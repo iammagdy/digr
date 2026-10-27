@@ -178,8 +178,8 @@ describe("exploration: real sample calls under code-enforced caps, an owner cost
   const ctx = () => ({ customerText: X_REQUEST, access: nobody, catalog, samples: new Map() });
   const deps = (db: any, requestId = "req1") => ({ client: db, requestId, userId: "u1" });
 
-  it("the caps are named constants: 0.02 USD per customer request and 0.50 USD per UTC day for all exploration", () => {
-    expect(EXPLORATION_REQUEST_CAP_USD).toBe(0.02);
+  it("the caps are named constants: 0.05 USD per customer request and 0.50 USD per UTC day for all exploration", () => {
+    expect(EXPLORATION_REQUEST_CAP_USD).toBe(0.05);
     expect(EXPLORATION_DAY_CAP_USD).toBe(0.5);
     expect(EXPLORATION_COST_MARKER).toBe("exploration");
   });
@@ -198,16 +198,16 @@ describe("exploration: real sample calls under code-enforced caps, an owner cost
     expect(await readExplorationSpend(deps(db))).toEqual({ request: 0.00045, day: 0.00045 });
   });
 
-  it("EXACT BOUNDARY per request: calls that land on 0.02 USD are made, the one that would pass it is NOT (no request leaves)", async () => {
+  it("EXACT BOUNDARY per request: calls that land on 0.05 USD are made, the one that would pass it is NOT (no request leaves)", async () => {
     gateway.restore();
     gateway = stubGateway({ "anyapi.x.user.posts": xPage }, { "anyapi.x.user.posts": 10_000 });
     const db = createMemoryDb();
     // the catalog price of one call is 0.0005; seed what this request already spent so the next call's estimate lands exactly on the cap
-    db.seed("provider_costs", [{ job_id: "explore_req1", cost_usd: 0.0195, capability: EXPLORATION_COST_MARKER, created_at: new Date().toISOString() }]);
+    db.seed("provider_costs", [{ job_id: "explore_req1", cost_usd: 0.0495, capability: EXPLORATION_COST_MARKER, created_at: new Date().toISOString() }]);
     const exact = await runSampleCall({ id: "anyapi.x.user.posts", params }, ctx(), deps(db));
     expect(exact.ok).toBe(true);
     expect(gateway.calls).toHaveLength(1);
-    // now 0.0195 + 0.01 (the call really billed 0.01) is past the cap: the next estimate (0.0005) would land at 0.0305 > 0.02
+    // now 0.0495 + 0.01 (the call really billed 0.01) is past the cap: the next estimate (0.0005) would land at 0.0605 > 0.05
     const over = await runSampleCall({ id: "anyapi.x.user.posts", params }, ctx(), deps(db));
     expect(over).toMatchObject({ ok: false, kind: "refused" });
     expect(gateway.calls).toHaveLength(1);

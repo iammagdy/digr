@@ -79,12 +79,21 @@ describe("NEVER PRICED FROM A CATALOG EXAMPLE (the planning loop)", () => {
     expect(gateway.calls).toHaveLength(0);
   });
 
-  it("a sample the exploration cap refuses (a 0.0295 USD endpoint against the 0.02 USD cap) leaves the plan unpriced: no card", async () => {
-    gateway = stubGateway({});
+  it("the Facebook keyword search (0.0295 USD per call) can now take ONE real sample under the 0.05 USD per-request cap, and is then priced from it; an endpoint above the cap (0.066 USD) still cannot be sampled and leaves the plan unpriced: no card", async () => {
+    const fbPage = { code: 0, data: { results: Array.from({ length: 5 }, (_, i) => ({ post_id: `p${i}`, url: `https://www.facebook.com/x/posts/${i}`, message: `post ${i}`, comments_count: i })), cursor: "c1" } };
+    gateway = stubGateway({ "justoneapi.x.facebook-search-post-v1": fbPage }, { "justoneapi.x.facebook-search-post-v1": 29_520 });
+    const customerMessages = ["أريد ٣٠ منشورًا عن الغلا"];
     const plan = { summaryAr: "جمع ٣٠ منشورًا عن الغلا", steps: [{ endpointId: "justoneapi.x.facebook-search-post-v1", volume: 30, params: [{ name: "keyword", value: "الغلا", source: "customer_text", quote: "الغلا" }], fieldMap: { columns: [{ field: "message", headerAr: "نص المنشور", role: "text" }], pagination: { kind: "token", param: "cursor" } } }] };
-    const { out, transport } = await run([sample("justoneapi.x.facebook-search-post-v1", [{ name: "keyword", value: "الغلا", source: "customer_text", quote: "الغلا" }]), propose(plan), propose(plan)], { customerMessages: ["أريد ٣٠ منشورًا عن الغلا"] });
-    expect(JSON.stringify(transport.requests[1].messages)).toContain("exploration budget");
-    expect(out.kind).toBe("message");
+    const ok = await run([sample("justoneapi.x.facebook-search-post-v1", [{ name: "keyword", value: "الغلا", source: "customer_text", quote: "الغلا" }]), propose(plan)], { customerMessages });
+    expect(ok.out.kind).toBe("plan");
+    expect(gateway.calls).toHaveLength(1);
+    if (ok.out.kind === "plan") expect(ok.out.plan.steps[0].price).toMatchObject({ rowsPerCall: 5, measuredFrom: "sample" });
+    gateway.restore();
+    gateway = stubGateway({});
+    const dear = { summaryAr: "جمع ٣٠ منشورًا عن الغلا", steps: [{ endpointId: "anyapi.facebook.search_posts", volume: 30, params: [{ name: "query", value: "الغلا", source: "customer_text", quote: "الغلا" }], fieldMap: { columns: [{ field: "message", headerAr: "نص المنشور", role: "text" }], pagination: { kind: "single" } } }] };
+    const refused = await run([sample("anyapi.facebook.search_posts", [{ name: "query", value: "الغلا", source: "customer_text", quote: "الغلا" }]), propose(dear), propose(dear)], { customerMessages });
+    expect(JSON.stringify(refused.transport.requests[1].messages)).toContain("exploration budget");
+    expect(refused.out.kind).toBe("message");
     expect(gateway.calls).toHaveLength(0);
   });
 });

@@ -33,7 +33,8 @@ export const PLANNER_MODEL_DEFAULT = "claude-haiku-5-5";
 export const PLANNER_MODEL_PRICE = { inputPerMillion: 0.10, outputPerMillion: 0.50, cacheReadPerMillion: 0.01, cacheWritePerMillion: 0.125 } as const;
 
 /** What exploration (real sample calls made BEFORE the customer approves) may spend: an owner cost, never charged to the customer. */
-export const EXPLORATION_REQUEST_CAP_USD = 0.02;
+/** Owner decision: 0.05 USD per customer request (raised from 0.02 so a 0.0295 USD endpoint such as the Facebook keyword search can take one real sample); the day's cap is unchanged. */
+export const EXPLORATION_REQUEST_CAP_USD = 0.05;
 export const EXPLORATION_DAY_CAP_USD = 0.50;
 /** The capability marker exploration rows carry in provider_costs (that table has no reason column: `capability` is the reason). */
 export const EXPLORATION_COST_MARKER = "exploration";

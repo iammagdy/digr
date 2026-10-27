@@ -97,9 +97,15 @@ export const REPLAY_CASES: ReplayCase[] = [
   },
   {
     id: "L5", group: "live", request: "أريد ٣٠ تعليقًا على منشورات فيسبوك عن الغلا", fixtures: [fx("catalog-example_justoneapi.x.facebook-search-post-v1"), fx("catalog-example_scrapecreators.x.v1-facebook-post-comments")],
-    script: [search("facebook", ["search", "posts"]), search("facebook", ["post", "comments"]), sample("justoneapi.x.facebook-search-post-v1", [{ name: "keyword", value: "الغلا", source: "customer_text", quote: "الغلا" }]), ask("هذه الخدمة غير متاحة حاليًا؛ ولم يُحجز أي رصيد.")],
-    expectNew: { kind: "refusal" }, alsoOk: ["question"],
-    note: "the only Facebook keyword search endpoints cost 0.0295 USD or more per call, above the 0.02 USD per-request exploration cap: no real sample can be made, so (the price needs one) no card is shown. The old path added the window «آخر شهر» here and delivered 0"
+    script: [search("facebook", ["search", "posts"]), search("facebook", ["post", "comments"]), sample("justoneapi.x.facebook-search-post-v1", [{ name: "keyword", value: "الغلا", source: "customer_text", quote: "الغلا" }]), sample("scrapecreators.x.v1-facebook-post-comments", [{ name: "url", source: "prior_step", fromStep: { step: 1, field: "url" } }]), propose({
+      summaryAr: "جمع ٣٠ تعليقًا على منشورات فيسبوك عن الغلا", topic: "الغلا",
+      steps: [
+        { endpointId: "justoneapi.x.facebook-search-post-v1", volume: 30, params: [{ name: "keyword", value: "الغلا", source: "customer_text", quote: "الغلا" }], fieldMap: { rowsPath: "data.results", columns: [{ field: "url", headerAr: "رابط المنشور", role: "url" }, { field: "message", headerAr: "نص المنشور", role: "text" }, { field: "comments_count", headerAr: "عدد التعليقات", role: "replies", transform: "number" }], pagination: { kind: "token", param: "cursor" } } },
+        { endpointId: "scrapecreators.x.v1-facebook-post-comments", volume: 30, perItem: 10, params: [{ name: "url", source: "prior_step", fromStep: { step: 1, field: "url" } }], fieldMap: { columns: [{ field: "text", headerAr: "نص التعليق", role: "text" }, { field: "author.name", headerAr: "الاسم", role: "author_name" }, { field: "created_at", headerAr: "تاريخ التعليق", role: "date" }, { field: "reaction_count", headerAr: "التفاعلات", role: "likes", transform: "number" }], pagination: { kind: "token", param: "cursor" } } },
+      ],
+    })],
+    expectNew: { kind: "plan", steps: 2, noWindow: true },
+    note: "the listing step's real sample costs about 0.0295 USD: it fits the 0.05 USD per-request exploration cap (it did not fit 0.02), so it is made and the plan is priced from it. The old path added the window «آخر شهر» here and delivered 0"
   },
   {
     id: "L6", group: "live", request: "أريد ١٠ شركات تقنية في مصر", fixtures: [egyptianCompanies()],
