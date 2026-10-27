@@ -31,7 +31,7 @@ import { DECISION_MAKER_UNIT_PRICES_POINTS, decisionMakerQuotePoints, type Conta
 import { PEOPLE_SETTLEMENT_UNAVAILABLE_AR, requirePeopleSettlementRpc } from "./peopleSettlementReadiness";
 import { containsMissingToken, quoteScopeGaps, stripMissingValueWords } from "../../lib/quoteScopeGaps";
 import { chargeForUnits, maxVolumeUnderCap, recordCostFor, reserveForUnits } from "../../lib/recordPricing";
-import { SOCIAL_CAPABILITIES } from "../../lib/socialSources"; import { fitNoticeAr, fitPostsAndComments, type FitReason } from "../../lib/planFit"; import { capacityRefusalAr, LARGE_PLAN_FROM_POINTS, PlanRefusalError } from "../../lib/capacityRefusal"; import { DECISION_MAKER_EMAIL_ROUTE_COST_CAP_USD } from "../../lib/server/decisionMakerSpend";
+import { SOCIAL_CAPABILITIES } from "../../lib/socialSources"; import { fitNoticeAr, fitPostsAndComments, type FitReason } from "../../lib/planFit"; import { capacityRefusalAr, LARGE_PLAN_FROM_POINTS, PlanIncompleteError, PlanRefusalError } from "../../lib/capacityRefusal"; import { isStepReference } from "../../lib/paramProvenance"; import { DECISION_MAKER_EMAIL_ROUTE_COST_CAP_USD } from "../../lib/server/decisionMakerSpend";
 import { multiProviderEnabled } from "../../lib/multiProvider/flag";
 import { isChainSlug } from "../../lib/multiProvider/routes";
 import { resolveChainItemRouting, type ChainItemRouting } from "../../lib/server/multiProvider/planRouting";
@@ -515,9 +515,9 @@ export function validatePlanAgainstLiveCatalog(
     if (!it.params) it.params = {};
     const required = liveEndpointRequiredParams(ep);
 
-    // Auto-fill or relax dependent parameters in multi-step plans (e.g. step 2 depends on step 1 postUrl)
-    if (index > 0 && required.includes("postUrl") && (!it.params.postUrl || it.params.postUrl === "from_step_1" || String(it.params.postUrl).startsWith("$") || String(it.params.postUrl).startsWith("{"))) {
-      it.params.postUrl = "https://www.facebook.com/post/1";
+    // A later step takes its post link from the step before it, NEVER from an invented link: an empty value becomes «from_step_1» (a step that depends on nothing is refused: paramProvenance)
+    if (index > 0 && required.includes("postUrl") && (!it.params.postUrl || isStepReference(it.params.postUrl))) {
+      it.params.postUrl = "from_step_1";
     }
 
     // An empty company query is never filled in with a country: the customer's country comes
@@ -608,7 +608,7 @@ export async function createAndSaveManagedQuote(
     // A summary that carries «undefined» or «null» as a value would be shown to the customer as it is: the plan is incomplete.
     if (containsMissingToken(plan.summaryAr) && !gaps.includes("placeholder")) gaps.push("placeholder");
     if (gaps.length > 0) {
-      throw new Error(`الخطة غير مكتملة: ${gaps.join(", ")}`);
+      throw new PlanIncompleteError(gaps); // a customer-readable refusal, never the generic «plan_build_failed»
     }
   }
 

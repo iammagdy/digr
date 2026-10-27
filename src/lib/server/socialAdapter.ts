@@ -30,6 +30,7 @@ import {
   type SocialSourceRequest,
 } from "../socialSources";
 import { timeNeededForAnotherCallMs } from "./chunkSizing";
+import { JOB_BUDGET_ERROR_CODE } from "./callBudget";
 import { classifyRowsByDate, DATE_BASIS_KEY, rowDateMs, VIDEO_PUBLISHED_AT_KEY } from "./dateRangeFilter";
 import { youtubeRecencyFor } from "../youtubeRecency";
 import { videoEvidence } from "./videoRelevance";
@@ -203,11 +204,14 @@ export interface CallClock {
   noteCallMs(ms: number): void;
   remainingMs(): number;
   canCallAgain(): boolean;
+  /** The job's USD budget refused a call: no other call (to this or another source) is made in this chunk. */
+  stopForBudget?(): void;
 }
 
 export class ChunkClock implements CallClock {
   private calls = 0;
   private slowestCallMs = 0;
+  private budgetStopped = false;
   readonly startedAt: number;
   constructor(private readonly now: () => number) {
     this.startedAt = now();
@@ -225,8 +229,11 @@ export class ChunkClock implements CallClock {
   remainingMs(): number {
     return SOCIAL_CHUNK_BUDGET_MS - (this.now() - this.startedAt);
   }
+  stopForBudget(): void {
+    this.budgetStopped = true;
+  }
   canCallAgain(): boolean {
-    return this.calls < MAX_CALLS_PER_CHUNK && this.remainingMs() >= timeNeededForAnotherCallMs(this.slowestCallMs);
+    return !this.budgetStopped && this.calls < MAX_CALLS_PER_CHUNK && this.remainingMs() >= timeNeededForAnotherCallMs(this.slowestCallMs);
   }
 }
 
@@ -281,6 +288,8 @@ export async function runChain(
     if (!outcome.ok) {
       result.errorCode = outcome.errorCode;
       result.errorMessageAr = outcome.errorMessageAr;
+      // The job's budget refused this call: another source would be refused too, and no further call is made in this chunk.
+      if (outcome.errorCode === JOB_BUDGET_ERROR_CODE) { clock.stopForBudget?.(); break; }
       continue;
     }
     if (!hasRecognizedProviderResultShape(outcome.data)) {

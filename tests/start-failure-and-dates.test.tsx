@@ -69,11 +69,11 @@ describe("dates in the data preview are in Arabic-Indic digits (display only)", 
     expect(formatCell(true)).toBe("نعم");
   });
 
-  it("the table of a real social dataset shows the publication date in Arabic-Indic digits, and the data itself keeps ISO text", () => {
+  it("the table of a real social dataset shows the publication date and time in Arabic-Indic digits, and the data itself keeps ISO text", () => {
     const normalized = normalizeDataset({ metadata: { template: "x" }, rows: [{ tweet_id: "1", text: "منشور", createdUtc: 1792308962, likes: 4 }] }, { socialKind: "posts", title: "x" });
-    expect(normalized.rows[0].published_at).toBe("2026-10-18");
+    expect(normalized.rows[0].published_at).toBe("2026-10-18 07:36");
     const html = renderToStaticMarkup(createElement(ResultsCanvas as any, { records: normalized.rows, profile: null, jobId: "job_x", jobStatus: "done", onDownload: () => {}, fileIds: { xlsx: "ready", pdf: null, csv: null } }));
-    expect(html).toContain("٢٠٢٦-١٠-١٨");
-    expect(html).not.toContain(">2026-10-18<");
+    expect(html).toContain("٢٠٢٦-١٠-١٨ ٠٧:٣٦");
+    expect(html).not.toContain(">2026-10-18 07:36<");
   });
 });

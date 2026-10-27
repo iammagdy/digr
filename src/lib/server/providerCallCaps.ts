@@ -17,7 +17,7 @@ export const SMALL_JOB_RECORDS = 10;
 export const SMALL_JOB_MAX_PAGES = 3;
 /** Stop after this many CONSECUTIVE pages that produced no new matching record. */
 export const MAX_CONSECUTIVE_EMPTY_PAGES_SMALL = 2;
-export const MAX_CONSECUTIVE_EMPTY_PAGES_LARGE = 3;
+export const MAX_CONSECUTIVE_EMPTY_PAGES_LARGE = 2;
 /** Larger jobs may use up to this multiple of the pages they would need if every record matched (defined once, in scaleConfig; 6 since 22 Oct 2026, it was 3). */
 export const LARGE_JOB_PAGE_ALLOWANCE = SCALE_LARGE_JOB_PAGE_ALLOWANCE;
 /** Hard ceiling on pages for any capped job. */
@@ -29,8 +29,8 @@ export const ABSOLUTE_MAX_PAGES = 300;
  */
 export const DIRECTORY_PAGE_ALLOWANCE = 3;
 export const DIRECTORY_MAX_PAGES = 30;
-/** ANY job that has delivered nothing after this many pages stops, however the earlier pages are recorded. */
-export const NO_PROGRESS_PAGES = 5;
+/** ANY job that has delivered nothing after this many pages stops, however the earlier pages are recorded (22 Oct 2026: 175 pages, 0 rows, 0.866 USD; this was 5). */
+export const NO_PROGRESS_PAGES = 2;
 export const DIRECTORY_NO_PROGRESS_PAGES = NO_PROGRESS_PAGES;
 /** Small company jobs request a page of 3x the wanted records, between these bounds, instead of exactly the wanted count. */
 export const SMALL_JOB_MIN_PAGE_SIZE = 5;
@@ -106,9 +106,9 @@ export const POST_REVIEW_BUDGET_NOTE_AR = "توقف الجمع لأن التحق
 
 export const CALL_CAP_NOTE_AR: Record<CallCapReason, string> = {
   page_cap: "توقف الجمع عند الحد الأقصى لعدد الصفحات المسموح لهذا الطلب، مع تسليم السجلات المطابقة التي جُمعت فقط",
-  no_progress: "توقف الجمع لأن عدة صفحات متتالية لم تُنتج أي سجل مطابق، ولم يُحتسب عليك إلا ما سُلّم",
+  no_progress: "توقف الجمع لأن صفحتين متتاليتين من المصدر لم تُنتجا أي سجل مطابق، ولم يُحتسب عليك إلا ما سُلّم",
   source_repeats: "توقف الجمع لأن المصدر لا يحتوي على عناصر جديدة أخرى؛ أعاد السجلات نفسها التي سُلّمت، ولم يُحتسب عليك إلا ما سُلّم وحُرّر الباقي من الحجز المؤقت",
-  empty_pages: "توقف الجمع لأن الصفحات الأخيرة لم تُنتج سجلات مطابقة جديدة، مع تسليم السجلات المطابقة التي جُمعت فقط",
+  empty_pages: "توقف الجمع لأن صفحتين متتاليتين من المصدر لم تُضيفا أي سجل مطابق جديد، مع تسليم السجلات المطابقة التي جُمعت فقط",
   review_unavailable: "توقف الجمع لأن التحقق الآلي من ملاءمة السجلات تعذّر الآن، ولم يُحتسب عليك إلا ما سُلّم",
   review_budget: "توقف الجمع لأن التحقق الآلي بلغ الحد المسموح لهذا الطلب؛ وُضعت السجلات التي لم تُراجَع في ورقة «غير مراجَع» ولم يُحتسب عليك إلا ما سُلّم",
   review_low_yield: "توقف الجمع لأن نسبة السجلات المطابقة لموضوعك بقيت منخفضة جداً وبلغ التحقق الآلي حدّه المسموح لهذا الطلب، ولم يُحتسب عليك إلا ما سُلّم",

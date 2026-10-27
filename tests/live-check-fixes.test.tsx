@@ -342,14 +342,14 @@ describe("live check 10: a notification never says its title twice", () => {
     const notice = completionNoticeFull({ requested: 100, delivered: 40, chargedPoints: 360, refundedPoints: 540 } as never);
     expect(notice.title).toBe("اكتمل طلبك جزئيًا");
     expect(notice.body.startsWith(notice.title)).toBe(false);
-    expect(notice.body).toContain("تم تسليم ٤٠ من ١٠٠ سجلاً");
+    expect(notice.body).toContain("تم تسليم ٤٠ من ١٠٠ سجل");
     expect(`${notice.title} ${notice.body}`.match(/اكتمل طلبك جزئيًا/g)?.length).toBe(1);
     expect(notice.email?.lead.startsWith("اكتمل طلبك جزئيًا")).toBe(false);
   });
   it("an old stored notice whose body repeats the title is shown once", () => {
-    const shown = notificationDisplay("اكتمل طلبك جزئيًا", "اكتمل طلبك جزئيًا: تم تسليم ٤٠ من ١٠٠ سجلاً، لأن المصدر لم يتوفر فيه عدد أكبر يطابق طلبك.");
+    const shown = notificationDisplay("اكتمل طلبك جزئيًا", "اكتمل طلبك جزئيًا: تم تسليم ٤٠ من ١٠٠ سجل، لأن المصدر لم يتوفر فيه عدد أكبر يطابق طلبك.");
     expect(shown.title).toBe("اكتمل طلبك جزئيًا");
-    expect(shown.body.startsWith("تم تسليم ٤٠ من ١٠٠ سجلاً")).toBe(true);
+    expect(shown.body.startsWith("تم تسليم ٤٠ من ١٠٠ سجل")).toBe(true);
     expect(`${shown.title} ${shown.body}`.match(/اكتمل طلبك جزئيًا/g)?.length).toBe(1);
     expect(notificationDisplay("عنوان", "نص مختلف").body).toBe("نص مختلف");
   });

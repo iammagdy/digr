@@ -216,7 +216,7 @@ describe("audit phase 2: one status vocabulary (point 9)", () => {
     expect(PARTIAL_STATUS_AR).toBe("مكتمل جزئيًا");
     expect(REQUEST_STATUS_LABEL_AR.partial).toBe(PARTIAL_STATUS_AR);
     expect(PARTIAL_SENTENCE_AR).toBe("اكتمل طلبك جزئيًا");
-    expect(deliveredOfRequestedAr(40, 100)).toBe("تم تسليم ٤٠ من ١٠٠ سجلاً");
+    expect(deliveredOfRequestedAr(40, 100)).toBe("تم تسليم ٤٠ من ١٠٠ سجل");
   });
   it("the old forms are gone from the customer text sources", () => {
     for (const file of ["src/lib/jobs/requestStatus.ts", "src/lib/server/jobNotices.ts", "src/lib/honestDisplay.ts"]) {
