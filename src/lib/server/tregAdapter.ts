@@ -1,5 +1,6 @@
 import { MODEL_PLAN_SLUG } from "../modelPlanner/constants";
 import { runModelPlanChunk } from "../modelPlanner/interpreter";
+import { getMissionManager } from "../modelPlanner/manager";
 import { executeTregCall, TregCallOptions, TregCallResult, serializeProviderParams } from "../../functions/shared/tregClient";
 import { JOB_BUDGET_STOP_AR } from "./callBudget";
 import { evaluateResearchRowRelevance } from "./researchRelevanceGate";
@@ -1176,7 +1177,9 @@ export interface ProviderAdapterCallOutput {
   /** The Facebook topic report only: a chunk that delivered no row but made progress (browsing, classifying): the worker does not count it as an empty page. */
   reportProgress?: boolean;
   /** A model-planned job with a topic: the model calls of the topic review of the chunk (usage and cost), for the worker to log. */
-  reviewModelUsage?: Array<{ inputTokens: number; outputTokens: number; costUsd: number; model: string; latencyMs: number; failure?: string }>;
+  reviewModelUsage?: Array<{ inputTokens: number; outputTokens: number; costUsd: number; model: string; latencyMs: number; failure?: string; reason?: string }>;
+  /** A model-planned mission only: short Arabic lines about what happened at a decision point (a source replaced, a stage stopped, the final review), kept with the job for the customer's summary. */
+  missionNotes?: Array<{ kind: string; stage?: number; textAr: string }>;
   /** The Facebook topic report only: the model calls of the chunk (usage and cost), for the worker to log. */
   reportModelUsage?: Array<{ inputTokens: number; outputTokens: number; costUsd: number; model: string; latencyMs: number; failure?: string }>;
 }
@@ -1334,7 +1337,7 @@ export const defaultTregAdapter: ProviderAdapterFn = async (
   }
 
   // A MODEL-PLANNED job: the generic interpreter runs the approved plan (see src/lib/modelPlanner/interpreter.ts).
-  if (input.capabilitySlug === MODEL_PLAN_SLUG) return runModelPlanChunk(input, input.sensitive ? { sensitive: input.sensitive } : {});
+  if (input.capabilitySlug === MODEL_PLAN_SLUG) return runModelPlanChunk(input, { ...(input.sensitive ? { sensitive: input.sensitive } : {}), manager: getMissionManager() });
 
   // Verified social services run through their own source chain (fallbacks, comments of discovered videos).
   if (isSocialCapabilitySlug(input.capabilitySlug)) {

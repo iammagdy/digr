@@ -62,6 +62,15 @@ function costLabel(e: CatalogEndpoint, catalog: TregCatalog): string {
   return `${c.usd} USD per ${c.unit}${e.kind === "routed" ? " (worst case of the providers behind it)" : ""}`;
 }
 
+/** What one record costs from this endpoint, as the planner shows it (USD): a per-record price as is; a per-call price over the rows a call usually returns (its page size, at most 20). Null when it has no usable price. */
+export function estimatedCostPerRecordUsd(e: CatalogEndpoint, catalog: TregCatalog): number | null {
+  const c = unitCost(e, catalog);
+  if (!c) return null;
+  if (c.unit === "record") return c.usd;
+  const limit = e.inputs.find((i) => ["limit", "count", "page_size", "per_page", "size", "num", "max_results"].includes(i.name))?.maximum ?? 20;
+  return c.usd / Math.max(1, Math.min(20, limit));
+}
+
 export interface SearchToolResult { hits: Array<Record<string, unknown>>; hidden: number; restrictedTop: boolean }
 
 /** `catalog_search` for one account: an endpoint the account may not use (blocked, or sensitive for an account that is not verified) is never listed. */
@@ -73,13 +82,16 @@ export function toolCatalogSearch(input: { platform?: string; words?: string[]; 
   const top = all[0];
   const restrictedTop = Boolean(top) && (categoryOf(top.id) === "sensitive" && !policyVerdict(top.id, access).allowed);
   const hidden = all.length - allowed.length;
+  // The candidates are shown SORTED BY COST PER RECORD, cheapest first (an endpoint priced per call is divided by the rows a call usually returns: its page size, up to 20), each with its rank.
+  // Relevance still decides WHICH candidates are listed; cost decides their order. The model samples the cheapest one that suits the request first.
+  const listed = priceable.slice(0, limit).map((h) => {
+    const e = catalog.byId.get(h.id)!;
+    return { hit: h, e, perRecord: estimatedCostPerRecordUsd(e, catalog) };
+  }).sort((a, b) => (a.perRecord ?? Number.POSITIVE_INFINITY) - (b.perRecord ?? Number.POSITIVE_INFINITY) || a.hit.id.localeCompare(b.hit.id));
   return {
     restrictedTop,
     hidden,
-    hits: priceable.slice(0, limit).map((h) => {
-      const e = catalog.byId.get(h.id)!;
-      return { id: h.id, name: clip(h.name, 80), platform: h.platform, capability: h.capability, summary: clip(h.summary, 140), price: costLabel(e, catalog), requiredInputs: h.requiredInputs, inputs: e.inputs.slice(0, 10).map((i) => `${i.name}${i.required ? "*" : ""}${i.type ? `:${i.type}` : ""}`), okRate: h.observedOkRate };
-    }),
+    hits: listed.map(({ hit: h, e, perRecord }, index) => ({ rank: index + 1, id: h.id, name: clip(h.name, 80), platform: h.platform, capability: h.capability, summary: clip(h.summary, 140), price: costLabel(e, catalog), costPerRecordUsd: perRecord === null ? undefined : Number(perRecord.toFixed(6)), requiredInputs: h.requiredInputs, inputs: e.inputs.slice(0, 10).map((i) => `${i.name}${i.required ? "*" : ""}${i.type ? `:${i.type}` : ""}`), okRate: h.observedOkRate })),
   };
 }
 

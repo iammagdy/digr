@@ -31,6 +31,8 @@ export default function PlannerSelfTestPage() {
   const [running, setRunning] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const stop = useRef(false);
+  const [seeding, setSeeding] = useState(false);
+  const [seedNote, setSeedNote] = useState("");
 
   useEffect(() => { adminFetch<Info>("/api/admin/planner-selftest").then(setInfo).catch((e) => toast(e instanceof Error ? e.message : "تعذّر التحميل")); }, [toast]);
 
@@ -57,6 +59,17 @@ export default function PlannerSelfTestPage() {
     setRunning(null);
   }
 
+  async function loadRecipes() {
+    if (seeding) return;
+    setSeeding(true); setSeedNote("");
+    try {
+      const r = await adminFetch<{ inserted: number; present: number; failed: number; tableApplied: boolean }>("/api/admin/recipes-seed", { method: "POST" });
+      setSeedNote(r.tableApplied ? `أُضيفت ${toArabicDigits(r.inserted)} وصفة، وكانت ${toArabicDigits(r.present)} موجودة، وتعذّر ${toArabicDigits(r.failed)}.` : "جدول الوصفات غير مُطبَّق بعد: لم يُحمَّل شيء.");
+    } catch (e) {
+      setSeedNote(e instanceof Error ? e.message : "تعذّر التحميل");
+    } finally { setSeeding(false); }
+  }
+
   function exportCsv() {
     const blob = new Blob([selfTestCsv(rows)], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
@@ -80,6 +93,15 @@ export default function PlannerSelfTestPage() {
         {info && !info.keyConfigured ? <p className="m-0 text-[13px] text-bad">مفتاح النموذج غير مضبوط.</p> : null}
         <p className="m-0 text-[13px] text-ink" data-testid="selftest-cost" aria-live="polite">تكلفة هذه التشغيلة {usd(spent)} من حدّ {usd(info?.capUsd ?? 0.3)} · نجح {toArabicDigits(passed)} من {toArabicDigits(rows.length)}</p>
         {note ? <p className="m-0 text-[13px] text-ink2" role="status">{note}</p> : null}
+      </section>
+
+      <section className={SECTION} aria-label="الوصفات المثبتة" data-testid="recipes-seed">
+        <h3 className="m-0 text-[13px] font-semibold text-ink">الوصفات المثبتة</h3>
+        <p className="m-0 text-[13px] font-light leading-[1.9] text-ink2">يحمّل وصفات مراجَعة للخدمات التي ثبت عملها: منشورات حساب وموضوع على إكس، وتعليقات تيك توك وفيسبوك (فيديو أو منشور أو كلمة)، والشركات وصنّاع القرار. لا يغيّر ولا يحذف أي وصفة محفوظة، ويضيف الناقص فقط.</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" className={BTN} disabled={seeding} onClick={loadRecipes} data-testid="recipes-seed-button">{seeding ? "جارٍ التحميل…" : "تحميل الوصفات المثبتة"}</button>
+          {seedNote ? <span className="text-[13px] text-ink" role="status">{seedNote}</span> : null}
+        </div>
       </section>
 
       {h ? (

@@ -118,9 +118,9 @@ describe("the model planner, end to end on the replay world (the gateway is a st
     expect(stored.steps).toHaveLength(2);
     expect(JSON.stringify(stored)).not.toMatch(/dateFrom|dateTo|date_window|datePosted|آخر شهر/);
     expect(r.planQuote.window).toBeUndefined();
-    // the two sample calls and nothing else were asked of the sources before approval
+    // the two samples (each on two pages: Phase 2 (d) measures the rows one call returns on two pages) and nothing else were asked of the sources before approval
     const planningRequests = world.stats.served.map((s) => s.endpointId);
-    expect(planningRequests).toEqual(["anyapi.tiktok.search.videos", "tikhub.tiktok.video.comments"]);
+    expect(planningRequests).toEqual(["anyapi.tiktok.search.videos", "anyapi.tiktok.search.videos", "tikhub.tiktok.video.comments", "tikhub.tiktok.video.comments"]);
     for (const s of world.stats.served) expect(Object.keys(s.body)).not.toEqual(expect.arrayContaining(["datePosted"]));
 
     // the topic review: the reviewer gets the customer's REAL request text and confirms the rows (fail closed otherwise)

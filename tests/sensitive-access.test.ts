@@ -63,7 +63,7 @@ describe("the gateway: a sensitive endpoint is never sent a request without the 
     const walk = (dir: string) => { for (const name of readdirSync(dir)) { const p = path.join(dir, name); if (statSync(p).isDirectory()) walk(p); else if (/\.(ts|tsx)$/.test(name)) files.push(p); } };
     walk("src");
     const hits = files.filter((f) => /sensitiveAccess:\s*\{\s*allowed:\s*true\s*\}/.test(readFileSync(f, "utf-8"))).map((f) => f.replace(/\\/g, "/")).sort();
-    expect(hits).toEqual(["src/lib/modelPlanner/interpreter.ts", "src/lib/server/adminLookup.ts"]);
+    expect(hits).toEqual(["src/lib/modelPlanner/stageCall.ts", "src/lib/server/adminLookup.ts"]);
   });
 });
 

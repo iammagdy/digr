@@ -136,8 +136,11 @@ export async function runSampleCall(input: { id: string; params: PlanParam[]; li
 
   // parameters: the same provenance rules as the plan (a sample uses the customer's real values, never invented ones)
   const issues: ValidationIssue[] = [];
-  const prior = [...ctx.samples.values()].filter((s) => s.endpointId !== id).pop();
+  const lastOther = [...ctx.samples.values()].filter((s) => s.endpointId !== id).pop();
+  // a value «from a prior step» is read from the REAL sample rows of that earlier step: the one the param names (fromStep.endpointId), else the latest other sample
+  const priorFor = (p: PlanParam) => (p.fromStep?.endpointId ? ctx.samples.get(p.fromStep.endpointId) : undefined) ?? lastOther;
   const resolved: PlanParam[] = input.params.map((p) => {
+    const prior = priorFor(p);
     if (p.source === "prior_step" && p.fromStep && prior) {
       const row = prior.rows.find((r) => { const v = readField(r, p.fromStep!.field); return v !== undefined && v !== null && v !== ""; });
       const value = row ? readField(row, p.fromStep.field) : undefined;
@@ -148,7 +151,7 @@ export async function runSampleCall(input: { id: string; params: PlanParam[]; li
   // a value taken from the previous sample's own rows is a real value (not a literal chosen by the model): checked as such
   const priorMarked = new Set(input.params.filter((p) => p.source === "prior_step").map((p) => p.name));
   checkParams(resolved.filter((p) => !priorMarked.has(p.name)), endpoint, { customerText: ctx.customerText, today: ctx.today }, { stepIndex: 0 }, issues, null);
-  for (const p of resolved.filter((q) => priorMarked.has(q.name))) if (resolvedParamValue(p) === undefined) issues.push({ code: "bad_step_reference", message: `no sample row of the previous step has a value at «${input.params.find((q) => q.name === p.name)?.fromStep?.field}». Fields of the previous sample: ${prior ? [...new Set(prior.digest.fields.map((f) => f.path))].slice(0, 20).join(", ") : "(no previous sample)"}`, param: p.name });
+  for (const p of resolved.filter((q) => priorMarked.has(q.name))) if (resolvedParamValue(p) === undefined) issues.push({ code: "bad_step_reference", message: `no sample row of the previous step has a value at «${input.params.find((q) => q.name === p.name)?.fromStep?.field}». Fields of the earlier step's sample: ${(() => { const q = priorFor(input.params.find((x) => x.name === p.name)!); return q ? [...new Set(q.digest.fields.map((f) => f.path))].slice(0, 30).join(", ") : "(no earlier sample: sample the earlier step first)"; })()}`, param: p.name });
   if (issues.length > 0) return { ok: false, kind: "invalid", message: issues.map((i) => i.message).join("; "), issues, ...none };
 
   const attempts: ExplorationAttempt[] = [];
@@ -166,7 +169,7 @@ export async function runSampleCall(input: { id: string; params: PlanParam[]; li
     attempts.push(result.attempt);
     spentHere += result.attempt.costUsd;
     if (result.ok) {
-      const sample: StepSample = { endpointId: next.endpoint.id, rows: result.rows, digest: result.digest, costUsd: result.attempt.costUsd, body: result.body };
+      const sample: StepSample = { endpointId: next.endpoint.id, rows: result.rows, digest: result.digest, costUsd: result.attempt.costUsd, body: result.body, pageRows: result.pageRows };
       ctx.samples.set(next.endpoint.id, sample);
       return { ok: true, digest: result.digest, sample, costUsd: spentHere, note: { endpointUsed: next.endpoint.id, paramsUsed: next.params.filter((p) => p.source !== "prior_step").map((p) => ({ name: p.name, value: resolvedParamValue(p) })), attempts } };
     }
@@ -190,13 +193,20 @@ export async function runSampleCall(input: { id: string; params: PlanParam[]; li
   return { ok: false, kind: "failed", message: failureMessage(attempts), attempts, costUsd: spentHere };
 }
 
+const CURSOR_PARAM_NAMES = ["cursor", "next_cursor", "page_token", "pageToken", "continuation", "continuation_token", "max_cursor", "next", "after", "offset", "page"];
+/** The input that carries the next-page token of an endpoint, from the names it declares (null when none is recognisable). */
+function cursorParamOf(endpoint: CatalogEndpoint): string | null {
+  const names = new Set([...endpoint.inputs.map((i) => i.name), ...(endpoint.pagination ?? [])]);
+  return CURSOR_PARAM_NAMES.find((n) => names.has(n) && !["offset", "page"].includes(n)) ?? null;
+}
+
 function failureMessage(attempts: ExplorationAttempt[]): string {
   const lines = attempts.map((a) => `«${a.endpointId}»: ${a.outcome}${a.httpStatus ? ` (HTTP ${a.httpStatus})` : ""}${a.detail ? ` - ${a.detail}` : ""}`);
   return `no real answer was obtained. Attempts: ${lines.join("; ")}. ${attempts.some((a) => a.outcome === "over_budget") ? "A call that does not fit the exploration budget was not made. " : ""}You may describe and sample ONE different endpoint of the same capability from catalog_search (cheaper, or with other parameters) if one is left. An endpoint priced PER RECORD needs no sample to be priced: you may propose it without one (its fields are then checked against the catalog's example). Otherwise end with ONE short Arabic message that this is not available.`;
 }
 
 type TryResult =
-  | { ok: true; attempt: ExplorationAttempt; rows: Array<Record<string, unknown>>; digest: ShapeDigest; body: unknown }
+  | { ok: true; attempt: ExplorationAttempt; rows: Array<Record<string, unknown>>; digest: ShapeDigest; body: unknown; pageRows: number[] }
   | { ok: false; attempt: ExplorationAttempt };
 
 async function tryOne(endpoint: CatalogEndpoint, params: PlanParam[], limitIn: number | undefined, ctx: SampleContext, deps: ExplorationDeps, catalog: TregCatalog, stats: SampleStats): Promise<TryResult> {
@@ -281,5 +291,29 @@ async function tryOne(endpoint: CatalogEndpoint, params: PlanParam[], limitIn: n
   const a = attempt({ outcome: "ok", httpStatus: result.httpStatus, rows: rows.length, costUsd, durationMs, detail: "" });
   void now;
   await recordAttempt(deps, { endpointId: id, params, limit, attempt: a, budgetUsd: capUsd });
-  return { ok: true, attempt: a, rows, digest, body: result.data };
+
+  // A SECOND PAGE for a per-call endpoint (when the first answered a next-page token, the budget and the time allow): the price divides by the rows one call RETURNS, which one page can mis-state.
+  const pageRows = [rows.length];
+  const cursorParam = cost.unit === "call" ? cursorParamOf(endpoint) : null;
+  if (cursorParam && reading.nextCursor && reading.cursorKind !== "url" && callParams[cursorParam] === undefined && stats.madeCalls < MAX_SAMPLE_CALLS) {
+    const after = await readExplorationSpend(deps);
+    const left = Math.min(capUsd - after.request, EXPLORATION_DAY_CAP_USD - after.day);
+    const time = deps.deadlineAtMs !== undefined ? Math.min(SAMPLE_CALL_TIMEOUT_MS, deps.deadlineAtMs - Date.now() - PLANNER_MIN_TURN_MS) : SAMPLE_CALL_TIMEOUT_MS;
+    if (estimate <= left + 1e-12 && time >= 3_000) {
+      const second = await call({
+        endpointId: id, method: endpoint.method === "GET" ? "GET" : "POST", params: { ...callParams, [cursorParam]: reading.nextCursor }, userId: deps.userId, jobId: `${EXPLORATION_JOB_PREFIX}${deps.requestId}`,
+        stepId: `explore_${n}_p2`, page: 2, routeMaxCostUsd: Number(Math.max(estimate, 0.001).toFixed(6)), timeoutMs: time, callBudget: createJobCallBudget({ ceilingUsd: Math.min(capUsd, after.request + left), spentUsd: after.request }), callEstimateUsd: estimate, endpointScope: endpoint.scope,
+      }).catch(() => null);
+      stats.madeCalls += 1;
+      if (second) {
+        const secondCost = Math.max(0, second.costMicro || 0) / 1_000_000;
+        const r2 = second.ok ? buildShapeDigest(second.data, endpoint).reading.rows.length : 0;
+        const a2 = attempt({ outcome: second.ok && r2 > 0 ? "ok" : second.ok ? "empty" : "http_error", httpStatus: second.httpStatus, rows: r2, costUsd: secondCost, durationMs: 0, detail: "second page, to measure the rows one call returns" });
+        await recordAttempt(deps, { endpointId: id, params, limit, attempt: a2, budgetUsd: capUsd });
+        a.costUsd += secondCost;
+        if (second.ok && r2 > 0) pageRows.push(Math.min(r2, SAMPLE_PAGE_ROWS_PER_CALL));
+      }
+    }
+  }
+  return { ok: true, attempt: a, rows, digest, body: result.data, pageRows };
 }

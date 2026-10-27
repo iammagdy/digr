@@ -2,7 +2,7 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { PLAN_UNAVAILABLE_AR, runPlanner, type PlannerInput } from "../src/lib/modelPlanner/planner";
+import { PLAN_INCOMPLETE_AR, PLAN_UNAVAILABLE_AR, runPlanner, type PlannerInput } from "../src/lib/modelPlanner/planner";
 import { createAnthropicTransport, createScriptedTransport, type ContentBlock } from "../src/lib/modelPlanner/transport";
 import { resetExplorationMemoryForTesting, runSampleCall } from "../src/lib/modelPlanner/exploration";
 import { EXPLORATION_REQUEST_CAP_USD, MAX_PLANNER_TURNS, MODEL_PLAN_PARAM, MODEL_PLAN_SLUG } from "../src/lib/modelPlanner/constants";
@@ -325,7 +325,8 @@ describe("PRODUCTION REQUEST: TikTok comments about a topic (two stages: videos 
     expect(out.kind).toBe("plan");
     if (out.kind !== "plan") return;
     expect(out.attempts.map((a) => [a.endpointId, a.outcome])).toEqual([["tikhub.tiktok.search.videos", "ok"], ["tikhub.tiktok.video.comments", "http_error"], ["tikhub.x.tiktok-app-v3-fetch-video-comments", "ok"]]);
-    expect(gateway.calls.map((c) => c.endpointId)).toEqual(["tikhub.tiktok.search.videos", "tikhub.tiktok.video.comments", "tikhub.x.tiktok-app-v3-fetch-video-comments"]);
+    // Phase 2 (d): a per-call endpoint that answers a next-page token is sampled on a SECOND page, so the rows one call returns are measured on two pages
+    expect(gateway.calls.map((c) => c.endpointId)).toEqual(["tikhub.tiktok.search.videos", "tikhub.tiktok.video.comments", "tikhub.x.tiktok-app-v3-fetch-video-comments", "tikhub.x.tiktok-app-v3-fetch-video-comments"]);
     expect(gateway.calls[1].body).toMatchObject({ aweme_id: "7600001" }); // a value from the first sample's rows, not invented
     expect(out.plan.steps).toHaveLength(2);
     expect(out.plan.steps[1].step.endpointId).toBe("tikhub.x.tiktok-app-v3-fetch-video-comments");
@@ -438,9 +439,11 @@ describe("MODEL LOOP ROBUSTNESS: every refusal goes back with its exact reason u
     expect(asked.out).toMatchObject({ kind: "message", reason: "clarification", messageAr: "ما اسم الحساب؟", turns: 2 });
   });
 
-  it("a model reply that cannot be shown to a customer (Latin words, a provider) becomes the same one sentence, never the raw text", async () => {
-    const { out } = await planNow([[say("The service tikhub is down, sorry")]], customer);
-    expect(out).toMatchObject({ kind: "message", messageAr: PLAN_UNAVAILABLE_AR });
+  it("a model reply that cannot be shown to a customer (Latin words, a provider) is sent back once to rephrase, then the standard question is asked, never the raw text and never a refusal", async () => {
+    const { out, transport } = await planNow([[say("The service tikhub is down, sorry")]], customer);
+    expect(out).toMatchObject({ kind: "message", reason: "incomplete", messageAr: PLAN_INCOMPLETE_AR });
+    expect(transport.requests).toHaveLength(2);
+    expect(JSON.stringify(transport.requests[1].messages.at(-1))).toContain("Rephrase");
   });
 
   it("the turn's own time is respected: with no time left no model call is made and the sentence is the same", async () => {

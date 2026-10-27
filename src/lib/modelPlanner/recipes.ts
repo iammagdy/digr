@@ -49,7 +49,7 @@ export function recipeStepsOf(plan: StoredModelPlan): unknown {
 export interface RecipeRow {
   slug: string;
   version: number;
-  status: "draft";
+  status: "draft" | "reviewed";
   endpoint_id: string;
   params_template: Record<string, unknown>;
   field_map: Record<string, unknown>;
@@ -66,7 +66,8 @@ export function recipeRowFromPlan(plan: StoredModelPlan, info: { deliveredUnits:
     status: "draft",
     endpoint_id: plan.steps[0].endpointId,
     params_template: { steps: (recipeStepsOf(plan) as Array<{ params: unknown }>).map((s) => s.params) },
-    field_map: { steps: recipeStepsOf(plan), topic: Boolean(plan.topic) },
+    // the WHOLE mission: every stage (its endpoint, parameter templates, field map, filters), how the stages are chained (parent, delivered or not, rows per parent) and their names
+    field_map: { steps: recipeStepsOf(plan), topic: Boolean(plan.topic), ...(plan.stages ? { stages: plan.stages.map((s) => ({ parent: s.parent, deliver: s.deliver, perParent: s.perParent, titleAr: s.titleAr })) } : {}) },
     price_basis: { measured: plan.measured, firstJobDeliveredUnits: info.deliveredUnits, firstJobId: info.jobId, note: "a measurement, not a price: the price is computed from the catalog cost by the shared function" },
     fixture_refs: [],
     catalog_snapshot_sha256: info.snapshotSha256 ?? null,
@@ -103,4 +104,10 @@ export async function loadRecipeForEndpoint(client: any, endpointId: string): Pr
       steps,
     };
   } catch { return null; }
+}
+
+/** What the recipe measured for the step that runs this endpoint (the recipe's own step order, not the new plan's): rows per call and the share that passed. */
+export function recipeMeasureFor(recipe: RecipeRecord, endpointId: string, fallbackIndex: number): { rowsPerCall: number; passRate: number } | undefined {
+  const at = recipe.endpointIds.indexOf(endpointId);
+  return recipe.measured[at >= 0 ? at : Math.min(fallbackIndex, Math.max(0, recipe.measured.length - 1))];
 }

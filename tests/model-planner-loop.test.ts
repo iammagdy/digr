@@ -106,7 +106,8 @@ describe("the planning loop: real tool use, tool results fed back", () => {
     const { out } = await run([[say("ما اسم حساب الجهة على إكس؟")]]);
     expect(out).toMatchObject({ kind: "message", reason: "clarification", messageAr: "ما اسم حساب الجهة على إكس؟" });
     const { out: unsafe } = await run([[say("I will use anyapi.x.user.posts for 5 USD")]]);
-    expect(unsafe).toMatchObject({ kind: "message", reason: "unavailable", messageAr: PLAN_UNAVAILABLE_AR });
+    // Phase 2 (g): the unsafe text is sent back ONCE to rephrase; when it fails again the standard question is asked, never a refusal
+    expect(unsafe).toMatchObject({ kind: "message", reason: "incomplete", messageAr: PLAN_INCOMPLETE_AR });
   });
 
   it("the loop is bounded: a model that only keeps searching ends at the turn limit; a turn past its deadline starts no further model call", async () => {

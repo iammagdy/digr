@@ -69,8 +69,8 @@ export const MAX_RUNTIME_ALTERNATES = 2;
 export const PLANNER_MAX_TOKENS = 2048;
 export const PLANNER_TIMEOUT_MS = 30_000;
 
-/** A plan has at most this many stages (a listing step, then one step run for each listed item). */
-export const MAX_PLAN_STAGES = 2;
+/** A plan has at most this many stages: roots (steps with no earlier step) and steps run once for each row of an earlier step. */
+export const MAX_PLAN_STAGES = 4;
 /** The interpreter reads at most this many listed items to fan out over, and at most this many provider calls in one worker chunk. */
 export const MAX_FAN_OUT_PARENTS = 40;
 export const MAX_CALLS_PER_CHUNK = 3;
@@ -79,3 +79,17 @@ export const MAX_CALLS_PER_CHUNK = 3;
 export const TOPIC_REVIEW_ROWS_PER_CALL = 25;
 export const TOPIC_REVIEW_JOB_CAP_USD = 0.15;
 export const TOPIC_REVIEW_CALL_ESTIMATE_USD = 0.0083;
+
+/** The model's own spend while it MANAGES an approved mission (first-page checks, stage transitions, the final review): 5% of the mission's reserve value, never below the floor. */
+export const MANAGER_BUDGET_SHARE = 0.05;
+export const MANAGER_BUDGET_FLOOR_USD = 0.01;
+/** One management call is cut after this long (ms); a mission never waits on the model past it. */
+export const MANAGER_CALL_TIMEOUT_MS = 12_000;
+/** Without a typed number the customer's hold stays at or below this many points. */
+export const DEFAULT_HOLD_CEILING_POINTS = 1000;
+/** The reserve is the expected cost plus this share (the same 15% the quote writer adds). */
+export const RESERVE_MARGIN = 1.15;
+/** A sample of a per-call endpoint takes a second page (when the first answered a next-page token and the budget allows) so rows per call is measured on two pages. */
+export const SAMPLE_PAGES_FOR_MEASURE = 2;
+/** The most parent rows one stage of a mission keeps waiting for the next stage (the cursor carries them from chunk to chunk). */
+export const MAX_MISSION_QUEUE = 120;

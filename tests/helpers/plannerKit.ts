@@ -36,7 +36,8 @@ export const say = (text: string): ContentBlock => ({ type: "text", text });
 export const search = (platform: string | undefined, words: string[]) => [use("catalog_search", { ...(platform ? { platform } : {}), words })];
 export const describe = (endpointId: string) => [use("describe_endpoint", { id: endpointId })];
 export const sample = (endpointId: string, params: Array<Record<string, unknown>>, limit?: number) => [use("sample_call", { id: endpointId, params, ...(limit ? { limit } : {}) })];
-export const propose = (input: Record<string, unknown>) => [use("propose_plan", input)];
+/** The recorded model's plan. Recordings made before the «cheapest suitable first» rule carry no reason for their choice, so the kit adds one (the rule itself is tested with `use("propose_plan", …)` directly). */
+export const propose = (input: Record<string, unknown>) => [use("propose_plan", { whyNotCheapest: "recorded plan: this is the endpoint the recording sampled", ...input })];
 
 /** The recorded plan of the X account request, with a few overrides. */
 export const xAccountPlan = (over: Record<string, unknown> = {}) => ({

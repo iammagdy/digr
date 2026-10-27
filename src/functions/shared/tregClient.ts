@@ -50,6 +50,10 @@ export interface TregCallResult {
   timedOut?: boolean;
   /** What the FIRST call of an idempotent replay cost (header `X-Treg-Original-Cost-Micro`); a replay itself reports 0. */
   originalCostMicro?: number;
+  /** TREG reported no charge for this answered call: `costMicro` is the call's catalog price estimate, and the record must say so. */
+  costIsEstimate?: boolean;
+  /** The charge the answer itself reported (`_treg.charged_micro`, routed calls), when it did. */
+  chargedMicroReported?: number;
   /** The call was NOT made: the endpoint is on the hard block list (never callable) ... */
   blocked?: string;
   /** ... or the job's USD budget would have been passed. */
@@ -334,7 +338,8 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
 
   const latencyMs = Date.now() - startTime;
   if (resolvedKey) reportProviderHttpStatus("treg", response.status, resolvedKey.source);
-  const costMicro = parseInt(response.headers.get("x-treg-cost-micro") || "0", 10);
+  const headerCost = response.headers.get("x-treg-cost-micro");
+  const headerMicro = headerCost === null ? null : (parseInt(headerCost || "0", 10) || 0);
   const originalCostMicro = parseInt(response.headers.get("x-treg-original-cost-micro") || "0", 10);
   const tregCallId = response.headers.get("x-treg-call-id") || "";
 
@@ -345,7 +350,7 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
       method,
       latencyMs,
       status: response.status,
-      costMicro,
+      costMicro: headerMicro ?? 0,
       tregCallId,
     })
   );
@@ -365,6 +370,18 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
 
   if (options.rawCapture) {
     try { await options.rawCapture({ endpointId: options.endpointId, httpStatus: response.status, page, body: responseBody ?? rawText }); } catch { /* a capture never changes a call */ }
+  }
+
+  // THE ACTUAL CHARGE, as TREG reports it: the cost header of a direct call; a routed call also reports `_treg.charged_micro` in its answer, which is used when the header is absent.
+  // When TREG reports nothing at all for an answered call, the call's own catalog price estimate is recorded and the result is marked as an estimate. A header and an answer that
+  // disagree are both kept visible: `chargedMicroReported` carries the answer's figure and the mismatch is logged for the owner (the header stays the figure the books use).
+  const reportedInBody = responseBody?._treg?.charged_micro;
+  const bodyMicro = typeof reportedInBody === "number" && Number.isFinite(reportedInBody) && reportedInBody >= 0 ? Math.round(reportedInBody) : null;
+  const estimatedMicro = response.ok && options.callEstimateUsd !== undefined && Number(options.callEstimateUsd) > 0 ? Math.round(Number(options.callEstimateUsd) * 1_000_000) : 0;
+  const costIsEstimate = bodyMicro === null && headerMicro === null && estimatedMicro > 0;
+  const costMicro = headerMicro !== null ? headerMicro : bodyMicro !== null ? bodyMicro : costIsEstimate ? estimatedMicro : 0;
+  if (bodyMicro !== null && headerMicro !== null && bodyMicro !== headerMicro) {
+    console.warn(JSON.stringify({ tag: "treg_charge_mismatch", endpointId: options.endpointId, headerMicro, chargedMicroInAnswer: bodyMicro, tregCallId }));
   }
 
   const bodyError = responseBody?.error;
@@ -420,5 +437,7 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
     isRouteMaxCost,
     isPlatformBalanceLow,
     ...(Number.isFinite(originalCostMicro) && originalCostMicro > 0 ? { originalCostMicro } : {}),
+    ...(costIsEstimate ? { costIsEstimate: true } : {}),
+    ...(bodyMicro !== null ? { chargedMicroReported: bodyMicro } : {}),
   };
 }
