@@ -1,9 +1,9 @@
 import { NextResponse } from "next/server";
-import { longJobDriverMode } from "@/lib/driverMode";
+import { liveDriverMode } from "@/lib/server/driverHeartbeat";
 
 export const dynamic = "force-dynamic";
 
-/** Public and read-only: which driver runs long jobs («tab» or «cron»). A configuration flag, no secret and no data. */
+/** Public and read-only: whether the always-on driver is LIVE right now («cron») or not («tab»), from its last tick. No secret, no data. */
 export async function GET() {
-  return NextResponse.json({ mode: longJobDriverMode() }, { headers: { "Cache-Control": "public, s-maxage=300, stale-while-revalidate=300" } });
+  return NextResponse.json({ mode: await liveDriverMode() }, { headers: { "Cache-Control": "public, s-maxage=30, stale-while-revalidate=0" } });
 }

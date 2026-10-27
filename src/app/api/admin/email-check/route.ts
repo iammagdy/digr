@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import { authenticateAdmin } from "@/lib/server/adminAuth";
-import { longJobDriverMode } from "@/lib/driverMode";
+import { liveDriverMode, readDriverLastTick } from "@/lib/server/driverHeartbeat";
+import { createAdminClient } from "@/lib/supabase/server";
 import { renderEmailTemplate } from "../../../../../supabase/functions/send-email/templates";
 import { sendPlatformEmail } from "@/lib/server/sendPlatformEmail";
 import {
@@ -33,7 +34,7 @@ export async function GET(req: NextRequest) {
     success: true,
     config,
     function: { state: probe, labelAr: FUNCTION_PROBE_LABEL_AR[probe] },
-    driver: { mode: longJobDriverMode() },
+    driver: { mode: await liveDriverMode(), lastTickAt: await readDriverLastTick(createAdminClient()) },
     senderAr: "المُرسِل ثابت: Diger <noreply@diger.tech>، ومفتاح الإرسال RESEND_API_KEY يُقرأ من أسرار دالة البريد على Supabase فقط.",
   });
 }

@@ -4,7 +4,8 @@ import { verifyCronSecret, resolveInternalBaseUrl, createInternalWorkerAuthHeade
 import { DRIVER_DISPATCH_TIMEOUT_MS, MAX_IDLE_MS, MAX_JOBS_PER_TICK, MIN_IDLE_MS } from "../../../../lib/server/driverLimits";
 import { dispatchWorkerChunk } from "../../../../lib/server/workerDispatch";
 import { notifyStalledJobs } from "../../../../lib/server/jobStallNotifier";
-import { longJobDriverMode } from "../../../../lib/driverMode";
+import { recordDriverTick } from "../../../../lib/server/driverHeartbeat";
+import { driverModeFromTick } from "../../../../lib/driverMode";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -26,6 +27,8 @@ export async function GET(req: NextRequest) {
   }
   const admin = createAdminClient();
   const now = Date.now();
+  // Proof of life the moment the call is authorised (a chunk can run for most of a minute); the final write below adds the count.
+  await recordDriverTick(admin, 0, now);
   const nowIso = new Date(now).toISOString();
   const idleSince = new Date(now - MAX_IDLE_MS).toISOString();
   const settledBefore = new Date(now - MIN_IDLE_MS).toISOString();
@@ -39,7 +42,9 @@ export async function GET(req: NextRequest) {
     .lt("updated_at", settledBefore)
     .order("updated_at", { ascending: true })
     .limit(MAX_JOBS_PER_TICK * 3);
-  if (error) return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  if (error) {
+    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+  }
 
   const candidates: any[] = Array.isArray(data) ? data : [];
   const due = candidates
@@ -65,9 +70,10 @@ export async function GET(req: NextRequest) {
     })),
     notifyStalledJobs(admin, now),
   ]);
+  await recordDriverTick(admin, results.filter((result) => result.started).length, now);
   return NextResponse.json({
     success: true,
-    mode: longJobDriverMode(),
+    mode: driverModeFromTick(new Date(now).toISOString(), now),
     considered: candidates.length,
     dispatched: results.length,
     started: results.filter((result) => result.started).length,

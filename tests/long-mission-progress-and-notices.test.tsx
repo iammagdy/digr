@@ -3,6 +3,11 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 
+const heartbeat = vi.hoisted(() => ({ at: null as string | null }));
+vi.mock("../src/lib/supabase/server", async (original) => ({
+  ...(await original<any>()),
+  createAdminClient: () => ({ from: () => ({ select: () => ({ eq: () => ({ maybeSingle: async () => ({ data: heartbeat.at ? { last_tick_at: heartbeat.at } : null }) }) }) }) }),
+}));
 vi.mock("../src/lib/server/sendPlatformEmail", async (original) => ({
   ...(await original<any>()),
   getRecipient: vi.fn(async (_admin: any, userId: string) => (userId === "optout" ? null : { email: `${userId}@example.com`, name: "سلمى" })),
@@ -10,6 +15,7 @@ vi.mock("../src/lib/server/sendPlatformEmail", async (original) => ({
 }));
 const mailbox: Array<{ template: string; to: string; vars: Record<string, string>; key?: string }> = [];
 
+import { resetDriverModeCache } from "../src/lib/server/driverHeartbeat";
 import PlanQuoteCard from "../src/app/dashboard/chat/components/PlanQuoteCard";
 import { GET as driverStatus } from "../src/app/api/driver-status/route";
 import { closePageLineAr, normalizeDriverMode } from "../src/lib/driverMode";
@@ -360,7 +366,7 @@ describe("the e-mail template, in isolation", () => {
 
 describe("«you can close the page» only with the always-on driver", () => {
   it("the line for each state", () => {
-    expect(closePageLineAr("cron")).toBe("تقدر تقفل الصفحة؛ المهمة تكمل وحدها وسنبلغك عند الاكتمال.");
+    expect(closePageLineAr("cron")).toBe("تقدر تقفل الصفحة وتروح تشرب قهوة، هنكمّل الشغل وهنبعتلك إيميل أول ما نخلص.");
     expect(closePageLineAr("tab")).toBe("أبقِ الصفحة مفتوحة حتى تكتمل المهمة.");
     expect(closePageLineAr("tab")).not.toContain("تقفل");
     expect(normalizeDriverMode(undefined)).toBe("tab");
@@ -383,17 +389,27 @@ describe("«you can close the page» only with the always-on driver", () => {
     expect(render(cron)).toContain("تقدر تقفل الصفحة");
   });
 
-  it("the driver-status endpoint reports the flag and defaults to «tab»", async () => {
+  it("the driver-status endpoint reports whether the driver is LIVE (a recent tick), «tab» otherwise, and a forced «tab» wins", async () => {
     const original = process.env.LONG_JOB_DRIVER;
     try {
       delete process.env.LONG_JOB_DRIVER;
+      resetDriverModeCache();
+      heartbeat.at = null;
       expect(await (await driverStatus()).json()).toEqual({ mode: "tab" });
-      process.env.LONG_JOB_DRIVER = "cron";
+      resetDriverModeCache();
+      heartbeat.at = new Date().toISOString();
       expect(await (await driverStatus()).json()).toEqual({ mode: "cron" });
-      process.env.LONG_JOB_DRIVER = "banana";
+      resetDriverModeCache();
+      process.env.LONG_JOB_DRIVER = "cron"; // the old flag can no longer switch anything on
+      heartbeat.at = new Date(Date.now() - 10 * 60_000).toISOString();
+      expect(await (await driverStatus()).json()).toEqual({ mode: "tab" });
+      resetDriverModeCache();
+      process.env.LONG_JOB_DRIVER = "tab"; // it can only force «tab»
+      heartbeat.at = new Date().toISOString();
       expect(await (await driverStatus()).json()).toEqual({ mode: "tab" });
     } finally {
       if (original === undefined) delete process.env.LONG_JOB_DRIVER; else process.env.LONG_JOB_DRIVER = original;
+      resetDriverModeCache();
     }
   });
 
@@ -402,7 +418,7 @@ describe("«you can close the page» only with the always-on driver", () => {
     expect(page).toContain("closePageLineAr(driverMode)");
     expect(page).toContain("useDriverMode()");
     expect(page).not.toContain("تقدر تقفل الصفحة");
-    expect(readFileSync("src/app/api/chat/accept-quote/route.ts", "utf8")).toContain("driverMode: longJobDriverMode()");
+    expect(readFileSync("src/app/api/chat/accept-quote/route.ts", "utf8")).toContain("driverMode: await liveDriverMode(adminClient)");
     expect(readFileSync("src/hooks/useDriverMode.ts", "utf8")).toContain('useState<DriverMode>(cached ?? "tab")');
   });
 });

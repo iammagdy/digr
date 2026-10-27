@@ -73,3 +73,9 @@ cron on the Hobby plan), so it is not part of this proposal. The route is the sa
   that made no progress for 10 minutes.
 - A provider cap, a 402 or a 429 mid-job is handled by the worker as before: rows already delivered are settled once through
   `settle_job_atomic`, the rest of the reserve returns; with nothing delivered the whole reserve is released.
+
+## Update: the driver is now proven live by its own heartbeat
+
+`LONG_JOB_DRIVER` is no longer needed. Every authorised call to `/api/cron/drive` (including a call with nothing waiting) writes one row
+into `public.driver_heartbeat` (`id = 1`, `last_tick_at`, `last_dispatched`). The app says «تقدر تقفل الصفحة» only while that tick is
+newer than 3 minutes; the answer is cached for at most 30 seconds. The variable can only force the old behaviour (`tab` or `off`).

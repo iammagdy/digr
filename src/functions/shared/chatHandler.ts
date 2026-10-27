@@ -120,7 +120,7 @@ import { handlesInText, videosCountAr } from "../../lib/channelNames";
 import { MAX_CHANNELS_PER_JOB, MAX_PER_VIDEO, MAX_VIDEOS_PER_JOB, canonicalSocialParams, isSocialCapabilitySlug, postsForVolume, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
 import { loadMeasuredTimings } from "../../lib/server/jobTimings";
 import { missionDurationForPlan } from "../../lib/missionDuration";
-import { longJobDriverMode } from "../../lib/driverMode";
+import { liveDriverMode } from "../../lib/server/driverHeartbeat";
 import { DEFAULT_COMMENTS_CAP, DEFAULT_RECORDS_CAP, defaultCapFittedLineAr, defaultCapLineAr, type DefaultNoun } from "../../lib/planDefaults";
 import { buildResultFollowupReply, type PriorConversationMessage } from "./resultFollowup";
 import { toSafeReasonCode } from "./chatErrors";
@@ -4091,7 +4091,7 @@ export class ChatHandler {
           // steps) and the measured chunk times of finished jobs, never decided by the model. It carries no money value.
           try {
             const measuredTimings = sb ? await loadMeasuredTimings(sb) : undefined;
-            const durationView = missionDurationForPlan(managedQuote.items as any[], longJobDriverMode(), measuredTimings);
+            const durationView = missionDurationForPlan(managedQuote.items as any[], await liveDriverMode(sb || undefined), measuredTimings);
             if (durationView) planQuoteData.duration = durationView;
           } catch (durationErr: any) {
             console.warn("[chat:duration_estimate_skipped]", durationErr?.message || "");
