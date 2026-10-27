@@ -247,7 +247,7 @@ describe("the notices of a job", () => {
   });
 
   it("the start notice says «you can close the page» only with the always-on driver", () => {
-    expect(startedNoticeFull({ targetVolumeMax: 800, driver: "cron" }).body).toContain("يمكنك إغلاق الصفحة");
+    expect(startedNoticeFull({ targetVolumeMax: 800, driver: "cron" }).body).toContain("تقدر تقفل الصفحة");
     expect(startedNoticeFull({ targetVolumeMax: 800, driver: "tab" }).body).not.toContain("يمكنك إغلاق الصفحة");
     expect(startedNoticeFull({ targetVolumeMax: 800 }).body).not.toContain("يمكنك إغلاق الصفحة");
   });

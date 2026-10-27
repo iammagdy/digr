@@ -503,6 +503,7 @@ export async function POST(req: NextRequest) {
     const result = await withDeadline(chatHandler.handleUserMessage({
       userId: verifiedUserId,
       conversationId: conversationId || undefined,
+      plannerRequestId: typeof body.plannerRequestId === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(body.plannerRequestId) ? body.plannerRequestId : undefined,
       message: message.trim(),
       answers: structuredAnswers?.answers || body.answers,
       uploadedFiles: verifiedUploadedFiles,

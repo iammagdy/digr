@@ -1180,6 +1180,8 @@ export interface ProviderAdapterCallOutput {
   reviewModelUsage?: Array<{ inputTokens: number; outputTokens: number; costUsd: number; model: string; latencyMs: number; failure?: string; reason?: string }>;
   /** A model-planned mission only: short Arabic lines about what happened at a decision point (a source replaced, a stage stopped, the final review), kept with the job for the customer's summary. */
   missionNotes?: Array<{ kind: string; stage?: number; textAr: string }>;
+  /** A model-planned mission only: where each stage stands after this chunk (rows collected, rows delivered, rows wanted, parent rows waiting, finished, why stopped). The panel reads it. */
+  missionProgress?: { stages: Array<{ c: number; d: number; x: number; e: number; q: number; done: boolean; stopped?: string }> };
   /** The Facebook topic report only: the model calls of the chunk (usage and cost), for the worker to log. */
   reportModelUsage?: Array<{ inputTokens: number; outputTokens: number; costUsd: number; model: string; latencyMs: number; failure?: string }>;
 }

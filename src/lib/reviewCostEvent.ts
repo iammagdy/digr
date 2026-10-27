@@ -14,5 +14,10 @@ export const REVIEW_FALLBACK_EVENT_TYPE = "review_fallback";
 /** The owner's internal row about the decision-makers email and phone lookups of a chunk (what each did; no name, email, phone, link or token). */
 export const LOOKUP_LOG_EVENT_TYPE = "lookup_log";
 
-/** False for the owner's internal rows: the customer's activity list never shows them. */
-export const isCustomerVisibleJobEvent = (eventType: unknown): boolean => eventType !== REVIEW_COST_EVENT_TYPE && eventType !== REVIEW_FAILURE_EVENT_TYPE && eventType !== REVIEW_FALLBACK_EVENT_TYPE && eventType !== REVIEW_SAMPLE_EVENT_TYPE && eventType !== LOOKUP_LOG_EVENT_TYPE;
+/** The per-chunk snapshot of a mission's stages (collected, delivered, wanted, waiting, done): read by the mission panel, not part of the activity list. */
+export const MISSION_PROGRESS_EVENT_TYPE = "mission_progress";
+/** A short Arabic line about a decision made at a decision point of a mission (a source replaced, a stage stopped, the final review): read by the mission panel. */
+export const MISSION_NOTE_EVENT_TYPE = "mission_note";
+
+/** False for the owner's internal rows and for the mission panel's own rows: the customer's activity list never shows them. */
+export const isCustomerVisibleJobEvent = (eventType: unknown): boolean => eventType !== REVIEW_COST_EVENT_TYPE && eventType !== REVIEW_FAILURE_EVENT_TYPE && eventType !== REVIEW_FALLBACK_EVENT_TYPE && eventType !== REVIEW_SAMPLE_EVENT_TYPE && eventType !== LOOKUP_LOG_EVENT_TYPE && eventType !== MISSION_PROGRESS_EVENT_TYPE && eventType !== MISSION_NOTE_EVENT_TYPE;

@@ -22,6 +22,8 @@ import { customerFacingConversationTitle } from "@/lib/customerFacingConversatio
 import { chunkMarksFromEvents, computeJobProgress } from "@/lib/jobProgress";
 import { STALLED_LINE_AR, isJobStalled } from "@/lib/jobStall";
 import { closePageLineAr } from "@/lib/driverMode";
+import MissionPlanInline from "@/components/mission/MissionPlanInline";
+import { MODEL_PLAN_SLUG } from "@/lib/modelPlanner/constants";
 import { useDriverMode } from "@/hooks/useDriverMode";
 
 interface JobDoc {
@@ -429,6 +431,7 @@ export default function RequestsPage() {
               {stalled && <p role="status" className="m-0 text-[13px] font-medium leading-[1.8] text-ink" data-testid="request-stalled">{STALLED_LINE_AR}</p>}
               {note && <p className="m-0 text-[13px] leading-[1.8] text-ink2">{pluralizeStoredCountsAr(note)}</p>}
               {(k === "refunded" || k === "partial") && <ReportProblemButton jobId={j.$id} className="self-start" />}
+              {j.templateSlug === MODEL_PLAN_SLUG && <MissionPlanInline jobId={j.$id} live={k === "running"} />}
               <div className="flex flex-wrap gap-2">
                 {availableFormats.map((ext) => (
                   <button

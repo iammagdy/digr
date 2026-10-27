@@ -70,8 +70,8 @@ describe("the notices of a long job", () => {
     const notice = jobStartedNotice({ targetVolumeMax: 1500, driver: "cron" });
     expect(notice.title).toBe("بدأ تنفيذ طلبك الكبير");
     expect(notice.body).toContain("حتى ١٥٠٠ سجل");
-    expect(notice.body).toContain("يمكنك إغلاق الصفحة");
-    expect(notice.body).toContain("سنخبرك عند اكتماله");
+    expect(notice.body).toContain("تقدر تقفل الصفحة");
+    expect(notice.body).toContain("هنبعتلك إيميل أول ما نخلص");
     expect(notice.body).toContain("فهو حجز مؤقت مُحرَّر كاملًا دون خصم");
     // without the driver (the default, and anything that is not «cron») the notice is the honest one
     for (const driver of ["tab", undefined] as const) {
@@ -114,7 +114,7 @@ describe("the notices of a long job", () => {
 
   it("the start notice is sent on acceptance only when the first chunk started and the job is long; it never fails the acceptance", () => {
     const route = readFileSync("src/app/api/chat/accept-quote/route.ts", "utf8");
-    expect(route).toContain("workerDispatch.started && isLongJob(volume)");
+    expect(route).toContain("workerDispatch.started && (isLongJob(volume) || (isMission && driverNow === \"cron\"))"); // Phase 3: a mission also gets the in-site notice while the background driver is live
     const block = route.slice(route.indexOf("A large request is announced in-app"), route.indexOf("return NextResponse.json({\n      success: true,"));
     expect(block).toContain("} catch {");
     expect(block).not.toMatch(/throw|return NextResponse/);
