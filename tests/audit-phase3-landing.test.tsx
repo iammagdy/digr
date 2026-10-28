@@ -156,8 +156,9 @@ describe("audit phase 3: the price strip is computed", () => {
     const rows = buildPriceRows();
     const unit = (id: string) => rows.find((row) => row.id === id)!.unitPricePoints;
     const strip = homePriceStrip();
-    expect(strip[0].points).toBe(Math.ceil(5 * unit("companies")));
-    expect(Math.abs(strip[1].points - 100 * unit("x-posts"))).toBeLessThan(1);
+    // (the old lines had no minimum: Math.ceil(5 * unit) and |points - 100 * unit| < 1) the one pricing rule: a mission is never charged less than 200 points
+    expect(strip[0].points).toBe(Math.max(200, Math.ceil(5 * unit("companies"))));
+    expect(Math.abs(strip[1].points - Math.max(200, 100 * unit("x-posts")))).toBeLessThan(1);
   });
   it("links to the pricing page and the calculator and states that the real price is in the plan", () => {
     expect(page[1]).toContain('href="/pricing"');

@@ -8,7 +8,8 @@ import {
   AGENT_ERROR_REQUEUES_MAX, AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD, AGENT_EXECUTION_LLM_BUDGET_SHARE, AGENT_MEMORY_REQUEUES_MAX, AGENT_PHASE_STARTS_MAX, AGENT_EXECUTION_MAX_TURNS, AGENT_EXECUTION_WALL_MS, AGENT_PLANNING_LLM_BUDGET_USD,
   AGENT_PLANNING_MAX_TURNS, AGENT_PLANNING_WALL_MS, AGENT_PRICING_BASIS,
 } from "../../src/lib/agentMission/constants";
-import { executionBudgetUsd } from "../../src/lib/agentMission/price";
+import { executionBudgetUsd, reviewBudgetUsdFor } from "../../src/lib/agentMission/price";
+import { MISSION_PRICING_SETTING_KEY, normalizeMissionPricingSettings } from "../../src/lib/missionPricing";
 import { planningBudgetUsd } from "../../src/lib/agentMission/budget";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
 import { customerPlanView, type PricedPlan } from "../../src/lib/agentMission/plan";
@@ -20,6 +21,8 @@ import { createWebGateway, type ProviderKeyFn } from "./webGateway";
 import { loadSystemPrompt } from "./prompt";
 import { readRunState, updateRunState } from "./runState";
 import { buildTools, countDeliveredRows, newRunState, type ToolContext } from "./tools";
+import { createReviewer, readReviewState, type ReviewCall } from "./review";
+import type { TokenUsage } from "./llmCost";
 import { buildMissionFiles } from "./workbook";
 import type { AgentStore, CallRow, MissionRecord } from "./types";
 import type { SandboxResult } from "./sandbox";
@@ -44,6 +47,8 @@ export interface RunnerDeps {
   providerKey?: ProviderKeyFn;
   /** The HTTP transport of the web gateway (tests pass a fake: no real call). */
   fetchFn?: FetchFn;
+  /** The model call that reviews uncertain rows (a small request to the model API, no SDK process). Absent (tests, no key): uncertain rows are not delivered. */
+  reviewCall?: ReviewCall;
   systemPromptFile?: string;
   log?: (line: string) => void;
 }
@@ -99,6 +104,23 @@ async function tell(deps: RunnerDeps, mission: MissionRecord, jobId: string | nu
   try { await deps.notify?.({ userId: mission.user_id, missionId: mission.id, jobId, kind, facts }); } catch (e) { deps.log?.(`notice_failed ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 120)}`); }
 }
 
+/**
+ * THE TOKENS OF A RUN, stored as an INTERNAL event of the mission (the admin page reads it; the customer never does): the agent's input, output, cache-read and cache-write tokens of this phase, the model review's
+ * own tokens, and the model cost in millionths of a dollar. This is the account the cost audit checks the recorded cost against. Never throws.
+ */
+async function recordTokens(deps: RunnerDeps, missionId: string, phase: 0 | 1, usage: TokenUsage | undefined, review: { inputTokens: number; outputTokens: number; calls: number }, llmUsd: number): Promise<void> {
+  try {
+    const u = usage ?? {};
+    await deps.store.addEvent(missionId, { kind: "call", message_ar: "قياس داخلي لاستهلاك النموذج في هذه الخطوة.", counts: {
+      tok_phase: phase, tok_in: u.input_tokens ?? 0, tok_out: u.output_tokens ?? 0, tok_cache_read: u.cache_read_input_tokens ?? 0, tok_cache_write: u.cache_creation_input_tokens ?? 0,
+      tok_review_in: review.inputTokens, tok_review_out: review.outputTokens, tok_review_calls: review.calls, llm_micro_usd: Math.round(llmUsd * 1_000_000),
+    } });
+  } catch (e) {
+    deps.log?.(`tokens_not_recorded ${missionId} ${shortMessage(e)}`);
+  }
+}
+const shortMessage = (e: unknown): string => String((e as Error)?.message ?? e).slice(0, 120);
+
 /** A planning that cannot be completed ends here, honestly: nothing was held, the customer is told once. */
 async function endPlanningUnserved(deps: RunnerDeps, mission: MissionRecord, error: string): Promise<void> {
   await deps.store.updateMission(mission.id, { status: "failed", error: error.slice(0, 300), ...clear });
@@ -122,15 +144,20 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter });
   const web = deps.providerKey ? createWebGateway({ store, missionId: mission.id, jobId: null, phase: "planning", budget, recorder: deps.recorder, providerKey: deps.providerKey, fetchFn: deps.fetchFn, counter }) : undefined;
   const state = newRunState(await lastOut(store, mission.id));
-  const ctx: ToolContext = { phase: "planning", mission, plan: null, store, gateway, web, catalog: deps.catalog, access, state, sandbox: deps.sandbox };
+  const pricingSettings = normalizeMissionPricingSettings(((await store.readSettings().catch(() => ({}))) as Record<string, unknown>)[MISSION_PRICING_SETTING_KEY]);
+  const ctx: ToolContext = { phase: "planning", mission, plan: null, store, gateway, web, catalog: deps.catalog, access, state, sandbox: deps.sandbox, pricingSettings };
+  // the model cost of earlier runs of this phase (a requeue, a takeover): this run adds to it, and every model message checkpoints the running total, so a run that is killed still leaves its cost on the mission
+  const baseLlm = Number((await store.getMission(mission.id))?.planning_llm_usd ?? mission.planning_llm_usd ?? 0);
+  const checkpoint = async ({ costUsd }: { costUsd: number }) => { try { await store.updateMission(mission.id, { planning_llm_usd: Number((baseLlm + costUsd).toFixed(6)) }); } catch { /* a lost checkpoint never stops a run */ } };
   let output;
   try {
-    output = await deps.driver.run({ phase: "planning", systemPrompt: loadSystemPrompt("planning", deps.systemPromptFile), userPrompt: planningPrompt(mission, calls), tools: buildTools(ctx), state, model, maxTurns: AGENT_PLANNING_MAX_TURNS, maxBudgetUsd: AGENT_PLANNING_LLM_BUDGET_USD, wallMs: AGENT_PLANNING_WALL_MS });
+    output = await deps.driver.run({ phase: "planning", systemPrompt: loadSystemPrompt("planning", deps.systemPromptFile), userPrompt: planningPrompt(mission, calls), tools: buildTools(ctx), state, model, maxTurns: AGENT_PLANNING_MAX_TURNS, maxBudgetUsd: AGENT_PLANNING_LLM_BUDGET_USD, wallMs: AGENT_PLANNING_WALL_MS, onUsage: checkpoint });
   } catch (e) {
-    output = { llmCostUsd: 0, turns: 0, stop: "error", error: String((e as Error)?.message ?? e).slice(0, 300) };
+    output = { llmCostUsd: 0, turns: 0, stop: "error", error: String((e as Error)?.message ?? e).slice(0, 300) } as Awaited<ReturnType<ModelDriver["run"]>>;
   }
-  const llm = Number(((await store.getMission(mission.id))?.planning_llm_usd ?? 0) + output.llmCostUsd);
+  const llm = Number(baseLlm + output.llmCostUsd);
   const base = { planning_llm_usd: Number(llm.toFixed(6)), ...clear };
+  await recordTokens(deps, mission.id, 0, output.usage, { inputTokens: 0, outputTokens: 0, calls: 0 }, output.llmCostUsd);
   if (output.stop === "memory" && !state.proposedPlan && !state.question && !state.finish && await requeue(deps, mission, "queued", { planning_llm_usd: base.planning_llm_usd }, "memory")) return;
 
   if (state.proposedPlan) {
@@ -176,17 +203,31 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: mission.job_id, phase: "execution", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter });
   const web = deps.providerKey ? createWebGateway({ store, missionId: mission.id, jobId: mission.job_id, phase: "execution", budget, recorder: deps.recorder, providerKey: deps.providerKey, fetchFn: deps.fetchFn, counter }) : undefined;
   const state = newRunState(await lastOut(store, mission.id));
-  const ctx: ToolContext = { phase: "execution", mission, plan, store, gateway, web, catalog: deps.catalog, access, state, sandbox: deps.sandbox };
+  // THE REVIEW of uncertain rows: a small model request per batch, within 20% of the mission's revenue (rows beyond it are not delivered and not charged); its tokens and cost are counted from the API's own answer
+  const reviewBudgetUsd = plan.price.reviewBudgetUsd ?? reviewBudgetUsdFor(plan.price.maxChargePoints);
+  const reviewer = deps.reviewCall ? createReviewer({ call: deps.reviewCall, store, missionId: mission.id, requestText: `${mission.request_text}${mission.answer_text ? ` — ${mission.answer_text}` : ""}`, budgetUsd: reviewBudgetUsd, log: deps.log }) : undefined;
+  const reviewBefore = await readReviewState(store, mission.id);
+  const ctx: ToolContext = { phase: "execution", mission, plan, store, gateway, web, catalog: deps.catalog, access, state, sandbox: deps.sandbox, review: reviewer };
   const savedBefore = (await countDeliveredRows(store, mission.id, plan)).perStage;
   const llmBudget = Math.max(AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD, holdValueUsd(reserve, AGENT_PRICING_BASIS) * AGENT_EXECUTION_LLM_BUDGET_SHARE);
+  const baseLlm = Number((await store.getMission(mission.id))?.execution_llm_usd ?? mission.execution_llm_usd ?? 0);
+  const checkpoint = async ({ costUsd }: { costUsd: number }) => {
+    try {
+      const reviewNow = reviewer ? Math.max(0, (await reviewer.state()).spentUsd - reviewBefore.spentUsd) : 0;
+      await store.updateMission(mission.id, { execution_llm_usd: Number((baseLlm + costUsd + reviewNow).toFixed(6)) });
+    } catch { /* a lost checkpoint never stops a run */ }
+  };
   let output;
   try {
-    output = await deps.driver.run({ phase: "execution", systemPrompt: loadSystemPrompt("execution", deps.systemPromptFile), userPrompt: executionPrompt(mission, plan, calls, savedBefore), tools: buildTools(ctx), state, model, maxTurns: AGENT_EXECUTION_MAX_TURNS, maxBudgetUsd: llmBudget, wallMs: AGENT_EXECUTION_WALL_MS });
+    output = await deps.driver.run({ phase: "execution", systemPrompt: loadSystemPrompt("execution", deps.systemPromptFile), userPrompt: executionPrompt(mission, plan, calls, savedBefore), tools: buildTools(ctx), state, model, maxTurns: AGENT_EXECUTION_MAX_TURNS, maxBudgetUsd: llmBudget, wallMs: AGENT_EXECUTION_WALL_MS, onUsage: checkpoint });
   } catch (e) {
-    output = { llmCostUsd: 0, turns: 0, stop: "error", error: String((e as Error)?.message ?? e).slice(0, 300) };
+    output = { llmCostUsd: 0, turns: 0, stop: "error", error: String((e as Error)?.message ?? e).slice(0, 300) } as Awaited<ReturnType<ModelDriver["run"]>>;
   }
-  const fresh = (await store.getMission(mission.id)) ?? mission;
-  const llm = Number((fresh.execution_llm_usd ?? 0) + output.llmCostUsd);
+  // the model cost of this run = the agent's own run + the review calls it made (a requeued or killed run's cost is already on the mission through the checkpoints and the review state)
+  const reviewAfter = await readReviewState(store, mission.id);
+  const reviewSpent = Math.max(0, reviewAfter.spentUsd - reviewBefore.spentUsd);
+  const llm = Number(baseLlm + output.llmCostUsd + reviewSpent);
+  await recordTokens(deps, mission.id, 1, output.usage, { inputTokens: reviewAfter.inputTokens - reviewBefore.inputTokens, outputTokens: reviewAfter.outputTokens - reviewBefore.outputTokens, calls: reviewAfter.calls - reviewBefore.calls }, output.llmCostUsd + reviewSpent);
   if (output.stop === "memory" && !state.finish && await requeue(deps, mission, "approved", { execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(budget.spentUsd().toFixed(6)) }, "memory")) return;
 
   await settleExecution(deps, mission, plan, reserve, unit, { llm, executionTregUsd: budget.spentUsd(), summary: state.finish?.summary_ar ?? null, outputError: output.error ?? null });
@@ -230,7 +271,10 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
     await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّرت التسوية الآلية للمهمة؛ راجع المشرف ولم يُخصم رصيد إضافي." });
     return;
   }
-  const summary = a.summary ?? (delivered > 0 ? `توقف الوكيل بعد حفظ ${toArabicDigits(delivered)} صفًا؛ سُلّم ما حُفظ فقط.` : "لم يتمكّن الوكيل من تسليم أي صف؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+  const base = a.summary ?? (delivered > 0 ? `توقف الوكيل بعد حفظ ${toArabicDigits(delivered)} صفًا؛ سُلّم ما حُفظ فقط.` : "لم يتمكّن الوكيل من تسليم أي صف؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+  // a shortfall is always said in plain words by code, whatever the model wrote: only rows that match the request are delivered and charged
+  const shortfall = delivered > 0 && delivered < plan.price.deliveredRows ? ` سُلّم ${toArabicDigits(delivered)} من ${toArabicDigits(plan.price.deliveredRows)} صفًا فقط، وهذا كل ما وُجد مطابقًا لطلبك ضمن حدود المصادر والميزانية، ولم يُخصم إلا مقابله.` : "";
+  const summary = `${base}${shortfall}`.slice(0, 1100);
   await store.updateMission(mission.id, {
     status: delivered > 0 ? "completed" : "unserved", delivered_units: delivered, charged_points: settled.chargedPoints, summary_ar: summary, files: files.length ? files : null,
     execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(a.executionTregUsd.toFixed(6)), error: settled.kind === "settled" && !settled.matchesExpectation ? `charge ${settled.chargedPoints} differs from the expected ${settled.expectedChargedPoints}` : (a.outputError ?? null), ...clear,

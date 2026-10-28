@@ -6,7 +6,7 @@ import type { ModelDriver, RunInput, RunOutput } from "./driver";
  */
 export type FakeStep = { tool: string; args: Record<string, unknown> | ((results: Array<{ tool: string; result: Record<string, unknown> }>) => Record<string, unknown>) };
 
-export function createFakeDriver(script: FakeStep[], options: { costUsd?: number; stopAfterTerminal?: boolean } = {}): ModelDriver & { results: Array<{ tool: string; result: Record<string, unknown> }> } {
+export function createFakeDriver(script: FakeStep[], options: { costUsd?: number; stopAfterTerminal?: boolean; usage?: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } } = {}): ModelDriver & { results: Array<{ tool: string; result: Record<string, unknown> }> } {
   const results: Array<{ tool: string; result: Record<string, unknown> }> = [];
   return {
     results,
@@ -21,7 +21,9 @@ export function createFakeDriver(script: FakeStep[], options: { costUsd?: number
         results.push({ tool: step.tool, result });
         if (input.state.terminal && options.stopAfterTerminal !== false) break;
       }
-      return { llmCostUsd: options.costUsd ?? 0.01, turns, stop: "end" };
+      const usage = options.usage ?? { input_tokens: 1200 * turns, output_tokens: 150 * turns, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+      await input.onUsage?.({ usage, costUsd: options.costUsd ?? 0.01 });
+      return { llmCostUsd: options.costUsd ?? 0.01, turns, usage, stop: "end" };
     },
   };
 }

@@ -111,7 +111,9 @@ export const AGENT_PHASE_STARTS_MAX = 8;
 /** Planning with no new event for this long gets the honest «still working, nothing held» line (never an ETA). */
 export const AGENT_STALL_AFTER_MS = 180_000;
 /** Events that carry the run's measured memory (internal: the admin sees them, the customer never does). */
-export const MISSION_INTERNAL_COUNT_KEYS = ["mem_phase", "mem_start_rss_mb", "mem_peak_rss_mb", "mem_start_tree_mb", "mem_peak_tree_mb", "mem_samples", "mem_seconds", "mem_stopped"] as const;
+export const MISSION_INTERNAL_COUNT_KEYS = ["mem_phase", "mem_start_rss_mb", "mem_peak_rss_mb", "mem_start_tree_mb", "mem_peak_tree_mb", "mem_samples", "mem_seconds", "mem_stopped",
+  // the model's tokens of a run (input, output, cache read, cache write), the review's own tokens and calls, and the run's model cost in millionths of a dollar
+  "tok_phase", "tok_in", "tok_out", "tok_cache_read", "tok_cache_write", "tok_review_in", "tok_review_out", "tok_review_calls", "llm_micro_usd"] as const;
 export const AGENT_POLL_INTERVAL_MS = 5_000;
 /** The worker writes a heartbeat row this often; the admin page calls it alive while the last beat is younger than AGENT_HEARTBEAT_ALIVE_MS. */
 export const AGENT_HEARTBEAT_INTERVAL_MS = 30_000;
@@ -140,6 +142,23 @@ export const AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD = 0.10;
 export const AGENT_PRICING_BASIS = DEFAULT_PRICING_BASIS;
 export const AGENT_RESERVE_MARGIN = 1 + DEFAULT_PRICING_BASIS.safetyBuffer;
 export const AGENT_JOB_POINTS_CAP = JOB_MAX_POINTS_CAP;
+/**
+ * THE MODEL'S SHARE OF A MISSION'S PRICE (estimates the quote adds to the provider cost; the real model cost of every mission is stored and compared with them on the admin page).
+ * Where they come from (the missions table, 2026-10-28): planning cost 0.0070 (300 tweets), 0.0183 (three companies and their staff); execution 0.0037 for one stage, 0.0070 for two; so planning 0.012 USD (between
+ * the two), execution 0.005 USD per stage (rounded up from 0.0037 and 0.0035 per stage). The review of one uncertain row by the small model is about 120 input and 12 output tokens at the list price of the
+ * small model (0.10 / 0.50 per million) = 0.000018 USD; the estimate is 0.00004 (2x) because the SDK's own total cannot be checked against a bill.
+ */
+export const AGENT_MODEL_PLANNING_ESTIMATE_USD = 0.012;
+export const AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD = 0.005;
+export const AGENT_REVIEW_ROW_ESTIMATE_USD = 0.00004;
+/** What the model review of uncertain rows may cost one mission: this share of the mission's revenue (owner decision of 2026-10-28). Rows beyond it are not delivered and not charged. */
+export const AGENT_REVIEW_BUDGET_SHARE = 0.2;
+/** Rows of a review request (one model call); each row's text is cut to REVIEW_ROW_CHARS characters. */
+export const AGENT_REVIEW_BATCH_ROWS = 25;
+export const AGENT_REVIEW_ROW_CHARS = 280;
+/** Rows kept in the «لم تُحتسب» review sheet of the files (excluded rows are never charged). */
+export const AGENT_EXCLUDED_ROWS_KEPT = 500;
+
 /** accept_quote_atomic refuses a target volume above this. */
 export const AGENT_MAX_DELIVERED_ROWS = 5_000;
 

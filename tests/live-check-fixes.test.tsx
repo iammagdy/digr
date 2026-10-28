@@ -390,7 +390,7 @@ describe("live check 12: a range reads low to high, in points and in pounds", ()
     expect(summary).toContain("حوالي ٢٥٠٠ إلى ٣١٦٨٠ ج.م");
   });
   it("the pounds keep the exact tenth (a point is a tenth of a pound)", () => {
-    expect(estimateSummaryAr(estimateMission({ kind: "companies", volume: 5 }) as any)).toBe("من حوالي ١٦ إلى ١٩ نقطة (حوالي ١٫٦ إلى ١٫٩ ج.م)");
+    expect(estimateSummaryAr(estimateMission({ kind: "companies", volume: 5 }) as any)).toBe("حتى حوالي ٢٠٠ نقطة (حوالي ٢٠ ج.م)"); // (was «من حوالي ١٦ إلى ١٩ نقطة (حوالي ١٫٦ إلى ١٫٩ ج.م)») the one pricing rule: the 200-point minimum
   });
 });
 

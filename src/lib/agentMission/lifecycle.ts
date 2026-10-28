@@ -1,15 +1,15 @@
 import { createHash, randomBytes } from "node:crypto";
 import { refundedPointsFromSettle } from "../server/settleRefund";
 import { AGENT_CAPABILITY_SLUG, AGENT_JOB_LEASE_SECONDS, AGENT_JOB_POINTS_CAP, AGENT_MAX_DELIVERED_ROWS } from "./constants";
-import { executionBudgetUsd, priceMissionByCode, settlementCharge } from "./price";
-import { firstSentenceAr, type PricedPlan } from "./plan";
+import { executionBudgetUsd, legacyPriceMissionByCode, priceMissionByCode, settlementCharge } from "./price";
+import { firstSentenceAr, stagePriceInputs, type PricedPlan } from "./plan";
 
 /**
  * The two money moments of a mission. BOTH go through the functions the website already uses; no money table is written by hand:
  *
  *   approve  create_quote_atomic -> accept_quote_atomic (reserves res_<job> in the ledger and creates the job) -> claim_job_chunk (a long lease on the job so the website's
  *            old driver never runs a chunk of it; complete_chunk or release_job_atomic ends it)
- *   settle   complete_chunk (records the delivered unique rows and clears the lease) -> settle_job_atomic (charge = ceil(delivered x unit price), never above the reserve; the rest
+ *   settle   complete_chunk (records the delivered unique rows and clears the lease) -> settle_job_atomic (charge = ceil(delivered x the job's unit price), never above the reserve; the minimum charge is inside that unit, see missionPricing.ts; the rest
  *            of the hold is released). Nothing delivered: complete_chunk at zero rows (clears the lease) then release_job_atomic (the whole hold comes back, nothing is charged).
  *
  * Every function takes the Supabase client so the tests can hand it a fake that records the calls.
@@ -32,7 +32,9 @@ const fail = (code: string): ApproveResult => ({ ok: false, code, messageAr: APP
 
 /** The stored plan priced AGAIN by code: what the site shows and reserves is never a stored number that nobody recomputed. */
 export function repriceStoredPlan(plan: PricedPlan) {
-  return priceMissionByCode(plan.stages.map((s) => ({ rows: s.planned_rows, costPerRowUsd: s.measured_cost_per_row_usd, deliver: s.deliver })));
+  // a plan stored before the one pricing rule (no `rule` on its price) is approved at the price it showed: the old formula; a new one is priced again with the markup and the minimum it was priced with
+  if (plan.price.rule !== 2) return legacyPriceMissionByCode(plan.stages.map((s) => ({ rows: s.planned_rows, costPerRowUsd: s.measured_cost_per_row_usd, deliver: s.deliver })));
+  return priceMissionByCode(stagePriceInputs(plan.stages), { settings: plan.price.settings });
 }
 
 export async function approveMission(client: any, mission: { id: string; user_id: string; plan: PricedPlan }, options: { now?: Date; expiresInMinutes?: number } = {}): Promise<ApproveResult> {

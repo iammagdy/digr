@@ -19,6 +19,7 @@ import { assertReplayInvariants, pagedAnswers, replay } from "./helpers/agentRep
 import { callIds, lastOutputId, pagedCalls, tregResult, xPage, type Results } from "./helpers/agentFakeWorld";
 import { COMMENTS_ENDPOINT, NOT_ADMIN, POSTS_ENDPOINT, USER_ID, commentsPage, fakeRecorder, makeHarness, postsPage } from "./helpers/agentHarness";
 import { fakeMoneyClient } from "./helpers/agentMoney";
+import { aboutWords, firstOutputId } from "./helpers/agentRelevance";
 
 /**
  * THE STUCK-MISSION FIX. Mission msn_480a44f90e1784edbc94 stayed «planning» for ever: the memory requeue wrote `memory_requeues.txt` as text/plain, the bucket refuses that type, the exception reached the
@@ -124,7 +125,7 @@ describe("an exception in a run never leaves a mission leased", () => {
       { tool: "treg_call", args: { endpoint_id: COMMENTS_ENDPOINT, params: { url: "https://x.example/p/9000" } } },
       { tool: "run_code", args: { code: "return inputs.call_0001.data.slice(0, 1).map(r => ({ id: r.id, text: r.text, url: r.url }))", files: ["call_0001"] } },
       { tool: "propose_plan", args: (r) => ({ summary_ar: "ستحصل على المنشورات ثم تعليقات كل منشور في ورقتين مرتبطتين بمعرّف المنشور.", stages: [
-        { key: "posts", title_ar: "المنشورات", endpoint_id: POSTS_ENDPOINT, expected_rows: 20, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "النص" }, { key: "url", title_ar: "الرابط" }], sample_rows: [{ id: "9000", text: "post 0", url: "https://x.example/p/9000" }], measured_by: [idOf(r, 0)] },
+        { key: "posts", title_ar: "المنشورات", endpoint_id: POSTS_ENDPOINT, expected_rows: 20, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "النص" }, { key: "url", title_ar: "الرابط" }], sample_rows: [{ id: "9000", text: "post 0", url: "https://x.example/p/9000" }], measured_by: [idOf(r, 0)], relevance: aboutWords(["post"]), yield_from: firstOutputId(r) },
         { key: "comments", title_ar: "التعليقات", endpoint_id: COMMENTS_ENDPOINT, expected_rows: 200, parent_key: "posts", per_parent_rows: 12, deliver: true, columns: [{ key: "text", title_ar: "النص" }], sample_rows: [{ id: "9000-c0", text: "comment 0" }], measured_by: [idOf(r, 1)] },
       ] }) },
     ];
@@ -140,7 +141,7 @@ describe("an exception in a run never leaves a mission leased", () => {
   it("EXECUTION: back to «approved» (twice) with the hold and the saved rows untouched; then settled through the existing functions with what is saved: charge = ceil(delivered x unit), never above the reserve, the rest released", async () => {
     vi.stubGlobal("fetch", () => { throw new Error("a real network call was attempted"); });
     const { store, money, t, ok } = await approved();
-    const rows = Array.from({ length: 3 }, (_, i) => ({ id: `p${i}`, text: "t", url: `https://x.example/${i}` }));
+    const rows = Array.from({ length: 3 }, (_, i) => ({ id: `p${i}`, text: "post t", url: `https://x.example/${i}` }));
     await store.putFile("msn_x3", "rows/posts.json", JSON.stringify(rows), "application/json");
     const balanceAfterHold = money.balance();
     const boom = t.deps({ resolveAccess: async () => { throw new Error("the account service is down"); } });
@@ -364,7 +365,7 @@ describe("the tweets mission end to end with the stuck mission's first step", ()
           summary_ar: "ستحصل على ٣٠٠ تغريدة عن محمد صلاح مع نص كل تغريدة ورابطها.",
           stages: [{ key: "tweets", title_ar: "التغريدات", endpoint_id: ENDPOINT, expected_rows: 300, parent_key: null, deliver: true,
             columns: [{ key: "text", title_ar: "نص التغريدة" }, { key: "url", title_ar: "رابط التغريدة" }, { key: "author", title_ar: "الحساب" }],
-            sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 3), measured_by: [callIds(res)[0]] }],
+            sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 3), measured_by: [callIds(res)[0]], relevance: aboutWords(["محمد صلاح"]), yield_from: firstOutputId(res) }],
         }) },
       ],
       execution: () => [

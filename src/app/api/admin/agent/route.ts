@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateAdmin } from "../../../../lib/server/adminAuth";
 import { createAdminClient } from "../../../../lib/supabase/server";
-import { createMission, loadOverview, setPlanningModel } from "../../../../lib/agentMission/adminActions";
+import { createMission, loadOverview, setMissionPricing, setPlanningModel } from "../../../../lib/agentMission/adminActions";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +30,15 @@ export async function POST(req: NextRequest) {
   if (body?.action === "planning_model") {
     const r = await setPlanningModel(client, { model: body.model, adminId: auth.ctx.adminId });
     if (r.ok) await auth.ctx.audit("setting", "نموذج تخطيط الوكيل", String(body.model));
+    return r.ok ? NextResponse.json(r) : NextResponse.json({ error: r.error }, { status: r.status });
+  }
+  if (body?.action === "pricing") {
+    const r = await setMissionPricing(client, { markup: body.markup, minChargePoints: body.minChargePoints, adminId: auth.ctx.adminId });
+    // every change has an audit row: who, what, from what to what
+    if (r.ok) {
+      if (r.before.markup !== r.after.markup) await auth.ctx.audit("setting", "مضاعف سعر المهام", `markup: ${r.before.markup} → ${r.after.markup}`, { targetType: "agent_settings", targetId: "mission_pricing" });
+      if (r.before.minChargePoints !== r.after.minChargePoints) await auth.ctx.audit("setting", "الحد الأدنى لخصم المهمة", `min_charge_points: ${r.before.minChargePoints} → ${r.after.minChargePoints}`, { targetType: "agent_settings", targetId: "mission_pricing" });
+    }
     return r.ok ? NextResponse.json(r) : NextResponse.json({ error: r.error }, { status: r.status });
   }
   return NextResponse.json({ error: "bad_input" }, { status: 400 });

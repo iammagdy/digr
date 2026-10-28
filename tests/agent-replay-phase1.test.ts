@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { assertReplayInvariants, pagedAnswers, readWorkbook, replay } from "./helpers/agentReplay";
 import { callIds, companiesPage, emailFound, emailNotFound, employeesPage, fbCommentsPage, fbPostsPage, igHashtagPage, lastOutputId, mapsReviewsPage, mapsSearch, planningFlow, pagedCalls, tregResult, ttCommentsPage, ttVideosPage, xPage, type Results } from "./helpers/agentFakeWorld";
 import type { FakeStep } from "../agent/src/fakeDriver";
+import { aboutWords, firstOutputId } from "./helpers/agentRelevance";
 import { policyVerdict } from "../src/lib/treg/dataPolicy";
 import { isSellable, loadTregCatalog } from "../src/lib/treg/catalog";
 
@@ -34,7 +35,7 @@ describe("a 300-tweet mission paged through the source", () => {
           summary_ar: "ستحصل على ٣٠٠ تغريدة عن محمد صلاح بعد انتقاله لتركيا مع نص كل تغريدة ورابطها.",
           stages: [{ key: "tweets", title_ar: "التغريدات", endpoint_id: ENDPOINT, expected_rows: 300, parent_key: null, deliver: true,
             columns: [{ key: "id", title_ar: "المعرّف" }, { key: "text", title_ar: "نص التغريدة" }, { key: "url", title_ar: "رابط التغريدة" }, { key: "author", title_ar: "الحساب" }],
-            sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 3), measured_by: [callIds(res)[0]] }],
+            sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 3), measured_by: [callIds(res)[0]], relevance: aboutWords(["محمد صلاح"]), yield_from: firstOutputId(res) }],
         }),
       }),
       execution: () => [
@@ -53,15 +54,17 @@ describe("a 300-tweet mission paged through the source", () => {
     expect(r.planView.stages).toHaveLength(1);
     expect(r.planView.totalRows).toBe(300);
     expect(r.planView.samples!.columns.map((c) => c.titleAr)).toEqual(["نص التغريدة", "رابط التغريدة", "الحساب"]);
-    expect(r.planView.priceLineAr).toMatch(/^السعر حتى ٦٢ نقطة .* حجز مؤقت ٧٢ نقطة .* الوقت المتوقع نحو /);
+    // (the old line said «٦٢ … ٧٢»: provider cost alone) the one pricing rule: the 300 tweets cost less than the minimum, so the charge is the minimum and the card says so
+    expect(r.planView.priceLineAr).toMatch(/^السعر حتى ٢٠٠ نقطة .* حجز مؤقت ٢٠٠ نقطة .* الحد الأدنى للمهمة ٢٠٠ نقطة، ولا خصم إن لم يُسلَّم شيء .* الوقت المتوقع نحو /);
     // 15 pages of 20 = 300 unique rows, saved in ONE stage, inside the execution budget
     expect(r.executionDriver.results.filter((x) => x.tool === "treg_call").every((x) => x.result.ok === true)).toBe(true);
     expect(r.executionDriver.results.filter((x) => x.tool === "save_rows")[0].result).toMatchObject({ saved_now: 300, rejected_over_limit: 0 });
     expect(r.mission.execution_treg_usd).toBeCloseTo(15 * 0.00075, 6);
     assertReplayInvariants(r, { expectDelivered: 300 });
-    expect(r.mission.charged_points).toBe(62);
+    expect(r.mission.charged_points).toBe(200); // (was 62)
     expect(r.finalView.phase).toBe("done");
-    expect(r.finalView.resultLinesAr.join(" ")).toContain("حجز مؤقت مُحرَّر");
+    // (the old line expected the released hold: with the minimum the reserve and the charge are both 200, so nothing is left to release)
+    expect(r.finalView.resultLinesAr.join(" ")).toContain("خُصم ٢٠٠ نقطة مقابل ما سُلّم فقط");
     // the live panel ticked from the counts
     expect(r.store.events.filter((e) => e.counts?.stage === 1).map((e) => e.counts)).toEqual([{ stage: 1, saved: 300, planned: 300 }]);
     // the file: the summary sheet first, headers frozen, a filter, readable columns
@@ -102,7 +105,7 @@ describe("a Facebook topic mission: posts, then the comments of each post, linke
           summary_ar: "ستحصل على منشورات فيسبوك عن التضخم وأسعار الغذاء مع رابط كل منشور وتعليقاته.",
           stages: [
             { key: "posts", title_ar: "المنشورات", endpoint_id: POSTS, expected_rows: POSTS_N, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "نص المنشور" }, { key: "url", title_ar: "رابط المنشور" }, { key: "author", title_ar: "الصفحة" }],
-              sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 2), measured_by: [callIds(res)[0]] },
+              sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 2), measured_by: [callIds(res)[0]], relevance: aboutWords(["التضخم"]), yield_from: firstOutputId(res) },
             { key: "comments", title_ar: "تعليقات كل منشور", endpoint_id: COMMENTS, expected_rows: POSTS_N * 5, parent_key: "posts", per_parent_rows: 5, deliver: true, columns: [{ key: "text", title_ar: "نص التعليق" }, { key: "author", title_ar: "كاتب التعليق" }],
               sample_rows: [{ id: `${postId(0)}-c00`, text: `تعليق 0 على ${postId(0)}`, author: "قارئ 0" }], measured_by: [callIds(res)[1]] },
           ],
@@ -154,7 +157,7 @@ describe("a TikTok mission: videos, then the comments of each video", () => {
           summary_ar: "ستحصل على فيديوهات تيك توك عن رحلة إلى الأقصر مع أرقامها وتعليقات كل فيديو.",
           stages: [
             { key: "videos", title_ar: "الفيديوهات", endpoint_id: VIDEOS, expected_rows: N, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "وصف الفيديو" }, { key: "url", title_ar: "رابط الفيديو" }, { key: "views", title_ar: "المشاهدات" }],
-              sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 2), measured_by: [callIds(res)[0]] },
+              sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 2), measured_by: [callIds(res)[0]], relevance: aboutWords(["الأقصر"]), yield_from: firstOutputId(res) },
             { key: "comments", title_ar: "تعليقات كل فيديو", endpoint_id: COMMENTS, expected_rows: N * 10, parent_key: "videos", per_parent_rows: 10, deliver: true, columns: [{ key: "text", title_ar: "نص التعليق" }, { key: "author", title_ar: "كاتب التعليق" }],
               sample_rows: [{ id: `${vid(0)}-k00`, text: `تعليق 0 على الفيديو ${vid(0)}`, author: "viewer0" }], measured_by: [callIds(res)[1]] },
           ],
@@ -191,7 +194,7 @@ describe("an Instagram hashtag mission", () => {
         plan: (res) => ({
           summary_ar: "ستحصل على ٦٠ منشورًا من إنستجرام تحت وسم قهوة مع نص كل منشور ورابطه وعدد الإعجابات.",
           stages: [{ key: "posts", title_ar: "المنشورات", endpoint_id: ENDPOINT, expected_rows: 60, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "نص المنشور" }, { key: "url", title_ar: "رابط الصورة" }, { key: "likes", title_ar: "الإعجابات" }],
-            sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 3), measured_by: [callIds(res)[0]] }],
+            sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 3), measured_by: [callIds(res)[0]], relevance: aboutWords(["قهوة"]), yield_from: firstOutputId(res) }],
         }),
       }),
       execution: () => [

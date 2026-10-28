@@ -14,7 +14,7 @@ const OVERVIEW_POLL_MS = 10000;
 interface WorkerMemory { rssMb: number; treeRssMb: number | null; limitMb: number; warn: boolean }
 interface WorkerState { alive: boolean; ageSeconds: number | null; lastBeatAt: string | null; workers: Array<{ worker_id: string; active_missions: number; model: string | null; version: string | null }>; memory: WorkerMemory | null }
 interface MissionRow { id: string; request_text: string; status: string; question_ar: string | null; reserved_points: number | null; unit_price_points: number | null; delivered_units: number | null; charged_points: number | null; planning_model: string | null; planning_llm_usd: number; execution_model: string | null; execution_llm_usd: number; planning_treg_usd: number; execution_treg_usd: number; created_at: string }
-interface Overview { tablesReady: boolean; worker: WorkerState; planningModel: string | null; allowedModels: string[]; testAccountEmail: string; missions: MissionRow[] }
+interface Overview { tablesReady: boolean; worker: WorkerState; planningModel: string | null; allowedModels: string[]; pricing?: { markup: number; minChargePoints: number }; testAccountEmail: string; missions: MissionRow[] }
 interface EventRow { id: number; kind: string; message_ar: string; counts: Record<string, number>; created_at: string }
 interface CustomerStage { key: string; title_ar: string; expected_rows: number; parent_key: string | null; deliver: boolean; columns: Array<{ key: string; title_ar: string }>; sample_rows: Array<Record<string, unknown>>; how_ar?: string }
 interface CustomerPlan { summary_ar: string; stages: CustomerStage[]; price: { unit_price_points: number; reserve_points: number; max_charge_points: number; delivered_rows: number } }
@@ -97,6 +97,14 @@ export default function AgentPage() {
     if (!selected) return;
     try { const r = await adminFetch<{ url: string }>(`/api/admin/agent/${selected}/file?name=${encodeURIComponent(name)}`); window.open(r.url, "_blank", "noopener"); } catch (e) { toast(e instanceof Error ? e.message : "تعذّر تنزيل الملف"); }
   }
+  const [markup, setMarkup] = useState("");
+  const [minCharge, setMinCharge] = useState("");
+  async function savePricing() {
+    try {
+      await adminFetch("/api/admin/agent", { method: "POST", body: JSON.stringify({ action: "pricing", markup: markup || overview?.pricing?.markup, minChargePoints: minCharge || overview?.pricing?.minChargePoints }) });
+      setMarkup(""); setMinCharge(""); await loadOverview(); toast("حُفظ إعداد التسعير");
+    } catch (e) { toast(e instanceof Error ? e.message : "تعذّر الحفظ"); }
+  }
   async function setModel(model: string) {
     try { await adminFetch("/api/admin/agent", { method: "POST", body: JSON.stringify({ action: "planning_model", model }) }); await loadOverview(); toast("حُفظ نموذج التخطيط"); } catch (e) { toast(e instanceof Error ? e.message : "تعذّر الحفظ"); }
   }
@@ -130,6 +138,16 @@ export default function AgentPage() {
           </select>
           <span className="text-ink2">تكلفة النموذج تُسجَّل لكل مهمة لتقارن بينهما.</span>
         </label>
+        <div className="flex flex-wrap items-end gap-2 text-[13px] text-ink" data-testid="agent-pricing">
+          <label className="flex flex-col gap-1">مضاعف السعر (فوق تكلفة المصدر والنموذج)
+            <input className="min-h-11 w-28 rounded-xl border border-ln2 bg-sf px-3 text-sm" inputMode="decimal" placeholder={String(overview?.pricing?.markup ?? 10)} value={markup} onChange={(e) => setMarkup(e.target.value)} data-testid="agent-markup" />
+          </label>
+          <label className="flex flex-col gap-1">الحد الأدنى للمهمة (نقطة)
+            <input className="min-h-11 w-28 rounded-xl border border-ln2 bg-sf px-3 text-sm" inputMode="numeric" placeholder={String(overview?.pricing?.minChargePoints ?? 200)} value={minCharge} onChange={(e) => setMinCharge(e.target.value)} data-testid="agent-min-charge" />
+          </label>
+          <button type="button" className={BTN} disabled={!markup && !minCharge} onClick={savePricing} data-testid="agent-pricing-save">احفظ التسعير</button>
+          <span className="text-ink2">يُسجَّل كل تغيير في سجل الإدارة، ولا يمسّ مهمة سبق عرض سعرها.</span>
+        </div>
         <textarea className="min-h-28 w-full rounded-xl border border-ln2 bg-sf p-3 text-sm" placeholder="مثال: هات لي ٣٠٠ منشور عن القهوة في مصر على إكس مع تعليقات كل منشور" value={text} onChange={(e) => setText(e.target.value)} data-testid="agent-text" />
         <div><button type="button" className={BTN} disabled={busy || text.trim().length < 3} onClick={create} data-testid="agent-create">شغّل الوكيل</button></div>
       </section>

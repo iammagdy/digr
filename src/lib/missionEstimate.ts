@@ -2,6 +2,7 @@ import { pointsAr } from "./pointsFormat";
 import { toArabicDigits } from "./arabicDigits";
 import { DEFAULT_JOB_POINTS_CAP, computePublicCalculatorQuote, getPublicCalculatorOptions } from "./calculatorPricing";
 import { chargeForUnits, reserveForUnits } from "./recordPricing";
+import { DEFAULT_MISSION_PRICING_SETTINGS, minimumLineAr } from "./missionPricing";
 import { DECISION_MAKER_UNIT_PRICES_POINTS, decisionMakerQuotePoints, type ContactField } from "../functions/shared/decisionMakerPricing";
 import { DEFAULT_PRICING_SETTINGS } from "../functions/shared/quotes";
 import { SOCIAL_PLATFORM_LABEL_AR, detectSocialIntent, type SocialPlatformId } from "./socialTasks";
@@ -130,7 +131,9 @@ export function estimateMission(input: EstimateInput): EstimateResult {
       : { status: "needs_cap", notesAr: ["اكتب عدد السجلات أو ميزانيتك بالنقاط لنحسب لك التكلفة."] };
   }
 
-  const expectedPoints = chargeForUnits(volume, perUnit);
+  // THE ONE PRICING RULE (missionPricing.ts): the same minimum charge the quote applies (max(minimum, ceil(volume x unit)); the reserve is max(minimum, ...) too); nothing delivered is never charged
+  const minCharge = isPeople ? 0 : DEFAULT_MISSION_PRICING_SETTINGS.minChargePoints;
+  const expectedPoints = Math.max(minCharge, chargeForUnits(volume, perUnit));
   // One shared rule for the one-job size (the quote writer's own: see jobSizing).
   const sizing = { unitPricePoints: perUnit, capPoints: jobCapPoints, safetyBuffer: settings.safetyBuffer, chargeCapped: isPeople, maxRecords: probe.maxRecordsPerJob };
   const maxVolumeInOneJob = recordsInOneJob(sizing);
@@ -139,10 +142,11 @@ export function estimateMission(input: EstimateInput): EstimateResult {
     ? decisionMakerQuotePoints(volume, fields, DECISION_MAKER_UNIT_PRICES_POINTS, settings.safetyBuffer, Number.MAX_SAFE_INTEGER)
     : reserveForUnits(volume, perUnit, settings.safetyBuffer);
   // Inside one job the writer clips a decision-maker hold to the cap; a request that needs several jobs shows the whole hold.
-  const reservePoints = fitsInOneJob ? reserveInOneJob(volume, sizing) : unclippedReserve;
+  const reservePoints = Math.max(minCharge, fitsInOneJob ? reserveInOneJob(volume, sizing) : unclippedReserve);
   const jobsNeeded = fitsInOneJob ? 1 : maxVolumeInOneJob > 0 ? Math.ceil(volume / maxVolumeInOneJob) : 0;
 
   const notesAr: string[] = [`السعر تقريبي: يُخصم فقط مقابل السجلات المطابقة التي تصلك فعلًا، والحجز (${pointsAr(reservePoints, n)}) يشمل احتياطيًا، وما لم يُستخدم منه حجز مؤقت مُحرَّر.`];
+  if (minCharge > 0) notesAr.push(minimumLineAr(DEFAULT_MISSION_PRICING_SETTINGS));
   if (!fitsInOneJob) {
     notesAr.push(maxVolumeInOneJob > 0
       ? `الطلب الواحد يتسع حاليًا لحوالي ${n(maxVolumeInOneJob)} سجل${limitedByServiceCeiling(sizing) ? "" : ` (سقف الحجز ${pointsAr(jobCapPoints, n)})`}، فيلزم حوالي ${n(jobsNeeded)} طلبات منفصلة، أو سقف أعلى بعد موافقتنا.`
