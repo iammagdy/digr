@@ -26,6 +26,7 @@ import type { TokenUsage } from "./llmCost";
 import { buildExcludedAdminCsv, buildMissionFiles, type ExcludedRow } from "./workbook";
 import { excludedTotal, PENDING_REASONS, readChecks } from "./checks";
 import { missionFileTitleAr } from "../../src/lib/agentMission/fileNames";
+import { itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
 import type { AgentStore, CallRow, MissionRecord } from "./types";
 import type { SandboxResult } from "./sandbox";
 import type { MissionNoticeFacts, MissionNoticeKind } from "../../src/lib/agentMission/notices";
@@ -125,10 +126,13 @@ async function recordTokens(deps: RunnerDeps, missionId: string, phase: 0 | 1, u
  * THE REPORT OF THE CHECK OF ITEMS: stored as an internal event per stage (looked at, accepted by rule and on what basis, accepted by the model, left out per reason, still pending, the review's extension) and the excluded
  * items as an admin-only CSV. The customer's files never hold an excluded item. Never throws.
  */
-async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPlan, store: AgentStore): Promise<void> {
+async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPlan, store: AgentStore): Promise<{ pending: number; stop: "budget" | "failed" | null }> {
+  let pendingTotal = 0;
+  let stop: "budget" | "failed" | null = null;
   try {
     const checks = await readChecks(store, missionId);
     const review = await readReviewState(store, missionId);
+    stop = review.stop;
     const excludedByStage: Record<string, ExcludedRow[]> = {};
     for (const [i, s] of plan.stages.entries()) {
       const c = checks[s.key];
@@ -137,6 +141,7 @@ async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPla
       if (raw) { try { list = JSON.parse(raw) as ExcludedRow[]; } catch { list = []; } }
       const finalRows = list.filter((e) => !PENDING_REASONS.includes(e.reason));
       if (finalRows.length > 0 || list.length > 0) excludedByStage[s.key] = list;
+      pendingTotal += list.length - finalRows.length;
       if (!c) continue;
       const counts: Record<string, number> = { chk_stage: i + 1, chk_examined: c.examined, chk_by_rule: c.accepted_by_rule, chk_by_model: c.accepted_by_model, chk_excluded: excludedTotal(c), chk_pending: list.length - finalRows.length, chk_review_extended: review.extended ? 1 : 0 };
       for (const [b, n] of Object.entries(c.accepted_by_rule_basis)) counts[`chk_rule_${b}`] = n ?? 0;
@@ -148,7 +153,18 @@ async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPla
   } catch (e) {
     deps.log?.(`checks_not_recorded ${missionId} ${shortMessage(e)}`);
   }
+  return { pending: pendingTotal, stop };
 }
+/** True when a text carries a number (Latin or Arabic-Indic digits): a model note with one is dropped, so a count in a text always comes from the data. */
+export const HAS_NUMBER = /[0-9٠-٩]/;
+
+/** Why fewer items than requested were delivered, in plain Arabic and with no number: the review's limit or a failure when rows were waiting for it, else that the sources gave no more matching items. */
+export function shortfallReasonAr(checked: { pending: number; stop: "budget" | "failed" | null }): string {
+  if (checked.pending > 0 && checked.stop === "failed") return "لم يكتمل العدد المطلوب لأن المراجعة الآلية تعذّر الوصول إليها لبعض ما وُجد، فلم يُسلَّم ما لم يُراجَع، ولم يُخصم إلا مقابل ما سُلّم.";
+  if (checked.pending > 0) return "لم يكتمل العدد المطلوب لأن المراجعة الآلية بلغت حدّها المسموح لهذه المهمة قبل فحص كل ما وُجد، فلم يُسلَّم ما لم يُراجَع، ولم يُخصم إلا مقابل ما سُلّم.";
+  return "لم يكتمل العدد المطلوب لأن هذا كل ما وُجد مطابقًا لطلبك ضمن حدود المصادر والميزانية، ولم يُخصم إلا مقابل ما سُلّم.";
+}
+
 const shortMessage = (e: unknown): string => String((e as Error)?.message ?? e).slice(0, 120);
 
 /** A planning that cannot be completed ends here, honestly: nothing was held, the customer is told once. */
@@ -280,7 +296,8 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   for (const s of plan.stages) { const raw = await store.getFile(mission.id, `rows/${s.key}.json`); rowsByStage[s.key] = raw ? JSON.parse(raw) : []; }
 
   // WHAT WAS LEFT OUT goes to the admin only (a CSV in the mission's own folder, never in the customer's files), with the report of the check
-  await recordChecks(deps, mission.id, plan, store);
+  const checked = await recordChecks(deps, mission.id, plan, store);
+  const noun = itemNounOfPlan(plan);
 
   let resultPath: string | null = null;
   let files: Array<{ name: string; path: string; kind: string }> = [];
@@ -296,7 +313,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
       await settleMission(deps.client, { jobId, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath: null, releaseReason: "agent mission: the result files could not be saved" });
       await store.updateMission(mission.id, { status: "failed", error: `files: ${String((e as Error)?.message ?? e).slice(0, 200)}`, execution_llm_usd: Number(llm.toFixed(6)), charged_points: 0, delivered_units: 0, ...clear });
       await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّر حفظ ملفات النتائج؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد." });
-      await tell(deps, mission, jobId, "failed", { delivered: 0, planned: plan.price.deliveredRows, chargedPoints: 0, releasedPoints: reserve, hasJob: true });
+      await tell(deps, mission, jobId, "failed", { delivered: 0, planned: plan.price.deliveredRows, chargedPoints: 0, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true });
       return;
     }
   }
@@ -306,16 +323,18 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
     await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّرت التسوية الآلية للمهمة؛ راجع المشرف ولم يُخصم رصيد إضافي." });
     return;
   }
-  const base = a.summary ?? (delivered > 0 ? `توقف الوكيل بعد حفظ ${toArabicDigits(delivered)} صفًا؛ سُلّم ما حُفظ فقط.` : "لم يتمكّن الوكيل من تسليم أي صف؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
-  // a shortfall is always said in plain words by code, whatever the model wrote: only rows that match the request are delivered and charged
-  const shortfall = delivered > 0 && delivered < plan.price.deliveredRows ? ` سُلّم ${toArabicDigits(delivered)} من ${toArabicDigits(plan.price.deliveredRows)} صفًا فقط، وهذا كل ما وُجد مطابقًا لطلبك ضمن حدود المصادر والميزانية، ولم يُخصم إلا مقابله.` : "";
-  const summary = `${base}${shortfall}`.slice(0, 1100);
+  // ONE SOURCE OF TRUTH for the numbers: the counts and the money are stated by code, from the real delivered count and the real settlement; the stored summary is the model's note (kept only when it has no number in it, so it can
+  // never disagree with the count) and, for a shortfall, the honest reason in plain words (never a number, never «صف» or «سجل»)
+  const note = a.summary && !HAS_NUMBER.test(a.summary) ? a.summary.trim() : "";
+  const requested = plan.price.deliveredRows;
+  const reason = delivered > 0 && delivered < requested ? shortfallReasonAr(checked) : delivered <= 0 ? "لم يُسلَّم أي شيء، ولم يُخصم منك شيء." : "";
+  const summary = [note, reason].filter(Boolean).join(" ").slice(0, 1100);
   await store.updateMission(mission.id, {
-    status: delivered > 0 ? "completed" : "unserved", delivered_units: delivered, charged_points: settled.chargedPoints, summary_ar: summary, files: files.length ? files : null,
+    status: delivered > 0 ? "completed" : "unserved", delivered_units: delivered, charged_points: settled.chargedPoints, summary_ar: summary || null, files: files.length ? files : null,
     execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(a.executionTregUsd.toFixed(6)), error: settled.kind === "settled" && !settled.matchesExpectation ? `charge ${settled.chargedPoints} differs from the expected ${settled.expectedChargedPoints}` : (a.outputError ?? null), ...clear,
   });
-  await store.addEvent(mission.id, { kind: "result", message_ar: summary, counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, perStage[s.key] ?? 0])) } });
-  await tell(deps, mission, jobId, delivered <= 0 ? "unserved" : delivered < plan.price.deliveredRows ? "partial" : "completed", { delivered, planned: plan.price.deliveredRows, chargedPoints: settled.chargedPoints, releasedPoints: Math.max(0, reserve - settled.chargedPoints), hasJob: true });
+  await store.addEvent(mission.id, { kind: "result", message_ar: summary || (delivered > 0 ? "اكتملت المهمة." : "لم يُسلَّم أي شيء."), counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, perStage[s.key] ?? 0])) } });
+  await tell(deps, mission, jobId, delivered <= 0 ? "unserved" : delivered < plan.price.deliveredRows ? "partial" : "completed", { delivered, planned: plan.price.deliveredRows, chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true });
 }
 
 const shortError = (e: unknown): string => String((e as Error)?.message ?? e).slice(0, 300);
@@ -351,7 +370,7 @@ export async function recoverFromError(deps: RunnerDeps, mission: MissionRecord,
       await settleMission(deps.client, { jobId: fresh.job_id, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: Number(fresh.planning_treg_usd ?? 0) + Number(fresh.execution_treg_usd ?? 0), resultPath: null, releaseReason: "agent mission could not be completed" });
       await store.updateMission(mission.id, { status: "failed", error: message, charged_points: 0, delivered_units: 0, ...clear });
       await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّر إكمال المهمة؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد." });
-      await tell(deps, fresh, fresh.job_id, "failed", { delivered: 0, planned: plan.price.deliveredRows, chargedPoints: 0, releasedPoints: reserve, hasJob: true });
+      await tell(deps, fresh, fresh.job_id, "failed", { delivered: 0, planned: plan.price.deliveredRows, chargedPoints: 0, releasedPoints: reserve, reservedPoints: reserve, noun: itemNounOfPlan(plan).singular, hasJob: true });
     }
   } catch (e) {
     deps.log?.(`recovery_failed ${mission.id} ${shortError(e).slice(0, 120)}`);

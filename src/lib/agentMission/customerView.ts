@@ -4,6 +4,8 @@ import { FILES_STEP_TITLE_AR, PLANNING_STEP_TITLES, type PanelStep } from "../mi
 import { pointsAr } from "../pointsFormat";
 import { AGENT_CLOSE_PAGE_LINE_AR, AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR, AGENT_QUEUE_LINE_AR, AGENT_SLOW_AFTER_MS, AGENT_STALL_AFTER_MS } from "./constants";
 import { isInternalEvent } from "./eventText";
+import { countAr, deliveredOfAr, itemNounOf, itemNounOfPlan } from "./itemNoun";
+import { moneyLineAr } from "./moneyText";
 
 /**
  * WHAT THE CUSTOMER SEES OF A MISSION: one pure function from the columns the customer may read (the mission row without its internal columns, its events, the worker's state and the queue)
@@ -79,7 +81,6 @@ export interface CustomerMissionView {
 const PHASE_OF_STATUS: Record<string, CustomerPhase> = { queued: "waiting", planning: "planning", needs_input: "question", plan_ready: "plan", approved: "running", executing: "running", completed: "done", unserved: "unserved", failed: "failed", cancelled: "cancelled" };
 export const isLivePhase = (p: CustomerPhase) => p === "waiting" || p === "planning" || p === "running";
 
-const rowsWordAr = (n: number): string => (n === 1 ? "صف واحد" : n === 2 ? "صفان" : n >= 3 && n <= 10 ? `${formatAr(n)} صفوف` : `${formatAr(n)} صفًا`);
 const hoursAr = (h: number): string => (h <= 1 ? "نحو ساعة" : h === 2 ? "نحو ساعتين" : `نحو ${formatAr(h)} ساعات`);
 const minutesAr = (m: number): string => (m <= 1 ? "نحو دقيقة" : m === 2 ? "نحو دقيقتين" : m <= 10 ? `نحو ${formatAr(m)} دقائق` : m < 60 ? `نحو ${formatAr(m)} دقيقة` : hoursAr(Math.ceil(m / 60)));
 
@@ -92,7 +93,7 @@ export function stagesView(plan: any): { stages: CustomerStageView[]; total: num
     const rows = Math.max(0, Math.floor(Number(s?.expected_rows) || 0));
     const deliver = s?.deliver !== false;
     if (deliver) total += rows;
-    stages.push({ n: i + 1, titleAr: String(s?.title_ar ?? ""), rows, rowsAr: rowsWordAr(rows), deliver, noteAr: deliver ? null : "تُستخدم في المرحلة التالية ولا تُحتسب في ملفك" });
+    stages.push({ n: i + 1, titleAr: String(s?.title_ar ?? ""), rows, rowsAr: countAr(rows, itemNounOf(String(s?.title_ar ?? ""))), deliver, noteAr: deliver ? null : "تُستخدم في المرحلة التالية ولا تُحتسب في ملفك" });
   });
   return { stages, total };
 }
@@ -295,21 +296,24 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   }
   const currentLineAr = q.lineAr ?? (running ? (running.countAr ? `${running.titleAr} · ${running.countAr}` : running.titleAr) : progressLine ?? steps.find((s) => s.state === "waiting")?.titleAr ?? "");
 
+  // THE RESULT, in the words of the wallet: what was delivered of what was requested (with the noun of the request), then the hold, the charge and the released hold, each with the same number the wallet shows
   const resultLinesAr: string[] = [];
   if (delivered !== null && (phase === "done" || phase === "partial" || phase === "failed" || phase === "unserved")) {
-    if (planned > 0) resultLinesAr.push(`سُلّم ${formatAr(delivered)} من ${rowsWordAr(planned)} متوقعة`);
-    const charged = Number(mission.charged_points ?? 0);
-    const reserved = Number(mission.reserved_points ?? 0);
-    if (mission.charged_points !== null) resultLinesAr.push(`خُصم ${pointsAr(Math.round(charged))} مقابل ما سُلّم فقط${reserved > charged ? `، وحجز مؤقت مُحرَّر ${pointsAr(Math.round(reserved - charged))}` : ""}`);
+    const noun = itemNounOfPlan(plan);
+    if (planned > 0 && delivered > 0) resultLinesAr.push(`تم تسليم ${deliveredOfAr(delivered, planned, noun)}.`);
+    else if (planned > 0) resultLinesAr.push("لم يُسلَّم أي شيء.");
+    if (mission.charged_points !== null && Number(mission.reserved_points ?? 0) > 0) resultLinesAr.push(moneyLineAr({ reservedPoints: Number(mission.reserved_points), chargedPoints: Number(mission.charged_points) }));
   }
+  // a stored summary that carries a number (written before the counts were stated by code) could disagree with the delivered count: it is not shown
+  const storedSummary = mission.summary_ar && !/[0-9٠-٩]/.test(mission.summary_ar) ? mission.summary_ar : null;
 
   return {
     id: mission.id, phase, summaryAr: plan?.summary_ar ? String(plan.summary_ar) : null, notesAr: Array.isArray(plan?.notes_ar) ? plan.notes_ar.map(String) : [], assumptionsAr: Array.isArray(plan?.assumptions_ar) ? plan.assumptions_ar.map(String) : [],
-    questionOptionsAr: phase === "question" && Array.isArray((mission.plan_public as any)?.question_options) ? (mission.plan_public as any).question_options.map(String).slice(0, 4) : [], stages, totalRows: total, totalRowsAr: rowsWordAr(total),
+    questionOptionsAr: phase === "question" && Array.isArray((mission.plan_public as any)?.question_options) ? (mission.plan_public as any).question_options.map(String).slice(0, 4) : [], stages, totalRows: total, totalRowsAr: countAr(total, itemNounOfPlan(plan)),
     samples: plan ? samplesView(plan) : null, fileContentsAr: plan ? fileContentsAr(plan) : null, priceLineAr: plan ? priceLineAr(plan) : null, questionAr: phase === "question" ? mission.question_ar : null,
     queueLineAr: q.lineAr, queuePosition: q.position, steps, currentLineAr, delayAr, remainingAr,
     closePageAr: closePageLine(mission.status, input.queue, input.emailWillBeSent),
-    resultLinesAr, resultSummaryAr: phase === "done" || phase === "partial" || phase === "unserved" || phase === "failed" ? mission.summary_ar : null,
+    resultLinesAr, resultSummaryAr: phase === "done" || phase === "partial" || phase === "unserved" || phase === "failed" ? storedSummary : null,
     files: filesReady ? mission.files!.filter((f) => FILE_LABEL_AR[f.kind]).map((f) => ({ name: f.name, kind: f.kind, labelAr: FILE_LABEL_AR[f.kind] })) : [],
     startedAt: (events.length ? Date.parse(events[0].created_at) : Date.parse(mission.created_at)) || null,
     live: isLivePhase(phase),

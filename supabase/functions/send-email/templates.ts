@@ -306,7 +306,8 @@ export function renderEmailTemplate(
   // job-update: a caller that sends no Preheader gets its heading as the preview line (the template's behaviour before the Preheader existed)
   if (id === "job-update" && !(all.Preheader ?? "").trim()) all.Preheader = all.Heading ?? "";
   const subject = PLATFORM_EMAIL_SUBJECTS[id].replace(TOKEN_RE, (_, name) => all[name] ?? "");
-  const html = PLATFORM_EMAIL_TEMPLATES[id].replace(TOKEN_RE, (_, name) => escapeHtml(all[name] ?? ""));
+  // a paragraph whose token is empty (the app sends no DetailTwo when there is nothing to add) is not drawn as an empty gap
+  const html = PLATFORM_EMAIL_TEMPLATES[id].replace(TOKEN_RE, (_, name) => escapeHtml(all[name] ?? "")).replace(/<p\b[^>]*>\s*<\/p>/g, "");
   return { subject, html };
 }
 

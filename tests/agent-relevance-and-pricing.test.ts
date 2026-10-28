@@ -523,8 +523,11 @@ describe("a Salah mission end to end (fake model, fake source with the real fail
     expect(delivered, JSON.stringify(r.executionDriver.results.map((x) => [x.tool, x.result.ok, x.result.error ?? x.result.saved_now ?? x.result.message]))).toBe(20); // two pages of 20, half of each match
     expect(r.mission.status).toBe("completed");
     // the shortfall is said in plain words by code; the model said nothing about it
-    expect(r.mission.summary_ar).toContain("سُلّم ٢٠ من ١٠٠ صفًا فقط");
-    expect(r.finalView.resultSummaryAr).toContain("وهذا كل ما وُجد مطابقًا لطلبك");
+    // (the old lines: summary_ar contained «سُلّم ٢٠ من ١٠٠ صفًا فقط» and the view's summary «وهذا كل ما وُجد مطابقًا لطلبك». The counts are now stated by code from the real delivered count, in the request's noun, and the stored summary carries no number: the reason only)
+    expect(r.mission.summary_ar).not.toMatch(/[0-9٠-٩]/);
+    expect(r.mission.summary_ar).toContain("هذا كل ما وُجد مطابقًا لطلبك");
+    expect(r.finalView.resultSummaryAr).toContain("هذا كل ما وُجد مطابقًا لطلبك");
+    expect(r.finalView.resultLinesAr[0]).toBe("تم تسليم ٢٠ من ١٠٠ تغريدة.");
     // 20 of 100 rows: charged in proportion to the job's unit, never the full minimum, never above the reserve; the rest of the hold is released
     expect(r.mission.charged_points).toBe(Math.ceil(Math.round(20 * Number(r.mission.unit_price_points) * 1e6) / 1e6 - 1e-9));
     expect(r.mission.charged_points).toBeLessThan(Number(r.mission.reserved_points));

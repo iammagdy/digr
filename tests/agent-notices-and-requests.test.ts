@@ -41,17 +41,19 @@ describe("the completion e-mail and the in-site notice are about THIS mission: t
 
   it("completed: delivered of requested in the subject, the points charged in the preview, the released hold said; partial says it is fewer than requested; nothing is called «اكتملت مهمتك» three times", () => {
     const done = buildMissionNotice("completed", CASES[0].facts, TITLE);
-    expect(done.email!.subject).toBe("تغريدات عن محمد صلاح — سُلّم ٣٠٠ من ٣٠٠ صفًا");
+    // (the old lines: subject «… — سُلّم ٣٠٠ من ٣٠٠ صفًا» and detail2 containing «حجز مؤقت مُحرَّر ١٠ نقاط». The noun is the request's («تغريدة», never «صف»), and the money is said exactly as the wallet shows it: the hold (٢١٠), the charge (٢٠٠) and the whole hold released (٢١٠), never the net ١٠)
+    expect(done.email!.subject).toBe("تغريدات عن محمد صلاح — تم تسليم ٣٠٠ من ٣٠٠ تغريدة");
     expect(done.email!.preheader).toContain("خُصم ٢٠٠ نقطة");
-    expect(done.email!.detail2).toContain("حجز مؤقت مُحرَّر ١٠ نقاط");
+    expect(done.email!.detail1).toBe("حُجز مؤقتًا ٢١٠ نقطة، وخُصم ٢٠٠ نقطة مقابل ما سُلّم، وحجز مؤقت مُحرَّر ٢١٠ نقطة.");
+    expect(done.email!.detail2).toBe("");
     expect(done.email!.heading).toBe("ملفات «تغريدات عن محمد صلاح» جاهزة للتحميل");
     const part = buildMissionNotice("partial", CASES[2].facts, TITLE);
-    expect(part.email!.subject).toBe("تغريدات عن محمد صلاح — سُلّم ٢٣٠ من ٣٠٠ فقط");
+    expect(part.email!.subject).toBe("تغريدات عن محمد صلاح — تم تسليم ٢٣٠ من ٣٠٠ فقط");
     expect(part.email!.lead).toContain("هذا كل ما وُجد مطابقًا لطلبك");
     expect(part.email!.heading).toContain("بعدد أقل من المطلوب");
     for (const n of [done, part]) expect([n.email!.subject, n.email!.preheader, n.email!.heading].filter((t) => t.includes("اكتملت مهمتك")).length).toBeLessThanOrEqual(0);
     const failed = buildMissionNotice("failed", CASES[3].facts, TITLE);
-    expect(failed.email!.preheader).toBe("لم يُخصم منك شيء، وعاد حجز رصيدك كاملًا.");
+    expect(failed.email!.preheader).toBe("لم يُخصم منك شيء، وعاد الحجز المؤقت كاملًا.");
     expect(failed.email!.subject).toContain("ولم يُخصم شيء");
   });
 
@@ -108,7 +110,8 @@ describe("what the sender puts in the mail and in the notice", () => {
     const r = await sendMissionNotice(client, { userId: "u1", missionId: "msn_aaaa0001", jobId: "job_x", kind: "completed", facts: CASES[0].facts });
     expect(r).toEqual({ inApp: true, email: true });
     const v = sent[0].body.vars;
-    expect(v.Subject).toBe("تغريدات عن محمد صلاح — سُلّم ٣٠٠ من ٣٠٠ صفًا");
+    // (the old line ended «سُلّم ٣٠٠ من ٣٠٠ صفًا»: the request's noun and one wording of delivered-of-requested)
+    expect(v.Subject).toBe("تغريدات عن محمد صلاح — تم تسليم ٣٠٠ من ٣٠٠ تغريدة");
     expect(v.Preheader).toContain("خُصم ٢٠٠ نقطة");
     expect(new Set([v.Subject, v.Preheader, v.Heading]).size).toBe(3);
     expect(v.JobURL).toBe("https://diger.tech/dashboard/chat?jobId=job_x&c=conv_7");

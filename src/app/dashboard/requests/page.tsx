@@ -25,6 +25,7 @@ import { closePageLineAr } from "@/lib/driverMode";
 import MissionPlanInline from "@/components/mission/MissionPlanInline";
 import { MODEL_PLAN_SLUG } from "@/lib/modelPlanner/constants";
 import { useDriverMode } from "@/hooks/useDriverMode";
+import { deliveredOfAr, itemNounOfPlan, knownItemNoun } from "@/lib/agentMission/itemNoun";
 
 interface JobDoc {
   $id: string;
@@ -112,6 +113,7 @@ export default function RequestsPage() {
   const driverMode = useDriverMode();
   const [jobs, setJobs] = useState<JobDoc[]>([]);
   const [quotes, setQuotes] = useState<Record<string, QuoteInfo>>({});
+  const [nounByJob, setNounByJob] = useState<Record<string, string>>({});
   const [titles, setTitles] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -160,7 +162,7 @@ export default function RequestsPage() {
         // AGENT missions: the mission names its job; the assistant message that shows its card names the mission and the conversation
         supabase
           .from("missions")
-          .select("id, job_id")
+          .select("id, job_id, stages:plan_public->stages")
           .eq("user_id", user.id)
           .not("job_id", "is", null)
           .order("created_at", { ascending: false })
@@ -271,11 +273,15 @@ export default function RequestsPage() {
         const missionId = m?.plan?.agentMissionId;
         if (typeof missionId === "string" && m.conversation_id && !conversationOfMission.has(missionId)) conversationOfMission.set(missionId, m.conversation_id);
       }
+      // an AGENT mission names its items by the noun of its request («تغريدات»), never «سجلات»
+      const nounMap: Record<string, string> = {};
       for (const m of (missionsRes?.data || []) as any[]) {
+        if (m.job_id && Array.isArray(m.stages)) nounMap[String(m.job_id)] = itemNounOfPlan({ stages: m.stages }).singular;
         const conversationId = conversationOfMission.get(String(m.id));
         if (m.job_id && conversationId) qMap[String(m.job_id)] = { ...(qMap[String(m.job_id)] ?? { targetVolumeMax: 0 }), conversationId };
       }
       setQuotes(qMap);
+      setNounByJob(nounMap);
 
       const tMap: Record<string, string> = {};
       for (const c of (convRes.data || []) as any[]) {
@@ -433,10 +439,12 @@ export default function RequestsPage() {
           const nothingDelivered = deliveredNothing({ kind: k, delivered: rows, deliveredKnown: j.deliveredKnown }) || !resultsReleasable({ status: j.status, charged_credits: j.chargedCredits });
           const pct = requested ? Math.min(100, (rows / requested) * 100) : 0;
           const stalled = k === "running" && isJobStalled({ status: j.status, updated_at: j.updatedAt ?? j.createdAt, lease_until: j.leaseUntil }, Date.now());
+          // an agent mission says «تغريدات» / «تعليقات» / «شركات» (the noun of its request) where the older requests say «السجلات»
+          const agentNoun = nounByJob[j.$id] ? knownItemNoun(nounByJob[j.$id]) : null;
           const note = k === "running" ? `جارٍ الجمع — ${closePageLineAr(driverMode)}`
             : k === "refunded" ? `${formatRefundedNote(j.errorAr, j.reservedCredits || 0)}${rows > 0 && requested ? ` ${collectedBeforeStopText(rows, requested)}` : ""}`
-            : nothingDelivered ? "لم يصل أي سجل، لذلك لا توجد ملفات بيانات لهذا الطلب، ولم يُخصم منك أي رصيد."
-            : k === "partial" ? partialDeliveryText(rows, requested || rows) : "";
+            : nothingDelivered ? (agentNoun ? "لم يُسلَّم أي شيء، لذلك لا توجد ملفات لهذا الطلب، ولم يُخصم منك أي رصيد." : "لم يصل أي سجل، لذلك لا توجد ملفات بيانات لهذا الطلب، ولم يُخصم منك أي رصيد.")
+            : k === "partial" ? (agentNoun ? `تم تسليم ${deliveredOfAr(rows, requested || rows, agentNoun)}؛ لم يُخصم إلا مقابل ما سُلّم.` : partialDeliveryText(rows, requested || rows)) : "";
           const availableFormats = nothingDelivered ? [] : (["xlsx", "pdf", "csv"] as const).filter(
             (ext) => Boolean(j.fileIds[ext]),
           );
@@ -459,7 +467,7 @@ export default function RequestsPage() {
                 <span className="shrink-0 whitespace-nowrap rounded-full px-3 py-1 text-xs font-medium" style={{ background: `color-mix(in oklab, ${st.tint} 13%, transparent)`, color: st.fg }}>{st.label}</span>
               </div>
               <div className="grid grid-cols-3 gap-2 border-t border-ln pt-3 text-xs text-mut">
-                <span>السجلات<br /><strong className="text-sm font-semibold text-ink">{formatAr(rows)}{requested ? ` / ${formatAr(requested)}` : ""}</strong></span>
+                <span>{agentNoun ? agentNoun.plural : "السجلات"}<br /><strong className="text-sm font-semibold text-ink">{formatAr(rows)}{requested ? ` / ${formatAr(requested)}` : ""}</strong></span>
                 <span>النقاط المخصومة<br /><strong className="text-sm font-semibold text-ink">{k === "running" ? "محجوز" : formatAr(j.chargedCredits ?? 0)}</strong></span>
                 <span>الملفات<br /><strong className="text-sm font-semibold text-ink">{hasFiles ? formatAr(availableFormats.length) : "—"}</strong></span>
               </div>

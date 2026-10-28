@@ -307,7 +307,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
     // the live panel ticks from this: the numbers are in `counts` (never in the text), written by code, not by the model
     if (tally.saved_now > 0 || (spec && fresh.size > 0)) {
       const c = mine;
-      await store.addEvent(mission.id, { kind: "progress", message_ar: `يحفظ الوكيل الصفوف التي جمعها لمرحلة «${stage.title_ar}»`, counts: { stage: plan.stages.indexOf(stage) + 1, saved: existing.length, planned: stage.planned_rows, ...(spec ? { checked: c.examined, accepted: c.accepted_by_rule + c.accepted_by_model, excluded: excludedTotal(c), pending: pendingNow } : {}) } });
+      await store.addEvent(mission.id, { kind: "progress", message_ar: `يحفظ الوكيل ما جمعه لمرحلة «${stage.title_ar}»`, counts: { stage: plan.stages.indexOf(stage) + 1, saved: existing.length, planned: stage.planned_rows, ...(spec ? { checked: c.examined, accepted: c.accepted_by_rule + c.accepted_by_model, excluded: excludedTotal(c), pending: pendingNow } : {}) } });
     }
     const stillNeeded = Math.max(0, stage.planned_rows - existing.length);
     return {

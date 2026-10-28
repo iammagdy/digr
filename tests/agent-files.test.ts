@@ -56,9 +56,11 @@ describe("the files are readable first", () => {
   it("the first sheet says what each sheet holds, in plain Arabic, with the one-sentence summary", async () => {
     const wb = await load((await buildMissionFiles(plan([COMPANIES, EMPLOYEES]), { companies: companyRows, employees: employeeRows })).xlsx);
     const s = wb.getWorksheet("ملخص المهمة")!;
-    expect((s.getRow(1).values as unknown[]).slice(1)).toEqual(["المرحلة", "الورقة", "الصفوف", "المتوقع", "ملاحظة"]);
+    // (the old line had «الصفوف» as the third header: «صف» is a spreadsheet word, the customer's file says «العدد»)
+    expect((s.getRow(1).values as unknown[]).slice(1)).toEqual(["المرحلة", "الورقة", "العدد", "المتوقع", "ملاحظة"]);
     expect(s.getRow(3).getCell(5).value).toContain("تابع لصف في مرحلة «الشركات»");
-    expect(s.getRow(5).getCell(1).value).toBe("ستحصل على شركات وموظفيها.");
+    // (the old line expected the agent's own sentence «ستحصل على شركات وموظفيها.»: the sentence about the delivery is now built from the real counts, so it can never name a number that differs from what was delivered)
+    expect(String(s.getRow(5).getCell(1).value)).toMatch(/^تم تسليم \d|^تم تسليم [٠-٩]/);
   });
 
   it("a column that repeats another (same title, or the same values) appears once; a context column the child already has is not added twice", async () => {

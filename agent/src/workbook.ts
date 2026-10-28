@@ -3,7 +3,8 @@ import { SUMMARY_SHEET_AR } from "../../src/lib/modelPlanner/missionWorkbook";
 import { wordBoundarySheetName } from "../../src/lib/agentMission/fileNames";
 import { REASON_AR, type RelevanceReason } from "../../src/lib/agentMission/relevance";
 import { cairoCellDate, cairoText, DATE_NUMBER_FORMAT, isDateValues, parseMoment } from "../../src/lib/agentMission/dateCells";
-import { firstSentenceAr, isInternalColumn, type PricedPlan, type PricedStage } from "../../src/lib/agentMission/plan";
+import { isInternalColumn, type PricedPlan, type PricedStage } from "../../src/lib/agentMission/plan";
+import { deliveredOfAr, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
 
 type Row = Record<string, unknown>;
 
@@ -200,7 +201,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<st
 
   // the first sheet: what each sheet holds, and how they connect
   summary.columns = [{ width: 30 }, { width: 24 }, { width: 14 }, { width: 14 }, { width: 52 }];
-  const sh = summary.addRow(["المرحلة", "الورقة", "الصفوف", "المتوقع", "ملاحظة"]);
+  const sh = summary.addRow(["المرحلة", "الورقة", "العدد", "المتوقع", "ملاحظة"]);
   sh.eachCell((cell) => { cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: WHITE } }; cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } }; cell.alignment = { horizontal: "center", vertical: "middle" }; });
   plan.stages.forEach((stage) => {
     const rows = (rowsByStage[stage.key] ?? []).length;
@@ -209,7 +210,10 @@ export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<st
     summary.addRow([stage.title_ar, sheetName ?? (stage.deliver ? "—" : "لم تُسلَّم (مرحلة وسيطة)"), rows, stage.planned_rows, parent ? `كل صف هنا تابع لصف في مرحلة «${parent.title_ar}»` : "لا ترتبط بمرحلة سابقة"]);
   });
   summary.addRow([]);
-  const intro = summary.addRow([firstSentenceAr(plan.summary_ar)]);
+  // the one sentence about the delivery is built from the real counts (never from the agent's own words, which may name the requested number): «تم تسليم ٢٥٠ من ٣٠٠ تغريدة.»
+  const deliveredCount = plan.stages.filter((st) => st.deliver).reduce((n, st) => n + (rowsByStage[st.key] ?? []).length, 0);
+  const requestedCount = plan.stages.filter((st) => st.deliver).reduce((n, st) => n + st.planned_rows, 0);
+  const intro = summary.addRow([`تم تسليم ${deliveredOfAr(deliveredCount, requestedCount, itemNounOfPlan(plan))}.`]);
   summary.mergeCells(intro.number, 1, intro.number, 5);
   intro.alignment = { wrapText: true, readingOrder: "rtl" as any, vertical: "middle" };
   intro.height = 32;
