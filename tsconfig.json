@@ -19,5 +19,5 @@
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules", "scripts", "src/functions", "supabase"]
+  "exclude": ["node_modules", "agent/node_modules", "agent/src/main.ts", "agent/src/sdkRuntime.ts", "scripts", "src/functions", "supabase"]
 }
