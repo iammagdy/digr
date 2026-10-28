@@ -359,7 +359,7 @@ describe("the waiting experience around it", () => {
     expect(jobStartedNotice({ targetVolumeMax: 500, driver: "cron" }).body).toContain("تقدر تقفل الصفحة وتروح تشرب قهوة");
     expect(jobStartedNotice({ targetVolumeMax: 500, driver: "tab" }).body).toContain("أبقِ الصفحة مفتوحة");
     const accept = readFileSync("src/app/api/chat/accept-quote/route.ts", "utf8");
-    expect(accept).toContain("isMission && driverNow === \"cron\"");
+    expect(accept).toContain("isModelPlanned, driver: driverNow"); // any model-planned job, while the driver is live (was: only a mission)
     const content = contentFromMission({ mission: true, phase: "running", view: { steps: [], currentLineAr: "x", delayAr: null } }, { closePageAr: "تقدر تقفل الصفحة" });
     expect(content!.closePageAr).toBe("تقدر تقفل الصفحة");
     expect(contentFromMission({ mission: true, phase: "completed", view: { steps: [], currentLineAr: "x", delayAr: null } }, { closePageAr: "تقدر تقفل الصفحة" })!.closePageAr).toBeNull();

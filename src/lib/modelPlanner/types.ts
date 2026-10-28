@@ -98,6 +98,10 @@ export const ProposePlanSchema = z.object({
   whyNotCheapest: z.string().max(300).optional(),
   /** The customer's topic words, when the request has a topic the rows must be about («كرة السلة»): used for the relevance review. */
   topic: z.string().max(200).optional(),
+  /** When the customer named NO platform: one Arabic sentence saying which platform the plan covers and why («اخترنا تيك توك لأنه الأنسب لترند فيديوهات مصر»). Shown on the card. */
+  platformChoiceAr: z.string().max(200).optional(),
+  /** When the customer asked for «the official channel / page / account» of a known organisation: what the plan found by searching (it must appear in a real sample answer). Shown on the card for the customer to confirm. */
+  foundEntities: z.array(z.object({ kindAr: z.string().min(2).max(20), nameAr: z.string().min(1).max(80), id: z.string().min(1).max(200) })).max(3).optional(),
 });
 export type ProposePlanInput = z.infer<typeof ProposePlanSchema>;
 
@@ -154,6 +158,10 @@ export interface StoredModelPlan {
    * manages the decision points); a plan approved before Phase 2 has none and keeps running on the first interpreter, unchanged.
    */
   stages?: StoredStage[];
+  /** Which platform the plan covers and why, when the customer named none (shown on the card). */
+  platformChoiceAr?: string;
+  /** The official channel / page / account the plan resolved by searching, for the customer to confirm on the card. */
+  foundEntities?: Array<{ kindAr: string; nameAr: string; id: string }>;
 }
 
 export interface StoredStage {
@@ -166,6 +174,8 @@ export interface StoredStage {
   perParent: number;
   /** The stage's name for the customer (Arabic, made safe by code). */
   titleAr: string;
+  /** Rows per parent the customer (or the model) asked for, when the source gives fewer in the first page (so the card can say why the stage's total is lower). */
+  askedPerParent?: number;
 }
 
 export interface ValidationIssue {
@@ -173,7 +183,8 @@ export interface ValidationIssue {
     | "unknown_endpoint" | "not_allowed" | "not_priceable" | "unknown_param" | "bad_param_type" | "bad_param_enum" | "bad_param_range" | "missing_required"
     | "no_provenance" | "quote_not_in_customer_text" | "id_like_literal" | "invented_value" | "window_not_stated" | "bad_field_path" | "bad_rows_path" | "bad_transform"
     | "bad_filter" | "bad_pagination" | "bad_step_reference" | "too_many_stages" | "no_sample_rows" | "needs_real_sample" | "zero_pass_rate" | "volume" | "sensitive_purpose" | "reader_mismatch" | "topic_not_applicable"
-    | "volume_not_stated" | "volume_hold_too_high" | "branch_reference" | "fanout_short" | "cheaper_untried";
+    | "volume_not_stated" | "volume_hold_too_high" | "branch_reference" | "fanout_short" | "cheaper_untried"
+    | "platform_choice_missing" | "entity_not_confirmed" | "entity_not_in_sample";
   /** For the model (English, internal): what is wrong and what to do. */
   message: string;
   stepIndex?: number;

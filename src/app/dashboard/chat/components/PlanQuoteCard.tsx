@@ -477,6 +477,20 @@ export default function PlanQuoteCard({
         </div>
       )}
 
+      {/* Which platform the plan covers and why (the customer named none), and the official channel / page the search found, for the customer to confirm by approving */}
+      {typeof primaryItem?.params?._modelStep?.platformChoiceAr === "string" && primaryItem.params._modelStep.platformChoiceAr ? (
+        <p className="mb-0 mt-3 rounded-xl border border-ln bg-sf2/40 p-3 text-[12.5px] font-light text-ink2" data-testid="platform-choice">{primaryItem.params._modelStep.platformChoiceAr}</p>
+      ) : null}
+      {Array.isArray(primaryItem?.params?._modelStep?.foundEntities) && primaryItem.params._modelStep.foundEntities.length > 0 ? (
+        <div className="mt-3 rounded-xl border border-ln bg-sf2/40 p-3 text-[12.5px]" data-testid="found-entities">
+          <p className="m-0 font-medium text-ink">لقينا:</p>
+          <ul className="m-0 mt-1 list-none space-y-1 p-0 font-light text-ink2">
+            {primaryItem.params._modelStep.foundEntities.map((e: any, i: number) => <li key={i}>{e.kindAr}: <span className="font-medium text-ink">{e.nameAr}</span> <span dir="ltr" className="text-mut">{e.id}</span></li>)}
+          </ul>
+          <p className="m-0 mt-1 text-[12px] text-mut">لو دي مش المقصودة، قل لنا قبل الموافقة وهنغيّرها.</p>
+        </div>
+      ) : null}
+
       {/* A channel mission (channels, then their top videos, then the comments) shows its own steps */}
       {modelStages ? (
         <div className="mt-3.5 space-y-2 rounded-xl border border-ln bg-sf2/40 p-3 text-[12.5px]" data-testid="mission-stages">
@@ -485,10 +499,11 @@ export default function PlanQuoteCard({
             {modelStages.map((stage, i) => (
               <li key={i} className="flex items-start gap-2" data-testid="mission-stage-line">
                 <span className="font-bold text-ac">{formatAr(i + 1)}.</span>
-                <span>{stage.titleAr}{stage.effVolume > 0 ? ` — حتى ${formatAr(stage.effVolume)} ${stage.deliver ? "صفًا يصلك" : "صفًا تُستخدم في المرحلة التالية"}` : ""}</span>
+                <span>{stage.titleAr}{stage.effVolume > 0 ? ` — حتى ${formatAr(stage.effVolume)} ${stage.deliver ? "صفًا يصلك" : "صفًا تُستخدم في المرحلة التالية"}` : ""}{stage.askedPerParent && stage.perParent ? ` (${formatAr(stage.perParent)} لكل عنصر، لأن المصدر أعطى ذلك في العينة وليس ${formatAr(stage.askedPerParent)})` : ""}</span>
               </li>
             ))}
           </ol>
+          <p className="m-0 text-[12px] text-ink2" data-testid="mission-stages-total">المجموع الذي يصلك: {formatAr(modelStages.reduce((n, stage) => n + (stage.deliver ? stage.effVolume : 0), 0))} صفًا.</p>
           <p className="m-0 text-[12px] text-mut">بعد الموافقة تتحوّل هذه المراحل إلى «خطة المهمة» وتتابع تقدّم كل مرحلة بنفسك.</p>
         </div>
       ) : Array.isArray(primaryItem?.params?.channels) && primaryItem.params.channels.length > 0 ? (

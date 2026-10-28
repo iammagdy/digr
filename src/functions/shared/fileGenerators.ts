@@ -1437,6 +1437,7 @@ export function generateMethodologyText(
     `اكتمال الحقول: ${toArabicDigits(norm.kpis.dataCompletenessPct)}٪ (يقيس وجود القيم فقط).`,
     "",
     "٥. الخصوصية وحدود التحقق",
+    ...(typeof contextCollection.reviewNoteAr === "string" && contextCollection.reviewNoteAr.trim() ? [`التحقق من ملاءمة السجلات للموضوع: جزئي. ${contextCollection.reviewNoteAr.trim()}`] : []),
     `${contactVerificationSummary(norm.rows) || "لم ترد حالات تحقق مستقلة للحقول."} تُعرض السجلات وفق ما أعادته المصادر المتاحة وقواعد الخطة المسجلة؛ ولا تُقاس تغطية مجتمع البحث من هذه السجلات وحدها.`,
     "",
     "٦. ملفات التسليم",

@@ -7,6 +7,8 @@ import type { ShapeReading } from "../treg/shapeReader";
 import { readStepRows } from "./reader";
 import { applyPlanToRows, type ApplyResult } from "./fieldMap";
 import { getRowAdvisor, type RowAdvisorFn } from "../server/rowReviewAdvisor";
+import { matchTopic, topicStems } from "../server/topicMatch";
+import { toArabicDigits } from "../arabicDigits";
 import { MODEL_PLAN_REQUEST_PARAM, TOPIC_REVIEW_CALL_ESTIMATE_USD, TOPIC_REVIEW_JOB_CAP_USD, TOPIC_REVIEW_ROWS_PER_CALL } from "./constants";
 import type { MissionManager } from "./manager";
 import type { PlanStep, StepAlternate, StepFacts, StoredModelPlan } from "./types";
@@ -115,26 +117,90 @@ export async function callStage(plan: StoredModelPlan, step: PlanStep & { facts:
 }
 
 /**
- * The TOPIC REVIEW: only when the plan has a topic. The rows of this chunk are shown to the relevance reviewer WITH THE CUSTOMER'S REAL REQUEST TEXT (stored on the quote item, never
- * the model's paraphrase); a row is delivered only when the review says it matches the topic. A row it does not confirm, a reply it could not give and a job past its review budget all
- * HOLD the row: it is not delivered and so not charged (the same fail-closed rule as the old path's reviews).
+ * The TOPIC REVIEW: only when the plan has a topic. The rows are shown to the relevance reviewer WITH THE CUSTOMER'S REAL REQUEST TEXT (stored on the quote item, never the model's
+ * paraphrase), through the same field map the sample used; a row the review confirms is delivered, a row it says is off topic is not.
+ *
+ * A TECHNICAL failure never turns rows into «held»: a call that failed, timed out or left rows without a verdict is retried once; rows that still have no verdict (and rows past the job's
+ * review budget or the chunk's time) are judged by the DETERMINISTIC checks (`deterministicTopicVerdict`: the row has its text, and the topic's words from the customer's request are in the
+ * row's own text; the author handle and the date window were already applied by the plan's filters) and delivered when they pass. That case is reported as `partial`, so the methodology says
+ * the review was partial. (The first version dropped every row in those cases: a Salah job lost 14 of 14 on-topic rows this way.)
  */
-export async function reviewTopicRows(records: Array<Record<string, unknown>>, plan: StoredModelPlan, input: ProviderAdapterCallInput, state: PageCursor, deps: InterpreterDeps): Promise<{ kept: Array<Record<string, unknown>>; usage: NonNullable<ProviderAdapterCallOutput["reviewModelUsage"]> }> {
+export interface TopicReviewPartial { reason: "review_failed" | "over_budget" | "no_time"; byCheck: number; kept: number; dropped: number }
+export interface TopicReviewResult { kept: Array<Record<string, unknown>>; usage: NonNullable<ProviderAdapterCallOutput["reviewModelUsage"]>; partial?: TopicReviewPartial }
+
+const rowTextOf = (record: Record<string, unknown>): string => Object.entries(record).filter(([k]) => !k.startsWith("_")).map(([, v]) => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "")).join(" ");
+
+/** Words that say how much or when, not what the request is about; and the leading letters (to, with, and, so) an Arabic word may carry. */
+const GENERIC_WORDS = new Set(["بعد", "قبل", "حول", "بين", "ضد", "مثل", "كل", "كله", "بعض", "جديد", "جديده", "اخبار", "خبر", "اهم", "افضل", "اخر", "حاليا", "اليوم", "هذا", "هذه", "ذلك", "تلك", "كم", "ما", "ماذا", "هل"]);
+
+/** The request's distinctive words, each with the spellings a row may use (with and without a one-letter prefix): numbers and generic words are not topic words. */
+export function distinctiveTopicWords(request: string): string[][] {
+  const stems = topicStems(request).filter((st) => !/^[\d٠-٩]+$/u.test(st) && !GENERIC_WORDS.has(st));
+  return stems.map((st) => [st, ...(/^[لبوف]/u.test(st) && st.length >= 5 ? [st.slice(1)] : [])]);
+}
+
+/**
+ * The deterministic check used when the review model could not judge a row: the row has its text, and enough of the request's distinctive words appear in it (all of them when the request
+ * has one or two, else at least half, never fewer than two). The author handle and the date window were already applied by the plan's filters. Never a promotion of a row the model judged.
+ */
+export function deterministicTopicVerdict(record: Record<string, unknown>, request: string): boolean {
+  const text = rowTextOf(record).trim();
+  if (text.length < 2) return false;
+  const words = distinctiveTopicWords(request);
+  if (words.length === 0) return true; // nothing to match against: the plan's own filters were the only condition
+  const found = words.filter((variants) => matchTopic(variants, text).matched > 0).length;
+  const need = words.length <= 2 ? words.length : Math.max(2, Math.ceil(words.length / 2));
+  return found >= need;
+}
+
+/** The line a partial review leaves with the job (customer-facing: no provider or model names). */
+export function reviewPartialNoteAr(p: TopicReviewPartial): string {
+  const why = p.reason === "over_budget" ? "بلغ التحقق الآلي حدّه المسموح لهذا الطلب" : p.reason === "no_time" ? "لم يتسع الوقت للتحقق الآلي" : "تعذّر التحقق الآلي من بعض السجلات";
+  return `${why}، فجرى فحص ${toArabicDigits(p.byCheck)} سجلًا بقواعد ثابتة (وجود نص السجل ووجود كلمات موضوعك فيه)؛ التحقق من الملاءمة جزئي.`;
+}
+
+export async function reviewTopicRows(records: Array<Record<string, unknown>>, plan: StoredModelPlan, input: ProviderAdapterCallInput, state: PageCursor, deps: InterpreterDeps): Promise<TopicReviewResult> {
   if (!plan.topic || records.length === 0) return { kept: records, usage: [] };
-  if ((state.reviewUsd ?? 0) + TOPIC_REVIEW_CALL_ESTIMATE_USD > TOPIC_REVIEW_JOB_CAP_USD) return { kept: [], usage: [] };
   const request = String(input.params?.[MODEL_PLAN_REQUEST_PARAM] ?? "").trim() || plan.topic;
   const advisor = deps.advisor ?? getRowAdvisor();
-  const batch = records.slice(0, TOPIC_REVIEW_ROWS_PER_CALL);
-  let result;
-  try {
-    result = await advisor({ customerRequest: request, kind: "records", rows: batch.map((row, index) => ({ index, row })), timeoutMs: 15_000 });
-  } catch {
-    return { kept: [], usage: [] };
+  const usage: TopicReviewResult["usage"] = [];
+  const verdict = new Map<number, boolean>();
+  let reason: TopicReviewPartial["reason"] | null = null;
+  const withinBudget = () => (state.reviewUsd ?? 0) + TOPIC_REVIEW_CALL_ESTIMATE_USD <= TOPIC_REVIEW_JOB_CAP_USD;
+
+  for (let from = 0; from < records.length; from += TOPIC_REVIEW_ROWS_PER_CALL) {
+    const batch = records.slice(from, from + TOPIC_REVIEW_ROWS_PER_CALL).map((row, k) => ({ index: from + k, row }));
+    let pending = batch;
+    for (let attempt = 1; attempt <= 2 && pending.length > 0; attempt += 1) {
+      if (!withinBudget()) { reason = reason ?? "over_budget"; break; }
+      let result;
+      try {
+        result = await advisor({ customerRequest: request, kind: "records", rows: pending.map(({ index, row }) => ({ index, row })), timeoutMs: 15_000 });
+      } catch {
+        reason = reason ?? "review_failed";
+        continue;
+      }
+      if (result.usage) {
+        usage.push({ inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens, costUsd: result.usage.costUsd, model: result.usage.model, latencyMs: result.usage.latencyMs, ...(result.failure ? { failure: String(result.failure) } : {}) });
+        state.reviewUsd = (state.reviewUsd ?? 0) + (result.usage.costUsd ?? 0);
+      }
+      for (const { index } of pending) { const v = result.verdicts.get(index)?.verdict; if (v) verdict.set(index, v === "match"); }
+      pending = pending.filter(({ index }) => !verdict.has(index));
+      if (pending.length > 0) reason = reason ?? "review_failed";
+    }
   }
-  const usage = result.usage ? [{ inputTokens: result.usage.inputTokens, outputTokens: result.usage.outputTokens, costUsd: result.usage.costUsd, model: result.usage.model, latencyMs: result.usage.latencyMs, ...(result.failure ? { failure: String(result.failure) } : {}) }] : [];
-  state.reviewUsd = (state.reviewUsd ?? 0) + (result.usage?.costUsd ?? 0);
-  const kept = batch.filter((_, index) => result.verdicts.get(index)?.verdict === "match");
-  return { kept, usage };
+
+  const kept: Array<Record<string, unknown>> = [];
+  let byCheck = 0;
+  let dropped = 0;
+  records.forEach((record, index) => {
+    const decided = verdict.get(index);
+    if (decided !== undefined) { if (decided) kept.push(record); else dropped += 1; return; }
+    byCheck += 1;
+    if (deterministicTopicVerdict(record, request)) kept.push(record); else dropped += 1;
+  });
+  // a retry that succeeded leaves no partial review: only rows judged by the checks make it partial
+  return { kept, usage, ...(byCheck > 0 ? { partial: { reason: reason ?? "review_failed", byCheck, kept: kept.length, dropped } } : {}) };
 }
 
 
