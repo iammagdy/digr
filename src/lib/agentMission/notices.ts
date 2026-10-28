@@ -1,6 +1,6 @@
 import { formatAr } from "../arabicDigits";
 import { pointsAr } from "../pointsFormat";
-import { AGENT_CLOSE_PAGE_LINE_AR } from "./constants";
+import { AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR } from "./constants";
 
 /**
  * THE NOTICES OF A MISSION, in plain Arabic (an in-site notification and an e-mail through the existing «job-update» template). Pure builders: nothing here sends anything.
@@ -33,7 +33,8 @@ const buttonOpen = "افتح طلباتي";
 export function buildMissionNotice(kind: MissionNoticeKind, f: MissionNoticeFacts): MissionNotice {
   if (kind === "started") {
     const title = "بدأ تنفيذ مهمتك";
-    return { kind, title, body: AGENT_CLOSE_PAGE_LINE_AR, link: REQUESTS, email: null };
+    // the in-site notice never promises an e-mail (the customer may have switched them off): it says where the result will be
+    return { kind, title, body: AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR, link: REQUESTS, email: null };
   }
   const released = f.releasedPoints > 0 ? `حجز مؤقت مُحرَّر ${pointsAr(Math.round(f.releasedPoints))}.` : "";
   if (kind === "completed" || kind === "partial") {

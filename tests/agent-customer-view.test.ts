@@ -117,7 +117,8 @@ describe("the live panel and the queue", () => {
   it("ticks the steps from the counts of the events, shows the current step with its count and the coffee line after approval", () => {
     const events = [ev(1, { kind: "system" }), ev(2, { counts: { stage: 1, saved: 20, planned: 20 } }), ev(3, { counts: { stage: 2, saved: 30, planned: 100 } })];
     const now = Date.parse(events[2].created_at) + 5_000;
-    const v = customerMissionView({ mission: row({ status: "executing" }), events, now });
+    // (the old call had no queue reading) the coffee line is shown only while the worker is really alive
+    const v = customerMissionView({ mission: row({ status: "executing" }), events, now, queue: { ahead: 0, running: 1, workerAlive: true } });
     expect(v.phase).toBe("running");
     expect(v.steps.map((s) => s.state)).toEqual(["done", "running", "waiting"]);
     expect(v.steps[1].countAr).toBe("٣٠ من ١٠٠");

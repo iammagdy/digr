@@ -2,7 +2,7 @@ import { formatAr, toArabicDigits } from "../arabicDigits";
 import { estimateRemainingSeconds, etaTextAr, type ProgressSample } from "../jobEta";
 import { FILES_STEP_TITLE_AR, PLANNING_STEP_TITLES, type PanelStep } from "../missionView";
 import { pointsAr } from "../pointsFormat";
-import { AGENT_CLOSE_PAGE_LINE_AR, AGENT_QUEUE_LINE_AR, AGENT_SLOW_AFTER_MS, AGENT_STALL_AFTER_MS } from "./constants";
+import { AGENT_CLOSE_PAGE_LINE_AR, AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR, AGENT_QUEUE_LINE_AR, AGENT_SLOW_AFTER_MS, AGENT_STALL_AFTER_MS } from "./constants";
 import { isInternalEvent } from "./eventText";
 
 /**
@@ -155,19 +155,21 @@ const stageIndexOf = (e: EventForCustomer): number => Math.max(0, Math.floor(Num
 
 /** Steps of the live panel. Before the plan: the four planning steps; after approval: the plan's stages and the files. */
 /** What collect_pages reports while it pages through a source: events with `pages` and `rows` (and the target in `planned`) but no `stage`. */
-function collectedOf(events: EventForCustomer[]): { rows: number; target: number; samples: ProgressSample[] } | null {
+function collectedOf(events: EventForCustomer[]): { rows: number; pages: number; target: number; samples: ProgressSample[] } | null {
   const samples: ProgressSample[] = [];
   let rows = 0;
+  let pages = 0;
   let target = 0;
   for (const e of events) {
     if (typeof e.counts?.pages === "number" && typeof e.counts?.rows === "number" && !e.counts?.stage) {
       rows = e.counts.rows;
+      pages = Math.max(pages, Math.floor(e.counts.pages));
       target = Number(e.counts.planned) || target;
       const at = Date.parse(e.created_at);
       if (Number.isFinite(at)) samples.push({ at, delivered: rows });
     }
   }
-  return samples.length ? { rows, target, samples } : null;
+  return samples.length ? { rows, pages, target, samples } : null;
 }
 
 function stepsOf(input: { phase: CustomerPhase; status: string; stages: CustomerStageView[]; events: EventForCustomer[]; callsMade: number; hasPlan: boolean; delivered: number | null; filesReady: boolean }): { steps: PanelStep[]; samples: ProgressSample[]; savedTotal: number; plannedTotal: number } {
@@ -220,7 +222,9 @@ function stepsOf(input: { phase: CustomerPhase; status: string; stages: Customer
   const collected = collectedOf(events);
   const runningStep = steps.find((st) => st.state === "running");
   if (collected && runningStep && !finished) {
-    const detail = `جُمع ${formatAr(collected.rows)}${collected.target ? ` من ${formatAr(collected.target)}` : ""} من المصدر حتى الآن`;
+    // ONE progress number everywhere: the rows that are in the customer's file («٠ من ٣٠٠» above). What the source has been READ for is pages, never a second row count (rows read include the ones left out as not matching).
+    const pagesAr = collected.pages === 1 ? "صفحة واحدة" : collected.pages === 2 ? "صفحتان" : collected.pages <= 10 ? `${formatAr(collected.pages)} صفحات` : `${formatAr(collected.pages)} صفحة`;
+    const detail = `قُرئت ${pagesAr} من المصدر، ويُحفظ في ملفك ما يطابق طلبك فقط`;
     runningStep.detailAr = runningStep.detailAr ? `${runningStep.detailAr} · ${detail}` : detail;
   }
   const failedStop = status === "failed";
@@ -231,7 +235,17 @@ function stepsOf(input: { phase: CustomerPhase; status: string; stages: Customer
 
 const FILE_LABEL_AR: Record<string, string> = { xlsx: "تنزيل ملف إكسل", csv: "تنزيل نسخة سي إس في" };
 
-export function customerMissionView(input: { mission: MissionRowForCustomer; events: EventForCustomer[]; queue?: QueueInfo | null; callsMade?: number; now?: number }): CustomerMissionView {
+/**
+ * «تقدر تقفل الصفحة» is said ONLY when closing the page is really safe: the mission is approved (its work is in the worker's hands on the server, not in this browser) AND the worker is alive right now (a fresh heartbeat).
+ * The e-mail is promised only when one will really be sent (a real address, the customer's «done» e-mails on). With no proof (no queue reading, a dead worker) the line is not shown and the panel's honest delay line speaks.
+ */
+export function closePageLine(status: string, queue: QueueInfo | null | undefined, emailWillBeSent: boolean | undefined): string | null {
+  if (status !== "approved" && status !== "executing") return null;
+  if (!queue || !queue.workerAlive) return null;
+  return emailWillBeSent === false ? AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR : AGENT_CLOSE_PAGE_LINE_AR;
+}
+
+export function customerMissionView(input: { mission: MissionRowForCustomer; events: EventForCustomer[]; queue?: QueueInfo | null; callsMade?: number; now?: number; /** Will the completion e-mail really be sent (real address, e-mails on)? Unknown: it is promised (the old default). */ emailWillBeSent?: boolean }): CustomerMissionView {
   const { mission } = input;
   const now = input.now ?? Date.now();
   // the run's measured memory is for the admin: the customer never sees it
@@ -283,7 +297,7 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
     questionOptionsAr: phase === "question" && Array.isArray((mission.plan_public as any)?.question_options) ? (mission.plan_public as any).question_options.map(String).slice(0, 4) : [], stages, totalRows: total, totalRowsAr: rowsWordAr(total),
     samples: plan ? samplesView(plan) : null, priceLineAr: plan ? priceLineAr(plan) : null, questionAr: phase === "question" ? mission.question_ar : null,
     queueLineAr: q.lineAr, queuePosition: q.position, steps, currentLineAr, delayAr, remainingAr,
-    closePageAr: mission.status === "approved" || mission.status === "executing" ? AGENT_CLOSE_PAGE_LINE_AR : null,
+    closePageAr: closePageLine(mission.status, input.queue, input.emailWillBeSent),
     resultLinesAr, resultSummaryAr: phase === "done" || phase === "partial" || phase === "unserved" || phase === "failed" ? mission.summary_ar : null,
     files: filesReady ? mission.files!.filter((f) => FILE_LABEL_AR[f.kind]).map((f) => ({ name: f.name, kind: f.kind, labelAr: FILE_LABEL_AR[f.kind] })) : [],
     startedAt: (events.length ? Date.parse(events[0].created_at) : Date.parse(mission.created_at)) || null,

@@ -22,6 +22,8 @@ export const AGENT_MAX_OPEN_MISSIONS_PER_USER = 3;
 export const AGENT_MAX_MISSIONS_PER_HOUR = 20;
 /** The sentence shown right after the customer approves, and in the in-site notice: the work continues without the page, and an e-mail follows. */
 export const AGENT_CLOSE_PAGE_LINE_AR = "تقدر تقفل الصفحة وتروح تشرب قهوة، هنكمّل الشغل وهنبعتلك إيميل أول ما نخلص.";
+/** The same promise when no e-mail will be sent (a guest, or the customer switched the e-mails off): the result is in «طلباتي». */
+export const AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR = "تقدر تقفل الصفحة؛ هنكمّل الشغل وتلاقي نتيجتك في «طلباتي» أول ما نخلص.";
 /** Shown while a mission waits for the worker to be free. */
 export const AGENT_QUEUE_LINE_AR = "مهمتك في الدور وهتبدأ خلال دقائق";
 /** A running mission with no new event for this long gets the honest «المصدر أبطأ» line. */

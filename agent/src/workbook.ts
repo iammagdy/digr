@@ -1,5 +1,7 @@
 import ExcelJS from "exceljs";
-import { safeSheetName, SUMMARY_SHEET_AR } from "../../src/lib/modelPlanner/missionWorkbook";
+import { SUMMARY_SHEET_AR } from "../../src/lib/modelPlanner/missionWorkbook";
+import { wordBoundarySheetName } from "../../src/lib/agentMission/fileNames";
+import { REASON_AR, type RelevanceReason } from "../../src/lib/agentMission/relevance";
 import { firstSentenceAr, isInternalColumn, type PricedPlan, type PricedStage } from "../../src/lib/agentMission/plan";
 
 type Row = Record<string, unknown>;
@@ -24,7 +26,13 @@ const MAX_PARENT_CONTEXT_COLUMNS = 2;
 
 const text = (v: unknown): string => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
 const isUrl = (v: unknown) => /^https?:\/\//i.test(text(v).trim());
-const textCell = (v: string): string => (/^[=+\-@\t\r]/.test(v) && !/^\+\d[\d\s]*$/.test(v) ? `'${v}` : v);
+/**
+ * A text that starts like a formula is dangerous in a CSV (a spreadsheet may run it), so the CSV marks it with a leading apostrophe. In the XLSX NO mark is written: a text cell is stored as a string (shared string),
+ * which a spreadsheet never runs as a formula, so a customer's reply «@name ...» shows exactly as written.
+ */
+const isFormulaLike = (v: string): boolean => /^[=+\-@\t\r]/.test(v) && !/^\+\d[\d\s]*$/.test(v);
+const csvText = (v: string): string => (isFormulaLike(v) ? `'${v}` : v);
+const textCell = (v: string): string => v;
 
 export interface SheetColumn { title: string; get: (row: Row, parent: Row | null) => unknown; kind?: "context" | "own"; contact?: boolean; link?: boolean }
 export interface SheetLayout { stageIndex: number; stage: PricedStage; rows: Row[]; columns: SheetColumn[]; hasParent: boolean }
@@ -90,17 +98,21 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
   return layouts;
 }
 
-export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<string, Row[]>): Promise<{ xlsx: Buffer; csv: string }> {
+/** A row the relevance check left out of a stage (never delivered, never charged), with the reason. */
+export interface ExcludedRow { id: string; reason: RelevanceReason; row: Row }
+export const REVIEW_SHEET_AR = "لم تُحتسب (للمراجعة)";
+
+export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<string, Row[]>, excludedByStage: Record<string, ExcludedRow[]> = {}): Promise<{ xlsx: Buffer; csv: string }> {
   const layouts = layoutOf(plan, rowsByStage);
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
-  const used = new Set<string>([SUMMARY_SHEET_AR.toLowerCase()]);
+  const used = new Set<string>([SUMMARY_SHEET_AR.toLowerCase(), REVIEW_SHEET_AR.toLowerCase()]);
   const summary = wb.addWorksheet(SUMMARY_SHEET_AR, { views: [{ state: "frozen", ySplit: 1, rightToLeft: true }] });
   const sheetNameOf = new Map<string, string>();
   // where each row's id cell is, so a parent id can link to it
   const idCell = new Map<string, Map<string, string>>();
 
-  for (const lay of layouts) sheetNameOf.set(lay.stage.key, safeSheetName(lay.stage.title_ar, used, `مرحلة ${lay.stageIndex + 1}`));
+  for (const lay of layouts) sheetNameOf.set(lay.stage.key, wordBoundarySheetName(lay.stage.title_ar, used, `مرحلة ${lay.stageIndex + 1}`));
 
   for (const lay of layouts) {
     const name = sheetNameOf.get(lay.stage.key)!;
@@ -164,6 +176,26 @@ export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<st
     });
   }
 
+  // THE REVIEW SHEET: the rows the relevance check left out (another person with the same name, a mention with no words, a row that matched only through its author's name ...). They are NOT delivered and NOT charged;
+  // they are here only so the customer can see what was left out and why.
+  const reviewStage = plan.stages.find((st) => (excludedByStage[st.key] ?? []).length > 0);
+  const excludedRows = reviewStage ? excludedByStage[reviewStage.key] : [];
+  if (reviewStage && excludedRows.length > 0) {
+    const cols = readableColumns(reviewStage).filter((c) => !c.kind);
+    const sheet = wb.addWorksheet(REVIEW_SHEET_AR, { views: [{ state: "frozen", ySplit: 1, rightToLeft: true }], properties: { tabColor: { argb: "FF9CA3AF" } } });
+    const headers = [...cols.map((c) => c.title_ar), "سبب الاستبعاد", ID_HEADER_AR];
+    sheet.columns = headers.map((h, j) => ({ width: j >= cols.length + 1 ? 16 : j === cols.length ? 40 : /نص|تعليق|وصف|عنوان|تقييم|منشور|تغريدة/.test(h) ? 52 : 24 }));
+    const head = sheet.addRow(headers);
+    head.eachCell((cell) => { cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: WHITE } }; cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GREY } }; cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true }; });
+    head.height = 30;
+    excludedRows.forEach((e, r) => {
+      const row = sheet.addRow([...cols.map((c) => { const v = e.row[c.key]; const t = text(v); return isUrl(t) ? { text: t.trim(), hyperlink: t.trim(), tooltip: t.trim() } : textCell(t); }), REASON_AR[e.reason] ?? "", textCell(text(e.id))]);
+      row.alignment = { vertical: "middle", wrapText: true };
+      row.eachCell((cell, col) => { cell.border = BORDER; cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: r % 2 ? ZEBRA : WHITE } }; if (col > cols.length) cell.font = { name: "Calibri", size: 9, color: { argb: GREY } }; });
+    });
+    sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: excludedRows.length + 1, column: headers.length } };
+  }
+
   // the first sheet: what each sheet holds, and how they connect
   summary.columns = [{ width: 30 }, { width: 24 }, { width: 14 }, { width: 14 }, { width: 52 }];
   const sh = summary.addRow(["المرحلة", "الورقة", "الصفوف", "المتوقع", "ملاحظة"]);
@@ -174,6 +206,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<st
     const sheetName = sheetNameOf.get(stage.key);
     summary.addRow([stage.title_ar, sheetName ?? (stage.deliver ? "—" : "لم تُسلَّم (مرحلة وسيطة)"), rows, stage.planned_rows, parent ? `كل صف هنا تابع لصف في مرحلة «${parent.title_ar}»` : "لا ترتبط بمرحلة سابقة"]);
   });
+  if (reviewStage && excludedRows.length > 0) summary.addRow(["صفوف استُبعدت لأنها لا تخص طلبك", REVIEW_SHEET_AR, excludedRows.length, "", "لم تُسلَّم ولم تُحتسب في السعر؛ وُضعت هنا للمراجعة فقط"]);
   summary.addRow([]);
   const intro = summary.addRow([firstSentenceAr(plan.summary_ar)]);
   summary.mergeCells(intro.number, 1, intro.number, 5);
@@ -184,12 +217,12 @@ export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<st
   summary.mergeCells(note.number, 1, note.number, 5);
   note.alignment = { wrapText: true, readingOrder: "rtl" as any };
   note.height = 34;
-  summary.autoFilter = { from: { row: 1, column: 1 }, to: { row: plan.stages.length + 1, column: 5 } };
+  summary.autoFilter = { from: { row: 1, column: 1 }, to: { row: plan.stages.length + 1 + (reviewStage && excludedRows.length > 0 ? 1 : 0), column: 5 } };
   const xlsx = Buffer.from(await wb.xlsx.writeBuffer());
 
   // the CSV: the deepest delivered stage, the same columns as its sheet
   const last = layouts[layouts.length - 1];
-  const esc = (v: unknown) => `"${text(v).replace(/"/g, '""')}"`;
+  const esc = (v: unknown) => `"${csvText(text(v)).replace(/"/g, '""')}"`;
   const lines: string[] = [];
   if (last) {
     const parentByIdRow = new Map((rowsByStage[last.stage.parent_key ?? ""] ?? []).map((r) => [text(r.id), r]));

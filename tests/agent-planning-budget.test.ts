@@ -43,7 +43,9 @@ describe("the live panel while a source is being paged through", () => {
     ];
     const v = customerMissionView({ mission: row, events, now: Date.parse(at(55)) });
     expect(v.steps[0]).toMatchObject({ state: "running" });
-    expect(v.steps[0].detailAr).toBe("جُمع ١٠٠ من ٣٠٠ من المصدر حتى الآن");
+    // (was «جُمع ١٠٠ من ٣٠٠ من المصدر حتى الآن», which sat next to «٠ من ٣٠٠» in the bar: two numbers for one thing) one progress number: the rows in the file; the source's pages are counted as pages
+    expect(v.steps[0].detailAr).toBe("قُرئت ٥ صفحات من المصدر، ويُحفظ في ملفك ما يطابق طلبك فقط");
+    expect(v.steps[0].countAr).toBe("٠ من ٣٠٠");
     // 80 rows in 40 s = 2 rows a second; 200 left = 100 s
     expect(v.remainingAr).toMatch(/^المتبقي /);
     expect(v.remainingAr).toContain("دقيقتين");
@@ -51,6 +53,6 @@ describe("the live panel while a source is being paged through", () => {
   it("with one sample only there is no time estimate (never a guess)", () => {
     const v = customerMissionView({ mission: row, events: [{ id: 1, kind: "progress", message_ar: "يجمع الوكيل الصفحات من المصدر صفحة بعد صفحة", counts: { pages: 1, rows: 20, planned: 300 }, created_at: at(10) }], now: Date.parse(at(12)) });
     expect(v.remainingAr).toBeNull();
-    expect(v.steps[0].detailAr).toContain("جُمع ٢٠ من ٣٠٠");
+    expect(v.steps[0].detailAr).toContain("قُرئت صفحة واحدة من المصدر"); // (was «جُمع ٢٠ من ٣٠٠»)
   });
 });

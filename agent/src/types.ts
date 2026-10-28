@@ -26,7 +26,7 @@ export interface MissionRecord {
   charged_points: number | null;
   summary_ar: string | null;
   error: string | null;
-  files: Array<{ name: string; path: string; kind: string }> | null;
+  files: Array<{ name: string; path: string; kind: string; /** The name the customer's download carries (built from the mission). */ download_name?: string }> | null;
   worker_id: string | null;
   lease_until: string | null;
   created_at: string;

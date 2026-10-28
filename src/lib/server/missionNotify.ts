@@ -1,4 +1,5 @@
 import { buildMissionNotice, type MissionNoticeFacts, type MissionNoticeKind } from "../agentMission/notices";
+import { userWillBeEmailed } from "../agentMission/emailEligibility";
 import { insertJobNotice } from "./jobNotices";
 import { sendPlatformEmail, resolveDisplayName } from "./sendPlatformEmail";
 
@@ -14,9 +15,7 @@ export async function sendMissionNotice(client: any, input: { userId: string; mi
     if (!out.inApp || !notice.email) return out;
     const got = await client.auth?.admin?.getUserById?.(input.userId);
     const user = got?.data?.user;
-    if (!user?.email || user.user_metadata?.is_guest) return out;
-    const prefs = (user.user_metadata?.prefs as any)?.notif;
-    if (prefs && typeof prefs === "object" && prefs.done === false) return out;
+    if (!userWillBeEmailed(user)) return out;
     const sent = await sendPlatformEmail("job-update", user.email, {
       Name: resolveDisplayName(user), Subject: notice.email.subject, Heading: notice.email.heading, Lead: notice.email.lead, DetailOne: notice.email.detail1, DetailTwo: notice.email.detail2, ButtonLabel: notice.email.buttonLabel,
       JobURL: `${(process.env.NEXT_PUBLIC_SITE_URL || "https://diger.tech").replace(/\/+$/, "")}/dashboard/requests${input.jobId ? `?job=${encodeURIComponent(input.jobId)}` : ""}`,

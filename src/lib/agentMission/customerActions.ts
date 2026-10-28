@@ -3,6 +3,7 @@ import { AGENT_BUCKET, AGENT_MAX_MISSIONS_PER_HOUR, AGENT_MAX_OPEN_MISSIONS_PER_
 import { approveMissionOnce } from "./approval";
 import { customerMissionView, type EventForCustomer, type MissionRowForCustomer, type QueueInfo } from "./customerView";
 import { latestBeat, workerAlive } from "./heartbeat";
+import { userWillBeEmailed } from "./emailEligibility";
 
 /**
  * What a CUSTOMER does with a mission, on the server, with the service-role client and an explicit owner check on every call (a customer reaches only their own missions; the browser never
@@ -66,7 +67,12 @@ export async function loadCustomerMission(client: any, input: { id: string; user
     files: Array.isArray(mission.files) ? mission.files : null, created_at: mission.created_at,
   };
   const evs: EventForCustomer[] = (Array.isArray(events?.data) ? events.data : []).map((e: any) => ({ id: Number(e.id), kind: String(e.kind), message_ar: String(e.message_ar ?? ""), counts: e.counts && typeof e.counts === "object" ? e.counts : {}, created_at: String(e.created_at) }));
-  return { ok: true as const, status: mission.status as string, requestText: String(mission.request_text ?? ""), view: customerMissionView({ mission: row, events: evs, queue, callsMade: typeof calls?.count === "number" ? calls.count : 0, now: input.now }) };
+  // the e-mail is promised only while it will really be sent (read only while the mission is in the worker's hands, when the line is shown)
+  let emailWillBeSent: boolean | undefined;
+  if (mission.status === "approved" || mission.status === "executing") {
+    try { emailWillBeSent = userWillBeEmailed((await client.auth?.admin?.getUserById?.(input.userId))?.data?.user); } catch { emailWillBeSent = false; }
+  }
+  return { ok: true as const, status: mission.status as string, requestText: String(mission.request_text ?? ""), view: customerMissionView({ mission: row, events: evs, queue, callsMade: typeof calls?.count === "number" ? calls.count : 0, now: input.now, emailWillBeSent }) };
 }
 
 const APPROVE_MESSAGES: Record<string, string> = {

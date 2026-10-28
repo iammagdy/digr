@@ -56,11 +56,13 @@ const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const LETTER = "\\p{L}\\p{N}";
 
 /** A regex for one term: whole word, any of ' ', '_' or '-' between its words (hashtags), an Arabic prefix allowed in front. */
-export function termRegex(term: string, flags = "u"): RegExp | null {
+export function termRegex(term: string, flags = "u", options: { suffixes?: boolean } = {}): RegExp | null {
   const t = normalizeText(term).replace(/[_-]+/g, " ");
   if (t.length < 2) return null;
   const body = t.split(" ").filter(Boolean).map(escapeRe).join("[\\s_\\-]+");
-  return new RegExp(`(?<![${LETTER}])(?:ال|لل|و|ف|ب|ل|ك|وال|بال|لل)?${body}(?![${LETTER}])`, flags);
+  // a CONTEXT word confirms a meaning, so it may carry up to three letters of Arabic ending («هدف» in «هدفًا» «هدفين» «هدفه»); a NAME may not (a word that merely starts with the name is another word)
+  const tail = options.suffixes ? `[\\p{L}]{0,3}` : "";
+  return new RegExp(`(?<![${LETTER}])(?:ال|لل|و|ف|ب|ل|ك|وال|بال|لل)?${body}${tail}(?![${LETTER}])`, flags);
 }
 
 const URL_RE = /https?:\/\/\S+|www\.\S+/gi;
@@ -75,8 +77,8 @@ const matchers = new WeakMap<RelevanceSpec, { terms: RegExp[]; context: RegExp[]
 function compiled(spec: RelevanceSpec) {
   let m = matchers.get(spec);
   if (!m) {
-    const build = (list: string[] | undefined) => (list ?? []).map((t) => termRegex(t)).filter((r): r is RegExp => r !== null);
-    m = { terms: build(spec.terms), context: build(spec.context_terms), exclude: build(spec.exclude_terms) };
+    const build = (list: string[] | undefined, suffixes = false) => (list ?? []).map((t) => termRegex(t, "u", { suffixes })).filter((r): r is RegExp => r !== null);
+    m = { terms: build(spec.terms), context: build(spec.context_terms, true), exclude: build(spec.exclude_terms) };
     matchers.set(spec, m);
   }
   return m;
