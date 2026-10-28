@@ -4,7 +4,7 @@ import { MODEL_PLAN_PARAM } from "../modelPlanner/constants";
 import { columnsOfMap } from "../modelPlanner/fieldMap";
 import type { StoredModelPlan } from "../modelPlanner/types";
 import { MISSION_NOTE_EVENT_TYPE, MISSION_PROGRESS_EVENT_TYPE } from "../reviewCostEvent";
-import { missionNotesFromEvents, missionView, phaseOfJob, snapshotsFromEvents, type JobPhase, type MissionStageInfo, type MissionView } from "../missionView";
+import { missionNotesFromEvents, missionView, phaseOfJob, snapshotsFromEvents, stageCounts, type JobPhase, type MissionStageInfo, type MissionView } from "../missionView";
 
 /**
  * What the mission panel reads for ONE job: the approved plan's stages (their Arabic names), the snapshots the worker wrote after each chunk, the decisions the model made, and a few of
@@ -85,9 +85,10 @@ export async function loadMissionStatus(admin: any, job: { id: string; user_id: 
   const snaps = snapshotsFromEvents(events.filter((e) => e.event_type === MISSION_PROGRESS_EVENT_TYPE));
   const notes = missionNotesFromEvents(events.filter((e) => e.event_type === MISSION_NOTE_EVENT_TYPE));
   const failureAr = phase === "failed" && typeof job.error_message === "string" && /[؀-ۿ]/.test(job.error_message) ? job.error_message : null;
-  const view = missionView({ stages: infos, snaps, phase, notes, now, ...(failureAr ? { failureReasonAr: failureAr } : {}) });
+  const view = missionView({ stages: infos, snaps, phase, notes, now, deliveredTotal: delivered, ...(failureAr ? { failureReasonAr: failureAr } : {}) });
   const last = snaps[snaps.length - 1];
-  const stages = infos.map((s, i) => ({ ...s, collected: last?.stages[i]?.c ?? 0, delivered: last?.stages[i]?.d ?? 0 }));
+  const endedCounts = stageCounts(infos, last, phase === "queued" || phase === "running" ? undefined : delivered);
+  const stages = infos.map((s, i) => ({ ...s, collected: last?.stages[i]?.c ?? 0, delivered: s.deliver ? endedCounts[i] : last?.stages[i]?.d ?? 0 }));
 
   // the newest rows of the stage that is filling (the deepest stage that has rows), from the last saved page
   let latest: MissionStatus["latest"] = null;

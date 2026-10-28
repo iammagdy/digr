@@ -54,6 +54,24 @@ export const DIGEST_VALUE_CHARS = 120;
  * (the model corrects the step); the turn ends without a plan only when the turns, the time or the exploration budget are spent.
  */
 export const MAX_PLANNER_TURNS = 6;
+/**
+ * THE PLANNING BUDGET of a planning SESSION (named constants; nothing ends a request in «غير متاحة» for want of time): when any of them is spent the customer gets what was found and ONE question.
+ *  - turns: the planning model's calls; model USD: its own spend; wall time: from the first step to the last; exploration USD is EXPLORATION_REQUEST_CAP_USD (the owner's cap per request).
+ */
+export const PLANNING_MAX_TURNS = 14;
+export const PLANNING_MODEL_BUDGET_USD = 0.06;
+export const PLANNING_MAX_WALL_MS = 6 * 60_000;
+/** One function invocation of a planning session: it ends before this (the route allows 60 s), and a step that calls the model or a source is not started after PLANNING_STEP_SOFT_MS. */
+export const PLANNING_STEP_DEADLINE_MS = 44_000;
+export const PLANNING_STEP_SOFT_MS = 16_000;
+/** The chat request's own first attempt (it holds the HTTP request open): a request that is done by then answers at once, like a single-stage one always did. */
+export const PLANNING_INLINE_SOFT_MS = 26_000;
+/** A running session nobody has stepped for this long is picked up by the background driver (the page may have been closed). */
+export const PLANNING_SESSION_STALE_MS = 45_000;
+/** A step holds the session's lease for this long. */
+export const PLANNING_SESSION_LEASE_MS = 60_000;
+/** A failed model call is tried again this many times (in later steps) before the session ends. */
+export const MODEL_ERROR_RETRIES = 3;
 /** The planner's own time for one chat request (ms from the start of the turn): the route allows 60 s and the page gives up at 55 s; the quote and the answer are written after it. */
 export const PLANNER_TURN_BUDGET_MS = 48_000;
 /** A further model turn is started only when at least this much time is left, and a model call is cut this long before the budget ends. */
@@ -62,6 +80,8 @@ export const PLANNER_MIN_TURN_MS = 7_000;
 export const MAX_SAMPLE_CALLS = 5;
 /** Alternatives (catalog siblings) tried for ONE sample the model asked for, after the first endpoint failed, returned nothing or was refused by a cap. */
 export const MAX_SAMPLE_ALTERNATIVES = 3;
+/** A sample of a PER-RECORD priced endpoint may spend at most this share of the exploration budget left for the request (at least one row is always asked when it fits). */
+export const SAMPLE_BUDGET_SHARE_PER_RECORD = 0.4;
 /** A sample call is given up after this long (ms); an alternative then gets its turn. */
 export const SAMPLE_CALL_TIMEOUT_MS = 12_000;
 /** The siblings an approved plan keeps for the worker to try when its call fails (cheaper or equal per call, in order of cost and observed success). */

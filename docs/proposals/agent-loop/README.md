@@ -15,6 +15,7 @@ Ids are prefixed like the others (`res_`, `rel_`, `chg_`, `top_`, `promo_`, `adm
 | 4 | `04_verify_after_apply.sql` | READ ONLY: shape, constraints, RLS on, no grant to `anon` or `authenticated` | none |
 | 5 | `05_sensitive_access.sql` | `verified_business_accounts` (which customer accounts the admin marked «verified business») and `sensitive_lookup_audit` (one row per sensitive lookup: account, endpoint and category, the value MASKED, purpose, job, time, cost); RLS: admin read, service role write, no customer access | `05_sensitive_access.rollback.sql` |
 | 6 | `06_verify_sensitive_access.sql` | READ ONLY: both tables, RLS on, one policy (admin read), grants | none |
+| 7 | `07_planning_sessions.sql` (+ `07_verify_planning_sessions.sql`) | `planning_sessions`: the planning loop of a chat request kept between steps, so a mission is planned in several short invocations (page steps or the background driver) instead of one request that the 60 s limit ends. The code works without it (one request, as before) and starts using it by itself once it exists | `07_planning_sessions.rollback.sql` |
 
 Rollback order: 05, then 03, then 02, then 01 (`unknown_keys` points at `recipes`; 05 is independent).
 

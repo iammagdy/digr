@@ -14,6 +14,7 @@ const originalEnv = { credit: process.env.PROVIDER_CREDIT_USD, cap: process.env.
 
 /** What the owner's admin page showed: 0.9968 USD recorded in total, 0.009 of it today, daily limit 0.9, the provider's own balance 0.9186. */
 async function liveSituation() {
+  process.env.PROVIDER_CREDIT_USD = "1"; // the credit the owner configured: the estimate is a real basis only then (and only while the recorded spend is within it)
   await recordProviderCallSpend(996_800);
   setMemoryProviderDailySpendUsdForTesting(0.009);
 }

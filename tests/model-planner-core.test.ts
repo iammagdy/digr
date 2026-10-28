@@ -148,7 +148,7 @@ describe("validation: the plan is checked against the catalog, the policy, the c
     expect(r.plan.sampleRows).toHaveLength(3);
     expect(r.plan.sampleColumns.map((c) => c.titleAr)).toEqual(["نص المنشور", "الحساب", "تاريخ النشر", "الإعجابات", "الرابط"]);
     expect(r.plan.stored.steps[0].facts).toMatchObject({ method: "POST", scope: "any_account", limitName: "limit", limitMax: 100, callEstimateUsd: 0.0005 });
-    expect(r.plan.stored.measured[0]).toEqual({ rowsPerCall: 10, passRate: 0.3, costPerCallUsd: 0.0005 });
+    expect(r.plan.stored.measured[0]).toEqual({ rowsPerCall: 10, passRate: 0.3, costPerCallUsd: 0.0005, from: "sample" });
     expect(r.plan.sensitive).toBe(false);
     // the goal line is the model's, made safe by code
     expect(r.plan.summaryAr).toBe("جمع ١٠ منشورات من حساب @elonmusk");

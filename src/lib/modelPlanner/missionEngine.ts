@@ -4,6 +4,8 @@ import { countryRowGate } from "./countryGate";
 import { MAX_CALLS_PER_CHUNK, MAX_MISSION_QUEUE, MODEL_PLAN_PURPOSE_PARAM, MODEL_PLAN_REQUEST_PARAM } from "./constants";
 import { alternateStep, callStage, failureAr, reviewPartialNoteAr, reviewTopicRows, type InterpreterDeps } from "./stageCall";
 import { safeArabicSentence } from "./customerSafe";
+import { toArabicDigits } from "../arabicDigits";
+import { deliveredTotalOf } from "./stageFit";
 import { MANAGER_CALL_ESTIMATE_USD, type ManagerRequest, type ManagerResult } from "./manager";
 import type { PlanStep, StepFacts, StoredModelPlan, StoredStage } from "./types";
 
@@ -303,7 +305,15 @@ export async function runMissionChunk(input: ProviderAdapterCallInput, plan: Sto
       stages: stages.map((st, i) => ({ titleAr: st.titleAr, collected: state.stages[i].collected, delivered: state.stages[i].delivered, ...(state.stages[i].stopped ? { stopped: state.stages[i].stopped } : {}) })),
       sampleRows: delivered.slice(0, 6),
     });
-    if (decision.action === "final") { const safe = safeArabicSentence(decision.noteAr); if (safe) note(decision.ok ? "final_ok" : "final_gap", undefined, safe); }
+    if (decision.action === "final") {
+      // the model phrases, CODE counts: a sentence of the model's that carries a number is not shown; the figures come from the stages' own counts (one source of truth)
+      const totalDelivered = stages.reduce((n, st, i) => n + (st.deliver ? state.stages[i].delivered : 0), 0);
+      const planned = deliveredTotalOf(stages);
+      const own = safeArabicSentence(decision.noteAr);
+      const phrase = own && !statesACount(own) ? own : null;
+      const facts = totalDelivered >= planned ? `وصلك كل المطلوب: ${toArabicDigits(totalDelivered)} صفًا.` : `وصلك ${toArabicDigits(totalDelivered)} من ${toArabicDigits(planned)} صفًا مخططًا لها.`;
+      note(decision.ok && totalDelivered >= planned ? "final_ok" : "final_gap", undefined, phrase ? `${phrase} ${facts}` : facts);
+    }
   }
 
   // where each stage stands (a stage that cannot do more is done: it has what it needs, it was stopped, or it waits for nothing any more)
@@ -324,3 +334,6 @@ export async function runMissionChunk(input: ProviderAdapterCallInput, plan: Sto
     ...(usage.length ? { reviewModelUsage: usage } : {}), ...(notes.length ? { missionNotes: notes } : {}), missionProgress,
   };
 }
+
+/** True when a sentence states a count (a digit, or a number written in words): the model never states one; code does. */
+export const statesACount = (text: string): boolean => /[0-9٠-٩]|(?:^|[^؀-ۿ])(?:واحد|واحدة|اثنين|اتنين|اثنان|ثلاث|ثلاثة|تلات|تلاتة|أربع|اربع|أربعة|اربعة|خمس|خمسة|ست|ستة|سبع|سبعة|ثمان|ثمانية|تمان|تمانية|تسع|تسعة|عشر|عشرة|عشرين|ثلاثين|أربعين|خمسين|مئة|مائة|مية|ألف|الف)(?![؀-ۿ])/u.test(String(text ?? ""));

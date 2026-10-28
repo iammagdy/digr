@@ -5,7 +5,7 @@ import type { TregCatalog } from "../treg/catalog";
 import { EXPLORATION_TABLE, PLANNER_EVENT_ROW_ENDPOINT, PLANNER_TURN_ROW_ENDPOINT, type ExplorationDeps } from "./exploration";
 import type { PlannerEvent } from "../missionView";
 import { createModelPlanQuote } from "./planItem";
-import { runPlanner, type PlannerOutcome } from "./planner";
+import { runPlanner, type PlannerInput, type PlannerOutcome } from "./planner";
 import { loadRecipeForEndpoint } from "./recipes";
 import { loadMeasuredAvgCallUsd } from "./measured";
 import { createAnthropicTransport, type PlannerTransport } from "./transport";
@@ -66,8 +66,19 @@ export type ModelPlannerTurn = (
   | { kind: "message"; contentAr: string; reason: string; clarificationItems?: Array<Record<string, unknown>> }
 ) & { outcome: PlannerOutcome };
 
-/** One chat turn of the model planner: runs the planning loop, then (for a plan) creates the quote with the shared pricing, and shapes the plan card data. */
-export async function runModelPlannerTurn(args: ModelPlannerTurnArgs): Promise<ModelPlannerTurn> {
+export interface PreparedPlannerTurn {
+  customerMessages: string[];
+  purpose: string | null;
+  customerRequest: string;
+  client: any;
+  /** The planner's input for this request, minus the per-step deadline (a planning session sets that for each step). */
+  input: PlannerInput;
+  /** Waits for the planner's event rows to be written. */
+  flushEvents: () => Promise<void>;
+}
+
+/** Everything that is decided BEFORE the planning loop runs: the customer's words, the purpose, the account's access, and where the planner's events are written. Used by the one-request path and by every step of a planning session. */
+export async function preparePlannerTurn(args: ModelPlannerTurnArgs): Promise<PreparedPlannerTurn> {
   const { config, tables } = args;
   const customerMessages = customerWordsOf(args.messagesContext, args.message);
   const purpose = purposeFrom(args.messagesContext, args.message);
@@ -85,7 +96,7 @@ export async function runModelPlannerTurn(args: ModelPlannerTurnArgs): Promise<M
       })).then(() => undefined, () => undefined));
     } catch { /* the table is not there */ }
   };
-  const outcome = await runPlanner({
+  const input: PlannerInput = {
     onEvent,
     transport: config.transport,
     customerMessages: purpose ? customerMessages.filter((m) => m !== purpose) : customerMessages,
@@ -98,10 +109,23 @@ export async function runModelPlannerTurn(args: ModelPlannerTurnArgs): Promise<M
     exploration: { client, requestId: args.requestId, userId: args.userId, ...(config.call ? { call: config.call } : {}) },
     loadRecipe: (id) => loadRecipeForEndpoint(client, id),
     loadMeasuredAvg: (id) => loadMeasuredAvgCallUsd(client, id),
-    deadlineAtMs: args.deadlineAtMs,
-  });
+    exhaustion: "explain",
+  };
+  return { customerMessages, purpose, customerRequest, client, input, flushEvents: async () => { await Promise.allSettled(pendingEvents); pendingEvents.length = 0; } };
+}
 
-  await Promise.allSettled(pendingEvents);
+/** One chat turn of the model planner in ONE request: runs the planning loop, then (for a plan) creates the quote with the shared pricing, and shapes the plan card data. */
+export async function runModelPlannerTurn(args: ModelPlannerTurnArgs): Promise<ModelPlannerTurn> {
+  const prepared = await preparePlannerTurn(args);
+  const outcome = await runPlanner({ ...prepared.input, deadlineAtMs: args.deadlineAtMs });
+  return completePlannerTurn(args, prepared, outcome);
+}
+
+/** What happens once the planning loop has ended (in one request or at the last step of a session): the planner's events are flushed, a failed turn is recorded, and a plan becomes a quote. */
+export async function completePlannerTurn(args: ModelPlannerTurnArgs, prepared: PreparedPlannerTurn, outcome: PlannerOutcome): Promise<ModelPlannerTurn> {
+  const { tables } = args;
+  const { client, customerRequest, purpose } = prepared;
+  await prepared.flushEvents();
   await recordPlannerTurnEnd(client, args, outcome, customerRequest);
 
   if (outcome.kind === "purpose_needed") {
@@ -130,6 +154,7 @@ export async function runModelPlannerTurn(args: ModelPlannerTurnArgs): Promise<M
       userBalance: args.userBalance,
       downscaledOffer: quote.downscaledOffer,
       capacityConstrained: quote.capacityConstrained,
+      ...((quote as any).capacityCause ? { capacityCause: (quote as any).capacityCause } : {}),
       outputFormats: quote.outputFormats,
       expiresAt: quote.expiresAt,
       understoodAr: quote.summaryAr,

@@ -5,7 +5,7 @@ import { categoryOf, NO_SENSITIVE_ACCESS, SENSITIVE_NOT_VERIFIED_AR, type Accoun
 import { PURPOSE_QUESTION_AR } from "../server/sensitiveAccess";
 import { readExplorationSpend, runSampleCall, type ExplorationAttempt, type ExplorationDeps, type SampleStats } from "./exploration";
 import { callEstimateUsd, unitCost } from "./pricing";
-import { EXPLORATION_DAY_CAP_USD, EXPLORATION_REQUEST_CAP_USD, MAX_PLANNER_TURNS, PLANNER_MIN_TURN_MS } from "./constants";
+import { EXPLORATION_DAY_CAP_USD, EXPLORATION_REQUEST_CAP_USD, MAX_PLANNER_TURNS, MODEL_ERROR_RETRIES, PLANNER_MIN_TURN_MS } from "./constants";
 import { anthropicToolDefinitions, toolCatalogSearch, toolDescribeEndpoint } from "./tools";
 import { addUsage, emptyUsage, plannerCostUsd, type ContentBlock, type PlannerMessage, type PlannerTransport, type PlannerUsage } from "./transport";
 import { ParamSchema, ProposePlanSchema, type ValidationIssue } from "./types";
@@ -18,6 +18,8 @@ import type { PlannerEvent } from "../missionView";
 export const PLAN_INCOMPLETE_AR = new PlanIncompleteError([]).messageAr;
 /** THE refusal sentence, the same everywhere on the model path: said only when nothing in the catalog can serve the request after the alternatives were tried. */
 export const PLAN_UNAVAILABLE_AR = "هذه الخدمة غير متاحة حاليًا، ولم يُحجز أي رصيد.";
+/** Said by a planning SESSION when the planning model itself kept failing (a real, temporary cause: not «the service is unavailable»). */
+export const PLAN_MODEL_HICCUP_AR = "تعذّر تجهيز الخطة الآن لعطل مؤقت في خدمة التجهيز، ولم يُحجز أي رصيد. أعد إرسال الطلب بعد دقائق قليلة.";
 
 export const PLANNER_SYSTEM_PROMPT = `You are the planning engine of Diger, a research-data service for Arabic-speaking customers. The customer wrote an Arabic request for data (posts, comments, profiles, companies, people, reviews, markets…). Your job: find the right endpoint(s) in the data catalog with the tools, learn how the endpoint answers, and propose ONE plan. Code validates and prices your plan; you never state a price, a cost or a point amount.
 
@@ -61,6 +63,12 @@ export interface PlannerInput {
   onEvent?: (event: PlannerEvent) => void;
   /** The turn's own deadline (epoch ms): a further model turn is not started with less than PLANNER_MIN_TURN_MS left, and a model call is cut before it. */
   deadlineAtMs?: number;
+  /** What happens when the turns or the model budget are spent without a plan: `refuse` (the old sentence, for callers that want it) or `explain` (what was found and ONE question). */
+  exhaustion?: "refuse" | "explain";
+  /** A planning budget besides the turns: the planning model's own spend (USD) at which the run stops. */
+  budget?: { maxModelUsd?: number };
+  /** A planning SESSION retries a model call that failed (a timeout, a provider error) in a later step instead of ending the request, up to MODEL_ERROR_RETRIES times. */
+  retryModelErrors?: boolean;
 }
 
 export type PlannerResult =
@@ -110,45 +118,100 @@ const clipText = (v: unknown, n: number): string => String(v ?? "").replace(/\s+
 const REFUSAL_LIKE = /غير\s+متاح|لا\s+تتوفر|غير\s+متوفر|لا\s+يمكن\s+(?:توفير|تنفيذ)|لا\s+نستطيع/;
 const QUESTION_LIKE = /[؟?]/;
 
+
+/** What a planning session keeps between steps: everything the loop holds, as plain data. */
+export interface PlannerSnapshot {
+  v: 1;
+  messages: PlannerMessage[];
+  turns: number;
+  usage: PlannerUsage;
+  toolCalls: number;
+  sampleCalls: number;
+  explorationCostUsd: number;
+  madeCalls: number;
+  failures: ValidationIssue[][];
+  trace: PlannerTraceEntry[];
+  attempts: ExplorationAttempt[];
+  stopReasons: string[];
+  restrictedSeen: boolean;
+  nudges: number;
+  lastIssues: ValidationIssue[];
+  hitsSeen: string[];
+  hitInfo: Array<[string, { platform: string; capability: string; perRecord: number | null }]>;
+  rephrased: boolean;
+  touched: string[];
+  samples: Array<[string, StepSample]>;
+  recipes: Array<[string, RecipeRecord]>;
+  measured: Array<[string, number]>;
+  pending: { uses: Array<Extract<ContentBlock, { type: "tool_use" }>>; index: number; results: ContentBlock[] } | null;
+  modelErrors?: number;
+}
+
+/** A sample's raw answer is kept for the validator's reader check only while it is small; a larger one is dropped from the snapshot (the rows and the digest stay). */
+export const SNAPSHOT_BODY_MAX_CHARS = 40_000;
+export function trimSamples(entries: Array<[string, StepSample]>): Array<[string, StepSample]> {
+  return entries.map(([id, sample]) => {
+    let size = 0;
+    try { size = JSON.stringify(sample.body ?? null).length; } catch { size = Number.POSITIVE_INFINITY; }
+    if (size <= SNAPSHOT_BODY_MAX_CHARS) return [id, sample];
+    const { body: _dropped, ...rest } = sample;
+    void _dropped;
+    return [id, rest as StepSample];
+  });
+}
+
 /**
- * The planning loop: the model calls tools, the app answers with tool_results, until the model proposes a plan that validates, or answers the customer in words.
+ * What the customer is told when the planning BUDGET ran out without a plan: what was found, and ONE question. Never «غير متاحة» and never a provider, endpoint or amount.
+ */
+export function budgetExplanationAr(attempts: ReadonlyArray<ExplorationAttempt>): string {
+  const worked = attempts.some((a) => a.outcome === "ok");
+  const overBudget = attempts.some((a) => a.outcome === "over_budget");
+  if (worked) return `وجدنا مصادر تُرجِع بيانات لجزء من طلبك، لكن لم نكمل تجهيز خطة كاملة له ضمن ميزانية التجهيز${overBudget ? " (نفدت تجارب العيّنات المسموحة لهذا الطلب)" : ""}. أي جزء تريدنا نبدأ به؟ اكتبه وحده (مثلًا: الشركات فقط، أو الفيديوهات فقط) وسنجهّز خطته فورًا.`;
+  return `جرّبنا عدة مصادر لهذا الطلب${overBudget ? "، ونفدت تجارب العيّنات المسموحة له" : ""}، ولم يُرجع أيٌّ منها بيانات مناسبة الآن. هل تريد أن نجرّب صياغة أخرى للطلب أو منصة أخرى؟`;
+}
+/**
+ * The planning loop, as a RUN that can stop between steps and resume from a snapshot (the planning session of the chat: each step is one model call or one tool call, so a mission that needs
+ * several samples and model turns is never held inside one HTTP request). `runPlanner` below runs a run to its end in one go (tests, the admin self-test, the retry).
+ *
+ * The model calls tools, the app answers with tool_results, until the model proposes a plan that validates, or answers the customer in words.
  * A plan that fails validation goes back to the model as a tool_result with the exact reasons on EVERY turn that is left, so it can correct the step. A model that answers «not
  * available» while untried candidates are left is sent back to try them (at most twice). The turn ends without a plan only when the turns, the time or the budget are spent, or
  * the customer's own input is what is missing (then ONE question). Sensitive services never reach an account that may not use them (the tools never show them).
  */
-export async function runPlanner(input: PlannerInput): Promise<PlannerOutcome> {
+export function createPlannerRun(input: PlannerInput, restore?: PlannerSnapshot) {
   const catalog = input.catalog ?? loadTregCatalog();
   const providers = providerNamesOf(catalog);
   const access = input.access ?? NO_SENSITIVE_ACCESS;
   const customerText = input.customerMessages.join("\n");
-  const samples = new Map<string, StepSample>();
-  const recipes = new Map<string, RecipeRecord>();
-  const measured = new Map<string, number>();
-  const failures: ValidationIssue[][] = [];
-  const trace: PlannerTraceEntry[] = [];
-  const attempts: ExplorationAttempt[] = [];
-  const stopReasons: string[] = [];
-  const stats: SampleStats = { madeCalls: 0 };
-  let usage = emptyUsage();
-  let toolCalls = 0;
-  let sampleCalls = 0;
-  let explorationCostUsd = 0;
-  let restrictedSeen = false;
-  let nudges = 0;
-  let lastIssues: ValidationIssue[] = [];
-  const hitsSeen: string[] = [];
-  const hitInfo = new Map<string, { platform: string; capability: string; perRecord: number | null }>();
-  let rephrased = false;
-  const touched = new Set<string>();
+  const samples = new Map<string, StepSample>(restore?.samples ?? []);
+  const recipes = new Map<string, RecipeRecord>(restore?.recipes ?? []);
+  const measured = new Map<string, number>(restore?.measured ?? []);
+  const failures: ValidationIssue[][] = restore?.failures ?? [];
+  const trace: PlannerTraceEntry[] = restore?.trace ?? [];
+  const attempts: ExplorationAttempt[] = restore?.attempts ?? [];
+  const stopReasons: string[] = restore?.stopReasons ?? [];
+  const stats: SampleStats = { madeCalls: restore?.madeCalls ?? 0 };
+  let usage = restore?.usage ?? emptyUsage();
+  let toolCalls = restore?.toolCalls ?? 0;
+  let sampleCalls = restore?.sampleCalls ?? 0;
+  let explorationCostUsd = restore?.explorationCostUsd ?? 0;
+  let restrictedSeen = restore?.restrictedSeen ?? false;
+  let nudges = restore?.nudges ?? 0;
+  let lastIssues: ValidationIssue[] = restore?.lastIssues ?? [];
+  const hitsSeen: string[] = [...(restore?.hitsSeen ?? [])];
+  const hitInfo = new Map<string, { platform: string; capability: string; perRecord: number | null }>(restore?.hitInfo ?? []);
+  let rephrased = restore?.rephrased ?? false;
+  const touched = new Set<string>(restore?.touched ?? []);
   const today = input.today ?? new Date();
   const maxTurns = input.maxTurns ?? MAX_PLANNER_TURNS;
   const tools = anthropicToolDefinitions();
-  const exploration: ExplorationDeps = { ...input.exploration, ...(input.deadlineAtMs !== undefined && input.exploration.deadlineAtMs === undefined ? { deadlineAtMs: input.deadlineAtMs } : {}) };
+  // read at every call: a session gives each step its own deadline
+  const exploration = (): ExplorationDeps => ({ ...input.exploration, ...(input.deadlineAtMs !== undefined && input.exploration.deadlineAtMs === undefined ? { deadlineAtMs: input.deadlineAtMs } : {}) });
 
   const first = [`Today is ${today.toISOString().slice(0, 10)}.`, "The customer's request (Arabic):", input.customerMessages[input.customerMessages.length - 1] ?? ""].filter(Boolean).join("\n");
-  const messages: PlannerMessage[] = [];
+  const messages: PlannerMessage[] = restore ? restore.messages : [];
   const history = input.history ?? [];
-  if (input.customerMessages.length > 1 || history.length > 0) {
+  if (restore) { /* resumed: the conversation with the model is the snapshot's */ } else if (input.customerMessages.length > 1 || history.length > 0) {
     messages.push({ role: "user", content: [`Today is ${today.toISOString().slice(0, 10)}.`, "The customer's request, in their words (Arabic):", input.customerMessages[0] ?? ""].join("\n") });
     for (const h of history) messages.push({ role: h.role, content: h.text });
     if (history.length === 0 || history[history.length - 1].role === "assistant") messages.push({ role: "user", content: input.customerMessages[input.customerMessages.length - 1] ?? "" });
@@ -164,57 +227,17 @@ export async function runPlanner(input: PlannerInput): Promise<PlannerOutcome> {
   };
 
   const emit = (event: Omit<PlannerEvent, "at">) => { try { input.onEvent?.({ ...event, at: Date.now() }); } catch { /* an event never changes the plan */ } };
-  let turns = 0;
-  while (turns < maxTurns) {
-    const left = input.deadlineAtMs !== undefined ? input.deadlineAtMs - Date.now() : Number.POSITIVE_INFINITY;
-    if (left < PLANNER_MIN_TURN_MS) return done(turns, { kind: "message", messageAr: PLAN_UNAVAILABLE_AR, reason: "no_model" }, `no time left for another model turn (${Math.max(0, Math.round(left / 1000))} s left of the turn)`);
-    turns += 1;
-    let response;
-    try {
-      response = await input.transport.send({ system: PLANNER_SYSTEM_PROMPT, messages, tools, ...(Number.isFinite(left) ? { timeoutMs: Math.max(1_000, left - 3_000) } : {}) });
-    } catch (err) {
-      return done(turns, { kind: "message", messageAr: PLAN_UNAVAILABLE_AR, reason: "no_model" }, `the planning model call failed: ${clipText((err as Error)?.message, 80)}`);
-    }
-    usage = addUsage(usage, response.usage);
-    stopReasons.push(response.stopReason || "");
-    if (turns === 1) emit({ kind: "understood" });
-    const toolUses = response.content.filter((b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use");
-    messages.push({ role: "assistant", content: response.content });
+
+  type ToolUse = Extract<ContentBlock, { type: "tool_use" }>;
+  let turns = restore?.turns ?? 0;
+  /** A model turn whose tool calls are being run one at a time (so a step never holds more than one call). */
+  let pending: { uses: ToolUse[]; index: number; results: ContentBlock[] } | null = restore?.pending ?? null;
+  /** Set by a tool that ends the planning (a plan that validated, a refusal that is final). */
+  let finished: PlannerOutcome | null = null;
+  let modelErrors = restore?.modelErrors ?? 0;
+
+  const executeTool = async (use: ToolUse, results: ContentBlock[]): Promise<void> => {
     const turnsLeft = maxTurns - turns;
-
-    if (toolUses.length === 0) {
-      // the model answered the customer in words: a question, or a «not available» sentence, made safe by code
-      if (restrictedSeen) return done(turns, { kind: "message", messageAr: SENSITIVE_NOT_VERIFIED_AR, reason: "restricted" }, "a restricted service was the best match");
-      const text = textOf(response.content);
-      const refusal = REFUSAL_LIKE.test(text) && !QUESTION_LIKE.test(text);
-      const untried = hitsSeen.filter((id) => !touched.has(id)).slice(0, 5);
-      if (refusal && nudges < 2 && turnsLeft >= 1) {
-        nudges += 1;
-        const why = attempts.length > 0 ? ` Attempts so far: ${attempts.map((a) => `${a.endpointId}=${a.outcome}`).join(", ")}.` : "";
-        messages.push({ role: "user", content: `Do not give up yet: nothing here proves the catalog cannot serve this request.${why} ${untried.length > 0 ? `Untried candidates from your searches: ${untried.join(", ")}. ` : "Search the catalog again with other words (other platform names, synonyms, the capability in English). "}Sample the best next candidate and propose a plan, or ask the customer ONE short question when a value is missing. Answer «not available» only when every candidate failed.` });
-        trace.push({ turn: turns, tool: "(model text)", summary: clipText(text, 60), outcome: "refusal sent back: candidates remain", error: true });
-        continue;
-      }
-      if (refusal) return done(turns, { kind: "message", messageAr: PLAN_UNAVAILABLE_AR, reason: "unavailable" }, "the model said the service is not available, and the alternatives were tried");
-      const safe = customerSafeArabic(text, providers);
-      if (!safe) {
-        // the model's words fail the customer-text check: it is asked ONCE to rephrase; if they fail again the standard question is asked. It is never turned into a refusal.
-        if (!rephrased && turnsLeft >= 1) {
-          rephrased = true;
-          messages.push({ role: "user", content: "Your message cannot be shown to the customer as written. Rephrase it as ONE short Arabic message: Arabic words only (no English or Latin letters), no markdown, no emoji, no provider, endpoint or technical name, no money amount. If you need a value from the customer, ask for it in one short question." });
-          trace.push({ turn: turns, tool: "(model text)", summary: clipText(text, 60), outcome: "customer text failed the check: sent back once to rephrase", error: true });
-          continue;
-        }
-        return done(turns, { kind: "message", messageAr: PLAN_INCOMPLETE_AR, reason: "incomplete" }, "the model's own words could not be shown to a customer, twice: the standard question was asked");
-      }
-      return done(turns, { kind: "message", messageAr: safe, reason: "clarification" });
-    }
-
-    const results: ContentBlock[] = [];
-    let plan: ValidatedPlan | null = null;
-    let endNow: PlannerOutcome | null = null;
-    // the tools of one turn run in the order the model wrote them (a second sample may take a value from the first); each answer is a tool_result
-    for (const use of toolUses) {
       toolCalls += 1;
       let content: unknown;
       let isError = false;
@@ -256,7 +279,7 @@ export async function runPlanner(input: PlannerInput): Promise<PlannerOutcome> {
           touched.add(parsed.data.id);
           if (categoryOf(parsed.data.id) === "sensitive" && !access.isAdmin && !access.verifiedBusiness) restrictedSeen = true;
           summary = parsed.data.id;
-          const out = await runSampleCall(parsed.data as any, { customerText, access, catalog, samples, today, stats }, exploration);
+          const out = await runSampleCall(parsed.data as any, { customerText, access, catalog, samples, today, stats }, exploration());
           const made = (out.ok ? out.note.attempts : out.attempts);
           attempts.push(...made);
           sampleCalls += 1;
@@ -276,8 +299,8 @@ export async function runPlanner(input: PlannerInput): Promise<PlannerOutcome> {
             // the endpoints this one has no catalog sibling for: the candidates of the model's own searches that were not tried and fit the exploration budget left
             let hint = "";
             if (out.kind === "failed") {
-              const spentNow = await readExplorationSpend(exploration);
-              const budgetLeft = Math.max(0, Math.min((exploration.requestCapUsd ?? EXPLORATION_REQUEST_CAP_USD) - spentNow.request, EXPLORATION_DAY_CAP_USD - spentNow.day));
+              const spentNow = await readExplorationSpend(exploration());
+              const budgetLeft = Math.max(0, Math.min((exploration().requestCapUsd ?? EXPLORATION_REQUEST_CAP_USD) - spentNow.request, EXPLORATION_DAY_CAP_USD - spentNow.day));
               const fits = hitsSeen.filter((id) => {
                 if (touched.has(id)) return false;
                 const e = catalog.byId.get(id);
@@ -319,7 +342,7 @@ export async function runPlanner(input: PlannerInput): Promise<PlannerOutcome> {
             const earlier = refs.map((r) => parsed.data.steps[r.fromStep!.step - 1]);
             if (earlier.some((x) => !x || !samples.has(x.endpointId))) continue;
             const withEndpoint = st.params.map((p) => (p.source === "prior_step" && p.fromStep ? { ...p, fromStep: { ...p.fromStep, endpointId: parsed.data.steps[p.fromStep.step - 1].endpointId } } : p));
-            const auto = await runSampleCall({ id: st.endpointId, params: withEndpoint as any }, { customerText, access, catalog, samples, today, stats }, exploration);
+            const auto = await runSampleCall({ id: st.endpointId, params: withEndpoint as any }, { customerText, access, catalog, samples, today, stats }, exploration());
             attempts.push(...(auto.ok ? auto.note.attempts : auto.attempts));
             sampleCalls += 1; explorationCostUsd += auto.costUsd;
             if (auto.ok) emit({ kind: "sampled", rows: auto.digest.rowsInSample });
@@ -342,11 +365,11 @@ export async function runPlanner(input: PlannerInput): Promise<PlannerOutcome> {
             content = issues.map((x) => `step ${(x.stepIndex ?? 0) + 1}: ${x.message}`).join("\n");
             trace.push({ turn: turns, tool: use.name, summary, outcome, error: true });
             results.push({ type: "tool_result", tool_use_id: use.id, content: clipResult(content), is_error: true });
-            continue;
+            return;
           }
           void autoNotes;
           const verdict = validatePlan(parsed.data, { customerText, access, catalog, samples, recipes, purpose: input.purpose ?? null, today, measuredAvgCallUsd: (id) => measured.get(id) ?? null });
-          if (verdict.ok) { plan = verdict.plan; outcome = "plan accepted"; emit({ kind: "planned" }); }
+          if (verdict.ok) { finished = done(turns, { kind: "plan", plan: verdict.plan }); outcome = "plan accepted"; emit({ kind: "planned" }); }
           else {
             emit({ kind: "adjusting" });
             isError = true;
@@ -354,9 +377,9 @@ export async function runPlanner(input: PlannerInput): Promise<PlannerOutcome> {
             lastIssues = verdict.issues;
             outcome = `refused: ${verdict.issues.map((i) => i.code).join(",")}`;
             if (verdict.issues.some((i) => i.code === "not_allowed") && parsed.data.steps.some((s) => categoryOf(s.endpointId) === "sensitive") && !access.isAdmin && !access.verifiedBusiness) {
-              endNow = done(turns, { kind: "message", messageAr: SENSITIVE_NOT_VERIFIED_AR, reason: "restricted" }, "a restricted service was proposed");
+              finished = done(turns, { kind: "message", messageAr: SENSITIVE_NOT_VERIFIED_AR, reason: "restricted" }, "a restricted service was proposed");
             } else if (verdict.issues.some((i) => i.code === "sensitive_purpose")) {
-              endNow = done(turns, { kind: "purpose_needed", messageAr: PURPOSE_QUESTION_AR });
+              finished = done(turns, { kind: "purpose_needed", messageAr: PURPOSE_QUESTION_AR });
             }
             const lastTurn = turnsLeft < 1 ? " This was your last turn." : turnsLeft === 1 ? " You have ONE turn left: fix everything this message names in one propose_plan." : "";
             content = `${verdict.issues.map((i) => `${i.stepIndex !== undefined ? `step ${i.stepIndex + 1}: ` : ""}${i.message}`).join("\n")}${lastTurn}`;
@@ -369,12 +392,104 @@ export async function runPlanner(input: PlannerInput): Promise<PlannerOutcome> {
       }
       trace.push({ turn: turns, tool: use.name, summary, outcome, ...(isError ? { error: true } : {}) });
       results.push({ type: "tool_result", tool_use_id: use.id, content: clipResult(content), ...(isError ? { is_error: true } : {}) });
+  };
+
+  const modelStep = async (): Promise<PlannerOutcome | null> => {
+    if (turns >= maxTurns) return exhausted();
+    if (input.budget?.maxModelUsd !== undefined && plannerCostUsd(usage) >= input.budget.maxModelUsd) return exhausted(`the planning model budget (${input.budget.maxModelUsd} USD) was used`);
+    const left = input.deadlineAtMs !== undefined ? input.deadlineAtMs - Date.now() : Number.POSITIVE_INFINITY;
+    if (left < PLANNER_MIN_TURN_MS) { const why = `no time left for another model turn (${Math.max(0, Math.round(left / 1000))} s left of the turn)`; return input.exhaustion === "explain" ? exhausted(why) : done(turns, { kind: "message", messageAr: PLAN_UNAVAILABLE_AR, reason: "no_model" }, why); }
+    turns += 1;
+    let response;
+    try {
+      response = await input.transport.send({ system: PLANNER_SYSTEM_PROMPT, messages, tools, ...(Number.isFinite(left) ? { timeoutMs: Math.max(1_000, left - 3_000) } : {}) });
+    } catch (err) {
+      const why = `the planning model call failed: ${clipText((err as Error)?.message, 80)}`;
+      // a session tries the call again in a later step (a timeout or a provider hiccup is not a reason to end the request)
+      if (input.retryModelErrors && modelErrors < MODEL_ERROR_RETRIES) { modelErrors += 1; turns -= 1; trace.push({ turn: turns + 1, tool: "(model call)", summary: "", outcome: why, error: true }); return null; }
+      if (input.exhaustion === "explain") return attempts.length > 0 ? exhausted(why) : done(turns, { kind: "message", messageAr: PLAN_MODEL_HICCUP_AR, reason: "no_model" }, why);
+      return done(turns, { kind: "message", messageAr: PLAN_UNAVAILABLE_AR, reason: "no_model" }, why);
     }
-    if (plan) return done(turns, { kind: "plan", plan });
-    if (endNow) return endNow;
-    messages.push({ role: "user", content: results });
+    usage = addUsage(usage, response.usage);
+    stopReasons.push(response.stopReason || "");
+    if (turns === 1) emit({ kind: "understood" });
+    const toolUses = response.content.filter((b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use");
+    messages.push({ role: "assistant", content: response.content });
+    const turnsLeft = maxTurns - turns;
+
+    if (toolUses.length === 0) {
+      // the model answered the customer in words: a question, or a «not available» sentence, made safe by code
+      if (restrictedSeen) return done(turns, { kind: "message", messageAr: SENSITIVE_NOT_VERIFIED_AR, reason: "restricted" }, "a restricted service was the best match");
+      const text = textOf(response.content);
+      const refusal = REFUSAL_LIKE.test(text) && !QUESTION_LIKE.test(text);
+      const untried = hitsSeen.filter((id) => !touched.has(id)).slice(0, 5);
+      if (refusal && nudges < 2 && turnsLeft >= 1) {
+        nudges += 1;
+        const why = attempts.length > 0 ? ` Attempts so far: ${attempts.map((a) => `${a.endpointId}=${a.outcome}`).join(", ")}.` : "";
+        messages.push({ role: "user", content: `Do not give up yet: nothing here proves the catalog cannot serve this request.${why} ${untried.length > 0 ? `Untried candidates from your searches: ${untried.join(", ")}. ` : "Search the catalog again with other words (other platform names, synonyms, the capability in English). "}Sample the best next candidate and propose a plan, or ask the customer ONE short question when a value is missing. Answer «not available» only when every candidate failed.` });
+        trace.push({ turn: turns, tool: "(model text)", summary: clipText(text, 60), outcome: "refusal sent back: candidates remain", error: true });
+        return null;
+      }
+      if (refusal) return done(turns, { kind: "message", messageAr: PLAN_UNAVAILABLE_AR, reason: "unavailable" }, "the model said the service is not available, and the alternatives were tried");
+      const safe = customerSafeArabic(text, providers);
+      if (!safe) {
+        // the model's words fail the customer-text check: it is asked ONCE to rephrase; if they fail again the standard question is asked. It is never turned into a refusal.
+        if (!rephrased && turnsLeft >= 1) {
+          rephrased = true;
+          messages.push({ role: "user", content: "Your message cannot be shown to the customer as written. Rephrase it as ONE short Arabic message: Arabic words only (no English or Latin letters), no markdown, no emoji, no provider, endpoint or technical name, no money amount. If you need a value from the customer, ask for it in one short question." });
+          trace.push({ turn: turns, tool: "(model text)", summary: clipText(text, 60), outcome: "customer text failed the check: sent back once to rephrase", error: true });
+          return null;
+        }
+        return done(turns, { kind: "message", messageAr: PLAN_INCOMPLETE_AR, reason: "incomplete" }, "the model's own words could not be shown to a customer, twice: the standard question was asked");
+      }
+      return done(turns, { kind: "message", messageAr: safe, reason: "clarification" });
+    }
+
+    pending = { uses: toolUses, index: 0, results: [] };
+    return null;
+  };
+
+  /** The turn ends without a plan: the turns, the model budget or the exploration budget are spent. */
+  const exhausted = (why?: string): PlannerOutcome => {
+    const needsInput = lastIssues.some((i) => CODES_NEEDING_INPUT.has(i.code));
+    if (restrictedSeen) return done(turns, { kind: "message", messageAr: SENSITIVE_NOT_VERIFIED_AR, reason: "restricted" }, "a restricted service was the best match");
+    const reason = why ?? `the ${maxTurns} turns were used`;
+    const detail = `${reason}${lastIssues.length ? `; the last refusal: ${lastIssues.map((i) => i.code).join(",")}` : ""}`;
+    if (needsInput) return done(turns, { kind: "message", messageAr: PLAN_INCOMPLETE_AR, reason: "incomplete" }, detail);
+    // A planning BUDGET that ran out is not «unavailable»: the customer gets what was found and ONE question (the old refusal stays for callers that ask for it)
+    if (input.exhaustion === "explain") return done(turns, { kind: "message", messageAr: budgetExplanationAr(attempts), reason: "incomplete" }, detail);
+    return done(turns, { kind: "message", messageAr: PLAN_UNAVAILABLE_AR, reason: "unavailable" }, detail);
+  };
+
+  const step = async (): Promise<PlannerOutcome | null> => {
+    if (finished) return finished;
+    if (pending) {
+      const turn = pending;
+      await executeTool(turn.uses[turn.index], turn.results);
+      turn.index += 1;
+      if (finished) return finished;
+      if (turn.index >= turn.uses.length) { messages.push({ role: "user", content: turn.results }); pending = null; }
+      return null;
+    }
+    return modelStep();
+  };
+
+  /** The next step calls the model or a real source (it can take most of a function invocation): a session starts it only with a fresh budget of time. */
+  const nextIsHeavy = (): boolean => !pending || ["sample_call", "propose_plan"].includes(pending.uses[pending.index]?.name ?? "");
+
+  const snapshot = (): PlannerSnapshot => ({
+    v: 1, messages, turns, usage, toolCalls, sampleCalls, explorationCostUsd, madeCalls: stats.madeCalls, failures, trace, attempts, stopReasons, restrictedSeen, nudges, lastIssues, hitsSeen,
+    hitInfo: [...hitInfo], rephrased, touched: [...touched], samples: trimSamples([...samples]), recipes: [...recipes], measured: [...measured], pending, modelErrors,
+  });
+
+  return { step, snapshot, nextIsHeavy, exhaust: exhausted, usage: () => usage, turns: () => turns, modelCostUsd: () => plannerCostUsd(usage), explorationCostUsd: () => explorationCostUsd, attempts: () => attempts, emit };
+}
+
+/** Runs a planning loop to its end in one go. */
+export async function runPlanner(input: PlannerInput): Promise<PlannerOutcome> {
+  const run = createPlannerRun(input);
+  for (;;) {
+    const out = await run.step();
+    if (out) return out;
   }
-  const needsInput = lastIssues.some((i) => CODES_NEEDING_INPUT.has(i.code));
-  if (restrictedSeen) return done(turns, { kind: "message", messageAr: SENSITIVE_NOT_VERIFIED_AR, reason: "restricted" }, "a restricted service was the best match");
-  return done(turns, { kind: "message", messageAr: needsInput ? PLAN_INCOMPLETE_AR : PLAN_UNAVAILABLE_AR, reason: needsInput ? "incomplete" : "unavailable" }, `the ${maxTurns} turns were used${lastIssues.length ? `; the last refusal: ${lastIssues.map((i) => i.code).join(",")}` : ""}`);
 }

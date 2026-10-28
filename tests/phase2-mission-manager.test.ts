@@ -512,10 +512,13 @@ describe("the model manages the mission at its decision points, inside a budget"
   it("the final review leaves one safe Arabic line for the customer's summary; an unsafe one (Latin words, a price) is dropped", async () => {
     const safe = scripted((req) => (req.kind === "final" ? { action: "final", ok: true, noteAr: "جمعنا الشركات وموظفيها وبيانات التواصل كما طلبت." } : { action: "continue" }));
     const a = await runAll(mission(), { manager: safe });
-    expect(a.notes.find((n) => n.kind === "final_ok")?.textAr).toBe("جمعنا الشركات وموظفيها وبيانات التواصل كما طلبت.");
+    // the model phrases, CODE counts: its sentence is kept (it has no number) and the delivered count of the stages is added by code
+    expect(a.notes.find((n) => n.kind === "final_ok" || n.kind === "final_gap")?.textAr).toMatch(/^جمعنا الشركات وموظفيها وبيانات التواصل كما طلبت\. وصلك/);
     const unsafe = scripted((req) => (req.kind === "final" ? { action: "final", ok: true, noteAr: "Done via tikhub for 5 USD" } : { action: "continue" }));
     const b = await runAll(mission(), { manager: unsafe });
-    expect(b.notes.some((n) => n.kind === "final_ok" || n.kind === "final_gap")).toBe(false);
+    // an unsafe sentence is dropped; the note is then only the code's own counts
+    expect(b.notes.find((n) => n.kind === "final_ok" || n.kind === "final_gap")?.textAr).toMatch(/^وصلك/);
+    expect(b.notes.some((n) => /USD|tikhub/.test(n.textAr))).toBe(false);
   });
 
   it("the real manager sends one tool call per decision on the planning model's transport and reports its real usage; its answer is parsed by code", async () => {

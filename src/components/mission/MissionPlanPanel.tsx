@@ -116,6 +116,8 @@ export interface MissionPanelContent {
   steps: PanelStep[];
   currentLineAr: string;
   delayAr?: string | null;
+  /** The time left of the running stage, shown only once its real speed is measured. */
+  remainingAr?: string | null;
   latest?: LiveRows | null;
   /** Short Arabic lines the model wrote at its decision points. */
   notesAr?: string[];
@@ -132,6 +134,7 @@ export function MissionPlanBody({ content }: { content: MissionPanelContent }) {
   return (
     <div dir="rtl" data-testid="mission-plan-body">
       <ol className="m-0 list-none p-0">{content.steps.map((s) => <MissionStepRow key={s.id} step={s} />)}</ol>
+      {content.remainingAr ? <p className="m-0 mt-2 text-[12px] text-ink2" data-testid="mission-remaining">{content.remainingAr}</p> : null}
       {content.delayAr ? <p role="status" className="m-0 mt-2 rounded-[12px] bg-sf2 px-3 py-2 text-[12px] leading-[1.8] text-ink" data-testid="mission-delay">{content.delayAr}</p> : null}
       {content.notesAr && content.notesAr.length > 0 ? (
         <ul className="m-0 mt-2 list-none space-y-1 p-0" data-testid="mission-notes">{content.notesAr.map((n, i) => <li key={i} className="text-[12px] font-light leading-[1.8] text-ink2">{n}</li>)}</ul>

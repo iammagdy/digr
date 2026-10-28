@@ -112,8 +112,10 @@ import { planChangeNoteAr, previousPlanQuoteOf } from "../../lib/planChangeNote"
 import { findRecentDuplicateRequest } from "../../lib/server/duplicateRequest";
 import { PlanRefusalError } from "../../lib/capacityRefusal";
 import { findParamProvenanceGaps, provenanceQuestionCard } from "../../lib/paramProvenance";
-import { isModelPlannerAccount, PLANNER_TURN_BUDGET_MS } from "../../lib/modelPlanner/constants";
-import { defaultModelPlannerConfig, runModelPlannerTurn, type ModelPlannerConfig } from "../../lib/modelPlanner/chatTurn";
+import { isModelPlannerAccount, PLANNER_TURN_BUDGET_MS, PLANNING_INLINE_SOFT_MS } from "../../lib/modelPlanner/constants";
+import { defaultModelPlannerConfig, runModelPlannerTurn, type ModelPlannerConfig, type ModelPlannerTurn } from "../../lib/modelPlanner/chatTurn";
+import { advancePlanningSession, sessionRequestOf, startPlanningSession } from "../../lib/modelPlanner/planningSession";
+import { persistPlannedAnswer, shapePlannedAnswer } from "../../lib/modelPlanner/plannedAnswer";
 import { plannerCostUsd } from "../../lib/modelPlanner/transport";
 import { pairRoleOf } from "../../lib/planFit";
 import { handlesInText, videosCountAr } from "../../lib/channelNames";
@@ -480,6 +482,8 @@ export interface ChatHandlerResponse {
   contentAr: string;
   outputType: LlmTurnOutput["type"];
   intent?: "chat" | "research";
+  /** A request whose planning is not finished: the page asks for the next step of this planning session (see modelPlanner/planningSession.ts). */
+  planning?: { sessionId: string };
   planQuote?: any;
   revisionQuote?: any;
   /** A validated file spec for the result on screen; the page turns it into a download of the shaped file. */
@@ -1605,10 +1609,36 @@ export class ChatHandler {
     messagesContext: PriorConversationMessage[]; turnStartTime: number; guest: boolean; stats: () => NonNullable<ChatHandlerResponse["turnStats"]>; plannerRequestId?: string;
   }): Promise<ChatHandlerResponse> {
     const { sb, turn, conversationId, assistantMsgId, userMsgId } = ctx;
-    const planned = await runModelPlannerTurn({
-      config: this.modelPlanner!, tables: sb ?? this.tables, userId: ctx.userId, conversationId, userBalance: ctx.userBalance, message: ctx.message, messagesContext: ctx.messagesContext, guest: ctx.guest,
-      deadlineAtMs: ctx.turnStartTime + PLANNER_TURN_BUDGET_MS, requestId: ctx.plannerRequestId || assistantMsgId,
-    });
+    const requestId = ctx.plannerRequestId || assistantMsgId;
+    const config = this.modelPlanner!;
+    // The planning loop is kept in a SESSION (see planningSession.ts) when its table exists: the first step runs here, and a mission that needs more than this request can hold is continued
+    // by the page's next steps or the background driver. Without the table (or for a guest) the whole loop runs in this request, as before.
+    const sessionClient = config.client ?? sb ?? this.tables;
+    const started = ctx.guest || !ctx.userId ? { ok: false as const } : await startPlanningSession(sessionClient, { id: requestId, userId: ctx.userId, conversationId, userMsgId, assistantMsgId, request: sessionRequestOf({ message: ctx.message, messagesContext: ctx.messagesContext as any, guest: ctx.guest, userBalance: ctx.userBalance }) });
+    let planned: ModelPlannerTurn;
+    let persistedBySession = false;
+    if (started.ok) {
+      const adv = await advancePlanningSession({ client: sessionClient, tables: sb ?? this.tables, config, session: started.session, startedAtMs: ctx.turnStartTime, softMs: PLANNING_INLINE_SOFT_MS });
+      if (adv.status !== "done") {
+        const delta = adv.usageDelta;
+        const tokensInPart = delta.inputTokens + delta.cacheReadTokens + delta.cacheWriteTokens;
+        turn.usage = { inputTokens: tokensInPart, outputTokens: delta.outputTokens, costUsd: plannerCostUsd(delta), calls: adv.session.state?.turns ?? 0 };
+        turn.model = config.transport.model;
+        return {
+          conversationId, messageId: assistantMsgId, role: "assistant", contentAr: "", outputType: "planning_pending" as any, intent: "research",
+          planning: { sessionId: requestId },
+          tokensUsed: { input: tokensInPart, output: delta.outputTokens, costUsd: plannerCostUsd(delta) },
+          turnStats: { ...ctx.stats(), modelCalls: adv.session.state?.turns ?? 0, catalogSearches: adv.session.state?.toolCalls ?? 0 },
+        } as ChatHandlerResponse;
+      }
+      planned = adv.planned;
+      persistedBySession = true;
+    } else {
+      planned = await runModelPlannerTurn({
+        config, tables: sb ?? this.tables, userId: ctx.userId, conversationId, userBalance: ctx.userBalance, message: ctx.message, messagesContext: ctx.messagesContext, guest: ctx.guest,
+        deadlineAtMs: ctx.turnStartTime + PLANNER_TURN_BUDGET_MS, requestId,
+      });
+    }
     // Internal log: the codes of the validation failures (never a customer value), the turns, the tool calls and the sample calls.
     console.info(JSON.stringify({ tag: "model_planner_turn", kind: planned.kind, reason: planned.kind === "message" ? planned.reason : undefined, turns: planned.outcome.turns, toolCalls: planned.outcome.toolCalls, sampleCalls: planned.outcome.sampleCalls, failureCodes: planned.outcome.failures.map((f) => f.map((i) => i.code)), stopReasons: planned.outcome.stopReasons, endReason: planned.outcome.endReason, attempts: planned.outcome.attempts.map((a) => `${a.endpointId}=${a.outcome}${a.httpStatus ? `/${a.httpStatus}` : ""}`) }));
     const usage = planned.outcome.usage;
@@ -1616,35 +1646,13 @@ export class ChatHandler {
     const tokensIn = usage.inputTokens + usage.cacheReadTokens + usage.cacheWriteTokens;
     turn.usage = { inputTokens: tokensIn, outputTokens: usage.outputTokens, costUsd, calls: planned.outcome.turns };
     turn.model = this.modelPlanner!.transport.model;
-    const isPlan = planned.kind === "plan";
-    const refusal = !isPlan && (planned.reason === "refused" || planned.reason === "restricted" || planned.reason === "unavailable" || planned.reason === "no_model");
-    const outputType: ChatHandlerResponse["outputType"] = isPlan ? "propose_plan" : refusal ? "refuse" : "answer_question";
-    const clarificationItems = !isPlan ? (planned.clarificationItems as any[] | undefined) : undefined;
-    const quote = isPlan ? (planned.planQuote as any) : null;
-    const status = resolveRequestAttemptStatus({ intent: "research", outputType, hasQuote: isPlan });
-    try {
-      if (sb) {
-        await Promise.all([
-          sb.from("messages").update({ content_ar: planned.contentAr, clarification_items: clarificationItems ?? null, plan: quote ? { items: quote.items, summaryAr: quote.summaryAr } : null, quote }).eq("id", assistantMsgId),
-          sb.from("messages").update({ request_status: status, request_quote_id: quote?.quoteId ?? null }).eq("id", userMsgId),
-        ]);
-      } else {
-        await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: assistantMsgId, data: { content: planned.contentAr, status: "ready", ...(quote ? { planQuoteId: quote.quoteId } : {}) } });
-        await this.tables.updateRow({ databaseId: "digr", tableId: "messages", rowId: userMsgId, data: { requestStatus: status, ...(quote ? { requestQuoteId: quote.quoteId } : {}) } });
-      }
-    } catch (persistError) {
-      console.warn(`[chat:model_planner_persist_failed] reason=${toSafeReasonCode(persistError, "model_planner_persist")}`);
-    }
+    const shaped = shapePlannedAnswer(planned);
+    if (!persistedBySession) await persistPlannedAnswer({ sb, tables: this.tables, assistantMsgId, userMsgId }, planned, shaped);
     return {
       conversationId,
       messageId: assistantMsgId,
       role: "assistant",
-      contentAr: planned.contentAr,
-      outputType,
-      intent: "research",
-      ...(isPlan ? { planQuote: quote } : {}),
-      ...(clarificationItems ? { clarificationItems, clarificationQuestions: clarificationItems.map((c: any) => c.text), clarificationIntro: planned.contentAr } : {}),
-      ...(refusal ? { refusalReason: planned.contentAr } : {}),
+      ...shaped.response,
       tokensUsed: { input: tokensIn, output: usage.outputTokens, costUsd },
       turnStats: { ...ctx.stats(), modelCalls: planned.outcome.turns, catalogSearches: planned.outcome.toolCalls },
     };
