@@ -1,5 +1,5 @@
 import {
-  AGENT_HEARTBEAT_INTERVAL_MS, AGENT_MEMORY_ADMIT_LIMIT_MB, AGENT_MEMORY_HARD_LIMIT_MB, AGENT_MEMORY_RECYCLE_AFTER_MS, AGENT_MEMORY_WATCH_MS, AGENT_MISSION_LEASE_SECONDS, AGENT_POLL_INTERVAL_MS, AGENT_WORKER_CONCURRENCY,
+  AGENT_HEARTBEAT_INTERVAL_MS, AGENT_MEMORY_ADMIT_LIMIT_MB, AGENT_MEMORY_HARD_LIMIT_MB, AGENT_MEMORY_RECYCLE_AFTER_MS, AGENT_MEMORY_RECYCLE_MIN_UPTIME_MS, AGENT_MEMORY_WATCH_MS, AGENT_MISSION_LEASE_SECONDS, AGENT_POLL_INTERVAL_MS, AGENT_WORKER_CONCURRENCY,
 } from "../../src/lib/agentMission/constants";
 import { readMemory as readProcessMemory, type MemoryReading } from "./memory";
 import type { AgentStore, MissionRecord } from "./types";
@@ -11,7 +11,7 @@ import type { AgentStore, MissionRecord } from "./types";
  *    worker restarted and a new one has another id) is not renewed, its lease ends and another run takes it over;
  *  - records the real peak memory of every run (the worker, and the worker with its processes) as an internal event of the mission (admin only);
  *  - takes NO new mission while the memory of the worker and its processes is at or above AGENT_MEMORY_ADMIT_LIMIT_MB (the mission stays queued, nothing is leased; it starts when the memory falls), and
- *    an IDLE worker that stays at or above that limit for AGENT_MEMORY_RECYCLE_AFTER_MS asks to be restarted (`onRecycle`) so the queue never waits for ever on a swollen heap; it
+ *    an IDLE worker (up for at least AGENT_MEMORY_RECYCLE_MIN_UPTIME_MS) that stays at or above that limit for AGENT_MEMORY_RECYCLE_AFTER_MS asks to be restarted (`onRecycle`) so the queue never waits for ever on a swollen heap; it
  *    watches the memory of a running mission: at AGENT_MEMORY_HARD_LIMIT_MB it calls `onMemoryPressure` (the entry point stops the model run and the mission goes back to the queue) BEFORE the platform kills the dyno;
  *  - writes a heartbeat row every 30 seconds, with the memory it uses (rss_mb and tree_rss_mb) (the admin page calls the worker alive while the last beat is younger than 90 seconds).
  * It is written over an injected store, run function and clock, so the tests drive it with no database and no timers.
@@ -37,6 +37,8 @@ export interface WorkerDeps {
   /** Called once when the IDLE worker has stayed at or above the admit limit for the recycle time: the entry point stops the loop so the platform restarts the process with a fresh heap. */
   onRecycle?: (reading: MemoryReading) => void;
   memoryRecycleAfterMs?: number;
+  /** A worker younger than this never asks to be restarted (a process that boots above the limit must not restart in a loop). */
+  memoryRecycleMinUptimeMs?: number;
   leaseSeconds?: number;
   now?: () => Date;
   log?: (line: string) => void;
@@ -53,6 +55,8 @@ export function createWorker(deps: WorkerDeps) {
   /** What the dyno counts: the worker and the processes it started; the worker alone where the tree cannot be read. */
   const usedMb = (m: MemoryReading) => (m.treeRssMb !== null && Number.isFinite(m.treeRssMb) ? m.treeRssMb : m.rssMb);
   const recycleAfterMs = deps.memoryRecycleAfterMs ?? AGENT_MEMORY_RECYCLE_AFTER_MS;
+  const recycleMinUptimeMs = deps.memoryRecycleMinUptimeMs ?? AGENT_MEMORY_RECYCLE_MIN_UPTIME_MS;
+  const startedAt = now().getTime();
   let waitingForMemory = false;
   let waitingSince: number | null = null;
   let recycled = false;
@@ -88,7 +92,7 @@ export function createWorker(deps: WorkerDeps) {
     if (!blocked) waitingSince = null;
     else if (active.size === 0) {
       waitingSince = waitingSince ?? now().getTime();
-      if (!recycled && now().getTime() - waitingSince >= recycleAfterMs) {
+      if (!recycled && now().getTime() - waitingSince >= recycleAfterMs && now().getTime() - startedAt >= recycleMinUptimeMs) {
         recycled = true;
         deps.log?.(`memory_recycle tree=${usedMb(reading)}MB: idle for ${Math.round((now().getTime() - waitingSince) / 1000)}s at or above ${admitLimit}MB, asking for a restart with a fresh heap`);
         try { deps.onRecycle?.(reading); } catch { /* best effort */ }
