@@ -47,10 +47,14 @@ const STABLE_SPREAD = 0.5;
 const SMOOTHING = 0.3;
 /** With no event for this long the estimate is not shown (it would only count down to a wrong «less than a minute»). */
 const QUIET_HIDE_MS = 90_000;
+/** The shown time may rise by this share (and by at least RISE_MIN_SECONDS) only after RISE_AFTER_EVENTS events in a row said so. */
+const RISE_TOLERANCE = 0.1;
+const RISE_MIN_SECONDS = 15;
+const RISE_AFTER_EVENTS = 3;
 
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
-export function trackMission(input: { stages: ReadonlyArray<TrackerStageInput>; events: ReadonlyArray<TrackerEventInput>; finished?: boolean; now: number }): TrackerResult {
+export function trackMission(input: { stages: ReadonlyArray<TrackerStageInput>; events: ReadonlyArray<TrackerEventInput>; finished?: boolean; /** The items of each stage IN THE FILE the customer received (the settlement's own count): when the mission is finished this is the number shown, whatever the live events said on the way. */ finalSaved?: ReadonlyArray<number | undefined>; now: number }): TrackerResult {
   const stages: StageTrack[] = input.stages.map((s) => ({ n: s.n, titleAr: s.titleAr, noun: itemNounOf(s.titleAr), planned: Math.max(0, Math.floor(s.expectedRows)), pagesRead: 0, found: 0, checked: 0, accepted: 0, excluded: 0, pending: 0, saved: 0, ratio: 0, state: "waiting" }));
   const bases = stages.map(() => ({ pages: 0, found: 0, lastPages: 0, lastFound: 0 }));
   const yields = new Map(input.stages.map((s) => [s.n, s.yieldShare]));
@@ -103,7 +107,10 @@ export function trackMission(input: { stages: ReadonlyArray<TrackerStageInput>; 
     if (Number.isFinite(at)) samples.push({ at, p: peak });
   }
 
-  for (const s of stages) {
+  for (const [i, s] of stages.entries()) {
+    // the end: the number of the stage is the count of its items in the delivered file (never the last live number, which could be higher or lower)
+    const final = input.finished ? input.finalSaved?.[i] : undefined;
+    if (typeof final === "number" && Number.isFinite(final)) s.saved = Math.max(0, Math.floor(final));
     s.state = input.finished || (s.planned > 0 && s.saved >= s.planned) ? "done" : "waiting";
     if (input.finished) s.ratio = Math.max(s.ratio, 1);
   }
@@ -123,6 +130,7 @@ export function remainingFrom(samples: ReadonlyArray<{ at: number; p: number }>,
   let shown: number | null = null;
   let lastAt = startedAt;
   let lastP = 0;
+  let riseStreak = 0;
   for (const s of samples) {
     const elapsed = s.at - startedAt;
     if (shown !== null) shown = Math.max(0, shown - (s.at - lastAt) / 1000);
@@ -131,7 +139,11 @@ export function remainingFrom(samples: ReadonlyArray<{ at: number; p: number }>,
     if (s.p < MIN_RATIO_FOR_ETA || elapsed < MIN_ELAPSED_MS) continue;
     const raw = (elapsed / 1000) * (1 - s.p) / s.p;
     raws.push(raw);
-    shown = shown === null ? raw : (1 - SMOOTHING) * shown + SMOOTHING * raw;
+    if (shown === null) { shown = raw; continue; }
+    const next = (1 - SMOOTHING) * shown + SMOOTHING * raw;
+    // NEVER UP AND DOWN: the shown time follows the clock down and the estimates smoothly; it rises only when the estimates have said «longer» for several events in a row (one slow page does not make the time jump up)
+    if (next > shown * (1 + RISE_TOLERANCE) && next - shown > RISE_MIN_SECONDS) { riseStreak += 1; if (riseStreak >= RISE_AFTER_EVENTS) { shown = next; riseStreak = 0; } }
+    else { riseStreak = 0; shown = Math.min(next, shown * (1 + RISE_TOLERANCE)); }
   }
   if (shown === null || raws.length < 3) return null;
   const recent = raws.slice(-3);

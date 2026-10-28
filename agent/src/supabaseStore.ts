@@ -18,6 +18,29 @@ export function createSupabaseStore(client: any): AgentStore {
       const body = typeof content === "string" ? Buffer.from(content, "utf8") : content;
       must(await bucket().upload(path(missionId, rel), body, { contentType, upsert: true }), "upload");
     },
+    async putNew(missionId, rel, content, contentType) {
+      const body = typeof content === "string" ? Buffer.from(content, "utf8") : content;
+      // create-only (upsert off): the item store never overwrites an object, so no read of it can be stale. An object that already exists is the same write seen twice (the path carries its own nonce): done.
+      const res = await bucket().upload(path(missionId, rel), body, { contentType, upsert: false, cacheControl: "31536000" });
+      if (res.error) {
+        const e = res.error as { statusCode?: string | number; message?: string };
+        const exists = String(e.statusCode ?? "") === "409" || /already exists|duplicate/i.test(String(e.message ?? ""));
+        if (!exists) throw new Error(`upload: ${String(e.message ?? "failed").slice(0, 160)}`);
+      }
+    },
+    async listFiles(missionId, folder) {
+      const dir = path(missionId, folder.replace(/\/+$/, ""));
+      const out: Array<{ name: string; size: number }> = [];
+      // the storage listing reads the database (not the CDN) in pages of at most 1000: consistent right after a write
+      for (let offset = 0; offset < 100_000; offset += 1000) {
+        const { data, error } = await bucket().list(dir, { limit: 1000, offset, sortBy: { column: "name", order: "asc" } });
+        if (error) throw new Error(`list: ${String(error.message ?? "failed").slice(0, 160)}`);
+        const page = (data ?? []) as Array<{ name: string; id?: string | null; metadata?: { size?: number } | null }>;
+        for (const o of page) if (o.id) out.push({ name: `${folder.replace(/\/+$/, "")}/${o.name}`, size: Number(o.metadata?.size ?? 0) });
+        if (page.length < 1000) break;
+      }
+      return out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    },
     async getFileBytes(missionId, rel) {
       const { data, error } = await bucket().download(path(missionId, rel));
       if (error || !data) return null;

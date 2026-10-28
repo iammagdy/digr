@@ -1,7 +1,6 @@
 import { formatAr, toArabicDigits } from "../arabicDigits";
-import { pointsAr } from "../pointsFormat";
 import { AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR } from "./constants";
-import { deliveredOfAr, itemNounOf, knownItemNoun } from "./itemNoun";
+import { deliveredOfAr, GENERIC_ITEM_NOUN, itemNounOf, knownItemNoun } from "./itemNoun";
 import { heldPointsOf, moneyLineAr } from "./moneyText";
 
 /**
@@ -22,6 +21,8 @@ export interface MissionNoticeFacts {
   noun?: string;
   /** The job the approval reserved under (none for a mission that never reserved anything). */
   hasJob: boolean;
+  /** Why fewer items than requested were delivered, as the run recorded it («لأن المصدر لم يعد يعطي نتائج أخرى لهذا الطلب»): a partial notice states it instead of the general sentence. */
+  shortfallClauseAr?: string;
 }
 
 export interface MissionNotice {
@@ -47,20 +48,21 @@ export function buildMissionNotice(kind: MissionNoticeKind, f: MissionNoticeFact
     return { kind, title, body: AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR, link: REQUESTS, email: null };
   }
   const t = toArabicDigits(String(titleIn ?? "").replace(/[«»]/g, "").trim()) || "مهمتك";
-  const noun = knownItemNoun(f.noun ?? "") ?? itemNounOf(t);
-  const money = moneyLineAr({ reservedPoints: heldPointsOf(f), chargedPoints: f.chargedPoints });
+  // the noun the mission was settled with (a plan whose stages name different things, posts and their comments, says «عنصر»: the panel says the same)
+  const noun = knownItemNoun(f.noun ?? "") ?? (f.noun === GENERIC_ITEM_NOUN.singular ? GENERIC_ITEM_NOUN : itemNounOf(t));
+  const money = moneyLineAr({ reservedPoints: heldPointsOf(f), chargedPoints: f.chargedPoints, delivered: f.delivered, noun });
   const deliveredOf = deliveredOfAr(f.delivered, f.planned, noun);
   if (kind === "completed" || kind === "partial") {
     const partial = kind === "partial";
     const lead = partial
-      ? `تم تسليم ${deliveredOf} فقط في مهمتك «${t}»؛ هذا كل ما وُجد مطابقًا لطلبك في المصادر.`
+      ? `تم تسليم ${deliveredOf} فقط في مهمتك «${t}»؛ ${f.shortfallClauseAr ? `لم يكتمل العدد المطلوب ${f.shortfallClauseAr}.` : "هذا كل ما وُجد مطابقًا لطلبك في المصادر."}`
       : `تم تسليم ${deliveredOf} في مهمتك «${t}»، والملفات جاهزة للتحميل.`;
     const title = partial ? `«${t}» بعدد أقل: ${deliveredOf}` : `«${t}»: تم تسليم ${deliveredOf}`;
     return {
-      kind, title, body: `${lead} ${money}`, link: REQUESTS,
+      kind, title, body: `${lead} ${money}.`, link: REQUESTS,
       email: {
         subject: partial ? `${t} — تم تسليم ${formatAr(f.delivered)} من ${formatAr(f.planned)} فقط` : `${t} — تم تسليم ${deliveredOf}`,
-        preheader: partial ? `${f.chargedPoints > 0 ? `خُصم ${pointsAr(Math.round(f.chargedPoints))} فقط مقابل ما سُلّم` : "لم يُخصم شيء"}، والباقي لم يُحسب عليك.` : `خُصم ${pointsAr(Math.round(f.chargedPoints))} مقابل ما سُلّم فقط، وعاد كامل الحجز المؤقت إليك.`,
+        preheader: money,
         heading: partial ? `اكتملت مهمة «${t}» بعدد أقل من المطلوب` : `ملفات «${t}» جاهزة للتحميل`,
         lead, detail1: money, detail2: "", buttonLabel: "افتح طلبك وحمّل الملفات",
       },
@@ -72,7 +74,7 @@ export function buildMissionNotice(kind: MissionNoticeKind, f: MissionNoticeFact
   const detail1 = money;
   const title = unserved ? `لا يمكن تنفيذ «${t}» بدقة الآن` : `تعذّر تنفيذ مهمتك: ${t}`;
   return {
-    kind, title, body: `${lead} ${detail1}`, link: REQUESTS,
+    kind, title, body: `${lead} ${detail1}.`, link: REQUESTS,
     email: {
       subject: unserved ? `${t} — لا يمكن تنفيذه بدقة الآن` : `${t} — تعذّر التنفيذ ولم يُخصم شيء`,
       preheader: f.hasJob ? "لم يُخصم منك شيء، وعاد الحجز المؤقت كاملًا." : "لم يُحجز أي رصيد منك ولم يُخصم شيء.",

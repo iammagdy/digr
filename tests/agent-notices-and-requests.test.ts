@@ -44,7 +44,7 @@ describe("the completion e-mail and the in-site notice are about THIS mission: t
     // (the old lines: subject «… — سُلّم ٣٠٠ من ٣٠٠ صفًا» and detail2 containing «حجز مؤقت مُحرَّر ١٠ نقاط». The noun is the request's («تغريدة», never «صف»), and the money is said exactly as the wallet shows it: the hold (٢١٠), the charge (٢٠٠) and the whole hold released (٢١٠), never the net ١٠)
     expect(done.email!.subject).toBe("تغريدات عن محمد صلاح — تم تسليم ٣٠٠ من ٣٠٠ تغريدة");
     expect(done.email!.preheader).toContain("خُصم ٢٠٠ نقطة");
-    expect(done.email!.detail1).toBe("حُجز مؤقتًا ٢١٠ نقطة، وخُصم ٢٠٠ نقطة مقابل ما سُلّم، وحجز مؤقت مُحرَّر ٢١٠ نقطة.");
+    expect(done.email!.detail1).toBe("خُصم ٢٠٠ نقطة مقابل ٣٠٠ تغريدة");
     expect(done.email!.detail2).toBe("");
     expect(done.email!.heading).toBe("ملفات «تغريدات عن محمد صلاح» جاهزة للتحميل");
     const part = buildMissionNotice("partial", CASES[2].facts, TITLE);

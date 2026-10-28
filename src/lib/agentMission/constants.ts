@@ -119,6 +119,9 @@ export const MISSION_INTERNAL_COUNT_KEYS = ["mem_phase", "mem_start_rss_mb", "me
   // the report of the check of items (internal; the admin reads it): looked at, accepted by rule (and on what basis), accepted by the model, left out (and why), still pending, review beyond its usual budget
   "chk_stage", "chk_examined", "chk_by_rule", "chk_by_model", "chk_excluded", "chk_pending", "chk_review_extended",
   "chk_rule_full_name_context", "chk_rule_full_name", "chk_rule_terms_context", "chk_rule_terms_only",
+  "chk_found", "chk_new", "chk_dup", "chk_unchecked", "chk_saved",
+  // the admin flag of a settlement whose numbers did not all agree: the items built from the log, in the file, and in the writer's memory
+  "adm_flag", "adm_store", "adm_file", "adm_memory",
   "chk_ex_no_text", "chk_ex_no_term", "chk_ex_mention_only", "chk_ex_other_person", "chk_ex_uncertain", "chk_ex_not_reviewed", "chk_ex_review_no", "chk_ex_review_failed"] as const;
 export const AGENT_POLL_INTERVAL_MS = 5_000;
 /** The worker writes a heartbeat row this often; the admin page calls it alive while the last beat is younger than AGENT_HEARTBEAT_ALIVE_MS. */
@@ -185,6 +188,8 @@ export const AGENT_INLINE_ROWS_MAX = 200;
 export const AGENT_COLLECT_MAX_PAGES = 60;
 export const AGENT_PLANNING_MAX_TURNS = 60;
 export const AGENT_EXECUTION_MAX_TURNS = 400;
+/** A model-driven execution that ends while matching items are still needed and a source has more pages is followed by at most this many further rounds. */
+export const AGENT_EXECUTION_CONTINUE_ROUNDS = 2;
 export const AGENT_PLANNING_WALL_MS = 20 * 60_000;
 export const AGENT_EXECUTION_WALL_MS = 6 * 3600_000;
 

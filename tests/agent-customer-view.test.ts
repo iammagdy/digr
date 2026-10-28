@@ -139,7 +139,8 @@ describe("the live panel and the queue", () => {
   it("a finished mission says what was delivered, what was charged and what came back; partial when fewer rows than planned", () => {
     const done = customerMissionView({ mission: row({ status: "completed", delivered_units: 120, charged_points: 28, reserved_points: 32, summary_ar: "اكتملت المهمة.", files: [{ name: "result.xlsx", kind: "xlsx" }, { name: "result.csv", kind: "csv" }] }), events: [] });
     expect(done.phase).toBe("done");
-    expect(done.resultLinesAr.join(" ")).toContain("حجز مؤقت مُحرَّر");
+    // one money line: what was charged and for how many items (the hold and its release are the wallet's own rows)
+    expect(done.resultLinesAr[done.resultLinesAr.length - 1]).toBe("خُصم ٢٨ نقطة مقابل ١٢٠ عنصرًا.");
     expect(done.files.map((f) => f.labelAr)).toEqual(["تنزيل ملف إكسل", "تنزيل نسخة سي إس في"]);
     expect(done.steps[done.steps.length - 1]).toMatchObject({ id: "files", state: "done" });
     const partial = customerMissionView({ mission: row({ status: "completed", delivered_units: 40, charged_points: 9, reserved_points: 32 }), events: [] });

@@ -109,23 +109,28 @@ describe("C. «صف» and «سجل» are not customer words (the agent's text is
   });
 });
 
-describe("D. the money is said exactly as the wallet shows it (hold, charge, the whole hold released)", () => {
+describe("D. the money is said in ONE line: the charge and the items in the file (the hold and its release are the wallet's own rows)", () => {
   it("the live mission: reserve -279, charge -202, release +279", () => {
-    expect(moneyLineAr({ reservedPoints: 279, chargedPoints: 202 })).toBe("حُجز مؤقتًا ٢٧٩ نقطة، وخُصم ٢٠٢ نقطة مقابل ما سُلّم، وحجز مؤقت مُحرَّر ٢٧٩ نقطة.");
-    expect(moneyLineAr({ reservedPoints: 279, chargedPoints: 0 })).toBe("حُجز مؤقتًا ٢٧٩ نقطة، ولم يُخصم شيء، وحجز مؤقت مُحرَّر ٢٧٩ نقطة.");
-    expect(moneyLineAr({ reservedPoints: 0, chargedPoints: 0 })).toBe("لم يُحجز أي رصيد ولم يُخصم شيء.");
+    // ONE LINE per mission (owner decision of 2026-10-29): what was charged and for how many items IN THE FILE; the hold and its release are the wallet's own rows, grouped under this line
+    const tweet = knownItemNoun("تغريدة")!;
+    expect(moneyLineAr({ reservedPoints: 279, chargedPoints: 202, delivered: 250, noun: tweet })).toBe("خُصم ٢٠٢ نقطة مقابل ٢٥٠ تغريدة");
+    expect(moneyLineAr({ reservedPoints: 200, chargedPoints: 128, delivered: 192, noun: tweet })).toBe("خُصم ١٢٨ نقطة مقابل ١٩٢ تغريدة");
+    expect(moneyLineAr({ reservedPoints: 279, chargedPoints: 0, delivered: 0, noun: tweet })).toBe("لم يُخصم شيء؛ حجز مؤقت مُحرَّر ٢٧٩ نقطة");
+    expect(moneyLineAr({ reservedPoints: 0, chargedPoints: 0, delivered: 0, noun: tweet })).toBe("لم يُحجز أي رصيد ولم يُخصم شيء");
     expect(heldPointsOf({ reservedPoints: 279, chargedPoints: 202, releasedPoints: 77 })).toBe(279);
     // the older shape of the facts (no hold given): the hold is the charge plus what came back
     expect(heldPointsOf({ chargedPoints: 202, releasedPoints: 77 })).toBe(279);
   });
 
-  it.each(TYPES)("$name: the notification and the e-mail state 279 / 202 / 279 and never the net 77", ({ stage, subject, noun }) => {
+  it.each(TYPES)("$name: the notification and the e-mail state the one line (the charge for the items in the file) and never the net 77", ({ stage, subject, noun }) => {
     const title = missionTitleAr({ plan: planOf(stage, subject), requestText: "" });
     const n = buildMissionNotice("partial", { delivered: 250, planned: 300, chargedPoints: 202, releasedPoints: 77, reservedPoints: 279, noun, hasJob: true }, title);
     const e = n.email!;
     const all = [n.title, n.body, e.subject, e.preheader, e.heading, e.lead, e.detail1, e.detail2].join(" | ");
-    expect(n.body).toContain("حُجز مؤقتًا ٢٧٩ نقطة، وخُصم ٢٠٢ نقطة مقابل ما سُلّم، وحجز مؤقت مُحرَّر ٢٧٩ نقطة.");
-    expect(e.detail1).toBe("حُجز مؤقتًا ٢٧٩ نقطة، وخُصم ٢٠٢ نقطة مقابل ما سُلّم، وحجز مؤقت مُحرَّر ٢٧٩ نقطة.");
+    const line = `خُصم ٢٠٢ نقطة مقابل ${countAr(250, knownItemNoun(noun)!)}`;
+    expect(n.body).toContain(`${line}.`);
+    expect(e.detail1).toBe(line);
+    expect(e.preheader).toBe(line);
     expect(all).not.toContain("٧٧");
     expect(all).not.toMatch(/[0-9]/);
     expect(checkCustomerText(all, { maxChars: 2000 }).issues).toEqual([]);
@@ -133,7 +138,7 @@ describe("D. the money is said exactly as the wallet shows it (hold, charge, the
 
   it("a mission that delivered nothing, and a failure with no hold", () => {
     const failed = buildMissionNotice("failed", { delivered: 0, planned: 300, chargedPoints: 0, releasedPoints: 279, reservedPoints: 279, hasJob: true }, "تغريدات عن محمد صلاح");
-    expect(failed.body).toContain("حُجز مؤقتًا ٢٧٩ نقطة، ولم يُخصم شيء، وحجز مؤقت مُحرَّر ٢٧٩ نقطة.");
+    expect(failed.body).toContain("لم يُخصم شيء؛ حجز مؤقت مُحرَّر ٢٧٩ نقطة.");
     const none = buildMissionNotice("unserved", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false }, "تغريدات عن محمد صلاح");
     expect(none.body).toContain("لم يُحجز أي رصيد ولم يُخصم شيء.");
   });
@@ -154,7 +159,7 @@ describe("C + D. ONE delivered count everywhere: no text says a number that diff
     // the stored summary of an older mission carries a number (٣٠٠) that disagrees with the delivered count: it is not shown
     expect(view.resultSummaryAr).toBeNull();
     expect(view.resultLinesAr[0]).toBe(`تم تسليم ${deliveredOfAr(250, 300, knownItemNoun(noun)!)}.`);
-    expect(view.resultLinesAr[1]).toBe("حُجز مؤقتًا ٢٧٩ نقطة، وخُصم ٢٠٢ نقطة مقابل ما سُلّم، وحجز مؤقت مُحرَّر ٢٧٩ نقطة.");
+    expect(view.resultLinesAr[1]).toBe(`خُصم ٢٠٢ نقطة مقابل ${countAr(250, knownItemNoun(noun)!)}.`);
 
     const title = missionTitleAr({ plan: planOf(stage, subject), requestText: "" });
     const notice = buildMissionNotice("partial", { delivered: 250, planned: 300, chargedPoints: 202, releasedPoints: 77, reservedPoints: 279, noun, hasJob: true }, title);
@@ -208,7 +213,7 @@ describe("F. the e-mail template draws no empty paragraph when the app has nothi
     const e = n.email!;
     const { html, subject } = renderEmailTemplate("job-update", { Name: "منى", Subject: e.subject, Preheader: e.preheader, Heading: e.heading, Lead: e.lead, DetailOne: e.detail1, DetailTwo: e.detail2, ButtonLabel: e.buttonLabel, JobURL: "https://diger.tech/dashboard/chat?c=1" });
     expect(subject).toBe(e.subject);
-    expect(html).toContain("حُجز مؤقتًا ٢٠٠ نقطة، وخُصم ٢٠٠ نقطة مقابل ما سُلّم، وحجز مؤقت مُحرَّر ٢٠٠ نقطة.");
+    expect(html).toContain("خُصم ٢٠٠ نقطة مقابل ٣٠٠ تغريدة");
     expect(html).not.toMatch(/<p\b[^>]*>\s*<\/p>/);
   });
 });
@@ -218,6 +223,8 @@ describe("C + D. end to end: a model summary that names a number is never shown 
     const SPEC = { subject_ar: "محمد صلاح لاعب كرة القدم", terms: ["محمد صلاح"], context_terms: ["هدف"], text_columns: ["text"] };
     const items = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `t${i}`, text: `محمد صلاح يسجل هدفًا جديدًا رقم ${i}`, url: `https://x.example/s/t${i}`, author: "fan", created: "2026-10-20T10:00:00Z" }));
     const r = await replay({
+      // this test is about the MODEL-driven path (a plan with no execution recipe, or the owner's switch off): the code engine is off for it
+      deps: (base) => ({ ...base, engine: false }),
       request: "هات ٥ تغريدات عن محمد صلاح",
       planning: [
         { tool: "catalog_search", args: { words: ["tweets", "search"], platform: "x", limit: 5 } },
@@ -244,7 +251,7 @@ describe("C + D. end to end: a model summary that names a number is never shown 
     expect(r.finalView.resultLinesAr[0]).toBe("تم تسليم ٥ تغريدات من ٥ تغريدات.");
     const reserved = Number(r.mission.reserved_points);
     const charged = Number(r.mission.charged_points);
-    expect(r.finalView.resultLinesAr[1]).toBe(moneyLineAr({ reservedPoints: reserved, chargedPoints: charged }));
+    expect(r.finalView.resultLinesAr[1]).toBe(`${moneyLineAr({ reservedPoints: reserved, chargedPoints: charged, delivered: 5, noun: knownItemNoun("تغريدة")! })}.`);
     const notice = r.notices[r.notices.length - 1];
     expect(notice.facts).toMatchObject({ delivered: 5, planned: 5, reservedPoints: reserved, releasedPoints: reserved, chargedPoints: charged, noun: "تغريدة" });
   });

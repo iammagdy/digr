@@ -1,7 +1,7 @@
-import { AGENT_COLLECT_MAX_PAGES, AGENT_EXCLUDED_ROWS_KEPT, AGENT_INLINE_ROWS_MAX, SANDBOX_INLINE_RESULT_CHARS } from "../../src/lib/agentMission/constants";
-import { classifyRowDetailed, normalizeText, type RelevanceReason, type RuleBasis } from "../../src/lib/agentMission/relevance";
+import { AGENT_COLLECT_MAX_PAGES, AGENT_INLINE_ROWS_MAX, SANDBOX_INLINE_RESULT_CHARS } from "../../src/lib/agentMission/constants";
+import { normalizeText } from "../../src/lib/agentMission/relevance";
 import type { MissionPricingSettings } from "../../src/lib/missionPricing";
-import { CONTACT_KINDS, isContactSource, verifyContactValue } from "../../src/lib/agentMission/contacts";
+import { isContactSource } from "../../src/lib/agentMission/contacts";
 import { describeAgentSource, isAgentSourceId, searchAgentSources, SESSION_RESTRICTED_SOURCES } from "../../src/lib/agentMission/sources";
 import { validateAndPricePlan, type PricedPlan, type RecordedCall } from "../../src/lib/agentMission/plan";
 import { checkCustomerText } from "../../src/lib/agentMission/text";
@@ -14,7 +14,10 @@ import { RAW_PATH } from "./gateway";
 import type { WebGateway } from "./webGateway";
 import { runInSandbox, type SandboxResult } from "./sandbox";
 import type { Reviewer } from "./review";
-import { emptyStageChecks, excludedTotal, PENDING_REASONS, readChecks, writeChecks } from "./checks";
+import { ItemStore, readSnapshot, type StopReason } from "./items/itemStore";
+import { ingestRows } from "./items/ingest";
+import { mirrorLegacyFiles } from "./items/mirror";
+import { codeRunPath, deriveEngineSpecs, type CodeRun } from "./engine/spec";
 import type { AgentStore, CallPhase, MissionRecord } from "./types";
 
 /**
@@ -43,8 +46,18 @@ export interface RunState {
   ranking: string[] | null;
   /** The sources this run has called (or been refused a call to). */
   tried: Set<string>;
+  /** The full inputs of every treg_call of this run, by call id (the call log keeps short values only): the plan's execution recipe is derived from them. */
+  callParams: Map<string, Record<string, unknown>>;
+  /** The code of every run_code of this run, by output id: the plan's execution recipe is derived from the mapping code the agent ran on the measured page. */
+  codeRuns: Map<string, CodeRun>;
+  /** How many times finish was refused because matching items were still needed and the source had more (a limit: the model is never stuck for ever). */
+  finishRefusals: number;
+  /** Per source stream (a collect_pages source and its inputs): whether the last read says the source has more pages. */
+  moreAvailable: Map<string, boolean>;
 }
-export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set() });
+export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), callParams: new Map(), codeRuns: new Map(), finishRefusals: 0, moreAvailable: new Map() });
+/** The most times finish is refused for the same reason in one run. */
+export const FINISH_REFUSALS_MAX = 3;
 
 export interface ToolContext {
   phase: CallPhase;
@@ -63,6 +76,8 @@ export interface ToolContext {
   review?: Reviewer;
   /** The markup and the minimum charge in force when the plan is priced. */
   pricingSettings?: MissionPricingSettings;
+  /** The mission's one item store (execution phase). Opened on first use when the caller gave none. */
+  items?: ItemStore;
 }
 
 const FILE_ID = /^(call|out)_\d{4,6}$/;
@@ -94,15 +109,22 @@ function previewOf(value: unknown): unknown {
   return value;
 }
 
-/** Unique final rows of the delivered stages that were saved (each already linked to a real parent row by save_rows), never above the approved volume. */
+/**
+ * Unique final rows of the delivered stages that were saved (each already linked to a real parent row by the check), never above the approved volume. Read FRESH from the item store (the log is listed and every segment read), never
+ * from a copy in memory or from an object that may have been overwritten. A mission an older worker started (rows in `rows/<stage>.json`, no log) is read from that file.
+ */
 export async function countDeliveredRows(store: AgentStore, missionId: string, plan: PricedPlan): Promise<{ delivered: number; perStage: Record<string, number> }> {
+  const snap = await readSnapshot(store, missionId);
   const perStage: Record<string, number> = {};
   let delivered = 0;
   for (const stage of plan.stages) {
-    const raw = await store.getFile(missionId, ROWS_PATH(stage.key));
-    const rows = raw ? (JSON.parse(raw) as unknown[]) : [];
-    perStage[stage.key] = rows.length;
-    if (stage.deliver) delivered += rows.length;
+    let n = snap.counts(stage.key).accepted;
+    if (snap.stage(stage.key).items.size === 0) {
+      const raw = await store.getFile(missionId, ROWS_PATH(stage.key));
+      try { n = raw ? (JSON.parse(raw) as unknown[]).length : 0; } catch { n = 0; }
+    }
+    perStage[stage.key] = n;
+    if (stage.deliver) delivered += n;
   }
   return { delivered: Math.min(delivered, plan.price.deliveredRows), perStage };
 }
@@ -134,10 +156,10 @@ const rowKeyOf = (row: unknown): string => {
 };
 
 /**
- * ONE WRITER PER STAGE. save_rows reads the saved rows, adds to them and writes them back: two calls at once (the model may issue tool calls side by side, and a review takes seconds) would each write back the rows it
- * read, and the later write would erase the earlier one (the live run of 2026-10-28 reported 300 rows saved and delivered 250). Calls on the same stage now run one after another.
+ * THE POSITION OF A SOURCE READ (collect_pages) IS IN THE ITEM STORE'S LOG, never in an object that is overwritten: the cursor after the last page, the pages read and whether the source ended are page records of the pseudo stage
+ * «_collect» (one per collect_pages call, create-only). A later call, in this run or after a restart, resumes from the newest record; an overwritten state object could be served stale and restart a source already paid for.
  */
-const collectPath = (key: string) => `collect/${key}.json`;
+const COLLECT_STAGE = "_collect";
 interface CollectStream { cursor: string | null; ended: boolean; pages: number; seen: string[] }
 /** A stable short key of the endpoint, the first-page inputs and the cursor input: the same source asked the same way is the same stream. */
 function collectStreamKey(endpointId: string, params: Record<string, unknown>, cursorParam: string): string {
@@ -146,14 +168,6 @@ function collectStreamKey(endpointId: string, params: Record<string, unknown>, c
   for (let i = 0; i < text.length; i += 1) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;
   return h.toString(36).padStart(7, "0");
 }
-async function readCollectStream(store: AgentStore, missionId: string, key: string): Promise<CollectStream | null> {
-  try {
-    const raw = await store.getFile(missionId, collectPath(key));
-    const o = raw ? (JSON.parse(raw) as Partial<CollectStream>) : null;
-    return o && Array.isArray(o.seen) ? { cursor: typeof o.cursor === "string" ? o.cursor : null, ended: o.ended === true, pages: Number(o.pages) || 0, seen: o.seen.map(String) } : null;
-  } catch { return null; }
-}
-const writeCollectStream = async (store: AgentStore, missionId: string, key: string, value: CollectStream): Promise<void> => { try { await store.putFile(missionId, collectPath(key), JSON.stringify(value), "application/json"); } catch { /* resuming is an economy, never a requirement */ } };
 
 const stageLocks = new Map<string, Promise<void>>();
 export async function withStageLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -181,144 +195,27 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
     return { ok: true, inputs };
   };
 
+  /** The mission's one item store, opened on first use (a mission an older worker started is imported from its `rows/` files once). */
+  let itemsOpening: Promise<ItemStore> | null = null;
+  const getItems = (): Promise<ItemStore> => {
+    if (ctx.items) return Promise.resolve(ctx.items);
+    itemsOpening ??= ItemStore.open(store, mission.id, { legacyStages: (ctx.plan?.stages ?? []).map((s) => s.key) }).then((i) => (ctx.items = i));
+    return itemsOpening;
+  };
+  /** The seen raw rows of the collect streams of THIS run (a later call returns only new rows); the position itself is in the log. */
+  const collectSeen = new Map<string, Set<string>>();
+
   /**
-   * THE CHECK AND SAVE OF ROWS OF ONE STAGE (always under the stage's lock). Pass 1 is the structure of each row; pass 2 is relevance: the rule decides every row it can by itself (strong evidence: the full name, a context
-   * word...), the model reviews only the rows the rule cannot decide, within the review budget; a row that could not be reviewed (budget, a failed call) is kept PENDING (never thrown away) and asked again by the next call.
-   * Rows that do not match are kept with their reason for the ADMIN only. The report of the check (by rule, by model, left out per reason, pending) is stored on the mission.
+   * THE CHECK AND SAVE OF ROWS OF ONE STAGE, for the model's save_rows and for finish: the same ingest the engine uses (de-duplicate, check by rule, review only the ambiguous within the budget, one atomic segment in the item store).
+   * The older files (`rows/`, `excluded/`, `checks.json`) are rewritten from the store afterwards for the admin page and the older readers.
    */
   const checkAndSaveRows = async (stage: PricedPlan["stages"][number], incoming: unknown[]): Promise<Record<string, unknown>> => {
     const plan = ctx.plan!;
-    const existingRaw = await store.getFile(mission.id, ROWS_PATH(stage.key));
-    const existing: Array<Record<string, unknown>> = existingRaw ? JSON.parse(existingRaw) : [];
-    const have = new Set(existing.map((r) => String(r.id)));
-    let parentIds: Set<string> | null = null;
-    if (stage.parent_key !== null) {
-      const parentRaw = await store.getFile(mission.id, ROWS_PATH(stage.parent_key));
-      parentIds = new Set((parentRaw ? (JSON.parse(parentRaw) as Array<Record<string, unknown>>) : []).map((r) => String(r.id)));
-    }
-    const columnKeys = stage.columns.map((c) => c.key);
-    // CONTACT FIELDS are verified by code: a work e-mail or phone that does not pass is left empty; a row of a contact stage with no verified value is not saved (so it is neither delivered nor charged)
-    const contactColumns = stage.columns.filter((c) => c.kind !== undefined && CONTACT_KINDS.includes(c.kind));
-    const contactStage = isContactSource(stage.endpoint_id);
-    const tally = { saved_now: 0, duplicates_ignored: 0, rejected_missing_id: 0, rejected_unknown_parent: 0, rejected_over_limit: 0, rejected_not_object: 0, rejected_no_verified_contact: 0, contact_values_left_empty: 0 };
-    const spec = stage.relevance ?? null;
-    const excludedRaw = spec ? await store.getFile(mission.id, EXCLUDED_PATH(stage.key)) : null;
-    let excluded: Array<{ id: string; reason: RelevanceReason; row: Record<string, unknown> }> = excludedRaw ? JSON.parse(excludedRaw) : [];
-    // rows that were waiting for a review come back first (they were left pending, never thrown away)
-    const pendingBack: Array<Record<string, unknown>> = [];
-    if (spec && ctx.review && spec.review !== false) {
-      pendingBack.push(...excluded.filter((e) => PENDING_REASONS.includes(e.reason)).map((e) => e.row));
-      excluded = excluded.filter((e) => !PENDING_REASONS.includes(e.reason));
-    }
-    const excludedIds = new Set(excluded.map((e) => e.id));
-    const pendingIds = new Set(pendingBack.map((r) => String(r.id)));
-    // pass 1: the structure of every row (id, parent, columns, contact values)
-    const candidates: Array<Record<string, unknown>> = [];
-    const seenNow = new Set<string>();
-    for (const raw of incoming) {
-      if (!isObject(raw)) { tally.rejected_not_object += 1; continue; }
-      const id = String(raw.id ?? "").trim();
-      if (!id) { tally.rejected_missing_id += 1; continue; }
-      // a row already saved, already left out, or twice in this batch: ignored (an excluded row is never reviewed or counted again; a pending one is already waiting)
-      if (have.has(id) || excludedIds.has(id) || seenNow.has(id) || pendingIds.has(id)) { tally.duplicates_ignored += 1; continue; }
-      seenNow.add(id);
-      let parentId: string | null = null;
-      if (parentIds) {
-        parentId = String(raw.parent_id ?? "").trim();
-        if (!parentId || !parentIds.has(parentId)) { tally.rejected_unknown_parent += 1; continue; }
-      }
-      const row: Record<string, unknown> = { id, ...(parentId !== null ? { parent_id: parentId } : {}) };
-      for (const k of columnKeys) if (k !== "id" && k !== "parent_id") row[k] = raw[k] ?? "";
-      let verifiedAny = false;
-      for (const c of contactColumns) {
-        const original = String(raw[c.key] ?? "").trim();
-        const verified = verifyContactValue(c.kind!, raw[c.key]);
-        row[c.key] = verified ?? "";
-        if (verified) verifiedAny = true; else if (original) tally.contact_values_left_empty += 1;
-      }
-      if (contactStage && contactColumns.length > 0 && !verifiedAny) { tally.rejected_no_verified_contact += 1; continue; }
-      candidates.push(row);
-    }
-    const fresh = new Set(candidates.map((r) => String(r.id)));
-    candidates.unshift(...pendingBack.filter((r) => !have.has(String(r.id))));
-
-    // pass 2: RELEVANCE. Only rows that are about what the customer asked are saved (so only they are delivered and charged).
-    const accepted = new Map<string, "rule" | "model">();
-    const basisOf = new Map<string, RuleBasis | undefined>();
-    const left: Record<string, number> = {};
-    let reviewedNow = 0;
-    let reviewStop: "budget" | "failed" | null = null;
-    let pendingNow = 0;
-    if (spec) {
-      const verdicts = candidates.map((row) => ({ row, v: classifyRowDetailed(spec, row) }));
-      const matches = verdicts.filter((x) => x.v.verdict === "match").length;
-      const room = Math.max(0, stage.planned_rows - existing.length);
-      const uncertain = verdicts.filter((x) => x.v.verdict === "review");
-      let verdictOf = new Map<string, boolean>();
-      if (uncertain.length > 0 && spec.review !== false && ctx.review && matches < room) {
-        // no more review than the room left can use (a row beyond the approved volume is never needed); the rest stays pending
-        const wanted = uncertain.slice(0, (room - matches) * 3 + 25);
-        verdictOf = await ctx.review.review({ subject: spec.subject_ar, rows: wanted.map((x) => ({ id: String(x.row.id), text: spec.text_columns.map((k) => String(x.row[k] ?? "")).join(" ") })) });
-        reviewedNow = verdictOf.size;
-        reviewStop = (await ctx.review.state()).stop;
-      }
-      for (const { row, v } of verdicts) {
-        const id = String(row.id);
-        let reason: RelevanceReason | null = null;
-        if (v.verdict === "match") { accepted.set(id, "rule"); basisOf.set(id, (v as { basis?: RuleBasis }).basis); }
-        else if (v.verdict === "exclude") reason = v.reason;
-        else if (verdictOf.get(id) === true) accepted.set(id, "model");
-        else if (verdictOf.has(id)) reason = "review_no";
-        else if (spec.review === false) reason = "uncertain";
-        else reason = !ctx.review ? "not_reviewed" : reviewStop === "failed" ? "review_failed" : "not_reviewed";
-        if (!reason) continue;
-        // with a reviewer, a row not reviewed (budget, a failed call, more than the room needs) is PENDING: kept and asked again; with none, it is a final exclusion
-        const isPending = PENDING_REASONS.includes(reason) && Boolean(ctx.review) && spec.review !== false;
-        if (isPending) pendingNow += 1;
-        else left[reason] = (left[reason] ?? 0) + 1;
-        // an admin-only record of the row left out; a pending row is always kept (it is asked again), a final one only up to a limit
-        if (isPending || excluded.length < AGENT_EXCLUDED_ROWS_KEPT) excluded.push({ id, reason, row }); else excludedIds.add(id);
-        excludedIds.add(id);
-      }
-    } else for (const row of candidates) accepted.set(String(row.id), "rule");
-
-    const checks = await readChecks(store, mission.id);
-    const mine = (checks[stage.key] ??= emptyStageChecks());
-    for (const row of candidates) {
-      const id = String(row.id);
-      if (!accepted.has(id)) continue;
-      if (existing.length >= stage.planned_rows) { tally.rejected_over_limit += 1; continue; }
-      existing.push(row);
-      have.add(id);
-      tally.saved_now += 1;
-      if (accepted.get(id) === "model") mine.accepted_by_model += 1;
-      else { mine.accepted_by_rule += 1; const b = basisOf.get(id); if (b) mine.accepted_by_rule_basis[b] = (mine.accepted_by_rule_basis[b] ?? 0) + 1; }
-    }
-    if (spec) {
-      mine.examined += fresh.size;
-      for (const [reason, n] of Object.entries(left)) mine.excluded[reason as RelevanceReason] = (mine.excluded[reason as RelevanceReason] ?? 0) + n;
-      // a row that was pending and is now accepted had been counted as examined when it was first seen: nothing to add
-    }
-    await store.putFile(mission.id, ROWS_PATH(stage.key), JSON.stringify(existing), "application/json");
-    if (spec) {
-      await store.putFile(mission.id, EXCLUDED_PATH(stage.key), JSON.stringify(excluded), "application/json");
-      await writeChecks(store, mission.id, checks);
-    }
-    // the live panel ticks from this: the numbers are in `counts` (never in the text), written by code, not by the model
-    if (tally.saved_now > 0 || (spec && fresh.size > 0)) {
-      const c = mine;
-      await store.addEvent(mission.id, { kind: "progress", message_ar: `يحفظ الوكيل ما جمعه لمرحلة «${stage.title_ar}»`, counts: { stage: plan.stages.indexOf(stage) + 1, saved: existing.length, planned: stage.planned_rows, ...(spec ? { checked: c.examined, accepted: c.accepted_by_rule + c.accepted_by_model, excluded: excludedTotal(c), pending: pendingNow } : {}) } });
-    }
-    const stillNeeded = Math.max(0, stage.planned_rows - existing.length);
-    return {
-      ok: true, stage: stage.key, ...tally, total_in_stage: existing.length, stage_limit: stage.planned_rows,
-      ...(spec ? {
-        left_out_not_matching: left, reviewed_by_model: reviewedNow, review_budget_reached: reviewStop === "budget", review_failed: reviewStop === "failed", pending_for_review: pendingNow,
-        accepted_by_rule: tally.saved_now - [...accepted.values()].filter((x) => x === "model").length,
-        still_needed: stillNeeded,
-        note: stillNeeded > 0 ? "only rows that MATCH the request are saved, delivered and charged; still_needed matching rows are missing: collect further pages (the source may have more) until still_needed is 0, the source ends, or the budget refuses; then finish and say honestly how many matched" : "the stage has all the matching rows it was sold",
-      } : {}),
-    };
+    const items = await getItems();
+    const result = await ingestRows({ items, plan, reviewer: ctx.review, addEvent: (e) => store.addEvent(mission.id, e) }, stage, incoming);
+    await mirrorLegacyFiles(items, store, plan, [stage.key]);
+    const { counts: _counts, newlyAccepted: _n, ...visible } = result;
+    return visible;
   };
 
   const tools: ToolSpec[] = [
@@ -372,6 +269,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         const refusal = cheapestFirstMessage(state, id, a.why);
         if (refusal) return { ok: false, refused: "choose_cheapest", message: refusal };
         const result = await gateway.tregCall({ endpoint_id: a.endpoint_id, params: a.params, purpose: a.purpose, why: a.why });
+        // the full inputs of this call, kept for the plan's execution recipe (the call log keeps short values only)
+        if (isObject(a.params) && typeof result.call_id === "string") state.callParams.set(result.call_id, { ...a.params });
         if (!("refused" in result) || result.refused === "needs_login") state.tried.add(id);
         // A SAMPLE THAT FAILS IS NOT THE END OF EXPLORATION: a failed call, an empty page or a source that refuses this search says which sources of the ranking are still untried, so the next one is sampled (within the budget)
         const unsuitable = ("failed" in result && result.failed === true) || ("refused" in result && result.refused === "needs_login") || (result.ok === true && result.rows_in_page === 0);
@@ -406,10 +305,12 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         // RESUME, NOT RESTART: a call with the same endpoint and the same inputs continues from where the last one stopped (its cursor) and skips the rows it already returned. Starting from the first page again re-bought the same
         // pages (the live run of 2026-10-28 paid for 60 pages to get 25 of new rows) and made the live count look frozen.
         const streamKey = collectStreamKey(id, first, cursorParam);
-        const prior = await readCollectStream(store, mission.id, streamKey);
+        const items = await getItems();
+        const st = items.streamState(COLLECT_STAGE, streamKey);
+        const prior: CollectStream | null = st ? { cursor: st.cursor, ended: st.ended, pages: st.pages, seen: [...st.seen] } : null;
         if (prior?.ended) return { ok: false, exhausted: true, error: `this source has no more pages for these inputs: it ended after ${prior.pages} pages, and the ${prior.seen.length} unique rows it gave were returned by earlier calls. Change the inputs (another search wording, another source) or finish with what is saved.` };
         const merged: unknown[] = [];
-        const seen = new Set<string>(prior?.seen ?? []);
+        const seen = new Set<string>(prior?.seen ?? collectSeen.get(streamKey) ?? []);
         const pagesBefore = prior?.pages ?? 0;
         const callIds: string[] = [];
         let cursor: string | null = prior?.cursor ?? null;
@@ -445,8 +346,13 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         const cut = merged.length > Math.max(target, 1);
         if (pages > 0) {
           const keptKeys = cut ? new Set([...(prior?.seen ?? []), ...merged.slice(0, Math.max(target, 1)).map(rowKeyOf)]) : seen;
-          await writeCollectStream(store, mission.id, streamKey, { cursor: cut ? usedCursor : nextCursor, ended: stopped === "source_ended" && !cut, pages: pagesBefore + pages - (cut ? 1 : 0), seen: [...keptKeys] });
+          collectSeen.set(streamKey, keptKeys);
+          // the position goes into the log as ONE create-only record (never an overwritten object): the cursor after the last page processed, the pages, the rows' keys new to this stream, and whether the source ended
+          const priorSeen = new Set(prior?.seen ?? []);
+          const newKeys = [...keptKeys].filter((k) => !priorSeen.has(k));
+          try { await items.exclusive(() => items.commit([{ t: "page", stage: COLLECT_STAGE, stream: streamKey, call_id: callIds[callIds.length - 1] ?? null, cursor_in: usedCursor, cursor_next: cut ? usedCursor : nextCursor, has_more: null, ended: stopped === "source_ended" && !cut, rows_in_page: merged.length, pages: pages - (cut ? 1 : 0), keys: newKeys }])); } catch { /* resuming is an economy, never a requirement */ }
         }
+        state.moreAvailable.set(streamKey, stopped === "max_pages" || stopped === "target_reached" || (cut && stopped === "source_ended"));
         if (merged.length === 0) return { ok: false, error: `no rows were collected (${stopped})`, pages, call_ids: callIds.slice(0, 5) };
         const output = merged.slice(0, Math.max(target, 1));
         state.outSeq += 1;
@@ -476,6 +382,9 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         state.outSeq += 1;
         const id = outId(state.outSeq);
         await store.putFile(mission.id, `out/${id}.json`, result.resultJson, "application/json");
+        // the code that made this output, kept for the plan's execution recipe (create-only: a new path, never overwritten)
+        state.codeRuns.set(id, { code, files });
+        try { await store.putNew(mission.id, codeRunPath(id), JSON.stringify({ code, files }), "application/json"); } catch { /* the copy in memory serves this run */ }
         const value = JSON.parse(result.resultJson) as unknown;
         const inline = result.resultJson.length <= SANDBOX_INLINE_RESULT_CHARS;
         return { ok: true, output_id: id, size_chars: result.resultJson.length, ...(inline ? { result: value } : { preview: previewOf(value), note: "the result is large: only a preview is shown; the whole output is saved under output_id" }), logs: result.logs.slice(0, 20) };
@@ -557,6 +466,11 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         };
         const checked = validateAndPricePlan({ summary_ar: a.summary_ar, stages: stagesIn, ...(a.contacts_note_ar !== undefined ? { contacts_note_ar: a.contacts_note_ar } : {}), ...(a.assumptions_ar !== undefined ? { assumptions_ar: a.assumptions_ar } : {}) }, lookup);
         if (!checked.ok) return err("the plan was not accepted; fix these and propose again", { issues: checked.issues.slice(0, 12) });
+        // THE MODEL PLANS, CODE EXECUTES: what code needs to carry each stage out without the model is derived from what the agent really did and proven on the measured page (a stage that cannot be proven has no recipe)
+        try {
+          const specs = await deriveEngineSpecs(checked.plan, { store, missionId: mission.id, catalog: ctx.catalog, calls, codeRuns: state.codeRuns, callParams: state.callParams, sandbox: runSandbox });
+          for (const st of checked.plan.stages) { const spec = specs.get(st.key); if (spec) st.engine = spec; }
+        } catch { /* a plan without recipes is carried out by the model, through the same item store */ }
         state.proposedPlan = checked.plan;
         state.terminal = true;
         await store.updateMission(mission.id, { plan: checked.plan as any });
@@ -591,7 +505,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           incoming = a.rows;
         } else return err("give from_output or rows");
 
-        return withStageLock(`${mission.id}:${stage.key}`, () => checkAndSaveRows(stage, incoming));
+        return checkAndSaveRows(stage, incoming);
       },
     },
     {
@@ -614,8 +528,19 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         if (outcome === "delivered" && ctx.plan && ctx.review) {
           for (const st of ctx.plan.stages) {
             if (!st.relevance) continue;
-            await withStageLock(`${mission.id}:${st.key}`, () => checkAndSaveRows(st, []));
+            await checkAndSaveRows(st, []);
           }
+        }
+        // NO EARLY STOP: while matching items are still needed and a source says it has more pages, finish is refused (a limited number of times, so the model is never stuck): the model cannot end a mission short of what was bought
+        if (outcome === "delivered" && ctx.plan) {
+          const items = await getItems();
+          const short = ctx.plan.stages.filter((st) => st.deliver && items.counts(st.key).accepted < st.planned_rows);
+          const more = [...state.moreAvailable.values()].some(Boolean);
+          if (short.length > 0 && more && state.finishRefusals < FINISH_REFUSALS_MAX) {
+            state.finishRefusals += 1;
+            return err(`do not finish yet: ${short.map((st) => `stage «${st.key}» still needs ${st.planned_rows - items.counts(st.key).accepted} matching items`).join("; ")}, and the source has more pages. Collect the next pages (collect_pages with the same inputs resumes), run_code, save_rows; finish only when still_needed is 0, the source ends, or a call is refused`);
+          }
+          if (short.length > 0 && more) for (const st of short) await items.exclusive(() => items.commit([{ t: "stop", stage: st.key, reason: "model_stopped" as StopReason }]));
         }
         state.finish = { outcome, summary_ar: checked.text };
         state.terminal = true;

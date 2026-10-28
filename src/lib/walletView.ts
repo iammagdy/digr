@@ -116,3 +116,26 @@ export function walletMonthStats(rows: WalletLedgerRow[], now: Date = new Date()
   const charged = rows.filter((r) => r.type === "charge" && inMonth(r)).reduce((a, r) => a + Math.abs(r.delta), 0);
   return { held, charged, releasedHold, releasedJobs, releasedGross };
 }
+
+
+/** A ledger row as the wallet groups it: any row; the ones that belong to a finished mission carry its one money line (the server computed it from the mission's own numbers). */
+export interface MissionGroupableRow { $id?: string; id?: string; jobId?: string | null; missionLineAr?: string | null }
+export type WalletEntry<T extends MissionGroupableRow> = { kind: "row"; row: T } | { kind: "mission"; jobId: string; lineAr: string; rows: T[] };
+
+/**
+ * THE WALLET LISTS A MISSION ONCE. The rows of one mission (the hold, the charge, the released hold) are separate ledger rows and stay exactly as they are; the wallet shows them under ONE line («خُصم ١٢٨ نقطة مقابل ١٩٢ تغريدة»)
+ * with the rows themselves as collapsible details. The group sits where its newest row is; rows of no finished mission (a top-up, a promo, a hold of a mission that is still running) stay single entries.
+ */
+export function groupMissionRows<T extends MissionGroupableRow>(rows: ReadonlyArray<T>): Array<WalletEntry<T>> {
+  const out: Array<WalletEntry<T>> = [];
+  const at = new Map<string, number>();
+  for (const row of rows) {
+    const jobId = row.jobId ?? null;
+    const line = row.missionLineAr ?? null;
+    if (!jobId || !line) { out.push({ kind: "row", row }); continue; }
+    const i = at.get(jobId);
+    if (i === undefined) { at.set(jobId, out.length); out.push({ kind: "mission", jobId, lineAr: line, rows: [row] }); }
+    else (out[i] as Extract<WalletEntry<T>, { kind: "mission" }>).rows.push(row);
+  }
+  return out;
+}

@@ -63,7 +63,8 @@ export function MissionStepRow({ step }: { step: PanelStep }) {
               {step.excludedAr ? <span className="text-mut">{step.excludedAr}</span> : null}
             </div>
             {percent !== null ? (
-              <div role="progressbar" aria-label={step.titleAr} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} className="mt-1 h-1 w-full overflow-hidden rounded-full bg-sf2">
+              // the accessible value is the count the customer reads (items of the volume bought), not the blended work ratio the bar's width follows
+              <div role="progressbar" aria-label={step.titleAr} aria-valuemin={0} aria-valuemax={typeof step.plannedN === "number" ? step.plannedN : 100} aria-valuenow={typeof step.savedN === "number" ? Math.min(step.savedN, typeof step.plannedN === "number" ? step.plannedN : step.savedN) : percent} aria-valuetext={step.countAr} className="mt-1 h-1 w-full overflow-hidden rounded-full bg-sf2">
                 <div className="h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none" style={{ width: `${percent}%`, background: done ? "var(--ok)" : "var(--ac)" }} />
               </div>
             ) : null}

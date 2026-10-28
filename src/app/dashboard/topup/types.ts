@@ -25,6 +25,8 @@ export interface LedgerRow {
   labelAr?: string;
   delta: number;
   jobId?: string | null;
+  /** The one money line of the finished mission this row belongs to (the wallet groups the mission's rows under it). */
+  missionLineAr?: string | null;
   topupId?: string | null;
   note?: string | null;
   createdAt: string;

@@ -26,6 +26,7 @@ import MissionPlanInline from "@/components/mission/MissionPlanInline";
 import { MODEL_PLAN_SLUG } from "@/lib/modelPlanner/constants";
 import { useDriverMode } from "@/hooks/useDriverMode";
 import { deliveredOfAr, itemNounOfPlan, knownItemNoun } from "@/lib/agentMission/itemNoun";
+import { moneyLineAr } from "@/lib/agentMission/moneyText";
 
 interface JobDoc {
   $id: string;
@@ -441,10 +442,13 @@ export default function RequestsPage() {
           const stalled = k === "running" && isJobStalled({ status: j.status, updated_at: j.updatedAt ?? j.createdAt, lease_until: j.leaseUntil }, Date.now());
           // an agent mission says «تغريدات» / «تعليقات» / «شركات» (the noun of its request) where the older requests say «السجلات»
           const agentNoun = nounByJob[j.$id] ? knownItemNoun(nounByJob[j.$id]) : null;
+          // the same one line as the completion panel, the notification, the e-mail and the wallet: what was charged and for how many items
+          const agentMoneyLine = agentNoun ? moneyLineAr({ reservedPoints: j.reservedCredits || 0, chargedPoints: j.chargedCredits ?? 0, delivered: rows, noun: agentNoun }) : "";
           const note = k === "running" ? `جارٍ الجمع — ${closePageLineAr(driverMode)}`
             : k === "refunded" ? `${formatRefundedNote(j.errorAr, j.reservedCredits || 0)}${rows > 0 && requested ? ` ${collectedBeforeStopText(rows, requested)}` : ""}`
             : nothingDelivered ? (agentNoun ? "لم يُسلَّم أي شيء، لذلك لا توجد ملفات لهذا الطلب، ولم يُخصم منك أي رصيد." : "لم يصل أي سجل، لذلك لا توجد ملفات بيانات لهذا الطلب، ولم يُخصم منك أي رصيد.")
-            : k === "partial" ? (agentNoun ? `تم تسليم ${deliveredOfAr(rows, requested || rows, agentNoun)}؛ لم يُخصم إلا مقابل ما سُلّم.` : partialDeliveryText(rows, requested || rows)) : "";
+            : k === "partial" ? (agentNoun ? `تم تسليم ${deliveredOfAr(rows, requested || rows, agentNoun)}؛ ${agentMoneyLine}.` : partialDeliveryText(rows, requested || rows))
+            : k === "done" && agentNoun ? `${agentMoneyLine}.` : "";
           const availableFormats = nothingDelivered ? [] : (["xlsx", "pdf", "csv"] as const).filter(
             (ext) => Boolean(j.fileIds[ext]),
           );

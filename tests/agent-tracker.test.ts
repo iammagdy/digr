@@ -3,7 +3,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { remainingFrom, remainingLineAr, stageMetricLines, trackMission, type TrackerEventInput, type TrackerStageInput } from "../src/lib/agentMission/tracker";
-import { customerMissionView, type EventForCustomer, type MissionRowForCustomer } from "../src/lib/agentMission/customerView";
+import { customerMissionView, PRICE_PROMISE_AR, type EventForCustomer, type MissionRowForCustomer } from "../src/lib/agentMission/customerView";
 import { AgentMissionCardBody } from "../src/components/mission/AgentMissionCard";
 import { LIVE_RUN_END, LIVE_RUN_EVENTS, LIVE_RUN_START, LIVE_RUN_STAGES } from "./helpers/liveRunEvents";
 
@@ -173,14 +173,14 @@ describe("E. the panel and the compact card are drawn from the tracker", () => {
     expect(html).toContain('data-testid="step-metrics"');
   });
 
-  it("the plan card is compact: the price, the hold and the time are three short cells with one sentence under them (the minimum included)", () => {
+  it("the plan card is compact: the price, the hold and the time are three short cells with one honest sentence under them (full delivery, fewer, nothing)", () => {
     const v = customerMissionView({ mission: mission({ status: "plan_ready" }), events: [], now: Date.parse(at(1)) });
     expect(v.priceFacts).toEqual([{ labelAr: "السعر حتى", valueAr: "٢٤٣ نقطة" }, { labelAr: "حجز مؤقت", valueAr: "٢٧٩ نقطة" }, { labelAr: "الوقت المتوقع", valueAr: "نحو ٤ دقائق" }]);
-    expect(v.priceNoteAr).toBe("لا يُخصم إلا ما يُسلَّم فعلًا. الحد الأدنى للمهمة ٢٠٠ نقطة، ولا خصم إن لم يُسلَّم شيء.");
+    expect(v.priceNoteAr).toBe(PRICE_PROMISE_AR);
     const html = renderToStaticMarkup(createElement(AgentMissionCardBody, { view: v, isGuest: false }));
     expect(html).toContain("grid-cols-2");
     expect(html).toContain("sm:grid-cols-3");
-    expect(html).toContain("الحد الأدنى للمهمة ٢٠٠ نقطة");
+    expect(html).toContain("لو سُلّم أقل يُخصم بنسبة ما سُلّم فقط");
     expect(html).toContain('data-testid="agent-file-contents"');
     expect(html).toContain("يضم الملف: التاريخ والوقت، نص التغريدة.");
     // phone width: the table scrolls inside its box, the buttons wrap, the cards have a 14px side padding
@@ -194,7 +194,7 @@ describe("E. the panel and the compact card are drawn from the tracker", () => {
     const html = renderToStaticMarkup(createElement(AgentMissionCardBody, { view: v, isGuest: false }));
     expect(html).toContain('data-testid="agent-result-lines"');
     expect(html).toContain("تم تسليم ٢٥٠ من ٣٠٠ تغريدة.");
-    expect(html).toContain("حُجز مؤقتًا ٢٧٩ نقطة، وخُصم ٢٠٢ نقطة مقابل ما سُلّم، وحجز مؤقت مُحرَّر ٢٧٩ نقطة.");
+    expect(html).toContain("خُصم ٢٠٢ نقطة مقابل ٢٥٠ تغريدة.");
   });
 
   it("the page uses the tracker for the steps and the time left (no second estimate of its own)", () => {

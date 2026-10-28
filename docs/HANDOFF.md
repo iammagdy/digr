@@ -4,6 +4,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-29): the agent, the item store and the engine
+
+Written by the session that fixed the lost-items defect (PR: «One item store, a code engine, settle from the file»; its merge commit is the head of `main` after it; before it `main` was `f6dfd3e30f5474c23eadbe7e177570db4e795663`, #283). Everything about the agent is in `agent/README.md`; this change is explained, with the raw evidence, in `docs/ENGINE_AND_ITEM_STORE.md`.
+
+- Diger runs missions through a Claude agent (`agent/`, Heroku app `diger-agent`, auto-deploys from `main`, model `claude-haiku-5-5`, never change it). `AGENT_SERVES_CHAT = true`: every customer is served by it. Supabase `pfinlfaqwnytesedchik`: tables `missions`, `mission_events`, `mission_calls`, `agent_worker_heartbeat`, `agent_settings`; private bucket `agent-missions`.
+- **The incident**: a mission showed 300 of 300, delivered and charged 192, and its file held 77 items. Cause: items were kept in one object that every save read, extended and overwrote, and Storage serves an overwritten object stale (up to 60 s). Fixed by ONE append-only item store of immutable objects, a code engine for plans whose stages have a proven recipe, a `finish` gate for the model path, and settlement from the read-back file.
+- **Money text**: one line per mission everywhere (panel, «طلباتي», notification, e-mail, wallet): «خُصم ١٢٨ نقطة مقابل ١٩٢ تغريدة». The wallet groups a mission's ledger rows under it. The plan card: the price shown is the full-delivery price, fewer costs in proportion, nothing costs nothing.
+- No SQL was written or applied. No e-mail template changed (the `job-update` template only receives other text), so no Edge Function deploy is waiting.
+- The rules below ("Standing rules") still hold. Everything older in this file is history and may be stale.
+
+---
+
 ## START HERE. Current state (main = `2d698d3`, 2026-10-25)
 
 A fresh session can start from this section. Facts come from git, the Vercel deployment API and the owner's briefs; anything not verified in the repo or in a brief is marked **owner-reported**. No secrets or passwords are written here.

@@ -6,7 +6,7 @@ import type { TregCatalog } from "../../src/lib/treg/catalog";
 import type { AccountAccess } from "../../src/lib/treg/dataPolicy";
 import {
   AGENT_ERROR_REQUEUES_MAX, AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD, AGENT_EXECUTION_LLM_BUDGET_SHARE, AGENT_MEMORY_REQUEUES_MAX, AGENT_PHASE_STARTS_MAX, AGENT_EXECUTION_MAX_TURNS, AGENT_EXECUTION_WALL_MS, AGENT_PLANNING_LLM_BUDGET_USD,
-  AGENT_PLANNING_MAX_TURNS, AGENT_PLANNING_WALL_MS, AGENT_PRICING_BASIS,
+  AGENT_PLANNING_MAX_TURNS, AGENT_PLANNING_WALL_MS, AGENT_PRICING_BASIS, AGENT_EXECUTION_CONTINUE_ROUNDS,
 } from "../../src/lib/agentMission/constants";
 import { executionBudgetUsd, reviewBudgetUsdFor, reviewCeilingUsdFor } from "../../src/lib/agentMission/price";
 import { MISSION_PRICING_SETTING_KEY, normalizeMissionPricingSettings } from "../../src/lib/missionPricing";
@@ -14,17 +14,23 @@ import { planningBudgetUsd } from "../../src/lib/agentMission/budget";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
 import { customerPlanView, type PricedPlan } from "../../src/lib/agentMission/plan";
 import { toArabicDigits } from "../../src/lib/arabicDigits";
+import type { RelevanceReason } from "../../src/lib/agentMission/relevance";
 import { holdValueUsd } from "../../src/lib/server/callBudget";
 import type { ModelDriver } from "./driver";
 import { createGateway } from "./gateway";
 import { createWebGateway, type ProviderKeyFn } from "./webGateway";
 import { loadSystemPrompt } from "./prompt";
 import { readRunState, updateRunState } from "./runState";
-import { buildTools, countDeliveredRows, newRunState, type ToolContext } from "./tools";
+import { buildTools, newRunState, type ToolContext } from "./tools";
+import { ItemStore, type ItemSnapshot, type StopReason } from "./items/itemStore";
+import { mirrorLegacyFiles } from "./items/mirror";
+import { runEngine } from "./engine/run";
+import { runInSandbox } from "./sandbox";
+import { trackRun, untrackRun } from "./sessions";
+import { countWorkbookSheets, shortfallClauseAr, shortfallFromStopAr } from "./finalize";
 import { createReviewer, readReviewState, type ReviewCall } from "./review";
 import type { TokenUsage } from "./llmCost";
 import { buildExcludedAdminCsv, buildMissionFiles, type ExcludedRow } from "./workbook";
-import { excludedTotal, PENDING_REASONS, readChecks } from "./checks";
 import { missionFileTitleAr } from "../../src/lib/agentMission/fileNames";
 import { itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
 import type { AgentStore, CallRow, MissionRecord } from "./types";
@@ -53,16 +59,17 @@ export interface RunnerDeps {
   /** The model call that reviews uncertain rows (a small request to the model API, no SDK process). Absent (tests, no key): uncertain rows are not delivered. */
   reviewCall?: ReviewCall;
   systemPromptFile?: string;
+  /** Carry out a plan whose stages all have an execution recipe with the code engine, no model session (default true). false: the model carries every mission out (through the same item store). */
+  engine?: boolean;
   log?: (line: string) => void;
 }
 
 const sum = (calls: CallRow[], phase: CallRow["phase"]) => calls.filter((c) => c.phase === phase).reduce((n, c) => n + (Number(c.cost_usd) || 0), 0);
 const lastSeq = (calls: CallRow[]) => calls.reduce((n, c) => Math.max(n, Number(/call_(\d+)$/.exec(c.id)?.[1] ?? 0)), 0);
 const lastOut = async (store: AgentStore, missionId: string): Promise<number> => {
-  // outputs continue their numbering after a restart: probe upward
-  let n = 0;
-  while (await store.getFile(missionId, `out/out_${String(n + 1).padStart(4, "0")}.json`) !== null) n += 1;
-  return n;
+  // outputs continue their numbering after a restart: the highest number in the mission's own `out/` folder (the listing reads the database, so it is exact right after a write)
+  const listed = await store.listFiles(missionId, "out").catch(() => []);
+  return listed.reduce((n, f) => Math.max(n, Number(/^out\/out_(\d+)\.json$/.exec(f.name)?.[1] ?? 0)), 0);
 };
 
 function savedCallsNote(calls: CallRow[]): string {
@@ -123,29 +130,26 @@ async function recordTokens(deps: RunnerDeps, missionId: string, phase: 0 | 1, u
   }
 }
 /**
- * THE REPORT OF THE CHECK OF ITEMS: stored as an internal event per stage (looked at, accepted by rule and on what basis, accepted by the model, left out per reason, still pending, the review's extension) and the excluded
- * items as an admin-only CSV. The customer's files never hold an excluded item. Never throws.
+ * THE REPORT OF THE CHECK OF ITEMS: stored as an internal event per stage (found, new, duplicates, looked at, accepted by rule and on what basis, accepted by the model, left out per reason, still pending, never looked at, the review's
+ * extension) and the excluded items as an admin-only CSV. Every number is read from the item store's snapshot. The customer's files never hold an excluded item. Never throws.
  */
-async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPlan, store: AgentStore): Promise<{ pending: number; stop: "budget" | "failed" | null }> {
+async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPlan, store: AgentStore, snap: ItemSnapshot): Promise<{ pending: number; stop: "budget" | "failed" | null }> {
   let pendingTotal = 0;
   let stop: "budget" | "failed" | null = null;
   try {
-    const checks = await readChecks(store, missionId);
     const review = await readReviewState(store, missionId);
     stop = review.stop;
     const excludedByStage: Record<string, ExcludedRow[]> = {};
     for (const [i, s] of plan.stages.entries()) {
-      const c = checks[s.key];
-      const raw = await store.getFile(missionId, `excluded/${s.key}.json`);
-      let list: ExcludedRow[] = [];
-      if (raw) { try { list = JSON.parse(raw) as ExcludedRow[]; } catch { list = []; } }
-      const finalRows = list.filter((e) => !PENDING_REASONS.includes(e.reason));
-      if (finalRows.length > 0 || list.length > 0) excludedByStage[s.key] = list;
-      pendingTotal += list.length - finalRows.length;
-      if (!c) continue;
-      const counts: Record<string, number> = { chk_stage: i + 1, chk_examined: c.examined, chk_by_rule: c.accepted_by_rule, chk_by_model: c.accepted_by_model, chk_excluded: excludedTotal(c), chk_pending: list.length - finalRows.length, chk_review_extended: review.extended ? 1 : 0 };
-      for (const [b, n] of Object.entries(c.accepted_by_rule_basis)) counts[`chk_rule_${b}`] = n ?? 0;
-      for (const [r, n] of Object.entries(c.excluded)) counts[`chk_ex_${r}`] = n ?? 0;
+      const c = snap.counts(s.key);
+      const asRow = (it: { id: string; reason?: string; row: Record<string, unknown> | null }): ExcludedRow => ({ id: it.id, reason: it.reason as RelevanceReason, row: it.row ?? {} });
+      const listed = [...snap.excludedItems(s.key), ...snap.pendingItems(s.key)].filter((it) => it.row && it.reason && (RELEVANCE_REASON_KEYS as readonly string[]).includes(it.reason)).map(asRow);
+      if (listed.length > 0) excludedByStage[s.key] = listed;
+      pendingTotal += c.pending;
+      if (!s.relevance) continue;
+      const counts: Record<string, number> = { chk_stage: i + 1, chk_examined: c.checked, chk_by_rule: c.acceptedByRule, chk_by_model: c.acceptedByModel, chk_excluded: c.excludedRelevance, chk_pending: c.pending, chk_review_extended: review.extended ? 1 : 0, chk_found: c.found, chk_new: c.new, chk_dup: c.duplicates, chk_unchecked: c.unchecked, chk_saved: c.saved };
+      for (const [b, n] of Object.entries(c.acceptedByRuleBasis)) counts[`chk_rule_${b}`] = n ?? 0;
+      for (const [r, n] of Object.entries(c.excludedByReason)) if ((RELEVANCE_REASON_KEYS as readonly string[]).includes(r)) counts[`chk_ex_${r}`] = n ?? 0;
       await store.addEvent(missionId, { kind: "call", message_ar: "تقرير داخلي لفحص العناصر في هذه المرحلة.", counts });
     }
     const csv = buildExcludedAdminCsv(plan, excludedByStage);
@@ -155,6 +159,7 @@ async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPla
   }
   return { pending: pendingTotal, stop };
 }
+const RELEVANCE_REASON_KEYS = ["no_text", "no_term", "mention_only", "other_person", "uncertain", "not_reviewed", "review_no", "review_failed"] as const;
 /** True when a text carries a number (Latin or Arabic-Indic digits): a model note with one is dropped, so a count in a text always comes from the data. */
 export const HAS_NUMBER = /[0-9٠-٩]/;
 
@@ -224,6 +229,11 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   }
 }
 
+/** What the model is told when a round ended while matching items were still needed and a source had more: carry on, the numbers are the store's. */
+export function continuationPrompt(mission: MissionRecord, plan: PricedPlan, calls: CallRow[], saved: Record<string, number>): string {
+  return `${executionPrompt(mission, plan, calls, saved)}\n\nYour last round ended before the approved volume was reached, and a source still has pages. Carry on from where you stopped (collect_pages with the same inputs resumes; never start a source again), save, and finish only when the volume is reached, the source ends, or a call is refused.`;
+}
+
 export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Promise<void> {
   const { store } = deps;
   const model = deps.models.execution;
@@ -253,8 +263,10 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   const reviewBudgetUsd = plan.price.reviewBudgetUsd ?? reviewBudgetUsdFor(plan.price.maxChargePoints);
   const reviewer = deps.reviewCall ? createReviewer({ call: deps.reviewCall, store, missionId: mission.id, requestText: `${mission.request_text}${mission.answer_text ? ` — ${mission.answer_text}` : ""}`, budgetUsd: reviewBudgetUsd, ceilingUsd: reviewCeilingUsdFor(reserve), log: deps.log }) : undefined;
   const reviewBefore = await readReviewState(store, mission.id);
-  const ctx: ToolContext = { phase: "execution", mission, plan, store, gateway, web, catalog: deps.catalog, access, state, sandbox: deps.sandbox, review: reviewer };
-  const savedBefore = (await countDeliveredRows(store, mission.id, plan)).perStage;
+  // THE ONE ITEM STORE: every item the engine or the model saves goes through it; a resumed mission continues from its log
+  const items = await ItemStore.open(store, mission.id, { legacyStages: plan.stages.map((s) => s.key) });
+  const ctx: ToolContext = { phase: "execution", mission, plan, store, gateway, web, catalog: deps.catalog, access, state, sandbox: deps.sandbox, review: reviewer, items };
+  const savedBefore = Object.fromEntries(plan.stages.map((s) => [s.key, items.counts(s.key).accepted]));
   const llmBudget = Math.max(AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD, holdValueUsd(reserve, AGENT_PRICING_BASIS) * AGENT_EXECUTION_LLM_BUDGET_SHARE);
   const baseLlm = Number((await store.getMission(mission.id))?.execution_llm_usd ?? mission.execution_llm_usd ?? 0);
   const checkpoint = async ({ costUsd }: { costUsd: number }) => {
@@ -263,11 +275,34 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
       await store.updateMission(mission.id, { execution_llm_usd: Number((baseLlm + costUsd + reviewNow).toFixed(6)) });
     } catch { /* a lost checkpoint never stops a run */ }
   };
-  let output;
-  try {
-    output = await deps.driver.run({ phase: "execution", systemPrompt: loadSystemPrompt("execution", deps.systemPromptFile), userPrompt: executionPrompt(mission, plan, calls, savedBefore), tools: buildTools(ctx), state, model, maxTurns: AGENT_EXECUTION_MAX_TURNS, maxBudgetUsd: llmBudget, wallMs: AGENT_EXECUTION_WALL_MS, onUsage: checkpoint });
-  } catch (e) {
-    output = { llmCostUsd: 0, turns: 0, stop: "error", error: String((e as Error)?.message ?? e).slice(0, 300) } as Awaited<ReturnType<ModelDriver["run"]>>;
+  const deadlineMs = Date.now() + AGENT_EXECUTION_WALL_MS;
+  let output: Awaited<ReturnType<ModelDriver["run"]>>;
+  const engineOn = deps.engine !== false && plan.stages.every((s) => s.engine !== undefined);
+  if (engineOn) {
+    // THE MODEL PLANNED, CODE EXECUTES: every stage has a recipe the plan check proved, so no model session is started at all (the only model call left is the small review of items the rule cannot decide)
+    const tracked = trackRun();
+    try {
+      const outcome = await runEngine({ items, store, plan, missionId: mission.id, gateway, sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, log: deps.log });
+      output = { llmCostUsd: 0, turns: 0, stop: outcome.aborted ?? "end" };
+    } finally {
+      untrackRun(tracked);
+    }
+  } else {
+    // the model carries the mission out (a plan whose stages have no proven recipe), still through the one item store. A round that ends while matching items are still needed and a source has more is followed by another round.
+    output = { llmCostUsd: 0, turns: 0, stop: "end", usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } };
+    for (let round = 0; round <= AGENT_EXECUTION_CONTINUE_ROUNDS; round += 1) {
+      state.terminal = false;
+      const saved = Object.fromEntries(plan.stages.map((s) => [s.key, items.counts(s.key).accepted]));
+      let r: Awaited<ReturnType<ModelDriver["run"]>>;
+      try {
+        r = await deps.driver.run({ phase: "execution", systemPrompt: loadSystemPrompt("execution", deps.systemPromptFile), userPrompt: round === 0 ? executionPrompt(mission, plan, calls, savedBefore) : continuationPrompt(mission, plan, await store.listCalls(mission.id), saved), tools: buildTools(ctx), state, model, maxTurns: AGENT_EXECUTION_MAX_TURNS, maxBudgetUsd: llmBudget, wallMs: AGENT_EXECUTION_WALL_MS, onUsage: checkpoint });
+      } catch (e) {
+        r = { llmCostUsd: 0, turns: 0, stop: "error", error: String((e as Error)?.message ?? e).slice(0, 300) } as Awaited<ReturnType<ModelDriver["run"]>>;
+      }
+      output = { ...r, llmCostUsd: output.llmCostUsd + r.llmCostUsd, turns: output.turns + r.turns, usage: sumUsage(output.usage, r.usage) };
+      const short = plan.stages.some((s) => s.deliver && items.counts(s.key).accepted < s.planned_rows) && [...state.moreAvailable.values()].some(Boolean);
+      if (r.stop !== "end" || r.error || state.finish || !short || Date.now() >= deadlineMs) break;
+    }
   }
   // the model cost of this run = the agent's own run + the review calls it made (a requeued or killed run's cost is already on the mission through the checkpoints and the review state)
   const reviewAfter = await readReviewState(store, mission.id);
@@ -276,38 +311,62 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   await recordTokens(deps, mission.id, 1, output.usage, { inputTokens: reviewAfter.inputTokens - reviewBefore.inputTokens, outputTokens: reviewAfter.outputTokens - reviewBefore.outputTokens, calls: reviewAfter.calls - reviewBefore.calls }, output.llmCostUsd + reviewSpent);
   if (output.stop === "memory" && !state.finish && await requeue(deps, mission, "approved", { execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(budget.spentUsd().toFixed(6)) }, "memory")) return;
 
-  await settleExecution(deps, mission, plan, reserve, unit, { llm, executionTregUsd: budget.spentUsd(), summary: state.finish?.summary_ar ?? null, outputError: output.error ?? null });
+  await settleExecution(deps, mission, plan, reserve, unit, { llm, executionTregUsd: budget.spentUsd(), summary: state.finish?.summary_ar ?? null, outputError: output.error ?? null, memory: items });
 }
 
+const sumUsage = (a: TokenUsage | undefined, b: TokenUsage | undefined): TokenUsage => ({
+  input_tokens: (a?.input_tokens ?? 0) + (b?.input_tokens ?? 0), output_tokens: (a?.output_tokens ?? 0) + (b?.output_tokens ?? 0),
+  cache_read_input_tokens: (a?.cache_read_input_tokens ?? 0) + (b?.cache_read_input_tokens ?? 0), cache_creation_input_tokens: (a?.cache_creation_input_tokens ?? 0) + (b?.cache_creation_input_tokens ?? 0),
+});
+
 /**
- * ENDS AN EXECUTION WITH WHAT IS SAVED: the unique final rows of the delivered stages (each linked to a saved parent row) become the files, and the existing settlement functions charge ceil(delivered x unit price), never
- * above the reserve, and release the rest of the hold. Used by the normal end of a run and by every recovery that ends a mission (a run that failed too many times, a worker that restarted too many times).
+ * ENDS AN EXECUTION FROM THE FILE. The settlement is built backwards from what the customer receives: the item store's log is read FRESH from storage (never from a copy in memory), the files are built from it, PUBLISHED, and READ BACK;
+ * the number of items in the file the customer will download is the ONE number: it is the delivered count, the charge basis (ceil(file count x unit price), never above the reserve, the rest released, through the existing money
+ * functions), the count in the result event, the notice, the e-mail and the summary sheet. If any other number (the writer's memory, the rows built) disagrees with the file, the mission is charged by the file and flagged for the admin;
+ * the customer is never shown a number that is not in the file. Used by the normal end of a run and by every recovery that ends a mission (a run that failed too many times, a worker that restarted too many times).
  */
-async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: PricedPlan, reserve: number, unit: number, a: { llm: number; executionTregUsd: number; summary: string | null; outputError: string | null }): Promise<void> {
+async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: PricedPlan, reserve: number, unit: number, a: { llm: number; executionTregUsd: number; summary: string | null; outputError: string | null; /** The writer's memory of the run: compared with the log, never used to settle. */ memory?: ItemStore }): Promise<void> {
   const { store } = deps;
   const fresh = (await store.getMission(mission.id)) ?? mission;
   const llm = a.llm;
   const jobId = mission.job_id;
   if (!jobId) throw new Error("the mission has no job");
-  // deliver what is saved: the unique final rows of the delivered stages, each linked to a saved parent row
-  const { delivered, perStage } = await countDeliveredRows(store, mission.id, plan);
   const spent = Number((fresh.planning_treg_usd ?? 0) + a.executionTregUsd);
+  // the log, read fresh: the listing then every segment (an unreadable segment throws, so the run is put back and retried instead of settling on a gap)
+  const log = await ItemStore.open(store, mission.id, { legacyStages: plan.stages.map((s) => s.key) });
+  const snap = log.snapshotOfMemory();
+  const flags: string[] = [];
   const rowsByStage: Record<string, Array<Record<string, unknown>>> = {};
-  for (const s of plan.stages) { const raw = await store.getFile(mission.id, `rows/${s.key}.json`); rowsByStage[s.key] = raw ? JSON.parse(raw) : []; }
+  for (const s of plan.stages) rowsByStage[s.key] = snap.acceptedRows(s.key, s.planned_rows);
+  const builtCount = plan.stages.filter((s) => s.deliver).reduce((n, s) => n + rowsByStage[s.key].length, 0);
+  if (a.memory) for (const s of plan.stages) if (a.memory.counts(s.key).accepted !== snap.counts(s.key).accepted) flags.push("memory_differs_from_store");
 
   // WHAT WAS LEFT OUT goes to the admin only (a CSV in the mission's own folder, never in the customer's files), with the report of the check
-  const checked = await recordChecks(deps, mission.id, plan, store);
+  const checked = await recordChecks(deps, mission.id, plan, store, snap);
+  await mirrorLegacyFiles(log, store, plan);
   const noun = itemNounOfPlan(plan);
 
   let resultPath: string | null = null;
   let files: Array<{ name: string; path: string; kind: string }> = [];
-  if (delivered > 0) {
+  let fileCount = 0;
+  /** The items of each delivered stage IN THE FILE (by sheet), for the tracker's final numbers. */
+  let fileByStage: Record<string, number> | null = null;
+  if (builtCount > 0) {
     try {
       const built = await buildMissionFiles(plan, rowsByStage);
       const published = await store.publishResult({ missionId: mission.id, userId: mission.user_id, jobId, xlsx: built.xlsx, csv: built.csv });
       resultPath = published.resultPath;
+      // READ BACK what the customer will download, and count it from the file itself
+      const stored = await store.getFileBytes(mission.id, "result/result.xlsx").catch(() => null);
+      let sheets = stored ? await countWorkbookSheets(stored) : null;
+      if (sheets === null) { sheets = await countWorkbookSheets(built.xlsx); flags.push("file_readback_unavailable"); }
+      if (sheets === null) throw new Error("the built file could not be read");
+      fileCount = sheets.reduce((n, x) => n + x, 0);
+      // the sheets are the delivered stages that have items, in plan order: each stage's own count in the file
+      const withSheet = plan.stages.filter((s) => s.deliver && rowsByStage[s.key].length > 0);
+      if (withSheet.length === sheets.length) fileByStage = Object.fromEntries(withSheet.map((s, i) => [s.key, sheets![i]]));
       // the name the customer's download carries, built from the mission: what + count + date in Arabic («تغريدات عن محمد صلاح - ٣٠٠ - ٢٨ أكتوبر ٢٠٢٦»)
-      const title = missionFileTitleAr({ plan, requestText: mission.request_text, delivered, date: new Date() });
+      const title = missionFileTitleAr({ plan, requestText: mission.request_text, delivered: Math.min(fileCount, plan.price.deliveredRows), date: new Date() });
       files = published.files.map((f) => ({ ...f, download_name: `${title}.${f.kind}` }));
     } catch (e) {
       await settleMission(deps.client, { jobId, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath: null, releaseReason: "agent mission: the result files could not be saved" });
@@ -316,25 +375,38 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
       await tell(deps, mission, jobId, "failed", { delivered: 0, planned: plan.price.deliveredRows, chargedPoints: 0, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true });
       return;
     }
+    if (fileCount !== builtCount) flags.push("file_differs_from_store");
   }
+  // THE ONE NUMBER: the items in the file
+  const delivered = Math.min(fileCount, plan.price.deliveredRows);
+  if (fileCount > plan.price.deliveredRows) flags.push("file_over_the_volume_sold");
   const settled = await settleMission(deps.client, { jobId, deliveredUnits: delivered, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath, releaseReason: "agent mission delivered nothing" });
   if (!settled.ok) {
     await store.updateMission(mission.id, { status: "failed", error: `settlement ${settled.code}: ${settled.detail}`, execution_llm_usd: Number(llm.toFixed(6)), ...clear });
     await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّرت التسوية الآلية للمهمة؛ راجع المشرف ولم يُخصم رصيد إضافي." });
     return;
   }
-  // ONE SOURCE OF TRUTH for the numbers: the counts and the money are stated by code, from the real delivered count and the real settlement; the stored summary is the model's note (kept only when it has no number in it, so it can
-  // never disagree with the count) and, for a shortfall, the honest reason in plain words (never a number, never «صف» or «سجل»)
-  const note = a.summary && !HAS_NUMBER.test(a.summary) ? a.summary.trim() : "";
+  if (flags.length > 0) {
+    await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: أرقام المهمة لا تتطابق تمامًا.", counts: { adm_flag: 1, adm_store: builtCount, adm_file: fileCount, adm_memory: a.memory ? plan.stages.filter((s) => s.deliver).reduce((n, s) => n + a.memory!.counts(s.key).accepted, 0) : -1 } });
+    deps.log?.(`settle_flags ${mission.id} ${flags.join(",")}`);
+  }
+  // ONE SOURCE OF TRUTH for the numbers: the counts and the money are stated by code, from the count of the file and the real settlement; the stored summary is the model's note (kept only when it has no number in it, so it can
+  // never disagree with the count) or, when no model carried the mission out, a sentence built here; for a shortfall, the honest reason from the stop reason the run RECORDED (never a number, never «صف» or «سجل»)
   const requested = plan.price.deliveredRows;
-  const reason = delivered > 0 && delivered < requested ? shortfallReasonAr(checked) : delivered <= 0 ? "لم يُسلَّم أي شيء، ولم يُخصم منك شيء." : "";
+  const note = a.summary && !HAS_NUMBER.test(a.summary) ? a.summary.trim() : "";
+  const shortStage = plan.stages.find((s) => s.deliver && snap.counts(s.key).accepted < s.planned_rows);
+  const reason = delivered > 0 && delivered < requested ? shortfallFromStopAr(shortStage ? snap.stage(shortStage.key).stop : null, checked) : delivered <= 0 ? "لم يُسلَّم أي شيء، ولم يُخصم منك شيء." : "";
   const summary = [note, reason].filter(Boolean).join(" ").slice(0, 1100);
+  const mismatch = settled.kind === "settled" && !settled.matchesExpectation ? `charge ${settled.chargedPoints} differs from the expected ${settled.expectedChargedPoints}` : null;
+  const adminFlag = flags.length > 0 ? `admin: ${[...new Set(flags)].join(", ")}` : null;
   await store.updateMission(mission.id, {
     status: delivered > 0 ? "completed" : "unserved", delivered_units: delivered, charged_points: settled.chargedPoints, summary_ar: summary || null, files: files.length ? files : null,
-    execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(a.executionTregUsd.toFixed(6)), error: settled.kind === "settled" && !settled.matchesExpectation ? `charge ${settled.chargedPoints} differs from the expected ${settled.expectedChargedPoints}` : (a.outputError ?? null), ...clear,
+    execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(a.executionTregUsd.toFixed(6)), error: mismatch ?? a.outputError ?? adminFlag, ...clear,
   });
-  await store.addEvent(mission.id, { kind: "result", message_ar: summary || (delivered > 0 ? "اكتملت المهمة." : "لم يُسلَّم أي شيء."), counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, perStage[s.key] ?? 0])) } });
-  await tell(deps, mission, jobId, delivered <= 0 ? "unserved" : delivered < plan.price.deliveredRows ? "partial" : "completed", { delivered, planned: plan.price.deliveredRows, chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true });
+  // the rows of a stage as the customer receives them: a delivered stage's count in the FILE (its own sheet); a stage that is not delivered (an intermediate one) keeps the items saved
+  const stageRowsOf = (s: PricedPlan["stages"][number]): number => (s.deliver ? (fileByStage ? fileByStage[s.key] ?? 0 : plan.stages.filter((x) => x.deliver).length === 1 ? delivered : rowsByStage[s.key].length) : rowsByStage[s.key].length);
+  await store.addEvent(mission.id, { kind: "result", message_ar: summary || (delivered > 0 ? "اكتملت المهمة." : "لم يُسلَّم أي شيء."), counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, stageRowsOf(s)])) } });
+  await tell(deps, mission, jobId, delivered <= 0 ? "unserved" : delivered < plan.price.deliveredRows ? "partial" : "completed", { delivered, planned: plan.price.deliveredRows, chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(delivered > 0 && delivered < requested ? { shortfallClauseAr: shortfallClauseAr(shortStage ? snap.stage(shortStage.key).stop : null, checked) } : {}) });
 }
 
 const shortError = (e: unknown): string => String((e as Error)?.message ?? e).slice(0, 300);

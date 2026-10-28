@@ -17,6 +17,25 @@ export interface PlanColumn {
   kind?: ContactKind;
 }
 
+/**
+ * WHAT CODE NEEDS TO RUN A STAGE WITHOUT THE MODEL (the model PLANS, code EXECUTES). Derived BY CODE at plan time from what the agent really did (never written by the agent): the source and its first-page inputs, the name of its
+ * cursor input, the mapping code the agent ran on the measured page (re-run at plan time on that very page and proven to give the same rows), and, for a stage with a parent, which input takes which field of the parent row.
+ * Internal: it is never part of what a customer reads (customerPlanView lists its fields one by one).
+ */
+export interface EngineSpec {
+  endpoint_id: string;
+  /** The inputs of the FIRST page, exactly as the measuring call had them (the cursor input is added by code for the next pages). */
+  params: Record<string, unknown>;
+  /** The endpoint's own paging input, or null when it has none (one page). */
+  cursor_param: string | null;
+  /** The agent's mapping code: the body of a function over `inputs`, turning ONE saved page into the stage's final rows. */
+  map_code: string;
+  /** The key of `inputs` the page is handed under (the id of the saved page the code was measured on). */
+  map_file_id: string;
+  /** A stage with a parent: the input that takes a field of the parent's row (`from` is a column key of the parent stage, or «id»). */
+  parent_binding: { param: string; from: string } | null;
+}
+
 export interface ProposedStage {
   key: string;
   title_ar: string;
@@ -36,6 +55,8 @@ export interface ProposedStage {
   relevance?: RelevanceSpec;
   /** The id of a run_code output holding ALL the rows of the measured page, mapped to this stage's columns: the code classifies them to know the share of matching rows (the yield) the price rests on. */
   yield_from?: string;
+  /** Set by code when the stage can be executed without the model (see EngineSpec). Absent: the model carries the stage out, through the same item store. */
+  engine?: EngineSpec;
 }
 
 export interface ProposedPlan {

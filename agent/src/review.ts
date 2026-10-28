@@ -91,9 +91,25 @@ export interface Reviewer {
   budgetUsd: number;
 }
 
+/**
+ * The review's account (cost, calls, budget reached) is kept as a series of create-only objects `state/review_<seq>_<writer>.json`, the newest being the state (an overwritten object may be read stale from the storage CDN, and a stale cost
+ * would let the review spend past its budget). `review_state.json` is a best-effort copy for the admin page.
+ */
+const REVIEW_VERSION_RE = /^state\/review_(\d{9})_([a-z0-9]+)\.json$/;
+async function newestReviewVersion(store: AgentStore, missionId: string): Promise<{ seq: number; text: string } | null> {
+  try {
+    const listed = (await store.listFiles(missionId, "state")).filter((f) => REVIEW_VERSION_RE.test(f.name));
+    for (let i = listed.length - 1; i >= 0; i -= 1) {
+      const text = await store.getFile(missionId, listed[i].name);
+      if (text !== null) return { seq: Number(REVIEW_VERSION_RE.exec(listed[i].name)![1]), text };
+    }
+  } catch { /* the older copy is read */ }
+  return null;
+}
+
 export async function readReviewState(store: AgentStore, missionId: string): Promise<ReviewState> {
   try {
-    const raw = await store.getFile(missionId, REVIEW_STATE_FILE);
+    const raw = (await newestReviewVersion(store, missionId))?.text ?? (await store.getFile(missionId, REVIEW_STATE_FILE));
     if (!raw) return emptyReviewState();
     const o = JSON.parse(raw) as Partial<ReviewState>;
     const base = emptyReviewState();
@@ -108,8 +124,18 @@ export async function readReviewState(store: AgentStore, missionId: string): Pro
 export function createReviewer(deps: { call: ReviewCall; store: AgentStore; missionId: string; requestText: string; budgetUsd: number; /** The most the review may reach when rows the request needs are still waiting (default: the budget itself). */ ceilingUsd?: number; model?: string; log?: (line: string) => void }): Reviewer {
   const model = deps.model ?? MODEL_HAIKU;
   let state: ReviewState | null = null;
-  const load = async () => (state ??= await readReviewState(deps.store, deps.missionId));
-  const save = async (s: ReviewState) => { try { await deps.store.putFile(deps.missionId, REVIEW_STATE_FILE, JSON.stringify(s), "application/json"); } catch (e) { deps.log?.(`review_state_not_saved ${deps.missionId} ${String((e as Error)?.message ?? e).slice(0, 100)}`); } };
+  let seq = 0;
+  const writer = Math.random().toString(36).slice(2, 10).replace(/[^a-z0-9]/g, "a").padEnd(8, "a");
+  const load = async () => {
+    if (!state) { seq = (await newestReviewVersion(deps.store, deps.missionId))?.seq ?? 0; state = await readReviewState(deps.store, deps.missionId); }
+    return state;
+  };
+  const save = async (s: ReviewState) => {
+    const body = JSON.stringify(s);
+    seq += 1;
+    try { await deps.store.putNew(deps.missionId, `state/review_${String(seq).padStart(9, "0")}_${writer}.json`, body, "application/json"); } catch (e) { deps.log?.(`review_state_not_saved ${deps.missionId} ${String((e as Error)?.message ?? e).slice(0, 100)}`); }
+    try { await deps.store.putFile(deps.missionId, REVIEW_STATE_FILE, body, "application/json"); } catch { /* the copy for the admin page */ }
+  };
   return {
     budgetUsd: deps.budgetUsd,
     state: load,

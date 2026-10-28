@@ -57,7 +57,7 @@ describe("a 300-tweet mission paged through the source", () => {
     // (the old line expected ["نص التغريدة", "رابط التغريدة", "الحساب"]: the date column was added, see above)
     expect(r.planView.samples!.columns.map((c) => c.titleAr)).toEqual(["نص التغريدة", "رابط التغريدة", "الحساب", "التاريخ والوقت"]);
     // (the old line said «٦٢ … ٧٢»: provider cost alone) the one pricing rule: the 300 tweets cost less than the minimum, so the charge is the minimum and the card says so
-    expect(r.planView.priceLineAr).toMatch(/^السعر حتى ٢٠٠ نقطة .* حجز مؤقت ٢٠٠ نقطة .* الحد الأدنى للمهمة ٢٠٠ نقطة، ولا خصم إن لم يُسلَّم شيء .* الوقت المتوقع نحو /);
+    expect(r.planView.priceLineAr).toMatch(/^السعر حتى ٢٠٠ نقطة .*ويُخصم بنسبة ما يُسلَّم فعلًا · حجز مؤقت ٢٠٠ نقطة .* الوقت المتوقع نحو /);
     // 15 pages of 20 = 300 unique rows, saved in ONE stage, inside the execution budget
     expect(r.executionDriver.results.filter((x) => x.tool === "treg_call").every((x) => x.result.ok === true)).toBe(true);
     expect(r.executionDriver.results.filter((x) => x.tool === "save_rows")[0].result).toMatchObject({ saved_now: 300, rejected_over_limit: 0 });
@@ -67,7 +67,7 @@ describe("a 300-tweet mission paged through the source", () => {
     expect(r.finalView.phase).toBe("done");
     // (the old line expected the released hold: with the minimum the reserve and the charge are both 200, so nothing is left to release)
     // (the old line expected «خُصم ٢٠٠ نقطة مقابل ما سُلّم فقط»: the money is now said as the wallet shows it: the hold, the charge, the whole hold released)
-    expect(r.finalView.resultLinesAr).toEqual(["تم تسليم ٣٠٠ من ٣٠٠ تغريدة.", "حُجز مؤقتًا ٢٠٠ نقطة، وخُصم ٢٠٠ نقطة مقابل ما سُلّم، وحجز مؤقت مُحرَّر ٢٠٠ نقطة."]);
+    expect(r.finalView.resultLinesAr).toEqual(["تم تسليم ٣٠٠ من ٣٠٠ تغريدة.", "خُصم ٢٠٠ نقطة مقابل ٣٠٠ تغريدة."]);
     // the live panel ticked from the counts
     // (the old line expected [{ stage: 1, saved: 300, planned: 300 }]: the live tick of a stage with a relevance rule now also carries the check counts, so the panel moves while items are being checked)
     expect(r.store.events.filter((e) => e.counts?.stage === 1).map((e) => e.counts)).toEqual([{ stage: 1, saved: 300, planned: 300, checked: 300, accepted: 300, excluded: 0, pending: 0 }]);

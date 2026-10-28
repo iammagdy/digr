@@ -1,0 +1,185 @@
+import { classifyRowDetailed, type RelevanceReason, type RuleBasis } from "../../../src/lib/agentMission/relevance";
+import { CONTACT_KINDS, isContactSource, verifyContactValue } from "../../../src/lib/agentMission/contacts";
+import type { PricedPlan } from "../../../src/lib/agentMission/plan";
+import type { MissionEventInput } from "../types";
+import type { Reviewer } from "../review";
+import type { ItemReason, ItemStore, Op, Row, StageCounts } from "./itemStore";
+
+type Stage = PricedPlan["stages"][number];
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** Items the review could not reach (the budget, a failed call): never thrown away, asked again. */
+export const PENDING_ITEM_REASONS: ReadonlyArray<ItemReason> = ["not_reviewed", "review_failed"];
+
+export interface IngestDeps {
+  items: ItemStore;
+  plan: PricedPlan;
+  reviewer?: Reviewer;
+  addEvent: (event: MissionEventInput) => Promise<void>;
+}
+
+/** What one page of a source adds to the log together with its items (one segment, so the cursor and the items can never disagree after a crash). */
+export interface PageRecord { stream: string; call_id: string | null; cursor_in: string | null; cursor_next: string | null; has_more: boolean | null; ended: boolean; rows_in_page: number }
+
+export interface IngestOptions {
+  page?: PageRecord;
+  /** Keep a progress event out of this call (the engine writes its own, once per page). Default: the event is written. */
+  silent?: boolean;
+  /** The most items this batch may ADD to the stage (a parent's share: «five comments per post»): a match beyond it is kept, never delivered, like a match beyond the volume bought. */
+  acceptCap?: number;
+}
+
+export interface IngestResult extends Record<string, unknown> {
+  ok: true;
+  stage: string;
+  counts: StageCounts;
+  newlyAccepted: number;
+}
+
+/**
+ * THE CHECK AND SAVE OF THE ITEMS OF ONE STAGE (the only way an item enters the store, for the engine and for the model's save_rows alike). One batch is one atomic step: the items are de-duplicated against the store, checked
+ * (the rule decides every item it can; the model reviews only what the rule cannot decide, within the review budget; an item the review could not reach stays PENDING and is asked again), and the verdicts are appended to the
+ * log as ONE segment together with the page that gave them. The batch cannot lose, double count or half-save an item: if the segment is not stored the batch did not happen, and the same items come again.
+ */
+export async function ingestRows(deps: IngestDeps, stage: Stage, incoming: unknown[], options: IngestOptions = {}): Promise<IngestResult> {
+  return deps.items.exclusive(() => ingestLocked(deps, stage, incoming, options));
+}
+
+async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[], options: IngestOptions): Promise<IngestResult> {
+  const { items, plan, reviewer } = deps;
+  const key = stage.key;
+  const spec = stage.relevance ?? null;
+  const before = items.counts(key);
+  const room = Math.max(0, stage.planned_rows - before.accepted);
+  const columnKeys = stage.columns.map((c) => c.key);
+  const contactColumns = stage.columns.filter((c) => c.kind !== undefined && CONTACT_KINDS.includes(c.kind));
+  const contactStage = isContactSource(stage.endpoint_id);
+  const parentIds = stage.parent_key !== null ? new Set(items.acceptedIds(stage.parent_key)) : null;
+  const tally = { saved_now: 0, duplicates_ignored: 0, rejected_missing_id: 0, rejected_unknown_parent: 0, rejected_over_limit: 0, rejected_not_object: 0, rejected_no_verified_contact: 0, contact_values_left_empty: 0 };
+  const ops: Op[] = [];
+
+  // items that were waiting (a review the budget or a failure delayed) or never looked at come back first, while matching items are still needed
+  const carry: Array<{ id: string; row: Row }> = [];
+  if (spec && reviewer && spec.review !== false && room > 0) {
+    for (const it of [...items.pendingItems(key), ...items.uncheckedItems(key)]) if (it.row) carry.push({ id: it.id, row: it.row });
+  }
+
+  // pass 1: the structure of every incoming item (id, duplicate, parent, columns, contact values)
+  const fresh: Array<Record<string, unknown>> = [];
+  const seenNow = new Set<string>();
+  let duplicates = 0;
+  const excludedStructural: Array<{ id: string; reason: ItemReason; row: Row }> = [];
+  for (const raw of incoming) {
+    if (!isObject(raw)) { tally.rejected_not_object += 1; continue; }
+    const id = String(raw.id ?? "").trim();
+    if (!id) { tally.rejected_missing_id += 1; continue; }
+    if (items.has(key, id) || seenNow.has(id)) { duplicates += 1; tally.duplicates_ignored += 1; continue; }
+    let parentId: string | null = null;
+    if (parentIds) {
+      parentId = String(raw.parent_id ?? "").trim();
+      // an item of a parent that is not saved (yet) is NOT remembered: it may come again once its parent is saved
+      if (!parentId || !parentIds.has(parentId)) { tally.rejected_unknown_parent += 1; continue; }
+    }
+    seenNow.add(id);
+    const row: Row = { id, ...(parentId !== null ? { parent_id: parentId } : {}) };
+    for (const k of columnKeys) if (k !== "id" && k !== "parent_id") row[k] = raw[k] ?? "";
+    // CONTACT FIELDS are verified by code: a work e-mail or phone that does not pass is left empty; an item of a contact stage with no verified value is not delivered (so it is not charged)
+    let verifiedAny = false;
+    for (const c of contactColumns) {
+      const original = String(raw[c.key] ?? "").trim();
+      const verified = verifyContactValue(c.kind!, raw[c.key]);
+      row[c.key] = verified ?? "";
+      if (verified) verifiedAny = true; else if (original) tally.contact_values_left_empty += 1;
+    }
+    if (contactStage && contactColumns.length > 0 && !verifiedAny) { tally.rejected_no_verified_contact += 1; excludedStructural.push({ id, reason: "no_verified_contact", row }); continue; }
+    fresh.push(row);
+  }
+  for (const e of excludedStructural) ops.push({ t: "item", stage: key, id: e.id, state: "excluded", reason: e.reason, row: e.row });
+
+  // pass 2: RELEVANCE. Only items that are about what the customer asked are saved (so only they are delivered and charged).
+  type Candidate = { id: string; row: Row; carried: boolean };
+  const candidates: Candidate[] = [...carry.filter((c) => !fresh.some((f) => String(f.id) === c.id)).map((c) => ({ id: c.id, row: c.row, carried: true })), ...fresh.map((row) => ({ id: String(row.id), row, carried: false }))];
+  const outcome = new Map<string, { state: "accepted" | "excluded" | "pending"; by?: "rule" | "model"; basis?: RuleBasis; reason?: RelevanceReason }>();
+  let reviewedNow = 0;
+  let reviewStop: "budget" | "failed" | null = null;
+  const left: Record<string, number> = {};
+  if (spec) {
+    const verdicts = candidates.map((c) => ({ c, v: classifyRowDetailed(spec, c.row) }));
+    const matches = verdicts.filter((x) => x.v.verdict === "match").length;
+    const uncertain = verdicts.filter((x) => x.v.verdict === "review");
+    let verdictOf = new Map<string, boolean>();
+    if (uncertain.length > 0 && spec.review !== false && reviewer && matches < room) {
+      // no more review than the room left can use (an item beyond the approved volume is never needed); the rest stays pending
+      const wanted = uncertain.slice(0, (room - matches) * 3 + 25);
+      verdictOf = await reviewer.review({ subject: spec.subject_ar, rows: wanted.map((x) => ({ id: x.c.id, text: spec.text_columns.map((k) => String(x.c.row[k] ?? "")).join(" ") })) });
+      reviewedNow = verdictOf.size;
+      reviewStop = (await reviewer.state()).stop;
+    }
+    for (const { c, v } of verdicts) {
+      if (v.verdict === "match") { outcome.set(c.id, { state: "accepted", by: "rule", basis: (v as { basis?: RuleBasis }).basis }); continue; }
+      if (v.verdict === "exclude") { outcome.set(c.id, { state: "excluded", reason: v.reason }); continue; }
+      if (verdictOf.get(c.id) === true) { outcome.set(c.id, { state: "accepted", by: "model" }); continue; }
+      if (verdictOf.has(c.id)) { outcome.set(c.id, { state: "excluded", reason: "review_no" }); continue; }
+      if (spec.review === false) { outcome.set(c.id, { state: "excluded", reason: "uncertain" }); continue; }
+      // with a reviewer, an item not reviewed (budget, a failed call, more than the room needs) is PENDING: kept and asked again; with none, it is a final exclusion
+      const reason: RelevanceReason = !reviewer ? "not_reviewed" : reviewStop === "failed" ? "review_failed" : "not_reviewed";
+      outcome.set(c.id, reviewer ? { state: "pending", reason } : { state: "excluded", reason });
+    }
+  } else for (const c of candidates) outcome.set(c.id, { state: "accepted", by: "rule" });
+
+  // the verdicts, in order, as ops: the volume the customer bought is never exceeded (a match beyond it is kept UNCHECKED, never delivered)
+  let acceptedNow = 0;
+  let modelAccepted = 0;
+  for (const c of candidates) {
+    const o = outcome.get(c.id)!;
+    let state: "accepted" | "excluded" | "pending" | "unchecked" = o.state;
+    let reason: ItemReason | undefined = o.reason;
+    // a match beyond the volume the customer bought was checked and is not needed: it is kept (never delivered, never charged) with that reason
+    if (state === "accepted" && (before.accepted + acceptedNow >= stage.planned_rows || (options.acceptCap !== undefined && acceptedNow >= options.acceptCap))) { state = "excluded"; reason = "target_reached"; tally.rejected_over_limit += 1; }
+    if (state === "accepted") { acceptedNow += 1; if (o.by === "model") modelAccepted += 1; }
+    if (state === "excluded" && reason && reason !== "target_reached") left[reason] = (left[reason] ?? 0) + 1;
+    if (c.carried) {
+      // a carried item is already in the log: only a decision moves it
+      if (state === "accepted" || state === "excluded") ops.push({ t: "resolve", stage: key, id: c.id, state, ...(o.by ? { by: o.by } : {}), ...(o.basis ? { basis: o.basis } : {}), ...(reason ? { reason } : {}) });
+    } else {
+      ops.push({ t: "item", stage: key, id: c.id, state, ...(state === "accepted" && o.by ? { by: o.by } : {}), ...(state === "accepted" && o.basis ? { basis: o.basis } : {}), ...(reason ? { reason } : {}), row: c.row });
+    }
+  }
+  tally.saved_now = acceptedNow;
+  if (duplicates > 0) ops.push({ t: "dup", stage: key, n: duplicates });
+  if (options.page) ops.push({ t: "page", stage: key, ...options.page });
+
+  await items.commit(ops);
+  const counts = items.counts(key);
+
+  // the live panel ticks from this: the numbers are in `counts` (never in the text), written by code from the item store, not by the model
+  if (!options.silent && (tally.saved_now > 0 || fresh.length > 0 || options.page)) {
+    await deps.addEvent({ kind: "progress", message_ar: `يحفظ الوكيل ما جمعه لمرحلة «${stage.title_ar}»`, counts: stageEventCounts(plan, key, counts) });
+  }
+  const stillNeeded = Math.max(0, stage.planned_rows - counts.accepted);
+  return {
+    ok: true, stage: key, ...tally, counts, newlyAccepted: acceptedNow, total_in_stage: counts.accepted, stage_limit: stage.planned_rows,
+    ...(spec ? {
+      left_out_not_matching: left, reviewed_by_model: reviewedNow, review_budget_reached: reviewStop === "budget", review_failed: reviewStop === "failed", pending_for_review: counts.pending,
+      accepted_by_rule: acceptedNow - modelAccepted,
+      still_needed: stillNeeded,
+      note: stillNeeded > 0 ? "only rows that MATCH the request are saved, delivered and charged; still_needed matching rows are missing: collect further pages (the source may have more) until still_needed is 0, the source ends, or the budget refuses; then finish and say honestly how many matched" : "the stage has all the matching rows it was sold",
+    } : {}),
+  };
+}
+
+/** The counts of the «saved» event of the live panel, every number read from the item store: the stage, what is saved, the volume bought and (for a stage with a relevance rule) what was checked, accepted, left out and is waiting. */
+export function stageEventCounts(plan: PricedPlan, stageKey: string, c: StageCounts): Record<string, number> {
+  const stage = plan.stages.find((s) => s.key === stageKey)!;
+  return {
+    stage: plan.stages.indexOf(stage) + 1, saved: c.saved, planned: stage.planned_rows,
+    ...(stage.relevance ? { checked: c.checked, accepted: c.accepted, excluded: c.excludedRelevance, pending: c.pending } : {}),
+  };
+}
+
+/** The two lines of the live panel after a batch: the source read so far (pages, items found: only ever growing) and what is saved. */
+export async function emitStageProgress(deps: Pick<IngestDeps, "plan" | "addEvent" | "items">, stage: Stage, options: { collecting: boolean }): Promise<void> {
+  const c = deps.items.counts(stage.key);
+  if (options.collecting && c.pages > 0) await deps.addEvent({ kind: "progress", message_ar: "يجمع الوكيل الصفحات من المصدر صفحة بعد صفحة", counts: { pages: c.pages, rows: c.found, planned: stage.planned_rows } });
+  await deps.addEvent({ kind: "progress", message_ar: `يحفظ الوكيل ما جمعه لمرحلة «${stage.title_ar}»`, counts: stageEventCounts(deps.plan, stage.key, c) });
+}
