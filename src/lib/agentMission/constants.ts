@@ -69,24 +69,27 @@ export const AGENT_MEMORY_WARN_SHARE = 0.8;
  * MEMORY ON THE 512 MB DYNO. All of it is the memory of the worker AND the processes it started (tree RSS, read from /proc), the figure the dyno's limit counts.
  *
  * WHERE THE NUMBERS COME FROM (evidence, not guesses):
- *  - idle readings of the worker after a restart: 208, 214, 217, 238, 250 MB tree (agent_worker_heartbeat, 2026-10-28);
- *  - the owner saw ONE normal planning run (a tweets / companies request) peak at 486 MB tree on this dyno WITHOUT crashing: so the SDK's own process costs about 486 - 216 = 270 MB (AGENT_SDK_CHILD_PEAK_MB);
- *  - the guard of PR #275 stopped a normal one-stage planning about 10 s after it started, at a hard limit of 450 MB: the limit was below what a normal run needs.
- * So: the hard limit sits above the measured normal peak (AGENT_MEMORY_OBSERVED_PLANNING_PEAK_MB), just over the dyno's quota (an overrun of the quota is the platform's R14 warning, not a kill; the kill threshold is NOT measured),
- * and a NEW mission is admitted only when the idle memory plus a normal run's SDK process still fits under that limit (admit = hard - SDK child). Every run now records its own peak (an internal event), so these numbers are
- * re-set from the dyno's real peaks, not from this reasoning.
- *  - a NEW mission is not taken (it stays queued, nothing is leased) while the tree is at or above AGENT_MEMORY_ADMIT_LIMIT_MB; an IDLE worker that stays at or above it for AGENT_MEMORY_RECYCLE_AFTER_MS exits so the platform
- *    restarts it with a fresh heap (otherwise the queue could wait for ever);
+ *  - the owner saw ONE normal planning run (a tweets / companies request) peak at 486 MB tree on this dyno WITHOUT crashing, under the old process layout (idle about 216 MB): the SDK's own process costs about 270 MB (AGENT_SDK_CHILD_PEAK_MB);
+ *  - the guard of PR #275 stopped a normal one-stage planning about 10 s after it started, at a hard limit of 450 MB: below what a normal run needs;
+ *  - PR #276 set admit = 250 MB (hard 520 - the SDK process). The fresh workers after its deploy read 259-267 MB tree at idle (agent_worker_heartbeat, 2026-10-28 17:36-17:38: rss 183-184 plus a child of about 76-84 MB,
+ *    not identified), so EVERY worker was blocked by its own admission limit and restarted in a loop: an admission limit below the idle memory of a healthy worker starves the queue.
+ * So now: admission 300 MB is a "this worker is swollen" level with a margin over the idle readings (267 at its highest); the hard limit 580 MB is that idle plus a whole SDK process (267 + 270 = 537) plus margin, and
+ * sits above the 486 MB planning peak that was measured. 580 MB is 13% over the dyno's quota (the platform's R14 warning zone); where it kills a dyno is NOT measured. Every run records its own peak (an internal event), so these
+ * numbers are re-set from the dyno's real peaks, not from this reasoning.
+ *  - a NEW mission is not taken (it stays queued, nothing is leased) while the tree is at or above AGENT_MEMORY_ADMIT_LIMIT_MB; a worker that is IDLE and has been up for AGENT_MEMORY_RECYCLE_MIN_UPTIME_MS stays at or above it for
+ *    AGENT_MEMORY_RECYCLE_AFTER_MS exits so the platform restarts it with a fresh heap (a younger worker never does, so a process that BOOTS above the limit cannot restart in a loop);
  *  - a RUNNING mission whose tree reaches AGENT_MEMORY_HARD_LIMIT_MB is stopped by the worker before the platform kills the dyno and put back in the queue (a mission that holds a reserve goes back to «approved» with everything
  *    it saved), at most AGENT_MEMORY_REQUEUES_MAX times; after that it finishes with what is saved (settled like any other end).
  */
 export const AGENT_MEMORY_PLANNING_TARGET_MB = 400;
 export const AGENT_MEMORY_OBSERVED_PLANNING_PEAK_MB = 486;
+export const AGENT_MEMORY_HIGHEST_IDLE_SEEN_MB = 267;
 export const AGENT_SDK_CHILD_PEAK_MB = 270;
-export const AGENT_MEMORY_HARD_LIMIT_MB = 520;
-export const AGENT_MEMORY_ADMIT_LIMIT_MB = AGENT_MEMORY_HARD_LIMIT_MB - AGENT_SDK_CHILD_PEAK_MB;
+export const AGENT_MEMORY_HARD_LIMIT_MB = 580;
+export const AGENT_MEMORY_ADMIT_LIMIT_MB = 300;
 export const AGENT_MEMORY_REQUEUES_MAX = 2;
 export const AGENT_MEMORY_RECYCLE_AFTER_MS = 120_000;
+export const AGENT_MEMORY_RECYCLE_MIN_UPTIME_MS = 15 * 60_000;
 /** How often the worker reads its memory while a mission runs (the peak of the run is the highest reading). */
 export const AGENT_MEMORY_WATCH_MS = 2_000;
 /** The Claude Agent SDK starts a native process for each session: one at a time. */

@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { AGENT_BUCKET_ALLOWED_MIME, AGENT_ERROR_REQUEUES_MAX, AGENT_MEMORY_ADMIT_LIMIT_MB, AGENT_MEMORY_HARD_LIMIT_MB, AGENT_MEMORY_OBSERVED_PLANNING_PEAK_MB, AGENT_MEMORY_RECYCLE_AFTER_MS, AGENT_PHASE_STARTS_MAX, AGENT_SDK_CHILD_PEAK_MB, AGENT_STALL_AFTER_MS, MISSION_INTERNAL_COUNT_KEYS } from "../src/lib/agentMission/constants";
+import { AGENT_BUCKET_ALLOWED_MIME, AGENT_ERROR_REQUEUES_MAX, AGENT_MEMORY_ADMIT_LIMIT_MB, AGENT_MEMORY_HARD_LIMIT_MB, AGENT_MEMORY_OBSERVED_PLANNING_PEAK_MB, AGENT_MEMORY_HIGHEST_IDLE_SEEN_MB, AGENT_MEMORY_RECYCLE_AFTER_MS, AGENT_MEMORY_RECYCLE_MIN_UPTIME_MS, AGENT_PHASE_STARTS_MAX, AGENT_SDK_CHILD_PEAK_MB, AGENT_STALL_AFTER_MS, MISSION_INTERNAL_COUNT_KEYS } from "../src/lib/agentMission/constants";
 import { internalCountsLineAr, isInternalEvent } from "../src/lib/agentMission/eventText";
 import { customerMissionView, SLOW_PLANNING_AR, STALLED_PLANNING_AR, type EventForCustomer, type MissionRowForCustomer } from "../src/lib/agentMission/customerView";
 import { checkCustomerText } from "../src/lib/agentMission/text";
@@ -211,11 +211,20 @@ describe("the heartbeat renews only the missions the worker really runs; an orph
 });
 
 describe("the real peak memory of every run is recorded (an internal event); the limits come from the measured peak", () => {
-  it("the numbers: hard limit above the measured normal planning peak, admit = hard - the SDK process, both from evidence", () => {
+  it("the numbers: admission above the highest idle reading ever seen (a healthy idle worker is never blocked), the hard limit above idle + a whole SDK process and above the measured planning peak", () => {
     expect(AGENT_MEMORY_OBSERVED_PLANNING_PEAK_MB).toBe(486);
+    expect(AGENT_MEMORY_HIGHEST_IDLE_SEEN_MB).toBe(267); // fresh workers after the #276 deploy: 259-267 MB tree, all blocked by the old admit limit of 250
+    expect(AGENT_MEMORY_ADMIT_LIMIT_MB).toBeGreaterThanOrEqual(AGENT_MEMORY_HIGHEST_IDLE_SEEN_MB + 30);
     expect(AGENT_MEMORY_HARD_LIMIT_MB).toBeGreaterThan(AGENT_MEMORY_OBSERVED_PLANNING_PEAK_MB);
-    expect(AGENT_MEMORY_ADMIT_LIMIT_MB + AGENT_SDK_CHILD_PEAK_MB).toBe(AGENT_MEMORY_HARD_LIMIT_MB);
-    expect(AGENT_MEMORY_ADMIT_LIMIT_MB).toBeGreaterThan(250 - 1); // the highest idle reading seen (250) must still be admitted
+    expect(AGENT_MEMORY_HARD_LIMIT_MB).toBeGreaterThanOrEqual(AGENT_MEMORY_HIGHEST_IDLE_SEEN_MB + AGENT_SDK_CHILD_PEAK_MB + 30);
+    expect(AGENT_MEMORY_ADMIT_LIMIT_MB + AGENT_SDK_CHILD_PEAK_MB).toBeLessThanOrEqual(AGENT_MEMORY_HARD_LIMIT_MB);
+  });
+
+  it("a worker that is idle at the highest reading seen (267 MB) takes a mission", async () => {
+    const store = createMemoryStore([newMission({ id: "msn_idle", user_id: U, status: "queued" })]);
+    const worker = createWorker({ store, workerId: "w1", version: "t", modelLabel: () => "m", readMemory: () => reading(AGENT_MEMORY_HIGHEST_IDLE_SEEN_MB, 184), runMission: async () => undefined });
+    expect(await worker.tick()).toBe(1);
+    await worker.idle();
   });
 
   const run = async (readings: Array<ReturnType<typeof reading>>, status: "queued" | "approved" = "queued") => {
@@ -260,16 +269,18 @@ describe("the real peak memory of every run is recorded (an internal event); the
     expect(checkCustomerText(line.replace(/\(م\.ب\)/g, "")).issues).toEqual([]);
   });
 
-  it("an IDLE worker that stays at or above the admit limit is asked to restart (once) instead of leaving the queue to wait for ever; a busy one is not", async () => {
+  it("an IDLE worker that stays at or above the admit limit is asked to restart (once) instead of leaving the queue to wait for ever; a young worker never restarts (no restart loop)", async () => {
     let clock = Date.parse("2026-10-28T10:00:00Z");
     const store = createMemoryStore([newMission({ id: "msn_w", user_id: U, status: "queued" })]);
     const recycle = vi.fn();
     const worker = createWorker({ store, workerId: "w1", version: "t", modelLabel: () => "m", readMemory: () => reading(AGENT_MEMORY_ADMIT_LIMIT_MB + 40), onRecycle: recycle, now: () => new Date(clock), runMission: async () => undefined });
     expect(await worker.tick()).toBe(0);
-    clock += AGENT_MEMORY_RECYCLE_AFTER_MS - 1_000;
+    // waiting for longer than the recycle time, but the worker is young: it keeps waiting, it does NOT restart
+    clock += AGENT_MEMORY_RECYCLE_AFTER_MS + 5_000;
     await worker.tick();
     expect(recycle).not.toHaveBeenCalled();
-    clock += 2_000;
+    // old enough, and still above the limit for the recycle time
+    clock += AGENT_MEMORY_RECYCLE_MIN_UPTIME_MS;
     await worker.tick();
     await worker.tick();
     expect(recycle).toHaveBeenCalledTimes(1);
