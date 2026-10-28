@@ -178,7 +178,8 @@ describe("E. the panel and the compact card are drawn from the tracker", () => {
     expect(v.priceFacts).toEqual([{ labelAr: "السعر حتى", valueAr: "٢٤٣ نقطة" }, { labelAr: "حجز مؤقت", valueAr: "٢٧٩ نقطة" }, { labelAr: "الوقت المتوقع", valueAr: "نحو ٤ دقائق" }]);
     expect(v.priceNoteAr).toBe("لا يُخصم إلا ما يُسلَّم فعلًا. الحد الأدنى للمهمة ٢٠٠ نقطة، ولا خصم إن لم يُسلَّم شيء.");
     const html = renderToStaticMarkup(createElement(AgentMissionCardBody, { view: v, isGuest: false }));
-    expect(html).toContain("grid-cols-3");
+    expect(html).toContain("grid-cols-2");
+    expect(html).toContain("sm:grid-cols-3");
     expect(html).toContain("الحد الأدنى للمهمة ٢٠٠ نقطة");
     expect(html).toContain('data-testid="agent-file-contents"');
     expect(html).toContain("يضم الملف: التاريخ والوقت، نص التغريدة.");

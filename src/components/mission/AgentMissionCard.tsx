@@ -151,9 +151,9 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, error = n
 
       {v.phase === "plan" && v.priceFacts.length > 0 ? (
         <div className="rounded-[12px] bg-sf2 px-3 py-2" data-testid="agent-price">
-          <dl className="m-0 grid grid-cols-3 gap-2 text-center">
-            {v.priceFacts.map((f) => (
-              <div key={f.labelAr} className="min-w-0"><dt className="text-[11px] font-light text-mut">{f.labelAr}</dt><dd className="m-0 mt-0.5 text-[13px] font-semibold leading-[1.5] text-ink">{f.valueAr}</dd></div>
+          <dl className="m-0 grid grid-cols-2 gap-2 text-center sm:grid-cols-3">
+            {v.priceFacts.map((f, i) => (
+              <div key={f.labelAr} className={`min-w-0${i === 2 ? " col-span-2 sm:col-span-1" : ""}`}><dt className="text-[11px] font-light text-mut">{f.labelAr}</dt><dd className="m-0 mt-0.5 text-[13px] font-semibold leading-[1.5] text-ink">{f.valueAr}</dd></div>
             ))}
           </dl>
           {v.priceNoteAr ? <p className="m-0 mt-1.5 border-t border-ln pt-1.5 text-center text-[12px] leading-[1.7] text-ink2" data-testid="agent-price-note">{v.priceNoteAr}</p> : null}
