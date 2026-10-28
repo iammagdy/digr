@@ -13,6 +13,8 @@ export interface SelfTestRow {
   window: string;
   sampleRows: number;
   unitPricePoints: number | null;
+  /** The range the unit price was expected to stay inside («0.05..6»), or empty. */
+  priceRange?: string;
   holdPoints: number | null;
   turns: number;
   stopReasons: string[];
@@ -28,8 +30,8 @@ export interface SelfTestRow {
 
 /** The table as CSV (admin download): one line per request, quoted. */
 export function selfTestCsv(rows: ReadonlyArray<SelfTestRow>): string {
-  const head = ["id", "request", "expected", "outcome", "pass", "reason", "understood", "endpoints", "alternatives_tried", "params", "window", "sample_rows", "unit_points", "hold_points", "turns", "stop_reasons", "tokens_in", "tokens_out", "model_usd", "provider_usd", "end_reason"];
+  const head = ["id", "request", "expected", "outcome", "pass", "reason", "understood", "endpoints", "alternatives_tried", "params", "window", "sample_rows", "unit_points", "price_range", "hold_points", "turns", "stop_reasons", "tokens_in", "tokens_out", "model_usd", "provider_usd", "end_reason"];
   const q = (v: unknown) => `"${String(v ?? "").replace(/"/g, '""')}"`;
-  const lines = rows.map((r) => [r.id, r.request, r.expected, r.outcome, r.pass ? "PASS" : "FAIL", r.reason, r.understood, r.endpoints.join(" > "), r.alternativesTried.map((a) => `${a.endpoint}=${a.outcome}${a.httpStatus ? `/${a.httpStatus}` : ""}`).join("; "), r.params.map((p) => `${p.name}=${p.value} (${p.source})`).join("; "), r.window, r.sampleRows, r.unitPricePoints ?? "", r.holdPoints ?? "", r.turns, r.stopReasons.join(","), r.tokensIn, r.tokensOut, r.modelUsd.toFixed(6), r.providerUsd.toFixed(6), r.endReason].map(q).join(","));
+  const lines = rows.map((r) => [r.id, r.request, r.expected, r.outcome, r.pass ? "PASS" : "FAIL", r.reason, r.understood, r.endpoints.join(" > "), r.alternativesTried.map((a) => `${a.endpoint}=${a.outcome}${a.httpStatus ? `/${a.httpStatus}` : ""}`).join("; "), r.params.map((p) => `${p.name}=${p.value} (${p.source})`).join("; "), r.window, r.sampleRows, r.unitPricePoints ?? "", r.priceRange ?? "", r.holdPoints ?? "", r.turns, r.stopReasons.join(","), r.tokensIn, r.tokensOut, r.modelUsd.toFixed(6), r.providerUsd.toFixed(6), r.endReason].map(q).join(","));
   return `﻿${[head.map(q).join(","), ...lines].join("\n")}\n`;
 }

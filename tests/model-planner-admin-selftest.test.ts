@@ -241,3 +241,57 @@ describe("the admin sidebar reads the same live check as the TREG tab, and one f
     expect(readFileSync("src/app/api/admin/providers/route.ts", "utf-8")).toContain('searchParams.get("refresh") === "true"');
   });
 });
+
+describe("Phase 4: choose what to run, see the cost first, M1 to M4 and the price ranges", () => {
+  it("M1 to M4 are fixed and marked as missions; the 34 cases have unique ids; the base 30 are unchanged", async () => {
+    const { MISSION_SELF_TEST_CASES, ALL_SELF_TEST_CASES } = await import("../src/lib/modelPlanner/selfTest");
+    expect(MISSION_SELF_TEST_CASES.map((c) => c.id)).toEqual(["M1", "M2", "M3", "M4"]);
+    expect(MISSION_SELF_TEST_CASES.every((c) => c.group === "mission")).toBe(true);
+    expect(ALL_SELF_TEST_CASES).toHaveLength(34);
+    expect(new Set(ALL_SELF_TEST_CASES.map((c) => c.id)).size).toBe(34);
+    expect(SELF_TEST_CASES).toHaveLength(30);
+    expect(MISSION_SELF_TEST_CASES.filter((c) => (c.minSteps ?? 1) >= 2).map((c) => c.id)).toEqual(["M1", "M2", "M4"]);
+  });
+
+  it("the estimate is shown per case and for any selection, before running: questions and refusals cost the model only, plans add their samples, missions sample every stage", async () => {
+    const { estimateCaseCostUsd, estimateRunCostUsd, ALL_SELF_TEST_CASES } = await import("../src/lib/modelPlanner/selfTest");
+    expect(estimateCaseCostUsd({ expect: ["question"], group: "phase0" })).toBe(0.004);
+    expect(estimateCaseCostUsd({ expect: ["plan"], group: "phase0" })).toBe(0.012);
+    expect(estimateCaseCostUsd({ expect: ["plan"], group: "mission", minSteps: 2 })).toBe(0.03);
+    expect(estimateRunCostUsd([])).toBe(0);
+    expect(estimateRunCostUsd(ALL_SELF_TEST_CASES.filter((c) => c.group === "mission"))).toBeCloseTo(0.12, 9);
+    expect(estimateRunCostUsd(SELF_TEST_CASES)).toBeLessThanOrEqual(SELF_TEST_RUN_CAP_USD + 0.2);
+  });
+
+  it("a plan outside its expected price range is graded FAIL with both figures; inside it passes; fewer stages than expected fails", async () => {
+    const { ALL_SELF_TEST_CASES } = await import("../src/lib/modelPlanner/selfTest");
+    const m3 = ALL_SELF_TEST_CASES.find((c) => c.id === "M3")!;
+    const planOf = (unit: number, steps: number) => ({ kind: "plan", plan: { steps: Array.from({ length: steps }, () => ({ endpoint: { platform: "x" } })), stored: {}, price: { unitPricePoints: unit } } }) as any;
+    expect(gradeCase(m3, planOf(1, 1), "plan", []).pass).toBe(true);
+    const high = gradeCase(m3, planOf(500, 1), "plan", []);
+    expect(high.pass).toBe(false);
+    expect(high.reason).toMatch(/outside the expected range 0\.05 to 6/);
+    const m1 = ALL_SELF_TEST_CASES.find((c) => c.id === "M1")!;
+    expect(gradeCase(m1, planOf(10, 1), "plan", []).reason).toMatch(/expected at least 2/);
+    expect(gradeCase(m1, planOf(10, 3), "plan", []).pass).toBe(true);
+  });
+
+  it("the route lists the 30 cases and the four missions with their price range and estimate, and runs an M case by id", async () => {
+    const getRes = await (await import("../src/app/api/admin/planner-selftest/route")).GET(new NextRequest("http://127.0.0.1:3000/api/admin/planner-selftest"));
+    const info = await getRes.json();
+    expect(info.cases).toHaveLength(30);
+    expect(info.missionCases.map((c: any) => c.id)).toEqual(["M1", "M2", "M3", "M4"]);
+    expect(info.missionCases[0]).toMatchObject({ estimateUsd: 0.03 });
+    expect(info.missionCases[2].priceRange).toBe("0.05..6");
+    state.transport = createScriptedTransport([[say("أي مباراة تقصد؟")]] as any);
+    const res = await (await import("../src/app/api/admin/planner-selftest/route")).POST(new NextRequest("http://127.0.0.1:3000/api/admin/planner-selftest", { method: "POST", body: JSON.stringify({ caseId: "M3", runId: "m3", spentUsd: 0 }) }));
+    expect(res.status).toBe(200);
+    expect((await res.json()).row).toMatchObject({ id: "M3" });
+  });
+
+  it("the page shows a checkbox for every case, select all / none / missions only, the estimate for the selection before running, and runs only the selected cases", () => {
+    const page = readFileSync("src/app/admin/planner-selftest/page.tsx", "utf-8");
+    for (const needle of ["selftest-select", "selftest-estimate", "تحديد الكل", "إلغاء التحديد", "المهام فقط", "التكلفة التقديرية قبل التشغيل", "estimateUsd", "priceRange", "selected?.has(c.id)", "missionCases"]) expect(page, needle).toContain(needle);
+    expect(page).not.toMatch(/for \(const c of info\.cases\)/);
+  });
+});

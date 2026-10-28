@@ -32,6 +32,8 @@ export interface TregCallOptions {
   sensitiveAccess?: { allowed: true };
   /** Receives the RAW answer of the call (flag RAW_FIRST_PAGE_CAPTURE, set by the worker for the first chunk): never affects the call. */
   rawCapture?: RawCapture;
+  /** For a routed waterfall endpoint (see NO_WATERFALL_ENDPOINTS): false sends `X-Treg-Route-Waterfall: 0`, so only one provider is tried and billed. */
+  routeWaterfall?: boolean;
 }
 
 export interface TregCallResult {
@@ -274,6 +276,9 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
 
   if (metaHeader) {
     headers["X-Treg-Meta"] = metaHeader;
+  }
+  if (options.routeWaterfall === false) {
+    headers["X-Treg-Route-Waterfall"] = "0";
   }
 
   // Only pass test scenario header when running against local fake server
