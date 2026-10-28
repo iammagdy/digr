@@ -146,6 +146,8 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, error = n
         </div>
       ) : null}
 
+      {v.fileContentsAr && v.phase === "plan" ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-file-contents">{v.fileContentsAr}</p> : null}
+
       {v.priceLineAr && v.phase === "plan" ? <p className="m-0 rounded-[12px] bg-sf2 px-3 py-2 text-[13px] leading-[1.9] text-ink" data-testid="agent-price">{v.priceLineAr}</p> : null}
 
       {v.phase === "plan" ? (

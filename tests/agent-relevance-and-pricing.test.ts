@@ -34,6 +34,8 @@ const SALAH: RelevanceSpec = {
   context_terms: ["ليفربول", "هدف", "منتخب", "الفراعنة", "الدوري", "مباراة", "كرة", "الملك المصري", "salah goal"],
   exclude_terms: ["الشهيد", "مدير مشروع", "القارئ", "مدرس النحو"],
   text_columns: ["text"],
+  // (added with the general checking rules: the full name alone is now enough BY DEFAULT; this fixture keeps the strict variant, where a context word is required, so the assertions below about uncertain rows are unchanged)
+  full_name_is_enough: false,
 };
 
 /** The rows of the real file, by kind. `n` makes each row unique. */
@@ -403,7 +405,9 @@ describe("the model review of uncertain rows: real request text, a budget of 20%
     expect(r.saved_now).toBe(25);
     expect(r.reviewed_by_model).toBe(25);
     expect(r.review_budget_reached).toBe(true);
-    expect(r.left_out_not_matching.not_reviewed).toBe(35);
+    // (the old line: expect(r.left_out_not_matching.not_reviewed).toBe(35). By the owner's decision of 2026-10-29 the budget never throws good rows away: the 35 rows it could not pay for stay PENDING, not delivered, not charged, asked again)
+    expect(r.pending_for_review).toBe(35);
+    expect(r.left_out_not_matching.not_reviewed).toBeUndefined();
     expect((await reviewer.state()).spentUsd).toBeLessThanOrEqual(0.0006);
   });
 

@@ -2,7 +2,7 @@ import ExcelJS from "exceljs";
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { arabicDateLabel, EXCEL_SHEET_NAME_MAX, missionFileTitleAr, nounOfStageTitle, wordBoundarySheetName } from "../src/lib/agentMission/fileNames";
-import { buildMissionFiles, REVIEW_SHEET_AR } from "../agent/src/workbook";
+import { buildExcludedAdminCsv, buildMissionFiles } from "../agent/src/workbook";
 import { closePageLine, customerMissionView, type EventForCustomer, type MissionRowForCustomer } from "../src/lib/agentMission/customerView";
 import { AGENT_CLOSE_PAGE_LINE_AR, AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR } from "../src/lib/agentMission/constants";
 import { userWillBeEmailed } from "../src/lib/agentMission/emailEligibility";
@@ -109,32 +109,34 @@ describe("no visible apostrophe in the xlsx; the CSV keeps its formula protectio
   });
 });
 
-describe("the sheet of rows that were left out: for review, clearly not charged", () => {
-  it("the excluded rows are on their own sheet with the reason in Arabic; the delivered sheet and the CSV hold none of them; the summary says they were not charged", async () => {
+// (the old describe was «the sheet of rows that were left out: for review, clearly not charged»: the excluded rows were a sheet «لم تُحتسب (للمراجعة)» INSIDE the customer's workbook, with a summary row. By the owner's decision of 2026-10-29 excluded items are never in a customer file: they go to an admin-only CSV)
+describe("the items that were left out never reach a customer file: they go to an admin-only CSV", () => {
+  it("the customer's workbook and CSV hold only delivered items (no review sheet, no summary row, no excluded text); the admin CSV holds them with the reason", async () => {
     const excluded = [
       { id: "a1", reason: "no_term" as const, row: { id: "a1", text: "صباح الخير يا جماعة", url: "https://x.example/a1", author: "سعيد محمد الصلاحي" } },
       { id: "n1", reason: "other_person" as const, row: { id: "n1", text: "رحم الله الشهيد محمد صلاح", url: "https://x.example/n1", author: "u" } },
     ];
-    const built = await buildMissionFiles(plan([TWEETS]), { tweets: [{ id: "m1", text: "محمد صلاح يسجل هدفًا", url: "https://x.example/m1", author: "f1" }] }, { tweets: excluded });
+    const built = await buildMissionFiles(plan([TWEETS]), { tweets: [{ id: "m1", text: "محمد صلاح يسجل هدفًا", url: "https://x.example/m1", author: "f1" }] });
     const wb = await load(built.xlsx);
-    expect(wb.worksheets.map((w) => w.name)).toEqual(["ملخص المهمة", "التغريدات", REVIEW_SHEET_AR]);
-    const review = wb.getWorksheet(REVIEW_SHEET_AR)!;
-    expect((review.getRow(1).values as unknown[]).slice(1)).toEqual(["نص التغريدة", "رابط التغريدة", "الحساب", "سبب الاستبعاد", "المعرّف"]);
-    expect(review.getRow(2).getCell(4).value).toBe("لا يذكر الموضوع في نصه (ظهر لأن اسم صاحب الحساب يشبهه)");
-    expect(review.getRow(3).getCell(4).value).toBe("عن شخص آخر يحمل الاسم نفسه");
+    expect(wb.worksheets.map((w) => w.name)).toEqual(["ملخص المهمة", "التغريدات"]);
     expect(wb.getWorksheet("التغريدات")!.rowCount).toBe(2);
     expect(built.csv).not.toContain("رحم الله");
-    const summary = wb.getWorksheet("ملخص المهمة")!;
-    const lastStageRow = (summary.getRow(3).values as unknown[]).slice(1);
-    expect(lastStageRow).toEqual(["صفوف استُبعدت لأنها لا تخص طلبك", REVIEW_SHEET_AR, 2, "", "لم تُسلَّم ولم تُحتسب في السعر؛ وُضعت هنا للمراجعة فقط"]);
-    // no excluded rows: no review sheet at all
-    const clean = await load((await buildMissionFiles(plan([TWEETS]), { tweets: [{ id: "m1", text: "محمد صلاح", url: "https://x.example/m1", author: "f1" }] })).xlsx);
-    expect(clean.worksheets.map((w) => w.name)).toEqual(["ملخص المهمة", "التغريدات"]);
+    const everyCell: string[] = [];
+    wb.eachSheet((sheet) => sheet.eachRow((row) => row.eachCell((cell) => everyCell.push(String((cell.value as any)?.text ?? cell.value ?? "")))));
+    expect(everyCell.join("\n")).not.toContain("رحم الله");
+    expect(everyCell.join("\n")).not.toContain("استُبعدت");
+    // the admin's CSV: stage, reason in Arabic, the readable columns, the id
+    const admin = buildExcludedAdminCsv(plan([TWEETS]), { tweets: excluded })!;
+    const lines = admin.replace(/^﻿/, "").split("\r\n");
+    expect(lines[0]).toBe('"المرحلة","سبب الاستبعاد","نص التغريدة","رابط التغريدة","الحساب","المعرّف"');
+    expect(lines[1]).toContain("لا يذكر الموضوع في نصه");
+    expect(lines[2]).toContain("عن شخص آخر يحمل الاسم نفسه");
+    expect(buildExcludedAdminCsv(plan([TWEETS]), {})).toBeNull();
   });
 });
 
 describe("a delivered mission carries its download name; the download route uses it", () => {
-  it("the Salah replay: the stored files carry «تغريدات عن محمد صلاح - N - date», in both formats, and the review sheet holds what was left out", async () => {
+  it("the Salah replay: the stored files carry «تغريدات عن محمد صلاح - N - date», in both formats, and what was left out is in the admin's file only", async () => {
     const SPEC = { subject_ar: "محمد صلاح لاعب كرة القدم", terms: ["محمد صلاح"], context_terms: ["هدف"], text_columns: ["text"] };
     const items = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `t${i}`, text: i % 2 === 0 ? `محمد صلاح يسجل هدفًا جديدًا رقم ${i}` : `كلام آخر لا علاقة له رقم ${i}`, url: `https://x.example/s/t${i}`, author: i % 2 === 0 ? "fan" : "محمد صلاح الصلاحي" }));
     const r = await replay({
@@ -163,8 +165,11 @@ describe("a delivered mission carries its download name; the download route uses
     expect(files.map((f) => f.download_name)).toEqual([`تغريدات عن محمد صلاح - ٥ - ${arabicDateLabel(new Date())}.xlsx`, `تغريدات عن محمد صلاح - ٥ - ${arabicDateLabel(new Date())}.csv`]);
     expect(String(day)).toBeTruthy();
     const wb = await load(r.store.files.get(`${r.missionId}/result/result.xlsx`) as Buffer);
-    expect(wb.worksheets.map((w) => w.name)).toEqual(["ملخص المهمة", "التغريدات", REVIEW_SHEET_AR]);
-    expect(wb.getWorksheet(REVIEW_SHEET_AR)!.rowCount).toBe(1 + 6); // the six tweets whose only link to the name is the author
+    // (the old lines expected a third sheet «لم تُحتسب (للمراجعة)» with 1 + 6 rows: excluded items are no longer in a customer file; the six tweets whose only link to the name is the author are in the admin's CSV)
+    expect(wb.worksheets.map((w) => w.name)).toEqual(["ملخص المهمة", "التغريدات"]);
+    const adminCsv = String(r.store.files.get(`${r.missionId}/admin/excluded.csv`));
+    expect(adminCsv.replace(/^﻿/, "").split("\r\n")).toHaveLength(1 + 6);
+    expect(r.mission.files!.every((f) => !f.path.includes("admin"))).toBe(true);
     // the route names the download from them (and from the plan for a mission delivered before the names were stored)
     const route = readFileSync("src/app/api/jobs/[id]/download/route.ts", "utf8");
     expect(route).toContain("download_name");

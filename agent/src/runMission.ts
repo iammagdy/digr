@@ -8,7 +8,7 @@ import {
   AGENT_ERROR_REQUEUES_MAX, AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD, AGENT_EXECUTION_LLM_BUDGET_SHARE, AGENT_MEMORY_REQUEUES_MAX, AGENT_PHASE_STARTS_MAX, AGENT_EXECUTION_MAX_TURNS, AGENT_EXECUTION_WALL_MS, AGENT_PLANNING_LLM_BUDGET_USD,
   AGENT_PLANNING_MAX_TURNS, AGENT_PLANNING_WALL_MS, AGENT_PRICING_BASIS,
 } from "../../src/lib/agentMission/constants";
-import { executionBudgetUsd, reviewBudgetUsdFor } from "../../src/lib/agentMission/price";
+import { executionBudgetUsd, reviewBudgetUsdFor, reviewCeilingUsdFor } from "../../src/lib/agentMission/price";
 import { MISSION_PRICING_SETTING_KEY, normalizeMissionPricingSettings } from "../../src/lib/missionPricing";
 import { planningBudgetUsd } from "../../src/lib/agentMission/budget";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
@@ -23,7 +23,8 @@ import { readRunState, updateRunState } from "./runState";
 import { buildTools, countDeliveredRows, newRunState, type ToolContext } from "./tools";
 import { createReviewer, readReviewState, type ReviewCall } from "./review";
 import type { TokenUsage } from "./llmCost";
-import { buildMissionFiles, type ExcludedRow } from "./workbook";
+import { buildExcludedAdminCsv, buildMissionFiles, type ExcludedRow } from "./workbook";
+import { excludedTotal, PENDING_REASONS, readChecks } from "./checks";
 import { missionFileTitleAr } from "../../src/lib/agentMission/fileNames";
 import type { AgentStore, CallRow, MissionRecord } from "./types";
 import type { SandboxResult } from "./sandbox";
@@ -120,6 +121,34 @@ async function recordTokens(deps: RunnerDeps, missionId: string, phase: 0 | 1, u
     deps.log?.(`tokens_not_recorded ${missionId} ${shortMessage(e)}`);
   }
 }
+/**
+ * THE REPORT OF THE CHECK OF ITEMS: stored as an internal event per stage (looked at, accepted by rule and on what basis, accepted by the model, left out per reason, still pending, the review's extension) and the excluded
+ * items as an admin-only CSV. The customer's files never hold an excluded item. Never throws.
+ */
+async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPlan, store: AgentStore): Promise<void> {
+  try {
+    const checks = await readChecks(store, missionId);
+    const review = await readReviewState(store, missionId);
+    const excludedByStage: Record<string, ExcludedRow[]> = {};
+    for (const [i, s] of plan.stages.entries()) {
+      const c = checks[s.key];
+      const raw = await store.getFile(missionId, `excluded/${s.key}.json`);
+      let list: ExcludedRow[] = [];
+      if (raw) { try { list = JSON.parse(raw) as ExcludedRow[]; } catch { list = []; } }
+      const finalRows = list.filter((e) => !PENDING_REASONS.includes(e.reason));
+      if (finalRows.length > 0 || list.length > 0) excludedByStage[s.key] = list;
+      if (!c) continue;
+      const counts: Record<string, number> = { chk_stage: i + 1, chk_examined: c.examined, chk_by_rule: c.accepted_by_rule, chk_by_model: c.accepted_by_model, chk_excluded: excludedTotal(c), chk_pending: list.length - finalRows.length, chk_review_extended: review.extended ? 1 : 0 };
+      for (const [b, n] of Object.entries(c.accepted_by_rule_basis)) counts[`chk_rule_${b}`] = n ?? 0;
+      for (const [r, n] of Object.entries(c.excluded)) counts[`chk_ex_${r}`] = n ?? 0;
+      await store.addEvent(missionId, { kind: "call", message_ar: "تقرير داخلي لفحص العناصر في هذه المرحلة.", counts });
+    }
+    const csv = buildExcludedAdminCsv(plan, excludedByStage);
+    if (csv) await store.putFile(missionId, "admin/excluded.csv", csv, "text/csv");
+  } catch (e) {
+    deps.log?.(`checks_not_recorded ${missionId} ${shortMessage(e)}`);
+  }
+}
 const shortMessage = (e: unknown): string => String((e as Error)?.message ?? e).slice(0, 120);
 
 /** A planning that cannot be completed ends here, honestly: nothing was held, the customer is told once. */
@@ -206,7 +235,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   const state = newRunState(await lastOut(store, mission.id));
   // THE REVIEW of uncertain rows: a small model request per batch, within 20% of the mission's revenue (rows beyond it are not delivered and not charged); its tokens and cost are counted from the API's own answer
   const reviewBudgetUsd = plan.price.reviewBudgetUsd ?? reviewBudgetUsdFor(plan.price.maxChargePoints);
-  const reviewer = deps.reviewCall ? createReviewer({ call: deps.reviewCall, store, missionId: mission.id, requestText: `${mission.request_text}${mission.answer_text ? ` — ${mission.answer_text}` : ""}`, budgetUsd: reviewBudgetUsd, log: deps.log }) : undefined;
+  const reviewer = deps.reviewCall ? createReviewer({ call: deps.reviewCall, store, missionId: mission.id, requestText: `${mission.request_text}${mission.answer_text ? ` — ${mission.answer_text}` : ""}`, budgetUsd: reviewBudgetUsd, ceilingUsd: reviewCeilingUsdFor(reserve), log: deps.log }) : undefined;
   const reviewBefore = await readReviewState(store, mission.id);
   const ctx: ToolContext = { phase: "execution", mission, plan, store, gateway, web, catalog: deps.catalog, access, state, sandbox: deps.sandbox, review: reviewer };
   const savedBefore = (await countDeliveredRows(store, mission.id, plan)).perStage;
@@ -250,13 +279,14 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const rowsByStage: Record<string, Array<Record<string, unknown>>> = {};
   for (const s of plan.stages) { const raw = await store.getFile(mission.id, `rows/${s.key}.json`); rowsByStage[s.key] = raw ? JSON.parse(raw) : []; }
 
+  // WHAT WAS LEFT OUT goes to the admin only (a CSV in the mission's own folder, never in the customer's files), with the report of the check
+  await recordChecks(deps, mission.id, plan, store);
+
   let resultPath: string | null = null;
   let files: Array<{ name: string; path: string; kind: string }> = [];
   if (delivered > 0) {
     try {
-      const excludedByStage: Record<string, ExcludedRow[]> = {};
-      for (const s of plan.stages) { const raw = await store.getFile(mission.id, `excluded/${s.key}.json`); if (raw) { try { excludedByStage[s.key] = JSON.parse(raw); } catch { /* a review sheet is a courtesy */ } } }
-      const built = await buildMissionFiles(plan, rowsByStage, excludedByStage);
+      const built = await buildMissionFiles(plan, rowsByStage);
       const published = await store.publishResult({ missionId: mission.id, userId: mission.user_id, jobId, xlsx: built.xlsx, csv: built.csv });
       resultPath = published.resultPath;
       // the name the customer's download carries, built from the mission: what + count + date in Arabic («تغريدات عن محمد صلاح - ٣٠٠ - ٢٨ أكتوبر ٢٠٢٦»)

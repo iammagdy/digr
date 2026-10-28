@@ -2,6 +2,7 @@ import ExcelJS from "exceljs";
 import { SUMMARY_SHEET_AR } from "../../src/lib/modelPlanner/missionWorkbook";
 import { wordBoundarySheetName } from "../../src/lib/agentMission/fileNames";
 import { REASON_AR, type RelevanceReason } from "../../src/lib/agentMission/relevance";
+import { cairoCellDate, cairoText, DATE_NUMBER_FORMAT, isDateValues, parseMoment } from "../../src/lib/agentMission/dateCells";
 import { firstSentenceAr, isInternalColumn, type PricedPlan, type PricedStage } from "../../src/lib/agentMission/plan";
 
 type Row = Record<string, unknown>;
@@ -34,7 +35,7 @@ const isFormulaLike = (v: string): boolean => /^[=+\-@\t\r]/.test(v) && !/^\+\d[
 const csvText = (v: string): string => (isFormulaLike(v) ? `'${v}` : v);
 const textCell = (v: string): string => v;
 
-export interface SheetColumn { title: string; get: (row: Row, parent: Row | null) => unknown; kind?: "context" | "own"; contact?: boolean; link?: boolean }
+export interface SheetColumn { title: string; get: (row: Row, parent: Row | null) => unknown; kind?: "context" | "own"; contact?: boolean; link?: boolean; /** The stage column's key (the date columns are recognised by it and by the title). */ key?: string }
 export interface SheetLayout { stageIndex: number; stage: PricedStage; rows: Row[]; columns: SheetColumn[]; hasParent: boolean }
 
 const readableColumns = (stage: PricedStage) => stage.columns.filter((c) => !isInternalColumn(c));
@@ -91,7 +92,7 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
       if (taken.some((t) => sameValues(t, values))) continue;
       titles.add(c.title_ar);
       taken.push(values);
-      columns.push({ title: c.title_ar, get: (r) => r[c.key], kind: "own", contact: c.kind !== undefined, link: values.some((v) => isUrl(v)) });
+      columns.push({ title: c.title_ar, get: (r) => r[c.key], kind: "own", contact: c.kind !== undefined, link: values.some((v) => isUrl(v)), key: c.key });
     }
     layouts.push({ stageIndex, stage, rows, columns, hasParent: stage.parent_key !== null });
   });
@@ -100,13 +101,30 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
 
 /** A row the relevance check left out of a stage (never delivered, never charged), with the reason. */
 export interface ExcludedRow { id: string; reason: RelevanceReason; row: Row }
-export const REVIEW_SHEET_AR = "لم تُحتسب (للمراجعة)";
 
-export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<string, Row[]>, excludedByStage: Record<string, ExcludedRow[]> = {}): Promise<{ xlsx: Buffer; csv: string }> {
+/**
+ * THE ADMIN'S VIEW OF WHAT WAS LEFT OUT: a CSV (the stage, the reason in Arabic, the readable columns of the row, its id) kept in the mission's own storage folder, NEVER in the customer's files. Customer files hold only items that were
+ * delivered and charged. Null when nothing was left out.
+ */
+export function buildExcludedAdminCsv(plan: PricedPlan, excludedByStage: Record<string, ExcludedRow[]>): string | null {
+  const lines: string[] = [];
+  const esc = (v: unknown) => `"${csvText(text(v)).replace(/"/g, '""')}"`;
+  for (const stage of plan.stages) {
+    const rows = excludedByStage[stage.key] ?? [];
+    if (rows.length === 0) continue;
+    const cols = readableColumns(stage).filter((c) => !c.kind);
+    if (lines.length > 0) lines.push("");
+    lines.push(["المرحلة", "سبب الاستبعاد", ...cols.map((c) => c.title_ar), ID_HEADER_AR].map(esc).join(","));
+    for (const e of rows) lines.push([stage.title_ar, REASON_AR[e.reason] ?? e.reason, ...cols.map((c) => e.row[c.key]), e.id].map(esc).join(","));
+  }
+  return lines.length > 0 ? `﻿${lines.join("\r\n")}` : null;
+}
+
+export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<string, Row[]>): Promise<{ xlsx: Buffer; csv: string }> {
   const layouts = layoutOf(plan, rowsByStage);
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
-  const used = new Set<string>([SUMMARY_SHEET_AR.toLowerCase(), REVIEW_SHEET_AR.toLowerCase()]);
+  const used = new Set<string>([SUMMARY_SHEET_AR.toLowerCase()]);
   const summary = wb.addWorksheet(SUMMARY_SHEET_AR, { views: [{ state: "frozen", ySplit: 1, rightToLeft: true }] });
   const sheetNameOf = new Map<string, string>();
   // where each row's id cell is, so a parent id can link to it
@@ -120,7 +138,9 @@ export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<st
     const parentByIdRow = new Map((rowsByStage[lay.stage.parent_key ?? ""] ?? []).map((r) => [text(r.id), r]));
     const headers = [...lay.columns.map((c) => c.title), ID_HEADER_AR, ...(lay.hasParent ? [PARENT_HEADER_AR] : [])];
     const sheet = wb.addWorksheet(name, { views: [{ state: "frozen", ySplit: 1, rightToLeft: true }] });
-    const numericAt = lay.columns.map((c) => numericColumn(lay.rows.map((r) => c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null)), Boolean(c.contact)));
+    const columnValues = lay.columns.map((c) => lay.rows.map((r) => c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null)));
+    const dateAt = lay.columns.map((c, k) => isDateValues(c.title, c.key, columnValues[k]));
+    const numericAt = lay.columns.map((c, k) => !dateAt[k] && numericColumn(columnValues[k], Boolean(c.contact)));
     sheet.columns = headers.map((h, j) => ({ width: j >= lay.columns.length ? 16 : /نص|تعليق|وصف|عنوان|تقييم|منشور|تغريدة/.test(h) ? 52 : /رابط|الموقع/.test(h) ? 34 : 24 }));
     const head = sheet.addRow(headers);
     head.eachCell((cell, col) => {
@@ -135,6 +155,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<st
       const values: ExcelJS.CellValue[] = lay.columns.map((c, k) => {
         const v = c.get(record, parent);
         if (v === null || v === undefined || v === "") return "";
+        if (dateAt[k]) { const moment = parseMoment(v); if (moment) return cairoCellDate(moment); }
         if (typeof v === "number" && Number.isFinite(v)) return v;
         if (typeof v === "boolean") return v ? "نعم" : "لا";
         const t = text(v);
@@ -150,6 +171,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<st
       row.eachCell((cell, col) => {
         cell.border = BORDER;
         cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: r % 2 ? ZEBRA : WHITE } };
+        if (col <= lay.columns.length && dateAt[col - 1]) { cell.numFmt = DATE_NUMBER_FORMAT; cell.alignment = { horizontal: "center", vertical: "middle" }; }
         if (cell.hyperlink) cell.font = { name: "Calibri", size: 10, color: { argb: "FF0563C1" }, underline: true };
         else if (col > lay.columns.length) cell.font = { name: "Calibri", size: 9, color: { argb: GREY } };
       });
@@ -176,26 +198,6 @@ export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<st
     });
   }
 
-  // THE REVIEW SHEET: the rows the relevance check left out (another person with the same name, a mention with no words, a row that matched only through its author's name ...). They are NOT delivered and NOT charged;
-  // they are here only so the customer can see what was left out and why.
-  const reviewStage = plan.stages.find((st) => (excludedByStage[st.key] ?? []).length > 0);
-  const excludedRows = reviewStage ? excludedByStage[reviewStage.key] : [];
-  if (reviewStage && excludedRows.length > 0) {
-    const cols = readableColumns(reviewStage).filter((c) => !c.kind);
-    const sheet = wb.addWorksheet(REVIEW_SHEET_AR, { views: [{ state: "frozen", ySplit: 1, rightToLeft: true }], properties: { tabColor: { argb: "FF9CA3AF" } } });
-    const headers = [...cols.map((c) => c.title_ar), "سبب الاستبعاد", ID_HEADER_AR];
-    sheet.columns = headers.map((h, j) => ({ width: j >= cols.length + 1 ? 16 : j === cols.length ? 40 : /نص|تعليق|وصف|عنوان|تقييم|منشور|تغريدة/.test(h) ? 52 : 24 }));
-    const head = sheet.addRow(headers);
-    head.eachCell((cell) => { cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: WHITE } }; cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GREY } }; cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true }; });
-    head.height = 30;
-    excludedRows.forEach((e, r) => {
-      const row = sheet.addRow([...cols.map((c) => { const v = e.row[c.key]; const t = text(v); return isUrl(t) ? { text: t.trim(), hyperlink: t.trim(), tooltip: t.trim() } : textCell(t); }), REASON_AR[e.reason] ?? "", textCell(text(e.id))]);
-      row.alignment = { vertical: "middle", wrapText: true };
-      row.eachCell((cell, col) => { cell.border = BORDER; cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: r % 2 ? ZEBRA : WHITE } }; if (col > cols.length) cell.font = { name: "Calibri", size: 9, color: { argb: GREY } }; });
-    });
-    sheet.autoFilter = { from: { row: 1, column: 1 }, to: { row: excludedRows.length + 1, column: headers.length } };
-  }
-
   // the first sheet: what each sheet holds, and how they connect
   summary.columns = [{ width: 30 }, { width: 24 }, { width: 14 }, { width: 14 }, { width: 52 }];
   const sh = summary.addRow(["المرحلة", "الورقة", "الصفوف", "المتوقع", "ملاحظة"]);
@@ -206,18 +208,17 @@ export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<st
     const sheetName = sheetNameOf.get(stage.key);
     summary.addRow([stage.title_ar, sheetName ?? (stage.deliver ? "—" : "لم تُسلَّم (مرحلة وسيطة)"), rows, stage.planned_rows, parent ? `كل صف هنا تابع لصف في مرحلة «${parent.title_ar}»` : "لا ترتبط بمرحلة سابقة"]);
   });
-  if (reviewStage && excludedRows.length > 0) summary.addRow(["صفوف استُبعدت لأنها لا تخص طلبك", REVIEW_SHEET_AR, excludedRows.length, "", "لم تُسلَّم ولم تُحتسب في السعر؛ وُضعت هنا للمراجعة فقط"]);
   summary.addRow([]);
   const intro = summary.addRow([firstSentenceAr(plan.summary_ar)]);
   summary.mergeCells(intro.number, 1, intro.number, 5);
   intro.alignment = { wrapText: true, readingOrder: "rtl" as any, vertical: "middle" };
   intro.height = 32;
   intro.font = { name: "Calibri", size: 11, bold: true };
-  const note = summary.addRow([`الأعمدة الأولى في كل ورقة مقروءة؛ وفي آخرها «${ID_HEADER_AR}» و«${PARENT_HEADER_AR}» للربط بين الأوراق (اضغط على «${PARENT_HEADER_AR}» للانتقال إلى صفّه).`]);
+  const note = summary.addRow([`الأعمدة الأولى في كل ورقة مقروءة؛ وفي آخرها «${ID_HEADER_AR}» و«${PARENT_HEADER_AR}» للربط بين الأوراق (اضغط على «${PARENT_HEADER_AR}» للانتقال إلى صفّه). التواريخ والأوقات بتوقيت القاهرة.`]);
   summary.mergeCells(note.number, 1, note.number, 5);
   note.alignment = { wrapText: true, readingOrder: "rtl" as any };
   note.height = 34;
-  summary.autoFilter = { from: { row: 1, column: 1 }, to: { row: plan.stages.length + 1 + (reviewStage && excludedRows.length > 0 ? 1 : 0), column: 5 } };
+  summary.autoFilter = { from: { row: 1, column: 1 }, to: { row: plan.stages.length + 1, column: 5 } };
   const xlsx = Buffer.from(await wb.xlsx.writeBuffer());
 
   // the CSV: the deepest delivered stage, the same columns as its sheet
@@ -227,7 +228,8 @@ export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<st
   if (last) {
     const parentByIdRow = new Map((rowsByStage[last.stage.parent_key ?? ""] ?? []).map((r) => [text(r.id), r]));
     lines.push([...last.columns.map((c) => c.title), ID_HEADER_AR, ...(last.hasParent ? [PARENT_HEADER_AR] : [])].map(esc).join(","));
-    for (const r of last.rows) lines.push([...last.columns.map((c) => c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null)), r.id, ...(last.hasParent ? [r.parent_id] : [])].map(esc).join(","));
+    const lastDates = last.columns.map((c) => isDateValues(c.title, c.key, last.rows.map((r) => c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null))));
+    for (const r of last.rows) lines.push([...last.columns.map((c, k) => { const v = c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null); const moment = lastDates[k] ? parseMoment(v) : null; return moment ? cairoText(moment) : v; }), r.id, ...(last.hasParent ? [r.parent_id] : [])].map(esc).join(","));
   }
   return { xlsx, csv: `﻿${lines.join("\r\n")}` };
 }

@@ -52,6 +52,8 @@ export interface CustomerMissionView {
   totalRowsAr: string;
   /** 2 to 3 sample rows with readable columns only. */
   samples: { stageTitleAr: string; columns: Array<{ key: string; titleAr: string }>; rows: string[][] } | null;
+  /** What the file will contain, built from the plan's REAL columns (never from the agent's own words): «يضم الملف: التاريخ والوقت، نص التغريدة، …». */
+  fileContentsAr: string | null;
   /** price, hold and expected time on ONE line. */
   priceLineAr: string | null;
   questionAr: string | null;
@@ -105,6 +107,15 @@ function samplesView(plan: any): CustomerMissionView["samples"] {
   if (columns.length === 0) return null;
   const rows = (stage.sample_rows as Array<Record<string, unknown>>).slice(0, 3).map((r) => columns.map((c) => String(r?.[c.key] ?? "").slice(0, 120)));
   return { stageTitleAr: String(stage.title_ar ?? ""), columns, rows };
+}
+
+/** What the file holds, from the columns of the deepest delivered stage (the sheet the customer opens): one line, in the order of the sheet. Null when the plan has no readable column. */
+export function fileContentsAr(plan: any): string | null {
+  const list: any[] = Array.isArray(plan?.stages) ? plan.stages : [];
+  const delivered = list.filter((s) => s?.deliver !== false);
+  const stage = delivered[delivered.length - 1];
+  const titles: string[] = (Array.isArray(stage?.columns) ? stage.columns : []).map((c: any) => String(c.title_ar ?? c.titleAr ?? "").trim()).filter(Boolean);
+  return titles.length > 0 ? `يضم الملف: ${titles.join("، ")}.` : null;
 }
 
 /** price, hold and expected time on one clear line. */
@@ -295,7 +306,7 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   return {
     id: mission.id, phase, summaryAr: plan?.summary_ar ? String(plan.summary_ar) : null, notesAr: Array.isArray(plan?.notes_ar) ? plan.notes_ar.map(String) : [], assumptionsAr: Array.isArray(plan?.assumptions_ar) ? plan.assumptions_ar.map(String) : [],
     questionOptionsAr: phase === "question" && Array.isArray((mission.plan_public as any)?.question_options) ? (mission.plan_public as any).question_options.map(String).slice(0, 4) : [], stages, totalRows: total, totalRowsAr: rowsWordAr(total),
-    samples: plan ? samplesView(plan) : null, priceLineAr: plan ? priceLineAr(plan) : null, questionAr: phase === "question" ? mission.question_ar : null,
+    samples: plan ? samplesView(plan) : null, fileContentsAr: plan ? fileContentsAr(plan) : null, priceLineAr: plan ? priceLineAr(plan) : null, questionAr: phase === "question" ? mission.question_ar : null,
     queueLineAr: q.lineAr, queuePosition: q.position, steps, currentLineAr, delayAr, remainingAr,
     closePageAr: closePageLine(mission.status, input.queue, input.emailWillBeSent),
     resultLinesAr, resultSummaryAr: phase === "done" || phase === "partial" || phase === "unserved" || phase === "failed" ? mission.summary_ar : null,

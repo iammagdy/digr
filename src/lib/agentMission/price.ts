@@ -3,7 +3,7 @@ import { DEFAULT_MISSION_PRICING_SETTINGS, priceByRule, settlementChargeFor, typ
 import { holdValueUsd } from "../server/callBudget";
 import {
   AGENT_EXECUTION_BUDGET_FLOOR_USD, AGENT_EXECUTION_BUDGET_SHARE, AGENT_JOB_POINTS_CAP, AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD, AGENT_MODEL_PLANNING_ESTIMATE_USD, AGENT_PRICING_BASIS, AGENT_RESERVE_MARGIN,
-  AGENT_REVIEW_ROW_ESTIMATE_USD, AGENT_REVIEW_BUDGET_SHARE,
+  AGENT_REVIEW_ROW_ESTIMATE_USD, AGENT_REVIEW_BUDGET_SHARE, AGENT_REVIEW_CEILING_SHARE,
 } from "./constants";
 
 /**
@@ -146,6 +146,11 @@ export function priceMissionByCode(stages: ReadonlyArray<StagePriceInput>, optio
 /** What the review of uncertain rows may cost one mission: 20% of its revenue (the full charge) in USD. Rows beyond it are not delivered and not charged. */
 export function reviewBudgetUsdFor(revenuePoints: number): number {
   return Math.max(0, revenuePoints) * AGENT_PRICING_BASIS.creditValueEgp / AGENT_PRICING_BASIS.usdToEgp * AGENT_REVIEW_BUDGET_SHARE;
+}
+
+/** The most the review may reach when rows the request needs are still waiting: 40% of the reserve's value (the hold covers it), USD. */
+export function reviewCeilingUsdFor(reservePoints: number, basis: PricingBasis = AGENT_PRICING_BASIS): number {
+  return holdValueUsd(reservePoints, basis) * AGENT_REVIEW_CEILING_SHARE;
 }
 
 /** THE OLD FORMULA (provider cost only, no minimum, no yield): kept for plans stored before the one rule, so a plan the customer was shown is approved at the price it showed. */
