@@ -187,9 +187,10 @@ describe("ONE progress number, and «تقدر تقفل الصفحة» only when 
     const events = [ev(1, 10, { pages: 1, rows: 20, planned: 300 }), ev(2, 60, { pages: 15, rows: 300, planned: 300 })];
     const v = customerMissionView({ mission: row(), events, now: Date.parse(at(65)), queue: { ahead: 0, running: 1, workerAlive: true } });
     const lines = numbersIn(v).join(" | ");
-    expect(v.steps[0].countAr).toBe("٠ من ٣٠٠");
+    // (the old lines: countAr «٠ من ٣٠٠» and the detail «قُرئت ١٥ صفحة من المصدر». The count carries the noun; what the source gave is a live line of its own: the items found and the pages, both growing)
+    expect(v.steps[0].countAr).toBe("٠ من ٣٠٠ تغريدة");
     expect(lines).not.toContain("جُمع");
-    expect(lines).toContain("قُرئت ١٥ صفحة من المصدر");
+    expect(v.steps[0].metricsAr).toEqual(["وُجد ٣٠٠ تغريدة في ١٥ صفحة من المصدر"]);
     // every «N من M» in the panel carries the same N
     const ns = [...lines.matchAll(/([٠-٩٬]+) من ([٠-٩٬]+)/g)].map((m) => m[1]);
     expect(new Set(ns).size).toBe(1);

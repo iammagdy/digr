@@ -121,8 +121,9 @@ describe("the live panel and the queue", () => {
     const v = customerMissionView({ mission: row({ status: "executing" }), events, now, queue: { ahead: 0, running: 1, workerAlive: true } });
     expect(v.phase).toBe("running");
     expect(v.steps.map((s) => s.state)).toEqual(["done", "running", "waiting"]);
-    expect(v.steps[1].countAr).toBe("٣٠ من ١٠٠");
-    expect(v.currentLineAr).toContain("٣٠ من ١٠٠");
+    // (the old lines expected «٣٠ من ١٠٠»: the count now carries the noun of the stage, correctly: «تعليقًا»)
+    expect(v.steps[1].countAr).toBe("٣٠ من ١٠٠ تعليقًا");
+    expect(v.currentLineAr).toContain("٣٠ من ١٠٠ تعليقًا");
     expect(v.closePageAr).toBe(AGENT_CLOSE_PAGE_LINE_AR);
     expect(v.delayAr).toBeNull();
     // the remaining time comes only from the real speed (two samples that show progress), never a guess

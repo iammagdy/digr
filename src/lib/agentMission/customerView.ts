@@ -1,11 +1,12 @@
 import { formatAr, toArabicDigits } from "../arabicDigits";
-import { estimateRemainingSeconds, etaTextAr, type ProgressSample } from "../jobEta";
+import type { ProgressSample } from "../jobEta";
 import { FILES_STEP_TITLE_AR, PLANNING_STEP_TITLES, type PanelStep } from "../missionView";
 import { pointsAr } from "../pointsFormat";
 import { AGENT_CLOSE_PAGE_LINE_AR, AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR, AGENT_QUEUE_LINE_AR, AGENT_SLOW_AFTER_MS, AGENT_STALL_AFTER_MS } from "./constants";
 import { isInternalEvent } from "./eventText";
 import { countAr, deliveredOfAr, itemNounOf, itemNounOfPlan } from "./itemNoun";
 import { moneyLineAr } from "./moneyText";
+import { remainingLineAr, stageMetricLines, trackMission } from "./tracker";
 
 /**
  * WHAT THE CUSTOMER SEES OF A MISSION: one pure function from the columns the customer may read (the mission row without its internal columns, its events, the worker's state and the queue)
@@ -36,7 +37,7 @@ export interface QueueInfo {
   /** The worker's heartbeat is fresh. */
   workerAlive: boolean;
 }
-export interface CustomerStageView { n: number; titleAr: string; rows: number; rowsAr: string; deliver: boolean; noteAr: string | null }
+export interface CustomerStageView { n: number; titleAr: string; rows: number; rowsAr: string; deliver: boolean; noteAr: string | null; yieldShare?: number }
 
 export interface CustomerMissionView {
   id: string;
@@ -58,6 +59,9 @@ export interface CustomerMissionView {
   fileContentsAr: string | null;
   /** price, hold and expected time on ONE line. */
   priceLineAr: string | null;
+  /** The same facts as short labelled cells for the compact card («السعر حتى ٢٤٣ نقطة»، «حجز مؤقت ٢٧٩ نقطة»، «الوقت المتوقع نحو ٤ دقائق»), and the one sentence under them. */
+  priceFacts: Array<{ labelAr: string; valueAr: string }>;
+  priceNoteAr: string | null;
   questionAr: string | null;
   /** «مهمتك في الدور وهتبدأ خلال دقائق» with the position, or null. */
   queueLineAr: string | null;
@@ -93,7 +97,7 @@ export function stagesView(plan: any): { stages: CustomerStageView[]; total: num
     const rows = Math.max(0, Math.floor(Number(s?.expected_rows) || 0));
     const deliver = s?.deliver !== false;
     if (deliver) total += rows;
-    stages.push({ n: i + 1, titleAr: String(s?.title_ar ?? ""), rows, rowsAr: countAr(rows, itemNounOf(String(s?.title_ar ?? ""))), deliver, noteAr: deliver ? null : "تُستخدم في المرحلة التالية ولا تُحتسب في ملفك" });
+    stages.push({ n: i + 1, titleAr: String(s?.title_ar ?? ""), rows, rowsAr: countAr(rows, itemNounOf(String(s?.title_ar ?? ""))), deliver, noteAr: deliver ? null : "تُستخدم في المرحلة التالية ولا تُحتسب في ملفك", ...(typeof s?.yield_share === "number" ? { yieldShare: s.yield_share } : {}) });
   });
   return { stages, total };
 }
@@ -136,6 +140,20 @@ export function priceLineAr(plan: any): string | null {
   return parts.join(" · ");
 }
 
+/** The price, the hold and the expected time as short cells, and one sentence about what is charged (the minimum included). Empty when the plan has no price. */
+export function priceFactsOf(plan: any): { facts: Array<{ labelAr: string; valueAr: string }>; noteAr: string | null } {
+  const price = plan?.price;
+  if (!price || !(Number(price.max_charge_points) > 0)) return { facts: [], noteAr: null };
+  const minutes = Math.round(Number(plan?.expected_minutes) || 0);
+  const facts = [
+    { labelAr: "السعر حتى", valueAr: pointsAr(Math.round(Number(price.max_charge_points))) },
+    { labelAr: "حجز مؤقت", valueAr: pointsAr(Math.round(Number(price.reserve_points))) },
+    ...(minutes > 0 ? [{ labelAr: "الوقت المتوقع", valueAr: minutesAr(minutes) }] : []),
+  ];
+  const minimum = typeof price.minimum_line_ar === "string" && price.minimum_line_ar.trim() ? ` ${price.minimum_line_ar.trim()}` : "";
+  return { facts, noteAr: `لا يُخصم إلا ما يُسلَّم فعلًا.${minimum}` };
+}
+
 /** The queue line, only when the mission really waits behind another or the worker is busy or away; the position counts the missions ahead + 1. */
 export function queueLine(status: string, queue: QueueInfo | null): { lineAr: string | null; position: number | null } {
   if (!queue || (status !== "queued" && status !== "approved")) return { lineAr: null, position: null };
@@ -166,39 +184,15 @@ function sampleProgress(events: EventForCustomer[], callsMade: number): { done: 
 const stageIndexOf = (e: EventForCustomer): number => Math.max(0, Math.floor(Number(e.counts?.stage) || 0));
 
 /** Steps of the live panel. Before the plan: the four planning steps; after approval: the plan's stages and the files. */
-/** What collect_pages reports while it pages through a source: events with `pages` and `rows` (and the target in `planned`) but no `stage`. */
-function collectedOf(events: EventForCustomer[]): { rows: number; pages: number; target: number; samples: ProgressSample[] } | null {
-  const samples: ProgressSample[] = [];
-  let rows = 0;
-  let pages = 0;
-  let target = 0;
-  for (const e of events) {
-    if (typeof e.counts?.pages === "number" && typeof e.counts?.rows === "number" && !e.counts?.stage) {
-      rows = e.counts.rows;
-      pages = Math.max(pages, Math.floor(e.counts.pages));
-      target = Number(e.counts.planned) || target;
-      const at = Date.parse(e.created_at);
-      if (Number.isFinite(at)) samples.push({ at, delivered: rows });
-    }
-  }
-  return samples.length ? { rows, pages, target, samples } : null;
-}
-
-function stepsOf(input: { phase: CustomerPhase; status: string; stages: CustomerStageView[]; events: EventForCustomer[]; callsMade: number; hasPlan: boolean; delivered: number | null; filesReady: boolean }): { steps: PanelStep[]; samples: ProgressSample[]; savedTotal: number; plannedTotal: number } {
+function stepsOf(input: { phase: CustomerPhase; status: string; stages: CustomerStageView[]; events: EventForCustomer[]; callsMade: number; hasPlan: boolean; delivered: number | null; filesReady: boolean; now: number }): { steps: PanelStep[]; samples: ProgressSample[]; savedTotal: number; plannedTotal: number; track: ReturnType<typeof trackMission> } {
   const { phase, status, stages, events, callsMade, hasPlan } = input;
   const executing = status === "approved" || status === "executing" || status === "completed" || (status === "failed" && hasPlan && events.some((e) => stageIndexOf(e) > 0));
-  const savedPerStage = new Map<number, number>();
+  const finishedRun = status === "completed";
+  // the live numbers of every stage, from the mission's own events: they only grow (one rule for every mission type)
+  const track = trackMission({ stages: stages.map((s) => ({ n: s.n, titleAr: s.titleAr, expectedRows: s.rows, deliver: s.deliver, yieldShare: s.yieldShare })), events, finished: finishedRun, now: input.now });
+  const savedPerStage = new Map<number, number>(track.stages.map((s) => [s.n, s.saved]));
   const samples: ProgressSample[] = [];
-  let savedTotalNow = 0;
-  for (const e of events) {
-    const idx = stageIndexOf(e);
-    if (idx > 0 && typeof e.counts?.saved === "number") {
-      savedPerStage.set(idx, Math.max(savedPerStage.get(idx) ?? 0, e.counts.saved));
-      savedTotalNow = [...savedPerStage.values()].reduce((a, b) => a + b, 0);
-      const at = Date.parse(e.created_at);
-      if (Number.isFinite(at)) samples.push({ at, delivered: savedTotalNow });
-    }
-  }
+  const savedTotalNow = track.stages.reduce((n, s) => n + s.saved, 0);
   const plannedTotal = stages.reduce((n, s) => n + s.rows, 0);
   if (!executing) {
     const planned = hasPlan;
@@ -217,32 +211,31 @@ function stepsOf(input: { phase: CustomerPhase; status: string; stages: Customer
     }
     if (phase === "question") { for (const s of steps) if (s.state === "waiting" || s.state === "running") s.state = "waiting"; }
     if (phase === "unserved" || phase === "failed" || phase === "cancelled") for (const s of steps) if (s.state === "running" || s.state === "waiting") s.state = "stopped";
-    return { steps, samples, savedTotal: savedTotalNow, plannedTotal };
+    return { steps, samples, savedTotal: savedTotalNow, plannedTotal, track };
   }
   const finished = status === "completed";
   const firstOpen = stages.findIndex((s) => (savedPerStage.get(s.n) ?? 0) < s.rows);
   const steps: PanelStep[] = stages.map((s, i) => {
-    const saved = Math.min(savedPerStage.get(s.n) ?? 0, s.rows);
+    const t = track.stages[i];
+    const saved = Math.min(t.saved, s.rows);
     const done = finished || (saved >= s.rows && s.rows > 0) || (firstOpen !== -1 && i < firstOpen && saved > 0);
     const running = !done && !finished && (status === "executing" || status === "approved") && i === (firstOpen === -1 ? 0 : firstOpen);
     const step: PanelStep = { id: `stage-${s.n}`, titleAr: s.titleAr, state: done ? "done" : running && status === "executing" ? "running" : "waiting" };
-    if (saved > 0 || running) { step.countAr = `${formatAr(saved)} من ${formatAr(s.rows)}`; step.ratio = s.rows > 0 ? Math.min(1, saved / s.rows) : 0; }
+    if (saved > 0 || running || t.found > 0) {
+      // what is in the file, with the noun of the stage; the bar follows the whole work of the stage (reading, checking, saving), so it moves while items are found and checked
+      step.countAr = deliveredOfAr(saved, s.rows, t.noun);
+      step.ratio = done ? 1 : t.ratio;
+      const lines = done && finished ? [] : stageMetricLines(t);
+      if (lines.length > 0) step.metricsAr = lines;
+      if (t.excluded > 0) step.excludedAr = `استُبعد ${formatAr(t.excluded)} لأنه لا يخص طلبك`;
+    }
     if (!s.deliver) step.detailAr = "تُستخدم في المرحلة التالية";
     return step;
   });
-  // while a source is being paged through, say how many rows were collected so far (the saved count only moves when the rows are saved)
-  const collected = collectedOf(events);
-  const runningStep = steps.find((st) => st.state === "running");
-  if (collected && runningStep && !finished) {
-    // ONE progress number everywhere: the rows that are in the customer's file («٠ من ٣٠٠» above). What the source has been READ for is pages, never a second row count (rows read include the ones left out as not matching).
-    const pagesAr = collected.pages === 1 ? "صفحة واحدة" : collected.pages === 2 ? "صفحتان" : collected.pages <= 10 ? `${formatAr(collected.pages)} صفحات` : `${formatAr(collected.pages)} صفحة`;
-    const detail = `قُرئت ${pagesAr} من المصدر، ويُحفظ في ملفك ما يطابق طلبك فقط`;
-    runningStep.detailAr = runningStep.detailAr ? `${runningStep.detailAr} · ${detail}` : detail;
-  }
   const failedStop = status === "failed";
   if (failedStop) for (const s of steps) if (s.state === "running" || s.state === "waiting") { s.state = "stopped"; }
   steps.push({ id: "files", titleAr: FILES_STEP_TITLE_AR, state: input.filesReady ? "done" : finished ? "done" : failedStop ? "stopped" : "waiting" });
-  return { steps, samples, savedTotal: savedTotalNow, plannedTotal };
+  return { steps, samples, savedTotal: savedTotalNow, plannedTotal, track };
 }
 
 const FILE_LABEL_AR: Record<string, string> = { xlsx: "تنزيل ملف إكسل", csv: "تنزيل نسخة سي إس في" };
@@ -270,7 +263,7 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   const phase: CustomerPhase = basePhase === "done" && delivered !== null && planned > 0 && delivered < planned ? "partial" : basePhase;
   const q = queueLine(mission.status, input.queue ?? null);
   const filesReady = Array.isArray(mission.files) && mission.files.length > 0;
-  const { steps, samples, savedTotal, plannedTotal } = stepsOf({ phase, status: mission.status, stages, events, callsMade: input.callsMade ?? 0, hasPlan: plan !== null, delivered, filesReady });
+  const { steps, track } = stepsOf({ phase, status: mission.status, stages, events, callsMade: input.callsMade ?? 0, hasPlan: plan !== null, delivered, filesReady, now });
 
   const lastEvent = events[events.length - 1];
   const lastAt = lastEvent ? Date.parse(lastEvent.created_at) : NaN;
@@ -287,13 +280,8 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   }
   if (input.queue && !input.queue.workerAlive && (mission.status === "queued" || mission.status === "approved" || mission.status === "executing" || mission.status === "planning")) delayAr = "الخدمة متوقفة مؤقتًا. مهمتك محفوظة وتكمل أول ما تعود للعمل.";
 
-  let remainingAr: string | null = null;
-  if (mission.status === "executing") {
-    let seconds = estimateRemainingSeconds(samples, plannedTotal, now);
-    // the speed of the paging itself (rows collected from the source), before the first rows are saved
-    if (seconds === null) { const c = collectedOf(events); if (c && c.target > 0) seconds = estimateRemainingSeconds(c.samples, c.target, now); }
-    remainingAr = seconds === null ? null : seconds === 0 ? null : `المتبقي ${etaTextAr(seconds)?.replace(/^حوالي /, "نحو ")}`;
-  }
+  // the time left: by code, from the measured speed, smoothed, and only when the estimates agree (never a number that jumps)
+  const remainingAr: string | null = mission.status === "executing" ? remainingLineAr(track.remainingSeconds, track.ratio) : null;
   const currentLineAr = q.lineAr ?? (running ? (running.countAr ? `${running.titleAr} · ${running.countAr}` : running.titleAr) : progressLine ?? steps.find((s) => s.state === "waiting")?.titleAr ?? "");
 
   // THE RESULT, in the words of the wallet: what was delivered of what was requested (with the noun of the request), then the hold, the charge and the released hold, each with the same number the wallet shows
@@ -310,7 +298,7 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   return {
     id: mission.id, phase, summaryAr: plan?.summary_ar ? String(plan.summary_ar) : null, notesAr: Array.isArray(plan?.notes_ar) ? plan.notes_ar.map(String) : [], assumptionsAr: Array.isArray(plan?.assumptions_ar) ? plan.assumptions_ar.map(String) : [],
     questionOptionsAr: phase === "question" && Array.isArray((mission.plan_public as any)?.question_options) ? (mission.plan_public as any).question_options.map(String).slice(0, 4) : [], stages, totalRows: total, totalRowsAr: countAr(total, itemNounOfPlan(plan)),
-    samples: plan ? samplesView(plan) : null, fileContentsAr: plan ? fileContentsAr(plan) : null, priceLineAr: plan ? priceLineAr(plan) : null, questionAr: phase === "question" ? mission.question_ar : null,
+    samples: plan ? samplesView(plan) : null, fileContentsAr: plan ? fileContentsAr(plan) : null, priceLineAr: plan ? priceLineAr(plan) : null, priceFacts: plan ? priceFactsOf(plan).facts : [], priceNoteAr: plan ? priceFactsOf(plan).noteAr : null, questionAr: phase === "question" ? mission.question_ar : null,
     queueLineAr: q.lineAr, queuePosition: q.position, steps, currentLineAr, delayAr, remainingAr,
     closePageAr: closePageLine(mission.status, input.queue, input.emailWillBeSent),
     resultLinesAr, resultSummaryAr: phase === "done" || phase === "partial" || phase === "unserved" || phase === "failed" ? storedSummary : null,

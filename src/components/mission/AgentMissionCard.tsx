@@ -92,9 +92,9 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved }: { mi
 
 /** The card itself, drawn from one view: pure (no network), so it renders the same on the server and in the tests. */
 export function AgentMissionCardBody({ view: v, isGuest, busy = false, error = null, reply = "", onReply = () => undefined, onAct = () => undefined, onDownload = () => undefined }: { view: CustomerMissionView; isGuest: boolean; busy?: boolean; error?: string | null; reply?: string; onReply?: (text: string) => void; onAct?: (action: "approve" | "cancel" | "edit" | "answer", text?: string) => void; onDownload?: (name: string) => void }) {
-  const panelContent = { title: "خطة المهمة", steps: v.steps, currentLineAr: v.currentLineAr, delayAr: v.delayAr, remainingAr: v.remainingAr, closePageAr: v.closePageAr, summaryAr: v.resultLinesAr, startedAt: v.startedAt ?? undefined, live: v.live };
+  const panelContent = { title: "خطة المهمة", steps: v.steps, currentLineAr: v.currentLineAr, delayAr: v.delayAr, remainingAr: v.remainingAr, closePageAr: v.closePageAr, startedAt: v.startedAt ?? undefined, live: v.live };
   return (
-    <section dir="rtl" data-testid="agent-card" data-phase={v.phase} aria-label="مهمتك" className="mt-3 flex w-full max-w-[640px] flex-col gap-3 rounded-[18px] border border-ln bg-sf p-4">
+    <section dir="rtl" data-testid="agent-card" data-phase={v.phase} aria-label="مهمتك" className="mt-3 flex w-full max-w-[640px] flex-col gap-2.5 rounded-[18px] border border-ln bg-sf p-3.5 sm:p-4">
       {v.queueLineAr ? <p role="status" className="m-0 rounded-[12px] bg-sf2 px-3 py-2 text-[13px] leading-[1.8] text-ink" data-testid="agent-queue">{v.queueLineAr}</p> : null}
 
       {v.phase === "question" && v.questionAr ? (
@@ -115,30 +115,31 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, error = n
       {v.assumptionsAr.length > 0 && v.phase === "plan" ? (
         <div className="rounded-[12px] bg-sf2 px-3 py-2" data-testid="agent-assumptions">
           <p className="m-0 text-[12px] font-semibold text-ink">كيف فهمنا طلبك</p>
-          <ul className="m-0 mt-1 list-disc pe-4 text-[13px] leading-[1.9] text-ink2">{v.assumptionsAr.map((a) => <li key={a}>{a}</li>)}</ul>
-          <p className="m-0 mt-1 text-[12px] font-light text-mut">لو فهمنا شيئًا بشكل مختلف عمّا تقصد، اضغط «عدّل الطلب» وغيّره قبل الاعتماد.</p>
+          <ul className="m-0 mt-0.5 list-disc pe-4 text-[13px] leading-[1.75] text-ink2">{v.assumptionsAr.map((a) => <li key={a}>{a}</li>)}</ul>
+          <p className="m-0 mt-1 text-[11px] font-light leading-[1.7] text-mut">لو فهمنا شيئًا بشكل مختلف، اضغط «عدّل الطلب» وغيّره قبل الاعتماد.</p>
         </div>
       ) : null}
 
       {v.notesAr.length > 0 && (v.phase === "plan" || v.phase === "running") ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-notes">{v.notesAr.join(" ")}</p> : null}
 
-      {v.stages.length > 0 && (v.phase === "plan" || v.phase === "running") ? (
+      {v.stages.length > 0 && v.phase === "plan" ? (
         <div data-testid="agent-stages">
-          <ol className="m-0 flex list-none flex-col gap-1.5 p-0">
+          <ol className="m-0 flex list-none flex-col gap-1 p-0">
             {v.stages.map((s) => (
-              <li key={s.n} className="text-[13px] leading-[1.8] text-ink" data-testid={`agent-stage-${s.n}`}>
-                <b>{toArabicDigits(s.n)}.</b> {s.titleAr} <span className="text-ink2">— {s.rowsAr}</span>
-                {s.noteAr ? <span className="block text-[12px] font-light text-mut">{s.noteAr}</span> : null}
+              <li key={s.n} className="flex items-baseline gap-1.5 text-[13px] leading-[1.7] text-ink" data-testid={`agent-stage-${s.n}`}>
+                <b className="shrink-0 text-mut">{toArabicDigits(s.n)}</b>
+                <span className="min-w-0 flex-1">{s.titleAr}{s.noteAr ? <span className="block text-[11px] font-light text-mut">{s.noteAr}</span> : null}</span>
+                <span className="shrink-0 text-ink2">{s.rowsAr}</span>
               </li>
             ))}
           </ol>
-          <p className="m-0 mt-1.5 text-[13px] font-semibold text-ink" data-testid="agent-total">المجموع في ملفك: {v.totalRowsAr}</p>
+          {v.stages.length > 1 ? <p className="m-0 mt-1 border-t border-ln pt-1 text-[13px] font-semibold text-ink" data-testid="agent-total">المجموع في ملفك: {v.totalRowsAr}</p> : null}
         </div>
       ) : null}
 
       {v.samples && v.phase === "plan" ? (
-        <div className="overflow-x-auto rounded-[14px] border border-ln bg-bg p-2.5" data-testid="agent-samples" aria-label="أمثلة من النتيجة">
-          <p className="m-0 mb-1.5 text-[12px] font-semibold text-ink">أمثلة من النتيجة{v.samples.stageTitleAr ? ` · ${v.samples.stageTitleAr}` : ""}</p>
+        <div className="overflow-x-auto rounded-[12px] border border-ln bg-bg p-2" data-testid="agent-samples" aria-label="أمثلة من النتيجة">
+          <p className="m-0 mb-1 text-[12px] font-semibold text-ink">أمثلة من النتيجة{v.samples.stageTitleAr ? ` · ${v.samples.stageTitleAr}` : ""}</p>
           <table className="w-full border-collapse text-[12px]">
             <thead><tr className="text-right text-mut">{v.samples.columns.map((c) => <th key={c.key} className="border-b border-ln px-1.5 py-1 font-semibold">{c.titleAr}</th>)}</tr></thead>
             <tbody>{v.samples.rows.map((r, i) => <tr key={i}>{r.map((cell, j) => <td key={j} className="max-w-[220px] truncate border-b border-ln px-1.5 py-1 text-ink2">{cell || "—"}</td>)}</tr>)}</tbody>
@@ -148,7 +149,16 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, error = n
 
       {v.fileContentsAr && v.phase === "plan" ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-file-contents">{v.fileContentsAr}</p> : null}
 
-      {v.priceLineAr && v.phase === "plan" ? <p className="m-0 rounded-[12px] bg-sf2 px-3 py-2 text-[13px] leading-[1.9] text-ink" data-testid="agent-price">{v.priceLineAr}</p> : null}
+      {v.phase === "plan" && v.priceFacts.length > 0 ? (
+        <div className="rounded-[12px] bg-sf2 px-3 py-2" data-testid="agent-price">
+          <dl className="m-0 grid grid-cols-2 gap-2 text-center sm:grid-cols-3">
+            {v.priceFacts.map((f, i) => (
+              <div key={f.labelAr} className={`min-w-0${i === 2 ? " col-span-2 sm:col-span-1" : ""}`}><dt className="text-[11px] font-light text-mut">{f.labelAr}</dt><dd className="m-0 mt-0.5 text-[13px] font-semibold leading-[1.5] text-ink">{f.valueAr}</dd></div>
+            ))}
+          </dl>
+          {v.priceNoteAr ? <p className="m-0 mt-1.5 border-t border-ln pt-1.5 text-center text-[12px] leading-[1.7] text-ink2" data-testid="agent-price-note">{v.priceNoteAr}</p> : null}
+        </div>
+      ) : v.priceLineAr && v.phase === "plan" ? <p className="m-0 rounded-[12px] bg-sf2 px-3 py-2 text-[13px] leading-[1.9] text-ink" data-testid="agent-price">{v.priceLineAr}</p> : null}
 
       {v.phase === "plan" ? (
         <div className="flex flex-wrap items-center gap-2">
@@ -167,6 +177,9 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, error = n
         </details>
       ) : null}
 
+      {(v.phase === "done" || v.phase === "partial" || v.phase === "unserved" || v.phase === "failed") && v.resultLinesAr.length > 0 ? (
+        <div className="rounded-[12px] bg-sf2 px-3 py-2" data-testid="agent-result-lines">{v.resultLinesAr.map((line) => <p key={line} className="m-0 text-[13px] leading-[1.8] text-ink">{line}</p>)}</div>
+      ) : null}
       {(v.phase === "done" || v.phase === "partial" || v.phase === "unserved" || v.phase === "failed") && v.resultSummaryAr ? <p className="m-0 text-[13px] leading-[1.9] text-ink" data-testid="agent-result">{v.resultSummaryAr}</p> : null}
       {v.phase === "cancelled" ? <p className="m-0 text-[13px] text-ink2" data-testid="agent-cancelled">أُلغيت هذه المهمة ولم يُخصم شيء.</p> : null}
       {v.files.length > 0 ? (

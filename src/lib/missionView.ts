@@ -24,6 +24,8 @@ export interface PanelStep {
   ratio?: number;
   /** Rows the rules left out («استبعدنا ٥ لعدم مطابقتها»): not delivered, not charged. */
   excludedAr?: string;
+  /** The live numbers of the stage as short lines, in the order the work happens («وُجد ٨٥٠ تغريدة في ٤٣ صفحة»، «فُحص ٤٠٠: قُبل ٢٥٠…»): they only grow. */
+  metricsAr?: string[];
   /** The remaining time of THIS stage, or the waiting phrase while the speed is not measured yet; absent for a finished stage. */
   etaAr?: string;
   /** Why a stopped step stopped, in plain Arabic. */
