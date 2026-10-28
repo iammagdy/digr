@@ -148,7 +148,7 @@ export interface StoredModelPlan {
   /** The country the customer's own words name (canonical English and the Arabic label), when the first step's rows are companies or people: rows of another country are never delivered. */
   country?: { canonicalEnglish: string; arabicLabel: string };
   /** Rows per call and delivered share MEASURED on the sample (or the recipe), per step: what the price was built on. */
-  measured: Array<{ rowsPerCall: number; passRate: number; costPerCallUsd: number }>;
+  measured: Array<{ rowsPerCall: number; passRate: number; costPerCallUsd: number; /** Where the measure came from: «sample», «recipe» (a reviewed recipe: the stable price path), «catalog_unit»… */ from?: string }>;
   /** What the model may spend on managing this mission (USD): 5% of the reserve value, never below the floor. Set at plan time by code. */
   managerBudgetUsd?: number;
   /** Per step, whether its rows are delivered (set by code from `deliver`). Absent on a plan approved before Phase 2: the last step only. */

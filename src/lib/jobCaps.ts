@@ -40,6 +40,14 @@ const n = (value: number) => toArabicDigits(Math.max(0, Math.round(value)));
 /** Said beside a count that the live extraction capacity cut: why, and what to do. No provider word, no money, no technical name. */
 export const CAPACITY_LIMITED_REASON_AR = "سعة المصدر المتاحة الآن محدودة، ونوصي بإعادة المحاولة لاحقًا.";
 
+/** The plain reason the live capacity cut a count, by which limit was the smallest (no provider word, no money, no technical name). */
+export const CAPACITY_CAUSE_REASON_AR: Record<"balance" | "daily" | "user", string> = {
+  balance: "رصيد الاستخراج المتاح لدينا اليوم منخفض، فاقتصر الطلب على ما يتسع له الآن.",
+  daily: "بلغنا الحد اليومي لاستخراج هذه الخدمة، فاقتصر الطلب على ما يتسع له الآن. يتجدد الحد غدًا.",
+  user: "بلغ حسابك حدّه اليومي للاستخراج، فاقتصر الطلب على ما يتسع له الآن. يتجدد الحد غدًا.",
+};
+export const capacityReasonAr = (cause?: string | null): string => CAPACITY_CAUSE_REASON_AR[(cause as "balance" | "daily" | "user")] ?? CAPACITY_LIMITED_REASON_AR;
+
 /** Said when the service's own per-request ceiling, and neither the balance nor the points cap, is what limits the count. */
 export const SERVICE_CEILING_REASON_AR = "هذا حدّ الخدمة نفسها لكل طلب، وليس رصيدك.";
 

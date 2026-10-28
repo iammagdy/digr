@@ -270,6 +270,12 @@ function validateStep(step: PlanStep, index: number, plan: ProposePlanInput, ctx
     issues.push(issue("needs_real_sample", `«${step.endpointId}» is priced per call, and the catalog's example answer is trimmed to one list item, so it cannot say how many rows a call returns: it cannot set a price. Call sample_call for this endpoint once (a tiny real check, within the exploration budget), then propose the plan again. If sample_call is refused for budget, end with ONE short Arabic message that this cannot be offered right now.`, at));
     return null;
   }
+  // THE PRICE OF A KIND OF REQUEST DOES NOT WOBBLE: a REVIEWED recipe of this endpoint (proven on real deliveries) is the price basis, whatever page size or pass rate today's sample happened to show
+  // (the same X topic request was priced 0.4125 and 0.20625 points on two days because the sample returned 15 rows one day and 20 the next). The sample still proves the field map above.
+  if (recipe?.status === "reviewed" && callCost.unit === "call" && step.fieldMap.columns.every((c) => recipe.knownFields.includes(c.field)) && step.filters.every((f) => recipe.knownFields.includes(f.field))) {
+    const m = recipeMeasureFor(recipe, step.endpointId, index);
+    if (m) measure = { rowsPerCall: m.rowsPerCall, passRate: m.passRate, source: "recipe" };
+  }
   const price = priceStep(callCost, measure);
   return { step, endpoint, category, callCost, price, callEstimateUsd: callEstimateUsd(callCost) };
 }
@@ -485,7 +491,7 @@ export function validatePlan(input: ProposePlanInput, ctx: ValidateContext): Val
       steps: validated,
       price,
       sensitive,
-      stored: { v: 1, steps: validated.map((v, i) => ({ ...v.step, params: v.step.params.map((p) => (p.source === "prior_step" ? p : { ...p, value: resolvedParamValue(p) as PlanParam["value"] })), facts: facts[i] })), ...(topic ? { topic } : {}), ...(cardCountry && entityOfEndpoint(validated[0].endpoint) ? { country: cardCountry } : {}), measured: validated.map((v) => ({ rowsPerCall: v.price.rowsPerCall, passRate: v.price.passRate, costPerCallUsd: v.price.costPerCallUsd })), managerBudgetUsd, delivers, stages: storedStages, ...(platformChoiceAr ? { platformChoiceAr } : {}), ...(foundEntities ? { foundEntities } : {}) },
+      stored: { v: 1, steps: validated.map((v, i) => ({ ...v.step, params: v.step.params.map((p) => (p.source === "prior_step" ? p : { ...p, value: resolvedParamValue(p) as PlanParam["value"] })), facts: facts[i] })), ...(topic ? { topic } : {}), ...(cardCountry && entityOfEndpoint(validated[0].endpoint) ? { country: cardCountry } : {}), measured: validated.map((v) => ({ rowsPerCall: v.price.rowsPerCall, passRate: v.price.passRate, costPerCallUsd: v.price.costPerCallUsd, from: v.price.measuredFrom })), managerBudgetUsd, delivers, stages: storedStages, ...(platformChoiceAr ? { platformChoiceAr } : {}), ...(foundEntities ? { foundEntities } : {}) },
       sampleRows,
       sampleColumns,
       deliveredVolume,

@@ -13,6 +13,8 @@ export const RECIPES_TABLE = "recipes";
 
 export interface RecipeRecord {
   slug: string;
+  /** A reviewed recipe prices a request of its kind (its measurement is the price basis); a draft only helps the planner. */
+  status?: "draft" | "reviewed";
   endpointIds: string[];
   /** Fields known to exist in the endpoint's rows (the columns and filters of the saved field map). */
   knownFields: string[];
@@ -88,16 +90,17 @@ export async function saveRecipeAfterDelivery(client: any, plan: StoredModelPlan
   } catch { return false; }
 }
 
-/** The saved recipe whose first endpoint is this one (the newest draft or reviewed one), or null. Never throws. */
+/** The saved recipe whose first endpoint is this one: a REVIEWED one first (it is the price basis), else the newest draft; null when none. Never throws. */
 export async function loadRecipeForEndpoint(client: any, endpointId: string): Promise<RecipeRecord | null> {
   if (typeof client?.from !== "function") return null;
   try {
-    const { data, error } = await client.from(RECIPES_TABLE).select("slug,endpoint_id,field_map,price_basis,status").eq("endpoint_id", endpointId).in("status", ["draft", "reviewed"]).order("created_at", { ascending: false }).limit(1);
+    const { data, error } = await client.from(RECIPES_TABLE).select("slug,endpoint_id,field_map,price_basis,status,created_at").eq("endpoint_id", endpointId).in("status", ["draft", "reviewed"]).order("created_at", { ascending: false }).limit(10);
     if (error || !Array.isArray(data) || data.length === 0) return null;
-    const row = data[0];
+    const row = data.find((r: any) => r.status === "reviewed") ?? data[0];
     const steps = (row.field_map?.steps ?? []) as Array<{ endpointId: string; fieldMap?: { columns?: Array<{ field: string }> }; filters?: Array<{ field: string }> }>;
     return {
       slug: String(row.slug),
+      status: row.status === "reviewed" ? "reviewed" : "draft",
       endpointIds: steps.map((s) => s.endpointId),
       knownFields: [...new Set(steps.flatMap((s) => [...(s.fieldMap?.columns ?? []).map((c) => c.field), ...(s.filters ?? []).map((f) => f.field)]))],
       measured: Array.isArray(row.price_basis?.measured) ? row.price_basis.measured.map((m: any) => ({ rowsPerCall: Number(m.rowsPerCall) || 1, passRate: Number(m.passRate) || 1 })) : [],

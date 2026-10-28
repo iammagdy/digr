@@ -1,4 +1,5 @@
-import { currentLineAr, FILES_STEP_TITLE_AR, REVIEW_STEP_TITLE_AR, type PanelStep } from "./missionView";
+import { currentLineAr, FILES_STEP_TITLE_AR, FINAL_STEP_LABEL_AR, REVIEW_STEP_TITLE_AR, type PanelStep } from "./missionView";
+import { formatAr } from "./arabicDigits";
 import type { MissionPanelContent } from "../components/mission/MissionPlanPanel";
 
 /**
@@ -19,10 +20,13 @@ export function stagesOfPlanQuote(quote: { items?: Array<{ params?: Record<strin
   return stages.map((s: any) => ({ titleAr: String(s.titleAr || ""), effVolume: Number(s.effVolume) || 0, deliver: Boolean(s.deliver), ...(Number(s.perParent) > 0 ? { perParent: Number(s.perParent) } : {}), ...(Number(s.askedPerParent) > 0 ? { askedPerParent: Number(s.askedPerParent) } : {}) }));
 }
 
-/** The proposed plan as steps, all waiting: what the mission WILL do once the customer approves. */
-export function proposedPlanSteps(stages: ReadonlyArray<{ titleAr: string }>): PanelStep[] {
-  const steps: PanelStep[] = stages.map((s, i) => ({ id: `stage-${i + 1}`, titleAr: s.titleAr, state: "waiting" as const }));
-  steps.push({ id: "review", titleAr: REVIEW_STEP_TITLE_AR, state: "waiting" }, { id: "files", titleAr: FILES_STEP_TITLE_AR, state: "waiting" });
+/** The proposed plan as steps, all waiting: what the mission WILL do once the customer approves, with the same counts the card shows (one source: the stored plan's stages). */
+export function proposedPlanSteps(stages: ReadonlyArray<{ titleAr: string; effVolume?: number; deliver?: boolean }>): PanelStep[] {
+  const steps: PanelStep[] = stages.map((s, i) => ({
+    id: `stage-${i + 1}`, titleAr: s.titleAr, state: "waiting" as const,
+    ...(s.effVolume && s.effVolume > 0 ? { detailAr: `حتى ${formatAr(s.effVolume)} صفًا ${s.deliver === false ? "تُستخدم في المرحلة التالية" : "يصلك"}` } : {}),
+  }));
+  steps.push({ id: "review", titleAr: REVIEW_STEP_TITLE_AR, detailAr: FINAL_STEP_LABEL_AR, state: "waiting" }, { id: "files", titleAr: FILES_STEP_TITLE_AR, detailAr: FINAL_STEP_LABEL_AR, state: "waiting" });
   return steps;
 }
 
@@ -47,7 +51,7 @@ export function contentFromPlanning(response: PlanningResponse | null | undefine
 export interface MissionStatusResponse {
   mission?: boolean;
   phase?: string;
-  view?: { steps: PanelStep[]; currentLineAr: string; delayAr: string | null } | null;
+  view?: { steps: PanelStep[]; currentLineAr: string; delayAr: string | null; remainingAr?: string | null } | null;
   latest?: { stageTitleAr: string; columns: Array<{ key: string; titleAr: string }>; rows: string[][] } | null;
   notes?: Array<{ kind: string; textAr: string }>;
   startedAt?: number | null;
@@ -62,7 +66,7 @@ export function contentFromMission(status: MissionStatusResponse | null | undefi
   const live = status.phase === "running" || status.phase === "queued";
   const notesAr = (status.notes ?? []).filter((n) => NOTE_KINDS.has(n.kind)).map((n) => n.textAr).slice(-3);
   return {
-    title: PANEL_TITLE_AR, steps: status.view.steps, currentLineAr: status.view.currentLineAr, delayAr: status.view.delayAr,
+    title: PANEL_TITLE_AR, steps: status.view.steps, currentLineAr: status.view.currentLineAr, delayAr: status.view.delayAr, remainingAr: live ? status.view.remainingAr ?? null : null,
     latest: status.latest ?? null, notesAr, closePageAr: live ? opts.closePageAr ?? null : null, startedAt: status.startedAt ?? undefined, live, summaryAr: live ? [] : status.summaryAr ?? [],
   };
 }

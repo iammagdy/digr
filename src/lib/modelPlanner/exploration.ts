@@ -10,7 +10,7 @@ import { buildShapeDigest, type ShapeDigest } from "./digest";
 import { callEstimateUsd, unitCost } from "./pricing";
 import { readField } from "./fieldMap";
 import { mapParamsToSibling, rankSiblings } from "./siblings";
-import { EXPLORATION_DAY_CAP_USD, EXPLORATION_JOB_PREFIX, EXPLORATION_REQUEST_CAP_USD, MAX_SAMPLE_ALTERNATIVES, MAX_SAMPLE_CALLS, PLANNER_MIN_TURN_MS, SAMPLE_CALL_TIMEOUT_MS, SAMPLE_PAGE_ROWS_PER_CALL, SAMPLE_ROWS_REQUESTED } from "./constants";
+import { EXPLORATION_DAY_CAP_USD, EXPLORATION_JOB_PREFIX, EXPLORATION_REQUEST_CAP_USD, MAX_SAMPLE_ALTERNATIVES, MAX_SAMPLE_CALLS, PLANNER_MIN_TURN_MS, SAMPLE_BUDGET_SHARE_PER_RECORD, SAMPLE_CALL_TIMEOUT_MS, SAMPLE_PAGE_ROWS_PER_CALL, SAMPLE_ROWS_REQUESTED } from "./constants";
 import type { PlanParam, ValidationIssue } from "./types";
 
 /**
@@ -230,10 +230,10 @@ async function tryOne(endpoint: CatalogEndpoint, params: PlanParam[], limitIn: n
   const allowed = Math.min(requestLeft, dayLeft);
 
   // A PER-CALL price does not depend on the page size, so the sample asks for the page the job will ask for (up to SAMPLE_PAGE_ROWS_PER_CALL): the rows it returns are the rows one call
-  // returns, which is what the price is divided by. A PER-RECORD price is paid for every row asked, so the sample asks for as few as it needs and as many as the budget allows.
+  // returns, which is what the price is divided by. A PER-RECORD price is paid for every row asked, so the sample asks for as few as it needs and at most SAMPLE_BUDGET_SHARE_PER_RECORD of what is left of the budget (the first version asked for ALL that was left: two calls of a 0.0098 USD per-row endpoint took 3 + 2 rows and the rest of the request cap, and every later source was refused as «over budget»).
   let limit: number;
   if (cost.unit === "call") limit = Math.max(1, Math.min(SAMPLE_PAGE_ROWS_PER_CALL, Math.floor(limitIn ?? SAMPLE_PAGE_ROWS_PER_CALL)));
-  else limit = Math.max(1, Math.min(SAMPLE_ROWS_REQUESTED, Math.floor(limitIn ?? SAMPLE_ROWS_REQUESTED), Math.floor((allowed + 1e-12) / Math.max(cost.usd, 1e-9))));
+  else limit = Math.max(1, Math.min(SAMPLE_ROWS_REQUESTED, Math.floor(limitIn ?? SAMPLE_ROWS_REQUESTED), Math.floor((allowed * SAMPLE_BUDGET_SHARE_PER_RECORD + 1e-12) / Math.max(cost.usd, 1e-9))));
   const setLimit = limitInput && callParams[limitInput.name] === undefined;
   if (setLimit) callParams[limitInput!.name] = limitInput!.maximum !== null ? Math.min(limit, limitInput!.maximum) : limit;
   const estimate = callEstimateUsd(cost, limit);

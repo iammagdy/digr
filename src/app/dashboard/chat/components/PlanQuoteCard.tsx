@@ -7,7 +7,7 @@ import { customerFacingFailure } from "@/lib/customerError";
 import { useEffect, useMemo, useState } from "react";
 import { formatNumber } from "@/lib/honestDisplay";
 import { formatAr, normalizeDigits as toLatinDigits, toArabicDigits } from "@/lib/arabicDigits";
-import { CAPACITY_LIMITED_REASON_AR, volumeLimitStatementAr } from "@/lib/jobCaps";
+import { capacityReasonAr, volumeLimitStatementAr } from "@/lib/jobCaps";
 import { defaultVolumeStatementAr, type DefaultNoun } from "@/lib/planDefaults";
 import { socialTopicForDisplay } from "@/lib/socialTopicDisplay";
 import { expiryShortAr as expiryShort, getQuoteApprovalState, isQuotePlanComplete, planApprovalNoteAr } from "@/lib/quoteApprovalState";
@@ -46,6 +46,7 @@ export interface PlanQuoteData {
   pointsCapConstrained?: boolean;
   /** The live extraction capacity (not the points cap) cut the count (set by the server). */
   capacityConstrained?: boolean;
+  capacityCause?: "balance" | "daily" | "user";
   /** The service's own per-request ceiling cut the count (not the balance, not the points cap): the number it holds (set by the server). */
   serviceCeilingUnits?: number;
   /** The sentence the server wrote for why the plan holds fewer records than asked (the service's ceiling, what the posts read can reach, the capacity). */
@@ -419,7 +420,7 @@ export default function PlanQuoteCard({
 
       {volumeLimit ? (
         <p data-testid="plan-volume-limit" className="mb-0 mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.8] text-amber-950">
-          {volumeLimit} {capacityCut ? CAPACITY_LIMITED_REASON_AR : quote.serviceCeilingUnits || quote.volumeLimitLineAr?.includes("هذا حدّ") ? "" : "يمكنك تقليل العدد أكثر إذا أردت."}
+          {volumeLimit} {capacityCut ? capacityReasonAr(quote.capacityCause) : quote.serviceCeilingUnits || quote.volumeLimitLineAr?.includes("هذا حدّ") ? "" : "يمكنك تقليل العدد أكثر إذا أردت."}
         </p>
       ) : quote.pointsCapConstrained && !defaultStatement ? (
         <p className="mb-0 mt-3 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-[12px] leading-[1.8] text-amber-950">

@@ -93,6 +93,7 @@ export interface ProgressSnap { at: number; stages: StageSnap[]; delivered: numb
 export type JobPhase = "queued" | "running" | "completed" | "partial" | "failed";
 export interface MissionNote { kind: string; stage?: number; textAr: string }
 
+export const FINAL_STEP_LABEL_AR = "خطوة ختامية بعد الجمع";
 export const REVIEW_STEP_TITLE_AR = "مراجعة النتائج";
 export const FILES_STEP_TITLE_AR = "تجهيز الملفات";
 
@@ -102,6 +103,8 @@ export interface MissionView {
   currentLineAr: string;
   /** An honest word when the source is slow or was replaced; null otherwise. */
   delayAr: string | null;
+  /** The time left of the stage that is running, ONLY once its real speed is measured (never a guess); null before. */
+  remainingAr: string | null;
 }
 
 const countAr = (c: number, e: number) => `${formatAr(c)} من ${formatAr(e)}`;
@@ -134,7 +137,23 @@ export function missionNotesFromEvents(rows: ReadonlyArray<{ message?: string | 
 }
 
 /** The steps of an approved mission and their states, counts and remaining times. */
-export function missionView(input: { stages: readonly MissionStageInfo[]; snaps: readonly ProgressSnap[]; phase: JobPhase; notes?: readonly MissionNote[]; now: number; failureReasonAr?: string }): MissionView {
+/**
+ * The counts the panel shows per stage: a stage whose rows reach the customer shows the rows DELIVERED (not the rows the stage touched), a stage that only feeds the next shows what it collected, and once
+ * the job has ended the delivered counts add up to what the job really delivered (rows the worker's own gate or the job's size took off are taken off the last delivered stage first). Pure.
+ */
+export function stageCounts(stages: ReadonlyArray<Pick<MissionStageInfo, "deliver">>, snap: ProgressSnap | undefined, jobDelivered?: number): number[] {
+  const shown = stages.map((st, i) => (snap?.stages[i] ? (st.deliver ? snap.stages[i].d : snap.stages[i].c) : 0));
+  if (jobDelivered === undefined) return shown;
+  let excess = stages.reduce((n, st, i) => n + (st.deliver ? shown[i] : 0), 0) - Math.max(0, Math.floor(jobDelivered));
+  for (let i = stages.length - 1; i >= 0 && excess > 0; i -= 1) {
+    if (!stages[i].deliver) continue;
+    const cut = Math.min(excess, shown[i]);
+    shown[i] -= cut; excess -= cut;
+  }
+  return shown;
+}
+
+export function missionView(input: { stages: readonly MissionStageInfo[]; snaps: readonly ProgressSnap[]; phase: JobPhase; notes?: readonly MissionNote[]; now: number; failureReasonAr?: string; /** What the job delivered in all (known once it has ended). */ deliveredTotal?: number }): MissionView {
   const snaps = [...input.snaps].sort((a, b) => a.at - b.at);
   const snap = snaps[snaps.length - 1];
   const finished = input.phase === "completed" || input.phase === "partial";
@@ -143,11 +162,13 @@ export function missionView(input: { stages: readonly MissionStageInfo[]; snaps:
   const firstOpen = snap ? snap.stages.findIndex((s) => !s.done) : 0;
   const noteOf = (stage: number) => (input.notes ?? []).filter((n) => n.stage === stage + 1 && n.kind === "stage_stopped").pop()?.textAr;
 
+  const ended = finished || failed;
+  const counts = stageCounts(input.stages, snap, ended ? input.deliveredTotal : undefined);
   const steps: PanelStep[] = input.stages.map((info, i) => {
     const s = snap?.stages[i];
     const base: PanelStep = { id: `stage-${i + 1}`, titleAr: info.titleAr, state: "waiting" };
     const e = s?.e || info.effVolume;
-    if (s) { base.countAr = countAr(Math.min(s.c, e), e); base.ratio = e > 0 ? Math.min(1, s.c / e) : 0; if (s.x > 0) base.excludedAr = `استبعدنا ${formatAr(s.x)} لعدم مطابقتها`; }
+    if (s) { base.countAr = countAr(Math.min(counts[i], e), e); base.ratio = e > 0 ? Math.min(1, counts[i] / e) : 0; if (s.x > 0) base.excludedAr = `استبعدنا ${formatAr(s.x)} لعدم مطابقتها`; }
     if (s?.stopped) return { ...base, state: "stopped", reasonAr: s.stopped, etaAr: undefined };
     if (finished) return { ...base, state: "done", ...(s ? { ratio: 1 } : {}) };
     if (s?.done) return { ...base, state: "done", ratio: 1 };
@@ -161,13 +182,14 @@ export function missionView(input: { stages: readonly MissionStageInfo[]; snaps:
   });
 
   const allStagesDone = steps.length > 0 && steps.every((s) => s.state === "done" || s.state === "stopped");
-  steps.push({ id: "review", titleAr: REVIEW_STEP_TITLE_AR, state: finished ? "done" : failed ? (allStagesDone ? "stopped" : "stopped") : allStagesDone && live ? "running" : "waiting", ...(failed ? { reasonAr: input.failureReasonAr ?? "توقفت المهمة قبل المراجعة." } : {}) });
-  steps.push({ id: "files", titleAr: FILES_STEP_TITLE_AR, state: finished ? "done" : failed ? "stopped" : "waiting", ...(failed ? { reasonAr: "لم تُجهَّز ملفات لهذه المهمة." } : {}) });
+  steps.push({ id: "review", titleAr: REVIEW_STEP_TITLE_AR, detailAr: FINAL_STEP_LABEL_AR, state: finished ? "done" : failed ? (allStagesDone ? "stopped" : "stopped") : allStagesDone && live ? "running" : "waiting", ...(failed ? { reasonAr: input.failureReasonAr ?? "توقفت المهمة قبل المراجعة." } : {}) });
+  steps.push({ id: "files", titleAr: FILES_STEP_TITLE_AR, detailAr: FINAL_STEP_LABEL_AR, state: finished ? "done" : failed ? "stopped" : "waiting", ...(failed ? { reasonAr: "لم تُجهَّز ملفات لهذه المهمة." } : {}) });
 
   const replaced = (input.notes ?? []).some((n) => n.kind === "source_replaced");
   const stale = live && snap ? input.now - snap.at > SLOW_AFTER_MS : false;
   const delayAr = stale ? SLOW_SOURCE_AR : live && replaced ? SOURCE_REPLACED_AR : null;
-  return { steps, currentLineAr: currentLineAr(steps), delayAr };
+  const measuredEta = steps.find((st) => st.state === "running" && st.etaAr && st.etaAr !== ETA_PENDING_AR)?.etaAr;
+  return { steps, currentLineAr: currentLineAr(steps), delayAr, remainingAr: measuredEta ?? null };
 }
 
 /** The one-line summary of a list of steps: the running step with its count, else the first waiting one, else the last finished. */

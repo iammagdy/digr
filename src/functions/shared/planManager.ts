@@ -786,6 +786,7 @@ export async function createAndSaveManagedQuote(
 
   // 1b. Check provider capacity (10% safety margin) across all items
   let capacityConstrained = false;
+  let capacityCause: "balance" | "daily" | "user" | undefined;
   // The chain's providers have their own daily caps and balances, checked by the router and at every call: only the TREG items are held to TREG's gate.
   const isChainItem = (it: PlanItem) => isChainSlug(it.capabilitySlug);
   const onlyChainItems = plan.items.length > 0 && plan.items.every(isChainItem);
@@ -812,6 +813,7 @@ export async function createAndSaveManagedQuote(
       throw new PlanRefusalError(capacityRefusalAr(plan.items, totalEstimatedUsd > 0 ? capacityCheck.safeBudgetUsd / totalEstimatedUsd : 0));
     }
     capacityConstrained = true;
+    capacityCause = capacityCheck.limitedBy;
     const scale = totalEstimatedUsd > 0 ? capacityCheck.safeBudgetUsd / totalEstimatedUsd : 1;
     for (const it of plan.items) {
       if (isChainItem(it)) continue;
@@ -1112,6 +1114,7 @@ export async function createAndSaveManagedQuote(
     isAffordable,
     downscaledOffer,
     capacityConstrained,
+    ...(capacityCause ? { capacityCause } : {}),
     pointsCapConstrained,
     requestedVolumeMax,
     pointsCap,

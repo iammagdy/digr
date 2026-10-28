@@ -10,7 +10,7 @@ import { getProviderStatus, lastGoodProviderBalance, type FetchLike } from "./pr
  * The plan path is never slowed by it: the read has a short budget, and when it cannot answer in time or at all, the last reading the provider
  * really gave is used if it is no older than a few minutes; otherwise the caller falls back to the estimate it had before.
  */
-export const REAL_BALANCE_MAX_AGE_MS = 5 * 60_000;
+export const REAL_BALANCE_MAX_AGE_MS = 30 * 60_000;
 /** The whole read (key, settings, identity call, balance call) may take this long before the plan goes on without it. */
 export const REAL_BALANCE_READ_BUDGET_MS = 700;
 /** Each of the two provider calls is cut at this. */

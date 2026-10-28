@@ -27,6 +27,7 @@ import { openJobHref } from "@/lib/requestLinks";
 import { PARTIAL_SENTENCE_AR } from "@/lib/jobs/requestStatus";
 import { isUntitledConversation, titleFromFirstRequest } from "@/lib/conversationTitleFromRequest";
 import { postApprovalMessageAr } from "@/lib/postApproval";
+import { resolvePlanningPending } from "@/lib/planningClient";
 import { closePageLineAr, normalizeDriverMode } from "@/lib/driverMode";
 import { useDriverMode } from "@/hooks/useDriverMode";
 import { nextPollDelayMs } from "@/lib/pollSchedule";
@@ -740,7 +741,7 @@ export default function ChatWorkspacePage() {
 
       clearTimeout(timeoutId);
 
-      const data = await readChatResponse(res);
+      const data: any = await resolvePlanningPending(await readChatResponse(res), { headers, signal: controller.signal });
 
       if (data.isGuest) {
         setGuestRemaining(data.remainingGuestMessages ?? 0);
@@ -844,7 +845,7 @@ export default function ChatWorkspacePage() {
           ...(activeJob?.resultColumns?.length ? { resultColumns: activeJob.resultColumns } : {}),
         }),
       });
-      const data = await readChatResponse(res);
+      const data: any = await resolvePlanningPending(await readChatResponse(res), { headers, signal: controller.signal });
 
       setMessages((previous) => [
         ...previous.map((message) => message.id === assistantMessageId

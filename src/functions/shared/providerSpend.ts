@@ -258,7 +258,9 @@ export async function getProviderAvailableBalanceUsd(
 export interface PlanCapacityCheckResult {
   allowed: boolean;
   /** Where the balance the budget came from: the provider's own reading, or the configured credit minus the recorded spend. */
-  balanceSource?: "real" | "estimate";
+  balanceSource?: "real" | "estimate" | "unknown";
+  /** Which of the three limits was the smallest (the one that cut the volume, when it was cut). */
+  limitedBy?: "balance" | "daily" | "user";
   safeBudgetUsd: number;
   availableBalanceUsd: number;
   originalVolume: number;
@@ -279,14 +281,20 @@ export async function checkPlanProviderCapacity(
   // The balance is the provider's REAL one when a recent reading exists; otherwise the estimate (credit minus recorded spend), as before.
   // A test that fixes the balance keeps its fixed figure.
   const real = testBalanceOverrideUsd !== null ? null : await readRealProviderBalance(tables);
-  const balanceUsd = real ? real.usd : status.availableBalanceUsd;
-  const balanceSource: "real" | "estimate" = real ? "real" : "estimate";
+  // The ESTIMATE (the configured credit minus every cost ever recorded) means something only when the credit is configured: with no PROVIDER_CREDIT_USD the default of 1 USD minus a lifetime spend of
+  // several USD is 0, and a plan was cut to ONE record whenever the real balance could not be read in its 700 ms budget (a 20-tweet request was sold as 1). An unreadable balance with no configured
+  // credit is UNKNOWN: it does not limit the plan (the daily limit, the customer's limit and the per-call budgets at run time still do).
+  // (Even a configured credit is a real basis only while the recorded spend has not passed it: a spend above the credit means the account was recharged since, and credit minus spend is not a balance.)
+  const creditConfigured = String(process.env.PROVIDER_CREDIT_USD ?? "").trim() !== "" && status.totalSpendUsd <= status.creditUsd;
+  const balanceUsd = real ? real.usd : creditConfigured || testBalanceOverrideUsd !== null ? status.availableBalanceUsd : Number.POSITIVE_INFINITY;
+  const balanceSource: "real" | "estimate" | "unknown" = real ? "real" : creditConfigured || testBalanceOverrideUsd !== null ? "estimate" : "unknown";
   const userCapUsd = options.userRemainingUsd != null && Number.isFinite(options.userRemainingUsd) ? Math.max(0, options.userRemainingUsd) : Number.POSITIVE_INFINITY;
   const effectiveAvailableUsd = testBalanceOverrideUsd !== null
     ? Math.min(testBalanceOverrideUsd, userCapUsd)
     : Math.min(balanceUsd, remainingDailyUsd, userCapUsd);
   // 10% safety margin on effective available balance
   const safeBudgetUsd = Math.max(0, effectiveAvailableUsd * 0.90);
+  const limitedBy: "balance" | "daily" | "user" = testBalanceOverrideUsd !== null ? "balance" : (balanceUsd <= remainingDailyUsd && balanceUsd <= userCapUsd ? "balance" : remainingDailyUsd <= userCapUsd ? "daily" : "user");
 
   const unitCost = primaryUnitCostUsd > 0 ? primaryUnitCostUsd : 0.001;
   const estimatedCostUsd = targetVolume * unitCost;
@@ -295,8 +303,9 @@ export async function checkPlanProviderCapacity(
     return {
       allowed: true,
       balanceSource,
+      limitedBy,
       safeBudgetUsd,
-      availableBalanceUsd: balanceUsd,
+      availableBalanceUsd: Number.isFinite(balanceUsd) ? balanceUsd : status.availableBalanceUsd,
       originalVolume: targetVolume,
       maxSafeVolume: targetVolume,
       downscaled: false,
@@ -307,8 +316,9 @@ export async function checkPlanProviderCapacity(
   return {
     allowed: maxSafeVolume > 0,
     balanceSource,
+    limitedBy,
     safeBudgetUsd,
-    availableBalanceUsd: balanceUsd,
+    availableBalanceUsd: Number.isFinite(balanceUsd) ? balanceUsd : status.availableBalanceUsd,
     originalVolume: targetVolume,
     maxSafeVolume,
     downscaled: true,
