@@ -69,6 +69,13 @@ export interface HeartbeatRow {
 /** Everything the worker and the tools need from storage and the database. Two implementations: Supabase (store.ts) and memory (the tests). */
 export interface AgentStore {
   putFile(missionId: string, relPath: string, content: string | Buffer, contentType: string): Promise<void>;
+  /**
+   * CREATE-ONLY write: the object is written once and never replaced. Resolves when the object was created or already exists (a retry after a lost answer is safe: the path carries its own nonce, so the same path is the same content).
+   * The item store writes ONLY through this: an overwritten object may be served stale by the storage CDN (up to 60 s, documented), a new path never is.
+   */
+  putNew(missionId: string, relPath: string, content: string | Buffer, contentType: string): Promise<void>;
+  /** The objects of ONE folder of this mission (non-recursive), names relative to the mission's folder, sorted by name. The listing reads the database, not the CDN: it is consistent right after a write. */
+  listFiles(missionId: string, folder: string): Promise<Array<{ name: string; size: number }>>;
   /** A file of THIS mission only (the path is always under the mission's own prefix). Null when absent. */
   getFile(missionId: string, relPath: string): Promise<string | null>;
   getFileBytes(missionId: string, relPath: string): Promise<Buffer | null>;

@@ -8,7 +8,7 @@ import { legacyPriceMissionByCode, priceMissionByCode, reviewBudgetUsdFor, settl
 import { AGENT_JOB_POINTS_CAP, AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD, AGENT_MODEL_PLANNING_ESTIMATE_USD, AGENT_REVIEW_BUDGET_SHARE } from "../src/lib/agentMission/constants";
 import { approveMission, repriceStoredPlan, settleMission } from "../src/lib/agentMission/lifecycle";
 import { customerPlanView, validateAndPricePlan, type PlanLookup, type PricedPlan } from "../src/lib/agentMission/plan";
-import { customerMissionView } from "../src/lib/agentMission/customerView";
+import { customerMissionView, PRICE_PROMISE_AR } from "../src/lib/agentMission/customerView";
 import { setMissionPricing } from "../src/lib/agentMission/adminActions";
 import { createReviewer, parseVerdicts, reviewPrompt, type ReviewCall } from "../agent/src/review";
 import { createFakeDriver, type FakeStep } from "../agent/src/fakeDriver";
@@ -173,7 +173,9 @@ describe("the plan: relevance is required for a text search, and the price rests
     expect(view.price.minimum_line_ar).toBe("الحد الأدنى للمهمة ٢٠٠ نقطة، ولا خصم إن لم يُسلَّم شيء.");
     const card = customerMissionView({ mission: { id: "msn_a", status: "plan_ready", question_ar: null, plan_public: view, reserved_points: null, unit_price_points: null, delivered_units: null, charged_points: null, summary_ar: null, files: null, created_at: new Date().toISOString() }, events: [], queue: null, now: Date.now() });
     expect(card.assumptionsAr).toEqual(checked.plan.assumptions_ar);
-    expect(card.priceLineAr).toContain("الحد الأدنى للمهمة ٢٠٠ نقطة، ولا خصم إن لم يُسلَّم شيء");
+    // the card states what is charged honestly (full delivery = the price shown, fewer = in proportion, nothing = nothing); the minimum stays in the plan's price data, not on the card
+    expect(card.priceLineAr).toContain("ويُخصم بنسبة ما يُسلَّم فعلًا");
+    expect(card.priceNoteAr).toBe(PRICE_PROMISE_AR);
     expect(JSON.stringify(card)).not.toMatch(/USD|\$|anyapi/);
   });
 });
@@ -447,6 +449,8 @@ describe("a Salah mission end to end (fake model, fake source with the real fail
     const REQUESTED = 50;
     const answers = Array.from({ length: 16 }, (_, p) => tregResult(pageOf(p), 0.00075));
     const r = await replay({
+      // this test is about the MODEL-driven path (a plan with no execution recipe, or the owner's switch off): the code engine is off for it
+      deps: (base) => ({ ...base, engine: false }),
       request: "هات ٥٠ تغريدة عن محمد صلاح",
       planning: [
         { tool: "report_progress", args: { message_ar: "أبحث عن أرخص مصدر مناسب للتغريدات", counts: { sources: 3 } } },
@@ -498,6 +502,8 @@ describe("a Salah mission end to end (fake model, fake source with the real fail
     // the planning sample is page 0; the two execution pages are 1 and 2, and the source has nothing after them
     const answers = [tregResult(pageOf(0), 0.00075), tregResult(pageOf(1), 0.00075), tregResult(pageOf(2), 0.00075)];
     const r = await replay({
+      // this test is about the MODEL-driven path (a plan with no execution recipe, or the owner's switch off): the code engine is off for it
+      deps: (base) => ({ ...base, engine: false }),
       request: "هات ١٠٠ تغريدة عن محمد صلاح",
       planning: [
         { tool: "catalog_search", args: { words: ["tweets", "search"], platform: "x", limit: 5 } },
@@ -658,7 +664,7 @@ describe("the card: the assumptions and the minimum on the plan, ready answers o
     expect(html).toContain("المقصود: محمد صلاح لاعب كرة القدم.");
     expect(html).toContain("تغريدات عربية، الأحدث أولًا.");
     expect(html).toContain("اضغط «عدّل الطلب» وغيّره قبل الاعتماد");
-    expect(html).toContain("الحد الأدنى للمهمة ٢٠٠ نقطة، ولا خصم إن لم يُسلَّم شيء");
+    expect(html).toContain(PRICE_PROMISE_AR);
     // (the sample table shows data cells such as «رقم 1»: only the labels are checked for digits)
     expect(html.replace(/<[^>]+>/g, " ")).not.toMatch(/USD|anyapi|endpoint/);
     const block = html.slice(html.indexOf('data-testid="agent-assumptions"'));

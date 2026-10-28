@@ -59,6 +59,7 @@ const INTERNAL_LABEL_AR: Record<(typeof MISSION_INTERNAL_COUNT_KEYS)[number], st
   tok_review_in: "رموز إدخال المراجعة", tok_review_out: "رموز إخراج المراجعة", tok_review_calls: "طلبات المراجعة", llm_micro_usd: "تكلفة النموذج (بالمليونيم من الدولار)",
   chk_stage: "رقم المرحلة", chk_examined: "عناصر فُحصت", chk_by_rule: "قُبلت بالقاعدة", chk_by_model: "قُبلت بمراجعة النموذج", chk_excluded: "استُبعدت", chk_pending: "بانتظار المراجعة", chk_review_extended: "تجاوزت المراجعة ميزانيتها المعتادة (١ نعم)",
   chk_rule_full_name_context: "قاعدة: الاسم الكامل وكلمة سياق", chk_rule_full_name: "قاعدة: الاسم الكامل وحده", chk_rule_terms_context: "قاعدة: لفظ وكلمة سياق", chk_rule_terms_only: "قاعدة: لفظ دون حاجة لسياق",
+  chk_found: "وُجد في المصدر", chk_new: "عناصر جديدة", chk_dup: "مكررة", chk_unchecked: "لم تُفحص", chk_saved: "محفوظة", adm_flag: "علامة للمشرف (١ نعم)", adm_store: "في السجل", adm_file: "في الملف", adm_memory: "في ذاكرة العامل",
   chk_ex_no_text: "استبعاد: بلا نص", chk_ex_no_term: "استبعاد: لا يذكر الموضوع", chk_ex_mention_only: "استبعاد: إشارة عابرة أو رد فارغ", chk_ex_other_person: "استبعاد: عن شخص آخر", chk_ex_uncertain: "استبعاد: غير مؤكد", chk_ex_not_reviewed: "استبعاد: لم يُراجَع", chk_ex_review_no: "استبعاد: رفضته المراجعة", chk_ex_review_failed: "استبعاد: تعذّرت مراجعته",
 };
 

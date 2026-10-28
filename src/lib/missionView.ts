@@ -22,6 +22,9 @@ export interface PanelStep {
   countAr?: string;
   /** 0 to 1, for the progress bar of a stage. */
   ratio?: number;
+  /** The items counted in `countAr` and the number the stage was sold for: the bar's accessible value is exactly this count (never the blended work ratio). */
+  savedN?: number;
+  plannedN?: number;
   /** Rows the rules left out («استبعدنا ٥ لعدم مطابقتها»): not delivered, not charged. */
   excludedAr?: string;
   /** The live numbers of the stage as short lines, in the order the work happens («وُجد ٨٥٠ تغريدة في ٤٣ صفحة»، «فُحص ٤٠٠: قُبل ٢٥٠…»): they only grow. */

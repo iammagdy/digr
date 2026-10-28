@@ -43,6 +43,8 @@ export interface ReplayInput {
   web?: { fetchFn: ReturnType<typeof vi.fn>; requests: Array<{ url: string; body: any }> };
   /** Extra setup of the worker's dependencies. */
   deps?: (base: RunnerDeps) => RunnerDeps;
+  /** The mission's store (default: the in-memory one). The stale-read store of cdnStaleStore.ts gives the real storage's read semantics. */
+  makeStore?: () => MemoryStore;
 }
 
 export interface ReplayResult {
@@ -86,7 +88,7 @@ export async function replay(input: ReplayInput): Promise<ReplayResult> {
   const db = createMemoryDb();
   const money = fakeMoneyClient({ balance: input.balance });
   const initialBalance = money.balance();
-  const store = createMemoryStore();
+  const store = input.makeStore ? input.makeStore() : createMemoryStore();
   const { client } = replayClient(db, money);
   const rec = fakeRecorder({ dailyCapUsd: 5 });
   const queue = [...input.answers];

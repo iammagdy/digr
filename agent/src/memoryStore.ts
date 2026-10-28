@@ -37,6 +37,15 @@ export function createMemoryStore(initial: MissionRecord[] = []): MemoryStore {
       if (!(AGENT_BUCKET_ALLOWED_MIME as readonly string[]).includes(contentType)) throw new Error(`upload: mime type ${contentType} is not supported`);
       files.set(key(missionId, relPath), content);
     },
+    async putNew(missionId, relPath, content, contentType) {
+      if (!(AGENT_BUCKET_ALLOWED_MIME as readonly string[]).includes(contentType)) throw new Error(`upload: mime type ${contentType} is not supported`);
+      // create-only, as the real bucket with upsert off: a path that exists is left as it is (the caller treats «already exists» as done)
+      if (!files.has(key(missionId, relPath))) files.set(key(missionId, relPath), content);
+    },
+    async listFiles(missionId, folder) {
+      const prefix = `${missionId}/${folder.replace(/\/+$/, "")}/`;
+      return [...files.entries()].filter(([k]) => k.startsWith(prefix) && !k.slice(prefix.length).includes("/")).map(([k, v]) => ({ name: k.slice(`${missionId}/`.length), size: typeof v === "string" ? Buffer.byteLength(v) : v.length })).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    },
     async getFile(missionId, relPath) { const v = files.get(key(missionId, relPath)); return v === undefined ? null : typeof v === "string" ? v : v.toString("utf8"); },
     async getFileBytes(missionId, relPath) { const v = files.get(key(missionId, relPath)); return v === undefined ? null : Buffer.isBuffer(v) ? v : Buffer.from(v); },
     async addEvent(missionId, event) { const g = guardEvent(event); events.push({ mission_id: missionId, kind: g.kind, message_ar: g.message_ar, counts: g.counts }); },

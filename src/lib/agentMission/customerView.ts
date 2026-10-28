@@ -123,6 +123,9 @@ export function fileContentsAr(plan: any): string | null {
   return titles.length > 0 ? `يضم الملف: ${titles.join("، ")}.` : null;
 }
 
+/** The one honest sentence of the plan card about what is charged: the price shown is the price of the FULL delivery; fewer items cost in proportion; nothing delivered costs nothing. */
+export const PRICE_PROMISE_AR = "السعر المعروض هو سعر التسليم الكامل؛ لو سُلّم أقل يُخصم بنسبة ما سُلّم فقط، ولو لم يُسلَّم شيء لا يُخصم شيء.";
+
 /** price, hold and expected time on one clear line. */
 export function priceLineAr(plan: any): string | null {
   const price = plan?.price;
@@ -131,16 +134,14 @@ export function priceLineAr(plan: any): string | null {
   const reserve = Math.round(Number(price.reserve_points));
   const minutes = Math.round(Number(plan?.expected_minutes) || 0);
   const parts = [
-    `السعر حتى ${pointsAr(maxCharge)} ولا يُخصم إلا ما يُسلَّم فعلًا`,
+    `السعر حتى ${pointsAr(maxCharge)} (سعر التسليم الكامل) ويُخصم بنسبة ما يُسلَّم فعلًا`,
     `حجز مؤقت ${pointsAr(reserve)} يُحرَّر ما لا يُستخدم منه`,
   ];
-  // the minimum of the pricing rule, stated plainly (a plan priced before the rule has none)
-  if (typeof price.minimum_line_ar === "string" && price.minimum_line_ar.trim()) parts.push(price.minimum_line_ar.trim().replace(/[.。]+$/, ""));
   if (minutes > 0) parts.push(`الوقت المتوقع ${minutesAr(minutes)}`);
   return parts.join(" · ");
 }
 
-/** The price, the hold and the expected time as short cells, and one sentence about what is charged (the minimum included). Empty when the plan has no price. */
+/** The price, the hold and the expected time as short cells, and one sentence about what is charged (full delivery = the price shown, fewer = in proportion, nothing = nothing). Empty when the plan has no price. */
 export function priceFactsOf(plan: any): { facts: Array<{ labelAr: string; valueAr: string }>; noteAr: string | null } {
   const price = plan?.price;
   if (!price || !(Number(price.max_charge_points) > 0)) return { facts: [], noteAr: null };
@@ -150,8 +151,7 @@ export function priceFactsOf(plan: any): { facts: Array<{ labelAr: string; value
     { labelAr: "حجز مؤقت", valueAr: pointsAr(Math.round(Number(price.reserve_points))) },
     ...(minutes > 0 ? [{ labelAr: "الوقت المتوقع", valueAr: minutesAr(minutes) }] : []),
   ];
-  const minimum = typeof price.minimum_line_ar === "string" && price.minimum_line_ar.trim() ? ` ${price.minimum_line_ar.trim()}` : "";
-  return { facts, noteAr: `لا يُخصم إلا ما يُسلَّم فعلًا.${minimum}` };
+  return { facts, noteAr: PRICE_PROMISE_AR };
 }
 
 /** The queue line, only when the mission really waits behind another or the worker is busy or away; the position counts the missions ahead + 1. */
@@ -189,7 +189,11 @@ function stepsOf(input: { phase: CustomerPhase; status: string; stages: Customer
   const executing = status === "approved" || status === "executing" || status === "completed" || (status === "failed" && hasPlan && events.some((e) => stageIndexOf(e) > 0));
   const finishedRun = status === "completed";
   // the live numbers of every stage, from the mission's own events: they only grow (one rule for every mission type)
-  const track = trackMission({ stages: stages.map((s) => ({ n: s.n, titleAr: s.titleAr, expectedRows: s.rows, deliver: s.deliver, yieldShare: s.yieldShare })), events, finished: finishedRun, now: input.now });
+  // the end of a finished mission: the items of each stage IN THE FILE (the result event's own counts, written by code from the delivered file); an older mission that has none says its delivered count for its one delivered stage
+  const resultCounts = [...events].reverse().find((e) => e.kind === "result" && e.counts)?.counts ?? null;
+  const deliveredStages = stages.filter((s) => s.deliver);
+  const finalSaved = finishedRun ? stages.map((s) => (typeof resultCounts?.[`stage_${s.n}_rows`] === "number" ? Math.floor(resultCounts[`stage_${s.n}_rows`]) : deliveredStages.length === 1 && s.deliver && typeof input.delivered === "number" ? input.delivered : undefined)) : undefined;
+  const track = trackMission({ stages: stages.map((s) => ({ n: s.n, titleAr: s.titleAr, expectedRows: s.rows, deliver: s.deliver, yieldShare: s.yieldShare })), events, finished: finishedRun, finalSaved, now: input.now });
   const savedPerStage = new Map<number, number>(track.stages.map((s) => [s.n, s.saved]));
   const samples: ProgressSample[] = [];
   const savedTotalNow = track.stages.reduce((n, s) => n + s.saved, 0);
@@ -224,6 +228,8 @@ function stepsOf(input: { phase: CustomerPhase; status: string; stages: Customer
     if (saved > 0 || running || t.found > 0) {
       // what is in the file, with the noun of the stage; the bar follows the whole work of the stage (reading, checking, saving), so it moves while items are found and checked
       step.countAr = deliveredOfAr(saved, s.rows, t.noun);
+      step.savedN = saved;
+      step.plannedN = s.rows;
       step.ratio = done ? 1 : t.ratio;
       const lines = done && finished ? [] : stageMetricLines(t);
       if (lines.length > 0) step.metricsAr = lines;
@@ -290,7 +296,7 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
     const noun = itemNounOfPlan(plan);
     if (planned > 0 && delivered > 0) resultLinesAr.push(`تم تسليم ${deliveredOfAr(delivered, planned, noun)}.`);
     else if (planned > 0) resultLinesAr.push("لم يُسلَّم أي شيء.");
-    if (mission.charged_points !== null && Number(mission.reserved_points ?? 0) > 0) resultLinesAr.push(moneyLineAr({ reservedPoints: Number(mission.reserved_points), chargedPoints: Number(mission.charged_points) }));
+    if (mission.charged_points !== null && Number(mission.reserved_points ?? 0) > 0) resultLinesAr.push(`${moneyLineAr({ reservedPoints: Number(mission.reserved_points), chargedPoints: Number(mission.charged_points), delivered, noun })}.`);
   }
   // a stored summary that carries a number (written before the counts were stated by code) could disagree with the delivered count: it is not shown
   const storedSummary = mission.summary_ar && !/[0-9٠-٩]/.test(mission.summary_ar) ? mission.summary_ar : null;

@@ -23,7 +23,7 @@ import { RejectionReasonLine } from "./RejectionReasonLine";
 import PromoCodeBox from "./PromoCodeBox";
 import { CREDIT_KIND_LABEL_AR, classifyLedgerRow } from "@/lib/creditKinds";
 import { TOPUP_REQUEST_LABEL_AR, walletDisplayText, walletNoteForDisplay } from "@/lib/walletText";
-import { creditedPointsByTopup, creditedPointsOf, kindOfLedgerRow as kindOf, visibleLedgerRows, walletMonthStats, type WalletLedgerKind as LedgerKind } from "@/lib/walletView";
+import { creditedPointsByTopup, creditedPointsOf, groupMissionRows, kindOfLedgerRow as kindOf, visibleLedgerRows, walletMonthStats, type WalletLedgerKind as LedgerKind } from "@/lib/walletView";
 import { statusBadge, USER_STATUS, type LedgerRow, type TopupRecord } from "./types";
 
 const ledgerLabel = (row: LedgerRow): string => walletDisplayText(row.labelAr || CREDIT_KIND_LABEL_AR[classifyLedgerRow({ type: row.type, kind: row.kind })]);
@@ -43,6 +43,24 @@ function searchesAr(n: number): string {
 
 function safeReturn(raw: string | null): string {
   return raw && /^\/dashboard\/[A-Za-z0-9/_?=&%-]*$/.test(raw) ? raw : "/dashboard/chat";
+}
+
+/** One ledger row, exactly as the wallet always showed it (the rows of a mission are the same rows, listed inside its group). */
+function LedgerLine({ l, compact = false }: { l: LedgerRow; compact?: boolean }) {
+  const k = kindOf(l);
+  const ico = k === "topup" ? [UI.wallet, "var(--ok)"] : k === "refund" ? [UI.refund, "var(--goldT)"] : ["M5 12h14", "var(--ink2)"];
+  const tint = k === "topup" ? "var(--ok)" : k === "refund" ? "var(--gold)" : "var(--mut)";
+  const plus = l.delta > 0;
+  return (
+    <div className={`flex items-center gap-3 border-t border-ln ${compact ? "px-3 py-2 first:border-t-0" : "px-5 py-3 first:border-t-0"}`}>
+      <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[11px]" style={{ background: `color-mix(in oklab, ${tint} 12%, transparent)`, color: ico[1] }}><Icon d={ico[0]} size={16} stroke={1.8} /></span>
+      <div className="min-w-0 flex-1">
+        <p className="m-0 text-sm text-ink">{ledgerLabel(l)}</p>
+        <p className="mb-0 mt-[3px] truncate text-xs font-light text-fnt">{walletNoteForDisplay(l.note) ? `${walletNoteForDisplay(l.note)} · ` : ""}{new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "long" }).format(new Date(l.createdAt))}</p>
+      </div>
+      <span dir="ltr" className="text-[15px] font-semibold" style={{ color: plus ? "var(--ok)" : "var(--ink)" }}>{plus ? "+" : "−"}{formatAr(Math.abs(l.delta))}</span>
+    </div>
+  );
 }
 
 export default function WalletPage() {
@@ -124,7 +142,7 @@ export default function WalletPage() {
       if (typed?.success && Array.isArray(typed.rows)) {
         setLedger(typed.rows.map((r: any) => ({
           $id: r.id, id: r.id, delta: Number(r.delta), type: r.type, kind: r.kind, labelAr: r.labelAr,
-          jobId: r.jobId, topupId: r.topupId, note: r.note || "", createdAt: r.createdAt,
+          jobId: r.jobId, missionLineAr: r.missionLineAr ?? null, topupId: r.topupId, note: r.note || "", createdAt: r.createdAt,
         })));
         setLedgerFailed(false);
         setLedgerLoaded(true);
@@ -416,20 +434,23 @@ export default function WalletPage() {
           </div>
           <div className="overflow-hidden rounded-[24px] border border-ln bg-sf">
             {ledgerFailed && <p role="alert" className="m-0 px-5 py-4 text-[13px] text-bad">تعذّر تحميل سجل الحركات الآن.</p>}
-            {visibleLedger.map((l) => {
-              const k = kindOf(l);
-              const ico = k === "topup" ? [UI.wallet, "var(--ok)"] : k === "refund" ? [UI.refund, "var(--goldT)"] : ["M5 12h14", "var(--ink2)"];
-              const tint = k === "topup" ? "var(--ok)" : k === "refund" ? "var(--gold)" : "var(--mut)";
-              const plus = l.delta > 0;
+            {groupMissionRows(visibleLedger).map((entry) => {
+              if (entry.kind === "row") return <LedgerLine key={entry.row.$id} l={entry.row} />;
+              // ONE LINE PER MISSION («خُصم ١٢٨ نقطة مقابل ١٩٢ تغريدة»), its ledger rows (the hold, the charge, the released hold) inside, collapsed
+              const net = entry.rows.reduce((n, r) => n + r.delta, 0);
+              const newest = entry.rows[0];
               return (
-                <div key={l.$id} className="flex items-center gap-3 border-t border-ln px-5 py-3 first:border-t-0">
-                  <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[11px]" style={{ background: `color-mix(in oklab, ${tint} 12%, transparent)`, color: ico[1] }}><Icon d={ico[0]} size={16} stroke={1.8} /></span>
-                  <div className="min-w-0 flex-1">
-                    <p className="m-0 text-sm text-ink">{ledgerLabel(l)}</p>
-                    <p className="mb-0 mt-[3px] truncate text-xs font-light text-fnt">{walletNoteForDisplay(l.note) ? `${walletNoteForDisplay(l.note)} · ` : ""}{new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "long" }).format(new Date(l.createdAt))}</p>
-                  </div>
-                  <span dir="ltr" className="text-[15px] font-semibold" style={{ color: plus ? "var(--ok)" : "var(--ink)" }}>{plus ? "+" : "−"}{formatAr(Math.abs(l.delta))}</span>
-                </div>
+                <details key={`mission-${entry.jobId}`} className="group border-t border-ln px-5 py-3 first:border-t-0" data-testid="wallet-mission-group">
+                  <summary className="flex cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
+                    <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[11px]" style={{ background: "color-mix(in oklab, var(--mut) 12%, transparent)", color: "var(--ink2)" }}><Icon d="M5 12h14" size={16} stroke={1.8} /></span>
+                    <div className="min-w-0 flex-1">
+                      <p className="m-0 text-sm text-ink" data-testid="wallet-mission-line">{walletDisplayText(entry.lineAr)}</p>
+                      <p className="mb-0 mt-[3px] truncate text-xs font-light text-fnt">{new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "long" }).format(new Date(newest.createdAt))} · تفاصيل الحركات</p>
+                    </div>
+                    <span dir="ltr" className="text-[15px] font-semibold" style={{ color: net > 0 ? "var(--ok)" : "var(--ink)" }}>{net > 0 ? "+" : "−"}{formatAr(Math.abs(net))}</span>
+                  </summary>
+                  <div className="mt-2 rounded-[14px] bg-sf2" data-testid="wallet-mission-details">{entry.rows.map((r) => <LedgerLine key={r.$id} l={r} compact />)}</div>
+                </details>
               );
             })}
             {!ledgerFailed && !ledgerLoaded && <p className="m-0 px-5 py-6 text-center text-[13px] font-light text-fnt">جارٍ تحميل الحركات…</p>}
