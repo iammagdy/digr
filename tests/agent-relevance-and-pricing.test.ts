@@ -647,8 +647,9 @@ describe("the card: the assumptions and the minimum on the plan, ready answers o
     expect(html).toContain("الحد الأدنى للمهمة ٢٠٠ نقطة، ولا خصم إن لم يُسلَّم شيء");
     // (the sample table shows data cells such as «رقم 1»: only the labels are checked for digits)
     expect(html.replace(/<[^>]+>/g, " ")).not.toMatch(/USD|anyapi|endpoint/);
-    expect(html).toMatch(/data-testid="agent-assumptions".*?<\/div>/s);
-    expect((/data-testid="agent-assumptions".*?<\/div>/s.exec(html)?.[0] ?? "").replace(/<[^>]+>/g, " ")).not.toMatch(/[0-9]/);
+    const block = html.slice(html.indexOf('data-testid="agent-assumptions"'));
+    expect(block.length).toBeGreaterThan(0);
+    expect(block.slice(0, block.indexOf("</div>")).replace(/<[^>]+>/g, " ")).not.toMatch(/[0-9]/);
   });
 
   it("the question card shows the ready answers as buttons that send that answer", () => {
