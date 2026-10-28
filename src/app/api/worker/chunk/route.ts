@@ -1504,7 +1504,9 @@ export async function POST(req: NextRequest) {
             }
           }
         }
-      } else if (matchedForAdvice.length > 0 && !isChainJob && !xAccountJob) {
+      } else if (matchedForAdvice.length > 0 && !isChainJob && !xAccountJob && spec.capabilitySlug !== MODEL_PLAN_SLUG) {
+        // (A model-planned job is NOT advised here: its topic review already ran inside the adapter with the customer's exact request text (reviewTopicRows). This advisory builds its request from the
+        // catalog-style params (query, industry, country…), which a model plan does not have: it asked «is this row relevant to ''?» and moved all 14 on-topic rows to the review sheet.)
         try {
           const advisory = await getRowAdvisor()({
             customerRequest: [spec.params?.query && typeof spec.params.query === "string" ? spec.params.query : "", spec.params?.industry, spec.params?.country, spec.params?.title, spec.params?.q, fullText]
@@ -2158,6 +2160,15 @@ export async function POST(req: NextRequest) {
         .filter((term): term is string => typeof term === "string")
         .map((term) => term.trim())
         .filter(Boolean))].slice(0, 10);
+      // A model-planned job whose topic review was partial (the review could not judge some rows and the fixed checks did) says so in the methodology.
+      let reviewNoteAr = "";
+      if (spec.capabilitySlug === MODEL_PLAN_SLUG && jobId) {
+        try {
+          const { data: noteRows } = await adminClient.from("job_events").select("message").eq("job_id", jobId).eq("event_type", "mission_note");
+          const lines = (Array.isArray(noteRows) ? noteRows : []).map((r: any) => { try { return JSON.parse(String(r.message)); } catch { return null; } }).filter((n: any) => n?.kind === "review_partial" && typeof n.textAr === "string").map((n: any) => String(n.textAr));
+          reviewNoteAr = [...new Set(lines)].slice(0, 3).join(" ");
+        } catch { /* the methodology line is an extra */ }
+      }
       const reportContext = {
         scope: {
           country: detectedCountry || undefined,
@@ -2178,6 +2189,7 @@ export async function POST(req: NextRequest) {
           pagesFetched: currentStep + (providerBudgetStopped ? 0 : 1),
           paginationStrategy: spec.paginationStrategy,
           stopReason: finalRows.length >= targetMax ? "target_reached" : callCapReason ? "call_cap" : "source_exhausted",
+          ...(reviewNoteAr ? { reviewNoteAr } : {}),
         },
         counts: {
           rawRows: rawRowsCollected,

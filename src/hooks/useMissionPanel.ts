@@ -48,7 +48,11 @@ export function useMissionPanel(input: { jobId: string | null; jobLive: boolean;
   if (!input.planning) startedPlanningAt.current = 0;
   const planning = usePolled<PlanningResponse>(input.planning && input.planningRequestId && !input.jobId ? `/api/chat/planning-events?requestId=${encodeURIComponent(input.planningRequestId)}` : null, input.planning);
   const fromMission = contentFromMission(mission, { closePageAr: driver === "cron" ? closePageLineAr(driver) : null });
-  if (input.jobId && fromMission) return fromMission;
+  // The mission of an approved request never disappears: a read that fails, or a request that ended in seconds, keeps the last good view of it (until a new request is being planned).
+  const lastMission = useRef<{ jobId: string; content: MissionPanelContent } | null>(null);
+  if (input.planning) lastMission.current = null;
+  if (input.jobId && fromMission) { lastMission.current = { jobId: input.jobId, content: fromMission }; return fromMission; }
+  if (input.jobId && lastMission.current?.jobId === input.jobId && !input.planning) return lastMission.current.content;
   const fromPlan = contentFromPlanQuote(input.planQuote);
   if (fromPlan && !input.planning) return fromPlan;
   return contentFromPlanning(planning, startedPlanningAt.current || undefined);

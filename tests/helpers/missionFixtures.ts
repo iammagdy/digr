@@ -33,7 +33,7 @@ const m4 = () => ProposePlanSchema.parse({
 
 export const M1_TEXT = "هات ١٠ أخبار عن منتخب مصر في كأس العالم ٢٠٢٦ و١٠ فيديوهات من قناة @FIFA الرسمية عن مصر ومعاها تعليقات كل فيديو";
 const m1 = () => ProposePlanSchema.parse({
-  summaryAr: "أخبار المنتخب وفيديوهات القناة الرسمية وتعليقاتها",
+  summaryAr: "أخبار المنتخب وفيديوهات القناة الرسمية وتعليقاتها", platformChoiceAr: "اخترنا يوتيوب لأن القناة الرسمية تنشر فيديوهاتها هناك، ومعه الأخبار من البحث.",
   steps: [
     { endpointId: "anyapi.google.serp.news", titleAr: "جمع الأخبار", volume: 10, params: [{ name: "query", value: "منتخب مصر في كأس العالم ٢٠٢٦", source: "customer_text", quote: "منتخب مصر في كأس العالم ٢٠٢٦" }], fieldMap: { columns: [col("title", "العنوان", "title"), col("url", "الرابط", "url")], pagination: { kind: "single" } } },
     { endpointId: "crawl4ai.youtube.channel.videos", titleAr: "فيديوهات القناة الرسمية", volume: 10, params: [{ name: "channel", value: "@FIFA", source: "customer_text", quote: "@FIFA" }], fieldMap: { columns: [col("video_id", "المعرف", "id"), col("title", "العنوان", "title"), col("url", "الرابط", "url")], pagination: { kind: "single" } } },

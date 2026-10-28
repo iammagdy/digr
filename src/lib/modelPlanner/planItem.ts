@@ -20,7 +20,8 @@ export function buildModelPlanItem(plan: ValidatedPlan, extra: { customerRequest
       ...(extra.purpose ? { [MODEL_PLAN_PURPOSE_PARAM]: extra.purpose.slice(0, 300) } : {}),
     },
     targetVolumeMin: 1,
-    targetVolumeMax: last.step.volume,
+    // the rows the customer receives AS CODE COUNTED THEM (the sum of the delivered stages): the same number the price, the hold and the card use, never the model's declared volume
+    targetVolumeMax: plan.deliveredVolume,
     paginationStrategy: "cursor",
     pricingUnit: "item",
     unitCostUsd: plan.price.costPerRecordUsd,

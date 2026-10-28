@@ -1,4 +1,5 @@
-import { isLongJob, sendJobNotice, startedNoticeFull } from "@/lib/server/jobNotices";
+import { isLongJob, sendJobNotice, shouldSendStartedNotice, startedNoticeFull } from "@/lib/server/jobNotices";
+import { MODEL_PLAN_SLUG } from "@/lib/modelPlanner/constants";
 import { liveDriverMode } from "@/lib/server/driverHeartbeat";
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient, createAdminClient } from "../../../../lib/supabase/server";
@@ -226,8 +227,8 @@ export async function POST(req: NextRequest) {
       const volume = items.reduce((sum: number, item: any) => sum + (Number(item?.targetVolumeMax) || 0), 0);
       // a long request, or a MISSION (a plan of stages) while the background driver is live: the in-site notice says the page may be closed
       const driverNow = await liveDriverMode(adminClient);
-      const isMission = Array.isArray(items[0]?.params?._modelStep?.stages) && items[0].params._modelStep.stages.length > 0;
-      if (workerDispatch.started && (isLongJob(volume) || (isMission && driverNow === "cron"))) await sendJobNotice(adminClient, user.id, acceptedJobId, startedNoticeFull({ targetVolumeMax: volume, driver: driverNow }));
+      const isModelPlanned = items[0]?.capabilitySlug === MODEL_PLAN_SLUG;
+      if (shouldSendStartedNotice({ workerStarted: Boolean(workerDispatch.started), volume, isLongJob: isLongJob(volume), isModelPlanned, driver: driverNow })) await sendJobNotice(adminClient, user.id, acceptedJobId, startedNoticeFull({ targetVolumeMax: volume, driver: driverNow }));
     } catch {
       // a missing notice never changes the acceptance
     }

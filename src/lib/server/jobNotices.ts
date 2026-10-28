@@ -64,6 +64,14 @@ export function jobStartedNotice(input: { targetVolumeMax: number; driver?: Driv
   };
 }
 
+/**
+ * Whether the in-site «started» notice (the one that says the page may be closed) is sent when a job starts: a long request, or ANY model-planned job (a mission or a single stage) while the
+ * background driver is live. A short job that ends in seconds is still told, so the sentence is in the notification list even when the chat line has gone.
+ */
+export function shouldSendStartedNotice(input: { workerStarted: boolean; volume: number; isLongJob: boolean; isModelPlanned: boolean; driver: DriverMode }): boolean {
+  return input.workerStarted && (input.isLongJob || (input.isModelPlanned && input.driver === "cron"));
+}
+
 /** The daily watchdog found the job without progress and released it with its whole reserve. */
 export function jobStalledNotice(): JobNotice {
   return {

@@ -27,7 +27,7 @@ import { openJobHref } from "@/lib/requestLinks";
 import { PARTIAL_SENTENCE_AR } from "@/lib/jobs/requestStatus";
 import { isUntitledConversation, titleFromFirstRequest } from "@/lib/conversationTitleFromRequest";
 import { postApprovalMessageAr } from "@/lib/postApproval";
-import { closePageLineAr } from "@/lib/driverMode";
+import { closePageLineAr, normalizeDriverMode } from "@/lib/driverMode";
 import { useDriverMode } from "@/hooks/useDriverMode";
 import { nextPollDelayMs } from "@/lib/pollSchedule";
 import { getSlowFactor } from "@/lib/degradedClient";
@@ -1326,6 +1326,8 @@ export default function ChatWorkspacePage() {
         ],
       });
       setCanvasOpen(true);
+      // An approved mission keeps its plan panel next to the results panel (pinned): the stages, their states and their reasons stay in view instead of the panel folding away.
+      if ((quote as any).modelPlanned) changeMissionPanel({ expanded: true, pinned: true });
 
       setMessages((prev) => [
         ...prev,
@@ -1333,7 +1335,8 @@ export default function ChatWorkspacePage() {
           id: `start_${Date.now()}`,
           role: "assistant",
           content: postApprovalMessageAr(data.driverMode),
-          progressNotice: true,
+          // «keep the page open» disappears when the job ends; «you can close the page» (the driver is live) stays: a job that ends in seconds must not erase what the customer was told
+          progressNotice: normalizeDriverMode(data.driverMode) !== "cron",
           jobId: data.jobId,
           createdAt: new Date().toISOString(),
         },

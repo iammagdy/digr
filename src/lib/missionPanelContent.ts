@@ -12,11 +12,11 @@ export const PANEL_POLL_HIDDEN_MS = 12000;
 export const panelPollDelayMs = (hidden: boolean): number => (hidden ? PANEL_POLL_HIDDEN_MS : PANEL_POLL_VISIBLE_MS);
 
 /** The stages of the model-planned plan on a quote card (its items carry the stored plan), or null when the plan is not a model-planned mission. */
-export function stagesOfPlanQuote(quote: { items?: Array<{ params?: Record<string, any> }> } | null | undefined): Array<{ titleAr: string; effVolume: number; deliver: boolean }> | null {
+export function stagesOfPlanQuote(quote: { items?: Array<{ params?: Record<string, any> }> } | null | undefined): Array<{ titleAr: string; effVolume: number; deliver: boolean; perParent?: number; askedPerParent?: number }> | null {
   const stored = quote?.items?.[0]?.params?._modelStep;
   const stages = stored?.stages;
   if (!stored || !Array.isArray(stages) || stages.length === 0 || stages.length !== stored.steps?.length) return null;
-  return stages.map((s: any) => ({ titleAr: String(s.titleAr || ""), effVolume: Number(s.effVolume) || 0, deliver: Boolean(s.deliver) }));
+  return stages.map((s: any) => ({ titleAr: String(s.titleAr || ""), effVolume: Number(s.effVolume) || 0, deliver: Boolean(s.deliver), ...(Number(s.perParent) > 0 ? { perParent: Number(s.perParent) } : {}), ...(Number(s.askedPerParent) > 0 ? { askedPerParent: Number(s.askedPerParent) } : {}) }));
 }
 
 /** The proposed plan as steps, all waiting: what the mission WILL do once the customer approves. */
@@ -54,7 +54,7 @@ export interface MissionStatusResponse {
   summaryAr?: string[];
 }
 
-const NOTE_KINDS = new Set(["source_replaced", "stage_stopped", "final_ok", "final_gap"]);
+const NOTE_KINDS = new Set(["source_replaced", "stage_stopped", "final_ok", "final_gap", "review_partial"]);
 
 /** The running or finished mission. `closePageAr` is passed only while the background driver is really live (the friendly sentence), never otherwise. */
 export function contentFromMission(status: MissionStatusResponse | null | undefined, opts: { closePageAr?: string | null } = {}): MissionPanelContent | null {

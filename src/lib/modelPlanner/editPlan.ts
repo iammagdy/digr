@@ -25,6 +25,8 @@ export function proposalFromStored(stored: StoredModelPlan, summaryAr: string, n
   return ProposePlanSchema.parse({
     summaryAr,
     ...(stored.topic ? { topic: stored.topic } : {}),
+    ...(stored.platformChoiceAr ? { platformChoiceAr: stored.platformChoiceAr } : {}),
+    ...(stored.foundEntities ? { foundEntities: stored.foundEntities } : {}),
     steps: stored.steps.map((s, i) => ({
       endpointId: s.endpointId,
       // the last step carries the volume; a listing step that was asked for the same volume follows it

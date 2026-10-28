@@ -2,7 +2,7 @@ import type { ProviderAdapterCallInput, ProviderAdapterCallOutput } from "../ser
 import { readField, ROLE_KEYS } from "./fieldMap";
 import { countryRowGate } from "./countryGate";
 import { MAX_CALLS_PER_CHUNK, MAX_MISSION_QUEUE, MODEL_PLAN_PURPOSE_PARAM, MODEL_PLAN_REQUEST_PARAM } from "./constants";
-import { alternateStep, callStage, failureAr, reviewTopicRows, type InterpreterDeps } from "./stageCall";
+import { alternateStep, callStage, failureAr, reviewPartialNoteAr, reviewTopicRows, type InterpreterDeps } from "./stageCall";
 import { safeArabicSentence } from "./customerSafe";
 import { MANAGER_CALL_ESTIMATE_USD, type ManagerRequest, type ManagerResult } from "./manager";
 import type { PlanStep, StepFacts, StoredModelPlan, StoredStage } from "./types";
@@ -41,6 +41,8 @@ interface StageState {
   excluded: number;
   /** The first page of the stage was shown to the manager. */
   checked: boolean;
+  /** The «review was partial» line of this stage was already written (once per stage). */
+  reviewPartialNoted?: boolean;
   /** 0 = the approved endpoint; k = the k-th alternative the plan carries (chosen by the manager). */
   alt: number;
   seq: number;
@@ -195,6 +197,7 @@ export async function runMissionChunk(input: ProviderAdapterCallInput, plan: Sto
       const reviewed = await reviewTopicRows(records, plan, input, cursor, withPurpose);
       state.reviewUsd = cursor.reviewUsd ?? state.reviewUsd;
       usage.push(...reviewed.usage);
+      if (reviewed.partial && !s.reviewPartialNoted) { s.reviewPartialNoted = true; note("review_partial", i, reviewPartialNoteAr(reviewed.partial)); }
       const keptSet = new Set(reviewed.kept);
       keepIdx = keepIdx.filter((k) => keptSet.has(records[k]));
       offTopic = keepIdx.length === 0;

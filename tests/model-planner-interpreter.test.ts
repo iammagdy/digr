@@ -202,7 +202,7 @@ describe("raw capture and the first page", () => {
   });
 });
 
-describe("the topic review: only when the request has a topic, with the customer's REAL request text, fail closed", () => {
+describe("the topic review: only when the request has a topic, with the customer's REAL request text; a verdict decides, a technical failure falls back to the fixed checks", () => {
   const withTopic = () => oneStage({ topic: "كرة السلة" });
   const REQUEST = "هات ٣٠ تعليق تيك توك عن كرة السلة في مصر";
   const call = async () => ok({ rows: [{ id: "1", text: "مباراة كرة السلة" }, { id: "2", text: "إعلان عن عرض" }, { id: "3", text: "تحليل المباراة" }, { id: "4", text: "نص آخر" }] });
@@ -221,15 +221,19 @@ describe("the topic review: only when the request has a topic, with the customer
     expect(given.rows[0].row).toEqual({ text: "مباراة كرة السلة", source_id: "1" });
   });
 
-  it("a reviewer that fails (no verdicts), a thrown error, and a job past its review budget all HOLD every row; and the cursor carries the review spend", async () => {
-    expect((await run(withTopic(), advisor({}, null))).rows).toEqual([]);
-    expect((await run(withTopic(), vi.fn(async () => { throw new Error("boom"); }))).rows).toEqual([]);
+  it("a reviewer that fails (no verdicts), a thrown error, and a job past its review budget NEVER hold every row for a technical reason: the call is retried once, then the fixed checks decide (the topic's words are in the row's text); and the cursor carries the review spend", async () => {
+    const none = advisor({}, null);
+    expect((await run(withTopic(), none)).rows.map((r) => r.source_id)).toEqual(["1"]); // only «مباراة كرة السلة» has both topic words
+    expect(none).toHaveBeenCalledTimes(2); // one call and one retry
+    const boom = vi.fn(async () => { throw new Error("boom"); });
+    expect((await run(withTopic(), boom as any)).rows.map((r) => r.source_id)).toEqual(["1"]);
+    expect(boom).toHaveBeenCalledTimes(2);
     const spent = vi.fn();
     const cursor = JSON.stringify({ v: 1, stage: 0, next: null, page: 1, offset: 0, queue: [], listDone: false, reviewUsd: 0.149 });
     const over = await runModelPlanChunk({ ...input(withTopic(), { cursor }), params: { [MODEL_PLAN_PARAM]: withTopic(), _customerRequest: REQUEST } }, { call, advisor: spent as any });
-    expect(over.rows).toEqual([]);
+    expect(over.rows.map((r) => r.source_id)).toEqual(["1"]);
     expect(spent).not.toHaveBeenCalled();
-    const first = await run(oneStage({ topic: "x" }, { fieldMap: { columns: [column, { field: "id", headerAr: "المعرف", role: "id" }], pagination: { kind: "page", param: "page" } } }), advisor({ 0: "match" }, { inputTokens: 1, outputTokens: 1, costUsd: 0.01, model: "m", latencyMs: 1 }));
+    const first = await run(oneStage({ topic: "x" }, { fieldMap: { columns: [column, { field: "id", headerAr: "المعرف", role: "id" }], pagination: { kind: "page", param: "page" } } }), advisor({ 0: "match", 1: "no_match", 2: "no_match", 3: "no_match" }, { inputTokens: 1, outputTokens: 1, costUsd: 0.01, model: "m", latencyMs: 1 }));
     expect(parseInterpreterState(first.nextCursor).reviewUsd).toBeCloseTo(0.01, 9);
   });
 

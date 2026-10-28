@@ -12,7 +12,7 @@ import { applyPlanToRows, columnsOfMap, readField, readDateIso } from "./fieldMa
 import { maskText } from "../server/rawCapture";
 import { DEFAULT_HOLD_CEILING_POINTS, MANAGER_BUDGET_FLOOR_USD, MANAGER_BUDGET_SHARE, MAX_PLAN_STAGES, RESERVE_MARGIN, SAMPLE_ROWS_ON_CARD } from "./constants";
 import { reserveForUnits } from "../recordPricing";
-import { safeStageTitleAr } from "./customerSafe";
+import { safeArabicSentence, safeStageTitleAr } from "./customerSafe";
 import { countryOfRequest, countryRowGate, type RequestCountry } from "./countryGate";
 import { callEstimateUsd, pricePlan, priceMission, priceStep, rowsPerParentOf, unitCost, type CallCost, type MissionPrice, type PlanPrice, type StepMeasure, type StepPrice } from "./pricing";
 import { MAX_RUNTIME_ALTERNATES } from "./constants";
@@ -66,6 +66,8 @@ export interface ValidatedPlan {
   /** Up to three real rows of the sample, written as the plan's columns and masked (for the plan card). */
   sampleRows: Array<Record<string, unknown>>;
   sampleColumns: Array<{ key: string; titleAr: string }>;
+  /** The rows the customer receives, as code computed them (the sum of the delivered stages' effective volumes): the number the card, the price and the hold are all built on. */
+  deliveredVolume: number;
 }
 
 export type ValidationResult = { ok: true; plan: ValidatedPlan } | { ok: false; issues: ValidationIssue[] };
@@ -352,6 +354,30 @@ export function safeSummaryAr(summary: string, volume: number, customerText: str
   return toArabicDigits(cleaned);
 }
 
+const PLATFORM_WORDS_RE = /تغريد|تويت|tweet|ريلز|reels|تيك\s*توك|تيكتوك|tiktok|يوتيوب|youtube|فيسبوك|فيس\s*بوك|facebook|انستقرام|انستجرام|إنستغرام|إنستجرام|instagram|تويتر|twitter|(?:^|[^\p{L}])(?:إكس|اكس|x)(?:[^\p{L}]|$)|لينكد\s*إن|لينكدإن|linkedin|جوجل|google|سناب|snapchat|تليجرام|تلجرام|telegram|ريديت|reddit|واتساب|whatsapp/iu;
+const SOCIAL_PLATFORMS = new Set(["x", "twitter", "tiktok", "youtube", "facebook", "instagram", "linkedin", "reddit", "snapchat", "telegram"]);
+/** True when the customer's own words name a platform. */
+export const customerNamesPlatform = (text: string): boolean => PLATFORM_WORDS_RE.test(String(text ?? ""));
+const OFFICIAL_ENTITY_RE = /(?:ال)?(?:قناة|قناه|صفحة|صفحه|حساب)(?:\s+\S+){0,3}?\s+(?:ال)?رسمي(?:ة|ه)?|(?:ال)?(?:رسمي(?:ة|ه)?)\s+(?:ل|لـ)\s*(?:ال)?(?:قناة|قناه|صفحة|صفحه|حساب)|الرسمي(?:ة|ه)?\s+(?:ل|لـ)/u;
+/** True when the customer asked for the OFFICIAL channel / page / account of someone WITHOUT giving its handle or link (code: the plan must show the one it found for the customer to confirm). */
+export const asksForOfficialEntity = (text: string): boolean => !/@[A-Za-z0-9_.]{2,}|https?:\/\//.test(String(text ?? "")) && (OFFICIAL_ENTITY_RE.test(normalizeArabic(String(text ?? "")).replace(/\s+/g, " ")) || OFFICIAL_ENTITY_RE.test(String(text ?? "")));
+
+export type EntityCheck = { ok: true; entities?: Array<{ kindAr: string; nameAr: string; id: string }> } | { ok: false; issue: ValidationIssue };
+
+/**
+ * «The official channel / page / account of X»: the plan must show the one it FOUND (kind, name, id), and the id must appear in a real sample answer of this turn (an edit of an approved plan
+ * keeps what its own sample found). A request that does not ask for an official entity needs none. Pure.
+ */
+export function resolveFoundEntities(customerText: string, sampleBodies: ReadonlyArray<unknown>, input: ReadonlyArray<{ kindAr: string; nameAr: string; id: string }> | undefined, approvedEdit = false): EntityCheck {
+  if (!asksForOfficialEntity(customerText)) return { ok: true };
+  const bodies = sampleBodies.map((b) => { try { return JSON.stringify(b ?? "").toLowerCase(); } catch { return ""; } });
+  const listed = (input ?? []).map((e) => ({ kindAr: safeArabicSentence(e.kindAr, 20) ?? "قناة", nameAr: String(e.nameAr).replace(/[*_#`>|\n]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 80), id: String(e.id).trim().slice(0, 200) })).filter((e) => e.nameAr && e.id);
+  if (listed.length === 0) return { ok: false, issue: issue("entity_not_confirmed", "the customer asked for an OFFICIAL channel/page/account. Search the catalog for it by the organisation's name (a channel/page/profile search endpoint), sample it, and put the one you found in foundEntities (kindAr, nameAr, id as it appears in the sample). Ask the customer for a link ONLY when the search finds nothing or several equally likely ones.") };
+  const missing = approvedEdit ? [] : listed.filter((e) => !bodies.some((b) => b.includes(e.id.toLowerCase())));
+  if (missing.length > 0) return { ok: false, issue: issue("entity_not_in_sample", `«${missing[0].id}» is not in any sample answer of this turn: foundEntities must come from a real search result, never from memory.`) };
+  return { ok: true, entities: listed.slice(0, 3) };
+}
+
 /** Validates a whole proposed plan against the catalog, the policy, the customer's words and the real sample rows, and prices it. Pure: no network. */
 export function validatePlan(input: ProposePlanInput, ctx: ValidateContext): ValidationResult {
   const issues: ValidationIssue[] = [];
@@ -408,6 +434,17 @@ export function validatePlan(input: ProposePlanInput, ctx: ValidateContext): Val
   const missionPrice = "effectiveVolumes" in price ? price : null;
   const last = validated[validated.length - 1];
 
+  // WHICH PLATFORM: a customer who named none gets the choice stated on the card (which platform, and why), never a silent narrowing to one.
+  const platformChoiceAr = safeArabicSentence(input.platformChoiceAr, 200) ?? undefined;
+  const socialPlan = validated.some((v) => SOCIAL_PLATFORMS.has(String(v.endpoint.platform).toLowerCase()));
+  if (socialPlan && !customerNamesPlatform(ctx.customerText) && !platformChoiceAr) {
+    return { ok: false, issues: [issue("platform_choice_missing", "the customer named no platform. Either cover every platform that fits the request (a root step for each), or set platformChoiceAr: ONE Arabic sentence saying which platform you chose and why (no provider names).")] };
+  }
+  // THE OFFICIAL CHANNEL / PAGE / ACCOUNT: found by searching, shown to the customer to confirm (never asked for as a link when the search finds it). It must really be in a sample answer.
+  const entityCheck = resolveFoundEntities(ctx.customerText, [...ctx.samples.values()].map((sm) => (sm as { body?: unknown }).body ?? sm.rows), input.foundEntities, Boolean(ctx.approved));
+  if (!entityCheck.ok) return { ok: false, issues: [entityCheck.issue] };
+  const foundEntities = entityCheck.entities;
+
   // THE COUNT is the customer's: a branch's first step takes the count from the customer's own words (a number, or a number written in words). With none, the plan is not made: ONE question.
   // Without a typed number no hold may pass DEFAULT_HOLD_CEILING_POINTS.
   const counted = countStated(ctx.customerText);
@@ -423,7 +460,8 @@ export function validatePlan(input: ProposePlanInput, ctx: ValidateContext): Val
   }
   const storedStages: StoredStage[] = validated.map((v, i) => {
     const perParent = parents[i] === null ? 0 : rowsPerParentOf({ price: v.price, parent: parents[i], perItem: input.steps[i].perItem });
-    return { parent: parents[i], deliver: delivers[i], effVolume: missionPrice ? missionPrice.effectiveVolumes[i] : input.steps[i].volume, perParent: Math.floor(perParent), titleAr: safeStageTitleAr(input.steps[i].titleAr, i, entityOfEndpoint(v.endpoint)) };
+    const asked = parents[i] !== null ? input.steps[i].perItem : undefined;
+    return { parent: parents[i], deliver: delivers[i], effVolume: missionPrice ? missionPrice.effectiveVolumes[i] : input.steps[i].volume, perParent: Math.floor(perParent), titleAr: safeStageTitleAr(input.steps[i].titleAr, i, entityOfEndpoint(v.endpoint)), ...(asked && Math.floor(perParent) < asked ? { askedPerParent: asked } : {}) };
   });
   const managerBudgetUsd = Number(Math.max(MANAGER_BUDGET_FLOOR_USD, MANAGER_BUDGET_SHARE * (missionPrice ? missionPrice.totalCostUsd : price.costPerRecordUsd * deliveredVolume) * RESERVE_MARGIN).toFixed(6));
   const sampleSource = ctx.samples.get(last.step.endpointId);
@@ -442,14 +480,15 @@ export function validatePlan(input: ProposePlanInput, ctx: ValidateContext): Val
   return {
     ok: true,
     plan: {
-      summaryAr: safeSummaryAr(input.summaryAr, last.step.volume, ctx.customerText),
+      summaryAr: safeSummaryAr(input.summaryAr, deliveredVolume, ctx.customerText),
       ...(topic ? { topic } : {}),
       steps: validated,
       price,
       sensitive,
-      stored: { v: 1, steps: validated.map((v, i) => ({ ...v.step, params: v.step.params.map((p) => (p.source === "prior_step" ? p : { ...p, value: resolvedParamValue(p) as PlanParam["value"] })), facts: facts[i] })), ...(topic ? { topic } : {}), ...(cardCountry && entityOfEndpoint(validated[0].endpoint) ? { country: cardCountry } : {}), measured: validated.map((v) => ({ rowsPerCall: v.price.rowsPerCall, passRate: v.price.passRate, costPerCallUsd: v.price.costPerCallUsd })), managerBudgetUsd, delivers, stages: storedStages },
+      stored: { v: 1, steps: validated.map((v, i) => ({ ...v.step, params: v.step.params.map((p) => (p.source === "prior_step" ? p : { ...p, value: resolvedParamValue(p) as PlanParam["value"] })), facts: facts[i] })), ...(topic ? { topic } : {}), ...(cardCountry && entityOfEndpoint(validated[0].endpoint) ? { country: cardCountry } : {}), measured: validated.map((v) => ({ rowsPerCall: v.price.rowsPerCall, passRate: v.price.passRate, costPerCallUsd: v.price.costPerCallUsd })), managerBudgetUsd, delivers, stages: storedStages, ...(platformChoiceAr ? { platformChoiceAr } : {}), ...(foundEntities ? { foundEntities } : {}) },
       sampleRows,
       sampleColumns,
+      deliveredVolume,
     },
   };
 }
