@@ -17,7 +17,8 @@ const CONTRACT: Record<PlatformEmailTemplateId, string[]> = {
   // «Refunded» was already sent by the app for this template (the earlier short layout simply did not show it)
   "job-done": ["Charged", "Delivered", "JobTitle", "JobURL", "Name", "Refunded", "Requested", "SiteURL"],
   "refund": ["Balance", "JobTitle", "Name", "Points", "Reason", "SiteURL"],
-  "job-update": ["Name", "Subject", "Heading", "Lead", "DetailOne", "DetailTwo", "ButtonLabel", "JobURL", "SiteURL"].sort(),
+  // (Preheader added: the line a mail list shows next to the subject; optional, a caller that sends none gets its heading) 
+  "job-update": ["Name", "Subject", "Preheader", "Heading", "Lead", "DetailOne", "DetailTwo", "ButtonLabel", "JobURL", "SiteURL"].sort(),
   "admin-topup-alert": ["AdminURL", "AmountEgp", "CustomerEmail", "CustomerName", "Points", "RequestTime", "SiteURL"],
 };
 

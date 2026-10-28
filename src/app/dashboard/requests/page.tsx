@@ -124,7 +124,7 @@ export default function RequestsPage() {
     if (!user) return;
     try {
       const supabase = createClient();
-      const [jobsRes, quotesRes, convRes, msgsRes, artifactsRes] = await Promise.all([
+      const [jobsRes, quotesRes, convRes, msgsRes, artifactsRes, missionsRes, planMsgsRes] = await Promise.all([
         supabase
           .from(JOBS_COLLECTION)
           .select("*")
@@ -157,6 +157,22 @@ export default function RequestsPage() {
           .eq("user_id", user.id)
           .order("version_number", { ascending: false })
           .limit(100),
+        // AGENT missions: the mission names its job; the assistant message that shows its card names the mission and the conversation
+        supabase
+          .from("missions")
+          .select("id, job_id")
+          .eq("user_id", user.id)
+          .not("job_id", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(200),
+        supabase
+          .from("messages")
+          .select("conversation_id, plan")
+          .eq("user_id", user.id)
+          .eq("role", "assistant")
+          .not("plan", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(300),
       ]);
       if (jobsRes.error) throw jobsRes.error;
       const conversationTitles = new Map<string, string>();
@@ -249,6 +265,16 @@ export default function RequestsPage() {
           summaryAr: msgInfo?.summaryAr || (typeof item?.summaryAr === "string" && item.summaryAr.trim() ? item.summaryAr.trim() : customerFacingQuoteSummary(item?.capabilitySlug)),
         };
       }
+      // an AGENT mission's request opens in the conversation that holds its card: job -> mission -> the message whose plan names the mission
+      const conversationOfMission = new Map<string, string>();
+      for (const m of (planMsgsRes?.data || []) as any[]) {
+        const missionId = m?.plan?.agentMissionId;
+        if (typeof missionId === "string" && m.conversation_id && !conversationOfMission.has(missionId)) conversationOfMission.set(missionId, m.conversation_id);
+      }
+      for (const m of (missionsRes?.data || []) as any[]) {
+        const conversationId = conversationOfMission.get(String(m.id));
+        if (m.job_id && conversationId) qMap[String(m.job_id)] = { ...(qMap[String(m.job_id)] ?? { targetVolumeMax: 0 }), conversationId };
+      }
       setQuotes(qMap);
 
       const tMap: Record<string, string> = {};
@@ -340,7 +366,7 @@ export default function RequestsPage() {
     }
   }
 
-  const openFile = (job: JobDoc, retry = false) => {
+  const openFile = async (job: JobDoc, retry = false) => {
     // A request the source refused for its own content fails the same way again: it is opened, never re-quoted.
     retry = retry && !isDeterministicFailureAr(job.errorAr);
     try {
@@ -349,7 +375,18 @@ export default function RequestsPage() {
     } catch {
       // Non-blocking storage fallback
     }
-    router.push(openJobHref({ jobId: job.$id, conversationId: quotes[job.$id]?.conversationId, retry }));
+    // a request opens in ITS conversation (its card and its files), never in a new empty chat: when the list could not link it (an older request, or one beyond the recent messages), the server resolves it for this one request
+    let conversationId = quotes[job.$id]?.conversationId || "";
+    if (!conversationId) {
+      try {
+        const res = await fetch(`/api/jobs/${encodeURIComponent(job.$id)}/conversation`, { cache: "no-store" });
+        const json = await res.json().catch(() => null);
+        if (json?.success && typeof json.conversationId === "string") conversationId = json.conversationId;
+      } catch {
+        // the request still opens by its job
+      }
+    }
+    router.push(openJobHref({ jobId: job.$id, conversationId, retry }));
   };
 
   return (

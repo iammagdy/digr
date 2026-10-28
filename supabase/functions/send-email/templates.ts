@@ -230,7 +230,8 @@ const PLATFORM_EMAIL_TEMPLATES: Record<PlatformEmailTemplateId, string> = {
   // DetailOne, DetailTwo, ButtonLabel) are written by the app in plain Arabic from real numbers; a missing one renders as "".
   "job-update": layout("job-update", {
     audience: "customer",
-    preheader: "{{ .Heading }}",
+    // the line a mail list shows next to the subject: its own words (Preheader); a caller that sends none gets the heading, as before (renderEmailTemplate)
+    preheader: "{{ .Preheader }}",
     heading: "{{ .Heading }}",
     paragraphs: ["أهلًا {{ .Name }}، {{ .Lead }}", "{{ .DetailOne }}", "{{ .DetailTwo }}"],
     button: { href: "{{ .JobURL }}", label: "{{ .ButtonLabel }}" },
@@ -302,6 +303,8 @@ export function renderEmailTemplate(
   for (const [k, v] of Object.entries(vars)) {
     if (v !== undefined && v !== null) all[k] = String(v);
   }
+  // job-update: a caller that sends no Preheader gets its heading as the preview line (the template's behaviour before the Preheader existed)
+  if (id === "job-update" && !(all.Preheader ?? "").trim()) all.Preheader = all.Heading ?? "";
   const subject = PLATFORM_EMAIL_SUBJECTS[id].replace(TOKEN_RE, (_, name) => all[name] ?? "");
   const html = PLATFORM_EMAIL_TEMPLATES[id].replace(TOKEN_RE, (_, name) => escapeHtml(all[name] ?? ""));
   return { subject, html };
