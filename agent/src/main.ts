@@ -3,7 +3,8 @@ import { createClient } from "@supabase/supabase-js";
 import { loadTregCatalog } from "../../src/lib/treg/catalog";
 import { createCallRecorder } from "../../src/lib/server/multiProvider/callRecorder";
 import { resolveAccountAccess } from "../../src/lib/server/sensitiveAccess";
-import { AGENT_MODEL_DEFAULT } from "../../src/lib/agentMission/constants";
+import { AGENT_CONCURRENCY_ENV, AGENT_MODEL_DEFAULT } from "../../src/lib/agentMission/constants";
+import { parseConcurrency } from "../../src/lib/agentMission/concurrency";
 import { resolveModels } from "./modelConfig";
 import { runExecution, runPlanning, type RunnerDeps } from "./runMission";
 import { createSdkDriver } from "./sdkRuntime";
@@ -12,7 +13,8 @@ import { createWorker } from "./worker";
 
 /**
  * The entry point of the Heroku worker dyno (`worker: npx tsx agent/src/main.ts`). Required environment variables (names only; the values are set in Heroku, never in the repository):
- *   ANTHROPIC_API_KEY, TREG_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY            AGENT_MODEL is optional (default claude-haiku-5-5).
+ *   ANTHROPIC_API_KEY, TREG_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY            AGENT_MODEL is optional (default claude-haiku-5-5);
+ *   AGENT_CONCURRENCY is optional (default 1, at most 4).
  */
 const REQUIRED = ["ANTHROPIC_API_KEY", "TREG_TOKEN", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"] as const;
 const VERSION = process.env.SOURCE_VERSION?.slice(0, 7) || process.env.HEROKU_SLUG_COMMIT?.slice(0, 7) || "dev";
@@ -42,8 +44,9 @@ async function main() {
     log,
   });
 
+  const concurrency = parseConcurrency(process.env[AGENT_CONCURRENCY_ENV]);
   const worker = createWorker({
-    store, workerId, version: VERSION, log,
+    store, workerId, version: VERSION, log, concurrency,
     modelLabel: () => `${models.planning}/${models.execution}`.slice(0, 80) || AGENT_MODEL_DEFAULT,
     runMission: async (mission) => {
       try {
@@ -60,7 +63,7 @@ async function main() {
   const shutdown = () => { log("shutting down: no new missions; running ones keep their lease until it ends"); worker.stop(); };
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
-  log(`worker ${workerId} started (${VERSION}); planning ${models.planning}, execution ${models.execution}`);
+  log(`worker ${workerId} started (${VERSION}); planning ${models.planning}, execution ${models.execution}, ${concurrency} mission(s) at a time`);
   await worker.run();
   await Promise.race([worker.idle(), new Promise((r) => setTimeout(r, 20_000))]);
   process.exit(0);

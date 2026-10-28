@@ -54,7 +54,17 @@ export interface CallRow {
   duration_ms: number | null;
 }
 
-export interface HeartbeatRow { worker_id: string; beat_at: string; active_missions: number; model: string; version: string }
+export interface HeartbeatRow {
+  worker_id: string;
+  beat_at: string;
+  active_missions: number;
+  model: string;
+  version: string;
+  /** Resident memory of the worker process (MB). */
+  rss_mb: number;
+  /** The worker process plus the processes it started (MB), or null when it cannot be measured. */
+  tree_rss_mb: number | null;
+}
 
 /** Everything the worker and the tools need from storage and the database. Two implementations: Supabase (store.ts) and memory (the tests). */
 export interface AgentStore {

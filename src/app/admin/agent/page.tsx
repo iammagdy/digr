@@ -10,7 +10,8 @@ const BTN = "hit min-h-11 cursor-pointer rounded-xl border border-ln2 bg-sf px-4
 const POLL_MS = 3000;
 const OVERVIEW_POLL_MS = 10000;
 
-interface WorkerState { alive: boolean; ageSeconds: number | null; lastBeatAt: string | null; workers: Array<{ worker_id: string; active_missions: number; model: string | null; version: string | null }> }
+interface WorkerMemory { rssMb: number; treeRssMb: number | null; limitMb: number; warn: boolean }
+interface WorkerState { alive: boolean; ageSeconds: number | null; lastBeatAt: string | null; workers: Array<{ worker_id: string; active_missions: number; model: string | null; version: string | null }>; memory: WorkerMemory | null }
 interface MissionRow { id: string; request_text: string; status: string; question_ar: string | null; reserved_points: number | null; unit_price_points: number | null; delivered_units: number | null; charged_points: number | null; planning_model: string | null; planning_llm_usd: number; execution_model: string | null; execution_llm_usd: number; planning_treg_usd: number; execution_treg_usd: number; created_at: string }
 interface Overview { tablesReady: boolean; worker: WorkerState; planningModel: string | null; allowedModels: string[]; testAccountEmail: string; missions: MissionRow[] }
 interface EventRow { id: number; kind: string; message_ar: string; counts: Record<string, number>; created_at: string }
@@ -113,6 +114,11 @@ export default function AgentPage() {
             {!w ? "…" : w.alive ? `العامل يعمل (آخر نبضة قبل ${num(w.ageSeconds)} ث)` : w.lastBeatAt ? `العامل متوقف (آخر نبضة قبل ${num(w.ageSeconds)} ث)` : "العامل لم يبدأ بعد"}
           </span>
         </div>
+        {w?.memory ? (
+          <p className={`m-0 text-[13px] ${w.memory.warn ? "text-bad" : "text-ink2"}`} data-testid="agent-memory" role={w.memory.warn ? "alert" : undefined}>
+            ذاكرة العامل: {num(w.memory.rssMb)} م.ب{w.memory.treeRssMb !== null ? ` · مع العمليات التي بدأها ${num(w.memory.treeRssMb)} م.ب من ${num(w.memory.limitMb)}` : ""}{w.memory.warn ? " — قريبة من حدّ الخادم؛ أبقِ المهام المتزامنة على واحدة" : ""}
+          </p>
+        ) : <p className="m-0 text-[13px] text-ink2" data-testid="agent-memory">ذاكرة العامل: لم تُسجَّل بعد.</p>}
         <p className="m-0 text-[13px] font-light leading-[1.9] text-ink2">اكتب مهمة بيانات؛ يخطّط لها وكيل Claude، ثم يظهر لك سعرها المحسوب بالكود من التكاليف المقيسة فعلًا، ولا يبدأ التنفيذ ولا يُحجز رصيد إلا بعد زر الاعتماد. تعمل هذه الصفحة <b>لحساب الاختبار فقط</b>{overview ? <> (<span dir="ltr">{overview.testAccountEmail}</span>)</> : null}، ولا تغيّر شيئًا للعملاء.</p>
         {overview && !overview.tablesReady ? <p className="m-0 text-[13px] text-bad" role="alert">جداول الوكيل غير مُطبَّقة بعد: SQL في docs/proposals/agent-worker لم يُطبَّق.</p> : null}
         <label className="flex flex-wrap items-center gap-2 text-[13px] text-ink">

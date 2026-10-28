@@ -1,13 +1,14 @@
 import {
   AGENT_HEARTBEAT_INTERVAL_MS, AGENT_MISSION_LEASE_SECONDS, AGENT_POLL_INTERVAL_MS, AGENT_WORKER_CONCURRENCY,
 } from "../../src/lib/agentMission/constants";
+import { readMemory as readProcessMemory, type MemoryReading } from "./memory";
 import type { AgentStore, MissionRecord } from "./types";
 
 /**
  * THE WORKER LOOP. A long-running process (a Heroku worker dyno) that
- *  - polls Supabase for a mission to PLAN (`queued`) or EXECUTE (`approved`), at most AGENT_WORKER_CONCURRENCY at a time (default 2);
+ *  - polls Supabase for a mission to PLAN (`queued`) or EXECUTE (`approved`), at most AGENT_WORKER_CONCURRENCY at a time (default 1: AGENT_CONCURRENCY);
  *  - leases each mission it takes (agent_claim_mission) and renews every lease with each heartbeat, so a dead worker's mission is taken over when the lease ends;
- *  - writes a heartbeat row every 30 seconds (the admin page calls the worker alive while the last beat is younger than 90 seconds).
+ *  - writes a heartbeat row every 30 seconds, with the memory it uses (rss_mb and tree_rss_mb) (the admin page calls the worker alive while the last beat is younger than 90 seconds).
  * It is written over an injected store, run function and clock, so the tests drive it with no database and no timers.
  */
 export interface WorkerDeps {
@@ -18,7 +19,10 @@ export interface WorkerDeps {
   modelLabel: () => string;
   /** Plans or executes one claimed mission, by its status (`planning` or `executing`). Must not throw. */
   runMission: (mission: MissionRecord) => Promise<void>;
+  /** How many missions at once (the entry point passes AGENT_CONCURRENCY; default 1). */
   concurrency?: number;
+  /** Memory reading for the heartbeat row; defaults to the real process. */
+  readMemory?: () => MemoryReading;
   leaseSeconds?: number;
   now?: () => Date;
   log?: (line: string) => void;
@@ -33,7 +37,8 @@ export function createWorker(deps: WorkerDeps) {
 
   async function heartbeat(): Promise<void> {
     try {
-      await deps.store.writeHeartbeat({ worker_id: deps.workerId, beat_at: now().toISOString(), active_missions: active.size, model: deps.modelLabel(), version: deps.version });
+      const memory = (deps.readMemory ?? readProcessMemory)();
+      await deps.store.writeHeartbeat({ worker_id: deps.workerId, beat_at: now().toISOString(), active_missions: active.size, model: deps.modelLabel(), version: deps.version, rss_mb: memory.rssMb, tree_rss_mb: memory.treeRssMb });
       await deps.store.renewLeases(deps.workerId, leaseSeconds);
     } catch (e) {
       deps.log?.(`heartbeat_failed ${String((e as Error)?.message ?? e).slice(0, 120)}`);

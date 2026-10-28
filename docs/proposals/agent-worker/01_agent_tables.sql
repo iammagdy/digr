@@ -75,13 +75,15 @@ CREATE TABLE IF NOT EXISTS public.mission_calls (
 );
 CREATE INDEX IF NOT EXISTS mission_calls_mission_idx ON public.mission_calls (mission_id, created_at);
 
--- One row per running worker process, written every 30 seconds. The admin page calls the worker alive while the newest beat is younger than 90 seconds.
+-- One row per running worker process, written every 30 seconds with the memory it uses. The admin page calls the worker alive while the newest beat is younger than 90 seconds, and shows the memory.
 CREATE TABLE IF NOT EXISTS public.agent_worker_heartbeat (
   worker_id        text PRIMARY KEY,
   beat_at          timestamptz NOT NULL,
   active_missions  integer     NOT NULL DEFAULT 0 CHECK (active_missions >= 0),
   model            text,
-  version          text
+  version          text,
+  rss_mb           integer     CHECK (rss_mb IS NULL OR rss_mb >= 0),        -- memory of the worker process (MB), written with every beat
+  tree_rss_mb      integer     CHECK (tree_rss_mb IS NULL OR tree_rss_mb >= 0) -- the worker plus the processes it started (MB): what the dyno's 512 MB counts
 );
 
 -- Settings the owner changes from the admin page. Key `planning_model`: {"model": "claude-haiku-5-5" | "claude-sonnet-5-5"}.

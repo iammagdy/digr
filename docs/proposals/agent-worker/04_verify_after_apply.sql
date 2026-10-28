@@ -38,5 +38,8 @@ SELECT id, public, file_size_limit FROM storage.buckets WHERE id = 'agent-missio
 -- 9. no storage policy was added for it (expected: 0 rows)
 SELECT policyname FROM pg_policies WHERE schemaname = 'storage' AND tablename = 'objects' AND (qual ILIKE '%agent-missions%' OR with_check ILIKE '%agent-missions%');
 
--- 10. the money tables are untouched (expected: the same row counts as before applying; this proposal never writes them)
+-- 10. the heartbeat table has the two memory columns (expected: two rows, rss_mb and tree_rss_mb, integer)
+SELECT column_name, data_type FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'agent_worker_heartbeat' AND column_name IN ('rss_mb', 'tree_rss_mb') ORDER BY column_name;
+
+-- 11. the money tables are untouched (expected: the same row counts as before applying; this proposal never writes them)
 SELECT 'credit_ledger' AS t, count(*) FROM public.credit_ledger UNION ALL SELECT 'jobs', count(*) FROM public.jobs UNION ALL SELECT 'plans_quotes', count(*) FROM public.plans_quotes UNION ALL SELECT 'provider_costs', count(*) FROM public.provider_costs;

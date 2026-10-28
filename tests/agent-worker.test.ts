@@ -4,6 +4,11 @@ import { AGENT_HEARTBEAT_ALIVE_MS, AGENT_HEARTBEAT_INTERVAL_MS, AGENT_WORKER_CON
 import { latestBeat, workerAlive } from "../src/lib/agentMission/heartbeat";
 import { createMemoryStore, newMission } from "../agent/src/memoryStore";
 import { createWorker } from "../agent/src/worker";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { parseConcurrency, memoryWarning } from "../src/lib/agentMission/concurrency";
+import { processTreeRssMb, readMemory } from "../agent/src/memory";
 import { resolveModels } from "../agent/src/modelConfig";
 import { chooseLlmCost, llmCostFromUsage } from "../agent/src/llmCost";
 import { BUILT_IN_TOOLS, buildQueryOptions, mcpToolNames } from "../agent/src/sdkOptions";
@@ -15,12 +20,12 @@ const U = "00000000-0000-0000-0000-0000000000aa";
 const queued = (n: number) => Array.from({ length: n }, (_, i) => newMission({ id: `msn_w${i}`, user_id: U, status: "queued" }));
 
 describe("worker: concurrency, leases, heartbeat", () => {
-  it("the default concurrency is 2 and the worker never runs more than that at once", async () => {
-    expect(AGENT_WORKER_CONCURRENCY).toBe(2);
+  it("the default concurrency is 1 (Heroku Basic has 512 MB); with 2 the worker never runs more than 2 at once", async () => {
+    expect(AGENT_WORKER_CONCURRENCY).toBe(1);
     const store = createMemoryStore(queued(5));
     let running = 0; let peak = 0;
     const release: Array<() => void> = [];
-    const worker = createWorker({ store, workerId: "w1", version: "t", modelLabel: () => "m", runMission: () => new Promise<void>((resolve) => { running += 1; peak = Math.max(peak, running); release.push(() => { running -= 1; resolve(); }); }) });
+    const worker = createWorker({ store, workerId: "w1", version: "t", modelLabel: () => "m", concurrency: 2, runMission: () => new Promise<void>((resolve) => { running += 1; peak = Math.max(peak, running); release.push(() => { running -= 1; resolve(); }); }) });
     expect(await worker.tick()).toBe(2);
     expect(worker.activeCount()).toBe(2);
     expect(await worker.tick()).toBe(0); // no free slot: nothing more is taken
@@ -52,12 +57,12 @@ describe("worker: concurrency, leases, heartbeat", () => {
 
   it("writes a heartbeat row and renews the leases of its missions", async () => {
     const store = createMemoryStore(queued(1));
-    const worker = createWorker({ store, workerId: "w1", version: "v9", modelLabel: () => "claude-haiku-5-5", runMission: () => new Promise(() => undefined), now: () => new Date("2026-10-28T10:00:00Z") });
+    const worker = createWorker({ store, workerId: "w1", version: "v9", modelLabel: () => "claude-haiku-5-5", runMission: () => new Promise(() => undefined), now: () => new Date("2026-10-28T10:00:00Z"), readMemory: () => ({ rssMb: 180, treeRssMb: 410 }) });
     await worker.tick();
     const before = store.missions.get("msn_w0")!.lease_until!;
     await new Promise((r) => setTimeout(r, 5));
     await worker.heartbeat();
-    expect(store.heartbeats).toEqual([{ worker_id: "w1", beat_at: "2026-10-28T10:00:00.000Z", active_missions: 1, model: "claude-haiku-5-5", version: "v9" }]);
+    expect(store.heartbeats).toEqual([{ worker_id: "w1", beat_at: "2026-10-28T10:00:00.000Z", active_missions: 1, model: "claude-haiku-5-5", version: "v9", rss_mb: 180, tree_rss_mb: 410 }]);
     expect(store.missions.get("msn_w0")!.lease_until! >= before).toBe(true);
   });
 
@@ -182,5 +187,74 @@ describe("what the model is given", () => {
     expect(planning).not.toContain("This phase: EXECUTION");
     expect(execution).toContain("This phase: EXECUTION");
     expect(execution).not.toContain("This phase: PLANNING");
+  });
+});
+
+describe("concurrency from AGENT_CONCURRENCY, default 1", () => {
+  it("reads a whole number from 1 to 4; anything else is the default of 1", () => {
+    expect(parseConcurrency(undefined)).toBe(1);
+    expect(parseConcurrency("")).toBe(1);
+    expect(parseConcurrency("2")).toBe(2);
+    expect(parseConcurrency(" 3 ")).toBe(3);
+    expect(parseConcurrency("4")).toBe(4);
+    expect(parseConcurrency("9")).toBe(4);
+    for (const bad of ["0", "-1", "1.5", "two", "1e3", "NaN", "٢"]) expect(parseConcurrency(bad), bad).toBe(1);
+  });
+
+  it("a worker built with no setting takes one mission at a time", async () => {
+    const store = createMemoryStore(queued(3));
+    const worker = createWorker({ store, workerId: "w1", version: "t", modelLabel: () => "m", runMission: () => new Promise(() => undefined) });
+    expect(await worker.tick()).toBe(1);
+    expect(await worker.tick()).toBe(0);
+    expect(worker.activeCount()).toBe(1);
+  });
+
+  it("a worker built with the parsed setting takes that many", async () => {
+    const store = createMemoryStore(queued(5));
+    const worker = createWorker({ store, workerId: "w1", version: "t", modelLabel: () => "m", concurrency: parseConcurrency("3"), runMission: () => new Promise(() => undefined) });
+    expect(await worker.tick()).toBe(3);
+  });
+});
+
+describe("memory in the heartbeat row", () => {
+  it("every heartbeat carries the real RSS of the process (a positive number of MB) and the tree figure", async () => {
+    const store = createMemoryStore();
+    const worker = createWorker({ store, workerId: "w1", version: "t", modelLabel: () => "m", runMission: async () => undefined });
+    await worker.heartbeat();
+    await worker.heartbeat();
+    expect(store.heartbeats).toHaveLength(2);
+    for (const row of store.heartbeats) {
+      expect(Number.isInteger(row.rss_mb)).toBe(true);
+      expect(row.rss_mb).toBeGreaterThan(10);
+      // the two figures are read a moment apart, so under load they can differ either way: only their kind is fixed
+      expect(row.tree_rss_mb === null || (Number.isInteger(row.tree_rss_mb) && row.tree_rss_mb > 10)).toBe(true);
+    }
+    // read a moment apart from a live process: equal up to what the process allocates in between
+    expect(Math.abs(readMemory().rssMb - Math.round(process.memoryUsage().rss / 1048576))).toBeLessThan(100);
+  });
+
+  it("the tree figure adds the processes the worker started (read from /proc), and is null when /proc cannot be read", () => {
+    const proc = mkdtempSync(path.join(tmpdir(), "fakeproc-"));
+    const add = (pid: number, ppid: number, pages: number, comm = "node") => {
+      mkdirSync(path.join(proc, String(pid)));
+      writeFileSync(path.join(proc, String(pid), "stat"), `${pid} (${comm}) S ${ppid} 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 1 1 1`);
+      writeFileSync(path.join(proc, String(pid), "statm"), `1000 ${pages} 10 1 0 1 0`);
+    };
+    add(100, 1, 25600);                 // the worker: 100 MB
+    add(200, 100, 51200, "claude (x)"); // its child (a name with a parenthesis): 200 MB
+    add(300, 200, 12800);               // its grandchild: 50 MB
+    add(400, 1, 256000);                // an unrelated process: not counted
+    mkdirSync(path.join(proc, "self")); // not a pid
+    expect(processTreeRssMb(100, proc)).toBe(350);
+    expect(processTreeRssMb(200, proc)).toBe(250);
+    expect(processTreeRssMb(999, proc)).toBeNull();
+    expect(processTreeRssMb(100, path.join(proc, "missing"))).toBeNull();
+  });
+
+  it("warns at 80% of the dyno's 512 MB and never when it was not measured", () => {
+    expect(memoryWarning(409)).toBe(false);
+    expect(memoryWarning(410)).toBe(true);
+    expect(memoryWarning(null)).toBe(false);
+    expect(memoryWarning(undefined)).toBe(false);
   });
 });

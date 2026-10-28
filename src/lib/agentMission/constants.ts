@@ -36,8 +36,16 @@ export const EVENT_KINDS = ["progress", "plan", "question", "answer", "call", "r
 export type EventKind = (typeof EVENT_KINDS)[number];
 
 // ---------------------------------------------------------------- the worker
-/** How many missions one worker process runs at the same time (planning or executing). */
-export const AGENT_WORKER_CONCURRENCY = 2;
+/**
+ * How many missions one worker process runs at the same time (planning or executing). The default is 1: a Heroku Basic dyno has 512 MB, and the Claude Agent SDK runs a native
+ * process of its own for each running mission. The owner raises it with the environment variable AGENT_CONCURRENCY (never above AGENT_CONCURRENCY_MAX).
+ */
+export const AGENT_WORKER_CONCURRENCY = 1;
+export const AGENT_CONCURRENCY_ENV = "AGENT_CONCURRENCY";
+export const AGENT_CONCURRENCY_MAX = 4;
+/** The memory of a Heroku Basic dyno (MB), and the share of it above which the admin page warns. */
+export const AGENT_DYNO_MEMORY_MB = 512;
+export const AGENT_MEMORY_WARN_SHARE = 0.8;
 export const AGENT_POLL_INTERVAL_MS = 5_000;
 /** The worker writes a heartbeat row this often; the admin page calls it alive while the last beat is younger than AGENT_HEARTBEAT_ALIVE_MS. */
 export const AGENT_HEARTBEAT_INTERVAL_MS = 30_000;

@@ -8,7 +8,7 @@ INSERT INTO public.missions (id, user_id, request_text, status, plan, plan_publi
   ('msn_bbbbbbbb', '22222222-2222-2222-2222-222222222222', 'mission of B', 'approved', NULL, NULL, NULL);
 INSERT INTO public.mission_events (mission_id, kind, message_ar) VALUES ('msn_aaaaaaaa', 'progress', 'line of A'), ('msn_bbbbbbbb', 'progress', 'line of B');
 INSERT INTO public.mission_calls (id, mission_id, phase, endpoint_id, status) VALUES ('msn_aaaaaaaa:call_0001', 'msn_aaaaaaaa', 'planning', 'x.y.z', 'ok');
-INSERT INTO public.agent_worker_heartbeat (worker_id, beat_at) VALUES ('w1', now());
+INSERT INTO public.agent_worker_heartbeat (worker_id, beat_at, rss_mb, tree_rss_mb) VALUES ('w1', now(), 180, 410);
 INSERT INTO public.agent_settings (key, value) VALUES ('planning_model', '{"model":"claude-sonnet-5-5"}');
 
 -- a customer (A) reads only their own mission and its events
