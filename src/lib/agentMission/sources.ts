@@ -147,3 +147,24 @@ export function describeAgentSource(id: string): (SourceCandidate & { how: strin
   const tool = s.kind === "search" ? "web_search" : s.kind === "scrape" ? "web_scrape" : "people_search";
   return { id, kind: s.kind === "search" ? "web_search" : s.kind === "scrape" ? "web_scrape" : "people_search", platform: s.platform, summary: s.summary, usd_per_call: s.usdPerCall, rows_per_call: s.rowsPerCall, usd_per_row: s.usdPerCall / Math.max(1, s.rowsPerCall), inputs: s.inputs, how: `call ${tool}${s.kind === "people_search" ? "" : ` with provider "${s.provider}"`}`, limits: s.kind === "people_search" ? "10 people a page; at most 1,000 people for a query; no e-mail, no phone" : "a public page only" };
 }
+
+/**
+ * SOURCES THAT REFUSE WHAT THEIR INPUT SCHEMA ACCEPTS. `crawl4ai.x.search.posts` takes `query` and `limit` (the payload is valid), but its catalog description says: "Without [an X login session] only from:<account> ...
+ * in mode latest ... Other queries are refused, not billed." A topic search («محمد صلاح») therefore answers HTTP 400 and costs nothing (mission msn_480a44f90e1784edbc94: http 400, 905 ms, cost 0). A mission never has the
+ * customer's own login, so the call is refused here, BEFORE it is made, with the reason the model needs to go on to the next source.
+ */
+export const SESSION_RESTRICTED_SOURCES: Readonly<Record<string, { param: string; allowed: RegExp; message: string }>> = {
+  "crawl4ai.x.search.posts": {
+    param: "query",
+    allowed: /^\s*from:@?[A-Za-z0-9_]{1,15}(\s|$)/i,
+    message: "this source answers only `from:<account>` searches (that account's timeline); a topic search needs the customer's own X login, which a mission never has, so it would be refused. It was NOT called and cost nothing: sample the next source of the ranking",
+  },
+};
+
+/** The reason a call would be refused by the source itself (so it is not made), or null. */
+export function sessionRestriction(endpointId: string, params: Record<string, unknown>): string | null {
+  const rule = SESSION_RESTRICTED_SOURCES[endpointId];
+  if (!rule) return null;
+  const value = params[rule.param];
+  return typeof value === "string" && rule.allowed.test(value) ? null : rule.message;
+}

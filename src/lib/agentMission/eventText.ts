@@ -1,6 +1,6 @@
 import { toArabicDigits } from "../arabicDigits";
 import type { EventKind, MissionEventCountKey } from "./constants";
-import { MISSION_EVENT_COUNT_KEYS } from "./constants";
+import { MISSION_EVENT_COUNT_KEYS, MISSION_INTERNAL_COUNT_KEYS } from "./constants";
 import { checkCustomerText } from "./text";
 
 /**
@@ -34,7 +34,7 @@ export function guardEvent(event: { kind: EventKind; message_ar: unknown; counts
 
 const COUNT_LABEL_AR: Record<MissionEventCountKey, string> = {
   stages: "المراحل", rows: "الصفوف", stage: "المرحلة", saved: "المحفوظ", planned: "المتوقع", pages: "الصفحات", sources: "المصادر",
-  delivered: "المسلَّم", charged_points: "المخصوم بالنقاط", reserve_points: "المحجوز بالنقاط", unit_points_x1000: "سعر الصف (بالألف)", queue_ahead: "قبلك في الدور", seconds_left: "الثواني المتبقية", requeued: "مرات التأجيل",
+  delivered: "المسلَّم", charged_points: "المخصوم بالنقاط", reserve_points: "المحجوز بالنقاط", unit_points_x1000: "سعر الصف (بالألف)", queue_ahead: "قبلك في الدور", seconds_left: "الثواني المتبقية", requeued: "مرات التأجيل", samples: "العينات المقروءة",
 };
 
 /** One count as an Arabic phrase, or null for a key that has no customer wording (it is simply not shown). `stage_<n>_rows` is the rows of stage n. */
@@ -49,4 +49,18 @@ export function countPhraseAr(key: string, value: number): string | null {
 /** The counts of an event as one Arabic line (for the admin page and the panel); keys without a customer wording are left out, never printed raw. */
 export function countsLineAr(counts: Record<string, number> | null | undefined): string {
   return Object.entries(counts ?? {}).map(([k, v]) => countPhraseAr(k, Number(v))).filter((x): x is string => x !== null).join("، ");
+}
+
+/** The labels of the internal memory counts (the admin page only). */
+const INTERNAL_LABEL_AR: Record<(typeof MISSION_INTERNAL_COUNT_KEYS)[number], string> = {
+  mem_phase: "المرحلة (٠ تخطيط، ١ تنفيذ)", mem_start_rss_mb: "ذاكرة العامل عند البدء (م.ب)", mem_peak_rss_mb: "أعلى ذاكرة للعامل (م.ب)", mem_start_tree_mb: "ذاكرة العامل وعملياته عند البدء (م.ب)",
+  mem_peak_tree_mb: "أعلى ذاكرة للعامل وعملياته (م.ب)", mem_samples: "عدد القراءات", mem_seconds: "مدة التشغيل بالثواني", mem_stopped: "أوقفه حارس الذاكرة",
+};
+
+/** An event the CUSTOMER never sees: the run's measured memory (its counts carry the `mem_` keys). The admin page shows it. */
+export const isInternalEvent = (event: { counts?: Record<string, unknown> | null }): boolean => Object.keys(event.counts ?? {}).some((k) => (MISSION_INTERNAL_COUNT_KEYS as readonly string[]).includes(k));
+
+/** The internal counts of an event as one Arabic line for the admin page. */
+export function internalCountsLineAr(counts: Record<string, number> | null | undefined): string {
+  return Object.entries(counts ?? {}).filter(([k]) => (MISSION_INTERNAL_COUNT_KEYS as readonly string[]).includes(k)).map(([k, v]) => `${INTERNAL_LABEL_AR[k as keyof typeof INTERNAL_LABEL_AR]}: ${toArabicDigits(Math.round(Number(v)))}`).join("، ");
 }

@@ -1,3 +1,4 @@
+import { AGENT_BUCKET_ALLOWED_MIME } from "../../src/lib/agentMission/constants";
 import { guardEvent } from "../../src/lib/agentMission/eventText";
 import type { AgentStore, CallRow, HeartbeatRow, MissionEventInput, MissionRecord } from "./types";
 
@@ -31,7 +32,11 @@ export function createMemoryStore(initial: MissionRecord[] = []): MemoryStore {
   const key = (missionId: string, relPath: string) => `${missionId}/${relPath}`;
   return {
     files, events, calls, missions, heartbeats, settings, published,
-    async putFile(missionId, relPath, content) { files.set(key(missionId, relPath), content); },
+    // the real bucket refuses any type outside its list (constants.ts: AGENT_BUCKET_ALLOWED_MIME): so does this one
+    async putFile(missionId, relPath, content, contentType) {
+      if (!(AGENT_BUCKET_ALLOWED_MIME as readonly string[]).includes(contentType)) throw new Error(`upload: mime type ${contentType} is not supported`);
+      files.set(key(missionId, relPath), content);
+    },
     async getFile(missionId, relPath) { const v = files.get(key(missionId, relPath)); return v === undefined ? null : typeof v === "string" ? v : v.toString("utf8"); },
     async getFileBytes(missionId, relPath) { const v = files.get(key(missionId, relPath)); return v === undefined ? null : Buffer.isBuffer(v) ? v : Buffer.from(v); },
     async addEvent(missionId, event) { const g = guardEvent(event); events.push({ mission_id: missionId, kind: g.kind, message_ar: g.message_ar, counts: g.counts }); },
@@ -52,8 +57,8 @@ export function createMemoryStore(initial: MissionRecord[] = []): MemoryStore {
       }
       return null;
     },
-    async renewLeases(workerId, leaseSeconds) {
-      for (const m of missions.values()) if (m.worker_id === workerId && (m.status === "planning" || m.status === "executing")) m.lease_until = new Date(Date.now() + leaseSeconds * 1000).toISOString();
+    async renewLeases(workerId, leaseSeconds, missionIds) {
+      for (const m of missions.values()) if (missionIds.includes(m.id) && m.worker_id === workerId && (m.status === "planning" || m.status === "executing")) m.lease_until = new Date(Date.now() + leaseSeconds * 1000).toISOString();
     },
     async writeHeartbeat(row) { heartbeats.push(row); },
     async readSettings() { return settings; },

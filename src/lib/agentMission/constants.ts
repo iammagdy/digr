@@ -51,7 +51,7 @@ export const MISSION_TERMINAL: ReadonlySet<string> = new Set(["completed", "fail
 export const EVENT_KINDS = ["progress", "plan", "question", "answer", "call", "result", "system", "refusal"] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 /** The fixed keys of an event's `counts` (numbers never go in the text). `stage_<n>_rows` (rows saved in stage n) is also allowed. */
-export const MISSION_EVENT_COUNT_KEYS = ["stages", "rows", "stage", "saved", "planned", "pages", "sources", "delivered", "charged_points", "reserve_points", "unit_points_x1000", "queue_ahead", "seconds_left", "requeued"] as const;
+export const MISSION_EVENT_COUNT_KEYS = ["stages", "rows", "stage", "saved", "planned", "pages", "sources", "delivered", "charged_points", "reserve_points", "unit_points_x1000", "queue_ahead", "seconds_left", "requeued", "samples"] as const;
 export type MissionEventCountKey = (typeof MISSION_EVENT_COUNT_KEYS)[number];
 
 // ---------------------------------------------------------------- the worker
@@ -66,22 +66,49 @@ export const AGENT_CONCURRENCY_MAX = 4;
 export const AGENT_DYNO_MEMORY_MB = 512;
 export const AGENT_MEMORY_WARN_SHARE = 0.8;
 /**
- * MEMORY ON THE 512 MB DYNO (Phase 3). All of it is the memory of the worker AND the processes it started (tree RSS, read from /proc), the figure the dyno's limit counts.
- *  - a planning run should stay under AGENT_MEMORY_PLANNING_TARGET_MB;
- *  - a NEW mission is not taken (it stays queued, nothing is leased) while the tree is at or above AGENT_MEMORY_ADMIT_LIMIT_MB;
- *  - a RUNNING mission whose tree reaches AGENT_MEMORY_HARD_LIMIT_MB is stopped by the worker before the platform kills the dyno, and put back in the queue (a mission that holds a reserve goes back to
- *    «approved» with everything it saved), at most AGENT_MEMORY_REQUEUES_MAX times; after that it finishes with what is saved (settled like any other end).
+ * MEMORY ON THE 512 MB DYNO. All of it is the memory of the worker AND the processes it started (tree RSS, read from /proc), the figure the dyno's limit counts.
+ *
+ * WHERE THE NUMBERS COME FROM (evidence, not guesses):
+ *  - idle readings of the worker after a restart: 208, 214, 217, 238, 250 MB tree (agent_worker_heartbeat, 2026-10-28);
+ *  - the owner saw ONE normal planning run (a tweets / companies request) peak at 486 MB tree on this dyno WITHOUT crashing: so the SDK's own process costs about 486 - 216 = 270 MB (AGENT_SDK_CHILD_PEAK_MB);
+ *  - the guard of PR #275 stopped a normal one-stage planning about 10 s after it started, at a hard limit of 450 MB: the limit was below what a normal run needs.
+ * So: the hard limit sits above the measured normal peak (AGENT_MEMORY_OBSERVED_PLANNING_PEAK_MB), just over the dyno's quota (an overrun of the quota is the platform's R14 warning, not a kill; the kill threshold is NOT measured),
+ * and a NEW mission is admitted only when the idle memory plus a normal run's SDK process still fits under that limit (admit = hard - SDK child). Every run now records its own peak (an internal event), so these numbers are
+ * re-set from the dyno's real peaks, not from this reasoning.
+ *  - a NEW mission is not taken (it stays queued, nothing is leased) while the tree is at or above AGENT_MEMORY_ADMIT_LIMIT_MB; an IDLE worker that stays at or above it for AGENT_MEMORY_RECYCLE_AFTER_MS exits so the platform
+ *    restarts it with a fresh heap (otherwise the queue could wait for ever);
+ *  - a RUNNING mission whose tree reaches AGENT_MEMORY_HARD_LIMIT_MB is stopped by the worker before the platform kills the dyno and put back in the queue (a mission that holds a reserve goes back to «approved» with everything
+ *    it saved), at most AGENT_MEMORY_REQUEUES_MAX times; after that it finishes with what is saved (settled like any other end).
  */
 export const AGENT_MEMORY_PLANNING_TARGET_MB = 400;
-export const AGENT_MEMORY_ADMIT_LIMIT_MB = 300;
-export const AGENT_MEMORY_HARD_LIMIT_MB = 450;
+export const AGENT_MEMORY_OBSERVED_PLANNING_PEAK_MB = 486;
+export const AGENT_SDK_CHILD_PEAK_MB = 270;
+export const AGENT_MEMORY_HARD_LIMIT_MB = 520;
+export const AGENT_MEMORY_ADMIT_LIMIT_MB = AGENT_MEMORY_HARD_LIMIT_MB - AGENT_SDK_CHILD_PEAK_MB;
 export const AGENT_MEMORY_REQUEUES_MAX = 2;
-/** How often the worker reads its memory while a mission runs. */
-export const AGENT_MEMORY_WATCH_MS = 5_000;
+export const AGENT_MEMORY_RECYCLE_AFTER_MS = 120_000;
+/** How often the worker reads its memory while a mission runs (the peak of the run is the highest reading). */
+export const AGENT_MEMORY_WATCH_MS = 2_000;
 /** The Claude Agent SDK starts a native process for each session: one at a time. */
 export const AGENT_SDK_SESSIONS_AT_ONCE = 1;
 /** The Node heap of the worker process (MB), set by the Procfile (`--max-old-space-size`). */
 export const AGENT_NODE_HEAP_MB = 192;
+
+/**
+ * THE REAL BUCKET'S MIME RULES (docs/proposals/agent-worker/03_agent_storage.sql, read back from storage.buckets on 2026-10-28): anything else is refused by Storage («mime type text/plain is not supported»).
+ * The in-memory store of the tests enforces this same list, so a write the real bucket would refuse fails in the tests too.
+ */
+export const AGENT_BUCKET_ALLOWED_MIME = ["application/json", "text/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"] as const;
+/** What a mission remembers about its own runs (starts, requeues by cause), as JSON in its own folder of the bucket. */
+export const AGENT_RUN_STATE_FILE = "run_state.json";
+/** A run that ends with an exception puts the mission back in the queue at most this many times; after that it ends honestly (planning: no hold, a clear message; execution: settled with what is saved). */
+export const AGENT_ERROR_REQUEUES_MAX = 2;
+/** The most times a phase may START for one mission (the first start, answers, requeues, takeovers after a dead worker). A mission that keeps killing its worker ends honestly instead of looping. */
+export const AGENT_PHASE_STARTS_MAX = 8;
+/** Planning with no new event for this long gets the honest «still working, nothing held» line (never an ETA). */
+export const AGENT_STALL_AFTER_MS = 180_000;
+/** Events that carry the run's measured memory (internal: the admin sees them, the customer never does). */
+export const MISSION_INTERNAL_COUNT_KEYS = ["mem_phase", "mem_start_rss_mb", "mem_peak_rss_mb", "mem_start_tree_mb", "mem_peak_tree_mb", "mem_samples", "mem_seconds", "mem_stopped"] as const;
 export const AGENT_POLL_INTERVAL_MS = 5_000;
 /** The worker writes a heartbeat row this often; the admin page calls it alive while the last beat is younger than AGENT_HEARTBEAT_ALIVE_MS. */
 export const AGENT_HEARTBEAT_INTERVAL_MS = 30_000;

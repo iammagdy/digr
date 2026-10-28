@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { adminFetch } from "@/lib/adminApi";
 import { toArabicDigits } from "@/lib/arabicDigits";
 import { useAdmin } from "@/components/admin/AdminShell";
-import { countsLineAr } from "@/lib/agentMission/eventText";
+import { countsLineAr, internalCountsLineAr } from "@/lib/agentMission/eventText";
 
 const SECTION = "flex flex-col gap-3 rounded-[18px] border border-ln bg-bg p-4";
 const BTN = "hit min-h-11 cursor-pointer rounded-xl border border-ln2 bg-sf px-4 text-sm font-semibold text-ink disabled:opacity-50";
@@ -23,7 +23,7 @@ interface Detail {
   customerPlan: CustomerPlan | null;
   internalPlan: { stages: Array<{ key: string; endpoint_id: string; measured_cost_per_row_usd: number }>; price: { costPerFinalRowUsd: number; totalCostUsd: number } } | null;
   events: EventRow[];
-  calls: { total: number; refused: number; items?: Array<{ id: string; phase: string; endpoint_id: string; status: string; refused_reason: string | null; rows_returned: number | null; cost_usd: number; params_digest?: Record<string, unknown> | null }> };
+  calls: { total: number; refused: number; items?: Array<{ id: string; phase: string; endpoint_id: string; status: string; refused_reason: string | null; http_status?: number | null; duration_ms?: number | null; rows_returned: number | null; cost_usd: number; params_digest?: Record<string, unknown> | null }> };
 }
 
 const STATUS_AR: Record<string, string> = { queued: "في الانتظار", planning: "يخطّط", needs_input: "ينتظر إجابتك", plan_ready: "الخطة جاهزة", approved: "معتمدة", executing: "ينفّذ", completed: "اكتملت", failed: "تعذّرت", unserved: "لا يمكن خدمتها", cancelled: "أُلغيت" };
@@ -161,6 +161,7 @@ export default function AgentPage() {
             {events.length === 0 ? <span className="text-[13px] text-ink2">لا أحداث بعد…</span> : events.map((e) => (
               <div key={e.id} className="text-[13px] text-ink"><span className="text-ink2">{hhmm(e.created_at)}</span> {e.message_ar}
                 {countsLineAr(e.counts) ? <span className="text-ink2"> ({countsLineAr(e.counts)})</span> : null}
+                {internalCountsLineAr(e.counts) ? <span className="text-ink2"> ({internalCountsLineAr(e.counts)})</span> : null}
               </div>
             ))}
           </div>
@@ -213,7 +214,7 @@ export default function AgentPage() {
               <summary className="cursor-pointer">سجل استدعاءات المصادر (للمشرف فقط)</summary>
               <ul className="m-0 mt-1 flex list-none flex-col gap-0.5 p-0" dir="ltr">
                 {detail.calls.items.map((c) => (
-                  <li key={c.id}>{c.id.split(":").pop()} · {c.phase} · {c.endpoint_id} · {c.status}{c.refused_reason ? ` (${c.refused_reason})` : ""} · {c.rows_returned ?? 0} rows · {Number(c.cost_usd).toFixed(5)} USD{c.params_digest?.cost_basis === "estimated" ? " (estimated)" : ""}{c.params_digest?._why ? ` · why: ${String(c.params_digest._why)}` : ""}</li>
+                  <li key={c.id}>{c.id.split(":").pop()} · {c.phase} · {c.endpoint_id} · {c.status}{c.refused_reason ? ` (${c.refused_reason})` : ""}{c.http_status ? ` · http ${c.http_status}` : ""}{c.duration_ms ? ` · ${c.duration_ms} ms` : ""} · {c.rows_returned ?? 0} rows · {Number(c.cost_usd).toFixed(5)} USD{c.params_digest?.cost_basis === "estimated" ? " (estimated)" : ""}{c.params_digest?._why ? ` · why: ${String(c.params_digest._why)}` : ""}{c.params_digest?._failure ? ` · failure: ${String(c.params_digest._failure)}` : ""}</li>
                 ))}
               </ul>
             </details>

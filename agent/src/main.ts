@@ -8,7 +8,7 @@ import { resolveProviderKey, useProviderKeyStoreClient } from "../../src/lib/ser
 import { AGENT_CONCURRENCY_ENV, AGENT_MODEL_DEFAULT } from "../../src/lib/agentMission/constants";
 import { parseConcurrency } from "../../src/lib/agentMission/concurrency";
 import { resolveModels } from "./modelConfig";
-import { runExecution, runPlanning, type RunnerDeps } from "./runMission";
+import { runMissionSafely, type RunnerDeps } from "./runMission";
 import { createSdkDriver } from "./sdkRuntime";
 import { abortActiveRuns } from "./sessions";
 import { createSupabaseStore } from "./supabaseStore";
@@ -61,16 +61,10 @@ async function main() {
     // at the memory hard limit the running model run is stopped; the mission goes back to the queue instead of the dyno being killed
     onMemoryPressure: () => { abortActiveRuns("memory"); },
     modelLabel: () => `${models.planning}/${models.execution}`.slice(0, 80) || AGENT_MODEL_DEFAULT,
-    runMission: async (mission) => {
-      try {
-        if (mission.status === "planning") await runPlanning(deps(), mission);
-        else if (mission.status === "executing") await runExecution(deps(), mission);
-      } catch (e) {
-        // never leave a mission leased to a worker that gave up on it: the lease ends and the mission is taken over; the error is recorded
-        log(`mission_error ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 200)}`);
-        await store.updateMission(mission.id, { error: String((e as Error)?.message ?? e).slice(0, 300) }).catch(() => undefined);
-      }
-    },
+    // a recycled worker (idle at or above the admit limit for too long) stops its loop; the process exits and the platform restarts it with a fresh heap
+    onRecycle: () => { worker.stop(); },
+    // every claimed mission ends in a clean state whatever happens in the run (runMission.ts: runMissionSafely)
+    runMission: (mission) => runMissionSafely(deps(), mission),
   });
 
   const shutdown = () => { log("shutting down: no new missions; running ones keep their lease until it ends"); worker.stop(); };
