@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { adminFetch } from "@/lib/adminApi";
 import { toArabicDigits } from "@/lib/arabicDigits";
 import { useAdmin } from "@/components/admin/AdminShell";
@@ -9,14 +9,14 @@ import { selfTestCsv, type SelfTestRow } from "@/lib/modelPlanner/selfTestCsv";
 const SECTION = "flex flex-col gap-3 rounded-[18px] border border-ln bg-bg p-4";
 const BTN = "hit min-h-11 cursor-pointer rounded-xl border border-ln2 bg-sf px-4 text-sm font-semibold text-ink disabled:opacity-50";
 
-interface CaseInfo { id: string; group: string; request: string; expected: string; note: string }
+interface CaseInfo { id: string; group: string; request: string; expected: string; note: string; priceRange?: string; estimateUsd?: number }
 interface Health {
   catalog: { endpoints: number; source: string } | { error: string };
   model: string;
   lastPlannerError: { at: string; reason: string } | null;
   lastExploration: { at: string; endpoint: string; result: string; httpStatus: number | null; rows: number | null; costUsd: number } | null;
 }
-interface Info { capUsd: number; keyConfigured: boolean; health: Health; cases: CaseInfo[] }
+interface Info { capUsd: number; keyConfigured: boolean; health: Health; cases: CaseInfo[]; missionCases?: CaseInfo[] }
 type StepResult = { stopped: "cap"; spentUsd: number; capUsd: number } | { stopped?: undefined; row: SelfTestRow; spentUsd: number; capUsd: number };
 
 /** USD with Arabic-Indic digits: this screen is admin-only, one of the few places a cost in dollars is shown. */
@@ -31,10 +31,11 @@ export default function PlannerSelfTestPage() {
   const [running, setRunning] = useState<string | null>(null);
   const [note, setNote] = useState("");
   const stop = useRef(false);
+  const [selected, setSelected] = useState<Set<string> | null>(null);
   const [seeding, setSeeding] = useState(false);
   const [seedNote, setSeedNote] = useState("");
 
-  useEffect(() => { adminFetch<Info>("/api/admin/planner-selftest").then(setInfo).catch((e) => toast(e instanceof Error ? e.message : "تعذّر التحميل")); }, [toast]);
+  useEffect(() => { adminFetch<Info>("/api/admin/planner-selftest").then((i) => { setInfo(i); setSelected(new Set(i.cases.map((c) => c.id))); }).catch((e) => toast(e instanceof Error ? e.message : "تعذّر التحميل")); }, [toast]);
 
   async function run() {
     if (running || !info) return;
@@ -42,7 +43,8 @@ export default function PlannerSelfTestPage() {
     setRows([]); setSpent(0); setNote("");
     const runId = `r${Date.now().toString(36)}`;
     let total = 0;
-    for (const c of info.cases) {
+    const chosen = allCases.filter((c) => selected?.has(c.id));
+    for (const c of chosen) {
       if (stop.current) { setNote("أوقفتَ الفحص."); break; }
       setRunning(c.id);
       try {
@@ -78,17 +80,46 @@ export default function PlannerSelfTestPage() {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
+  const allCases = useMemo(() => [...(info?.cases ?? []), ...(info?.missionCases ?? [])], [info]);
+  const chosenCases = allCases.filter((c) => selected?.has(c.id));
+  const estimate = Number(chosenCases.reduce((s, c) => s + (c.estimateUsd ?? 0.012), 0).toFixed(4));
+  const toggle = (id: string) => setSelected((prev) => { const next = new Set(prev ?? []); if (next.has(id)) next.delete(id); else next.add(id); return next; });
   const passed = rows.filter((r) => r.pass).length;
   const h = info?.health;
   return (
     <div className="flex flex-col gap-4" dir="rtl">
       <section className={SECTION} aria-label="فحص المخطط">
         <h2 className="m-0 text-base font-semibold text-ink">فحص المخطط</h2>
-        <p className="m-0 text-[13px] font-light leading-[1.9] text-ink2">يشغّل ٣٠ طلبًا بالعربية عبر المخطط الحقيقي (النموذج الحقيقي واستدعاءات العيّنة الحقيقية) ويتوقف قبل أي عرض سعر: لا مهمة ولا حجز ولا خصم ولا بيانات عميل. لكل طلب نتيجة متوقعة محفوظة معه، ويُحكم عليه نجاحًا أو فشلًا.</p>
+        <p className="m-0 text-[13px] font-light leading-[1.9] text-ink2">يشغّل الطلبات المحددة (٣٠ طلبًا أساسيًا، وأربع مهام M1 إلى M4 بصيغة صغيرة) بالعربية عبر المخطط الحقيقي (النموذج الحقيقي واستدعاءات العيّنة الحقيقية) ويتوقف قبل أي عرض سعر: لا مهمة ولا حجز ولا خصم ولا بيانات عميل. لكل طلب نتيجة متوقعة محفوظة معه، ويُحكم عليه نجاحًا أو فشلًا.</p>
         <div className="flex flex-wrap items-center gap-2">
-          <button type="button" className={BTN} disabled={!info || Boolean(running) || !info.keyConfigured} onClick={run} data-testid="selftest-run">{running ? `يعمل: ${running}` : "شغّل الفحص"}</button>
+          <button type="button" className={BTN} disabled={!info || Boolean(running) || !info.keyConfigured || chosenCases.length === 0} onClick={run} data-testid="selftest-run">{running ? `يعمل: ${running}` : `شغّل المحدد (${toArabicDigits(chosenCases.length)})`}</button>
           {running ? <button type="button" className={BTN} onClick={() => { stop.current = true; }}>إيقاف</button> : null}
           <button type="button" className={BTN} disabled={rows.length === 0} onClick={exportCsv} data-testid="selftest-csv">تصدير CSV</button>
+        </div>
+        <div className="flex flex-col gap-2" data-testid="selftest-select">
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" className={BTN} onClick={() => setSelected(new Set(allCases.map((c) => c.id)))} disabled={Boolean(running)}>تحديد الكل</button>
+            <button type="button" className={BTN} onClick={() => setSelected(new Set())} disabled={Boolean(running)}>إلغاء التحديد</button>
+            <button type="button" className={BTN} onClick={() => setSelected(new Set((info?.missionCases ?? []).map((c) => c.id)))} disabled={Boolean(running)}>المهام فقط (M1 إلى M4)</button>
+          </div>
+          <p className="m-0 text-[13px] text-ink" data-testid="selftest-estimate" aria-live="polite">التكلفة التقديرية قبل التشغيل: {usd(estimate)} من حدّ {usd(info?.capUsd ?? 0.3)}{estimate > (info?.capUsd ?? 0.3) ? " — سيتوقف الفحص عند الحد قبل نهاية المحدد" : ""}</p>
+          <div className="max-h-72 overflow-auto rounded-xl border border-ln">
+            <table className="w-full border-collapse text-[12px]">
+              <thead><tr className="text-right text-ink2"><th className="px-2 py-1" /><th className="px-2 py-1">#</th><th className="px-2 py-1">الطلب</th><th className="px-2 py-1">المتوقع</th><th className="px-2 py-1">نطاق السعر (نقطة)</th><th className="px-2 py-1">تكلفة تقديرية</th></tr></thead>
+              <tbody>
+                {allCases.map((c) => (
+                  <tr key={c.id} className="align-top">
+                    <td className="px-2 py-1"><input type="checkbox" aria-label={`تحديد ${c.id}`} checked={Boolean(selected?.has(c.id))} onChange={() => toggle(c.id)} disabled={Boolean(running)} data-testid={`select-${c.id}`} /></td>
+                    <td className="px-2 py-1" dir="ltr">{c.id}</td>
+                    <td className="px-2 py-1">{c.request}</td>
+                    <td className="px-2 py-1" dir="ltr">{c.expected}</td>
+                    <td className="px-2 py-1" dir="ltr">{c.priceRange || "—"}</td>
+                    <td className="px-2 py-1">{usd(c.estimateUsd ?? 0.012)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
         {info && !info.keyConfigured ? <p className="m-0 text-[13px] text-bad">مفتاح النموذج غير مضبوط.</p> : null}
         <p className="m-0 text-[13px] text-ink" data-testid="selftest-cost" aria-live="polite">تكلفة هذه التشغيلة {usd(spent)} من حدّ {usd(info?.capUsd ?? 0.3)} · نجح {toArabicDigits(passed)} من {toArabicDigits(rows.length)}</p>
@@ -121,7 +152,7 @@ export default function PlannerSelfTestPage() {
           <table className="w-full border-collapse text-[12px]" data-testid="selftest-table">
             <thead>
               <tr className="text-right text-ink2">
-                {["#", "الطلب", "المتوقع", "النتيجة", "الحكم", "ما فُهم", "الخدمة المختارة والبدائل", "المعاملات ومصدرها", "الفترة", "عيّنة", "سعر الوحدة", "الحجز", "الأدوار", "الرموز", "تكلفة النموذج", "تكلفة المصدر", "السبب"].map((t) => <th key={t} className="border-b border-ln px-2 py-1 font-semibold">{t}</th>)}
+                {["#", "الطلب", "المتوقع", "النتيجة", "الحكم", "ما فُهم", "الخدمة المختارة والبدائل", "المعاملات ومصدرها", "الفترة", "عيّنة", "سعر الوحدة", "نطاق السعر", "الحجز", "الأدوار", "الرموز", "تكلفة النموذج", "تكلفة المصدر", "السبب"].map((t) => <th key={t} className="border-b border-ln px-2 py-1 font-semibold">{t}</th>)}
               </tr>
             </thead>
             <tbody>
@@ -138,6 +169,7 @@ export default function PlannerSelfTestPage() {
                   <td className="border-b border-ln px-2 py-1" dir="ltr">{r.window}</td>
                   <td className="border-b border-ln px-2 py-1">{toArabicDigits(r.sampleRows)}</td>
                   <td className="border-b border-ln px-2 py-1">{num(r.unitPricePoints)}</td>
+                  <td className="border-b border-ln px-2 py-1" dir="ltr">{r.priceRange || "—"}</td>
                   <td className="border-b border-ln px-2 py-1">{num(r.holdPoints)}</td>
                   <td className="border-b border-ln px-2 py-1">{toArabicDigits(r.turns)}</td>
                   <td className="border-b border-ln px-2 py-1" dir="ltr">{r.tokensIn}/{r.tokensOut}</td>

@@ -24,7 +24,7 @@ export type Expected = "plan" | "question" | "refusal" | "restricted";
 
 export interface SelfTestCase {
   id: string;
-  group: "phase0" | "production";
+  group: "phase0" | "production" | "mission";
   request: string;
   /** Outcomes that pass (the first is the one the case is about). */
   expect: Expected[];
@@ -34,13 +34,17 @@ export interface SelfTestCase {
   country?: string;
   /** For a plan: no topic review (the customer named ONE thing). */
   noTopic?: boolean;
+  /** For a plan: the unit price (points per delivered record) must lie in this range (generous: it catches a price that is off by an order of magnitude, not a rounding). */
+  priceRangePoints?: [number, number];
+  /** For a plan: at least this many stages. */
+  minSteps?: number;
   note?: string;
 }
 
 const P = (n: number, request: string, expect: Expected[], extra: Partial<SelfTestCase> = {}): SelfTestCase => ({ id: `P${n}`, group: "phase0", request, expect, ...extra });
 const N = (n: number, request: string, expect: Expected[], extra: Partial<SelfTestCase> = {}): SelfTestCase => ({ id: `N${n}`, group: "production", request, expect, ...extra });
 
-export const SELF_TEST_CASES: readonly SelfTestCase[] = [
+const BASE_CASES: readonly SelfTestCase[] = [
   P(1, "عايز ٤٠٠ بوست من حساب وزارة الصحة السعودية على أكس وفيها التعليقات", ["question", "plan"], { note: "the account's handle is not in the words: one question" }),
   P(2, "أبي ٤٠٠ تغريدة من حساب وزارة الصحة السعودية في اكس مع الردود", ["question", "plan"]),
   P(3, "أرغب بجمع ٤٠٠ منشور من حساب وزارة الصحة السعودية على منصة إكس", ["question", "plan"]),
@@ -73,6 +77,38 @@ export const SELF_TEST_CASES: readonly SelfTestCase[] = [
   N(10, "هات ١٠ بوستات من حساب @elonmusk على أكس", ["plan"], { platforms: ["x"], note: "the same request again: the second answer must be as good as the first" }),
 ];
 
+/** The price range each planned request is expected to stay inside, in points per delivered record (from the replay table and the catalog: wide on purpose). */
+const PRICE_RANGES: Record<string, [number, number]> = {
+  P5: [0.05, 6], P6: [0.05, 6], P8: [0.03, 10], P9: [0.5, 120], P10: [1, 300], P13: [0.03, 10], P18: [0.05, 6], P19: [0.05, 6],
+  N1: [0.05, 6], N2: [0.03, 10], N3: [0.5, 70], N4: [0.05, 30], N5: [0.1, 60], N6: [0.5, 70], N7: [0.5, 100], N10: [0.05, 6],
+};
+
+/** The 30 requests of the first self-test, each with the price range its plan must stay inside. */
+export const SELF_TEST_CASES: readonly SelfTestCase[] = BASE_CASES.map((c) => (PRICE_RANGES[c.id] ? { ...c, priceRangePoints: PRICE_RANGES[c.id] } : c));
+
+const M = (n: number, request: string, expect: Expected[], extra: Partial<SelfTestCase> = {}): SelfTestCase => ({ id: `M${n}`, group: "mission", request, expect, ...extra });
+
+/** M1 to M4: the missions the owner used to run by hand, as SMALL planning-only requests (a few rows each, so a run is cheap). They stop before any quote like every other case. */
+export const MISSION_SELF_TEST_CASES: readonly SelfTestCase[] = [
+  M(1, "هات ٣ أخبار عن منتخب مصر في كأس العالم ٢٠٢٦ و٣ فيديوهات من قناة FIFA الرسمية على يوتيوب عن مصر، ومعاها تعليقات كل فيديو", ["plan", "question"], { minSteps: 2, priceRangePoints: [1, 200], note: "news, the channel's videos and the comments of each: several stages" }),
+  M(2, "هات ٥ فيديوهات تيك توك عن الزواج والطلاق في مصر، ومعاها لينك كل فيديو وتعليقاته", ["plan", "question"], { platforms: ["tiktok"], minSteps: 2, priceRangePoints: [1, 100], note: "videos on a trend with their links and comments: two stages, both delivered" }),
+  M(3, "هات ٥ بوستات على X عن محمد صلاح بعد انتقاله إلى تركيا من ١ سبتمبر ٢٠٢٦", ["plan"], { platforms: ["x"], priceRangePoints: [0.05, 6], note: "a topic and a date boundary from the customer's words" }),
+  M(4, "هات ٥ شركات كهروميكانيكية في مصر، وفيها الموظفين، وإيميل كل موظف", ["plan", "question", "restricted"], { minSteps: 2, country: "Egypt", priceRangePoints: [20, 3000], note: "companies, then the people inside each, then their work e-mail: three stages (e-mail lookups may need a verified business: the sentence is honest too)" }),
+];
+
+/** Every request the page can run. */
+export const ALL_SELF_TEST_CASES: readonly SelfTestCase[] = [...SELF_TEST_CASES, ...MISSION_SELF_TEST_CASES];
+
+/**
+ * What one request is expected to cost a run (USD, the planning model and the sample calls together), shown BEFORE the run: a question or a refusal costs the model only (about 0.004), a plan adds
+ * its real sample calls (about 0.012; the live run of the 30 requests cost 0.28 USD, 0.0093 each), a mission samples every stage (about 0.03).
+ */
+export function estimateCaseCostUsd(test: Pick<SelfTestCase, "expect" | "group" | "minSteps">): number {
+  if (test.group === "mission" || (test.minSteps ?? 1) > 1) return 0.03;
+  return test.expect.includes("plan") ? 0.012 : 0.004;
+}
+export const estimateRunCostUsd = (tests: ReadonlyArray<Pick<SelfTestCase, "expect" | "group" | "minSteps">>): number => Number(tests.reduce((s, t) => s + estimateCaseCostUsd(t), 0).toFixed(4));
+
 const clip = (v: unknown, n: number) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, n);
 
 /** The outcome kind of a planner result, as the table names it. */
@@ -97,6 +133,8 @@ export function gradeCase(test: SelfTestCase, out: PlannerOutcome, outcome: Self
   if (test.country === "Liechtenstein" && out.plan.stored.country?.canonicalEnglish !== "Liechtenstein") return { pass: false, reason: "the plan carries no Liechtenstein country gate" };
   if (test.noTopic && out.plan.stored.topic) return { pass: false, reason: `a topic review was attached (${out.plan.stored.topic}) to a lookup of one named thing` };
   if (!(out.plan.price.unitPricePoints > 0)) return { pass: false, reason: "the plan has no price" };
+  if (test.priceRangePoints && (out.plan.price.unitPricePoints < test.priceRangePoints[0] || out.plan.price.unitPricePoints > test.priceRangePoints[1])) return { pass: false, reason: `the unit price ${out.plan.price.unitPricePoints.toFixed(4)} points is outside the expected range ${test.priceRangePoints[0]} to ${test.priceRangePoints[1]}` };
+  if (test.minSteps && out.plan.steps.length < test.minSteps) return { pass: false, reason: `the plan has ${out.plan.steps.length} stage(s), expected at least ${test.minSteps}` };
   return { pass: true, reason: "" };
 }
 
@@ -157,6 +195,7 @@ export async function runSelfTestCase(input: RunCaseInput): Promise<RunCaseResul
     endpoints, alternativesTried: out.attempts.map((a) => ({ endpoint: a.endpointId, outcome: a.outcome, httpStatus: a.httpStatus, ms: a.durationMs, costUsd: a.costUsd, detail: a.internal ?? a.detail })),
     params, window, sampleRows, unitPricePoints: unit, holdPoints: hold, turns: out.turns, stopReasons: out.stopReasons,
     tokensIn: out.usage.inputTokens + out.usage.cacheReadTokens + out.usage.cacheWriteTokens, tokensOut: out.usage.outputTokens, modelUsd, providerUsd,
+    priceRange: input.test.priceRangePoints ? `${input.test.priceRangePoints[0]}..${input.test.priceRangePoints[1]}` : "",
     pass: graded.pass, reason: graded.reason, endReason: out.endReason ?? "", trace: out.trace.map((t) => `${t.turn}:${t.tool}:${t.error ? "ERR:" : ""}${clip(t.summary, 50)} -> ${clip(t.outcome, 90)}`),
   };
   return { row, spentUsd: input.spentUsd + modelUsd + providerUsd, capUsd };

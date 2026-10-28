@@ -4,6 +4,7 @@ import { categoryOf, policyVerdict, type AccountAccess } from "../treg/dataPolic
 import { checkParamValue, isWindowParamName, resolvedParamValue } from "./paramRules";
 import { unitCost, callEstimateUsd, type CallCost } from "./pricing";
 import type { PlanParam } from "./types";
+import { applyReverseOrder } from "../treg/reverseOrder";
 
 /**
  * PROVIDER ALTERNATIVES. The catalog lists, for most endpoints, the siblings that do the same job through another provider. When an endpoint fails, answers nothing, takes too long
@@ -98,5 +99,6 @@ export function rankSiblings(endpoint: CatalogEndpoint, catalog: TregCatalog, ac
   const routed = (c: SiblingChoice) => (c.endpoint.kind === "routed" ? 1 : 0);
   // an endpoint whose usual answer takes longer than a sample is allowed to wait is tried after the ones that answer in time
   const slow = (c: SiblingChoice) => ((c.p50Ms ?? 0) > SLOW_P50_MS ? 1 : 0);
-  return out.sort((a, b) => routed(a) - routed(b) || slow(a) - slow(b) || a.cost.usd - b.cost.usd || (b.okRate ?? 0.8) - (a.okRate ?? 0.8) || (a.p50Ms ?? 5000) - (b.p50Ms ?? 5000) || a.endpoint.id.localeCompare(b.endpoint.id));
+  // the reverse lookups keep their evidence order (src/lib/treg/reverseOrder.ts); every other sibling keeps its place
+  return applyReverseOrder(out.sort((a, b) => routed(a) - routed(b) || slow(a) - slow(b) || a.cost.usd - b.cost.usd || (b.okRate ?? 0.8) - (a.okRate ?? 0.8) || (a.p50Ms ?? 5000) - (b.p50Ms ?? 5000) || a.endpoint.id.localeCompare(b.endpoint.id)), (c) => c.endpoint.id);
 }

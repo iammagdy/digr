@@ -6,11 +6,15 @@ import { loadTregCatalog, type CatalogEndpoint, type TregCatalog } from "../treg
 import { categoryOf, policyRuleOf } from "../treg/dataPolicy";
 import { hintsOf, readShape } from "../treg/shapeReader";
 import { callEstimateUsd, unitCost } from "../modelPlanner/pricing";
+import { COMPANY_DOMAIN_ONLY_ENDPOINTS, EMAIL_REVERSE_ORDER, NO_WATERFALL_ENDPOINTS, PHONE_REVERSE_ORDER, US_ONLY_PHONE_ENDPOINTS, isCompanyDomainEmail } from "../treg/reverseOrder";
+import { isUsefulIdentity, mergeFields, type LookupFields } from "../adminLookupResult";
 
 /**
- * The ADMIN REVERSE LOOKUP: the admin types a phone number or an email address; code runs the CHEAPEST suitable reverse-lookup endpoint first, and a stronger (costlier) one only when
- * the admin asks for a deeper search. It shows name, company, title and profile link, and the real cost in USD (this screen is admin-only). No customer points are used. The cost is
- * recorded in provider_costs with capability «admin_lookup», every lookup is written to the same audit log as every sensitive call, and a daily cost cap stops the day's spending.
+ * The ADMIN REVERSE LOOKUP: the admin types a phone number or an email address. The order of the endpoints comes from live evidence (src/lib/treg/reverseOrder.ts): an e-mail goes through
+ * the e-mail list in order and stops at the first USEFUL answer («بحث أعمق» continues and merges the fields of the next answers, each field keeping its source); a phone number runs only
+ * the FREE endpoints by default, and a paid one only after the admin confirmed its price (with a warning when its coverage of the number's country is unproven). It shows name, company,
+ * title, profile link and country, and the real cost in USD (this screen is admin-only). No customer points are used. Every lookup is written to the same audit log as every sensitive call,
+ * and a daily cost cap stops the day's spending.
  */
 export const ADMIN_LOOKUP_DAILY_CAP_USD = 2;
 export const ADMIN_LOOKUP_COST_MARKER = "admin_lookup";
@@ -28,7 +32,7 @@ export function classifyLookupInput(raw: unknown): { kind: LookupKind; value: st
   return null;
 }
 
-export interface LookupCandidate { id: string; paramName: string; costUsd: number; estimateUsd: number; okRate: number | null; /** The countries the catalog's own text limits this endpoint to (["US"] for «a US phone number»), or null when it states none. */ countries: string[] | null }
+export interface LookupCandidate { id: string; paramName: string; costUsd: number; estimateUsd: number; okRate: number | null; /** The countries the catalog's own text limits this endpoint to (["US"] for «a US phone number»), or null when it states none. */ countries: string[] | null; /** Costs money (a free endpoint costs nothing and may run without a confirmation). */ paid: boolean }
 
 /** Calling codes of the countries the admin is likely to look up (longest match first); «US» covers +1. */
 const CALLING_CODES: Array<[string, string]> = [["971", "AE"], ["966", "SA"], ["962", "JO"], ["965", "KW"], ["974", "QA"], ["973", "BH"], ["968", "OM"], ["961", "LB"], ["964", "IQ"], ["963", "SY"], ["967", "YE"], ["970", "PS"], ["212", "MA"], ["213", "DZ"], ["216", "TN"], ["218", "LY"], ["249", "SD"], ["20", "EG"], ["44", "GB"], ["33", "FR"], ["49", "DE"], ["91", "IN"], ["90", "TR"], ["39", "IT"], ["34", "ES"], ["1", "US"]];
@@ -66,23 +70,67 @@ function paramFor(endpoint: CatalogEndpoint, kind: LookupKind): string | null {
   return required.length === 1 ? required[0].name : null;
 }
 
-/** The reverse-lookup endpoints for this kind of input, cheapest first (priceable ones only). */
-export function lookupCandidates(kind: LookupKind, catalog: TregCatalog = loadTregCatalog(), policyRule: (id: string) => string | null): LookupCandidate[] {
+/**
+ * The reverse-lookup endpoints for this kind of input IN THE ORDER LIVE EVIDENCE GAVE (src/lib/treg/reverseOrder.ts): the listed ones first, in their order; any other priceable reverse-lookup
+ * endpoint the catalog gained since comes after them, cheapest first. Only the endpoints that need nothing but the one value the admin typed are listed.
+ */
+export function lookupCandidates(kind: LookupKind, catalog: TregCatalog = loadTregCatalog(), policyRule: (id: string) => string | null = policyRuleOf): LookupCandidate[] {
+  const build = (e: CatalogEndpoint): LookupCandidate | null => {
+    // a catalog price of exactly 0 (a free endpoint, which the planner cannot SELL) is fine for the admin's own lookup
+    const free = e.cost?.usd === 0 && e.cost?.failed_or_empty_billed !== undefined && !(e.kind === "routed");
+    const cost = free ? { usd: 0, unit: "call" as const, basis: "catalog" as const } : unitCost(e, catalog);
+    const param = paramFor(e, kind);
+    if (!cost || !param) return null;
+    if (e.inputs.some((i) => i.required && i.name !== param)) return null; // needs more than the one value the admin typed
+    const ok = (e.observed as { ok_rate?: number } | null)?.ok_rate;
+    return { id: e.id, paramName: param, costUsd: cost.usd, estimateUsd: free ? 0 : callEstimateUsd(cost, 1), okRate: typeof ok === "number" ? ok : null, countries: kind === "phone" ? endpointCountries(e) : null, paid: cost.usd > 0 };
+  };
+  const listed = kind === "phone" ? PHONE_REVERSE_ORDER : EMAIL_REVERSE_ORDER;
   const out: LookupCandidate[] = [];
+  for (const id of listed) { const e = catalog.byId.get(id); const c = e ? build(e) : null; if (c) out.push(c); }
+  const others: LookupCandidate[] = [];
   for (const e of catalog.endpoints) {
-    if (categoryOf(e.id) !== "sensitive") continue;
+    if (listed.includes(e.id) || categoryOf(e.id) !== "sensitive") continue;
     const rule = policyRule(e.id);
     if (!rule || !REVERSE_RULES.has(rule)) continue;
     const phoneEndpoint = /phone|mobile/i.test(e.id);
     if (kind === "phone" ? !phoneEndpoint : phoneEndpoint) continue;
-    const cost = unitCost(e, catalog);
-    const param = paramFor(e, kind);
-    if (!cost || !param) continue;
-    if (e.inputs.some((i) => i.required && i.name !== param)) continue; // needs more than the one value the admin typed
-    const ok = (e.observed as { ok_rate?: number } | null)?.ok_rate;
-    out.push({ id: e.id, paramName: param, costUsd: cost.usd, estimateUsd: callEstimateUsd(cost, 1), okRate: typeof ok === "number" ? ok : null, countries: kind === "phone" ? endpointCountries(e) : null });
+    const c = build(e);
+    if (c) others.push(c);
   }
-  return out.sort((a, b) => a.costUsd - b.costUsd || (b.okRate ?? 0) - (a.okRate ?? 0) || a.id.localeCompare(b.id));
+  others.sort((a, b) => a.costUsd - b.costUsd || (b.okRate ?? 0) - (a.okRate ?? 0) || a.id.localeCompare(b.id));
+  return [...out, ...others];
+}
+
+/** What the screen shows for one candidate before anything runs. */
+export interface LookupPlanEntry {
+  id: string; paramName: string; usd: number; paid: boolean;
+  /** auto: runs by itself; confirm: runs only after the admin confirmed its price; skipped: not for this input. */
+  state: "auto" | "confirm" | "skipped";
+  /** Arabic, for the screen: why it is skipped. */
+  skipReasonAr?: string;
+  /** Arabic: the warning shown with the price (coverage of the number's country unproven, or a US-only service for a number elsewhere). */
+  warningAr?: string;
+}
+
+/** The plan for one input: every candidate in order with its state. A free-mailbox address skips the company-only endpoint; a paid phone endpoint waits for the admin's confirmation; the US-only one is never automatic. */
+export function lookupPlan(kind: LookupKind, value: string, catalog: TregCatalog = loadTregCatalog(), policyRule: (id: string) => string | null = policyRuleOf): LookupPlanEntry[] {
+  const country = kind === "phone" ? phoneCountry(value) : null;
+  return lookupCandidates(kind, catalog, policyRule).map((c): LookupPlanEntry => {
+    const base = { id: c.id, paramName: c.paramName, usd: c.estimateUsd, paid: c.paid };
+    if (kind === "email") {
+      if (COMPANY_DOMAIN_ONLY_ENDPOINTS.includes(c.id) && !isCompanyDomainEmail(value)) return { ...base, state: "skipped", skipReasonAr: "يجيب عن الشركات فقط، وهذا بريد على نطاق عام (outlook وgmail وأمثالهما)" };
+      return { ...base, state: "auto" };
+    }
+    if (!coversCountry(c.countries, country)) return { ...base, state: "skipped", skipReasonAr: `هذه الخدمة محدودة بحسب كتالوجها بأرقام ${c.countries?.join("/")}` };
+    const usOnly = US_ONLY_PHONE_ENDPOINTS.includes(c.id);
+    const proven = Boolean(country && c.countries?.includes(country)) || (usOnly && country === "US");
+    const warningAr = usOnly && country !== "US"
+      ? "هذه الخدمة للأرقام الأمريكية، ولا تُشغَّل تلقائيًا لرقم من خارج أمريكا؛ تغطيتها لدولة هذا الرقم غير مثبتة"
+      : !proven && c.paid ? "تغطية هذه الخدمة لدولة هذا الرقم غير مثبتة" : undefined;
+    if (!c.paid) return { ...base, state: "auto" };
+    return { ...base, state: "confirm", ...(warningAr ? { warningAr } : {}) };
+  });
 }
 
 const pick = (row: Record<string, unknown>, re: RegExp, valid: (v: unknown) => boolean): string => {
@@ -99,29 +147,36 @@ const pick = (row: Record<string, unknown>, re: RegExp, valid: (v: unknown) => b
 const isText = (v: unknown) => typeof v === "string" && v.trim().length > 0;
 const isLink = (v: unknown) => typeof v === "string" && /^https?:\/\//i.test(v.trim());
 
-/** Name, company, title and profile link read from the first row of an answer (admin screen only). */
-export function extractIdentity(row: Record<string, unknown> | undefined): { name: string; company: string; title: string; profileUrl: string } {
-  if (!row) return { name: "", company: "", title: "", profileUrl: "" };
+/** Name, company, title, profile link and country read from the first row of an answer (admin screen only). A brand record (branddev) is about the COMPANY: its title is the company's name, never a job title. */
+export function extractIdentity(row: Record<string, unknown> | undefined, endpointId = ""): { name: string; company: string; title: string; profileUrl: string; country: string } {
+  if (!row) return { name: "", company: "", title: "", profileUrl: "", country: "" };
+  const country = pick(row, /^(country|country_?name|country_?code|location_?country)$/i, isText);
+  if (/^branddev\./.test(endpointId)) {
+    return { name: "", company: pick(row, /^(title|name|brand_?name|company_?name|company)$/i, isText), title: "", profileUrl: pick(row, /^(linkedin|linkedin_?url|url|domain)$/i, isLink), country };
+  }
   const first = pick(row, /^(first_?name|given_?name)$/i, isText), last = pick(row, /^(last_?name|family_?name|surname)$/i, isText);
   return {
     name: pick(row, /^(full_?name|name|display_?name|person_?name)$/i, isText) || [first, last].filter(Boolean).join(" "),
     company: pick(row, /^(company|company_?name|employer|organi[sz]ation|current_?company)$/i, isText),
     title: pick(row, /^(title|job_?title|headline|position|current_?title|role)$/i, isText),
     profileUrl: pick(row, /(linkedin|profile)_?(url|link)?$|^url$|^link$/i, isLink),
+    country,
   };
 }
 
 /** What one attempt did, for the admin screen only. */
 export interface LookupAttempt {
   endpointId: string;
-  outcome: "found" | "no_data" | "failed" | "skipped_country" | "cap";
+  outcome: "found" | "no_data" | "failed" | "skipped_country" | "skipped" | "needs_confirmation" | "cap";
   costUsd: number;
   /** English, internal: why it was skipped or what went wrong. */
   note: string;
 }
 
+type Identity = ReturnType<typeof extractIdentity>;
+
 export type AdminLookupOutcome =
-  | { ok: true; endpointId: string; costUsd: number; identity: ReturnType<typeof extractIdentity>; found: boolean; depth: number; hasDeeper: boolean; spentTodayUsd: number; capUsd: number; attempts: LookupAttempt[] }
+  | { ok: true; endpointId: string; costUsd: number; identity: Identity; fields: LookupFields; found: boolean; depth: number; hasDeeper: boolean; spentTodayUsd: number; capUsd: number; attempts: LookupAttempt[] }
   | { ok: false; reason: "bad_input" | "no_endpoint" | "daily_cap" | "no_deeper" | "failed" | "audit_unavailable"; spentTodayUsd: number; capUsd: number; costUsd?: number; hasDeeper?: boolean; attempts?: LookupAttempt[] };
 
 const utcDayStart = (now: Date): string => `${now.toISOString().slice(0, 10)}T00:00:00.000Z`;
@@ -142,13 +197,75 @@ export async function readAdminLookupSpendToday(client: any, now: Date = new Dat
 const MEMORY = { day: new Map<string, number>() };
 export function resetAdminLookupMemoryForTesting(): void { MEMORY.day.clear(); }
 
+type CallFn = (o: TregCallOptions) => Promise<TregCallResult>;
+
+export type AttemptResult =
+  | { ok: true; attempt: LookupAttempt; identity: Identity; fields: LookupFields; found: boolean; spentTodayUsd: number; capUsd: number }
+  | { ok: false; reason: "bad_input" | "unknown_endpoint" | "skipped" | "needs_confirmation" | "daily_cap" | "audit_unavailable" | "refused"; attempt?: LookupAttempt; priceUsd?: number; warningAr?: string; spentTodayUsd: number; capUsd: number };
+
 /**
- * Runs the lookup. Starting at the endpoint `depth`, the candidates that cover the number's country (read from the catalog's own text: «a US phone number» is not tried for +20) are
- * tried one after another, cheapest first, until one FINDS the person; a call that answers «no data» or fails moves on to the next, while the day's cap allows. The attempts and their
- * real cost are returned for the admin screen (this screen is admin-only; a customer never sees them).
+ * ONE attempt: one endpoint of the plan for this input. A skipped endpoint is never called; a paid phone endpoint is called only when `confirmedUsd` is at least its catalog price (the admin
+ * saw the price and the warning); the day's cap, the audit row and the sensitive-access checks all apply. The fields of the answer are merged INTO `previous` (an earlier field is never replaced).
+ */
+export async function runLookupAttempt(input: {
+  client: any; adminId: string; text: string; endpointId: string; confirmedUsd?: number; previous?: LookupFields; catalog?: TregCatalog; call?: CallFn; now?: Date; policyRule?: (id: string) => string | null;
+}): Promise<AttemptResult> {
+  const now = input.now ?? new Date();
+  const capUsd = ADMIN_LOOKUP_DAILY_CAP_USD;
+  const day = now.toISOString().slice(0, 10);
+  const fromDb = await readAdminLookupSpendToday(input.client, now);
+  const spent = Math.max(fromDb ?? 0, MEMORY.day.get(day) ?? 0);
+  const parsed = classifyLookupInput(input.text);
+  if (!parsed) return { ok: false, reason: "bad_input", spentTodayUsd: spent, capUsd };
+  const catalog = input.catalog ?? loadTregCatalog();
+  const plan = lookupPlan(parsed.kind, parsed.value, catalog, input.policyRule ?? policyRuleOf);
+  const entry = plan.find((p) => p.id === input.endpointId);
+  const endpoint = catalog.byId.get(input.endpointId);
+  if (!entry || !endpoint) return { ok: false, reason: "unknown_endpoint", spentTodayUsd: spent, capUsd };
+  const skippedAttempt = (outcome: LookupAttempt["outcome"], note: string): LookupAttempt => ({ endpointId: entry.id, outcome, costUsd: 0, note });
+  if (entry.state === "skipped") return { ok: false, reason: "skipped", attempt: skippedAttempt(/US|limited/.test(entry.skipReasonAr ?? "") ? "skipped_country" : "skipped", entry.skipReasonAr ?? "skipped"), spentTodayUsd: spent, capUsd };
+  if (entry.state === "confirm" && !(Number(input.confirmedUsd) >= entry.usd - 1e-9)) return { ok: false, reason: "needs_confirmation", attempt: skippedAttempt("needs_confirmation", "a paid phone endpoint runs only after the admin confirmed its price"), priceUsd: entry.usd, ...(entry.warningAr ? { warningAr: entry.warningAr } : {}), spentTodayUsd: spent, capUsd };
+  if (spent + entry.usd > capUsd + 1e-9) return { ok: false, reason: "daily_cap", attempt: skippedAttempt("cap", "the day's cap would be passed"), spentTodayUsd: spent, capUsd };
+
+  const call = input.call ?? executeTregCall;
+  const jobId = `${ADMIN_LOOKUP_JOB_PREFIX}${randomUUID().replace(/-/g, "")}`;
+  const budget = createJobCallBudget({ ceilingUsd: Math.max(0, capUsd - spent), spentUsd: 0 });
+  const value = parsed.value;
+  const out = await runSensitiveCall<TregCallResult>({
+    client: input.client, account: { userId: input.adminId, access: { isAdmin: true, verifiedBusiness: false } }, endpointId: entry.id, params: { [entry.paramName]: value }, purpose: ADMIN_LOOKUP_PURPOSE, jobId, now,
+    call: async () => {
+      const r = await call({ endpointId: entry.id, method: endpoint.method === "GET" ? "GET" : "POST", params: { [entry.paramName]: value }, userId: input.adminId, jobId, stepId: "lookup", page: 1,
+        routeMaxCostUsd: Number(Math.max(entry.usd, 0.001).toFixed(6)), timeoutMs: 15_000, endpointScope: endpoint.scope, callBudget: budget, callEstimateUsd: entry.usd, sensitiveAccess: { allowed: true },
+        ...(NO_WATERFALL_ENDPOINTS.includes(entry.id) ? { routeWaterfall: false } : {}) });
+      return { result: r, costUsd: Math.max(0, r.costMicro || 0) / 1_000_000, ok: r.ok };
+    },
+  });
+  if (!out.ok) {
+    if (out.refused === "audit_unavailable") return { ok: false, reason: "audit_unavailable", spentTodayUsd: spent, capUsd };
+    return { ok: false, reason: "refused", attempt: skippedAttempt("failed", `refused: ${String(out.refused)}`), spentTodayUsd: spent, capUsd };
+  }
+  const result = out.result;
+  const costUsd = Math.max(0, result.costMicro || 0) / 1_000_000;
+  MEMORY.day.set(day, (MEMORY.day.get(day) ?? 0) + costUsd);
+  const spentAfter = spent + costUsd;
+  if (!result.ok) {
+    const attempt: LookupAttempt = { endpointId: entry.id, outcome: "failed", costUsd, note: result.budgetStopped ? "stopped by the day's cap" : `HTTP ${result.httpStatus}${result.errorDetails ? `: ${String(result.errorDetails).slice(0, 100)}` : ""}` };
+    return { ok: true, attempt, identity: extractIdentity(undefined), fields: input.previous ?? {}, found: false, spentTodayUsd: spentAfter, capUsd };
+  }
+  const reading = readShape(result.data, hintsOf(endpoint));
+  const identity = extractIdentity(reading.rows[0], entry.id);
+  const found = isUsefulIdentity(identity);
+  const attempt: LookupAttempt = { endpointId: entry.id, outcome: found ? "found" : "no_data", costUsd, note: found ? "" : "the source answered with no data" };
+  return { ok: true, attempt, identity, fields: found ? mergeFields(input.previous, entry.id, identity) : input.previous ?? {}, found, spentTodayUsd: spentAfter, capUsd };
+}
+
+/**
+ * The whole lookup in one call (the route's default when the screen does not drive the attempts one by one). The automatic candidates of the plan are tried IN ORDER, starting at the `depth`-th,
+ * until one gives a USEFUL answer; the paid phone endpoints and the skipped ones are never tried here (they need the admin's confirmation, which only the attempt-by-attempt screen can give).
+ * A «بحث أعمق» passes the fields found so far: the answers that follow are merged into them.
  */
 export async function runAdminLookup(input: {
-  client: any; adminId: string; text: string; depth?: number; catalog?: TregCatalog; call?: (o: TregCallOptions) => Promise<TregCallResult>; now?: Date; policyRule?: (id: string) => string | null;
+  client: any; adminId: string; text: string; depth?: number; previous?: LookupFields; catalog?: TregCatalog; call?: CallFn; now?: Date; policyRule?: (id: string) => string | null;
 }): Promise<AdminLookupOutcome> {
   const now = input.now ?? new Date();
   const capUsd = ADMIN_LOOKUP_DAILY_CAP_USD;
@@ -158,60 +275,46 @@ export async function runAdminLookup(input: {
   const parsed = classifyLookupInput(input.text);
   if (!parsed) return { ok: false, reason: "bad_input", spentTodayUsd: spentBefore, capUsd };
   const catalog = input.catalog ?? loadTregCatalog();
-  const all = lookupCandidates(parsed.kind, catalog, input.policyRule ?? policyRuleOf);
+  const policyRule = input.policyRule ?? policyRuleOf;
+  const all = lookupPlan(parsed.kind, parsed.value, catalog, policyRule);
   if (all.length === 0) return { ok: false, reason: "no_endpoint", spentTodayUsd: spentBefore, capUsd };
   const depth = Math.max(0, Math.floor(input.depth ?? 0));
   if (depth >= all.length) return { ok: false, reason: "no_deeper", spentTodayUsd: spentBefore, capUsd, hasDeeper: false };
-  const country = parsed.kind === "phone" ? phoneCountry(input.text) : null;
   const attempts: LookupAttempt[] = [];
-  let spent = spentBefore;
+  let fields: LookupFields = input.previous ?? {};
   let total = 0;
-  const call = input.call ?? executeTregCall;
-  let last: { chosen: LookupCandidate; identity: ReturnType<typeof extractIdentity>; index: number } | null = null;
-
+  let spent = spentBefore;
+  let lastIndex = depth - 1;
+  let found = false;
+  let lastIdentity: Identity = extractIdentity(undefined);
+  let lastEndpoint = all[depth].id;
+  let sawAnswer = false;
   for (let index = depth; index < all.length; index += 1) {
-    const chosen = all[index];
-    if (!coversCountry(chosen.countries, country)) { attempts.push({ endpointId: chosen.id, outcome: "skipped_country", costUsd: 0, note: `limited to ${chosen.countries?.join("/")} by the catalog; the number is ${country}` }); continue; }
-    if (spent + chosen.estimateUsd > capUsd + 1e-9) { attempts.push({ endpointId: chosen.id, outcome: "cap", costUsd: 0, note: "the day's cap would be passed" }); break; }
-    const endpoint = catalog.byId.get(chosen.id)!;
-    const jobId = `${ADMIN_LOOKUP_JOB_PREFIX}${randomUUID().replace(/-/g, "")}`;
-    const budget = createJobCallBudget({ ceilingUsd: Math.max(0, capUsd - spent), spentUsd: 0 });
-    const out = await runSensitiveCall<TregCallResult>({
-      client: input.client, account: { userId: input.adminId, access: { isAdmin: true, verifiedBusiness: false } }, endpointId: chosen.id, params: { [chosen.paramName]: parsed.value }, purpose: ADMIN_LOOKUP_PURPOSE, jobId, now,
-      call: async () => {
-        const r = await call({ endpointId: chosen.id, method: endpoint.method === "GET" ? "GET" : "POST", params: { [chosen.paramName]: parsed.value }, userId: input.adminId, jobId, stepId: "lookup", page: 1,
-          routeMaxCostUsd: Number(Math.max(chosen.estimateUsd, 0.001).toFixed(6)), timeoutMs: 15_000, endpointScope: endpoint.scope, callBudget: budget, callEstimateUsd: chosen.estimateUsd, sensitiveAccess: { allowed: true } });
-        return { result: r, costUsd: Math.max(0, r.costMicro || 0) / 1_000_000, ok: r.ok };
-      },
-    });
-    if (!out.ok) {
-      if (out.refused === "audit_unavailable") return { ok: false, reason: "audit_unavailable", spentTodayUsd: spent, capUsd, attempts };
-      attempts.push({ endpointId: chosen.id, outcome: "failed", costUsd: 0, note: `refused: ${String(out.refused)}` });
+    const entry = all[index];
+    lastIndex = index;
+    if (entry.state === "skipped") { attempts.push({ endpointId: entry.id, outcome: /خدمة محدودة/.test(entry.skipReasonAr ?? "") ? "skipped_country" : "skipped", costUsd: 0, note: entry.skipReasonAr ?? "skipped" }); continue; }
+    if (entry.state === "confirm") { attempts.push({ endpointId: entry.id, outcome: "needs_confirmation", costUsd: 0, note: "paid: runs only after the admin confirmed its price" }); continue; }
+    const r = await runLookupAttempt({ client: input.client, adminId: input.adminId, text: input.text, endpointId: entry.id, previous: fields, catalog, call: input.call, now, policyRule });
+    if (!r.ok) {
+      if (r.reason === "audit_unavailable") return { ok: false, reason: "audit_unavailable", spentTodayUsd: spent, capUsd, attempts };
+      if (r.attempt) attempts.push(r.attempt);
+      if (r.reason === "daily_cap") break;
       continue;
     }
-    const result = out.result;
-    const costUsd = Math.max(0, result.costMicro || 0) / 1_000_000;
-    spent += costUsd; total += costUsd;
-    MEMORY.day.set(day, (MEMORY.day.get(day) ?? 0) + costUsd);
-    if (!result.ok) {
-      attempts.push({ endpointId: chosen.id, outcome: "failed", costUsd, note: result.budgetStopped ? "stopped by the day's cap" : `HTTP ${result.httpStatus}${result.errorDetails ? `: ${String(result.errorDetails).slice(0, 100)}` : ""}` });
-      if (result.budgetStopped) break;
-      continue;
-    }
-    const reading = readShape(result.data, hintsOf(endpoint));
-    const identity = extractIdentity(reading.rows[0]);
-    const found = Boolean(identity.name || identity.company || identity.title || identity.profileUrl);
-    attempts.push({ endpointId: chosen.id, outcome: found ? "found" : "no_data", costUsd, note: found ? "" : "the source answered with no data" });
-    last = { chosen, identity, index };
-    if (found) break;
+    attempts.push(r.attempt);
+    total += r.attempt.costUsd;
+    spent = r.spentTodayUsd;
+    if (r.attempt.outcome !== "failed") sawAnswer = true;
+    lastEndpoint = entry.id; lastIdentity = r.found ? r.identity : lastIdentity;
+    fields = r.fields;
+    if (r.found) { found = true; break; }
   }
-  const answered = attempts.some((a) => a.outcome === "found" || a.outcome === "no_data");
-  if (!last || !answered) {
+  if (!sawAnswer) {
     const capped = attempts.some((a) => a.outcome === "cap");
     if (capped && !attempts.some((a) => a.outcome === "failed")) return { ok: false, reason: "daily_cap", spentTodayUsd: spent, capUsd, costUsd: total, hasDeeper: false, attempts };
-    if (attempts.every((a) => a.outcome === "skipped_country")) return { ok: false, reason: "no_endpoint", spentTodayUsd: spent, capUsd, attempts };
+    if (attempts.every((a) => a.outcome === "skipped" || a.outcome === "skipped_country" || a.outcome === "needs_confirmation")) return { ok: false, reason: "no_endpoint", spentTodayUsd: spent, capUsd, attempts };
     return { ok: false, reason: attempts.some((a) => a.outcome === "failed") ? "failed" : "no_endpoint", spentTodayUsd: spent, capUsd, costUsd: total, hasDeeper: false, attempts };
   }
-  const found = attempts.some((a) => a.outcome === "found");
-  return { ok: true, endpointId: last.chosen.id, costUsd: total, identity: last.identity, found, depth: last.index, hasDeeper: !found && last.index + 1 < all.length, spentTodayUsd: spent, capUsd, attempts };
+  const hasDeeper = all.slice(lastIndex + 1).some((e) => e.state === "auto");
+  return { ok: true, endpointId: lastEndpoint, costUsd: total, identity: lastIdentity, fields, found: found || Object.keys(fields).length > 0, depth: lastIndex, hasDeeper, spentTodayUsd: spent, capUsd, attempts };
 }

@@ -23,6 +23,7 @@ const nextConfig = {
     "/api/chat/edit-plan": ["./data/treg/treg_catalog_sellable.json", "./data/treg/treg_write_actions.json"],
     "/api/admin/reverse-lookup": ["./data/treg/treg_catalog_sellable.json", "./data/treg/treg_write_actions.json"],
     "/api/admin/planner-selftest": ["./data/treg/treg_catalog_sellable.json", "./data/treg/treg_write_actions.json"],
+    "/api/admin/failures/retry": ["./data/treg/treg_catalog_sellable.json", "./data/treg/treg_write_actions.json"],
   },
   env: {
     NEXT_PUBLIC_GIT_COMMIT: process.env.NEXT_PUBLIC_GIT_COMMIT || "83444cf",

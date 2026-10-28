@@ -216,9 +216,9 @@ describe("customer side: none of this is reachable or importable", () => {
   it("no customer route, page or component names the admin job labels, the job cell, the derived fields or the new wording", () => {
     expect(customer.filter((f) => VOCAB.test(readFileSync(path.join(ROOT, f), "utf8")))).toEqual([]);
   });
-  it("the admin label module is imported only by admin routes, admin components and server modules of the admin logs", () => {
+  it("the admin label module is imported only by admin routes, admin components and server modules of the admin logs and the failures board", () => {
     const importers = walk(path.join(ROOT, "src")).map(rel).filter((f) => /adminJobLabels/.test(readFileSync(path.join(ROOT, f), "utf8")));
-    expect(importers.every((f) => /^src\/(app\/api\/admin\/|app\/admin\/|components\/admin\/|lib\/server\/(adminCallsLog|adminJobLabels|multiProvider\/callLog))/.test(f)), importers.join(", ")).toBe(true);
+    expect(importers.every((f) => /^src\/(app\/api\/admin\/|app\/admin\/|components\/admin\/|lib\/server\/(adminCallsLog|adminJobLabels|failureBoard|multiProvider\/callLog))/.test(f)), importers.join(", ")).toBe(true);
   });
   it("the customer metadata route answers none of the new fields", async () => {
     const { GET } = await import("../src/app/api/chat/metadata/route");

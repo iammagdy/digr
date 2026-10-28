@@ -6,6 +6,7 @@ import { digestFromCatalogExample } from "./digest";
 import { SAMPLE_ROWS_REQUESTED } from "./constants";
 import { ProposePlanSchema } from "./types";
 import { unitCost } from "./pricing";
+import { applyReverseOrder } from "../treg/reverseOrder";
 
 /** The tools the planning model gets. `catalog_search` and `describe_endpoint` are local (zero cost); `sample_call` is a REAL call under the exploration caps; `propose_plan` ends the loop when it validates. */
 export const TOOL_NAMES = ["catalog_search", "describe_endpoint", "sample_call", "propose_plan"] as const;
@@ -88,10 +89,12 @@ export function toolCatalogSearch(input: { platform?: string; words?: string[]; 
     const e = catalog.byId.get(h.id)!;
     return { hit: h, e, perRecord: estimatedCostPerRecordUsd(e, catalog) };
   }).sort((a, b) => (a.perRecord ?? Number.POSITIVE_INFINITY) - (b.perRecord ?? Number.POSITIVE_INFINITY) || a.hit.id.localeCompare(b.hit.id));
+  // The reverse lookups a verified business may use keep the order live evidence gave (src/lib/treg/reverseOrder.ts), the same order as the admin's «بحث عكسي»; every other candidate keeps its cost place.
+  const ordered = applyReverseOrder(listed, (x) => x.hit.id);
   return {
     restrictedTop,
     hidden,
-    hits: listed.map(({ hit: h, e, perRecord }, index) => ({ rank: index + 1, id: h.id, name: clip(h.name, 80), platform: h.platform, capability: h.capability, summary: clip(h.summary, 140), price: costLabel(e, catalog), costPerRecordUsd: perRecord === null ? undefined : Number(perRecord.toFixed(6)), requiredInputs: h.requiredInputs, inputs: e.inputs.slice(0, 10).map((i) => `${i.name}${i.required ? "*" : ""}${i.type ? `:${i.type}` : ""}`), okRate: h.observedOkRate })),
+    hits: ordered.map(({ hit: h, e, perRecord }, index) => ({ rank: index + 1, id: h.id, name: clip(h.name, 80), platform: h.platform, capability: h.capability, summary: clip(h.summary, 140), price: costLabel(e, catalog), costPerRecordUsd: perRecord === null ? undefined : Number(perRecord.toFixed(6)), requiredInputs: h.requiredInputs, inputs: e.inputs.slice(0, 10).map((i) => `${i.name}${i.required ? "*" : ""}${i.type ? `:${i.type}` : ""}`), okRate: h.observedOkRate })),
   };
 }
 
