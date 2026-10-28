@@ -191,8 +191,11 @@ export function assertReplayInvariants(r: ReplayResult, options: { expectDeliver
   const price = repriceStoredPlan(plan);
   expect(price.unitPricePoints).toBe(plan.price.unitPricePoints);
   expect(price.reservePoints).toBe(plan.price.reservePoints);
-  expect(Math.abs(price.unitPricePoints - price.costPerFinalRowUsd * 5500)).toBeLessThan(0.0000011);
-  expect(price.reservePoints).toBe(Math.ceil(Math.round(price.deliveredRows * price.unitPricePoints * 1e6 * 1.15) / 1e6 - 1e-9));
+  // the one pricing rule: the rule's unit is (provider + model cost) per delivered row x 5,500; the job stores the larger of it and the minimum spread over the volume; the reserve is max(minimum, ceil(volume x rule unit x 1.15))
+  const ruleUnit = price.ruleUnitPoints ?? price.unitPricePoints;
+  expect(Math.abs(ruleUnit - price.costPerFinalRowUsd * 5500)).toBeLessThan(0.0000011);
+  expect(price.unitPricePoints).toBeGreaterThanOrEqual(ruleUnit);
+  expect(price.reservePoints).toBe(Math.max(price.minChargePoints ?? 0, Math.ceil(Math.round(price.deliveredRows * ruleUnit * 1e6 * 1.15) / 1e6 - 1e-9)));
   expect(price.reservePoints).toBeLessThanOrEqual(25_000);
   expect(new Set(r.money.calls.map((c) => c.name))).toEqual(new Set(["create_quote_atomic", "accept_quote_atomic", "claim_job_chunk", "complete_chunk", "settle_job_atomic", ...(m.status === "unserved" ? ["release_job_atomic"] : [])]));
   const delivered = Number(m.delivered_units);

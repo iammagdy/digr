@@ -13,8 +13,9 @@ describe("the public estimate uses the quote writer's pricing", () => {
     if (r.status !== "ok") return;
     const shared = computePublicCalculatorQuote(r.slug, 100, 100);
     expect(r.unitPricePoints).toBe(shared.unitPricePoints);
-    expect(r.expectedPoints).toBe(Math.ceil(100 * shared.unitPricePoints));
-    expect(r.reservePoints).toBe(Math.ceil(100 * shared.unitPricePoints * 1.15));
+    // the one pricing rule adds the minimum of 200 points to both (the old lines had no max: Math.ceil(100 * unit) and Math.ceil(100 * unit * 1.15))
+    expect(r.expectedPoints).toBe(Math.max(200, Math.ceil(100 * shared.unitPricePoints)));
+    expect(r.reservePoints).toBe(Math.max(200, Math.ceil(100 * shared.unitPricePoints * 1.15)));
     expect(r.reservePoints).toBeGreaterThanOrEqual(r.expectedPoints);
     expect(r.expectedEgp).toBeCloseTo(r.expectedPoints * 0.1, 2);
   });

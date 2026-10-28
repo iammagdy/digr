@@ -100,12 +100,25 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, error = n
       {v.phase === "question" && v.questionAr ? (
         <div className="flex flex-col gap-2" data-testid="agent-question">
           <p className="m-0 text-[14px] font-semibold leading-[1.9] text-ink">{v.questionAr}</p>
-          <input value={reply} onChange={(e) => onReply(e.target.value)} className="min-h-11 rounded-xl border border-ln2 bg-bg px-3 text-sm text-ink" aria-label="إجابتك" />
+          {v.questionOptionsAr.length > 0 ? (
+            <div className="flex flex-wrap gap-2" role="group" aria-label="إجابات جاهزة" data-testid="agent-question-options">
+              {v.questionOptionsAr.map((o) => <button key={o} type="button" className={BTN_PLAIN} disabled={busy} onClick={() => onAct("answer", o)}>{o}</button>)}
+            </div>
+          ) : null}
+          <input value={reply} onChange={(e) => onReply(e.target.value)} className="min-h-11 rounded-xl border border-ln2 bg-bg px-3 text-sm text-ink" aria-label="أو اكتب إجابتك" />
           <div><button type="button" className={BTN_PRIMARY} disabled={busy || !reply.trim()} onClick={() => onAct("answer", reply)}>أرسل إجابتك</button></div>
         </div>
       ) : null}
 
       {(v.phase === "plan" || v.phase === "running" || v.phase === "done" || v.phase === "partial") && v.summaryAr ? <p className="m-0 text-[14px] font-semibold leading-[1.9] text-ink" data-testid="agent-summary">{v.summaryAr}</p> : null}
+
+      {v.assumptionsAr.length > 0 && v.phase === "plan" ? (
+        <div className="rounded-[12px] bg-sf2 px-3 py-2" data-testid="agent-assumptions">
+          <p className="m-0 text-[12px] font-semibold text-ink">كيف فهمنا طلبك</p>
+          <ul className="m-0 mt-1 list-disc pe-4 text-[13px] leading-[1.9] text-ink2">{v.assumptionsAr.map((a) => <li key={a}>{a}</li>)}</ul>
+          <p className="m-0 mt-1 text-[12px] font-light text-mut">لو فهمنا شيئًا بشكل مختلف عمّا تقصد، اضغط «عدّل الطلب» وغيّره قبل الاعتماد.</p>
+        </div>
+      ) : null}
 
       {v.notesAr.length > 0 && (v.phase === "plan" || v.phase === "running") ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-notes">{v.notesAr.join(" ")}</p> : null}
 

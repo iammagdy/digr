@@ -55,6 +55,8 @@ export function countsLineAr(counts: Record<string, number> | null | undefined):
 const INTERNAL_LABEL_AR: Record<(typeof MISSION_INTERNAL_COUNT_KEYS)[number], string> = {
   mem_phase: "المرحلة (٠ تخطيط، ١ تنفيذ)", mem_start_rss_mb: "ذاكرة العامل عند البدء (م.ب)", mem_peak_rss_mb: "أعلى ذاكرة للعامل (م.ب)", mem_start_tree_mb: "ذاكرة العامل وعملياته عند البدء (م.ب)",
   mem_peak_tree_mb: "أعلى ذاكرة للعامل وعملياته (م.ب)", mem_samples: "عدد القراءات", mem_seconds: "مدة التشغيل بالثواني", mem_stopped: "أوقفه حارس الذاكرة",
+  tok_phase: "المرحلة (٠ تخطيط، ١ تنفيذ)", tok_in: "رموز الإدخال", tok_out: "رموز الإخراج", tok_cache_read: "رموز قراءة الذاكرة المؤقتة", tok_cache_write: "رموز كتابة الذاكرة المؤقتة",
+  tok_review_in: "رموز إدخال المراجعة", tok_review_out: "رموز إخراج المراجعة", tok_review_calls: "طلبات المراجعة", llm_micro_usd: "تكلفة النموذج (بالمليونيم من الدولار)",
 };
 
 /** An event the CUSTOMER never sees: the run's measured memory (its counts carry the `mem_` keys). The admin page shows it. */

@@ -5,6 +5,7 @@ import { latestBeat, workerAlive } from "./heartbeat";
 import { approveMissionOnce } from "./approval";
 import { repriceStoredPlan } from "./lifecycle";
 import { customerPlanView, type PricedPlan } from "./plan";
+import { DEFAULT_MISSION_PRICING_SETTINGS, MISSION_PRICING_SETTING_KEY, missionPricingSettingsProblemAr, normalizeMissionPricingSettings, type MissionPricingSettings } from "../missionPricing";
 
 /**
  * What the admin page «الوكيل» does, on the server, with the service-role client. The page is for ONE account only in Phase A: the test account iam.magdy+1@outlook.com.
@@ -79,14 +80,30 @@ export async function setPlanningModel(client: any, input: { model: unknown; adm
   return { ok: true, model };
 }
 
+/**
+ * The markup and the minimum charge of the pricing rule (missionPricing.ts): saved in agent_settings (key `mission_pricing`) by the admin only. Returns the values before and after so the caller writes the audit row
+ * (who changed what, from what to what). A value out of range is refused; nothing here touches a money table.
+ */
+export async function setMissionPricing(client: any, input: { markup: unknown; minChargePoints: unknown; adminId: string }): Promise<ActionResult<{ before: MissionPricingSettings; after: MissionPricingSettings }>> {
+  const problem = missionPricingSettingsProblemAr({ markup: input.markup, minChargePoints: input.minChargePoints });
+  if (problem) return bad(400, problem);
+  const after = normalizeMissionPricingSettings({ markup: Number(input.markup), min_charge_points: Number(input.minChargePoints) });
+  const current = await client.from(AGENT_SETTINGS_TABLE).select("value").eq("key", MISSION_PRICING_SETTING_KEY).maybeSingle();
+  const before = normalizeMissionPricingSettings(current.data?.value);
+  const { error } = await client.from(AGENT_SETTINGS_TABLE).upsert({ key: MISSION_PRICING_SETTING_KEY, value: { markup: after.markup, min_charge_points: after.minChargePoints }, updated_at: new Date().toISOString(), updated_by: input.adminId }, { onConflict: "key" });
+  if (error) return bad(500, "تعذّر حفظ الإعداد.");
+  return { ok: true, before, after };
+}
+
 const SUMMARY_COLUMNS = "id,request_text,status,question_ar,reserved_points,unit_price_points,delivered_units,charged_points,planning_model,planning_llm_usd,execution_model,execution_llm_usd,planning_treg_usd,execution_treg_usd,created_at,updated_at";
 
 /** The page's first load: the worker's heartbeat (alive or not), the model setting, and the latest missions. */
 export async function loadOverview(client: any, now: number = Date.now()) {
-  const [beats, setting, missions] = await Promise.all([
+  const [beats, setting, missions, pricing] = await Promise.all([
     client.from(AGENT_HEARTBEAT_TABLE).select("worker_id,beat_at,active_missions,model,version,rss_mb,tree_rss_mb").order("beat_at", { ascending: false }).limit(5),
     client.from(AGENT_SETTINGS_TABLE).select("value").eq("key", PLANNING_MODEL_SETTING_KEY).maybeSingle(),
     client.from(MISSION_TABLE).select(SUMMARY_COLUMNS).order("created_at", { ascending: false }).limit(LIST_LIMIT),
+    client.from(AGENT_SETTINGS_TABLE).select("value").eq("key", MISSION_PRICING_SETTING_KEY).maybeSingle(),
   ]);
   const rows = Array.isArray(beats.data) ? beats.data : [];
   const last = latestBeat(rows);
@@ -100,6 +117,7 @@ export async function loadOverview(client: any, now: number = Date.now()) {
     worker: { ...workerAlive(last, now), lastBeatAt: last, workers: rows, memory },
     planningModel: typeof setting.data?.value?.model === "string" ? setting.data.value.model : null,
     allowedModels: AGENT_ALLOWED_MODELS,
+    pricing: pricing.data?.value ? normalizeMissionPricingSettings(pricing.data.value) : { ...DEFAULT_MISSION_PRICING_SETTINGS },
     testAccountEmail: AGENT_TEST_ACCOUNT_EMAIL,
     missions: Array.isArray(missions.data) ? missions.data : [],
   };

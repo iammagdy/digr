@@ -4,7 +4,7 @@ import path from "node:path";
 import { createSdkMcpServer, query, tool } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import type { ModelDriver, RunInput, RunOutput } from "./driver";
-import { chooseLlmCost, type TokenUsage } from "./llmCost";
+import { chooseLlmCost, llmCostFromUsage, type TokenUsage } from "./llmCost";
 import { buildQueryOptions, MCP_SERVER_NAME } from "./sdkOptions";
 import type { ParamSpec, ToolSpec } from "./tools";
 import { acquireSession, clipToolResult, releaseSession, trackRun, untrackRun } from "./sessions";
@@ -72,9 +72,20 @@ export function createSdkDriver(env: Record<string, string | undefined> = proces
           if (message.type === "assistant") {
             turns += 1;
             const u = (message as { message?: { usage?: TokenUsage } }).message?.usage;
-            if (u) { usage.input_tokens! += u.input_tokens ?? 0; usage.output_tokens! += u.output_tokens ?? 0; usage.cache_read_input_tokens! += u.cache_read_input_tokens ?? 0; usage.cache_creation_input_tokens! += u.cache_creation_input_tokens ?? 0; }
+            if (u) {
+              usage.input_tokens! += u.input_tokens ?? 0; usage.output_tokens! += u.output_tokens ?? 0; usage.cache_read_input_tokens! += u.cache_read_input_tokens ?? 0; usage.cache_creation_input_tokens! += u.cache_creation_input_tokens ?? 0;
+              // checkpoint: the tokens and the cost so far, so a run that is killed still leaves its cost on the mission (our own figure from the API's token counts: the SDK's total only arrives with its final result)
+              try { await input.onUsage?.({ usage: { ...usage }, costUsd: llmCostFromUsage(input.model, usage) }); } catch { /* a lost checkpoint never stops the run */ }
+            }
           } else if (message.type === "result") {
             sdkTotal = message.total_cost_usd;
+            // the result's own per-model usage is the token account the SDK itself prices (list prices, an estimate not a bill); it replaces our running sum of assistant messages
+            const mu = (message as { modelUsage?: Record<string, { inputTokens?: number; outputTokens?: number; cacheReadInputTokens?: number; cacheCreationInputTokens?: number }> }).modelUsage;
+            if (mu && typeof mu === "object") {
+              const sum = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
+              for (const m of Object.values(mu)) { sum.input_tokens += m?.inputTokens ?? 0; sum.output_tokens += m?.outputTokens ?? 0; sum.cache_read_input_tokens += m?.cacheReadInputTokens ?? 0; sum.cache_creation_input_tokens += m?.cacheCreationInputTokens ?? 0; }
+              if (sum.input_tokens + sum.output_tokens + sum.cache_read_input_tokens + sum.cache_creation_input_tokens > 0) Object.assign(usage, sum);
+            }
             stop = message.subtype === "success" ? "end" : String(message.subtype);
             if (message.is_error) error = `the model run ended with ${String(message.subtype)}`;
           }
@@ -92,7 +103,7 @@ export function createSdkDriver(env: Record<string, string | undefined> = proces
         try { rmSync(cwd, { recursive: true, force: true }); } catch { /* a temp folder */ }
         releaseSession();
       }
-      return { llmCostUsd: chooseLlmCost(sdkTotal, input.model, usage), turns, stop, ...(error ? { error } : {}) };
+      return { llmCostUsd: chooseLlmCost(sdkTotal, input.model, usage), turns, usage: { ...usage }, stop, ...(error ? { error } : {}) };
     },
   };
 }

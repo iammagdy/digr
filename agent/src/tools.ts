@@ -1,4 +1,6 @@
-import { AGENT_COLLECT_MAX_PAGES, AGENT_INLINE_ROWS_MAX, SANDBOX_INLINE_RESULT_CHARS } from "../../src/lib/agentMission/constants";
+import { AGENT_COLLECT_MAX_PAGES, AGENT_EXCLUDED_ROWS_KEPT, AGENT_INLINE_ROWS_MAX, SANDBOX_INLINE_RESULT_CHARS } from "../../src/lib/agentMission/constants";
+import { classifyRow, normalizeText, type RelevanceReason } from "../../src/lib/agentMission/relevance";
+import type { MissionPricingSettings } from "../../src/lib/missionPricing";
 import { CONTACT_KINDS, isContactSource, verifyContactValue } from "../../src/lib/agentMission/contacts";
 import { describeAgentSource, isAgentSourceId, searchAgentSources, SESSION_RESTRICTED_SOURCES } from "../../src/lib/agentMission/sources";
 import { validateAndPricePlan, type PricedPlan, type RecordedCall } from "../../src/lib/agentMission/plan";
@@ -11,6 +13,7 @@ import type { Gateway } from "./gateway";
 import { RAW_PATH } from "./gateway";
 import type { WebGateway } from "./webGateway";
 import { runInSandbox, type SandboxResult } from "./sandbox";
+import type { Reviewer } from "./review";
 import type { AgentStore, CallPhase, MissionRecord } from "./types";
 
 /**
@@ -55,11 +58,31 @@ export interface ToolContext {
   access: AccountAccess;
   state: RunState;
   sandbox?: (code: string, inputs: Record<string, unknown>) => Promise<SandboxResult>;
+  /** The model review of uncertain rows (execution phase), within the review budget; absent: uncertain rows are not delivered. */
+  review?: Reviewer;
+  /** The markup and the minimum charge in force when the plan is priced. */
+  pricingSettings?: MissionPricingSettings;
 }
 
 const FILE_ID = /^(call|out)_\d{4,6}$/;
+/** The phrases of a summary that admit the rows were not filtered (normalised Arabic: no diacritics, ta marbuta as ha). */
+const UNFILTERED_ADMISSION = {
+  test: (text: string): boolean => {
+    const ar = "[\\u0621-\\u064A]";
+    const patterns = [
+      new RegExp(`(?:لم|لا)\\s+[تي]?(?:صف|فلتر)(?:ي|ت|ا|وا)?(?!${ar})`),
+      /(?:لم|لا)\s+(?:تتم|يتم|تجر|يجر)\s+(?:ال)?(?:تصفيه|فلتره)/,
+      new RegExp(`غير\\s+م?(?:صف|فلتر)(?:ي|ه|ات|اه|ا)?(?!${ar})`),
+      /(?:بدون|دون)\s+(?:ال)?(?:تصفيه|فلتره|فلتر)/,
+      /(?:قد\s+)?(?:تشمل|تتضمن|تحتوي|تضم)\s+(?:علي\s+)?(?:بعض\s+)?(?:ردود|اسماء\s+مشابهه|اشخاص\s+اخر)/,
+    ];
+    return patterns.some((r) => r.test(text));
+  },
+};
 const pathOfFile = (id: string) => (id.startsWith("call_") ? `raw/${id}.json` : `out/${id}.json`);
 const ROWS_PATH = (stageKey: string) => `rows/${stageKey}.json`;
+/** The rows of a stage that did not match the request (never delivered, never charged): kept with the reason for the review sheet of the files. */
+export const EXCLUDED_PATH = (stageKey: string) => `excluded/${stageKey}.json`;
 const outId = (n: number) => `out_${String(n).padStart(4, "0")}`;
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const err = (error: string, extra: Record<string, unknown> = {}) => ({ ok: false, error, ...extra });
@@ -288,13 +311,24 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       name: "ask_question",
       description: "When something ESSENTIAL to the mission is missing and cannot be found in the catalog or the data, ask the customer ONE question in Arabic and stop. Use it at most once, and only in the planning phase.",
       phases: ["planning"],
-      params: { question_ar: { type: "string", description: "One Arabic question" } },
+      params: {
+        question_ar: { type: "string", description: "One Arabic question" },
+        options_ar: { type: "string[]", description: "2 to 4 READY ANSWERS the customer taps (short Arabic phrases, each one a complete answer, e.g. «لاعب كرة القدم»). Required: a question without options is refused.", optional: true },
+      },
       handler: async (a) => {
         if (state.question !== null) return err("you already asked your one question");
         const checked = checkCustomerText(a.question_ar, { maxChars: 300 });
         if (checked.issues.length) return err(`rephrase the question: ${checked.issues.join("; ")}`);
+        const options: string[] = [];
+        for (const o of Array.isArray(a.options_ar) ? a.options_ar : []) {
+          const c = checkCustomerText(o, { maxChars: 60 });
+          if (c.issues.length) return err(`options_ar: ${c.issues.join("; ")}`);
+          if (!options.includes(c.text)) options.push(c.text);
+        }
+        if (options.length < 2 || options.length > 4) return err("ask the question with 2 to 4 ready answers in options_ar (the customer taps one); if the request has one clearly dominant meaning, do not ask: decide, and state the assumption in assumptions_ar of the plan");
         state.question = checked.text;
         state.terminal = true;
+        await store.updateMission(mission.id, { plan_public: { question_options: options } as any });
         await store.addEvent(mission.id, { kind: "question", message_ar: checked.text });
         return { ok: true, note: "the question was shown to the customer; stop now" };
       },
@@ -305,27 +339,32 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       phases: ["planning"],
       params: {
         summary_ar: { type: "string", description: "ONE Arabic sentence: what the customer will get (the customer card shows only this sentence)" },
+        assumptions_ar: { type: "string[]", description: "Up to 6 short Arabic lines: every choice you made where the request left it open (which meaning of a name, the language, newest first, how many replies...), e.g. «محمد صلاح لاعب كرة القدم، تغريدات عربية، الأحدث أولًا». The customer reads them on the plan card and may change them before approving.", optional: true },
         contacts_note_ar: { type: "string", description: "Only when the customer asked for work e-mails or phones and NO contact stage is in the plan: ONE Arabic sentence saying honestly why", optional: true },
-        stages: { type: "array", description: "[{key, title_ar, endpoint_id, expected_rows, parent_key|null, per_parent_rows (if parent), deliver, columns:[{key,title_ar}], sample_rows:[{...}], measured_by:[call ids], how_ar?}]" },
+        stages: { type: "array", description: "[{key, title_ar, endpoint_id, expected_rows, parent_key|null, per_parent_rows (if parent), deliver, columns:[{key,title_ar}], sample_rows:[{...}], measured_by:[call ids], how_ar?, relevance?:{subject_ar, terms:[...], context_terms?:[...], exclude_terms?:[...], text_columns:[column keys], min_own_words?}, yield_from?: out id}]. A stage whose rows were FOUND BY A TEXT SEARCH (a person, entity or topic) REQUIRES relevance and yield_from." },
       },
       handler: async (a) => {
         const stagesIn: any[] = Array.isArray(a.stages) ? a.stages : [];
         const ids = new Set<string>();
-        for (const s of stagesIn) if (s && Array.isArray(s.measured_by)) for (const id of s.measured_by) ids.add(String(id));
+        for (const s of stagesIn) {
+          if (s && Array.isArray(s.measured_by)) for (const id of s.measured_by) ids.add(String(id));
+          if (s && typeof s.yield_from === "string") ids.add(s.yield_from);
+        }
         const calls = await store.listCalls(mission.id);
         const evidence = new Map<string, string | null>();
         for (const id of ids) evidence.set(id, FILE_ID.test(id) ? await store.getFile(mission.id, pathOfFile(id)) : null);
         const lookup = {
           call: (id: string): RecordedCall | null => {
             const row = calls.find((c) => c.id === `${mission.id}:${id}`);
-            return row ? { id, endpointId: row.endpoint_id, ok: row.status === "ok", costUsd: Number(row.cost_usd) || 0, rows: Number(row.rows_returned) || 0, durationMs: Number(row.duration_ms) || undefined } : null;
+            return row ? { id, endpointId: row.endpoint_id, ok: row.status === "ok", costUsd: Number(row.cost_usd) || 0, rows: Number(row.rows_returned) || 0, durationMs: Number(row.duration_ms) || undefined, params: row.params_digest } : null;
           },
           evidenceText: (id: string) => evidence.get(id) ?? null,
           endpointAllowed: (endpointId: string) => (Boolean(ctx.web) && isAgentSourceId(endpointId)) || (isSellable(endpointId, ctx.catalog) && !blockedEndpointReason(endpointId) && policyVerdict(endpointId, ctx.access).allowed),
           requestText: `${mission.request_text} ${mission.answer_text ?? ""}`,
           isContactSource,
+          pricingSettings: ctx.pricingSettings,
         };
-        const checked = validateAndPricePlan({ summary_ar: a.summary_ar, stages: stagesIn, ...(a.contacts_note_ar !== undefined ? { contacts_note_ar: a.contacts_note_ar } : {}) }, lookup);
+        const checked = validateAndPricePlan({ summary_ar: a.summary_ar, stages: stagesIn, ...(a.contacts_note_ar !== undefined ? { contacts_note_ar: a.contacts_note_ar } : {}), ...(a.assumptions_ar !== undefined ? { assumptions_ar: a.assumptions_ar } : {}) }, lookup);
         if (!checked.ok) return err("the plan was not accepted; fix these and propose again", { issues: checked.issues.slice(0, 12) });
         state.proposedPlan = checked.plan;
         state.terminal = true;
@@ -374,11 +413,20 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         const contactColumns = stage.columns.filter((c) => c.kind !== undefined && CONTACT_KINDS.includes(c.kind));
         const contactStage = isContactSource(stage.endpoint_id);
         const tally = { saved_now: 0, duplicates_ignored: 0, rejected_missing_id: 0, rejected_unknown_parent: 0, rejected_over_limit: 0, rejected_not_object: 0, rejected_no_verified_contact: 0, contact_values_left_empty: 0 };
+        // pass 1: the structure of every row (id, parent, columns, contact values)
+        const candidates: Array<Record<string, unknown>> = [];
+        const seenNow = new Set<string>();
+        const spec = stage.relevance ?? null;
+        const excludedRaw = spec ? await store.getFile(mission.id, EXCLUDED_PATH(stage.key)) : null;
+        const excluded: Array<{ id: string; reason: RelevanceReason; row: Record<string, unknown> }> = excludedRaw ? JSON.parse(excludedRaw) : [];
+        const excludedIds = new Set(excluded.map((e) => e.id));
         for (const raw of incoming) {
           if (!isObject(raw)) { tally.rejected_not_object += 1; continue; }
           const id = String(raw.id ?? "").trim();
           if (!id) { tally.rejected_missing_id += 1; continue; }
-          if (have.has(id)) { tally.duplicates_ignored += 1; continue; }
+          // a row already saved, already left out, or twice in this batch: ignored (an excluded row is never reviewed or counted again)
+          if (have.has(id) || excludedIds.has(id) || seenNow.has(id)) { tally.duplicates_ignored += 1; continue; }
+          seenNow.add(id);
           let parentId: string | null = null;
           if (parentIds) {
             parentId = String(raw.parent_id ?? "").trim();
@@ -394,15 +442,58 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             if (verified) verifiedAny = true; else if (original) tally.contact_values_left_empty += 1;
           }
           if (contactStage && contactColumns.length > 0 && !verifiedAny) { tally.rejected_no_verified_contact += 1; continue; }
+          candidates.push(row);
+        }
+
+        // pass 2: RELEVANCE. Only rows that are about what the customer asked are saved (so only they are delivered and charged). The cheap deterministic check decides most rows; the uncertain ones go to the model
+        // review within the review budget, and an uncertain row that is not reviewed is NOT delivered. Rows left out are kept (never charged) for the review sheet.
+        const accepted = new Set<string>();
+        const left: Record<string, number> = {};
+        let reviewedNow = 0;
+        let budgetReached = false;
+        if (spec) {
+          const verdicts = candidates.map((row) => ({ row, v: classifyRow(spec, row) }));
+          const matches = verdicts.filter((x) => x.v.verdict === "match").length;
+          const room = Math.max(0, stage.planned_rows - existing.length);
+          const uncertain = verdicts.filter((x) => x.v.verdict === "review");
+          let verdictOf = new Map<string, boolean>();
+          if (uncertain.length > 0 && spec.review !== false && ctx.review && matches < room) {
+            // no more review than the room left can use (a row beyond the approved volume is never needed)
+            const wanted = uncertain.slice(0, (room - matches) * 3 + 25);
+            verdictOf = await ctx.review.review({ subject: spec.subject_ar, rows: wanted.map((x) => ({ id: String(x.row.id), text: spec.text_columns.map((k) => String(x.row[k] ?? "")).join(" ") })) });
+            reviewedNow = verdictOf.size;
+            budgetReached = (await ctx.review.state()).budgetReached;
+          }
+          for (const { row, v } of verdicts) {
+            const id = String(row.id);
+            let reason: RelevanceReason | null = null;
+            if (v.verdict === "match") accepted.add(id);
+            else if (v.verdict === "exclude") reason = v.reason;
+            else if (verdictOf.get(id) === true) accepted.add(id);
+            else reason = verdictOf.has(id) ? "review_no" : spec.review === false ? "uncertain" : "not_reviewed";
+            if (reason) { left[reason] = (left[reason] ?? 0) + 1; if (excluded.length < AGENT_EXCLUDED_ROWS_KEPT) excluded.push({ id, reason, row }); else excludedIds.add(id); excludedIds.add(id); }
+          }
+        } else for (const row of candidates) accepted.add(String(row.id));
+        for (const row of candidates) {
+          const id = String(row.id);
+          if (!accepted.has(id)) continue;
           if (existing.length >= stage.planned_rows) { tally.rejected_over_limit += 1; continue; }
           existing.push(row);
           have.add(id);
           tally.saved_now += 1;
         }
         await store.putFile(mission.id, ROWS_PATH(stage.key), JSON.stringify(existing), "application/json");
+        if (spec && Object.keys(left).length > 0) await store.putFile(mission.id, EXCLUDED_PATH(stage.key), JSON.stringify(excluded), "application/json");
         // the live panel ticks from this: the numbers are in `counts` (never in the text), written by code, not by the model
         if (tally.saved_now > 0) await store.addEvent(mission.id, { kind: "progress", message_ar: `يحفظ الوكيل الصفوف التي جمعها لمرحلة «${stage.title_ar}»`, counts: { stage: plan.stages.indexOf(stage) + 1, saved: existing.length, planned: stage.planned_rows } });
-        return { ok: true, stage: stage.key, ...tally, total_in_stage: existing.length, stage_limit: stage.planned_rows };
+        return {
+          ok: true, stage: stage.key, ...tally, total_in_stage: existing.length, stage_limit: stage.planned_rows,
+          ...(spec ? {
+            left_out_not_matching: left, reviewed_by_model: reviewedNow, review_budget_reached: budgetReached,
+            still_needed: Math.max(0, stage.planned_rows - existing.length),
+            note: existing.length < stage.planned_rows ? "only rows that MATCH the request are saved, delivered and charged; still_needed matching rows are missing: collect further pages (the source may have more) until still_needed is 0, the source ends, or the budget refuses; then finish and say honestly how many matched" : "the stage has all the matching rows it was sold",
+          } : {}),
+        };
       },
     },
     {
@@ -419,6 +510,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         if (ctx.phase === "planning" && outcome !== "cannot_serve") return err("while planning, finish only to say the mission cannot be served; otherwise call propose_plan");
         const checked = checkCustomerText(a.summary_ar, { maxChars: 800 });
         if (checked.issues.length) return err(`rephrase the summary: ${checked.issues.join("; ")}`);
+        // rows the agent itself calls unfiltered are never delivered: it must filter them (the stage's relevance rule does it in save_rows) or say honestly that it cannot serve
+        if (outcome === "delivered" && UNFILTERED_ADMISSION.test(normalizeText(checked.text))) return err("your summary says the rows are NOT filtered or may include other people / replies. Rows that do not match the request are never delivered or charged: save only rows that match (the stage's relevance rule filters them in save_rows) and rewrite the summary, or finish with outcome \"cannot_serve\"");
         state.finish = { outcome, summary_ar: checked.text };
         state.terminal = true;
         return { ok: true, note: "recorded; stop now" };

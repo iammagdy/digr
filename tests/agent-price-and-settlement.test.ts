@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { unitPricePointsFromCost } from "../src/lib/recordPricing";
 import { AGENT_JOB_POINTS_CAP, AGENT_PLANNING_BUDGET_USD } from "../src/lib/agentMission/constants";
-import { chargeForDelivered, executionBudgetUsd, measuredCostPerRowUsd, priceMissionByCode, reservePointsFor, settlementCharge } from "../src/lib/agentMission/price";
+import { chargeForDelivered, executionBudgetUsd, legacyPriceMissionByCode, measuredCostPerRowUsd, priceMissionByCode, reservePointsFor, settlementCharge } from "../src/lib/agentMission/price";
+import { AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD, AGENT_MODEL_PLANNING_ESTIMATE_USD } from "../src/lib/agentMission/constants";
 import { approveMission, repriceStoredPlan, settleMission } from "../src/lib/agentMission/lifecycle";
 import { validateAndPricePlan, type PlanLookup } from "../src/lib/agentMission/plan";
 import { fakeMoneyClient } from "./helpers/agentMoney";
@@ -9,7 +10,8 @@ import { pricedTwoStagePlan } from "./helpers/agentPlan";
 
 describe("the price of a mission is computed by code", () => {
   it("unit price = cost per final row x 5,500; reserve = ceil(volume x unit x 1.15); charge = ceil(delivered x unit)", () => {
-    const p = priceMissionByCode([{ rows: 100, costPerRowUsd: 0.0002, deliver: true }]);
+    // the formula of plans stored before the one pricing rule (provider cost alone): kept as legacyPriceMissionByCode, so a plan the customer was shown is approved at the price it showed
+    const p = legacyPriceMissionByCode([{ rows: 100, costPerRowUsd: 0.0002, deliver: true }]);
     expect(p.costPerFinalRowUsd).toBeCloseTo(0.0002, 10);
     expect(p.unitPricePoints).toBe(unitPricePointsFromCost(0.0002)); // 1.1 points
     expect(p.unitPricePoints).toBeCloseTo(1.1, 6);
@@ -20,7 +22,7 @@ describe("the price of a mission is computed by code", () => {
 
   it("a two-stage mission spreads the whole cost over the delivered rows only", () => {
     // 20 posts at 0.005 each (not delivered), 200 comments at 0.0003 each (delivered)
-    const p = priceMissionByCode([{ rows: 20, costPerRowUsd: 0.005, deliver: false }, { rows: 200, costPerRowUsd: 0.0003, deliver: true }]);
+    const p = legacyPriceMissionByCode([{ rows: 20, costPerRowUsd: 0.005, deliver: false }, { rows: 200, costPerRowUsd: 0.0003, deliver: true }]);
     expect(p.totalCostUsd).toBeCloseTo(20 * 0.005 + 200 * 0.0003, 10);
     expect(p.deliveredRows).toBe(200);
     expect(p.costPerFinalRowUsd).toBeCloseTo((0.1 + 0.06) / 200, 10);
@@ -162,7 +164,8 @@ describe("a plan is priced from recorded calls and the model's own numbers are i
     if (!checked.ok) return;
     // cost per row is the MEASURED 0.05 / 10 rows = 0.005, so the unit price is 27.5 points, whatever the model wrote
     expect(checked.plan.stages[0].measured_cost_per_row_usd).toBeCloseTo(0.005, 10);
-    expect(checked.plan.price.unitPricePoints).toBeCloseTo(27.5, 6);
+    // (the old line said 27.5: provider cost alone) the one rule adds the estimated model cost, one planning and one execution stage, over the 20 delivered rows
+    expect(checked.plan.price.unitPricePoints).toBeCloseTo(((20 * 0.005 + AGENT_MODEL_PLANNING_ESTIMATE_USD + AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD) / 20) * 5500, 6);
     expect(plan.price.unitPricePoints).toBeGreaterThan(0);
   });
 

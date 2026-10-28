@@ -9,6 +9,7 @@ import { AGENT_CONCURRENCY_ENV, AGENT_MODEL_DEFAULT } from "../../src/lib/agentM
 import { parseConcurrency } from "../../src/lib/agentMission/concurrency";
 import { resolveModels } from "./modelConfig";
 import { runMissionSafely, type RunnerDeps } from "./runMission";
+import { anthropicReviewCall } from "./review";
 import { createSdkDriver } from "./sdkRuntime";
 import { abortActiveRuns } from "./sessions";
 import { createSupabaseStore } from "./supabaseStore";
@@ -47,6 +48,8 @@ async function main() {
   const deps = (): RunnerDeps => ({
     store, client, catalog, driver, recorder, models, token: process.env.TREG_TOKEN,
     resolveAccess: (userId) => resolveAccountAccess(client, userId),
+    // the review of uncertain rows: one small request per batch to the model API (the SDK's native process is never started for it)
+    reviewCall: anthropicReviewCall(process.env.ANTHROPIC_API_KEY!),
     // the customer's notice when a mission ends: an in-site notification and an e-mail through the existing send-email function
     notify: (n) => sendMissionNotice(client, n),
     // the Firecrawl and Context.dev keys come from the SAME encrypted provider key store the website uses (needs PROVIDER_KEYS_ENCRYPTION_KEY, the same value as the website's); when the store gives no key the site's

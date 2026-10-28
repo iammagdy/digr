@@ -334,7 +334,8 @@ describe("audit phase 2/3: the home page price example is computed by the shared
   });
   it("the companies item agrees with the pricing page's unit price", () => {
     const unit = buildPriceRows().find((row) => row.id === "companies")!.unitPricePoints;
-    expect(homePriceStrip()[0].points).toBe(Math.ceil(5 * unit));
+    // (the old line had no minimum) the one pricing rule: a mission is never charged less than 200 points
+    expect(homePriceStrip()[0].points).toBe(Math.max(200, Math.ceil(5 * unit)));
   });
   it("the strip is rendered on the home page from the shared function, not typed by hand", () => {
     expect(src("src/app/page.tsx")).toContain("<PriceStrip />");

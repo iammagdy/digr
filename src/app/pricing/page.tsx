@@ -2,6 +2,7 @@ import { pointsAr } from "@/lib/pointsFormat";
 import Link from "next/link";
 import CapacityCalculator from "@/components/pricing/CapacityCalculator";
 import { toArabicDigits } from "@/lib/arabicDigits";
+import { minimumLineAr } from "@/lib/missionPricing";
 import { CAPACITY_AMOUNTS_EGP, PEOPLE_PRICE_POINTS, PRICING_FAQ_AR, buildPriceRows, capacityForAmount, capacityLineAr, peoplePerRequestLineAr, pointsForAmountEgp } from "@/lib/pricingPage";
 import { unitPriceLabelAr } from "@/lib/pointsFormat";
 
@@ -18,7 +19,7 @@ export default function PricingPage() {
           <div>
             <Link href="/" className="text-sm text-mut no-underline hover:text-ink">ديجر — الصفحة الرئيسية</Link>
             <h1 className="mb-0 mt-2 font-display text-[40px] font-medium leading-[1.2] text-ink">تدفع على ما يصلك فعلًا</h1>
-            <p className="mb-0 mt-3 max-w-[620px] text-[15px] font-light leading-[2] text-ink2">رصيدك بالنقاط، ونقطة واحدة تساوي ٠٫١٠ ج.م. لا يُخصم شيء قبل موافقتك على الخطة، ولا يُخصم إلا مقابل السجلات المطابقة التي وصلتك.</p>
+            <p className="mb-0 mt-3 max-w-[620px] text-[15px] font-light leading-[2] text-ink2">رصيدك بالنقاط، ونقطة واحدة تساوي ٠٫١٠ ج.م. لا يُخصم شيء قبل موافقتك على الخطة، ولا يُخصم إلا مقابل السجلات المطابقة التي وصلتك. {minimumLineAr()}</p>
           </div>
           <Link href="/register" className="inline-flex min-h-11 items-center rounded-full bg-ac px-5 text-sm text-onac no-underline">ابدأ بحسابك المجاني</Link>
         </header>

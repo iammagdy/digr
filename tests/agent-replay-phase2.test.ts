@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { aboutWords, firstOutputId } from "./helpers/agentRelevance";
 import { assertReplayInvariants, pagedAnswers, readWorkbook, replay } from "./helpers/agentReplay";
 import { callIds, companiesPage, employeesPage, lastOutputId, planningFlow, tregResult, ttCommentsPage, xPage, type Results } from "./helpers/agentFakeWorld";
 import { emailsOf, fakeContextDev, igFeed, linksOf, mapsPlace, mapsReviews, phonesOf, ttFeed } from "./helpers/fakeContextDev";
@@ -238,7 +239,7 @@ describe("a 300-tweet mission paged by ONE tool call", () => {
         sampleCode: "return inputs.call_0001.output.data.items.slice(0, 3).map(t => ({ id: t.id, text: t.text, url: t.url, author: t.author }))",
         plan: (res: Results) => ({
           summary_ar: "ستحصل على ٣٠٠ تغريدة عن محمد صلاح بعد انتقاله لتركيا مع نص كل تغريدة ورابطها.",
-          stages: [{ key: "tweets", title_ar: "التغريدات", endpoint_id: ENDPOINT, expected_rows: 300, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "نص التغريدة" }, { key: "url", title_ar: "رابط التغريدة" }, { key: "author", title_ar: "الحساب" }], sample_rows: lastRows(res), measured_by: [callIds(res)[0]] }],
+          stages: [{ key: "tweets", title_ar: "التغريدات", endpoint_id: ENDPOINT, expected_rows: 300, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "نص التغريدة" }, { key: "url", title_ar: "رابط التغريدة" }, { key: "author", title_ar: "الحساب" }], sample_rows: lastRows(res), measured_by: [callIds(res)[0]], relevance: aboutWords(["محمد صلاح"]), yield_from: firstOutputId(res) }],
         }),
       }),
       execution: () => [
@@ -252,7 +253,7 @@ describe("a 300-tweet mission paged by ONE tool call", () => {
     assertReplayInvariants(r, { expectDelivered: 300 });
     expect(r.executionDriver.results.map((x) => x.tool)).toEqual(["collect_pages", "run_code", "save_rows", "finish"]);
     expect(r.executionDriver.results[0].result).toMatchObject({ ok: true, pages: 15, unique_rows: 300, stopped_because: "target_reached" });
-    expect(r.mission.charged_points).toBe(62);
+    expect(r.mission.charged_points).toBe(200); // (was 62: provider cost alone) the one pricing rule: 300 tweets cost less than the 200-point minimum
     // the panel got the paging progress and the save
     expect(r.store.events.filter((e) => e.counts?.pages).length).toBe(15);
     expect(r.finalView.steps.map((s) => s.state)).toEqual(["done", "done"]);

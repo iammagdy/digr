@@ -137,7 +137,8 @@ describe("one job's size comes from ONE function, the quote writer's own rule", 
     const small = await writerXPosts();
     expect(small.targetVolumeMax).toBe(500);
     expect(small.quotedPoints).toBe(68);
-    expect(estimateMission({ kind: "posts", platform: "x", volume: 500 })).toMatchObject({ maxVolumeInOneJob: 4453, fitsInOneJob: true, reservePoints: 68 });
+    // (the old line said reservePoints: 68, the writer's own figure) the public estimate applies the one pricing rule's minimum of 200 points on top of the same unit price
+    expect(estimateMission({ kind: "posts", platform: "x", volume: 500 })).toMatchObject({ maxVolumeInOneJob: 4453, fitsInOneJob: true, reservePoints: Math.max(200, small.quotedPoints) });
     const large = await writerXPosts("٤٠٠٠٠");
     expect(large.targetVolumeMax).toBe(4453);
     expect(large.quotedPoints).toBe(600);

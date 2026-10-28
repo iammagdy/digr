@@ -3,11 +3,13 @@ import { describe, expect, it, vi } from "vitest";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { approveMission, repriceStoredPlan } from "../src/lib/agentMission/lifecycle";
 import { executionBudgetUsd } from "../src/lib/agentMission/price";
+import { AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD, AGENT_MODEL_PLANNING_ESTIMATE_USD } from "../src/lib/agentMission/constants";
 import { createFakeDriver, type FakeStep } from "../agent/src/fakeDriver";
 import { createMemoryStore, newMission } from "../agent/src/memoryStore";
 import { runExecution, runPlanning, type RunnerDeps } from "../agent/src/runMission";
 import { COMMENTS_ENDPOINT, NOT_ADMIN, POSTS_ENDPOINT, USER_ID, commentsPage, fakeRecorder, postsPage, tregResult } from "./helpers/agentHarness";
 import { fakeMoneyClient } from "./helpers/agentMoney";
+import { aboutWords, firstOutputId } from "./helpers/agentRelevance";
 import type { TregCallOptions, TregCallResult } from "../src/functions/shared/tregClient";
 
 // zero real calls: a real network call from anywhere in these tests is a failure
@@ -35,7 +37,7 @@ const planningScript = (overrides: { stages?: (r: any[]) => unknown[] } = {}): F
   { tool: "propose_plan", args: (r) => ({
     summary_ar: "ستحصل على المنشورات ثم تعليقات كل منشور في ورقتين مرتبطتين بمعرّف المنشور.",
     stages: overrides.stages ? overrides.stages(r) : [
-      { key: "posts", title_ar: "المنشورات", endpoint_id: POSTS_ENDPOINT, expected_rows: 20, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "النص" }, { key: "url", title_ar: "الرابط" }], sample_rows: [{ id: "9000", text: "post 0", url: "https://x.example/p/9000" }], measured_by: [idOf(r, 0)] },
+      { key: "posts", title_ar: "المنشورات", endpoint_id: POSTS_ENDPOINT, expected_rows: 20, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "النص" }, { key: "url", title_ar: "الرابط" }], sample_rows: [{ id: "9000", text: "post 0", url: "https://x.example/p/9000" }], measured_by: [idOf(r, 0)], relevance: aboutWords(["post"]), yield_from: firstOutputId(r) },
       { key: "comments", title_ar: "التعليقات", endpoint_id: COMMENTS_ENDPOINT, expected_rows: 200, parent_key: "posts", per_parent_rows: 12, deliver: true, columns: [{ key: "text", title_ar: "النص" }], sample_rows: [{ id: "9000-c0", text: "comment 0" }], measured_by: [idOf(r, 1)] },
     ],
   }) },
@@ -61,7 +63,8 @@ describe("PLANNING with a fake model transcript", () => {
     expect(plan.stages[1].measured_cost_per_row_usd).toBeCloseTo(0.00012, 9);
     expect(plan.price.totalCostUsd).toBeCloseTo(20 * 0.005 + 200 * 0.00012, 9);
     expect(plan.price.deliveredRows).toBe(220);
-    expect(plan.price.unitPricePoints).toBeCloseTo(((20 * 0.005 + 200 * 0.00012) / 220) * 5500, 4);
+    // the one pricing rule: provider cost PLUS the estimated model cost (one planning, one execution per stage) per delivered row, x 5,500 (the old line was provider cost alone: ((20 * 0.005 + 200 * 0.00012) / 220) * 5500)
+    expect(plan.price.unitPricePoints).toBeCloseTo(((20 * 0.005 + 200 * 0.00012 + AGENT_MODEL_PLANNING_ESTIMATE_USD + 2 * AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD) / 220) * 5500, 4);
     expect(m.reserved_points).toBe(plan.price.reservePoints);
     expect(m.unit_price_points).toBe(plan.price.unitPricePoints);
     // what the model was told after propose_plan carries no price
@@ -94,7 +97,7 @@ describe("PLANNING with a fake model transcript", () => {
   it("a plan with an invented sample id is rejected with the exact issue and no plan is stored", async () => {
     const t = setup(planningResponses());
     t.store.missions.set("msn_p3", newMission({ id: "msn_p3", user_id: USER_ID, status: "planning" }));
-    const bad = planningScript({ stages: (r) => [{ key: "posts", title_ar: "المنشورات", endpoint_id: POSTS_ENDPOINT, expected_rows: 20, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "النص" }], sample_rows: [{ id: "424242", text: "x" }], measured_by: [idOf(r, 0)] }] });
+    const bad = planningScript({ stages: (r) => [{ key: "posts", title_ar: "المنشورات", endpoint_id: POSTS_ENDPOINT, expected_rows: 20, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "النص" }], sample_rows: [{ id: "424242", text: "x" }], measured_by: [idOf(r, 0)], relevance: aboutWords(["post"]), yield_from: firstOutputId(r) }] });
     const driver = createFakeDriver(bad);
     await runPlanning(t.deps(driver), t.store.missions.get("msn_p3")!);
     const last = driver.results[driver.results.length - 1].result;
@@ -108,8 +111,8 @@ describe("PLANNING with a fake model transcript", () => {
     const t = setup([]);
     t.store.missions.set("msn_q", newMission({ id: "msn_q", user_id: USER_ID, status: "planning", request_text: "أريد تعليقات" }));
     const driver = createFakeDriver([
-      { tool: "ask_question", args: { question_ar: "أي منشور أو حساب تقصد؟" } },
-      { tool: "ask_question", args: { question_ar: "سؤال ثانٍ؟" } },
+      { tool: "ask_question", args: { question_ar: "أي منشور أو حساب تقصد؟", options_ar: ["منشور محدد بالرابط", "حساب محدد"] } },
+      { tool: "ask_question", args: { question_ar: "سؤال ثانٍ؟", options_ar: ["هذا", "ذاك"] } },
     ], { stopAfterTerminal: false });
     await runPlanning(t.deps(driver), t.store.missions.get("msn_q")!);
     expect(driver.results.map((r) => r.result.ok)).toEqual([true, false]);
@@ -242,7 +245,7 @@ describe("EXECUTION with a fake model transcript: linked rows, settlement, files
   it("a stage never keeps more rows than the approved volume", async () => {
     const { store, money, mission } = await planned();
     const t = setup([], store, money);
-    const rows = Array.from({ length: 30 }, (_, i) => ({ id: `p${i}`, text: "t", url: `https://x.example/${i}` }));
+    const rows = Array.from({ length: 30 }, (_, i) => ({ id: `p${i}`, text: "post t", url: `https://x.example/${i}` }));
     const driver = createFakeDriver([{ tool: "save_rows", args: { stage_key: "posts", rows } }], { stopAfterTerminal: false });
     await runExecution(t.deps(driver), mission);
     expect(driver.results[0].result).toMatchObject({ saved_now: 20, rejected_over_limit: 10, stage_limit: 20 });

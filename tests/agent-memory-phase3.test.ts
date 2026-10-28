@@ -17,6 +17,7 @@ import { callIds, lastOutputId, type Results } from "./helpers/agentFakeWorld";
 import { igFeed, fakeContextDev } from "./helpers/fakeContextDev";
 import { COMMENTS_ENDPOINT, NOT_ADMIN, POSTS_ENDPOINT, USER_ID, commentsPage, fakeRecorder, postsPage, tregResult } from "./helpers/agentHarness";
 import { fakeMoneyClient } from "./helpers/agentMoney";
+import { aboutWords, firstOutputId } from "./helpers/agentRelevance";
 
 /**
  * PHASE 3: STABILITY ON THE 512 MB DYNO. A mission that would not fit in the memory waits in the queue; a running one that reaches the hard limit is stopped by the worker and put back in the queue;
@@ -253,7 +254,7 @@ describe("a mission stopped for memory goes back to the queue instead of crashin
       { tool: "propose_plan", args: (r) => ({
         summary_ar: "ستحصل على المنشورات ثم تعليقات كل منشور في ورقتين مرتبطتين بمعرّف المنشور.",
         stages: [
-          { key: "posts", title_ar: "المنشورات", endpoint_id: POSTS_ENDPOINT, expected_rows: 20, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "النص" }, { key: "url", title_ar: "الرابط" }], sample_rows: [{ id: "9000", text: "post 0", url: "https://x.example/p/9000" }], measured_by: [idOf(r, 0)] },
+          { key: "posts", title_ar: "المنشورات", endpoint_id: POSTS_ENDPOINT, expected_rows: 20, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "النص" }, { key: "url", title_ar: "الرابط" }], sample_rows: [{ id: "9000", text: "post 0", url: "https://x.example/p/9000" }], measured_by: [idOf(r, 0)], relevance: aboutWords(["post"]), yield_from: firstOutputId(r) },
           { key: "comments", title_ar: "التعليقات", endpoint_id: COMMENTS_ENDPOINT, expected_rows: 200, parent_key: "posts", per_parent_rows: 12, deliver: true, columns: [{ key: "text", title_ar: "النص" }], sample_rows: [{ id: "9000-c0", text: "comment 0" }], measured_by: [idOf(r, 1)] },
         ],
       }) },
@@ -271,7 +272,7 @@ describe("a mission stopped for memory goes back to the queue instead of crashin
     vi.stubGlobal("fetch", () => { throw new Error("a real network call was attempted"); });
     const { store, money, t, approved } = await approvedMission();
     const balanceAfterHold = money.balance();
-    const rows = Array.from({ length: 6 }, (_, i) => ({ id: `p${i}`, text: "t", url: `https://x.example/${i}` }));
+    const rows = Array.from({ length: 6 }, (_, i) => ({ id: `p${i}`, text: "post t", url: `https://x.example/${i}` }));
     const save: FakeStep = { tool: "save_rows", args: { stage_key: "posts", rows } };
     // stop #1: six rows are saved, then the memory stop
     store.missions.get("msn_r3")!.status = "executing";
@@ -285,7 +286,7 @@ describe("a mission stopped for memory goes back to the queue instead of crashin
     // resumed: the same rows are not saved twice, the mission finishes and is charged for the delivered rows only
     const claimed = await store.claimMission("w1", 120);
     expect(claimed).toMatchObject({ id: "msn_r3", status: "executing" });
-    const more = Array.from({ length: 4 }, (_, i) => ({ id: `q${i}`, text: "t", url: `https://x.example/q${i}` }));
+    const more = Array.from({ length: 4 }, (_, i) => ({ id: `q${i}`, text: "post t", url: `https://x.example/q${i}` }));
     await runExecution(t.deps(createFakeDriver([{ tool: "save_rows", args: { stage_key: "posts", rows: [...rows, ...more] } }, { tool: "finish", args: { outcome: "delivered", summary_ar: "سُلّمت عشرة منشورات." } }])), store.missions.get("msn_r3")!);
     const done = store.missions.get("msn_r3")!;
     expect(done.status).toBe("completed");
@@ -297,7 +298,7 @@ describe("a mission stopped for memory goes back to the queue instead of crashin
   it("EXECUTION: after the allowed requeues the mission is settled with what is saved (charge = ceil(delivered x unit), never above the reserve) instead of waiting for ever", async () => {
     vi.stubGlobal("fetch", () => { throw new Error("a real network call was attempted"); });
     const { store, money, t } = await approvedMission();
-    const rows = Array.from({ length: 3 }, (_, i) => ({ id: `p${i}`, text: "t", url: `https://x.example/${i}` }));
+    const rows = Array.from({ length: 3 }, (_, i) => ({ id: `p${i}`, text: "post t", url: `https://x.example/${i}` }));
     for (let n = 0; n < AGENT_MEMORY_REQUEUES_MAX; n += 1) {
       store.missions.get("msn_r3")!.status = "executing";
       await runExecution(t.deps(stoppedForMemory(n === 0 ? [{ tool: "save_rows", args: { stage_key: "posts", rows } }] : [])), store.missions.get("msn_r3")!);

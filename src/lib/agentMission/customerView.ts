@@ -43,6 +43,10 @@ export interface CustomerMissionView {
   summaryAr: string | null;
   /** Honest sentences next to the summary (for example why a contact the customer asked for is not in the plan). */
   notesAr: string[];
+  /** What the agent assumed where the request left a choice open («المقصود: محمد صلاح لاعب كرة القدم.»): the customer reads it on the card and may edit the request before approving. */
+  assumptionsAr: string[];
+  /** The ready answers of the agent's one question (the customer taps one). */
+  questionOptionsAr: string[];
   stages: CustomerStageView[];
   totalRows: number;
   totalRowsAr: string;
@@ -114,6 +118,8 @@ export function priceLineAr(plan: any): string | null {
     `السعر حتى ${pointsAr(maxCharge)} ولا يُخصم إلا ما يُسلَّم فعلًا`,
     `حجز مؤقت ${pointsAr(reserve)} يُحرَّر ما لا يُستخدم منه`,
   ];
+  // the minimum of the pricing rule, stated plainly (a plan priced before the rule has none)
+  if (typeof price.minimum_line_ar === "string" && price.minimum_line_ar.trim()) parts.push(price.minimum_line_ar.trim().replace(/[.。]+$/, ""));
   if (minutes > 0) parts.push(`الوقت المتوقع ${minutesAr(minutes)}`);
   return parts.join(" · ");
 }
@@ -273,7 +279,8 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   }
 
   return {
-    id: mission.id, phase, summaryAr: plan?.summary_ar ? String(plan.summary_ar) : null, notesAr: Array.isArray(plan?.notes_ar) ? plan.notes_ar.map(String) : [], stages, totalRows: total, totalRowsAr: rowsWordAr(total),
+    id: mission.id, phase, summaryAr: plan?.summary_ar ? String(plan.summary_ar) : null, notesAr: Array.isArray(plan?.notes_ar) ? plan.notes_ar.map(String) : [], assumptionsAr: Array.isArray(plan?.assumptions_ar) ? plan.assumptions_ar.map(String) : [],
+    questionOptionsAr: phase === "question" && Array.isArray((mission.plan_public as any)?.question_options) ? (mission.plan_public as any).question_options.map(String).slice(0, 4) : [], stages, totalRows: total, totalRowsAr: rowsWordAr(total),
     samples: plan ? samplesView(plan) : null, priceLineAr: plan ? priceLineAr(plan) : null, questionAr: phase === "question" ? mission.question_ar : null,
     queueLineAr: q.lineAr, queuePosition: q.position, steps, currentLineAr, delayAr, remainingAr,
     closePageAr: mission.status === "approved" || mission.status === "executing" ? AGENT_CLOSE_PAGE_LINE_AR : null,
