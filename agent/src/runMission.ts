@@ -20,6 +20,7 @@ import { buildTools, countDeliveredRows, newRunState, type ToolContext } from ".
 import { buildMissionFiles } from "./workbook";
 import type { AgentStore, CallRow, MissionRecord } from "./types";
 import type { SandboxResult } from "./sandbox";
+import type { MissionNoticeFacts, MissionNoticeKind } from "../../src/lib/agentMission/notices";
 
 export interface RunnerDeps {
   store: AgentStore;
@@ -34,6 +35,8 @@ export interface RunnerDeps {
   commit?: typeof commitTregSpend;
   call?: (options: TregCallOptions) => Promise<TregCallResult>;
   sandbox?: (code: string, inputs: Record<string, unknown>) => Promise<SandboxResult>;
+  /** Tells the customer how the mission ended (an in-site notice and an e-mail). Must not throw; absent in tests that do not look at it. */
+  notify?: (input: { userId: string; missionId: string; jobId: string | null; kind: MissionNoticeKind; facts: MissionNoticeFacts }) => Promise<unknown>;
   systemPromptFile?: string;
   log?: (line: string) => void;
 }
@@ -66,6 +69,11 @@ export function executionPrompt(mission: MissionRecord, plan: PricedPlan, calls:
 
 const clear = { worker_id: null, lease_until: null } as const;
 
+/** The customer's notice (in-site and e-mail); never lets a failed notice change the mission. */
+async function tell(deps: RunnerDeps, mission: MissionRecord, jobId: string | null, kind: MissionNoticeKind, facts: MissionNoticeFacts): Promise<void> {
+  try { await deps.notify?.({ userId: mission.user_id, missionId: mission.id, jobId, kind, facts }); } catch (e) { deps.log?.(`notice_failed ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 120)}`); }
+}
+
 export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Promise<void> {
   const { store } = deps;
   const model = deps.models.planning;
@@ -89,16 +97,18 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   if (state.proposedPlan) {
     const plan = state.proposedPlan;
     await store.updateMission(mission.id, { ...base, status: "plan_ready", plan: plan as any, plan_public: customerPlanView(plan) as any, unit_price_points: plan.price.unitPricePoints, reserved_points: plan.price.reservePoints });
-    await store.addEvent(mission.id, { kind: "plan", message_ar: plan.summary_ar, counts: { stages: plan.stages.length, rows: plan.price.deliveredRows, points_per_row_x1000: Math.round(plan.price.unitPricePoints * 1000), reserve_points: plan.price.reservePoints } });
+    await store.addEvent(mission.id, { kind: "plan", message_ar: plan.summary_ar, counts: { stages: plan.stages.length, rows: plan.price.deliveredRows, unit_points_x1000: Math.round(plan.price.unitPricePoints * 1000), reserve_points: plan.price.reservePoints } });
     deps.log?.(`plan_ready ${mission.id} ${JSON.stringify(customerPlanView(plan).price)}`);
   } else if (state.question) {
     await store.updateMission(mission.id, { ...base, status: "needs_input", question_ar: state.question });
   } else if (state.finish) {
     await store.updateMission(mission.id, { ...base, status: "unserved", summary_ar: state.finish.summary_ar });
     await store.addEvent(mission.id, { kind: "result", message_ar: state.finish.summary_ar });
+    await tell(deps, mission, null, "unserved", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false });
   } else {
     await store.updateMission(mission.id, { ...base, status: "failed", error: output.error ?? `the agent ended without a plan (${output.stop})` });
     await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّر على الوكيل إعداد خطة لهذا الطلب؛ لم يُحجز أي رصيد." });
+    await tell(deps, mission, null, "failed", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false });
   }
 }
 
@@ -149,6 +159,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
       await settleMission(deps.client, { jobId: mission.job_id, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath: null, releaseReason: "agent mission: the result files could not be saved" });
       await store.updateMission(mission.id, { status: "failed", error: `files: ${String((e as Error)?.message ?? e).slice(0, 200)}`, execution_llm_usd: Number(llm.toFixed(6)), charged_points: 0, delivered_units: 0, ...clear });
       await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّر حفظ ملفات النتائج؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد." });
+      await tell(deps, mission, mission.job_id, "failed", { delivered: 0, planned: plan.price.deliveredRows, chargedPoints: 0, releasedPoints: reserve, hasJob: true });
       return;
     }
   }
@@ -163,5 +174,6 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
     status: delivered > 0 ? "completed" : "unserved", delivered_units: delivered, charged_points: settled.chargedPoints, summary_ar: summary, files: files.length ? files : null,
     execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(budget.spentUsd().toFixed(6)), error: settled.kind === "settled" && !settled.matchesExpectation ? `charge ${settled.chargedPoints} differs from the expected ${settled.expectedChargedPoints}` : (output.error ?? null), ...clear,
   });
-  await store.addEvent(mission.id, { kind: "result", message_ar: summary, counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(Object.entries(perStage).map(([k, v]) => [`rows_${k}`, v])) } });
+  await store.addEvent(mission.id, { kind: "result", message_ar: summary, counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, perStage[s.key] ?? 0])) } });
+  await tell(deps, mission, mission.job_id, delivered <= 0 ? "unserved" : delivered < plan.price.deliveredRows ? "partial" : "completed", { delivered, planned: plan.price.deliveredRows, chargedPoints: settled.chargedPoints, releasedPoints: Math.max(0, reserve - settled.chargedPoints), hasJob: true });
 }

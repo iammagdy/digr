@@ -2,7 +2,8 @@ import { randomBytes } from "node:crypto";
 import { AGENT_ALLOWED_MODELS, AGENT_DYNO_MEMORY_MB, AGENT_BUCKET, AGENT_HEARTBEAT_TABLE, AGENT_SETTINGS_TABLE, AGENT_TEST_ACCOUNT_EMAIL, MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE, PLANNING_MODEL_SETTING_KEY } from "./constants";
 import { memoryWarning } from "./concurrency";
 import { latestBeat, workerAlive } from "./heartbeat";
-import { approveMission, repriceStoredPlan } from "./lifecycle";
+import { approveMissionOnce } from "./approval";
+import { repriceStoredPlan } from "./lifecycle";
 import { customerPlanView, type PricedPlan } from "./plan";
 
 /**
@@ -59,24 +60,15 @@ export async function cancelMission(client: any, input: { id: string }): Promise
   return { ok: true };
 }
 
-/** Approve: re-prices the stored plan by code, reserves through the existing functions (quote, accept, lock the job), then hands the mission to the worker. */
+/** Approve: the shared approval path (claim, re-price by code, reserve through the existing functions), then hands the mission to the worker. */
 export async function approvePlan(client: any, input: { id: string; adminId: string }): Promise<ActionResult<{ jobId: string; reservePoints: number; unitPricePoints: number }>> {
   const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,status,plan").eq("id", input.id).maybeSingle();
   if (!mission) return bad(404, "المهمة غير موجودة.");
   if (mission.status !== "plan_ready" || !mission.plan) return bad(409, "لا توجد خطة جاهزة للاعتماد.");
   const account = await findTestAccount(client);
   if (!account || account.id !== mission.user_id) return bad(403, "هذه الصفحة تعمل لحساب الاختبار فقط.");
-  // claim the transition first so a double click never approves twice
-  const claim = await client.from(MISSION_TABLE).update({ status: "approved", approved_at: new Date().toISOString(), approved_by: input.adminId, worker_id: null, lease_until: new Date(Date.now() + 3600_000).toISOString() }).eq("id", input.id).eq("status", "plan_ready");
-  if (claim.error) return bad(500, "تعذّر الاعتماد.");
-  const result = await approveMission(client, { id: mission.id, user_id: mission.user_id, plan: mission.plan as PricedPlan });
-  if (!result.ok) {
-    await client.from(MISSION_TABLE).update({ status: "plan_ready", lease_until: null, error: result.code }).eq("id", input.id);
-    return bad(result.code === "insufficient_balance" ? 402 : 409, result.messageAr);
-  }
-  await client.from(MISSION_TABLE).update({ job_id: result.jobId, quote_id: result.quoteId, reserved_points: result.reservePoints, unit_price_points: result.unitPricePoints, lease_until: null, error: null, updated_at: new Date().toISOString() }).eq("id", input.id);
-  await client.from(MISSION_EVENTS_TABLE).insert({ mission_id: input.id, kind: "system", message_ar: "اعتُمدت الخطة وحُجز الرصيد؛ يبدأ التنفيذ الآن." });
-  return { ok: true, jobId: result.jobId, reservePoints: result.reservePoints, unitPricePoints: result.unitPricePoints };
+  const r = await approveMissionOnce(client, { id: input.id, actorId: input.adminId, messages: { insufficient_balance: "رصيد حساب الاختبار لا يكفي لحجز هذه المهمة." } });
+  return r.ok ? { ok: true, jobId: r.jobId, reservePoints: r.reservePoints, unitPricePoints: r.unitPricePoints } : bad(r.status, r.error);
 }
 
 export async function setPlanningModel(client: any, input: { model: unknown; adminId: string }): Promise<ActionResult<{ model: string }>> {

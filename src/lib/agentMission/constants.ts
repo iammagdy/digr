@@ -11,6 +11,22 @@ import { HOLD_SPEND_SHARE, CALL_CEILING_FLOOR_USD } from "../server/callBudget";
 /** The only account a mission may run for in Phase A (the test account of docs/HANDOFF.md). Nothing here changes what a customer sees. */
 export const AGENT_TEST_ACCOUNT_EMAIL = "iam.magdy+1@outlook.com";
 
+/**
+ * THE ROLLBACK SWITCH (Phase 1). true: every customer request in the chat goes to the agent (a mission is created for the signed-in user, or for the guest, who must sign up before approving).
+ * false: the chat answers with the old planner path exactly as before; nothing else needs to change. To roll back, set this one constant to false and redeploy the website.
+ */
+export const AGENT_SERVES_CHAT = true;
+/** One account may have this many missions at once in the worker's hands (waiting, planning, or asked a question); the next request is told to wait for one. A plan that waits for approval holds nothing and does not count. */
+export const AGENT_MAX_OPEN_MISSIONS_PER_USER = 3;
+/** And at most this many new missions in one hour (every plan costs the owner a planning run): the next request is told to try again later. */
+export const AGENT_MAX_MISSIONS_PER_HOUR = 20;
+/** The sentence shown right after the customer approves, and in the in-site notice: the work continues without the page, and an e-mail follows. */
+export const AGENT_CLOSE_PAGE_LINE_AR = "تقدر تقفل الصفحة وتروح تشرب قهوة، هنكمّل الشغل وهنبعتلك إيميل أول ما نخلص.";
+/** Shown while a mission waits for the worker to be free. */
+export const AGENT_QUEUE_LINE_AR = "مهمتك في الدور وهتبدأ خلال دقائق";
+/** A running mission with no new event for this long gets the honest «المصدر أبطأ» line. */
+export const AGENT_SLOW_AFTER_MS = 90_000;
+
 export const MISSION_TABLE = "missions";
 export const MISSION_EVENTS_TABLE = "mission_events";
 export const MISSION_CALLS_TABLE = "mission_calls";
@@ -34,6 +50,9 @@ export const MISSION_TERMINAL: ReadonlySet<string> = new Set(["completed", "fail
 
 export const EVENT_KINDS = ["progress", "plan", "question", "answer", "call", "result", "system", "refusal"] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
+/** The fixed keys of an event's `counts` (numbers never go in the text). `stage_<n>_rows` (rows saved in stage n) is also allowed. */
+export const MISSION_EVENT_COUNT_KEYS = ["stages", "rows", "stage", "saved", "planned", "pages", "sources", "delivered", "charged_points", "reserve_points", "unit_points_x1000", "queue_ahead", "seconds_left"] as const;
+export type MissionEventCountKey = (typeof MISSION_EVENT_COUNT_KEYS)[number];
 
 // ---------------------------------------------------------------- the worker
 /**

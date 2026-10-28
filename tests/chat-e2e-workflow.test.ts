@@ -23,6 +23,8 @@ const mockUserState = {
 
 const mockConversationBriefs = new Map<string, any>();
 
+// The old planner path is the ROLLBACK path and these tests cover it: the rollback constant (AGENT_SERVES_CHAT) is pinned to «old path» here. The agent path has its own tests (agent-chat-handler, agent-replay-phase1).
+vi.mock("../src/lib/agentMission/constants", async (importOriginal) => ({ ...(await importOriginal<typeof import("../src/lib/agentMission/constants")>()), AGENT_SERVES_CHAT: false }));
 vi.mock("../src/lib/supabase/server", () => ({
   createServerSideClient: vi.fn(async () => ({
     auth: {

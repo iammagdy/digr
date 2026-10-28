@@ -178,10 +178,10 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
     },
     {
       name: "propose_plan",
-      description: "Propose the plan: 1 to 4 stages (a stage runs once per row of its parent stage), the rows each is expected to give, the columns of each stage's rows (Arabic titles), 1 to 3 sample rows you really saw, and the ids of the saved calls that measured each stage (measured_by). You never state a price: the site computes it from the measured charges. Rejected plans come back with the exact issues to fix.",
+      description: "Propose the plan: 1 to 4 stages (a stage runs once per row of its parent stage), the rows each is expected to give, the columns of each stage's rows (Arabic titles, readable ones only: names, texts, links, numbers; never an id column, every row already carries its own id and its parent's id), 1 to 3 sample rows you really saw, and the ids of the saved calls that measured each stage (measured_by). You never state a price: the site computes it from the measured charges. Rejected plans come back with the exact issues to fix.",
       phases: ["planning"],
       params: {
-        summary_ar: { type: "string", description: "Two or three Arabic sentences: what the customer will get and how the files link" },
+        summary_ar: { type: "string", description: "ONE Arabic sentence: what the customer will get (the customer card shows only this sentence)" },
         stages: { type: "array", description: "[{key, title_ar, endpoint_id, expected_rows, parent_key|null, per_parent_rows (if parent), deliver, columns:[{key,title_ar}], sample_rows:[{...}], measured_by:[call ids], how_ar?}]" },
       },
       handler: async (a) => {
@@ -194,7 +194,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         const lookup = {
           call: (id: string): RecordedCall | null => {
             const row = calls.find((c) => c.id === `${mission.id}:${id}`);
-            return row ? { id, endpointId: row.endpoint_id, ok: row.status === "ok", costUsd: Number(row.cost_usd) || 0, rows: Number(row.rows_returned) || 0 } : null;
+            return row ? { id, endpointId: row.endpoint_id, ok: row.status === "ok", costUsd: Number(row.cost_usd) || 0, rows: Number(row.rows_returned) || 0, durationMs: Number(row.duration_ms) || undefined } : null;
           },
           evidenceText: (id: string) => evidence.get(id) ?? null,
           endpointAllowed: (endpointId: string) => isSellable(endpointId, ctx.catalog) && !blockedEndpointReason(endpointId) && policyVerdict(endpointId, ctx.access).allowed,
@@ -263,6 +263,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           tally.saved_now += 1;
         }
         await store.putFile(mission.id, ROWS_PATH(stage.key), JSON.stringify(existing), "application/json");
+        // the live panel ticks from this: the numbers are in `counts` (never in the text), written by code, not by the model
+        if (tally.saved_now > 0) await store.addEvent(mission.id, { kind: "progress", message_ar: `يحفظ الوكيل الصفوف التي جمعها لمرحلة «${stage.title_ar}»`, counts: { stage: plan.stages.indexOf(stage) + 1, saved: existing.length, planned: stage.planned_rows } });
         return { ok: true, stage: stage.key, ...tally, total_in_stage: existing.length, stage_limit: stage.planned_rows };
       },
     },

@@ -246,7 +246,7 @@ export default function RequestsPage() {
         qMap[jId] = {
           conversationId: msgInfo?.conversationId || "",
           targetVolumeMax: item?.targetVolumeMax ?? item?.target_volume_max ?? 0,
-          summaryAr: msgInfo?.summaryAr || customerFacingQuoteSummary(item?.capabilitySlug),
+          summaryAr: msgInfo?.summaryAr || (typeof item?.summaryAr === "string" && item.summaryAr.trim() ? item.summaryAr.trim() : customerFacingQuoteSummary(item?.capabilitySlug)),
         };
       }
       setQuotes(qMap);

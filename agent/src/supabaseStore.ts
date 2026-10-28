@@ -1,4 +1,5 @@
 import { AGENT_BUCKET, AGENT_HEARTBEAT_TABLE, AGENT_SETTINGS_TABLE, MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE } from "../../src/lib/agentMission/constants";
+import { guardEvent } from "../../src/lib/agentMission/eventText";
 import { artifactVersionRowId } from "../../src/functions/shared/artifactVersions";
 import type { AgentStore, CallRow, HeartbeatRow, MissionEventInput, MissionRecord } from "./types";
 
@@ -27,7 +28,9 @@ export function createSupabaseStore(client: any): AgentStore {
       return bytes ? bytes.toString("utf8") : null;
     },
     async addEvent(missionId: string, event: MissionEventInput) {
-      must(await client.from(MISSION_EVENTS_TABLE).insert({ mission_id: missionId, kind: event.kind, message_ar: event.message_ar, counts: event.counts ?? {} }), "event");
+      // the event text guard: nothing but Arabic, Arabic-Indic digits and no technical name ever reaches a screen; the numbers are in `counts`
+      const g = guardEvent(event);
+      must(await client.from(MISSION_EVENTS_TABLE).insert({ mission_id: missionId, kind: g.kind, message_ar: g.message_ar, counts: g.counts }), "event");
     },
     async addCall(row: CallRow) { must(await client.from(MISSION_CALLS_TABLE).insert(row), "call"); },
     async listCalls(missionId) {

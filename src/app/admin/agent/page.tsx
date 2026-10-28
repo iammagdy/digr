@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { adminFetch } from "@/lib/adminApi";
 import { toArabicDigits } from "@/lib/arabicDigits";
 import { useAdmin } from "@/components/admin/AdminShell";
+import { countsLineAr } from "@/lib/agentMission/eventText";
 
 const SECTION = "flex flex-col gap-3 rounded-[18px] border border-ln bg-bg p-4";
 const BTN = "hit min-h-11 cursor-pointer rounded-xl border border-ln2 bg-sf px-4 text-sm font-semibold text-ink disabled:opacity-50";
@@ -159,7 +160,7 @@ export default function AgentPage() {
           <div className="flex flex-col gap-1 rounded-xl border border-ln p-3" data-testid="agent-events" aria-live="polite">
             {events.length === 0 ? <span className="text-[13px] text-ink2">لا أحداث بعد…</span> : events.map((e) => (
               <div key={e.id} className="text-[13px] text-ink"><span className="text-ink2">{hhmm(e.created_at)}</span> {e.message_ar}
-                {e.counts && Object.keys(e.counts).length ? <span className="text-ink2"> ({Object.entries(e.counts).map(([k, v]) => `${k} ${num(v)}`).join("، ")})</span> : null}
+                {countsLineAr(e.counts) ? <span className="text-ink2"> ({countsLineAr(e.counts)})</span> : null}
               </div>
             ))}
           </div>
@@ -190,9 +191,10 @@ export default function AgentPage() {
                 <div className="text-[12px] text-ink2">السعر محسوب بالكود من تكلفة كل صف قيست فعلًا: سعر الصف = تكلفة الصف النهائي × ٥٥٠٠، والحجز = ⌈العدد × السعر × ١٫١٥⌉ بحدّ ٢٥٬٠٠٠ نقطة.</div>
               </div>
               {detail?.internalPlan ? (
-                <div className="text-[12px] text-ink2" data-testid="agent-internal">
-                  داخلي (للمشرف): {detail.internalPlan.stages.map((s) => `${s.key}: ${s.endpoint_id} ← ${usd(s.measured_cost_per_row_usd)} للصف`).join(" · ")} · تكلفة الصف النهائي {usd(detail.internalPlan.price.costPerFinalRowUsd)} · التكلفة الكلية المتوقعة {usd(detail.internalPlan.price.totalCostUsd)}
-                </div>
+                <details className="text-[12px] text-ink2" data-testid="agent-internal">
+                  <summary className="cursor-pointer">تفاصيل داخلية للمشرف فقط (المصادر والتكاليف)</summary>
+                  <div className="mt-1 leading-[1.9]">{detail.internalPlan.stages.map((s) => `${s.key}: ${s.endpoint_id} ← ${usd(s.measured_cost_per_row_usd)} للصف`).join(" · ")} · تكلفة الصف النهائي {usd(detail.internalPlan.price.costPerFinalRowUsd)} · التكلفة الكلية المتوقعة {usd(detail.internalPlan.price.totalCostUsd)}</div>
+                </details>
               ) : null}
               {m.status === "plan_ready" ? <div><button type="button" className={BTN} disabled={busy} onClick={() => act("approve")} data-testid="agent-approve">اعتمد الخطة واحجز الرصيد</button></div> : null}
             </div>

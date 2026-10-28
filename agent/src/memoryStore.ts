@@ -1,3 +1,4 @@
+import { guardEvent } from "../../src/lib/agentMission/eventText";
 import type { AgentStore, CallRow, HeartbeatRow, MissionEventInput, MissionRecord } from "./types";
 
 /** The store of the tests: everything in memory, nothing real. */
@@ -33,7 +34,7 @@ export function createMemoryStore(initial: MissionRecord[] = []): MemoryStore {
     async putFile(missionId, relPath, content) { files.set(key(missionId, relPath), content); },
     async getFile(missionId, relPath) { const v = files.get(key(missionId, relPath)); return v === undefined ? null : typeof v === "string" ? v : v.toString("utf8"); },
     async getFileBytes(missionId, relPath) { const v = files.get(key(missionId, relPath)); return v === undefined ? null : Buffer.isBuffer(v) ? v : Buffer.from(v); },
-    async addEvent(missionId, event) { events.push({ mission_id: missionId, ...event }); },
+    async addEvent(missionId, event) { const g = guardEvent(event); events.push({ mission_id: missionId, kind: g.kind, message_ar: g.message_ar, counts: g.counts }); },
     async addCall(row) { calls.push(row); },
     async listCalls(missionId) { return calls.filter((c) => c.mission_id === missionId); },
     async getMission(id) { return missions.get(id) ?? null; },

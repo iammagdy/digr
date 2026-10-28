@@ -1,10 +1,15 @@
-# Diger agent worker (phase A)
+# Diger agent worker
 
 A long-running worker that runs Diger's real AI agent: a Claude agent (the Claude Agent SDK, `@anthropic-ai/claude-agent-sdk`) that understands a data mission, searches the TREG
 catalog, samples and looks at real rows, splits the work into stages, runs for as long as it needs, links results to their parents and delivers analysis-ready files. It is hosted on
 Heroku as a **worker dyno** (no 60-second limit). The website stays the interface for users and money.
 
-**Phase A changes nothing for customers.** The only way to start a mission is the admin page «الوكيل», and it runs for ONE account: the test account `iam.magdy+1@outlook.com`.
+**Since Phase 1 the agent serves the customer chat.** Every research request typed in the chat becomes a mission (a greeting, a general question and a file-shaping turn are still answered by the old code). The admin page «الوكيل» still starts missions for the test account.
+
+* **The rollback switch** is ONE constant: `AGENT_SERVES_CHAT` in `src/lib/agentMission/constants.ts`. `true`: the chat creates a mission; `false` and redeploy the website: the old planner path answers, exactly as before. The old planner is not deleted.
+* **What the customer sees**: a card in the chat (`src/components/mission/AgentMissionCard.tsx`) drawn from `/api/missions/<id>` by `src/lib/agentMission/customerView.ts`: one summary sentence, numbered stages with their expected rows (they add up), 2 to 3 sample rows with readable columns, the price, the hold and the expected time on one line, and the buttons «اعتمد» and «عدّل الطلب». After approval the live panel «خطة المهمة» ticks from `mission_events` (the counts are in the events' `counts` JSON, written by code), the page may be closed, and the customer gets an in-site notice and an e-mail (the existing `send-email` function, template `job-update`) when the mission ends. A guest sees the plan and is asked to sign up before approving.
+* **Queue**: with one mission at a time (`AGENT_CONCURRENCY=1`) a mission that waits shows «مهمتك في الدور وهتبدأ خلال دقائق» and its position (missions waiting before it + 1).
+* **Event text guard** (`src/lib/agentMission/eventText.ts`): every line that reaches `mission_events` passes the Arabic-only check; a line that fails is replaced by the fixed Arabic line of its kind. Numbers go in `counts`.
 
 ```
 admin page «الوكيل» ──► missions (Supabase) ◄── worker (Heroku) ──► Claude (Agent SDK)

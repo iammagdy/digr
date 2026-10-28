@@ -1,5 +1,5 @@
 import { AGENT_MAX_DELIVERED_ROWS, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE } from "./constants";
-import { measuredCostPerRowUsd, priceMissionByCode, type MissionPriceResult } from "./price";
+import { estimateMissionMinutes, measuredCostPerRowUsd, priceMissionByCode, type MissionPriceResult } from "./price";
 import { checkCustomerLabel, checkCustomerText } from "./text";
 
 /**
@@ -39,6 +39,8 @@ export interface RecordedCall {
   costUsd: number;
   /** Rows counted by code from the saved page. */
   rows: number;
+  /** How long the call took (ms), when known: the expected time of the mission is computed from it. */
+  durationMs?: number;
 }
 
 export interface PlanLookup {
@@ -55,6 +57,8 @@ export interface PricedStage extends ProposedStage {
   /** Measured cost per row of this stage, USD (internal). */
   measured_cost_per_row_usd: number;
   measured_from_calls: string[];
+  /** How long the measuring calls took per row they returned (ms), when known (internal; the expected time is computed from it). */
+  measured_ms_per_row?: number;
 }
 
 export interface PricedPlan {
@@ -66,6 +70,10 @@ export interface PricedPlan {
 export type PlanCheck = { ok: true; plan: PricedPlan } | { ok: false; issues: string[] };
 
 const KEY_RE = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
+/** A column that only holds an internal id (the key says so, or its Arabic title is «معرّف …»): never shown to the customer as a column, never a column of its own in the sheet. */
+export function isInternalColumn(c: { key: string; title_ar: string }): boolean {
+  return /^(id|uid|pk|guid|parent_id|parent)$/i.test(c.key) || /(^|_)(id|uid|pk|guid)$/i.test(c.key) || /^id_/i.test(c.key) || /معرّ?ف/.test(c.title_ar);
+}
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /** Every string value of a sample row that looks like an id or a link must be present in the evidence the stage cites. */
@@ -129,17 +137,24 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
     const columns = Array.isArray(raw.columns) ? raw.columns : [];
     if (columns.length < 1 || columns.length > MAX_COLUMNS_PER_STAGE) issues.push(`${label}: 1 to ${MAX_COLUMNS_PER_STAGE} columns`);
     const colKeys = new Set<string>();
+    const colTitles = new Set<string>();
     const cleanColumns: PlanColumn[] = [];
     for (const c of columns) {
       if (!isRecord(c) || !KEY_RE.test(String(c.key ?? "")) || colKeys.has(String(c.key))) { issues.push(`${label}: every column needs a unique key (letters, digits, underscores)`); continue; }
       colKeys.add(String(c.key));
       const t = checkCustomerLabel(c.title_ar);
       if (t.issues.length) issues.push(`${label} column «${c.key}»: ${t.issues.join("; ")}`);
+      // every row already carries its own id and its parent's id: a column that only repeats an id, or a second column with the same title, is dropped (the sheet is for people to read)
+      if (isInternalColumn({ key: String(c.key), title_ar: t.text }) || colTitles.has(t.text)) continue;
+      colTitles.add(t.text);
       cleanColumns.push({ key: String(c.key), title_ar: t.text });
     }
+    if (cleanColumns.length === 0 && issues.length === 0) issues.push(`${label}: give at least one readable column (an id is not one; every row already carries its own id)`);
 
     const measuredBy = Array.isArray(raw.measured_by) ? raw.measured_by.map(String) : [];
     const measuredCalls: Array<{ costUsd: number; rows: number }> = [];
+    let measuredMs = 0;
+    let measuredMsRows = 0;
     let evidence = "";
     if (measuredBy.length === 0) issues.push(`${label}: measured_by must cite the calls that measured it (ids returned by treg_call)`);
     for (const id of measuredBy) {
@@ -150,6 +165,7 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
       if (call.endpointId !== endpointId) { issues.push(`${label}: call «${id}» measured another source than the stage uses`); continue; }
       if (!call.ok || call.rows <= 0) { issues.push(`${label}: call «${id}» returned no rows; it cannot measure the cost`); continue; }
       measuredCalls.push({ costUsd: call.costUsd, rows: call.rows });
+      if (typeof call.durationMs === "number" && call.durationMs > 0) { measuredMs += call.durationMs; measuredMsRows += call.rows; }
     }
     const costPerRow = measuredCostPerRowUsd(measuredCalls);
     if (measuredCalls.length === 0 || costPerRow === null) issues.push(`${label}: no measured call with rows and a recorded charge`);
@@ -168,6 +184,7 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
       deliver: raw.deliver === true, columns: cleanColumns, sample_rows: samples.filter(isRecord).slice(0, MAX_SAMPLE_ROWS_PER_STAGE),
       measured_by: measuredBy, ...(how ? { how_ar: how.text } : {}),
       planned_rows: rowsHere, measured_cost_per_row_usd: costPerRow ?? 0, measured_from_calls: measuredBy,
+      ...(measuredMsRows > 0 ? { measured_ms_per_row: Math.round(measuredMs / measuredMsRows) } : {}),
     });
   }
 
@@ -181,11 +198,29 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
   return { ok: true, plan: { summary_ar: summary.text, stages: priced, price } };
 }
 
-/** The part of a priced plan a customer (and the admin page's customer view) may read: Arabic titles, rows, links between stages, sample rows, the price in points. No endpoint, no USD. */
+/** The first sentence of a text: the customer card says what will be delivered in ONE sentence. */
+export function firstSentenceAr(text: string): string {
+  const t = String(text ?? "").replace(/\s+/g, " ").trim();
+  const m = /^(.+?[.!؟?])(?:\s|$)/.exec(t);
+  return (m ? m[1] : t).trim();
+}
+
+const SAMPLE_CELL_CHARS = 120;
+const CUSTOMER_SAMPLE_ROWS = 3;
+
+/** The part of a priced plan a customer (and the admin page's customer view) may read: Arabic titles, rows, links between stages, readable columns and sample rows, the price in points, the expected time. No endpoint, no USD, no internal id. */
 export function customerPlanView(plan: PricedPlan) {
   return {
-    summary_ar: plan.summary_ar,
-    stages: plan.stages.map((s) => ({ key: s.key, title_ar: s.title_ar, expected_rows: s.planned_rows, parent_key: s.parent_key, deliver: s.deliver, columns: s.columns, sample_rows: s.sample_rows, ...(s.how_ar ? { how_ar: s.how_ar } : {}) })),
+    summary_ar: firstSentenceAr(plan.summary_ar),
+    stages: plan.stages.map((s) => {
+      const columns = s.columns.filter((c) => !isInternalColumn(c));
+      return {
+        key: s.key, title_ar: s.title_ar, expected_rows: s.planned_rows, parent_key: s.parent_key, deliver: s.deliver, columns,
+        sample_rows: s.sample_rows.slice(0, CUSTOMER_SAMPLE_ROWS).map((r) => Object.fromEntries(columns.map((c) => [c.key, String(r[c.key] ?? "").slice(0, SAMPLE_CELL_CHARS)]))),
+        ...(s.how_ar ? { how_ar: s.how_ar } : {}),
+      };
+    }),
     price: { unit_price_points: plan.price.unitPricePoints, reserve_points: plan.price.reservePoints, max_charge_points: plan.price.maxChargePoints, delivered_rows: plan.price.deliveredRows },
+    expected_minutes: estimateMissionMinutes(plan.stages.map((s) => ({ rows: s.planned_rows, msPerRow: s.measured_ms_per_row ?? null }))),
   };
 }

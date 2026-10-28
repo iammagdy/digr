@@ -21,6 +21,7 @@ import { sanitizeCustomerErrorMessage } from "../../../functions/shared/catalogC
 import { toSafeReasonCode, reasonCodeToCustomerMessage } from "../../../functions/shared/chatErrors";
 import { findUnresolvedResearchPlaceholder, unresolvedResearchPlaceholderMessageAr } from "../../../lib/researchPlaceholders";
 import { withDeadline } from "../../../functions/shared/deadline";
+import { AGENT_SERVES_CHAT } from "../../../lib/agentMission/constants";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -227,6 +228,8 @@ export async function POST(req: NextRequest) {
           await Promise.all([
             tables.from("conversations").update({ user_id: verifiedUserId }).eq("user_id", prevGuestUuid),
             tables.from("messages").update({ user_id: verifiedUserId }).eq("user_id", prevGuestUuid),
+            // the guest's missions (a plan they looked at before signing up) follow them; deleting the guest account below is refused while any mission still points at it
+            tables.from("missions").update({ user_id: verifiedUserId, created_by: verifiedUserId }).eq("user_id", prevGuestUuid),
           ]);
           if (tables.auth?.admin?.deleteUser) {
             await tables.auth.admin.deleteUser(prevGuestUuid).catch(() => {});
@@ -500,6 +503,8 @@ export async function POST(req: NextRequest) {
     // 6. Delegate to ChatHandler
     currentStep = "chat_handler";
     const chatHandler = new ChatHandler(tables);
+    // every research request goes to the agent (one rollback constant; false = the old planner path answers, exactly as before)
+    chatHandler.agentChat = { enabled: AGENT_SERVES_CHAT };
     const result = await withDeadline(chatHandler.handleUserMessage({
       userId: verifiedUserId,
       conversationId: conversationId || undefined,

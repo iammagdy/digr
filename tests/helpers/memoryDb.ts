@@ -38,15 +38,19 @@ export function createMemoryDb(options: { missing?: string[] } = {}): MemoryDb {
     let orderBy: { col: string; asc: boolean } | null = null;
     let max: number | null = null;
     let single = false;
+    let wantCount = false;
+    let head = false;
     const run = () => {
       let out = rows.filter((r) => filters.every((f) => f(r)));
       if (mode === "update") { for (const r of out) Object.assign(r, patch); return { data: out, error: null }; }
+      // select(cols, { count: "exact", head: true }): the number of matching rows (and no rows with head)
+      if (wantCount) return { data: head ? null : out, count: out.length, error: null };
       if (orderBy) out = [...out].sort((a, b) => (a[orderBy!.col] > b[orderBy!.col] ? 1 : -1) * (orderBy!.asc ? 1 : -1));
       if (max !== null) out = out.slice(0, max);
       return { data: single ? out[0] ?? null : out, error: null };
     };
     const b: any = {
-      select: () => b,
+      select: (_cols?: string, opts?: { count?: string; head?: boolean }) => { if (opts?.count) { wantCount = true; head = Boolean(opts.head); } return b; },
       eq: (c: string, v: any) => { filters.push((r) => r[c] === v); return b; },
       gt: (c: string, v: any) => { filters.push((r) => r[c] > v); return b; },
       neq: (c: string, v: any) => { filters.push((r) => r[c] !== v); return b; },
