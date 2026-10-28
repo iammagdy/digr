@@ -75,6 +75,22 @@ export function checkPublicBusinessUrl(url: string): UrlVerdict {
   return { ok: true };
 }
 
+/**
+ * May this page be READ (never written to, never logged into) by the agent's web tools? Owner decision of 2026-10-28: public social pages (a hashtag, a profile, a post, a video) may be read
+ * through the providers, read only. Still refused: a page behind a login or sign-up, an account area, a private host, an address with credentials, anything that is not http(s).
+ * (`checkPublicBusinessUrl` above stays what it is: it decides whether a page is a COMPANY'S OWN website for contact discovery, and a social network is not one.)
+ */
+export function checkPublicReadUrl(url: string): UrlVerdict {
+  let parsed: URL;
+  try { parsed = new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`); } catch { return { ok: false, reason: "invalid" }; }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return { ok: false, reason: "not_https_or_http" };
+  if (parsed.username || parsed.password) return { ok: false, reason: "login_page" };
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+  if (isIpOrLocal(host)) return { ok: false, reason: "private_host" };
+  if (LOGIN_PATH.test(parsed.pathname) || /(?:^|\/)(?:accounts?)\/(?:login|emailsignup)/i.test(parsed.pathname) || /\/(?:login|signup)(?:\/|$|\?)/i.test(parsed.pathname)) return { ok: false, reason: "login_page" };
+  return { ok: true };
+}
+
 /** The pages worth reading for contacts: a link whose path names contact, about or team (English or Arabic), on the company's own domain. */
 const CONTACT_PATH = /(?:contact|reach-?us|get-?in-?touch|about|team|leadership|management|our-?people|اتصل|تواصل|من-?نحن|عن-?نا|الفريق|الإدارة|فريق)/i;
 
@@ -197,6 +213,9 @@ const EMAIL_RE = /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,6
 const PLACEHOLDER_DOMAINS = /(?:^|\.)(?:example\.(?:com|org|net)|domain\.com|yourdomain\.com|yoursite\.com|email\.com|test\.com|sentry\.io|sentry-next\.wixpress\.com|wixpress\.com|godaddy\.com|schema\.org|w3\.org)$/i;
 const PERSONAL_MAIL_DOMAINS = /^(?:gmail|googlemail|yahoo|ymail|hotmail|outlook|live|msn|icloud|me|aol|proton|protonmail|gmx|mail|yandex|zoho)\.(?:com|net|me|org|ru|fr|de|co\.uk|com\.eg)$/i;
 const IMAGE_LIKE = /\.(?:png|jpe?g|gif|svg|webp|ico|css|js)$/i;
+
+/** True for a mailbox of a public provider (gmail, outlook ...): never a WORK e-mail. */
+export function isPersonalMailDomain(domain: string): boolean { return PERSONAL_MAIL_DOMAINS.test(domain.trim().toLowerCase()); }
 
 export function isPlausibleEmail(email: string): boolean {
   if (email.length > 254 || IMAGE_LIKE.test(email)) return false;

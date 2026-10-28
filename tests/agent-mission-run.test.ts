@@ -205,10 +205,11 @@ describe("EXECUTION with a fake model transcript: linked rows, settlement, files
     await wb.xlsx.load(((await store.getFileBytes(m.id, "result/result.xlsx")) as unknown) as ArrayBuffer);
     expect(wb.worksheets.map((w) => w.name)).toEqual(["ملخص المهمة", "المنشورات", "التعليقات"]);
     const sheet = wb.getWorksheet("التعليقات")!;
-    expect(sheet.getRow(1).getCell(2).value).toBe("معرّف الأصل");
+    // readable first: the post's text and link next to each comment, then the comment, and the ids LAST (the parent id is a link to the post's id cell)
+    expect([1, 2, 3, 4, 5].map((c) => sheet.getRow(1).getCell(c).value)).toEqual(["النص (المنشورات)", "الرابط", "النص", "المعرّف", "معرّف الأصل"]);
     expect(sheet.rowCount).toBe(81);
-    const parentCell = sheet.getRow(2).getCell(2).value as any;
-    expect(parentCell.hyperlink).toMatch(/^#'المنشورات'!A\d+$/);
+    const parentCell = sheet.getRow(2).getCell(5).value as any;
+    expect(parentCell.hyperlink).toMatch(/^#'المنشورات'!C\d+$/);
     // the final summary and counts reached the live panel
     expect(store.events[store.events.length - 1]).toMatchObject({ kind: "result" });
     expect(store.events[store.events.length - 1].message_ar).not.toMatch(/[0-9]/);

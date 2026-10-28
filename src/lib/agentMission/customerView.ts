@@ -40,6 +40,8 @@ export interface CustomerMissionView {
   phase: CustomerPhase;
   /** ONE sentence: what will be delivered. */
   summaryAr: string | null;
+  /** Honest sentences next to the summary (for example why a contact the customer asked for is not in the plan). */
+  notesAr: string[];
   stages: CustomerStageView[];
   totalRows: number;
   totalRowsAr: string;
@@ -127,6 +129,22 @@ export function queueLine(status: string, queue: QueueInfo | null): { lineAr: st
 const stageIndexOf = (e: EventForCustomer): number => Math.max(0, Math.floor(Number(e.counts?.stage) || 0));
 
 /** Steps of the live panel. Before the plan: the four planning steps; after approval: the plan's stages and the files. */
+/** What collect_pages reports while it pages through a source: events with `pages` and `rows` (and the target in `planned`) but no `stage`. */
+function collectedOf(events: EventForCustomer[]): { rows: number; target: number; samples: ProgressSample[] } | null {
+  const samples: ProgressSample[] = [];
+  let rows = 0;
+  let target = 0;
+  for (const e of events) {
+    if (typeof e.counts?.pages === "number" && typeof e.counts?.rows === "number" && !e.counts?.stage) {
+      rows = e.counts.rows;
+      target = Number(e.counts.planned) || target;
+      const at = Date.parse(e.created_at);
+      if (Number.isFinite(at)) samples.push({ at, delivered: rows });
+    }
+  }
+  return samples.length ? { rows, target, samples } : null;
+}
+
 function stepsOf(input: { phase: CustomerPhase; status: string; stages: CustomerStageView[]; events: EventForCustomer[]; callsMade: number; hasPlan: boolean; delivered: number | null; filesReady: boolean }): { steps: PanelStep[]; samples: ProgressSample[]; savedTotal: number; plannedTotal: number } {
   const { phase, status, stages, events, callsMade, hasPlan } = input;
   const executing = status === "approved" || status === "executing" || status === "completed" || (status === "failed" && hasPlan && events.some((e) => stageIndexOf(e) > 0));
@@ -167,6 +185,13 @@ function stepsOf(input: { phase: CustomerPhase; status: string; stages: Customer
     if (!s.deliver) step.detailAr = "تُستخدم في المرحلة التالية";
     return step;
   });
+  // while a source is being paged through, say how many rows were collected so far (the saved count only moves when the rows are saved)
+  const collected = collectedOf(events);
+  const runningStep = steps.find((st) => st.state === "running");
+  if (collected && runningStep && !finished) {
+    const detail = `جُمع ${formatAr(collected.rows)}${collected.target ? ` من ${formatAr(collected.target)}` : ""} من المصدر حتى الآن`;
+    runningStep.detailAr = runningStep.detailAr ? `${runningStep.detailAr} · ${detail}` : detail;
+  }
   const failedStop = status === "failed";
   if (failedStop) for (const s of steps) if (s.state === "running" || s.state === "waiting") { s.state = "stopped"; }
   steps.push({ id: "files", titleAr: FILES_STEP_TITLE_AR, state: input.filesReady ? "done" : finished ? "done" : failedStop ? "stopped" : "waiting" });
@@ -199,7 +224,9 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
 
   let remainingAr: string | null = null;
   if (mission.status === "executing") {
-    const seconds = estimateRemainingSeconds(samples, plannedTotal, now);
+    let seconds = estimateRemainingSeconds(samples, plannedTotal, now);
+    // the speed of the paging itself (rows collected from the source), before the first rows are saved
+    if (seconds === null) { const c = collectedOf(events); if (c && c.target > 0) seconds = estimateRemainingSeconds(c.samples, c.target, now); }
     remainingAr = seconds === null ? null : seconds === 0 ? null : `المتبقي ${etaTextAr(seconds)?.replace(/^حوالي /, "نحو ")}`;
   }
   const currentLineAr = q.lineAr ?? (running ? (running.countAr ? `${running.titleAr} · ${running.countAr}` : running.titleAr) : progressLine ?? steps.find((s) => s.state === "waiting")?.titleAr ?? "");
@@ -213,7 +240,7 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   }
 
   return {
-    id: mission.id, phase, summaryAr: plan?.summary_ar ? String(plan.summary_ar) : null, stages, totalRows: total, totalRowsAr: rowsWordAr(total),
+    id: mission.id, phase, summaryAr: plan?.summary_ar ? String(plan.summary_ar) : null, notesAr: Array.isArray(plan?.notes_ar) ? plan.notes_ar.map(String) : [], stages, totalRows: total, totalRowsAr: rowsWordAr(total),
     samples: plan ? samplesView(plan) : null, priceLineAr: plan ? priceLineAr(plan) : null, questionAr: phase === "question" ? mission.question_ar : null,
     queueLineAr: q.lineAr, queuePosition: q.position, steps, currentLineAr, delayAr, remainingAr,
     closePageAr: mission.status === "approved" || mission.status === "executing" ? AGENT_CLOSE_PAGE_LINE_AR : null,

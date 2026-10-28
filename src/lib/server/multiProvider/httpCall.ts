@@ -47,7 +47,7 @@ export async function runRecordedCall<T>(args: {
   const now = ctx.now ?? Date.now;
   const facts = PROVIDER_FACTS[capability.provider];
   const usdPerCredit = facts.usdPerCredit ?? 0;
-  const timeoutMs = Math.min(ctx.timeoutMs && ctx.timeoutMs > 0 ? ctx.timeoutMs : facts.callTimeoutMs, facts.callTimeoutMs);
+  const timeoutMs = Math.min(ctx.timeoutMs && ctx.timeoutMs > 0 ? ctx.timeoutMs : facts.callTimeoutMs, ctx.timeoutCapMs && ctx.timeoutCapMs > 0 ? ctx.timeoutCapMs : facts.callTimeoutMs);
   const estimatedUsd = round6(capability.costPerCallUsd ?? 0);
 
   const reservation = await ctx.recorder.reserve({ provider: capability.provider, capabilityId: capability.id, estimatedUsd, jobId: ctx.jobId });

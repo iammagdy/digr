@@ -9,7 +9,9 @@ import type { FakeStep } from "../../agent/src/fakeDriver";
  */
 export type Results = Array<{ tool: string; result: Record<string, unknown> }>;
 
-export const callIds = (r: Results): string[] => r.filter((x) => x.tool === "treg_call" && x.result.ok === true).map((x) => String(x.result.call_id));
+const CALL_TOOLS = new Set(["treg_call", "parse_page", "web_search", "web_scrape", "people_search"]);
+/** The saved-page ids of every source call made so far (catalog and web gateway alike), in order. */
+export const callIds = (r: Results): string[] => r.filter((x) => CALL_TOOLS.has(x.tool) && x.result.ok === true).map((x) => String(x.result.call_id));
 export const lastOutputId = (r: Results): string => String([...r].reverse().find((x) => x.tool === "run_code" && x.result.output_id)?.result.output_id);
 export const lastNextCursor = (r: Results): string | null => {
   const last = [...r].reverse().find((x) => x.tool === "treg_call" && x.result.ok === true);
@@ -56,7 +58,7 @@ export interface PlanningFlowOptions {
   searchWords: string[];
   platform?: string;
   /** The endpoint the sample call goes to, with its params. */
-  sample: Array<{ endpoint: string; params: Args }>;
+  sample: Array<{ endpoint: string; params: Args; /** Why a dearer source than the cheapest ranked one is sampled (the code asks for it; it is kept in the admin trace). */ why?: string }>;
   /** run_code that builds sample rows of the first stage from the first saved page. */
   sampleCode: string;
   sampleFiles?: (r: Results) => string[];
@@ -70,7 +72,7 @@ export function planningFlow(o: PlanningFlowOptions): FakeStep[] {
     { tool: "catalog_search", args: { words: o.searchWords, ...(o.platform ? { platform: o.platform } : {}), limit: 5 } },
     ...o.sample.flatMap((s): FakeStep[] => [
       { tool: "describe_endpoint", args: { id: s.endpoint } },
-      { tool: "treg_call", args: typeof s.params === "function" ? (r: Results) => ({ endpoint_id: s.endpoint, params: (s.params as (r: Results) => Record<string, unknown>)(r) }) : { endpoint_id: s.endpoint, params: s.params } },
+      { tool: "treg_call", args: typeof s.params === "function" ? (r: Results) => ({ endpoint_id: s.endpoint, params: (s.params as (r: Results) => Record<string, unknown>)(r), ...(s.why ? { why: s.why } : {}) }) : { endpoint_id: s.endpoint, params: s.params, ...(s.why ? { why: s.why } : {}) } },
     ]),
     { tool: "run_code", args: (r) => ({ code: o.sampleCode, files: o.sampleFiles ? o.sampleFiles(r) : callIds(r).slice(0, 1) }) },
     { tool: "propose_plan", args: (r) => o.plan(r) },
