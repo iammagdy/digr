@@ -1,0 +1,69 @@
+# Diger agent worker (phase A)
+
+A long-running worker that runs Diger's real AI agent: a Claude agent (the Claude Agent SDK, `@anthropic-ai/claude-agent-sdk`) that understands a data mission, searches the TREG
+catalog, samples and looks at real rows, splits the work into stages, runs for as long as it needs, links results to their parents and delivers analysis-ready files. It is hosted on
+Heroku as a **worker dyno** (no 60-second limit). The website stays the interface for users and money.
+
+**Phase A changes nothing for customers.** The only way to start a mission is the admin page «الوكيل», and it runs for ONE account: the test account `iam.magdy+1@outlook.com`.
+
+```
+admin page «الوكيل» ──► missions (Supabase) ◄── worker (Heroku) ──► Claude (Agent SDK)
+        │ approve                                   │ the ONLY tools: catalog_search, describe_endpoint, treg_call,
+        ▼                                           │   run_code, report_progress, ask_question, propose_plan, save_rows, finish
+ existing money functions                           ▼
+ (reserve / settle / release)             gateway ──► TREG   (code-enforced: sellable, block list, data policy,
+                                                            mission budget, provider daily cap, every call recorded)
+```
+
+## What is enforced in code (not in the prompt)
+
+* `treg_call` checks, before every call: the endpoint is sellable, it is not on the block list (write actions, own_account, apollo, datagma), the data policy (a sensitive endpoint only for the admin
+  or a verified business), the mission's USD budget (planning 0.05; execution 40% of the approved reserve's value, floor 0.005) and the provider's daily cap. Every call is recorded in `provider_costs`
+  with the actual charge, the full raw answer is saved to private storage, and the model gets a shape digest and the first rows only.
+* `run_code` runs JavaScript in a separate process with an empty environment, Node's permission model, a vm context with no `require`, `process`, `fetch`, timers or string code generation, a time limit and a
+  memory limit, on the mission's own saved files only. The SDK's built-in shell, web fetch and file tools are disabled three ways, and the SDK's process never receives the Supabase key or the TREG token.
+* The model never states a price. The site computes it: unit price = measured cost per final row x 5,500; reserve = ceil(volume x unit x 1.15), cap 25,000; charge = ceil(delivered unique final rows x unit price),
+  never above the reserve, the rest released. Settlement uses the existing money functions only.
+* What the customer reads is Arabic only, with Arabic-Indic digits, and never a provider name, an endpoint id, a dollar amount or an internal id: the prompt says so and `src/lib/agentMission/text.ts` refuses a line that breaks it.
+
+The system prompt is a file: `agent/prompts/system.md`.
+
+## Environment variables (names only; set them in Heroku, never in the repository)
+
+| Name | What |
+|---|---|
+| `ANTHROPIC_API_KEY` | the Anthropic API key |
+| `TREG_TOKEN` | the TREG token (the same one the website uses) |
+| `SUPABASE_URL` | the Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | the Supabase service-role key |
+| `AGENT_MODEL` | optional; `claude-haiku-5-5` (default) or `claude-sonnet-5-5`. Planning can be switched separately from the admin page «الوكيل» (the model of each phase and its cost are stored on every mission, so the two can be compared) |
+
+## Heroku, step by step (no command line)
+
+0. **Supabase first.** Apply `docs/proposals/agent-worker/` in the order of its README (the admin page tells you if it is not applied). Do not turn the worker on before this.
+1. **Create the app.** dashboard.heroku.com → **New** → **Create new app** → give it a name (for example `diger-agent`) and a region → **Create app**.
+2. **Connect GitHub.** In the app, tab **Deploy** → **Deployment method: GitHub** → **Connect to GitHub** → search `iammagdy/digr` → **Connect**. Under **Manual deploy** choose the branch (`main`) and press **Deploy Branch**. (Optional: **Enable Automatic Deploys**.) Heroku detects Node from `package.json` (Node 22) and builds with `heroku-postbuild`.
+3. **Add the settings.** Tab **Settings** → **Reveal Config Vars** → add the four names above with their values (and `AGENT_MODEL` if you want to change the default).
+4. **Choose the dyno and turn the worker on.** Tab **Resources** → under **Free/Hobby/Basic** the list shows one line, `worker` (from the `Procfile`; there is no `web` line, which is correct). Press the pencil icon on that line → choose **Basic** → switch it **on** → **Confirm**.
+5. **Check.** Open the admin page «الوكيل»: the dot turns green («العامل يعمل») within a minute. In Heroku: **More** → **View logs** shows `[agent] worker ... started`.
+6. **To stop it**: Resources → the pencil → switch the worker off. Missions waiting stay queued; a mission that was running is taken over by the worker when you turn it on again (its lease ends after two minutes).
+
+Cost: one Basic dyno. Model cost per mission is shown on the admin page.
+
+## Developing
+
+```
+npm test                       # all tests, with a fake model transcript and fake TREG answers: no real call
+npm run agent:typecheck        # type-checks the worker, including the SDK driver
+npm run agent:worker           # starts the worker (needs the four environment variables)
+```
+
+`agent/` has its own `package.json` (the Claude Agent SDK, which ships a native binary of about 280 MB) so the website's install does not carry it; the website's `tsconfig.json` excludes the two files that import it
+(`agent/src/main.ts`, `agent/src/sdkRuntime.ts`). Everything else in `agent/src` is plain code over injected stores, clocks and model drivers, and is tested without the SDK.
+
+## NOT PROVEN
+
+* A real run with the real model: no Anthropic key was used and no provider was called while building this. The SDK driver type-checks against the installed SDK and its options are asserted in tests, but a real mission has not run.
+* The SDK's native binary on a Heroku Basic dyno (512 MB of memory) and the slug size (the website's dependencies plus the SDK's native binary) are not measured; the build (`heroku-postbuild`) has not run on Heroku.
+* The sandbox is a separate Node process with the permission model and a vm context. Node 22's permission model does not restrict the network, and a vm context is not a security boundary against an unknown engine bug; an OS-level network jail is not in place.
+* The SQL has run only on a scratch PostgreSQL, not on Supabase; the job cap (25,000) must already be applied there for a large mission to be approvable.

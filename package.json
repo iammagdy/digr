@@ -2,6 +2,9 @@
   "name": "diger",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": "22.x"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build && tsx scripts/check-client-bundle-secrets.ts",
@@ -9,7 +12,10 @@
     "build:functions": "tsx scripts/build-functions.ts",
     "test": "vitest run",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "agent:typecheck": "tsc -p agent/tsconfig.json",
+    "agent:worker": "tsx agent/src/main.ts",
+    "heroku-postbuild": "npm ci --prefix agent --no-audit --no-fund && tsc -p agent/tsconfig.json"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

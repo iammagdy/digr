@@ -1,0 +1,7 @@
+# Heroku builds the agent worker (agent/) from this repository. The website's static assets, tests, docs, SQL and scripts are not needed by the worker dyno.
+# (No *.md rule: agent/prompts/system.md is the agent's system prompt and must stay in the slug.)
+public/
+tests/
+docs/
+supabase/
+scripts/
