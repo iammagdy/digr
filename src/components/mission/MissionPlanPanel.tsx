@@ -47,12 +47,15 @@ export function MissionStepRow({ step }: { step: PanelStep }) {
   const done = step.state === "done";
   const percent = typeof step.ratio === "number" ? Math.round(step.ratio * 100) : null;
   return (
-    <li className="flex gap-2.5 py-2" data-testid={`mission-step-${step.id}`} data-state={step.state} aria-label={`${step.titleAr}: ${STATE_LABEL_AR[step.state]}`}>
+    <li className="flex gap-2 py-1.5" data-testid={`mission-step-${step.id}`} data-state={step.state} aria-label={`${step.titleAr}: ${STATE_LABEL_AR[step.state]}`}>
       <StepIcon state={step.state} />
       <div className="min-w-0 flex-1">
         <p className={`m-0 text-[13px] leading-[1.7] ${done ? "text-mut line-through decoration-1" : step.state === "waiting" ? "text-ink2" : "font-semibold text-ink"}`}>{step.titleAr}</p>
         {step.detailAr ? <p className="m-0 text-[12px] font-light leading-[1.7] text-ink2" data-testid="step-detail">{step.detailAr}</p> : null}
         {step.state === "stopped" && step.reasonAr ? <p className="m-0 text-[12px] leading-[1.7]" style={{ color: "var(--bad)" }} data-testid="step-reason">{step.reasonAr}</p> : null}
+        {step.metricsAr && step.metricsAr.length > 0 && step.state !== "waiting" ? (
+          <ul className="m-0 mt-0.5 list-none p-0" data-testid="step-metrics" aria-live="off">{step.metricsAr.map((line) => <li key={line} className="text-[12px] font-light leading-[1.7] text-ink2">{line}</li>)}</ul>
+        ) : null}
         {step.countAr && step.state !== "waiting" ? (
           <div className="mt-1" data-testid="step-count">
             <div className="flex items-baseline justify-between gap-2 text-[12px] text-ink2">
@@ -60,7 +63,7 @@ export function MissionStepRow({ step }: { step: PanelStep }) {
               {step.excludedAr ? <span className="text-mut">{step.excludedAr}</span> : null}
             </div>
             {percent !== null ? (
-              <div role="progressbar" aria-label={step.titleAr} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-sf2">
+              <div role="progressbar" aria-label={step.titleAr} aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} className="mt-1 h-1 w-full overflow-hidden rounded-full bg-sf2">
                 <div className="h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none" style={{ width: `${percent}%`, background: done ? "var(--ok)" : "var(--ac)" }} />
               </div>
             ) : null}
