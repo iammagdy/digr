@@ -72,6 +72,7 @@ export interface AgentStore {
   /** A file of THIS mission only (the path is always under the mission's own prefix). Null when absent. */
   getFile(missionId: string, relPath: string): Promise<string | null>;
   getFileBytes(missionId: string, relPath: string): Promise<Buffer | null>;
+  /** A note on the live panel / admin page. NEVER throws: a lost note must not break a mission. */
   addEvent(missionId: string, event: MissionEventInput): Promise<void>;
   addCall(row: CallRow): Promise<void>;
   listCalls(missionId: string): Promise<CallRow[]>;
@@ -79,7 +80,8 @@ export interface AgentStore {
   updateMission(id: string, patch: Partial<MissionRecord> & Record<string, unknown>): Promise<void>;
   /** Takes the next mission to plan (`queued`) or execute (`approved`), or a mission whose lease ran out; null when there is none. */
   claimMission(workerId: string, leaseSeconds: number): Promise<MissionRecord | null>;
-  renewLeases(workerId: string, leaseSeconds: number): Promise<void>;
+  /** Extends the lease of EXACTLY these missions (the ones the worker is really running in memory) and of no other: a mission this worker no longer runs must be free to be taken over. */
+  renewLeases(workerId: string, leaseSeconds: number, missionIds: string[]): Promise<void>;
   writeHeartbeat(row: HeartbeatRow): Promise<void>;
   /** The settings the owner sets from the admin page (e.g. planning_model). */
   readSettings(): Promise<Record<string, unknown>>;

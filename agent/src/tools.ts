@@ -1,6 +1,6 @@
 import { AGENT_COLLECT_MAX_PAGES, AGENT_INLINE_ROWS_MAX, SANDBOX_INLINE_RESULT_CHARS } from "../../src/lib/agentMission/constants";
 import { CONTACT_KINDS, isContactSource, verifyContactValue } from "../../src/lib/agentMission/contacts";
-import { describeAgentSource, isAgentSourceId, searchAgentSources } from "../../src/lib/agentMission/sources";
+import { describeAgentSource, isAgentSourceId, searchAgentSources, SESSION_RESTRICTED_SOURCES } from "../../src/lib/agentMission/sources";
 import { validateAndPricePlan, type PricedPlan, type RecordedCall } from "../../src/lib/agentMission/plan";
 import { checkCustomerText } from "../../src/lib/agentMission/text";
 import { blockedEndpointReason } from "../../src/lib/treg/blockList";
@@ -94,6 +94,9 @@ export function cheapestFirstMessage(state: RunState, id: string, why: unknown):
   return untried.length > 0 ? `a cheaper source of the last catalog_search has not been tried (${untried.slice(0, 3).join(", ")}): sample it first, or pass \`why\` (at least 8 characters) saying why it is unsuitable` : null;
 }
 
+/** The sources of the last catalog_search that have not been tried yet, cheapest first: what a failed sample moves on to. */
+export const untriedSources = (state: RunState, except: string, n = 3): string[] => (state.ranking ?? []).filter((x) => x !== except && !state.tried.has(x)).slice(0, n);
+
 const valueAt = (value: unknown, path: string | null | undefined): unknown => {
   if (!path || path === "root") return value;
   let cur: any = value;
@@ -141,7 +144,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           ...found.hits.map((h: any) => ({ ...h, usd_per_row: h.costPerRecordUsd ?? null })),
           ...web.map((c) => ({ id: c.id, name: c.id, platform: c.platform, capability: c.kind, summary: c.summary.slice(0, 140), price: `about ${c.usd_per_call.toFixed(5)} USD a call, up to ${c.rows_per_call} rows`, costPerRecordUsd: Number(c.usd_per_row.toFixed(7)), usd_per_row: c.usd_per_row, requiredInputs: [], inputs: [c.inputs] })),
         ].sort((x, y) => (x.usd_per_row ?? Number.POSITIVE_INFINITY) - (y.usd_per_row ?? Number.POSITIVE_INFINITY) || String(x.id).localeCompare(String(y.id)));
-        const top: Array<Record<string, any>> = merged.slice(0, limit).map(({ usd_per_row: _u, ...h }, i) => ({ ...h, rank: i + 1 }));
+        const top: Array<Record<string, any>> = merged.slice(0, limit).map(({ usd_per_row: _u, ...h }, i) => ({ ...h, rank: i + 1, ...(SESSION_RESTRICTED_SOURCES[String(h.id)] ? { limit_note: SESSION_RESTRICTED_SOURCES[String(h.id)].message } : {}) }));
         state.ranking = top.map((h) => String(h.id));
         return { ok: true, restrictedTop: found.restrictedTop, hidden: found.hidden, hits: top, note: "ranked cheapest first by cost per row; use the cheapest source that really fits, and give `why` when you choose a dearer one" };
       },
@@ -172,8 +175,10 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         const refusal = cheapestFirstMessage(state, id, a.why);
         if (refusal) return { ok: false, refused: "choose_cheapest", message: refusal };
         const result = await gateway.tregCall({ endpoint_id: a.endpoint_id, params: a.params, purpose: a.purpose, why: a.why });
-        if (!("refused" in result)) state.tried.add(id);
-        return { ...result };
+        if (!("refused" in result) || result.refused === "needs_login") state.tried.add(id);
+        // A SAMPLE THAT FAILS IS NOT THE END OF EXPLORATION: a failed call, an empty page or a source that refuses this search says which sources of the ranking are still untried, so the next one is sampled (within the budget)
+        const unsuitable = ("failed" in result && result.failed === true) || ("refused" in result && result.refused === "needs_login") || (result.ok === true && result.rows_in_page === 0);
+        return unsuitable ? { ...result, next_sources: untriedSources(state, id), next_step: "this sample did not give rows; sample the next untried source of the ranking (pass `why` only if you skip one), and stop only when the budget refuses or no suitable source is left" } : { ...result };
       },
     },
     ...(ctx.web ? webTools(ctx) : []),

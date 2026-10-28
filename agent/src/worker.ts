@@ -1,5 +1,5 @@
 import {
-  AGENT_HEARTBEAT_INTERVAL_MS, AGENT_MEMORY_ADMIT_LIMIT_MB, AGENT_MEMORY_HARD_LIMIT_MB, AGENT_MEMORY_WATCH_MS, AGENT_MISSION_LEASE_SECONDS, AGENT_POLL_INTERVAL_MS, AGENT_WORKER_CONCURRENCY,
+  AGENT_HEARTBEAT_INTERVAL_MS, AGENT_MEMORY_ADMIT_LIMIT_MB, AGENT_MEMORY_HARD_LIMIT_MB, AGENT_MEMORY_RECYCLE_AFTER_MS, AGENT_MEMORY_WATCH_MS, AGENT_MISSION_LEASE_SECONDS, AGENT_POLL_INTERVAL_MS, AGENT_WORKER_CONCURRENCY,
 } from "../../src/lib/agentMission/constants";
 import { readMemory as readProcessMemory, type MemoryReading } from "./memory";
 import type { AgentStore, MissionRecord } from "./types";
@@ -7,8 +7,11 @@ import type { AgentStore, MissionRecord } from "./types";
 /**
  * THE WORKER LOOP. A long-running process (a Heroku worker dyno) that
  *  - polls Supabase for a mission to PLAN (`queued`) or EXECUTE (`approved`), at most AGENT_WORKER_CONCURRENCY at a time (default 1: AGENT_CONCURRENCY);
- *  - leases each mission it takes (agent_claim_mission) and renews every lease with each heartbeat, so a dead worker's mission is taken over when the lease ends;
+ *  - leases each mission it takes (agent_claim_mission) and renews, with each heartbeat, the lease of EXACTLY the missions it is running in memory right now: a mission this worker no longer runs (it ended, crashed, or the
+ *    worker restarted and a new one has another id) is not renewed, its lease ends and another run takes it over;
+ *  - records the real peak memory of every run (the worker, and the worker with its processes) as an internal event of the mission (admin only);
  *  - takes NO new mission while the memory of the worker and its processes is at or above AGENT_MEMORY_ADMIT_LIMIT_MB (the mission stays queued, nothing is leased; it starts when the memory falls), and
+ *    an IDLE worker that stays at or above that limit for AGENT_MEMORY_RECYCLE_AFTER_MS asks to be restarted (`onRecycle`) so the queue never waits for ever on a swollen heap; it
  *    watches the memory of a running mission: at AGENT_MEMORY_HARD_LIMIT_MB it calls `onMemoryPressure` (the entry point stops the model run and the mission goes back to the queue) BEFORE the platform kills the dyno;
  *  - writes a heartbeat row every 30 seconds, with the memory it uses (rss_mb and tree_rss_mb) (the admin page calls the worker alive while the last beat is younger than 90 seconds).
  * It is written over an injected store, run function and clock, so the tests drive it with no database and no timers.
@@ -31,6 +34,9 @@ export interface WorkerDeps {
   memoryHardLimitMb?: number;
   /** Called (once per reading above the hard limit) while a mission runs: stop the model run so the mission can be put back in the queue. */
   onMemoryPressure?: (reading: MemoryReading) => void;
+  /** Called once when the IDLE worker has stayed at or above the admit limit for the recycle time: the entry point stops the loop so the platform restarts the process with a fresh heap. */
+  onRecycle?: (reading: MemoryReading) => void;
+  memoryRecycleAfterMs?: number;
   leaseSeconds?: number;
   now?: () => Date;
   log?: (line: string) => void;
@@ -46,20 +52,32 @@ export function createWorker(deps: WorkerDeps) {
   const hardLimit = deps.memoryHardLimitMb ?? AGENT_MEMORY_HARD_LIMIT_MB;
   /** What the dyno counts: the worker and the processes it started; the worker alone where the tree cannot be read. */
   const usedMb = (m: MemoryReading) => (m.treeRssMb !== null && Number.isFinite(m.treeRssMb) ? m.treeRssMb : m.rssMb);
+  const recycleAfterMs = deps.memoryRecycleAfterMs ?? AGENT_MEMORY_RECYCLE_AFTER_MS;
   let waitingForMemory = false;
+  let waitingSince: number | null = null;
+  let recycled = false;
   let stopping = false;
+  /** The measured memory of each running mission: where it started, its highest readings, and whether the worker had to stop it. */
+  const peaks = new Map<string, { phase: 0 | 1; startedAt: number; startRss: number; startTree: number | null; peakRss: number; peakTree: number | null; samples: number; stopped: boolean }>();
+  const sample = (reading: MemoryReading) => {
+    for (const p of peaks.values()) {
+      p.samples += 1;
+      p.peakRss = Math.max(p.peakRss, reading.rssMb);
+      if (reading.treeRssMb !== null && Number.isFinite(reading.treeRssMb)) p.peakTree = Math.max(p.peakTree ?? 0, reading.treeRssMb);
+    }
+  };
 
   async function heartbeat(): Promise<void> {
     try {
       const memory = (deps.readMemory ?? readProcessMemory)();
       await deps.store.writeHeartbeat({ worker_id: deps.workerId, beat_at: now().toISOString(), active_missions: active.size, model: deps.modelLabel(), version: deps.version, rss_mb: memory.rssMb, tree_rss_mb: memory.treeRssMb });
-      await deps.store.renewLeases(deps.workerId, leaseSeconds);
+      await deps.store.renewLeases(deps.workerId, leaseSeconds, [...active.keys()]);
     } catch (e) {
       deps.log?.(`heartbeat_failed ${String((e as Error)?.message ?? e).slice(0, 120)}`);
     }
   }
 
-  /** True while the memory is too high to start another mission (logged once per wait). */
+  /** True while the memory is too high to start another mission (logged once per wait). An idle worker that stays above the limit for the recycle time asks to be restarted. */
   function memoryBlocksAdmission(): boolean {
     let reading: MemoryReading;
     try { reading = readMem(); } catch { return false; }
@@ -67,18 +85,48 @@ export function createWorker(deps: WorkerDeps) {
     if (blocked && !waitingForMemory) deps.log?.(`memory_wait tree=${usedMb(reading)}MB limit=${admitLimit}MB: no new mission is taken until it falls`);
     if (!blocked && waitingForMemory) deps.log?.(`memory_ok tree=${usedMb(reading)}MB: taking missions again`);
     waitingForMemory = blocked;
+    if (!blocked) waitingSince = null;
+    else if (active.size === 0) {
+      waitingSince = waitingSince ?? now().getTime();
+      if (!recycled && now().getTime() - waitingSince >= recycleAfterMs) {
+        recycled = true;
+        deps.log?.(`memory_recycle tree=${usedMb(reading)}MB: idle for ${Math.round((now().getTime() - waitingSince) / 1000)}s at or above ${admitLimit}MB, asking for a restart with a fresh heap`);
+        try { deps.onRecycle?.(reading); } catch { /* best effort */ }
+      }
+    }
     return blocked;
   }
 
-  /** While a mission runs: at the hard limit the entry point is told to stop the model run (the mission goes back to the queue). Returns whether the limit was reached. */
+  /** While a mission runs: every reading counts toward its peak; at the hard limit the entry point is told to stop the model run (the mission goes back to the queue). Returns whether the limit was reached. */
   function watchMemory(): boolean {
     if (active.size === 0) return false;
     let reading: MemoryReading;
     try { reading = readMem(); } catch { return false; }
+    sample(reading);
     if (usedMb(reading) < hardLimit) return false;
+    for (const p of peaks.values()) p.stopped = true;
     deps.log?.(`memory_pressure tree=${usedMb(reading)}MB limit=${hardLimit}MB: stopping the running mission so it can wait in the queue`);
     try { deps.onMemoryPressure?.(reading); } catch { /* the stop is best effort */ }
     return true;
+  }
+
+  /** The run ended: its measured memory goes on the mission as an INTERNAL event (the admin page reads it; the customer's screen never does). Never throws. */
+  async function recordPeak(missionId: string): Promise<void> {
+    const p = peaks.get(missionId);
+    peaks.delete(missionId);
+    if (!p) return;
+    try {
+      let last: MemoryReading | null = null;
+      try { last = readMem(); } catch { last = null; }
+      if (last) { p.samples += 1; p.peakRss = Math.max(p.peakRss, last.rssMb); if (last.treeRssMb !== null) p.peakTree = Math.max(p.peakTree ?? 0, last.treeRssMb); }
+      const counts: Record<string, number> = { mem_phase: p.phase, mem_start_rss_mb: p.startRss, mem_peak_rss_mb: p.peakRss, mem_samples: p.samples, mem_seconds: Math.max(0, Math.round((now().getTime() - p.startedAt) / 1000)) };
+      if (p.startTree !== null) counts.mem_start_tree_mb = p.startTree;
+      if (p.peakTree !== null) counts.mem_peak_tree_mb = p.peakTree;
+      if (p.stopped) counts.mem_stopped = 1;
+      await deps.store.addEvent(missionId, { kind: "call", message_ar: "قياس داخلي لذاكرة الخدمة أثناء هذه الخطوة.", counts });
+    } catch (e) {
+      deps.log?.(`peak_not_recorded ${missionId} ${String((e as Error)?.message ?? e).slice(0, 120)}`);
+    }
   }
 
   /** Takes missions while there is a free slot; returns how many it started. */
@@ -95,8 +143,12 @@ export function createWorker(deps: WorkerDeps) {
         break;
       }
       if (!mission) break;
-      const run = deps.runMission(mission).catch((e) => deps.log?.(`mission_crashed ${mission!.id} ${String((e as Error)?.message ?? e).slice(0, 160)}`)).finally(() => { active.delete(mission!.id); });
-      active.set(mission.id, run);
+      let startReading: MemoryReading | null = null;
+      try { startReading = readMem(); } catch { startReading = null; }
+      const claimed = mission;
+      if (startReading) peaks.set(claimed.id, { phase: claimed.status === "executing" ? 1 : 0, startedAt: now().getTime(), startRss: startReading.rssMb, startTree: startReading.treeRssMb, peakRss: startReading.rssMb, peakTree: startReading.treeRssMb, samples: 1, stopped: false });
+      const run = deps.runMission(claimed).catch((e) => deps.log?.(`mission_crashed ${claimed.id} ${String((e as Error)?.message ?? e).slice(0, 160)}`)).then(() => recordPeak(claimed.id)).finally(() => { active.delete(claimed.id); });
+      active.set(claimed.id, run);
       started += 1;
     }
     return started;

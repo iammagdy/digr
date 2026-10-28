@@ -1,8 +1,9 @@
 import { formatAr, toArabicDigits } from "../arabicDigits";
 import { estimateRemainingSeconds, etaTextAr, type ProgressSample } from "../jobEta";
-import { FILES_STEP_TITLE_AR, PLANNING_STEP_TITLES, SLOW_SOURCE_AR, type PanelStep } from "../missionView";
+import { FILES_STEP_TITLE_AR, PLANNING_STEP_TITLES, type PanelStep } from "../missionView";
 import { pointsAr } from "../pointsFormat";
-import { AGENT_CLOSE_PAGE_LINE_AR, AGENT_QUEUE_LINE_AR, AGENT_SLOW_AFTER_MS } from "./constants";
+import { AGENT_CLOSE_PAGE_LINE_AR, AGENT_QUEUE_LINE_AR, AGENT_SLOW_AFTER_MS, AGENT_STALL_AFTER_MS } from "./constants";
+import { isInternalEvent } from "./eventText";
 
 /**
  * WHAT THE CUSTOMER SEES OF A MISSION: one pure function from the columns the customer may read (the mission row without its internal columns, its events, the worker's state and the queue)
@@ -126,6 +127,24 @@ export function queueLine(status: string, queue: QueueInfo | null): { lineAr: st
   return { lineAr: `${AGENT_QUEUE_LINE_AR} · ترتيبك ${toArabicDigits(position)}`, position };
 }
 
+/** The honest lines of a step that is slow. Planning holds NOTHING, and says so; a running mission says it charges only what it delivers. Never an ETA. */
+export const SLOW_PLANNING_AR = "ما زلنا نجهّز خطتك وبعض المصادر أبطأ من المعتاد. لم يُحجز أي رصيد منك.";
+export const STALLED_PLANNING_AR = "الخطوة الحالية تستغرق وقتًا أطول من المعتاد وما زلنا نعمل عليها. لم يُحجز أي رصيد منك حتى الآن.";
+export const SLOW_RUNNING_AR = "المصدر أبطأ من المعتاد وما زلنا نعمل. ولن يُخصم منك إلا ما يُسلَّم فعلًا.";
+export const STALLED_RUNNING_AR = "المصدر أبطأ من المعتاد منذ وقت أطول، وما زلنا نعمل عليه. ولن يُخصم منك إلا ما يُسلَّم فعلًا.";
+
+/** Progress INSIDE the planning step «تجربة عينة من كل مرحلة»: the samples read so far, and out of how many when the agent has said how many stages it plans. */
+function sampleProgress(events: EventForCustomer[], callsMade: number): { done: number; of: number | null } {
+  let samples = 0;
+  let stages = 0;
+  for (const e of events) {
+    if (typeof e.counts?.samples === "number") samples = Math.max(samples, Math.floor(e.counts.samples));
+    if (typeof e.counts?.stages === "number" && e.counts.stages > 0) stages = Math.floor(e.counts.stages);
+  }
+  const done = Math.max(samples, callsMade);
+  return { done, of: stages > 0 ? stages : null };
+}
+
 const stageIndexOf = (e: EventForCustomer): number => Math.max(0, Math.floor(Number(e.counts?.stage) || 0));
 
 /** Steps of the live panel. Before the plan: the four planning steps; after approval: the plan's stages and the files. */
@@ -170,6 +189,12 @@ function stepsOf(input: { phase: CustomerPhase; status: string; stages: Customer
     steps[1].state = planned || callsMade > 0 ? "done" : phase === "planning" && steps[0].state === "done" ? "running" : "waiting";
     steps[2].state = planned ? "done" : callsMade > 0 ? "running" : "waiting";
     steps[3].state = planned ? "done" : planning && callsMade > 0 ? "waiting" : "waiting";
+    // clear progress inside the current step: «عينة ١ من ٢» when the number of stages is known, else how many samples were tried
+    const progress = sampleProgress(events, callsMade);
+    if (!planned && progress.done > 0 && steps[2].state === "running") {
+      if (progress.of !== null) { const n = Math.min(progress.done, progress.of); steps[2].countAr = `عينة ${formatAr(n)} من ${formatAr(progress.of)}`; steps[2].ratio = Math.min(1, n / progress.of); }
+      else steps[2].detailAr = progress.done === 1 ? "جُرّبت عينة واحدة" : progress.done === 2 ? "جُرّبت عينتان" : `جُرّبت ${formatAr(progress.done)} عينات`;
+    }
     if (phase === "question") { for (const s of steps) if (s.state === "waiting" || s.state === "running") s.state = "waiting"; }
     if (phase === "unserved" || phase === "failed" || phase === "cancelled") for (const s of steps) if (s.state === "running" || s.state === "waiting") s.state = "stopped";
     return { steps, samples, savedTotal: savedTotalNow, plannedTotal };
@@ -203,7 +228,8 @@ const FILE_LABEL_AR: Record<string, string> = { xlsx: "تنزيل ملف إكس�
 export function customerMissionView(input: { mission: MissionRowForCustomer; events: EventForCustomer[]; queue?: QueueInfo | null; callsMade?: number; now?: number }): CustomerMissionView {
   const { mission } = input;
   const now = input.now ?? Date.now();
-  const events = [...input.events].sort((a, b) => a.id - b.id);
+  // the run's measured memory is for the admin: the customer never sees it
+  const events = input.events.filter((e) => !isInternalEvent(e)).sort((a, b) => a.id - b.id);
   const basePhase = PHASE_OF_STATUS[mission.status] ?? "waiting";
   const plan = mission.plan_public && typeof mission.plan_public === "object" ? mission.plan_public : null;
   const { stages, total } = stagesView(plan);
@@ -219,7 +245,14 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   const progressLine = [...events].reverse().find((e) => e.kind === "progress" || e.kind === "system")?.message_ar ?? null;
   const running = steps.find((s) => s.state === "running");
   let delayAr: string | null = null;
-  if ((mission.status === "executing" || mission.status === "planning") && Number.isFinite(lastAt) && now - lastAt > AGENT_SLOW_AFTER_MS) delayAr = SLOW_SOURCE_AR;
+  // how long since anything moved: the last event, or the creation of the mission when there is none yet
+  const quietSince = Number.isFinite(lastAt) ? lastAt : Date.parse(mission.created_at);
+  if ((mission.status === "executing" || mission.status === "planning") && Number.isFinite(quietSince)) {
+    const quietMs = now - quietSince;
+    const planningNow = mission.status === "planning";
+    if (quietMs > AGENT_STALL_AFTER_MS) delayAr = planningNow ? STALLED_PLANNING_AR : STALLED_RUNNING_AR;
+    else if (quietMs > AGENT_SLOW_AFTER_MS) delayAr = planningNow ? SLOW_PLANNING_AR : SLOW_RUNNING_AR;
+  }
   if (input.queue && !input.queue.workerAlive && (mission.status === "queued" || mission.status === "approved" || mission.status === "executing" || mission.status === "planning")) delayAr = "الخدمة متوقفة مؤقتًا. مهمتك محفوظة وتكمل أول ما تعود للعمل.";
 
   let remainingAr: string | null = null;
@@ -246,7 +279,7 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
     closePageAr: mission.status === "approved" || mission.status === "executing" ? AGENT_CLOSE_PAGE_LINE_AR : null,
     resultLinesAr, resultSummaryAr: phase === "done" || phase === "partial" || phase === "unserved" || phase === "failed" ? mission.summary_ar : null,
     files: filesReady ? mission.files!.filter((f) => FILE_LABEL_AR[f.kind]).map((f) => ({ name: f.name, kind: f.kind, labelAr: FILE_LABEL_AR[f.kind] })) : [],
-    startedAt: events.length ? Date.parse(events[0].created_at) || null : null,
+    startedAt: (events.length ? Date.parse(events[0].created_at) : Date.parse(mission.created_at)) || null,
     live: isLivePhase(phase),
   };
 }

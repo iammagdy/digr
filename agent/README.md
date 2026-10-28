@@ -61,17 +61,20 @@ The admin page «الوكيل» shows the worker's memory (the worker alone, and
 
 ## Memory on the 512 MB dyno
 
-The numbers live in `src/lib/agentMission/constants.ts` (`AGENT_MEMORY_*`); the figure that counts is the **tree** memory (the worker plus the processes it started, read from `/proc`), the one the dyno's limit counts.
+The numbers live in `src/lib/agentMission/constants.ts` (`AGENT_MEMORY_*`, with the evidence in the comment above them); the figure that counts is the **tree** memory (the worker plus the processes it started, read from `/proc`).
 
-* **One process, small heap.** The `Procfile` runs `node --max-old-space-size=192 --max-semi-space-size=4 --import tsx agent/src/main.ts` (no `npx`/`tsx` wrapper processes). Measured on this machine with an empty environment: the worker alone is about 160 MB once the catalog and the libraries are loaded; the SDK's native process (started per session) cannot be measured here and is **not proven**.
-* **One SDK session at a time** (`agent/src/sessions.ts`), whatever `AGENT_CONCURRENCY` says; a finished session is closed and its temp folder removed before the next starts.
-* **Small tool results.** What a tool returns to the model is cut at 10,000 characters; the code sandbox has a 96 MB heap, 12 MB of input and returns 3,000 characters inline (bigger results are saved as files).
-* **Admission.** At or above **300 MB** (tree) the worker takes no new mission: it stays `queued`, nothing is leased, and it starts when the memory falls (the worker logs `memory_wait` / `memory_ok`).
-* **Hard limit.** A running mission whose tree reaches **450 MB** is stopped by the worker before the platform kills the dyno; planning goes back to `queued`, execution back to `approved` (the hold stays, every saved row stays), with an Arabic notice (`requeued` in the counts). At most **2** times per mission; after that it ends with what is saved and is settled like any other end (charge = ceil(delivered x unit), never above the reserve).
-* The heartbeat rows (`rss_mb`, `tree_rss_mb`) show all of this on the admin page.
+* **One process, small heap.** The `Procfile` runs `node --max-old-space-size=192 --max-semi-space-size=4 --import tsx agent/src/main.ts`. After a restart the idle worker reads 208-250 MB tree.
+* **One SDK session at a time** (`agent/src/sessions.ts`); a finished session is closed and its temp folder removed. Tool results are cut at 10,000 characters; the code sandbox has a 96 MB heap.
+* **Measured, not guessed.** Every run writes its own peak (worker and whole tree, per phase) as an INTERNAL event of the mission (`mem_*` counts; the admin page «الوكيل» shows it in Arabic, the customer's panel never does). Re-set the limits from those peaks.
+* **Hard limit 520 MB.** A normal planning run was measured at 486 MB, so the guard sits above it, just over the dyno's quota (the quota overrun is the platform's R14 warning; its kill threshold is not measured). At the hard limit the running mission is stopped and goes back to the queue (planning: `queued`; execution: `approved`, hold and saved rows kept), at most 2 times, then it ends with what is saved.
+* **Admission 250 MB** (= hard limit - the SDK process, about 270 MB): a new mission is not taken while the tree is at or above it (it stays `queued`). An idle worker that stays above it for 2 minutes exits so the platform restarts it with a fresh heap.
 
+## A mission never stays leased by a worker that does not run it
 
-Cost: one Basic dyno. Model cost per mission is shown on the admin page.
+* The heartbeat renews the lease of **exactly the missions the worker is running in memory**. A mission whose run ended, or whose worker restarted (a new worker has a new id), is not renewed: its lease ends and the next claim takes it over.
+* Every claimed mission goes through `runMissionSafely` (`runMission.ts`): an exception, or a run that returns without leaving the mission in any state, ends cleanly. Planning (nothing held) goes back to `queued`, at most 2 times, then fails honestly with one Arabic message. Execution goes back to `approved`, at most 2 times, then is settled with what is saved through the existing settlement functions (charge = ceil(delivered x unit), never above the reserve, the rest released).
+* What a mission remembers about its runs (`run_state.json`, application/json in its own folder) counts starts and requeues; a phase that starts more than 8 times ends honestly. The bucket accepts ONLY `application/json`, `text/csv` and the xlsx type: the in-memory store of the tests enforces the same list.
+* A source that refuses a search by its own description (`crawl4ai.x.search.posts`: a topic search without an X login answers HTTP 400, free) is not called at all; a failed, empty or refused sample lists the untried sources of the ranking so exploration goes on within the budget. The reason of a failed call is kept in `mission_calls.params_digest._failure` for the admin.
 
 ## Developing
 

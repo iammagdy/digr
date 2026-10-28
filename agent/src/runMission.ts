@@ -5,7 +5,7 @@ import type { commitTregSpend } from "../../src/lib/server/tregCallRecord";
 import type { TregCatalog } from "../../src/lib/treg/catalog";
 import type { AccountAccess } from "../../src/lib/treg/dataPolicy";
 import {
-  AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD, AGENT_EXECUTION_LLM_BUDGET_SHARE, AGENT_MEMORY_REQUEUES_MAX, AGENT_EXECUTION_MAX_TURNS, AGENT_EXECUTION_WALL_MS, AGENT_PLANNING_LLM_BUDGET_USD,
+  AGENT_ERROR_REQUEUES_MAX, AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD, AGENT_EXECUTION_LLM_BUDGET_SHARE, AGENT_MEMORY_REQUEUES_MAX, AGENT_PHASE_STARTS_MAX, AGENT_EXECUTION_MAX_TURNS, AGENT_EXECUTION_WALL_MS, AGENT_PLANNING_LLM_BUDGET_USD,
   AGENT_PLANNING_MAX_TURNS, AGENT_PLANNING_WALL_MS, AGENT_PRICING_BASIS,
 } from "../../src/lib/agentMission/constants";
 import { executionBudgetUsd } from "../../src/lib/agentMission/price";
@@ -18,6 +18,7 @@ import type { ModelDriver } from "./driver";
 import { createGateway } from "./gateway";
 import { createWebGateway, type ProviderKeyFn } from "./webGateway";
 import { loadSystemPrompt } from "./prompt";
+import { readRunState, updateRunState } from "./runState";
 import { buildTools, countDeliveredRows, newRunState, type ToolContext } from "./tools";
 import { buildMissionFiles } from "./workbook";
 import type { AgentStore, CallRow, MissionRecord } from "./types";
@@ -75,19 +76,21 @@ export function executionPrompt(mission: MissionRecord, plan: PricedPlan, calls:
 
 const clear = { worker_id: null, lease_until: null } as const;
 
-const MEMORY_REQUEUES_FILE = "memory_requeues.txt";
-
 /**
- * The worker stopped the model run because the dyno's memory reached its hard limit (worker.ts): the mission goes back to the queue (a mission that holds a reserve goes back to «approved» with everything it
- * saved; planning goes back to «queued») instead of the dyno being killed. At most AGENT_MEMORY_REQUEUES_MAX times: after that it ends with what it has, settled like any other end. True when it was requeued.
+ * PUTS A MISSION BACK IN THE QUEUE: a mission that holds a reserve goes back to «approved» with everything it saved, planning goes back to «queued», with no worker and no lease so any worker takes it.
+ * `cause` is why: "memory" (the worker stopped the run at the dyno's hard limit) or "error" (the run ended with an exception); each has its own count (run_state.json) and its own limit, after which this returns false and
+ * the caller ends the mission honestly. The count is a note: if it cannot be saved the in-process copy still stops a loop.
  */
-async function requeueForMemory(deps: RunnerDeps, mission: MissionRecord, status: "queued" | "approved", patch: Record<string, unknown>): Promise<boolean> {
-  const n = Number(await deps.store.getFile(mission.id, MEMORY_REQUEUES_FILE)) || 0;
-  if (n >= AGENT_MEMORY_REQUEUES_MAX) return false;
-  await deps.store.putFile(mission.id, MEMORY_REQUEUES_FILE, String(n + 1), "text/plain");
+async function requeue(deps: RunnerDeps, mission: MissionRecord, status: "queued" | "approved", patch: Record<string, unknown>, cause: "memory" | "error"): Promise<boolean> {
+  const state = await readRunState(deps.store, mission.id);
+  const used = cause === "memory" ? state.memoryRequeues : state.errorRequeues;
+  const max = cause === "memory" ? AGENT_MEMORY_REQUEUES_MAX : AGENT_ERROR_REQUEUES_MAX;
+  if (used >= max) return false;
+  const next = await updateRunState(deps.store, mission.id, (s) => (cause === "memory" ? { ...s, memoryRequeues: s.memoryRequeues + 1 } : { ...s, errorRequeues: s.errorRequeues + 1 }), deps.log);
   await deps.store.updateMission(mission.id, { ...patch, status, worker_id: null, lease_until: null });
-  await deps.store.addEvent(mission.id, { kind: "system", message_ar: "تأجّلت مهمتك قليلًا بسبب ضغط على الخدمة، وستُستأنف تلقائيًا من حيث وصلت.", counts: { requeued: n + 1 } });
-  deps.log?.(`memory_requeue ${mission.id} -> ${status} (${n + 1} of ${AGENT_MEMORY_REQUEUES_MAX})`);
+  const n = cause === "memory" ? next.memoryRequeues : next.errorRequeues;
+  await deps.store.addEvent(mission.id, { kind: "system", message_ar: cause === "memory" ? "تأجّلت مهمتك قليلًا بسبب ضغط على الخدمة، وستُستأنف تلقائيًا من حيث وصلت." : "تعثّرت الخطوة الأخيرة مؤقتًا، وستُستأنف مهمتك تلقائيًا من حيث وصلت.", counts: { requeued: n } });
+  deps.log?.(`requeue_${cause} ${mission.id} -> ${status} (${n} of ${max})`);
   return true;
 }
 
@@ -96,9 +99,19 @@ async function tell(deps: RunnerDeps, mission: MissionRecord, jobId: string | nu
   try { await deps.notify?.({ userId: mission.user_id, missionId: mission.id, jobId, kind, facts }); } catch (e) { deps.log?.(`notice_failed ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 120)}`); }
 }
 
+/** A planning that cannot be completed ends here, honestly: nothing was held, the customer is told once. */
+async function endPlanningUnserved(deps: RunnerDeps, mission: MissionRecord, error: string): Promise<void> {
+  await deps.store.updateMission(mission.id, { status: "failed", error: error.slice(0, 300), ...clear });
+  await deps.store.addEvent(mission.id, { kind: "result", message_ar: "تعذّر على الوكيل إعداد خطة لهذا الطلب؛ لم يُحجز أي رصيد." });
+  await tell(deps, mission, null, "failed", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false });
+}
+
 export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Promise<void> {
   const { store } = deps;
   const model = deps.models.planning;
+  // a mission whose planning has started too many times (it keeps failing or keeps killing its worker) ends honestly instead of looping
+  const started = await updateRunState(store, mission.id, (r) => ({ ...r, planningStarts: r.planningStarts + 1 }), deps.log);
+  if (started.planningStarts > AGENT_PHASE_STARTS_MAX) { await endPlanningUnserved(deps, mission, `planning started ${started.planningStarts} times`); return; }
   await store.updateMission(mission.id, { planning_model: model, error: null });
   await store.addEvent(mission.id, { kind: "system", message_ar: "بدأ الوكيل دراسة طلبك." });
   const calls = await store.listCalls(mission.id);
@@ -118,7 +131,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   }
   const llm = Number(((await store.getMission(mission.id))?.planning_llm_usd ?? 0) + output.llmCostUsd);
   const base = { planning_llm_usd: Number(llm.toFixed(6)), ...clear };
-  if (output.stop === "memory" && !state.proposedPlan && !state.question && !state.finish && await requeueForMemory(deps, mission, "queued", { planning_llm_usd: base.planning_llm_usd })) return;
+  if (output.stop === "memory" && !state.proposedPlan && !state.question && !state.finish && await requeue(deps, mission, "queued", { planning_llm_usd: base.planning_llm_usd }, "memory")) return;
 
   if (state.proposedPlan) {
     const plan = state.proposedPlan;
@@ -148,6 +161,12 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
     await store.updateMission(mission.id, { status: "failed", error: "the mission has no approved plan or reserve", ...clear });
     return;
   }
+  const started = await updateRunState(store, mission.id, (r) => ({ ...r, executionStarts: r.executionStarts + 1 }), deps.log);
+  if (started.executionStarts > AGENT_PHASE_STARTS_MAX) {
+    const stuck = (await store.getMission(mission.id)) ?? mission;
+    await settleExecution(deps, mission, plan, reserve, unit, { llm: Number(stuck.execution_llm_usd ?? 0), executionTregUsd: Number(stuck.execution_treg_usd ?? 0), summary: null, outputError: `execution started ${started.executionStarts} times` });
+    return;
+  }
   await store.updateMission(mission.id, { execution_model: model, error: null });
   await store.addEvent(mission.id, { kind: "system", message_ar: "اعتُمدت الخطة وبدأ الوكيل التنفيذ." });
   const calls = await store.listCalls(mission.id);
@@ -168,11 +187,24 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   }
   const fresh = (await store.getMission(mission.id)) ?? mission;
   const llm = Number((fresh.execution_llm_usd ?? 0) + output.llmCostUsd);
-  if (output.stop === "memory" && !state.finish && await requeueForMemory(deps, mission, "approved", { execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(budget.spentUsd().toFixed(6)) })) return;
+  if (output.stop === "memory" && !state.finish && await requeue(deps, mission, "approved", { execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(budget.spentUsd().toFixed(6)) }, "memory")) return;
 
+  await settleExecution(deps, mission, plan, reserve, unit, { llm, executionTregUsd: budget.spentUsd(), summary: state.finish?.summary_ar ?? null, outputError: output.error ?? null });
+}
+
+/**
+ * ENDS AN EXECUTION WITH WHAT IS SAVED: the unique final rows of the delivered stages (each linked to a saved parent row) become the files, and the existing settlement functions charge ceil(delivered x unit price), never
+ * above the reserve, and release the rest of the hold. Used by the normal end of a run and by every recovery that ends a mission (a run that failed too many times, a worker that restarted too many times).
+ */
+async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: PricedPlan, reserve: number, unit: number, a: { llm: number; executionTregUsd: number; summary: string | null; outputError: string | null }): Promise<void> {
+  const { store } = deps;
+  const fresh = (await store.getMission(mission.id)) ?? mission;
+  const llm = a.llm;
+  const jobId = mission.job_id;
+  if (!jobId) throw new Error("the mission has no job");
   // deliver what is saved: the unique final rows of the delivered stages, each linked to a saved parent row
   const { delivered, perStage } = await countDeliveredRows(store, mission.id, plan);
-  const spent = Number((fresh.planning_treg_usd ?? 0) + budget.spentUsd());
+  const spent = Number((fresh.planning_treg_usd ?? 0) + a.executionTregUsd);
   const rowsByStage: Record<string, Array<Record<string, unknown>>> = {};
   for (const s of plan.stages) { const raw = await store.getFile(mission.id, `rows/${s.key}.json`); rowsByStage[s.key] = raw ? JSON.parse(raw) : []; }
 
@@ -181,28 +213,90 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   if (delivered > 0) {
     try {
       const built = await buildMissionFiles(plan, rowsByStage);
-      const published = await store.publishResult({ missionId: mission.id, userId: mission.user_id, jobId: mission.job_id, xlsx: built.xlsx, csv: built.csv });
+      const published = await store.publishResult({ missionId: mission.id, userId: mission.user_id, jobId, xlsx: built.xlsx, csv: built.csv });
       resultPath = published.resultPath;
       files = published.files;
     } catch (e) {
-      await settleMission(deps.client, { jobId: mission.job_id, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath: null, releaseReason: "agent mission: the result files could not be saved" });
+      await settleMission(deps.client, { jobId, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath: null, releaseReason: "agent mission: the result files could not be saved" });
       await store.updateMission(mission.id, { status: "failed", error: `files: ${String((e as Error)?.message ?? e).slice(0, 200)}`, execution_llm_usd: Number(llm.toFixed(6)), charged_points: 0, delivered_units: 0, ...clear });
       await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّر حفظ ملفات النتائج؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد." });
-      await tell(deps, mission, mission.job_id, "failed", { delivered: 0, planned: plan.price.deliveredRows, chargedPoints: 0, releasedPoints: reserve, hasJob: true });
+      await tell(deps, mission, jobId, "failed", { delivered: 0, planned: plan.price.deliveredRows, chargedPoints: 0, releasedPoints: reserve, hasJob: true });
       return;
     }
   }
-  const settled = await settleMission(deps.client, { jobId: mission.job_id, deliveredUnits: delivered, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath, releaseReason: "agent mission delivered nothing" });
+  const settled = await settleMission(deps.client, { jobId, deliveredUnits: delivered, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath, releaseReason: "agent mission delivered nothing" });
   if (!settled.ok) {
     await store.updateMission(mission.id, { status: "failed", error: `settlement ${settled.code}: ${settled.detail}`, execution_llm_usd: Number(llm.toFixed(6)), ...clear });
     await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّرت التسوية الآلية للمهمة؛ راجع المشرف ولم يُخصم رصيد إضافي." });
     return;
   }
-  const summary = state.finish?.summary_ar ?? (delivered > 0 ? `توقف الوكيل بعد حفظ ${toArabicDigits(delivered)} صفًا؛ سُلّم ما حُفظ فقط.` : "لم يتمكّن الوكيل من تسليم أي صف؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+  const summary = a.summary ?? (delivered > 0 ? `توقف الوكيل بعد حفظ ${toArabicDigits(delivered)} صفًا؛ سُلّم ما حُفظ فقط.` : "لم يتمكّن الوكيل من تسليم أي صف؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
   await store.updateMission(mission.id, {
     status: delivered > 0 ? "completed" : "unserved", delivered_units: delivered, charged_points: settled.chargedPoints, summary_ar: summary, files: files.length ? files : null,
-    execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(budget.spentUsd().toFixed(6)), error: settled.kind === "settled" && !settled.matchesExpectation ? `charge ${settled.chargedPoints} differs from the expected ${settled.expectedChargedPoints}` : (output.error ?? null), ...clear,
+    execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(a.executionTregUsd.toFixed(6)), error: settled.kind === "settled" && !settled.matchesExpectation ? `charge ${settled.chargedPoints} differs from the expected ${settled.expectedChargedPoints}` : (a.outputError ?? null), ...clear,
   });
   await store.addEvent(mission.id, { kind: "result", message_ar: summary, counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, perStage[s.key] ?? 0])) } });
-  await tell(deps, mission, mission.job_id, delivered <= 0 ? "unserved" : delivered < plan.price.deliveredRows ? "partial" : "completed", { delivered, planned: plan.price.deliveredRows, chargedPoints: settled.chargedPoints, releasedPoints: Math.max(0, reserve - settled.chargedPoints), hasJob: true });
+  await tell(deps, mission, jobId, delivered <= 0 ? "unserved" : delivered < plan.price.deliveredRows ? "partial" : "completed", { delivered, planned: plan.price.deliveredRows, chargedPoints: settled.chargedPoints, releasedPoints: Math.max(0, reserve - settled.chargedPoints), hasJob: true });
+}
+
+const shortError = (e: unknown): string => String((e as Error)?.message ?? e).slice(0, 300);
+
+/**
+ * WHAT HAPPENS WHEN A RUN ENDS WITH AN EXCEPTION (or ends without leaving the mission in any state): the mission must never stay «planning» / «executing» under a worker that is no longer running it.
+ *  - planning (nothing was held): back to «queued» (counted, at most AGENT_ERROR_REQUEUES_MAX times), then one honest Arabic message;
+ *  - execution (a reserve is held): back to «approved» with everything it saved (counted), then settled with what is saved through the existing settlement functions, the rest of the hold released.
+ * Every step here is guarded: if even this fails, the mission is simply not renewed (the worker only renews missions it runs), its lease ends and another run takes it over.
+ */
+export async function recoverFromError(deps: RunnerDeps, mission: MissionRecord, error: unknown): Promise<void> {
+  const { store } = deps;
+  const message = shortError(error);
+  deps.log?.(`mission_error ${mission.id} ${message.slice(0, 200)}`);
+  try {
+    const fresh = (await store.getMission(mission.id)) ?? mission;
+    if (fresh.status !== "planning" && fresh.status !== "executing") return; // the run had already moved it on: nothing is left leased
+    if (fresh.status === "planning") {
+      if (await requeue(deps, fresh, "queued", { error: message }, "error")) return;
+      await endPlanningUnserved(deps, fresh, message);
+      return;
+    }
+    if (await requeue(deps, fresh, "approved", { error: message }, "error")) return;
+    const plan = fresh.plan;
+    const reserve = Number(fresh.reserved_points);
+    const unit = Number(fresh.unit_price_points);
+    if (!plan || !fresh.job_id || !(reserve > 0) || !(unit > 0)) { await store.updateMission(mission.id, { status: "failed", error: message, ...clear }); return; }
+    try {
+      await settleExecution(deps, fresh, plan, reserve, unit, { llm: Number(fresh.execution_llm_usd ?? 0), executionTregUsd: Number(fresh.execution_treg_usd ?? 0), summary: null, outputError: message });
+    } catch (e) {
+      // last resort: nothing delivered, the whole hold released through the existing function
+      deps.log?.(`settle_failed ${mission.id} ${shortError(e).slice(0, 120)}`);
+      await settleMission(deps.client, { jobId: fresh.job_id, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: Number(fresh.planning_treg_usd ?? 0) + Number(fresh.execution_treg_usd ?? 0), resultPath: null, releaseReason: "agent mission could not be completed" });
+      await store.updateMission(mission.id, { status: "failed", error: message, charged_points: 0, delivered_units: 0, ...clear });
+      await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّر إكمال المهمة؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد." });
+      await tell(deps, fresh, fresh.job_id, "failed", { delivered: 0, planned: plan.price.deliveredRows, chargedPoints: 0, releasedPoints: reserve, hasJob: true });
+    }
+  } catch (e) {
+    deps.log?.(`recovery_failed ${mission.id} ${shortError(e).slice(0, 120)}`);
+  }
+}
+
+/**
+ * THE ONE ENTRY POINT OF THE WORKER FOR A CLAIMED MISSION: runs the phase its status names, and whatever happens (an exception, or a run that returns without leaving the mission in any state) the mission ends in a clean
+ * state (recoverFromError). Never throws.
+ */
+export async function runMissionSafely(deps: RunnerDeps, mission: MissionRecord): Promise<void> {
+  try {
+    if (mission.status === "planning") await runPlanning(deps, mission);
+    else if (mission.status === "executing") await runExecution(deps, mission);
+    else return;
+  } catch (e) {
+    await recoverFromError(deps, mission, e);
+    return;
+  }
+  try {
+    const after = await deps.store.getMission(mission.id);
+    // the run returned but left the mission «planning» / «executing» under this worker: that is a lease nobody works on
+    if (after && (after.status === "planning" || after.status === "executing") && after.worker_id === mission.worker_id) await recoverFromError(deps, after, "the run ended without a result");
+  } catch (e) {
+    deps.log?.(`post_run_check_failed ${mission.id} ${shortError(e).slice(0, 120)}`);
+  }
 }

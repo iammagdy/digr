@@ -111,7 +111,7 @@ export async function loadDetail(client: any, input: { id: string; afterEventId?
   if (!mission) return bad(404, "المهمة غير موجودة.");
   const [events, calls] = await Promise.all([
     client.from(MISSION_EVENTS_TABLE).select("id,kind,message_ar,counts,created_at").eq("mission_id", input.id).gt("id", input.afterEventId ?? 0).order("id", { ascending: true }).limit(500),
-    client.from(MISSION_CALLS_TABLE).select("id,phase,endpoint_id,status,refused_reason,rows_returned,cost_usd,params_digest,created_at").eq("mission_id", input.id).order("created_at", { ascending: true }).limit(500),
+    client.from(MISSION_CALLS_TABLE).select("id,phase,endpoint_id,status,refused_reason,http_status,duration_ms,rows_returned,cost_usd,params_digest,created_at").eq("mission_id", input.id).order("created_at", { ascending: true }).limit(500),
   ]);
   const plan = (mission.plan ?? null) as PricedPlan | null;
   const callRows: any[] = Array.isArray(calls.data) ? calls.data : [];

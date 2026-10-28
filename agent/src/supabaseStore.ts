@@ -29,8 +29,13 @@ export function createSupabaseStore(client: any): AgentStore {
     },
     async addEvent(missionId: string, event: MissionEventInput) {
       // the event text guard: nothing but Arabic, Arabic-Indic digits and no technical name ever reaches a screen; the numbers are in `counts`
-      const g = guardEvent(event);
-      must(await client.from(MISSION_EVENTS_TABLE).insert({ mission_id: missionId, kind: g.kind, message_ar: g.message_ar, counts: g.counts }), "event");
+      // a lost note never breaks a mission: the error is logged and the work goes on
+      try {
+        const g = guardEvent(event);
+        must(await client.from(MISSION_EVENTS_TABLE).insert({ mission_id: missionId, kind: g.kind, message_ar: g.message_ar, counts: g.counts }), "event");
+      } catch (e) {
+        console.error(`[agent] event_not_saved ${missionId} ${String((e as Error)?.message ?? e).slice(0, 120)}`);
+      }
     },
     async addCall(row: CallRow) { must(await client.from(MISSION_CALLS_TABLE).insert(row), "call"); },
     async listCalls(missionId) {
@@ -49,9 +54,11 @@ export function createSupabaseStore(client: any): AgentStore {
       const row = Array.isArray(data) ? data[0] : data;
       return row && row.id ? (row as MissionRecord) : null;
     },
-    async renewLeases(workerId, leaseSeconds) {
+    async renewLeases(workerId, leaseSeconds, missionIds) {
+      // only the missions this worker really runs: a mission it no longer runs keeps its old lease, which ends, and another worker takes it over
+      if (missionIds.length === 0) return;
       const until = new Date(Date.now() + leaseSeconds * 1000).toISOString();
-      must(await client.from(MISSION_TABLE).update({ lease_until: until }).eq("worker_id", workerId).in("status", ["planning", "executing"]), "renew");
+      must(await client.from(MISSION_TABLE).update({ lease_until: until }).eq("worker_id", workerId).in("id", missionIds).in("status", ["planning", "executing"]), "renew");
     },
     async writeHeartbeat(row: HeartbeatRow) { must(await client.from(AGENT_HEARTBEAT_TABLE).upsert(row, { onConflict: "worker_id" }), "heartbeat"); },
     async publishResult({ missionId, userId, jobId, xlsx, csv }) {

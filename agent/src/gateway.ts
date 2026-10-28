@@ -10,6 +10,7 @@ import { blockedEndpointReason } from "../../src/lib/treg/blockList";
 import { endpointCostUsd, isSellable, type CatalogEndpoint, type TregCatalog } from "../../src/lib/treg/catalog";
 import { categoryOf, policyVerdict, type AccountAccess } from "../../src/lib/treg/dataPolicy";
 import { AGENT_FIRST_ROWS } from "../../src/lib/agentMission/constants";
+import { sessionRestriction } from "../../src/lib/agentMission/sources";
 import type { AgentStore, CallPhase } from "./types";
 
 /**
@@ -34,7 +35,7 @@ const LIMIT_PARAM_NAMES = ["limit", "count", "page_size", "per_page", "size", "n
 
 export type RefusalCode =
   | "not_sellable" | "blocked" | "sensitive_not_allowed" | "purpose_required" | "daily_limit" | "audit_unavailable"
-  | "missing_params" | "over_budget" | "daily_cap" | "recording_unavailable";
+  | "missing_params" | "over_budget" | "daily_cap" | "recording_unavailable" | "needs_login";
 
 export type GatewayCallResult =
   | { ok: true; call_id: string; http_status: number; rows_in_page: number; has_more: boolean | null; next_cursor: string | null; shape: unknown; first_rows: unknown[]; warnings: string[]; saved: string }
@@ -96,6 +97,7 @@ const REFUSAL_TEXT: Record<RefusalCode, string> = {
   over_budget: "the budget for source calls of this mission would be passed by this call, so it was NOT made; work with what is already saved or stop and explain honestly",
   daily_cap: "the provider's daily limit has no room for this call, so it was NOT made; stop and explain honestly",
   recording_unavailable: "the call could not be recorded, so it was NOT made; try once more, then stop and explain honestly",
+  needs_login: "this source refuses this kind of search without the customer's own login, so it was NOT called and cost nothing; sample the next source of the ranking",
 };
 
 export function createGateway(deps: GatewayDeps) {
@@ -107,7 +109,7 @@ export function createGateway(deps: GatewayDeps) {
     await deps.store.addCall({
       id: `${deps.missionId}:${row.id}`, mission_id: deps.missionId, phase: deps.phase, endpoint_id: row.endpoint_id,
       // parameter NAMES and short values; never a token (the call carries none in its params)
-      params_digest: Object.fromEntries(Object.entries(row.params).slice(0, 20).map(([k, v]) => [k, typeof v === "string" ? clip(v, 80) : v])),
+      params_digest: Object.fromEntries(Object.entries(row.params).slice(0, 20).map(([k, v]) => [k, typeof v === "string" ? clip(v, k.startsWith("_") ? 300 : 80) : v])),
       status: row.status, refused_reason: row.refused_reason ?? null, http_status: row.http_status ?? null, rows_returned: row.rows ?? null,
       cost_usd: row.cost_usd ?? 0, estimate_usd: row.estimate_usd ?? 0, provider_cost_id: row.provider_cost_id ?? null, storage_path: row.storage_path ?? null, duration_ms: row.duration_ms ?? null,
     });
@@ -149,6 +151,13 @@ export function createGateway(deps: GatewayDeps) {
       const trace: Record<string, unknown> = { ...params, ...(input.why ? { _why: clip(input.why, 300) } : {}) };
       const missing = endpoint.inputs.filter((i) => i.required && (params[i.name] === undefined || params[i.name] === null || params[i.name] === "")).map((i) => i.name);
       if (missing.length) return refuse(id, endpointId, trace, "missing_params", missing.join(","));
+
+      // 4b: a source that refuses, by its own description, what its input schema accepts (a topic search without a login) is not called at all
+      const restricted = sessionRestriction(endpointId, params);
+      if (restricted) {
+        const refused = await refuse(id, endpointId, trace, "needs_login", "topic search without a login");
+        return { ...refused, message: restricted } as GatewayCallResult;
+      }
 
       // 5: the mission's USD budget
       const estimate = estimateCallUsd(endpoint, params, deps.catalog);
@@ -200,7 +209,7 @@ export function createGateway(deps: GatewayDeps) {
 
       if (!result) {
         await commit(deps.client, { costId: reservation.costId, costUsd: actualUsd, units: 0, capabilityId, status: "failed", durationMs, jobId: deps.jobId });
-        await logCall({ id, endpoint_id: endpointId, params: trace, status: "failed", cost_usd: actualUsd, estimate_usd: estimate, provider_cost_id: reservation.costId, duration_ms: durationMs });
+        await logCall({ id, endpoint_id: endpointId, params: { ...trace, _failure: "the call did not complete (no answer)" }, status: "failed", cost_usd: actualUsd, estimate_usd: estimate, provider_cost_id: reservation.costId, duration_ms: durationMs });
         return { ok: false, call_id: id, failed: true, http_status: 0, message: "the call did not complete; it may be tried once more" };
       }
       if (result.blocked) {
@@ -218,7 +227,9 @@ export function createGateway(deps: GatewayDeps) {
       const rows = reading ? reading.rows.length : 0;
       const status = tregCallStatusOf({ ok: result.ok, rows: reading?.rows ?? [] });
       await commit(deps.client, { costId: reservation.costId, costUsd: actualUsd, units: rows, capabilityId, status, durationMs, jobId: deps.jobId });
-      await logCall({ id, endpoint_id: endpointId, params: trace, status: status === "success" ? "ok" : status, http_status: result.httpStatus, rows, cost_usd: actualUsd, estimate_usd: estimate, provider_cost_id: reservation.costId, storage_path: storagePath, duration_ms: durationMs });
+      // why a call failed is kept in the trace for the admin (the provider's own words, shortened): the model sees the same text in its answer
+      const failure = result.ok ? null : clip(result.errorDetails || result.detail || result.error || "the source answered with an error", 160);
+      await logCall({ id, endpoint_id: endpointId, params: failure ? { ...trace, _failure: failure } : trace, status: status === "success" ? "ok" : status, http_status: result.httpStatus, rows, cost_usd: actualUsd, estimate_usd: estimate, provider_cost_id: reservation.costId, storage_path: storagePath, duration_ms: durationMs });
 
       if (!result.ok) {
         return { ok: false, call_id: id, failed: true, http_status: result.httpStatus, message: clip(result.errorDetails || result.detail || result.error || "the source answered with an error", 240) };
