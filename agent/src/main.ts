@@ -3,6 +3,7 @@ import { createClient } from "@supabase/supabase-js";
 import { loadTregCatalog } from "../../src/lib/treg/catalog";
 import { createCallRecorder } from "../../src/lib/server/multiProvider/callRecorder";
 import { resolveAccountAccess } from "../../src/lib/server/sensitiveAccess";
+import { sendMissionNotice } from "../../src/lib/server/missionNotify";
 import { AGENT_CONCURRENCY_ENV, AGENT_MODEL_DEFAULT } from "../../src/lib/agentMission/constants";
 import { parseConcurrency } from "../../src/lib/agentMission/concurrency";
 import { resolveModels } from "./modelConfig";
@@ -20,6 +21,8 @@ const REQUIRED = ["ANTHROPIC_API_KEY", "TREG_TOKEN", "SUPABASE_URL", "SUPABASE_S
 const VERSION = process.env.SOURCE_VERSION?.slice(0, 7) || process.env.HEROKU_SLUG_COMMIT?.slice(0, 7) || "dev";
 
 async function main() {
+  // the site's e-mail helper (src/lib/server/sendPlatformEmail.ts) reads the Supabase URL under its public name: the worker has the same project URL under SUPABASE_URL
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.SUPABASE_URL) process.env.NEXT_PUBLIC_SUPABASE_URL = process.env.SUPABASE_URL;
   const missing = REQUIRED.filter((name) => !process.env[name]);
   if (missing.length) {
     console.error(`[agent] missing environment variables: ${missing.join(", ")}`);
@@ -41,6 +44,8 @@ async function main() {
   const deps = (): RunnerDeps => ({
     store, client, catalog, driver, recorder, models, token: process.env.TREG_TOKEN,
     resolveAccess: (userId) => resolveAccountAccess(client, userId),
+    // the customer's notice when a mission ends: an in-site notification and an e-mail through the existing send-email function
+    notify: (n) => sendMissionNotice(client, n),
     log,
   });
 

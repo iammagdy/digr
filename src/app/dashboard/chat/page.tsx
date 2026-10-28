@@ -54,6 +54,7 @@ import { customerFacingConversationTitle } from "@/lib/customerFacingConversatio
 import { buildChatTimeline } from "@/lib/chatTimeline";
 import { type TerminalEvent as JobEvent } from "./components/ActivityTerminal";
 import RunningIndicator from "./components/RunningIndicator";
+import AgentMissionCard from "@/components/mission/AgentMissionCard";
 import ResultsCanvas, { ExtractedRecord } from "./components/ResultsCanvas";
 import EmptyChat from "./components/EmptyChat";
 import { FilesSection } from "./components/RunSections";
@@ -133,6 +134,8 @@ interface MessageItem {
   outputType?: "propose_plan" | "edit_plan" | "ask_clarification" | "suggest_alternative" | "refuse" | "edit_artifact" | "answer_question" | "write_note";
   intent?: "chat" | "research";
   planQuote?: PlanQuoteData;
+  /** The request is a mission of the agent: the card draws it (see components/mission/AgentMissionCard.tsx). */
+  agentMissionId?: string;
   /** After a delivered sample: the offer to quote the rest (a new quote on the remaining volume, without the sample's rows). */
   sampleRest?: { sampleQuoteId: string; fullVolume: number };
   /** A validated file spec for the result on screen («شيت لكل محافظة»): becomes a download of the shaped file. */
@@ -761,6 +764,7 @@ export default function ChatWorkspacePage() {
         outputType: data.outputType,
         intent: data.intent,
         planQuote: data.planQuote,
+        ...(typeof data.agentMission?.id === "string" ? { agentMissionId: data.agentMission.id } : {}),
         fileShape: data.fileShape,
         clarificationQuestions: data.clarificationQuestions,
         clarificationItems: data.clarificationItems,
@@ -988,6 +992,7 @@ export default function ChatWorkspacePage() {
             content: String(document.content_ar || document.content || "").slice(0, 20000),
             clarificationItems: document.clarification_items,
             fileShape: persistedFileShape(document.plan),
+            ...(typeof document.plan?.agentMissionId === "string" ? { agentMissionId: document.plan.agentMissionId } : {}),
             planQuote: savedQuote
               ? { ...savedQuote, status: quoteStatusById.get(quoteId) || "unknown" }
               : null,
@@ -1854,6 +1859,13 @@ export default function ChatWorkspacePage() {
             disabled={loading}
             onComplete={(answers) => handleSubmitClarification(m.id, answers)}
           />
+        </div>
+      );
+    }
+    if (m.agentMissionId) {
+      return (
+        <div key={m.id}>
+          <AgentMissionCard missionId={m.agentMissionId} onEdit={(requestText) => setInputText(requestText)} onApproved={() => void loadBalance()} />
         </div>
       );
     }

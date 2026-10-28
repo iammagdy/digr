@@ -117,6 +117,7 @@ import { defaultModelPlannerConfig, runModelPlannerTurn, type ModelPlannerConfig
 import { advancePlanningSession, sessionRequestOf, startPlanningSession } from "../../lib/modelPlanner/planningSession";
 import { persistPlannedAnswer, shapePlannedAnswer } from "../../lib/modelPlanner/plannedAnswer";
 import { plannerCostUsd } from "../../lib/modelPlanner/transport";
+import { agentChatTurn } from "../../lib/agentMission/chatTurn";
 import { pairRoleOf } from "../../lib/planFit";
 import { handlesInText, videosCountAr } from "../../lib/channelNames";
 import { MAX_CHANNELS_PER_JOB, MAX_PER_VIDEO, MAX_VIDEOS_PER_JOB, canonicalSocialParams, isSocialCapabilitySlug, postsForVolume, socialCapabilityForIntent, socialPlanSummaryAr } from "../../lib/socialSources";
@@ -484,6 +485,8 @@ export interface ChatHandlerResponse {
   intent?: "chat" | "research";
   /** A request whose planning is not finished: the page asks for the next step of this planning session (see modelPlanner/planningSession.ts). */
   planning?: { sessionId: string };
+  /** The request is a mission of the agent: the page draws the mission card from this id (see lib/agentMission/chatTurn.ts). */
+  agentMission?: { id: string };
   planQuote?: any;
   revisionQuote?: any;
   /** A validated file spec for the result on screen; the page turns it into a download of the shaped file. */
@@ -1520,6 +1523,11 @@ export class ChatHandler {
    * untouched and runs exactly as before for every other account (and when this is null). Tests and replays set it with a recorded transport.
    */
   public modelPlanner: ModelPlannerConfig | null = defaultModelPlannerConfig();
+  /**
+   * The AGENT serves the chat: a research request becomes a mission of the worker (agent/) instead of a plan from the old planner. Off by default (nothing changes for any caller that does not set it);
+   * the chat route sets it from the one rollback constant AGENT_SERVES_CHAT (src/lib/agentMission/constants.ts).
+   */
+  public agentChat: { enabled: boolean } | null = null;
   /** Which accounts take the model path: the allowlist of `src/lib/modelPlanner/constants.ts`. Every other account keeps the hand-coded path. Tests replace it. */
   public modelPlannerFor: (account: { email?: string | null; isGuest?: boolean }) => boolean = isModelPlannerAccount;
 
@@ -1598,6 +1606,15 @@ export class ChatHandler {
     } catch (usageErr) {
       console.warn("[llm:USAGE_LOG_FAILED]", (usageErr as any)?.message || usageErr);
     }
+  }
+
+  /** One chat turn answered by the AGENT (see `agentChat`): a mission is created for the customer; the page draws its card. Never calls a model or a source itself. */
+  private async answerWithAgent(ctx: { sb: any; turn: TurnUsageLog; conversationId: string; assistantMsgId: string; userMsgId: string; userId: string; message: string; conversationTitle: string | null; stats: () => NonNullable<ChatHandlerResponse["turnStats"]> }): Promise<ChatHandlerResponse> {
+    const r = await agentChatTurn({ sb: ctx.sb, userId: ctx.userId, conversationId: ctx.conversationId, userMsgId: ctx.userMsgId, assistantMsgId: ctx.assistantMsgId, message: ctx.message, conversationTitle: ctx.conversationTitle });
+    ctx.turn.model = "agent";
+    const base = { conversationId: ctx.conversationId, messageId: ctx.assistantMsgId, role: "assistant" as const, intent: "research" as const, tokensUsed: { input: 0, output: 0, costUsd: 0 }, turnStats: ctx.stats() };
+    if (!r.ok) return { ...base, contentAr: r.contentAr, outputType: "answer_question" } as ChatHandlerResponse;
+    return { ...base, contentAr: r.contentAr, outputType: "agent_mission" as any, agentMission: { id: r.missionId }, ...(r.conversationTitle ? { conversationTitle: r.conversationTitle } : {}) } as ChatHandlerResponse;
   }
 
   /**
@@ -2685,6 +2702,12 @@ export class ChatHandler {
           tokensUsed: { input: 0, output: 0, costUsd: 0 },
           turnStats: currentTurnStats(),
         };
+      }
+
+      // The AGENT takes every research request when it is on (the rollback constant is AGENT_SERVES_CHAT): a greeting, a general question and a file-shaping turn are still answered by the code above.
+      if (this.agentChat?.enabled && sb && !isTestSearchScenario && !isFileShapingTurn && !isGreeting && !isGeneralQuestion) {
+        currentStep = "agent_mission";
+        return await this.answerWithAgent({ sb, turn, conversationId, assistantMsgId, userMsgId, userId, message, conversationTitle: currentConversationTitle, stats: currentTurnStats });
       }
 
       // The MODEL PLANNER takes the whole planning path (studies, coverage, discovery questions, social intent, deterministic plans, the model call of the old path) when it is on.

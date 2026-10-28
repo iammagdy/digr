@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { refundedPointsFromSettle } from "../server/settleRefund";
 import { AGENT_CAPABILITY_SLUG, AGENT_JOB_LEASE_SECONDS, AGENT_JOB_POINTS_CAP, AGENT_MAX_DELIVERED_ROWS } from "./constants";
 import { executionBudgetUsd, priceMissionByCode, settlementCharge } from "./price";
-import type { PricedPlan } from "./plan";
+import { firstSentenceAr, type PricedPlan } from "./plan";
 
 /**
  * The two money moments of a mission. BOTH go through the functions the website already uses; no money table is written by hand:
@@ -46,6 +46,8 @@ export async function approveMission(client: any, mission: { id: string; user_id
   const items = [{
     capabilitySlug: AGENT_CAPABILITY_SLUG, endpointId: AGENT_CAPABILITY_SLUG, missionId: mission.id,
     unitPricePoints: price.unitPricePoints, targetVolumeMin: 1, targetVolumeMax: price.deliveredRows, unitCostUsd: price.costPerFinalRowUsd,
+    // what «طلباتي» says about the request: the one sentence the customer approved
+    summaryAr: firstSentenceAr(mission.plan.summary_ar),
   }];
   const formats = ["xlsx", "csv"];
   const quoteHash = createHash("sha256").update(JSON.stringify({ items, formats })).digest("hex");

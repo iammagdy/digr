@@ -5,6 +5,8 @@ import { understandRequest } from "../src/lib/requestUnderstanding";
 import { createLatencyDb } from "./helpers/loadHarness";
 
 const h = vi.hoisted(() => ({ db: null as any }));
+// The old planner path is the ROLLBACK path and these tests cover it: the rollback constant (AGENT_SERVES_CHAT) is pinned to «old path» here. The agent path has its own tests (agent-chat-handler, agent-replay-phase1).
+vi.mock("../src/lib/agentMission/constants", async (importOriginal) => ({ ...(await importOriginal<typeof import("../src/lib/agentMission/constants")>()), AGENT_SERVES_CHAT: false }));
 vi.mock("../src/lib/supabase/server", () => ({
   createServerSideClient: vi.fn(async () => ({
     auth: { getUser: vi.fn(async (token?: string) => ({ data: { user: token ? { id: String(token), email: `${token}@x.test`, email_confirmed_at: "2026-10-01T00:00:00Z", user_metadata: {} } : null }, error: token ? null : new Error("no session") })) },

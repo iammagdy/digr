@@ -8,6 +8,10 @@ import { toArabicDigits } from "../arabicDigits";
 const LATIN_WORD = /[A-Za-z]{2,}/;
 const USD_WORDS = /\$|USD|دولار|دولارات|دولارا/i;
 const INTERNAL_ID = /\b(?:msn|call|out|job|quote|res|chg|rel|exp|stg)_[A-Za-z0-9]+/i;
+/** snake_case technical names («rows_tweets», «charged_points»): never a customer word. */
+const SNAKE_CASE = /[A-Za-z0-9]+_[A-Za-z0-9_]+/;
+/** The sources' names written in Arabic letters: a customer never reads who the source is. */
+const PROVIDER_AR = /تريغ|تريج|فاير\s?كراول|كونتكست\s?(?:دوت)?\s?دي?\s?في?|ابولو|أبولو|داتاجم|أبيفاي|ابيفاي/;
 
 export interface CustomerTextCheck {
   /** The text with every ASCII digit turned into an Arabic-Indic digit. */
@@ -26,6 +30,8 @@ export function checkCustomerText(raw: unknown, options: { maxChars?: number } =
   if (LATIN_WORD.test(source)) issues.push("no Latin words: provider names, endpoint ids and English are never shown to the customer");
   if (USD_WORDS.test(source)) issues.push("no dollar amounts: the customer sees points only");
   if (INTERNAL_ID.test(source)) issues.push("no internal ids");
+  if (SNAKE_CASE.test(source)) issues.push("no technical names (snake_case)");
+  if (PROVIDER_AR.test(source)) issues.push("no source or provider names, in any script");
   return { text, issues };
 }
 

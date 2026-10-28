@@ -108,3 +108,26 @@ export function priceMissionByCode(stages: ReadonlyArray<StagePriceInput>, basis
 export function executionBudgetUsd(reservePoints: number, basis: PricingBasis = AGENT_PRICING_BASIS): number {
   return Math.max(AGENT_EXECUTION_BUDGET_FLOOR_USD, holdValueUsd(reservePoints, basis) * AGENT_EXECUTION_BUDGET_SHARE);
 }
+
+// ------------------------------------------------------------------------------------------- the expected time
+/**
+ * THE EXPECTED TIME OF A MISSION, BY CODE (the model never states it). It is built from what the planning calls MEASURED: how long they took per row they returned.
+ *   seconds = AGENT_TIME_BASE_S + sum over stages of ( AGENT_TIME_STAGE_S + rows x ms-per-row / 1000 x AGENT_TIME_SAFETY + ceil(rows / 200) x AGENT_TIME_TURN_S )
+ * rounded UP to whole minutes, never below two. A stage whose calls have no recorded time uses AGENT_TIME_DEFAULT_MS_PER_ROW. It is shown to the customer as «نحو N دقائق».
+ */
+export const AGENT_TIME_BASE_S = 45;
+export const AGENT_TIME_STAGE_S = 40;
+export const AGENT_TIME_SAFETY = 1.5;
+export const AGENT_TIME_TURN_S = 12;
+export const AGENT_TIME_DEFAULT_MS_PER_ROW = 300;
+export const AGENT_TIME_MIN_MINUTES = 2;
+
+export function estimateMissionMinutes(stages: ReadonlyArray<{ rows: number; msPerRow?: number | null }>): number {
+  let seconds = AGENT_TIME_BASE_S;
+  for (const s of stages) {
+    const rows = Math.max(0, Math.floor(s.rows));
+    const ms = typeof s.msPerRow === "number" && s.msPerRow > 0 ? s.msPerRow : AGENT_TIME_DEFAULT_MS_PER_ROW;
+    seconds += AGENT_TIME_STAGE_S + (rows * ms / 1000) * AGENT_TIME_SAFETY + Math.ceil(rows / 200) * AGENT_TIME_TURN_S;
+  }
+  return Math.max(AGENT_TIME_MIN_MINUTES, Math.ceil(seconds / 60));
+}
