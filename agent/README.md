@@ -36,6 +36,7 @@ The system prompt is a file: `agent/prompts/system.md`.
 | `TREG_TOKEN` | the TREG token (the same one the website uses) |
 | `SUPABASE_URL` | the Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | the Supabase service-role key |
+| `AGENT_CONCURRENCY` | optional; how many missions the worker runs at once. Default **1** (a Basic dyno has 512 MB, and each running mission starts a native process of its own); at most 4 |
 | `AGENT_MODEL` | optional; `claude-haiku-5-5` (default) or `claude-sonnet-5-5`. Planning can be switched separately from the admin page «الوكيل» (the model of each phase and its cost are stored on every mission, so the two can be compared) |
 
 ## Heroku, step by step (no command line)
@@ -47,6 +48,8 @@ The system prompt is a file: `agent/prompts/system.md`.
 4. **Choose the dyno and turn the worker on.** Tab **Resources** → under **Free/Hobby/Basic** the list shows one line, `worker` (from the `Procfile`; there is no `web` line, which is correct). Press the pencil icon on that line → choose **Basic** → switch it **on** → **Confirm**.
 5. **Check.** Open the admin page «الوكيل»: the dot turns green («العامل يعمل») within a minute. In Heroku: **More** → **View logs** shows `[agent] worker ... started`.
 6. **To stop it**: Resources → the pencil → switch the worker off. Missions waiting stay queued; a mission that was running is taken over by the worker when you turn it on again (its lease ends after two minutes).
+
+The admin page «الوكيل» shows the worker's memory (the worker alone, and with the processes it started, against the dyno's 512 MB) from every heartbeat; it turns red above 80%.
 
 Cost: one Basic dyno. Model cost per mission is shown on the admin page.
 

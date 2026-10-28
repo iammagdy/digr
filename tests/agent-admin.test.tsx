@@ -151,11 +151,22 @@ describe("questions, cancelling, settings, files, the live view", () => {
   it("the overview says whether the worker is alive from its heartbeat", async () => {
     const { client } = makeClient(db);
     const now = Date.parse("2026-10-28T10:00:00Z");
-    db.seed("agent_worker_heartbeat", [{ worker_id: "w1", beat_at: "2026-10-28T09:59:50Z", active_missions: 1, model: "m", version: "v" }]);
-    expect((await loadOverview(client, now)).worker).toMatchObject({ alive: true, ageSeconds: 10 });
+    db.seed("agent_worker_heartbeat", [{ worker_id: "w1", beat_at: "2026-10-28T09:59:50Z", active_missions: 1, model: "m", version: "v", rss_mb: 180, tree_rss_mb: 300 }]);
+    expect((await loadOverview(client, now)).worker).toMatchObject({ alive: true, ageSeconds: 10, memory: { rssMb: 180, treeRssMb: 300, limitMb: 512, warn: false } });
     expect((await loadOverview(client, now + 5 * 60_000)).worker.alive).toBe(false);
     db.tables.set("agent_worker_heartbeat", []);
     expect((await loadOverview(client, now)).worker).toMatchObject({ alive: false, ageSeconds: null });
+  });
+
+  it("the overview reports the worker's memory from its heartbeat, warns near the dyno's limit, and says nothing before any is reported", async () => {
+    const { client } = makeClient(db);
+    const now = Date.parse("2026-10-28T10:00:00Z");
+    db.seed("agent_worker_heartbeat", [{ worker_id: "w1", beat_at: "2026-10-28T09:59:50Z", active_missions: 1, rss_mb: 200, tree_rss_mb: 450 }]);
+    expect((await loadOverview(client, now)).worker.memory).toEqual({ rssMb: 200, treeRssMb: 450, limitMb: 512, warn: true });
+    db.tables.set("agent_worker_heartbeat", [{ worker_id: "w1", beat_at: "2026-10-28T09:59:50Z", active_missions: 0, rss_mb: 120, tree_rss_mb: null }]);
+    expect((await loadOverview(client, now)).worker.memory).toEqual({ rssMb: 120, treeRssMb: null, limitMb: 512, warn: false });
+    db.tables.set("agent_worker_heartbeat", [{ worker_id: "w1", beat_at: "2026-10-28T09:59:50Z", active_missions: 0, rss_mb: null, tree_rss_mb: null }]);
+    expect((await loadOverview(client, now)).worker.memory).toBeNull();
   });
 
   it("the overview works before the SQL is applied (tablesReady false, nothing throws)", async () => {
@@ -234,6 +245,8 @@ describe("the page and the menu", () => {
     const html = renderToStaticMarkup(createElement(AgentPage as any));
     expect(html).toContain("الوكيل");
     expect(html).toContain("agent-heartbeat");
+    expect(html).toContain("agent-memory");
+    expect(html).toContain("ذاكرة العامل");
     expect(html).toContain("لحساب الاختبار فقط");
     expect(html).toContain("agent-text");
     expect(html).toContain("شغّل الوكيل");
@@ -275,6 +288,13 @@ describe("the SQL proposal (docs/proposals/agent-worker): not applied, RLS on, s
     }
     for (const f of ["00_verify_before_apply.sql", "04_verify_after_apply.sql"]) expect(code(read(f))).not.toMatch(/\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|TRUNCATE|GRANT|REVOKE)\b/i);
     void MONEY;
+  });
+  it("the heartbeat table carries the two memory columns, nothing else changed in its access", () => {
+    const sql = code(read("01_agent_tables.sql"));
+    const table = sql.match(/CREATE TABLE IF NOT EXISTS public\.agent_worker_heartbeat \(([\s\S]*?)\n\);/)![1];
+    expect(table).toMatch(/rss_mb\s+integer/);
+    expect(table).toMatch(/tree_rss_mb\s+integer/);
+    expect(code(read("04_verify_after_apply.sql"))).toMatch(/'rss_mb', 'tree_rss_mb'/);
   });
   it("the claim function is service-role only and takes missions with FOR UPDATE SKIP LOCKED", () => {
     const sql = read("02_agent_claim_function.sql");

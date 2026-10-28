@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { AGENT_ALLOWED_MODELS, AGENT_BUCKET, AGENT_HEARTBEAT_TABLE, AGENT_SETTINGS_TABLE, AGENT_TEST_ACCOUNT_EMAIL, MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE, PLANNING_MODEL_SETTING_KEY } from "./constants";
+import { AGENT_ALLOWED_MODELS, AGENT_DYNO_MEMORY_MB, AGENT_BUCKET, AGENT_HEARTBEAT_TABLE, AGENT_SETTINGS_TABLE, AGENT_TEST_ACCOUNT_EMAIL, MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE, PLANNING_MODEL_SETTING_KEY } from "./constants";
+import { memoryWarning } from "./concurrency";
 import { latestBeat, workerAlive } from "./heartbeat";
 import { approveMission, repriceStoredPlan } from "./lifecycle";
 import { customerPlanView, type PricedPlan } from "./plan";
@@ -91,15 +92,20 @@ const SUMMARY_COLUMNS = "id,request_text,status,question_ar,reserved_points,unit
 /** The page's first load: the worker's heartbeat (alive or not), the model setting, and the latest missions. */
 export async function loadOverview(client: any, now: number = Date.now()) {
   const [beats, setting, missions] = await Promise.all([
-    client.from(AGENT_HEARTBEAT_TABLE).select("worker_id,beat_at,active_missions,model,version").order("beat_at", { ascending: false }).limit(5),
+    client.from(AGENT_HEARTBEAT_TABLE).select("worker_id,beat_at,active_missions,model,version,rss_mb,tree_rss_mb").order("beat_at", { ascending: false }).limit(5),
     client.from(AGENT_SETTINGS_TABLE).select("value").eq("key", PLANNING_MODEL_SETTING_KEY).maybeSingle(),
     client.from(MISSION_TABLE).select(SUMMARY_COLUMNS).order("created_at", { ascending: false }).limit(LIST_LIMIT),
   ]);
   const rows = Array.isArray(beats.data) ? beats.data : [];
   const last = latestBeat(rows);
+  // the memory the freshest worker reported with its heartbeat (null before it reports any, or before the column exists)
+  const newest = rows.find((r: any) => r.beat_at === last);
+  const rss = Number(newest?.rss_mb);
+  const tree = newest?.tree_rss_mb === null || newest?.tree_rss_mb === undefined ? null : Number(newest.tree_rss_mb);
+  const memory = newest && Number.isFinite(rss) && newest.rss_mb !== null ? { rssMb: rss, treeRssMb: tree !== null && Number.isFinite(tree) ? tree : null, limitMb: AGENT_DYNO_MEMORY_MB, warn: memoryWarning(tree) } : null;
   return {
     tablesReady: !beats.error && !missions.error,
-    worker: { ...workerAlive(last, now), lastBeatAt: last, workers: rows },
+    worker: { ...workerAlive(last, now), lastBeatAt: last, workers: rows, memory },
     planningModel: typeof setting.data?.value?.model === "string" ? setting.data.value.model : null,
     allowedModels: AGENT_ALLOWED_MODELS,
     testAccountEmail: AGENT_TEST_ACCOUNT_EMAIL,
