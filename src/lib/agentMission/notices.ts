@@ -1,4 +1,4 @@
-import { formatAr } from "../arabicDigits";
+import { formatAr, toArabicDigits } from "../arabicDigits";
 import { pointsAr } from "../pointsFormat";
 import { AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR } from "./constants";
 
@@ -21,32 +21,57 @@ export interface MissionNotice {
   kind: MissionNoticeKind;
   title: string;
   body: string;
-  /** In-site link. */
+  /** In-site link (the sender replaces it with the link that opens THIS request's conversation). */
   link: string;
-  email: { subject: string; heading: string; lead: string; detail1: string; detail2: string; buttonLabel: string } | null;
+  email: { subject: string; /** The line a mail list shows next to the subject. */ preheader: string; heading: string; lead: string; detail1: string; detail2: string; buttonLabel: string } | null;
 }
 
 const rowsAr = (n: number) => (n === 1 ? "صف واحد" : n === 2 ? "صفان" : n >= 3 && n <= 10 ? `${formatAr(n)} صفوف` : `${formatAr(n)} صفًا`);
 const REQUESTS = "/dashboard/requests";
-const buttonOpen = "افتح طلباتي";
+const buttonOpen = "افتح طلبك";
 
-export function buildMissionNotice(kind: MissionNoticeKind, f: MissionNoticeFacts): MissionNotice {
+/**
+ * The notice of an ending, specific to THE MISSION: its title («تغريدات عن محمد صلاح»), what was delivered of what was requested, the points charged, and a button to that request. The subject, the preview line
+ * and the heading of the e-mail are three different sentences (a mail list shows the subject and the preview next to each other); the in-site notice says the same facts. Arabic only, Arabic-Indic digits, no id.
+ */
+export function buildMissionNotice(kind: MissionNoticeKind, f: MissionNoticeFacts, titleIn?: string | null): MissionNotice {
   if (kind === "started") {
     const title = "بدأ تنفيذ مهمتك";
     // the in-site notice never promises an e-mail (the customer may have switched them off): it says where the result will be
     return { kind, title, body: AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR, link: REQUESTS, email: null };
   }
+  const t = toArabicDigits(String(titleIn ?? "").replace(/[«»]/g, "").trim()) || "مهمتك";
   const released = f.releasedPoints > 0 ? `حجز مؤقت مُحرَّر ${pointsAr(Math.round(f.releasedPoints))}.` : "";
+  const deliveredOf = `${formatAr(f.delivered)} من ${rowsAr(f.planned)}`;
   if (kind === "completed" || kind === "partial") {
     const partial = kind === "partial";
-    const title = partial ? "اكتملت مهمتك جزئيًا" : "اكتملت مهمتك";
-    const lead = partial ? `تم تسليم ${formatAr(f.delivered)} من ${rowsAr(f.planned)} متوقعة، لأن المصادر لم يتوفر فيها عدد أكبر يطابق طلبك.` : `تم تسليم ${rowsAr(f.delivered)} والملفات جاهزة للتحميل.`;
-    const detail1 = `خُصم ${pointsAr(Math.round(f.chargedPoints))} مقابل ما سُلّم فقط.`;
-    return { kind, title, body: `${lead} ${detail1}${released ? ` ${released}` : ""}`, link: REQUESTS, email: { subject: title, heading: title, lead, detail1, detail2: released, buttonLabel: "تحميل الملفات" } };
+    const charged = `خُصم ${pointsAr(Math.round(f.chargedPoints))} مقابل ما سُلّم فقط.`;
+    const lead = partial
+      ? `سُلّم ${deliveredOf} فقط في مهمتك «${t}»؛ هذا كل ما وُجد مطابقًا لطلبك في المصادر.`
+      : `تم تسليم ${deliveredOf} في مهمتك «${t}»، والملفات جاهزة للتحميل.`;
+    const title = partial ? `اكتملت «${t}» بعدد أقل: ${deliveredOf}` : `اكتملت «${t}»: سُلّم ${deliveredOf}`;
+    return {
+      kind, title, body: `${lead} ${charged}${released ? ` ${released}` : ""}`, link: REQUESTS,
+      email: {
+        subject: partial ? `${t} — سُلّم ${formatAr(f.delivered)} من ${formatAr(f.planned)} فقط` : `${t} — سُلّم ${deliveredOf}`,
+        preheader: partial ? `خُصم ${pointsAr(Math.round(f.chargedPoints))} فقط مقابل ما سُلّم، والباقي لم يُحسب عليك.` : `خُصم ${pointsAr(Math.round(f.chargedPoints))} مقابل ما سُلّم فقط${f.releasedPoints > 0 ? "، وما لم يُستخدم من الحجز عاد إليك" : ""}.`,
+        heading: partial ? `اكتملت مهمة «${t}» بعدد أقل من المطلوب` : `ملفات «${t}» جاهزة للتحميل`,
+        lead, detail1: charged, detail2: released, buttonLabel: "افتح طلبك وحمّل الملفات",
+      },
+    };
   }
   // failed or unserved: nothing was delivered. When a reserve was taken it came back whole.
-  const title = kind === "unserved" ? "لا يمكن تنفيذ طلبك بدقة" : "تعذّر تنفيذ مهمتك";
-  const lead = kind === "unserved" ? "لم نجد مصدرًا يخدم طلبك بدقة الآن." : "تعذّر استكمال مهمتك.";
+  const unserved = kind === "unserved";
+  const lead = unserved ? `لم نجد مصدرًا يخدم طلبك «${t}» بدقة الآن.` : `تعذّر استكمال مهمتك «${t}».`;
   const detail1 = f.hasJob ? (f.releasedPoints > 0 ? `حجز مؤقت مُحرَّر ${pointsAr(Math.round(f.releasedPoints))} كاملًا دون أي خصم.` : "حجز مؤقت مُحرَّر كاملًا دون أي خصم.") : "لم يُحجز أي رصيد ولم يُخصم شيء.";
-  return { kind, title, body: `${lead} ${detail1}`, link: REQUESTS, email: { subject: title, heading: title, lead, detail1, detail2: "", buttonLabel: buttonOpen } };
+  const title = unserved ? `لا يمكن تنفيذ «${t}» بدقة الآن` : `تعذّر تنفيذ مهمتك: ${t}`;
+  return {
+    kind, title, body: `${lead} ${detail1}`, link: REQUESTS,
+    email: {
+      subject: unserved ? `${t} — لا يمكن تنفيذه بدقة الآن` : `${t} — تعذّر التنفيذ ولم يُخصم شيء`,
+      preheader: f.hasJob ? "لم يُخصم منك شيء، وعاد حجز رصيدك كاملًا." : "لم يُحجز أي رصيد منك ولم يُخصم شيء.",
+      heading: unserved ? `لا يمكن تنفيذ «${t}» بدقة الآن` : `لم تكتمل مهمة «${t}»`,
+      lead, detail1, detail2: "", buttonLabel: buttonOpen,
+    },
+  };
 }

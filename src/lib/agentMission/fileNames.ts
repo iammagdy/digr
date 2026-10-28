@@ -79,3 +79,18 @@ export function wordBoundarySheetName(title: string, used: Set<string>, fallback
   return name;
 }
 
+
+/** What the mission is, in a few words, for a notice or an e-mail: «تغريدات عن محمد صلاح» (the file name without its count and date); a mission with no plan (planning failed) is its request, shortened at a word boundary. */
+export function missionTitleAr(input: { plan?: { stages: Array<{ deliver: boolean; title_ar: string; relevance?: { terms: string[]; subject_ar: string } }> } | null; requestText?: string | null }): string {
+  if (input.plan && Array.isArray(input.plan.stages) && input.plan.stages.length > 0) {
+    const delivering = input.plan.stages.filter((s) => s.deliver);
+    const last = delivering[delivering.length - 1] ?? input.plan.stages[input.plan.stages.length - 1];
+    const noun = nounOfStageTitle(last?.title_ar ?? "");
+    const subject = subjectOfMission({ plan: input.plan, requestText: input.requestText });
+    if (noun) return (subject ? `${noun} عن ${subject}` : noun).replace(FORBIDDEN_IN_FILE_NAME, " ").replace(/\s+/g, " ").trim();
+  }
+  const words = String(input.requestText ?? "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  let out = "";
+  for (const w of words) { const next = out ? `${out} ${w}` : w; if ([...next].length > 48) break; out = next; }
+  return toArabicDigits(out) || "مهمتك";
+}

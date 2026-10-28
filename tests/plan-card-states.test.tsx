@@ -164,7 +164,9 @@ describe("tapping a request on «طلباتي» only opens it", () => {
     const retryButtons = page.match(/openFile\(j, k === "refunded"\)/g) ?? [];
     expect(retryButtons).toHaveLength(1);
     expect(page).toContain("إعادة المحاولة");
-    expect(page).toContain("openJobHref({ jobId: job.$id, conversationId: quotes[job.$id]?.conversationId, retry })");
+    // (the old line named quotes[job.$id]?.conversationId inline: the conversation is now resolved first, by the list or by the server, and only then passed; `retry` is still passed only from the explicit button)
+    expect(page).toContain("openJobHref({ jobId: job.$id, conversationId, retry })");
+    expect(page).toContain("quotes[job.$id]?.conversationId");
   });
 
   it("the chat page sends the retry message only for an explicit link, and removes the parameter so a reload cannot repeat it", () => {
