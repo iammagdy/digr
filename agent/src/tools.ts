@@ -15,7 +15,7 @@ import type { WebGateway } from "./webGateway";
 import { runInSandbox, type SandboxResult } from "./sandbox";
 import type { Reviewer } from "./review";
 import { ItemStore, readSnapshot, type StopReason } from "./items/itemStore";
-import { ingestRows } from "./items/ingest";
+import { drainPending, ingestRows } from "./items/ingest";
 import { mirrorLegacyFiles } from "./items/mirror";
 import { codeRunPath, deriveEngineSpecs, type CodeRun } from "./engine/spec";
 import type { AgentStore, CallPhase, MissionRecord } from "./types";
@@ -526,9 +526,11 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         if (outcome === "delivered" && UNFILTERED_ADMISSION.test(normalizeText(checked.text))) return err("your summary says the rows are NOT filtered or may include other people / replies. Rows that do not match the request are never delivered or charged: save only rows that match (the stage's relevance rule filters them in save_rows) and rewrite the summary, or finish with outcome \"cannot_serve\"");
         // rows that were waiting for a review (the budget or a failed call delayed them) are asked once more before the mission ends: a good row is never lost only because it was late
         if (outcome === "delivered" && ctx.plan && ctx.review) {
+          const items = await getItems();
           for (const st of ctx.plan.stages) {
             if (!st.relevance) continue;
-            await checkAndSaveRows(st, []);
+            await drainPending({ items, plan: ctx.plan, reviewer: ctx.review, addEvent: (e) => store.addEvent(mission.id, e) }, st);
+            await mirrorLegacyFiles(items, store, ctx.plan, [st.key]);
           }
         }
         // NO EARLY STOP: while matching items are still needed and a source says it has more pages, finish is refused (a limited number of times, so the model is never stuck): the model cannot end a mission short of what was bought

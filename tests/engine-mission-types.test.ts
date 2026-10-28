@@ -111,6 +111,23 @@ describe("Facebook posts and the comments of each post", () => {
     expect(sheet.getRow(2).getCell(sheet.columnCount).value).toBeTruthy();
   });
 
+  it("the comments of ONE post cannot be read (two failed calls): that post is skipped, the others are read, the shortfall is the recorded reason (the reading failed), and what was read is what is delivered and charged", async () => {
+    const base = input();
+    const failing = (n: number) => Array.from({ length: n }, () => tregResult({ error: "upstream error" }, 0, { ok: false, httpStatus: 502, error: "upstream_error" } as never));
+    // answers: planning (2), posts (3 pages), then the comments of post 0, 1, 2, then TWO failures for post 3, then post 4 .. 23
+    const answers = [...base.answers.slice(0, 5), ...[0, 1, 2].map((i) => tregResult(fbCommentsPage(postId(i), 10), 0.002)), ...failing(2), ...Array.from({ length: POSTS_N - 4 }, (_, k) => tregResult(fbCommentsPage(postId(k + 4), 10), 0.002))];
+    const r = await replay({ ...base, answers });
+    const snap = await readSnapshot(r.store, r.missionId);
+    expect(snap.counts("comments").accepted).toBe((POSTS_N - 1) * 5);
+    expect(snap.stage("comments").stop).toBe("failed");
+    expect(r.mission.delivered_units).toBe(POSTS_N + (POSTS_N - 1) * 5);
+    expect(r.mission.summary_ar).toContain("القراءة من المصدر تعذّرت قبل اكتمال العدد");
+    expect(r.mission.summary_ar).not.toContain("هذا كل ما وُجد");
+    const wb = await readWorkbook(r);
+    expect(wb.getWorksheet("تعليقات كل منشور")!.rowCount - 1).toBe((POSTS_N - 1) * 5);
+    expect(r.finalView.steps[1]).toMatchObject({ savedN: (POSTS_N - 1) * 5 });
+  });
+
   it("the same mission on a store that serves overwritten objects stale: the same file, the same charge", async () => {
     const r = await replay({ ...input(), makeStore: () => createCdnStaleStore({ staleReads: 6 }) });
     await assertOneNumber(r, { delivered: POSTS_N + POSTS_N * 5, perSheet: { "المنشورات": POSTS_N, "تعليقات كل منشور": POSTS_N * 5 }, noun: "عنصر" });

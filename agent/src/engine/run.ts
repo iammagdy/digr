@@ -2,7 +2,7 @@ import { AGENT_COLLECT_MAX_PAGES } from "../../../src/lib/agentMission/constants
 import type { EngineSpec, PricedPlan } from "../../../src/lib/agentMission/plan";
 import type { Gateway } from "../gateway";
 import { RAW_PATH } from "../gateway";
-import { emitStageProgress, ingestRows } from "../items/ingest";
+import { drainPending, emitStageProgress, ingestRows } from "../items/ingest";
 import type { ItemStore, Row, StopReason } from "../items/itemStore";
 import type { Reviewer } from "../review";
 import type { SandboxResult } from "../sandbox";
@@ -60,7 +60,7 @@ export async function runEngine(deps: EngineDeps): Promise<EngineOutcome> {
     const outcome = await runStage(deps, stage, spec);
     if (outcome.aborted) return { stops, aborted: outcome.aborted };
     // items the review could not reach are asked once more at the end of the stage (a late good item is never lost)
-    if (stage.relevance && deps.reviewer && items.counts(stage.key).pending > 0 && items.counts(stage.key).accepted < stage.planned_rows) await ingestRows(deps, stage, []);
+    await drainPending(deps, stage);
     const counts = items.counts(stage.key);
     let reason = outcome.reason;
     if (counts.accepted >= stage.planned_rows) reason = "target_reached";
@@ -77,6 +77,8 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
   const parentRows = items.acceptedRows(stage.parent_key);
   if (parentRows.length === 0 || !spec.parent_binding) return { reason: "no_parents", aborted: null };
   let last: StopReason = "source_exhausted";
+  let failedInARow = 0;
+  let anyFailed = false;
   for (const parent of parentRows) {
     if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
     const parentId = String(parent.id);
@@ -85,11 +87,15 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
     const params = { ...spec.params, [spec.parent_binding.param]: bound };
     const r = await runStream(deps, stage, spec, `p:${parentId}`, params, parentId, stage.per_parent_rows ?? Number.POSITIVE_INFINITY);
     if (r.aborted) return r;
-    // a stop that ends the whole stage (the budget, the daily limit, the time, a failure) is not «this parent has no more»
-    if (r.reason === "budget" || r.reason === "daily_cap" || r.reason === "refused" || r.reason === "time_limit" || r.reason === "failed" || r.reason === "review_limit" || r.reason === "page_limit") return r;
+    // a stop that ends the whole stage (the budget, the daily limit, the time, a refusal) is not «this parent has no more»
+    if (r.reason === "budget" || r.reason === "daily_cap" || r.reason === "refused" || r.reason === "time_limit" || r.reason === "review_limit" || r.reason === "page_limit") return r;
+    // one parent whose read failed twice is skipped (the others may well be read); three in a row end the stage with that reason
+    if (r.reason === "failed") { failedInARow += 1; anyFailed = true; if (failedInARow >= 3) return r; continue; }
+    failedInARow = 0;
     last = r.reason;
   }
-  return { reason: items.counts(stage.key).accepted >= stage.planned_rows ? "target_reached" : last === "target_reached" ? "source_exhausted" : last, aborted: null };
+  // a read that failed for some parent is the recorded reason when the volume was not reached (never «the source has no more»)
+  return { reason: items.counts(stage.key).accepted >= stage.planned_rows ? "target_reached" : anyFailed ? "failed" : last === "target_reached" ? "source_exhausted" : last, aborted: null };
 }
 
 /** One stream of pages (a whole source, or one parent's children): resumes from the log, stops on a recorded reason. */

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createMemoryStore } from "../agent/src/memoryStore";
 import { ItemStore, loadSegments, readSnapshot, type Op } from "../agent/src/items/itemStore";
-import { ingestRows } from "../agent/src/items/ingest";
+import { drainPending, ingestRows } from "../agent/src/items/ingest";
 import { createReviewer, type ReviewCall } from "../agent/src/review";
 import { createCdnStaleStore } from "./helpers/cdnStaleStore";
 import type { PricedPlan, PricedStage } from "../src/lib/agentMission/plan";
@@ -64,6 +64,32 @@ describe("A. the store is append-only: nothing is ever read, extended and overwr
     const again = await ingestRows(deps(items, plan, funded), plan.stages[0], []);
     expect(again.newlyAccepted).toBe(6);
     expect(items.counts("tweets")).toMatchObject({ pending: 0, accepted: 6, acceptedByModel: 6 });
+  });
+});
+
+describe("A2. pending items are asked again until none is left or the review can do no more", () => {
+  it("a review that answers «no» to everything decides the waiting items in rounds (a round reviews at most what the room left can use); a round that makes no progress ends it", async () => {
+    const store = createMemoryStore();
+    const items = await ItemStore.open(store, MISSION);
+    const spec: RelevanceSpec = { subject_ar: "اللاعب", terms: ["صلاح"], context_terms: ["هدف"], text_columns: ["text"], min_own_words: 0 };
+    const small = stage({ relevance: spec, planned_rows: 5, expected_rows: 5 });
+    const plan = planOf(small);
+    const rows = Array.from({ length: 100 }, (_, i) => ({ id: `u${i}`, text: `أعتقد أن صلاح لاعب مختلف رقم ${i}` }));
+    const no: ReviewCall = async ({ user }) => { const n = (user.match(/^\d+\./gm) ?? []).length; return { text: JSON.stringify(Array(n).fill(0)), usage: { input_tokens: 100, output_tokens: 10 } }; };
+    const starved = createReviewer({ call: no, store, missionId: MISSION, requestText: "صلاح", budgetUsd: 0 });
+    await ingestRows(deps(items, plan, starved), small, rows);
+    expect(items.counts("tweets")).toMatchObject({ pending: 100, accepted: 0 });
+    const funded = createReviewer({ call: no, store, missionId: MISSION, requestText: "صلاح", budgetUsd: 1 });
+    await drainPending(deps(items, plan, funded), small);
+    // 100 waiting, 40 reviewed a round (room 5 x 3 + 25): three rounds, every one decided «no»
+    expect(items.counts("tweets")).toMatchObject({ pending: 0, accepted: 0, excluded: 100 });
+    expect(items.counts("tweets").excludedByReason).toMatchObject({ review_no: 100 });
+    // with a review that has no budget at all nothing moves and the loop ends at once
+    const store2 = createMemoryStore();
+    const items2 = await ItemStore.open(store2, MISSION);
+    await ingestRows(deps(items2, plan, createReviewer({ call: no, store: store2, missionId: MISSION, requestText: "صلاح", budgetUsd: 0 })), small, rows);
+    await drainPending(deps(items2, plan, createReviewer({ call: no, store: store2, missionId: MISSION, requestText: "صلاح", budgetUsd: 0 })), small);
+    expect(items2.counts("tweets")).toMatchObject({ pending: 100 });
   });
 });
 

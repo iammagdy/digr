@@ -168,6 +168,21 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   };
 }
 
+/**
+ * ASKS THE PENDING ITEMS OF A STAGE AGAIN until none is left, the volume bought is reached, or a round makes no progress (the review budget is spent, the model could not be reached). An item the review could not reach is never
+ * thrown away and a mission never ends while items wait and the review still has budget.
+ */
+export async function drainPending(deps: IngestDeps, stage: Stage): Promise<void> {
+  if (!stage.relevance || !deps.reviewer) return;
+  for (let round = 0; round < 40; round += 1) {
+    const before = deps.items.counts(stage.key);
+    if (before.pending === 0 || before.accepted >= stage.planned_rows) return;
+    await ingestRows(deps, stage, [], { silent: round > 0 });
+    const after = deps.items.counts(stage.key);
+    if (after.pending >= before.pending && after.accepted === before.accepted) return;
+  }
+}
+
 /** The counts of the «saved» event of the live panel, every number read from the item store: the stage, what is saved, the volume bought and (for a stage with a relevance rule) what was checked, accepted, left out and is waiting. */
 export function stageEventCounts(plan: PricedPlan, stageKey: string, c: StageCounts): Record<string, number> {
   const stage = plan.stages.find((s) => s.key === stageKey)!;
