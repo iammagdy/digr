@@ -4,6 +4,7 @@ import { loadTregCatalog } from "../../src/lib/treg/catalog";
 import { createCallRecorder } from "../../src/lib/server/multiProvider/callRecorder";
 import { resolveAccountAccess } from "../../src/lib/server/sensitiveAccess";
 import { sendMissionNotice } from "../../src/lib/server/missionNotify";
+import { resolveProviderKey, useProviderKeyStoreClient } from "../../src/lib/server/providerKeys";
 import { AGENT_CONCURRENCY_ENV, AGENT_MODEL_DEFAULT } from "../../src/lib/agentMission/constants";
 import { parseConcurrency } from "../../src/lib/agentMission/concurrency";
 import { resolveModels } from "./modelConfig";
@@ -30,6 +31,7 @@ async function main() {
   }
   const client = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false, autoRefreshToken: false } });
   const store = createSupabaseStore(client);
+  useProviderKeyStoreClient(client);
   const catalog = loadTregCatalog();
   const driver = createSdkDriver(process.env);
   const recorder = createCallRecorder(client);
@@ -46,6 +48,9 @@ async function main() {
     resolveAccess: (userId) => resolveAccountAccess(client, userId),
     // the customer's notice when a mission ends: an in-site notification and an e-mail through the existing send-email function
     notify: (n) => sendMissionNotice(client, n),
+    // the Firecrawl and Context.dev keys come from the SAME encrypted provider key store the website uses (needs PROVIDER_KEYS_ENCRYPTION_KEY, the same value as the website's); when the store gives no key the site's
+    // environment names are read (CONTEXT_DEV_API_KEY / FIRECRAWL_API_KEY, see providerKeyCrypto.ts); with neither, the web tools answer «source unavailable» and the agent uses the catalog
+    providerKey: async (provider) => (await resolveProviderKey(provider)).key || null,
     log,
   });
 

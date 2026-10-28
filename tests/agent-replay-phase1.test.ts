@@ -28,7 +28,7 @@ describe("a 300-tweet mission paged through the source", () => {
       planning: planningFlow({
         progress: "أبحث عن أرخص مصدر مناسب للتغريدات",
         searchWords: ["tweets", "search"], platform: "x",
-        sample: [{ endpoint: ENDPOINT, params: { query: TOPIC, limit: PER_PAGE } }],
+        sample: [{ endpoint: ENDPOINT, params: { query: TOPIC, limit: PER_PAGE }, why: "the cheaper sources return no author or link fields in their catalog description" }],
         sampleCode: "return inputs.call_0001.output.data.items.slice(0, 3).map(t => ({ id: t.id, text: t.text, url: t.url, author: t.author }))",
         plan: (res: Results) => ({
           summary_ar: "ستحصل على ٣٠٠ تغريدة عن محمد صلاح بعد انتقاله لتركيا مع نص كل تغريدة ورابطها.",
@@ -96,7 +96,7 @@ describe("a Facebook topic mission: posts, then the comments of each post, linke
       planning: planningFlow({
         progress: "أجرّب مصدر المنشورات ومصدر التعليقات",
         searchWords: ["facebook", "posts", "search"], platform: "facebook",
-        sample: [{ endpoint: POSTS, params: { keyword: TOPIC } }, { endpoint: COMMENTS, params: { url: `https://fb.example/posts/${postId(0)}` } }],
+        sample: [{ endpoint: POSTS, params: { keyword: TOPIC }, why: "the cheaper sources return no author or link fields in their catalog description" }, { endpoint: COMMENTS, params: { url: `https://fb.example/posts/${postId(0)}` }, why: "the cheaper sources return no author or link fields in their catalog description" }],
         sampleCode: "return inputs.call_0001.data.results.slice(0, 2).map(p => ({ id: p.post_id, text: p.message, url: p.url, author: p.author.name }))",
         plan: (res) => ({
           summary_ar: "ستحصل على منشورات فيسبوك عن التضخم وأسعار الغذاء مع رابط كل منشور وتعليقاته.",
@@ -148,7 +148,7 @@ describe("a TikTok mission: videos, then the comments of each video", () => {
       planning: planningFlow({
         progress: "أجرّب مصدر الفيديوهات ومصدر تعليقاتها",
         searchWords: ["tiktok", "videos"], platform: "tiktok",
-        sample: [{ endpoint: VIDEOS, params: { query: TOPIC, limit: N } }, { endpoint: COMMENTS, params: { post: `https://tt.example/@creator0/video/${vid(0)}` } }],
+        sample: [{ endpoint: VIDEOS, params: { query: TOPIC, limit: N }, why: "the cheaper sources return no author or link fields in their catalog description" }, { endpoint: COMMENTS, params: { post: `https://tt.example/@creator0/video/${vid(0)}` }, why: "the cheaper sources return no author or link fields in their catalog description" }],
         sampleCode: "return inputs.call_0001.rows.slice(0, 2).map(v => ({ id: v.post_id, text: v.description, url: v.url, views: v.stats.views }))",
         plan: (res) => ({
           summary_ar: "ستحصل على فيديوهات تيك توك عن رحلة إلى الأقصر مع أرقامها وتعليقات كل فيديو.",
@@ -186,7 +186,7 @@ describe("an Instagram hashtag mission", () => {
       request: "هات ٦٠ بوست إنستجرام عن هاشتاج قهوة",
       planning: planningFlow({
         progress: "أجرّب مصدر منشورات الوسوم", searchWords: ["instagram", "hashtag"], platform: "instagram",
-        sample: [{ endpoint: ENDPOINT, params: { hashtag: "قهوة" } }],
+        sample: [{ endpoint: ENDPOINT, params: { hashtag: "قهوة" }, why: "the cheaper sources return no author or link fields in their catalog description" }],
         sampleCode: "return inputs.call_0001.output.data.posts.slice(0, 3).map(p => ({ id: p.id, text: p.caption, url: p.displayUrl, likes: p.likes }))",
         plan: (res) => ({
           summary_ar: "ستحصل على ٦٠ منشورًا من إنستجرام تحت وسم قهوة مع نص كل منشور ورابطه وعدد الإعجابات.",
@@ -221,7 +221,7 @@ describe("a Google Maps reviews mission", () => {
       request: "عايز ٢٠٠ تقييم من خرائط جوجل لمطعم أبو طارق في القاهرة",
       planning: planningFlow({
         progress: "أبحث عن المكان ثم أجرّب مصدر التقييمات", searchWords: ["google", "maps", "reviews"],
-        sample: [{ endpoint: SEARCH, params: { query: "مطعم أبو طارق القاهرة", limit: 3 } }, { endpoint: REVIEWS, params: { place_id: "ChIJplace0001", num: 10 } }],
+        sample: [{ endpoint: SEARCH, params: { query: "مطعم أبو طارق القاهرة", limit: 3 }, why: "the cheaper sources return no author or link fields in their catalog description" }, { endpoint: REVIEWS, params: { place_id: "ChIJplace0001", num: 10 }, why: "the cheaper sources return no author or link fields in their catalog description" }],
         sampleCode: "return inputs.call_0001.rows.map(p => ({ id: p.place_id, text: p.name, url: p.address }))",
         plan: (res) => ({
           summary_ar: "ستحصل على ٢٠٠ تقييم من خرائط جوجل لمطعم أبو طارق بتاريخ كل تقييم ونصه ودرجته.",
@@ -274,7 +274,7 @@ describe("a companies + employees + work e-mails mission (the contacts stage)", 
       planning: planningFlow({
         progress: "أبحث عن مصدر الشركات ثم الموظفين ثم البريد المهني",
         searchWords: ["companies", "search"],
-        sample: [{ endpoint: COMPANIES, params: { page: 0, size: 3, account: "الكهروميكانيكا مصر" } }, { endpoint: EMPLOYEES, params: { website: "company1.example", page: 0, perPage: 2 } }, { endpoint: EMAILS, params: { person_linkedin_url: "https://www.linkedin.com/in/co1-p1" } }],
+        sample: [{ endpoint: COMPANIES, params: { page: 0, size: 3, account: "الكهروميكانيكا مصر" }, why: "the cheaper sources return no author or link fields in their catalog description" }, { endpoint: EMPLOYEES, params: { website: "company1.example", page: 0, perPage: 2 }, why: "the cheaper sources return no author or link fields in their catalog description" }, { endpoint: EMAILS, params: { person_linkedin_url: "https://www.linkedin.com/in/co1-p1" }, why: "the cheaper sources return no author or link fields in their catalog description" }],
         sampleCode: "return inputs.call_0001.content.slice(0, 2).map(c => ({ id: c.id, text: c.name, url: c.domain }))",
         plan: (res) => ({
           summary_ar: "ستحصل على ثلاث شركات كهروميكانيكا في مصر وموظفين اثنين من كل شركة مع بريد كل موظف المهني.",
@@ -283,7 +283,7 @@ describe("a companies + employees + work e-mails mission (the contacts stage)", 
               sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 2), measured_by: [callIds(res)[0]] },
             { key: "employees", title_ar: "موظفو كل شركة", endpoint_id: EMPLOYEES, expected_rows: 6, parent_key: "companies", per_parent_rows: 2, deliver: true, columns: [{ key: "text", title_ar: "اسم الموظف" }, { key: "title", title_ar: "المسمى الوظيفي" }, { key: "company", title_ar: "الشركة" }],
               sample_rows: [{ id: "co1-p1", text: "أحمد حسن", title: "مدير المشتريات", company: "الشركة المصرية للكهروميكانيكا" }], measured_by: [callIds(res)[1]] },
-            { key: "emails", title_ar: "البريد المهني لكل موظف", endpoint_id: EMAILS, expected_rows: 6, parent_key: "employees", per_parent_rows: 1, deliver: true, columns: [{ key: "text", title_ar: "البريد المهني" }, { key: "person", title_ar: "الموظف" }],
+            { key: "emails", title_ar: "البريد المهني لكل موظف", endpoint_id: EMAILS, expected_rows: 6, parent_key: "employees", per_parent_rows: 1, deliver: true, columns: [{ key: "text", title_ar: "البريد المهني", kind: "work_email" }, { key: "person", title_ar: "الموظف" }],
               sample_rows: [{ id: MAILS[0], text: MAILS[0], person: "أحمد حسن" }], measured_by: [callIds(res)[2]] },
           ],
         }),

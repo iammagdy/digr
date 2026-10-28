@@ -39,7 +39,9 @@ export interface ReplayInput {
   access?: AccountAccess;
   balance?: number;
   models?: { planning: string; execution: string };
-  /** Extra tool-less setup before planning (for example the other provider's fake answers); a hook for later phases. */
+  /** The fake Context.dev / Firecrawl (tests/helpers/fakeContextDev.ts): when given, the agent has the web tools and its provider keys resolve to a test value. */
+  web?: { fetchFn: ReturnType<typeof vi.fn>; requests: Array<{ url: string; body: any }> };
+  /** Extra setup of the worker's dependencies. */
   deps?: (base: RunnerDeps) => RunnerDeps;
 }
 
@@ -49,6 +51,7 @@ export interface ReplayResult {
   money: ReturnType<typeof fakeMoneyClient>;
   rec: ReturnType<typeof fakeRecorder>;
   call: ReturnType<typeof vi.fn>;
+  web: ReplayInput["web"];
   missionId: string;
   mission: MissionRecord;
   plannedPlan: PricedPlan;
@@ -117,6 +120,7 @@ export async function replay(input: ReplayInput): Promise<ReplayResult> {
     store, client, catalog: loadTregCatalog(), driver, recorder: rec.recorder, commit: rec.commit, call: call as any, models: input.models ?? MODELS,
     resolveAccess: async () => input.access ?? NOT_ADMIN,
     notify: async (n) => { notices.push({ kind: n.kind, facts: n.facts, jobId: n.jobId }); },
+    ...(input.web ? { providerKey: async () => "test-provider-key", fetchFn: input.web.fetchFn as any } : {}),
   });
   const wire = (driver: ReturnType<typeof createFakeDriver>) => (input.deps ? input.deps(base(driver)) : base(driver));
 
@@ -149,7 +153,7 @@ export async function replay(input: ReplayInput): Promise<ReplayResult> {
   if (!finalLoad.ok) throw new Error("the customer could not read the final mission");
   customerAnswers.push(finalLoad);
 
-  return { db, store, money, rec, call, missionId, mission, plannedPlan: planned.plan, planView: planLoad.view, finalView: finalLoad.view, notices, planningDriver, executionDriver, initialBalance, customerAnswers };
+  return { db, store, money, rec, call, web: input.web, missionId, mission, plannedPlan: planned.plan, planView: planLoad.view, finalView: finalLoad.view, notices, planningDriver, executionDriver, initialBalance, customerAnswers };
 }
 
 const INTERNAL = /(treg|firecrawl|context\.dev|contextdev|anyapi|crawl4ai|litescrape|aiark|aviato|blitz|limadata|justoneapi|scrapecreators|tomba|\bx\.x\.|endpoint|call_\d{4}|out_\d{4}|msn_[a-z0-9]{6}|job_quote|quote_|USD|\$|measured_|worker_id)/i;
@@ -165,7 +169,7 @@ function strings(value: unknown, out: string[] = []): string[] {
 export function assertReplayInvariants(r: ReplayResult, options: { expectDelivered?: number; expectStatus?: string } = {}): void {
   const m = r.mission;
   // nothing real: the provider was only ever called through the fake
-  expect(r.call.mock.calls.length).toBeGreaterThan(0);
+  expect(r.call.mock.calls.length + (r.web?.fetchFn.mock.calls.length ?? 0)).toBeGreaterThan(0);
   // every event the worker wrote is Arabic only with no ASCII digit; the numbers are in the counts
   for (const e of r.store.events) {
     expect(checkCustomerText(e.message_ar, { maxChars: 1100 }).issues, e.message_ar).toEqual([]);

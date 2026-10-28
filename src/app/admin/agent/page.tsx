@@ -23,7 +23,7 @@ interface Detail {
   customerPlan: CustomerPlan | null;
   internalPlan: { stages: Array<{ key: string; endpoint_id: string; measured_cost_per_row_usd: number }>; price: { costPerFinalRowUsd: number; totalCostUsd: number } } | null;
   events: EventRow[];
-  calls: { total: number; refused: number };
+  calls: { total: number; refused: number; items?: Array<{ id: string; phase: string; endpoint_id: string; status: string; refused_reason: string | null; rows_returned: number | null; cost_usd: number; params_digest?: Record<string, unknown> | null }> };
 }
 
 const STATUS_AR: Record<string, string> = { queued: "في الانتظار", planning: "يخطّط", needs_input: "ينتظر إجابتك", plan_ready: "الخطة جاهزة", approved: "معتمدة", executing: "ينفّذ", completed: "اكتملت", failed: "تعذّرت", unserved: "لا يمكن خدمتها", cancelled: "أُلغيت" };
@@ -208,6 +208,16 @@ export default function AgentPage() {
           <div className="text-[12px] leading-[1.9] text-ink2" data-testid="agent-cost">
             تكلفة المهمة (للمشرف): التخطيط {MODEL_AR[m.planning_model ?? ""] ?? m.planning_model ?? "—"} {usd(m.planning_llm_usd)} نموذج + {usd(m.planning_treg_usd)} مصدر · التنفيذ {MODEL_AR[m.execution_model ?? ""] ?? m.execution_model ?? "—"} {usd(m.execution_llm_usd)} نموذج + {usd(m.execution_treg_usd)} مصدر · استدعاءات {num(detail?.calls.total)} (مرفوضة {num(detail?.calls.refused)})
           </div>
+          {detail?.calls.items && detail.calls.items.length > 0 ? (
+            <details className="text-[12px] text-ink2" data-testid="agent-calls">
+              <summary className="cursor-pointer">سجل استدعاءات المصادر (للمشرف فقط)</summary>
+              <ul className="m-0 mt-1 flex list-none flex-col gap-0.5 p-0" dir="ltr">
+                {detail.calls.items.map((c) => (
+                  <li key={c.id}>{c.id.split(":").pop()} · {c.phase} · {c.endpoint_id} · {c.status}{c.refused_reason ? ` (${c.refused_reason})` : ""} · {c.rows_returned ?? 0} rows · {Number(c.cost_usd).toFixed(5)} USD{c.params_digest?.cost_basis === "estimated" ? " (estimated)" : ""}{c.params_digest?._why ? ` · why: ${String(c.params_digest._why)}` : ""}</li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
           {m.error ? <p className="m-0 text-[12px] text-bad" dir="ltr">{m.error}</p> : null}
         </section>
       ) : null}

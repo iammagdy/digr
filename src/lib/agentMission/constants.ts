@@ -79,6 +79,8 @@ export const AGENT_CAPABILITY_SLUG = "agent-mission";
 // ----------------------------------------------------------------- the money
 /** TREG USD budget of the PLANNING phase of one mission (the calls made before the customer approves anything). An owner cost, never charged. */
 export const AGENT_PLANNING_BUDGET_USD = 0.05;
+/** The same budget for a MULTI-STAGE request (a parent and its children: posts and their comments, companies and their employees and contacts): every stage needs its own sample. Raised on 2026-10-28 (owner decision). */
+export const AGENT_PLANNING_BUDGET_MULTI_STAGE_USD = 0.10;
 /** The execution budget is HOLD_SPEND_SHARE (40%) of the approved reserve's value, never below CALL_CEILING_FLOOR_USD (0.005). Same numbers as the website's job budget. */
 export const AGENT_EXECUTION_BUDGET_SHARE = HOLD_SPEND_SHARE;
 export const AGENT_EXECUTION_BUDGET_FLOOR_USD = CALL_CEILING_FLOOR_USD;
@@ -105,6 +107,8 @@ export const AGENT_VALUE_CHARS = 160;
 export const AGENT_INLINE_ROWS_MAX = 200;
 
 // ----------------------------------------------------------------- the model
+/** collect_pages: most pages one call may fetch (the mission's execution budget still decides how many it may pay for). */
+export const AGENT_COLLECT_MAX_PAGES = 60;
 export const AGENT_PLANNING_MAX_TURNS = 60;
 export const AGENT_EXECUTION_MAX_TURNS = 400;
 export const AGENT_PLANNING_WALL_MS = 20 * 60_000;

@@ -126,7 +126,7 @@ export function createGateway(deps: GatewayDeps) {
       return toolDescribeEndpoint(input, deps.access, deps.catalog, null);
     },
 
-    async tregCall(input: { endpoint_id?: unknown; params?: unknown; purpose?: unknown }): Promise<GatewayCallResult> {
+    async tregCall(input: { endpoint_id?: unknown; params?: unknown; purpose?: unknown; why?: unknown }): Promise<GatewayCallResult> {
       deps.counter.seq += 1;
       const id = callIdOf(deps.counter.seq);
       const endpointId = String(input.endpoint_id ?? "").trim();
@@ -145,19 +145,21 @@ export function createGateway(deps: GatewayDeps) {
       // 4: parameters
       const known = new Set([...endpoint.inputs.map((i) => i.name), ...(endpoint.pagination ?? [])]);
       for (const k of Object.keys(params)) if (!known.has(k)) delete params[k];
+      // what the call log keeps of the parameters: the values given, plus WHY a dearer source was chosen when the agent said so (for the admin's trace; never shown to a customer)
+      const trace: Record<string, unknown> = { ...params, ...(input.why ? { _why: clip(input.why, 300) } : {}) };
       const missing = endpoint.inputs.filter((i) => i.required && (params[i.name] === undefined || params[i.name] === null || params[i.name] === "")).map((i) => i.name);
-      if (missing.length) return refuse(id, endpointId, params, "missing_params", missing.join(","));
+      if (missing.length) return refuse(id, endpointId, trace, "missing_params", missing.join(","));
 
       // 5: the mission's USD budget
       const estimate = estimateCallUsd(endpoint, params, deps.catalog);
-      if (!deps.budget.reserve(estimate)) return refuse(id, endpointId, params, "over_budget", `${deps.phase}`);
+      if (!deps.budget.reserve(estimate)) return refuse(id, endpointId, trace, "over_budget", `${deps.phase}`);
 
       // 6: the provider's daily cap, recorded BEFORE the call
       const capabilityId = tregCapabilityIdOf({ endpointId });
       const reservation = await deps.recorder.reserve({ provider: "treg", capabilityId, estimatedUsd: estimate, jobId: deps.jobId });
       if (!reservation.allowed) {
         deps.budget.settle(estimate, 0);
-        return refuse(id, endpointId, params, reservation.reason === "cap" ? "daily_cap" : "recording_unavailable", reservation.reason ?? "");
+        return refuse(id, endpointId, trace, reservation.reason === "cap" ? "daily_cap" : "recording_unavailable", reservation.reason ?? "");
       }
 
       // the call itself, through the audited path for a sensitive endpoint
@@ -188,7 +190,7 @@ export function createGateway(deps: GatewayDeps) {
         deps.budget.settle(estimate, 0);
         await commit(deps.client, { costId: reservation.costId, costUsd: 0, units: 0, capabilityId, status: "failed", durationMs: 0, jobId: deps.jobId });
         void sensitiveRefusalAr; // the Arabic sentence is for the customer's screen, not for the model
-        return refuse(id, endpointId, params, outcome.refused as SensitiveRefusal, "sensitive");
+        return refuse(id, endpointId, trace, outcome.refused as SensitiveRefusal, "sensitive");
       }
 
       const durationMs = Date.now() - started;
@@ -198,13 +200,13 @@ export function createGateway(deps: GatewayDeps) {
 
       if (!result) {
         await commit(deps.client, { costId: reservation.costId, costUsd: actualUsd, units: 0, capabilityId, status: "failed", durationMs, jobId: deps.jobId });
-        await logCall({ id, endpoint_id: endpointId, params, status: "failed", cost_usd: actualUsd, estimate_usd: estimate, provider_cost_id: reservation.costId, duration_ms: durationMs });
+        await logCall({ id, endpoint_id: endpointId, params: trace, status: "failed", cost_usd: actualUsd, estimate_usd: estimate, provider_cost_id: reservation.costId, duration_ms: durationMs });
         return { ok: false, call_id: id, failed: true, http_status: 0, message: "the call did not complete; it may be tried once more" };
       }
       if (result.blocked) {
         // executeTregCall's own gate refused (it runs the same lists): nothing was sent
         await commit(deps.client, { costId: reservation.costId, costUsd: 0, units: 0, capabilityId, status: "failed", durationMs, jobId: deps.jobId });
-        return refuse(id, endpointId, params, result.blocked === "sensitive_not_allowed" ? "sensitive_not_allowed" : "blocked", String(result.blocked));
+        return refuse(id, endpointId, trace, result.blocked === "sensitive_not_allowed" ? "sensitive_not_allowed" : "blocked", String(result.blocked));
       }
 
       // save the FULL raw answer, then read its shape
@@ -216,7 +218,7 @@ export function createGateway(deps: GatewayDeps) {
       const rows = reading ? reading.rows.length : 0;
       const status = tregCallStatusOf({ ok: result.ok, rows: reading?.rows ?? [] });
       await commit(deps.client, { costId: reservation.costId, costUsd: actualUsd, units: rows, capabilityId, status, durationMs, jobId: deps.jobId });
-      await logCall({ id, endpoint_id: endpointId, params, status: status === "success" ? "ok" : status, http_status: result.httpStatus, rows, cost_usd: actualUsd, estimate_usd: estimate, provider_cost_id: reservation.costId, storage_path: storagePath, duration_ms: durationMs });
+      await logCall({ id, endpoint_id: endpointId, params: trace, status: status === "success" ? "ok" : status, http_status: result.httpStatus, rows, cost_usd: actualUsd, estimate_usd: estimate, provider_cost_id: reservation.costId, storage_path: storagePath, duration_ms: durationMs });
 
       if (!result.ok) {
         return { ok: false, call_id: id, failed: true, http_status: result.httpStatus, message: clip(result.errorDetails || result.detail || result.error || "the source answered with an error", 240) };

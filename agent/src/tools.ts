@@ -1,4 +1,6 @@
-import { AGENT_INLINE_ROWS_MAX, SANDBOX_INLINE_RESULT_CHARS } from "../../src/lib/agentMission/constants";
+import { AGENT_COLLECT_MAX_PAGES, AGENT_INLINE_ROWS_MAX, SANDBOX_INLINE_RESULT_CHARS } from "../../src/lib/agentMission/constants";
+import { CONTACT_KINDS, isContactSource, verifyContactValue } from "../../src/lib/agentMission/contacts";
+import { describeAgentSource, isAgentSourceId, searchAgentSources } from "../../src/lib/agentMission/sources";
 import { validateAndPricePlan, type PricedPlan, type RecordedCall } from "../../src/lib/agentMission/plan";
 import { checkCustomerText } from "../../src/lib/agentMission/text";
 import { blockedEndpointReason } from "../../src/lib/treg/blockList";
@@ -6,6 +8,8 @@ import { isSellable, type TregCatalog } from "../../src/lib/treg/catalog";
 import { policyVerdict, type AccountAccess } from "../../src/lib/treg/dataPolicy";
 import { digestValue } from "../../src/lib/modelPlanner/digest";
 import type { Gateway } from "./gateway";
+import { RAW_PATH } from "./gateway";
+import type { WebGateway } from "./webGateway";
 import { runInSandbox, type SandboxResult } from "./sandbox";
 import type { AgentStore, CallPhase, MissionRecord } from "./types";
 
@@ -31,8 +35,12 @@ export interface RunState {
   outSeq: number;
   /** Set when the run has reached an end the model must stop at (a plan, a question, finish). */
   terminal: boolean;
+  /** The ids of the last catalog_search, cheapest first (by code): a source ranked below one that was not tried needs a stated reason (`why`). */
+  ranking: string[] | null;
+  /** The sources this run has called (or been refused a call to). */
+  tried: Set<string>;
 }
-export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false });
+export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set() });
 
 export interface ToolContext {
   phase: CallPhase;
@@ -41,6 +49,8 @@ export interface ToolContext {
   plan: PricedPlan | null;
   store: AgentStore;
   gateway: Gateway;
+  /** The page parsers, web search / scrape and people search; absent when no provider key store is wired (the tools are then not offered). */
+  web?: WebGateway;
   catalog: TregCatalog;
   access: AccountAccess;
   state: RunState;
@@ -73,6 +83,29 @@ export async function countDeliveredRows(store: AgentStore, missionId: string, p
   return { delivered: Math.min(delivered, plan.price.deliveredRows), perStage };
 }
 
+/** CHEAPEST SUITABLE SOURCE FIRST, in code: a source that ranks below one the last catalog_search listed above it (cheaper per row) and that was not tried needs a stated reason, kept in the call log for the admin. */
+export function cheapestFirstMessage(state: RunState, id: string, why: unknown): string | null {
+  const ranking = state.ranking;
+  if (!ranking) return null;
+  const at = ranking.indexOf(id);
+  if (at <= 0) return null;
+  if (String(why ?? "").trim().length >= 8) return null;
+  const untried = ranking.slice(0, at).filter((x) => !state.tried.has(x));
+  return untried.length > 0 ? `a cheaper source of the last catalog_search has not been tried (${untried.slice(0, 3).join(", ")}): sample it first, or pass \`why\` (at least 8 characters) saying why it is unsuitable` : null;
+}
+
+const valueAt = (value: unknown, path: string | null | undefined): unknown => {
+  if (!path || path === "root") return value;
+  let cur: any = value;
+  for (const part of path.split(".")) { if (cur === null || cur === undefined) return undefined; cur = cur[part]; }
+  return cur;
+};
+const ROW_KEY_FIELDS = ["id", "post_id", "comment_id", "review_id", "place_id", "shortcode", "video_id", "personID", "url"];
+const rowKeyOf = (row: unknown): string => {
+  if (row && typeof row === "object") for (const k of ROW_KEY_FIELDS) { const v = (row as Record<string, unknown>)[k]; if (typeof v === "string" || typeof v === "number") return `${k}:${v}`; }
+  return JSON.stringify(row);
+};
+
 export function buildTools(ctx: ToolContext): ToolSpec[] {
   const { store, mission, gateway, state } = ctx;
   const runSandbox = ctx.sandbox ?? ((code: string, inputs: Record<string, unknown>) => runInSandbox(code, inputs));
@@ -98,14 +131,31 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         platform: { type: "string", description: "Platform filter, e.g. \"x\" or \"youtube\"", optional: true },
         limit: { type: "number", description: "At most this many candidates (1 to 10)", optional: true },
       },
-      handler: async (a) => ({ ok: true, ...gateway.catalogSearch({ words: Array.isArray(a.words) ? a.words.map(String) : [], platform: a.platform ? String(a.platform) : undefined, limit: Number(a.limit) || undefined }) }),
+      handler: async (a) => {
+        const words = Array.isArray(a.words) ? a.words.map(String) : [];
+        const limit = Math.max(1, Math.min(10, Math.floor(Number(a.limit) || 8)));
+        const found = gateway.catalogSearch({ words, platform: a.platform ? String(a.platform) : undefined, limit: 10 });
+        // the web sources (page parsers, web search / scrape, people search) are candidates too: ONE list for every provider, ordered by cost per row computed by code
+        const web = ctx.web ? searchAgentSources({ words, platform: a.platform ? String(a.platform) : undefined }) : [];
+        const merged: Array<Record<string, any>> = [
+          ...found.hits.map((h: any) => ({ ...h, usd_per_row: h.costPerRecordUsd ?? null })),
+          ...web.map((c) => ({ id: c.id, name: c.id, platform: c.platform, capability: c.kind, summary: c.summary.slice(0, 140), price: `about ${c.usd_per_call.toFixed(5)} USD a call, up to ${c.rows_per_call} rows`, costPerRecordUsd: Number(c.usd_per_row.toFixed(7)), usd_per_row: c.usd_per_row, requiredInputs: [], inputs: [c.inputs] })),
+        ].sort((x, y) => (x.usd_per_row ?? Number.POSITIVE_INFINITY) - (y.usd_per_row ?? Number.POSITIVE_INFINITY) || String(x.id).localeCompare(String(y.id)));
+        const top: Array<Record<string, any>> = merged.slice(0, limit).map(({ usd_per_row: _u, ...h }, i) => ({ ...h, rank: i + 1 }));
+        state.ranking = top.map((h) => String(h.id));
+        return { ok: true, restrictedTop: found.restrictedTop, hidden: found.hidden, hits: top, note: "ranked cheapest first by cost per row; use the cheapest source that really fits, and give `why` when you choose a dearer one" };
+      },
     },
     {
       name: "describe_endpoint",
       description: "The full description of one catalog endpoint: inputs (required, limits, enums), how its answer is paged, its fields, a trimmed example and how it is priced. Read it before calling an endpoint.",
       phases: ["planning", "execution"],
       params: { id: { type: "string", description: "Endpoint id exactly as catalog_search returned it" } },
-      handler: async (a) => gateway.describeEndpoint({ id: String(a.id ?? "") }),
+      handler: async (a) => {
+        const id = String(a.id ?? "");
+        if (ctx.web && isAgentSourceId(id)) { const d = describeAgentSource(id); if (d) return { ok: true, endpoint: d }; }
+        return gateway.describeEndpoint({ id });
+      },
     },
     {
       name: "treg_call",
@@ -115,8 +165,76 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         endpoint_id: { type: "string", description: "Endpoint id exactly as catalog_search returned it" },
         params: { type: "object", description: "The endpoint's inputs as an object, e.g. {\"query\": \"...\", \"limit\": 20}. Page with the cursor input the description names." },
         purpose: { type: "string", description: "Only for a personal-data lookup: why the customer needs it", optional: true },
+        why: { type: "string", description: "Only when this source is dearer than one the last catalog_search ranked above it: why that cheaper source was unsuitable (kept in the admin's trace)", optional: true },
       },
-      handler: async (a) => ({ ...(await gateway.tregCall({ endpoint_id: a.endpoint_id, params: a.params, purpose: a.purpose })) }),
+      handler: async (a) => {
+        const id = String(a.endpoint_id ?? "").trim();
+        const refusal = cheapestFirstMessage(state, id, a.why);
+        if (refusal) return { ok: false, refused: "choose_cheapest", message: refusal };
+        const result = await gateway.tregCall({ endpoint_id: a.endpoint_id, params: a.params, purpose: a.purpose, why: a.why });
+        if (!("refused" in result)) state.tried.add(id);
+        return { ...result };
+      },
+    },
+    ...(ctx.web ? webTools(ctx) : []),
+    {
+      name: "collect_pages",
+      description: "Page through a catalog endpoint IN CODE, many pages in ONE call: it makes the endpoint's calls one after another (each one passes every check of treg_call: budget, daily limit, recording), follows the cursor the answers return, joins and de-duplicates the rows, and stops at the target, at the end of the source, at a refusal, or after max_pages. The joined raw rows are saved as an output file (output_id) for run_code and save_rows. Use it for missions of hundreds of rows instead of calling treg_call page by page.",
+      phases: ["execution"],
+      params: {
+        endpoint_id: { type: "string", description: "Endpoint id exactly as catalog_search returned it" },
+        params: { type: "object", description: "The inputs of the FIRST page (the cursor input is added by code for the next pages)" },
+        target_rows: { type: "number", description: "Stop when this many unique rows are collected (at most the approved volume of the stage)" },
+        cursor_param: { type: "string", description: "The name of the endpoint's cursor input; default: its own paging input", optional: true },
+        max_pages: { type: "number", description: `At most this many pages (default and maximum ${AGENT_COLLECT_MAX_PAGES})`, optional: true },
+        why: { type: "string", description: "Only when this source is dearer than one ranked above it: why", optional: true },
+      },
+      handler: async (a) => {
+        const id = String(a.endpoint_id ?? "").trim();
+        const endpoint = ctx.catalog.byId.get(id);
+        if (!endpoint) return err("this endpoint is not in the catalog; use an id exactly as catalog_search returned it");
+        const refusal = cheapestFirstMessage(state, id, a.why);
+        if (refusal) return { ok: false, refused: "choose_cheapest", message: refusal };
+        const cursorParam = String(a.cursor_param || (endpoint.pagination ?? []).find((p) => !/^(limit|count|page_size|per_page|size|num|max_results|n)$/i.test(p)) || "");
+        if (!cursorParam) return err("this endpoint has no cursor input; call treg_call once, or give cursor_param");
+        const target = Math.max(1, Math.min(5000, Math.floor(Number(a.target_rows) || 0)));
+        if (!Number.isFinite(target) || !(Number(a.target_rows) > 0)) return err("target_rows is required (a whole number of rows)");
+        const maxPages = Math.max(1, Math.min(AGENT_COLLECT_MAX_PAGES, Math.floor(Number(a.max_pages) || AGENT_COLLECT_MAX_PAGES)));
+        const first = isObject(a.params) ? { ...a.params } : {};
+        const merged: unknown[] = [];
+        const seen = new Set<string>();
+        const callIds: string[] = [];
+        let cursor: string | null = null;
+        let stopped = "max_pages";
+        let pages = 0;
+        let barren = 0;
+        let lastFirstRows: unknown[] = [];
+        while (pages < maxPages) {
+          const result = await gateway.tregCall({ endpoint_id: id, params: cursor ? { ...first, [cursorParam]: cursor } : first, why: a.why });
+          if (!result.ok) { stopped = "refused" in result ? `refused:${result.refused}` : "failed"; break; }
+          state.tried.add(id);
+          pages += 1;
+          callIds.push(result.call_id);
+          const raw = await store.getFile(mission.id, RAW_PATH(result.call_id));
+          let list: unknown[] = [];
+          try { const v = valueAt(raw ? JSON.parse(raw) : null, (result.shape as { list_path?: string | null } | null)?.list_path); list = Array.isArray(v) ? v : []; } catch { list = []; }
+          if (pages === 1) lastFirstRows = list.slice(0, 3).map((r) => digestValue(r));
+          let added = 0;
+          for (const row of list) { const k = rowKeyOf(row); if (seen.has(k)) continue; seen.add(k); merged.push(row); added += 1; }
+          await store.addEvent(mission.id, { kind: "progress", message_ar: "يجمع الوكيل الصفحات من المصدر صفحة بعد صفحة", counts: { pages, rows: merged.length, planned: target } });
+          if (merged.length >= target) { stopped = "target_reached"; break; }
+          cursor = result.next_cursor;
+          if (!cursor || list.length === 0 || result.has_more === false) { stopped = "source_ended"; break; }
+          barren = added === 0 ? barren + 1 : 0;
+          if (barren >= 2) { stopped = "no_new_rows"; break; }
+        }
+        if (merged.length === 0) return { ok: false, error: `no rows were collected (${stopped})`, pages, call_ids: callIds.slice(0, 5) };
+        const output = merged.slice(0, Math.max(target, 1));
+        state.outSeq += 1;
+        const outputId = outId(state.outSeq);
+        await store.putFile(mission.id, `out/${outputId}.json`, JSON.stringify(output), "application/json");
+        return { ok: true, output_id: outputId, pages, unique_rows: merged.length, saved_rows: output.length, stopped_because: stopped, call_ids: callIds.slice(0, 3).concat(callIds.length > 3 ? [`… ${callIds.length} pages in all`] : []), first_rows: lastFirstRows, note: "output_id holds the joined RAW rows: map them to final rows with run_code (files: [output_id]) and save_rows" };
+      },
     },
     {
       name: "run_code",
@@ -130,7 +248,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         const code = String(a.code ?? "");
         if (!code.trim()) return err("code is empty");
         const files = Array.isArray(a.files) ? a.files.map(String) : [];
-        if (files.length > 30) return err("at most 30 files per run");
+        if (files.length > 60) return err("at most 60 files per run");
         const loaded = await loadFileIds(files);
         if (!loaded.ok) return err(loaded.error);
         const result = await runSandbox(code, loaded.inputs);
@@ -182,6 +300,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       phases: ["planning"],
       params: {
         summary_ar: { type: "string", description: "ONE Arabic sentence: what the customer will get (the customer card shows only this sentence)" },
+        contacts_note_ar: { type: "string", description: "Only when the customer asked for work e-mails or phones and NO contact stage is in the plan: ONE Arabic sentence saying honestly why", optional: true },
         stages: { type: "array", description: "[{key, title_ar, endpoint_id, expected_rows, parent_key|null, per_parent_rows (if parent), deliver, columns:[{key,title_ar}], sample_rows:[{...}], measured_by:[call ids], how_ar?}]" },
       },
       handler: async (a) => {
@@ -197,9 +316,11 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             return row ? { id, endpointId: row.endpoint_id, ok: row.status === "ok", costUsd: Number(row.cost_usd) || 0, rows: Number(row.rows_returned) || 0, durationMs: Number(row.duration_ms) || undefined } : null;
           },
           evidenceText: (id: string) => evidence.get(id) ?? null,
-          endpointAllowed: (endpointId: string) => isSellable(endpointId, ctx.catalog) && !blockedEndpointReason(endpointId) && policyVerdict(endpointId, ctx.access).allowed,
+          endpointAllowed: (endpointId: string) => (Boolean(ctx.web) && isAgentSourceId(endpointId)) || (isSellable(endpointId, ctx.catalog) && !blockedEndpointReason(endpointId) && policyVerdict(endpointId, ctx.access).allowed),
+          requestText: `${mission.request_text} ${mission.answer_text ?? ""}`,
+          isContactSource,
         };
-        const checked = validateAndPricePlan({ summary_ar: a.summary_ar, stages: stagesIn }, lookup);
+        const checked = validateAndPricePlan({ summary_ar: a.summary_ar, stages: stagesIn, ...(a.contacts_note_ar !== undefined ? { contacts_note_ar: a.contacts_note_ar } : {}) }, lookup);
         if (!checked.ok) return err("the plan was not accepted; fix these and propose again", { issues: checked.issues.slice(0, 12) });
         state.proposedPlan = checked.plan;
         state.terminal = true;
@@ -244,7 +365,10 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           parentIds = new Set((parentRaw ? (JSON.parse(parentRaw) as Array<Record<string, unknown>>) : []).map((r) => String(r.id)));
         }
         const columnKeys = stage.columns.map((c) => c.key);
-        const tally = { saved_now: 0, duplicates_ignored: 0, rejected_missing_id: 0, rejected_unknown_parent: 0, rejected_over_limit: 0, rejected_not_object: 0 };
+        // CONTACT FIELDS are verified by code: a work e-mail or phone that does not pass is left empty; a row of a contact stage with no verified value is not saved (so it is neither delivered nor charged)
+        const contactColumns = stage.columns.filter((c) => c.kind !== undefined && CONTACT_KINDS.includes(c.kind));
+        const contactStage = isContactSource(stage.endpoint_id);
+        const tally = { saved_now: 0, duplicates_ignored: 0, rejected_missing_id: 0, rejected_unknown_parent: 0, rejected_over_limit: 0, rejected_not_object: 0, rejected_no_verified_contact: 0, contact_values_left_empty: 0 };
         for (const raw of incoming) {
           if (!isObject(raw)) { tally.rejected_not_object += 1; continue; }
           const id = String(raw.id ?? "").trim();
@@ -255,9 +379,17 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             parentId = String(raw.parent_id ?? "").trim();
             if (!parentId || !parentIds.has(parentId)) { tally.rejected_unknown_parent += 1; continue; }
           }
-          if (existing.length >= stage.planned_rows) { tally.rejected_over_limit += 1; continue; }
           const row: Record<string, unknown> = { id, ...(parentId !== null ? { parent_id: parentId } : {}) };
           for (const k of columnKeys) if (k !== "id" && k !== "parent_id") row[k] = raw[k] ?? "";
+          let verifiedAny = false;
+          for (const c of contactColumns) {
+            const original = String(raw[c.key] ?? "").trim();
+            const verified = verifyContactValue(c.kind!, raw[c.key]);
+            row[c.key] = verified ?? "";
+            if (verified) verifiedAny = true; else if (original) tally.contact_values_left_empty += 1;
+          }
+          if (contactStage && contactColumns.length > 0 && !verifiedAny) { tally.rejected_no_verified_contact += 1; continue; }
+          if (existing.length >= stage.planned_rows) { tally.rejected_over_limit += 1; continue; }
           existing.push(row);
           have.add(id);
           tally.saved_now += 1;
@@ -291,4 +423,66 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
   return tools.filter((t) => t.phases.includes(ctx.phase));
 }
 
-export const TOOL_NAMES = ["catalog_search", "describe_endpoint", "treg_call", "run_code", "report_progress", "ask_question", "propose_plan", "save_rows", "finish"] as const;
+
+/** The web tools: ONE gateway tool for the page parsers (parser name + URL), and the web search, page scrape and people search of the providers. Same rules as treg_call, in the gateway. */
+function webTools(ctx: ToolContext): ToolSpec[] {
+  const { state } = ctx;
+  const web = ctx.web!;
+  const guard = (id: string, why: unknown) => { const m = cheapestFirstMessage(state, id, why); return m ? { ok: false, refused: "choose_cheapest", message: m } : null; };
+  const done = (id: string, result: Record<string, any>) => { if (!("refused" in result)) state.tried.add(id); return result; };
+  const why: ParamSpec = { type: "string", description: "Only when this source is dearer than one the last catalog_search ranked above it: why that cheaper source was unsuitable (kept in the admin's trace)", optional: true };
+  return [
+    {
+      name: "parse_page",
+      description: "Read ONE public page with a pre-built parser and get its ROWS (no crawling, one parser per call). Parsers: google-maps (businesses of a search or a place), google-maps-reviews (reviews of a place, up to 1,000; optional sort and limit), google-play and google-play-reviews (up to 200), app-store and app-store-reviews (up to 500), instagram-profile, instagram-post (top comments), instagram-feed (hashtag, keyword or location URL), tiktok-profile, tiktok-video, tiktok-feed (profile, hashtag or search URL), tiktok-comments (the first 20 only: use the catalog's comment sources for more), tiktok-followers, tiktok-following, tiktok-user-search (top 10), g2-reviews (25), emails, phone-numbers and links (of the ONE page you give: open the company's own site, then its contact page via links). There is no X, Facebook or YouTube parser: those stay on the catalog. Public pages only, read only. The full answer is saved as { rows, data }; you get a shape digest and the first rows.",
+      phases: ["planning", "execution"],
+      params: {
+        parser: { type: "string", description: "The parser name, e.g. \"instagram-feed\"" },
+        url: { type: "string", description: "The public page in the shape that parser accepts (see describe_endpoint of contextdev.parse.<parser>)" },
+        sort: { type: "string", description: "google-maps-reviews only: newest, oldest, relevant, highest or lowest", optional: true },
+        limit: { type: "number", description: "google-maps-reviews only: 1 to 1000 reviews (default 100)", optional: true },
+        why,
+      },
+      handler: async (a) => {
+        const name = String(a.parser ?? "").trim();
+        const id = `contextdev.parse.${name}`;
+        return guard(id, a.why) ?? done(id, await web.parsePage({ parser: a.parser, url: a.url, sort: a.sort, limit: a.limit, why: a.why }) as Record<string, any>);
+      },
+    },
+    {
+      name: "web_search",
+      description: "Search the public web (Firecrawl or Context.dev): the title, address and description of up to 30 results. Use it to find a company's website or a place's page; then read the page with parse_page or web_scrape.",
+      phases: ["planning", "execution"],
+      params: {
+        provider: { type: "string", description: "\"contextdev\" (cheaper) or \"firecrawl\"" },
+        query: { type: "string", description: "The search words" },
+        limit: { type: "number", description: "10, 20 or 30 results", optional: true },
+        country: { type: "string", description: "Two-letter country code", optional: true },
+        why,
+      },
+      handler: async (a) => {
+        const id = `${a.provider === "firecrawl" ? "firecrawl" : "contextdev"}.search`;
+        return guard(id, a.why) ?? done(id, await web.webSearch({ provider: a.provider, query: a.query, limit: a.limit, country: a.country, why: a.why }) as Record<string, any>);
+      },
+    },
+    {
+      name: "web_scrape",
+      description: "Read ONE public page as text with its links (Firecrawl or Context.dev). The full text and links are saved; process them with run_code. For the e-mails or phones of a page prefer parse_page with the emails / phone-numbers parser.",
+      phases: ["planning", "execution"],
+      params: { provider: { type: "string", description: "\"contextdev\" (cheaper) or \"firecrawl\"" }, url: { type: "string", description: "A public page" }, why },
+      handler: async (a) => {
+        const id = `${a.provider === "firecrawl" ? "firecrawl" : "contextdev"}.scrape`;
+        return guard(id, a.why) ?? done(id, await web.webScrape({ provider: a.provider, url: a.url, why: a.why }) as Record<string, any>);
+      },
+    },
+    {
+      name: "people_search",
+      description: "Find professionals from a plain-language description (Context.dev people search): name, role, company, location and public profile links, 10 per page. It returns NO e-mail and NO phone: use a contact source for those. Page with the next_cursor it returns.",
+      phases: ["planning", "execution"],
+      params: { query: { type: "string", description: "For example \"VPs of sales at solar companies in California\" (up to 500 characters)" }, country: { type: "string", description: "Two-letter country code", optional: true }, cursor: { type: "string", description: "The next_cursor of the previous page", optional: true }, why },
+      handler: async (a) => guard("contextdev.people.search", a.why) ?? done("contextdev.people.search", await web.peopleSearch({ query: a.query, country: a.country, cursor: a.cursor, why: a.why }) as Record<string, any>),
+    },
+  ];
+}
+
+export const TOOL_NAMES = ["catalog_search", "describe_endpoint", "treg_call", "parse_page", "web_search", "web_scrape", "people_search", "collect_pages", "run_code", "report_progress", "ask_question", "propose_plan", "save_rows", "finish"] as const;

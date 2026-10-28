@@ -1,4 +1,5 @@
 import { AGENT_MAX_DELIVERED_ROWS, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE } from "./constants";
+import { CONTACT_KINDS, requestWantsContacts, type ContactKind } from "./contacts";
 import { estimateMissionMinutes, measuredCostPerRowUsd, priceMissionByCode, type MissionPriceResult } from "./price";
 import { checkCustomerLabel, checkCustomerText } from "./text";
 
@@ -6,7 +7,12 @@ import { checkCustomerLabel, checkCustomerText } from "./text";
  * A mission PLAN: stages (a stage runs once per row of its parent stage), the rows each is expected to give, sample rows the agent really saw, and the calls that MEASURED the cost.
  * The agent writes this through propose_plan. `validateAndPricePlan` checks it against what was recorded and prices it by code; the agent never supplies a price.
  */
-export interface PlanColumn { key: string; title_ar: string }
+export interface PlanColumn {
+  key: string;
+  title_ar: string;
+  /** Set on a column that holds a work e-mail or a phone: its values are verified by code before a row is saved; an unverified value is left empty. */
+  kind?: ContactKind;
+}
 
 export interface ProposedStage {
   key: string;
@@ -49,6 +55,10 @@ export interface PlanLookup {
   evidenceText(id: string): string | null;
   /** May this endpoint be sold to this account (sellable, not blocked, data policy)? */
   endpointAllowed(endpointId: string): boolean;
+  /** The customer's own words: when they ask for work e-mails or phones the plan must have a contact stage (or say honestly why not). */
+  requestText?: string;
+  /** Is this source one whose rows are contacts (a b2b_contact endpoint, the e-mail / phone parser)? */
+  isContactSource?(endpointId: string): boolean;
 }
 
 export interface PricedStage extends ProposedStage {
@@ -63,6 +73,8 @@ export interface PricedStage extends ProposedStage {
 
 export interface PricedPlan {
   summary_ar: string;
+  /** Honest sentences the customer reads next to the summary (for example: why the e-mails they asked for are not in the plan). */
+  notes_ar?: string[];
   stages: PricedStage[];
   price: MissionPriceResult;
 }
@@ -147,7 +159,8 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
       // every row already carries its own id and its parent's id: a column that only repeats an id, or a second column with the same title, is dropped (the sheet is for people to read)
       if (isInternalColumn({ key: String(c.key), title_ar: t.text }) || colTitles.has(t.text)) continue;
       colTitles.add(t.text);
-      cleanColumns.push({ key: String(c.key), title_ar: t.text });
+      const kind = CONTACT_KINDS.includes(c.kind as ContactKind) ? (c.kind as ContactKind) : undefined;
+      cleanColumns.push({ key: String(c.key), title_ar: t.text, ...(kind ? { kind } : {}) });
     }
     if (cleanColumns.length === 0 && issues.length === 0) issues.push(`${label}: give at least one readable column (an id is not one; every row already carries its own id)`);
 
@@ -171,6 +184,7 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
     if (measuredCalls.length === 0 || costPerRow === null) issues.push(`${label}: no measured call with rows and a recorded charge`);
     else if (!(costPerRow > 0)) issues.push(`${label}: the measured charge is zero, so no price can be built on it; measure with a call that was charged`);
 
+    if (lookup.isContactSource?.(endpointId) && !cleanColumns.some((c) => c.kind !== undefined)) issues.push(`${label}: a contact stage must mark its e-mail / phone columns with kind "work_email" or "phone" (their values are verified by code; an unverified value is left empty and a row with none is not delivered or charged)`);
     const samples = Array.isArray(raw.sample_rows) ? raw.sample_rows : [];
     if (samples.length < 1 || samples.length > MAX_SAMPLE_ROWS_PER_STAGE) issues.push(`${label}: 1 to ${MAX_SAMPLE_ROWS_PER_STAGE} sample_rows, rows you really saw`);
     for (const s of samples) {
@@ -189,13 +203,23 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
   }
 
   if (!priced.some((s) => s.deliver)) issues.push("at least one stage must be delivered (deliver: true)");
+  // the customer asked for work e-mails or phones: the plan needs a contact stage (a contact source, or a column of verified contact values), or one honest sentence saying why it cannot
+  const notes: string[] = [];
+  const wants = requestWantsContacts(lookup.requestText);
+  if ((wants.email || wants.phone) && lookup.isContactSource) {
+    const hasContactStage = priced.some((s) => lookup.isContactSource!(s.endpoint_id) || s.columns.some((c) => c.kind !== undefined));
+    const note = input.contacts_note_ar === undefined ? null : checkCustomerText(input.contacts_note_ar, { maxChars: 300 });
+    if (note && note.issues.length) issues.push(`contacts_note_ar: ${note.issues.join("; ")}`);
+    else if (!hasContactStage && !note) issues.push(`the customer asked for ${wants.email ? "work e-mails" : ""}${wants.email && wants.phone ? " and " : ""}${wants.phone ? "phones" : ""}: add a CONTACT STAGE per person or company (a contact source of the catalog or the page parsers; mark its e-mail / phone columns with kind "work_email" / "phone"), sample it, and deliver verified values only; if no source can give them, pass contacts_note_ar (ONE Arabic sentence saying honestly why they are not in the plan)`);
+    else if (note && !hasContactStage) notes.push(note.text);
+  }
   const delivered = priced.filter((s) => s.deliver).reduce((n, s) => n + s.planned_rows, 0);
   if (delivered > AGENT_MAX_DELIVERED_ROWS) issues.push(`the delivered rows (${delivered}) are more than the limit of ${AGENT_MAX_DELIVERED_ROWS}; lower the expected rows`);
   if (issues.length) return { ok: false, issues };
 
   const price = priceMissionByCode(priced.map((s) => ({ rows: s.planned_rows, costPerRowUsd: s.measured_cost_per_row_usd, deliver: s.deliver })));
   if (price.overCap) return { ok: false, issues: [`the mission would hold ${price.reservePoints} points, more than the job limit; lower the expected rows`] };
-  return { ok: true, plan: { summary_ar: summary.text, stages: priced, price } };
+  return { ok: true, plan: { summary_ar: summary.text, stages: priced, price, ...(notes.length ? { notes_ar: notes } : {}) } };
 }
 
 /** The first sentence of a text: the customer card says what will be delivered in ONE sentence. */
@@ -212,6 +236,7 @@ const CUSTOMER_SAMPLE_ROWS = 3;
 export function customerPlanView(plan: PricedPlan) {
   return {
     summary_ar: firstSentenceAr(plan.summary_ar),
+    ...(plan.notes_ar?.length ? { notes_ar: plan.notes_ar } : {}),
     stages: plan.stages.map((s) => {
       const columns = s.columns.filter((c) => !isInternalColumn(c));
       return {

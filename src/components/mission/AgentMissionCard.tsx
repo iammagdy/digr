@@ -107,6 +107,8 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, error = n
 
       {(v.phase === "plan" || v.phase === "running" || v.phase === "done" || v.phase === "partial") && v.summaryAr ? <p className="m-0 text-[14px] font-semibold leading-[1.9] text-ink" data-testid="agent-summary">{v.summaryAr}</p> : null}
 
+      {v.notesAr.length > 0 && (v.phase === "plan" || v.phase === "running") ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-notes">{v.notesAr.join(" ")}</p> : null}
+
       {v.stages.length > 0 && (v.phase === "plan" || v.phase === "running") ? (
         <div data-testid="agent-stages">
           <ol className="m-0 flex list-none flex-col gap-1.5 p-0">

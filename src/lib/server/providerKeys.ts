@@ -52,6 +52,12 @@ export function __setProviderKeyStoreForTests(client: any | null, now?: () => nu
   resetProviderKeyCache();
 }
 
+/** For a process that is not the website (the agent worker): the Supabase client the key store is read through, so nothing of Next is loaded to resolve a key. */
+export function useProviderKeyStoreClient(client: any): void {
+  testClient = client;
+  resetProviderKeyCache();
+}
+
 export function resetProviderKeyCache(): void {
   cache.clear();
   lastGoodStore.clear();

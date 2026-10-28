@@ -61,6 +61,8 @@ export interface AdapterContext {
   now?: () => number;
   /** Overrides the provider's call timeout (never above it). */
   timeoutMs?: number;
+  /** A call that is known to take longer than the provider's usual timeout (a parser reading 1,000 reviews takes up to 45 s) may raise the ceiling to this. */
+  timeoutCapMs?: number;
 }
 
 export interface OperationResult<T> {

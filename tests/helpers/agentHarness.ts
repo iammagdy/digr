@@ -26,22 +26,26 @@ export function tregResult(data: unknown, costUsd: number, extra: Partial<TregCa
 export const postsPage = (n: number, offset = 0) => ({ data: Array.from({ length: n }, (_, i) => ({ id: `${9000 + offset + i}`, text: `post ${offset + i}`, url: `https://x.example/p/${9000 + offset + i}` })), next_cursor: "cur1" });
 export const commentsPage = (postId: string, n: number) => ({ output: { data: { comments: Array.from({ length: n }, (_, i) => ({ id: `${postId}-c${i}`, text: `comment ${i}` })) } } });
 
-export interface ProviderCostRow { costId: number; reservedUsd: number; committedUsd: number | null; units: number | null; status: string | null; jobId: string | null; capabilityId: string }
+export interface ProviderCostRow { costId: number; reservedUsd: number; committedUsd: number | null; units: number | null; status: string | null; jobId: string | null; capabilityId: string; provider?: string }
 
 /** A fake recorder over an in-memory provider_costs list, with a daily cap like reserve_provider_spend_atomic. */
 export function fakeRecorder(options: { dailyCapUsd?: number; failReserve?: boolean } = {}) {
   const rows: ProviderCostRow[] = [];
   const cap = options.dailyCapUsd ?? 0.8;
   const recorder: CallRecorder = {
-    async reserve({ estimatedUsd, jobId, capabilityId }) {
+    async reserve({ estimatedUsd, jobId, capabilityId, provider }) {
       if (options.failReserve) return { allowed: false, costId: null, reason: "error" };
       const spent = rows.reduce((n, r) => n + (r.committedUsd ?? r.reservedUsd), 0);
       if (spent + estimatedUsd > cap) return { allowed: false, costId: null, reason: "cap" };
       const costId = rows.length + 1;
-      rows.push({ costId, reservedUsd: estimatedUsd, committedUsd: null, units: null, status: null, jobId, capabilityId });
+      rows.push({ costId, reservedUsd: estimatedUsd, committedUsd: null, units: null, status: null, jobId, capabilityId, provider });
       return { allowed: true, costId };
     },
-    async commit() { /* the gateway commits through `commit` below */ },
+    // the web gateway commits through the recorder (the TREG gateway commits through `commit` below): either way the reserved row becomes the real cost
+    async commit(costId, record) {
+      const row = rows.find((r) => r.costId === costId);
+      if (row) { row.committedUsd = record.costUsd; row.units = record.units; row.status = record.status; row.provider = record.provider; row.capabilityId = record.capabilityId; }
+    },
   };
   const commit = vi.fn(async (_client: unknown, args: { costId: number | null; costUsd: number; units: number; capabilityId: string; status: string; durationMs: number; jobId: string | null }) => {
     const row = rows.find((r) => r.costId === args.costId);

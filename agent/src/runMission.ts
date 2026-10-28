@@ -1,20 +1,22 @@
 import { createJobCallBudget } from "../../src/lib/server/callBudget";
-import type { CallRecorder } from "../../src/lib/server/multiProvider/adapterTypes";
+import type { CallRecorder, FetchFn } from "../../src/lib/server/multiProvider/adapterTypes";
 import type { TregCallOptions, TregCallResult } from "../../src/functions/shared/tregClient";
 import type { commitTregSpend } from "../../src/lib/server/tregCallRecord";
 import type { TregCatalog } from "../../src/lib/treg/catalog";
 import type { AccountAccess } from "../../src/lib/treg/dataPolicy";
 import {
-  AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD, AGENT_EXECUTION_LLM_BUDGET_SHARE, AGENT_EXECUTION_MAX_TURNS, AGENT_EXECUTION_WALL_MS, AGENT_PLANNING_BUDGET_USD, AGENT_PLANNING_LLM_BUDGET_USD,
+  AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD, AGENT_EXECUTION_LLM_BUDGET_SHARE, AGENT_EXECUTION_MAX_TURNS, AGENT_EXECUTION_WALL_MS, AGENT_PLANNING_LLM_BUDGET_USD,
   AGENT_PLANNING_MAX_TURNS, AGENT_PLANNING_WALL_MS, AGENT_PRICING_BASIS,
 } from "../../src/lib/agentMission/constants";
 import { executionBudgetUsd } from "../../src/lib/agentMission/price";
+import { planningBudgetUsd } from "../../src/lib/agentMission/budget";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
 import { customerPlanView, type PricedPlan } from "../../src/lib/agentMission/plan";
 import { toArabicDigits } from "../../src/lib/arabicDigits";
 import { holdValueUsd } from "../../src/lib/server/callBudget";
 import type { ModelDriver } from "./driver";
 import { createGateway } from "./gateway";
+import { createWebGateway, type ProviderKeyFn } from "./webGateway";
 import { loadSystemPrompt } from "./prompt";
 import { buildTools, countDeliveredRows, newRunState, type ToolContext } from "./tools";
 import { buildMissionFiles } from "./workbook";
@@ -37,6 +39,10 @@ export interface RunnerDeps {
   sandbox?: (code: string, inputs: Record<string, unknown>) => Promise<SandboxResult>;
   /** Tells the customer how the mission ended (an in-site notice and an e-mail). Must not throw; absent in tests that do not look at it. */
   notify?: (input: { userId: string; missionId: string; jobId: string | null; kind: MissionNoticeKind; facts: MissionNoticeFacts }) => Promise<unknown>;
+  /** The provider's key from the encrypted key store (the site's own resolver); with it the agent gets the page parsers, the web search and scrape, and people search. Absent: those tools are not offered. */
+  providerKey?: ProviderKeyFn;
+  /** The HTTP transport of the web gateway (tests pass a fake: no real call). */
+  fetchFn?: FetchFn;
   systemPromptFile?: string;
   log?: (line: string) => void;
 }
@@ -81,10 +87,13 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   await store.addEvent(mission.id, { kind: "system", message_ar: "بدأ الوكيل دراسة طلبك." });
   const calls = await store.listCalls(mission.id);
   const access = await deps.resolveAccess(mission.user_id);
-  const budget = createJobCallBudget({ ceilingUsd: AGENT_PLANNING_BUDGET_USD, spentUsd: sum(calls, "planning") });
-  const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter: { seq: lastSeq(calls) } });
+  // a multi-stage request (a parent and its children) gets the larger exploration budget (named constants in agentMission/constants.ts), decided by code from the customer's words
+  const budget = createJobCallBudget({ ceilingUsd: planningBudgetUsd(`${mission.request_text} ${mission.answer_text ?? ""}`), spentUsd: sum(calls, "planning") });
+  const counter = { seq: lastSeq(calls) };
+  const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter });
+  const web = deps.providerKey ? createWebGateway({ store, missionId: mission.id, jobId: null, phase: "planning", budget, recorder: deps.recorder, providerKey: deps.providerKey, fetchFn: deps.fetchFn, counter }) : undefined;
   const state = newRunState(await lastOut(store, mission.id));
-  const ctx: ToolContext = { phase: "planning", mission, plan: null, store, gateway, catalog: deps.catalog, access, state, sandbox: deps.sandbox };
+  const ctx: ToolContext = { phase: "planning", mission, plan: null, store, gateway, web, catalog: deps.catalog, access, state, sandbox: deps.sandbox };
   let output;
   try {
     output = await deps.driver.run({ phase: "planning", systemPrompt: loadSystemPrompt("planning", deps.systemPromptFile), userPrompt: planningPrompt(mission, calls), tools: buildTools(ctx), state, model, maxTurns: AGENT_PLANNING_MAX_TURNS, maxBudgetUsd: AGENT_PLANNING_LLM_BUDGET_USD, wallMs: AGENT_PLANNING_WALL_MS });
@@ -127,9 +136,11 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   const calls = await store.listCalls(mission.id);
   const access = await deps.resolveAccess(mission.user_id);
   const budget = createJobCallBudget({ ceilingUsd: executionBudgetUsd(reserve), spentUsd: sum(calls, "execution") });
-  const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: mission.job_id, phase: "execution", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter: { seq: lastSeq(calls) } });
+  const counter = { seq: lastSeq(calls) };
+  const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: mission.job_id, phase: "execution", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter });
+  const web = deps.providerKey ? createWebGateway({ store, missionId: mission.id, jobId: mission.job_id, phase: "execution", budget, recorder: deps.recorder, providerKey: deps.providerKey, fetchFn: deps.fetchFn, counter }) : undefined;
   const state = newRunState(await lastOut(store, mission.id));
-  const ctx: ToolContext = { phase: "execution", mission, plan, store, gateway, catalog: deps.catalog, access, state, sandbox: deps.sandbox };
+  const ctx: ToolContext = { phase: "execution", mission, plan, store, gateway, web, catalog: deps.catalog, access, state, sandbox: deps.sandbox };
   const savedBefore = (await countDeliveredRows(store, mission.id, plan)).perStage;
   const llmBudget = Math.max(AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD, holdValueUsd(reserve, AGENT_PRICING_BASIS) * AGENT_EXECUTION_LLM_BUDGET_SHARE);
   let output;
