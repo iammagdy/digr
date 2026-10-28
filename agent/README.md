@@ -59,6 +59,18 @@ The system prompt is a file: `agent/prompts/system.md`.
 
 The admin page «الوكيل» shows the worker's memory (the worker alone, and with the processes it started, against the dyno's 512 MB) from every heartbeat; it turns red above 80%.
 
+## Memory on the 512 MB dyno
+
+The numbers live in `src/lib/agentMission/constants.ts` (`AGENT_MEMORY_*`); the figure that counts is the **tree** memory (the worker plus the processes it started, read from `/proc`), the one the dyno's limit counts.
+
+* **One process, small heap.** The `Procfile` runs `node --max-old-space-size=192 --max-semi-space-size=4 --import tsx agent/src/main.ts` (no `npx`/`tsx` wrapper processes). Measured on this machine with an empty environment: the worker alone is about 160 MB once the catalog and the libraries are loaded; the SDK's native process (started per session) cannot be measured here and is **not proven**.
+* **One SDK session at a time** (`agent/src/sessions.ts`), whatever `AGENT_CONCURRENCY` says; a finished session is closed and its temp folder removed before the next starts.
+* **Small tool results.** What a tool returns to the model is cut at 10,000 characters; the code sandbox has a 96 MB heap, 12 MB of input and returns 3,000 characters inline (bigger results are saved as files).
+* **Admission.** At or above **300 MB** (tree) the worker takes no new mission: it stays `queued`, nothing is leased, and it starts when the memory falls (the worker logs `memory_wait` / `memory_ok`).
+* **Hard limit.** A running mission whose tree reaches **450 MB** is stopped by the worker before the platform kills the dyno; planning goes back to `queued`, execution back to `approved` (the hold stays, every saved row stays), with an Arabic notice (`requeued` in the counts). At most **2** times per mission; after that it ends with what is saved and is settled like any other end (charge = ceil(delivered x unit), never above the reserve).
+* The heartbeat rows (`rss_mb`, `tree_rss_mb`) show all of this on the admin page.
+
+
 Cost: one Basic dyno. Model cost per mission is shown on the admin page.
 
 ## Developing
@@ -75,6 +87,6 @@ npm run agent:worker           # starts the worker (needs the four environment v
 ## NOT PROVEN
 
 * A real run with the real model: no Anthropic key was used and no provider was called while building this. The SDK driver type-checks against the installed SDK and its options are asserted in tests, but a real mission has not run.
-* The SDK's native binary on a Heroku Basic dyno (512 MB of memory) and the slug size (the website's dependencies plus the SDK's native binary) are not measured; the build (`heroku-postbuild`) has not run on Heroku.
+* The SDK's native process memory on a Heroku Basic dyno (512 MB) during a real planning run — the limits above act on the measured tree, but no real run was measured here — and the slug size (the website's dependencies plus the SDK's native binary) are not measured; the build (`heroku-postbuild`) has not run on Heroku.
 * The sandbox is a separate Node process with the permission model and a vm context. Node 22's permission model does not restrict the network, and a vm context is not a security boundary against an unknown engine bug; an OS-level network jail is not in place.
 * The SQL has run only on a scratch PostgreSQL, not on Supabase; the job cap (25,000) must already be applied there for a large mission to be approvable.

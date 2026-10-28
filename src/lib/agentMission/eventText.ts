@@ -34,7 +34,7 @@ export function guardEvent(event: { kind: EventKind; message_ar: unknown; counts
 
 const COUNT_LABEL_AR: Record<MissionEventCountKey, string> = {
   stages: "المراحل", rows: "الصفوف", stage: "المرحلة", saved: "المحفوظ", planned: "المتوقع", pages: "الصفحات", sources: "المصادر",
-  delivered: "المسلَّم", charged_points: "المخصوم بالنقاط", reserve_points: "المحجوز بالنقاط", unit_points_x1000: "سعر الصف (بالألف)", queue_ahead: "قبلك في الدور", seconds_left: "الثواني المتبقية",
+  delivered: "المسلَّم", charged_points: "المخصوم بالنقاط", reserve_points: "المحجوز بالنقاط", unit_points_x1000: "سعر الصف (بالألف)", queue_ahead: "قبلك في الدور", seconds_left: "الثواني المتبقية", requeued: "مرات التأجيل",
 };
 
 /** One count as an Arabic phrase, or null for a key that has no customer wording (it is simply not shown). `stage_<n>_rows` is the rows of stage n. */

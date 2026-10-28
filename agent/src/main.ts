@@ -10,6 +10,7 @@ import { parseConcurrency } from "../../src/lib/agentMission/concurrency";
 import { resolveModels } from "./modelConfig";
 import { runExecution, runPlanning, type RunnerDeps } from "./runMission";
 import { createSdkDriver } from "./sdkRuntime";
+import { abortActiveRuns } from "./sessions";
 import { createSupabaseStore } from "./supabaseStore";
 import { createWorker } from "./worker";
 
@@ -57,6 +58,8 @@ async function main() {
   const concurrency = parseConcurrency(process.env[AGENT_CONCURRENCY_ENV]);
   const worker = createWorker({
     store, workerId, version: VERSION, log, concurrency,
+    // at the memory hard limit the running model run is stopped; the mission goes back to the queue instead of the dyno being killed
+    onMemoryPressure: () => { abortActiveRuns("memory"); },
     modelLabel: () => `${models.planning}/${models.execution}`.slice(0, 80) || AGENT_MODEL_DEFAULT,
     runMission: async (mission) => {
       try {

@@ -1,4 +1,4 @@
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { createSdkMcpServer, query, tool } from "@anthropic-ai/claude-agent-sdk";
@@ -7,6 +7,7 @@ import type { ModelDriver, RunInput, RunOutput } from "./driver";
 import { chooseLlmCost, type TokenUsage } from "./llmCost";
 import { buildQueryOptions, MCP_SERVER_NAME } from "./sdkOptions";
 import type { ParamSpec, ToolSpec } from "./tools";
+import { acquireSession, clipToolResult, releaseSession, trackRun, untrackRun } from "./sessions";
 
 /**
  * THE REAL MODEL DRIVER: the Claude Agent SDK (@anthropic-ai/claude-agent-sdk) running a Claude agent whose ONLY tools are the ones in tools.ts, served by an in-process MCP server.
@@ -19,8 +20,6 @@ import type { ParamSpec, ToolSpec } from "./tools";
  *  - maxTurns, maxBudgetUsd (what the model may cost) and a wall-clock abort bound every run.
  * This file is the only one that imports the SDK; the tests never load it (they use fakeDriver.ts through the same tool handlers).
  */
-const MAX_TOOL_RESULT_CHARS = 30_000;
-
 function zodOf(spec: ParamSpec): z.ZodTypeAny {
   const base: z.ZodTypeAny =
     spec.type === "string" ? z.string()
@@ -39,17 +38,20 @@ function toSdkTool(spec: ToolSpec, input: RunInput) {
     // once the run has reached its end (a plan, a question, finish) nothing else is executed
     const result = input.state.terminal && spec.name !== "report_progress" ? { ok: false, error: "the run is over; stop now and write nothing more" } : await spec.handler(args);
     const text = JSON.stringify(result);
-    return { content: [{ type: "text" as const, text: text.length > MAX_TOOL_RESULT_CHARS ? `${text.slice(0, MAX_TOOL_RESULT_CHARS)}…(cut)` : text }], isError: (result as { ok?: boolean }).ok === false };
+    return { content: [{ type: "text" as const, text: clipToolResult(text) }], isError: (result as { ok?: boolean }).ok === false };
   });
 }
 
 export function createSdkDriver(env: Record<string, string | undefined> = process.env): ModelDriver {
   return {
     async run(input: RunInput): Promise<RunOutput> {
+      await acquireSession();
       const server = createSdkMcpServer({ name: MCP_SERVER_NAME, version: "1.0.0", tools: input.tools.map((t) => toSdkTool(t, input)) });
-      const abort = new AbortController();
+      const run = trackRun();
+      const abort = run.abort;
       const timer = setTimeout(() => abort.abort(), input.wallMs);
       const cwd = mkdtempSync(path.join(tmpdir(), "diger-agent-"));
+      let q: ReturnType<typeof query> | null = null;
       const usage: TokenUsage = { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };
       let turns = 0;
       let sdkTotal: number | undefined;
@@ -57,7 +59,7 @@ export function createSdkDriver(env: Record<string, string | undefined> = proces
       let error: string | undefined;
       try {
         const o = buildQueryOptions({ model: input.model, systemPrompt: input.systemPrompt, maxTurns: input.maxTurns, maxBudgetUsd: input.maxBudgetUsd, cwd, tools: input.tools }, env);
-        const q = query({
+        q = query({
           prompt: input.userPrompt,
           options: {
             model: o.model, systemPrompt: o.systemPrompt, tools: o.tools, allowedTools: o.allowedTools, disallowedTools: o.disallowedTools,
@@ -77,11 +79,18 @@ export function createSdkDriver(env: Record<string, string | undefined> = proces
             if (message.is_error) error = `the model run ended with ${String(message.subtype)}`;
           }
         }
+        if (abort.signal.aborted && run.reason.value) stop = run.reason.value;
       } catch (e) {
-        stop = abort.signal.aborted ? "time" : "error";
+        stop = abort.signal.aborted ? (run.reason.value ?? "time") : "error";
         error = String((e as Error)?.message ?? e).slice(0, 300);
       } finally {
         clearTimeout(timer);
+        untrackRun(run);
+        // release the session: its native process, its in-process tool server and its working folder go before the next one starts
+        try { q?.close(); } catch { /* already closed */ }
+        q = null;
+        try { rmSync(cwd, { recursive: true, force: true }); } catch { /* a temp folder */ }
+        releaseSession();
       }
       return { llmCostUsd: chooseLlmCost(sdkTotal, input.model, usage), turns, stop, ...(error ? { error } : {}) };
     },
