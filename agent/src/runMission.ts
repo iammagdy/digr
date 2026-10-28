@@ -23,7 +23,8 @@ import { readRunState, updateRunState } from "./runState";
 import { buildTools, countDeliveredRows, newRunState, type ToolContext } from "./tools";
 import { createReviewer, readReviewState, type ReviewCall } from "./review";
 import type { TokenUsage } from "./llmCost";
-import { buildMissionFiles } from "./workbook";
+import { buildMissionFiles, type ExcludedRow } from "./workbook";
+import { missionFileTitleAr } from "../../src/lib/agentMission/fileNames";
 import type { AgentStore, CallRow, MissionRecord } from "./types";
 import type { SandboxResult } from "./sandbox";
 import type { MissionNoticeFacts, MissionNoticeKind } from "../../src/lib/agentMission/notices";
@@ -253,10 +254,14 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   let files: Array<{ name: string; path: string; kind: string }> = [];
   if (delivered > 0) {
     try {
-      const built = await buildMissionFiles(plan, rowsByStage);
+      const excludedByStage: Record<string, ExcludedRow[]> = {};
+      for (const s of plan.stages) { const raw = await store.getFile(mission.id, `excluded/${s.key}.json`); if (raw) { try { excludedByStage[s.key] = JSON.parse(raw); } catch { /* a review sheet is a courtesy */ } } }
+      const built = await buildMissionFiles(plan, rowsByStage, excludedByStage);
       const published = await store.publishResult({ missionId: mission.id, userId: mission.user_id, jobId, xlsx: built.xlsx, csv: built.csv });
       resultPath = published.resultPath;
-      files = published.files;
+      // the name the customer's download carries, built from the mission: what + count + date in Arabic («تغريدات عن محمد صلاح - ٣٠٠ - ٢٨ أكتوبر ٢٠٢٦»)
+      const title = missionFileTitleAr({ plan, requestText: mission.request_text, delivered, date: new Date() });
+      files = published.files.map((f) => ({ ...f, download_name: `${title}.${f.kind}` }));
     } catch (e) {
       await settleMission(deps.client, { jobId, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath: null, releaseReason: "agent mission: the result files could not be saved" });
       await store.updateMission(mission.id, { status: "failed", error: `files: ${String((e as Error)?.message ?? e).slice(0, 200)}`, execution_llm_usd: Number(llm.toFixed(6)), charged_points: 0, delivered_units: 0, ...clear });

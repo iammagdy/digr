@@ -93,6 +93,9 @@ describe("the files are readable first", () => {
 
   it("a text that starts like a formula is stored as text", async () => {
     const wb = await load((await buildMissionFiles(plan([stage({ key: "t", title_ar: "التغريدات", columns: [{ key: "text", title_ar: "النص" }] })]), { t: [{ id: "1", text: "=HYPERLINK(\"x\")" }] })).xlsx);
-    expect(String(wb.getWorksheet("التغريدات")!.getRow(2).getCell(1).value).startsWith("'=")).toBe(true);
+    // (the old line expected a visible leading apostrophe: «'=HYPERLINK»; the owner's decision: no mark in the xlsx) a STRING cell holding the text exactly as written is never run as a formula; the CSV keeps the apostrophe
+    const cell = wb.getWorksheet("التغريدات")!.getRow(2).getCell(1);
+    expect(cell.type).toBe(ExcelJS.ValueType.String);
+    expect(cell.value).toBe("=HYPERLINK(\"x\")");
   });
 });

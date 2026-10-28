@@ -11,6 +11,7 @@ import { normalizeDataset } from "@/lib/server/normalizationPipeline";
 import { deliveredNothing, NO_RELEASABLE_RESULT_AR, resultsReleasable } from "@/lib/producedFormats";
 import { linkArtifactVersion } from "@/functions/shared/artifactVersionLinking";
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
+import { missionFileTitleAr } from "@/lib/agentMission/fileNames";
 import { inferSocialRowKind } from "@/lib/server/socialRows";
 import { buildFacebookReportExcelFrom, buildFacebookReportPdfFrom, facebookReportOf } from "@/functions/shared/facebookReportFiles";
 
@@ -259,6 +260,21 @@ export async function GET(
       } catch {
         // Keep the best task name derived from the approved request metadata.
       }
+    }
+
+    // An AGENT mission names its files from the mission itself: what + count + date in Arabic («تغريدات عن محمد صلاح - ٣٠٠ - ٢٨ أكتوبر ٢٠٢٦»), never the generic task title. The name was stored with the files when it
+    // was delivered; a mission delivered before that is named the same way from its plan. Nothing here fails the download.
+    try {
+      const { data: agentMission } = await adminClient.from("missions").select("files, plan, request_text, delivered_units, updated_at").eq("job_id", jobId).maybeSingle();
+      if (agentMission && (format === "xlsx" || format === "csv")) {
+        const stored = Array.isArray(agentMission.files) ? agentMission.files.find((f: any) => f?.kind === format && typeof f?.download_name === "string" && f.download_name.trim()) : null;
+        const title = stored ? String(stored.download_name).replace(/\.(xlsx|csv)$/i, "") : agentMission.plan && Array.isArray(agentMission.plan.stages)
+          ? missionFileTitleAr({ plan: agentMission.plan, requestText: agentMission.request_text, delivered: Number(agentMission.delivered_units) || count, date: new Date(agentMission.updated_at || job.finished_at || job.created_at || Date.now()) })
+          : "";
+        if (title) downloadFileName = `${title}.${format}`.replace(/[/\\?%*:|"<>]/g, "-").trim();
+      }
+    } catch {
+      // the generic name stays
     }
 
     let signedUrl: string | null = null;

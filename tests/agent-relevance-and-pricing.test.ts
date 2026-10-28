@@ -82,6 +82,13 @@ describe("the deterministic relevance check, on the shapes of the real file", ()
     expect(classifyRow(SALAH, { text: "Mohamed Salah scores again for Liverpool tonight, salah goal of the season" })).toEqual({ verdict: "match" });
   });
 
+  it("a context word carries Arabic endings («هدف» in «هدفًا» «هدفين» «أهداف» is not: only up to three letters after it), a NAME does not («صلاحه» is another word)", () => {
+    const spec = { ...SALAH, terms: ["صلاح"], context_terms: ["هدف"], exclude_terms: [] };
+    expect(classifyRow(spec, { text: "صلاح يسجل هدفًا جديدًا في المباراة" }).verdict).toBe("match");
+    expect(classifyRow(spec, { text: "صلاح يسجل هدفين جميلين في الشوط" }).verdict).toBe("match");
+    expect(classifyRow(spec, { text: "حدثني صلاحه عن مواضيع كثيرة هدف" }).verdict).toBe("exclude");
+  });
+
   it("counts a page: the share that matches is what the price rests on", () => {
     const rows = [REAL.match(1), REAL.match(2), REAL.match(3), REAL.authorOnly(1), REAL.namesake(1), REAL.bare(1), REAL.noContext(1), REAL.emptyReply(1)];
     const { counts } = classifyRows(SALAH, rows);
