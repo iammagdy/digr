@@ -66,7 +66,8 @@ describe("a 300-tweet mission paged through the source", () => {
     expect(r.mission.charged_points).toBe(200); // (was 62)
     expect(r.finalView.phase).toBe("done");
     // (the old line expected the released hold: with the minimum the reserve and the charge are both 200, so nothing is left to release)
-    expect(r.finalView.resultLinesAr.join(" ")).toContain("خُصم ٢٠٠ نقطة مقابل ما سُلّم فقط");
+    // (the old line expected «خُصم ٢٠٠ نقطة مقابل ما سُلّم فقط»: the money is now said as the wallet shows it: the hold, the charge, the whole hold released)
+    expect(r.finalView.resultLinesAr).toEqual(["تم تسليم ٣٠٠ من ٣٠٠ تغريدة.", "حُجز مؤقتًا ٢٠٠ نقطة، وخُصم ٢٠٠ نقطة مقابل ما سُلّم، وحجز مؤقت مُحرَّر ٢٠٠ نقطة."]);
     // the live panel ticked from the counts
     // (the old line expected [{ stage: 1, saved: 300, planned: 300 }]: the live tick of a stage with a relevance rule now also carries the check counts, so the panel moves while items are being checked)
     expect(r.store.events.filter((e) => e.counts?.stage === 1).map((e) => e.counts)).toEqual([{ stage: 1, saved: 300, planned: 300, checked: 300, accepted: 300, excluded: 0, pending: 0 }]);

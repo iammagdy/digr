@@ -1,4 +1,5 @@
 import { formatAr, toArabicDigits } from "../arabicDigits";
+import { knownItemNoun } from "./itemNoun";
 
 /**
  * THE NAMES THE CUSTOMER SEES ON A MISSION'S FILES, built from the mission (never a generic «نتائج البحث»):
@@ -19,6 +20,8 @@ export function nounOfStageTitle(title: string): string {
   const words = String(title ?? "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
   if (words.length === 0) return "";
   const first = words[0].replace(/^ال(?=[؀-ۿ]{3,})/, "");
+  // a title that starts with a known noun is that noun alone («التغريدات التي تذكر محمد صلاح» → «تغريدات», never «تغريدات التي»)
+  if (knownItemNoun(words[0])) return first;
   // a title like «تعليقات كل منشور» is the noun and its owner: the noun stands for the file
   return /^(كل|لكل|من|في|على|عن)$/.test(words[1] ?? "") ? first : [first, ...words.slice(1, 2)].join(" ").trim();
 }

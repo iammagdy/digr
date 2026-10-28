@@ -13,6 +13,9 @@ const SNAKE_CASE = /[A-Za-z0-9]+_[A-Za-z0-9_]+/;
 /** The sources' names written in Arabic letters: a customer never reads who the source is. */
 const PROVIDER_AR = /تريغ|تريج|فاير\s?كراول|كونتكست\s?(?:دوت)?\s?دي?\s?في?|ابولو|أبولو|داتاجم|أبيفاي|ابيفاي/;
 
+/** «صف» and «سجل» are spreadsheet words: a customer text names its items («تغريدات»، «تعليقات»، «شركات»), never rows or records. */
+const SPREADSHEET_WORD = /(?<![ء-ي])(?:ب|ل|ال|وال|بال|لل)?(?:صفوف|صفا|سجلات|سجلا)(?![ء-ي])|[0-9٠-٩]\s*(?:سجل|صف)(?![ء-ي])|(?<![ء-ي])(?:ال|بال|لل|وال)(?:سجل|صف)(?![ء-ي])/;
+
 export interface CustomerTextCheck {
   /** The text with every ASCII digit turned into an Arabic-Indic digit. */
   text: string;
@@ -32,6 +35,7 @@ export function checkCustomerText(raw: unknown, options: { maxChars?: number } =
   if (INTERNAL_ID.test(source)) issues.push("no internal ids");
   if (SNAKE_CASE.test(source)) issues.push("no technical names (snake_case)");
   if (PROVIDER_AR.test(source)) issues.push("no source or provider names, in any script");
+  if (SPREADSHEET_WORD.test(source.replace(/[\u064B-\u065F]/g, ""))) issues.push("do not say «صف» or «سجل»: name the items by the noun of the request (تغريدات، تعليقات، منشورات، شركات ...)");
   return { text, issues };
 }
 
