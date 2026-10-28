@@ -28,7 +28,7 @@ describe("an Instagram hashtag mission through the page parser", () => {
         { tool: "run_code", args: (res: Results) => ({ code: "return inputs.call_0001.rows.slice(0, 3).map(p => ({ id: p.id, text: p.caption, url: p.url, likes: p.like_count }))", files: callIds(res).slice(0, 1) }) },
         { tool: "propose_plan", args: (res: Results) => ({
           summary_ar: "ستحصل على منشورات إنستجرام الأكثر ظهورًا تحت وسم قهوة مع نص كل منشور ورابطه وعدد إعجاباته.",
-          stages: [{ key: "posts", title_ar: "المنشورات", endpoint_id: "contextdev.parse.instagram-feed", expected_rows: 12, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "نص المنشور" }, { key: "url", title_ar: "رابط المنشور" }, { key: "likes", title_ar: "الإعجابات" }], sample_rows: lastRows(res), measured_by: [callIds(res)[0]] }],
+          stages: [{ key: "posts", title_ar: "المنشورات", endpoint_id: "contextdev.parse.instagram-feed", expected_rows: 12, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "نص المنشور" }, { key: "url", title_ar: "رابط المنشور" }, { key: "likes", title_ar: "الإعجابات" }, { key: "date", title_ar: "التاريخ والوقت" }, { key: "writer", title_ar: "الكاتب" }, { key: "comments_count", title_ar: "عدد التعليقات" }], sample_rows: lastRows(res), measured_by: [callIds(res)[0]] }],
         }) },
       ],
       execution: () => [
@@ -71,7 +71,7 @@ describe("a Google Maps reviews mission through the page parsers", () => {
           summary_ar: "ستحصل على ٢٠٠ تقييم من خرائط جوجل لمطعم أبو طارق بنص كل تقييم ودرجته وتاريخه.",
           stages: [
             { key: "place", title_ar: "المكان", endpoint_id: "contextdev.parse.google-maps", expected_rows: 1, parent_key: null, deliver: false, columns: [{ key: "name", title_ar: "اسم المكان" }, { key: "url", title_ar: "رابط المكان" }], sample_rows: lastRows(res).slice(0, 1), measured_by: [callIds(res)[0]] },
-            { key: "reviews", title_ar: "التقييمات", endpoint_id: "contextdev.parse.google-maps-reviews", expected_rows: 200, parent_key: "place", per_parent_rows: 200, deliver: true, columns: [{ key: "text", title_ar: "نص التقييم" }, { key: "rating", title_ar: "الدرجة" }, { key: "date", title_ar: "التاريخ" }], sample_rows: [{ id: "rv0", text: "تجربة رقم 0 في المكان", rating: 1, date: "2026-09-20T12:00:00Z" }], measured_by: [callIds(res)[1]] },
+            { key: "reviews", title_ar: "التقييمات", endpoint_id: "contextdev.parse.google-maps-reviews", expected_rows: 200, parent_key: "place", per_parent_rows: 200, deliver: true, columns: [{ key: "text", title_ar: "نص التقييم" }, { key: "rating", title_ar: "الدرجة" }, { key: "date", title_ar: "التاريخ" }, { key: "likes", title_ar: "الإعجابات" }, { key: "writer", title_ar: "الكاتب" }, { key: "page_link", title_ar: "الرابط" }], sample_rows: [{ id: "rv0", text: "تجربة رقم 0 في المكان", rating: 1, date: "2026-09-20T12:00:00Z" }], measured_by: [callIds(res)[1]] },
           ],
         }) },
       ],
@@ -93,7 +93,8 @@ describe("a Google Maps reviews mission through the page parsers", () => {
     expect(web.requests[3].body.parseParams).toMatchObject({ sort: "newest", limit: 200 });
     // the file: the place's name comes first, then the review, the ids last
     const sheet = (await readWorkbook(r)).getWorksheet("التقييمات")!;
-    expect((sheet.getRow(1).values as unknown[]).slice(1)).toEqual(["اسم المكان", "رابط المكان", "نص التقييم", "الدرجة", "التاريخ", "المعرّف", "معرّف الأصل"]);
+    // (the old line expected [... "الدرجة", "التاريخ", "المعرّف", "معرّف الأصل"]: the reviews source also gives likes, the writer and a link, and a plan that leaves a useful field out is refused, so those columns are planned too)
+    expect((sheet.getRow(1).values as unknown[]).slice(1)).toEqual(["اسم المكان", "رابط المكان", "نص التقييم", "الدرجة", "التاريخ", "الإعجابات", "الكاتب", "الرابط", "المعرّف", "معرّف الأصل"]);
     expect(sheet.getRow(2).getCell(1).value).toBe("مطعم أبو طارق");
     expect(sheet.getRow(2).getCell(4).value).toBe(1);
     expect(sheet.rowCount).toBe(201);
@@ -117,8 +118,8 @@ describe("a TikTok mission: videos from the parser, comments from the catalog (t
         { tool: "propose_plan", args: (res: Results) => ({
           summary_ar: "ستحصل على فيديوهات تيك توك عن الأقصر مع مشاهداتها وعشرة تعليقات لكل فيديو.",
           stages: [
-            { key: "videos", title_ar: "الفيديوهات", endpoint_id: "contextdev.parse.tiktok-feed", expected_rows: 12, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "وصف الفيديو" }, { key: "url", title_ar: "رابط الفيديو" }, { key: "views", title_ar: "المشاهدات" }], sample_rows: lastRows(res).slice(0, 2), measured_by: [callIds(res)[0]] },
-            { key: "comments", title_ar: "تعليقات كل فيديو", endpoint_id: COMMENTS, expected_rows: 120, parent_key: "videos", per_parent_rows: 10, deliver: true, columns: [{ key: "text", title_ar: "نص التعليق" }, { key: "author", title_ar: "كاتب التعليق" }], sample_rows: [{ id: `${vid(0)}-k00`, text: `تعليق 0 على الفيديو ${vid(0)}`, author: "viewer0" }], measured_by: [callIds(res)[1]] },
+            { key: "videos", title_ar: "الفيديوهات", endpoint_id: "contextdev.parse.tiktok-feed", expected_rows: 12, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "وصف الفيديو" }, { key: "url", title_ar: "رابط الفيديو" }, { key: "views", title_ar: "المشاهدات" }, { key: "date", title_ar: "التاريخ والوقت" }, { key: "writer", title_ar: "الكاتب" }, { key: "likes", title_ar: "الإعجابات" }, { key: "comments_count", title_ar: "عدد التعليقات" }, { key: "shares", title_ar: "المشاركات" }], sample_rows: lastRows(res).slice(0, 2), measured_by: [callIds(res)[0]] },
+            { key: "comments", title_ar: "تعليقات كل فيديو", endpoint_id: COMMENTS, expected_rows: 120, parent_key: "videos", per_parent_rows: 10, deliver: true, columns: [{ key: "text", title_ar: "نص التعليق" }, { key: "author", title_ar: "كاتب التعليق" }, { key: "likes", title_ar: "الإعجابات" }, { key: "date", title_ar: "التاريخ والوقت" }], sample_rows: [{ id: `${vid(0)}-k00`, text: `تعليق 0 على الفيديو ${vid(0)}`, author: "viewer0" }], measured_by: [callIds(res)[1]] },
           ],
         }) },
       ],
@@ -239,7 +240,7 @@ describe("a 300-tweet mission paged by ONE tool call", () => {
         sampleCode: "return inputs.call_0001.output.data.items.slice(0, 3).map(t => ({ id: t.id, text: t.text, url: t.url, author: t.author }))",
         plan: (res: Results) => ({
           summary_ar: "ستحصل على ٣٠٠ تغريدة عن محمد صلاح بعد انتقاله لتركيا مع نص كل تغريدة ورابطها.",
-          stages: [{ key: "tweets", title_ar: "التغريدات", endpoint_id: ENDPOINT, expected_rows: 300, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "نص التغريدة" }, { key: "url", title_ar: "رابط التغريدة" }, { key: "author", title_ar: "الحساب" }], sample_rows: lastRows(res), measured_by: [callIds(res)[0]], relevance: aboutWords(["محمد صلاح"]), yield_from: firstOutputId(res) }],
+          stages: [{ key: "tweets", title_ar: "التغريدات", endpoint_id: ENDPOINT, expected_rows: 300, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "نص التغريدة" }, { key: "url", title_ar: "رابط التغريدة" }, { key: "author", title_ar: "الحساب" }, { key: "date", title_ar: "التاريخ والوقت" }], sample_rows: lastRows(res), measured_by: [callIds(res)[0]], relevance: aboutWords(["محمد صلاح"]), yield_from: firstOutputId(res) }],
         }),
       }),
       execution: () => [

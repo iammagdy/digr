@@ -1,5 +1,5 @@
 import { AGENT_COLLECT_MAX_PAGES, AGENT_EXCLUDED_ROWS_KEPT, AGENT_INLINE_ROWS_MAX, SANDBOX_INLINE_RESULT_CHARS } from "../../src/lib/agentMission/constants";
-import { classifyRow, normalizeText, type RelevanceReason } from "../../src/lib/agentMission/relevance";
+import { classifyRowDetailed, normalizeText, type RelevanceReason, type RuleBasis } from "../../src/lib/agentMission/relevance";
 import type { MissionPricingSettings } from "../../src/lib/missionPricing";
 import { CONTACT_KINDS, isContactSource, verifyContactValue } from "../../src/lib/agentMission/contacts";
 import { describeAgentSource, isAgentSourceId, searchAgentSources, SESSION_RESTRICTED_SOURCES } from "../../src/lib/agentMission/sources";
@@ -14,6 +14,7 @@ import { RAW_PATH } from "./gateway";
 import type { WebGateway } from "./webGateway";
 import { runInSandbox, type SandboxResult } from "./sandbox";
 import type { Reviewer } from "./review";
+import { emptyStageChecks, excludedTotal, PENDING_REASONS, readChecks, writeChecks } from "./checks";
 import type { AgentStore, CallPhase, MissionRecord } from "./types";
 
 /**
@@ -132,6 +133,39 @@ const rowKeyOf = (row: unknown): string => {
   return JSON.stringify(row);
 };
 
+/**
+ * ONE WRITER PER STAGE. save_rows reads the saved rows, adds to them and writes them back: two calls at once (the model may issue tool calls side by side, and a review takes seconds) would each write back the rows it
+ * read, and the later write would erase the earlier one (the live run of 2026-10-28 reported 300 rows saved and delivered 250). Calls on the same stage now run one after another.
+ */
+const collectPath = (key: string) => `collect/${key}.json`;
+interface CollectStream { cursor: string | null; ended: boolean; pages: number; seen: string[] }
+/** A stable short key of the endpoint, the first-page inputs and the cursor input: the same source asked the same way is the same stream. */
+function collectStreamKey(endpointId: string, params: Record<string, unknown>, cursorParam: string): string {
+  const text = JSON.stringify([endpointId, cursorParam, Object.keys(params).filter((k) => k !== cursorParam).sort().map((k) => [k, params[k]])]);
+  let h = 5381;
+  for (let i = 0; i < text.length; i += 1) h = ((h * 33) ^ text.charCodeAt(i)) >>> 0;
+  return h.toString(36).padStart(7, "0");
+}
+async function readCollectStream(store: AgentStore, missionId: string, key: string): Promise<CollectStream | null> {
+  try {
+    const raw = await store.getFile(missionId, collectPath(key));
+    const o = raw ? (JSON.parse(raw) as Partial<CollectStream>) : null;
+    return o && Array.isArray(o.seen) ? { cursor: typeof o.cursor === "string" ? o.cursor : null, ended: o.ended === true, pages: Number(o.pages) || 0, seen: o.seen.map(String) } : null;
+  } catch { return null; }
+}
+const writeCollectStream = async (store: AgentStore, missionId: string, key: string, value: CollectStream): Promise<void> => { try { await store.putFile(missionId, collectPath(key), JSON.stringify(value), "application/json"); } catch { /* resuming is an economy, never a requirement */ } };
+
+const stageLocks = new Map<string, Promise<void>>();
+export async function withStageLock<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const before = stageLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const mine = new Promise<void>((resolve) => { release = resolve; });
+  const tail = before.then(() => mine);
+  stageLocks.set(key, tail);
+  await before;
+  try { return await fn(); } finally { release(); if (stageLocks.get(key) === tail) stageLocks.delete(key); }
+}
+
 export function buildTools(ctx: ToolContext): ToolSpec[] {
   const { store, mission, gateway, state } = ctx;
   const runSandbox = ctx.sandbox ?? ((code: string, inputs: Record<string, unknown>) => runInSandbox(code, inputs));
@@ -145,6 +179,146 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       try { inputs[id] = JSON.parse(text); } catch { return { ok: false, error: `«${id}» is not valid JSON` }; }
     }
     return { ok: true, inputs };
+  };
+
+  /**
+   * THE CHECK AND SAVE OF ROWS OF ONE STAGE (always under the stage's lock). Pass 1 is the structure of each row; pass 2 is relevance: the rule decides every row it can by itself (strong evidence: the full name, a context
+   * word...), the model reviews only the rows the rule cannot decide, within the review budget; a row that could not be reviewed (budget, a failed call) is kept PENDING (never thrown away) and asked again by the next call.
+   * Rows that do not match are kept with their reason for the ADMIN only. The report of the check (by rule, by model, left out per reason, pending) is stored on the mission.
+   */
+  const checkAndSaveRows = async (stage: PricedPlan["stages"][number], incoming: unknown[]): Promise<Record<string, unknown>> => {
+    const plan = ctx.plan!;
+    const existingRaw = await store.getFile(mission.id, ROWS_PATH(stage.key));
+    const existing: Array<Record<string, unknown>> = existingRaw ? JSON.parse(existingRaw) : [];
+    const have = new Set(existing.map((r) => String(r.id)));
+    let parentIds: Set<string> | null = null;
+    if (stage.parent_key !== null) {
+      const parentRaw = await store.getFile(mission.id, ROWS_PATH(stage.parent_key));
+      parentIds = new Set((parentRaw ? (JSON.parse(parentRaw) as Array<Record<string, unknown>>) : []).map((r) => String(r.id)));
+    }
+    const columnKeys = stage.columns.map((c) => c.key);
+    // CONTACT FIELDS are verified by code: a work e-mail or phone that does not pass is left empty; a row of a contact stage with no verified value is not saved (so it is neither delivered nor charged)
+    const contactColumns = stage.columns.filter((c) => c.kind !== undefined && CONTACT_KINDS.includes(c.kind));
+    const contactStage = isContactSource(stage.endpoint_id);
+    const tally = { saved_now: 0, duplicates_ignored: 0, rejected_missing_id: 0, rejected_unknown_parent: 0, rejected_over_limit: 0, rejected_not_object: 0, rejected_no_verified_contact: 0, contact_values_left_empty: 0 };
+    const spec = stage.relevance ?? null;
+    const excludedRaw = spec ? await store.getFile(mission.id, EXCLUDED_PATH(stage.key)) : null;
+    let excluded: Array<{ id: string; reason: RelevanceReason; row: Record<string, unknown> }> = excludedRaw ? JSON.parse(excludedRaw) : [];
+    // rows that were waiting for a review come back first (they were left pending, never thrown away)
+    const pendingBack: Array<Record<string, unknown>> = [];
+    if (spec && ctx.review && spec.review !== false) {
+      pendingBack.push(...excluded.filter((e) => PENDING_REASONS.includes(e.reason)).map((e) => e.row));
+      excluded = excluded.filter((e) => !PENDING_REASONS.includes(e.reason));
+    }
+    const excludedIds = new Set(excluded.map((e) => e.id));
+    const pendingIds = new Set(pendingBack.map((r) => String(r.id)));
+    // pass 1: the structure of every row (id, parent, columns, contact values)
+    const candidates: Array<Record<string, unknown>> = [];
+    const seenNow = new Set<string>();
+    for (const raw of incoming) {
+      if (!isObject(raw)) { tally.rejected_not_object += 1; continue; }
+      const id = String(raw.id ?? "").trim();
+      if (!id) { tally.rejected_missing_id += 1; continue; }
+      // a row already saved, already left out, or twice in this batch: ignored (an excluded row is never reviewed or counted again; a pending one is already waiting)
+      if (have.has(id) || excludedIds.has(id) || seenNow.has(id) || pendingIds.has(id)) { tally.duplicates_ignored += 1; continue; }
+      seenNow.add(id);
+      let parentId: string | null = null;
+      if (parentIds) {
+        parentId = String(raw.parent_id ?? "").trim();
+        if (!parentId || !parentIds.has(parentId)) { tally.rejected_unknown_parent += 1; continue; }
+      }
+      const row: Record<string, unknown> = { id, ...(parentId !== null ? { parent_id: parentId } : {}) };
+      for (const k of columnKeys) if (k !== "id" && k !== "parent_id") row[k] = raw[k] ?? "";
+      let verifiedAny = false;
+      for (const c of contactColumns) {
+        const original = String(raw[c.key] ?? "").trim();
+        const verified = verifyContactValue(c.kind!, raw[c.key]);
+        row[c.key] = verified ?? "";
+        if (verified) verifiedAny = true; else if (original) tally.contact_values_left_empty += 1;
+      }
+      if (contactStage && contactColumns.length > 0 && !verifiedAny) { tally.rejected_no_verified_contact += 1; continue; }
+      candidates.push(row);
+    }
+    const fresh = new Set(candidates.map((r) => String(r.id)));
+    candidates.unshift(...pendingBack.filter((r) => !have.has(String(r.id))));
+
+    // pass 2: RELEVANCE. Only rows that are about what the customer asked are saved (so only they are delivered and charged).
+    const accepted = new Map<string, "rule" | "model">();
+    const basisOf = new Map<string, RuleBasis | undefined>();
+    const left: Record<string, number> = {};
+    let reviewedNow = 0;
+    let reviewStop: "budget" | "failed" | null = null;
+    let pendingNow = 0;
+    if (spec) {
+      const verdicts = candidates.map((row) => ({ row, v: classifyRowDetailed(spec, row) }));
+      const matches = verdicts.filter((x) => x.v.verdict === "match").length;
+      const room = Math.max(0, stage.planned_rows - existing.length);
+      const uncertain = verdicts.filter((x) => x.v.verdict === "review");
+      let verdictOf = new Map<string, boolean>();
+      if (uncertain.length > 0 && spec.review !== false && ctx.review && matches < room) {
+        // no more review than the room left can use (a row beyond the approved volume is never needed); the rest stays pending
+        const wanted = uncertain.slice(0, (room - matches) * 3 + 25);
+        verdictOf = await ctx.review.review({ subject: spec.subject_ar, rows: wanted.map((x) => ({ id: String(x.row.id), text: spec.text_columns.map((k) => String(x.row[k] ?? "")).join(" ") })) });
+        reviewedNow = verdictOf.size;
+        reviewStop = (await ctx.review.state()).stop;
+      }
+      for (const { row, v } of verdicts) {
+        const id = String(row.id);
+        let reason: RelevanceReason | null = null;
+        if (v.verdict === "match") { accepted.set(id, "rule"); basisOf.set(id, (v as { basis?: RuleBasis }).basis); }
+        else if (v.verdict === "exclude") reason = v.reason;
+        else if (verdictOf.get(id) === true) accepted.set(id, "model");
+        else if (verdictOf.has(id)) reason = "review_no";
+        else if (spec.review === false) reason = "uncertain";
+        else reason = !ctx.review ? "not_reviewed" : reviewStop === "failed" ? "review_failed" : "not_reviewed";
+        if (!reason) continue;
+        // with a reviewer, a row not reviewed (budget, a failed call, more than the room needs) is PENDING: kept and asked again; with none, it is a final exclusion
+        const isPending = PENDING_REASONS.includes(reason) && Boolean(ctx.review) && spec.review !== false;
+        if (isPending) pendingNow += 1;
+        else left[reason] = (left[reason] ?? 0) + 1;
+        // an admin-only record of the row left out; a pending row is always kept (it is asked again), a final one only up to a limit
+        if (isPending || excluded.length < AGENT_EXCLUDED_ROWS_KEPT) excluded.push({ id, reason, row }); else excludedIds.add(id);
+        excludedIds.add(id);
+      }
+    } else for (const row of candidates) accepted.set(String(row.id), "rule");
+
+    const checks = await readChecks(store, mission.id);
+    const mine = (checks[stage.key] ??= emptyStageChecks());
+    for (const row of candidates) {
+      const id = String(row.id);
+      if (!accepted.has(id)) continue;
+      if (existing.length >= stage.planned_rows) { tally.rejected_over_limit += 1; continue; }
+      existing.push(row);
+      have.add(id);
+      tally.saved_now += 1;
+      if (accepted.get(id) === "model") mine.accepted_by_model += 1;
+      else { mine.accepted_by_rule += 1; const b = basisOf.get(id); if (b) mine.accepted_by_rule_basis[b] = (mine.accepted_by_rule_basis[b] ?? 0) + 1; }
+    }
+    if (spec) {
+      mine.examined += fresh.size;
+      for (const [reason, n] of Object.entries(left)) mine.excluded[reason as RelevanceReason] = (mine.excluded[reason as RelevanceReason] ?? 0) + n;
+      // a row that was pending and is now accepted had been counted as examined when it was first seen: nothing to add
+    }
+    await store.putFile(mission.id, ROWS_PATH(stage.key), JSON.stringify(existing), "application/json");
+    if (spec) {
+      await store.putFile(mission.id, EXCLUDED_PATH(stage.key), JSON.stringify(excluded), "application/json");
+      await writeChecks(store, mission.id, checks);
+    }
+    // the live panel ticks from this: the numbers are in `counts` (never in the text), written by code, not by the model
+    if (tally.saved_now > 0 || (spec && fresh.size > 0)) {
+      const c = mine;
+      await store.addEvent(mission.id, { kind: "progress", message_ar: `يحفظ الوكيل الصفوف التي جمعها لمرحلة «${stage.title_ar}»`, counts: { stage: plan.stages.indexOf(stage) + 1, saved: existing.length, planned: stage.planned_rows, ...(spec ? { checked: c.examined, accepted: c.accepted_by_rule + c.accepted_by_model, excluded: excludedTotal(c), pending: pendingNow } : {}) } });
+    }
+    const stillNeeded = Math.max(0, stage.planned_rows - existing.length);
+    return {
+      ok: true, stage: stage.key, ...tally, total_in_stage: existing.length, stage_limit: stage.planned_rows,
+      ...(spec ? {
+        left_out_not_matching: left, reviewed_by_model: reviewedNow, review_budget_reached: reviewStop === "budget", review_failed: reviewStop === "failed", pending_for_review: pendingNow,
+        accepted_by_rule: tally.saved_now - [...accepted.values()].filter((x) => x === "model").length,
+        still_needed: stillNeeded,
+        note: stillNeeded > 0 ? "only rows that MATCH the request are saved, delivered and charged; still_needed matching rows are missing: collect further pages (the source may have more) until still_needed is 0, the source ends, or the budget refuses; then finish and say honestly how many matched" : "the stage has all the matching rows it was sold",
+      } : {}),
+    };
   };
 
   const tools: ToolSpec[] = [
@@ -229,15 +403,24 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         if (!Number.isFinite(target) || !(Number(a.target_rows) > 0)) return err("target_rows is required (a whole number of rows)");
         const maxPages = Math.max(1, Math.min(AGENT_COLLECT_MAX_PAGES, Math.floor(Number(a.max_pages) || AGENT_COLLECT_MAX_PAGES)));
         const first = isObject(a.params) ? { ...a.params } : {};
+        // RESUME, NOT RESTART: a call with the same endpoint and the same inputs continues from where the last one stopped (its cursor) and skips the rows it already returned. Starting from the first page again re-bought the same
+        // pages (the live run of 2026-10-28 paid for 60 pages to get 25 of new rows) and made the live count look frozen.
+        const streamKey = collectStreamKey(id, first, cursorParam);
+        const prior = await readCollectStream(store, mission.id, streamKey);
+        if (prior?.ended) return { ok: false, exhausted: true, error: `this source has no more pages for these inputs: it ended after ${prior.pages} pages, and the ${prior.seen.length} unique rows it gave were returned by earlier calls. Change the inputs (another search wording, another source) or finish with what is saved.` };
         const merged: unknown[] = [];
-        const seen = new Set<string>();
+        const seen = new Set<string>(prior?.seen ?? []);
+        const pagesBefore = prior?.pages ?? 0;
         const callIds: string[] = [];
-        let cursor: string | null = null;
+        let cursor: string | null = prior?.cursor ?? null;
+        let usedCursor: string | null = cursor;
+        let nextCursor: string | null = cursor;
         let stopped = "max_pages";
         let pages = 0;
         let barren = 0;
         let lastFirstRows: unknown[] = [];
         while (pages < maxPages) {
+          usedCursor = cursor;
           const result = await gateway.tregCall({ endpoint_id: id, params: cursor ? { ...first, [cursorParam]: cursor } : first, why: a.why });
           if (!result.ok) { stopped = "refused" in result ? `refused:${result.refused}` : "failed"; break; }
           state.tried.add(id);
@@ -249,19 +432,27 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           if (pages === 1) lastFirstRows = list.slice(0, 3).map((r) => digestValue(r));
           let added = 0;
           for (const row of list) { const k = rowKeyOf(row); if (seen.has(k)) continue; seen.add(k); merged.push(row); added += 1; }
-          await store.addEvent(mission.id, { kind: "progress", message_ar: "يجمع الوكيل الصفحات من المصدر صفحة بعد صفحة", counts: { pages, rows: merged.length, planned: target } });
+          nextCursor = result.next_cursor;
+          // the counts are CUMULATIVE over every call of this source (pages read, unique rows found): they only grow; a different source starts again from page 1, and the panel adds the earlier peak when the numbers fall
+          await store.addEvent(mission.id, { kind: "progress", message_ar: "يجمع الوكيل الصفحات من المصدر صفحة بعد صفحة", counts: { pages: pagesBefore + pages, rows: seen.size, planned: target } });
           if (merged.length >= target) { stopped = "target_reached"; break; }
           cursor = result.next_cursor;
           if (!cursor || list.length === 0 || result.has_more === false) { stopped = "source_ended"; break; }
           barren = added === 0 ? barren + 1 : 0;
           if (barren >= 2) { stopped = "no_new_rows"; break; }
         }
+        // what the next call resumes from: after the last page processed, or (rows beyond the target are cut from the output) from the last page again, so no row is skipped
+        const cut = merged.length > Math.max(target, 1);
+        if (pages > 0) {
+          const keptKeys = cut ? new Set([...(prior?.seen ?? []), ...merged.slice(0, Math.max(target, 1)).map(rowKeyOf)]) : seen;
+          await writeCollectStream(store, mission.id, streamKey, { cursor: cut ? usedCursor : nextCursor, ended: stopped === "source_ended" && !cut, pages: pagesBefore + pages - (cut ? 1 : 0), seen: [...keptKeys] });
+        }
         if (merged.length === 0) return { ok: false, error: `no rows were collected (${stopped})`, pages, call_ids: callIds.slice(0, 5) };
         const output = merged.slice(0, Math.max(target, 1));
         state.outSeq += 1;
         const outputId = outId(state.outSeq);
         await store.putFile(mission.id, `out/${outputId}.json`, JSON.stringify(output), "application/json");
-        return { ok: true, output_id: outputId, pages, unique_rows: merged.length, saved_rows: output.length, stopped_because: stopped, call_ids: callIds.slice(0, 3).concat(callIds.length > 3 ? [`… ${callIds.length} pages in all`] : []), first_rows: lastFirstRows, note: "output_id holds the joined RAW rows: map them to final rows with run_code (files: [output_id]) and save_rows" };
+        return { ok: true, output_id: outputId, pages, unique_rows: merged.length, saved_rows: output.length, pages_in_all: pagesBefore + pages, unique_in_all: seen.size, ...(prior ? { resumed_from_page: pagesBefore + 1 } : {}), stopped_because: stopped, call_ids: callIds.slice(0, 3).concat(callIds.length > 3 ? [`… ${callIds.length} pages in all`] : []), first_rows: lastFirstRows, note: "output_id holds the joined RAW rows: map them to final rows with run_code (files: [output_id]) and save_rows" };
       },
     },
     {
@@ -400,100 +591,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           incoming = a.rows;
         } else return err("give from_output or rows");
 
-        const existingRaw = await store.getFile(mission.id, ROWS_PATH(stage.key));
-        const existing: Array<Record<string, unknown>> = existingRaw ? JSON.parse(existingRaw) : [];
-        const have = new Set(existing.map((r) => String(r.id)));
-        let parentIds: Set<string> | null = null;
-        if (stage.parent_key !== null) {
-          const parentRaw = await store.getFile(mission.id, ROWS_PATH(stage.parent_key));
-          parentIds = new Set((parentRaw ? (JSON.parse(parentRaw) as Array<Record<string, unknown>>) : []).map((r) => String(r.id)));
-        }
-        const columnKeys = stage.columns.map((c) => c.key);
-        // CONTACT FIELDS are verified by code: a work e-mail or phone that does not pass is left empty; a row of a contact stage with no verified value is not saved (so it is neither delivered nor charged)
-        const contactColumns = stage.columns.filter((c) => c.kind !== undefined && CONTACT_KINDS.includes(c.kind));
-        const contactStage = isContactSource(stage.endpoint_id);
-        const tally = { saved_now: 0, duplicates_ignored: 0, rejected_missing_id: 0, rejected_unknown_parent: 0, rejected_over_limit: 0, rejected_not_object: 0, rejected_no_verified_contact: 0, contact_values_left_empty: 0 };
-        // pass 1: the structure of every row (id, parent, columns, contact values)
-        const candidates: Array<Record<string, unknown>> = [];
-        const seenNow = new Set<string>();
-        const spec = stage.relevance ?? null;
-        const excludedRaw = spec ? await store.getFile(mission.id, EXCLUDED_PATH(stage.key)) : null;
-        const excluded: Array<{ id: string; reason: RelevanceReason; row: Record<string, unknown> }> = excludedRaw ? JSON.parse(excludedRaw) : [];
-        const excludedIds = new Set(excluded.map((e) => e.id));
-        for (const raw of incoming) {
-          if (!isObject(raw)) { tally.rejected_not_object += 1; continue; }
-          const id = String(raw.id ?? "").trim();
-          if (!id) { tally.rejected_missing_id += 1; continue; }
-          // a row already saved, already left out, or twice in this batch: ignored (an excluded row is never reviewed or counted again)
-          if (have.has(id) || excludedIds.has(id) || seenNow.has(id)) { tally.duplicates_ignored += 1; continue; }
-          seenNow.add(id);
-          let parentId: string | null = null;
-          if (parentIds) {
-            parentId = String(raw.parent_id ?? "").trim();
-            if (!parentId || !parentIds.has(parentId)) { tally.rejected_unknown_parent += 1; continue; }
-          }
-          const row: Record<string, unknown> = { id, ...(parentId !== null ? { parent_id: parentId } : {}) };
-          for (const k of columnKeys) if (k !== "id" && k !== "parent_id") row[k] = raw[k] ?? "";
-          let verifiedAny = false;
-          for (const c of contactColumns) {
-            const original = String(raw[c.key] ?? "").trim();
-            const verified = verifyContactValue(c.kind!, raw[c.key]);
-            row[c.key] = verified ?? "";
-            if (verified) verifiedAny = true; else if (original) tally.contact_values_left_empty += 1;
-          }
-          if (contactStage && contactColumns.length > 0 && !verifiedAny) { tally.rejected_no_verified_contact += 1; continue; }
-          candidates.push(row);
-        }
-
-        // pass 2: RELEVANCE. Only rows that are about what the customer asked are saved (so only they are delivered and charged). The cheap deterministic check decides most rows; the uncertain ones go to the model
-        // review within the review budget, and an uncertain row that is not reviewed is NOT delivered. Rows left out are kept (never charged) for the review sheet.
-        const accepted = new Set<string>();
-        const left: Record<string, number> = {};
-        let reviewedNow = 0;
-        let budgetReached = false;
-        if (spec) {
-          const verdicts = candidates.map((row) => ({ row, v: classifyRow(spec, row) }));
-          const matches = verdicts.filter((x) => x.v.verdict === "match").length;
-          const room = Math.max(0, stage.planned_rows - existing.length);
-          const uncertain = verdicts.filter((x) => x.v.verdict === "review");
-          let verdictOf = new Map<string, boolean>();
-          if (uncertain.length > 0 && spec.review !== false && ctx.review && matches < room) {
-            // no more review than the room left can use (a row beyond the approved volume is never needed)
-            const wanted = uncertain.slice(0, (room - matches) * 3 + 25);
-            verdictOf = await ctx.review.review({ subject: spec.subject_ar, rows: wanted.map((x) => ({ id: String(x.row.id), text: spec.text_columns.map((k) => String(x.row[k] ?? "")).join(" ") })) });
-            reviewedNow = verdictOf.size;
-            budgetReached = (await ctx.review.state()).budgetReached;
-          }
-          for (const { row, v } of verdicts) {
-            const id = String(row.id);
-            let reason: RelevanceReason | null = null;
-            if (v.verdict === "match") accepted.add(id);
-            else if (v.verdict === "exclude") reason = v.reason;
-            else if (verdictOf.get(id) === true) accepted.add(id);
-            else reason = verdictOf.has(id) ? "review_no" : spec.review === false ? "uncertain" : "not_reviewed";
-            if (reason) { left[reason] = (left[reason] ?? 0) + 1; if (excluded.length < AGENT_EXCLUDED_ROWS_KEPT) excluded.push({ id, reason, row }); else excludedIds.add(id); excludedIds.add(id); }
-          }
-        } else for (const row of candidates) accepted.add(String(row.id));
-        for (const row of candidates) {
-          const id = String(row.id);
-          if (!accepted.has(id)) continue;
-          if (existing.length >= stage.planned_rows) { tally.rejected_over_limit += 1; continue; }
-          existing.push(row);
-          have.add(id);
-          tally.saved_now += 1;
-        }
-        await store.putFile(mission.id, ROWS_PATH(stage.key), JSON.stringify(existing), "application/json");
-        if (spec && Object.keys(left).length > 0) await store.putFile(mission.id, EXCLUDED_PATH(stage.key), JSON.stringify(excluded), "application/json");
-        // the live panel ticks from this: the numbers are in `counts` (never in the text), written by code, not by the model
-        if (tally.saved_now > 0) await store.addEvent(mission.id, { kind: "progress", message_ar: `يحفظ الوكيل الصفوف التي جمعها لمرحلة «${stage.title_ar}»`, counts: { stage: plan.stages.indexOf(stage) + 1, saved: existing.length, planned: stage.planned_rows } });
-        return {
-          ok: true, stage: stage.key, ...tally, total_in_stage: existing.length, stage_limit: stage.planned_rows,
-          ...(spec ? {
-            left_out_not_matching: left, reviewed_by_model: reviewedNow, review_budget_reached: budgetReached,
-            still_needed: Math.max(0, stage.planned_rows - existing.length),
-            note: existing.length < stage.planned_rows ? "only rows that MATCH the request are saved, delivered and charged; still_needed matching rows are missing: collect further pages (the source may have more) until still_needed is 0, the source ends, or the budget refuses; then finish and say honestly how many matched" : "the stage has all the matching rows it was sold",
-          } : {}),
-        };
+        return withStageLock(`${mission.id}:${stage.key}`, () => checkAndSaveRows(stage, incoming));
       },
     },
     {
@@ -512,6 +610,13 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         if (checked.issues.length) return err(`rephrase the summary: ${checked.issues.join("; ")}`);
         // rows the agent itself calls unfiltered are never delivered: it must filter them (the stage's relevance rule does it in save_rows) or say honestly that it cannot serve
         if (outcome === "delivered" && UNFILTERED_ADMISSION.test(normalizeText(checked.text))) return err("your summary says the rows are NOT filtered or may include other people / replies. Rows that do not match the request are never delivered or charged: save only rows that match (the stage's relevance rule filters them in save_rows) and rewrite the summary, or finish with outcome \"cannot_serve\"");
+        // rows that were waiting for a review (the budget or a failed call delayed them) are asked once more before the mission ends: a good row is never lost only because it was late
+        if (outcome === "delivered" && ctx.plan && ctx.review) {
+          for (const st of ctx.plan.stages) {
+            if (!st.relevance) continue;
+            await withStageLock(`${mission.id}:${st.key}`, () => checkAndSaveRows(st, []));
+          }
+        }
         state.finish = { outcome, summary_ar: checked.text };
         state.terminal = true;
         return { ok: true, note: "recorded; stop now" };

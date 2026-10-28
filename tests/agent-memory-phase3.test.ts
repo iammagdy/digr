@@ -331,7 +331,7 @@ describe("a planning run measured with the heartbeat memory columns", () => {
         { tool: "run_code", args: { code: "return inputs.call_0001.rows.slice(0, 3).map(p => ({ id: p.id, text: p.caption, url: p.url, likes: p.like_count }))", files: ["call_0001"] } },
         { tool: "propose_plan", args: (res: Results) => ({
           summary_ar: "ستحصل على منشورات إنستجرام الأكثر ظهورًا تحت وسم قهوة مع نص كل منشور ورابطه وعدد إعجاباته.",
-          stages: [{ key: "posts", title_ar: "المنشورات", endpoint_id: "contextdev.parse.instagram-feed", expected_rows: 12, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "نص المنشور" }, { key: "url", title_ar: "رابط المنشور" }, { key: "likes", title_ar: "الإعجابات" }], sample_rows: (res.find((x) => x.tool === "run_code")!.result.result as unknown[]).slice(0, 3), measured_by: [callIds(res)[0]] }],
+          stages: [{ key: "posts", title_ar: "المنشورات", endpoint_id: "contextdev.parse.instagram-feed", expected_rows: 12, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "نص المنشور" }, { key: "url", title_ar: "رابط المنشور" }, { key: "likes", title_ar: "الإعجابات" }, { key: "date", title_ar: "التاريخ والوقت" }, { key: "writer", title_ar: "الكاتب" }, { key: "comments_count", title_ar: "عدد التعليقات" }], sample_rows: (res.find((x) => x.tool === "run_code")!.result.result as unknown[]).slice(0, 3), measured_by: [callIds(res)[0]] }],
         }) },
       ],
       execution: () => [

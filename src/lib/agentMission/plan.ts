@@ -4,6 +4,7 @@ import { estimateMissionMinutes, measuredCostPerRowUsd, priceMissionByCode, type
 import { classifyRows, searchQueryOf, validateRelevanceSpec, type RelevanceSpec } from "./relevance";
 import { minimumLineAr, type MissionPricingSettings } from "../missionPricing";
 import { checkCustomerLabel, checkCustomerText } from "./text";
+import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type SourceField } from "./fields";
 
 /**
  * A mission PLAN: stages (a stage runs once per row of its parent stage), the rows each is expected to give, sample rows the agent really saw, and the calls that MEASURED the cost.
@@ -194,10 +195,12 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
     let measuredMsRows = 0;
     let evidence = "";
     if (measuredBy.length === 0) issues.push(`${label}: measured_by must cite the calls that measured it (ids returned by treg_call)`);
+    const sourceFields: SourceField[] = [];
     for (const id of measuredBy) {
       const call = lookup.call(id);
       const text = lookup.evidenceText(id);
       if (text) evidence += `\n${text}`;
+      if (text && id.startsWith("call_")) for (const f of usefulFieldsOfPage(text)) if (!sourceFields.some((x) => x.cls === f.cls)) sourceFields.push(f);
       if (!call) { if (text === null) issues.push(`${label}: «${id}» is not a call or output of this mission`); continue; }
       if (call.endpointId !== endpointId) { issues.push(`${label}: call «${id}» measured another source than the stage uses`); continue; }
       if (!call.ok || call.rows <= 0) { issues.push(`${label}: call «${id}» returned no rows; it cannot measure the cost`); continue; }
@@ -209,6 +212,11 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
     if (measuredCalls.length === 0 || costPerRow === null) issues.push(`${label}: no measured call with rows and a recorded charge`);
     else if (!(costPerRow > 0)) issues.push(`${label}: the measured charge is zero, so no price can be built on it; measure with a call that was charged`);
 
+    // EVERY USEFUL FIELD THE SOURCE GIVES stays in the file: a date, an author, a link, the counts (likes, replies, shares, views) that the saved page carries must each have a column (the agent maps them in its code)
+    if (raw.deliver === true) {
+      const missing = uncoveredFields(sourceFields, cleanColumns);
+      if (missing.length > 0) issues.push(`${label}: the source gives fields the customer would want in the file that no column holds: ${missing.map((f) => `${FIELD_LABEL_AR[f.cls]} (${f.path})`).join(", ")}. Add a column for each (map it in your run_code and give it an Arabic title like «${FIELD_LABEL_AR[missing[0].cls]}»): the file keeps every useful field of the source`);
+    }
     if (lookup.isContactSource?.(endpointId) && !cleanColumns.some((c) => c.kind !== undefined)) issues.push(`${label}: a contact stage must mark its e-mail / phone columns with kind "work_email" or "phone" (their values are verified by code; an unverified value is left empty and a row with none is not delivered or charged)`);
     const samples = Array.isArray(raw.sample_rows) ? raw.sample_rows : [];
     if (samples.length < 1 || samples.length > MAX_SAMPLE_ROWS_PER_STAGE) issues.push(`${label}: 1 to ${MAX_SAMPLE_ROWS_PER_STAGE} sample_rows, rows you really saw`);

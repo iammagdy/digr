@@ -364,7 +364,7 @@ describe("the tweets mission end to end with the stuck mission's first step", ()
         { tool: "propose_plan", args: (res: Results) => ({
           summary_ar: "ستحصل على ٣٠٠ تغريدة عن محمد صلاح مع نص كل تغريدة ورابطها.",
           stages: [{ key: "tweets", title_ar: "التغريدات", endpoint_id: ENDPOINT, expected_rows: 300, parent_key: null, deliver: true,
-            columns: [{ key: "text", title_ar: "نص التغريدة" }, { key: "url", title_ar: "رابط التغريدة" }, { key: "author", title_ar: "الحساب" }],
+            columns: [{ key: "text", title_ar: "نص التغريدة" }, { key: "url", title_ar: "رابط التغريدة" }, { key: "author", title_ar: "الحساب" }, { key: "date", title_ar: "التاريخ والوقت" }],
             sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 3), measured_by: [callIds(res)[0]], relevance: aboutWords(["محمد صلاح"]), yield_from: firstOutputId(res) }],
         }) },
       ],

@@ -115,7 +115,11 @@ export const AGENT_STALL_AFTER_MS = 180_000;
 /** Events that carry the run's measured memory (internal: the admin sees them, the customer never does). */
 export const MISSION_INTERNAL_COUNT_KEYS = ["mem_phase", "mem_start_rss_mb", "mem_peak_rss_mb", "mem_start_tree_mb", "mem_peak_tree_mb", "mem_samples", "mem_seconds", "mem_stopped",
   // the model's tokens of a run (input, output, cache read, cache write), the review's own tokens and calls, and the run's model cost in millionths of a dollar
-  "tok_phase", "tok_in", "tok_out", "tok_cache_read", "tok_cache_write", "tok_review_in", "tok_review_out", "tok_review_calls", "llm_micro_usd"] as const;
+  "tok_phase", "tok_in", "tok_out", "tok_cache_read", "tok_cache_write", "tok_review_in", "tok_review_out", "tok_review_calls", "llm_micro_usd",
+  // the report of the check of items (internal; the admin reads it): looked at, accepted by rule (and on what basis), accepted by the model, left out (and why), still pending, review beyond its usual budget
+  "chk_stage", "chk_examined", "chk_by_rule", "chk_by_model", "chk_excluded", "chk_pending", "chk_review_extended",
+  "chk_rule_full_name_context", "chk_rule_full_name", "chk_rule_terms_context", "chk_rule_terms_only",
+  "chk_ex_no_text", "chk_ex_no_term", "chk_ex_mention_only", "chk_ex_other_person", "chk_ex_uncertain", "chk_ex_not_reviewed", "chk_ex_review_no", "chk_ex_review_failed"] as const;
 export const AGENT_POLL_INTERVAL_MS = 5_000;
 /** The worker writes a heartbeat row this often; the admin page calls it alive while the last beat is younger than AGENT_HEARTBEAT_ALIVE_MS. */
 export const AGENT_HEARTBEAT_INTERVAL_MS = 30_000;
@@ -155,6 +159,8 @@ export const AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD = 0.005;
 export const AGENT_REVIEW_ROW_ESTIMATE_USD = 0.00004;
 /** What the model review of uncertain rows may cost one mission: this share of the mission's revenue (owner decision of 2026-10-28). Rows beyond it are not delivered and not charged. */
 export const AGENT_REVIEW_BUDGET_SHARE = 0.2;
+/** When the usual review budget is spent and rows the request still needs are waiting, the review may go on up to this share of the RESERVE's value (the hold covers it); only then do rows stay undelivered, with an honest sentence. */
+export const AGENT_REVIEW_CEILING_SHARE = 0.4;
 /** Rows of a review request (one model call); each row's text is cut to REVIEW_ROW_CHARS characters. */
 export const AGENT_REVIEW_BATCH_ROWS = 25;
 export const AGENT_REVIEW_ROW_CHARS = 280;

@@ -25,10 +25,19 @@ export interface RelevanceSpec {
   min_own_words?: number;
   /** Uncertain rows go to the model review (default true); false: uncertain rows are never delivered. */
   review?: boolean;
+  /**
+   * Default true: a row whose text has the subject's FULL NAME (a term of two words or more) is accepted by rule, with or without a context word: the full name is strong evidence, and the cost of sending every such row to
+   * the model is what threw good rows away in the live run of 2026-10-28. Set false when the full name is itself common (a very common person's name, a generic company name): then a context word is required and the rest goes
+   * to the review.
+   */
+  full_name_is_enough?: boolean;
 }
 
-export type RelevanceReason = "no_text" | "no_term" | "mention_only" | "other_person" | "uncertain" | "not_reviewed" | "review_no";
+export type RelevanceReason = "no_text" | "no_term" | "mention_only" | "other_person" | "uncertain" | "not_reviewed" | "review_no" | "review_failed";
 export type RelevanceVerdict = { verdict: "match" } | { verdict: "exclude"; reason: RelevanceReason } | { verdict: "review"; reason: "uncertain" };
+/** WHY a row was accepted by rule (the report of the check counts them): the full name and a context word, the full name alone, a term and a context word, or no context was asked for. */
+export type RuleBasis = "full_name_context" | "full_name" | "terms_context" | "terms_only";
+export type DetailedVerdict = RelevanceVerdict & { basis?: RuleBasis };
 
 export const MAX_TERMS = 12;
 export const MAX_CONTEXT_TERMS = 40;
@@ -86,8 +95,21 @@ function compiled(spec: RelevanceSpec) {
 
 const textOf = (row: Record<string, unknown>, keys: string[]): string => keys.map((k) => (row[k] === null || row[k] === undefined ? "" : typeof row[k] === "object" ? JSON.stringify(row[k]) : String(row[k]))).join(" \n ");
 
-/** The deterministic verdict on one row. */
-export function classifyRow(spec: RelevanceSpec, row: Record<string, unknown>): RelevanceVerdict {
+/** The words of a normalized term: «محمد صلاح» has two. A term of two words or more is a FULL NAME (strong evidence); a single word is weak (it may be a surname, a common word, a brand that is also a thing). */
+const wordsOfTerm = (term: string): number => normalizeText(term).replace(/[_-]+/g, " ").split(" ").filter(Boolean).length;
+
+const strongRegexes = new WeakMap<RelevanceSpec, RegExp[]>();
+function strongTerms(spec: RelevanceSpec): RegExp[] {
+  let list = strongRegexes.get(spec);
+  if (!list) {
+    list = spec.terms.filter((t) => wordsOfTerm(t) >= 2).map((t) => termRegex(t, "u")).filter((r): r is RegExp => r !== null);
+    strongRegexes.set(spec, list);
+  }
+  return list;
+}
+
+/** The deterministic verdict on one row, with the basis of an acceptance (why the rule accepted it). */
+export function classifyRowDetailed(spec: RelevanceSpec, row: Record<string, unknown>): DetailedVerdict {
   const { terms, context, exclude } = compiled(spec);
   const raw = textOf(row, spec.text_columns).trim();
   if (!raw) return { verdict: "exclude", reason: "no_text" };
@@ -101,8 +123,19 @@ export function classifyRow(spec: RelevanceSpec, row: Record<string, unknown>): 
   const words = rest.replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter((w) => [...w].length >= 2);
   if (words.length < (spec.min_own_words ?? DEFAULT_MIN_OWN_WORDS)) return { verdict: "exclude", reason: "mention_only" };
   if (exclude.some((r) => r.test(text))) return { verdict: "exclude", reason: "other_person" };
-  if (context.length > 0 && !context.some((r) => r.test(text))) return { verdict: "review", reason: "uncertain" };
-  return { verdict: "match" };
+  const fullName = strongTerms(spec).some((r) => r.test(text));
+  if (context.length === 0) return { verdict: "match", basis: fullName ? "full_name" : "terms_only" };
+  if (context.some((r) => r.test(text))) return { verdict: "match", basis: fullName ? "full_name_context" : "terms_context" };
+  // the full name alone is strong evidence: accepted by rule unless the plan says the full name is itself common
+  if (fullName && spec.full_name_is_enough !== false) return { verdict: "match", basis: "full_name" };
+  return { verdict: "review", reason: "uncertain" };
+}
+
+/** The deterministic verdict on one row. */
+export function classifyRow(spec: RelevanceSpec, row: Record<string, unknown>): RelevanceVerdict {
+  const { basis: _basis, ...verdict } = classifyRowDetailed(spec, row);
+  void _basis;
+  return verdict as RelevanceVerdict;
 }
 
 export interface RelevanceCounts { examined: number; match: number; review: number; excluded: Record<string, number> }
@@ -145,8 +178,9 @@ export function validateRelevanceSpec(raw: unknown, columnKeys: readonly string[
   if (cols.length < 1 || cols.length > 5) issues.push(`relevance.text_columns: 1 to 5 keys of this stage's columns that hold the text to read (the author's name is not one)`);
   const minWords = o.min_own_words === undefined ? DEFAULT_MIN_OWN_WORDS : Number(o.min_own_words);
   if (!Number.isInteger(minWords) || minWords < 0 || minWords > 6) issues.push("relevance.min_own_words: a whole number from 0 to 6");
+  if (o.full_name_is_enough !== undefined && typeof o.full_name_is_enough !== "boolean") issues.push("relevance.full_name_is_enough: true or false");
   if (issues.length) return { ok: false, issues };
-  return { ok: true, spec: { subject_ar: subject.text, terms: terms!, ...(context && context.length ? { context_terms: context } : {}), ...(exclude && exclude.length ? { exclude_terms: exclude } : {}), text_columns: cols, min_own_words: minWords, review: o.review === false ? false : true } };
+  return { ok: true, spec: { subject_ar: subject.text, terms: terms!, ...(context && context.length ? { context_terms: context } : {}), ...(exclude && exclude.length ? { exclude_terms: exclude } : {}), text_columns: cols, min_own_words: minWords, review: o.review === false ? false : true, ...(o.full_name_is_enough === false ? { full_name_is_enough: false } : {}) } };
 }
 
 /** The free-text search a call made, or null when it asked for a known account / page / link instead (rows of those are about their owner by construction). */
@@ -169,6 +203,7 @@ export const REASON_AR: Record<RelevanceReason, string> = {
   mention_only: "إشارة عابرة أو رد فارغ بلا كلام",
   other_person: "عن شخص آخر يحمل الاسم نفسه",
   uncertain: "لم يتأكد أنه عن المقصود",
-  not_reviewed: "لم يُراجَع لانتهاء ميزانية المراجعة",
+  not_reviewed: "لم يُراجَع (حد المراجعة لهذه المهمة)",
   review_no: "رُفض عند المراجعة: ليس عن المقصود",
+  review_failed: "تعذّرت مراجعته (لم يُراجَع)",
 };

@@ -34,7 +34,7 @@ describe("a 300-tweet mission paged through the source", () => {
         plan: (res: Results) => ({
           summary_ar: "ستحصل على ٣٠٠ تغريدة عن محمد صلاح بعد انتقاله لتركيا مع نص كل تغريدة ورابطها.",
           stages: [{ key: "tweets", title_ar: "التغريدات", endpoint_id: ENDPOINT, expected_rows: 300, parent_key: null, deliver: true,
-            columns: [{ key: "id", title_ar: "المعرّف" }, { key: "text", title_ar: "نص التغريدة" }, { key: "url", title_ar: "رابط التغريدة" }, { key: "author", title_ar: "الحساب" }],
+            columns: [{ key: "id", title_ar: "المعرّف" }, { key: "text", title_ar: "نص التغريدة" }, { key: "url", title_ar: "رابط التغريدة" }, { key: "author", title_ar: "الحساب" }, { key: "date", title_ar: "التاريخ والوقت" }],
             sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 3), measured_by: [callIds(res)[0]], relevance: aboutWords(["محمد صلاح"]), yield_from: firstOutputId(res) }],
         }),
       }),
@@ -49,11 +49,13 @@ describe("a 300-tweet mission paged through the source", () => {
     });
 
     // the plan on the customer's card
-    expect(r.plannedPlan.stages[0].columns.map((c) => c.key)).toEqual(["text", "url", "author"]);
+    // (the old line expected ["text", "url", "author"]: the source gives a date, and a plan that leaves a useful field of the source out is refused, so the plan now carries the date column)
+    expect(r.plannedPlan.stages[0].columns.map((c) => c.key)).toEqual(["text", "url", "author", "date"]);
     expect(r.planView.phase).toBe("plan");
     expect(r.planView.stages).toHaveLength(1);
     expect(r.planView.totalRows).toBe(300);
-    expect(r.planView.samples!.columns.map((c) => c.titleAr)).toEqual(["نص التغريدة", "رابط التغريدة", "الحساب"]);
+    // (the old line expected ["نص التغريدة", "رابط التغريدة", "الحساب"]: the date column was added, see above)
+    expect(r.planView.samples!.columns.map((c) => c.titleAr)).toEqual(["نص التغريدة", "رابط التغريدة", "الحساب", "التاريخ والوقت"]);
     // (the old line said «٦٢ … ٧٢»: provider cost alone) the one pricing rule: the 300 tweets cost less than the minimum, so the charge is the minimum and the card says so
     expect(r.planView.priceLineAr).toMatch(/^السعر حتى ٢٠٠ نقطة .* حجز مؤقت ٢٠٠ نقطة .* الحد الأدنى للمهمة ٢٠٠ نقطة، ولا خصم إن لم يُسلَّم شيء .* الوقت المتوقع نحو /);
     // 15 pages of 20 = 300 unique rows, saved in ONE stage, inside the execution budget
@@ -66,7 +68,8 @@ describe("a 300-tweet mission paged through the source", () => {
     // (the old line expected the released hold: with the minimum the reserve and the charge are both 200, so nothing is left to release)
     expect(r.finalView.resultLinesAr.join(" ")).toContain("خُصم ٢٠٠ نقطة مقابل ما سُلّم فقط");
     // the live panel ticked from the counts
-    expect(r.store.events.filter((e) => e.counts?.stage === 1).map((e) => e.counts)).toEqual([{ stage: 1, saved: 300, planned: 300 }]);
+    // (the old line expected [{ stage: 1, saved: 300, planned: 300 }]: the live tick of a stage with a relevance rule now also carries the check counts, so the panel moves while items are being checked)
+    expect(r.store.events.filter((e) => e.counts?.stage === 1).map((e) => e.counts)).toEqual([{ stage: 1, saved: 300, planned: 300, checked: 300, accepted: 300, excluded: 0, pending: 0 }]);
     // the file: the summary sheet first, headers frozen, a filter, readable columns
     const wb = await readWorkbook(r);
     expect(wb.worksheets[0].name).toBe("ملخص المهمة");
@@ -104,9 +107,9 @@ describe("a Facebook topic mission: posts, then the comments of each post, linke
         plan: (res) => ({
           summary_ar: "ستحصل على منشورات فيسبوك عن التضخم وأسعار الغذاء مع رابط كل منشور وتعليقاته.",
           stages: [
-            { key: "posts", title_ar: "المنشورات", endpoint_id: POSTS, expected_rows: POSTS_N, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "نص المنشور" }, { key: "url", title_ar: "رابط المنشور" }, { key: "author", title_ar: "الصفحة" }],
+            { key: "posts", title_ar: "المنشورات", endpoint_id: POSTS, expected_rows: POSTS_N, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "نص المنشور" }, { key: "url", title_ar: "رابط المنشور" }, { key: "author", title_ar: "الصفحة" }, { key: "date", title_ar: "التاريخ والوقت" }, { key: "comments_count", title_ar: "عدد التعليقات" }, { key: "likes", title_ar: "الإعجابات" }],
               sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 2), measured_by: [callIds(res)[0]], relevance: aboutWords(["التضخم"]), yield_from: firstOutputId(res) },
-            { key: "comments", title_ar: "تعليقات كل منشور", endpoint_id: COMMENTS, expected_rows: POSTS_N * 5, parent_key: "posts", per_parent_rows: 5, deliver: true, columns: [{ key: "text", title_ar: "نص التعليق" }, { key: "author", title_ar: "كاتب التعليق" }],
+            { key: "comments", title_ar: "تعليقات كل منشور", endpoint_id: COMMENTS, expected_rows: POSTS_N * 5, parent_key: "posts", per_parent_rows: 5, deliver: true, columns: [{ key: "text", title_ar: "نص التعليق" }, { key: "author", title_ar: "كاتب التعليق" }, { key: "date", title_ar: "التاريخ والوقت" }],
               sample_rows: [{ id: `${postId(0)}-c00`, text: `تعليق 0 على ${postId(0)}`, author: "قارئ 0" }], measured_by: [callIds(res)[1]] },
           ],
         }),
@@ -124,7 +127,8 @@ describe("a Facebook topic mission: posts, then the comments of each post, linke
     });
     expect(r.planView.stages.map((s) => [s.n, s.titleAr, s.rows])).toEqual([[1, "المنشورات", 24], [2, "تعليقات كل منشور", 120]]);
     expect(r.planView.totalRows).toBe(144);
-    expect(r.planView.samples!.columns.map((c) => c.titleAr)).toEqual(["نص التعليق", "كاتب التعليق"]);
+    // (the old line expected ["نص التعليق", "كاتب التعليق"]: the comments source gives a date, so the comments stage carries the date column too)
+    expect(r.planView.samples!.columns.map((c) => c.titleAr)).toEqual(["نص التعليق", "كاتب التعليق", "التاريخ والوقت"]);
     assertReplayInvariants(r, { expectDelivered: 144 });
     const wb = await readWorkbook(r);
     expect(wb.worksheets.map((w) => w.name)).toEqual(["ملخص المهمة", "المنشورات", "تعليقات كل منشور"]);
@@ -156,9 +160,9 @@ describe("a TikTok mission: videos, then the comments of each video", () => {
         plan: (res) => ({
           summary_ar: "ستحصل على فيديوهات تيك توك عن رحلة إلى الأقصر مع أرقامها وتعليقات كل فيديو.",
           stages: [
-            { key: "videos", title_ar: "الفيديوهات", endpoint_id: VIDEOS, expected_rows: N, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "وصف الفيديو" }, { key: "url", title_ar: "رابط الفيديو" }, { key: "views", title_ar: "المشاهدات" }],
+            { key: "videos", title_ar: "الفيديوهات", endpoint_id: VIDEOS, expected_rows: N, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "وصف الفيديو" }, { key: "url", title_ar: "رابط الفيديو" }, { key: "views", title_ar: "المشاهدات" }, { key: "likes", title_ar: "الإعجابات" }, { key: "comments_count", title_ar: "عدد التعليقات" }, { key: "shares", title_ar: "المشاركات" }, { key: "date", title_ar: "التاريخ والوقت" }],
               sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 2), measured_by: [callIds(res)[0]], relevance: aboutWords(["الأقصر"]), yield_from: firstOutputId(res) },
-            { key: "comments", title_ar: "تعليقات كل فيديو", endpoint_id: COMMENTS, expected_rows: N * 10, parent_key: "videos", per_parent_rows: 10, deliver: true, columns: [{ key: "text", title_ar: "نص التعليق" }, { key: "author", title_ar: "كاتب التعليق" }],
+            { key: "comments", title_ar: "تعليقات كل فيديو", endpoint_id: COMMENTS, expected_rows: N * 10, parent_key: "videos", per_parent_rows: 10, deliver: true, columns: [{ key: "text", title_ar: "نص التعليق" }, { key: "author", title_ar: "كاتب التعليق" }, { key: "likes", title_ar: "الإعجابات" }, { key: "date", title_ar: "التاريخ والوقت" }],
               sample_rows: [{ id: `${vid(0)}-k00`, text: `تعليق 0 على الفيديو ${vid(0)}`, author: "viewer0" }], measured_by: [callIds(res)[1]] },
           ],
         }),
@@ -193,7 +197,7 @@ describe("an Instagram hashtag mission", () => {
         sampleCode: "return inputs.call_0001.output.data.posts.slice(0, 3).map(p => ({ id: p.id, text: p.caption, url: p.displayUrl, likes: p.likes }))",
         plan: (res) => ({
           summary_ar: "ستحصل على ٦٠ منشورًا من إنستجرام تحت وسم قهوة مع نص كل منشور ورابطه وعدد الإعجابات.",
-          stages: [{ key: "posts", title_ar: "المنشورات", endpoint_id: ENDPOINT, expected_rows: 60, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "نص المنشور" }, { key: "url", title_ar: "رابط الصورة" }, { key: "likes", title_ar: "الإعجابات" }],
+          stages: [{ key: "posts", title_ar: "المنشورات", endpoint_id: ENDPOINT, expected_rows: 60, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "نص المنشور" }, { key: "url", title_ar: "رابط الصورة" }, { key: "likes", title_ar: "الإعجابات" }, { key: "comments_count", title_ar: "عدد التعليقات" }, { key: "date", title_ar: "التاريخ والوقت" }],
             sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 3), measured_by: [callIds(res)[0]], relevance: aboutWords(["قهوة"]), yield_from: firstOutputId(res) }],
         }),
       }),
@@ -231,7 +235,7 @@ describe("a Google Maps reviews mission", () => {
           stages: [
             { key: "place", title_ar: "المكان", endpoint_id: SEARCH, expected_rows: 1, parent_key: null, deliver: false, columns: [{ key: "text", title_ar: "اسم المكان" }, { key: "url", title_ar: "العنوان" }],
               sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 1), measured_by: [callIds(res)[0]] },
-            { key: "reviews", title_ar: "التقييمات", endpoint_id: REVIEWS, expected_rows: 200, parent_key: "place", per_parent_rows: 200, deliver: true, columns: [{ key: "text", title_ar: "نص التقييم" }, { key: "rating", title_ar: "الدرجة" }, { key: "date", title_ar: "التاريخ" }],
+            { key: "reviews", title_ar: "التقييمات", endpoint_id: REVIEWS, expected_rows: 200, parent_key: "place", per_parent_rows: 200, deliver: true, columns: [{ key: "text", title_ar: "نص التقييم" }, { key: "rating", title_ar: "الدرجة" }, { key: "date", title_ar: "التاريخ" }, { key: "writer", title_ar: "الكاتب" }, { key: "likes", title_ar: "الإعجابات" }],
               sample_rows: [{ id: "rv000000", text: "تجربة رقم 0 في المكان", rating: 1, date: "2026-10-10T12:00:00Z" }], measured_by: [callIds(res)[1]] },
           ],
         }),
