@@ -5,7 +5,7 @@ import type { commitTregSpend } from "../../src/lib/server/tregCallRecord";
 import type { TregCatalog } from "../../src/lib/treg/catalog";
 import type { AccountAccess } from "../../src/lib/treg/dataPolicy";
 import {
-  AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD, AGENT_EXECUTION_LLM_BUDGET_SHARE, AGENT_EXECUTION_MAX_TURNS, AGENT_EXECUTION_WALL_MS, AGENT_PLANNING_LLM_BUDGET_USD,
+  AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD, AGENT_EXECUTION_LLM_BUDGET_SHARE, AGENT_MEMORY_REQUEUES_MAX, AGENT_EXECUTION_MAX_TURNS, AGENT_EXECUTION_WALL_MS, AGENT_PLANNING_LLM_BUDGET_USD,
   AGENT_PLANNING_MAX_TURNS, AGENT_PLANNING_WALL_MS, AGENT_PRICING_BASIS,
 } from "../../src/lib/agentMission/constants";
 import { executionBudgetUsd } from "../../src/lib/agentMission/price";
@@ -75,6 +75,22 @@ export function executionPrompt(mission: MissionRecord, plan: PricedPlan, calls:
 
 const clear = { worker_id: null, lease_until: null } as const;
 
+const MEMORY_REQUEUES_FILE = "memory_requeues.txt";
+
+/**
+ * The worker stopped the model run because the dyno's memory reached its hard limit (worker.ts): the mission goes back to the queue (a mission that holds a reserve goes back to «approved» with everything it
+ * saved; planning goes back to «queued») instead of the dyno being killed. At most AGENT_MEMORY_REQUEUES_MAX times: after that it ends with what it has, settled like any other end. True when it was requeued.
+ */
+async function requeueForMemory(deps: RunnerDeps, mission: MissionRecord, status: "queued" | "approved", patch: Record<string, unknown>): Promise<boolean> {
+  const n = Number(await deps.store.getFile(mission.id, MEMORY_REQUEUES_FILE)) || 0;
+  if (n >= AGENT_MEMORY_REQUEUES_MAX) return false;
+  await deps.store.putFile(mission.id, MEMORY_REQUEUES_FILE, String(n + 1), "text/plain");
+  await deps.store.updateMission(mission.id, { ...patch, status, worker_id: null, lease_until: null });
+  await deps.store.addEvent(mission.id, { kind: "system", message_ar: "تأجّلت مهمتك قليلًا بسبب ضغط على الخدمة، وستُستأنف تلقائيًا من حيث وصلت.", counts: { requeued: n + 1 } });
+  deps.log?.(`memory_requeue ${mission.id} -> ${status} (${n + 1} of ${AGENT_MEMORY_REQUEUES_MAX})`);
+  return true;
+}
+
 /** The customer's notice (in-site and e-mail); never lets a failed notice change the mission. */
 async function tell(deps: RunnerDeps, mission: MissionRecord, jobId: string | null, kind: MissionNoticeKind, facts: MissionNoticeFacts): Promise<void> {
   try { await deps.notify?.({ userId: mission.user_id, missionId: mission.id, jobId, kind, facts }); } catch (e) { deps.log?.(`notice_failed ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 120)}`); }
@@ -102,6 +118,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   }
   const llm = Number(((await store.getMission(mission.id))?.planning_llm_usd ?? 0) + output.llmCostUsd);
   const base = { planning_llm_usd: Number(llm.toFixed(6)), ...clear };
+  if (output.stop === "memory" && !state.proposedPlan && !state.question && !state.finish && await requeueForMemory(deps, mission, "queued", { planning_llm_usd: base.planning_llm_usd })) return;
 
   if (state.proposedPlan) {
     const plan = state.proposedPlan;
@@ -151,6 +168,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   }
   const fresh = (await store.getMission(mission.id)) ?? mission;
   const llm = Number((fresh.execution_llm_usd ?? 0) + output.llmCostUsd);
+  if (output.stop === "memory" && !state.finish && await requeueForMemory(deps, mission, "approved", { execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(budget.spentUsd().toFixed(6)) })) return;
 
   // deliver what is saved: the unique final rows of the delivered stages, each linked to a saved parent row
   const { delivered, perStage } = await countDeliveredRows(store, mission.id, plan);

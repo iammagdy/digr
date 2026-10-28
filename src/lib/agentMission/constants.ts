@@ -51,7 +51,7 @@ export const MISSION_TERMINAL: ReadonlySet<string> = new Set(["completed", "fail
 export const EVENT_KINDS = ["progress", "plan", "question", "answer", "call", "result", "system", "refusal"] as const;
 export type EventKind = (typeof EVENT_KINDS)[number];
 /** The fixed keys of an event's `counts` (numbers never go in the text). `stage_<n>_rows` (rows saved in stage n) is also allowed. */
-export const MISSION_EVENT_COUNT_KEYS = ["stages", "rows", "stage", "saved", "planned", "pages", "sources", "delivered", "charged_points", "reserve_points", "unit_points_x1000", "queue_ahead", "seconds_left"] as const;
+export const MISSION_EVENT_COUNT_KEYS = ["stages", "rows", "stage", "saved", "planned", "pages", "sources", "delivered", "charged_points", "reserve_points", "unit_points_x1000", "queue_ahead", "seconds_left", "requeued"] as const;
 export type MissionEventCountKey = (typeof MISSION_EVENT_COUNT_KEYS)[number];
 
 // ---------------------------------------------------------------- the worker
@@ -65,6 +65,23 @@ export const AGENT_CONCURRENCY_MAX = 4;
 /** The memory of a Heroku Basic dyno (MB), and the share of it above which the admin page warns. */
 export const AGENT_DYNO_MEMORY_MB = 512;
 export const AGENT_MEMORY_WARN_SHARE = 0.8;
+/**
+ * MEMORY ON THE 512 MB DYNO (Phase 3). All of it is the memory of the worker AND the processes it started (tree RSS, read from /proc), the figure the dyno's limit counts.
+ *  - a planning run should stay under AGENT_MEMORY_PLANNING_TARGET_MB;
+ *  - a NEW mission is not taken (it stays queued, nothing is leased) while the tree is at or above AGENT_MEMORY_ADMIT_LIMIT_MB;
+ *  - a RUNNING mission whose tree reaches AGENT_MEMORY_HARD_LIMIT_MB is stopped by the worker before the platform kills the dyno, and put back in the queue (a mission that holds a reserve goes back to
+ *    «approved» with everything it saved), at most AGENT_MEMORY_REQUEUES_MAX times; after that it finishes with what is saved (settled like any other end).
+ */
+export const AGENT_MEMORY_PLANNING_TARGET_MB = 400;
+export const AGENT_MEMORY_ADMIT_LIMIT_MB = 300;
+export const AGENT_MEMORY_HARD_LIMIT_MB = 450;
+export const AGENT_MEMORY_REQUEUES_MAX = 2;
+/** How often the worker reads its memory while a mission runs. */
+export const AGENT_MEMORY_WATCH_MS = 5_000;
+/** The Claude Agent SDK starts a native process for each session: one at a time. */
+export const AGENT_SDK_SESSIONS_AT_ONCE = 1;
+/** The Node heap of the worker process (MB), set by the Procfile (`--max-old-space-size`). */
+export const AGENT_NODE_HEAP_MB = 192;
 export const AGENT_POLL_INTERVAL_MS = 5_000;
 /** The worker writes a heartbeat row this often; the admin page calls it alive while the last beat is younger than AGENT_HEARTBEAT_ALIVE_MS. */
 export const AGENT_HEARTBEAT_INTERVAL_MS = 30_000;
@@ -116,8 +133,8 @@ export const AGENT_EXECUTION_WALL_MS = 6 * 3600_000;
 
 // ----------------------------------------------------------------- the sandbox
 export const SANDBOX_TIMEOUT_MS = 20_000;
-export const SANDBOX_MAX_HEAP_MB = 192;
-export const SANDBOX_MAX_INPUT_BYTES = 24 * 1024 * 1024;
+export const SANDBOX_MAX_HEAP_MB = 96;
+export const SANDBOX_MAX_INPUT_BYTES = 12 * 1024 * 1024;
 export const SANDBOX_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 /** A run_code result up to this size comes back inline; a bigger one is saved as an output file and only a preview comes back. */
-export const SANDBOX_INLINE_RESULT_CHARS = 6_000;
+export const SANDBOX_INLINE_RESULT_CHARS = 3_000;

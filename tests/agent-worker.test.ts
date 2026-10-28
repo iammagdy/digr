@@ -57,7 +57,7 @@ describe("worker: concurrency, leases, heartbeat", () => {
 
   it("writes a heartbeat row and renews the leases of its missions", async () => {
     const store = createMemoryStore(queued(1));
-    const worker = createWorker({ store, workerId: "w1", version: "v9", modelLabel: () => "claude-haiku-5-5", runMission: () => new Promise(() => undefined), now: () => new Date("2026-10-28T10:00:00Z"), readMemory: () => ({ rssMb: 180, treeRssMb: 410 }) });
+    const worker = createWorker({ store, workerId: "w1", version: "v9", modelLabel: () => "claude-haiku-5-5", runMission: () => new Promise(() => undefined), now: () => new Date("2026-10-28T10:00:00Z"), readMemory: () => ({ rssMb: 180, treeRssMb: 410 }), memoryAdmitLimitMb: 500 });
     await worker.tick();
     const before = store.missions.get("msn_w0")!.lease_until!;
     await new Promise((r) => setTimeout(r, 5));
