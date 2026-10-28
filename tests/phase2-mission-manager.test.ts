@@ -548,12 +548,12 @@ describe("customer text made by the model is made safe by code", () => {
 });
 
 describe("reviewed recipes for the services proven on the old path", () => {
-  it("seven services plus the two-step ones are seeded as reviewed recipes with no customer value in them", () => {
+  it("seven services plus the two-step ones are seeded (a draft until real measurements prove them) with no customer value in them", () => {
     const rows = seedRecipeRows();
     const endpoints = rows.map((r) => r.row.endpoint_id);
     for (const id of ["anyapi.x.user.posts", "anyapi.x.search.posts", "tikhub.tiktok.video.comments", "scrapecreators.x.v1-facebook-post-comments", "justoneapi.x.facebook-search-post-v1", "icypeas.companies.search", "icypeas.people.search"]) expect(endpoints).toContain(id);
     for (const { row } of rows) {
-      expect(row.status).toBe("reviewed");
+      expect(row.status).toBe("draft"); // a `reviewed` row needs a reviewer, a date and a fixture ref (the table refuses it otherwise): see tests/recipe-seeds-constraints.test.ts
       expect(row.created_by).toBe("seed");
       expect(JSON.stringify(row)).not.toMatch(/elonmusk|@/);
     }

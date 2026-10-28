@@ -9,6 +9,9 @@ import { selfTestCsv, type SelfTestRow } from "@/lib/modelPlanner/selfTestCsv";
 const SECTION = "flex flex-col gap-3 rounded-[18px] border border-ln bg-bg p-4";
 const BTN = "hit min-h-11 cursor-pointer rounded-xl border border-ln2 bg-sf px-4 text-sm font-semibold text-ink disabled:opacity-50";
 
+interface SeedItem { title: string; slug: string; state: "inserted" | "present" | "failed"; status?: "reviewed" | "draft"; reasonAr?: string; error?: string; noteAr?: string }
+const SEED_STATE_AR: Record<SeedItem["state"], string> = { inserted: "أُضيفت", present: "موجودة", failed: "تعذّرت" };
+
 interface CaseInfo { id: string; group: string; request: string; expected: string; note: string; priceRange?: string; estimateUsd?: number }
 interface Health {
   catalog: { endpoints: number; source: string } | { error: string };
@@ -34,6 +37,7 @@ export default function PlannerSelfTestPage() {
   const [selected, setSelected] = useState<Set<string> | null>(null);
   const [seeding, setSeeding] = useState(false);
   const [seedNote, setSeedNote] = useState("");
+  const [seedItems, setSeedItems] = useState<SeedItem[]>([]);
 
   useEffect(() => { adminFetch<Info>("/api/admin/planner-selftest").then((i) => { setInfo(i); setSelected(new Set(i.cases.map((c) => c.id))); }).catch((e) => toast(e instanceof Error ? e.message : "تعذّر التحميل")); }, [toast]);
 
@@ -63,9 +67,10 @@ export default function PlannerSelfTestPage() {
 
   async function loadRecipes() {
     if (seeding) return;
-    setSeeding(true); setSeedNote("");
+    setSeeding(true); setSeedNote(""); setSeedItems([]);
     try {
-      const r = await adminFetch<{ inserted: number; present: number; failed: number; tableApplied: boolean }>("/api/admin/recipes-seed", { method: "POST" });
+      const r = await adminFetch<{ inserted: number; present: number; failed: number; tableApplied: boolean; items?: SeedItem[] }>("/api/admin/recipes-seed", { method: "POST" });
+      setSeedItems(r.items ?? []);
       setSeedNote(r.tableApplied ? `أُضيفت ${toArabicDigits(r.inserted)} وصفة، وكانت ${toArabicDigits(r.present)} موجودة، وتعذّر ${toArabicDigits(r.failed)}.` : "جدول الوصفات غير مُطبَّق بعد: لم يُحمَّل شيء.");
     } catch (e) {
       setSeedNote(e instanceof Error ? e.message : "تعذّر التحميل");
@@ -133,6 +138,18 @@ export default function PlannerSelfTestPage() {
           <button type="button" className={BTN} disabled={seeding} onClick={loadRecipes} data-testid="recipes-seed-button">{seeding ? "جارٍ التحميل…" : "تحميل الوصفات المثبتة"}</button>
           {seedNote ? <span className="text-[13px] text-ink" role="status">{seedNote}</span> : null}
         </div>
+        {seedItems.length > 0 ? (
+          <ul className="m-0 flex list-none flex-col gap-1 p-0 text-[12px]" data-testid="recipes-seed-items">
+            {seedItems.map((it) => (
+              <li key={it.slug} className="flex flex-col gap-0.5 rounded-lg border border-ln bg-bg px-3 py-2" data-testid={`seed-${it.state}`}>
+                <span className="font-medium text-ink">{it.title} — {SEED_STATE_AR[it.state]}{it.state === "inserted" && it.status ? ` (${it.status === "reviewed" ? "مراجَعة" : "مسودة"})` : ""}</span>
+                {it.reasonAr ? <span className="text-ink" data-testid="seed-reason">{it.reasonAr}</span> : null}
+                {it.noteAr ? <span className="text-ink2">{it.noteAr}</span> : null}
+                {it.error ? <span className="text-mut" dir="ltr">{it.error}</span> : null}
+              </li>
+            ))}
+          </ul>
+        ) : null}
       </section>
 
       {h ? (
