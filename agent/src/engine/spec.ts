@@ -1,6 +1,10 @@
 import type { EngineSpec, PricedPlan } from "../../../src/lib/agentMission/plan";
 import { proveMappedRows } from "../../../src/lib/agentMission/contract";
 import { CHILD_RAW_FILTER_KINDS, filterVerdict, findFilterFields, isEnabled, refitFilters, type StageFilter } from "../../../src/lib/agentMission/filters";
+import { alternativesOf, nameWords, unresolvedSources } from "../../../src/lib/agentMission/namedSources";
+import { onlyTimesAdded, withoutDayCut } from "../../../src/lib/agentMission/dateLoss";
+import { dateWindowOf } from "../../../src/lib/agentMission/dateWindow";
+import { placeAskedOfSource } from "../../../src/lib/agentMission/places";
 import type { TregCatalog } from "../../../src/lib/treg/catalog";
 import type { SandboxResult } from "../sandbox";
 import type { AgentStore, CallRow } from "../types";
@@ -57,7 +61,13 @@ function paramsOfCall(deps: DeriveDeps, callId: string): Record<string, unknown>
 }
 
 /** What the plan check gets from the proof: the recipes, the filters with their fields found from what the mapping really gives, and the CONTRACT issues (what the engine or the file needs that the mapping does not give): a plan with an issue is refused. */
-export interface DerivedSpecs { specs: Map<string, EngineSpec>; filters: Map<string, StageFilter[]>; issues: string[] }
+export interface DerivedSpecs {
+  specs: Map<string, EngineSpec>;
+  filters: Map<string, StageFilter[]>;
+  issues: string[];
+  /** The named sources (channels, pages, accounts the customer wrote) of a stage that no item of what the agent sampled belongs to: the card says so before approval. */
+  unresolved: Map<string, string[]>;
+}
 
 export async function deriveEngineSpecs(plan: PricedPlan, deps: DeriveDeps): Promise<Map<string, EngineSpec>> {
   return (await deriveEngineSpecsChecked(plan, deps)).specs;
@@ -67,8 +77,11 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
   const specs = new Map<string, EngineSpec>();
   const filtersOut = new Map<string, StageFilter[]>();
   const issues: string[] = [];
+  const unresolved = new Map<string, string[]>();
   const mappedRows = new Map<string, Array<Record<string, unknown>>>();
   for (const stage of plan.stages) {
+    // every row the agent really saw for this stage (the proven page, the other measuring calls mapped with the same code, the sample rows it listed): what a named source is looked for in
+    const seenRows: Array<Record<string, unknown>> = [...stage.sample_rows];
     let contractIssues: string[] | null = null;
     const endpoint = deps.catalog.byId.get(stage.endpoint_id);
     if (!endpoint) continue;
@@ -99,17 +112,44 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
       if (canon(againJson) !== canon(seenJson)) continue;
       // THE CONTRACT: the mapped items must give what the engine and the file need (an id or a key to derive one, every column the card promises, every field a promised filter reads). Checked on this very page, before approval.
       const label = `stage «${stage.key}»`;
-      const mapped = seenJson as Array<Record<string, unknown>>;
+      // THE SOURCE'S TIME IS KEPT: a mapping that cuts a timestamp to its day (`.toISOString().slice(0,10)`) is repaired, and the repair is proven on this very page (the same rows, only times added to days)
+      let mapCode = run.code;
+      let mapped = seenJson as Array<Record<string, unknown>>;
+      const uncut = withoutDayCut(run.code);
+      if (uncut) {
+        const fixed = await deps.sandbox(uncut, { [callId]: pageJson });
+        if (fixed.ok && fixed.resultJson !== null) {
+          try { const rows = JSON.parse(fixed.resultJson) as unknown; if (Array.isArray(rows) && rows.every(isRecord) && onlyTimesAdded(mapped, rows)) { mapCode = uncut; mapped = rows; } } catch { /* the mapping stays as it was */ }
+        }
+      }
       const mappedKeys = [...new Set(mapped.flatMap((r) => Object.keys(r)))];
       const fields = findFilterFields({ mappedKeys, columnKeys: stage.columns.map((c) => c.key), textColumns: stage.relevance?.text_columns, columnTitles: Object.fromEntries(stage.columns.map((c) => [c.key, c.title_ar])) });
       const refitAll = refitFilters(stage.filters ?? [], fields, mappedKeys, label);
       // the items of a child stage are raw: the language and the place are not offered on it (the customer's editor shows only what code applies)
-      const refit = { ...refitAll, filters: stage.parent_key === null ? refitAll.filters : refitAll.filters.filter((f) => !CHILD_RAW_FILTER_KINDS.includes(f.kind)) };
+      const refit = { ...refitAll, filters: (stage.parent_key === null ? refitAll.filters : refitAll.filters.filter((f) => !CHILD_RAW_FILTER_KINDS.includes(f.kind))).map((f) => (f.kind === "place" && (f.places?.length ?? 0) > 0 ? (placeAskedOfSource(f.places!, params) ? { ...f, by_source: true } : (({ by_source: _drop, ...rest }) => rest)(f)) : f)) };
       const proof = proveMappedRows({ rows: mapped, columnKeys: stage.columns.map((c) => c.key), textColumns: stage.relevance?.text_columns, filters: refit.filters, label });
       // THE PLACE THE CARD PROMISES must be provable on the measured page: at least one of its items carries evidence of it (else the plan promises a place no item of this source can show)
       const placeIssues = refit.filters.filter((f) => isEnabled(f) && f.kind === "place" && (f.places?.length ?? 0) > 0 && !mapped.some((r) => filterVerdict([f], r, { textKey: null, now: 0 }) === null)).map((f) => `${label}: the card promises items in ${(f.values ?? []).join("، ")}, but none of the ${mapped.length} items of the measured page carries evidence of it in a mapped field (${(f.fields ?? []).join(", ") || "none"}); map the country, city, address, website or phone field of every item, or sample a source that gives one`);
       const problems = [...refit.issues, ...proof.issues, ...placeIssues];
       if (problems.length > 0) { contractIssues = problems; continue; }
+      seenRows.push(...mapped);
+      // the other measuring calls of this stage, read with the same mapping (a named source may only show in one of them)
+      for (const otherId of stage.measured_by.filter((m) => /^call_\d{4,6}$/.test(m) && m !== callId)) {
+        const orow = deps.calls.find((c) => c.id === `${deps.missionId}:${otherId}`);
+        if (!orow || orow.endpoint_id !== stage.endpoint_id || orow.status !== "ok") continue;
+        try {
+          const other = await deps.store.getFile(deps.missionId, `raw/${otherId}.json`);
+          if (other === null) continue;
+          const again2 = await deps.sandbox(mapCode, { [callId]: JSON.parse(other) });
+          if (!again2.ok || again2.resultJson === null) continue;
+          const rows2 = JSON.parse(again2.resultJson) as unknown;
+          if (Array.isArray(rows2)) seenRows.push(...rows2.filter(isRecord));
+        } catch { /* a page the mapping cannot read adds nothing */ }
+      }
+      // A SINGLE RECORDED QUERY CANNOT SERVE SEVERAL NAMED SOURCES: a stage that must give items of three named channels, whose measuring call searched for one of them, would deliver that one only. Such a stage has no recipe: the model
+      // searches every named source (one search each) and the same checks keep only the named ones.
+      const named = refit.filters.find((f) => isEnabled(f) && f.kind === "account" && (f.values ?? []).length >= 2);
+      if (named && !namedSourcesInQuery(params, named.values ?? [])) continue;
       const cursorParam = (endpoint.pagination ?? []).find((p) => !LIMIT_INPUT.test(p)) ?? null;
       let binding: EngineSpec["parent_binding"] = null;
       if (stage.parent_key !== null) {
@@ -119,16 +159,33 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
         binding = found;
         delete params[found.param];
       }
-      specs.set(stage.key, { endpoint_id: stage.endpoint_id, params, cursor_param: cursorParam, map_code: run.code, map_file_id: callId, parent_binding: binding, ...(proof.idField !== "id" ? { id_field: proof.idField } : {}) });
+      const window = stage.parent_key === null ? dateWindowOf(endpoint, params) : null;
+      specs.set(stage.key, { endpoint_id: stage.endpoint_id, params, cursor_param: cursorParam, map_code: mapCode, map_file_id: callId, parent_binding: binding, ...(proof.idField !== "id" ? { id_field: proof.idField } : {}), ...(window ? { window } : {}) });
       filtersOut.set(stage.key, refit.filters);
-      mappedRows.set(stage.key, seenJson as Array<Record<string, unknown>>);
+      mappedRows.set(stage.key, mapped);
       contractIssues = null;
       break;
     }
     // a mapping that was proven to reproduce what the agent saw but breaks the contract is refused (never silently handed to the model: the customer would approve a card the file cannot match)
     if (contractIssues && !specs.has(stage.key)) issues.push(...contractIssues);
+    // THE NAMED SOURCES THE CUSTOMER WROTE must be found in what was sampled: one that no sampled item belongs to is told on the card before approval
+    const account = (filtersOut.get(stage.key) ?? stage.filters ?? []).find((f) => isEnabled(f) && f.kind === "account" && (f.values ?? []).length > 0);
+    if (account && stage.parent_key === null) {
+      const field = account.field;
+      const authors = field ? seenRows.map((r) => r[field]).filter((v) => v !== undefined && v !== null) : [];
+      const missing = unresolvedSources(account.values ?? [], authors);
+      if (missing.length > 0) unresolved.set(stage.key, missing);
+    }
   }
-  return { specs, filters: filtersOut, issues };
+  return { specs, filters: filtersOut, issues, unresolved };
+}
+
+/** True when the first-page inputs of the recorded query already name every named source (one query serves them all, as «from:a OR from:b» does), or when the inputs carry no free text to name them in. */
+export function namedSourcesInQuery(params: Record<string, unknown>, values: ReadonlyArray<string>): boolean {
+  const text = Object.values(params).filter((v): v is string => typeof v === "string").join(" ");
+  const have = new Set(nameWords(text));
+  if (have.size === 0) return true;
+  return values.every((v) => alternativesOf(v).some((alt) => { const need = nameWords(alt); return need.length > 0 && need.every((w) => have.has(w)); }));
 }
 
 /** Which input of the child's measuring call is a field of a parent row (a value that equals the parent's own id, or one of its columns)? Exactly one input may bind, and it must bind to one field: else no recipe. */

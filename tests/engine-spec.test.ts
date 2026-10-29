@@ -30,7 +30,7 @@ const deps = (store: ReturnType<typeof createMemoryStore>, over: Record<string, 
 describe("the recipe of a stage is proven before it is trusted", () => {
   it("the mapping the agent ran, run again on the page it was written for, gives the rows the agent saw: the stage gets a recipe", async () => {
     const specs = await deriveEngineSpecs(planOf(stage()), deps(await world(MAP, mapped)));
-    expect(specs.get("tweets")).toEqual({ endpoint_id: ENDPOINT, params: { query: "محمد صلاح", limit: 20 }, cursor_param: "cursor", map_code: MAP, map_file_id: "call_0001", parent_binding: null });
+    expect(specs.get("tweets")).toEqual({ endpoint_id: ENDPOINT, params: { query: "محمد صلاح", limit: 20 }, cursor_param: "cursor", map_code: MAP, map_file_id: "call_0001", parent_binding: null, window: { kind: "query_operators", param: "query" } });
   });
 
   it("a mapping of only the first rows of the page (the engine would deliver a fraction of each page) gets NO recipe: the model carries the mission out", async () => {

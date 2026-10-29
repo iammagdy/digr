@@ -47,7 +47,7 @@ export interface StoredItem {
 }
 
 export type Op =
-  | { t: "page"; stage: string; stream: string; call_id: string | null; cursor_in: string | null; cursor_next: string | null; has_more: boolean | null; ended: boolean; rows_in_page: number; /** Pages this record stands for (default 1: a source read by collect_pages writes one record for a whole call). */ pages?: number; /** The keys of the raw rows this record added to the stream (collect_pages: a later call returns only new rows). */ keys?: string[] }
+  | { t: "page"; stage: string; stream: string; call_id: string | null; cursor_in: string | null; cursor_next: string | null; has_more: boolean | null; ended: boolean; rows_in_page: number; /** Pages this record stands for (default 1: a source read by collect_pages writes one record for a whole call). */ pages?: number; /** The oldest moment (ms since 1970) among the source rows of this page, read from the stage's period field: where a read that walks back through date windows has got to. */ oldest_ms?: number; /** The keys of the raw rows this record added to the stream (collect_pages: a later call returns only new rows). */ keys?: string[] }
   | { t: "item"; stage: string; id: string; state: ItemState; by?: "rule" | "model" | "legacy"; basis?: RuleBasis; reason?: ItemReason; row: Row | null }
   | { t: "resolve"; stage: string; id: string; state: "accepted" | "excluded"; by?: "rule" | "model"; basis?: RuleBasis; reason?: ItemReason }
   | { t: "dup"; stage: string; n: number }
@@ -55,7 +55,7 @@ export type Op =
 
 export interface Segment { v: 1; seq: number; writer: string; at: string; ops: Op[] }
 
-export interface StreamState { cursor: string | null; ended: boolean; pages: number; rows: number; /** Consecutive pages that gave no new item. */ barren: number; /** Keys of the raw rows the stream has returned (collect_pages). */ seen: Set<string> }
+export interface StreamState { cursor: string | null; ended: boolean; pages: number; rows: number; /** Consecutive pages that gave no new item. */ barren: number; /** Keys of the raw rows the stream has returned (collect_pages). */ seen: Set<string>; /** The oldest moment of the source rows the stream has read (a stage read in date windows), or null. */ oldest: number | null }
 
 export interface StageLog {
   items: Map<string, StoredItem>;
@@ -100,8 +100,9 @@ function applyOp(logs: Map<string, StageLog>, op: Op): void {
       const n = op.pages === undefined ? 1 : Math.max(0, Math.floor(op.pages) || 0);
       log.pages += n;
       log.sourceRows += Math.max(0, Math.floor(op.rows_in_page) || 0);
-      const s = log.streams.get(op.stream) ?? { cursor: null, ended: false, pages: 0, rows: 0, barren: 0, seen: new Set<string>() };
+      const s = log.streams.get(op.stream) ?? { cursor: null, ended: false, pages: 0, rows: 0, barren: 0, seen: new Set<string>(), oldest: null };
       s.pages += n;
+      if (typeof op.oldest_ms === "number" && Number.isFinite(op.oldest_ms)) s.oldest = s.oldest === null ? op.oldest_ms : Math.min(s.oldest, op.oldest_ms);
       for (const k of op.keys ?? []) s.seen.add(k);
       s.rows += Math.max(0, Math.floor(op.rows_in_page) || 0);
       s.cursor = op.cursor_next;
@@ -304,6 +305,8 @@ export class ItemStore {
   pendingItems(key: string): StoredItem[] { return this.view().pendingItems(key); }
   uncheckedItems(key: string): StoredItem[] { return this.view().uncheckedItems(key); }
   streamState(stageKey: string, stream: string): StreamState | null { return this.logs.get(stageKey)?.streams.get(stream) ?? null; }
+  /** The streams of a stage in the order they were first read (the windows of a read that walks back through the period are «w:<day>» streams). */
+  streamKeys(stageKey: string): string[] { return [...(this.logs.get(stageKey)?.streams.keys() ?? [])]; }
   stopReason(stageKey: string): StopReason | null { return this.logs.get(stageKey)?.stop ?? null; }
   segmentCount(): number { return this.segments; }
   snapshotOfMemory(): ItemSnapshot { return this.view(); }

@@ -239,9 +239,10 @@ describe("the planner cannot pick a pricier source without a reason", () => {
 
   it("once the cheaper sources were tried (even if they failed) the dearer one needs no reason", async () => {
     const tried = cheaper();
-    const required = (id: string) => Object.fromEntries(catalog.byId.get(id).inputs.filter((i: any) => i.required).map((i: any) => [i.name, i.type === "number" || i.type === "integer" ? 5 : "قهوة"]));
-    const steps: FakeStep[] = tried.map((id) => ({ tool: "treg_call", args: { endpoint_id: id, params: { ...required(id), limit: 5 } } }));
-    const r = await plan([...steps, { tool: "treg_call", args: { endpoint_id: PRICIER, params: { query: "قهوة", max_results: 5 } } }], [...tried.map(() => tregResult({ output: { data: { items: [], nextCursor: null } } }, 0)), tregResult(postsPage(5), 0.025)]);
+    const required = (id: string, word = "قهوة") => Object.fromEntries(catalog.byId.get(id).inputs.filter((i: any) => i.required).map((i: any) => [i.name, i.type === "number" || i.type === "integer" ? 5 : word]));
+    // ONE empty answer is no verdict on a source far cheaper than the dearer one (fix mission 10): each cheaper source is asked with two different inputs, and then the dearer one needs no reason
+    const steps: FakeStep[] = tried.flatMap((id) => ["قهوة", "شاي"].map((word): FakeStep => ({ tool: "treg_call", args: { endpoint_id: id, params: { ...required(id, word), limit: 5 } } })));
+    const r = await plan([...steps, { tool: "treg_call", args: { endpoint_id: PRICIER, params: { query: "قهوة", max_results: 5 } } }], [...tried.flatMap(() => [0, 1].map(() => tregResult({ output: { data: { items: [], nextCursor: null } } }, 0))), tregResult(postsPage(5), 0.025)]);
     expect(r.results[r.results.length - 1].refused).toBeUndefined();
   });
 

@@ -71,6 +71,37 @@ const COUNTRIES: ReadonlyArray<Country> = [
   { code: "CA", labelAr: "كندا", names: ["كندا", "canada"], tlds: ["ca"], phone: "1" },
 ];
 
+/**
+ * THE DISTRICTS A SOURCE WRITES AS ITS «CITY» («mokattam», «El Agouza», «Sheikh Zayed Egypt»): each belongs to a city of the table (so it is evidence of the country) and has its own Arabic name, which is what the file's city cell says.
+ */
+const DISTRICTS: ReadonlyArray<{ city: string; labelAr: string; names: string[] }> = [
+  { city: "EG:cairo", labelAr: "المقطم", names: ["المقطم", "mokattam", "mokatam", "muqattam", "al mokattam"] },
+  { city: "EG:giza", labelAr: "العجوزة", names: ["العجوزة", "agouza", "el agouza", "al agouza", "ajouza"] },
+  { city: "EG:giza", labelAr: "الشيخ زايد", names: ["الشيخ زايد", "sheikh zayed", "sheikh zayed city", "sheikh zayed egypt", "el sheikh zayed", "elsheikh zayed", "shaikh zayed"] },
+  { city: "EG:cairo", labelAr: "القاهرة الجديدة", names: ["القاهرة الجديدة", "new cairo", "new cairo city", "al qahirah al jadidah", "التجمع الخامس", "fifth settlement", "5th settlement", "tagamoa", "tagamoa el khames"] },
+  { city: "EG:cairo", labelAr: "مدينة نصر", names: ["مدينة نصر", "nasr city", "madinat nasr"] },
+  { city: "EG:cairo", labelAr: "المعادي", names: ["المعادي", "maadi", "el maadi"] },
+  { city: "EG:cairo", labelAr: "مصر الجديدة", names: ["مصر الجديدة", "heliopolis", "masr el gedida"] },
+  { city: "EG:cairo", labelAr: "الزمالك", names: ["الزمالك", "zamalek", "el zamalek"] },
+  { city: "EG:giza", labelAr: "الدقي", names: ["الدقي", "dokki", "el dokki", "dokki giza"] },
+  { city: "EG:giza", labelAr: "المهندسين", names: ["المهندسين", "mohandessin", "mohandiseen", "el mohandessin"] },
+  { city: "EG:giza", labelAr: "مدينة ٦ أكتوبر", names: ["6 اكتوبر", "6 أكتوبر", "مدينة 6 اكتوبر", "6th of october", "6th october", "sixth of october", "october city", "6 october", "6th of october city"] },
+  { city: "EG:giza", labelAr: "الهرم", names: ["الهرم", "haram", "el haram", "al haram", "pyramids"] },
+  { city: "EG:cairo", labelAr: "الشروق", names: ["الشروق", "shorouk", "el shorouk", "al shorouk"] },
+  { city: "EG:cairo", labelAr: "العبور", names: ["العبور", "obour", "el obour", "al obour"] },
+  { city: "EG:cairo", labelAr: "الرحاب", names: ["الرحاب", "rehab", "el rehab", "al rehab"] },
+  { city: "EG:cairo", labelAr: "مدينتي", names: ["مدينتي", "madinaty"] },
+  { city: "EG:cairo", labelAr: "القطامية", names: ["القطامية", "katameya", "el katameya"] },
+  { city: "EG:cairo", labelAr: "وسط البلد", names: ["وسط البلد", "downtown cairo", "downtown", "wust el balad"] },
+  { city: "EG:cairo", labelAr: "شبرا", names: ["شبرا", "shubra", "shoubra"] },
+  { city: "EG:cairo", labelAr: "عين شمس", names: ["عين شمس", "ain shams"] },
+  { city: "EG:cairo", labelAr: "العباسية", names: ["العباسية", "abbasiya", "abbassia", "el abbasiya"] },
+  { city: "EG:giza", labelAr: "إمبابة", names: ["امبابة", "إمبابة", "imbaba", "embaba"] },
+  { city: "EG:giza", labelAr: "فيصل", names: ["فيصل", "faisal", "el faisal"] },
+  { city: "EG:cairo", labelAr: "جاردن سيتي", names: ["جاردن سيتي", "garden city"] },
+];
+for (const c of COUNTRIES) for (const city of c.cities ?? []) { const own = DISTRICTS.filter((d) => d.city === `${c.code}:${city.id}`); for (const d of own) for (const n of d.names) if (!city.names.includes(n)) city.names.push(n); }
+
 const ENTRIES: PlaceEntry[] = COUNTRIES.flatMap((c) => [
   { key: c.code, kind: "country" as const, country: c.code, labelAr: c.labelAr, names: c.names },
   ...(c.cities ?? []).map((city) => ({ key: `${c.code}:${city.id}`, kind: "city" as const, country: c.code, labelAr: city.labelAr, names: city.names })),
@@ -131,7 +162,7 @@ export type PlaceVerdict = "pass" | "other_place" | "no_evidence";
  * Does this mapped item carry evidence of one of the named places? A location text that names the place passes; one that names ANOTHER country fails (a Luxembourg company in an Egypt request) unless it also names the place; a website's
  * country suffix or an international phone prefix passes only when no location text says otherwise; no evidence at all fails.
  */
-export function placeVerdict(placeKeys: ReadonlyArray<string>, mapped: Record<string, unknown>, fields: ReadonlyArray<string>): PlaceVerdict {
+export function placeVerdict(placeKeys: ReadonlyArray<string>, mapped: Record<string, unknown>, fields: ReadonlyArray<string>, options: { bySource?: boolean } = {}): PlaceVerdict {
   const wanted = placeKeys.map((k) => byKey.get(k)).filter((e): e is PlaceEntry => Boolean(e));
   if (wanted.length === 0) return "no_evidence";
   const wantedCountries = new Set(wanted.map((e) => e.country));
@@ -159,14 +190,40 @@ export function placeVerdict(placeKeys: ReadonlyArray<string>, mapped: Record<st
     const iso = COUNTRY_FIELD_KEY.test(field) ? isoCountryOf(raw) : null;
     if (iso) { if (wantedWholeCountries.some((e) => e.country === iso)) textPositive = true; else if (!wantedCountries.has(iso)) textNegative = true; continue; }
     const text = normalizeText(raw);
-    if (wanted.some((e) => textHas(e, text))) { textPositive = true; continue; }
+    // a CITY of a wanted country is evidence of the country («Cairo», «Giza», «Sheikh Zayed» for «في مصر»); a wanted city is evidence of itself
+    if (wanted.some((e) => textHas(e, text)) || ENTRIES.some((e) => e.kind === "city" && wantedWholeCountries.some((w) => w.country === e.country) && textHas(e, text))) { textPositive = true; continue; }
     // another country (not one of the wanted ones) named in the text
     if (COUNTRIES.some((c) => !wantedCountries.has(c.code) && [byKey.get(c.code)!, ...ENTRIES.filter((e) => e.kind === "city" && e.country === c.code)].some((e) => textHas(e, text)))) textNegative = true;
   }
   if (textPositive) return "pass";
   if (textNegative) return "other_place";
   if (weakPositive) return "pass";
-  return weakNegative ? "other_place" : "no_evidence";
+  if (weakNegative) return "other_place";
+  // THE SOURCE WAS ASKED FOR THE PLACE (its own country filter, recorded with the measuring call): the item came back under that filter, and nothing in the item says otherwise. A source that gives no country field of its own is not left with a stage that delivers 33 of 842.
+  return options.bySource === true ? "pass" : "no_evidence";
+}
+
+/**
+ * Was the SOURCE itself asked for the place? True when a structured input of the recorded first-page call (a country, a location, a place, a region or a city filter, however deep) holds a value that names one of the places: an ISO code («EG»),
+ * a name («Egypt»), a city. A free-text search phrase is not a place filter and does not count.
+ */
+export function placeAskedOfSource(placeKeys: ReadonlyArray<string>, params: unknown): boolean {
+  const wanted = new Set(placeKeys.map((k) => byKey.get(k)).filter((e): e is PlaceEntry => Boolean(e)).map((e) => e.country));
+  if (wanted.size === 0) return false;
+  const geoKey = /country|location|place|region|city|geo|nation/i;
+  const walk = (value: unknown, underGeoKey: boolean, depth: number): boolean => {
+    if (depth > 6 || value === null || value === undefined) return false;
+    if (typeof value === "string") {
+      if (!underGeoKey) return false;
+      const iso = isoCountryOf(value);
+      if (iso && wanted.has(iso)) return true;
+      return placesInText(value).some((e) => wanted.has(e.country));
+    }
+    if (Array.isArray(value)) return value.some((v) => walk(v, underGeoKey, depth + 1));
+    if (typeof value === "object") return Object.entries(value as Record<string, unknown>).some(([k, v]) => walk(v, underGeoKey || geoKey.test(k), depth + 1));
+    return false;
+  };
+  return walk(params, false, 0);
 }
 
 /** The words of the request that name a place, as the card says them («مصر»), for the filter's sentence. */
@@ -191,8 +248,30 @@ export function exactPlaceLabelAr(value: unknown, kind: "country" | "city" | "re
   const n = normalizeText(raw).replace(/\b(?:governorate|city|province|state|region)\b/g, " ").replace(/(?:محافظه|مدينه|منطقه)\s/g, " ").replace(/\s+/g, " ").trim();
   if (!n) return null;
   const wantKind = kind === "country" ? "country" : "city";
-  const hit = ENTRIES.find((e) => e.kind === wantKind && e.names.some((name) => normalizeText(name) === n));
-  return hit ? hit.labelAr : null;
+  const variants = [n, ...(kind === "country" ? [] : [withoutCountryWord(n)])].filter((x, i, a) => x && a.indexOf(x) === i);
+  // the district's own Arabic name first («mokattam» → «المقطم»), then the city's
+  for (const v of variants) {
+    const district = kind === "country" ? undefined : DISTRICTS.find((d) => d.names.some((name) => normalizeText(name) === v));
+    if (district) return district.labelAr;
+    const hit = ENTRIES.find((e) => e.kind === wantKind && e.names.some((name) => normalizeText(name) === v));
+    if (hit) return hit.labelAr;
+  }
+  return null;
+}
+
+/** A source writes the country after the city («Sheikh Zayed Egypt», «القاهرة مصر», «Cairo, EG»): the country word is not part of the city. */
+const withoutCountryWord = (normalized: string): string => normalized.replace(/\b(?:egypt|eg|ksa|uae)\b/g, " ").replace(/(?:^|\s)(?:مصر|السعوديه|الامارات)(?=\s|$)/g, " ").replace(/\s+/g, " ").trim();
+
+/** WORDS THAT ARE NOT A PLACE: a source's cut or empty city value («Of», «the», «n/a», «-»). Never shown as a city. */
+const NOT_A_PLACE = new Set(["of", "the", "in", "at", "and", "for", "to", "el", "al", "de", "la", "n/a", "na", "none", "null", "unknown", "undefined", "nan", "tbd", "other", "others"]);
+/** True when a place cell holds nothing a reader could take for a place: a stop word, a fragment of one or two letters, only digits or marks. */
+export function isPlaceFragment(value: unknown): boolean {
+  const t = String(value ?? "").trim();
+  if (!t) return false;
+  const letters = t.replace(/[^\p{L}]/gu, "");
+  if (letters.length === 0) return true;
+  const n = normalizeText(t).replace(/[^\p{L}\p{N}/\s]/gu, "").trim();
+  return NOT_A_PLACE.has(n) || (letters.length <= 2 && /^[A-Za-z]+$/.test(letters));
 }
 
 /** Said in the file where the source did not say the city (never an empty cell when the card promised the place). */
@@ -207,7 +286,13 @@ export function placeCellsAr(row: Record<string, unknown>, columns: ReadonlyArra
     const kind = placeCellKind(col);
     if (!kind) continue;
     const value = String(row[col.key] ?? "").trim();
-    if (value) { const label = exactPlaceLabelAr(value, kind); if (label) row[col.key] = label; continue; }
+    if (value) {
+      const label = exactPlaceLabelAr(value, kind);
+      if (label) { row[col.key] = label; continue; }
+      // a fragment («Of») is not a place: the cell says the source did not state it (no invented city)
+      if (isPlaceFragment(value)) { row[col.key] = PLACE_NOT_STATED_AR; continue; }
+      continue;
+    }
     if (!promised) continue;
     if (kind === "country") {
       const countries = [...new Set(promised.places.map((k) => byKey.get(k)?.country).filter((c): c is string => Boolean(c)))];

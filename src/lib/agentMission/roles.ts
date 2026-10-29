@@ -78,3 +78,17 @@ export const roleLineAr = (role: RoleKey, parentNounSingularAr: string): string 
   const def = roleDefOf(role);
   return `نفضّل في كل ${parentNounSingularAr} من تدل مسمياتهم الوظيفية على أنهم ${def ? def.pluralAr : "المطلوبون"}؛ وإن لم يذكر المصدر عددًا كافيًا منهم يكتمل العدد من بقية موظفي ${parentNounSingularAr === "شركة" ? "الشركة" : `ال${parentNounSingularAr}`} بمسمياتهم كما ذكرها المصدر، ولا نضيف أي مسمى لم يذكره.`;
 };
+
+/**
+ * THE TITLE OF A PEOPLE STAGE DOES NOT PROMISE A ROLE THE STAGE DOES NOT FILTER. The customer's «اتنين من المديرين» only RANKS the people of each company by the job title the source gives (never excludes: when fewer match, the count is completed from
+ * the company's other people), so a stage title such as «موظفو الإدارة في كل شركة» (the live sheet, which held an accountant and a water-plant operator) would promise what the file does not hold. A title that names the role (or «الإدارة») is replaced by the
+ * plain one, «موظفو كل شركة»; the card's own line says the matching titles come first. A title that names no role is kept as it is.
+ */
+const ADMIN_STEM = ["ادار", "اداري"];
+export function neutralPeopleTitleAr(title: string, role: RoleKey, parentNounSingularAr: string): string {
+  const def = roleDefOf(role);
+  const n = normalizeText(title);
+  const claims = [...(def?.nounStems ?? []).filter((x) => /[\u0600-\u06ff]/.test(x)), ...(role === "manager" ? ADMIN_STEM : [])].map((x) => normalizeText(x));
+  if (!claims.some((c) => n.includes(c))) return title;
+  return `موظفو كل ${parentNounSingularAr || "عنصر"}`;
+}
