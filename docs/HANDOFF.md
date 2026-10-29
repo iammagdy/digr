@@ -4,6 +4,19 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-29, night): the five-mission live run (after #286)
+
+`main` before it was `3a3e6b0709b4b8cebe163cb3ac0d2645345be31f` (#286); its merge commit is the head of `main` after it. Details, evidence and the companies price breakdown: `docs/ENGINE_AND_ITEM_STORE.md` section 7. No SQL written or applied; no Edge Function changed; prices untouched.
+
+- **Four honest classes for a no-card end** (`refusal.ts`): needs a detail (one question with answers), unsupported, OUR planning failed (budget/limits/all sources failed: status `failed`, admin flag, «من جانبنا»), source truly empty (only after a real empty sample). The live Facebook request was our planning budget (three 5-post searches of one source), shown as «لم نجد ما يطابق» because a stored sentence with a digit is dropped; the planning now refuses a third sample of one source.
+- **Parents tell the truth**: card «حتى ١٠ فيديوهات», tracker and summary sheet «قُرئ ١٠، ومنها ٦ لها نتائج»; counts from the item store; no «صف»/«سجل» in file notes.
+- **One language rule**: the request's language is the default content language of every text stage (filter added by code, stated on the card, editable); shortfall says so.
+- **Download name**: one function on every route; a place request names the file after the place.
+- Open owner decision: the companies price (63 points per company, source `companyenrich` 0.0098 USD per company vs 0.00025 before): section 7 of the engine doc.
+- Rollback: `git revert -m 1 <merge commit>`.
+
+---
+
 ## START HERE (2026-10-29, evening): the delivered file of the live run (after #285)
 
 Written after the live run `msn_169c911fd8a0a5c89cf1` (67 of 300, charge 45, hold released: the count/charge core was right and is untouched). `main` before it was `8f9b2acfc4811c7a0411f9b851edb034811c5f71` (#285); its merge commit is the head of `main` after it. Details and root causes 1-7: `docs/ENGINE_AND_ITEM_STORE.md` section 6. No SQL was written or applied; no Edge Function changed.

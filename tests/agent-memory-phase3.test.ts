@@ -240,7 +240,7 @@ describe("a mission stopped for memory goes back to the queue instead of crashin
     const store = createMemoryStore();
     const money = fakeMoneyClient();
     const t = setup(store, money);
-    store.missions.set("msn_r3", newMission({ id: "msn_r3", user_id: USER_ID, request_text: "أريد منشورات عن القهوة مع تعليقاتها", status: "planning" }));
+    store.missions.set("msn_r3", newMission({ id: "msn_r3", user_id: USER_ID, request_text: "أريد منشورات عن القهوة مع تعليقاتها بكل اللغات", status: "planning" }));
     const queue = [tregResult(postsPage(5), 0.025), tregResult(commentsPage("9000", 12), 0.00144)];
     const call = vi.fn(async () => queue.shift()!);
     const rec = fakeRecorder();

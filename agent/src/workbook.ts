@@ -7,6 +7,8 @@ import { FILTER_REASON_LABEL_AR, type FilterReason } from "../../src/lib/agentMi
 import { cairoCellDate, cairoText, DATE_NUMBER_FORMAT, isDateValues, parseMoment } from "../../src/lib/agentMission/dateCells";
 import { isInternalColumn, type PricedPlan, type PricedStage } from "../../src/lib/agentMission/plan";
 import { deliveredOfAr, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
+import { formatAr } from "../../src/lib/arabicDigits";
+import { parentCountsOf } from "../../src/lib/agentMission/parents";
 
 type Row = Record<string, unknown>;
 
@@ -218,11 +220,22 @@ export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<st
   summary.columns = [{ width: 30 }, { width: 24 }, { width: 14 }, { width: 14 }, { width: 52 }];
   const sh = summary.addRow(["المرحلة", "الورقة", "العدد", "المتوقع", "ملاحظة"]);
   sh.eachCell((cell) => { cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: WHITE } }; cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } }; cell.alignment = { horizontal: "center", vertical: "middle" }; });
-  plan.stages.forEach((stage) => {
+  // THE TRUTH ABOUT A PARENT STAGE, from the items themselves: how many parents were read and how many of them have items in this file (never the number the plan allowed)
+  const parentCounts = parentCountsOf(plan, rowsByStage);
+  plan.stages.forEach((stage, index) => {
     const rows = (rowsByStage[stage.key] ?? []).length;
     const parent = stage.parent_key !== null ? plan.stages.find((p) => p.key === stage.parent_key) : undefined;
+    const child = plan.stages.find((c) => c.parent_key === stage.key && c.deliver);
     const sheetName = sheetNameOf.get(stage.key);
-    summary.addRow([stage.title_ar, sheetName ?? (stage.deliver ? "—" : "لم تُسلَّم (مرحلة وسيطة)"), rows, stage.planned_rows, parent ? `كل صف هنا تابع لصف في مرحلة «${parent.title_ar}»` : "لا ترتبط بمرحلة سابقة"]);
+    const read = parentCounts[`stage_${index + 1}_read`];
+    const used = parentCounts[`stage_${index + 1}_used`];
+    const link = parent ? `كل عنصر هنا تابع لعنصر في مرحلة «${parent.title_ar}»` : "لا ترتبط بمرحلة سابقة";
+    if (child && read !== undefined && !stage.deliver) {
+      // an intermediate stage is not in the file: it says what it read and how many of what it read have results in the file
+      summary.addRow([stage.title_ar, "لم تُسلَّم (مرحلة وسيطة)", `قُرئ ${formatAr(read)}، ومنها ${formatAr(used ?? 0)} لها نتائج في الملف`, `حتى ${formatAr(stage.planned_rows)}`, link]);
+    } else {
+      summary.addRow([stage.title_ar, sheetName ?? (stage.deliver ? "—" : "لم تُسلَّم (مرحلة وسيطة)"), rows, stage.planned_rows, child && used !== undefined ? `${link}؛ ومنها ${formatAr(used)} لها عناصر تابعة في الملف` : link]);
+    }
   });
   summary.addRow([]);
   // the one sentence about the delivery is built from the real counts (never from the agent's own words, which may name the requested number): «تم تسليم ٢٥٠ من ٣٠٠ تغريدة.»

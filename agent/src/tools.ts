@@ -39,7 +39,7 @@ export interface ToolSpec {
 export interface RunState {
   proposedPlan: PricedPlan | null;
   question: string | null;
-  finish: { outcome: "delivered" | "cannot_serve"; summary_ar: string } | null;
+  finish: { outcome: "delivered" | "cannot_serve"; summary_ar: string; /** What the model says is the reason of a cannot_serve: code checks the claim and decides the class. */ kind?: "unsupported" | "empty" } | null;
   outSeq: number;
   /** Set when the run has reached an end the model must stop at (a plan, a question, finish). */
   terminal: boolean;
@@ -526,6 +526,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       params: {
         outcome: { type: "string", description: "\"delivered\" or \"cannot_serve\"" },
         summary_ar: { type: "string", description: "The Arabic summary" },
+        kind: { type: "string", description: "Only for cannot_serve: \"unsupported\" (our sources cannot serve this request with the precision asked) or \"empty\" (a real sample call returned nothing for it). Code checks the claim against the calls that were made and writes the sentence the customer reads; do not claim \"empty\" when any call returned rows.", optional: true },
       },
       handler: async (a) => {
         const outcome = String(a.outcome ?? "");
@@ -555,7 +556,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           }
           if (short.length > 0 && more) for (const st of short) await items.exclusive(() => items.commit([{ t: "stop", stage: st.key, reason: "model_stopped" as StopReason }]));
         }
-        state.finish = { outcome, summary_ar: checked.text };
+        state.finish = { outcome, summary_ar: checked.text, ...(outcome === "cannot_serve" && (a.kind === "unsupported" || a.kind === "empty") ? { kind: a.kind as "unsupported" | "empty" } : {}) };
         state.terminal = true;
         return { ok: true, note: "recorded; stop now" };
       },

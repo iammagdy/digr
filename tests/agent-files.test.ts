@@ -58,7 +58,9 @@ describe("the files are readable first", () => {
     const s = wb.getWorksheet("ملخص المهمة")!;
     // (the old line had «الصفوف» as the third header: «صف» is a spreadsheet word, the customer's file says «العدد»)
     expect((s.getRow(1).values as unknown[]).slice(1)).toEqual(["المرحلة", "الورقة", "العدد", "المتوقع", "ملاحظة"]);
-    expect(s.getRow(3).getCell(5).value).toContain("تابع لصف في مرحلة «الشركات»");
+    // (the old line expected «تابع لصف في مرحلة «الشركات»»: «صف» is a spreadsheet word a file note never uses)
+    expect(s.getRow(3).getCell(5).value).toContain("تابع لعنصر في مرحلة «الشركات»");
+    expect(String(s.getRow(3).getCell(5).value)).not.toMatch(/صف|سجل/);
     // (the old line expected the agent's own sentence «ستحصل على شركات وموظفيها.»: the sentence about the delivery is now built from the real counts, so it can never name a number that differs from what was delivered)
     expect(String(s.getRow(5).getCell(1).value)).toMatch(/^تم تسليم \d|^تم تسليم [٠-٩]/);
   });

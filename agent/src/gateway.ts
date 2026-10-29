@@ -31,11 +31,13 @@ import type { AgentStore, CallPhase } from "./types";
 export const GATEWAY_CALL_TIMEOUT_MS = 90_000;
 export const GATEWAY_UNKNOWN_PRICE_ESTIMATE_USD = 0.01;
 export const GATEWAY_DEFAULT_PAGE_ROWS = 10;
+/** The most real sample calls the PLANNING may make to one source once it has given rows: the rest of the planning budget is for the other stages (a post search and its comments, a company search and its employees). */
+export const GATEWAY_MAX_SAMPLES_PER_SOURCE = 2;
 const LIMIT_PARAM_NAMES = ["limit", "count", "page_size", "per_page", "size", "num", "max_results", "maxItems", "max_items", "n", "Count", "pageSize", "perPage"];
 
 export type RefusalCode =
   | "not_sellable" | "blocked" | "sensitive_not_allowed" | "purpose_required" | "daily_limit" | "audit_unavailable"
-  | "missing_params" | "over_budget" | "daily_cap" | "recording_unavailable" | "needs_login";
+  | "missing_params" | "over_budget" | "daily_cap" | "recording_unavailable" | "needs_login" | "repeat_sample";
 
 export type GatewayCallResult =
   | { ok: true; call_id: string; http_status: number; rows_in_page: number; has_more: boolean | null; next_cursor: string | null; shape: unknown; first_rows: unknown[]; warnings: string[]; saved: string }
@@ -97,6 +99,7 @@ const REFUSAL_TEXT: Record<RefusalCode, string> = {
   over_budget: "the budget for source calls of this mission would be passed by this call, so it was NOT made; work with what is already saved or stop and explain honestly",
   daily_cap: "the provider's daily limit has no room for this call, so it was NOT made; stop and explain honestly",
   recording_unavailable: "the call could not be recorded, so it was NOT made; try once more, then stop and explain honestly",
+  repeat_sample: "this source was already sampled twice and gave rows both times: a third sample only spends the planning budget (the live Facebook request of 2026-10-29 spent it on three searches of one source and could not sample the next stage). Plan from the samples you have, or sample the OTHER stages and sources the plan still needs",
   needs_login: "this source refuses this kind of search without the customer's own login, so it was NOT called and cost nothing; sample the next source of the ranking",
 };
 
@@ -104,6 +107,8 @@ export function createGateway(deps: GatewayDeps) {
   const call = deps.call ?? executeTregCall;
   const commit = deps.commit ?? commitTregSpend;
   const spendField = deps.phase === "planning" ? "planning_treg_usd" : "execution_treg_usd";
+  /** Real calls per source that gave rows, in this run of the gateway (planning only). */
+  const samplesWithRows = new Map<string, number>();
 
   async function logCall(row: { id: string; endpoint_id: string; params: Record<string, unknown>; status: "ok" | "failed" | "empty" | "refused"; refused_reason?: string; http_status?: number; rows?: number; cost_usd?: number; estimate_usd?: number; provider_cost_id?: number | null; storage_path?: string | null; duration_ms?: number }) {
     await deps.store.addCall({
@@ -162,6 +167,8 @@ export function createGateway(deps: GatewayDeps) {
       // 5: the mission's USD budget
       const estimate = estimateCallUsd(endpoint, params, deps.catalog);
       if (!deps.budget.reserve(estimate)) return refuse(id, endpointId, trace, "over_budget", `${deps.phase}`);
+      // 5b: planning samples a source at most twice once it has given rows (the budget is shared by every stage of the plan); the reservation just taken is given back
+      if (deps.phase === "planning" && (samplesWithRows.get(endpointId) ?? 0) >= GATEWAY_MAX_SAMPLES_PER_SOURCE) { deps.budget.settle(estimate, 0); return refuse(id, endpointId, trace, "repeat_sample", "planning"); }
 
       // 6: the provider's daily cap, recorded BEFORE the call
       const capabilityId = tregCapabilityIdOf({ endpointId });
@@ -226,6 +233,7 @@ export function createGateway(deps: GatewayDeps) {
       const { digest, reading } = result.ok ? buildShapeDigest(result.data, endpoint) : { digest: null, reading: null };
       const rows = reading ? reading.rows.length : 0;
       const status = tregCallStatusOf({ ok: result.ok, rows: reading?.rows ?? [] });
+      if (result.ok && rows > 0) samplesWithRows.set(endpointId, (samplesWithRows.get(endpointId) ?? 0) + 1);
       await commit(deps.client, { costId: reservation.costId, costUsd: actualUsd, units: rows, capabilityId, status, durationMs, jobId: deps.jobId });
       // why a call failed is kept in the trace for the admin (the provider's own words, shortened): the model sees the same text in its answer
       const failure = result.ok ? null : clip(result.errorDetails || result.detail || result.error || "the source answered with an error", 160);

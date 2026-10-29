@@ -11,7 +11,7 @@ const mapped = [1, 2, 3, 4].map((n) => ({ id: `s${n}`, text: `محمد صلاح 
 const lookup: PlanLookup = {
   call: (id) => (id === "call_0001" ? { id, endpointId: "anyapi.x.search.posts", ok: true, costUsd: 0.00075, rows: 20, params: { query: "محمد صلاح" } } : null),
   evidenceText: (id) => (id === "out_0001" ? JSON.stringify(mapped) : `${JSON.stringify(mapped)} https://x.example/s/1 s1`),
-  endpointAllowed: () => true, requestText: "هات ٣٠٠ تغريدة عن محمد صلاح",
+  endpointAllowed: () => true, requestText: "هات ٣٠٠ تغريدة عن محمد صلاح بكل اللغات",
 };
 const plan = (): PricedPlan => {
   const r = validateAndPricePlan({ summary_ar: "ستحصل على تغريدات عن محمد صلاح مع نص كل تغريدة ورابطها.", stages: [{

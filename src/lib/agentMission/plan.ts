@@ -7,7 +7,7 @@ import { checkCustomerLabel, checkCustomerText } from "./text";
 import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type SourceField } from "./fields";
 import { bindQuantity, countedQuantities } from "./quantity";
 import { isTextItemStage, textKeyOf } from "./contract";
-import { assumptionLinesShown, filterLabelAr, filterLineAr, findFilterFields, isEnabled, parseFilters, promiseIssues, resolveFilters, type StageFilter } from "./filters";
+import { assumptionLinesShown, defaultLanguageOf, filterLabelAr, filterLineAr, findFilterFields, isEnabled, parseFilters, promiseIssues, resolveFilters, type StageFilter } from "./filters";
 
 /**
  * A mission PLAN: stages (a stage runs once per row of its parent stage), the rows each is expected to give, sample rows the agent really saw, and the calls that MEASURED the cost.
@@ -332,7 +332,12 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
     issues.push(...declared.issues);
     const mappedKeys = [...new Set([...(yieldRows ?? []).flatMap((r) => Object.keys(r)), ...samples.filter(isRecord).flatMap((r) => Object.keys(r))])];
     const fields = findFilterFields({ mappedKeys, columnKeys: cleanColumns.map((c) => c.key), textColumns: relevance?.text_columns, columnTitles: Object.fromEntries(cleanColumns.map((c) => [c.key, c.title_ar])) });
-    const resolved = resolveFilters(declared.filters, fields, label);
+    // THE ONE LANGUAGE RULE: the request's language is the default language of the items of every text stage (tweets, posts, comments, reviews); a language filter the plan already switched on is the plan's own choice
+    const requestLang = raw.deliver === true && isTextItemStage({ title_ar: title.text }) && (fields.lang || fields.text) ? defaultLanguageOf(lookup.requestText, lookup.answerText) : null;
+    const declaredWithLanguage = requestLang && !declared.filters.some((f) => f.kind === "language" && isEnabled(f))
+      ? [...declared.filters.filter((f) => f.kind !== "language"), { kind: "language" as const, lang: requestLang }]
+      : declared.filters;
+    const resolved = resolveFilters(declaredWithLanguage, fields, label);
     issues.push(...resolved.issues);
 
     priced.push({

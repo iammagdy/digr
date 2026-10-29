@@ -145,7 +145,7 @@ describe("EXECUTION with a fake model transcript: linked rows, settlement, files
     const store = createMemoryStore();
     const money = fakeMoneyClient();
     const t = setup(planningResponses(), store, money);
-    store.missions.set("msn_e1", newMission({ id: "msn_e1", user_id: USER_ID, request_text: "أريد منشورات عن القهوة مع تعليقاتها", status: "planning" }));
+    store.missions.set("msn_e1", newMission({ id: "msn_e1", user_id: USER_ID, request_text: "أريد منشورات عن القهوة مع تعليقاتها بكل اللغات", status: "planning" }));
     await runPlanning(t.deps(createFakeDriver(planningScript())), store.missions.get("msn_e1")!);
     const m = store.missions.get("msn_e1")!;
     expect(m.status).toBe("plan_ready");

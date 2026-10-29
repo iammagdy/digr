@@ -41,6 +41,12 @@ export function subjectOfMission(input: { plan: { stages: Array<{ deliver: boole
     const cut = m[1].split(/\s+(?:في|على|مع|من|خلال|بين|بعد)\s+/)[0].trim();
     if (cut) return cut;
   }
+  // a request about a PLACE or a business names it without «عن» («تقييمات من جوجل ماب لمطعم كشري أبو طارق في القاهرة»): the name starts at the kind of place
+  const place = /(?:^|\s)(?:ل|لل)?((?:مطعم|مطاعم|كافيه|مقهى|فندق|محل|صيدلية|عيادة|مستشفى|مدرسة|جامعة|مول|بنك|شركة|معرض|مصنع|نادي)\s[^،,.؟?!\n]{1,60})/.exec(String(input.requestText ?? ""));
+  if (place) {
+    const cut = place[1].split(/\s+(?:في|على|مع|من|خلال|بين|بعد|اللي|الذي)\s+/)[0].trim();
+    if (cut) return cut;
+  }
   return "";
 }
 

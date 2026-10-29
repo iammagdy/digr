@@ -11,6 +11,8 @@ import {
 import { executionBudgetUsd, reviewBudgetUsdFor, reviewCeilingUsdFor } from "../../src/lib/agentMission/price";
 import { MISSION_PRICING_SETTING_KEY, normalizeMissionPricingSettings } from "../../src/lib/missionPricing";
 import { planningBudgetUsd } from "../../src/lib/agentMission/budget";
+import { classifyNoCardEnd, refusalSentenceAr } from "../../src/lib/agentMission/refusal";
+import { parentCountsOf } from "../../src/lib/agentMission/parents";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
 import { customerPlanView, requestedRowsOf, type PricedPlan } from "../../src/lib/agentMission/plan";
 import { toArabicDigits } from "../../src/lib/arabicDigits";
@@ -134,8 +136,9 @@ async function recordTokens(deps: RunnerDeps, missionId: string, phase: 0 | 1, u
  * THE REPORT OF THE CHECK OF ITEMS: stored as an internal event per stage (found, new, duplicates, looked at, accepted by rule and on what basis, accepted by the model, left out per reason, still pending, never looked at, the review's
  * extension) and the excluded items as an admin-only CSV. Every number is read from the item store's snapshot. The customer's files never hold an excluded item. Never throws.
  */
-async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPlan, store: AgentStore, snap: ItemSnapshot): Promise<{ pending: number; stop: "budget" | "failed" | null }> {
+async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPlan, store: AgentStore, snap: ItemSnapshot): Promise<{ pending: number; stop: "budget" | "failed" | null; languageLeftOut: number }> {
   let pendingTotal = 0;
+  let languageLeftOut = 0;
   let stop: "budget" | "failed" | null = null;
   try {
     const review = await readReviewState(store, missionId);
@@ -147,6 +150,7 @@ async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPla
       const listed = [...snap.excludedItems(s.key), ...snap.pendingItems(s.key)].filter((it) => it.row && it.reason && (RELEVANCE_REASON_KEYS as readonly string[]).includes(it.reason)).map(asRow);
       if (listed.length > 0) excludedByStage[s.key] = listed;
       pendingTotal += c.pending;
+      if (s.deliver) languageLeftOut += c.excludedByReason.filter_language ?? 0;
       if (!s.relevance && !(s.filters ?? []).some(isEnabled)) continue;
       const counts: Record<string, number> = { chk_stage: i + 1, chk_examined: c.checked, chk_by_rule: c.acceptedByRule, chk_by_model: c.acceptedByModel, chk_excluded: c.excludedRelevance, chk_pending: c.pending, chk_review_extended: review.extended ? 1 : 0, chk_found: c.found, chk_new: c.new, chk_dup: c.duplicates, chk_unchecked: c.unchecked, chk_saved: c.saved };
       for (const [b, n] of Object.entries(c.acceptedByRuleBasis)) counts[`chk_rule_${b}`] = n ?? 0;
@@ -158,7 +162,7 @@ async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPla
   } catch (e) {
     deps.log?.(`checks_not_recorded ${missionId} ${shortMessage(e)}`);
   }
-  return { pending: pendingTotal, stop };
+  return { pending: pendingTotal, stop, languageLeftOut };
 }
 const RELEVANCE_REASON_KEYS = [...RELEVANCE_REASON_LIST, ...FILTER_REASONS] as const;
 /** True when a text carries a number (Latin or Arabic-Indic digits): a model note with one is dropped, so a count in a text always comes from the data. */
@@ -219,14 +223,23 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     deps.log?.(`plan_ready ${mission.id} ${JSON.stringify(customerPlanView(plan).price)}`);
   } else if (state.question) {
     await store.updateMission(mission.id, { ...base, status: "needs_input", question_ar: state.question });
-  } else if (state.finish) {
-    await store.updateMission(mission.id, { ...base, status: "unserved", summary_ar: state.finish.summary_ar });
-    await store.addEvent(mission.id, { kind: "result", message_ar: state.finish.summary_ar });
-    await tell(deps, mission, null, "unserved", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false });
   } else {
-    await store.updateMission(mission.id, { ...base, status: "failed", error: output.error ?? `the agent ended without a plan (${output.stop})` });
-    await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّر على الوكيل إعداد خطة لهذا الطلب؛ لم يُحجز أي رصيد." });
-    await tell(deps, mission, null, "failed", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false });
+    // NO CARD: exactly one of four honest classes, decided by code from what the planning really did (src/lib/agentMission/refusal.ts), never from the model's own words
+    const planningCalls = await store.listCalls(mission.id);
+    const verdict = classifyNoCardEnd({ claim: state.finish?.kind ?? (state.finish ? "unsupported" : null), endedWithoutAnswer: !state.finish, stop: output.error ? `${output.stop}: ${output.error}` : String(output.stop ?? ""), calls: planningCalls });
+    deps.log?.(`no_card ${mission.id} class=${verdict.cls} reason=${verdict.reason}`);
+    if (verdict.cls === "internal") {
+      // OUR failure: nothing was held; the admin is flagged (the mission's error and an internal event), the customer is told it was ours
+      await store.updateMission(mission.id, { ...base, status: "failed", summary_ar: refusalSentenceAr("internal"), error: `admin: planning_failed class=internal reason=${verdict.reason}${output.error ? ` detail=${output.error}` : ""}`.slice(0, 300) });
+      await store.addEvent(mission.id, { kind: "call", message_ar: "علامة للمشرف: تعذّر التخطيط من جانبنا.", counts: { adm_flag: 1 } });
+      await store.addEvent(mission.id, { kind: "result", message_ar: refusalSentenceAr("internal") });
+      await tell(deps, mission, null, "failed", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false, cause: "internal" });
+    } else {
+      const sentence = refusalSentenceAr(verdict.cls as "unsupported" | "empty_source");
+      await store.updateMission(mission.id, { ...base, status: "unserved", summary_ar: sentence });
+      await store.addEvent(mission.id, { kind: "result", message_ar: sentence });
+      await tell(deps, mission, null, "unserved", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false, ...(verdict.cls === "empty_source" ? { cause: "empty" as const } : {}) });
+    }
   }
 }
 
@@ -414,7 +427,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   if (internalStage) await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: أعطى المصدر عناصر ولم يُحفظ أي منها.", counts: { adm_flag: 1, adm_store: 0, adm_file: 0, adm_source_rows: snap.stage(internalStage.key).sourceRows } });
   // the rows of a stage as the customer receives them: a delivered stage's count in the FILE (its own sheet); a stage that is not delivered (an intermediate one) keeps the items saved
   const stageRowsOf = (s: PricedPlan["stages"][number]): number => (s.deliver ? (fileByStage ? fileByStage[s.key] ?? 0 : plan.stages.filter((x) => x.deliver).length === 1 ? delivered : rowsByStage[s.key].length) : rowsByStage[s.key].length);
-  await store.addEvent(mission.id, { kind: "result", message_ar: summary || (delivered > 0 ? "اكتملت المهمة." : "لم يُسلَّم أي شيء."), counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, stageRowsOf(s)])) } });
+  await store.addEvent(mission.id, { kind: "result", message_ar: summary || (delivered > 0 ? "اكتملت المهمة." : "لم يُسلَّم أي شيء."), counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, stageRowsOf(s)])), ...parentCountsOf(plan, rowsByStage) } });
   const noticeKind: MissionNoticeKind = internalStage ? "failed" : delivered <= 0 ? "unserved" : delivered < requested ? "partial" : "completed";
   await tell(deps, mission, jobId, noticeKind, { delivered, planned: requested, chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(internalStage ? { cause: "internal" as const } : {}), ...(delivered > 0 && delivered < target ? { shortfallClauseAr: shortfallClauseAr(shortStage ? snap.stage(shortStage.key).stop : null, checked) } : delivered > 0 && delivered < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
 }
