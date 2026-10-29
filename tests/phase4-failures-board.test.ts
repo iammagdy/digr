@@ -184,7 +184,7 @@ describe("the page and the navigation", () => {
   const page = readFileSync("src/app/admin/failures/page.tsx", "utf-8");
   it("is registered in the admin navigation as «لوحة الأعطال», and the page has the summary, the rows, the test toggle and a per-row retry that sends only that request", () => {
     expect(readFileSync("src/components/admin/icons.tsx", "utf-8")).toContain("لوحة الأعطال");
-    expect(readFileSync("src/components/admin/AdminShell.tsx", "utf-8")).toContain("failures");
+    expect(readFileSync("src/components/admin/nav.ts", "utf-8")).toContain("failures");
     expect(page).toContain("أعد التجربة");
     expect(page).toContain("/api/admin/failures/retry");
     expect(page).toContain("requestText");

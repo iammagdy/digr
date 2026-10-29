@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import { adminFetch } from "@/lib/adminApi";
 import { formatAr } from "@/lib/arabicDigits";
 import { useAdmin, type ProviderStatus } from "@/components/admin/AdminShell";
-import { ProviderTab } from "@/components/admin/ProviderTab";
+import { ProviderTab, type ProviderView } from "@/components/admin/ProviderTab";
+import { parseProvidersQuery, providersQuery, providerViews, type ProviderTabId } from "@/components/admin/providerViews";
+import { SubTabs } from "@/components/admin/ui";
 import { tint } from "@/components/admin/format";
 
 const LLM_P: Record<string, { label: string; modelEnv: string; defaultModel: string }> = {
@@ -26,11 +28,12 @@ function Switch({ on, onClick, label }: { on: boolean; onClick: () => void; labe
   );
 }
 
-type TabId = "treg" | "firecrawl" | "contextdev" | "anthropic";
+type TabId = ProviderTabId;
 
 export default function AdminProvidersPage() {
   const { providers: shellProviders, refresh, toast, isMobile } = useAdmin();
-  const [tab, setTab] = useState<TabId>("treg");
+  const [tab, setTabState] = useState<TabId>("treg");
+  const [view, setViewState] = useState<ProviderView>("status");
   const [p, setP] = useState<ProviderStatus | null>(shellProviders);
   const [confirm, setConfirm] = useState<"llm" | "treg" | null>(null);
   const [model, setModel] = useState("");
@@ -40,6 +43,14 @@ export default function AdminProvidersPage() {
 
   const load = () => adminFetch<ProviderStatus>("/api/admin/providers").then((r) => { setP(r); setModel(r.llm.model); setTregUrl(r.treg.baseUrl); });
   useEffect(() => { load().catch(() => {}); }, []);
+
+  // The address keeps the open provider and view (`?p=treg&v=keys`), so a refresh or a shared link lands on the same short view.
+  useEffect(() => { const r = parseProvidersQuery(window.location.search); setTabState(r.tab); setViewState(r.view); }, []);
+  const open = (t: TabId, v: ProviderView) => {
+    setTabState(t); setViewState(v);
+    try { window.history.replaceState(null, "", `${window.location.pathname}${providersQuery(t, v)}`); } catch { /* address bar not writable */ }
+  };
+  const setTab = (t: TabId) => open(t, "status");
 
   /** Non-secret switches and settings only. Keys never travel here: they use the validated, encrypted key store. */
   const save = async (updates: Array<{ key: string; value: string }>, done: string) => {
@@ -138,20 +149,24 @@ export default function AdminProvidersPage() {
 
   const tabs: Array<[TabId, string]> = [["treg", "TREG: مزود البيانات"], ["firecrawl", "Firecrawl: مزود قراءة المواقع"], ["contextdev", "Context.dev: مزود البحث والقراءة"], ["anthropic", "مزود النموذج الذكي"]];
 
+  const viewsFor = providerViews(tab);
+  const panel = (t: TabId) => t === "treg"
+    ? <ProviderTab key="treg" provider="treg" view={view} onChanged={refresh}>{tregControls}</ProviderTab>
+    : t === "firecrawl" || t === "contextdev"
+    ? <ProviderTab key={t} provider={t} view={view} onChanged={refresh} />
+    : <ProviderTab key="anthropic" provider="anthropic" view={view} onChanged={refresh}>{llmControls}</ProviderTab>;
+
   return (
-    <div data-screen-label="Providers" className="flex flex-col gap-3.5" style={{ maxWidth: isMobile ? undefined : 860 }}>
+    <div data-screen-label="Providers" className="flex flex-col gap-3.5" style={{ maxWidth: isMobile ? undefined : 1000 }}>
       <div role="tablist" aria-label="مزودو الخدمة" className="grid grid-cols-2 gap-1 rounded-[14px] bg-sf2 p-1 sm:grid-cols-4">
         {tabs.map(([id, label]) => (
           <button key={id} id={`tab-${id}`} type="button" role="tab" aria-selected={tab === id} aria-controls={`panel-${id}`} onClick={() => setTab(id)}
             className="min-h-[46px] cursor-pointer rounded-[10px] border-0 text-[13px] font-semibold" style={{ background: tab === id ? "var(--sf)" : "transparent", color: tab === id ? "var(--ink)" : "var(--mut)", boxShadow: tab === id ? "0 1px 3px rgba(0,0,0,.08)" : "none" }}>{label}</button>
         ))}
       </div>
+      <SubTabs label="أقسام المزود" value={view} items={viewsFor} onChange={(v) => open(tab, v)} />
       <div id={`panel-${tab}`} role="tabpanel" aria-labelledby={`tab-${tab}`}>
-        {tab === "treg"
-          ? <ProviderTab key="treg" provider="treg" onChanged={refresh}>{tregControls}</ProviderTab>
-          : tab === "firecrawl" || tab === "contextdev"
-          ? <ProviderTab key={tab} provider={tab} onChanged={refresh} />
-          : <ProviderTab key="anthropic" provider="anthropic" onChanged={refresh}>{llmControls}</ProviderTab>}
+        {panel(tab)}
       </div>
     </div>
   );

@@ -12,6 +12,8 @@ import { TregKeyPool } from "./TregKeyPool";
 import type { ActivityJobRow } from "@/lib/server/adminCallsLog";
 
 type Provider = "treg" | "anthropic" | "firecrawl" | "contextdev";
+/** The short views of one provider; without `view` every section is shown (the old single long page). */
+export type ProviderView = "status" | "keys" | "limits" | "calls";
 /** The providers that collect data (the model provider has no call log of this kind). */
 const isDataProvider = (p: Provider): p is "treg" | "firecrawl" | "contextdev" => p !== "anthropic";
 /** Providers that sell credits: the balance is the provider's own credit count, not dollars. */
@@ -65,7 +67,7 @@ function Spinner() {
   return <span className="inline-block h-3.5 w-3.5 rounded-full border-2 border-ln2 border-t-ink" style={{ animation: "spin .8s linear infinite" }} />;
 }
 
-export function ProviderTab({ provider, onChanged, children }: { provider: Provider; onChanged?: () => void; children?: ReactNode }) {
+export function ProviderTab({ provider, view, onChanged, children }: { provider: Provider; view?: ProviderView; onChanged?: () => void; children?: ReactNode }) {
   const [state, setState] = useState<ProviderTabState | null>(null);
   const [activityJobs, setActivityJobs] = useState<ActivityJobRow[]>([]);
   const [error, setError] = useState("");
@@ -114,6 +116,7 @@ export function ProviderTab({ provider, onChanged, children }: { provider: Provi
   const healthColor = h.ok ? "var(--ok)" : "var(--bad)";
   const capPct = state.spend.capUsd ? Math.min(100, (state.spend.todayUsd / state.spend.capUsd) * 100) : 0;
   const canReplace = state.store.ready && state.encryptionConfigured;
+  const show = (v: ProviderView) => !view || view === v;
 
   return (
     <div className="flex flex-col gap-3.5">
@@ -121,6 +124,7 @@ export function ProviderTab({ provider, onChanged, children }: { provider: Provi
         <p key={n} role="status" className="m-0 rounded-[14px] px-3.5 py-3 text-[13px] leading-[1.8] text-ink" style={{ background: tint("var(--gold)", 14) }}>{n}</p>
       ))}
 
+      {show("status") && <>
       {/* Real status: an authenticated call, not a flag */}
       <section className={SECTION} aria-label="حالة الاتصال الحقيقية">
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -200,15 +204,16 @@ export function ProviderTab({ provider, onChanged, children }: { provider: Provi
         <p className="m-0 text-[11px] text-fnt">مسجّل من جدول التكاليف الداخلي للمنصة (قراءة فقط)، وليس رصيد المزود.</p>
       </section>
 
-      <ProviderLimitsPanel provider={provider} balanceUsd={provider === "treg" && b.available && typeof b.balanceUsd === "number" ? b.balanceUsd : null} onSaved={() => { void load(true); onChanged?.(); }} />
-
       {children}
+      </>}
+
+      {show("limits") && <ProviderLimitsPanel provider={provider} balanceUsd={provider === "treg" && b.available && typeof b.balanceUsd === "number" ? b.balanceUsd : null} onSaved={() => { void load(true); onChanged?.(); }} />}
 
       {/* The TREG key pool (docs/proposals/treg-key-pool): many keys, one active, a fallback chain ending at the main key; OFF until the admin turns it on */}
-      {provider === "treg" && <TregKeyPool />}
+      {show("keys") && provider === "treg" && <TregKeyPool />}
 
       {/* Key management: masked only, validated before saving, one-step rollback */}
-      <section className={SECTION} aria-label="المفتاح">
+      {show("keys") && <section className={SECTION} aria-label="المفتاح">
         <h3 className="m-0 text-[15px] font-semibold text-ink">مفتاح الوصول</h3>
         {provider === "treg" && <p className="m-0 text-[11px] leading-[1.7] text-fnt">هذا هو المفتاح الذي تستخدمه المنصة عندما يكون المجمّع أعلاه مغلقًا، ومنه يُنسخ المفتاح الرئيسي عند اعتماده.</p>}
         <div className="flex min-h-[46px] items-center gap-2 rounded-xl border border-ln bg-sf ps-3.5 pe-3.5">
@@ -239,25 +244,25 @@ export function ProviderTab({ provider, onChanged, children }: { provider: Provi
         )}
         {msg && <p role="status" aria-live="polite" className="m-0 text-[13px] leading-[1.8]" style={{ color: msg.ok ? "var(--ok)" : "var(--bad)" }}>{msg.text}</p>}
         <p className="m-0 text-[11px] leading-[1.7] text-fnt">المفتاح لا يُعرض كاملًا أبدًا؛ تظهر آخر ٤ خانات فقط. يُحفظ مشفّرًا ويسري على كل الخوادم خلال ٣٠ ثانية على الأكثر بلا إعادة نشر.</p>
-      </section>
+      </section>}
 
-      <section className={SECTION} aria-label="آخر النشاط">
+      {show("calls") && <section className={SECTION} aria-label="آخر النشاط">
         <h3 className="m-0 text-[15px] font-semibold text-ink">آخر النشاط (٢٠ سجلًا)</h3>
         <p className="m-0 text-[11px] text-fnt">التكلفة بالدولار{provider === "anthropic" ? "، والتوكنات: دخل / خرج" : ""}.</p>
         {state.activity.length === 0 ? <p className="m-0 text-[13px] text-mut">لا يوجد نشاط مسجّل بعد.</p> : (
-          <div className="overflow-x-auto">
-            <table className="w-full table-fixed border-collapse text-[11px]">
-              <thead><tr className="text-mut">{(isDataProvider(provider) ? ["الوقت", "المهمة", "الوحدات", "التكلفة"] : ["الوقت", "السبب", "التوكنات", "التكلفة"]).map((c) => <th key={c} className="border-b border-ln py-2 text-right font-medium">{c}</th>)}</tr></thead>
+          <div className="rtable-wrap">
+            <table className="rtable w-full table-fixed border-collapse text-[11px]">
+              <thead><tr className="text-mut">{(isDataProvider(provider) ? ["الوقت", "المهمة", "الوحدات", "التكلفة"] : ["الوقت", "السبب", "التوكنات", "التكلفة"]).map((c) => <th key={c} scope="col" className="border-b border-ln py-2 text-start font-medium">{c}</th>)}</tr></thead>
               <tbody>
                 {state.activity.map((r, i) => (
-                  <tr key={i} className="text-ink"><td className="border-b border-ln py-2">{agoAr(r.at)}</td><td className="break-words border-b border-ln py-2">{isDataProvider(provider) && activityJobs[i]?.jobId && activityJobs[i].at === r.at ? <JobCell info={activityJobs[i]} /> : r.label}</td><td className="border-b border-ln py-2">{toArabicDigits(r.detail)}</td><td className="border-b border-ln py-2" dir="ltr">{toArabicDigits(Number(r.amount).toFixed(6).replace(/\.?0+$/, "") || "0")}</td></tr>
+                  <tr key={i} className="text-ink"><td data-label="الوقت" className="border-b border-ln py-2">{agoAr(r.at)}</td><td data-label={isDataProvider(provider) ? "المهمة" : "السبب"} className="break-words border-b border-ln py-2">{isDataProvider(provider) && activityJobs[i]?.jobId && activityJobs[i].at === r.at ? <JobCell info={activityJobs[i]} /> : r.label}</td><td data-label={isDataProvider(provider) ? "الوحدات" : "التوكنات"} className="border-b border-ln py-2">{toArabicDigits(r.detail)}</td><td data-label="التكلفة" className="border-b border-ln py-2" dir="ltr">{toArabicDigits(Number(r.amount).toFixed(6).replace(/\.?0+$/, "") || "0")}</td></tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
-      </section>
-      {isDataProvider(provider) && <ProviderCallLog provider={provider} />}
+      </section>}
+      {show("calls") && isDataProvider(provider) && <ProviderCallLog provider={provider} />}
     </div>
   );
 }
