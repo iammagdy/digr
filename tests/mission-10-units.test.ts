@@ -81,6 +81,9 @@ describe("the time of a timestamp is not cut to a day by a mapping", () => {
     expect(onlyTimesAdded(before, [{ id: "1", date: "2026-10-29T17:21:03.000Z", n: 2 }])).toBe(false);
     expect(onlyTimesAdded(before, before)).toBe(false);
     expect(onlyTimesAdded(before, [])).toBe(false);
+    // a day computed from «20 hours ago» becomes midnight when the cut goes: that time was never in the source, so the cut stays (the live YouTube mapping)
+    expect(onlyTimesAdded(before, [{ id: "1", date: "2026-10-29T00:00:00.000Z", n: 1 }])).toBe(false);
+    expect(onlyTimesAdded([{ id: "1", date: "2026-10-29" }, { id: "2", date: "2026-10-28" }], [{ id: "1", date: "2026-10-29T00:00:00.000Z" }, { id: "2", date: "2026-10-28T09:15:00.000Z" }])).toBe(true);
   });
 });
 

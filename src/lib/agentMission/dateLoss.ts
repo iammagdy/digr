@@ -27,15 +27,17 @@ const DAY_AND_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/;
 export function onlyTimesAdded(before: ReadonlyArray<Record<string, unknown>>, after: ReadonlyArray<Record<string, unknown>>): boolean {
   if (before.length !== after.length || before.length === 0) return false;
   let added = 0;
+  let withTime = 0;
   for (let i = 0; i < before.length; i += 1) {
     const keys = new Set([...Object.keys(before[i]), ...Object.keys(after[i])]);
     for (const k of keys) {
       const a = before[i][k];
       const b = after[i][k];
       if (JSON.stringify(a) === JSON.stringify(b)) continue;
-      if (typeof a === "string" && typeof b === "string" && DAY.test(a) && DAY_AND_TIME.test(b) && b.startsWith(a)) { added += 1; continue; }
+      if (typeof a === "string" && typeof b === "string" && DAY.test(a) && DAY_AND_TIME.test(b) && b.startsWith(a)) { added += 1; if (!/T00:00(?::00(?:\.0+)?)?(?:Z|[+-]00:?00)?$/.test(b)) withTime += 1; continue; }
       return false;
     }
   }
-  return added > 0;
+  // a time that is midnight on every row was never in the source (a day computed from «20 hours ago» is a day, not a moment): the cut is kept, never a made-up time of day
+  return added > 0 && withTime * 2 >= added;
 }
