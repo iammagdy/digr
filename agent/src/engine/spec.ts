@@ -1,9 +1,12 @@
 import type { EngineSpec, PricedPlan } from "../../../src/lib/agentMission/plan";
 import { proveMappedRows } from "../../../src/lib/agentMission/contract";
 import { CHILD_RAW_FILTER_KINDS, filterVerdict, findFilterFields, isEnabled, refitFilters, type StageFilter } from "../../../src/lib/agentMission/filters";
-import { alternativesOf, nameWords, unresolvedSources } from "../../../src/lib/agentMission/namedSources";
+import { alternativesOf, nameWords, sourceNameMatches, unresolvedSources } from "../../../src/lib/agentMission/namedSources";
 import { onlyTimesAdded, withoutDayCut } from "../../../src/lib/agentMission/dateLoss";
 import { dateWindowOf } from "../../../src/lib/agentMission/dateWindow";
+import { isListingEndpoint } from "../../../src/lib/agentMission/namedRoutes";
+import { looksLikeDateColumn } from "../../../src/lib/agentMission/dateCells";
+import { isRelativeAge } from "../../../src/lib/agentMission/relativeDates";
 import { placeAskedOfSource } from "../../../src/lib/agentMission/places";
 import type { TregCatalog } from "../../../src/lib/treg/catalog";
 import type { SandboxResult } from "../sandbox";
@@ -67,6 +70,8 @@ export interface DerivedSpecs {
   issues: string[];
   /** The named sources (channels, pages, accounts the customer wrote) of a stage that no item of what the agent sampled belongs to: the card says so before approval. */
   unresolved: Map<string, string[]>;
+  /** The date columns of a stage in which the source gives only a relative time («قبل ٣ أيام»): the dates are approximate and the card says so. */
+  approx: Map<string, string[]>;
 }
 
 export async function deriveEngineSpecs(plan: PricedPlan, deps: DeriveDeps): Promise<Map<string, EngineSpec>> {
@@ -78,6 +83,7 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
   const filtersOut = new Map<string, StageFilter[]>();
   const issues: string[] = [];
   const unresolved = new Map<string, string[]>();
+  const approx = new Map<string, string[]>();
   const mappedRows = new Map<string, Array<Record<string, unknown>>>();
   for (const stage of plan.stages) {
     // every row the agent really saw for this stage (the proven page, the other measuring calls mapped with the same code, the sample rows it listed): what a named source is looked for in
@@ -133,6 +139,8 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
       const problems = [...refit.issues, ...proof.issues, ...placeIssues];
       if (problems.length > 0) { contractIssues = problems; continue; }
       seenRows.push(...mapped);
+      // every measured page of this stage, mapped with the same code, with the inputs it was read with (a named source may be the one a given page shows)
+      const pages: MeasuredPage[] = [{ id: callId, params, rows: mapped }];
       // the other measuring calls of this stage, read with the same mapping (a named source may only show in one of them)
       for (const otherId of stage.measured_by.filter((m) => /^call_\d{4,6}$/.test(m) && m !== callId)) {
         const orow = deps.calls.find((c) => c.id === `${deps.missionId}:${otherId}`);
@@ -143,14 +151,29 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
           const again2 = await deps.sandbox(mapCode, { [callId]: JSON.parse(other) });
           if (!again2.ok || again2.resultJson === null) continue;
           const rows2 = JSON.parse(again2.resultJson) as unknown;
-          if (Array.isArray(rows2)) seenRows.push(...rows2.filter(isRecord));
+          if (Array.isArray(rows2)) {
+            seenRows.push(...rows2.filter(isRecord));
+            const p2 = paramsOfCall(deps, otherId);
+            if (p2) pages.push({ id: otherId, params: p2, rows: rows2.filter(isRecord) });
+          }
         } catch { /* a page the mapping cannot read adds nothing */ }
       }
       // A SINGLE RECORDED QUERY CANNOT SERVE SEVERAL NAMED SOURCES: a stage that must give items of three named channels, whose measuring call searched for one of them, would deliver that one only. Such a stage has no recipe: the model
       // searches every named source (one search each) and the same checks keep only the named ones.
       const named = refit.filters.find((f) => isEnabled(f) && f.kind === "account" && (f.values ?? []).length >= 2);
-      if (named && !namedSourcesInQuery(params, named.values ?? [])) continue;
       const cursorParam = (endpoint.pagination ?? []).find((p) => !LIMIT_INPUT.test(p)) ?? null;
+      // ...unless every named source was read by a measuring call of its own (its own query, or the source's own listing of its items): the engine then reads each of them in turn, each up to its share
+      let sources: EngineSpec["sources"] | undefined;
+      const listing = stage.parent_key === null && isListingEndpoint(endpoint);
+      if (named && !namedSourcesInQuery(params, named.values ?? [])) {
+        const perSource = sourcesFromPages(named, pages, cursorParam, listing);
+        if (!perSource) continue;
+        sources = perSource;
+      } else if (listing && stage.parent_key === null) {
+        // ONE named source read by its own listing (a channel's videos): the engine reads it as that source, so items with no author of their own belong to it
+        const one = refit.filters.find((f) => isEnabled(f) && f.kind === "account" && (f.values ?? []).length === 1);
+        if (one) sources = [{ names: [one.values![0]], params }];
+      }
       let binding: EngineSpec["parent_binding"] = null;
       if (stage.parent_key !== null) {
         const parentRows = [...(mappedRows.get(stage.parent_key) ?? []), ...(plan.stages.find((s) => s.key === stage.parent_key)?.sample_rows ?? [])];
@@ -159,8 +182,8 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
         binding = found;
         delete params[found.param];
       }
-      const window = stage.parent_key === null ? dateWindowOf(endpoint, params) : null;
-      specs.set(stage.key, { endpoint_id: stage.endpoint_id, params, cursor_param: cursorParam, map_code: mapCode, map_file_id: callId, parent_binding: binding, ...(proof.idField !== "id" ? { id_field: proof.idField } : {}), ...(window ? { window } : {}) });
+      const window = stage.parent_key === null && !sources ? dateWindowOf(endpoint, params) : null;
+      specs.set(stage.key, { endpoint_id: stage.endpoint_id, params, cursor_param: cursorParam, map_code: mapCode, map_file_id: callId, parent_binding: binding, ...(proof.idField !== "id" ? { id_field: proof.idField } : {}), ...(window ? { window } : {}), ...(sources ? { sources } : {}), ...(sources && listing ? { source_listing: true } : {}) });
       filtersOut.set(stage.key, refit.filters);
       mappedRows.set(stage.key, mapped);
       contractIssues = null;
@@ -168,16 +191,57 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
     }
     // a mapping that was proven to reproduce what the agent saw but breaks the contract is refused (never silently handed to the model: the customer would approve a card the file cannot match)
     if (contractIssues && !specs.has(stage.key)) issues.push(...contractIssues);
+    // THE SOURCE GIVES ONLY A RELATIVE TIME («قبل ٣ أيام») in a date column: the dates of the file are approximate, and the card says so before approval
+    const relativeColumns = stage.columns.filter((c) => looksLikeDateColumn(c.title_ar, c.key) && seenRows.some((r) => isRelativeAge(r[c.key]))).map((c) => c.key);
+    if (relativeColumns.length > 0) approx.set(stage.key, relativeColumns);
     // THE NAMED SOURCES THE CUSTOMER WROTE must be found in what was sampled: one that no sampled item belongs to is told on the card before approval
     const account = (filtersOut.get(stage.key) ?? stage.filters ?? []).find((f) => isEnabled(f) && f.kind === "account" && (f.values ?? []).length > 0);
     if (account && stage.parent_key === null) {
-      const field = account.field;
-      const authors = field ? seenRows.map((r) => r[field]).filter((v) => v !== undefined && v !== null) : [];
-      const missing = unresolvedSources(account.values ?? [], authors);
+      const authorFields = [account.field, ...(account.fields ?? [])].filter((k): k is string => typeof k === "string");
+      const authors = authorFields.flatMap((field) => seenRows.map((r) => r[field])).filter((v) => v !== undefined && v !== null);
+      // a source read by its own listing (a channel's videos) is found by the very call that listed it, though the listing's items name no author
+      const listed = isListingEndpoint(endpoint) ? new Set(specs.get(stage.key)?.sources?.flatMap((e) => e.names) ?? []) : new Set<string>();
+      const missing = unresolvedSources(account.values ?? [], authors).filter((v) => !listed.has(v));
       if (missing.length > 0) unresolved.set(stage.key, missing);
     }
   }
-  return { specs, filters: filtersOut, issues, unresolved };
+  return { specs, filters: filtersOut, issues, unresolved, approx };
+}
+
+interface MeasuredPage { id: string; params: Record<string, unknown>; rows: Array<Record<string, unknown>> }
+
+/** True when none of the rows names its author in any of the fields (a source's own listing gives the items of one source and no author). */
+const authorless = (rows: ReadonlyArray<Record<string, unknown>>, fields: ReadonlyArray<string>): boolean => rows.length > 0 && rows.every((r) => fields.every((f) => !String(r[f] ?? "").trim()));
+
+/**
+ * THE INPUTS THAT READ EACH NAMED SOURCE. For every source the customer named, the measured page that SHOWS items of it (the one with the most of them): its inputs are that source's first-page inputs. The planner may also DECLARE the call that read a source
+ * (`calls`, in the order of the values): trusted when the page's items do not contradict it (a page whose items name an author that is none of the named source is not that source's listing; a page that names no author at all, a source's own listing, is). A page read from
+ * a later position (a cursor was set) is never a first page. One page that shows several named sources serves them all (they share one entry); an entry of ONE name reads that source's own listing, so its items with no author belong to it. Null when a named source is read
+ * by no measured page: the stage has no recipe, and the model carries it out.
+ */
+export function sourcesFromPages(named: StageFilter, pages: ReadonlyArray<MeasuredPage>, cursorParam: string | null, listing = false): Array<{ names: string[]; params: Record<string, unknown> }> | null {
+  const fields = [named.field, ...(named.fields ?? [])].filter((k): k is string => typeof k === "string");
+  const first = (p: MeasuredPage) => !(cursorParam && p.params[cursorParam] !== undefined && p.params[cursorParam] !== "" && p.params[cursorParam] !== null);
+  const entries = new Map<string, { names: string[]; params: Record<string, unknown> }>();
+  (named.values ?? []).forEach((value, k) => {
+    let chosen: MeasuredPage | null = null;
+    const declared = named.calls?.[k] ? pages.find((p) => p.id === named.calls![k]) : undefined;
+    if (declared && first(declared) && (declared.rows.some((r) => fields.some((f) => sourceNameMatches(value, r[f]))) || (listing && authorless(declared.rows, fields)))) chosen = declared;
+    if (!chosen) {
+      let bestN = 0;
+      for (const p of pages) {
+        if (!first(p)) continue;
+        const n = p.rows.filter((r) => fields.some((f) => sourceNameMatches(value, r[f]))).length;
+        if (n > bestN) { chosen = p; bestN = n; }
+      }
+    }
+    if (!chosen) return;
+    const key = canon(chosen.params);
+    const entry = entries.get(key);
+    if (entry) entry.names.push(value); else entries.set(key, { names: [value], params: chosen.params });
+  });
+  const served = new Set([...entries.values()].flatMap((e) => e.names));
+  return (named.values ?? []).every((v) => served.has(v)) ? [...entries.values()] : null;
 }
 
 /** True when the first-page inputs of the recorded query already name every named source (one query serves them all, as «from:a OR from:b» does), or when the inputs carry no free text to name them in. */

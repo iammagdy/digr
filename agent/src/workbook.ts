@@ -6,6 +6,7 @@ import { requestedRowsOf } from "../../src/lib/agentMission/plan";
 import { FILTER_REASON_LABEL_AR, type FilterReason } from "../../src/lib/agentMission/filters";
 import { cairoCellDate, cairoText, DATE_NUMBER_FORMAT, DATE_ONLY_NUMBER_FORMAT, dateOnlyCellDate, dateOnlyText, isDateValues, parseDateOnly, parseMoment } from "../../src/lib/agentMission/dateCells";
 import { reconcileParentColumns, type ParentColumnFix } from "../../src/lib/agentMission/parentColumns";
+import { APPROX_DATES_NOTE_AR, APPROX_DATE_NUMBER_FORMAT, APPROX_WORD_AR, approxColumnsOf } from "../../src/lib/agentMission/relativeDates";
 import { isInternalColumn, type PricedPlan, type PricedStage } from "../../src/lib/agentMission/plan";
 import { deliveredOfAr, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
 import { formatAr } from "../../src/lib/arabicDigits";
@@ -143,13 +144,14 @@ export function buildExcludedAdminCsv(plan: PricedPlan, excludedByStage: Record<
 }
 
 /** What the first sheet's closing note may say about the file: only what the file really has. */
-export interface WorkbookFacts { sheets: number; hasParentColumn: boolean; parentLinked: boolean; hasDateColumn: boolean }
+export interface WorkbookFacts { sheets: number; hasParentColumn: boolean; parentLinked: boolean; hasDateColumn: boolean; /** Some date of the file was computed from a relative time the source gave («قبل ٣ أيام»). */ hasApproxDates?: boolean }
 
 /** The closing note of the summary sheet, built from the sheets and columns the file REALLY has: a link between sheets is described only when a parent column and its target sheet exist; the time zone only when a date column exists. */
 export function workbookNoteAr(f: WorkbookFacts): string {
   const where = f.sheets > 1 ? "كل ورقة" : "الورقة";
   const parts = [`الأعمدة الأولى في ${where} مقروءة؛ وفي آخرها «${ID_HEADER_AR}»${f.hasParentColumn ? ` و«${PARENT_HEADER_AR}»` : ""}${f.sheets > 1 && f.hasParentColumn ? " للربط بين الأوراق" : ""}${f.parentLinked ? ` (اضغط على «${PARENT_HEADER_AR}» للانتقال إلى صفّه)` : ""}.`];
   if (f.hasDateColumn) parts.push("التواريخ والأوقات بتوقيت القاهرة.");
+  if (f.hasApproxDates) parts.push(APPROX_DATES_NOTE_AR);
   return parts.join(" ");
 }
 
@@ -166,6 +168,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   // where each row's id cell is, so a parent id can link to it
   const idCell = new Map<string, Map<string, string>>();
   let hasDateColumn = false;
+  let hasApproxDates = false;
 
   for (const lay of layouts) sheetNameOf.set(lay.stage.key, wordBoundarySheetName(lay.stage.title_ar, used, `مرحلة ${lay.stageIndex + 1}`));
 
@@ -198,7 +201,13 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
         if (dateAt[k]) {
           // a date with no time stays a date (no time of day, no zone shift); only a real timestamp is written in Cairo time
           const day = parseDateOnly(v);
-          if (day) { cellFormat[k] = DATE_ONLY_NUMBER_FORMAT; return dateOnlyCellDate(day); }
+          if (day) {
+            // a date computed from a relative time the source gave («قبل ٣ أيام») is written with the word «تقريبًا» before it
+            const approx = c.key !== undefined && approxColumnsOf(record).includes(c.key);
+            if (approx) hasApproxDates = true;
+            cellFormat[k] = approx ? APPROX_DATE_NUMBER_FORMAT : DATE_ONLY_NUMBER_FORMAT;
+            return dateOnlyCellDate(day);
+          }
           const moment = parseMoment(v);
           if (moment) { cellFormat[k] = DATE_NUMBER_FORMAT; return cairoCellDate(moment); }
         }
@@ -276,7 +285,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   intro.height = 32;
   intro.font = { name: "Calibri", size: 11, bold: true };
   const parentLinked = layouts.some((l) => l.hasParent && sheetNameOf.has(l.stage.parent_key!) && (idCell.get(l.stage.parent_key!)?.size ?? 0) > 0);
-  const note = summary.addRow([workbookNoteAr({ sheets: layouts.length, hasParentColumn: layouts.some((l) => l.hasParent), parentLinked, hasDateColumn })]);
+  const note = summary.addRow([workbookNoteAr({ sheets: layouts.length, hasParentColumn: layouts.some((l) => l.hasParent), parentLinked, hasDateColumn, hasApproxDates })]);
   summary.mergeCells(note.number, 1, note.number, 5);
   note.alignment = { wrapText: true, readingOrder: "rtl" as any };
   note.height = 34;
@@ -291,7 +300,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
     const parentByIdRow = new Map((rowsByStage[last.stage.parent_key ?? ""] ?? []).map((r) => [text(r.id), r]));
     lines.push([...last.columns.map((c) => c.title), ID_HEADER_AR, ...(last.hasParent ? [PARENT_HEADER_AR] : [])].map(esc).join(","));
     const lastDates = last.columns.map((c) => isDateValues(c.title, c.key, last.rows.map((r) => c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null))));
-    for (const r of last.rows) lines.push([...last.columns.map((c, k) => { const v = c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null); if (lastDates[k]) { const day = parseDateOnly(v); if (day) return dateOnlyText(day); const moment = parseMoment(v); if (moment) return cairoText(moment); } return v; }), r.id, ...(last.hasParent ? [r.parent_id] : [])].map(esc).join(","));
+    for (const r of last.rows) lines.push([...last.columns.map((c, k) => { const v = c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null); if (lastDates[k]) { const day = parseDateOnly(v); if (day) return approxColumnsOf(r).includes(c.key ?? "") ? `${dateOnlyText(day)} (${APPROX_WORD_AR})` : dateOnlyText(day); const moment = parseMoment(v); if (moment) return cairoText(moment); } return v; }), r.id, ...(last.hasParent ? [r.parent_id] : [])].map(esc).join(","));
   }
   return { xlsx, csv: `﻿${lines.join("\r\n")}`, parentFixes: reconciled.fixes };
 }

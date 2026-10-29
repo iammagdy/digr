@@ -11,6 +11,7 @@ import { endpointCostUsd, isSellable, type CatalogEndpoint, type TregCatalog } f
 import { categoryOf, policyVerdict, type AccountAccess } from "../../src/lib/treg/dataPolicy";
 import { AGENT_FIRST_ROWS, AGENT_PLANNING_STAGE_RESERVE_SHARE } from "../../src/lib/agentMission/constants";
 import { sessionRestriction } from "../../src/lib/agentMission/sources";
+import { isListingEndpoint, sourceInputOf } from "../../src/lib/agentMission/namedRoutes";
 import type { AgentStore, CallPhase } from "./types";
 
 /**
@@ -33,6 +34,8 @@ export const GATEWAY_UNKNOWN_PRICE_ESTIMATE_USD = 0.01;
 export const GATEWAY_DEFAULT_PAGE_ROWS = 10;
 /** The most real sample calls the PLANNING may make to one source once it has given rows: the rest of the planning budget is for the other stages (a post search and its comments, a company search and its employees). */
 export const GATEWAY_MAX_SAMPLES_PER_SOURCE = 2;
+/** A source that lists the items of ONE named source (a channel's videos, an account's posts) is sampled once per named source: each new source value is a sample of its own (the live YouTube request named three channels and the third search of one source was refused), up to this many samples of the endpoint, and at most twice per source value. */
+export const GATEWAY_MAX_NAMED_SOURCE_SAMPLES = 8;
 const LIMIT_PARAM_NAMES = ["limit", "count", "page_size", "per_page", "size", "num", "max_results", "maxItems", "max_items", "n", "Count", "pageSize", "perPage"];
 
 export type RefusalCode =
@@ -112,6 +115,7 @@ export function createGateway(deps: GatewayDeps) {
   const spendField = deps.phase === "planning" ? "planning_treg_usd" : "execution_treg_usd";
   /** Real calls per source that gave rows, in this run of the gateway (planning only). */
   const samplesWithRows = new Map<string, number>();
+  const samplesBySource = new Map<string, number>();
   /** The jobs (capabilities) that have given rows in this run: a stage is «sampled» once its job has. */
   const sampledJobs = new Set<string>();
 
@@ -182,7 +186,10 @@ export function createGateway(deps: GatewayDeps) {
       }
 
       // 5b: planning samples a source at most twice once it has given rows (the budget is shared by every stage of the plan); the reservation just taken is given back
-      if (deps.phase === "planning" && (samplesWithRows.get(endpointId) ?? 0) >= GATEWAY_MAX_SAMPLES_PER_SOURCE) { deps.budget.settle(estimate, 0); return refuse(id, endpointId, trace, "repeat_sample", "planning"); }
+      const sourceKey = deps.phase === "planning" && isListingEndpoint(endpoint) ? `${endpointId}|${String(params[sourceInputOf(endpoint) ?? ""] ?? "").trim().toLowerCase()}` : null;
+      const sampled = samplesWithRows.get(endpointId) ?? 0;
+      const repeated = sourceKey !== null ? (samplesBySource.get(sourceKey) ?? 0) >= GATEWAY_MAX_SAMPLES_PER_SOURCE || sampled >= GATEWAY_MAX_NAMED_SOURCE_SAMPLES : sampled >= GATEWAY_MAX_SAMPLES_PER_SOURCE;
+      if (deps.phase === "planning" && repeated) { deps.budget.settle(estimate, 0); return refuse(id, endpointId, trace, "repeat_sample", "planning"); }
 
       // 6: the provider's daily cap, recorded BEFORE the call
       const capabilityId = tregCapabilityIdOf({ endpointId });
@@ -247,7 +254,7 @@ export function createGateway(deps: GatewayDeps) {
       const { digest, reading } = result.ok ? buildShapeDigest(result.data, endpoint) : { digest: null, reading: null };
       const rows = reading ? reading.rows.length : 0;
       const status = tregCallStatusOf({ ok: result.ok, rows: reading?.rows ?? [] });
-      if (result.ok && rows > 0) { samplesWithRows.set(endpointId, (samplesWithRows.get(endpointId) ?? 0) + 1); sampledJobs.add(endpoint.capability ?? endpointId); }
+      if (result.ok && rows > 0) { samplesWithRows.set(endpointId, (samplesWithRows.get(endpointId) ?? 0) + 1); if (sourceKey !== null) samplesBySource.set(sourceKey, (samplesBySource.get(sourceKey) ?? 0) + 1); sampledJobs.add(endpoint.capability ?? endpointId); }
       await commit(deps.client, { costId: reservation.costId, costUsd: actualUsd, units: rows, capabilityId, status, durationMs, jobId: deps.jobId, ...(result.keyRef ? { keyRef: result.keyRef } : {}) });
       // why a call failed is kept in the trace for the admin (the provider's own words, shortened): the model sees the same text in its answer
       const failure = result.ok ? null : clip(result.errorDetails || result.detail || result.error || "the source answered with an error", 160);

@@ -56,8 +56,15 @@ const COUNTRIES: ReadonlyArray<Country> = [
   { code: "SD", labelAr: "السودان", names: ["السودان", "sudan"], tlds: ["sd"], phone: "249" },
   { code: "YE", labelAr: "اليمن", names: ["اليمن", "yemen"], tlds: ["ye"], phone: "967" },
   { code: "TR", labelAr: "تركيا", names: ["تركيا", "turkey", "turkiye", "اسطنبول", "إسطنبول", "istanbul", "انقرة", "أنقرة", "ankara"], tlds: ["tr"], phone: "90" },
-  { code: "US", labelAr: "أمريكا", names: ["امريكا", "أمريكا", "الولايات المتحده", "الولايات المتحدة", "united states", "usa", "u.s.", "us", "new york", "نيويورك"], tlds: ["us"], phone: "1" },
-  { code: "GB", labelAr: "بريطانيا", names: ["بريطانيا", "المملكة المتحدة", "united kingdom", "uk", "england", "london", "لندن"], tlds: ["uk", "gb"], phone: "44" },
+  { code: "US", labelAr: "أمريكا", names: ["امريكا", "أمريكا", "الولايات المتحده", "الولايات المتحدة", "united states", "usa", "u.s.", "us", "new york", "نيويورك"], tlds: ["us"], phone: "1", cities: [
+    { id: "miami", labelAr: "ميامي", names: ["ميامي", "miami"] }, { id: "seattle", labelAr: "سياتل", names: ["سياتل", "seattle"] }, { id: "houston", labelAr: "هيوستن", names: ["هيوستن", "houston"] }, { id: "chicago", labelAr: "شيكاغو", names: ["شيكاغو", "chicago"] },
+    { id: "losangeles", labelAr: "لوس أنجلوس", names: ["لوس انجلوس", "لوس أنجلوس", "los angeles"] }, { id: "sanfrancisco", labelAr: "سان فرانسيسكو", names: ["سان فرانسيسكو", "san francisco"] }, { id: "boston", labelAr: "بوسطن", names: ["بوسطن", "boston"] },
+    { id: "dallas", labelAr: "دالاس", names: ["دالاس", "dallas"] }, { id: "atlanta", labelAr: "أتلانتا", names: ["اتلانتا", "أتلانتا", "atlanta"] }, { id: "sandiego", labelAr: "سان دييغو", names: ["سان دييغو", "san diego"] }, { id: "lasvegas", labelAr: "لاس فيغاس", names: ["لاس فيغاس", "las vegas"] },
+    { id: "denver", labelAr: "دنفر", names: ["دنفر", "denver"] }, { id: "phoenix", labelAr: "فينيكس", names: ["فينيكس", "phoenix"] }, { id: "philadelphia", labelAr: "فيلادلفيا", names: ["فيلادلفيا", "philadelphia"] },
+  ] },
+  { code: "GB", labelAr: "بريطانيا", names: ["بريطانيا", "المملكة المتحدة", "united kingdom", "uk", "england", "london", "لندن"], tlds: ["uk", "gb"], phone: "44", cities: [
+    { id: "manchester", labelAr: "مانشستر", names: ["مانشستر", "manchester"] }, { id: "birmingham", labelAr: "برمنغهام", names: ["برمنجهام", "برمنغهام", "birmingham"] }, { id: "glasgow", labelAr: "غلاسكو", names: ["غلاسكو", "glasgow"] },
+  ] },
   { code: "DE", labelAr: "ألمانيا", names: ["المانيا", "ألمانيا", "germany", "deutschland"], tlds: ["de"], phone: "49" },
   { code: "FR", labelAr: "فرنسا", names: ["فرنسا", "france", "paris", "باريس"], tlds: ["fr"], phone: "33" },
   { code: "LU", labelAr: "لوكسمبورغ", names: ["لوكسمبورج", "لوكسمبورغ", "luxembourg", "luxemburg"], tlds: ["lu"], phone: "352" },
@@ -92,7 +99,11 @@ const DISTRICTS: ReadonlyArray<{ city: string; labelAr: string; names: string[] 
   { city: "EG:cairo", labelAr: "الرحاب", names: ["الرحاب", "rehab", "el rehab", "al rehab"] },
   { city: "EG:cairo", labelAr: "مدينتي", names: ["مدينتي", "madinaty"] },
   { city: "EG:cairo", labelAr: "القطامية", names: ["القطامية", "katameya", "el katameya"] },
-  { city: "EG:cairo", labelAr: "وسط البلد", names: ["وسط البلد", "downtown cairo", "downtown", "wust el balad"] },
+  { city: "EG:cairo", labelAr: "وسط البلد", names: ["وسط البلد", "downtown cairo", "downtown", "down town", "down town cairo", "wust el balad", "wast el balad"] },
+  { city: "EG:cairo", labelAr: "زهراء المعادي", names: ["زهراء المعادي", "zahraa el maadi", "zahraa al maadi", "zahraa maadi", "zahraa elmaadi", "zahraa el-maadi"] },
+  { city: "EG:cairo", labelAr: "التجمع الأول", names: ["التجمع الأول", "first new cairo", "1st new cairo", "first settlement", "1st settlement", "first new cairo city"] },
+  { city: "EG:cairo", labelAr: "التجمع الثاني", names: ["التجمع الثاني", "second new cairo", "2nd new cairo", "second settlement", "2nd settlement"] },
+  { city: "EG:cairo", labelAr: "التجمع الثالث", names: ["التجمع الثالث", "third new cairo", "3rd new cairo", "third settlement", "3rd settlement"] },
   { city: "EG:cairo", labelAr: "شبرا", names: ["شبرا", "shubra", "shoubra"] },
   { city: "EG:cairo", labelAr: "عين شمس", names: ["عين شمس", "ain shams"] },
   { city: "EG:cairo", labelAr: "العباسية", names: ["العباسية", "abbasiya", "abbassia", "el abbasiya"] },
@@ -245,10 +256,12 @@ export function exactPlaceLabelAr(value: unknown, kind: "country" | "city" | "re
   const raw = String(value ?? "").trim();
   if (!raw || raw.length > 60) return null;
   if (kind === "country") { const iso = isoCountryOf(raw); if (iso) return countryOf.get(iso)!.labelAr; }
-  const n = normalizeText(raw).replace(/\b(?:governorate|city|province|state|region)\b/g, " ").replace(/(?:محافظه|مدينه|منطقه)\s/g, " ").replace(/\s+/g, " ").trim();
+  const full = normalizeText(raw).replace(/\s+/g, " ").trim();
+  const n = full.replace(/\b(?:governorate|city|province|state|region)\b/g, " ").replace(/(?:محافظه|مدينه|منطقه)\s/g, " ").replace(/\s+/g, " ").trim();
   if (!n) return null;
   const wantKind = kind === "country" ? "country" : "city";
-  const variants = [n, ...(kind === "country" ? [] : [withoutCountryWord(n)])].filter((x, i, a) => x && a.indexOf(x) === i);
+  // a district's own name may contain the generic word («Nasr City», «Sheikh Zayed City»): the whole text is tried first, then without the generic words and without a country word after the city
+  const variants = (kind === "country" ? [n] : [full, withoutCountryWord(full), n, withoutCountryWord(n)]).filter((x, i, a) => x && a.indexOf(x) === i);
   // the district's own Arabic name first («mokattam» → «المقطم»), then the city's
   for (const v of variants) {
     const district = kind === "country" ? undefined : DISTRICTS.find((d) => d.names.some((name) => normalizeText(name) === v));

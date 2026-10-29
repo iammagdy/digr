@@ -4,6 +4,7 @@ import { governmentVerdict, excludesGovernment, EXCLUDES_GOVERNMENT } from "./go
 import { isPlaceEvidenceKey, placeVerdict } from "./places";
 import { matchesAnyNamedSource } from "./namedSources";
 import { normalizeText } from "./relevance";
+import { parseRelativeAge, rangeOverlaps } from "./relativeDates";
 
 /**
  * EVERY PROMISE OF THE PLAN CARD IS A CHECK IN CODE. The card says «دون الردود»، «باللغة العربية فقط»، «آخر ٣٠ يومًا»، «من حسابات محددة»، «في القاهرة»: each of those is a typed FILTER on the stage that code applies to every mapped item BEFORE it is saved
@@ -26,12 +27,14 @@ export interface StageFilter {
   /** period: an explicit range (ISO dates). */
   from?: string;
   to?: string;
-  /** account: the usernames; place: the place words (one of them must appear in the field). */
+  /** account: the usernames, channel or page names; place: the place words (one of them must appear in the field). For an account the check reads `field` AND every other field of `fields` (a channel's handle and its display name are both its name). */
   values?: string[];
   /** place: the countries and cities (places.ts keys) the words name, filled by code. With them the check reads EVIDENCE of the place from every mapped field in `fields` (country, city, address, website domain, phone prefix). */
   places?: string[];
   /** place: the mapped fields that can carry evidence of a place, found by code from the mapping. */
   fields?: string[];
+  /** account: for each of `values`, in the same order, the id of the saved call that read THAT named source (its own channel, page or account listing). Optional; code checks it against the call's own items and trusts it only when they do not contradict it. */
+  calls?: string[];
   /** place: the source itself was asked for the place (its own country or location input, recorded with the measuring call): an item that carries no evidence against it passes. Set by code. */
   by_source?: boolean;
 }
@@ -90,6 +93,8 @@ export function parseFilters(input: unknown, label: string): { filters: StageFil
       const values = Array.isArray(raw.values) ? raw.values.map((v) => String(v ?? "").trim()).filter(Boolean) : [];
       if (values.length < 1 || values.length > MAX_VALUES) { issues.push(`${label}: filter «${kind}» needs values (1 to ${MAX_VALUES})`); continue; }
       f.values = values;
+      // the call that read each named source, in the order of the values (a list of saved-call ids of the same length, or nothing)
+      if (kind === "account" && Array.isArray(raw.calls) && raw.calls.length === values.length && raw.calls.every((c) => typeof c === "string" && /^call_\d{4,6}$/.test(c))) f.calls = raw.calls.map(String);
     }
     filters.push(f);
   }
@@ -133,6 +138,8 @@ export interface FilterContext {
   textKey: string | null;
   /** «Now» for a period counted in days. */
   now: number;
+  /** The stage reads the source's OWN LISTING (a channel's videos, an account's posts): an item that gives no author at all belongs to the source asked for, so the account filter does not reject it for lacking a name. */
+  listing?: boolean;
 }
 
 /** Characters that show nothing: zero-width and direction marks, the byte-order mark, the non-breaking space. A text that «starts with» a handle may have any of them in front of it. */
@@ -175,18 +182,26 @@ export function filterVerdict(filters: ReadonlyArray<StageFilter> | undefined, m
         break;
       }
       case "period": {
-        const moment = f.field ? parseMoment(mapped[f.field]) : null;
-        if (!moment) return "filter_period";
-        const t = moment.getTime();
+        const value = f.field ? mapped[f.field] : undefined;
+        const moment = parseMoment(value);
         const from = f.days !== undefined ? ctx.now - f.days * 86_400_000 : f.from ? Date.parse(`${f.from}T00:00:00Z`) : Number.NEGATIVE_INFINITY;
         const to = f.days !== undefined ? Number.POSITIVE_INFINITY : f.to ? Date.parse(`${f.to}T23:59:59Z`) : Number.POSITIVE_INFINITY;
+        if (!moment) {
+          // A SOURCE THAT GIVES ONLY A RELATIVE TIME («قبل ٤ أيام», «4 days ago»): the item stands for a RANGE of moments, and it is accepted when that range overlaps the period (relativeDates.ts); any other value has no moment
+          const age = parseRelativeAge(value, ctx.now);
+          if (!age || !rangeOverlaps(age, from, to)) return "filter_period";
+          break;
+        }
+        const t = moment.getTime();
         if (t < from || t > to) return "filter_period";
         break;
       }
       case "account": {
         // the named source of the customer (a channel, a page, an account): the name the source gives for the author matches it (namedSources.ts: the same name, or every word of it), not only the exact handle
-        const who = f.field ? String(mapped[f.field] ?? "").trim() : "";
-        if (!who || !matchesAnyNamedSource(f.values ?? [], who)) return "filter_account";
+        // the item's author is named by several fields (a channel's handle AND its display name): the source matches when any of them is the named source
+        const whos = [f.field, ...(f.fields ?? [])].filter((k): k is string => typeof k === "string").map((k) => { const v = mapped[k]; return typeof v === "string" || typeof v === "number" ? String(v).trim() : ""; }).filter(Boolean);
+        if (whos.length === 0) { if (ctx.listing === true) break; return "filter_account"; }
+        if (!whos.some((who) => matchesAnyNamedSource(f.values ?? [], who))) return "filter_account";
         break;
       }
       case "exclude_government": {
@@ -214,6 +229,8 @@ export function filterVerdict(filters: ReadonlyArray<StageFilter> | undefined, m
 const TEXT_KEY = /(^|_)(text|content|body|message|comment|caption|description|full_text|fulltext)$/i;
 const DATE_KEY = /(^|_)(date|time|datetime|timestamp|created|createdat|created_at|created_utc|createdutc|createtime|create_time|published|published_at|posted|posted_at|publish_time)$/i;
 const ACCOUNT_KEY = /(^|_)(username|user_name|screen_name|handle|author_username|authorusername|account|author_handle)$/i;
+/** Every other mapped field that names the AUTHOR of an item (a channel's or page's display name, an author's name): a named source may be written the way one of them writes it. */
+const AUTHOR_NAME_KEY = /(^|_)(channel|channel_?name|channel_?title|author|author_?name|page|page_?name|owner|owner_?name|uploader|publisher|creator|user|poster|source_?name)$/i;
 const PLACE_KEY = /(^|_)(place|location|city|country|address|region|governorate)$/i;
 const REPLY_FLAG_KEY = /^(is_?reply|isreply|is_comment_reply|in_?reply_?to\w*|reply_?to\w*|replying_?to\w*|parent_comment\w*)$/i;
 const REPOST_FLAG_KEY = /^(is_?(re)?(post|tweet|share)|is_?retweet|retweeted_status\w*|is_?repost|reshare\w*)$/i;
@@ -222,7 +239,7 @@ const LANG_KEY = /^(lang|language|lang_code|language_code)$/i;
 
 const pick = (keys: ReadonlyArray<string>, re: RegExp): string | null => keys.find((k) => re.test(k)) ?? null;
 
-export interface FilterFields { text: string | null; date: string | null; account: string | null; place: string | null; /** Every mapped field that can carry evidence of a place: a location text, a website, a phone. */ placeFields: string[]; replyFlag: string | null; repostFlag: string | null; lang: string | null; /** Every mapped field that can say what a company is: its website, name, description, type. */ entityFields: string[] }
+export interface FilterFields { text: string | null; date: string | null; account: string | null; /** Every mapped field that names the author (handle and display names). */ accountFields: string[]; place: string | null; /** Every mapped field that can carry evidence of a place: a location text, a website, a phone. */ placeFields: string[]; replyFlag: string | null; repostFlag: string | null; lang: string | null; /** Every mapped field that can say what a company is: its website, name, description, type. */ entityFields: string[] }
 
 /**
  * The mapped fields the checks can read, found by CODE from what the mapping really gives (the keys of the mapped items, the stage's columns, the relevance rule's text columns). Never the model's guess.
@@ -235,7 +252,8 @@ export function findFilterFields(input: { mappedKeys: ReadonlyArray<string>; col
   return {
     text: input.textColumns?.find((k) => keys.includes(k)) ?? pick(keys, TEXT_KEY),
     date: pick(keys, DATE_KEY) ?? byTitle(/تاريخ|وقت النشر|وقت التغريد/),
-    account: pick(keys, ACCOUNT_KEY) ?? byTitle(/اسم المستخدم/),
+    account: pick(keys, ACCOUNT_KEY) ?? byTitle(/اسم المستخدم/) ?? pick(keys, AUTHOR_NAME_KEY) ?? byTitle(/^(?:القناة|الحساب|الصفحة|الناشر|المصدر|الكاتب)$/),
+    accountFields: [...new Set([...keys.filter((k) => ACCOUNT_KEY.test(k) || AUTHOR_NAME_KEY.test(k)), ...keys.filter((k) => /^(?:القناة|الحساب|الصفحة|الناشر|المصدر|الكاتب|اسم المستخدم)$/.test(titleOf(k)))])],
     place: pick(keys, PLACE_KEY) ?? byTitle(/مكان|موقع|مدينة|دولة|عنوان/),
     placeFields: [...new Set([...keys.filter((k) => isPlaceEvidenceKey(k)), ...keys.filter((k) => /مكان|موقع|مدينة|دولة|عنوان|بلد/.test(titleOf(k)))])],
     replyFlag: pick(keys, REPLY_FLAG_KEY) ?? byTitle(/هل هي رد|هل هو رد/),
@@ -274,6 +292,8 @@ export function resolveFilters(declared: ReadonlyArray<StageFilter>, fields: Fil
         break;
       case "account":
         g.field = f.field ?? fields.account ?? undefined;
+        // the named source is looked for in every field that names the author (the handle AND the display name), found by code from the mapping
+        g.fields = [...new Set([...(g.field ? [g.field] : []), ...(f.fields ?? []), ...fields.accountFields])];
         if (!g.field) problem = `${label}: an account filter needs a mapped username field; the mapping gives none`;
         break;
       case "exclude_government":

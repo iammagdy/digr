@@ -45,6 +45,15 @@ export function sourceNameMatches(wanted: string, actual: unknown): boolean {
 /** True when the author is any of the named sources. */
 export const matchesAnyNamedSource = (values: ReadonlyArray<string>, actual: unknown): boolean => values.some((v) => sourceNameMatches(v, actual));
 
+/** Which of the named sources an item belongs to (the first whose name matches one of the item's author fields), or null. */
+export function namedSourceOf(values: ReadonlyArray<string>, fields: ReadonlyArray<string>, item: Record<string, unknown>): string | null {
+  for (const v of values) if (fields.some((f) => sourceNameMatches(v, item[f]))) return v;
+  return null;
+}
+
+/** The internal mark an item of a stage with several named sources carries: the named source it belongs to (never a column of the file). */
+export const SOURCE_KEY = "_src";
+
 /** The named sources no item of the measured rows belongs to: the card says so before the customer approves (a source the sample never showed may give nothing). */
 export function unresolvedSources(values: ReadonlyArray<string>, authors: ReadonlyArray<unknown>): string[] {
   return values.filter((v) => !authors.some((a) => sourceNameMatches(v, a)));

@@ -6,6 +6,7 @@ import { rankPeopleByRole } from "../../../src/lib/agentMission/roles";
 import { parseMoment } from "../../../src/lib/agentMission/dateCells";
 import { dayOf, firstWindowEndDay, nextWindowEndDay, windowParams } from "../../../src/lib/agentMission/dateWindow";
 import { isEnabled } from "../../../src/lib/agentMission/filters";
+import { SOURCE_KEY } from "../../../src/lib/agentMission/namedSources";
 import { drainPending, emitStageProgress, ingestRows } from "../items/ingest";
 import type { ItemStore, Row, StopReason } from "../items/itemStore";
 import type { Reviewer } from "../review";
@@ -134,6 +135,7 @@ function periodOf(stage: Stage, now: number): { field: string; sinceMs: number }
  */
 async function runRoot(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promise<{ reason: StopReason; aborted: string | null }> {
   const { items } = deps;
+  if (spec.sources && spec.sources.length > 0) return runSources(deps, stage, spec, spec.sources);
   const now = (deps.now ?? Date.now)();
   const period = spec.window ? periodOf(stage, now) : null;
   let r = await runStream(deps, stage, spec, "root", { ...spec.params }, null, Number.POSITIVE_INFINITY, period?.field ?? null);
@@ -162,6 +164,36 @@ async function runRoot(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promis
   return r;
 }
 
+/** What a stage with several NAMED SOURCES reads from each: the named source's fields, every named value and the share of each. */
+interface SourceShare { fields: string[]; values: string[]; perValue: number }
+
+/**
+ * A STAGE WHOSE CUSTOMER NAMED SEVERAL SOURCES («٥ فيديوهات من كل قناة» for three channels): each named source is read in turn with the inputs that gave it in the measuring calls, each up to its own share of the stage's volume; an item beyond a source's share is kept,
+ * never delivered, so one prolific channel never takes the places of the others. A source that gives nothing, or fails, does not stop the next one; a stop that ends the whole stage (the budget, the daily limit, the time, a refusal) does.
+ */
+async function runSources(deps: EngineDeps, stage: Stage, spec: EngineSpec, sources: NonNullable<EngineSpec["sources"]>): Promise<{ reason: StopReason; aborted: string | null }> {
+  const { items } = deps;
+  const account = (stage.filters ?? []).find((f) => f.kind === "account" && isEnabled(f) && (f.values ?? []).length > 0);
+  const values = account?.values ?? sources.flatMap((s) => s.names);
+  const fields = [account?.field, ...(account?.fields ?? [])].filter((k): k is string => typeof k === "string");
+  const share: SourceShare = { fields, values, perValue: Math.max(1, Math.ceil(stage.planned_rows / Math.max(1, values.length))) };
+  const period = periodOf(stage, (deps.now ?? Date.now)());
+  let last: StopReason = "source_exhausted";
+  let anyFailed = false;
+  for (let i = 0; i < sources.length; i += 1) {
+    if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
+    const r = await runStream(deps, stage, spec, `s:${i}`, { ...sources[i].params }, null, Number.POSITIVE_INFINITY, period?.field ?? null, { ...share, names: sources[i].names, listing: spec.source_listing === true });
+    if (r.aborted) return r;
+    if (r.reason === "budget" || r.reason === "daily_cap" || r.reason === "refused" || r.reason === "time_limit" || r.reason === "review_limit" || r.reason === "page_limit") return r;
+    if (r.reason === "failed") { anyFailed = true; continue; }
+    last = r.reason;
+  }
+  return { reason: items.counts(stage.key).accepted >= stage.planned_rows ? "target_reached" : anyFailed ? "failed" : last === "target_reached" ? "source_exhausted" : last, aborted: null };
+}
+
+/** The items of a stage that belong to the given named sources. */
+const acceptedOfSources = (items: ItemStore, stageKey: string, names: ReadonlyArray<string>): number => items.acceptedRows(stageKey).filter((r) => typeof r[SOURCE_KEY] === "string" && names.includes(String(r[SOURCE_KEY]))).length;
+
 /** The oldest moment among mapped rows, read from the period's date field (null when none has one). */
 function oldestMomentOf(rows: ReadonlyArray<Record<string, unknown>>, field: string): number | null {
   let oldest: number | null = null;
@@ -170,7 +202,7 @@ function oldestMomentOf(rows: ReadonlyArray<Record<string, unknown>>, field: str
 }
 
 /** One stream of pages (a whole source, or one parent's children): resumes from the log, stops on a recorded reason. */
-async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, streamKey: string, params: Record<string, unknown>, parentId: string | null, perParentCap: number, periodField: string | null = null): Promise<{ reason: StopReason; aborted: string | null }> {
+async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, streamKey: string, params: Record<string, unknown>, parentId: string | null, perParentCap: number, periodField: string | null = null, source: (SourceShare & { names: string[]; listing?: boolean }) | null = null): Promise<{ reason: StopReason; aborted: string | null }> {
   const { items, store, gateway } = deps;
   const now = deps.now ?? Date.now;
   const maxPages = deps.maxPagesPerStage ?? enginePageCapFor(stage.planned_rows);
@@ -183,6 +215,8 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     if (state?.ended) return { reason: "source_exhausted", aborted: null };
     if (state && state.barren >= BARREN_PAGES) return { reason: "no_new_items", aborted: null };
     if (parentId !== null && items.acceptedRows(stage.key).filter((r) => String(r.parent_id) === parentId).length >= perParentCap) return { reason: "target_reached", aborted: null };
+    // a named source whose share is full is not read further
+    if (source && acceptedOfSources(items, stage.key, source.names) >= source.perValue * source.names.length) return { reason: "target_reached", aborted: null };
     if (counts.pages >= maxPages) return { reason: "page_limit", aborted: null };
     if (now() >= deps.deadlineMs) return { reason: "time_limit", aborted: null };
     const outside = deps.shouldStop?.() ?? null;
@@ -221,7 +255,7 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     // a parent's share (per_parent_rows) is a cap on what this page may add for it
     const have = parentId !== null ? items.acceptedRows(stage.key).filter((r) => String(r.parent_id) === parentId).length : 0;
     const oldestMs = periodField !== null ? oldestMomentOf(incoming, periodField) : null;
-    await ingestRows(deps, stage, incoming, { silent: true, idField: spec.id_field ?? null, ...(parentId !== null && Number.isFinite(perParentCap) ? { acceptCap: Math.max(0, perParentCap - have) } : {}), page: { stream: streamKey, call_id: result.call_id, cursor_in: cursor, cursor_next: nextCursor, has_more: result.has_more, ended, rows_in_page: result.rows_in_page, ...(oldestMs !== null ? { oldest_ms: oldestMs } : {}) } });
+    await ingestRows(deps, stage, incoming, { silent: true, idField: spec.id_field ?? null, ...(parentId !== null && Number.isFinite(perParentCap) ? { acceptCap: Math.max(0, perParentCap - have) } : {}), ...(source ? { sourceQuota: { fields: source.fields, values: source.values, perValue: source.perValue, ...(source.listing && source.names.length === 1 ? { defaultSource: source.names[0] } : {}) } } : {}), page: { stream: streamKey, call_id: result.call_id, cursor_in: cursor, cursor_next: nextCursor, has_more: result.has_more, ended, rows_in_page: result.rows_in_page, ...(oldestMs !== null ? { oldest_ms: oldestMs } : {}) } });
     await emitStageProgress(deps, stage, { collecting: true });
     // the review had nothing left to give while items still wait: pages that add nothing are not bought for ever
     const after = items.counts(stage.key);

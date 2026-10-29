@@ -16,6 +16,8 @@ export interface RequestedQuantity {
   perEach: boolean;
   /** «اتنين من المديرين»: the noun after «من» (the noun field holds «من» itself then), else null. */
   of: string | null;
+  /** «١٠ تعليقات لكل فيديو»: the word after «كل» (the parent item), else null. */
+  parent?: string | null;
 }
 
 const ARABIC_INDIC = /[٠-٩]/g;
@@ -134,25 +136,25 @@ const isOneParent = (t: Token | undefined): boolean => t !== undefined && !/^(?:
  * or before the number («ومن كل فيديو ١٠ تعليقات», «ومع كل بوست ١٠ تعليقات», «وجوه كل شركة موظفين اتنين», «ولكل واحد ١٠ تعليقات», «كل بوست فيه ١٠ تعليقات», «تعليقات كل فيديو ١٠»). The marker must touch the number or
  * its noun: «٥ فيديوهات ... ومن كل فيديو ...» does not make the 5 a per-parent number. Pure.
  */
-function perEachOf(tokens: Token[], i: number, used: number, counted: boolean, hasOf: boolean): { perEach: boolean; noun: string | null } {
+function perEachOf(tokens: Token[], i: number, used: number, counted: boolean, hasOf: boolean): { perEach: boolean; noun: string | null; parent: string | null } {
   // after: [number] [noun]? [من المديرين]? [preposition]? كل <one parent>
   let a = i + used + (counted ? 1 + (hasOf ? 1 : 0) : 0);
   if (counted && hasOf) a = i + used + 2;
   const sameClause = (t: Token | undefined): boolean => t !== undefined && !t.brk && !t.n.startsWith("و");
-  if (sameClause(tokens[a]) && isEveryPreposition(tokens[a]) && isEvery(tokens[a + 1]) && isOneParent(tokens[a + 2])) return { perEach: true, noun: null };
-  if (sameClause(tokens[a]) && isEvery(tokens[a]) && isOneParent(tokens[a + 1])) return { perEach: true, noun: null };
+  if (sameClause(tokens[a]) && isEveryPreposition(tokens[a]) && isEvery(tokens[a + 1]) && isOneParent(tokens[a + 2])) return { perEach: true, noun: null, parent: tokens[a + 2].raw };
+  if (sameClause(tokens[a]) && isEvery(tokens[a]) && isOneParent(tokens[a + 1])) return { perEach: true, noun: null, parent: tokens[a + 1].raw };
   // before: كل <one parent> [filler or the child noun]* [number]
   for (let k = i - 1; k >= 0 && k >= i - 7; k -= 1) {
-    if (isNumberToken(tokens[k]) && !(tokens[k].n === "واحد" && isEvery(tokens[k - 1]))) return { perEach: false, noun: null };
+    if (isNumberToken(tokens[k]) && !(tokens[k].n === "واحد" && isEvery(tokens[k - 1]))) return { perEach: false, noun: null, parent: null };
     if (!isEvery(tokens[k])) continue;
-    if (k + 1 > i - 1 || !isOneParent(tokens[k + 1])) return { perEach: false, noun: null };
+    if (k + 1 > i - 1 || !isOneParent(tokens[k + 1])) return { perEach: false, noun: null, parent: null };
     const between = tokens.slice(k + 2, i);
     const own = between.find((t) => isCountedNoun(t.raw));
     const before = tokens[k - 1] && !isEveryPreposition(tokens[k - 1]) && isCountedNoun(tokens[k - 1].raw) ? tokens[k - 1] : tokens[k - 2] && isEveryPreposition(tokens[k - 1]) && isCountedNoun(tokens[k - 2].raw) ? tokens[k - 2] : undefined;
     const noun = own ? own.raw : before ? before.raw : null;
-    return { perEach: true, noun: noun !== null && /^و/.test(noun) && isCountedNoun(noun.slice(1)) ? noun.slice(1) : noun };
+    return { perEach: true, noun: noun !== null && /^و/.test(noun) && isCountedNoun(noun.slice(1)) ? noun.slice(1) : noun, parent: tokens[k + 1].raw };
   }
-  return { perEach: false, noun: null };
+  return { perEach: false, noun: null, parent: null };
 }
 
 const DIGITS_THEN_SUFFIX = /^(\d+(?:[.٫]\d+)?)(k|K|ك)?$/;
@@ -195,7 +197,7 @@ export function parseQuantities(textIn: unknown): RequestedQuantity[] {
     // a number word with no item noun after it is ordinary speech, unless it is the per-parent number of a noun that stood before it («كل شركة موظفين اتنين»)
     if (!dm && !counted && !(each.perEach && each.noun)) { i += used - 1; continue; }
     const childNoun = counted ? nounToken!.raw : each.perEach && each.noun ? each.noun : nounToken ? nounToken.raw : null;
-    out.push({ value, noun: childNoun, digits: Boolean(dm), perEach: each.perEach, of: nounAfterOf !== null && tokens[i + used + 1] ? tokens[i + used + 1].raw : null });
+    out.push({ value, noun: childNoun, digits: Boolean(dm), perEach: each.perEach, of: nounAfterOf !== null && tokens[i + used + 1] ? tokens[i + used + 1].raw : null, parent: each.perEach ? each.parent : null });
     i += used - 1;
   }
   return out;
@@ -226,6 +228,17 @@ export function perParentQuantities(text: unknown): RequestedQuantity[] {
   return parseQuantities(text)
     .filter((q) => q.perEach && q.noun !== null && (isCountedNoun(q.noun) || (q.of !== null && isCountedNoun(q.of))))
     .map((q) => (q.of !== null && !isCountedNoun(q.noun!) ? { ...q, noun: q.of } : q));
+}
+
+/** The words that name a SOURCE the customer lists («٥ فيديوهات من كل قناة»: the channel is a source, not a step of the plan): channel, account, page, source. */
+const SOURCE_KIND_STEMS = ["قنا", "حساب", "صفح", "مصدر"];
+export const isSourceKindWord = (wordIn: string): boolean => { const w = bareWord(wordIn); return SOURCE_KIND_STEMS.some((s) => w.startsWith(norm(s))); };
+
+/**
+ * THE NUMBER THE CUSTOMER ASKED FOR FROM EACH NAMED SOURCE («٥ فيديوهات من كل قناة» for three channels, «١٠ تغريدات من كل حساب»): not a step of the plan (the channels are not items the plan reads), a count per source. The caller decides whether the request really names sources.
+ */
+export function perSourceQuantities(text: unknown): RequestedQuantity[] {
+  return perParentQuantities(text).filter((q) => q.parent !== undefined && q.parent !== null && isSourceKindWord(q.parent));
 }
 
 /** The per-parent numbers of the request that no child stage of the plan serves: the customer asked for a step the plan does not have. */
@@ -269,7 +282,7 @@ const canonicalStem = (w: string): string => { for (const [from, to] of SAME_NOU
 /** The words of a stage's title that name ITS OWN items: the words before the first «كل» / «على» / «عن» («تعليقات كل بوست» counts comments; «بوست» there is the parent). */
 export const ownTitleWords = (title: string): string[] => {
   const words = String(title ?? "").split(/\s+/).filter(Boolean);
-  const cut = words.findIndex((w, i) => i > 0 && /^(?:كل|لكل|على|عن|في|من|لدى)$/.test(bareWord(w)));
+  const cut = words.findIndex((w, i) => i > 0 && /^(?:كل|لكل|على|علي|عن|في|من|لدى)$/.test(bareWord(w)));
   return cut === -1 ? words : words.slice(0, cut);
 };
 

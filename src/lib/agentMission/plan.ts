@@ -6,13 +6,14 @@ import { minimumLineAr, type MissionPricingSettings } from "../missionPricing";
 import { checkCustomerLabel, checkCustomerText } from "./text";
 import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type SourceField } from "./fields";
 import { neutralPeopleTitleAr, roleLineAr, roleOfNoun, type RoleKey } from "./roles";
-import { bindQuantity, bindQuantityDetailed, countedQuantities, ownTitleWords, perParentAskFor, perParentAskOf, perParentQuantities, requestedStageIndexes, sameNounStem, unservedPerParentAsks } from "./quantity";
+import { bindQuantity, bindQuantityDetailed, countedQuantities, ownTitleWords, perParentAskFor, perParentAskOf, perParentQuantities, perSourceQuantities, requestedStageIndexes, sameNounStem, unservedPerParentAsks } from "./quantity";
 import { itemNounOf } from "./itemNoun";
 import { isTextItemStage, textKeyOf } from "./contract";
 import { childCardTitleAr, childRuleLinesAr } from "./childItems";
 import { platformCostNotesAr } from "./platformNotes";
 import type { DateWindow } from "./dateWindow";
 import { unresolvedSourcesLineAr } from "./namedSources";
+import { APPROX_DATES_CARD_LINE_AR } from "./relativeDates";
 import { isCompanyStage, isEntityStage, requestNamesSector, sectorEnglishWords, sectorWordsOf } from "./entities";
 import { placeEntry, placeLabelsAr, placesInText } from "./places";
 import { excludesGovernment } from "./government";
@@ -50,6 +51,10 @@ export interface EngineSpec {
   id_field?: string;
   /** The source's own date inputs, from the catalog (dateWindow.ts): when the source ends before a requested period is reached, the engine asks again with the end of the window moved back. Absent: the source has none documented. */
   window?: DateWindow;
+  /** A stage whose customer named SEVERAL sources (channels, pages, accounts) read by one measuring call each: the first-page inputs that gave each named source (or several of them, when one call showed them all), the engine reads them in turn, each named source up to its own share (namedSources.ts). Absent: one query serves the stage. */
+  sources?: Array<{ names: string[]; params: Record<string, unknown> }>;
+  /** The endpoint lists the items of ONE source named by its own input (a channel's videos): an item that names no author belongs to the source that was asked for. */
+  source_listing?: boolean;
 }
 
 export interface ProposedStage {
@@ -83,6 +88,8 @@ export interface ProposedStage {
   hidden_columns?: PlanColumn[];
   /** Set by code at plan time: the sources the customer NAMED (a channel, a page, an account) that no item of what the agent sampled belongs to. The card says so before approval; nothing is invented for them. */
   unresolved_sources?: string[];
+  /** Set by code at plan time: the date columns of this stage in which the source gives only a RELATIVE time («قبل ٣ أيام»); the dates are approximate and the card says so. */
+  approx_dates?: string[];
 }
 
 export interface ProposedPlan {
@@ -251,7 +258,12 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
   // THE CUSTOMER'S QUANTITY is read by code from their words (the answer to the agent's question wins over the request): it is the target of the stage that counts it
   const refs = stagesIn.map((st, index) => ({ index, title_ar: isRecord(st) ? String(st.title_ar ?? "") : "", deliver: isRecord(st) && st.deliver === true }));
   const quantityText = lookup.answerText && bindQuantity(lookup.answerText, refs) ? lookup.answerText : lookup.requestText ?? "";
-  const bound = quantityText ? bindQuantityDetailed(quantityText, refs) : null;
+  const bound0 = quantityText ? bindQuantityDetailed(quantityText, refs) : null;
+  // «٥ فيديوهات من كل قناة» with three named channels: no total in the words, a count PER NAMED SOURCE; the stage that counts that noun has its sources' count x that number as its target (read by code from the stage's own account filter)
+  const accountValuesOf = (st: unknown): number => (isRecord(st) && Array.isArray(st.filters) ? st.filters.filter((f) => isRecord(f) && f.kind === "account" && f.enabled !== false && Array.isArray(f.values)).reduce((n, f) => Math.max(n, (f as { values: unknown[] }).values.length), 0) : 0);
+  const perSourceAsk = quantityText && !bound0 ? perSourceQuantities(quantityText)[0] : undefined;
+  const perSourceStage = perSourceAsk ? stagesIn.findIndex((st, index) => isRecord(st) && (st.parent_key === null || st.parent_key === undefined || st.parent_key === "") && accountValuesOf(st) > 0 && ownTitleWords(String(st.title_ar ?? "")).some((w) => sameNounStem(w, perSourceAsk.noun!)) && index >= 0) : -1;
+  const bound = bound0 ?? (perSourceAsk && perSourceStage >= 0 ? { index: perSourceStage, value: perSourceAsk.value * accountValuesOf(stagesIn[perSourceStage]), named: true } : null);
   let quantity: PlanQuantity | undefined;
   // what the request asks PER PARENT item (the steps that hang on another step): read by code, never by the model
   const perParentAsks = perParentQuantities(`${lookup.requestText ?? ""} ${lookup.answerText ?? ""}`);
@@ -673,7 +685,7 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
   // what the card promises about the items is backed by the filters that are switched ON: a line of the model that promises one is shown only while its filter is on, and a filter that is on gets its own sentence, built by code
   const assumptions = assumptionLinesOf(plan);
   // fewer than the customer asked for: the reason the card shows next to the one target number
-  const notes = [...(plan.notes_ar ?? []), ...(plan.quantity?.reason_ar ? [plan.quantity.reason_ar] : []), ...childRuleLinesAr(plan.stages), ...roleLinesAr(plan.stages), ...platformCostNotesAr(plan.stages), ...plan.stages.filter((s) => (s.unresolved_sources ?? []).length > 0 && (s.filters ?? []).some((f) => f.kind === "account" && isEnabled(f))).map((s) => unresolvedSourcesLineAr(s.unresolved_sources!))];
+  const notes = [...(plan.notes_ar ?? []), ...(plan.quantity?.reason_ar ? [plan.quantity.reason_ar] : []), ...childRuleLinesAr(plan.stages), ...roleLinesAr(plan.stages), ...platformCostNotesAr(plan.stages), ...plan.stages.filter((s) => (s.unresolved_sources ?? []).length > 0 && (s.filters ?? []).some((f) => f.kind === "account" && isEnabled(f))).map((s) => unresolvedSourcesLineAr(s.unresolved_sources!)), ...(plan.stages.some((s) => (s.approx_dates ?? []).length > 0) ? [APPROX_DATES_CARD_LINE_AR] : [])];
   return {
     summary_ar: firstSentenceAr(plan.summary_ar),
     ...(notes.length ? { notes_ar: notes } : {}),

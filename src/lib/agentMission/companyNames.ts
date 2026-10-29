@@ -3,6 +3,8 @@
  * Code replaces it with another NAME field of the same item when the item has one (a legal name, a display name, a brand), and otherwise leaves it exactly as the source gave it: nothing is invented from the domain, the link or the description.
  * Pure: no I/O.
  */
+import { cleanedName, nameHasDebris } from "./entityDoubts";
+
 const DOMAIN_ONLY = /^(?:https?:\/\/)?(?:www\.)?[a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]*[a-z0-9])?)*\.[a-z]{2,24}\/?$/i;
 const NAME_COLUMN = /(^|_)(name|company_name|companyname|title)$/i;
 const OTHER_NAME_FIELD = /(^|_)(legal_?name|company_?name|display_?name|trade_?name|brand_?name|brand|short_?name|full_?name|official_?name|name_?(?:ar|en)|alias|alternative_?names?|former_?names?)$/i;
@@ -26,3 +28,20 @@ export function withRealName<T extends Record<string, unknown>>(item: T, columns
   }
   return out ?? item;
 }
+
+/** The item with every name column that is a BROKEN SPREADSHEET LINE («serious construction "sc",,11-50,seriouscons.com») cut back to the name inside it; `debris` says that one was. The other fields of such an item may be another company's: the caller sends it to the model check. */
+export function withCleanName<T extends Record<string, unknown>>(item: T, columns: ReadonlyArray<{ key: string; title_ar?: string }>): { item: T; debris: boolean } {
+  let out: T | null = null;
+  let debris = false;
+  for (const col of columns) {
+    if (!NAME_COLUMN.test(col.key) && !/^اسم\s/.test(String(col.title_ar ?? ""))) continue;
+    if (!nameHasDebris(item[col.key])) continue;
+    debris = true;
+    const name = cleanedName(String(item[col.key]));
+    if (name) { out = out ?? ({ ...item } as T); (out as Record<string, unknown>)[col.key] = name; }
+  }
+  return { item: out ?? item, debris };
+}
+
+/** The mapped fields (keys) of a stage's columns that hold the company's name. */
+export const nameKeysOf = (columns: ReadonlyArray<{ key: string; title_ar?: string }>): string[] => columns.filter((c) => NAME_COLUMN.test(c.key) || /^اسم\s/.test(String(c.title_ar ?? ""))).map((c) => c.key);

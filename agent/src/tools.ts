@@ -27,6 +27,8 @@ import { applyReverseOrder } from "../../src/lib/treg/reverseOrder";
 import { rankedCandidates } from "../../src/lib/agentMission/candidates";
 import { perParentQuantities } from "../../src/lib/agentMission/quantity";
 import { sourceNameMatches } from "../../src/lib/agentMission/namedSources";
+import { namedSourceRoutes } from "../../src/lib/agentMission/namedRoutes";
+import { catalogDateKind } from "../../src/lib/agentMission/relativeDates";
 
 /**
  * The tools the agent has, and the only ones: three gateway tools (catalog_search, describe_endpoint, treg_call), the sandboxed run_code, and the mission tools (report_progress,
@@ -294,7 +296,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         // most relevant ones (the same capability: every post search, every company search, every comment source) join the ones the words matched, so a cheaper source the words did not name is still offered
         const matched = (found.hits as Array<Record<string, any>>).map((h) => ctx.catalog.byId.get(String(h.id))).filter((e): e is NonNullable<typeof e> => Boolean(e));
         const ranking = rankedCandidates({ catalog: ctx.catalog, access: ctx.access, words, platform, stats, now, matched });
-        const fromCatalog = ranking.ranked.map((r) => ({ id: r.id, effective: r.effectiveUsd, view: { ...catalogHitView(ctx.catalog.byId.get(r.id)!, ctx.catalog, 0, r.effectiveUsd), expected_usd_per_item: Number(r.usdPerItem.toFixed(6)), rows_per_call: Math.round(r.rowsPerCall * 10) / 10, basis: r.basis, ...(r.health.state === "demoted" ? { health: "demoted: recent failures on its inputs" } : {}) } as Record<string, any> }));
+        const fromCatalog = ranking.ranked.map((r) => ({ id: r.id, effective: r.effectiveUsd, view: { ...catalogHitView(ctx.catalog.byId.get(r.id)!, ctx.catalog, 0, r.effectiveUsd), expected_usd_per_item: Number(r.usdPerItem.toFixed(6)), rows_per_call: Math.round(r.rowsPerCall * 10) / 10, basis: r.basis, ...(catalogDateKind(ctx.catalog.byId.get(r.id)!) ? { dates: catalogDateKind(ctx.catalog.byId.get(r.id)!) } : {}), ...(r.health.state === "demoted" ? { health: "demoted: recent failures on its inputs" } : {}) } as Record<string, any> }));
         // the web sources (page parsers, web search / scrape, people search) are candidates too: ONE list for every provider, with the same health and measurement
         const web = ctx.web ? searchAgentSources({ words, platform }) : [];
         const webRanked = web.map((c) => {
@@ -531,7 +533,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         assumptions_ar: { type: "string[]", description: "Up to 6 short Arabic lines: every choice you made where the request left it open (which meaning of a name, the language, newest first, how many replies...), e.g. «محمد صلاح لاعب كرة القدم، تغريدات عربية، الأحدث أولًا». The customer reads them on the plan card and may change them before approving.", optional: true },
         contacts_note_ar: { type: "string", description: "Only when the customer asked for work e-mails or phones and NO contact stage is in the plan: ONE Arabic sentence saying honestly why", optional: true },
         unserved_steps: { type: "array", description: "Only when the customer asked for a step PER PARENT item («ومن كل شركة اتنين من المديرين», «مع كل بوست ١٠ تعليقات») that NO stage of your plan carries out because no source could give it: [{reason_ar}] (one entry per missing step, in the request's order; reason_ar is ONE Arabic sentence, no number, saying honestly why). The customer card shows that step as NOT included, with your reason, BEFORE they approve; a step must never be dropped silently, and a plan that drops one without this is refused. When a stage carries the step, do not pass this.", optional: true },
-        stages: { type: "array", description: "[{key, title_ar, endpoint_id, expected_rows, target_reason_ar?, parent_key|null, per_parent_rows (if parent), deliver, columns:[{key,title_ar}], sample_rows:[{...}], measured_by:[call ids], how_ar?, relevance?:{subject_ar, terms:[...], context_terms?:[...], exclude_terms?:[...], competing_meanings?:[{meaning_ar, extensions?:[words that follow the name in that meaning], titles?:[a title right next to the name], markers?:[words of that meaning]}], text_columns:[column keys], min_own_words?}, yield_from?: out id, filters?:[{kind:\"exclude_replies\"|\"exclude_reposts\"|\"language\"|\"period\"|\"account\"|\"place\", lang?:\"ar\"|\"en\", days?, from?, to?, values?:[...]}]}]. A stage whose rows were FOUND BY A TEXT SEARCH (a person, entity or topic) REQUIRES relevance and yield_from. expected_rows of the stage that counts what the customer asked for is the customer's number (code reads it from their words and sets it); give a LOWER one only with target_reason_ar (one Arabic sentence, no number) when the sources really cannot give that many. filters: everything the card promises about the items (replies left out, a language, a period, an account, a place) must be a filter: code checks every item with it; a sentence that promises one of these without its filter is refused." },
+        stages: { type: "array", description: "[{key, title_ar, endpoint_id, expected_rows, target_reason_ar?, parent_key|null, per_parent_rows (if parent), deliver, columns:[{key,title_ar}], sample_rows:[{...}], measured_by:[call ids], how_ar?, relevance?:{subject_ar, terms:[...], context_terms?:[...], exclude_terms?:[...], competing_meanings?:[{meaning_ar, extensions?:[words that follow the name in that meaning], titles?:[a title right next to the name], markers?:[words of that meaning]}], text_columns:[column keys], min_own_words?}, yield_from?: out id, filters?:[{kind:\"exclude_replies\"|\"exclude_reposts\"|\"language\"|\"period\"|\"account\"|\"place\", lang?:\"ar\"|\"en\", days?, from?, to?, values?:[...], calls?:[for an account filter: the saved call that read each value, in the same order]}]}]. A stage whose rows were FOUND BY A TEXT SEARCH (a person, entity or topic) REQUIRES relevance and yield_from. expected_rows of the stage that counts what the customer asked for is the customer's number (code reads it from their words and sets it); give a LOWER one only with target_reason_ar (one Arabic sentence, no number) when the sources really cannot give that many. filters: everything the card promises about the items (replies left out, a language, a period, an account, a place) must be a filter: code checks every item with it; a sentence that promises one of these without its filter is refused." },
       },
       handler: async (a) => {
         const stagesIn: any[] = Array.isArray(a.stages) ? a.stages : [];
@@ -574,7 +576,23 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             if (filters) { if (filters.length > 0) st.filters = filters; else delete st.filters; }
             const missing = derived.unresolved.get(st.key);
             if (missing && missing.length > 0) st.unresolved_sources = missing;
+            const approxDates = derived.approx.get(st.key);
+            if (approxDates && approxDates.length > 0) st.approx_dates = approxDates;
           }
+        }
+        // A NAMED SOURCE NO SAMPLE SHOWS, WHILE THE CATALOG HAS A SOURCE THAT TAKES THE SOURCE ITSELF (a channel's videos, an account's posts): the stage searched by keyword and found none of the sources the customer named. Sampling the source itself is cheap; the card's
+        // «not found» sentence is for a source that was really looked for and not found. A few refusals at most (the same counter as the early stop), so the planner is never stuck.
+        if (derived && state.finishRefusals < FINISH_REFUSALS_MAX) {
+          const allowed = (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
+          const lines: string[] = [];
+          for (const st of checked.plan.stages) {
+            const missing = derived.unresolved.get(st.key);
+            if (!missing || missing.length === 0 || st.parent_key !== null) continue;
+            const routes = namedSourceRoutes(st.endpoint_id, ctx.catalog, allowed);
+            if (routes.length === 0 || routes.some((r) => calls.some((c) => c.endpoint_id === r.id))) continue;
+            lines.push(`stage «${st.key}» names sources (${missing.map((m) => `«${m}»`).join(", ")}) that no sampled item belongs to, and it searches the whole platform by keyword. The catalog has sources that take the named source itself: ${routes.slice(0, 4).map((r) => `${r.id} (input ${r.input})`).join(", ")}. Sample one of them once for each named source (the source's own items; use its handle or id, resolved with the catalog's own lookup endpoint when it needs one), map the items with the same columns, and plan on it: the engine then reads each named source in turn and the topic's items are kept by the relevance rule. Propose again after sampling; only a source that really gives nothing for a name is told on the card as not found`);
+          }
+          if (lines.length > 0) { state.finishRefusals += 1; return err("the plan was not accepted; fix these and propose again", { issues: lines }); }
         }
         state.proposedPlan = checked.plan;
         state.terminal = true;
