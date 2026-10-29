@@ -5,6 +5,11 @@ import { createCallRecorder } from "../../src/lib/server/multiProvider/callRecor
 import { resolveAccountAccess } from "../../src/lib/server/sensitiveAccess";
 import { sendMissionNotice } from "../../src/lib/server/missionNotify";
 import { resolveProviderKey, useProviderKeyStoreClient } from "../../src/lib/server/providerKeys";
+import { last4Of } from "../../src/lib/server/providerKeyCrypto";
+import { sendPlatformEmail } from "../../src/lib/server/sendPlatformEmail";
+import { configureTregKeyPool } from "../../src/lib/server/tregKeyPool";
+import { buildPoolAlertVars } from "../../src/lib/server/tregPoolAlerts";
+import { ownerAlertRecipient } from "../../src/lib/server/topupOwnerAlert";
 import { AGENT_CONCURRENCY_ENV, AGENT_MODEL_DEFAULT } from "../../src/lib/agentMission/constants";
 import { parseConcurrency } from "../../src/lib/agentMission/concurrency";
 import { resolveModels } from "./modelConfig";
@@ -17,7 +22,7 @@ import { createWorker } from "./worker";
 
 /**
  * The entry point of the Heroku worker dyno (`worker: npx tsx agent/src/main.ts`). Required environment variables (names only; the values are set in Heroku, never in the repository):
- *   ANTHROPIC_API_KEY, TREG_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY            AGENT_MODEL is optional (default claude-haiku-5-5);
+ *   ANTHROPIC_API_KEY, TREG_TOKEN, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY            AGENT_MODEL is optional (default claude-haiku-5-5); ADMIN_ALERT_EMAIL is optional (a direct notice when the key pool's database is unreachable);
  *   AGENT_CONCURRENCY is optional (default 1, at most 4).
  */
 const REQUIRED = ["ANTHROPIC_API_KEY", "TREG_TOKEN", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"] as const;
@@ -34,6 +39,21 @@ async function main() {
   const client = createClient(process.env.SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!, { auth: { persistSession: false, autoRefreshToken: false } });
   const store = createSupabaseStore(client);
   useProviderKeyStoreClient(client);
+  // The TREG key pool (docs/proposals/treg-key-pool): with the rollout switch ON every call of this worker uses the pool's active key, read every 3 seconds (a switch needs no restart);
+  // OFF, or when the pool cannot be read, the worker uses TREG_TOKEN exactly as before (it is the main key then). The optional ADMIN_ALERT_EMAIL here lets the worker tell the owner
+  // directly when the database itself is unreachable; otherwise that notice is queued and goes out as soon as the database answers.
+  configureTregKeyPool({
+    source: "worker",
+    getClient: async () => client,
+    onEmergency: async ({ reason }) => {
+      const to = ownerAlertRecipient();
+      if (!to) return;
+      await sendPlatformEmail("job-update", to, buildPoolAlertVars({ problem: "store_unreadable", key_number: null, key_label: null, to_key_number: null, to_key_label: null, reason, created_at: new Date().toISOString() }), `treg-pool-worker-${Date.now().toString(36)}`);
+    },
+  });
+  const reportTokenTail = () => { void Promise.resolve(client.rpc("treg_pool_note_worker", { p_env_last4: last4Of(process.env.TREG_TOKEN) ?? "" })).catch(() => undefined); };
+  reportTokenTail();
+  setInterval(reportTokenTail, 600_000).unref();
   const catalog = loadTregCatalog();
   const driver = createSdkDriver(process.env);
   const recorder = createCallRecorder(client);

@@ -1,5 +1,5 @@
 import { createCallRecorder } from "./multiProvider/callRecorder";
-import type { CallStatus } from "./multiProvider/adapterTypes";
+import type { CallRecord, CallStatus } from "./multiProvider/adapterTypes";
 
 /**
  * What a TREG cost row says about itself: the capability the call served, how it ended (success / failed / empty) and how long it took.
@@ -23,7 +23,7 @@ export function tregCallStatusOf(result: { ok: boolean; rows?: unknown[] | null 
 
 export async function commitTregSpend(
   client: any,
-  args: { costId: number | null; costUsd: number; units: number; capabilityId: string; status: CallStatus; durationMs: number; jobId: string | null },
+  args: { costId: number | null; costUsd: number; units: number; capabilityId: string; status: CallStatus; durationMs: number; jobId: string | null; keyRef?: CallRecord["keyRef"] },
 ): Promise<void> {
   if (args.costId === null || args.costId === undefined) return;
   const units = Math.max(0, Math.floor(Number(args.units) || 0));
@@ -37,6 +37,7 @@ export async function commitTregSpend(
       costUsd,
       durationMs: Math.max(0, Math.floor(Number(args.durationMs) || 0)),
       jobId: args.jobId,
+      ...(args.keyRef ? { keyRef: args.keyRef } : {}),
     });
     return;
   } catch (e: any) {

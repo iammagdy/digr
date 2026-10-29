@@ -40,6 +40,8 @@ export interface CallRecord {
   costUsd: number;
   durationMs: number;
   jobId: string | null;
+  /** TREG key pool: the pool key that made the call (number and label go to the call log; never the key). Absent while the pool's switch is OFF. */
+  keyRef?: { id: string; number: number; label: string; isMain: boolean } | null;
 }
 
 export interface Reservation { allowed: boolean; costId: number | null; reason?: "cap" | "error" }

@@ -1,9 +1,13 @@
 import { ProviderKeyCryptoError, decryptProviderKey, last4Of, type ProviderId } from "./providerKeyCrypto";
+import { getTregKeyPool, type PoolKeyRef } from "./tregKeyPool";
 
 /**
  * THE ONE place that reads a provider API key. Every call site (worker, chat catalog search, adapters, health
  * check, smoke test, assistant) goes through resolveProviderKey / peekProviderKey; a test greps the source for any
  * other read of these variables.
+ *
+ * TREG, with the key pool's rollout switch ON (docs/proposals/treg-key-pool): the pool's active key (tregKeyPool.ts, a 3-second view of the database), so every call
+ * site follows an admin's switch on its next call. With the switch OFF, or when the pool cannot be read, everything below is exactly what it always was.
  *
  * Order: the active key from the encrypted store (decrypted here, kept in memory for at most 30 seconds per server
  * instance), else the environment variable. A missing table or function, or a missing encryption key, falls back to
@@ -11,7 +15,7 @@ import { ProviderKeyCryptoError, decryptProviderKey, last4Of, type ProviderId } 
  */
 export const PROVIDER_KEY_CACHE_TTL_MS = 30_000;
 
-export type KeySource = "store" | "env" | "none";
+export type KeySource = "store" | "env" | "none" | "pool";
 export type StoreState =
   | "ok" // an active key was read and decrypted
   | "no_key" // the store is ready but holds no key for this provider
@@ -28,6 +32,8 @@ export interface ResolvedProviderKey {
   last4: string | null;
   storeState: StoreState;
   resolvedAt: number;
+  /** TREG with the key pool ON: which pool key this is (number and label for screens and call marks; never the key). */
+  keyRef?: PoolKeyRef;
 }
 
 const ENV_NAMES: Record<ProviderId, readonly string[]> = {
@@ -156,8 +162,22 @@ async function loadFresh(provider: ProviderId): Promise<ResolvedProviderKey> {
   }
 }
 
-/** Async resolver for every provider call. Cached for 30 seconds per server instance. */
+/** Async resolver for every provider call. Cached for 30 seconds per server instance (TREG with the key pool ON: the pool's active key, read every 3 seconds). */
 export async function resolveProviderKey(provider: ProviderId, options?: { forceRefresh?: boolean }): Promise<ResolvedProviderKey> {
+  if (provider === "treg") {
+    const pool = getTregKeyPool();
+    if (pool) {
+      const choice = await pool.choose();
+      if (choice.mode === "pool" && choice.key && choice.ref) {
+        return { provider, key: choice.key, source: "pool", last4: last4Of(choice.key), storeState: "ok", resolvedAt: nowFn(), keyRef: choice.ref };
+      }
+    }
+  }
+  return resolveLegacyProviderKey(provider, options);
+}
+
+/** The key as it was before the pool: the encrypted store, then the environment. Used by the pool's own adoption of the main key and by the OFF/emergency paths. */
+export async function resolveLegacyProviderKey(provider: ProviderId, options?: { forceRefresh?: boolean }): Promise<ResolvedProviderKey> {
   const now = nowFn();
   const hit = cache.get(provider);
   // Only a key that came from the store is held in memory. When the store gave nothing, the environment variable is
@@ -182,6 +202,10 @@ export async function getProviderKey(provider: ProviderId): Promise<string> {
  * the environment variable. Callers that matter prime it with resolveProviderKey first.
  */
 export function peekProviderKey(provider: ProviderId): string {
+  if (provider === "treg") {
+    const held = getTregKeyPool()?.peekKey();
+    if (held) return held;
+  }
   const hit = cache.get(provider)?.value ?? lastGoodStore.get(provider);
   if (hit && hit.source === "store" && hit.key) return hit.key;
   return readEnvProviderKey(provider);

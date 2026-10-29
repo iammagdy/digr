@@ -24,8 +24,8 @@ const UNAVAILABLE = "غير متاح";
 /** Dollars with up to 6 decimals in Arabic-Indic digits (admin only). */
 const usd = (n: number) => `${toArabicDigits(n.toFixed(6).replace(/0+$/, "").replace(/\.$/, "") || "0")} دولار`;
 
-interface Filters { provider: string; from: string; to: string; status: string; user: string; test: TestFilter; jobId: string }
-const EMPTY: Filters = { provider: "", from: "", to: "", status: "", user: "", test: "all", jobId: "" };
+interface Filters { provider: string; from: string; to: string; status: string; user: string; test: TestFilter; jobId: string; key: string }
+const EMPTY: Filters = { provider: "", from: "", to: "", status: "", user: "", test: "all", jobId: "", key: "" };
 
 function queryString(f: Filters, page?: number, extra: Record<string, string> = {}): string {
   const q = new URLSearchParams();
@@ -36,6 +36,7 @@ function queryString(f: Filters, page?: number, extra: Record<string, string> = 
   if (f.user.trim()) q.set("user", f.user.trim());
   if (f.test !== "all") q.set("test", f.test);
   if (f.jobId.trim()) q.set("jobId", f.jobId.trim());
+  if (f.key) q.set("key", f.key);
   if (page) q.set("page", String(page));
   for (const [k, v] of Object.entries(extra)) q.set(k, v);
   return q.toString();
@@ -102,6 +103,15 @@ export function AllCallsLog() {
             </select>
           </label>
           <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-mut">رقم المهمة</span><input type="text" dir="ltr" value={filters.jobId} onChange={(e) => set({ jobId: e.target.value })} className={FIELD} /></label>
+          {log?.keyOptions && (
+            <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-mut">مفتاح TREG</span>
+              <select value={filters.key} onChange={(e) => set({ key: e.target.value })} className={FIELD} style={{ textAlign: "right" }} data-testid="key-filter">
+                <option value="">كل المفاتيح</option>
+                <option value="none">بدون مجمّع (قبل التفعيل)</option>
+                {log.keyOptions.map((k) => <option key={k.number} value={String(k.number)}>{`#${toArabicDigits(k.number)} · ${k.label} (${formatAr(k.calls)})`}</option>)}
+              </select>
+            </label>
+          )}
         </div>
         <div className="flex flex-wrap gap-2">
           <button type="button" disabled={busy} onClick={() => void load(filters, 1)} className={BTN}>{busy ? "جارٍ التحميل…" : "تطبيق"}</button>
@@ -137,6 +147,13 @@ export function AllCallsLog() {
               );
             })}
           </div>
+          {log.summary.byKey && (
+            <div className="grid gap-2 text-xs sm:grid-cols-4" data-testid="spend-per-key">
+              {log.summary.byKey.map((k) => (
+                <div key={k.keyNumber} className="rounded-xl bg-sf p-3"><p className="m-0 font-semibold text-ink">{`مفتاح #${toArabicDigits(k.keyNumber)} · ${k.keyLabel}`}</p><p className="m-0 mt-1 text-mut">{formatAr(k.calls)} استدعاء · <span dir="ltr">{usd(k.costUsd)}</span></p></div>
+              ))}
+            </div>
+          )}
           {log.truncated && <p role="status" className="m-0 text-[12px] text-bad">تمت القراءة حتى الحد الأقصى الآمن؛ الأرقام تغطي ما قُرئ فقط.</p>}
         </section>
       )}
@@ -152,7 +169,7 @@ export function AllCallsLog() {
         {log && log.rows.length > 0 && (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[980px] border-collapse text-[11px]" data-testid="calls-table">
-              <thead><tr className="text-mut">{["الوقت", "المزود", "نوع الاستدعاء", "المهمة والمستخدم", "الوحدات", "التكلفة", "الحالة", "المدة"].map((c) => <th key={c} className="border-b border-ln py-2 text-right font-medium">{c}</th>)}</tr></thead>
+              <thead><tr className="text-mut">{["الوقت", "المزود", ...(log.keyOptions ? ["المفتاح"] : []), "نوع الاستدعاء", "المهمة والمستخدم", "الوحدات", "التكلفة", "الحالة", "المدة"].map((c) => <th key={c} className="border-b border-ln py-2 text-right font-medium">{c}</th>)}</tr></thead>
               <tbody>
                 {log.rows.map((r, i) => {
                   const missing = log.metadataAvailable ? NOT_RECORDED : UNAVAILABLE;
@@ -161,6 +178,7 @@ export function AllCallsLog() {
                     <tr key={r.id ?? i} className="text-ink">
                       <td className="border-b border-ln py-2">{dateTimeAr(r.at)}</td>
                       <td className="border-b border-ln py-2" dir="ltr">{PROVIDER_NAME[r.provider] ?? r.provider}</td>
+                      {log.keyOptions && <td className="border-b border-ln py-2" data-testid="key-cell">{typeof r.keyNumber === "number" ? `#${toArabicDigits(r.keyNumber)} · ${r.keyLabel ?? ""}` : "—"}</td>}
                       <td className="border-b border-ln py-2">{r.capabilityLabelAr ?? (r.capabilityDerivedAr ? `${r.capabilityDerivedAr} (من المهمة)` : missing)}</td>
                       <td className="border-b border-ln py-2"><JobCell info={r} /></td>
                       <td className="border-b border-ln py-2">{formatAr(r.units)}</td>
