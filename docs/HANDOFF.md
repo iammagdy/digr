@@ -4,6 +4,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-29, after #291): the admin panel reorganised (layout and navigation only)
+
+`main` before it was `32fcd5c38cdde4e87c414b7b5cb2e07398c024a2` (#290); its merge commit is the head of `main` after it. Map, screenshots and details: `docs/admin-reorg/README.md`. No API, SQL, money, key-pool behaviour, worker, price or customer text changed; no admin address moved.
+
+- **Menu**: 20 pages in six sections (`src/components/admin/nav.ts`; `ADMIN_PAGES` in `icons.tsx` unchanged). Only the open section is unfolded; every page has a one-line description and section chips under its title.
+- **«مزودو الخدمة»**: four short views per provider (status and balance, keys, limits, call log), kept in the address `?p=<provider>&v=<view>`.
+- **Key pool table**: no horizontal scroll at 1280 px, cards at 390 px (`.rtable` / `.rtable-wrap` in `globals.css`, a container query, also used by the call logs), number once, status badge, main key marked, one action visible and the rest in a small menu.
+- Tests: `tests/admin-navigation.test.tsx`; two selectors moved from `AdminShell.tsx` to `nav.ts` (`tests/conference-dashboard.test.tsx`, `tests/phase4-failures-board.test.ts`).
+- Rollback: `git revert -m 1 <merge commit>`.
+
+---
+
 ## START HERE (2026-10-29, after #289): the TREG key pool (many keys, one active, a fallback chain ending at the main key)
 
 `main` before it was `51e5d3a1dfee5c5fcb32db7d22dcec9f3a7ede8c` (#289); its merge commit is the head of `main` after it. Design, SQL proposals, owner decisions D1 to D8, rollout checklist and NOT PROVEN: `docs/proposals/treg-key-pool/README.md`. SQL 01 to 04 were applied by the owner; **06 (`treg_pool_keys_for_check`) is a later addition and must be applied before the background health check works**. No money table or function, no price, cap, model string or customer text changed.
