@@ -3,6 +3,7 @@ import { CONTACT_KINDS, isContactSource, verifyContactValue } from "../../../src
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
 import { dedupeScope, deriveItemId, isTextItemStage, textDedupeKey, textKeyOf } from "../../../src/lib/agentMission/contract";
 import { placeCellsAr } from "../../../src/lib/agentMission/places";
+import { withRealName } from "../../../src/lib/agentMission/companyNames";
 import { CHILD_RAW_FILTER_KINDS, filterVerdict, governmentUnclear, isEnabled } from "../../../src/lib/agentMission/filters";
 import type { MissionEventInput } from "../types";
 import type { Reviewer } from "../review";
@@ -22,7 +23,7 @@ export interface IngestDeps {
 }
 
 /** What one page of a source adds to the log together with its items (one segment, so the cursor and the items can never disagree after a crash). */
-export interface PageRecord { stream: string; call_id: string | null; cursor_in: string | null; cursor_next: string | null; has_more: boolean | null; ended: boolean; rows_in_page: number }
+export interface PageRecord { stream: string; call_id: string | null; cursor_in: string | null; cursor_next: string | null; has_more: boolean | null; ended: boolean; rows_in_page: number; /** The oldest moment among the page's rows (a stage read in date windows). */ oldest_ms?: number }
 
 export interface IngestOptions {
   page?: PageRecord;
@@ -91,11 +92,13 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   let duplicates = 0;
   const excludedStructural: Array<{ id: string; reason: ItemReason; row: Row }> = [];
   const govUnclear = new Set<string>();
-  for (const raw of incoming) {
-    if (!isObject(raw)) { tally.rejected_not_object += 1; continue; }
+  for (const raw0 of incoming) {
+    if (!isObject(raw0)) { tally.rejected_not_object += 1; continue; }
+    // a name that is only a web address is replaced by another name field of the same item (never invented); the id is derived from the item as the source gave it
+    const raw = isChild ? raw0 : withRealName(raw0, stage.columns);
     // an item always has an id: its own, the field the recipe chose, a known key field (a platform id, the link), or its fingerprint: the same item read twice is the same id (never rejected for lacking one)
     // (the engine passes the recipe's `idField`, so its items are keyed this way; the model's own save_rows has no such field and keeps refusing an item without an id, which it was told to give)
-    const id = options.idField !== undefined ? deriveItemId(raw, options.idField, parentIds ? String(raw.parent_id ?? "").trim() || null : null) : String(raw.id ?? "").trim();
+    const id = options.idField !== undefined ? deriveItemId(raw0, options.idField, parentIds ? String(raw0.parent_id ?? "").trim() || null : null) : String(raw0.id ?? "").trim();
     if (!id) { tally.rejected_missing_id += 1; continue; }
     if (items.has(key, id) || seenNow.has(id)) { duplicates += 1; tally.duplicates_ignored += 1; continue; }
     let parentId: string | null = null;
@@ -146,7 +149,10 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   const left: Record<string, number> = {};
   if (spec) {
     // a company that MAY be a public body (a research institute, a university, «national»: government.ts) goes to the model check even when the rule would accept it; the model is told the customer wants no government bodies
-    const verdicts = candidates.map((c) => { const v = classifyRowDetailed(spec, c.row); return { c, v: v.verdict === "match" && (govUnclear.has(c.id) || (c.carried && governmentUnclear(stage.filters, c.row))) ? ({ verdict: "review", reason: "uncertain" } as const) : v }; });
+    // THE CUSTOMER NAMED THE SOURCE (a channel, a page, an account): an item that passed the source filter is from it, so «the text names none of the topic's words» is not enough to throw it away (a video title in English about an Arabic topic, a
+    // post in another dialect): the model judges the topic only, in the item's own language
+    const namedSource = enabledFilters.some((f) => f.kind === "account");
+    const verdicts = candidates.map((c) => { const v0 = classifyRowDetailed(spec, c.row); const v = namedSource && v0.verdict === "exclude" && v0.reason === "no_term" ? ({ verdict: "review", reason: "uncertain" } as const) : v0; return { c, v: v.verdict === "match" && (govUnclear.has(c.id) || (c.carried && governmentUnclear(stage.filters, c.row))) ? ({ verdict: "review", reason: "uncertain" } as const) : v }; });
     const matches = verdicts.filter((x) => x.v.verdict === "match").length;
     const uncertain = verdicts.filter((x) => x.v.verdict === "review");
     let verdictOf = new Map<string, boolean>();

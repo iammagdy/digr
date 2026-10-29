@@ -5,12 +5,14 @@ import { classifyRows, searchQueryOf, validateRelevanceSpec, type RelevanceSpec 
 import { minimumLineAr, type MissionPricingSettings } from "../missionPricing";
 import { checkCustomerLabel, checkCustomerText } from "./text";
 import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type SourceField } from "./fields";
-import { roleLineAr, roleOfNoun, type RoleKey } from "./roles";
+import { neutralPeopleTitleAr, roleLineAr, roleOfNoun, type RoleKey } from "./roles";
 import { bindQuantity, bindQuantityDetailed, countedQuantities, ownTitleWords, perParentAskFor, perParentAskOf, perParentQuantities, requestedStageIndexes, sameNounStem, unservedPerParentAsks } from "./quantity";
 import { itemNounOf } from "./itemNoun";
 import { isTextItemStage, textKeyOf } from "./contract";
 import { childCardTitleAr, childRuleLinesAr } from "./childItems";
 import { platformCostNotesAr } from "./platformNotes";
+import type { DateWindow } from "./dateWindow";
+import { unresolvedSourcesLineAr } from "./namedSources";
 import { isCompanyStage, isEntityStage, requestNamesSector, sectorEnglishWords, sectorWordsOf } from "./entities";
 import { placeEntry, placeLabelsAr, placesInText } from "./places";
 import { excludesGovernment } from "./government";
@@ -46,6 +48,8 @@ export interface EngineSpec {
   parent_binding: { param: string; from: string } | null;
   /** The field of the mapped items that keys them when they carry no `id` of their own (chosen by code from the measured page: a platform id, a link, or «$content» for the fingerprint). Absent: the items carry `id`. */
   id_field?: string;
+  /** The source's own date inputs, from the catalog (dateWindow.ts): when the source ends before a requested period is reached, the engine asks again with the end of the window moved back. Absent: the source has none documented. */
+  window?: DateWindow;
 }
 
 export interface ProposedStage {
@@ -77,6 +81,8 @@ export interface ProposedStage {
   role_preference?: { role: RoleKey };
   /** Columns the customer switched off in the plan editor (kept so they can be switched back on). */
   hidden_columns?: PlanColumn[];
+  /** Set by code at plan time: the sources the customer NAMED (a channel, a page, an account) that no item of what the agent sampled belongs to. The card says so before approval; nothing is invented for them. */
+  unresolved_sources?: string[];
 }
 
 export interface ProposedPlan {
@@ -550,6 +556,8 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
 
   const price = priceMissionByCode(stagePriceInputs(priced), { settings: lookup.pricingSettings });
   if (price.overCap) return { ok: false, issues: [`the mission would hold ${price.reservePoints} points, more than the job limit; lower the expected rows`] };
+  // THE TITLE OF A PEOPLE STAGE THAT ONLY RANKS BY ROLE does not promise the role (roles.ts); done last, so the checks above still read the noun the model wrote
+  for (const st of priced) if (st.role_preference && st.parent_key !== null) st.title_ar = neutralPeopleTitleAr(st.title_ar, st.role_preference.role, itemNounOf(priced.find((p) => p.key === st.parent_key)?.title_ar ?? "").singular);
   return { ok: true, plan: { summary_ar: summary.text, stages: priced, price, ...(notes.length ? { notes_ar: notes } : {}), ...(assumptions.length ? { assumptions_ar: assumptions } : {}), ...(quantity ? { quantity } : {}), ...(unserved.length ? { unserved_steps: unserved } : {}) } };
 }
 
@@ -647,12 +655,25 @@ export function roleLinesAr(stages: ReadonlyArray<Pick<PricedStage, "key" | "tit
   return [...new Set(lines)];
 }
 
+/** The filters whose verdict an example row can show: what the card promises about WHICH items (a period, a source, replies, reposts, a language). Place and government need evidence the example may not carry. */
+const EXAMPLE_FILTER_KINDS: ReadonlyArray<StageFilter["kind"]> = ["period", "account", "exclude_replies", "exclude_reposts", "language"];
+
+/**
+ * THE EXAMPLES OF THE CARD OBEY THE CARD'S OWN FILTERS: an example row that the plan's enabled filters would leave out (a tweet from 2018 under «من اليوم فقط», a reply under «دون الردود», a video of another channel under «من القنوات التي سمّيتها») is
+ * not shown; a filter whose field the example row does not carry cannot judge it and is skipped.
+ */
+export function sampleRowPasses(stage: Pick<PricedStage, "filters" | "parent_key" | "columns" | "relevance">, row: Record<string, unknown>, now: number): boolean {
+  const active = (stage.filters ?? []).filter((f) => isEnabled(f) && EXAMPLE_FILTER_KINDS.includes(f.kind) && !(stage.parent_key !== null && CHILD_RAW_FILTER_KINDS.includes(f.kind)) && (f.field === undefined || row[f.field] !== undefined));
+  return active.length === 0 || filterVerdict(active, row, { textKey: textKeyOf(stage, Object.keys(row)), now }) === null;
+}
+
 /** The part of a priced plan a customer (and the admin page's customer view) may read: Arabic titles, rows, links between stages, readable columns and sample rows, the price in points, the expected time. No endpoint, no USD, no internal id. */
-export function customerPlanView(plan: PricedPlan) {
+export function customerPlanView(plan: PricedPlan, options: { now?: number } = {}) {
+  const now = options.now ?? Date.now();
   // what the card promises about the items is backed by the filters that are switched ON: a line of the model that promises one is shown only while its filter is on, and a filter that is on gets its own sentence, built by code
   const assumptions = assumptionLinesOf(plan);
   // fewer than the customer asked for: the reason the card shows next to the one target number
-  const notes = [...(plan.notes_ar ?? []), ...(plan.quantity?.reason_ar ? [plan.quantity.reason_ar] : []), ...childRuleLinesAr(plan.stages), ...roleLinesAr(plan.stages), ...platformCostNotesAr(plan.stages)];
+  const notes = [...(plan.notes_ar ?? []), ...(plan.quantity?.reason_ar ? [plan.quantity.reason_ar] : []), ...childRuleLinesAr(plan.stages), ...roleLinesAr(plan.stages), ...platformCostNotesAr(plan.stages), ...plan.stages.filter((s) => (s.unresolved_sources ?? []).length > 0 && (s.filters ?? []).some((f) => f.kind === "account" && isEnabled(f))).map((s) => unresolvedSourcesLineAr(s.unresolved_sources!))];
   return {
     summary_ar: firstSentenceAr(plan.summary_ar),
     ...(notes.length ? { notes_ar: notes } : {}),
@@ -663,7 +684,7 @@ export function customerPlanView(plan: PricedPlan) {
       const columns = s.columns.filter((c) => !isInternalColumn(c));
       return {
         key: s.key, title_ar: childCardTitleAr(s, plan.stages), expected_rows: s.planned_rows, parent_key: s.parent_key, deliver: s.deliver, columns,
-        sample_rows: s.sample_rows.slice(0, CUSTOMER_SAMPLE_ROWS).map((r) => Object.fromEntries(columns.map((c) => [c.key, String(r[c.key] ?? "").slice(0, SAMPLE_CELL_CHARS)]))),
+        sample_rows: s.sample_rows.filter((r) => sampleRowPasses(s, r, now)).slice(0, CUSTOMER_SAMPLE_ROWS).map((r) => Object.fromEntries(columns.map((c) => [c.key, String(r[c.key] ?? "").slice(0, SAMPLE_CELL_CHARS)]))),
         ...(s.how_ar ? { how_ar: s.how_ar } : {}),
         // the share of the sampled items the plan expected to match (a ratio, no money): the live tracker uses it to judge how much must be read before the target is reached
         ...(typeof s.yield_share === "number" ? { yield_share: Math.round(s.yield_share * 1000) / 1000 } : {}),

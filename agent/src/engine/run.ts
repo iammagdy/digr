@@ -3,6 +3,9 @@ import type { EngineSpec, PricedPlan } from "../../../src/lib/agentMission/plan"
 import type { Gateway } from "../gateway";
 import { RAW_PATH } from "../gateway";
 import { rankPeopleByRole } from "../../../src/lib/agentMission/roles";
+import { parseMoment } from "../../../src/lib/agentMission/dateCells";
+import { dayOf, firstWindowEndDay, nextWindowEndDay, windowParams } from "../../../src/lib/agentMission/dateWindow";
+import { isEnabled } from "../../../src/lib/agentMission/filters";
 import { drainPending, emitStageProgress, ingestRows } from "../items/ingest";
 import type { ItemStore, Row, StopReason } from "../items/itemStore";
 import type { Reviewer } from "../review";
@@ -23,6 +26,8 @@ export const enginePageCapFor = (plannedRows: number): number => Math.max(ENGINE
 const REVIEW_STALL_PAGES = 3;
 /** Pages in a row that give no new item at all (the source repeats itself). */
 const BARREN_PAGES = 2;
+/** Windows one stage may walk back through (a safety net: every window ends at least a day earlier than the one before, and a source that gives nothing more ends the walk). */
+export const ENGINE_MAX_WINDOWS = 200;
 
 export interface EngineDeps {
   items: ItemStore;
@@ -82,7 +87,7 @@ export async function runEngine(deps: EngineDeps): Promise<EngineOutcome> {
 
 async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promise<{ reason: StopReason; aborted: string | null }> {
   const { items } = deps;
-  if (stage.parent_key === null) return runStream(deps, stage, spec, "root", { ...spec.params }, null, Number.POSITIVE_INFINITY);
+  if (stage.parent_key === null) return runRoot(deps, stage, spec);
   const parentRows = items.acceptedRows(stage.parent_key);
   if (parentRows.length === 0 || !spec.parent_binding) return { reason: "no_parents", aborted: null };
   let last: StopReason = "source_exhausted";
@@ -114,8 +119,58 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
   return { reason: items.counts(stage.key).accepted >= stage.planned_rows ? "target_reached" : anyFailed ? "failed" : last === "target_reached" ? "source_exhausted" : last, aborted: null };
 }
 
+/** The period the customer asked for, as the engine can walk it: the enabled period filter with its date field and a first day. Null when the stage has none (or only an end). */
+function periodOf(stage: Stage, now: number): { field: string; sinceMs: number } | null {
+  const f = (stage.filters ?? []).find((x) => x.kind === "period" && isEnabled(x) && x.field);
+  if (!f?.field) return null;
+  const sinceMs = f.days !== undefined ? now - f.days * 86_400_000 : f.from ? Date.parse(`${f.from}T00:00:00Z`) : NaN;
+  return Number.isFinite(sinceMs) ? { field: f.field, sinceMs } : null;
+}
+
+/**
+ * THE FIRST-LEVEL STAGE: one read of the source as the plan recorded it; and, when a PERIOD was asked for and the source ends before the target is reached, THE WALK BACK THROUGH DATE WINDOWS: the same source is asked again with the end of the
+ * window moved back to the oldest day read (the source's own date inputs from the catalog: dateWindow.ts), until the target is reached, the first day of the period is reached, or the source gives nothing more. Items are de-duplicated by id
+ * (the overlapping day is read again and ignored), the review budget and every cap (calls, pages, time) are the ones of every read.
+ */
+async function runRoot(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promise<{ reason: StopReason; aborted: string | null }> {
+  const { items } = deps;
+  const now = (deps.now ?? Date.now)();
+  const period = spec.window ? periodOf(stage, now) : null;
+  let r = await runStream(deps, stage, spec, "root", { ...spec.params }, null, Number.POSITIVE_INFINITY, period?.field ?? null);
+  if (!spec.window || !period) return r;
+  const sinceDay = dayOf(period.sinceMs);
+  let lastEnd = firstWindowEndDay(spec.window, spec.params, now);
+  // windows read before a restart are continued in the order they were started
+  for (const key of items.streamKeys(stage.key).filter((k) => k.startsWith("w:"))) {
+    if (r.aborted || r.reason === "target_reached") return r;
+    lastEnd = key.slice(2);
+    r = await runStream(deps, stage, spec, key, windowParams(spec.window, spec.params, sinceDay, lastEnd), null, Number.POSITIVE_INFINITY, period.field);
+  }
+  for (let n = 0; n < ENGINE_MAX_WINDOWS; n += 1) {
+    if (r.aborted) return r;
+    if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
+    // only a source that has nothing more to give is walked back; a budget, a refusal, the time or a failure ends the stage as it always did
+    if (r.reason !== "source_exhausted" && r.reason !== "no_new_items") return r;
+    const oldest = items.streamKeys(stage.key).map((k) => items.streamState(stage.key, k)?.oldest ?? null).filter((x): x is number => x !== null);
+    const end = nextWindowEndDay({ oldestMs: oldest.length > 0 ? Math.min(...oldest) : null, lastEndDay: lastEnd, sinceDay });
+    if (!end) return r;
+    lastEnd = end;
+    r = await runStream(deps, stage, spec, `w:${end}`, windowParams(spec.window, spec.params, sinceDay, end), null, Number.POSITIVE_INFINITY, period.field);
+    // a window that reaches back to the first day of the period and gives NOTHING says the source has nothing older: the walk ends (never a call for every remaining day)
+    if ((items.streamState(stage.key, `w:${end}`)?.rows ?? 0) === 0) return { reason: "source_exhausted", aborted: r.aborted };
+  }
+  return r;
+}
+
+/** The oldest moment among mapped rows, read from the period's date field (null when none has one). */
+function oldestMomentOf(rows: ReadonlyArray<Record<string, unknown>>, field: string): number | null {
+  let oldest: number | null = null;
+  for (const r of rows) { const t = parseMoment(r[field])?.getTime(); if (t !== undefined && (oldest === null || t < oldest)) oldest = t; }
+  return oldest;
+}
+
 /** One stream of pages (a whole source, or one parent's children): resumes from the log, stops on a recorded reason. */
-async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, streamKey: string, params: Record<string, unknown>, parentId: string | null, perParentCap: number): Promise<{ reason: StopReason; aborted: string | null }> {
+async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, streamKey: string, params: Record<string, unknown>, parentId: string | null, perParentCap: number, periodField: string | null = null): Promise<{ reason: StopReason; aborted: string | null }> {
   const { items, store, gateway } = deps;
   const now = deps.now ?? Date.now;
   const maxPages = deps.maxPagesPerStage ?? enginePageCapFor(stage.planned_rows);
@@ -165,7 +220,8 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     const before = items.counts(stage.key).accepted;
     // a parent's share (per_parent_rows) is a cap on what this page may add for it
     const have = parentId !== null ? items.acceptedRows(stage.key).filter((r) => String(r.parent_id) === parentId).length : 0;
-    await ingestRows(deps, stage, incoming, { silent: true, idField: spec.id_field ?? null, ...(parentId !== null && Number.isFinite(perParentCap) ? { acceptCap: Math.max(0, perParentCap - have) } : {}), page: { stream: streamKey, call_id: result.call_id, cursor_in: cursor, cursor_next: nextCursor, has_more: result.has_more, ended, rows_in_page: result.rows_in_page } });
+    const oldestMs = periodField !== null ? oldestMomentOf(incoming, periodField) : null;
+    await ingestRows(deps, stage, incoming, { silent: true, idField: spec.id_field ?? null, ...(parentId !== null && Number.isFinite(perParentCap) ? { acceptCap: Math.max(0, perParentCap - have) } : {}), page: { stream: streamKey, call_id: result.call_id, cursor_in: cursor, cursor_next: nextCursor, has_more: result.has_more, ended, rows_in_page: result.rows_in_page, ...(oldestMs !== null ? { oldest_ms: oldestMs } : {}) } });
     await emitStageProgress(deps, stage, { collecting: true });
     // the review had nothing left to give while items still wait: pages that add nothing are not bought for ever
     const after = items.counts(stage.key);

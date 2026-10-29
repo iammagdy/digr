@@ -204,7 +204,7 @@ export function sameCapability(seeds: ReadonlyArray<CatalogEndpoint>, catalog: T
 }
 
 /** The candidates of the same capability as `id` that rank clearly cheaper than it (by `factor`) and are neither skipped for health: what the planner must sample first or give a reason to skip. */
-export function cheaperAlternatives(id: string, catalog: TregCatalog, stats: StatsMap, now: number, isAllowed: (id: string) => boolean, options: { factor?: number; max?: number } = {}): RankedSource[] {
+export function cheaperAlternatives(id: string, catalog: TregCatalog, stats: StatsMap, now: number, isAllowed: (id: string) => boolean, options: { factor?: number; max?: number } = {}): Array<RankedSource & { cheaperBy: number }> {
   const e = catalog.byId.get(id);
   if (!e || !e.capability) return [];
   const group = sameCapability([e], catalog, isAllowed);
@@ -214,8 +214,11 @@ export function cheaperAlternatives(id: string, catalog: TregCatalog, stats: Sta
   const mineCost = mine?.effectiveUsd ?? (() => { const c = expectedCost(e, catalog, stats.get(id)); return c.usdPerItem === null ? null : c.usdPerItem / c.successRate; })();
   if (mineCost === null) return [];
   const factor = options.factor ?? 1.5;
-  return ranked.filter((r) => r.id !== id && r.effectiveUsd * factor <= mineCost).slice(0, options.max ?? 3);
+  return ranked.filter((r) => r.id !== id && r.effectiveUsd * factor <= mineCost).slice(0, options.max ?? 3).map((r) => ({ ...r, cheaperBy: r.effectiveUsd > 0 ? mineCost / r.effectiveUsd : Number.POSITIVE_INFINITY }));
 }
+
+/** A source this many times dearer than one that answered EMPTY for a single input is not bought before that cheaper source is asked once more with another item (one empty answer says little about a source). */
+export const EMPTY_ONCE_FACTOR = 5;
 
 /** The words the planner may give for skipping a cheaper source: recorded with the call. */
 export const SKIP_REASONS = ["wrong_data", "missing_input", "too_few_rows", "known_failing", "other"] as const;

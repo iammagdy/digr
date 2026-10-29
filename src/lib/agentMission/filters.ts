@@ -2,6 +2,7 @@ import { toArabicDigits } from "../arabicDigits";
 import { parseMoment } from "./dateCells";
 import { governmentVerdict, excludesGovernment, EXCLUDES_GOVERNMENT } from "./government";
 import { isPlaceEvidenceKey, placeVerdict } from "./places";
+import { matchesAnyNamedSource } from "./namedSources";
 import { normalizeText } from "./relevance";
 
 /**
@@ -31,6 +32,8 @@ export interface StageFilter {
   places?: string[];
   /** place: the mapped fields that can carry evidence of a place, found by code from the mapping. */
   fields?: string[];
+  /** place: the source itself was asked for the place (its own country or location input, recorded with the measuring call): an item that carries no evidence against it passes. Set by code. */
+  by_source?: boolean;
 }
 
 export type FilterReason = "filter_reply" | "filter_repost" | "filter_language" | "filter_period" | "filter_account" | "filter_place" | "filter_government";
@@ -137,7 +140,6 @@ export const INVISIBLE = /[\u00a0\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180
 /** True when a text starts with an @handle (after whitespace and invisible characters): on X and the platforms that copy it, that is how a reply is written, whatever the source's own flag says. */
 export const startsWithHandle = (text: unknown): boolean => /^@[\p{L}\p{N}_.]{1,30}/u.test(String(text ?? "").replace(INVISIBLE, "").replace(/^\s+/, ""));
 
-const normName = (s: string): string => normalizeText(s).replace(/^@/, "");
 
 /** True when the item is not clearly a public body but MAY be one (a research institute, a university, «national»): the model checks it before it is delivered. */
 export function governmentUnclear(filters: ReadonlyArray<StageFilter> | undefined, mapped: Record<string, unknown>): boolean {
@@ -182,8 +184,9 @@ export function filterVerdict(filters: ReadonlyArray<StageFilter> | undefined, m
         break;
       }
       case "account": {
-        const who = f.field ? normName(String(mapped[f.field] ?? "")) : "";
-        if (!who || !(f.values ?? []).some((v) => normName(v) === who)) return "filter_account";
+        // the named source of the customer (a channel, a page, an account): the name the source gives for the author matches it (namedSources.ts: the same name, or every word of it), not only the exact handle
+        const who = f.field ? String(mapped[f.field] ?? "").trim() : "";
+        if (!who || !matchesAnyNamedSource(f.values ?? [], who)) return "filter_account";
         break;
       }
       case "exclude_government": {
@@ -194,7 +197,7 @@ export function filterVerdict(filters: ReadonlyArray<StageFilter> | undefined, m
       case "place": {
         // WITH named places: the item must carry evidence of one of them from a mapped field; another country or no evidence is not delivered
         if (f.places && f.places.length > 0) {
-          if (placeVerdict(f.places, mapped, f.fields && f.fields.length > 0 ? f.fields : f.field ? [f.field] : []) !== "pass") return "filter_place";
+          if (placeVerdict(f.places, mapped, f.fields && f.fields.length > 0 ? f.fields : f.field ? [f.field] : [], { bySource: f.by_source === true }) !== "pass") return "filter_place";
           break;
         }
         const where = f.field ? normalizeText(String(mapped[f.field] ?? "")) : "";
@@ -324,7 +327,8 @@ export function filterLineAr(f: StageFilter): string {
     case "exclude_reposts": return "دون إعادة النشر.";
     case "language": return f.lang === "en" ? "باللغة الإنجليزية فقط." : "باللغة العربية فقط.";
     case "period": return f.days !== undefined ? `${daysAr(f.days)}.` : `من ${f.from ? toArabicDigits(f.from) : "البداية"} إلى ${f.to ? toArabicDigits(f.to) : "اليوم"}.`;
-    case "account": return `من ${(f.values ?? []).length === 1 ? "حساب محدد" : "حسابات محددة"} فقط.`;
+    // the card NAMES the sources the customer named (the values are their own words)
+    case "account": return (f.values ?? []).length === 1 ? `من المصدر الذي سمّيته فقط: ${f.values![0]}.` : `من المصادر التي سمّيتها فقط: ${(f.values ?? []).join("، ")}.`;
     case "place": return `في: ${(f.values ?? []).join("، ")}.`;
     case "exclude_government": return "دون الجهات الحكومية والعسكرية.";
   }
@@ -388,7 +392,9 @@ export function assumptionLinesShown(modelLines: ReadonlyArray<string>, filters:
   const on = new Set(filters.filter(isEnabled).map((f) => f.kind));
   const shown = modelLines.filter((line) => kindsPromisedBy(line).every((k) => on.has(k)));
   const covered = new Set(shown.flatMap(kindsPromisedBy));
-  const added = [...new Set(filters.filter(isEnabled).filter((f) => !covered.has(f.kind)).map(filterLineAr))];
+  // a line that only says «من حسابات محددة» does not name them: the card always names the sources the customer named
+  const namesAll = (f: StageFilter): boolean => (f.values ?? []).every((v) => shown.some((line) => normalizeText(line).includes(normalizeText(v))));
+  const added = [...new Set(filters.filter(isEnabled).filter((f) => !covered.has(f.kind) || (f.kind === "account" && !namesAll(f))).map(filterLineAr))];
   return [...shown, ...added];
 }
 

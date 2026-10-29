@@ -4,6 +4,22 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-29, after #296): fix mission 10 (social-media depth and correctness)
+
+`main` before it was `77685e2fb3f0a0b02d1f0f85e31e183943f819c8` (#296); its merge commit is the head of `main` after it. Evidence, root causes, tests and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 14. No SQL written or applied; no Edge Function changed; no price, cap, markup, minimum or model string changed; settlement code untouched.
+
+- **YouTube named channels, 0 of 315**: the ACCOUNT filter (exact name equality) left out 18 of 18 videos; the topic check never ran. A named source is now matched by name (every word of it), the card names the sources, a named source no sample shows is told on the card, a stage naming several sources by one query gets no engine recipe, `finish` is refused while a named source has no item, and an item of a named source with no topic term goes to the model check, which judges the topic only, in the item's own language.
+- **Time depth** (2000 tweets: 176): the source ends after about two thousand results, all of the last two days. A stage with a period filter is now walked back through date windows (the source's own `since:/until:` operators or start/end inputs from the catalog) before a shortfall is declared. 1,084 against 242: the yield the sample measured (0.3 against 1.0), nothing changed in the price.
+- **«آخر ٢٠ تغريدة» from @AlAhly: NOT FIXED** (root cause in section 14: one call to the timeline source gave 4 recent + 16 sparse tweets; the data cannot tell a selection from a rare poster).
+- **Tweet times**: not #296; the model's mapping cut `createdUtc` to a day. A recipe's cut (`.toISOString().slice(0,10)` and two more forms) is removed and proven on the measured page.
+- **Facebook 4,383**: comments bought from a source 15 times dearer after one empty sample of the cheaper one on one reel; now a cheaper source that answered empty for one input is asked again with another item, and a planner that skips some cheaper sources by name must account for all.
+- **Companies**: 781 of 842 left out by the place proof (a city of the country, or the source's own country filter, is now evidence); a name that is only a domain is replaced from another name field of the item; city cells in Arabic, fragments «غير مذكورة في المصدر»; a role-ranked people stage is titled «موظفو كل شركة».
+- **Card examples** obey the plan's period (and the other enabled filters).
+- Existing tests changed: `tests/engine-spec.test.ts`, `tests/source-ranking.test.ts` (justifications in section 14). A clock-dependent test (`tests/review-budget-up.test.ts`) fails after 21:00 UTC on main too.
+- Rollback: `git revert -m 1 <merge commit>`.
+
+---
+
 ## START HERE (2026-10-29, after #295): fix mission 9 (file correctness)
 
 `main` before it was `8e98d5759c242a15c64520fc06ef6107ca39acd3` (#295); its merge commit is the head of `main` after it. Evidence, root causes, tests and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 13. No SQL written or applied; no Edge Function changed; no price, cap or model string changed; settlement code untouched.

@@ -22,10 +22,11 @@ import { codeRunPath, deriveEngineSpecsChecked, type CodeRun } from "./engine/sp
 import { ROW_KEY_FIELDS } from "../../src/lib/agentMission/contract";
 import type { AgentStore, CallPhase, MissionRecord } from "./types";
 import { catalogHitView } from "../../src/lib/modelPlanner/tools";
-import { cheaperAlternatives, SKIP_REASONS, sourceHealth, type StatsMap } from "../../src/lib/agentMission/sourceRanking";
+import { cheaperAlternatives, EMPTY_ONCE_FACTOR, SKIP_REASONS, sourceHealth, type StatsMap } from "../../src/lib/agentMission/sourceRanking";
 import { applyReverseOrder } from "../../src/lib/treg/reverseOrder";
 import { rankedCandidates } from "../../src/lib/agentMission/candidates";
 import { perParentQuantities } from "../../src/lib/agentMission/quantity";
+import { sourceNameMatches } from "../../src/lib/agentMission/namedSources";
 
 /**
  * The tools the agent has, and the only ones: three gateway tools (catalog_search, describe_endpoint, treg_call), the sandboxed run_code, and the mission tools (report_progress,
@@ -65,8 +66,10 @@ export interface RunState {
   giveUpRefusals: number;
   /** Per source stream (a collect_pages source and its inputs): whether the last read says the source has more pages. */
   moreAvailable: Map<string, boolean>;
+  /** What each source gave in the planning samples: the rows of every answered call and a key of its inputs (two samples of the same item are one). */
+  samples: Map<string, Array<{ rows: number; key: string }>>;
 }
-export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, moreAvailable: new Map() });
+export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, moreAvailable: new Map(), samples: new Map() });
 /** The most times finish is refused for the same reason in one run. */
 export const FINISH_REFUSALS_MAX = 3;
 /** The most times a planning that already holds real rows is told not to end with «cannot_serve» for a source's price or yield. */
@@ -168,14 +171,22 @@ const skipReasonOf = (v: unknown): string | null => { const t = String(v ?? "").
 export function cheaperSameJobMessage(ctx: Pick<ToolContext, "catalog" | "access" | "stats" | "now" | "state" | "phase">, id: string, why: unknown, skip: unknown): { refusal: string | null; recorded: string } {
   if (ctx.phase !== "planning") return { refusal: null, recorded: "" };
   const allowed = (x: string): boolean => policyVerdict(x, ctx.access).allowed && !blockedEndpointReason(x) && isSellable(x, ctx.catalog);
-  const alts = cheaperAlternatives(id, ctx.catalog, ctx.stats ?? new Map(), ctx.now ?? Date.now(), allowed).filter((r) => !ctx.state.tried.has(r.id));
+  const all = cheaperAlternatives(id, ctx.catalog, ctx.stats ?? new Map(), ctx.now ?? Date.now(), allowed);
+  // ONE EMPTY ANSWER IS NOT A VERDICT ON A SOURCE: a cheaper source that gave nothing for a single input (one post, one page) is asked once more with another item before a source many times dearer is bought
+  // (live: the comments of a Facebook video were bought at 0.02952 a call after one cheaper source (0.00188) answered empty for one reel; the same source gave ten comments for every other post)
+  const emptyOnce = all.filter((r) => ctx.state.tried.has(r.id) && r.cheaperBy >= EMPTY_ONCE_FACTOR && (() => { const s = ctx.state.samples.get(r.id) ?? []; return s.length > 0 && s.every((x) => x.rows === 0) && new Set(s.map((x) => x.key)).size === 1; })());
+  if (emptyOnce.length > 0) return { refusal: `a cheaper source that does the same job gave nothing for ONE input only: ${emptyOnce.map((r) => `${r.id} (${Math.round(r.cheaperBy)} times cheaper)`).join(", ")}. One empty answer says little about a source: ask it once more with ANOTHER item (another post, another page, another account) before a source this much dearer is chosen; if that gives rows too, choose the cheaper one`, recorded: "" };
+  const alts = all.filter((r) => !ctx.state.tried.has(r.id));
   if (alts.length === 0) return { refusal: null, recorded: "" };
   const given = isObject(skip) ? (skip as Record<string, unknown>) : {};
   const unexplained = alts.filter((r) => skipReasonOf(given[r.id]) === null);
   const recorded = alts.filter((r) => skipReasonOf(given[r.id]) !== null).map((r) => `skip ${r.id}=${skipReasonOf(given[r.id])}`).join("; ");
   for (const r of alts) { const reason = skipReasonOf(given[r.id]); if (reason) ctx.state.skips.set(r.id, reason); }
-  if (unexplained.length === 0 || String(why ?? "").trim().length >= 8) return { refusal: null, recorded };
-  return { refusal: `cheaper sources that do the same job have not been tried: ${unexplained.map((r) => `${r.id} (about ${r.usdPerItem.toFixed(5)} USD per item)`).join(", ")}. Sample the cheapest first, or skip it on purpose with \`skip\` {"<source id>": "wrong_data" | "missing_input" | "too_few_rows" | "known_failing" | "other"} (recorded for the admin), or give \`why\` (at least 8 characters)`, recorded };
+  // A FREE SENTENCE (`why`) EXCUSES THE CHOICE AS A WHOLE only when the planner did not itemize: a call that skips some of the cheaper sources on purpose (`skip`) has shown it reads them one by one, so every other cheaper source must be sampled or skipped
+  // too (live: a source 15 times dearer was bought after one cheaper source was skipped by name and another was never mentioned, all excused by one sentence)
+  const itemized = alts.some((r) => skipReasonOf(given[r.id]) !== null);
+  if (unexplained.length === 0 || (!itemized && String(why ?? "").trim().length >= 8)) return { refusal: null, recorded };
+  return { refusal: `cheaper sources that do the same job have not been tried: ${unexplained.map((r) => `${r.id} (about ${r.usdPerItem.toFixed(5)} USD per item)`).join(", ")}. Sample the cheapest first, or skip it on purpose with \`skip\` {"<source id>": "wrong_data" | "missing_input" | "too_few_rows" | "known_failing" | "other"} (recorded for the admin)${itemized ? "; you skipped some cheaper sources by name, so every one of them needs its own skip or a sample" : ", or give \`why\` (at least 8 characters)"}`, recorded };
 }
 
 /** A source that failed on its configuration or its inputs in recent calls is not sampled during planning (the health window of the recorded calls). */
@@ -349,6 +360,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         // the full inputs of this call, kept for the plan's execution recipe (the call log keeps short values only)
         if (isObject(a.params) && typeof result.call_id === "string") state.callParams.set(result.call_id, { ...a.params });
         if (!("refused" in result) || result.refused === "needs_login") state.tried.add(id);
+        if (ctx.phase === "planning" && result.ok === true && isObject(a.params)) { const list = state.samples.get(id) ?? []; list.push({ rows: Number(result.rows_in_page ?? 0) || 0, key: JSON.stringify(Object.entries(a.params).filter(([k]) => !/^(?:limit|count|page|cursor|page_size|per_page)$/i.test(k)).sort(([x], [y]) => x.localeCompare(y)))}); state.samples.set(id, list); }
         // A SAMPLE THAT FAILS IS NOT THE END OF EXPLORATION: a failed call, an empty page or a source that refuses this search says which sources of the ranking are still untried, so the next one is sampled (within the budget)
         const unsuitable = ("failed" in result && result.failed === true) || ("refused" in result && result.refused === "needs_login") || (result.ok === true && result.rows_in_page === 0);
         return unsuitable ? { ...result, next_sources: untriedSources(state, id), next_step: "this sample did not give rows; sample the next untried source of the ranking (pass `why` only if you skip one), and stop only when the budget refuses or no suitable source is left" } : { ...result };
@@ -560,6 +572,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             if (spec) st.engine = spec;
             const filters = derived.filters.get(st.key);
             if (filters) { if (filters.length > 0) st.filters = filters; else delete st.filters; }
+            const missing = derived.unresolved.get(st.key);
+            if (missing && missing.length > 0) st.unresolved_sources = missing;
           }
         }
         state.proposedPlan = checked.plan;
@@ -632,6 +646,22 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             if (!st.relevance) continue;
             await drainPending({ items, plan: ctx.plan, reviewer: ctx.review, addEvent: (e) => store.addEvent(mission.id, e) }, st);
             await mirrorLegacyFiles(items, store, ctx.plan, [st.key]);
+          }
+        }
+        // A NAMED SOURCE WITH NOTHING: the customer named several channels, pages or accounts, the stage is still short, and no saved item comes from one of them: that source has not been searched (the live YouTube mission searched one of three named channels and finished).
+        // Refused a limited number of times (the same counter as below), so the model is never stuck.
+        if (outcome === "delivered" && ctx.plan && state.finishRefusals < FINISH_REFUSALS_MAX) {
+          const items = await getItems();
+          const unmet: string[] = [];
+          for (const st of ctx.plan.stages) {
+            const named = (st.filters ?? []).find((f) => f.kind === "account" && f.enabled !== false && f.field !== undefined && (f.values?.length ?? 0) >= 2);
+            if (!st.deliver || st.parent_key !== null || !named || items.counts(st.key).accepted >= st.planned_rows) continue;
+            const authors = items.acceptedRows(st.key).map((r) => r[named.field!]);
+            for (const v of named.values ?? []) if (!authors.some((x) => sourceNameMatches(v, x))) unmet.push(v);
+          }
+          if (unmet.length > 0) {
+            state.finishRefusals += 1;
+            return err(`do not finish yet: the customer named ${unmet.map((v) => `«${v}»`).join(", ")} and no saved item comes from it. Search each named source (one search per named source, with its own name in the search), map, save_rows; finish when each named source has its items or its search really gave none (then say so in the summary)`);
           }
         }
         // NO EARLY STOP: while matching items are still needed and a source says it has more pages, finish is refused (a limited number of times, so the model is never stuck): the model cannot end a mission short of what was bought
