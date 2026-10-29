@@ -2,6 +2,7 @@ import { AGENT_BUCKET, AGENT_HEARTBEAT_TABLE, AGENT_SETTINGS_TABLE, MISSION_CALL
 import { guardEvent } from "../../src/lib/agentMission/eventText";
 import { artifactVersionRowId } from "../../src/functions/shared/artifactVersions";
 import type { AgentStore, CallRow, HeartbeatRow, MissionEventInput, MissionRecord } from "./types";
+import type { RecordedCallFact } from "../../src/lib/agentMission/sourceRanking";
 
 const XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
@@ -64,6 +65,10 @@ export function createSupabaseStore(client: any): AgentStore {
     async listCalls(missionId) {
       const data = must(await client.from(MISSION_CALLS_TABLE).select("*").eq("mission_id", missionId).order("id", { ascending: true }).limit(2000), "calls");
       return (data ?? []) as CallRow[];
+    },
+    async recentCalls(sinceMs) {
+      const data = must(await client.from(MISSION_CALLS_TABLE).select("endpoint_id,status,refused_reason,http_status,rows_returned,cost_usd,created_at,params_digest").gte("created_at", new Date(sinceMs).toISOString()).order("created_at", { ascending: false }).limit(5000), "recent calls");
+      return (data ?? []) as RecordedCallFact[];
     },
     async getMission(id) {
       const { data, error } = await client.from(MISSION_TABLE).select("*").eq("id", id).maybeSingle();

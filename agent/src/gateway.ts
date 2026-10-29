@@ -9,7 +9,7 @@ import { toolCatalogSearch, toolDescribeEndpoint } from "../../src/lib/modelPlan
 import { blockedEndpointReason } from "../../src/lib/treg/blockList";
 import { endpointCostUsd, isSellable, type CatalogEndpoint, type TregCatalog } from "../../src/lib/treg/catalog";
 import { categoryOf, policyVerdict, type AccountAccess } from "../../src/lib/treg/dataPolicy";
-import { AGENT_FIRST_ROWS } from "../../src/lib/agentMission/constants";
+import { AGENT_FIRST_ROWS, AGENT_PLANNING_STAGE_RESERVE_SHARE } from "../../src/lib/agentMission/constants";
 import { sessionRestriction } from "../../src/lib/agentMission/sources";
 import type { AgentStore, CallPhase } from "./types";
 
@@ -37,7 +37,7 @@ const LIMIT_PARAM_NAMES = ["limit", "count", "page_size", "per_page", "size", "n
 
 export type RefusalCode =
   | "not_sellable" | "blocked" | "sensitive_not_allowed" | "purpose_required" | "daily_limit" | "audit_unavailable"
-  | "missing_params" | "over_budget" | "daily_cap" | "recording_unavailable" | "needs_login" | "repeat_sample";
+  | "missing_params" | "over_budget" | "daily_cap" | "recording_unavailable" | "needs_login" | "repeat_sample" | "stage_reserved";
 
 export type GatewayCallResult =
   | { ok: true; call_id: string; http_status: number; rows_in_page: number; has_more: boolean | null; next_cursor: string | null; shape: unknown; first_rows: unknown[]; warnings: string[]; saved: string }
@@ -65,6 +65,8 @@ export interface GatewayDeps {
   defaultPurpose: string;
   /** Call counter, shared by the whole mission (continues after a restart). */
   counter: { seq: number };
+  /** Planning only: how many stages the plan will have and the planning budget (USD): a share of it is kept for the first sample of every stage not sampled yet. */
+  stageBudget?: { stages: number; budgetUsd: number };
 }
 
 const clip = (s: unknown, n: number): string => String(s ?? "").slice(0, n);
@@ -100,6 +102,7 @@ const REFUSAL_TEXT: Record<RefusalCode, string> = {
   daily_cap: "the provider's daily limit has no room for this call, so it was NOT made; stop and explain honestly",
   recording_unavailable: "the call could not be recorded, so it was NOT made; try once more, then stop and explain honestly",
   repeat_sample: "this source was already sampled twice and gave rows both times: a third sample only spends the planning budget (the live Facebook request of 2026-10-29 spent it on three searches of one source and could not sample the next stage). Plan from the samples you have, or sample the OTHER stages and sources the plan still needs",
+  stage_reserved: "this call would spend the planning budget kept for the first sample of a stage that has not been sampled yet: sample the next stage of the plan (its parent or its children) first, then come back if budget is left",
   needs_login: "this source refuses this kind of search without the customer's own login, so it was NOT called and cost nothing; sample the next source of the ranking",
 };
 
@@ -109,6 +112,8 @@ export function createGateway(deps: GatewayDeps) {
   const spendField = deps.phase === "planning" ? "planning_treg_usd" : "execution_treg_usd";
   /** Real calls per source that gave rows, in this run of the gateway (planning only). */
   const samplesWithRows = new Map<string, number>();
+  /** The jobs (capabilities) that have given rows in this run: a stage is «sampled» once its job has. */
+  const sampledJobs = new Set<string>();
 
   async function logCall(row: { id: string; endpoint_id: string; params: Record<string, unknown>; status: "ok" | "failed" | "empty" | "refused"; refused_reason?: string; http_status?: number; rows?: number; cost_usd?: number; estimate_usd?: number; provider_cost_id?: number | null; storage_path?: string | null; duration_ms?: number }) {
     await deps.store.addCall({
@@ -167,6 +172,14 @@ export function createGateway(deps: GatewayDeps) {
       // 5: the mission's USD budget
       const estimate = estimateCallUsd(endpoint, params, deps.catalog);
       if (!deps.budget.reserve(estimate)) return refuse(id, endpointId, trace, "over_budget", `${deps.phase}`);
+      // 5a: THE PLANNING BUDGET IS SHARED BY EVERY STAGE: a call may not spend what the first sample of a stage that is still unsampled needs (a new job counts as the stage it samples)
+      if (deps.phase === "planning" && deps.stageBudget && deps.stageBudget.stages > 1) {
+        const job = endpoint.capability ?? endpointId;
+        const unsampledOthers = Math.max(0, deps.stageBudget.stages - sampledJobs.size - (sampledJobs.has(job) ? 0 : 1));
+        const kept = unsampledOthers * AGENT_PLANNING_STAGE_RESERVE_SHARE * deps.stageBudget.budgetUsd;
+        if (deps.budget.spentUsd() + estimate > deps.stageBudget.budgetUsd - kept + 1e-9) { deps.budget.settle(estimate, 0); return refuse(id, endpointId, trace, "stage_reserved", "planning"); }
+      }
+
       // 5b: planning samples a source at most twice once it has given rows (the budget is shared by every stage of the plan); the reservation just taken is given back
       if (deps.phase === "planning" && (samplesWithRows.get(endpointId) ?? 0) >= GATEWAY_MAX_SAMPLES_PER_SOURCE) { deps.budget.settle(estimate, 0); return refuse(id, endpointId, trace, "repeat_sample", "planning"); }
 
@@ -233,7 +246,7 @@ export function createGateway(deps: GatewayDeps) {
       const { digest, reading } = result.ok ? buildShapeDigest(result.data, endpoint) : { digest: null, reading: null };
       const rows = reading ? reading.rows.length : 0;
       const status = tregCallStatusOf({ ok: result.ok, rows: reading?.rows ?? [] });
-      if (result.ok && rows > 0) samplesWithRows.set(endpointId, (samplesWithRows.get(endpointId) ?? 0) + 1);
+      if (result.ok && rows > 0) { samplesWithRows.set(endpointId, (samplesWithRows.get(endpointId) ?? 0) + 1); sampledJobs.add(endpoint.capability ?? endpointId); }
       await commit(deps.client, { costId: reservation.costId, costUsd: actualUsd, units: rows, capabilityId, status, durationMs, jobId: deps.jobId });
       // why a call failed is kept in the trace for the admin (the provider's own words, shortened): the model sees the same text in its answer
       const failure = result.ok ? null : clip(result.errorDetails || result.detail || result.error || "the source answered with an error", 160);

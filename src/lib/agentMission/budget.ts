@@ -15,3 +15,6 @@ export function isMultiStageRequest(text: unknown): boolean {
 }
 
 export const planningBudgetUsd = (requestText: unknown): number => (isMultiStageRequest(requestText) ? AGENT_PLANNING_BUDGET_MULTI_STAGE_USD : AGENT_PLANNING_BUDGET_USD);
+
+/** How many stages the request will need (each needs a sample while planning): two for a parent and its children, else one. Decided by code from the customer's words. */
+export const expectedStageCount = (requestText: unknown): number => (isMultiStageRequest(requestText) ? 2 : 1);

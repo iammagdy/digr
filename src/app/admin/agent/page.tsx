@@ -37,8 +37,16 @@ const num = (n: number | null | undefined) => (n === null || n === undefined ? "
 const hhmm = (iso: string) => toArabicDigits(new Date(iso).toLocaleTimeString("ar-EG", { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }));
 const cell = (v: unknown) => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v)).slice(0, 140);
 
+interface SourceRow { id: string; state: "ok" | "demoted" | "skipped"; reason: "config" | "validation" | null; failures: number; until: string | null; attempts: number; withRows: number; rows: number; usdPerRow: number | null }
+const STATE_AR: Record<SourceRow["state"], string> = { ok: "سليم", demoted: "مُؤخَّر في الترتيب", skipped: "مُتجاوَز مؤقتًا" };
+const REASON_AR: Record<"config" | "validation", string> = { config: "إعداد المصدر أو صلاحياته", validation: "مدخلات مرفوضة تكررت" };
+
 export default function AgentPage() {
   const { toast } = useAdmin();
+  const [sources, setSources] = useState<SourceRow[] | null>(null);
+  async function loadSources() {
+    try { const r = await adminFetch<{ ok: boolean; sources: SourceRow[] }>("/api/admin/agent/sources"); setSources(r.sources); } catch (e) { toast(e instanceof Error ? e.message : "تعذّر التحميل"); }
+  }
   const [overview, setOverview] = useState<Overview | null>(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -150,6 +158,21 @@ export default function AgentPage() {
         </div>
         <textarea className="min-h-28 w-full rounded-xl border border-ln2 bg-sf p-3 text-sm" placeholder="مثال: هات لي ٣٠٠ منشور عن القهوة في مصر على إكس مع تعليقات كل منشور" value={text} onChange={(e) => setText(e.target.value)} data-testid="agent-text" />
         <div><button type="button" className={BTN} disabled={busy || text.trim().length < 3} onClick={create} data-testid="agent-create">شغّل الوكيل</button></div>
+      </section>
+
+      <section className={SECTION} aria-label="صحة المصادر" data-testid="agent-sources">
+        <h3 className="m-0 text-[13px] font-semibold text-ink">صحة المصادر (آخر ١٤ يومًا)</h3>
+        <p className="m-0 text-[12px] leading-[1.8] text-ink2">يُؤخَّر في الترتيب أو يُتجاوَز مؤقتًا أي مصدر فشلت نداءاته الأخيرة بسبب إعداده أو مدخلاته، حتى يعطي صفوفًا من جديد أو تنتهي مدة ٢٤ ساعة. الحساب آلي بلا استثناءات لمزوّد بعينه.</p>
+        <div><button type="button" className={BTN} onClick={loadSources} data-testid="agent-sources-load">اعرض المصادر</button></div>
+        {sources === null ? null : sources.filter((x) => x.state !== "ok").length === 0 ? <p className="m-0 text-[13px] text-ink2">لا مصدر مُؤخَّر أو مُتجاوَز الآن.</p> : (
+          <ul className="m-0 flex list-none flex-col gap-1 p-0">
+            {sources.filter((x) => x.state !== "ok").map((x) => (
+              <li key={x.id} className="rounded-[12px] bg-sf2 px-3 py-2 text-[13px] text-ink" dir="rtl">
+                <span dir="ltr" className="font-mono">{x.id}</span> — {STATE_AR[x.state]}{x.reason ? ` (${REASON_AR[x.reason]}، ${num(x.failures)} مرة)` : ""}{x.until ? ` — حتى ${hhmm(x.until)}` : ""}
+              </li>
+            ))}
+          </ul>
+        )}
       </section>
 
       <section className={SECTION} aria-label="المهام">

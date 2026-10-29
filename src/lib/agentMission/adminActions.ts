@@ -1,10 +1,11 @@
 import { randomBytes } from "node:crypto";
-import { AGENT_ALLOWED_MODELS, AGENT_DYNO_MEMORY_MB, AGENT_BUCKET, AGENT_HEARTBEAT_TABLE, AGENT_SETTINGS_TABLE, AGENT_TEST_ACCOUNT_EMAIL, MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE, PLANNING_MODEL_SETTING_KEY } from "./constants";
+import { AGENT_SOURCE_MEASURE_WINDOW_MS, AGENT_ALLOWED_MODELS, AGENT_DYNO_MEMORY_MB, AGENT_BUCKET, AGENT_HEARTBEAT_TABLE, AGENT_SETTINGS_TABLE, AGENT_TEST_ACCOUNT_EMAIL, MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE, PLANNING_MODEL_SETTING_KEY } from "./constants";
 import { memoryWarning } from "./concurrency";
 import { latestBeat, workerAlive } from "./heartbeat";
 import { approveMissionOnce } from "./approval";
 import { repriceStoredPlan } from "./lifecycle";
 import { customerPlanView, type PricedPlan } from "./plan";
+import { sourceHealth, statsFromCalls, type RecordedCallFact } from "./sourceRanking";
 import { missionDownloadName } from "./fileNames";
 import { DEFAULT_MISSION_PRICING_SETTINGS, MISSION_PRICING_SETTING_KEY, missionPricingSettingsProblemAr, normalizeMissionPricingSettings, type MissionPricingSettings } from "../missionPricing";
 
@@ -122,6 +123,22 @@ export async function loadOverview(client: any, now: number = Date.now()) {
     testAccountEmail: AGENT_TEST_ACCOUNT_EMAIL,
     missions: Array.isArray(missions.data) ? missions.data : [],
   };
+}
+
+/**
+ * THE HEALTH OF THE SOURCES, for the admin: every source whose recorded calls (the last fourteen days) failed on its configuration or its inputs, with its state (demoted or skipped for the time window), the reason, how many failures
+ * since it last gave rows, when it is tried again, and what it really cost per row. Read only; the planner ranks and skips with the same function.
+ */
+export async function loadSourceHealth(client: any, now: number = Date.now()) {
+  const since = new Date(now - AGENT_SOURCE_MEASURE_WINDOW_MS).toISOString();
+  const { data, error } = await client.from(MISSION_CALLS_TABLE).select("endpoint_id,status,refused_reason,http_status,rows_returned,cost_usd,created_at,params_digest").gte("created_at", since).order("created_at", { ascending: false }).limit(5000);
+  if (error) return { ok: false as const, sources: [] };
+  const stats = statsFromCalls((data ?? []) as RecordedCallFact[]);
+  const sources = [...stats.entries()].map(([id, s]) => {
+    const h = sourceHealth(s, now);
+    return { id, state: h.state, reason: h.reason, failures: h.failures, until: h.until === null ? null : new Date(h.until).toISOString(), attempts: s.attempts, withRows: s.withRows, rows: s.rows, usdPerRow: s.rows > 0 ? Number((s.costUsd / s.rows).toFixed(6)) : null };
+  }).sort((a, b) => (a.state === "ok" ? 1 : 0) - (b.state === "ok" ? 1 : 0) || a.id.localeCompare(b.id));
+  return { ok: true as const, sources };
 }
 
 /** One mission for the admin: everything, the plan in both views (the customer's and the internal one with the price computed by code), the events after `afterEventId`, and the call totals. */

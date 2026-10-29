@@ -51,6 +51,7 @@ export function createMemoryStore(initial: MissionRecord[] = []): MemoryStore {
     async addEvent(missionId, event) { const g = guardEvent(event); events.push({ mission_id: missionId, kind: g.kind, message_ar: g.message_ar, counts: g.counts }); },
     async addCall(row) { calls.push(row); },
     async listCalls(missionId) { return calls.filter((c) => c.mission_id === missionId); },
+    async recentCalls(sinceMs) { return calls.map((c) => ({ ...c, created_at: (c as unknown as { created_at?: string | number }).created_at ?? Date.now() })).filter((c) => Number(typeof c.created_at === "number" ? c.created_at : Date.parse(c.created_at)) >= sinceMs); },
     async getMission(id) { return missions.get(id) ?? null; },
     async updateMission(id, patch) { const m = missions.get(id); if (m) Object.assign(m, patch); },
     async claimMission(workerId, leaseSeconds) {

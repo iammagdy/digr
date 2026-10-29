@@ -36,6 +36,8 @@ export interface MissionEventInput { kind: EventKind; message_ar: string; counts
 
 export type CallPhase = "planning" | "execution";
 
+import type { RecordedCallFact } from "../../src/lib/agentMission/sourceRanking";
+
 export interface CallRow {
   id: string;
   mission_id: string;
@@ -83,6 +85,8 @@ export interface AgentStore {
   addEvent(missionId: string, event: MissionEventInput): Promise<void>;
   addCall(row: CallRow): Promise<void>;
   listCalls(missionId: string): Promise<CallRow[]>;
+  /** The recorded source calls of ALL missions since a moment, newest first (the measurement and the health of the sources are read from them). Read only. */
+  recentCalls(sinceMs: number): Promise<RecordedCallFact[]>;
   getMission(id: string): Promise<MissionRecord | null>;
   updateMission(id: string, patch: Partial<MissionRecord> & Record<string, unknown>): Promise<void>;
   /** Takes the next mission to plan (`queued`) or execute (`approved`), or a mission whose lease ran out; null when there is none. */

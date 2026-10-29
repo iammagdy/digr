@@ -78,7 +78,7 @@ describe("A. every no-card end is exactly one of four classes, each with its own
   it("«empty» claimed while a call returned rows is NOT empty: it is unsupported", async () => {
     const r = await plan([
       { tool: "catalog_search", args: { words: ["posts", "search"], platform: "x", limit: 5 } },
-      { tool: "treg_call", args: { endpoint_id: POSTS_ENDPOINT, params: { query: "غلاء", max_results: 5 } } },
+      { tool: "treg_call", args: { endpoint_id: POSTS_ENDPOINT, params: { query: "غلاء", max_results: 5 }, why: "the fixture source is the one under test" } },
       { tool: "finish", args: { outcome: "cannot_serve", kind: "empty", summary_ar: "لا نتائج." } },
     ], [tregResult(postsPage(5), 0.025)]);
     expect(r.m).toMatchObject({ status: "unserved", summary_ar: UNSUPPORTED_AR });
@@ -88,7 +88,7 @@ describe("A. every no-card end is exactly one of four classes, each with its own
     // a 25-row page of a per-record source is estimated above the multi-stage planning budget: refused before the call
     const r = await plan([
       { tool: "catalog_search", args: { words: ["posts", "search"], platform: "x", limit: 5 } },
-      { tool: "treg_call", args: { endpoint_id: POSTS_ENDPOINT, params: { query: "غلاء", max_results: 25 } } },
+      { tool: "treg_call", args: { endpoint_id: POSTS_ENDPOINT, params: { query: "غلاء", max_results: 25 }, why: "the fixture source is the one under test" } },
       { tool: "finish", args: { outcome: "cannot_serve", kind: "unsupported", summary_ar: SAY } },
     ]);
     expect(r.call).not.toHaveBeenCalled();
@@ -140,20 +140,32 @@ describe("A. every no-card end is exactly one of four classes, each with its own
 });
 
 describe("A. the planning does not spend its one budget on one source", () => {
-  it("a third sample of a source that gave rows twice is refused, costs nothing and leaves the budget for the other stages", async () => {
-    const t = setup([tregResult(postsPage(5), 0.025), tregResult(postsPage(5), 0.025)]);
-    t.store.missions.set("msn_x", newMission({ id: "msn_x", user_id: USER_ID, status: "planning", request_text: REQUEST }));
-    const ask = (q: string): FakeStep => ({ tool: "treg_call", args: { endpoint_id: POSTS_ENDPOINT, params: { query: q, max_results: 5 } } });
-    const driver = createFakeDriver([{ tool: "catalog_search", args: { words: ["posts"], platform: "x", limit: 5 } }, ask("غلاء"), ask("غلاء الأسعار"), ask("ارتفاع الأسعار"), { tool: "finish", args: { outcome: "cannot_serve", summary_ar: "لا أستطيع خدمة هذا الطلب بدقة." } }]);
+  const ask = (q: string, rows: number): FakeStep => ({ tool: "treg_call", args: { endpoint_id: POSTS_ENDPOINT, params: { query: q, max_results: rows }, why: "the fixture source is the one under test" } });
+  const run = async (request: string, steps: FakeStep[], answers: TregCallResult[]) => {
+    const t = setup(answers);
+    t.store.missions.set("msn_x", newMission({ id: "msn_x", user_id: USER_ID, status: "planning", request_text: request }));
+    const driver = createFakeDriver([{ tool: "catalog_search", args: { words: ["posts"], platform: "x", limit: 5 } }, ...steps, { tool: "finish", args: { outcome: "cannot_serve", summary_ar: "لا أستطيع خدمة هذا الطلب بدقة." } }]);
     await runPlanning(t.deps(driver), t.store.missions.get("msn_x")!);
-    const calls = driver.results.filter((x) => x.tool === "treg_call");
+    return { t, calls: driver.results.filter((x) => x.tool === "treg_call") };
+  };
+
+  it("a third sample of a source that gave rows twice is refused (repeat_sample), costs nothing", async () => {
+    const { t, calls } = await run("هات منشورات عن غلاء الأسعار", [ask("غلاء", 1), ask("غلاء الأسعار", 1), ask("ارتفاع الأسعار", 1)], [tregResult(postsPage(1), 0.005), tregResult(postsPage(1), 0.005)]);
     expect(calls.map((c) => (c.result as { ok?: boolean }).ok)).toEqual([true, true, false]);
     expect(calls[2].result).toMatchObject({ refused: "repeat_sample" });
     expect(t.call).toHaveBeenCalledTimes(2);
-    const logged = (await t.store.listCalls("msn_x")).filter((c) => c.status === "refused");
-    expect(logged.map((c) => c.refused_reason)).toEqual(["repeat_sample:planning"]);
+    expect((await t.store.listCalls("msn_x")).filter((c) => c.status === "refused").map((c) => c.refused_reason)).toEqual(["repeat_sample:planning"]);
     // a refusal for repeating is not one of the planning's own limits: the end is «unsupported», not our failure
     expect(t.store.missions.get("msn_x")!.status).toBe("unserved");
+  });
+
+  it("a parent and its children: the first job cannot spend the budget the next stage's first sample needs (stage_reserved)", async () => {
+    // two calls of 0.025 estimate each: the third would pass 0.07 (0.10 less the 30% kept for the stage not yet sampled)
+    const { t, calls } = await run(REQUEST, [ask("غلاء", 5), ask("غلاء الأسعار", 5), ask("ارتفاع الأسعار", 5)], [tregResult(postsPage(5), 0.025), tregResult(postsPage(5), 0.025)]);
+    expect(calls.map((c) => (c.result as { ok?: boolean }).ok)).toEqual([true, true, false]);
+    expect(calls[2].result).toMatchObject({ refused: "stage_reserved" });
+    expect(t.call).toHaveBeenCalledTimes(2);
+    expect((await t.store.listCalls("msn_x")).filter((c) => c.status === "refused").map((c) => c.refused_reason)).toEqual(["stage_reserved:planning"]);
   });
 });
 

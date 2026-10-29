@@ -31,8 +31,8 @@ const planningScript = (overrides: { stages?: (r: any[]) => unknown[] } = {}): F
   { tool: "report_progress", args: { message_ar: "أبحث في المصادر المتاحة عن أرخص مصدر مناسب", counts: { sources: 3 } } },
   { tool: "catalog_search", args: { words: ["posts", "search"], platform: "x", limit: 5 } },
   { tool: "describe_endpoint", args: { id: POSTS_ENDPOINT } },
-  { tool: "treg_call", args: { endpoint_id: POSTS_ENDPOINT, params: { query: "قهوة", max_results: 5 } } },
-  { tool: "treg_call", args: { endpoint_id: COMMENTS_ENDPOINT, params: { url: "https://x.example/p/9000" } } },
+  { tool: "treg_call", args: { endpoint_id: POSTS_ENDPOINT, params: { query: "قهوة", max_results: 5 }, why: "the fixture source is the one under test" } },
+  { tool: "treg_call", args: { endpoint_id: COMMENTS_ENDPOINT, params: { url: "https://x.example/p/9000" }, why: "the fixture source is the one under test" } },
   { tool: "run_code", args: { code: "return inputs.call_0001.data.slice(0, 1).map(r => ({ id: r.id, text: r.text, url: r.url }))", files: ["call_0001"] } },
   { tool: "propose_plan", args: (r) => ({
     summary_ar: "ستحصل على المنشورات ثم تعليقات كل منشور في ورقتين مرتبطتين بمعرّف المنشور.",
@@ -158,10 +158,10 @@ describe("EXECUTION with a fake model transcript: linked rows, settlement, files
 
   const execScript = (postCount: number, commentsPerPost: number, extra: FakeStep[] = []): FakeStep[] => [
     { tool: "report_progress", args: { message_ar: "بدأت جمع المنشورات", counts: { target: postCount } } },
-    { tool: "treg_call", args: { endpoint_id: POSTS_ENDPOINT, params: { query: "قهوة", max_results: postCount } } },
+    { tool: "treg_call", args: { endpoint_id: POSTS_ENDPOINT, params: { query: "قهوة", max_results: postCount }, why: "the fixture source is the one under test" } },
     { tool: "run_code", args: { code: "return inputs.call_0003.data.map(r => ({ id: r.id, text: r.text, url: r.url }))", files: ["call_0003"] } },
     { tool: "save_rows", args: { stage_key: "posts", from_output: "out_0002" } },
-    ...Array.from({ length: postCount }, (_, i): FakeStep => ({ tool: "treg_call", args: { endpoint_id: COMMENTS_ENDPOINT, params: { url: `https://x.example/p/${9000 + i}` } } })),
+    ...Array.from({ length: postCount }, (_, i): FakeStep => ({ tool: "treg_call", args: { endpoint_id: COMMENTS_ENDPOINT, params: { url: `https://x.example/p/${9000 + i}` }, why: "the fixture source is the one under test" } })),
     { tool: "run_code", args: { code: `const out = []; const posts = inputs.call_0003.data; const ids = Object.keys(inputs).filter(k => k !== 'call_0003'); ids.forEach((k, i) => inputs[k].output.data.comments.forEach(c => out.push({ id: c.id, parent_id: posts[i].id, text: c.text }))); return out;`, files: ["call_0003", ...Array.from({ length: postCount }, (_, i) => `call_${String(4 + i).padStart(4, "0")}`)] } },
     { tool: "save_rows", args: { stage_key: "comments", from_output: "out_0003" } },
     ...extra,
