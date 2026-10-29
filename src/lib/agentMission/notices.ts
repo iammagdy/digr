@@ -23,7 +23,7 @@ export interface MissionNoticeFacts {
   /** The job the approval reserved under (none for a mission that never reserved anything). */
   hasJob: boolean;
   /** «internal»: nothing was delivered because of OUR failure (the source gave items and our own mapping stored none): the notice says so, never «no source found». */
-  cause?: "internal";
+  cause?: "internal" | "empty";
   /** Why fewer items than requested were delivered, as the run recorded it («لأن المصدر لم يعد يعطي نتائج أخرى لهذا الطلب»): a partial notice states it instead of the general sentence. */
   shortfallClauseAr?: string;
 }
@@ -74,7 +74,7 @@ export function buildMissionNotice(kind: MissionNoticeKind, f: MissionNoticeFact
   // failed or unserved: nothing was delivered. When a hold was taken it was released whole.
   const unserved = kind === "unserved";
   const ourFault = f.cause === "internal";
-  const lead = unserved ? `لم نجد مصدرًا يخدم طلبك «${t}» بدقة الآن.` : ourFault ? `تعذّر تنفيذ مهمتك «${t}» بسبب خلل من جانبنا، وليس لأن المصدر خالٍ من النتائج؛ وأُبلغ فريقنا ليراجعه.` : `تعذّر استكمال مهمتك «${t}».`;
+  const lead = unserved ? (f.cause === "empty" ? `بحثنا في المصادر المتاحة فلم نجد ما يطابق طلبك «${t}».` : `لم نجد مصدرًا يخدم طلبك «${t}» بدقة الآن.`) : ourFault ? `تعذّر تنفيذ مهمتك «${t}» بسبب خلل من جانبنا، وليس لأن المصدر خالٍ من النتائج؛ وأُبلغ فريقنا ليراجعه.` : `تعذّر استكمال مهمتك «${t}».`;
   const detail1 = money;
   const title = unserved ? `لا يمكن تنفيذ «${t}» بدقة الآن` : `تعذّر تنفيذ مهمتك: ${t}`;
   return {

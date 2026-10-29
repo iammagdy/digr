@@ -352,3 +352,22 @@ export function assumptionLinesShown(modelLines: ReadonlyArray<string>, filters:
   const added = [...new Set(filters.filter(isEnabled).filter((f) => !covered.has(f.kind)).map(filterLineAr))];
   return [...shown, ...added];
 }
+
+// ------------------------------------------------------------------------------------------------- the language of the request
+
+/** The request says it wants the items in some OTHER language, or in all of them. */
+const OTHER_LANGUAGE_CUE = /(?:ب|بال)?(?:ال)?(?:انجليزي|إنجليزي|انجليزيه|إنجليزية|انجلش|فرنسي|فرنسية|تركي|تركية|اسباني|إسباني|ألماني|المانى|ألمانية)|english|french|turkish|spanish|german|(?:بكل|كل|أي|اي|جميع)\s+(?:ال)?لغ|كل\s+اللغات|بأي\s+لغة|باي\s+لغة|متعدد(?:ة)?\s+اللغ/i;
+
+/**
+ * THE ONE LANGUAGE RULE: the language the customer wrote the request in is the default language of the CONTENT they want, on every platform (tweets, posts, comments, reviews). An Arabic request gets Arabic items unless it asks
+ * for another language or for every language; an English request, English ones. Null when the request does not decide (too few letters, mixed, or it names another language).
+ */
+export function defaultLanguageOf(...texts: Array<string | null | undefined>): "ar" | "en" | null {
+  const t = texts.filter(Boolean).join(" ");
+  if (!t.trim() || OTHER_LANGUAGE_CUE.test(t)) return null;
+  const ar = (t.match(ARABIC_LETTER) ?? []).length;
+  const la = (t.match(LATIN_LETTER) ?? []).length;
+  if (ar >= 3 && ar >= la) return "ar";
+  if (la >= 6 && ar === 0) return "en";
+  return null;
+}

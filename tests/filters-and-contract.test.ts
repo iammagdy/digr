@@ -235,7 +235,7 @@ describe("the plan check: the card states what code checks", () => {
   });
 
   it("every promise has a check: «دون الردود» and «تغريدات عربية» need their filters; with them the plan is accepted and the fields are found from the mapping", () => {
-    const withoutFilters = validateAndPricePlan({ summary_ar: "ستحصل على تغريدات عربية أصلية دون الردود عن محمد صلاح.", stages: [stage()] }, lookup("هات ٣٠٠ تغريدة"));
+    const withoutFilters = validateAndPricePlan({ summary_ar: "ستحصل على تغريدات عربية أصلية دون الردود عن محمد صلاح.", stages: [stage()] }, lookup("هات ٣٠٠ تغريدة بكل اللغات"));
     expect(withoutFilters.ok).toBe(false);
     if (!withoutFilters.ok) { const text = withoutFilters.issues.join(" "); expect(text).toContain("replies"); expect(text).toContain("language"); }
     const ok = validateAndPricePlan({ summary_ar: "ستحصل على تغريدات عربية أصلية دون الردود عن محمد صلاح.", stages: [stage({ filters: [{ kind: "exclude_replies" }, { kind: "language", lang: "ar" }] })] }, lookup("هات ٣٠٠ تغريدة"));

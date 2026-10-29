@@ -38,9 +38,10 @@ export function countCsvItems(csv: string): number {
  * WHY FEWER ITEMS THAN REQUESTED WERE DELIVERED, in plain Arabic and with no number, from the stop reason the engine RECORDED (never a guess, and never «this is all that matched» when found items were not checked). A reason that
  * cannot be named says only what is true: the sources gave no more matching items.
  */
-export function shortfallClauseAr(reason: StopReason | null, review: { pending: number; stop: "budget" | "failed" | null }): string {
+export function shortfallClauseAr(reason: StopReason | null, review: { pending: number; stop: "budget" | "failed" | null; /** Items the language of the plan left out (the language rule): when the sources ran dry, this is the reason to say. */ languageLeftOut?: number }): string {
   if (review.pending > 0 && review.stop === "failed") return "لأن المراجعة الآلية تعذّر الوصول إليها لبعض ما وُجد، فلم يُسلَّم ما لم يُراجَع";
   if (review.pending > 0) return "لأن المراجعة الآلية بلغت حدّها المسموح لهذه المهمة قبل فحص كل ما وُجد، فلم يُسلَّم ما لم يُراجَع";
+  if ((review.languageLeftOut ?? 0) > 0 && (reason === null || reason === "source_exhausted" || reason === "no_new_items" || reason === "target_reached")) return "لأن المصادر لم تعطِ ما يكفي من المحتوى باللغة المحددة في خطتك";
   switch (reason) {
     case "source_exhausted": return "لأن المصدر لم يعد يعطي نتائج أخرى لهذا الطلب";
     case "no_new_items": return "لأن المصدر صار يكرر نفس النتائج ولم تظهر نتائج جديدة مطابقة لطلبك";
@@ -56,6 +57,6 @@ export function shortfallClauseAr(reason: StopReason | null, review: { pending: 
   }
 }
 
-export function shortfallFromStopAr(reason: StopReason | null, review: { pending: number; stop: "budget" | "failed" | null }): string {
+export function shortfallFromStopAr(reason: StopReason | null, review: { pending: number; stop: "budget" | "failed" | null; languageLeftOut?: number }): string {
   return `لم يكتمل العدد المطلوب ${shortfallClauseAr(reason, review)}، ولم يُخصم إلا مقابل ما سُلّم.`;
 }

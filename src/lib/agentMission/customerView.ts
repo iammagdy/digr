@@ -39,7 +39,7 @@ export interface QueueInfo {
   /** The worker's heartbeat is fresh. */
   workerAlive: boolean;
 }
-export interface CustomerStageView { n: number; titleAr: string; rows: number; rowsAr: string; deliver: boolean; noteAr: string | null; yieldShare?: number }
+export interface CustomerStageView { n: number; titleAr: string; rows: number; rowsAr: string; deliver: boolean; noteAr: string | null; yieldShare?: number; /** The number (1-based) of the stage this one hangs on (comments of posts), else null. */ parentN: number | null }
 
 export interface CustomerMissionView {
   id: string;
@@ -105,7 +105,10 @@ export function stagesView(plan: any): { stages: CustomerStageView[]; total: num
     const rows = Math.max(0, Math.floor(Number(s?.expected_rows) || 0));
     const deliver = s?.deliver !== false;
     if (deliver) total += rows;
-    stages.push({ n: i + 1, titleAr: customerSafeText(s?.title_ar, "مرحلة"), rows, rowsAr: countAr(rows, itemNounOf(String(s?.title_ar ?? ""))), deliver, noteAr: deliver ? null : "تُستخدم في المرحلة التالية ولا تُحتسب في ملفك", ...(typeof s?.yield_share === "number" ? { yieldShare: s.yield_share } : {}) });
+    const parentIndex = typeof s?.parent_key === "string" ? list.findIndex((x) => x?.key === s.parent_key) : -1;
+    // a stage that only FEEDS the next one is a ceiling, never a promise: «حتى ١٠ فيديوهات» (how many of them end up with results in the file is counted from the item store at the end)
+    const rowsAr = countAr(rows, itemNounOf(String(s?.title_ar ?? "")));
+    stages.push({ n: i + 1, parentN: parentIndex >= 0 ? parentIndex + 1 : null, titleAr: customerSafeText(s?.title_ar, "مرحلة"), rows, rowsAr: deliver ? rowsAr : `حتى ${rowsAr}`, deliver, noteAr: deliver ? null : "تُستخدم في المرحلة التالية ولا تُحتسب في ملفك", ...(typeof s?.yield_share === "number" ? { yieldShare: s.yield_share } : {}) });
   });
   return { stages, total };
 }
@@ -244,12 +247,24 @@ function stepsOf(input: { phase: CustomerPhase; status: string; stages: Customer
       if (t.excluded > 0) step.excludedAr = `استُبعد ${formatAr(t.excluded)} لأنه لا يخص طلبك`;
     }
     if (!s.deliver) step.detailAr = "تُستخدم في المرحلة التالية";
+    // THE TRUTH ABOUT A PARENT STAGE, from the item store: how many parents were read and, at the end, how many of them have items in the file (never «١٠ من ١٠» when only some parents gave results)
+    if (stages.some((c) => c.parentN === s.n) && (saved > 0 || t.found > 0)) {
+      const read = typeof resultCounts?.[`stage_${s.n}_read`] === "number" ? Math.floor(resultCounts[`stage_${s.n}_read`]) : saved;
+      const used = typeof resultCounts?.[`stage_${s.n}_used`] === "number" ? Math.floor(resultCounts[`stage_${s.n}_used`]) : null;
+      step.countAr = parentCountAr({ read, max: s.rows, used, noun: t.noun, finished });
+    }
     return step;
   });
   const failedStop = status === "failed";
   if (failedStop) for (const s of steps) if (s.state === "running" || s.state === "waiting") { s.state = "stopped"; }
   steps.push({ id: "files", titleAr: FILES_STEP_TITLE_AR, state: input.filesReady ? "done" : finished ? "done" : failedStop ? "stopped" : "waiting" });
   return { steps, samples, savedTotal: savedTotalNow, plannedTotal, track };
+}
+
+/** What a parent stage says about itself: while it works, how many were read of the most it may read; at the end, how many were read and how many of them have items in the file. */
+export function parentCountAr(input: { read: number; max: number; used: number | null; noun: Parameters<typeof countAr>[1]; finished: boolean }): string {
+  if (!input.finished || input.used === null) return `قُرئ ${countAr(input.read, input.noun)}، والحد الأقصى ${formatAr(input.max)}`;
+  return `قُرئ ${countAr(input.read, input.noun)}، ومنها ${formatAr(input.used)} لها نتائج في ملفك`;
 }
 
 const FILE_LABEL_AR: Record<string, string> = { xlsx: "تنزيل ملف إكسل", csv: "تنزيل نسخة سي إس في" };
@@ -352,7 +367,7 @@ function endLineOf(phase: CustomerPhase, resultLinesAr: string[], summary: strin
   switch (phase) {
     case "done": return resultLinesAr[0] ?? "اكتملت مهمتك.";
     case "partial": return resultLinesAr[0] ?? "اكتملت مهمتك بعدد أقل من المطلوب.";
-    case "unserved": return summary ?? "لم نجد ما يطابق طلبك، ولم يُخصم منك شيء.";
+    case "unserved": return summary ?? "لم نتمكن من تجهيز طلبك، ولم يُخصم منك شيء.";
     case "failed": return summary ?? "تعذّر استكمال مهمتك ولم يُخصم منك شيء.";
     case "cancelled": return "أُلغيت هذه المهمة ولم يُخصم شيء.";
     default: return null;
