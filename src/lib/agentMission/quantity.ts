@@ -143,7 +143,9 @@ export function parseQuantities(textIn: unknown): RequestedQuantity[] {
     // a number WORD with no item noun after it is ordinary speech («واحد من اللاعبين», «أحد الحسابات»), not a quantity
     if (!dm && !counted) { i += used - 1; continue; }
     const next = tokens.slice(i + used + 1, i + used + 4).map((t) => bareWord(t.raw));
-    const perEach = next.includes("لكل") || next.some((w, k) => (w === "من" || w === "في" || w === "على") && next[k + 1] === "كل");
+    // «١٠ تعليقات لكل فيديو» and «مع كل بوست ١٠ تعليقات» / «وكل شركة موظفين اتنين»: a number per parent item, whether the «كل» comes after the noun or before the number
+    const before = tokens.slice(Math.max(0, i - 3), i).map((t) => bareWord(t.raw));
+    const perEach = next.includes("لكل") || next.some((w, k) => (w === "من" || w === "في" || w === "على") && next[k + 1] === "كل") || before.some((w) => /^(?:و)?(?:ل)?كل$/.test(w));
     out.push({ value, noun: nounToken ? nounToken.raw : null, digits: Boolean(dm), perEach });
     i += used - 1;
   }
@@ -158,7 +160,7 @@ export function isCountedNoun(wordIn: string): boolean {
 }
 
 /** True when a word is a form of one of the given words (a stage's title words: «تعليقات كل منشور»). */
-const nounInTitles = (noun: string, titles: ReadonlyArray<string>): boolean => titles.some((t) => String(t).split(/\s+/).some((w) => sameNounStem(w, noun)));
+const nounInTitles = (noun: string, titles: ReadonlyArray<string>): boolean => titles.some((t) => ownTitleWords(t).some((w) => sameNounStem(w, noun)));
 
 /**
  * The quantities of a text that COUNT ITEMS: the number is followed by the noun of an item (a known noun, or a word of a stage title). A number beside any other word is not the customer's quantity («أكثر من ٢٠٠ ألف متابع»: a
@@ -175,12 +177,23 @@ export function parseRequestedQuantity(text: unknown): RequestedQuantity | null 
 
 /** True when two Arabic words are forms of one noun («التغريدات» ~ «تغريدة»): compared by a four-letter stem. */
 export function sameNounStem(a: string, b: string): boolean {
-  const x = bareWord(a).replace(/(ات|ون|ين|ان|ه)$/, "");
-  const y = bareWord(b).replace(/(ات|ون|ين|ان|ه)$/, "");
+  const x = canonicalStem(bareWord(a).replace(/(ات|ون|ين|ان|ه)$/, ""));
+  const y = canonicalStem(bareWord(b).replace(/(ات|ون|ين|ان|ه)$/, ""));
   if (!x || !y) return false;
   const n = Math.min(4, x.length, y.length);
   return x.slice(0, n) === y.slice(0, n);
 }
+
+/** Two names of one kind of item: a «بوست» is a «منشور», a «مراجعة» a «تقييم», a «مقطع» a «فيديو» (the customer says one, the stage's title the other). */
+const SAME_NOUN: ReadonlyArray<readonly [string, string]> = [["بوست", "منشور"], ["مراجع", "تقييم"], ["مقطع", "فيديو"], ["ريلز", "فيديو"], ["كومنت", "تعليق"], ["تويت", "تغريد"]];
+const canonicalStem = (w: string): string => { for (const [from, to] of SAME_NOUN) if (w.startsWith(from)) return to; return w; };
+
+/** The words of a stage's title that name ITS OWN items: the words before the first «كل» / «على» / «عن» («تعليقات كل بوست» counts comments; «بوست» there is the parent). */
+export const ownTitleWords = (title: string): string[] => {
+  const words = String(title ?? "").split(/\s+/).filter(Boolean);
+  const cut = words.findIndex((w, i) => i > 0 && /^(?:كل|لكل|على|عن|في|من|لدى)$/.test(bareWord(w)));
+  return cut === -1 ? words : words.slice(0, cut);
+};
 
 export interface QuantityStageRef { index: number; title_ar: string; deliver: boolean }
 
@@ -195,7 +208,7 @@ export function bindQuantity(text: unknown, stages: ReadonlyArray<QuantityStageR
   if (candidates.length === 0) return null;
   if (delivered.length === 1) return { index: delivered[0].index, value: candidates[0].value };
   for (const q of candidates) {
-    const hit = delivered.find((s) => String(s.title_ar).split(/\s+/).some((w) => sameNounStem(w, q.noun!)));
+    const hit = delivered.find((s) => ownTitleWords(String(s.title_ar)).some((w) => sameNounStem(w, q.noun!)));
     if (hit) return { index: hit.index, value: q.value };
   }
   return { index: delivered[0].index, value: candidates[0].value };

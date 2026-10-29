@@ -1,6 +1,6 @@
 import type { EngineSpec, PricedPlan } from "../../../src/lib/agentMission/plan";
 import { proveMappedRows } from "../../../src/lib/agentMission/contract";
-import { findFilterFields, refitFilters, type StageFilter } from "../../../src/lib/agentMission/filters";
+import { CHILD_RAW_FILTER_KINDS, filterVerdict, findFilterFields, isEnabled, refitFilters, type StageFilter } from "../../../src/lib/agentMission/filters";
 import type { TregCatalog } from "../../../src/lib/treg/catalog";
 import type { SandboxResult } from "../sandbox";
 import type { AgentStore, CallRow } from "../types";
@@ -102,9 +102,13 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
       const mapped = seenJson as Array<Record<string, unknown>>;
       const mappedKeys = [...new Set(mapped.flatMap((r) => Object.keys(r)))];
       const fields = findFilterFields({ mappedKeys, columnKeys: stage.columns.map((c) => c.key), textColumns: stage.relevance?.text_columns, columnTitles: Object.fromEntries(stage.columns.map((c) => [c.key, c.title_ar])) });
-      const refit = refitFilters(stage.filters ?? [], fields, mappedKeys, label);
+      const refitAll = refitFilters(stage.filters ?? [], fields, mappedKeys, label);
+      // the items of a child stage are raw: the language and the place are not offered on it (the customer's editor shows only what code applies)
+      const refit = { ...refitAll, filters: stage.parent_key === null ? refitAll.filters : refitAll.filters.filter((f) => !CHILD_RAW_FILTER_KINDS.includes(f.kind)) };
       const proof = proveMappedRows({ rows: mapped, columnKeys: stage.columns.map((c) => c.key), textColumns: stage.relevance?.text_columns, filters: refit.filters, label });
-      const problems = [...refit.issues, ...proof.issues];
+      // THE PLACE THE CARD PROMISES must be provable on the measured page: at least one of its items carries evidence of it (else the plan promises a place no item of this source can show)
+      const placeIssues = refit.filters.filter((f) => isEnabled(f) && f.kind === "place" && (f.places?.length ?? 0) > 0 && !mapped.some((r) => filterVerdict([f], r, { textKey: null, now: 0 }) === null)).map((f) => `${label}: the card promises items in ${(f.values ?? []).join("، ")}, but none of the ${mapped.length} items of the measured page carries evidence of it in a mapped field (${(f.fields ?? []).join(", ") || "none"}); map the country, city, address, website or phone field of every item, or sample a source that gives one`);
+      const problems = [...refit.issues, ...proof.issues, ...placeIssues];
       if (problems.length > 0) { contractIssues = problems; continue; }
       const cursorParam = (endpoint.pagination ?? []).find((p) => !LIMIT_INPUT.test(p)) ?? null;
       let binding: EngineSpec["parent_binding"] = null;

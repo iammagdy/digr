@@ -4,6 +4,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-29, after #288): raw child items, place enforced, Facebook always reaches a card, scale (fix mission 5)
+
+`main` before it was `90ca9010a4eafb17caaf538eecdee2ed971bdf4e` (#288); its merge commit is the head of `main` after it. Details, evidence, the scale table and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 9. No SQL written or applied; no Edge Function changed; prices and settings untouched.
+
+- **Child items are raw** (comments, replies, reviews, employees): no topic, language, place or text-dedup rule on them; only the same item id is one item; the card says so; relevance/language/place choose the parents and the top-level items.
+- **Facebook**: planning budget scaled to the platform's cost by code (0.1254 for posts + comments, hard cap 0.20), the honest cost sentence on the card, two give-up attempts sent back; the quantity «٥ بوستات ... مع كل بوست ١٠ تعليقات» now counts the posts (it counted the comments).
+- **Place/country** is enforced from mapped fields (country, city, address, website suffix, phone prefix); companies of a sector are checked by kind (exhibition / other trade go to the model check).
+- **Scale**: page cap grows with the volume sold; `listCalls` reads every call (pages of 1,000); measurements in `tests/scale-engine-2000.test.ts`.
+- Rollback: `git revert -m 1 <merge commit>`.
+
+---
+
 ## START HERE (2026-10-29, late night): cheapest source first, source health, planning budget split (after #287)
 
 `main` before it was `3349e3d3ae55b9872fcdd2ded2b7f5b195e2b8f4` (#287); its merge commit is the head of `main` after it. Details, the offline re-plan table and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 8. No SQL written or applied; no Edge Function changed; prices and settings untouched.

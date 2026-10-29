@@ -36,6 +36,11 @@ export interface RelevanceSpec {
    * to the review.
    */
   full_name_is_enough?: boolean;
+  /**
+   * Set BY CODE for a stage that lists companies (never by the model): the rows are entities, so a row that does not name the sector, or that carries the marks of something else (an exhibition, a conference, a magazine), is sent to the
+   * model check instead of being left out or delivered; a bare name with no words of its own is not «a mention».
+   */
+  entity?: boolean;
 }
 
 /** Another meaning of the name, as the planner saw it in its sample: «الحكم محمد صلاح عبد الفتاح». `extensions`: the words that follow the name in it («عبد الفتاح»); `titles`: a title right before or after the name («الحكم», «المدرب»); `markers`: words of that meaning anywhere in the text. */
@@ -93,7 +98,7 @@ export function stripLinksAndMentions(text: string): string {
   return text.replace(URL_RE, " ").replace(MENTION_RE, "$1 ").replace(/\s+/g, " ").trim();
 }
 
-const matchers = new WeakMap<RelevanceSpec, { terms: RegExp[]; sticky: RegExp[]; context: RegExp[]; exclude: RegExp[]; extended: RegExp[]; titled: RegExp[]; markers: RegExp[]; otherTopic: RegExp[] }>();
+const matchers = new WeakMap<RelevanceSpec, { terms: RegExp[]; sticky: RegExp[]; context: RegExp[]; exclude: RegExp[]; extended: RegExp[]; titled: RegExp[]; markers: RegExp[]; otherTopic: RegExp[]; notCompany: RegExp[] }>();
 function compiled(spec: RelevanceSpec) {
   let m = matchers.get(spec);
   if (!m) {
@@ -105,6 +110,7 @@ function compiled(spec: RelevanceSpec) {
       titled: titledNameRegexes(spec.terms, meanings.flatMap((c) => c.titles ?? [])),
       markers: build(meanings.flatMap((c) => c.markers ?? []), true),
       otherTopic: build(OTHER_TOPIC_WORDS, true),
+      notCompany: spec.entity ? build(NOT_A_COMPANY_WORDS, false) : [],
     };
     matchers.set(spec, m);
   }
@@ -142,6 +148,8 @@ function titledNameRegexes(terms: string[], titles: string[]): RegExp[] {
 
 /** Words of a text that sells, teaches or recruits, not one that talks ABOUT a person: with the name inside them and no word that confirms the meaning, they send the row to the model check instead of straight to delivery. */
 const OTHER_TOPIC_WORDS = ["ورشة", "ورشه", "ورش عمل", "دورة تدريبية", "دورات", "محاضرة", "ندوة", "ويبينار", "workshop", "webinar", "course", "رابط التسجيل", "سجل الآن", "سجلوا", "للتسجيل", "للحجز", "احجز", "اشترك", "اشتراك", "عرض خاص", "تواصل معنا", "للتواصل", "واتساب", "whatsapp", "فرصة عمل", "وظائف", "نقدم لكم", "بسعر"];
+/** Words that make an entity something other than a company of a trade: an event, an exhibition, a publication, a directory, a body. A row of a company stage that carries one goes to the model check, never straight to delivery. */
+export const NOT_A_COMPANY_WORDS = ["معرض", "معارض", "مؤتمر", "ملتقى", "منتدى", "فعالية", "فعاليات", "مهرجان", "مجلة", "جريدة", "نقابة", "جمعية", "exhibition", "exhibitions", "expo", "conference", "summit", "forum", "festival", "event", "events", "magazine", "newspaper", "association", "directory"];
 /** A text that is a LIST of short entries (names, tags): the subject is one entry among many. */
 export function looksLikeList(raw: string): boolean {
   const segments = stripLinksAndMentions(raw).split(/[\n،,;•·|\/]+|\s[-–—]\s/).map((x) => x.trim()).filter(Boolean);
@@ -187,15 +195,18 @@ export function classifyRowDetailed(spec: RelevanceSpec, row: Record<string, unk
   // a @handle is an account: the name inside it is not the subject being written about
   const text = normalizeText(stripLinksAndMentions(raw));
   if (!text) return { verdict: "exclude", reason: "no_text" };
-  if (!terms.some((r) => r.test(text))) return { verdict: "exclude", reason: "no_term" };
+  // a company that does not name the sector is not thrown away unseen: the model checks it (a contracting company may not say «مقاولات» in its name); every other stage leaves the row out
+  if (!terms.some((r) => r.test(text))) return spec.entity ? { verdict: "review", reason: "uncertain" } : { verdict: "exclude", reason: "no_term" };
   // what the author says beyond the name itself
   let rest = text;
   for (const r of terms) rest = rest.replace(new RegExp(r.source, "gu"), " ");
   const words = rest.replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter((w) => [...w].length >= 2);
-  if (words.length < (spec.min_own_words ?? DEFAULT_MIN_OWN_WORDS)) return { verdict: "exclude", reason: "mention_only" };
+  if (!spec.entity && words.length < (spec.min_own_words ?? DEFAULT_MIN_OWN_WORDS)) return { verdict: "exclude", reason: "mention_only" };
   if (exclude.some((r) => r.test(text))) return { verdict: "exclude", reason: "other_person" };
   // ANOTHER MEANING OF THE NAME: a longer name, a title next to it, a word of the other meaning
-  const { titled, markers, otherTopic } = compiled(spec);
+  const { titled, markers, otherTopic, notCompany } = compiled(spec);
+  // an exhibition, a conference, a magazine is not a company of a trade, whatever its name says: the model decides
+  if (notCompany.some((r) => r.test(text))) return { verdict: "review", reason: "uncertain" };
   if (hasExtendedName(spec, text) || titled.some((r) => r.test(text))) return { verdict: "exclude", reason: "name_extended" };
   if (markers.some((r) => r.test(text))) return context.some((r) => r.test(text)) ? { verdict: "review", reason: "uncertain" } : { verdict: "exclude", reason: "other_meaning" };
   const fullName = strongTerms(spec).some((r) => r.test(text));

@@ -1,6 +1,6 @@
 import { callIds, companiesPage, employeesPage, fbCommentsPage, fbPostsPage, tregResult, ttCommentsPage, ttVideosPage, type Results } from "./agentFakeWorld";
 import { aboutWords, firstOutputId } from "./agentRelevance";
-import type { ReplayInput } from "./agentReplay";
+import { approvingReview, type ReplayInput } from "./agentReplay";
 import type { FakeStep } from "../../agent/src/fakeDriver";
 
 /**
@@ -173,15 +173,16 @@ const coScenario: Scenario = {
   idFieldOfFirstStage: "url",
   input: (shape) => {
     const companiesCode = shape === "normal"
-      ? "return inputs.call_0001.content.map(c => ({ id: c.id, text: c.name, url: c.domain }))"
+      ? "return inputs.call_0001.content.map(c => ({ id: c.id, text: c.name, url: c.domain, country: c.location.country }))"
       : shape === "idless"
-        ? "return inputs.call_0001.content.map(c => ({ text: c.name, url: c.domain }))"
-        : "const r = inputs.call_0001.content; if (r.length > 2) return []; return r.map(c => ({ id: c.id, text: c.name, url: c.domain }))";
+        ? "return inputs.call_0001.content.map(c => ({ text: c.name, url: c.domain, country: c.location.country }))"
+        : "const r = inputs.call_0001.content; if (r.length > 2) return []; return r.map(c => ({ id: c.id, text: c.name, url: c.domain, country: c.location.country }))";
     const employeesCode = shape === "idless"
       ? `const names = ${JSON.stringify(NAMES)}; return inputs.call_0002.employees.map(e => ({ text: e.person.fullName, title: e.positionList[0].title, company: names[e.companyID] }))`
       : `const names = ${JSON.stringify(NAMES)}; return inputs.call_0002.employees.map(e => ({ id: e.personID, text: e.person.fullName, title: e.positionList[0].title, company: names[e.companyID] }))`;
     return {
       request: "عايز ٣ شركات كهروميكانيكا في مصر، وجوه كل شركة موظفين اتنين",
+      deps: (base) => ({ ...base, reviewCall: approvingReview as never }),
       planning: planFlow({
         progress: "أبحث عن مصدر الشركات ثم الموظفين", words: ["companies", "search"],
         calls: [{ endpoint: CO, params: { page: 0, size: 3, account: "الكهروميكانيكا مصر" }, code: companiesCode }, { endpoint: EMP, params: { website: "company1.example", page: 0, perPage: 2 }, code: employeesCode }],

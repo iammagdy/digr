@@ -241,3 +241,6 @@ export function pagedAnswers(total: number, perPage: number, costUsd: number, ma
   }
   return out;
 }
+
+/** A model review that accepts every row it is given (a fixture whose rows the rule sends to the check: the companies of a sector, whose names do not all say it). Its tokens are small and counted like any review's. */
+export const approvingReview = async ({ user }: { user: string }) => ({ text: JSON.stringify(Array((user.match(/^\d+\./gm) ?? []).length).fill(1)), usage: { input_tokens: 400, output_tokens: 20 } });

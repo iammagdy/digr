@@ -59,12 +59,16 @@ export interface RunState {
   skips: Map<string, string>;
   /** How many times finish was refused because matching items were still needed and the source had more (a limit: the model is never stuck for ever). */
   finishRefusals: number;
+  /** How many times a PLANNING that had real rows in hand was told not to give up for the yield or the price of a source (a limit: the model is never stuck). */
+  giveUpRefusals: number;
   /** Per source stream (a collect_pages source and its inputs): whether the last read says the source has more pages. */
   moreAvailable: Map<string, boolean>;
 }
-export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, moreAvailable: new Map() });
+export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, moreAvailable: new Map() });
 /** The most times finish is refused for the same reason in one run. */
 export const FINISH_REFUSALS_MAX = 3;
+/** The most times a planning that already holds real rows is told not to end with «cannot_serve» for a source's price or yield. */
+export const GIVE_UP_REFUSALS_MAX = 2;
 
 export interface ToolContext {
   phase: CallPhase;
@@ -593,6 +597,15 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         if (ctx.phase === "planning" && outcome !== "cannot_serve") return err("while planning, finish only to say the mission cannot be served; otherwise call propose_plan");
         const checked = checkCustomerText(a.summary_ar, { maxChars: 800 });
         if (checked.issues.length) return err(`rephrase the summary: ${checked.issues.join("; ")}`);
+        // PLANNING DOES NOT END BEFORE A CARD BECAUSE A SOURCE IS DEAR OR ITS SAMPLE IS POOR (owner decision 2026-10-29): a platform that is costly to reach, or whose sample has few matching items, still gets a plan; the price is computed from the measured
+        // cost per MATCHING item and the card tells the customer. With real rows in hand the first attempts to give up are sent back (a limit, so the model is never stuck).
+        if (ctx.phase === "planning" && outcome === "cannot_serve" && state.giveUpRefusals < GIVE_UP_REFUSALS_MAX) {
+          const withRows = (await store.listCalls(mission.id)).filter((c) => (c.phase ?? "planning") === "planning" && c.status === "ok" && Number(c.rows_returned ?? 0) > 0);
+          if (withRows.length > 0) {
+            state.giveUpRefusals += 1;
+            return err("do not end without a plan: you hold real rows from the sources. A dear source, a low share of matching items, few comments per post or an item that is out of the topic is never a reason to refuse: code prices the plan from the measured cost per MATCHING item (a low yield only raises the price) and the card tells the customer the price and the rule; the customer decides. Build the plan from what you sampled: relevance to keep only matching parents, per_parent_rows and expected_rows as the samples show, and target_reason_ar (one sentence, no number) when the sources give fewer than the customer asked. End with cannot_serve only when NO source of the catalog does this job, or every sampled item fails what the stage needs");
+          }
+        }
         // rows the agent itself calls unfiltered are never delivered: it must filter them (the stage's relevance rule does it in save_rows) or say honestly that it cannot serve
         if (outcome === "delivered" && UNFILTERED_ADMISSION.test(normalizeText(checked.text))) return err("your summary says the rows are NOT filtered or may include other people / replies. Rows that do not match the request are never delivered or charged: save only rows that match (the stage's relevance rule filters them in save_rows) and rewrite the summary, or finish with outcome \"cannot_serve\"");
         // rows that were waiting for a review (the budget or a failed call delayed them) are asked once more before the mission ends: a good row is never lost only because it was late

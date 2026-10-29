@@ -2,7 +2,7 @@ import { classifyRowDetailed, type RelevanceReason, type RuleBasis } from "../..
 import { CONTACT_KINDS, isContactSource, verifyContactValue } from "../../../src/lib/agentMission/contacts";
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
 import { dedupeScope, deriveItemId, isTextItemStage, textDedupeKey, textKeyOf } from "../../../src/lib/agentMission/contract";
-import { filterVerdict, isEnabled } from "../../../src/lib/agentMission/filters";
+import { CHILD_RAW_FILTER_KINDS, filterVerdict, isEnabled } from "../../../src/lib/agentMission/filters";
 import type { MissionEventInput } from "../types";
 import type { Reviewer } from "../review";
 import type { ItemReason, ItemStore, Op, Row, StageCounts } from "./itemStore";
@@ -54,7 +54,10 @@ export async function ingestRows(deps: IngestDeps, stage: Stage, incoming: unkno
 async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[], options: IngestOptions): Promise<IngestResult> {
   const { items, plan, reviewer } = deps;
   const key = stage.key;
-  const spec = stage.relevance ?? null;
+  // THE ITEMS OF A CHILD STAGE (the comments of a post, the reviews of a place, the employees of a company) ARE DELIVERED AS THE SOURCE GIVES THEM: no topic check, no language check, no place check and no text de-duplication (two people who wrote the same
+  // comment wrote two comments); only the same item id is one item. The relevance and the language rules choose the PARENTS and the top-level items.
+  const isChild = stage.parent_key !== null;
+  const spec = isChild ? null : stage.relevance ?? null;
   const before = items.counts(key);
   const room = Math.max(0, stage.planned_rows - before.accepted);
   const columnKeys = stage.columns.map((c) => c.key);
@@ -62,10 +65,10 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   const contactStage = isContactSource(stage.endpoint_id);
   const parentIds = stage.parent_key !== null ? new Set(items.acceptedIds(stage.parent_key)) : null;
   const tally = { saved_now: 0, duplicates_ignored: 0, duplicate_texts: 0, rejected_missing_id: 0, rejected_unknown_parent: 0, rejected_over_limit: 0, rejected_not_object: 0, rejected_no_verified_contact: 0, rejected_by_filter: 0, contact_values_left_empty: 0 };
-  const enabledFilters = (stage.filters ?? []).filter(isEnabled);
+  const enabledFilters = (stage.filters ?? []).filter(isEnabled).filter((f) => !(isChild && CHILD_RAW_FILTER_KINDS.includes(f.kind)));
   const now = options.now ?? Date.now();
   // THE SAME TEXT TWICE (a post or a comment): the first is kept, the rest are counted as duplicates. A text of a child stage is unique among the items of its own parent.
-  const dedupeText = isTextItemStage(stage);
+  const dedupeText = isTextItemStage(stage) && !isChild;
   const seenTexts = new Set<string>();
   if (dedupeText) {
     const dedupeKey = textKeyOf(stage);
@@ -88,7 +91,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     if (!isObject(raw)) { tally.rejected_not_object += 1; continue; }
     // an item always has an id: its own, the field the recipe chose, a known key field (a platform id, the link), or its fingerprint: the same item read twice is the same id (never rejected for lacking one)
     // (the engine passes the recipe's `idField`, so its items are keyed this way; the model's own save_rows has no such field and keeps refusing an item without an id, which it was told to give)
-    const id = options.idField !== undefined ? deriveItemId(raw, options.idField) : String(raw.id ?? "").trim();
+    const id = options.idField !== undefined ? deriveItemId(raw, options.idField, parentIds ? String(raw.parent_id ?? "").trim() || null : null) : String(raw.id ?? "").trim();
     if (!id) { tally.rejected_missing_id += 1; continue; }
     if (items.has(key, id) || seenNow.has(id)) { duplicates += 1; tally.duplicates_ignored += 1; continue; }
     let parentId: string | null = null;

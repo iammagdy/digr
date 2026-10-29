@@ -1,5 +1,6 @@
 import { toArabicDigits } from "../arabicDigits";
 import { parseMoment } from "./dateCells";
+import { isPlaceEvidenceKey, placeVerdict } from "./places";
 import { normalizeText } from "./relevance";
 
 /**
@@ -25,6 +26,10 @@ export interface StageFilter {
   to?: string;
   /** account: the usernames; place: the place words (one of them must appear in the field). */
   values?: string[];
+  /** place: the countries and cities (places.ts keys) the words name, filled by code. With them the check reads EVIDENCE of the place from every mapped field in `fields` (country, city, address, website domain, phone prefix). */
+  places?: string[];
+  /** place: the mapped fields that can carry evidence of a place, found by code from the mapping. */
+  fields?: string[];
 }
 
 export type FilterReason = "filter_reply" | "filter_repost" | "filter_language" | "filter_period" | "filter_account" | "filter_place";
@@ -35,6 +40,9 @@ export const FILTER_REASON_LABEL_AR: Record<FilterReason, string> = {
 };
 
 export const isEnabled = (f: StageFilter): boolean => f.enabled !== false;
+
+/** The filters that never apply to the items of a CHILD stage (comments, replies, reviews, employees): they are delivered as the source gives them, in its order. The language and the place are rules for choosing the parents and the top-level items. */
+export const CHILD_RAW_FILTER_KINDS: ReadonlyArray<FilterKind> = ["language", "place"];
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const MAX_VALUES = 20;
@@ -72,6 +80,8 @@ export function parseFilters(input: unknown, label: string): { filters: StageFil
         if (f.from && f.to && f.from > f.to) { issues.push(`${label}: filter «period» starts after it ends`); continue; }
       } else { issues.push(`${label}: filter «period» needs days, or from and/or to`); continue; }
     }
+    if (kind === "place" && Array.isArray(raw.places)) f.places = raw.places.map(String).filter((k) => /^[A-Z]{2}(?::[a-z]+)?$/.test(k)).slice(0, 20);
+    if (kind === "place" && Array.isArray(raw.fields)) f.fields = raw.fields.map(String).filter((k) => /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(k)).slice(0, 12);
     if (kind === "account" || kind === "place") {
       const values = Array.isArray(raw.values) ? raw.values.map((v) => String(v ?? "").trim()).filter(Boolean) : [];
       if (values.length < 1 || values.length > MAX_VALUES) { issues.push(`${label}: filter «${kind}» needs values (1 to ${MAX_VALUES})`); continue; }
@@ -170,6 +180,11 @@ export function filterVerdict(filters: ReadonlyArray<StageFilter> | undefined, m
         break;
       }
       case "place": {
+        // WITH named places: the item must carry evidence of one of them from a mapped field; another country or no evidence is not delivered
+        if (f.places && f.places.length > 0) {
+          if (placeVerdict(f.places, mapped, f.fields && f.fields.length > 0 ? f.fields : f.field ? [f.field] : []) !== "pass") return "filter_place";
+          break;
+        }
         const where = f.field ? normalizeText(String(mapped[f.field] ?? "")) : "";
         if (!where || !(f.values ?? []).some((v) => where.includes(normalizeText(v)))) return "filter_place";
         break;
@@ -191,7 +206,7 @@ const LANG_KEY = /^(lang|language|lang_code|language_code)$/i;
 
 const pick = (keys: ReadonlyArray<string>, re: RegExp): string | null => keys.find((k) => re.test(k)) ?? null;
 
-export interface FilterFields { text: string | null; date: string | null; account: string | null; place: string | null; replyFlag: string | null; repostFlag: string | null; lang: string | null }
+export interface FilterFields { text: string | null; date: string | null; account: string | null; place: string | null; /** Every mapped field that can carry evidence of a place: a location text, a website, a phone. */ placeFields: string[]; replyFlag: string | null; repostFlag: string | null; lang: string | null }
 
 /**
  * The mapped fields the checks can read, found by CODE from what the mapping really gives (the keys of the mapped items, the stage's columns, the relevance rule's text columns). Never the model's guess.
@@ -206,6 +221,7 @@ export function findFilterFields(input: { mappedKeys: ReadonlyArray<string>; col
     date: pick(keys, DATE_KEY) ?? byTitle(/تاريخ|وقت النشر|وقت التغريد/),
     account: pick(keys, ACCOUNT_KEY) ?? byTitle(/اسم المستخدم/),
     place: pick(keys, PLACE_KEY) ?? byTitle(/مكان|موقع|مدينة|دولة|عنوان/),
+    placeFields: [...new Set([...keys.filter((k) => isPlaceEvidenceKey(k)), ...keys.filter((k) => /مكان|موقع|مدينة|دولة|عنوان|بلد/.test(titleOf(k)))])],
     replyFlag: pick(keys, REPLY_FLAG_KEY) ?? byTitle(/هل هي رد|هل هو رد/),
     repostFlag: pick(keys, REPOST_FLAG_KEY),
     lang: pick(keys, LANG_KEY),
@@ -244,11 +260,13 @@ export function resolveFilters(declared: ReadonlyArray<StageFilter>, fields: Fil
         if (!g.field) problem = `${label}: an account filter needs a mapped username field; the mapping gives none`;
         break;
       case "place":
-        g.field = f.field ?? fields.place ?? undefined;
+        g.field = f.field ?? fields.place ?? fields.placeFields[0] ?? undefined;
+        if (f.places && f.places.length > 0) g.fields = [...new Set([...(g.field ? [g.field] : []), ...fields.placeFields])];
         if (!g.field) problem = `${label}: a place filter needs a mapped place field (city, country, address ...); the mapping gives none`;
         break;
     }
     if (g.field === undefined) delete g.field;
+    if (g.fields !== undefined && g.fields.length === 0) delete g.fields;
     // a filter that is switched on and cannot be enforced is refused (the card would promise it); one that is off and cannot be enforced simply is not offered
     if (problem) { if (isEnabled(f)) issues.push(problem); continue; }
     out.push(g);
@@ -268,13 +286,13 @@ export function resolveFilters(declared: ReadonlyArray<StageFilter>, fields: Fil
  */
 export function refitFilters(filters: ReadonlyArray<StageFilter>, fields: FilterFields, mappedKeys: ReadonlyArray<string>, label: string): { filters: StageFilter[]; issues: string[] } {
   const keys = new Set(mappedKeys);
-  const cleared = filters.map((f) => { const g: StageFilter = { ...f }; if (g.field !== undefined && !keys.has(g.field)) delete g.field; return g; });
+  const cleared = filters.map((f) => { const g: StageFilter = { ...f }; if (g.field !== undefined && !keys.has(g.field)) delete g.field; if (g.fields !== undefined) { g.fields = g.fields.filter((k) => keys.has(k)); if (g.fields.length === 0) delete g.fields; } return g; });
   return resolveFilters(cleared, fields, label);
 }
 
 /** Every field a filter of the stage reads (the proof requires each to be a key the mapping really gives). */
 export function filterFieldsRequired(filters: ReadonlyArray<StageFilter> | undefined): string[] {
-  return [...new Set((filters ?? []).filter(isEnabled).map((f) => f.field).filter((x): x is string => typeof x === "string"))];
+  return [...new Set((filters ?? []).filter(isEnabled).flatMap((f) => [f.field, ...(f.fields ?? [])]).filter((x): x is string => typeof x === "string"))];
 }
 
 // ------------------------------------------------------------------------------------------------- the customer's sentence

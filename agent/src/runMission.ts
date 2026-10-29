@@ -10,7 +10,7 @@ import {
 } from "../../src/lib/agentMission/constants";
 import { executionBudgetUsd, reviewBudgetUsdFor, reviewCeilingUsdFor } from "../../src/lib/agentMission/price";
 import { MISSION_PRICING_SETTING_KEY, normalizeMissionPricingSettings } from "../../src/lib/missionPricing";
-import { expectedStageCount, planningBudgetUsd } from "../../src/lib/agentMission/budget";
+import { planningBudgetFacts } from "../../src/lib/agentMission/planningBudget";
 import { statsFromCalls } from "../../src/lib/agentMission/sourceRanking";
 import { classifyNoCardEnd, refusalSentenceAr } from "../../src/lib/agentMission/refusal";
 import { parentCountsOf } from "../../src/lib/agentMission/parents";
@@ -195,14 +195,16 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   await store.addEvent(mission.id, { kind: "system", message_ar: "بدأ الوكيل دراسة طلبك." });
   const calls = await store.listCalls(mission.id);
   const access = await deps.resolveAccess(mission.user_id);
-  // a multi-stage request (a parent and its children) gets the larger exploration budget (named constants in agentMission/constants.ts), decided by code from the customer's words
-  const budget = createJobCallBudget({ ceilingUsd: planningBudgetUsd(`${mission.request_text} ${mission.answer_text ?? ""}`), spentUsd: sum(calls, "planning") });
   const counter = { seq: lastSeq(calls) };
   const requestForBudget = `${mission.request_text} ${mission.answer_text ?? ""}`;
   // THE MEASUREMENT AND THE HEALTH OF THE SOURCES, read from the recorded calls of all missions (read only; planning never waits on it): the ranking the planner gets is computed from them
   const planningNow = Date.now();
   const sourceStats = statsFromCalls(await store.recentCalls(planningNow - AGENT_SOURCE_MEASURE_WINDOW_MS).catch(() => []));
-  const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, stageBudget: { stages: expectedStageCount(requestForBudget), budgetUsd: planningBudgetUsd(requestForBudget) } });
+  // THE PLANNING BUDGET is the base figure, or what one minimal sample per stage costs on the platform's sources, under a hard cap (planningBudget.ts): decided by code from the customer's words and the catalog, never by the model
+  const budgetFacts = planningBudgetFacts(requestForBudget, { catalog: deps.catalog, access, stats: sourceStats, now: planningNow });
+  const budget = createJobCallBudget({ ceilingUsd: budgetFacts.budgetUsd, spentUsd: sum(calls, "planning") });
+  deps.log?.(`planning_budget ${mission.id} base=${budgetFacts.baseUsd} budget=${budgetFacts.budgetUsd} cap=${budgetFacts.capUsd} stages=${budgetFacts.stages.map((s) => `${s.role}:${s.sourceId ?? "none"}:${s.callUsd.toFixed(5)}:reserve=${s.reserveUsd}`).join("|")}`);
+  const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, stageBudget: { stages: budgetFacts.stages.length, budgetUsd: budgetFacts.budgetUsd, reservesUsd: budgetFacts.stages.filter((s) => s.role !== "parent" && s.role !== "only").map((s) => s.reserveUsd) } });
   const web = deps.providerKey ? createWebGateway({ store, missionId: mission.id, jobId: null, phase: "planning", budget, recorder: deps.recorder, providerKey: deps.providerKey, fetchFn: deps.fetchFn, counter }) : undefined;
   const state = newRunState(await lastOut(store, mission.id));
   const pricingSettings = normalizeMissionPricingSettings(((await store.readSettings().catch(() => ({}))) as Record<string, unknown>)[MISSION_PRICING_SETTING_KEY]);

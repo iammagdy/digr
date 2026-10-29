@@ -13,6 +13,11 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "obj
 
 /** Pages one stage may read in all (a safety net above the call budget, which is what normally ends a long read). */
 export const ENGINE_MAX_PAGES_PER_STAGE = Math.max(AGENT_COLLECT_MAX_PAGES, 400);
+/**
+ * The pages one stage may read: the safety net above, or twice the items the stage is sold when that is more (a source that gives five items a page needs a thousand pages for five thousand items: a mission of that size must not stop at the net). What really ends a
+ * long read is still the call budget, the time, the source's end and the pages that add nothing; this only stops a read that never ends.
+ */
+export const enginePageCapFor = (plannedRows: number): number => Math.max(ENGINE_MAX_PAGES_PER_STAGE, Math.max(0, Math.floor(plannedRows)) * 2);
 /** Pages in a row with no new item accepted, once the review has no budget left and items are waiting: the stage stops with the review limit as its reason instead of buying pages it cannot use. */
 const REVIEW_STALL_PAGES = 3;
 /** Pages in a row that give no new item at all (the source repeats itself). */
@@ -105,7 +110,7 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
 async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, streamKey: string, params: Record<string, unknown>, parentId: string | null, perParentCap: number): Promise<{ reason: StopReason; aborted: string | null }> {
   const { items, store, gateway } = deps;
   const now = deps.now ?? Date.now;
-  const maxPages = deps.maxPagesPerStage ?? ENGINE_MAX_PAGES_PER_STAGE;
+  const maxPages = deps.maxPagesPerStage ?? enginePageCapFor(stage.planned_rows);
   let stallStreak = 0;
   let failures = 0;
   for (;;) {

@@ -66,7 +66,7 @@ export interface GatewayDeps {
   /** Call counter, shared by the whole mission (continues after a restart). */
   counter: { seq: number };
   /** Planning only: how many stages the plan will have and the planning budget (USD): a share of it is kept for the first sample of every stage not sampled yet. */
-  stageBudget?: { stages: number; budgetUsd: number };
+  stageBudget?: { stages: number; budgetUsd: number; /** The USD kept for the first sample of each stage (code sized it from the sources' prices: planningBudget.ts); absent: the flat share of the budget for every stage. */ reservesUsd?: number[] };
 }
 
 const clip = (s: unknown, n: number): string => String(s ?? "").slice(0, n);
@@ -176,7 +176,8 @@ export function createGateway(deps: GatewayDeps) {
       if (deps.phase === "planning" && deps.stageBudget && deps.stageBudget.stages > 1) {
         const job = endpoint.capability ?? endpointId;
         const unsampledOthers = Math.max(0, deps.stageBudget.stages - sampledJobs.size - (sampledJobs.has(job) ? 0 : 1));
-        const kept = unsampledOthers * AGENT_PLANNING_STAGE_RESERVE_SHARE * deps.stageBudget.budgetUsd;
+        const reserves = [...(deps.stageBudget.reservesUsd ?? [])].sort((a, b) => b - a);
+        const kept = reserves.length > 0 ? reserves.slice(0, unsampledOthers).reduce((n, r) => n + r, 0) : unsampledOthers * AGENT_PLANNING_STAGE_RESERVE_SHARE * deps.stageBudget.budgetUsd;
         if (deps.budget.spentUsd() + estimate > deps.stageBudget.budgetUsd - kept + 1e-9) { deps.budget.settle(estimate, 0); return refuse(id, endpointId, trace, "stage_reserved", "planning"); }
       }
 
