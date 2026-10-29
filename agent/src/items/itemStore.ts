@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { AGENT_EXCLUDED_ROWS_KEPT } from "../../../src/lib/agentMission/constants";
 import type { RelevanceReason, RuleBasis } from "../../../src/lib/agentMission/relevance";
+import { FILTER_REASONS, type FilterReason } from "../../../src/lib/agentMission/filters";
 import type { AgentStore } from "../types";
 
 /**
@@ -26,11 +27,13 @@ export type Row = Record<string, unknown>;
 export type ItemState = "accepted" | "excluded" | "pending" | "unchecked";
 /** Why a structurally valid item was not saved, besides the relevance reasons. */
 export type StructuralReason = "unknown_parent" | "no_verified_contact";
-export type ItemReason = RelevanceReason | StructuralReason | "target_reached";
+export type ItemReason = RelevanceReason | StructuralReason | FilterReason | "target_reached";
 export const STRUCTURAL_REASONS: ReadonlyArray<ItemReason> = ["unknown_parent", "no_verified_contact"];
 
 /** Why a stage's collection stopped: recorded once, by code, and the only source of the shortfall sentence. */
-export type StopReason = "target_reached" | "source_exhausted" | "no_new_items" | "budget" | "daily_cap" | "refused" | "time_limit" | "review_limit" | "failed" | "page_limit" | "no_parents" | "model_stopped";
+export type StopReason = "target_reached" | "source_exhausted" | "no_new_items" | "budget" | "daily_cap" | "refused" | "time_limit" | "review_limit" | "failed" | "page_limit" | "no_parents" | "model_stopped"
+  /** The source gave pages with items and NONE was stored: our own mapping or save failed. Never presented to the customer as an empty source: an internal failure (the hold is released whole, the admin is flagged). */
+  | "internal_error";
 
 export interface StoredItem {
   id: string;
@@ -87,7 +90,8 @@ export interface StageCounts {
   excludedByReason: Partial<Record<ItemReason, number>>;
 }
 
-const RELEVANCE_REASONS: ReadonlyArray<string> = ["no_text", "no_term", "mention_only", "other_person", "uncertain", "not_reviewed", "review_no", "review_failed"];
+/** The reasons that read to the customer as «استُبعد لأنه لا يخص طلبك»: the relevance reasons and what a filter of the card rejects. */
+const RELEVANCE_REASONS: ReadonlyArray<string> = ["no_text", "no_term", "mention_only", "other_person", "uncertain", "not_reviewed", "review_no", "review_failed", ...FILTER_REASONS];
 
 function applyOp(logs: Map<string, StageLog>, op: Op): void {
   const log = logs.get(op.stage) ?? (logs.set(op.stage, newStageLog()), logs.get(op.stage)!);

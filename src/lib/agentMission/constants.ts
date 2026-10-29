@@ -122,11 +122,20 @@ export const MISSION_INTERNAL_COUNT_KEYS = ["mem_phase", "mem_start_rss_mb", "me
   "chk_found", "chk_new", "chk_dup", "chk_unchecked", "chk_saved",
   // the admin flag of a settlement whose numbers did not all agree: the items built from the log, in the file, and in the writer's memory
   "adm_flag", "adm_store", "adm_file", "adm_memory",
-  "chk_ex_no_text", "chk_ex_no_term", "chk_ex_mention_only", "chk_ex_other_person", "chk_ex_uncertain", "chk_ex_not_reviewed", "chk_ex_review_no", "chk_ex_review_failed"] as const;
+  "chk_ex_no_text", "chk_ex_no_term", "chk_ex_mention_only", "chk_ex_other_person", "chk_ex_uncertain", "chk_ex_not_reviewed", "chk_ex_review_no", "chk_ex_review_failed",
+  // what the filters of the card rejected, and the rows the source gave when our own mapping stored none of them (an internal failure)
+  "chk_ex_filter_reply", "chk_ex_filter_repost", "chk_ex_filter_language", "chk_ex_filter_period", "chk_ex_filter_account", "chk_ex_filter_place", "adm_source_rows"] as const;
 export const AGENT_POLL_INTERVAL_MS = 5_000;
 /** The worker writes a heartbeat row this often; the admin page calls it alive while the last beat is younger than AGENT_HEARTBEAT_ALIVE_MS. */
 export const AGENT_HEARTBEAT_INTERVAL_MS = 30_000;
 export const AGENT_HEARTBEAT_ALIVE_MS = 90_000;
+/**
+ * THE HEARTBEAT ROW IS ONE PER WORKER AND IS OVERWRITTEN, so after the fact it only says «now». The worker also writes ONE small object every this often under `_worker/heartbeat/` of the bucket (create-only, no SQL, nothing overwritten):
+ * its NAME carries the reading (`<time>_<worker>_r<rss>_t<tree>_a<active>.json`), so the history reads with one SELECT on the objects' names (storage.objects), without opening a file. About 288 objects a day.
+ */
+export const AGENT_HEARTBEAT_HISTORY_EVERY_MS = 5 * 60_000;
+export const AGENT_HEARTBEAT_HISTORY_FOLDER = "heartbeat";
+export const AGENT_HEARTBEAT_HISTORY_SPACE = "_worker";
 /** A claimed mission is leased to its worker for this long and the lease is renewed with every heartbeat: a dead worker's mission is taken over after the lease ends. */
 export const AGENT_MISSION_LEASE_SECONDS = 120;
 /** The lease taken on the JOB of an approved mission (claim_job_chunk), so the website's old driver never runs a chunk of it. complete_chunk clears it when the mission ends. */

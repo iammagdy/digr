@@ -122,7 +122,9 @@ function salahPlan(opts: { sample?: Array<Record<string, unknown>>; settings?: P
     stages: [{ key: "tweets", title_ar: "التغريدات", endpoint_id: "anyapi.x.search.posts", expected_rows: opts.rows ?? 300, parent_key: null, deliver: true,
       columns: [{ key: "text", title_ar: "نص التغريدة" }, { key: "url", title_ar: "رابط التغريدة" }, { key: "author", title_ar: "الحساب" }],
       sample_rows: [REAL.match(1), REAL.match(2)].map((r) => ({ id: r.id, text: r.text, url: r.url, author: r.author })), measured_by: ["call_0001", "out_0001"],
-      relevance: opts.relevance ?? SALAH, yield_from: "out_0001" }],
+      relevance: opts.relevance ?? SALAH, yield_from: "out_0001",
+      // the card says «تغريدات عربية»: that promise is a filter in code (the language check on the text)
+      filters: [{ kind: "language", lang: "ar" }] }],
   }, lookup);
 }
 
@@ -462,7 +464,7 @@ describe("a Salah mission end to end (fake model, fake source with the real fail
           assumptions_ar: ["تغريدات عربية، الأحدث أولًا."],
           stages: [{ key: "tweets", title_ar: "التغريدات", endpoint_id: "anyapi.x.search.posts", expected_rows: REQUESTED, parent_key: null, deliver: true,
             columns: [{ key: "text", title_ar: "نص التغريدة" }, { key: "url", title_ar: "رابط التغريدة" }, { key: "author", title_ar: "الحساب" }],
-            sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 3), measured_by: [callIds(res)[0], firstOutputId(res)], relevance: SALAH, yield_from: firstOutputId(res) }],
+            sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 3), measured_by: [callIds(res)[0], firstOutputId(res)], relevance: SALAH, yield_from: firstOutputId(res), filters: [{ kind: "language", lang: "ar" }] }],
         }) },
       ],
       execution: () => [
@@ -513,7 +515,7 @@ describe("a Salah mission end to end (fake model, fake source with the real fail
           summary_ar: "ستحصل على ١٠٠ تغريدة عن محمد صلاح لاعب كرة القدم.",
           stages: [{ key: "tweets", title_ar: "التغريدات", endpoint_id: "anyapi.x.search.posts", expected_rows: REQUESTED, parent_key: null, deliver: true,
             columns: [{ key: "text", title_ar: "نص التغريدة" }, { key: "url", title_ar: "رابط التغريدة" }, { key: "author", title_ar: "الحساب" }],
-            sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 3), measured_by: [callIds(res)[0], firstOutputId(res)], relevance: SALAH, yield_from: firstOutputId(res) }],
+            sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 3), measured_by: [callIds(res)[0], firstOutputId(res)], relevance: SALAH, yield_from: firstOutputId(res), filters: [{ kind: "language", lang: "ar" }] }],
         }) },
       ],
       execution: () => [

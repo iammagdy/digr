@@ -7,6 +7,7 @@ import { isInternalEvent } from "./eventText";
 import { countAr, deliveredOfAr, itemNounOf, itemNounOfPlan } from "./itemNoun";
 import { moneyLineAr } from "./moneyText";
 import { remainingLineAr, stageMetricLines, trackMission } from "./tracker";
+import type { PlanEditorView } from "./plan";
 
 /**
  * WHAT THE CUSTOMER SEES OF A MISSION: one pure function from the columns the customer may read (the mission row without its internal columns, its events, the worker's state and the queue)
@@ -77,6 +78,12 @@ export interface CustomerMissionView {
   resultLinesAr: string[];
   resultSummaryAr: string | null;
   files: Array<{ name: string; kind: string; labelAr: string }>;
+  /** What the customer asked for in all, and the target the plan was approved at: equal unless the plan proposed fewer, with the reason on the card. A delivery below the request is never «complete». */
+  requestedRows: number;
+  /** The honest end sentence (what happened and what it cost, in one place): for an ending only; null while the mission is open. */
+  endLineAr: string | null;
+  /** The plan editor of the card (the target, the columns, the filters), only while the plan waits for approval. */
+  edit: PlanEditorView | null;
   /** The start of the work (the first event), for the elapsed clock. */
   startedAt: number | null;
   live: boolean;
@@ -265,8 +272,11 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   const plan = mission.plan_public && typeof mission.plan_public === "object" ? mission.plan_public : null;
   const { stages, total } = stagesView(plan);
   const planned = stages.filter((s) => s.deliver).reduce((n, s) => n + s.rows, 0);
+  // the request: the target the plan was approved at, plus what a lower target (proposed with a reason) left out of it
+  const quantity = plan?.quantity && typeof plan.quantity === "object" ? plan.quantity : null;
+  const requestedRows = planned + (quantity ? Math.max(0, Math.floor(Number(quantity.requested) || 0) - Math.floor(Number(quantity.target) || 0)) : 0);
   const delivered = mission.delivered_units;
-  const phase: CustomerPhase = basePhase === "done" && delivered !== null && planned > 0 && delivered < planned ? "partial" : basePhase;
+  const phase: CustomerPhase = basePhase === "done" && delivered !== null && requestedRows > 0 && delivered < requestedRows ? "partial" : basePhase;
   const q = queueLine(mission.status, input.queue ?? null);
   const filesReady = Array.isArray(mission.files) && mission.files.length > 0;
   const { steps, track } = stepsOf({ phase, status: mission.status, stages, events, callsMade: input.callsMade ?? 0, hasPlan: plan !== null, delivered, filesReady, now });
@@ -294,13 +304,14 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   const resultLinesAr: string[] = [];
   if (delivered !== null && (phase === "done" || phase === "partial" || phase === "failed" || phase === "unserved")) {
     const noun = itemNounOfPlan(plan);
-    if (planned > 0 && delivered > 0) resultLinesAr.push(`تم تسليم ${deliveredOfAr(delivered, planned, noun)}.`);
-    else if (planned > 0) resultLinesAr.push("لم يُسلَّم أي شيء.");
+    if (requestedRows > 0 && delivered > 0) resultLinesAr.push(`تم تسليم ${deliveredOfAr(delivered, requestedRows, noun)}.`);
+    else if (requestedRows > 0) resultLinesAr.push("لم يُسلَّم أي شيء.");
     if (mission.charged_points !== null && Number(mission.reserved_points ?? 0) > 0) resultLinesAr.push(`${moneyLineAr({ reservedPoints: Number(mission.reserved_points), chargedPoints: Number(mission.charged_points), delivered, noun })}.`);
   }
   // a stored summary that carries a number (written before the counts were stated by code) could disagree with the delivered count: it is not shown
   const storedSummary = mission.summary_ar && !/[0-9٠-٩]/.test(mission.summary_ar) ? mission.summary_ar : null;
 
+  const endLineAr = endLineOf(phase, resultLinesAr, storedSummary);
   return {
     id: mission.id, phase, summaryAr: plan?.summary_ar ? String(plan.summary_ar) : null, notesAr: Array.isArray(plan?.notes_ar) ? plan.notes_ar.map(String) : [], assumptionsAr: Array.isArray(plan?.assumptions_ar) ? plan.assumptions_ar.map(String) : [],
     questionOptionsAr: phase === "question" && Array.isArray((mission.plan_public as any)?.question_options) ? (mission.plan_public as any).question_options.map(String).slice(0, 4) : [], stages, totalRows: total, totalRowsAr: countAr(total, itemNounOfPlan(plan)),
@@ -309,7 +320,20 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
     closePageAr: closePageLine(mission.status, input.queue, input.emailWillBeSent),
     resultLinesAr, resultSummaryAr: phase === "done" || phase === "partial" || phase === "unserved" || phase === "failed" ? storedSummary : null,
     files: filesReady ? mission.files!.filter((f) => FILE_LABEL_AR[f.kind]).map((f) => ({ name: f.name, kind: f.kind, labelAr: FILE_LABEL_AR[f.kind] })) : [],
+    requestedRows, endLineAr, edit: phase === "plan" && plan?.edit && typeof plan.edit === "object" ? (plan.edit as PlanEditorView) : null,
     startedAt: (events.length ? Date.parse(events[0].created_at) : Date.parse(mission.created_at)) || null,
     live: isLivePhase(phase),
   };
+}
+
+/** THE HONEST END SENTENCE of a mission that ended, said once on the card (and read aloud as a status): what happened, in the customer's words; null while the mission is open. */
+function endLineOf(phase: CustomerPhase, resultLinesAr: string[], summary: string | null): string | null {
+  switch (phase) {
+    case "done": return resultLinesAr[0] ?? "اكتملت مهمتك.";
+    case "partial": return resultLinesAr[0] ?? "اكتملت مهمتك بعدد أقل من المطلوب.";
+    case "unserved": return summary ?? "لم نجد ما يطابق طلبك، ولم يُخصم منك شيء.";
+    case "failed": return summary ?? "تعذّر استكمال مهمتك ولم يُخصم منك شيء.";
+    case "cancelled": return "أُلغيت هذه المهمة ولم يُخصم شيء.";
+    default: return null;
+  }
 }

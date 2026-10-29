@@ -17,7 +17,8 @@ import type { Reviewer } from "./review";
 import { ItemStore, readSnapshot, type StopReason } from "./items/itemStore";
 import { drainPending, ingestRows } from "./items/ingest";
 import { mirrorLegacyFiles } from "./items/mirror";
-import { codeRunPath, deriveEngineSpecs, type CodeRun } from "./engine/spec";
+import { codeRunPath, deriveEngineSpecsChecked, type CodeRun } from "./engine/spec";
+import { ROW_KEY_FIELDS } from "../../src/lib/agentMission/contract";
 import type { AgentStore, CallPhase, MissionRecord } from "./types";
 
 /**
@@ -149,7 +150,6 @@ const valueAt = (value: unknown, path: string | null | undefined): unknown => {
   for (const part of path.split(".")) { if (cur === null || cur === undefined) return undefined; cur = cur[part]; }
   return cur;
 };
-const ROW_KEY_FIELDS = ["id", "post_id", "comment_id", "review_id", "place_id", "shortcode", "video_id", "personID", "url"];
 const rowKeyOf = (row: unknown): string => {
   if (row && typeof row === "object") for (const k of ROW_KEY_FIELDS) { const v = (row as Record<string, unknown>)[k]; if (typeof v === "string" || typeof v === "number") return `${k}:${v}`; }
   return JSON.stringify(row);
@@ -435,13 +435,13 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
     },
     {
       name: "propose_plan",
-      description: "Propose the plan: 1 to 4 stages (a stage runs once per row of its parent stage), the rows each is expected to give, the columns of each stage's rows (Arabic titles, readable ones only: names, texts, links, numbers; never an id column, every row already carries its own id and its parent's id), 1 to 3 sample rows you really saw, and the ids of the saved calls that measured each stage (measured_by). You never state a price: the site computes it from the measured charges. Rejected plans come back with the exact issues to fix.",
+      description: "Propose the plan: 1 to 4 stages (a stage runs once per row of its parent stage), the rows each is expected to give, the columns of each stage's rows (Arabic titles, readable ones only: names, texts, links, numbers, dates; an id is NOT a column of the file, but your run_code mapping MUST give every row an `id` field: the source's own id of that item, or its link; every column you list must be a field your mapping gives, and code checks it on the measured page), 1 to 3 sample rows you really saw, and the ids of the saved calls that measured each stage (measured_by). You never state a price: the site computes it from the measured charges. Rejected plans come back with the exact issues to fix.",
       phases: ["planning"],
       params: {
         summary_ar: { type: "string", description: "ONE Arabic sentence: what the customer will get (the customer card shows only this sentence)" },
         assumptions_ar: { type: "string[]", description: "Up to 6 short Arabic lines: every choice you made where the request left it open (which meaning of a name, the language, newest first, how many replies...), e.g. «محمد صلاح لاعب كرة القدم، تغريدات عربية، الأحدث أولًا». The customer reads them on the plan card and may change them before approving.", optional: true },
         contacts_note_ar: { type: "string", description: "Only when the customer asked for work e-mails or phones and NO contact stage is in the plan: ONE Arabic sentence saying honestly why", optional: true },
-        stages: { type: "array", description: "[{key, title_ar, endpoint_id, expected_rows, parent_key|null, per_parent_rows (if parent), deliver, columns:[{key,title_ar}], sample_rows:[{...}], measured_by:[call ids], how_ar?, relevance?:{subject_ar, terms:[...], context_terms?:[...], exclude_terms?:[...], text_columns:[column keys], min_own_words?}, yield_from?: out id}]. A stage whose rows were FOUND BY A TEXT SEARCH (a person, entity or topic) REQUIRES relevance and yield_from." },
+        stages: { type: "array", description: "[{key, title_ar, endpoint_id, expected_rows, target_reason_ar?, parent_key|null, per_parent_rows (if parent), deliver, columns:[{key,title_ar}], sample_rows:[{...}], measured_by:[call ids], how_ar?, relevance?:{subject_ar, terms:[...], context_terms?:[...], exclude_terms?:[...], text_columns:[column keys], min_own_words?}, yield_from?: out id, filters?:[{kind:\"exclude_replies\"|\"exclude_reposts\"|\"language\"|\"period\"|\"account\"|\"place\", lang?:\"ar\"|\"en\", days?, from?, to?, values?:[...]}]}]. A stage whose rows were FOUND BY A TEXT SEARCH (a person, entity or topic) REQUIRES relevance and yield_from. expected_rows of the stage that counts what the customer asked for is the customer's number (code reads it from their words and sets it); give a LOWER one only with target_reason_ar (one Arabic sentence, no number) when the sources really cannot give that many. filters: everything the card promises about the items (replies left out, a language, a period, an account, a place) must be a filter: code checks every item with it; a sentence that promises one of these without its filter is refused." },
       },
       handler: async (a) => {
         const stagesIn: any[] = Array.isArray(a.stages) ? a.stages : [];
@@ -461,16 +461,27 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           evidenceText: (id: string) => evidence.get(id) ?? null,
           endpointAllowed: (endpointId: string) => (Boolean(ctx.web) && isAgentSourceId(endpointId)) || (isSellable(endpointId, ctx.catalog) && !blockedEndpointReason(endpointId) && policyVerdict(endpointId, ctx.access).allowed),
           requestText: `${mission.request_text} ${mission.answer_text ?? ""}`,
+          ...(mission.answer_text ? { answerText: mission.answer_text } : {}),
           isContactSource,
           pricingSettings: ctx.pricingSettings,
         };
         const checked = validateAndPricePlan({ summary_ar: a.summary_ar, stages: stagesIn, ...(a.contacts_note_ar !== undefined ? { contacts_note_ar: a.contacts_note_ar } : {}), ...(a.assumptions_ar !== undefined ? { assumptions_ar: a.assumptions_ar } : {}) }, lookup);
         if (!checked.ok) return err("the plan was not accepted; fix these and propose again", { issues: checked.issues.slice(0, 12) });
         // THE MODEL PLANS, CODE EXECUTES: what code needs to carry each stage out without the model is derived from what the agent really did and proven on the measured page (a stage that cannot be proven has no recipe)
+        let derived: Awaited<ReturnType<typeof deriveEngineSpecsChecked>> | null = null;
         try {
-          const specs = await deriveEngineSpecs(checked.plan, { store, missionId: mission.id, catalog: ctx.catalog, calls, codeRuns: state.codeRuns, callParams: state.callParams, sandbox: runSandbox });
-          for (const st of checked.plan.stages) { const spec = specs.get(st.key); if (spec) st.engine = spec; }
+          derived = await deriveEngineSpecsChecked(checked.plan, { store, missionId: mission.id, catalog: ctx.catalog, calls, codeRuns: state.codeRuns, callParams: state.callParams, sandbox: runSandbox });
         } catch { /* a plan without recipes is carried out by the model, through the same item store */ }
+        // THE CONTRACT: a mapping that gives what the engine needs but breaks what the card promises (an id, a column, a field a filter reads) is refused here, before the customer sees a card the file cannot match
+        if (derived && derived.issues.length > 0) return err("the plan was not accepted; fix these and propose again", { issues: derived.issues.slice(0, 12) });
+        if (derived) {
+          for (const st of checked.plan.stages) {
+            const spec = derived.specs.get(st.key);
+            if (spec) st.engine = spec;
+            const filters = derived.filters.get(st.key);
+            if (filters) { if (filters.length > 0) st.filters = filters; else delete st.filters; }
+          }
+        }
         state.proposedPlan = checked.plan;
         state.terminal = true;
         await store.updateMission(mission.id, { plan: checked.plan as any });

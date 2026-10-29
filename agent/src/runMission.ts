@@ -12,9 +12,10 @@ import { executionBudgetUsd, reviewBudgetUsdFor, reviewCeilingUsdFor } from "../
 import { MISSION_PRICING_SETTING_KEY, normalizeMissionPricingSettings } from "../../src/lib/missionPricing";
 import { planningBudgetUsd } from "../../src/lib/agentMission/budget";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
-import { customerPlanView, type PricedPlan } from "../../src/lib/agentMission/plan";
+import { customerPlanView, requestedRowsOf, type PricedPlan } from "../../src/lib/agentMission/plan";
 import { toArabicDigits } from "../../src/lib/arabicDigits";
 import type { RelevanceReason } from "../../src/lib/agentMission/relevance";
+import { FILTER_REASONS, isEnabled, type FilterReason } from "../../src/lib/agentMission/filters";
 import { holdValueUsd } from "../../src/lib/server/callBudget";
 import type { ModelDriver } from "./driver";
 import { createGateway } from "./gateway";
@@ -142,11 +143,11 @@ async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPla
     const excludedByStage: Record<string, ExcludedRow[]> = {};
     for (const [i, s] of plan.stages.entries()) {
       const c = snap.counts(s.key);
-      const asRow = (it: { id: string; reason?: string; row: Record<string, unknown> | null }): ExcludedRow => ({ id: it.id, reason: it.reason as RelevanceReason, row: it.row ?? {} });
+      const asRow = (it: { id: string; reason?: string; row: Record<string, unknown> | null }): ExcludedRow => ({ id: it.id, reason: it.reason as RelevanceReason | FilterReason, row: it.row ?? {} });
       const listed = [...snap.excludedItems(s.key), ...snap.pendingItems(s.key)].filter((it) => it.row && it.reason && (RELEVANCE_REASON_KEYS as readonly string[]).includes(it.reason)).map(asRow);
       if (listed.length > 0) excludedByStage[s.key] = listed;
       pendingTotal += c.pending;
-      if (!s.relevance) continue;
+      if (!s.relevance && !(s.filters ?? []).some(isEnabled)) continue;
       const counts: Record<string, number> = { chk_stage: i + 1, chk_examined: c.checked, chk_by_rule: c.acceptedByRule, chk_by_model: c.acceptedByModel, chk_excluded: c.excludedRelevance, chk_pending: c.pending, chk_review_extended: review.extended ? 1 : 0, chk_found: c.found, chk_new: c.new, chk_dup: c.duplicates, chk_unchecked: c.unchecked, chk_saved: c.saved };
       for (const [b, n] of Object.entries(c.acceptedByRuleBasis)) counts[`chk_rule_${b}`] = n ?? 0;
       for (const [r, n] of Object.entries(c.excludedByReason)) if ((RELEVANCE_REASON_KEYS as readonly string[]).includes(r)) counts[`chk_ex_${r}`] = n ?? 0;
@@ -159,7 +160,7 @@ async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPla
   }
   return { pending: pendingTotal, stop };
 }
-const RELEVANCE_REASON_KEYS = ["no_text", "no_term", "mention_only", "other_person", "uncertain", "not_reviewed", "review_no", "review_failed"] as const;
+const RELEVANCE_REASON_KEYS = ["no_text", "no_term", "mention_only", "other_person", "uncertain", "not_reviewed", "review_no", "review_failed", ...FILTER_REASONS] as const;
 /** True when a text carries a number (Latin or Arabic-Indic digits): a model note with one is dropped, so a count in a text always comes from the data. */
 export const HAS_NUMBER = /[0-9٠-٩]/;
 
@@ -392,22 +393,37 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   }
   // ONE SOURCE OF TRUTH for the numbers: the counts and the money are stated by code, from the count of the file and the real settlement; the stored summary is the model's note (kept only when it has no number in it, so it can
   // never disagree with the count) or, when no model carried the mission out, a sentence built here; for a shortfall, the honest reason from the stop reason the run RECORDED (never a number, never «صف» or «سجل»)
-  const requested = plan.price.deliveredRows;
+  // THE TARGET is what the customer approved and what the charge is settled against; THE REQUEST is what they asked for (the same number unless the model proposed fewer, with a reason the card showed): a delivery below the request is never «complete»
+  const target = plan.price.deliveredRows;
+  const requested = requestedRowsOf(plan);
+  const internalStage = delivered <= 0 ? plan.stages.find((s) => snap.stage(s.key).stop === "internal_error") : undefined;
+  if (internalStage) flags.push("engine_zero_ingest");
   const note = a.summary && !HAS_NUMBER.test(a.summary) ? a.summary.trim() : "";
   const shortStage = plan.stages.find((s) => s.deliver && snap.counts(s.key).accepted < s.planned_rows);
-  const reason = delivered > 0 && delivered < requested ? shortfallFromStopAr(shortStage ? snap.stage(shortStage.key).stop : null, checked) : delivered <= 0 ? "لم يُسلَّم أي شيء، ولم يُخصم منك شيء." : "";
-  const summary = [note, reason].filter(Boolean).join(" ").slice(0, 1100);
+  const reason = internalStage ? INTERNAL_FAILURE_AR
+    : delivered > 0 && delivered < target ? shortfallFromStopAr(shortStage ? snap.stage(shortStage.key).stop : null, checked)
+    : delivered > 0 && delivered < requested ? loweredTargetAr(plan)
+    : delivered <= 0 ? "لم يُسلَّم أي شيء، ولم يُخصم منك شيء." : "";
+  const summary = (internalStage ? reason : [note, reason].filter(Boolean).join(" ")).slice(0, 1100);
   const mismatch = settled.kind === "settled" && !settled.matchesExpectation ? `charge ${settled.chargedPoints} differs from the expected ${settled.expectedChargedPoints}` : null;
-  const adminFlag = flags.length > 0 ? `admin: ${[...new Set(flags)].join(", ")}` : null;
+  const adminFlag = flags.length > 0 ? `admin: ${[...new Set(flags)].join(", ")}${internalStage ? ` stage=${internalStage.key} source_rows=${snap.stage(internalStage.key).sourceRows}` : ""}` : null;
   await store.updateMission(mission.id, {
-    status: delivered > 0 ? "completed" : "unserved", delivered_units: delivered, charged_points: settled.chargedPoints, summary_ar: summary || null, files: files.length ? files : null,
-    execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(a.executionTregUsd.toFixed(6)), error: mismatch ?? a.outputError ?? adminFlag, ...clear,
+    status: internalStage ? "failed" : delivered > 0 ? "completed" : "unserved", delivered_units: delivered, charged_points: settled.chargedPoints, summary_ar: summary || null, files: files.length ? files : null,
+    execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(a.executionTregUsd.toFixed(6)), error: internalStage ? adminFlag : mismatch ?? a.outputError ?? adminFlag, ...clear,
   });
+  if (internalStage) await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: أعطى المصدر عناصر ولم يُحفظ أي منها.", counts: { adm_flag: 1, adm_store: 0, adm_file: 0, adm_source_rows: snap.stage(internalStage.key).sourceRows } });
   // the rows of a stage as the customer receives them: a delivered stage's count in the FILE (its own sheet); a stage that is not delivered (an intermediate one) keeps the items saved
   const stageRowsOf = (s: PricedPlan["stages"][number]): number => (s.deliver ? (fileByStage ? fileByStage[s.key] ?? 0 : plan.stages.filter((x) => x.deliver).length === 1 ? delivered : rowsByStage[s.key].length) : rowsByStage[s.key].length);
   await store.addEvent(mission.id, { kind: "result", message_ar: summary || (delivered > 0 ? "اكتملت المهمة." : "لم يُسلَّم أي شيء."), counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, stageRowsOf(s)])) } });
-  await tell(deps, mission, jobId, delivered <= 0 ? "unserved" : delivered < plan.price.deliveredRows ? "partial" : "completed", { delivered, planned: plan.price.deliveredRows, chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(delivered > 0 && delivered < requested ? { shortfallClauseAr: shortfallClauseAr(shortStage ? snap.stage(shortStage.key).stop : null, checked) } : {}) });
+  const noticeKind: MissionNoticeKind = internalStage ? "failed" : delivered <= 0 ? "unserved" : delivered < requested ? "partial" : "completed";
+  await tell(deps, mission, jobId, noticeKind, { delivered, planned: requested, chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(internalStage ? { cause: "internal" as const } : {}), ...(delivered > 0 && delivered < target ? { shortfallClauseAr: shortfallClauseAr(shortStage ? snap.stage(shortStage.key).stop : null, checked) } : delivered > 0 && delivered < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
 }
+
+/** What the customer is told when the source gave items and our own mapping stored none: it was OUR failure, never «nothing was found». No number: the money line says the rest. */
+export const INTERNAL_FAILURE_AR = "تعذّر تنفيذ طلبك بسبب خلل من جانبنا، وليس لأن المصدر خالٍ من النتائج. لم يُخصم منك شيء، وأُبلغ فريقنا بالأمر ليراجعه.";
+const loweredTargetClauseAr = (plan: PricedPlan): string => (plan.quantity?.reason_ar ? `لأن ${plan.quantity.reason_ar.replace(/[.،\s]+$/, "")}` : "لأن الخطة التي اعتمدتها كانت بعدد أقل من المطلوب");
+/** The sentence of a delivery that met the approved target when the target was lower than the request. */
+export const loweredTargetAr = (plan: PricedPlan): string => `سُلّم العدد الذي اعتمدته في الخطة، وهو أقل مما طلبت ${loweredTargetClauseAr(plan)}.`;
 
 const shortError = (e: unknown): string => String((e as Error)?.message ?? e).slice(0, 300);
 

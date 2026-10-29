@@ -6,15 +6,20 @@ import { toArabicDigits } from "@/lib/arabicDigits";
 import { panelPollDelayMs } from "@/lib/missionPanelContent";
 import type { CustomerMissionView } from "@/lib/agentMission/customerView";
 import { MissionPlanBody } from "@/components/mission/MissionPlanPanel";
+import { PlanEditor } from "@/components/mission/PlanEditor";
+import type { PlanEdits } from "@/lib/agentMission/planEdit";
 
 /**
  * THE MISSION CARD of the chat: what the agent will deliver, in plain Arabic and in one place. It draws ONE answer of /api/missions/<id> (the customer's own mission): a summary sentence, the
  * numbered stages with their rows (they add up to the total), two or three sample rows with readable columns, the price, the hold and the expected time on one line, and the buttons
- * «اعتمد» and «عدّل الطلب». While the mission waits or works it shows the live panel «خطة المهمة»; when it ends it shows what was delivered and the files.
+ * «اعتمد» and «عدّل الطلب» (which opens the PLAN EDITOR: the number of items, the period, the language, each exclusion and the columns, priced again by code; retyping the request stays beside it). While the mission waits or works it shows the live panel «خطة المهمة»; when it ends it shows what was delivered and the files.
  * No endpoint, no provider, no cost in dollars and no internal id ever reaches this card: the server leaves them out.
  */
 interface MissionAnswer { success: boolean; isGuest?: boolean; status?: string; requestText?: string; view?: CustomerMissionView; error?: string }
 
+const TERMINAL_PHASES: ReadonlySet<string> = new Set(["done", "partial", "unserved", "failed", "cancelled"]);
+const WAITING_POLL_MS = 8000;
+const WAITING_POLL_HIDDEN_MS = 20000;
 const BTN = "min-h-11 cursor-pointer rounded-full border px-5 text-[13px] focus-visible:outline-2 disabled:cursor-wait disabled:opacity-60";
 const BTN_PRIMARY = `${BTN} border-0 bg-ac text-onac`;
 const BTN_PLAIN = `${BTN} border-ln2 bg-transparent text-ink`;
@@ -32,6 +37,7 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved }: { mi
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [reply, setReply] = useState("");
+  const [editing, setEditing] = useState(false);
   const alive = useRef(true);
 
   const read = useCallback(async () => {
@@ -43,30 +49,38 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved }: { mi
   }, [missionId]);
 
   const live = answer?.view?.live ?? true;
+  const ended = TERMINAL_PHASES.has(answer?.view?.phase ?? "");
+  // THE CARD NEVER GOES DEAF: it reads every 2 to 3 seconds while the mission works and every few seconds while it waits for the customer (so an approval or an ending that happened elsewhere shows by itself), and reads at once when the tab comes back; it stops only when the mission has ended
   useEffect(() => {
     alive.current = true;
     let timer: ReturnType<typeof setTimeout> | null = null;
+    const hidden = () => typeof document !== "undefined" && document.visibilityState === "hidden";
     const loop = async () => {
       await read();
       if (!alive.current) return;
-      timer = setTimeout(loop, panelPollDelayMs(typeof document !== "undefined" && document.visibilityState === "hidden"));
+      timer = setTimeout(loop, live ? panelPollDelayMs(hidden()) : hidden() ? WAITING_POLL_HIDDEN_MS : WAITING_POLL_MS);
     };
-    if (live) void loop(); else void read();
-    return () => { alive.current = false; if (timer) clearTimeout(timer); };
-  }, [read, live]);
+    const onVisible = () => { if (typeof document !== "undefined" && document.visibilityState === "visible") void read(); };
+    if (ended) void read(); else void loop();
+    if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisible);
+    return () => { alive.current = false; if (timer) clearTimeout(timer); if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisible); };
+  }, [read, live, ended]);
 
-  async function act(action: "approve" | "cancel" | "edit" | "answer", text?: string) {
+  async function act(action: "approve" | "cancel" | "edit" | "edit_plan" | "answer", text?: string, edits?: PlanEdits) {
     if (busy) return;
     setBusy(true);
     setError(null);
     try {
-      const res = await fetch(`/api/missions/${encodeURIComponent(missionId)}`, { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) }, body: JSON.stringify({ action, ...(text !== undefined ? { text } : {}) }) });
+      const res = await fetch(`/api/missions/${encodeURIComponent(missionId)}`, { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) }, body: JSON.stringify({ action, ...(text !== undefined ? { text } : {}), ...(edits !== undefined ? { edits } : {}) }) });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json?.success) { setError(String(json?.error || "تعذّر تنفيذ الطلب الآن؛ حاول بعد قليل. لم يُخصم شيء.")); return; }
       if (action === "edit" && typeof json.requestText === "string") onEdit?.(json.requestText);
       if (action === "approve") onApproved?.();
       if (action === "answer") setReply("");
+      if (action === "edit_plan") setEditing(false);
       await read();
+      // an approval is followed by a second read at once: the work may already have started (or ended) by the time the first answer was written
+      if (action === "approve") setTimeout(() => { if (alive.current) void read(); }, 1500);
     } catch {
       setError("تعذّر الاتصال الآن؛ حاول بعد قليل. لم يُخصم شيء.");
     } finally {
@@ -87,11 +101,11 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved }: { mi
   if (!v) {
     return <div dir="rtl" data-testid="agent-card" data-phase="loading" className="mt-3 rounded-[18px] border border-ln bg-sf p-4 text-[13px] text-ink2" role="status">جاري تجهيز مهمتك…</div>;
   }
-  return <AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} />;
+  return <AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} editing={editing} onEditing={setEditing} />;
 }
 
 /** The card itself, drawn from one view: pure (no network), so it renders the same on the server and in the tests. */
-export function AgentMissionCardBody({ view: v, isGuest, busy = false, error = null, reply = "", onReply = () => undefined, onAct = () => undefined, onDownload = () => undefined }: { view: CustomerMissionView; isGuest: boolean; busy?: boolean; error?: string | null; reply?: string; onReply?: (text: string) => void; onAct?: (action: "approve" | "cancel" | "edit" | "answer", text?: string) => void; onDownload?: (name: string) => void }) {
+export function AgentMissionCardBody({ view: v, isGuest, busy = false, error = null, reply = "", onReply = () => undefined, onAct = () => undefined, onDownload = () => undefined, editing = false, onEditing = () => undefined }: { view: CustomerMissionView; isGuest: boolean; busy?: boolean; error?: string | null; reply?: string; onReply?: (text: string) => void; onAct?: (action: "approve" | "cancel" | "edit" | "edit_plan" | "answer", text?: string, edits?: PlanEdits) => void; onDownload?: (name: string) => void; editing?: boolean; onEditing?: (open: boolean) => void }) {
   const panelContent = { title: "خطة المهمة", steps: v.steps, currentLineAr: v.currentLineAr, delayAr: v.delayAr, remainingAr: v.remainingAr, closePageAr: v.closePageAr, startedAt: v.startedAt ?? undefined, live: v.live };
   return (
     <section dir="rtl" data-testid="agent-card" data-phase={v.phase} aria-label="مهمتك" className="mt-3 flex w-full max-w-[640px] flex-col gap-2.5 rounded-[18px] border border-ln bg-sf p-3.5 sm:p-4">
@@ -165,12 +179,15 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, error = n
           {isGuest
             ? <a href="/register" className={`${BTN_PRIMARY} inline-flex items-center no-underline`} data-testid="agent-signup">سجّل لتعتمد</a>
             : <button type="button" className={BTN_PRIMARY} disabled={busy} onClick={() => onAct("approve")} data-testid="agent-approve">اعتمد</button>}
-          <button type="button" className={BTN_PLAIN} disabled={busy} onClick={() => onAct("edit")} data-testid="agent-edit">عدّل الطلب</button>
+          <button type="button" className={BTN_PLAIN} disabled={busy} onClick={() => (v.edit ? onEditing(!editing) : onAct("edit"))} data-testid="agent-edit" aria-expanded={v.edit ? editing : undefined}>عدّل الطلب</button>
         </div>
       ) : null}
+      {v.phase === "plan" && v.edit && editing ? <PlanEditor edit={v.edit} busy={busy} onSave={(edits) => onAct("edit_plan", undefined, edits)} onCancel={() => onEditing(false)} onRetype={() => onAct("edit")} /> : null}
       {v.phase === "plan" && isGuest ? <p className="m-0 text-[12px] font-light leading-[1.8] text-mut" data-testid="agent-guest-note">بعد التسجيل تُنقل محادثتك لحسابك؛ اكتب «موافق» فيها ثم اضغط «اعتمد».</p> : null}
 
-      {(v.phase === "waiting" || v.phase === "planning" || v.phase === "running" || v.phase === "done" || v.phase === "partial") ? (
+      {(v.phase === "unserved" || v.phase === "failed") && v.endLineAr ? <p role="status" aria-live="polite" className="m-0 rounded-[12px] bg-sf2 px-3 py-2 text-[13px] font-semibold leading-[1.9] text-ink" data-testid="agent-end-line">{v.endLineAr}</p> : null}
+
+      {(v.phase === "waiting" || v.phase === "planning" || v.phase === "running" || v.phase === "done" || v.phase === "partial" || (v.phase === "failed" && v.steps.length > 1) || (v.phase === "unserved" && v.steps.length > 1)) ? (
         <details open={v.live} className="rounded-[14px] border border-ln bg-bg px-3 py-1" data-testid="agent-panel">
           <summary className="cursor-pointer py-2 text-[13px] font-semibold text-ink">خطة المهمة</summary>
           <MissionPlanBody content={panelContent} />
@@ -180,7 +197,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, error = n
       {(v.phase === "done" || v.phase === "partial" || v.phase === "unserved" || v.phase === "failed") && v.resultLinesAr.length > 0 ? (
         <div className="rounded-[12px] bg-sf2 px-3 py-2" data-testid="agent-result-lines">{v.resultLinesAr.map((line) => <p key={line} className="m-0 text-[13px] leading-[1.8] text-ink">{line}</p>)}</div>
       ) : null}
-      {(v.phase === "done" || v.phase === "partial" || v.phase === "unserved" || v.phase === "failed") && v.resultSummaryAr ? <p className="m-0 text-[13px] leading-[1.9] text-ink" data-testid="agent-result">{v.resultSummaryAr}</p> : null}
+      {(v.phase === "done" || v.phase === "partial") && v.resultSummaryAr ? <p className="m-0 text-[13px] leading-[1.9] text-ink" data-testid="agent-result">{v.resultSummaryAr}</p> : null}
       {v.phase === "cancelled" ? <p className="m-0 text-[13px] text-ink2" data-testid="agent-cancelled">أُلغيت هذه المهمة ولم يُخصم شيء.</p> : null}
       {v.files.length > 0 ? (
         <div className="flex flex-wrap gap-2" data-testid="agent-files">

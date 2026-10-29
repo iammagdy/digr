@@ -21,6 +21,8 @@ export interface MissionNoticeFacts {
   noun?: string;
   /** The job the approval reserved under (none for a mission that never reserved anything). */
   hasJob: boolean;
+  /** «internal»: nothing was delivered because of OUR failure (the source gave items and our own mapping stored none): the notice says so, never «no source found». */
+  cause?: "internal";
   /** Why fewer items than requested were delivered, as the run recorded it («لأن المصدر لم يعد يعطي نتائج أخرى لهذا الطلب»): a partial notice states it instead of the general sentence. */
   shortfallClauseAr?: string;
 }
@@ -70,13 +72,14 @@ export function buildMissionNotice(kind: MissionNoticeKind, f: MissionNoticeFact
   }
   // failed or unserved: nothing was delivered. When a hold was taken it was released whole.
   const unserved = kind === "unserved";
-  const lead = unserved ? `لم نجد مصدرًا يخدم طلبك «${t}» بدقة الآن.` : `تعذّر استكمال مهمتك «${t}».`;
+  const ourFault = f.cause === "internal";
+  const lead = unserved ? `لم نجد مصدرًا يخدم طلبك «${t}» بدقة الآن.` : ourFault ? `تعذّر تنفيذ مهمتك «${t}» بسبب خلل من جانبنا، وليس لأن المصدر خالٍ من النتائج؛ وأُبلغ فريقنا ليراجعه.` : `تعذّر استكمال مهمتك «${t}».`;
   const detail1 = money;
   const title = unserved ? `لا يمكن تنفيذ «${t}» بدقة الآن` : `تعذّر تنفيذ مهمتك: ${t}`;
   return {
     kind, title, body: `${lead} ${detail1}.`, link: REQUESTS,
     email: {
-      subject: unserved ? `${t} — لا يمكن تنفيذه بدقة الآن` : `${t} — تعذّر التنفيذ ولم يُخصم شيء`,
+      subject: unserved ? `${t} — لا يمكن تنفيذه بدقة الآن` : ourFault ? `${t} — خلل من جانبنا ولم يُخصم شيء` : `${t} — تعذّر التنفيذ ولم يُخصم شيء`,
       preheader: f.hasJob ? "لم يُخصم منك شيء، وعاد الحجز المؤقت كاملًا." : "لم يُحجز أي رصيد منك ولم يُخصم شيء.",
       heading: unserved ? `لا يمكن تنفيذ «${t}» بدقة الآن` : `لم تكتمل مهمة «${t}»`,
       lead, detail1, detail2: "", buttonLabel: buttonOpen,

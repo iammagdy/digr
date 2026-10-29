@@ -1,4 +1,6 @@
 import type { EngineSpec, PricedPlan } from "../../../src/lib/agentMission/plan";
+import { proveMappedRows } from "../../../src/lib/agentMission/contract";
+import { findFilterFields, refitFilters, type StageFilter } from "../../../src/lib/agentMission/filters";
 import type { TregCatalog } from "../../../src/lib/treg/catalog";
 import type { SandboxResult } from "../sandbox";
 import type { AgentStore, CallRow } from "../types";
@@ -54,10 +56,20 @@ function paramsOfCall(deps: DeriveDeps, callId: string): Record<string, unknown>
   return out;
 }
 
+/** What the plan check gets from the proof: the recipes, the filters with their fields found from what the mapping really gives, and the CONTRACT issues (what the engine or the file needs that the mapping does not give): a plan with an issue is refused. */
+export interface DerivedSpecs { specs: Map<string, EngineSpec>; filters: Map<string, StageFilter[]>; issues: string[] }
+
 export async function deriveEngineSpecs(plan: PricedPlan, deps: DeriveDeps): Promise<Map<string, EngineSpec>> {
+  return (await deriveEngineSpecsChecked(plan, deps)).specs;
+}
+
+export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDeps): Promise<DerivedSpecs> {
   const specs = new Map<string, EngineSpec>();
+  const filtersOut = new Map<string, StageFilter[]>();
+  const issues: string[] = [];
   const mappedRows = new Map<string, Array<Record<string, unknown>>>();
   for (const stage of plan.stages) {
+    let contractIssues: string[] | null = null;
     const endpoint = deps.catalog.byId.get(stage.endpoint_id);
     if (!endpoint) continue;
     // the outputs the stage cites, then every output of this run made from ONE of the stage's measuring calls (the newest first): the mapping the agent ran on the measured page
@@ -85,6 +97,15 @@ export async function deriveEngineSpecs(plan: PricedPlan, deps: DeriveDeps): Pro
       let againJson: unknown;
       try { againJson = JSON.parse(again.resultJson); } catch { continue; }
       if (canon(againJson) !== canon(seenJson)) continue;
+      // THE CONTRACT: the mapped items must give what the engine and the file need (an id or a key to derive one, every column the card promises, every field a promised filter reads). Checked on this very page, before approval.
+      const label = `stage «${stage.key}»`;
+      const mapped = seenJson as Array<Record<string, unknown>>;
+      const mappedKeys = [...new Set(mapped.flatMap((r) => Object.keys(r)))];
+      const fields = findFilterFields({ mappedKeys, columnKeys: stage.columns.map((c) => c.key), textColumns: stage.relevance?.text_columns, columnTitles: Object.fromEntries(stage.columns.map((c) => [c.key, c.title_ar])) });
+      const refit = refitFilters(stage.filters ?? [], fields, mappedKeys, label);
+      const proof = proveMappedRows({ rows: mapped, columnKeys: stage.columns.map((c) => c.key), textColumns: stage.relevance?.text_columns, filters: refit.filters, label });
+      const problems = [...refit.issues, ...proof.issues];
+      if (problems.length > 0) { contractIssues = problems; continue; }
       const cursorParam = (endpoint.pagination ?? []).find((p) => !LIMIT_INPUT.test(p)) ?? null;
       let binding: EngineSpec["parent_binding"] = null;
       if (stage.parent_key !== null) {
@@ -94,12 +115,16 @@ export async function deriveEngineSpecs(plan: PricedPlan, deps: DeriveDeps): Pro
         binding = found;
         delete params[found.param];
       }
-      specs.set(stage.key, { endpoint_id: stage.endpoint_id, params, cursor_param: cursorParam, map_code: run.code, map_file_id: callId, parent_binding: binding });
+      specs.set(stage.key, { endpoint_id: stage.endpoint_id, params, cursor_param: cursorParam, map_code: run.code, map_file_id: callId, parent_binding: binding, ...(proof.idField !== "id" ? { id_field: proof.idField } : {}) });
+      filtersOut.set(stage.key, refit.filters);
       mappedRows.set(stage.key, seenJson as Array<Record<string, unknown>>);
+      contractIssues = null;
       break;
     }
+    // a mapping that was proven to reproduce what the agent saw but breaks the contract is refused (never silently handed to the model: the customer would approve a card the file cannot match)
+    if (contractIssues && !specs.has(stage.key)) issues.push(...contractIssues);
   }
-  return specs;
+  return { specs, filters: filtersOut, issues };
 }
 
 /** Which input of the child's measuring call is a field of a parent row (a value that equals the parent's own id, or one of its columns)? Exactly one input may bind, and it must bind to one field: else no recipe. */

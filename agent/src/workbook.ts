@@ -2,6 +2,8 @@ import ExcelJS from "exceljs";
 import { SUMMARY_SHEET_AR } from "../../src/lib/modelPlanner/missionWorkbook";
 import { wordBoundarySheetName } from "../../src/lib/agentMission/fileNames";
 import { REASON_AR, type RelevanceReason } from "../../src/lib/agentMission/relevance";
+import { requestedRowsOf } from "../../src/lib/agentMission/plan";
+import { FILTER_REASON_LABEL_AR, type FilterReason } from "../../src/lib/agentMission/filters";
 import { cairoCellDate, cairoText, DATE_NUMBER_FORMAT, isDateValues, parseMoment } from "../../src/lib/agentMission/dateCells";
 import { isInternalColumn, type PricedPlan, type PricedStage } from "../../src/lib/agentMission/plan";
 import { deliveredOfAr, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
@@ -101,7 +103,7 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
 }
 
 /** A row the relevance check left out of a stage (never delivered, never charged), with the reason. */
-export interface ExcludedRow { id: string; reason: RelevanceReason; row: Row }
+export interface ExcludedRow { id: string; reason: RelevanceReason | FilterReason; row: Row }
 
 /**
  * THE ADMIN'S VIEW OF WHAT WAS LEFT OUT: a CSV (the stage, the reason in Arabic, the readable columns of the row, its id) kept in the mission's own storage folder, NEVER in the customer's files. Customer files hold only items that were
@@ -116,7 +118,7 @@ export function buildExcludedAdminCsv(plan: PricedPlan, excludedByStage: Record<
     const cols = readableColumns(stage).filter((c) => !c.kind);
     if (lines.length > 0) lines.push("");
     lines.push(["المرحلة", "سبب الاستبعاد", ...cols.map((c) => c.title_ar), ID_HEADER_AR].map(esc).join(","));
-    for (const e of rows) lines.push([stage.title_ar, REASON_AR[e.reason] ?? e.reason, ...cols.map((c) => e.row[c.key]), e.id].map(esc).join(","));
+    for (const e of rows) lines.push([stage.title_ar, (REASON_AR as Record<string, string>)[e.reason] ?? (FILTER_REASON_LABEL_AR as Record<string, string>)[e.reason] ?? e.reason, ...cols.map((c) => e.row[c.key]), e.id].map(esc).join(","));
   }
   return lines.length > 0 ? `﻿${lines.join("\r\n")}` : null;
 }
@@ -212,7 +214,8 @@ export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<st
   summary.addRow([]);
   // the one sentence about the delivery is built from the real counts (never from the agent's own words, which may name the requested number): «تم تسليم ٢٥٠ من ٣٠٠ تغريدة.»
   const deliveredCount = plan.stages.filter((st) => st.deliver).reduce((n, st) => n + (rowsByStage[st.key] ?? []).length, 0);
-  const requestedCount = plan.stages.filter((st) => st.deliver).reduce((n, st) => n + st.planned_rows, 0);
+  // the number of items the CUSTOMER asked for (the plan's target, or the request when the model proposed fewer with a reason the card showed): a delivery below it is never written «N من N»
+  const requestedCount = requestedRowsOf(plan);
   const intro = summary.addRow([`تم تسليم ${deliveredOfAr(deliveredCount, requestedCount, itemNounOfPlan(plan))}.`]);
   summary.mergeCells(intro.number, 1, intro.number, 5);
   intro.alignment = { wrapText: true, readingOrder: "rtl" as any, vertical: "middle" };
