@@ -10,6 +10,7 @@ import { adminFetch } from "@/lib/adminApi";
 import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
 import { ADMIN_IC, ADMIN_PAGES, AIcon, adminHref, type AdminPageId } from "./icons";
 import { EGP, agoAr, initials, tint } from "./format";
+import { ADMIN_GROUPS, ADMIN_PAGE_INFO, BOTTOM_BAR_PAGES, adminGroupOf } from "./nav";
 
 export type Range = 7 | 30 | 90;
 
@@ -87,6 +88,10 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
   const page: AdminPageId = (ADMIN_PAGES.find(([id]) => id !== "overview" && pathname.startsWith(adminHref(id)))?.[0] ?? "overview") as AdminPageId;
   const title = ADMIN_PAGES.find(([id]) => id === page)![1];
+  const group = adminGroupOf(page);
+  // Only the section of the open page is unfolded in the menu; the others are one line each. A tap on a section title folds or unfolds it.
+  const [openGroup, setOpenGroup] = useState(group.id);
+  useEffect(() => { setOpenGroup(group.id); }, [group.id]);
 
   useEffect(() => {
     try {
@@ -178,18 +183,17 @@ export function AdminShell({ children }: { children: ReactNode }) {
   const llmShort = !providers ? "…" : !providers.llm.enabled ? "متوقف" : providers.llm.provider === "fake" ? "وضع تجريبي" : providers.llm.health ? (providers.llm.health.ok ? "متصل فعليًا" : "لا يستجيب") : "…";
   const tregShort = !providers ? "…" : providers.treg.health ? (providers.treg.health.ok ? (providers.treg.lowBalance ? "رصيد منخفض" : "متصل فعليًا") : "لا يستجيب") : "…";
 
-  const navItems = ADMIN_PAGES.map(([id, label]) => ({ id, label, icon: ADMIN_IC[id], on: page === id, badge: id === "topups" ? pendingCount : 0 }));
   const bottom: Array<{ id: string; label: string; icon: string; on: boolean; badge: number; go: () => void }> = [
     ["overview", "الرئيسية"], ["users", "المستخدمون"], ["topups", "الشحن"], ["providers", "المزودون"], ["more", "المزيد"],
   ].map(([id, label]) => ({
     id, label, icon: ADMIN_IC[id as keyof typeof ADMIN_IC],
-    on: page === id || (id === "more" && ["jobs", "visitors", "operations", "finance", "calls-log", "audit", "requests", "conference", "settings", "export", "reverse-lookup", "planner-selftest", "failures", "agent"].includes(page)),
+    on: page === id || (id === "more" && !BOTTOM_BAR_PAGES.includes(page)),
     badge: id === "topups" ? pendingCount : 0,
     go: id === "more" ? () => setDrawer(true) : () => router.push(adminHref(id as AdminPageId)),
   }));
 
   const exit = () => router.push("/dashboard/chat");
-  const NavButton = ({ n, big }: { n: (typeof navItems)[number]; big?: boolean }) => (
+  const NavButton = ({ n, big }: { n: { id: AdminPageId; label: string; icon: string; on: boolean; badge: number }; big?: boolean }) => (
     <Link
       href={adminHref(n.id)} aria-current={n.on ? "page" : undefined}
       className={`relative flex shrink-0 items-center gap-3 rounded-xl px-3 text-right text-sm transition-colors hover:bg-sf2 ${big ? "min-h-12" : "min-h-11"} ${n.on ? "bg-sf2 font-semibold text-ink" : "bg-transparent font-medium text-mut"}`}
@@ -199,6 +203,28 @@ export function AdminShell({ children }: { children: ReactNode }) {
       {n.badge > 0 && <span className="inline-flex h-[22px] min-w-[22px] items-center justify-center rounded-full bg-gold px-[7px] text-[11px] font-bold text-white">{formatAr(n.badge)}</span>}
       {!big && <span className="absolute bottom-2.5 top-2.5 w-[3px] rounded-[3px] bg-gold" style={{ right: -14, opacity: n.on ? 1 : 0 }} />}
     </Link>
+  );
+
+  const pageLabel = (id: AdminPageId) => ADMIN_PAGES.find(([x]) => x === id)![1];
+  const NavGroups = ({ big }: { big?: boolean }) => (
+    <>
+      {ADMIN_GROUPS.map((g) => {
+        const open = openGroup === g.id;
+        const current = g.id === group.id;
+        const groupBadge = g.pages.includes("topups") ? pendingCount : 0;
+        return (
+          <div key={g.id} className="flex flex-col gap-0.5" data-testid={`nav-group-${g.id}`}>
+            <button type="button" aria-expanded={open} onClick={() => setOpenGroup(open ? "" : g.id)}
+              className={`flex w-full cursor-pointer items-center gap-2 rounded-xl border-0 bg-transparent px-3 text-right text-[12px] font-semibold hover:bg-sf2 ${big ? "min-h-12" : "min-h-11"} ${current ? "text-ink" : "text-mut"}`}>
+              <span className="flex-1">{g.label}</span>
+              {!open && groupBadge > 0 && <span className="inline-flex h-[20px] min-w-[20px] items-center justify-center rounded-full bg-gold px-1.5 text-[11px] font-bold text-white">{formatAr(groupBadge)}</span>}
+              <AIcon d={open ? "M6 15l6-6 6 6" : "M6 9l6 6 6-6"} size={14} stroke={2} />
+            </button>
+            {open && g.pages.map((id) => <NavButton key={id} n={{ id, label: pageLabel(id), icon: ADMIN_IC[id], on: page === id, badge: id === "topups" ? pendingCount : 0 }} big={big} />)}
+          </div>
+        );
+      })}
+    </>
   );
 
   return (
@@ -212,7 +238,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                 <span className="rounded-full px-[9px] py-0.5 text-[11px] font-semibold text-goldT" style={{ background: tint("var(--gold)", 16) }}>إدارة</span>
               </div>
               <nav aria-label="الإدارة" className="-mx-1.5 flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-1.5">
-                {navItems.map((n) => <NavButton key={n.id} n={n} />)}
+                <NavGroups />
               </nav>
               <div className="mt-3 flex shrink-0 flex-col gap-2.5 rounded-2xl bg-sf2 p-3.5">
                 <p className="m-0 text-[11px] font-semibold text-mut">حالة المزودين</p>
@@ -236,7 +262,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                   </button>
                 )}
                 <div className={`flex-1 ${mobile ? "min-w-0" : "min-w-[140px]"}`}>
-                  <p className="m-0 whitespace-nowrap text-[11px] text-fnt">لوحة الإدارة</p>
+                  <p className="m-0 truncate text-[11px] text-fnt">لوحة الإدارة · {group.label}</p>
                   <h1 className="mb-0 mt-0.5 truncate font-semibold text-ink" style={{ fontSize: mobile ? 18 : 20 }}>{title}</h1>
                 </div>
                 {!mobile && wide && (
@@ -282,7 +308,25 @@ export function AdminShell({ children }: { children: ReactNode }) {
                           {hasRange && mobile && <div className="flex justify-center px-3.5 pb-2.5">{rangeSwitch}</div>}
             </header>
 
-            <main className="flex flex-1 flex-col gap-4" style={{ padding: mobile ? "14px 14px 24px" : "22px 24px 40px" }}>{children}</main>
+            <main className="flex flex-1 flex-col gap-4" style={{ padding: mobile ? "14px 14px 24px" : "22px 24px 40px" }}>
+              <div data-testid="admin-page-intro" className="flex flex-col gap-2.5">
+                <p className="m-0 text-[13px] leading-[1.8] text-mut">{ADMIN_PAGE_INFO[page]}</p>
+                <nav aria-label={group.label} className="flex flex-wrap gap-1.5">
+                  {group.pages.map((id) => {
+                    const on = id === page;
+                    const badge = id === "topups" ? pendingCount : 0;
+                    return (
+                      <Link key={id} href={adminHref(id)} aria-current={on ? "page" : undefined} className="inline-flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-full border px-4 text-[13px] font-semibold"
+                        style={{ background: on ? "var(--ac)" : "var(--sf)", color: on ? "var(--onac)" : "var(--ink)", borderColor: on ? "var(--ac)" : "var(--ln2)" }}>
+                        {pageLabel(id)}
+                        {badge > 0 && <span className="inline-flex h-[18px] min-w-[18px] items-center justify-center rounded-full bg-gold px-1.5 text-[10px] font-bold text-white">{formatAr(badge)}</span>}
+                      </Link>
+                    );
+                  })}
+                </nav>
+              </div>
+              {children}
+            </main>
 
             {mobile && (
               <nav aria-label="تنقل سريع" className="sticky bottom-0 z-40 grid grid-cols-5 border-t border-ln px-1.5 pt-1.5" style={{ paddingBottom: "calc(8px + env(safe-area-inset-bottom))", background: "color-mix(in oklab, var(--sf) 92%, transparent)", WebkitBackdropFilter: "blur(14px)", backdropFilter: "blur(14px)" }}>
@@ -305,7 +349,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
                 <Logo height={26} />
                 <button type="button" onClick={() => setDrawer(false)} aria-label="إغلاق" className="h-11 w-11 cursor-pointer border-0 bg-transparent text-xl text-mut">×</button>
               </div>
-              {navItems.map((n) => <NavButton key={n.id} n={n} big />)}
+              <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto"><NavGroups big /></div>
               <button type="button" onClick={exit} className="mt-auto flex min-h-11 cursor-pointer items-center border-0 bg-transparent px-3 text-[13px] text-mut">← لوحة المستخدم</button>
               <button type="button" onClick={async () => { await logout(); router.push("/"); }} className="flex min-h-11 cursor-pointer items-center border-0 bg-transparent px-3 text-[13px] text-mut">تسجيل الخروج</button>
             </aside>

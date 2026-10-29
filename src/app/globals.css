@@ -368,3 +368,19 @@ input::placeholder, textarea::placeholder { color: var(--fnt); }
 /* Extends the tap area to 44px without changing the visual size. */
 .hit { position: relative; }
 .hit::after { content: ""; position: absolute; inset: -7px -4px; }
+
+/* ── Admin: a table that becomes cards when its own area is narrow (admin screens only) ──
+   Wrap the table in .rtable-wrap and give the table .rtable; every <td> carries data-label with its column header. */
+.rtable-wrap { container-type: inline-size; }
+@container (max-width: 859px) {
+  .rtable, .rtable tbody, .rtable tr, .rtable td { display: block; }
+  .rtable { width: 100%; }
+  .rtable thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .rtable tr { margin-bottom: 10px; padding: 6px 14px; border: 1px solid var(--ln); border-radius: 16px; background: var(--sf); }
+  .rtable td { display: flex; align-items: baseline; justify-content: space-between; gap: 14px; padding: 9px 0; border-bottom: 1px dashed var(--ln) !important; text-align: start; }
+  .rtable td:last-child { border-bottom: 0 !important; }
+  .rtable td[data-label]::before { content: attr(data-label); flex: none; color: var(--mut); font-size: 11px; }
+  .rtable td[data-wide] { display: block; }
+  .rtable td[data-wide]::before { display: none; }
+  .rtable td > .rtable-val { min-width: 0; text-align: end; }
+}

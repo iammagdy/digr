@@ -85,22 +85,22 @@ export function ProviderCallLog({ provider }: { provider: "treg" | "firecrawl" |
 
       {log && log.rows.length === 0 && !error && <p className="m-0 text-[13px] text-mut">لا توجد استدعاءات مسجّلة بهذه المعايير.</p>}
       {log && log.rows.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[640px] border-collapse text-[11px]">
-            <thead><tr className="text-mut">{["الوقت", "نوع الاستدعاء", "المهمة والمستخدم", "الوحدات", "التكلفة", "الحالة", "المدة"].map((c) => <th key={c} className="border-b border-ln py-2 text-right font-medium">{c}</th>)}</tr></thead>
+        <div className="rtable-wrap overflow-x-auto">
+          <table className="rtable w-full border-collapse text-[11px] @min-[860px]:min-w-[640px]">
+            <thead><tr className="text-mut">{["الوقت", "نوع الاستدعاء", "المهمة والمستخدم", "الوحدات", "التكلفة", "الحالة", "المدة"].map((c) => <th key={c} scope="col" className="border-b border-ln py-2 text-start font-medium">{c}</th>)}</tr></thead>
             <tbody>
               {(log.rows as Row[]).map((r, i) => {
                 const missing = log.metadataAvailable ? NOT_RECORDED : UNAVAILABLE;
                 const status = r.status ?? r.statusDerived ?? null;
                 return (
                 <tr key={r.id ?? i} className="text-ink">
-                  <td className="border-b border-ln py-2">{dateTimeAr(r.at)}</td>
-                  <td className="border-b border-ln py-2">{r.capabilityLabelAr ?? (r.capabilityDerivedAr ? `${r.capabilityDerivedAr} (من المهمة)` : missing)}</td>
-                  <td className="border-b border-ln py-2"><JobCell info={{ jobId: r.jobId, jobLabelAr: r.jobLabelAr, userEmail: r.userEmail, userName: r.userName, isTestAccount: r.isTestAccount, jobHref: r.jobHref }} /></td>
-                  <td className="border-b border-ln py-2">{formatAr(r.units)}</td>
-                  <td className="border-b border-ln py-2" dir="ltr">{usd(r.costUsd)}{r.isEstimate ? " · تقدير" : ""}</td>
-                  <td className="border-b border-ln py-2" style={{ color: status ? STATUS_COLOR[status] : undefined }}>{status ? `${STATUS_AR[status]}${r.status ? "" : " (مُستنتج)"}` : missing}</td>
-                  <td className="border-b border-ln py-2">{r.durationMs === null ? missing : `${formatAr(r.durationMs)} مللي ثانية`}</td>
+                  <td data-label="الوقت" className="border-b border-ln py-2">{dateTimeAr(r.at)}</td>
+                  <td data-label="نوع الاستدعاء" className="border-b border-ln py-2">{r.capabilityLabelAr ?? (r.capabilityDerivedAr ? `${r.capabilityDerivedAr} (من المهمة)` : missing)}</td>
+                  <td data-label="المهمة والمستخدم" className="border-b border-ln py-2"><JobCell info={{ jobId: r.jobId, jobLabelAr: r.jobLabelAr, userEmail: r.userEmail, userName: r.userName, isTestAccount: r.isTestAccount, jobHref: r.jobHref }} /></td>
+                  <td data-label="الوحدات" className="border-b border-ln py-2">{formatAr(r.units)}</td>
+                  <td data-label="التكلفة" className="border-b border-ln py-2" dir="ltr">{usd(r.costUsd)}{r.isEstimate ? " · تقدير" : ""}</td>
+                  <td data-label="الحالة" className="border-b border-ln py-2" style={{ color: status ? STATUS_COLOR[status] : undefined }}>{status ? `${STATUS_AR[status]}${r.status ? "" : " (مُستنتج)"}` : missing}</td>
+                  <td data-label="المدة" className="border-b border-ln py-2">{r.durationMs === null ? missing : `${formatAr(r.durationMs)} مللي ثانية`}</td>
                 </tr>
                 );
               })}

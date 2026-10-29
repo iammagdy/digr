@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { Fragment, useCallback, useEffect, useState } from "react";
 import { adminFetch } from "@/lib/adminApi";
-import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
+import { formatAr, normalizeDigits, toArabicDigits } from "@/lib/arabicDigits";
 import type { PoolKeyView, PoolOverview } from "@/lib/server/tregPoolAdmin";
 import { agoAr } from "./format";
+import { StatusBadge, type BadgeTone } from "./ui";
 
 /**
  * «مجمّع مفاتيح TREG» inside the TREG tab of «مزودو الخدمة» (docs/proposals/treg-key-pool). Admin only. A key is typed into a password field, sent once, validated against
@@ -16,11 +17,21 @@ const FIELD = "min-h-[46px] w-full rounded-xl border border-ln bg-bg px-3.5 text
 const MONO = { fontFamily: "ui-monospace,monospace" } as const;
 const BTN = "min-h-11 cursor-pointer whitespace-nowrap rounded-full border border-ln2 bg-sf px-4 text-xs text-ink";
 const BTN_SMALL = "min-h-9 cursor-pointer whitespace-nowrap rounded-full border border-ln2 bg-sf px-3 text-[11px] text-ink";
+const BTN_SMALL_PRIMARY = "min-h-9 cursor-pointer whitespace-nowrap rounded-full border-0 bg-ac px-3.5 text-[11px] font-semibold text-onac disabled:opacity-50";
 const BTN_PRIMARY = "min-h-11 cursor-pointer rounded-full border-0 bg-ac px-4 text-xs font-semibold text-onac";
 
 export const STATUS_AR: Record<PoolKeyView["status"], string> = { connected: "متصل", error: "خطأ", revoked: "ملغى", out_of_balance: "الرصيد خلص", unknown: "لم يُفحص" };
-const STATUS_COLOR: Record<PoolKeyView["status"], string> = { connected: "var(--ok)", error: "var(--bad)", revoked: "var(--bad)", out_of_balance: "var(--bad)", unknown: "var(--mut)" };
+const STATUS_TONE: Record<PoolKeyView["status"], BadgeTone> = { connected: "ok", error: "bad", revoked: "bad", out_of_balance: "bad", unknown: "mute" };
+const MENU_ITEM = "flex min-h-10 w-full cursor-pointer items-center rounded-lg border-0 bg-transparent px-3 text-start text-[12px] text-ink hover:bg-sf2 disabled:cursor-default disabled:opacity-45";
+const closeMenu = (e: { currentTarget: HTMLElement }) => e.currentTarget.closest("details")?.removeAttribute("open");
 const usd = (n: number) => `${toArabicDigits(n.toFixed(n < 1 ? 4 : 2).replace(/\.?0+$/, "") || "0")} دولار`;
+
+/** The key's name with Arabic-Indic digits. Empty when the name is only the key's own number, so the number is never shown twice beside the name. */
+export function shownLabel(k: Pick<PoolKeyView, "label" | "number">): string {
+  const t = normalizeDigits(k.label).trim();
+  if (t === String(k.number) || t === `رقم ${k.number}` || t === `مفتاح ${k.number}`) return "";
+  return toArabicDigits(k.label);
+}
 
 /** The order the chain follows: pool keys by position, the main key last, keys outside the chain after everything. */
 export function chainOrder(keys: PoolKeyView[]): PoolKeyView[] {
@@ -84,30 +95,35 @@ export function TregKeyPool({ initial }: { initial?: PoolOverview | null }) {
     <section className={SECTION} aria-label="مجمّع مفاتيح TREG" data-testid="treg-key-pool">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="m-0 text-[15px] font-semibold text-ink">مجمّع مفاتيح TREG</h3>
-        <span className="rounded-full px-3 py-1 text-[11px] font-semibold" style={{ background: ov.rolloutOn ? "var(--ok)" : "var(--sf2)", color: ov.rolloutOn ? "var(--onac)" : "var(--mut)" }} data-testid="rollout-state">{ov.rolloutOn ? "المجمّع يعمل" : "المجمّع مغلق"}</span>
+        <StatusBadge tone={ov.rolloutOn ? "ok" : "mute"} testId="rollout-state">{ov.rolloutOn ? "المجمّع يعمل" : "المجمّع مغلق"}</StatusBadge>
       </div>
-      <p className="m-0 text-[12px] leading-[1.8] text-mut">
-        {ov.rolloutOn
-          ? `المنصة كلها (الموقع والعامل) تستخدم المفتاح النشط${active ? `: رقم ${toArabicDigits(active.number)} (${active.label})` : ""}. عند توقف المفتاح النشط (إلغاء أو انتهاء رصيد) تنتقل تلقائيًا إلى المفتاح التالي في السلسلة، والمفتاح الرئيسي دائمًا الأخير، ويصلك بريد.`
-          : "مغلق: المنصة تعمل بالمفتاح الحالي تمامًا كما هي اليوم. تشغيله يجعل المنصة كلها تستخدم المفتاح النشط من الجدول، ويمكن إيقافه في أي لحظة فتعود للوضع الحالي خلال ثوانٍ."}
-      </p>
-      <div className="flex flex-wrap items-center gap-2">
-        {!ov.rolloutOn && !confirmOn && <button type="button" disabled={!ov.ready || !main || busy !== ""} onClick={() => setConfirmOn(true)} className={BTN} style={{ opacity: ov.ready && main ? 1 : 0.5 }} data-testid="rollout-on">تشغيل المجمّع</button>}
-        {!ov.rolloutOn && confirmOn && (
-          <>
-            <span className="text-xs text-ink">تشغيل المجمّع يغيّر المفتاح المستخدم في كل الطلبات لاحقًا. المفتاح النشط يبدأ بالرئيسي. متأكد؟</span>
-            <button type="button" disabled={busy !== ""} onClick={async () => { await act("rollout", { action: "set_rollout", on: true }); setConfirmOn(false); }} className={BTN_PRIMARY}>نعم، شغّل</button>
-            <button type="button" onClick={() => setConfirmOn(false)} className={BTN}>إلغاء</button>
-          </>
-        )}
-        {ov.rolloutOn && <button type="button" disabled={busy !== ""} onClick={() => void act("rollout", { action: "set_rollout", on: false })} className={BTN} data-testid="rollout-off">إيقاف المجمّع (العودة للوضع الحالي)</button>}
-        <button type="button" disabled={busy !== "" || !ov.ready} onClick={() => void load(true)} className={BTN} data-testid="refresh-all">{busy === "refresh" ? "جارٍ الفحص…" : "فحص الآن"}</button>
-        {!main && ov.ready && (
-          <>
-            <button type="button" disabled={busy !== ""} onClick={() => void act("adopt", { action: "adopt_main", label: "الرئيسي" })} className={BTN_PRIMARY} data-testid="adopt-main">اعتماد المفتاح الحالي كمفتاح رئيسي</button>
-            <button type="button" onClick={() => setMainPaste((v) => !v)} className={BTN}>أو الصق المفتاح الرئيسي</button>
-          </>
-        )}
+
+      <div className="flex flex-col gap-3 rounded-2xl border border-ln bg-sf p-3.5">
+        <div className="flex flex-wrap items-center gap-2">
+          {!ov.rolloutOn && !confirmOn && <button type="button" disabled={!ov.ready || !main || busy !== ""} onClick={() => setConfirmOn(true)} className={BTN} style={{ opacity: ov.ready && main ? 1 : 0.5 }} data-testid="rollout-on">تشغيل المجمّع</button>}
+          {!ov.rolloutOn && confirmOn && (
+            <>
+              <span className="text-xs leading-[1.8] text-ink">تشغيل المجمّع يغيّر المفتاح المستخدم في كل الطلبات لاحقًا. المفتاح النشط يبدأ بالرئيسي. متأكد؟</span>
+              <button type="button" disabled={busy !== ""} onClick={async () => { await act("rollout", { action: "set_rollout", on: true }); setConfirmOn(false); }} className={BTN_PRIMARY}>نعم، شغّل</button>
+              <button type="button" onClick={() => setConfirmOn(false)} className={BTN}>إلغاء</button>
+            </>
+          )}
+          {ov.rolloutOn && <button type="button" disabled={busy !== ""} onClick={() => void act("rollout", { action: "set_rollout", on: false })} className={BTN} data-testid="rollout-off">إيقاف المجمّع (العودة للوضع الحالي)</button>}
+          <button type="button" disabled={busy !== "" || !ov.ready} onClick={() => void load(true)} className={BTN} data-testid="refresh-all">{busy === "refresh" ? "جارٍ الفحص…" : "فحص الآن"}</button>
+          {!main && ov.ready && (
+            <>
+              <button type="button" disabled={busy !== ""} onClick={() => void act("adopt", { action: "adopt_main", label: "الرئيسي" })} className={BTN_PRIMARY} data-testid="adopt-main">اعتماد المفتاح الحالي كمفتاح رئيسي</button>
+              <button type="button" onClick={() => setMainPaste((v) => !v)} className={BTN}>أو الصق المفتاح الرئيسي</button>
+            </>
+          )}
+        </div>
+        <p className="m-0 text-[13px] leading-[1.8] text-ink" data-testid="active-key-line">
+          {ov.rolloutOn
+            ? active
+              ? <>المفتاح النشط الآن: <b>رقم {toArabicDigits(active.number)}</b>{shownLabel(active) ? ` · ${shownLabel(active)}` : ""}{active.last4 ? <> · <bdi dir="ltr" style={MONO}>••••{active.last4}</bdi></> : null}</>
+              : "لا يوجد مفتاح نشط الآن."
+            : <>المنصة تعمل الآن بالمفتاح الحالي، لأن المجمّع مغلق.{active ? ` عند التشغيل يبدأ بالمفتاح النشط: رقم ${toArabicDigits(active.number)}.` : ""}</>}
+        </p>
       </div>
       {mainPaste && !main && (
         <div className="flex flex-col gap-2">
@@ -115,52 +131,95 @@ export function TregKeyPool({ initial }: { initial?: PoolOverview | null }) {
           <div><button type="button" disabled={secret.length < 12 || busy !== ""} onClick={async () => { const k = secret; setSecret(""); if (await act("adopt", { action: "adopt_main", label: "الرئيسي", key: k })) setMainPaste(false); }} className={BTN_PRIMARY}>فحص وحفظ كمفتاح رئيسي</button></div>
         </div>
       )}
+      <details className="text-[12px] leading-[1.8] text-mut">
+        <summary className="min-h-9 cursor-pointer py-1.5 font-semibold text-ink">كيف يعمل المجمّع؟</summary>
+        <p className="m-0 mt-1">
+          {ov.rolloutOn
+            ? `المنصة كلها (الموقع والعامل) تستخدم المفتاح النشط${active ? `: رقم ${toArabicDigits(active.number)}${shownLabel(active) ? ` (${shownLabel(active)})` : ""}` : ""}. عند توقف المفتاح النشط (إلغاء أو انتهاء رصيد) تنتقل تلقائيًا إلى المفتاح التالي في السلسلة، والمفتاح الرئيسي دائمًا الأخير، ويصلك بريد.`
+            : "مغلق: المنصة تعمل بالمفتاح الحالي تمامًا كما هي اليوم. تشغيله يجعل المنصة كلها تستخدم المفتاح النشط من الجدول، ويمكن إيقافه في أي لحظة فتعود للوضع الحالي خلال ثوانٍ."}
+        </p>
+      </details>
       {ov.noticesAr.map((n, i) => <p key={i} role="status" className="m-0 text-[12px] leading-[1.8]" style={{ color: "var(--bad)" }}>{n}</p>)}
       {msg && <p role="status" aria-live="polite" className="m-0 text-[13px] leading-[1.8]" style={{ color: msg.ok ? "var(--ok)" : "var(--bad)" }}>{msg.text}</p>}
 
       {ordered.length > 0 && (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[960px] border-collapse text-[11px]" data-testid="pool-table">
-            <thead><tr className="text-mut">{["#", "الاسم", "بريد الحساب", "آخر ٤", "الرصيد المتبقي", "الحالة", "الاستهلاك", "إجراءات"].map((c) => <th key={c} className="border-b border-ln py-2 text-right font-medium">{c}</th>)}</tr></thead>
-            <tbody>
-              {ordered.map((k) => (
-                <tr key={k.id} className="align-top text-ink" data-testid={`pool-row-${k.number}`} style={k.isActive ? { background: "var(--sf)" } : undefined}>
-                  <td className="border-b border-ln py-2">{toArabicDigits(k.number)}</td>
-                  <td className="border-b border-ln py-2">
-                    <span className="font-medium">{k.label}</span>
-                    {k.isMain && <span className="ms-2 rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ background: "var(--gold)", color: "var(--onac)" }}>الرئيسي / الافتراضي</span>}
-                    {k.isActive && <span className="ms-2 rounded-full px-2 py-0.5 text-[10px] font-semibold" style={{ background: "var(--ok)", color: "var(--onac)" }}>نشط الآن</span>}
-                    {!k.inChain && !k.isMain && <span className="ms-2 text-[10px] text-mut">خارج السلسلة</span>}
-                    {k.isMain && <div className="mt-1 text-[10px] text-mut">آخر خطوة في السلسلة دائمًا ولا يُحذف</div>}
-                  </td>
-                  <td className="border-b border-ln py-2"><bdi dir="ltr" style={MONO}>{k.accountEmail ?? "—"}</bdi></td>
-                  <td className="border-b border-ln py-2"><bdi dir="ltr" style={MONO}>{k.last4 ? `••••${k.last4}` : "—"}</bdi></td>
-                  <td className="border-b border-ln py-2" dir="ltr">{k.balanceUsd === null ? "—" : usd(k.balanceUsd)}</td>
-                  <td className="border-b border-ln py-2">
-                    <span className="font-semibold" style={{ color: STATUS_COLOR[k.status] }}>{STATUS_AR[k.status]}</span>
-                    <div className="mt-1 text-[10px] text-mut">{k.statusCheckedAt ? `آخر فحص: ${agoAr(k.statusCheckedAt)}` : "لم يُفحص بعد"}</div>
-                  </td>
-                  <td className="border-b border-ln py-2">{k.spend.calls > 0 ? <><div>{formatAr(k.spend.calls)} استدعاء</div><div dir="ltr">{usd(k.spend.usd)}</div><div className="text-[10px] text-mut">اليوم: <bdi dir="ltr">{usd(k.spend.todayUsd)}</bdi></div></> : "—"}</td>
-                  <td className="border-b border-ln py-2">
-                    <div className="flex flex-wrap gap-1.5">
-                      {!k.isActive && <button type="button" disabled={busy !== ""} onClick={() => void act("active", { action: "set_active", keyId: k.id, force: k.status === "revoked" || k.status === "out_of_balance" })} className={BTN_SMALL}>تفعيل</button>}
-                      {k.inChain && !k.isMain && <><button type="button" aria-label="تحريك لأعلى" disabled={busy !== "" || poolIds.indexOf(k.id) === 0} onClick={() => move(k.id, -1)} className={BTN_SMALL}>↑</button><button type="button" aria-label="تحريك لأسفل" disabled={busy !== "" || poolIds.indexOf(k.id) === poolIds.length - 1} onClick={() => move(k.id, 1)} className={BTN_SMALL}>↓</button></>}
-                      {!k.isMain && <button type="button" disabled={busy !== ""} onClick={() => void saveChain(k.inChain ? poolIds.filter((id) => id !== k.id) : [...poolIds, k.id])} className={BTN_SMALL}>{k.inChain ? "إخراج من السلسلة" : "إدخال في السلسلة"}</button>}
-                      <button type="button" disabled={busy !== ""} onClick={() => void act("check", { action: "refresh", keyId: k.id })} className={BTN_SMALL}>فحص</button>
-                      <button type="button" disabled={busy !== ""} onClick={() => { setReplacing(replacing === k.id ? null : k.id); setSecret(""); }} className={BTN_SMALL}>استبدال</button>
-                      {!k.isMain && <button type="button" disabled={busy !== "" || k.isActive} title={k.isActive ? "هذا المفتاح قيد الاستخدام؛ فعّل مفتاحًا آخر أولًا" : undefined} onClick={() => { if (window.confirm(`حذف المفتاح رقم ${toArabicDigits(k.number)} (${k.label})؟`)) void act("remove", { action: "remove", keyId: k.id }); }} className={BTN_SMALL} style={{ opacity: k.isActive ? 0.45 : 1 }}>حذف</button>}
-                    </div>
-                    {replacing === k.id && (
-                      <div className="mt-2 flex flex-col gap-2">
-                        <input type="password" dir="ltr" autoComplete="off" spellCheck={false} value={secret} onChange={(e) => setSecret(e.target.value)} placeholder="الصق المفتاح الجديد هنا" className={FIELD} style={MONO} />
-                        <div className="flex gap-2"><button type="button" disabled={secret.length < 12 || busy !== ""} onClick={async () => { const v = secret; setSecret(""); if (await act("replace", { action: "replace", keyId: k.id, key: v })) setReplacing(null); }} className={BTN_PRIMARY}>فحص وحفظ</button><button type="button" onClick={() => { setReplacing(null); setSecret(""); }} className={BTN}>إلغاء</button></div>
-                      </div>
-                    )}
-                  </td>
+        <div className="flex flex-col gap-2">
+          <p className="m-0 text-[11px] leading-[1.7] text-fnt">الترتيب في الجدول هو ترتيب الانتقال عند توقف مفتاح: من الأعلى إلى الأسفل، والمفتاح الرئيسي آخرًا دائمًا.</p>
+          <div className="rtable-wrap">
+            <table className="rtable w-full table-fixed border-collapse text-[12px]" data-testid="pool-table">
+              <thead>
+                <tr className="text-mut">
+                  {[["المفتاح", "w-[22%]"], ["بريد الحساب", "w-[20%]"], ["آخر ٤", "w-[8%]"], ["الرصيد المتبقي", "w-[11%]"], ["الحالة", "w-[14%]"], ["الاستهلاك", "w-[10%]"], ["إجراءات", "w-[15%]"]].map(([c, w]) => <th key={c} scope="col" className={`${w} border-b border-ln px-2 py-2 text-start font-medium`}>{c}</th>)}
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {ordered.map((k) => {
+                  const name = shownLabel(k);
+                  const menuLabel = `إجراءات المفتاح رقم ${toArabicDigits(k.number)}`;
+                  return (
+                    <Fragment key={k.id}>
+                      <tr className="align-top text-ink" data-testid={`pool-row-${k.number}`} style={k.isActive ? { background: "var(--sf)" } : undefined}>
+                        <td data-wide className="border-b border-ln px-2 py-3">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1.5">
+                            <span aria-label={`مفتاح رقم ${toArabicDigits(k.number)}`} className="inline-flex h-7 min-w-7 items-center justify-center rounded-full bg-sf2 px-1.5 text-[12px] font-semibold text-ink">{toArabicDigits(k.number)}</span>
+                            {name && <span className="text-[13px] font-semibold">{name}</span>}
+                            {k.isMain && <StatusBadge tone="gold" dot={false}>★ الرئيسي / الافتراضي</StatusBadge>}
+                            {k.isActive && <StatusBadge tone="ok">نشط الآن</StatusBadge>}
+                            {!k.inChain && !k.isMain && <StatusBadge tone="mute" dot={false}>خارج السلسلة</StatusBadge>}
+                          </div>
+                          {k.isMain && <div className="mt-1.5 text-[11px] leading-[1.6] text-mut">آخر خطوة في السلسلة دائمًا ولا يُحذف</div>}
+                        </td>
+                        <td data-label="بريد الحساب" className="border-b border-ln px-2 py-3"><span className="rtable-val block break-all"><bdi dir="ltr" style={MONO}>{k.accountEmail ?? "—"}</bdi></span></td>
+                        <td data-label="آخر ٤" className="border-b border-ln px-2 py-3"><span className="rtable-val"><bdi dir="ltr" style={MONO}>{k.last4 ? `••••${k.last4}` : "—"}</bdi></span></td>
+                        <td data-label="الرصيد المتبقي" className="border-b border-ln px-2 py-3"><span className="rtable-val" dir="ltr">{k.balanceUsd === null ? "—" : usd(k.balanceUsd)}</span></td>
+                        <td data-label="الحالة" className="border-b border-ln px-2 py-3">
+                          <div className="rtable-val flex flex-col items-start gap-1.5 @max-[859px]:items-end">
+                            <StatusBadge tone={STATUS_TONE[k.status]}>{STATUS_AR[k.status]}</StatusBadge>
+                            <span className="text-[11px] text-mut">{k.statusCheckedAt ? `آخر فحص: ${agoAr(k.statusCheckedAt)}` : "لم يُفحص بعد"}</span>
+                          </div>
+                        </td>
+                        <td data-label="الاستهلاك" className="border-b border-ln px-2 py-3">
+                          <div className="rtable-val">{k.spend.calls > 0 ? <><div>{formatAr(k.spend.calls)} استدعاء</div><div dir="ltr">{usd(k.spend.usd)}</div><div className="text-[11px] text-mut">اليوم: <bdi dir="ltr">{usd(k.spend.todayUsd)}</bdi></div></> : "—"}</div>
+                        </td>
+                        <td data-wide className="border-b border-ln px-2 py-3">
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            {!k.isActive
+                              ? <button type="button" disabled={busy !== ""} onClick={() => void act("active", { action: "set_active", keyId: k.id, force: k.status === "revoked" || k.status === "out_of_balance" })} className={BTN_SMALL_PRIMARY}>تفعيل</button>
+                              : <button type="button" disabled={busy !== ""} onClick={() => void act("check", { action: "refresh", keyId: k.id })} className={BTN_SMALL}>فحص</button>}
+                            <details className="relative">
+                              <summary aria-label={menuLabel} className={`${BTN_SMALL} inline-flex list-none items-center [&::-webkit-details-marker]:hidden`}>المزيد</summary>
+                              <div role="group" aria-label={menuLabel} className="absolute end-0 z-20 mt-1 flex w-52 flex-col rounded-xl border border-ln bg-bg p-1" style={{ boxShadow: "var(--admin-shadow)" }}>
+                                {k.inChain && !k.isMain && (
+                                  <>
+                                    <button type="button" disabled={busy !== "" || poolIds.indexOf(k.id) === 0} onClick={(e) => { closeMenu(e); move(k.id, -1); }} className={MENU_ITEM}>تحريك لأعلى ↑</button>
+                                    <button type="button" disabled={busy !== "" || poolIds.indexOf(k.id) === poolIds.length - 1} onClick={(e) => { closeMenu(e); move(k.id, 1); }} className={MENU_ITEM}>تحريك لأسفل ↓</button>
+                                  </>
+                                )}
+                                {!k.isMain && <button type="button" disabled={busy !== ""} onClick={(e) => { closeMenu(e); void saveChain(k.inChain ? poolIds.filter((id) => id !== k.id) : [...poolIds, k.id]); }} className={MENU_ITEM}>{k.inChain ? "إخراج من السلسلة" : "إدخال في السلسلة"}</button>}
+                                {!k.isActive && <button type="button" disabled={busy !== ""} onClick={(e) => { closeMenu(e); void act("check", { action: "refresh", keyId: k.id }); }} className={MENU_ITEM}>فحص</button>}
+                                <button type="button" disabled={busy !== ""} onClick={(e) => { closeMenu(e); setReplacing(replacing === k.id ? null : k.id); setSecret(""); }} className={MENU_ITEM}>استبدال</button>
+                                {!k.isMain && <button type="button" disabled={busy !== "" || k.isActive} title={k.isActive ? "هذا المفتاح قيد الاستخدام؛ فعّل مفتاحًا آخر أولًا" : undefined} onClick={(e) => { closeMenu(e); if (window.confirm(`حذف المفتاح رقم ${toArabicDigits(k.number)}${name ? ` (${name})` : ""}؟`)) void act("remove", { action: "remove", keyId: k.id }); }} className={`${MENU_ITEM} text-bad`}>حذف</button>}
+                              </div>
+                            </details>
+                          </div>
+                        </td>
+                      </tr>
+                      {replacing === k.id && (
+                        <tr>
+                          <td colSpan={7} data-wide className="border-b border-ln px-2 py-3">
+                            <div className="flex flex-col gap-2">
+                              <input type="password" dir="ltr" autoComplete="off" spellCheck={false} value={secret} onChange={(e) => setSecret(e.target.value)} placeholder={`الصق المفتاح الجديد لرقم ${toArabicDigits(k.number)} هنا`} className={FIELD} style={MONO} />
+                              <div className="flex gap-2"><button type="button" disabled={secret.length < 12 || busy !== ""} onClick={async () => { const v = secret; setSecret(""); if (await act("replace", { action: "replace", keyId: k.id, key: v })) setReplacing(null); }} className={BTN_PRIMARY}>فحص وحفظ</button><button type="button" onClick={() => { setReplacing(null); setSecret(""); }} className={BTN}>إلغاء</button></div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
       {ordered.length === 0 && ov.ready && <p className="m-0 text-[13px] text-mut">لا توجد مفاتيح بعد. ابدأ باعتماد المفتاح الرئيسي ثم أضف مفاتيح الاختبار.</p>}

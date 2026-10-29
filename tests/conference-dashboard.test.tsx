@@ -353,8 +353,8 @@ describe("the page and the menu", () => {
   it("is in the admin menu", () => {
     expect(ADMIN_PAGES.find(([id]) => id === "conference")![1]).toBe("لوحة المؤتمر");
     expect(adminHref("conference")).toBe("/admin/conference");
-    const shell = readFileSync("src/components/admin/AdminShell.tsx", "utf8");
-    expect(shell).toContain('"requests", "conference", "settings"');
+    const nav = readFileSync("src/components/admin/nav.ts", "utf8");
+    expect(nav).toContain('pages: ["overview", "operations", "conference", "visitors"]');
   });
 
   it("renders its Arabic sections", () => {
