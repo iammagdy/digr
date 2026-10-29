@@ -172,8 +172,11 @@ describe("a delivered mission carries its download name; the download route uses
     expect(r.mission.files!.every((f) => !f.path.includes("admin"))).toBe(true);
     // the route names the download from them (and from the plan for a mission delivered before the names were stored)
     const route = readFileSync("src/app/api/jobs/[id]/download/route.ts", "utf8");
-    expect(route).toContain("download_name");
-    expect(route).toContain("missionFileTitleAr");
+    // (the name is built by ONE function that every download path shares: the route calls it, and it reads the stored name and builds the name from the plan)
+    expect(route).toContain("missionDownloadName");
+    const names = readFileSync("src/lib/agentMission/fileNames.ts", "utf8");
+    expect(names).toContain("download_name");
+    expect(names).toContain("missionFileTitleAr");
   });
 });
 

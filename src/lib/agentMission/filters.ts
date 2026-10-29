@@ -121,6 +121,11 @@ export interface FilterContext {
   now: number;
 }
 
+/** Characters that show nothing: zero-width and direction marks, the byte-order mark, the non-breaking space. A text that «starts with» a handle may have any of them in front of it. */
+export const INVISIBLE = /[\u00a0\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180e\u200b-\u200f\u202a-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0]/g;
+/** True when a text starts with an @handle (after whitespace and invisible characters): on X and the platforms that copy it, that is how a reply is written, whatever the source's own flag says. */
+export const startsWithHandle = (text: unknown): boolean => /^@[\p{L}\p{N}_.]{1,30}/u.test(String(text ?? "").replace(INVISIBLE, "").replace(/^\s+/, ""));
+
 const normName = (s: string): string => normalizeText(s).replace(/^@/, "");
 
 /** The FIRST enabled filter that rejects a mapped item, as its reason; null when the item passes every enabled filter. */
@@ -131,7 +136,8 @@ export function filterVerdict(filters: ReadonlyArray<StageFilter> | undefined, m
     if (!isEnabled(f)) continue;
     switch (f.kind) {
       case "exclude_replies": {
-        const isReply = f.field ? flagIsSet(mapped[f.field]) : /^\s*@/.test(text);
+        // the source's flag AND the text itself: a reply the source did not flag (a thread, a mention in front) still starts with the handle it answers
+        const isReply = (f.field ? flagIsSet(mapped[f.field]) : false) || startsWithHandle(text);
         if (isReply) return "filter_reply";
         break;
       }

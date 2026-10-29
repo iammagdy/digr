@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { AGENT_EXCLUDED_ROWS_KEPT } from "../../../src/lib/agentMission/constants";
-import type { RelevanceReason, RuleBasis } from "../../../src/lib/agentMission/relevance";
+import { RELEVANCE_REASON_LIST, type RelevanceReason, type RuleBasis } from "../../../src/lib/agentMission/relevance";
 import { FILTER_REASONS, type FilterReason } from "../../../src/lib/agentMission/filters";
 import type { AgentStore } from "../types";
 
@@ -91,7 +91,7 @@ export interface StageCounts {
 }
 
 /** The reasons that read to the customer as «استُبعد لأنه لا يخص طلبك»: the relevance reasons and what a filter of the card rejects. */
-const RELEVANCE_REASONS: ReadonlyArray<string> = ["no_text", "no_term", "mention_only", "other_person", "uncertain", "not_reviewed", "review_no", "review_failed", ...FILTER_REASONS];
+const RELEVANCE_REASONS: ReadonlyArray<string> = [...RELEVANCE_REASON_LIST, ...FILTER_REASONS];
 
 function applyOp(logs: Map<string, StageLog>, op: Op): void {
   const log = logs.get(op.stage) ?? (logs.set(op.stage, newStageLog()), logs.get(op.stage)!);

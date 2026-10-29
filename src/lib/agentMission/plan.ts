@@ -365,6 +365,11 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
     else for (const a of input.assumptions_ar) { const c = checkCustomerText(a, { maxChars: 160 }); if (c.issues.length) issues.push(`assumptions_ar: ${c.issues.join("; ")}`); else assumptions.push(c.text); }
   }
   for (const st of priced) if (st.relevance && !assumptions.some((a) => a.includes(st.relevance!.subject_ar))) assumptions.unshift(`المقصود: ${st.relevance.subject_ar}.`);
+  // the other meanings of the name that the plan excludes by rule (a namesake, a title) are said on the card, one line per stage
+  for (const st of priced) {
+    const others = (st.relevance?.competing_meanings ?? []).map((c) => c.meaning_ar);
+    if (others.length > 0) assumptions.push(`لا يُحتسب ما يخص: ${others.join("، ")}.`.slice(0, 160));
+  }
 
   // THE CARD DOES NOT PROMISE WHAT NO CODE CHECKS, AND STATES ONE NUMBER: a sentence of the model that promises replies out, a language, a period, an account or a place needs the filter that enforces it; a count it states is the plan's target
   const sentences = [{ where: "summary_ar", text: summary.text }, ...priced.filter((st) => st.how_ar).map((st) => ({ where: `stage «${st.key}» how_ar`, text: st.how_ar! })), ...assumptions.map((a) => ({ where: "assumptions_ar", text: a }))];

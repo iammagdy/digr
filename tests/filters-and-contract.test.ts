@@ -7,14 +7,15 @@ const NOW = Date.parse("2026-10-29T12:00:00Z");
 const ctx = { textKey: "text", now: NOW };
 
 describe("EVERY PROMISE OF THE CARD IS A CHECK: the filters", () => {
-  it("replies: the reply flag the source gives, in every shape; with no flag, a text that starts with «@» is a reply", () => {
+  it("replies: the reply flag the source gives, in every shape; a text that starts with «@» is a reply with or without the flag", () => {
     const byFlag: StageFilter[] = [{ kind: "exclude_replies", field: "is_reply" }];
     expect(filterVerdict(byFlag, { text: "محمد صلاح يسجل", is_reply: "نعم" }, ctx)).toBe("filter_reply");
     expect(filterVerdict(byFlag, { text: "محمد صلاح يسجل", is_reply: true }, ctx)).toBe("filter_reply");
     expect(filterVerdict(byFlag, { text: "محمد صلاح يسجل", is_reply: "12345" }, ctx)).toBe("filter_reply");
     expect(filterVerdict(byFlag, { text: "محمد صلاح يسجل", is_reply: "لا" }, ctx)).toBeNull();
     expect(filterVerdict(byFlag, { text: "محمد صلاح يسجل", is_reply: "" }, ctx)).toBeNull();
-    expect(filterVerdict(byFlag, { text: "@someone محمد صلاح يسجل", is_reply: false }, ctx)).toBeNull();
+    // the source's flag says «not a reply» but the text starts with the handle it answers: it is a reply (the live tweet of 2026-10-29 «@Ahmed1Afify ...» passed on the flag alone)
+    expect(filterVerdict(byFlag, { text: "@someone محمد صلاح يسجل", is_reply: false }, ctx)).toBe("filter_reply");
     const byText: StageFilter[] = [{ kind: "exclude_replies" }];
     expect(filterVerdict(byText, { text: "@fan1 محمد صلاح يسجل هدفًا" }, ctx)).toBe("filter_reply");
     expect(filterVerdict(byText, { text: "محمد صلاح يسجل هدفًا مع @fan1" }, ctx)).toBeNull();

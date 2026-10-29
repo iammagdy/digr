@@ -14,7 +14,7 @@ import { planningBudgetUsd } from "../../src/lib/agentMission/budget";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
 import { customerPlanView, requestedRowsOf, type PricedPlan } from "../../src/lib/agentMission/plan";
 import { toArabicDigits } from "../../src/lib/arabicDigits";
-import type { RelevanceReason } from "../../src/lib/agentMission/relevance";
+import { RELEVANCE_REASON_LIST, type RelevanceReason } from "../../src/lib/agentMission/relevance";
 import { FILTER_REASONS, isEnabled, type FilterReason } from "../../src/lib/agentMission/filters";
 import { holdValueUsd } from "../../src/lib/server/callBudget";
 import type { ModelDriver } from "./driver";
@@ -160,7 +160,7 @@ async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPla
   }
   return { pending: pendingTotal, stop };
 }
-const RELEVANCE_REASON_KEYS = ["no_text", "no_term", "mention_only", "other_person", "uncertain", "not_reviewed", "review_no", "review_failed", ...FILTER_REASONS] as const;
+const RELEVANCE_REASON_KEYS = [...RELEVANCE_REASON_LIST, ...FILTER_REASONS] as const;
 /** True when a text carries a number (Latin or Arabic-Indic digits): a model note with one is dropped, so a count in a text always comes from the data. */
 export const HAS_NUMBER = /[0-9٠-٩]/;
 
@@ -370,7 +370,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
       const title = missionFileTitleAr({ plan, requestText: mission.request_text, delivered: Math.min(fileCount, plan.price.deliveredRows), date: new Date() });
       files = published.files.map((f) => ({ ...f, download_name: `${title}.${f.kind}` }));
     } catch (e) {
-      await settleMission(deps.client, { jobId, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath: null, releaseReason: "agent mission: the result files could not be saved" });
+      await settleMission(deps.client, { jobId, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath: null, releaseReason: "تعذّر حفظ ملفات النتيجة، فعاد الحجز المؤقت كاملًا." });
       await store.updateMission(mission.id, { status: "failed", error: `files: ${String((e as Error)?.message ?? e).slice(0, 200)}`, execution_llm_usd: Number(llm.toFixed(6)), charged_points: 0, delivered_units: 0, ...clear });
       await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّر حفظ ملفات النتائج؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد." });
       await tell(deps, mission, jobId, "failed", { delivered: 0, planned: plan.price.deliveredRows, chargedPoints: 0, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true });
@@ -381,7 +381,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   // THE ONE NUMBER: the items in the file
   const delivered = Math.min(fileCount, plan.price.deliveredRows);
   if (fileCount > plan.price.deliveredRows) flags.push("file_over_the_volume_sold");
-  const settled = await settleMission(deps.client, { jobId, deliveredUnits: delivered, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath, releaseReason: "agent mission delivered nothing" });
+  const settled = await settleMission(deps.client, { jobId, deliveredUnits: delivered, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath, releaseReason: "لم يُسلَّم شيء من هذه المهمة، فعاد الحجز المؤقت كاملًا." });
   if (!settled.ok) {
     await store.updateMission(mission.id, { status: "failed", error: `settlement ${settled.code}: ${settled.detail}`, execution_llm_usd: Number(llm.toFixed(6)), ...clear });
     await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّرت التسوية الآلية للمهمة؛ راجع المشرف ولم يُخصم رصيد إضافي." });
@@ -455,7 +455,7 @@ export async function recoverFromError(deps: RunnerDeps, mission: MissionRecord,
     } catch (e) {
       // last resort: nothing delivered, the whole hold released through the existing function
       deps.log?.(`settle_failed ${mission.id} ${shortError(e).slice(0, 120)}`);
-      await settleMission(deps.client, { jobId: fresh.job_id, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: Number(fresh.planning_treg_usd ?? 0) + Number(fresh.execution_treg_usd ?? 0), resultPath: null, releaseReason: "agent mission could not be completed" });
+      await settleMission(deps.client, { jobId: fresh.job_id, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: Number(fresh.planning_treg_usd ?? 0) + Number(fresh.execution_treg_usd ?? 0), resultPath: null, releaseReason: "تعذّر إكمال المهمة، فعاد الحجز المؤقت كاملًا." });
       await store.updateMission(mission.id, { status: "failed", error: message, charged_points: 0, delivered_units: 0, ...clear });
       await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّر إكمال المهمة؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد." });
       await tell(deps, fresh, fresh.job_id, "failed", { delivered: 0, planned: plan.price.deliveredRows, chargedPoints: 0, releasedPoints: reserve, reservedPoints: reserve, noun: itemNounOfPlan(plan).singular, hasJob: true });

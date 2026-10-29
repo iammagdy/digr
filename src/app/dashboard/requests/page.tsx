@@ -5,6 +5,7 @@ import { normalizeReleaseWording } from "@/lib/releaseWording";
 import { pluralizeStoredCountsAr } from "@/lib/planCounts";
 import { openJobHref } from "@/lib/requestLinks";
 import { isDeterministicFailureAr } from "@/lib/providerFailureText";
+import { customerSafeText } from "@/lib/agentMission/text";
 import ReportProblemButton from "@/components/ReportProblemButton";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -100,6 +101,8 @@ function formatRefundedNote(rawError?: string, reservedCredits = 0): string {
     cleaned = "تم إلغاء الطلب تلقائياً لتأخر التنفيذ، وهو حجز مؤقت مُحرَّر كاملًا ولم يُخصم منك شيء.";
   }
 
+  // the render-time guard: an English or internal phrase stored with an older request (a release reason written by the system) is shown as its Arabic meaning, never as it was stored
+  cleaned = customerSafeText(cleaned, "تعذر إكمال البحث");
   cleaned = normalizeReleaseWording(cleaned);
   if (cleaned.includes("حجز مؤقت مُحرَّر")) return cleaned;
 
@@ -432,7 +435,7 @@ export default function RequestsPage() {
           const st = STATUS[k];
           const q = quotes[j.$id];
           // A title stored before the plural rule says «٥ سجل»: it is read again at display time, the stored row stays as it is.
-          const title = pluralizeStoredCountsAr((q?.conversationId && titles[q.conversationId]) || q?.summaryAr || targetOf(j.params) || `طلب ${customerFacingCapabilityLabel(j.templateSlug)}`);
+          const title = pluralizeStoredCountsAr((q?.conversationId && titles[q.conversationId]) || (q?.summaryAr ? customerSafeText(q.summaryAr, "") : "") || targetOf(j.params) || `طلب ${customerFacingCapabilityLabel(j.templateSlug)}`);
           const requested = j.targetVolumeMax || q?.targetVolumeMax;
           const rows = j.rowsCollected ?? 0;
           // A finished request that delivered no record has no data file to offer: zero files, said once (the same rule as the results panel).

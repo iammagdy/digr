@@ -11,7 +11,7 @@ import { normalizeDataset } from "@/lib/server/normalizationPipeline";
 import { deliveredNothing, NO_RELEASABLE_RESULT_AR, resultsReleasable } from "@/lib/producedFormats";
 import { linkArtifactVersion } from "@/functions/shared/artifactVersionLinking";
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
-import { missionFileTitleAr } from "@/lib/agentMission/fileNames";
+import { missionDownloadName } from "@/lib/agentMission/fileNames";
 import { inferSocialRowKind } from "@/lib/server/socialRows";
 import { buildFacebookReportExcelFrom, buildFacebookReportPdfFrom, facebookReportOf } from "@/functions/shared/facebookReportFiles";
 
@@ -267,11 +267,9 @@ export async function GET(
     try {
       const { data: agentMission } = await adminClient.from("missions").select("files, plan, request_text, delivered_units, updated_at").eq("job_id", jobId).maybeSingle();
       if (agentMission && (format === "xlsx" || format === "csv")) {
-        const stored = Array.isArray(agentMission.files) ? agentMission.files.find((f: any) => f?.kind === format && typeof f?.download_name === "string" && f.download_name.trim()) : null;
-        const title = stored ? String(stored.download_name).replace(/\.(xlsx|csv)$/i, "") : agentMission.plan && Array.isArray(agentMission.plan.stages)
-          ? missionFileTitleAr({ plan: agentMission.plan, requestText: agentMission.request_text, delivered: Number(agentMission.delivered_units) || count, date: new Date(agentMission.updated_at || job.finished_at || job.created_at || Date.now()) })
-          : "";
-        if (title) downloadFileName = `${title}.${format}`.replace(/[/\\?%*:|"<>]/g, "-").trim();
+        // the same function every other download path uses (the completion panel, the admin's link): the stored name, else the name built from the mission
+        const named = missionDownloadName({ files: agentMission.files, kind: format, plan: agentMission.plan, requestText: agentMission.request_text, deliveredUnits: Number(agentMission.delivered_units) || count, date: new Date(agentMission.updated_at || job.finished_at || job.created_at || Date.now()) });
+        if (!/^result\.(xlsx|csv)$/i.test(named)) downloadFileName = named;
       }
     } catch {
       // the generic name stays

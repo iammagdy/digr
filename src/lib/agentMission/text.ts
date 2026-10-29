@@ -41,3 +41,35 @@ export function checkCustomerText(raw: unknown, options: { maxChars?: number } =
 
 /** Same, for a value that must never carry a price or a technical id but may be short (a stage title, a column title). */
 export const checkCustomerLabel = (raw: unknown): CustomerTextCheck => checkCustomerText(raw, { maxChars: 80 });
+
+// ------------------------------------------------------------------------------------------------------ the render-time guard
+
+/** Phrases the system itself wrote in English into a stored field before every customer text was Arabic (a release reason, an error): each has its Arabic meaning. */
+const KNOWN_INTERNAL_PHRASES: ReadonlyArray<[RegExp, string]> = [
+  [/delivered nothing/i, "لم نجد ما يطابق طلبك."],
+  [/could not be saved/i, "تعذّر حفظ ملفات النتيجة."],
+  [/could not be (?:completed|locked)|not be locked/i, "تعذّر إكمال المهمة."],
+];
+/** What a customer reads in place of an internal phrase when nothing more exact is known. */
+export const NEUTRAL_CUSTOMER_TEXT_AR = "تعذّر عرض تفاصيل هذه الخطوة، ولم يُخصم منك شيء.";
+const ARABIC_ANY = /[؀-ۿ]/;
+
+/** True when a text meant for the customer is an internal phrase: Latin words with no Arabic at all («agent mission delivered nothing»), or an id, a technical name or an «admin:» note anywhere in it. */
+export function isInternalPhrase(raw: unknown): boolean {
+  const t = String(raw ?? "").trim();
+  if (!t) return false;
+  if (INTERNAL_ID.test(t) || SNAKE_CASE.test(t) || /^admin\s*:/i.test(t)) return true;
+  return !ARABIC_ANY.test(t) && LATIN_WORD.test(t);
+}
+
+/**
+ * THE LAST LINE OF DEFENCE for customer text, applied when a text is RENDERED (so it also covers what older missions stored): an internal phrase is replaced by its Arabic meaning when it is a known one, else by the neutral sentence the caller
+ * gives. Any other text is returned as it is, with Arabic-Indic digits. Null and empty stay empty.
+ */
+export function customerSafeText(raw: unknown, neutralAr: string = NEUTRAL_CUSTOMER_TEXT_AR): string {
+  const t = String(raw ?? "").trim();
+  if (!t) return "";
+  if (!isInternalPhrase(t)) return toArabicDigits(t);
+  for (const [re, ar] of KNOWN_INTERNAL_PHRASES) if (re.test(t)) return ar;
+  return neutralAr;
+}
