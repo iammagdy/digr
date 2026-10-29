@@ -71,7 +71,9 @@ export async function readRealProviderBalance(client?: any, options?: { now?: ()
   }
   if (fresh && usable(fresh.usd) && now() - fresh.at <= REAL_BALANCE_MAX_AGE_MS) return { usd: fresh.usd, at: fresh.at, source: "live" };
   // The read failed, timed out or was not usable: the last figure the provider really gave, if it is recent enough.
-  const last = injectedReader ? null : lastGoodProviderBalance();
+  // only a reading of the key that is in use counts: after the active key is switched, the old key's balance is not this key's
+  const activeKey = injectedReader ? "" : (await resolveProviderKey("treg").catch(() => null))?.key ?? "";
+  const last = injectedReader ? null : lastGoodProviderBalance(activeKey);
   if (last && now() - last.at <= REAL_BALANCE_MAX_AGE_MS) {
     const usd = last.balanceMicro / 1_000_000;
     if (usable(usd)) return { usd, at: last.at, source: "last_reading" };

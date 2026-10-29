@@ -1,4 +1,8 @@
+import { createHash } from "node:crypto";
 import type { ProviderId } from "./providerKeyCrypto";
+
+/** A short one-way fingerprint of a key, so cached readings belong to the key that was read (never the key itself; 48 bits of a SHA-256). */
+export const keyFingerprint = (key: string): string => createHash("sha256").update(key).digest("hex").slice(0, 12);
 
 /**
  * Real provider checks: an authenticated call, never a flag. The same call validates a candidate key before it is
@@ -198,7 +202,8 @@ function creditBalanceFrom(provider: "firecrawl" | "contextdev", body: unknown, 
   return p ? { available: true, credits: p.credits, creditsUsedThisPeriod: p.usedThisPeriod, periodEndsAt: p.refillAt, checkedAt } : { available: false, unavailableReason: "unreadable", checkedAt };
 }
 
-const statusCache = new Map<ProviderId, { at: number; snapshot: ProviderStatusSnapshot }>();
+const statusCache = new Map<string, { at: number; snapshot: ProviderStatusSnapshot }>();
+const statusCacheKey = (provider: ProviderId, key: string) => `${provider}:${key ? keyFingerprint(key) : "none"}`;
 
 /**
  * The e-mail of the connected provider account, exactly as the provider's own identity or balance answer gives it. It is kept in memory only,
@@ -231,10 +236,13 @@ export function getProviderAccountEmail(provider: ProviderId): string | null {
 }
 
 /** The last balance the provider really answered, kept past the 60 s cache (and past a later failed check) for the plan capacity gate. */
-let lastGoodTregBalance: { balanceMicro: number; at: number } | null = null;
+let lastGoodTregBalance: { balanceMicro: number; at: number; fp: string } | null = null;
 
-export function lastGoodProviderBalance(): { balanceMicro: number; at: number } | null {
-  return lastGoodTregBalance;
+/** The last balance a TREG key really answered. With `forKey` only a reading of THAT key counts (a switch of the active key never reuses the old key's balance). */
+export function lastGoodProviderBalance(forKey?: string): { balanceMicro: number; at: number } | null {
+  if (!lastGoodTregBalance) return null;
+  if (forKey !== undefined && lastGoodTregBalance.fp !== keyFingerprint(forKey)) return null;
+  return { balanceMicro: lastGoodTregBalance.balanceMicro, at: lastGoodTregBalance.at };
 }
 
 export function resetLastGoodProviderBalanceForTests(): void {
@@ -242,7 +250,10 @@ export function resetLastGoodProviderBalanceForTests(): void {
 }
 
 export function invalidateProviderStatusCache(provider?: ProviderId): void {
-  if (provider) { statusCache.delete(provider); accountEmails.delete(provider); } else { statusCache.clear(); accountEmails.clear(); }
+  if (provider) {
+    for (const k of [...statusCache.keys()]) if (k.startsWith(`${provider}:`)) statusCache.delete(k);
+    accountEmails.delete(provider);
+  } else { statusCache.clear(); accountEmails.clear(); }
 }
 
 /** Health plus balance, cached 60 seconds per server instance; the refresh button bypasses the cache. */
@@ -252,7 +263,8 @@ export async function getProviderStatus(
   options?: { forceRefresh?: boolean; orgIdOverride?: string | null; fetchFn?: FetchFn; now?: () => number; timeoutMs?: number },
 ): Promise<ProviderStatusSnapshot> {
   const now = options?.now ?? (() => Date.now());
-  const hit = statusCache.get(provider);
+  const cacheKey = statusCacheKey(provider, key);
+  const hit = statusCache.get(cacheKey);
   if (!options?.forceRefresh && hit && now() - hit.at < (hit.snapshot.health.ok ? STATUS_CACHE_TTL_MS : STATUS_FAILURE_TTL_MS)) return hit.snapshot;
 
   const fetchFn = options?.fetchFn ?? fetch;
@@ -278,8 +290,8 @@ export async function getProviderStatus(
   }
   if (provider === "treg" && !health.ok) accountEmails.set(provider, null);
   const snapshot: ProviderStatusSnapshot = { provider, health, balance, cachedAt: new Date(now()).toISOString(), cacheTtlMs: STATUS_CACHE_TTL_MS };
-  statusCache.set(provider, { at: now(), snapshot });
-  if (provider === "treg" && balance.available && typeof balance.balanceMicro === "number") lastGoodTregBalance = { balanceMicro: balance.balanceMicro, at: now() };
+  statusCache.set(cacheKey, { at: now(), snapshot });
+  if (provider === "treg" && balance.available && typeof balance.balanceMicro === "number") lastGoodTregBalance = { balanceMicro: balance.balanceMicro, at: now(), fp: keyFingerprint(key) };
   return snapshot;
 }
 

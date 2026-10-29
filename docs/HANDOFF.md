@@ -4,6 +4,22 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-29, after #289): the TREG key pool (many keys, one active, a fallback chain ending at the main key)
+
+`main` before it was `51e5d3a1dfee5c5fcb32db7d22dcec9f3a7ede8c` (#289); its merge commit is the head of `main` after it. Design, SQL proposals, owner decisions D1 to D8, rollout checklist and NOT PROVEN: `docs/proposals/treg-key-pool/README.md`. SQL 01 to 04 were applied by the owner; **06 (`treg_pool_keys_for_check`) is a later addition and must be applied before the background health check works**. No money table or function, no price, cap, model string or customer text changed.
+
+- **Rollout switch, OFF by default** (admin «مزودو الخدمة» → TREG → «مجمّع مفاتيح TREG»). OFF = exactly today: website store key then `TREG_TOKEN`; Heroku worker `TREG_TOKEN`. Turning it OFF restores that within about 3 seconds. `TREG_TOKEN` on Heroku is never touched; it is the worker's legacy and emergency source.
+- **One shared module** (`src/lib/server/tregKeyPool.ts`) used by the website (resolver + `executeTregCall`) and the worker (gateway passes `legacyToken`). ON: the active pool key from a 3-second view of `treg_pool_runtime()`, so a switch is live on the next call; a running mission continues on the new key.
+- **Failover**: 401/403 (verified with the free `/auth/me`) or 402 (not a price cap) on the active key → recorded (`treg_pool_record_failover`, compare-and-set) → next healthy key of the admin's chain, main always last → the call is retried once on it (at most 3 hops, the last on main) → admin e-mail through the outbox. Timeouts, 5xx, 429, 400/404/422 and price caps never switch.
+- **Secrets**: keys AES-256-GCM encrypted in the app (AAD = the key's row id) with a key generated inside Supabase Vault (`diger-treg-pool-enc-key`, read via the service-role-only `treg_pool_enc_key()`); no Vercel/Heroku variable was added; the old key store and `PROVIDER_KEYS_ENCRYPTION_KEY` are untouched. Keys never reach a browser, a log, an error, an audit line or an e-mail.
+- **Emergency**: pool/DB/Vault unreadable → the worker uses `TREG_TOKEN` (never a non-main key after a 30 s grace on the admin's own active key) and the admin is told (queued, sent when the DB is back; direct if `ADMIN_ALERT_EMAIL` is set on Heroku).
+- **Health check**: pg_cron `diger-treg-pool-tick` → `/api/cron/treg-pool` (cron secret): sends waiting e-mails and, at most once per 10 minutes, checks every key with read-only identity and balance calls.
+- **Call log per key**: `treg_pool_calls` (cost row → key number and label); calls log key filter, column and per-key spend; the export gets one extra column only when rows carry marks.
+- Tests: `tests/treg-pool-*.test.ts*` (fake TREG, in-memory model of the SQL functions) + `tests/helpers/tregPoolKit.ts`. One existing test changed: `tests/provider-status.test.ts` (it passed four different random keys where it meant one key; the status cache is now per key).
+- Rollback: switch OFF in the admin (seconds), then `git revert -m 1 <merge commit>`, then the rollback SQL files in reverse order (06, 04, 03, 02, 01).
+
+---
+
 ## START HERE (2026-10-29, after #288): raw child items, place enforced, Facebook always reaches a card, scale (fix mission 5)
 
 `main` before it was `90ca9010a4eafb17caaf538eecdee2ed971bdf4e` (#288); its merge commit is the head of `main` after it. Details, evidence, the scale table and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 9. No SQL written or applied; no Edge Function changed; prices and settings untouched.

@@ -8,6 +8,7 @@ import { agoAr, dateTimeAr, tint } from "./format";
 import { ProviderLimitsPanel } from "./ProviderLimitsPanel";
 import { ProviderCallLog } from "./ProviderCallLog";
 import { JobCell } from "./JobCell";
+import { TregKeyPool } from "./TregKeyPool";
 import type { ActivityJobRow } from "@/lib/server/adminCallsLog";
 
 type Provider = "treg" | "anthropic" | "firecrawl" | "contextdev";
@@ -203,9 +204,13 @@ export function ProviderTab({ provider, onChanged, children }: { provider: Provi
 
       {children}
 
+      {/* The TREG key pool (docs/proposals/treg-key-pool): many keys, one active, a fallback chain ending at the main key; OFF until the admin turns it on */}
+      {provider === "treg" && <TregKeyPool />}
+
       {/* Key management: masked only, validated before saving, one-step rollback */}
       <section className={SECTION} aria-label="المفتاح">
         <h3 className="m-0 text-[15px] font-semibold text-ink">مفتاح الوصول</h3>
+        {provider === "treg" && <p className="m-0 text-[11px] leading-[1.7] text-fnt">هذا هو المفتاح الذي تستخدمه المنصة عندما يكون المجمّع أعلاه مغلقًا، ومنه يُنسخ المفتاح الرئيسي عند اعتماده.</p>}
         <div className="flex min-h-[46px] items-center gap-2 rounded-xl border border-ln bg-sf ps-3.5 pe-3.5">
           <span dir="ltr" className="flex-1 text-left text-sm text-ink" style={MONO}>{state.maskedKey}</span>
           <span className="text-[11px] text-mut">المصدر: {SOURCE_AR[state.keySource]}</span>

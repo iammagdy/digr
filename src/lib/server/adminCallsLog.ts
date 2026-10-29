@@ -29,6 +29,8 @@ export interface CallsLogQuery {
   user: string | null;
   test: TestFilter;
   jobId: string | null;
+  /** TREG key pool: a key number («3»), or «none» for TREG calls that carry no pool mark (made before the pool was switched on). Null = every key. */
+  key?: string | null;
   page: number;
 }
 
@@ -55,6 +57,9 @@ export interface CallsLogRow {
   statusDerived: CallStatus | null;
   /** The admin page of the job, when the row has a job. */
   jobHref: string | null;
+  /** TREG key pool: the pool key that made the call (number and label; never the key). Present only once the pool has marked calls; null for a TREG call without a mark. */
+  keyNumber?: number | null;
+  keyLabel?: string | null;
 }
 
 export interface ProviderSummary { calls: number; costUsd: number; lastCallAt: string | null }
@@ -64,6 +69,8 @@ export interface CallsLogSummary {
   costUsd: number;
   byProvider: Record<DataProviderId, ProviderSummary>;
   byStatus: Record<CallStatus | "unknown", number>;
+  /** TREG key pool: calls and USD per pool key among the filtered rows (only marked calls). Present only once the pool has marked calls. */
+  byKey?: Array<{ keyNumber: number; keyLabel: string; calls: number; costUsd: number }>;
 }
 
 export interface SpendVsLimit { provider: DataProviderId; todayUsd: number | null; limitUsd: number }
@@ -76,11 +83,13 @@ export interface CallsLogResult {
   summary: CallsLogSummary;
   spendToday: SpendVsLimit[];
   metadataAvailable: boolean;
-  filters: { provider: DataProviderId | null; from: string | null; to: string | null; status: CallStatus | null; user: string | null; test: TestFilter; jobId: string | null };
+  filters: { provider: DataProviderId | null; from: string | null; to: string | null; status: CallStatus | null; user: string | null; test: TestFilter; jobId: string | null; key?: string };
   statusFilterUnavailable: boolean;
   exportCap: number;
   /** The reading stopped at the safety limit (a very large table): totals then cover what was read. */
   truncated: boolean;
+  /** TREG key pool: the keys that made calls in the date range (for the key filter). Present only once the pool has marked calls. */
+  keyOptions?: Array<{ number: number; label: string; calls: number }>;
 }
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
@@ -101,6 +110,8 @@ export function parseCallsLogQuery(search: URLSearchParams): { ok: true; value: 
   const user = (search.get("user") || "").trim().slice(0, 100);
   const jobId = (search.get("jobId") || "").trim();
   if (jobId && !JOB_ID.test(jobId)) return { ok: false, messageAr: "رقم المهمة غير صالح." };
+  const key = (search.get("key") || "").trim();
+  if (key && key !== "none" && !/^\d{1,6}$/.test(key)) return { ok: false, messageAr: "رقم المفتاح غير صالح." };
   const page = Number(search.get("page") ?? 1);
   return {
     ok: true,
@@ -112,6 +123,7 @@ export function parseCallsLogQuery(search: URLSearchParams): { ok: true; value: 
       user: user || null,
       test: test as TestFilter,
       jobId: jobId || null,
+      key: key || null,
       page: Number.isInteger(page) && page >= 1 && page <= 100_000 ? page : 1,
     },
   };
@@ -229,8 +241,25 @@ export async function withJobContext<T extends { jobId: string | null; units: nu
 const utcStart = (date: string) => `${date}T00:00:00.000Z`;
 const utcNextDay = (date: string) => new Date(Date.parse(`${date}T00:00:00Z`) + 86_400_000).toISOString();
 
+interface KeyMark { keyNumber: number; keyLabel: string }
+
+/** TREG key pool: which pool key made which cost row (treg_pool_calls, read only). A missing table or an empty one gives no marks and the log looks exactly as before. */
+async function readKeyMarks(client: any, query: CallsLogQuery): Promise<Map<number, KeyMark>> {
+  const marks = new Map<number, KeyMark>();
+  try {
+    const { data } = await selectAllRows<any>(() => {
+      let q = client.from("treg_pool_calls").select("provider_cost_id, key_number, key_label, created_at");
+      if (query.from) q = q.gte("created_at", utcStart(query.from));
+      if (query.to) q = q.lt("created_at", utcNextDay(query.to));
+      return q;
+    }, { orderBy: "provider_cost_id" });
+    for (const r of data || []) if (r?.provider_cost_id !== undefined && r?.provider_cost_id !== null) marks.set(Number(r.provider_cost_id), { keyNumber: Number(r.key_number), keyLabel: String(r.key_label ?? "") });
+  } catch { /* no marks: the log is what it always was */ }
+  return marks;
+}
+
 /** Every row matching the query (no paging yet), newest first, owners resolved, test / real and user filters applied. */
-export async function readFilteredCalls(client: any, query: CallsLogQuery): Promise<{ rows: CallsLogRow[]; metadataAvailable: boolean; truncated: boolean }> {
+export async function readFilteredCalls(client: any, query: CallsLogQuery): Promise<{ rows: CallsLogRow[]; metadataAvailable: boolean; truncated: boolean; keyOptions?: CallsLogResult["keyOptions"] }> {
   let metadataAvailable = true;
   try {
     const probe = await client.from("provider_costs").select("capability, status, duration_ms").limit(1);
@@ -272,6 +301,23 @@ export async function readFilteredCalls(client: any, query: CallsLogQuery): Prom
     return { ...base, ...callRowContext(base, owner) };
   });
 
+  // TREG key pool: the key behind each TREG call; nothing is added (and no key filter applies) until the pool has marked calls
+  let keyOptions: CallsLogResult["keyOptions"];
+  const marks = providers.includes("treg") ? await readKeyMarks(client, query) : new Map<number, KeyMark>();
+  if (marks.size > 0) {
+    const counts = new Map<number, { label: string; calls: number }>();
+    for (const m of marks.values()) { const c = counts.get(m.keyNumber) ?? { label: m.keyLabel, calls: 0 }; c.calls += 1; counts.set(m.keyNumber, c); }
+    keyOptions = [...counts.entries()].sort((a, b) => a[0] - b[0]).map(([number, c]) => ({ number, label: c.label, calls: c.calls }));
+    rows = rows.map((r) => {
+      if (r.provider !== "treg") return r;
+      const m = r.id === null ? undefined : marks.get(r.id);
+      return { ...r, keyNumber: m ? m.keyNumber : null, keyLabel: m ? m.keyLabel : null };
+    });
+  }
+  if (query.key) {
+    rows = query.key === "none" ? rows.filter((r) => r.provider === "treg" && (r.keyNumber === undefined || r.keyNumber === null)) : rows.filter((r) => r.keyNumber === Number(query.key));
+  }
+
   if (query.test === "test") rows = rows.filter((r) => r.isTestAccount);
   else if (query.test === "real") rows = rows.filter((r) => !r.isTestAccount);
   if (query.user) {
@@ -279,7 +325,7 @@ export async function readFilteredCalls(client: any, query: CallsLogQuery): Prom
     rows = rows.filter((r) => [r.userEmail, r.userName, r.userId].some((v) => typeof v === "string" && v.toLowerCase().includes(needle)));
   }
   rows.sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : (b.id ?? 0) - (a.id ?? 0)));
-  return { rows, metadataAvailable, truncated };
+  return { rows, metadataAvailable, truncated, ...(keyOptions ? { keyOptions } : {}) };
 }
 
 export function summarizeCalls(rows: CallsLogRow[]): CallsLogSummary {
@@ -297,7 +343,14 @@ export function summarizeCalls(rows: CallsLogRow[]): CallsLogSummary {
     }
     byStatus[r.status ?? "unknown"] += 1;
   }
-  return { calls: rows.length, costUsd, byProvider, byStatus };
+  const perKey = new Map<number, { keyNumber: number; keyLabel: string; calls: number; costUsd: number }>();
+  for (const r of rows) {
+    if (typeof r.keyNumber !== "number") continue;
+    const e = perKey.get(r.keyNumber) ?? { keyNumber: r.keyNumber, keyLabel: r.keyLabel ?? "", calls: 0, costUsd: 0 };
+    e.calls += 1; e.costUsd += r.costUsd;
+    perKey.set(r.keyNumber, e);
+  }
+  return { calls: rows.length, costUsd, byProvider, byStatus, ...(perKey.size ? { byKey: [...perKey.values()].sort((a, b) => a.keyNumber - b.keyNumber) } : {}) };
 }
 
 export interface ActivityJobRow extends CallRowContext { jobId: string | null; at: string }
@@ -316,7 +369,7 @@ export async function readActivityJobContext(client: any, provider: DataProvider
 }
 
 export async function readCallsLog(client: any, query: CallsLogQuery): Promise<CallsLogResult> {
-  const { rows: all, metadataAvailable, truncated } = await readFilteredCalls(client, query);
+  const { rows: all, metadataAvailable, truncated, keyOptions } = await readFilteredCalls(client, query);
   const caps = await resolveAllProviderDailyCaps(client).catch(() => ({ treg: 0, firecrawl: 0, contextdev: 0 }));
   const spendToday: SpendVsLimit[] = [];
   for (const id of DATA_PROVIDER_IDS) spendToday.push({ provider: id, todayUsd: await readProviderSpendToday(client, id), limitUsd: caps[id] ?? 0 });
@@ -329,10 +382,11 @@ export async function readCallsLog(client: any, query: CallsLogQuery): Promise<C
     summary: summarizeCalls(all),
     spendToday,
     metadataAvailable,
-    filters: { provider: query.provider, from: query.from, to: query.to, status: metadataAvailable ? query.status : null, user: query.user, test: query.test, jobId: query.jobId },
+    filters: { provider: query.provider, from: query.from, to: query.to, status: metadataAvailable ? query.status : null, user: query.user, test: query.test, jobId: query.jobId, ...(query.key ? { key: query.key } : {}) },
     statusFilterUnavailable: !metadataAvailable && Boolean(query.status),
     exportCap: EXPORT_MAX_ROWS,
     truncated,
+    ...(keyOptions ? { keyOptions } : {}),
   };
 }
 

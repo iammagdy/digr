@@ -40,9 +40,10 @@ The system prompt is a file: `agent/prompts/system.md`.
 | Name | What |
 |---|---|
 | `ANTHROPIC_API_KEY` | the Anthropic API key |
-| `TREG_TOKEN` | the TREG token (the same one the website uses) |
+| `TREG_TOKEN` | the TREG token (the same one the website uses). With the TREG key pool's rollout switch OFF (the default) the worker sends exactly this key. With the switch ON the worker uses the pool's active key (read every 3 seconds, no restart); `TREG_TOKEN` then stays the emergency source: when the pool or its database cannot be read the worker uses it (it is the main key) and the admin is told. Never touched by the pool |
 | `SUPABASE_URL` | the Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | the Supabase service-role key |
+| `ADMIN_ALERT_EMAIL` | optional; only so the worker can e-mail the owner directly when the key pool's database itself is unreachable. Without it that single notice is queued and e-mailed (by the website's cron) as soon as the database answers |
 | `AGENT_CONCURRENCY` | optional; how many missions the worker runs at once. Default **1** (a Basic dyno has 512 MB, and each running mission starts a native process of its own); at most 4 |
 | `PROVIDER_KEYS_ENCRYPTION_KEY` | (Phase 2) the same value as on the website: the worker reads the Firecrawl and Context.dev keys from the encrypted provider key store. Without it the worker falls back to `CONTEXT_DEV_API_KEY` / `FIRECRAWL_API_KEY` |
 | `AGENT_MODEL` | optional; `claude-haiku-5-5` (default) or `claude-sonnet-5-5`. Planning can be switched separately from the admin page «الوكيل» (the model of each phase and its cost are stored on every mission, so the two can be compared) |

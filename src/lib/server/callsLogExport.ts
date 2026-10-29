@@ -26,7 +26,13 @@ export function neutralizeCell(value: string): string {
 
 type Cell = string | number;
 
+/** TREG key pool: a column «المفتاح» is added only when the filtered rows carry pool marks (otherwise the file is exactly what it always was). */
+export const KEY_COLUMN = "المفتاح (TREG)";
+const hasKeyMarks = (rows: CallsLogRow[]): boolean => rows.some((r) => typeof r.keyNumber === "number");
+const keyCell = (r: CallsLogRow): string => (typeof r.keyNumber === "number" ? neutralizeCell(`#${r.keyNumber} ${r.keyLabel ?? ""}`.trim()) : "");
+
 export function exportRows(rows: CallsLogRow[]): Cell[][] {
+  const withKey = hasKeyMarks(rows);
   return rows.map((r) => [
     neutralizeCell(r.at),
     PROVIDER_NAME[r.provider] ?? neutralizeCell(String(r.provider)),
@@ -41,8 +47,11 @@ export function exportRows(rows: CallsLogRow[]): Cell[][] {
     r.status ? STATUS_AR[r.status] : UNAVAILABLE_AR,
     r.durationMs === null ? UNAVAILABLE_AR : r.durationMs,
     r.isEstimate ? "نعم" : "لا",
+    ...(withKey ? [keyCell(r)] : []),
   ]);
 }
+
+export const exportColumns = (rows: CallsLogRow[]): readonly string[] => (hasKeyMarks(rows) ? [...EXPORT_COLUMNS, KEY_COLUMN] : EXPORT_COLUMNS);
 
 const csvField = (cell: Cell): string => {
   const text = typeof cell === "number" ? String(cell) : cell;
@@ -50,20 +59,20 @@ const csvField = (cell: Cell): string => {
 };
 
 export function toCsv(rows: CallsLogRow[]): string {
-  const lines = [EXPORT_COLUMNS as readonly Cell[], ...exportRows(rows)].map((line) => line.map(csvField).join(","));
+  const lines = [exportColumns(rows) as readonly Cell[], ...exportRows(rows)].map((line) => line.map(csvField).join(","));
   return `﻿${lines.join("\r\n")}\r\n`;
 }
 
 export async function toXlsx(rows: CallsLogRow[]): Promise<Buffer> {
   const wb = new ExcelJS.Workbook();
   const sheet = wb.addWorksheet("سجل الاستدعاءات", { views: [{ rightToLeft: true, state: "frozen", ySplit: 1 }] });
-  sheet.addRow([...EXPORT_COLUMNS]);
+  sheet.addRow([...exportColumns(rows)]);
   sheet.getRow(1).font = { bold: true };
   for (const line of exportRows(rows)) {
     // A string value is written as a string cell (never parsed as a formula); numbers stay numbers.
     sheet.addRow(line);
   }
-  sheet.columns.forEach((column, index) => { column.width = [22, 12, 24, 30, 30, 22, 38, 14, 10, 14, 12, 16, 16][index] ?? 16; });
+  sheet.columns.forEach((column, index) => { column.width = [22, 12, 24, 30, 30, 22, 38, 14, 10, 14, 12, 16, 16, 22][index] ?? 16; });
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 

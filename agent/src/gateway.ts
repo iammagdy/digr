@@ -59,7 +59,7 @@ export interface GatewayDeps {
   recorder: CallRecorder;
   commit?: typeof commitTregSpend;
   call?: (options: TregCallOptions) => Promise<TregCallResult>;
-  /** TREG token for the call (the worker passes TREG_TOKEN). */
+  /** The worker's own TREG key (TREG_TOKEN): used while the TREG key pool's switch is OFF or the pool cannot be read (then it is the main key); with the switch ON the pool's active key is used. */
   token?: string;
   /** Used as the purpose of a sensitive lookup when the model gives none. */
   defaultPurpose: string;
@@ -202,7 +202,7 @@ export function createGateway(deps: GatewayDeps) {
           res = await call({
             endpointId, method: endpoint.method === "GET" ? "GET" : "POST", params, allowedParamKeys: [...known], userId: deps.userId, jobId: deps.jobId ?? `agent_${deps.missionId}`,
             stepId: id, page: 1, idempotencyKey: `agent_${deps.missionId}_${id}`, routeMaxCostUsd: Number(Math.max(estimate, 0.001).toFixed(6)), timeoutMs: GATEWAY_CALL_TIMEOUT_MS,
-            endpointScope: endpoint.scope, sensitiveAccess: { allowed: true }, ...(deps.token ? { token: deps.token } : {}),
+            endpointScope: endpoint.scope, sensitiveAccess: { allowed: true }, ...(deps.token ? { legacyToken: deps.token } : {}),
           });
         } catch {
           thrown = true;
@@ -248,7 +248,7 @@ export function createGateway(deps: GatewayDeps) {
       const rows = reading ? reading.rows.length : 0;
       const status = tregCallStatusOf({ ok: result.ok, rows: reading?.rows ?? [] });
       if (result.ok && rows > 0) { samplesWithRows.set(endpointId, (samplesWithRows.get(endpointId) ?? 0) + 1); sampledJobs.add(endpoint.capability ?? endpointId); }
-      await commit(deps.client, { costId: reservation.costId, costUsd: actualUsd, units: rows, capabilityId, status, durationMs, jobId: deps.jobId });
+      await commit(deps.client, { costId: reservation.costId, costUsd: actualUsd, units: rows, capabilityId, status, durationMs, jobId: deps.jobId, ...(result.keyRef ? { keyRef: result.keyRef } : {}) });
       // why a call failed is kept in the trace for the admin (the provider's own words, shortened): the model sees the same text in its answer
       const failure = result.ok ? null : clip(result.errorDetails || result.detail || result.error || "the source answered with an error", 160);
       await logCall({ id, endpoint_id: endpointId, params: failure ? { ...trace, _failure: failure } : trace, status: status === "success" ? "ok" : status, http_status: result.httpStatus, rows, cost_usd: actualUsd, estimate_usd: estimate, provider_cost_id: reservation.costId, storage_path: storagePath, duration_ms: durationMs });

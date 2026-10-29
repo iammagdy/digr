@@ -1,5 +1,9 @@
 # TREG key pool: design (STEP 1, NOT BUILT, NOT APPLIED)
 
+> **STEP 2 update (built).** The design below was approved (D1 to D8, all defaults) and built; SQL files 01 to 04 were applied by the owner and verified. While building, one gap in file 03 was found and is closed by ONE new additive function in `06_treg_pool_check_keys.sql` (+ rollback + `06_verify_after_apply.sql`, validated on a scratch Postgres, **NOT APPLIED until the owner applies it**): `treg_pool_runtime()` deliberately hands out no ciphertext while the switch is OFF and none for keys outside the chain, so the background health check and «فحص الآن» need `treg_pool_keys_for_check()` to read the keys they check (service role only, returns secrets, writes nothing). Until 06 is applied the call path, the switch, the failover and the e-mails all work; only the health check and the live refresh say «SQL 06 not applied». Section 8 below counts files 01 to 04 (23 functions); 06 adds the 24th.
+>
+> Original STEP 1 status line follows.
+
 Status: **design only**. No application code is written, no SQL is applied, nothing was called at a provider. Facts below come from `origin/main` at `51e5d3a1dfee5c5fcb32db7d22dcec9f3a7ede8c` (the #289 merge) and from read-only SELECTs on the live project. The SQL files in this folder are proposals: the owner applies them by hand after review.
 
 Goal (owner): stop burning the main TREG credit in tests. A pool of TREG keys (many test keys of about 1 USD, plus the main key) and ONE active key chosen from the admin panel, used at once by the website AND the Heroku worker, with an always-on fallback chain that ends at the main key.

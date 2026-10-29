@@ -4,7 +4,7 @@ import {
   ENCRYPTION_KEY_ENV, PROVIDER_IDS, ProviderKeyCryptoError, cleanKey, decryptProviderKey, encryptProviderKey,
   isEncryptionConfigured, last4Of, maskedKey, validateKeyShape, type ProviderId,
 } from "./providerKeyCrypto";
-import { envKeyConfigured, getLastAuthRejection, invalidateProviderKeyCache, resolveProviderKey, type AuthRejection, type KeySource, type StoreState } from "./providerKeys";
+import { envKeyConfigured, getLastAuthRejection, invalidateProviderKeyCache, resolveLegacyProviderKey, type AuthRejection, type KeySource, type StoreState } from "./providerKeys";
 import { selectAllRows } from "./selectAll";
 import { resolveProviderDailyCapUsd } from "./multiProvider/providerCaps";
 import {
@@ -170,7 +170,7 @@ export async function replaceProviderKey(
   if (!store.ready) return { ok: false, reason: "store_not_ready", messageAr: MSG.storeNotReady, status: 409 };
 
   const key = cleanKey(String(input.newKey));
-  const current = await resolveProviderKey(input.provider);
+  const current = await resolveLegacyProviderKey(input.provider);
   if (current.source === "store" && current.key === key) return { ok: false, reason: "same_key", messageAr: MSG.sameAsStored, status: 409 };
 
   const { health } = await checkProviderKey(input.provider, key, deps.fetchFn);
@@ -302,7 +302,8 @@ export async function loadProviderTabState(
   options?: { forceRefresh?: boolean },
 ): Promise<ProviderTabState> {
   const [settings, store] = await Promise.all([readProviderKeySettings(deps.client), readStoreInfo(deps.client, provider)]);
-  const resolved = await resolveProviderKey(provider, { forceRefresh: options?.forceRefresh });
+  // the tab's own key section is the LEGACY key (encrypted store, then environment) even while the key pool is ON: the pool has its own section
+  const resolved = await resolveLegacyProviderKey(provider, { forceRefresh: options?.forceRefresh });
   const status = await getProviderStatus(provider, resolved.key, { forceRefresh: options?.forceRefresh, orgIdOverride: provider === "treg" ? settings.tregOrgId : null, fetchFn: deps.fetchFn, now: deps.now });
   const [{ todayUsd, activity }, capUsd] = await Promise.all([readSpendAndActivity(deps.client, provider), readCap(deps.client, provider)]);
   const authRejection = getLastAuthRejection(provider);

@@ -2,6 +2,7 @@ import { isMissingAtomicRpc } from "../../../functions/shared/atomicRpc";
 import type { CallRecord, CallRecorder, Reservation } from "./adapterTypes";
 import { resolveProviderDailyCapUsd } from "./providerCaps";
 import type { DataProviderId } from "../../multiProvider/types";
+import { getTregKeyPool } from "../tregKeyPool";
 
 /**
  * The cost-recording hook over the APPROVED SQL functions; nothing here writes provider_costs directly.
@@ -36,6 +37,14 @@ export function createCallRecorder(client: any, options: { capFor?: (provider: D
     async commit(costId: number | null, record: CallRecord): Promise<void> {
       if (costId === null || costId === undefined) return;
       const cost = Math.max(0, Number(record.costUsd) || 0);
+      // TREG key pool: which pool key made this call (number and label only), recorded beside the cost row. A cost row of a job with several calls carries the key of the
+      // job's latest call. Never fails or delays the commit by more than 1.5 s; nothing is written while the pool's switch is OFF.
+      const markKey = async () => {
+        if (record.provider !== "treg") return;
+        const pool = getTregKeyPool();
+        if (!pool) return;
+        try { await pool.recordCall(record.keyRef ?? pool.lastRefFor(record.jobId), costId); } catch { /* a mark never fails a commit */ }
+      };
       if (v2Available !== false) {
         const { error } = await client.rpc("commit_provider_spend_v2", {
           p_cost_id: costId,
@@ -45,12 +54,13 @@ export function createCallRecorder(client: any, options: { capFor?: (provider: D
           p_status: record.status,
           p_duration_ms: Math.max(0, Math.floor(record.durationMs)),
         });
-        if (!error) { v2Available = true; return; }
+        if (!error) { v2Available = true; await markKey(); return; }
         if (!isMissingAtomicRpc(error, "commit_provider_spend_v2")) throw error;
         v2Available = false;
       }
       const { error } = await client.rpc("commit_provider_spend", { p_cost_id: costId, p_actual_cost_usd: cost, p_units: Math.max(0, Math.floor(record.units)) });
       if (error) throw error;
+      await markKey();
     },
   };
 }

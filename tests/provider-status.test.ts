@@ -100,16 +100,17 @@ describe("real balance", () => {
     let t = 5_000_000;
     const f = mockProviderFetch((url) => (url.endsWith("/auth/me") ? { status: 200, body: { org_id: 9 } } : { status: 200, body: { balance_micro: 100_000 } }));
     const opts = { fetchFn: f.fn, now: () => t };
-    const a = await getProviderStatus("treg", fakeKey("c1"), opts);
+    const key = fakeKey("c1"); // one key: the cache belongs to the key that was read (a switch of the active key never reuses the old key's reading)
+    const a = await getProviderStatus("treg", key, opts);
     expect(a.balance).toMatchObject({ available: true, balanceUsd: 0.1 });
     expect(f.calls).toHaveLength(2);
     t += 59_000;
-    await getProviderStatus("treg", fakeKey("c1"), opts);
+    await getProviderStatus("treg", key, opts);
     expect(f.calls).toHaveLength(2);
     t += 2_000;
-    await getProviderStatus("treg", fakeKey("c1"), opts);
+    await getProviderStatus("treg", key, opts);
     expect(f.calls).toHaveLength(4);
-    await getProviderStatus("treg", fakeKey("c1"), { ...opts, forceRefresh: true });
+    await getProviderStatus("treg", key, { ...opts, forceRefresh: true });
     expect(f.calls).toHaveLength(6);
   });
 

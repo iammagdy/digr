@@ -1,11 +1,18 @@
 import { peekProviderKey, reportProviderHttpStatus, resolveProviderKey } from "../../lib/server/providerKeys";
+import { POOL_MAX_HOPS, getTregKeyPool, type KeyChoice } from "../../lib/server/tregKeyPool";
 import { blockedEndpointReason } from "../../lib/treg/blockList";
 import { categoryOf } from "../../lib/treg/dataPolicy";
 import { JOB_BUDGET_ERROR_CODE, type JobCallBudget } from "../../lib/server/callBudget";
 import type { RawCapture } from "../../lib/server/rawCapture";
 export interface TregCallOptions {
   baseUrl?: string;
+  /** An explicit key (tests, one-off tools): used as given; the key pool is bypassed. */
   token?: string;
+  /**
+   * The key this caller used before the TREG key pool existed (the Heroku worker's TREG_TOKEN). Used exactly like `token` while the pool's rollout switch is OFF or the pool
+   * cannot be read (it is then the main key); with the switch ON the pool's active key is used instead.
+   */
+  legacyToken?: string;
   endpointId: string;
   method?: "GET" | "POST";
   params?: Record<string, any>;
@@ -60,6 +67,8 @@ export interface TregCallResult {
   blocked?: string;
   /** ... or the job's USD budget would have been passed. */
   budgetStopped?: boolean;
+  /** The pool key that answered this call (number and label for the call log; never the key). Absent while the key pool's switch is OFF. */
+  keyRef?: { id: string; number: number; label: string; isMain: boolean };
 }
 
 /**
@@ -82,6 +91,8 @@ export function sanitizeTregDetail(rawMsg: string, knownSecret?: string): string
   if (resolvedToken && resolvedToken.trim().length > 4) {
     sanitized = sanitized.split(resolvedToken.trim()).join("[REDACTED]");
   }
+  // every pool key this process holds decrypted (the one that answered may not be the active one any more)
+  for (const held of getTregKeyPool()?.knownKeys() ?? []) sanitized = sanitized.split(held.trim()).join("[REDACTED]");
 
   return sanitized.trim().slice(0, 300);
 }
@@ -187,7 +198,7 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
   }
   let result: TregCallResult;
   try {
-    result = await executeTregCallUnguarded(options);
+    result = await executeWithKeyPool(options);
   } catch (err) {
     budget?.settle(estimate, null);
     throw err;
@@ -196,6 +207,32 @@ export async function executeTregCall(options: TregCallOptions): Promise<TregCal
     // A cut or unreachable call may have been billed after we stopped waiting: its estimate stays counted. Any answer carries its own cost (0 for a refusal).
     const unknown = result.timedOut === true || result.error === "network_failure";
     budget.settle(estimate, unknown ? null : Math.max(0, result.costMicro || 0) / 1_000_000);
+  }
+  return result;
+}
+
+/**
+ * One call with the key the pool chooses. Without a pool (offline tests, nothing configured), with an explicit `token`, or with the rollout switch OFF this is the
+ * single attempt it always was (the worker's TREG_TOKEN travels as `legacyToken`). With the switch ON, a failure that is the KEY's (revoked, or out of balance, verified
+ * first) moves the active key to the next one of the chain and retries the same call on it (same idempotency key; such a call was not billed), at most three times,
+ * the last always on the main key.
+ */
+async function executeWithKeyPool(options: TregCallOptions): Promise<TregCallResult> {
+  const pool = options.token ? null : getTregKeyPool();
+  const single = (token: string | undefined) => executeTregCallUnguarded(token ? { ...options, token } : options);
+  if (!pool) return single(options.token ? undefined : options.legacyToken);
+  let choice: KeyChoice = await pool.choose(options.legacyToken);
+  const attempt = (c: KeyChoice) => single(c.key ?? options.legacyToken);
+  let result = await attempt(choice);
+  for (let hop = 0; hop < POOL_MAX_HOPS; hop++) {
+    const next = await pool.afterCall(choice, result, { forceMain: hop === POOL_MAX_HOPS - 1 });
+    if (!next) break;
+    choice = next;
+    result = await attempt(choice);
+  }
+  if (choice.mode === "pool" && choice.ref) {
+    result.keyRef = { ...choice.ref };
+    pool.noteUse(options.jobId, choice.ref);
   }
   return result;
 }
