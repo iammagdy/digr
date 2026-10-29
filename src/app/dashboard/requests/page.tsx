@@ -17,6 +17,7 @@ import { JOBS_COLLECTION } from "@/lib/constants";
 import { getJobIdForQuote } from "@/lib/md5";
 import { startNewResearch } from "@/lib/newResearchNavigation";
 import { resultsReleasable } from "@/lib/producedFormats";
+import { jobFileIds } from "@/lib/producedFormats";
 import { REQUEST_STATUS_LABEL_AR, collectedBeforeStopText, deliveredNothing, partialDeliveryText, resolveRequestKind, type RequestKind } from "@/lib/jobs/requestStatus";
 import { customerFacingCapabilityLabel, customerFacingQuoteSummary } from "@/lib/customerFacingRequestLabels";
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
@@ -130,7 +131,7 @@ export default function RequestsPage() {
     if (!user) return;
     try {
       const supabase = createClient();
-      const [jobsRes, quotesRes, convRes, msgsRes, artifactsRes, missionsRes, planMsgsRes] = await Promise.all([
+      const [jobsRes, quotesRes, convRes, msgsRes, missionsRes, planMsgsRes] = await Promise.all([
         supabase
           .from(JOBS_COLLECTION)
           .select("*")
@@ -157,16 +158,10 @@ export default function RequestsPage() {
           .not("quote", "is", null)
           .order("created_at", { ascending: false })
           .limit(100),
-        supabase
-          .from("artifact_versions")
-          .select("job_id, file_id_xlsx, file_id_pdf, file_id_csv, version_number")
-          .eq("user_id", user.id)
-          .order("version_number", { ascending: false })
-          .limit(100),
         // AGENT missions: the mission names its job; the assistant message that shows its card names the mission and the conversation
         supabase
           .from("missions")
-          .select("id, job_id, stages:plan_public->stages")
+          .select("id, job_id, stages:plan_public->stages, files")
           .eq("user_id", user.id)
           .not("job_id", "is", null)
           .order("created_at", { ascending: false })
@@ -185,14 +180,15 @@ export default function RequestsPage() {
       for (const conversation of convRes.data || []) {
         conversationTitles.set(conversation.id, customerFacingConversationTitle(conversation.title || ""));
       }
-      const fileIdsByJob = new Map<string, JobDoc["fileIds"]>();
-      for (const artifact of artifactsRes.data || []) {
-        const fileIds = fileIdsByJob.get(artifact.job_id) || { xlsx: null, pdf: null, csv: null };
-        fileIds.xlsx ||= artifact.file_id_xlsx || null;
-        fileIds.pdf ||= artifact.file_id_pdf || null;
-        fileIds.csv ||= artifact.file_id_csv || null;
-        fileIdsByJob.set(artifact.job_id, fileIds);
-      }
+      // the files of each listed job: its artifact rows asked for BY JOB (the latest 100 rows of the whole account lose a job's row once the account has more), the file the job stored, and the files an agent mission delivered
+      const listedJobIds = (jobsRes.data || []).map((r: any) => String(r.id));
+      const artifactsRes = listedJobIds.length > 0
+        ? await supabase.from("artifact_versions").select("job_id, file_id_xlsx, file_id_pdf, file_id_csv, version_number").eq("user_id", user.id).in("job_id", listedJobIds).order("version_number", { ascending: false })
+        : { data: [] as any[] };
+      const artifactsByJob = new Map<string, any[]>();
+      for (const artifact of (artifactsRes.data || []) as any[]) artifactsByJob.set(artifact.job_id, [...(artifactsByJob.get(artifact.job_id) || []), artifact]);
+      const missionFilesByJob = new Map<string, any[]>();
+      for (const m of (missionsRes?.data || []) as any[]) if (m.job_id && Array.isArray(m.files)) missionFilesByJob.set(String(m.job_id), m.files);
 
       const mappedJobs: JobDoc[] = (jobsRes.data || []).map((r: any) => ({
         $id: r.id,
@@ -210,11 +206,7 @@ export default function RequestsPage() {
         leaseUntil: r.lease_until ?? null,
         nextAttemptAt: r.next_attempt_at ?? null,
         attemptCount: typeof r.attempt_count === "number" ? r.attempt_count : undefined,
-        fileIds: {
-          xlsx: fileIdsByJob.get(r.id)?.xlsx || (String(r.result_file_id || "").endsWith(".xlsx") ? r.result_file_id : null),
-          pdf: fileIdsByJob.get(r.id)?.pdf || (String(r.result_file_id || "").endsWith(".pdf") ? r.result_file_id : null),
-          csv: fileIdsByJob.get(r.id)?.csv || (String(r.result_file_id || "").endsWith(".csv") ? r.result_file_id : null),
-        },
+        fileIds: jobFileIds({ artifacts: artifactsByJob.get(r.id), resultFileId: r.result_file_id, missionFiles: missionFilesByJob.get(r.id) }),
       }));
       setJobs(mappedJobs);
       // Live progress of the running requests, from the page lines their chunks wrote (one read for all of them, recomputed every refresh).

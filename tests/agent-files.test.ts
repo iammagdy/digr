@@ -47,10 +47,12 @@ describe("the files are readable first", () => {
     expect(companies.getRow(2).getCell(3).value).toBe(120);
     expect(typeof companies.getRow(2).getCell(3).value).toBe("number");
     const employees = wb.getWorksheet("الموظفون")!;
-    // a phone stays text (a leading zero or a plus is not lost), an unverified (empty) e-mail is empty
+    // a phone stays text (a leading zero or a plus is not lost), an unverified (empty) e-mail is a truly EMPTY cell (not an empty text) that keeps the sheet's border and fill
     expect(employees.getRow(2).getCell(6).value).toBe("+20227945000");
     expect(employees.getRow(3).getCell(6).value).toBe("01012345678");
-    expect(employees.getRow(3).getCell(5).value).toBe("");
+    expect(employees.getRow(3).getCell(5).value).toBeNull();
+    expect(employees.getRow(3).getCell(5).border).toBeTruthy();
+    expect(employees.getRow(3).getCell(5).fill).toBeTruthy();
   });
 
   it("the first sheet says what each sheet holds, in plain Arabic, with the one-sentence summary", async () => {

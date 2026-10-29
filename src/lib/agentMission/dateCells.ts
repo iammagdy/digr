@@ -1,6 +1,8 @@
 /**
  * DATES IN THE FILES, readable: a value that is a date and time (an ISO text, the long English form some sources return, a count of seconds or milliseconds since 1970) becomes a real spreadsheet date shown as
  * «٢٠٢٦-١٠-٢٨ ٢٣:٠٦» in Cairo time, so it sorts and filters; a CSV gets the same moment as a plain «2026-10-28 23:06». A value that is not a date is left exactly as it is.
+ *
+ * A DATE WITHOUT A TIME («2022-03-01», or a label before it: «تاريخ البداية: 2022-03-01») is a calendar date, not a moment: it stays a date («٢٠٢٢-٠٣-٠١», no time, no zone: reading it as midnight UTC showed «02:00» in Cairo). Only a real timestamp is moved to Cairo time.
  */
 const CAIRO = "Africa/Cairo";
 
@@ -24,9 +26,30 @@ export function parseMoment(value: unknown): Date | null {
   const t = value.trim();
   if (!t || t.length > 64) return null;
   if (!/\d{4}|\d{1,2}:\d{2}/.test(t)) return null;
+  // a date text is ASCII: the engine of the language also «reads» a date out of a sentence that merely ends with one («تاريخ البداية: 2022-03-01»), and that is not a moment
+  if (/[^\x00-\x7f]/.test(t)) return null;
   const d = new Date(t);
   return Number.isNaN(d.getTime()) || d.getUTCFullYear() < 2000 || d.getUTCFullYear() > 2100 ? null : d;
 }
+
+export interface DateOnly { y: number; mo: number; da: number }
+const DATE_ONLY = /^(?:[^\d]{1,40}[:：]\s*)?(\d{4})[-/](\d{2})[-/](\d{2})$/;
+
+/** A calendar date with no time of day (an optional label and colon before it is ignored), or null. A real calendar day only. */
+export function parseDateOnly(value: unknown): DateOnly | null {
+  if (typeof value !== "string") return null;
+  const m = DATE_ONLY.exec(value.trim());
+  if (!m) return null;
+  const y = Number(m[1]); const mo = Number(m[2]); const da = Number(m[3]);
+  if (y < 1900 || y > 2100) return null;
+  const probe = new Date(Date.UTC(y, mo - 1, da));
+  return probe.getUTCFullYear() === y && probe.getUTCMonth() === mo - 1 && probe.getUTCDate() === da ? { y, mo, da } : null;
+}
+/** A spreadsheet date for a calendar date: the day itself, shown with DATE_ONLY_NUMBER_FORMAT (no time, no zone shift). */
+export const dateOnlyCellDate = (d: DateOnly): Date => new Date(Date.UTC(d.y, d.mo - 1, d.da));
+export const DATE_ONLY_NUMBER_FORMAT = "yyyy-mm-dd";
+/** «2022-03-01» (the CSV). */
+export const dateOnlyText = (d: DateOnly): string => `${d.y}-${String(d.mo).padStart(2, "0")}-${String(d.da).padStart(2, "0")}`;
 
 /** The wall-clock reading of Cairo for a moment, as the pieces of a date. */
 function cairoParts(d: Date): { y: number; mo: number; da: number; h: number; mi: number } {
@@ -54,5 +77,5 @@ export function cairoText(d: Date): string {
 export function isDateValues(title: string, key: string | undefined, values: unknown[]): boolean {
   if (!looksLikeDateColumn(title, key)) return false;
   const filled = values.filter((v) => v !== null && v !== undefined && String(v).trim() !== "");
-  return filled.length > 0 && filled.every((v) => parseMoment(v) !== null);
+  return filled.length > 0 && filled.every((v) => parseDateOnly(v) !== null || parseMoment(v) !== null);
 }

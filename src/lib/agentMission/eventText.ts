@@ -62,7 +62,7 @@ const INTERNAL_LABEL_AR: Record<(typeof MISSION_INTERNAL_COUNT_KEYS)[number], st
   chk_found: "وُجد في المصدر", chk_new: "عناصر جديدة", chk_dup: "مكررة", chk_unchecked: "لم تُفحص", chk_saved: "محفوظة", adm_flag: "علامة للمشرف (١ نعم)", adm_store: "في السجل", adm_file: "في الملف", adm_memory: "في ذاكرة العامل",
   chk_ex_no_text: "استبعاد: بلا نص", chk_ex_no_term: "استبعاد: لا يذكر الموضوع", chk_ex_mention_only: "استبعاد: إشارة عابرة أو رد فارغ", chk_ex_other_person: "استبعاد: عن شخص آخر", chk_ex_name_extended: "استبعاد: اسم أطول أو لقب لشخص آخر", chk_ex_other_meaning: "استبعاد: معنى آخر للاسم", chk_ex_uncertain: "استبعاد: غير مؤكد", chk_ex_not_reviewed: "استبعاد: لم يُراجَع", chk_ex_review_no: "استبعاد: رفضته المراجعة", chk_ex_review_failed: "استبعاد: تعذّرت مراجعته",
   chk_ex_filter_reply: "استبعاد: رد", chk_ex_filter_repost: "استبعاد: إعادة نشر", chk_ex_filter_language: "استبعاد: لغة أخرى", chk_ex_filter_period: "استبعاد: خارج الفترة", chk_ex_filter_account: "استبعاد: حساب آخر", chk_ex_filter_place: "استبعاد: مكان آخر",
-  adm_source_rows: "ما أعطاه المصدر",
+  adm_source_rows: "ما أعطاه المصدر", adm_parent_fixed: "قيم أُصلحت من أصلها",
 };
 
 /** An event the CUSTOMER never sees: the run's measured memory (its counts carry the `mem_` keys). The admin page shows it. */

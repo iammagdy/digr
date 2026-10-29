@@ -4,7 +4,8 @@ import { wordBoundarySheetName } from "../../src/lib/agentMission/fileNames";
 import { REASON_AR, type RelevanceReason } from "../../src/lib/agentMission/relevance";
 import { requestedRowsOf } from "../../src/lib/agentMission/plan";
 import { FILTER_REASON_LABEL_AR, type FilterReason } from "../../src/lib/agentMission/filters";
-import { cairoCellDate, cairoText, DATE_NUMBER_FORMAT, isDateValues, parseMoment } from "../../src/lib/agentMission/dateCells";
+import { cairoCellDate, cairoText, DATE_NUMBER_FORMAT, DATE_ONLY_NUMBER_FORMAT, dateOnlyCellDate, dateOnlyText, isDateValues, parseDateOnly, parseMoment } from "../../src/lib/agentMission/dateCells";
+import { reconcileParentColumns, type ParentColumnFix } from "../../src/lib/agentMission/parentColumns";
 import { isInternalColumn, type PricedPlan, type PricedStage } from "../../src/lib/agentMission/plan";
 import { deliveredOfAr, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
 import { formatAr } from "../../src/lib/arabicDigits";
@@ -152,7 +153,10 @@ export function workbookNoteAr(f: WorkbookFacts): string {
   return parts.join(" ");
 }
 
-export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<string, Row[]>): Promise<{ xlsx: Buffer; csv: string }> {
+export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string, Row[]>): Promise<{ xlsx: Buffer; csv: string; /** Wrong parent-describing values of a child sheet that were replaced from the row's own parent (for the admin only). */ parentFixes: ParentColumnFix[] }> {
+  // BEFORE THE FILE IS WRITTEN: every value of a child row that describes its parent must be its OWN parent's (parentColumns.ts); a mapping that copied the first company's website onto every person is repaired here and reported to the admin
+  const reconciled = reconcileParentColumns(plan.stages, rowsIn, (key) => { const st = plan.stages.find((x) => x.key === key); return st ? readableColumns(st).map((c) => c.key) : []; }, (key) => { const st = plan.stages.find((x) => x.key === key); return st ? readableColumns(st).map((c) => c.key) : []; });
+  const rowsByStage = reconciled.rowsByStage;
   const layouts = layoutOf(plan, rowsByStage);
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
@@ -186,10 +190,18 @@ export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<st
     const ids = new Map<string, string>();
     lay.rows.forEach((record, r) => {
       const parent = parentByIdRow.get(text(record.parent_id)) ?? null;
+      const cellFormat: Array<string | null> = [];
       const values: ExcelJS.CellValue[] = lay.columns.map((c, k) => {
         const v = c.get(record, parent);
-        if (v === null || v === undefined || v === "") return "";
-        if (dateAt[k]) { const moment = parseMoment(v); if (moment) return cairoCellDate(moment); }
+        // a missing value is an EMPTY cell, never an empty text
+        if (v === null || v === undefined || (typeof v === "string" && v.trim() === "")) { cellFormat[k] = null; return null; }
+        if (dateAt[k]) {
+          // a date with no time stays a date (no time of day, no zone shift); only a real timestamp is written in Cairo time
+          const day = parseDateOnly(v);
+          if (day) { cellFormat[k] = DATE_ONLY_NUMBER_FORMAT; return dateOnlyCellDate(day); }
+          const moment = parseMoment(v);
+          if (moment) { cellFormat[k] = DATE_NUMBER_FORMAT; return cairoCellDate(moment); }
+        }
         if (typeof v === "number" && Number.isFinite(v)) return v;
         if (typeof v === "boolean") return v ? "نعم" : "لا";
         const t = text(v);
@@ -202,10 +214,10 @@ export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<st
       const row = sheet.addRow(values);
       ids.set(text(record.id), `${sheet.getColumn(lay.columns.length + 1).letter}${r + 2}`);
       row.alignment = { vertical: "middle", wrapText: true };
-      row.eachCell((cell, col) => {
+      row.eachCell({ includeEmpty: true }, (cell, col) => {
         cell.border = BORDER;
         cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: r % 2 ? ZEBRA : WHITE } };
-        if (col <= lay.columns.length && dateAt[col - 1]) { cell.numFmt = DATE_NUMBER_FORMAT; cell.alignment = { horizontal: "center", vertical: "middle" }; }
+        if (col <= lay.columns.length && dateAt[col - 1] && cellFormat[col - 1]) { cell.numFmt = cellFormat[col - 1]!; cell.alignment = { horizontal: "center", vertical: "middle" }; }
         if (cell.hyperlink) cell.font = { name: "Calibri", size: 10, color: { argb: "FF0563C1" }, underline: true };
         else if (col > lay.columns.length) cell.font = { name: "Calibri", size: 9, color: { argb: GREY } };
       });
@@ -279,7 +291,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<st
     const parentByIdRow = new Map((rowsByStage[last.stage.parent_key ?? ""] ?? []).map((r) => [text(r.id), r]));
     lines.push([...last.columns.map((c) => c.title), ID_HEADER_AR, ...(last.hasParent ? [PARENT_HEADER_AR] : [])].map(esc).join(","));
     const lastDates = last.columns.map((c) => isDateValues(c.title, c.key, last.rows.map((r) => c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null))));
-    for (const r of last.rows) lines.push([...last.columns.map((c, k) => { const v = c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null); const moment = lastDates[k] ? parseMoment(v) : null; return moment ? cairoText(moment) : v; }), r.id, ...(last.hasParent ? [r.parent_id] : [])].map(esc).join(","));
+    for (const r of last.rows) lines.push([...last.columns.map((c, k) => { const v = c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null); if (lastDates[k]) { const day = parseDateOnly(v); if (day) return dateOnlyText(day); const moment = parseMoment(v); if (moment) return cairoText(moment); } return v; }), r.id, ...(last.hasParent ? [r.parent_id] : [])].map(esc).join(","));
   }
-  return { xlsx, csv: `﻿${lines.join("\r\n")}` };
+  return { xlsx, csv: `﻿${lines.join("\r\n")}`, parentFixes: reconciled.fixes };
 }
