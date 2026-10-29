@@ -237,11 +237,15 @@ export function unservedPerParentAsks(asks: ReadonlyArray<RequestedQuantity>, ch
  * The per-parent number that belongs to ONE child stage of a plan: the one whose noun is a word of the stage's title; when the title names none of them (the customer said «ردود», the plan's title says «تعليقات»), the only per-parent number
  * of the request when the plan has exactly one child stage. Null when the request gives no per-parent number for this stage.
  */
-export function perParentAskFor(asks: ReadonlyArray<RequestedQuantity>, childTitle: string, childStageCount: number): number | null {
+export function perParentAskOf(asks: ReadonlyArray<RequestedQuantity>, childTitle: string, childStageCount: number): RequestedQuantity | null {
   const own = ownTitleWords(childTitle);
   const hit = asks.find((q) => own.some((w) => sameNounStem(w, q.noun!)));
-  if (hit) return hit.value;
-  return childStageCount === 1 && asks.length === 1 ? asks[0].value : null;
+  if (hit) return hit;
+  return childStageCount === 1 && asks.length === 1 ? asks[0] : null;
+}
+
+export function perParentAskFor(asks: ReadonlyArray<RequestedQuantity>, childTitle: string, childStageCount: number): number | null {
+  return perParentAskOf(asks, childTitle, childStageCount)?.value ?? null;
 }
 
 /** The first quantity whose noun names a kind of item; null when the text has none. */
@@ -287,6 +291,28 @@ export function bindQuantityDetailed(text: unknown, stages: ReadonlyArray<Quanti
   }
   if (delivered.length === 0) return null;
   return { index: delivered[0].index, value: candidates[0].value, named: false };
+}
+
+export interface RequestedStageRef { index: number; title_ar: string; parent_key: string | null }
+
+/**
+ * THE STAGES WHOSE ITEMS THE CUSTOMER ASKED FOR, by their nouns, whatever the model marked: the counted noun («٥ فيديوهات», «٣ شركات») and every per-parent noun («من كل فيديو ١٠ تعليقات», «ومن كل شركة اتنين من المديرين», «ومع كل بوست ...», «لكل ...»;
+ * `perParentQuantities`). A stage may be an intermediate one (read, never delivered) only when the customer did not ask for its items. Live run of 2026-10-29 after #294: the videos were forced to be delivered but the comments were kept as an
+ * intermediate stage («لم تُسلَّم (مرحلة وسيطة)»), and the same for the managers of the companies: the customer paid for a file without what they asked for. Pure.
+ */
+export function requestedStageIndexes(text: unknown, stages: ReadonlyArray<RequestedStageRef>): Set<number> {
+  const out = new Set<number>();
+  if (stages.length === 0) return out;
+  const bound = bindQuantityDetailed(text, stages.map((s) => ({ index: s.index, title_ar: s.title_ar, deliver: false })));
+  if (bound?.named) out.add(bound.index);
+  const asks = perParentQuantities(text);
+  const childCount = stages.filter((s) => s.parent_key !== null).length;
+  for (const s of stages) {
+    const own = ownTitleWords(s.title_ar);
+    if (asks.some((q) => own.some((w) => sameNounStem(w, q.noun!)))) out.add(s.index);
+    else if (s.parent_key !== null && perParentAskFor(asks, s.title_ar, childCount) !== null) out.add(s.index);
+  }
+  return out;
 }
 
 /** The same, without `named` (the stage and the value). */

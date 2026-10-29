@@ -5,7 +5,8 @@ import { classifyRows, searchQueryOf, validateRelevanceSpec, type RelevanceSpec 
 import { minimumLineAr, type MissionPricingSettings } from "../missionPricing";
 import { checkCustomerLabel, checkCustomerText } from "./text";
 import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type SourceField } from "./fields";
-import { bindQuantity, bindQuantityDetailed, countedQuantities, ownTitleWords, perParentAskFor, perParentQuantities, sameNounStem, unservedPerParentAsks } from "./quantity";
+import { roleLineAr, roleOfNoun, type RoleKey } from "./roles";
+import { bindQuantity, bindQuantityDetailed, countedQuantities, ownTitleWords, perParentAskFor, perParentAskOf, perParentQuantities, requestedStageIndexes, sameNounStem, unservedPerParentAsks } from "./quantity";
 import { itemNounOf } from "./itemNoun";
 import { isTextItemStage, textKeyOf } from "./contract";
 import { childCardTitleAr, childRuleLinesAr } from "./childItems";
@@ -72,6 +73,8 @@ export interface ProposedStage {
   filters?: StageFilter[];
   /** Only when the model proposes FEWER items than the customer asked for: one Arabic sentence, with no number, saying why (the card shows it). Without it the customer's quantity is the target. */
   target_reason_ar?: string;
+  /** Set by code from the request's own noun («اتنين من المديرين»): the people of each parent are ranked by the job title the source gives, the matching ones first (roles.ts). Never a filter: the count is always completed. */
+  role_preference?: { role: RoleKey };
   /** Columns the customer switched off in the plan editor (kept so they can be switched back on). */
   hidden_columns?: PlanColumn[];
 }
@@ -209,6 +212,24 @@ export function childPromiseIssues(sentences: ReadonlyArray<{ where: string; tex
   return issues;
 }
 
+/**
+ * THE DELIVERED STAGES, THE HEADLINE AND THE TOTAL AGREE (checked on the finished plan, by code, never left to the model):
+ *  (1) a stage whose items the customer asked for (`requested`: the counted noun and every per-parent noun of the request) is never an intermediate stage: the plan loop delivers it, this refuses a plan where one slipped through;
+ *  (2) the headline sentence the card shows states a count only when that count is in the file: a number equal to the target of an intermediate stage (and of no delivered one) promises items the file does not hold.
+ * The card's «المجموع في ملفك» is the sum of the delivered stages' targets (`stagesView`), which is what the price is built on, so with (1) and (2) the three say the same.
+ */
+export function deliveryConsistencyIssues(stages: ReadonlyArray<Pick<PricedStage, "key" | "title_ar" | "planned_rows" | "deliver">>, summaryAr: string, requested: ReadonlySet<number>): string[] {
+  const issues: string[] = [];
+  stages.forEach((s, i) => { if (requested.has(i) && !s.deliver) issues.push(`stage «${s.key}» (${s.title_ar}) is an intermediate stage, but the customer asked for its items: they must be delivered in their own sheet (deliver: true)`); });
+  const deliveredCounts = new Set(stages.filter((s) => s.deliver).map((s) => s.planned_rows));
+  const titles = stages.map((s) => s.title_ar);
+  for (const q of countedQuantities(firstSentenceAr(summaryAr), titles)) {
+    const hidden = stages.find((s) => !s.deliver && s.planned_rows === q.value);
+    if (hidden && !deliveredCounts.has(q.value)) issues.push(`summary_ar promises ${q.value} items of «${hidden.title_ar}», which is an intermediate stage and is not in the customer's file: deliver that stage or leave the count out of the sentence`);
+  }
+  return issues;
+}
+
 export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCheck {
   const issues: string[] = [];
   if (!isRecord(input)) return { ok: false, issues: ["the plan must be an object"] };
@@ -228,13 +249,16 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
   let quantity: PlanQuantity | undefined;
   // what the request asks PER PARENT item (the steps that hang on another step): read by code, never by the model
   const perParentAsks = perParentQuantities(`${lookup.requestText ?? ""} ${lookup.answerText ?? ""}`);
+  // THE STAGES WHOSE ITEMS THE CUSTOMER ASKED FOR (the counted noun and every per-parent noun) ARE DELIVERED, whatever the model marked: only items nobody asked for may be an intermediate stage (checked again below, on the finished plan)
+  const stageRefs = stagesIn.map((st, index) => ({ index, title_ar: isRecord(st) ? String(st.title_ar ?? "") : "", parent_key: isRecord(st) && st.parent_key !== null && st.parent_key !== undefined && st.parent_key !== "" ? String(st.parent_key) : null }));
+  const requestedStages = new Set<number>([...requestedStageIndexes(quantityText, stageRefs), ...requestedStageIndexes(`${lookup.requestText ?? ""} ${lookup.answerText ?? ""}`, stageRefs)]);
   /** How much the quantity changed the rows of a stage: the stages that hang on it follow in proportion. */
   const rowScale = new Map<string, number>();
 
   for (let i = 0; i < stagesIn.length; i += 1) {
     const given = stagesIn[i];
-    // THE ITEMS THE CUSTOMER COUNTED ARE DELIVERED: «هات ٥ فيديوهات ... ومن كل فيديو ١٠ تعليقات» asks for the videos too; a stage the model kept as an intermediate one is delivered by code
-    const raw = isRecord(given) && bound?.named && bound.index === i && given.deliver !== true ? { ...given, deliver: true } : given;
+    // THE ITEMS THE CUSTOMER ASKED FOR ARE DELIVERED: «هات ٥ فيديوهات ... ومن كل فيديو ١٠ تعليقات» asks for the videos AND the comments, «ومن كل شركة اتنين من المديرين» for the people; a stage the model kept as an intermediate one is delivered by code
+    const raw = isRecord(given) && (requestedStages.has(i) || (bound?.named && bound.index === i)) && given.deliver !== true ? { ...given, deliver: true } : given;
     if (!isRecord(raw)) { issues.push(`stage ${i + 1} is not an object`); continue; }
     const key = String(raw.key ?? "");
     const label = `stage «${key || i + 1}»`;
@@ -273,6 +297,9 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
     // THE CUSTOMER'S NUMBER PER PARENT («مع كل بوست ١٠ تعليقات») is the stage's per-parent number whatever the model wrote, and the stage's target is parents x that number: every parent is read up to it. The model cannot lower it (the card would promise less
     // than was asked); what the source really gives is told at the end, per parent, from the data.
     const askedPerParent = isChild ? perParentAskFor(perParentAsks, title.text, stagesIn.filter((x) => isRecord(x) && x.parent_key !== null && x.parent_key !== undefined && x.parent_key !== "").length) : null;
+    // THE ROLE THE CUSTOMER NAMED among the people of each parent («اتنين من المديرين»): code ranks them by the job title the source gives
+    const askedOf = isChild ? perParentAskOf(perParentAsks, title.text, stagesIn.filter((x) => isRecord(x) && x.parent_key !== null && x.parent_key !== undefined && x.parent_key !== "").length) : null;
+    const roleOf = askedOf ? roleOfNoun(askedOf.of ?? askedOf.noun) : null;
     if (parentKey !== null) {
       if (!planned.has(parentKey)) issues.push(`${label}: parent «${parentKey}» must be an EARLIER stage`);
 
@@ -445,6 +472,7 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
     priced.push({
       key, title_ar: title.text, endpoint_id: endpointId, expected_rows: rowsHere, parent_key: parentKey,
       ...(parentKey !== null ? { per_parent_rows: perHere } : {}),
+      ...(roleOf ? { role_preference: { role: roleOf.key } } : {}),
       deliver: raw.deliver === true, columns: cleanColumns, sample_rows: samples.filter(isRecord).slice(0, MAX_SAMPLE_ROWS_PER_STAGE),
       measured_by: measuredBy, ...(how ? { how_ar: how.text } : {}),
       planned_rows: rowsHere, measured_cost_per_row_usd: costPerRow ?? 0, measured_from_calls: measuredBy,
@@ -516,6 +544,7 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
   const titles = priced.map((st) => st.title_ar);
   for (const sentence of sentences) for (const q of countedQuantities(sentence.text, titles)) if (!targets.has(q.value)) issues.push(`${sentence.where}: it states the number ${q.value}, which is not a target of the plan (${[...targets].join(", ")}); the card states the counts itself: write the sentence without a count, or with the plan's own`);
   const delivered = priced.filter((s) => s.deliver).reduce((n, s) => n + s.planned_rows, 0);
+  issues.push(...deliveryConsistencyIssues(priced, summary.text, requestedStages));
   if (delivered > AGENT_MAX_DELIVERED_ROWS) issues.push(`the delivered rows (${delivered}) are more than the limit of ${AGENT_MAX_DELIVERED_ROWS}; lower the expected rows`);
   if (issues.length) return { ok: false, issues };
 
@@ -607,12 +636,23 @@ export function assumptionLinesOf(plan: Pick<PricedPlan, "stages" | "assumptions
   return [...base, ...scoped];
 }
 
+/** One line per delivered people stage that prefers a role: what is preferred and that fewer matching people may come (roles.ts). */
+export function roleLinesAr(stages: ReadonlyArray<Pick<PricedStage, "key" | "title_ar" | "parent_key" | "deliver" | "role_preference">>): string[] {
+  const lines: string[] = [];
+  for (const s of stages) {
+    if (!s.deliver || !s.role_preference || s.parent_key === null) continue;
+    const parent = stages.find((p) => p.key === s.parent_key);
+    lines.push(roleLineAr(s.role_preference.role, parent ? itemNounOf(parent.title_ar).singular : "عنصر"));
+  }
+  return [...new Set(lines)];
+}
+
 /** The part of a priced plan a customer (and the admin page's customer view) may read: Arabic titles, rows, links between stages, readable columns and sample rows, the price in points, the expected time. No endpoint, no USD, no internal id. */
 export function customerPlanView(plan: PricedPlan) {
   // what the card promises about the items is backed by the filters that are switched ON: a line of the model that promises one is shown only while its filter is on, and a filter that is on gets its own sentence, built by code
   const assumptions = assumptionLinesOf(plan);
   // fewer than the customer asked for: the reason the card shows next to the one target number
-  const notes = [...(plan.notes_ar ?? []), ...(plan.quantity?.reason_ar ? [plan.quantity.reason_ar] : []), ...childRuleLinesAr(plan.stages), ...platformCostNotesAr(plan.stages)];
+  const notes = [...(plan.notes_ar ?? []), ...(plan.quantity?.reason_ar ? [plan.quantity.reason_ar] : []), ...childRuleLinesAr(plan.stages), ...roleLinesAr(plan.stages), ...platformCostNotesAr(plan.stages)];
   return {
     summary_ar: firstSentenceAr(plan.summary_ar),
     ...(notes.length ? { notes_ar: notes } : {}),

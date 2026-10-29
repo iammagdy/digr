@@ -4,6 +4,17 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-29, after #294): fix mission 8 (the children of a request are delivered)
+
+`main` before it was `82938c7d38f75a5b7b8dfb6bfb1b4d1605c543d2` (#294); its merge commit is the head of `main` after it. Evidence, root cause, the arithmetic for both live plans, tests and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 12. No SQL written or applied; no Edge Function changed; no price, cap or model string changed.
+
+- **Live: 5 videos / 3 companies delivered, their comments / managers collected and not delivered, 200 charged.** #294 forced only the PARENT stage; the model's `deliver: false` on the child stage was believed. Now every stage whose noun the request asks for (the counted noun and every per-parent noun) is delivered by code (`requestedStageIndexes`), the plan check refuses a plan where one is intermediate or where the headline promises a count the file does not hold (`deliveryConsistencyIssues`), and the card total, the price's delivered rows and the delivered stages are one number.
+- **Why #294's tests passed**: their fake model marked the comments `deliver: true`. `tests/live-run-8-replay.test.ts` uses a fake model that marks the child stage intermediate, as the real one did (it fails on main).
+- **Managers**: a per-parent role noun («المديرين») ranks each company's people by the job title the source gives (`roles.ts`, engine `run.ts`), matching titles first, never excluding, never inventing a title; one card line says fewer matching people may come.
+- Settlement unchanged. Rollback: `git revert -m 1 <merge commit>`.
+
+---
+
 ## START HERE (2026-10-29, after #293): fix mission 7 (per-parent numbers, named parents, government bodies, the people of a company)
 
 `main` before it was `28bd5fd05fb78aadbfbf3a4c7d6b361e83ca5f8a` (#293); its merge commit is the head of `main` after it. Evidence, root causes 1-4, the settlement arithmetic, tests and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 11. No SQL written or applied; no Edge Function changed; no price, cap or model string changed.

@@ -2,6 +2,7 @@ import { AGENT_COLLECT_MAX_PAGES } from "../../../src/lib/agentMission/constants
 import type { EngineSpec, PricedPlan } from "../../../src/lib/agentMission/plan";
 import type { Gateway } from "../gateway";
 import { RAW_PATH } from "../gateway";
+import { rankPeopleByRole } from "../../../src/lib/agentMission/roles";
 import { drainPending, emitStageProgress, ingestRows } from "../items/ingest";
 import type { ItemStore, Row, StopReason } from "../items/itemStore";
 import type { Reviewer } from "../review";
@@ -156,7 +157,9 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     let rows: unknown;
     try { rows = JSON.parse(mapped.resultJson); } catch { rows = null; }
     if (!Array.isArray(rows)) return mapFailed();
-    const incoming: Row[] = rows.filter(isObject).map((r) => (parentId !== null ? { ...r, parent_id: parentId } : r));
+    // THE ROLE THE CUSTOMER NAMED among the people of a parent: the people whose job title names it come first (roles.ts), so the parent's share is taken from the top; the page's order is kept inside each group, and a page with no title field is untouched
+    const ranked = parentId !== null && stage.role_preference ? rankPeopleByRole(rows.filter(isObject), stage.role_preference.role).rows : rows.filter(isObject);
+    const incoming: Row[] = ranked.map((r) => (parentId !== null ? { ...r, parent_id: parentId } : r));
     const nextCursor = pageMode ? (result.rows_in_page > 0 ? String((cursor !== null ? Number(cursor) : Number(params.page)) + 1) : null) : result.next_cursor ?? null;
     const ended = pageMode ? result.rows_in_page === 0 : !nextCursor || result.rows_in_page === 0 || result.has_more === false || !spec.cursor_param;
     const before = items.counts(stage.key).accepted;
