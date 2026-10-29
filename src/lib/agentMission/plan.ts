@@ -5,13 +5,14 @@ import { classifyRows, searchQueryOf, validateRelevanceSpec, type RelevanceSpec 
 import { minimumLineAr, type MissionPricingSettings } from "../missionPricing";
 import { checkCustomerLabel, checkCustomerText } from "./text";
 import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type SourceField } from "./fields";
-import { bindQuantity, countedQuantities } from "./quantity";
+import { bindQuantity, countedQuantities, ownTitleWords, perParentAskFor, perParentQuantities, sameNounStem, unservedPerParentAsks } from "./quantity";
+import { itemNounOf } from "./itemNoun";
 import { isTextItemStage, textKeyOf } from "./contract";
 import { childCardTitleAr, childRuleLinesAr } from "./childItems";
 import { platformCostNotesAr } from "./platformNotes";
-import { isCompanyStage, isEntityStage, requestNamesSector, sectorWordsOf } from "./entities";
+import { isCompanyStage, isEntityStage, requestNamesSector, sectorEnglishWords, sectorWordsOf } from "./entities";
 import { placeEntry, placeLabelsAr, placesInText } from "./places";
-import { assumptionLinesShown, CHILD_RAW_FILTER_KINDS, defaultLanguageOf, filterVerdict, filterLabelAr, filterLineAr, findFilterFields, isEnabled, parseFilters, promiseIssues, resolveFilters, type StageFilter } from "./filters";
+import { assumptionLinesShown, CHILD_RAW_FILTER_KINDS, defaultLanguageOf, filterVerdict, filterLabelAr, filterLineAr, findFilterFields, isEnabled, kindsPromisedBy, parseFilters, promiseIssues, resolveFilters, type StageFilter } from "./filters";
 
 /**
  * A mission PLAN: stages (a stage runs once per row of its parent stage), the rows each is expected to give, sample rows the agent really saw, and the calls that MEASURED the cost.
@@ -137,6 +138,15 @@ export interface PricedPlan {
   price: MissionPriceResult;
   /** THE CUSTOMER'S QUANTITY, read by code from their words (or set by them in the plan editor): the target of the stage that counts it. `target` equals `requested` unless the model proposed fewer, with a reason the card shows. */
   quantity?: PlanQuantity;
+  /** A step the customer asked for that the plan does not carry out (the managers of each company): what it is and why, shown on the card BEFORE approval. The customer approves the rest or edits the request; a step is never dropped silently. */
+  unserved_steps?: UnservedStep[];
+}
+
+export interface UnservedStep {
+  /** The step as the customer asked for it («من كل شركة اتنين من المديرين»), built by code from the request. */
+  what_ar: string;
+  /** Why the plan cannot serve it (one Arabic sentence, no number): the model's, checked by code. */
+  reason_ar: string;
 }
 
 export interface PlanQuantity {
@@ -173,6 +183,27 @@ function sampleRowIssues(row: Record<string, unknown>, evidence: string, stageKe
   return issues;
 }
 
+/** A sentence that promises a language or a topic. */
+const CHILD_FILTER_PROMISE = /عربي(?:ة|ا|ًا)?(?![\u0621-\u064A])|بالعربية|باللغة|إنجليزي|انجليزي|الإنجليزية|الانجليزية|متعلق|ذات\s+(?:ال)?صلة|تتعلق|تخص|مطابق|عن\s+(?:ال)?موضوع/;
+/** A sentence that says the items are delivered as they are. */
+const RAW_STATEMENT = /دون\s+(?:أي\s+)?(?:تصفية|فلترة|تصفيه)|كما\s+(?:هي|يعطيها|يعرضها|تعرضها|يقدمها|تظهر)|بلا\s+(?:تصفية|فلترة)/;
+
+/**
+ * THE ITEMS OF A CHILD STAGE ARE DELIVERED RAW, so no sentence of the card may promise a language or a topic for them. A sentence that names the child items (the words of the child stage's title) and promises a language or a topic is refused with the way to fix it:
+ * say the language of the PARENTS («الفيديوهات بالعربية») in one sentence and the children in another («التعليقات كما يعطيها المصدر»).
+ */
+export function childPromiseIssues(sentences: ReadonlyArray<{ where: string; text: string }>, childTitles: ReadonlyArray<string>): string[] {
+  if (childTitles.length === 0) return [];
+  const childWords = childTitles.flatMap((t) => ownTitleWords(t));
+  const issues: string[] = [];
+  for (const s of sentences) {
+    if (RAW_STATEMENT.test(s.text) || !CHILD_FILTER_PROMISE.test(s.text)) continue;
+    const words = s.text.split(/[\s،,.؛:()«»"'؟?!]+/).filter(Boolean);
+    if (words.some((w) => childWords.some((c) => sameNounStem(c, w) || sameNounStem(c, w.replace(/^و(?=.{3,})/, ""))))) issues.push(`${s.where}: it promises a language or a topic for the child items (${childTitles.join("، ")}); the child items are delivered exactly as the source gives them, with no language or topic rule. Say the language or the topic of the PARENTS only, in its own sentence, and say of the children only that they come as the source gives them`);
+  }
+  return issues;
+}
+
 export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCheck {
   const issues: string[] = [];
   if (!isRecord(input)) return { ok: false, issues: ["the plan must be an object"] };
@@ -190,6 +221,8 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
   const quantityText = lookup.answerText && bindQuantity(lookup.answerText, refs) ? lookup.answerText : lookup.requestText ?? "";
   const bound = quantityText ? bindQuantity(quantityText, refs) : null;
   let quantity: PlanQuantity | undefined;
+  // what the request asks PER PARENT item (the steps that hang on another step): read by code, never by the model
+  const perParentAsks = perParentQuantities(`${lookup.requestText ?? ""} ${lookup.answerText ?? ""}`);
   /** How much the quantity changed the rows of a stage: the stages that hang on it follow in proportion. */
   const rowScale = new Map<string, number>();
 
@@ -229,16 +262,22 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
       }
     } else if (reasonIn && reasonIn.issues.length) issues.push(`${label} target_reason_ar: ${reasonIn.issues.join("; ")}`);
     const isChild = parentKey !== null;
+    let perHere = Number(raw.per_parent_rows);
+    // THE CUSTOMER'S NUMBER PER PARENT («مع كل بوست ١٠ تعليقات») is the stage's per-parent number whatever the model wrote, and the stage's target is parents x that number: every parent is read up to it. The model cannot lower it (the card would promise less
+    // than was asked); what the source really gives is told at the end, per parent, from the data.
+    const askedPerParent = isChild ? perParentAskFor(perParentAsks, title.text, stagesIn.filter((x) => isRecord(x) && x.parent_key !== null && x.parent_key !== undefined && x.parent_key !== "").length) : null;
     if (parentKey !== null) {
       if (!planned.has(parentKey)) issues.push(`${label}: parent «${parentKey}» must be an EARLIER stage`);
 
-      const per = Number(raw.per_parent_rows);
+      const per = askedPerParent ?? Number(raw.per_parent_rows);
+      perHere = per;
       if (!Number.isInteger(per) || per < 1) issues.push(`${label}: a stage with a parent needs per_parent_rows (a whole number, at least 1)`);
       else if (planned.has(parentKey)) {
         const ceiling = planned.get(parentKey)! * per;
+        if (askedPerParent !== null && quantity?.stage_key !== key) rowsHere = ceiling;
         // a stage that hangs on a parent whose rows the quantity changed follows it in proportion (never above what the parent can give)
         const ratio = rowScale.get(parentKey);
-        if (ratio !== undefined && rowsHere >= 1 && quantity?.stage_key !== key) { const scaled = Math.max(1, Math.min(ceiling, Math.round(rowsHere * ratio))); rowScale.set(key, scaled / rowsHere); rowsHere = scaled; }
+        if (ratio !== undefined && rowsHere >= 1 && quantity?.stage_key !== key && askedPerParent === null) { const scaled = Math.max(1, Math.min(ceiling, Math.round(rowsHere * ratio))); rowScale.set(key, scaled / rowsHere); rowsHere = scaled; }
         if (rowsHere > ceiling) issues.push(`${label}: ${quantity?.stage_key === key ? "the customer asked for" : "expected_rows is"} ${rowsHere}, more than its parent can give (${planned.get(parentKey)} parent rows x ${per} = ${ceiling}); ${quantity?.stage_key === key ? "raise the parent stage's expected_rows or per_parent_rows, or give target_reason_ar (one sentence, no number) when the source cannot give that many" : "lower it"}`);
       }
     }
@@ -340,7 +379,7 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
       // name and description columns; a company it cannot place in the sector, or that looks like an event or a publication, goes to the model check, never straight to delivery
       const words = sectorWordsOf(requestWords).slice(0, 4);
       const named = cleanColumns.filter((c) => /name|title|desc|about|industry|sector|summary|text|company/i.test(c.key)).map((c) => c.key).slice(0, 3);
-      relevance = { subject_ar: `شركات ${words.slice(0, 3).join(" ")}`, terms: [...new Set(words.flatMap((w) => [w, w.replace(/ات$/, "ة")]))].slice(0, 8), text_columns: named.length > 0 ? named : [cleanColumns[0].key], min_own_words: 0, review: true, entity: true };
+      relevance = { subject_ar: `شركات ${words.slice(0, 3).join(" ")}`, terms: [...new Set(words.flatMap((w) => [w, w.replace(/ات$/, "ة"), ...sectorEnglishWords(w)]))].slice(0, 14), text_columns: named.length > 0 ? named : [cleanColumns[0].key], min_own_words: 0, review: true, entity: true };
     } else if (foundBySearch && raw.deliver === true && !isChild) {
       issues.push(`${label}: its rows were found by a text search, so it needs \`relevance\` (subject_ar, terms, context_terms, exclude_terms, text_columns) and \`yield_from\`: code keeps only the rows that are ABOUT what the customer asked and charges only for those`);
     }
@@ -393,7 +432,7 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
 
     priced.push({
       key, title_ar: title.text, endpoint_id: endpointId, expected_rows: rowsHere, parent_key: parentKey,
-      ...(parentKey !== null ? { per_parent_rows: Number(raw.per_parent_rows) } : {}),
+      ...(parentKey !== null ? { per_parent_rows: perHere } : {}),
       deliver: raw.deliver === true, columns: cleanColumns, sample_rows: samples.filter(isRecord).slice(0, MAX_SAMPLE_ROWS_PER_STAGE),
       measured_by: measuredBy, ...(how ? { how_ar: how.text } : {}),
       planned_rows: rowsHere, measured_cost_per_row_usd: costPerRow ?? 0, measured_from_calls: measuredBy,
@@ -404,6 +443,24 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
   }
 
   if (!priced.some((s) => s.deliver)) issues.push("at least one stage must be delivered (deliver: true)");
+  // A STEP THE CUSTOMER ASKED FOR THAT THE PLAN DOES NOT HAVE is never dropped silently («ومن كل شركة اتنين من المديرين» with a plan of companies only): the plan carries it as a stage, or says which step it leaves out and why, and the card shows that
+  // BEFORE the customer approves. A per-parent number whose noun is the noun of a top-level stage is a split of that stage's total («١٠ تغريدات لكل لاعب»), not a step of its own.
+  const topTitles = priced.filter((s) => s.parent_key === null).map((s) => s.title_ar);
+  const stepAsks = perParentAsks.filter((q) => !topTitles.some((t) => ownTitleWords(t).some((w) => sameNounStem(w, q.noun!))));
+  const missingAsks = unservedPerParentAsks(stepAsks, priced.filter((s) => s.parent_key !== null).map((s) => s.title_ar));
+  const unserved: UnservedStep[] = [];
+  if (missingAsks.length > 0) {
+    const given = Array.isArray(input.unserved_steps) ? input.unserved_steps : [];
+    const parentNoun = itemNounOf(topTitles[0] ?? "").singular;
+    missingAsks.forEach((q, i) => {
+      const what = `${q.noun} لكل ${parentNoun}`;
+      const g = isRecord(given[i]) ? given[i] : null;
+      const reason = g && g.reason_ar !== undefined ? checkCustomerText(g.reason_ar, { maxChars: 200 }) : null;
+      if (!reason) issues.push(`the customer asked for a step the plan does not have: «${what}» (${q.value} per ${parentNoun}). Add a stage for it (parent_key = the stage of the ${parentNoun}, per_parent_rows ${q.value}) after sampling a source that gives it, or, when no source can, pass unserved_steps: [{reason_ar}] (one Arabic sentence, no number, saying honestly why this step is not in the plan; one entry per missing step, in the request's order). The customer is shown the missing step BEFORE approving; it is never dropped silently`);
+      else if (reason.issues.length || /[0-9٠-٩]/.test(reason.text)) issues.push(`unserved_steps[${i}].reason_ar: ${[...reason.issues, ...(/[0-9٠-٩]/.test(reason.text) ? ["no number in the reason"] : [])].join("; ")}`);
+      else unserved.push({ what_ar: what, reason_ar: reason.text });
+    });
+  }
   // the customer asked for work e-mails or phones: the plan needs a contact stage (a contact source, or a column of verified contact values), or one honest sentence saying why it cannot
   const notes: string[] = [];
   const wants = requestWantsContacts(lookup.requestText);
@@ -430,6 +487,7 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
   // THE CARD DOES NOT PROMISE WHAT NO CODE CHECKS, AND STATES ONE NUMBER: a sentence of the model that promises replies out, a language, a period, an account or a place needs the filter that enforces it; a count it states is the plan's target
   const sentences = [{ where: "summary_ar", text: summary.text }, ...priced.filter((st) => st.how_ar).map((st) => ({ where: `stage «${st.key}» how_ar`, text: st.how_ar! })), ...assumptions.map((a) => ({ where: "assumptions_ar", text: a }))];
   issues.push(...promiseIssues(sentences, priced.map((st) => ({ key: st.key, filters: st.filters, hasRelevance: Boolean(st.relevance) }))));
+  issues.push(...childPromiseIssues(sentences, priced.filter((st) => st.parent_key !== null).map((st) => st.title_ar)));
   const targets = new Set<number>(priced.flatMap((st) => [st.planned_rows, ...(st.per_parent_rows ? [st.per_parent_rows] : [])]));
   const titles = priced.map((st) => st.title_ar);
   for (const sentence of sentences) for (const q of countedQuantities(sentence.text, titles)) if (!targets.has(q.value)) issues.push(`${sentence.where}: it states the number ${q.value}, which is not a target of the plan (${[...targets].join(", ")}); the card states the counts itself: write the sentence without a count, or with the plan's own`);
@@ -439,7 +497,7 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
 
   const price = priceMissionByCode(stagePriceInputs(priced), { settings: lookup.pricingSettings });
   if (price.overCap) return { ok: false, issues: [`the mission would hold ${price.reservePoints} points, more than the job limit; lower the expected rows`] };
-  return { ok: true, plan: { summary_ar: summary.text, stages: priced, price, ...(notes.length ? { notes_ar: notes } : {}), ...(assumptions.length ? { assumptions_ar: assumptions } : {}), ...(quantity ? { quantity } : {}) } };
+  return { ok: true, plan: { summary_ar: summary.text, stages: priced, price, ...(notes.length ? { notes_ar: notes } : {}), ...(assumptions.length ? { assumptions_ar: assumptions } : {}), ...(quantity ? { quantity } : {}), ...(unserved.length ? { unserved_steps: unserved } : {}) } };
 }
 
 /** The first sentence of a text: the customer card says what will be delivered in ONE sentence. */
@@ -498,10 +556,37 @@ export function planEditorView(plan: PricedPlan): PlanEditorView {
   };
 }
 
+const LANGUAGE_NAME_AR = { ar: "اللغة العربية فقط", en: "اللغة الإنجليزية فقط" } as const;
+const withArticle = (word: string): string => (word.startsWith("ال") ? word : `ال${word}`);
+
+/** The sentence about a step the customer asked for and the plan leaves out, built here from the step and the reason, shown on the card before approval. */
+export const unservedStepLineAr = (u: UnservedStep): string => `لم تُضَف إلى الخطة خطوة «${u.what_ar}»: ${u.reason_ar.replace(/[.،\s]+$/, "")}. يمكنك اعتماد باقي الخطة كما هي، أو تعديل طلبك قبل الاعتماد.`;
+
+/**
+ * THE ASSUMPTION LINES OF THE CARD. The language and the topic are rules for choosing the PARENTS and the top-level items; the items of a child stage (comments, replies, reviews, employees) are delivered as the source gives them. So in a plan with a child stage a line
+ * about the language is never stated for the whole plan: the model's own line about it is replaced by one built here that names the items it applies to («اللغة العربية فقط تُطبَّق على التغريدات وحدها، أما الردود فتُسلَّم كما هي»).
+ */
+export function assumptionLinesOf(plan: Pick<PricedPlan, "stages" | "assumptions_ar">): string[] {
+  const filters = plan.stages.flatMap((s) => s.filters ?? []);
+  const childOf = (s: { key: string }) => plan.stages.find((c) => c.parent_key === s.key && c.deliver) ?? plan.stages.find((c) => c.parent_key === s.key);
+  if (!plan.stages.some((s) => s.parent_key !== null)) return assumptionLinesShown(plan.assumptions_ar ?? [], filters);
+  const kept = (plan.assumptions_ar ?? []).filter((line) => !kindsPromisedBy(line).includes("language"));
+  const base = assumptionLinesShown(kept, filters.filter((f) => f.kind !== "language"));
+  const scoped: string[] = [];
+  for (const s of plan.stages) {
+    const language = (s.filters ?? []).find((f) => f.kind === "language" && isEnabled(f));
+    if (!language) continue;
+    const name = LANGUAGE_NAME_AR[language.lang === "en" ? "en" : "ar"];
+    const child = childOf(s);
+    scoped.push(child ? `${name} تُطبَّق على ${withArticle(itemNounOf(s.title_ar).plural)} وحدها، أما ${withArticle(itemNounOf(child.title_ar).plural)} فتُسلَّم كما هي.` : filterLineAr(language));
+  }
+  return [...base, ...scoped];
+}
+
 /** The part of a priced plan a customer (and the admin page's customer view) may read: Arabic titles, rows, links between stages, readable columns and sample rows, the price in points, the expected time. No endpoint, no USD, no internal id. */
 export function customerPlanView(plan: PricedPlan) {
   // what the card promises about the items is backed by the filters that are switched ON: a line of the model that promises one is shown only while its filter is on, and a filter that is on gets its own sentence, built by code
-  const assumptions = assumptionLinesShown(plan.assumptions_ar ?? [], plan.stages.flatMap((s) => s.filters ?? []));
+  const assumptions = assumptionLinesOf(plan);
   // fewer than the customer asked for: the reason the card shows next to the one target number
   const notes = [...(plan.notes_ar ?? []), ...(plan.quantity?.reason_ar ? [plan.quantity.reason_ar] : []), ...childRuleLinesAr(plan.stages), ...platformCostNotesAr(plan.stages)];
   return {
@@ -509,6 +594,7 @@ export function customerPlanView(plan: PricedPlan) {
     ...(notes.length ? { notes_ar: notes } : {}),
     ...(assumptions.length ? { assumptions_ar: assumptions } : {}),
     ...(plan.quantity ? { quantity: { requested: plan.quantity.requested, target: plan.quantity.target, stage_key: plan.quantity.stage_key } } : {}),
+    ...(plan.unserved_steps && plan.unserved_steps.length > 0 ? { unserved_ar: plan.unserved_steps.map(unservedStepLineAr) } : {}),
     stages: plan.stages.map((s) => {
       const columns = s.columns.filter((c) => !isInternalColumn(c));
       return {

@@ -14,3 +14,15 @@ export function parentCountsOf(plan: PricedPlan, rowsByStage: Record<string, Arr
   });
   return out;
 }
+
+/**
+ * HOW MANY PARENTS GAVE LESS THAN THE CUSTOMER'S NUMBER PER PARENT: for a child stage with a per-parent number, the parents read that have fewer children than that number in the file (a video with six comments when ten were asked). It is the real reason a child
+ * stage falls short while every parent was read: the source has no more for that parent. Zero when the stage has no parent or no per-parent number.
+ */
+export function parentsBelowShare(plan: PricedPlan, stageKey: string, rowsByStage: Record<string, Array<Record<string, unknown>>>): number {
+  const stage = plan.stages.find((s) => s.key === stageKey);
+  if (!stage || stage.parent_key === null || !stage.per_parent_rows) return 0;
+  const counts = new Map<string, number>();
+  for (const r of rowsByStage[stage.key] ?? []) counts.set(String(r.parent_id ?? ""), (counts.get(String(r.parent_id ?? "")) ?? 0) + 1);
+  return (rowsByStage[stage.parent_key] ?? []).filter((p) => (counts.get(String(p.id)) ?? 0) < stage.per_parent_rows!).length;
+}

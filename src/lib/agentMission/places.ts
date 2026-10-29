@@ -115,6 +115,16 @@ export const PLACE_SITE_KEY = /(^|_)(website|domain|site|url|link|company_url|we
 export const PLACE_PHONE_KEY = /(^|_)(phone|tel|telephone|mobile|phone_number)$/i;
 export const isPlaceEvidenceKey = (k: string): boolean => PLACE_TEXT_KEY.test(k) || PLACE_SITE_KEY.test(k) || PLACE_PHONE_KEY.test(k);
 
+/** A COUNTRY FIELD often holds the ISO code and nothing else («EG», «EGY»): a company source that was asked for Egypt answers `country: "EG"`. The code names the country; it is read only in a field that is a country field (a «state» of «CA» is not Canada). */
+const ISO3: Record<string, string> = { EG: "EGY", SA: "SAU", AE: "ARE", KW: "KWT", QA: "QAT", BH: "BHR", OM: "OMN", JO: "JOR", LB: "LBN", SY: "SYR", IQ: "IRQ", PS: "PSE", LY: "LBY", TN: "TUN", DZ: "DZA", MA: "MAR", SD: "SDN", YE: "YEM", TR: "TUR", US: "USA", GB: "GBR", DE: "DEU", FR: "FRA", LU: "LUX", IT: "ITA", ES: "ESP", NL: "NLD", CH: "CHE", CY: "CYP", IN: "IND", CN: "CHN", CA: "CAN" };
+const COUNTRY_FIELD_KEY = /(^|_)(country|country_code|country_name|nation|countrycode)$/i;
+const isoCountryOf = (value: string): string | null => {
+  const t = value.trim().toUpperCase();
+  if (/^[A-Z]{2}$/.test(t)) return countryOf.has(t) ? t : null;
+  if (/^[A-Z]{3}$/.test(t)) return Object.keys(ISO3).find((c) => ISO3[c] === t) ?? null;
+  return null;
+};
+
 export type PlaceVerdict = "pass" | "other_place" | "no_evidence";
 
 /**
@@ -146,6 +156,8 @@ export function placeVerdict(placeKeys: ReadonlyArray<string>, mapped: Record<st
       if (tld) { if (wantedWholeCountries.some((e) => countryOf.get(e.country)!.tlds.includes(tld))) weakPositive = true; else if (COUNTRIES.some((c) => !wantedCountries.has(c.code) && c.tlds.includes(tld))) weakNegative = true; }
       continue;
     }
+    const iso = COUNTRY_FIELD_KEY.test(field) ? isoCountryOf(raw) : null;
+    if (iso) { if (wantedWholeCountries.some((e) => e.country === iso)) textPositive = true; else if (!wantedCountries.has(iso)) textNegative = true; continue; }
     const text = normalizeText(raw);
     if (wanted.some((e) => textHas(e, text))) { textPositive = true; continue; }
     // another country (not one of the wanted ones) named in the text

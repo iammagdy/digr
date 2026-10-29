@@ -5,7 +5,7 @@ import type { commitTregSpend } from "../../src/lib/server/tregCallRecord";
 import type { TregCatalog } from "../../src/lib/treg/catalog";
 import type { AccountAccess } from "../../src/lib/treg/dataPolicy";
 import {
-  AGENT_ERROR_REQUEUES_MAX, AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD, AGENT_EXECUTION_LLM_BUDGET_SHARE, AGENT_MEMORY_REQUEUES_MAX, AGENT_PHASE_STARTS_MAX, AGENT_EXECUTION_MAX_TURNS, AGENT_EXECUTION_WALL_MS, AGENT_PLANNING_LLM_BUDGET_USD,
+  AGENT_ERROR_REQUEUES_MAX, AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD, AGENT_EXECUTION_LLM_BUDGET_SHARE, AGENT_MEMORY_REQUEUES_MAX, AGENT_PHASE_STARTS_MAX, AGENT_RESTART_REQUEUES_MAX, AGENT_EXECUTION_MAX_TURNS, AGENT_EXECUTION_WALL_MS, AGENT_PLANNING_LLM_BUDGET_USD,
   AGENT_PLANNING_MAX_TURNS, AGENT_PLANNING_WALL_MS, AGENT_PRICING_BASIS, AGENT_EXECUTION_CONTINUE_ROUNDS, AGENT_SOURCE_MEASURE_WINDOW_MS,
 } from "../../src/lib/agentMission/constants";
 import { executionBudgetUsd, reviewBudgetUsdFor, reviewCeilingUsdFor } from "../../src/lib/agentMission/price";
@@ -13,7 +13,7 @@ import { MISSION_PRICING_SETTING_KEY, normalizeMissionPricingSettings } from "..
 import { planningBudgetFacts } from "../../src/lib/agentMission/planningBudget";
 import { statsFromCalls } from "../../src/lib/agentMission/sourceRanking";
 import { classifyNoCardEnd, refusalSentenceAr } from "../../src/lib/agentMission/refusal";
-import { parentCountsOf } from "../../src/lib/agentMission/parents";
+import { parentCountsOf, parentsBelowShare } from "../../src/lib/agentMission/parents";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
 import { customerPlanView, requestedRowsOf, type PricedPlan } from "../../src/lib/agentMission/plan";
 import { toArabicDigits } from "../../src/lib/arabicDigits";
@@ -24,19 +24,19 @@ import type { ModelDriver } from "./driver";
 import { createGateway } from "./gateway";
 import { createWebGateway, type ProviderKeyFn } from "./webGateway";
 import { loadSystemPrompt } from "./prompt";
-import { readRunState, updateRunState } from "./runState";
+import { readRunState, updateRunState, type RunState } from "./runState";
 import { buildTools, newRunState, type ToolContext } from "./tools";
 import { ItemStore, type ItemSnapshot, type StopReason } from "./items/itemStore";
 import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
 import { runInSandbox } from "./sandbox";
 import { trackRun, untrackRun } from "./sessions";
-import { countWorkbookSheets, shortfallClauseAr, shortfallFromStopAr } from "./finalize";
+import { childShortfallClauseAr, countWorkbookSheets, shortfallClauseAr, shortfallFromStopAr } from "./finalize";
 import { createReviewer, readReviewState, type ReviewCall } from "./review";
 import type { TokenUsage } from "./llmCost";
 import { buildExcludedAdminCsv, buildMissionFiles, type ExcludedRow } from "./workbook";
 import { missionFileTitleAr } from "../../src/lib/agentMission/fileNames";
-import { itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
+import { itemNounOf, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
 import type { AgentStore, CallRow, MissionRecord } from "./types";
 import type { SandboxResult } from "./sandbox";
 import type { MissionNoticeFacts, MissionNoticeKind } from "../../src/lib/agentMission/notices";
@@ -100,15 +100,36 @@ const clear = { worker_id: null, lease_until: null } as const;
  * `cause` is why: "memory" (the worker stopped the run at the dyno's hard limit) or "error" (the run ended with an exception); each has its own count (run_state.json) and its own limit, after which this returns false and
  * the caller ends the mission honestly. The count is a note: if it cannot be saved the in-process copy still stops a loop.
  */
-async function requeue(deps: RunnerDeps, mission: MissionRecord, status: "queued" | "approved", patch: Record<string, unknown>, cause: "memory" | "error"): Promise<boolean> {
+type RequeueCause = "memory" | "error" | "restart";
+const REQUEUE_LIMIT: Record<RequeueCause, number> = { memory: AGENT_MEMORY_REQUEUES_MAX, error: AGENT_ERROR_REQUEUES_MAX, restart: AGENT_RESTART_REQUEUES_MAX };
+const REQUEUE_COUNTER: Record<RequeueCause, keyof Pick<RunState, "memoryRequeues" | "errorRequeues" | "restartRequeues">> = { memory: "memoryRequeues", error: "errorRequeues", restart: "restartRequeues" };
+const REQUEUE_MESSAGE_AR: Record<RequeueCause, string> = {
+  memory: "تأجّلت مهمتك قليلًا بسبب ضغط على الخدمة، وستُستأنف تلقائيًا من حيث وصلت.",
+  error: "تعثّرت الخطوة الأخيرة مؤقتًا، وستُستأنف مهمتك تلقائيًا من حيث وصلت.",
+  restart: "أُعيد تشغيل الخدمة أثناء العمل على مهمتك، وستُستأنف تلقائيًا من حيث وصلت.",
+};
+
+/**
+ * A RUN THE PLATFORM CUT SHORT: the worker was told to stop (SIGTERM at a deploy: `output.stop === "restart"`), or the model's own process died with that signal (exit code 143, or 137 for SIGKILL) before the worker's handler could say so. It is
+ * never the customer's request that failed: the mission goes back to the queue (planning) or to «approved» with everything it saved (execution), and the next worker takes it.
+ */
+export const endedByRestart = (output: { stop?: string; error?: string }): boolean =>
+  output.stop === "restart" || (output.stop === "error" && /exited with code (?:143|137)\b|\bSIGTERM\b|\bSIGKILL\b|terminated by signal/i.test(String(output.error ?? "")));
+
+/**
+ * PUTS A MISSION BACK IN THE QUEUE: a mission that holds a reserve goes back to «approved» with everything it saved, planning goes back to «queued», with no worker and no lease so any worker takes it.
+ * `cause` is why: "memory" (the worker stopped the run at the dyno's hard limit), "restart" (the platform restarted the worker) or "error" (the run ended with an exception); each has its own count (run_state.json) and its own limit, after which this returns false and
+ * the caller ends the mission honestly. The count is a note: if it cannot be saved the in-process copy still stops a loop.
+ */
+async function requeue(deps: RunnerDeps, mission: MissionRecord, status: "queued" | "approved", patch: Record<string, unknown>, cause: RequeueCause): Promise<boolean> {
   const state = await readRunState(deps.store, mission.id);
-  const used = cause === "memory" ? state.memoryRequeues : state.errorRequeues;
-  const max = cause === "memory" ? AGENT_MEMORY_REQUEUES_MAX : AGENT_ERROR_REQUEUES_MAX;
-  if (used >= max) return false;
-  const next = await updateRunState(deps.store, mission.id, (s) => (cause === "memory" ? { ...s, memoryRequeues: s.memoryRequeues + 1 } : { ...s, errorRequeues: s.errorRequeues + 1 }), deps.log);
+  const counter = REQUEUE_COUNTER[cause];
+  const max = REQUEUE_LIMIT[cause];
+  if (state[counter] >= max) return false;
+  const next = await updateRunState(deps.store, mission.id, (s) => ({ ...s, [counter]: s[counter] + 1 }), deps.log);
   await deps.store.updateMission(mission.id, { ...patch, status, worker_id: null, lease_until: null });
-  const n = cause === "memory" ? next.memoryRequeues : next.errorRequeues;
-  await deps.store.addEvent(mission.id, { kind: "system", message_ar: cause === "memory" ? "تأجّلت مهمتك قليلًا بسبب ضغط على الخدمة، وستُستأنف تلقائيًا من حيث وصلت." : "تعثّرت الخطوة الأخيرة مؤقتًا، وستُستأنف مهمتك تلقائيًا من حيث وصلت.", counts: { requeued: n } });
+  const n = next[counter];
+  await deps.store.addEvent(mission.id, { kind: "system", message_ar: REQUEUE_MESSAGE_AR[cause], counts: { requeued: n } });
   deps.log?.(`requeue_${cause} ${mission.id} -> ${status} (${n} of ${max})`);
   return true;
 }
@@ -222,6 +243,8 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const base = { planning_llm_usd: Number(llm.toFixed(6)), ...clear };
   await recordTokens(deps, mission.id, 0, output.usage, { inputTokens: 0, outputTokens: 0, calls: 0 }, output.llmCostUsd);
   if (output.stop === "memory" && !state.proposedPlan && !state.question && !state.finish && await requeue(deps, mission, "queued", { planning_llm_usd: base.planning_llm_usd }, "memory")) return;
+  // a deploy restarted the worker while the planning ran (its model process ended with SIGTERM, exit code 143): the planning starts again on the next worker, it is never answered as «a limit of ours»
+  if (endedByRestart(output) && !state.proposedPlan && !state.question && !state.finish && await requeue(deps, mission, "queued", { planning_llm_usd: base.planning_llm_usd }, "restart")) return;
 
   if (state.proposedPlan) {
     const plan = state.proposedPlan;
@@ -331,6 +354,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   const llm = Number(baseLlm + output.llmCostUsd + reviewSpent);
   await recordTokens(deps, mission.id, 1, output.usage, { inputTokens: reviewAfter.inputTokens - reviewBefore.inputTokens, outputTokens: reviewAfter.outputTokens - reviewBefore.outputTokens, calls: reviewAfter.calls - reviewBefore.calls }, output.llmCostUsd + reviewSpent);
   if (output.stop === "memory" && !state.finish && await requeue(deps, mission, "approved", { execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(budget.spentUsd().toFixed(6)) }, "memory")) return;
+  if (endedByRestart(output) && !state.finish && await requeue(deps, mission, "approved", { execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(budget.spentUsd().toFixed(6)) }, "restart")) return;
 
   await settleExecution(deps, mission, plan, reserve, unit, { llm, executionTregUsd: budget.spentUsd(), summary: state.finish?.summary_ar ?? null, outputError: output.error ?? null, memory: items });
 }
@@ -420,8 +444,15 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   if (internalStage) flags.push("engine_zero_ingest");
   const note = a.summary && !HAS_NUMBER.test(a.summary) ? a.summary.trim() : "";
   const shortStage = plan.stages.find((s) => s.deliver && snap.counts(s.key).accepted < s.planned_rows);
+  // the reason is about the stage that fell short: the language rule only ever applies to a stage of top-level items (a child stage is delivered raw), and a child stage that fell short while its parents were read says so
+  const parentOfShort = shortStage && shortStage.parent_key !== null ? plan.stages.find((p) => p.key === shortStage.parent_key) : undefined;
+  const checkedForShort = {
+    ...checked,
+    languageLeftOut: shortStage && shortStage.parent_key === null ? snap.counts(shortStage.key).excludedByReason.filter_language ?? 0 : 0,
+    childShare: shortStage && parentOfShort && parentsBelowShare(plan, shortStage.key, rowsByStage) > 0 ? childShortfallClauseAr(itemNounOf(parentOfShort.title_ar).singular, itemNounOf(parentOfShort.title_ar).plural, itemNounOf(shortStage.title_ar).plural) : null,
+  };
   const reason = internalStage ? INTERNAL_FAILURE_AR
-    : delivered > 0 && delivered < target ? shortfallFromStopAr(shortStage ? snap.stage(shortStage.key).stop : null, checked)
+    : delivered > 0 && delivered < target ? shortfallFromStopAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort)
     : delivered > 0 && delivered < requested ? loweredTargetAr(plan)
     : delivered <= 0 ? "لم يُسلَّم أي شيء، ولم يُخصم منك شيء." : "";
   const summary = (internalStage ? reason : [note, reason].filter(Boolean).join(" ")).slice(0, 1100);
@@ -436,7 +467,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const stageRowsOf = (s: PricedPlan["stages"][number]): number => (s.deliver ? (fileByStage ? fileByStage[s.key] ?? 0 : plan.stages.filter((x) => x.deliver).length === 1 ? delivered : rowsByStage[s.key].length) : rowsByStage[s.key].length);
   await store.addEvent(mission.id, { kind: "result", message_ar: summary || (delivered > 0 ? "اكتملت المهمة." : "لم يُسلَّم أي شيء."), counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, stageRowsOf(s)])), ...parentCountsOf(plan, rowsByStage) } });
   const noticeKind: MissionNoticeKind = internalStage ? "failed" : delivered <= 0 ? "unserved" : delivered < requested ? "partial" : "completed";
-  await tell(deps, mission, jobId, noticeKind, { delivered, planned: requested, chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(internalStage ? { cause: "internal" as const } : {}), ...(delivered > 0 && delivered < target ? { shortfallClauseAr: shortfallClauseAr(shortStage ? snap.stage(shortStage.key).stop : null, checked) } : delivered > 0 && delivered < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
+  await tell(deps, mission, jobId, noticeKind, { delivered, planned: requested, chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(internalStage ? { cause: "internal" as const } : {}), ...(delivered > 0 && delivered < target ? { shortfallClauseAr: shortfallClauseAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort) } : delivered > 0 && delivered < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
 }
 
 /** What the customer is told when the source gave items and our own mapping stored none: it was OUR failure, never «nothing was found». No number: the money line says the rest. */

@@ -157,7 +157,8 @@ export function createReviewer(deps: { call: ReviewCall; store: AgentStore; miss
         let verdicts: boolean[] | null = null;
         // one retry: a call that got no answer, or an answer that is not one 0/1 per row, is asked once more (its tokens are counted either way)
         for (let attempt = 0; attempt < 2 && verdicts === null; attempt += 1) {
-          const res = await deps.call({ model, system: SYSTEM, user, maxTokens: outTokens });
+          // the second attempt says exactly what shape is needed (in the system text, so the rows stay as they were): an answer in words, or with the wrong number of verdicts, is the usual reason a first attempt gives nothing usable
+          const res = await deps.call({ model, system: attempt === 0 ? SYSTEM : `${SYSTEM} Your last answer could not be used: reply with ONLY a JSON array of exactly ${batch.length} numbers, each 0 or 1, and no words.`, user, maxTokens: outTokens });
           if (!res) { s.failedCalls += 1; continue; }
           s.spentUsd = Number((s.spentUsd + llmCostFromUsage(model, res.usage)).toFixed(8));
           s.calls += 1;

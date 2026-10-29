@@ -38,9 +38,10 @@ export function countCsvItems(csv: string): number {
  * WHY FEWER ITEMS THAN REQUESTED WERE DELIVERED, in plain Arabic and with no number, from the stop reason the engine RECORDED (never a guess, and never «this is all that matched» when found items were not checked). A reason that
  * cannot be named says only what is true: the sources gave no more matching items.
  */
-export function shortfallClauseAr(reason: StopReason | null, review: { pending: number; stop: "budget" | "failed" | null; /** Items the language of the plan left out (the language rule): when the sources ran dry, this is the reason to say. */ languageLeftOut?: number }): string {
+export function shortfallClauseAr(reason: StopReason | null, review: { pending: number; stop: "budget" | "failed" | null; /** Items the language of the plan left out (the language rule): when the sources ran dry, this is the reason to say. Never set for a stage of child items: they are delivered raw. */ languageLeftOut?: number; /** The sentence for a child stage whose parents gave fewer children than the number asked for each (see childShortfallClauseAr). */ childShare?: string | null }): string {
   if (review.pending > 0 && review.stop === "failed") return "لأن المراجعة الآلية تعذّر الوصول إليها لبعض ما وُجد، فلم يُسلَّم ما لم يُراجَع";
   if (review.pending > 0) return "لأن المراجعة الآلية بلغت حدّها المسموح لهذه المهمة قبل فحص كل ما وُجد، فلم يُسلَّم ما لم يُراجَع";
+  if (review.childShare && (reason === null || reason === "source_exhausted" || reason === "no_new_items" || reason === "target_reached")) return review.childShare;
   if ((review.languageLeftOut ?? 0) > 0 && (reason === null || reason === "source_exhausted" || reason === "no_new_items" || reason === "target_reached")) return "لأن المصادر لم تعطِ ما يكفي من المحتوى باللغة المحددة في خطتك";
   switch (reason) {
     case "source_exhausted": return "لأن المصدر لم يعد يعطي نتائج أخرى لهذا الطلب";
@@ -57,6 +58,15 @@ export function shortfallClauseAr(reason: StopReason | null, review: { pending: 
   }
 }
 
-export function shortfallFromStopAr(reason: StopReason | null, review: { pending: number; stop: "budget" | "failed" | null; languageLeftOut?: number }): string {
+/**
+ * THE REASON A CHILD STAGE FELL SHORT WHILE EVERY PARENT WAS READ: some parents have fewer children than the number asked for each («بعض الفيديوهات عليها تعليقات أقل من العدد المطلوب لكل فيديو»). No language, topic or text rule is ever the reason: the children are delivered as
+ * the source gives them. No number in it.
+ */
+export function childShortfallClauseAr(parentSingular: string, parentPlural: string, childPlural: string): string {
+  const withArticle = (w: string): string => (w.startsWith("ال") ? w : `ال${w}`);
+  return `لأن بعض ${withArticle(parentPlural)} عليها ${childPlural} أقل من العدد المطلوب لكل ${parentSingular}`;
+}
+
+export function shortfallFromStopAr(reason: StopReason | null, review: { pending: number; stop: "budget" | "failed" | null; languageLeftOut?: number; childShare?: string | null }): string {
   return `لم يكتمل العدد المطلوب ${shortfallClauseAr(reason, review)}، ولم يُخصم إلا مقابل ما سُلّم.`;
 }

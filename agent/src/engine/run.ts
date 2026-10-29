@@ -87,20 +87,27 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
   let last: StopReason = "source_exhausted";
   let failedInARow = 0;
   let anyFailed = false;
-  for (const parent of parentRows) {
-    if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
-    const parentId = String(parent.id);
-    const bound = parent[spec.parent_binding.from];
-    if (bound === undefined || bound === null || bound === "") continue;
-    const params = { ...spec.params, [spec.parent_binding.param]: bound };
-    const r = await runStream(deps, stage, spec, `p:${parentId}`, params, parentId, stage.per_parent_rows ?? Number.POSITIVE_INFINITY);
-    if (r.aborted) return r;
-    // a stop that ends the whole stage (the budget, the daily limit, the time, a refusal) is not «this parent has no more»
-    if (r.reason === "budget" || r.reason === "daily_cap" || r.reason === "refused" || r.reason === "time_limit" || r.reason === "review_limit" || r.reason === "page_limit") return r;
-    // one parent whose read failed twice is skipped (the others may well be read); three in a row end the stage with that reason
-    if (r.reason === "failed") { failedInARow += 1; anyFailed = true; if (failedInARow >= 3) return r; continue; }
-    failedInARow = 0;
-    last = r.reason;
+  // EVERY PARENT IS READ, each up to its own share, in the source's order. The share is the customer's number per parent. When the stage's total is lower than parents x that number (the model's own, smaller target) the share is an equal part of the total:
+  // the first parent never takes all of it while the others have children. There is no second round: a page's rows beyond a parent's share are kept out, and reading the next page of that parent would skip them (a child list is delivered in the source's order).
+  const per = stage.per_parent_rows ?? Number.POSITIVE_INFINITY;
+  const fair = Math.max(1, Math.ceil(stage.planned_rows / parentRows.length));
+  const rounds = [Math.min(per, fair)];
+  for (const cap of rounds) {
+    for (const parent of parentRows) {
+      if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
+      const parentId = String(parent.id);
+      const bound = parent[spec.parent_binding.from];
+      if (bound === undefined || bound === null || bound === "") continue;
+      const params = { ...spec.params, [spec.parent_binding.param]: bound };
+      const r = await runStream(deps, stage, spec, `p:${parentId}`, params, parentId, cap);
+      if (r.aborted) return r;
+      // a stop that ends the whole stage (the budget, the daily limit, the time, a refusal) is not «this parent has no more»
+      if (r.reason === "budget" || r.reason === "daily_cap" || r.reason === "refused" || r.reason === "time_limit" || r.reason === "review_limit" || r.reason === "page_limit") return r;
+      // one parent whose read failed twice is skipped (the others may well be read); three in a row end the stage with that reason
+      if (r.reason === "failed") { failedInARow += 1; anyFailed = true; if (failedInARow >= 3) return r; continue; }
+      failedInARow = 0;
+      last = r.reason;
+    }
   }
   // a read that failed for some parent is the recorded reason when the volume was not reached (never «the source has no more»)
   return { reason: items.counts(stage.key).accepted >= stage.planned_rows ? "target_reached" : anyFailed ? "failed" : last === "target_reached" ? "source_exhausted" : last, aborted: null };

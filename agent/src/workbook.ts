@@ -9,6 +9,7 @@ import { isInternalColumn, type PricedPlan, type PricedStage } from "../../src/l
 import { deliveredOfAr, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
 import { formatAr } from "../../src/lib/arabicDigits";
 import { parentCountsOf } from "../../src/lib/agentMission/parents";
+import { isTextItemStage, textKeyOf } from "../../src/lib/agentMission/contract";
 
 type Row = Record<string, unknown>;
 
@@ -61,6 +62,19 @@ function sameValues(a: unknown[], b: unknown[]): boolean {
   return any && same / a.length >= 0.8;
 }
 
+/**
+ * A POST, TWEET OR COMMENT WITH NO TEXT (a picture, a video, a sticker) shows a clear Arabic marker in the file instead of an empty cell, so nobody thinks data is missing. The marker is for the file only: the item itself, its id and its de-duplication are untouched.
+ * A top-level item says «منشور بصورة أو فيديو دون نص»; a child item (a comment, a reply) says «تعليق بصورة أو ملصق دون نص».
+ */
+export const MEDIA_ONLY_POST_AR = "منشور بصورة أو فيديو دون نص";
+export const MEDIA_ONLY_COMMENT_AR = "تعليق بصورة أو ملصق دون نص";
+const isBlankText = (v: unknown): boolean => v === null || v === undefined || (typeof v !== "object" && String(v).replace(/[\u200b-\u200f\u202a-\u202e\ufeff]/g, "").trim() === "");
+function textGetter(stage: PricedStage, key: string): ((row: Row) => unknown) | null {
+  if (!isTextItemStage(stage) || textKeyOf(stage) !== key) return null;
+  const marker = stage.parent_key === null ? MEDIA_ONLY_POST_AR : MEDIA_ONLY_COMMENT_AR;
+  return (row) => (isBlankText(row[key]) ? marker : row[key]);
+}
+
 export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): SheetLayout[] {
   const stageByKey = new Map(plan.stages.map((s, i) => [s.key, { s, i }]));
   const layouts: SheetLayout[] = [];
@@ -80,7 +94,8 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
       const firstText = parentCols.find((c) => !c.kind && !rows.every((r) => isUrl((parentById.get(text(r.parent_id)) ?? {})[c.key])));
       const firstLink = parentCols.find((c) => c !== firstText && rows.some((r) => isUrl((parentById.get(text(r.parent_id)) ?? {})[c.key])));
       for (const pc of [firstText, firstLink].filter((c): c is NonNullable<typeof c> => Boolean(c)).slice(0, MAX_PARENT_CONTEXT_COLUMNS)) {
-        const get = (_r: Row, parent: Row | null) => parent?.[pc.key] ?? "";
+        const parentText = textGetter(parentInfo.s, pc.key);
+        const get = (_r: Row, parent: Row | null) => (parent ? (parentText ? parentText(parent) : parent[pc.key] ?? "") : "");
         const values = sample(get);
         const twin = own.find((c) => sameValues(values, rows.map((r) => r[c.key])));
         if (twin) continue;
@@ -97,7 +112,8 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
       if (taken.some((t) => sameValues(t, values))) continue;
       titles.add(c.title_ar);
       taken.push(values);
-      columns.push({ title: c.title_ar, get: (r) => r[c.key], kind: "own", contact: c.kind !== undefined, link: values.some((v) => isUrl(v)), key: c.key });
+      const ownText = textGetter(stage, c.key);
+      columns.push({ title: c.title_ar, get: ownText ? (r) => ownText(r) : (r) => r[c.key], kind: "own", contact: c.kind !== undefined, link: values.some((v) => isUrl(v)), key: c.key });
     }
     layouts.push({ stageIndex, stage, rows, columns, hasParent: stage.parent_key !== null });
   });
