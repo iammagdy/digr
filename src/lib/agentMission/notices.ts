@@ -1,4 +1,5 @@
 import { formatAr, toArabicDigits } from "../arabicDigits";
+import { customerSafeText } from "./text";
 import { AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR } from "./constants";
 import { deliveredOfAr, GENERIC_ITEM_NOUN, itemNounOf, knownItemNoun } from "./itemNoun";
 import { heldPointsOf, moneyLineAr } from "./moneyText";
@@ -49,7 +50,7 @@ export function buildMissionNotice(kind: MissionNoticeKind, f: MissionNoticeFact
     // the in-site notice never promises an e-mail (the customer may have switched them off): it says where the result will be
     return { kind, title, body: AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR, link: REQUESTS, email: null };
   }
-  const t = toArabicDigits(String(titleIn ?? "").replace(/[«»]/g, "").trim()) || "مهمتك";
+  const t = customerSafeText(String(titleIn ?? "").replace(/[«»]/g, "").trim(), "مهمتك") || "مهمتك";
   // the noun the mission was settled with (a plan whose stages name different things, posts and their comments, says «عنصر»: the panel says the same)
   const noun = knownItemNoun(f.noun ?? "") ?? (f.noun === GENERIC_ITEM_NOUN.singular ? GENERIC_ITEM_NOUN : itemNounOf(t));
   const money = moneyLineAr({ reservedPoints: heldPointsOf(f), chargedPoints: f.chargedPoints, delivered: f.delivered, noun });

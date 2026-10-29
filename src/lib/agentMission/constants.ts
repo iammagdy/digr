@@ -122,7 +122,7 @@ export const MISSION_INTERNAL_COUNT_KEYS = ["mem_phase", "mem_start_rss_mb", "me
   "chk_found", "chk_new", "chk_dup", "chk_unchecked", "chk_saved",
   // the admin flag of a settlement whose numbers did not all agree: the items built from the log, in the file, and in the writer's memory
   "adm_flag", "adm_store", "adm_file", "adm_memory",
-  "chk_ex_no_text", "chk_ex_no_term", "chk_ex_mention_only", "chk_ex_other_person", "chk_ex_uncertain", "chk_ex_not_reviewed", "chk_ex_review_no", "chk_ex_review_failed",
+  "chk_ex_no_text", "chk_ex_no_term", "chk_ex_mention_only", "chk_ex_other_person", "chk_ex_name_extended", "chk_ex_other_meaning", "chk_ex_uncertain", "chk_ex_not_reviewed", "chk_ex_review_no", "chk_ex_review_failed",
   // what the filters of the card rejected, and the rows the source gave when our own mapping stored none of them (an internal failure)
   "chk_ex_filter_reply", "chk_ex_filter_repost", "chk_ex_filter_language", "chk_ex_filter_period", "chk_ex_filter_account", "chk_ex_filter_place", "adm_source_rows"] as const;
 export const AGENT_POLL_INTERVAL_MS = 5_000;

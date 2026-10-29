@@ -1,6 +1,6 @@
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
 import { emptyStageChecks, writeChecks, type MissionChecks } from "../checks";
-import type { RelevanceReason } from "../../../src/lib/agentMission/relevance";
+import { RELEVANCE_REASON_LIST, type RelevanceReason } from "../../../src/lib/agentMission/relevance";
 import type { AgentStore } from "../types";
 import type { ItemStore } from "./itemStore";
 
@@ -8,7 +8,7 @@ import type { ItemStore } from "./itemStore";
  * THE OLDER FILES, DERIVED. The admin page and the first versions of the tools read `rows/<stage>.json`, `excluded/<stage>.json` and `checks.json`. They are written from the item store (never read to decide anything: an overwritten
  * object may be stale), best effort, after a model-driven save and at the end of a run. The item store is the truth.
  */
-const RELEVANCE: ReadonlyArray<string> = ["no_text", "no_term", "mention_only", "other_person", "uncertain", "not_reviewed", "review_no", "review_failed"];
+const RELEVANCE: ReadonlyArray<string> = RELEVANCE_REASON_LIST;
 
 export async function mirrorLegacyFiles(items: ItemStore, store: AgentStore, plan: PricedPlan, stageKeys: ReadonlyArray<string> = plan.stages.map((s) => s.key)): Promise<void> {
   const checks: MissionChecks = {};

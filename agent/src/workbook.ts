@@ -123,6 +123,17 @@ export function buildExcludedAdminCsv(plan: PricedPlan, excludedByStage: Record<
   return lines.length > 0 ? `﻿${lines.join("\r\n")}` : null;
 }
 
+/** What the first sheet's closing note may say about the file: only what the file really has. */
+export interface WorkbookFacts { sheets: number; hasParentColumn: boolean; parentLinked: boolean; hasDateColumn: boolean }
+
+/** The closing note of the summary sheet, built from the sheets and columns the file REALLY has: a link between sheets is described only when a parent column and its target sheet exist; the time zone only when a date column exists. */
+export function workbookNoteAr(f: WorkbookFacts): string {
+  const where = f.sheets > 1 ? "كل ورقة" : "الورقة";
+  const parts = [`الأعمدة الأولى في ${where} مقروءة؛ وفي آخرها «${ID_HEADER_AR}»${f.hasParentColumn ? ` و«${PARENT_HEADER_AR}»` : ""}${f.sheets > 1 && f.hasParentColumn ? " للربط بين الأوراق" : ""}${f.parentLinked ? ` (اضغط على «${PARENT_HEADER_AR}» للانتقال إلى صفّه)` : ""}.`];
+  if (f.hasDateColumn) parts.push("التواريخ والأوقات بتوقيت القاهرة.");
+  return parts.join(" ");
+}
+
 export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<string, Row[]>): Promise<{ xlsx: Buffer; csv: string }> {
   const layouts = layoutOf(plan, rowsByStage);
   const wb = new ExcelJS.Workbook();
@@ -132,6 +143,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<st
   const sheetNameOf = new Map<string, string>();
   // where each row's id cell is, so a parent id can link to it
   const idCell = new Map<string, Map<string, string>>();
+  let hasDateColumn = false;
 
   for (const lay of layouts) sheetNameOf.set(lay.stage.key, wordBoundarySheetName(lay.stage.title_ar, used, `مرحلة ${lay.stageIndex + 1}`));
 
@@ -143,6 +155,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<st
     const sheet = wb.addWorksheet(name, { views: [{ state: "frozen", ySplit: 1, rightToLeft: true }] });
     const columnValues = lay.columns.map((c) => lay.rows.map((r) => c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null)));
     const dateAt = lay.columns.map((c, k) => isDateValues(c.title, c.key, columnValues[k]));
+    if (dateAt.some(Boolean)) hasDateColumn = true;
     const numericAt = lay.columns.map((c, k) => !dateAt[k] && numericColumn(columnValues[k], Boolean(c.contact)));
     sheet.columns = headers.map((h, j) => ({ width: j >= lay.columns.length ? 16 : /نص|تعليق|وصف|عنوان|تقييم|منشور|تغريدة/.test(h) ? 52 : /رابط|الموقع/.test(h) ? 34 : 24 }));
     const head = sheet.addRow(headers);
@@ -221,7 +234,8 @@ export async function buildMissionFiles(plan: PricedPlan, rowsByStage: Record<st
   intro.alignment = { wrapText: true, readingOrder: "rtl" as any, vertical: "middle" };
   intro.height = 32;
   intro.font = { name: "Calibri", size: 11, bold: true };
-  const note = summary.addRow([`الأعمدة الأولى في كل ورقة مقروءة؛ وفي آخرها «${ID_HEADER_AR}» و«${PARENT_HEADER_AR}» للربط بين الأوراق (اضغط على «${PARENT_HEADER_AR}» للانتقال إلى صفّه). التواريخ والأوقات بتوقيت القاهرة.`]);
+  const parentLinked = layouts.some((l) => l.hasParent && sheetNameOf.has(l.stage.parent_key!) && (idCell.get(l.stage.parent_key!)?.size ?? 0) > 0);
+  const note = summary.addRow([workbookNoteAr({ sheets: layouts.length, hasParentColumn: layouts.some((l) => l.hasParent), parentLinked, hasDateColumn })]);
   summary.mergeCells(note.number, 1, note.number, 5);
   note.alignment = { wrapText: true, readingOrder: "rtl" as any };
   note.height = 34;

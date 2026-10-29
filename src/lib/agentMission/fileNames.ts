@@ -97,3 +97,25 @@ export function missionTitleAr(input: { plan?: { stages: Array<{ deliver: boolea
   for (const w of words) { const next = out ? `${out} ${w}` : w; if ([...next].length > 48) break; out = next; }
   return toArabicDigits(out) || "مهمتك";
 }
+
+/** The characters a download name may not carry once it reaches a header or a path (the same set for every download). */
+const FORBIDDEN_IN_DOWNLOAD = /[/\\?%*:|"<>]/g;
+
+/**
+ * THE ONE NAME A DOWNLOAD OF A MISSION'S FILE CARRIES, whichever way the customer reaches it (the completion panel, «طلباتي», the e-mail's link, the admin's link; the Excel and the CSV): the name stored with the file when it was delivered,
+ * else the name built from the mission («تغريدات عن محمد صلاح - ٦٧ - ٢٩ أكتوبر ٢٠٢٦.xlsx»), and only for a mission that has no plan at all the file's own name. A generic «result.xlsx» is never what a customer saves.
+ */
+export function missionDownloadName(input: { files?: unknown; kind: string; plan?: { stages: Array<{ deliver: boolean; title_ar: string; relevance?: { terms: string[]; subject_ar: string } }> } | null; requestText?: string | null; deliveredUnits?: number | null; date?: Date | string | number | null }): string {
+  const kind = String(input.kind ?? "").toLowerCase();
+  const list = Array.isArray(input.files) ? (input.files as Array<Record<string, unknown>>) : [];
+  const own = list.find((f) => f && String(f.kind ?? "").toLowerCase() === kind);
+  const stored = typeof own?.download_name === "string" ? own.download_name.trim() : "";
+  const strip = (name: string): string => name.replace(new RegExp(`\\.${kind}$`, "i"), "");
+  let title = stored ? strip(stored) : "";
+  if (!title && input.plan && Array.isArray(input.plan.stages) && input.plan.stages.length > 0) {
+    const when = new Date(input.date ?? Date.now());
+    title = missionFileTitleAr({ plan: input.plan, requestText: input.requestText, delivered: Number(input.deliveredUnits) || 0, date: Number.isNaN(when.getTime()) ? new Date() : when });
+  }
+  if (!title) return typeof own?.name === "string" && own.name ? own.name : `result.${kind}`;
+  return `${title}.${kind}`.replace(FORBIDDEN_IN_DOWNLOAD, "-").trim();
+}

@@ -106,7 +106,9 @@ export async function generateMissionWorkbook(rows: ReadonlyArray<Record<string,
     summary.addRow([stage.titleAr, names[i] ?? (stage.deliver ? "—" : "لم تُسلَّم (مرحلة وسيطة)"), byStage[i].length, stage.effVolume, stage.parent !== null ? `«${PARENT_HEADER_AR}» يشير إلى «${ID_HEADER_AR}» في مرحلة «${parentTitle}»` : "لا ترتبط بمرحلة سابقة"]);
   });
   summary.addRow([]);
-  const note = summary.addRow([`كل ورقة تبدأ بالعمودين «${ID_HEADER_AR}» و«${PARENT_HEADER_AR}»؛ اربط الأوراق بهما، أو اضغط على «${PARENT_HEADER_AR}» للانتقال إلى صفّه.`]);
+  // the note describes only the columns the file really has: «معرّف الأصل» and the link between sheets exist only when a stage has a parent
+  const anyParent = stages.some((st) => st.parent !== null);
+  const note = summary.addRow([anyParent ? `كل ورقة تبدأ بالعمودين «${ID_HEADER_AR}» و«${PARENT_HEADER_AR}»؛ اربط الأوراق بهما، أو اضغط على «${PARENT_HEADER_AR}» للانتقال إلى صفّه.` : `كل ورقة تبدأ بالعمود «${ID_HEADER_AR}».`]);
   summary.mergeCells(note.number, 1, note.number, 5);
   note.alignment = { wrapText: true, readingOrder: "rtl" as any };
   note.height = 36;

@@ -1,4 +1,4 @@
-import { filterFieldsRequired, isEnabled, type StageFilter } from "./filters";
+import { filterFieldsRequired, INVISIBLE, isEnabled, type StageFilter } from "./filters";
 import { itemNounOf } from "./itemNoun";
 import { normalizeText, stripLinksAndMentions } from "./relevance";
 
@@ -109,12 +109,24 @@ const MIN_DEDUPE_CHARS = 12;
 /** True when a stage's items are posts or comments (judged from the noun of the stage title, the same noun the card uses). */
 export const isTextItemStage = (stage: { title_ar: string }): boolean => TEXT_ITEM_NOUNS.has(itemNounOf(stage.title_ar).key);
 
+/** Words that open a post to say what KIND of post it is («عاجل», «بالفيديو», «الآن»): the same news is often posted again with another one in front. Written as the normalized text has them. */
+const LEADING_MARKERS = /^(?:(?:خبر\s+)?عاجل|الان|بالفيديو|بالصور|بالفيديو\s+والصور|شاهد|فيديو|صور|تحديث|متابعه|رسميا|حصري|حصريا|قبل\s+قليل|breaking(?:\s+news)?|urgent|update|just\s+in|rt)(?![\p{L}\p{N}])\s*/u;
+/** An emoji, a keycap digit («1️⃣»), a symbol: shown, never said. */
+const PICTOGRAPH = /[0-9#*]\ufe0f?\u20e3|[\p{Extended_Pictographic}\p{Emoji_Modifier}\p{Regional_Indicator}\p{S}]/gu;
+
 /**
- * The key two items with the same text share: the text without links, mentions, hashtag marks, punctuation, diacritics and emoji, in one comparable form. A text shorter than twelve letters (a reaction: «شكرًا», «👍») has no key:
- * short answers that happen to be the same are different people's answers, not a repeated item.
+ * The key two items with the same text share: the text without links, mentions, hashtags, emoji, invisible characters, punctuation and diacritics, and without the markers that open a repeated post («عاجل», «بالفيديو»), in one comparable
+ * form. Two posts that differ only in such decoration are ONE item. A text shorter than twelve letters (a reaction: «شكرًا», «👍») has no key: short answers that happen to be the same are different people's answers, not a repeated item.
  */
 export function textDedupeKey(text: unknown): string | null {
-  const t = normalizeText(stripLinksAndMentions(String(text ?? ""))).replace(/#/g, " ").replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
+  let t = normalizeText(stripLinksAndMentions(String(text ?? "").replace(INVISIBLE, "")))
+    .replace(/(^|\s)#[^\s#]*/gu, " ")
+    .replace(PICTOGRAPH, " ")
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  // markers in front come off, one after the other («🔴 عاجل | بالفيديو …»)
+  for (let n = 0; n < 4; n += 1) { const next = t.replace(LEADING_MARKERS, ""); if (next === t) break; t = next; }
   return [...t].length >= MIN_DEDUPE_CHARS ? t : null;
 }
 

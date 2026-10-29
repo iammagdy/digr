@@ -1,3 +1,4 @@
+import { customerSafeText } from "./text";
 import { formatAr, toArabicDigits } from "../arabicDigits";
 import type { ProgressSample } from "../jobEta";
 import { FILES_STEP_TITLE_AR, PLANNING_STEP_TITLES, type PanelStep } from "../missionView";
@@ -104,7 +105,7 @@ export function stagesView(plan: any): { stages: CustomerStageView[]; total: num
     const rows = Math.max(0, Math.floor(Number(s?.expected_rows) || 0));
     const deliver = s?.deliver !== false;
     if (deliver) total += rows;
-    stages.push({ n: i + 1, titleAr: String(s?.title_ar ?? ""), rows, rowsAr: countAr(rows, itemNounOf(String(s?.title_ar ?? ""))), deliver, noteAr: deliver ? null : "تُستخدم في المرحلة التالية ولا تُحتسب في ملفك", ...(typeof s?.yield_share === "number" ? { yieldShare: s.yield_share } : {}) });
+    stages.push({ n: i + 1, titleAr: customerSafeText(s?.title_ar, "مرحلة"), rows, rowsAr: countAr(rows, itemNounOf(String(s?.title_ar ?? ""))), deliver, noteAr: deliver ? null : "تُستخدم في المرحلة التالية ولا تُحتسب في ملفك", ...(typeof s?.yield_share === "number" ? { yieldShare: s.yield_share } : {}) });
   });
   return { stages, total };
 }
@@ -118,7 +119,7 @@ function samplesView(plan: any): CustomerMissionView["samples"] {
   const columns: Array<{ key: string; titleAr: string }> = (Array.isArray(stage.columns) ? stage.columns : []).map((c: any) => ({ key: String(c.key), titleAr: String(c.title_ar ?? c.titleAr ?? "") })).filter((c: { titleAr: string }) => c.titleAr).slice(0, 6);
   if (columns.length === 0) return null;
   const rows = (stage.sample_rows as Array<Record<string, unknown>>).slice(0, 3).map((r) => columns.map((c) => String(r?.[c.key] ?? "").slice(0, 120)));
-  return { stageTitleAr: String(stage.title_ar ?? ""), columns, rows };
+  return { stageTitleAr: customerSafeText(stage.title_ar, "مرحلة"), columns, rows };
 }
 
 /** What the file holds, from the columns of the deepest delivered stage (the sheet the customer opens): one line, in the order of the sheet. Null when the plan has no readable column. */
@@ -312,7 +313,7 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   const storedSummary = mission.summary_ar && !/[0-9٠-٩]/.test(mission.summary_ar) ? mission.summary_ar : null;
 
   const endLineAr = endLineOf(phase, resultLinesAr, storedSummary);
-  return {
+  const view: CustomerMissionView = {
     id: mission.id, phase, summaryAr: plan?.summary_ar ? String(plan.summary_ar) : null, notesAr: Array.isArray(plan?.notes_ar) ? plan.notes_ar.map(String) : [], assumptionsAr: Array.isArray(plan?.assumptions_ar) ? plan.assumptions_ar.map(String) : [],
     questionOptionsAr: phase === "question" && Array.isArray((mission.plan_public as any)?.question_options) ? (mission.plan_public as any).question_options.map(String).slice(0, 4) : [], stages, totalRows: total, totalRowsAr: countAr(total, itemNounOfPlan(plan)),
     samples: plan ? samplesView(plan) : null, fileContentsAr: plan ? fileContentsAr(plan) : null, priceLineAr: plan ? priceLineAr(plan) : null, priceFacts: plan ? priceFactsOf(plan).facts : [], priceNoteAr: plan ? priceFactsOf(plan).noteAr : null, questionAr: phase === "question" ? mission.question_ar : null,
@@ -323,6 +324,26 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
     requestedRows, endLineAr, edit: phase === "plan" && plan?.edit && typeof plan.edit === "object" ? (plan.edit as PlanEditorView) : null,
     startedAt: (events.length ? Date.parse(events[0].created_at) : Date.parse(mission.created_at)) || null,
     live: isLivePhase(phase),
+  };
+  return guardViewText(view);
+}
+
+/**
+ * Every customer text of a view, passed through the render-time guard: whatever a stored field holds (an older mission's title or summary, an event the model wrote, a release reason), the customer never reads an English or an internal
+ * phrase, in any state of the mission. Data cells (the samples) and file names are the customer's data, not messages, and are left as they are.
+ */
+export function guardViewText(v: CustomerMissionView): CustomerMissionView {
+  const g = (s: string): string => customerSafeText(s);
+  const n = (s: string | null): string | null => (s === null ? null : customerSafeText(s) || null);
+  return {
+    ...v,
+    summaryAr: n(v.summaryAr), notesAr: v.notesAr.map(g).filter(Boolean), assumptionsAr: v.assumptionsAr.map(g).filter(Boolean), questionOptionsAr: v.questionOptionsAr.map(g).filter(Boolean),
+    stages: v.stages.map((s) => ({ ...s, titleAr: g(s.titleAr) || "مرحلة", noteAr: n(s.noteAr) })),
+    samples: v.samples ? { ...v.samples, stageTitleAr: g(v.samples.stageTitleAr) } : null,
+    fileContentsAr: n(v.fileContentsAr), priceLineAr: n(v.priceLineAr), priceNoteAr: n(v.priceNoteAr), questionAr: n(v.questionAr), queueLineAr: n(v.queueLineAr),
+    steps: v.steps.map((s) => ({ ...s, titleAr: g(s.titleAr) || "خطوة", ...(typeof s.countAr === "string" ? { countAr: g(s.countAr) } : {}) })),
+    currentLineAr: g(v.currentLineAr), delayAr: n(v.delayAr), remainingAr: n(v.remainingAr), closePageAr: n(v.closePageAr),
+    resultLinesAr: v.resultLinesAr.map(g).filter(Boolean), resultSummaryAr: n(v.resultSummaryAr), endLineAr: n(v.endLineAr),
   };
 }
 

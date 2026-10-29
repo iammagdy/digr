@@ -8,6 +8,9 @@ import { checkCustomerText } from "./text";
  *      because its AUTHOR's name contains the name has no term in its text and is excluded («no_term»);
  *   2. what is left of the text after removing links, @mentions and the terms themselves must have at least `min_own_words` words: an empty reply or a bare mention is excluded («mention_only»);
  *   3. a row with one of the `exclude_terms` (the markers of another person who has the same name) is excluded («other_person»);
+ *   3b. NAMESAKES: a full name that is immediately EXTENDED by more name words is another person («محمد صلاح عبد الفتاح» is not «محمد صلاح»): the words that mark an extended name (built in: «عبد…», «أبو», «الدين», and the plan's own
+ *      `competing_meanings[].extensions`) and a title right next to the name (the plan's `titles`: «الحكم», «المدرب») exclude the row by rule («name_extended»), with or without a context word; a word of another meaning
+ *      anywhere (`markers`) excludes a row that has no context word («other_meaning») and sends one that has to the review. An extension that is itself one of the plan's own terms (a nickname) is the same person;
  *   4. when `context_terms` are given (the words that confirm the intended meaning, for a footballer: the club, the national team, goals...), a row that has a term but none of them is UNCERTAIN: it goes to a model
  *      review within the mission's review budget, and is not delivered if it is not reviewed.
  * Everything else is a match. Pure: no I/O.
@@ -19,6 +22,8 @@ export interface RelevanceSpec {
   terms: string[];
   context_terms?: string[];
   exclude_terms?: string[];
+  /** The OTHER meanings of the same name that the planner found in its sample (another person, a thing): code turns each into exclusion checks. */
+  competing_meanings?: CompetingMeaning[];
   /** Keys of the row (the stage's columns) that hold the text to read. */
   text_columns: string[];
   /** Words (of at least two letters) that must remain after removing links, mentions and the terms. Default 2. */
@@ -33,7 +38,11 @@ export interface RelevanceSpec {
   full_name_is_enough?: boolean;
 }
 
-export type RelevanceReason = "no_text" | "no_term" | "mention_only" | "other_person" | "uncertain" | "not_reviewed" | "review_no" | "review_failed";
+/** Another meaning of the name, as the planner saw it in its sample: «الحكم محمد صلاح عبد الفتاح». `extensions`: the words that follow the name in it («عبد الفتاح»); `titles`: a title right before or after the name («الحكم», «المدرب»); `markers`: words of that meaning anywhere in the text. */
+export interface CompetingMeaning { meaning_ar: string; extensions?: string[]; titles?: string[]; markers?: string[] }
+
+export const RELEVANCE_REASON_LIST = ["no_text", "no_term", "mention_only", "other_person", "name_extended", "other_meaning", "uncertain", "not_reviewed", "review_no", "review_failed"] as const;
+export type RelevanceReason = (typeof RELEVANCE_REASON_LIST)[number];
 export type RelevanceVerdict = { verdict: "match" } | { verdict: "exclude"; reason: RelevanceReason } | { verdict: "review"; reason: "uncertain" };
 /** WHY a row was accepted by rule (the report of the check counts them): the full name and a context word, the full name alone, a term and a context word, or no context was asked for. */
 export type RuleBasis = "full_name_context" | "full_name" | "terms_context" | "terms_only";
@@ -43,6 +52,8 @@ export const MAX_TERMS = 12;
 export const MAX_CONTEXT_TERMS = 40;
 export const MAX_EXCLUDE_TERMS = 40;
 export const DEFAULT_MIN_OWN_WORDS = 2;
+export const MAX_COMPETING_MEANINGS = 8;
+export const MAX_MEANING_WORDS = 12;
 
 const ARABIC_DIGITS = /[٠-٩]/g;
 const DIACRITICS = /[\u064B-\u065F\u0670\u0640]/g;
@@ -82,15 +93,61 @@ export function stripLinksAndMentions(text: string): string {
   return text.replace(URL_RE, " ").replace(MENTION_RE, "$1 ").replace(/\s+/g, " ").trim();
 }
 
-const matchers = new WeakMap<RelevanceSpec, { terms: RegExp[]; context: RegExp[]; exclude: RegExp[] }>();
+const matchers = new WeakMap<RelevanceSpec, { terms: RegExp[]; sticky: RegExp[]; context: RegExp[]; exclude: RegExp[]; extended: RegExp[]; titled: RegExp[]; markers: RegExp[]; otherTopic: RegExp[] }>();
 function compiled(spec: RelevanceSpec) {
   let m = matchers.get(spec);
   if (!m) {
     const build = (list: string[] | undefined, suffixes = false) => (list ?? []).map((t) => termRegex(t, "u", { suffixes })).filter((r): r is RegExp => r !== null);
-    m = { terms: build(spec.terms), context: build(spec.context_terms, true), exclude: build(spec.exclude_terms) };
+    const meanings = spec.competing_meanings ?? [];
+    m = {
+      terms: build(spec.terms), sticky: build(spec.terms).map((r) => new RegExp(r.source, "uy")), context: build(spec.context_terms, true), exclude: build(spec.exclude_terms),
+      extended: extendedNameRegexes(spec.terms, meanings.flatMap((c) => c.extensions ?? [])),
+      titled: titledNameRegexes(spec.terms, meanings.flatMap((c) => c.titles ?? [])),
+      markers: build(meanings.flatMap((c) => c.markers ?? []), true),
+      otherTopic: build(OTHER_TOPIC_WORDS, true),
+    };
     matchers.set(spec, m);
   }
   return m;
+}
+
+const PREFIX = "(?:ال|لل|و|ف|ب|ل|ك|وال|بال)?";
+const bodyOf = (term: string): string => normalizeText(term).replace(/[_-]+/g, " ").split(" ").filter(Boolean).map(escapeRe).join("[\\s_\\-]+");
+/** The words that make a name another person's when they follow it: «عبد الفتاح» (any «عبد…»), «أبو عمر», «صلاح الدين»; Latin spellings of the same. A plan adds its own. */
+const NAME_EXTENSION_BUILT_IN = ["عبد[\\p{L}]*", "ابو", "الدين", "abdel", "abdul", "abd", "abu", "abou", "eldin", "el-din"];
+/** A name followed by an extension word: matches from the name to the end of that word. */
+function extendedNameRegexes(terms: string[], planExtensions: string[]): RegExp[] {
+  const planned = planExtensions.map((e) => normalizeText(e).split(" ").filter(Boolean).map(escapeRe).join("\\s+")).filter(Boolean);
+  const out: RegExp[] = [];
+  for (const t of terms) {
+    const full = wordsOfTerm(t) >= 2;
+    const ext = [...(full ? NAME_EXTENSION_BUILT_IN : []), ...planned];
+    if (ext.length === 0 || normalizeText(t).length < 2) continue;
+    out.push(new RegExp(`(?<![${LETTER}])${PREFIX}${bodyOf(t)}\\s+(?:${ext.join("|")})(?![${LETTER}])`, "gu"));
+  }
+  return out;
+}
+/** A title right before or right after the name («الحكم محمد صلاح», «محمد صلاح الحكم الدولي»). */
+function titledNameRegexes(terms: string[], titles: string[]): RegExp[] {
+  const t = titles.map((x) => normalizeText(x).replace(/^ال(?=.{2,})/, "")).filter((x) => x.length >= 2).map(escapeRe);
+  if (t.length === 0) return [];
+  const title = `(?:ال)?(?:${t.join("|")})`;
+  const out: RegExp[] = [];
+  for (const term of terms) {
+    if (normalizeText(term).length < 2) continue;
+    out.push(new RegExp(`(?<![${LETTER}])${title}(?:\\s+(?:الدولي|المساعد|السابق|الحالي|الوطني))?\\s+${PREFIX}${bodyOf(term)}(?![${LETTER}])|(?<![${LETTER}])${PREFIX}${bodyOf(term)}\\s+${title}(?![${LETTER}])`, "u"));
+  }
+  return out;
+}
+
+/** Words of a text that sells, teaches or recruits, not one that talks ABOUT a person: with the name inside them and no word that confirms the meaning, they send the row to the model check instead of straight to delivery. */
+const OTHER_TOPIC_WORDS = ["ورشة", "ورشه", "ورش عمل", "دورة تدريبية", "دورات", "محاضرة", "ندوة", "ويبينار", "workshop", "webinar", "course", "رابط التسجيل", "سجل الآن", "سجلوا", "للتسجيل", "للحجز", "احجز", "اشترك", "اشتراك", "عرض خاص", "تواصل معنا", "للتواصل", "واتساب", "whatsapp", "فرصة عمل", "وظائف", "نقدم لكم", "بسعر"];
+/** A text that is a LIST of short entries (names, tags): the subject is one entry among many. */
+export function looksLikeList(raw: string): boolean {
+  const segments = stripLinksAndMentions(raw).split(/[\n،,;•·|\/]+|\s[-–—]\s/).map((x) => x.trim()).filter(Boolean);
+  if (segments.length < 5) return false;
+  const short = segments.filter((x) => x.split(/\s+/).length <= 4).length;
+  return short / segments.length >= 0.7;
 }
 
 const textOf = (row: Record<string, unknown>, keys: string[]): string => keys.map((k) => (row[k] === null || row[k] === undefined ? "" : typeof row[k] === "object" ? JSON.stringify(row[k]) : String(row[k]))).join(" \n ");
@@ -108,6 +165,20 @@ function strongTerms(spec: RelevanceSpec): RegExp[] {
   return list;
 }
 
+/** True when the text has a full name immediately followed by an extension word: another person's name. An extension that is itself one of the plan's own terms (a nickname the plan lists) is the same person. */
+function hasExtendedName(spec: RelevanceSpec, text: string): boolean {
+  const { extended, sticky } = compiled(spec);
+  for (const re of extended) {
+    re.lastIndex = 0;
+    for (let m = re.exec(text); m; m = re.exec(text)) {
+      const end = m.index + m[0].length;
+      const explained = sticky.some((t) => { t.lastIndex = m!.index; const hit = t.exec(text); return hit !== null && m!.index + hit[0].length >= end; });
+      if (!explained) return true;
+    }
+  }
+  return false;
+}
+
 /** The deterministic verdict on one row, with the basis of an acceptance (why the rule accepted it). */
 export function classifyRowDetailed(spec: RelevanceSpec, row: Record<string, unknown>): DetailedVerdict {
   const { terms, context, exclude } = compiled(spec);
@@ -123,11 +194,16 @@ export function classifyRowDetailed(spec: RelevanceSpec, row: Record<string, unk
   const words = rest.replace(/[^\p{L}\p{N}\s]/gu, " ").split(/\s+/).filter((w) => [...w].length >= 2);
   if (words.length < (spec.min_own_words ?? DEFAULT_MIN_OWN_WORDS)) return { verdict: "exclude", reason: "mention_only" };
   if (exclude.some((r) => r.test(text))) return { verdict: "exclude", reason: "other_person" };
+  // ANOTHER MEANING OF THE NAME: a longer name, a title next to it, a word of the other meaning
+  const { titled, markers, otherTopic } = compiled(spec);
+  if (hasExtendedName(spec, text) || titled.some((r) => r.test(text))) return { verdict: "exclude", reason: "name_extended" };
+  if (markers.some((r) => r.test(text))) return context.some((r) => r.test(text)) ? { verdict: "review", reason: "uncertain" } : { verdict: "exclude", reason: "other_meaning" };
   const fullName = strongTerms(spec).some((r) => r.test(text));
   if (context.length === 0) return { verdict: "match", basis: fullName ? "full_name" : "terms_only" };
   if (context.some((r) => r.test(text))) return { verdict: "match", basis: fullName ? "full_name_context" : "terms_context" };
   // the full name alone is strong evidence: accepted by rule unless the plan says the full name is itself common
-  if (fullName && spec.full_name_is_enough !== false) return { verdict: "match", basis: "full_name" };
+  // ... unless the text has the marks of ANOTHER TOPIC (it sells, teaches or recruits; it is a list of names): then it goes to the model check, never straight to delivery
+  if (fullName && spec.full_name_is_enough !== false && !otherTopic.some((r) => r.test(text)) && !looksLikeList(raw)) return { verdict: "match", basis: "full_name" };
   return { verdict: "review", reason: "uncertain" };
 }
 
@@ -178,9 +254,23 @@ export function validateRelevanceSpec(raw: unknown, columnKeys: readonly string[
   if (cols.length < 1 || cols.length > 5) issues.push(`relevance.text_columns: 1 to 5 keys of this stage's columns that hold the text to read (the author's name is not one)`);
   const minWords = o.min_own_words === undefined ? DEFAULT_MIN_OWN_WORDS : Number(o.min_own_words);
   if (!Number.isInteger(minWords) || minWords < 0 || minWords > 6) issues.push("relevance.min_own_words: a whole number from 0 to 6");
+  const meanings: CompetingMeaning[] = [];
+  if (o.competing_meanings !== undefined && o.competing_meanings !== null) {
+    if (!Array.isArray(o.competing_meanings) || o.competing_meanings.length > MAX_COMPETING_MEANINGS) issues.push(`relevance.competing_meanings: at most ${MAX_COMPETING_MEANINGS} entries {meaning_ar, extensions?, titles?, markers?}`);
+    else for (const [i, raw1] of o.competing_meanings.entries()) {
+      const c = typeof raw1 === "object" && raw1 !== null && !Array.isArray(raw1) ? (raw1 as Record<string, unknown>) : null;
+      if (!c) { issues.push(`relevance.competing_meanings[${i}] must be an object`); continue; }
+      const label = checkCustomerText(c.meaning_ar, { maxChars: 120 });
+      if (label.issues.length) issues.push(`relevance.competing_meanings[${i}].meaning_ar: ${label.issues.join("; ")} (one short Arabic phrase naming the OTHER meaning, e.g. «الحكم محمد صلاح عبد الفتاح»)`);
+      const lists = (["extensions", "titles", "markers"] as const).map((k) => cleanList(c[k], MAX_MEANING_WORDS, 2));
+      if (lists.some((l) => l === null)) issues.push(`relevance.competing_meanings[${i}]: extensions, titles and markers are lists of at most ${MAX_MEANING_WORDS} words`);
+      else if (lists.every((l) => l!.length === 0)) issues.push(`relevance.competing_meanings[${i}]: give at least one of extensions (the words that follow the name in that meaning), titles (a title right next to the name) or markers (words of that meaning)`);
+      else meanings.push({ meaning_ar: label.text, ...(lists[0]!.length ? { extensions: lists[0]! } : {}), ...(lists[1]!.length ? { titles: lists[1]! } : {}), ...(lists[2]!.length ? { markers: lists[2]! } : {}) });
+    }
+  }
   if (o.full_name_is_enough !== undefined && typeof o.full_name_is_enough !== "boolean") issues.push("relevance.full_name_is_enough: true or false");
   if (issues.length) return { ok: false, issues };
-  return { ok: true, spec: { subject_ar: subject.text, terms: terms!, ...(context && context.length ? { context_terms: context } : {}), ...(exclude && exclude.length ? { exclude_terms: exclude } : {}), text_columns: cols, min_own_words: minWords, review: o.review === false ? false : true, ...(o.full_name_is_enough === false ? { full_name_is_enough: false } : {}) } };
+  return { ok: true, spec: { subject_ar: subject.text, terms: terms!, ...(context && context.length ? { context_terms: context } : {}), ...(exclude && exclude.length ? { exclude_terms: exclude } : {}), ...(meanings.length ? { competing_meanings: meanings } : {}), text_columns: cols, min_own_words: minWords, review: o.review === false ? false : true, ...(o.full_name_is_enough === false ? { full_name_is_enough: false } : {}) } };
 }
 
 /** The free-text search a call made, or null when it asked for a known account / page / link instead (rows of those are about their owner by construction). */
@@ -198,6 +288,8 @@ export function searchQueryOf(params: Record<string, unknown> | null | undefined
 
 /** Customer words for a reason a row was left out (the review sheet). */
 export const REASON_AR: Record<RelevanceReason, string> = {
+  name_extended: "الاسم فيه امتداد يدل على شخص آخر (اسم أطول أو لقب)",
+  other_meaning: "عن معنى آخر للاسم نفسه",
   no_text: "لا نص في الصف",
   no_term: "لا يذكر الموضوع في نصه (ظهر لأن اسم صاحب الحساب يشبهه)",
   mention_only: "إشارة عابرة أو رد فارغ بلا كلام",

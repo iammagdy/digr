@@ -4,6 +4,17 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-29, evening): the delivered file of the live run (after #285)
+
+Written after the live run `msn_169c911fd8a0a5c89cf1` (67 of 300, charge 45, hold released: the count/charge core was right and is untouched). `main` before it was `8f9b2acfc4811c7a0411f9b851edb034811c5f71` (#285); its merge commit is the head of `main` after it. Details and root causes 1-7: `docs/ENGINE_AND_ITEM_STORE.md` section 6. No SQL was written or applied; no Edge Function changed.
+
+- **Namesakes:** a full name extended by more name words («محمد صلاح عبد الفتاح», «أبو عمر») is another person, excluded by rule; the plan lists the other meanings it found (`relevance.competing_meanings`); a row with the full name and no context word that looks like an advert or a list goes to the model check.
+- **Repeats:** the same text with other emoji, hashtags, links or a leading «عاجل» is one item. **Replies:** a text that starts with `@handle` is a reply whatever the source's flag says.
+- **One download name** (`missionDownloadName`) for the panel, «طلباتي» and the admin; **render-time guard** (`customerSafeText`) so no English or internal phrase reaches a customer in any state; release reasons are written in Arabic; **file notes** describe only the sheets and columns the file has.
+- Rollback: `git revert -m 1 <merge commit>`. NOT PROVEN list: end of section 6 of the engine doc.
+
+---
+
 ## START HERE (2026-10-29, later): the contract between the plan and the engine
 
 Written by the session that diagnosed the two missions of 2026-10-29 (read-only) and fixed them. `main` before it was `a9c8666386e62e0e3f8b31b3b09195adf693126e` (#284); its merge commit is the head of `main` after it. Details and evidence: `docs/ENGINE_AND_ITEM_STORE.md` section 5. No SQL was written or applied; no Edge Function changed.

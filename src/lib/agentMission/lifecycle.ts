@@ -69,7 +69,7 @@ export async function approveMission(client: any, mission: { id: string; user_id
 
   const claim = await client.rpc("claim_job_chunk", { p_job_id: jobId, p_expected_step: 0, p_lease_seconds: AGENT_JOB_LEASE_SECONDS });
   if (claim?.error || claim?.data?.claimed !== true) {
-    await client.rpc("release_job_atomic", { p_job_id: jobId, p_error_message: "agent mission: the job could not be locked against the old driver" });
+    await client.rpc("release_job_atomic", { p_job_id: jobId, p_error_message: "تعذّر تجهيز المهمة للتنفيذ، فعاد الحجز المؤقت كاملًا." });
     return fail("claim_failed");
   }
   return { ok: true, jobId, quoteId, reservePoints: price.reservePoints, unitPricePoints: price.unitPricePoints, deliveredRows: price.deliveredRows, executionBudgetUsd: executionBudgetUsd(price.reservePoints) };
@@ -99,7 +99,7 @@ export async function settleMission(client: any, input: SettleInput): Promise<Se
     // release_job_atomic refuses while a chunk lease is held (found on the real function bodies on a scratch PostgreSQL): complete_chunk at zero rows clears the lease first
     const cleared = await client.rpc("complete_chunk", { p_job_id: input.jobId, p_expected_step: 0, p_new_cursor: "completed", p_new_delivered_units: 0, p_cost_usd: Math.max(0, Number(input.costUsd.toFixed(6))) });
     if (cleared?.error) return { ok: false, code: "complete_chunk_failed", detail: String(cleared.error.message ?? cleared.error.code ?? "").slice(0, 200) };
-    const released = await client.rpc("release_job_atomic", { p_job_id: input.jobId, p_error_message: input.releaseReason ?? "agent mission delivered nothing" });
+    const released = await client.rpc("release_job_atomic", { p_job_id: input.jobId, p_error_message: input.releaseReason ?? "لم يُسلَّم شيء من هذه المهمة، فعاد الحجز المؤقت كاملًا." });
     if (released?.error) return { ok: false, code: "release_failed", detail: String(released.error.message ?? released.error.code ?? "").slice(0, 200) };
     return { ok: true, kind: "released", chargedPoints: 0, releasedPoints: input.reservedPoints };
   }

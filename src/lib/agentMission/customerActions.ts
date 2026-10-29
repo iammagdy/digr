@@ -6,6 +6,7 @@ import { latestBeat, workerAlive } from "./heartbeat";
 import { userWillBeEmailed } from "./emailEligibility";
 import { customerPlanView, type PricedPlan, type PricedStage } from "./plan";
 import { applyPlanEdits } from "./planEdit";
+import { missionDownloadName } from "./fileNames";
 
 /**
  * What a CUSTOMER does with a mission, on the server, with the service-role client and an explicit owner check on every call (a customer reaches only their own missions; the browser never
@@ -165,11 +166,13 @@ export async function answerForCustomer(client: any, input: { id: string; userId
 
 /** A short-lived link to a result file of the customer's own mission. */
 export async function customerFileLink(client: any, input: { id: string; userId: string; name: string }): Promise<CustomerResult<{ url: string }>> {
-  const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,files").eq("id", input.id).maybeSingle();
+  const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,files,plan,request_text,delivered_units,updated_at").eq("id", input.id).maybeSingle();
   if (!mission || mission.user_id !== input.userId) return bad(404, "الملف غير موجود.");
-  const file = Array.isArray(mission.files) ? (mission.files as Array<{ name: string; path: string }>).find((f) => f.name === input.name) : null;
+  const file = Array.isArray(mission.files) ? (mission.files as Array<{ name: string; path: string; kind?: string }>).find((f) => f.name === input.name) : null;
   if (!file) return bad(404, "الملف غير موجود.");
-  const { data, error } = await client.storage.from(AGENT_BUCKET).createSignedUrl(`${input.id}/${file.path}`, 120, { download: file.name });
+  // the name the customer saves is the mission's name (the same function as «طلباتي» and the e-mail's link use), never «result.xlsx»
+  const download = missionDownloadName({ files: mission.files, kind: file.kind ?? input.name.split(".").pop() ?? "", plan: mission.plan, requestText: mission.request_text, deliveredUnits: mission.delivered_units, date: mission.updated_at });
+  const { data, error } = await client.storage.from(AGENT_BUCKET).createSignedUrl(`${input.id}/${file.path}`, 120, { download });
   if (error || !data?.signedUrl) return bad(500, "تعذّر إنشاء رابط الملف.");
   return { ok: true, url: String(data.signedUrl) };
 }
