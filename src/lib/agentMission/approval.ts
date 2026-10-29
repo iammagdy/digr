@@ -31,7 +31,10 @@ export async function approveMissionOnce(client: any, input: ApprovalInput): Pro
   if (claim.error) return bad(500, "تعذّر الاعتماد.");
   // the claim changed no row: another click got there first
   if (Array.isArray(claim.data) && claim.data.length === 0) return bad(409, "هذه الخطة اعتُمدت بالفعل.");
-  const result = await approveMission(client, { id: mission.id, user_id: mission.user_id, plan: mission.plan as PricedPlan });
+  // the plan is read AGAIN after the claim: a plan edit (the customer's «عدّل الخطة») only writes while the status is still plan_ready, so after the claim the stored plan is the one that is priced and reserved
+  const { data: claimed } = await client.from(MISSION_TABLE).select("plan").eq("id", input.id).maybeSingle();
+  const plan = (claimed?.plan ?? mission.plan) as PricedPlan;
+  const result = await approveMission(client, { id: mission.id, user_id: mission.user_id, plan });
   if (!result.ok) {
     await client.from(MISSION_TABLE).update({ status: "plan_ready", lease_until: null, error: result.code }).eq("id", input.id);
     return bad(result.code === "insufficient_balance" ? 402 : 409, input.messages?.[result.code] ?? result.messageAr, result.code);

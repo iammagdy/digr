@@ -45,6 +45,8 @@ export interface ReplayInput {
   deps?: (base: RunnerDeps) => RunnerDeps;
   /** The mission's store (default: the in-memory one). The stale-read store of cdnStaleStore.ts gives the real storage's read semantics. */
   makeStore?: () => MemoryStore;
+  /** Runs after the customer read the card and before they approve (the plan editor, a second card read): the plan the worker then executes is the stored one at that moment. */
+  beforeApproval?: (ctx: { client: any; missionId: string; db: MemoryDb; store: MemoryStore }) => Promise<void>;
 }
 
 export interface ReplayResult {
@@ -140,6 +142,11 @@ export async function replay(input: ReplayInput): Promise<ReplayResult> {
   if (!planLoad.ok) throw new Error("the customer could not read the mission");
   customerAnswers.push(planLoad);
 
+  if (input.beforeApproval) await input.beforeApproval({ client, missionId, db, store });
+  const stored = store.missions.get(missionId)!;
+  // the plan the customer approves is the stored one (a plan edit may have replaced it)
+  const approvedPlan = (stored.plan ?? planned.plan) as PricedPlan;
+
   // 4. the customer approves
   const approved = await approveForCustomer(client, { id: missionId, userId: REPLAY_USER, isGuest: false, emailVerified: true });
   if (!approved.ok) throw new Error(`approval failed: ${approved.error}`);
@@ -147,7 +154,7 @@ export async function replay(input: ReplayInput): Promise<ReplayResult> {
   // 5. the worker executes it
   const claimedForExecution = await store.claimMission("w_replay", 120);
   expect(claimedForExecution?.status).toBe("executing");
-  const executionDriver = createFakeDriver(input.execution(planned.plan), { costUsd: 0.004 });
+  const executionDriver = createFakeDriver(input.execution(approvedPlan), { costUsd: 0.004 });
   await runExecution(wire(executionDriver), store.missions.get(missionId)!);
   const mission = store.missions.get(missionId)!;
 
@@ -155,7 +162,7 @@ export async function replay(input: ReplayInput): Promise<ReplayResult> {
   if (!finalLoad.ok) throw new Error("the customer could not read the final mission");
   customerAnswers.push(finalLoad);
 
-  return { db, store, money, rec, call, web: input.web, missionId, mission, plannedPlan: planned.plan, planView: planLoad.view, finalView: finalLoad.view, notices, planningDriver, executionDriver, initialBalance, customerAnswers };
+  return { db, store, money, rec, call, web: input.web, missionId, mission, plannedPlan: approvedPlan, planView: planLoad.view, finalView: finalLoad.view, notices, planningDriver, executionDriver, initialBalance, customerAnswers };
 }
 
 const INTERNAL = /(treg|firecrawl|context\.dev|contextdev|anyapi|crawl4ai|litescrape|aiark|aviato|blitz|limadata|justoneapi|scrapecreators|tomba|\bx\.x\.|endpoint|call_\d{4}|out_\d{4}|msn_[a-z0-9]{6}|job_quote|quote_|USD|\$|measured_|worker_id)/i;

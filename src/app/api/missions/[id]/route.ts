@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { answerForCustomer, approveForCustomer, cancelForCustomer, loadCustomerMission } from "@/lib/agentMission/customerActions";
+import { answerForCustomer, approveForCustomer, cancelForCustomer, editPlanForCustomer, loadCustomerMission } from "@/lib/agentMission/customerActions";
 import { sendMissionNotice } from "@/lib/server/missionNotify";
 import { resolveMissionViewer, safeMissionId } from "@/lib/server/missionViewer";
 import { getLiveProviderGateStatusFromSettings } from "@/lib/server/providerGate";
@@ -21,8 +21,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
 }
 
 /**
- * Body {action}: "approve" (a guest signs up first; the reserve goes through the existing money functions), "cancel", "answer" (+ text), or "edit" (cancels a mission that holds nothing and
- * returns its words so the customer can change them and send again). The price is recomputed by code at approval; nothing the agent said sets it.
+ * Body {action}: "approve" (a guest signs up first; the reserve goes through the existing money functions), "cancel", "answer" (+ text), "edit_plan" (+ edits: the number of items, the period, the language, the
+ * exclusions and the columns of the plan itself, priced again by code and shown again for approval), or "edit" (cancels a mission that holds nothing and returns its words so the customer can retype the request).
+ * The price is recomputed by code at approval; nothing the agent said sets it.
  */
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const id = safeMissionId((await ctx.params).id);
@@ -54,6 +55,10 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   if (body?.action === "cancel" || body?.action === "edit") {
     const r = await cancelForCustomer(client, { id, userId: viewer.userId });
     return r.ok ? NextResponse.json({ success: true, ...(body.action === "edit" ? { requestText: r.requestText } : {}) }) : fail(r);
+  }
+  if (body?.action === "edit_plan") {
+    const r = await editPlanForCustomer(client, { id, userId: viewer.userId, edits: body.edits });
+    return r.ok ? NextResponse.json({ success: true }) : fail(r);
   }
   if (body?.action === "answer") {
     const r = await answerForCustomer(client, { id, userId: viewer.userId, text: body.text });

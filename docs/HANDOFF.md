@@ -4,6 +4,19 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-29, later): the contract between the plan and the engine
+
+Written by the session that diagnosed the two missions of 2026-10-29 (read-only) and fixed them. `main` before it was `a9c8666386e62e0e3f8b31b3b09195adf693126e` (#284); its merge commit is the head of `main` after it. Details and evidence: `docs/ENGINE_AND_ITEM_STORE.md` section 5. No SQL was written or applied; no Edge Function changed.
+
+- **M1 was our failure, not memory:** the plan's mapping had no `id`, the engine rejected every item. Now the recipe proof requires an id (or a key code derives one from) and every column and filter field, the engine derives ids, and zero items stored from non-empty pages is an INTERNAL failure (hold released whole, admin flagged in `missions.error` and an `adm_source_rows` event, the customer told it was ours).
+- **The quantity is set by code** from the customer's words (digits and number words); the model may go lower only with a reason shown on the card; one target everywhere; settlement against the approved target; below the request is `partial`, never «N من N».
+- **Every card promise is a filter in code** (replies, reposts, language, period, account, place) and posts/comments with the same text are one item. A promise without its filter is refused at plan time.
+- **«عدّل الطلب» edits the plan itself** (count, period, language, exclusions, columns), priced again by code; «اكتب الطلب من جديد» (cancel and retype) stays.
+- **The card never goes deaf** (polls while waiting and working, reads on tab focus, says the end once); the worker writes a heartbeat history as object names under `_worker/heartbeat/` (no SQL).
+- Rollback: `git revert -m 1 <merge commit>`. NOT PROVEN list: end of section 5 of the engine doc.
+
+---
+
 ## START HERE (2026-10-29): the agent, the item store and the engine
 
 Written by the session that fixed the lost-items defect (PR: «One item store, a code engine, settle from the file»; its merge commit is the head of `main` after it; before it `main` was `f6dfd3e30f5474c23eadbe7e177570db4e795663`, #283). Everything about the agent is in `agent/README.md`; this change is explained, with the raw evidence, in `docs/ENGINE_AND_ITEM_STORE.md`.

@@ -63,7 +63,10 @@ export async function runEngine(deps: EngineDeps): Promise<EngineOutcome> {
     await drainPending(deps, stage);
     const counts = items.counts(stage.key);
     let reason = outcome.reason;
-    if (counts.accepted >= stage.planned_rows) reason = "target_reached";
+    // THE SOURCE GAVE ITEMS AND NONE WAS STORED: our own mapping or save failed. That is an internal failure, never «the source has nothing»: recorded as its own reason so the settlement releases the hold whole, tells the customer the truth and flags the admin
+    const sourceRows = items.stage(stage.key).sourceRows;
+    if (outcome.reason === "internal_error" || (counts.new === 0 && counts.duplicates === 0 && sourceRows > 0)) reason = "internal_error";
+    else if (counts.accepted >= stage.planned_rows) reason = "target_reached";
     else if (counts.pending > 0 && deps.reviewer && (await deps.reviewer.state()).stop && (reason === "source_exhausted" || reason === "no_new_items" || reason === "review_limit")) reason = (await deps.reviewer.state()).stop === "failed" ? "failed" : "review_limit";
     stops[stage.key] = reason;
     await items.commit([{ t: "stop", stage: stage.key, reason }]);
@@ -135,17 +138,19 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     try { page = raw === null ? null : JSON.parse(raw); } catch { page = null; }
     if (page === null) return { reason: "failed", aborted: null };
     const mapped = await deps.sandbox(spec.map_code, { [spec.map_file_id]: page });
-    if (!mapped.ok || mapped.resultJson === null) { deps.log?.(`engine_map_failed ${deps.missionId} ${mapped.ok ? "no result" : mapped.error.slice(0, 80)}`); return { reason: "failed", aborted: null }; }
+    // the mapping is OURS: a mapping that fails on a page the source gave is our failure (an internal one while nothing has been stored yet), never «the source failed»
+    const mapFailed = (): { reason: StopReason; aborted: null } => ({ reason: items.counts(stage.key).new === 0 ? "internal_error" : "failed", aborted: null });
+    if (!mapped.ok || mapped.resultJson === null) { deps.log?.(`engine_map_failed ${deps.missionId} ${mapped.ok ? "no result" : mapped.error.slice(0, 80)}`); return mapFailed(); }
     let rows: unknown;
     try { rows = JSON.parse(mapped.resultJson); } catch { rows = null; }
-    if (!Array.isArray(rows)) return { reason: "failed", aborted: null };
+    if (!Array.isArray(rows)) return mapFailed();
     const incoming: Row[] = rows.filter(isObject).map((r) => (parentId !== null ? { ...r, parent_id: parentId } : r));
     const nextCursor = pageMode ? (result.rows_in_page > 0 ? String((cursor !== null ? Number(cursor) : Number(params.page)) + 1) : null) : result.next_cursor ?? null;
     const ended = pageMode ? result.rows_in_page === 0 : !nextCursor || result.rows_in_page === 0 || result.has_more === false || !spec.cursor_param;
     const before = items.counts(stage.key).accepted;
     // a parent's share (per_parent_rows) is a cap on what this page may add for it
     const have = parentId !== null ? items.acceptedRows(stage.key).filter((r) => String(r.parent_id) === parentId).length : 0;
-    await ingestRows(deps, stage, incoming, { silent: true, ...(parentId !== null && Number.isFinite(perParentCap) ? { acceptCap: Math.max(0, perParentCap - have) } : {}), page: { stream: streamKey, call_id: result.call_id, cursor_in: cursor, cursor_next: nextCursor, has_more: result.has_more, ended, rows_in_page: result.rows_in_page } });
+    await ingestRows(deps, stage, incoming, { silent: true, idField: spec.id_field ?? null, ...(parentId !== null && Number.isFinite(perParentCap) ? { acceptCap: Math.max(0, perParentCap - have) } : {}), page: { stream: streamKey, call_id: result.call_id, cursor_in: cursor, cursor_next: nextCursor, has_more: result.has_more, ended, rows_in_page: result.rows_in_page } });
     await emitStageProgress(deps, stage, { collecting: true });
     // the review had nothing left to give while items still wait: pages that add nothing are not bought for ever
     const after = items.counts(stage.key);

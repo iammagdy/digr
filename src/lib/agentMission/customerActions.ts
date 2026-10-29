@@ -4,6 +4,8 @@ import { approveMissionOnce } from "./approval";
 import { customerMissionView, type EventForCustomer, type MissionRowForCustomer, type QueueInfo } from "./customerView";
 import { latestBeat, workerAlive } from "./heartbeat";
 import { userWillBeEmailed } from "./emailEligibility";
+import { customerPlanView, type PricedPlan, type PricedStage } from "./plan";
+import { applyPlanEdits } from "./planEdit";
 
 /**
  * What a CUSTOMER does with a mission, on the server, with the service-role client and an explicit owner check on every call (a customer reaches only their own missions; the browser never
@@ -113,6 +115,40 @@ export async function cancelForCustomer(client: any, input: { id: string; userId
   const upd = await client.from(MISSION_TABLE).update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", input.id).in("status", CANCELLABLE);
   if (upd.error) return bad(500, "تعذّر الإلغاء.");
   return { ok: true, requestText: String(data.request_text ?? "") };
+}
+
+/** The mapped items of the page each stage's yield was measured on, read from the mission's own folder (null for a stage whose page is unavailable: its measured yield stays). */
+async function readYieldRows(client: any, missionId: string, plan: PricedPlan): Promise<Map<string, Array<Record<string, unknown>>>> {
+  const out = new Map<string, Array<Record<string, unknown>>>();
+  for (const s of plan.stages) {
+    if (!s.relevance || !s.yield_from || !/^out_\d{4,6}$/.test(s.yield_from)) continue;
+    try {
+      const { data } = await client.storage.from(AGENT_BUCKET).download(`${missionId}/out/${s.yield_from}.json`);
+      const parsed = JSON.parse(typeof data?.text === "function" ? await data.text() : String(data ?? ""));
+      if (Array.isArray(parsed) && parsed.every((r) => r && typeof r === "object")) out.set(s.key, parsed as Array<Record<string, unknown>>);
+    } catch { /* the measured yield stays */ }
+  }
+  return out;
+}
+
+/**
+ * THE CUSTOMER EDITS THE PLAN (the number of items, the period, the language, each exclusion, the main columns) while it waits for approval: applied to the stored plan by code, priced again by code (the model never decides a price),
+ * stored with the card's own view, and shown again. Only a plan that is still «plan_ready» changes; once approved, the plan is what was priced and held. Nothing is held or charged here.
+ */
+export async function editPlanForCustomer(client: any, input: { id: string; userId: string; edits: unknown }): Promise<CustomerResult<{ status: string; requestText: string }>> {
+  const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,status,plan,request_text").eq("id", input.id).maybeSingle();
+  if (!mission || mission.user_id !== input.userId) return bad(404, "المهمة غير موجودة.");
+  if (mission.status !== "plan_ready" || !mission.plan) return bad(409, "لا يمكن تعديل الخطة الآن.");
+  const plan = mission.plan as PricedPlan;
+  const rows = await readYieldRows(client, input.id, plan);
+  const r = applyPlanEdits(plan, input.edits, { yieldRows: (s: PricedStage) => rows.get(s.key) ?? null });
+  if (!r.ok) return bad(400, r.errorAr);
+  const upd = await client.from(MISSION_TABLE).update({ plan: r.plan as any, plan_public: customerPlanView(r.plan) as any, unit_price_points: r.plan.price.unitPricePoints, reserved_points: r.plan.price.reservePoints, updated_at: new Date().toISOString() }).eq("id", input.id).eq("status", "plan_ready").select("id");
+  if (upd.error) return bad(500, "تعذّر حفظ تعديلك.");
+  // approved or cancelled in the meantime: the stored plan is the one that was priced and held
+  if (Array.isArray(upd.data) && upd.data.length === 0) return bad(409, "تغيّرت حالة المهمة؛ لا يمكن تعديل الخطة الآن.");
+  await client.from(MISSION_EVENTS_TABLE).insert({ mission_id: input.id, kind: "plan", message_ar: "حدّثنا الخطة بحسب تعديلك، والسعر محسوب من جديد.", counts: { stages: r.plan.stages.length, rows: r.plan.price.deliveredRows, unit_points_x1000: Math.round(r.plan.price.unitPricePoints * 1000), reserve_points: r.plan.price.reservePoints } });
+  return { ok: true, status: "plan_ready", requestText: String(mission.request_text ?? "") };
 }
 
 export async function answerForCustomer(client: any, input: { id: string; userId: string; text: unknown }): Promise<CustomerResult> {

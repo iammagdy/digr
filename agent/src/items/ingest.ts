@@ -1,6 +1,8 @@
 import { classifyRowDetailed, type RelevanceReason, type RuleBasis } from "../../../src/lib/agentMission/relevance";
 import { CONTACT_KINDS, isContactSource, verifyContactValue } from "../../../src/lib/agentMission/contacts";
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
+import { dedupeScope, deriveItemId, isTextItemStage, textDedupeKey, textKeyOf } from "../../../src/lib/agentMission/contract";
+import { filterVerdict, isEnabled } from "../../../src/lib/agentMission/filters";
 import type { MissionEventInput } from "../types";
 import type { Reviewer } from "../review";
 import type { ItemReason, ItemStore, Op, Row, StageCounts } from "./itemStore";
@@ -27,6 +29,10 @@ export interface IngestOptions {
   silent?: boolean;
   /** The most items this batch may ADD to the stage (a parent's share: «five comments per post»): a match beyond it is kept, never delivered, like a match beyond the volume bought. */
   acceptCap?: number;
+  /** The engine's items are keyed by code: their own `id`, else this field (the recipe's `id_field`; null: a known key field or the fingerprint). Absent (the model's save_rows): an item without an `id` is refused. */
+  idField?: string | null;
+  /** «Now» for a period counted in days (tests pass a fixed moment). */
+  now?: number;
 }
 
 export interface IngestResult extends Record<string, unknown> {
@@ -55,7 +61,16 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   const contactColumns = stage.columns.filter((c) => c.kind !== undefined && CONTACT_KINDS.includes(c.kind));
   const contactStage = isContactSource(stage.endpoint_id);
   const parentIds = stage.parent_key !== null ? new Set(items.acceptedIds(stage.parent_key)) : null;
-  const tally = { saved_now: 0, duplicates_ignored: 0, rejected_missing_id: 0, rejected_unknown_parent: 0, rejected_over_limit: 0, rejected_not_object: 0, rejected_no_verified_contact: 0, contact_values_left_empty: 0 };
+  const tally = { saved_now: 0, duplicates_ignored: 0, duplicate_texts: 0, rejected_missing_id: 0, rejected_unknown_parent: 0, rejected_over_limit: 0, rejected_not_object: 0, rejected_no_verified_contact: 0, rejected_by_filter: 0, contact_values_left_empty: 0 };
+  const enabledFilters = (stage.filters ?? []).filter(isEnabled);
+  const now = options.now ?? Date.now();
+  // THE SAME TEXT TWICE (a post or a comment): the first is kept, the rest are counted as duplicates. A text of a child stage is unique among the items of its own parent.
+  const dedupeText = isTextItemStage(stage);
+  const seenTexts = new Set<string>();
+  if (dedupeText) {
+    const dedupeKey = textKeyOf(stage);
+    if (dedupeKey) for (const it of items.stage(key).items.values()) { const k = it.row ? textDedupeKey(it.row[dedupeKey]) : null; if (k) seenTexts.add(`${dedupeScope(it.row?.parent_id === undefined ? null : String(it.row.parent_id))}|${k}`); }
+  }
   const ops: Op[] = [];
 
   // items that were waiting (a review the budget or a failure delayed) or never looked at come back first, while matching items are still needed
@@ -71,7 +86,9 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   const excludedStructural: Array<{ id: string; reason: ItemReason; row: Row }> = [];
   for (const raw of incoming) {
     if (!isObject(raw)) { tally.rejected_not_object += 1; continue; }
-    const id = String(raw.id ?? "").trim();
+    // an item always has an id: its own, the field the recipe chose, a known key field (a platform id, the link), or its fingerprint: the same item read twice is the same id (never rejected for lacking one)
+    // (the engine passes the recipe's `idField`, so its items are keyed this way; the model's own save_rows has no such field and keeps refusing an item without an id, which it was told to give)
+    const id = options.idField !== undefined ? deriveItemId(raw, options.idField) : String(raw.id ?? "").trim();
     if (!id) { tally.rejected_missing_id += 1; continue; }
     if (items.has(key, id) || seenNow.has(id)) { duplicates += 1; tally.duplicates_ignored += 1; continue; }
     let parentId: string | null = null;
@@ -80,9 +97,23 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
       // an item of a parent that is not saved (yet) is NOT remembered: it may come again once its parent is saved
       if (!parentId || !parentIds.has(parentId)) { tally.rejected_unknown_parent += 1; continue; }
     }
+    if (dedupeText) {
+      const textField = textKeyOf(stage, Object.keys(raw));
+      const k = textField ? textDedupeKey(raw[textField]) : null;
+      if (k) {
+        const scoped = `${dedupeScope(parentId)}|${k}`;
+        if (seenTexts.has(scoped)) { duplicates += 1; tally.duplicates_ignored += 1; tally.duplicate_texts += 1; continue; }
+        seenTexts.add(scoped);
+      }
+    }
     seenNow.add(id);
     const row: Row = { id, ...(parentId !== null ? { parent_id: parentId } : {}) };
     for (const k of columnKeys) if (k !== "id" && k !== "parent_id") row[k] = raw[k] ?? "";
+    // WHAT THE CARD PROMISES, checked here on the mapped item (replies, language, period, account, place): an item a filter rejects is neither delivered nor charged, and is kept with its reason
+    if (enabledFilters.length > 0) {
+      const why = filterVerdict(enabledFilters, raw, { textKey: textKeyOf(stage, Object.keys(raw)), now });
+      if (why) { tally.rejected_by_filter += 1; excludedStructural.push({ id, reason: why, row }); continue; }
+    }
     // CONTACT FIELDS are verified by code: a work e-mail or phone that does not pass is left empty; an item of a contact stage with no verified value is not delivered (so it is not charged)
     let verifiedAny = false;
     for (const c of contactColumns) {

@@ -1,5 +1,5 @@
 import {
-  AGENT_HEARTBEAT_INTERVAL_MS, AGENT_MEMORY_ADMIT_LIMIT_MB, AGENT_MEMORY_HARD_LIMIT_MB, AGENT_MEMORY_RECYCLE_AFTER_MS, AGENT_MEMORY_RECYCLE_MIN_UPTIME_MS, AGENT_MEMORY_WATCH_MS, AGENT_MISSION_LEASE_SECONDS, AGENT_POLL_INTERVAL_MS, AGENT_WORKER_CONCURRENCY,
+  AGENT_HEARTBEAT_HISTORY_EVERY_MS, AGENT_HEARTBEAT_HISTORY_FOLDER, AGENT_HEARTBEAT_HISTORY_SPACE, AGENT_HEARTBEAT_INTERVAL_MS, AGENT_MEMORY_ADMIT_LIMIT_MB, AGENT_MEMORY_HARD_LIMIT_MB, AGENT_MEMORY_RECYCLE_AFTER_MS, AGENT_MEMORY_RECYCLE_MIN_UPTIME_MS, AGENT_MEMORY_WATCH_MS, AGENT_MISSION_LEASE_SECONDS, AGENT_POLL_INTERVAL_MS, AGENT_WORKER_CONCURRENCY,
 } from "../../src/lib/agentMission/constants";
 import { readMemory as readProcessMemory, type MemoryReading } from "./memory";
 import type { AgentStore, MissionRecord } from "./types";
@@ -71,10 +71,28 @@ export function createWorker(deps: WorkerDeps) {
     }
   };
 
+  let historyBucket = -1;
+  /** One create-only object per worker per few minutes, the reading in its NAME (see AGENT_HEARTBEAT_HISTORY_EVERY_MS): the history the overwritten heartbeat row cannot give. Never throws. */
+  async function writeHistory(memory: MemoryReading): Promise<void> {
+    try {
+      const t = now().getTime();
+      const bucket = Math.floor(t / AGENT_HEARTBEAT_HISTORY_EVERY_MS);
+      if (bucket === historyBucket) return;
+      historyBucket = bucket;
+      const at = new Date(bucket * AGENT_HEARTBEAT_HISTORY_EVERY_MS).toISOString().replace(/[:.]/g, "-");
+      const name = `${AGENT_HEARTBEAT_HISTORY_FOLDER}/${at}_${deps.workerId}_r${Math.round(memory.rssMb)}_t${memory.treeRssMb === null ? "x" : Math.round(memory.treeRssMb)}_a${active.size}.json`;
+      await deps.store.putNew(AGENT_HEARTBEAT_HISTORY_SPACE, name, JSON.stringify({ worker: deps.workerId, at: now().toISOString(), rss_mb: memory.rssMb, tree_rss_mb: memory.treeRssMb, active: active.size, version: deps.version }), "application/json");
+    } catch (e) {
+      historyBucket = -1;
+      deps.log?.(`heartbeat_history_failed ${String((e as Error)?.message ?? e).slice(0, 120)}`);
+    }
+  }
+
   async function heartbeat(): Promise<void> {
     try {
       const memory = (deps.readMemory ?? readProcessMemory)();
       await deps.store.writeHeartbeat({ worker_id: deps.workerId, beat_at: now().toISOString(), active_missions: active.size, model: deps.modelLabel(), version: deps.version, rss_mb: memory.rssMb, tree_rss_mb: memory.treeRssMb });
+      await writeHistory(memory);
       await deps.store.renewLeases(deps.workerId, leaseSeconds, [...active.keys()]);
     } catch (e) {
       deps.log?.(`heartbeat_failed ${String((e as Error)?.message ?? e).slice(0, 120)}`);
