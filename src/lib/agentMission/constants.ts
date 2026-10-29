@@ -129,7 +129,7 @@ export const MISSION_INTERNAL_COUNT_KEYS = ["mem_phase", "mem_start_rss_mb", "me
   "adm_flag", "adm_store", "adm_file", "adm_memory",
   "chk_ex_no_text", "chk_ex_no_term", "chk_ex_mention_only", "chk_ex_other_person", "chk_ex_name_extended", "chk_ex_other_meaning", "chk_ex_uncertain", "chk_ex_not_reviewed", "chk_ex_review_no", "chk_ex_review_failed",
   // what the filters of the card rejected, and the rows the source gave when our own mapping stored none of them (an internal failure)
-  "chk_ex_filter_reply", "chk_ex_filter_repost", "chk_ex_filter_language", "chk_ex_filter_period", "chk_ex_filter_account", "chk_ex_filter_place", "adm_source_rows"] as const;
+  "chk_ex_filter_reply", "chk_ex_filter_repost", "chk_ex_filter_language", "chk_ex_filter_period", "chk_ex_filter_account", "chk_ex_filter_place", "adm_source_rows", "adm_parent_fixed"] as const;
 export const AGENT_POLL_INTERVAL_MS = 5_000;
 /** The worker writes a heartbeat row this often; the admin page calls it alive while the last beat is younger than AGENT_HEARTBEAT_ALIVE_MS. */
 export const AGENT_HEARTBEAT_INTERVAL_MS = 30_000;

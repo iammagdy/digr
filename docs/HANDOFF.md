@@ -4,6 +4,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-29, after #295): fix mission 9 (file correctness)
+
+`main` before it was `8e98d5759c242a15c64520fc06ef6107ca39acd3` (#295); its merge commit is the head of `main` after it. Evidence, root causes, tests and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 13. No SQL written or applied; no Edge Function changed; no price, cap or model string changed; settlement code untouched.
+
+- **Live: «موقع الشركة» was the first company's website on every person**: the model's recorded mapping hard-codes the sample call's input (`website: 'orascom.com'`) and the engine runs it for every parent. `parentColumns.ts` repairs, before the file is written, every parent-describing child value that is another parent's (own parent's value, same style); admin-only flag `parent_column_fixed`.
+- **«02:00» on start dates**: a date with no time stays a date (`yyyy-mm-dd`, no shift); real timestamps keep Cairo time. **Missing values are empty cells**, not `''`.
+- **«ملفين» vs «الملفات ١»**: the closing note (the model's text) is corrected when shown (one Excel of N linked sheets); «طلباتي» asked for «the latest 100 artifact rows of the account» and lost this mission's row (104 rows): now by job, plus the mission's own files.
+- One existing test changed: `tests/agent-files.test.ts` (an empty cell is `null`, not `""`; border and fill asserted too).
+- Rollback: `git revert -m 1 <merge commit>`.
+
+---
+
 ## START HERE (2026-10-29, after #294): fix mission 8 (the children of a request are delivered)
 
 `main` before it was `82938c7d38f75a5b7b8dfb6bfb1b4d1605c543d2` (#294); its merge commit is the head of `main` after it. Evidence, root cause, the arithmetic for both live plans, tests and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 12. No SQL written or applied; no Edge Function changed; no price, cap or model string changed.

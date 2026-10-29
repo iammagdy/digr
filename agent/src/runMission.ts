@@ -396,9 +396,12 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   let fileCount = 0;
   /** The items of each delivered stage IN THE FILE (by sheet), for the tracker's final numbers. */
   let fileByStage: Record<string, number> | null = null;
+  /** Rows whose parent-describing value was replaced by their own parent's before the file was written (admin only). */
+  let parentFixedRows = 0;
   if (builtCount > 0) {
     try {
       const built = await buildMissionFiles(plan, rowsByStage);
+      if (built.parentFixes.length > 0) { parentFixedRows = built.parentFixes.reduce((n, f) => n + f.rows, 0); flags.push("parent_column_fixed"); deps.log?.(`parent_column_fixed ${mission.id} ${built.parentFixes.map((f) => `${f.stage_key}.${f.column}<-${f.parent_field}x${f.rows}`).join(",")}`); }
       const published = await store.publishResult({ missionId: mission.id, userId: mission.user_id, jobId, xlsx: built.xlsx, csv: built.csv });
       resultPath = published.resultPath;
       // READ BACK what the customer will download, and count it from the file itself
@@ -432,7 +435,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
     return;
   }
   if (flags.length > 0) {
-    await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: أرقام المهمة لا تتطابق تمامًا.", counts: { adm_flag: 1, adm_store: builtCount, adm_file: fileCount, adm_memory: a.memory ? plan.stages.filter((s) => s.deliver).reduce((n, s) => n + a.memory!.counts(s.key).accepted, 0) : -1 } });
+    await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: أرقام المهمة لا تتطابق تمامًا.", counts: { adm_flag: 1, adm_store: builtCount, adm_file: fileCount, adm_memory: a.memory ? plan.stages.filter((s) => s.deliver).reduce((n, s) => n + a.memory!.counts(s.key).accepted, 0) : -1, ...(parentFixedRows > 0 ? { adm_parent_fixed: parentFixedRows } : {}) } });
     deps.log?.(`settle_flags ${mission.id} ${flags.join(",")}`);
   }
   // ONE SOURCE OF TRUTH for the numbers: the counts and the money are stated by code, from the count of the file and the real settlement; the stored summary is the model's note (kept only when it has no number in it, so it can

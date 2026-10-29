@@ -42,3 +42,24 @@ export function onRequestFormats(fileIds?: ResultFileIds | null, options: { noth
   const produced = new Set(producedFormats(fileIds));
   return RESULT_FORMATS.filter((format) => !produced.has(format));
 }
+
+/**
+ * THE FILES OF A JOB AS «طلباتي» LISTS THEM, from every place that knows them, so the list is the one the completion panel shows: the job's artifact rows (the newest version first), the file the job stored as its result, and, for an AGENT mission, the files the
+ * mission itself delivered (`missions.files`: the Excel and its CSV copy). The artifact rows must be asked for BY JOB: a page that asks for «the latest 100 artifact rows of the account» loses the rows of a job when the account has more (live: 104 rows,
+ * the newest mission's Excel row was the one dropped, and the page showed its CSV alone).
+ */
+export function jobFileIds(input: { artifacts?: ReadonlyArray<{ file_id_xlsx?: string | null; file_id_pdf?: string | null; file_id_csv?: string | null }> | null; resultFileId?: string | null; missionFiles?: ReadonlyArray<{ kind?: unknown; path?: unknown }> | null }): Record<ResultFormat, string | null> {
+  const out: Record<ResultFormat, string | null> = { xlsx: null, pdf: null, csv: null };
+  for (const a of input.artifacts ?? []) {
+    out.xlsx ||= a.file_id_xlsx || null;
+    out.pdf ||= a.file_id_pdf || null;
+    out.csv ||= a.file_id_csv || null;
+  }
+  const result = String(input.resultFileId ?? "");
+  for (const f of RESULT_FORMATS) if (result.endsWith(`.${f}`)) out[f] ||= result;
+  for (const f of input.missionFiles ?? []) {
+    const kind = String(f?.kind ?? "");
+    if ((kind === "xlsx" || kind === "csv") && !out[kind]) out[kind] = String(f?.path || `mission/result.${kind}`);
+  }
+  return out;
+}
