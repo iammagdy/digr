@@ -33,20 +33,21 @@ function hash53(text: string): string {
 }
 
 /** The fingerprint of an item: its text and boolean fields in key order (numbers are left out: a like count changes between two reads of the same item). */
-export function contentFingerprint(row: MappedRow): string {
+export function contentFingerprint(row: MappedRow, scope: string | null = null): string {
   const parts = Object.keys(row).filter((k) => k !== "id" && k !== "parent_id").sort().map((k) => (typeof row[k] === "string" || typeof row[k] === "boolean" ? `${k}=${String(row[k]).trim()}` : "")).filter(Boolean);
-  return `c_${hash53(parts.join("\u0001"))}`;
+  return `c_${hash53(parts.join("\u0001") + (scope ? `\u0002${scope}` : ""))}`;
 }
 
 /**
- * The id of one mapped item: its own `id`; else the field the stage's recipe chose (`idField`); else the first of the known key fields it has; else its fingerprint. An item always has an id (never rejected for lacking one),
+ * The id of one mapped item: its own `id`; else the field the stage's recipe chose (`idField`); else the first of the known key fields it has; else its fingerprint (within its parent's scope, for a child). An item always has an id (never rejected for lacking one),
  * and the same item read twice gets the same id.
  */
-export function deriveItemId(row: MappedRow, idField: string | null = null): string {
+export function deriveItemId(row: MappedRow, idField: string | null = null, scope: string | null = null): string {
   if (filled(row.id)) return String(row.id).trim();
   if (idField && idField !== CONTENT_ID_FIELD && filled(row[idField])) return String(row[idField]).trim();
   if (!idField || idField !== CONTENT_ID_FIELD) for (const k of ID_KEY_FIELDS) if (k !== "id" && filled(row[k])) return String(row[k]).trim();
-  return contentFingerprint(row);
+  // the last resort: an item with no id of its own is keyed by what it says; a CHILD is keyed within its parent (the same words written under two posts are two comments)
+  return contentFingerprint(row, scope);
 }
 
 /** Which field of the mapped items keys them: «id» when every item has one; else the first key field every item has and that is (almost) unique; else the fingerprint. */

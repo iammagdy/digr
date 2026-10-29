@@ -63,8 +63,15 @@ export function createSupabaseStore(client: any): AgentStore {
     },
     async addCall(row: CallRow) { must(await client.from(MISSION_CALLS_TABLE).insert(row), "call"); },
     async listCalls(missionId) {
-      const data = must(await client.from(MISSION_CALLS_TABLE).select("*").eq("mission_id", missionId).order("id", { ascending: true }).limit(2000), "calls");
-      return (data ?? []) as CallRow[];
+      // EVERY call of the mission, in pages (the API answers at most its row limit, 1000 by default, whatever limit is asked): a mission of thousands of pages must still find its last call number after a restart and count what it spent
+      const out: CallRow[] = [];
+      for (let from = 0; from < 100_000; from += 1000) {
+        const data = must(await client.from(MISSION_CALLS_TABLE).select("*").eq("mission_id", missionId).order("id", { ascending: true }).range(from, from + 999), "calls");
+        const page = (data ?? []) as CallRow[];
+        out.push(...page);
+        if (page.length < 1000) break;
+      }
+      return out;
     },
     async recentCalls(sinceMs) {
       const data = must(await client.from(MISSION_CALLS_TABLE).select("endpoint_id,status,refused_reason,http_status,rows_returned,cost_usd,created_at,params_digest").gte("created_at", new Date(sinceMs).toISOString()).order("created_at", { ascending: false }).limit(5000), "recent calls");

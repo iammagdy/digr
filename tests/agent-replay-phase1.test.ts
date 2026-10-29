@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertReplayInvariants, pagedAnswers, readWorkbook, replay } from "./helpers/agentReplay";
+import { approvingReview, assertReplayInvariants, pagedAnswers, readWorkbook, replay } from "./helpers/agentReplay";
 import { callIds, companiesPage, emailFound, emailNotFound, employeesPage, fbCommentsPage, fbPostsPage, igHashtagPage, lastOutputId, mapsReviewsPage, mapsSearch, planningFlow, pagedCalls, tregResult, ttCommentsPage, ttVideosPage, xPage, type Results } from "./helpers/agentFakeWorld";
 import type { FakeStep } from "../agent/src/fakeDriver";
 import { aboutWords, firstOutputId } from "./helpers/agentRelevance";
@@ -279,11 +279,12 @@ describe("a companies + employees + work e-mails mission (the contacts stage)", 
     ];
     const r = await replay({
       request: "عايز ٣ شركات كهروميكانيكا في مصر، وجوه كل شركة موظفين اتنين بإيميلاتهم",
+      deps: (base) => ({ ...base, reviewCall: approvingReview as never }),
       planning: planningFlow({
         progress: "أبحث عن مصدر الشركات ثم الموظفين ثم البريد المهني",
         searchWords: ["companies", "search"],
         sample: [{ endpoint: COMPANIES, params: { page: 0, size: 3, account: "الكهروميكانيكا مصر" }, why: "the cheaper sources return no author or link fields in their catalog description" }, { endpoint: EMPLOYEES, params: { website: "company1.example", page: 0, perPage: 2 }, why: "the cheaper sources return no author or link fields in their catalog description" }, { endpoint: EMAILS, params: { person_linkedin_url: "https://www.linkedin.com/in/co1-p1" }, why: "the cheaper sources return no author or link fields in their catalog description" }],
-        sampleCode: "return inputs.call_0001.content.slice(0, 2).map(c => ({ id: c.id, text: c.name, url: c.domain }))",
+        sampleCode: "return inputs.call_0001.content.slice(0, 2).map(c => ({ id: c.id, text: c.name, url: c.domain, country: c.location.country }))",
         plan: (res) => ({
           summary_ar: "ستحصل على ثلاث شركات كهروميكانيكا في مصر وموظفين اثنين من كل شركة مع بريد كل موظف المهني.",
           stages: [
@@ -298,7 +299,7 @@ describe("a companies + employees + work e-mails mission (the contacts stage)", 
       }),
       execution: () => [
         { tool: "treg_call", args: { endpoint_id: COMPANIES, params: { page: 0, size: 3, account: "الكهروميكانيكا مصر" } } },
-        { tool: "run_code", args: (res: Results) => ({ code: "return inputs[Object.keys(inputs)[0]].content.map(c => ({ id: c.id, text: c.name, url: c.domain }))", files: [execCalls(res)[0]] }) },
+        { tool: "run_code", args: (res: Results) => ({ code: "return inputs[Object.keys(inputs)[0]].content.map(c => ({ id: c.id, text: c.name, url: c.domain, country: c.location.country }))", files: [execCalls(res)[0]] }) },
         { tool: "save_rows", args: (res: Results) => ({ stage_key: "companies", from_output: lastOutputId(res) }) },
         ...[1, 2, 3].map((c): FakeStep => ({ tool: "treg_call", args: { endpoint_id: EMPLOYEES, params: { website: `company${c}.example`, page: 0, perPage: 2 } } })),
         { tool: "run_code", args: (res: Results) => ({ code: "const names = { co1: 'الشركة المصرية للكهروميكانيكا', co2: 'النيل للتركيبات الكهربائية', co3: 'دلتا للمقاولات الكهروميكانيكية' }; const out = []; for (const page of Object.values(inputs)) for (const e of page.employees) out.push({ id: e.personID, parent_id: e.companyID, text: e.person.fullName, title: e.positionList[0].title, company: names[e.companyID] }); return out;", files: execCalls(res).slice(1) }) },

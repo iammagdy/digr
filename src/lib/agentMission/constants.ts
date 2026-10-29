@@ -150,6 +150,16 @@ export const AGENT_PLANNING_BUDGET_USD = 0.05;
 export const AGENT_PLANNING_BUDGET_MULTI_STAGE_USD = 0.10;
 /** The share of the planning budget kept for the FIRST sample of each stage that has not been sampled yet: the first stage can never spend the budget the next one needs (the live Facebook request of 2026-10-29). */
 export const AGENT_PLANNING_STAGE_RESERVE_SHARE = 0.3;
+/**
+ * THE PLANNING BUDGET SCALES WITH THE PLATFORM'S COST (owner decision 2026-10-29: Facebook must reach a card even when it is dear), under a HARD CAP the budget object enforces in code. It is the base figure above, or what one minimal sample per
+ * stage costs on the sources the request needs, whichever is more: the first stage takes AGENT_PLANNING_SAMPLES_FIRST_STAGE samples of its cheapest ranked source (two of it, one more of the next source if it is unsuitable) and each later stage AGENT_PLANNING_SAMPLES_LATER_STAGE, times the margin, plus the slack for the cheap calls (a web search
+ * that is refused, a page fetch). The cap is never passed whatever the sources cost.
+ */
+export const AGENT_PLANNING_BUDGET_CAP_USD = 0.20;
+export const AGENT_PLANNING_SAMPLES_FIRST_STAGE = 3;
+export const AGENT_PLANNING_SAMPLES_LATER_STAGE = 2;
+export const AGENT_PLANNING_SAMPLE_MARGIN = 1.25;
+export const AGENT_PLANNING_SLACK_USD = 0.01;
 /** How far back the recorded calls are read to measure what a source really costs per row (the health of a source uses its own, shorter window). */
 export const AGENT_SOURCE_MEASURE_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 /** The execution budget is HOLD_SPEND_SHARE (40%) of the approved reserve's value, never below CALL_CEILING_FLOOR_USD (0.005). Same numbers as the website's job budget. */

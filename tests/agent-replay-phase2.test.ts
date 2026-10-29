@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { aboutWords, firstOutputId } from "./helpers/agentRelevance";
-import { assertReplayInvariants, pagedAnswers, readWorkbook, replay } from "./helpers/agentReplay";
+import { approvingReview, assertReplayInvariants, pagedAnswers, readWorkbook, replay } from "./helpers/agentReplay";
 import { callIds, companiesPage, employeesPage, lastOutputId, planningFlow, tregResult, ttCommentsPage, xPage, type Results } from "./helpers/agentFakeWorld";
 import { emailsOf, fakeContextDev, igFeed, linksOf, mapsPlace, mapsReviews, phonesOf, ttFeed } from "./helpers/fakeContextDev";
 import type { FakeStep } from "../agent/src/fakeDriver";
@@ -167,6 +167,7 @@ describe("a companies + employees + company contacts mission: the company's own 
     ];
     const r = await replay({
       request: "عايز ٣ شركات كهروميكانيكا في مصر، وجوه كل شركة موظفين اتنين، وإيميل وموبايل كل شركة من موقعها",
+      deps: (base) => ({ ...base, reviewCall: approvingReview as never }),
       web, answers,
       planning: [
         { tool: "catalog_search", args: { words: ["companies", "search"], limit: 5 } },
@@ -176,7 +177,7 @@ describe("a companies + employees + company contacts mission: the company's own 
         { tool: "parse_page", args: { parser: "links", url: SITES[0], why: WHY } },
         { tool: "parse_page", args: { parser: "emails", url: `${SITES[0]}/contact`, why: WHY } },
         { tool: "parse_page", args: { parser: "phone-numbers", url: `${SITES[0]}/contact`, why: WHY } },
-        { tool: "run_code", args: (res: Results) => ({ code: "return inputs.call_0001.content.slice(0, 2).map(c => ({ id: c.id, text: c.name, url: c.domain }))", files: callIds(res).slice(0, 1) }) },
+        { tool: "run_code", args: (res: Results) => ({ code: "return inputs.call_0001.content.slice(0, 2).map(c => ({ id: c.id, text: c.name, url: c.domain, country: c.location.country }))", files: callIds(res).slice(0, 1) }) },
         { tool: "propose_plan", args: (res: Results) => ({
           summary_ar: "ستحصل على ثلاث شركات كهروميكانيكا في مصر وموظفين اثنين من كل شركة مع بريد كل شركة المهني وهاتفها من موقعها.",
           stages: [
@@ -189,7 +190,7 @@ describe("a companies + employees + company contacts mission: the company's own 
       ],
       execution: () => [
         { tool: "treg_call", args: { endpoint_id: COMPANIES, params: { page: 0, size: 3, account: "الكهروميكانيكا مصر" }, why: WHY } },
-        { tool: "run_code", args: (res: Results) => ({ code: "return inputs[Object.keys(inputs)[0]].content.map(c => ({ id: c.id, text: c.name, url: c.domain }))", files: callIds(res) }) },
+        { tool: "run_code", args: (res: Results) => ({ code: "return inputs[Object.keys(inputs)[0]].content.map(c => ({ id: c.id, text: c.name, url: c.domain, country: c.location.country }))", files: callIds(res) }) },
         { tool: "save_rows", args: (res: Results) => ({ stage_key: "companies", from_output: lastOutputId(res) }) },
         ...[1, 2, 3].map((c): FakeStep => ({ tool: "treg_call", args: { endpoint_id: EMPLOYEES, params: { website: `company${c}.example`, page: 0, perPage: 2 }, why: WHY } })),
         { tool: "run_code", args: (res: Results) => ({ code: "const out = []; for (const page of Object.values(inputs)) for (const e of page.employees) out.push({ id: e.personID, parent_id: e.companyID, text: e.person.fullName, title: e.positionList[0].title }); return out;", files: callIds(res).slice(1) }) },

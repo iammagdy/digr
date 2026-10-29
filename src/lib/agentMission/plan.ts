@@ -7,7 +7,11 @@ import { checkCustomerLabel, checkCustomerText } from "./text";
 import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type SourceField } from "./fields";
 import { bindQuantity, countedQuantities } from "./quantity";
 import { isTextItemStage, textKeyOf } from "./contract";
-import { assumptionLinesShown, defaultLanguageOf, filterLabelAr, filterLineAr, findFilterFields, isEnabled, parseFilters, promiseIssues, resolveFilters, type StageFilter } from "./filters";
+import { childCardTitleAr, childRuleLinesAr } from "./childItems";
+import { platformCostNotesAr } from "./platformNotes";
+import { isCompanyStage, isEntityStage, requestNamesSector, sectorWordsOf } from "./entities";
+import { placeEntry, placeLabelsAr, placesInText } from "./places";
+import { assumptionLinesShown, CHILD_RAW_FILTER_KINDS, defaultLanguageOf, filterVerdict, filterLabelAr, filterLineAr, findFilterFields, isEnabled, parseFilters, promiseIssues, resolveFilters, type StageFilter } from "./filters";
 
 /**
  * A mission PLAN: stages (a stage runs once per row of its parent stage), the rows each is expected to give, sample rows the agent really saw, and the calls that MEASURED the cost.
@@ -224,8 +228,10 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
         quantity = { requested, stage_key: key, target: requested, source: "request" };
       }
     } else if (reasonIn && reasonIn.issues.length) issues.push(`${label} target_reason_ar: ${reasonIn.issues.join("; ")}`);
+    const isChild = parentKey !== null;
     if (parentKey !== null) {
       if (!planned.has(parentKey)) issues.push(`${label}: parent «${parentKey}» must be an EARLIER stage`);
+
       const per = Number(raw.per_parent_rows);
       if (!Number.isInteger(per) || per < 1) issues.push(`${label}: a stage with a parent needs per_parent_rows (a whole number, at least 1)`);
       else if (planned.has(parentKey)) {
@@ -293,6 +299,11 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
       if (evidence) issues.push(...sampleRowIssues(s, evidence, key));
     }
 
+    // THE ENTITY STAGES (companies, restaurants, places, people, accounts): the place the card names is enforced from the items' fields, and a COMPANY stage whose request names a sector needs a relevance rule that checks the kind of entity
+    const entityStage = raw.deliver === true && !isChild && isEntityStage({ title_ar: title.text });
+    const companyStage = entityStage && isCompanyStage({ title_ar: title.text });
+    const requestWords = `${lookup.requestText ?? ""} ${lookup.answerText ?? ""}`;
+
     // RELEVANCE: a stage whose rows were FOUND by a text search must say what «matching» means, and the share of the sample that matches is computed here, by code, from the rows the agent cites
     let relevance: RelevanceSpec | undefined;
     let yieldRows: Array<Record<string, unknown>> | null = null;
@@ -300,11 +311,12 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
     let reviewShare = 0;
     let sampleExamined = 0;
     let sampleMatching = 0;
-    if (raw.relevance !== undefined && raw.relevance !== null) {
+    // THE ITEMS OF A CHILD STAGE ARE RAW (childItems.ts): the topic rule is the PARENT's; a relevance rule given on a child stage is not applied and does not touch its price
+    if (raw.relevance !== undefined && raw.relevance !== null && !isChild) {
       const checkedRel = validateRelevanceSpec(raw.relevance, cleanColumns.map((c) => c.key));
       if (!checkedRel.ok) issues.push(...checkedRel.issues.map((m) => `${label}: ${m}`));
       else {
-        relevance = checkedRel.spec;
+        relevance = companyStage ? { ...checkedRel.spec, entity: true } : checkedRel.spec;
         const yieldId = String(raw.yield_from ?? "");
         const yieldText = yieldId ? lookup.evidenceText(yieldId) : null;
         let sampleRows: Array<Record<string, unknown>> | null = null;
@@ -323,22 +335,61 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
           if (bad.length) issues.push(`${label}: ${bad.length} of your sample_rows do not match your own relevance rule; show only rows that match`);
         }
       }
-    } else if (foundBySearch && raw.deliver === true) {
+    } else if (companyStage && requestNamesSector(requestWords) && cleanColumns.length > 0) {
+      // THE KIND OF COMPANY IS CHECKED EVEN WHEN THE MODEL GAVE NO RULE (the customer asked for a sector, and a source that lists companies by country returns exhibitions and other trades too): code builds the rule from the request's own words, over the
+      // name and description columns; a company it cannot place in the sector, or that looks like an event or a publication, goes to the model check, never straight to delivery
+      const words = sectorWordsOf(requestWords).slice(0, 4);
+      const named = cleanColumns.filter((c) => /name|title|desc|about|industry|sector|summary|text|company/i.test(c.key)).map((c) => c.key).slice(0, 3);
+      relevance = { subject_ar: `شركات ${words.slice(0, 3).join(" ")}`, terms: [...new Set(words.flatMap((w) => [w, w.replace(/ات$/, "ة")]))].slice(0, 8), text_columns: named.length > 0 ? named : [cleanColumns[0].key], min_own_words: 0, review: true, entity: true };
+    } else if (foundBySearch && raw.deliver === true && !isChild) {
       issues.push(`${label}: its rows were found by a text search, so it needs \`relevance\` (subject_ar, terms, context_terms, exclude_terms, text_columns) and \`yield_from\`: code keeps only the rows that are ABOUT what the customer asked and charges only for those`);
     }
 
     // WHAT THE CARD PROMISES ABOUT THE ITEMS is a filter in code: its fields are found by code from what the mapping gives (the measured rows, the columns, the relevance text columns); a filter nothing can enforce is refused
     const declared = parseFilters(raw.filters, label);
     issues.push(...declared.issues);
+    // a language or a place filter given on a child stage is not applied (the items are delivered as the source gives them)
+    if (isChild) declared.filters = declared.filters.filter((f) => !CHILD_RAW_FILTER_KINDS.includes(f.kind));
     const mappedKeys = [...new Set([...(yieldRows ?? []).flatMap((r) => Object.keys(r)), ...samples.filter(isRecord).flatMap((r) => Object.keys(r))])];
     const fields = findFilterFields({ mappedKeys, columnKeys: cleanColumns.map((c) => c.key), textColumns: relevance?.text_columns, columnTitles: Object.fromEntries(cleanColumns.map((c) => [c.key, c.title_ar])) });
     // THE ONE LANGUAGE RULE: the request's language is the default language of the items of every text stage (tweets, posts, comments, reviews); a language filter the plan already switched on is the plan's own choice
-    const requestLang = raw.deliver === true && isTextItemStage({ title_ar: title.text }) && (fields.lang || fields.text) ? defaultLanguageOf(lookup.requestText, lookup.answerText) : null;
+    const requestLang = raw.deliver === true && !isChild && isTextItemStage({ title_ar: title.text }) && (fields.lang || fields.text) ? defaultLanguageOf(lookup.requestText, lookup.answerText) : null;
     const declaredWithLanguage = requestLang && !declared.filters.some((f) => f.kind === "language" && isEnabled(f))
       ? [...declared.filters.filter((f) => f.kind !== "language"), { kind: "language" as const, lang: requestLang }]
       : declared.filters;
-    const resolved = resolveFilters(declaredWithLanguage, fields, label);
-    issues.push(...resolved.issues);
+    const resolvedAll = resolveFilters(declaredWithLanguage, fields, label);
+    issues.push(...resolvedAll.issues);
+    const resolvedBase = { ...resolvedAll, filters: isChild ? resolvedAll.filters.filter((f) => !CHILD_RAW_FILTER_KINDS.includes(f.kind)) : resolvedAll.filters };
+    // PLACE AND COUNTRY ARE ENFORCED: a place filter reads evidence from the mapped fields (country, city, address, website domain, phone prefix); an entity stage whose request names a place gets the filter from the request itself, and with no field that can carry
+    // the evidence the plan is refused (the card must never promise a place no code can check)
+    const askedPlaces = entityStage ? placesInText(requestWords) : [];
+    const placeFilters = resolvedBase.filters.filter((f) => f.kind === "place" && isEnabled(f));
+    let filtersOut = resolvedBase.filters;
+    if (askedPlaces.length > 0 || placeFilters.length > 0) {
+      const named = askedPlaces.length > 0 ? askedPlaces : placeFilters.flatMap((f) => placesInText((f.values ?? []).join(" ")));
+      const keys = [...new Set(named.map((e) => e.key))].filter((k) => placeEntry(k));
+      if (keys.length > 0) {
+        if (fields.placeFields.length === 0) issues.push(`${label}: the card promises items in ${placeLabelsAr(named).join(", ")}, so every item must carry evidence of it from a mapped field (country, city, address, website domain or phone number); the mapping gives none. Map such a field in your run_code on every row, or finish with cannot_serve if the source has none`);
+        else {
+          const existing = filtersOut.find((f) => f.kind === "place");
+          const placeFilter: StageFilter = { ...(existing ?? { kind: "place" as const }), kind: "place", field: existing?.field ?? fields.place ?? fields.placeFields[0], fields: fields.placeFields, places: keys, values: askedPlaces.length > 0 ? placeLabelsAr(named) : existing?.values ?? placeLabelsAr(named) };
+          delete placeFilter.enabled;
+          filtersOut = [...filtersOut.filter((f) => f.kind !== "place"), placeFilter];
+        }
+      }
+    }
+    const resolved = { ...resolvedBase, filters: filtersOut };
+    // THE PRICE RESTS ON THE ITEMS THAT PASS THE PLACE TOO: the place the card promises takes its share of the measured page away (a source that lists companies of every country), and the cost per DELIVERED item rises with it
+    const pricedFilters = resolved.filters.filter((f) => isEnabled(f) && f.kind === "place");
+    if (relevance && yieldRows && yieldRows.length > 0 && pricedFilters.length > 0) {
+      const textKey = textKeyOf({ relevance, columns: cleanColumns, filters: pricedFilters }, Object.keys(yieldRows[0] ?? {}));
+      const passing = yieldRows.filter((r) => filterVerdict(pricedFilters, r, { textKey, now: 0 }) === null);
+      if (passing.length === 0) issues.push(`${label}: none of the ${yieldRows.length} items of your measured page carries evidence of ${pricedFilters.flatMap((f) => f.values ?? []).join("، ")} in a mapped field; map the country, city, address, website or phone field of every item, or sample a source that gives one`);
+      const after = classifyRows(relevance, passing).counts;
+      sampleMatching = after.match;
+      yieldShare = Math.min(1, Math.max(0.02, (after.match + 0.5 * after.review) / yieldRows.length));
+      reviewShare = after.review / yieldRows.length;
+    }
 
     priced.push({
       key, title_ar: title.text, endpoint_id: endpointId, expected_rows: rowsHere, parent_key: parentKey,
@@ -452,7 +503,7 @@ export function customerPlanView(plan: PricedPlan) {
   // what the card promises about the items is backed by the filters that are switched ON: a line of the model that promises one is shown only while its filter is on, and a filter that is on gets its own sentence, built by code
   const assumptions = assumptionLinesShown(plan.assumptions_ar ?? [], plan.stages.flatMap((s) => s.filters ?? []));
   // fewer than the customer asked for: the reason the card shows next to the one target number
-  const notes = [...(plan.notes_ar ?? []), ...(plan.quantity?.reason_ar ? [plan.quantity.reason_ar] : [])];
+  const notes = [...(plan.notes_ar ?? []), ...(plan.quantity?.reason_ar ? [plan.quantity.reason_ar] : []), ...childRuleLinesAr(plan.stages), ...platformCostNotesAr(plan.stages)];
   return {
     summary_ar: firstSentenceAr(plan.summary_ar),
     ...(notes.length ? { notes_ar: notes } : {}),
@@ -461,7 +512,7 @@ export function customerPlanView(plan: PricedPlan) {
     stages: plan.stages.map((s) => {
       const columns = s.columns.filter((c) => !isInternalColumn(c));
       return {
-        key: s.key, title_ar: s.title_ar, expected_rows: s.planned_rows, parent_key: s.parent_key, deliver: s.deliver, columns,
+        key: s.key, title_ar: childCardTitleAr(s, plan.stages), expected_rows: s.planned_rows, parent_key: s.parent_key, deliver: s.deliver, columns,
         sample_rows: s.sample_rows.slice(0, CUSTOMER_SAMPLE_ROWS).map((r) => Object.fromEntries(columns.map((c) => [c.key, String(r[c.key] ?? "").slice(0, SAMPLE_CELL_CHARS)]))),
         ...(s.how_ar ? { how_ar: s.how_ar } : {}),
         // the share of the sampled items the plan expected to match (a ratio, no money): the live tracker uses it to judge how much must be read before the target is reached

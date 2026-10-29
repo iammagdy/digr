@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertReplayInvariants, readWorkbook, replay, type ReplayResult } from "./helpers/agentReplay";
+import { approvingReview, assertReplayInvariants, readWorkbook, replay, type ReplayResult } from "./helpers/agentReplay";
 import { callIds, companiesPage, employeesPage, fbCommentsPage, fbPostsPage, tregResult, ttCommentsPage, ttVideosPage, type Results } from "./helpers/agentFakeWorld";
 import { aboutWords, firstOutputId } from "./helpers/agentRelevance";
 import { createCdnStaleStore } from "./helpers/cdnStaleStore";
@@ -181,7 +181,7 @@ describe("companies and the employees of each company", () => {
       planning: planFlow({
         progress: "أبحث عن مصدر الشركات ثم الموظفين", words: ["companies", "search"],
         calls: [
-          { endpoint: COMPANIES, params: { page: 0, size: 3, account: "الكهروميكانيكا مصر" }, code: "return inputs.call_0001.content.map(c => ({ id: c.id, text: c.name, url: c.domain }))" },
+          { endpoint: COMPANIES, params: { page: 0, size: 3, account: "الكهروميكانيكا مصر" }, code: "return inputs.call_0001.content.map(c => ({ id: c.id, text: c.name, url: c.domain, country: c.location.country }))" },
           { endpoint: EMPLOYEES, params: { website: "company1.example", page: 0, perPage: 2 }, code: `const names = ${JSON.stringify(NAMES)}; return inputs.call_0002.employees.map(e => ({ id: e.personID, text: e.person.fullName, title: e.positionList[0].title, company: names[e.companyID] }))` },
         ],
         plan: (res) => ({
@@ -195,6 +195,7 @@ describe("companies and the employees of each company", () => {
         }),
       }),
       execution: () => [],
+      deps: (base) => ({ ...base, reviewCall: approvingReview as never }),
       answers: [tregResult(companiesPage(3), 0.0005267), tregResult(employeesPage("co1", 2), 0.005), tregResult(companiesPage(3), 0.0005267), tregResult(employeesPage("co1", 2), 0.005), tregResult(employeesPage("co2", 2), 0.005), tregResult(employeesPage("co3", 2), 0.005)],
     });
     await assertOneNumber(r, { delivered: 9, perSheet: { "الشركات": 3, "موظفو كل شركة": 6 }, noun: "عنصر" });

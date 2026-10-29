@@ -46,6 +46,8 @@ const plan = async (steps: FakeStep[], answers: Array<TregCallResult> = []) => {
   const view = customerMissionView({ mission: { id: m.id, status: m.status, question_ar: m.question_ar, plan_public: m.plan_public, reserved_points: null, unit_price_points: null, delivered_units: null, charged_points: null, summary_ar: m.summary_ar, files: null, created_at: "2026-10-29T08:00:00Z" }, events: [] });
   return { ...t, m, view, driver };
 };
+/** What a planning that holds real rows does when it gives up: the first two attempts are sent back by code (owner decision 2026-10-29), the third ends it. */
+const GIVE_UP_THREE_TIMES = (summary_ar: string, kind?: "empty" | "unsupported"): FakeStep[] => Array.from({ length: 3 }, () => ({ tool: "finish", args: { outcome: "cannot_serve", ...(kind ? { kind } : {}), summary_ar } }));
 const SAY = "لا أستطيع خدمة هذا الطلب بدقة، وقد جرّبت مصادر عدة وأقل من ١٠ تعليقات لكل منشور ولم يُحسب أي مبلغ.";
 
 describe("A. every no-card end is exactly one of four classes, each with its own sentence", () => {
@@ -79,16 +81,17 @@ describe("A. every no-card end is exactly one of four classes, each with its own
     const r = await plan([
       { tool: "catalog_search", args: { words: ["posts", "search"], platform: "x", limit: 5 } },
       { tool: "treg_call", args: { endpoint_id: POSTS_ENDPOINT, params: { query: "غلاء", max_results: 5 }, why: "the fixture source is the one under test" } },
-      { tool: "finish", args: { outcome: "cannot_serve", kind: "empty", summary_ar: "لا نتائج." } },
+      // (was one finish: with real rows in hand a planning is now sent back twice before it may end without a card, owner decision 2026-10-29; the third attempt ends it)
+      ...GIVE_UP_THREE_TIMES("لا نتائج.", "empty"),
     ], [tregResult(postsPage(5), 0.025)]);
     expect(r.m).toMatchObject({ status: "unserved", summary_ar: UNSUPPORTED_AR });
   });
 
   it("internal: the planning ran out of its own source budget (the live Facebook mission): failed, hold never taken, the admin flagged, the customer told it was ours", async () => {
-    // a 25-row page of a per-record source is estimated above the multi-stage planning budget: refused before the call
+    // a 40-row page of a per-record source is estimated above the multi-stage planning budget (scaled to the platform's cost, 0.1254 for this request; was a 25-row page against the flat 0.10): refused before the call
     const r = await plan([
       { tool: "catalog_search", args: { words: ["posts", "search"], platform: "x", limit: 5 } },
-      { tool: "treg_call", args: { endpoint_id: POSTS_ENDPOINT, params: { query: "غلاء", max_results: 25 }, why: "the fixture source is the one under test" } },
+      { tool: "treg_call", args: { endpoint_id: POSTS_ENDPOINT, params: { query: "غلاء", max_results: 40 }, why: "the fixture source is the one under test" } },
       { tool: "finish", args: { outcome: "cannot_serve", kind: "unsupported", summary_ar: SAY } },
     ]);
     expect(r.call).not.toHaveBeenCalled();
@@ -144,7 +147,7 @@ describe("A. the planning does not spend its one budget on one source", () => {
   const run = async (request: string, steps: FakeStep[], answers: TregCallResult[]) => {
     const t = setup(answers);
     t.store.missions.set("msn_x", newMission({ id: "msn_x", user_id: USER_ID, status: "planning", request_text: request }));
-    const driver = createFakeDriver([{ tool: "catalog_search", args: { words: ["posts"], platform: "x", limit: 5 } }, ...steps, { tool: "finish", args: { outcome: "cannot_serve", summary_ar: "لا أستطيع خدمة هذا الطلب بدقة." } }]);
+    const driver = createFakeDriver([{ tool: "catalog_search", args: { words: ["posts"], platform: "x", limit: 5 } }, ...steps, ...GIVE_UP_THREE_TIMES("لا أستطيع خدمة هذا الطلب بدقة.")]);
     await runPlanning(t.deps(driver), t.store.missions.get("msn_x")!);
     return { t, calls: driver.results.filter((x) => x.tool === "treg_call") };
   };
@@ -160,8 +163,8 @@ describe("A. the planning does not spend its one budget on one source", () => {
   });
 
   it("a parent and its children: the first job cannot spend the budget the next stage's first sample needs (stage_reserved)", async () => {
-    // two calls of 0.025 estimate each: the third would pass 0.07 (0.10 less the 30% kept for the stage not yet sampled)
-    const { t, calls } = await run(REQUEST, [ask("غلاء", 5), ask("غلاء الأسعار", 5), ask("ارتفاع الأسعار", 5)], [tregResult(postsPage(5), 0.025), tregResult(postsPage(5), 0.025)]);
+    // two calls of 0.025 estimate each: the third (ten rows, 0.05; was five rows) would pass 0.0954 (0.1254, the budget scaled to this platform's cost, less the 0.03 kept for the stage not yet sampled)
+    const { t, calls } = await run(REQUEST, [ask("غلاء", 5), ask("غلاء الأسعار", 5), ask("ارتفاع الأسعار", 10)], [tregResult(postsPage(5), 0.025), tregResult(postsPage(5), 0.025)]);
     expect(calls.map((c) => (c.result as { ok?: boolean }).ok)).toEqual([true, true, false]);
     expect(calls[2].result).toMatchObject({ refused: "stage_reserved" });
     expect(t.call).toHaveBeenCalledTimes(2);
