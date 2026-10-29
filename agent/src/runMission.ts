@@ -6,11 +6,12 @@ import type { TregCatalog } from "../../src/lib/treg/catalog";
 import type { AccountAccess } from "../../src/lib/treg/dataPolicy";
 import {
   AGENT_ERROR_REQUEUES_MAX, AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD, AGENT_EXECUTION_LLM_BUDGET_SHARE, AGENT_MEMORY_REQUEUES_MAX, AGENT_PHASE_STARTS_MAX, AGENT_EXECUTION_MAX_TURNS, AGENT_EXECUTION_WALL_MS, AGENT_PLANNING_LLM_BUDGET_USD,
-  AGENT_PLANNING_MAX_TURNS, AGENT_PLANNING_WALL_MS, AGENT_PRICING_BASIS, AGENT_EXECUTION_CONTINUE_ROUNDS,
+  AGENT_PLANNING_MAX_TURNS, AGENT_PLANNING_WALL_MS, AGENT_PRICING_BASIS, AGENT_EXECUTION_CONTINUE_ROUNDS, AGENT_SOURCE_MEASURE_WINDOW_MS,
 } from "../../src/lib/agentMission/constants";
 import { executionBudgetUsd, reviewBudgetUsdFor, reviewCeilingUsdFor } from "../../src/lib/agentMission/price";
 import { MISSION_PRICING_SETTING_KEY, normalizeMissionPricingSettings } from "../../src/lib/missionPricing";
-import { planningBudgetUsd } from "../../src/lib/agentMission/budget";
+import { expectedStageCount, planningBudgetUsd } from "../../src/lib/agentMission/budget";
+import { statsFromCalls } from "../../src/lib/agentMission/sourceRanking";
 import { classifyNoCardEnd, refusalSentenceAr } from "../../src/lib/agentMission/refusal";
 import { parentCountsOf } from "../../src/lib/agentMission/parents";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
@@ -197,11 +198,15 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // a multi-stage request (a parent and its children) gets the larger exploration budget (named constants in agentMission/constants.ts), decided by code from the customer's words
   const budget = createJobCallBudget({ ceilingUsd: planningBudgetUsd(`${mission.request_text} ${mission.answer_text ?? ""}`), spentUsd: sum(calls, "planning") });
   const counter = { seq: lastSeq(calls) };
-  const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter });
+  const requestForBudget = `${mission.request_text} ${mission.answer_text ?? ""}`;
+  // THE MEASUREMENT AND THE HEALTH OF THE SOURCES, read from the recorded calls of all missions (read only; planning never waits on it): the ranking the planner gets is computed from them
+  const planningNow = Date.now();
+  const sourceStats = statsFromCalls(await store.recentCalls(planningNow - AGENT_SOURCE_MEASURE_WINDOW_MS).catch(() => []));
+  const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, stageBudget: { stages: expectedStageCount(requestForBudget), budgetUsd: planningBudgetUsd(requestForBudget) } });
   const web = deps.providerKey ? createWebGateway({ store, missionId: mission.id, jobId: null, phase: "planning", budget, recorder: deps.recorder, providerKey: deps.providerKey, fetchFn: deps.fetchFn, counter }) : undefined;
   const state = newRunState(await lastOut(store, mission.id));
   const pricingSettings = normalizeMissionPricingSettings(((await store.readSettings().catch(() => ({}))) as Record<string, unknown>)[MISSION_PRICING_SETTING_KEY]);
-  const ctx: ToolContext = { phase: "planning", mission, plan: null, store, gateway, web, catalog: deps.catalog, access, state, sandbox: deps.sandbox, pricingSettings };
+  const ctx: ToolContext = { phase: "planning", mission, plan: null, store, gateway, web, catalog: deps.catalog, access, state, sandbox: deps.sandbox, pricingSettings, stats: sourceStats, now: planningNow };
   // the model cost of earlier runs of this phase (a requeue, a takeover): this run adds to it, and every model message checkpoints the running total, so a run that is killed still leaves its cost on the mission
   const baseLlm = Number((await store.getMission(mission.id))?.planning_llm_usd ?? mission.planning_llm_usd ?? 0);
   const checkpoint = async ({ costUsd }: { costUsd: number }) => { try { await store.updateMission(mission.id, { planning_llm_usd: Number((baseLlm + costUsd).toFixed(6)) }); } catch { /* a lost checkpoint never stops a run */ } };

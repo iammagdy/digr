@@ -248,8 +248,8 @@ describe("a mission stopped for memory goes back to the queue instead of crashin
     const script: FakeStep[] = [
       { tool: "catalog_search", args: { words: ["posts", "search"], platform: "x", limit: 5 } },
       { tool: "describe_endpoint", args: { id: POSTS_ENDPOINT } },
-      { tool: "treg_call", args: { endpoint_id: POSTS_ENDPOINT, params: { query: "قهوة", max_results: 5 } } },
-      { tool: "treg_call", args: { endpoint_id: COMMENTS_ENDPOINT, params: { url: "https://x.example/p/9000" } } },
+      { tool: "treg_call", args: { endpoint_id: POSTS_ENDPOINT, params: { query: "قهوة", max_results: 5 }, why: "the fixture source is the one under test" } },
+      { tool: "treg_call", args: { endpoint_id: COMMENTS_ENDPOINT, params: { url: "https://x.example/p/9000" }, why: "the fixture source is the one under test" } },
       { tool: "run_code", args: { code: "return inputs.call_0001.data.slice(0, 1).map(r => ({ id: r.id, text: r.text, url: r.url }))", files: ["call_0001"] } },
       { tool: "propose_plan", args: (r) => ({
         summary_ar: "ستحصل على المنشورات ثم تعليقات كل منشور في ورقتين مرتبطتين بمعرّف المنشور.",

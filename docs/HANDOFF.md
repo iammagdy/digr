@@ -4,6 +4,17 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-29, late night): cheapest source first, source health, planning budget split (after #287)
+
+`main` before it was `3349e3d3ae55b9872fcdd2ded2b7f5b195e2b8f4` (#287); its merge commit is the head of `main` after it. Details, the offline re-plan table and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 8. No SQL written or applied; no Edge Function changed; prices and settings untouched.
+
+- **Ranking by code** (`sourceRanking.ts`, `candidates.ts`): the sources that do the job, ranked by expected cost per delivered item (measured from `mission_calls`, the catalog otherwise); `catalog_search` returns that list; a pricier source of the same job needs `skip` {id: reason} or `why`; a third sample of one source stays refused.
+- **Source health** (generic, no provider rules): configuration failures skip a source, input/validation failures demote (1) or skip (3) for 24 h until it gives rows again; admin list: `GET /api/admin/agent/sources` and the «صحة المصادر» panel.
+- **Planning budget split**: 30% kept for the first sample of every stage not yet sampled (`stage_reserved`).
+- Rollback: `git revert -m 1 <merge commit>`.
+
+---
+
 ## START HERE (2026-10-29, night): the five-mission live run (after #286)
 
 `main` before it was `3a3e6b0709b4b8cebe163cb3ac0d2645345be31f` (#286); its merge commit is the head of `main` after it. Details, evidence and the companies price breakdown: `docs/ENGINE_AND_ITEM_STORE.md` section 7. No SQL written or applied; no Edge Function changed; prices untouched.

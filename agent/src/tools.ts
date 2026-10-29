@@ -20,6 +20,10 @@ import { mirrorLegacyFiles } from "./items/mirror";
 import { codeRunPath, deriveEngineSpecsChecked, type CodeRun } from "./engine/spec";
 import { ROW_KEY_FIELDS } from "../../src/lib/agentMission/contract";
 import type { AgentStore, CallPhase, MissionRecord } from "./types";
+import { catalogHitView } from "../../src/lib/modelPlanner/tools";
+import { cheaperAlternatives, SKIP_REASONS, sourceHealth, type StatsMap } from "../../src/lib/agentMission/sourceRanking";
+import { applyReverseOrder } from "../../src/lib/treg/reverseOrder";
+import { rankedCandidates } from "../../src/lib/agentMission/candidates";
 
 /**
  * The tools the agent has, and the only ones: three gateway tools (catalog_search, describe_endpoint, treg_call), the sandboxed run_code, and the mission tools (report_progress,
@@ -51,12 +55,14 @@ export interface RunState {
   callParams: Map<string, Record<string, unknown>>;
   /** The code of every run_code of this run, by output id: the plan's execution recipe is derived from the mapping code the agent ran on the measured page. */
   codeRuns: Map<string, CodeRun>;
+  /** The sources the planner skipped on purpose, with the reason it gave (recorded in the call log of the source it chose instead). */
+  skips: Map<string, string>;
   /** How many times finish was refused because matching items were still needed and the source had more (a limit: the model is never stuck for ever). */
   finishRefusals: number;
   /** Per source stream (a collect_pages source and its inputs): whether the last read says the source has more pages. */
   moreAvailable: Map<string, boolean>;
 }
-export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), callParams: new Map(), codeRuns: new Map(), finishRefusals: 0, moreAvailable: new Map() });
+export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, moreAvailable: new Map() });
 /** The most times finish is refused for the same reason in one run. */
 export const FINISH_REFUSALS_MAX = 3;
 
@@ -79,6 +85,10 @@ export interface ToolContext {
   pricingSettings?: MissionPricingSettings;
   /** The mission's one item store (execution phase). Opened on first use when the caller gave none. */
   items?: ItemStore;
+  /** The measurement and the health of the sources, from the recorded calls of the missions (planning): the ranking is computed from it. Absent: the catalog alone decides. */
+  stats?: StatsMap;
+  /** «Now» for the health window (tests pass a fixed moment). */
+  now?: number;
 }
 
 const FILE_ID = /^(call|out)_\d{4,6}$/;
@@ -139,6 +149,34 @@ export function cheapestFirstMessage(state: RunState, id: string, why: unknown):
   if (String(why ?? "").trim().length >= 8) return null;
   const untried = ranking.slice(0, at).filter((x) => !state.tried.has(x));
   return untried.length > 0 ? `a cheaper source of the last catalog_search has not been tried (${untried.slice(0, 3).join(", ")}): sample it first, or pass \`why\` (at least 8 characters) saying why it is unsuitable` : null;
+}
+
+/** What a recorded reason for skipping a cheaper source looks like: a known word (`wrong_data`, `missing_input`, `too_few_rows`, `known_failing`, `other`), as the planner gives it in `skip`. */
+const skipReasonOf = (v: unknown): string | null => { const t = String(v ?? "").trim().toLowerCase(); return (SKIP_REASONS as readonly string[]).includes(t) ? t : t.length >= 8 ? "other" : null; };
+
+/**
+ * THE SAME JOB, CHEAPER (planning): the sources of the catalog that do the same job as the one chosen (the same capability) and rank clearly cheaper by expected cost per delivered item, whatever the planner's last search listed.
+ * Each one not yet tried must be sampled first or skipped with a recorded reason (`skip` {id: reason}, or a `why` of at least eight characters for the choice as a whole); a source skipped for its health is not asked about.
+ * Returns the refusal sentence, or null; the skips it accepts are kept in the run's state and returned for the call log.
+ */
+export function cheaperSameJobMessage(ctx: Pick<ToolContext, "catalog" | "access" | "stats" | "now" | "state" | "phase">, id: string, why: unknown, skip: unknown): { refusal: string | null; recorded: string } {
+  if (ctx.phase !== "planning") return { refusal: null, recorded: "" };
+  const allowed = (x: string): boolean => policyVerdict(x, ctx.access).allowed && !blockedEndpointReason(x) && isSellable(x, ctx.catalog);
+  const alts = cheaperAlternatives(id, ctx.catalog, ctx.stats ?? new Map(), ctx.now ?? Date.now(), allowed).filter((r) => !ctx.state.tried.has(r.id));
+  if (alts.length === 0) return { refusal: null, recorded: "" };
+  const given = isObject(skip) ? (skip as Record<string, unknown>) : {};
+  const unexplained = alts.filter((r) => skipReasonOf(given[r.id]) === null);
+  const recorded = alts.filter((r) => skipReasonOf(given[r.id]) !== null).map((r) => `skip ${r.id}=${skipReasonOf(given[r.id])}`).join("; ");
+  for (const r of alts) { const reason = skipReasonOf(given[r.id]); if (reason) ctx.state.skips.set(r.id, reason); }
+  if (unexplained.length === 0 || String(why ?? "").trim().length >= 8) return { refusal: null, recorded };
+  return { refusal: `cheaper sources that do the same job have not been tried: ${unexplained.map((r) => `${r.id} (about ${r.usdPerItem.toFixed(5)} USD per item)`).join(", ")}. Sample the cheapest first, or skip it on purpose with \`skip\` {"<source id>": "wrong_data" | "missing_input" | "too_few_rows" | "known_failing" | "other"} (recorded for the admin), or give \`why\` (at least 8 characters)`, recorded };
+}
+
+/** A source that failed on its configuration or its inputs in recent calls is not sampled during planning (the health window of the recorded calls). */
+export function unhealthyMessage(ctx: Pick<ToolContext, "stats" | "now" | "phase">, id: string): string | null {
+  if (ctx.phase !== "planning") return null;
+  const h = sourceHealth(ctx.stats?.get(id), ctx.now ?? Date.now());
+  return h.state === "skipped" ? `this source is skipped for now: its recent calls failed on its ${h.reason === "config" ? "configuration (not configured or credentials refused)" : "inputs (repeated invalid-input errors)"}, ${h.failures} time(s), and no call of it has given rows since. Sample the next source of the ranking` : null;
 }
 
 /** The sources of the last catalog_search that have not been tried yet, cheapest first: what a failed sample moves on to. */
@@ -231,16 +269,32 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       handler: async (a) => {
         const words = Array.isArray(a.words) ? a.words.map(String) : [];
         const limit = Math.max(1, Math.min(10, Math.floor(Number(a.limit) || 8)));
-        const found = gateway.catalogSearch({ words, platform: a.platform ? String(a.platform) : undefined, limit: 10 });
-        // the web sources (page parsers, web search / scrape, people search) are candidates too: ONE list for every provider, ordered by cost per row computed by code
-        const web = ctx.web ? searchAgentSources({ words, platform: a.platform ? String(a.platform) : undefined }) : [];
-        const merged: Array<Record<string, any>> = [
-          ...found.hits.map((h: any) => ({ ...h, usd_per_row: h.costPerRecordUsd ?? null })),
-          ...web.map((c) => ({ id: c.id, name: c.id, platform: c.platform, capability: c.kind, summary: c.summary.slice(0, 140), price: `about ${c.usd_per_call.toFixed(5)} USD a call, up to ${c.rows_per_call} rows`, costPerRecordUsd: Number(c.usd_per_row.toFixed(7)), usd_per_row: c.usd_per_row, requiredInputs: [], inputs: [c.inputs] })),
-        ].sort((x, y) => (x.usd_per_row ?? Number.POSITIVE_INFINITY) - (y.usd_per_row ?? Number.POSITIVE_INFINITY) || String(x.id).localeCompare(String(y.id)));
-        const top: Array<Record<string, any>> = merged.slice(0, limit).map(({ usd_per_row: _u, ...h }, i) => ({ ...h, rank: i + 1, ...(SESSION_RESTRICTED_SOURCES[String(h.id)] ? { limit_note: SESSION_RESTRICTED_SOURCES[String(h.id)].message } : {}) }));
+        const platform = a.platform ? String(a.platform) : undefined;
+        const found = gateway.catalogSearch({ words, platform, limit: 10 });
+        const stats = ctx.stats ?? new Map();
+        const now = ctx.now ?? Date.now();
+        // THE CANDIDATES OF THE JOB, ranked by code by expected cost per delivered item (measured where the missions recorded calls, the catalog otherwise, health included): the sources that do the same job as the three
+        // most relevant ones (the same capability: every post search, every company search, every comment source) join the ones the words matched, so a cheaper source the words did not name is still offered
+        const matched = (found.hits as Array<Record<string, any>>).map((h) => ctx.catalog.byId.get(String(h.id))).filter((e): e is NonNullable<typeof e> => Boolean(e));
+        const ranking = rankedCandidates({ catalog: ctx.catalog, access: ctx.access, words, platform, stats, now, matched });
+        const fromCatalog = ranking.ranked.map((r) => ({ id: r.id, effective: r.effectiveUsd, view: { ...catalogHitView(ctx.catalog.byId.get(r.id)!, ctx.catalog, 0, r.effectiveUsd), expected_usd_per_item: Number(r.usdPerItem.toFixed(6)), rows_per_call: Math.round(r.rowsPerCall * 10) / 10, basis: r.basis, ...(r.health.state === "demoted" ? { health: "demoted: recent failures on its inputs" } : {}) } as Record<string, any> }));
+        // the web sources (page parsers, web search / scrape, people search) are candidates too: ONE list for every provider, with the same health and measurement
+        const web = ctx.web ? searchAgentSources({ words, platform }) : [];
+        const webRanked = web.map((c) => {
+          const health = sourceHealth(stats.get(c.id), now);
+          const s = stats.get(c.id);
+          const rate = s && s.attempts > 0 ? Math.min(1, Math.max(0.1, (s.withRows + 1.6) / (s.attempts + 2))) : 0.8;
+          return { c, health, effective: (c.usd_per_row / rate) * (health.state === "demoted" ? 5 : 1) };
+        }).filter((x) => x.health.state !== "skipped");
+        const skippedForHealth = [...ranking.skipped.map((x) => x.id), ...web.filter((c) => sourceHealth(stats.get(c.id), now).state === "skipped").map((c) => c.id)];
+        const merged: Array<{ id: string; effective: number; view: Record<string, any> }> = [
+          ...fromCatalog,
+          ...webRanked.map(({ c, health, effective }) => ({ id: c.id, effective, view: { id: c.id, name: c.id, platform: c.platform, capability: c.kind, summary: c.summary.slice(0, 140), price: `about ${c.usd_per_call.toFixed(5)} USD a call, up to ${c.rows_per_call} rows`, costPerRecordUsd: Number(effective.toFixed(7)), expected_usd_per_item: Number(c.usd_per_row.toFixed(7)), requiredInputs: [], inputs: [c.inputs], ...(health.state === "demoted" ? { health: "demoted: recent failures on its inputs" } : {}) } })),
+        ].sort((x, y) => x.effective - y.effective || x.id.localeCompare(y.id));
+        const ordered = applyReverseOrder(merged, (x) => x.id);
+        const top: Array<Record<string, any>> = ordered.slice(0, limit).map((m, i) => ({ ...m.view, rank: i + 1, ...(SESSION_RESTRICTED_SOURCES[m.id] ? { limit_note: SESSION_RESTRICTED_SOURCES[m.id].message } : {}) }));
         state.ranking = top.map((h) => String(h.id));
-        return { ok: true, restrictedTop: found.restrictedTop, hidden: found.hidden, hits: top, note: "ranked cheapest first by cost per row; use the cheapest source that really fits, and give `why` when you choose a dearer one" };
+        return { ok: true, restrictedTop: found.restrictedTop, hidden: found.hidden, hits: top, ...(skippedForHealth.length ? { skipped_for_health: skippedForHealth.slice(0, 10), skipped_note: "these sources failed on their configuration or inputs in recent calls and are not offered for now" } : {}), note: "ranked by code, cheapest first by EXPECTED COST PER DELIVERED ITEM (measured where earlier calls recorded it); sample in this order. A source below one you have not tried is refused unless you give a reason: `skip` {sourceId: wrong_data | missing_input | too_few_rows | known_failing | other} or `why` (kept in the admin's trace). A third sample of one source is refused" };
       },
     },
     {
@@ -263,12 +317,17 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         params: { type: "object", description: "The endpoint's inputs as an object, e.g. {\"query\": \"...\", \"limit\": 20}. Page with the cursor input the description names." },
         purpose: { type: "string", description: "Only for a personal-data lookup: why the customer needs it", optional: true },
         why: { type: "string", description: "Only when this source is dearer than one the last catalog_search ranked above it: why that cheaper source was unsuitable (kept in the admin's trace)", optional: true },
+        skip: { type: "object", description: "Only when a cheaper source that does the same job was not sampled: {\"<source id>\": \"wrong_data\" | \"missing_input\" | \"too_few_rows\" | \"known_failing\" | \"other\"} (recorded for the admin)", optional: true },
       },
       handler: async (a) => {
         const id = String(a.endpoint_id ?? "").trim();
         const refusal = cheapestFirstMessage(state, id, a.why);
         if (refusal) return { ok: false, refused: "choose_cheapest", message: refusal };
-        const result = await gateway.tregCall({ endpoint_id: a.endpoint_id, params: a.params, purpose: a.purpose, why: a.why });
+        const sick = unhealthyMessage(ctx, id);
+        if (sick) return { ok: false, refused: "source_unhealthy", message: sick };
+        const sameJob = cheaperSameJobMessage(ctx, id, a.why, a.skip);
+        if (sameJob.refusal) return { ok: false, refused: "choose_cheapest", message: sameJob.refusal };
+        const result = await gateway.tregCall({ endpoint_id: a.endpoint_id, params: a.params, purpose: a.purpose, why: [a.why, sameJob.recorded].filter(Boolean).join(" | ") || undefined });
         // the full inputs of this call, kept for the plan's execution recipe (the call log keeps short values only)
         if (isObject(a.params) && typeof result.call_id === "string") state.callParams.set(result.call_id, { ...a.params });
         if (!("refused" in result) || result.refused === "needs_login") state.tried.add(id);

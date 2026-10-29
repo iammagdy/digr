@@ -148,6 +148,10 @@ export const AGENT_CAPABILITY_SLUG = "agent-mission";
 export const AGENT_PLANNING_BUDGET_USD = 0.05;
 /** The same budget for a MULTI-STAGE request (a parent and its children: posts and their comments, companies and their employees and contacts): every stage needs its own sample. Raised on 2026-10-28 (owner decision). */
 export const AGENT_PLANNING_BUDGET_MULTI_STAGE_USD = 0.10;
+/** The share of the planning budget kept for the FIRST sample of each stage that has not been sampled yet: the first stage can never spend the budget the next one needs (the live Facebook request of 2026-10-29). */
+export const AGENT_PLANNING_STAGE_RESERVE_SHARE = 0.3;
+/** How far back the recorded calls are read to measure what a source really costs per row (the health of a source uses its own, shorter window). */
+export const AGENT_SOURCE_MEASURE_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
 /** The execution budget is HOLD_SPEND_SHARE (40%) of the approved reserve's value, never below CALL_CEILING_FLOOR_USD (0.005). Same numbers as the website's job budget. */
 export const AGENT_EXECUTION_BUDGET_SHARE = HOLD_SPEND_SHARE;
 export const AGENT_EXECUTION_BUDGET_FLOOR_USD = CALL_CEILING_FLOOR_USD;
