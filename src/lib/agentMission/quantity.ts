@@ -14,6 +14,8 @@ export interface RequestedQuantity {
   digits: boolean;
   /** «١٠ تعليقات لكل فيديو»: a number PER parent item, not the total the customer asked for. */
   perEach: boolean;
+  /** «اتنين من المديرين»: the noun after «من» (the noun field holds «من» itself then), else null. */
+  of: string | null;
 }
 
 const ARABIC_INDIC = /[٠-٩]/g;
@@ -63,7 +65,7 @@ function numberWordCore(n: string): string {
   if (n.length > 3 && (n.startsWith("و") || n.startsWith("ب")) && isNumberWord(n.slice(1))) return n.slice(1);
   return n;
 }
-function isNumberWord(n: string): boolean {
+export function isNumberWord(n: string): boolean {
   return n in UNITS || TEN_WORDS.has(n) || n in TENS || HUNDRED_WORDS.has(n) || TWO_HUNDRED.has(n) || hundredCompoundValue(n) !== null || THOUSAND.has(n) || TWO_THOUSAND.has(n) || THOUSANDS_PLURAL.has(n) || MILLION.has(n) || HALF.has(n);
 }
 
@@ -146,13 +148,13 @@ export function parseQuantities(textIn: unknown): RequestedQuantity[] {
     // «١٠ تعليقات لكل فيديو» and «مع كل بوست ١٠ تعليقات» / «وكل شركة موظفين اتنين»: a number per parent item, whether the «كل» comes after the noun or before the number
     const before = tokens.slice(Math.max(0, i - 3), i).map((t) => bareWord(t.raw));
     const perEach = next.includes("لكل") || next.some((w, k) => (w === "من" || w === "في" || w === "على") && next[k + 1] === "كل") || before.some((w) => /^(?:و)?(?:ل)?كل$/.test(w));
-    out.push({ value, noun: nounToken ? nounToken.raw : null, digits: Boolean(dm), perEach });
+    out.push({ value, noun: nounToken ? nounToken.raw : null, digits: Boolean(dm), perEach, of: nounAfterOf !== null && tokens[i + used + 1] ? tokens[i + used + 1].raw : null });
     i += used - 1;
   }
   return out;
 }
 
-const COUNTED_NOUN_STEMS = ["تغريد", "منشور", "تعليق", "فيديو", "مقطع", "شرك", "موظف", "تقييم", "مراجع", "مكان", "مطعم", "حساب", "صور", "وظيف", "منتج", "اعلان", "صفح", "قنا", "خبر", "مقال", "رساله", "رسائل", "شخص", "رد", "نتيج", "سجل", "صف", "عنصر", "بوست", "كومنت", "ريل", "تويت"];
+const COUNTED_NOUN_STEMS = ["تغريد", "منشور", "تعليق", "فيديو", "مقطع", "شرك", "موظف", "تقييم", "مراجع", "مكان", "مطعم", "حساب", "صور", "وظيف", "منتج", "اعلان", "صفح", "قنا", "خبر", "مقال", "رساله", "رسائل", "شخص", "رد", "نتيج", "سجل", "صف", "عنصر", "بوست", "كومنت", "ريل", "تويت", "مدير", "مسؤول", "مسئول"];
 /** True for a word that names a kind of item (stem match: «تغريدات»، «التعليقات»، «شركة»). */
 export function isCountedNoun(wordIn: string): boolean {
   const w = bareWord(wordIn);
@@ -168,6 +170,31 @@ const nounInTitles = (noun: string, titles: ReadonlyArray<string>): boolean => t
  */
 export function countedQuantities(text: unknown, stageTitles: ReadonlyArray<string> = []): RequestedQuantity[] {
   return parseQuantities(text).filter((q) => !q.perEach && q.noun !== null && (isCountedNoun(q.noun) || nounInTitles(q.noun, stageTitles)));
+}
+
+/**
+ * THE NUMBERS A REQUEST GIVES PER PARENT ITEM, in reading order: «ومع كل بوست ١٠ تعليقات», «ومن كل شركة اتنين من المديرين», «١٠ ردود لكل تغريدة». Each one is a STEP of the request (the children of the items of the step before it) with the count asked for each parent.
+ */
+export function perParentQuantities(text: unknown): RequestedQuantity[] {
+  return parseQuantities(text)
+    .filter((q) => q.perEach && q.noun !== null && (isCountedNoun(q.noun) || (q.of !== null && isCountedNoun(q.of))))
+    .map((q) => (q.of !== null && !isCountedNoun(q.noun!) ? { ...q, noun: q.of } : q));
+}
+
+/** The per-parent numbers of the request that no child stage of the plan serves: the customer asked for a step the plan does not have. */
+export function unservedPerParentAsks(asks: ReadonlyArray<RequestedQuantity>, childTitles: ReadonlyArray<string>): RequestedQuantity[] {
+  return asks.filter((q) => !(childTitles.some((t) => ownTitleWords(t).some((w) => sameNounStem(w, q.noun!))) || (childTitles.length === 1 && asks.length === 1)));
+}
+
+/**
+ * The per-parent number that belongs to ONE child stage of a plan: the one whose noun is a word of the stage's title; when the title names none of them (the customer said «ردود», the plan's title says «تعليقات»), the only per-parent number
+ * of the request when the plan has exactly one child stage. Null when the request gives no per-parent number for this stage.
+ */
+export function perParentAskFor(asks: ReadonlyArray<RequestedQuantity>, childTitle: string, childStageCount: number): number | null {
+  const own = ownTitleWords(childTitle);
+  const hit = asks.find((q) => own.some((w) => sameNounStem(w, q.noun!)));
+  if (hit) return hit.value;
+  return childStageCount === 1 && asks.length === 1 ? asks[0].value : null;
 }
 
 /** The first quantity whose noun names a kind of item; null when the text has none. */

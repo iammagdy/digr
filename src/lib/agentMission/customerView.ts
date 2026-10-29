@@ -50,6 +50,8 @@ export interface CustomerMissionView {
   notesAr: string[];
   /** What the agent assumed where the request left a choice open («المقصود: محمد صلاح لاعب كرة القدم.»): the customer reads it on the card and may edit the request before approving. */
   assumptionsAr: string[];
+  /** The steps the customer asked for that the plan leaves out, each with the reason (shown BEFORE approval; the customer approves the rest or edits the request). */
+  unservedAr: string[];
   /** The ready answers of the agent's one question (the customer taps one). */
   questionOptionsAr: string[];
   stages: CustomerStageView[];
@@ -329,7 +331,7 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
 
   const endLineAr = endLineOf(phase, resultLinesAr, storedSummary);
   const view: CustomerMissionView = {
-    id: mission.id, phase, summaryAr: plan?.summary_ar ? String(plan.summary_ar) : null, notesAr: Array.isArray(plan?.notes_ar) ? plan.notes_ar.map(String) : [], assumptionsAr: Array.isArray(plan?.assumptions_ar) ? plan.assumptions_ar.map(String) : [],
+    id: mission.id, phase, summaryAr: plan?.summary_ar ? String(plan.summary_ar) : null, notesAr: Array.isArray(plan?.notes_ar) ? plan.notes_ar.map(String) : [], assumptionsAr: Array.isArray(plan?.assumptions_ar) ? plan.assumptions_ar.map(String) : [], unservedAr: Array.isArray(plan?.unserved_ar) ? plan.unserved_ar.map(String) : [],
     questionOptionsAr: phase === "question" && Array.isArray((mission.plan_public as any)?.question_options) ? (mission.plan_public as any).question_options.map(String).slice(0, 4) : [], stages, totalRows: total, totalRowsAr: countAr(total, itemNounOfPlan(plan)),
     samples: plan ? samplesView(plan) : null, fileContentsAr: plan ? fileContentsAr(plan) : null, priceLineAr: plan ? priceLineAr(plan) : null, priceFacts: plan ? priceFactsOf(plan).facts : [], priceNoteAr: plan ? priceFactsOf(plan).noteAr : null, questionAr: phase === "question" ? mission.question_ar : null,
     queueLineAr: q.lineAr, queuePosition: q.position, steps, currentLineAr, delayAr, remainingAr,
@@ -352,7 +354,7 @@ export function guardViewText(v: CustomerMissionView): CustomerMissionView {
   const n = (s: string | null): string | null => (s === null ? null : customerSafeText(s) || null);
   return {
     ...v,
-    summaryAr: n(v.summaryAr), notesAr: v.notesAr.map(g).filter(Boolean), assumptionsAr: v.assumptionsAr.map(g).filter(Boolean), questionOptionsAr: v.questionOptionsAr.map(g).filter(Boolean),
+    summaryAr: n(v.summaryAr), notesAr: v.notesAr.map(g).filter(Boolean), assumptionsAr: v.assumptionsAr.map(g).filter(Boolean), unservedAr: v.unservedAr.map(g).filter(Boolean), questionOptionsAr: v.questionOptionsAr.map(g).filter(Boolean),
     stages: v.stages.map((s) => ({ ...s, titleAr: g(s.titleAr) || "مرحلة", noteAr: n(s.noteAr) })),
     samples: v.samples ? { ...v.samples, stageTitleAr: g(v.samples.stageTitleAr) } : null,
     fileContentsAr: n(v.fileContentsAr), priceLineAr: n(v.priceLineAr), priceNoteAr: n(v.priceNoteAr), questionAr: n(v.questionAr), queueLineAr: n(v.queueLineAr),

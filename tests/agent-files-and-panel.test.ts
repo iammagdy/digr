@@ -26,13 +26,13 @@ describe("the file name is built from the mission: what + count + date, in Arabi
     expect(title).not.toContain("نتائج البحث");
   });
 
-  it("with no relevance rule the subject is read from the request («عن ...»); with none at all it is the noun alone; the child stage names the file by its own noun", () => {
+  it("with no relevance rule the subject is read from the request («عن ...»); with none at all the subject is what the request leaves after the noun and the place; the child stage names the file by its own noun", () => {
     const posts = stage({ key: "posts", title_ar: "المنشورات", columns: [{ key: "text", title_ar: "النص" }] });
     const comments = stage({ key: "comments", title_ar: "تعليقات كل منشور", parent_key: "posts", columns: [{ key: "text", title_ar: "النص" }] });
     const d = new Date("2026-01-05T00:00:00Z");
     expect(missionFileTitleAr({ plan: plan([posts]), requestText: "هات ٣٠ منشور عن التضخم في مصر", delivered: 30, date: d })).toBe("منشورات عن التضخم - ٣٠ - ٥ يناير ٢٠٢٦");
     expect(missionFileTitleAr({ plan: plan([posts, comments]), requestText: "هات ١٠٠ منشور عن الغلاء مع تعليقاتها", delivered: 2100, date: d })).toBe("تعليقات عن الغلاء - ٢٬١٠٠ - ٥ يناير ٢٠٢٦");
-    expect(missionFileTitleAr({ plan: plan([stage({ key: "c", title_ar: "الشركات", columns: [{ key: "n", title_ar: "الاسم" }] })]), requestText: "شركات مقاولات في جدة", delivered: 12, date: d })).toBe("شركات - ١٢ - ٥ يناير ٢٠٢٦");
+    expect(missionFileTitleAr({ plan: plan([stage({ key: "c", title_ar: "الشركات", columns: [{ key: "n", title_ar: "الاسم" }] })]), requestText: "شركات مقاولات في جدة", delivered: 12, date: d })).toBe("شركات مقاولات - ١٢ - ٥ يناير ٢٠٢٦");
     expect(nounOfStageTitle("الموظفون")).toBe("موظفون");
     expect(arabicDateLabel(new Date("2026-12-31T23:00:00Z"))).toBe("٣١ ديسمبر ٢٠٢٦");
   });

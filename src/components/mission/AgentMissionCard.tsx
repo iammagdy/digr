@@ -126,6 +126,13 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, error = n
 
       {(v.phase === "plan" || v.phase === "running" || v.phase === "done" || v.phase === "partial") && v.summaryAr ? <p className="m-0 text-[14px] font-semibold leading-[1.9] text-ink" data-testid="agent-summary">{v.summaryAr}</p> : null}
 
+      {v.unservedAr.length > 0 && v.phase === "plan" ? (
+        <div className="rounded-[12px] border border-ln2 bg-sf2 px-3 py-2" role="note" data-testid="agent-unserved">
+          <p className="m-0 text-[12px] font-semibold text-ink">خطوة لم تُضَف إلى الخطة</p>
+          <ul className="m-0 mt-0.5 list-disc pe-4 text-[13px] leading-[1.75] text-ink">{v.unservedAr.map((a) => <li key={a}>{a}</li>)}</ul>
+        </div>
+      ) : null}
+
       {v.assumptionsAr.length > 0 && v.phase === "plan" ? (
         <div className="rounded-[12px] bg-sf2 px-3 py-2" data-testid="agent-assumptions">
           <p className="m-0 text-[12px] font-semibold text-ink">كيف فهمنا طلبك</p>

@@ -216,8 +216,8 @@ describe("companies of a sector in a country, their employees raw: another count
     expect(c.accepted).toBe(3);
     // the place: the Luxembourg company and the company with no evidence of any place are not delivered
     expect(c.excludedByReason.filter_place).toBe(2);
-    // the sector: the sports company and the exhibition went to the model check and were refused there; they were never delivered straight
-    expect(c.excludedByReason.review_no).toBe(2);
+    // the sector: the three contractors say so in their names (the English-named one by the sector's English words: «construction», «contracting»), so the rule accepts them and the volume is reached before the sports company and the exhibition need the model check;
+    // neither is ever delivered (see the names below)
     expect(c.acceptedByModel + c.acceptedByRule).toBe(3);
     const wb = await readWorkbook(r);
     const names: string[] = [];
@@ -228,6 +228,29 @@ describe("companies of a sector in a country, their employees raw: another count
     expect(r.planView.assumptionsAr).toContain("في: مصر.");
     expect(r.planView.notesAr).toContain("تُجمع الموظفون كما هي على كل شركة، دون تصفية.");
     expect(wb.getWorksheet("موظفو كل شركة")!.rowCount - 1).toBe(6);
+  });
+
+  it("when the volume is NOT reached by the rule alone (5 asked, 3 contractors say so in their names), the sports company and the exhibition go to the model check and are refused there; they are never delivered straight", async () => {
+    const r = await replay({
+      request: "عايز ٥ شركات مقاولات في مصر",
+      deps: (base) => ({ ...base, reviewCall: reviewCall as never }),
+      planning: planFlow({
+        progress: "أبحث عن شركات المقاولات", words: ["companies", "search"],
+        calls: [{ endpoint: COMPANIES, params: { page: 0, size: 7, account: "مقاولات مصر" }, code: "return inputs.call_0001.content.map(c => ({ id: c.id, text: c.name + ' - ' + c.description, url: c.domain, country: c.location.country || '' }))" }],
+        plan: (res) => ({
+          summary_ar: "ستحصل على شركات مقاولات في مصر.",
+          stages: [{ key: "companies", title_ar: "الشركات", endpoint_id: COMPANIES, expected_rows: 5, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "الشركة ووصفها" }, { key: "url", title_ar: "الموقع" }, { key: "country", title_ar: "الدولة" }], sample_rows: [{ id: "co1", text: "النيل للمقاولات العامة - مقاولات وإنشاءات", url: "company1.example", country: "مصر" }], measured_by: [callIds(res)[0]] }],
+        }),
+      }),
+      execution: () => [],
+      answers: [tregResult(page, 0.0005267), tregResult(page, 0.0005267)],
+    });
+    const snap = await readSnapshot(r.store, r.missionId);
+    const c = snap.counts("companies");
+    expect(c.accepted).toBe(3);
+    expect(c.excludedByReason.filter_place).toBe(2);
+    expect(c.excludedByReason.review_no).toBe(2);
+    expect(snap.acceptedRows("companies").map((x) => String(x.text)).join(" | ")).not.toMatch(/Egytic|Big 5|Yourwebsite/);
   });
 
   it("the same request with the check unreachable delivers none of the doubtful ones (never straight to delivery)", async () => {
@@ -247,9 +270,10 @@ describe("companies of a sector in a country, their employees raw: another count
     const snap = await readSnapshot(r.store, r.missionId);
     const names = snap.acceptedRows("companies").map((x) => String(x.text));
     expect(names.some((t) => /Egytic|Big 5|Yourwebsite|الحديثة/.test(t))).toBe(false);
-    // the two contractors that say so in Arabic are accepted by rule; the three the rule cannot place in the sector (the sports company, the exhibition and an English-named contractor) wait for the check, and are not delivered without it
-    expect(names).toHaveLength(2);
-    expect(snap.counts("companies").excludedByReason.not_reviewed).toBe(3);
+    // the three contractors are accepted by rule (the two that say so in Arabic, and the English-named one by the sector's English words); the two the rule cannot place in the sector (the sports company and the exhibition) wait for the check, and are not delivered without it
+    expect(names).toHaveLength(3);
+    expect(snap.counts("companies").excludedByReason.not_reviewed ?? 0).toBeLessThanOrEqual(2);
+    expect(names.some((t) => /Egytic|Big 5/.test(t))).toBe(false);
   });
 });
 
@@ -290,7 +314,11 @@ describe("Facebook: a dear platform still reaches a card, with the real price an
     expect(r.plannedPlan.price.reservePoints).toBeGreaterThan(0);
     expect(cost).not.toMatch(/justone|anyapi|scrape|[A-Za-z]{2,}|[0-9]/);
     // delivered: the 5 posts and all the distinct comments of each, as they are
-    assertReplayInvariants(r, { expectDelivered: 5 + 5 * DISTINCT_PER_PARENT });
+    // the customer asked for ten comments for each post: the card's target is 5 x 10 whatever the model wrote, every post is read, and the source gives fewer per post, so the delivery is partial and says exactly why
+    expect(r.plannedPlan.stages[1]).toMatchObject({ planned_rows: 50, per_parent_rows: 10 });
+    assertReplayInvariants(r, { expectDelivered: 5 + 5 * DISTINCT_PER_PARENT, expectStatus: "partial" });
+    expect(r.mission.summary_ar).toContain("لأن بعض المنشورات عليها تعليقات أقل من العدد المطلوب لكل منشور");
+    expect(r.mission.summary_ar).not.toMatch(/اللغة/);
     await assertRawChildren(r, { childKey: "comments", childSheet: "تعليقات كل بوست", parents: 5 });
     expect(r.mission.charged_points).toBe(Math.ceil(r.mission.delivered_units! * r.plannedPlan.price.unitPricePoints));
   });

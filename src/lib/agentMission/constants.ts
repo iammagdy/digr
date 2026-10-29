@@ -108,6 +108,11 @@ export const AGENT_BUCKET_ALLOWED_MIME = ["application/json", "text/csv", "appli
 export const AGENT_RUN_STATE_FILE = "run_state.json";
 /** A run that ends with an exception puts the mission back in the queue at most this many times; after that it ends honestly (planning: no hold, a clear message; execution: settled with what is saved). */
 export const AGENT_ERROR_REQUEUES_MAX = 2;
+/**
+ * The platform restarted the worker while a mission was running (a deploy of `main`, the daily cycling): the run is stopped (or its model process is killed with SIGTERM, exit code 143) and the mission goes back to the queue. This is not the mission's fault
+ * and not an error of its own: it has its own, higher, limit (a restart storm must still end).
+ */
+export const AGENT_RESTART_REQUEUES_MAX = 6;
 /** The most times a phase may START for one mission (the first start, answers, requeues, takeovers after a dead worker). A mission that keeps killing its worker ends honestly instead of looping. */
 export const AGENT_PHASE_STARTS_MAX = 8;
 /** Planning with no new event for this long gets the honest «still working, nothing held» line (never an ETA). */

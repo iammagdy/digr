@@ -90,7 +90,9 @@ async function main() {
     runMission: (mission) => runMissionSafely(deps(), mission),
   });
 
-  const shutdown = () => { log("shutting down: no new missions; running ones keep their lease until it ends"); worker.stop(); };
+  // The platform restarts the worker at every deploy of `main` (SIGTERM, then SIGKILL after 30 seconds) and kills the model's own process at the same moment (exit code 143). The runs in flight are stopped here so each mission is put back in the queue with
+  // everything it saved (planning goes back to «queued», an execution to «approved»); the next worker takes it. Before this a planning that met a deploy ended as «a limit of ours» and the customer never got a card.
+  const shutdown = () => { log("shutting down: no new missions; running ones are put back in the queue"); worker.stop(); const stopped = abortActiveRuns("restart"); if (stopped > 0) log(`shutdown: ${stopped} run(s) stopped for the restart`); };
   process.on("SIGTERM", shutdown);
   process.on("SIGINT", shutdown);
   log(`worker ${workerId} started (${VERSION}); planning ${models.planning}, execution ${models.execution}, ${concurrency} mission(s) at a time`);

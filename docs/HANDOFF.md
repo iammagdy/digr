@@ -4,6 +4,19 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-29, after #292): the six compound missions (fix mission 6)
+
+`main` before it was `dfefa2989e06b004e35c2fa870558f2385cd87ed` (#292); its merge commit is the head of `main` after it. Evidence, root causes 1-7, tests and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 10. No SQL written or applied; no Edge Function changed; no price, cap or model string changed.
+
+- **The 1,000-tweet refusal was a DEPLOY of the worker, not a size limit** (the model's process ended with exit code 143 one minute after #292 was merged). A run cut short by a restart now goes back to the queue (planning: `queued`; execution: `approved` with what it saved), own counter, own limit. 1,000 and 5,000 tweets reach a card and are delivered in full (`tests/large-missions.test.ts`; they also passed on the code before).
+- **Per-parent numbers are the customer's**: the child stage's target is parents x the number in the request (the card said «حتى ٧» for 5 x 10); every parent is read up to its share, in the source's order; a lower target is shared out equally.
+- **The child rule on the card**: the language/topic sentences name the PARENTS only; a sentence that promises a language or topic for the children is refused; the shortfall reason of a child stage is «بعض الفيديوهات عليها تعليقات أقل من العدد المطلوب لكل فيديو» (never the language: the TikTok source itself gave 10, 6, 10, 10, 5).
+- **No step dropped silently**: a step asked per parent that the plan cannot serve is shown on the card before approval («خطوة لم تُضَف إلى الخطة») with its reason (`unserved_steps`); the companies mission also failed because a country field holding «EG» was no place evidence, the sector words were garbled and English names never matched the Arabic sector word; fixed.
+- **File names** always carry the subject (account / channel / topic / sector); **media-only posts** show «منشور بصورة أو فيديو دون نص» in the file.
+- Rollback: `git revert -m 1 <merge commit>`.
+
+---
+
 ## START HERE (2026-10-29, after #291): the admin panel reorganised (layout and navigation only)
 
 `main` before it was `32fcd5c38cdde4e87c414b7b5cb2e07398c024a2` (#290); its merge commit is the head of `main` after it. Map, screenshots and details: `docs/admin-reorg/README.md`. No API, SQL, money, key-pool behaviour, worker, price or customer text changed; no admin address moved.
