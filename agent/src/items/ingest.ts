@@ -2,7 +2,8 @@ import { classifyRowDetailed, type RelevanceReason, type RuleBasis } from "../..
 import { CONTACT_KINDS, isContactSource, verifyContactValue } from "../../../src/lib/agentMission/contacts";
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
 import { dedupeScope, deriveItemId, isTextItemStage, textDedupeKey, textKeyOf } from "../../../src/lib/agentMission/contract";
-import { CHILD_RAW_FILTER_KINDS, filterVerdict, isEnabled } from "../../../src/lib/agentMission/filters";
+import { placeCellsAr } from "../../../src/lib/agentMission/places";
+import { CHILD_RAW_FILTER_KINDS, filterVerdict, governmentUnclear, isEnabled } from "../../../src/lib/agentMission/filters";
 import type { MissionEventInput } from "../types";
 import type { Reviewer } from "../review";
 import type { ItemReason, ItemStore, Op, Row, StageCounts } from "./itemStore";
@@ -67,6 +68,8 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   const tally = { saved_now: 0, duplicates_ignored: 0, duplicate_texts: 0, rejected_missing_id: 0, rejected_unknown_parent: 0, rejected_over_limit: 0, rejected_not_object: 0, rejected_no_verified_contact: 0, rejected_by_filter: 0, contact_values_left_empty: 0 };
   const enabledFilters = (stage.filters ?? []).filter(isEnabled).filter((f) => !(isChild && CHILD_RAW_FILTER_KINDS.includes(f.kind)));
   const now = options.now ?? Date.now();
+  const placeFilter = enabledFilters.find((f) => f.kind === "place" && f.places && f.places.length > 0);
+  const promisedPlace = placeFilter ? { places: placeFilter.places!, fields: placeFilter.fields ?? (placeFilter.field ? [placeFilter.field] : []) } : null;
   // THE SAME TEXT TWICE (a post or a comment): the first is kept, the rest are counted as duplicates. A text of a child stage is unique among the items of its own parent.
   const dedupeText = isTextItemStage(stage) && !isChild;
   const seenTexts = new Set<string>();
@@ -87,6 +90,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   const seenNow = new Set<string>();
   let duplicates = 0;
   const excludedStructural: Array<{ id: string; reason: ItemReason; row: Row }> = [];
+  const govUnclear = new Set<string>();
   for (const raw of incoming) {
     if (!isObject(raw)) { tally.rejected_not_object += 1; continue; }
     // an item always has an id: its own, the field the recipe chose, a known key field (a platform id, the link), or its fingerprint: the same item read twice is the same id (never rejected for lacking one)
@@ -112,10 +116,13 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     seenNow.add(id);
     const row: Row = { id, ...(parentId !== null ? { parent_id: parentId } : {}) };
     for (const k of columnKeys) if (k !== "id" && k !== "parent_id") row[k] = raw[k] ?? "";
+    // THE PLACE CELLS in Arabic («al qahirah» → «القاهرة»); never empty when the card promised the place
+    if (!isChild) placeCellsAr(row, stage.columns, raw, promisedPlace);
     // WHAT THE CARD PROMISES, checked here on the mapped item (replies, language, period, account, place): an item a filter rejects is neither delivered nor charged, and is kept with its reason
     if (enabledFilters.length > 0) {
       const why = filterVerdict(enabledFilters, raw, { textKey: textKeyOf(stage, Object.keys(raw)), now });
       if (why) { tally.rejected_by_filter += 1; excludedStructural.push({ id, reason: why, row }); continue; }
+      if (governmentUnclear(enabledFilters, raw)) govUnclear.add(id);
     }
     // CONTACT FIELDS are verified by code: a work e-mail or phone that does not pass is left empty; an item of a contact stage with no verified value is not delivered (so it is not charged)
     let verifiedAny = false;
@@ -138,14 +145,15 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   let reviewStop: "budget" | "failed" | null = null;
   const left: Record<string, number> = {};
   if (spec) {
-    const verdicts = candidates.map((c) => ({ c, v: classifyRowDetailed(spec, c.row) }));
+    // a company that MAY be a public body (a research institute, a university, «national»: government.ts) goes to the model check even when the rule would accept it; the model is told the customer wants no government bodies
+    const verdicts = candidates.map((c) => { const v = classifyRowDetailed(spec, c.row); return { c, v: v.verdict === "match" && (govUnclear.has(c.id) || (c.carried && governmentUnclear(stage.filters, c.row))) ? ({ verdict: "review", reason: "uncertain" } as const) : v }; });
     const matches = verdicts.filter((x) => x.v.verdict === "match").length;
     const uncertain = verdicts.filter((x) => x.v.verdict === "review");
     let verdictOf = new Map<string, boolean>();
     if (uncertain.length > 0 && spec.review !== false && reviewer && matches < room) {
       // no more review than the room left can use (an item beyond the approved volume is never needed); the rest stays pending
       const wanted = uncertain.slice(0, (room - matches) * 3 + 25);
-      verdictOf = await reviewer.review({ subject: spec.subject_ar, rows: wanted.map((x) => ({ id: x.c.id, text: spec.text_columns.map((k) => String(x.c.row[k] ?? "")).join(" ") })) });
+      verdictOf = await reviewer.review({ subject: (stage.filters ?? []).some((f) => f.kind === "exclude_government" && isEnabled(f)) ? `${spec.subject_ar} (ليست جهة حكومية أو عسكرية ولا مركز أبحاث أو معهدًا حكوميًا)` : spec.subject_ar, rows: wanted.map((x) => ({ id: x.c.id, text: spec.text_columns.map((k) => String(x.c.row[k] ?? "")).join(" ") })) });
       reviewedNow = verdictOf.size;
       reviewStop = (await reviewer.state()).stop;
     }

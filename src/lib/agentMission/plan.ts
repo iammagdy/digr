@@ -5,13 +5,14 @@ import { classifyRows, searchQueryOf, validateRelevanceSpec, type RelevanceSpec 
 import { minimumLineAr, type MissionPricingSettings } from "../missionPricing";
 import { checkCustomerLabel, checkCustomerText } from "./text";
 import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type SourceField } from "./fields";
-import { bindQuantity, countedQuantities, ownTitleWords, perParentAskFor, perParentQuantities, sameNounStem, unservedPerParentAsks } from "./quantity";
+import { bindQuantity, bindQuantityDetailed, countedQuantities, ownTitleWords, perParentAskFor, perParentQuantities, sameNounStem, unservedPerParentAsks } from "./quantity";
 import { itemNounOf } from "./itemNoun";
 import { isTextItemStage, textKeyOf } from "./contract";
 import { childCardTitleAr, childRuleLinesAr } from "./childItems";
 import { platformCostNotesAr } from "./platformNotes";
 import { isCompanyStage, isEntityStage, requestNamesSector, sectorEnglishWords, sectorWordsOf } from "./entities";
 import { placeEntry, placeLabelsAr, placesInText } from "./places";
+import { excludesGovernment } from "./government";
 import { assumptionLinesShown, CHILD_RAW_FILTER_KINDS, defaultLanguageOf, filterVerdict, filterLabelAr, filterLineAr, findFilterFields, isEnabled, kindsPromisedBy, parseFilters, promiseIssues, resolveFilters, type StageFilter } from "./filters";
 
 /**
@@ -111,6 +112,10 @@ export interface PlanLookup {
   isContactSource?(endpointId: string): boolean;
   /** The markup and the minimum charge in force (the admin's settings); the defaults when absent. */
   pricingSettings?: MissionPricingSettings;
+  /** The catalog sources that can carry out a step the request asks per parent (the people of a company), cheapest first: a plan may not call such a step «unserved» while one of them was never tried. */
+  childStepSources?(noun: string): Array<{ id: string; accepts: string[] }>;
+  /** The endpoints this mission has called so far and the most rows one call of each gave. */
+  endpointsCalled?(): ReadonlyMap<string, { rows: number }>;
 }
 
 export interface PricedStage extends ProposedStage {
@@ -219,7 +224,7 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
   // THE CUSTOMER'S QUANTITY is read by code from their words (the answer to the agent's question wins over the request): it is the target of the stage that counts it
   const refs = stagesIn.map((st, index) => ({ index, title_ar: isRecord(st) ? String(st.title_ar ?? "") : "", deliver: isRecord(st) && st.deliver === true }));
   const quantityText = lookup.answerText && bindQuantity(lookup.answerText, refs) ? lookup.answerText : lookup.requestText ?? "";
-  const bound = quantityText ? bindQuantity(quantityText, refs) : null;
+  const bound = quantityText ? bindQuantityDetailed(quantityText, refs) : null;
   let quantity: PlanQuantity | undefined;
   // what the request asks PER PARENT item (the steps that hang on another step): read by code, never by the model
   const perParentAsks = perParentQuantities(`${lookup.requestText ?? ""} ${lookup.answerText ?? ""}`);
@@ -227,7 +232,9 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
   const rowScale = new Map<string, number>();
 
   for (let i = 0; i < stagesIn.length; i += 1) {
-    const raw = stagesIn[i];
+    const given = stagesIn[i];
+    // THE ITEMS THE CUSTOMER COUNTED ARE DELIVERED: «هات ٥ فيديوهات ... ومن كل فيديو ١٠ تعليقات» asks for the videos too; a stage the model kept as an intermediate one is delivered by code
+    const raw = isRecord(given) && bound?.named && bound.index === i && given.deliver !== true ? { ...given, deliver: true } : given;
     if (!isRecord(raw)) { issues.push(`stage ${i + 1} is not an object`); continue; }
     const key = String(raw.key ?? "");
     const label = `stage «${key || i + 1}»`;
@@ -396,7 +403,12 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
     const declaredWithLanguage = requestLang && !declared.filters.some((f) => f.kind === "language" && isEnabled(f))
       ? [...declared.filters.filter((f) => f.kind !== "language"), { kind: "language" as const, lang: requestLang }]
       : declared.filters;
-    const resolvedAll = resolveFilters(declaredWithLanguage, fields, label);
+    // GOVERNMENT BODIES: a request (or a card sentence) that leaves them out is a filter of the stage, applied from the website's suffix and the name (government.ts); never only a promise
+    const wantsNoGovernment = entityStage && excludesGovernment(`${lookup.requestText ?? ""} ${lookup.answerText ?? ""}`);
+    const declaredFull = wantsNoGovernment && !declaredWithLanguage.some((f) => f.kind === "exclude_government" && isEnabled(f))
+      ? [...declaredWithLanguage.filter((f) => f.kind !== "exclude_government"), { kind: "exclude_government" as const }]
+      : declaredWithLanguage;
+    const resolvedAll = resolveFilters(declaredFull, fields, label);
     issues.push(...resolvedAll.issues);
     const resolvedBase = { ...resolvedAll, filters: isChild ? resolvedAll.filters.filter((f) => !CHILD_RAW_FILTER_KINDS.includes(f.kind)) : resolvedAll.filters };
     // PLACE AND COUNTRY ARE ENFORCED: a place filter reads evidence from the mapped fields (country, city, address, website domain, phone prefix); an entity stage whose request names a place gets the filter from the request itself, and with no field that can carry
@@ -456,7 +468,19 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
       const what = `${q.noun} لكل ${parentNoun}`;
       const g = isRecord(given[i]) ? given[i] : null;
       const reason = g && g.reason_ar !== undefined ? checkCustomerText(g.reason_ar, { maxChars: 200 }) : null;
-      if (!reason) issues.push(`the customer asked for a step the plan does not have: «${what}» (${q.value} per ${parentNoun}). Add a stage for it (parent_key = the stage of the ${parentNoun}, per_parent_rows ${q.value}) after sampling a source that gives it, or, when no source can, pass unserved_steps: [{reason_ar}] (one Arabic sentence, no number, saying honestly why this step is not in the plan; one entry per missing step, in the request's order). The customer is shown the missing step BEFORE approving; it is never dropped silently`);
+      // A STEP THE CATALOG CAN SERVE IS NOT «UNSERVED»: the model's «no source gives it» is accepted only after it really tried the sources the catalog has for that step and none gave rows (live: the managers of a company were declared unserved
+      // while four people sources take a company's website)
+      const serving = lookup.childStepSources?.(q.noun!) ?? [];
+      if (reason && serving.length > 0) {
+        const called = lookup.endpointsCalled?.() ?? new Map<string, { rows: number }>();
+        const tried = serving.filter((s) => called.has(s.id));
+        const works = tried.some((s) => (called.get(s.id)?.rows ?? 0) > 0);
+        if (works || tried.length < Math.min(2, serving.length)) {
+          issues.push(`the step «${what}» CAN be served: the catalog has ${serving.slice(0, 4).map((s) => `${s.id} (takes the company's ${s.accepts.join(" / ")})`).join(", ")}. Sample one of them with a company of your first sample (its website, link or name as that source's input), add the stage (parent_key = the companies' stage, per_parent_rows ${q.value}) and drop unserved_steps for it. If the companies' source gives none of those fields, choose a companies source that gives the website. unserved_steps for this step is accepted only after at least two of these sources were really tried and gave no rows`);
+          return;
+        }
+      }
+      if (!reason) issues.push(`the customer asked for a step the plan does not have: «${what}» (${q.value} per ${parentNoun}). Add a stage for it (parent_key = the stage of the ${parentNoun}, per_parent_rows ${q.value}) after sampling a source that gives it, or, when no source can, pass unserved_steps: [{reason_ar}] (one Arabic sentence, no number, saying honestly why this step is not in the plan; one entry per missing step, in the request's order). The customer is shown the missing step BEFORE approving; it is never dropped silently${serving.length ? `. The catalog HAS sources for this step: ${serving.slice(0, 4).map((x) => x.id).join(", ")}; sample one with a company of your first sample and add the stage` : ""}`);
       else if (reason.issues.length || /[0-9٠-٩]/.test(reason.text)) issues.push(`unserved_steps[${i}].reason_ar: ${[...reason.issues, ...(/[0-9٠-٩]/.test(reason.text) ? ["no number in the reason"] : [])].join("; ")}`);
       else unserved.push({ what_ar: what, reason_ar: reason.text });
     });

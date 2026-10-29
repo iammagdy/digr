@@ -186,7 +186,12 @@ describe("Companies: three companies and their managers (the plan dropped the ma
       request,
       planning: planFlow({
         progress: "أبحث عن شركات المقاولات", words: ["companies", "search"],
-        calls: [{ endpoint: COMPANIES, params: { page: 1, size: 6 }, code: "return inputs.call_0001.content.map(c => ({ id: c.id, name: c.name, website: 'https://' + c.website_url, country: c.country, city: c.city || '', size: c.company_size }))" }],
+        // the managers' step may be called «unserved» only after the sources the catalog has for it were really tried and gave nothing (fix mission 7): two people sources are sampled with a company's website
+        calls: [
+          { endpoint: COMPANIES, params: { page: 1, size: 6 }, code: "return inputs.call_0001.content.map(c => ({ id: c.id, name: c.name, website: 'https://' + c.website_url, country: c.country, city: c.city || '', size: c.company_size }))" },
+          { endpoint: "aviato.companies.employees", params: { website: "orascom.com", perPage: 2, page: 1 }, code: "return []" },
+          { endpoint: "tomba.companies.emails.list", params: { domain: "orascom.com", limit: 2 }, code: "return []" },
+        ],
         plan: (res) => ({
           summary_ar: "ستحصل على شركات مقاولات مصرية مع بياناتها العامة.",
           unserved_steps: [{ reason_ar: "المصادر المتاحة لا تعطي أسماء المديرين لكل شركة بدقة" }],
@@ -195,7 +200,7 @@ describe("Companies: three companies and their managers (the plan dropped the ma
         }),
       }),
       execution: () => [],
-      answers: [tregResult(page, 0.0005), tregResult(page, 0.0005)],
+      answers: [tregResult(page, 0.0005), tregResult([], 0.0005), tregResult([], 0.0005), tregResult(page, 0.0005)],
     });
   }
 

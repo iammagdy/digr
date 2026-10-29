@@ -56,8 +56,22 @@ const NOT_A_COUNT = new Set([
 ]);
 const bareWord = (w: string): string => norm(w).replace(/^(?:لل|ال)(?=.{2,})/, "");
 
-interface Token { raw: string; n: string }
-const tokenize = (text: string): Token[] => text.split(/[\s،,؛;:()«»"'؟?!]+/).filter(Boolean).map((raw) => raw.replace(/\.+$/, "")).map((raw) => ({ raw, n: norm(raw) })).filter((t) => t.n.length > 0);
+/** `brk`: a comma, a semicolon or a full stop stood before the word (a new clause). */
+interface Token { raw: string; n: string; brk: boolean }
+const tokenize = (text: string): Token[] => {
+  const out: Token[] = [];
+  let brk = false;
+  let prevDot = false;
+  for (const part of text.split(/([\s،,؛;:()«»"'؟?!]+)/)) {
+    if (part === "") continue;
+    if (/^[\s،,؛;:()«»"'؟?!]+$/.test(part)) { if (/[،,؛;؟?!]/.test(part)) brk = true; continue; }
+    const raw = part.replace(/\.+$/, "");
+    const n = norm(raw);
+    if (n.length > 0) { out.push({ raw, n, brk: brk || prevDot }); brk = false; }
+    prevDot = raw !== part;
+  }
+  return out;
+};
 
 /** Strips a leading conjunction/preposition letter from a word that is a number word without it («وخمسين» → «خمسين»). */
 function numberWordCore(n: string): string {
@@ -106,6 +120,41 @@ function readWordNumber(tokens: Token[], start: number): { value: number; used: 
   return value > 0 ? { value: Math.round(value), used: u } : null;
 }
 
+/** «كل» / «لكل» / «وكل» / «ولكل». */
+const isEvery = (t: Token | undefined): boolean => t !== undefined && /^(?:و)?(?:ل)?كل$/.test(t.n);
+/** The prepositions that put a number on every parent: «من كل», «مع كل», «على كل», «في كل», «تحت كل», «وجوه كل». */
+const EVERY_PREPOSITIONS = new Set(["من", "مع", "في", "على", "علي", "تحت", "عند", "جوه", "جوا", "داخل", "وسط", "عن"]);
+const isEveryPreposition = (t: Token | undefined): boolean => t !== undefined && EVERY_PREPOSITIONS.has(t.n.replace(/^و(?=.{2,})/, ""));
+const isNumberToken = (t: Token): boolean => DIGITS_THEN_SUFFIX.test(t.raw.replace(/^و(?=\d)/, "")) || isNumberWord(numberWordCore(t.n));
+/** The word after «كل» names ONE parent («كل فيديو», «كل شركة», «كل واحد»), not all of them («كل الفيديوهات»). */
+const isOneParent = (t: Token | undefined): boolean => t !== undefined && !/^(?:ال|لل)/.test(t.n) && t.n.length >= 2 && (t.n === "واحد" || !isNumberToken(t)) && !["ما", "اللي", "الي", "شي", "شيء", "حاجه", "حاجة", "مين", "ايه"].includes(t.n);
+
+/**
+ * IS THE NUMBER AT TOKEN `i` A NUMBER PER PARENT ITEM, and which noun does it count? Every phrasing: the marker after the noun («١٠ تعليقات لكل فيديو», «١٠ تعليقات على كل بوست», «١٠ تعليقات كل بوست»),
+ * or before the number («ومن كل فيديو ١٠ تعليقات», «ومع كل بوست ١٠ تعليقات», «وجوه كل شركة موظفين اتنين», «ولكل واحد ١٠ تعليقات», «كل بوست فيه ١٠ تعليقات», «تعليقات كل فيديو ١٠»). The marker must touch the number or
+ * its noun: «٥ فيديوهات ... ومن كل فيديو ...» does not make the 5 a per-parent number. Pure.
+ */
+function perEachOf(tokens: Token[], i: number, used: number, counted: boolean, hasOf: boolean): { perEach: boolean; noun: string | null } {
+  // after: [number] [noun]? [من المديرين]? [preposition]? كل <one parent>
+  let a = i + used + (counted ? 1 + (hasOf ? 1 : 0) : 0);
+  if (counted && hasOf) a = i + used + 2;
+  const sameClause = (t: Token | undefined): boolean => t !== undefined && !t.brk && !t.n.startsWith("و");
+  if (sameClause(tokens[a]) && isEveryPreposition(tokens[a]) && isEvery(tokens[a + 1]) && isOneParent(tokens[a + 2])) return { perEach: true, noun: null };
+  if (sameClause(tokens[a]) && isEvery(tokens[a]) && isOneParent(tokens[a + 1])) return { perEach: true, noun: null };
+  // before: كل <one parent> [filler or the child noun]* [number]
+  for (let k = i - 1; k >= 0 && k >= i - 7; k -= 1) {
+    if (isNumberToken(tokens[k]) && !(tokens[k].n === "واحد" && isEvery(tokens[k - 1]))) return { perEach: false, noun: null };
+    if (!isEvery(tokens[k])) continue;
+    if (k + 1 > i - 1 || !isOneParent(tokens[k + 1])) return { perEach: false, noun: null };
+    const between = tokens.slice(k + 2, i);
+    const own = between.find((t) => isCountedNoun(t.raw));
+    const before = tokens[k - 1] && !isEveryPreposition(tokens[k - 1]) && isCountedNoun(tokens[k - 1].raw) ? tokens[k - 1] : tokens[k - 2] && isEveryPreposition(tokens[k - 1]) && isCountedNoun(tokens[k - 2].raw) ? tokens[k - 2] : undefined;
+    const noun = own ? own.raw : before ? before.raw : null;
+    return { perEach: true, noun: noun !== null && /^و/.test(noun) && isCountedNoun(noun.slice(1)) ? noun.slice(1) : noun };
+  }
+  return { perEach: false, noun: null };
+}
+
 const DIGITS_THEN_SUFFIX = /^(\d+(?:[.٫]\d+)?)(k|K|ك)?$/;
 
 /**
@@ -118,7 +167,7 @@ export function parseQuantities(textIn: unknown): RequestedQuantity[] {
   for (let i = 0; i < tokens.length; i += 1) {
     let value: number | null = null;
     let used = 1;
-    const raw = tokens[i].raw;
+    const raw = tokens[i].raw.replace(/^و(?=\d)/, "");
     const dm = DIGITS_THEN_SUFFIX.exec(raw);
     if (dm) {
       value = Number(dm[1]);
@@ -142,23 +191,21 @@ export function parseQuantities(textIn: unknown): RequestedQuantity[] {
     if ((prev === "اخر" || prev === "منذ" || prev === "خلال") && nounBare && NOT_A_COUNT.has(nounBare)) { i += used - 1; continue; }
     if (value >= 1900 && value <= 2100 && !dm?.[2] && (!nounBare || !isCountedNoun(nounBare))) { i += used - 1; continue; }
     const counted = nounToken !== undefined && (isCountedNoun(nounToken.raw) || (nounAfterOf !== null && isCountedNoun(nounAfterOf)));
-    // a number WORD with no item noun after it is ordinary speech («واحد من اللاعبين», «أحد الحسابات»), not a quantity
-    if (!dm && !counted) { i += used - 1; continue; }
-    const next = tokens.slice(i + used + 1, i + used + 4).map((t) => bareWord(t.raw));
-    // «١٠ تعليقات لكل فيديو» and «مع كل بوست ١٠ تعليقات» / «وكل شركة موظفين اتنين»: a number per parent item, whether the «كل» comes after the noun or before the number
-    const before = tokens.slice(Math.max(0, i - 3), i).map((t) => bareWord(t.raw));
-    const perEach = next.includes("لكل") || next.some((w, k) => (w === "من" || w === "في" || w === "على") && next[k + 1] === "كل") || before.some((w) => /^(?:و)?(?:ل)?كل$/.test(w));
-    out.push({ value, noun: nounToken ? nounToken.raw : null, digits: Boolean(dm), perEach, of: nounAfterOf !== null && tokens[i + used + 1] ? tokens[i + used + 1].raw : null });
+    const each = perEachOf(tokens, i, used, counted, nounAfterOf !== null);
+    // a number word with no item noun after it is ordinary speech, unless it is the per-parent number of a noun that stood before it («كل شركة موظفين اتنين»)
+    if (!dm && !counted && !(each.perEach && each.noun)) { i += used - 1; continue; }
+    const childNoun = counted ? nounToken!.raw : each.perEach && each.noun ? each.noun : nounToken ? nounToken.raw : null;
+    out.push({ value, noun: childNoun, digits: Boolean(dm), perEach: each.perEach, of: nounAfterOf !== null && tokens[i + used + 1] ? tokens[i + used + 1].raw : null });
     i += used - 1;
   }
   return out;
 }
 
-const COUNTED_NOUN_STEMS = ["تغريد", "منشور", "تعليق", "فيديو", "مقطع", "شرك", "موظف", "تقييم", "مراجع", "مكان", "مطعم", "حساب", "صور", "وظيف", "منتج", "اعلان", "صفح", "قنا", "خبر", "مقال", "رساله", "رسائل", "شخص", "رد", "نتيج", "سجل", "صف", "عنصر", "بوست", "كومنت", "ريل", "تويت", "مدير", "مسؤول", "مسئول"];
+const COUNTED_NOUN_STEMS = ["تغريد", "منشور", "تعليق", "فيديو", "مقطع", "شرك", "موظف", "تقييم", "مراجع", "مكان", "مطعم", "حساب", "صور", "وظيف", "منتج", "اعلان", "صفح", "قنا", "خبر", "مقال", "رساله", "رسائل", "شخص", "رد", "نتيج", "سجل", "صف", "عنصر", "بوست", "كومنت", "ريل", "تويت", "مدير", "مسؤول", "مسئول", "اماكن", "قنو", "اشخاص", "صانع", "صناع", "ناشر", "مالك", "عضو", "اعضاء", "مشارك"];
 /** True for a word that names a kind of item (stem match: «تغريدات»، «التعليقات»، «شركة»). */
 export function isCountedNoun(wordIn: string): boolean {
   const w = bareWord(wordIn);
-  return COUNTED_NOUN_STEMS.some((s) => w.startsWith(norm(s)));
+  return COUNTED_NOUN_STEMS.some((s) => w.startsWith(norm(s)) || (w.length > 4 && w.startsWith("و") && w.slice(1).startsWith(norm(s))));
 }
 
 /** True when a word is a form of one of the given words (a stage's title words: «تعليقات كل منشور»). */
@@ -225,18 +272,25 @@ export const ownTitleWords = (title: string): string[] => {
 export interface QuantityStageRef { index: number; title_ar: string; deliver: boolean }
 
 /**
- * WHICH STAGE THE QUANTITY COUNTS. A single delivered stage takes it. With several (posts and their comments, companies and their employees) the stage whose title names the noun the customer counted takes it; when no
- * title does, the first delivered stage (the root of what the customer receives). Returns the stage index and the value, or null when the request has no quantity of items.
+ * WHICH STAGE THE QUANTITY COUNTS. The stage whose title names the noun the customer counted takes it, WHETHER OR NOT the model marked that stage as delivered: «هات ٥ فيديوهات ... ومن كل فيديو ١٠ تعليقات» counts the videos (live run of
+ * 2026-10-29: the model kept the videos as an intermediate stage, the only delivered stage was the comments, and the 5 became the comments' target: 5 comments in all). `named` is true when a title named the noun: the customer asked for
+ * those items, so the plan delivers them. When no title names it, a single delivered stage takes it; with several, the first delivered stage (the root of what the customer receives). Returns null when the request has no quantity of items.
  */
-export function bindQuantity(text: unknown, stages: ReadonlyArray<QuantityStageRef>): { index: number; value: number } | null {
+export function bindQuantityDetailed(text: unknown, stages: ReadonlyArray<QuantityStageRef>): { index: number; value: number; named: boolean } | null {
   const delivered = stages.filter((s) => s.deliver);
-  if (delivered.length === 0) return null;
-  const candidates = countedQuantities(text, delivered.map((s) => s.title_ar));
+  if (stages.length === 0) return null;
+  const candidates = countedQuantities(text, stages.map((s) => s.title_ar));
   if (candidates.length === 0) return null;
-  if (delivered.length === 1) return { index: delivered[0].index, value: candidates[0].value };
   for (const q of candidates) {
-    const hit = delivered.find((s) => ownTitleWords(String(s.title_ar)).some((w) => sameNounStem(w, q.noun!)));
-    if (hit) return { index: hit.index, value: q.value };
+    const hit = stages.find((s) => ownTitleWords(String(s.title_ar)).some((w) => sameNounStem(w, q.noun!)));
+    if (hit) return { index: hit.index, value: q.value, named: true };
   }
-  return { index: delivered[0].index, value: candidates[0].value };
+  if (delivered.length === 0) return null;
+  return { index: delivered[0].index, value: candidates[0].value, named: false };
+}
+
+/** The same, without `named` (the stage and the value). */
+export function bindQuantity(text: unknown, stages: ReadonlyArray<QuantityStageRef>): { index: number; value: number } | null {
+  const bound = bindQuantityDetailed(text, stages);
+  return bound ? { index: bound.index, value: bound.value } : null;
 }

@@ -2,6 +2,7 @@ import { AGENT_COLLECT_MAX_PAGES, AGENT_INLINE_ROWS_MAX, SANDBOX_INLINE_RESULT_C
 import { normalizeText } from "../../src/lib/agentMission/relevance";
 import type { MissionPricingSettings } from "../../src/lib/missionPricing";
 import { isContactSource } from "../../src/lib/agentMission/contacts";
+import { childStepSourcesFor, isPeopleNoun, linkableCompanySources } from "../../src/lib/agentMission/childSources";
 import { describeAgentSource, isAgentSourceId, searchAgentSources, SESSION_RESTRICTED_SOURCES } from "../../src/lib/agentMission/sources";
 import { validateAndPricePlan, type PricedPlan, type RecordedCall } from "../../src/lib/agentMission/plan";
 import { checkCustomerText } from "../../src/lib/agentMission/text";
@@ -24,6 +25,7 @@ import { catalogHitView } from "../../src/lib/modelPlanner/tools";
 import { cheaperAlternatives, SKIP_REASONS, sourceHealth, type StatsMap } from "../../src/lib/agentMission/sourceRanking";
 import { applyReverseOrder } from "../../src/lib/treg/reverseOrder";
 import { rankedCandidates } from "../../src/lib/agentMission/candidates";
+import { perParentQuantities } from "../../src/lib/agentMission/quantity";
 
 /**
  * The tools the agent has, and the only ones: three gateway tools (catalog_search, describe_endpoint, treg_call), the sandboxed run_code, and the mission tools (report_progress,
@@ -295,6 +297,18 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           ...fromCatalog,
           ...webRanked.map(({ c, health, effective }) => ({ id: c.id, effective, view: { id: c.id, name: c.id, platform: c.platform, capability: c.kind, summary: c.summary.slice(0, 140), price: `about ${c.usd_per_call.toFixed(5)} USD a call, up to ${c.rows_per_call} rows`, costPerRecordUsd: Number(effective.toFixed(7)), expected_usd_per_item: Number(c.usd_per_row.toFixed(7)), requiredInputs: [], inputs: [c.inputs], ...(health.state === "demoted" ? { health: "demoted: recent failures on its inputs" } : {}) } })),
         ].sort((x, y) => x.effective - y.effective || x.id.localeCompare(y.id));
+        // THE PEOPLE OF EACH COMPANY («ومن كل شركة اتنين من المديرين»): a company source whose rows a people source can take as input (the website, the page link, the name) ranks first; one that feeds none is demoted and says so
+        if (perParentQuantities(`${mission.request_text} ${mission.answer_text ?? ""}`).some((q) => isPeopleNoun(q.noun ?? ""))) {
+          const allowed = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
+          const linkable = new Map(linkableCompanySources(ctx.catalog, allowed, now).map((l) => [l.id, l]));
+          for (const m of merged) {
+            if (ctx.catalog.byId.get(m.id)?.capability !== "companies.search") continue;
+            const l = linkable.get(m.id);
+            if (l) m.view = { ...m.view, feeds_people_sources: l.feeds.slice(0, 3).map((f) => `${f.people} (takes the company's ${f.via})`) };
+            else { m.effective *= 3; m.view = { ...m.view, link_note: "no people source takes a field of this source's rows as input: the people of each company could not be asked for" }; }
+          }
+          merged.sort((x, y) => x.effective - y.effective || x.id.localeCompare(y.id));
+        }
         const ordered = applyReverseOrder(merged, (x) => x.id);
         const top: Array<Record<string, any>> = ordered.slice(0, limit).map((m, i) => ({ ...m.view, rank: i + 1, ...(SESSION_RESTRICTED_SOURCES[m.id] ? { limit_note: SESSION_RESTRICTED_SOURCES[m.id].message } : {}) }));
         state.ranking = top.map((h) => String(h.id));
@@ -528,6 +542,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           ...(mission.answer_text ? { answerText: mission.answer_text } : {}),
           isContactSource,
           pricingSettings: ctx.pricingSettings,
+          childStepSources: (noun: string) => childStepSourcesFor(noun, ctx.catalog, (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed),
+          endpointsCalled: () => { const m = new Map<string, { rows: number }>(); for (const c of calls) m.set(c.endpoint_id, { rows: Math.max(m.get(c.endpoint_id)?.rows ?? 0, c.status === "ok" ? Number(c.rows_returned) || 0 : 0) }); return m; },
         };
         const checked = validateAndPricePlan({ summary_ar: a.summary_ar, stages: stagesIn, ...(a.contacts_note_ar !== undefined ? { contacts_note_ar: a.contacts_note_ar } : {}), ...(a.unserved_steps !== undefined ? { unserved_steps: a.unserved_steps } : {}), ...(a.assumptions_ar !== undefined ? { assumptions_ar: a.assumptions_ar } : {}) }, lookup);
         if (!checked.ok) return err("the plan was not accepted; fix these and propose again", { issues: checked.issues.slice(0, 12) });
