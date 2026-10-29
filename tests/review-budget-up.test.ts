@@ -220,7 +220,10 @@ describe("the daily review spend read", () => {
 });
 
 describe("the daily review spend route (read-only, admin only)", () => {
-  afterEach(() => { vi.resetModules(); vi.doUnmock("../src/lib/server/adminAuth"); vi.doUnmock("../src/lib/supabase/server"); });
+  // a FIXED clock (13:00 in Cairo, far from Cairo midnight and from the day the clocks change): the route reads «now» for its window, and the test used the real time, so it failed after 21:00 UTC
+  const FIXED_NOW = "2026-10-20T10:00:00.000Z";
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date(FIXED_NOW)); });
+  afterEach(() => { vi.useRealTimers(); vi.resetModules(); vi.doUnmock("../src/lib/server/adminAuth"); vi.doUnmock("../src/lib/supabase/server"); });
 
   const load = async (auth: any, client: any) => {
     vi.doMock("../src/lib/server/adminAuth", () => ({ authenticateAdmin: async () => auth }));
@@ -241,7 +244,7 @@ describe("the daily review spend route (read-only, admin only)", () => {
     const calls: string[] = [];
     const chain: any = {};
     for (const name of ["select", "like", "gte", "order"]) chain[name] = (...args: any[]) => { calls.push(name); return chain; };
-    chain.range = async () => ({ data: [{ created_at: new Date().toISOString(), reason: "relevance_review", cost_usd: 0.01 }], error: null });
+    chain.range = async () => ({ data: [{ created_at: new Date(FIXED_NOW).toISOString(), reason: "relevance_review", cost_usd: 0.01 }], error: null });
     const from = vi.fn(() => chain);
     const GET = await load({ ok: true }, { from });
     const response = await GET(req("?days=2"));
@@ -250,6 +253,7 @@ describe("the daily review spend route (read-only, admin only)", () => {
     expect(from).toHaveBeenCalledWith("llm_usage");
     expect(calls).toEqual(["select", "like", "gte", "order"]);
     expect(body.days).toHaveLength(2);
+    expect(body.days).toEqual([{ date: "2026-10-20", calls: 1, failedCalls: 0, usd: 0.01 }, { date: "2026-10-19", calls: 0, failedCalls: 0, usd: 0 }]);
     expect(body.totalUsd).toBe(0.01);
     expect(body.jobCeilingUsd).toBe(0.15);
   });
