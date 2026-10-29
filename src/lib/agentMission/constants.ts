@@ -215,6 +215,8 @@ export const AGENT_INLINE_ROWS_MAX = 200;
 /** collect_pages: most pages one call may fetch (the mission's execution budget still decides how many it may pay for). */
 export const AGENT_COLLECT_MAX_PAGES = 60;
 export const AGENT_PLANNING_MAX_TURNS = 60;
+/** A planning run that ends with no plan, no question and no ending while the sources gave it real rows is asked again at most this many times. */
+export const AGENT_PLANNING_NUDGES_MAX = 1;
 export const AGENT_EXECUTION_MAX_TURNS = 400;
 /** A model-driven execution that ends while matching items are still needed and a source has more pages is followed by at most this many further rounds. */
 export const AGENT_EXECUTION_CONTINUE_ROUNDS = 2;

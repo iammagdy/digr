@@ -3,7 +3,11 @@ import { CONTACT_KINDS, isContactSource, verifyContactValue } from "../../../src
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
 import { dedupeScope, deriveItemId, isTextItemStage, textDedupeKey, textKeyOf } from "../../../src/lib/agentMission/contract";
 import { placeCellsAr } from "../../../src/lib/agentMission/places";
-import { withRealName } from "../../../src/lib/agentMission/companyNames";
+import { nameKeysOf, withCleanName, withRealName } from "../../../src/lib/agentMission/companyNames";
+import { entityDoubt, type DoubtInput } from "../../../src/lib/agentMission/entityDoubts";
+import { namedSourceOf, SOURCE_KEY } from "../../../src/lib/agentMission/namedSources";
+import { looksLikeDateColumn, parseMoment } from "../../../src/lib/agentMission/dateCells";
+import { APPROX_DATES_KEY, approxDayOf, parseRelativeAge } from "../../../src/lib/agentMission/relativeDates";
 import { CHILD_RAW_FILTER_KINDS, filterVerdict, governmentUnclear, isEnabled } from "../../../src/lib/agentMission/filters";
 import type { MissionEventInput } from "../types";
 import type { Reviewer } from "../review";
@@ -35,6 +39,8 @@ export interface IngestOptions {
   idField?: string | null;
   /** «Now» for a period counted in days (tests pass a fixed moment). */
   now?: number;
+  /** A stage whose customer named SEVERAL sources: every item is marked with the named source it belongs to (read from `fields`), and no source takes more than `perValue` items (an item beyond it is kept, never delivered, like a match beyond the volume bought). */
+  sourceQuota?: { fields: string[]; values: string[]; perValue: number; /** The stream reads ONE named source's own listing: an item that names no author belongs to it (and its author cell, when empty, says so). */ defaultSource?: string };
 }
 
 export interface IngestResult extends Record<string, unknown> {
@@ -78,6 +84,11 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     const dedupeKey = textKeyOf(stage);
     if (dedupeKey) for (const it of items.stage(key).items.values()) { const k = it.row ? textDedupeKey(it.row[dedupeKey]) : null; if (k) seenTexts.add(`${dedupeScope(it.row?.parent_id === undefined ? null : String(it.row.parent_id))}|${k}`); }
   }
+  // the share of every named source applies to everything that is accepted for the stage, a page read by the engine or a waiting item decided later (a stage with a recipe per source: no source takes more than its share)
+  const account = (stage.filters ?? []).find((f) => f.kind === "account" && isEnabled(f) && (f.values ?? []).length > 0);
+  const quota = options.sourceQuota ?? (stage.engine?.sources && stage.engine.sources.length > 0 && account ? { fields: [account.field, ...(account.fields ?? [])].filter((k): k is string => typeof k === "string"), values: account.values ?? [], perValue: Math.max(1, Math.ceil(stage.planned_rows / Math.max(1, (account.values ?? []).length))) } : undefined);
+  const quotaHave = new Map<string, number>();
+  if (quota) for (const r of items.acceptedRows(key)) { const v = r[SOURCE_KEY]; if (typeof v === "string") quotaHave.set(v, (quotaHave.get(v) ?? 0) + 1); }
   const ops: Op[] = [];
 
   // items that were waiting (a review the budget or a failure delayed) or never looked at come back first, while matching items are still needed
@@ -92,10 +103,14 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   let duplicates = 0;
   const excludedStructural: Array<{ id: string; reason: ItemReason; row: Row }> = [];
   const govUnclear = new Set<string>();
+  // A COMPANY ROW WHOSE OWN TEXT CONTRADICTS WHAT THE CARD PROMISES (a broken spreadsheet line as a name, a head office abroad, a law firm, a news site, a trade show) goes to the model check even when the sector rule accepts it (entityDoubts.ts)
+  const doubtInput: DoubtInput | null = spec?.entity ? { nameKeys: nameKeysOf(stage.columns), descriptionKeys: (spec.text_columns ?? []).filter((k) => /desc|about|summary|bio|overview|نبذ|وصف/i.test(`${k} ${stage.columns.find((c) => c.key === k)?.title_ar ?? ""}`)), wantedPlaces: promisedPlace?.places ?? [] } : null;
+  const doubts = new Map<string, string>();
   for (const raw0 of incoming) {
     if (!isObject(raw0)) { tally.rejected_not_object += 1; continue; }
     // a name that is only a web address is replaced by another name field of the same item (never invented); the id is derived from the item as the source gave it
-    const raw = isChild ? raw0 : withRealName(raw0, stage.columns);
+    const named = isChild ? { item: raw0, debris: false } : withCleanName(withRealName(raw0, stage.columns), stage.columns);
+    const raw = named.item;
     // an item always has an id: its own, the field the recipe chose, a known key field (a platform id, the link), or its fingerprint: the same item read twice is the same id (never rejected for lacking one)
     // (the engine passes the recipe's `idField`, so its items are keyed this way; the model's own save_rows has no such field and keeps refusing an item without an id, which it was told to give)
     const id = options.idField !== undefined ? deriveItemId(raw0, options.idField, parentIds ? String(raw0.parent_id ?? "").trim() || null : null) : String(raw0.id ?? "").trim();
@@ -123,10 +138,29 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     if (!isChild) placeCellsAr(row, stage.columns, raw, promisedPlace);
     // WHAT THE CARD PROMISES, checked here on the mapped item (replies, language, period, account, place): an item a filter rejects is neither delivered nor charged, and is kept with its reason
     if (enabledFilters.length > 0) {
-      const why = filterVerdict(enabledFilters, raw, { textKey: textKeyOf(stage, Object.keys(raw)), now });
+      const why = filterVerdict(enabledFilters, raw, { textKey: textKeyOf(stage, Object.keys(raw)), now, ...(quota?.defaultSource ? { listing: true } : {}) });
       if (why) { tally.rejected_by_filter += 1; excludedStructural.push({ id, reason: why, row }); continue; }
       if (governmentUnclear(enabledFilters, raw)) govUnclear.add(id);
     }
+    const doubt = doubtInput ? (named.debris ? "name_debris" : entityDoubt(raw, doubtInput)) : null;
+    if (doubt) { doubts.set(id, doubt); row._doubt = doubt; }
+    // THE NAMED SOURCE the item belongs to (a stage naming several): marked on the item, so each source can be held to its own share
+    if (quota) {
+      const src = namedSourceOf(quota.values, quota.fields, raw) ?? (quota.defaultSource && !quota.fields.some((f) => (typeof raw[f] === "string" || typeof raw[f] === "number") && String(raw[f]).trim()) ? quota.defaultSource : null);
+      if (src) {
+        row[SOURCE_KEY] = src;
+        // the listing of a named source gives no author: the author cell of the file says whose item it is (the name of the source that was asked for, never invented)
+        if (quota.defaultSource === src) for (const f of quota.fields) if (columnKeys.includes(f) && !String(row[f] ?? "").trim()) row[f] = src;
+      }
+    }
+    // A DATE THE SOURCE GIVES ONLY AS A RELATIVE TIME («قبل ٤ أيام», «4 days ago») is written as the approximate day it stands for (from the moment the item was read) and the item is marked, so the file says the date is approximate (relativeDates.ts)
+    const approxColumns: string[] = [];
+    for (const c of stage.columns) {
+      if (!looksLikeDateColumn(c.title_ar, c.key) || parseMoment(row[c.key]) !== null) continue;
+      const age = parseRelativeAge(row[c.key], now);
+      if (age) { row[c.key] = approxDayOf(age); approxColumns.push(c.key); }
+    }
+    if (approxColumns.length > 0) row[APPROX_DATES_KEY] = approxColumns;
     // CONTACT FIELDS are verified by code: a work e-mail or phone that does not pass is left empty; an item of a contact stage with no verified value is not delivered (so it is not charged)
     let verifiedAny = false;
     for (const c of contactColumns) {
@@ -152,14 +186,18 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     // THE CUSTOMER NAMED THE SOURCE (a channel, a page, an account): an item that passed the source filter is from it, so «the text names none of the topic's words» is not enough to throw it away (a video title in English about an Arabic topic, a
     // post in another dialect): the model judges the topic only, in the item's own language
     const namedSource = enabledFilters.some((f) => f.kind === "account");
-    const verdicts = candidates.map((c) => { const v0 = classifyRowDetailed(spec, c.row); const v = namedSource && v0.verdict === "exclude" && v0.reason === "no_term" ? ({ verdict: "review", reason: "uncertain" } as const) : v0; return { c, v: v.verdict === "match" && (govUnclear.has(c.id) || (c.carried && governmentUnclear(stage.filters, c.row))) ? ({ verdict: "review", reason: "uncertain" } as const) : v }; });
+    const verdicts = candidates.map((c) => { const v0 = classifyRowDetailed(spec, c.row); const v = namedSource && v0.verdict === "exclude" && v0.reason === "no_term" ? ({ verdict: "review", reason: "uncertain" } as const) : v0; return { c, v: v.verdict === "match" && (govUnclear.has(c.id) || doubts.has(c.id) || (c.carried && (governmentUnclear(stage.filters, c.row) || typeof c.row._doubt === "string"))) ? ({ verdict: "review", reason: "uncertain" } as const) : v }; });
     const matches = verdicts.filter((x) => x.v.verdict === "match").length;
     const uncertain = verdicts.filter((x) => x.v.verdict === "review");
     let verdictOf = new Map<string, boolean>();
     if (uncertain.length > 0 && spec.review !== false && reviewer && matches < room) {
       // no more review than the room left can use (an item beyond the approved volume is never needed); the rest stays pending
       const wanted = uncertain.slice(0, (room - matches) * 3 + 25);
-      verdictOf = await reviewer.review({ subject: (stage.filters ?? []).some((f) => f.kind === "exclude_government" && isEnabled(f)) ? `${spec.subject_ar} (ليست جهة حكومية أو عسكرية ولا مركز أبحاث أو معهدًا حكوميًا)` : spec.subject_ar, rows: wanted.map((x) => ({ id: x.c.id, text: spec.text_columns.map((k) => String(x.c.row[k] ?? "")).join(" ") })) });
+      const governmentAsked = (stage.filters ?? []).some((f) => f.kind === "exclude_government" && isEnabled(f));
+      // a company stage with a promised place: the model check is told the company must really be of that kind and place (a head office abroad, a law firm, a news site, a trade show is not)
+      const placeWords = spec.entity && placeFilter ? (placeFilter.values ?? []).join("، ") : "";
+      const subject = `${spec.subject_ar}${governmentAsked ? " (ليست جهة حكومية أو عسكرية ولا مركز أبحاث أو معهدًا حكوميًا)" : ""}${placeWords ? ` (شركة حقيقية من هذا النوع مقرها أو نشاطها في ${placeWords}؛ وليست حدثًا أو معرضًا أو مكتب محاماة أو موقعًا إخباريًا أو منتدى أو شركة مقرها في بلد آخر)` : ""}`;
+      verdictOf = await reviewer.review({ subject, rows: wanted.map((x) => ({ id: x.c.id, text: spec.text_columns.map((k) => String(x.c.row[k] ?? "")).join(" ") })) });
       reviewedNow = verdictOf.size;
       reviewStop = (await reviewer.state()).stop;
     }
@@ -184,6 +222,14 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     let reason: ItemReason | undefined = o.reason;
     // a match beyond the volume the customer bought was checked and is not needed: it is kept (never delivered, never charged) with that reason
     if (state === "accepted" && (before.accepted + acceptedNow >= stage.planned_rows || (options.acceptCap !== undefined && acceptedNow >= options.acceptCap))) { state = "excluded"; reason = "target_reached"; tally.rejected_over_limit += 1; }
+    // a named source whose share is full: its match is kept, not delivered (the other sources still have room)
+    if (state === "accepted" && quota) {
+      const src = c.row[SOURCE_KEY];
+      if (typeof src === "string") {
+        const have = quotaHave.get(src) ?? 0;
+        if (have >= quota.perValue) { state = "excluded"; reason = "target_reached"; tally.rejected_over_limit += 1; } else quotaHave.set(src, have + 1);
+      }
+    }
     if (state === "accepted") { acceptedNow += 1; if (o.by === "model") modelAccepted += 1; }
     if (state === "excluded" && reason && reason !== "target_reached") left[reason] = (left[reason] ?? 0) + 1;
     if (c.carried) {

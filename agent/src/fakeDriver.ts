@@ -1,4 +1,5 @@
 import type { ModelDriver, RunInput, RunOutput } from "./driver";
+import { PLANNING_NUDGE } from "./nudge";
 
 /**
  * A FAKE model: a scripted transcript of tool calls. Each step names a tool and its arguments (or a function that builds them from the results so far); the driver runs them in order
@@ -6,13 +7,15 @@ import type { ModelDriver, RunInput, RunOutput } from "./driver";
  */
 export type FakeStep = { tool: string; args: Record<string, unknown> | ((results: Array<{ tool: string; result: Record<string, unknown> }>) => Record<string, unknown>) };
 
-export function createFakeDriver(script: FakeStep[], options: { costUsd?: number; stopAfterTerminal?: boolean; usage?: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } } = {}): ModelDriver & { results: Array<{ tool: string; result: Record<string, unknown> }> } {
+export function createFakeDriver(script: FakeStep[], options: { /** The steps of the run the planner is asked for once more after it ended silently (runMission.ts); none: that run does nothing. */ nudgeScript?: FakeStep[]; costUsd?: number; stopAfterTerminal?: boolean; usage?: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } } = {}): ModelDriver & { results: Array<{ tool: string; result: Record<string, unknown> }> } {
   const results: Array<{ tool: string; result: Record<string, unknown> }> = [];
   return {
     results,
     async run(input: RunInput): Promise<RunOutput> {
       let turns = 0;
-      for (const step of script) {
+      // a scripted transcript is ONE run: the run the planner is asked for once more (after it ended with nothing) plays only its own script
+      const steps = input.userPrompt.includes(PLANNING_NUDGE) ? options.nudgeScript ?? [] : script;
+      for (const step of steps) {
         const tool = input.tools.find((t) => t.name === step.tool);
         turns += 1;
         if (!tool) { results.push({ tool: step.tool, result: { ok: false, error: `no such tool in this phase: ${step.tool}` } }); continue; }

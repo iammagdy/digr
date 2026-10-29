@@ -4,6 +4,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-30, after #297): fix mission 11 (named channels, Facebook videos, company rows)
+
+`main` before it was `24e428fadc8566d8dfc6b69b2624a754faa3a222` (#297); its merge commit is the head of `main` after it. Evidence, root causes, tests and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 15. No SQL written or applied; no Edge Function changed; no price, cap, markup, minimum or model string changed; settlement code untouched.
+
+- **YouTube named channels, 0 of 90**: the period filter left out all 16 videos because the source gives only «قبل ٤ أيام». Relative times are now an age range read from the moment of the read, accepted when the range overlaps the period, saved as an approximate day (`تقريبًا` in the cell, a sentence on the first sheet, a line on the card). The channels were never sampled by their own listing: the third search of one source is refused (`repeat_sample`), the catalog has `youtube.channel.videos` sources, and the named-source guidance sat in the EXECUTION part of the prompt. Now: a keyword plan for named sources no sample shows is refused while a listing exists and none was sampled; a listing is sampled once per named source; a stage with several named sources gets one recipe per source (each up to its share); an author is matched in every field that names it. The card promised 90 rows instead of 315: «على» is written «علي» once normalized, so the comments stage took the wrong per-parent number.
+- **Facebook videos, «حد من جانبنا»**: no limit; the planner ended its run with no plan after two unavailable web searches (`no_plan(end)`). A run that ends with nothing while it holds real rows is now asked once more.
+- **Companies**: a row whose own text contradicts the card (a law firm, a news site, a trade show, a head office abroad, a broken spreadsheet line as a name) goes to the model check; US and UK cities are evidence against an Egypt request; «Nasr City», «Down Town», «Zahraa El Maadi», «First New Cairo» are written in Arabic.
+- Not done: exact dates from a details endpoint (no enrichment step in the engine); the shortfall sentence that blames the review for a shortfall of the people stage.
+- Rollback: `git revert -m 1 <merge commit>`.
+
+---
+
 ## START HERE (2026-10-29, after #296): fix mission 10 (social-media depth and correctness)
 
 `main` before it was `77685e2fb3f0a0b02d1f0f85e31e183943f819c8` (#296); its merge commit is the head of `main` after it. Evidence, root causes, tests and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 14. No SQL written or applied; no Edge Function changed; no price, cap, markup, minimum or model string changed; settlement code untouched.

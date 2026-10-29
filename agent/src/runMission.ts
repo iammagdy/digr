@@ -6,7 +6,7 @@ import type { TregCatalog } from "../../src/lib/treg/catalog";
 import type { AccountAccess } from "../../src/lib/treg/dataPolicy";
 import {
   AGENT_ERROR_REQUEUES_MAX, AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD, AGENT_EXECUTION_LLM_BUDGET_SHARE, AGENT_MEMORY_REQUEUES_MAX, AGENT_PHASE_STARTS_MAX, AGENT_RESTART_REQUEUES_MAX, AGENT_EXECUTION_MAX_TURNS, AGENT_EXECUTION_WALL_MS, AGENT_PLANNING_LLM_BUDGET_USD,
-  AGENT_PLANNING_MAX_TURNS, AGENT_PLANNING_WALL_MS, AGENT_PRICING_BASIS, AGENT_EXECUTION_CONTINUE_ROUNDS, AGENT_SOURCE_MEASURE_WINDOW_MS,
+  AGENT_PLANNING_MAX_TURNS, AGENT_PLANNING_NUDGES_MAX, AGENT_PLANNING_WALL_MS, AGENT_PRICING_BASIS, AGENT_EXECUTION_CONTINUE_ROUNDS, AGENT_SOURCE_MEASURE_WINDOW_MS,
 } from "../../src/lib/agentMission/constants";
 import { executionBudgetUsd, reviewBudgetUsdFor, reviewCeilingUsdFor } from "../../src/lib/agentMission/price";
 import { MISSION_PRICING_SETTING_KEY, normalizeMissionPricingSettings } from "../../src/lib/missionPricing";
@@ -24,6 +24,7 @@ import type { ModelDriver } from "./driver";
 import { createGateway } from "./gateway";
 import { createWebGateway, type ProviderKeyFn } from "./webGateway";
 import { loadSystemPrompt } from "./prompt";
+import { PLANNING_NUDGE } from "./nudge";
 import { readRunState, updateRunState, type RunState } from "./runState";
 import { buildTools, newRunState, type ToolContext } from "./tools";
 import { ItemStore, type ItemSnapshot, type StopReason } from "./items/itemStore";
@@ -80,6 +81,10 @@ function savedCallsNote(calls: CallRow[]): string {
   const rows = calls.filter((c) => c.status === "ok" || c.status === "empty").map((c) => `- ${c.id.split(":").pop()}: endpoint ${c.endpoint_id}, params ${JSON.stringify(c.params_digest)}, ${c.rows_returned ?? 0} rows, ${c.phase}`);
   return rows.length ? `Pages ALREADY saved for this mission (use them with run_code before paying for the same data again):\n${rows.join("\n")}` : "No page is saved yet.";
 }
+
+/** The planning run ended with a plain end (not a limit, a crash or a restart) and said nothing the system can use: no plan, no question, no ending. */
+export const endedSilently = (output: { stop?: string; error?: string }, state: { proposedPlan: unknown; question: unknown; finish: unknown }): boolean => output.stop === "end" && !output.error && !state.proposedPlan && !state.question && !state.finish;
+
 
 /** Everything the agent is told at the start of a PLANNING run. */
 export function planningPrompt(mission: MissionRecord, calls: CallRow[]): string {
@@ -232,16 +237,28 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const ctx: ToolContext = { phase: "planning", mission, plan: null, store, gateway, web, catalog: deps.catalog, access, state, sandbox: deps.sandbox, pricingSettings, stats: sourceStats, now: planningNow };
   // the model cost of earlier runs of this phase (a requeue, a takeover): this run adds to it, and every model message checkpoints the running total, so a run that is killed still leaves its cost on the mission
   const baseLlm = Number((await store.getMission(mission.id))?.planning_llm_usd ?? mission.planning_llm_usd ?? 0);
-  const checkpoint = async ({ costUsd }: { costUsd: number }) => { try { await store.updateMission(mission.id, { planning_llm_usd: Number((baseLlm + costUsd).toFixed(6)) }); } catch { /* a lost checkpoint never stops a run */ } };
-  let output;
-  try {
-    output = await deps.driver.run({ phase: "planning", systemPrompt: loadSystemPrompt("planning", deps.systemPromptFile), userPrompt: planningPrompt(mission, calls), tools: buildTools(ctx), state, model, maxTurns: AGENT_PLANNING_MAX_TURNS, maxBudgetUsd: AGENT_PLANNING_LLM_BUDGET_USD, wallMs: AGENT_PLANNING_WALL_MS, onUsage: checkpoint });
-  } catch (e) {
-    output = { llmCostUsd: 0, turns: 0, stop: "error", error: String((e as Error)?.message ?? e).slice(0, 300) } as Awaited<ReturnType<ModelDriver["run"]>>;
-  }
-  const llm = Number(baseLlm + output.llmCostUsd);
-  const base = { planning_llm_usd: Number(llm.toFixed(6)), ...clear };
+  let llmBase = baseLlm;
+  const checkpoint = async ({ costUsd }: { costUsd: number }) => { try { await store.updateMission(mission.id, { planning_llm_usd: Number((llmBase + costUsd).toFixed(6)) }); } catch { /* a lost checkpoint never stops a run */ } };
+  const runOnce = async (userPrompt: string): Promise<Awaited<ReturnType<ModelDriver["run"]>>> => {
+    try {
+      return await deps.driver.run({ phase: "planning", systemPrompt: loadSystemPrompt("planning", deps.systemPromptFile), userPrompt, tools: buildTools(ctx), state, model, maxTurns: AGENT_PLANNING_MAX_TURNS, maxBudgetUsd: AGENT_PLANNING_LLM_BUDGET_USD, wallMs: AGENT_PLANNING_WALL_MS, onUsage: checkpoint });
+    } catch (e) {
+      return { llmCostUsd: 0, turns: 0, stop: "error", error: String((e as Error)?.message ?? e).slice(0, 300) } as Awaited<ReturnType<ModelDriver["run"]>>;
+    }
+  };
+  let output = await runOnce(planningPrompt(mission, calls));
   await recordTokens(deps, mission.id, 0, output.usage, { inputTokens: 0, outputTokens: 0, calls: 0 }, output.llmCostUsd);
+  // A RUN THAT ENDED WITH NO PLAN, NO QUESTION AND NO ENDING while the sources gave it real rows (live 2026-10-29: Facebook videos, after the customer answered the question, the planner tried two unavailable web searches and stopped): it is asked once more, told to
+  // build the plan from what it holds. Never a limit of ours: the run's stop was a plain end, with no budget, turn or time limit reached.
+  for (let nudge = 0; nudge < AGENT_PLANNING_NUDGES_MAX && endedSilently(output, state); nudge += 1) {
+    llmBase += output.llmCostUsd;
+    const fresh = await store.listCalls(mission.id);
+    if (!fresh.some((c) => (c.phase ?? "planning") === "planning" && c.status === "ok" && Number(c.rows_returned ?? 0) > 0)) break;
+    output = await runOnce(`${planningPrompt(mission, fresh)}\n\n${PLANNING_NUDGE}`);
+    await recordTokens(deps, mission.id, 0, output.usage, { inputTokens: 0, outputTokens: 0, calls: 0 }, output.llmCostUsd);
+  }
+  const llm = Number(llmBase + output.llmCostUsd);
+  const base = { planning_llm_usd: Number(llm.toFixed(6)), ...clear };
   if (output.stop === "memory" && !state.proposedPlan && !state.question && !state.finish && await requeue(deps, mission, "queued", { planning_llm_usd: base.planning_llm_usd }, "memory")) return;
   // a deploy restarted the worker while the planning ran (its model process ended with SIGTERM, exit code 143): the planning starts again on the next worker, it is never answered as «a limit of ours»
   if (endedByRestart(output) && !state.proposedPlan && !state.question && !state.finish && await requeue(deps, mission, "queued", { planning_llm_usd: base.planning_llm_usd }, "restart")) return;
