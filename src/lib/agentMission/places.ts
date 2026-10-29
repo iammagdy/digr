@@ -19,9 +19,9 @@ interface Country { code: string; labelAr: string; names: string[]; tlds: string
 
 const COUNTRIES: ReadonlyArray<Country> = [
   { code: "EG", labelAr: "مصر", names: ["مصر", "جمهورية مصر العربية", "egypt", "arab republic of egypt", "eg"], tlds: ["eg"], phone: "20", cities: [
-    { id: "cairo", labelAr: "القاهرة", names: ["القاهرة", "cairo", "new cairo", "القاهرة الجديدة", "التجمع الخامس", "مدينة نصر", "nasr city", "المعادي", "maadi", "heliopolis", "مصر الجديدة"] },
-    { id: "giza", labelAr: "الجيزة", names: ["الجيزة", "giza", "6 اكتوبر", "6th of october", "october city", "الشيخ زايد", "sheikh zayed", "المهندسين", "mohandessin", "الدقي", "dokki"] },
-    { id: "alexandria", labelAr: "الإسكندرية", names: ["الاسكندريه", "الإسكندرية", "alexandria", "alex"] },
+    { id: "cairo", labelAr: "القاهرة", names: ["القاهرة", "cairo", "al qahirah", "al-qahirah", "al qahira", "el qahira", "el-qahira", "qahira", "new cairo", "القاهرة الجديدة", "التجمع الخامس", "مدينة نصر", "nasr city", "المعادي", "maadi", "heliopolis", "مصر الجديدة"] },
+    { id: "giza", labelAr: "الجيزة", names: ["الجيزة", "giza", "al jizah", "al-jizah", "el giza", "6 اكتوبر", "6th of october", "october city", "الشيخ زايد", "sheikh zayed", "المهندسين", "mohandessin", "الدقي", "dokki"] },
+    { id: "alexandria", labelAr: "الإسكندرية", names: ["الاسكندريه", "الإسكندرية", "alexandria", "alex", "al iskandariyah", "al-iskandariyah", "iskandariya"] },
     { id: "mansoura", labelAr: "المنصورة", names: ["المنصوره", "المنصورة", "mansoura"] },
     { id: "tanta", labelAr: "طنطا", names: ["طنطا", "tanta"] },
     { id: "assiut", labelAr: "أسيوط", names: ["اسيوط", "أسيوط", "assiut", "asyut"] },
@@ -171,3 +171,56 @@ export function placeVerdict(placeKeys: ReadonlyArray<string>, mapped: Record<st
 
 /** The words of the request that name a place, as the card says them («مصر»), for the filter's sentence. */
 export const placeLabelsAr = (entries: ReadonlyArray<PlaceEntry>): string[] => [...new Set(entries.map((e) => e.labelAr))];
+
+// ------------------------------------------------------------------------------------------------- the place cells of the file
+
+/** The kind of place a column holds, from its key or its title: a country, a city, or a region (state, governorate); null for any other column. */
+export function placeCellKind(column: { key: string; title_ar?: string }): "country" | "city" | "region" | null {
+  const title = column.title_ar ?? "";
+  if (/(^|_)(country|country_name|countrycode|country_code|nation)$/i.test(column.key) || /^(?:الدولة|دولة|البلد|بلد)$/.test(title.trim())) return "country";
+  if (/(^|_)(city|town|locality)$/i.test(column.key) || /^(?:المدينة|مدينة)$/.test(title.trim())) return "city";
+  if (/(^|_)(state|region|governorate|province)$/i.test(column.key) || /^(?:المحافظة|محافظة|المنطقة|منطقة)$/.test(title.trim())) return "region";
+  return null;
+}
+
+/** The Arabic name of a place when the whole value IS a known place («al qahirah» → «القاهرة», «EG» → «مصر», «Cairo Governorate» → «القاهرة»); null otherwise (a street address, a place the table does not know). */
+export function exactPlaceLabelAr(value: unknown, kind: "country" | "city" | "region"): string | null {
+  const raw = String(value ?? "").trim();
+  if (!raw || raw.length > 60) return null;
+  if (kind === "country") { const iso = isoCountryOf(raw); if (iso) return countryOf.get(iso)!.labelAr; }
+  const n = normalizeText(raw).replace(/\b(?:governorate|city|province|state|region)\b/g, " ").replace(/(?:محافظه|مدينه|منطقه)\s/g, " ").replace(/\s+/g, " ").trim();
+  if (!n) return null;
+  const wantKind = kind === "country" ? "country" : "city";
+  const hit = ENTRIES.find((e) => e.kind === wantKind && e.names.some((name) => normalizeText(name) === n));
+  return hit ? hit.labelAr : null;
+}
+
+/** Said in the file where the source did not say the city (never an empty cell when the card promised the place). */
+export const PLACE_NOT_STATED_AR = "غير مذكورة في المصدر";
+
+/**
+ * THE PLACE CELLS OF A ROW, in Arabic. A country or city the source writes in Latin letters («al qahirah», «EG») is written in Arabic when the table knows it. When the card promised the place (`promised`) no place cell stays empty: the country
+ * cell takes the country the item's own evidence proves, the city cell the city another field of the item names, else «غير مذكورة في المصدر». Mutates the row. Pure.
+ */
+export function placeCellsAr(row: Record<string, unknown>, columns: ReadonlyArray<{ key: string; title_ar?: string }>, mapped: Record<string, unknown>, promised: { places: ReadonlyArray<string>; fields: ReadonlyArray<string> } | null): void {
+  for (const col of columns) {
+    const kind = placeCellKind(col);
+    if (!kind) continue;
+    const value = String(row[col.key] ?? "").trim();
+    if (value) { const label = exactPlaceLabelAr(value, kind); if (label) row[col.key] = label; continue; }
+    if (!promised) continue;
+    if (kind === "country") {
+      const countries = [...new Set(promised.places.map((k) => byKey.get(k)?.country).filter((c): c is string => Boolean(c)))];
+      const proven = countries.find((c) => placeVerdict([c], mapped, promised.fields) === "pass") ?? (countries.length === 1 ? countries[0] : null);
+      row[col.key] = proven ? countryOf.get(proven)!.labelAr : PLACE_NOT_STATED_AR;
+      continue;
+    }
+    let city: string | null = null;
+    for (const f of promised.fields) {
+      if (!PLACE_TEXT_KEY.test(f) || f === col.key) continue;
+      const found = placesInText(mapped[f]).find((e) => e.kind === "city");
+      if (found) { city = found.labelAr; break; }
+    }
+    row[col.key] = city ?? PLACE_NOT_STATED_AR;
+  }
+}

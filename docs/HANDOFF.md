@@ -4,6 +4,19 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-29, after #293): fix mission 7 (per-parent numbers, named parents, government bodies, the people of a company)
+
+`main` before it was `28bd5fd05fb78aadbfbf3a4c7d6b361e83ca5f8a` (#293); its merge commit is the head of `main` after it. Evidence, root causes 1-4, the settlement arithmetic, tests and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 11. No SQL written or applied; no Edge Function changed; no price, cap or model string changed.
+
+- **TikTok «هات ٥ فيديوهات ... ومن كل فيديو ١٠ تعليقات» gave 5 comments in all**: the model kept the videos as an intermediate stage, the quantity was bound to the only DELIVERED stage (the comments) and the per-parent override was skipped for the stage that held the quantity. Now the quantity binds to the stage whose title names the counted noun (delivered or not) and that stage is DELIVERED by code; the comments are parents x N. The per-parent parser (`quantity.ts`, `perEachOf`) reads every phrasing (من/مع/لكل/على/في/تحت/وجوه كل, «لكل واحد», «كل X فيه», the number before or after, digits, words) and no longer takes the parents' own number for a per-parent one.
+- **The people of a company are servable**: `childSources.ts` lists the people sources of the catalog (they take a company's website, page link or name) and the company sources that feed them; a plan may call the step «unserved» only after two of them were really tried and gave no rows (`PlanLookup.childStepSources / endpointsCalled`); `catalog_search` ranks a company source that feeds a people source first for such a request.
+- **Government bodies are excluded by evidence** (`government.ts`, filter kind `exclude_government`, built by code from «بدون جهات حكومية»): .gov/.mil/.edu/.ac suffixes and names are definite; «research institute / university / national» goes to the model check.
+- **Place cells**: Arabic names («al qahirah» → «القاهرة»), never empty when the card promised the place (`placeCellsAr`).
+- **Settlement**: ONE unit price for every delivered item of the job: charge = ceil(delivered x unit) (the card's price is ceil(target x unit)); arithmetic of the live Facebook mission in section 11.
+- Rollback: `git revert -m 1 <merge commit>`.
+
+---
+
 ## START HERE (2026-10-29, after #292): the six compound missions (fix mission 6)
 
 `main` before it was `dfefa2989e06b004e35c2fa870558f2385cd87ed` (#292); its merge commit is the head of `main` after it. Evidence, root causes 1-7, tests and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 10. No SQL written or applied; no Edge Function changed; no price, cap or model string changed.

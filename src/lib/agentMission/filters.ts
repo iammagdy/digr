@@ -1,5 +1,6 @@
 import { toArabicDigits } from "../arabicDigits";
 import { parseMoment } from "./dateCells";
+import { governmentVerdict, excludesGovernment, EXCLUDES_GOVERNMENT } from "./government";
 import { isPlaceEvidenceKey, placeVerdict } from "./places";
 import { normalizeText } from "./relevance";
 
@@ -8,8 +9,8 @@ import { normalizeText } from "./relevance";
  * (an item the filter rejects is neither delivered nor charged, and is kept with its reason for the admin). The card's sentence is BUILT from the filter by code (`filterLineAr`), so the card can never promise what no code enforces. A free sentence of the
  * model that promises one of these without a filter is refused at plan time (`promiseIssues`). The customer may switch a filter on or off, and change its period or language, before approving (planEdit.ts). Pure: no I/O.
  */
-export type FilterKind = "exclude_replies" | "exclude_reposts" | "language" | "period" | "account" | "place";
-export const FILTER_KINDS: ReadonlyArray<FilterKind> = ["exclude_replies", "exclude_reposts", "language", "period", "account", "place"];
+export type FilterKind = "exclude_replies" | "exclude_reposts" | "language" | "period" | "account" | "place" | "exclude_government";
+export const FILTER_KINDS: ReadonlyArray<FilterKind> = ["exclude_replies", "exclude_reposts", "language", "period", "account", "place", "exclude_government"];
 
 export interface StageFilter {
   kind: FilterKind;
@@ -32,17 +33,17 @@ export interface StageFilter {
   fields?: string[];
 }
 
-export type FilterReason = "filter_reply" | "filter_repost" | "filter_language" | "filter_period" | "filter_account" | "filter_place";
-export const FILTER_REASONS: ReadonlyArray<FilterReason> = ["filter_reply", "filter_repost", "filter_language", "filter_period", "filter_account", "filter_place"];
-export const REASON_OF_KIND: Record<FilterKind, FilterReason> = { exclude_replies: "filter_reply", exclude_reposts: "filter_repost", language: "filter_language", period: "filter_period", account: "filter_account", place: "filter_place" };
+export type FilterReason = "filter_reply" | "filter_repost" | "filter_language" | "filter_period" | "filter_account" | "filter_place" | "filter_government";
+export const FILTER_REASONS: ReadonlyArray<FilterReason> = ["filter_reply", "filter_repost", "filter_language", "filter_period", "filter_account", "filter_place", "filter_government"];
+export const REASON_OF_KIND: Record<FilterKind, FilterReason> = { exclude_replies: "filter_reply", exclude_reposts: "filter_repost", language: "filter_language", period: "filter_period", account: "filter_account", place: "filter_place", exclude_government: "filter_government" };
 export const FILTER_REASON_LABEL_AR: Record<FilterReason, string> = {
-  filter_reply: "استبعاد: رد", filter_repost: "استبعاد: إعادة نشر", filter_language: "استبعاد: لغة أخرى", filter_period: "استبعاد: خارج الفترة", filter_account: "استبعاد: حساب آخر", filter_place: "استبعاد: مكان آخر",
+  filter_reply: "استبعاد: رد", filter_repost: "استبعاد: إعادة نشر", filter_language: "استبعاد: لغة أخرى", filter_period: "استبعاد: خارج الفترة", filter_account: "استبعاد: حساب آخر", filter_place: "استبعاد: مكان آخر", filter_government: "استبعاد: جهة حكومية",
 };
 
 export const isEnabled = (f: StageFilter): boolean => f.enabled !== false;
 
 /** The filters that never apply to the items of a CHILD stage (comments, replies, reviews, employees): they are delivered as the source gives them, in its order. The language and the place are rules for choosing the parents and the top-level items. */
-export const CHILD_RAW_FILTER_KINDS: ReadonlyArray<FilterKind> = ["language", "place"];
+export const CHILD_RAW_FILTER_KINDS: ReadonlyArray<FilterKind> = ["language", "place", "exclude_government"];
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const MAX_VALUES = 20;
@@ -81,7 +82,7 @@ export function parseFilters(input: unknown, label: string): { filters: StageFil
       } else { issues.push(`${label}: filter «period» needs days, or from and/or to`); continue; }
     }
     if (kind === "place" && Array.isArray(raw.places)) f.places = raw.places.map(String).filter((k) => /^[A-Z]{2}(?::[a-z]+)?$/.test(k)).slice(0, 20);
-    if (kind === "place" && Array.isArray(raw.fields)) f.fields = raw.fields.map(String).filter((k) => /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(k)).slice(0, 12);
+    if ((kind === "place" || kind === "exclude_government") && Array.isArray(raw.fields)) f.fields = raw.fields.map(String).filter((k) => /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(k)).slice(0, 12);
     if (kind === "account" || kind === "place") {
       const values = Array.isArray(raw.values) ? raw.values.map((v) => String(v ?? "").trim()).filter(Boolean) : [];
       if (values.length < 1 || values.length > MAX_VALUES) { issues.push(`${label}: filter «${kind}» needs values (1 to ${MAX_VALUES})`); continue; }
@@ -138,6 +139,12 @@ export const startsWithHandle = (text: unknown): boolean => /^@[\p{L}\p{N}_.]{1,
 
 const normName = (s: string): string => normalizeText(s).replace(/^@/, "");
 
+/** True when the item is not clearly a public body but MAY be one (a research institute, a university, «national»): the model checks it before it is delivered. */
+export function governmentUnclear(filters: ReadonlyArray<StageFilter> | undefined, mapped: Record<string, unknown>): boolean {
+  const f = (filters ?? []).find((x) => x.kind === "exclude_government" && isEnabled(x));
+  return f !== undefined && governmentVerdict(mapped, f.fields ?? (f.field ? [f.field] : [])) === "unclear";
+}
+
 /** The FIRST enabled filter that rejects a mapped item, as its reason; null when the item passes every enabled filter. */
 export function filterVerdict(filters: ReadonlyArray<StageFilter> | undefined, mapped: Record<string, unknown>, ctx: FilterContext): FilterReason | null {
   if (!filters || filters.length === 0) return null;
@@ -179,6 +186,11 @@ export function filterVerdict(filters: ReadonlyArray<StageFilter> | undefined, m
         if (!who || !(f.values ?? []).some((v) => normName(v) === who)) return "filter_account";
         break;
       }
+      case "exclude_government": {
+        // a ministry, an armed-forces authority, a state institute: a government, military or academic suffix of the website, or a name that says so (government.ts); a body that MAY be public is not rejected here (ingest sends it to the model check)
+        if (governmentVerdict(mapped, f.fields ?? (f.field ? [f.field] : [])) === "government") return "filter_government";
+        break;
+      }
       case "place": {
         // WITH named places: the item must carry evidence of one of them from a mapped field; another country or no evidence is not delivered
         if (f.places && f.places.length > 0) {
@@ -202,11 +214,12 @@ const ACCOUNT_KEY = /(^|_)(username|user_name|screen_name|handle|author_username
 const PLACE_KEY = /(^|_)(place|location|city|country|address|region|governorate)$/i;
 const REPLY_FLAG_KEY = /^(is_?reply|isreply|is_comment_reply|in_?reply_?to\w*|reply_?to\w*|replying_?to\w*|parent_comment\w*)$/i;
 const REPOST_FLAG_KEY = /^(is_?(re)?(post|tweet|share)|is_?retweet|retweeted_status\w*|is_?repost|reshare\w*)$/i;
+const ENTITY_KEY = /(^|_)(website|website_url|url|domain|site|name|company_name|title|description|about|summary|industry|type|bio|headline)$/i;
 const LANG_KEY = /^(lang|language|lang_code|language_code)$/i;
 
 const pick = (keys: ReadonlyArray<string>, re: RegExp): string | null => keys.find((k) => re.test(k)) ?? null;
 
-export interface FilterFields { text: string | null; date: string | null; account: string | null; place: string | null; /** Every mapped field that can carry evidence of a place: a location text, a website, a phone. */ placeFields: string[]; replyFlag: string | null; repostFlag: string | null; lang: string | null }
+export interface FilterFields { text: string | null; date: string | null; account: string | null; place: string | null; /** Every mapped field that can carry evidence of a place: a location text, a website, a phone. */ placeFields: string[]; replyFlag: string | null; repostFlag: string | null; lang: string | null; /** Every mapped field that can say what a company is: its website, name, description, type. */ entityFields: string[] }
 
 /**
  * The mapped fields the checks can read, found by CODE from what the mapping really gives (the keys of the mapped items, the stage's columns, the relevance rule's text columns). Never the model's guess.
@@ -225,6 +238,7 @@ export function findFilterFields(input: { mappedKeys: ReadonlyArray<string>; col
     replyFlag: pick(keys, REPLY_FLAG_KEY) ?? byTitle(/هل هي رد|هل هو رد/),
     repostFlag: pick(keys, REPOST_FLAG_KEY),
     lang: pick(keys, LANG_KEY),
+    entityFields: [...new Set([...keys.filter((k) => ENTITY_KEY.test(k)), ...keys.filter((k) => /اسم|موقع الكتروني|الموقع|نبذه|نبذة|وصف|نوع/.test(titleOf(k)))])],
   };
 }
 
@@ -258,6 +272,10 @@ export function resolveFilters(declared: ReadonlyArray<StageFilter>, fields: Fil
       case "account":
         g.field = f.field ?? fields.account ?? undefined;
         if (!g.field) problem = `${label}: an account filter needs a mapped username field; the mapping gives none`;
+        break;
+      case "exclude_government":
+        g.fields = [...new Set([...(f.fields ?? []), ...fields.entityFields])];
+        if (g.fields.length === 0) problem = `${label}: leaving out government bodies needs a mapped website, name or description field; the mapping gives none`;
         break;
       case "place":
         g.field = f.field ?? fields.place ?? fields.placeFields[0] ?? undefined;
@@ -308,6 +326,7 @@ export function filterLineAr(f: StageFilter): string {
     case "period": return f.days !== undefined ? `${daysAr(f.days)}.` : `من ${f.from ? toArabicDigits(f.from) : "البداية"} إلى ${f.to ? toArabicDigits(f.to) : "اليوم"}.`;
     case "account": return `من ${(f.values ?? []).length === 1 ? "حساب محدد" : "حسابات محددة"} فقط.`;
     case "place": return `في: ${(f.values ?? []).join("، ")}.`;
+    case "exclude_government": return "دون الجهات الحكومية والعسكرية.";
   }
 }
 
@@ -320,6 +339,7 @@ export function filterLabelAr(f: StageFilter): string {
     case "period": return "الفترة الزمنية";
     case "account": return "حسابات محددة";
     case "place": return "المكان";
+    case "exclude_government": return "استبعاد الجهات الحكومية";
   }
 }
 
@@ -333,6 +353,7 @@ const PROMISE_RULES: ReadonlyArray<PromiseRule> = [
   { kind: "period", what: "period", test: /آخر\s+\S+\s+(?:يوم|أيام|يومًا|يوما|أسبوع|أسابيع|شهر|أشهر|شهور|سنة|سنوات|ساعة|ساعات)|خلال\s+(?:ال)?(?:أسبوع|شهر|عام|سنة|يوم)|منذ\s|من\s+تاريخ|بين\s+تاريخ|(?:في|خلال)\s+(?:عام|سنة)\s+[0-9٠-٩]/ },
   { kind: "account", what: "account", test: /من\s+(?:الحساب|حساب|حسابات)\s|حسابات\s+محددة/ },
   { kind: "place", what: "place", test: /(?:داخل|ضمن)\s+(?:دولة|مدينة|محافظة|منطقة)|في\s+(?:مدينة|دولة|محافظة)\s/ },
+  { kind: "exclude_government", what: "government bodies", test: EXCLUDES_GOVERNMENT },
   { kind: "relevance", what: "namesakes", test: /بالاسم\sنفسه|يحملون\sالاسم|أشخاص\sآخرين|شخص\sآخر/ },
 ];
 
