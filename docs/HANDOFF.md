@@ -4,6 +4,17 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-30, after #300): the TREG key pool was fooled (suspended organisation, exhausted key shown «متصل»)
+
+Evidence (read-only SELECTs of `mission_calls`, `treg_pool_keys`, `treg_pool_calls`), the design of the fixes, tests and NOT PROVEN: `docs/proposals/treg-key-pool/README.md` («STEP 3 update»). The «حد من جانبنا» refusals of 2026-10-30 were NOT #298 or #300: key #2's organisation was suspended at TREG (24 data calls, 403 «org suspended», from 01:09:29 UTC) while its free identity read passed. No price, cap, markup, minimum or model string changed; settlement untouched; no Edge Function.
+
+- **Admin key checker** («مزودو الخدمة» → TREG): paste a key → «افحص» runs identity, balance and ONE real data call (cheapest sellable endpoint, ~0.00015 USD, counted against the daily cap); «افحص الآن» does the same on each pool key and records it. 5 pasted checks / 20 pool checks per admin per hour, counted in `admin_audit_log`. The key is never stored, logged, echoed or put in a URL.
+- **Pool**: an unreadable balance never writes `connected`; a key a call proved refused is not cleared by free reads; a 403 naming the account, or 3 consecutive 403s on 2+ endpoints within 2 minutes, fails over (main last); the table shows each key's last answered call.
+- **SQL 07 is NOT applied** (`docs/proposals/treg-key-pool/07_*`): one read-only function; the table says «غير متاح» for «آخر طلب ناجح» until the owner applies it, nothing else depends on it.
+- Rollback: `git revert -m 1 <merge commit>` (then, if 07 was applied, `07_treg_pool_call_health.rollback.sql`).
+
+---
+
 ## START HERE (2026-10-30, after #299): the «عندك مهام مفتوحة» incident (one definition of «open»)
 
 `main` before it was `ae59a477552bdd28f323cd5ea57aa6658d45f950`; its merge commit is the head of `main` after it. Evidence (raw rows), root cause, the 2,000-point arithmetic, tests and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 16. No SQL written or applied; no Edge Function changed; no price, cap, markup or model string changed; settlement untouched.

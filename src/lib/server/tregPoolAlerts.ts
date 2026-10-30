@@ -24,6 +24,8 @@ export interface PoolAlertRow {
 /** What happened to a key, in words (the stored reason is a fixed code). */
 export function poolReasonAr(reason: string | null | undefined): string {
   const r = String(reason || "");
+  if (r === "org_suspended" || r === "account_disabled") return "حسابه لدى المزود موقوف";
+  if (r === "auth_403_repeated" || /^data_(401|403)$/.test(r)) return "رفض المزود طلباته";
   if (r === "revoked" || /^auth_/.test(r)) return "أُلغي أو رفضه المزود";
   if (r === "out_of_balance" || r === "http_402" || r === "balance_low") return "انتهى رصيده";
   if (r === "error") return "يعطي خطأ غير متوقع";

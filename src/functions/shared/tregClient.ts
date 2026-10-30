@@ -225,7 +225,7 @@ async function executeWithKeyPool(options: TregCallOptions): Promise<TregCallRes
   const attempt = (c: KeyChoice) => single(c.key ?? options.legacyToken);
   let result = await attempt(choice);
   for (let hop = 0; hop < POOL_MAX_HOPS; hop++) {
-    const next = await pool.afterCall(choice, result, { forceMain: hop === POOL_MAX_HOPS - 1 });
+    const next = await pool.afterCall(choice, result, { forceMain: hop === POOL_MAX_HOPS - 1, endpointId: options.endpointId });
     if (!next) break;
     choice = next;
     result = await attempt(choice);

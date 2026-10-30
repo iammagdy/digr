@@ -183,7 +183,7 @@ describe("the key pool table is readable at 1280 px and becomes cards at 390 px"
     expect(other.split("<details")[0]).toContain(">تفعيل<");
     expect(other.split("<details")[0]).not.toContain(">حذف<");
     expect(other.split("<details")[1]).toContain(">حذف<");
-    expect(active.split("<details")[0]).toContain(">فحص<");
+    expect(active.split("<details")[0]).toContain(">افحص الآن<");
     expect(active.split("<details")[0]).not.toContain(">تفعيل<");
     expect(other).toContain("المزيد");
     expect((other.match(/<details/g) || []).length).toBe(1);
