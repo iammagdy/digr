@@ -115,11 +115,12 @@ export interface SourceCandidate { id: string; kind: "web_parser" | "web_search"
 const norm = (w: string) => w.trim().toLowerCase();
 
 /** The agent's web candidates for a search: matched on the platform and the English words, with a cost per row computed by code. Sorted cheapest first by the caller together with the TREG candidates. */
-export function searchAgentSources(input: { words?: string[]; platform?: string }): SourceCandidate[] {
+export function searchAgentSources(input: { words?: string[]; platform?: string; /** Only the sources this says are available are candidates (a provider the worker has no key for is not offered). */ isAvailable?: (id: string) => boolean }): SourceCandidate[] {
   const words = (input.words ?? []).map(norm).filter(Boolean);
   const platform = input.platform ? norm(input.platform) : "";
   const out: Array<SourceCandidate & { score: number }> = [];
   const consider = (c: SourceCandidate, keywords: string[], plat: string) => {
+    if (input.isAvailable && !input.isAvailable(c.id)) return;
     const platformHit = platform && (plat === platform || keywords.includes(platform));
     const hits = words.filter((w) => keywords.includes(w)).length;
     // with a platform filter only that platform's sources are candidates (X, Facebook and YouTube have no parser: they stay on the catalog)

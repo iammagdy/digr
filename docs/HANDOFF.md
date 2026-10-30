@@ -4,6 +4,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-30 night, after #303): fix mission 13 (tools the worker cannot use, provider links, TikTok comments, people coverage, denominator)
+
+`main` before it was `acf38ddd1c83af92967f0dcd3177dc5ae2dbdebe` (#303); its merge commit is the head of `main` after it. Evidence, root causes, tests and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 18. No SQL written or applied; no Edge Function, price, cap, markup, minimum or model string changed; settlement untouched.
+
+- **Tools the worker cannot use**: the web search / scrape / parsers / people search need a Context.dev or Firecrawl key; the keys are stored (website) but the worker got none, so all 71 calls of 3 days were refused and the YouTube planner never reached the catalog. Each key is now resolved once per run; a tool with no key is not offered at all (tool list, `catalog_search`, `describe_endpoint`, plan, prompt). Why the worker gets no key: NOT PROVEN (check `PROVIDER_KEYS_ENCRYPTION_KEY` on the worker).
+- **Provider links**: an address of a data provider (catalog provider or origin name; a record page `/company/<long id>` on a non-platform host; never the row's own website) is removed from every customer cell, an id made from one is a neutral `id_<hash>` the same in «المعرّف» and «معرّف الأصل», and the finished workbook and CSV are scanned again (`providerHosts.ts`).
+- **TikTok comments**: the source gave 0, 0, 1, 0, 10 for five brand-new videos (HTTP 200); a parent with no child is replaced by a spare the search had checked and kept (`swap` op), most comments first. **People**: 404 for one company is that source's answer, not a stage failure (3 in a row used to end the stage: 21 of 43 companies were never asked); inputs are not asked twice, a provider address is never an input, a website is also tried as a bare domain.
+- **Denominator**: short of the card = «X من (the card's total)»; a delivery that fills a lowered card keeps «من (the request)».
+- Rollback: `git revert -m 1 <merge commit>`.
+
+---
+
 ## START HERE (2026-10-30 evening, after #302): fix mission 12 (named channels, Facebook video proof, companies, name cells)
 
 `main` before it was `1b268a5de02443ea0e30336cb453b6646612a648` (#302); its merge commit is the head of `main` after it. Evidence, root causes, tests and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 17. No SQL written or applied; no Edge Function, price, cap, markup, minimum or model string changed; settlement untouched.

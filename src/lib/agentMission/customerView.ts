@@ -9,7 +9,7 @@ import { countAr, deliveredOfAr, itemNounOf, itemNounOfPlan } from "./itemNoun";
 import { moneyLineAr } from "./moneyText";
 import { fixFileWordingAr } from "./fileWording";
 import { remainingLineAr, stageMetricLines, trackMission } from "./tracker";
-import type { PlanEditorView } from "./plan";
+import { deliveryDenominatorOf, type PlanEditorView } from "./plan";
 
 /**
  * WHAT THE CUSTOMER SEES OF A MISSION: one pure function from the columns the customer may read (the mission row without its internal columns, its events, the worker's state and the queue)
@@ -323,7 +323,8 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   const resultLinesAr: string[] = [];
   if (delivered !== null && (phase === "done" || phase === "partial" || phase === "failed" || phase === "unserved")) {
     const noun = itemNounOfPlan(plan);
-    if (requestedRows > 0 && delivered > 0) resultLinesAr.push(`تم تسليم ${deliveredOfAr(delivered, requestedRows, noun)}.`);
+    // a delivery short of the CARD is told against the card's total (what the customer approved); one that fills a card with a lowered target, against the request
+    if (requestedRows > 0 && delivered > 0) resultLinesAr.push(`تم تسليم ${deliveredOfAr(delivered, deliveryDenominatorOf(delivered, planned, requestedRows), noun)}.`);
     else if (requestedRows > 0) resultLinesAr.push("لم يُسلَّم أي شيء.");
     if (mission.charged_points !== null && Number(mission.reserved_points ?? 0) > 0) resultLinesAr.push(`${moneyLineAr({ reservedPoints: Number(mission.reserved_points), chargedPoints: Number(mission.charged_points), delivered, noun })}.`);
   }

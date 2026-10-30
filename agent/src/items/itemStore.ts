@@ -51,6 +51,8 @@ export type Op =
   | { t: "item"; stage: string; id: string; state: ItemState; by?: "rule" | "model" | "legacy"; basis?: RuleBasis; reason?: ItemReason; row: Row | null }
   | { t: "resolve"; stage: string; id: string; state: "accepted" | "excluded"; by?: "rule" | "model"; basis?: RuleBasis; reason?: ItemReason }
   | { t: "dup"; stage: string; n: number }
+  /** A parent that gave no child is replaced by a spare parent the stage had checked and kept beyond its volume (`target_reached`): `in` becomes accepted, `out` becomes a kept, undelivered match. The parent stage's count does not change. */
+  | { t: "swap"; stage: string; out: string; in: string }
   | { t: "stop"; stage: string; reason: StopReason };
 
 export interface Segment { v: 1; seq: number; writer: string; at: string; ops: Op[] }
@@ -129,6 +131,15 @@ function applyOp(logs: Map<string, StageLog>, op: Op): void {
       return;
     }
     case "dup": log.duplicates += Math.max(0, Math.floor(op.n) || 0); return;
+    case "swap": {
+      const out = log.items.get(op.out);
+      const inn = log.items.get(op.in);
+      // both or neither: an id that is not in the state the swap needs leaves the log as it is (every reader of the log applies the same rule)
+      if (!out || !inn || out.state !== "accepted" || inn.state !== "excluded" || inn.reason !== "target_reached" || !inn.row) return;
+      out.state = "excluded"; out.reason = "target_reached"; delete out.by; delete out.basis;
+      inn.state = "accepted"; inn.by = "rule"; delete inn.reason;
+      return;
+    }
     case "stop": log.stop = op.reason; return;
   }
 }

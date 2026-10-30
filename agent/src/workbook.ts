@@ -2,7 +2,7 @@ import ExcelJS from "exceljs";
 import { SUMMARY_SHEET_AR } from "../../src/lib/modelPlanner/missionWorkbook";
 import { wordBoundarySheetName } from "../../src/lib/agentMission/fileNames";
 import { REASON_AR, type RelevanceReason } from "../../src/lib/agentMission/relevance";
-import { requestedRowsOf } from "../../src/lib/agentMission/plan";
+import { cardTotalOf, deliveryDenominatorOf, requestedRowsOf } from "../../src/lib/agentMission/plan";
 import { FILTER_REASON_LABEL_AR, type FilterReason } from "../../src/lib/agentMission/filters";
 import { cairoCellDate, cairoText, DATE_NUMBER_FORMAT, DATE_ONLY_NUMBER_FORMAT, dateOnlyCellDate, dateOnlyText, isDateValues, parseDateOnly, parseMoment } from "../../src/lib/agentMission/dateCells";
 import { reconcileParentColumns, type ParentColumnFix } from "../../src/lib/agentMission/parentColumns";
@@ -12,6 +12,7 @@ import { deliveredOfAr, itemNounOfPlan } from "../../src/lib/agentMission/itemNo
 import { formatAr } from "../../src/lib/arabicDigits";
 import { parentCountsOf } from "../../src/lib/agentMission/parents";
 import { isTextItemStage, textKeyOf } from "../../src/lib/agentMission/contract";
+import { cleanRowsForCustomer, isProviderUrl, providerContext, withoutProviderNames, withoutProviderUrls, type ProviderCleanReport } from "../../src/lib/agentMission/providerHosts";
 
 type Row = Record<string, unknown>;
 
@@ -166,10 +167,13 @@ export function workbookNoteAr(f: WorkbookFacts): string {
   return parts.join(" ");
 }
 
-export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string, Row[]>): Promise<{ xlsx: Buffer; csv: string; /** Wrong parent-describing values of a child sheet that were replaced from the row's own parent (for the admin only). */ parentFixes: ParentColumnFix[] }> {
+export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string, Row[]>): Promise<{ xlsx: Buffer; csv: string; /** Wrong parent-describing values of a child sheet that were replaced from the row's own parent (for the admin only). */ parentFixes: ParentColumnFix[]; /** What was taken out of the customer's cells because it named a data provider (for the admin only). */ providerFixes: ProviderCleanReport & { final: number } }> {
   // BEFORE THE FILE IS WRITTEN: every value of a child row that describes its parent must be its OWN parent's (parentColumns.ts); a mapping that copied the first company's website onto every person is repaired here and reported to the admin
   const reconciled = reconcileParentColumns(plan.stages, rowsIn, (key) => { const st = plan.stages.find((x) => x.key === key); return st ? readableColumns(st).map((c) => c.key) : []; }, (key) => { const st = plan.stages.find((x) => x.key === key); return st ? readableColumns(st).map((c) => c.key) : []; });
-  const rowsByStage = reconciled.rowsByStage;
+  // NO DATA PROVIDER IN A CUSTOMER FILE (providerHosts.ts): its addresses are taken out of every cell and an id built from one is replaced by a neutral id, the same wherever it is written
+  const providers = providerContext();
+  const cleaned = cleanRowsForCustomer(reconciled.rowsByStage, providers);
+  const rowsByStage = cleaned.rowsByStage;
   const layouts = layoutOf(plan, rowsByStage);
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
@@ -288,8 +292,8 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   summary.addRow([]);
   // the one sentence about the delivery is built from the real counts (never from the agent's own words, which may name the requested number): «تم تسليم ٢٥٠ من ٣٠٠ تغريدة.»
   const deliveredCount = plan.stages.filter((st) => st.deliver).reduce((n, st) => n + (rowsByStage[st.key] ?? []).length, 0);
-  // the number of items the CUSTOMER asked for (the plan's target, or the request when the model proposed fewer with a reason the card showed): a delivery below it is never written «N من N»
-  const requestedCount = requestedRowsOf(plan);
+  // a delivery short of the CARD the customer approved is told against the card's total (the same number the final line and the notice say); one that fills a card with a lowered target is told against the request
+  const requestedCount = deliveryDenominatorOf(deliveredCount, cardTotalOf(plan), requestedRowsOf(plan));
   const intro = summary.addRow([`تم تسليم ${deliveredOfAr(deliveredCount, requestedCount, itemNounOfPlan(plan))}.`]);
   summary.mergeCells(intro.number, 1, intro.number, 5);
   intro.alignment = { wrapText: true, readingOrder: "rtl" as any, vertical: "middle" };
@@ -301,6 +305,22 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   note.alignment = { wrapText: true, readingOrder: "rtl" as any };
   note.height = 34;
   summary.autoFilter = { from: { row: 1, column: 1 }, to: { row: plan.stages.length + 1, column: 5 } };
+  // THE LAST LOOK, at every cell of every sheet: an address of a provider is taken out; in the texts we write (the first sheet and the headings) a provider's name is taken out too
+  let finalFixes = 0;
+  wb.eachSheet((sheet) => {
+    sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      row.eachCell({ includeEmpty: false }, (cell) => {
+        const v = cell.value;
+        const ours = sheet.name === SUMMARY_SHEET_AR || rowNumber === 1;
+        const fix = (t: string): string => { const a = withoutProviderUrls(t, providers); return ours ? withoutProviderNames(a, providers) : a; };
+        if (typeof v === "string") { const f = fix(v); if (f !== v) { cell.value = f === "" ? null : f; finalFixes += 1; } }
+        else if (v && typeof v === "object" && "hyperlink" in v && typeof (v as { hyperlink?: unknown }).hyperlink === "string") {
+          const link = String((v as { hyperlink: string }).hyperlink);
+          if (isProviderUrl(link, providers)) { cell.value = null; finalFixes += 1; }
+        }
+      });
+    });
+  });
   const xlsx = Buffer.from(await wb.xlsx.writeBuffer());
 
   // the CSV: the deepest delivered stage, the same columns as its sheet
@@ -313,5 +333,8 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
     const lastDates = last.columns.map((c) => isDateValues(c.title, c.key, last.rows.map((r) => c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null))));
     for (const r of last.rows) lines.push([...last.columns.map((c, k) => { const v = c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null); if (lastDates[k]) { const day = parseDateOnly(v); if (day) return approxColumnsOf(r).includes(c.key ?? "") ? `${dateOnlyText(day)} (${APPROX_WORD_AR})` : dateOnlyText(day); const moment = parseMoment(v); if (moment) return cairoText(moment); } return v; }), r.id, ...(last.hasParent ? [r.parent_id] : [])].map(esc).join(","));
   }
-  return { xlsx, csv: `﻿${lines.join("\r\n")}`, parentFixes: reconciled.fixes };
+  // the CSV gets the same last look
+  const csvOut = withoutProviderUrls(`﻿${lines.join("\r\n")}`, providers);
+  if (csvOut !== `﻿${lines.join("\r\n")}`) finalFixes += 1;
+  return { xlsx, csv: csvOut, parentFixes: reconciled.fixes, providerFixes: { ...cleaned.report, final: finalFixes } };
 }

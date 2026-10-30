@@ -7,6 +7,7 @@ import { parseMoment } from "../../../src/lib/agentMission/dateCells";
 import { dayOf, firstWindowEndDay, nextWindowEndDay, windowParams } from "../../../src/lib/agentMission/dateWindow";
 import { isEnabled } from "../../../src/lib/agentMission/filters";
 import { SOURCE_KEY } from "../../../src/lib/agentMission/namedSources";
+import { isProviderUrl, providerContext } from "../../../src/lib/agentMission/providerHosts";
 import { drainPending, emitStageProgress, ingestRows } from "../items/ingest";
 import type { ItemStore, Row, StopReason } from "../items/itemStore";
 import type { Reviewer } from "../review";
@@ -99,34 +100,80 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
   const per = stage.per_parent_rows ?? Number.POSITIVE_INFINITY;
   const fair = Math.max(1, Math.ceil(stage.planned_rows / parentRows.length));
   const rounds = [Math.min(per, fair)];
+  // A PARENT THE SOURCE GAVE NO CHILD FOR IS REPLACED (live, 2026-10-30: «٥ فيديوهات تيك توك ... ومن كل فيديو ١٠ تعليقات»: the plan took the five NEWEST videos, brand new, and the comment source answered 0, 0, 1, 0 and 10 comments, so 16 of 55 were delivered while the
+  // search had checked 20 videos and kept 15 beyond the five). The parent stage's own spares (matches it checked and kept beyond its volume) stand in, one at a time, so the customer gets the number of parents he asked for, each with children. Only a parent with NO child is replaced
+  // (nothing delivered is ever dropped), only when this stage is the only child of that stage, and a spare is read once.
+  const onlyChild = deps.plan.stages.filter((x) => x.parent_key === stage.parent_key).length === 1;
+  const swapsLeft = { n: onlyChild && stage.per_parent_rows !== undefined ? Math.max(3, parentRows.length * 3) : 0 };
   for (const cap of rounds) {
-    for (const parent of parentRows) {
-      if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
-      const parentId = String(parent.id);
-      // THE PARENT'S OWN FIELDS, in order (the measuring call's input first, then its website, page and name when the child source takes them): the first that has a value is read; a read that FAILED or gave nothing is retried through the next one
-      const bindings = [{ param: spec.parent_binding.param, from: spec.parent_binding.from, domain: false }, ...(spec.parent_binding.fallbacks ?? []).map((f) => ({ param: f.param, from: f.from, domain: f.domain === true }))];
-      const usable = bindings.map((b, index) => ({ b, index, value: index === 0 ? (parent[b.from] === undefined || parent[b.from] === null || parent[b.from] === "" ? null : parent[b.from]) : bindingValue(parent[b.from], b.domain) })).filter((x) => x.value !== null);
-      if (usable.length === 0) continue;
-      let r: { reason: StopReason; aborted: string | null } = { reason: "source_exhausted", aborted: null };
-      for (const u of usable) {
-        const params = { ...spec.params, [u.b.param]: u.value };
-        const before = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
-        r = await runStream(deps, stage, spec, u.index === 0 ? `p:${parentId}` : `p:${parentId}:b${u.index}`, params, parentId, cap);
+    for (const first of parentRows) {
+      let parent: Row = first;
+      for (;;) {
+        if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
+        const parentId = String(parent.id);
+        // THE PARENT'S OWN FIELDS, in order (the measuring call's input first, then its website, page and name when the child source takes them): the first that has a value is read; a read that FAILED or gave nothing is retried through the next one
+        // the same field read as a BARE DOMAIN too when the source's input is a website («www.x.com», «x.com/home» are not found by a source that knows «x.com»): index 9, so the streams of the other bindings keep their keys
+        const bindings = [{ param: spec.parent_binding.param, from: spec.parent_binding.from, domain: false, index: 0 }, ...(WEBSITE_PARAM.test(spec.parent_binding.param) ? [{ param: spec.parent_binding.param, from: spec.parent_binding.from, domain: true, index: 9 }] : []), ...(spec.parent_binding.fallbacks ?? []).map((f, i) => ({ param: f.param, from: f.from, domain: f.domain === true, index: i + 1 }))];
+        const seenInputs = new Set<string>();
+        // an address of a DATA PROVIDER (a record page the companies source cited) is never an input for another source, and an input that was already asked is not asked again
+        const usable = bindings.map((b) => ({ b, index: b.index, value: b.index === 0 ? (parent[b.from] === undefined || parent[b.from] === null || parent[b.from] === "" ? null : parent[b.from]) : bindingValue(parent[b.from], b.domain) })).filter((x) => {
+          if (x.value === null || isProviderUrl(x.value, providerContext()) || isProviderUrl(parent[x.b.from], providerContext())) return false;
+          const key = `${x.b.param}=${String(x.value)}`;
+          if (seenInputs.has(key)) return false;
+          seenInputs.add(key);
+          return true;
+        });
+        if (usable.length === 0) break;
+        let r: { reason: StopReason; aborted: string | null } = { reason: "source_exhausted", aborted: null };
+        for (const u of usable) {
+          const params = { ...spec.params, [u.b.param]: u.value };
+          const before = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
+          r = await runStream(deps, stage, spec, u.index === 0 ? `p:${parentId}` : `p:${parentId}:b${u.index}`, params, parentId, cap);
+          if (r.aborted) return r;
+          const gained = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length - before;
+          if (gained > 0 || !(r.reason === "failed" || r.reason === "source_exhausted" || r.reason === "no_new_items")) break;
+        }
         if (r.aborted) return r;
-        const gained = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length - before;
-        if (gained > 0 || !(r.reason === "failed" || r.reason === "source_exhausted" || r.reason === "no_new_items")) break;
+        // a stop that ends the whole stage (the budget, the daily limit, the time, a refusal) is not «this parent has no more»
+        if (r.reason === "budget" || r.reason === "daily_cap" || r.reason === "refused" || r.reason === "time_limit" || r.reason === "review_limit" || r.reason === "page_limit") return r;
+        const children = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
+        // the source ended for this parent and gave it NO child: a spare parent takes its place and is read the same way
+        if (children === 0 && (r.reason === "source_exhausted" || r.reason === "no_new_items") && swapsLeft.n > 0) {
+          const spare = spareParentFor(items, stage.parent_key, stage.key, parent);
+          if (spare) {
+            swapsLeft.n -= 1;
+            await items.commit([{ t: "swap", stage: stage.parent_key, out: parentId, in: spare.id }]);
+            await items.mirror(stage.parent_key);
+            parent = spare.row;
+            continue;
+          }
+        }
+        // one parent whose read failed twice is skipped (the others may well be read); three in a row end the stage with that reason
+        if (r.reason === "failed") { failedInARow += 1; anyFailed = true; if (failedInARow >= 3) return r; break; }
+        failedInARow = 0;
+        last = r.reason;
+        break;
       }
-      if (r.aborted) return r;
-      // a stop that ends the whole stage (the budget, the daily limit, the time, a refusal) is not «this parent has no more»
-      if (r.reason === "budget" || r.reason === "daily_cap" || r.reason === "refused" || r.reason === "time_limit" || r.reason === "review_limit" || r.reason === "page_limit") return r;
-      // one parent whose read failed twice is skipped (the others may well be read); three in a row end the stage with that reason
-      if (r.reason === "failed") { failedInARow += 1; anyFailed = true; if (failedInARow >= 3) return r; continue; }
-      failedInARow = 0;
-      last = r.reason;
     }
   }
   // a read that failed for some parent is the recorded reason when the volume was not reached (never «the source has no more»)
   return { reason: items.counts(stage.key).accepted >= stage.planned_rows ? "target_reached" : anyFailed ? "failed" : last === "target_reached" ? "source_exhausted" : last, aborted: null };
+}
+
+/** The numeric field of a parent row that counts its children (a video's comments, a place's reviews), when the mapping carries one: spares with more children are tried first. */
+/** The answers that say «this source has nothing for this input»: not found, gone, the input was rejected. */
+const PARENT_UNKNOWN_HTTP: ReadonlySet<number> = new Set([400, 404, 410, 422]);
+const WEBSITE_PARAM = /^(website|domain|site|url|homepage|web|company_?(website|domain|site))$/i;
+const CHILD_COUNT_KEY = /^(comments?|comments?_?count|comment_?num|num_?comments|replies|reply_?count|reviews?|reviews?_?count)$/i;
+
+/** The next spare parent: a match the parent stage checked and kept beyond its volume, never read for children, from the same named source as the parent it replaces (a named source's share is kept). Most children first when the rows say it, else the source's order. */
+function spareParentFor(items: ItemStore, parentKey: string, childKey: string, out: Row): { id: string; row: Row } | null {
+  const src = (r: Row): string => String(r[SOURCE_KEY] ?? "");
+  const spares = items.excludedItems(parentKey).filter((i) => i.reason === "target_reached" && i.row && src(i.row) === src(out) && !items.streamState(childKey, `p:${i.id}`));
+  if (spares.length === 0) return null;
+  const count = (r: Row): number => { for (const [k, v] of Object.entries(r)) if (CHILD_COUNT_KEY.test(k) && typeof v === "number" && Number.isFinite(v)) return v; return -1; };
+  const best = spares.map((i, index) => ({ i, index, n: count(i.row!) })).sort((a, b) => b.n - a.n || a.index - b.index)[0].i;
+  return { id: best.id, row: { ...best.row!, id: best.row!.id ?? best.id } };
 }
 
 /** The value a parent's field gives to the child source's input: the text itself, or for a website input the bare domain («https://www.mustcc.com/» → «mustcc.com»). Null when the parent has none. */
@@ -246,6 +293,9 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     const result = await gateway.tregCall({ endpoint_id: spec.endpoint_id, params: callParams });
     if (!result.ok) {
       if ("refused" in result) return { reason: refusalStop(result.refused), aborted: null };
+      // A PARENT THE SOURCE DOES NOT KNOW (live: aviato.companies.employees answered 404 «Not Found» for 14 of 23 companies, each asked twice by the same input, and three such companies in a row ended the stage with 20 companies never asked): a client error
+      // of a lookup for ONE parent is the source's answer for that parent («no such company»), not a failure of the source. It is not asked again with the same input, and it is not counted against the stage; the parent's next input is tried.
+      if (parentId !== null && "http_status" in result && PARENT_UNKNOWN_HTTP.has(Number(result.http_status))) return { reason: "source_exhausted", aborted: null };
       // a page that failed is asked once more; a second failure ends the stream with that reason (what was saved stays saved)
       failures += 1;
       if (failures >= 2) return { reason: "failed", aborted: null };
