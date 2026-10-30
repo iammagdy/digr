@@ -11,6 +11,8 @@ import { rankEndpoints, type RankedSource } from "./sourceRanking";
  *   - `childStepSourcesFor` is what the plan check asks before it accepts «this step has no source»: it answers with the sources that CAN serve the step.
  * Pure: the catalog and a predicate («may this account be sold this source?») in, plain facts out.
  */
+/** The card's sentence when a company's people are asked for through every field of the company the source can take (its page, its website, its name). */
+export const PEOPLE_FALLBACK_LINE_AR = "نطلب موظفي كل شركة بأول ما يتوفر لها من بياناتها: صفحتها على لينكدإن أو موقعها الإلكتروني أو اسمها، فلا تُستبعد شركة لمجرد أنه لا صفحة لها.";
 export type LinkField = "domain" | "linkedin" | "name" | "id";
 
 /** The capabilities whose rows are the people of ONE company. */

@@ -29,6 +29,9 @@ import { perParentQuantities } from "../../src/lib/agentMission/quantity";
 import { sourceNameMatches } from "../../src/lib/agentMission/namedSources";
 import { namedSourceRoutes } from "../../src/lib/agentMission/namedRoutes";
 import { catalogDateKind } from "../../src/lib/agentMission/relativeDates";
+import { PEOPLE_FALLBACK_LINE_AR } from "../../src/lib/agentMission/childSources";
+import { mediaProofSources, mediaUnprovenLineAr } from "../../src/lib/agentMission/mediaProof";
+import { giveUpRefusalText, GIVE_UP_NO_ROWS_REFUSALS_MAX, untriedBeforeGiveUp } from "../../src/lib/agentMission/giveUp";
 
 /**
  * The tools the agent has, and the only ones: three gateway tools (catalog_search, describe_endpoint, treg_call), the sandboxed run_code, and the mission tools (report_progress,
@@ -66,16 +69,23 @@ export interface RunState {
   finishRefusals: number;
   /** How many times a PLANNING that had real rows in hand was told not to give up for the yield or the price of a source (a limit: the model is never stuck). */
   giveUpRefusals: number;
+  /** How many times a PLANNING that no source had given a row to was told to reach more sources of the catalog before it gives up (a limit: the model is never stuck). */
+  giveUpNoRowsRefusals: number;
+  /** How many times a plan promising videos (or images) that no sampled source proves was sent back to the catalog's media sources (a limit: the planner is never stuck). */
+  mediaSendBacks: number;
   /** Per source stream (a collect_pages source and its inputs): whether the last read says the source has more pages. */
   moreAvailable: Map<string, boolean>;
   /** What each source gave in the planning samples: the rows of every answered call and a key of its inputs (two samples of the same item are one). */
   samples: Map<string, Array<{ rows: number; key: string }>>;
 }
-export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, moreAvailable: new Map(), samples: new Map() });
+export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, giveUpNoRowsRefusals: 0, mediaSendBacks: 0, moreAvailable: new Map(), samples: new Map() });
 /** The most times finish is refused for the same reason in one run. */
 export const FINISH_REFUSALS_MAX = 3;
 /** The most times a planning that already holds real rows is told not to end with «cannot_serve» for a source's price or yield. */
 export const GIVE_UP_REFUSALS_MAX = 2;
+/** The most times a plan that promises media no sampled source proves is sent back to sample the catalog's media sources; and the sources that must have been really reached before the card says it is unproven. */
+export const MEDIA_SEND_BACKS_MAX = 3;
+export const MEDIA_SOURCES_MIN = 3;
 
 export interface ToolContext {
   phase: CallPhase;
@@ -551,6 +561,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             return row ? { id, endpointId: row.endpoint_id, ok: row.status === "ok", costUsd: Number(row.cost_usd) || 0, rows: Number(row.rows_returned) || 0, durationMs: Number(row.duration_ms) || undefined, params: row.params_digest } : null;
           },
           evidenceText: (id: string) => evidence.get(id) ?? null,
+          endpointCapability: (endpointId: string) => ctx.catalog.byId.get(endpointId)?.capability ?? null,
           endpointAllowed: (endpointId: string) => (Boolean(ctx.web) && isAgentSourceId(endpointId)) || (isSellable(endpointId, ctx.catalog) && !blockedEndpointReason(endpointId) && policyVerdict(endpointId, ctx.access).allowed),
           requestText: `${mission.request_text} ${mission.answer_text ?? ""}`,
           ...(mission.answer_text ? { answerText: mission.answer_text } : {}),
@@ -579,6 +590,31 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             const approxDates = derived.approx.get(st.key);
             if (approxDates && approxDates.length > 0) st.approx_dates = approxDates;
           }
+        }
+        // A PLAN THAT PROMISES VIDEOS (OR IMAGES) NO SAMPLED SOURCE PROVES is not refused: the planner is sent (a few times) to sample the catalog's media sources (a page's reels, a post search whose items carry a video, a post's detail) and builds the card from the one
+        // that proves it. Only after MEDIA_SOURCES_MIN real sources were tried and none proves it does the card say so before approval (the filter keeps only proven items; only what is delivered is charged).
+        if (checked.mediaUnproven && checked.mediaUnproven.length > 0) {
+          const first = checked.mediaUnproven[0];
+          const platform = ctx.catalog.byId.get(first.endpoint_id)?.platform ?? String(ctx.catalog.byId.get(first.endpoint_id)?.capability ?? "").split(".")[0];
+          const allowed = (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
+          const sources = mediaProofSources(ctx.catalog, String(platform), first.media, allowed);
+          const made = await store.listCalls(mission.id);
+          const reached = new Set(made.filter((c) => (c.phase ?? "planning") === "planning" && (c.status === "ok" || c.status === "empty" || c.status === "failed") && sources.some((x) => x.id === c.endpoint_id)).map((c) => c.endpoint_id)).size;
+          const untried = sources.filter((x) => !made.some((c) => c.endpoint_id === x.id));
+          if (reached < MEDIA_SOURCES_MIN && untried.length > 0 && state.mediaSendBacks < MEDIA_SEND_BACKS_MAX) {
+            state.mediaSendBacks += 1;
+            const word = first.media === "image" ? "images" : "videos";
+            return err("the plan was not accepted yet; fix this and propose again", { issues: [`stage «${first.stage_key}» promises ${word}, but ${first.why === "no_field" ? "no mapped field of its items says an item is one" : "none of the items of its measured page proves one"}. Do not drop the request and do not promise what no sample shows: sample the catalog's own sources that can prove it, cheapest first, and build the stage from the one that does (map the field that proves it, or a source whose items ARE ${word}): ${untried.slice(0, 5).map((x) => `${x.id} (${x.how === "own" ? "its items are the media itself" : x.how === "field" ? "its items carry a field that proves it: map it" : "reads one post and says whether it has one"}; input ${x.inputs.join(", ")})`).join("; ")}. Only ${reached} such source(s) were really reached so far; the card may say the media could not be proven only after ${MEDIA_SOURCES_MIN} were tried or none is left.`] });
+          }
+          const line = mediaUnprovenLineAr(first.media);
+          if (!(checked.plan.notes_ar ?? []).includes(line)) checked.plan.notes_ar = [...(checked.plan.notes_ar ?? []), line];
+        }
+        // THE PEOPLE OF EVERY COMPANY THAT HAS ANY USABLE INPUT: when the engine will also read a company's people through its website or name, the card says so, and a model-written line that says the companies without a page get no people (true only of the page) is dropped
+        if (derived && checked.plan.stages.some((st) => (st.engine?.parent_binding?.fallbacks?.length ?? 0) > 0)) {
+          const stripped = (t: string) => t.replace(/[\u064B-\u0652]/g, "");
+          checked.plan.assumptions_ar = (checked.plan.assumptions_ar ?? []).filter((l) => !/(?:لن|لا)\s+(?:ي|ت)جلب\s+لها\s+(?:موظف|اشخاص|أشخاص)/.test(stripped(l)));
+          if (checked.plan.assumptions_ar.length === 0) delete checked.plan.assumptions_ar;
+          if (!(checked.plan.notes_ar ?? []).includes(PEOPLE_FALLBACK_LINE_AR)) checked.plan.notes_ar = [...(checked.plan.notes_ar ?? []), PEOPLE_FALLBACK_LINE_AR];
         }
         // A NAMED SOURCE NO SAMPLE SHOWS, WHILE THE CATALOG HAS A SOURCE THAT TAKES THE SOURCE ITSELF (a channel's videos, an account's posts): the stage searched by keyword and found none of the sources the customer named. Sampling the source itself is cheap; the card's
         // «not found» sentence is for a source that was really looked for and not found. A few refusals at most (the same counter as the early stop), so the planner is never stuck.
@@ -654,6 +690,11 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             state.giveUpRefusals += 1;
             return err("do not end without a plan: you hold real rows from the sources. A dear source, a low share of matching items, few comments per post or an item that is out of the topic is never a reason to refuse: code prices the plan from the measured cost per MATCHING item (a low yield only raises the price) and the card tells the customer the price and the rule; the customer decides. Build the plan from what you sampled: relevance to keep only matching parents, per_parent_rows and expected_rows as the samples show, and target_reason_ar (one sentence, no number) when the sources give fewer than the customer asked. End with cannot_serve only when NO source of the catalog does this job, or every sampled item fails what the stage needs");
           }
+        }
+        // NO GIVE-UP BEFORE THE CATALOG WAS REALLY ASKED: no sample gave a row, and fewer than three sources of the request's job were reached (a refused or unavailable call reaches nothing): the untried sources are named, a named channel's own listing first
+        if (ctx.phase === "planning" && outcome === "cannot_serve" && state.giveUpNoRowsRefusals < GIVE_UP_NO_ROWS_REFUSALS_MAX) {
+          const found = untriedBeforeGiveUp({ request: `${mission.request_text} ${mission.answer_text ?? ""}`, catalog: ctx.catalog, access: ctx.access, stats: ctx.stats ?? new Map(), now: ctx.now ?? Date.now(), calls: await store.listCalls(mission.id) });
+          if (found.applies) { state.giveUpNoRowsRefusals += 1; return err(giveUpRefusalText(found)); }
         }
         // rows the agent itself calls unfiltered are never delivered: it must filter them (the stage's relevance rule does it in save_rows) or say honestly that it cannot serve
         if (outcome === "delivered" && UNFILTERED_ADMISSION.test(normalizeText(checked.text))) return err("your summary says the rows are NOT filtered or may include other people / replies. Rows that do not match the request are never delivered or charged: save only rows that match (the stage's relevance rule filters them in save_rows) and rewrite the summary, or finish with outcome \"cannot_serve\"");

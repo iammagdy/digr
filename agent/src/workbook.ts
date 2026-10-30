@@ -46,6 +46,17 @@ const textCell = (v: string): string => v;
 export interface SheetColumn { title: string; get: (row: Row, parent: Row | null) => unknown; kind?: "context" | "own"; contact?: boolean; link?: boolean; /** The stage column's key (the date columns are recognised by it and by the title). */ key?: string }
 export interface SheetLayout { stageIndex: number; stage: PricedStage; rows: Row[]; columns: SheetColumn[]; hasParent: boolean }
 
+/**
+ * INVISIBLE DIRECTION MARKS IN A NAME CELL (live: a person's name written between U+202A, U+202C and U+200F, which a spreadsheet shows as stray squares or reverses next to Arabic): the embedding and override marks U+202A-U+202E, the left and right marks
+ * U+200E and U+200F and the isolates U+2066-U+2069 are removed from the cells of the columns that hold a NAME (a person, a company, an author, a channel, a page), in the workbook and in the CSV alike; the text between them is untouched. Only names: the
+ * words of a post or a comment are delivered as the source gave them.
+ */
+const DIRECTION_MARKS = /[\u202a-\u202e\u200e\u200f\u2066-\u2069]/g;
+export const withoutDirectionMarks = (v: unknown): unknown => (typeof v === "string" ? v.replace(DIRECTION_MARKS, "") : v);
+const NAME_KEY = /(^|_)(name|full_?name|first_?name|last_?name|display_?name|author|author_?name|username|user_?name|parent_company|company|company_?name|channel|channel_?name|page|page_?name|owner|publisher|uploader|creator|poster|contact)$/i;
+const NAME_TITLE = /^(?:اسم(?:\s|$)|الاسم|الناشر|الكاتب|المعلّق|المعلق|كاتب|الشركة|القناة|الصفحة|المصدر|صاحب|اسم الشركة|اسم الموظف)/;
+const isNameColumn = (c: SheetColumn): boolean => (c.key !== undefined && NAME_KEY.test(c.key)) || NAME_TITLE.test(c.title.trim());
+
 const readableColumns = (stage: PricedStage) => stage.columns.filter((c) => !isInternalColumn(c));
 
 /** True when a column's values are numbers and nothing else (no leading zero, at most 15 digits): only then it is stored as a number. */
@@ -117,7 +128,7 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
       const ownText = textGetter(stage, c.key);
       columns.push({ title: c.title_ar, get: ownText ? (r) => ownText(r) : (r) => r[c.key], kind: "own", contact: c.kind !== undefined, link: values.some((v) => isUrl(v)), key: c.key });
     }
-    layouts.push({ stageIndex, stage, rows, columns, hasParent: stage.parent_key !== null });
+    layouts.push({ stageIndex, stage, rows, columns: columns.map((c) => (isNameColumn(c) ? { ...c, get: (row: Row, parent: Row | null) => withoutDirectionMarks(c.get(row, parent)) } : c)), hasParent: stage.parent_key !== null });
   });
   return layouts;
 }

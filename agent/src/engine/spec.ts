@@ -8,7 +8,7 @@ import { isListingEndpoint } from "../../../src/lib/agentMission/namedRoutes";
 import { looksLikeDateColumn } from "../../../src/lib/agentMission/dateCells";
 import { isRelativeAge } from "../../../src/lib/agentMission/relativeDates";
 import { placeAskedOfSource } from "../../../src/lib/agentMission/places";
-import type { TregCatalog } from "../../../src/lib/treg/catalog";
+import type { CatalogEndpoint, TregCatalog } from "../../../src/lib/treg/catalog";
 import type { SandboxResult } from "../sandbox";
 import type { AgentStore, CallRow } from "../types";
 
@@ -179,9 +179,13 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
         const parentRows = [...(mappedRows.get(stage.parent_key) ?? []), ...(plan.stages.find((s) => s.key === stage.parent_key)?.sample_rows ?? [])];
         const found = parentBinding(params, parentRows);
         if (!found) continue;
-        binding = found;
+        const fallbacks = bindingFallbacks(endpoint, found, parentRows);
+        binding = fallbacks.length > 0 ? { ...found, fallbacks } : found;
         delete params[found.param];
       }
+      // a source with no next page and a flat price per call is asked for everything its limit allows (a lower limit only makes the one answer smaller)
+      const lifted = stage.parent_key === null && !sources ? liftedVolume(endpoint, params) : null;
+      if (lifted) params[lifted.param] = lifted.to;
       const window = stage.parent_key === null && !sources ? dateWindowOf(endpoint, params) : null;
       specs.set(stage.key, { endpoint_id: stage.endpoint_id, params, cursor_param: cursorParam, map_code: mapCode, map_file_id: callId, parent_binding: binding, ...(proof.idField !== "id" ? { id_field: proof.idField } : {}), ...(window ? { window } : {}), ...(sources ? { sources } : {}), ...(sources && listing ? { source_listing: true } : {}) });
       filtersOut.set(stage.key, refit.filters);
@@ -250,6 +254,51 @@ export function namedSourcesInQuery(params: Record<string, unknown>, values: Rea
   const have = new Set(nameWords(text));
   if (have.size === 0) return true;
   return values.every((v) => alternativesOf(v).some((alt) => { const need = nameWords(alt); return need.length > 0 && need.every((w) => have.has(w)); }));
+}
+
+/**
+ * A SOURCE THAT HAS NO NEXT PAGE GIVES WHAT ITS LIMIT ALLOWS, so the limit is the volume (live, 2026-10-30: a company search priced per call with up to 100 results included was called with the limit 50 the measuring call used; the engine read that one
+ * answer, 18 of its 50 companies passed, and the source had «nothing more»). For an endpoint with no paging input, a numeric limit input whose maximum is above the value of the measuring call, and a PRICE PER CALL (the call costs the same whatever the limit),
+ * the first page is asked at the input's maximum. Nothing is lifted for a source with a next page, nor for a per-result price (the cost would follow the limit). Pure.
+ */
+const VOLUME_INPUT = /^(?:limit|match_limit|count|page_size|pagesize|per_page|perpage|size|num|max_results|maxresults|max_items|maxitems|n)$/i;
+export function liftedVolume(endpoint: CatalogEndpoint, params: Record<string, unknown>): { param: string; from: number | null; to: number } | null {
+  if ((endpoint.pagination ?? []).some((p) => !LIMIT_INPUT.test(p))) return null;
+  if (endpoint.cost?.type !== "per_call") return null;
+  const input = endpoint.inputs.find((i) => VOLUME_INPUT.test(i.name) && (i.type === "integer" || i.type === "number") && typeof i.maximum === "number" && i.maximum > 0);
+  if (!input) return null;
+  const current = Number(params[input.name]);
+  const have = Number.isFinite(current) && current > 0 ? current : null;
+  return have !== null && have >= (input.maximum as number) ? null : { param: input.name, from: have, to: input.maximum as number };
+}
+
+const DOMAIN_NAMES = /^(?:domain|domains|website|domainOrCompany)$/i;
+const NAME_NAMES = /^(?:company|company_name)$/i;
+const LINKEDIN_NAMES = /^(?:linkedinURL|company_linkedin_url|company_profile_url)$/i;
+const PARENT_DOMAIN_FIELD = /(?:^|_)(?:website|domain|site|url)$/i;
+const PARENT_NAME_FIELD = /^(?:name|company_name|title)$/i;
+const PARENT_LINKEDIN_FIELD = /linkedin/i;
+
+/**
+ * THE PEOPLE OF EVERY COMPANY THAT HAS ANY USABLE INPUT (live: managers were asked for the 11 companies that had a LinkedIn page and for none of the 7 others that had a website). When the child source takes more than one of a company's own fields (its website,
+ * its page, its name), the binding the measuring call used comes first and the others follow in a fixed order (website, page, name): a company with no value for the first is read through the next, and a read that failed or gave nothing is retried through the
+ * next. Only STRING inputs; only fields the parent's rows really carry. Pure.
+ */
+export function bindingFallbacks(endpoint: CatalogEndpoint, primary: { param: string; from: string }, parentRows: ReadonlyArray<Record<string, unknown>>): Array<{ param: string; from: string; domain?: true }> {
+  const keys = [...new Set(parentRows.flatMap((r) => Object.keys(r)))];
+  const hasValue = (k: string): boolean => parentRows.some((r) => typeof r[k] === "string" && String(r[k]).trim() !== "");
+  const stringInput = (re: RegExp): string | null => endpoint.inputs.find((i) => re.test(i.name) && (i.type === "string" || i.type === "str") && i.name !== primary.param)?.name ?? null;
+  const out: Array<{ param: string; from: string; domain?: true }> = [];
+  const domainInput = stringInput(DOMAIN_NAMES);
+  const domainField = keys.find((k) => k !== primary.from && PARENT_DOMAIN_FIELD.test(k) && !/linkedin|facebook|twitter|instagram/i.test(k) && hasValue(k));
+  if (domainInput && domainField) out.push({ param: domainInput, from: domainField, domain: true });
+  const linkedinInput = stringInput(LINKEDIN_NAMES);
+  const linkedinField = keys.find((k) => k !== primary.from && PARENT_LINKEDIN_FIELD.test(k) && hasValue(k));
+  if (linkedinInput && linkedinField) out.push({ param: linkedinInput, from: linkedinField });
+  const nameInput = stringInput(NAME_NAMES);
+  const nameField = keys.find((k) => k !== primary.from && PARENT_NAME_FIELD.test(k) && hasValue(k));
+  if (nameInput && nameField) out.push({ param: nameInput, from: nameField });
+  return out;
 }
 
 /** Which input of the child's measuring call is a field of a parent row (a value that equals the parent's own id, or one of its columns)? Exactly one input may bind, and it must bind to one field: else no recipe. */
