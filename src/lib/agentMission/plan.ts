@@ -641,6 +641,11 @@ export interface PlanEditorView {
 /** What the customer asked for, in all: the plan's target, plus what the model's lower target left out (only when it proposed fewer, with a reason). Equal to the target in every other plan. Messages say «N من هذا العدد»; the charge is settled against the TARGET. */
 /** THE CARD'S TOTAL: what the customer approved (the delivered stages' rows, the number the card showed and the charge is settled against). The final line, the first sheet and the notice say «X من هذا الرقم», never the request's own number (which can be higher when the card lowered the target). */
 export const cardTotalOf = (plan: Pick<PricedPlan, "stages">): number => plan.stages.filter((s) => s.deliver).reduce((n, s) => n + s.planned_rows, 0);
+/**
+ * THE NUMBER A DELIVERY IS TOLD AGAINST («تم تسليم X من …»). A delivery SHORT OF THE CARD is told against the card's total (live: «٧٣ من ١٣٦» with a card of 129: the customer never saw 136). A delivery that FILLS the card while the card had lowered the target (and said so before the approval)
+ * is still told against the request («١٢٠ من ٣٠٠»), never «١٢٠ من ١٢٠»: that rule is older and stays. Display only: whether a mission is complete or partial is decided elsewhere, from the request.
+ */
+export const deliveryDenominatorOf = (delivered: number, cardTotal: number, requested: number): number => (cardTotal > 0 && delivered < cardTotal ? cardTotal : Math.max(requested, cardTotal));
 export const requestedRowsOf = (plan: Pick<PricedPlan, "stages" | "quantity">): number => plan.stages.filter((s) => s.deliver).reduce((n, s) => n + s.planned_rows, 0) + (plan.quantity ? Math.max(0, plan.quantity.requested - plan.quantity.target) : 0);
 
 /** The stage the quantity counts (the one whose target the customer may change): the quantity's own, else the first delivered stage. */

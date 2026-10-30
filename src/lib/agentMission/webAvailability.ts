@@ -2,7 +2,7 @@ import { PARSER_IDS, WEB_SOURCES } from "./sources";
 
 /**
  * A TOOL THE WORKER CANNOT USE IS NOT OFFERED (live, 2026-10-30 evening, the two YouTube runs of the named channels). The web search, the page scrape, the page parsers and the people search each need a provider key. The worker reads it from the website's encrypted
- * key store (or the environment) and, in two days, never obtained one: every one of the 69 recorded calls of those tools was refused as «source unavailable» before reaching a provider. The planner kept choosing them (they were in its tool list, in `catalog_search`
+ * key store (or the environment) and, in two days, never obtained one: every one of the 71 recorded calls of those tools was refused as «source unavailable» before reaching a provider. The planner kept choosing them (they were in its tool list, in `catalog_search`
  * results and in the system prompt), spent its whole run on refusals and ended with «a limit of ours», and the catalog's own YouTube channel sources were never called.
  *
  * ONE rule, decided by code before the planner starts: each provider key is resolved once (a read of the key store, no provider call); a source whose provider has no key is not in the tool list, not in `catalog_search`, not in `describe_endpoint`, not allowed in a plan,

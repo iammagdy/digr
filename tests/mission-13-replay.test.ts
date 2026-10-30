@@ -22,7 +22,7 @@ const catalog = loadTregCatalog();
 const REQUEST_YT = "هات من قنوات العربية واليوم السابع وبي بي سي نيوز الإنجليزية على يوتيوب ٥ فيديوهات من كل قناة عن حرب إيران وإسرائيل آخر ٣ شهور، ومن كل فيديو ٢٠ تعليق";
 
 // ---------------------------------------------------------------------------------------------------- 1. tools the worker cannot use (msn_592ed6abda7c8e5973e6, msn_898221359b77fb4e050c)
-describe("1. a tool the worker has no key for is not offered (live: both YouTube runs called only web search / scrape, 69 of 69 web calls in 3 days refused as «unavailable»)", () => {
+describe("1. a tool the worker has no key for is not offered (live: both YouTube runs called only web search / scrape, 71 of 71 web calls in 3 days refused as «unavailable»)", () => {
   /** A driver that keeps what the run offered (the tool list and the system prompt) and plays the script. */
   const recording = (script: FakeStep[]) => {
     const inner = createFakeDriver(script);
@@ -221,7 +221,7 @@ describe("3. TikTok «هات ٥ فيديوهات ... ومن كل فيديو ١٠
 import { readWorkbook } from "./helpers/agentReplay";
 import { cleanRowsForCustomer, isProviderUrl, neutralIdOf, providerContext, withoutProviderNames, withoutProviderUrls } from "../src/lib/agentMission/providerHosts";
 
-describe("4. «عايز ٥٠ شركة مقاولات في مصر، ومن كل شركة اتنين من المديرين»: a company the people source does not know is that source's answer for it, not a failure of the stage (live: 23 of 43 companies were asked, 20 never)", () => {
+describe("4. «عايز ٥٠ شركة مقاولات في مصر، ومن كل شركة اتنين من المديرين»: a company the people source does not know is that source's answer for it, not a failure of the stage (live: 22 of 43 companies were asked, 21 never)", () => {
   const COMPANIES = "parallel.companies.search";
   const EMPLOYEES = "aviato.companies.employees";
   const REQUEST_CO = "عايز ١٢ شركة مقاولات في مصر، ومن كل شركة اتنين من المديرين";
@@ -335,7 +335,7 @@ describe("4. «عايز ٥٠ شركة مقاولات في مصر، ومن كل �
 });
 
 // ---------------------------------------------------------------------------------------------------- 5. The denominator is the card's total
-import { cardTotalOf } from "../src/lib/agentMission/plan";
+import { cardTotalOf, deliveryDenominatorOf } from "../src/lib/agentMission/plan";
 
 describe("5. the final line, the first sheet and the notice say «X من» the CARD's total, not the request's own number (live: «تم تسليم ٧٣ من ١٣٦» with a card of 129; «من ١٥» with a card of 11)", () => {
   const COMPANIES = "parallel.companies.search";
@@ -348,10 +348,12 @@ describe("5. the final line, the first sheet and the notice say «X من» the C
   const MAP_CO = "const rows = inputs.call_0001.entities || []; return rows.map(r => { const d = r.description || ''; const web = d.match(/Website Url:\\s*(https?:\\/\\/[^\\s|]+)/); const sd = (d.match(/Short Description:\\s*([^|]+)/)||[])[1] || ''; return { id: web[1].replace(/^https?:\\/\\//,''), name: r.name, website: web[1], country: 'Egypt', linkedin: r.url, description: sd.trim() }; })";
   const MAP_EMP = "const rows = inputs.call_0002.employees || []; return rows.map(r => { const p = r.person || {}; const pos = (r.positionList && r.positionList[0]) || {}; return { id: r.personID, company: r.companyName || '', name: p.fullName || '', title: pos.title || '' }; })";
   const employeesOf = (site: string, n: number) => ({ employees: Array.from({ length: n }, (_, k) => ({ personID: `${site}-p${k}`, companyName: site, positionList: [{ title: "General Manager" }], person: { fullName: `Person ${site} ${k}` } })) });
+  /** Two companies hold only one manager each in the source: the delivery falls short of the card (live: 73 of a card of 129). */
   const answerFor = (o: { endpointId?: string; params?: unknown }) => {
     const p = (o.params ?? {}) as Record<string, unknown>;
     if (o.endpointId === COMPANIES) return tregResult({ entities: POOL }, 0.005);
-    return tregResult(employeesOf(String(p.website ?? "x").replace(/^www\./, ""), 2), 0.005);
+    const site = String(p.website ?? "x").replace(/^www\./, "");
+    return tregResult(employeesOf(site, site === "co3.eg" || site === "co4.eg" ? 1 : 2), 0.005);
   };
   const flow = (): FakeStep[] => [
     { tool: "catalog_search", args: { words: ["companies", "search"], limit: 5 } },
@@ -385,13 +387,14 @@ describe("5. the final line, the first sheet and the notice say «X من» the C
     });
   }
 
-  it("a card of 36 (12 companies + 24 people) that lowered the target from 50 says «من ٣٦» in the final line, the first sheet and the notice", async () => {
+  it("a delivery short of a card of 36 (12 companies + 24 people, the target lowered from 50) says «من ٣٦» in the final line, the first sheet and the notice", async () => {
     const r = await run();
     expect(cardTotalOf(r.plannedPlan)).toBe(36);
     expect(r.planView.totalRows).toBe(36);
     // the customer's final line
     const line = r.finalView.resultLinesAr.find((l) => l.startsWith("تم تسليم"))!;
     expect(line).toContain("من ٣٦");
+    expect(line).toContain("تم تسليم ٣٤");
     expect(line).not.toMatch(/من (?:٨٦|٧٤)/);
     // the first sheet of the file
     const wb = await readWorkbook(r);
@@ -402,7 +405,19 @@ describe("5. the final line, the first sheet and the notice say «X من» the C
     expect(intro).toContain("من ٣٦");
     // the notice
     expect(r.notices[0].facts.planned).toBe(36);
+    expect(r.notices[0].facts.delivered).toBe(34);
     // the money is what it was: the charge is settled against the same total
-    assertReplayInvariants(r, { expectDelivered: 36, expectStatus: "partial" });
+    assertReplayInvariants(r, { expectDelivered: 34, expectStatus: "partial" });
+  });
+
+  it("the older rule stays: a delivery that FILLS a card with a lowered target is told against the request, never «من» its own number", () => {
+    expect(deliveryDenominatorOf(36, 36, 74)).toBe(74);
+    expect(deliveryDenominatorOf(120, 120, 300)).toBe(300);
+    // short of the card: the card's total, whatever the request said
+    expect(deliveryDenominatorOf(73, 129, 136)).toBe(129);
+    expect(deliveryDenominatorOf(2, 11, 15)).toBe(11);
+    // a card with no lowered target
+    expect(deliveryDenominatorOf(50, 50, 50)).toBe(50);
+    expect(deliveryDenominatorOf(0, 0, 40)).toBe(40);
   });
 });
