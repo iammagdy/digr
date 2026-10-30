@@ -17,6 +17,7 @@ import { APPROX_DATES_CARD_LINE_AR } from "./relativeDates";
 import { isCompanyStage, isEntityStage, requestNamesSector, sectorEnglishWords, sectorWordsOf } from "./entities";
 import { placeEntry, placeLabelsAr, placesInText } from "./places";
 import { excludesGovernment } from "./government";
+import { isMediaCapability, keySaysMedia, rawMediaProof, requestedMedia } from "./mediaProof";
 import { assumptionLinesShown, CHILD_RAW_FILTER_KINDS, defaultLanguageOf, filterVerdict, filterLabelAr, filterLineAr, findFilterFields, isEnabled, kindsPromisedBy, parseFilters, promiseIssues, resolveFilters, type StageFilter } from "./filters";
 
 /**
@@ -118,6 +119,8 @@ export interface PlanLookup {
   call(id: string): RecordedCall | null;
   /** Text of a saved page or code output (to prove a sample row's id and links were really seen). Null when the id is unknown. */
   evidenceText(id: string): string | null;
+  /** The catalog capability of an endpoint («facebook.search.posts»), or null: a card that promises videos (or images) needs the proof of it unless the source's own kind IS the media. */
+  endpointCapability?(endpointId: string): string | null;
   /** May this endpoint be sold to this account (sellable, not blocked, data policy)? */
   endpointAllowed(endpointId: string): boolean;
   /** The customer's own words: when they ask for work e-mails or phones the plan must have a contact stage (or say honestly why not). */
@@ -453,7 +456,21 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
     const declaredFull = wantsNoGovernment && !declaredWithLanguage.some((f) => f.kind === "exclude_government" && isEnabled(f))
       ? [...declaredWithLanguage.filter((f) => f.kind !== "exclude_government"), { kind: "exclude_government" as const }]
       : declaredWithLanguage;
-    const resolvedAll = resolveFilters(declaredFull, fields, label);
+    // A CARD NEVER PROMISES A KIND OF ITEM THE SAMPLES DID NOT PROVE: the request counts videos (or images) and this stage lists the posts of a platform by a source whose own kind is not the media: the proof is a filter of the stage (mediaProof.ts), found by code
+    const askedMedia = !isChild && parentKey === null && lookup.endpointCapability ? requestedMedia(requestWords) : null;
+    const mediaStage = askedMedia !== null && !isMediaCapability(lookup.endpointCapability?.(endpointId), askedMedia) && (askedMedia === "video" ? /فيديو|ريل|مقطع|reel|video/i : /صور|image|photo/i).test(`${title.text} ${requestWords.slice(0, 400)}`) && (stagesIn.filter((x) => isRecord(x) && (x.parent_key === null || x.parent_key === undefined || x.parent_key === "")).length === 1 || (askedMedia === "video" ? /فيديو|ريل|مقطع/.test(title.text) : /صور/.test(title.text)));
+    // the proof is in the MAPPED items (a video / reel field, a video address: the filter enforces it on every item) or the mapping itself kept only the items the measured page proves (its code dropped the rest): both are proof; neither is refused with the guidance
+    let mediaKeepsOnlyProven = false;
+    if (mediaStage && !fields.mediaFields[askedMedia!].some((k) => keySaysMedia(askedMedia!, k))) {
+      const pages = measuredBy.map((id) => lookup.evidenceText(id));
+      const raw = rawMediaProof(askedMedia!, pages);
+      const mappedCount = (yieldRows ?? samples.filter(isRecord)).length;
+      mediaKeepsOnlyProven = raw.proven > 0 && mappedCount > 0 && mappedCount <= raw.proven;
+    }
+    const declaredMedia = mediaStage && !mediaKeepsOnlyProven && !declaredFull.some((f) => f.kind === "media" && isEnabled(f))
+      ? [...declaredFull.filter((f) => f.kind !== "media"), { kind: "media" as const, media: askedMedia! }]
+      : declaredFull;
+    const resolvedAll = resolveFilters(declaredMedia, fields, label);
     issues.push(...resolvedAll.issues);
     const resolvedBase = { ...resolvedAll, filters: isChild ? resolvedAll.filters.filter((f) => !CHILD_RAW_FILTER_KINDS.includes(f.kind)) : resolvedAll.filters };
     // PLACE AND COUNTRY ARE ENFORCED: a place filter reads evidence from the mapped fields (country, city, address, website domain, phone prefix); an entity stage whose request names a place gets the filter from the request itself, and with no field that can carry
@@ -476,11 +493,17 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
     }
     const resolved = { ...resolvedBase, filters: filtersOut };
     // THE PRICE RESTS ON THE ITEMS THAT PASS THE PLACE TOO: the place the card promises takes its share of the measured page away (a source that lists companies of every country), and the cost per DELIVERED item rises with it
-    const pricedFilters = resolved.filters.filter((f) => isEnabled(f) && f.kind === "place");
+    const pricedFilters = resolved.filters.filter((f) => isEnabled(f) && (f.kind === "place" || f.kind === "media"));
     if (relevance && yieldRows && yieldRows.length > 0 && pricedFilters.length > 0) {
       const textKey = textKeyOf({ relevance, columns: cleanColumns, filters: pricedFilters }, Object.keys(yieldRows[0] ?? {}));
       const passing = yieldRows.filter((r) => filterVerdict(pricedFilters, r, { textKey, now: 0 }) === null);
-      if (passing.length === 0) issues.push(`${label}: none of the ${yieldRows.length} items of your measured page carries evidence of ${pricedFilters.flatMap((f) => f.values ?? []).join("، ")} in a mapped field; map the country, city, address, website or phone field of every item, or sample a source that gives one`);
+      if (passing.length === 0) {
+        const mediaF = pricedFilters.find((f) => f.kind === "media");
+        const placeOnly = pricedFilters.filter((f) => f.kind === "place");
+        // THE SAMPLE PROVES NO VIDEO (live: the card promised videos from a post search whose sampled posts carried none that the mapping could show): said before the card, so the customer is never asked to approve what no sample showed
+        if (mediaF && placeOnly.length === 0) issues.push(`${label}: the card promises ${mediaF.media === "image" ? "images" : "videos"} but none of the ${yieldRows.length} items of your measured page proves one (no mapped ${mediaF.media === "image" ? "image or photo" : "video or reel"} field holds a value, no address is a ${mediaF.media === "image" ? "photo" : "video"} address, no type says so). Do NOT promise it. Sample a source whose items ARE ${mediaF.media === "image" ? "images" : "videos"} (a video search, a page's reels, a post's detail), another query, or ask the customer (ask_question) whether posts without ${mediaF.media === "image" ? "an image" : "a video"} are fine; if the catalog has no source that can prove it, finish with cannot_serve and say so`);
+        else issues.push(`${label}: none of the ${yieldRows.length} items of your measured page carries evidence of ${placeOnly.flatMap((f) => f.values ?? []).join("، ")}${mediaF ? " together with the media the card promises" : ""} in a mapped field; map the country, city, address, website or phone field of every item, or sample a source that gives one`);
+      }
       const after = classifyRows(relevance, passing).counts;
       sampleMatching = after.match;
       yieldShare = Math.min(1, Math.max(0.02, (after.match + 0.5 * after.review) / yieldRows.length));

@@ -29,6 +29,7 @@ import { perParentQuantities } from "../../src/lib/agentMission/quantity";
 import { sourceNameMatches } from "../../src/lib/agentMission/namedSources";
 import { namedSourceRoutes } from "../../src/lib/agentMission/namedRoutes";
 import { catalogDateKind } from "../../src/lib/agentMission/relativeDates";
+import { giveUpRefusalText, GIVE_UP_NO_ROWS_REFUSALS_MAX, untriedBeforeGiveUp } from "../../src/lib/agentMission/giveUp";
 
 /**
  * The tools the agent has, and the only ones: three gateway tools (catalog_search, describe_endpoint, treg_call), the sandboxed run_code, and the mission tools (report_progress,
@@ -66,12 +67,14 @@ export interface RunState {
   finishRefusals: number;
   /** How many times a PLANNING that had real rows in hand was told not to give up for the yield or the price of a source (a limit: the model is never stuck). */
   giveUpRefusals: number;
+  /** How many times a PLANNING that no source had given a row to was told to reach more sources of the catalog before it gives up (a limit: the model is never stuck). */
+  giveUpNoRowsRefusals: number;
   /** Per source stream (a collect_pages source and its inputs): whether the last read says the source has more pages. */
   moreAvailable: Map<string, boolean>;
   /** What each source gave in the planning samples: the rows of every answered call and a key of its inputs (two samples of the same item are one). */
   samples: Map<string, Array<{ rows: number; key: string }>>;
 }
-export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, moreAvailable: new Map(), samples: new Map() });
+export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, giveUpNoRowsRefusals: 0, moreAvailable: new Map(), samples: new Map() });
 /** The most times finish is refused for the same reason in one run. */
 export const FINISH_REFUSALS_MAX = 3;
 /** The most times a planning that already holds real rows is told not to end with «cannot_serve» for a source's price or yield. */
@@ -551,6 +554,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             return row ? { id, endpointId: row.endpoint_id, ok: row.status === "ok", costUsd: Number(row.cost_usd) || 0, rows: Number(row.rows_returned) || 0, durationMs: Number(row.duration_ms) || undefined, params: row.params_digest } : null;
           },
           evidenceText: (id: string) => evidence.get(id) ?? null,
+          endpointCapability: (endpointId: string) => ctx.catalog.byId.get(endpointId)?.capability ?? null,
           endpointAllowed: (endpointId: string) => (Boolean(ctx.web) && isAgentSourceId(endpointId)) || (isSellable(endpointId, ctx.catalog) && !blockedEndpointReason(endpointId) && policyVerdict(endpointId, ctx.access).allowed),
           requestText: `${mission.request_text} ${mission.answer_text ?? ""}`,
           ...(mission.answer_text ? { answerText: mission.answer_text } : {}),
@@ -654,6 +658,11 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             state.giveUpRefusals += 1;
             return err("do not end without a plan: you hold real rows from the sources. A dear source, a low share of matching items, few comments per post or an item that is out of the topic is never a reason to refuse: code prices the plan from the measured cost per MATCHING item (a low yield only raises the price) and the card tells the customer the price and the rule; the customer decides. Build the plan from what you sampled: relevance to keep only matching parents, per_parent_rows and expected_rows as the samples show, and target_reason_ar (one sentence, no number) when the sources give fewer than the customer asked. End with cannot_serve only when NO source of the catalog does this job, or every sampled item fails what the stage needs");
           }
+        }
+        // NO GIVE-UP BEFORE THE CATALOG WAS REALLY ASKED: no sample gave a row, and fewer than three sources of the request's job were reached (a refused or unavailable call reaches nothing): the untried sources are named, a named channel's own listing first
+        if (ctx.phase === "planning" && outcome === "cannot_serve" && state.giveUpNoRowsRefusals < GIVE_UP_NO_ROWS_REFUSALS_MAX) {
+          const found = untriedBeforeGiveUp({ request: `${mission.request_text} ${mission.answer_text ?? ""}`, catalog: ctx.catalog, access: ctx.access, stats: ctx.stats ?? new Map(), now: ctx.now ?? Date.now(), calls: await store.listCalls(mission.id) });
+          if (found.applies) { state.giveUpNoRowsRefusals += 1; return err(giveUpRefusalText(found)); }
         }
         // rows the agent itself calls unfiltered are never delivered: it must filter them (the stage's relevance rule does it in save_rows) or say honestly that it cannot serve
         if (outcome === "delivered" && UNFILTERED_ADMISSION.test(normalizeText(checked.text))) return err("your summary says the rows are NOT filtered or may include other people / replies. Rows that do not match the request are never delivered or charged: save only rows that match (the stage's relevance rule filters them in save_rows) and rewrite the summary, or finish with outcome \"cannot_serve\"");

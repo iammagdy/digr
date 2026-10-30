@@ -1,4 +1,5 @@
 import { toArabicDigits } from "../arabicDigits";
+import { itemProvesMedia, mediaFieldsOf, mediaLabelAr, mediaLineAr, type MediaKind } from "./mediaProof";
 import { parseMoment } from "./dateCells";
 import { governmentVerdict, excludesGovernment, EXCLUDES_GOVERNMENT } from "./government";
 import { isPlaceEvidenceKey, placeVerdict } from "./places";
@@ -11,8 +12,8 @@ import { parseRelativeAge, rangeOverlaps } from "./relativeDates";
  * (an item the filter rejects is neither delivered nor charged, and is kept with its reason for the admin). The card's sentence is BUILT from the filter by code (`filterLineAr`), so the card can never promise what no code enforces. A free sentence of the
  * model that promises one of these without a filter is refused at plan time (`promiseIssues`). The customer may switch a filter on or off, and change its period or language, before approving (planEdit.ts). Pure: no I/O.
  */
-export type FilterKind = "exclude_replies" | "exclude_reposts" | "language" | "period" | "account" | "place" | "exclude_government";
-export const FILTER_KINDS: ReadonlyArray<FilterKind> = ["exclude_replies", "exclude_reposts", "language", "period", "account", "place", "exclude_government"];
+export type FilterKind = "exclude_replies" | "exclude_reposts" | "language" | "period" | "account" | "place" | "exclude_government" | "media";
+export const FILTER_KINDS: ReadonlyArray<FilterKind> = ["exclude_replies", "exclude_reposts", "language", "period", "account", "place", "exclude_government", "media"];
 
 export interface StageFilter {
   kind: FilterKind;
@@ -35,21 +36,23 @@ export interface StageFilter {
   fields?: string[];
   /** account: for each of `values`, in the same order, the id of the saved call that read THAT named source (its own channel, page or account listing). Optional; code checks it against the call's own items and trusts it only when they do not contradict it. */
   calls?: string[];
+  /** media: the kind of item the card promises (a video, an image); `fields` are the mapped fields that can prove it, found by code. */
+  media?: MediaKind;
   /** place: the source itself was asked for the place (its own country or location input, recorded with the measuring call): an item that carries no evidence against it passes. Set by code. */
   by_source?: boolean;
 }
 
-export type FilterReason = "filter_reply" | "filter_repost" | "filter_language" | "filter_period" | "filter_account" | "filter_place" | "filter_government";
-export const FILTER_REASONS: ReadonlyArray<FilterReason> = ["filter_reply", "filter_repost", "filter_language", "filter_period", "filter_account", "filter_place", "filter_government"];
-export const REASON_OF_KIND: Record<FilterKind, FilterReason> = { exclude_replies: "filter_reply", exclude_reposts: "filter_repost", language: "filter_language", period: "filter_period", account: "filter_account", place: "filter_place", exclude_government: "filter_government" };
+export type FilterReason = "filter_reply" | "filter_repost" | "filter_language" | "filter_period" | "filter_account" | "filter_place" | "filter_government" | "filter_media";
+export const FILTER_REASONS: ReadonlyArray<FilterReason> = ["filter_reply", "filter_repost", "filter_language", "filter_period", "filter_account", "filter_place", "filter_government", "filter_media"];
+export const REASON_OF_KIND: Record<FilterKind, FilterReason> = { exclude_replies: "filter_reply", exclude_reposts: "filter_repost", language: "filter_language", period: "filter_period", account: "filter_account", place: "filter_place", exclude_government: "filter_government", media: "filter_media" };
 export const FILTER_REASON_LABEL_AR: Record<FilterReason, string> = {
-  filter_reply: "استبعاد: رد", filter_repost: "استبعاد: إعادة نشر", filter_language: "استبعاد: لغة أخرى", filter_period: "استبعاد: خارج الفترة", filter_account: "استبعاد: حساب آخر", filter_place: "استبعاد: مكان آخر", filter_government: "استبعاد: جهة حكومية",
+  filter_reply: "استبعاد: رد", filter_repost: "استبعاد: إعادة نشر", filter_language: "استبعاد: لغة أخرى", filter_period: "استبعاد: خارج الفترة", filter_account: "استبعاد: حساب آخر", filter_place: "استبعاد: مكان آخر", filter_government: "استبعاد: جهة حكومية", filter_media: "استبعاد: لا يحمل ما يثبت الفيديو أو الصورة",
 };
 
 export const isEnabled = (f: StageFilter): boolean => f.enabled !== false;
 
 /** The filters that never apply to the items of a CHILD stage (comments, replies, reviews, employees): they are delivered as the source gives them, in its order. The language and the place are rules for choosing the parents and the top-level items. */
-export const CHILD_RAW_FILTER_KINDS: ReadonlyArray<FilterKind> = ["language", "place", "exclude_government"];
+export const CHILD_RAW_FILTER_KINDS: ReadonlyArray<FilterKind> = ["language", "place", "exclude_government", "media"];
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const MAX_VALUES = 20;
@@ -88,7 +91,11 @@ export function parseFilters(input: unknown, label: string): { filters: StageFil
       } else { issues.push(`${label}: filter «period» needs days, or from and/or to`); continue; }
     }
     if (kind === "place" && Array.isArray(raw.places)) f.places = raw.places.map(String).filter((k) => /^[A-Z]{2}(?::[a-z]+)?$/.test(k)).slice(0, 20);
-    if ((kind === "place" || kind === "exclude_government") && Array.isArray(raw.fields)) f.fields = raw.fields.map(String).filter((k) => /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(k)).slice(0, 12);
+    if (kind === "media") {
+      if (raw.media !== "video" && raw.media !== "image") { issues.push(`${label}: filter «media» needs media "video" or "image"`); continue; }
+      f.media = raw.media;
+    }
+    if ((kind === "place" || kind === "exclude_government" || kind === "media") && Array.isArray(raw.fields)) f.fields = raw.fields.map(String).filter((k) => /^[A-Za-z][A-Za-z0-9_]{0,39}$/.test(k)).slice(0, 12);
     if (kind === "account" || kind === "place") {
       const values = Array.isArray(raw.values) ? raw.values.map((v) => String(v ?? "").trim()).filter(Boolean) : [];
       if (values.length < 1 || values.length > MAX_VALUES) { issues.push(`${label}: filter «${kind}» needs values (1 to ${MAX_VALUES})`); continue; }
@@ -204,6 +211,11 @@ export function filterVerdict(filters: ReadonlyArray<StageFilter> | undefined, m
         if (!whos.some((who) => matchesAnyNamedSource(f.values ?? [], who))) return "filter_account";
         break;
       }
+      case "media": {
+        // the card promises videos (or images): an item is delivered only when one of its own mapped fields proves it (a video field, a reel or video address, a type that says so)
+        if (!f.media || !itemProvesMedia(f.media, mapped, f.fields ?? (f.field ? [f.field] : []))) return "filter_media";
+        break;
+      }
       case "exclude_government": {
         // a ministry, an armed-forces authority, a state institute: a government, military or academic suffix of the website, or a name that says so (government.ts); a body that MAY be public is not rejected here (ingest sends it to the model check)
         if (governmentVerdict(mapped, f.fields ?? (f.field ? [f.field] : [])) === "government") return "filter_government";
@@ -239,7 +251,7 @@ const LANG_KEY = /^(lang|language|lang_code|language_code)$/i;
 
 const pick = (keys: ReadonlyArray<string>, re: RegExp): string | null => keys.find((k) => re.test(k)) ?? null;
 
-export interface FilterFields { text: string | null; date: string | null; account: string | null; /** Every mapped field that names the author (handle and display names). */ accountFields: string[]; place: string | null; /** Every mapped field that can carry evidence of a place: a location text, a website, a phone. */ placeFields: string[]; replyFlag: string | null; repostFlag: string | null; lang: string | null; /** Every mapped field that can say what a company is: its website, name, description, type. */ entityFields: string[] }
+export interface FilterFields { text: string | null; date: string | null; account: string | null; /** Every mapped field that names the author (handle and display names). */ accountFields: string[]; place: string | null; /** Every mapped field that can carry evidence of a place: a location text, a website, a phone. */ placeFields: string[]; replyFlag: string | null; repostFlag: string | null; lang: string | null; /** Every mapped field that can say what a company is: its website, name, description, type. */ entityFields: string[]; /** Every mapped field that can prove a video or an image (a video field, a type field, a link). */ mediaFields: Record<MediaKind, string[]> }
 
 /**
  * The mapped fields the checks can read, found by CODE from what the mapping really gives (the keys of the mapped items, the stage's columns, the relevance rule's text columns). Never the model's guess.
@@ -259,6 +271,7 @@ export function findFilterFields(input: { mappedKeys: ReadonlyArray<string>; col
     replyFlag: pick(keys, REPLY_FLAG_KEY) ?? byTitle(/هل هي رد|هل هو رد/),
     repostFlag: pick(keys, REPOST_FLAG_KEY),
     lang: pick(keys, LANG_KEY),
+    mediaFields: { video: mediaFieldsOf([...keys, ...keys.filter((k) => /فيديو|ريل|مقطع/.test(titleOf(k)))], "video"), image: mediaFieldsOf(keys, "image") },
     entityFields: [...new Set([...keys.filter((k) => ENTITY_KEY.test(k)), ...keys.filter((k) => /اسم|موقع الكتروني|الموقع|نبذه|نبذة|وصف|نوع/.test(titleOf(k)))])],
   };
 }
@@ -300,6 +313,13 @@ export function resolveFilters(declared: ReadonlyArray<StageFilter>, fields: Fil
         g.fields = [...new Set([...(f.fields ?? []), ...fields.entityFields])];
         if (g.fields.length === 0) problem = `${label}: leaving out government bodies needs a mapped website, name or description field; the mapping gives none`;
         break;
+      case "media": {
+        const proving = f.media ? fields.mediaFields[f.media].filter((k) => (f.media === "video" ? /video|reel|play|type|kind|url|link/i : /image|photo|picture|display|img|type|kind|url|link/i).test(k)) : [];
+        g.fields = [...new Set([...(f.fields ?? []), ...proving])];
+        // a field that SAYS it (video, reel, image, photo) must exist: a link and a type field alone cannot prove a post carries media when the mapping dropped the field that says so
+        if (!f.media || !g.fields.some((k) => (f.media === "video" ? /video|reel/i : /image|photo|picture|display|img/i).test(k)) ) problem = `${label}: the card promises ${f.media === "image" ? "images" : "videos"}, so every item must carry the proof from a mapped field (the source's ${f.media === "image" ? "image or photo" : "video or reel"} field, a ${f.media === "image" ? "photo" : "video"} address, or a type that says so); the mapping gives none. Map the item's own ${f.media === "image" ? "image" : "video"} field on every row, sample a source whose items ARE ${f.media === "image" ? "images" : "videos"} (a video search, a page's reels), or ask the customer whether posts without ${f.media === "image" ? "an image" : "a video"} are fine`;
+        break;
+      }
       case "place":
         g.field = f.field ?? fields.place ?? fields.placeFields[0] ?? undefined;
         if (f.places && f.places.length > 0) g.fields = [...new Set([...(g.field ? [g.field] : []), ...fields.placeFields])];
@@ -351,6 +371,7 @@ export function filterLineAr(f: StageFilter): string {
     case "account": return (f.values ?? []).length === 1 ? `من المصدر الذي سمّيته فقط: ${f.values![0]}.` : `من المصادر التي سمّيتها فقط: ${(f.values ?? []).join("، ")}.`;
     case "place": return `في: ${(f.values ?? []).join("، ")}.`;
     case "exclude_government": return "دون الجهات الحكومية والعسكرية.";
+    case "media": return mediaLineAr(f.media ?? "video");
   }
 }
 
@@ -364,6 +385,7 @@ export function filterLabelAr(f: StageFilter): string {
     case "account": return "حسابات محددة";
     case "place": return "المكان";
     case "exclude_government": return "استبعاد الجهات الحكومية";
+    case "media": return mediaLabelAr(f.media ?? "video");
   }
 }
 
