@@ -5,7 +5,8 @@ import type { FetchLike } from "./providerStatus";
 import { readProviderKeySettings } from "./providerKeyAdmin";
 import type { TregKeyPool } from "./tregKeyPool";
 import { checkPoolKey, runPoolHealth, type HealthRunResult } from "./tregPoolHealth";
-import { encryptPoolKey } from "./tregPoolCrypto";
+import { decryptPoolKey, encryptPoolKey } from "./tregPoolCrypto";
+import { runKeyCheck, type KeyCheckDeps, type KeyCheckReport } from "./tregKeyCheck";
 
 /**
  * Everything the admin «مجمّع مفاتيح TREG» section reads and does (docs/proposals/treg-key-pool/README.md). Admin only: the route verifies the role first and every SQL
@@ -34,7 +35,13 @@ export const MSG = {
   rolloutOff: "أُوقف المجمّع: عادت المنصة إلى المفتاح الحالي كما كانت قبله (خلال ثوانٍ).",
   settingsSaved: "حُفظ الحد الأدنى للرصيد.",
   refreshed: "تم الفحص.",
+  checkLimited: "تجاوزت عدد الفحوص المسموح به في الساعة. حاول بعد قليل.",
+  checkDone: "تم الفحص.",
+  checkNoKey: "تعذّرت قراءة هذا المفتاح للفحص.",
 } as const;
+
+/** The pasted-key checker and the per-key 3-step check each send a real (tiny, counted) data call: so each is limited per admin per hour, durably (the audit table), not only per server instance. */
+export const KEY_CHECK_LIMITS = { pasted: { max: 5, windowMs: 3_600_000, targetType: "treg_key_check_pasted" }, pool: { max: 20, windowMs: 3_600_000, targetType: "treg_key_check_pool" } } as const;
 
 export interface PoolActionOutcome { ok: boolean; reason: string; messageAr: string; status: number; keyId?: string; number?: number; last4?: string | null }
 export interface PoolAdminDeps { client: any; pool: TregKeyPool; fetchFn?: FetchLike; now?: () => number }
@@ -81,6 +88,10 @@ export interface PoolKeyView {
   status: "unknown" | "connected" | "error" | "revoked" | "out_of_balance"; statusReason: string | null; statusCheckedAt: string | null;
   balanceUsd: number | null; balanceCheckedAt: string | null;
   spend: { calls: number; usd: number; todayUsd: number; lastCallAt: string | null };
+  /** From SQL 07: when the key last ANSWERED a data call (success or empty) and how many calls failed since. Null until 07 is applied or when the key made no call in 14 days. */
+  callHealth?: { lastOkAt: string | null; lastFailedAt: string | null; failedSinceOk: number } | null;
+  /** The status says «connected» (or nothing) but the key's own calls are failing: the table must not show it as healthy. */
+  deadWarning?: boolean;
 }
 export interface PoolOverview {
   ready: boolean;
@@ -96,16 +107,20 @@ export interface PoolOverview {
   workerSeenAt: string | null;
   workerMismatch: boolean;
   noticesAr: string[];
+  /** SQL 07 (treg_pool_call_health) is applied: «آخر طلب ناجح» is a real figure. */
+  callHealthReady?: boolean;
   health?: HealthRunResult;
 }
 
+/** Calls that failed since the last answered one before a «connected» key is shown as not answering (the same count the pool needs to switch on 403s). */
+export const DEAD_KEY_FAILED_CALLS = 3;
 const microToUsd = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v / 1_000_000 : typeof v === "string" && /^-?\d+$/.test(v) ? Number(v) / 1_000_000 : null);
 const num = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? n : 0; };
 
 export async function loadPoolOverview(deps: PoolAdminDeps, options: { refresh?: boolean } = {}): Promise<PoolOverview> {
   const empty: PoolOverview = {
     ready: false, rolloutOn: false, activeKeyId: null, generation: 0, minBalanceUsd: 0.01, lastHealthRunAt: null, keys: [], events: [],
-    legacy: { source: "none", last4: null }, workerEnvLast4: null, workerSeenAt: null, workerMismatch: false, noticesAr: [],
+    legacy: { source: "none", last4: null }, workerEnvLast4: null, workerSeenAt: null, workerMismatch: false, noticesAr: [], callHealthReady: false,
   };
   const legacy = await resolveLegacyProviderKey("treg").catch(() => null);
   empty.legacy = { source: legacy?.source ?? "none", last4: legacy?.last4 ?? null };
@@ -124,14 +139,25 @@ export async function loadPoolOverview(deps: PoolAdminDeps, options: { refresh?:
   const spendBy = new Map<number, { calls: number; usd: number; todayUsd: number; lastCallAt: string | null }>();
   for (const r of Array.isArray(spendRes.data) ? spendRes.data : []) spendBy.set(Number(r.key_number), { calls: num(r.calls), usd: num(r.spend_usd), todayUsd: num(r.spend_today_usd), lastCallAt: r.last_call_at ?? null });
 
+  const healthRes = await rpc(deps, "treg_pool_call_health", {});
+  const callHealthReady = !healthRes.error && Array.isArray(healthRes.data);
+  const healthBy = new Map<number, { lastOkAt: string | null; lastFailedAt: string | null; failedSinceOk: number }>();
+  if (callHealthReady) for (const r of healthRes.data) healthBy.set(Number(r.key_number), { lastOkAt: r.last_ok_at ?? null, lastFailedAt: r.last_failed_at ?? null, failedSinceOk: num(r.failed_since_ok) });
+
   const state = ov.data.state;
-  const keys: PoolKeyView[] = (Array.isArray(ov.data.keys) ? ov.data.keys : []).map((k: any) => ({
-    id: String(k.id), number: Number(k.number), label: String(k.label), isMain: Boolean(k.is_main), inChain: Boolean(k.in_chain), chainPosition: Number(k.chain_position) || 0,
-    isActive: state.active_key_id === k.id, last4: k.last4 ?? null, accountEmail: k.account_email ?? null,
-    status: ["connected", "error", "revoked", "out_of_balance"].includes(k.status) ? k.status : "unknown", statusReason: k.status_reason ?? null, statusCheckedAt: k.status_checked_at ?? null,
-    balanceUsd: microToUsd(k.balance_micro), balanceCheckedAt: k.balance_checked_at ?? null,
-    spend: spendBy.get(Number(k.number)) ?? { calls: 0, usd: 0, todayUsd: 0, lastCallAt: null },
-  }));
+  const keys: PoolKeyView[] = (Array.isArray(ov.data.keys) ? ov.data.keys : []).map((k: any) => {
+    const status: PoolKeyView["status"] = ["connected", "error", "revoked", "out_of_balance"].includes(k.status) ? k.status : "unknown";
+    const callHealth = healthBy.get(Number(k.number)) ?? null;
+    return {
+      id: String(k.id), number: Number(k.number), label: String(k.label), isMain: Boolean(k.is_main), inChain: Boolean(k.in_chain), chainPosition: Number(k.chain_position) || 0,
+      isActive: state.active_key_id === k.id, last4: k.last4 ?? null, accountEmail: k.account_email ?? null,
+      status, statusReason: k.status_reason ?? null, statusCheckedAt: k.status_checked_at ?? null,
+      balanceUsd: microToUsd(k.balance_micro), balanceCheckedAt: k.balance_checked_at ?? null,
+      spend: spendBy.get(Number(k.number)) ?? { calls: 0, usd: 0, todayUsd: 0, lastCallAt: null },
+      callHealth,
+      deadWarning: (status === "connected" || status === "unknown") && (callHealth?.failedSinceOk ?? 0) >= DEAD_KEY_FAILED_CALLS,
+    };
+  });
   const main = keys.find((k) => k.isMain);
   const workerEnvLast4: string | null = state.worker_env_last4 ?? null;
   const workerMismatch = Boolean(main?.last4 && workerEnvLast4 && main.last4 !== workerEnvLast4);
@@ -145,7 +171,7 @@ export async function loadPoolOverview(deps: PoolAdminDeps, options: { refresh?:
     ready: true, rolloutOn: Boolean(state.rollout_on), activeKeyId: state.active_key_id ?? null, generation: num(state.generation),
     minBalanceUsd: (microToUsd(state.min_balance_micro) ?? 0.01), lastHealthRunAt: state.last_health_run_at ?? null, keys,
     events: (Array.isArray(ov.data.events) ? ov.data.events : []).map((e: any) => ({ at: e.at, kind: e.kind, keyNumber: e.key_number ?? null, keyLabel: e.key_label ?? null, toKeyNumber: e.to_key_number ?? null, toKeyLabel: e.to_key_label ?? null, reason: e.reason ?? null, source: e.source ?? null })),
-    legacy: { source: legacy?.source ?? "none", last4: legacy?.last4 ?? null }, workerEnvLast4, workerSeenAt: state.worker_seen_at ?? null, workerMismatch, noticesAr, ...(health ? { health } : {}),
+    legacy: { source: legacy?.source ?? "none", last4: legacy?.last4 ?? null }, workerEnvLast4, workerSeenAt: state.worker_seen_at ?? null, workerMismatch, noticesAr, callHealthReady, ...(health ? { health } : {}),
   };
 }
 
@@ -155,7 +181,8 @@ export async function loadPoolOverview(deps: PoolAdminDeps, options: { refresh?:
 async function vetKey(deps: PoolAdminDeps, key: string, orgId?: string | null): Promise<{ ok: true; result: Awaited<ReturnType<typeof checkPoolKey>> } | { ok: false; outcome: PoolActionOutcome }> {
   const result = await checkPoolKey(key, { fetchFn: deps.fetchFn, orgId: orgId ?? null });
   if (result.status === "revoked") return { ok: false, outcome: { ok: false, reason: "rejected", messageAr: MSG.rejected, status: 422 } };
-  if (result.status === null) return { ok: false, outcome: { ok: false, reason: "unreachable", messageAr: MSG.unreachable, status: 502 } };
+  // a key whose identity read passed but whose balance cannot be read is real (it is saved with no status: «connected» needs a number or a successful data call); anything else null is a blip
+  if (result.status === null && !result.identityOk) return { ok: false, outcome: { ok: false, reason: "unreachable", messageAr: MSG.unreachable, status: 502 } };
   if (result.status === "error") return { ok: false, outcome: { ok: false, reason: "unexpected", messageAr: MSG.unexpected, status: 502 } };
   return { ok: true, result };
 }
@@ -285,4 +312,93 @@ export async function refreshPoolKeys(deps: PoolAdminDeps, input: { keyId?: unkn
     return { ok: false, reason, messageAr: reason === "sql_not_ready" ? "ملف التحديث ٠٦ (قراءة المفاتيح للفحص) لم يُطبَّق بعد." : reason === "encryption_unavailable" ? MSG.encryptionUnavailable : MSG.failed, status: reason === "sql_not_ready" ? 409 : 503, health };
   }
   return { ok: true, reason: "ok", messageAr: MSG.refreshed, status: 200, health };
+}
+
+// ---- the 3-step key check (admin only) -------------------------------------------------------------------------------------------------
+
+export interface PublicKeyCheckReport { verdict: KeyCheckReport["verdict"]; statusAr: string; balanceUsd: number | null; providerText: string | null; noteAr: string | null; steps: KeyCheckReport["steps"]; costUsd: number }
+export type CheckOutcome = PoolActionOutcome & { report?: PublicKeyCheckReport };
+
+/** What the browser may receive: no account e-mail, no record fields, never the key. */
+export function toPublicReport(r: KeyCheckReport): PublicKeyCheckReport {
+  return { verdict: r.verdict, statusAr: r.statusAr, balanceUsd: r.balanceUsd, providerText: r.providerText, noteAr: r.noteAr, steps: r.steps, costUsd: r.costUsd };
+}
+
+export interface KeyCheckAdminDeps extends PoolAdminDeps { check?: Pick<KeyCheckDeps, "recorder" | "callFn" | "nonce"> }
+
+const checkAttempts = new Map<string, number[]>();
+export function __resetCheckLimiter(): void { checkAttempts.clear(); }
+
+/**
+ * One slot of the hourly allowance, taken BEFORE anything is sent. Durable: the attempts are counted in the audit table (so a restart or another server instance does not reset the
+ * allowance); the per-instance list is a second, cheaper gate. The audit row names the action only: never a key, not even its last 4 characters.
+ */
+async function takeCheckSlot(deps: PoolAdminDeps, adminId: string, kind: keyof typeof KEY_CHECK_LIMITS, labelAr: string): Promise<boolean> {
+  const lim = KEY_CHECK_LIMITS[kind];
+  const now = (deps.now ?? Date.now)();
+  const memKey = `${kind}:${adminId}`;
+  const recent = (checkAttempts.get(memKey) || []).filter((t) => now - t < lim.windowMs);
+  if (recent.length >= lim.max) { checkAttempts.set(memKey, recent); return false; }
+  try {
+    const since = new Date(now - lim.windowMs).toISOString();
+    const res = await deps.client.from("admin_audit_log").select("id", { count: "exact", head: true }).eq("actor_id", adminId).eq("target_type", lim.targetType).gte("created_at", since);
+    if (!res?.error && typeof res?.count === "number" && res.count >= lim.max) return false;
+  } catch { /* the per-instance gate still applies */ }
+  checkAttempts.set(memKey, [...recent, now]);
+  try {
+    await deps.client.from("admin_audit_log").insert({ actor_id: adminId, action: "key", target_type: lim.targetType, target_id: "attempt", details: { label: labelAr } });
+  } catch { /* an audit failure never blocks the admin's own check */ }
+  return true;
+}
+
+async function readMinBalanceMicro(deps: PoolAdminDeps): Promise<number | undefined> {
+  const rt = await rpc(deps, "treg_pool_runtime", {});
+  return typeof rt.data?.min_balance_micro === "number" ? rt.data.min_balance_micro : undefined;
+}
+
+/**
+ * «افحص»: a key PASTED by the admin, checked by the three steps and thrown away. It is validated for shape, held in this function's memory, sent only as the header of the three
+ * requests, and never saved, logged, put in an error, an audit line or the answer; the browser clears the field as soon as it sends it.
+ */
+export async function checkPastedKey(deps: KeyCheckAdminDeps, input: { adminId: string; key: unknown }): Promise<CheckOutcome> {
+  const shape = validateKeyShape(input.key);
+  if (shape) return { ok: false, reason: "invalid_key", messageAr: shape, status: 400 };
+  if (!(await takeCheckSlot(deps, input.adminId, "pasted", "فحص مفتاح TREG ملصوق"))) return { ok: false, reason: "rate_limited", messageAr: MSG.checkLimited, status: 429 };
+  const key = cleanKey(String(input.key));
+  try {
+    const report = await runKeyCheck(key, { client: deps.client, fetchFn: deps.fetchFn, minBalanceMicro: await readMinBalanceMicro(deps), ...deps.check });
+    return { ok: true, reason: "ok", messageAr: MSG.checkDone, status: 200, report: toPublicReport(report) };
+  } catch {
+    return { ok: false, reason: "failed", messageAr: MSG.failed, status: 500 };
+  }
+}
+
+/** «افحص الآن» of one pool key: the same three steps on the key stored in the pool (read and decrypted on the server, never shown), and the result is recorded on the key. */
+export async function checkPoolKeyNow(deps: KeyCheckAdminDeps, input: { adminId: string; keyId: unknown }): Promise<CheckOutcome> {
+  if (!validUuid(input.keyId)) return { ok: false, reason: "invalid_request", messageAr: MSG.invalidRequest, status: 400 };
+  if (!(await takeCheckSlot(deps, input.adminId, "pool", "فحص مفتاح TREG من المجمّع"))) return { ok: false, reason: "rate_limited", messageAr: MSG.checkLimited, status: 429 };
+  const enc = await deps.pool.encryptionKey();
+  if (!enc) return { ok: false, reason: "encryption_unavailable", messageAr: MSG.encryptionUnavailable, status: 503 };
+  const listed = await rpc(deps, "treg_pool_keys_for_check", { p_ids: [input.keyId], p_limit: 1 });
+  if (listed.error) return isMissingFn(listed.error) ? { ok: false, reason: "sql_not_ready", messageAr: "ملف التحديث ٠٦ (قراءة المفاتيح للفحص) لم يُطبَّق بعد.", status: 409 } : { ok: false, reason: "failed", messageAr: MSG.failed, status: 500 };
+  const row = (Array.isArray(listed.data) ? listed.data : []).find((k: any) => k?.id === input.keyId);
+  if (!row) return { ok: false, reason: "unknown_key", messageAr: MSG.checkNoKey, status: 404 };
+  let plain: string;
+  try { plain = decryptPoolKey(enc, row.id, row.ciphertext); } catch { return { ok: false, reason: "decrypt_failed", messageAr: MSG.checkNoKey, status: 503 }; }
+  try {
+    const settings = row.is_main ? await readProviderKeySettings(deps.client).catch(() => null) : null;
+    const report = await runKeyCheck(plain, {
+      client: deps.client, fetchFn: deps.fetchFn, orgId: settings?.tregOrgId ?? null, minBalanceMicro: await readMinBalanceMicro(deps),
+      keyRef: { id: row.id, number: Number(row.number), label: String(row.label), isMain: Boolean(row.is_main) }, ...deps.check,
+    });
+    // an inconclusive check records nothing (it would overwrite the reason of a refusal a call proved)
+    if (report.record.status !== null) {
+      const rec = await rpc(deps, "treg_pool_record_check", { p_key_id: row.id, p_status: report.record.status, p_reason: report.record.reason, p_balance_micro: report.record.balanceMicro, p_email: report.record.email, p_source: "admin" });
+      if (rec.data?.needs_failover === true && (report.record.status === "revoked" || report.record.status === "out_of_balance")) await deps.pool.failoverFromHealth(row.id, report.record.status, report.record.reason);
+    }
+    deps.pool.invalidate();
+    return { ok: true, reason: "ok", messageAr: MSG.checkDone, status: 200, keyId: row.id, number: Number(row.number), report: toPublicReport(report) };
+  } catch {
+    return { ok: false, reason: "failed", messageAr: MSG.failed, status: 500 };
+  }
 }

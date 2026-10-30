@@ -29,8 +29,12 @@ export function fakePoolDb(options: { admins?: string[] } = {}) {
   const alerts: FakeAlert[] = [];
   const calls = new Map<number, { key_id: string; key_number: number; key_label: string; source: string }>();
   const costs = new Map<number, number>();
+  const costStatus = new Map<number, "success" | "failed" | "empty">();
+  const costAt = new Map<number, number>();
+  /** provider_costs as the two spend functions see it (reserve_provider_spend_atomic / commit_provider_spend_v2, modelled from the live definitions): today's spend and the open estimates. */
+  const spend = { today: 0, nextCost: 1000, estimates: new Map<number, number>(), reserveCalls: [] as Array<{ job: string | null; provider: string; est: number; cap: number }> };
   const rpcLog: Array<{ fn: string; args: any }> = [];
-  const flags = { down: false, missingFunctions: false, encMissing: false, noCheckFn: false };
+  const flags = { down: false, missingFunctions: false, encMissing: false, noCheckFn: false, noCallHealth: false };
   let nextNumber = 1;
   let nextAlert = 1;
 
@@ -122,6 +126,29 @@ export function fakePoolDb(options: { admins?: string[] } = {}) {
       for (const [cost, c] of calls) { const e = by.get(c.key_number) ?? { key_number: c.key_number, key_label: c.key_label, calls: 0, spend_usd: 0, spend_today_usd: 0, last_call_at: iso() }; e.calls += 1; e.spend_usd += costs.get(cost) ?? 0; e.spend_today_usd += costs.get(cost) ?? 0; by.set(c.key_number, e); }
       return [...by.values()];
     },
+    reserve_provider_spend_atomic: (a) => {
+      spend.reserveCalls.push({ job: a.p_job_id ?? null, provider: a.p_provider, est: a.p_estimated_cost_usd, cap: a.p_daily_cap_usd });
+      if (spend.today + a.p_estimated_cost_usd > a.p_daily_cap_usd) return { allowed: false, current_spend: spend.today, daily_cap: a.p_daily_cap_usd, estimated_cost: a.p_estimated_cost_usd };
+      const id = spend.nextCost++; spend.today += a.p_estimated_cost_usd; spend.estimates.set(id, a.p_estimated_cost_usd); costs.set(id, a.p_estimated_cost_usd); costAt.set(id, clock.t);
+      return { allowed: true, cost_id: id, current_spend: spend.today, daily_cap: a.p_daily_cap_usd };
+    },
+    commit_provider_spend_v2: (a) => {
+      if (!spend.estimates.has(a.p_cost_id)) throw new Error("not found or already committed");
+      spend.today += a.p_actual_cost_usd - (spend.estimates.get(a.p_cost_id) ?? 0); spend.estimates.delete(a.p_cost_id);
+      costs.set(a.p_cost_id, a.p_actual_cost_usd); costStatus.set(a.p_cost_id, a.p_status); costAt.set(a.p_cost_id, clock.t);
+      return { success: true };
+    },
+    // SQL 07: when each key last ANSWERED a data call (success or empty) and the failures since; fed by `costStatus` per cost id
+    treg_pool_call_health: () => {
+      const by = new Map<number, { key_number: number; last_ok_at: string | null; last_failed_at: string | null; failed_since_ok: number }>();
+      const list = [...calls.entries()].map(([cost, c]) => ({ cost, ...c, status: costStatus.get(cost) ?? "success", at: costAt.get(cost) ?? clock.t })).sort((a, b) => a.at - b.at);
+      for (const c of list) {
+        const e = by.get(c.key_number) ?? { key_number: c.key_number, last_ok_at: null, last_failed_at: null, failed_since_ok: 0 };
+        if (c.status === "failed") { e.last_failed_at = new Date(c.at).toISOString(); e.failed_since_ok += 1; } else { e.last_ok_at = new Date(c.at).toISOString(); e.failed_since_ok = 0; }
+        by.set(c.key_number, e);
+      }
+      return [...by.values()];
+    },
     // ---- admin (role verified inside) ----
     admin_add_treg_pool_key: (a) => {
       if (!admins.has(a.p_admin_id)) return notAdmin;
@@ -180,8 +207,8 @@ export function fakePoolDb(options: { admins?: string[] } = {}) {
     rpc: vi.fn(async (fn: string, args: any = {}) => {
       rpcLog.push({ fn, args });
       if (flags.down) return { data: null, error: { code: "08006", message: "connection failure" } };
-      if (flags.missingFunctions || !handlers[fn] || (flags.noCheckFn && fn === "treg_pool_keys_for_check")) return { data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn} in the schema cache` } };
-      return { data: handlers[fn](args), error: null };
+      if (flags.missingFunctions || !handlers[fn] || (flags.noCheckFn && fn === "treg_pool_keys_for_check") || (flags.noCallHealth && fn === "treg_pool_call_health")) return { data: null, error: { code: "PGRST202", message: `Could not find the function public.${fn} in the schema cache` } };
+      try { return { data: handlers[fn](args), error: null }; } catch (e) { return { data: null, error: { code: "P0001", message: e instanceof Error ? e.message : "raised" } }; }
     }),
     from: (_table: string) => { const c: any = { select: () => c, eq: () => c, maybeSingle: async () => ({ data: null, error: null }), upsert: async () => ({ error: null }), insert: async () => ({ error: null }) }; return c; },
   };
@@ -200,7 +227,7 @@ export function fakePoolDb(options: { admins?: string[] } = {}) {
     return { id, number, plaintext, row };
   }
 
-  return { client, state, keys, events, alerts, calls, costs, rpcLog, flags, encKey, addKey, byId, live, ordered, setCost: (costId: number, usd: number) => costs.set(costId, usd), rpcCount: (fn: string) => rpcLog.filter((r) => r.fn === fn).length };
+  return { client, state, keys, events, alerts, calls, costs, spend, rpcLog, flags, encKey, addKey, byId, live, ordered, setCost: (costId: number, usd: number) => costs.set(costId, usd), setCostStatus: (costId: number, status: "success" | "failed" | "empty", at: number = clock.t) => { costStatus.set(costId, status); costAt.set(costId, at); }, rpcCount: (fn: string) => rpcLog.filter((r) => r.fn === fn).length };
 }
 export type FakePoolDb = ReturnType<typeof fakePoolDb>;
 
@@ -208,8 +235,8 @@ export type FakePoolDb = ReturnType<typeof fakePoolDb>;
 // A fake TREG: answers by the token in the X-Treg-Token header. Never a real network call.
 // ---------------------------------------------------------------------------------------------------------------------------------------
 
-export type TregMode = "ok" | "revoked" | "revoked403" | "empty" | "forbid403" | "route_max_cost" | "timeout" | "http503" | "http429" | "http400";
-export interface FakeTregKey { mode: TregMode; balanceMicro: number; email: string; org: string; meMode?: "ok" | "http503" | "timeout" }
+export type TregMode = "ok" | "revoked" | "revoked403" | "empty" | "forbid403" | "suspended403" | "route_max_cost" | "timeout" | "http503" | "http429" | "http400";
+export interface FakeTregKey { mode: TregMode; balanceMicro: number; email: string; org: string; meMode?: "ok" | "http503" | "timeout"; /** «unreadable»: the balance answers with no number (seen live for four keys on 2026-10-30) */ balanceMode?: "ok" | "unreadable" }
 
 export function fakeTreg() {
   const keys = new Map<string, FakeTregKey>();
@@ -229,7 +256,7 @@ export function fakeTreg() {
       return json({ email: k.email, org_id: k.org });
     }
     const bal = /^\/orgs\/([^/]+)\/balance$/.exec(url.pathname);
-    if (bal) return !k || k.mode === "revoked" ? json({ error: "unauthorized" }, 401) : json({ balance_micro: k.balanceMicro });
+    if (bal) return !k || k.mode === "revoked" ? json({ error: "unauthorized" }, 401) : k.balanceMode === "unreadable" ? json({ ok: true }) : json({ balance_micro: k.balanceMicro });
     if (url.pathname.startsWith("/call/")) {
       if (!k || k.mode === "revoked") return json({ error: "unauthorized" }, 401);
       switch (k.mode) {
@@ -237,6 +264,8 @@ export function fakeTreg() {
         case "empty": return json({ error: "insufficient_balance" }, 402);
         case "route_max_cost": return json({ error: "route_max_cost" }, 402);
         case "forbid403": return json({ error: "forbidden" }, 403);
+        // the incident of 2026-10-30: the identity and balance reads pass, every data call is refused with the account's own words
+        case "suspended403": return json({ detail: "org suspended" }, 403);
         case "http503": return json({ error: "unavailable" }, 503);
         case "http429": return json({ error: "rate_limited" }, 429);
         case "http400": return json({ error: "bad_request" }, 400);

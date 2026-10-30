@@ -8,7 +8,7 @@ import { fakePoolDb } from "./helpers/tregPoolKit";
 const root = path.resolve(__dirname, "..");
 const read = (p: string) => readFileSync(path.join(root, p), "utf8");
 const SQL_DIR = "docs/proposals/treg-key-pool";
-const sqlFiles = ["03_treg_pool_functions.sql", "04_treg_pool_cron.sql", "06_treg_pool_check_keys.sql"];
+const sqlFiles = ["03_treg_pool_functions.sql", "04_treg_pool_cron.sql", "06_treg_pool_check_keys.sql", "07_treg_pool_call_health.sql"];
 
 /** function name -> parameter names, from the SQL proposals the owner applied. */
 function sqlFunctions(): Map<string, string[]> {

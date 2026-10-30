@@ -42,11 +42,11 @@ describe("checking one key (identity read + balance read, nothing billed)", () =
     expect(await checkPoolKey(k.plaintext, { fetchFn: world.treg.fetch as any })).toMatchObject({ status: null, reason: "transient_server_error" });
   });
 
-  it("an unexpected 4xx is «error»; an answer with no team id is connected with the balance unread", async () => {
+  it("an unexpected 4xx is «error»; an answer with no team id passes the identity read but claims no status (a balance that cannot be read is not «connected»)", async () => {
     const fetch418 = vi.fn(async () => new Response("{}", { status: 418 }));
     expect(await checkPoolKey("testonly-x-0000000000", { fetchFn: fetch418 as any })).toMatchObject({ status: "error", reason: "http_418" });
     const noOrg = vi.fn(async () => new Response(JSON.stringify({ email: "a@b.co" }), { status: 200 }));
-    expect(await checkPoolKey("testonly-x-0000000000", { fetchFn: noOrg as any })).toMatchObject({ status: "connected", reason: "org_unknown", balanceMicro: null });
+    expect(await checkPoolKey("testonly-x-0000000000", { fetchFn: noOrg as any })).toMatchObject({ status: null, reason: "org_unknown", balanceMicro: null, identityOk: true });
   });
 });
 

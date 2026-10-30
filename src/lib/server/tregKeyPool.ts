@@ -1,5 +1,6 @@
 import { decryptPoolKey, parsePoolEncryptionKey } from "./tregPoolCrypto";
 import { checkProviderKey, extractTregOrgId, fetchTregBalance, type FetchLike } from "./providerStatus";
+import { accountRefusalReason } from "./tregRefusal";
 
 /**
  * THE TREG KEY POOL at call time (docs/proposals/treg-key-pool/README.md). One module shared by the website and the Heroku worker; it imports nothing of Next,
@@ -11,6 +12,9 @@ import { checkProviderKey, extractTregOrgId, fetchTregBalance, type FetchLike } 
  *  - afterCall(): when the key used answered 401/403/402 (not a price cap) it is VERIFIED with the free identity/balance reads; a confirmed revoked or empty key
  *    is recorded and the active key moves to the next one of the chain (main last) in one transaction (treg_pool_record_failover); the caller retries on it.
  *    Timeouts, 5xx, 429, 400/404/422 and route caps never switch anything.
+ *  - a 403 on a DATA call is judged by the call's own evidence, not only by the identity read (which passes for a suspended organisation): the answer's words name the account
+ *    («org suspended», «account disabled»), or POOL_FORBIDDEN_STREAK 403s in a row on at least POOL_FORBIDDEN_MIN_ENDPOINTS different endpoints inside POOL_FORBIDDEN_WINDOW_MS with no
+ *    answered call in between. Either one is a verdict on the key and moves the pool on. A single bare 403 still needs the identity read to fail, as before.
  *  - the plaintext key lives only in this process's memory and never leaves this module except as the header of the call that uses it.
  */
 export const POOL_SNAPSHOT_TTL_MS = 3_000;
@@ -24,6 +28,15 @@ export const POOL_RECORD_TIMEOUT_MS = 1_500;
 export const POOL_VERIFY_TIMEOUT_MS = 5_000;
 export const POOL_VERDICT_MEMO_MS = 5_000;
 export const POOL_EMERGENCY_REFLUSH_MS = 300_000;
+/**
+ * Three 403s in a row on two or more endpoints within two minutes, with no answered call between them. One refusing endpoint is a plan limit (it happens); three in a row across
+ * endpoints, with nothing answered in between, is the key. The worker's planning makes a call about every two seconds, so the incident of 2026-10-30 (ten 403s in 22 seconds on ten
+ * endpoints) would have switched on the third call. Counted per process; an answered call (2xx, 400, 404, 422) clears the count; 5xx, timeouts and 429 neither count nor clear.
+ */
+export const POOL_FORBIDDEN_STREAK = 3;
+export const POOL_FORBIDDEN_WINDOW_MS = 120_000;
+export const POOL_FORBIDDEN_MIN_ENDPOINTS = 2;
+const ANSWERED_NOT_FORBIDDEN = new Set([400, 404, 422]);
 export const POOL_DIRECT_ALERT_MIN_GAP_MS = 3_600_000;
 const LAST_REF_MAX = 2_000;
 const LAST_REF_TTL_MS = 30 * 60_000;
@@ -45,7 +58,11 @@ export interface RuntimeSnapshot { rollout_on: boolean; active_id: string | null
 type SnapshotResult = { state: "ok"; snap: RuntimeSnapshot } | { state: "not_ready" } | { state: "unreadable"; code: string };
 
 export type FailureVerdict = { status: "revoked" | "out_of_balance"; reason: string };
-export interface PoolCallOutcome { ok: boolean; httpStatus: number; isPlatformBalanceLow?: boolean; isRouteMaxCost?: boolean; blocked?: string; budgetStopped?: boolean }
+export interface PoolCallOutcome {
+  ok: boolean; httpStatus: number; isPlatformBalanceLow?: boolean; isRouteMaxCost?: boolean; blocked?: string; budgetStopped?: boolean;
+  /** The provider's own words of a failed call (already sanitized by the caller); read only to tell an ACCOUNT refusal from an endpoint refusal. */
+  error?: string; errorDetails?: string; detail?: string;
+}
 export interface EmergencyInfo { reason: string; source: "website" | "worker" }
 
 export interface TregKeyPoolDeps {
@@ -91,6 +108,8 @@ export class TregKeyPool {
   private readonly verifying = new Map<string, Promise<FailureVerdict | null>>();
   /** A failover just recorded for a key (a burst of calls failing on the same key records it once; the rest read the new active key). */
   private readonly recorded = new Map<string, { at: number; done: Promise<boolean> }>();
+  /** Recent 403s of data calls per key (this process only): the evidence of POOL_FORBIDDEN_STREAK. */
+  private readonly forbidden = new Map<string, Array<{ at: number; endpoint: string }>>();
   private readonly lastRefs = new Map<string, { ref: PoolKeyRef; at: number }>();
   private lastChoice: { at: number; key: string | null; mode: ChoiceMode } | null = null;
   private lastLegacyToken: string | undefined;
@@ -251,13 +270,15 @@ export class TregKeyPool {
    * After a call that FAILED on a pool key: the next key to retry on, or null (nothing to do, or the failure is not the key's). `forceMain` is the last allowed hop:
    * the retry goes straight to the main key.
    */
-  async afterCall(choice: KeyChoice, outcome: PoolCallOutcome, options: { forceMain?: boolean } = {}): Promise<KeyChoice | null> {
-    if (choice.mode !== "pool" || !choice.ref || !choice.key || outcome.ok || outcome.blocked || outcome.budgetStopped) return null;
+  async afterCall(choice: KeyChoice, outcome: PoolCallOutcome, options: { forceMain?: boolean; endpointId?: string } = {}): Promise<KeyChoice | null> {
+    if (choice.mode !== "pool" || !choice.ref || !choice.key || outcome.blocked || outcome.budgetStopped) return null;
+    this.noteAnswer(choice.ref.id, outcome, options.endpointId);
+    if (outcome.ok) return null;
     const balance402 = outcome.httpStatus === 402 && outcome.isPlatformBalanceLow === true && outcome.isRouteMaxCost !== true;
     const candidate = outcome.httpStatus === 401 || outcome.httpStatus === 403 || balance402;
     if (!candidate) return null;
 
-    const verdict = await this.verdictFor(choice.ref, choice.key, balance402);
+    const verdict = this.evidenceVerdict(choice.ref.id, outcome) ?? await this.verdictFor(choice.ref, choice.key, balance402);
     if (!verdict) return null;
     // One recording per key per burst: later callers WAIT for it (they must read the new active key, not the one this switch is replacing)
     let entry = this.recorded.get(choice.ref.id);
@@ -266,6 +287,7 @@ export class TregKeyPool {
       const done = (async () => {
         const recorded = await this.rpc("treg_pool_record_failover", { p_failed_key_id: failedId, p_new_status: verdict.status, p_reason: verdict.reason, p_source: this.source }, POOL_RECORD_TIMEOUT_MS + 1_000);
         if (recorded.error || !recorded.data?.success) return false;
+        this.forbidden.delete(failedId);
         this.invalidate();
         return true;
       })();
@@ -285,6 +307,27 @@ export class TregKeyPool {
     }
     const next = await this.choose(this.lastLegacyToken);
     return next.mode === "pool" && next.ref && next.ref.id !== choice.ref.id ? next : null;
+  }
+
+  /** Keeps the 403 evidence of a key: an answered call clears it, a 403 adds to it; everything else (5xx, timeouts, 429, 402) leaves it alone. */
+  private noteAnswer(keyId: string, outcome: PoolCallOutcome, endpointId: string | undefined): void {
+    if (outcome.ok || ANSWERED_NOT_FORBIDDEN.has(outcome.httpStatus)) { this.forbidden.delete(keyId); return; }
+    if (outcome.httpStatus !== 403) return;
+    const now = this.nowFn();
+    const recent = (this.forbidden.get(keyId) ?? []).filter((e) => now - e.at < POOL_FORBIDDEN_WINDOW_MS);
+    recent.push({ at: now, endpoint: endpointId ?? "?" });
+    this.forbidden.set(keyId, recent.slice(-20));
+  }
+
+  /** The verdict the call's own answer gives about its key, with no identity read: an account-level refusal text, or the 403 streak. Null = not conclusive. */
+  private evidenceVerdict(keyId: string, outcome: PoolCallOutcome): FailureVerdict | null {
+    if (outcome.httpStatus !== 403) return null;
+    const refusal = accountRefusalReason(`${outcome.errorDetails ?? ""} ${outcome.detail ?? ""} ${outcome.error ?? ""}`);
+    const recent = this.forbidden.get(keyId) ?? [];
+    const streak = recent.length >= POOL_FORBIDDEN_STREAK && new Set(recent.map((e) => e.endpoint)).size >= POOL_FORBIDDEN_MIN_ENDPOINTS;
+    const verdict: FailureVerdict | null = refusal ? { status: "revoked", reason: refusal } : streak ? { status: "revoked", reason: "auth_403_repeated" } : null;
+    if (verdict) this.verdicts.set(keyId, { at: this.nowFn(), verdict });
+    return verdict;
   }
 
   private verdictFor(ref: PoolKeyRef, key: string, balance402: boolean): Promise<FailureVerdict | null> {

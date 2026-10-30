@@ -3,7 +3,7 @@
 import { Fragment, useCallback, useEffect, useState } from "react";
 import { adminFetch } from "@/lib/adminApi";
 import { formatAr, normalizeDigits, toArabicDigits } from "@/lib/arabicDigits";
-import type { PoolKeyView, PoolOverview } from "@/lib/server/tregPoolAdmin";
+import type { PoolKeyView, PoolOverview, PublicKeyCheckReport } from "@/lib/server/tregPoolAdmin";
 import { agoAr } from "./format";
 import { StatusBadge, type BadgeTone } from "./ui";
 
@@ -22,8 +22,27 @@ const BTN_PRIMARY = "min-h-11 cursor-pointer rounded-full border-0 bg-ac px-4 te
 
 export const STATUS_AR: Record<PoolKeyView["status"], string> = { connected: "متصل", error: "خطأ", revoked: "ملغى", out_of_balance: "الرصيد خلص", unknown: "لم يُفحص" };
 const STATUS_TONE: Record<PoolKeyView["status"], BadgeTone> = { connected: "ok", error: "bad", revoked: "bad", out_of_balance: "bad", unknown: "mute" };
+/**
+ * What the status cell says. «متصل» alone must never hide a dead key: a refusal the platform's own calls proved is named (the account is suspended), and a key whose calls keep
+ * failing with no answered call since is shown as not answering whatever the free reads say.
+ */
+export function statusView(k: Pick<PoolKeyView, "status" | "statusReason" | "deadWarning">): { text: string; tone: BadgeTone } {
+  if (k.status === "revoked" && (k.statusReason === "org_suspended" || k.statusReason === "account_disabled")) return { text: "الحساب موقوف", tone: "bad" };
+  if (k.status === "revoked" && k.statusReason === "auth_403_repeated") return { text: "يرفض المزود طلباته", tone: "bad" };
+  if (k.deadWarning) return { text: "لا يرد على الطلبات", tone: "bad" };
+  return { text: STATUS_AR[k.status], tone: STATUS_TONE[k.status] };
+}
+/** «آخر طلب ناجح» of a key, from SQL 07; honest when the figure is not available. */
+export function lastOkLine(k: Pick<PoolKeyView, "callHealth">, ready: boolean): string {
+  if (!ready) return "آخر طلب ناجح: غير متاح (ملف ٠٧ لم يُطبَّق)";
+  const h = k.callHealth;
+  if (!h || !h.lastOkAt) return h && h.failedSinceOk > 0 ? `لا طلب ناجح مسجَّل · فشل ${toArabicDigits(h.failedSinceOk)}` : "لا طلب مسجَّل";
+  return `آخر طلب ناجح: ${agoAr(h.lastOkAt)}${h.failedSinceOk > 0 ? ` · فشل ${toArabicDigits(h.failedSinceOk)} بعده` : ""}`;
+}
 const MENU_ITEM = "flex min-h-10 w-full cursor-pointer items-center rounded-lg border-0 bg-transparent px-3 text-start text-[12px] text-ink hover:bg-sf2 disabled:cursor-default disabled:opacity-45";
 const closeMenu = (e: { currentTarget: HTMLElement }) => e.currentTarget.closest("details")?.removeAttribute("open");
+/** A tiny amount (a probe call costs 0.00015) with its real digits. */
+const usdFine = (n: number) => `${toArabicDigits(String(Number(n.toPrecision(2))).replace(".", "٫"))} دولار`;
 const usd = (n: number) => `${toArabicDigits(n.toFixed(n < 1 ? 4 : 2).replace(/\.?0+$/, "") || "0")} دولار`;
 
 /** The key's name with Arabic-Indic digits. Empty when the name is only the key's own number, so the number is never shown twice beside the name. */
@@ -52,6 +71,9 @@ export function TregKeyPool({ initial }: { initial?: PoolOverview | null }) {
   const [replacing, setReplacing] = useState<string | null>(null);
   const [mainPaste, setMainPaste] = useState(false);
   const [confirmOn, setConfirmOn] = useState(false);
+  const [probe, setProbe] = useState("");
+  const [report, setReport] = useState<{ title: string; r: PublicKeyCheckReport } | null>(null);
+  const [checkError, setCheckError] = useState("");
 
   const load = useCallback(async (refresh: boolean) => {
     setBusy(refresh ? "refresh" : "load");
@@ -75,6 +97,21 @@ export function TregKeyPool({ initial }: { initial?: PoolOverview | null }) {
       return false;
     } finally { setBusy(""); }
   };
+
+  /**
+   * The 3-step checker. The pasted key leaves the field the moment the request is sent (the field is cleared before anything is awaited) and is never kept in state, the page or a URL.
+   * `payload` for a pool key carries only its row id.
+   */
+  const runCheck = async (title: string, payload: Record<string, unknown>) => {
+    if (busy) return;
+    setBusy("check"); setCheckError(""); setReport(null);
+    try {
+      const r = await adminFetch<{ report?: PublicKeyCheckReport }>("/api/admin/treg-keys", { method: "POST", body: JSON.stringify(payload) });
+      if (r.report) setReport({ title, r: r.report });
+      await load(false);
+    } catch (e) { setCheckError(e instanceof Error ? e.message : "تعذّر تنفيذ الفحص."); } finally { setBusy(""); }
+  };
+  const checkPasted = () => { const k = probe; setProbe(""); void runCheck("المفتاح الملصوق", { action: "check_key", key: k }); };
 
   if (error && !ov) return <p role="alert" className="m-0 text-[13px] text-bad">{error}</p>;
   if (!ov) return <div className="h-48 rounded-[18px] bg-sf2 motion-safe:animate-pulse motion-reduce:animate-none" />;
@@ -109,7 +146,7 @@ export function TregKeyPool({ initial }: { initial?: PoolOverview | null }) {
             </>
           )}
           {ov.rolloutOn && <button type="button" disabled={busy !== ""} onClick={() => void act("rollout", { action: "set_rollout", on: false })} className={BTN} data-testid="rollout-off">إيقاف المجمّع (العودة للوضع الحالي)</button>}
-          <button type="button" disabled={busy !== "" || !ov.ready} onClick={() => void load(true)} className={BTN} data-testid="refresh-all">{busy === "refresh" ? "جارٍ الفحص…" : "فحص الآن"}</button>
+          <button type="button" disabled={busy !== "" || !ov.ready} onClick={() => void load(true)} className={BTN} title="قراءات مجانية فقط (الهوية والرصيد). للتأكد من أن المفتاح يرد على الطلبات استخدم «افحص الآن» في صف المفتاح." data-testid="refresh-all">{busy === "refresh" ? "جارٍ الفحص…" : "فحص الآن"}</button>
           {!main && ov.ready && (
             <>
               <button type="button" disabled={busy !== ""} onClick={() => void act("adopt", { action: "adopt_main", label: "الرئيسي" })} className={BTN_PRIMARY} data-testid="adopt-main">اعتماد المفتاح الحالي كمفتاح رئيسي</button>
@@ -174,8 +211,9 @@ export function TregKeyPool({ initial }: { initial?: PoolOverview | null }) {
                         <td data-label="الرصيد المتبقي" className="border-b border-ln px-2 py-3"><span className="rtable-val" dir="ltr">{k.balanceUsd === null ? "—" : usd(k.balanceUsd)}</span></td>
                         <td data-label="الحالة" className="border-b border-ln px-2 py-3">
                           <div className="rtable-val flex flex-col items-start gap-1.5 @max-[859px]:items-end">
-                            <StatusBadge tone={STATUS_TONE[k.status]}>{STATUS_AR[k.status]}</StatusBadge>
+                            <StatusBadge tone={statusView(k).tone}>{statusView(k).text}</StatusBadge>
                             <span className="text-[11px] text-mut">{k.statusCheckedAt ? `آخر فحص: ${agoAr(k.statusCheckedAt)}` : "لم يُفحص بعد"}</span>
+                            <span className="text-[11px]" style={{ color: k.deadWarning ? "var(--bad)" : "var(--mut)" }} data-testid={`last-ok-${k.number}`}>{lastOkLine(k, ov.callHealthReady === true)}</span>
                           </div>
                         </td>
                         <td data-label="الاستهلاك" className="border-b border-ln px-2 py-3">
@@ -185,7 +223,7 @@ export function TregKeyPool({ initial }: { initial?: PoolOverview | null }) {
                           <div className="flex flex-wrap items-center gap-1.5">
                             {!k.isActive
                               ? <button type="button" disabled={busy !== ""} onClick={() => void act("active", { action: "set_active", keyId: k.id, force: k.status === "revoked" || k.status === "out_of_balance" })} className={BTN_SMALL_PRIMARY}>تفعيل</button>
-                              : <button type="button" disabled={busy !== ""} onClick={() => void act("check", { action: "refresh", keyId: k.id })} className={BTN_SMALL}>فحص</button>}
+                              : <button type="button" disabled={busy !== ""} onClick={() => void runCheck(`المفتاح رقم ${toArabicDigits(k.number)}`, { action: "check_pool_key", keyId: k.id })} className={BTN_SMALL} data-testid={`check-now-${k.number}`}>افحص الآن</button>}
                             <details className="relative">
                               <summary aria-label={menuLabel} className={`${BTN_SMALL} inline-flex list-none items-center [&::-webkit-details-marker]:hidden`}>المزيد</summary>
                               <div role="group" aria-label={menuLabel} className="absolute end-0 z-20 mt-1 flex w-52 flex-col rounded-xl border border-ln bg-bg p-1" style={{ boxShadow: "var(--admin-shadow)" }}>
@@ -196,7 +234,7 @@ export function TregKeyPool({ initial }: { initial?: PoolOverview | null }) {
                                   </>
                                 )}
                                 {!k.isMain && <button type="button" disabled={busy !== ""} onClick={(e) => { closeMenu(e); void saveChain(k.inChain ? poolIds.filter((id) => id !== k.id) : [...poolIds, k.id]); }} className={MENU_ITEM}>{k.inChain ? "إخراج من السلسلة" : "إدخال في السلسلة"}</button>}
-                                {!k.isActive && <button type="button" disabled={busy !== ""} onClick={(e) => { closeMenu(e); void act("check", { action: "refresh", keyId: k.id }); }} className={MENU_ITEM}>فحص</button>}
+                                {!k.isActive && <button type="button" disabled={busy !== ""} onClick={(e) => { closeMenu(e); void runCheck(`المفتاح رقم ${toArabicDigits(k.number)}`, { action: "check_pool_key", keyId: k.id }); }} className={MENU_ITEM} data-testid={`check-now-${k.number}`}>افحص الآن</button>}
                                 <button type="button" disabled={busy !== ""} onClick={(e) => { closeMenu(e); setReplacing(replacing === k.id ? null : k.id); setSecret(""); }} className={MENU_ITEM}>استبدال</button>
                                 {!k.isMain && <button type="button" disabled={busy !== "" || k.isActive} title={k.isActive ? "هذا المفتاح قيد الاستخدام؛ فعّل مفتاحًا آخر أولًا" : undefined} onClick={(e) => { closeMenu(e); if (window.confirm(`حذف المفتاح رقم ${toArabicDigits(k.number)}${name ? ` (${name})` : ""}؟`)) void act("remove", { action: "remove", keyId: k.id }); }} className={`${MENU_ITEM} text-bad`}>حذف</button>}
                               </div>
@@ -238,6 +276,17 @@ export function TregKeyPool({ initial }: { initial?: PoolOverview | null }) {
         )}
       </div>
 
+      <div className="flex flex-col gap-2 rounded-2xl border border-ln bg-sf p-3.5" data-testid="key-checker">
+        <h4 className="m-0 text-[13px] font-semibold text-ink">فحص مفتاح قبل استخدامه</h4>
+        <p className="m-0 text-[11px] leading-[1.7] text-mut">الصق مفتاح TREG واضغط «افحص». يُجرى على الخادم فقط: قراءة الهوية، قراءة الرصيد، ثم طلب حقيقي واحد بتكلفة نحو {usdFine(0.00015)} يُحسب من الحد اليومي للمزود. المفتاح لا يُحفظ ولا يُسجَّل ولا يُعاد إليك، ويُمسح من الحقل فور الإرسال. الحد: ٥ فحوص في الساعة.</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <input type="password" dir="ltr" autoComplete="off" spellCheck={false} value={probe} onChange={(e) => setProbe(e.target.value)} placeholder="الصق مفتاح TREG هنا" aria-label="مفتاح TREG للفحص" className={`${FIELD} sm:max-w-md`} style={MONO} data-testid="checker-input" />
+          <button type="button" disabled={probe.trim().length < 12 || busy !== "" || !ov.ready} onClick={checkPasted} className={BTN_PRIMARY} data-testid="checker-run">{busy === "check" ? "جارٍ الفحص…" : "افحص"}</button>
+        </div>
+        {checkError && <p role="alert" className="m-0 text-[13px] leading-[1.8]" style={{ color: "var(--bad)" }} data-testid="checker-error">{checkError}</p>}
+        {report && <KeyCheckResult title={report.title} r={report.r} />}
+      </div>
+
       {ov.events.length > 0 && (
         <details className="text-[11px] text-mut">
           <summary className="cursor-pointer">آخر الأحداث</summary>
@@ -248,6 +297,26 @@ export function TregKeyPool({ initial }: { initial?: PoolOverview | null }) {
       )}
       <p className="m-0 text-[11px] leading-[1.7] text-fnt">الفحص الدوري كل ١٠ دقائق بطلبات قراءة مجانية فقط. المفتاح لا يُعرض كاملًا أبدًا. الحد الأدنى للرصيد قبل اعتبار المفتاح منتهيًا: {usd(ov.minBalanceUsd)}.</p>
     </section>
+  );
+}
+
+const VERDICT_TONE: Record<PublicKeyCheckReport["verdict"], BadgeTone> = { works: "ok", out_of_balance: "bad", suspended: "bad", refused: "bad", unknown: "mute" };
+const STEP_AR: Record<PublicKeyCheckReport["steps"][number]["name"], string> = { identity: "قراءة الهوية", balance: "قراءة الرصيد", data: "طلب حقيقي واحد" };
+
+/** The answer of one 3-step check: الحالة، الرصيد إن أمكن، ردّ المزود نفسه. Nothing here can contain a key: the server never returns one. */
+export function KeyCheckResult({ title, r }: { title: string; r: PublicKeyCheckReport }) {
+  return (
+    <div className="flex flex-col gap-1.5 rounded-xl border border-ln bg-bg p-3 text-[13px] leading-[1.8] text-ink" role="status" aria-live="polite" data-testid="check-report">
+      <div className="flex flex-wrap items-center gap-2"><span className="text-mut">{title}</span><StatusBadge tone={VERDICT_TONE[r.verdict]} testId="check-status">{r.statusAr}</StatusBadge></div>
+      <div>الحالة: <b>{r.statusAr}</b></div>
+      <div>الرصيد: {r.balanceUsd === null ? "غير متاح" : <bdi dir="ltr">{usd(r.balanceUsd)}</bdi>}</div>
+      {r.providerText && <div>ردّ المزود: <bdi dir="ltr" style={MONO}>{r.providerText}</bdi></div>}
+      {r.noteAr && <div className="text-mut">{r.noteAr}</div>}
+      <ul className="m-0 flex list-none flex-wrap gap-x-4 gap-y-1 p-0 text-[11px] text-mut">
+        {r.steps.map((s) => <li key={s.name}>{STEP_AR[s.name]}: {!s.ran ? "لم يُنفَّذ" : s.ok ? "نجح" : `لم ينجح${s.httpStatus ? ` (${toArabicDigits(s.httpStatus)})` : ""}`}</li>)}
+        {r.costUsd > 0 && <li>تكلفة الطلب: <bdi dir="ltr">{usdFine(r.costUsd)}</bdi></li>}
+      </ul>
+    </div>
   );
 }
 
