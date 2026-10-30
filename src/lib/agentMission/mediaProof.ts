@@ -87,3 +87,30 @@ export function rawMediaProof(kind: MediaKind, pageTexts: ReadonlyArray<string |
 
 /** Does a mapped key SAY it (a video, reel, image or photo field), as opposed to a link or a type field that can only support it? */
 export const keySaysMedia = (kind: MediaKind, key: string): boolean => fieldOf(kind).test(key);
+
+/** The mediaProof sources of a platform: where the catalog can show that an item IS a video (or an image), cheapest first inside each group. */
+export interface MediaProofSource { id: string; /** own: the source's items ARE the media (a page's reels, a video search); field: its items carry a field that proves it (a post search with a `video` object); verify: it reads one post and says whether it has a video (a post's detail or transcript). */ how: "own" | "field" | "verify"; inputs: string[] }
+
+export function mediaProofSources(catalog: { endpoints: ReadonlyArray<{ id: string; platform?: string | null; capability?: string | null; inputs: ReadonlyArray<{ name: string }>; item_fields?: Record<string, unknown> | null; cost?: { usd?: number | null } | null }> }, platform: string, kind: MediaKind, isAllowed: (id: string) => boolean): MediaProofSource[] {
+  const own = kind === "video" ? /\.(?:reels|videos|shorts)$|reel|video/i : /\.(?:photos|images)$|photo|image/i;
+  const out: Array<MediaProofSource & { usd: number }> = [];
+  for (const e of catalog.endpoints) {
+    const onPlatform = e.platform === platform || e.id.toLowerCase().includes(platform) || String(e.capability ?? "").startsWith(`${platform}.`);
+    if (!onPlatform || !isAllowed(e.id)) continue;
+    const cap = String(e.capability ?? "");
+    if (/adlibrary|marketplace|\.comment|company_ads|ads?_|events?\b|\.info$|profile\.id/i.test(`${e.id} ${cap}`)) continue;
+    const keys = Object.keys(e.item_fields ?? {});
+    const ownKind = (kind === "video" ? /\.(?:reels|videos|shorts)$/ : /\.(?:photos|images)$/).test(cap) || (cap === "" && own.test(e.id) && !/transcript/i.test(e.id));
+    const hasField = keys.some((k) => fieldOf(kind).test(k));
+    const verifies = /\.post\.(?:transcript|detail)$/.test(cap) || /post_transcript|post_detail/i.test(e.id);
+    const how = ownKind ? "own" : hasField ? "field" : verifies ? "verify" : null;
+    if (how) out.push({ id: e.id, how, inputs: e.inputs.map((i) => i.name).slice(0, 6), usd: Number(e.cost?.usd ?? 1) });
+  }
+  const rank = { own: 0, field: 1, verify: 2 } as const;
+  return out.sort((a, b) => rank[a.how] - rank[b.how] || a.usd - b.usd || a.id.localeCompare(b.id)).map(({ usd: _usd, ...x }) => x);
+}
+
+/** Said to the customer BEFORE approval, only after the planner was sent to the catalog's media sources and none proved it. */
+export const mediaUnprovenLineAr = (kind: MediaKind): string => (kind === "video"
+  ? "لم نجد في المصادر المتاحة ما يثبت وجود فيديو في كل منشور؛ سنسلّم المنشورات التي يثبت وجود فيديو فيها فقط، وقد يقل العدد عن المطلوب أو لا يصلك شيء، ولا يُخصم إلا ما يُسلَّم."
+  : "لم نجد في المصادر المتاحة ما يثبت وجود صورة في كل منشور؛ سنسلّم المنشورات التي يثبت وجود صورة فيها فقط، وقد يقل العدد عن المطلوب أو لا يصلك شيء، ولا يُخصم إلا ما يُسلَّم.");

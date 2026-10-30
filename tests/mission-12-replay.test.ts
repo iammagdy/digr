@@ -91,7 +91,7 @@ describe("1. YouTube named channels: planning gave up before the channel listing
 import { callIds, type Results } from "./helpers/agentFakeWorld";
 import { firstOutputId } from "./helpers/agentRelevance";
 import { filterVerdict, type StageFilter } from "../src/lib/agentMission/filters";
-import { itemProvesMedia, mediaFieldsOf, rawMediaProof, requestedMedia } from "../src/lib/agentMission/mediaProof";
+import { itemProvesMedia, mediaFieldsOf, mediaProofSources, rawMediaProof, requestedMedia } from "../src/lib/agentMission/mediaProof";
 
 describe("2. Facebook «هات ٥ فيديوهات ... عن منتخب مصر، ومن كل فيديو ١٠ تعليقات»: the card promises videos only when the sampled items prove them (live: card 405 points, approved, then «لم يُسلَّم أي شيء»)", () => {
   const POSTS = "justoneapi.x.facebook-search-post-v1";
@@ -165,13 +165,74 @@ describe("2. Facebook «هات ٥ فيديوهات ... عن منتخب مصر، 
     expect(verdicts).toEqual([null, "filter_media", "filter_media", "filter_media", "filter_media"]);
   });
 
-  it("no sampled post proves a video: the plan is refused BEFORE the card, with what to do (live: the card was made and the run ended with nothing)", async () => {
-    const r = await run([]);
+  const REELS = "scrapecreators.x.v1-facebook-profile-reels";
+  const reelsPage = { success: true, reels: Array.from({ length: 6 }, (_, i) => ({ id: `r${i}`, post_id: `rp${i}`, creation_time: "2026-10-03T09:42:08.000Z", url: `https://www.facebook.com/reel/15337039547710${i}`, view_count: 1000 + i, description: `منتخب مصر ريل رقم ${i}`, video_id: `15337039547710${i}` })) };
+  const MAP_REELS = "return inputs.call_0003.reels.map(r => ({ id: r.video_id, text: r.description, link: r.url, views: r.view_count, date: r.creation_time }))";
+  /** The live plan shape (a post search whose sampled posts prove no video), then the planner does what it is sent to do: it samples the page's reels and builds the card from them. */
+  const reelsFlow = (): FakeStep[] => [
+    ...steps([]),
+    { tool: "describe_endpoint", args: { id: REELS } },
+    { tool: "treg_call", args: { endpoint_id: REELS, params: { url: "https://www.facebook.com/page0" }, why } },
+    { tool: "run_code", args: (r: Results) => ({ code: MAP_REELS, files: [callIds(r)[2]] }) },
+    { tool: "propose_plan", args: (r: Results) => ({
+      summary_ar: "نجمع ريلز فيسبوك عن منتخب مصر، ومن كل ريل عشرة تعليقات.",
+      stages: [
+        { key: "posts", title_ar: "ريلز فيسبوك عن منتخب مصر", endpoint_id: REELS, expected_rows: 5, parent_key: null, deliver: false,
+          columns: cols(["text", "وصف الريل"], ["link", "رابط الريل"], ["views", "المشاهدات"], ["date", "التاريخ"]),
+          sample_rows: [{ id: "153370395477100", text: "منتخب مصر ريل رقم 0", link: "https://www.facebook.com/reel/153370395477100", views: 1000, date: "2026-10-03T09:42:08.000Z" }], measured_by: [callIds(r)[2]], yield_from: firstOutputId(r),
+          relevance: { subject_ar: "منتخب مصر", terms: ["منتخب مصر"], text_columns: ["text"], min_own_words: 0 } },
+        { key: "comments", title_ar: "تعليقات على الريلز المختارة", endpoint_id: COMMENTS, expected_rows: 50, parent_key: "posts", per_parent_rows: 10, deliver: true,
+          columns: cols(["text", "نص التعليق"], ["author", "المعلّق"], ["date", "تاريخ التعليق"]),
+          sample_rows: [{ id: "c0", text: "تعليق 0", author: "قارئ 0", date: "2026-10-03T09:42:08.000Z" }], measured_by: [callIds(r)[1]] },
+      ],
+    }) },
+  ];
+  async function runFlow(flow: FakeStep[], answers: unknown[]) {
+    const store = createMemoryStore();
+    store.missions.set("msn_fbv2", newMission({ id: "msn_fbv2", user_id: USER_ID, status: "planning", request_text: REQUEST }));
+    const queue = [...answers];
+    const call = async () => { const n = queue.shift(); if (!n) throw new Error("no fake answer left"); return n as never; };
+    const driver = createFakeDriver(flow);
+    const rec = fakeRecorder();
+    const deps: RunnerDeps = { store, client: fakeMoneyClient().client, catalog, driver, recorder: rec.recorder, commit: rec.commit, call: call as never, models: { planning: "claude-haiku-5-5", execution: "claude-haiku-5-5" }, resolveAccess: async () => NOT_ADMIN };
+    await runPlanning(deps, store.missions.get("msn_fbv2")!);
+    return { store, driver, mission: store.missions.get("msn_fbv2")! };
+  }
+
+  it("no sampled post proves a video: the plan is NOT refused, it is sent to the catalog's video and reel sources, and the card is built from the one that proves video", async () => {
+    const r = await runFlow(reelsFlow(), [tregResult(page([]), 0.02952), tregResult(commentsPage, 0.00188), tregResult(reelsPage, 0.00188)]);
     const proposals = r.driver.results.filter((x) => x.tool === "propose_plan").map((x) => x.result as { ok?: boolean; issues?: string[] });
     expect(proposals[0].ok).toBe(false);
-    expect(JSON.stringify(proposals[0].issues)).toContain("proves one");
-    expect(JSON.stringify(proposals[0].issues)).toContain("ask_question");
-    expect(r.mission.status).not.toBe("plan_ready");
+    const sentBack = JSON.stringify(proposals[0].issues);
+    // it names the catalog's sources that can prove a video: the page's reels first, then the post search that carries a video object, then the post's detail and transcript
+    expect(sentBack).toContain(REELS);
+    expect(sentBack).toContain("anyapi.facebook.profile_reels");
+    expect(sentBack).not.toContain("justoneapi.x.facebook-search-post-v1"); // already sampled: not offered again
+    expect(sentBack).toContain("anyapi.facebook.post_transcript");
+    expect(proposals[1].ok).toBe(true);
+    expect(r.mission.status).toBe("plan_ready");
+    expect(r.mission.plan!.stages[0].endpoint_id).toBe(REELS);
+    // the source's items ARE reels: no media filter is needed and the card does not say that video could not be proven
+    expect((r.mission.plan!.stages[0].filters ?? []).some((f) => f.kind === "media")).toBe(false);
+    expect(JSON.stringify(r.mission.plan_public)).not.toContain("لم نجد في المصادر المتاحة ما يثبت وجود فيديو");
+  });
+
+  it("after three send-backs with fewer than three media sources reached, the plan is accepted and the card tells the customer BEFORE approval (the filter stays, only proven posts are delivered)", async () => {
+    const same = steps([]);
+    const propose = same[same.length - 1];
+    const r = await runFlow([...same, propose, propose, propose], [tregResult(page([]), 0.02952), tregResult(commentsPage, 0.00188)]);
+    const proposals = r.driver.results.filter((x) => x.tool === "propose_plan").map((x) => (x.result as { ok?: boolean }).ok === true);
+    expect(proposals).toEqual([false, false, false, true]);
+    expect(r.mission.status).toBe("plan_ready");
+    expect(JSON.stringify(r.mission.plan_public)).toContain("لم نجد في المصادر المتاحة ما يثبت وجود فيديو");
+  });
+
+  it("the catalog's media sources of Facebook, by how they prove it", () => {
+    const list = mediaProofSources(catalog, "facebook", "video", () => true);
+    const by = (how: string) => list.filter((x) => x.how === how).map((x) => x.id);
+    expect(by("own")).toEqual(["anyapi.facebook.profile_reels", "scrapecreators.x.v1-facebook-profile-reels"]);
+    expect(by("field")).toContain("justoneapi.x.facebook-search-post-v1");
+    expect(by("verify")).toEqual(expect.arrayContaining(["scrapecreators.x.v1-facebook-post-transcript", "anyapi.facebook.post_transcript", "scrapecreators.x.v1-facebook-post"]));
   });
 
   it("the proof reader: the catalog's own item fields (a video object, a reel address, a type) prove a video; a null field, a text or a photo post prove nothing", () => {

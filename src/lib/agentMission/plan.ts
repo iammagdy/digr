@@ -17,7 +17,7 @@ import { APPROX_DATES_CARD_LINE_AR } from "./relativeDates";
 import { isCompanyStage, isEntityStage, requestNamesSector, sectorEnglishWords, sectorWordsOf } from "./entities";
 import { placeEntry, placeLabelsAr, placesInText } from "./places";
 import { excludesGovernment } from "./government";
-import { isMediaCapability, keySaysMedia, rawMediaProof, requestedMedia } from "./mediaProof";
+import { isMediaCapability, keySaysMedia, rawMediaProof, requestedMedia, type MediaKind } from "./mediaProof";
 import { assumptionLinesShown, CHILD_RAW_FILTER_KINDS, defaultLanguageOf, filterVerdict, filterLabelAr, filterLineAr, findFilterFields, isEnabled, kindsPromisedBy, parseFilters, promiseIssues, resolveFilters, type StageFilter } from "./filters";
 
 /**
@@ -181,7 +181,9 @@ export interface PlanQuantity {
   source: "request" | "edit";
 }
 
-export type PlanCheck = { ok: true; plan: PricedPlan } | { ok: false; issues: string[] };
+/** A stage that promises videos (or images) whose measured page does not prove them: the planner is sent to the catalog's media sources before the card says so. */
+export interface MediaUnproven { stage_key: string; endpoint_id: string; media: MediaKind; why: "no_field" | "no_proof" }
+export type PlanCheck = { ok: true; plan: PricedPlan; mediaUnproven?: MediaUnproven[] } | { ok: false; issues: string[] };
 
 const KEY_RE = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
 const MAX_ASSUMPTIONS = 6;
@@ -250,6 +252,7 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
   const issues: string[] = [];
   if (!isRecord(input)) return { ok: false, issues: ["the plan must be an object"] };
   const stagesIn = Array.isArray(input.stages) ? input.stages : [];
+  const mediaUnproven: MediaUnproven[] = [];
   if (stagesIn.length < 1 || stagesIn.length > MAX_PLAN_STAGES) return { ok: false, issues: [`a plan has 1 to ${MAX_PLAN_STAGES} stages`] };
   const summary = checkCustomerText(input.summary_ar, { maxChars: 600 });
   if (summary.issues.length) issues.push(`summary_ar: ${summary.issues.join("; ")}`);
@@ -467,7 +470,10 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
       const mappedCount = (yieldRows ?? samples.filter(isRecord)).length;
       mediaKeepsOnlyProven = raw.proven > 0 && mappedCount > 0 && mappedCount <= raw.proven;
     }
-    const declaredMedia = mediaStage && !mediaKeepsOnlyProven && !declaredFull.some((f) => f.kind === "media" && isEnabled(f))
+    // NO MAPPED FIELD CAN PROVE IT: the filter cannot be enforced, so it is not added; the planner is sent to the media sources first (tools.ts), the card says so only after that
+    const mediaNoField = mediaStage && !mediaKeepsOnlyProven && !fields.mediaFields[askedMedia!].some((k) => keySaysMedia(askedMedia!, k));
+    if (mediaNoField) mediaUnproven.push({ stage_key: key, endpoint_id: endpointId, media: askedMedia!, why: "no_field" });
+    const declaredMedia = mediaStage && !mediaKeepsOnlyProven && !mediaNoField && !declaredFull.some((f) => f.kind === "media" && isEnabled(f))
       ? [...declaredFull.filter((f) => f.kind !== "media"), { kind: "media" as const, media: askedMedia! }]
       : declaredFull;
     const resolvedAll = resolveFilters(declaredMedia, fields, label);
@@ -501,13 +507,16 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
         const mediaF = pricedFilters.find((f) => f.kind === "media");
         const placeOnly = pricedFilters.filter((f) => f.kind === "place");
         // THE SAMPLE PROVES NO VIDEO (live: the card promised videos from a post search whose sampled posts carried none that the mapping could show): said before the card, so the customer is never asked to approve what no sample showed
-        if (mediaF && placeOnly.length === 0) issues.push(`${label}: the card promises ${mediaF.media === "image" ? "images" : "videos"} but none of the ${yieldRows.length} items of your measured page proves one (no mapped ${mediaF.media === "image" ? "image or photo" : "video or reel"} field holds a value, no address is a ${mediaF.media === "image" ? "photo" : "video"} address, no type says so). Do NOT promise it. Sample a source whose items ARE ${mediaF.media === "image" ? "images" : "videos"} (a video search, a page's reels, a post's detail), another query, or ask the customer (ask_question) whether posts without ${mediaF.media === "image" ? "an image" : "a video"} are fine; if the catalog has no source that can prove it, finish with cannot_serve and say so`);
+        if (mediaF && placeOnly.length === 0) mediaUnproven.push({ stage_key: key, endpoint_id: endpointId, media: mediaF.media ?? "video", why: "no_proof" });
         else issues.push(`${label}: none of the ${yieldRows.length} items of your measured page carries evidence of ${placeOnly.flatMap((f) => f.values ?? []).join("، ")}${mediaF ? " together with the media the card promises" : ""} in a mapped field; map the country, city, address, website or phone field of every item, or sample a source that gives one`);
       }
-      const after = classifyRows(relevance, passing).counts;
-      sampleMatching = after.match;
-      yieldShare = Math.min(1, Math.max(0.02, (after.match + 0.5 * after.review) / yieldRows.length));
-      reviewShare = after.review / yieldRows.length;
+      // a sample that proves no media leaves the price as the topic share made it (the filter still keeps only proven items, and only what is delivered is charged)
+      if (passing.length > 0 || !pricedFilters.every((f) => f.kind === "media")) {
+        const after = classifyRows(relevance, passing).counts;
+        sampleMatching = after.match;
+        yieldShare = Math.min(1, Math.max(0.02, (after.match + 0.5 * after.review) / yieldRows.length));
+        reviewShare = after.review / yieldRows.length;
+      }
     }
 
     priced.push({
@@ -593,7 +602,7 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
   if (price.overCap) return { ok: false, issues: [`the mission would hold ${price.reservePoints} points, more than the job limit; lower the expected rows`] };
   // THE TITLE OF A PEOPLE STAGE THAT ONLY RANKS BY ROLE does not promise the role (roles.ts); done last, so the checks above still read the noun the model wrote
   for (const st of priced) if (st.role_preference && st.parent_key !== null) st.title_ar = neutralPeopleTitleAr(st.title_ar, st.role_preference.role, itemNounOf(priced.find((p) => p.key === st.parent_key)?.title_ar ?? "").singular);
-  return { ok: true, plan: { summary_ar: summary.text, stages: priced, price, ...(notes.length ? { notes_ar: notes } : {}), ...(assumptions.length ? { assumptions_ar: assumptions } : {}), ...(quantity ? { quantity } : {}), ...(unserved.length ? { unserved_steps: unserved } : {}) } };
+  return { ok: true, plan: { summary_ar: summary.text, stages: priced, price, ...(notes.length ? { notes_ar: notes } : {}), ...(assumptions.length ? { assumptions_ar: assumptions } : {}), ...(quantity ? { quantity } : {}), ...(unserved.length ? { unserved_steps: unserved } : {}) }, ...(mediaUnproven.length ? { mediaUnproven } : {}) };
 }
 
 /** The first sentence of a text: the customer card says what will be delivered in ONE sentence. */
