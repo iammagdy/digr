@@ -401,3 +401,32 @@ Existing tests changed: none (see the PR for the exact count).
 - The real planner: that it samples the channel listings after the refusal, declares `calls`, and builds a plan on the second Facebook run; that the real listing sources (`crawl4ai.youtube.channel.videos` takes a channel id, a handle or a name) accept the handle the planner chooses.
 - That an `until`/`channel` listing returns 12 or more videos a call (its catalog says 15 by default): a channel with fewer on-topic videos than its share delivers fewer, said by the existing shortfall sentence.
 - The model check on the new company doubts (the live check answered nothing usable in that run).
+
+## 16. The «عندك مهام مفتوحة» incident of 2026-10-30 (test account; read-only evidence; fix: one definition of «open»)
+
+Reported: every new request and «إعادة المحاولة» refused with «عندك مهام مفتوحة بالفعل قيد الإعداد», no card, «طلباتي» empty of work in progress, balance 11,920 -> 9,920 with no visible charge. All rows below were read with SELECT only on 2026-10-30 15:31 UTC (account `b0d08be8-db61-4860-841e-fa963045557e`).
+
+**What the limiter counts** (`createCustomerMission`, before this fix): `missions` of the user with status in (`queued`, `planning`, `needs_input`), at least `AGENT_MAX_OPEN_MISSIONS_PER_USER` = 3 -> HTTP 429. No lease, no age, no worker check.
+
+**What matched**: exactly three rows, all `needs_input`, none `queued` or `planning` (global: 0 missions queued, planning, approved or executing; 0 expired leases):
+
+| mission | created (UTC) | request | conversation |
+|---|---|---|---|
+| `msn_4b08aab1dfe4b5d5b8ee` | 2026-10-28 18:03 | «استخرج لي بيانات حساب عام على تيك توك…» (question: which handle?) | `017436fe03b0484091e6` |
+| `msn_cc494158fa9f27ff1ab7` | 2026-10-30 01:29 | «عايز بيانات عن السوق المصري» (question: which kind of data?) | `7ab026561e0e4843a8f6` |
+| `msn_61f9f496279cacccc067` | 2026-10-30 01:43 | «عايز ٥ حاجات عن السياحة» (question: which kind?) | `754b057d4af543c5a396` |
+
+**Root cause, in plain words**: the agent asked three clarifying questions and nobody answered them (each in its own conversation, the customer moved on). A question that waits for the CUSTOMER is not work in the worker's hands, but the limiter counted it, so three unanswered questions closed the door. The chat's own rule («a new request replaces the unapproved plan above it») cancels only the latest mission of the SAME conversation, and each question lived in an abandoned one. «طلباتي» lists the `jobs` table (a job exists only after approval), so it could never show a question; the two screens used two definitions of «open» and the customer saw one of them. It was NOT a mission stuck in `planning` (that was the first hypothesis; the rows disprove it) and not a dead worker: `agent_worker_heartbeat` latest beat 2026-10-30 15:32:00 UTC (age under 30 s), `active_missions` 0; the last mission event is 01:43:33 UTC, the last call 01:30:59 UTC, because nothing was queued after that. Refused turns in the messages table: 01:44, 01:47, 01:49, 14:13, 14:20, 14:27 UTC (each answered by the refusal sentence; their user messages stayed `request_status = 'planning'` for good, which this fix also ends).
+
+**The 2,000 points** (`credit_ledger`, 493 rows for the account): balance at 2026-10-30 00:00 UTC = 11,920; balance now = 9,920; every row since 00:00 UTC is `res_`/`chg_`/`rel_`: 10 x (`res_` -200, `chg_` -200, `rel_` +200) = net -2,000, no `top_` and no `adm_` row. The ten jobs are the ten missions completed between 00:27 and 00:57 UTC (3 or 5 items each, charge 200 = the reserve, never above it): `job_quote_869e742f…` (5 companies), `…0306a731…` (Google), `…6363738a…` (X), `…816afd96…` (Meta ads), `…180e755d…` (Amazon), `…1ff3bf5c…` (Tripadvisor), `…8f46c507…` (Hacker News), `…e59e9c7c…` (GitHub), `…a9873f9b…` (stocks), `…271c8ca9…` (Wikipedia). Every job of the account (182) has its release: held now = 0. Nothing is missing from the ledger and nothing is charged twice; the points were charged by completed missions that ran after the 11,920 reading. NOT PROVEN: why the wallet did not show them to the customer (not examined here; the rows exist and are complete).
+
+**The fix** (general rules; no SQL, no Edge Function, no price/cap/markup/model string, settlement untouched):
+- `src/lib/agentMission/openMissions.ts` is the ONE definition (`openKindOf`): `worker` (queued, or planning with a live lease) counts toward the limit; `waiting_for_customer` (needs_input, plan_ready) never counts; `stuck` (planning whose lease ran out more than `AGENT_STUCK_PLANNING_AFTER_MS` = 10 min ago) never counts and is ended; everything else is a job.
+- The limiter and the list the customer reads call the same function (`listOpenMissions`); a test proves, for every status, that a mission blocks exactly when the list says so.
+- A stuck planning mission is ended honestly (`failStuckPlanning`): `failed`, the existing «من جانبنا» sentence, admin flag `reason=lease_lost_past_timeout`, compare-and-set on status and expired lease (a worker that took it over keeps it), idempotent, never a mission that has a job. Planning holds nothing (the reserve exists only after approval), so no money function is called; the test asserts zero money calls and zero ledger rows.
+- The refusal sentence names the blocking missions with their state; `GET /api/missions` and a «مهام قيد الإعداد» block at the top of «طلباتي» list every open mission (state, open in its conversation, cancel for the ones that wait).
+- A refused request ends its message («completed») instead of leaving it `planning`.
+
+Tests: `tests/stuck-open-missions-replay.test.ts` (the exact rows above, calls only functions that exist on main: 3 failed on main, pass now), `tests/open-missions.test.ts`. One existing test changed, for a different reason: `tests/source-ranking.test.ts` (its planner block dated its recorded calls against a fixed 2026-10-29 10:30 UTC while the planner reads the real clock for the 24-hour source-health window: 3 tests failed on main from 2026-10-30 10:30 UTC on; a fixed `Date` for that block, like #297 did for the daily review spend test). The SDK type test needs `agent/node_modules` (`npm ci` in `agent/`).
+
+NOT PROVEN: the customer's «send stayed disabled 15+ minutes» (the composer is disabled by the page's own loading state, not by data I can read); the live page of «طلباتي» with the new block (not exercised in a browser); that no other path creates a second blocker.
