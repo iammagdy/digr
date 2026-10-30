@@ -25,6 +25,7 @@ import { chunkMarksFromEvents, computeJobProgress } from "@/lib/jobProgress";
 import { STALLED_LINE_AR, isJobStalled } from "@/lib/jobStall";
 import { closePageLineAr } from "@/lib/driverMode";
 import MissionPlanInline from "@/components/mission/MissionPlanInline";
+import OpenMissionsList from "@/components/mission/OpenMissionsList";
 import { MODEL_PLAN_SLUG } from "@/lib/modelPlanner/constants";
 import { useDriverMode } from "@/hooks/useDriverMode";
 import { deliveredOfAr, itemNounOfPlan, knownItemNoun } from "@/lib/agentMission/itemNoun";
@@ -416,6 +417,8 @@ export default function RequestsPage() {
             );
           })}
         </div>
+
+        <OpenMissionsList />
 
         {failed && <p role="alert" className="m-0 text-[13px] text-bad">تعذّر تحميل طلباتك الآن. تحقق من الاتصال ثم حاول مرة أخرى.</p>}
         {dlError && <p role="alert" className="m-0 text-[13px] text-bad">{dlError}</p>}

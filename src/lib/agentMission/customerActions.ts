@@ -7,17 +7,17 @@ import { userWillBeEmailed } from "./emailEligibility";
 import { customerPlanView, type PricedPlan, type PricedStage } from "./plan";
 import { applyPlanEdits } from "./planEdit";
 import { missionDownloadName } from "./fileNames";
+import { listOpenMissions, openLimitMessageAr, type OpenMissionView } from "./openMissions";
 
 /**
  * What a CUSTOMER does with a mission, on the server, with the service-role client and an explicit owner check on every call (a customer reaches only their own missions; the browser never
  * holds the service key). The agent plans and works in the worker; the site creates the mission, shows it, approves it through the existing money functions, and cancels or answers it.
  */
-export type CustomerResult<T = Record<string, unknown>> = ({ ok: true } & T) | { ok: false; status: number; error: string };
+export type CustomerResult<T = Record<string, unknown>> = ({ ok: true } & T) | { ok: false; status: number; error: string; blockers?: OpenMissionView[] };
 const bad = (status: number, error: string): { ok: false; status: number; error: string } => ({ ok: false, status, error });
 
 const MIN_TEXT = 3;
 const MAX_TEXT = 4000;
-const OPEN_STATUSES = ["queued", "planning", "needs_input"];
 const CANCELLABLE = ["queued", "needs_input", "plan_ready"];
 const SAFE_COLUMNS = "id,user_id,status,question_ar,plan_public,job_id,reserved_points,unit_price_points,delivered_units,charged_points,summary_ar,files,created_at";
 
@@ -28,10 +28,9 @@ export async function createCustomerMission(client: any, input: { userId: string
   const text = String(input.text ?? "").replace(/\s+/g, " ").trim();
   if (text.length < MIN_TEXT) return bad(400, "اكتب نص المهمة.");
   if (text.length > MAX_TEXT) return bad(400, "نص المهمة أطول من المسموح.");
-  const open = await client.from(MISSION_TABLE).select("id", { count: "exact", head: true }).eq("user_id", input.userId).in("status", OPEN_STATUSES);
-  if (!open?.error && typeof open?.count === "number" && open.count >= AGENT_MAX_OPEN_MISSIONS_PER_USER) {
-    return bad(429, "عندك مهام مفتوحة بالفعل قيد الإعداد. انتظر حتى تجهز إحداها ثم ابدأ مهمة جديدة؛ لن يُخصم شيء.");
-  }
+  // the limit counts exactly the missions `listOpenMissions` shows as the worker's (one definition, `openMissions.ts`); a planning mission with no live worker is ended there, and a question or plan that waits for the customer never blocks
+  const blockers = (await listOpenMissions(client, { userId: input.userId })).filter((m) => m.blocksNewRequests);
+  if (blockers.length >= AGENT_MAX_OPEN_MISSIONS_PER_USER) return { ...bad(429, openLimitMessageAr(blockers)), blockers };
   const hourAgo = new Date(Date.now() - 3600_000).toISOString();
   const recent = await client.from(MISSION_TABLE).select("id", { count: "exact", head: true }).eq("user_id", input.userId).gte("created_at", hourAgo);
   if (!recent?.error && typeof recent?.count === "number" && recent.count >= AGENT_MAX_MISSIONS_PER_HOUR) {

@@ -16,8 +16,13 @@ export const AGENT_TEST_ACCOUNT_EMAIL = "iam.magdy+1@outlook.com";
  * false: the chat answers with the old planner path exactly as before; nothing else needs to change. To roll back, set this one constant to false and redeploy the website.
  */
 export const AGENT_SERVES_CHAT = true;
-/** One account may have this many missions at once in the worker's hands (waiting, planning, or asked a question); the next request is told to wait for one. A plan that waits for approval holds nothing and does not count. */
+/**
+ * One account may have this many missions at once in the worker's hands (waiting for the worker, or being planned); the next request is told which ones and to wait for one. A mission that waits for the CUSTOMER
+ * (a question to answer, a plan to approve) holds nothing and uses no worker: it does not count (`openMissions.ts` is the one definition, shared by this limit and the list the customer sees).
+ */
 export const AGENT_MAX_OPEN_MISSIONS_PER_USER = 3;
+/** A mission in `planning` whose lease ran out this long ago has no live worker (the worker renews every 30 s and the claim function takes an expired lease over at once): it is ended honestly, never kept as a blocker. */
+export const AGENT_STUCK_PLANNING_AFTER_MS = 10 * 60_000;
 /** And at most this many new missions in one hour (every plan costs the owner a planning run): the next request is told to try again later. */
 export const AGENT_MAX_MISSIONS_PER_HOUR = 20;
 /** The sentence shown right after the customer approves, and in the in-site notice: the work continues without the page, and an e-mail follows. */

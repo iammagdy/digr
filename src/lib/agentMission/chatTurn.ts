@@ -54,7 +54,13 @@ export async function agentChatTurn(input: AgentChatTurnInput): Promise<AgentCha
   const created = await createCustomerMission(sb, { userId: input.userId, text: input.message });
   if (!created.ok) {
     const contentAr = created.error;
-    try { await sb.from("messages").update({ content_ar: contentAr }).eq("id", input.assistantMsgId); } catch { /* shown anyway */ }
+    // the answer is the sentence itself: the request never became a mission, so its message must not stay «planning» (the early answers of the handler end theirs «completed»)
+    try {
+      await Promise.all([
+        sb.from("messages").update({ content_ar: contentAr }).eq("id", input.assistantMsgId),
+        sb.from("messages").update({ request_status: "completed" }).eq("id", input.userMsgId),
+      ]);
+    } catch { /* shown anyway */ }
     return { ok: false, contentAr, status: created.status };
   }
   const derived = isUntitledConversation(input.conversationTitle) ? titleFromFirstRequest([{ role: "user", content: input.message }]) : null;

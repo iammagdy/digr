@@ -4,6 +4,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-30, after #299): the «عندك مهام مفتوحة» incident (one definition of «open»)
+
+`main` before it was `ae59a477552bdd28f323cd5ea57aa6658d45f950`; its merge commit is the head of `main` after it. Evidence (raw rows), root cause, the 2,000-point arithmetic, tests and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 16. No SQL written or applied; no Edge Function changed; no price, cap, markup or model string changed; settlement untouched.
+
+- **Cause**: three `needs_input` missions (questions nobody answered, one per abandoned conversation) filled the limit of 3; «طلباتي» lists jobs, so it never showed them. Not a stuck planning mission, not a dead worker.
+- **Fix**: `openMissions.ts` is the one definition used by the limiter AND the customer's list: only queued/planning-with-live-lease count; a question or plan waiting for the customer never blocks; a planning mission with no live lease for 10 minutes is ended as `failed` («من جانبنا», nothing held). The refusal names the blockers; «طلباتي» has a «مهام قيد الإعداد» block; a refused message no longer stays «planning».
+- **Money**: the 2,000 points are ten completed missions of 200 points each (00:27-00:57 UTC on 2026-10-30), every hold released. No money row needs fixing.
+- Also: `tests/source-ranking.test.ts` got a fixed clock (3 tests were failing on main by the date); `agent/node_modules` must be installed for the SDK type test.
+- Rollback: `git revert -m 1 <merge commit>`.
+
+---
+
 ## START HERE (2026-10-30, after #297): fix mission 11 (named channels, Facebook videos, company rows)
 
 `main` before it was `24e428fadc8566d8dfc6b69b2624a754faa3a222` (#297); its merge commit is the head of `main` after it. Evidence, root causes, tests and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 15. No SQL written or applied; no Edge Function changed; no price, cap, markup, minimum or model string changed; settlement code untouched.
