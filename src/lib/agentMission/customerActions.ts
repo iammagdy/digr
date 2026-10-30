@@ -112,8 +112,10 @@ export async function cancelForCustomer(client: any, input: { id: string; userId
   if (!data || data.user_id !== input.userId) return bad(404, "المهمة غير موجودة.");
   // before approval nothing is held: cancelling is just a status. A mission that holds money ends by its own settlement.
   if (!CANCELLABLE.includes(data.status)) return bad(409, data.status === "cancelled" ? "هذه المهمة أُلغيت بالفعل." : "لا يمكن إلغاء مهمة بدأ تنفيذها؛ ينتهي حجزها بالتسوية.");
-  const upd = await client.from(MISSION_TABLE).update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", input.id).in("status", CANCELLABLE);
+  // the update is read back: a compare-and-set that matched no row (the worker took the mission in the meantime) changed nothing and must never be answered as a cancel that worked
+  const upd = await client.from(MISSION_TABLE).update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", input.id).eq("user_id", input.userId).in("status", CANCELLABLE).select("id");
   if (upd.error) return bad(500, "تعذّر الإلغاء.");
+  if (Array.isArray(upd.data) && upd.data.length === 0) return bad(409, "تغيّرت حالة المهمة قبل أن نلغيها؛ حدّث الصفحة وحاول مرة أخرى.");
   return { ok: true, requestText: String(data.request_text ?? "") };
 }
 

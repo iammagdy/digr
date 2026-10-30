@@ -1,55 +1,35 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-
-interface OpenMissionItem { id: string; stateAr: string; requestText: string; blocksNewRequests: boolean; cancellable: boolean; conversationId: string | null }
+import { useState } from "react";
+import { dayLabel } from "@/lib/dayLabel";
+import { pendingBlockView } from "@/lib/requests/pendingBlock";
+import type { PendingIndexRow } from "@/lib/requests/types";
 
 /**
- * «مهام قيد الإعداد»: the missions that exist but are not jobs yet (queued, being planned, a question waiting for the customer's answer, a plan waiting for approval), each with its state. It is read from the
- * same function that decides whether a new request is allowed, so whatever blocks a request is listed here. A mission that waits for the customer can be opened in its conversation or cancelled (nothing is held before approval).
+ * «مهام قيد الإعداد»: the questions and plans that wait for the customer (created in the last 72 hours, newest first, 5 shown and «عرض الكل» for the rest). Nothing is held before approval, so «إلغاء» only ends the request.
+ * The list comes from «طلباتي» (one request for the whole page) and a change is handed back to it, so the block and the tabs always agree.
  */
-export default function OpenMissionsList() {
-  const [items, setItems] = useState<OpenMissionItem[]>([]);
-  const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState("");
-
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch("/api/missions", { cache: "no-store" });
-      const json = await res.json().catch(() => null);
-      if (res.ok && json?.success && Array.isArray(json.missions)) setItems(json.missions as OpenMissionItem[]);
-    } catch { /* the list is a courtesy of «طلباتي»: it stays as it was */ }
-  }, []);
-  useEffect(() => { void load(); }, [load]);
-
-  async function cancel(id: string) {
-    setBusy(id);
-    setError("");
-    try {
-      const res = await fetch(`/api/missions/${encodeURIComponent(id)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ action: "cancel" }) });
-      if (!res.ok) setError("تعذّر إلغاء المهمة الآن. حاول بعد قليل.");
-    } catch { setError("تعذّر إلغاء المهمة الآن. حاول بعد قليل."); }
-    setBusy(null);
-    await load();
-  }
-
-  if (items.length === 0) return null;
+export default function OpenMissionsList({ items, busyId, error, onCancel }: { items: PendingIndexRow[]; busyId: string | null; error: string; onCancel: (id: string) => void }) {
+  const [expanded, setExpanded] = useState(false);
+  if (items.length === 0 && !error) return null;
+  const { visible, showAllLabel } = pendingBlockView(items, expanded);
   return (
     <section aria-label="مهام قيد الإعداد" data-testid="open-missions" className="flex flex-col gap-2 rounded-3xl border border-ln bg-sf p-4">
       <h2 className="m-0 text-sm font-medium text-ink">مهام قيد الإعداد</h2>
-      <p className="m-0 text-xs leading-[1.8] text-mut">مهام لم تبدأ التنفيذ بعد ولم يُحجز لها رصيد. التي تنتظرك لا تمنعك من طلب جديد.</p>
-      {items.map((m) => (
-        <div key={m.id} data-testid="open-mission" className="flex flex-wrap items-center justify-between gap-2 border-t border-ln pt-2">
-          <div className="min-w-0">
+      <p className="m-0 text-xs leading-[1.8] text-mut">مهام تنتظرك ولم يُحجز لها رصيد؛ تنتهي صلاحيتها بعد ٧٢ ساعة إن لم تعتمدها.</p>
+      {visible.map((m) => (
+        <div key={m.id} data-testid="open-mission" className="flex items-center justify-between gap-2 border-t border-ln pt-2">
+          <div className="min-w-0 flex-1">
             <p className="m-0 truncate text-[13px] text-ink">{m.requestText || "طلب بدون نص"}</p>
-            <p className="m-0 text-xs text-mut">{m.stateAr}</p>
+            <p className="m-0 truncate text-xs text-mut">{m.stateAr}{m.createdAt ? ` · ${dayLabel(m.createdAt)}` : ""}</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex shrink-0 gap-2">
             {m.conversationId && <a href={`/dashboard/chat?c=${encodeURIComponent(m.conversationId)}`} className="min-h-11 content-center text-[13px] text-ink underline">افتحها</a>}
-            {m.cancellable && <button type="button" disabled={busy === m.id} onClick={() => void cancel(m.id)} className="min-h-11 cursor-pointer rounded-full border border-ln2 bg-transparent px-4 text-[13px] text-ink disabled:opacity-60">إلغاء</button>}
+            {m.cancellable && <button type="button" disabled={busyId === m.id} onClick={() => onCancel(m.id)} className="min-h-11 cursor-pointer rounded-full border border-ln2 bg-transparent px-4 text-[13px] text-ink disabled:opacity-60">إلغاء</button>}
           </div>
         </div>
       ))}
+      {showAllLabel && <button type="button" onClick={() => setExpanded(true)} className="min-h-11 cursor-pointer self-start rounded-full border border-ln2 bg-transparent px-4 text-[13px] text-ink">{showAllLabel}</button>}
       {error && <p role="alert" className="m-0 text-[13px] text-bad">{error}</p>}
     </section>
   );

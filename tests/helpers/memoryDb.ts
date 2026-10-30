@@ -26,7 +26,7 @@ export function createMemoryDb(options: { missing?: string[] } = {}): MemoryDb {
   const tableRows = (name: string) => { if (!tables.has(name)) tables.set(name, []); return tables.get(name)!; };
 
   const missingBuilder: any = {};
-  for (const m of ["select", "eq", "gt", "neq", "gte", "lt", "lte", "in", "order", "limit", "insert", "update", "upsert", "maybeSingle", "single"]) missingBuilder[m] = () => missingBuilder;
+  for (const m of ["select", "eq", "gt", "neq", "gte", "lt", "lte", "in", "is", "range", "order", "limit", "insert", "update", "upsert", "maybeSingle", "single"]) missingBuilder[m] = () => missingBuilder;
   missingBuilder.then = (resolve: any) => resolve({ data: null, error: { message: "relation does not exist" } });
 
   const from = (name: string) => {
@@ -37,6 +37,7 @@ export function createMemoryDb(options: { missing?: string[] } = {}): MemoryDb {
     let patch: any = null;
     let orderBy: { col: string; asc: boolean } | null = null;
     let max: number | null = null;
+    let skip = 0;
     let single = false;
     let wantCount = false;
     let head = false;
@@ -46,6 +47,7 @@ export function createMemoryDb(options: { missing?: string[] } = {}): MemoryDb {
       // select(cols, { count: "exact", head: true }): the number of matching rows (and no rows with head)
       if (wantCount) return { data: head ? null : out, count: out.length, error: null };
       if (orderBy) out = [...out].sort((a, b) => (a[orderBy!.col] > b[orderBy!.col] ? 1 : -1) * (orderBy!.asc ? 1 : -1));
+      if (skip > 0) out = out.slice(skip);
       if (max !== null) out = out.slice(0, max);
       return { data: single ? out[0] ?? null : out, error: null };
     };
@@ -60,6 +62,9 @@ export function createMemoryDb(options: { missing?: string[] } = {}): MemoryDb {
       in: (c: string, vs: any[]) => { filters.push((r) => vs.includes(r[c])); return b; },
       order: (c: string, o?: { ascending?: boolean }) => { orderBy = { col: c, asc: o?.ascending !== false }; return b; },
       limit: (n: number) => { max = n; return b; },
+      // `is(col, null)`: the column is empty; `range(from, to)`: rows from..to inclusive (the paged reads)
+      is: (c: string, v: any) => { filters.push((r) => (v === null ? r[c] === null || r[c] === undefined : r[c] === v)); return b; },
+      range: (from: number, to: number) => { skip = from; max = to - from + 1; return b; },
       maybeSingle: () => { single = true; return Promise.resolve(run()); },
       single: () => { single = true; return Promise.resolve(run()); },
       insert: (row: any) => { for (const r of Array.isArray(row) ? row : [row]) rows.push({ ...r }); return Promise.resolve({ data: row, error: null }); },

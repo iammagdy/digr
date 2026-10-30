@@ -1,5 +1,6 @@
 import { AGENT_MAX_OPEN_MISSIONS_PER_USER, AGENT_STUCK_PLANNING_AFTER_MS, MISSION_TABLE } from "./constants";
 import { refusalSentenceAr } from "./refusal";
+import { expireWaitingMissions } from "../requests/expiry";
 
 /**
  * THE ONE DEFINITION OF AN «OPEN» MISSION. The limit on new requests and the list the customer reads («طلباتي», the refusal sentence) are both computed from `openKindOf`, so a mission that blocks
@@ -84,10 +85,14 @@ export async function failStuckPlanning(client: any, input: { userId: string; no
   return ended;
 }
 
-/** The customer's open missions, newest first, after stuck planning ones were ended. Read errors read as «none»: the request path never fails because of the list. */
+/**
+ * The customer's open missions, newest first, after stuck planning ones were ended and the questions and plans nobody answered in 72 hours (or beyond the newest 5) were expired (`expiry.ts`: a status change, no money).
+ * Read errors read as «none»: the request path never fails because of the list.
+ */
 export async function listOpenMissions(client: any, input: { userId: string; now?: number }): Promise<OpenMissionView[]> {
   const now = input.now ?? Date.now();
   try { await failStuckPlanning(client, { userId: input.userId, now }); } catch { /* the list still reads */ }
+  try { await expireWaitingMissions(client, { userId: input.userId, now }); } catch { /* the list still reads */ }
   const read = await client.from(MISSION_TABLE).select("id,status,request_text,created_at,lease_until,job_id").eq("user_id", input.userId).in("status", OPEN_LIST_STATUSES).order("created_at", { ascending: false }).limit(50);
   if (read?.error || !Array.isArray(read?.data)) return [];
   return (read.data as OpenMissionRow[]).map((r) => openMissionView(r, now)).filter((v): v is OpenMissionView => v !== null);
