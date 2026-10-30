@@ -323,7 +323,8 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   const resultLinesAr: string[] = [];
   if (delivered !== null && (phase === "done" || phase === "partial" || phase === "failed" || phase === "unserved")) {
     const noun = itemNounOfPlan(plan);
-    if (requestedRows > 0 && delivered > 0) resultLinesAr.push(`تم تسليم ${deliveredOfAr(delivered, requestedRows, noun)}.`);
+    // the count is told against the CARD's total (what the customer approved), never against the request's own number
+    if (requestedRows > 0 && delivered > 0) resultLinesAr.push(`تم تسليم ${deliveredOfAr(delivered, planned > 0 ? planned : requestedRows, noun)}.`);
     else if (requestedRows > 0) resultLinesAr.push("لم يُسلَّم أي شيء.");
     if (mission.charged_points !== null && Number(mission.reserved_points ?? 0) > 0) resultLinesAr.push(`${moneyLineAr({ reservedPoints: Number(mission.reserved_points), chargedPoints: Number(mission.charged_points), delivered, noun })}.`);
   }

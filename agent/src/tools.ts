@@ -4,6 +4,7 @@ import type { MissionPricingSettings } from "../../src/lib/missionPricing";
 import { isContactSource } from "../../src/lib/agentMission/contacts";
 import { childStepSourcesFor, isPeopleNoun, linkableCompanySources } from "../../src/lib/agentMission/childSources";
 import { describeAgentSource, isAgentSourceId, searchAgentSources, SESSION_RESTRICTED_SOURCES } from "../../src/lib/agentMission/sources";
+import { usableSearchProvider, webSourceAvailable, type WebAvailability } from "../../src/lib/agentMission/webAvailability";
 import { validateAndPricePlan, type PricedPlan, type RecordedCall } from "../../src/lib/agentMission/plan";
 import { checkCustomerText } from "../../src/lib/agentMission/text";
 import { blockedEndpointReason } from "../../src/lib/treg/blockList";
@@ -96,6 +97,8 @@ export interface ToolContext {
   gateway: Gateway;
   /** The page parsers, web search / scrape and people search; absent when no provider key store is wired (the tools are then not offered). */
   web?: WebGateway;
+  /** The web providers the worker has a key for (resolved once before the run); a source of any other provider is not offered. Absent with `web`: both. */
+  webAvailable?: WebAvailability;
   catalog: TregCatalog;
   access: AccountAccess;
   state: RunState;
@@ -308,7 +311,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         const ranking = rankedCandidates({ catalog: ctx.catalog, access: ctx.access, words, platform, stats, now, matched });
         const fromCatalog = ranking.ranked.map((r) => ({ id: r.id, effective: r.effectiveUsd, view: { ...catalogHitView(ctx.catalog.byId.get(r.id)!, ctx.catalog, 0, r.effectiveUsd), expected_usd_per_item: Number(r.usdPerItem.toFixed(6)), rows_per_call: Math.round(r.rowsPerCall * 10) / 10, basis: r.basis, ...(catalogDateKind(ctx.catalog.byId.get(r.id)!) ? { dates: catalogDateKind(ctx.catalog.byId.get(r.id)!) } : {}), ...(r.health.state === "demoted" ? { health: "demoted: recent failures on its inputs" } : {}) } as Record<string, any> }));
         // the web sources (page parsers, web search / scrape, people search) are candidates too: ONE list for every provider, with the same health and measurement
-        const web = ctx.web ? searchAgentSources({ words, platform }) : [];
+        const web = ctx.web ? searchAgentSources({ words, platform, isAvailable: (id) => webSourceAvailable(id, webAvailableOf(ctx)) }) : [];
         const webRanked = web.map((c) => {
           const health = sourceHealth(stats.get(c.id), now);
           const s = stats.get(c.id);
@@ -345,7 +348,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       params: { id: { type: "string", description: "Endpoint id exactly as catalog_search returned it" } },
       handler: async (a) => {
         const id = String(a.id ?? "");
-        if (ctx.web && isAgentSourceId(id)) { const d = describeAgentSource(id); if (d) return { ok: true, endpoint: d }; }
+        if (ctx.web && isAgentSourceId(id) && webSourceAvailable(id, webAvailableOf(ctx))) { const d = describeAgentSource(id); if (d) return { ok: true, endpoint: d }; }
         return gateway.describeEndpoint({ id });
       },
     },
@@ -562,7 +565,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           },
           evidenceText: (id: string) => evidence.get(id) ?? null,
           endpointCapability: (endpointId: string) => ctx.catalog.byId.get(endpointId)?.capability ?? null,
-          endpointAllowed: (endpointId: string) => (Boolean(ctx.web) && isAgentSourceId(endpointId)) || (isSellable(endpointId, ctx.catalog) && !blockedEndpointReason(endpointId) && policyVerdict(endpointId, ctx.access).allowed),
+          endpointAllowed: (endpointId: string) => (Boolean(ctx.web) && webSourceAvailable(endpointId, webAvailableOf(ctx))) || (isSellable(endpointId, ctx.catalog) && !blockedEndpointReason(endpointId) && policyVerdict(endpointId, ctx.access).allowed),
           requestText: `${mission.request_text} ${mission.answer_text ?? ""}`,
           ...(mission.answer_text ? { answerText: mission.answer_text } : {}),
           isContactSource,
@@ -744,14 +747,18 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
 }
 
 
+/** The web providers with a key: what the run resolved, or both when a caller gave a web gateway and no answer (tests, an older caller). */
+const webAvailableOf = (ctx: ToolContext): WebAvailability => ctx.webAvailable ?? { firecrawl: true, contextdev: true };
+
 /** The web tools: ONE gateway tool for the page parsers (parser name + URL), and the web search, page scrape and people search of the providers. Same rules as treg_call, in the gateway. */
 function webTools(ctx: ToolContext): ToolSpec[] {
   const { state } = ctx;
   const web = ctx.web!;
+  const avail = webAvailableOf(ctx);
   const guard = (id: string, why: unknown) => { const m = cheapestFirstMessage(state, id, why); return m ? { ok: false, refused: "choose_cheapest", message: m } : null; };
   const done = (id: string, result: Record<string, any>) => { if (!("refused" in result)) state.tried.add(id); return result; };
   const why: ParamSpec = { type: "string", description: "Only when this source is dearer than one the last catalog_search ranked above it: why that cheaper source was unsuitable (kept in the admin's trace)", optional: true };
-  return [
+  const tools: ToolSpec[] = [
     {
       name: "parse_page",
       description: "Read ONE public page with a pre-built parser and get its ROWS (no crawling, one parser per call). Parsers: google-maps (businesses of a search or a place), google-maps-reviews (reviews of a place, up to 1,000; optional sort and limit), google-play and google-play-reviews (up to 200), app-store and app-store-reviews (up to 500), instagram-profile, instagram-post (top comments), instagram-feed (hashtag, keyword or location URL), tiktok-profile, tiktok-video, tiktok-feed (profile, hashtag or search URL), tiktok-comments (the first 20 only: use the catalog's comment sources for more), tiktok-followers, tiktok-following, tiktok-user-search (top 10), g2-reviews (25), emails, phone-numbers and links (of the ONE page you give: open the company's own site, then its contact page via links). There is no X, Facebook or YouTube parser: those stay on the catalog. Public pages only, read only. The full answer is saved as { rows, data }; you get a shape digest and the first rows.",
@@ -781,8 +788,9 @@ function webTools(ctx: ToolContext): ToolSpec[] {
         why,
       },
       handler: async (a) => {
-        const id = `${a.provider === "firecrawl" ? "firecrawl" : "contextdev"}.search`;
-        return guard(id, a.why) ?? done(id, await web.webSearch({ provider: a.provider, query: a.query, limit: a.limit, country: a.country, why: a.why }) as Record<string, any>);
+        const provider = usableSearchProvider(a.provider, avail) ?? "contextdev";
+        const id = `${provider}.search`;
+        return guard(id, a.why) ?? done(id, await web.webSearch({ provider, query: a.query, limit: a.limit, country: a.country, why: a.why }) as Record<string, any>);
       },
     },
     {
@@ -791,8 +799,9 @@ function webTools(ctx: ToolContext): ToolSpec[] {
       phases: ["planning", "execution"],
       params: { provider: { type: "string", description: "\"contextdev\" (cheaper) or \"firecrawl\"" }, url: { type: "string", description: "A public page" }, why },
       handler: async (a) => {
-        const id = `${a.provider === "firecrawl" ? "firecrawl" : "contextdev"}.scrape`;
-        return guard(id, a.why) ?? done(id, await web.webScrape({ provider: a.provider, url: a.url, why: a.why }) as Record<string, any>);
+        const provider = usableSearchProvider(a.provider, avail) ?? "contextdev";
+        const id = `${provider}.scrape`;
+        return guard(id, a.why) ?? done(id, await web.webScrape({ provider, url: a.url, why: a.why }) as Record<string, any>);
       },
     },
     {
@@ -803,6 +812,8 @@ function webTools(ctx: ToolContext): ToolSpec[] {
       handler: async (a) => guard("contextdev.people.search", a.why) ?? done("contextdev.people.search", await web.peopleSearch({ query: a.query, country: a.country, cursor: a.cursor, why: a.why }) as Record<string, any>),
     },
   ];
+  // a tool whose provider has no key is not offered at all: the parsers and the people search are Context.dev's, the search and the scrape need either provider
+  return tools.filter((t) => (t.name === "web_search" || t.name === "web_scrape" ? avail.firecrawl || avail.contextdev : avail.contextdev));
 }
 
 export const TOOL_NAMES = ["catalog_search", "describe_endpoint", "treg_call", "parse_page", "web_search", "web_scrape", "people_search", "collect_pages", "run_code", "report_progress", "ask_question", "propose_plan", "save_rows", "finish"] as const;
