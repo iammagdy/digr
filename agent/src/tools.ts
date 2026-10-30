@@ -29,6 +29,7 @@ import { perParentQuantities } from "../../src/lib/agentMission/quantity";
 import { sourceNameMatches } from "../../src/lib/agentMission/namedSources";
 import { namedSourceRoutes } from "../../src/lib/agentMission/namedRoutes";
 import { catalogDateKind } from "../../src/lib/agentMission/relativeDates";
+import { PEOPLE_FALLBACK_LINE_AR } from "../../src/lib/agentMission/childSources";
 import { giveUpRefusalText, GIVE_UP_NO_ROWS_REFUSALS_MAX, untriedBeforeGiveUp } from "../../src/lib/agentMission/giveUp";
 
 /**
@@ -583,6 +584,13 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             const approxDates = derived.approx.get(st.key);
             if (approxDates && approxDates.length > 0) st.approx_dates = approxDates;
           }
+        }
+        // THE PEOPLE OF EVERY COMPANY THAT HAS ANY USABLE INPUT: when the engine will also read a company's people through its website or name, the card says so, and a model-written line that says the companies without a page get no people (true only of the page) is dropped
+        if (derived && checked.plan.stages.some((st) => (st.engine?.parent_binding?.fallbacks?.length ?? 0) > 0)) {
+          const stripped = (t: string) => t.replace(/[\u064B-\u0652]/g, "");
+          checked.plan.assumptions_ar = (checked.plan.assumptions_ar ?? []).filter((l) => !/(?:لن|لا)\s+(?:ي|ت)جلب\s+لها\s+(?:موظف|اشخاص|أشخاص)/.test(stripped(l)));
+          if (checked.plan.assumptions_ar.length === 0) delete checked.plan.assumptions_ar;
+          if (!(checked.plan.notes_ar ?? []).includes(PEOPLE_FALLBACK_LINE_AR)) checked.plan.notes_ar = [...(checked.plan.notes_ar ?? []), PEOPLE_FALLBACK_LINE_AR];
         }
         // A NAMED SOURCE NO SAMPLE SHOWS, WHILE THE CATALOG HAS A SOURCE THAT TAKES THE SOURCE ITSELF (a channel's videos, an account's posts): the stage searched by keyword and found none of the sources the customer named. Sampling the source itself is cheap; the card's
         // «not found» sentence is for a source that was really looked for and not found. A few refusals at most (the same counter as the early stop), so the planner is never stuck.

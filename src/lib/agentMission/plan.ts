@@ -47,7 +47,7 @@ export interface EngineSpec {
   /** The key of `inputs` the page is handed under (the id of the saved page the code was measured on). */
   map_file_id: string;
   /** A stage with a parent: the input that takes a field of the parent's row (`from` is a column key of the parent stage, or «id»). */
-  parent_binding: { param: string; from: string } | null;
+  parent_binding: { param: string; from: string; /** The other fields of a parent that the child source can take (its website, its page, its name): tried in order for a parent with no value for the first, or when the read through the first failed or gave nothing. */ fallbacks?: Array<{ param: string; from: string; domain?: true }> } | null;
   /** The field of the mapped items that keys them when they carry no `id` of their own (chosen by code from the measured page: a platform id, a link, or «$content» for the fingerprint). Absent: the items carry `id`. */
   id_field?: string;
   /** The source's own date inputs, from the catalog (dateWindow.ts): when the source ends before a requested period is reached, the engine asks again with the end of the window moved back. Absent: the source has none documented. */

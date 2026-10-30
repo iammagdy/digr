@@ -185,3 +185,166 @@ describe("2. Facebook «هات ٥ فيديوهات ... عن منتخب مصر، 
     expect(itemProvesMedia("image", { image: { uri: "https://x/y.jpg" } }, ["image"])).toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------------------------------- 3. Companies: 40 of 148 (msn_f0211c1a4633e0c2114e)
+import { assertReplayInvariants, replay } from "./helpers/agentReplay";
+import { readSnapshot } from "../agent/src/items/itemStore";
+import { createReviewer } from "../agent/src/review";
+import { bindingFallbacks, liftedVolume } from "../agent/src/engine/spec";
+
+describe("3. «عايز ٥٠ شركة مقاولات في مصر، ومن كل شركة اتنين من المديرين»: the source is asked for what it can give, the model check is asked again until it answers, the people are asked for every company with a usable input (live: 18 of 49 companies, 22 people for 11 companies, 40 of 148)", () => {
+  const COMPANIES = "parallel.companies.search";
+  const EMPLOYEES = "aviato.companies.employees";
+  const REQUEST_CO = "عايز ٥٠ شركة مقاولات في مصر، ومن كل شركة اتنين من المديرين";
+  const cols = (...c: Array<[string, string]>) => c.map(([key, title_ar]) => ({ key, title_ar }));
+  const why = "the cheaper sources are searches by hiring or by people, not by sector and place";
+  /** The source's pool as the live page shaped it: an entity with a name, the company's LinkedIn address when it has one, and ONE text field (website, country, short description). Every 5th is a US company, three of four of the rest say nothing the rule can read (they wait for the model check). */
+  const entity = (i: number) => {
+    const us = i % 5 === 0;
+    const unsure = !us && i % 4 !== 1;
+    const name = unsure ? `Delta Group ${i}` : `Nile Construction Company ${i}`;
+    const sd = unsure ? "Provider of civil works and construction support." : "Provider of engineering, construction, and project management services.";
+    return { name, url: i % 2 === 0 ? `https://linkedin.com/company/co-${i}` : "https://example.org/x", description: `Website Url: https://co${i}.eg | Location Country: ${us ? "United States" : "Egypt"} | Short Description: ${sd} | Primary Sector: Construction` };
+  };
+  const POOL = Array.from({ length: 100 }, (_, i) => entity(i + 1));
+  const MAP_CO = "const rows = inputs.call_0001.entities || []; return rows.map(r => { const d = r.description || ''; const web = d.match(/Website Url:\\s*(https?:\\/\\/[^\\s|]+)/); const loc = (d.match(/Location Country:\\s*([^|]+)/)||[])[1] || ''; const sd = (d.match(/Short Description:\\s*([^|]+)/)||[])[1] || ''; const li = /linkedin\\.com\\/company\\//.test(r.url||'') ? r.url : ''; return { id: web ? web[1].replace(/^https?:\\/\\//,'') : r.url, name: r.name, website: web ? web[1] : '', country: loc.trim(), linkedin: li, description: sd.trim() }; })";
+  const MAP_EMP = "const rows = inputs.call_0002.employees || []; return rows.map(r => { const p = r.person || {}; const pos = (r.positionList && r.positionList[0]) || {}; return { id: r.personID, parent_company: r.companyName || '', name: p.fullName || '', title: pos.title || '', profile: p.URLs && p.URLs.linkedin ? p.URLs.linkedin : '' }; })";
+  const employeesOf = (key: string) => ({ employees: [0, 1].map((k) => ({ personID: `${key}-p${k}`, companyName: key, positionList: [{ title: k === 0 ? "General Manager" : "Operations Manager" }], person: { fullName: `Person ${key} ${k}`, URLs: { linkedin: `linkedin.com/in/${key}-${k}` } } })) });
+  const answerFor = (o: { endpointId?: string; params?: unknown }) => {
+    const p = (o.params ?? {}) as Record<string, unknown>;
+    if (o.endpointId === COMPANIES) return tregResult({ entities: POOL.slice(0, Math.min(Number(p.match_limit) || 100, 100)) }, 0.005);
+    const key = String(p.linkedinURL ?? p.website ?? "x").replace(/^.*\/company\//, "").replace(/\/$/, "");
+    return tregResult(employeesOf(key), 0.005);
+  };
+  /** The model check as the live one behaved: asked for 24 rows with 116 tokens of room it wrote more than the room allowed and was cut (4 calls, 464 tokens, none usable); given room, it answers. */
+  const cutAt = (n: number) => 4 * n + 20;
+  const makeReview = (log: Array<{ rows: number; maxTokens: number; answered: boolean }>) => async ({ user, maxTokens }: { user: string; maxTokens: number }) => {
+    const rows = user.split("\n").filter((l) => /^\d+\./.test(l));
+    const room = cutAt(rows.length);
+    if (maxTokens <= room) { log.push({ rows: rows.length, maxTokens, answered: false }); return { text: "Looking at each row in turn: 1. Delta Group is a company that", usage: { input_tokens: 200, output_tokens: maxTokens } }; }
+    log.push({ rows: rows.length, maxTokens, answered: true });
+    return { text: JSON.stringify(rows.map((l) => (/construction|civil/i.test(l) ? 1 : 0))), usage: { input_tokens: 200, output_tokens: 60 } };
+  };
+  const flow = (): FakeStep[] => [
+    { tool: "catalog_search", args: { words: ["companies", "search"], limit: 5 } },
+    { tool: "describe_endpoint", args: { id: COMPANIES } },
+    { tool: "treg_call", args: { endpoint_id: COMPANIES, params: { objective: "construction contractor companies headquartered in Egypt", entity_type: "companies", match_limit: 50 }, why } },
+    { tool: "run_code", args: (r: Results) => ({ code: MAP_CO, files: [callIds(r)[0]] }) },
+    { tool: "describe_endpoint", args: { id: EMPLOYEES } },
+    { tool: "treg_call", args: { endpoint_id: EMPLOYEES, params: { page: 1, perPage: 10, linkedinURL: "https://linkedin.com/company/co-2" }, why } },
+    { tool: "run_code", args: (r: Results) => ({ code: MAP_EMP, files: [callIds(r)[1]] }) },
+    { tool: "propose_plan", args: (r: Results) => ({
+      summary_ar: "نجمع شركات مقاولات مصرية، ومن كل شركة اثنين من مديريها.",
+      stages: [
+        { key: "companies", title_ar: "شركات مقاولات في مصر", endpoint_id: COMPANIES, expected_rows: 50, parent_key: null, deliver: true,
+          columns: cols(["name", "اسم الشركة"], ["website", "الموقع الإلكتروني"], ["country", "البلد"], ["description", "نشاط الشركة"], ["linkedin", "صفحة لينكدإن"]),
+          filters: [{ kind: "place", field: "country", fields: ["country", "website"], places: ["EG"], values: ["مصر"] }],
+          sample_rows: [1, 9, 13].map((n) => ({ id: `co${n}.eg`, name: POOL[n - 1].name, website: `https://co${n}.eg`, country: "Egypt", linkedin: POOL[n - 1].url.includes("linkedin") ? POOL[n - 1].url : "", description: "Provider of engineering, construction, and project management services." })),
+          measured_by: [callIds(r)[0]], yield_from: firstOutputId(r),
+          relevance: { subject_ar: "شركات مقاولات وبناء مصرية", terms: ["construction company", "construction services", "engineering construction", "contracting company", "general contractor", "شركة مقاولات"], text_columns: ["name", "description"], min_own_words: 2, entity: true, review: true } },
+        { key: "employees", title_ar: "مديرو كل شركة", endpoint_id: EMPLOYEES, expected_rows: 100, parent_key: "companies", per_parent_rows: 2, deliver: true,
+          columns: cols(["name", "اسم الموظف"], ["title", "المسمى الوظيفي"], ["parent_company", "الشركة"], ["profile", "صفحة لينكدإن"]),
+          sample_rows: [{ id: "co-2-p0", name: "Person co-2 0", title: "General Manager", parent_company: "co-2", profile: "linkedin.com/in/co-2-0" }], measured_by: [callIds(r)[1]] },
+      ],
+    }) },
+  ];
+  async function run(log: Array<{ rows: number; maxTokens: number; answered: boolean }>) {
+    return replay({
+      deps: (base) => ({ ...base, reviewCall: makeReview(log) as never }),
+      request: REQUEST_CO,
+      planning: flow(),
+      execution: () => [],
+      answers: [answerFor({ endpointId: COMPANIES, params: { match_limit: 50 } }), answerFor({ endpointId: EMPLOYEES, params: { linkedinURL: "co-2" } }), ...Array.from({ length: 400 }, () => (o: { endpointId: string; params: unknown }) => answerFor(o))] as never,
+    });
+  }
+
+  it("the source's limit: a flat price per call with up to 100 results is asked for 100, a source with a next page or a price per result is not touched", () => {
+    const cat = loadTregCatalog();
+    expect(liftedVolume(cat.byId.get(COMPANIES)!, { match_limit: 50 })).toEqual({ param: "match_limit", from: 50, to: 100 });
+    expect(liftedVolume(cat.byId.get(COMPANIES)!, { match_limit: 100 })).toBeNull();
+    // a source with a next page (a keyword search of a platform) is read page by page, never lifted
+    expect(liftedVolume(cat.byId.get("justoneapi.x.facebook-search-post-v1")!, {})).toBeNull();
+    expect(liftedVolume(cat.byId.get("crawl4ai.youtube.channel.videos")!, { channel: "@x", limit: 10 })?.to ?? null).toBeNull();
+  });
+
+  it("the people: a company with no LinkedIn page is read through its website (a bare domain), then its name; the page the measuring call used stays first", () => {
+    const cat = loadTregCatalog();
+    const parents = [{ id: "a.eg", name: "A", website: "https://www.a.eg/", linkedin: "https://linkedin.com/company/a" }, { id: "b.eg", name: "B", website: "https://b.eg", linkedin: "" }];
+    expect(bindingFallbacks(cat.byId.get(EMPLOYEES)!, { param: "linkedinURL", from: "linkedin" }, parents)).toEqual([{ param: "website", from: "website", domain: true }]);
+  });
+
+  it("the model check asked again until it answers: the live answers cut at their own limit are not the end (24 rows waited for ever)", async () => {
+    const log: Array<{ rows: number; maxTokens: number; answered: boolean }> = [];
+    const store = createMemoryStore();
+    const reviewer = createReviewer({ call: makeReview(log) as never, store, missionId: "msn_rv", requestText: REQUEST_CO, budgetUsd: 0.05 });
+    const rows = Array.from({ length: 24 }, (_, i) => ({ id: `r${i}`, text: i % 2 === 0 ? `Delta Group ${i} construction support` : `Alpha ${i} marketing` }));
+    const verdicts = await reviewer.review({ subject: "شركات مقاولات", rows });
+    expect(verdicts.size).toBe(24);
+    expect([...verdicts.values()].filter(Boolean)).toHaveLength(12);
+    // the first attempt was cut at the live limit (4 x 24 + 20 = 116), the second had room and was read
+    expect(log[0]).toMatchObject({ rows: 24, maxTokens: 116, answered: false });
+    expect(log.some((x) => x.answered)).toBe(true);
+    expect((await reviewer.state()).stop ?? null).toBeNull();
+  });
+
+  it("the file: the source is asked for 100, the model check settles the waiting companies, and the people are asked for companies with no LinkedIn page through their website", async () => {
+    const log: Array<{ rows: number; maxTokens: number; answered: boolean }> = [];
+    const r = await run(log);
+    const snap = await readSnapshot(r.store, r.missionId);
+    const execCalls = (r.call.mock.calls as Array<[{ endpointId: string; params: Record<string, unknown> }]>).map((c) => c[0]).slice(2);
+    // 1. the first execution call of the companies source asks for the most it gives for the price
+    expect(execCalls.find((c) => c.endpointId === COMPANIES)!.params.match_limit).toBe(100);
+    // 2. the waiting companies were settled by the model check (live: 24 pending, 0 by the model)
+    const c = snap.counts("companies");
+    expect(log.some((x) => x.answered)).toBe(true);
+    expect(c.accepted).toBe(50);
+    // 3. the people: companies without a LinkedIn page were read through their website
+    const byWebsite = execCalls.filter((x) => x.endpointId === EMPLOYEES && typeof x.params.website === "string");
+    expect(byWebsite.length).toBeGreaterThan(0);
+    for (const x of byWebsite) expect(String(x.params.website)).toMatch(/^co\d+\.eg$/);
+    const people = snap.acceptedRows("employees");
+    const parentsWithPeople = new Set(people.map((p) => String(p.parent_id)));
+    expect(parentsWithPeople.size).toBe(50);
+    expect(people).toHaveLength(100);
+    assertReplayInvariants(r, { expectDelivered: 150 });
+    // the card says it before approval
+    expect(JSON.stringify(r.planView)).toContain("فلا تُستبعد شركة لمجرد أنه لا صفحة لها");
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------- 4. Direction marks in name cells (a person's name between U+202A, U+202C and U+200F)
+import ExcelJS from "exceljs";
+import { buildMissionFiles, withoutDirectionMarks } from "../agent/src/workbook";
+
+describe("4. invisible direction marks are removed from the cells that hold a name, in the workbook and in the CSV, and nowhere else (live: a person's name wrapped in U+202A / U+202C / U+200F)", () => {
+  const MARKS = ["‪", "‫", "‬", "‭", "‮", "‎", "‏", "⁦", "⁧", "⁨", "⁩"];
+  const st = (over: Record<string, unknown>) => ({ endpoint_id: "e", expected_rows: 1, planned_rows: 1, parent_key: null, deliver: true, sample_rows: [], measured_by: [], measured_from_calls: [], measured_cost_per_row_usd: 0.0001, ...over });
+  const pl = (stages: unknown[]) => ({ summary_ar: "ستحصل على شركات وموظفيها. وتفاصيل أخرى.", stages: stages as never, price: { totalCostUsd: 0, deliveredRows: 1, costPerFinalRowUsd: 0.0001, unitPricePoints: 1, reservePoints: 2, maxChargePoints: 1, overCap: false } }) as never;
+  const COMPANIES = st({ key: "companies", title_ar: "الشركات", columns: [{ key: "name", title_ar: "اسم الشركة" }, { key: "site", title_ar: "الموقع" }] });
+  const PEOPLE = st({ key: "employees", title_ar: "الموظفون", parent_key: "companies", per_parent_rows: 2, columns: [{ key: "person", title_ar: "اسم الموظف" }, { key: "title", title_ar: "المسمى الوظيفي" }, { key: "note", title_ar: "ملاحظة" }] });
+  const wrapped = (t: string) => `‪${t}‬‏`;
+  const companyRows = [{ id: "co1", name: `‏${"النيل للتركيبات"}‎`, site: "https://nile.example" }];
+  const peopleRows = [{ id: "p1", parent_id: "co1", person: wrapped("أحمد حسن"), title: "مدير", note: wrapped("كما كتبه صاحبه") }];
+
+  it("the person's name and the company's name in the context column are clean; the text of another column is delivered as it came", async () => {
+    const built = await buildMissionFiles(pl([COMPANIES, PEOPLE]), { companies: companyRows, employees: peopleRows });
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(built.xlsx as unknown as ArrayBuffer);
+    const sheet = wb.getWorksheet("الموظفون")!;
+    const header = (sheet.getRow(1).values as unknown[]).slice(1);
+    const at = (title: string) => header.indexOf(title) + 1;
+    expect(sheet.getRow(2).getCell(at("اسم الموظف")).value).toBe("أحمد حسن");
+    expect(sheet.getRow(2).getCell(at("اسم الشركة")).value).toBe("النيل للتركيبات");
+    expect(sheet.getRow(2).getCell(at("ملاحظة")).value).toBe(wrapped("كما كتبه صاحبه"));
+    // the CSV of the deepest stage: the same columns, the same cleaning
+    expect(built.csv).toContain('"أحمد حسن"');
+    for (const m of MARKS) expect(built.csv.split("\n")[1] ?? "").not.toContain(`${m}أ`);
+  });
+
+  it("every direction mark of the list is removed from a name and nothing else of the text is touched", () => {
+    expect(withoutDirectionMarks(`${MARKS.join("")}منى سليم${MARKS.join("")}`)).toBe("منى سليم");
+    expect(withoutDirectionMarks("Ahmed ​ Hassan")).toBe("Ahmed ​ Hassan");
+    expect(withoutDirectionMarks(12)).toBe(12);
+    expect(withoutDirectionMarks(null)).toBeNull();
+  });
+});

@@ -4,6 +4,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-30 evening, after #302): fix mission 12 (named channels, Facebook video proof, companies, name cells)
+
+`main` before it was `1b268a5de02443ea0e30336cb453b6646612a648` (#302); its merge commit is the head of `main` after it. Evidence, root causes, tests and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 17. No SQL written or applied; no Edge Function, price, cap, markup, minimum or model string changed; settlement untouched.
+
+- **YouTube named channels (no card, twice)**: not a #297/#298 rule: the planner called `finish(cannot_serve)` after one empty call and two unavailable web searches (the three earlier attempts were the TREG suspension of #300). For a request that names channels, accounts or pages, a give-up is now sent back until three catalog sources were really reached (the channel's own listing first), at most 3 times.
+- **Facebook videos**: a card for videos from a post search now needs proof in the sampled items (a `media` filter built by code, enforced at ingest, priced by the measured share); with none it is refused before the card, never after approval.
+- **Companies (40 of 148)**: a one-page per-call source is asked at its maximum limit (it was asked 50 of 100 for the same price); the model check that was cut at its own output limit (4 x 116 tokens) is asked again with room, then in halves; people are asked through the company's page, website and name; 147 vs 148 is the lowered target (49) added back in the customer's line.
+- **Name cells**: direction marks removed from name columns in the workbook and the CSV. **Ledger**: the 200-point drop is the owner's own TikTok profile test (`job_quote_0a25ec81...`, minimum charge 200).
+- Rollback: `git revert -m 1 <merge commit>`.
+
+---
+
 ## START HERE (2026-10-30, after #301): «طلباتي» (cancel, the pending block, tabs, paging, search)
 
 `main` before it was `85ba607b15ba301e56a785f45e057bb333b8ea5d` (#301); its merge commit is the head of `main` after it. No SQL written or applied (no new status or column was needed); no Edge Function, price, cap, markup, minimum, model string or settlement code changed; no money function is called by anything new.

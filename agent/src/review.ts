@@ -168,19 +168,42 @@ export function createReviewer(deps: { call: ReviewCall; store: AgentStore; miss
         if (s.spentUsd + worst > ceiling) { s.budgetReached = true; s.stop = "budget"; await save(s); break; }
         if (s.spentUsd + worst > deps.budgetUsd) s.extended = true;
         let verdicts: boolean[] | null = null;
-        // one retry: a call that got no answer, or an answer that is not one 0/1 per row, is asked once more (its tokens are counted either way)
-        for (let attempt = 0; attempt < 2 && verdicts === null; attempt += 1) {
-          // the second attempt says exactly what shape is needed (in the system text, so the rows stay as they were): an answer in words, or with the wrong number of verdicts, is the usual reason a first attempt gives nothing usable
-          const res = await deps.call({ model, system: attempt === 0 ? SYSTEM : `${SYSTEM} Your last answer could not be used: reply with ONLY a JSON array of exactly ${batch.length} numbers, each 0 or 1, and no words.`, user, maxTokens: outTokens });
-          if (!res) { s.failedCalls += 1; continue; }
+        // AN ANSWER THAT IS NOT ONE 0/1 PER ROW IS ASKED AGAIN, EACH TIME A LITTLE DIFFERENTLY (live, 2026-10-29 and 10-30: every review call of two missions ended at EXACTLY its output limit, 4 x 116 tokens for 24 rows, 80 for 15: an answer cut before its array was
+        // closed, asked again with the same limit and cut again, so 24 companies waited for ever): the first attempt as it was; the second says exactly what shape is needed and has room for words before the array; the third asks the two halves of the batch
+        // separately (the same strict text, room for each). Every attempt's tokens are counted. Rows that no attempt could settle stay PENDING.
+        let answered = false;
+        const ask = async (rowsOf: typeof batch, system: string, maxTokens: number): Promise<boolean[] | null> => {
+          const prompt = rowsOf === batch ? user : reviewPrompt({ requestText: deps.requestText, subject, rows: rowsOf });
+          const res = await deps.call({ model, system, user: prompt, maxTokens });
+          if (!res) { s.failedCalls += 1; return null; }
+          answered = true;
           s.spentUsd = Number((s.spentUsd + llmCostFromUsage(model, res.usage)).toFixed(8));
           s.calls += 1;
           s.inputTokens += res.usage.input_tokens ?? 0;
           s.outputTokens += res.usage.output_tokens ?? 0;
           s.cacheReadTokens += res.usage.cache_read_input_tokens ?? 0;
           s.cacheWriteTokens += res.usage.cache_creation_input_tokens ?? 0;
-          verdicts = parseVerdicts(res.text, batch.length);
-          if (verdicts === null) { s.failedCalls += 1; s.lastUnusable = res.text.replace(/\s+/g, " ").trim().slice(0, 160); }
+          const got = parseVerdicts(res.text, rowsOf.length);
+          if (got === null) { s.failedCalls += 1; s.lastUnusable = res.text.replace(/\s+/g, " ").trim().slice(0, 160); }
+          return got;
+        };
+        const strict = (n: number) => `${SYSTEM} Your last answer could not be used: reply with ONLY a JSON array of exactly ${n} numbers, each 0 or 1, and no words.`;
+        const roomFor = (n: number) => n * 10 + 200;
+        verdicts = await ask(batch, SYSTEM, outTokens);
+        if (verdicts === null) verdicts = await ask(batch, strict(batch.length), roomFor(batch.length));
+        if (verdicts === null && answered && batch.length > 1) {
+          const half = Math.ceil(batch.length / 2);
+          const halves = [batch.slice(0, half), batch.slice(half)];
+          const answers: boolean[][] = [];
+          for (const h of halves) {
+            // the escalation costs real money too: it stays inside the same ceiling
+            const worstHalf = llmCostFromUsage(model, { input_tokens: Math.ceil((SYSTEM.length + 120 + reviewPrompt({ requestText: deps.requestText, subject, rows: h }).length) / 2), output_tokens: roomFor(h.length) });
+            if (s.spentUsd + worstHalf > ceiling) break;
+            const got = await ask(h, strict(h.length), roomFor(h.length));
+            if (got === null) break;
+            answers.push(got);
+          }
+          if (answers.length === halves.length) verdicts = answers.flat();
         }
         if (verdicts) {
           batch.forEach((r, i) => out.set(r.id, verdicts![i]));

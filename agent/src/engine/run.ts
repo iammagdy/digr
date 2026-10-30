@@ -103,10 +103,19 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
     for (const parent of parentRows) {
       if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
       const parentId = String(parent.id);
-      const bound = parent[spec.parent_binding.from];
-      if (bound === undefined || bound === null || bound === "") continue;
-      const params = { ...spec.params, [spec.parent_binding.param]: bound };
-      const r = await runStream(deps, stage, spec, `p:${parentId}`, params, parentId, cap);
+      // THE PARENT'S OWN FIELDS, in order (the measuring call's input first, then its website, page and name when the child source takes them): the first that has a value is read; a read that FAILED or gave nothing is retried through the next one
+      const bindings = [{ param: spec.parent_binding.param, from: spec.parent_binding.from, domain: false }, ...(spec.parent_binding.fallbacks ?? []).map((f) => ({ param: f.param, from: f.from, domain: f.domain === true }))];
+      const usable = bindings.map((b, index) => ({ b, index, value: index === 0 ? (parent[b.from] === undefined || parent[b.from] === null || parent[b.from] === "" ? null : parent[b.from]) : bindingValue(parent[b.from], b.domain) })).filter((x) => x.value !== null);
+      if (usable.length === 0) continue;
+      let r: { reason: StopReason; aborted: string | null } = { reason: "source_exhausted", aborted: null };
+      for (const u of usable) {
+        const params = { ...spec.params, [u.b.param]: u.value };
+        const before = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
+        r = await runStream(deps, stage, spec, u.index === 0 ? `p:${parentId}` : `p:${parentId}:b${u.index}`, params, parentId, cap);
+        if (r.aborted) return r;
+        const gained = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length - before;
+        if (gained > 0 || !(r.reason === "failed" || r.reason === "source_exhausted" || r.reason === "no_new_items")) break;
+      }
       if (r.aborted) return r;
       // a stop that ends the whole stage (the budget, the daily limit, the time, a refusal) is not «this parent has no more»
       if (r.reason === "budget" || r.reason === "daily_cap" || r.reason === "refused" || r.reason === "time_limit" || r.reason === "review_limit" || r.reason === "page_limit") return r;
@@ -118,6 +127,14 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
   }
   // a read that failed for some parent is the recorded reason when the volume was not reached (never «the source has no more»)
   return { reason: items.counts(stage.key).accepted >= stage.planned_rows ? "target_reached" : anyFailed ? "failed" : last === "target_reached" ? "source_exhausted" : last, aborted: null };
+}
+
+/** The value a parent's field gives to the child source's input: the text itself, or for a website input the bare domain («https://www.mustcc.com/» → «mustcc.com»). Null when the parent has none. */
+function bindingValue(v: unknown, domain: boolean): string | null {
+  if (typeof v !== "string" && typeof v !== "number") return null;
+  const t = String(v).trim();
+  if (t === "") return null;
+  return domain ? (t.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/^www\./i, "").split(/[/?#]/)[0] || null) : t;
 }
 
 /** The period the customer asked for, as the engine can walk it: the enabled period filter with its date field and a first day. Null when the stage has none (or only an end). */
