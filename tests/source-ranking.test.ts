@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { rankedCandidates } from "../src/lib/agentMission/candidates";
 import { classifyFailure, cheaperAlternatives, expectedCost, SOURCE_DEMOTE_FACTOR, SOURCE_HEALTH_WINDOW_MS, rankEndpoints, sourceHealth, statsFromCalls, type RecordedCallFact } from "../src/lib/agentMission/sourceRanking";
@@ -207,6 +207,9 @@ const plan = async (steps: FakeStep[], answers: TregCallResult[], request = "ه�
 const xPage = tregResult({ output: { data: { items: Array.from({ length: 5 }, (_, i) => ({ id: `${i}`, text: `تغريدة ${i}`, url: `https://x.example/${i}`, author: "a", createdAt: "2026-10-20T10:00:00Z" })), nextCursor: null } } }, 0.00075);
 
 describe("the planner cannot pick a pricier source without a reason", () => {
+  // the recorded calls of this block are dated against NOW and the planner reads the real clock for the 24-hour health window: with the real clock the block passed only on the day it was written
+  beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"], now: NOW }); });
+  afterEach(() => { vi.useRealTimers(); });
   const PRICIER = "x.x.search-posts-all";
   const cheaper = () => cheaperAlternatives(PRICIER, catalog, new Map(), Date.now(), () => true).map((r) => r.id);
 
