@@ -36,12 +36,12 @@ describe("what moves the platform to the next key", () => {
     expect(w.db.alerts.map((a) => a.problem)).toEqual(["failover"]);
   });
 
-  it("402 (not a price cap): out of balance at once, no verification call", async () => {
+  it("402 (not a price cap): verified with the free reads (identity and balance); a confirmed empty balance marks the key, the reason names the endpoint", async () => {
     const { w, pool } = world(["empty", "ok"]);
     const r = await executeTregCall(callOptions());
     expect(r.ok).toBe(true);
-    expect(authMeCalls(w)).toHaveLength(0);
-    expect(w.db.byId(pool[0].id)).toMatchObject({ status: "out_of_balance", status_reason: "http_402" });
+    expect(authMeCalls(w)).toHaveLength(1);
+    expect(w.db.byId(pool[0].id)).toMatchObject({ status: "out_of_balance", status_reason: "balance_low:anyapi.x.search.posts" });
     expect(w.db.state.active_key_id).toBe(pool[1].id);
   });
 

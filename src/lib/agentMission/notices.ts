@@ -71,19 +71,29 @@ export function buildMissionNotice(kind: MissionNoticeKind, f: MissionNoticeFact
       },
     };
   }
-  // failed or unserved: nothing was delivered. When a hold was taken it was released whole.
+  // failed or unserved: nothing was delivered. When a hold was taken it was released whole. FOUR WORDINGS, one per truth, and in each the subject, the heading and the lead say DIFFERENT things (the old text said the same sentence in the
+  // heading, the lead and the subject, and told the customer «no source serves your request» for our own failures):
+  //   ours       a fault of ours stopped the run before anything was delivered (the sources were not the problem);
+  //   empty      we searched the sources and nothing matched;
+  //   no source  no source serves this kind of request with the accuracy it needs, so nothing was started;
+  //   stopped    the run stopped before it finished, for a reason we do not name.
   const unserved = kind === "unserved";
   const ourFault = f.cause === "internal";
-  const lead = unserved ? (f.cause === "empty" ? `بحثنا في المصادر المتاحة فلم نجد ما يطابق طلبك «${t}».` : `لم نجد مصدرًا يخدم طلبك «${t}» بدقة الآن.`) : ourFault ? `تعذّر تنفيذ مهمتك «${t}» بسبب خلل من جانبنا، وليس لأن المصدر خالٍ من النتائج؛ وأُبلغ فريقنا ليراجعه.` : `تعذّر استكمال مهمتك «${t}».`;
+  const wording = ourFault
+    ? { subject: `${t}: خلل من جانبنا ولم يُخصم شيء`, heading: `توقفت مهمة «${t}» قبل أن تُسلَّم`, lead: `تعذّر تنفيذ مهمتك «${t}» بسبب خلل من جانبنا، وليس لأن المصادر خالية من النتائج؛ لم نسلّمك شيئًا وأبلغنا فريقنا ليصلحه. يمكنك إعادة إرسال الطلب بعد قليل.`, title: `«${t}»: خلل من جانبنا` }
+    : unserved && f.cause === "empty"
+      ? { subject: `${t}: لا نتائج مطابقة`, heading: `لم نجد ما يطابق «${t}»`, lead: `بحثنا في المصادر المتاحة عن «${t}» ولم نجد نتائج تطابق طلبك بالدقة المطلوبة، فلم نسلّم شيئًا. جرّب تغيير الصياغة أو توسيع الطلب.`, title: `«${t}»: لا نتائج مطابقة` }
+      : unserved
+        ? { subject: `${t}: لا يوجد مصدر يخدمه`, heading: `«${t}» خارج مصادرنا الآن`, lead: `لا يوجد بين مصادرنا ما يخدم طلبك «${t}» بالدقة التي يحتاجها، لذلك لم نبدأ تنفيذه. يمكنك تعديل الطلب أو كتابته بصيغة أخرى.`, title: `«${t}»: خارج مصادرنا الآن` }
+        : { subject: `${t}: توقفت قبل نهايتها ولم يُخصم شيء`, heading: `لم نصل إلى نتيجة في «${t}»`, lead: `توقف تنفيذ مهمتك «${t}» قبل أن يكتمل ولم نسلّمك شيئًا. يمكنك إعادة المحاولة بعد قليل.`, title: `«${t}»: لم تكتمل المهمة` };
   const detail1 = money;
-  const title = unserved ? `لا يمكن تنفيذ «${t}» بدقة الآن` : `تعذّر تنفيذ مهمتك: ${t}`;
   return {
-    kind, title, body: `${lead} ${detail1}.`, link: REQUESTS,
+    kind, title: wording.title, body: `${wording.lead} ${detail1}.`, link: REQUESTS,
     email: {
-      subject: unserved ? `${t} — لا يمكن تنفيذه بدقة الآن` : ourFault ? `${t} — خلل من جانبنا ولم يُخصم شيء` : `${t} — تعذّر التنفيذ ولم يُخصم شيء`,
+      subject: wording.subject,
       preheader: f.hasJob ? "لم يُخصم منك شيء، وعاد الحجز المؤقت كاملًا." : "لم يُحجز أي رصيد منك ولم يُخصم شيء.",
-      heading: unserved ? `لا يمكن تنفيذ «${t}» بدقة الآن` : `لم تكتمل مهمة «${t}»`,
-      lead, detail1, detail2: "", buttonLabel: buttonOpen,
+      heading: wording.heading,
+      lead: wording.lead, detail1, detail2: "", buttonLabel: buttonOpen,
     },
   };
 }

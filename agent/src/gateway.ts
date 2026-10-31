@@ -257,7 +257,8 @@ export function createGateway(deps: GatewayDeps) {
       if (result.ok && rows > 0) { samplesWithRows.set(endpointId, (samplesWithRows.get(endpointId) ?? 0) + 1); if (sourceKey !== null) samplesBySource.set(sourceKey, (samplesBySource.get(sourceKey) ?? 0) + 1); sampledJobs.add(endpoint.capability ?? endpointId); }
       await commit(deps.client, { costId: reservation.costId, costUsd: actualUsd, units: rows, capabilityId, status, durationMs, jobId: deps.jobId, ...(result.keyRef ? { keyRef: result.keyRef } : {}) });
       // why a call failed is kept in the trace for the admin (the provider's own words, shortened): the model sees the same text in its answer
-      const failure = result.ok ? null : clip(result.errorDetails || result.detail || result.error || "the source answered with an error", 160);
+      // a 402 the key pool checked against the key's own balance (healthy): THIS source refused payment, and the trace says so (source health demotes it, never the key)
+      const failure = result.ok ? null : clip(`${result.paymentScope === "endpoint" ? "endpoint_payment_refused: " : ""}${result.errorDetails || result.detail || result.error || "the source answered with an error"}`, 160);
       await logCall({ id, endpoint_id: endpointId, params: failure ? { ...trace, _failure: failure } : trace, status: status === "success" ? "ok" : status, http_status: result.httpStatus, rows, cost_usd: actualUsd, estimate_usd: estimate, provider_cost_id: reservation.costId, storage_path: storagePath, duration_ms: durationMs });
 
       if (!result.ok) {

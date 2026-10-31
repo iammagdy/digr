@@ -16,8 +16,9 @@ const FIELD = "min-h-11 rounded-xl border border-ln2 bg-bg px-3 text-sm text-ink
 
 interface StageState { columns: Record<string, boolean>; filters: Record<string, { enabled: boolean; lang?: "ar" | "en"; days?: string }> }
 
-export const initialState = (edit: PlanEditorView): { count: string; stages: Record<string, StageState> } => ({
+export const initialState = (edit: PlanEditorView): { count: string; perParent: Record<string, string>; stages: Record<string, StageState> } => ({
   count: String(edit.stages.find((s) => s.key === edit.target_stage_key)?.target ?? ""),
+  perParent: Object.fromEntries(edit.stages.filter((s) => s.per_parent !== undefined).map((s) => [s.key, String(s.per_parent)])),
   stages: Object.fromEntries(edit.stages.map((s) => [s.key, {
     columns: Object.fromEntries(s.columns.map((c) => [c.key, c.on])),
     filters: Object.fromEntries(s.filters.map((f) => [f.kind, { enabled: f.enabled, ...(f.lang ? { lang: f.lang } : {}), ...(f.days !== undefined ? { days: String(f.days) } : {}) }])),
@@ -34,6 +35,10 @@ export function editsFromState(edit: PlanEditorView, state: ReturnType<typeof in
   for (const s of edit.stages) {
     const st = state.stages[s.key];
     const e: NonNullable<PlanEdits["stages"]>[number] = { key: s.key };
+    if (s.per_parent !== undefined) {
+      const per = Number(normalizeDigits(state.perParent[s.key] ?? "").replace(/[^\d]/g, ""));
+      if (Number.isInteger(per) && per !== s.per_parent) e.per_parent = per;
+    }
     if (s.columns.some((c) => st.columns[c.key] !== c.on)) e.columns = s.columns.filter((c) => st.columns[c.key]).map((c) => c.key);
     const filters = s.filters.flatMap((f) => {
       const cur = st.filters[f.kind];
@@ -42,7 +47,7 @@ export function editsFromState(edit: PlanEditorView, state: ReturnType<typeof in
       return changed ? [{ kind: f.kind, enabled: cur.enabled, ...(cur.lang !== undefined ? { lang: cur.lang } : {}), ...(days !== undefined && Number.isFinite(days) && days !== f.days ? { days } : {}) }] : [];
     });
     if (filters.length > 0) e.filters = filters;
-    if (e.columns || e.filters) stages.push(e);
+    if (e.columns || e.filters || e.per_parent !== undefined) stages.push(e);
   }
   if (stages.length > 0) out.stages = stages;
   return out;
@@ -66,6 +71,14 @@ export function PlanEditor({ edit, busy = false, onSave, onCancel, onRetype }: {
           <span className="text-[11px] font-light text-mut">الحد الأقصى {toArabicDigits(edit.max_rows)}. يُحسب السعر من جديد بعد الحفظ.</span>
         </label>
       ) : null}
+
+      {edit.stages.filter((s) => s.per_parent !== undefined).map((s) => (
+        <label key={`per-${s.key}`} className="flex flex-col gap-1 text-[13px] text-ink2">
+          <span>{s.per_parent_label_ar}</span>
+          <input value={state.perParent[s.key] ?? ""} onChange={(e) => setState((p) => ({ ...p, perParent: { ...p.perParent, [s.key]: e.target.value } }))} inputMode="numeric" className={FIELD} dir="ltr" aria-label={s.per_parent_label_ar} data-testid={`agent-edit-per-parent-${s.key}`} />
+          <span className="text-[11px] font-light text-mut">يُحسب السعر من جديد بعد الحفظ.</span>
+        </label>
+      ))}
 
       {edit.stages.filter((s) => s.filters.length > 0).map((s) => (
         <fieldset key={s.key} className="m-0 flex flex-col gap-1.5 border-0 p-0" data-testid={`agent-edit-filters-${s.key}`}>

@@ -2,7 +2,7 @@ import { toArabicDigits } from "../arabicDigits";
 import { AGENT_MAX_DELIVERED_ROWS } from "./constants";
 import { textKeyOf } from "./contract";
 import { FILTER_KINDS, filterVerdict, isEnabled, kindsPromisedBy, type FilterKind } from "./filters";
-import { countAr, itemNounOfPlan } from "./itemNoun";
+import { countAr, itemNounOf, itemNounOfPlan } from "./itemNoun";
 import { lockedColumnKeys, stagePriceInputs, targetStageKey, type PlanColumn, type PricedPlan, type PricedStage } from "./plan";
 import { priceMissionByCode } from "./price";
 import { classifyRows } from "./relevance";
@@ -18,6 +18,8 @@ export interface PlanEdits {
   count?: number;
   stages?: Array<{
     key: string;
+    /** For a stage that hangs on another (the people of each company): how many items per item of the parent. */
+    per_parent?: number;
     /** The keys of the columns that stay in the file (the others are hidden; hidden ones may be switched back on). */
     columns?: string[];
     filters?: Array<{ kind: FilterKind; enabled?: boolean; lang?: "ar" | "en"; days?: number }>;
@@ -93,11 +95,25 @@ export function applyPlanEdits(planIn: PricedPlan, editsIn: unknown, ctx: EditCo
 
   // 2. THE COLUMNS AND THE FILTERS of each stage named in the edit (a filter whose value the customer changed makes the model's sentence about it stale: it is replaced by the code's own)
   const changedKinds = new Set<FilterKind>();
+  let perEdited = false;
   const stageEdits = Array.isArray(editsIn.stages) ? editsIn.stages : [];
   for (const e of stageEdits) {
     if (!isRecord(e)) return fail("تعذّر قراءة تعديلك. حاول مرة أخرى.");
     const stage = plan.stages.find((s) => s.key === String(e.key ?? ""));
     if (!stage) return fail("هذه المرحلة غير موجودة في الخطة.");
+    if (e.per_parent !== undefined) {
+      // THE COUNT PER ITEM OF THE PARENT («صناع القرار» of each company): a whole number from 1; the stage's rows follow (parent rows x count) and the plan is priced again below
+      const per = Number(e.per_parent);
+      const parent = stage.parent_key === null ? undefined : plan.stages.find((s) => s.key === stage.parent_key);
+      if (!parent) return fail("هذا العدد خاص بالمراحل التابعة لمرحلة أخرى.");
+      if (!Number.isInteger(per) || per < 1 || per > 100) return fail(`العدد لكل ${itemNounOf(parent.title_ar).singular} لازم يكون رقمًا صحيحًا من ${toArabicDigits(1)} إلى ${toArabicDigits(100)}.`);
+      stage.per_parent_rows = per;
+      stage.planned_rows = parent.planned_rows * per;
+      stage.expected_rows = stage.planned_rows;
+      // the line that said the count was code's default is the customer's own now; a sentence that still carries the old count is dropped
+      plan.assumptions_ar = [...(plan.assumptions_ar ?? []).filter((a) => !a.startsWith("لم تحدد عدد")), `اعتمدنا ${toArabicDigits(per)} لكل ${itemNounOf(parent.title_ar).singular} حسب تعديلك.`];
+      perEdited = true;
+    }
     if (Array.isArray(e.columns)) {
       const all: PlanColumn[] = [...stage.columns, ...(stage.hidden_columns ?? [])];
       const on = new Set(e.columns.map((k) => String(k)));
@@ -130,6 +146,7 @@ export function applyPlanEdits(planIn: PricedPlan, editsIn: unknown, ctx: EditCo
     }
   }
 
+  if (perEdited) restateCounts(plan, 0, 0);
   // a sentence of the plan that promises what a filter the customer just switched OFF used to enforce is not left on the card: the headline becomes a sentence built here, the stage's explanation is dropped
   const offKinds = new Set(plan.stages.flatMap((s) => (s.filters ?? []).filter((f) => !isEnabled(f)).map((f) => f.kind)));
   const stalePromise = (text: string): boolean => kindsPromisedBy(text).some((k) => offKinds.has(k) || changedKinds.has(k));

@@ -323,6 +323,16 @@ describe("a failed sample does not end exploration", () => {
     expect(h.call).toHaveBeenCalledTimes(1);
   });
 
+  it("a 402 that the key pool found to be the ENDPOINT's own (the key's balance is healthy) is traced as «endpoint_payment_refused», which source health reads as a demotion of that source only", async () => {
+    const h = makeHarness({ responses: [tregResult(null, 0, { ok: false, httpStatus: 402, errorDetails: "payment required", paymentScope: "endpoint", data: null })] });
+    await tool(h, "catalog_search").handler({ words: ["tweets", "search"], platform: "x", limit: 5 });
+    const failed = await tool(h, "treg_call").handler({ endpoint_id: "crawl4ai.x.search.posts", params: { query: "from:nobody", limit: 20 } }) as any;
+    expect(failed).toMatchObject({ ok: false, failed: true, http_status: 402 });
+    expect(h.store.calls[0].params_digest._failure).toMatch(/^endpoint_payment_refused: /);
+    const { classifyFailure } = await import("../src/lib/agentMission/sourceRanking");
+    expect(classifyFailure(h.store.calls[0] as any)).toBe("payment");
+  });
+
   it("a REAL failed sample (HTTP 400 from the source): its reason is kept for the admin, and the answer points to the next untried source", async () => {
     const h = makeHarness({ responses: [tregResult(null, 0, { ok: false, httpStatus: 400, errorDetails: "query refused: topic search needs a session", data: null }), tregResult(xPage("قهوة", 0, 5, null), 0.00075)] });
     await tool(h, "catalog_search").handler({ words: ["tweets", "search"], platform: "x", limit: 5 });

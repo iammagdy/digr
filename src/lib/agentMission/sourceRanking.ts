@@ -37,7 +37,7 @@ export interface RecordedCallFact {
   params_digest?: Record<string, unknown> | null;
 }
 
-export type FailureKind = "config" | "validation" | "transient" | "none";
+export type FailureKind = "config" | "validation" | "payment" | "transient" | "none";
 
 /** What a recorded call says about its SOURCE (not about the mission): configuration, input/validation, or nothing. Generic: refusal codes, HTTP statuses and the provider's own words. */
 export function classifyFailure(call: Pick<RecordedCallFact, "status" | "refused_reason" | "http_status" | "params_digest">): FailureKind {
@@ -50,6 +50,8 @@ export function classifyFailure(call: Pick<RecordedCallFact, "status" | "refused
   if (call.status !== "failed") return "none";
   const http = Number(call.http_status ?? 0);
   const text = String(call.params_digest?._failure ?? "");
+  // a 402 that the key pool checked against the key's own balance (healthy) is THIS source refusing payment: it is demoted, never skipped; a bare 402 or a price cap says nothing about the source
+  if (http === 402 && /^endpoint_payment_refused/.test(text)) return "payment";
   if (/route_max_cost|over_budget|budget/i.test(text) || http === 402) return "none"; // the price cap of the call, not the source
   if (http === 401 || http === 403 || /not configured|no api key|missing (api )?key|unauthori[sz]ed|forbidden|credential/i.test(text)) return "config";
   if (http === 400 || http === 404 || http === 422 || /not allowed|not a valid|invalid|is required|must be|unsupported|unknown (parameter|value)|bad request/i.test(text)) return "validation";
@@ -66,7 +68,7 @@ export interface SourceStats {
   costUsd: number;
   okCalls: number;
   /** The recent failures that say something about the source, oldest first. */
-  bad: Array<{ at: number; kind: "config" | "validation" }>;
+  bad: Array<{ at: number; kind: "config" | "validation" | "payment" }>;
   lastRowsAt: number | null;
 }
 export type StatsMap = Map<string, SourceStats>;
@@ -82,7 +84,7 @@ export function statsFromCalls(calls: ReadonlyArray<RecordedCallFact>): StatsMap
     const s = out.get(id) ?? { attempts: 0, withRows: 0, rows: 0, costUsd: 0, okCalls: 0, bad: [], lastRowsAt: null };
     const at = atOf(c.created_at);
     const kind = classifyFailure(c);
-    if (kind === "config" || kind === "validation") s.bad.push({ at: Number.isFinite(at) ? at : 0, kind });
+    if (kind === "config" || kind === "validation" || kind === "payment") s.bad.push({ at: Number.isFinite(at) ? at : 0, kind });
     if (c.status === "ok" || c.status === "empty" || c.status === "failed") s.attempts += 1;
     if (c.status === "ok") {
       const rows = Math.max(0, Math.floor(Number(c.rows_returned ?? 0)));
@@ -99,7 +101,7 @@ export function statsFromCalls(calls: ReadonlyArray<RecordedCallFact>): StatsMap
 export interface SourceHealth {
   state: "ok" | "demoted" | "skipped";
   /** Why, for the admin: the kind of failure and how many since the source last gave rows. */
-  reason: "config" | "validation" | null;
+  reason: "config" | "validation" | "payment" | null;
   failures: number;
   /** When the source is tried again (the end of the window after its last failure), else null. */
   until: number | null;
@@ -113,7 +115,9 @@ export function sourceHealth(stats: SourceStats | undefined, now: number): Sourc
   const last = recent[recent.length - 1].at;
   const until = last + SOURCE_HEALTH_WINDOW_MS;
   if (recent.some((b) => b.kind === "config")) return { state: "skipped", reason: "config", failures: recent.length, until };
-  return recent.length >= SOURCE_SKIP_AFTER_VALIDATION_FAILURES ? { state: "skipped", reason: "validation", failures: recent.length, until } : { state: "demoted", reason: "validation", failures: recent.length, until };
+  const validation = recent.filter((b) => b.kind === "validation").length;
+  if (validation >= SOURCE_SKIP_AFTER_VALIDATION_FAILURES) return { state: "skipped", reason: "validation", failures: recent.length, until };
+  return { state: "demoted", reason: validation > 0 ? "validation" : "payment", failures: recent.length, until };
 }
 
 export interface ExpectedCost {

@@ -127,7 +127,8 @@ export function decideVerdict(input: {
   }
   if (data.ran) {
     if (data.ok) return { verdict: "works", httpStatus: data.httpStatus, providerText: null, refusal: null, origin: "data" };
-    if (data.platformBalanceLow) return { verdict: "out_of_balance", httpStatus: data.httpStatus, providerText: data.text, refusal: null, origin: "data" };
+    // A 402 IS ONLY THE KEY'S WHEN THE BALANCE SAYS SO (live, 2026-10-31: one endpoint refused payment while the balance was 6.64 USD): a balance read above the minimum, or none, leaves the key's status alone
+    if (data.platformBalanceLow && input.balanceMicro !== null && input.balanceMicro <= input.minBalanceMicro) return { verdict: "out_of_balance", httpStatus: data.httpStatus, providerText: data.text, refusal: null, origin: "data" };
     if (data.httpStatus === 401 || data.httpStatus === 403) {
       const refusal = accountRefusalReason(data.text);
       return { verdict: refusal ? "suspended" : "refused", httpStatus: data.httpStatus, providerText: data.text, refusal, origin: "data" };
@@ -168,7 +169,7 @@ export async function runKeyCheck(key: string, deps: KeyCheckDeps): Promise<KeyC
   // «works» wins over a low balance read: the call was answered. A refusal's reason code is stored admin-only.
   const record: KeyCheckReport["record"] =
     d.verdict === "works" ? { status: "connected", reason: "data_call_ok", balanceMicro, email }
-      : d.verdict === "out_of_balance" ? { status: "out_of_balance", reason: data.ran ? "http_402" : "balance_low", balanceMicro, email }
+      : d.verdict === "out_of_balance" ? { status: "out_of_balance", reason: data.ran ? `balance_low:${KEY_CHECK_PROBE.endpointId}`.slice(0, 60) : "balance_low", balanceMicro, email }
         : d.verdict === "suspended" ? { status: "revoked", reason: d.refusal ?? "org_suspended", balanceMicro, email }
           : d.verdict === "refused" ? { status: "revoked", reason: `${d.origin === "data" ? "data" : "auth"}_${d.httpStatus ?? "none"}`.slice(0, 60), balanceMicro, email }
             : { status: null, reason: "check_inconclusive", balanceMicro, email };

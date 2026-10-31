@@ -70,11 +70,11 @@ describe("a health run over the pool", () => {
   });
 
   it("runs while the rollout switch is OFF (the table is useful before it is turned on)", async () => {
-    world.addKey({ isMain: true }); const k = world.addKey({ tregMode: "empty" });
+    world.addKey({ isMain: true }); const k = world.addKey({ tregMode: "endpoint402" });
     expect(world.db.state.rollout_on).toBe(false);
     const out = await runPoolHealth({ client: world.db.client, pool: world.pool, fetchFn: world.treg.fetch as any, now: clock.now });
     expect(out.checked).toBe(2);
-    expect(world.db.byId(k.id)?.status).toBe("connected"); // the fake TREG's /auth/me and balance are fine: «empty» only refuses billed calls
+    expect(world.db.byId(k.id)?.status).toBe("connected"); // the fake TREG's /auth/me and balance are fine: «endpoint402» only refuses billed calls
   });
 
   it("a NON-active key turning bad opens ONE health_broken alert, its repeat opens none; connected again clears it", async () => {

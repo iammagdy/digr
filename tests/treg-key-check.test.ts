@@ -119,8 +119,8 @@ describe("the verdict of the three steps (pure)", () => {
     expect(decideVerdict({ identity: ok, balanceMicro: 912_244, minBalanceMicro: 10_000, data: data({ httpStatus: 403, text: "org suspended" }) })).toMatchObject({ verdict: "suspended", refusal: "org_suspended", origin: "data" });
     expect(decideVerdict({ identity: ok, balanceMicro: 912_244, minBalanceMicro: 10_000, data: data({ httpStatus: 403, text: "forbidden" }) })).toMatchObject({ verdict: "refused", origin: "data" });
   });
-  it("a 402 is an empty balance; any other failure of the call is unknown, never a verdict on the key", () => {
-    expect(decideVerdict({ identity: ok, balanceMicro: null, minBalanceMicro: 1, data: data({ httpStatus: 402, platformBalanceLow: true }) }).verdict).toBe("out_of_balance");
+  it("a 402 with a confirmed low balance is an empty balance; any other failure of the call is unknown, never a verdict on the key", () => {
+    expect(decideVerdict({ identity: ok, balanceMicro: 0, minBalanceMicro: 1, data: data({ httpStatus: 402, platformBalanceLow: true }) }).verdict).toBe("out_of_balance");
     for (const httpStatus of [400, 404, 422, 429, 500, 503, null]) expect(decideVerdict({ identity: ok, balanceMicro: 500_000, minBalanceMicro: 1, data: data({ httpStatus }) }).verdict).toBe("unknown");
   });
   it("with no data call (cap, cost record): only a low balance is conclusive", () => {
@@ -338,7 +338,7 @@ describe("«افحص الآن» on a pool key: the same three steps on the store
   it("an empty account is recorded out_of_balance; an inconclusive check records nothing and keeps what the key had", async () => {
     const a = poolWorld("empty", { balanceMicro: 5_000 });
     await run(a.k.id);
-    expect(w.db.byId(a.k.id)).toMatchObject({ status: "out_of_balance", status_reason: "http_402" });
+    expect(w.db.byId(a.k.id)).toMatchObject({ status: "out_of_balance", status_reason: "balance_low:crawl4ai.google.serp.news" });
     teardownPoolWorld(); w = makePoolWorld(); state.client = withAudit(w.db.client);
     const b = poolWorld("http503");
     w.db.byId(b.k.id)!.status_reason = "http_402"; w.db.byId(b.k.id)!.status = "out_of_balance";

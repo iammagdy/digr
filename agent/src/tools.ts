@@ -2,7 +2,7 @@ import { AGENT_COLLECT_MAX_PAGES, AGENT_INLINE_ROWS_MAX, SANDBOX_INLINE_RESULT_C
 import { normalizeText } from "../../src/lib/agentMission/relevance";
 import type { MissionPricingSettings } from "../../src/lib/missionPricing";
 import { isContactSource } from "../../src/lib/agentMission/contacts";
-import { childStepSourcesFor, isPeopleNoun, linkableCompanySources } from "../../src/lib/agentMission/childSources";
+import { childStepSourcesFor, isPeopleNoun, linkableCompanySources, peopleSourcesForCompanies } from "../../src/lib/agentMission/childSources";
 import { describeAgentSource, isAgentSourceId, searchAgentSources, SESSION_RESTRICTED_SOURCES } from "../../src/lib/agentMission/sources";
 import { usableSearchProvider, webSourceAvailable, type WebAvailability } from "../../src/lib/agentMission/webAvailability";
 import { validateAndPricePlan, type PricedPlan, type RecordedCall } from "../../src/lib/agentMission/plan";
@@ -376,6 +376,14 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         if (isObject(a.params) && typeof result.call_id === "string") state.callParams.set(result.call_id, { ...a.params });
         if (!("refused" in result) || result.refused === "needs_login") state.tried.add(id);
         if (ctx.phase === "planning" && result.ok === true && isObject(a.params)) { const list = state.samples.get(id) ?? []; list.push({ rows: Number(result.rows_in_page ?? 0) || 0, key: JSON.stringify(Object.entries(a.params).filter(([k]) => !/^(?:limit|count|page|cursor|page_size|per_page)$/i.test(k)).sort(([x], [y]) => x.localeCompare(y)))}); state.samples.set(id, list); }
+        // ONE OVER-BUDGET REFUSAL IS NOT THE END OF THE SEARCH (live, 2026-10-31: the only people call was a source dearer than the planning budget; it was refused once and the planner stopped, dropping the decision makers): the answer
+        // names the cheapest sources that can do the step (the people sources of a company when the request asks for people), and says the search goes on
+        if (ctx.phase === "planning" && "refused" in result && (result.refused === "over_budget" || result.refused === "stage_reserved")) {
+          const wantsPeople = perParentQuantities(`${mission.request_text} ${mission.answer_text ?? ""}`).some((q) => isPeopleNoun(q.noun ?? ""));
+          const allowedSource = (x: string): boolean => policyVerdict(x, ctx.access).allowed && !blockedEndpointReason(x) && isSellable(x, ctx.catalog);
+          const next = (wantsPeople ? peopleSourcesForCompanies(ctx.catalog, allowedSource).map((p) => p.id) : untriedSources(state, id, 6)).filter((x) => x !== id && !state.tried.has(x)).slice(0, 3);
+          return { ...result, next_sources: next, next_step: "this call costs more than the planning budget that is left, so it was NOT made. One refusal does not end the search: sample the cheapest of next_sources (cheapest first) for this step, and give the step up only after two sources were really tried and gave no rows" };
+        }
         // A SAMPLE THAT FAILS IS NOT THE END OF EXPLORATION: a failed call, an empty page or a source that refuses this search says which sources of the ranking are still untried, so the next one is sampled (within the budget)
         const unsuitable = ("failed" in result && result.failed === true) || ("refused" in result && result.refused === "needs_login") || (result.ok === true && result.rows_in_page === 0);
         return unsuitable ? { ...result, next_sources: untriedSources(state, id), next_step: "this sample did not give rows; sample the next untried source of the ranking (pass `why` only if you skip one), and stop only when the budget refuses or no suitable source is left" } : { ...result };
