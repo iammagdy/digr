@@ -33,7 +33,8 @@ describe("when the methodology add-on is offered", () => {
     const canvas = readFileSync("src/app/dashboard/chat/components/ResultsCanvas.tsx", "utf8");
     const filesTab = canvas.slice(canvas.indexOf('{tab === "files" && ('));
     const offer = filesTab.slice(filesTab.indexOf('data-testid="methodology-offer"') - 140);
-    expect(offer).toContain("methodologyOffered({ status: jobStatus, delivered: deliveredCount })");
+    // the call now also passes the rows loaded from the saved data (`savedRows`), so the offer is not drawn where the purchase would be refused
+    expect(offer).toContain("methodologyOffered({ status: jobStatus, delivered: deliveredCount, savedRows: records.length })");
     expect(offer).toContain("اكتب المنهجية الرسمية");
     expect(offer).toContain("formatNumber(METHODOLOGY_POINTS)");
     // not inside the per-format list: a job that produced only Excel still shows it
@@ -46,7 +47,7 @@ describe("when the methodology add-on is offered", () => {
 
   it("the report tab no longer shows the paid button for a job that delivered nothing", () => {
     const canvas = readFileSync("src/app/dashboard/chat/components/ResultsCanvas.tsx", "utf8");
-    expect((canvas.match(/methodologyOffered\(\{ status: jobStatus, delivered: deliveredCount \}\)/g) || []).length).toBe(2);
+    expect((canvas.match(/methodologyOffered\(\{ status: jobStatus, delivered: deliveredCount, savedRows: records\.length \}\)/g) || []).length).toBe(2);
   });
 });
 

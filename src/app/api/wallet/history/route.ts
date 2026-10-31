@@ -5,7 +5,7 @@ import { fetchNewestLedgerRows } from "@/lib/server/typedLedger";
 import { CREDIT_KIND_LABEL_AR } from "@/lib/creditKinds";
 import { walletDisplayText, walletNoteForDisplay } from "@/lib/walletText";
 import { jobFactsForWallet, jobLedgerLineAr } from "@/lib/agentMission/walletLine";
-import { jobLedgerTotals } from "@/lib/walletView";
+import { isMethodologyChargeId, jobLedgerTotals, methodologyPurchaseLineAr } from "@/lib/walletView";
 import { readLedgerRowsOfJobs } from "@/lib/server/jobLedger";
 
 export const dynamic = "force-dynamic";
@@ -52,12 +52,13 @@ export async function GET(req: NextRequest) {
       delta: r.delta,
       type: r.type,
       kind: r.kind,
-      labelAr: walletDisplayText(CREDIT_KIND_LABEL_AR[r.kind]),
+      // the methodology purchase (`chg_meth_<job id>`) is a line of its own, not a row of the job's delivery line
+      labelAr: isMethodologyChargeId(r.id) ? methodologyPurchaseLineAr(r.delta) : walletDisplayText(CREDIT_KIND_LABEL_AR[r.kind]),
       jobId: r.jobId,
-      missionLineAr: r.jobId ? lineByJob.get(r.jobId) ?? null : null,
+      missionLineAr: r.jobId && !isMethodologyChargeId(r.id) ? lineByJob.get(r.jobId) ?? null : null,
       topupId: r.topupId,
       // The stored note is never rewritten: it is cleaned (internal ids, Latin names) only in what the customer is sent.
-      note: r.kind === "admin_grant" ? "" : walletNoteForDisplay(r.note),
+      note: r.kind === "admin_grant" || isMethodologyChargeId(r.id) ? "" : walletNoteForDisplay(r.note),
       createdAt: r.createdAt,
     }));
     return NextResponse.json({ success: true, rows: newestFirst }, { headers: { "Server-Timing": [...marks, `total;dur=${Date.now() - started}`].join(", ") } });

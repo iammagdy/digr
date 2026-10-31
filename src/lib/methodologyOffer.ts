@@ -8,9 +8,13 @@ export const METHODOLOGY_POINTS = 10;
  * finished job; a request that delivered nothing has nothing to document, and a running one is not complete yet. The offer does
  * not depend on which files the job produced: the document is generated from the saved data on request.
  */
-export function methodologyOffered(job: { status?: unknown; delivered?: unknown } | null | undefined): boolean {
+export function methodologyOffered(job: { status?: unknown; delivered?: unknown; savedRows?: unknown } | null | undefined): boolean {
   const status = String(job?.status || "").toLowerCase();
-  return ["done", "completed"].includes(status) && Number(job?.delivered) > 0;
+  if (!(["done", "completed"].includes(status) && Number(job?.delivered) > 0)) return false;
+  // `savedRows`: the rows the results panel loaded from the job's saved data (`/api/jobs/<id>/data`, which reads the very file the purchase reads). The document is written from that saved data, so a job with
+  // none (a mission-era job keeps its results in the workbook, not in that file) would get «لم يتم خصم أي نقاط» after the customer confirmed: the offer is then not shown at all. Left out = not checked.
+  if (job && "savedRows" in job && !(Number(job.savedRows) > 0)) return false;
+  return true;
 }
 
 const ASKS_FOR_METHODOLOGY = /(?:منهجي[هة]|methodology)/i;

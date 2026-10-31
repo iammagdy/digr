@@ -4,6 +4,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-31, after #307): the methodology purchase in the wallet, the offer, the estimate wording
+
+`main` before it was `3526b092abe04d4cb965181bae94a9cbbaec3773` (#307); its merge commit is the head of `main` after it. Customer UI and wording only: no SQL, no ledger write, no change to `purchase_methodology_atomic`, the methodology route's charging, the price (10 points), settlement, reserve/charge/release, pricing or the engine.
+
+- **The «3 jobs where charge > reserve»** (read-only evidence, 2026-10-31): each has a second `charge` row `chg_meth_<job id>` of 10 points, the owner-approved, customer-confirmed methodology add-on (`purchase_methodology_atomic`, written 10 minutes to 3 hours after settlement). The settlement charge (30, 9, 789) never exceeded the reserve in any of the 360 jobs with ledger rows; 3 methodology purchases exist (2026-10-15 to 2026-10-24, all legacy jobs).
+- **Wallet**: the purchase is its own line («شراء المنهجية الرسمية للطلب: ١٠ نقاط», Cairo day and time); a job's delivery line sums only `res_`, `rel_`, `chg_<job id>` (30, 9, 789). Recognised by the exact id prefix `chg_meth_` (`isMethodologyChargeId`), never by the note. All lines still add up to `calculateBalance`.
+- **Methodology offer**: it was drawn for every finished job with delivered items, also mission-era jobs, which keep no `data.json` (0 of 65) and would get «لم يتم خصم أي نقاط» (409) after the customer confirmed. It is now drawn only when the rows loaded from the saved data exist (`savedRows`); the route is unchanged. NOT PROVEN with a live call (none made). The chat answer «ملف المنهجية متاح من لوحة النتائج…» (`methodologyAnswerAr`) is not gated by this and can still point a mission-era customer to a button that is not there.
+- **Calculator**: the price note, the over-limit notes and the form's maximum-volume message say the item's noun («٤٥٠٠ تغريدة») or «النتائج», never «سجل»; every figure is as it was (golden test).
+- Rollback: `git revert -m 1 <merge commit>`.
+
+---
+
 ## START HERE (2026-10-31, after #306): wallet and public-page fixes from the browser tester
 
 `main` before it was `24faf89f68d68d48e96e33ce3447bb22d10657c8` (#306); its merge commit is the head of `main` after it. Customer UI only: no SQL, ledger, settlement, engine, pricing or Edge Function change; the wallet route is unchanged (it only reads).
