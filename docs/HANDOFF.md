@@ -4,9 +4,9 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
-## START HERE (2026-10-31, after #308): INVOICES SIMPLE 1 (the owner's feedback on the invoice builder)
+## START HERE (2026-10-31, after #310): INVOICES SIMPLE 1 (the owner's feedback on the invoice builder)
 
-`main` before it was `5a6c8ce5853a8d855dea13076fac44d7149fc87a` (#308). Everything (the total bug with evidence, the one-screen builder, sectors, «بيان بيانات», the saved rate, the Claude helper with its model and cost, default prices, changed tests, NOT PROVEN): `docs/ADMIN_INVOICES_SIMPLE.md`.
+`main` before it was `d65713b9c3443fb50e77a7d76e9f7bcb226612b3` (#310); the invoice builder it changes is #308 (`5a6c8ce`). Everything (the total bug with evidence, the one-screen builder, sectors, «بيان بيانات», the saved rate, the Claude helper with its model and cost, default prices, changed tests, NOT PROVEN): `docs/ADMIN_INVOICES_SIMPLE.md`.
 **SQL part 06 (statement mode) is NOT applied**: `docs/proposals/admin-invoices/06_statement_mode.sql` (the owner applies it; the verify SELECT is now 23 rows). Invoices and quotes work without it; only creating a statement needs it.
 
 - **«The total does not work»**: three causes: points/EGP with no rate left NO currency (an empty totals box), a quantity typed «1,200» counted as 0, and item types still at price 0 with no warning. Fixed, with tests that failed first.
@@ -27,6 +27,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 - **No wallet, ledger, mission, price, cap or agent code touched**; marking paid credits no points (test: `tests/invoice-ledger-isolation.test.ts`). RLS on, no policy, `service_role` read-only on the document tables.
 - New dependency: `html-to-image` 1.11.13 (MIT), client-side PNG only. One existing test changed: `tests/admin-navigation.test.tsx` (one admin page added).
 - Rollback: `git revert -m 1 <merge commit>`; `99_rollback.sql` only if the feature is abandoned (it deletes every document entered: download `/admin/export` first).
+
+---
+
+## START HERE (2026-10-31, after #309 and #308): «FILE OUTPUT 1» (the «المنهجية» section in the Excel, no CSV for customers)
+
+`main` before it was `5a6c8ce5853a8d855dea13076fac44d7149fc87a` (#308 admin invoices, SQL NOT applied by this work); its merge commit is the head of `main` after it. No SQL, no ledger write, no change to pricing, settlement, reserve/charge/release, planning or provider calls, `finalize.ts` (`countWorkbookItems`, `countWorkbookSheets`), the worker's CSV writing or the Edge Functions.
+
+- **THE RULE THAT SHAPED PART A: never add a sheet to a delivered workbook.** Settlement reads the file back with `countWorkbookSheets` (`agent/src/finalize.ts`): every sheet AFTER THE FIRST, minus its header row, is counted as delivered items. A «المنهجية» sheet placed last made a 50-item file count 62 (proved with the real functions, 2026-10-31), and a 40-of-50 delivery would have been charged for 52. So the methodology is a SECTION below the summary in the FIRST sheet «ملخص المهمة» (the one sheet the readers skip), built by code (`agent/src/methodology.ts`) from recorded facts: the customer's request (`mission.request_text`), the plan (stages, relevance, filters, quantity, unserved steps, unresolved sources), the item store's counts per stage (`missionFactsOf`: read, duplicates, accepted by rule or by the model, left out per reason, stop reason) and the delivered rows' dates (Cairo time). A fact that was not recorded says «غير مسجّل». The first sheet keeps its name (tests and the last-look pass look it up by it). `tests/methodology-section.test.ts` proves, with the real readers, that for 50 items and for 40 of 50 the counts and the sheet-to-stage mapping are identical with and without the section. The only change in `runMission.ts` is the argument of the `buildMissionFiles` call (the facts); the settlement lines are as they were.
+- **Part B: a customer never sees or downloads a CSV.** The CSV is still produced and stored (worker, `publishResult`, settlement) exactly as before. Customer surfaces now offer the Excel: the mission card (`customerFilesOf`), «طلباتي» (`customerFormatsOf`), the results canvas, the files section, the activity terminal, the plan card chips and editor, the plan explanation, the landing page, the chat answer about files, the prompt, the legacy e-mail template, the text inside legacy generated files, and the API responses (`customerFileIds`: the CSV's id is never given). `/api/jobs/[id]/download` defaults to the Excel and gives a customer who asks for «csv» the Excel (only an admin can still get the CSV there); `/api/missions/[id]/file` does the same. An older request with a CSV and no Excel gets an Excel built from its CSV on download (`src/lib/server/excelFromCsv.ts`, saved beside the CSV).
+- **Chat**: «ملف المنهجية» in a conversation whose delivered job has no saved data (`jobHasSavedData`, the same rule as the offer) no longer points to the paid button (`methodologyNoDataAr`). The paid route and its price are unchanged.
+- **NOT changed, on purpose** (see the PR): the Edge Function e-mail template `supabase/functions/send-email/templates.ts` still says «سي إس في» in the «job-done» e-mail (Edge Functions are out of scope); the terms text `legalText.ts` still names CSV; the exclusion-file UPLOAD still accepts a CSV (an input, not an output); «طلباتي» still reads `file_id_csv` from the customer's own `artifact_versions` row (to know that an older request has a file); the Excel label «جدول البيانات فقط» (A3) is as it was although a new file now holds a methodology section.
+- Rollback: `git revert -m 1 <merge commit>`.
 
 ---
 

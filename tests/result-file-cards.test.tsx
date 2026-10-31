@@ -47,16 +47,18 @@ describe("A1: result cards show only the formats produced for the quote", () => 
 
   it("a quote that produced all three formats shows three ready cards and no on-request row", () => {
     const html = render({ xlsx: "a", pdf: "b", csv: "c" });
-    expect(html.match(/↓/g)?.length).toBe(3);
+    // never a CSV card: the Excel and the PDF
+    expect(html.match(/↓/g)?.length).toBe(2);
+    expect(html).not.toContain("سي إس في");
     expect(html).not.toContain("صيغ أخرى تُجهَّز عند الطلب");
   });
 
   it("the canvas files tab and the terminal footer no longer hard-code three download buttons", () => {
     const canvas = readFileSync("src/app/dashboard/chat/components/ResultsCanvas.tsx", "utf8");
     const terminal = readFileSync("src/app/dashboard/chat/components/ActivityTerminal.tsx", "utf8");
-    expect(canvas).toContain(".filter((f) => producedFormats(fileIds).includes(f.ext))");
+    expect(canvas).toContain(".filter((f) => customerResultFormats(producedFormats(fileIds)).includes(f.ext))");
     expect(terminal).not.toContain('onClick={() => onDownload("pdf")}');
-    expect(terminal).toContain("producedFormats(fileIds).map");
+    expect(terminal).toContain("customerResultFormats(producedFormats(fileIds)).map");
     // No «on request» offers anywhere in the result surfaces.
     expect(canvas).not.toContain("onRequestFormats");
     expect(terminal).not.toContain("onRequestFormats");
@@ -74,7 +76,7 @@ describe("A1: result cards show only the formats produced for the quote", () => 
     const route = readFileSync("src/app/api/jobs/[id]/data/route.ts", "utf8");
     expect(route).toContain('.from("artifact_versions")');
     expect(route).toContain("fileIds,");
-    expect(route).toContain("producedFormats: producedFormats(fileIds)");
+    expect(route).toContain("producedFormats: customerResultFormats(producedFormats(fileIds))");
   });
 
   it("a plain edit regenerates only the formats the job already has, and a format that was not generated stays empty", () => {

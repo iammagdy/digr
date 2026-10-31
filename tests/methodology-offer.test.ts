@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { readFileSync } from "fs";
 import { ChatHandler } from "../src/functions/shared/chatHandler";
 import { getJobIdForQuote } from "../src/lib/md5";
-import { asksForMethodology, methodologyAnswerAr, methodologyChargeId, methodologyOffered, methodologyPurchasedAr, methodologyUnavailableAr, METHODOLOGY_POINTS } from "../src/lib/methodologyOffer";
+import { asksForMethodology, methodologyAnswerAr, methodologyNoDataAr, methodologyChargeId, methodologyOffered, methodologyPurchasedAr, methodologyUnavailableAr, METHODOLOGY_POINTS } from "../src/lib/methodologyOffer";
 import { isMethodologyPurchased } from "../src/lib/server/methodologyPurchase";
 import { methodologyMessageText } from "../src/lib/honestDisplay";
 import { generateMethodologyText } from "../src/functions/shared/fileGenerators";
@@ -74,7 +74,7 @@ const rows = [
 ];
 const JOB_ID = getJobIdForQuote("Q1");
 
-function conversation(withJob: boolean, ledger: Array<Record<string, unknown>> = []) {
+function conversation(withJob: boolean, ledger: Array<Record<string, unknown>> = [], withSavedData = true) {
   const message = (id: string, role: string, text: string, extra: Record<string, unknown>, minute: number) => ({
     id, conversation_id: "c1", user_id: "u1", role, content_ar: text, created_at: `2026-10-19T10:${String(minute).padStart(2, "0")}:00.000Z`, ...extra,
   });
@@ -91,7 +91,7 @@ function conversation(withJob: boolean, ledger: Array<Record<string, unknown>> =
       llm_usage: [],
       credit_ledger: ledger.map((row) => ({ ...row })),
     },
-    files: { [`results/u1/${JOB_ID}/data.json`]: JSON.stringify({ rows, metadata: { country: "Egypt", entityType: "companies", title: "شركات" } }) },
+    files: withSavedData ? { [`results/u1/${JOB_ID}/data.json`]: JSON.stringify({ rows, metadata: { country: "Egypt", entityType: "companies", title: "شركات" } }) } : {},
   });
   const handler = new ChatHandler(store.client as any);
   const model = vi.fn(async () => ({
@@ -116,6 +116,19 @@ describe("chat: the methodology request is answered by code in a conversation wi
     const usage = store.rows("llm_usage");
     expect(usage).toHaveLength(1);
     expect(usage[0]).toMatchObject({ model: "deterministic", tokens_in: 0, tokens_out: 0, cost_usd: 0 });
+  });
+
+  it("a delivered job with NO saved data (a mission-era job) is never pointed to the paid button: one plain sentence, nothing charged, no plan, no model", async () => {
+    const { store, model, send } = conversation(true, [], false);
+    const reply = await send("ملف المنهجية");
+    expect(reply.contentAr).toBe(methodologyNoDataAr());
+    expect(reply.contentAr).not.toBe(methodologyAnswerAr());
+    expect(reply.contentAr).not.toContain("اكتب المنهجية الرسمية");
+    expect(reply.contentAr).not.toMatch(/[A-Za-z]|سجل|صف/);
+    expect(reply.planQuote).toBeUndefined();
+    expect(model).not.toHaveBeenCalled();
+    expect(store.rows("credit_ledger")).toHaveLength(0);
+    expect(store.rpcCalls).toEqual([]);
   });
 
   it("with no delivered job it still starts no plan and no price: one plain sentence says when the button appears", async () => {

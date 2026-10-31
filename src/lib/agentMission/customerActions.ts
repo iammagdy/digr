@@ -8,6 +8,7 @@ import { customerPlanView, type PricedPlan, type PricedStage } from "./plan";
 import { applyPlanEdits } from "./planEdit";
 import { missionDownloadName } from "./fileNames";
 import { listOpenMissions, openLimitMessageAr, type OpenMissionView } from "./openMissions";
+import { excelFromCsv } from "../server/excelFromCsv";
 
 /**
  * What a CUSTOMER does with a mission, on the server, with the service-role client and an explicit owner check on every call (a customer reaches only their own missions; the browser never
@@ -169,10 +170,27 @@ export async function answerForCustomer(client: any, input: { id: string; userId
 export async function customerFileLink(client: any, input: { id: string; userId: string; name: string }): Promise<CustomerResult<{ url: string }>> {
   const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,files,plan,request_text,delivered_units,updated_at").eq("id", input.id).maybeSingle();
   if (!mission || mission.user_id !== input.userId) return bad(404, "الملف غير موجود.");
-  const file = Array.isArray(mission.files) ? (mission.files as Array<{ name: string; path: string; kind?: string }>).find((f) => f.name === input.name) : null;
+  const files = Array.isArray(mission.files) ? (mission.files as Array<{ name: string; path: string; kind?: string }>) : [];
+  // A CUSTOMER NEVER GETS A CSV: a link asked for by the CSV's name (an old page, an old link) is the mission's Excel; a mission that has only a CSV gets an Excel built from it, saved in the mission's own folder
+  const customerName = input.name.toLowerCase().endsWith(".csv") ? "result.xlsx" : input.name;
+  let file = files.find((f) => f.name === customerName && f.kind !== "csv") ?? null;
+  if (!file && /^result\.(xlsx|csv)$/.test(input.name)) {
+    const csv = files.find((f) => f.kind === "csv" || f.name.toLowerCase().endsWith(".csv"));
+    if (csv) {
+      try {
+        const { data } = await client.storage.from(AGENT_BUCKET).download(`${input.id}/${csv.path}`);
+        const text = typeof data?.text === "function" ? await data.text() : String(data ?? "");
+        if (text) {
+          const path = "result/result.xlsx";
+          const up = await client.storage.from(AGENT_BUCKET).upload(`${input.id}/${path}`, await excelFromCsv(text), { contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", upsert: true });
+          if (!up?.error) file = { name: "result.xlsx", path, kind: "xlsx" };
+        }
+      } catch { /* the customer is told the file is missing; nothing was charged or changed */ }
+    }
+  }
   if (!file) return bad(404, "الملف غير موجود.");
   // the name the customer saves is the mission's name (the same function as «طلباتي» and the e-mail's link use), never «result.xlsx»
-  const download = missionDownloadName({ files: mission.files, kind: file.kind ?? input.name.split(".").pop() ?? "", plan: mission.plan, requestText: mission.request_text, deliveredUnits: mission.delivered_units, date: mission.updated_at });
+  const download = missionDownloadName({ files: mission.files, kind: file.kind ?? customerName.split(".").pop() ?? "", plan: mission.plan, requestText: mission.request_text, deliveredUnits: mission.delivered_units, date: mission.updated_at });
   const { data, error } = await client.storage.from(AGENT_BUCKET).createSignedUrl(`${input.id}/${file.path}`, 120, { download });
   if (error || !data?.signedUrl) return bad(500, "تعذّر إنشاء رابط الملف.");
   return { ok: true, url: String(data.signedUrl) };

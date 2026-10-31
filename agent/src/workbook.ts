@@ -12,6 +12,7 @@ import { deliveredOfAr, itemNounOfPlan } from "../../src/lib/agentMission/itemNo
 import { formatAr } from "../../src/lib/arabicDigits";
 import { parentCountsOf } from "../../src/lib/agentMission/parents";
 import { isTextItemStage, textKeyOf } from "../../src/lib/agentMission/contract";
+import { buildMethodology, type MissionFacts } from "./methodology";
 import { cleanRowsForCustomer, isProviderUrl, providerContext, withoutProviderNames, withoutProviderUrls, type ProviderCleanReport } from "../../src/lib/agentMission/providerHosts";
 
 type Row = Record<string, unknown>;
@@ -167,7 +168,47 @@ export function workbookNoteAr(f: WorkbookFacts): string {
   return parts.join(" ");
 }
 
-export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string, Row[]>): Promise<{ xlsx: Buffer; csv: string; /** Wrong parent-describing values of a child sheet that were replaced from the row's own parent (for the admin only). */ parentFixes: ParentColumnFix[]; /** What was taken out of the customer's cells because it named a data provider (for the admin only). */ providerFixes: ProviderCleanReport & { final: number } }> {
+/**
+ * THE «المنهجية» SECTION, written BELOW the summary in the FIRST sheet (never a sheet of its own: the settlement counts the items of every sheet after the first). A title bar, then one labelled block per fact, the counts of every stage as a small table
+ * and the reasons for what was left out. Text only: nothing here is a number the settlement could read.
+ */
+function addMethodologySection(sheet: ExcelJS.Worksheet, model: ReturnType<typeof buildMethodology>): void {
+  const WIDTH = 104; // the characters a merged B:E block shows on a line (14 + 14 + 24 + 52)
+  const heightOf = (lines: string[]): number => Math.max(20, lines.reduce((n, l) => n + Math.max(1, Math.ceil(l.length / WIDTH)), 0) * 15 + 6);
+  sheet.addRow([]);
+  const title = sheet.addRow([model.title]);
+  sheet.mergeCells(title.number, 1, title.number, 5);
+  title.height = 26;
+  title.alignment = { horizontal: "right", vertical: "middle", readingOrder: "rtl" as any };
+  title.font = { name: "Calibri", size: 12, bold: true, color: { argb: WHITE } };
+  title.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: NAVY } };
+  const block = (label: string, values: string[]) => {
+    const row = sheet.addRow([label, values.join("\n")]);
+    sheet.mergeCells(row.number, 2, row.number, 5);
+    row.height = heightOf(values);
+    row.alignment = { vertical: "top", wrapText: true, horizontal: "right", readingOrder: "rtl" as any };
+    row.getCell(1).font = { name: "Calibri", size: 10, bold: true };
+    row.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: ZEBRA } };
+    row.getCell(2).font = { name: "Calibri", size: 10 };
+    [1, 2].forEach((c) => { row.getCell(c).border = BORDER; });
+  };
+  for (const item of model.items) {
+    block(item.label, item.values);
+    if (item.label !== model.tableAfterLabel) continue;
+    block("الأعداد في كل مرحلة", ["قراءة ما أعطاه المصدر، وما استُبعد ولماذا، وما سُلّم في ملفك."]);
+    const head = sheet.addRow(model.table.head);
+    head.eachCell((cell) => { cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: WHITE } }; cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: GREY } }; cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true }; });
+    for (const r of model.table.rows) {
+      const row = sheet.addRow(r);
+      row.alignment = { vertical: "middle", wrapText: true, horizontal: "center", readingOrder: "rtl" as any };
+      row.getCell(1).alignment = { vertical: "middle", wrapText: true, horizontal: "right", readingOrder: "rtl" as any };
+      row.eachCell((cell) => { cell.border = BORDER; cell.font = { name: "Calibri", size: 10 }; });
+    }
+    if (model.reasons.length) block("أسباب الاستبعاد", model.reasons);
+  }
+}
+
+export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string, Row[]>, facts?: MissionFacts): Promise<{ xlsx: Buffer; csv: string; /** Wrong parent-describing values of a child sheet that were replaced from the row's own parent (for the admin only). */ parentFixes: ParentColumnFix[]; /** What was taken out of the customer's cells because it named a data provider (for the admin only). */ providerFixes: ProviderCleanReport & { final: number } }> {
   // BEFORE THE FILE IS WRITTEN: every value of a child row that describes its parent must be its OWN parent's (parentColumns.ts); a mapping that copied the first company's website onto every person is repaired here and reported to the admin
   const reconciled = reconcileParentColumns(plan.stages, rowsIn, (key) => { const st = plan.stages.find((x) => x.key === key); return st ? readableColumns(st).map((c) => c.key) : []; }, (key) => { const st = plan.stages.find((x) => x.key === key); return st ? readableColumns(st).map((c) => c.key) : []; });
   // NO DATA PROVIDER IN A CUSTOMER FILE (providerHosts.ts): its addresses are taken out of every cell and an id built from one is replaced by a neutral id, the same wherever it is written
@@ -304,6 +345,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   summary.mergeCells(note.number, 1, note.number, 5);
   note.alignment = { wrapText: true, readingOrder: "rtl" as any };
   note.height = 34;
+  addMethodologySection(summary, buildMethodology({ plan, layouts, rowsByStage, facts }));
   summary.autoFilter = { from: { row: 1, column: 1 }, to: { row: plan.stages.length + 1, column: 5 } };
   // THE LAST LOOK, at every cell of every sheet: an address of a provider is taken out; in the texts we write (the first sheet and the headings) a provider's name is taken out too
   let finalFixes = 0;

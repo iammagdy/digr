@@ -68,6 +68,6 @@ describe("Task 8: Preview Columns and Landing Copy", () => {
 
     // Verify Arabic format names in SHEETS
     const sheetNames = SHEETS.map((s) => s.name);
-    expect(sheetNames).toEqual(["ملف سي إس في", "ملف بي دي إف", "ملف إكسل"]);
+    expect(sheetNames).toEqual(["ورقة المنهجية", "ملف بي دي إف", "ملف إكسل"]);
   });
 });

@@ -6,6 +6,7 @@ import { artifactVersionRowId } from "@/functions/shared/artifactVersions";
 import { producedFormats, resultsReleasable } from "@/lib/producedFormats";
 import { generateCsvReport, generateExcelReport, generatePdfReport } from "@/functions/shared/fileGenerators";
 import { buildFacebookReportExcelFrom, buildFacebookReportPdfFrom, facebookReportOf } from "@/functions/shared/facebookReportFiles";
+import { customerFileIds } from "@/lib/customerFiles";
 
 export const dynamic = "force-dynamic";
 
@@ -142,7 +143,8 @@ function versionView(row: ArtifactVersionRow) {
     rowCount: Number(row.rowCount) || 0,
     isOriginal: Boolean(row.isOriginal),
     createdAt: row.createdAt,
-    fileIds: { xlsx: row.fileIdXlsx || null, pdf: row.fileIdPdf || null, csv: row.fileIdCsv || null },
+    // a customer is never told of a CSV: its id is not given, and a request that has only a CSV says its Excel is ready
+    fileIds: customerFileIds({ xlsx: row.fileIdXlsx, pdf: row.fileIdPdf, csv: row.fileIdCsv }),
   };
 }
 
@@ -320,7 +322,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         rowCount: Array.isArray(edited.rows) ? edited.rows.length : 0,
         isOriginal: false,
         createdAt: nowIso,
-        fileIds,
+        fileIds: customerFileIds(fileIds),
       },
     });
   } catch (error: any) {

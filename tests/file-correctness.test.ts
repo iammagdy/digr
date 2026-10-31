@@ -178,7 +178,7 @@ describe("the words about the files match the files (live: «تم تسليم م�
     });
     expect(v.resultSummaryAr).toContain("تم تسليم ملف إكسل واحد من ورقتين مرتبطتين.");
     expect(v.resultSummaryAr).not.toContain("ملفين");
-    expect(v.files.map((f) => f.kind)).toEqual(["xlsx", "csv"]);
+    expect(v.files.map((f) => f.kind)).toEqual(["xlsx"]);
   });
 });
 

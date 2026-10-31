@@ -14,6 +14,7 @@ import { customerFacingConversationTitle } from "@/lib/customerFacingConversatio
 import { missionDownloadName } from "@/lib/agentMission/fileNames";
 import { inferSocialRowKind } from "@/lib/server/socialRows";
 import { buildFacebookReportExcelFrom, buildFacebookReportPdfFrom, facebookReportOf } from "@/functions/shared/facebookReportFiles";
+import { excelFromCsv } from "@/lib/server/excelFromCsv";
 
 export const dynamic = "force-dynamic";
 
@@ -124,11 +125,13 @@ export async function GET(
     }
 
     // 3. Format and filename selection
-    const format = (req.nextUrl.searchParams.get("format") || "csv").toLowerCase();
+    // A CUSTOMER NEVER GETS A CSV: the Excel is the default, and a customer who asks for «csv» (an old link, an old page) is given the Excel. The CSV stays stored for settlement and the admin; only an admin can still ask for it here.
+    const requestedFormat = (req.nextUrl.searchParams.get("format") || "xlsx").toLowerCase();
     const allowedFormats = ["csv", "xlsx", "pdf", "json"];
-    if (!allowedFormats.includes(format)) {
+    if (!allowedFormats.includes(requestedFormat)) {
       return NextResponse.json({ success: false, error: "صيغة الملف غير مدعومة" }, { status: 400 });
     }
+    const format = requestedFormat === "csv" && !isAdmin ? "xlsx" : requestedFormat;
 
     let country = "الدولة غير محددة";
     let industry = "النشاط غير محدد";
@@ -164,6 +167,9 @@ export async function GET(
     // 4. Candidate file paths in results storage bucket
     const candidatePaths: string[] = [];
 
+    // the stored CSV of an older request that has no Excel: the Excel is built from it (below), never the CSV itself
+    let storedCsvPath: string | null = null;
+
     // Query artifact_versions to link directly to stored artifacts
     try {
       const { data: avRows } = await adminClient
@@ -179,6 +185,7 @@ export async function GET(
         if (format === "pdf" && latestAv.file_id_pdf) candidatePaths.push(latestAv.file_id_pdf);
         if (format === "xlsx" && latestAv.file_id_xlsx) candidatePaths.push(latestAv.file_id_xlsx);
         if (format === "csv" && latestAv.file_id_csv) candidatePaths.push(latestAv.file_id_csv);
+        storedCsvPath = latestAv.file_id_csv || null;
       }
     } catch {
       // Non-blocking fallback to candidate paths
@@ -358,6 +365,27 @@ export async function GET(
           signedUrl = signed.signedUrl;
           resolvedStoragePath = path;
           break;
+        }
+      }
+
+      // AN OLDER REQUEST WITH A CSV AND NO EXCEL still gets a file: the Excel is built from its stored CSV and saved beside it
+      if (!signedUrl && format === "xlsx" && !shapedSpec) {
+        try {
+          const csvCandidates = [storedCsvPath, `${job.user_id}/${jobId}/result.csv`, `${user.id}/${jobId}/result.csv`, `${jobId}/result.csv`, `${job.user_id}/${jobId}/data.csv`, `${jobId}/data.csv`].filter((p, i, all): p is string => Boolean(p) && all.indexOf(p) === i);
+          for (const csvPath of csvCandidates) {
+            const { data: csvBlob, error: csvError } = await adminClient.storage.from("results").download(csvPath);
+            if (csvError || !csvBlob) continue;
+            const buf = await excelFromCsv(await csvBlob.text());
+            const uploadPath = `${job.user_id}/${jobId}/result.xlsx`;
+            const { error: uploadError } = await adminClient.storage.from("results").upload(uploadPath, buf, { contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", upsert: true });
+            if (uploadError) throw uploadError;
+            const { data: built, error: builtError } = await adminClient.storage.from("results").createSignedUrl(uploadPath, 300, { download: downloadFileName });
+            // ONE storage file and NO database row: `resolvedStoragePath` stays null on purpose, so the artifact record below is not linked (the Excel is rebuilt from the CSV whenever it is asked for)
+            if (!builtError && built?.signedUrl) signedUrl = built.signedUrl;
+            break;
+          }
+        } catch (csvErr) {
+          console.error("Excel from the stored CSV error:", csvErr);
         }
       }
 

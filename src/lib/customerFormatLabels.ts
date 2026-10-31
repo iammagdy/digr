@@ -2,7 +2,6 @@
 export const CUSTOMER_FORMAT_LABEL_AR: Record<string, string> = {
   xlsx: "ملف إكسل",
   pdf: "ملف بي دي إف",
-  csv: "ملف سي إس في",
 };
 
 export function customerFormatLabelAr(format: string): string {

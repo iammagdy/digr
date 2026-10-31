@@ -8,10 +8,11 @@ import { REQUEST_STATUS_LABEL_AR, resolveRequestKind } from "@/lib/jobs/requestS
 import { summarizeActivityCounts } from "@/lib/activityCounts";
 import { settleTimelineEvents, timelineWaitingText } from "@/lib/honestDisplay";
 import { producedFormats, type ResultFileIds, type ResultFormat } from "@/lib/producedFormats";
+import { customerResultFormats } from "@/lib/customerFiles";
 import { liveEventsForDisplay, PREVIEW_TITLE_AR, PREVIEW_WAITING_AR, postSelectionFromEvents, previewCountsLineAr, type LivePreviewSample } from "@/lib/liveJobView";
 import RunningIndicator from "./RunningIndicator";
 
-const FORMAT_LABEL_AR: Record<ResultFormat, string> = { xlsx: "إكسل", pdf: "بي دي إف", csv: "سي إس في" };
+const FORMAT_LABEL_AR: Record<"xlsx" | "pdf", string> = { xlsx: "إكسل", pdf: "بي دي إف" };
 
 export interface TerminalEvent {
   $id: string;
@@ -347,7 +348,7 @@ export default function ActivityTerminal({
         <div className="shrink-0 border-t border-ln bg-sf2 p-3">
           <div className="text-xs text-mut mb-2 font-medium">الملفات الجاهزة للتحميل:</div>
           <div className="flex flex-wrap gap-2">
-            {producedFormats(fileIds).map((ext) => (
+            {customerResultFormats(producedFormats(fileIds)).map((ext) => (
               <button
                 key={ext}
                 type="button"

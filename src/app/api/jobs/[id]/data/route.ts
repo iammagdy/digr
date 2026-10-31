@@ -3,6 +3,7 @@ import { createServerSideClient, createAdminClient } from "@/lib/supabase/server
 import { normalizeDataset } from "@/lib/server/normalizationPipeline";
 import { inferSocialRowKind } from "@/lib/server/socialRows";
 import { deliveredNothing, NO_RELEASABLE_RESULT_AR, producedFormats, resultsReleasable } from "@/lib/producedFormats";
+import { customerFileIds, customerResultFormats } from "@/lib/customerFiles";
 
 export const dynamic = "force-dynamic";
 
@@ -143,8 +144,9 @@ export async function GET(
         kpis: normalized.kpis,
         chargedCredits: jobDoc.charged_credits,
         finishedAt: jobDoc.finished_at,
-        fileIds,
-        producedFormats: producedFormats(fileIds),
+        // never a CSV: its id is not given, and the formats are the Excel (and an older request's PDF)
+        fileIds: fileIds ? customerFileIds(fileIds) : fileIds,
+        producedFormats: customerResultFormats(producedFormats(fileIds)),
         // A failed request that delivered no record has no file to offer.
         ...(deliveredNothing({ status: jobDoc.status, delivered: jobDoc.delivered_units }) ? { producedFormats: [] } : {}),
       });

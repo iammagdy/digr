@@ -5,12 +5,12 @@ import { formatAr } from "@/lib/arabicDigits";
 import { PARTIAL_SENTENCE_AR, deliveredOfRequestedAr } from "@/lib/jobs/requestStatus";
 import { sanitizeActivityError } from "@/functions/shared/liveActivityFeed";
 import { producedFormats, type ResultFileIds, type ResultFormat } from "@/lib/producedFormats";
+import { customerResultFormats, type CustomerFormat } from "@/lib/customerFiles";
 
 // Excel holds the data only; the methodology is its own Arabic PDF.
-const FILES: Record<ResultFormat, { name: string; desc: string; requestLabel: string }> = {
+const FILES: Record<CustomerFormat, { name: string; desc: string; requestLabel: string }> = {
   xlsx: { name: "إكسل", desc: "جدول البيانات فقط", requestLabel: "جهّز ملف إكسل" },
   pdf: { name: "بي دي إف", desc: "الدليل المنهجي", requestLabel: "جهّز ملف بي دي إف" },
-  csv: { name: "سي إس في", desc: "بيانات جدولية", requestLabel: "جهّز ملف سي إس في" },
 };
 
 /** Design «الملفات»: delivery summary + ONLY the files this request produced (the formats of the approved quote). Numbers come from the finished job, never from the quote. */
@@ -30,7 +30,8 @@ export function FilesSection({
   onOpenCanvas: () => void;
   canvasOpen: boolean;
 }) {
-  const ready = producedFormats(fileIds);
+  // never a CSV: the Excel (and an older request's PDF)
+  const ready = customerResultFormats(producedFormats(fileIds));
   return (
     <div style={{ animation: "up .6s both" }}>
       <p className="mb-0 mt-3 text-sm font-light leading-[1.9] text-ink">

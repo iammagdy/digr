@@ -11,8 +11,8 @@ import { CAPACITY_LIMITED_REASON_AR, capStatementAr, volumeLimitStatementAr } fr
 import { balanceVerdictAr } from "../../lib/balanceVerdict";
 import { SOCIAL_DISCOVERY_IDS, SOCIAL_DISCOVERY_OWN_IDS, discoveryAnswerAsRequestText, FACEBOOK_POSTS_ONLY_UNAVAILABLE_AR, platformFollowUpStateAr, readSocialFacts, unsupportedPlatformAnswerAr, UNSUPPORTED_PLATFORM_AR, X_COMMENTS_UNAVAILABLE_AR, X_ONE_ACCOUNT_AR, X_REQUEST_NOT_SERVED_AR, socialDiscoveryIntroAr, socialDiscoveryItems, socialDiscoveryTrigger, otherFacebookServiceExists, FACEBOOK_TOPIC_OR_PAGE_AR, FACEBOOK_PAGE_LINK_RETRY_AR, facebookPageLinkAlreadyAsked, withLinkScheme } from "../../lib/socialDiscoveryCard";
 import { latestDeliveredJob } from "../../lib/server/conversationJobs";
-import { asksForMethodology, methodologyAnswerAr, methodologyPurchasedAr, methodologyUnavailableAr } from "../../lib/methodologyOffer";
-import { isMethodologyPurchased } from "../../lib/server/methodologyPurchase";
+import { asksForMethodology, methodologyAnswerAr, methodologyNoDataAr, methodologyPurchasedAr, methodologyUnavailableAr } from "../../lib/methodologyOffer";
+import { isMethodologyPurchased, jobHasSavedData } from "../../lib/server/methodologyPurchase";
 import { stripMissingValueWords } from "../../lib/quoteScopeGaps";
 import { FILTER_OPERATORS, FileSpecSchema, describeFileSpecAr, deterministicShapeSpec, fileEditAnswerAr, looksLikeFileShapingRequest, resolveShapeAnswer, shapeAnswerFromMessage, shapeQuestionForSpec, unsupportedFileEdit, validateFileSpec, type DatasetColumn, type FileSpec } from "../../lib/fileSpec";
 import { explorationOffer, explorationOfferLineAr, isExplorationCandidate } from "../../lib/exploration";
@@ -2031,10 +2031,13 @@ export class ChatHandler {
     const asksMethodology = !looksShaping && !shapeAnswer && asksForMethodology(shapingText) && !isStandaloneResearchRequest(shapingText);
     let methodologyJobId: string | null = null;
     let methodologyBought = false;
+    // false only when the job is KNOWN to have no saved data to write the document from (the same rule as the results panel's offer): the answer then never points to a button that is not there. Unknown (a failed read): the answer as before.
+    let methodologyNoData = false;
     if (asksMethodology && sb) {
       awaitsCount++;
       methodologyJobId = (await latestDeliveredJob(sb, { conversationId, userId }))?.id ?? null;
       if (methodologyJobId) methodologyBought = await isMethodologyPurchased(sb, { userId, jobId: methodologyJobId });
+      if (methodologyJobId && !methodologyBought) methodologyNoData = (await jobHasSavedData(sb, { userId, jobId: methodologyJobId })) === false;
     }
     if (looksShaping && shapingColumns.length === 0 && sb) {
       awaitsCount++;
@@ -3012,7 +3015,7 @@ export class ChatHandler {
       const fileEditKind = isFileShapingTurn && !shapeAnswer && !isTestSearchScenario && !testScenario ? unsupportedFileEdit(shapingText) : null;
       const fileEditOutput: any = fileEditKind ? { type: "answer_question", answerAr: fileEditAnswerAr(fileEditKind) } : null;
       const methodologyOutput: any = asksMethodology && !isTestSearchScenario && !testScenario
-        ? { type: "answer_question", answerAr: methodologyJobId ? (methodologyBought ? methodologyPurchasedAr() : methodologyAnswerAr()) : methodologyUnavailableAr() }
+        ? { type: "answer_question", answerAr: methodologyJobId ? (methodologyBought ? methodologyPurchasedAr() : methodologyNoData ? methodologyNoDataAr() : methodologyAnswerAr()) : methodologyUnavailableAr() }
         : null;
       const codeBuiltOutput: any = shapeAnswerOutput ?? fileEditOutput ?? methodologyOutput ?? fastPlanOutput ?? (shapeSpec ? { type: "shape_file", replyAr: "تمام", spec: shapeSpec } : null);
       if (!codeBuiltOutput) modelCallCount++;

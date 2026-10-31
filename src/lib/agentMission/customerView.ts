@@ -292,12 +292,19 @@ export function parentCountAr(input: { read: number; max: number; used: number |
   return `قُرئ ${countAr(input.read, input.noun)}، ومنها ${formatAr(input.used)} لها نتائج في ملفك`;
 }
 
-const FILE_LABEL_AR: Record<string, string> = { xlsx: "تنزيل ملف إكسل", csv: "تنزيل نسخة سي إس في" };
+/** The only file a customer is offered is the Excel (the CSV copy is stored for settlement and the admin, never offered). */
+const FILE_LABEL_AR: Record<string, string> = { xlsx: "تنزيل ملف إكسل" };
 
 /**
  * «تقدر تقفل الصفحة» is said ONLY when closing the page is really safe: the mission is approved (its work is in the worker's hands on the server, not in this browser) AND the worker is alive right now (a fresh heartbeat).
  * The e-mail is promised only when one will really be sent (a real address, the customer's «done» e-mails on). With no proof (no queue reading, a dead worker) the line is not shown and the panel's honest delay line speaks.
  */
+export function customerFilesOf(files: ReadonlyArray<{ name: string; kind: string }>): Array<{ name: string; kind: string; labelAr: string }> {
+  const excel = files.filter((f) => FILE_LABEL_AR[f.kind]).map((f) => ({ name: f.name, kind: f.kind, labelAr: FILE_LABEL_AR[f.kind] }));
+  if (excel.length > 0) return excel;
+  return files.some((f) => f.kind === "csv") ? [{ name: "result.xlsx", kind: "xlsx", labelAr: FILE_LABEL_AR.xlsx }] : [];
+}
+
 export function closePageLine(status: string, queue: QueueInfo | null | undefined, emailWillBeSent: boolean | undefined): string | null {
   if (status !== "approved" && status !== "executing") return null;
   if (!queue || !queue.workerAlive) return null;
@@ -364,7 +371,8 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
     queueLineAr: q.lineAr, queuePosition: q.position, steps, currentLineAr, delayAr, remainingAr,
     closePageAr: closePageLine(mission.status, input.queue, input.emailWillBeSent),
     resultLinesAr, resultSummaryAr: phase === "done" || phase === "partial" || phase === "unserved" || phase === "failed" ? storedSummary : null,
-    files: filesReady ? mission.files!.filter((f) => FILE_LABEL_AR[f.kind]).map((f) => ({ name: f.name, kind: f.kind, labelAr: FILE_LABEL_AR[f.kind] })) : [],
+    // a mission whose delivery holds only a CSV (older) is offered ONE Excel: the download builds it from that CSV
+    files: filesReady ? customerFilesOf(mission.files!) : [],
     requestedRows, endLineAr, edit: phase === "plan" && plan?.edit && typeof plan.edit === "object" ? (plan.edit as PlanEditorView) : null,
     startedAt: (events.length ? Date.parse(events[0].created_at) : Date.parse(mission.created_at)) || null,
     live: isLivePhase(phase),
