@@ -1,6 +1,6 @@
 import { classifyRowDetailed, type RelevanceReason, type RuleBasis } from "../../../src/lib/agentMission/relevance";
 import { CONTACT_KINDS, isContactSource, verifyContactValue } from "../../../src/lib/agentMission/contacts";
-import { isPeopleStage, personVerdict } from "../../../src/lib/agentMission/people";
+import { isNamedPerson, isPeopleStage, personVerdict } from "../../../src/lib/agentMission/people";
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
 import { dedupeScope, deriveItemId, isTextItemStage, textDedupeKey, textKeyOf } from "../../../src/lib/agentMission/contract";
 import { placeCellsAr } from "../../../src/lib/agentMission/places";
@@ -172,7 +172,9 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
       if (age) { row[c.key] = approxDayOf(age); approxColumns.push(c.key); }
     }
     if (approxColumns.length > 0) row[APPROX_DATES_KEY] = approxColumns;
-    // CONTACT FIELDS are verified by code: a work e-mail or phone that does not pass is left empty; an item of a contact stage with no verified value is not delivered (so it is not charged)
+    // CONTACT FIELDS are verified by code: a work e-mail or phone that does not pass is left empty (the CELL). Verification never decides whether a PERSON is delivered: a row that carries a real person's name (people.ts) is delivered with
+    // its unverified cells empty (live re-test 2026-10-31, A1 and A2: 31 and 32 named people with job titles were thrown away because the source gave no e-mail or phone). Only a row of a contact source that is NOT a named person (an
+    // e-mail finder's row is its address) and has no verified value has nothing to deliver, so it is not delivered (and not charged).
     let verifiedAny = false;
     for (const c of contactColumns) {
       const original = String(raw[c.key] ?? "").trim();
@@ -180,7 +182,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
       row[c.key] = verified ?? "";
       if (verified) verifiedAny = true; else if (original) tally.contact_values_left_empty += 1;
     }
-    if (contactStage && contactColumns.length > 0 && !verifiedAny) { tally.rejected_no_verified_contact += 1; excludedStructural.push({ id, reason: "no_verified_contact", row }); continue; }
+    if (contactStage && contactColumns.length > 0 && !verifiedAny && !isNamedPerson(raw, stage.columns)) { tally.rejected_no_verified_contact += 1; excludedStructural.push({ id, reason: "no_verified_contact", row }); continue; }
     // A PERSON ROW MUST BE A PERSON (people.ts): a row of a people stage with no person's name, or whose address is a role or generic mailbox (info@, customer_care@, webmaster@), is a COMPANY e-mail. It is kept with its reason and its address (the company's sheet
     // shows it), and it is not a decision maker, not counted and not charged.
     if (peopleStage && !personVerdict(raw, stage.columns).person) { tally.rejected_not_a_person += 1; excludedStructural.push({ id, reason: "not_a_person", row }); continue; }
