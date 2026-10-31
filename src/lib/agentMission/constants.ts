@@ -136,7 +136,9 @@ export const MISSION_INTERNAL_COUNT_KEYS = ["mem_phase", "mem_start_rss_mb", "me
   "adm_flag", "adm_store", "adm_file", "adm_memory",
   "chk_ex_no_text", "chk_ex_no_term", "chk_ex_mention_only", "chk_ex_other_person", "chk_ex_name_extended", "chk_ex_other_meaning", "chk_ex_uncertain", "chk_ex_not_reviewed", "chk_ex_review_no", "chk_ex_review_failed",
   // what the filters of the card rejected, and the rows the source gave when our own mapping stored none of them (an internal failure)
-  "chk_ex_filter_reply", "chk_ex_filter_repost", "chk_ex_filter_language", "chk_ex_filter_period", "chk_ex_filter_account", "chk_ex_filter_place", "adm_source_rows", "adm_parent_fixed"] as const;
+  "chk_ex_filter_reply", "chk_ex_filter_repost", "chk_ex_filter_language", "chk_ex_filter_period", "chk_ex_filter_account", "chk_ex_filter_place", "adm_source_rows", "adm_parent_fixed",
+  // the admin flag of a run whose model review could not answer (items left pending, review calls that gave no usable answer)
+  "adm_pending", "adm_review_failed_calls"] as const;
 export const AGENT_POLL_INTERVAL_MS = 5_000;
 /** The worker writes a heartbeat row this often; the admin page calls it alive while the last beat is younger than AGENT_HEARTBEAT_ALIVE_MS. */
 export const AGENT_HEARTBEAT_INTERVAL_MS = 30_000;
@@ -201,6 +203,8 @@ export const AGENT_REVIEW_BUDGET_SHARE = 0.2;
 export const AGENT_REVIEW_CEILING_SHARE = 0.4;
 /** Rows of a review request (one model call); each row's text is cut to REVIEW_ROW_CHARS characters. */
 export const AGENT_REVIEW_BATCH_ROWS = 25;
+/** One DELAYED retry of the model review for items it could not settle (live, 2026-10-31: six answers, none usable, 50 companies left pending, nothing delivered): the pause lets a transient fault of the model API pass. */
+export const AGENT_REVIEW_RETRY_DELAY_MS = 20_000;
 export const AGENT_REVIEW_ROW_CHARS = 280;
 /** Rows kept in the «لم تُحتسب» review sheet of the files (excluded rows are never charged). */
 export const AGENT_EXCLUDED_ROWS_KEPT = 500;

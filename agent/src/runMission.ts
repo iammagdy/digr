@@ -68,6 +68,8 @@ export interface RunnerDeps {
   systemPromptFile?: string;
   /** Carry out a plan whose stages all have an execution recipe with the code engine, no model session (default true). false: the model carries every mission out (through the same item store). */
   engine?: boolean;
+  /** The pause before the one delayed review retry (tests pass a fake that does not wait). */
+  sleep?: (ms: number) => Promise<void>;
   log?: (line: string) => void;
 }
 
@@ -165,13 +167,17 @@ async function recordTokens(deps: RunnerDeps, missionId: string, phase: 0 | 1, u
  * THE REPORT OF THE CHECK OF ITEMS: stored as an internal event per stage (found, new, duplicates, looked at, accepted by rule and on what basis, accepted by the model, left out per reason, still pending, never looked at, the review's
  * extension) and the excluded items as an admin-only CSV. Every number is read from the item store's snapshot. The customer's files never hold an excluded item. Never throws.
  */
-async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPlan, store: AgentStore, snap: ItemSnapshot): Promise<{ pending: number; stop: "budget" | "failed" | null; languageLeftOut: number }> {
+async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPlan, store: AgentStore, snap: ItemSnapshot): Promise<{ pending: number; stop: "budget" | "failed" | null; languageLeftOut: number; lastUnusable: string; failedCalls: number }> {
   let pendingTotal = 0;
   let languageLeftOut = 0;
   let stop: "budget" | "failed" | null = null;
+  let lastUnusable = "";
+  let failedCalls = 0;
   try {
     const review = await readReviewState(store, missionId);
     stop = review.stop;
+    lastUnusable = review.lastUnusable;
+    failedCalls = review.failedCalls;
     const excludedByStage: Record<string, ExcludedRow[]> = {};
     for (const [i, s] of plan.stages.entries()) {
       const c = snap.counts(s.key);
@@ -191,7 +197,7 @@ async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPla
   } catch (e) {
     deps.log?.(`checks_not_recorded ${missionId} ${shortMessage(e)}`);
   }
-  return { pending: pendingTotal, stop, languageLeftOut };
+  return { pending: pendingTotal, stop, languageLeftOut, lastUnusable, failedCalls };
 }
 const RELEVANCE_REASON_KEYS = [...RELEVANCE_REASON_LIST, ...FILTER_REASONS] as const;
 /** True when a text carries a number (Latin or Arabic-Indic digits): a model note with one is dropped, so a count in a text always comes from the data. */
@@ -349,7 +355,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
     // THE MODEL PLANNED, CODE EXECUTES: every stage has a recipe the plan check proved, so no model session is started at all (the only model call left is the small review of items the rule cannot decide)
     const tracked = trackRun();
     try {
-      const outcome = await runEngine({ items, store, plan, missionId: mission.id, gateway, sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, log: deps.log });
+      const outcome = await runEngine({ items, store, plan, missionId: mission.id, gateway, sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, ...(deps.sleep ? { sleep: deps.sleep } : {}), log: deps.log });
       output = { llmCostUsd: 0, turns: 0, stop: outcome.aborted ?? "end" };
     } finally {
       untrackRun(tracked);
@@ -468,6 +474,11 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const requested = requestedRowsOf(plan);
   const internalStage = delivered <= 0 ? plan.stages.find((s) => snap.stage(s.key).stop === "internal_error") : undefined;
   if (internalStage) flags.push("engine_zero_ingest");
+  // THE MODEL REVIEW COULD NOT ANSWER AND NOTHING WAS DELIVERED: items were found and are still waiting for a verdict that never came. That is OUR failure (live, 2026-10-31: 50 companies pending, all six review answers unusable, and the customer was told no
+  // source serves the request). Failed, flagged for the admin with the first words of the unusable answer, told to the customer as ours; the hold is released whole as for any zero delivery.
+  const reviewFailedOurs = !internalStage && delivered <= 0 && checked.stop === "failed" && checked.pending > 0;
+  if (reviewFailedOurs) flags.push("review_failed");
+  const ourFailure = Boolean(internalStage) || reviewFailedOurs;
   const note = a.summary && !HAS_NUMBER.test(a.summary) ? a.summary.trim() : "";
   const shortStage = plan.stages.find((s) => s.deliver && snap.counts(s.key).accepted < s.planned_rows);
   // the reason is about the stage that fell short: the language rule only ever applies to a stage of top-level items (a child stage is delivered raw), and a child stage that fell short while its parents were read says so
@@ -477,23 +488,25 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
     languageLeftOut: shortStage && shortStage.parent_key === null ? snap.counts(shortStage.key).excludedByReason.filter_language ?? 0 : 0,
     childShare: shortStage && parentOfShort && parentsBelowShare(plan, shortStage.key, rowsByStage) > 0 ? childShortfallClauseAr(itemNounOf(parentOfShort.title_ar).singular, itemNounOf(parentOfShort.title_ar).plural, itemNounOf(shortStage.title_ar).plural) : null,
   };
-  const reason = internalStage ? INTERNAL_FAILURE_AR
+  const reason = ourFailure ? INTERNAL_FAILURE_AR
     : delivered > 0 && delivered < target ? shortfallFromStopAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort)
     : delivered > 0 && delivered < requested ? loweredTargetAr(plan)
     : delivered <= 0 ? "لم يُسلَّم أي شيء، ولم يُخصم منك شيء." : "";
-  const summary = (internalStage ? reason : [note, reason].filter(Boolean).join(" ")).slice(0, 1100);
+  const summary = (ourFailure ? reason : [note, reason].filter(Boolean).join(" ")).slice(0, 1100);
   const mismatch = settled.kind === "settled" && !settled.matchesExpectation ? `charge ${settled.chargedPoints} differs from the expected ${settled.expectedChargedPoints}` : null;
-  const adminFlag = flags.length > 0 ? `admin: ${[...new Set(flags)].join(", ")}${internalStage ? ` stage=${internalStage.key} source_rows=${snap.stage(internalStage.key).sourceRows}` : ""}` : null;
+  const unusableWords = checked.lastUnusable ? checked.lastUnusable.replace(/\s+/g, " ").slice(0, 120) : "";
+  const adminFlag = flags.length > 0 ? `admin: ${[...new Set(flags)].join(", ")}${internalStage ? ` stage=${internalStage.key} source_rows=${snap.stage(internalStage.key).sourceRows}` : ""}${reviewFailedOurs ? ` pending=${checked.pending} review_failed_calls=${checked.failedCalls} unusable="${unusableWords}"` : ""}` : null;
   await store.updateMission(mission.id, {
-    status: internalStage ? "failed" : delivered > 0 ? "completed" : "unserved", delivered_units: delivered, charged_points: settled.chargedPoints, summary_ar: summary || null, files: files.length ? files : null,
-    execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(a.executionTregUsd.toFixed(6)), error: internalStage ? adminFlag : mismatch ?? a.outputError ?? adminFlag, ...clear,
+    status: ourFailure ? "failed" : delivered > 0 ? "completed" : "unserved", delivered_units: delivered, charged_points: settled.chargedPoints, summary_ar: summary || null, files: files.length ? files : null,
+    execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(a.executionTregUsd.toFixed(6)), error: ourFailure ? adminFlag : mismatch ?? a.outputError ?? adminFlag, ...clear,
   });
   if (internalStage) await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: أعطى المصدر عناصر ولم يُحفظ أي منها.", counts: { adm_flag: 1, adm_store: 0, adm_file: 0, adm_source_rows: snap.stage(internalStage.key).sourceRows } });
+  if (reviewFailedOurs) await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: تعذّرت مراجعة العناصر آليًا فلم يُسلَّم شيء.", counts: { adm_flag: 1, adm_pending: checked.pending, adm_review_failed_calls: checked.failedCalls } });
   // the rows of a stage as the customer receives them: a delivered stage's count in the FILE (its own sheet); a stage that is not delivered (an intermediate one) keeps the items saved
   const stageRowsOf = (s: PricedPlan["stages"][number]): number => (s.deliver ? (fileByStage ? fileByStage[s.key] ?? 0 : plan.stages.filter((x) => x.deliver).length === 1 ? delivered : rowsByStage[s.key].length) : rowsByStage[s.key].length);
   await store.addEvent(mission.id, { kind: "result", message_ar: summary || (delivered > 0 ? "اكتملت المهمة." : "لم يُسلَّم أي شيء."), counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, stageRowsOf(s)])), ...parentCountsOf(plan, rowsByStage) } });
-  const noticeKind: MissionNoticeKind = internalStage ? "failed" : delivered <= 0 ? "unserved" : delivered < requested ? "partial" : "completed";
-  await tell(deps, mission, jobId, noticeKind, { delivered, planned: deliveryDenominatorOf(delivered, cardTotalOf(plan), requested), chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(internalStage ? { cause: "internal" as const } : {}), ...(delivered > 0 && delivered < target ? { shortfallClauseAr: shortfallClauseAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort) } : delivered > 0 && delivered < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
+  const noticeKind: MissionNoticeKind = ourFailure ? "failed" : delivered <= 0 ? "unserved" : delivered < requested ? "partial" : "completed";
+  await tell(deps, mission, jobId, noticeKind, { delivered, planned: deliveryDenominatorOf(delivered, cardTotalOf(plan), requested), chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(ourFailure ? { cause: "internal" as const } : {}), ...(delivered > 0 && delivered < target ? { shortfallClauseAr: shortfallClauseAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort) } : delivered > 0 && delivered < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
 }
 
 /** What the customer is told when the source gave items and our own mapping stored none: it was OUR failure, never «nothing was found». No number: the money line says the rest. */

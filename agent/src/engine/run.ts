@@ -1,4 +1,4 @@
-import { AGENT_COLLECT_MAX_PAGES } from "../../../src/lib/agentMission/constants";
+import { AGENT_COLLECT_MAX_PAGES, AGENT_REVIEW_RETRY_DELAY_MS } from "../../../src/lib/agentMission/constants";
 import type { EngineSpec, PricedPlan } from "../../../src/lib/agentMission/plan";
 import type { Gateway } from "../gateway";
 import { RAW_PATH } from "../gateway";
@@ -46,6 +46,8 @@ export interface EngineDeps {
   maxPagesPerStage?: number;
   /** Asked before every page: a reason (the worker's memory guard) stops the run so the mission can be put back in the queue with everything it saved. */
   shouldStop?: () => string | null;
+  /** The pause before the one delayed review retry (default AGENT_REVIEW_RETRY_DELAY_MS); tests pass a fake that does not wait. */
+  sleep?: (ms: number) => Promise<void>;
   log?: (line: string) => void;
 }
 
@@ -74,6 +76,7 @@ export async function runEngine(deps: EngineDeps): Promise<EngineOutcome> {
     if (outcome.aborted) return { stops, aborted: outcome.aborted };
     // items the review could not reach are asked once more at the end of the stage (a late good item is never lost)
     await drainPending(deps, stage);
+    await retryReviewLater(deps, stage);
     const counts = items.counts(stage.key);
     let reason = outcome.reason;
     // THE SOURCE GAVE ITEMS AND NONE WAS STORED: our own mapping or save failed. That is an internal failure, never «the source has nothing»: recorded as its own reason so the settlement releases the hold whole, tells the customer the truth and flags the admin
@@ -85,6 +88,20 @@ export async function runEngine(deps: EngineDeps): Promise<EngineOutcome> {
     await items.commit([{ t: "stop", stage: stage.key, reason }]);
   }
   return { stops, aborted: null };
+}
+
+/**
+ * ONE DELAYED RETRY OF THE REVIEW, once per stage, before the mission settles: when items are still pending because the model review could not answer (a failed call, or answers that were not one 0/1 per row), wait a little
+ * and ask again. Never a loop, never when the review stopped for its budget, never past the volume bought. The retry costs what the review costs (the same budget and ceiling); nothing is charged for what is not delivered.
+ */
+async function retryReviewLater(deps: EngineDeps, stage: Stage): Promise<void> {
+  if (!stage.relevance || !deps.reviewer) return;
+  const c = deps.items.counts(stage.key);
+  if (c.pending === 0 || c.accepted >= stage.planned_rows) return;
+  if ((await deps.reviewer.state()).stop !== "failed") return;
+  if (deps.shouldStop?.() || Date.now() >= deps.deadlineMs) return;
+  await (deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))))(AGENT_REVIEW_RETRY_DELAY_MS);
+  await drainPending(deps, stage);
 }
 
 async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promise<{ reason: StopReason; aborted: string | null }> {
