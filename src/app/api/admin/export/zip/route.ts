@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateAdmin } from "@/lib/server/adminAuth";
 import { createAdminClient } from "@/lib/supabase/server";
-import { backupZipFileName } from "@/lib/adminExport";
+import { INVOICE_EXPORT_TABLES, backupZipFileName, invoiceBackupZipFileName } from "@/lib/adminExport";
 import { prepareBackupZip } from "./backupZip";
 
 export const dynamic = "force-dynamic";
@@ -23,7 +23,9 @@ export async function GET(req: NextRequest) {
   }
 
   const at = new Date();
-  const prepared = await prepareBackupZip(createAdminClient(), { now: at });
+  // ?set=invoices: the invoice tables as their own ZIP (the default ZIP of the five tables is unchanged)
+  const invoices = req.nextUrl.searchParams.get("set") === "invoices";
+  const prepared = await prepareBackupZip(createAdminClient(), invoices ? { now: at, tables: INVOICE_EXPORT_TABLES } : { now: at });
   if (!prepared.ok) return NextResponse.json({ error: prepared.error }, { status: prepared.status, headers: NO_STORE });
 
   return new NextResponse(prepared.stream, {
@@ -31,7 +33,7 @@ export async function GET(req: NextRequest) {
     headers: {
       ...NO_STORE,
       "Content-Type": "application/zip",
-      "Content-Disposition": `attachment; filename="${backupZipFileName(at)}"`,
+      "Content-Disposition": `attachment; filename="${invoices ? invoiceBackupZipFileName(at) : backupZipFileName(at)}"`,
       "X-Export-Rows": String(prepared.expectedRows),
       "X-Content-Type-Options": "nosniff",
     },

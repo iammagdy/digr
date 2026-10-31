@@ -4,7 +4,10 @@
  * Pure helpers: the route reads pages with SELECT only, the page assembles the file in the browser. Nothing here writes anywhere.
  */
 
-export type ExportTableId = "credit_ledger" | "topups" | "jobs" | "plans_quotes" | "profiles";
+export type InvoiceExportTableId =
+  | "invoice_settings" | "invoice_item_types" | "invoice_clients" | "invoice_number_counters"
+  | "invoice_documents" | "invoice_batches" | "invoice_lines" | "invoice_status_events";
+export type ExportTableId = "credit_ledger" | "topups" | "jobs" | "plans_quotes" | "profiles" | InvoiceExportTableId;
 
 export interface ExportTable {
   id: ExportTableId;
@@ -21,6 +24,22 @@ export const EXPORT_TABLES: ExportTable[] = [
 ];
 
 export const EXPORT_TABLE_IDS: ReadonlySet<string> = new Set(EXPORT_TABLES.map((t) => t.id));
+
+/**
+ * The invoice tables: a SEPARATE group, added after the five above (their list, their ZIP and their files are unchanged). Read only like the rest.
+ * They hold the owner's quotes and invoices, item types, clients and the append-only status log; none of them is a wallet table.
+ */
+export const INVOICE_EXPORT_TABLES: ExportTable[] = [
+  { id: "invoice_documents", titleAr: "الوثائق (عروض الأسعار والفواتير)", noteAr: "كل وثيقة بحالتها وإجمالياتها المثبتة" },
+  { id: "invoice_lines", titleAr: "بنود الوثائق", noteAr: "بنود كل وثيقة وأسعارها" },
+  { id: "invoice_batches", titleAr: "مراحل الوثائق", noteAr: "مجموعات البنود المسماة" },
+  { id: "invoice_status_events", titleAr: "سجل حالات الوثائق", noteAr: "كل تغيير حالة مع المسؤول والوقت" },
+  { id: "invoice_clients", titleAr: "عملاء الفواتير", noteAr: "العملاء المحفوظون" },
+  { id: "invoice_item_types", titleAr: "أنواع البنود", noteAr: "الأنواع وأسعارها الافتراضية" },
+  { id: "invoice_number_counters", titleAr: "عدّادات الترقيم", noteAr: "آخر رقم لكل نوع وسنة" },
+  { id: "invoice_settings", titleAr: "إعدادات الوثائق", noteAr: "بيانات البائع وآخر سعر صرف" },
+];
+export const INVOICE_TABLE_IDS: ReadonlySet<string> = new Set(INVOICE_EXPORT_TABLES.map((t) => t.id));
 
 /** Rows per request: the same size the database API returns per request. */
 export const EXPORT_PAGE_SIZE = 1000;
@@ -89,4 +108,9 @@ export function backupZipFileName(now: Date = new Date()): string {
   const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Africa/Cairo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(now);
   const at = (type: string) => parts.find((part) => part.type === type)?.value ?? "00";
   return `diger-backup-${at("year")}-${at("month")}-${at("day")}-${at("hour")}${at("minute")}.zip`;
+}
+
+/** diger-invoices-backup-YYYY-MM-DD-HHmm.zip */
+export function invoiceBackupZipFileName(now: Date = new Date()): string {
+  return backupZipFileName(now).replace("diger-backup-", "diger-invoices-backup-");
 }
