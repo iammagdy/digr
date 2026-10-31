@@ -7,6 +7,7 @@ import type { TregCallOptions } from "../src/functions/shared/tregClient";
 import { buildMethodology, type MissionFacts, type StageRecord } from "../agent/src/methodology";
 import { shortfallClauseAr, stageTruthBodyAr, zeroDeliveryReasonAr } from "../agent/src/finalize";
 import type { PricedPlan } from "../src/lib/agentMission/plan";
+import { checkCustomerText } from "../src/lib/agentMission/text";
 
 /**
  * THE LIMITS AND EXCLUSION TEXT TELLS THE TRUTH FROM RECORDED COUNTS. Live re-test 2026-10-31 (A1 msn_e750…, A2 msn_6fe6…): the people stage read 31 (A1) / 41 with 9 repeats (A2) rows, every one was left out by our own row rule, and the delivered file said
@@ -62,6 +63,22 @@ describe("the limits row of the delivered file (live A1 and A2: people read, all
     expect(companiesRow[4]).toContain("بقي ١٠ دون مراجعة لأن العدد المطلوب اكتمل");
     expect(companiesRow[4]).not.toContain("فلم يُسلَّم");
     expect(m.reasons.join("\n")).toContain("٣١ لا اسم شخص فيه ولا بيانات تواصل موثّقة");
+  });
+});
+
+describe("every new sentence is customer-safe: Arabic only, Arabic-Indic digits, no provider, no endpoint, no money figure", () => {
+  const cases: StageRecord[] = [
+    record({ found: 31, excluded: 31, excludedByReason: { no_verified_contact: 31 } }),
+    record({ found: 41, duplicates: 9, excluded: 32, excludedByReason: { no_verified_contact: 32 } }),
+    record({ found: 31, accepted: 3, excluded: 28, pending: 4, excludedByReason: { not_a_person: 20, no_verified_contact: 8 } }),
+  ];
+  it.each(cases.map((c, i) => [i, c] as const))("limits row %i and its closing clause", (_i, c) => {
+    const lines = [...limitsOf(facts(c, { reviewStop: "budget" }), { companies: 5, people: c.accepted }), `إذ ${stageTruthBodyAr({ found: c.found, duplicates: c.duplicates, delivered: c.accepted, excludedByReason: c.excludedByReason, pending: c.pending, reviewStop: "budget", stop: c.stop, people: true })}`];
+    for (const line of lines) {
+      expect(checkCustomerText(line, { maxChars: 1100 }).issues, line).toEqual([]);
+      expect(line).not.toMatch(/[0-9]/);
+      expect(line).not.toMatch(/tomba|blitz|aviato|aiark|anyapi|endpoint|USD|\$|claude|haiku|call_\d{4}|msn_/i);
+    }
   });
 });
 
