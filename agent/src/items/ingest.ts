@@ -1,5 +1,6 @@
 import { classifyRowDetailed, type RelevanceReason, type RuleBasis } from "../../../src/lib/agentMission/relevance";
 import { CONTACT_KINDS, isContactSource, verifyContactValue } from "../../../src/lib/agentMission/contacts";
+import { isPeopleStage, personVerdict } from "../../../src/lib/agentMission/people";
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
 import { dedupeScope, deriveItemId, isTextItemStage, textDedupeKey, textKeyOf } from "../../../src/lib/agentMission/contract";
 import { placeCellsAr } from "../../../src/lib/agentMission/places";
@@ -71,8 +72,9 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   const columnKeys = stage.columns.map((c) => c.key);
   const contactColumns = stage.columns.filter((c) => c.kind !== undefined && CONTACT_KINDS.includes(c.kind));
   const contactStage = isContactSource(stage.endpoint_id);
+  const peopleStage = isPeopleStage(stage);
   const parentIds = stage.parent_key !== null ? new Set(items.acceptedIds(stage.parent_key)) : null;
-  const tally = { saved_now: 0, duplicates_ignored: 0, duplicate_texts: 0, rejected_missing_id: 0, rejected_unknown_parent: 0, rejected_over_limit: 0, rejected_not_object: 0, rejected_no_verified_contact: 0, rejected_by_filter: 0, contact_values_left_empty: 0 };
+  const tally = { saved_now: 0, duplicates_ignored: 0, duplicate_texts: 0, rejected_missing_id: 0, rejected_unknown_parent: 0, rejected_over_limit: 0, rejected_not_object: 0, rejected_no_verified_contact: 0, rejected_not_a_person: 0, rejected_by_filter: 0, contact_values_left_empty: 0 };
   const enabledFilters = (stage.filters ?? []).filter(isEnabled).filter((f) => !(isChild && CHILD_RAW_FILTER_KINDS.includes(f.kind)));
   const now = options.now ?? Date.now();
   const placeFilter = enabledFilters.find((f) => f.kind === "place" && f.places && f.places.length > 0);
@@ -179,6 +181,9 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
       if (verified) verifiedAny = true; else if (original) tally.contact_values_left_empty += 1;
     }
     if (contactStage && contactColumns.length > 0 && !verifiedAny) { tally.rejected_no_verified_contact += 1; excludedStructural.push({ id, reason: "no_verified_contact", row }); continue; }
+    // A PERSON ROW MUST BE A PERSON (people.ts): a row of a people stage with no person's name, or whose address is a role or generic mailbox (info@, customer_care@, webmaster@), is a COMPANY e-mail. It is kept with its reason and its address (the company's sheet
+    // shows it), and it is not a decision maker, not counted and not charged.
+    if (peopleStage && !personVerdict(raw, stage.columns).person) { tally.rejected_not_a_person += 1; excludedStructural.push({ id, reason: "not_a_person", row }); continue; }
     fresh.push(row);
   }
   for (const e of excludedStructural) ops.push({ t: "item", stage: key, id: e.id, state: "excluded", reason: e.reason, row: e.row });

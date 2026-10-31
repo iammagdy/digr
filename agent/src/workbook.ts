@@ -135,6 +135,24 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
   return layouts;
 }
 
+/** The generic mailboxes found for the companies: by the key of the stage whose rows are the companies, then by the company row's id. */
+export type CompanyMailboxes = Record<string, Map<string, string[]>>;
+export const COMPANY_MAILBOXES_KEY = "company_mailboxes";
+export const COMPANY_MAILBOXES_HEADER_AR = "إيميلات عامة للشركة";
+
+/** Adds the «إيميلات عامة للشركة» column to each stage that has companies' mailboxes (one cell per company, one address per line), on a copy: the plan and the rows the settlement counts are untouched. */
+function withCompanyMailboxes(plan: PricedPlan, rowsIn: Record<string, Row[]>, mailboxes: CompanyMailboxes | undefined): { rowsByStage: Record<string, Row[]>; layoutPlan: PricedPlan } {
+  const rowsByStage: Record<string, Row[]> = { ...rowsIn };
+  let layoutPlan = plan;
+  for (const [stageKey, byParent] of Object.entries(mailboxes ?? {})) {
+    const rows = rowsByStage[stageKey];
+    if (!rows || ![...byParent.values()].some((v) => v.length > 0)) continue;
+    rowsByStage[stageKey] = rows.map((r) => ({ ...r, [COMPANY_MAILBOXES_KEY]: (byParent.get(text(r.id)) ?? []).join("\n") }));
+    layoutPlan = { ...layoutPlan, stages: layoutPlan.stages.map((s) => (s.key === stageKey ? { ...s, columns: [...s.columns, { key: COMPANY_MAILBOXES_KEY, title_ar: COMPANY_MAILBOXES_HEADER_AR }] } : s)) };
+  }
+  return { rowsByStage, layoutPlan };
+}
+
 /** A row the relevance check left out of a stage (never delivered, never charged), with the reason. */
 export interface ExcludedRow { id: string; reason: RelevanceReason | FilterReason; row: Row }
 
@@ -208,14 +226,15 @@ function addMethodologySection(sheet: ExcelJS.Worksheet, model: ReturnType<typeo
   }
 }
 
-export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string, Row[]>, facts?: MissionFacts): Promise<{ xlsx: Buffer; csv: string; /** Wrong parent-describing values of a child sheet that were replaced from the row's own parent (for the admin only). */ parentFixes: ParentColumnFix[]; /** What was taken out of the customer's cells because it named a data provider (for the admin only). */ providerFixes: ProviderCleanReport & { final: number } }> {
+export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string, Row[]>, facts?: MissionFacts, companyMailboxes?: CompanyMailboxes): Promise<{ xlsx: Buffer; csv: string; /** Wrong parent-describing values of a child sheet that were replaced from the row's own parent (for the admin only). */ parentFixes: ParentColumnFix[]; /** What was taken out of the customer's cells because it named a data provider (for the admin only). */ providerFixes: ProviderCleanReport & { final: number } }> {
   // BEFORE THE FILE IS WRITTEN: every value of a child row that describes its parent must be its OWN parent's (parentColumns.ts); a mapping that copied the first company's website onto every person is repaired here and reported to the admin
   const reconciled = reconcileParentColumns(plan.stages, rowsIn, (key) => { const st = plan.stages.find((x) => x.key === key); return st ? readableColumns(st).map((c) => c.key) : []; }, (key) => { const st = plan.stages.find((x) => x.key === key); return st ? readableColumns(st).map((c) => c.key) : []; });
   // NO DATA PROVIDER IN A CUSTOMER FILE (providerHosts.ts): its addresses are taken out of every cell and an id built from one is replaced by a neutral id, the same wherever it is written
   const providers = providerContext();
   const cleaned = cleanRowsForCustomer(reconciled.rowsByStage, providers);
-  const rowsByStage = cleaned.rowsByStage;
-  const layouts = layoutOf(plan, rowsByStage);
+  // THE COMPANIES' OWN E-MAILS (role and generic mailboxes the people source gave: info@, customer_care@, webmaster@) are a COLUMN of the company's sheet, never rows of the people sheet: they add no row, so they are not counted and not charged
+  const { rowsByStage, layoutPlan } = withCompanyMailboxes(plan, cleaned.rowsByStage, companyMailboxes);
+  const layouts = layoutOf(layoutPlan, rowsByStage);
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
   const used = new Set<string>([SUMMARY_SHEET_AR.toLowerCase()]);

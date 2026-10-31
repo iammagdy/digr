@@ -21,7 +21,8 @@ interface RoleDef {
 }
 
 const ROLES: ReadonlyArray<RoleDef> = [
-  { key: "manager", nounStems: ["مدير", "مسؤول", "مسئول", "رئيس", "قيادي", "manager", "director"], pluralAr: "مديرون", words: ["manager", "managers", "director", "directors", "head", "chief", "ceo", "coo", "cfo", "cto", "cmo", "cio", "president", "vp", "gm", "مدير", "مديرة", "مديرين", "رئيس", "رئيسة", "مسؤول", "مسئول", "مدير عام"], phrases: ["vice president", "general manager", "managing director", "team lead", "head of", "chief executive", "chief operating", "chief financial"] },
+  // the DECISION MAKERS («صناع القرار») are this role: the owner, the founders, the chairman, the chiefs, the general manager, the directors, the managers and the heads
+  { key: "manager", nounStems: ["مدير", "مدرا", "مسؤول", "مسئول", "رئيس", "قيادي", "صناع", "صانع", "manager", "director", "decision"], pluralAr: "مديرون", words: ["manager", "managers", "director", "directors", "head", "chief", "ceo", "coo", "cfo", "cto", "cmo", "cio", "president", "vp", "gm", "owner", "owners", "founder", "founders", "cofounder", "co-founder", "chairman", "chairwoman", "مدير", "مديرة", "مديرين", "رئيس", "رئيسة", "مسؤول", "مسئول", "مدير عام", "مالك", "مالكة", "صاحب", "صاحبة", "مؤسس", "مؤسسة"], phrases: ["vice president", "general manager", "managing director", "team lead", "head of", "chief executive", "chief operating", "chief financial"] },
   { key: "engineer", nounStems: ["مهندس", "engineer"], pluralAr: "مهندسون", words: ["engineer", "engineers", "engineering", "مهندس", "مهندسة", "مهندسين"] },
   { key: "sales", nounStems: ["مبيع", "مندوب", "sales"], pluralAr: "مسؤولو مبيعات", words: ["sales", "salesman", "salesperson", "مبيعات", "مندوب", "business development"] },
   { key: "hr", nounStems: ["موارد", "hr"], pluralAr: "مسؤولو موارد بشرية", words: ["hr", "recruiter", "recruitment", "talent", "موارد", "توظيف"], phrases: ["human resources"] },
@@ -50,7 +51,8 @@ export function titleRoleVerdict(title: unknown, role: RoleKey): TitleVerdict {
   const norm = normalizeText(text);
   const words = wordsOf(text);
   if (def.phrases?.some((p) => norm.includes(normalizeText(p)))) return "match";
-  if (words.some((w) => def.words.some((d) => normalizeText(d) === w))) return "match";
+  // a word is compared as written and without the Arabic definite article («المدير» is «مدير»)
+  if (words.some((w) => def.words.some((d) => normalizeText(d) === w || normalizeText(d) === w.replace(/^ال(?=.{2,})/, "")))) return "match";
   if (GENERIC_TITLES.has(norm) || words.every((w) => GENERIC_TITLES.has(w))) return "unclear";
   return "other";
 }

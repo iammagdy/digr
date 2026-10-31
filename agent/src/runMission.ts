@@ -36,7 +36,8 @@ import { trackRun, untrackRun } from "./sessions";
 import { childShortfallClauseAr, countWorkbookSheets, shortfallClauseAr, shortfallFromStopAr, zeroDeliveryReasonAr, type ZeroDeliveryFacts } from "./finalize";
 import { createReviewer, readReviewState, type ReviewCall } from "./review";
 import type { TokenUsage } from "./llmCost";
-import { buildExcludedAdminCsv, buildMissionFiles, type ExcludedRow } from "./workbook";
+import { buildExcludedAdminCsv, buildMissionFiles, type CompanyMailboxes, type ExcludedRow } from "./workbook";
+import { isPeopleStage, mailboxesOf } from "../../src/lib/agentMission/people";
 import { missionFactsOf } from "./methodology";
 import { missionFileTitleAr } from "../../src/lib/agentMission/fileNames";
 import { itemNounOf, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
@@ -200,6 +201,30 @@ async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPla
   return { pending: pendingTotal, stop, languageLeftOut, lastUnusable, failedCalls };
 }
 const RELEVANCE_REASON_KEYS = [...RELEVANCE_REASON_LIST, ...FILTER_REASONS] as const;
+
+/**
+ * THE COMPANIES' OWN E-MAILS: the rows of a people stage that were not people (a role or generic mailbox, a row with no person's name: people.ts) were kept with their reason and their address. They go to the sheet of the companies, one cell per company
+ * (workbook.ts); here they are gathered by company, in the order the source gave them, each address once. Only what the log recorded: never an address that was not in a row.
+ */
+export function companyMailboxesOf(plan: PricedPlan, snap: ItemSnapshot): CompanyMailboxes {
+  const out: CompanyMailboxes = {};
+  for (const s of plan.stages) {
+    if (s.parent_key === null || !isPeopleStage(s)) continue;
+    // only the stage whose rows ARE the companies: a mailbox found for a PERSON (a step under a people stage) is not a company e-mail
+    const parentStage = plan.stages.find((p) => p.key === s.parent_key);
+    if (!parentStage || isPeopleStage(parentStage)) continue;
+    const byParent = out[s.parent_key] ?? (out[s.parent_key] = new Map());
+    for (const it of snap.excludedItems(s.key)) {
+      if (it.reason !== "not_a_person" || !it.row) continue;
+      const parentId = String(it.row.parent_id ?? "").trim();
+      if (!parentId) continue;
+      const have = byParent.get(parentId) ?? [];
+      for (const email of mailboxesOf(it.row, s.columns)) if (!have.includes(email)) have.push(email);
+      if (have.length > 0) byParent.set(parentId, have);
+    }
+  }
+  return out;
+}
 /** True when a text carries a number (Latin or Arabic-Indic digits): a model note with one is dropped, so a count in a text always comes from the data. */
 export const HAS_NUMBER = /[0-9٠-٩]/;
 
@@ -429,7 +454,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   let parentFixedRows = 0;
   if (builtCount > 0) {
     try {
-      const built = await buildMissionFiles(plan, rowsByStage, missionFactsOf({ requestText: mission.request_text, plan, snap, reviewStop: checked.stop }));
+      const built = await buildMissionFiles(plan, rowsByStage, missionFactsOf({ requestText: mission.request_text, plan, snap, reviewStop: checked.stop }), companyMailboxesOf(plan, snap));
       if (built.parentFixes.length > 0) { parentFixedRows = built.parentFixes.reduce((n, f) => n + f.rows, 0); flags.push("parent_column_fixed"); deps.log?.(`parent_column_fixed ${mission.id} ${built.parentFixes.map((f) => `${f.stage_key}.${f.column}<-${f.parent_field}x${f.rows}`).join(",")}`); }
       const published = await store.publishResult({ missionId: mission.id, userId: mission.user_id, jobId, xlsx: built.xlsx, csv: built.csv });
       resultPath = published.resultPath;
