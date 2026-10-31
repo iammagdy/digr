@@ -322,5 +322,5 @@ export function KeyCheckResult({ title, r }: { title: string; r: PublicKeyCheckR
 
 const EVENT_AR: Record<string, string> = {
   key_added: "إضافة مفتاح", key_removed: "حذف مفتاح", key_replaced: "استبدال مفتاح", active_set: "تفعيل مفتاح", chain_set: "تغيير ترتيب السلسلة",
-  rollout_on: "تشغيل المجمّع", rollout_off: "إيقاف المجمّع", failover: "انتقال تلقائي", settings: "تغيير الإعدادات",
+  rollout_on: "تشغيل المجمّع", rollout_off: "إيقاف المجمّع", failover: "انتقال تلقائي", main_failed: "توقف المفتاح الرئيسي", settings: "تغيير الإعدادات",
 };

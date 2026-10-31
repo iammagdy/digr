@@ -55,6 +55,8 @@ export interface TregCallResult {
   detail?: string;
   isRouteMaxCost: boolean;
   isPlatformBalanceLow: boolean;
+  /** For a 402 (not a price cap), set by the key pool after the free balance read: «endpoint» = the key's balance is fine and this source refused payment by itself; «key» = a confirmed low balance. */
+  paymentScope?: "key" | "endpoint" | "unconfirmed";
   /** The call was cut by OUR time limit: the source may have answered (and billed) after we stopped waiting. */
   timedOut?: boolean;
   /** What the FIRST call of an idempotent replay cost (header `X-Treg-Original-Cost-Micro`); a replay itself reports 0. */

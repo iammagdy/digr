@@ -58,8 +58,16 @@ export interface RuntimeSnapshot { rollout_on: boolean; active_id: string | null
 type SnapshotResult = { state: "ok"; snap: RuntimeSnapshot } | { state: "not_ready" } | { state: "unreadable"; code: string };
 
 export type FailureVerdict = { status: "revoked" | "out_of_balance"; reason: string };
+/**
+ * What a 402 turned out to be after the free balance read: the KEY's («key»: a confirmed low balance), the ENDPOINT's («endpoint»: the balance is above the minimum, so this source refused payment by itself),
+ * or not known («unconfirmed»: the balance could not be read). Only «key» ever writes a status.
+ */
+export type PaymentScope = "key" | "endpoint" | "unconfirmed";
+interface VerdictInfo { verdict: FailureVerdict | null; scope: PaymentScope }
 export interface PoolCallOutcome {
   ok: boolean; httpStatus: number; isPlatformBalanceLow?: boolean; isRouteMaxCost?: boolean; blocked?: string; budgetStopped?: boolean;
+  /** Set by `afterCall` for a 402 (not a price cap): what the verification found. The caller records it with the call (source health). */
+  paymentScope?: PaymentScope;
   /** The provider's own words of a failed call (already sanitized by the caller); read only to tell an ACCOUNT refusal from an endpoint refusal. */
   error?: string; errorDetails?: string; detail?: string;
 }
@@ -73,6 +81,9 @@ export interface TregKeyPoolDeps {
   /** Direct notice (the worker's optional ADMIN_ALERT_EMAIL path), at most once per hour; never carries a key. */
   onEmergency?: (info: EmergencyInfo) => void | Promise<void>;
 }
+
+/** «balance_low:aiark.people.search»: the cause and the source that showed it, never more than the 60 characters the status reason can hold. */
+export const reasonWithEndpoint = (reason: string, endpointId?: string | null): string => (endpointId ? `${reason}:${endpointId}` : reason).slice(0, 60);
 
 const isMissingFunction = (error: any): boolean => {
   const code = String(error?.code || "");
@@ -104,8 +115,10 @@ export class TregKeyPool {
   private lastGood: { snap: RuntimeSnapshot; at: number } | null = null;
   private enc: { key: string; at: number } | null = null;
   private readonly decrypted = new Map<string, { key: string; at: number }>();
-  private readonly verdicts = new Map<string, { at: number; verdict: FailureVerdict | null }>();
-  private readonly verifying = new Map<string, Promise<FailureVerdict | null>>();
+  private readonly verdicts = new Map<string, { at: number; info: VerdictInfo }>();
+  private readonly verifying = new Map<string, Promise<VerdictInfo>>();
+  /** A key a successful call just cleared (once per burst). */
+  private readonly healed = new Map<string, number>();
   /** A failover just recorded for a key (a burst of calls failing on the same key records it once; the rest read the new active key). */
   private readonly recorded = new Map<string, { at: number; done: Promise<boolean> }>();
   /** Recent 403s of data calls per key (this process only): the evidence of POOL_FORBIDDEN_STREAK. */
@@ -273,12 +286,17 @@ export class TregKeyPool {
   async afterCall(choice: KeyChoice, outcome: PoolCallOutcome, options: { forceMain?: boolean; endpointId?: string } = {}): Promise<KeyChoice | null> {
     if (choice.mode !== "pool" || !choice.ref || !choice.key || outcome.blocked || outcome.budgetStopped) return null;
     this.noteAnswer(choice.ref.id, outcome, options.endpointId);
-    if (outcome.ok) return null;
+    if (outcome.ok) { await this.clearFlagAfterSuccess(choice.ref).catch(() => undefined); return null; }
     const balance402 = outcome.httpStatus === 402 && outcome.isPlatformBalanceLow === true && outcome.isRouteMaxCost !== true;
     const candidate = outcome.httpStatus === 401 || outcome.httpStatus === 403 || balance402;
     if (!candidate) return null;
 
-    const verdict = this.evidenceVerdict(choice.ref.id, outcome) ?? await this.verdictFor(choice.ref, choice.key, balance402);
+    // A 402 IS NOT A VERDICT ON THE KEY BY ITSELF (live, 2026-10-31 15:50: one endpoint answered 402 while the balance was 6.64 USD, and the only key was marked «الرصيد خلص»): it is checked with the same free reads
+    // a 401/403 gets, and only a confirmed low balance marks the key.
+    const evidence = this.evidenceVerdict(choice.ref.id, outcome);
+    const info: VerdictInfo = evidence ? { verdict: evidence, scope: "key" } : await this.verdictFor(choice.ref, choice.key, balance402);
+    if (balance402) outcome.paymentScope = info.verdict ? "key" : info.scope;
+    const verdict = info.verdict && balance402 && info.verdict.status === "out_of_balance" ? { ...info.verdict, reason: reasonWithEndpoint(info.verdict.reason, options.endpointId) } : info.verdict;
     if (!verdict) return null;
     // One recording per key per burst: later callers WAIT for it (they must read the new active key, not the one this switch is replacing)
     let entry = this.recorded.get(choice.ref.id);
@@ -326,30 +344,46 @@ export class TregKeyPool {
     const recent = this.forbidden.get(keyId) ?? [];
     const streak = recent.length >= POOL_FORBIDDEN_STREAK && new Set(recent.map((e) => e.endpoint)).size >= POOL_FORBIDDEN_MIN_ENDPOINTS;
     const verdict: FailureVerdict | null = refusal ? { status: "revoked", reason: refusal } : streak ? { status: "revoked", reason: "auth_403_repeated" } : null;
-    if (verdict) this.verdicts.set(keyId, { at: this.nowFn(), verdict });
+    if (verdict) this.verdicts.set(keyId, { at: this.nowFn(), info: { verdict, scope: "key" } });
     return verdict;
   }
 
-  private verdictFor(ref: PoolKeyRef, key: string, balance402: boolean): Promise<FailureVerdict | null> {
+  private verdictFor(ref: PoolKeyRef, key: string, balance402: boolean): Promise<VerdictInfo> {
     const memo = this.verdicts.get(ref.id);
-    if (memo && this.nowFn() - memo.at < POOL_VERDICT_MEMO_MS) return Promise.resolve(memo.verdict);
+    if (memo && this.nowFn() - memo.at < POOL_VERDICT_MEMO_MS) return Promise.resolve(memo.info);
     const running = this.verifying.get(ref.id);
     if (running) return running;
-    const p = (async (): Promise<FailureVerdict | null> => {
-      if (balance402) return { status: "out_of_balance", reason: "http_402" };
+    const unknown: PaymentScope = "unconfirmed";
+    const p = (async (): Promise<VerdictInfo> => {
       const { health, body } = await checkProviderKey("treg", key, this.fetchFn, POOL_VERIFY_TIMEOUT_MS);
-      if (!health.ok) return health.httpStatus === 401 || health.httpStatus === 403 ? { status: "revoked", reason: `auth_${health.httpStatus}` } : null;
+      if (!health.ok) return health.httpStatus === 401 || health.httpStatus === 403 ? { verdict: { status: "revoked", reason: `auth_${health.httpStatus}` }, scope: "key" } : { verdict: null, scope: unknown };
       const org = extractTregOrgId(body);
-      if (!org) return null;
+      if (!org) return { verdict: null, scope: unknown };
       const min = this.cache?.result.state === "ok" ? this.cache.result.snap.min_balance_micro : 10_000;
       const balance = await fetchTregBalance(key, org, this.fetchFn, POOL_VERIFY_TIMEOUT_MS);
-      return balance.available && typeof balance.balanceMicro === "number" && balance.balanceMicro <= min ? { status: "out_of_balance", reason: "balance_low" } : null;
+      if (!balance.available || typeof balance.balanceMicro !== "number") return { verdict: null, scope: unknown };
+      return balance.balanceMicro <= min ? { verdict: { status: "out_of_balance", reason: "balance_low" }, scope: "key" } : { verdict: null, scope: balance402 ? "endpoint" : unknown };
     })()
-      .catch(() => null)
-      .then((verdict) => { this.verdicts.set(ref.id, { at: this.nowFn(), verdict }); return verdict; })
+      .catch((): VerdictInfo => ({ verdict: null, scope: unknown }))
+      .then((info) => { this.verdicts.set(ref.id, { at: this.nowFn(), info }); return info; })
       .finally(() => { this.verifying.delete(ref.id); });
     this.verifying.set(ref.id, p);
     return p;
+  }
+
+  /**
+   * A SUCCESSFUL DATA CALL CLEARS A FLAG THAT NO CALL PROVED: a key shown «الرصيد خلص» or «خطأ» that has just answered a call is connected (the same record the health check writes; the urgent alert is cleared with it).
+   * A «revoked» status is left to the health check and the admin. Costs nothing for a healthy key (the cached view says so), and writes once per burst.
+   */
+  private async clearFlagAfterSuccess(ref: PoolKeyRef): Promise<void> {
+    const snap = this.cache?.result.state === "ok" ? this.cache.result.snap : this.lastGood?.snap;
+    const k = snap?.keys.find((x) => x.id === ref.id);
+    if (!k || (k.status !== "out_of_balance" && k.status !== "error")) return;
+    const last = this.healed.get(ref.id);
+    if (last !== undefined && this.nowFn() - last < POOL_VERDICT_MEMO_MS) return;
+    this.healed.set(ref.id, this.nowFn());
+    const { data, error } = await this.rpc("treg_pool_record_check", { p_key_id: ref.id, p_status: "connected", p_reason: "data_call_ok", p_balance_micro: null, p_email: null, p_source: this.source }, POOL_RECORD_TIMEOUT_MS);
+    if (!error && data?.success === true) this.invalidate();
   }
 
   /** The health check found the ACTIVE key revoked or empty: the same switch a failing call would make. Returns whether the active key moved. */

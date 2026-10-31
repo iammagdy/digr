@@ -1,0 +1,51 @@
+-- ROLLBACK of 08. Restores the function exactly as it was (no event for a failed main key) and the old check constraint. Existing «main_failed» event rows must be removed first
+-- (the table is append-only: do it as the owner, in a transaction, with the trigger disabled) or the old constraint cannot be restored; if rows exist, leave the constraint widened.
+CREATE OR REPLACE FUNCTION public.treg_pool_record_failover(p_failed_key_id uuid, p_new_status text, p_reason text, p_source text)
+RETURNS jsonb
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public', 'pg_temp'
+AS $function$
+DECLARE
+  v_failed public.treg_pool_keys%ROWTYPE;
+  v_state public.treg_pool_state%ROWTYPE;
+  v_to uuid;
+  v_switched boolean := false;
+  v_a_failover boolean := false;
+  v_a_main boolean := false;
+  v_a_main_failed boolean := false;
+  v_to_is_main boolean := false;
+BEGIN
+  IF p_new_status IS NULL OR p_new_status NOT IN ('revoked', 'out_of_balance') THEN RETURN jsonb_build_object('success', false, 'error', 'invalid_status'); END IF;
+  IF p_source IS NULL OR p_source NOT IN ('website', 'worker', 'health') THEN RETURN jsonb_build_object('success', false, 'error', 'invalid_source'); END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended('treg_pool', 0));
+  SELECT * INTO v_failed FROM public.treg_pool_keys WHERE id = p_failed_key_id AND removed_at IS NULL;
+  IF NOT FOUND THEN RETURN jsonb_build_object('success', false, 'error', 'unknown_key'); END IF;
+  SELECT * INTO v_state FROM public.treg_pool_state WHERE id = 1 FOR UPDATE;
+
+  UPDATE public.treg_pool_keys SET status = p_new_status, status_reason = left(p_reason, 60), status_checked_at = now() WHERE id = p_failed_key_id;
+
+  IF v_state.rollout_on AND v_state.active_key_id = p_failed_key_id THEN
+    v_to := public.treg_pool_next_key(p_failed_key_id);
+    IF v_to IS NOT NULL THEN
+      UPDATE public.treg_pool_state SET active_key_id = v_to, generation = generation + 1, updated_at = now(), updated_by = NULL WHERE id = 1;
+      v_switched := true;
+      SELECT is_main INTO v_to_is_main FROM public.treg_pool_keys WHERE id = v_to;
+      PERFORM public.treg_pool_log_event('failover', p_failed_key_id, v_to, p_reason, p_source, NULL);
+      v_a_failover := public.treg_pool_claim_alert('failover', p_failed_key_id, p_new_status, v_to);
+      IF v_to_is_main THEN v_a_main := public.treg_pool_claim_alert('chain_reached_main', v_to, 'chain_reached_main', NULL); END IF;
+    ELSE
+      -- the main key itself failed: nothing is left after it
+      v_a_main_failed := public.treg_pool_claim_alert('main_failed', p_failed_key_id, p_new_status, NULL);
+    END IF;
+  END IF;
+
+  RETURN jsonb_build_object('success', true, 'switched', v_switched, 'active_id', (SELECT active_key_id FROM public.treg_pool_state WHERE id = 1),
+    'alert_failover', v_a_failover, 'alert_chain_reached_main', v_a_main, 'alert_main_failed', v_a_main_failed);
+END;
+$function$;
+REVOKE ALL ON FUNCTION public.treg_pool_record_failover(uuid, text, text, text) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.treg_pool_record_failover(uuid, text, text, text) TO service_role;
+ALTER TABLE public.treg_pool_events DROP CONSTRAINT IF EXISTS treg_pool_events_kind_check;
+ALTER TABLE public.treg_pool_events ADD CONSTRAINT treg_pool_events_kind_check
+  CHECK (kind = ANY (ARRAY['key_added','key_removed','key_replaced','active_set','chain_set','rollout_on','rollout_off','failover','settings']));

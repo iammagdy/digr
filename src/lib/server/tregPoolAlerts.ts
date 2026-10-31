@@ -27,7 +27,7 @@ export function poolReasonAr(reason: string | null | undefined): string {
   if (r === "org_suspended" || r === "account_disabled") return "حسابه لدى المزود موقوف";
   if (r === "auth_403_repeated" || /^data_(401|403)$/.test(r)) return "رفض المزود طلباته";
   if (r === "revoked" || /^auth_/.test(r)) return "أُلغي أو رفضه المزود";
-  if (r === "out_of_balance" || r === "http_402" || r === "balance_low") return "انتهى رصيده";
+  if (/^(out_of_balance|http_402|balance_low)(:|$)/.test(r)) return "انتهى رصيده";
   if (r === "error") return "يعطي خطأ غير متوقع";
   return "توقف عن العمل";
 }
