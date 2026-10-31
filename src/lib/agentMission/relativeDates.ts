@@ -1,5 +1,5 @@
 import { normalizeText } from "./relevance";
-import { cairoText } from "./dateCells";
+import { cairoText, parseMoment } from "./dateCells";
 
 /**
  * A SOURCE THAT GIVES ONLY A RELATIVE TIME («قبل ٤ أيام», «4 days ago», «Streamed 2 weeks ago», «1 month ago»). The live YouTube retest of 2026-10-29: every video the search gave had a relative publish time, the period filter («آخر ٣ شهور») found no moment in it
@@ -89,6 +89,22 @@ export const isRelativeAge = (value: unknown): boolean => parseRelativeAge(value
 
 /** The day the file shows for a relative age: the approximate moment's calendar day in Cairo («2026-10-25»). A day, never a time of day. */
 export const approxDayOf = (age: RelativeAge): string => cairoText(new Date(age.approxMs)).slice(0, 10);
+
+/** How far a date may be from «the moment of the read minus the age in words» and still be that computed date (the call itself takes seconds, a page may be mapped minutes later). */
+const DERIVED_TOLERANCE_MS = 10 * MIN;
+
+/**
+ * A DATE THE SOURCE COMPUTED FROM A RELATIVE TIME (live: a comment «6 years ago» next to a field `publishedTime` of «2020-10-31T16:42:29Z», the minute of the call minus six years). It looks like an exact moment with a time of day and is not one: the
+ * source only knows «6 years ago». When `value` is a moment within a few minutes of (the read moment minus the age that `relativeText` states), it is that computed date and the day it stands for is returned, to be written as an approximate day;
+ * null for a real timestamp (it differs from the computed one by more than the tolerance) or when the text is not a relative age. Pure.
+ */
+export function derivedRelativeDay(value: unknown, relativeText: unknown, now: number): string | null {
+  const age = parseRelativeAge(relativeText, now);
+  if (!age) return null;
+  const moment = parseMoment(value);
+  if (!moment) return null;
+  return Math.abs(moment.getTime() - age.approxMs) <= DERIVED_TOLERANCE_MS ? approxDayOf(age) : null;
+}
 
 /** True when the range of a relative age overlaps the span [fromMs, toMs]: the item MAY be inside it. */
 export const rangeOverlaps = (age: RelativeAge, fromMs: number, toMs: number): boolean => age.toMs >= fromMs && age.fromMs <= toMs;

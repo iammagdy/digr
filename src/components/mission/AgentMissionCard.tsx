@@ -7,6 +7,7 @@ import { formatSampleCell } from "@/lib/customerDates";
 import { PLANNING_USUAL_TIME_AR } from "@/lib/missionView";
 import { AGENT_CLOSE_NOTICE_AR } from "@/lib/agentMission/constants";
 import { panelPollDelayMs } from "@/lib/missionPanelContent";
+import { MISSION_READ_LIMIT_MS, startMissionPolling } from "@/lib/missionPoller";
 import type { CustomerMissionView } from "@/lib/agentMission/customerView";
 import { MissionPlanBody } from "@/components/mission/MissionPlanPanel";
 import { PlanEditor } from "@/components/mission/PlanEditor";
@@ -47,29 +48,27 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved }: { mi
   const alive = useRef(true);
 
   const read = useCallback(async () => {
+    // a read that does not answer is cut off (the connection is freed) and the next one is made by the polling loop, which also has its own limit
+    const cut = new AbortController();
+    const limit = setTimeout(() => cut.abort(), MISSION_READ_LIMIT_MS);
     try {
-      const res = await fetch(`/api/missions/${encodeURIComponent(missionId)}`, { cache: "no-store", headers: await authHeaders() });
+      const res = await fetch(`/api/missions/${encodeURIComponent(missionId)}`, { cache: "no-store", headers: await authHeaders(), signal: cut.signal });
       const json = (await res.json()) as MissionAnswer;
       if (alive.current && json?.success && json.view) setAnswer(json);
-    } catch { /* the card keeps what it has */ }
+    } catch { /* the card keeps what it has */ } finally { clearTimeout(limit); }
   }, [missionId]);
 
   const live = answer?.view?.live ?? true;
   const ended = TERMINAL_PHASES.has(answer?.view?.phase ?? "");
   // THE CARD NEVER GOES DEAF: it reads every 2 to 3 seconds while the mission works and every few seconds while it waits for the customer (so an approval or an ending that happened elsewhere shows by itself), and reads at once when the tab comes back; it stops only when the mission has ended
+  // The loop is startMissionPolling's: every read has a limit, so ONE read that never answers cannot end it (live: the plan was stored and the card showed «تستغرق وقتًا أطول» until a reload)
   useEffect(() => {
     alive.current = true;
-    let timer: ReturnType<typeof setTimeout> | null = null;
     const hidden = () => typeof document !== "undefined" && document.visibilityState === "hidden";
-    const loop = async () => {
-      await read();
-      if (!alive.current) return;
-      timer = setTimeout(loop, live ? panelPollDelayMs(hidden()) : hidden() ? WAITING_POLL_HIDDEN_MS : WAITING_POLL_MS);
-    };
     const onVisible = () => { if (typeof document !== "undefined" && document.visibilityState === "visible") void read(); };
-    if (ended) void read(); else void loop();
+    const stop = ended ? (void read(), () => undefined) : startMissionPolling({ read, nextDelayMs: () => (live ? panelPollDelayMs(hidden()) : hidden() ? WAITING_POLL_HIDDEN_MS : WAITING_POLL_MS) });
     if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisible);
-    return () => { alive.current = false; if (timer) clearTimeout(timer); if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisible); };
+    return () => { alive.current = false; stop(); if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisible); };
   }, [read, live, ended]);
 
   async function act(action: "approve" | "cancel" | "edit" | "edit_plan" | "answer", text?: string, edits?: PlanEdits) {

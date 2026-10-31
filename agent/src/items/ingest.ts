@@ -7,7 +7,7 @@ import { nameKeysOf, withCleanName, withRealName } from "../../../src/lib/agentM
 import { entityDoubt, type DoubtInput } from "../../../src/lib/agentMission/entityDoubts";
 import { namedSourceOf, SOURCE_KEY } from "../../../src/lib/agentMission/namedSources";
 import { looksLikeDateColumn, parseMoment } from "../../../src/lib/agentMission/dateCells";
-import { APPROX_DATES_KEY, approxDayOf, parseRelativeAge } from "../../../src/lib/agentMission/relativeDates";
+import { APPROX_DATES_KEY, approxDayOf, derivedRelativeDay, parseRelativeAge } from "../../../src/lib/agentMission/relativeDates";
 import { CHILD_RAW_FILTER_KINDS, filterVerdict, governmentUnclear, isEnabled } from "../../../src/lib/agentMission/filters";
 import type { MissionEventInput } from "../types";
 import type { Reviewer } from "../review";
@@ -156,7 +156,16 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     // A DATE THE SOURCE GIVES ONLY AS A RELATIVE TIME («قبل ٤ أيام», «4 days ago») is written as the approximate day it stands for (from the moment the item was read) and the item is marked, so the file says the date is approximate (relativeDates.ts)
     const approxColumns: string[] = [];
     for (const c of stage.columns) {
-      if (!looksLikeDateColumn(c.title_ar, c.key) || parseMoment(row[c.key]) !== null) continue;
+      if (!looksLikeDateColumn(c.title_ar, c.key)) continue;
+      if (parseMoment(row[c.key]) !== null) {
+        // A DATE THE SOURCE COMPUTED ITSELF from a relative text it also gives («6 years ago» beside a `publishedTime` of the minute of the call minus six years) is not an exact moment: it is written as the approximate day it stands for (a real timestamp is untouched)
+        for (const [field, text] of Object.entries(raw)) {
+          if (field === c.key || typeof text !== "string") continue;
+          const day = derivedRelativeDay(row[c.key], text, now);
+          if (day !== null) { row[c.key] = day; approxColumns.push(c.key); break; }
+        }
+        continue;
+      }
       const age = parseRelativeAge(row[c.key], now);
       if (age) { row[c.key] = approxDayOf(age); approxColumns.push(c.key); }
     }
