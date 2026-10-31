@@ -1,4 +1,4 @@
-import { customerMissionView } from "/home/user/digr/src/lib/agentMission/customerView";
+import { customerMissionView } from "../../src/lib/agentMission/customerView";
 const plan = {
   summary_ar: "ستستلم ملف إكسل بـ ٥٠ تغريدة عن «القهوة» خلال آخر ٣ أشهر، مع تاريخ كل تغريدة ونصها ورابطها.",
   assumptions_ar: [
