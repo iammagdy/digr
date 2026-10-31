@@ -25,6 +25,8 @@ const N = (singular: string, dual: string, dualGen: string, plural: string, tamy
 export const ITEM_NOUNS: ReadonlyArray<ItemNoun> = [
   N("تغريدة", "تغريدتان", "تغريدتين", "تغريدات", "تغريدة", true),
   N("منشور", "منشوران", "منشورين", "منشورات", "منشورًا", false),
+  // the word customers write for a post («٥ بوستات»): without it a title that starts with it was counted by the next known noun, the page the posts come from
+  N("بوست", "بوستان", "بوستين", "بوستات", "بوست", false),
   N("تعليق", "تعليقان", "تعليقين", "تعليقات", "تعليقًا", false),
   N("فيديو", "فيديوهان", "فيديوهين", "فيديوهات", "فيديو", false, ["مقاطع", "مقطع"]),
   N("شركة", "شركتان", "شركتين", "شركات", "شركة", true),
@@ -60,11 +62,22 @@ export function knownItemNoun(word: string): ItemNoun | null {
   return KNOWN.get(w) ?? KNOWN.get(`ال${w}`) ?? null;
 }
 
-/** The noun of a stage title or a short phrase: its first words that name a known noun («التغريدات التي تذكر محمد صلاح» → تغريدة; «تعليقات كل منشور» → تعليق); «عنصر» when none does. */
+/** Nouns that name WHERE the items come from (the page, the account, the channel), never the items themselves in a title like «بوستات صفحة طلبات مصر». */
+const SOURCE_NOUN_KEYS: ReadonlySet<string> = new Set(["صفحة", "حساب", "قناة"].map((n) => normalizeText(n)));
+/** Words that may stand in front of a noun without being a noun («أحدث صفحات فيسبوك», «أفضل قنوات يوتيوب»): the noun after them is still the first noun of the title. */
+const LEADING_MODIFIERS: ReadonlySet<string> = new Set(["أحدث", "أفضل", "أهم", "أشهر", "أكبر", "أقدم", "أول", "آخر", "بعض", "كل", "جميع", "أكثر"].map((n) => normalizeText(n)));
+
+/**
+ * The noun of a stage title or a short phrase: its first words that name a known noun («التغريدات التي تذكر محمد صلاح» → تغريدة; «تعليقات كل منشور» → تعليق); «عنصر» when none does.
+ * A noun that names the SOURCE of the items (a page, an account, a channel) is the unit only when it opens the title or follows a plain modifier: after a word the table does not know it is the source («ريلز صفحة فلان»), and the unit is then the honest «عنصر» (live: «بوستات صفحة طلبات مصر» was counted «٥ صفحات»).
+ */
 export function itemNounOf(text: string | null | undefined): ItemNoun {
-  for (const word of String(text ?? "").replace(/[«»"،,.:؛]/g, " ").split(/\s+/).filter(Boolean).slice(0, 3)) {
-    const n = knownItemNoun(word);
-    if (n) return n;
+  const words = String(text ?? "").replace(/[«»"،,.:؛]/g, " ").split(/\s+/).filter(Boolean).slice(0, 3);
+  for (let i = 0; i < words.length; i += 1) {
+    const n = knownItemNoun(words[i]);
+    if (!n) continue;
+    if (i > 0 && SOURCE_NOUN_KEYS.has(n.key) && !words.slice(0, i).every((w) => LEADING_MODIFIERS.has(normalizeText(w)))) continue;
+    return n;
   }
   return GENERIC_ITEM_NOUN;
 }
