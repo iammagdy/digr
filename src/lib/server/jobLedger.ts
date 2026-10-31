@@ -12,9 +12,9 @@ export async function readLedgerRowsOfJobs(client: any, userId: string, jobIds: 
   for (let i = 0; i < jobIds.length; i += IDS_PER_READ) {
     const ids = jobIds.slice(i, i + IDS_PER_READ);
     for (let from = 0; ; from += PAGE) {
-      const { data, error } = await client.from("credit_ledger").select("job_id,type,delta").eq("user_id", userId).in("job_id", ids).order("id", { ascending: true }).range(from, from + PAGE - 1);
+      const { data, error } = await client.from("credit_ledger").select("id,job_id,type,delta").eq("user_id", userId).in("job_id", ids).order("id", { ascending: true }).range(from, from + PAGE - 1);
       if (error) throw new Error("job_ledger_read_failed");
-      for (const row of data ?? []) out.push({ jobId: row.job_id ?? null, type: String(row.type ?? ""), delta: Number(row.delta) || 0 });
+      for (const row of data ?? []) out.push({ id: typeof row.id === "string" ? row.id : undefined, jobId: row.job_id ?? null, type: String(row.type ?? ""), delta: Number(row.delta) || 0 });
       if (!data || data.length < PAGE) break;
     }
   }

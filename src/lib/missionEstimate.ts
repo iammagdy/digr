@@ -1,5 +1,6 @@
 import { pointsAr } from "./pointsFormat";
 import { toArabicDigits } from "./arabicDigits";
+import { countKindOfSlug, countPlainAr } from "./planCounts";
 import { DEFAULT_JOB_POINTS_CAP, computePublicCalculatorQuote, getPublicCalculatorOptions } from "./calculatorPricing";
 import { chargeForUnits, reserveForUnits } from "./recordPricing";
 import { DEFAULT_MISSION_PRICING_SETTINGS, minimumLineAr } from "./missionPricing";
@@ -127,8 +128,8 @@ export function estimateMission(input: EstimateInput): EstimateResult {
   if (!volume && input.budgetPoints && input.budgetPoints > 0) volume = volumeForPointsCap(input.budgetPoints, perUnit, settings.safetyBuffer);
   if (!volume) {
     return input.openEnded || input.budgetPoints
-      ? { status: "needs_cap", notesAr: ["الطلب المفتوح يحتاج حدًا أقصى: اكتب عدد السجلات أو ميزانيتك بالنقاط."] }
-      : { status: "needs_cap", notesAr: ["اكتب عدد السجلات أو ميزانيتك بالنقاط لنحسب لك التكلفة."] };
+      ? { status: "needs_cap", notesAr: ["الطلب المفتوح يحتاج حدًا أقصى: اكتب العدد المطلوب أو ميزانيتك بالنقاط."] }
+      : { status: "needs_cap", notesAr: ["اكتب العدد المطلوب أو ميزانيتك بالنقاط لنحسب لك التكلفة."] };
   }
 
   // THE ONE PRICING RULE (missionPricing.ts): the same minimum charge the quote applies (max(minimum, ceil(volume x unit)); the reserve is max(minimum, ...) too); nothing delivered is never charged
@@ -145,12 +146,12 @@ export function estimateMission(input: EstimateInput): EstimateResult {
   const reservePoints = Math.max(minCharge, fitsInOneJob ? reserveInOneJob(volume, sizing) : unclippedReserve);
   const jobsNeeded = fitsInOneJob ? 1 : maxVolumeInOneJob > 0 ? Math.ceil(volume / maxVolumeInOneJob) : 0;
 
-  const notesAr: string[] = [`السعر تقريبي: يُخصم فقط مقابل السجلات المطابقة التي تصلك فعلًا، والحجز (${pointsAr(reservePoints, n)}) يشمل احتياطيًا، وما لم يُستخدم منه حجز مؤقت مُحرَّر.`];
+  const notesAr: string[] = [`السعر تقريبي: يُخصم فقط مقابل النتائج المطابقة التي تصلك فعلًا، والحجز (${pointsAr(reservePoints, n)}) يشمل احتياطيًا، وما لم يُستخدم منه حجز مؤقت مُحرَّر.`];
   if (minCharge > 0) notesAr.push(minimumLineAr(DEFAULT_MISSION_PRICING_SETTINGS));
   if (!fitsInOneJob) {
     notesAr.push(maxVolumeInOneJob > 0
-      ? `الطلب الواحد يتسع حاليًا لحوالي ${n(maxVolumeInOneJob)} سجل${limitedByServiceCeiling(sizing) ? "" : ` (سقف الحجز ${pointsAr(jobCapPoints, n)})`}، فيلزم حوالي ${n(jobsNeeded)} طلبات منفصلة، أو سقف أعلى بعد موافقتنا.`
-      : "السجل الواحد أعلى من سقف الحجز الحالي للطلب الواحد.");
+      ? `الطلب الواحد يتسع حاليًا لحوالي ${countPlainAr(Math.max(0, Math.round(maxVolumeInOneJob)), countKindOfSlug(slug))}${limitedByServiceCeiling(sizing) ? "" : ` (سقف الحجز ${pointsAr(jobCapPoints, n)})`}، فيلزم حوالي ${n(jobsNeeded)} طلبات منفصلة، أو سقف أعلى بعد موافقتنا.`
+      : "سعر النتيجة الواحدة أعلى من سقف الحجز الحالي للطلب الواحد.");
   }
   return {
     status: "ok",
@@ -231,7 +232,7 @@ export const ESTIMATE_MAX_VOLUME = 1_000_000;
 export function estimateFormProblemAr(input: { kind: EstimateKind; platform?: string | null; volume: number; budget: number }): string | null {
   const social = input.kind === "comments" || input.kind === "posts" || input.kind === "videos";
   if (social && !input.platform) return "اختر المنصة لنحسب لك التكلفة.";
-  if (input.volume > ESTIMATE_MAX_VOLUME) return `الحد الأقصى للحساب هنا ${toArabicDigits(ESTIMATE_MAX_VOLUME)} سجل؛ اكتب عددًا أقل، أو قسّم طلبك على أكثر من طلب.`;
+  if (input.volume > ESTIMATE_MAX_VOLUME) return `الحد الأقصى للحساب هنا ${countPlainAr(ESTIMATE_MAX_VOLUME, input.kind === "posts" && input.platform === "x" ? "tweets" : input.kind)}؛ اكتب عددًا أقل، أو قسّم طلبك على أكثر من طلب.`;
   if (!input.volume && !input.budget) return "اكتب العدد المطلوب أو ميزانيتك بالنقاط لنحسب السعر.";
   return null;
 }

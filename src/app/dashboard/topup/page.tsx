@@ -25,10 +25,11 @@ import PromoCodeBox from "./PromoCodeBox";
 import { WalletJobToggle } from "./WalletJobToggle";
 import { CREDIT_KIND_LABEL_AR, classifyLedgerRow } from "@/lib/creditKinds";
 import { TOPUP_REQUEST_LABEL_AR, walletDisplayText, walletNoteForDisplay } from "@/lib/walletText";
-import { creditedPointsByTopup, creditedPointsOf, groupMissionRows, kindOfLedgerRow as kindOf, toggledSet, visibleLedgerRows, walletMonthStats, type WalletLedgerKind as LedgerKind } from "@/lib/walletView";
+import { creditedPointsByTopup, creditedPointsOf, groupMissionRows, isMethodologyChargeId, kindOfLedgerRow as kindOf, methodologyPurchaseLineAr, toggledSet, visibleLedgerRows, walletMonthStats, type WalletLedgerKind as LedgerKind } from "@/lib/walletView";
 import { statusBadge, USER_STATUS, type LedgerRow, type TopupRecord } from "./types";
 
-const ledgerLabel = (row: LedgerRow): string => walletDisplayText(row.labelAr || CREDIT_KIND_LABEL_AR[classifyLedgerRow({ type: row.type, kind: row.kind })]);
+const isMethodologyRow = (row: LedgerRow): boolean => isMethodologyChargeId(row.id ?? row.$id);
+const ledgerLabel = (row: LedgerRow): string => (isMethodologyRow(row) ? methodologyPurchaseLineAr(row.delta) : walletDisplayText(row.labelAr || CREDIT_KIND_LABEL_AR[classifyLedgerRow({ type: row.type, kind: row.kind })]));
 const LEDGER_TABS: Array<["all" | LedgerKind, string]> = [["all", "الكل"], ["topup", "شحن"], ["charge", "خصم وحجز"], ["refund", "حجز مُحرَّر"]];
 
 /** The three estimate chips of the balance card: the records the balance delivers, by kind. */
@@ -58,7 +59,7 @@ function LedgerLine({ l, compact = false }: { l: LedgerRow; compact?: boolean })
       <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[11px]" style={{ background: `color-mix(in oklab, ${tint} 12%, transparent)`, color: ico[1] }}><Icon d={ico[0]} size={16} stroke={1.8} /></span>
       <div className="min-w-0 flex-1">
         <p className="m-0 text-sm text-ink">{ledgerLabel(l)}</p>
-        <p className="mb-0 mt-[3px] text-xs font-light leading-[1.7] text-fnt">{walletNoteForDisplay(l.note) ? `${walletNoteForDisplay(l.note)} · ` : ""}{compact ? formatMomentCairo(l.createdAt) : new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "long" }).format(new Date(l.createdAt))}</p>
+        <p className="mb-0 mt-[3px] text-xs font-light leading-[1.7] text-fnt">{walletNoteForDisplay(l.note) && !isMethodologyRow(l) ? `${walletNoteForDisplay(l.note)} · ` : ""}{compact || isMethodologyRow(l) ? formatMomentCairo(l.createdAt) : new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "long" }).format(new Date(l.createdAt))}</p>
       </div>
       <span dir="ltr" className="text-[15px] font-semibold" style={{ color: plus ? "var(--ok)" : "var(--ink)" }}>{plus ? "+" : "−"}{formatAr(Math.abs(l.delta))}</span>
     </div>
