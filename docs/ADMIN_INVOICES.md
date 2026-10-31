@@ -3,6 +3,8 @@
 An **admin-only** builder for quotes («عرض سعر») and invoices («فاتورة») for research work the owner does by hand for companies, with a PDF and PNG export carrying the Diger logo.
 It is **completely separate from the points wallet** (see "Isolation"). The SQL was **applied by the owner** on 2026-10-31 (parts 01 to 05, one at a time) and checked by `98_verify_after_apply.sql` (18 rows, `ok = true`); see `docs/proposals/admin-invoices/README.md`.
 
+> **Update (INVOICE AGENT 2):** new documents are EGP only with the payment block off; the summary table is «ملخص القطاعات»; unit columns show the decimals that match the totals; EGP = points x point value when both are shown; export files are named «فاتورة INV-2026-0002»: `docs/ADMIN_INVOICES_AGENT_2.md`.
+>
 > **Update (INVOICE AGENT 1):** a unit price is now TYPED in US dollars (up to 4 decimals) or in points per item, never in cents; the stored unit is unchanged. A chat assistant fills the draft from files and words: `docs/ADMIN_INVOICES_AGENT.md`.
 >
 > **Update (INVOICES SIMPLE 1):** the builder is now one simple screen with sector rows, a data-statement mode («بيان بيانات»), one saved exchange rate, a Claude helper, and the «total does not work» fix: see `docs/ADMIN_INVOICES_SIMPLE.md`. The statement mode needs SQL part 06 (not applied until the owner applies it).

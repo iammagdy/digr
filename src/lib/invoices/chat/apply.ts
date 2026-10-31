@@ -3,7 +3,7 @@ import { fmtEgp, fmtInt, fmtPoints, fmtRate, fmtUnitUsd, fmtUsd } from "../forma
 import { formToPreview, unitErrors, type DocForm } from "../form";
 import { MAX_LINES, formatScaled, parseScaled } from "../money";
 import { parseUnitPoints, parseUnitUsd, unitUsdText } from "../priceInput";
-import { QUICK_TYPE_NAMES, addSector, countText, quickFields, removeSector, renameSector, setCount, type ItemTypeLite } from "../sectors";
+import { QUICK_TYPE_NAMES, addSector, isType, countText, quickFields, removeSector, renameSector, setCount, type ItemTypeLite } from "../sectors";
 import { totalsForDoc } from "../totals";
 import type { Currency } from "../types";
 import { isMoneyAction, type Action, type CountKey } from "./actions";
@@ -32,7 +32,7 @@ export interface ApplyOutcome {
   changed: boolean;
 }
 
-const COUNT_NAME: Record<CountKey, string> = { company: "شركة", manager: "مدير", email: "بريد إلكتروني", phone: "رقم هاتف" };
+const COUNT_NAME: Record<CountKey, string> = { company: "شركة", manager: "مدير", email: "بريد إلكتروني", phone: "رقم هاتف", department: "جهة تواصل إدارية" };
 const CUR_AR: Record<Currency, string> = { usd: "دولار", points: "نقطة", egp: "جنيه" };
 const base = (creditValueE4: number) => ({ id: null, number: "", status: "draft" as const, revision: 1, creditValueE4, instapayAddress: "" });
 
@@ -62,9 +62,9 @@ const countsPhrase = (counts: Partial<Record<CountKey, number>>): string =>
 
 /** The item type a name or key refers to (company/شركة…, or any active type by its name). */
 function resolveType(types: ItemTypeLite[], key: string): ItemTypeLite | null {
-  const alias: Record<string, string> = { company: "شركة", companies: "شركة", manager: "مدير", managers: "مدير", email: "بريد إلكتروني", emails: "بريد إلكتروني", phone: "رقم هاتف", phones: "رقم هاتف" };
+  const alias: Record<string, string> = { company: "شركة", companies: "شركة", manager: "مدير", managers: "مدير", email: "بريد إلكتروني", emails: "بريد إلكتروني", phone: "رقم هاتف", phones: "رقم هاتف", department: "جهة تواصل إدارية", departments: "جهة تواصل إدارية" };
   const wanted = (alias[key.trim().toLowerCase()] ?? key).trim();
-  return types.find((t) => t.nameAr.trim() === wanted) ?? null;
+  return types.find((t) => t.nameAr.trim() === wanted) ?? quickFields(types).find((q) => q.name === wanted)?.type ?? null;
 }
 
 export function applyActions(input: DocForm, actions: Action[], ctx: ApplyCtx, lineIds: ReadonlyMap<string, string>): ApplyOutcome {
@@ -80,7 +80,7 @@ export function applyActions(input: DocForm, actions: Action[], ctx: ApplyCtx, l
 
   const reprice = () => {
     if (!priceOverride.size) return;
-    form = { ...form, lines: form.lines.map((l) => (l.itemTypeId && priceOverride.has(l.itemTypeId) ? { ...l, unit: unitUsdText(priceOverride.get(l.itemTypeId) as number) } : l)) };
+    form = { ...form, lines: form.lines.map((l) => { const t = ctx.types.concat(quickFields(ctx.types).map((q) => q.type)).find((x) => priceOverride.has(x.id) && isType(l, x)); return t ? { ...l, unit: unitUsdText(priceOverride.get(t.id) as number) } : l; }) };
   };
   const putCounts = (batchKey: string, counts: Partial<Record<CountKey, number>>): string | null => {
     for (const k of Object.keys(counts) as CountKey[]) {
@@ -146,15 +146,22 @@ export function applyActions(input: DocForm, actions: Action[], ctx: ApplyCtx, l
         const turnedOn = !form[flag];
         const working: DocForm = turnedOn ? { ...form, [flag]: true } : form;
         const doc = formToPreview(working, base(ctx.creditValueE4));
-        const r = solveTargetTotal(doc.lines.map((l) => ({ quantity: l.quantity, unitCc: l.unitCc })), doc, a.currency, target);
+        const r = solveTargetTotal(doc.lines.map((l) => ({ quantity: l.quantity, unitCc: l.unitCc, group: l.itemTypeName.trim() })), doc, a.currency, target);
         if (!r.ok) { refused.push(r.error); break; }
         form = { ...working, lines: working.lines.map((l, i) => (r.units[i] !== doc.lines[i].unitCc ? { ...l, unit: unitUsdText(r.units[i]) } : l)) };
         if (turnedOn) applied.push(`فعّلت عرض ${CUR_AR[a.currency]} في الوثيقة لأنك طلبت إجمالي بها.`);
         const fmt = (n: number) => (a.currency === "usd" ? `${fmtUsd(n)} دولار` : a.currency === "points" ? `${fmtPoints(n)} نقطة` : `${fmtEgp(n)} جنيه`);
+        const diff = Math.abs(r.achievedMinor - r.targetMinor);
         applied.push(r.exact
           ? `الإجمالي صار ${fmt(r.achievedMinor)} تمامًا؛ عدّلت أسعار الوحدة بنفس النسبة (${fmtInt(r.changedLines)} بند).`
-          : `ما قدرتش أوصل لـ ${fmt(r.targetMinor)} بالظبط بسبب التقريب (كل بند يُقرَّب للسنت أولًا). أقرب إجمالي ممكن ${fmt(r.achievedMinor)}.`);
-        if (!r.exact) warnings.push("الإجمالي المعروض هو أقرب إجمالي ممكن، وليس المطلوب بالظبط.");
+          : `المطلوب ${fmt(r.targetMinor)}، وأقرب إجمالي ممكن ${fmt(r.achievedMinor)}، والفرق ${fmt(diff)} (كل بند يُقرَّب للسنت أولًا).`);
+        if (r.clean) {
+          // the whole-points prices that were chosen, per item type: «سعر الشركة ١٧ نقطة، المدير ٥٠ نقطة»
+          const byType = new Map<string, number[]>();
+          r.points.forEach((pt, i) => { if (pt !== null) { const k = doc.lines[i].itemTypeName.trim() || "البند"; byType.set(k, [...(byType.get(k) ?? []), pt]); } });
+          const text = [...byType.entries()].map(([k, v]) => `${k} ${Math.min(...v) === Math.max(...v) ? fmtInt(v[0]) : `من ${fmtInt(Math.min(...v))} إلى ${fmtInt(Math.max(...v))}`} نقطة`).join("، ");
+          if (text) applied.push(`أسعار الوحدة (نقاط صحيحة): ${text}.`);
+        }
         break;
       }
       case "set_discount": {
@@ -210,7 +217,7 @@ export function applyActions(input: DocForm, actions: Action[], ctx: ApplyCtx, l
         }
         if (a.showPhaseSummary !== undefined) {
           phaseSummary = a.showPhaseSummary;
-          applied.push(a.showPhaseSummary ? "ملخص المراحل ظاهر في الوثيقة بعد جدول البنود." : "أخفيت ملخص المراحل من العرض الحالي والتصدير فقط (الوثيقة المحفوظة تحتفظ به).");
+          applied.push(a.showPhaseSummary ? "ملخص القطاعات ظاهر في الوثيقة بعد جدول البنود." : "أخفيت ملخص القطاعات من العرض الحالي والتصدير فقط (الوثيقة المحفوظة تحتفظ به).");
         }
         if (a.maxPages !== undefined) { fitPages = a.maxPages; applied.push(`هضبط الوثيقة على ${a.maxPages === 1 ? "صفحة واحدة" : `${fmtInt(a.maxPages)} صفحات`} بعرض القطاعات الكبيرة كملخص.`); }
         break;

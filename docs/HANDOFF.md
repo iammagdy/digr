@@ -4,6 +4,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-31, after #313): INVOICE AGENT 2 (the assistant understands the owner's files, asks the right questions, looks like the customer chat)
+
+`main` before it was `4690c444ca115e650e167d8b586e2239bbc2c1e7` (#313); its merge commit is the head of `main` after it. Everything (root cause of each wrong count with the old-code numbers, the rules, the conversation, clean prices, the display polish, changed tests, NOT PROVEN): `docs/ADMIN_INVOICES_AGENT_2.md`; screenshots at 380 px and the browser run: `docs/admin-invoices-agent-2/`. **No SQL.** No wallet, ledger, mission, price-engine, cap or agent-worker code touched. The owner's real files were never used: tests use SYNTHETIC files of their shapes (`tests/helpers/ownerShapeFixtures.ts`).
+
+- **Why 201/605 and 36**: a merged TITLE row reads as the same text in every cell, so it was chosen as the header and the real header row was counted as data (+1 company, +1 manager per file); and a sheet the model did not map was skipped silently (it mapped one detail sheet of three). Now: merged cells hold their text once, a repeated-text row is a title, continuation rows belong to the company above, a company is one company across sheets and files (Arabic or English name), contacts are distinct per (company, name), departments are told apart by code, every sheet is looked at (matched by headers, or put to the owner). Truth on the shapes: electromechanical 200 / 601; petroleum 149 companies, 239 people, 32 departments, 151 repeats ignored.
+- **The conversation** (code, no model after the files): one sentence, then one question at a time with chips (what to bill, departments, the total or his usual prices, the dollar rate, the client); the draft is shown before/after with the exact difference and waits for «تمام». A manager is ONE billable item (e-mails and phones are not billed separately); departments are a separate «جهة تواصل إدارية» line at price 0. A points / EGP target uses whole-points prices (shared per item type when that is as near, else per line, else the finest grid).
+- **Look**: the customer chat's own bubbles, chips, file chips, typing dots and composer; full height on a phone, beside the live preview on a desktop.
+- **Display**: unit columns show the decimals that make quantity x unit match every printed line; EGP = points x point value when both are shown (sent documents keep their frozen numbers); «ملخص القطاعات»; payment block off by default; export names «فاتورة INV-2026-0002.pdf» / «مسودة فاتورة»; new documents are EGP only.
+- Rollback: `git revert -m 1 <merge commit>`.
+
+---
+
 ## START HERE (2026-10-31, after #312): INVOICE AGENT 1 («مساعد الفواتير» + the live fixes)
 
 `main` before it was `69941bfb678d5699ac5d2e950435bee72abb6556` (#312); its merge commit is the head of `main` after it. Everything (bug causes with evidence, the rules, the target-total rule, model and cost, deviations, changed tests, NOT PROVEN): `docs/ADMIN_INVOICES_AGENT.md`; screenshots at 380 px, the browser run and the exact masked payload: `docs/admin-invoices-agent/`. **No SQL.** No wallet, ledger, mission, price-engine, cap or agent-worker code touched.

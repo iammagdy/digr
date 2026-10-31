@@ -7,7 +7,8 @@ import { adminFetch } from "@/lib/adminApi";
 import { toArabicDigits } from "@/lib/arabicDigits";
 import { useAdmin } from "@/components/admin/AdminShell";
 import { todayCairo } from "@/lib/invoices/dates";
-import { emptyForm, emptyLine, formFromDoc, formToInput, formToPreview, rateIsMissing, rateSanityWarning, showRateBox, unitErrors, type DocForm, type LineForm } from "@/lib/invoices/form";
+import { emptyLine, formFromDoc, newDocForm, formToInput, formToPreview, rateIsMissing, rateSanityWarning, showRateBox, unitErrors, type DocForm, type LineForm } from "@/lib/invoices/form";
+import { exportFileBase } from "@/lib/invoices/labels";
 import { nextFitStep } from "@/lib/invoices/chat/fit";
 import { InvoiceChatPanel } from "./InvoiceChatPanel";
 import { POINTS_ROUNDING_RULE_AR, UNIT_LABEL_AR, parseUnitPoints, parseUnitUsd, unitPointsText, unitUsdText, type PriceUnit } from "@/lib/invoices/priceInput";
@@ -94,7 +95,7 @@ function BuilderView({ meta, types, clients, setClients, loaded, initialType, sh
 }) {
   const { toast } = useAdmin();
   const router = useRouter();
-  const [form, setForm] = useState<DocForm>(() => loaded ? formFromDoc(loaded.doc) : { ...emptyForm(initialType, todayCairo(), { rateE4: meta.lastRateE4, payment: meta.defaultPaymentInstructions }), showUsd: false, showPoints: true });
+  const [form, setForm] = useState<DocForm>(() => loaded ? formFromDoc(loaded.doc) : newDocForm(initialType, todayCairo(), { rateE4: meta.lastRateE4 }));
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState(initialError);
   const [busy, setBusy] = useState(false);
@@ -126,7 +127,7 @@ function BuilderView({ meta, types, clients, setClients, loaded, initialType, sh
   const totals = useMemo(() => totalsForDoc(doc), [doc]);
   const model = useMemo(() => buildSheetModel(doc, loaded?.seller ?? meta.seller, undefined, { phaseSummary }), [doc, loaded, meta, phaseSummary]);
   const shownModel = useDeferredValue(model);
-  const x = useInvoiceExport(shownModel, loaded?.doc.number || "draft");
+  const x = useInvoiceExport(shownModel, exportFileBase({ docType: form.docType, number: status === "draft" ? "" : loaded?.doc.number ?? "" }));
 
   // «خلي الـ PDF صفحة واحدة»: the page count is only known from the real measurement, so the sectors are folded into summaries one at a time (largest first) until it fits.
   // A measurement counts only when it belongs to the CURRENT document (the deferred preview and the plan have both caught up); totals never change by a fold.
@@ -147,6 +148,9 @@ function BuilderView({ meta, types, clients, setClients, loaded, initialType, sh
   const zero = useMemo(() => (statement || locked ? [] : zeroPriceNames(form)), [form, statement, locked]);
   const rateMissing = !statement && rateIsMissing(form);
   const eligibleQr = showsInstapayShortcuts(doc.instapayAddress);
+  // the payment block (Instapay text, address and QR) is OFF on a new document; turning it on fills the saved text and the QR, turning it off empties both
+  const paymentOn = form.payment.trim() !== "" || form.showQr;
+  const setPaymentOn = (on: boolean) => set(on ? { payment: meta.defaultPaymentInstructions, showQr: eligibleQr } : { payment: "", showQr: false });
   const others = (key: string | null) => otherLines(form, key, quick);
 
   // ----- prices: typed in dollars (default) or in points per item; the stored number is the same either way -----
@@ -495,9 +499,14 @@ function BuilderView({ meta, types, clients, setClients, loaded, initialType, sh
                 <Field label="ملاحظات"><textarea className={`${INPUT} min-h-[70px] py-2`} value={form.notes} onChange={(e) => set({ notes: e.target.value })} maxLength={1000} /></Field>
                 {!statement ? (
                   <>
-                    <Field label="تعليمات الدفع" hint="تُملأ من عنوان إنستا باي المحفوظ في الإعدادات."><textarea className={`${INPUT} min-h-[70px] py-2`} value={form.payment} onChange={(e) => set({ payment: e.target.value })} maxLength={600} /></Field>
-                    <label className="flex min-h-[44px] items-center gap-2 text-[13px] text-ink"><input type="checkbox" className="h-5 w-5" checked={form.showQr} onChange={(e) => set({ showQr: e.target.checked })} disabled={!eligibleQr} data-testid="show-qr" />إظهار رمز الدفع (QR)</label>
-                    {!eligibleQr ? <p className="m-0 text-xs leading-6 text-mut">الرمز لا يظهر لأن عنوان إنستا باي المحفوظ ليس العنوان الذي يطابقه الرمز.</p> : null}
+                    <label className="flex min-h-[44px] items-center gap-2 text-[13px] text-ink"><input type="checkbox" className="h-5 w-5" checked={paymentOn} onChange={(e) => setPaymentOn(e.target.checked)} data-testid="payment-on" />إظهار بيانات الدفع (إنستا باي والرمز) في الوثيقة</label>
+                    {paymentOn ? (
+                      <>
+                        <Field label="تعليمات الدفع" hint="تُملأ من عنوان إنستا باي المحفوظ في الإعدادات."><textarea className={`${INPUT} min-h-[70px] py-2`} value={form.payment} onChange={(e) => set({ payment: e.target.value })} maxLength={600} /></Field>
+                        <label className="flex min-h-[44px] items-center gap-2 text-[13px] text-ink"><input type="checkbox" className="h-5 w-5" checked={form.showQr} onChange={(e) => set({ showQr: e.target.checked })} disabled={!eligibleQr} data-testid="show-qr" />إظهار رمز الدفع (QR)</label>
+                        {!eligibleQr ? <p className="m-0 text-xs leading-6 text-mut">الرمز لا يظهر لأن عنوان إنستا باي المحفوظ ليس العنوان الذي يطابقه الرمز.</p> : null}
+                      </>
+                    ) : null}
                   </>
                 ) : null}
 

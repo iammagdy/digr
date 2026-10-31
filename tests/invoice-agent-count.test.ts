@@ -50,13 +50,13 @@ describe("counting is done by code, on the real cells", () => {
     expect(r.sectors.map((s) => s.companies)).toEqual([200, 150, 120, 60]);
   });
 
-  it("the same sector in two files merges: distinct sets are shared (a company in both counts once), managers are rows (they add)", async () => {
+  it("the same sector in two files merges: a company in both counts once, and so does the same person of the same company (a copy of a file adds nothing)", async () => {
     const f = await fixtureElectro();
     const one = await load(f);
     const two: ParsedSheetFile = { ...one, name: "نسخة.xlsx" };
     const r = countByMapping([one, two], [electroMap(f.name), { ...electroMap("نسخة.xlsx") }]);
     expect(r.sectors).toHaveLength(1);
-    expect(r.sectors[0]).toMatchObject({ companies: 200, emails: 287, phones: 140, managers: 624 });
+    expect(r.sectors[0]).toMatchObject({ companies: 200, emails: 287, phones: 140, managers: 312, duplicateContacts: 312 });
   });
 
   it("no mapped sector name and no sector column: the file name is the sector (stated in the report)", async () => {

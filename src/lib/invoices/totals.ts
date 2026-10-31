@@ -1,4 +1,4 @@
-import { centsToPoints, centsToQirsh, lineCents, percentOf } from "./money";
+import { centsToPoints, centsToQirsh, lineCents, percentOf, pointsToQirsh } from "./money";
 import type { DocView, Money, PricingInput, Totals } from "./types";
 
 const ZERO: Money = { usd: 0, points: 0, egp: 0 };
@@ -35,7 +35,20 @@ export function computeTotals(lines: Array<{ quantity: number; unitCc: number }>
  * Everything after the lines: discount, tax and total from an already summed subtotal. Split out so a caller that changes ONE line (the agent's «target total»
  * search) can re-derive the grand total from the new subtotal without re-pricing every line; `computeTotals` itself is unchanged.
  */
+/** EGP as points x point value, when the document shows both and the point value is a whole number of qirsh (then every sum stays exact). */
+export function egpIsDerivedFromPoints(p: PricingInput): boolean {
+  return (p.egpFromPoints ?? Boolean(p.show?.points && p.show?.egp)) && p.rateE4 !== null && p.creditValueE4 % 100 === 0;
+}
+const withEgpFromPoints = (m: Money, credit: number): Money => (m.points === null ? m : { ...m, egp: pointsToQirsh(m.points, credit) });
+
 export function finishTotals(per: Money[], subtotal: Money, pricing: PricingInput): Totals {
+  const t = finishTotalsRaw(per, subtotal, pricing);
+  if (!egpIsDerivedFromPoints(pricing)) return t;
+  const c = pricing.creditValueE4;
+  return { lines: t.lines.map((m) => withEgpFromPoints(m, c)), subtotal: withEgpFromPoints(t.subtotal, c), discount: withEgpFromPoints(t.discount, c), afterDiscount: withEgpFromPoints(t.afterDiscount, c), tax: withEgpFromPoints(t.tax, c), total: withEgpFromPoints(t.total, c) };
+}
+
+function finishTotalsRaw(per: Money[], subtotal: Money, pricing: PricingInput): Totals {
   let discount: Money;
   if (pricing.discountKind === "percent") {
     discount = {

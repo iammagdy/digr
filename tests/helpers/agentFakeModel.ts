@@ -7,8 +7,9 @@ import type { ContentBlock } from "../../src/lib/invoices/chat/prompt";
  */
 const ROLE_RE: Array<[string, RegExp]> = [
   ["sector", /^(القطاع|النشاط)$/],
+  ["company_en", /^(english|company name|اسم الشركة بالإنجليزية)$/i],
   ["company", /(اسم الشركة|^الشركة$|^شركة$)/],
-  ["manager", /(المدير|المسؤول|المسئول)/],
+  ["manager", /(المدير|المسؤول|المسئول|جهة الاتصال)/],
   ["email", /(البريد|الايميل|الإيميل|e-?mail)/i],
   ["phone", /(الهاتف|تليفون|التليفون|الموبايل|رقم الموبايل|phone|mobile)/i],
 ];
@@ -22,11 +23,13 @@ export function fakeAgentReply(content: ContentBlock[]): string {
 
   if (payload.files?.length) {
     out.mapping = [];
+    // like the model did live: ONE sheet per file is mapped (the first with a list); the code looks at the others and infers or asks
     for (const f of payload.files) for (const s of f.sheets) {
       const columns: Record<string, string> = {};
       for (const c of s.columns) for (const [role, re] of ROLE_RE) if (!columns[role] && re.test(c.header)) { columns[role] = c.col; break; }
       if (!columns.company && !columns.manager && !columns.email && !columns.phone) continue;
       out.mapping.push({ file: f.file, sheet: s.sheet, sector_name: columns.sector ? null : f.file.replace(/\.[A-Za-z0-9]+$/, ""), columns });
+      break;
     }
     out.say = "لقيت الملفات ورتبت الأعمدة. راجع الأعداد وقل تمام.";
   }
@@ -42,7 +45,7 @@ export function fakeAgentReply(content: ContentBlock[]): string {
   const price = /سعر\s*(الشركة|المدير)\s*(\d+(?:\.\d+)?)\s*(سنت|دولار|نقطة)/.exec(message);
   if (price) out.actions.push({ action: "set_unit_price", item_type: price[1] === "الشركة" ? "company" : "manager", value: price[3] === "سنت" ? Number(price[2]) / 100 : Number(price[2]), unit: price[3] === "نقطة" ? "points" : "usd" });
   if (/صفحة واحدة/.test(message)) out.actions.push({ action: "set_layout", max_pages: 1 });
-  if (/ملخص المراحل/.test(message)) out.actions.push({ action: "set_layout", show_phase_summary: true });
+  if (/ملخص (المراحل|القطاعات)/.test(message)) out.actions.push({ action: "set_layout", show_phase_summary: true });
   if (/الأرقام المخفية/.test(message)) out.actions.push({ action: "set_layout", unhide_all: true });
   if (/فاتورة/.test(message) && /اعمل/.test(message)) out.actions.push({ action: "set_doc_type", doc_type: "invoice" });
   const sector = /ضيف قطاع\s+(\S+)\s+(\d+)\s*شركة/.exec(message);

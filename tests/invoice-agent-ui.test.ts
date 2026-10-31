@@ -16,19 +16,13 @@ const TYPES = [T(1, "شركة", 1200), T(2, "مدير", 3500), T(3, "بريد إ
 const CTX = { types: TYPES, creditValueE4: 1000, canChangeDocType: true };
 const blank = (): DocForm => ({ ...emptyForm("invoice", "2026-10-31", { rateE4: null, payment: "" }), showUsd: true, showPoints: false, showEgp: false });
 
-describe("what the files become: set_counts actions from the code's counts", () => {
-  const count: CountResult = {
-    sectors: [
-      { sector: "كهروميكانيكا", companies: 200, managers: 312, emails: 287, phones: 140, invalidEmails: 6, ignoredPhones: 4 },
-      { sector: "فارغ", companies: 0, managers: 0, emails: 0, phones: 0, invalidEmails: 0, ignoredPhones: 0 },
-      { sector: "بترول", companies: 150, managers: 0, emails: 0, phones: 95, invalidEmails: 0, ignoredPhones: 0 },
-    ],
-    sheets: [], notes: [],
-  };
-  it("one set_counts per sector with only the items that have a number; an empty sector adds nothing", () => {
+describe("what the files become: set_counts actions from the code's counts (the DEFAULT billing; the conversation in flow.ts builds the owner's choice)", () => {
+  const sc = (sector: string, companies: number, managers: number, departments: number, emails = 0, phones = 0) => ({ sector, companies, managers, departments, emails, phones, duplicateCompanies: 0, duplicateContacts: 0, invalidEmails: 0, ignoredPhones: 0, contacts: [] });
+  const count: CountResult = { sectors: [sc("كهروميكانيكا", 200, 601, 0, 601, 140), sc("فارغ", 0, 0, 0), sc("بترول", 149, 239, 32, 300, 95)], sheets: [], notes: [], duplicateCompanies: 0 };
+  it("one set_counts per sector with companies, people and departments; e-mails and phones are information, never items; an empty sector adds nothing", () => {
     expect(importActions(count)).toEqual([
-      { type: "set_counts", sector: "كهروميكانيكا", counts: { company: 200, manager: 312, email: 287, phone: 140 } },
-      { type: "set_counts", sector: "بترول", counts: { company: 150, phone: 95 } },
+      { type: "set_counts", sector: "كهروميكانيكا", counts: { company: 200, manager: 601 } },
+      { type: "set_counts", sector: "بترول", counts: { company: 149, manager: 239, department: 32 } },
     ]);
   });
 
@@ -36,7 +30,8 @@ describe("what the files become: set_counts actions from the code's counts", () 
     const once = applyActions(blank(), importActions(count), CTX, new Map());
     const twice = applyActions(once.form, importActions(count), CTX, new Map());
     expect(twice.after.usd).toBe(once.after.usd);
-    expect(once.after.usd).toBe(2400 + 10920 + 129 + 700 + 1800 + 475);
+    // 200 x 12c + 601 x 35c + 149 x 12c + 239 x 35c, the departments at 0
+    expect(once.after.usd).toBe(2400 + 21035 + 1788 + 8365);
     expect(twice.form.batches).toHaveLength(2);
   });
 });
@@ -85,7 +80,7 @@ describe("the chat panel: collapsible, phone-first, and it can only do what the 
   it("a money-changing proposal waits for «تمام»; the draft is only changed through the one executor and can be undone", () => {
     expect(panel).toContain("needsConfirm(");
     expect(panel).toContain("applyActions(");
-    expect(panel).toMatch(/const mustConfirm = Boolean\(pr\.count\) \|\| pr\.imageRows\.length > 0 \|\| needsConfirm\(/);
+    expect(panel).toMatch(/const mustConfirm = pr\.imageRows\.length > 0 \|\| needsConfirm\(/);
     expect(panel).toContain("doUndo");
     expect(panel).toContain("p.onPhaseSummary(undo[at].phase)");
   });

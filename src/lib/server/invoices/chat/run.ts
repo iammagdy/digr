@@ -1,11 +1,12 @@
 import { COUNT_KEYS, type Action, type CountKey } from "@/lib/invoices/chat/actions";
 import type { DraftSummary } from "@/lib/invoices/chat/apply";
 import { countByMapping } from "@/lib/invoices/chat/count";
+import { completeMappings } from "@/lib/invoices/chat/sheets";
 import { AGENT_MAX_CALLS_PER_HOUR, AGENT_MAX_CHARS, AGENT_MAX_FILES, AGENT_MAX_OUTPUT_TOKENS, AGENT_MODEL, agentCostUsd } from "@/lib/invoices/chat/limits";
 import { buildAgentRequest, cleanHistory, estimateTextTokens, type ContentBlock } from "@/lib/invoices/chat/prompt";
 import { profileSheet } from "@/lib/invoices/chat/profile";
 import { parseAgentReply, type ImageCount } from "@/lib/invoices/chat/reply";
-import type { CountResult, FileProfile, ParsedSheetFile, SheetMapping } from "@/lib/invoices/chat/types";
+import type { CountResult, FileProfile, ParsedSheetFile, SheetMapping, UnmappedSheet } from "@/lib/invoices/chat/types";
 import { cleanText } from "@/lib/invoices/validate";
 import type { ModelReply } from "../assist";
 import { AgentInputError, newRowBudget, parseAgentFile } from "./parseFiles";
@@ -45,8 +46,10 @@ export interface AgentSuccess {
   actions: Action[];
   files: FileReport[];
   mapping: SheetMapping[];
-  /** sheets the model did not map (notes, cover pages, or columns it could not tell apart) */
-  unmapped: Array<{ file: string; sheet: string }>;
+  /** sheets nobody mapped and the headers could not place: «ask» = real data, the owner decides; «ignored» = too small to hold a list. Never skipped silently. */
+  unmapped: UnmappedSheet[];
+  /** sheets whose mapping was taken from a sibling sheet with the same headers (not from the model) */
+  inferred: Array<{ file: string; sheet: string }>;
   count: CountResult | null;
   imageCounts: ImageCount[];
   usage: { model: string; inputTokens: number; outputTokens: number; costUsd: number };
@@ -125,11 +128,13 @@ export async function runAgent(input: AgentInput, deps: AgentDeps): Promise<Agen
   const parsed = parseAgentReply(reply.text, { profiles, imageNames: images.map((i) => i.name), lineIds: draft.lineIds });
   if (!parsed.ok) return { ok: false, status: 422, code: `unreadable_${parsed.reason}`, message: AGENT_ERRORS_AR.parse };
 
-  // 4. the counts, by code, from the mapping
-  const count = sheets.length && parsed.reply.mapping.length ? countByMapping(sheets, parsed.reply.mapping) : null;
-  const mappedIds = new Set(parsed.reply.mapping.map((m) => `${m.file}\u0000${m.sheet}`));
-  const unmapped = sheets.flatMap((f) => f.sheets.filter((s) => !mappedIds.has(`${f.name}\u0000${s.name}`)).map((s) => ({ file: f.name, sheet: s.name })));
-  return { ok: true, say: parsed.reply.say, sayDropped: parsed.sayDropped, actions: parsed.reply.actions, files: reports, mapping: parsed.reply.mapping, unmapped, count, imageCounts: parsed.reply.imageCounts, usage };
+  // 4. the counts, by code, from the mapping. EVERY sheet is looked at: the ones the model left out are matched by their headers to a mapped sheet, or put to the owner
+  const completed = sheets.length ? completeMappings(sheets, parsed.reply.mapping) : null;
+  const count = completed && completed.mappings.length ? countByMapping(sheets, completed.mappings, completed.inferred) : null;
+  const unmapped = completed?.unmapped ?? [];
+  const inferred = completed ? [...completed.inferred].map((k) => { const [file, sheet] = k.split("\u0000"); return { file, sheet }; }) : [];
+  const mapping = completed?.mappings ?? parsed.reply.mapping;
+  return { ok: true, say: parsed.reply.say, sayDropped: parsed.sayDropped, actions: parsed.reply.actions, files: reports, mapping, unmapped, inferred, count, imageCounts: parsed.reply.imageCounts, usage };
 }
 
 export { estimateTextTokens };

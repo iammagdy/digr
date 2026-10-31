@@ -11,10 +11,10 @@ const ZERO_TYPES = TYPES.map((t) => ({ ...t, unitCc: 0 }));
 const blank = () => emptyForm("invoice", "2026-10-31", { rateE4: 507_500, payment: "" });
 
 describe("quick fields", () => {
-  it("the four known item types give four fields in the fixed order; a renamed or missing type has none", () => {
+  it("the four known item types give their fields in the fixed order, then the VIRTUAL department field; a renamed or missing type has none of its own (INVOICE AGENT 2 added the department field)", () => {
     expect(quickFields(TYPES).map((f) => f.name)).toEqual([...QUICK_TYPE_NAMES]);
-    expect(quickFields([TYPES[1], TYPES[0]]).map((f) => f.name)).toEqual(["شركة", "مدير"]);
-    expect(quickFields([{ ...TYPES[0], nameAr: "منشأة" }])).toEqual([]);
+    expect(quickFields([TYPES[1], TYPES[0]]).map((f) => f.name)).toEqual(["شركة", "مدير", "جهة تواصل إدارية"]);
+    expect(quickFields([{ ...TYPES[0], nameAr: "منشأة" }]).map((f) => f.name)).toEqual(["جهة تواصل إدارية"]);
   });
 });
 

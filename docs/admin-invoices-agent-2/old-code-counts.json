@@ -1,0 +1,29 @@
+{
+ "electro": [
+  [
+   "كهروميكانيكا",
+   201,
+   605
+  ]
+ ],
+ "electroHeaderRowUsed": [
+  1,
+  1,
+  1,
+  1
+ ],
+ "petroOneDetailSheet": [
+  [
+   "بترول",
+   36,
+   68
+  ]
+ ],
+ "petroAllSheetsNaive": [
+  [
+   "بترول",
+   150,
+   547
+  ]
+ ]
+}

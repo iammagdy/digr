@@ -3,6 +3,7 @@
 import { createPortal } from "react-dom";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { toArabicDigits } from "@/lib/arabicDigits";
+import { pngFileName } from "@/lib/invoices/labels";
 import { paginate, pageLabel, type PagePlan } from "@/lib/invoices/paginate";
 import type { SheetModel, SheetRow } from "@/lib/invoices/sheetModel";
 import { TOPUP_INSTAPAY_QR_SRC } from "@/lib/topupConfig";
@@ -118,7 +119,7 @@ function SummaryTail({ model }: { model: SheetModel }) {
     <div className="inv-tail" data-m="tail">
       {model.groupSummary ? (
         <table className="inv-sum">
-          <thead><tr><th className="caption" style={{ textAlign: "right", color: "#111827" }}>ملخص المراحل</th>{heads}</tr></thead>
+          <thead><tr><th className="caption" style={{ textAlign: "right", color: "#111827" }}>ملخص القطاعات</th>{heads}</tr></thead>
           <tbody>{model.groupSummary.map((g, i) => <tr key={i}><td>{g.title}</td>{g.total.map((t, j) => <td key={j} className="m"><Num>{t}</Num></td>)}</tr>)}</tbody>
         </table>
       ) : null}
@@ -281,6 +282,7 @@ export function useInvoiceExport(model: SheetModel, fileBase: string): InvoiceEx
     return () => ro.disconnect();
   }, []);
 
+  const count = plan?.length ?? 0;
   const savePng = useCallback(async (index: number) => {
     const node = pageEls.current[index];
     if (!node) return;
@@ -288,13 +290,12 @@ export function useInvoiceExport(model: SheetModel, fileBase: string): InvoiceEx
     const url = await toPng(node, { pixelRatio: 2, backgroundColor: "#ffffff", cacheBust: true, width: SHEET_PAGE_WIDTH_PX, height: SHEET_PAGE_HEIGHT_PX });
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${fileBase}-${index + 1}.png`;
+    a.download = pngFileName(fileBase, index + 1, count);
     document.body.appendChild(a);
     a.click();
     a.remove();
-  }, [fileBase]);
+  }, [fileBase, count]);
 
-  const count = plan?.length ?? 0;
   const downloadPng = useCallback(async (only?: number) => {
     setError(""); setBusy("png");
     try {
@@ -303,6 +304,15 @@ export function useInvoiceExport(model: SheetModel, fileBase: string): InvoiceEx
     } catch { setError("تعذّر إنشاء الصورة. جرّب «تنزيل PDF» أو أعد المحاولة."); }
     finally { setBusy(""); }
   }, [count, savePng]);
+
+  /** the print dialog proposes the PAGE TITLE as the PDF's name: it is set to the document's file name while the dialog is open */
+  const print = useCallback(() => {
+    const before = document.title;
+    const restore = () => { document.title = before; window.removeEventListener("afterprint", restore); };
+    document.title = fileBase;
+    window.addEventListener("afterprint", restore);
+    window.print();
+  }, [fileBase]);
 
   const totalHeight = count * SHEET_PAGE_HEIGHT_PX + Math.max(0, count - 1) * 16;
   const element = (
@@ -321,7 +331,7 @@ export function useInvoiceExport(model: SheetModel, fileBase: string): InvoiceEx
       {printRoot && plan && planModel ? createPortal(<SheetPageView model={planModel} plan={plan} />, printRoot) : null}
     </div>
   );
-  return { element, ready: Boolean(plan), settled: Boolean(plan) && planModel === model, pageCount: count, busy, error, print: () => window.print(), downloadPng };
+  return { element, ready: Boolean(plan), settled: Boolean(plan) && planModel === model, pageCount: count, busy, error, print, downloadPng };
 }
 
 /** The preview with its own buttons (used for a document that is already sent or closed). */

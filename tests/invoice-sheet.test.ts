@@ -114,13 +114,18 @@ describe("what is shown always adds up to the totals (no hidden extra charge)", 
     expect(draftSameInputs.totalRows.at(-1)!.amounts).not.toEqual(model.totalRows.at(-1)!.amounts); // a draft is live, an issued one is frozen
   });
 
-  it("the rounding footnote appears only when a line's total differs from quantity x unit price", () => {
+  it("the rounding footnote appears only when no number of decimals makes quantity x unit match a printed line total within half a cent (INVOICE AGENT 2: the unit column shows the decimals it needs; see tests/invoice-display-polish.test.ts)", () => {
     const exact = buildSheetModel(doc({ lines: [line("a", null, "شركة", 250, 1200)], show: { usd: true, points: false, egp: false }, rateE4: null }), SELLER);
     expect(exact.roundingNote).toBeNull();
+    // 3 x 0.0045 dollar: the unit is shown with its four decimals, so 3 x 0.0045 = 0.0135 matches the printed 0.01 to within half a cent: no note any more
     const fraction = buildSheetModel(doc({ lines: [line("a", null, "بريد", 3, 45)], show: { usd: true, points: false, egp: false }, rateE4: null }), SELLER);
-    expect(fraction.roundingNote).toMatch(/مقرَّب/);
-    const points = buildSheetModel(doc({ lines: [line("a", null, "شركة", 250, 1200)] }), SELLER); // 61 x 250 = 15250 but the line is 15225
-    expect(points.roundingNote).not.toBeNull();
+    expect(fraction.roundingNote).toBeNull();
+    // 250 x 60.9 points = 15,225: the unit shows 60.9 (it used to show 61 and needed the note)
+    const points = buildSheetModel(doc({ lines: [line("a", null, "شركة", 250, 1200)] }), SELLER);
+    expect(points.roundingNote).toBeNull();
+    // a line whose cents were rounded by half a cent (10,001 x 0.005 dollar = 50.005 -> 5001 cents) is within the tolerance (half a cent): no note either
+    const half = buildSheetModel(doc({ lines: [line("a", null, "x", 10001, 50)], show: { usd: true, points: true, egp: false } }), SELLER);
+    expect(half.roundingNote).toBeNull();
   });
 });
 

@@ -1,5 +1,7 @@
 # Admin invoices: «مساعد الفواتير» (INVOICE AGENT 1) and the live fixes
 
+> **Update (INVOICE AGENT 2):** the file reading was rewritten for the owner's real shapes (title rows, continuation rows, overall and detail sheets, repeats, departments), the assistant now asks questions with chips, the panel looks like the customer chat, and the invoice display was polished: see `docs/ADMIN_INVOICES_AGENT_2.md`. Where this page and that one disagree, that one wins.
+
 Follow-up to `docs/ADMIN_INVOICES.md` (#308) and `docs/ADMIN_INVOICES_SIMPLE.md` (#311). **No SQL.** No wallet, ledger, balance, mission, reserve, charge, price-engine, cap or agent-worker code is touched.
 Evidence (screenshots at 380 px, the browser run, the masked payload, the benchmark): `docs/admin-invoices-agent/`.
 
