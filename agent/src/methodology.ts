@@ -8,7 +8,8 @@ import { APPROX_DATES_NOTE_AR, approxColumnsOf } from "../../src/lib/agentMissio
 import { unresolvedSourcesLineAr } from "../../src/lib/agentMission/namedSources";
 import { formatAr, toArabicDigits } from "../../src/lib/arabicDigits";
 import { plainSearchAr } from "../../src/lib/agentMission/plainSearchAr";
-import { shortfallClauseAr } from "./finalize";
+import { reasonTextAr, shortfallClauseAr, stageTruthBodyAr } from "./finalize";
+import { isPeopleStage } from "../../src/lib/agentMission/people";
 
 /**
  * THE «المنهجية» SECTION OF THE FIRST SHEET, built by CODE from what the mission RECORDED (the approved plan, the item store's counts, the request's own words, the delivered rows): the model never writes it, and a fact that was not
@@ -98,14 +99,7 @@ export function sourceLabelAr(endpointId: string | null | undefined): string | n
   return "مصدر بيانات متخصص";
 }
 
-/** What each reason for leaving an item out says to the customer. */
-const REASON_TEXT_AR: Record<string, string> = {
-  no_text: "لا نص فيه", no_term: "لا يذكر الموضوع في نصه", mention_only: "إشارة عابرة أو رد فارغ", other_person: "عن شخص آخر يحمل الاسم نفسه", name_extended: "الاسم فيه امتداد يدل على شخص آخر", other_meaning: "عن معنى آخر للاسم نفسه",
-  uncertain: "لم يتأكد أنه عن المقصود", not_reviewed: "لم يُراجَع لأن المراجعة الآلية بلغت حدها", review_no: "رُفض عند المراجعة الآلية", review_failed: "تعذّرت مراجعته",
-  filter_reply: "رد على غيره", filter_repost: "إعادة نشر", filter_language: "بلغة غير التي حددتها", filter_period: "خارج الفترة المحددة", filter_account: "من مصدر لم تسمّه", filter_place: "من مكان غير الذي حددته", filter_government: "جهة حكومية أو عسكرية", filter_media: "لا يثبت أنه فيديو أو صورة",
-  unknown_parent: "لا ينتمي لعنصر مقروء", no_verified_contact: "لا بيانات تواصل موثّقة له", not_a_person: "بريد عام لجهة وليس لشخص (يظهر في عمود إيميلات الشركة)", target_reached: "زاد عن العدد المعتمد",
-};
-const reasonText = (r: string): string => REASON_TEXT_AR[r] ?? "سبب آخر";
+const reasonText = reasonTextAr;
 
 const quoted = (names: ReadonlyArray<string>): string => names.map((n) => `«${n}»`).join("، ");
 const fmt = (n: number): string => formatAr(Math.max(0, Math.floor(Number(n) || 0)));
@@ -294,7 +288,8 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
     const delivered = s.deliver ? fmt((rowsByStage[s.key] ?? []).length) : "مرحلة وسيطة";
     const notes: string[] = [];
     if (r && r.duplicates > 0) notes.push(`أُزيل ${fmt(r.duplicates)} مكررًا`);
-    if (r && r.pending + r.unchecked > 0) notes.push(`بقي ${fmt(r.pending + r.unchecked)} دون مراجعة فلم يُسلَّم`);
+    // items nobody reviewed because the approved count was already reached are surplus, not a review that ran out
+    if (r && r.pending + r.unchecked > 0) notes.push(r.accepted >= s.planned_rows ? `بقي ${fmt(r.pending + r.unchecked)} دون مراجعة لأن العدد المطلوب اكتمل` : `بقي ${fmt(r.pending + r.unchecked)} دون مراجعة فلم يُسلَّم`);
     table.rows.push([s.title_ar, r ? fmt(r.found) : NOT_RECORDED_AR, r ? fmt(r.excluded) : NOT_RECORDED_AR, delivered, notes.length ? notes.join("؛ ") : r ? "" : NOT_RECORDED_AR]);
     const why = r ? Object.entries(r.excludedByReason).filter(([, n]) => n > 0).sort((a, b) => b[1] - a[1]).map(([k, n]) => `${fmt(n)} ${reasonText(k)}`) : [];
     if (why.length) reasons.push(`${many ? `«${s.title_ar}»: ` : ""}استُبعد ${why.join("؛ ")}`);
@@ -310,6 +305,9 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
     const r = facts.stages?.[s.key];
     const got = (rowsByStage[s.key] ?? []).length;
     if (!r || got >= s.planned_rows) continue;
+    // WHAT THE STAGE FOUND AND LEFT OUT, from the recorded counts, when our own row rules left out what the source gave (live A1, A2: 31 and 32 people found, none delivered, «the source gave no more»)
+    const truth = stageTruthBodyAr({ found: r.found, duplicates: r.duplicates, delivered: got, excludedByReason: r.excludedByReason, pending: r.pending, reviewStop: facts.reviewStop ?? null, stop: r.stop, people: isPeopleStage(s) });
+    if (truth) { limits.push(`${many ? `«${s.title_ar}»: ` : ""}سُلّم ${fmt(got)} من ${fmt(s.planned_rows)}: ${truth}.`); continue; }
     const clause = shortfallClauseAr(r.stop, { pending: r.pending, stop: facts.reviewStop ?? null, languageLeftOut: r.excludedByReason.filter_language ?? 0 });
     limits.push(`${many ? `«${s.title_ar}»: ` : ""}سُلّم ${fmt(got)} من ${fmt(s.planned_rows)} ${clause}.`);
   }

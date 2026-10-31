@@ -76,6 +76,18 @@ export function personVerdict(row: Record<string, unknown>, columns: ReadonlyArr
   return { person: true };
 }
 
+/**
+ * A REAL PERSON, WHATEVER CONTACT CELLS ARE FILLED: the row carries a person's NAME (a name column with letters, not an organisation's or a department's) and is not a role mailbox. Live re-test 2026-10-31 (A1, A2): the people source gave names, job
+ * titles and professional pages but no e-mail and no phone, and every one of the 31 (A1) and 32 (A2) people was thrown away as «no verified contact» (ingest.ts). The owner's rule: verification decides whether an e-mail or phone CELL is filled, never
+ * whether the PERSON row is delivered. A row with no name column at all is not judged a named person here (an e-mail finder's row is its address: with no verified address there is nothing to deliver).
+ */
+export function isNamedPerson(row: Record<string, unknown>, columns: ReadonlyArray<PersonColumn>): boolean {
+  const keys = nameKeysOf(columns);
+  if (keys.length === 0) return false;
+  const name = keys.map((k) => textOf(row[k])).filter(Boolean).join(" ").trim();
+  return hasLetters(name) && personVerdict(row, columns).person;
+}
+
 /** A stage whose items are the PEOPLE of the items of another stage: a stage with a parent whose title names people («مسؤولو الشركات», «موظفو كل شركة», «صناع القرار») or that prefers a role among them. */
 export function isPeopleStage(stage: { parent_key: string | null; title_ar: string; role_preference?: unknown }): boolean {
   if (stage.parent_key === null) return false;

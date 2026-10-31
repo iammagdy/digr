@@ -1,5 +1,6 @@
 import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE } from "./constants";
 import { CONTACT_KINDS, requestWantsContacts, type ContactKind } from "./contacts";
+import { peopleConditionedOnContactIssues } from "./contactQuestion";
 import { estimateMissionMinutes, measuredCostPerRowUsd, priceMissionByCode, type MissionPriceResult } from "./price";
 import { classifyRows, searchQueryOf, validateRelevanceSpec, type RelevanceSpec } from "./relevance";
 import { minimumLineAr, type MissionPricingSettings } from "../missionPricing";
@@ -403,7 +404,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
       const missing = uncoveredFields(sourceFields, cleanColumns);
       if (missing.length > 0) issues.push(`${label}: the source gives fields the customer would want in the file that no column holds: ${missing.map((f) => `${FIELD_LABEL_AR[f.cls]} (${f.path})`).join(", ")}. Add a column for each (map it in your run_code and give it an Arabic title like «${FIELD_LABEL_AR[missing[0].cls]}»): the file keeps every useful field of the source`);
     }
-    if (lookup.isContactSource?.(endpointId) && !cleanColumns.some((c) => c.kind !== undefined)) issues.push(`${label}: a contact stage must mark its e-mail / phone columns with kind "work_email" or "phone" (their values are verified by code; an unverified value is left empty and a row with none is not delivered or charged)`);
+    if (lookup.isContactSource?.(endpointId) && !cleanColumns.some((c) => c.kind !== undefined)) issues.push(`${label}: a contact stage must mark its e-mail / phone columns with kind "work_email" or "phone" (their values are verified by code: a verified value fills the cell and an unverified one leaves it EMPTY; a row that is a named person is delivered either way, only a row that is nothing but an address with none verified is not delivered or charged)`);
     const samples = Array.isArray(raw.sample_rows) ? raw.sample_rows : [];
     if (samples.length < 1 || samples.length > MAX_SAMPLE_ROWS_PER_STAGE) issues.push(`${label}: 1 to ${MAX_SAMPLE_ROWS_PER_STAGE} sample_rows, rows you really saw`);
     for (const s of samples) {
@@ -607,6 +608,8 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   // THE CARD DOES NOT PROMISE WHAT NO CODE CHECKS, AND STATES ONE NUMBER: a sentence of the model that promises replies out, a language, a period, an account or a place needs the filter that enforces it; a count it states is the plan's target
   const sentences = [{ where: "summary_ar", text: summary.text }, ...priced.filter((st) => st.how_ar).map((st) => ({ where: `stage «${st.key}» how_ar`, text: st.how_ar! })), ...assumptions.map((a) => ({ where: "assumptions_ar", text: a }))];
   issues.push(...promiseIssues(sentences, priced.map((st) => ({ key: st.key, filters: st.filters, hasRelevance: Boolean(st.relevance) }))));
+  // VERIFICATION DECIDES A CELL, NEVER A PERSON: a sentence that delivers a person only when a verified e-mail or phone exists is refused (the e-mail and phone cells are filled when verified and left empty otherwise)
+  issues.push(...peopleConditionedOnContactIssues([...sentences.map((x) => x.text), ...notes]));
   issues.push(...childPromiseIssues(sentences, priced.filter((st) => st.parent_key !== null).map((st) => st.title_ar)));
   const targets = new Set<number>(priced.flatMap((st) => [st.planned_rows, ...(st.per_parent_rows ? [st.per_parent_rows] : [])]));
   const titles = priced.map((st) => st.title_ar);

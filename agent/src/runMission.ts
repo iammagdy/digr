@@ -33,11 +33,12 @@ import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
 import { runInSandbox } from "./sandbox";
 import { trackRun, untrackRun } from "./sessions";
-import { childShortfallClauseAr, countWorkbookSheets, shortfallClauseAr, shortfallFromStopAr, zeroDeliveryReasonAr, type ZeroDeliveryFacts } from "./finalize";
+import { childShortfallClauseAr, countWorkbookSheets, shortfallClauseAr, shortfallFromStopAr, stageTruthBodyAr, zeroDeliveryReasonAr, type ZeroDeliveryFacts } from "./finalize";
 import { createReviewer, readReviewState, type ReviewCall } from "./review";
 import type { TokenUsage } from "./llmCost";
 import { buildExcludedAdminCsv, buildMissionFiles, type CompanyMailboxes, type ExcludedRow } from "./workbook";
 import { isPeopleStage, mailboxesOf } from "../../src/lib/agentMission/people";
+import { availableContactAnswerNote } from "../../src/lib/agentMission/contactQuestion";
 import { missionFactsOf } from "./methodology";
 import { missionFileTitleAr } from "../../src/lib/agentMission/fileNames";
 import { itemNounOf, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
@@ -93,7 +94,8 @@ export const endedSilently = (output: { stop?: string; error?: string }, state: 
 
 /** Everything the agent is told at the start of a PLANNING run. */
 export function planningPrompt(mission: MissionRecord, calls: CallRow[]): string {
-  const answer = mission.answer_text ? `\n\nYou asked the customer one question and they answered: «${mission.answer_text}». Do not ask again.` : "";
+  const followAnswer = availableContactAnswerNote(mission.answer_text);
+  const answer = mission.answer_text ? `\n\nYou asked the customer one question and they answered: «${mission.answer_text}». Do not ask again.${followAnswer ? ` ${followAnswer}` : ""}` : "";
   return `The customer's mission (Arabic):\n«${mission.request_text}»${answer}\n\n${savedCallsNote(calls)}\n\nPlan it now.`;
 }
 
@@ -263,7 +265,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const budgetFacts = planningBudgetFacts(requestForBudget, { catalog: deps.catalog, access, stats: sourceStats, now: planningNow });
   const budget = createJobCallBudget({ ceilingUsd: budgetFacts.budgetUsd, spentUsd: sum(calls, "planning") });
   deps.log?.(`planning_budget ${mission.id} base=${budgetFacts.baseUsd} budget=${budgetFacts.budgetUsd} cap=${budgetFacts.capUsd} stages=${budgetFacts.stages.map((s) => `${s.role}:${s.sourceId ?? "none"}:${s.callUsd.toFixed(5)}:reserve=${s.reserveUsd}`).join("|")}`);
-  const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, stageBudget: { stages: budgetFacts.stages.length, budgetUsd: budgetFacts.budgetUsd, reservesUsd: budgetFacts.stages.filter((s) => s.role !== "parent" && s.role !== "only").map((s) => s.reserveUsd) } });
+  const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, priorCalls: calls, stats: sourceStats, stageBudget: { stages: budgetFacts.stages.length, budgetUsd: budgetFacts.budgetUsd, reservesUsd: budgetFacts.stages.filter((s) => s.role !== "parent" && s.role !== "only").map((s) => s.reserveUsd) } });
   // THE WEB TOOLS ONLY WHEN THE WORKER HAS A KEY FOR THEM (webAvailability.ts): a tool that would only be refused is not offered, not listed, not named in the prompt
   const webAvailable = deps.providerKey ? await resolveWebAvailability(deps.providerKey) : NO_WEB;
   deps.log?.(`web_tools ${mission.id} firecrawl=${webAvailable.firecrawl} contextdev=${webAvailable.contextdev}`);
@@ -510,6 +512,8 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const parentOfShort = shortStage && shortStage.parent_key !== null ? plan.stages.find((p) => p.key === shortStage.parent_key) : undefined;
   const checkedForShort = {
     ...checked,
+    // THE SHORT STAGE'S OWN waiting items (live A1/A2: ten surplus companies a review never needed made the PEOPLE stage's shortfall «the review ran out»)
+    pending: shortStage ? snap.counts(shortStage.key).pending : checked.pending,
     languageLeftOut: shortStage && shortStage.parent_key === null ? snap.counts(shortStage.key).excludedByReason.filter_language ?? 0 : 0,
     childShare: shortStage && parentOfShort && parentsBelowShare(plan, shortStage.key, rowsByStage) > 0 ? childShortfallClauseAr(itemNounOf(parentOfShort.title_ar).singular, itemNounOf(parentOfShort.title_ar).plural, itemNounOf(shortStage.title_ar).plural) : null,
   };
@@ -518,10 +522,14 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const zeroFacts: ZeroDeliveryFacts = {
     found: deliveredStages.reduce((n, s) => n + snap.counts(s.key).new, 0),
     excludedByReason: deliveredStages.reduce<Record<string, number>>((acc, s) => { for (const [k, n] of Object.entries(snap.counts(s.key).excludedByReason)) acc[k] = (acc[k] ?? 0) + (n ?? 0); return acc; }, {}),
-    pending: checked.pending, reviewStop: checked.stop, stop: deliveredStages.length > 0 ? snap.stage(deliveredStages[0].key).stop : null,
+    pending: deliveredStages.reduce((n, s) => n + snap.counts(s.key).pending, 0), reviewStop: checked.stop, stop: deliveredStages.length > 0 ? snap.stage(deliveredStages[0].key).stop : null,
   };
+  // WHAT THE SHORT STAGE FOUND AND LEFT OUT, from its recorded counts, when our own row rules left out what the source gave (never «the source gave no more» for rows it did give)
+  const shortCounts = shortStage ? snap.counts(shortStage.key) : null;
+  const shortTruth = shortStage && shortCounts ? stageTruthBodyAr({ found: shortCounts.found, duplicates: shortCounts.duplicates, delivered: shortCounts.accepted, excludedByReason: shortCounts.excludedByReason as Record<string, number>, pending: shortCounts.pending, reviewStop: checked.stop, stop: snap.stage(shortStage.key).stop, people: isPeopleStage(shortStage) }) : null;
+  const shortClause = shortTruth ? `إذ ${shortTruth}` : shortfallClauseAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort);
   const reason = ourFailure ? INTERNAL_FAILURE_AR
-    : delivered > 0 && delivered < target ? shortfallFromStopAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort)
+    : delivered > 0 && delivered < target ? (shortTruth ? `لم يكتمل العدد المطلوب ${shortClause}، ولم يُخصم إلا مقابل ما سُلّم.` : shortfallFromStopAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort))
     : delivered > 0 && delivered < requested ? loweredTargetAr(plan)
     : delivered <= 0 ? zeroDeliveryReasonAr(zeroFacts) : "";
   const summary = (ourFailure ? reason : [note, reason].filter(Boolean).join(" ")).slice(0, 1100);
@@ -538,7 +546,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const stageRowsOf = (s: PricedPlan["stages"][number]): number => (s.deliver ? (fileByStage ? fileByStage[s.key] ?? 0 : plan.stages.filter((x) => x.deliver).length === 1 ? delivered : rowsByStage[s.key].length) : rowsByStage[s.key].length);
   await store.addEvent(mission.id, { kind: "result", message_ar: summary || (delivered > 0 ? "اكتملت المهمة." : "لم يُسلَّم أي شيء."), counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, stageRowsOf(s)])), ...parentCountsOf(plan, rowsByStage) } });
   const noticeKind: MissionNoticeKind = ourFailure ? "failed" : delivered <= 0 ? "unserved" : delivered < requested ? "partial" : "completed";
-  await tell(deps, mission, jobId, noticeKind, { delivered, planned: deliveryDenominatorOf(delivered, cardTotalOf(plan), requested), chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && delivered < target ? { shortfallClauseAr: shortfallClauseAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort) } : delivered > 0 && delivered < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
+  await tell(deps, mission, jobId, noticeKind, { delivered, planned: deliveryDenominatorOf(delivered, cardTotalOf(plan), requested), chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && delivered < target ? { shortfallClauseAr: shortClause } : delivered > 0 && delivered < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
 }
 
 /** What the customer is told when the source gave items and our own mapping stored none: it was OUR failure, never «nothing was found». No number: the money line says the rest. */

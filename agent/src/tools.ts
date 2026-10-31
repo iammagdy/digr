@@ -2,6 +2,7 @@ import { AGENT_COLLECT_MAX_PAGES, AGENT_INLINE_ROWS_MAX, SANDBOX_INLINE_RESULT_C
 import { normalizeText } from "../../src/lib/agentMission/relevance";
 import type { MissionPricingSettings } from "../../src/lib/missionPricing";
 import { isContactSource } from "../../src/lib/agentMission/contacts";
+import { contactVerificationQuestionIssue } from "../../src/lib/agentMission/contactQuestion";
 import { childStepSourcesFor, isPeopleNoun, linkableCompanySources, peopleSourcesForCompanies } from "../../src/lib/agentMission/childSources";
 import { peopleAndContactAdvice, phoneSourcesOf } from "../../src/lib/agentMission/peopleCheck";
 import { describeAgentSource, isAgentSourceId, searchAgentSources, SESSION_RESTRICTED_SOURCES } from "../../src/lib/agentMission/sources";
@@ -543,6 +544,9 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           if (!options.includes(c.text)) options.push(c.text);
         }
         if (options.length < 2 || options.length > 4) return err("ask the question with 2 to 4 ready answers in options_ar (the customer taps one); if the request has one clearly dominant meaning, do not ask: decide, and state the assumption in assumptions_ar of the plan");
+        // VERIFICATION DECIDES A CELL, NEVER A PERSON (live, 2026-10-31, A1): when the request already asks for the people, a question about whether to deliver them when their contacts are limited, unverified or missing is not asked
+        const contactIssue = contactVerificationQuestionIssue(mission.request_text, checked.text, options);
+        if (contactIssue) return err(contactIssue);
         state.question = checked.text;
         state.terminal = true;
         await store.updateMission(mission.id, { plan_public: { question_options: options } as any });

@@ -1,5 +1,7 @@
 import ExcelJS from "exceljs";
 import type { StopReason } from "./items/itemStore";
+import { formatAr } from "../../src/lib/arabicDigits";
+import { countAr, GENERIC_ITEM_NOUN, knownItemNoun, type ItemNoun } from "../../src/lib/agentMission/itemNoun";
 
 /**
  * READING A FILE BACK. The count that settles a mission and is shown to the customer is the number of items in the file the customer downloads, counted from the file itself (the xlsx: every sheet after the summary, minus its
@@ -96,7 +98,7 @@ const ZERO_REASON_CLAUSES: ReadonlyArray<{ keys: ReadonlyArray<string>; clause: 
   { keys: ["filter_media"], clause: "لا يثبت أنه فيديو أو صورة كما طلبت" },
   { keys: ["no_text", "no_term", "mention_only", "other_person", "name_extended", "other_meaning", "uncertain", "review_no", "review_failed"], clause: "لا يطابق موضوع طلبك" },
   { keys: ["not_a_person"], clause: "كان عناوين عامة للشركات لا لأشخاص" },
-  { keys: ["no_verified_contact"], clause: "ليست له بيانات تواصل موثّقة" },
+  { keys: ["no_verified_contact"], clause: "لا اسم شخص فيه ولا بيانات تواصل موثّقة" },
 ];
 const ZERO_ADVICE_AR = "يمكنك تعديل الطلب، كاللغة أو الحساب أو الموضوع، ثم إعادة المحاولة.";
 
@@ -119,4 +121,56 @@ export function zeroDeliveryReasonAr(f: ZeroDeliveryFacts): string {
   if (groups.length === 0) return `قرأنا ما أعطاه المصدر، لكن لم يبقَ منه ما يطابق طلبك. ${nothing}. ${ZERO_ADVICE_AR}`;
   const clauses = groups.map((g, i) => `${i === 0 ? "منه" : "ومنه"} ما ${g.clause}`).join("، ");
   return `قرأنا ما أعطاه المصدر، لكن لم يبقَ منه ما يطابق طلبك: ${clauses}. ${nothing}. ${ZERO_ADVICE_AR}`;
+}
+
+/** What each reason for leaving an item out says to the customer (the delivered file's methodology and the closing sentence read the same words). */
+export const REASON_TEXT_AR: Record<string, string> = {
+  no_text: "لا نص فيه", no_term: "لا يذكر الموضوع في نصه", mention_only: "إشارة عابرة أو رد فارغ", other_person: "عن شخص آخر يحمل الاسم نفسه", name_extended: "الاسم فيه امتداد يدل على شخص آخر", other_meaning: "عن معنى آخر للاسم نفسه",
+  uncertain: "لم يتأكد أنه عن المقصود", not_reviewed: "لم يُراجَع لأن المراجعة الآلية بلغت حدها", review_no: "رُفض عند المراجعة الآلية", review_failed: "تعذّرت مراجعته",
+  filter_reply: "رد على غيره", filter_repost: "إعادة نشر", filter_language: "بلغة غير التي حددتها", filter_period: "خارج الفترة المحددة", filter_account: "من مصدر لم تسمّه", filter_place: "من مكان غير الذي حددته", filter_government: "جهة حكومية أو عسكرية", filter_media: "لا يثبت أنه فيديو أو صورة",
+  unknown_parent: "لا ينتمي لعنصر مقروء", no_verified_contact: "لا اسم شخص فيه ولا بيانات تواصل موثّقة", not_a_person: "لا يخص شخصًا بعينه (بريد عام أو اسم جهة أو بلا اسم؛ يظهر البريد في عمود إيميلات الشركة)", target_reached: "زاد عن العدد المعتمد",
+};
+export const reasonTextAr = (reason: string): string => REASON_TEXT_AR[reason] ?? "سبب آخر";
+
+/** The reasons that are OUR row rules (the shape of a row), not the customer's own criteria: when they left out what the source gave, «the source gave no more» is not the truth. */
+const OUR_ROW_RULE_REASONS: ReadonlyArray<string> = ["no_verified_contact", "not_a_person", "unknown_parent"];
+
+export interface StageTruthFacts {
+  /** Items the source gave for the stage (repeats included). */
+  found: number;
+  /** Repeats among them. */
+  duplicates: number;
+  /** Items delivered from the stage. */
+  delivered: number;
+  excludedByReason: Record<string, number>;
+  /** THIS stage's items a review never reached (never another stage's). */
+  pending: number;
+  reviewStop: "budget" | "failed" | null;
+  stop: StopReason | null;
+  /** The stage's items are people (the noun is «شخص» whatever the stage's title calls them). */
+  people?: boolean;
+  noun?: ItemNoun;
+}
+
+/**
+ * WHAT THE STAGE THAT FELL SHORT REALLY FOUND AND LEFT OUT, from the counts the run recorded, in plain Arabic: «وُجد ٣١ شخصًا، ولم يُسلَّم ٣١: ٣١ لا اسم شخص فيه ولا بيانات تواصل موثّقة». Live re-test 2026-10-31 (A1, A2): the delivered file said
+ * «سُلّم ٠ من ١٠ لأن المصدر لم يعد يعطي نتائج أخرى لهذا الطلب» although the source had given 31 and 41 people and OUR row rule had left them all out.
+ *
+ * Returns null (the caller keeps the older, true sentence by the recorded stop reason) when the source gave nothing, or when none of the items the source gave was left out by one of OUR row rules (everything it gave was delivered, or only what
+ * does not match the request was left out: then «the source gave no more matching results» is true).
+ */
+export function stageTruthBodyAr(t: StageTruthFacts): string | null {
+  const found = Math.max(0, Math.floor(Number(t.found) || 0));
+  const duplicates = Math.max(0, Math.floor(Number(t.duplicates) || 0));
+  const distinct = Math.max(0, found - duplicates);
+  if (distinct <= 0) return null;
+  const byReason = Object.entries(t.excludedByReason).filter(([k, n]) => k !== "target_reached" && Number(n) > 0).map(([k, n]) => [k, Math.floor(Number(n))] as const);
+  if (!byReason.some(([k]) => OUR_ROW_RULE_REASONS.includes(k))) return null;
+  const noun = t.people ? knownItemNoun("شخص") ?? GENERIC_ITEM_NOUN : t.noun ?? GENERIC_ITEM_NOUN;
+  const parts = [`وُجد ${countAr(distinct, noun)}${duplicates > 0 ? ` (بعد إزالة ${formatAr(duplicates)} مكررًا)` : ""}`];
+  const leftN = byReason.reduce((n, [, c]) => n + c, 0);
+  if (leftN > 0) parts.push(`ولم يُسلَّم ${formatAr(leftN)}: ${[...byReason].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, c]) => `${formatAr(c)} ${reasonTextAr(k)}`).join("؛ ")}`);
+  const pending = Math.max(0, Math.floor(Number(t.pending) || 0));
+  if (pending > 0) parts.push(`وبقي ${formatAr(pending)} دون مراجعة لأن المراجعة الآلية ${t.reviewStop === "failed" ? "تعذّر الوصول إليها" : "بلغت حدّها المسموح لهذه المهمة"}`);
+  return parts.join("، ");
 }
