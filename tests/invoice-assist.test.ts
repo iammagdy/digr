@@ -97,7 +97,7 @@ describe("the model never decides money: prices come from the item-type table, t
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const form = applyAssist({ ...emptyForm("invoice", "2026-10-31", { rateE4: null, payment: "" }), company: "x" }, r.sectors, PRICED);
-    expect(form.lines.map((l) => [l.qty, l.unit])).toEqual([["80", "12"]]);
+    expect(form.lines.map((l) => [l.qty, l.unit])).toEqual([["80", "0.12"]]);
     const total = buildSheetModel(formToPreview(form, { id: null, number: "", status: "draft", revision: 1, instapayAddress: "" }), SELLER).totalRows.at(-1)!.amounts;
     expect(total).toEqual(["٩.٦٠"]);
   });
@@ -179,6 +179,7 @@ describe("the route: admin only, the key stays on the server, nothing is saved",
 
   beforeEach(() => {
     h.model = new InvoiceDbModel();
+    h.model.now = () => new Date(); // the route counts the last hour on the REAL clock; a fixed model clock made this test pass only within an hour of 10:00Z on 2026-10-31
     h.model.tables.invoice_item_types.forEach((t: any) => { t.default_unit_price_usd_centi_cents = t.name_ar === "شركة" ? 1234 : 5678; });
     h.user = null; h.key = "sk-ant-TEST-SECRET-KEY-do-not-leak"; h.fetchCalls = []; h.reply = OWNER_REPLY; h.status = 200; logs.length = 0;
     process.env.NEXT_PUBLIC_SUPABASE_URL = "https://mock.supabase.co";

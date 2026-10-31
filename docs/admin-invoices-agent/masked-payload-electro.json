@@ -1,0 +1,145 @@
+{
+  "owner_message": "اعمل فاتورة للشركة دي، الدولار النهارده ٥٦ جنيه",
+  "history": [],
+  "draft": {
+    "doc_type": "invoice",
+    "currencies": {
+      "usd": false,
+      "points": true,
+      "egp": false
+    },
+    "rate_set": true,
+    "discount": "none",
+    "client": "",
+    "sectors": [],
+    "lines": [],
+    "lines_listed": true
+  },
+  "files": [
+    {
+      "file": "كهروميكانيكا.xlsx",
+      "sheets": [
+        {
+          "sheet": "الشركات",
+          "rows": 316,
+          "header_row": 1,
+          "columns": [
+            {
+              "col": "A",
+              "header": "م",
+              "filled": 316,
+              "distinct": 316,
+              "email_share": 0,
+              "phone_share": 0,
+              "number_share": 1,
+              "avg_words": 1,
+              "samples": [
+                "1",
+                "80",
+                "159",
+                "237",
+                "316"
+              ]
+            },
+            {
+              "col": "B",
+              "header": "اسم الشركة",
+              "filled": 316,
+              "distinct": 200,
+              "email_share": 0,
+              "phone_share": 0,
+              "number_share": 0,
+              "avg_words": 4,
+              "samples": [
+                "ش. ا. ل. E.",
+                "ش. ا. ل. E.",
+                "ش. ا. ل. E.",
+                "ش. ا. ل. E.",
+                "ش. ا. ل. E."
+              ]
+            },
+            {
+              "col": "C",
+              "header": "المدير المسؤول",
+              "filled": 312,
+              "distinct": 312,
+              "email_share": 0,
+              "phone_share": 0,
+              "number_share": 0,
+              "avg_words": 4.1,
+              "samples": [
+                "م. أ. ح. 1.",
+                "م. س. ش. 7.",
+                "م. أ. ا. 1.",
+                "م. ه. ز. 2.",
+                "م. ع. ف. 3."
+              ]
+            },
+            {
+              "col": "D",
+              "header": "البريد الإلكتروني",
+              "filled": 298,
+              "distinct": 293,
+              "email_share": 0.98,
+              "phone_share": 0,
+              "number_share": 0,
+              "avg_words": 1,
+              "samples": [
+                "u***@d***.com",
+                "u***@a***.com",
+                "u***@n***.com",
+                "u***@s***.com",
+                "u***@a***.com"
+              ]
+            },
+            {
+              "col": "E",
+              "header": "الهاتف",
+              "filled": 154,
+              "distinct": 151,
+              "email_share": 0,
+              "phone_share": 0.97,
+              "number_share": 0.49,
+              "avg_words": 1.8,
+              "samples": [
+                "101****000",
+                "012****218",
+                "101****464",
+                "015****629",
+                "012****794"
+              ]
+            }
+          ]
+        },
+        {
+          "sheet": "ملاحظات",
+          "rows": 2,
+          "header_row": 1,
+          "columns": [
+            {
+              "col": "A",
+              "header": "ملاحظة",
+              "filled": 2,
+              "distinct": 2,
+              "email_share": 0,
+              "phone_share": 0,
+              "number_share": 0,
+              "avg_words": 2.5,
+              "samples": [
+                "ت. ا. ي.",
+                "م. ن."
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "images": [],
+  "item_types": [
+    "شركة",
+    "مدير",
+    "بريد إلكتروني",
+    "رقم هاتف"
+  ]
+}

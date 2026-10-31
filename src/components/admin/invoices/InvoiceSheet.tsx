@@ -242,6 +242,8 @@ export interface InvoiceExportControls {
   /** the scaled preview of the real sheet (plus the hidden measuring page and the print copy): render it where the preview should be */
   element: React.ReactNode;
   ready: boolean;
+  /** the measured pages belong to THIS model (not to the one before the last edit): the page count can be trusted */
+  settled: boolean;
   pageCount: number;
   busy: string;
   error: string;
@@ -319,7 +321,7 @@ export function useInvoiceExport(model: SheetModel, fileBase: string): InvoiceEx
       {printRoot && plan && planModel ? createPortal(<SheetPageView model={planModel} plan={plan} />, printRoot) : null}
     </div>
   );
-  return { element, ready: Boolean(plan), pageCount: count, busy, error, print: () => window.print(), downloadPng };
+  return { element, ready: Boolean(plan), settled: Boolean(plan) && planModel === model, pageCount: count, busy, error, print: () => window.print(), downloadPng };
 }
 
 /** The preview with its own buttons (used for a document that is already sent or closed). */

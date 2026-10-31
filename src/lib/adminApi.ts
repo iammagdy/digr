@@ -15,10 +15,12 @@ export async function adminFetch<T = any>(path: string, init: RequestInit = {}):
     /* cookie fallback */
   }
 
+  // a FormData body (a file upload) sets its own multipart Content-Type with the boundary: forcing JSON here would break it
+  const isForm = typeof FormData !== "undefined" && init.body instanceof FormData;
   const res = await fetch(path, {
     ...init,
     headers: {
-      "Content-Type": "application/json",
+      ...(isForm ? {} : { "Content-Type": "application/json" }),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...(init.headers || {}),
     },

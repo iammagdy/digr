@@ -1,5 +1,7 @@
 # Admin invoices, simple (INVOICES SIMPLE 1)
 
+> **Update (INVOICE AGENT 1):** prices are now typed in US dollars (or points per item), the rate box no longer vanishes after the first digit, and a chat assistant was added: see `docs/ADMIN_INVOICES_AGENT.md`.
+
 Follow-up to `docs/ADMIN_INVOICES.md` (PR #308). Owner feedback after billing a real job (200 electromechanical companies with their managers, plus petroleum companies and contractors for one client):
 every line by hand, a complicated builder, and **the total did not work**. This change makes the screen one simple page, fixes the total, adds sector rows, a data-statement mode and a Claude helper.
 Invoices stay separate from the points wallet; an issued document is locked exactly as before; every new behaviour is draft-only.
@@ -51,14 +53,14 @@ No money can be stored on one, at three levels: the app zeroes it on every save 
 
 ## 5. Default prices (a proposal; nothing was written to the database)
 
-The owner sets these from «أنواع البنود» (the box takes cents). They follow his own examples (12¢ a company, 35¢ a manager, 0.45¢ an e-mail) and the platform's per-record price level; points use the sample rate 50.00 EGP per USD (points = EGP ÷ 0.10).
+The owner sets these from «أنواع البنود» (**the box takes US dollars since INVOICE AGENT 1: 12 cents is «0.12»; it used to take cents**). They follow his own examples (12¢ a company, 35¢ a manager, 0.45¢ an e-mail) and the platform's per-record price level; points use the sample rate 50.00 EGP per USD (points = EGP ÷ 0.10).
 
-| Item type | Enter (cents) | USD | Points (at 50.00) | EGP |
+| Item type | Enter (dollars) | USD | Points (at 50.00) | EGP |
 |---|---|---|---|---|
-| شركة | 12 | $0.12 | 60 | 6.00 |
-| مدير | 35 | $0.35 | 175 | 17.50 |
-| بريد إلكتروني | 0.45 | $0.0045 | 2.25 | 0.225 |
-| رقم هاتف | 5 | $0.05 | 25 | 2.50 |
+| شركة | 0.12 | $0.12 | 60 | 6.00 |
+| مدير | 0.35 | $0.35 | 175 | 17.50 |
+| بريد إلكتروني | 0.0045 | $0.0045 | 2.25 | 0.225 |
+| رقم هاتف | 0.05 | $0.05 | 25 | 2.50 |
 
 A line is rounded once, so the e-mail price shows up on whole lines: 300 e-mails = 135¢ = 675 points. At the saved rate 50.75 the points are 60.9 / 177.6 / 2.28 / 25.4 per unit (a line's total is the authoritative figure).
 The owner's job at these prices: 200 companies + 340 managers = $143.00 (71,500 points at 50.00); the three-sector job is $167.00.

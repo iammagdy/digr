@@ -22,7 +22,7 @@ function ownersJob(over: Partial<DocForm> = {}): DocForm {
   const line = (batchKey: string, name: string, qty: string, unit: string) => ({ ...emptyLine(batchKey), itemTypeName: name, qty, unit });
   return {
     ...f, company: "شركة العميل", batches,
-    lines: [line(batches[0].key, "شركة", "200", "12"), line(batches[0].key, "مدير", "340", "35"), line(batches[1].key, "شركة", "80", "12"), line(batches[2].key, "شركة", "120", "12")],
+    lines: [line(batches[0].key, "شركة", "200", "0.12"), line(batches[0].key, "مدير", "340", "0.35"), line(batches[1].key, "شركة", "80", "0.12"), line(batches[2].key, "شركة", "120", "0.12")],
     ...over,
   };
 }
