@@ -12,20 +12,19 @@ import type { CountResult, SectorCount } from "./types";
  */
 export interface ImageRow { sector: string; itemType: CountKey; quantity: string }
 
-/** the counts of the files as `set_counts` actions (a re-import REPLACES a sector's numbers, it never doubles them); only items with a number */
+/** the counts of the files as `set_counts` actions with the DEFAULT billing (companies, people, departments; e-mails and phones are not billed): a re-import REPLACES a sector's numbers, it never doubles them. The conversation (flow.ts) builds the owner's choice instead. */
 export function importActions(count: CountResult): Action[] {
   return count.sectors.map((s: SectorCount) => {
     const counts: Counts = {};
     if (s.companies > 0) counts.company = s.companies;
     if (s.managers > 0) counts.manager = s.managers;
-    if (s.emails > 0) counts.email = s.emails;
-    if (s.phones > 0) counts.phone = s.phones;
+    if (s.departments > 0) counts.department = s.departments;
     return { type: "set_counts", sector: s.sector, counts } as Action;
   }).filter((a) => a.type === "set_counts" && Object.keys(a.counts).length > 0);
 }
 
-const NAME: Record<CountKey, string> = { company: "شركة", manager: "مدير", email: "بريد إلكتروني", phone: "رقم هاتف" };
-const WORD: Record<CountKey, string> = { company: "الشركات", manager: "المديرين", email: "الإيميلات", phone: "الأرقام" };
+const NAME: Record<CountKey, string> = { company: "شركة", manager: "مدير", email: "بريد إلكتروني", phone: "رقم هاتف", department: "جهة تواصل إدارية" };
+const WORD: Record<CountKey, string> = { company: "الشركات", manager: "المديرين", email: "الإيميلات", phone: "الأرقام", department: "الجهات الإدارية" };
 
 /**
  * Approximate (picture) numbers become actions ONLY for cells that are empty in the draft: a number that came from a file, or that the owner typed, is never

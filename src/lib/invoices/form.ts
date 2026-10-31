@@ -42,6 +42,14 @@ export function emptyForm(docType: DocType, today: string, defaults: { rateE4: n
   };
 }
 
+/**
+ * A NEW document in the builder: EGP only (the owner adds points or dollars with a chip), no payment block (he turns it on when the document needs it),
+ * the saved exchange rate prefilled. The text of the payment block and the QR are filled only when he turns it on.
+ */
+export function newDocForm(docType: DocType, today: string, defaults: { rateE4: number | null }): DocForm {
+  return { ...emptyForm(docType, today, { rateE4: defaults.rateE4, payment: "" }), showUsd: false, showPoints: false, showEgp: true, showQr: false };
+}
+
 export function formFromDoc(doc: DocView): DocForm {
   return {
     docType: doc.docType, clientId: doc.client.id,

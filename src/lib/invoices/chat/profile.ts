@@ -27,6 +27,8 @@ export function detectHeaderRow(rows: string[][]): number {
   for (let i = 0; i < top.length; i++) {
     if (filled[i] === 0 || filled[i] < Math.ceil(widest * 0.6)) continue;
     const cells = top[i].filter((c) => c !== "");
+    // a title that was merged across the table (or exported with its text repeated) is the same text in every cell: never a header
+    if (cells.length > 1 && cells.every((c) => c === cells[0])) continue;
     if (cells.filter((c) => !isNumeric(c)).length * 2 >= cells.length) return i;
   }
   return 0;

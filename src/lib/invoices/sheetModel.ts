@@ -1,8 +1,8 @@
 import { showsInstapayShortcuts } from "@/lib/topupConfig";
 import { arabicizeText, fmtDateAr, fmtEgp, fmtInt, fmtNumber, fmtPercent, fmtPhone, fmtPoints, fmtPointValue, fmtRate, fmtUnitUsd, fmtUsd } from "./format";
 import { CURRENCY_AR, CURRENCY_ORDER, DOC_TYPE_AR, ROUNDING_NOTE_AR, STATEMENT_TITLE_AR } from "./labels";
-import { unitCcToPoints, unitCcToQirsh } from "./money";
-import { totalsForDoc } from "./totals";
+import { unitAt, unitDecimals, fmtFixed } from "./unitColumn";
+import { egpIsDerivedFromPoints, totalsForDoc } from "./totals";
 import type { Currency, DocView, Money, SellerBlock } from "./types";
 
 /**
@@ -73,10 +73,19 @@ export function buildSheetModel(doc: DocView, seller: SellerBlock, qrAllowed: bo
   const fm = (m: Money) => currencies.map((c) => fmtMoney(c, m));
   const rate = doc.rateE4;
 
+  // the unit column of each money currency: the fewest decimals at which quantity x the shown unit equals every PRINTED line total (see unitColumn.ts)
+  const summaryOnlyKeys = new Set(doc.batches.filter((b) => b.summaryOnly).map((b) => b.key));
+  const printedIdx = doc.lines.map((l, i) => (l.hidden || (l.batchKey !== null && summaryOnlyKeys.has(l.batchKey)) ? -1 : i)).filter((i) => i >= 0);
+  const decimals: Partial<Record<Currency, { decimals: number; ok: boolean }>> = {};
+  for (const c of currencies) {
+    if (c === "usd" || rate === null) continue;
+    decimals[c] = unitDecimals(c, printedIdx.map((i) => ({ quantity: doc.lines[i].quantity, unitCc: doc.lines[i].unitCc, totalMinor: (c === "points" ? totals.lines[i].points : totals.lines[i].egp) ?? 0 })), rate, doc.creditValueE4, egpIsDerivedFromPoints(doc));
+  }
   const unitText = (cc: number, cur: Currency): string => {
     if (cur === "usd") return fmtUnitUsd(cc);
     if (rate === null) return "—";
-    return cur === "points" ? fmtPoints(unitCcToPoints(cc, rate, doc.creditValueE4)) : fmtEgp(unitCcToQirsh(cc, rate));
+    const d = (decimals[cur] as { decimals: number }).decimals;
+    return fmtFixed(unitAt(cur, cc, rate, doc.creditValueE4, d), d);
   };
 
   // groups: lines that belong to no batch first, then each batch in order
@@ -88,7 +97,6 @@ export function buildSheetModel(doc: DocView, seller: SellerBlock, qrAllowed: bo
   const rows: SheetRow[] = [];
   const summary: Array<{ title: string; total: string[] }> = [];
   let visibleNo = 0;
-  let rounding = false;
   for (const g of groups) {
     const groupTotal = sumMoney(g.idx.map((i) => totals.lines[i]));
     summary.push({ title: arabicizeText(g.title ?? "بنود بدون مرحلة"), total: fm(groupTotal) });
@@ -104,11 +112,6 @@ export function buildSheetModel(doc: DocView, seller: SellerBlock, qrAllowed: bo
       visibleNo += 1;
       const label = arabicizeText([line.itemTypeName, line.description].filter(Boolean).join(" — "));
       rows.push({ kind: "line", n: fmtInt(visibleNo), description: label, qty: fmtInt(line.quantity), unit: currencies.map((c) => unitText(line.unitCc, c)), total: fm(totals.lines[i]) });
-      if (!statement && (BigInt(line.quantity) * BigInt(line.unitCc)) % BigInt(100) !== BigInt(0)) rounding = true;
-      if (!statement && rate !== null) {
-        if (doc.show.points && BigInt(line.quantity) * BigInt(unitCcToPoints(line.unitCc, rate, doc.creditValueE4)) !== BigInt(totals.lines[i].points ?? 0)) rounding = true;
-        if (doc.show.egp && BigInt(line.quantity) * BigInt(unitCcToQirsh(line.unitCc, rate)) !== BigInt(totals.lines[i].egp ?? 0)) rounding = true;
-      }
     }
     if (hidden.length) rows.push({ kind: "aggregate", label: `بنود أخرى (${fmtInt(hidden.length)})`, total: fm(sumMoney(hidden.map((i) => totals.lines[i]))) });
     if (g.title !== null && !statement) rows.push({ kind: "subtotal", label: arabicizeText(`إجمالي ${g.title}`), total: fm(groupTotal) });
@@ -166,7 +169,7 @@ export function buildSheetModel(doc: DocView, seller: SellerBlock, qrAllowed: bo
     groupSummary: doc.batches.length > 0 && !statement && options.phaseSummary !== false ? summary : null,
     totalRows,
     rateNote,
-    roundingNote: rounding && !statement ? ROUNDING_NOTE_AR : null,
+    roundingNote: !statement && Object.values(decimals).some((d) => d && !d.ok) ? ROUNDING_NOTE_AR : null,
     notes: arabicizeText(doc.notes),
     paymentInstructions: statement ? "" : arabicizeText(doc.paymentInstructions),
     showQr: !statement && qrAllowed && doc.showInstapayQr && Boolean(doc.paymentInstructions || doc.instapayAddress),

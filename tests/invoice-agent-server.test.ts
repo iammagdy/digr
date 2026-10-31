@@ -42,7 +42,7 @@ describe("the owner's flow, end to end through the real runner (scripted model)"
     expect(r.count?.sectors.map((s) => [s.sector, s.companies, s.managers, s.emails, s.phones])).toEqual([
       ["كهروميكانيكا", 200, 312, 287, 140], ["بترول", 150, 190, 120, 95], ["مقاولات", 120, 120, 100, 70], ["عقارات", 60, 50, 45, 30],
     ]);
-    expect(r.unmapped).toEqual([{ file: "كهروميكانيكا.xlsx", sheet: "ملاحظات" }]);
+    expect(r.unmapped).toEqual([{ file: "كهروميكانيكا.xlsx", sheet: "ملاحظات", rows: 2, columns: 1, status: "ignored" }]); // a two-line note is listed, never skipped silently
     expect(r.actions).toEqual([{ type: "set_rate", rateE4: 560000 }, { type: "set_doc_type", docType: "invoice" }]);
     expect(r.files.map((f) => f.name)).toEqual(["كهروميكانيكا.xlsx", "بترول.xlsx", "مقاولات وعقارات.xlsx"]);
     expect(r.usage.model).toBe("claude-haiku-5-5");

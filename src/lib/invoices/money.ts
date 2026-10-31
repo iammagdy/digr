@@ -73,6 +73,14 @@ export function centsToQirsh(cents: number, rateE4: number): number {
   return out(roundDiv(big(cents, "cents") * big(rateE4, "rate"), B10000));
 }
 
+/**
+ * EGP from points, EXACTLY: qirsh = points x pointValue (credit value E4 / 100: 1 point = 0.10 EGP = 10 qirsh). Used when a document shows BOTH points and EGP, so the two columns
+ * can never disagree (17,097 points is 1,709.70 EGP, not 1,709.68). Exact for every point value that is a whole number of qirsh; the caller falls back otherwise.
+ */
+export function pointsToQirsh(points: number, creditValueE4: number = CREDIT_VALUE_DEFAULT_E4): number {
+  return out(roundDiv(big(points, "points") * big(creditValueE4, "creditValue"), B100));
+}
+
 /** The unit price in whole points, for display only (the line total is authoritative). */
 export function unitCcToPoints(unitCc: number, rateE4: number, creditValueE4: number = CREDIT_VALUE_DEFAULT_E4): number {
   return out(roundDiv(big(unitCc, "unitCc") * big(rateE4, "rate"), B100 * B100 * big(creditValueE4, "creditValue")));

@@ -100,7 +100,14 @@ export async function parseXlsx(name: string, bytes: Uint8Array, budget: RowBudg
       if (values.length - 1 > AGENT_MAX_COLUMNS) truncated = true;
       const cells: string[] = [];
       let any = false;
-      for (let c = 1; c <= width; c++) { const t = cellText(values[c]); cells.push(t); if (t !== "") any = true; }
+      for (let c = 1; c <= width; c++) {
+        // A MERGED range reads as the same text in every cell of it (exceljs gives the master's value to each). Only the master cell holds the text: a title merged across
+        // the table is ONE cell (never a row that looks like a header), and a company merged down over its manager rows is empty on the rows below (a continuation).
+        const cell = row.getCell(c);
+        const t = cell.isMerged && cell.master && cell.master.address !== cell.address ? "" : cellText(values[c]);
+        cells.push(t);
+        if (t !== "") any = true;
+      }
       if (!any) return;
       budget.left -= 1;
       if (budget.left < 0) throw new AgentInputError("rows", `الملفات أكبر من ${AGENT_MAX_ROWS_TOTAL.toLocaleString("en")} صف إجمالًا. ارفع جزءًا منها.`);

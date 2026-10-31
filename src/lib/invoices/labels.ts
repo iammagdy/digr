@@ -27,3 +27,16 @@ export const CONFIRM_AR = {
     action: "نعم، ألغِ",
   },
 } as const;
+
+/**
+ * The name of an exported file (and of the PDF the print dialog proposes): «فاتورة INV-2026-0002», «بيان STM-2026-0001», «عرض سعر QUO-2026-0003»; a draft has no number yet: «مسودة فاتورة».
+ * Characters a file name cannot hold are dropped; the number stays as it is stored (ASCII), so it can be searched and sorted.
+ */
+export function exportFileBase(doc: { docType: DocType; number: string }): string {
+  const word = DOC_TYPE_AR[doc.docType] === "بيان بيانات" ? "بيان" : DOC_TYPE_AR[doc.docType];
+  const number = doc.number.trim();
+  const base = number === "" ? `مسودة ${word}` : `${word} ${number}`;
+  return base.replace(/[\\/:*?"<>|\u0000-\u001f\u202a-\u202e\u2066-\u2069]/g, "").replace(/\s+/g, " ").trim();
+}
+/** one page: «فاتورة INV-2026-0002.png»; several: «فاتورة INV-2026-0002 - 2.png» */
+export const pngFileName = (base: string, page: number, pages: number): string => (pages <= 1 ? `${base}.png` : `${base} - ${page}.png`);

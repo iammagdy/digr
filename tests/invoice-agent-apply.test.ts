@@ -45,7 +45,7 @@ describe("actions run on the draft with the money library, and report before and
     const r = run(f, [{ type: "set_target_total", currency: "points", text: "5000" }]);
     expect(r.refused).toEqual([]);
     expect(r.applied[0]).toMatch(/تمامًا|أقرب إجمالي ممكن/);
-    if (r.after.points !== 5000) { expect(r.applied[0]).toContain("أقرب إجمالي ممكن"); expect(r.warnings.join(" ")).toContain("أقرب إجمالي ممكن"); }
+    if (r.after.points !== 5000) { expect(r.applied[0]).toContain("أقرب إجمالي ممكن"); expect(r.applied[0]).toMatch(/الفرق/); } // said once, with the exact difference (no second red warning)
   });
 
   it("prices: dollars (0.28 = 28 cents) or points per item (converted with the document's rate); all lines of that type, also lines added in the same reply", () => {

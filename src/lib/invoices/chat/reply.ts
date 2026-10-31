@@ -25,7 +25,7 @@ const nameOf = (v: unknown, max = 60): string | null => { if (typeof v !== "stri
 
 const ITEM_ALIASES: Record<string, CountKey> = {
   company: "company", companies: "company", "شركة": "company", manager: "manager", managers: "manager", "مدير": "manager",
-  email: "email", emails: "email", "بريد إلكتروني": "email", phone: "phone", phones: "phone", "رقم هاتف": "phone",
+  email: "email", emails: "email", "بريد إلكتروني": "email", phone: "phone", phones: "phone", "رقم هاتف": "phone", department: "department", departments: "department", "جهة تواصل إدارية": "department",
 };
 export const countKeyOf = (v: unknown): CountKey | null => (typeof v === "string" ? ITEM_ALIASES[v.trim().toLowerCase()] ?? ITEM_ALIASES[v.trim()] ?? null : null);
 

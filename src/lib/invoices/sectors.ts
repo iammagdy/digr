@@ -7,42 +7,50 @@ import { parseUnitUsd, unitUsdText } from "./priceInput";
  * (companies, managers, e-mails, phones); a field with a number is one line of that batch, an empty field is no line at all.
  * Prices are never typed here: a new line takes the item type's default sale price, and the total always comes from the one money library.
  */
-export const QUICK_TYPE_NAMES = ["شركة", "مدير", "بريد إلكتروني", "رقم هاتف"] as const;
+export const DEPARTMENT_NAME = "جهة تواصل إدارية";
+export const QUICK_TYPE_NAMES = ["شركة", "مدير", "بريد إلكتروني", "رقم هاتف", DEPARTMENT_NAME] as const;
 /** The quick fields' labels as the owner says them: «عدد الشركات»… */
-export const QUICK_LABELS: Record<string, string> = { "شركة": "الشركات", "مدير": "المديرين", "بريد إلكتروني": "الإيميلات", "رقم هاتف": "أرقام الهاتف" };
+export const QUICK_LABELS: Record<string, string> = { "شركة": "الشركات", "مدير": "المديرين", "بريد إلكتروني": "الإيميلات", "رقم هاتف": "أرقام الهاتف", [DEPARTMENT_NAME]: "الجهات الإدارية" };
 /** Suggestions for the sector name box; the owner can type anything. */
 export const SECTOR_SUGGESTIONS = ["كهروميكانيكا", "بترول", "مقاولات", "تجارة", "صناعة", "عقارات"];
 
 export interface ItemTypeLite { id: string; nameAr: string; unitCc: number }
 export interface QuickField { name: string; label: string; type: ItemTypeLite }
 
-/** The quick fields that exist: the owner's item types with the four known names, in the fixed order. A renamed or archived type simply has no quick field. */
+/**
+ * The quick fields that exist: the owner's item types with the known names, in the fixed order. A renamed or archived type simply has no quick field.
+ * «جهة تواصل إدارية» (a department such as «إدارة المشتريات») is the one VIRTUAL field: if the owner has no item type of that name it is a line with no item type, price 0, found by its name.
+ */
 export function quickFields(types: ItemTypeLite[]): QuickField[] {
   const out: QuickField[] = [];
   for (const name of QUICK_TYPE_NAMES) {
     const type = types.find((t) => t.nameAr.trim() === name);
     if (type) out.push({ name, label: QUICK_LABELS[name], type });
+    else if (name === DEPARTMENT_NAME) out.push({ name, label: QUICK_LABELS[name], type: { id: "", nameAr: DEPARTMENT_NAME, unitCc: 0 } });
   }
   return out;
 }
+
+/** a line belongs to a type by its id, or (the virtual department type, which has no id) by having no item type and its name */
+export const isType = (l: LineForm, type: ItemTypeLite): boolean => (type.id !== "" ? l.itemTypeId === type.id : l.itemTypeId === null && l.itemTypeName.trim() === type.nameAr);
 
 const inGroup = (l: LineForm, batchKey: string | null) => l.batchKey === batchKey;
 
 /** The number typed for this type in this sector (the first line of that type), or «». */
 export function countText(form: DocForm, batchKey: string | null, typeId: string): string {
-  return form.lines.find((l) => inGroup(l, batchKey) && l.itemTypeId === typeId)?.qty ?? "";
+  return form.lines.find((l) => inGroup(l, batchKey) && (typeId !== "" ? l.itemTypeId === typeId : l.itemTypeId === null && l.itemTypeName.trim() === DEPARTMENT_NAME))?.qty ?? "";
 }
 
 /** Sets the number of one type in one sector: a number makes or updates its line (price = the type's default), empty or 0 removes it. Everything else is untouched. */
 export function setCount(form: DocForm, batchKey: string | null, type: ItemTypeLite, text: string): DocForm {
   const trimmed = text.trim();
-  const at = form.lines.findIndex((l) => inGroup(l, batchKey) && l.itemTypeId === type.id);
+  const at = form.lines.findIndex((l) => inGroup(l, batchKey) && isType(l, type));
   if (trimmed === "" || parseScaled(trimmed, 0) === 0) {
     return at < 0 ? form : { ...form, lines: form.lines.filter((_, i) => i !== at) };
   }
   if (at >= 0) return { ...form, lines: form.lines.map((l, i) => (i === at ? { ...l, qty: trimmed } : l)) };
   if (form.lines.length >= MAX_LINES) return form;
-  const line: LineForm = { ...emptyLine(batchKey), itemTypeId: type.id, itemTypeName: type.nameAr, qty: trimmed, unit: unitUsdText(type.unitCc) };
+  const line: LineForm = { ...emptyLine(batchKey), itemTypeId: type.id === "" ? null : type.id, itemTypeName: type.nameAr, qty: trimmed, unit: unitUsdText(type.unitCc) };
   return { ...form, lines: [...form.lines, line] };
 }
 
@@ -52,7 +60,7 @@ export function otherLines(form: DocForm, batchKey: string | null, quick: QuickF
   const out: LineForm[] = [];
   for (const l of form.lines) {
     if (!inGroup(l, batchKey)) continue;
-    const q = quick.find((f) => f.type.id === l.itemTypeId);
+    const q = quick.find((f) => isType(l, f.type));
     if (q && !shown.has(q.type.id) && !l.description && !l.hidden) { shown.add(q.type.id); continue; }
     out.push(l);
   }
@@ -80,7 +88,7 @@ export function zeroPriceNames(form: DocForm): string[] {
     const qty = parseScaled(l.qty, 0);
     if (qty === null || qty < 1) continue;
     const unit = parseUnitUsd(l.unit);
-    if (unit.ok && unit.cc === 0) {
+    if (unit.ok && unit.cc === 0 && l.itemTypeName.trim() !== DEPARTMENT_NAME) { // departments are at 0 on purpose: not a forgotten price
       const name = l.itemTypeName.trim() || "بند";
       if (!names.includes(name)) names.push(name);
     }

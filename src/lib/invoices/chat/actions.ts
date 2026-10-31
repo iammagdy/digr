@@ -8,8 +8,8 @@ import { AGENT_MAX_ACTIONS } from "./limits";
  * The fixed vocabulary of the agent. The model translates the owner's words into this list and NOTHING else: an action outside it, an extra key, a number that is not a
  * number, or a money-looking field anywhere rejects the WHOLE reply. Code executes the actions with the existing money library; the model never computes a price or a total.
  */
-export type CountKey = "company" | "manager" | "email" | "phone";
-export const COUNT_KEYS: readonly CountKey[] = ["company", "manager", "email", "phone"];
+export type CountKey = "company" | "manager" | "email" | "phone" | "department";
+export const COUNT_KEYS: readonly CountKey[] = ["company", "manager", "email", "phone", "department"];
 export type Counts = Partial<Record<CountKey, number>>;
 
 export type Action =

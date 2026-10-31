@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { PAIR_STEPS, SINGLE_STEPS, solveTargetTotal, targetMinorOf, type TargetLine } from "../src/lib/invoices/chat/targetTotal";
+import { CLEAN_TOLERANCE, PAIR_STEPS, SINGLE_STEPS, solveFinest, solveTargetTotal, targetMinorOf, type TargetLine } from "../src/lib/invoices/chat/targetTotal";
 import { computeTotals } from "../src/lib/invoices/totals";
 import type { Currency, PricingInput } from "../src/lib/invoices/types";
 
@@ -43,6 +43,41 @@ describe("target total: code scales the prices to the exact total", () => {
     const b = solveTargetTotal(JOB, P(), "egp", 123_456);
     expect(b.ok).toBe(true);
     if (b.ok) { expect(totalOf(JOB, b.units, P(), "egp")).toBe(b.achievedMinor); expect(Math.abs(b.achievedMinor - 123_456)).toBeLessThanOrEqual(60); expect(b.exact).toBe(b.achievedMinor === 123_456); }
+  });
+
+  it("CLEAN prices for a points / EGP target: whole points per item when they land within 0.1% (the owner's job at 2,000 EGP), otherwise the finest grid, said so", () => {
+    const egp = solveTargetTotal(JOB, P(), "egp", 200_000);
+    expect(egp.ok).toBe(true);
+    if (!egp.ok) return;
+    expect(egp.clean).toBe(true);
+    expect(egp.points.filter((x) => x !== null).every((x) => Number.isInteger(x))).toBe(true);
+    expect(Math.abs(egp.achievedMinor - 200_000)).toBeLessThanOrEqual(200_000 * CLEAN_TOLERANCE);
+    // the chosen prices really give that total (the unit price is the points price converted once)
+    expect(totalOf(JOB, egp.units, P(), "egp")).toBe(egp.achievedMinor);
+    // dollars are never on the points grid
+    const usd = solveTargetTotal(JOB, P(), "usd", 1700);
+    expect(usd.ok && usd.clean).toBe(false);
+    expect(usd.ok && usd.points.every((x) => x === null)).toBe(true);
+    // a line cheaper than 2 points (a quarter-point e-mail) stays on the finest grid
+    const cheap = solveTargetTotal([{ quantity: 1000, unitCc: 1 }, { quantity: 100, unitCc: 1200 }], P(), "points", 9000);
+    expect(cheap.ok && cheap.points[0]).toBeNull();
+  });
+
+  it("SHARED prices come first: when one whole-points price per item type reaches the target, every line of a type has the same price", () => {
+    // 200 + 149 companies at 10 points and 601 + 240 managers at 20 points, at R = 50.75 and 1 point = 0.10 EGP
+    const lines: TargetLine[] = [{ quantity: 200, unitCc: 0, group: "شركة" }, { quantity: 601, unitCc: 0, group: "مدير" }, { quantity: 149, unitCc: 0, group: "شركة" }, { quantity: 240, unitCc: 0, group: "مدير" }].map((l) => ({ ...l, unitCc: l.group === "شركة" ? 1200 : 3500 }));
+    const p = P({ rateE4: 500000 });
+    const priced = (pc: number, pm: number) => lines.map((l) => ({ quantity: l.quantity, unitCc: (l.group === "شركة" ? pc : pm) * 20 })); // R = 50: one point = 20 hundredths of a cent
+    const target = computeTotals(priced(10, 20), p).total.points as number;
+    const r = solveTargetTotal(lines, p, "points", target);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.exact).toBe(true);
+    expect(r.clean).toBe(true);
+    expect(r.shared).toBe(true);
+    expect(r.points[0]).toBe(r.points[2]);   // every company has the same price
+    expect(r.points[1]).toBe(r.points[3]);   // every manager has the same price
+    expect(r.units[0]).toBe(r.units[2]);
   });
 
   it("a target that is tiny next to the quantities (prices of a few hundredths of a cent) may not be reachable exactly: the nearest total is reported, not exact", () => {
@@ -136,6 +171,14 @@ describe("target total: code scales the prices to the exact total", () => {
       expect(totalOf(lines, r.units, p, cur), `case ${k}`).toBe(r.achievedMinor);
       if (cur === "usd") { usdCases++; if (r.exact) usdExact++; }
       if (r.exact) { expect(r.achievedMinor).toBe(target); continue; }
+      if (r.clean) {
+        // whole points per item were chosen: only because they land within 0.1% of the target or as near as the finest search does
+        const finest = solveFinest(lines, p, cur, target);
+        expect(finest.ok).toBe(true);
+        if (finest.ok) expect(Math.abs(r.achievedMinor - target), `case ${k} clean`).toBeLessThanOrEqual(Math.max(Math.abs(finest.achievedMinor - target), Math.ceil(target * CLEAN_TOLERANCE)));
+        expect(r.points.every((x) => x === null || (Number.isInteger(x) && x >= 1))).toBe(true);
+        continue;
+      }
       // brute force: no single move and no pair of moves of one step (up or down) is strictly nearer (or equally near and lower)
       const err = (g: number) => Math.abs(g - target);
       const cap = (q: number) => Math.min(100_000_000, Number((BigInt(1_000_000_000) * BigInt(100)) / BigInt(q)));

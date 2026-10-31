@@ -44,6 +44,12 @@ export interface PricingInput {
   taxEnabled: boolean;
   taxLabel: string;
   taxBp: number;
+  /**
+   * EGP is derived from points (qirsh = points x point value) instead of from the dollar cents. Set it explicitly, or pass a document: when its `show` has both points and EGP
+   * it is on. Frozen values of an issued document are never recomputed.
+   */
+  egpFromPoints?: boolean;
+  show?: { points: boolean; egp: boolean };
 }
 
 export interface ClientBlock { id: string | null; company: string; contact: string; email: string; phone: string; address: string }
