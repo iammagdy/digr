@@ -4,16 +4,28 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
-## START HERE (2026-10-31, after #307): ADMIN INVOICES 1 («الفواتير», admin only)
+## START HERE (2026-10-31, after #309): ADMIN INVOICES 1 («الفواتير», admin only)
 
-`main` before it was `3526b092abe04d4cb965181bae94a9cbbaec3773` (#307); the merge commit is the head of `main` after it. Everything (money rule, examples, statuses, numbering, export, isolation, files, screenshots): `docs/ADMIN_INVOICES.md`.
-**The SQL is NOT applied** (the owner applies it; steps, the ONE read-only verify SELECT and the rollback: `docs/proposals/admin-invoices/README.md`). Until it is applied the screens answer with a plain Arabic error and `/admin/export`'s invoice group fails with a clear message; nothing else depends on it.
+`main` before it was `609cf015c78d03faf13a41cd2d34dc1febff5be3` (#309); the merge commit is the head of `main` after it. Everything (money rule, examples, statuses, numbering, export, isolation, files, screenshots): `docs/ADMIN_INVOICES.md`.
+**The SQL IS applied** (the owner ran parts 01 to 05 one at a time on 2026-10-31, after downloading `/admin/export`). His `98_verify_after_apply.sql` returned 18 rows, `ok = true` on every row; a read-only count afterwards found `invoice_settings` 1 row, `invoice_item_types` the 4 seeded names at price 0, and 0 rows in clients, documents, batches, lines, status events and counters. Steps, the verify SELECT and the rollback: `docs/proposals/admin-invoices/README.md`.
 
 - Quotes and invoices for hand-made research work, PDF (print dialog) and PNG per page, A4, «صفحة ١ من ٣», Arabic-Indic digits, the Diger logo on every page. Usable at 380 px.
 - Money is integers: unit price in hundredths of a cent, line = round_half_up once per line, points and EGP from a rate frozen at «مرسلة». After «مرسلة» the database locks the document; the status log is append-only with the admin id.
 - **No wallet, ledger, mission, price, cap or agent code touched**; marking paid credits no points (test: `tests/invoice-ledger-isolation.test.ts`). RLS on, no policy, `service_role` read-only on the document tables.
 - New dependency: `html-to-image` 1.11.13 (MIT), client-side PNG only. One existing test changed: `tests/admin-navigation.test.tsx` (one admin page added).
-- Rollback: `git revert -m 1 <merge commit>`, then (only if the SQL was applied) `99_rollback.sql`.
+- Rollback: `git revert -m 1 <merge commit>`; `99_rollback.sql` only if the feature is abandoned (it deletes every document entered: download `/admin/export` first).
+
+---
+
+## START HERE (2026-10-31, after #307): the methodology purchase in the wallet, the offer, the estimate wording
+
+`main` before it was `3526b092abe04d4cb965181bae94a9cbbaec3773` (#307); its merge commit is the head of `main` after it. Customer UI and wording only: no SQL, no ledger write, no change to `purchase_methodology_atomic`, the methodology route's charging, the price (10 points), settlement, reserve/charge/release, pricing or the engine.
+
+- **The «3 jobs where charge > reserve»** (read-only evidence, 2026-10-31): each has a second `charge` row `chg_meth_<job id>` of 10 points, the owner-approved, customer-confirmed methodology add-on (`purchase_methodology_atomic`, written 10 minutes to 3 hours after settlement). The settlement charge (30, 9, 789) never exceeded the reserve in any of the 360 jobs with ledger rows; 3 methodology purchases exist (2026-10-15 to 2026-10-24, all legacy jobs).
+- **Wallet**: the purchase is its own line («شراء المنهجية الرسمية للطلب: ١٠ نقاط», Cairo day and time); a job's delivery line sums only `res_`, `rel_`, `chg_<job id>` (30, 9, 789). Recognised by the exact id prefix `chg_meth_` (`isMethodologyChargeId`), never by the note. All lines still add up to `calculateBalance`.
+- **Methodology offer**: it was drawn for every finished job with delivered items, also mission-era jobs, which keep no `data.json` (0 of 65) and would get «لم يتم خصم أي نقاط» (409) after the customer confirmed. It is now drawn only when the rows loaded from the saved data exist (`savedRows`); the route is unchanged. NOT PROVEN with a live call (none made). The chat answer «ملف المنهجية متاح من لوحة النتائج…» (`methodologyAnswerAr`) is not gated by this and can still point a mission-era customer to a button that is not there.
+- **Calculator**: the price note, the over-limit notes and the form's maximum-volume message say the item's noun («٤٥٠٠ تغريدة») or «النتائج», never «سجل»; every figure is as it was (golden test).
+- Rollback: `git revert -m 1 <merge commit>`.
 
 ---
 

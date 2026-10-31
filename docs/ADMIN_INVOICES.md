@@ -1,7 +1,7 @@
 # Admin invoices («الفواتير»)
 
 An **admin-only** builder for quotes («عرض سعر») and invoices («فاتورة») for research work the owner does by hand for companies, with a PDF and PNG export carrying the Diger logo.
-It is **completely separate from the points wallet** (see "Isolation"). The SQL is **not applied** (see `docs/proposals/admin-invoices/README.md`).
+It is **completely separate from the points wallet** (see "Isolation"). The SQL was **applied by the owner** on 2026-10-31 (parts 01 to 05, one at a time) and checked by `98_verify_after_apply.sql` (18 rows, `ok = true`); see `docs/proposals/admin-invoices/README.md`.
 
 ## What it is
 

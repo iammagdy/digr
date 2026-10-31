@@ -544,7 +544,7 @@ export default function ResultsCanvas({
                 </Button>
               </div>
             ))}
-            {jobId && methodologyOffered({ status: jobStatus, delivered: deliveredCount }) && (
+            {jobId && methodologyOffered({ status: jobStatus, delivered: deliveredCount, savedRows: records.length }) && (
               <div className="flex items-center justify-between gap-3 rounded-[20px] border border-sand-200 bg-sf p-4" data-testid="methodology-offer">
                 <div className="min-w-0">
                   <p className="text-xs font-bold text-ink-900">المنهجية الرسمية</p>
@@ -578,7 +578,7 @@ export default function ResultsCanvas({
               <Button size="sm" variant="secondary" onClick={onExplainMethodology} className="w-full">
                 اشرح لي كيف تم جمع البيانات
               </Button>
-              {methodologyOffered({ status: jobStatus, delivered: deliveredCount }) && (
+              {methodologyOffered({ status: jobStatus, delivered: deliveredCount, savedRows: records.length }) && (
                 <Button size="sm" variant="secondary" onClick={onRequestDocxMethodology} className="tnum w-full">
                   {methodologyPurchased ? "تحميل المنهجية" : `اكتب المنهجية الرسمية (${formatNumber(METHODOLOGY_POINTS)} نقاط)`}
                 </Button>

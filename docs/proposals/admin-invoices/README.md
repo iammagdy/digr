@@ -1,4 +1,4 @@
-# Admin invoices: the SQL (NOT APPLIED — the owner runs it)
+# Admin invoices: the SQL (applied by the owner on 2026-10-31; verify: 18 rows, ok = true)
 
 The agent that wrote this **did not apply any SQL** and made no database write. The only database call it made was one read-only `SELECT` on the
 live project to check that no object named `invoice*` already exists (none did).

@@ -1,4 +1,5 @@
 import { classifyLedgerRow, type CreditKind } from "./creditKinds";
+import { pointsAr } from "./pointsFormat";
 
 /** The fields of a ledger row the wallet screen reads (the page's LedgerRow satisfies it). */
 export interface WalletLedgerRow {
@@ -137,12 +138,22 @@ export interface JobLedgerTotals {
   rows: number;
 }
 
-export interface JobLedgerRow { jobId?: string | null; type?: string; delta: number }
+export interface JobLedgerRow { id?: string; jobId?: string | null; type?: string; delta: number }
+
+/**
+ * THE METHODOLOGY PURCHASE IS ITS OWN LINE. The optional «المنهجية الرسمية» document is bought after delivery (`purchase_methodology_atomic`) and recorded as the ledger row `chg_meth_<job id>` (type `charge`, linked to the
+ * job). It is not part of what the job's delivery cost, so a job's line sums only its settlement rows (`res_`, `rel_`, `chg_<job id>`), and this row is listed on its own. Recognised by the exact id prefix, never by the note.
+ */
+export const METHODOLOGY_CHARGE_PREFIX = "chg_meth_";
+export const isMethodologyChargeId = (id: string | null | undefined): boolean => typeof id === "string" && id.startsWith(METHODOLOGY_CHARGE_PREFIX);
+/** «شراء المنهجية الرسمية للطلب: ١٠ نقاط» */
+export const methodologyPurchaseLineAr = (delta: number): string => `شراء المنهجية الرسمية للطلب: ${pointsAr(Math.abs(delta))}`;
 
 export function jobLedgerTotals(rows: ReadonlyArray<JobLedgerRow>): Map<string, JobLedgerTotals> {
   const byJob = new Map<string, JobLedgerTotals>();
   for (const r of rows) {
     if (!r.jobId) continue;
+    if (isMethodologyChargeId(r.id)) continue; // its own line (above), not part of the job's delivery line
     const j = byJob.get(r.jobId) ?? { reserved: 0, released: 0, charged: 0, net: 0, otherTypes: false, rows: 0 };
     if (r.type === "reserve") j.reserved += Math.abs(r.delta);
     else if (r.type === "release") j.released += Math.abs(r.delta);
@@ -177,7 +188,8 @@ export function groupMissionRows<T extends MissionGroupableRow>(rows: ReadonlyAr
   for (const row of rows) {
     const jobId = row.jobId ?? null;
     const line = row.missionLineAr ?? null;
-    if (!jobId || !line) { out.push({ kind: "row", row }); continue; }
+    // the methodology purchase of a job is a line of its own, never a row inside the job's delivery group
+    if (!jobId || !line || isMethodologyChargeId(row.id ?? row.$id)) { out.push({ kind: "row", row }); continue; }
     const i = at.get(jobId);
     if (i === undefined) { at.set(jobId, out.length); out.push({ kind: "mission", jobId, lineAr: line, rows: [row] }); }
     else (out[i] as Extract<WalletEntry<T>, { kind: "mission" }>).rows.push(row);
