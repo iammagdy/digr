@@ -78,12 +78,32 @@ export function platformOfEndpoint(endpointId: string | null | undefined): strin
   return null;
 }
 
+/**
+ * WHAT KIND OF SOURCE A STAGE READ, in customer-safe Arabic: the platform when the source's name says one («إكس», «يوتيوب»); otherwise the KIND of data the source gives (live: A1 and A2 said «غير مسجّل» in «المنصات والمصادر المستخدمة» because their
+ * sources are company, people and e-mail databases whose names say no platform). Read from the words of the source's name only (never from a table of providers) and never the name itself: a customer sees what was read, not who sold it.
+ */
+export function sourceLabelAr(endpointId: string | null | undefined): string | null {
+  if (!endpointId) return null;
+  const platform = platformOfEndpoint(endpointId);
+  if (platform) return platform;
+  const tokens = String(endpointId).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).slice(1);
+  // a name that says nothing (no provider prefix, no capability) is not guessed at: the row says «غير مسجّل»
+  if (tokens.length === 0) return null;
+  const has = (...words: string[]): boolean => words.some((w) => tokens.includes(w));
+  if (has("phone", "phones", "mobile", "tel", "telephone")) return "مصدر أرقام الهواتف";
+  if (has("email", "emails", "mail")) return "مصدر عناوين البريد الإلكتروني للعمل";
+  if (has("employees", "employee", "people", "person", "colleagues", "founders", "decision", "makers", "contacts", "profile", "profiles")) return "مصدر بيانات الموظفين والمسؤولين";
+  if (has("companies", "company", "businesses", "business", "organizations", "organization", "accounts", "firms")) return "قاعدة بيانات الشركات";
+  if (has("web", "search", "scrape", "crawl", "page", "pages", "site", "sites", "serp")) return "البحث في صفحات الويب";
+  return "مصدر بيانات متخصص";
+}
+
 /** What each reason for leaving an item out says to the customer. */
 const REASON_TEXT_AR: Record<string, string> = {
   no_text: "لا نص فيه", no_term: "لا يذكر الموضوع في نصه", mention_only: "إشارة عابرة أو رد فارغ", other_person: "عن شخص آخر يحمل الاسم نفسه", name_extended: "الاسم فيه امتداد يدل على شخص آخر", other_meaning: "عن معنى آخر للاسم نفسه",
   uncertain: "لم يتأكد أنه عن المقصود", not_reviewed: "لم يُراجَع لأن المراجعة الآلية بلغت حدها", review_no: "رُفض عند المراجعة الآلية", review_failed: "تعذّرت مراجعته",
   filter_reply: "رد على غيره", filter_repost: "إعادة نشر", filter_language: "بلغة غير التي حددتها", filter_period: "خارج الفترة المحددة", filter_account: "من مصدر لم تسمّه", filter_place: "من مكان غير الذي حددته", filter_government: "جهة حكومية أو عسكرية", filter_media: "لا يثبت أنه فيديو أو صورة",
-  unknown_parent: "لا ينتمي لعنصر مقروء", no_verified_contact: "لا بيانات تواصل موثّقة له", target_reached: "زاد عن العدد المعتمد",
+  unknown_parent: "لا ينتمي لعنصر مقروء", no_verified_contact: "لا بيانات تواصل موثّقة له", not_a_person: "بريد عام لجهة وليس لشخص (يظهر في عمود إيميلات الشركة)", target_reached: "زاد عن العدد المعتمد",
 };
 const reasonText = (r: string): string => REASON_TEXT_AR[r] ?? "سبب آخر";
 
@@ -222,7 +242,7 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
   items.push({ label: "طلبك (بكلماتك)", values: [request || NOT_RECORDED_AR] });
 
   // 2. the platforms (or kinds of source) the stages read
-  items.push({ label: "المنصات والمصادر المستخدمة", values: orNotRecorded(perStage((s) => platformOfEndpoint(s.engine?.endpoint_id ?? s.endpoint_id))) });
+  items.push({ label: "المنصات والمصادر المستخدمة", values: orNotRecorded(perStage((s) => sourceLabelAr(s.engine?.endpoint_id ?? s.endpoint_id))) });
 
   // 3. what was searched for
   const searched = perStage((s) => { const l = searchedOf(s, stages); return l.length ? l.join("؛ ") : null; });
@@ -305,7 +325,7 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
   // 9. one sentence the researcher can paste, with the delivery date
   const total = delivering.reduce((n, s) => n + (rowsByStage[s.key] ?? []).length, 0);
   const subject = delivering.map((s) => s.relevance?.subject_ar).find((x): x is string => typeof x === "string" && x.trim() !== "");
-  const platforms = uniq(delivering.map((s) => platformOfEndpoint(s.engine?.endpoint_id ?? s.endpoint_id)).filter((x): x is string => x !== null));
+  const platforms = uniq(delivering.map((s) => sourceLabelAr(s.engine?.endpoint_id ?? s.endpoint_id)).filter((x): x is string => x !== null));
   const spans = layouts.map(coveredOf).filter((x): x is NonNullable<ReturnType<typeof coveredOf>> => x !== null);
   const from = spans.map((x) => x.from).sort()[0];
   const to = spans.map((x) => x.to).sort().slice(-1)[0];

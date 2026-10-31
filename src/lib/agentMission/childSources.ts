@@ -15,8 +15,14 @@ import { rankEndpoints, type RankedSource } from "./sourceRanking";
 export const PEOPLE_FALLBACK_LINE_AR = "نطلب موظفي كل شركة بأول ما يتوفر لها من بياناتها: صفحتها على لينكدإن أو موقعها الإلكتروني أو اسمها، فلا تُستبعد شركة لمجرد أنه لا صفحة لها.";
 export type LinkField = "domain" | "linkedin" | "name" | "id";
 
-/** The capabilities whose rows are the people of ONE company. */
-export const PEOPLE_OF_COMPANY_CAPABILITIES: ReadonlySet<string> = new Set(["companies.employees", "companies.employees.list", "companies.employees.search", "people.employees.search", "linkedin.company.people", "companies.emails.list"]);
+/**
+ * The capabilities whose rows are the PEOPLE of ONE company: a name, usually a job title and a profile (employee lists, employee finders, the company's founders, a company's contacts). `people.search` joins them only for an endpoint that takes a company's
+ * website, page or name (`acceptedLinks`). An e-mail LISTER (`companies.emails.list`: «the addresses found on a domain») is NOT among them: its rows are mailboxes, and most of the mailboxes of a small company are info@, sales@ or webmaster@ with no name at all
+ * (live, 2026-10-31: eight of nine rows). A mailbox lister serves the company's own e-mails; the people come from a people source and their e-mail and phone are separate steps.
+ */
+export const PEOPLE_OF_COMPANY_CAPABILITIES: ReadonlySet<string> = new Set(["companies.employees", "companies.employees.list", "companies.employees.search", "people.employees.search", "linkedin.company.people", "companies.founders", "people.organization_contacts", "people.search"]);
+/** The capabilities that list the MAILBOXES of a company's domain (role and personal addresses together). */
+export const MAILBOX_LISTER_CAPABILITIES: ReadonlySet<string> = new Set(["companies.emails.list", "companies.emails.role"]);
 const COMPANY_SEARCH_CAPABILITY = "companies.search";
 
 const DOMAIN_INPUT = /^(?:domain|domains|company_domains?|company_domain|website|domainOrCompany)$/i;
@@ -58,14 +64,14 @@ export function linkBetween(company: CatalogEndpoint, people: CatalogEndpoint): 
   return accepts.includes("id") && gives.includes("id") && company.provider === people.provider ? "id" : null;
 }
 
-export interface PeopleSource { id: string; accepts: LinkField[]; usdPerItem: number }
+export interface PeopleSource { id: string; accepts: LinkField[]; usdPerItem: number; /** What the list is ordered by: the price per item over the expected success rate (a source that often gives nothing ranks lower than its price says). */ effectiveUsd: number }
 
 const rankedOf = (group: CatalogEndpoint[], catalog: TregCatalog, now: number): RankedSource[] => rankEndpoints(group, catalog, new Map(), now).ranked;
 
 /** The people sources of a company that this account may buy, cheapest first. */
 export function peopleSourcesForCompanies(catalog: TregCatalog, isAllowed: (id: string) => boolean, now = Date.now()): PeopleSource[] {
   const group = catalog.endpoints.filter((e) => e.capability && PEOPLE_OF_COMPANY_CAPABILITIES.has(e.capability) && isAllowed(e.id) && acceptedLinks(e).length > 0);
-  return rankedOf(group, catalog, now).map((r) => ({ id: r.id, accepts: acceptedLinks(catalog.byId.get(r.id)!), usdPerItem: r.usdPerItem }));
+  return rankedOf(group, catalog, now).map((r) => ({ id: r.id, accepts: acceptedLinks(catalog.byId.get(r.id)!), usdPerItem: r.usdPerItem, effectiveUsd: r.effectiveUsd }));
 }
 
 /** The company sources (company search) that give a field some people source accepts, cheapest first: each with the people sources it feeds. */

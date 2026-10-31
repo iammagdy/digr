@@ -3,6 +3,7 @@ import { normalizeText } from "../../src/lib/agentMission/relevance";
 import type { MissionPricingSettings } from "../../src/lib/missionPricing";
 import { isContactSource } from "../../src/lib/agentMission/contacts";
 import { childStepSourcesFor, isPeopleNoun, linkableCompanySources, peopleSourcesForCompanies } from "../../src/lib/agentMission/childSources";
+import { peopleAndContactAdvice, phoneSourcesOf } from "../../src/lib/agentMission/peopleCheck";
 import { describeAgentSource, isAgentSourceId, searchAgentSources, SESSION_RESTRICTED_SOURCES } from "../../src/lib/agentMission/sources";
 import { usableSearchProvider, webSourceAvailable, type WebAvailability } from "../../src/lib/agentMission/webAvailability";
 import { validateAndPricePlan, type PricedPlan, type RecordedCall } from "../../src/lib/agentMission/plan";
@@ -74,12 +75,14 @@ export interface RunState {
   giveUpNoRowsRefusals: number;
   /** How many times a plan promising videos (or images) that no sampled source proves was sent back to the catalog's media sources (a limit: the planner is never stuck). */
   mediaSendBacks: number;
+  /** How many times a plan was sent back to try the people sources / the phone sources before it settles (a limit: the planner is never stuck). */
+  peopleSendBacks: number;
   /** Per source stream (a collect_pages source and its inputs): whether the last read says the source has more pages. */
   moreAvailable: Map<string, boolean>;
   /** What each source gave in the planning samples: the rows of every answered call and a key of its inputs (two samples of the same item are one). */
   samples: Map<string, Array<{ rows: number; key: string }>>;
 }
-export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, giveUpNoRowsRefusals: 0, mediaSendBacks: 0, moreAvailable: new Map(), samples: new Map() });
+export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, giveUpNoRowsRefusals: 0, mediaSendBacks: 0, peopleSendBacks: 0, moreAvailable: new Map(), samples: new Map() });
 /** The most times finish is refused for the same reason in one run. */
 export const FINISH_REFUSALS_MAX = 3;
 /** The most times a planning that already holds real rows is told not to end with «cannot_serve» for a source's price or yield. */
@@ -87,6 +90,8 @@ export const GIVE_UP_REFUSALS_MAX = 2;
 /** The most times a plan that promises media no sampled source proves is sent back to sample the catalog's media sources; and the sources that must have been really reached before the card says it is unproven. */
 export const MEDIA_SEND_BACKS_MAX = 3;
 export const MEDIA_SOURCES_MIN = 3;
+/** The most times a plan whose people stage reads a mailbox lister, or that drops the phones asked for, is sent back to try the people and phone sources (peopleCheck.ts). */
+export const PEOPLE_SEND_BACKS_MAX = 3;
 
 export interface ToolContext {
   phase: CallPhase;
@@ -583,6 +588,17 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         };
         const checked = validateAndPricePlan({ summary_ar: a.summary_ar, stages: stagesIn, ...(a.contacts_note_ar !== undefined ? { contacts_note_ar: a.contacts_note_ar } : {}), ...(a.unserved_steps !== undefined ? { unserved_steps: a.unserved_steps } : {}), ...(a.assumptions_ar !== undefined ? { assumptions_ar: a.assumptions_ar } : {}) }, lookup);
         if (!checked.ok) return err("the plan was not accepted; fix these and propose again", { issues: checked.issues.slice(0, 12) });
+        // THE PEOPLE AND THEIR PHONES (live, 2026-10-31): a people stage that reads a mailbox lister, or phones dropped while no phone source was sampled, is sent back (a few times at most) to the sources that serve it; a plan that really tried them and says so is accepted
+        if (state.peopleSendBacks < PEOPLE_SEND_BACKS_MAX) {
+          const allowedSource = (x: string): boolean => policyVerdict(x, ctx.access).allowed && !blockedEndpointReason(x) && isSellable(x, ctx.catalog);
+          const advice = peopleAndContactAdvice({
+            plan: checked.plan, requestText: lookup.requestText, capabilityOf: lookup.endpointCapability,
+            peopleSources: peopleSourcesForCompanies(ctx.catalog, allowedSource).map((p) => p.id), phoneSources: phoneSourcesOf(ctx.catalog, allowedSource).map((p) => p.id),
+            calls: lookup.endpointsCalled(),
+            evidenceOf: (stageKey: string) => { const st = checked.plan.stages.find((x) => x.key === stageKey); const texts = (st?.measured_by ?? []).map((id) => evidence.get(id)).filter((t): t is string => typeof t === "string"); return texts.length > 0 ? texts.join("\n") : null; },
+          });
+          if (advice.length > 0) { state.peopleSendBacks += 1; return err("the plan was not accepted yet; fix this and propose again", { issues: advice.slice(0, 6) }); }
+        }
         // THE MODEL PLANS, CODE EXECUTES: what code needs to carry each stage out without the model is derived from what the agent really did and proven on the measured page (a stage that cannot be proven has no recipe)
         let derived: Awaited<ReturnType<typeof deriveEngineSpecsChecked>> | null = null;
         try {

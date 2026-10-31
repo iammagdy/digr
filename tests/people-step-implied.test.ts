@@ -74,7 +74,7 @@ describe("the plan check: the decision makers are never dropped by one sentence"
     const given = { summary_ar: "٥ شركات مصرية في قطاع الكهروميكانيكا.", stages: [companies], contacts_note_ar: "لم تتوفر مصادر موثقة للإيميلات وأرقام التليفون ضمن ميزانية هذه المهمة.", unserved_steps: [{ reason_ar: "لم تُرجع المصادر المتاحة أسماء مديرين لهذه الشركات" }] };
     expect(validateAndPricePlan(given, lookupOf([])).ok).toBe(false);
     expect(validateAndPricePlan(given, lookupOf([["aviato.companies.employees", 0]])).ok).toBe(false);
-    const accepted = validateAndPricePlan(given, lookupOf([["aviato.companies.employees", 0], ["tomba.companies.emails.list", 0]]));
+    const accepted = validateAndPricePlan(given, lookupOf([["aviato.companies.employees", 0], ["limadata.people.employees.search", 0]]));
     expect(accepted.ok, JSON.stringify(accepted)).toBe(true);
   });
   it("a plan WITH the people stage is accepted whatever per-company number the model wrote: the default count is code's, the card says so and the price is under the job limit", () => {

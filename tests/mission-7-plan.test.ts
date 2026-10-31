@@ -108,9 +108,12 @@ describe("D: the people of a company can be served from the catalog (linkable so
   it("the catalog has people sources that take a company's website, page link or name, cheapest first", () => {
     const people = peopleSourcesForCompanies(catalog, allowed);
     expect(people.length).toBeGreaterThanOrEqual(3);
-    expect(people.map((p) => p.id)).toEqual(expect.arrayContaining(["aviato.companies.employees", "tomba.companies.emails.list", "limadata.people.employees.search"]));
+    expect(people.map((p) => p.id)).toEqual(expect.arrayContaining(["aviato.companies.employees", "blitzapi.people.employee-finder", "limadata.people.employees.search"]));
+    // an e-mail LISTER gives mailboxes (info@, webmaster@), not people: it is not a people source (live 2026-10-31, F1)
+    expect(people.map((p) => p.id)).not.toContain("tomba.companies.emails.list");
     expect(people.every((p) => p.accepts.length > 0)).toBe(true);
-    for (let i = 1; i < people.length; i += 1) expect(people[i].usdPerItem).toBeGreaterThanOrEqual(people[i - 1].usdPerItem);
+    // cheapest first by the ranking's own key: the price per item over the expected success rate
+    for (let i = 1; i < people.length; i += 1) expect(people[i].effectiveUsd).toBeGreaterThanOrEqual(people[i - 1].effectiveUsd);
   });
 
   it("the cheapest company sources (the live one, tomba's company search, among them) give a website that those people sources take: a plan with managers is possible", () => {
@@ -159,9 +162,9 @@ describe("D: the people of a company can be served from the catalog (linkable so
 
   it("a source that was tried and GAVE rows keeps the refusal; two that were tried and gave none allow the honest «unserved»", () => {
     const given = { summary_ar: "شركات مقاولات مصرية.", stages: [companies], unserved_steps: [{ reason_ar: "لم تُرجع المصادر المتاحة أسماء مديرين لهذه الشركات" }] };
-    expect(validateAndPricePlan(given, base([["aviato.companies.employees", 6], ["tomba.companies.emails.list", 0]])).ok).toBe(false);
+    expect(validateAndPricePlan(given, base([["aviato.companies.employees", 6], ["limadata.people.employees.search", 0]])).ok).toBe(false);
     expect(validateAndPricePlan(given, base([["aviato.companies.employees", 0]])).ok).toBe(false);
-    const accepted = validateAndPricePlan(given, base([["aviato.companies.employees", 0], ["tomba.companies.emails.list", 0]]));
+    const accepted = validateAndPricePlan(given, base([["aviato.companies.employees", 0], ["limadata.people.employees.search", 0]]));
     expect(accepted.ok, JSON.stringify(accepted)).toBe(true);
   });
 });

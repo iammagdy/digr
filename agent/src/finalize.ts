@@ -70,3 +70,53 @@ export function childShortfallClauseAr(parentSingular: string, parentPlural: str
 export function shortfallFromStopAr(reason: StopReason | null, review: { pending: number; stop: "budget" | "failed" | null; languageLeftOut?: number; childShare?: string | null }): string {
   return `لم يكتمل العدد المطلوب ${shortfallClauseAr(reason, review)}، ولم يُخصم إلا مقابل ما سُلّم.`;
 }
+
+/** What the item store recorded about the delivered stages of a mission that delivered nothing. */
+export interface ZeroDeliveryFacts {
+  /** Items the source gave (new ones, duplicates left out), summed over the delivered stages. */
+  found: number;
+  /** Items left out, by the reason the run recorded, summed over the delivered stages. */
+  excludedByReason: Record<string, number>;
+  /** Items still waiting for a review that never came. */
+  pending: number;
+  reviewStop: "budget" | "failed" | null;
+  /** Why the first delivered stage stopped (a budget, a daily limit, a refusal, a failure say so instead of «the source gave nothing»). */
+  stop?: StopReason | null;
+}
+
+/** One clause per reason a found item is left out, each finishing «منه ما ...». The relevance reasons are one idea. */
+const ZERO_REASON_CLAUSES: ReadonlyArray<{ keys: ReadonlyArray<string>; clause: string }> = [
+  { keys: ["filter_account"], clause: "جاء من حسابات أو مصادر غير التي سمّيتها" },
+  { keys: ["filter_period"], clause: "وقع خارج الفترة التي حددتها" },
+  { keys: ["filter_language"], clause: "كان بلغة غير التي حددتها في خطتك" },
+  { keys: ["filter_place"], clause: "كان من مكان غير الذي حددته" },
+  { keys: ["filter_reply"], clause: "كان ردودًا على منشورات أخرى" },
+  { keys: ["filter_repost"], clause: "كان إعادة نشر لمحتوى غيره" },
+  { keys: ["filter_government"], clause: "كان لجهات حكومية أو عسكرية" },
+  { keys: ["filter_media"], clause: "لا يثبت أنه فيديو أو صورة كما طلبت" },
+  { keys: ["no_text", "no_term", "mention_only", "other_person", "name_extended", "other_meaning", "uncertain", "review_no", "review_failed"], clause: "لا يطابق موضوع طلبك" },
+  { keys: ["not_a_person"], clause: "كان عناوين عامة للشركات لا لأشخاص" },
+  { keys: ["no_verified_contact"], clause: "ليست له بيانات تواصل موثّقة" },
+];
+const ZERO_ADVICE_AR = "يمكنك تعديل الطلب، كاللغة أو الحساب أو الموضوع، ثم إعادة المحاولة.";
+
+/**
+ * WHY NOTHING WAS DELIVERED, in plain Arabic and with no number, from what the run RECORDED (live, B3: twelve posts read, all left out by the account and language rules, and the customer read only «لم يُسلَّم أي شيء»; a reason existed only when the model wrote
+ * a closing note). The biggest reasons first, at most three. Never a guess: an item that was never read says «the source gave nothing»; items still waiting for a review that ran out say that.
+ */
+export function zeroDeliveryReasonAr(f: ZeroDeliveryFacts): string {
+  const nothing = "لم يُسلَّم أي شيء، ولم يُخصم منك شيء";
+  if (f.pending > 0) return `لم يُسلَّم أي شيء ${shortfallClauseAr(f.stop ?? null, { pending: f.pending, stop: f.reviewStop })}، ولم يُخصم منك شيء.`;
+  if (f.found <= 0) {
+    if (f.stop && f.stop !== "source_exhausted" && f.stop !== "no_new_items" && f.stop !== "target_reached" && f.stop !== "no_parents") return `لم يُسلَّم أي شيء ${shortfallClauseAr(f.stop, { pending: 0, stop: null })}، ولم يُخصم منك شيء.`;
+    return `لم يعطِ المصدر أي نتائج لهذا الطلب، فلم يُسلَّم أي شيء ولم يُخصم منك شيء. ${ZERO_ADVICE_AR}`;
+  }
+  const groups = ZERO_REASON_CLAUSES
+    .map((g, order) => ({ clause: g.clause, n: g.keys.reduce((s, k) => s + (f.excludedByReason[k] ?? 0), 0), order }))
+    .filter((g) => g.n > 0)
+    .sort((a, b) => b.n - a.n || a.order - b.order)
+    .slice(0, 3);
+  if (groups.length === 0) return `قرأنا ما أعطاه المصدر، لكن لم يبقَ منه ما يطابق طلبك. ${nothing}. ${ZERO_ADVICE_AR}`;
+  const clauses = groups.map((g, i) => `${i === 0 ? "منه" : "ومنه"} ما ${g.clause}`).join("، ");
+  return `قرأنا ما أعطاه المصدر، لكن لم يبقَ منه ما يطابق طلبك: ${clauses}. ${nothing}. ${ZERO_ADVICE_AR}`;
+}

@@ -190,7 +190,7 @@ describe("Companies: three companies and their managers (the plan dropped the ma
         calls: [
           { endpoint: COMPANIES, params: { page: 1, size: 6 }, code: "return inputs.call_0001.content.map(c => ({ id: c.id, name: c.name, website: 'https://' + c.website_url, country: c.country, city: c.city || '', size: c.company_size }))" },
           { endpoint: "aviato.companies.employees", params: { website: "orascom.com", perPage: 2, page: 1 }, code: "return []" },
-          { endpoint: "tomba.companies.emails.list", params: { domain: "orascom.com", limit: 2 }, code: "return []" },
+          { endpoint: "limadata.people.employees.search", params: { company_domains: ["orascom.com"], limit: 2 }, code: "return []" },
         ],
         plan: (res) => ({
           summary_ar: "ستحصل على شركات مقاولات مصرية مع بياناتها العامة.",

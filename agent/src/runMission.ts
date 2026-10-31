@@ -33,10 +33,11 @@ import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
 import { runInSandbox } from "./sandbox";
 import { trackRun, untrackRun } from "./sessions";
-import { childShortfallClauseAr, countWorkbookSheets, shortfallClauseAr, shortfallFromStopAr } from "./finalize";
+import { childShortfallClauseAr, countWorkbookSheets, shortfallClauseAr, shortfallFromStopAr, zeroDeliveryReasonAr, type ZeroDeliveryFacts } from "./finalize";
 import { createReviewer, readReviewState, type ReviewCall } from "./review";
 import type { TokenUsage } from "./llmCost";
-import { buildExcludedAdminCsv, buildMissionFiles, type ExcludedRow } from "./workbook";
+import { buildExcludedAdminCsv, buildMissionFiles, type CompanyMailboxes, type ExcludedRow } from "./workbook";
+import { isPeopleStage, mailboxesOf } from "../../src/lib/agentMission/people";
 import { missionFactsOf } from "./methodology";
 import { missionFileTitleAr } from "../../src/lib/agentMission/fileNames";
 import { itemNounOf, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
@@ -200,6 +201,30 @@ async function recordChecks(deps: RunnerDeps, missionId: string, plan: PricedPla
   return { pending: pendingTotal, stop, languageLeftOut, lastUnusable, failedCalls };
 }
 const RELEVANCE_REASON_KEYS = [...RELEVANCE_REASON_LIST, ...FILTER_REASONS] as const;
+
+/**
+ * THE COMPANIES' OWN E-MAILS: the rows of a people stage that were not people (a role or generic mailbox, a row with no person's name: people.ts) were kept with their reason and their address. They go to the sheet of the companies, one cell per company
+ * (workbook.ts); here they are gathered by company, in the order the source gave them, each address once. Only what the log recorded: never an address that was not in a row.
+ */
+export function companyMailboxesOf(plan: PricedPlan, snap: ItemSnapshot): CompanyMailboxes {
+  const out: CompanyMailboxes = {};
+  for (const s of plan.stages) {
+    if (s.parent_key === null || !isPeopleStage(s)) continue;
+    // only the stage whose rows ARE the companies: a mailbox found for a PERSON (a step under a people stage) is not a company e-mail
+    const parentStage = plan.stages.find((p) => p.key === s.parent_key);
+    if (!parentStage || isPeopleStage(parentStage)) continue;
+    const byParent = out[s.parent_key] ?? (out[s.parent_key] = new Map());
+    for (const it of snap.excludedItems(s.key)) {
+      if (it.reason !== "not_a_person" || !it.row) continue;
+      const parentId = String(it.row.parent_id ?? "").trim();
+      if (!parentId) continue;
+      const have = byParent.get(parentId) ?? [];
+      for (const email of mailboxesOf(it.row, s.columns)) if (!have.includes(email)) have.push(email);
+      if (have.length > 0) byParent.set(parentId, have);
+    }
+  }
+  return out;
+}
 /** True when a text carries a number (Latin or Arabic-Indic digits): a model note with one is dropped, so a count in a text always comes from the data. */
 export const HAS_NUMBER = /[0-9٠-٩]/;
 
@@ -429,7 +454,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   let parentFixedRows = 0;
   if (builtCount > 0) {
     try {
-      const built = await buildMissionFiles(plan, rowsByStage, missionFactsOf({ requestText: mission.request_text, plan, snap, reviewStop: checked.stop }));
+      const built = await buildMissionFiles(plan, rowsByStage, missionFactsOf({ requestText: mission.request_text, plan, snap, reviewStop: checked.stop }), companyMailboxesOf(plan, snap));
       if (built.parentFixes.length > 0) { parentFixedRows = built.parentFixes.reduce((n, f) => n + f.rows, 0); flags.push("parent_column_fixed"); deps.log?.(`parent_column_fixed ${mission.id} ${built.parentFixes.map((f) => `${f.stage_key}.${f.column}<-${f.parent_field}x${f.rows}`).join(",")}`); }
       const published = await store.publishResult({ missionId: mission.id, userId: mission.user_id, jobId, xlsx: built.xlsx, csv: built.csv });
       resultPath = published.resultPath;
@@ -488,10 +513,17 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
     languageLeftOut: shortStage && shortStage.parent_key === null ? snap.counts(shortStage.key).excludedByReason.filter_language ?? 0 : 0,
     childShare: shortStage && parentOfShort && parentsBelowShare(plan, shortStage.key, rowsByStage) > 0 ? childShortfallClauseAr(itemNounOf(parentOfShort.title_ar).singular, itemNounOf(parentOfShort.title_ar).plural, itemNounOf(shortStage.title_ar).plural) : null,
   };
+  // NOTHING DELIVERED: the reason is stated from what the run recorded for the delivered stages (found, left out per reason, waiting for a review, why it stopped), never from the model's note and never a guess
+  const deliveredStages = plan.stages.filter((s) => s.deliver);
+  const zeroFacts: ZeroDeliveryFacts = {
+    found: deliveredStages.reduce((n, s) => n + snap.counts(s.key).new, 0),
+    excludedByReason: deliveredStages.reduce<Record<string, number>>((acc, s) => { for (const [k, n] of Object.entries(snap.counts(s.key).excludedByReason)) acc[k] = (acc[k] ?? 0) + (n ?? 0); return acc; }, {}),
+    pending: checked.pending, reviewStop: checked.stop, stop: deliveredStages.length > 0 ? snap.stage(deliveredStages[0].key).stop : null,
+  };
   const reason = ourFailure ? INTERNAL_FAILURE_AR
     : delivered > 0 && delivered < target ? shortfallFromStopAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort)
     : delivered > 0 && delivered < requested ? loweredTargetAr(plan)
-    : delivered <= 0 ? "لم يُسلَّم أي شيء، ولم يُخصم منك شيء." : "";
+    : delivered <= 0 ? zeroDeliveryReasonAr(zeroFacts) : "";
   const summary = (ourFailure ? reason : [note, reason].filter(Boolean).join(" ")).slice(0, 1100);
   const mismatch = settled.kind === "settled" && !settled.matchesExpectation ? `charge ${settled.chargedPoints} differs from the expected ${settled.expectedChargedPoints}` : null;
   const unusableWords = checked.lastUnusable ? checked.lastUnusable.replace(/\s+/g, " ").slice(0, 120) : "";
@@ -506,7 +538,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const stageRowsOf = (s: PricedPlan["stages"][number]): number => (s.deliver ? (fileByStage ? fileByStage[s.key] ?? 0 : plan.stages.filter((x) => x.deliver).length === 1 ? delivered : rowsByStage[s.key].length) : rowsByStage[s.key].length);
   await store.addEvent(mission.id, { kind: "result", message_ar: summary || (delivered > 0 ? "اكتملت المهمة." : "لم يُسلَّم أي شيء."), counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, stageRowsOf(s)])), ...parentCountsOf(plan, rowsByStage) } });
   const noticeKind: MissionNoticeKind = ourFailure ? "failed" : delivered <= 0 ? "unserved" : delivered < requested ? "partial" : "completed";
-  await tell(deps, mission, jobId, noticeKind, { delivered, planned: deliveryDenominatorOf(delivered, cardTotalOf(plan), requested), chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(ourFailure ? { cause: "internal" as const } : {}), ...(delivered > 0 && delivered < target ? { shortfallClauseAr: shortfallClauseAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort) } : delivered > 0 && delivered < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
+  await tell(deps, mission, jobId, noticeKind, { delivered, planned: deliveryDenominatorOf(delivered, cardTotalOf(plan), requested), chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && delivered < target ? { shortfallClauseAr: shortfallClauseAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort) } : delivered > 0 && delivered < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
 }
 
 /** What the customer is told when the source gave items and our own mapping stored none: it was OUR failure, never «nothing was found». No number: the money line says the rest. */
