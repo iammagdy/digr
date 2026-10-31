@@ -33,7 +33,7 @@ import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
 import { runInSandbox } from "./sandbox";
 import { trackRun, untrackRun } from "./sessions";
-import { childShortfallClauseAr, countWorkbookSheets, shortfallClauseAr, shortfallFromStopAr, zeroDeliveryReasonAr, type ZeroDeliveryFacts } from "./finalize";
+import { childShortfallClauseAr, countWorkbookSheets, shortfallClauseAr, shortfallFromStopAr, stageTruthBodyAr, zeroDeliveryReasonAr, type ZeroDeliveryFacts } from "./finalize";
 import { createReviewer, readReviewState, type ReviewCall } from "./review";
 import type { TokenUsage } from "./llmCost";
 import { buildExcludedAdminCsv, buildMissionFiles, type CompanyMailboxes, type ExcludedRow } from "./workbook";
@@ -512,6 +512,8 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const parentOfShort = shortStage && shortStage.parent_key !== null ? plan.stages.find((p) => p.key === shortStage.parent_key) : undefined;
   const checkedForShort = {
     ...checked,
+    // THE SHORT STAGE'S OWN waiting items (live A1/A2: ten surplus companies a review never needed made the PEOPLE stage's shortfall «the review ran out»)
+    pending: shortStage ? snap.counts(shortStage.key).pending : checked.pending,
     languageLeftOut: shortStage && shortStage.parent_key === null ? snap.counts(shortStage.key).excludedByReason.filter_language ?? 0 : 0,
     childShare: shortStage && parentOfShort && parentsBelowShare(plan, shortStage.key, rowsByStage) > 0 ? childShortfallClauseAr(itemNounOf(parentOfShort.title_ar).singular, itemNounOf(parentOfShort.title_ar).plural, itemNounOf(shortStage.title_ar).plural) : null,
   };
@@ -520,10 +522,14 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const zeroFacts: ZeroDeliveryFacts = {
     found: deliveredStages.reduce((n, s) => n + snap.counts(s.key).new, 0),
     excludedByReason: deliveredStages.reduce<Record<string, number>>((acc, s) => { for (const [k, n] of Object.entries(snap.counts(s.key).excludedByReason)) acc[k] = (acc[k] ?? 0) + (n ?? 0); return acc; }, {}),
-    pending: checked.pending, reviewStop: checked.stop, stop: deliveredStages.length > 0 ? snap.stage(deliveredStages[0].key).stop : null,
+    pending: deliveredStages.reduce((n, s) => n + snap.counts(s.key).pending, 0), reviewStop: checked.stop, stop: deliveredStages.length > 0 ? snap.stage(deliveredStages[0].key).stop : null,
   };
+  // WHAT THE SHORT STAGE FOUND AND LEFT OUT, from its recorded counts, when our own row rules left out what the source gave (never «the source gave no more» for rows it did give)
+  const shortCounts = shortStage ? snap.counts(shortStage.key) : null;
+  const shortTruth = shortStage && shortCounts ? stageTruthBodyAr({ found: shortCounts.found, duplicates: shortCounts.duplicates, delivered: shortCounts.accepted, excludedByReason: shortCounts.excludedByReason as Record<string, number>, pending: shortCounts.pending, reviewStop: checked.stop, stop: snap.stage(shortStage.key).stop, people: isPeopleStage(shortStage) }) : null;
+  const shortClause = shortTruth ? `إذ ${shortTruth}` : shortfallClauseAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort);
   const reason = ourFailure ? INTERNAL_FAILURE_AR
-    : delivered > 0 && delivered < target ? shortfallFromStopAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort)
+    : delivered > 0 && delivered < target ? (shortTruth ? `لم يكتمل العدد المطلوب ${shortClause}، ولم يُخصم إلا مقابل ما سُلّم.` : shortfallFromStopAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort))
     : delivered > 0 && delivered < requested ? loweredTargetAr(plan)
     : delivered <= 0 ? zeroDeliveryReasonAr(zeroFacts) : "";
   const summary = (ourFailure ? reason : [note, reason].filter(Boolean).join(" ")).slice(0, 1100);
@@ -540,7 +546,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const stageRowsOf = (s: PricedPlan["stages"][number]): number => (s.deliver ? (fileByStage ? fileByStage[s.key] ?? 0 : plan.stages.filter((x) => x.deliver).length === 1 ? delivered : rowsByStage[s.key].length) : rowsByStage[s.key].length);
   await store.addEvent(mission.id, { kind: "result", message_ar: summary || (delivered > 0 ? "اكتملت المهمة." : "لم يُسلَّم أي شيء."), counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, stageRowsOf(s)])), ...parentCountsOf(plan, rowsByStage) } });
   const noticeKind: MissionNoticeKind = ourFailure ? "failed" : delivered <= 0 ? "unserved" : delivered < requested ? "partial" : "completed";
-  await tell(deps, mission, jobId, noticeKind, { delivered, planned: deliveryDenominatorOf(delivered, cardTotalOf(plan), requested), chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && delivered < target ? { shortfallClauseAr: shortfallClauseAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort) } : delivered > 0 && delivered < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
+  await tell(deps, mission, jobId, noticeKind, { delivered, planned: deliveryDenominatorOf(delivered, cardTotalOf(plan), requested), chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && delivered < target ? { shortfallClauseAr: shortClause } : delivered > 0 && delivered < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
 }
 
 /** What the customer is told when the source gave items and our own mapping stored none: it was OUR failure, never «nothing was found». No number: the money line says the rest. */
