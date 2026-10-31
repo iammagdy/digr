@@ -7,6 +7,7 @@ import { filterLineAr, isEnabled, type StageFilter } from "../../src/lib/agentMi
 import { APPROX_DATES_NOTE_AR, approxColumnsOf } from "../../src/lib/agentMission/relativeDates";
 import { unresolvedSourcesLineAr } from "../../src/lib/agentMission/namedSources";
 import { formatAr, toArabicDigits } from "../../src/lib/arabicDigits";
+import { plainSearchAr } from "../../src/lib/agentMission/plainSearchAr";
 import { shortfallClauseAr } from "./finalize";
 
 /**
@@ -125,7 +126,9 @@ function searchedOf(stage: PricedStage, planStages: ReadonlyArray<PricedStage>):
   take(params);
   for (const src of stage.engine?.sources ?? []) { take(src.params); accounts.push(...src.names.map(oneLine)); }
   for (const f of (stage.filters ?? []) as StageFilter[]) if (isEnabled(f) && f.kind === "account") accounts.push(...(f.values ?? []).map(oneLine));
-  if (uniq(texts).length) out.push(`كلمات أو عبارات البحث: ${quoted(uniq(texts))}`);
+  // the search string as the source reads it («"محمد صلاح" lang:ar since:…») is told in plain Arabic; an operator we do not know is left out
+  const plain = uniq(texts.map(plainSearchAr).filter((p) => p.text !== ""));
+  if (plain.length) out.push(`كلمات أو عبارات البحث: ${plain.map((p) => p.text).join(plain.some((p) => p.operators) ? "؛ " : "، ")}`);
   if (uniq(accounts).length) out.push(`حسابات أو قنوات أو صفحات: ${quoted(uniq(accounts).filter(Boolean))}`);
   if (uniq(links).length) out.push(`روابط: ${uniq(links).join("، ")}`);
   const parent = stage.parent_key !== null ? planStages.find((p) => p.key === stage.parent_key) : undefined;
@@ -134,24 +137,63 @@ function searchedOf(stage: PricedStage, planStages: ReadonlyArray<PricedStage>):
 }
 
 /** The earliest and the latest date of the delivered items of a stage, from its first date column. Null when the sheet has no date column. */
-function coveredOf(layout: MethodologyLayout): { from: string; to: string; approx: boolean } | null {
+interface Covered { from: string; to: string; approx: boolean; fromMs: number; toMs: number; /** every date of the column is a day with no time (so the span is counted in whole days) */ dayOnly: boolean }
+function coveredOf(layout: MethodologyLayout): Covered | null {
   for (const c of layout.columns) {
     if (c.kind === "context") continue;
     const values = layout.rows.map((r) => c.get(r, null));
     if (!isDateValues(c.title, c.key, values)) continue;
-    const points: Array<{ t: number; text: string }> = [];
+    const points: Array<{ t: number; text: string; day: boolean }> = [];
     for (const v of values) {
       const day = parseDateOnly(v);
-      if (day) { points.push({ t: Date.UTC(day.y, day.mo - 1, day.da), text: dateOnlyText(day) }); continue; }
+      if (day) { points.push({ t: Date.UTC(day.y, day.mo - 1, day.da), text: dateOnlyText(day), day: true }); continue; }
       const moment = parseMoment(v);
-      if (moment) points.push({ t: moment.getTime(), text: cairoText(moment) });
+      if (moment) points.push({ t: moment.getTime(), text: cairoText(moment), day: false });
     }
     if (points.length === 0) continue;
     points.sort((a, b) => a.t - b.t);
     const approx = c.key !== undefined && layout.rows.some((r) => approxColumnsOf(r).includes(c.key as string));
-    return { from: toArabicDigits(points[0].text), to: toArabicDigits(points[points.length - 1].text), approx };
+    return { from: toArabicDigits(points[0].text), to: toArabicDigits(points[points.length - 1].text), approx, fromMs: points[0].t, toMs: points[points.length - 1].t, dayOnly: points.some((p) => p.day) };
   }
   return null;
+}
+
+const DAY_MS = 86_400_000;
+const HOUR_MS = 3_600_000;
+/** A whole number of days / hours as the object of «غطّت»: «يومًا واحدًا», «يومين», «٥ أيام», «١٢ يومًا». */
+const daysObjectAr = (n: number): string => (n === 1 ? "يومًا واحدًا" : n === 2 ? "يومين" : n <= 10 ? `${toArabicDigits(n)} أيام` : `${toArabicDigits(n)} يومًا`);
+const hoursObjectAr = (n: number): string => (n === 1 ? "ساعة واحدة" : n === 2 ? "ساعتين" : n <= 10 ? `${toArabicDigits(n)} ساعات` : `${toArabicDigits(n)} ساعة`);
+
+/** The length of the period the plan's enabled period filter asked for, in milliseconds, and how the customer worded it. Null when it has no length that can be told (a range with no start). */
+function requestedSpanOf(f: StageFilter, deliveredAt: Date): { ms: number; wording: string } | null {
+  const wording = filterLineAr(f).replace(/\.$/, "");
+  if (f.days !== undefined) return f.days >= 1 ? { ms: f.days * DAY_MS, wording } : null;
+  const day = (s: string | undefined): number | null => { const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(s ?? "")); return m ? Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])) : null; };
+  const from = day(f.from);
+  if (from === null) return null;
+  const toDay = day(f.to);
+  const end = toDay !== null ? toDay + DAY_MS : deliveredAt.getTime();
+  return end > from ? { ms: end - from, wording: wording.startsWith("من") ? `الفترة ${wording}` : wording } : null;
+}
+
+/**
+ * INFORMATION ONLY: when the dates of the delivered items cover less than HALF of the period the customer asked for, say so plainly and, when the stage's recorded stop is «target_reached», why
+ * («طلبت آخر ٧ أيام، وغطّت النتائج نحو ١٦ ساعة فقط لأن العدد المطلوب اكتمل من أحدث النتائج.»). It never changes, blocks or refuses a delivery. Null when the coverage is not that short, when the dates are
+ * only approximate (a relative time such as «قبل ٤ أيام» has no exact span), or when the period or the dates are not recorded.
+ */
+export function periodLimitLineAr(input: { filter: StageFilter | undefined; covered: Covered | null; deliveredAt: Date; targetReached: boolean }): string | null {
+  const { filter, covered } = input;
+  if (!filter || !isEnabled(filter) || filter.kind !== "period" || !covered || covered.approx) return null;
+  const asked = requestedSpanOf(filter, input.deliveredAt);
+  if (!asked) return null;
+  const got = covered.dayOnly ? (covered.toMs - covered.fromMs) + DAY_MS : covered.toMs - covered.fromMs;
+  if (!(got * 2 < asked.ms)) return null;
+  let said: string;
+  if (covered.dayOnly) said = daysObjectAr(Math.max(1, Math.round(got / DAY_MS)));
+  else if (got < HOUR_MS) said = "أقل من ساعة";
+  else if (got < 48 * HOUR_MS) said = `نحو ${hoursObjectAr(Math.round(got / HOUR_MS))}`;
+  else said = `نحو ${daysObjectAr(Math.round(got / DAY_MS))}`;
+  return `طلبت ${asked.wording}، وغطّت النتائج ${said} فقط${input.targetReached ? " لأن العدد المطلوب اكتمل من أحدث النتائج" : ""}.`;
 }
 
 const periodLineOf = (filters: ReadonlyArray<StageFilter> | undefined): string | null => {
@@ -250,6 +292,13 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
     if (!r || got >= s.planned_rows) continue;
     const clause = shortfallClauseAr(r.stop, { pending: r.pending, stop: facts.reviewStop ?? null, languageLeftOut: r.excludedByReason.filter_language ?? 0 });
     limits.push(`${many ? `«${s.title_ar}»: ` : ""}سُلّم ${fmt(got)} من ${fmt(s.planned_rows)} ${clause}.`);
+  }
+  // the period the results really cover is much shorter than the one asked for (information only; the delivery is never changed by it)
+  const deliveredAt = facts.deliveredAt ?? new Date();
+  for (const s of delivering) {
+    const lay = layouts.find((l) => l.stage.key === s.key);
+    const line = periodLimitLineAr({ filter: (s.filters ?? []).find((f) => isEnabled(f) && f.kind === "period"), covered: lay ? coveredOf(lay) : null, deliveredAt, targetReached: facts.stages?.[s.key]?.stop === "target_reached" });
+    if (line) limits.push(many ? `«${s.title_ar}»: ${line}` : line);
   }
   items.push({ label: "حدود هذا التسليم", values: limits.length ? limits : ["لا قيود سُجّلت على هذا التسليم"] });
 

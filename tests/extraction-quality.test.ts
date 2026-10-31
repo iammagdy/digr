@@ -311,7 +311,7 @@ describe("B4/B5. Arabic columns, readable dates, numbers as numbers, verificatio
 
   it("social uncertain rows get a review sheet that says plainly they were not charged", async () => {
     const wb = await load(payloadFor("comments", [{ cid: "1", text: "كرة السلة", user_nickname: "a" }], [{ cid: "9", text: "كرة السلة وكرة القدم", _relevance_reason: "يذكر السجل كرة السلة وكرة القدم معاً" }]));
-    const review = wb.getWorksheet("سجلات تحتاج مراجعة")!;
+    const review = wb.getWorksheet("نتائج تحتاج مراجعة")!;
     expect(String(review.getRow(1).getCell(1).value)).toBe(REVIEW_SHEET_NOTICE_AR);
     expect(String(review.getRow(3).getCell(2).value)).toContain("كرة السلة وكرة القدم");
     expect(String(review.getRow(3).getCell(4).value)).toContain("كرة السلة وكرة القدم");
@@ -319,7 +319,7 @@ describe("B4/B5. Arabic columns, readable dates, numbers as numbers, verificatio
 
   it("with no uncertain rows there is no review sheet", async () => {
     const wb = await load(payloadFor("videos", [{ video_id: "1", title: "فيديو", views: "12K views" }]));
-    expect(wb.worksheets.map((s) => s.name)).not.toContain("سجلات تحتاج مراجعة");
+    expect(wb.worksheets.map((s) => s.name)).not.toContain("نتائج تحتاج مراجعة");
   });
 
   it("people: the review sheet lists reviewed people with the same plain notice", async () => {
@@ -328,7 +328,7 @@ describe("B4/B5. Arabic columns, readable dates, numbers as numbers, verificatio
       rows: [{ id: "p1", full_name: "A B", job_title: "Director", company_name: "Co", work_email: "a@co.example" }],
       uncertainRows: [{ id: "p2", full_name: "C D", job_title: "Manager", company_name: "Co2", linkedin_url: "https://www.linkedin.com/in/cd", _relevance_reason: "مراجعة" }],
     });
-    const review = wb.getWorksheet("سجلات تحتاج مراجعة")!;
+    const review = wb.getWorksheet("نتائج تحتاج مراجعة")!;
     expect(String(review.getRow(1).getCell(1).value)).toBe(REVIEW_SHEET_NOTICE_AR);
     expect(String(review.getRow(3).getCell(2).value)).toContain("C D");
   });

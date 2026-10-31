@@ -33,7 +33,7 @@ describe("A3: the Excel label matches what the workbook really contains", () => 
       rows,
       uncertainRows: [{ id: "r1", company_name: "Unknown", _relevance_reason: "يحتاج مراجعة" }],
     });
-    expect(withReview).toEqual(["بيانات الشركات", "سجلات تحتاج مراجعة"]);
+    expect(withReview).toEqual(["بيانات الشركات", "نتائج تحتاج مراجعة"]);
   });
 
   it("a people workbook is one data sheet", async () => {

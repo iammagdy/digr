@@ -88,7 +88,7 @@ describe("item 7: company Excel quality", () => {
       rows: [{ id: "m", company_name: "Accepted", industry: "Construction" }],
       uncertainRows: [{ id: "u", company_name: "Maybe", industry: "Utilities", location: "Cairo, Egypt", _relevance_reason: "x" }],
     });
-    const review = workbook.getWorksheet("سجلات تحتاج مراجعة")!;
+    const review = workbook.getWorksheet("نتائج تحتاج مراجعة")!;
     expect(String(review.getRow(1).getCell(1).value)).toBe(REVIEW_SHEET_NOTICE_AR);
     expect(REVIEW_SHEET_NOTICE_AR).toContain("لم تُحتسب عليك");
     expect(REVIEW_SHEET_NOTICE_AR).toContain("لم تُخصم");

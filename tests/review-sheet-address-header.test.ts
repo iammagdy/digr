@@ -15,7 +15,7 @@ describe("the review sheet names its address column by what is in it", () => {
     });
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(buffer as any);
-    const review = wb.getWorksheet("سجلات تحتاج مراجعة")!;
+    const review = wb.getWorksheet("نتائج تحتاج مراجعة")!;
     const headers = (review.getRow(2).values as any[]).slice(1).map(String);
     expect(headers).toEqual(["اسم الشركة", "مجال النشاط كما ورد", "العنوان كما ورد", "سبب المراجعة"]);
     expect(headers).not.toContain("الموقع كما ورد");

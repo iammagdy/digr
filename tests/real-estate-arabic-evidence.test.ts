@@ -292,7 +292,7 @@ describe("worker, the stored real-estate quote: developers are delivered with gr
     expect(wb.getWorksheet("بيانات الشركات")!.rowCount).toBe(3); // header + 2
     expect(delivered).toContain("شركة الرياض للتطوير العقاري");
     expect(delivered).toContain("Al Noor Development");
-    const review = textOf(wb.getWorksheet("سجلات تحتاج مراجعة")!);
+    const review = textOf(wb.getWorksheet("نتائج تحتاج مراجعة")!);
     for (const name of ["مكتب النخبة", "Bayt Listings", "مطاعم الواحة", "Gulf Group"]) expect(review).toContain(name);
     expect(review).not.toContain("Dubai Towers");
     expect(delivered).not.toContain("Bayt Listings");
