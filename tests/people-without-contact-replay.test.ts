@@ -46,7 +46,17 @@ const ccolumns = columnsOf(["name", "اسم الشركة"], ["city", "المدي
 /** The approved plan's people columns: name, title, company, professional page, and the e-mail and phone MARKED with a kind. */
 const pcolumns = columnsOf(["full_name", "الاسم"], ["job_title", "المسمى الوظيفي"], ["company", "الشركة"], ["linkedin", "الملف المهني للشخص"], ["email", "الإيميل", "work_email"], ["phone", "رقم التليفون", "phone"]);
 
-const planFlow = (): FakeStep[] => [
+const planArgs = (res: Results, assumptions?: string[]) => ({
+      summary_ar: "ستحصل على ٥ شركات مصرية في الكهروميكانيكا، ومع كل شركة أبرز صناع القرار فيها بالاسم والمسمى الوظيفي وصفحتهم المهنية.",
+      assumptions_ar: assumptions ?? ["صناع القرار: المدير التنفيذي والمدير العام والعضو المنتدب أولًا، ثم المديرون ورؤساء الأقسام."],
+      stages: [
+        { key: "companies", title_ar: "شركات مصرية في المعدات الكهربائية والميكانيكية", endpoint_id: COMPANIES, expected_rows: 5, parent_key: null, deliver: true, columns: ccolumns,
+          sample_rows: [{ id: linkedinOf("orascom-em"), name: "Orascom Electromechanical", city: "Cairo", website: "orascom-em.com.eg", linkedin: linkedinOf("orascom-em") }], measured_by: [callIds(res)[0], firstOutputId(res)] },
+        { key: "people", title_ar: "موظفو كل شركة", endpoint_id: PEOPLE, expected_rows: 10, parent_key: "companies", per_parent_rows: 2, deliver: true, columns: pcolumns,
+          sample_rows: [{ id: "https://www.linkedin.example/in/orascom-em-2", full_name: "Karim orascom", job_title: "Chief Executive Officer", company: "orascom-em co", linkedin: "https://www.linkedin.example/in/orascom-em-2", email: "", phone: "" }], measured_by: [callIds(res)[1]] },
+      ],
+});
+const planFlow = (firstAttempt?: { assumptions_ar: string[] }): FakeStep[] => [
   { tool: "report_progress", args: { message_ar: "أبحث عن الشركات ومسؤوليها", counts: { sources: 2 } } },
   { tool: "catalog_search", args: { words: ["companies", "search"], limit: 5 } },
   { tool: "describe_endpoint", args: { id: COMPANIES } },
@@ -55,24 +65,13 @@ const planFlow = (): FakeStep[] => [
   { tool: "describe_endpoint", args: { id: PEOPLE } },
   { tool: "treg_call", args: { endpoint_id: PEOPLE, params: { company_linkedin_url: linkedinOf("orascom-em"), cascade: [{ include_title: ["Chief Executive Officer", "Managing Director", "General Manager", "Chairman"] }, { include_title: ["Director", "Head of", "Manager"] }], max_results: 10 }, why } },
   { tool: "run_code", args: (r: Results) => ({ code: "return inputs.call_0002.results.map(r => { const p = r.person || {}; const exp = (p.experiences && p.experiences[0]) || {}; return { id: p.linkedin_url, full_name: p.full_name, job_title: exp.job_title || '', company: exp.company_name || '', linkedin: p.linkedin_url, email: '', phone: '' }; })", files: [callIds(r)[1]] }) },
-  {
-    tool: "propose_plan",
-    args: (res: Results) => ({
-      summary_ar: "ستحصل على ٥ شركات مصرية في الكهروميكانيكا، ومع كل شركة أبرز صناع القرار فيها بالاسم والمسمى الوظيفي وصفحتهم المهنية.",
-      assumptions_ar: ["صناع القرار: المدير التنفيذي والمدير العام والعضو المنتدب أولًا، ثم المديرون ورؤساء الأقسام."],
-      stages: [
-        { key: "companies", title_ar: "شركات مصرية في المعدات الكهربائية والميكانيكية", endpoint_id: COMPANIES, expected_rows: 5, parent_key: null, deliver: true, columns: ccolumns,
-          sample_rows: [{ id: linkedinOf("orascom-em"), name: "Orascom Electromechanical", city: "Cairo", website: "orascom-em.com.eg", linkedin: linkedinOf("orascom-em") }], measured_by: [callIds(res)[0], firstOutputId(res)] },
-        { key: "people", title_ar: "موظفو كل شركة", endpoint_id: PEOPLE, expected_rows: 10, parent_key: "companies", per_parent_rows: 2, deliver: true, columns: pcolumns,
-          sample_rows: [{ id: "https://www.linkedin.example/in/orascom-em-2", full_name: "Karim orascom", job_title: "Chief Executive Officer", company: "orascom-em co", linkedin: "https://www.linkedin.example/in/orascom-em-2", email: "", phone: "" }], measured_by: [callIds(res)[1]] },
-      ],
-    }),
-  },
+  ...(firstAttempt ? [{ tool: "propose_plan", args: (res: Results) => planArgs(res, firstAttempt.assumptions_ar) }] : []),
+  { tool: "propose_plan", args: (res: Results) => planArgs(res) },
 ];
-async function run() {
+async function run(firstAttempt?: { assumptions_ar: string[] }) {
   return replay({
     request,
-    planning: planFlow(),
+    planning: planFlow(firstAttempt),
     execution: () => [],
     answers: [tregResult(companiesPage, 0.0005), tregResult(peopleOfCompany("orascom-em"), 0.0005), tregResult(companiesPage, 0.0005), ...Array.from({ length: 12 }, () => peopleAnswer)],
   });
@@ -195,5 +194,19 @@ describe("A2 shape (petroleum): 41 rows read, 9 repeats, 32 distinct people with
     await ingestRows(deps, (plan as any).stages[2], [{ id: "e1", parent_id: "pc1-p2", email: "someone@gmail.com" }], { silent: true, idField: null });
     expect(items.counts("emails").accepted).toBe(0);
     expect(items.counts("emails").excludedByReason.no_verified_contact).toBe(1);
+  });
+});
+
+describe("the planner's first plan said the people come only with a verified contact: it is sent back, and the plan that settles keeps every person", () => {
+  it("the conditional sentence is refused by the plan check; the corrected plan is accepted and delivers the 10 people", async () => {
+    const r = await run({ assumptions_ar: ["نسلّم المديرين فقط إذا ظهر لهم إيميل أو تليفون تحقق منه النظام."] });
+    const proposals = r.planningDriver.results.filter((x) => x.tool === "propose_plan");
+    expect(proposals).toHaveLength(2);
+    expect(proposals[0].result.ok).toBe(false);
+    expect(JSON.stringify(proposals[0].result)).toMatch(/conditional on a verified e-mail or phone/);
+    expect(proposals[1].result.ok).toBe(true);
+    const snap = await readSnapshot(r.store, r.missionId);
+    expect(snap.counts("people").accepted).toBe(10);
+    expect(r.mission.delivered_units).toBe(15);
   });
 });

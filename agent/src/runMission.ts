@@ -38,6 +38,7 @@ import { createReviewer, readReviewState, type ReviewCall } from "./review";
 import type { TokenUsage } from "./llmCost";
 import { buildExcludedAdminCsv, buildMissionFiles, type CompanyMailboxes, type ExcludedRow } from "./workbook";
 import { isPeopleStage, mailboxesOf } from "../../src/lib/agentMission/people";
+import { availableContactAnswerNote } from "../../src/lib/agentMission/contactQuestion";
 import { missionFactsOf } from "./methodology";
 import { missionFileTitleAr } from "../../src/lib/agentMission/fileNames";
 import { itemNounOf, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
@@ -93,7 +94,8 @@ export const endedSilently = (output: { stop?: string; error?: string }, state: 
 
 /** Everything the agent is told at the start of a PLANNING run. */
 export function planningPrompt(mission: MissionRecord, calls: CallRow[]): string {
-  const answer = mission.answer_text ? `\n\nYou asked the customer one question and they answered: «${mission.answer_text}». Do not ask again.` : "";
+  const followAnswer = availableContactAnswerNote(mission.answer_text);
+  const answer = mission.answer_text ? `\n\nYou asked the customer one question and they answered: «${mission.answer_text}». Do not ask again.${followAnswer ? ` ${followAnswer}` : ""}` : "";
   return `The customer's mission (Arabic):\n«${mission.request_text}»${answer}\n\n${savedCallsNote(calls)}\n\nPlan it now.`;
 }
 
