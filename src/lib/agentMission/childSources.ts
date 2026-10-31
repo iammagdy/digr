@@ -82,7 +82,7 @@ export function linkableCompanySources(catalog: TregCatalog, isAllowed: (id: str
 }
 
 /** Stems of the nouns that name the PEOPLE of a company («موظفين», «المديرين», «مسؤولين», «صناع القرار»), compared after normalizing and without «ال». */
-const PEOPLE_STEMS = ["موظف", "مدير", "مدرا", "مسول", "مسوول", "مسيول", "مسئول", "مسؤول", "اشخاص", "شخص", "صانع", "صناع", "قيادي", "رئيس", "تنفيذي", "مؤسس", "اداري", "عضو", "اعضاء"];
+const PEOPLE_STEMS = ["موظف", "مدير", "مدرا", "مسول", "مسوول", "مسيول", "مسئول", "مسؤول", "اشخاص", "شخص", "صانع", "صناع", "قيادي", "رئيس", "تنفيذي", "مؤسس", "اداري", "عضو", "اعضاء", "مسمي"];
 export const isPeopleNoun = (noun: string): boolean => {
   const w = normalizeText(String(noun ?? "")).replace(/^(?:ال|لل)/, "");
   return PEOPLE_STEMS.some((s) => w.startsWith(normalizeText(s)));

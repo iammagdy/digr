@@ -189,6 +189,11 @@ export const AGENT_PRICING_BASIS = DEFAULT_PRICING_BASIS;
 export const AGENT_RESERVE_MARGIN = 1 + DEFAULT_PRICING_BASIS.safetyBuffer;
 export const AGENT_JOB_POINTS_CAP = JOB_MAX_POINTS_CAP;
 /**
+ * THE DEFAULT COUNT OF PEOPLE PER COMPANY (when the customer named the people but gave no number) never makes a plan dearer than this: code lowers it, down to one per company, until the hold fits. It is NOT a job cap and refuses nothing
+ * (the cap above is unchanged); a customer who wants more people edits the count on the card, and a number the customer gave is never lowered.
+ */
+export const AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS = 600;
+/**
  * THE MODEL'S SHARE OF A MISSION'S PRICE (estimates the quote adds to the provider cost; the real model cost of every mission is stored and compared with them on the admin page).
  * Where they come from (the missions table, 2026-10-28): planning cost 0.0070 (300 tweets), 0.0183 (three companies and their staff); execution 0.0037 for one stage, 0.0070 for two; so planning 0.012 USD (between
  * the two), execution 0.005 USD per stage (rounded up from 0.0037 and 0.0035 per stage). The review of one uncertain row by the small model is about 120 input and 12 output tokens at the list price of the

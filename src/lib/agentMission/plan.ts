@@ -1,4 +1,4 @@
-import { AGENT_MAX_DELIVERED_ROWS, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE } from "./constants";
+import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE } from "./constants";
 import { CONTACT_KINDS, requestWantsContacts, type ContactKind } from "./contacts";
 import { estimateMissionMinutes, measuredCostPerRowUsd, priceMissionByCode, type MissionPriceResult } from "./price";
 import { classifyRows, searchQueryOf, validateRelevanceSpec, type RelevanceSpec } from "./relevance";
@@ -6,7 +6,8 @@ import { minimumLineAr, type MissionPricingSettings } from "../missionPricing";
 import { checkCustomerLabel, checkCustomerText } from "./text";
 import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type SourceField } from "./fields";
 import { neutralPeopleTitleAr, roleLineAr, roleOfNoun, type RoleKey } from "./roles";
-import { bindQuantity, bindQuantityDetailed, countedQuantities, ownTitleWords, perParentAskFor, perParentAskOf, perParentQuantities, perSourceQuantities, requestedStageIndexes, sameNounStem, unservedPerParentAsks } from "./quantity";
+import { toArabicDigits } from "../arabicDigits";
+import { DEFAULT_PEOPLE_PER_PARENT, bindQuantity, bindQuantityDetailed, countedQuantities, ownTitleWords, perParentAskFor, perParentAskOf, perParentQuantities, perSourceQuantities, requestedStageIndexes, sameNounStem, unservedPerParentAsks } from "./quantity";
 import { itemNounOf } from "./itemNoun";
 import { isTextItemStage, textKeyOf } from "./contract";
 import { childCardTitleAr, childRuleLinesAr } from "./childItems";
@@ -183,7 +184,7 @@ export interface PlanQuantity {
 
 /** A stage that promises videos (or images) whose measured page does not prove them: the planner is sent to the catalog's media sources before the card says so. */
 export interface MediaUnproven { stage_key: string; endpoint_id: string; media: MediaKind; why: "no_field" | "no_proof" }
-export type PlanCheck = { ok: true; plan: PricedPlan; mediaUnproven?: MediaUnproven[] } | { ok: false; issues: string[] };
+export type PlanCheck = { ok: true; plan: PricedPlan; mediaUnproven?: MediaUnproven[] } | { ok: false; issues: string[]; /** The plan passes the job limit only with fewer people per company than the default: code tries the next lower count. */ lowerImplied?: boolean };
 
 const KEY_RE = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
 const MAX_ASSUMPTIONS = 6;
@@ -248,7 +249,18 @@ export function deliveryConsistencyIssues(stages: ReadonlyArray<Pick<PricedStage
   return issues;
 }
 
+/**
+ * THE CHECK AND THE PRICE OF A PLAN. When the customer named the people of the companies with no number, the count per company is code's default (quantity.ts); if the plan would then pass the job limit, code tries one person fewer per company, down to one
+ * (the limit is never raised, and the number the customer gave is never lowered). The card says which count was used.
+ */
 export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCheck {
+  for (let count = DEFAULT_PEOPLE_PER_PARENT; ; count -= 1) {
+    const checked = validateAndPricePlanWith(input, lookup, count);
+    if (checked.ok || !checked.lowerImplied || count <= 1) return checked;
+  }
+}
+
+function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCount: number): PlanCheck {
   const issues: string[] = [];
   if (!isRecord(input)) return { ok: false, issues: ["the plan must be an object"] };
   const stagesIn = Array.isArray(input.stages) ? input.stages : [];
@@ -272,10 +284,12 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
   const bound = bound0 ?? (perSourceAsk && perSourceStage >= 0 ? { index: perSourceStage, value: perSourceAsk.value * accountValuesOf(stagesIn[perSourceStage]), named: true } : null);
   let quantity: PlanQuantity | undefined;
   // what the request asks PER PARENT item (the steps that hang on another step): read by code, never by the model
-  const perParentAsks = perParentQuantities(`${lookup.requestText ?? ""} ${lookup.answerText ?? ""}`);
+  const perParentAsks = perParentQuantities(`${lookup.requestText ?? ""} ${lookup.answerText ?? ""}`, { impliedPerParent: impliedCount });
+  /** The implied ask (people of the companies, no number) a child stage of this plan serves: its count is code's default and the card says so. */
+  let impliedUsed: { noun: string; parent: string } | null = null;
   // THE STAGES WHOSE ITEMS THE CUSTOMER ASKED FOR (the counted noun and every per-parent noun) ARE DELIVERED, whatever the model marked: only items nobody asked for may be an intermediate stage (checked again below, on the finished plan)
   const stageRefs = stagesIn.map((st, index) => ({ index, title_ar: isRecord(st) ? String(st.title_ar ?? "") : "", parent_key: isRecord(st) && st.parent_key !== null && st.parent_key !== undefined && st.parent_key !== "" ? String(st.parent_key) : null }));
-  const requestedStages = new Set<number>([...requestedStageIndexes(quantityText, stageRefs), ...requestedStageIndexes(`${lookup.requestText ?? ""} ${lookup.answerText ?? ""}`, stageRefs)]);
+  const requestedStages = new Set<number>([...requestedStageIndexes(quantityText, stageRefs, { impliedPerParent: impliedCount }), ...requestedStageIndexes(`${lookup.requestText ?? ""} ${lookup.answerText ?? ""}`, stageRefs, { impliedPerParent: impliedCount })]);
   /** How much the quantity changed the rows of a stage: the stages that hang on it follow in proportion. */
   const rowScale = new Map<string, number>();
 
@@ -324,6 +338,7 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
     // THE ROLE THE CUSTOMER NAMED among the people of each parent («اتنين من المديرين»): code ranks them by the job title the source gives
     const askedOf = isChild ? perParentAskOf(perParentAsks, title.text, stagesIn.filter((x) => isRecord(x) && x.parent_key !== null && x.parent_key !== undefined && x.parent_key !== "").length) : null;
     const roleOf = askedOf ? roleOfNoun(askedOf.of ?? askedOf.noun) : null;
+    if (askedOf?.implied) impliedUsed = { noun: askedOf.noun ?? "", parent: askedOf.parent ?? "" };
     if (parentKey !== null) {
       if (!planned.has(parentKey)) issues.push(`${label}: parent «${parentKey}» must be an EARLIER stage`);
 
@@ -580,6 +595,8 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
     if (!Array.isArray(input.assumptions_ar) || input.assumptions_ar.length > MAX_ASSUMPTIONS) issues.push(`assumptions_ar: at most ${MAX_ASSUMPTIONS} short Arabic lines`);
     else for (const a of input.assumptions_ar) { const c = checkCustomerText(a, { maxChars: 160 }); if (c.issues.length) issues.push(`assumptions_ar: ${c.issues.join("; ")}`); else assumptions.push(c.text); }
   }
+  // THE COUNT THE CUSTOMER DID NOT GIVE is said on the card, where they can change it («عدّل الطلب»)
+  if (impliedUsed) assumptions.push(`لم تحدد عدد ${impliedUsed.noun} لكل ${itemNounOf(impliedUsed.parent).singular}، فاعتمدنا ${toArabicDigits(impliedCount)}؛ تقدر تغيّره من «عدّل الطلب».`);
   for (const st of priced) if (st.relevance && !assumptions.some((a) => a.includes(st.relevance!.subject_ar))) assumptions.unshift(`المقصود: ${st.relevance.subject_ar}.`);
   // the other meanings of the name that the plan excludes by rule (a namesake, a title) are said on the card, one line per stage
   for (const st of priced) {
@@ -600,7 +617,9 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
   if (issues.length) return { ok: false, issues };
 
   const price = priceMissionByCode(stagePriceInputs(priced), { settings: lookup.pricingSettings });
-  if (price.overCap) return { ok: false, issues: [`the mission would hold ${price.reservePoints} points, more than the job limit; lower the expected rows`] };
+  if (price.overCap) return { ok: false, issues: [`the mission would hold ${price.reservePoints} points, more than the job limit; lower the expected rows`], ...(impliedUsed && impliedCount > 1 ? { lowerImplied: true } : {}) };
+  // the DEFAULT count of people per company is lowered (one fewer at a time, down to one) while the hold is above the target; the cap itself is not touched
+  if (impliedUsed && impliedCount > 1 && price.reservePoints > AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS) return { ok: false, issues: [`the default count of people per company makes the hold ${price.reservePoints} points`], lowerImplied: true };
   // THE TITLE OF A PEOPLE STAGE THAT ONLY RANKS BY ROLE does not promise the role (roles.ts); done last, so the checks above still read the noun the model wrote
   for (const st of priced) if (st.role_preference && st.parent_key !== null) st.title_ar = neutralPeopleTitleAr(st.title_ar, st.role_preference.role, itemNounOf(priced.find((p) => p.key === st.parent_key)?.title_ar ?? "").singular);
   return { ok: true, plan: { summary_ar: summary.text, stages: priced, price, ...(notes.length ? { notes_ar: notes } : {}), ...(assumptions.length ? { assumptions_ar: assumptions } : {}), ...(quantity ? { quantity } : {}), ...(unserved.length ? { unserved_steps: unserved } : {}) }, ...(mediaUnproven.length ? { mediaUnproven } : {}) };
@@ -634,6 +653,9 @@ export interface PlanEditorView {
     key: string;
     title_ar: string;
     target: number;
+    /** A stage that hangs on another (the people of each company): the number of its items per item of the parent, which the customer can change. */
+    per_parent?: number;
+    per_parent_label_ar?: string;
     columns: Array<{ key: string; title_ar: string; on: boolean; locked: boolean }>;
     filters: Array<{ kind: StageFilter["kind"]; label_ar: string; enabled: boolean; line_ar: string; lang?: "ar" | "en"; days?: number }>;
   }>;
@@ -662,6 +684,7 @@ export function planEditorView(plan: PricedPlan): PlanEditorView {
       const locked = lockedColumnKeys(s);
       return {
         key: s.key, title_ar: s.title_ar, target: s.planned_rows,
+        ...(s.parent_key !== null && s.deliver && s.per_parent_rows ? { per_parent: s.per_parent_rows, per_parent_label_ar: `عدد «${s.title_ar}» لكل ${itemNounOf(plan.stages.find((p) => p.key === s.parent_key)?.title_ar ?? "").singular}` } : {}),
         columns: [...s.columns.filter((c) => !isInternalColumn(c)).map((c) => ({ key: c.key, title_ar: c.title_ar, on: true, locked: locked.has(c.key) })), ...(s.hidden_columns ?? []).map((c) => ({ key: c.key, title_ar: c.title_ar, on: false, locked: false }))],
         filters: (s.filters ?? []).map((f) => ({ kind: f.kind, label_ar: filterLabelAr(f), enabled: isEnabled(f), line_ar: filterLineAr({ ...f, enabled: true }), ...(f.lang ? { lang: f.lang } : {}), ...(f.days !== undefined ? { days: f.days } : {}) })),
       };

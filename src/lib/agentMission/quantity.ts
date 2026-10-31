@@ -1,3 +1,4 @@
+import { isPeopleNoun } from "./childSources";
 import { normalizeText } from "./relevance";
 
 /**
@@ -18,6 +19,8 @@ export interface RequestedQuantity {
   of: string | null;
   /** «١٠ تعليقات لكل فيديو»: the word after «كل» (the parent item), else null. */
   parent?: string | null;
+  /** The customer named the PEOPLE of the companies («ومعاهم صناع القرار») but gave no number: the value is the default per company, chosen by code, shown on the card and editable. */
+  implied?: boolean;
 }
 
 const ARABIC_INDIC = /[٠-٩]/g;
@@ -224,10 +227,42 @@ export function countedQuantities(text: unknown, stageTitles: ReadonlyArray<stri
 /**
  * THE NUMBERS A REQUEST GIVES PER PARENT ITEM, in reading order: «ومع كل بوست ١٠ تعليقات», «ومن كل شركة اتنين من المديرين», «١٠ ردود لكل تغريدة». Each one is a STEP of the request (the children of the items of the step before it) with the count asked for each parent.
  */
-export function perParentQuantities(text: unknown): RequestedQuantity[] {
-  return parseQuantities(text)
+export function perParentQuantities(text: unknown, options: { impliedPerParent?: number } = {}): RequestedQuantity[] {
+  const explicit = parseQuantities(text)
     .filter((q) => q.perEach && q.noun !== null && (isCountedNoun(q.noun) || (q.of !== null && isCountedNoun(q.of))))
     .map((q) => (q.of !== null && !isCountedNoun(q.noun!) ? { ...q, noun: q.of } : q));
+  // THE PEOPLE OF THE COMPANIES NAMED WITH NO NUMBER are a step all the same (live, 2026-10-31: «ومعاهم صناع القرار: اسم المدير، المسمى الوظيفي، الإيميل…» got a plan without them, because only a number made a step)
+  if (explicit.some((q) => isPeopleNoun(q.noun ?? "") || isPeopleNoun(q.of ?? ""))) return explicit;
+  const implied = impliedPeopleAsk(text, options.impliedPerParent ?? DEFAULT_PEOPLE_PER_PARENT);
+  return implied ? [...explicit, implied] : explicit;
+}
+
+/** The people of each company when the customer gave no number: two, the same as «اتنين من المديرين». Code lowers it (never the job limit) when two would not fit, and the customer edits it on the card. */
+export const DEFAULT_PEOPLE_PER_PARENT = 2;
+const JOB_TITLE_STEM = "مسمي";
+const COMPANY_NOUN = /^(?:شرك)/;
+const tokensOf = (text: unknown): string[] => String(text ?? "").split(/[\s،,:؛;.!؟?()\-–—/]+/).filter(Boolean);
+const bare = (w: string): string => bareWord(norm(w).replace(/^و(?=.{3,})/, ""));
+
+/**
+ * «عايز ٥ شركات ... ومعاهم صناع القرار: اسم المدير، المسمى الوظيفي»: the top-level noun is a company and the request names the people of the companies (a people noun after it) without a number. Null when the request counts
+ * people at the top («٥٠ مدير تسويق»), names no people, or asks only for the company's own contacts («وإيميلاتهم»).
+ */
+export function impliedPeopleAsk(text: unknown, value: number): RequestedQuantity | null {
+  const top = countedQuantities(text)[0];
+  if (!top || !top.noun || !COMPANY_NOUN.test(bare(top.noun)) || isPeopleNoun(top.noun)) return null;
+  const tokens = tokensOf(text);
+  const at = tokens.findIndex((t) => bare(t) === bare(top.noun!));
+  const after = at >= 0 ? tokens.slice(at + 1) : tokens;
+  const strong = after.findIndex((t) => isPeopleNoun(bare(t)) && !bare(t).startsWith(JOB_TITLE_STEM));
+  const titleOnly = strong < 0 ? after.findIndex((t) => bare(t).startsWith(JOB_TITLE_STEM)) : -1;
+  if (strong < 0 && titleOnly < 0) return null;
+  let noun: string;
+  if (strong >= 0) {
+    const word = after[strong].replace(/^و(?=.{3,})/, "");
+    noun = bare(word).startsWith("صناع") && after[strong + 1] && bare(after[strong + 1]).startsWith("قرار") ? `${word} ${after[strong + 1]}` : word;
+  } else noun = "المسمى الوظيفي";
+  return { value, noun, digits: false, perEach: true, of: null, parent: top.noun, implied: true };
 }
 
 /** The words that name a SOURCE the customer lists («٥ فيديوهات من كل قناة»: the channel is a source, not a step of the plan): channel, account, page, source. */
@@ -313,12 +348,12 @@ export interface RequestedStageRef { index: number; title_ar: string; parent_key
  * `perParentQuantities`). A stage may be an intermediate one (read, never delivered) only when the customer did not ask for its items. Live run of 2026-10-29 after #294: the videos were forced to be delivered but the comments were kept as an
  * intermediate stage («لم تُسلَّم (مرحلة وسيطة)»), and the same for the managers of the companies: the customer paid for a file without what they asked for. Pure.
  */
-export function requestedStageIndexes(text: unknown, stages: ReadonlyArray<RequestedStageRef>): Set<number> {
+export function requestedStageIndexes(text: unknown, stages: ReadonlyArray<RequestedStageRef>, options: { impliedPerParent?: number } = {}): Set<number> {
   const out = new Set<number>();
   if (stages.length === 0) return out;
   const bound = bindQuantityDetailed(text, stages.map((s) => ({ index: s.index, title_ar: s.title_ar, deliver: false })));
   if (bound?.named) out.add(bound.index);
-  const asks = perParentQuantities(text);
+  const asks = perParentQuantities(text, options);
   const childCount = stages.filter((s) => s.parent_key !== null).length;
   for (const s of stages) {
     const own = ownTitleWords(s.title_ar);
