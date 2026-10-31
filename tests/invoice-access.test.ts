@@ -184,8 +184,9 @@ describe("the SQL: RLS on, nothing for customers, writes only through the functi
     for (const t of tables) expect(sql, t).toContain(`ALTER TABLE public.${t} ENABLE ROW LEVEL SECURITY;`);
     const revoke = /REVOKE ALL ON TABLE ([\s\S]*?) FROM PUBLIC, anon, authenticated, service_role;/.exec(sql)?.[1] ?? "";
     for (const t of tables) expect(revoke, t).toContain(`public.${t}`);
-    expect(sql).not.toMatch(/CREATE POLICY/i);
-    expect(sql).not.toMatch(/GRANT[^;]*TO[^;]*\b(anon|authenticated|PUBLIC)\b/i);
+    const statements = sql.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n"); // statements only: the comments explain the rules in words
+    expect(statements).not.toMatch(/CREATE POLICY/i);
+    expect(statements).not.toMatch(/GRANT[^;]*TO[^;]*\b(anon|authenticated|PUBLIC)\b/i);
   });
 
   it("service_role can read every table but write directly only the three plain tables; documents, lines, batches, counters and the log are written by functions", () => {
@@ -198,11 +199,21 @@ describe("the SQL: RLS on, nothing for customers, writes only through the functi
   it("every function is revoked from customers and the three runtime functions are SECURITY DEFINER with a fixed search_path", () => {
     const funcs = [...sql.matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)\(/g)].map((m) => m[1]);
     expect(funcs.length).toBe(10);
-    for (const f of funcs) expect(sql, f).toMatch(new RegExp(`REVOKE ALL ON FUNCTION public\\.${f}\\([^)]*\\) FROM PUBLIC, anon, authenticated;`));
-    for (const f of ["invoice_create_document", "invoice_save_draft", "invoice_set_status"]) {
+    // every one of the 10 is revoked from PUBLIC, anon, authenticated AND service_role (the project's default privileges grant EXECUTE to all of them)
+    for (const f of funcs) expect(sql, f).toMatch(new RegExp(`REVOKE ALL ON FUNCTION public\\.${f}\\([^)]*\\) FROM PUBLIC, anon, authenticated, service_role;`));
+    const runtime = ["invoice_create_document", "invoice_save_draft", "invoice_set_status"];
+    // only the three runtime functions are granted back, and only to service_role
+    const grants = [...sql.matchAll(/GRANT EXECUTE ON FUNCTION public\.(\w+)\([^)]*\) TO (\w+);/g)].map((m) => `${m[1]}->${m[2]}`).sort();
+    expect(grants).toEqual(runtime.map((f) => `${f}->service_role`).sort());
+    for (const f of runtime) {
       const body = sql.slice(sql.indexOf(`FUNCTION public.${f}(`));
       expect(body.slice(0, 1200), f).toMatch(/SECURITY DEFINER SET search_path TO 'public', 'pg_temp'/);
-      expect(sql, f).toMatch(new RegExp(`GRANT EXECUTE ON FUNCTION public\\.${f}\\([^)]*\\) TO service_role;`));
+    }
+    // the seven others are SECURITY INVOKER (the default) and still have a fixed search_path
+    for (const f of funcs.filter((n) => !runtime.includes(n))) {
+      const head = sql.slice(sql.indexOf(`FUNCTION public.${f}(`)).split("AS $$")[0];
+      expect(head, f).not.toMatch(/SECURITY DEFINER/);
+      expect(head, f).toMatch(/SET search_path TO 'public', 'pg_temp'/);
     }
   });
 
@@ -218,6 +229,16 @@ describe("the SQL: RLS on, nothing for customers, writes only through the functi
   it("no money column is a float, numeric or money type", () => {
     const code = sql.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n").replace(/--.*$/gm, "");
     expect(code).not.toMatch(/\b(real|double precision|numeric|decimal|money|float\d?)\b/i);
+  });
+
+  it("the verify SELECT lists every table AND every function and checks EXECUTE for anon, authenticated and PUBLIC on each function", () => {
+    const verify = readFileSync(join(dir, "98_verify_after_apply.sql"), "utf8").split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+    for (const role of ["anon", "authenticated", "public", "service_role"]) expect(verify, role).toContain(`has_function_privilege('${role}', f.oid, 'EXECUTE')`);
+    for (const role of ["anon", "authenticated", "public"]) expect(verify, role).toContain(`has_table_privilege('${role}', c.oid,`);
+    expect(verify).toContain("f.prosecdef");
+    expect(verify).toContain("f.proconfig");
+    expect(verify).toMatch(/UNION ALL/); // ONE result set
+    expect(verify).toContain("AS ok");
   });
 
   it("the verify file is ONE read-only SELECT", () => {

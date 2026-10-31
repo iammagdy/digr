@@ -59,6 +59,7 @@ No wallet, ledger, balance, mission, reserve, charge, top-up, price, cap or agen
 
 Every route under `/api/admin/invoices/**` starts with `authenticateAdmin` (a test checks all 15 handlers, then checks 401 for no session and 403 for a customer or any non-admin role with no database access at all). RLS is on for the 8 new tables with **no policy**, all privileges revoked from `anon` and `authenticated`,
 and `service_role` can only READ the document tables: documents, batches, lines, the counters and the log are written by three `SECURITY DEFINER` functions only.
+All 10 invoice functions are revoked from PUBLIC, `anon`, `authenticated` and `service_role`; only the three runtime functions are granted back, to `service_role` alone (the other seven run inside them, as triggers or helpers). Every function has a fixed `search_path`. The verify SELECT checks all of this per function.
 
 ## Files
 

@@ -23,9 +23,12 @@ Each part can be run again safely (`IF NOT EXISTS`, `CREATE OR REPLACE`, `DROP T
 
 ## Check it: ONE read-only SELECT
 
-Run `98_verify_after_apply.sql`. Expected: **8 rows** (one per `invoice_*` table) and on every row
-`rls_on = true`, `policies = 0`, `anon_any_privilege = false`, `authenticated_any_privilege = false`, `customer_callable_functions = false`, `functions_present = 10`;
-`direct_write_by_service_role = true` only for `invoice_settings`, `invoice_item_types`, `invoice_clients`; `item_types_seeded = 4` the first time.
+Run `98_verify_after_apply.sql` (one statement, one result set). Expected: **18 rows** (8 tables, then 10 functions) and **`ok = true` on every row**. `ok` is computed by the query from these rules:
+
+- **tables**: `rls_on = true`, `policies = 0`, no privilege at all for `anon`, `authenticated` and `public`; `service_role_can_write_or_execute = true` only for `invoice_settings`, `invoice_item_types`, `invoice_clients`.
+- **functions** (one row each): no EXECUTE for `anon`, `authenticated` or `public`; `search_path_fixed = true` on all 10; `security_definer = true` only for `invoice_create_document`, `invoice_save_draft`, `invoice_set_status`; and only those three are executable by `service_role`.
+
+Why the explicit revokes matter: on this project a function created in `public` is executable by `anon`, `authenticated` and `service_role` by default (`pg_default_acl`), and by PUBLIC in Postgres itself. Part 05 removes all of that.
 
 ## Roll back
 
@@ -33,6 +36,6 @@ Run `98_verify_after_apply.sql`. Expected: **8 rows** (one per `invoice_*` table
 
 ## What was and was not tested
 
-`sql-check/run.mjs` ran all five parts (twice), the verify SELECT and the rollback against a throwaway embedded Postgres (PGlite, not Supabase): 76 checks,
-including the lock triggers, the privileges of `anon`, `authenticated` and `service_role`, numbering and rounding. It found one real mistake (a draft could not be voided), fixed in
+`sql-check/run.mjs` ran all five parts (twice), the verify SELECT and the rollback against a throwaway embedded Postgres (PGlite, not Supabase), applied by a non-superuser owner with the live default privileges: 136 checks,
+including the lock triggers, a call of every one of the 10 functions as `anon` and as `authenticated` (all permission denied), the privileges of `service_role`, numbering and rounding, and that the verify SELECT turns `ok = false` when any rule is broken on purpose. It found one real mistake (a draft could not be voided), fixed in
 `02_documents.sql`. **Not proven**: the same behaviour on the owner's Supabase project itself: that is what the verify SELECT is for.
