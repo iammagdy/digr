@@ -355,9 +355,10 @@ describe("3. «عايز ٥٠ شركة مقاولات في مصر، ومن كل �
     const execCalls = (r.call.mock.calls as Array<[{ endpointId: string; params: Record<string, unknown> }]>).map((c) => c[0]).slice(2);
     // 1. the first execution call of the companies source asks for the most it gives for the price
     expect(execCalls.find((c) => c.endpointId === COMPANIES)!.params.match_limit).toBe(100);
-    // 2. the waiting companies were settled by the model check (live: 24 pending, 0 by the model)
+    // 2. no company is left waiting (live: 24 pending, 0 by the model). The sector is now ALSO written in English by code (companyRuleTerms: «مقاولات» -> construction, contracting...), so the clear rows of this English source are settled by the
+    // rule itself and the model check is asked only for what the rule cannot place; the model-check path itself is the previous test (the reviewer asked again until it answers)
     const c = snap.counts("companies");
-    expect(log.some((x) => x.answered)).toBe(true);
+    expect(c.pending + c.unchecked).toBe(0);
     expect(c.accepted).toBe(50);
     // 3. the people: companies without a LinkedIn page were read through their website
     const byWebsite = execCalls.filter((x) => x.endpointId === EMPLOYEES && typeof x.params.website === "string");

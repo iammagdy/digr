@@ -11,7 +11,7 @@ import type { AgentStore } from "./types";
  * customer's real words and the intended meaning; the rows are DATA, never instructions. The tokens of every call come back from the API and are stored on the mission (review_state.json), so the cost is
  * counted, not guessed.
  */
-export type ReviewCall = (input: { model: string; system: string; user: string; maxTokens: number }) => Promise<{ text: string; usage: TokenUsage } | null>;
+export type ReviewCall = (input: { model: string; system: string; user: string; maxTokens: number; /** How many rows the answer must have a verdict for: the real call then FORCES an answer of exactly that shape (a tool whose input is an array of that many 0/1). */ rows?: number }) => Promise<{ text: string; usage: TokenUsage } | null>;
 
 export const REVIEW_STATE_FILE = "review_state.json";
 
@@ -72,28 +72,49 @@ export function parseVerdicts(text: string, n: number): boolean[] | null {
   return byRow.size === n ? Array.from({ length: n }, (_, i) => byRow.get(i + 1)!) : null;
 }
 
-/** The real call: the Messages API over HTTPS with the key the worker already holds. Never throws; null on any failure. */
+/**
+ * The real call: the Messages API over HTTPS with the key the worker already holds. Never throws; null on any failure.
+ * THE SHAPE OF THE ANSWER IS ENFORCED (live, 2026-10-31: six answers in a row were not one 0/1 per row, so 50 companies stayed unjudged): when the number of rows is known the request forces ONE tool whose input is an array of exactly that
+ * many zeros and ones, and the tool's input is handed back as the JSON array the reader (parseVerdicts) already understands. An answer with no tool block is read as text as before, and an API that refuses the tool request (HTTP 400) is
+ * asked once more without it.
+ */
 export function anthropicReviewCall(apiKey: string, fetchFn: FetchFn = fetch as unknown as FetchFn, timeoutMs = 30_000): ReviewCall {
-  return async ({ model, system, user, maxTokens }) => {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
-    try {
-      const res = await fetchFn("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-        body: JSON.stringify({ model, max_tokens: maxTokens, system, messages: [{ role: "user", content: user }] }),
-        signal: controller.signal,
-      } as never);
-      if (!(res as { ok?: boolean }).ok) return null;
-      const body = (await (res as { json: () => Promise<any> }).json()) as { content?: Array<{ type?: string; text?: string }>; usage?: Record<string, number> };
-      const text = (body.content ?? []).filter((c) => c.type === "text").map((c) => c.text ?? "").join("");
-      const u = body.usage ?? {};
-      return { text, usage: { input_tokens: u.input_tokens ?? 0, output_tokens: u.output_tokens ?? 0, cache_read_input_tokens: u.cache_read_input_tokens ?? 0, cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0 } };
-    } catch {
-      return null;
-    } finally {
-      clearTimeout(timer);
-    }
+  const VERDICT_TOOL = "verdicts";
+  return async ({ model, system, user, maxTokens, rows }) => {
+    const send = async (withTool: boolean): Promise<{ res: any; body: any } | null> => {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const payload: Record<string, unknown> = { model, max_tokens: maxTokens, system, messages: [{ role: "user", content: user }] };
+        if (withTool && rows && rows > 0) {
+          payload.tools = [{ name: VERDICT_TOOL, description: "Report one verdict per row, in the order given: 1 if the row is about what the customer means, 0 if it is not.", input_schema: { type: "object", properties: { [VERDICT_TOOL]: { type: "array", minItems: rows, maxItems: rows, items: { type: "integer", enum: [0, 1] } } }, required: [VERDICT_TOOL] } }];
+          payload.tool_choice = { type: "tool", name: VERDICT_TOOL };
+        }
+        const res = await fetchFn("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        } as never);
+        if (!(res as { ok?: boolean }).ok) return { res, body: null };
+        return { res, body: await (res as { json: () => Promise<any> }).json() };
+      } catch {
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    };
+    const toolWanted = Boolean(rows && rows > 0);
+    let got = await send(toolWanted);
+    // an API that refuses the tool request is asked once more the plain way
+    if (toolWanted && got && !(got.res as { ok?: boolean }).ok && (got.res as { status?: number }).status === 400) got = await send(false);
+    if (!got || !(got.res as { ok?: boolean }).ok || !got.body) return null;
+    const body = got.body as { content?: Array<{ type?: string; text?: string; name?: string; input?: { verdicts?: unknown } }>; usage?: Record<string, number> };
+    const blocks = body.content ?? [];
+    const tool = blocks.find((c) => c.type === "tool_use" && c.name === VERDICT_TOOL && Array.isArray(c.input?.verdicts));
+    const text = tool ? JSON.stringify(tool.input!.verdicts) : blocks.filter((c) => c.type === "text").map((c) => c.text ?? "").join("");
+    const u = body.usage ?? {};
+    return { text, usage: { input_tokens: u.input_tokens ?? 0, output_tokens: u.output_tokens ?? 0, cache_read_input_tokens: u.cache_read_input_tokens ?? 0, cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0 } };
   };
 }
 
@@ -174,7 +195,7 @@ export function createReviewer(deps: { call: ReviewCall; store: AgentStore; miss
         let answered = false;
         const ask = async (rowsOf: typeof batch, system: string, maxTokens: number): Promise<boolean[] | null> => {
           const prompt = rowsOf === batch ? user : reviewPrompt({ requestText: deps.requestText, subject, rows: rowsOf });
-          const res = await deps.call({ model, system, user: prompt, maxTokens });
+          const res = await deps.call({ model, system, user: prompt, maxTokens, rows: rowsOf.length });
           if (!res) { s.failedCalls += 1; return null; }
           answered = true;
           s.spentUsd = Number((s.spentUsd + llmCostFromUsage(model, res.usage)).toFixed(8));

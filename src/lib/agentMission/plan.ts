@@ -14,7 +14,7 @@ import { platformCostNotesAr } from "./platformNotes";
 import type { DateWindow } from "./dateWindow";
 import { unresolvedSourcesLineAr } from "./namedSources";
 import { APPROX_DATES_CARD_LINE_AR } from "./relativeDates";
-import { isCompanyStage, isEntityStage, requestNamesSector, sectorEnglishWords, sectorWordsOf } from "./entities";
+import { companyRuleTerms, isCompanyStage, isEntityStage, requestNamesSector, sectorEnglishWords, sectorWordsOf } from "./entities";
 import { placeEntry, placeLabelsAr, placesInText } from "./places";
 import { excludesGovernment } from "./government";
 import { isMediaCapability, keySaysMedia, rawMediaProof, requestedMedia, type MediaKind } from "./mediaProof";
@@ -413,7 +413,8 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
       const checkedRel = validateRelevanceSpec(raw.relevance, cleanColumns.map((c) => c.key));
       if (!checkedRel.ok) issues.push(...checkedRel.issues.map((m) => `${label}: ${m}`));
       else {
-        relevance = companyStage ? { ...checkedRel.spec, entity: true } : checkedRel.spec;
+        // a COMPANY stage's terms are the sector in Arabic AND English with the request's frame words taken out (entities.ts): the model's own list is kept, never trusted alone
+        relevance = companyStage ? { ...checkedRel.spec, entity: true, terms: companyRuleTerms(checkedRel.spec.terms, requestWords) } : checkedRel.spec;
         const yieldId = String(raw.yield_from ?? "");
         const yieldText = yieldId ? lookup.evidenceText(yieldId) : null;
         let sampleRows: Array<Record<string, unknown>> | null = null;
