@@ -1,6 +1,6 @@
 import { computeTotals, toFrozenPayload } from "@/lib/invoices/totals";
 import { CREDIT_VALUE_DEFAULT_E4, CREDIT_VALUE_MAX_E4, CREDIT_VALUE_MIN_E4, parseScaled } from "@/lib/invoices/money";
-import { documentInputSchema, inputFromDoc, parseInput, toSqlPayload, type DocumentInput } from "@/lib/invoices/validate";
+import { documentInputSchema, inputFromDoc, normalizeForStatement, parseInput, toSqlPayload, type DocumentInput } from "@/lib/invoices/validate";
 import type { DocType, DocView, ListItem, SellerBlock, StatusEvent } from "@/lib/invoices/types";
 import { todayCairo } from "@/lib/invoices/dates";
 import { rowToDoc, rowToEvent, rowToListItem } from "./rows";
@@ -30,6 +30,7 @@ const DB_ERRORS: Record<string, [number, string]> = {
   invoice_too_large: [400, "عدد البنود أو المراحل أكبر من الحد المسموح."],
   invoice_unknown_batch: [400, "بند يشير إلى مرحلة غير موجودة."],
   invoice_frozen_required: [400, "تعذّر تثبيت الأرقام. راجع سعر الصرف وأعد المحاولة."],
+  invoice_statement_no_prices: [400, "بيان البيانات لا يحتوي على أسعار."],
 };
 
 /** Turns a database error into an Arabic InvoiceError (never the raw message, never a table or column name). */
@@ -73,17 +74,27 @@ export async function getSettings(db: InvoiceDb): Promise<InvoiceSettings> {
   };
 }
 
-export async function updateSeller(db: InvoiceDb, adminId: string, input: { sellerName: string; sellerEmail: string; sellerWebsite: string; sellerTaxNumber: string; sellerCommercialRegister: string }): Promise<void> {
+export async function updateSeller(db: InvoiceDb, adminId: string, input: { sellerName: string; sellerEmail: string; sellerWebsite: string; sellerTaxNumber: string; sellerCommercialRegister: string; rateE4?: number | null }): Promise<void> {
   await ok(db.from("invoice_settings").update({
+    ...(input.rateE4 === undefined ? {} : { last_rate_egp_per_usd_e4: input.rateE4 }),
     seller_name_ar: input.sellerName, seller_email: input.sellerEmail, seller_website: input.sellerWebsite,
     seller_tax_number: input.sellerTaxNumber || null, seller_commercial_register: input.sellerCommercialRegister || null,
     updated_at: new Date().toISOString(), updated_by: adminId,
   }).eq("id", true));
 }
 
-async function rememberRate(db: InvoiceDb, rateE4: number | null): Promise<void> {
+/**
+ * The SAVED rate (settings, editable there) is what every new document starts from, silently. The first time a rate is typed on a document and none is saved yet,
+ * it becomes the saved rate; after that a document's own rate never overwrites it (changing the saved rate is a deliberate act in the settings).
+ */
+async function rememberRateIfEmpty(db: InvoiceDb, rateE4: number | null): Promise<void> {
   if (rateE4 === null) return;
-  try { await db.from("invoice_settings").update({ last_rate_egp_per_usd_e4: rateE4 }).eq("id", true); } catch { /* only a convenience */ }
+  try {
+    const rows = await ok<any[]>(db.from("invoice_settings").select("last_rate_egp_per_usd_e4").limit(1));
+    if (rows?.[0]?.last_rate_egp_per_usd_e4 === null || rows?.[0]?.last_rate_egp_per_usd_e4 === undefined) {
+      await db.from("invoice_settings").update({ last_rate_egp_per_usd_e4: rateE4 }).eq("id", true);
+    }
+  } catch { /* only a convenience */ }
 }
 
 // ---------- reading documents ----------
@@ -106,7 +117,7 @@ export async function listDocuments(db: InvoiceDb, f: ListFilter = {}): Promise<
   const offset = Math.max(Math.floor(f.offset ?? 0), 0);
   let query = db.from("invoice_documents").select("*").order("created_at", { ascending: false });
   if (f.status && ["draft", "sent", "paid", "void"].includes(f.status)) query = query.eq("status", f.status);
-  if (f.docType && ["quote", "invoice"].includes(f.docType)) query = query.eq("doc_type", f.docType);
+  if (f.docType && ["quote", "invoice", "statement"].includes(f.docType)) query = query.eq("doc_type", f.docType);
   if (f.clientId) query = query.eq("client_id", f.clientId);
   const rows = await ok<any[]>(query.range(offset, offset + limit - 1));
   const needle = (f.q ?? "").trim().toLowerCase();
@@ -135,11 +146,12 @@ export async function listDocuments(db: InvoiceDb, f: ListFilter = {}): Promise<
 // ---------- writing documents (every write is one SQL function call) ----------
 
 export async function createDocument(db: InvoiceDb, adminId: string, docType: DocType, input: DocumentInput, pricing: PricingSettings, extra: { convertedFrom?: string; duplicatedFrom?: string; creditValueE4?: number } = {}): Promise<string> {
-  const payload = toSqlPayload(input, { creditValueE4: extra.creditValueE4 ?? pricing.creditValueE4, instapayAddress: pricing.instapayAddress });
+  const clean = docType === "statement" ? normalizeForStatement(input) : input;
+  const payload = toSqlPayload(clean, { creditValueE4: extra.creditValueE4 ?? pricing.creditValueE4, instapayAddress: pricing.instapayAddress });
   const id = await ok<string>(db.rpc("invoice_create_document", {
     p_admin: adminId, p_type: docType, p_payload: payload, p_converted_from: extra.convertedFrom ?? null, p_duplicated_from: extra.duplicatedFrom ?? null,
   }));
-  await rememberRate(db, input.rateE4);
+  await rememberRateIfEmpty(db, input.rateE4);
   return id;
 }
 
@@ -153,9 +165,10 @@ export async function saveDraft(db: InvoiceDb, adminId: string, id: string, inpu
   const row = await currentRow(db, id);
   if (row.status !== "draft") throw new InvoiceError("invoice_locked", 409, DB_ERRORS.invoice_locked[1]);
   const revision = input.expectedRevision ?? Number(row.revision);
-  const payload = toSqlPayload(input, { creditValueE4: Number(row.credit_value_e4) || CREDIT_VALUE_DEFAULT_E4, instapayAddress: pricing.instapayAddress });
+  const clean = row.doc_type === "statement" ? normalizeForStatement(input) : input;
+  const payload = toSqlPayload(clean, { creditValueE4: Number(row.credit_value_e4) || CREDIT_VALUE_DEFAULT_E4, instapayAddress: pricing.instapayAddress });
   const next = await ok<number>(db.rpc("invoice_save_draft", { p_id: id, p_admin: adminId, p_expected_revision: revision, p_payload: payload }));
-  await rememberRate(db, input.rateE4);
+  await rememberRateIfEmpty(db, input.rateE4);
   return Number(next);
 }
 
@@ -173,7 +186,6 @@ export async function setStatus(db: InvoiceDb, adminId: string, id: string, req:
   if (req.to === "sent") {
     if (doc.status !== "draft") throw new InvoiceError("invoice_bad_transition", 409, DB_ERRORS.invoice_bad_transition[1]);
     if (req.expectedRevision !== undefined && req.expectedRevision !== doc.revision) throw new InvoiceError("invoice_stale", 409, DB_ERRORS.invoice_stale[1]);
-    if (!doc.client.company) throw new InvoiceError("client_required", 400, "اسم الشركة (العميل) مطلوب قبل الإرسال.");
     if (!doc.lines.length) throw new InvoiceError("invoice_no_lines", 400, DB_ERRORS.invoice_no_lines[1]);
     const again = parseInput(documentInputSchema, inputFromDoc(doc));
     if (!again.ok) throw new InvoiceError("invalid", 400, again.error);

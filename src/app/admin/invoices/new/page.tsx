@@ -5,7 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { InvoiceBuilder } from "@/components/admin/invoices/InvoiceBuilder";
 
 function NewDocument() {
-  const type = useSearchParams().get("type") === "quote" ? "quote" : "invoice";
+  const asked = useSearchParams().get("type");
+  const type = asked === "quote" || asked === "statement" ? asked : "invoice";
   return <InvoiceBuilder initialType={type} />;
 }
 

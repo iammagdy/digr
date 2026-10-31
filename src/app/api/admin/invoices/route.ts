@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   try {
     const body = (await readBody(req)) as Record<string, unknown> | null;
     const docType = body?.docType;
-    if (docType !== "quote" && docType !== "invoice") return badRequest("نوع الوثيقة غير صالح.");
+    if (docType !== "quote" && docType !== "invoice" && docType !== "statement") return badRequest("نوع الوثيقة غير صالح.");
     const parsed = parseInput(documentInputSchema, body);
     if (!parsed.ok) return badRequest(parsed.error);
     const db = invoiceDb();

@@ -45,7 +45,7 @@ describe("every invoice route is admin-only, on the server", () => {
   it("the routes are exactly the ones the screens use (nothing public was added)", () => {
     expect(FILES).toEqual([
       "src/app/api/admin/invoices/[id]/convert/route.ts", "src/app/api/admin/invoices/[id]/duplicate/route.ts", "src/app/api/admin/invoices/[id]/route.ts",
-      "src/app/api/admin/invoices/[id]/status/route.ts", "src/app/api/admin/invoices/clients/[id]/route.ts", "src/app/api/admin/invoices/clients/route.ts",
+      "src/app/api/admin/invoices/[id]/status/route.ts", "src/app/api/admin/invoices/assist/route.ts", "src/app/api/admin/invoices/clients/[id]/route.ts", "src/app/api/admin/invoices/clients/route.ts",
       "src/app/api/admin/invoices/route.ts", "src/app/api/admin/invoices/settings/route.ts", "src/app/api/admin/invoices/types/[id]/route.ts", "src/app/api/admin/invoices/types/route.ts",
     ]);
   });
@@ -62,12 +62,12 @@ describe("every invoice route is admin-only, on the server", () => {
         count += 1;
       }
     }
-    expect(count).toBe(15);
+    expect(count).toBe(16); // 15 + the Claude helper (POST /assist)
   });
 
   it("no session: 401 for every handler, and the database is not touched at all", async () => {
     const all = await handlers();
-    expect(all).toHaveLength(15);
+    expect(all).toHaveLength(16);
     for (const { file, verb, fn } of all) {
       const res = await fn(request(verb, { authorization: "Bearer nobody" }), ctx);
       expect(res.status, `${verb} ${file}`).toBe(401);
@@ -179,6 +179,19 @@ describe("the SQL: RLS on, nothing for customers, writes only through the functi
     }
   });
 
+  it("part 06 (statement mode) is its own migration, identical to the proposal file, and only changes constraints and three functions", () => {
+    const delta = readFileSync("supabase/migrations/20261031150000_admin_invoices_statement.sql", "utf8");
+    expect(delta).toContain(readFileSync(join(dir, "06_statement_mode.sql"), "utf8"));
+    const code = delta.split("\n").filter((l) => !l.trim().startsWith("--")).join("\n");
+    expect(code).not.toMatch(/CREATE TABLE|DROP TABLE|DROP FUNCTION|TRUNCATE|CREATE POLICY|credit_ledger|wallet|balance|mission|reserve|charge/i); // (INSERT / UPDATE / DELETE appear only inside the replaced function bodies, which write only invoice_* tables)
+    expect([...code.matchAll(/CREATE OR REPLACE FUNCTION public\.(\w+)\(/g)].map((m) => m[1]).sort()).toEqual(["invoice__replace_children", "invoice_assign_number", "invoice_set_status"]);
+    expect(code).not.toMatch(/GRANT[^;]*TO[^;]*\b(anon|authenticated|PUBLIC)\b/i);
+    expect(code).toContain("REVOKE ALL ON FUNCTION public.invoice_set_status(uuid, uuid, text, integer, jsonb, date, text, text) FROM PUBLIC, anon, authenticated, service_role;");
+    expect(code).toContain("doc_type <> 'statement'");
+    expect(code).toContain("v_doc.doc_type <> 'invoice'");
+    expect(code).not.toMatch(/\b(real|double precision|numeric|decimal|money|float\d?)\b/i);
+  });
+
   it("eight tables, each with RLS enabled, all privileges revoked from PUBLIC / anon / authenticated, and NO policy at all", () => {
     expect([...tables].sort()).toEqual(["invoice_batches", "invoice_clients", "invoice_documents", "invoice_item_types", "invoice_lines", "invoice_number_counters", "invoice_settings", "invoice_status_events"]);
     for (const t of tables) expect(sql, t).toContain(`ALTER TABLE public.${t} ENABLE ROW LEVEL SECURITY;`);
@@ -238,6 +251,7 @@ describe("the SQL: RLS on, nothing for customers, writes only through the functi
     expect(verify).toContain("f.prosecdef");
     expect(verify).toContain("f.proconfig");
     expect(verify).toMatch(/UNION ALL/); // ONE result set
+    expect(verify).toContain("'check'"); // the five part-06 checks are in the same result set
     expect(verify).toContain("AS ok");
   });
 

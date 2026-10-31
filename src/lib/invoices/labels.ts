@@ -1,7 +1,9 @@
 import type { Currency, DocStatus, DocType } from "./types";
 
 /** «فاتورة» only: a document is never labelled a tax invoice anywhere. */
-export const DOC_TYPE_AR: Record<DocType, string> = { quote: "عرض سعر", invoice: "فاتورة" };
+export const DOC_TYPE_AR: Record<DocType, string> = { quote: "عرض سعر", invoice: "فاتورة", statement: "بيان بيانات" };
+/** The title printed on a data statement. */
+export const STATEMENT_TITLE_AR = "بيان بالبيانات المستخرجة";
 export const STATUS_AR: Record<DocStatus, string> = { draft: "مسودة", sent: "مرسلة", paid: "مدفوعة", void: "ملغية" };
 export const CURRENCY_AR: Record<Currency, string> = { usd: "دولار", points: "نقطة", egp: "جنيه" };
 export const CURRENCY_ORDER: Currency[] = ["usd", "points", "egp"];

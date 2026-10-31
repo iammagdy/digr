@@ -1,6 +1,7 @@
 /** Shapes shared by the invoice screens, the routes and the sheet. Money fields are INTEGERS in the units documented in money.ts. */
 
-export type DocType = "quote" | "invoice";
+/** «statement» = «بيان بيانات»: sectors and counts only, no prices and no totals; it can be sent or voided, never paid. */
+export type DocType = "quote" | "invoice" | "statement";
 export type DocStatus = "draft" | "sent" | "paid" | "void";
 export type Currency = "usd" | "points" | "egp";
 export type DiscountKind = "none" | "amount" | "percent";

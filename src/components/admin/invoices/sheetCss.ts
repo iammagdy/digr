@@ -26,6 +26,7 @@ export const SHEET_CSS = `
 .inv-badge.paid { border-color: #047857; color: #047857; }
 .inv-body { flex: 1; min-height: 0; overflow: hidden; padding-top: 10px; }
 .inv-first { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; padding-bottom: 12px; }
+.inv-first.solo { grid-template-columns: 1fr; }
 .inv-box { border: 1px solid #d1d5db; border-radius: 6px; padding: 8px 11px; }
 .inv-box h3 { margin: 0 0 4px; font-size: 11px; font-weight: 600; color: #6b7280; }
 .inv-kv { display: grid; grid-template-columns: auto 1fr; gap: 1px 10px; font-size: 12px; }

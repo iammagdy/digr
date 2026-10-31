@@ -124,8 +124,9 @@ describe("«مرسلة»: totals are frozen, the document is locked, every chang
     const after = totalsForDoc((await loadDocument(db, id))!.doc);
     expect(after).toEqual(before);
   });
-  it("needs a client and at least one line, and re-saves the Instapay text as of the moment of sending", async () => {
-    expect(await code(setStatus(db, ADMIN, await draft("invoice", { client: { company: "", contact: "", email: "", phone: "", address: "" } }), { to: "sent" }, PRICING))).toBe("client_required");
+  it("needs at least one line (the client is optional since INVOICES SIMPLE 1), and re-saves the Instapay text as of the moment of sending", async () => {
+    // owner feedback (INVOICES SIMPLE 1): the client is OPTIONAL, so a document with no client can be sent; it still needs a line
+    expect(await code(setStatus(db, ADMIN, await draft("invoice", { client: { company: "", contact: "", email: "", phone: "", address: "" } }), { to: "sent" }, PRICING))).toBe("no error");
     expect(await code(setStatus(db, ADMIN, await draft("invoice", { lines: [], batches: [] }), { to: "sent" }, PRICING))).toBe("invoice_no_lines");
     const id = await draft();
     await setStatus(db, ADMIN, id, { to: "sent" }, { instapayAddress: "other@instapay", creditValueE4: 1000 });

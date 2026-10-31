@@ -86,6 +86,8 @@ export const settingsInputSchema = z.object({
   sellerName: text(120).refine((s) => s.length >= 1),
   sellerEmail: text(200), sellerWebsite: text(200),
   sellerTaxNumber: text(60), sellerCommercialRegister: text(60),
+  /** the saved exchange rate (EGP per USD x 10,000): absent = unchanged, null = cleared */
+  rateE4: z.number().int().min(RATE_MIN_E4).max(RATE_MAX_E4).nullable().optional(),
 });
 
 export type ParseResult<T> = { ok: true; value: T } | { ok: false; error: string };
@@ -97,6 +99,24 @@ export function parseInput<T>(schema: z.ZodType<T>, body: unknown): ParseResult<
   const issue = r.error.issues[0];
   const custom = issue.code === "custom" && issue.message && !/^Invalid/.test(issue.message) ? issue.message : "";
   return { ok: false, error: custom || `قيمة غير صالحة في الحقل «${issue.path.join(".") || "الطلب"}».` };
+}
+
+/**
+ * A data statement («بيان بيانات») carries NO money: every unit price is 0, no discount, no tax, dollars only, no rate, no payment text or QR.
+ * Applied on every create and save of a statement, so even a hand-made request cannot store a price on one (the database refuses it too).
+ */
+export function normalizeForStatement(input: DocumentInput): DocumentInput {
+  return {
+    ...input,
+    show: { usd: true, points: false, egp: false },
+    rateE4: null,
+    discount: { kind: "none", value: 0 },
+    tax: { enabled: false, label: input.tax.label, bp: 0 },
+    paymentInstructions: "",
+    showInstapayQr: false,
+    dueDate: null,
+    lines: input.lines.map((l) => ({ ...l, unitCc: 0 })),
+  };
 }
 
 /** The document as the API input shape again (for re-saving, converting, duplicating). */
