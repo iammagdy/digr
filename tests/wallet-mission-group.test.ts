@@ -91,7 +91,9 @@ describe("the wallet history answer carries the line of each finished mission", 
     const page = readFileSync("src/app/dashboard/topup/page.tsx", "utf8");
     expect(page).toContain("groupMissionRows(visibleLedger)");
     expect(page).toContain('data-testid="wallet-mission-group"');
-    expect(page).toContain("<details");
+    // the line is a button with its own open state (WalletJobToggle), not the browser's native <details>
+    expect(page).not.toContain("<details");
+    expect(page).toContain("<WalletJobToggle");
     expect(page).toContain("function LedgerLine");
   });
 });

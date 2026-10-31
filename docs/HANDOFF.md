@@ -4,6 +4,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-31, after #306): wallet and public-page fixes from the browser tester
+
+`main` before it was `24faf89f68d68d48e96e33ce3447bb22d10657c8` (#306); its merge commit is the head of `main` after it. Customer UI only: no SQL, ledger, settlement, engine, pricing or Edge Function change; the wallet route is unchanged (it only reads).
+
+- **«Same wallet line twice»** was NOT a duplicate: the TEST account has two separate 50-tweet jobs (`job_quote_980be00…` 2026-10-30 22:45 UTC and `job_quote_435bc26…` 2026-10-31 07:25 UTC), each with one reserve, one release and one charge of 200 in `credit_ledger` (534 rows, 534 distinct ids, balance 7,754). Both are on 31 October in Cairo and read the same words, so they looked like one line twice. Each wallet line now shows day AND time (Cairo clock, `formatMomentCairo`).
+- **Line does not expand**: not reproduced in Chromium (the native `<details>` opened and folded on every click, also after 40 s and a focus event); the cause in the tester's browser is NOT PROVEN. The native `<details>` came from a1c2a5f (2026-10-28), not from #305. The line is now a button with its own open state (`WalletJobToggle`, `aria-expanded`).
+- **Public pages** no longer draw «تسجيل الدخول» before the session is read (the pages are built ahead of time, so the button was in the first HTML for everyone).
+- **Calculator**: «لعدد ٥٠ تغريدة، بسعر … لكل ١٠٠ تغريدة» (the item's noun). **Excel sheet names** cut at a word boundary no longer end on «في / عن / من / على / إلى / مع / و / أو» (`wordBoundarySheetName` only; the settlement count reads sheets by position).
+- Rollback: `git revert -m 1 <merge commit>`.
+
+---
+
 ## START HERE (2026-10-31, after #304): UI pass 1 (customer-facing screens only)
 
 `main` before it was `50925ac553ab53c9c3d63778d4e810fa07e60918` (#304); its merge commit is the head of `main` after it. Per-item changes, measurements, the pages that had no header, every changed test with its reason, screenshots (`docs/ui-pass-1/`), what was not done and NOT PROVEN: `docs/UI_PASS_1.md`. No SQL written or applied; no Edge Function, price, cap, markup, minimum, model string, engine, planning, checking or settlement code changed; the wallet history route only reads.
