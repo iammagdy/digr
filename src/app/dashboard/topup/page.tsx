@@ -11,6 +11,7 @@ import { useCreditValue } from "@/hooks/useCreditValue";
 import { Icon, UI } from "@/components/app/icons";
 import { balanceText, formatDate, formatTime, isIpaAvailable } from "@/lib/honestDisplay";
 import { formatAr } from "@/lib/arabicDigits";
+import { formatMomentCairo } from "@/lib/customerDates";
 import { CREDIT_LEDGER_COLLECTION, JOBS_COLLECTION, NOTIFICATIONS_COLLECTION, SETTINGS_PUBLIC_COLLECTION, TOPUPS_COLLECTION } from "@/lib/constants";
 import { notificationIdForTopup, rejectionReasonFor, topupIdFromNotificationId } from "@/lib/topupRejectReason";
 import { capacityForPoints } from "@/lib/pricingPage";
@@ -21,9 +22,10 @@ import SubmittedCard from "./SubmittedCard";
 import TopupForm from "./TopupForm";
 import { RejectionReasonLine } from "./RejectionReasonLine";
 import PromoCodeBox from "./PromoCodeBox";
+import { WalletJobToggle } from "./WalletJobToggle";
 import { CREDIT_KIND_LABEL_AR, classifyLedgerRow } from "@/lib/creditKinds";
 import { TOPUP_REQUEST_LABEL_AR, walletDisplayText, walletNoteForDisplay } from "@/lib/walletText";
-import { creditedPointsByTopup, creditedPointsOf, groupMissionRows, kindOfLedgerRow as kindOf, visibleLedgerRows, walletMonthStats, type WalletLedgerKind as LedgerKind } from "@/lib/walletView";
+import { creditedPointsByTopup, creditedPointsOf, groupMissionRows, kindOfLedgerRow as kindOf, toggledSet, visibleLedgerRows, walletMonthStats, type WalletLedgerKind as LedgerKind } from "@/lib/walletView";
 import { statusBadge, USER_STATUS, type LedgerRow, type TopupRecord } from "./types";
 
 const ledgerLabel = (row: LedgerRow): string => walletDisplayText(row.labelAr || CREDIT_KIND_LABEL_AR[classifyLedgerRow({ type: row.type, kind: row.kind })]);
@@ -56,7 +58,7 @@ function LedgerLine({ l, compact = false }: { l: LedgerRow; compact?: boolean })
       <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[11px]" style={{ background: `color-mix(in oklab, ${tint} 12%, transparent)`, color: ico[1] }}><Icon d={ico[0]} size={16} stroke={1.8} /></span>
       <div className="min-w-0 flex-1">
         <p className="m-0 text-sm text-ink">{ledgerLabel(l)}</p>
-        <p className="mb-0 mt-[3px] text-xs font-light leading-[1.7] text-fnt">{walletNoteForDisplay(l.note) ? `${walletNoteForDisplay(l.note)} · ` : ""}{new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "long" }).format(new Date(l.createdAt))}</p>
+        <p className="mb-0 mt-[3px] text-xs font-light leading-[1.7] text-fnt">{walletNoteForDisplay(l.note) ? `${walletNoteForDisplay(l.note)} · ` : ""}{compact ? formatMomentCairo(l.createdAt) : new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "long" }).format(new Date(l.createdAt))}</p>
       </div>
       <span dir="ltr" className="text-[15px] font-semibold" style={{ color: plus ? "var(--ok)" : "var(--ink)" }}>{plus ? "+" : "−"}{formatAr(Math.abs(l.delta))}</span>
     </div>
@@ -77,6 +79,8 @@ export default function WalletPage() {
   // the notification text of each rejected request (the customer reads their own notifications): where the reason lives, see loadRejectNotes below
   const [rejectNotes, setRejectNotes] = useState<Record<string, string>>({});
   const [ledFilter, setLedFilter] = useState<"all" | LedgerKind>("all");
+  // the wallet lines (one per job) that are open
+  const [openJobs, setOpenJobs] = useState<ReadonlySet<string>>(() => new Set());
   const [queryEgp, setQueryEgp] = useState<number | null>(null);
   // the chat sends the shortfall in EGP; the form works in points, so it starts from the points that amount buys (the form keeps it inside the limits)
   const initialPoints = queryEgp === null ? undefined : egpToPoints(queryEgp, creditValue);
@@ -434,23 +438,19 @@ export default function WalletPage() {
           </div>
           <div className="overflow-hidden rounded-[24px] border border-ln bg-sf">
             {ledgerFailed && <p role="alert" className="m-0 px-5 py-4 text-[13px] text-bad">تعذّر تحميل سجل الحركات الآن.</p>}
-            {groupMissionRows(visibleLedger).map((entry) => {
+            {groupMissionRows(visibleLedger).map((entry, index) => {
               if (entry.kind === "row") return <LedgerLine key={entry.row.$id} l={entry.row} />;
-              // ONE LINE PER MISSION («خُصم ١٢٨ نقطة مقابل ١٩٢ تغريدة»), its ledger rows (the hold, the charge, the released hold) inside, collapsed
+              // ONE LINE PER JOB («خُصم ١٢٨ نقطة مقابل ١٩٢ تغريدة»), its ledger rows (the hold, the charge, the released hold) inside, folded. The line is a button whose open state is ours (not the browser's
+              // native disclosure element), so it opens and folds the same in every browser and a refresh of the list never closes it.
               const net = entry.rows.reduce((n, r) => n + r.delta, 0);
               const newest = entry.rows[0];
+              const isOpen = openJobs.has(entry.jobId);
+              const panelId = `wallet-job-details-${index}`;
               return (
-                <details key={`mission-${entry.jobId}`} className="group border-t border-ln px-5 py-3 first:border-t-0" data-testid="wallet-mission-group">
-                  <summary className="flex cursor-pointer list-none items-center gap-3 [&::-webkit-details-marker]:hidden">
-                    <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[11px]" style={{ background: "color-mix(in oklab, var(--mut) 12%, transparent)", color: "var(--ink2)" }}><Icon d="M5 12h14" size={16} stroke={1.8} /></span>
-                    <div className="min-w-0 flex-1">
-                      <p className="m-0 text-sm text-ink" data-testid="wallet-mission-line">{walletDisplayText(entry.lineAr)}</p>
-                      <p className="mb-0 mt-[3px] text-xs font-light leading-[1.7] text-fnt">{new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "long" }).format(new Date(newest.createdAt))} · <span className="text-ink2 underline decoration-dotted underline-offset-4">تفاصيل الحركات</span></p>
-                    </div>
-                    <span dir="ltr" className="text-[15px] font-semibold" style={{ color: net > 0 ? "var(--ok)" : "var(--ink)" }}>{net > 0 ? "+" : "−"}{formatAr(Math.abs(net))}</span>
-                  </summary>
-                  <div className="mt-2 rounded-[14px] bg-sf2" data-testid="wallet-mission-details">{entry.rows.map((r) => <LedgerLine key={r.$id} l={r} compact />)}</div>
-                </details>
+                <div key={`mission-${entry.jobId}`} className="border-t border-ln px-5 py-3 first:border-t-0" data-testid="wallet-mission-group">
+                  <WalletJobToggle lineAr={walletDisplayText(entry.lineAr)} whenAr={formatMomentCairo(newest.createdAt)} net={net} open={isOpen} panelId={panelId} onToggle={() => setOpenJobs((cur) => toggledSet(cur, entry.jobId))} />
+                  {isOpen ? <div id={panelId} className="mt-2 rounded-[14px] bg-sf2" data-testid="wallet-mission-details">{entry.rows.map((r) => <LedgerLine key={r.$id} l={r} compact />)}</div> : null}
+                </div>
               );
             })}
             {!ledgerFailed && !ledgerLoaded && <p className="m-0 px-5 py-6 text-center text-[13px] font-light text-fnt">جارٍ تحميل الحركات…</p>}

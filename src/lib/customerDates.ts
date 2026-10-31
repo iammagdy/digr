@@ -8,7 +8,20 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const dateOnly = new Intl.DateTimeFormat("ar-EG-u-nu-arab", { timeZone: "UTC", day: "numeric", month: "long", year: "numeric" });
 const dateTime = new Intl.DateTimeFormat("ar-EG-u-nu-arab", { timeZone: "Africa/Cairo", day: "numeric", month: "long", year: "numeric", hour: "numeric", minute: "2-digit", hour12: true });
 
-export const isIsoDateText = (value: string): boolean => ISO_DATE.test(value.trim()) || ISO_DATE_TIME.test(value.trim());
+const momentParts = new Intl.DateTimeFormat("ar-EG-u-nu-arab", { timeZone: "Africa/Cairo", day: "numeric", month: "long", hour: "numeric", minute: "2-digit", hour12: true });
+
+/**
+ * «٣١ أكتوبر، ٩:٢٥ ص»: the day AND the time of an instant on the Cairo clock (the same clock for every customer, whatever their phone's zone). The wallet writes it on each job's line so two jobs of the
+ * same size on the same day («خُصم ٢٠٠ نقطة مقابل ٥٠ تغريدة» twice) are told apart. An unreadable instant is an empty text.
+ */
+export function formatMomentCairo(value: string | number | Date): string {
+  const d = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(d.getTime())) return "";
+  const part = (type: Intl.DateTimeFormatPartTypes) => momentParts.formatToParts(d).find((p) => p.type === type)?.value ?? "";
+  return `${part("day")} ${part("month")}، ${part("hour")}:${part("minute")} ${part("dayPeriod")}`.trim();
+}
+
+export const isIsoDateText =(value: string): boolean => ISO_DATE.test(value.trim()) || ISO_DATE_TIME.test(value.trim());
 
 /** «٣٠ أكتوبر ٢٠٢٦» for a date, «٣٠ أكتوبر ٢٠٢٦ في ١١:٥٩ م» (Cairo) for an instant. A text that is not an ISO date is returned as it is. */
 export function formatIsoForCustomer(value: string): string {

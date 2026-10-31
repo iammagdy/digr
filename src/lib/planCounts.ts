@@ -48,6 +48,9 @@ export function countAr(count: number, kind: CountKind): string {
 /** The bare singular after a number of eleven or more («١٥ سجل»): the form with the final accusative ending removed. */
 const BARE: Record<CountKind, string> = { posts: "منشور", tweets: "تغريدة", comments: "تعليق", videos: "فيديو", companies: "شركة", people: "شخص", records: "سجل" };
 
+/** The bare noun of a kind («تغريدة», «تعليق»), for «نقطة لكل ١٠٠ تغريدة»: the same noun the counts above use. */
+export const bareNounAr = (kind: CountKind): string => BARE[kind];
+
 /**
  * ONE plural rule for every count in a sentence the customer reads (the plan title, the understood line, the chat summary, the activity lines):
  * «سجل واحد», «سجلين», «٣ إلى ١٠ سجلات», and from eleven on «١١ سجل». «٥ شركة» and «٥ سجل» are never written.
