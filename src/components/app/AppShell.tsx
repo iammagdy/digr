@@ -64,7 +64,9 @@ function useIsMobile(bp = 760) {
 
 /** `allowGuest`: the public pages (calculator, catalog, prices, help, contact, terms) use the same shell for a visitor who is not signed in. */
 export function AppShell({ children, allowGuest = false }: { children: ReactNode; allowGuest?: boolean }) {
-  const { user, logout } = useUser();
+  // `authLoading`: until the browser has read the session, the shell does not know whether a customer is signed in. The public pages are built ahead of time (no customer in them), so without this the
+  // «تسجيل الدخول» button was in the page the browser first drew, and a signed-in customer saw it until the session was read.
+  const { user, logout, loading: authLoading } = useUser();
   const { balance, refresh: refreshBalance } = useBalance();
   const { theme, toggleTheme } = useTheme();
   const online = useOnline();
@@ -345,6 +347,8 @@ export function AppShell({ children, allowGuest = false }: { children: ReactNode
                 </span>
                 {!compactSidebar || mobile ? <span className="text-xs text-fnt transition-transform duration-200" style={{ transform: `rotate(${acctOpen ? 0 : 180}deg)` }}>⌃</span> : null}
               </button>
+            ) : authLoading ? (
+              <div aria-hidden="true" data-testid="account-pending" className="min-h-[52px]" />
             ) : (
               <div className="flex flex-col gap-1.5 p-1">
                 <Link
@@ -396,6 +400,8 @@ export function AppShell({ children, allowGuest = false }: { children: ReactNode
                   <span className="text-xs font-light text-mut">نقطة</span>
                 </Link>
               </div>
+            ) : authLoading ? (
+              <div aria-hidden="true" data-testid="header-account-pending" className="h-11 w-24" />
             ) : (
               <div className="flex items-center gap-2">
                 <Link

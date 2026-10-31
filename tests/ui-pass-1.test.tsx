@@ -420,7 +420,10 @@ describe("8. the wallet: one line per job, its points summed from the job's cred
     expect(page).not.toContain("جاري تحميل الأرقام");
     expect(page.indexOf('{balance.status === "failed" ? "غير متاح" : balanceText(balance)}')).toBeLessThan(page.indexOf('data-testid="wallet-released-month"'));
     expect(page).not.toContain("truncate");
-    expect(page).toContain("تفاصيل الحركات");
+    // the «تفاصيل الحركات» label moved with the line's button into its own component (WalletJobToggle), still drawn by this page
+    expect(src("src/app/dashboard/topup/WalletJobToggle.tsx")).toContain("تفاصيل الحركات");
+    expect(src("src/app/dashboard/topup/WalletJobToggle.tsx")).not.toContain("truncate");
+    expect(page).toContain("<WalletJobToggle");
     expect(page).toContain('data-testid="wallet-released-explainer"');
   });
 });

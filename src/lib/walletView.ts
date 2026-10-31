@@ -155,6 +155,14 @@ export function jobLedgerTotals(rows: ReadonlyArray<JobLedgerRow>): Map<string, 
   return byJob;
 }
 
+/** The set of open wallet lines after one is pressed: a closed line opens, an open one folds (the set is never changed in place). */
+export function toggledSet(open: ReadonlySet<string>, id: string): Set<string> {
+  const next = new Set(open);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  return next;
+}
+
 /** A ledger row as the wallet groups it: any row; the ones that belong to a finished mission carry its one money line (the server computed it from the mission's own numbers). */
 export interface MissionGroupableRow { $id?: string; id?: string; jobId?: string | null; missionLineAr?: string | null }
 export type WalletEntry<T extends MissionGroupableRow> = { kind: "row"; row: T } | { kind: "mission"; jobId: string; lineAr: string; rows: T[] };

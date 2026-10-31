@@ -112,17 +112,27 @@ export function missionFileTitleAr(input: { plan: { stages: Array<{ deliver: boo
 
 export const EXCEL_SHEET_NAME_MAX = 31;
 
-/** A sheet name Excel accepts, cut at a word boundary: at most 31 characters, none of [ ] : * ? / \, unique in the book (a number is added to a duplicate). */
+/** A word a phrase cannot end on («تغريدات عن الذكاء الاصطناعي في»): when a title is cut, these are dropped from its end. */
+const DANGLING_LAST_WORD = new Set(["في", "عن", "من", "على", "إلى", "الى", "مع", "و", "أو", "او"]);
+
+/** A sheet name Excel accepts, cut at a word boundary (and never on a dangling «في / عن / من»): at most 31 characters, none of [ ] : * ? / \, unique in the book (a number is added to a duplicate). */
 export function wordBoundarySheetName(title: string, used: Set<string>, fallback: string): string {
   const clean = String(title || "").replace(/[\[\]:*?/\\]/g, " ").replace(/\s+/g, " ").trim();
   const fit = (text: string, max: number): string => {
     if ([...text].length <= max) return text;
     const words = text.split(" ");
     let out = "";
+    let kept = 0;
     for (const w of words) {
       const next = out ? `${out} ${w}` : w;
       if ([...next].length > max) break;
       out = next;
+      kept += 1;
+    }
+    // the title was cut: a phrase must not stop on a preposition or a conjunction, so those are taken off the end (at least one word stays)
+    while (kept > 1 && DANGLING_LAST_WORD.has(words[kept - 1])) {
+      kept -= 1;
+      out = words.slice(0, kept).join(" ");
     }
     // a single word longer than the limit has no boundary to cut at: it is cut, and only then
     return out || [...text].slice(0, max).join("");

@@ -4,9 +4,9 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
-## START HERE (2026-10-31, after #306): ADMIN INVOICES 1 («الفواتير», admin only)
+## START HERE (2026-10-31, after #307): ADMIN INVOICES 1 («الفواتير», admin only)
 
-`main` before it was `24faf89f68d68d48e96e33ce3447bb22d10657c8` (#306); the merge commit is the head of `main` after it. Everything (money rule, examples, statuses, numbering, export, isolation, files, screenshots): `docs/ADMIN_INVOICES.md`.
+`main` before it was `3526b092abe04d4cb965181bae94a9cbbaec3773` (#307); the merge commit is the head of `main` after it. Everything (money rule, examples, statuses, numbering, export, isolation, files, screenshots): `docs/ADMIN_INVOICES.md`.
 **The SQL is NOT applied** (the owner applies it; steps, the ONE read-only verify SELECT and the rollback: `docs/proposals/admin-invoices/README.md`). Until it is applied the screens answer with a plain Arabic error and `/admin/export`'s invoice group fails with a clear message; nothing else depends on it.
 
 - Quotes and invoices for hand-made research work, PDF (print dialog) and PNG per page, A4, «صفحة ١ من ٣», Arabic-Indic digits, the Diger logo on every page. Usable at 380 px.
@@ -14,6 +14,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 - **No wallet, ledger, mission, price, cap or agent code touched**; marking paid credits no points (test: `tests/invoice-ledger-isolation.test.ts`). RLS on, no policy, `service_role` read-only on the document tables.
 - New dependency: `html-to-image` 1.11.13 (MIT), client-side PNG only. One existing test changed: `tests/admin-navigation.test.tsx` (one admin page added).
 - Rollback: `git revert -m 1 <merge commit>`, then (only if the SQL was applied) `99_rollback.sql`.
+
+---
+
+## START HERE (2026-10-31, after #306): wallet and public-page fixes from the browser tester
+
+`main` before it was `24faf89f68d68d48e96e33ce3447bb22d10657c8` (#306); its merge commit is the head of `main` after it. Customer UI only: no SQL, ledger, settlement, engine, pricing or Edge Function change; the wallet route is unchanged (it only reads).
+
+- **«Same wallet line twice»** was NOT a duplicate: the TEST account has two separate 50-tweet jobs (`job_quote_980be00…` 2026-10-30 22:45 UTC and `job_quote_435bc26…` 2026-10-31 07:25 UTC), each with one reserve, one release and one charge of 200 in `credit_ledger` (534 rows, 534 distinct ids, balance 7,754). Both are on 31 October in Cairo and read the same words, so they looked like one line twice. Each wallet line now shows day AND time (Cairo clock, `formatMomentCairo`).
+- **Line does not expand**: not reproduced in Chromium (the native `<details>` opened and folded on every click, also after 40 s and a focus event); the cause in the tester's browser is NOT PROVEN. The native `<details>` came from a1c2a5f (2026-10-28), not from #305. The line is now a button with its own open state (`WalletJobToggle`, `aria-expanded`).
+- **Public pages** no longer draw «تسجيل الدخول» before the session is read (the pages are built ahead of time, so the button was in the first HTML for everyone).
+- **Calculator**: «لعدد ٥٠ تغريدة، بسعر … لكل ١٠٠ تغريدة» (the item's noun). **Excel sheet names** cut at a word boundary no longer end on «في / عن / من / على / إلى / مع / و / أو» (`wordBoundarySheetName` only; the settlement count reads sheets by position).
+- Rollback: `git revert -m 1 <merge commit>`.
 
 ---
 
