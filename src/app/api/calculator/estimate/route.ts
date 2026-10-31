@@ -5,6 +5,7 @@ import type { SocialPlatformId } from "@/lib/socialTasks";
 import { liveDailyCapPoints } from "@/lib/server/liveDailyCap";
 import { liveDriverMode } from "@/lib/server/driverHeartbeat";
 import { missionDurationForPlan } from "@/lib/missionDuration";
+import { expectedTimeOf } from "@/lib/agentMission/expectedTime";
 import { loadMeasuredTimings } from "@/lib/server/jobTimings";
 import { createAdminClient } from "@/lib/supabase/server";
 
@@ -54,7 +55,10 @@ export async function POST(req: NextRequest) {
   const result = estimateMission({ ...input, dailyCapPoints: await liveDailyCapPoints() });
   // The same duration logic the plan panel uses (records, records per call, dependent steps, measured chunk times), for ONE request.
   let duration = null as ReturnType<typeof missionDurationForPlan>;
+  // THE EXPECTED TIME the customer reads: the plan card's own function (minutes and words), for the records one request holds
+  let expected: { minutes: number; textAr: string } | null = null;
   if (result.status === "ok") {
+    expected = expectedTimeOf([{ rows: result.fitsInOneJob ? result.volume : Math.max(1, result.maxVolumeInOneJob) }]);
     try {
       const measured = await loadMeasuredTimings(createAdminClient());
       const records = result.fitsInOneJob ? result.volume : Math.max(1, result.maxVolumeInOneJob);
@@ -67,6 +71,8 @@ export async function POST(req: NextRequest) {
     success: true,
     result,
     duration,
+    expectedMinutes: expected?.minutes ?? null,
+    expectedAr: expected?.textAr ?? null,
     summaryAr: result.status === "ok" ? estimateSummaryAr(result) : null,
     understoodAr,
     missingAr,

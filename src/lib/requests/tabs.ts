@@ -34,3 +34,14 @@ export const hashOfTab = (tab: RequestTab): string => `#${tab}`;
 export function tabOfKind(kind: RequestKind): "done" | "running" | "refunded" {
   return kind === "partial" ? "done" : kind;
 }
+
+/**
+ * THE TWO NUMBERS OF THE LIST, FROM ONE SOURCE. The tab's number is what the tab holds (`counts[tab]`, from the server); the footer says how many of THOSE are on the page right now. On the «all» tab the requests that wait
+ * for the customer (the block above the list) are part of the tab's number and are on the page, so they count as shown: «يظهر ٢٤ من ٢٢٥» next to a tab that says «الكل ٢٢٥», never «٢٠ من ٢٢١».
+ */
+export function requestsShownCounts(input: { tab: RequestTab; counts: Record<RequestTab, number>; listed: number; pending: number }): { shown: number; total: number } {
+  const total = input.counts[input.tab] ?? 0;
+  const shown = input.listed + (input.tab === "all" ? input.pending : 0);
+  // the page can never show more than the tab holds (a count read a moment before the list is the only way they differ)
+  return { shown, total: Math.max(total, shown) };
+}

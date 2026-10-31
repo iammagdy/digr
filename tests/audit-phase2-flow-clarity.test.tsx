@@ -4,7 +4,9 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import nextConfig from "../next.config.mjs";
 import DetailsBlanks from "../src/app/dashboard/chat/components/DetailsBlanks";
-import EmptyChat, { STARTER_EXAMPLES } from "../src/app/dashboard/chat/components/EmptyChat";
+import EmptyChat from "../src/app/dashboard/chat/components/EmptyChat";
+import { TEMPLATE_FORMS, buildTemplateRequest, initialTemplateValues, type TemplateForm } from "../src/lib/templateForms";
+import { kindsOfPlatform } from "../src/components/calculator/MissionEstimator";
 import Composer, { ATTACH_WAIT_AR } from "../src/app/dashboard/chat/components/Composer";
 import MissionEstimator from "../src/components/calculator/MissionEstimator";
 import { proseDigitsAr } from "../src/lib/arabicDigits";
@@ -50,7 +52,7 @@ describe("audit phase 2: one navigation, honest titles (point 21)", () => {
 });
 
 describe("audit phase 2: the bell counts only what needs the customer (point 25)", () => {
-  it("counts an unread result and an unread rejected top-up, nothing else", () => {
+  it("counts an unread rejected top-up, nothing else: a finished request is a routine update (UI pass 1, item 13: «٣٠+ تحتاج انتباهك» for finished requests)", () => {
     const items = [
       { kind: "job_done", read: false },
       { kind: "topup_rejected", read: false },
@@ -59,7 +61,7 @@ describe("audit phase 2: the bell counts only what needs the customer (point 25)
       { kind: "job_released", read: false },
       { kind: "job_done", read: true },
     ];
-    expect(actionableUnreadCount(items)).toBe(2);
+    expect(actionableUnreadCount(items)).toBe(1);
   });
   it("is zero (so no badge) when only notes remain", () => {
     expect(actionableUnreadCount([{ kind: "welcome", read: false }])).toBe(0);
@@ -115,18 +117,26 @@ describe("audit phase 2: why the paperclip is off (point 30)", () => {
   });
 });
 
-describe("audit phase 2: starter examples are complete requests (point 20)", () => {
-  it("none has a bracket slot, each names a subject, and a click only fills", () => {
-    expect(STARTER_EXAMPLES.length).toBeGreaterThanOrEqual(4);
-    for (const example of STARTER_EXAMPLES) {
-      expect(example.prompt).not.toMatch(/[\[\]()]/);
-      expect(example.prompt.split(/\s+/).length).toBeGreaterThanOrEqual(4);
+/** What a customer types into the one required field of each form (an account, a link, a topic, an activity, a list of channels). */
+const TYPED: Record<string, string> = { account: "alahly", link: "https://www.youtube.com/watch?v=abc123", topic: "القهوة", activity: "مقاولات", accounts: "@قناة_أولى\n@قناة_ثانية" };
+const filledValues = (form: TemplateForm) => ({ ...initialTemplateValues(form), ...Object.fromEntries(form.fields.filter((f) => f.required).map((f) => [f.id, TYPED[f.id]])) });
+
+describe("audit phase 2: the example forms build complete requests (point 20, UI pass 1 items 3 and 4: a chip opens a form instead of filling a ready sentence)", () => {
+  it("4 to 6 chips; a required field starts empty (no placeholder account), so nothing can be built until the customer fills it; filled, the request has no bracket slot and names a subject", () => {
+    expect(TEMPLATE_FORMS.length).toBeGreaterThanOrEqual(4);
+    expect(TEMPLATE_FORMS.length).toBeLessThanOrEqual(6);
+    for (const form of TEMPLATE_FORMS) {
+      expect(buildTemplateRequest(form, initialTemplateValues(form)), form.id).toBeNull();
+      const text = buildTemplateRequest(form, filledValues(form))!;
+      expect(text, form.id).not.toMatch(/[\[\]()]/);
+      expect(text.split(/\s+/).length).toBeGreaterThanOrEqual(4);
     }
-    const markup = html(createElement(EmptyChat, { firstName: "", zeroBalance: false, onStart: () => {} }));
-    for (const example of STARTER_EXAMPLES) expect(markup).toContain(example.label);
+    const markup = html(createElement(EmptyChat, { firstName: "", zeroBalance: false, composer: null, onSend: () => {} }));
+    for (const form of TEMPLATE_FORMS) expect(markup).toContain(form.chipAr);
   });
-  it("the company example states a count, a sector and a country", () => {
-    expect(STARTER_EXAMPLES[0].prompt).toBe("ابحث لي عن ٥ شركات مقاولات في مصر في ملف إكسل");
+  it("the company form states a count, a sector and a country", () => {
+    const companies = TEMPLATE_FORMS.find((f) => f.id === "companies")!;
+    expect(buildTemplateRequest(companies, filledValues(companies))).toBe("أريد ٥٠ شركة مقاولات في مصر مع صناع القرار والبريد المهني والهاتف.");
   });
 });
 
@@ -290,15 +300,17 @@ describe("audit phase 2: the cost form always answers (point 1)", () => {
       if (result.status === "ok") expect(result.expectedPoints).toBeGreaterThan(0);
     }
   });
-  it("the platform field stays on the form (resting) for companies instead of disappearing", () => {
+  it("the form has exactly three choices (the platform, the type of data, the count) and the platform list holds companies and decision makers, which need no platform (UI pass 1, item 10)", () => {
     const markup = html(createElement(MissionEstimator));
-    expect(markup).toContain('data-testid="estimate-platform-field"');
-    expect(markup).toContain("disabled");
+    for (const id of ["estimate-platform", "estimate-kind", "estimate-volume"]) expect(markup).toContain(`id="${id}"`);
+    expect(markup).not.toContain("<textarea");
+    expect(markup).toContain('value="companies"');
+    expect(kindsOfPlatform("companies")).toEqual(["companies", "people"]);
+    expect(kindsOfPlatform("x")).toEqual(["posts"]);
   });
-  it("the detailed calculator follows the kind chosen in the estimate form", () => {
+  it("the kind chosen in the form maps to the detailed service the price uses", () => {
     expect(calculatorSlugForEstimate("companies")).toBe("icypeas-companies-search");
     expect(calculatorSlugForEstimate("posts", "x")).toBeTruthy();
-    expect(src("src/app/calculator/page.tsx")).toContain("onSelectionChange");
   });
 });
 
@@ -345,13 +357,13 @@ describe("audit phase 2/3: the home page price example is computed by the shared
   });
 });
 
-describe("audit phase 2: every starter example goes through the chat as a real request (point 20)", () => {
+describe("audit phase 2: every example form's request goes through the chat as a real request (point 20)", () => {
   it("none of them comes back asking for a bracket slot or an empty field", async () => {
     const { clearBriefCacheForTesting } = await import("../src/functions/shared/briefManager");
     const { runConversation } = await import("./helpers/chatSession");
-    for (const example of STARTER_EXAMPLES) {
+    for (const form of TEMPLATE_FORMS) {
       clearBriefCacheForTesting();
-      const { responses } = await runConversation([example.prompt]);
+      const { responses } = await runConversation([buildTemplateRequest(form, filledValues(form))!]);
       const text = responses.map((response: any) => `${response.contentAr ?? ""} ${response.clarificationIntro ?? ""} ${JSON.stringify(response.clarificationQuestions ?? "")}`).join(" ");
       expect(responses.length).toBeGreaterThan(0);
       // the customer gets either a plan or a real question: never an empty reply

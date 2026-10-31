@@ -27,7 +27,7 @@ function RegisterForm() {
     e.preventDefault();
     if (!navigator.onLine) { setError("أنت غير متصل بالإنترنت."); return; }
     setError("");
-    if (password.length < 8) { setError("كلمة المرور يجب ألا تقل عن 8 خانات"); return; }
+    if (password.length < 8) { setError("كلمة المرور يجب ألا تقل عن ٨ خانات"); return; }
     setBusy(true);
     try {
       await register(email.trim(), password, name.trim());

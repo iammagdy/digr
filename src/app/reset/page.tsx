@@ -71,7 +71,7 @@ export default function ResetPage() {
   return (
     <AuthLayout title="كلمة مرور جديدة" subtitle="اختر كلمة مرور قوية لم تستخدمها من قبل." showPending={false}>
       <form onSubmit={submit} className="mt-7 flex flex-col gap-3" style={{ animation: "up .5s both" }}>
-        <input type="password" dir="ltr" required autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="كلمة المرور الجديدة · 8 خانات على الأقل" className={`${authInput} text-left`} />
+        <input type="password" dir="ltr" required autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="كلمة المرور الجديدة · ٨ خانات على الأقل" className={`${authInput} text-left`} />
         <input type="password" dir="ltr" required autoComplete="new-password" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="تأكيد كلمة المرور" className={`${authInput} text-left`} />
         <div className="flex gap-1">
           {[0, 1, 2, 3].map((i) => (

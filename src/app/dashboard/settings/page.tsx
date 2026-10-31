@@ -104,7 +104,7 @@ export default function SettingsPage() {
 
   async function savePw() {
     if (!oldPw) return setPwMsg({ ok: false, text: "اكتب كلمة المرور الحالية." });
-    if (newPw.length < 8) return setPwMsg({ ok: false, text: "كلمة المرور الجديدة يجب ألا تقل عن 8 خانات." });
+    if (newPw.length < 8) return setPwMsg({ ok: false, text: "كلمة المرور الجديدة يجب ألا تقل عن ٨ خانات." });
     try {
       const supabase = createClient();
       const { error } = await supabase.auth.updateUser({ password: newPw });
@@ -187,7 +187,7 @@ export default function SettingsPage() {
         <section className={SECTION}>
           <h3 className="m-0 text-[15px] font-semibold text-ink">كلمة المرور</h3>
           <input type="password" dir="ltr" autoComplete="current-password" value={oldPw} onChange={(e) => { setOldPw(e.target.value); setPwMsg(null); }} placeholder="كلمة المرور الحالية" className={`${INPUT} text-left`} />
-          <input type="password" dir="ltr" autoComplete="new-password" value={newPw} onChange={(e) => { setNewPw(e.target.value); setPwMsg(null); }} placeholder="كلمة المرور الجديدة · 8 خانات على الأقل" className={`${INPUT} text-left`} />
+          <input type="password" dir="ltr" autoComplete="new-password" value={newPw} onChange={(e) => { setNewPw(e.target.value); setPwMsg(null); }} placeholder="كلمة المرور الجديدة · ٨ خانات على الأقل" className={`${INPUT} text-left`} />
           <button type="button" onClick={savePw} className="min-h-11 cursor-pointer self-start rounded-full border border-ln2 bg-transparent px-5 text-[13px] text-ink">تغيير كلمة المرور</button>
           {pwMsg && <Status ok={pwMsg.ok}>{pwMsg.text}</Status>}
         </section>

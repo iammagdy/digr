@@ -20,8 +20,8 @@ export default function OpenMissionsList({ items, busyId, error, onCancel }: { i
       {visible.map((m) => (
         <div key={m.id} data-testid="open-mission" className="flex items-center justify-between gap-2 border-t border-ln pt-2">
           <div className="min-w-0 flex-1">
-            <p className="m-0 truncate text-[13px] text-ink">{m.requestText || "طلب بدون نص"}</p>
-            <p className="m-0 truncate text-xs text-mut">{m.stateAr}{m.createdAt ? ` · ${dayLabel(m.createdAt)}` : ""}</p>
+            <p className="m-0 break-words text-[13px] leading-[1.7] text-ink">{m.requestText || "طلب بدون نص"}</p>
+            <p className="m-0 break-words text-xs leading-[1.7] text-mut">{m.stateAr}{m.createdAt ? ` · ${dayLabel(m.createdAt)}` : ""}</p>
           </div>
           <div className="flex shrink-0 gap-2">
             {m.conversationId && <a href={`/dashboard/chat?c=${encodeURIComponent(m.conversationId)}`} className="min-h-11 content-center text-[13px] text-ink underline">افتحها</a>}

@@ -1,6 +1,5 @@
 /** Database and storage resource identifiers */
 
-import { SUPPORT_EMAIL } from "@/lib/site";
 
 export const DATABASE_ID = "digr";
 
@@ -27,6 +26,6 @@ export const RESULTS_BUCKET = "results";
 export const RECEIPTS_BUCKET = "receipts";
 export const PARTIALS_BUCKET = "partials";
 
-// Help links in the app sidebar. Overridable per deployment; default to the support mailbox.
-export const SUPPORT_URL = process.env.NEXT_PUBLIC_SUPPORT_URL || `mailto:${SUPPORT_EMAIL}`;
-export const HELP_CENTER_URL = process.env.NEXT_PUBLIC_HELP_URL || SUPPORT_URL;
+// Help links in the app sidebar. Overridable per deployment; they default to the site's own pages: the help page and the contact form (a «mailto:» link does nothing on a device with no mail app).
+export const SUPPORT_URL = process.env.NEXT_PUBLIC_SUPPORT_URL || "/contact";
+export const HELP_CENTER_URL = process.env.NEXT_PUBLIC_HELP_URL || "/help";

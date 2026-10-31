@@ -1,9 +1,9 @@
 /**
- * The number on the bell counts what needs the customer: an unread result to open, or an unread top-up that was turned down. A welcome note, an
- * approved top-up and a released hold are in the list (unread dot and all) but never in the number, so the badge is a count of things to do and
- * disappears when there is none.
+ * The number on the bell counts only what needs the customer to DO something: an unread top-up that was turned down (the customer corrects and sends it again). A finished request, a welcome
+ * note, an approved top-up and a released hold are routine updates: they are in the list (unread dot and all) and make the bell show a plain dot, but never a number, so «تحتاج انتباهك» is
+ * never said about a routine update (a customer with thirty finished requests used to read «٣٠+ تحتاج انتباهك»).
  */
-export const ACTIONABLE_NOTIFICATION_KINDS: ReadonlySet<string> = new Set(["job_done", "topup_rejected"]);
+export const ACTIONABLE_NOTIFICATION_KINDS: ReadonlySet<string> = new Set(["topup_rejected"]);
 
 export function actionableUnreadCount(items: ReadonlyArray<{ kind: string; read: boolean }>): number {
   return items.filter((item) => !item.read && ACTIONABLE_NOTIFICATION_KINDS.has(item.kind)).length;

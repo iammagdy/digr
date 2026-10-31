@@ -154,16 +154,16 @@ describe("planning steps as they really happen", () => {
     expect(searched[1].detailAr).toBe("لقيت ٣ مصادر مناسبة.");
     const sampled = planningSteps([ev("understood"), ev("searched", { n: 3 }), ev("sampled", { rows: 10 })]);
     expect(sampled.map((s) => s.state)).toEqual(["done", "done", "running", "running"]);
-    expect(sampled[2].detailAr).toBe("العينة رجعت ١٠ صفوف مطابقة.");
+    expect(sampled[2].detailAr).toBe("العينة رجعت ١٠ نتائج مطابقة.");
     const planned = planningSteps([ev("understood"), ev("searched", { n: 3 }), ev("sampled", { rows: 10 }), ev("planned")], { finished: "plan" });
     expect(planned.every((s) => s.state === "done")).toBe(true);
-    expect(planned.map((s) => s.titleAr)).toEqual(["فهم الطلب", "البحث عن المصادر المناسبة", "تجربة عينة من كل مرحلة", "تجهيز الخطة والسعر"]);
+    expect(planned.map((s) => s.titleAr)).toEqual(["فهمنا طلبك", "لقينا المصادر", "بنجرب عينة صغيرة للتأكد من الجودة", "بنجهز السعر"]);
   });
 
   it("a slow or replaced source is told in plain words; no provider, endpoint, price or English word anywhere", () => {
     const steps = planningSteps([ev("understood"), ev("searched", { n: 1 }), ev("switched"), ev("sample_slow")]);
     expect(steps[2].detailAr).toContain("بدّلنا لمصدر بديل");
-    expect(steps[2].detailAr).toContain("المصدر أبطأ من المعتاد، لسه شغالين");
+    expect(steps[2].detailAr).toContain("الأمر يأخذ وقتًا أطول قليلًا، لسه شغالين");
     expect(steps[1].detailAr).toBe("لقيت مصدرًا مناسبًا.");
     expect(panelTextProblems(steps)).toEqual([]);
   });
@@ -270,7 +270,7 @@ describe("the planning steps API reads the planner's own event rows, the custome
     expect(out.finished).toBeNull();
     expect(out.steps.map((s: any) => s.state)).toEqual(["done", "done", "running", "running"]);
     expect(out.steps[1].detailAr).toBe("لقيت ٤ مصادر مناسبة.");
-    expect(out.currentLineAr).toBe("تجربة عينة من كل مرحلة");
+    expect(out.currentLineAr).toBe("بنجرب عينة صغيرة للتأكد من الجودة");
     expect((await ask("x")).status).toBe(400);
     const none = await (await ask("req_unknown1")).json();
     expect(none.steps[0].state).toBe("running");
@@ -286,11 +286,12 @@ describe("the panel's drawing: check mark and strike-through, spinner, plain, st
   };
   const body = () => renderToStaticMarkup(createElement(MissionPlanBody, { content: content() }));
 
-  it("a done step has the check mark and a struck-through name; the running one a spinner; waiting is plain; stopped has its reason", () => {
+  it("a done step has the green check mark and its name WITHOUT a strike-through (a struck-through name reads as «cancelled»); the running one a spinner; waiting is plain; stopped has its reason", () => {
     const html = body();
     expect(html).toContain('data-state="done"');
     expect(html).toContain('data-testid="step-icon-done"');
-    expect(html).toMatch(/line-through[^>]*>جمع الشركات</);
+    expect(html).not.toContain("line-through");
+    expect(html).toMatch(/text-ink[^>]*>جمع الشركات</);
     expect(html).toContain('data-testid="step-icon-running"');
     expect(html).toContain("animate-spin");
     expect(html).toContain('data-testid="step-icon-waiting"');

@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { toArabicDigits } from "@/lib/arabicDigits";
+import { formatSampleCell } from "@/lib/customerDates";
 import type { PanelStep, StepState } from "@/lib/missionView";
 
 /**
- * THE MISSION PLAN PANEL «خطة المهمة»: a task list in the manner of a coding agent's plan (a finished step has a check mark and a struck-through name, the step in progress has a spinner,
- * the others are plain), in Arabic, right to left, in the site's own tokens (light and dark). It only DRAWS the steps it is given: they come from the planner's real events and the approved
+ * THE MISSION PLAN PANEL «خطة المهمة»: a task list in the manner of a coding agent's plan (a finished step has a green check mark and its name written as it is: a struck-through name reads as «cancelled»;
+ * the step in progress has a spinner, the others are plain), in Arabic, right to left, in the site's own tokens (light and dark). It only DRAWS the steps it is given: they come from the planner's real events and the approved
  * plan's stages (see missionView.ts), never from a text written here. Motion is for what is really happening and stands still when the customer asked for less motion.
  */
 
@@ -50,7 +51,7 @@ export function MissionStepRow({ step }: { step: PanelStep }) {
     <li className="flex gap-2 py-1.5" data-testid={`mission-step-${step.id}`} data-state={step.state} aria-label={`${step.titleAr}: ${STATE_LABEL_AR[step.state]}`}>
       <StepIcon state={step.state} />
       <div className="min-w-0 flex-1">
-        <p className={`m-0 text-[13px] leading-[1.7] ${done ? "text-mut line-through decoration-1" : step.state === "waiting" ? "text-ink2" : "font-semibold text-ink"}`}>{step.titleAr}</p>
+        <p className={`m-0 text-[13px] leading-[1.7] ${done ? "text-ink" : step.state === "waiting" ? "text-ink2" : "font-semibold text-ink"}`}>{step.titleAr}</p>
         {step.detailAr ? <p className="m-0 text-[12px] font-light leading-[1.7] text-ink2" data-testid="step-detail">{step.detailAr}</p> : null}
         {step.state === "stopped" && step.reasonAr ? <p className="m-0 text-[12px] leading-[1.7]" style={{ color: "var(--bad)" }} data-testid="step-reason">{step.reasonAr}</p> : null}
         {step.metricsAr && step.metricsAr.length > 0 && step.state !== "waiting" ? (
@@ -87,7 +88,7 @@ export function MissionLiveRows({ latest }: { latest: LiveRows }) {
       <div className="overflow-x-auto">
         <table className="w-full border-collapse text-[11px]">
           <thead><tr className="text-right text-mut">{latest.columns.map((c) => <th key={c.key} className="border-b border-ln px-1.5 py-1 font-semibold">{c.titleAr}</th>)}</tr></thead>
-          <tbody>{latest.rows.map((row, i) => <tr key={i}>{row.map((v, j) => <td key={j} className="max-w-[160px] truncate border-b border-ln px-1.5 py-1 text-ink2">{v || "—"}</td>)}</tr>)}</tbody>
+          <tbody>{latest.rows.map((row, i) => <tr key={i}>{row.map((v, j) => <td key={j} className="min-w-[96px] max-w-[220px] whitespace-normal break-words border-b border-ln px-1.5 py-1 align-top text-ink2">{formatSampleCell(v) || "—"}</td>)}</tr>)}</tbody>
         </table>
       </div>
     </section>
@@ -189,9 +190,9 @@ export function MissionPlanSidePanel({ content, expanded, pinned, onToggleExpand
 export function MissionPlanMobileBar({ content, onOpen }: { content: MissionPanelContent; onOpen: () => void }) {
   const state: StepState = content.steps.some((s) => s.state === "running") ? "running" : content.steps.some((s) => s.state === "stopped") ? "stopped" : content.steps.every((s) => s.state === "done") ? "done" : "waiting";
   return (
-    <button type="button" onClick={onOpen} data-testid="mission-mobile-bar" aria-haspopup="dialog" dir="rtl" className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 border-0 border-t border-ln bg-sf px-4 text-start text-[13px] text-ink lg:hidden">
+    <button type="button" onClick={onOpen} data-testid="mission-mobile-bar" aria-haspopup="dialog" dir="rtl" className="flex min-h-11 w-full cursor-pointer items-center gap-2.5 border-0 border-t border-ln bg-sf px-4 py-1.5 text-start text-[13px] text-ink lg:hidden">
       <StepIcon state={state} />
-      <span className="min-w-0 flex-1 truncate" data-testid="mission-current-line" aria-live="polite">{content.currentLineAr}</span>
+      <span className="min-w-0 flex-1 break-words leading-[1.6]" data-testid="mission-current-line" aria-live="polite">{content.currentLineAr}</span>
       <span className="shrink-0 text-[12px] text-mut">خطة المهمة</span>
       <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0 text-mut"><path d="m6 15 6-6 6 6" /></svg>
     </button>

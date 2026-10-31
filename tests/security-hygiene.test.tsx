@@ -29,13 +29,16 @@ describe("14. no provider name in page markup", () => {
   it("the rendered /calculator page has no provider name anywhere in its markup, and the option for companies still exists", () => {
     const html = renderToStaticMarkup(createElement(PublicCalculatorPage));
     expect(html.match(PROVIDER_NAME_PATTERN)).toBeNull();
-    expect(html).toContain('value="companies-search"');
-    expect(html).toContain("بحث واستخراج بيانات الشركات");
+    // UI pass 1 (item 10): the calculator offers platforms and kinds (no service list); companies and decision makers are one platform choice
+    expect(html).toContain('value="companies"');
+    expect(html).toContain("شركات وصناع قرار");
   });
 
-  it("the calculator maps the chosen public id back to the stored slug before pricing", () => {
-    const source = readFileSync("src/app/calculator/page.tsx", "utf8");
-    expect(source).toContain("handleSelectCapability(capabilitySlugFromPublicId(e.target.value))");
+  it("the calculator shows no stored service slug: it prices a platform and a kind through the server estimate", () => {
+    const source = readFileSync("src/components/calculator/MissionEstimator.tsx", "utf8");
+    expect(source).toContain('fetch("/api/calculator/estimate"');
+    expect(source).not.toMatch(PROVIDER_NAME_PATTERN);
+    expect(source).not.toContain("capabilitySlugFromPublicId");
   });
 });
 

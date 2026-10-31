@@ -202,7 +202,7 @@ describe("C. the requests page names an agent mission's items by their noun", ()
     const page = readFileSync("src/app/dashboard/requests/page.tsx", "utf8");
     expect(page).toContain('stages:plan_public->stages');
     expect(page).toContain("itemNounOfPlan({ stages: m.stages })");
-    expect(page).toContain('agentNoun ? agentNoun.plural : "السجلات"');
+    expect(page).toContain('agentNoun ? agentNoun.plural : "العناصر"');
     expect(page).toContain("deliveredOfAr(rows, requested || rows, agentNoun)");
   });
 });

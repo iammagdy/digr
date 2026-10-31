@@ -413,21 +413,21 @@ describe("the customer's panel: elapsed time, progress inside the step, an hones
     expect(stalled.queueLineAr).toBeNull();
   });
 
-  it("progress inside «تجربة عينة من كل مرحلة»: «عينة ١ من ٢» when the agent said how many stages it plans, else how many samples were tried", () => {
+  it("progress inside «بنجرب عينة صغيرة للتأكد من الجودة»: «عينة ١ من ٢» when the agent said how many stages it plans, else how many samples were tried", () => {
     const withTotal = customerMissionView({ mission: mission({ status: "planning" }), events: [event(1, { kind: "progress", message_ar: "أجرّب العينة الأولى", counts: { stages: 2, samples: 1 } })], callsMade: 1, now: T0 + 20_000 });
-    const step = withTotal.steps.find((s) => s.titleAr === "تجربة عينة من كل مرحلة")!;
+    const step = withTotal.steps.find((s) => s.titleAr === "بنجرب عينة صغيرة للتأكد من الجودة")!;
     expect(step.state).toBe("running");
     expect(step.countAr).toBe("عينة ١ من ٢");
     expect(step.ratio).toBeCloseTo(0.5, 5);
     expect(withTotal.currentLineAr).toContain("عينة ١ من ٢");
     const noTotal = customerMissionView({ mission: mission({ status: "planning" }), events: [event(1)], callsMade: 2, now: T0 + 20_000 });
-    expect(noTotal.steps.find((s) => s.titleAr === "تجربة عينة من كل مرحلة")!.detailAr).toBe("جُرّبت عينتان");
+    expect(noTotal.steps.find((s) => s.titleAr === "بنجرب عينة صغيرة للتأكد من الجودة")!.detailAr).toBe("جرّبنا عينتين");
     for (const v of [withTotal, noTotal]) expect(checkCustomerText([v.currentLineAr, ...v.steps.flatMap((s) => [s.titleAr, s.countAr ?? "", s.detailAr ?? ""])].join(" ")).issues).toEqual([]);
   });
 
-  it("a running mission quiet for a long time says it charges only what is delivered (and keeps the existing «المصدر أبطأ» wording)", () => {
+  it("a running mission quiet for a long time says it charges only what is delivered (in plain words: «الأمر يأخذ وقتًا أطول», not «المصدر أبطأ»)", () => {
     const v = customerMissionView({ mission: mission({ status: "executing" }), events: [event(1, { counts: { stage: 1, saved: 5, planned: 20 } })], now: T0 + 2_000 + 1_000 + AGENT_STALL_AFTER_MS + 5_000 });
-    expect(v.delayAr).toContain("المصدر أبطأ من المعتاد");
+    expect(v.delayAr).toContain("الأمر يأخذ وقتًا أطول من المعتاد");
     expect(v.delayAr).toContain("ولن يُخصم منك إلا ما يُسلَّم فعلًا");
   });
 });

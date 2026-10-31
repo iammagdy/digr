@@ -133,7 +133,7 @@ describe("the live panel and the queue", () => {
   it("an honest delay when nothing new arrived for a while", () => {
     const events = [ev(1, { counts: { stage: 1, saved: 5, planned: 20 } })];
     const v = customerMissionView({ mission: row({ status: "executing" }), events, now: Date.parse(events[0].created_at) + 200_000 });
-    expect(v.delayAr).toContain("المصدر أبطأ من المعتاد");
+    expect(v.delayAr).toContain("الأمر يأخذ وقتًا أطول من المعتاد");
   });
 
   it("a finished mission says what was delivered, what was charged and what came back; partial when fewer rows than planned", () => {

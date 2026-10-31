@@ -1827,6 +1827,8 @@ export default function ChatWorkspacePage() {
   // The real profile name only. The e-mail prefix that the account hook falls back to is not a name (owner decision D2).
   const firstName = String(user?.user_metadata?.name || user?.user_metadata?.full_name || "").trim().split(/\s+/)[0] || "";
   const chatEmpty = messages.length === 0 && !conversationLoading && !conversationLoadError;
+  // a form opened by a link («ابدأ طلبًا» in the catalog): `?template=<id>`; read once on the client
+  const [startTemplateId] = useState<string | null>(() => (typeof window === "undefined" ? null : new URLSearchParams(window.location.search).get("template")));
 
   const renderNote = (m: MessageItem) => {
     if (m.hidden) return null;
@@ -2160,16 +2162,10 @@ export default function ChatWorkspacePage() {
             <EmptyChat
               firstName={firstName}
               zeroBalance={balanceValue !== null && balanceValue <= 0}
-              balance={balanceValue}
-              onStart={(prompt) => {
-                setInputText(prompt);
-                setTimeout(() => {
-                  const input = document.getElementById("chat-composer-input") || document.querySelector('input[aria-label="اسأل ديجر"]');
-                  if (input instanceof HTMLInputElement) {
-                    input.focus();
-                  }
-                }, 50);
-              }}
+              composer={<Composer hero value={inputText} onChange={setInputText} onSend={handleSendMessage} disabled={conversationLoading || loading} />}
+              onSend={(text) => handleSendMessage(text)}
+              initialTemplateId={startTemplateId}
+              sending={loading}
             />
           )}
 
@@ -2198,7 +2194,7 @@ export default function ChatWorkspacePage() {
           <div ref={messagesEndRef} />
         </div>
         {missionContent && <MissionPlanMobileBar content={missionContent} onOpen={() => setMissionSheetOpen(true)} />}
-        <Composer value={inputText} onChange={setInputText} onSend={handleSendMessage} disabled={conversationLoading || loading} />
+        {!chatEmpty && <Composer value={inputText} onChange={setInputText} onSend={handleSendMessage} disabled={conversationLoading || loading} />}
       </div>
 
       {/* 2b. The mission plan panel: a side panel on desktop (expand, collapse, pin); the bar above the composer and a bottom sheet on mobile */}

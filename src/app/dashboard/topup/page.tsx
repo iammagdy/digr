@@ -56,7 +56,7 @@ function LedgerLine({ l, compact = false }: { l: LedgerRow; compact?: boolean })
       <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[11px]" style={{ background: `color-mix(in oklab, ${tint} 12%, transparent)`, color: ico[1] }}><Icon d={ico[0]} size={16} stroke={1.8} /></span>
       <div className="min-w-0 flex-1">
         <p className="m-0 text-sm text-ink">{ledgerLabel(l)}</p>
-        <p className="mb-0 mt-[3px] truncate text-xs font-light text-fnt">{walletNoteForDisplay(l.note) ? `${walletNoteForDisplay(l.note)} · ` : ""}{new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "long" }).format(new Date(l.createdAt))}</p>
+        <p className="mb-0 mt-[3px] text-xs font-light leading-[1.7] text-fnt">{walletNoteForDisplay(l.note) ? `${walletNoteForDisplay(l.note)} · ` : ""}{new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "long" }).format(new Date(l.createdAt))}</p>
       </div>
       <span dir="ltr" className="text-[15px] font-semibold" style={{ color: plus ? "var(--ok)" : "var(--ink)" }}>{plus ? "+" : "−"}{formatAr(Math.abs(l.delta))}</span>
     </div>
@@ -314,7 +314,7 @@ export default function WalletPage() {
         <div className="flex flex-wrap items-end justify-between gap-4">
           <div>
             <h1 className="m-0 text-[32px] font-bold leading-[1.2] text-ac">المحفظة</h1>
-            <p className="mb-0 mt-1.5 text-sm text-mut">النقطة الواحدة = {formatAr(creditValue, 2)} ج.م · تدفع على السجلات المسلَّمة فقط</p>
+            <p className="mb-0 mt-1.5 text-sm text-mut">النقطة الواحدة = {formatAr(creditValue, 2)} ج.م · تدفع على ما يُسلَّم لك فقط</p>
           </div>
           <button type="button" onClick={scrollToForm} className="min-h-11 cursor-pointer whitespace-nowrap rounded-full border-0 bg-ac px-[18px] text-sm font-semibold text-onac">+ شحن الرصيد</button>
         </div>
@@ -346,14 +346,14 @@ export default function WalletPage() {
               <div className="flex items-center justify-between gap-3 border-b border-wallet-line py-3">
                 <div className="min-w-0">
                   <p className="m-0 flex items-center gap-2 whitespace-nowrap text-[13px] text-wallet-ondark"><span className="h-2 w-2 shrink-0 rounded-full bg-wallet-amber" />محجوز ومُحرَّر</p>
-                  <p className="mb-0 mt-1 text-[11px] leading-[1.6] text-wallet-ondark-faint">{monthReady ? `حجز مؤقت رُفع ولم يُخصم، من ${searchesAr(stats.releasedJobs)}` : ledgerFailed ? "تعذّر تحميل الأرقام" : "جاري تحميل الأرقام"}</p>
+                  <p className="mb-0 mt-1 text-[11px] leading-[1.6] text-wallet-ondark-faint">{monthReady ? `حجز مؤقت رُفع ولم يُخصم، من ${searchesAr(stats.releasedJobs)}` : ledgerFailed ? "تعذّر تحميل الأرقام" : "حجز مؤقت رُفع ولم يُخصم"}</p>
                 </div>
                 {monthReady ? <p className="m-0 text-xl font-bold text-wallet-amber">{formatAr(stats.releasedHold)}</p> : ledgerFailed ? <p className="m-0 text-xl font-bold text-white">—</p> : <Skeleton className="h-7 w-16 !bg-none bg-white/10" />}
               </div>
               <div className="flex items-center justify-between gap-3 border-b border-wallet-line py-3">
                 <div className="min-w-0">
                   <p className="m-0 flex items-center gap-2 whitespace-nowrap text-[13px] text-wallet-ondark"><span className="h-2 w-2 shrink-0 rounded-full bg-wallet-dot" />خُصم</p>
-                  <p className="mb-0 mt-1 text-[11px] leading-[1.6] text-wallet-ondark-faint">{monthReady && monthRows !== null ? `على ${formatAr(monthRows)} سجلًا مسلَّمًا` : "جاري تحميل الأرقام"}</p>
+                  <p className="mb-0 mt-1 text-[11px] leading-[1.6] text-wallet-ondark-faint">{monthReady && monthRows !== null ? `مقابل ${formatAr(monthRows)} عنصرًا مسلَّمًا` : ledgerFailed ? "تعذّر تحميل الأرقام" : "مقابل ما سُلِّم لك"}</p>
                 </div>
                 {monthReady ? <p className="m-0 text-xl font-bold text-white">{formatAr(stats.charged)}</p> : ledgerFailed ? <p className="m-0 text-xl font-bold text-white">—</p> : <Skeleton className="h-7 w-16 !bg-none bg-white/10" />}
               </div>
@@ -404,7 +404,7 @@ export default function WalletPage() {
                 <div key={t.$id} className="flex items-center gap-3.5 border-t border-ln px-5 py-3.5 first:border-t-0">
                   <div className="min-w-0 flex-1">
                     <p className="m-0 text-[15px] font-semibold text-ink">{formatAr(t.amountEgp)} ج.م{pts === null ? "" : ` · ${pointsAr(pts)}`}</p>
-                    <p className="mb-0 mt-[3px] truncate text-xs font-light text-fnt">{TOPUP_REQUEST_LABEL_AR} · {formatDate(t.createdAt)}، {formatTime(t.createdAt)}</p>
+                    <p className="mb-0 mt-[3px] text-xs font-light leading-[1.7] text-fnt">{TOPUP_REQUEST_LABEL_AR} · {formatDate(t.createdAt)}، {formatTime(t.createdAt)}</p>
                     <RejectionReasonLine reason={t.status === "rejected" ? t.rejectReason ?? null : null} />
                   </div>
                   <span className="shrink-0 rounded-full px-3 py-1 text-xs font-medium" style={{ background: b.bg, color: b.fg }}>{USER_STATUS[t.status]}</span>
@@ -445,7 +445,7 @@ export default function WalletPage() {
                     <span className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-[11px]" style={{ background: "color-mix(in oklab, var(--mut) 12%, transparent)", color: "var(--ink2)" }}><Icon d="M5 12h14" size={16} stroke={1.8} /></span>
                     <div className="min-w-0 flex-1">
                       <p className="m-0 text-sm text-ink" data-testid="wallet-mission-line">{walletDisplayText(entry.lineAr)}</p>
-                      <p className="mb-0 mt-[3px] truncate text-xs font-light text-fnt">{new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "long" }).format(new Date(newest.createdAt))} · تفاصيل الحركات</p>
+                      <p className="mb-0 mt-[3px] text-xs font-light leading-[1.7] text-fnt">{new Intl.DateTimeFormat("ar-EG-u-nu-arab", { day: "numeric", month: "long" }).format(new Date(newest.createdAt))} · <span className="text-ink2 underline decoration-dotted underline-offset-4">تفاصيل الحركات</span></p>
                     </div>
                     <span dir="ltr" className="text-[15px] font-semibold" style={{ color: net > 0 ? "var(--ok)" : "var(--ink)" }}>{net > 0 ? "+" : "−"}{formatAr(Math.abs(net))}</span>
                   </summary>

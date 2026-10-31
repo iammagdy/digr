@@ -48,10 +48,11 @@ describe("Phase 5: Ready-to-Use Example Templates on Landing & Chat", () => {
     expect(customTemplates[0].approximatePoints).toBeGreaterThan(defaultTemplates[0].approximatePoints);
   });
 
-  it("the V7 design replaces the priced example cards with three fixed starters (no invented prices in the UI)", () => {
+  it("the start page shows example chips that open forms (UI pass 1), with no invented prices in the UI", () => {
     const empty = readFileSync("src/app/dashboard/chat/components/EmptyChat.tsx", "utf-8");
     const chatSource = readFileSync("src/app/dashboard/chat/page.tsx", "utf-8");
-    expect(empty).toContain("حساب عام على تيك توك");
+    expect(empty).toContain("TEMPLATE_FORMS.map");
+    expect(readFileSync("src/lib/templateForms.ts", "utf-8")).toContain("منشورات حساب");
     expect(chatSource).not.toContain("تقريبيًا");
   });
 });

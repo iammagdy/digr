@@ -1,0 +1,187 @@
+{
+ "label": "after",
+ "base": "http://localhost:3100",
+ "latencyMs": 600,
+ "checks": [
+  {
+   "name": "A0 chips present",
+   "value": true
+  },
+  {
+   "name": "A1 chip click opens a form",
+   "value": true
+  },
+  {
+   "name": "A2 requests sent after chip click",
+   "value": 0
+  },
+  {
+   "name": "A3 requests sent after «أرسل» with an empty account",
+   "value": 0
+  },
+  {
+   "name": "A4 error shown for the empty required field",
+   "value": true
+  },
+  {
+   "name": "A5 requests sent after a filled form + «أرسل»",
+   "value": 1
+  },
+  {
+   "name": "A6 the text sent",
+   "value": "{\"plannerRequestId\":\"p6795a59a2405423db773429a9cdce7e2\",\"message\":\"أريد أحدث ٣٠ منشور من حساب @alahly على إكس خلال آخر ٣ أشهر.\",\"jwt\":\"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJ1LTAwMDAtMTExMSIsImV4cCI6MTc5MzQ0MDQy"
+  },
+  {
+   "name": "B1 «مركز المساعدة» goes to",
+   "value": "/help"
+  },
+  {
+   "name": "B1 page heading",
+   "value": "مركز المساعدة"
+  },
+  {
+   "name": "B2 «تواصل مع الدعم» goes to",
+   "value": "/contact"
+  },
+  {
+   "name": "B2 page heading",
+   "value": "تواصل معنا"
+  },
+  {
+   "name": "C1 ms until a status line is on the page after «اعتمد»",
+   "value": 55
+  },
+  {
+   "name": "C2 ms until the running status (started line + close notice)",
+   "value": 844
+  },
+  {
+   "name": "C3 started line",
+   "value": "بدأنا جمع ٥٠ تغريدة، نحو دقيقتين."
+  },
+  {
+   "name": "C4 close notice visible",
+   "value": true
+  },
+  {
+   "name": "D1 first thing on screen after «التفاصيل»",
+   "value": "details-title"
+  },
+  {
+   "name": "D1 ms to it",
+   "value": 843
+  },
+  {
+   "name": "D1 url",
+   "value": "/dashboard/requests/job_demo00"
+  },
+  {
+   "name": "D2 ms until the mission card (heavy part) is on screen",
+   "value": 1637
+  },
+  {
+   "name": "E desktop /calculator",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E desktop /services",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E desktop /services/facebook",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E desktop /pricing",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E desktop /contact",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E desktop /legal/terms",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E desktop /legal/privacy",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E desktop /help",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E desktop /for/researchers",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E desktop /dashboard/requests",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E desktop /dashboard/topup",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E desktop /dashboard/settings",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E desktop /dashboard/chat",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E m380 /calculator",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E m380 /services",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E m380 /services/facebook",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E m380 /pricing",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E m380 /contact",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E m380 /legal/terms",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E m380 /legal/privacy",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E m380 /help",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E m380 /for/researchers",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E m380 /dashboard/requests",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E m380 /dashboard/topup",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E m380 /dashboard/settings",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E m380 /dashboard/chat",
+   "value": "header+logo+menu"
+  }
+ ]
+}

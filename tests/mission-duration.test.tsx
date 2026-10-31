@@ -345,10 +345,12 @@ describe("the plan panel and the calculator show it", () => {
     expect(ok.duration.rangeAr).toBe(same!.rangeAr);
   });
 
-  it("the estimator component renders the duration block from the endpoint's answer", () => {
+  it("the estimator component renders the expected time from the endpoint's answer: the plan card's own function (UI pass 1, item 10), not a second range", () => {
     const source = readFileSync("src/components/calculator/MissionEstimator.tsx", "utf8");
     expect(source).toContain('data-testid="estimate-duration"');
-    expect(source).toContain("answer.duration.rangeAr");
+    expect(source).toContain("answer.expectedAr");
+    expect(source).not.toContain("answer.duration");
+    expect(readFileSync("src/app/api/calculator/estimate/route.ts", "utf8")).toContain("expectedTimeOf(");
   });
 });
 

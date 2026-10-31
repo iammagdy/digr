@@ -86,13 +86,15 @@ describe("sign-up on a phone: three fields, the invitation code inside it, nothi
 });
 
 describe("after the e-mail is confirmed: the first templates, the balance in the welcome, the code redeemed once", () => {
-  it("the empty chat shows the templates and the welcome line with the points, and no line at zero", () => {
-    const withBalance = renderToStaticMarkup(createElement(EmptyChat as any, { firstName: "منى", zeroBalance: false, balance: 250, onStart: () => {} }));
-    expect(withBalance).toContain('data-testid="mission-templates"');
-    expect(withBalance).toContain("رصيدك الآن ٢٥٠ نقطة");
-    expect(withBalance).toContain("ولا يُخصم منها إلا ما يُسلَّم لك فعلًا");
-    const none = renderToStaticMarkup(createElement(EmptyChat as any, { firstName: "", zeroBalance: true, balance: 0, onStart: () => {} }));
-    expect(none).not.toContain("welcome-balance");
+  it("the start page is one input and a few example chips (UI pass 1, item 3): the points a new customer received are in the header chip on every page, not a welcome paragraph; the zero-balance line stays", () => {
+    const withBalance = renderToStaticMarkup(createElement(EmptyChat as any, { firstName: "منى", zeroBalance: false, composer: null, onSend: () => {} }));
+    expect(withBalance).toContain('data-testid="example-chips"');
+    expect(withBalance).not.toContain('data-testid="mission-templates"');
+    expect(withBalance).not.toContain("welcome-balance");
+    const shell = readFileSync("src/components/app/AppShell.tsx", "utf8");
+    expect(shell).toContain("balanceText(balance)");
+    const none = renderToStaticMarkup(createElement(EmptyChat as any, { firstName: "", zeroBalance: true, composer: null, onSend: () => {} }));
+    expect(none).toContain("رصيدك صفر");
   });
   it("the redeem goes through the existing redeem route once the account is verified, and the stored code is cleared on success and on a plain refusal", () => {
     const hook = readFileSync("src/hooks/usePendingPromo.ts", "utf8");

@@ -30,7 +30,8 @@ import { MODEL_PLAN_SLUG } from "@/lib/modelPlanner/constants";
 import { useDriverMode } from "@/hooks/useDriverMode";
 import { deliveredOfAr, itemNounOfPlan, knownItemNoun } from "@/lib/agentMission/itemNoun";
 import { moneyLineAr } from "@/lib/agentMission/moneyText";
-import { REQUESTS_PAGE_SIZE, hashOfTab, tabFromHash, tabOfKind, type RequestTab } from "@/lib/requests/tabs";
+import { REQUESTS_PAGE_SIZE, hashOfTab, requestsShownCounts, tabFromHash, tabOfKind, type RequestTab } from "@/lib/requests/tabs";
+import { saveRequestFacts } from "@/lib/requests/facts";
 import { customerFormatsOf } from "@/lib/requests/files";
 import type { MissionIndexRow, RequestIndex } from "@/lib/requests/types";
 
@@ -445,6 +446,12 @@ export default function RequestsPage() {
     router.push(openJobHref({ jobId: job.$id, conversationId, retry }));
   };
 
+  /** «التفاصيل»: the request's own page opens AT ONCE with the facts the row already holds (no wait for the database); the page reads the rest after. The chat is a separate button there. */
+  function openDetails(facts: Parameters<typeof saveRequestFacts>[0]) {
+    saveRequestFacts(facts);
+    router.push(`/dashboard/requests/${encodeURIComponent(facts.id)}`);
+  }
+
   /** One request that never became a job (queued, being planned, cancelled, expired, failed before approval): everything its row shows came with the list. */
   function missionRow(r: MissionIndexRow) {
     const chip = r.tab === "running" ? REQUEST_STATUS_LABEL_AR.running : ENDED_CHIP_AR[r.endedKind ?? "cancelled"] ?? "أُلغيت";
@@ -456,19 +463,17 @@ export default function RequestsPage() {
           <span className="shrink-0 whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-medium" style={{ background: `color-mix(in oklab, ${tint} 13%, transparent)`, color: tint }}>{chip}</span>
         </div>
         <p className="m-0 text-xs text-mut">{dayLabel(r.createdAt)}{r.tab === "ended" ? ` · ${pointsAr(0)}` : ""}</p>
-        <p className="m-0 line-clamp-2 text-xs leading-[1.7] text-ink2">{r.noteAr}</p>
-        {r.conversationId && (
-          <div className="flex gap-2">
-            <a href={`/dashboard/chat?c=${encodeURIComponent(r.conversationId)}`} className="flex min-h-11 items-center rounded-full bg-sf2 px-4 text-xs font-medium text-ink">التفاصيل</a>
-          </div>
-        )}
+        <p className="m-0 text-xs leading-[1.7] text-ink2">{r.noteAr}</p>
+        <div className="flex gap-2">
+          <button type="button" data-testid="request-details" onClick={() => openDetails({ id: r.id, title: r.title || "طلب بدون نص", stateAr: chip, createdAt: r.createdAt, nounPlural: null, delivered: null, requested: null, pointsAr: r.tab === "ended" ? pointsAr(0) : null })} className="flex min-h-11 cursor-pointer items-center rounded-full border-0 bg-sf2 px-4 text-xs font-medium text-ink">التفاصيل</button>
+        </div>
       </article>
     );
   }
 
   const searching = searched.length > 0;
-  const loadedCount = shownRows.length;
-  const tabTotal = tab === "all" ? Math.max(0, counts.all - (index?.pending.length ?? 0)) : counts[tab ?? "all"];
+  // the tab's number and the footer's number come from the same place (requestsShownCounts)
+  const { shown: loadedCount, total: tabTotal } = requestsShownCounts({ tab: tab ?? "all", counts, listed: shownRows.length, pending: index?.pending.length ?? 0 });
 
   return (
     <div data-screen-label="Requests" className="flex-1">
@@ -544,8 +549,8 @@ export default function RequestsPage() {
                 <button
                   type="button"
                   data-testid="request-title"
-                  // Opening a request only shows it; a retry is the «إعادة المحاولة» button below, never a tap on the title.
-                  onClick={() => openFile(j)}
+                  // Opening a request shows its own page; a retry is the «إعادة المحاولة» button below, never a tap on the title.
+                  onClick={() => openDetails({ id: j.$id, title, stateAr: k === "refunded" ? "حجز مؤقت مُحرَّر" : st.label, createdAt: j.createdAt, nounPlural: agentNoun ? agentNoun.plural : null, delivered: rows, requested: requested ?? null, pointsAr: k === "running" ? "محجوز" : pointsAr(j.chargedCredits ?? 0) })}
                   className="m-0 min-w-0 flex-1 cursor-pointer truncate border-0 bg-transparent p-0 text-right text-[14px] font-medium text-ink hover:underline focus-visible:outline-2"
                 >
                   {title}
@@ -554,13 +559,13 @@ export default function RequestsPage() {
               </div>
               <p className="m-0 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-mut">
                 <span>{dayLabel(j.createdAt)}</span>
-                <span>{agentNoun ? agentNoun.plural : "السجلات"} <strong className="font-semibold text-ink">{formatAr(rows)}{requested ? ` / ${formatAr(requested)}` : ""}</strong></span>
+                <span>{agentNoun ? agentNoun.plural : "العناصر"} <strong className="font-semibold text-ink">{formatAr(rows)}{requested ? ` / ${formatAr(requested)}` : ""}</strong></span>
                 <span>{k === "running" ? "محجوز" : pointsAr(j.chargedCredits ?? 0)}</span>
               </p>
               {k === "running" && <div className="h-1 overflow-hidden rounded bg-sf2"><div className="h-full bg-gold" style={{ width: `${pct}%` }} /></div>}
               {k === "running" && progressByJob[j.$id] && <p className="m-0 text-[13px] leading-[1.8] text-ink2" data-testid="request-progress">{progressByJob[j.$id]}</p>}
               {stalled && <p role="status" className="m-0 text-[13px] font-medium leading-[1.8] text-ink" data-testid="request-stalled">{STALLED_LINE_AR}</p>}
-              {note && <p className="m-0 line-clamp-2 text-xs leading-[1.7] text-ink2">{pluralizeStoredCountsAr(note)}</p>}
+              {note && <p className="m-0 text-xs leading-[1.7] text-ink2" data-testid="request-note">{pluralizeStoredCountsAr(note)}</p>}
               {(k === "refunded" || k === "partial") && <ReportProblemButton jobId={j.$id} className="self-start" />}
               {j.templateSlug === MODEL_PLAN_SLUG && k === "running" && <MissionPlanInline jobId={j.$id} live={k === "running"} />}
               <div className="flex flex-wrap gap-2">
@@ -575,7 +580,12 @@ export default function RequestsPage() {
                 ))}
                 <button
                   type="button"
-                  onClick={() => openFile(j, k === "refunded")}
+                  data-testid="request-details"
+                  onClick={() => {
+                    // a retry is the only button that goes to the chat; «التفاصيل» and «متابعة التقدم» open the request's own page
+                    if (k === "refunded" && !isDeterministicFailureAr(j.errorAr)) return void openFile(j, true);
+                    openDetails({ id: j.$id, title, stateAr: k === "refunded" ? "حجز مؤقت مُحرَّر" : st.label, createdAt: j.createdAt, nounPlural: agentNoun ? agentNoun.plural : null, delivered: rows, requested: requested ?? null, pointsAr: k === "running" ? "محجوز" : pointsAr(j.chargedCredits ?? 0) });
+                  }}
                   className={`min-h-11 cursor-pointer rounded-full border-0 px-4 text-xs font-medium transition-colors ${
                     k === "running" ? "bg-ac text-onac hover:opacity-90" : "bg-sf2 text-ink hover:bg-sf"
                   }`}

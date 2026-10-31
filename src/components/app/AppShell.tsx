@@ -62,7 +62,8 @@ function useIsMobile(bp = 760) {
   return m;
 }
 
-export function AppShell({ children }: { children: ReactNode }) {
+/** `allowGuest`: the public pages (calculator, catalog, prices, help, contact, terms) use the same shell for a visitor who is not signed in. */
+export function AppShell({ children, allowGuest = false }: { children: ReactNode; allowGuest?: boolean }) {
   const { user, logout } = useUser();
   const { balance, refresh: refreshBalance } = useBalance();
   const { theme, toggleTheme } = useTheme();
@@ -177,7 +178,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     return () => document.removeEventListener("mousedown", on);
   }, [acctOpen]);
 
-  if (!user && !isChat) return null;
+  if (!user && !isChat && !allowGuest) return null;
 
   const navItems: Array<{ id: string; label: string; icon: string; href?: string; meta?: string; badge?: number; active: boolean; onClick?: () => void }> = user ? [
     { id: "chat", label: "المساعد البحثي", icon: SIDEBAR_ICONS.chat, active: pathname === "/dashboard/chat", onClick: () => {
@@ -188,7 +189,7 @@ export function AppShell({ children }: { children: ReactNode }) {
     { id: "requests", label: "طلباتي", icon: SIDEBAR_ICONS.requests, href: "/dashboard/requests", badge: running, active: pathname.startsWith("/dashboard/requests") },
     { id: "wallet", label: "المحفظة", icon: SIDEBAR_ICONS.wallet, href: "/dashboard/topup", meta: balance.status === "ready" ? balanceText(balance) : undefined, active: pathname.startsWith("/dashboard/topup") },
     { id: "calculator", label: "حاسبة التكلفة", icon: SIDEBAR_ICONS.calculator, href: "/calculator", active: pathname === "/calculator" },
-    { id: "catalog", label: "كتالوج الخدمات", icon: SIDEBAR_ICONS.catalog, href: "/services", active: pathname === "/services" },
+    { id: "catalog", label: "كتالوج الخدمات", icon: SIDEBAR_ICONS.catalog, href: "/services", active: pathname.startsWith("/services") },
     { id: "settings", label: "الإعدادات", icon: SIDEBAR_ICONS.settings, href: "/dashboard/settings", active: pathname.startsWith("/dashboard/settings") },
   ] : [
     { id: "chat", label: "المساعد البحثي", icon: SIDEBAR_ICONS.chat, active: pathname === "/dashboard/chat", onClick: () => {
@@ -197,7 +198,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       else router.push("/dashboard/chat?history=1");
     } },
     { id: "calculator", label: "حاسبة التكلفة", icon: SIDEBAR_ICONS.calculator, href: "/calculator", active: pathname === "/calculator" },
-    { id: "catalog", label: "كتالوج الخدمات", icon: SIDEBAR_ICONS.catalog, href: "/services", active: pathname === "/services" },
+    { id: "catalog", label: "كتالوج الخدمات", icon: SIDEBAR_ICONS.catalog, href: "/services", active: pathname.startsWith("/services") },
   ];
 
   // The account menu lists only what the sidebar does not: «الإعدادات» is a sidebar entry and «الشروط والخصوصية» is a help link.
@@ -290,11 +291,14 @@ export function AppShell({ children }: { children: ReactNode }) {
             <div className={`flex min-h-0 flex-1 flex-col gap-3.5 overflow-y-auto ${compactSidebar && !mobile ? "px-2" : "px-3"} pb-3 pt-1`}>
               <div className="mt-auto flex flex-col gap-0.5">
                 <p className={`mx-1 mb-1 mt-0 text-[11px] font-medium text-fnt ${compactSidebar && !mobile ? "sr-only" : ""}`}>المساعدة</p>
-                {helpLinks.map((h) => (
-                  <Link key={h.label} href={h.href} title={compactSidebar && !mobile ? h.label : undefined} className={`flex min-h-[44px] items-center gap-2.5 rounded-[10px] px-2 text-right text-[13px] text-mut transition-colors hover:bg-sf2 hover:text-ink ${compactSidebar && !mobile ? "justify-center" : ""}`}>
-                    <Icon d={h.icon} size={16} /><span className={compactSidebar && !mobile ? "sr-only" : ""}>{h.label}</span>
-                  </Link>
-                ))}
+                {helpLinks.map((h) => {
+                  const cls = `flex min-h-[44px] items-center gap-2.5 rounded-[10px] px-2 text-right text-[13px] text-mut transition-colors hover:bg-sf2 hover:text-ink ${compactSidebar && !mobile ? "justify-center" : ""}`;
+                  const inner = <><Icon d={h.icon} size={16} /><span className={compactSidebar && !mobile ? "sr-only" : ""}>{h.label}</span></>;
+                  // a page of the site opens inside the app; an address outside it (a deployment's own help desk) opens as a plain link
+                  return /^(?:[a-z]+:)?\/\//i.test(h.href) || h.href.startsWith("mailto:")
+                    ? <a key={h.label} href={h.href} title={compactSidebar && !mobile ? h.label : undefined} className={cls}>{inner}</a>
+                    : <Link key={h.label} href={h.href} title={compactSidebar && !mobile ? h.label : undefined} aria-current={pathname === h.href ? "page" : undefined} className={cls}>{inner}</Link>;
+                })}
               </div>
             </div>
             {/* account row: pinned to the bottom, never scrolls away */}
@@ -369,6 +373,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                   <span className="h-[1.5px] w-[18px] bg-current" /><span className="h-[1.5px] w-[18px] bg-current" />
                 </button>
               )}
+              {mobile && <Link href="/" aria-label="ديجر" data-testid="header-logo" className="flex h-11 w-9 shrink-0 items-center justify-center"><LogoMark size={26} /></Link>}
               {pageTitle ? (isChat
                 ? <h1 data-testid="shell-title" className="m-0 truncate text-[15px] font-medium text-ink">{pageTitle}</h1>
                 : <p data-testid="shell-title" className="m-0 truncate text-[15px] font-medium text-ink">{pageTitle}</p>) : null}
@@ -376,13 +381,15 @@ export function AppShell({ children }: { children: ReactNode }) {
             {user ? (
               <div className="flex items-center gap-1.5">
                 <button
-                  type="button" onClick={() => { setNotifsOpen((v) => !v); setAcctOpen(false); }} aria-label={notifs.actionableUnread > 0 ? `الإشعارات، ${bellBadgeText(notifs.actionableUnread, notifs.items.length, toArabicDigits)} تحتاج انتباهك` : "الإشعارات"} aria-expanded={notifsOpen}
+                  type="button" onClick={() => { setNotifsOpen((v) => !v); setAcctOpen(false); }} aria-label={notifs.actionableUnread > 0 ? `الإشعارات، ${bellBadgeText(notifs.actionableUnread, notifs.items.length, toArabicDigits)} تحتاج انتباهك` : notifs.unread > 0 ? "الإشعارات، فيها جديد" : "الإشعارات"} aria-expanded={notifsOpen}
                   className={`relative flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border-0 text-ink hover:bg-sf2 ${notifsOpen ? "bg-sf2" : "bg-transparent"}`}
                 >
                   <Icon d={UI.bell} size={19} />
-                  {notifs.actionableUnread > 0 && (
+                  {notifs.actionableUnread > 0 ? (
                     <span data-testid="bell-badge" className="absolute left-1.5 top-1.5 flex h-[17px] min-w-[17px] items-center justify-center rounded-full border-2 border-bg bg-gold px-1 text-[9px] font-bold text-white">{bellBadgeText(notifs.actionableUnread, notifs.items.length, toArabicDigits)}</span>
-                  )}
+                  ) : notifs.unread > 0 ? (
+                    <span data-testid="bell-dot" aria-hidden="true" className="absolute left-3 top-2.5 h-[9px] w-[9px] rounded-full border-2 border-bg bg-gold" />
+                  ) : null}
                 </button>
                 <Link href="/dashboard/topup" className="flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-full bg-sf2 px-3.5">
                   <span className="text-sm font-medium text-ink">{balanceText(balance)}</span>

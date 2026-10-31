@@ -8,11 +8,13 @@ import PublicCalculatorPage from "../src/app/calculator/page";
 const html = renderToStaticMarkup(createElement(MissionEstimator));
 
 describe("the public estimate form", () => {
-  it("offers a free-text box and structured fields, in Arabic only", () => {
+  it("offers exactly three choices (platform, type of data, count), in Arabic only (UI pass 1, item 10: the free-text box and the budget field are gone)", () => {
     expect(html).toContain('data-testid="mission-estimator"');
-    expect(html).toContain("اكتب طلبك");
+    expect(html).toContain("المنصة");
     expect(html).toContain("نوع البيانات");
-    expect(html).toContain("ميزانيتك بالنقاط");
+    expect(html).toContain("العدد المطلوب");
+    expect(html).not.toContain("<textarea");
+    expect(html).not.toContain("ميزانيتك بالنقاط");
     expect(html).not.toMatch(/undefined|null|NaN|USD|\$|treg|scrapecreators|tikhub|serpapi|openai|anthropic/i);
   });
 
@@ -32,9 +34,10 @@ describe("the public estimate form", () => {
     expect(readFileSync("src/app/api/calculator/cap/route.ts", "utf8")).toContain("createRateLimiter");
   });
 
-  it("the calculator page mounts it above the exact per-service calculator", () => {
+  it("the calculator page is this form and the accounting rules, with no second per-service calculator under it", () => {
     const page = renderToStaticMarkup(createElement(PublicCalculatorPage));
-    expect(page.indexOf('data-testid="mission-estimator"')).toBeGreaterThan(0);
-    expect(page.indexOf('data-testid="mission-estimator"')).toBeLessThan(page.indexOf("capability-select"));
+    expect(page).toContain('data-testid="mission-estimator"');
+    expect(page).not.toContain("capability-select");
+    expect(page).not.toContain("جدول التدقيق");
   });
 });
