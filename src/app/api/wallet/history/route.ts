@@ -4,7 +4,9 @@ import { authenticateUser } from "@/lib/server/userAuth";
 import { fetchNewestLedgerRows } from "@/lib/server/typedLedger";
 import { CREDIT_KIND_LABEL_AR } from "@/lib/creditKinds";
 import { walletDisplayText, walletNoteForDisplay } from "@/lib/walletText";
-import { jobWalletLineAr, missionWalletLineAr } from "@/lib/agentMission/walletLine";
+import { jobFactsForWallet, jobLedgerLineAr } from "@/lib/agentMission/walletLine";
+import { jobLedgerTotals } from "@/lib/walletView";
+import { readLedgerRowsOfJobs } from "@/lib/server/jobLedger";
 
 export const dynamic = "force-dynamic";
 
@@ -21,25 +23,30 @@ export async function GET(req: NextRequest) {
     const admin = createAdminClient();
     const rows = await fetchNewestLedgerRows(admin, { userId: auth.user.id }, 500);
     t = mark("ledger", t);
-    // the money line of every finished mission whose jobs appear in this history (the customer's own missions only): the wallet groups the hold, the charge and the release of one mission under it
+    // THE ONE LINE OF EACH JOB, from the ledger: the points are the sums of the job's own credit_ledger rows (all of them, not only the newest 500 shown), the same sign the balance uses; the mission or job row
+    // supplies only how many items were delivered and what to call them. A failed read gives no line (the rows are then listed one by one), never a guess.
     const lineByJob = new Map<string, string>();
     try {
       const jobIds = [...new Set(rows.map((r) => r.jobId).filter((x): x is string => typeof x === "string" && x.length > 0))].slice(0, 200);
       if (jobIds.length > 0) {
-        const { data } = await (admin as any).from("missions").select("job_id,status,delivered_units,charged_points,reserved_points,plan_public").eq("user_id", auth.user.id).in("job_id", jobIds);
-        for (const m of (data ?? []) as Array<Parameters<typeof missionWalletLineAr>[0]>) { const line = missionWalletLineAr(m); if (line && m.job_id) lineByJob.set(m.job_id, line); }
+        const totals = jobLedgerTotals(await readLedgerRowsOfJobs(admin, auth.user.id, jobIds));
+        t = mark("jobledger", t);
+        const { data: missions } = await (admin as any).from("missions").select("job_id,delivered_units,plan_public").eq("user_id", auth.user.id).in("job_id", jobIds);
+        const missionOf = new Map<string, { delivered_units: number | null; plan_public: unknown }>();
+        for (const m of (missions ?? []) as Array<{ job_id: string | null; delivered_units: number | null; plan_public: unknown }>) if (m.job_id) missionOf.set(m.job_id, m);
+        const olderIds = jobIds.filter((id) => !missionOf.has(id));
+        const jobOf = new Map<string, { delivered_units: number | null }>();
+        if (olderIds.length > 0) {
+          const { data: jobs } = await (admin as any).from("jobs").select("id,delivered_units").eq("user_id", auth.user.id).in("id", olderIds);
+          for (const j of (jobs ?? []) as Array<{ id: string; delivered_units: number | null }>) jobOf.set(j.id, j);
+        }
+        for (const id of jobIds) {
+          const line = jobLedgerLineAr(totals.get(id), jobFactsForWallet(missionOf.get(id), jobOf.get(id)));
+          if (line) lineByJob.set(id, line);
+        }
       }
     } catch { /* the rows are then listed one by one */ }
-    t = mark("missions", t);
-    // a job from before missions existed has no mission row: its one line is built from the job's own stored numbers, so the wallet lists it once too
-    try {
-      const missing = [...new Set(rows.map((r) => r.jobId).filter((x): x is string => typeof x === "string" && x.length > 0 && !lineByJob.has(x)))].slice(0, 200);
-      if (missing.length > 0) {
-        const { data } = await (admin as any).from("jobs").select("id,status,delivered_units,charged_credits,reserved_credits").eq("user_id", auth.user.id).in("id", missing);
-        for (const j of (data ?? []) as Array<Parameters<typeof jobWalletLineAr>[0]>) { const line = jobWalletLineAr(j); if (line) lineByJob.set(j.id, line); }
-      }
-    } catch { /* those rows are then listed one by one */ }
-    mark("jobs", t);
+    mark("facts", t);
     const newestFirst = rows.map((r) => ({
       id: r.id,
       delta: r.delta,

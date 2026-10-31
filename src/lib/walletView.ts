@@ -118,6 +118,43 @@ export function walletMonthStats(rows: WalletLedgerRow[], now: Date = new Date()
 }
 
 
+/**
+ * WHAT ONE JOB'S LEDGER ROWS SAY, the numbers a wallet line is built from. The same grouping and the same reading of a row as `walletMonthStats` above (by `job_id`; by `type` reserve / release / charge; the size of a row is
+ * `Math.abs(delta)`), and the same sign the balance uses (`calculateBalance` in supabase/ledger.ts sums `delta` over the customer's rows: a reserve and a charge are negative, a release positive). `net` is that plain sum for the
+ * job's rows: reserved, released and charged always satisfy `net === released - reserved - charged` while the job has only those three types. A job linked to a row of ANOTHER type (a goodwill adjustment, for example)
+ * is marked `otherTypes`: its net no longer equals what these three numbers say, so no summary line is made for it and its rows are listed one by one (the balance and the line can then never disagree).
+ */
+export interface JobLedgerTotals {
+  /** Points held when the job was approved (the reserve rows). */
+  reserved: number;
+  /** Points lifted from the hold (the release rows). A release lifts the WHOLE hold, and the charge for what was delivered is a separate row after it. */
+  released: number;
+  /** Points deducted for what was delivered (the charge rows). */
+  charged: number;
+  /** The plain sum of the job's `delta`, exactly what the balance adds up for these rows. */
+  net: number;
+  otherTypes: boolean;
+  rows: number;
+}
+
+export interface JobLedgerRow { jobId?: string | null; type?: string; delta: number }
+
+export function jobLedgerTotals(rows: ReadonlyArray<JobLedgerRow>): Map<string, JobLedgerTotals> {
+  const byJob = new Map<string, JobLedgerTotals>();
+  for (const r of rows) {
+    if (!r.jobId) continue;
+    const j = byJob.get(r.jobId) ?? { reserved: 0, released: 0, charged: 0, net: 0, otherTypes: false, rows: 0 };
+    if (r.type === "reserve") j.reserved += Math.abs(r.delta);
+    else if (r.type === "release") j.released += Math.abs(r.delta);
+    else if (r.type === "charge") j.charged += Math.abs(r.delta);
+    else j.otherTypes = true;
+    j.net += r.delta;
+    j.rows += 1;
+    byJob.set(r.jobId, j);
+  }
+  return byJob;
+}
+
 /** A ledger row as the wallet groups it: any row; the ones that belong to a finished mission carry its one money line (the server computed it from the mission's own numbers). */
 export interface MissionGroupableRow { $id?: string; id?: string; jobId?: string | null; missionLineAr?: string | null }
 export type WalletEntry<T extends MissionGroupableRow> = { kind: "row"; row: T } | { kind: "mission"; jobId: string; lineAr: string; rows: T[] };

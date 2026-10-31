@@ -35,7 +35,11 @@ import { PRICING_FAQ_AR } from "../src/lib/pricingPage";
 import { requestsShownCounts } from "../src/lib/requests/tabs";
 import { isSafeRequestId, readRequestFacts, saveRequestFacts } from "../src/lib/requests/facts";
 import { groupMissionRows } from "../src/lib/walletView";
-import { jobWalletLineAr } from "../src/lib/agentMission/walletLine";
+import { jobFactsForWallet, jobLedgerLineAr, missionWalletLineAr } from "../src/lib/agentMission/walletLine";
+import { jobLedgerTotals, walletMonthStats } from "../src/lib/walletView";
+import { readLedgerRowsOfJobs } from "../src/lib/server/jobLedger";
+import { calculateBalance } from "../src/lib/supabase/ledger";
+import { knownItemNoun } from "../src/lib/agentMission/itemNoun";
 import { actionableUnreadCount } from "../src/lib/notificationBadge";
 import { PLATFORM_REQUEST_GROUPS, startRequestHref } from "../src/lib/servicesRequestExamples";
 import ServicesCatalogPage from "../src/app/services/page";
@@ -310,44 +314,107 @@ describe("7. «طلباتي»: one number for the tab and the footer, and «ال
 });
 
 // ================================================================================================================ 8. the wallet
-describe("8. the wallet: one line per mission by default", () => {
-  it("a job with no mission row (an older request) gets its one line from the job's own numbers; an open job gets none", () => {
-    expect(jobWalletLineAr({ id: "j1", status: "completed", delivered_units: 50, charged_credits: 200, reserved_credits: 230 })).toBe("خُصم ٢٠٠ نقطة مقابل ٥٠ عنصرًا");
-    expect(jobWalletLineAr({ id: "j2", status: "failed", delivered_units: 0, charged_credits: 0, reserved_credits: 230 })).toBe("لم يُخصم شيء؛ حجز مؤقت مُحرَّر ٢٣٠ نقطة");
-    expect(jobWalletLineAr({ id: "j3", status: "running", delivered_units: 0, charged_credits: null, reserved_credits: 230 })).toBeNull();
-    expect(src("src/lib/agentMission/walletLine.ts")).not.toMatch(/سجل|صف/);
-  });
-  it("the history answer carries the line of EVERY finished job (mission or older), so the wallet shows one line per job and folds the hold, the charge and the release under «تفاصيل الحركات»", async () => {
-    const USER = "11111111-1111-1111-1111-111111111111";
+describe("8. the wallet: one line per job, its points summed from the job's credit_ledger rows", () => {
+  const USER = "11111111-1111-1111-1111-111111111111";
+  const tweet = knownItemNoun("تغريدة")!;
+  const L = (jobId: string, type: "reserve" | "release" | "charge", points: number, at = "2026-10-29T00:50:00Z") => ({ id: `${type.slice(0, 3)}_${jobId}`, user_id: USER, delta: type === "release" ? points : -points, type, job_id: jobId, created_at: at });
+  const plan8 = { stages: [{ title_ar: "التغريدات", deliver: true }] };
+  const historyOf = async (tables: Record<string, any[]>) => {
     state.user = { id: USER, email: "c@x.test", app_metadata: {}, user_metadata: {} };
-    const rows = (jobId: string, at: string) => [
-      { id: `res_${jobId}`, user_id: USER, delta: -230, type: "reserve", job_id: jobId, created_at: at },
-      { id: `chg_${jobId}`, user_id: USER, delta: -200, type: "charge", job_id: jobId, created_at: at },
-      { id: `rel_${jobId}`, user_id: USER, delta: 230, type: "release", job_id: jobId, created_at: at },
-    ];
-    state.admin = fakeSupabase({
-      missing: ["credit_ledger_typed"],
-      tables: {
-        credit_ledger: [...rows("job_m", "2026-10-29T00:52:00Z"), ...rows("job_old", "2026-10-28T00:52:00Z"), { id: "res_run", user_id: USER, delta: -230, type: "reserve", job_id: "job_run", created_at: "2026-10-30T00:00:00Z" }],
-        missions: [{ id: "msn_1", user_id: USER, job_id: "job_m", status: "completed", delivered_units: 50, charged_points: 200, reserved_points: 230, plan_public: { stages: [{ title_ar: "التغريدات", deliver: true }] } }],
-        jobs: [
-          { id: "job_old", user_id: USER, status: "completed", delivered_units: 50, charged_credits: 200, reserved_credits: 230 },
-          { id: "job_run", user_id: USER, status: "running", delivered_units: 0, charged_credits: null, reserved_credits: 230 },
-        ],
-      },
-    }) as any;
+    state.admin = fakeSupabase({ missing: ["credit_ledger_typed"], tables }) as any;
     const response = await walletHistory(new NextRequest("http://localhost/api/wallet/history"));
-    const body = await response.json();
-    const lines = new Set(body.rows.map((r: any) => r.missionLineAr).filter(Boolean));
-    expect([...lines].sort()).toEqual(["خُصم ٢٠٠ نقطة مقابل ٥٠ تغريدة", "خُصم ٢٠٠ نقطة مقابل ٥٠ عنصرًا"].sort());
-    const entries = groupMissionRows(body.rows.map((r: any) => ({ ...r, $id: r.id })));
-    // two folded groups (3 rows each) and the open job's hold as a single row: 3 entries, not 7
-    expect(entries.map((e) => e.kind)).toEqual(expect.arrayContaining(["mission", "mission", "row"]));
-    expect(entries).toHaveLength(3);
-    expect(entries.flatMap((e) => (e.kind === "row" ? [e.row] : e.rows))).toHaveLength(7);
+    return { body: await response.json(), response };
+  };
+  const lineOf = (body: any, id: string) => body.rows.find((r: any) => r.id === id).missionLineAr;
+
+  it("the points follow the ledger when a stored figure disagrees: the mission says 999 charged, the ledger rows say 200", async () => {
+    const { body, response } = await historyOf({
+      credit_ledger: [L("job_a", "reserve", 230), L("job_a", "release", 230), L("job_a", "charge", 200)],
+      missions: [{ id: "msn_a", user_id: USER, job_id: "job_a", status: "completed", delivered_units: 50, charged_points: 999, reserved_points: 999, plan_public: plan8 }],
+      jobs: [{ id: "job_a", user_id: USER, status: "completed", delivered_units: 50, charged_credits: 999, reserved_credits: 999 }],
+    });
+    expect(lineOf(body, "cha_job_a")).toBe("خُصم ٢٠٠ نقطة مقابل ٥٠ تغريدة");
+    expect(JSON.stringify(body)).not.toMatch(/٩٩٩/);
     // where the time goes is visible in the network panel
-    expect(response.headers.get("Server-Timing")).toMatch(/auth;dur=\d+.*ledger;dur=\d+.*missions;dur=\d+.*jobs;dur=\d+.*total;dur=\d+/);
+    expect(response.headers.get("Server-Timing")).toMatch(/auth;dur=\d+.*ledger;dur=\d+.*jobledger;dur=\d+.*facts;dur=\d+.*total;dur=\d+/);
+    // the old mission-only helper (kept, unchanged, for its own tests) would have said 999: the route no longer uses it
+    expect(missionWalletLineAr({ job_id: "job_a", status: "completed", delivered_units: 50, charged_points: 999, reserved_points: 999, plan_public: plan8 })).toBe("خُصم ٩٩٩ نقطة مقابل ٥٠ تغريدة");
+    expect(src("src/app/api/wallet/history/route.ts")).not.toMatch(/missionWalletLineAr|charged_points|reserved_points|charged_credits|reserved_credits/);
   });
+
+  it("a running job (a hold with no release and no charge yet) shows as held, in one line with its row folded; nothing is shown as charged", async () => {
+    const { body } = await historyOf({
+      credit_ledger: [L("job_run", "reserve", 230, "2026-10-30T00:00:00Z"), { id: "top_1", user_id: USER, delta: 5000, type: "topup", job_id: null, created_at: "2026-10-01T00:00:00Z" }],
+      missions: [{ id: "msn_run", user_id: USER, job_id: "job_run", status: "executing", delivered_units: null, charged_points: null, reserved_points: 230, plan_public: plan8 }],
+      jobs: [{ id: "job_run", user_id: USER, status: "running", delivered_units: 0, charged_credits: null, reserved_credits: 230 }],
+    });
+    expect(lineOf(body, "res_job_run")).toBe("حجز مؤقت ٢٣٠ نقطة لطلب قيد التنفيذ");
+    expect(lineOf(body, "res_job_run")).not.toContain("خُصم");
+    expect(lineOf(body, "top_1")).toBeNull();
+    const entries = groupMissionRows(body.rows.map((r: any) => ({ ...r, $id: r.id })));
+    expect(entries.map((e) => e.kind)).toEqual(["mission", "row"]);
+  });
+
+  it("a job with no mission row (an older request): the points come from the ledger even when the job row's stored charge is different (30 stored, 40 in the ledger)", async () => {
+    const { body } = await historyOf({
+      credit_ledger: [L("job_old", "reserve", 35), L("job_old", "release", 35), L("job_old", "charge", 40)],
+      missions: [],
+      jobs: [{ id: "job_old", user_id: USER, status: "completed", delivered_units: 10, charged_credits: 30, reserved_credits: 35 }],
+    });
+    expect(lineOf(body, "cha_job_old")).toBe("خُصم ٤٠ نقطة مقابل ١٠ عناصر");
+    expect(JSON.stringify(body)).not.toMatch(/٣٠ نقطة/);
+  });
+
+  it("a finished partial delivery: 30 of 50 delivered, 230 held and lifted, 90 charged: the line says what the charge rows add up to, and nothing is held", async () => {
+    const { body } = await historyOf({
+      credit_ledger: [L("job_p", "reserve", 230), L("job_p", "release", 230), L("job_p", "charge", 60), L("job_p", "charge", 30, "2026-10-29T00:52:00Z")].map((r, i) => ({ ...r, id: `${r.id}_${i}` })),
+      missions: [{ id: "msn_p", user_id: USER, job_id: "job_p", status: "completed", delivered_units: 30, charged_points: 120, reserved_points: 230, plan_public: plan8 }],
+    });
+    expect(lineOf(body, "res_job_p_0")).toBe("خُصم ٩٠ نقطة مقابل ٣٠ تغريدة");
+    const totals = jobLedgerTotals([{ jobId: "job_p", type: "reserve", delta: -230 }, { jobId: "job_p", type: "release", delta: 230 }, { jobId: "job_p", type: "charge", delta: -90 }]).get("job_p")!;
+    expect(totals).toMatchObject({ reserved: 230, released: 230, charged: 90, net: -90 });
+    // finished: released = reserved, so held is zero (the wallet's own month figure agrees: nothing held)
+    expect(walletMonthStats([{ jobId: "job_p", type: "reserve", delta: -230, createdAt: "2026-10-29T00:00:00Z" }, { jobId: "job_p", type: "release", delta: 230, createdAt: "2026-10-29T00:00:00Z" }, { jobId: "job_p", type: "charge", delta: -90, createdAt: "2026-10-29T00:00:00Z" }], new Date("2026-10-30T00:00:00Z")).held).toBe(0);
+  });
+
+  it("the totals never disagree with the balance: the jobs' net equals the sum of delta the balance adds (calculateBalance), and the held / charged agree with the wallet's month figures", async () => {
+    const rows = [
+      L("j1", "reserve", 230), L("j1", "release", 230), L("j1", "charge", 200),
+      L("j2", "reserve", 100), L("j2", "release", 100),
+      L("j3", "reserve", 50),
+    ];
+    const totals = jobLedgerTotals(rows.map((r) => ({ jobId: r.job_id, type: r.type, delta: r.delta })));
+    const net = [...totals.values()].reduce((n, t) => n + t.net, 0);
+    const balanceSum = await calculateBalance(fakeSupabase({ tables: { credit_ledger: rows } }) as any, USER);
+    expect(net).toBe(balanceSum);
+    for (const t of totals.values()) expect(t.net).toBe(t.released - t.reserved - t.charged);
+    const month = walletMonthStats(rows.map((r) => ({ jobId: r.job_id, type: r.type, delta: r.delta, createdAt: r.created_at })), new Date("2026-10-30T00:00:00Z"));
+    expect(month.held).toBe(totals.get("j3")!.reserved);
+    expect(month.charged).toBe(totals.get("j1")!.charged);
+  });
+
+  it("a job linked to a row of another type (a goodwill adjustment) gets no summary line, so a line can never disagree with the balance; a failed ledger read gives no line and still answers", async () => {
+    const odd = { id: "adj_job_x", user_id: USER, delta: 20, type: "goodwill", job_id: "job_x", created_at: "2026-10-29T00:53:00Z" };
+    expect(jobLedgerLineAr(jobLedgerTotals([{ jobId: "job_x", type: "reserve", delta: -50 }, { jobId: "job_x", type: "release", delta: 50 }, { jobId: "job_x", type: "goodwill", delta: 20 }]).get("job_x"), { delivered: 5, noun: tweet })).toBeNull();
+    const { body } = await historyOf({ credit_ledger: [L("job_x", "reserve", 50), L("job_x", "release", 50), odd], missions: [], jobs: [] });
+    expect(body.success).toBe(true);
+    expect(body.rows.map((r: any) => r.missionLineAr)).toEqual([null, null, null]);
+    expect(jobLedgerLineAr(undefined, { delivered: 1, noun: tweet })).toBeNull();
+    // the delivered count and the noun are the only things the mission or job rows supply
+    expect(jobFactsForWallet({ delivered_units: 7, plan_public: plan8 }, undefined)).toEqual({ delivered: 7, noun: tweet });
+    expect(jobFactsForWallet(undefined, undefined).delivered).toBeNull();
+  });
+
+  it("every ledger row of the job is read, not only the newest page: a job with 1,205 rows and 120 jobs (read in groups of 50) are summed whole", async () => {
+    const many = Array.from({ length: 1205 }, (_, i) => ({ id: `row_${String(i).padStart(5, "0")}`, user_id: USER, delta: -1, type: "charge", job_id: "job_big", created_at: "2026-10-29T00:00:00Z" }));
+    const read = await readLedgerRowsOfJobs(fakeSupabase({ tables: { credit_ledger: many } }) as any, USER, ["job_big"]);
+    expect(read).toHaveLength(1205);
+    expect(jobLedgerTotals(read).get("job_big")!.charged).toBe(1205);
+    const jobs = Array.from({ length: 120 }, (_, i) => `job_${i}`);
+    const rows120 = jobs.map((id) => ({ id: `res_${id}`, user_id: USER, delta: -2, type: "reserve", job_id: id, created_at: "2026-10-29T00:00:00Z" }));
+    expect(await readLedgerRowsOfJobs(fakeSupabase({ tables: { credit_ledger: rows120 } }) as any, USER, jobs)).toHaveLength(120);
+  });
+
   it("the wallet page does not say «جاري تحميل الأرقام» while it loads, shows the balance first, and cuts no note or explanation", () => {
     const page = src("src/app/dashboard/topup/page.tsx");
     expect(page).not.toContain("جاري تحميل الأرقام");
