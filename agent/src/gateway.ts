@@ -12,7 +12,11 @@ import { categoryOf, policyVerdict, type AccountAccess } from "../../src/lib/tre
 import { AGENT_FIRST_ROWS, AGENT_PLANNING_STAGE_RESERVE_SHARE } from "../../src/lib/agentMission/constants";
 import { sessionRestriction } from "../../src/lib/agentMission/sources";
 import { isListingEndpoint, sourceInputOf } from "../../src/lib/agentMission/namedRoutes";
-import type { AgentStore, CallPhase } from "./types";
+import { EMAIL_FINDER_CAPABILITIES, contactFinderKind, contactSampleCapUsd, contactSampleMessage, contactSampleRefusal, type ContactFinderKind } from "../../src/lib/agentMission/contactSampling";
+import { PHONE_CAPABILITIES } from "../../src/lib/agentMission/peopleCheck";
+import { oneCallUsd } from "../../src/lib/agentMission/planningBudget";
+import { rankEndpoints, type StatsMap } from "../../src/lib/agentMission/sourceRanking";
+import type { AgentStore, CallPhase, CallRow } from "./types";
 
 /**
  * THE GATEWAY: the only way the agent reaches TREG. Three tools — catalog_search, describe_endpoint, treg_call — and `treg_call` enforces, IN CODE, before every call, in this order:
@@ -40,7 +44,7 @@ const LIMIT_PARAM_NAMES = ["limit", "count", "page_size", "per_page", "size", "n
 
 export type RefusalCode =
   | "not_sellable" | "blocked" | "sensitive_not_allowed" | "purpose_required" | "daily_limit" | "audit_unavailable"
-  | "missing_params" | "over_budget" | "daily_cap" | "recording_unavailable" | "needs_login" | "repeat_sample" | "stage_reserved";
+  | "missing_params" | "over_budget" | "daily_cap" | "recording_unavailable" | "needs_login" | "repeat_sample" | "stage_reserved" | "contact_sample";
 
 export type GatewayCallResult =
   | { ok: true; call_id: string; http_status: number; rows_in_page: number; has_more: boolean | null; next_cursor: string | null; shape: unknown; first_rows: unknown[]; warnings: string[]; saved: string }
@@ -69,6 +73,10 @@ export interface GatewayDeps {
   /** Call counter, shared by the whole mission (continues after a restart). */
   counter: { seq: number };
   /** Planning only: how many stages the plan will have and the planning budget (USD): a share of it is kept for the first sample of every stage not sampled yet. */
+  /** Planning only: the calls this mission has already recorded. The gateway lives one run; a customer's answer starts a new one, so what was sampled (stages, sources, contact kinds) and what the contact samples cost are rebuilt from the record, never forgotten. */
+  priorCalls?: ReadonlyArray<CallRow>;
+  /** The measured ranking of the sources (planning), to pick the cheapest ranked contact finder; absent: the catalog's own prices. */
+  stats?: StatsMap;
   stageBudget?: { stages: number; budgetUsd: number; /** The USD kept for the first sample of each stage (code sized it from the sources' prices: planningBudget.ts); absent: the flat share of the budget for every stage. */ reservesUsd?: number[] };
 }
 
@@ -107,7 +115,10 @@ const REFUSAL_TEXT: Record<RefusalCode, string> = {
   repeat_sample: "this source was already sampled twice and gave rows both times: a third sample only spends the planning budget (the live Facebook request of 2026-10-29 spent it on three searches of one source and could not sample the next stage). Plan from the samples you have, or sample the OTHER stages and sources the plan still needs",
   stage_reserved: "this call would spend the planning budget kept for the first sample of a stage that has not been sampled yet: sample the next stage of the plan (its parent or its children) first, then come back if budget is left",
   needs_login: "this source refuses this kind of search without the customer's own login, so it was NOT called and cost nothing; sample the next source of the ranking",
+  contact_sample: "this contact-finder sample was NOT made (the planning budget is for the stages of the plan)",
 };
+
+const FINDER_CAPABILITIES: Record<ContactFinderKind, ReadonlySet<string>> = { email: EMAIL_FINDER_CAPABILITIES, phone: PHONE_CAPABILITIES };
 
 export function createGateway(deps: GatewayDeps) {
   const call = deps.call ?? executeTregCall;
@@ -118,6 +129,34 @@ export function createGateway(deps: GatewayDeps) {
   const samplesBySource = new Map<string, number>();
   /** The jobs (capabilities) that have given rows in this run: a stage is «sampled» once its job has. */
   const sampledJobs = new Set<string>();
+  /** Contact finders (planning): the kinds a finder was called for, and the USD those samples cost. At most one sample per kind and a quarter of the planning budget in all (contactSampling.ts). */
+  const contactKinds = new Set<ContactFinderKind>();
+  let contactSpentUsd = 0;
+  const sourceKeyOf = (endpoint: CatalogEndpoint, params: Record<string, unknown>): string | null => deps.phase === "planning" && isListingEndpoint(endpoint) ? `${endpoint.id}|${String(params[sourceInputOf(endpoint) ?? ""] ?? "").trim().toLowerCase()}` : null;
+  // REBUILT FROM THE RECORD: this gateway is created again after the customer answers a question (and after a restart), and the planning budget it shares among the stages is already partly spent
+  if (deps.phase === "planning") {
+    for (const row of deps.priorCalls ?? []) {
+      if ((row.phase ?? "planning") !== "planning") continue;
+      const endpoint = deps.catalog.byId.get(row.endpoint_id);
+      if (!endpoint || row.status === "refused") continue;
+      const kind = contactFinderKind(endpoint.capability);
+      if (kind) { contactKinds.add(kind); contactSpentUsd += Math.max(0, Number(row.cost_usd) || 0); }
+      if (row.status !== "ok" || !(Number(row.rows_returned) > 0)) continue;
+      samplesWithRows.set(endpoint.id, (samplesWithRows.get(endpoint.id) ?? 0) + 1);
+      const key = sourceKeyOf(endpoint, row.params_digest ?? {});
+      if (key !== null) samplesBySource.set(key, (samplesBySource.get(key) ?? 0) + 1);
+      sampledJobs.add(endpoint.capability ?? endpoint.id);
+    }
+  }
+  /** The cheapest ranked finder of a kind that this account may use and whose single call fits inside the cap: the one the planning samples first. */
+  const cheapestFinder = (kind: ContactFinderKind, capUsd: number | null): string | null => {
+    const group = deps.catalog.endpoints.filter((e) => e.capability && FINDER_CAPABILITIES[kind].has(e.capability) && isSellable(e.id, deps.catalog) && !blockedEndpointReason(e.id, e.scope ?? null) && policyVerdict(e.id, deps.access).allowed);
+    for (const r of rankEndpoints(group, deps.catalog, deps.stats ?? new Map(), Date.now()).ranked) {
+      const e = deps.catalog.byId.get(r.id);
+      if (e && (capUsd === null || oneCallUsd(e, deps.catalog) <= capUsd + 1e-9)) return r.id;
+    }
+    return null;
+  };
 
   async function logCall(row: { id: string; endpoint_id: string; params: Record<string, unknown>; status: "ok" | "failed" | "empty" | "refused"; refused_reason?: string; http_status?: number; rows?: number; cost_usd?: number; estimate_usd?: number; provider_cost_id?: number | null; storage_path?: string | null; duration_ms?: number }) {
     await deps.store.addCall({
@@ -175,6 +214,17 @@ export function createGateway(deps: GatewayDeps) {
 
       // 5: the mission's USD budget
       const estimate = estimateCallUsd(endpoint, params, deps.catalog);
+      // 4c: CONTACT-FINDER SAMPLES DO NOT STARVE PLANNING (contactSampling.ts): at most a quarter of the planning budget, one sample per kind, the cheapest ranked finder first, never a finder whose one call costs more than that quarter
+      const finderKind = deps.phase === "planning" ? contactFinderKind(endpoint.capability) : null;
+      if (finderKind) {
+        const capUsd = contactSampleCapUsd(deps.stageBudget?.budgetUsd ?? deps.budget.ceilingUsd);
+        const cheapestId = cheapestFinder(finderKind, capUsd);
+        const why = contactSampleRefusal({ kind: finderKind, estimateUsd: estimate, capUsd, sampledKinds: contactKinds, spentOnContactUsd: contactSpentUsd, endpointId, cheapestId });
+        if (why) {
+          const refused = await refuse(id, endpointId, trace, "contact_sample", `${finderKind}_${why}`);
+          return { ...refused, message: contactSampleMessage(why, finderKind, cheapestId) } as GatewayCallResult;
+        }
+      }
       if (!deps.budget.reserve(estimate)) return refuse(id, endpointId, trace, "over_budget", `${deps.phase}`);
       // 5a: THE PLANNING BUDGET IS SHARED BY EVERY STAGE: a call may not spend what the first sample of a stage that is still unsampled needs (a new job counts as the stage it samples)
       if (deps.phase === "planning" && deps.stageBudget && deps.stageBudget.stages > 1) {
@@ -186,7 +236,7 @@ export function createGateway(deps: GatewayDeps) {
       }
 
       // 5b: planning samples a source at most twice once it has given rows (the budget is shared by every stage of the plan); the reservation just taken is given back
-      const sourceKey = deps.phase === "planning" && isListingEndpoint(endpoint) ? `${endpointId}|${String(params[sourceInputOf(endpoint) ?? ""] ?? "").trim().toLowerCase()}` : null;
+      const sourceKey = sourceKeyOf(endpoint, params);
       const sampled = samplesWithRows.get(endpointId) ?? 0;
       const repeated = sourceKey !== null ? (samplesBySource.get(sourceKey) ?? 0) >= GATEWAY_MAX_SAMPLES_PER_SOURCE || sampled >= GATEWAY_MAX_NAMED_SOURCE_SAMPLES : sampled >= GATEWAY_MAX_SAMPLES_PER_SOURCE;
       if (deps.phase === "planning" && repeated) { deps.budget.settle(estimate, 0); return refuse(id, endpointId, trace, "repeat_sample", "planning"); }
@@ -233,6 +283,8 @@ export function createGateway(deps: GatewayDeps) {
       const durationMs = Date.now() - started;
       const result = res as TregCallResult | null;
       deps.budget.settle(estimate, thrown || !result || result.timedOut || result.error === "network_failure" ? null : actualUsd);
+      // a finder that was called is a sample of its kind, whatever it gave (a call that was cut may have been billed: its estimate counts)
+      if (finderKind) { contactKinds.add(finderKind); contactSpentUsd += actualUsd; }
       await deps.store.updateMission(deps.missionId, { [spendField]: Number(deps.budget.spentUsd().toFixed(6)) });
 
       if (!result) {

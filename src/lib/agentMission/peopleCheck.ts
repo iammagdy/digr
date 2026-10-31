@@ -10,7 +10,7 @@ import { rankEndpoints } from "./sourceRanking";
  * people found. Pure: the plan, the request and what the mission REALLY called in, advice (the planner's tool answers with it) out. The plan is never refused for good: each piece of advice is a step the planner can take, the tool sends the plan back a few
  * times at most, and a plan that has really tried the sources and says so honestly is accepted.
  *   1. The people stage must read PEOPLE: a stage on a mailbox lister is sent back while a people source gave rows (use it) or fewer than two people sources were tried.
- *   2. A phone asked for is in the plan (a phone column on a stage) when a phone source gave a number; else at least two phone sources were tried for the people found; else the plan says honestly that no number was found.
+ *   2. A phone asked for is in the plan (a phone column on a stage) when a phone source gave a number; else a phone source was tried for the people found (the planning allows ONE phone finder sample: contactSampling.ts; a refused one counts as tried); else the plan says honestly that no number was found.
  *   3. No personal number, but the companies' own page carries a company phone: it goes in the company sheet.
  */
 export const PHONE_CAPABILITIES: ReadonlySet<string> = new Set(["people.phone.find", "people.phone.find.personal"]);
@@ -70,8 +70,8 @@ export function peopleAndContactAdvice(i: PeopleCheckInput): string[] {
     const untried = i.phoneSources.filter((id) => !i.calls.has(id));
     const said = [...(i.plan.assumptions_ar ?? []), ...(i.plan.notes_ar ?? [])].some((l) => PHONE_SAID.test(l));
     if (phoneGaveRows.length > 0) issues.push(`the customer asked for phones and a phone source gave a number (${top(phoneGaveRows)}), but the plan has no phone column: add the phone as a step of the people found (a child stage whose column has kind "phone"; its values are verified by code) instead of dropping it`);
-    else if (phoneTried.length < 2 && untried.length > 0) issues.push(`the customer asked for phones, and the catalog has phone sources that were not sampled for the people found. Sample at least two of them with a person of your people sample (the profile link, or the name with the company), cheapest first: ${top(untried)}; add the phone step if one gives a number. Only after two were really tried and gave none may the plan say so`);
-    else if (!said) issues.push("the customer asked for phones, two phone sources were tried and gave none, and the plan does not say so: say honestly in assumptions_ar (one Arabic sentence, no number) that phone numbers are not in the file and why, so the card tells the customer before approval; never drop the phones silently");
+    else if (phoneTried.length < 1 && untried.length > 0) issues.push(`the customer asked for phones, and the catalog has phone sources that were not sampled for the people found. Sample one phone finder with a person of your people sample (the profile link, or the name with the company), the cheapest ranked first: ${top(untried)}; add the phone step if it gives a number. The planning allows one phone finder sample (a quarter of its budget in all, never a finder whose one call costs more than that): a finder the gateway refuses is counted as tried and is not chased. If no phone was found the plan says so, and says that the phone cells are filled only if found during the approved job`);
+    else if (!said) issues.push("the customer asked for phones, a phone source was tried (or refused for the planning allowance) and gave none, and the plan does not say so: say honestly in assumptions_ar (one Arabic sentence, no number) that phone numbers are not in the file and why, so the card tells the customer before approval; never drop the phones silently");
   }
 
   // 3. NO PERSONAL NUMBER, BUT A COMPANY PHONE ON THE COMPANIES' OWN PAGE: it goes in the company sheet
