@@ -158,11 +158,13 @@ describe("tapping a request on «طلباتي» only opens it", () => {
     const page = readFileSync("src/app/dashboard/requests/page.tsx", "utf8");
     const marker = page.indexOf('data-testid="request-title"');
     const title = page.slice(page.lastIndexOf("<button", marker), page.indexOf("</button>", marker));
-    expect(title).toContain("onClick={() => openFile(j)}");
-    expect(title).not.toContain('k === "refunded"');
-    expect(title).not.toContain("openFile(j, ");
-    const retryButtons = page.match(/openFile\(j, k === "refunded"\)/g) ?? [];
+    // UI pass 1 (item 7): the title opens the request's own page («التفاصيل»), never the chat and never a retry
+    expect(title).toContain("onClick={() => openDetails(");
+    expect(title).not.toContain("openFile(");
+    // the only call that retries is the «إعادة المحاولة» branch of the row's button
+    const retryButtons = page.match(/openFile\(j, true\)/g) ?? [];
     expect(retryButtons).toHaveLength(1);
+    expect(page).toContain('if (k === "refunded" && !isDeterministicFailureAr(j.errorAr)) return void openFile(j, true);');
     expect(page).toContain("إعادة المحاولة");
     // (the old line named quotes[job.$id]?.conversationId inline: the conversation is now resolved first, by the list or by the server, and only then passed; `retry` is still passed only from the explicit button)
     expect(page).toContain("openJobHref({ jobId: job.$id, conversationId, retry })");

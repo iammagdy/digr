@@ -24,7 +24,10 @@ export default function Composer({
   onChange,
   onSend,
   disabled,
+  hero = false,
 }: {
+  /** The start page: the same input, large and centred (no bottom bar padding, no small print under it). */
+  hero?: boolean;
   value: string;
   onChange: (v: string) => void;
   onSend: (text: string, attachedFile?: AttachedFile | null) => void | boolean | Promise<void | boolean>;
@@ -105,7 +108,7 @@ export default function Composer({
   };
 
   return (
-    <div className="shrink-0 px-4 pb-4 pt-2" style={{ paddingBottom: "max(16px, env(safe-area-inset-bottom))" }}>
+    <div className={hero ? "w-full" : "shrink-0 px-4 pb-4 pt-2"} style={hero ? undefined : { paddingBottom: "max(16px, env(safe-area-inset-bottom))" }} data-testid={hero ? "composer-hero" : "composer-bar"}>
       <div className="mx-auto flex max-w-[720px] flex-col gap-1.5">
         {/* Arabic File Error Notification */}
         {fileError && (
@@ -169,7 +172,7 @@ export default function Composer({
         {/* Form Container */}
         <form
           onSubmit={submit}
-          className="flex w-full items-center gap-1.5 rounded-full border border-ln bg-sf p-1.5"
+          className={`flex w-full items-center gap-1.5 rounded-full border border-ln bg-sf ${hero ? "p-2" : "p-1.5"}`}
           style={{ boxShadow: "var(--shadow)" }}
         >
           {/* Hidden File Input */}
@@ -210,7 +213,7 @@ export default function Composer({
             enterKeyHint="send"
             autoComplete="off"
             maxLength={2000}
-            className="min-h-[46px] min-w-0 flex-1 border-0 bg-transparent px-[14px] text-base font-light text-ink outline-none"
+            className={`min-w-0 flex-1 border-0 bg-transparent px-[14px] font-light text-ink outline-none ${hero ? "min-h-[56px] text-[17px]" : "min-h-[46px] text-base"}`}
           />
 
           {/* Send Button */}
@@ -228,9 +231,9 @@ export default function Composer({
         {disabled && (
           <p id="chat-attach-wait" role="status" data-testid="attach-wait" className="m-0 text-center text-[11px] font-light text-mut">{ATTACH_WAIT_AR}</p>
         )}
-        <p className="m-0 mt-1 text-center text-[11px] font-light text-mut">
+        {!hero && <p className="m-0 mt-1 text-center text-[11px] font-light text-mut">
           يدعم إرفاق ملفات الاستبعاد بصيغتي إكسل وسي إس في حتى ٥ ميجابايت. ملفات بي دي إف والمستندات المصورة غير مدعومة حاليًا.
-        </p>
+        </p>}
       </div>
     </div>
   );

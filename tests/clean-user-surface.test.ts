@@ -59,8 +59,10 @@ describe("Task 4: Clean User Surface & Card Redesign", () => {
     const composer = readFileSync("src/app/dashboard/chat/components/Composer.tsx", "utf8");
     const results = readFileSync("src/app/dashboard/chat/components/ResultsCanvas.tsx", "utf8");
 
-    expect(emptyChat).toContain("شركات ومؤسسات (إكسل)");
-    expect(emptyChat).toContain("ابحث لي عن ٥ شركات");
+    // the start page's example chips and forms (UI pass 1) are Arabic: the chip labels live in templateForms.ts
+    const forms = readFileSync("src/lib/templateForms.ts", "utf8");
+    expect(forms).toContain("شركات وصناع قرار");
+    expect(forms).toContain("أريد ${nAr(wholeNumber(v.count, 50))} شركة");
     expect(emptyChat).not.toContain("Excel");
     expect(composer).toContain('aria-label="رفع ملف استبعاد بصيغة إكسل أو سي إس في"');
     expect(composer).toContain("ملفات بي دي إف والمستندات المصورة غير مدعومة حاليًا");

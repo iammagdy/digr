@@ -30,6 +30,8 @@ export const AGENT_CLOSE_PAGE_LINE_AR = "تقدر تقفل الصفحة وترو
 /** The same promise when no e-mail will be sent (a guest, or the customer switched the e-mails off): the result is in «طلباتي». */
 export const AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR = "تقدر تقفل الصفحة؛ هنكمّل الشغل وتلاقي نتيجتك في «طلباتي» أول ما نخلص.";
 /** Shown while a mission waits for the worker to be free. */
+/** Said on the card from the moment the customer approves, on the page itself (not only in the bell): the work is saved on our side, the page can be closed, and the notification comes when it ends. */
+export const AGENT_CLOSE_NOTICE_AR = "تقدر تقفل الصفحة وهنبعتلك إشعار لما يخلص.";
 export const AGENT_QUEUE_LINE_AR = "مهمتك في الدور وهتبدأ خلال دقائق";
 /** A running mission with no new event for this long gets the honest «المصدر أبطأ» line. */
 export const AGENT_SLOW_AFTER_MS = 90_000;

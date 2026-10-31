@@ -160,7 +160,7 @@ export default function DetailsBlanks({ questions, intro, completedAnswers, disa
             if (index === step || !(given?.value || given?.skipped)) return null;
             return (
               <li key={q.id} className="flex items-center justify-between gap-2 text-[12px] text-mut">
-                <span className="min-w-0 truncate">{q.text}: <span className="text-ink">{answerLabel(given)}</span></span>
+                <span className="min-w-0 break-words">{q.text}: <span className="text-ink">{answerLabel(given)}</span></span>
                 <button type="button" onClick={() => moveTo(index)} disabled={disabled} className="min-h-11 shrink-0 cursor-pointer border-0 bg-transparent px-2 text-[12px] text-goldT">تعديل</button>
               </li>
             );

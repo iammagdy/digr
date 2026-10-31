@@ -65,7 +65,7 @@ export function AuthToast({ tone = "ok", children }: { tone?: "ok" | "bad"; chil
 }
 
 export function PasswordInput({
-  value, onChange, placeholder = "كلمة المرور · 8 خانات على الأقل", autoComplete,
+  value, onChange, placeholder = "كلمة المرور · ٨ خانات على الأقل", autoComplete,
 }: { value: string; onChange: (v: string) => void; placeholder?: string; autoComplete: string }) {
   const [show, setShow] = useState(false);
   return (

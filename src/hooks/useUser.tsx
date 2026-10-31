@@ -161,6 +161,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   );
 }
 
+/** The signed-in customer, or null: never throws outside a provider (a public component that only chooses a button by it, and the tests that render it alone). */
+export function useOptionalUser(): AppUser | null {
+  return useContext(AuthContext)?.user ?? null;
+}
+
 export function useUser() {
   const context = useContext(AuthContext);
   if (!context) {

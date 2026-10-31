@@ -1,0 +1,163 @@
+{
+ "label": "before",
+ "base": "http://localhost:3101",
+ "latencyMs": 600,
+ "checks": [
+  {
+   "name": "A0 chips present",
+   "value": false
+  },
+  {
+   "name": "B1 «مركز المساعدة» goes to",
+   "value": "/dashboard/chat"
+  },
+  {
+   "name": "B1 page heading",
+   "value": "محادثة جديدة"
+  },
+  {
+   "name": "B2 «تواصل مع الدعم» goes to",
+   "value": "/dashboard/chat"
+  },
+  {
+   "name": "B2 page heading",
+   "value": "محادثة جديدة"
+  },
+  {
+   "name": "C1 ms until a status line is on the page after «اعتمد»",
+   "value": 10032
+  },
+  {
+   "name": "C2 ms until the running status (started line + close notice)",
+   "value": 25034
+  },
+  {
+   "name": "C3 started line",
+   "value": ""
+  },
+  {
+   "name": "C4 close notice visible",
+   "value": false
+  },
+  {
+   "name": "D1 first thing on screen after «التفاصيل»",
+   "value": "agent-card"
+  },
+  {
+   "name": "D1 ms to it",
+   "value": 2380
+  },
+  {
+   "name": "D1 url",
+   "value": "/dashboard/chat"
+  },
+  {
+   "name": "D2 ms until the mission card (heavy part) is on screen",
+   "value": 2386
+  },
+  {
+   "name": "E desktop /calculator",
+   "value": "MISSING {\"logo\":false,\"menu\":false,\"header\":true}"
+  },
+  {
+   "name": "E desktop /services",
+   "value": "MISSING {\"logo\":false,\"menu\":false,\"header\":true}"
+  },
+  {
+   "name": "E desktop /services/facebook",
+   "value": "MISSING {\"logo\":false,\"menu\":false,\"header\":true}"
+  },
+  {
+   "name": "E desktop /pricing",
+   "value": "MISSING {\"logo\":false,\"menu\":false,\"header\":true}"
+  },
+  {
+   "name": "E desktop /contact",
+   "value": "MISSING {\"logo\":true,\"menu\":false,\"header\":false}"
+  },
+  {
+   "name": "E desktop /legal/terms",
+   "value": "MISSING {\"logo\":true,\"menu\":false,\"header\":false}"
+  },
+  {
+   "name": "E desktop /legal/privacy",
+   "value": "MISSING {\"logo\":true,\"menu\":false,\"header\":false}"
+  },
+  {
+   "name": "E desktop /help",
+   "value": "MISSING {\"logo\":false,\"menu\":false,\"header\":false}"
+  },
+  {
+   "name": "E desktop /for/researchers",
+   "value": "MISSING {\"logo\":false,\"menu\":false,\"header\":true}"
+  },
+  {
+   "name": "E desktop /dashboard/requests",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E desktop /dashboard/topup",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E desktop /dashboard/settings",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E desktop /dashboard/chat",
+   "value": "header+logo+menu"
+  },
+  {
+   "name": "E m380 /calculator",
+   "value": "MISSING {\"logo\":false,\"menu\":false,\"header\":true}"
+  },
+  {
+   "name": "E m380 /services",
+   "value": "MISSING {\"logo\":false,\"menu\":false,\"header\":true}"
+  },
+  {
+   "name": "E m380 /services/facebook",
+   "value": "MISSING {\"logo\":false,\"menu\":false,\"header\":true}"
+  },
+  {
+   "name": "E m380 /pricing",
+   "value": "MISSING {\"logo\":false,\"menu\":false,\"header\":true}"
+  },
+  {
+   "name": "E m380 /contact",
+   "value": "MISSING {\"logo\":true,\"menu\":false,\"header\":false}"
+  },
+  {
+   "name": "E m380 /legal/terms",
+   "value": "MISSING {\"logo\":true,\"menu\":false,\"header\":false}"
+  },
+  {
+   "name": "E m380 /legal/privacy",
+   "value": "MISSING {\"logo\":true,\"menu\":false,\"header\":false}"
+  },
+  {
+   "name": "E m380 /help",
+   "value": "MISSING {\"logo\":false,\"menu\":false,\"header\":false}"
+  },
+  {
+   "name": "E m380 /for/researchers",
+   "value": "MISSING {\"logo\":false,\"menu\":false,\"header\":true}"
+  },
+  {
+   "name": "E m380 /dashboard/requests",
+   "value": "MISSING {\"logo\":false,\"menu\":true,\"header\":true}"
+  },
+  {
+   "name": "E m380 /dashboard/topup",
+   "value": "MISSING {\"logo\":false,\"menu\":true,\"header\":true}"
+  },
+  {
+   "name": "E m380 /dashboard/settings",
+   "value": "MISSING {\"logo\":false,\"menu\":true,\"header\":true}"
+  },
+  {
+   "name": "E m380 /dashboard/chat",
+   "value": "MISSING {\"logo\":false,\"menu\":true,\"header\":true}"
+  }
+ ]
+}

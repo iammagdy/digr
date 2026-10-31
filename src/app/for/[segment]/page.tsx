@@ -23,11 +23,10 @@ export default async function SegmentPage({ params }: { params: Promise<{ segmen
   const example = segmentExample(segment, dailyCapPoints);
   const peopleLine = segmentPeopleLineAr(segment, dailyCapPoints);
   return (
-    <main dir="rtl" lang="ar" className="min-h-dvh bg-bg px-5 py-12 font-sans text-ink">
+    <main dir="rtl" lang="ar" className="min-h-full bg-bg px-5 py-12 font-sans text-ink">
       <div className="mx-auto flex max-w-[860px] flex-col gap-9">
         <header className="border-b border-ln pb-6">
-          <Link href="/" className="text-sm text-mut no-underline hover:text-ink">ديجر — الصفحة الرئيسية</Link>
-          <p className="mb-0 mt-4 text-sm font-light text-mut">لـ{segment.nameAr}</p>
+          <p className="m-0 text-sm font-light text-mut">لـ{segment.nameAr}</p>
           <h1 className="mb-0 mt-2 font-display text-[36px] font-medium leading-[1.25] text-ink">{segment.headlineAr}</h1>
           <p className="mb-0 mt-3 text-[15px] font-light leading-[2] text-ink2">{segment.painAr}</p>
         </header>

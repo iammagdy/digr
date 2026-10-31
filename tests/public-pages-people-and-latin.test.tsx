@@ -90,12 +90,12 @@ describe("D5: where it appears", () => {
     }
   });
 
-  it("the calculator: the estimate form and the per-service list both read the sizing function", () => {
+  it("the calculator: its one result reads the sizing function (UI pass 1, item 10: the second, per-service list under the form is gone)", () => {
     const estimator = readFileSync("src/components/calculator/MissionEstimator.tsx", "utf8");
     expect(estimator).toContain("decisionMakersPerRequestLineAr(result.maxVolumeInOneJob)");
     const page = readFileSync("src/app/calculator/page.tsx", "utf8");
-    expect(page).toContain("decisionMakersPerRequestLineAr(recordsInOneJob(");
-    expect(page).toContain('breakdown.capabilitySlug === "professional-people-search"');
+    expect(page).toContain("<MissionEstimator />");
+    expect(page).not.toContain("computePublicCalculatorQuote");
   });
 });
 

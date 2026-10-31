@@ -4,6 +4,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-31, after #304): UI pass 1 (customer-facing screens only)
+
+`main` before it was `50925ac553ab53c9c3d63778d4e810fa07e60918` (#304); its merge commit is the head of `main` after it. Per-item changes, measurements, the pages that had no header, every changed test with its reason, screenshots (`docs/ui-pass-1/`), what was not done and NOT PROVEN: `docs/UI_PASS_1.md`. No SQL written or applied; no Edge Function, price, cap, markup, minimum, model string, engine, planning, checking or settlement code changed; the wallet history route only reads.
+
+- **Help**: «مركز المساعدة» → `/help`, «تواصل مع الدعم» → `/contact` (a `mailto:` did nothing without a mail app). **After «اعتمد»** the card shows a status line at once, then the running status with the «تقدر تقفل الصفحة» sentence on the page.
+- **Start page**: one centred input and six chips; a chip opens a small form and sends nothing, «أرسل» builds the request from the fields (`src/lib/templateForms.ts`). **Plan card**: «هتستلم إيه», four fact cells, a prominent «اعتمد», details folded, no ISO dates, no cut sentences, near-duplicate points shown once. Planning steps in plain Arabic, no strikethrough.
+- **«طلباتي»**: tab and footer from one number; «التفاصيل» opens `/dashboard/requests/<id>` at once (facts from the row, the rest after). **Wallet**: one line per job (older jobs with no mission row too), `Server-Timing` on `/api/wallet/history`. **Calculator**: three choices, one result, the card's own time function. **Catalog**: platform groups with «تقدر تطلب…». **One layout** (`SiteFrame`) for every customer page. **Bell**: only a rejected top-up counts. Arabic-Indic digits in the touched messages.
+- NOT PROVEN: where the wallet's ~10 s was spent (the queries take milliseconds; Hobby logs keep an hour); times were measured on a dev server with a simulated delay.
+- Rollback: `git revert -m 1 <merge commit>`.
+
+---
+
 ## START HERE (2026-10-30 night, after #303): fix mission 13 (tools the worker cannot use, provider links, TikTok comments, people coverage, denominator)
 
 `main` before it was `acf38ddd1c83af92967f0dcd3177dc5ae2dbdebe` (#303); its merge commit is the head of `main` after it. Evidence, root causes, tests and NOT PROVEN: `docs/ENGINE_AND_ITEM_STORE.md` section 18. No SQL written or applied; no Edge Function, price, cap, markup, minimum or model string changed; settlement untouched.

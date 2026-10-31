@@ -71,7 +71,9 @@ describe("audit phase 4: the page never widens past the phone", () => {
   it("the minimum-height of a public page follows the visible viewport (dvh), not the tall 100vh of a phone with a URL bar", () => {
     for (const file of customerFiles) expect(readFileSync(file, "utf8"), file).not.toMatch(/\bmin-h-screen\b|\bh-screen\b|100vh/);
     expect(src("src/app/page.tsx")).toContain("min-h-dvh");
-    expect(src("src/app/pricing/page.tsx")).toContain("min-h-dvh");
+    // the prices page sits inside the shared site frame (UI pass 1, item 12): the frame is as tall as the visible viewport and the page fills it
+    expect(src("src/app/pricing/page.tsx")).toContain("min-h-full");
+    expect(src("src/components/app/AppShell.tsx")).toContain('height: "var(--vvh, 100dvh)"');
   });
 });
 

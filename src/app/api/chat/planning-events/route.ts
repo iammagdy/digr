@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { authenticateUser } from "@/lib/server/userAuth";
 import { EXPLORATION_TABLE, PLANNER_EVENT_ROW_ENDPOINT } from "@/lib/modelPlanner/exploration";
-import { currentLineAr, planningSteps, type PlannerEvent, type PlannerEventKind } from "@/lib/missionView";
+import { PLANNING_STEP_TITLES, currentLineAr, planningSteps, type PlannerEvent, type PlannerEventKind } from "@/lib/missionView";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +30,6 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ success: true, finished, steps, currentLineAr: currentLineAr(steps) }, { headers: { "Cache-Control": "no-store" } });
   } catch (err: any) {
     console.warn("[chat:planning_events_failed]", String(err?.message || "").slice(0, 120));
-    return NextResponse.json({ success: true, finished: null, steps: planningSteps([]), currentLineAr: "فهم الطلب" });
+    return NextResponse.json({ success: true, finished: null, steps: planningSteps([]), currentLineAr: PLANNING_STEP_TITLES[0] });
   }
 }

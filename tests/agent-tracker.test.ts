@@ -173,13 +173,15 @@ describe("E. the panel and the compact card are drawn from the tracker", () => {
     expect(html).toContain('data-testid="step-metrics"');
   });
 
-  it("the plan card is compact: the price, the hold and the time are three short cells with one honest sentence under them (full delivery, fewer, nothing)", () => {
+  it("the plan card is compact: the count, the price, the hold and the time are four short cells with one honest sentence under them (full delivery, fewer, nothing)", () => {
     const v = customerMissionView({ mission: mission({ status: "plan_ready" }), events: [], now: Date.parse(at(1)) });
     expect(v.priceFacts).toEqual([{ labelAr: "السعر حتى", valueAr: "٢٤٣ نقطة" }, { labelAr: "حجز مؤقت", valueAr: "٢٧٩ نقطة" }, { labelAr: "الوقت المتوقع", valueAr: "نحو ٤ دقائق" }]);
     expect(v.priceNoteAr).toBe(PRICE_PROMISE_AR);
     const html = renderToStaticMarkup(createElement(AgentMissionCardBody, { view: v, isGuest: false }));
     expect(html).toContain("grid-cols-2");
-    expect(html).toContain("sm:grid-cols-3");
+    // the count the customer receives is the first cell, in front of the three money-and-time cells (four cells: four columns)
+    expect(html).toContain("sm:grid-cols-4");
+    expect(html).toContain(">هتستلم<");
     expect(html).toContain("لو سُلّم أقل يُخصم بنسبة ما سُلّم فقط");
     expect(html).toContain('data-testid="agent-file-contents"');
     expect(html).toContain("يضم الملف: التاريخ والوقت، نص التغريدة.");

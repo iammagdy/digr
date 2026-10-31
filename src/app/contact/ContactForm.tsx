@@ -1,8 +1,6 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Logo } from "@/components/Brand";
 import { toArabicDigits } from "@/lib/arabicDigits";
 import { SUPPORT_PLACEHOLDER_AR, validateSupportMessage, whatsappHref, type SupportSettings } from "@/lib/supportContact";
 
@@ -46,12 +44,8 @@ export default function ContactForm({ initialSettings = { supportEmail: "", what
   const hasAnyChannel = hasEmail || Boolean(wa);
   const field = "min-h-12 w-full rounded-xl border border-ln2 bg-bg px-3.5 text-base text-ink outline-none focus-visible:outline-2";
   return (
-    <main data-screen-label="Contact" className="min-h-dvh bg-bg px-5 pb-[72px] pt-5 text-ink2">
+    <main data-screen-label="Contact" className="min-h-full bg-bg px-5 pb-[72px] pt-5 text-ink2">
       <div className="mx-auto flex max-w-[640px] flex-col gap-[18px]">
-        <div className="flex items-center justify-between gap-2.5">
-          <Link href="/" className="flex min-h-11 items-center rounded-full bg-sf2 px-4 text-[13px] text-ink">→ الرئيسية</Link>
-          <Link href="/" aria-label="ديجر" className="flex min-h-11 items-center"><Logo height={26} /></Link>
-        </div>
         <div>
           <h1 className="m-0 font-display text-[40px] font-medium leading-[1.15] text-ink">تواصل معنا</h1>
           <p className="mb-0 mt-2 text-[15px] font-light leading-[2] text-ink2">اكتب لنا مشكلتك أو سؤالك، وسنرد عليك على بريدك الإلكتروني. إن كان عندك طلب بعينه فاضغط «بلّغ عن مشكلة» من صفحة طلباتك ليصلنا رقمه تلقائيًا.</p>

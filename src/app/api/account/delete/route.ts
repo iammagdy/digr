@@ -102,7 +102,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       success: true,
       scheduledFor,
-      messageAr: "تم جدولة حذف الحساب بنجاح خلال 30 يوماً.",
+      messageAr: "تم جدولة حذف الحساب بنجاح خلال ٣٠ يومًا.",
     });
   } catch (err: any) {
     console.error("Account delete route error:", err);

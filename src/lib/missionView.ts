@@ -36,7 +36,7 @@ export interface PanelStep {
 }
 
 export const ETA_PENDING_AR = "بنحسب الوقت المتوقع…";
-export const SLOW_SOURCE_AR = "المصدر أبطأ من المعتاد، لسه شغالين.";
+export const SLOW_SOURCE_AR = "الأمر يأخذ وقتًا أطول قليلًا، لسه شغالين.";
 export const SOURCE_REPLACED_AR = "بدّلنا لمصدر بديل.";
 /** A running mission with no new snapshot for this long is called slow (the chunk of a source can take most of a minute). */
 export const SLOW_AFTER_MS = 90_000;
@@ -47,7 +47,10 @@ export const SLOW_AFTER_MS = 90_000;
 export type PlannerEventKind = "understood" | "searched" | "sampled" | "sample_slow" | "switched" | "adjusting" | "planned" | "asked" | "stopped";
 export interface PlannerEvent { kind: PlannerEventKind; at: number; n?: number; rows?: number; stage?: number }
 
-export const PLANNING_STEP_TITLES = ["فهم الطلب", "البحث عن المصادر المناسبة", "تجربة عينة من كل مرحلة", "تجهيز الخطة والسعر"] as const;
+export const PLANNING_STEP_TITLES = ["فهمنا طلبك", "لقينا المصادر", "بنجرب عينة صغيرة للتأكد من الجودة", "بنجهز السعر"] as const;
+
+/** Said once under the planning steps: how long planning usually takes and that nothing is charged before the customer agrees. */
+export const PLANNING_USUAL_TIME_AR = "عادةً دقيقة أو اتنين، ولن يُخصم شيء قبل موافقتك.";
 
 const sourcesFoundAr = (n: number): string => {
   if (n <= 0) return "لم نجد مصدرًا مطابقًا بعد، نجرّب كلمات أخرى.";
@@ -55,7 +58,7 @@ const sourcesFoundAr = (n: number): string => {
   if (n === 2) return "لقيت مصدرين مناسبين.";
   return n <= 10 ? `لقيت ${toArabicDigits(n)} مصادر مناسبة.` : `لقيت ${toArabicDigits(n)} مصدرًا مناسبًا.`;
 };
-const sampleRowsAr = (rows: number): string => (rows <= 0 ? "العينة ما رجّعتش صفوف مطابقة." : rows === 1 ? "العينة رجعت صفًا واحدًا مطابقًا." : `العينة رجعت ${toArabicDigits(rows)} ${rows <= 10 ? "صفوف" : "صفًا"} مطابقة.`);
+const sampleRowsAr = (rows: number): string => (rows <= 0 ? "العينة ما رجّعتش نتائج مطابقة." : rows === 1 ? "العينة رجعت نتيجة واحدة مطابقة." : `العينة رجعت ${toArabicDigits(rows)} ${rows <= 10 ? "نتائج" : "نتيجة"} مطابقة.`);
 
 /** The four planning steps and their states from the planner's real events, oldest first. */
 export function planningSteps(events: readonly PlannerEvent[], opts: { finished?: "plan" | "asked" | "stopped" | null } = {}): PanelStep[] {

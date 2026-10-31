@@ -1,0 +1,68 @@
+# UI pass 1: the customer-facing screens (owner and tester audit)
+
+`main` before it was `50925ac553ab53c9c3d63778d4e810fa07e60918` (#304). Customer-facing UI/UX only: presentation, wording, layout, loading and navigation. **Not touched**: the agent engine, planning, checking, pricing, settlement, the ledger and every money function (the wallet history route only READS and builds one line of words; it writes nothing). No SQL written or applied, no Edge Function (`src/functions/shared/*` is untouched), no provider call, no background task.
+
+Screenshots (desktop 1280 and 380 px, light; the main pages also dark) are in `docs/ui-pass-1/before` and `docs/ui-pass-1/after`, taken in a real Chromium against a mocked backend (`docs/ui-pass-1/shoot.cjs`, the stored plan it draws is `makeViews.ts`). Real clicks and timings (`interact.cjs`) are in `interact-before-*.json` / `interact-after-*.json` (200 ms and 600 ms added per request).
+
+## What changed, per item
+
+| # | Change | Where |
+|---|---|---|
+| 1 | «مركز المساعدة» → the new `/help` page (how to ask, how points work, approval, files, refunds: the pricing page's own sentences, imported); «تواصل مع الدعم» → the existing `/contact` form (the old default was a `mailto:` that does nothing without a mail app). `/help` is a public path. | `src/lib/constants.ts`, `src/app/help/page.tsx`, `src/lib/helpContent.ts`, `AppShell.tsx` |
+| 2 | After «اعتمد»: the button turns to «جاري الاعتماد…» with a status line at once (56 ms in the browser run); when the server accepts, the card shows the running status immediately: «بدأنا جمع ٥٠ تغريدة، نحو دقيقتين.», «وصلنا ١٢ من ٥٠ تغريدة» with a bar, the time left, and **on the page** «تقدر تقفل الصفحة وهنبعتلك إشعار لما يخلص.» (before: no status line within 10 s). | `AgentMissionCard.tsx`, `customerView.ts` (`expectedAr`, `progressLineAr`, `savedSoFar`, `periodAr`), `agentMission/constants.ts` |
+| 3 | The start page is one large centred input and 6 short chips; the welcome paragraph, the balance line and the long template cards are gone (the zero-balance note stays; the balance is in the header on every page). | `EmptyChat.tsx`, `Composer.tsx` (`hero`), `chat/page.tsx` |
+| 4 | A chip opens a small form card (platform, account/topic/link, count, period…) with sensible defaults; the account, topic or link is an empty required field; **«أرسل» builds the text and sends it, nothing is sent before** (browser run: 0 requests after the chip, 0 after «أرسل» with an empty account, 1 after a filled form: «أريد أحدث ٣٠ منشور من حساب @alahly على إكس خلال آخر ٣ أشهر.»). The form can also be opened by `?template=<id>` (the catalog uses it). | `templateForms.ts`, `TemplateFormCard.tsx` |
+| 5 | Done steps keep the green check and lose the strikethrough. Steps: «فهمنا طلبك», «لقينا المصادر», «بنجرب عينة صغيرة للتأكد من الجودة», «بنجهز السعر», and under them «عادةً دقيقة أو اتنين، ولن يُخصم شيء قبل موافقتك.». «جُرّبت عينتان» → «جرّبنا عينتين»; «بعض المصادر أبطأ من المعتاد» → «الأمر يأخذ وقتًا أطول قليلًا…» (the sentence about no hold stays). The step detail «رجعت ١٠ صفوف» → «١٠ نتائج» (no «صف»). | `missionView.ts`, `customerView.ts`, `MissionPlanPanel.tsx` |
+| 6 | Plan card: «هتستلم إيه» + one big line; the count, the period (from the plan's own period filter), the price and the hold in four cells; a full-width «اعتمد»; assumptions, steps, the example table and what the file holds are in a closed «تفاصيل الخطة». Sample dates are written in Arabic on the Cairo clock (no ISO text); the table is in its own scrolling box, cells wrap and are not cut; the price note and the file contents have no truncation; near-identical «كيف فهمنا طلبك» points are shown once (points that differ by a number are both kept). | `AgentMissionCard.tsx`, `customerDates.ts`, `dedupeLines.ts`, `customerView.ts` |
+| 7 | «الكل ٢٢٥» and the footer come from the same number: «يظهر ٢٤ من ٢٢٥» (the waiting requests are part of the tab and are on the page). «التفاصيل» (and the title and «متابعة التقدم») open the request's own page `/dashboard/requests/<id>` at once with the row's facts (title, state, date, delivered, points); the job and mission are read in ONE parallel round; the mission card, files and steps mount after; the chat is a separate button. Only «إعادة المحاولة» still goes to the chat. Notes of failed requests are not clamped. | `requests/page.tsx`, `requests/[id]/page.tsx`, `requests/tabs.ts`, `requests/facts.ts` |
+| 8 | One line per job: the history answer now carries the money line of EVERY finished job: missions as before, and **older jobs with no mission row** (131 of 195 jobs of the busiest customer) from the job's own stored numbers («خُصم ٢٠٠ نقطة مقابل ٥٠ عنصرًا»); the hold, charge and release rows are folded under «تفاصيل الحركات» (wording unchanged). While the ledger loads the page no longer says «جاري تحميل الأرقام» (skeletons on the numbers, plain sub-labels); notes and dates wrap. «سجلًا» → «عنصرًا» in the month line. The route sends `Server-Timing` (auth, ledger, missions, jobs, total). | `topup/page.tsx`, `api/wallet/history/route.ts`, `agentMission/walletLine.ts` |
+| 9 | The glued, cut template buttons are replaced by the chips of item 3: they wrap, are one line each, no arrows. | `EmptyChat.tsx` |
+| 10 | Calculator: three choices (platform, type of data, count) and one result; no free-text box, budget field, delivered-count slider, per-service list or audit table. Its time is the plan card's function: `expectedTimeOf` = `estimateMissionMinutes` + `minutesAr` (the same two the card uses): the same mission can no longer read «أقل من دقيقة» in one place and «نحو دقيقتين» in the other (the card's floor is two minutes). | `MissionEstimator.tsx`, `calculator/page.tsx`, `agentMission/expectedTime.ts`, `api/calculator/estimate/route.ts` |
+| 11 | Catalog: opens with five platform groups (فيسبوك, تيك توك, يوتيوب, إكس, الشركات وصناع القرار), each with «تقدر تطلب…» sentences and «ابدأ طلبًا» (opens that example form); the sector/platform/service list and its counts are behind one fold. | `servicesRequestExamples.ts`, `services/page.tsx` |
+| 12 | One layout everywhere (see the list below). | `SiteFrame.tsx`, the `layout.tsx` of each route, `AppShell.tsx` (`allowGuest`, the logo in the phone header) |
+| 13 | The bell's number counts only an unread rejected top-up (something to do). Finished requests and the other routine updates give a plain dot, never «تحتاج انتباهك». | `notificationBadge.ts`, `AppShell.tsx` |
+| 14 | «٨ خانات» (login, register, reset, settings) and «٣٠ يومًا» (account deletion) in Arabic-Indic digits; the default numbers in the example forms and the calculator are Arabic-Indic. Whole messages: the clamps on the notes of «طلباتي», the waiting-requests block, the top-up list, the wallet notes and the mobile status bar were removed (they wrap). | several |
+
+### Pages that lost the header, logo and menu (found in the browser run on `main`)
+`/calculator`, `/services` and every `/services/<platform>`, `/pricing`, `/contact` (own small logo, no menu), `/legal/terms`, `/legal/privacy` (same), `/for/<segment>`, and `/help` (did not exist). On a phone the dashboard pages had the menu but **no logo in the header** (only inside the drawer): the logo mark is now in the header. After: all 13 customer pages checked at 1280 and 380 px have header + logo + side menu. The landing page `/` keeps its own marketing header, and the sign-in pages their own split layout (not customer pages in the sense of the brief).
+
+## Measured
+
+* **«التفاصيل» (item 7)**, real Chromium, dev server, the mock backend adding the same delay to every request: at 200 ms: the facts are on screen after **0.86 s** (page and heavy card) against **1.35 s** before (the chat); at 600 ms: facts **0.84 s**, mission card **1.64 s** against **2.38 s**. The old path made at least six requests one after the other (conversation, message pages, quote statuses, jobs, job and events, results) before the page was usable; the new one makes none before the facts appear and then two in parallel. The floor of about 0.85 s is the dev server's route change, not a request. The database part is not the cause: the busiest conversation reads in 3.7 ms.
+* **Wallet «جاري تحميل الأرقام» ~10 s (item 8)**: the database side was measured read-only on the busiest customer (531 ledger rows): the typed history 2.4 ms, the balance read 1.8 ms, the missions lookup 0.5 ms. So the 10 s is **not** the queries. Vercel's Hobby plan keeps one hour of logs, so the route's own time could not be read afterwards. **NOT PROVEN where the 10 s was spent** (cold start, the sign-in check, or the network). What was done: the balance is shown first (it already comes from the shell, independent of the ledger), no number waits for a sentence, and `Server-Timing` on `/api/wallet/history` now shows the split in the browser's network panel the next time it is slow.
+* **After «اعتمد» (item 2)**: a status line after 56 ms and the running status (started line, progress, close-page sentence) after 0.35 s at 200 ms per request; before: nothing within 10 s.
+
+## Tests
+
+Full suite before: 562 files passed / 5 skipped, 7091 passed, **57 skipped**, 0 failed. After: see the PR. `expect(` 25,426 → 25,627. New: `tests/ui-pass-1.test.tsx` (38 tests: one block per item). 17 existing test files changed (81 lines removed, 127 added); each change follows an intended change of this pass:
+
+| File | Change | Why |
+|---|---|---|
+| agent-customer-view, agent-stuck-mission-fix (5 lines), phase3-mission-panel (planning wording, 4 lines) | the old wording «المصدر أبطأ من المعتاد», «تجربة عينة من كل مرحلة», «جُرّبت عينتان», «فهم الطلب…» and «١٠ صفوف» | item 5: plain Arabic, no «صف» |
+| phase3-mission-panel (panel drawing) | «struck-through name» → no `line-through` | item 5 |
+| agent-tracker | `sm:grid-cols-3` → `sm:grid-cols-4` and the «هتستلم» cell | item 6: the count is now the first of four cells |
+| agent-wording-and-money | fallback noun «السجلات» → «العناصر» on «طلباتي» | the brief bans «سجل» |
+| audit-phase2-flow-clarity | bell: 2 → 1 (a finished request no longer counts); the starter-example tests now test the example forms (same properties: complete request, no bracket, goes through the chat as a real request); the calculator tests now describe three choices | items 13, 3-4, 10 |
+| audit-phase4-mobile | `min-h-dvh` on the prices page → `min-h-full` inside the frame, and the frame's `100dvh` is asserted | item 12 |
+| calculator-estimator, public-pages-people-and-latin (D5), security-hygiene (2), server-wording (1 line), mission-duration (1) | the free-text box, the budget field, the per-service list, the audit table and the second duration range no longer exist | item 10 |
+| clean-user-surface, example-templates-phase5, mission-templates (2), signup-path (1) | the starter cards and the welcome paragraph no longer exist; chips and forms instead; a chip sends nothing | items 3, 4, 9 |
+| plan-card-states | the title opens the request's page, the retry is the only call that goes to the chat | item 7 |
+
+## Not done, and why
+
+* The wallet's slow load was not located (above); only the measurable part was fixed and instrumented.
+* Existing site-wide sentences that say «سجل» (the pricing FAQ, which the help page imports as «the refunds policy as already stated on the site», the landing page, the older plan card `PlanQuoteCard`) were not rewritten: they are the owner's published wording. Only the strings this pass touched were changed.
+* The older plan card `PlanQuoteCard` (the pre-agent path) was not redesigned: the live plan card is `AgentMissionCard` («اعتمد»).
+* The 105-platform catalogue list itself (service names such as «بحث معمق متعدد الاستعلامات مع استدلال») was not rewritten; it is behind the fold, and the new top of the page is in plain Arabic.
+* Two server messages with Latin digits were left as they are because their files are on the money / engine boundary: «30 دقيقة» in `src/lib/supabase/quoteAccept.ts` (quote acceptance) and «5 ميجابايت» in `src/app/api/chat/route.ts` (the chat entry). One word each, listed for the next pass.
+* `src/functions/shared/*` still has the Latin digits in its own copies of two sentences («30 دقيقة», examples): that directory is the Edge Function build input, which this pass must not touch.
+
+## NOT PROVEN
+
+* Where the wallet's 10 s was spent (above).
+* The measured times are from a dev server with a simulated delay, not the production build on the real network.
+* Real devices: the 380 px layout was checked in Chromium (no sideways scroll on any page, light and dark), not on a phone.
+* The calculator's time estimates ONE stage of the records asked for; a real two-stage request (videos then comments) is longer on its card, because the card counts each stage.
+* A real approval of a real plan was not run (no provider call, no money function): the post-approval status was driven by a mocked mission.
+
+Rollback: `git revert -m 1 <merge commit>`.

@@ -13,12 +13,11 @@ export default function PricingPage() {
   const peopleLine = peoplePerRequestLineAr();
   const capacity = CAPACITY_AMOUNTS_EGP.map((amount) => ({ amount, points: pointsForAmountEgp(amount), lines: capacityForAmount(amount) }));
   return (
-    <main dir="rtl" lang="ar" className="min-h-dvh bg-bg px-5 py-12 font-sans text-ink">
+    <main dir="rtl" lang="ar" className="min-h-full bg-bg px-5 py-12 font-sans text-ink">
       <div className="mx-auto flex max-w-[960px] flex-col gap-10">
         <header className="flex flex-wrap items-end justify-between gap-4 border-b border-ln pb-6">
           <div>
-            <Link href="/" className="text-sm text-mut no-underline hover:text-ink">ديجر — الصفحة الرئيسية</Link>
-            <h1 className="mb-0 mt-2 font-display text-[40px] font-medium leading-[1.2] text-ink">تدفع على ما يصلك فعلًا</h1>
+            <h1 className="m-0 font-display text-[40px] font-medium leading-[1.2] text-ink">تدفع على ما يصلك فعلًا</h1>
             <p className="mb-0 mt-3 max-w-[620px] text-[15px] font-light leading-[2] text-ink2">رصيدك بالنقاط، ونقطة واحدة تساوي ٠٫١٠ ج.م. لا يُخصم شيء قبل موافقتك على الخطة، ولا يُخصم إلا مقابل السجلات المطابقة التي وصلتك. {minimumLineAr()}</p>
           </div>
           <Link href="/register" className="inline-flex min-h-11 items-center rounded-full bg-ac px-5 text-sm text-onac no-underline">ابدأ بحسابك المجاني</Link>

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { MISSION_TEMPLATES } from "../src/lib/missionTemplates";
 import { findUnresolvedResearchPlaceholder } from "../src/lib/researchPlaceholders";
 import { understandMission, nextStep } from "../src/lib/consultantCopy";
@@ -54,24 +54,40 @@ describe("big-mission templates", () => {
   });
 });
 
-describe("a template only fills the input", () => {
+describe("a chip opens a form and sends nothing (UI pass 1, items 3, 4 and 9: the long template cards and the ready sentences are gone from the start page)", () => {
   const empty = readFileSync("src/app/dashboard/chat/components/EmptyChat.tsx", "utf8");
+  const formCard = readFileSync("src/app/dashboard/chat/components/TemplateFormCard.tsx", "utf8");
   const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
   const hero = readFileSync("src/components/landing/HeroLens.tsx", "utf8");
 
-  it("the empty chat shows the four templates", () => {
-    const html = renderToStaticMarkup(createElement(EmptyChat, { firstName: "سلمى", zeroBalance: false, onStart: () => {} }));
-    for (const t of MISSION_TEMPLATES) {
-      expect(html).toContain(t.titleAr);
-      expect(html).toContain(`data-testid="mission-template-${t.id}"`);
-    }
+  it("the start page shows short chips (one line each, wrapping), not the glued, cut template cards", () => {
+    const html = renderToStaticMarkup(createElement(EmptyChat, { firstName: "سلمى", zeroBalance: false, composer: null, onSend: () => {} }));
+    expect(html).toContain('data-testid="example-chips"');
+    expect(html).toContain("flex-wrap");
+    expect(html).not.toContain('data-testid="mission-templates"');
+    for (const t of MISSION_TEMPLATES) expect(html).not.toContain(t.titleAr);
   });
 
-  it("clicking one calls onStart(prompt), which in the chat page only sets the input text", () => {
-    expect(empty).toContain("onClick={() => onStart(t.promptAr)}");
+  it("a chip only opens its form; it never calls onSend; an open form sends nothing until «أرسل» is pressed", () => {
+    const onSend = vi.fn();
+    const closed = renderToStaticMarkup(createElement(EmptyChat, { firstName: "", zeroBalance: false, composer: null, onSend }));
+    expect(closed).not.toContain('data-testid="template-form"');
+    const open = renderToStaticMarkup(createElement(EmptyChat, { firstName: "", zeroBalance: false, composer: null, onSend, initialTemplateId: "account_posts" }));
+    expect(open).toContain('data-testid="template-form"');
+    expect(open).toContain('data-testid="template-form-send"');
+    // the request is built from the fields: an account is a required, empty field; the placeholder account of the old example is nowhere
+    expect(open).not.toContain("@tiktok");
+    expect(open).toContain("(مطلوب)");
+    expect(onSend).not.toHaveBeenCalled();
+    // the chip's handler changes the open form and nothing else; the form's own submit is the only sender, and only with a built text
+    expect(empty).toContain("setOpenId(openId === t.id ? null : t.id)");
+    expect(empty.slice(empty.indexOf("onClick={() => setOpenId"), empty.indexOf("{t.chipAr}"))).not.toContain("onSend");
+    expect(formCard).toContain("const text = buildTemplateRequest(form, values);");
+    expect(formCard).toContain("if (!text || sending || disabled) return;");
+    expect(formCard.indexOf("onSend(text)")).toBeGreaterThan(formCard.indexOf("if (!text || sending || disabled) return;"));
     const handler = page.slice(page.indexOf("<EmptyChat"), page.indexOf("{!chatEmpty && !conversationLoading"));
-    expect(handler).toContain("setInputText(prompt);");
-    expect(handler).not.toMatch(/handleSendMessage|fetch\(|handleStartExecution/);
+    expect(handler).toContain("onSend={(text) => handleSendMessage(text)}");
+    expect(handler).not.toContain("setInputText(prompt)");
   });
 
   it("the landing hero offers no templates (audit phase 3: one box, one action); sending goes to sign-up", () => {

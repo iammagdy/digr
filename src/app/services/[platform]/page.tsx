@@ -29,7 +29,7 @@ export default async function PlatformServicesPage({ params }: { params: Promise
   const rest = remainingServices(platform, featured);
   const others = platformsProvenFirst(sector.platforms).filter((other) => other.slug !== platform.slug);
   return (
-    <main dir="rtl" lang="ar" className="min-h-dvh bg-bg px-4 py-10 font-sans text-ink min-[760px]:px-5 min-[760px]:py-12">
+    <main dir="rtl" lang="ar" className="min-h-full bg-bg px-4 py-10 font-sans text-ink min-[760px]:px-5 min-[760px]:py-12">
       <div className="mx-auto flex max-w-[1000px] flex-col gap-10">
         <header className="flex flex-col gap-6 border-b border-ln pb-8">
           <nav aria-label="مسار الصفحة" className="flex flex-wrap items-center gap-2 text-sm text-mut">

@@ -10,6 +10,10 @@ import { moneyLineAr } from "./moneyText";
 import { fixFileWordingAr } from "./fileWording";
 import { remainingLineAr, stageMetricLines, trackMission } from "./tracker";
 import { deliveryDenominatorOf, type PlanEditorView } from "./plan";
+import { minutesAr } from "./expectedTime";
+import { filterLineAr, isEnabled, type StageFilter } from "./filters";
+import { formatSampleCell } from "../customerDates";
+import { dedupeNearIdentical } from "../dedupeLines";
 
 /**
  * WHAT THE CUSTOMER SEES OF A MISSION: one pure function from the columns the customer may read (the mission row without its internal columns, its events, the worker's state and the queue)
@@ -91,13 +95,20 @@ export interface CustomerMissionView {
   /** The start of the work (the first event), for the elapsed clock. */
   startedAt: number | null;
   live: boolean;
+  /** The period the plan applies, in words («آخر ٩٠ يومًا»), from its own enabled period filter; null when the plan has none. */
+  periodAr: string | null;
+  /** The expected time in words («نحو دقيقتين»), from the plan's own `expected_minutes` (the one function the calculator uses too); null when the plan has none. */
+  expectedAr: string | null;
+  /** After approval: what has reached the file so far, out of the whole, with the noun of the request («١٢ من ٥٠ تغريدة»); null before approval. */
+  progressLineAr: string | null;
+  /** The items saved so far and the total, for a progress bar. */
+  savedSoFar: number;
 }
 
 const PHASE_OF_STATUS: Record<string, CustomerPhase> = { queued: "waiting", planning: "planning", needs_input: "question", plan_ready: "plan", approved: "running", executing: "running", completed: "done", unserved: "unserved", failed: "failed", cancelled: "cancelled" };
 export const isLivePhase = (p: CustomerPhase) => p === "waiting" || p === "planning" || p === "running";
 
-const hoursAr = (h: number): string => (h <= 1 ? "نحو ساعة" : h === 2 ? "نحو ساعتين" : `نحو ${formatAr(h)} ساعات`);
-const minutesAr = (m: number): string => (m <= 1 ? "نحو دقيقة" : m === 2 ? "نحو دقيقتين" : m <= 10 ? `نحو ${formatAr(m)} دقائق` : m < 60 ? `نحو ${formatAr(m)} دقيقة` : hoursAr(Math.ceil(m / 60)));
+export { minutesAr };
 
 /** Stages in plain words with the expected rows of each; the delivered ones add up to the total shown. */
 export function stagesView(plan: any): { stages: CustomerStageView[]; total: number } {
@@ -124,7 +135,7 @@ function samplesView(plan: any): CustomerMissionView["samples"] {
   if (!stage) return null;
   const columns: Array<{ key: string; titleAr: string }> = (Array.isArray(stage.columns) ? stage.columns : []).map((c: any) => ({ key: String(c.key), titleAr: String(c.title_ar ?? c.titleAr ?? "") })).filter((c: { titleAr: string }) => c.titleAr).slice(0, 6);
   if (columns.length === 0) return null;
-  const rows = (stage.sample_rows as Array<Record<string, unknown>>).slice(0, 3).map((r) => columns.map((c) => String(r?.[c.key] ?? "").slice(0, 120)));
+  const rows = (stage.sample_rows as Array<Record<string, unknown>>).slice(0, 3).map((r) => columns.map((c) => formatSampleCell(String(r?.[c.key] ?? "").slice(0, 600))));
   return { stageTitleAr: customerSafeText(stage.title_ar, "مرحلة"), columns, rows };
 }
 
@@ -168,6 +179,17 @@ export function priceFactsOf(plan: any): { facts: Array<{ labelAr: string; value
   return { facts, noteAr: PRICE_PROMISE_AR };
 }
 
+/** The period of the plan in words, from its own enabled period filter (the one the card's promise rests on); null when no stage filters by period. */
+export function periodOfPlan(plan: any): string | null {
+  const list: any[] = Array.isArray(plan?.stages) ? plan.stages : [];
+  for (const s of list) {
+    for (const f of (Array.isArray(s?.filters) ? s.filters : []) as StageFilter[]) {
+      if (f?.kind === "period" && isEnabled(f)) return filterLineAr({ ...f, enabled: true }).replace(/[.\s]+$/u, "");
+    }
+  }
+  return null;
+}
+
 /** The queue line, only when the mission really waits behind another or the worker is busy or away; the position counts the missions ahead + 1. */
 export function queueLine(status: string, queue: QueueInfo | null): { lineAr: string | null; position: number | null } {
   if (!queue || (status !== "queued" && status !== "approved")) return { lineAr: null, position: null };
@@ -178,12 +200,12 @@ export function queueLine(status: string, queue: QueueInfo | null): { lineAr: st
 }
 
 /** The honest lines of a step that is slow. Planning holds NOTHING, and says so; a running mission says it charges only what it delivers. Never an ETA. */
-export const SLOW_PLANNING_AR = "ما زلنا نجهّز خطتك وبعض المصادر أبطأ من المعتاد. لم يُحجز أي رصيد منك.";
+export const SLOW_PLANNING_AR = "ما زلنا نجهّز خطتك، والأمر يأخذ وقتًا أطول قليلًا. لم يُحجز أي رصيد منك.";
 export const STALLED_PLANNING_AR = "الخطوة الحالية تستغرق وقتًا أطول من المعتاد وما زلنا نعمل عليها. لم يُحجز أي رصيد منك حتى الآن.";
-export const SLOW_RUNNING_AR = "المصدر أبطأ من المعتاد وما زلنا نعمل. ولن يُخصم منك إلا ما يُسلَّم فعلًا.";
-export const STALLED_RUNNING_AR = "المصدر أبطأ من المعتاد منذ وقت أطول، وما زلنا نعمل عليه. ولن يُخصم منك إلا ما يُسلَّم فعلًا.";
+export const SLOW_RUNNING_AR = "الأمر يأخذ وقتًا أطول قليلًا وما زلنا نعمل. ولن يُخصم منك إلا ما يُسلَّم فعلًا.";
+export const STALLED_RUNNING_AR = "الأمر يأخذ وقتًا أطول من المعتاد، وما زلنا نعمل عليه. ولن يُخصم منك إلا ما يُسلَّم فعلًا.";
 
-/** Progress INSIDE the planning step «تجربة عينة من كل مرحلة»: the samples read so far, and out of how many when the agent has said how many stages it plans. */
+/** Progress INSIDE the planning step «بنجرب عينة صغيرة للتأكد من الجودة»: the samples read so far, and out of how many when the agent has said how many stages it plans. */
 function sampleProgress(events: EventForCustomer[], callsMade: number): { done: number; of: number | null } {
   let samples = 0;
   let stages = 0;
@@ -225,7 +247,7 @@ function stepsOf(input: { phase: CustomerPhase; status: string; stages: Customer
     const progress = sampleProgress(events, callsMade);
     if (!planned && progress.done > 0 && steps[2].state === "running") {
       if (progress.of !== null) { const n = Math.min(progress.done, progress.of); steps[2].countAr = `عينة ${formatAr(n)} من ${formatAr(progress.of)}`; steps[2].ratio = Math.min(1, n / progress.of); }
-      else steps[2].detailAr = progress.done === 1 ? "جُرّبت عينة واحدة" : progress.done === 2 ? "جُرّبت عينتان" : `جُرّبت ${formatAr(progress.done)} عينات`;
+      else steps[2].detailAr = progress.done === 1 ? "جرّبنا عينة واحدة" : progress.done === 2 ? "جرّبنا عينتين" : `جرّبنا ${formatAr(progress.done)} عينات`;
     }
     if (phase === "question") { for (const s of steps) if (s.state === "waiting" || s.state === "running") s.state = "waiting"; }
     if (phase === "unserved" || phase === "failed" || phase === "cancelled") for (const s of steps) if (s.state === "running" || s.state === "waiting") s.state = "stopped";
@@ -300,6 +322,8 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   const filesReady = Array.isArray(mission.files) && mission.files.length > 0;
   const { steps, track } = stepsOf({ phase, status: mission.status, stages, events, callsMade: input.callsMade ?? 0, hasPlan: plan !== null, delivered, filesReady, now });
 
+  // the items of the DELIVERED stages that have reached the file so far (the one number the progress line and the bar show)
+  const savedSoFar = track.stages.reduce((n, t, i) => n + (stages[i]?.deliver ? Math.min(t.saved, stages[i].rows) : 0), 0);
   const lastEvent = events[events.length - 1];
   const lastAt = lastEvent ? Date.parse(lastEvent.created_at) : NaN;
   const progressLine = [...events].reverse().find((e) => e.kind === "progress" || e.kind === "system")?.message_ar ?? null;
@@ -334,7 +358,7 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
 
   const endLineAr = endLineOf(phase, resultLinesAr, storedSummary);
   const view: CustomerMissionView = {
-    id: mission.id, phase, summaryAr: plan?.summary_ar ? String(plan.summary_ar) : null, notesAr: Array.isArray(plan?.notes_ar) ? plan.notes_ar.map(String) : [], assumptionsAr: Array.isArray(plan?.assumptions_ar) ? plan.assumptions_ar.map(String) : [], unservedAr: Array.isArray(plan?.unserved_ar) ? plan.unserved_ar.map(String) : [],
+    id: mission.id, phase, summaryAr: plan?.summary_ar ? String(plan.summary_ar) : null, notesAr: Array.isArray(plan?.notes_ar) ? dedupeNearIdentical(plan.notes_ar.map(String)) : [], assumptionsAr: Array.isArray(plan?.assumptions_ar) ? dedupeNearIdentical(plan.assumptions_ar.map(String)) : [], unservedAr: Array.isArray(plan?.unserved_ar) ? dedupeNearIdentical(plan.unserved_ar.map(String)) : [],
     questionOptionsAr: phase === "question" && Array.isArray((mission.plan_public as any)?.question_options) ? (mission.plan_public as any).question_options.map(String).slice(0, 4) : [], stages, totalRows: total, totalRowsAr: countAr(total, itemNounOfPlan(plan)),
     samples: plan ? samplesView(plan) : null, fileContentsAr: plan ? fileContentsAr(plan) : null, priceLineAr: plan ? priceLineAr(plan) : null, priceFacts: plan ? priceFactsOf(plan).facts : [], priceNoteAr: plan ? priceFactsOf(plan).noteAr : null, questionAr: phase === "question" ? mission.question_ar : null,
     queueLineAr: q.lineAr, queuePosition: q.position, steps, currentLineAr, delayAr, remainingAr,
@@ -344,6 +368,10 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
     requestedRows, endLineAr, edit: phase === "plan" && plan?.edit && typeof plan.edit === "object" ? (plan.edit as PlanEditorView) : null,
     startedAt: (events.length ? Date.parse(events[0].created_at) : Date.parse(mission.created_at)) || null,
     live: isLivePhase(phase),
+    periodAr: periodOfPlan(plan),
+    expectedAr: Number(plan?.expected_minutes) > 0 ? minutesAr(Math.round(Number(plan.expected_minutes))) : null,
+    progressLineAr: mission.status === "approved" || mission.status === "executing" ? deliveredOfAr(Math.min(savedSoFar, planned), planned, itemNounOfPlan(plan)) : null,
+    savedSoFar,
   };
   return guardViewText(view);
 }
