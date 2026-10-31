@@ -63,7 +63,10 @@ function sumMoney(list: Money[]): Money {
   };
 }
 
-export function buildSheetModel(doc: DocView, seller: SellerBlock, qrAllowed: boolean = showsInstapayShortcuts(doc.instapayAddress)): SheetModel {
+/** Display options that are never stored with the document: `phaseSummary: false` hides the sector summary table (the saved document always keeps it). */
+export interface SheetOptions { phaseSummary?: boolean }
+
+export function buildSheetModel(doc: DocView, seller: SellerBlock, qrAllowed: boolean = showsInstapayShortcuts(doc.instapayAddress), options: SheetOptions = {}): SheetModel {
   const statement = doc.docType === "statement";
   const currencies = statement ? [] : currenciesOf(doc);
   const totals = totalsForDoc(doc);
@@ -160,7 +163,7 @@ export function buildSheetModel(doc: DocView, seller: SellerBlock, qrAllowed: bo
       total: currencies.map((c) => `الإجمالي (${CURRENCY_AR[c]})`),
     },
     rows,
-    groupSummary: doc.batches.length > 0 && !statement ? summary : null,
+    groupSummary: doc.batches.length > 0 && !statement && options.phaseSummary !== false ? summary : null,
     totalRows,
     rateNote,
     roundingNote: rounding && !statement ? ROUNDING_NOTE_AR : null,

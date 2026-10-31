@@ -45,7 +45,7 @@ describe("every invoice route is admin-only, on the server", () => {
   it("the routes are exactly the ones the screens use (nothing public was added)", () => {
     expect(FILES).toEqual([
       "src/app/api/admin/invoices/[id]/convert/route.ts", "src/app/api/admin/invoices/[id]/duplicate/route.ts", "src/app/api/admin/invoices/[id]/route.ts",
-      "src/app/api/admin/invoices/[id]/status/route.ts", "src/app/api/admin/invoices/assist/route.ts", "src/app/api/admin/invoices/clients/[id]/route.ts", "src/app/api/admin/invoices/clients/route.ts",
+      "src/app/api/admin/invoices/[id]/status/route.ts", "src/app/api/admin/invoices/agent/route.ts", "src/app/api/admin/invoices/assist/route.ts", "src/app/api/admin/invoices/clients/[id]/route.ts", "src/app/api/admin/invoices/clients/route.ts",
       "src/app/api/admin/invoices/route.ts", "src/app/api/admin/invoices/settings/route.ts", "src/app/api/admin/invoices/types/[id]/route.ts", "src/app/api/admin/invoices/types/route.ts",
     ]);
   });
@@ -62,12 +62,12 @@ describe("every invoice route is admin-only, on the server", () => {
         count += 1;
       }
     }
-    expect(count).toBe(16); // 15 + the Claude helper (POST /assist)
+    expect(count).toBe(17); // 15 + the Claude helper (POST /assist) + the invoice agent (POST /agent)
   });
 
   it("no session: 401 for every handler, and the database is not touched at all", async () => {
     const all = await handlers();
-    expect(all).toHaveLength(16);
+    expect(all).toHaveLength(17);
     for (const { file, verb, fn } of all) {
       const res = await fn(request(verb, { authorization: "Bearer nobody" }), ctx);
       expect(res.status, `${verb} ${file}`).toBe(401);

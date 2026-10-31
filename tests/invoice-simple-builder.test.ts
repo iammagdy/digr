@@ -33,8 +33,9 @@ describe("one screen: a short form on top, the real sheet always visible, big cl
 
   it("the client is optional and the rate is asked once, only when none is saved", () => {
     expect(builder).toContain("(اختياري)");
-    expect(builder).toMatch(/\(form\.showPoints \|\| form\.showEgp\) && form\.rate\.trim\(\) === ""/);
-    expect(builder).toContain("مرة واحدة، يُحفظ ولا يُطلب منك بعدها");
+    // the rate box is always there while points or EGP are on (it used to vanish after the first digit typed: tests/invoice-live-fixes.test.ts)
+    expect(builder).toContain("showRateBox(form)");
+    expect(builder).toContain("أول سعر تحفظ به مسودة يصير السعر الافتراضي للوثائق القادمة");
   });
 
   it("a statement hides every money control and the paid button", () => {

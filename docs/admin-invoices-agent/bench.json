@@ -1,0 +1,24 @@
+{
+ "bigFileMB": 1.18,
+ "parseMs": 1662,
+ "profileMs": 525,
+ "countMs": 342,
+ "bigCounts": {
+  "sector": "x",
+  "companies": 45000,
+  "managers": 45000,
+  "emails": 45000,
+  "phones": 45000,
+  "invalidEmails": 0,
+  "ignoredPhones": 0
+ },
+ "profileCols": 4,
+ "rssMB": 376,
+ "systemChars": 5454,
+ "userChars": 3941,
+ "estInputTokens3": 2937,
+ "estInputTokensText": 1801,
+ "costTextCall": 0.0002551,
+ "costThreeFilesCall": 0.0006437000000000001,
+ "costWorst": 0.0044
+}

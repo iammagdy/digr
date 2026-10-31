@@ -81,6 +81,11 @@ export function auditDeps(client: { from: (table: string) => any }): Pick<Assist
 
 /** One call to the Messages API with the app's server-side key (same plain fetch the app's other model calls use). Low effort, no prices in the request. */
 export async function callAnthropic(system: string, note: string): Promise<ModelReply> {
+  return callAnthropicBlocks(system, note, ASSIST_MAX_OUTPUT_TOKENS);
+}
+
+/** The same call with content blocks (text and pictures) and its own output cap; the invoice agent uses it. The key never leaves this function. */
+export async function callAnthropicBlocks(system: string, content: string | Array<Record<string, unknown>>, maxTokens: number): Promise<ModelReply> {
   let key = "";
   let source: "store" | "env" | "none" | "pool" = "none";
   try { const resolved = await resolveProviderKey("anthropic"); key = resolved.key; source = resolved.source; } catch { key = ""; }
@@ -93,7 +98,7 @@ export async function callAnthropic(system: string, note: string): Promise<Model
       return await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
-        body: JSON.stringify({ model: ASSIST_MODEL, max_tokens: ASSIST_MAX_OUTPUT_TOKENS, ...(withEffort ? { output_config: { effort: "low" } } : {}), system, messages: [{ role: "user", content: note }] }),
+        body: JSON.stringify({ model: ASSIST_MODEL, max_tokens: maxTokens, ...(withEffort ? { output_config: { effort: "low" } } : {}), system, messages: [{ role: "user", content }] }),
         signal: controller.signal,
       });
     } finally { clearTimeout(timer); }

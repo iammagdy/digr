@@ -83,6 +83,21 @@ export function unitCcToQirsh(unitCc: number, rateE4: number): number {
   return out(roundDiv(big(unitCc, "unitCc") * big(rateE4, "rate"), B10000 * B100));
 }
 
+/**
+ * Points PER ITEM -> unit price in hundredths of a cent (the stored unit), rounded half up ONCE.
+ * `pointsScaled` is the typed points with two decimals (60 points = 6000). One point is `creditValueE4 / 10000` EGP and one dollar is `rateE4 / 10000` EGP, so
+ *   USD = points x creditValueE4 / rateE4   and   hundredths of a cent = USD x 10,000 = pointsScaled x creditValueE4 x 100 / rateE4.
+ * Example (R = 50.00, 1 point = 0.10 EGP): 60 points = 6000 x 1000 x 100 / 500000 = 1200 = 12 cents.
+ */
+export function pointsToUnitCc(pointsScaled: number, rateE4: number, creditValueE4: number = CREDIT_VALUE_DEFAULT_E4): number {
+  return out(roundDiv(big(pointsScaled, "points") * big(creditValueE4, "creditValue") * B100, big(rateE4, "rate")));
+}
+
+/** The same conversion backwards, for showing a stored price in points with two decimals (6000 = 60 points), rounded half up. */
+export function unitCcToPointsScaled(unitCc: number, rateE4: number, creditValueE4: number = CREDIT_VALUE_DEFAULT_E4): number {
+  return out(roundDiv(big(unitCc, "unitCc") * big(rateE4, "rate"), big(creditValueE4, "creditValue") * B100));
+}
+
 /** round_half_up(amount x basisPoints / 10000). */
 export function percentOf(amount: number, basisPoints: number): number {
   return out(roundDiv(big(amount, "amount") * big(basisPoints, "bp"), B10000));

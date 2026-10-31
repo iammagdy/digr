@@ -30,16 +30,16 @@ describe("a sector row: numbers make lines, empty fields make none, prices come 
   it("typing 200 companies and 340 managers creates exactly two lines with the default prices (12 and 35 cents), nothing else", () => {
     const { f, k } = owner();
     expect(f.lines).toHaveLength(2);
-    expect(f.lines.map((l) => [l.itemTypeName, l.qty, l.unit, l.batchKey])).toEqual([["شركة", "200", "12", k], ["مدير", "340", "35", k]]);
+    expect(f.lines.map((l) => [l.itemTypeName, l.qty, l.unit, l.batchKey])).toEqual([["شركة", "200", "0.12", k], ["مدير", "340", "0.35", k]]);
     expect(countText(f, k, TYPES[0].id)).toBe("200");
     expect(countText(f, k, TYPES[2].id)).toBe("");
   });
 
   it("clearing a field (or typing 0) removes its line; changing it updates the same line and keeps a price the owner edited", () => {
     let { f, k } = owner();
-    f = { ...f, lines: f.lines.map((l) => (l.itemTypeId === TYPES[0].id ? { ...l, unit: "15" } : l)) };
+    f = { ...f, lines: f.lines.map((l) => (l.itemTypeId === TYPES[0].id ? { ...l, unit: "0.15" } : l)) };
     f = setCount(f, k, TYPES[0], "250");
-    expect(f.lines.find((l) => l.itemTypeId === TYPES[0].id)).toMatchObject({ qty: "250", unit: "15" });
+    expect(f.lines.find((l) => l.itemTypeId === TYPES[0].id)).toMatchObject({ qty: "250", unit: "0.15" });
     expect(setCount(f, k, TYPES[1], "").lines.map((l) => l.itemTypeName)).toEqual(["شركة"]);
     expect(setCount(f, k, TYPES[1], "0").lines.map((l) => l.itemTypeName)).toEqual(["شركة"]);
     expect(setCount(f, k, TYPES[3], "").lines).toHaveLength(2); // an empty field with no line stays no line
@@ -86,7 +86,7 @@ describe("a price of 0 is never silent", () => {
     expect(zeroPriceNames(z)).toEqual([]);
     const typed = { ...f, lines: f.lines.map((l) => ({ ...l, unit: "0" })) };
     expect(zeroPriceNames(typed)).toEqual(["شركة"]);
-    expect(zeroPriceNames({ ...typed, lines: typed.lines.map((l) => ({ ...l, unit: "12" })) })).toEqual([]);
+    expect(zeroPriceNames({ ...typed, lines: typed.lines.map((l) => ({ ...l, unit: "0.12" })) })).toEqual([]);
   });
 });
 
@@ -115,7 +115,7 @@ describe("applying the helper's result", () => {
       { sector: "بترول", counts: [{ itemTypeId: TYPES[0].id, itemTypeName: "شركة", quantity: 80 }] },
     ], TYPES);
     expect(out.batches.map((b) => b.title)).toEqual(["كهروميكانيكا", "بترول"]);
-    expect(out.lines.map((l) => [l.itemTypeName, l.qty, l.unit])).toEqual([["شركة", "210", "12"], ["مدير", "340", "35"], ["شركة", "80", "12"]]);
+    expect(out.lines.map((l) => [l.itemTypeName, l.qty, l.unit])).toEqual([["شركة", "210", "0.12"], ["مدير", "340", "0.35"], ["شركة", "80", "0.12"]]);
     expect(f.lines).toHaveLength(1); // the original form object is not changed
   });
 });

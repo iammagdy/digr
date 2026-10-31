@@ -4,6 +4,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-31, after #312): INVOICE AGENT 1 («مساعد الفواتير» + the live fixes)
+
+`main` before it was `69941bfb678d5699ac5d2e950435bee72abb6556` (#312); its merge commit is the head of `main` after it. Everything (bug causes with evidence, the rules, the target-total rule, model and cost, deviations, changed tests, NOT PROVEN): `docs/ADMIN_INVOICES_AGENT.md`; screenshots at 380 px, the browser run and the exact masked payload: `docs/admin-invoices-agent/`. **No SQL.** No wallet, ledger, mission, price-engine, cap or agent-worker code touched.
+
+- **Part A (live bugs)**: the builder's exchange-rate box vanished after the first digit typed (so «٥٠» became «٥.٠٠» and that was SAVED as his default rate); a price with more than 2 decimals of a CENT became 0 silently; the price unit was cents. Now: the rate box stays, with a live echo and a typo hint; prices are typed in dollars (up to 4 decimals) or in points per item (one toggle, default dollars, the rounding rule shown), a price that cannot be stored shows a red sentence and blocks «حفظ» and «إرسال»; «سنت» is no longer an input unit. Stored values are unchanged.
+- **Part B (the chat)**: files and pictures in, a PROPOSAL out. Counting is done by code (the model only maps columns by letter from masked profiles; no raw cell ever reaches it); money actions show before/after totals and wait for «تمام»; the model can only emit a fixed list of 12 actions (no send, no pay, no save); «خلي الإجمالي ١٧ دولار» is solved by code (dollars hit exactly in most cases, points / EGP only on the whole-cent lattice, said honestly); pictures are «تقريبي» and never overwrite a number from a file; every step has «تراجع»; files are in memory only. `claude-haiku-5-5`, about $0.0003 to $0.0008 a call, 30 calls an hour per admin, 4,000 characters, 5 files, 10 MB each.
+- Not done on purpose: `.xls` (no safe reader), a 10 MB upload through Vercel's 4.5 MB body limit (the screen stops above about 4 MB), storing the «hide the sector summary» option (would need SQL).
+- Folder and component names say «chat» because `tests/invoice-ledger-isolation.test.ts` forbids imports containing «agent»; the route is `/api/admin/invoices/agent`.
+- Rollback: `git revert -m 1 <merge commit>`.
+
+---
+
 ## START HERE (2026-10-31, after #310): INVOICES SIMPLE 1 (the owner's feedback on the invoice builder)
 
 `main` before it was `d65713b9c3443fb50e77a7d76e9f7bcb226612b3` (#310); the invoice builder it changes is #308 (`5a6c8ce`). Everything (the total bug with evidence, the one-screen builder, sectors, «بيان بيانات», the saved rate, the Claude helper with its model and cost, default prices, changed tests, NOT PROVEN): `docs/ADMIN_INVOICES_SIMPLE.md`.

@@ -1,8 +1,12 @@
-import { CREDIT_VALUE_DEFAULT_E4, formatScaled, parseScaled } from "./money";
+import { toArabicDigits } from "@/lib/arabicDigits";
+import { fmtRate } from "./format";
+import { CREDIT_VALUE_DEFAULT_E4, RATE_MAX_E4, RATE_MIN_E4, formatScaled, parseScaled } from "./money";
+import { parseUnitUsd, unitUsdText } from "./priceInput";
 import type { BatchInput, DiscountKind, DocStatus, DocType, DocView, LineInput } from "./types";
 import { documentInputSchema, parseInput, type DocumentInput } from "./validate";
 
 /** The builder's form: every number is the TEXT the owner typed; it becomes an integer only here (parseScaled: no float). */
+/** `unit` is the unit price TEXT IN US DOLLARS («0.12» = 12 cents, up to 4 decimals); it becomes hundredths of a cent only in the strict/tolerant conversions below. */
 export interface LineForm { key: string; batchKey: string | null; itemTypeId: string | null; itemTypeName: string; description: string; qty: string; unit: string; hidden: boolean }
 export interface DocForm {
   docType: DocType;
@@ -52,9 +56,39 @@ export function formFromDoc(doc: DocView): DocForm {
     batches: doc.batches.map((b) => ({ ...b })),
     lines: doc.lines.map((l) => ({
       key: l.key, batchKey: l.batchKey, itemTypeId: l.itemTypeId, itemTypeName: l.itemTypeName, description: l.description,
-      qty: String(l.quantity), unit: formatScaled(l.unitCc, 2), hidden: l.hidden,
+      qty: String(l.quantity), unit: unitUsdText(l.unitCc), hidden: l.hidden,
     })),
   };
+}
+
+/** The tolerant read for the live preview only: an unreadable price shows as 0 AND `unitErrors` puts a red message next to its box, so it is never a silent 0. */
+const unitCcOf = (text: string): number => { const r = parseUnitUsd(text); return r.ok ? r.cc : 0; };
+
+/** The red message for every price box whose text cannot be stored exactly (line key -> Arabic sentence). A data statement has no prices. */
+export function unitErrors(form: DocForm): Record<string, string> {
+  if (form.docType === "statement") return {};
+  const out: Record<string, string> = {};
+  for (const l of form.lines) {
+    const r = parseUnitUsd(l.unit);
+    if (!r.ok) out[l.key] = r.error;
+  }
+  return out;
+}
+
+/** The exchange-rate box is on screen whenever points or EGP are shown (never hidden by what is typed in it, so a second digit can always be typed). */
+export function showRateBox(f: Pick<DocForm, "docType" | "showPoints" | "showEgp">): boolean {
+  return f.docType !== "statement" && (f.showPoints || f.showEgp);
+}
+
+/** A typo guard, not a rule: a rate far from the usual range (the owner typed «5» meaning «50») gets a visible question next to the box. */
+export function rateSanityWarning(text: string): string | null {
+  const rate = parseScaled(text, 4);
+  if (rate === null || rate < RATE_MIN_E4 || rate > RATE_MAX_E4) return null;
+  const LOW = 20 * 10_000, HIGH = 200 * 10_000;
+  if (rate >= LOW && rate <= HIGH) return null;
+  const guess = rate < LOW ? rate * 10 : Math.round(rate / 10);
+  const hint = guess >= LOW && guess <= HIGH && guess >= RATE_MIN_E4 ? ` هل تقصد ${fmtRate(guess)}؟` : " راجعه قبل المتابعة.";
+  return `تأكد من سعر الصرف: المكتوب ${fmtRate(rate)} جنيه للدولار.${hint}`;
 }
 
 const intOr = (text: string, scale: number): number | null => (text.trim() === "" ? 0 : parseScaled(text, scale));
@@ -69,10 +103,10 @@ export function formToInput(form: DocForm): { ok: true; input: DocumentInput } |
   for (let i = 0; i < f.lines.length; i++) {
     const l = f.lines[i];
     const quantity = parseScaled(l.qty, 0);
-    const unitCc = parseScaled(l.unit, 2);
-    if (quantity === null || quantity < 1) return { ok: false, error: `الكمية في البند ${i + 1} غير صالحة (رقم صحيح ١ أو أكثر).` };
-    if (unitCc === null) return { ok: false, error: `سعر الوحدة في البند ${i + 1} غير صالح (بالسنت، حتى منزلتين عشريتين).` };
-    lines.push({ batchKey: l.batchKey, itemTypeId: l.itemTypeId, itemTypeName: l.itemTypeName, description: l.description, quantity, unitCc, hidden: l.hidden });
+    const unit = parseUnitUsd(l.unit);
+    if (quantity === null || quantity < 1) return { ok: false, error: `الكمية في البند ${toArabicDigits(i + 1)} غير صالحة (رقم صحيح ١ أو أكثر).` };
+    if (!unit.ok) return { ok: false, error: `سعر الوحدة في البند ${toArabicDigits(i + 1)}: ${unit.error}` };
+    lines.push({ batchKey: l.batchKey, itemTypeId: l.itemTypeId, itemTypeName: l.itemTypeName, description: l.description, quantity, unitCc: unit.cc, hidden: l.hidden });
   }
   let discountValue = 0;
   if (f.discountKind !== "none") {
@@ -111,7 +145,7 @@ export function formToPreview(form: DocForm, base: { id: string | null; number: 
   const rate = f.rate.trim() === "" ? null : parseScaled(f.rate, 4);
   const lines: LineInput[] = f.lines.map((l) => ({
     key: l.key, batchKey: l.batchKey, itemTypeId: l.itemTypeId, itemTypeName: l.itemTypeName, description: l.description,
-    quantity: Math.max(0, parseScaled(l.qty, 0) ?? 0), unitCc: parseScaled(l.unit, 2) ?? 0, hidden: l.hidden,
+    quantity: Math.max(0, parseScaled(l.qty, 0) ?? 0), unitCc: unitCcOf(l.unit), hidden: l.hidden,
   }));
   const discountRaw = f.discountKind === "none" ? 0 : intOr(f.discount, 2) ?? 0;
   const discountValue = f.discountKind === "percent" ? Math.min(discountRaw, 10000) : discountRaw;

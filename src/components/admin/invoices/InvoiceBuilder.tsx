@@ -7,7 +7,10 @@ import { adminFetch } from "@/lib/adminApi";
 import { toArabicDigits } from "@/lib/arabicDigits";
 import { useAdmin } from "@/components/admin/AdminShell";
 import { todayCairo } from "@/lib/invoices/dates";
-import { emptyForm, emptyLine, formFromDoc, formToInput, formToPreview, rateIsMissing, type DocForm } from "@/lib/invoices/form";
+import { emptyForm, emptyLine, formFromDoc, formToInput, formToPreview, rateIsMissing, rateSanityWarning, showRateBox, unitErrors, type DocForm, type LineForm } from "@/lib/invoices/form";
+import { nextFitStep } from "@/lib/invoices/chat/fit";
+import { InvoiceChatPanel } from "./InvoiceChatPanel";
+import { POINTS_ROUNDING_RULE_AR, UNIT_LABEL_AR, parseUnitPoints, parseUnitUsd, unitPointsText, unitUsdText, type PriceUnit } from "@/lib/invoices/priceInput";
 import { fmtDateAr, fmtInt, fmtNumber, fmtRate, fmtUsd } from "@/lib/invoices/format";
 import { CONFIRM_AR, DOC_TYPE_AR, STATUS_AR } from "@/lib/invoices/labels";
 import { parseScaled } from "@/lib/invoices/money";
@@ -80,6 +83,11 @@ export function InvoiceBuilder({ id, initialType }: { id?: string; initialType?:
   );
 }
 
+/** the exchange rate as the integer the money library uses, or null when the text is not a rate */
+const rate4 = (text: string): number | null => (text.trim() === "" ? null : parseScaled(text, 4));
+/** a stored price text (dollars) as hundredths of a cent for the points display; an unreadable one shows no points */
+const parseUnitPoints0 = (unitText: string): number => { const r = parseUnitUsd(unitText); return r.ok ? r.cc : 0; };
+
 function BuilderView({ meta, types, clients, setClients, loaded, initialType, showMore, setShowMore, reload, initialError }: {
   meta: Meta; types: ItemType[]; clients: SavedClient[]; setClients: (f: (c: SavedClient[]) => SavedClient[]) => void; loaded: Loaded | null; initialType: DocType;
   showMore: boolean; setShowMore: (v: boolean) => void; reload: () => Promise<void>; initialError: string;
@@ -93,6 +101,12 @@ function BuilderView({ meta, types, clients, setClients, loaded, initialType, sh
   const [confirm, setConfirm] = useState<null | "sent" | "paid" | "void">(null);
   const [paidAt, setPaidAt] = useState(todayCairo());
   const [paidRef, setPaidRef] = useState("");
+  const [agentOpen, setAgentOpen] = useState(!loaded);
+  const [phaseSummary, setPhaseSummary] = useState(true);
+  const [fit, setFit] = useState<{ target: number; steps: number; notes: string[] } | null>(null);
+  const [fitReport, setFitReport] = useState<{ token: number; text: string } | null>(null);
+  const [priceUnit, setPriceUnit] = useState<PriceUnit>("usd");
+  const [pointsTyped, setPointsTyped] = useState<Record<string, string>>({});
   const [assistText, setAssistText] = useState("");
   const [assistBusy, setAssistBusy] = useState(false);
   const [assistMsg, setAssistMsg] = useState<{ ok: boolean; text: string } | null>(null);
@@ -110,17 +124,75 @@ function BuilderView({ meta, types, clients, setClients, loaded, initialType, sh
     creditValueE4: loaded?.doc.creditValueE4 ?? meta.creditValueE4, instapayAddress: loaded?.doc.instapayAddress ?? meta.instapayAddress,
   })), [form, loaded, locked, status, meta]);
   const totals = useMemo(() => totalsForDoc(doc), [doc]);
-  const model = useMemo(() => buildSheetModel(doc, loaded?.seller ?? meta.seller), [doc, loaded, meta]);
+  const model = useMemo(() => buildSheetModel(doc, loaded?.seller ?? meta.seller, undefined, { phaseSummary }), [doc, loaded, meta, phaseSummary]);
   const shownModel = useDeferredValue(model);
   const x = useInvoiceExport(shownModel, loaded?.doc.number || "draft");
+
+  // «خلي الـ PDF صفحة واحدة»: the page count is only known from the real measurement, so the sectors are folded into summaries one at a time (largest first) until it fits.
+  // A measurement counts only when it belongs to the CURRENT document (the deferred preview and the plan have both caught up); totals never change by a fold.
+  const finishFit = (text: string) => { setFit(null); setFitReport({ token: Date.now(), text }); };
+  useEffect(() => {
+    if (!fit || shownModel !== model || !x.settled) return;
+    const pagesWord = (n: number) => (n === 1 ? "صفحة واحدة" : n === 2 ? "صفحتين" : `${toArabicDigits(n)} صفحات`);
+    if (x.pageCount <= fit.target) {
+      finishFit(fit.steps === 0 ? `الوثيقة أصلًا ${pagesWord(x.pageCount)}، ما احتجتش أغيّر حاجة.` : `الوثيقة بقت ${pagesWord(x.pageCount)}: ${fit.notes.join("، ")}. الإجمالي ما اتغيّرش، وتقدر ترجّع التفاصيل من «خيارات إضافية» أو بزرار «تراجع».`);
+      return;
+    }
+    const step = fit.steps < 60 ? nextFitStep(form) : null;
+    if (!step) { finishFit(`أقل ما قدرت أوصل له ${pagesWord(x.pageCount)}${fit.notes.length ? ` بعد: ${fit.notes.join("، ")}` : ""}؛ مفيش حاجة تانية أطويها من غير ما أمسح بنودًا.`); return; }
+    setForm(step.form); setDirty(true);
+    setFit({ target: fit.target, steps: fit.steps + 1, notes: [...fit.notes, step.note] });
+  }, [fit, shownModel, model, x.settled, x.pageCount, form]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const zero = useMemo(() => (statement || locked ? [] : zeroPriceNames(form)), [form, statement, locked]);
   const rateMissing = !statement && rateIsMissing(form);
   const eligibleQr = showsInstapayShortcuts(doc.instapayAddress);
   const others = (key: string | null) => otherLines(form, key, quick);
 
+  // ----- prices: typed in dollars (default) or in points per item; the stored number is the same either way -----
+  const rateE4 = rate4(form.rate);
+  const creditE4 = loaded?.doc.creditValueE4 ?? meta.creditValueE4;
+  const priceBoxText = (l: LineForm): string => (priceUnit === "usd" ? l.unit : pointsTyped[l.key] ?? unitPointsText(parseUnitPoints0(l.unit), rateE4, creditE4));
+  const typePrice = (key: string, text: string) => {
+    if (priceUnit === "usd") { update((f) => ({ ...f, lines: f.lines.map((l) => (l.key === key ? { ...l, unit: text } : l)) })); return; }
+    setPointsTyped((t) => ({ ...t, [key]: text }));
+    const r = parseUnitPoints(text, rateE4, creditE4);
+    if (r.ok) update((f) => ({ ...f, lines: f.lines.map((l) => (l.key === key ? { ...l, unit: unitUsdText(r.cc) } : l)) }));
+  };
+  const usdErrors = useMemo(() => unitErrors(form), [form]);
+  const priceError = (l: LineForm): string | null => {
+    if (statement) return null;
+    if (priceUnit === "points" && pointsTyped[l.key] !== undefined) { const r = parseUnitPoints(pointsTyped[l.key], rateE4, creditE4); return r.ok ? null : r.error; }
+    return usdErrors[l.key] ?? null;
+  };
+  /** the first price that cannot be stored exactly (in the unit being typed): «حفظ» and «إرسال» stop on it, never saving a silent 0 */
+  const firstPriceError = (): string | null => {
+    for (const l of form.lines) { const e = priceError(l); if (e) return `سعر الوحدة في البند ${toArabicDigits(form.lines.indexOf(l) + 1)}: ${e}`; }
+    return null;
+  };
+  const switchPriceUnit = (u: PriceUnit) => {
+    if (u === priceUnit || (u === "points" && rateE4 === null)) return;
+    // a price that cannot be stored must be fixed first: switching would hide its error and leave a stale number behind
+    const problem = firstPriceError();
+    if (problem) { setError(problem); return; }
+    setError(""); setPriceUnit(u); setPointsTyped({});
+  };
+  const priceBox = (l: LineForm, label: string, testId: string, cls: string) => {
+    const err = priceError(l);
+    return (
+      <>
+        <input className={err ? cls.replace("border-ln", "border-bad") : cls} inputMode="decimal" dir="ltr" value={toArabicDigits(priceBoxText(l))} aria-label={label} aria-invalid={err ? true : undefined}
+          onChange={(e) => typePrice(l.key, e.target.value)} data-testid={testId} />
+        <span data-testid={`price-unit-${testId.replace(/^price-|^line-unit/, "") || "line"}`}>{UNIT_LABEL_AR[priceUnit]}</span>
+        {err ? <span role="alert" className="w-full text-[12px] leading-5 text-bad" data-testid={`price-error-${testId.replace(/^price-|^line-unit/, "") || "line"}`}>{err}</span> : null}
+      </>
+    );
+  };
+
   // ----- saving and status -----
   const save = async (): Promise<{ id: string; revision: number } | null> => {
+    const priceProblem = firstPriceError();
+    if (priceProblem) { setError(priceProblem); return null; }
     const r = formToInput(form);
     if (!r.ok) { setError(r.error); return null; }
     setError("");
@@ -145,6 +217,8 @@ function BuilderView({ meta, types, clients, setClients, loaded, initialType, sh
 
   const askSend = () => {
     const r = formToInput(form);
+    const priceProblem = firstPriceError();
+    if (priceProblem) { setError(priceProblem); return; }
     if (!r.ok) { setError(r.error); return; }
     if (!form.lines.length) { setError("أضف قطاعًا وأرقامًا قبل الإرسال."); return; }
     setError(""); setConfirm("sent");
@@ -264,17 +338,15 @@ function BuilderView({ meta, types, clients, setClients, loaded, initialType, sh
           {error ? <p role="alert" className="m-0 text-[13px] text-bad" data-testid="builder-error">{error}</p> : null}
         </section>
 
+        <InvoiceChatPanel
+          form={form} types={types} creditValueE4={creditE4} canChangeDocType={!loaded} disabled={locked}
+          open={agentOpen} onToggle={() => setAgentOpen((v) => !v)}
+          onApplyForm={(next) => { setForm(next); setDirty(true); setPointsTyped({}); }}
+          onFit={(pages) => setFit({ target: pages, steps: 0, notes: [] })}
+          phaseSummary={phaseSummary} onPhaseSummary={setPhaseSummary} fitReport={fitReport}
+        />
+
         <fieldset disabled={locked} className="m-0 flex min-w-0 flex-col gap-3.5 border-0 p-0">
-          <section className={SECTION} data-testid="assist-section">
-            <label htmlFor="assist-text" className="text-sm font-semibold text-ink">اكتب اللي عملته</label>
-            <textarea id="assist-text" className={`${INPUT} min-h-[84px] py-2`} value={assistText} maxLength={2000} onChange={(e) => setAssistText(e.target.value)} data-testid="assist-text"
-              placeholder="مثال: سحبت ٢٠٠ شركة كهروميكانيكا ومعاهم ٣٤٠ مدير، و٨٠ شركة بترول و١٢٠ شركة مقاولات" />
-            <div className="flex flex-wrap items-center gap-2">
-              <button type="button" className={BTN_PRIMARY} disabled={assistBusy || !assistText.trim()} onClick={runAssist} data-testid="assist-run">{assistBusy ? "جارٍ الترتيب…" : "رتّبهالي"}</button>
-              <span className="text-[11px] text-mut">مساعد Claude يقرأ الأعداد فقط: الأسعار من «أنواع البنود» والإجمالي من النظام. لا يُحفظ شيء قبل «حفظ مسودة».</span>
-            </div>
-            {assistMsg ? <p role={assistMsg.ok ? "status" : "alert"} className={`m-0 text-[13px] ${assistMsg.ok ? "text-ok" : "text-bad"}`} data-testid="assist-msg">{assistMsg.text}</p> : null}
-          </section>
 
           <section className={SECTION}>
             <h3 className="m-0 text-sm font-semibold text-ink">العميل <span className="text-xs font-normal text-mut">(اختياري)</span></h3>
@@ -294,6 +366,19 @@ function BuilderView({ meta, types, clients, setClients, loaded, initialType, sh
               <h3 className="m-0 text-sm font-semibold text-ink">القطاعات</h3>
               <button type="button" className={BTN_PRIMARY} onClick={() => update((f) => addSector(f))} data-testid="add-sector">+ إضافة قطاع</button>
             </div>
+            {!statement ? (
+              <div className="flex min-w-0 flex-col gap-1.5" data-testid="price-unit-toggle-box">
+                <div className="flex flex-wrap items-center gap-2" role="group" aria-label="وحدة كتابة السعر" data-testid="price-unit-toggle">
+                  <span className="text-xs font-semibold text-mut">أكتب سعر الوحدة بـ:</span>
+                  {(["usd", "points"] as const).map((u) => (
+                    <button key={u} type="button" aria-pressed={priceUnit === u} disabled={u === "points" && rateE4 === null} onClick={() => switchPriceUnit(u)}
+                      className={`${CHIP} ${priceUnit === u ? "border-ink bg-ink text-sf" : "border-ln bg-sf text-ink"} disabled:opacity-50`} data-testid={`unit-${u}`}>{u === "usd" ? "دولار" : "نقاط لكل بند"}</button>
+                  ))}
+                </div>
+                {priceUnit === "points" ? <p className="m-0 text-[11px] leading-5 text-mut" data-testid="points-rule">{POINTS_ROUNDING_RULE_AR}</p> : null}
+                {rateE4 === null ? <p className="m-0 text-[11px] leading-5 text-mut">الكتابة بالنقاط تحتاج سعر الصرف: اكتبه في قسم العملة أولًا.</p> : null}
+              </div>
+            ) : null}
             {groups.length === 0 ? <p className="m-0 text-[13px] leading-[1.9] text-mut">اضغط «إضافة قطاع» ثم اكتب اسم القطاع وعدد الشركات والمديرين والإيميلات وأرقام الهاتف. الخانة الفارغة لا تُضاف.</p> : null}
             <datalist id="sector-names">{SECTOR_SUGGESTIONS.map((s) => <option key={s} value={s} />)}</datalist>
             {groups.map((g) => (
@@ -308,7 +393,8 @@ function BuilderView({ meta, types, clients, setClients, loaded, initialType, sh
                   {quick.map((q) => {
                     const line = form.lines.find((l) => l.batchKey === g.key && l.itemTypeId === q.type.id);
                     const m = line ? money(line.key) : null;
-                    const unitZero = line ? parseScaled(line.unit, 2) === 0 : false;
+                    const lineUnit = line ? parseUnitUsd(line.unit) : null;
+                    const unitZero = Boolean(lineUnit && lineUnit.ok && lineUnit.cc === 0);
                     return (
                       <div key={q.type.id} className="flex min-w-0 flex-col gap-1 rounded-xl border border-ln bg-bg p-2" data-testid={`quick-${q.name}`}>
                         <label className="text-xs font-semibold text-mut" htmlFor={`q-${g.key}-${q.type.id}`}>عدد {q.label}</label>
@@ -317,10 +403,8 @@ function BuilderView({ meta, types, clients, setClients, loaded, initialType, sh
                         {line && !statement ? (
                           <div className="flex min-w-0 flex-wrap items-center gap-1 text-[11px] text-mut">
                             <span>×</span>
-                            <input className="min-h-[36px] w-[64px] rounded-lg border border-ln bg-sf px-2 text-base text-ink outline-none" inputMode="decimal" dir="ltr" value={toArabicDigits(line.unit)} aria-label={`سعر ${q.name} بالسنت`}
-                              onChange={(e) => update((f) => ({ ...f, lines: f.lines.map((l) => (l.key === line.key ? { ...l, unit: e.target.value } : l)) }))} data-testid={`price-${q.name}`} />
-                            <span>سنت</span>
-                            {m ? <strong className="text-ink" dir="ltr">= {fmtUsd(m.usd)}</strong> : null}
+                            {priceBox(line, `سعر ${q.name} (${UNIT_LABEL_AR[priceUnit]})`, `price-${q.name}`, "min-h-[36px] w-[84px] rounded-lg border border-ln bg-sf px-2 text-base text-ink outline-none")}
+                            {m ? <strong className="text-ink" dir="ltr">= {fmtUsd(m.usd)} دولار</strong> : null}
                             {unitZero ? <span className="w-full text-bad">السعر صفر</span> : null}
                           </div>
                         ) : null}
@@ -347,15 +431,19 @@ function BuilderView({ meta, types, clients, setClients, loaded, initialType, sh
                 <button type="button" aria-pressed={form.showEgp} onClick={() => toggleCurrency("showEgp")} className={`${CHIP} ${form.showEgp ? "border-ink bg-ink text-sf" : "border-ln bg-sf text-ink"}`} data-testid="show-egp">جنيه</button>
                 <button type="button" aria-pressed={form.showUsd} onClick={() => toggleCurrency("showUsd")} className={`${CHIP} ${form.showUsd ? "border-ink bg-ink text-sf" : "border-ln bg-sf text-ink"}`} data-testid="show-usd">دولار</button>
               </div>
-              {(form.showPoints || form.showEgp) && form.rate.trim() === "" ? (
-                <Field label="سعر الصرف: كم جنيه يساوي دولارًا واحدًا؟ (مرة واحدة، يُحفظ ولا يُطلب منك بعدها)">
-                  <input className={INPUT} inputMode="decimal" dir="ltr" value={toArabicDigits(form.rate)} onChange={(e) => set({ rate: e.target.value })} placeholder="مثل ٥٠.٧٥" data-testid="rate" />
+              {showRateBox(form) ? (
+                <Field label="سعر الصرف: كم جنيه يساوي دولارًا واحدًا؟">
+                  <input className={INPUT} inputMode="decimal" dir="ltr" value={toArabicDigits(form.rate)} onChange={(e) => set({ rate: e.target.value })} placeholder="مثل ٥٠ أو ٥٦.٥" data-testid="rate" />
                 </Field>
               ) : null}
               {rateMissing ? <p role="status" className="m-0 text-xs leading-6 text-bad" data-testid="rate-missing">اكتب سعر الصرف لتظهر النقاط والجنيه. الظاهر الآن بالدولار.</p> : null}
-              {(form.showPoints || form.showEgp) && !rateMissing && parseScaled(form.rate, 4) !== null ? (
-                <p className="m-0 text-xs leading-6 text-mut" data-testid="rate-note">سعر الصرف المحفوظ: <span dir="ltr">{fmtRate(parseScaled(form.rate, 4) as number)}</span> جنيه للدولار (يتغير من «بيانات البائع»، ويُثبَّت على الوثيقة عند الإرسال).</p>
+              {showRateBox(form) && rateE4 !== null ? (
+                <p className="m-0 text-xs leading-6 text-mut" data-testid="rate-note">
+                  الفهم الحالي: ١ دولار = <span dir="ltr">{fmtRate(rateE4)}</span> جنيه.{" "}
+                  {meta.lastRateE4 === null ? "أول سعر تحفظ به مسودة يصير السعر الافتراضي للوثائق القادمة، ويمكن تغييره من «بيانات البائع»." : <>السعر المحفوظ في «بيانات البائع» <span dir="ltr">{fmtRate(meta.lastRateE4)}</span>؛ ما تكتبه هنا لهذه الوثيقة فقط، ويُثبَّت عند الإرسال.</>}
+                </p>
               ) : null}
+              {showRateBox(form) && rateSanityWarning(form.rate) ? <p role="alert" className="m-0 text-xs leading-6 text-bad" data-testid="rate-sanity">{rateSanityWarning(form.rate)}</p> : null}
             </section>
           ) : null}
 
@@ -363,6 +451,17 @@ function BuilderView({ meta, types, clients, setClients, loaded, initialType, sh
             <button type="button" className={BTN} aria-expanded={showMore} onClick={() => setShowMore(!showMore)} data-testid="toggle-more">{showMore ? "إخفاء الخيارات الإضافية" : "خيارات إضافية"}</button>
             {showMore ? (
               <div className="flex min-w-0 flex-col gap-3.5" data-testid="more-options">
+                <section className={SECTION} data-testid="assist-section">
+            <label htmlFor="assist-text" className="text-sm font-semibold text-ink">اكتب اللي عملته</label>
+            <textarea id="assist-text" className={`${INPUT} min-h-[84px] py-2`} value={assistText} maxLength={2000} onChange={(e) => setAssistText(e.target.value)} data-testid="assist-text"
+              placeholder="مثال: سحبت ٢٠٠ شركة كهروميكانيكا ومعاهم ٣٤٠ مدير، و٨٠ شركة بترول و١٢٠ شركة مقاولات" />
+            <div className="flex flex-wrap items-center gap-2">
+              <button type="button" className={BTN_PRIMARY} disabled={assistBusy || !assistText.trim()} onClick={runAssist} data-testid="assist-run">{assistBusy ? "جارٍ الترتيب…" : "رتّبهالي"}</button>
+              <span className="text-[11px] text-mut">مساعد Claude يقرأ الأعداد فقط: الأسعار من «أنواع البنود» والإجمالي من النظام. لا يُحفظ شيء قبل «حفظ مسودة».</span>
+            </div>
+            {assistMsg ? <p role={assistMsg.ok ? "status" : "alert"} className={`m-0 text-[13px] ${assistMsg.ok ? "text-ok" : "text-bad"}`} data-testid="assist-msg">{assistMsg.text}</p> : null}
+          </section>
+
                 <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
                   <Field label="تاريخ الإصدار"><input className={INPUT} type="date" value={form.issueDate} onChange={(e) => set({ issueDate: e.target.value })} /></Field>
                   {!statement ? <Field label={form.docType === "invoice" ? "تاريخ الاستحقاق" : "صالح حتى"}><input className={INPUT} type="date" value={form.dueDate} onChange={(e) => set({ dueDate: e.target.value })} /></Field> : null}
@@ -375,11 +474,6 @@ function BuilderView({ meta, types, clients, setClients, loaded, initialType, sh
 
                 {!statement ? (
                   <>
-                    {(form.showPoints || form.showEgp) ? (
-                      <Field label="سعر الصرف لهذه الوثيقة (جنيه لكل دولار)" hint="يبدأ من السعر المحفوظ في «بيانات البائع». تغييره هنا لهذه الوثيقة فقط.">
-                        <input className={INPUT} inputMode="decimal" dir="ltr" value={toArabicDigits(form.rate)} onChange={(e) => set({ rate: e.target.value })} data-testid="rate-doc" />
-                      </Field>
-                    ) : null}
                     <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
                       <Field label="الخصم">
                         <select className={INPUT} value={form.discountKind} onChange={(e) => set({ discountKind: e.target.value as DocForm["discountKind"] })} data-testid="discount-kind">
@@ -429,7 +523,7 @@ function BuilderView({ meta, types, clients, setClients, loaded, initialType, sh
                           <input className={INPUT} value={l.description} onChange={(e) => update((f) => ({ ...f, lines: f.lines.map((v) => (v.key === l.key ? { ...v, description: e.target.value } : v)) }))} placeholder="وصف (اختياري)" aria-label="الوصف" />
                           <div className="grid min-w-0 grid-cols-2 gap-2">
                             <Field label="الكمية"><input className={INPUT} inputMode="numeric" dir="ltr" value={toArabicDigits(l.qty)} onChange={(e) => update((f) => ({ ...f, lines: f.lines.map((v) => (v.key === l.key ? { ...v, qty: e.target.value } : v)) }))} data-testid="line-qty" /></Field>
-                            {!statement ? <Field label="سعر الوحدة (سنت)"><input className={INPUT} inputMode="decimal" dir="ltr" value={toArabicDigits(l.unit)} onChange={(e) => update((f) => ({ ...f, lines: f.lines.map((v) => (v.key === l.key ? { ...v, unit: e.target.value } : v)) }))} data-testid="line-unit" /></Field> : null}
+                            {!statement ? <Field label={`سعر الوحدة (${UNIT_LABEL_AR[priceUnit]})`}><div className="flex min-w-0 flex-wrap items-center gap-1">{priceBox(l, `سعر الوحدة (${UNIT_LABEL_AR[priceUnit]})`, "line-unit", INPUT)}</div></Field> : null}
                           </div>
                           <div className="flex flex-wrap items-center gap-3 text-[13px] text-ink">
                             <label className="flex min-h-[44px] items-center gap-2"><input type="checkbox" className="h-5 w-5" checked={l.hidden} onChange={(e) => update((f) => ({ ...f, lines: f.lines.map((v) => (v.key === l.key ? { ...v, hidden: e.target.checked } : v)) }))} data-testid="line-hidden" />إخفاء من الوثيقة{statement ? "" : " (يُحتسب في الإجمالي)"}</label>

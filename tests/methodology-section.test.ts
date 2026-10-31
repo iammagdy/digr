@@ -102,8 +102,9 @@ describe("where the section is", () => {
     const { join } = await import("node:path");
     const walk = (dir: string): string[] => readdirSync(dir).flatMap((f) => { const p = join(dir, f); return statSync(p).isDirectory() ? (f === "node_modules" ? [] : walk(p)) : /\.(ts|tsx)$/.test(f) ? [p] : []; });
     const readers = [...walk("agent/src"), ...walk("src")].filter((p) => /xlsx\.load|readFile\(/.test(readFileSync(p, "utf8")) && /worksheets|getWorksheet/.test(readFileSync(p, "utf8"))).map((p) => p.replace(/\\/g, "/")).sort();
-    // finalize.ts skips the first sheet (slice(1)); exclusionFileParser reads the CUSTOMER'S upload; extractionBenchmark reads a workbook of the old chat generator; the builders write, never read
-    expect(readers).toEqual(["agent/src/finalize.ts", "src/lib/server/exclusionFileParser.ts", "src/lib/server/extractionBenchmark.ts"]);
+    // finalize.ts skips the first sheet (slice(1)); exclusionFileParser reads the CUSTOMER'S upload; extractionBenchmark reads a workbook of the old chat generator;
+    // the invoice assistant's parseFiles reads the ADMIN'S OWN uploaded spreadsheets in memory (never a delivered file, never written back); the builders write, never read
+    expect(readers).toEqual(["agent/src/finalize.ts", "src/lib/server/exclusionFileParser.ts", "src/lib/server/extractionBenchmark.ts", "src/lib/server/invoices/chat/parseFiles.ts"]);
     expect(readFileSync("agent/src/finalize.ts", "utf8")).toContain("wb.worksheets.slice(1)");
   });
 });

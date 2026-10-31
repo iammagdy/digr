@@ -1,5 +1,6 @@
 import { emptyLine, newKey, type DocForm, type LineForm } from "./form";
-import { MAX_BATCHES, MAX_LINES, formatScaled, parseScaled } from "./money";
+import { MAX_BATCHES, MAX_LINES, parseScaled } from "./money";
+import { parseUnitUsd, unitUsdText } from "./priceInput";
 
 /**
  * The simple builder's «القطاع» (sector) groups. A sector IS a batch: no new storage, no new table. Each sector row has quick number fields
@@ -41,7 +42,7 @@ export function setCount(form: DocForm, batchKey: string | null, type: ItemTypeL
   }
   if (at >= 0) return { ...form, lines: form.lines.map((l, i) => (i === at ? { ...l, qty: trimmed } : l)) };
   if (form.lines.length >= MAX_LINES) return form;
-  const line: LineForm = { ...emptyLine(batchKey), itemTypeId: type.id, itemTypeName: type.nameAr, qty: trimmed, unit: formatScaled(type.unitCc, 2) };
+  const line: LineForm = { ...emptyLine(batchKey), itemTypeId: type.id, itemTypeName: type.nameAr, qty: trimmed, unit: unitUsdText(type.unitCc) };
   return { ...form, lines: [...form.lines, line] };
 }
 
@@ -78,8 +79,8 @@ export function zeroPriceNames(form: DocForm): string[] {
   for (const l of form.lines) {
     const qty = parseScaled(l.qty, 0);
     if (qty === null || qty < 1) continue;
-    const unit = parseScaled(l.unit, 2);
-    if (unit === 0) {
+    const unit = parseUnitUsd(l.unit);
+    if (unit.ok && unit.cc === 0) {
       const name = l.itemTypeName.trim() || "بند";
       if (!names.includes(name)) names.push(name);
     }

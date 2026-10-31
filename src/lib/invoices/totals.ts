@@ -3,10 +3,10 @@ import type { DocView, Money, PricingInput, Totals } from "./types";
 
 const ZERO: Money = { usd: 0, points: 0, egp: 0 };
 
-function add(a: Money, b: Money): Money {
+export function addMoney(a: Money, b: Money): Money {
   return { usd: a.usd + b.usd, points: a.points === null || b.points === null ? null : a.points + b.points, egp: a.egp === null || b.egp === null ? null : a.egp + b.egp };
 }
-function sub(a: Money, b: Money): Money {
+export function subMoney(a: Money, b: Money): Money {
   return { usd: a.usd - b.usd, points: a.points === null || b.points === null ? null : a.points - b.points, egp: a.egp === null || b.egp === null ? null : a.egp - b.egp };
 }
 const nullIfNoRate = (m: Money, rate: number | null): Money => (rate === null ? { usd: m.usd, points: null, egp: null } : m);
@@ -28,7 +28,14 @@ function fixedDiscount(cents: number, rateE4: number | null, creditValueE4: numb
  */
 export function computeTotals(lines: Array<{ quantity: number; unitCc: number }>, pricing: PricingInput): Totals {
   const per = lines.map((l) => lineMoney(l.quantity, l.unitCc, pricing.rateE4, pricing.creditValueE4));
-  const subtotal = nullIfNoRate(per.reduce<Money>((sum, m) => add(sum, m), ZERO), pricing.rateE4);
+  return finishTotals(per, nullIfNoRate(per.reduce<Money>((sum, m) => addMoney(sum, m), ZERO), pricing.rateE4), pricing);
+}
+
+/**
+ * Everything after the lines: discount, tax and total from an already summed subtotal. Split out so a caller that changes ONE line (the agent's «target total»
+ * search) can re-derive the grand total from the new subtotal without re-pricing every line; `computeTotals` itself is unchanged.
+ */
+export function finishTotals(per: Money[], subtotal: Money, pricing: PricingInput): Totals {
   let discount: Money;
   if (pricing.discountKind === "percent") {
     discount = {
@@ -46,7 +53,7 @@ export function computeTotals(lines: Array<{ quantity: number; unitCc: number }>
   } else {
     discount = nullIfNoRate(ZERO, pricing.rateE4);
   }
-  const afterDiscount = sub(subtotal, discount);
+  const afterDiscount = subMoney(subtotal, discount);
   const tax: Money = pricing.taxEnabled
     ? {
         usd: percentOf(afterDiscount.usd, pricing.taxBp),
@@ -54,7 +61,7 @@ export function computeTotals(lines: Array<{ quantity: number; unitCc: number }>
         egp: afterDiscount.egp === null ? null : percentOf(afterDiscount.egp, pricing.taxBp),
       }
     : nullIfNoRate(ZERO, pricing.rateE4);
-  return { lines: per, subtotal, discount, afterDiscount, tax, total: add(afterDiscount, tax) };
+  return { lines: per, subtotal, discount, afterDiscount, tax, total: addMoney(afterDiscount, tax) };
 }
 
 /** What the database freezes at issue (same field names as the columns). */

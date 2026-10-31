@@ -18,9 +18,9 @@ const doc = (): DocView => ({
 });
 
 describe("the builder's text fields become exact integers", () => {
-  it("a document survives form -> input -> form without a single digit changing (0.45 cent stays 45, 50.75 stays 507500, 12.5% stays 1250)", () => {
+  it("a document survives form -> input -> form without a single digit changing (0.0045 dollar (0.45 cent) stays 45, 50.75 stays 507500, 12.5% stays 1250)", () => {
     const f = formFromDoc(doc());
-    expect(f.lines[0]).toMatchObject({ qty: "300", unit: "0.45" });
+    expect(f.lines[0]).toMatchObject({ qty: "300", unit: "0.0045" });
     expect(f.rate).toBe("50.75");
     expect(f.discount).toBe("12.5");
     const r = formToInput(f);
@@ -34,7 +34,7 @@ describe("the builder's text fields become exact integers", () => {
   it("typed Arabic-Indic digits and the Arabic decimal mark are read as numbers", () => {
     const f = formFromDoc(doc());
     f.lines[0].qty = "٣٠٠";
-    f.lines[0].unit = "٠٫٤٥";
+    f.lines[0].unit = "٠٫٠٠٤٥";
     f.rate = "٥٠٫٧٥";
     const r = formToInput(f);
     expect(r.ok && r.input.lines[0]).toMatchObject({ quantity: 300, unitCc: 45 });
@@ -53,7 +53,7 @@ describe("the builder's text fields become exact integers", () => {
     const err = (mutate: (f: ReturnType<typeof base>) => void): string => { const f = base(); mutate(f); const r = formToInput(f); return r.ok ? "" : r.error; };
     expect(err((f) => { f.lines[0].qty = "0"; })).toMatch(/الكمية/);
     expect(err((f) => { f.lines[0].qty = "1.5"; })).toMatch(/الكمية/);
-    expect(err((f) => { f.lines[0].unit = "0.455"; })).toMatch(/سعر الوحدة/);
+    expect(err((f) => { f.lines[0].unit = "0.00455"; })).toMatch(/سعر الوحدة/);
     expect(err((f) => { f.lines[0].unit = "abc"; })).toMatch(/سعر الوحدة/);
     expect(err((f) => { f.rate = "50.12345"; })).toMatch(/سعر الصرف/);
     expect(err((f) => { f.rate = ""; })).toMatch(/سعر الصرف/); // points shown but no rate
@@ -66,7 +66,7 @@ describe("the builder's text fields become exact integers", () => {
   it("the live preview never breaks while typing: an unreadable number counts as 0", () => {
     const f = formFromDoc(doc());
     f.lines[0].qty = "";
-    f.lines[0].unit = "0.4";
+    f.lines[0].unit = "0.004";
     f.rate = "5";
     f.discount = "zzz";
     const preview = formToPreview(f, { id: "d", number: "INV-2026-0001", status: "draft", revision: 3, instapayAddress: "iammagdy@instapay" });
