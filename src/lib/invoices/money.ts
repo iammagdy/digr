@@ -94,11 +94,13 @@ export function percentOf(amount: number, basisPoints: number): number {
  * (negative, more decimals than `scale`, letters, empty) or a value that is not a safe integer.
  */
 export function parseScaled(text: string, scale: number): number | null {
-  const ascii = String(text ?? "")
+  let ascii = String(text ?? "")
     .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))
     .replace(/[۰-۹]/g, (d) => String(d.charCodeAt(0) - 0x06f0))
-    .replace(/[\s٬ ']/g, "")
-    .replace(/[٫,]/g, ".");
+    .replace(/[\s\u00a0']/g, "");
+  // a whole number (a quantity) has no decimal mark: «1,200» or «١٬٢٠٠» (groups of exactly three) is 1200, never silently 0; «12,5» stays refused, never read as 125
+  if (scale === 0 && /^\d{1,3}(?:[,٬]\d{3})+$/.test(ascii)) ascii = ascii.replace(/[,٬]/g, "");
+  ascii = ascii.replace(/٬/g, "").replace(/[٫,]/g, ".");
   const m = /^(\d{1,15})(?:\.(\d{1,12}))?$/.exec(ascii);
   if (!m) return null;
   const frac = m[2] ?? "";

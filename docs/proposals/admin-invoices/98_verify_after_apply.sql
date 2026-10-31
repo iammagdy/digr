@@ -1,9 +1,12 @@
--- ONE read-only SELECT (one result set). Run it after parts 01 to 05. Expected: 18 rows (8 tables, then 10 functions) and `ok = true` on EVERY row.
+-- ONE read-only SELECT (one result set). Run it after parts 01 to 06. Expected: 23 rows (5 checks, 10 functions, 8 tables) and `ok = true` on EVERY row.
+-- (Run after parts 01 to 05 only, the 5 `check` rows of part 06 show ok = false: that is the proof the check sees whether part 06 is applied.)
 --
 -- Tables (object_kind = 'table'): rls_on = true, policies = 0, anon / authenticated / public have NO privilege at all,
 --   service_role_can_write_or_execute = true only for invoice_settings, invoice_item_types, invoice_clients (the rest are written by the functions).
 -- Functions (object_kind = 'function'): anon, authenticated and PUBLIC have NO EXECUTE on any of the 10; search_path_fixed = true on all 10;
 --   security_definer = true only for invoice_create_document, invoice_save_draft, invoice_set_status; and only those three are executable by service_role.
+-- Checks (object_kind = 'check'): part 06 is there: the document type may be 'statement' (documents and counters), a statement cannot carry money (table CHECK),
+--   numbering knows STM, only an invoice can be marked paid, and a statement line must have price 0.
 -- `ok` is computed here from exactly those rules, so a single `select ... where not ok` style glance is enough.
 SELECT
   'table' AS object_kind,
@@ -48,4 +51,20 @@ SELECT
   )
 FROM pg_proc f
 WHERE f.pronamespace = 'public'::regnamespace AND f.proname LIKE 'invoice\_%'
+UNION ALL
+SELECT 'check', 'documents.doc_type allows statement', NULL::boolean, NULL::integer, NULL::boolean, NULL::boolean, NULL::boolean, NULL::boolean, NULL::boolean, NULL::boolean, NULL::integer,
+  EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = 'public.invoice_documents'::regclass AND k.conname = 'invoice_documents_doc_type_check' AND pg_get_constraintdef(k.oid) LIKE '%statement%')
+UNION ALL
+SELECT 'check', 'counters.doc_type allows statement', NULL::boolean, NULL::integer, NULL::boolean, NULL::boolean, NULL::boolean, NULL::boolean, NULL::boolean, NULL::boolean, NULL::integer,
+  EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = 'public.invoice_number_counters'::regclass AND k.conname = 'invoice_number_counters_doc_type_check' AND pg_get_constraintdef(k.oid) LIKE '%statement%')
+UNION ALL
+SELECT 'check', 'a statement cannot carry money (table CHECK)', NULL::boolean, NULL::integer, NULL::boolean, NULL::boolean, NULL::boolean, NULL::boolean, NULL::boolean, NULL::boolean, NULL::integer,
+  EXISTS (SELECT 1 FROM pg_constraint k WHERE k.conrelid = 'public.invoice_documents'::regclass AND k.conname = 'invoice_documents_statement_no_money')
+UNION ALL
+SELECT 'check', 'numbering knows STM and only an invoice can be marked paid', NULL::boolean, NULL::integer, NULL::boolean, NULL::boolean, NULL::boolean, NULL::boolean, NULL::boolean, NULL::boolean, NULL::integer,
+  coalesce((SELECT position('STM' IN a.prosrc) > 0 FROM pg_proc a WHERE a.pronamespace = 'public'::regnamespace AND a.proname = 'invoice_assign_number'), false)
+  AND coalesce((SELECT position('doc_type <> ''invoice''' IN a.prosrc) > 0 FROM pg_proc a WHERE a.pronamespace = 'public'::regnamespace AND a.proname = 'invoice_set_status'), false)
+UNION ALL
+SELECT 'check', 'a statement line must have price 0', NULL::boolean, NULL::integer, NULL::boolean, NULL::boolean, NULL::boolean, NULL::boolean, NULL::boolean, NULL::boolean, NULL::integer,
+  coalesce((SELECT position('invoice_statement_no_prices' IN a.prosrc) > 0 FROM pg_proc a WHERE a.pronamespace = 'public'::regnamespace AND a.proname = 'invoice__replace_children'), false)
 ORDER BY 1, 2;

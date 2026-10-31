@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { adminFetch } from "@/lib/adminApi";
 import { useAdmin } from "@/components/admin/AdminShell";
+import { toArabicDigits } from "@/lib/arabicDigits";
 import { formatScaled, parseScaled } from "@/lib/invoices/money";
 import { BTN, BTN_PRIMARY, INPUT, SECTION } from "./ui";
 
@@ -64,7 +65,7 @@ export function ItemTypesPanel() {
               {(types ?? []).map((t) => (
                 <tr key={t.id} className="border-t border-ln">
                   <td className="p-2"><input className={INPUT} value={t.nameAr} onChange={(e) => patch(t.id, { nameAr: e.target.value })} aria-label="اسم النوع" /></td>
-                  <td className="p-2"><input className={INPUT} inputMode="decimal" dir="ltr" value={t.price} onChange={(e) => patch(t.id, { price: e.target.value })} aria-label="السعر بالسنت" /></td>
+                  <td className="p-2"><input className={INPUT} inputMode="decimal" dir="ltr" value={toArabicDigits(t.price)} onChange={(e) => patch(t.id, { price: e.target.value })} aria-label="السعر بالسنت" /></td>
                   <td className="p-2"><input type="checkbox" className="h-5 w-5" checked={t.isActive} onChange={(e) => patch(t.id, { isActive: e.target.checked })} aria-label="يظهر" /></td>
                   <td className="p-2"><button type="button" className={BTN} disabled={busy === t.id} onClick={() => save(t)}>حفظ</button></td>
                 </tr>
@@ -77,7 +78,7 @@ export function ItemTypesPanel() {
         <h3 className="m-0 text-sm font-semibold text-ink">نوع جديد</h3>
         <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
           <input className={INPUT} placeholder="الاسم (مثل: رابط حساب)" value={fresh.name} onChange={(e) => setFresh({ ...fresh, name: e.target.value })} required aria-label="اسم النوع الجديد" />
-          <input className={INPUT} inputMode="decimal" dir="ltr" placeholder="السعر بالسنت (مثل 12 أو 0.45)" value={fresh.price} onChange={(e) => setFresh({ ...fresh, price: e.target.value })} aria-label="سعر النوع الجديد" />
+          <input className={INPUT} inputMode="decimal" dir="ltr" placeholder="السعر بالسنت (مثل ١٢ أو ٠.٤٥)" value={toArabicDigits(fresh.price)} onChange={(e) => setFresh({ ...fresh, price: e.target.value })} aria-label="سعر النوع الجديد" />
         </div>
         <div><button type="submit" className={BTN_PRIMARY} disabled={busy === "new"}>إضافة</button></div>
       </form>

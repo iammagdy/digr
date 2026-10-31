@@ -1,4 +1,4 @@
-// Runs the five SQL parts, the verify SELECT and the rollback against a THROWAWAY embedded Postgres (PGlite): nothing here touches Supabase.
+// Runs the six SQL parts (01 to 05 as they are live, then the delta 06), the verify SELECT and the rollbacks against a THROWAWAY embedded Postgres (PGlite): nothing here touches Supabase.
 // Not part of the app or its tests (no dependency was added to package.json). To run it:
 //   mkdir /tmp/pgcheck && cd /tmp/pgcheck && npm init -y && npm i @electric-sql/pglite@0.3.14 && cp <repo>/docs/proposals/admin-invoices/sql-check/run.mjs . && SQL_DIR=<repo>/docs/proposals/admin-invoices/ node run.mjs
 //
@@ -14,18 +14,21 @@ const results = [];
 const check = (name, ok, extra = "") => { results.push([ok ? "PASS" : "FAIL", name, extra]); };
 const q = async (sql, params) => (await db.query(sql, params)).rows;
 const fails = async (sql, params) => { try { await db.query(sql, params); return null; } catch (e) { return e.message; } };
+const failsScript = async (d, sql) => { try { await d.exec(sql); return null; } catch (e) { return e.message; } };
 const PARTS = ["01_catalog_clients_settings", "02_documents", "03_numbering_and_guards", "04_functions", "05_security_rls_privileges"];
+const PART6 = "06_statement_mode";
 const RUNTIME = ["invoice_create_document", "invoice_save_draft", "invoice_set_status"];
 const NONRUNTIME = ["invoice__apply_fields", "invoice__replace_children", "invoice_assign_number", "invoice_documents_guard", "invoice_never_delete", "invoice_children_guard", "invoice_events_append_only"];
 const apply = async (f) => { await db.exec("set role app_owner"); try { await db.exec(fs.readFileSync(dir + f + ".sql", "utf8")); return null; } catch (e) { return e.message; } finally { await db.exec("reset role"); } };
 
-await db.exec(`create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
+const ROLE_SQL = `create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;
 create role app_owner nologin bypassrls;
 create schema auth; create table auth.users (id uuid primary key); insert into auth.users values ('${ADMIN}');
 grant usage on schema auth to service_role, app_owner; grant select, references on auth.users to app_owner;
 grant usage on schema public to anon, authenticated, service_role; grant usage, create on schema public to app_owner;
 alter default privileges for role app_owner in schema public grant all on tables to anon, authenticated, service_role;
-alter default privileges for role app_owner in schema public grant execute on functions to anon, authenticated, service_role;`);
+alter default privileges for role app_owner in schema public grant execute on functions to anon, authenticated, service_role;`;
+await db.exec(ROLE_SQL);
 
 // ---- apply 01..04, and show that BEFORE 05 the default privileges really do expose every function (so 05 is what closes them) ----
 for (const f of PARTS.slice(0, 4)) { const e = await apply(f); check(`apply ${f} (as a non-superuser owner)`, e === null, String(e ?? "")); }
@@ -35,6 +38,18 @@ check("BEFORE part 05: all 10 functions are executable by anon, authenticated an
 // idempotent: every part can be run again, in any order, and part 04 (CREATE OR REPLACE) after 05 does not bring the grants back
 for (const f of PARTS) { const e = await apply(f); check(`re-run ${f}`, e === null, String(e ?? "")); }
 { const e = await apply(PARTS[3]); check("re-run 04 AFTER 05 keeps the privileges closed", e === null); }
+
+// ---- the state that is LIVE today (01 to 05): the verify must say that part 06 is not there, and everything else is fine ----
+const verifySql = fs.readFileSync(dir + "98_verify_after_apply.sql", "utf8");
+{
+  const rows = await q(verifySql);
+  check("BEFORE part 06: the verify returns 23 rows; the 18 table and function rows are ok", rows.length === 23 && rows.filter((r) => r.object_kind !== "check").every((r) => r.ok === true), String(rows.length));
+  check("BEFORE part 06: the 5 `check` rows say ok = false (the verify sees that 06 is missing)", rows.filter((r) => r.object_kind === "check").length === 5 && rows.filter((r) => r.object_kind === "check").every((r) => r.ok === false));
+  check("BEFORE part 06: a statement cannot be created", /check|violates/.test((await fails("select public.invoice_create_document($1,'statement','{}'::jsonb)", [ADMIN])) ?? ""));
+}
+{ const e = await apply(PART6); check("apply 06_statement_mode (as the non-superuser owner)", e === null, String(e ?? "")); }
+{ const e = await apply(PART6); check("re-run 06 (idempotent)", e === null, String(e ?? "")); }
+{ const e = await apply(PARTS[3]); const e2 = await apply(PART6); check("re-run 04 then 06 keeps working (05's privileges stay closed)", e === null && e2 === null, String(e ?? e2 ?? "")); }
 
 // ---- every function, every role: the full privilege matrix ----
 const fns = await q("select p.oid, p.proname, pg_get_function_identity_arguments(p.oid) as args, p.prosecdef, p.proconfig, pg_get_userbyid(p.proowner) as owner from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname like 'invoice%' order by 2");
@@ -136,9 +151,8 @@ check("service_role may edit item types and clients", (await fails("update publi
 await db.exec("reset role");
 
 // ---- the verify query: ONE result set, 18 rows, ok = true on every row ----
-const verifySql = fs.readFileSync(dir + "98_verify_after_apply.sql", "utf8");
 const rows = await q(verifySql);
-check("verify: 18 rows (8 tables, 10 functions)", rows.length === 18 && rows.filter((r) => r.object_kind === "table").length === 8 && rows.filter((r) => r.object_kind === "function").length === 10, String(rows.length));
+check("verify AFTER 06: 23 rows (5 checks, 10 functions, 8 tables)", rows.length === 23 && rows.filter((r) => r.object_kind === "check").length === 5 && rows.filter((r) => r.object_kind === "table").length === 8 && rows.filter((r) => r.object_kind === "function").length === 10, String(rows.length));
 check("verify: ok = true on every row", rows.every((r) => r.ok === true), JSON.stringify(rows.filter((r) => r.ok !== true).map((r) => r.object_name)));
 const fr = rows.filter((r) => r.object_kind === "function");
 check("verify: no function executable by anon, authenticated or PUBLIC (per-function columns)", fr.every((r) => r.anon_any_privilege === false && r.authenticated_any_privilege === false && r.public_any_privilege === false));
@@ -162,7 +176,46 @@ for (const [label, bad, fix, name] of breaks) {
   await db.exec(bad); const broken = await okOf(name); await db.exec(fix); const fixed = await okOf(name);
   check(`verify turns ok=false for ${label}, and back to true when fixed`, broken === false && fixed === true, `${broken}/${fixed}`);
 }
-check("verify: all 18 rows ok again after the fixes", (await q(verifySql)).every((r) => r.ok === true));
+check("verify: all 23 rows ok again after the fixes", (await q(verifySql)).every((r) => r.ok === true));
+
+// ---- part 06 behaviour: data statements ----
+const stm = (over = {}) => ({ show_usd: true, batches: [{ key: "k", title: "كهروميكانيكا", summary_only: false }], lines: [{ batch_key: "k", item_type_name: "شركة", quantity: 200, unit_price_usd_centi_cents: 0 }], ...over });
+const sid = (await q("select public.invoice_create_document($1,'statement',$2::jsonb) as id", [ADMIN, JSON.stringify(stm())]))[0].id;
+check("a statement is numbered STM-…-0001", /^STM-\d{4}-0001$/.test((await q("select number from public.invoice_documents where id=$1", [sid]))[0].number));
+check("statement lines have price 0 and the generated total is 0", (await q("select line_total_usd_cents t from public.invoice_lines where document_id=$1", [sid])).every((r) => Number(r.t) === 0));
+check("a statement line with a price is refused", /invoice_statement_no_prices/.test(await fails("select public.invoice_create_document($1,'statement',$2::jsonb)", [ADMIN, JSON.stringify(stm({ lines: [{ item_type_name: "x", quantity: 1, unit_price_usd_centi_cents: 5 }] }))])));
+check("a statement with points, a rate, a discount or tax is refused by the table CHECK", (await Promise.all([{ show_points: true, rate_egp_per_usd_e4: 507500 }, { discount_kind: "percent", discount_value: 100 }, { tax_enabled: true, tax_bp: 100 }].map((o) => fails("select public.invoice_create_document($1,'statement',$2::jsonb)", [ADMIN, JSON.stringify(stm(o))])))).every((m) => /statement_no_money|check/.test(m ?? "")));
+check("a statement can be sent (frozen at 0) and voided", (await fails("select public.invoice_set_status($1,$2,'sent',1,$3::jsonb,null,null,'')", [sid, ADMIN, JSON.stringify({ lines: (await q("select id from public.invoice_lines where document_id=$1", [sid])).map((r) => ({ id: r.id, points: null, egp: null })), totals: { subtotal_usd_cents: 0, discount_usd_cents: 0, tax_usd_cents: 0, total_usd_cents: 0 } })])) === null);
+check("a sent statement can NEVER be paid", /invoice_bad_transition/.test(await fails("select public.invoice_set_status($1,$2,'paid',null,null,'2026-11-02','','')", [sid, ADMIN])));
+const qid = await create("quote", payload({ show_points: false, show_egp: false, rate_egp_per_usd_e4: null, discount_kind: "none", discount_value: 0, tax_enabled: false }));
+const qLines = await q("select id from public.invoice_lines where document_id=$1", [qid]);
+await q("select public.invoice_set_status($1,$2,'sent',1,$3::jsonb,null,null,'')", [qid, ADMIN, JSON.stringify({ lines: qLines.map((r) => ({ id: r.id, points: null, egp: null })), totals: { subtotal_usd_cents: 4750, discount_usd_cents: 0, tax_usd_cents: 0, total_usd_cents: 4750 } })]);
+check("a sent QUOTE can no longer be marked paid (only an invoice)", /invoice_bad_transition/.test(await fails("select public.invoice_set_status($1,$2,'paid',null,null,'2026-11-02','','')", [qid, ADMIN])));
+check("an INVOICE can still be marked paid (earlier flow unchanged)", (await q("select status from public.invoice_documents where id=$1", [a]))[0].status === "paid");
+check("verify is still ok = true on all 23 rows after real statement traffic", (await q(verifySql)).every((r) => r.ok === true));
+// the part 06 rollback refuses while a statement exists, because documents are never deleted
+check("rollback of 06 refuses while a statement exists", /statements exist|cannot be rolled back/.test((await failsScript(db, fs.readFileSync(dir + "06_statement_mode.rollback.sql", "utf8"))) ?? ""));
+
+// ---- the part 06 rollback really works (on a fresh database with no statement) ----
+{
+  const d2 = new PGlite();
+  await d2.exec(ROLE_SQL);
+  const run = async (f) => { await d2.exec("set role app_owner"); try { await d2.exec(fs.readFileSync(dir + f + ".sql", "utf8")); return null; } catch (e) { return e.message; } finally { await d2.exec("reset role"); } };
+  let ok6 = true;
+  for (const f of [...PARTS, PART6]) ok6 = ok6 && (await run(f)) === null;
+  check("fresh database: parts 01 to 06 apply", ok6);
+  const rb = await failsScript(d2, fs.readFileSync(dir + "06_statement_mode.rollback.sql", "utf8"));
+  check("fresh database: the 06 rollback runs when no statement exists", rb === null, String(rb ?? ""));
+  const err = await d2.query("select public.invoice_create_document($1,'statement','{}'::jsonb)", [ADMIN]).then(() => "created", (e) => e.message);
+  check("fresh database: after the 06 rollback a statement can no longer be created", /check|violates/.test(err), err);
+  const restored = (await run("03_numbering_and_guards")) === null && (await run("04_functions")) === null;
+  const bodies = (await d2.query("select (select position('STM' in prosrc) from pg_proc where proname = 'invoice_assign_number') as a, (select position('invoice_statement_no_prices' in prosrc) from pg_proc where proname = 'invoice__replace_children') as c, (select position('v_doc.doc_type' in prosrc) from pg_proc where proname = 'invoice_set_status') as b")).rows[0];
+  check("fresh database: re-running 03 and 04 restores the earlier function bodies (no STM, no statement price rule, no paid-only-invoice rule)", restored && bodies.a === 0 && bodies.b === 0 && bodies.c === 0, JSON.stringify(bodies));
+  const after = (await d2.query(verifySql)).rows;
+  check("fresh database: after the rollback the verify shows exactly the 5 part-06 checks as not ok and the 18 others ok", after.filter((r) => r.ok !== true).length === 5 && after.filter((r) => r.ok !== true).every((r) => r.object_kind === "check"));
+  check("fresh database: applying 06 again brings the verify back to 23 ok", (await run(PART6)) === null && (await d2.query(verifySql)).rows.every((r) => r.ok === true));
+  await d2.close();
+}
 
 // ---- rollback ----
 try { await db.exec(fs.readFileSync(dir + "99_rollback.sql", "utf8")); const left = await q("select count(*)::int c from pg_class where relnamespace='public'::regnamespace and relname like 'invoice%'"); const fn = await q("select count(*)::int c from pg_proc where pronamespace='public'::regnamespace and proname like 'invoice%'"); check("rollback removes every invoice object", left[0].c === 0 && fn[0].c === 0, `${left[0].c} tables, ${fn[0].c} functions`); } catch (e) { check("rollback", false, e.message); }

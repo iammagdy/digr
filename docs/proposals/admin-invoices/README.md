@@ -21,9 +21,16 @@ live project to check that no object named `invoice*` already exists (none did).
 Each part can be run again safely (`IF NOT EXISTS`, `CREATE OR REPLACE`, `DROP TRIGGER IF EXISTS`). The same SQL is in one piece in
 `supabase/migrations/20261031120000_admin_invoices.sql` (a test checks that the five parts and that file are identical).
 
+## Part 06: «بيان بيانات» (data statement), added by INVOICES SIMPLE 1
+
+Parts 01 to 05 are applied. **`06_statement_mode.sql` is NOT APPLIED**: a small delta, run once in the SQL editor after downloading `/admin/export`. It lets a document be a data statement (sectors and counts, no money):
+the document type may also be `statement` (documents and number counters), a table CHECK says a statement carries no money, numbering gets `STM-2026-0001`, only an invoice can be marked paid, and a statement line must have price 0.
+It only replaces three functions (`invoice_assign_number`, `invoice__replace_children`, `invoice_set_status`, same owner, same fixed `search_path`, privileges re-asserted) and changes three constraints; no row is touched and no table is dropped.
+The same SQL in one file: `supabase/migrations/20261031150000_admin_invoices_statement.sql`. Undo (only while no statement exists): `06_statement_mode.rollback.sql`, then run 03 and 04 again.
+
 ## Check it: ONE read-only SELECT
 
-Run `98_verify_after_apply.sql` (one statement, one result set). Expected: **18 rows** (8 tables, then 10 functions) and **`ok = true` on every row**. `ok` is computed by the query from these rules:
+Run `98_verify_after_apply.sql` (one statement, one result set). Expected after parts 01 to 06: **23 rows** (5 `check` rows for part 06, 10 functions, 8 tables) and **`ok = true` on every row**. (After parts 01 to 05 only, the 18 table and function rows are `ok` and the 5 `check` rows say `false`: that is the proof the query sees whether part 06 is applied.) `ok` is computed by the query from these rules:
 
 - **tables**: `rls_on = true`, `policies = 0`, no privilege at all for `anon`, `authenticated` and `public`; `service_role_can_write_or_execute = true` only for `invoice_settings`, `invoice_item_types`, `invoice_clients`.
 - **functions** (one row each): no EXECUTE for `anon`, `authenticated` or `public`; `search_path_fixed = true` on all 10; `security_definer = true` only for `invoice_create_document`, `invoice_save_draft`, `invoice_set_status`; and only those three are executable by `service_role`.
@@ -36,6 +43,6 @@ Why the explicit revokes matter: on this project a function created in `public` 
 
 ## What was and was not tested
 
-`sql-check/run.mjs` ran all five parts (twice), the verify SELECT and the rollback against a throwaway embedded Postgres (PGlite, not Supabase), applied by a non-superuser owner with the live default privileges: 136 checks,
+`sql-check/run.mjs` ran parts 01 to 05 (twice) and then 06, the verify SELECT and the rollbacks against a throwaway embedded Postgres (PGlite, not Supabase), applied by a non-superuser owner with the live default privileges: 158 checks,
 including the lock triggers, a call of every one of the 10 functions as `anon` and as `authenticated` (all permission denied), the privileges of `service_role`, numbering and rounding, and that the verify SELECT turns `ok = false` when any rule is broken on purpose. It found one real mistake (a draft could not be voided), fixed in
 `02_documents.sql`. **Not proven**: the same behaviour on the owner's Supabase project itself: that is what the verify SELECT is for.

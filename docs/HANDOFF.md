@@ -4,6 +4,19 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-31, after #308): INVOICES SIMPLE 1 (the owner's feedback on the invoice builder)
+
+`main` before it was `5a6c8ce5853a8d855dea13076fac44d7149fc87a` (#308). Everything (the total bug with evidence, the one-screen builder, sectors, «بيان بيانات», the saved rate, the Claude helper with its model and cost, default prices, changed tests, NOT PROVEN): `docs/ADMIN_INVOICES_SIMPLE.md`.
+**SQL part 06 (statement mode) is NOT applied**: `docs/proposals/admin-invoices/06_statement_mode.sql` (the owner applies it; the verify SELECT is now 23 rows). Invoices and quotes work without it; only creating a statement needs it.
+
+- **«The total does not work»**: three causes: points/EGP with no rate left NO currency (an empty totals box), a quantity typed «1,200» counted as 0, and item types still at price 0 with no warning. Fixed, with tests that failed first.
+- One screen, the real sheet always visible; sectors with four number boxes; prices from the item types; client optional; the extras behind «خيارات إضافية»; one saved exchange rate (settings), silent on every new document.
+- «رتّبهالي» (admin only): `claude-haiku-5-5`, about $0.0003 a call, 2,000 characters, 20 calls an hour per admin; the model never sees or sets a price; any price/total field in its reply rejects the whole reply.
+- No wallet, ledger, mission, price, cap or agent code touched. Issued documents are locked exactly as before.
+- Rollback: `git revert -m 1 <merge commit>`; part 06 only through `06_statement_mode.rollback.sql` while no statement exists.
+
+---
+
 ## START HERE (2026-10-31, after #309): ADMIN INVOICES 1 («الفواتير», admin only)
 
 `main` before it was `609cf015c78d03faf13a41cd2d34dc1febff5be3` (#309); the merge commit is the head of `main` after it. Everything (money rule, examples, statuses, numbering, export, isolation, files, screenshots): `docs/ADMIN_INVOICES.md`.

@@ -147,7 +147,8 @@ describe("static: the invoice code is wired to nothing of the wallet", () => {
       for (const m of c.matchAll(/tableId:\s*"([^"]+)"/g)) names.push(m[1]);
     }
     expect(names.length).toBeGreaterThan(10);
-    for (const n of new Set(names)) expect(n, n).toMatch(/^(invoice_\w+|settings_public)$/);
+    // admin_audit_log: the Claude helper counts its own calls there (the admin audit table, never a wallet table)
+    for (const n of new Set(names)) expect(n, n).toMatch(/^(invoice_\w+|settings_public|admin_audit_log)$/);
   });
 
   it("the SQL (comments removed) never references a wallet, ledger, balance, mission, reserve or charge object", () => {
