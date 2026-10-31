@@ -380,7 +380,8 @@ export async function GET(
             const { error: uploadError } = await adminClient.storage.from("results").upload(uploadPath, buf, { contentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", upsert: true });
             if (uploadError) throw uploadError;
             const { data: built, error: builtError } = await adminClient.storage.from("results").createSignedUrl(uploadPath, 300, { download: downloadFileName });
-            if (!builtError && built?.signedUrl) { signedUrl = built.signedUrl; resolvedStoragePath = uploadPath; }
+            // ONE storage file and NO database row: `resolvedStoragePath` stays null on purpose, so the artifact record below is not linked (the Excel is rebuilt from the CSV whenever it is asked for)
+            if (!builtError && built?.signedUrl) signedUrl = built.signedUrl;
             break;
           }
         } catch (csvErr) {

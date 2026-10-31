@@ -22,18 +22,23 @@ const world = vi.hoisted(() => ({
   versions: [] as Array<Record<string, unknown>>,
   signed: [] as Array<{ path: string; download?: string }>,
   uploaded: [] as Array<{ path: string; bytes: Buffer }>,
+  /** every database write attempted (table and kind); when `noDbWrites` is on, ANY write throws */
+  writes: [] as string[],
+  noDbWrites: false,
 }));
 
 vi.mock("../src/lib/supabase/server", () => {
-  const chain = (result: () => any): any => { const c: any = { select: () => c, eq: () => c, not: () => c, order: () => c, limit: () => c, in: () => c, update: () => c, insert: () => c, upsert: () => c, single: async () => result(), maybeSingle: async () => result(), then: (resolve: any, reject: any) => Promise.resolve(result()).then(resolve, reject) }; return c; };
+  const chain = (result: () => any, table = "?"): any => {
+    const write = (kind: string) => () => { world.writes.push(`${kind}:${table}`); if (world.noDbWrites) throw new Error(`DATABASE WRITE (${kind} ${table})`); return c; };
+    const c: any = { select: () => c, eq: () => c, not: () => c, order: () => c, limit: () => c, in: () => c, update: write("update"), insert: write("insert"), upsert: write("upsert"), delete: write("delete"), single: async () => result(), maybeSingle: async () => result(), then: (resolve: any, reject: any) => Promise.resolve(result()).then(resolve, reject) }; return c; };
   return {
     createServerSideClient: vi.fn(async () => ({ auth: { getUser: vi.fn(async () => ({ data: { user: { id: world.user, app_metadata: world.admin ? { role: "admin" } : {} } }, error: null })) } })),
     createAdminClient: vi.fn(() => ({
-      rpc: async () => ({ data: null, error: null }),
+      rpc: async () => { world.writes.push("rpc"); if (world.noDbWrites) throw new Error("DATABASE WRITE (rpc)"); return { data: null, error: null }; },
       from: (table: string) => {
-        if (table === "jobs") return chain(() => ({ data: { id: "job_old1", user_id: "owner-1", status: "completed", delivered_units: 3, charged_credits: 9, reserved_credits: 9, target_volume_max: 3, params: {}, endpoint_id: "x", created_at: "2026-09-01T10:00:00Z", finished_at: "2026-09-01T10:30:00Z" }, error: null }));
-        if (table === "artifact_versions") return chain(() => ({ data: world.versions, error: null }));
-        return chain(() => ({ data: table === "missions" ? null : [], error: null }));
+        if (table === "jobs") return chain(() => ({ data: { id: "job_old1", user_id: "owner-1", status: "completed", delivered_units: 3, charged_credits: 9, reserved_credits: 9, target_volume_max: 3, params: {}, endpoint_id: "x", created_at: "2026-09-01T10:00:00Z", finished_at: "2026-09-01T10:30:00Z" }, error: null }), table);
+        if (table === "artifact_versions") return chain(() => ({ data: world.versions, error: null }), table);
+        return chain(() => ({ data: table === "missions" ? null : [], error: null }), table);
       },
       storage: {
         from: () => ({
@@ -46,18 +51,18 @@ vi.mock("../src/lib/supabase/server", () => {
     })),
   };
 });
-vi.mock("../src/functions/shared/artifactVersionLinking", () => ({ linkArtifactVersion: vi.fn(async () => undefined) }));
 import { GET as downloadRoute } from "../src/app/api/jobs/[id]/download/route";
 
 const CSV = `﻿"الاسم","العدد","الرابط","ملاحظة"\r\n"النيل","120","https://nile.example","قال ""أهلًا""\nوسطر ثانٍ"\r\n"دلتا","80","","'=سطر يبدأ كمعادلة"\r\n"المنصورة","0045","https://mansoura.example",""`;
 
 async function ask(query: string): Promise<{ status: number; json: any }> {
-  world.signed = []; world.uploaded = [];
+  world.signed = []; world.uploaded = []; world.writes = [];
   const res = await downloadRoute(new NextRequest(`https://x.example/api/jobs/job_old1/download${query}`, { headers: { authorization: "Bearer t" } }), { params: Promise.resolve({ id: "job_old1" }) });
   return { status: res.status, json: await res.json() };
 }
 function reset(options: { admin?: boolean; xlsx?: boolean; csv?: boolean } = {}) {
   world.admin = Boolean(options.admin);
+  world.noDbWrites = false;
   world.files = new Map();
   world.versions = [{ id: "v1", version_number: 1, file_id_xlsx: options.xlsx === false ? null : "owner-1/job_old1/result.xlsx", file_id_csv: options.csv === false ? null : "owner-1/job_old1/result.csv", file_id_pdf: null }];
   if (options.xlsx !== false) world.files.set("owner-1/job_old1/result.xlsx", Buffer.from("xlsx-bytes"));
@@ -92,7 +97,10 @@ describe("the download route never gives a customer a CSV", () => {
   it("an older request with a CSV and NO Excel gets an Excel built from that CSV (for «xlsx» and for an old «csv» link), and the stored CSV is untouched", async () => {
     for (const query of ["?format=xlsx", "?format=csv", ""]) {
       reset({ xlsx: false });
+      // the database throws on ANY write (insert, update, upsert, delete, rpc) for this path: the download writes one storage file and nothing else
+      world.noDbWrites = true;
       const { status, json } = await ask(query);
+      expect(world.writes, query).toEqual([]);
       expect(status, query).toBe(200);
       expect(json, query).toMatchObject({ success: true, format: "xlsx" });
       expect(world.signed.map((s) => s.path), query).toEqual(["owner-1/job_old1/result.xlsx"]);
@@ -114,6 +122,15 @@ describe("the download route never gives a customer a CSV", () => {
       expect(sheet.getRow(4).getCell(2).value).toBe("0045");
       expect(sheet.rowCount).toBe(4);
     }
+  });
+
+  it("the guard is real: the same database DOES record a write when the artifact record is linked (a stored Excel is linked as before)", async () => {
+    reset();
+    world.versions = [{ id: "v1", version_number: 1, file_id_xlsx: null, file_id_csv: "owner-1/job_old1/result.csv", file_id_pdf: null }];
+    world.files.set("owner-1/job_old1/result.xlsx", Buffer.from("xlsx-bytes"));
+    const { json } = await ask("?format=xlsx");
+    expect(json.success).toBe(true);
+    expect(world.writes).toContain("update:artifact_versions");
   });
 
   it("an older request with nothing stored still says plainly that the file is not ready (never a CSV)", async () => {
