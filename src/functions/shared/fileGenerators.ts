@@ -212,14 +212,16 @@ function customerFacingCountry(country: unknown): string {
 }
 
 /** First line of the review sheet: said plainly, in Arabic, before any table. */
-export const REVIEW_SHEET_NOTICE_AR = "هذه السجلات لم تُحتسب عليك ولم تُخصم نقاطها، ولم تدخل ضمن الملف المُسلَّم لأننا لم نتأكد من مطابقتها لطلبك. راجعها بنفسك إن أردت.";
+export const REVIEW_SHEET_NOTICE_AR = "هذه النتائج لم تُحتسب عليك ولم تُخصم نقاطها، ولم تدخل ضمن الملف المُسلَّم لأننا لم نتأكد من مطابقتها لطلبك. راجعها بنفسك إن أردت.";
 /** First line of the «غير مراجَع» sheet: rows the job's review budget did not reach. Said plainly, in Arabic, before any table. */
-export const UNREVIEWED_SHEET_NOTICE_AR = "هذه السجلات لم تُراجَع آلياً لأن التحقق بلغ الحد المسموح لهذا الطلب، فلم نتأكد من مطابقتها لموضوعك. لم تُحتسب عليك ولم تُخصم نقاطها، ولم تدخل ضمن الملف المُسلَّم. راجعها بنفسك إن أردت.";
+export const UNREVIEWED_SHEET_NOTICE_AR = "هذه النتائج لم تُراجَع آلياً لأن التحقق بلغ الحد المسموح لهذا الطلب، فلم نتأكد من مطابقتها لموضوعك. لم تُحتسب عليك ولم تُخصم نقاطها، ولم تدخل ضمن الملف المُسلَّم. راجعها بنفسك إن أردت.";
 export const UNREVIEWED_SHEET_NAME_AR = "غير مراجَع";
 
 /** Which of the two apart-sheets of social rows is written: rows under review, or rows the review budget did not reach. */
 interface ReviewSheetKind { name: string; notice: string; reasonLabel: string }
-const REVIEW_SHEET: ReviewSheetKind = { name: "سجلات تحتاج مراجعة", notice: REVIEW_SHEET_NOTICE_AR, reasonLabel: "سبب المراجعة" };
+/** The name of the sheet of results that need review (no code reads it by name; only tests look it up). Wording: «نتائج», never «سجلات». */
+export const REVIEW_SHEET_NAME_AR = "نتائج تحتاج مراجعة";
+const REVIEW_SHEET: ReviewSheetKind = { name: REVIEW_SHEET_NAME_AR, notice: REVIEW_SHEET_NOTICE_AR, reasonLabel: "سبب المراجعة" };
 const UNREVIEWED_SHEET: ReviewSheetKind = { name: UNREVIEWED_SHEET_NAME_AR, notice: UNREVIEWED_SHEET_NOTICE_AR, reasonLabel: "سبب عدم المراجعة" };
 
 /**
@@ -232,7 +234,7 @@ const UNREVIEWED_SHEET: ReviewSheetKind = { name: UNREVIEWED_SHEET_NAME_AR, noti
 function addGenericReviewSheet(wb: ExcelJS.Workbook, uncertain: any[], pick: { text: (row: any) => string; link: (row: any) => string; idLabel?: string }, sheet: ReviewSheetKind = REVIEW_SHEET) {
   if (!Array.isArray(uncertain) || uncertain.length === 0) return;
   const review = wb.addWorksheet(sheet.name, { views: [{ state: "frozen", ySplit: 2, rightToLeft: true }] });
-  const headers = ["معرّف السجل", "ما ورد في السجل", "الرابط", sheet.reasonLabel];
+  const headers = ["معرّف النتيجة", "ما ورد في النتيجة", "الرابط", sheet.reasonLabel];
   review.mergeCells(1, 1, 1, headers.length);
   const notice = review.getCell(1, 1);
   notice.value = sheet.notice;
@@ -422,7 +424,7 @@ async function generateSocialDataWorkbookStreaming(norm: NormalizedDataset, unce
     noticeCell.alignment = { horizontal: "right", vertical: "middle", wrapText: true, readingOrder: "rtl" as any };
     notice.height = 48;
     notice.commit();
-    const head = sheet.addRow(["معرّف السجل", "ما ورد في السجل", "الرابط", kind.reasonLabel]);
+    const head = sheet.addRow(["معرّف النتيجة", "ما ورد في النتيجة", "الرابط", kind.reasonLabel]);
     head.eachCell((cell) => {
       cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: COLOR_WHITE } };
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: COLOR_NAVY_HEADER } };
@@ -846,7 +848,7 @@ async function generateCompanyDataWorkbook(
 
   const uncertain = Array.isArray(uncertainRows) ? uncertainRows : [];
   if (uncertain.length) {
-    const review = wb.addWorksheet("سجلات تحتاج مراجعة", {
+    const review = wb.addWorksheet(REVIEW_SHEET_NAME_AR, {
       views: [{ state: "frozen", ySplit: 1, rightToLeft: true }],
     });
     // No record id: the main sheet has none either, and nothing in the workbook points at a review row (the company name is what the customer reads).

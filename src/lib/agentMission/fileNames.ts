@@ -113,7 +113,7 @@ export function missionFileTitleAr(input: { plan: { stages: Array<{ deliver: boo
 export const EXCEL_SHEET_NAME_MAX = 31;
 
 /** A word a phrase cannot end on («تغريدات عن الذكاء الاصطناعي في»): when a title is cut, these are dropped from its end. */
-const DANGLING_LAST_WORD = new Set(["في", "عن", "من", "على", "إلى", "الى", "مع", "و", "أو", "او"]);
+const DANGLING_LAST_WORD = new Set(["في", "عن", "من", "على", "إلى", "الى", "مع", "و", "أو", "او", "آخر", "خلال", "حول", "بين"]);
 
 /** A sheet name Excel accepts, cut at a word boundary (and never on a dangling «في / عن / من»): at most 31 characters, none of [ ] : * ? / \, unique in the book (a number is added to a duplicate). */
 export function wordBoundarySheetName(title: string, used: Set<string>, fallback: string): string {

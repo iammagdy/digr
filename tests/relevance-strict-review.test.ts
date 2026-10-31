@@ -192,10 +192,10 @@ describe("company job: strict review of the rows the gate matched", () => {
     // charge = ceil(1 delivered x 3) = 3, never above the reserve (11), the reserve itself unchanged
     expect(result.last.json.settle).toMatchObject({ charged_credits: 3, reserved_credits: 11 });
     const wb = await workbook();
-    expect(wb.worksheets.map((s) => s.name)).toEqual(["بيانات الشركات", "سجلات تحتاج مراجعة"]);
+    expect(wb.worksheets.map((s) => s.name)).toEqual(["بيانات الشركات", "نتائج تحتاج مراجعة"]);
     expect(wb.getWorksheet("بيانات الشركات")!.rowCount).toBe(2); // header + the one delivered row
     expect(textOf(wb.getWorksheet("بيانات الشركات")!)).toContain("Nile Electrical Contracting");
-    const review = textOf(wb.getWorksheet("سجلات تحتاج مراجعة")!);
+    const review = textOf(wb.getWorksheet("نتائج تحتاج مراجعة")!);
     expect(review).toContain("Alpha Sourcing");
     expect(review).toContain("QuickFix");
     expect(review).toContain("Delta Group");
@@ -291,7 +291,7 @@ describe("company job: strict review of the rows the gate matched", () => {
     expect(result.last.json.settle).toMatchObject({ charged_credits: 3 });
     const wb = await workbook();
     expect(wb.getWorksheet("بيانات الشركات")!.rowCount).toBe(2);
-    expect(textOf(wb.getWorksheet("سجلات تحتاج مراجعة")!)).toContain("Delta Electricity");
+    expect(textOf(wb.getWorksheet("نتائج تحتاج مراجعة")!)).toContain("Delta Electricity");
     // 1 success row for page 1, 3 failed attempts for page 2
     expect(db.llmUsage.map((row) => row.reason)).toEqual(["relevance_review", "relevance_review_failed", "relevance_review_failed", "relevance_review_failed"]);
     expect(db.events.some((e) => /توقف الجمع لأن التحقق الآلي من ملاءمة السجلات تعذّر الآن/.test(String(e.message)))).toBe(true);
@@ -322,7 +322,7 @@ describe("company job: strict review of the rows the gate matched", () => {
     const wb = await workbook();
     expect(wb.getWorksheet("بيانات الشركات")!.rowCount).toBe(26);
     // the review sheet: a note row, a header row and the 25 rows that were checked but are not the company's own activity
-    expect(wb.getWorksheet("سجلات تحتاج مراجعة")!.rowCount).toBe(27);
+    expect(wb.getWorksheet("نتائج تحتاج مراجعة")!.rowCount).toBe(27);
   });
 
   it("50-row replay with fake replies over two pages: the matching rows are delivered and the job is not stopped", async () => {

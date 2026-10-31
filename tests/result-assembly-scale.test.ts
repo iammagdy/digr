@@ -54,7 +54,7 @@ describe("a large comments workbook is written as a stream", () => {
     setScaleOverridesForTesting({ streamXlsxAboveRows: 0 });
     const streamed = await load(await generateExcelReport(payload(60, 3)));
     expect(streamed.worksheets.map((s) => s.name)).toEqual(standard.worksheets.map((s) => s.name));
-    expect(streamed.worksheets.map((s) => s.name)).toEqual(["التعليقات", "سجلات تحتاج مراجعة"]);
+    expect(streamed.worksheets.map((s) => s.name)).toEqual(["التعليقات", "نتائج تحتاج مراجعة"]);
     for (const [a, b] of streamed.worksheets.map((s, i) => [s, standard.worksheets[i]] as const)) {
       expect(cellValues(a)).toEqual(cellValues(b));
       expect(a.views[0]).toMatchObject({ state: "frozen", rightToLeft: true });

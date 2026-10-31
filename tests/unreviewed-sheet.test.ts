@@ -28,14 +28,14 @@ describe.each([["in memory", 1_000_000], ["streamed", 0]])("the «غير مرا�
   it("is a sheet of its own after the review sheet, with the plain Arabic notice first, and the delivered data does not contain its rows", async () => {
     setScaleOverridesForTesting({ streamXlsxAboveRows: streamAbove });
     const wb = await load(await generateExcelReport(payload(rows, review, unreviewed)));
-    expect(wb.worksheets.map((sheet) => sheet.name)).toEqual(["المنشورات", "سجلات تحتاج مراجعة", UNREVIEWED_SHEET_NAME_AR]);
+    expect(wb.worksheets.map((sheet) => sheet.name)).toEqual(["المنشورات", "نتائج تحتاج مراجعة", UNREVIEWED_SHEET_NAME_AR]);
     expect(UNREVIEWED_SHEET_NAME_AR).toBe("غير مراجَع");
     const apart = wb.getWorksheet(UNREVIEWED_SHEET_NAME_AR)!;
     expect(String(apart.getCell(1, 1).value)).toBe(UNREVIEWED_SHEET_NOTICE_AR);
     expect(UNREVIEWED_SHEET_NOTICE_AR).toContain("لم تُراجَع آلياً");
     expect(UNREVIEWED_SHEET_NOTICE_AR).toContain("لم تُحتسب عليك");
     expect(UNREVIEWED_SHEET_NOTICE_AR).toContain("لم تدخل ضمن الملف المُسلَّم");
-    expect(apart.getRow(2).values).toEqual([undefined, "معرّف السجل", "ما ورد في السجل", "الرابط", "سبب عدم المراجعة"]);
+    expect(apart.getRow(2).values).toEqual([undefined, "معرّف النتيجة", "ما ورد في النتيجة", "الرابط", "سبب عدم المراجعة"]);
     expect(apart.rowCount).toBe(2 + 2);
     expect(String(apart.getCell(3, 2).value)).toContain("منشور لم يُراجَع ١");
     expect(String(apart.getCell(3, 4).value)).toBe(UNREVIEWED_BY_BUDGET_REASON_AR);
@@ -49,7 +49,7 @@ describe.each([["in memory", 1_000_000], ["streamed", 0]])("the «غير مرا�
   it("is absent when no row was left unreviewed, and the review sheet is as before", async () => {
     setScaleOverridesForTesting({ streamXlsxAboveRows: streamAbove });
     const wb = await load(await generateExcelReport(payload(rows, review, [])));
-    expect(wb.worksheets.map((sheet) => sheet.name)).toEqual(["المنشورات", "سجلات تحتاج مراجعة"]);
+    expect(wb.worksheets.map((sheet) => sheet.name)).toEqual(["المنشورات", "نتائج تحتاج مراجعة"]);
     const none = await load(await generateExcelReport(payload(rows, [], [])));
     expect(none.worksheets.map((sheet) => sheet.name)).toEqual(["المنشورات"]);
   });

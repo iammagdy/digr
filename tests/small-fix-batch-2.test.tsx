@@ -121,7 +121,7 @@ describe("4. the review sheet of the company Excel has no record id", () => {
     } as any);
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(buffer as any);
-    const review = workbook.getWorksheet("سجلات تحتاج مراجعة")!;
+    const review = workbook.getWorksheet("نتائج تحتاج مراجعة")!;
     expect((review.getRow(2).values as unknown[]).slice(1).map(String)).toEqual(["اسم الشركة", "مجال النشاط كما ورد", "العنوان كما ورد", "سبب المراجعة"]);
     expect(review.getRow(3).getCell(1).value).toBe("Maybe Co");
     let text = "";
