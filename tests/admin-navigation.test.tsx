@@ -24,6 +24,8 @@ const OLD_ROUTES = [
   "/admin/providers", "/admin/calls-log", "/admin/audit", "/admin/requests", "/admin/conference", "/admin/reverse-lookup", "/admin/planner-selftest",
   "/admin/failures", "/admin/agent", "/admin/settings", "/admin/export",
 ];
+/** Pages added on purpose after the reorganisation (each one is a decision, so each is written out here). */
+const NEW_ROUTES = ["/admin/invoices"];
 
 describe("every old admin address still opens its page", () => {
   it("each old address has its page file with a default export, at the same path as before", () => {
@@ -36,14 +38,15 @@ describe("every old admin address still opens its page", () => {
 
   it("no page was added, removed or renamed: the page folders are exactly the old list", () => {
     const dirs = readdirSync("src/app/admin", { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => `/admin/${d.name}`);
-    expect([...dirs, "/admin"].sort()).toEqual([...OLD_ROUTES].sort());
+    // «الفواتير» (/admin/invoices) is the one deliberate addition of the invoices feature; every old folder is still there
+    expect([...dirs, "/admin"].sort()).toEqual([...OLD_ROUTES, ...NEW_ROUTES].sort());
     expect(existsSync("src/app/admin/page.tsx")).toBe(true);
   });
 
   it("the menu list produces exactly the old addresses and nothing was lost from it", () => {
-    expect(ADMIN_PAGES.map(([id]) => adminHref(id)).sort()).toEqual([...OLD_ROUTES].sort());
-    expect([...ADMIN_LEGACY_ROUTES].sort()).toEqual([...OLD_ROUTES].sort());
-    expect(ADMIN_PAGES).toHaveLength(20);
+    expect(ADMIN_PAGES.map(([id]) => adminHref(id)).sort()).toEqual([...OLD_ROUTES, ...NEW_ROUTES].sort());
+    expect([...ADMIN_LEGACY_ROUTES].sort()).toEqual([...OLD_ROUTES].sort()); // the legacy list itself never changes
+    expect(ADMIN_PAGES).toHaveLength(21);
   });
 
   it("no redirect was added that could send an old address somewhere else", () => {

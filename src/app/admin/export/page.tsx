@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { adminDownload, adminFetch } from "@/lib/adminApi";
 import { formatAr } from "@/lib/arabicDigits";
-import { columnsOf, EXPORT_MAX_ROWS, EXPORT_TABLES, exportFileName, rowsToCsv, type ExportTableId } from "@/lib/adminExport";
+import { columnsOf, EXPORT_MAX_ROWS, EXPORT_TABLES, INVOICE_EXPORT_TABLES, exportFileName, rowsToCsv, type ExportTableId } from "@/lib/adminExport";
 
 interface Page {
   rows: Array<Record<string, unknown>>;
@@ -80,13 +80,13 @@ export default function AdminExportPage() {
   }, [exportTable]);
 
   /** ONE ZIP with the five CSV files and a manifest, built by the server (the route only SELECTs). A cut-short download fails as a whole: no file is saved. */
-  const runZip = useCallback(async () => {
+  const runZip = useCallback(async (set?: "invoices") => {
     setError("");
     setBusy("zip");
     setProgress("جارٍ تجهيز الملف…");
     try {
-      const { rows } = await adminDownload("/api/admin/export/zip", "diger-backup.zip");
-      for (const table of EXPORT_TABLES) saveStamp(table.id);
+      const { rows } = set === "invoices" ? await adminDownload("/api/admin/export/zip?set=invoices", "diger-invoices-backup.zip") : await adminDownload("/api/admin/export/zip", "diger-backup.zip");
+      for (const table of set === "invoices" ? INVOICE_EXPORT_TABLES : EXPORT_TABLES) saveStamp(table.id);
       setStamps(readStamps());
       setProgress(rows !== null ? `اكتمل التنزيل: ${formatAr(rows)} صفًا في ملف واحد.` : "اكتمل التنزيل.");
     } catch (e: any) {
@@ -127,7 +127,7 @@ export default function AdminExportPage() {
           <button type="button" disabled={Boolean(busy)} onClick={() => run(EXPORT_TABLES.map((t) => t.id), "csv")} className="rounded-xl bg-ink px-4 py-2 text-sf disabled:opacity-50" data-testid="export-all">
             {busy === "all" ? "جارٍ التنزيل…" : "تنزيل الجداول الخمسة (CSV)"}
           </button>
-          <button type="button" disabled={Boolean(busy)} onClick={runZip} className="rounded-xl bg-ink px-4 py-2 text-sf disabled:opacity-50" data-testid="export-zip">
+          <button type="button" disabled={Boolean(busy)} onClick={() => runZip()} className="rounded-xl bg-ink px-4 py-2 text-sf disabled:opacity-50" data-testid="export-zip">
             {busy === "zip" ? "جارٍ تجهيز الملف…" : "تنزيل الكل (ZIP)"}
           </button>
           {progress && <span className="text-[13px] text-mut" role="status">{progress}</span>}
@@ -136,6 +136,26 @@ export default function AdminExportPage() {
           «تنزيل الكل (ZIP)» ملف واحد يضم الجداول الخمسة بصيغة CSV، ومعه ملف بيان المحتويات المكتوب أخيرًا بعدد صفوف كل جدول: إن غاب من الأرشيف فالتنزيل لم يكتمل.
         </p>
         {error && <p role="alert" className="mb-0 mt-2.5 text-[13px] text-bad">{error}</p>}
+      </section>
+      <section className="rounded-[20px] border border-ln bg-sf p-[18px]" aria-labelledby="export-invoices" data-testid="export-invoices-section">
+        <h2 id="export-invoices" className="m-0 text-base font-semibold text-ink">الفواتير وعروض الأسعار</h2>
+        <p className="mb-0 mt-2.5 text-[13px] leading-[1.9] text-ink2">
+          جداول الفواتير منفصلة عن الجداول الخمسة أعلاه ولا علاقة لها بالنقاط. القراءة فقط مثل الباقي. إن لم تُنشأ جداول الفواتير بعد في قاعدة البيانات فسيفشل تنزيلها برسالة واضحة.
+        </p>
+        <ul className="m-0 mt-2.5 flex list-none flex-col gap-3 p-0 text-[13px] text-ink2" data-testid="export-invoice-tables">
+          {INVOICE_EXPORT_TABLES.map((t) => (
+            <li key={t.id} className="flex flex-wrap items-center gap-2">
+              <span className="min-w-[10rem] font-semibold text-ink">{t.titleAr}</span>
+              <span className="text-mut">{t.noteAr}</span>
+              <button type="button" disabled={Boolean(busy)} onClick={() => run([t.id], "csv")} className="rounded-xl border border-ln px-3 py-1.5 text-ink disabled:opacity-50">ملف CSV</button>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <button type="button" disabled={Boolean(busy)} onClick={() => runZip("invoices")} className="rounded-xl bg-ink px-4 py-2 text-sf disabled:opacity-50" data-testid="export-invoices-zip">
+            {busy === "zip" ? "جارٍ تجهيز الملف…" : "تنزيل الفواتير (ZIP)"}
+          </button>
+        </div>
       </section>
     </div>
   );

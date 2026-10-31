@@ -10,7 +10,7 @@ export interface AdminGroup { id: string; label: string; pages: AdminPageId[] }
 export const ADMIN_GROUPS: AdminGroup[] = [
   { id: "overview", label: "نظرة عامة", pages: ["overview", "operations", "conference", "visitors"] },
   { id: "customers", label: "العملاء والطلبات", pages: ["users", "jobs", "support", "requests"] },
-  { id: "money", label: "الفلوس والشحن", pages: ["topups", "finance", "promo-codes"] },
+  { id: "money", label: "الفلوس والشحن", pages: ["topups", "finance", "invoices", "promo-codes"] },
   { id: "providers", label: "المزودون والمفاتيح", pages: ["providers", "calls-log"] },
   { id: "agent", label: "الوكيل والجودة", pages: ["agent", "failures", "planner-selftest", "reverse-lookup"] },
   { id: "settings", label: "الإعدادات", pages: ["settings", "audit", "export"] },
@@ -27,6 +27,7 @@ export const ADMIN_PAGE_INFO: Record<AdminPageId, string> = {
   support: "الرسائل التي أرسلها العملاء إلى الدعم.",
   requests: "ما طلبه العملاء ولا نبيعه حاليًا.",
   topups: "طلبات الشحن التي تنتظر الاعتماد أو الرفض.",
+  invoices: "عروض الأسعار والفواتير التي تصدرها لشركات عملت لها بحثًا يدويًا. منفصلة تمامًا عن محفظة النقاط.",
   finance: "الإيرادات والتكاليف والأرباح شهرًا بشهر.",
   "promo-codes": "إنشاء الأكواد الترويجية ومتابعة من استخدمها.",
   providers: "حالة كل مزود ورصيده ومفاتيحه وحدوده وسجل مكالماته.",

@@ -4,6 +4,19 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-10-31, after #306): ADMIN INVOICES 1 («الفواتير», admin only)
+
+`main` before it was `24faf89f68d68d48e96e33ce3447bb22d10657c8` (#306); the merge commit is the head of `main` after it. Everything (money rule, examples, statuses, numbering, export, isolation, files, screenshots): `docs/ADMIN_INVOICES.md`.
+**The SQL is NOT applied** (the owner applies it; steps, the ONE read-only verify SELECT and the rollback: `docs/proposals/admin-invoices/README.md`). Until it is applied the screens answer with a plain Arabic error and `/admin/export`'s invoice group fails with a clear message; nothing else depends on it.
+
+- Quotes and invoices for hand-made research work, PDF (print dialog) and PNG per page, A4, «صفحة ١ من ٣», Arabic-Indic digits, the Diger logo on every page. Usable at 380 px.
+- Money is integers: unit price in hundredths of a cent, line = round_half_up once per line, points and EGP from a rate frozen at «مرسلة». After «مرسلة» the database locks the document; the status log is append-only with the admin id.
+- **No wallet, ledger, mission, price, cap or agent code touched**; marking paid credits no points (test: `tests/invoice-ledger-isolation.test.ts`). RLS on, no policy, `service_role` read-only on the document tables.
+- New dependency: `html-to-image` 1.11.13 (MIT), client-side PNG only. One existing test changed: `tests/admin-navigation.test.tsx` (one admin page added).
+- Rollback: `git revert -m 1 <merge commit>`, then (only if the SQL was applied) `99_rollback.sql`.
+
+---
+
 ## START HERE (2026-10-31, after #304): UI pass 1 (customer-facing screens only)
 
 `main` before it was `50925ac553ab53c9c3d63778d4e810fa07e60918` (#304); its merge commit is the head of `main` after it. Per-item changes, measurements, the pages that had no header, every changed test with its reason, screenshots (`docs/ui-pass-1/`), what was not done and NOT PROVEN: `docs/UI_PASS_1.md`. No SQL written or applied; no Edge Function, price, cap, markup, minimum, model string, engine, planning, checking or settlement code changed; the wallet history route only reads.

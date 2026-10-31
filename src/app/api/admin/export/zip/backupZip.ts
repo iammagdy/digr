@@ -1,7 +1,7 @@
 import { Zip, ZipDeflate } from "fflate";
 import {
   columnsOf, EXPORT_MAX_ROWS, EXPORT_PAGE_SIZE, EXPORT_TABLES, EXPORT_ZIP_MAX_ROWS_PER_TABLE, EXPORT_ZIP_TIME_BUDGET_MS, exportFileName, rowsToCsv,
-  type ExportTableId,
+  type ExportTable, type ExportTableId,
 } from "@/lib/adminExport";
 import { readExportPage, type ExportPageRead } from "../exportRead";
 
@@ -28,16 +28,17 @@ export function csvBytes(rows: Array<Record<string, unknown>>): Uint8Array {
  */
 export async function prepareBackupZip(
   db: { from: (table: string) => any },
-  options: { now?: Date; clock?: () => number; budgetMs?: number; maxRowsPerTable?: number } = {},
+  options: { now?: Date; clock?: () => number; budgetMs?: number; maxRowsPerTable?: number; tables?: ExportTable[] } = {},
 ): Promise<BackupPrepared> {
   const clock = options.clock ?? Date.now;
   const started = clock();
   const budget = options.budgetMs ?? EXPORT_ZIP_TIME_BUDGET_MS;
   const cap = Math.min(options.maxRowsPerTable ?? EXPORT_ZIP_MAX_ROWS_PER_TABLE, EXPORT_MAX_ROWS);
   const at = options.now ?? new Date();
+  const tableList = options.tables ?? EXPORT_TABLES;
 
   const firstPages = new Map<ExportTableId, ExportPageRead>();
-  for (const table of EXPORT_TABLES) {
+  for (const table of tableList) {
     const page = await readExportPage(db, table.id, 0);
     if (!page) return { ok: false, status: 500, error: ZIP_ERRORS_AR.unreadable };
     if ((page.count ?? page.rows.length) > cap) return { ok: false, status: 413, error: ZIP_ERRORS_AR.tooLarge };
@@ -61,7 +62,7 @@ export async function prepareBackupZip(
 
         const files: Array<Record<string, unknown>> = [];
         let totalRows = 0;
-        for (const table of EXPORT_TABLES) {
+        for (const table of tableList) {
           const first = firstPages.get(table.id)!;
           const rows: Array<Record<string, unknown>> = [...first.rows];
           let omitted = new Set(first.omitted);
