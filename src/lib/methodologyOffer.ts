@@ -40,6 +40,11 @@ export function methodologyAnswerAr(): string {
   return `ملف المنهجية متاح من لوحة النتائج: افتح تبويب «الملفات» ثم اضغط «اكتب المنهجية الرسمية»، وتكلفته ${toArabicDigits(METHODOLOGY_POINTS)} نقاط ولا تُخصم إلا بعد تأكيدك داخل الصفحة.`;
 }
 
+/** The answer when the delivered job has no saved data to write the document from (the offer button is not shown for it either): nothing to press, nothing charged, and where what was delivered is summarised. */
+export function methodologyNoDataAr(): string {
+  return "ملف المنهجية الرسمية غير متاح لهذا الطلب لأن بياناته المحفوظة غير موجودة، ولذلك لا يظهر زر شرائه ولن يُخصم منك شيء. ستجد في الورقة الأولى من ملف الإكسل ملخصًا لما سُلّم لك.";
+}
+
 /** The ledger row that records a methodology purchase for a job: the single source of truth for "already purchased". */
 export function methodologyChargeId(jobId: string): string {
   return `chg_meth_${jobId}`;

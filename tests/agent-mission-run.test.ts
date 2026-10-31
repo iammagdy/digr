@@ -207,6 +207,14 @@ describe("EXECUTION with a fake model transcript: linked rows, settlement, files
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(((await store.getFileBytes(m.id, "result/result.xlsx")) as unknown) as ArrayBuffer);
     expect(wb.worksheets.map((w) => w.name)).toEqual(["ملخص المهمة", "المنشورات", "التعليقات"]);
+    // the «المنهجية» section is in the FIRST sheet (never a sheet of its own), built by the real run from the recorded facts: the customer's own words and the counts of the item store; the settlement above is unchanged
+    const methodRows = new Map<string, string>();
+    wb.worksheets[0].eachRow((r) => methodRows.set(String(r.getCell(1).value ?? ""), String(r.getCell(2).value ?? "")));
+    expect(methodRows.has("المنهجية")).toBe(true);
+    expect(methodRows.get("طلبك (بكلماتك)")).toBe(m.request_text);
+    expect(methodRows.get("المرحلة")).toBe("قُرئ");
+    const sectionBody = [...methodRows.values()].join(" ");
+    expect(sectionBody).toMatch(/المنشورات/);
     const sheet = wb.getWorksheet("التعليقات")!;
     // readable first: the post's text and link next to each comment, then the comment, and the ids LAST (the parent id is a link to the post's id cell)
     expect([1, 2, 3, 4, 5].map((c) => sheet.getRow(1).getCell(c).value)).toEqual(["النص (المنشورات)", "الرابط", "النص", "المعرّف", "معرّف الأصل"]);

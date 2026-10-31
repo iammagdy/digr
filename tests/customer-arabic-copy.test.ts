@@ -12,10 +12,11 @@ describe("Arabic customer-facing copy", () => {
   });
 
   it("uses Arabic-script labels for every deliverable format", () => {
+    // the CSV has no customer label: it is never named to a customer
     expect(["xlsx", "pdf", "csv"].map(customerFormatLabelAr)).toEqual([
       "ملف إكسل",
       "ملف بي دي إف",
-      "ملف سي إس في",
+      "ملف بيانات",
     ]);
     expect(["xlsx", "pdf", "csv"].map(customerFormatLabelAr).join(" ")).not.toMatch(/[A-Za-z]/);
   });
