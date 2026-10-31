@@ -42,6 +42,7 @@ export function InvoiceList() {
         <div className="flex flex-wrap items-center gap-2">
           <Link href="/admin/invoices/new?type=invoice" className={`${BTN_PRIMARY} inline-flex items-center`} data-testid="new-invoice">فاتورة جديدة</Link>
           <Link href="/admin/invoices/new?type=quote" className={`${BTN} inline-flex items-center`} data-testid="new-quote">عرض سعر جديد</Link>
+          <Link href="/admin/invoices/new?type=statement" className={`${BTN} inline-flex items-center`} data-testid="new-statement">بيان بيانات جديد</Link>
         </div>
         {unpaid ? (
           <div className="rounded-xl border border-ln bg-bg p-3 text-[13px] leading-[1.9] text-ink" data-testid="unpaid-total">
@@ -56,7 +57,7 @@ export function InvoiceList() {
             {(["draft", "sent", "paid", "void"] as const).map((s) => <option key={s} value={s}>{STATUS_AR[s]}</option>)}
           </select>
           <select className={INPUT} value={docType} onChange={(e) => setDocType(e.target.value)} aria-label="النوع">
-            <option value="">الكل (عروض وفواتير)</option><option value="quote">{DOC_TYPE_AR.quote}</option><option value="invoice">{DOC_TYPE_AR.invoice}</option>
+            <option value="">الكل (فواتير وعروض وبيانات)</option><option value="invoice">{DOC_TYPE_AR.invoice}</option><option value="quote">{DOC_TYPE_AR.quote}</option><option value="statement">{DOC_TYPE_AR.statement}</option>
           </select>
           <select className={INPUT} value={clientId} onChange={(e) => setClientId(e.target.value)} aria-label="العميل">
             <option value="">كل العملاء</option>
@@ -79,9 +80,10 @@ export function InvoiceList() {
               <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-mut">
                 <span>{fmtDateAr(it.issueDate)}{it.dueDate ? ` · الاستحقاق ${fmtDateAr(it.dueDate)}` : ""}</span>
                 <span className="text-[13px] font-semibold text-ink">
-                  {it.show.usd ? <><span dir="ltr">{fmtUsd(it.totalUsd)}</span> دولار</> : null}
-                  {it.show.points && it.totalPoints !== null ? <>{it.show.usd ? " · " : ""}<span dir="ltr">{fmtPoints(it.totalPoints)}</span> نقطة</> : null}
-                  {it.show.egp && it.totalEgp !== null ? <> · <span dir="ltr">{fmtEgp(it.totalEgp)}</span> جنيه</> : null}
+                  {it.docType === "statement" ? <span className="font-normal text-mut">بدون أسعار</span> : null}
+                  {it.docType !== "statement" && it.show.usd ? <><span dir="ltr">{fmtUsd(it.totalUsd)}</span> دولار</> : null}
+                  {it.docType !== "statement" && it.show.points && it.totalPoints !== null ? <>{it.show.usd ? " · " : ""}<span dir="ltr">{fmtPoints(it.totalPoints)}</span> نقطة</> : null}
+                  {it.docType !== "statement" && it.show.egp && it.totalEgp !== null ? <> · <span dir="ltr">{fmtEgp(it.totalEgp)}</span> جنيه</> : null}
                 </span>
               </div>
             </Link>

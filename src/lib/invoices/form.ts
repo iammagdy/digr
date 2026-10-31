@@ -60,7 +60,9 @@ export function formFromDoc(doc: DocView): DocForm {
 const intOr = (text: string, scale: number): number | null => (text.trim() === "" ? 0 : parseScaled(text, scale));
 
 /** The strict conversion used by «حفظ»: the same schema as the server, so an error is caught before the request. */
-export function formToInput(f: DocForm): { ok: true; input: DocumentInput } | { ok: false; error: string } {
+export function formToInput(form: DocForm): { ok: true; input: DocumentInput } | { ok: false; error: string } {
+  // a data statement («بيان بيانات») has no money: whatever is left in the money fields of the form is ignored
+  const f: DocForm = form.docType === "statement" ? { ...form, showUsd: true, showPoints: false, showEgp: false, rate: "", discountKind: "none", discount: "", taxEnabled: false, tax: "" } : form;
   const rate = f.rate.trim() === "" ? null : parseScaled(f.rate, 4);
   if (f.rate.trim() !== "" && rate === null) return { ok: false, error: "سعر الصرف غير صالح (حتى ٤ منازل عشرية)." };
   const lines: DocumentInput["lines"] = [];
@@ -98,8 +100,14 @@ export function formToInput(f: DocForm): { ok: true; input: DocumentInput } | { 
   return parsed.ok ? { ok: true, input: parsed.value } : { ok: false, error: parsed.error };
 }
 
+/** Points or EGP are wanted but no usable rate is typed or saved. */
+export function rateIsMissing(f: Pick<DocForm, "showPoints" | "showEgp" | "rate">): boolean {
+  return (f.showPoints || f.showEgp) && (f.rate.trim() === "" || parseScaled(f.rate, 4) === null);
+}
+
 /** A tolerant DocView for the live preview: a number that cannot be read yet counts as 0, so typing never breaks the preview. */
-export function formToPreview(f: DocForm, base: { id: string | null; number: string; status: DocStatus; revision: number; creditValueE4?: number; instapayAddress: string }): DocView {
+export function formToPreview(form: DocForm, base: { id: string | null; number: string; status: DocStatus; revision: number; creditValueE4?: number; instapayAddress: string }): DocView {
+  const f: DocForm = form.docType === "statement" ? { ...form, showUsd: true, showPoints: false, showEgp: false, rate: "", discountKind: "none", discount: "", taxEnabled: false, tax: "" } : form;
   const rate = f.rate.trim() === "" ? null : parseScaled(f.rate, 4);
   const lines: LineInput[] = f.lines.map((l) => ({
     key: l.key, batchKey: l.batchKey, itemTypeId: l.itemTypeId, itemTypeName: l.itemTypeName, description: l.description,
@@ -111,7 +119,8 @@ export function formToPreview(f: DocForm, base: { id: string | null; number: str
     id: base.id, docType: f.docType, number: base.number, status: base.status, revision: base.revision,
     client: { id: f.clientId, company: f.company, contact: f.contact, email: f.email, phone: f.phone, address: f.address },
     issueDate: f.issueDate, dueDate: f.dueDate || null,
-    show: { usd: f.showUsd || (!f.showPoints && !f.showEgp), points: f.showPoints && rate !== null, egp: f.showEgp && rate !== null },
+    // Points and EGP need a rate. Without one the dollar total is shown instead (never an empty totals box); the builder says why next to the field.
+    show: { usd: f.showUsd || rateIsMissing(f) || (!f.showPoints && !f.showEgp), points: f.showPoints && rate !== null, egp: f.showEgp && rate !== null },
     rateE4: rate, creditValueE4: base.creditValueE4 ?? CREDIT_VALUE_DEFAULT_E4,
     discountKind: f.discountKind, discountValue,
     taxEnabled: f.taxEnabled, taxLabel: f.taxLabel || "ضريبة", taxBp: f.taxEnabled ? Math.min(intOr(f.tax, 2) ?? 0, 10000) : 0,

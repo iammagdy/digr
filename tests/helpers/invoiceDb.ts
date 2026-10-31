@@ -16,6 +16,8 @@ export class InvoiceDbModel {
   tables: Record<string, Row[]> = {};
   touched: Touch[] = [];
   /** public.settings_public (the pricing row) is read-only here, like the app's single read of it */
+  /** rows written to tables outside the invoice set (the admin audit log): stored, so counts and limits can be tested */
+  extra: Record<string, Row[]> = {};
   settingsPublic: Row[] = [{ key: "pricing", value: { ipa: "iammagdy@instapay", creditValueEgp: 0.1 } }];
   now: () => Date = () => new Date("2026-10-31T10:00:00Z");
   private seq = 0;
@@ -69,10 +71,12 @@ export class InvoiceDbModel {
     if (next.due_date && next.due_date < next.issue_date) this.fail("check dates", "23514");
     if (next.discount_kind === "percent" && next.discount_value > 10000) this.fail("check discount", "23514");
     if (next.credit_value_e4 < 100 || next.credit_value_e4 > 100000) this.fail("check credit", "23514");
+    if (d.doc_type === "statement" && !(next.discount_kind === "none" && next.discount_value === 0 && !next.tax_enabled && next.show_usd && !next.show_points && !next.show_egp && next.rate_egp_per_usd_e4 == null)) this.fail("check statement_no_money", "23514");
     Object.assign(d, next);
   }
 
   private replaceChildren(docId: string, p: Row) {
+    const docType = this.doc(docId)?.doc_type;
     if ((p.batches ?? []).length > 50 || (p.lines ?? []).length > 500) this.fail("invoice_too_large");
     this.tables.invoice_lines = this.tables.invoice_lines.filter((l) => l.document_id !== docId);
     this.tables.invoice_batches = this.tables.invoice_batches.filter((b) => b.document_id !== docId);
@@ -84,6 +88,7 @@ export class InvoiceDbModel {
     });
     (p.lines ?? []).forEach((l: Row, i: number) => {
       let batch: string | null = null;
+      if (docType === "statement" && Number(l.unit_price_usd_centi_cents) !== 0) this.fail("invoice_statement_no_prices");
       if (l.batch_key) { batch = map[l.batch_key] ?? null; if (!batch) this.fail("invoice_unknown_batch"); }
       if (!(l.quantity >= 1 && l.quantity <= 10_000_000) || !(l.unit_price_usd_centi_cents >= 0 && l.unit_price_usd_centi_cents <= 100_000_000)) this.fail("check line", "23514");
       this.tables.invoice_lines.push({
@@ -106,7 +111,7 @@ export class InvoiceDbModel {
     if (!counter) { counter = { id: this.tables.invoice_number_counters.length + 1, doc_type: a.p_type, year, last_value: 0 }; this.tables.invoice_number_counters.push(counter); }
     counter.last_value += 1;
     const n = counter.last_value;
-    const number = `${a.p_type === "invoice" ? "INV" : "QUO"}-${year}-${n < 10000 ? String(n).padStart(4, "0") : String(n)}`;
+    const number = `${a.p_type === "invoice" ? "INV" : a.p_type === "statement" ? "STM" : "QUO"}-${year}-${n < 10000 ? String(n).padStart(4, "0") : String(n)}`;
     const d: Row = {
       id: this.uuid(), doc_type: a.p_type, number, status: "draft", revision: 1, issue_date: "2026-10-31", show_usd: true, show_points: false, show_egp: false, credit_value_e4: 1000,
       converted_from_id: a.p_converted_from ?? null, duplicated_from_id: a.p_duplicated_from ?? null, paid_at: null, payment_reference: "", locked_at: null, created_by: a.p_admin,
@@ -138,6 +143,7 @@ export class InvoiceDbModel {
     const d = this.doc(a.p_id);
     if (!d) this.fail("invoice_not_found");
     if (!TRANSITIONS.some(([f, t]) => f === d.status && t === a.p_to)) this.fail("invoice_bad_transition");
+    if (a.p_to === "paid" && d.doc_type !== "invoice") this.fail("invoice_bad_transition");
     const from = d.status;
     if (a.p_to === "sent") {
       if (a.p_expected_revision !== d.revision) this.fail("invoice_stale");
@@ -172,10 +178,13 @@ class Query implements PromiseLike<{ data: any; error: any }> {
   private max: number | null = null;
   private wantRows = true;
   private one: "single" | "maybe" | null = null;
+  private countMode = false;
+  private head = false;
 
   constructor(private db: InvoiceDbModel, private table: string) {}
 
-  select(_cols?: string) { if (this.op !== "select") this.wantRows = true; return this; }
+  select(_cols?: string, opts?: { count?: string; head?: boolean }) { if (this.op !== "select") this.wantRows = true; this.countMode = Boolean(opts?.count); this.head = Boolean(opts?.head); return this; }
+  gte(col: string, val: any) { this.filters.push((r) => r[col] >= val); return this; }
   eq(col: string, val: any) { this.filters.push((r) => r[col] === val); return this; }
   in(col: string, vals: any[]) { this.filters.push((r) => vals.includes(r[col])); return this; }
   order(col: string, o?: { ascending?: boolean }) { this.orderBy.push([col, o?.ascending !== false]); return this; }
@@ -205,7 +214,13 @@ class Query implements PromiseLike<{ data: any; error: any }> {
       if (this.op !== "select") return { data: null, error: { message: "permission denied", code: "42501" } };
       return { data: this.db.settingsPublic.map((r) => ({ ...r })), error: null };
     }
-    if (!known) return { data: [], error: null };
+    if (!known) {
+      const rows = (this.db.extra[t] ??= []);
+      if (this.op === "insert") { const row = { id: this.db.uuid(), created_at: this.db.now().toISOString(), ...this.payload }; rows.push(row); return { data: [{ ...row }], error: null }; }
+      const hit = rows.filter((r) => this.filters.every((f) => f(r)));
+      if (this.head) return { data: null, error: null, count: hit.length } as any;
+      return { data: hit.map((r) => ({ ...r })), error: null, ...(this.countMode ? { count: hit.length } : {}) } as any;
+    }
     if (this.op !== "select" && !DIRECT_WRITE_OK.has(t)) return { data: null, error: { message: "permission denied for table", code: "42501" } };
     const rows = this.db.tables[t];
     if (this.op === "insert") {

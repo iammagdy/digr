@@ -1,6 +1,6 @@
 import { showsInstapayShortcuts } from "@/lib/topupConfig";
 import { arabicizeText, fmtDateAr, fmtEgp, fmtInt, fmtNumber, fmtPercent, fmtPhone, fmtPoints, fmtPointValue, fmtRate, fmtUnitUsd, fmtUsd } from "./format";
-import { CURRENCY_AR, CURRENCY_ORDER, DOC_TYPE_AR, ROUNDING_NOTE_AR } from "./labels";
+import { CURRENCY_AR, CURRENCY_ORDER, DOC_TYPE_AR, ROUNDING_NOTE_AR, STATEMENT_TITLE_AR } from "./labels";
 import { unitCcToPoints, unitCcToQirsh } from "./money";
 import { totalsForDoc } from "./totals";
 import type { Currency, DocView, Money, SellerBlock } from "./types";
@@ -23,6 +23,8 @@ export type SheetRow =
 export interface SheetTotalRow { label: string; amounts: string[]; strong?: boolean }
 
 export interface SheetModel {
+  /** a data statement: sectors and counts only, no price column, no totals, no payment block */
+  statement: boolean;
   docTypeAr: string;
   numberText: string;
   badge: string | null;
@@ -62,7 +64,8 @@ function sumMoney(list: Money[]): Money {
 }
 
 export function buildSheetModel(doc: DocView, seller: SellerBlock, qrAllowed: boolean = showsInstapayShortcuts(doc.instapayAddress)): SheetModel {
-  const currencies = currenciesOf(doc);
+  const statement = doc.docType === "statement";
+  const currencies = statement ? [] : currenciesOf(doc);
   const totals = totalsForDoc(doc);
   const fm = (m: Money) => currencies.map((c) => fmtMoney(c, m));
   const rate = doc.rateE4;
@@ -98,29 +101,30 @@ export function buildSheetModel(doc: DocView, seller: SellerBlock, qrAllowed: bo
       visibleNo += 1;
       const label = arabicizeText([line.itemTypeName, line.description].filter(Boolean).join(" — "));
       rows.push({ kind: "line", n: fmtInt(visibleNo), description: label, qty: fmtInt(line.quantity), unit: currencies.map((c) => unitText(line.unitCc, c)), total: fm(totals.lines[i]) });
-      if ((BigInt(line.quantity) * BigInt(line.unitCc)) % BigInt(100) !== BigInt(0)) rounding = true;
-      if (rate !== null) {
+      if (!statement && (BigInt(line.quantity) * BigInt(line.unitCc)) % BigInt(100) !== BigInt(0)) rounding = true;
+      if (!statement && rate !== null) {
         if (doc.show.points && BigInt(line.quantity) * BigInt(unitCcToPoints(line.unitCc, rate, doc.creditValueE4)) !== BigInt(totals.lines[i].points ?? 0)) rounding = true;
         if (doc.show.egp && BigInt(line.quantity) * BigInt(unitCcToQirsh(line.unitCc, rate)) !== BigInt(totals.lines[i].egp ?? 0)) rounding = true;
       }
     }
     if (hidden.length) rows.push({ kind: "aggregate", label: `بنود أخرى (${fmtInt(hidden.length)})`, total: fm(sumMoney(hidden.map((i) => totals.lines[i]))) });
-    if (g.title !== null) rows.push({ kind: "subtotal", label: arabicizeText(`إجمالي ${g.title}`), total: fm(groupTotal) });
+    if (g.title !== null && !statement) rows.push({ kind: "subtotal", label: arabicizeText(`إجمالي ${g.title}`), total: fm(groupTotal) });
   }
 
-  const totalRows: SheetTotalRow[] = [{ label: "المجموع الفرعي", amounts: fm(totals.subtotal) }];
+  const totalRows: SheetTotalRow[] = statement ? [] : [{ label: "المجموع الفرعي", amounts: fm(totals.subtotal) }];
   const minus = (cells: string[]) => cells.map((c) => `−${c}`);
-  if (doc.discountKind !== "none") {
+  if (!statement && doc.discountKind !== "none") {
     totalRows.push({ label: doc.discountKind === "percent" ? `الخصم (${fmtPercent(doc.discountValue)})` : "الخصم", amounts: minus(fm(totals.discount)) });
   }
-  if (doc.taxEnabled) totalRows.push({ label: `${arabicizeText(doc.taxLabel)} (${fmtPercent(doc.taxBp)})`, amounts: fm(totals.tax) });
-  totalRows.push({ label: doc.docType === "invoice" ? "الإجمالي المستحق" : "الإجمالي", amounts: fm(totals.total), strong: true });
+  if (!statement && doc.taxEnabled) totalRows.push({ label: `${arabicizeText(doc.taxLabel)} (${fmtPercent(doc.taxBp)})`, amounts: fm(totals.tax) });
+  if (!statement) totalRows.push({ label: doc.docType === "invoice" ? "الإجمالي المستحق" : "الإجمالي", amounts: fm(totals.total), strong: true });
 
   const badge = doc.status === "draft" ? "مسودة" : doc.status === "void" ? "ملغية" : doc.status === "paid" ? "مدفوعة" : null;
 
-  const meta: SheetModel["meta"] = [{ label: doc.docType === "invoice" ? "رقم الفاتورة" : "رقم العرض", value: doc.number ? fmtNumber(doc.number) : "—" }];
+  const numberLabel = doc.docType === "invoice" ? "رقم الفاتورة" : doc.docType === "statement" ? "رقم البيان" : "رقم العرض";
+  const meta: SheetModel["meta"] = [{ label: numberLabel, value: doc.number ? fmtNumber(doc.number) : "—" }];
   if (doc.issueDate) meta.push({ label: "تاريخ الإصدار", value: fmtDateAr(doc.issueDate) });
-  if (doc.dueDate) meta.push({ label: doc.docType === "invoice" ? "تاريخ الاستحقاق" : "صالح حتى", value: fmtDateAr(doc.dueDate) });
+  if (doc.dueDate && !statement) meta.push({ label: doc.docType === "invoice" ? "تاريخ الاستحقاق" : "صالح حتى", value: fmtDateAr(doc.dueDate) });
   if (doc.status === "paid" && doc.paidAt) meta.push({ label: "تاريخ الدفع", value: fmtDateAr(doc.paidAt) });
 
   const client: SheetModel["client"] = [];
@@ -134,13 +138,14 @@ export function buildSheetModel(doc: DocView, seller: SellerBlock, qrAllowed: bo
   if (seller.taxNumber) extra.push({ label: "الرقم الضريبي", value: arabicizeText(seller.taxNumber) });
   if (seller.commercialRegister) extra.push({ label: "السجل التجاري", value: arabicizeText(seller.commercialRegister) });
 
-  const usesRate = doc.show.points || doc.show.egp;
+  const usesRate = !statement && (doc.show.points || doc.show.egp);
   const rateNote = usesRate && rate !== null
     ? `سعر الصرف المعتمد: ١ دولار = ${fmtRate(rate)} جنيه مصري، وقيمة النقطة ${fmtPointValue(doc.creditValueE4)} جنيه.`
     : null;
 
   return {
-    docTypeAr: DOC_TYPE_AR[doc.docType],
+    statement,
+    docTypeAr: statement ? STATEMENT_TITLE_AR : DOC_TYPE_AR[doc.docType],
     numberText: doc.number ? fmtNumber(doc.number) : "",
     badge,
     seller: { name: arabicizeText(seller.name), email: seller.email, website: seller.website, extra },
@@ -150,17 +155,17 @@ export function buildSheetModel(doc: DocView, seller: SellerBlock, qrAllowed: bo
     currencyLabels: currencies.map((c) => CURRENCY_AR[c]),
     columns: {
       description: "البيان",
-      qty: "الكمية",
+      qty: statement ? "العدد" : "الكمية",
       unit: currencies.map((c) => `سعر الوحدة (${CURRENCY_AR[c]})`),
       total: currencies.map((c) => `الإجمالي (${CURRENCY_AR[c]})`),
     },
     rows,
-    groupSummary: doc.batches.length > 0 ? summary : null,
+    groupSummary: doc.batches.length > 0 && !statement ? summary : null,
     totalRows,
     rateNote,
-    roundingNote: rounding ? ROUNDING_NOTE_AR : null,
+    roundingNote: rounding && !statement ? ROUNDING_NOTE_AR : null,
     notes: arabicizeText(doc.notes),
-    paymentInstructions: arabicizeText(doc.paymentInstructions),
-    showQr: qrAllowed && doc.showInstapayQr && Boolean(doc.paymentInstructions || doc.instapayAddress),
+    paymentInstructions: statement ? "" : arabicizeText(doc.paymentInstructions),
+    showQr: !statement && qrAllowed && doc.showInstapayQr && Boolean(doc.paymentInstructions || doc.instapayAddress),
   };
 }

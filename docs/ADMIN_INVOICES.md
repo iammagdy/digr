@@ -3,6 +3,8 @@
 An **admin-only** builder for quotes («عرض سعر») and invoices («فاتورة») for research work the owner does by hand for companies, with a PDF and PNG export carrying the Diger logo.
 It is **completely separate from the points wallet** (see "Isolation"). The SQL was **applied by the owner** on 2026-10-31 (parts 01 to 05, one at a time) and checked by `98_verify_after_apply.sql` (18 rows, `ok = true`); see `docs/proposals/admin-invoices/README.md`.
 
+> **Update (INVOICES SIMPLE 1):** the builder is now one simple screen with sector rows, a data-statement mode («بيان بيانات»), one saved exchange rate, a Claude helper, and the «total does not work» fix: see `docs/ADMIN_INVOICES_SIMPLE.md`. The statement mode needs SQL part 06 (not applied until the owner applies it).
+
 ## What it is
 
 - **Screens** (`/admin/invoices`, section «الفلوس والشحن»): the list (filters by status, type, client, text; the total still unpaid), the builder, item types with default prices, saved clients, seller text.
