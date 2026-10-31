@@ -235,7 +235,7 @@ export type FakePoolDb = ReturnType<typeof fakePoolDb>;
 // A fake TREG: answers by the token in the X-Treg-Token header. Never a real network call.
 // ---------------------------------------------------------------------------------------------------------------------------------------
 
-export type TregMode = "ok" | "revoked" | "revoked403" | "empty" | "endpoint402" | "forbid403" | "suspended403" | "route_max_cost" | "timeout" | "http503" | "http429" | "http400";
+export type TregMode = "ok" | "revoked" | "revoked403" | "empty" | "endpoint402" | "free" | "forbid403" | "suspended403" | "route_max_cost" | "timeout" | "http503" | "http429" | "http400";
 export interface FakeTregKey { mode: TregMode; balanceMicro: number; email: string; org: string; meMode?: "ok" | "http503" | "timeout"; /** «unreadable»: the balance answers with no number (seen live for four keys on 2026-10-30) */ balanceMode?: "ok" | "unreadable" }
 
 export function fakeTreg() {
@@ -263,6 +263,8 @@ export function fakeTreg() {
         case "revoked403": return json({ error: "forbidden" }, 403);
         case "empty": return json({ error: "insufficient_balance" }, 402);
         // one endpoint refuses payment while the key's own balance is healthy (live, 2026-10-31 15:50: aiark.people.search, balance 6.64 USD)
+        // a call that succeeds and costs NOTHING (a free endpoint): it proves nothing about the key's balance
+        case "free": return json({ data: [{ id: "1", text: "row" }] }, 200, { "x-treg-cost-micro": "0" });
         case "endpoint402": return json({ error: "payment_required" }, 402);
         case "route_max_cost": return json({ error: "route_max_cost" }, 402);
         case "forbid403": return json({ error: "forbidden" }, 403);

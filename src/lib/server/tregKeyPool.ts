@@ -68,6 +68,8 @@ export interface PoolCallOutcome {
   ok: boolean; httpStatus: number; isPlatformBalanceLow?: boolean; isRouteMaxCost?: boolean; blocked?: string; budgetStopped?: boolean;
   /** Set by `afterCall` for a 402 (not a price cap): what the verification found. The caller records it with the call (source health). */
   paymentScope?: PaymentScope;
+  /** What the call was charged (micro-USD) and whether that figure is only the catalog's estimate: a flag is cleared only by a call that was really billed. */
+  costMicro?: number; costIsEstimate?: boolean;
   /** The provider's own words of a failed call (already sanitized by the caller); read only to tell an ACCOUNT refusal from an endpoint refusal. */
   error?: string; errorDetails?: string; detail?: string;
 }
@@ -286,7 +288,11 @@ export class TregKeyPool {
   async afterCall(choice: KeyChoice, outcome: PoolCallOutcome, options: { forceMain?: boolean; endpointId?: string } = {}): Promise<KeyChoice | null> {
     if (choice.mode !== "pool" || !choice.ref || !choice.key || outcome.blocked || outcome.budgetStopped) return null;
     this.noteAnswer(choice.ref.id, outcome, options.endpointId);
-    if (outcome.ok) { await this.clearFlagAfterSuccess(choice.ref).catch(() => undefined); return null; }
+    if (outcome.ok) {
+      // ONLY A BILLED CALL PROVES THE BALANCE: a free endpoint (cost 0, or a cost that is only an estimate) answers whatever the balance is, and clearing on it would flap against the health check
+      if ((outcome.costMicro ?? 0) > 0 && outcome.costIsEstimate !== true) await this.clearFlagAfterSuccess(choice.ref).catch(() => undefined);
+      return null;
+    }
     const balance402 = outcome.httpStatus === 402 && outcome.isPlatformBalanceLow === true && outcome.isRouteMaxCost !== true;
     const candidate = outcome.httpStatus === 401 || outcome.httpStatus === 403 || balance402;
     if (!candidate) return null;
@@ -372,7 +378,7 @@ export class TregKeyPool {
   }
 
   /**
-   * A SUCCESSFUL DATA CALL CLEARS A FLAG THAT NO CALL PROVED: a key shown «الرصيد خلص» or «خطأ» that has just answered a call is connected (the same record the health check writes; the urgent alert is cleared with it).
+   * A SUCCESSFUL BILLED DATA CALL (cost > 0, as TREG reported it) CLEARS A FLAG THAT NO CALL PROVED: a key shown «الرصيد خلص» or «خطأ» that has just answered a call is connected (the same record the health check writes; the urgent alert is cleared with it).
    * A «revoked» status is left to the health check and the admin. Costs nothing for a healthy key (the cached view says so), and writes once per burst.
    */
   private async clearFlagAfterSuccess(ref: PoolKeyRef): Promise<void> {

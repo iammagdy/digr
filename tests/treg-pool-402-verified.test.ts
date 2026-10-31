@@ -112,6 +112,27 @@ describe("a successful data call clears a flag no call proved", () => {
     expect(w.db.alerts.filter((a) => !a.cleared)).toHaveLength(0);
   });
 
+  it("a FREE call (cost 0) that succeeds leaves the flag where it is; only a BILLED call clears it (no flapping against the health check)", async () => {
+    const w = makePoolWorld();
+    const main = w.addKey({ isMain: true, status: "out_of_balance", tregMode: "free" });
+    w.switchOn(main.id);
+    await w.db.client.rpc("treg_pool_claim_alert", { p_problem: "main_failed", p_key_id: main.id, p_reason: "out_of_balance", p_to_key_id: null });
+    const free = await executeTregCall(callOptions());
+    expect(free.ok).toBe(true);
+    expect(free.costMicro).toBe(0);
+    expect(w.db.byId(main.id)?.status).toBe("out_of_balance");
+    expect(w.db.alerts.filter((a) => !a.cleared)).toHaveLength(1);
+    expect(w.db.rpcLog.filter((c) => c.fn === "treg_pool_record_check")).toHaveLength(0);
+    // the same key now answers a billed call (cost > 0): the flag clears
+    w.treg.keys.get(main.plaintext)!.mode = "ok";
+    clock.advance(10_000);
+    const billed = await executeTregCall(callOptions());
+    expect(billed.ok).toBe(true);
+    expect(billed.costMicro).toBeGreaterThan(0);
+    expect(w.db.byId(main.id)).toMatchObject({ status: "connected", status_reason: "data_call_ok" });
+    expect(w.db.alerts.filter((a) => !a.cleared)).toHaveLength(0);
+  });
+
   it("a «revoked» status is left to the health check and the admin: a call answering does not move it", async () => {
     const w = makePoolWorld();
     const main = w.addKey({ isMain: true, status: "revoked" });
