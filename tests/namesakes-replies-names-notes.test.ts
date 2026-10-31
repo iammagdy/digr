@@ -158,7 +158,8 @@ describe("D. ONE name for every download of a mission's file", () => {
   ];
   const row = (stored: boolean): FakeRow => ({ id: "msn_1", user_id: "u1", files: files(stored), plan: planOf("التغريدات"), request_text: "هات ٣٠٠ تغريدة عن محمد صلاح", delivered_units: 67, updated_at: "2026-10-29T07:00:00Z" });
 
-  it.each([["xlsx"], ["csv"]])("the completion panel, the admin's link and «طلباتي» give the same %s name, the mission's (stored with the file)", async (kind) => {
+  // the customer's links are the Excel's (a CSV name gives the Excel: see tests/methodology-section.test.ts and tests/customer-no-csv.test.ts)
+  it.each([["xlsx"]])("the completion panel, the admin's link and «طلباتي» give the same %s name, the mission's (stored with the file)", async (kind) => {
     const signed: Array<{ path: string; download: string | undefined }> = [];
     const client = fakeClient(row(true), signed);
     const name = `result.${kind}`;
@@ -268,7 +269,10 @@ const readNote = async (plan: PricedPlan, rows: Record<string, Array<Record<stri
   await wb.xlsx.load(built.xlsx as unknown as ArrayBuffer);
   const summary = wb.worksheets[0];
   const headers = wb.worksheets.slice(1).map((s) => (s.getRow(1).values as unknown[]).slice(1).map(String));
-  return { note: String(summary.getRow(summary.rowCount).getCell(1).value), headers, sheets: wb.worksheets.length - 1 };
+  // the closing note is the row above the blank row that opens the «المنهجية» section (it is no longer the sheet's last row)
+  let title = summary.rowCount + 1;
+  summary.eachRow({ includeEmpty: true }, (row, n) => { if (row.getCell(1).value === "المنهجية" && n < title) title = n; });
+  return { note: String(summary.getRow(title - 2).getCell(1).value), headers, sheets: wb.worksheets.length - 1 };
 };
 
 describe("F. the note of the summary sheet describes only the sheets and columns the file really has", () => {

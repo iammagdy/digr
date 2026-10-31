@@ -15,6 +15,7 @@ import { orderPeopleColumns, peopleColumnTitleAr } from "@/lib/peopleColumns";
 import { formatPhoneDisplay, phoneMayBeIncomplete, PHONE_MAY_BE_INCOMPLETE_AR } from "@/lib/phoneDisplay";
 import { contactCellUnavailable } from "@/lib/contactVerification";
 import { industryLabelForCell } from "@/lib/industryLabels";
+import { customerResultFormats } from "@/lib/customerFiles";
 import { producedFormats, type ResultFileIds } from "@/lib/producedFormats";
 import { methodologyOffered, METHODOLOGY_POINTS } from "@/lib/methodologyOffer";
 
@@ -255,7 +256,7 @@ export default function ResultsCanvas({
     { label: "تجميع حسب التوثيق", op: { action: "group_aggregate", groupBy: "verified", metrics: [{ operation: "count", as: "count" }, { field: "followers", operation: "average", as: "averageFollowers" }] } },
     { label: "حفظ البحث كفلتر", op: { action: "filter", field: "username", operator: "contains", value: searchTerm.trim() }, needsSearch: true },
     { label: "حفظ الملخص كنسخة", op: { action: "rewrite_summary", summaryAr: notesText.slice(0, 1000) }, needsNotes: true },
-    { label: "إعادة توليد الصيغ", op: { action: "convert_formats", formats: ["xlsx", "pdf", "csv"] } },
+    { label: "إعادة توليد الصيغ", op: { action: "convert_formats", formats: ["xlsx", "pdf"] } },
   ];
 
   return (
@@ -529,8 +530,7 @@ export default function ResultsCanvas({
             {(nothingDelivered ? [] : [
               { ext: "xlsx" as const, label: "إكسل", title: "ملف إكسل", desc: "جدول البيانات فقط." },
               { ext: "pdf" as const, label: "بي دي إف", title: "الدليل المنهجي", desc: "منهجية الجمع وحدود البيانات." },
-              { ext: "csv" as const, label: "سي إس في", title: "بيانات جدولية", desc: "للاستخدام في التحليل." },
-            ]).filter((f) => producedFormats(fileIds).includes(f.ext)).map((f) => (
+            ]).filter((f) => customerResultFormats(producedFormats(fileIds)).includes(f.ext)).map((f) => (
               <div key={f.ext} className="flex items-center justify-between gap-3 rounded-[20px] border border-sand-200 bg-sf p-4">
                 <div className="flex min-w-0 items-center gap-3">
                   <span aria-hidden="true" className="tnum flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-ac text-xs font-semibold text-onac">{f.label}</span>

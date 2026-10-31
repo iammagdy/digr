@@ -37,6 +37,7 @@ import { childShortfallClauseAr, countWorkbookSheets, shortfallClauseAr, shortfa
 import { createReviewer, readReviewState, type ReviewCall } from "./review";
 import type { TokenUsage } from "./llmCost";
 import { buildExcludedAdminCsv, buildMissionFiles, type ExcludedRow } from "./workbook";
+import { missionFactsOf } from "./methodology";
 import { missionFileTitleAr } from "../../src/lib/agentMission/fileNames";
 import { itemNounOf, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
 import type { AgentStore, CallRow, MissionRecord } from "./types";
@@ -422,7 +423,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   let parentFixedRows = 0;
   if (builtCount > 0) {
     try {
-      const built = await buildMissionFiles(plan, rowsByStage);
+      const built = await buildMissionFiles(plan, rowsByStage, missionFactsOf({ requestText: mission.request_text, plan, snap, reviewStop: checked.stop }));
       if (built.parentFixes.length > 0) { parentFixedRows = built.parentFixes.reduce((n, f) => n + f.rows, 0); flags.push("parent_column_fixed"); deps.log?.(`parent_column_fixed ${mission.id} ${built.parentFixes.map((f) => `${f.stage_key}.${f.column}<-${f.parent_field}x${f.rows}`).join(",")}`); }
       const published = await store.publishResult({ missionId: mission.id, userId: mission.user_id, jobId, xlsx: built.xlsx, csv: built.csv });
       resultPath = published.resultPath;

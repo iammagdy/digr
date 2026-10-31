@@ -14,6 +14,7 @@ import { expiryShortAr as expiryShort, getQuoteApprovalState, isQuotePlanComplet
 import { quoteScopeGaps, planScopeRows, scrubQuoteTexts } from "@/lib/quoteScopeGaps";
 import { getCustomerMethodologyNote } from "@/lib/customerMethodology";
 import { CUSTOMER_FORMAT_LABEL_AR } from "@/lib/customerFormatLabels";
+import { withoutCsvFormat } from "@/lib/customerFiles";
 import { missionStepsAr } from "@/lib/dependentSteps";
 import { JOB_MAX_POINTS_CAP } from "@/lib/jobPointsCap";
 import { balanceVerdictAr } from "@/lib/balanceVerdict";
@@ -274,7 +275,7 @@ export default function PlanQuoteCard({
   const shortPts = Math.max(0, quote.quotedPoints - balance);
   const expectedPoints = quote.expectedPoints ?? chargeForUnits(quote.targetVolumeMax, quote.unitPricePoints);
   const shortEgp = Math.max(50, Math.ceil((shortPts * creditValue) / 50) * 50);
-  const formats = (quote.outputFormats?.length ? quote.outputFormats : ["xlsx", "pdf", "csv"]).map((f) => FORMAT_LABEL[f] || "ملف بيانات");
+  const formats = withoutCsvFormat(quote.outputFormats?.length ? quote.outputFormats : ["xlsx", "pdf", "csv"]).map((f) => FORMAT_LABEL[f] || "ملف بيانات");
 
   function toggleFormat(fmt: string) {
     if (editFormats.includes(fmt)) {
@@ -566,7 +567,7 @@ export default function PlanQuoteCard({
       {/* Deliverable format choices chips directly on the main card */}
       <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs">
           <span className="text-mut text-[12px]">صيغ التسليم المعتمدة:</span>
-        {(quote.outputFormats?.length ? quote.outputFormats : ["xlsx", "csv", "pdf"]).map((fmt) => (
+        {withoutCsvFormat(quote.outputFormats?.length ? quote.outputFormats : ["xlsx", "pdf"]).map((fmt) => (
           <span
             key={fmt}
             className="inline-flex items-center gap-1 rounded-full border border-ln bg-sf2 px-2.5 py-1 text-ink text-[12px] font-medium"
@@ -626,7 +627,7 @@ export default function PlanQuoteCard({
           <div>
             <label className="mb-1 block font-medium text-ink">صيغ التسليم</label>
             <div className="flex flex-wrap gap-2" role="group" aria-label="الصيغ">
-              {["xlsx", "pdf", "csv"].map((f) => (
+              {["xlsx", "pdf"].map((f) => (
                 <button
                   key={f} type="button" aria-pressed={editFormats.includes(f)} onClick={() => toggleFormat(f)}
                   className="min-h-11 cursor-pointer rounded-xl px-3.5 text-[13px] text-ink"

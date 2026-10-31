@@ -23,10 +23,11 @@ export function recordNounAr(capabilitySlug: string | undefined): string {
   return (NOUNS.find((n) => n.test.test(slug)) ?? { one: "سجل" }).one;
 }
 
-const FORMAT_AR: Record<string, string> = { xlsx: "إكسل", csv: "سي إس في", pdf: "بي دي إف" };
+const FORMAT_AR: Record<string, string> = { xlsx: "إكسل", pdf: "بي دي إف" };
 
 export function formatsAr(formats: string[] | undefined): string {
-  const names = [...new Set((formats || []).map((f) => FORMAT_AR[String(f).toLowerCase()]).filter(Boolean))];
+  // the CSV is never named to a customer (it is kept for settlement, never offered)
+  const names = [...new Set((formats || []).filter((f) => String(f).toLowerCase() !== "csv").map((f) => FORMAT_AR[String(f).toLowerCase()]).filter(Boolean))];
   return names.length ? names.join(" و") : "إكسل";
 }
 

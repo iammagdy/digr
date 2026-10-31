@@ -345,8 +345,10 @@ describe("5. the block and the rows: what the customer reads", () => {
   it("the Excel is the customer's one file button; the CSV and the PDF are not offered, except to a request that has no Excel", () => {
     expect(customerFormatsOf(["xlsx", "pdf", "csv"])).toEqual(["xlsx"]);
     expect(customerFormatsOf(["xlsx", "csv"])).toEqual(["xlsx"]);
-    expect(customerFormatsOf(["csv"])).toEqual(["csv"]);
-    expect(customerFormatsOf(["pdf", "csv"])).toEqual(["pdf"]);
+    // a request that has a CSV and no Excel is offered an Excel (built from the CSV when it is asked for), never the CSV
+    expect(customerFormatsOf(["csv"])).toEqual(["xlsx"]);
+    expect(customerFormatsOf(["pdf", "csv"])).toEqual(["xlsx"]);
+    expect(customerFormatsOf(["pdf"])).toEqual(["pdf"]);
     expect(customerFormatsOf([])).toEqual([]);
     const page = readFileSync("src/app/dashboard/requests/page.tsx", "utf8");
     expect(page).toContain("customerFormats.map((ext)");

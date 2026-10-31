@@ -352,7 +352,8 @@ describe.each([
 
   it.each([[true], [false]])("stored name: %s — «طلباتي» (the route's JSON and its signed link), the panel and the admin give one name, never «result.xlsx»", async (stored) => {
     state.mission = named(stored);
-    for (const kind of ["xlsx", "csv"]) {
+    // the customer's routes give the Excel (a customer is never given a CSV; the CSV name is covered in tests/customer-no-csv.test.ts)
+    for (const kind of ["xlsx"]) {
       state.signed = [];
       const res = await downloadRoute(new NextRequest(`https://x.example/api/jobs/job_quote_e3a/download?format=${kind}`, { headers: { authorization: "Bearer t" } }), { params: Promise.resolve({ id: "job_quote_e3a" }) });
       const json = await res.json();

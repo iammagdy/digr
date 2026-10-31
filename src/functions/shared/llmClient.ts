@@ -1466,7 +1466,7 @@ export class LlmClient {
       if (promptLower.includes("شحن") || promptLower.includes("إنستاباي") || promptLower.includes("instapay")) {
         answerText = "يتم شحن الرصيد عبر إنستاباي (Instapay) من صفحة الرصيد. بعد التحويل ترفع إيصال المعاملة ويتم اعتماد النقاط فورياً لحسابك.";
       } else if (promptLower.includes("ملفات")) {
-        answerText = "تحصل مع كل عملية استخراج على 3 ملفات جاهزة للتحميل: ملف Excel تفصيلي مع دليل البيانات والمنهجية، ملف CSV، وملف PDF موجز ومهيأ للطباعة والمراجعة السريعة.";
+        answerText = "تحصل مع كل عملية استخراج على ملف إكسل جاهز للتحميل، فيه البيانات ودليلها وورقة المنهجية التي توثّق طريقة الجمع وحدوده.";
       }
       return {
         output: {

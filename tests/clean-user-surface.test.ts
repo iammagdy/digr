@@ -69,7 +69,7 @@ describe("Task 4: Clean User Surface & Card Redesign", () => {
     expect(composer).not.toContain("جداول البيانات Excel");
     expect(results).toContain("تقرير نتائج جمع البيانات (بي دي إف)");
     expect(results).toContain('label: "إكسل"');
-    expect(results).toContain('label: "سي إس في"');
+    expect(results).not.toContain('label: "سي إس في"');
     expect(results).not.toContain("ملف Excel");
     expect(results).not.toContain("تقرير PDF");
   });
