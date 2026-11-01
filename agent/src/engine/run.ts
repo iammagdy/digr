@@ -168,6 +168,8 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
         // an address of a DATA PROVIDER (a record page the companies source cited) is never an input for another source, and an input that was already asked is not asked again
         const usable = bindings.map((b) => ({ b, index: b.index, value: b.index === 0 ? (parent[b.from] === undefined || parent[b.from] === null || parent[b.from] === "" ? null : parent[b.from]) : bindingValue(parent[b.from], b.domain) })).filter((x) => {
           // a PLACEHOLDER company page or website (https://linkedin.com/company/mycompany) is never the key: the source would answer for another company
+          // A POST LINK IS NEVER A COMPANY WEBSITE (S1 live findings, R1): the bare domain of a social link («facebook.com») names no post, the source refuses it
+          if (deps.redesignStages?.has(stage.key) && x.value !== null && x.b.domain && SOCIAL_HOST.test(String(x.value))) return false;
           if (x.value === null || isProviderUrl(x.value, providerContext()) || isProviderUrl(parent[x.b.from], providerContext()) || isPlaceholderCompanyUrl(x.value)) return false;
           const key = `${x.b.param}=${String(x.value)}`;
           if (seenInputs.has(key)) return false;
@@ -176,15 +178,31 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
         });
         if (usable.length === 0) break;
         let r: { reason: StopReason; aborted: string | null } = { reason: "source_exhausted", aborted: null };
+        const baseline = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
+        let primary: { params: Record<string, unknown> } | null = null;
         for (const u of usable) {
           // the first read of a parent also carries the parent's other identity inputs (its link beside its id): a routed source needs them to keep its providers (spec.ts bindingAlso)
           const also = u.index === 0 ? Object.fromEntries((spec.parent_binding.also ?? []).map((a) => [a.param, bindingValue((a.grand ? grandRows.get(String(parent.parent_id ?? "")) : parent)?.[a.from], false)] as const).filter(([, v]) => v !== null && !isProviderUrl(v, providerContext()) && !isPlaceholderCompanyUrl(v))) : {};
           const params = { ...spec.params, ...also, [u.b.param]: u.value };
+          if (u.index === 0) primary = { params };
           const before = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
           r = await runStream(deps, stage, spec, u.index === 0 ? `p:${parentId}` : `p:${parentId}:b${u.index}`, params, parentId, parentCap);
           if (r.aborted) return r;
           const gained = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length - before;
           if (gained > 0 || !(r.reason === "failed" || r.reason === "source_exhausted" || r.reason === "no_new_items")) break;
+        }
+        if (r.aborted) return r;
+        // EVERY SELECTED PARENT IS READ TO THE END (S1 complete count, redesigned stages): a parent that gave nothing (an empty answer or a failure) is read once more with its own input, then by the next suitable tool of the stage (which reads the same parent through its own input)
+        if (deps.redesignStages?.has(stage.key) && !isReplies && items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length === baseline && RETRY_ON.has(r.reason)) {
+          if (primary) r = await runStream(deps, stage, spec, `p:${parentId}:retry`, primary.params, parentId, parentCap);
+          for (let i = 0; !r.aborted && i < (spec.alternatives ?? []).length && items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length === baseline && RETRY_ON.has(r.reason); i += 1) {
+            const alt = spec.alternatives![i];
+            const value = alt.parent_binding ? bindingValue(parent[alt.parent_binding.from], false) : null;
+            if (!alt.parent_binding || value === null) continue;
+            const { alternatives: _a, sources: _s, id_field: _i, window: _w, ...rest } = spec;
+            const altSpec: EngineSpec = { ...rest, endpoint_id: alt.endpoint_id, params: { ...alt.params, [alt.parent_binding.param]: value }, cursor_param: alt.cursor_param, map_code: alt.map_code, map_file_id: alt.map_file_id, parent_binding: alt.parent_binding, ...(alt.id_field !== undefined ? { id_field: alt.id_field } : {}) };
+            r = await runStream(deps, stage, altSpec, `p:${parentId}:alt${i}`, altSpec.params, parentId, parentCap);
+          }
         }
         if (r.aborted) return r;
         // a stop that ends the whole stage (the budget, the daily limit, the time, a refusal) is not «this parent has no more»
@@ -264,6 +282,8 @@ function markPeopleNotAtCompany(deps: EngineDeps, stage: Stage, parentId: string
 /** The numeric field of a parent row that counts its children (a video's comments, a place's reviews), when the mapping carries one: spares with more children are tried first. */
 /** The answers that say «this source has nothing for this input»: not found, gone, the input was rejected. */
 const PARENT_UNKNOWN_HTTP: ReadonlySet<number> = new Set([400, 404, 410, 422]);
+/** The bare domains of the social platforms: never an input that stands for a parent. */
+const SOCIAL_HOST = /^(?:facebook|fb|instagram|tiktok|youtube|youtu|x|twitter|linkedin|threads)\.(?:com|be|me)$/i;
 const WEBSITE_PARAM = /^(website|domain|site|url|homepage|web|company_?(website|domain|site))$/i;
 /** The parent's own count of its children (a video's comments, a place's reviews, a comment's replies), when its row carries a number for it (a numeric text counts); null when the row has none (childCount.ts, shared with the plan). */
 export const ownChildCount = (row: Row): number | null => childCountOf(row);
@@ -335,6 +355,8 @@ async function runRoot(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promis
   return deps.redesignStages?.has(stage.key) ? continueAcrossTools(deps, stage, spec, r) : r;
 }
 
+/** Why a parent that gave nothing is read again (the same input once, then the next tool). */
+const RETRY_ON: ReadonlySet<StopReason> = new Set<StopReason>(["failed", "source_exhausted", "no_new_items"]);
 /** Why a read of one tool may be continued on the next one: it failed twice, it ran dry before the count, or it only repeated itself. */
 const CONTINUE_ON: ReadonlySet<StopReason> = new Set<StopReason>(["failed", "source_exhausted", "no_new_items"]);
 /** The first day a read goes back to when the customer gave no period. */
