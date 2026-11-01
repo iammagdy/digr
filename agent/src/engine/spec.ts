@@ -207,6 +207,11 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
       if (lifted) params[lifted.param] = lifted.to;
       const window = stage.parent_key === null && !sources ? dateWindowOf(endpoint, params) : null;
       specs.set(stage.key, { endpoint_id: stage.endpoint_id, params, cursor_param: cursorParam, map_code: mapCode, map_file_id: callId, parent_binding: binding, ...(proof.idField !== "id" ? { id_field: proof.idField } : {}), ...(window ? { window } : {}), ...(sources ? { sources } : {}), ...(sources && listing ? { source_listing: true } : {}), ...(builtBy ? { built_by: builtBy } : {}), ...(stageGaps.length > 0 ? { gaps: stageGaps } : {}) });
+      // THE NEXT TOOLS (S1 item 1.9, redesigned mode): another source of the same job that the planner also sampled and mapped, proven the same way, is stored as the stage's alternative
+      if (deps.codeBuild && stage.parent_key === null && !sources) {
+        const alternatives = await nextToolsOf(deps, stage, endpoint, refit.filters);
+        if (alternatives.length > 0) specs.get(stage.key)!.alternatives = alternatives;
+      }
       if (stageGaps.length > 0) gapsOut.set(stage.key, stageGaps);
       filtersOut.set(stage.key, refit.filters);
       mappedRows.set(stage.key, mapped);
@@ -230,6 +235,45 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
     }
   }
   return { specs, filters: filtersOut, issues, unresolved, approx, gaps: gapsOut };
+}
+
+/** The most alternatives a stage stores. */
+const MAX_ALTERNATIVES = 2;
+
+/**
+ * THE NEXT TOOLS OF A STAGE (S1 item 1.9). Every OTHER source of the same job (the same capability) that this run called, mapped with its own recorded code, and whose mapping gives exactly the rows of the page it was measured on (the same proof as the main recipe: every row of the page,
+ * the stage's columns, an id) is an alternative: its first-page inputs are built by code (toolInput.ts), its cursor input is discovered on its own page, its date window is read from its inputs. Nothing new is measured or paid for: only what the planner already sampled. In the order the planner sampled them.
+ */
+async function nextToolsOf(deps: DeriveDeps, stage: PricedPlan["stages"][number], endpoint: CatalogEndpoint, filters: StageFilter[]): Promise<NonNullable<EngineSpec["alternatives"]>> {
+  const out: NonNullable<EngineSpec["alternatives"]> = [];
+  for (const [outId, run] of deps.codeRuns.entries()) {
+    if (out.length >= MAX_ALTERNATIVES) break;
+    if (run.files.length !== 1 || !/^call_\d{4,6}$/.test(run.files[0])) continue;
+    const callId = run.files[0];
+    const row = deps.calls.find((c) => c.id === `${deps.missionId}:${callId}`);
+    if (!row || row.status !== "ok" || row.endpoint_id === stage.endpoint_id || out.some((a) => a.endpoint_id === row.endpoint_id)) continue;
+    const other = deps.catalog.byId.get(row.endpoint_id);
+    if (!other || !other.capability || other.capability !== endpoint.capability) continue;
+    const params = paramsOfCall(deps, callId);
+    if (!params) continue;
+    const [page, seen] = await Promise.all([deps.store.getFile(deps.missionId, `raw/${callId}.json`), deps.store.getFile(deps.missionId, `out/${outId}.json`)]);
+    if (page === null || seen === null) continue;
+    let pageJson: unknown;
+    let seenJson: unknown;
+    try { pageJson = JSON.parse(page); seenJson = JSON.parse(seen); } catch { continue; }
+    if (!Array.isArray(seenJson) || seenJson.length === 0 || !seenJson.every(isRecord) || seenJson.length !== Number(row.rows_returned ?? -1)) continue;
+    const again = await deps.sandbox(run.code, { [callId]: pageJson });
+    if (!again.ok || again.resultJson === null) continue;
+    try { if (canon(JSON.parse(again.resultJson)) !== canon(seenJson)) continue; } catch { continue; }
+    const proof = proveMappedRows({ rows: seenJson as Array<Record<string, unknown>>, columnKeys: stage.columns.map((c) => c.key), textColumns: stage.relevance?.text_columns, filters, label: `alternative «${other.id}»` });
+    if (proof.issues.length > 0) continue;
+    const built = buildToolInput(other, understoodOfStage(stage, deps.codeBuild!.nowMs), params);
+    if (!built.ok) continue;
+    const cursor = (other.pagination ?? []).find((p) => !LIMIT_INPUT.test(p)) ?? discoverCursor(other, pageJson);
+    const window = dateWindowOf(other, built.params);
+    out.push({ endpoint_id: other.id, params: built.params, cursor_param: cursor, map_code: run.code, map_file_id: callId, ...(proof.idField !== "id" ? { id_field: proof.idField } : {}), ...(window ? { window } : {}) });
+  }
+  return out;
 }
 
 interface MeasuredPage { id: string; params: Record<string, unknown>; rows: Array<Record<string, unknown>> }

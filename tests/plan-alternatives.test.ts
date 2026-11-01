@@ -12,9 +12,9 @@ import { ENDPOINT, TOPIC, pages, planning, pad } from "./helpers/engineXScenario
  * nothing is measured for it beyond what the planner already did, so the plan's price and reserve do not change (a dearer tool that would exceed the reserve is refused by the same budget and the stage ends with need_new_plan).
  */
 afterEach(() => { vi.unstubAllGlobals(); });
-const ALT = "x.x.search-posts-recent";
-const altPage = () => ({ data: Array.from({ length: 10 }, (_, i) => ({ id: `19${pad(i)}`, text: `${TOPIC} تعليق رقم ${i} في المباراة`, author_id: `acct${i}`, created_at: "2026-10-30T10:00:00Z" })), meta: { next_token: "tok_2" } });
-const MAP_ALT = "return inputs.call_0002.data.map(t => ({ id: t.id, text: t.text, url: 'https://x.example/u/status/' + t.id, author: t.author_id, date: t.created_at }))";
+const ALT = "tikhub.x.twitter-web-fetch-search-timeline";
+const altPage = () => ({ data: { tweets: Array.from({ length: 10 }, (_, i) => ({ id: `19${pad(i)}`, text: `${TOPIC} تعليق رقم ${i} في المباراة`, author_id: `acct${i}`, created_at: "2026-10-30T10:00:00Z" })), cursor: "tok_2" } });
+const MAP_ALT = "return inputs.call_0002.data.tweets.map(t => ({ id: t.id, text: t.text, url: 'https://x.example/u/status/' + t.id, author: t.author_id, date: t.created_at }))";
 
 /** The standard X planning, with a second source of the same capability sampled and mapped after the first. */
 function twoSources(): FakeStep[] {
@@ -22,13 +22,13 @@ function twoSources(): FakeStep[] {
   const [progress, search, describeA, callA, runA, proposeA] = base;
   return [progress, search, describeA, callA,
     { tool: "describe_endpoint", args: { id: ALT } },
-    { tool: "treg_call", args: { endpoint_id: ALT, params: { query: TOPIC, max_results: 10 }, why: "a second source of the same job, sampled to have a next tool if the first fails" } },
+    { tool: "treg_call", args: { endpoint_id: ALT, params: { keyword: TOPIC }, why: "a second source of the same job, sampled to have a next tool if the first fails" } },
     runA,
     { tool: "run_code", args: { code: MAP_ALT, files: ["call_0002"] } },
     proposeA,
   ];
 }
-const run = (flags: unknown) => replay({ request: "هات ٣٠٠ تغريدة عن محمد صلاح", planning: twoSources(), execution: () => [], answers: [pages(1)[0], tregResult(altPage(), 0.005), ...pages(30)], deps: (d) => { (d.store as MemoryStore).settings.redesign_flags = flags; return d; } });
+const run = (flags: unknown) => replay({ request: "هات ٣٠٠ تغريدة عن محمد صلاح", planning: twoSources(), execution: () => [], answers: [pages(1)[0], tregResult(altPage(), 0.001), ...pages(30)], deps: (d) => { (d.store as MemoryStore).settings.redesign_flags = flags; return d; } });
 
 describe("the next tool is stored with the plan", () => {
   it("flag on: the second sampled source is the stage's alternative, with its own proven mapping and a cursor discovered from its inputs", async () => {
@@ -40,8 +40,8 @@ describe("the next tool is stored with the plan", () => {
     expect(alt.endpoint_id).toBe(ALT);
     expect(alt.map_file_id).toBe("call_0002");
     expect(alt.map_code).toContain("call_0002");
-    expect(alt.cursor_param).toBe("next_token");
-    expect(alt.params).toMatchObject({ query: TOPIC });
+    expect(alt.cursor_param).toBe("cursor");
+    expect(alt.params).toMatchObject({ keyword: TOPIC });
     // the price and the reserve are the ones of the first tool (nothing was measured or priced for the alternative)
     expect(Number(r.plannedPlan.price.reservePoints)).toBeGreaterThan(0);
   });
