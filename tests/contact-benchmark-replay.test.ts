@@ -30,7 +30,12 @@ function dispatcher(mode: "benchmark" | "nothing", log: Array<{ capability: stri
       // 8 of 10 found: the 2nd and the 7th person asked are the finder's misses (as in the benchmark: 8 of 10)
       const slug = slugIn(who);
       // the person, whichever finder is asked (the first and the fallback take the page under different input names)
-      const url = /\/in\/([a-z-]+-\d)/.exec(who)?.[1] ?? who;
+      // CHANGED (owner decision after #321: finders are ranked by measured cost per hit): the chain now holds a finder that takes the person's NAME and the company's domain (no profile link); its person is the same one: first name -> index, domain -> company
+      const FIRST = ["Hossam", "Mona", "Ahmed", "Salma", "Karim", "Nadia", "Tamer"];
+      const p = (o.params ?? {}) as Record<string, unknown>;
+      const nameSlug = SLUGS.find((s) => String(p.company_domain ?? "").includes(s));
+      const nameIndex = FIRST.indexOf(String(p.first_name ?? ""));
+      const url = /\/in\/([a-z-]+-\d)/.exec(who)?.[1] ?? (nameSlug && nameIndex >= 0 ? `${nameSlug}-${nameIndex}` : who);
       asked.add(url);
       const order = [...asked].indexOf(url);
       return slug && order !== 1 && order !== 6 ? tregResult({ found: true, email: `person${order}.${slug}@${slug}.com.eg` }, 0.000495) : tregResult({ found: false }, 0);

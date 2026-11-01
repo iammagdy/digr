@@ -65,7 +65,7 @@ const inputKindOf = (name: string): (typeof INPUT_KINDS)[number]["kind"] | null 
  * under-prices a call that bills per call five-fold (quickenrich's 0.004834 became 0.00097) and the step's cap and the plan's price rested on it. Here the price is the catalog's price of one call (a routed endpoint at its dearest sibling), health and success rate come from the
  * general ranking, and the order is price over success rate, cheapest first, ties by id.
  */
-function rankedHelpers(group: ReadonlyArray<CatalogEndpoint>, catalog: TregCatalog, stats: StatsMap, now: number): FinderInfo[] {
+function rankedHelpers(group: ReadonlyArray<CatalogEndpoint>, catalog: TregCatalog, stats: StatsMap, now: number, options: { rank?: (id: string, usd: number) => number; maxUsd?: number } = {}): FinderInfo[] {
   const seen = new Set<string>();
   const list: Array<{ key: number; info: FinderInfo }> = [];
   for (const e of group) {
@@ -77,18 +77,27 @@ function rankedHelpers(group: ReadonlyArray<CatalogEndpoint>, catalog: TregCatal
     if (own === null) continue; // no usable price: not offered
     // a FREE call is priced at a token amount (never zero: the budget checks and the price carry a figure), and still ranks first
     const usd = own > 0 ? own : 0.000001;
+    if (options.maxUsd !== undefined && usd > options.maxUsd) continue; // a call dearer than the ceiling is not part of the chain
     const successRate = expectedCost(e, catalog, stats.get(e.id)).successRate;
-    list.push({ key: (usd / successRate) * (health.state === "demoted" ? SOURCE_DEMOTE_FACTOR : 1), info: { id: e.id, usd, bill: e.cost?.type === "per_success" || e.cost?.type === "free" ? "success" : "call", inputs: e.inputs.map((i) => ({ name: i.name, required: i.required })) } });
+    list.push({ key: (options.rank ? options.rank(e.id, usd) : usd / successRate) * (health.state === "demoted" ? SOURCE_DEMOTE_FACTOR : 1), info: { id: e.id, usd, bill: e.cost?.type === "per_success" || e.cost?.type === "free" ? "success" : "call", inputs: e.inputs.map((i) => ({ name: i.name, required: i.required })) } });
   }
   return list.sort((a, b) => a.key - b.key || a.info.id.localeCompare(b.info.id)).slice(0, FINDERS_PER_STEP).map((x) => x.info);
 }
+
+/**
+ * A FINDER OF A CHAIN COSTS AT MOST THIS MUCH A CALL (USD). The live catalog holds finders that bill every call at 0.1 USD (enrichlayer) or a hit at 0.0445 (tomba phone): with a chain of three and ten people one job could take a large share of the provider's daily cap (0.80 USD) on lookups alone.
+ * Above the ceiling a finder is not part of the step; the plan then prices and caps the chain without it. It limits the CHAIN only (the cap and the price are derived from the chain), never the customer's quantity.
+ */
+export const FALLBACK_FINDER_MAX_USD = 0.02;
+/** What a FOUND value costs: the price of a call over the measured share of calls that find one (finderStats.ts); finders are ranked by it, cheapest first. */
+export const finderRankKey = (f: { id: string; usd: number }, kind: FinderKind): number => f.usd / finderHitRate(f.id, kind);
 
 /** The finders of a kind this account may buy, cheapest first (the helper ranking above). Only finders that answer at once and need only what a person row gives. */
 export function finderSourcesOf(kind: FinderKind, catalog: TregCatalog, isAllowed: (id: string) => boolean, stats: StatsMap = new Map(), now = Date.now()): FinderInfo[] {
   const caps = kind === "email" ? EMAIL_FINDER_CAPABILITIES : PHONE_CAPABILITIES;
   const usable = (e: CatalogEndpoint): boolean => !e.async && e.inputs.filter((i) => i.required).every((i) => inputKindOf(i.name) !== null) && e.inputs.some((i) => inputKindOf(i.name) !== null);
   const group = catalog.endpoints.filter((e) => e.capability && caps.has(e.capability) && isAllowed(e.id) && usable(e));
-  return rankedHelpers(group, catalog, stats, now);
+  return rankedHelpers(group, catalog, stats, now, { rank: (id, usd) => finderRankKey({ id, usd }, kind), maxUsd: FALLBACK_FINDER_MAX_USD });
 }
 
 /** The e-mail verifiers of the catalog this account may buy, cheapest first (the same ranking as every source): direct and synchronous (a routed one bills a range, an asynchronous one needs polling), taking only the address, with a known price. */
