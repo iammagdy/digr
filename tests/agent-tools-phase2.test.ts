@@ -167,7 +167,8 @@ describe("contacts: asked for, verified by code, never charged when unverified",
     expect((!r.ok && r.issues.join(" ")) || "").toContain('kind "work_email"');
   });
 
-  it("save_rows leaves an unverified value empty and does NOT save a contact row with no verified value (so it is neither delivered nor charged)", async () => {
+  // CHANGED (owner direction 2026-11-01): a value that looks like an address is kept with «غير موثّق» beside it instead of being emptied; a text that is no address is still left empty
+  it("save_rows keeps an unverified address as written, leaves a non-address empty, and does NOT save a contact row with no verified value (so it is neither delivered nor charged)", async () => {
     const checked = validateAndPricePlan(withContacts, lookup("عايز إيميلات"));
     if (!checked.ok) throw new Error(checked.issues.join("; "));
     const h = makeHarness({ phase: "execution", mission: { plan: checked.plan, job_id: "job_c" } });
@@ -180,20 +181,20 @@ describe("contacts: asked for, verified by code, never charged when unverified",
       { id: "e3", parent_id: "co3", text: "not an email" },
       { id: "e4", parent_id: "co4", text: "sales@acme2.example" },
     ] });
-    expect(r).toMatchObject({ ok: true, saved_now: 2, rejected_no_verified_contact: 2, contact_values_left_empty: 2 });
+    expect(r).toMatchObject({ ok: true, saved_now: 2, rejected_no_verified_contact: 2, contact_values_left_empty: 1 });
     const rows = JSON.parse((await h.store.getFile(h.mission.id, "rows/emails.json"))!);
     expect(rows.map((x: any) => x.text)).toEqual(["info@acme.example", "sales@acme2.example"]);
   });
 
-  it("a non-contact stage with a contact column keeps its rows and blanks the unverified value", async () => {
+  it("a non-contact stage with a contact column keeps its rows and keeps the unverified value, marked «غير موثّق» (CHANGED 2026-11-01: it used to be blanked)", async () => {
     const planWith = { summary_ar: "ستحصل على موظفين.", stages: [{ key: "people", title_ar: "الموظفون", endpoint_id: "anyapi.x.search.posts", expected_rows: 10, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "الاسم" }, { key: "mail", title_ar: "البريد", kind: "work_email" }], sample_rows: [{ id: "18000001", text: "x" }], measured_by: ["call_0001"] }] };
     const checked = validateAndPricePlan(planWith, lookup("عايز موظفين"));
     if (!checked.ok) throw new Error(checked.issues.join("; "));
     const h = makeHarness({ phase: "execution", mission: { plan: checked.plan, job_id: "job_c" } });
     h.ctx.plan = checked.plan;
     const r: any = await toolMap(h.ctx).save_rows.handler({ stage_key: "people", rows: [{ id: "p1", text: "منى", mail: "mona@gmail.com" }, { id: "p2", text: "خالد", mail: "k@acme.example" }] });
-    expect(r).toMatchObject({ saved_now: 2, contact_values_left_empty: 1 });
-    expect(JSON.parse((await h.store.getFile(h.mission.id, "rows/people.json"))!).map((x: any) => x.mail)).toEqual(["", "k@acme.example"]);
+    expect(r).toMatchObject({ saved_now: 2, contact_values_left_empty: 0 });
+    expect(JSON.parse((await h.store.getFile(h.mission.id, "rows/people.json"))!).map((x: any) => x.mail)).toEqual(["mona@gmail.com", "k@acme.example"]);
   });
 });
 void USER_ID;

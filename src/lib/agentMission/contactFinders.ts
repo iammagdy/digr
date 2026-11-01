@@ -151,7 +151,7 @@ export function foundContactIn(kind: FinderKind, page: unknown): FoundContact | 
     }
   };
   walk(page, 0);
-  const raw = seen.find((v) => !v.includes("*") && (kind === "email" ? v.includes("@") : /\d{5,}/.test(v)));
+  const raw = seen.find((v) => !v.includes("*") && (kind === "email" ? v.includes("@") : v.replace(/\D/g, "").length >= 7));
   if (!raw) return null;
   const checked = verifyContactValue(KIND_OF[kind], raw);
   if (checked) return { value: checked, status: sourceStatus === "bad" ? "unverified" : "verified" };

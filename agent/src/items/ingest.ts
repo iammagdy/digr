@@ -1,3 +1,4 @@
+import { CONTACT_STATUS_UNVERIFIED_AR, CONTACT_STATUS_VERIFIED_AR, statusKeyOf } from "../../../src/lib/agentMission/contactFinders";
 import { classifyRowDetailed, type RelevanceReason, type RuleBasis } from "../../../src/lib/agentMission/relevance";
 import { CONTACT_KINDS, isContactSource, verifyContactValue } from "../../../src/lib/agentMission/contacts";
 import { isNamedPerson, isPeopleStage, personVerdict } from "../../../src/lib/agentMission/people";
@@ -179,8 +180,12 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     for (const c of contactColumns) {
       const original = String(raw[c.key] ?? "").trim();
       const verified = verifyContactValue(c.kind!, raw[c.key]);
-      row[c.key] = verified ?? "";
-      if (verified) verifiedAny = true; else if (original) tally.contact_values_left_empty += 1;
+      // A VALUE THE SOURCE GAVE IS DELIVERED even when the check does not verify it (owner direction 2026-11-01): it is kept as written and the status cell beside it says «غير موثّق»; a masked value (stars) is no value. Empty only when nothing was found.
+      const looksLikeValue = c.kind === "work_email" ? /^[^\s@*]+@[^\s@*]+\.[^\s@*]+$/.test(original) : !original.includes("*") && original.replace(/\D/g, "").length >= 7;
+      const kept = verified ?? (looksLikeValue ? original : "");
+      row[c.key] = kept;
+      if (kept) row[statusKeyOf(c.key)] = verified ? CONTACT_STATUS_VERIFIED_AR : CONTACT_STATUS_UNVERIFIED_AR;
+      if (verified) verifiedAny = true; else if (original && !kept) tally.contact_values_left_empty += 1;
     }
     if (contactStage && contactColumns.length > 0 && !verifiedAny && !isNamedPerson(raw, stage.columns)) { tally.rejected_no_verified_contact += 1; excludedStructural.push({ id, reason: "no_verified_contact", row }); continue; }
     // A PERSON ROW MUST BE A PERSON (people.ts): a row of a people stage with no person's name, or whose address is a role or generic mailbox (info@, customer_care@, webmaster@), is a COMPANY e-mail. It is kept with its reason and its address (the company's sheet

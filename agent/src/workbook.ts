@@ -124,7 +124,8 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
     for (const c of own) {
       if (titles.has(c.title_ar)) continue;
       const values = rows.map((r) => r[c.key]);
-      if (taken.some((t) => sameValues(t, values))) continue;
+      // a status column («موثّق» / «غير موثّق») says the same words on every row by nature: it is never merged into a twin
+      if (c.status_of === undefined && taken.some((t) => sameValues(t, values))) continue;
       titles.add(c.title_ar);
       taken.push(values);
       const ownText = textGetter(stage, c.key);

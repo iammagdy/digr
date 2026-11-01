@@ -53,6 +53,8 @@ export type Op =
   | { t: "dup"; stage: string; n: number }
   /** A parent that gave no child is replaced by a spare parent the stage had checked and kept beyond its volume (`target_reached`): `in` becomes accepted, `out` becomes a kept, undelivered match. The parent stage's count does not change. */
   | { t: "swap"; stage: string; out: string; in: string }
+  /** Cells of an ACCEPTED item's row filled after it was stored (the contact finder steps, engine/contacts.ts): only cells that are still empty are set, so a replay of the log gives the same row. It adds no item and changes no state or count. */
+  | { t: "cells"; stage: string; id: string; cells: Record<string, string> }
   | { t: "stop"; stage: string; reason: StopReason };
 
 export interface Segment { v: 1; seq: number; writer: string; at: string; ops: Op[] }
@@ -138,6 +140,12 @@ function applyOp(logs: Map<string, StageLog>, op: Op): void {
       if (!out || !inn || out.state !== "accepted" || inn.state !== "excluded" || inn.reason !== "target_reached" || !inn.row) return;
       out.state = "excluded"; out.reason = "target_reached"; delete out.by; delete out.basis;
       inn.state = "accepted"; inn.by = "rule"; delete inn.reason;
+      return;
+    }
+    case "cells": {
+      const it = log.items.get(op.id);
+      if (!it || it.state !== "accepted" || !it.row) return;
+      for (const [k, v] of Object.entries(op.cells)) if (typeof v === "string" && v.trim() !== "" && String(it.row[k] ?? "").trim() === "") it.row[k] = v;
       return;
     }
     case "stop": log.stop = op.reason; return;
