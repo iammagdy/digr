@@ -8,6 +8,7 @@ import { isListingEndpoint } from "../../../src/lib/agentMission/namedRoutes";
 import { looksLikeDateColumn } from "../../../src/lib/agentMission/dateCells";
 import { isRelativeAge } from "../../../src/lib/agentMission/relativeDates";
 import { placeAskedOfSource } from "../../../src/lib/agentMission/places";
+import { buildToolInput, understoodOfStage, type Gap } from "../../../src/lib/agentMission/toolInput";
 import type { CatalogEndpoint, TregCatalog } from "../../../src/lib/treg/catalog";
 import type { SandboxResult } from "../sandbox";
 import type { AgentStore, CallRow } from "../types";
@@ -36,6 +37,8 @@ export interface DeriveDeps {
   /** The full inputs of the measuring calls of this run (the call log keeps short values only). */
   callParams: ReadonlyMap<string, Record<string, unknown>>;
   sandbox: (code: string, inputs: Record<string, unknown>) => Promise<SandboxResult>;
+  /** The redesigned mode (S1 item 1.6): the request of each stage is built by code from the tool's own fields and the stage's typed filters. Absent: the model's measured inputs are frozen as they were (the old path, byte for byte). */
+  codeBuild?: { nowMs: number };
 }
 
 async function readCodeRun(deps: DeriveDeps, outId: string): Promise<CodeRun | null> {
@@ -72,6 +75,8 @@ export interface DerivedSpecs {
   unresolved: Map<string, string[]>;
   /** The date columns of a stage in which the source gives only a relative time («قبل ٣ أيام»): the dates are approximate and the card says so. */
   approx: Map<string, string[]>;
+  /** The conditions a stage's tool cannot carry, when the request was built by code (S1 items 1.6 and 1.7). */
+  gaps: Map<string, Gap[]>;
 }
 
 export async function deriveEngineSpecs(plan: PricedPlan, deps: DeriveDeps): Promise<Map<string, EngineSpec>> {
@@ -84,6 +89,7 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
   const issues: string[] = [];
   const unresolved = new Map<string, string[]>();
   const approx = new Map<string, string[]>();
+  const gapsOut = new Map<string, Gap[]>();
   const mappedRows = new Map<string, Array<Record<string, unknown>>>();
   for (const stage of plan.stages) {
     // every row the agent really saw for this stage (the proven page, the other measuring calls mapped with the same code, the sample rows it listed): what a named source is looked for in
@@ -186,11 +192,20 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
         delete params[found.param];
         for (const a of also) delete params[a.param];
       }
+      // THE REQUEST BUILT BY CODE (S1 item 1.6, only in the redesigned mode): the customer's conditions are written into the tool's own fields; a stage whose inputs are not all real inputs of the endpoint keeps the model's request and is NOT marked as built by code
+      let builtBy: "code" | "model" | undefined;
+      let stageGaps: Gap[] = [];
+      if (deps.codeBuild && !sources) {
+        const built = buildToolInput(endpoint, understoodOfStage(stage, deps.codeBuild.nowMs), params);
+        builtBy = built.ok ? "code" : "model";
+        if (built.ok) { for (const k of Object.keys(params)) delete params[k]; Object.assign(params, built.params); stageGaps = built.gaps; }
+      }
       // a source with no next page and a flat price per call is asked for everything its limit allows (a lower limit only makes the one answer smaller)
       const lifted = stage.parent_key === null && !sources ? liftedVolume(endpoint, params) : null;
       if (lifted) params[lifted.param] = lifted.to;
       const window = stage.parent_key === null && !sources ? dateWindowOf(endpoint, params) : null;
-      specs.set(stage.key, { endpoint_id: stage.endpoint_id, params, cursor_param: cursorParam, map_code: mapCode, map_file_id: callId, parent_binding: binding, ...(proof.idField !== "id" ? { id_field: proof.idField } : {}), ...(window ? { window } : {}), ...(sources ? { sources } : {}), ...(sources && listing ? { source_listing: true } : {}) });
+      specs.set(stage.key, { endpoint_id: stage.endpoint_id, params, cursor_param: cursorParam, map_code: mapCode, map_file_id: callId, parent_binding: binding, ...(proof.idField !== "id" ? { id_field: proof.idField } : {}), ...(window ? { window } : {}), ...(sources ? { sources } : {}), ...(sources && listing ? { source_listing: true } : {}), ...(builtBy ? { built_by: builtBy } : {}), ...(stageGaps.length > 0 ? { gaps: stageGaps } : {}) });
+      if (stageGaps.length > 0) gapsOut.set(stage.key, stageGaps);
       filtersOut.set(stage.key, refit.filters);
       mappedRows.set(stage.key, mapped);
       contractIssues = null;
@@ -212,7 +227,7 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
       if (missing.length > 0) unresolved.set(stage.key, missing);
     }
   }
-  return { specs, filters: filtersOut, issues, unresolved, approx };
+  return { specs, filters: filtersOut, issues, unresolved, approx, gaps: gapsOut };
 }
 
 interface MeasuredPage { id: string; params: Record<string, unknown>; rows: Array<Record<string, unknown>> }

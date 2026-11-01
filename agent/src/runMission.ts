@@ -32,6 +32,8 @@ import { buildTools, newRunState, type ToolContext } from "./tools";
 import { ItemStore, type ItemSnapshot, type StopReason } from "./items/itemStore";
 import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
+import { readRedesignFlags } from "../../src/lib/agentMission/redesignFlags";
+import { isTestAccount } from "../../src/lib/server/testAccounts";
 import { runContactEnrichment } from "./engine/contacts";
 import { runNamesStep } from "./namesAr";
 
@@ -290,8 +292,11 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   deps.log?.(`web_tools ${mission.id} firecrawl=${webAvailable.firecrawl} contextdev=${webAvailable.contextdev}`);
   const web = deps.providerKey && anyWebAvailable(webAvailable) ? createWebGateway({ store, missionId: mission.id, jobId: null, phase: "planning", budget, recorder: deps.recorder, providerKey: deps.providerKey, fetchFn: deps.fetchFn, counter }) : undefined;
   const state = newRunState(await lastOut(store, mission.id));
-  const pricingSettings = normalizeMissionPricingSettings(((await store.readSettings().catch(() => ({}))) as Record<string, unknown>)[MISSION_PRICING_SETTING_KEY]);
-  const ctx: ToolContext = { phase: "planning", mission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, pricingSettings, stats: sourceStats, now: planningNow };
+  const settings = (await store.readSettings().catch(() => ({}))) as Record<string, unknown>;
+  const pricingSettings = normalizeMissionPricingSettings(settings[MISSION_PRICING_SETTING_KEY]);
+  // THE REDESIGN FLAGS (S1 item 0.1): read once at the start of the run; every one is off unless the owner switched it
+  const redesign = { flags: readRedesignFlags(settings), isTest: isTestAccount({ id: mission.user_id }) };
+  const ctx: ToolContext = { redesign, phase: "planning", mission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, pricingSettings, stats: sourceStats, now: planningNow };
   // the model cost of earlier runs of this phase (a requeue, a takeover): this run adds to it, and every model message checkpoints the running total, so a run that is killed still leaves its cost on the mission
   const baseLlm = Number((await store.getMission(mission.id))?.planning_llm_usd ?? mission.planning_llm_usd ?? 0);
   let llmBase = baseLlm;

@@ -68,6 +68,10 @@ export interface EngineSpec {
   sources?: Array<{ names: string[]; params: Record<string, unknown> }>;
   /** The endpoint lists the items of ONE source named by its own input (a channel's videos): an item that names no author belongs to the source that was asked for. */
   source_listing?: boolean;
+  /** WHO WROTE THE REQUEST of this recipe (S1 item 1.6): `code` when the inputs were built by code from the tool's own fields and every input was checked against the endpoint; absent or `model` when the model's measured inputs were frozen as they were. Raw delivery runs only for `code` (redesignFlags.ts rawDeliveryEffective). */
+  built_by?: "code" | "model";
+  /** The customer's conditions this tool cannot carry (S1 items 1.6 and 1.7): a period, a language, a country, an account or replies with no field of its own (`not_enforced`: a field that only places the request). */
+  gaps?: Array<{ cls: string; reason: string }>;
 }
 
 export interface ProposedStage {

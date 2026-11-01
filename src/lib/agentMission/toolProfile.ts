@@ -61,8 +61,17 @@ export const CURSOR_NAMES: ReadonlyArray<string> = ["cursor", "next_token", "pag
 
 const refOf = (i: CatalogInput): FieldRef => {
   const values = valuesOf(i);
-  return { field: i.name, ...(values ? { values } : {}), ...(typeof i.maximum === "number" ? { maximum: i.maximum } : {}) };
+  const maximum = typeof i.maximum === "number" ? i.maximum : maximumFromNote(i);
+  return { field: i.name, ...(values ? { values } : {}), ...(maximum !== undefined ? { maximum } : {}) };
 };
+
+/** A page size's limit the note states as a range («1–100, default 20», «1-50»), when the input declares no maximum. */
+function maximumFromNote(i: CatalogInput): number | undefined {
+  if (i.type !== "integer" && i.type !== "number") return undefined;
+  const m = (i.note ?? "").match(/(?:^|[^\d])1\s*[–\-]\s*(\d{1,4})(?!\d)/);
+  const n = m ? Number(m[1]) : NaN;
+  return Number.isFinite(n) && n > 1 ? n : undefined;
+}
 
 /** The allowed values: the declared enumeration, else the values the note names after «:» or between quotes («'Latest', 'Top'», «time (default) | relevance»). */
 function valuesOf(i: CatalogInput): string[] | undefined {
