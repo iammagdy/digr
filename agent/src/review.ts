@@ -186,7 +186,7 @@ export function createReviewer(deps: { call: ReviewCall; store: AgentStore; miss
         const outTokens = batch.length * 4 + 20;
         const worst = llmCostFromUsage(model, { input_tokens: inTokens, output_tokens: outTokens });
         // the usual budget first; rows the request still needs may go on up to the ceiling (a good row is never thrown away only because the usual budget is spent)
-        if (s.spentUsd + worst > ceiling) { s.budgetReached = true; s.stop = "budget"; await save(s); break; }
+        if (s.spentUsd + worst > ceiling) { s.budgetReached = true; s.stop = "budget"; deps.log?.(`review_stop ${deps.missionId} reason=budget spent=${s.spentUsd.toFixed(8)} budget=${deps.budgetUsd.toFixed(8)} ceiling=${ceiling.toFixed(8)} worst=${worst.toFixed(8)} calls=${s.calls} rows_reviewed=${s.rowsReviewed} rows_left=${rows.length - at}`); await save(s); break; }
         if (s.spentUsd + worst > deps.budgetUsd) s.extended = true;
         let verdicts: boolean[] | null = null;
         // AN ANSWER THAT IS NOT ONE 0/1 PER ROW IS ASKED AGAIN, EACH TIME A LITTLE DIFFERENTLY (live, 2026-10-29 and 10-30: every review call of two missions ended at EXACTLY its output limit, 4 x 116 tokens for 24 rows, 80 for 15: an answer cut before its array was
@@ -233,6 +233,7 @@ export function createReviewer(deps: { call: ReviewCall; store: AgentStore; miss
         } else {
           // the model could not be reached, or never answered in the right shape: the rows stay PENDING (asked again on the next save), and the reason is the failure, not the budget
           s.stop = "failed";
+          deps.log?.(`review_stop ${deps.missionId} reason=failed spent=${s.spentUsd.toFixed(8)} budget=${deps.budgetUsd.toFixed(8)} ceiling=${ceiling.toFixed(8)} worst=${worst.toFixed(8)} failed_calls=${s.failedCalls} calls=${s.calls} rows_reviewed=${s.rowsReviewed} rows_left=${rows.length - at}`);
           await save(s);
           break;
         }

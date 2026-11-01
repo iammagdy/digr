@@ -220,13 +220,20 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     const uncertain = verdicts.filter((x) => x.v.verdict === "review");
     let verdictOf = new Map<string, boolean>();
     if (uncertain.length > 0 && spec.review !== false && reviewer && matches < room) {
-      // no more review than the room left can use (an item beyond the approved volume is never needed); the rest stays pending
-      const wanted = uncertain.slice(0, (room - matches) * 3 + 25);
       const governmentAsked = (stage.filters ?? []).some((f) => f.kind === "exclude_government" && isEnabled(f));
       // a company stage with a promised place: the model check is told the company must really be of that kind and place (a head office abroad, a law firm, a news site, a trade show is not)
       const placeWords = spec.entity && placeFilter ? (placeFilter.values ?? []).join("، ") : "";
       const subject = `${spec.subject_ar}${governmentAsked ? " (ليست جهة حكومية أو عسكرية ولا مركز أبحاث أو معهدًا حكوميًا)" : ""}${placeWords ? ` (شركة حقيقية من هذا النوع مقرها أو نشاطها في ${placeWords}؛ وليست حدثًا أو معرضًا أو مكتب محاماة أو موقعًا إخباريًا أو منتدى أو شركة مقرها في بلد آخر)` : ""}`;
-      verdictOf = await reviewer.review({ subject, rows: wanted.map((x) => ({ id: x.c.id, text: spec.text_columns.map((k) => String(x.c.row[k] ?? "")).join(" ") })) });
+      // THE REVIEW GOES ON, SLICE AFTER SLICE, UNTIL THE ROOM IS FILLED, EVERY WAITING ITEM WAS REVIEWED, OR A STOP WAS RECORDED (audit G13: one slice per pass left paid rows waiting for a later round). Each slice is no more than the room still left can use (x3 for the rows the model says no to, plus 25).
+      let modelAccepted = 0;
+      let at = 0;
+      while (at < uncertain.length && matches + modelAccepted < room) {
+        const slice = uncertain.slice(at, at + (room - matches - modelAccepted) * 3 + 25);
+        at += slice.length;
+        const got = await reviewer.review({ subject, rows: slice.map((x) => ({ id: x.c.id, text: spec.text_columns.map((k) => String(x.c.row[k] ?? "")).join(" ") })) });
+        for (const [id, ok] of got) { verdictOf.set(id, ok); if (ok) modelAccepted += 1; }
+        if ((await reviewer.state()).stop) break;
+      }
       reviewedNow = verdictOf.size;
       reviewStop = (await reviewer.state()).stop;
     }
