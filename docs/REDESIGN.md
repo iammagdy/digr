@@ -26,7 +26,7 @@ Measured in the code today (details and file:line in the plan, section "Findings
 ## 1. Understanding the request
 
 1. The customer writes freely in Arabic.
-2. **Models.** Fast chat replies and cards: Claude Haiku 5.5 (`claude-haiku-5-5`). Planning and building the provider request: Claude Haiku 5.5 with extended thinking enabled. **No other model is introduced.** (Today the code also allows `claude-sonnet-5-5` for planning through an admin setting: `src/lib/agentMission/constants.ts:51-52`, V. The new pipeline pins Haiku 5.5 and ignores that setting. See open decision D4.)
+2. **Models.** Fast chat replies and cards: Claude Haiku 5.5 (`claude-haiku-5-5`). Planning and building the provider request: Claude Haiku 5.5 with extended thinking enabled. **No other model is introduced.** (Today the code also allows `claude-sonnet-5-5` for planning through an admin setting: `src/lib/agentMission/constants.ts:51-52`, V. The new pipeline pins Haiku 5.5 and ignores that setting. Extended-thinking budget: open decision D4, default proposed in the plan.)
 3. **Catalog first.** Before asking the customer anything, the agent searches the provider catalog and reads the input schemas of the candidate tools, so it asks only what changes a tool input. No generic questions.
 4. **"Understood your request as" card**, editable. Fields, each tappable to edit:
 
@@ -43,13 +43,13 @@ Measured in the code today (details and file:line in the plan, section "Findings
 
 5. **Question cards.** A missing important field becomes at most **three** question cards, each with ready options plus «شيء آخر». Questions are chosen from the candidate tools' input schemas (a field the tool has and the request does not fill).
 6. **Plan, price, approval.** Then the plan with the price, then the customer approves. **Nothing is spent before approval.**
-7. **The cards that stopped appearing.** Investigated; the cause and the fix are in the plan (findings F8 and PR 2.1, 2.2). Short version: the old question/plan cards were bypassed when the agent took over the chat, and the «how we understood your request» block was folded into a closed `<details>` on 2026-10-31.
+7. **The cards that stopped appearing.** Investigated; the cause and the fix are in the plan (findings F8 and Stage 2 items 2.1 to 2.3). Short version: the old question/plan cards were bypassed when the agent took over the chat, and the «how we understood your request» block was folded into a closed `<details>` on 2026-10-31.
 
 ## 2. Building the provider request
 
 1. Search the catalog, **compare candidate tools**, read the chosen tool's input schema, and fill **every field that matches a customer condition**: date, language, country, account/URL, count, replies (and sort, where the customer implied one).
 2. **Compare by what the tool can express, then by price.** A cheaper tool that cannot take the date range loses to a dearer one that can, unless no tool can.
-3. If a condition has no field in that tool, look for another tool that has it. If none exists, **say it honestly in the plan before approval** (plain Arabic line on the card, e.g. «لا يوفّر المصدر تحديد اللغة، فنسلّمك النتائج كما وردت ونضع عمودًا يبيّن لغة كل نص»).
+3. **If the chosen tool cannot express a condition (date, topic, language, country), the agent must FIRST look for another tool that can** (owner decision D7, 2026-11-01). If none exists, **the plan card says so before approval and the customer chooses** (continue with the raw rows, change the request, or cancel). Plain Arabic line on the card, e.g. «لا يوفّر المصدر تحديد اللغة؛ إن أكملت نسلّمك النتائج كما وردت مع عمود يبيّن لغة كل نص». If the customer continues, the raw rows are delivered **marked** (section 4).
 4. **The request is built by code from a structured "understood" record**, not free-typed by the model. The model proposes the record and picks the tool; code writes the tool input from the tool's schema (types, enums, min, max, required) and refuses an unknown or invalid field instead of silently deleting it.
 5. TREG only for now. Firecrawl and Context.dev are out of scope.
 
@@ -67,13 +67,13 @@ Measured in the code today (details and file:line in the plan, section "Findings
 1. The roughly twenty post-fetch rules are removed in the new pipeline. The inventory (file:line, what each drops, what replaces it) is in the plan, section "Filter inventory".
 2. **The only removal allowed is an exact duplicate:**
    - Social posts, comments, replies: **the same record id returned twice** (for example by pagination or overlapping windows). The key is platform + record id within the stage. **The same text from different people is kept.**
-   - Companies: the same company twice (same provider company id or same web domain). People: the same person twice (same profile URL, or same name at the same company). Name-only matches are NOT enough to remove a company (open decision D5).
+   - **Duplicate company = the same provider company id OR the same web domain. Duplicate person = the same profile URL, OR the same normalised name at the same company. A name-only match never removes anything** (owner decision D5, 2026-11-01).
 3. **Nothing is judged on content.** Comments are never filtered. No language rule, no topic rule, no relevance model, no "is this a person" rule removes a row.
 4. **Mark instead of drop.** A condition the customer asked for that we cannot enforce at the source becomes a column. Found values are always delivered, marked:
 
    | Today's drop (reason code) | New mark column (Arabic header) | Values |
    |---|---|---|
-   | `not_at_company` | «يعمل حاليًا في الشركة» | نعم / غير مؤكد / لا |
+   | `not_at_company` | «يعمل حاليًا في الشركة» | نعم / غير مؤكد / لا (a person not currently at the company is delivered with «لا»: owner decision D8; the decision-maker upgrade swaps stay for now) |
    | `no_verified_contact` | «حالة توثيق الإيميل» / «حالة توثيق الهاتف» | موثّق / غير موثّق |
    | `not_a_person` (role mailbox, department) | «نوع الجهة» | شخص / بريد عام للشركة |
    | `filter_reply` | «نوع التعليق» (exists) / «رد أم أصلي» for posts | أصلي / رد |
@@ -87,7 +87,7 @@ Measured in the code today (details and file:line in the plan, section "Findings
 
 5. **Parent link is sheet structure, not a filter.** Comments and replies stay linked to their parent post: parent link and title on every row, parent comment id on a reply, a reply sits under its comment (the structure of `docs/AUDIT-2026-11.md` section 1C).
 6. **Claude only organizes and formats the sheet.** No model decides which rows are in the file.
-7. **Count rule with raw delivery.** The customer's number is a cap on what is fetched and charged. Rows beyond it that the provider already returned in the same page are not delivered (the customer pays for N). This is unchanged from today (`agent/src/items/ingest.ts:260`, V) and stays an owner decision (D6).
+7. **Count rule with raw delivery.** The customer's number is a cap on what is fetched and charged. Rows beyond it that the provider already returned in the same page are not delivered (the customer pays for N). This is unchanged from today (`agent/src/items/ingest.ts:260`, V). **Owner decision D6 (2026-11-01): keep the count cap. The customer pays for N; rows beyond N are not delivered.**
 
 ## 5. Optional paid review
 
@@ -100,13 +100,13 @@ Measured in the code today (details and file:line in the plan, section "Findings
 ## 6. Post-delivery edits
 
 1. The customer says something is wrong or asks for a change: Claude checks and edits **the same file as a new version**, not a new plan from scratch. Only the changed part is read.
-2. **Price = real cost of the edit x markup, minimum 100 points**, computed by code, shown before approval. (Conflict to resolve: `docs/AUDIT-2026-11.md` section 9 item 4 recorded a 20-point minimum as DECIDED. See D2.)
-3. **OPEN DECISION, not implemented: whether fixes caused by our own mistake are free.** (D1.)
+2. **Price = real cost of the edit x markup, minimum 100 points**, computed by code, shown before approval. **Owner decision D2 (2026-11-01): the minimum is 100 points.** It supersedes the 20 points recorded in `docs/AUDIT-2026-11.md` section 9 item 4 (marked SUPERSEDED there).
+3. **Owner decision D1 (2026-11-01): fixes caused by our own mistake are NOT free.** They are priced like any other edit (same rule, same minimum, shown before approval). No "our mistake" exemption is built.
 
 ## 7. Live sheet while waiting
 
 1. **Each batch is written immediately to a "preview" store.** The site shows rows as they arrive. The preview is **display only and never touches money.**
-2. **Target design (owner-approved): a Supabase table with Row Level Security (each customer sees only their own rows) and Supabase Realtime.** That needs SQL and a Realtime publication, and Realtime is today deliberately forbidden by a test (plan finding F9, open decision D3). So the build is staged: (a) the same UI fed by a polling endpoint that reads the item store, no SQL; (b) the preview table, RLS and Realtime later, behind explicit owner approval.
+2. **Owner decision D3 (2026-11-01): no Realtime for now.** The live sheet is fed by a **polling endpoint that reads the item store (no SQL, no new table)**, with adaptive, jittered polling in the style of `startNotificationPolling`. The Realtime ban test (`tests/supabase-free-plan-limits.test.ts:18-27`) stays unchanged. The earlier idea of a "preview" table with Row Level Security plus Supabase Realtime is **later, not planned** (it would need SQL and a Realtime publication; see the plan, "Later, not planned").
 3. **Desktop:** looks like a real Excel sheet inside the site: frozen header with **the same column names as the final file**, Arabic, RTL, row numbers, each new row appears with a soft highlight that fades.
 4. **Mobile:** no table. Small cards for the latest rows (newest on top, replies indented under their comment), with a counter and a progress bar on top.
 5. **Counter:** «X من N» in Arabic-Indic numerals. When done, a «تحميل الملف» button replaces the counter.
@@ -153,6 +153,25 @@ The new pipeline sits **behind a flag per request type**: social posts search, a
 | Same-text posts | Merged across authors for top-level posts (V `ingest.ts:87,132-139`) | Kept when from different people |
 | Planning restart | New SDK session, no conversation; only call digests are replayed (V `sdkOptions.ts` `persistSession: false`; V `runMission.ts:92-106,279`) | Planning state checkpointed and resumed |
 | Live sheet | Card polls mission state; no rows shown (V-R `AgentMissionCard.tsx:51-77`) | Rows stream into a sheet or cards |
-| Realtime | Zero uses; a test forbids it (V `tests/supabase-free-plan-limits.test.ts:18-27`) | Optional, behind owner approval |
+| Realtime | Zero uses; a test forbids it (V `tests/supabase-free-plan-limits.test.ts:18-27`) | Still none (D3); the live sheet polls a feed that reads the item store |
 | Edits after delivery | Only while `plan_ready` (`docs/AUDIT-2026-11.md` G16) | New version of the same file |
 | Queue message | Position line exists (V-R `customerView.ts:194-200`); no start e-mail | Position, ETA, one optional e-mail |
+
+## 13. Owner decisions recorded (2026-11-01)
+
+| ID | Decision |
+|---|---|
+| D1 | Fixes caused by our own mistake are NOT free. They are priced like any edit. |
+| D2 | Post-delivery edit minimum = 100 points. Supersedes the 20 points in `docs/AUDIT-2026-11.md` section 9 item 4. |
+| D3 | No Realtime for now. The live sheet uses a polling feed (no SQL). The Realtime ban test stays. A preview table with RLS and a Realtime subscription are "later, not planned". |
+| D5 | Duplicate company = same provider company id or same web domain. Duplicate person = same profile URL, or same normalised name at the same company. Name-only never removes. |
+| D6 | Keep the count cap. The customer pays for N; rows beyond N are not delivered. |
+| D7 | If the chosen tool cannot express a condition (date, topic, language, country), first look for another tool that can. If none exists, the plan card says so before approval and the customer chooses. Raw rows are then delivered marked. |
+| D8 | A person not currently at the company is delivered with the mark «يعمل حاليًا في الشركة: لا». Decision-maker upgrade swaps stay for now. |
+| D10 | The 10 benchmark requests are in `docs/benchmarks/antigravity-10.md`. |
+
+Still open, each with a proposed default: D4, D9, D11, D12, D13, D14, D15 (see `docs/REDESIGN-PLAN.md`, section 7).
+
+## 14. How it ships
+
+Four stages, each ONE pull request, with one commit per plan item (failing test committed first), all new behaviour behind the per-request-type flag, default OFF. Stage 4 has one extra, separate money pull request. The table is in `docs/REDESIGN-PLAN.md`, section 4.
