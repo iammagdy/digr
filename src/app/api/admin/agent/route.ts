@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateAdmin } from "../../../../lib/server/adminAuth";
 import { createAdminClient } from "../../../../lib/supabase/server";
-import { createMission, loadOverview, setMissionPricing, setPlanningModel } from "../../../../lib/agentMission/adminActions";
+import { createMission, loadOverview, setMissionPricing, setPlanningModel, setRedesignFlag } from "../../../../lib/agentMission/adminActions";
 
 export const dynamic = "force-dynamic";
 
@@ -39,6 +39,12 @@ export async function POST(req: NextRequest) {
       if (r.before.markup !== r.after.markup) await auth.ctx.audit("setting", "مضاعف سعر المهام", `markup: ${r.before.markup} → ${r.after.markup}`, { targetType: "agent_settings", targetId: "mission_pricing" });
       if (r.before.minChargePoints !== r.after.minChargePoints) await auth.ctx.audit("setting", "الحد الأدنى لخصم المهمة", `min_charge_points: ${r.before.minChargePoints} → ${r.after.minChargePoints}`, { targetType: "agent_settings", targetId: "mission_pricing" });
     }
+    return r.ok ? NextResponse.json(r) : NextResponse.json({ error: r.error }, { status: r.status });
+  }
+  if (body?.action === "redesign_flag") {
+    const r = await setRedesignFlag(client, { type: body.type, mode: body.mode, adminId: auth.ctx.adminId });
+    // every change has an audit row: who, which type, from what to what
+    if (r.ok && r.before !== r.after) await auth.ctx.audit("setting", "مفتاح إعادة التصميم", `${String(body.type)}: ${r.before} → ${r.after}`, { targetType: "agent_settings", targetId: "redesign_flags" });
     return r.ok ? NextResponse.json(r) : NextResponse.json({ error: r.error }, { status: r.status });
   }
   return NextResponse.json({ error: "bad_input" }, { status: 400 });

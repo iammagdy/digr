@@ -73,6 +73,7 @@ export function createSdkDriver(env: Record<string, string | undefined> = proces
             turns += 1;
             const u = (message as { message?: { usage?: TokenUsage } }).message?.usage;
             if (u) {
+              try { await input.onTurn?.({ turn: turns, usage: { input_tokens: u.input_tokens ?? 0, output_tokens: u.output_tokens ?? 0, cache_read_input_tokens: u.cache_read_input_tokens ?? 0, cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0 } }); } catch { /* telemetry never stops a run */ }
               usage.input_tokens! += u.input_tokens ?? 0; usage.output_tokens! += u.output_tokens ?? 0; usage.cache_read_input_tokens! += u.cache_read_input_tokens ?? 0; usage.cache_creation_input_tokens! += u.cache_creation_input_tokens ?? 0;
               // checkpoint: the tokens and the cost so far, so a run that is killed still leaves its cost on the mission (our own figure from the API's token counts: the SDK's total only arrives with its final result)
               try { await input.onUsage?.({ usage: { ...usage }, costUsd: llmCostFromUsage(input.model, usage) }); } catch { /* a lost checkpoint never stops the run */ }

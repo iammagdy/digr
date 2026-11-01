@@ -19,6 +19,8 @@ export interface RunInput {
   wallMs: number;
   /** Called after every model message with the run's cumulative tokens and cost so far: the worker saves them, so the cost of a run that is killed is still on the mission. Must not throw. */
   onUsage?: (progress: { usage: TokenUsage; costUsd: number }) => Promise<void> | void;
+  /** Called once per model turn with THAT turn's own tokens (not cumulative): the planning telemetry of S1 item 0.4 (counts only). Must not throw. */
+  onTurn?: (turn: { turn: number; usage: TokenUsage }) => Promise<void> | void;
 }
 
 export interface RunOutput {

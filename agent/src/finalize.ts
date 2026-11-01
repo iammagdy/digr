@@ -58,6 +58,7 @@ export function shortfallClauseAr(reason: StopReason | null, review: { pending: 
     case "page_limit": return "لأن القراءة بلغت الحد الأقصى لعدد الصفحات المسموح لهذه المهمة";
     case "no_parents": return "لأن المرحلة السابقة لم تعطِ عناصر يُبنى عليها هذا الجزء";
     case "model_stopped": return "لأن القراءة توقفت قبل اكتمال العدد المطلوب";
+    case "need_new_plan": return "لأن ميزانية القراءة المحجوزة لهذه المهمة اكتملت قبل بلوغ العدد، ولإكمال الباقي يلزم طلب جديد بخطة وسعر جديدين";
     case "target_reached": case null: default: return "لأن هذا كل ما وُجد مطابقًا لطلبك ضمن حدود المصادر والميزانية";
   }
 }

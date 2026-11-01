@@ -127,6 +127,7 @@ export const AGENT_STALL_AFTER_MS = 180_000;
 /** Events that carry the run's measured memory (internal: the admin sees them, the customer never does). */
 export const MISSION_INTERNAL_COUNT_KEYS = ["mem_phase", "mem_start_rss_mb", "mem_peak_rss_mb", "mem_start_tree_mb", "mem_peak_tree_mb", "mem_samples", "mem_seconds", "mem_stopped",
   // the model's tokens of a run (input, output, cache read, cache write), the review's own tokens and calls, and the run's model cost in millionths of a dollar
+  "turn_n", "turn_in", "turn_out", "turn_cache_read", "turn_cache_write", "turn_rss_mb", "pipe_new",
   "tok_phase", "tok_in", "tok_out", "tok_cache_read", "tok_cache_write", "tok_review_in", "tok_review_out", "tok_review_calls", "llm_micro_usd",
   // the report of the check of items (internal; the admin reads it): looked at, accepted by rule (and on what basis), accepted by the model, left out (and why), still pending, review beyond its usual budget
   "chk_stage", "chk_examined", "chk_by_rule", "chk_by_model", "chk_excluded", "chk_pending", "chk_review_extended",

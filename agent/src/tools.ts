@@ -34,6 +34,11 @@ import { rankedCandidates } from "../../src/lib/agentMission/candidates";
 import { perParentQuantities } from "../../src/lib/agentMission/quantity";
 import { sourceNameMatches } from "../../src/lib/agentMission/namedSources";
 import { namedSourceRoutes } from "../../src/lib/agentMission/namedRoutes";
+import { redesignActive, type RedesignFlags } from "../../src/lib/agentMission/redesignFlags";
+import { conditionsOfRequest } from "../../src/lib/agentMission/requestConditions";
+import { applyGapNotes } from "../../src/lib/agentMission/gapLines";
+import { counterOfRow, withAllChildren } from "../../src/lib/agentMission/allChildren";
+import { coverageOf } from "../../src/lib/agentMission/sourceRanking";
 import { catalogDateKind } from "../../src/lib/agentMission/relativeDates";
 import { PEOPLE_FALLBACK_LINE_AR } from "../../src/lib/agentMission/childSources";
 import { mediaProofSources, mediaUnprovenLineAr } from "../../src/lib/agentMission/mediaProof";
@@ -65,6 +70,8 @@ export interface RunState {
   ranking: string[] | null;
   /** The sources this run has called (or been refused a call to). */
   tried: Set<string>;
+  /** The endpoints whose description (describe_endpoint) this run has read: in the redesigned mode a source is not called before its inputs were read. */
+  described: Set<string>;
   /** The full inputs of every treg_call of this run, by call id (the call log keeps short values only): the plan's execution recipe is derived from them. */
   callParams: Map<string, Record<string, unknown>>;
   /** The code of every run_code of this run, by output id: the plan's execution recipe is derived from the mapping code the agent ran on the measured page. */
@@ -86,7 +93,10 @@ export interface RunState {
   /** What each source gave in the planning samples: the rows of every answered call and a key of its inputs (two samples of the same item are one). */
   samples: Map<string, Array<{ rows: number; key: string }>>;
 }
-export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, giveUpNoRowsRefusals: 0, mediaSendBacks: 0, peopleSendBacks: 0, moreAvailable: new Map(), samples: new Map() });
+export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), described: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, giveUpNoRowsRefusals: 0, mediaSendBacks: 0, peopleSendBacks: 0, moreAvailable: new Map(), samples: new Map() });
+/** The redesigned mode of planning: any of the three social flags is active for this mission's account (planning does not know the request type yet; with every flag off this is false and nothing changes). */
+export const socialRedesignActive = (ctx: { redesign?: { flags: RedesignFlags; isTest: boolean } }): boolean =>
+  ctx.redesign !== undefined && (["social_posts", "social_account", "social_comments"] as const).some((t) => redesignActive(ctx.redesign!.flags, t, { isTest: ctx.redesign!.isTest }));
 /** The most times finish is refused for the same reason in one run. */
 export const FINISH_REFUSALS_MAX = 3;
 /** The most times a planning that already holds real rows is told not to end with «cannot_serve» for a source's price or yield. */
@@ -122,6 +132,8 @@ export interface ToolContext {
   stats?: StatsMap;
   /** «Now» for the health window (tests pass a fixed moment). */
   now?: number;
+  /** The redesign flags in force for this mission and whether its account is a test account (redesignFlags.ts). Absent: the old behaviour. */
+  redesign?: { flags: RedesignFlags; isTest: boolean };
 }
 
 const FILE_ID = /^(call|out)_\d{4,6}$/;
@@ -318,7 +330,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         // most relevant ones (the same capability: every post search, every company search, every comment source) join the ones the words matched, so a cheaper source the words did not name is still offered
         const matched = (found.hits as Array<Record<string, any>>).map((h) => ctx.catalog.byId.get(String(h.id))).filter((e): e is NonNullable<typeof e> => Boolean(e));
         const ranking = rankedCandidates({ catalog: ctx.catalog, access: ctx.access, words, platform, stats, now, matched });
-        const fromCatalog = ranking.ranked.map((r) => ({ id: r.id, effective: r.effectiveUsd, view: { ...catalogHitView(ctx.catalog.byId.get(r.id)!, ctx.catalog, 0, r.effectiveUsd), expected_usd_per_item: Number(r.usdPerItem.toFixed(6)), rows_per_call: Math.round(r.rowsPerCall * 10) / 10, basis: r.basis, ...(catalogDateKind(ctx.catalog.byId.get(r.id)!) ? { dates: catalogDateKind(ctx.catalog.byId.get(r.id)!) } : {}), ...(r.health.state === "demoted" ? { health: "demoted: recent failures on its inputs" } : {}) } as Record<string, any> }));
+        const fromCatalog = ranking.ranked.map((r) => ({ id: r.id, effective: r.effectiveUsd, view: { ...catalogHitView(ctx.catalog.byId.get(r.id)!, ctx.catalog, 0, r.effectiveUsd, { allInputs: socialRedesignActive(ctx) }), expected_usd_per_item: Number(r.usdPerItem.toFixed(6)), rows_per_call: Math.round(r.rowsPerCall * 10) / 10, basis: r.basis, ...(catalogDateKind(ctx.catalog.byId.get(r.id)!) ? { dates: catalogDateKind(ctx.catalog.byId.get(r.id)!) } : {}), ...(r.health.state === "demoted" ? { health: "demoted: recent failures on its inputs" } : {}) } as Record<string, any> }));
         // the web sources (page parsers, web search / scrape, people search) are candidates too: ONE list for every provider, with the same health and measurement
         const web = ctx.web ? searchAgentSources({ words, platform, isAvailable: (id) => webSourceAvailable(id, webAvailableOf(ctx)) }) : [];
         const webRanked = web.map((c) => {
@@ -332,6 +344,21 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           ...fromCatalog,
           ...webRanked.map(({ c, health, effective }) => ({ id: c.id, effective, view: { id: c.id, name: c.id, platform: c.platform, capability: c.kind, summary: c.summary.slice(0, 140), price: `about ${c.usd_per_call.toFixed(5)} USD a call, up to ${c.rows_per_call} rows`, costPerRecordUsd: Number(effective.toFixed(7)), expected_usd_per_item: Number(c.usd_per_row.toFixed(7)), requiredInputs: [], inputs: [c.inputs], ...(health.state === "demoted" ? { health: "demoted: recent failures on its inputs" } : {}) } })),
         ].sort((x, y) => x.effective - y.effective || x.id.localeCompare(y.id));
+        // CONDITION COVERAGE FIRST, THEN PRICE (S1 item 1.5, owner decision D7): in the redesigned mode the tools whose own inputs can carry more of the customer's conditions come first, and each hit says which it can and cannot carry
+        if (socialRedesignActive(ctx)) {
+          const wanted = conditionsOfRequest(`${mission.request_text} ${mission.answer_text ?? ""}`);
+          if (wanted.length > 0) {
+            const cover = new Map<string, number>();
+            for (const m of merged) {
+              const e = ctx.catalog.byId.get(m.id);
+              if (!e) continue;
+              const c = coverageOf(e, wanted);
+              cover.set(m.id, c.covered.filter((x) => x !== "count").length);
+              m.view = { ...m.view, can_carry: c.covered, cannot_carry: c.missing };
+            }
+            merged.sort((x, y) => (cover.get(y.id) ?? 0) - (cover.get(x.id) ?? 0) || x.effective - y.effective || x.id.localeCompare(y.id));
+          }
+        }
         // THE PEOPLE OF EACH COMPANY («ومن كل شركة اتنين من المديرين»): a company source whose rows a people source can take as input (the website, the page link, the name) ranks first; one that feeds none is demoted and says so
         if (perParentQuantities(`${mission.request_text} ${mission.answer_text ?? ""}`).some((q) => isPeopleNoun(q.noun ?? ""))) {
           const allowed = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
@@ -358,7 +385,15 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       handler: async (a) => {
         const id = String(a.id ?? "");
         if (ctx.web && isAgentSourceId(id) && webSourceAvailable(id, webAvailableOf(ctx))) { const d = describeAgentSource(id); if (d) return { ok: true, endpoint: d }; }
-        return gateway.describeEndpoint({ id });
+        const described = await gateway.describeEndpoint({ id });
+        if ((described as { ok?: boolean }).ok === true) {
+          state.described.add(id);
+          // the redesigned mode shows every input with its WHOLE note (a note that names a condition, «does not filter by region», must not be cut at 140 characters)
+          const e = ctx.catalog.byId.get(id);
+          const ep = (described as { endpoint?: { inputs?: Array<Record<string, unknown>> } }).endpoint;
+          if (socialRedesignActive(ctx) && e && ep && Array.isArray(ep.inputs)) ep.inputs = e.inputs.map((i) => ({ name: i.name, type: i.type, required: i.required, enum: i.enum ?? undefined, minimum: i.minimum ?? undefined, maximum: i.maximum ?? undefined, default: i.default ?? undefined, note: i.note ?? undefined }));
+        }
+        return described;
       },
     },
     {
@@ -374,6 +409,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       },
       handler: async (a) => {
         const id = String(a.endpoint_id ?? "").trim();
+        // SCHEMA ALWAYS READ (S1 item 1.5): in the redesigned mode a source is not called before its description was read in this run (nothing is called, nothing is spent)
+        if (ctx.phase === "planning" && socialRedesignActive(ctx) && !state.described.has(id)) return { ok: false, refused: "describe_first", message: "read this endpoint's description with describe_endpoint first: its inputs say which of the customer's conditions (period, language, country, account) it can carry" };
         const refusal = cheapestFirstMessage(state, id, a.why);
         if (refusal) return { ok: false, refused: "choose_cheapest", message: refusal };
         const sick = unhealthyMessage(ctx, id);
@@ -615,7 +652,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         // THE MODEL PLANS, CODE EXECUTES: what code needs to carry each stage out without the model is derived from what the agent really did and proven on the measured page (a stage that cannot be proven has no recipe)
         let derived: Awaited<ReturnType<typeof deriveEngineSpecsChecked>> | null = null;
         try {
-          derived = await deriveEngineSpecsChecked(checked.plan, { store, missionId: mission.id, catalog: ctx.catalog, calls, codeRuns: state.codeRuns, callParams: state.callParams, sandbox: runSandbox });
+          derived = await deriveEngineSpecsChecked(checked.plan, { store, missionId: mission.id, catalog: ctx.catalog, calls, codeRuns: state.codeRuns, callParams: state.callParams, sandbox: runSandbox, ...(socialRedesignActive(ctx) ? { codeBuild: { nowMs: ctx.now ?? Date.now() } } : {}) });
         } catch { /* a plan without recipes is carried out by the model, through the same item store */ }
         // THE CONTRACT: a mapping that gives what the engine needs but breaks what the card promises (an id, a column, a field a filter reads) is refused here, before the customer sees a card the file cannot match
         if (derived && derived.issues.length > 0) return err("the plan was not accepted; fix these and propose again", { issues: derived.issues.slice(0, 12) });
@@ -627,6 +664,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             if (filters) { if (filters.length > 0) st.filters = filters; else delete st.filters; }
             const missing = derived.unresolved.get(st.key);
             if (missing && missing.length > 0) st.unresolved_sources = missing;
+            const stageGaps = derived.gaps.get(st.key);
+            if (stageGaps && stageGaps.length > 0) applyGapNotes(checked.plan, stageGaps);
             const approxDates = derived.approx.get(st.key);
             if (approxDates && approxDates.length > 0) st.approx_dates = approxDates;
           }
@@ -643,6 +682,24 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         // are estimated from is the comments stage's own measured page, mapped by its own proven mapping.
         if (derived) {
           const allowedReply = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
+          // «ALL THE COMMENTS» (S1 item 1.10, redesigned mode only): each parent is read to its own counter and the plan's estimate follows the counters; done BEFORE the replies stage, which is estimated from the comments' count
+          if (socialRedesignActive(ctx)) {
+            checked.plan = await withAllChildren(checked.plan, {
+              request: `${mission.request_text} ${mission.answer_text ?? ""}`,
+              parentCountersOf: async (parentStage) => {
+                const sp = parentStage.engine;
+                if (!sp) return null;
+                try {
+                  const page = await store.getFile(mission.id, `raw/${sp.map_file_id}.json`);
+                  if (page === null) return null;
+                  const out = await runSandbox(sp.map_code, { [sp.map_file_id]: JSON.parse(page) });
+                  if (!out.ok || out.resultJson === null) return null;
+                  const rows = JSON.parse(out.resultJson) as unknown;
+                  return Array.isArray(rows) ? rows.filter(isObject).map((r) => counterOfRow(r)) : null;
+                } catch { return null; }
+              },
+            });
+          }
           checked.plan = await withRepliesStages(checked.plan, {
             catalog: ctx.catalog, isAllowed: allowedReply, stats: ctx.stats,
             sampleRowsOf: async (st) => {

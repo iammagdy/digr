@@ -8,6 +8,8 @@ import { isListingEndpoint } from "../../../src/lib/agentMission/namedRoutes";
 import { looksLikeDateColumn } from "../../../src/lib/agentMission/dateCells";
 import { isRelativeAge } from "../../../src/lib/agentMission/relativeDates";
 import { placeAskedOfSource } from "../../../src/lib/agentMission/places";
+import { buildToolInput, understoodOfStage, type Gap } from "../../../src/lib/agentMission/toolInput";
+import { discoverCursor } from "../../../src/lib/agentMission/toolProfile";
 import type { CatalogEndpoint, TregCatalog } from "../../../src/lib/treg/catalog";
 import type { SandboxResult } from "../sandbox";
 import type { AgentStore, CallRow } from "../types";
@@ -36,6 +38,8 @@ export interface DeriveDeps {
   /** The full inputs of the measuring calls of this run (the call log keeps short values only). */
   callParams: ReadonlyMap<string, Record<string, unknown>>;
   sandbox: (code: string, inputs: Record<string, unknown>) => Promise<SandboxResult>;
+  /** The redesigned mode (S1 item 1.6): the request of each stage is built by code from the tool's own fields and the stage's typed filters. Absent: the model's measured inputs are frozen as they were (the old path, byte for byte). */
+  codeBuild?: { nowMs: number };
 }
 
 async function readCodeRun(deps: DeriveDeps, outId: string): Promise<CodeRun | null> {
@@ -72,6 +76,8 @@ export interface DerivedSpecs {
   unresolved: Map<string, string[]>;
   /** The date columns of a stage in which the source gives only a relative time («قبل ٣ أيام»): the dates are approximate and the card says so. */
   approx: Map<string, string[]>;
+  /** The conditions a stage's tool cannot carry, when the request was built by code (S1 items 1.6 and 1.7). */
+  gaps: Map<string, Gap[]>;
 }
 
 export async function deriveEngineSpecs(plan: PricedPlan, deps: DeriveDeps): Promise<Map<string, EngineSpec>> {
@@ -84,6 +90,7 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
   const issues: string[] = [];
   const unresolved = new Map<string, string[]>();
   const approx = new Map<string, string[]>();
+  const gapsOut = new Map<string, Gap[]>();
   const mappedRows = new Map<string, Array<Record<string, unknown>>>();
   for (const stage of plan.stages) {
     // every row the agent really saw for this stage (the proven page, the other measuring calls mapped with the same code, the sample rows it listed): what a named source is looked for in
@@ -161,7 +168,8 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
       // A SINGLE RECORDED QUERY CANNOT SERVE SEVERAL NAMED SOURCES: a stage that must give items of three named channels, whose measuring call searched for one of them, would deliver that one only. Such a stage has no recipe: the model
       // searches every named source (one search each) and the same checks keep only the named ones.
       const named = refit.filters.find((f) => isEnabled(f) && f.kind === "account" && (f.values ?? []).length >= 2);
-      const cursorParam = (endpoint.pagination ?? []).find((p) => !LIMIT_INPUT.test(p)) ?? null;
+      // the cursor input: the endpoint's own paging list; in the redesigned mode, else the paging input of its inputs that this very page proves (S1 item 1.8)
+      const cursorParam = (endpoint.pagination ?? []).find((p) => !LIMIT_INPUT.test(p)) ?? (deps.codeBuild ? discoverCursor(endpoint, pageJson) : null);
       // ...unless every named source was read by a measuring call of its own (its own query, or the source's own listing of its items): the engine then reads each of them in turn, each up to its share
       let sources: EngineSpec["sources"] | undefined;
       const listing = stage.parent_key === null && isListingEndpoint(endpoint);
@@ -186,11 +194,25 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
         delete params[found.param];
         for (const a of also) delete params[a.param];
       }
+      // THE REQUEST BUILT BY CODE (S1 item 1.6, only in the redesigned mode): the customer's conditions are written into the tool's own fields; a stage whose inputs are not all real inputs of the endpoint keeps the model's request and is NOT marked as built by code
+      let builtBy: "code" | "model" | undefined;
+      let stageGaps: Gap[] = [];
+      if (deps.codeBuild && !sources) {
+        const built = buildToolInput(endpoint, understoodOfStage(stage, deps.codeBuild.nowMs), params);
+        builtBy = built.ok ? "code" : "model";
+        if (built.ok) { for (const k of Object.keys(params)) delete params[k]; Object.assign(params, built.params); stageGaps = built.gaps; }
+      }
       // a source with no next page and a flat price per call is asked for everything its limit allows (a lower limit only makes the one answer smaller)
       const lifted = stage.parent_key === null && !sources ? liftedVolume(endpoint, params) : null;
       if (lifted) params[lifted.param] = lifted.to;
       const window = stage.parent_key === null && !sources ? dateWindowOf(endpoint, params) : null;
-      specs.set(stage.key, { endpoint_id: stage.endpoint_id, params, cursor_param: cursorParam, map_code: mapCode, map_file_id: callId, parent_binding: binding, ...(proof.idField !== "id" ? { id_field: proof.idField } : {}), ...(window ? { window } : {}), ...(sources ? { sources } : {}), ...(sources && listing ? { source_listing: true } : {}) });
+      specs.set(stage.key, { endpoint_id: stage.endpoint_id, params, cursor_param: cursorParam, map_code: mapCode, map_file_id: callId, parent_binding: binding, ...(proof.idField !== "id" ? { id_field: proof.idField } : {}), ...(window ? { window } : {}), ...(sources ? { sources } : {}), ...(sources && listing ? { source_listing: true } : {}), ...(builtBy ? { built_by: builtBy } : {}), ...(stageGaps.length > 0 ? { gaps: stageGaps } : {}) });
+      // THE NEXT TOOLS (S1 item 1.9, redesigned mode): another source of the same job that the planner also sampled and mapped, proven the same way, is stored as the stage's alternative
+      if (deps.codeBuild && stage.parent_key === null && !sources) {
+        const alternatives = await nextToolsOf(deps, stage, endpoint, refit.filters);
+        if (alternatives.length > 0) specs.get(stage.key)!.alternatives = alternatives;
+      }
+      if (stageGaps.length > 0) gapsOut.set(stage.key, stageGaps);
       filtersOut.set(stage.key, refit.filters);
       mappedRows.set(stage.key, mapped);
       contractIssues = null;
@@ -212,7 +234,46 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
       if (missing.length > 0) unresolved.set(stage.key, missing);
     }
   }
-  return { specs, filters: filtersOut, issues, unresolved, approx };
+  return { specs, filters: filtersOut, issues, unresolved, approx, gaps: gapsOut };
+}
+
+/** The most alternatives a stage stores. */
+const MAX_ALTERNATIVES = 2;
+
+/**
+ * THE NEXT TOOLS OF A STAGE (S1 item 1.9). Every OTHER source of the same job (the same capability) that this run called, mapped with its own recorded code, and whose mapping gives exactly the rows of the page it was measured on (the same proof as the main recipe: every row of the page,
+ * the stage's columns, an id) is an alternative: its first-page inputs are built by code (toolInput.ts), its cursor input is discovered on its own page, its date window is read from its inputs. Nothing new is measured or paid for: only what the planner already sampled. In the order the planner sampled them.
+ */
+async function nextToolsOf(deps: DeriveDeps, stage: PricedPlan["stages"][number], endpoint: CatalogEndpoint, filters: StageFilter[]): Promise<NonNullable<EngineSpec["alternatives"]>> {
+  const out: NonNullable<EngineSpec["alternatives"]> = [];
+  for (const [outId, run] of deps.codeRuns.entries()) {
+    if (out.length >= MAX_ALTERNATIVES) break;
+    if (run.files.length !== 1 || !/^call_\d{4,6}$/.test(run.files[0])) continue;
+    const callId = run.files[0];
+    const row = deps.calls.find((c) => c.id === `${deps.missionId}:${callId}`);
+    if (!row || row.status !== "ok" || row.endpoint_id === stage.endpoint_id || out.some((a) => a.endpoint_id === row.endpoint_id)) continue;
+    const other = deps.catalog.byId.get(row.endpoint_id);
+    if (!other || !other.capability || other.capability !== endpoint.capability) continue;
+    const params = paramsOfCall(deps, callId);
+    if (!params) continue;
+    const [page, seen] = await Promise.all([deps.store.getFile(deps.missionId, `raw/${callId}.json`), deps.store.getFile(deps.missionId, `out/${outId}.json`)]);
+    if (page === null || seen === null) continue;
+    let pageJson: unknown;
+    let seenJson: unknown;
+    try { pageJson = JSON.parse(page); seenJson = JSON.parse(seen); } catch { continue; }
+    if (!Array.isArray(seenJson) || seenJson.length === 0 || !seenJson.every(isRecord) || seenJson.length !== Number(row.rows_returned ?? -1)) continue;
+    const again = await deps.sandbox(run.code, { [callId]: pageJson });
+    if (!again.ok || again.resultJson === null) continue;
+    try { if (canon(JSON.parse(again.resultJson)) !== canon(seenJson)) continue; } catch { continue; }
+    const proof = proveMappedRows({ rows: seenJson as Array<Record<string, unknown>>, columnKeys: stage.columns.map((c) => c.key), textColumns: stage.relevance?.text_columns, filters, label: `alternative «${other.id}»` });
+    if (proof.issues.length > 0) continue;
+    const built = buildToolInput(other, understoodOfStage(stage, deps.codeBuild!.nowMs), params);
+    if (!built.ok) continue;
+    const cursor = (other.pagination ?? []).find((p) => !LIMIT_INPUT.test(p)) ?? discoverCursor(other, pageJson);
+    const window = dateWindowOf(other, built.params);
+    out.push({ endpoint_id: other.id, params: built.params, cursor_param: cursor, map_code: run.code, map_file_id: callId, ...(proof.idField !== "id" ? { id_field: proof.idField } : {}), ...(window ? { window } : {}) });
+  }
+  return out;
 }
 
 interface MeasuredPage { id: string; params: Record<string, unknown>; rows: Array<Record<string, unknown>> }

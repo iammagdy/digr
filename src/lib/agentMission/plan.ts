@@ -68,6 +68,12 @@ export interface EngineSpec {
   sources?: Array<{ names: string[]; params: Record<string, unknown> }>;
   /** The endpoint lists the items of ONE source named by its own input (a channel's videos): an item that names no author belongs to the source that was asked for. */
   source_listing?: boolean;
+  /** WHO WROTE THE REQUEST of this recipe (S1 item 1.6): `code` when the inputs were built by code from the tool's own fields and every input was checked against the endpoint; absent or `model` when the model's measured inputs were frozen as they were. Raw delivery runs only for `code` (redesignFlags.ts rawDeliveryEffective). */
+  built_by?: "code" | "model";
+  /** The customer's conditions this tool cannot carry (S1 items 1.6 and 1.7): a period, a language, a country, an account or replies with no field of its own (`not_enforced`: a field that only places the request). */
+  gaps?: Array<{ cls: string; reason: string }>;
+  /** THE NEXT TOOLS, in order (S1 item 1.9): when this tool fails twice or runs dry before the approved count, the engine takes the next one and continues by the remaining count, the date boundary reached and the stored ids. Each alternative carries its own proven mapping. Absent: no fallback. */
+  alternatives?: Array<{ endpoint_id: string; params: Record<string, unknown>; cursor_param: string | null; map_code: string; map_file_id: string; id_field?: string; window?: DateWindow }>;
 }
 
 export interface ProposedStage {
@@ -78,6 +84,8 @@ export interface ProposedStage {
   parent_key: string | null;
   /** Rows taken from each parent row (required for a stage with a parent). */
   per_parent_rows?: number;
+  /** Every child of every parent is read to the source's end, each parent up to its OWN counter (S1 item 1.10, «كل التعليقات»); `planned_rows` is the estimate from the counters. Set by code only. */
+  all_children?: boolean;
   /** Whether this stage's rows go into the customer's files (and count in the charge). */
   deliver: boolean;
   columns: PlanColumn[];

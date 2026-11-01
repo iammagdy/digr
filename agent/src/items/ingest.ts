@@ -11,6 +11,7 @@ import { namedSourceOf, SOURCE_KEY } from "../../../src/lib/agentMission/namedSo
 import { looksLikeDateColumn, parseMoment } from "../../../src/lib/agentMission/dateCells";
 import { APPROX_DATES_KEY, approxDayOf, derivedRelativeDay, parseRelativeAge } from "../../../src/lib/agentMission/relativeDates";
 import { CHILD_RAW_FILTER_KINDS, filterVerdict, governmentUnclear, isEnabled } from "../../../src/lib/agentMission/filters";
+import { MARKS_KEY, markVerdict } from "../../../src/lib/agentMission/rawMarks";
 import type { MissionEventInput } from "../types";
 import type { Reviewer } from "../review";
 import type { ItemReason, ItemStore, Op, Row, StageCounts } from "./itemStore";
@@ -45,6 +46,8 @@ export interface IngestOptions {
   /** «Now» for a period counted in days (tests pass a fixed moment). */
   now?: number;
   /** A stage whose customer named SEVERAL sources: every item is marked with the named source it belongs to (read from `fields`), and no source takes more than `perValue` items (an item beyond it is kept, never delivered, like a match beyond the volume bought). */
+  /** RAW DELIVERY (S1 item 1.1): the stage runs in the redesigned mode (its flag is active and its request was built by code). Only the same id, an unknown parent, the volume bought and a named source's share remove an item; every content rule becomes a mark on the row. Ignored for a people or company stage. Absent: the old checks. */
+  raw?: boolean;
   sourceQuota?: { fields: string[]; values: string[]; perValue: number; /** The stream reads ONE named source's own listing: an item that names no author belongs to it (and its author cell, when empty, says so). */ defaultSource?: string };
 }
 
@@ -70,7 +73,8 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   // THE ITEMS OF A CHILD STAGE (the comments of a post, the reviews of a place, the employees of a company) ARE DELIVERED AS THE SOURCE GIVES THEM: no topic check, no language check, no place check and no text de-duplication (two people who wrote the same
   // comment wrote two comments); only the same item id is one item. The relevance and the language rules choose the PARENTS and the top-level items.
   const isChild = stage.parent_key !== null;
-  const spec = isChild ? null : stage.relevance ?? null;
+  const rawMode = options.raw === true && !isContactSource(stage.endpoint_id) && !isPeopleStage(stage);
+  const spec = isChild || rawMode ? null : stage.relevance ?? null;
   const before = items.counts(key);
   const room = Math.max(0, stage.planned_rows - before.accepted);
   const columnKeys = stage.columns.map((c) => c.key);
@@ -84,7 +88,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   const placeFilter = enabledFilters.find((f) => f.kind === "place" && f.places && f.places.length > 0);
   const promisedPlace = placeFilter ? { places: placeFilter.places!, fields: placeFilter.fields ?? (placeFilter.field ? [placeFilter.field] : []) } : null;
   // THE SAME TEXT TWICE (a post or a comment): the first is kept, the rest are counted as duplicates. A text of a child stage is unique among the items of its own parent.
-  const dedupeText = isTextItemStage(stage) && !isChild;
+  const dedupeText = isTextItemStage(stage) && !isChild && !rawMode;
   const seenTexts = new Set<string>();
   if (dedupeText) {
     const dedupeKey = textKeyOf(stage);
@@ -144,7 +148,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     // THE PLACE CELLS in Arabic («al qahirah» → «القاهرة»); never empty when the card promised the place
     if (!isChild) placeCellsAr(row, stage.columns, raw, promisedPlace);
     // WHAT THE CARD PROMISES, checked here on the mapped item (replies, language, period, account, place): an item a filter rejects is neither delivered nor charged, and is kept with its reason
-    if (enabledFilters.length > 0) {
+    if (!rawMode && enabledFilters.length > 0) {
       const why = filterVerdict(enabledFilters, raw, { textKey: textKeyOf(stage, Object.keys(raw)), now, ...(quota?.defaultSource ? { listing: true } : {}) });
       if (why) { tally.rejected_by_filter += 1; excludedStructural.push({ id, reason: why, row }); continue; }
       if (governmentUnclear(enabledFilters, raw)) govUnclear.add(id);
@@ -160,6 +164,8 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
         if (quota.defaultSource === src) for (const f of quota.fields) if (columnKeys.includes(f) && !String(row[f] ?? "").trim()) row[f] = src;
       }
     }
+    // RAW DELIVERY: what is true of the row is written on it as marks (reply, repost, language, period, named source); nothing is removed for it (rawMarks.ts)
+    if (rawMode && !isChild) row[MARKS_KEY] = markVerdict(stage.filters, raw, { textKey: textKeyOf(stage, Object.keys(raw)), now, ...(quota?.defaultSource ? { listing: true } : {}) });
     // A DATE THE SOURCE GIVES ONLY AS A RELATIVE TIME («قبل ٤ أيام», «4 days ago») is written as the approximate day it stands for (from the moment the item was read) and the item is marked, so the file says the date is approximate (relativeDates.ts)
     const approxColumns: string[] = [];
     for (const c of stage.columns) {

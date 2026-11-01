@@ -3,7 +3,7 @@ import type { EngineSpec, PricedPlan } from "../../../src/lib/agentMission/plan"
 import type { Gateway } from "../gateway";
 import { RAW_PATH } from "../gateway";
 import { rankPeopleByRole, titleFieldOf, titleTierOf } from "../../../src/lib/agentMission/roles";
-import { parseMoment } from "../../../src/lib/agentMission/dateCells";
+import { looksLikeDateColumn, parseMoment } from "../../../src/lib/agentMission/dateCells";
 import { dayOf, firstWindowEndDay, nextWindowEndDay, windowParams } from "../../../src/lib/agentMission/dateWindow";
 import { isEnabled } from "../../../src/lib/agentMission/filters";
 import { childCountNumber, childCountOf } from "../../../src/lib/agentMission/childCount";
@@ -51,6 +51,8 @@ export interface EngineDeps {
   maxPagesPerStage?: number;
   /** Asked before every page: a reason (the worker's memory guard) stops the run so the mission can be put back in the queue with everything it saved. */
   shouldStop?: () => string | null;
+  /** The stages that run the REDESIGNED engine behaviour (S1 items 1.1, 1.3, 1.9): the type's flag is active for the account AND the stage's recipe was built by code. Absent or not listed: the engine behaves as it always did. */
+  redesignStages?: ReadonlySet<string>;
   /** The pause before the one delayed review retry (default AGENT_REVIEW_RETRY_DELAY_MS); tests pass a fake that does not wait. */
   sleep?: (ms: number) => Promise<void>;
   log?: (line: string) => void;
@@ -130,7 +132,8 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
   // a comment whose counter is 0 gets 0 (no paid read), the others get what they have up to the cap, and when the total is smaller than the need every comment gets an equal part first
   const isReplies = stage.replies_of !== undefined;
   const shareById = isReplies ? (() => { const shares = replyShares(parentRows.map((r) => ownChildCount(r)), stage.planned_rows, Number.isFinite(per) ? per : AGENT_REPLIES_PER_COMMENT_MAX); return new Map(parentRows.map((r, i) => [String(r.id), shares[i]] as const)); })() : null;
-  const swapsLeft = { n: onlyChild && stage.per_parent_rows !== undefined && !isReplies ? Math.max(3, parentRows.length * 3) : 0 };
+  const readAll = stage.all_children === true;
+  const swapsLeft = { n: onlyChild && stage.per_parent_rows !== undefined && !isReplies && !readAll ? Math.max(3, parentRows.length * 3) : 0 };
   // the parent's parent (the video of a comment): the replies' source takes the video's id and link beside the comment's id
   const grandKey = deps.plan.stages.find((x) => x.key === stage.parent_key)?.parent_key ?? null;
   const grandRows = new Map<string, Row>((grandKey ? items.acceptedRows(grandKey) : []).map((r) => [String(r.id), r] as const));
@@ -140,7 +143,8 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
       for (;;) {
         if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
         const parentId = String(parent.id);
-        const parentCap = shareById ? shareById.get(parentId) ?? 0 : cap;
+        // «ALL THE COMMENTS» (S1 item 1.10): each parent is read to its OWN counter, not to an equal share
+        const parentCap = shareById ? shareById.get(parentId) ?? 0 : readAll ? ownChildCount(parent) ?? cap : cap;
         if (shareById && parentCap <= 0) break;
         // A PARENT THAT SAYS IT HAS NO CHILD IS NOT READ (audit 2026-11 gap G10, live: 9 of 108 paid comment reads returned nothing): its own count field (comments, replies, reviews) is 0, so no paid read is made. It is replaced by a spare parent the same way a parent
         // the source answered nothing for is, or skipped when none is left. A parent that gives no count at all is read as before.
@@ -281,6 +285,11 @@ function bindingValue(v: unknown, domain: boolean): string | null {
   return domain ? (t.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/^www\./i, "").split(/[/?#]/)[0] || null) : t;
 }
 
+/** The mapped field whose oldest value marks the date boundary a fallback continues from: the period's field, else the stage's own date column (redesigned stages only). */
+function boundaryFieldOf(stage: Stage, now: number): string | null {
+  return periodOf(stage, now)?.field ?? stage.columns.find((c) => looksLikeDateColumn(c.title_ar, c.key))?.key ?? null;
+}
+
 /** The period the customer asked for, as the engine can walk it: the enabled period filter with its date field and a first day. Null when the stage has none (or only an end). */
 function periodOf(stage: Stage, now: number): { field: string; sinceMs: number } | null {
   const f = (stage.filters ?? []).find((x) => x.kind === "period" && isEnabled(x) && x.field);
@@ -295,11 +304,47 @@ function periodOf(stage: Stage, now: number): { field: string; sinceMs: number }
  * (the overlapping day is read again and ignored), the review budget and every cap (calls, pages, time) are the ones of every read.
  */
 async function runRoot(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promise<{ reason: StopReason; aborted: string | null }> {
+  const r = await runRootPrimary(deps, stage, spec);
+  return deps.redesignStages?.has(stage.key) ? continueAcrossTools(deps, stage, spec, r) : r;
+}
+
+/** Why a read of one tool may be continued on the next one: it failed twice, it ran dry before the count, or it only repeated itself. */
+const CONTINUE_ON: ReadonlySet<StopReason> = new Set<StopReason>(["failed", "source_exhausted", "no_new_items"]);
+/** The first day a read goes back to when the customer gave no period. */
+const EARLIEST_DAY = "2000-01-01";
+
+/**
+ * FETCH TO THE COUNT ACROSS TOOLS (S1 item 1.9, owner decisions D7 and D15). When the tool of the recipe could not give the approved count, the next tool of `spec.alternatives` continues: by the remaining count (the stage's own accepted count), by the date boundary
+ * (a tool with date inputs is asked for the days up to the oldest day read so far) and by the stored ids (the item store drops an id it already holds). A cursor never crosses providers; near-duplicates the id check cannot catch are kept. Everything stays inside the
+ * budget: when the reserve refuses before the count is reached the stage ends with `need_new_plan` and says so, never with a silently lower count.
+ */
+async function continueAcrossTools(deps: EngineDeps, stage: Stage, spec: EngineSpec, first: { reason: StopReason; aborted: string | null }): Promise<{ reason: StopReason; aborted: string | null }> {
+  const { items } = deps;
+  const now = (deps.now ?? Date.now)();
+  const period = periodOf(stage, now);
+  let r = first;
+  for (let i = 0; i < (spec.alternatives ?? []).length; i += 1) {
+    if (r.aborted) return r;
+    if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
+    if (!CONTINUE_ON.has(r.reason)) break;
+    const alt = spec.alternatives![i];
+    const oldest = items.streamKeys(stage.key).map((k) => items.streamState(stage.key, k)?.oldest ?? null).filter((x): x is number => x !== null);
+    const params = alt.window && oldest.length > 0 ? windowParams(alt.window, alt.params, period ? dayOf(period.sinceMs) : EARLIEST_DAY, dayOf(Math.min(...oldest))) : { ...alt.params };
+    const { alternatives: _a, sources: _s, id_field: _i, window: _w, ...rest } = spec;
+    const altSpec: EngineSpec = { ...rest, endpoint_id: alt.endpoint_id, params, cursor_param: alt.cursor_param, map_code: alt.map_code, map_file_id: alt.map_file_id, ...(alt.id_field !== undefined ? { id_field: alt.id_field } : {}), ...(alt.window ? { window: alt.window } : {}) };
+    r = await runStream(deps, stage, altSpec, `alt:${i}`, params, null, Number.POSITIVE_INFINITY, boundaryFieldOf(stage, now));
+  }
+  if (r.aborted) return r;
+  if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
+  return r.reason === "budget" ? { reason: "need_new_plan", aborted: null } : r;
+}
+
+async function runRootPrimary(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promise<{ reason: StopReason; aborted: string | null }> {
   const { items } = deps;
   if (spec.sources && spec.sources.length > 0) return runSources(deps, stage, spec, spec.sources);
   const now = (deps.now ?? Date.now)();
   const period = spec.window ? periodOf(stage, now) : null;
-  let r = await runStream(deps, stage, spec, "root", { ...spec.params }, null, Number.POSITIVE_INFINITY, period?.field ?? null);
+  let r = await runStream(deps, stage, spec, "root", { ...spec.params }, null, Number.POSITIVE_INFINITY, period?.field ?? (deps.redesignStages?.has(stage.key) ? boundaryFieldOf(stage, now) : null));
   if (!spec.window || !period) return r;
   const sinceDay = dayOf(period.sinceMs);
   let lastEnd = firstWindowEndDay(spec.window, spec.params, now);
@@ -423,12 +468,14 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     const ranked = parentId !== null && stage.role_preference ? rankPeopleByRole(confirmed, stage.role_preference.role).rows : confirmed;
     const incoming: Row[] = ranked.map((r) => (parentId !== null ? { ...r, parent_id: parentId } : r));
     const nextCursor = pageMode ? (result.rows_in_page > 0 ? String((cursor !== null ? Number(cursor) : Number(params.page)) + 1) : null) : result.next_cursor ?? null;
-    const ended = pageMode ? result.rows_in_page === 0 : !nextCursor || result.rows_in_page === 0 || result.has_more === false || !spec.cursor_param;
+    // THE COUNT GUARANTEE (S1 item 1.3, redesigned stages): an EMPTY page that still carries a next-page value is a barren page (two in a row end the read, BARREN_PAGES), not the end of the source; the source's own «no more» (no next value, or has_more false) still ends it
+    const guaranteeCount = deps.redesignStages?.has(stage.key) === true;
+    const ended = pageMode ? result.rows_in_page === 0 : !nextCursor || (result.rows_in_page === 0 && !guaranteeCount) || result.has_more === false || !spec.cursor_param;
     const before = items.counts(stage.key).accepted;
     // a parent's share (per_parent_rows) is a cap on what this page may add for it
     const have = parentId !== null ? items.acceptedRows(stage.key).filter((r) => String(r.parent_id) === parentId).length : 0;
     const oldestMs = periodField !== null ? oldestMomentOf(incoming, periodField) : null;
-    await ingestRows(deps, stage, incoming, { silent: true, idField: spec.id_field ?? null, ...(parentId !== null && Number.isFinite(perParentCap) ? { acceptCap: Math.max(0, perParentCap - have) } : {}), ...(source ? { sourceQuota: { fields: source.fields, values: source.values, perValue: source.perValue, ...(source.listing && source.names.length === 1 ? { defaultSource: source.names[0] } : {}) } } : {}), page: { stream: streamKey, call_id: result.call_id, cursor_in: cursor, cursor_next: nextCursor, has_more: result.has_more, ended, rows_in_page: result.rows_in_page, ...(oldestMs !== null ? { oldest_ms: oldestMs } : {}) } });
+    await ingestRows(deps, stage, incoming, { silent: true, idField: spec.id_field ?? null, ...(deps.redesignStages?.has(stage.key) ? { raw: true } : {}), ...(parentId !== null && Number.isFinite(perParentCap) ? { acceptCap: Math.max(0, perParentCap - have) } : {}), ...(source ? { sourceQuota: { fields: source.fields, values: source.values, perValue: source.perValue, ...(source.listing && source.names.length === 1 ? { defaultSource: source.names[0] } : {}) } } : {}), page: { stream: streamKey, call_id: result.call_id, cursor_in: cursor, cursor_next: nextCursor, has_more: result.has_more, ended, rows_in_page: result.rows_in_page, ...(oldestMs !== null ? { oldest_ms: oldestMs } : {}) } });
     // a decision maker read on this page takes the place of a lower title accepted from an earlier page of the same company
     if (parentId !== null && depthPages > 1) await upgradeDecisionMakers(deps, stage, parentId);
     await emitStageProgress(deps, stage, { collecting: true });

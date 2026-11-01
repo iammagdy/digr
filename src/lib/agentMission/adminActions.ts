@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { REDESIGN_FLAGS_KEY, REDESIGN_MODES, isRedesignType, normalizeRedesignFlags, type RedesignMode } from "./redesignFlags";
 import { AGENT_SOURCE_MEASURE_WINDOW_MS, AGENT_ALLOWED_MODELS, AGENT_DYNO_MEMORY_MB, AGENT_BUCKET, AGENT_HEARTBEAT_TABLE, AGENT_SETTINGS_TABLE, AGENT_TEST_ACCOUNT_EMAIL, MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE, PLANNING_MODEL_SETTING_KEY } from "./constants";
 import { memoryWarning } from "./concurrency";
 import { latestBeat, workerAlive } from "./heartbeat";
@@ -97,7 +98,23 @@ export async function setMissionPricing(client: any, input: { markup: unknown; m
   return { ok: true, before, after };
 }
 
-const SUMMARY_COLUMNS = "id,request_text,status,question_ar,reserved_points,unit_price_points,delivered_units,charged_points,planning_model,planning_llm_usd,execution_model,execution_llm_usd,planning_treg_usd,execution_treg_usd,created_at,updated_at";
+/**
+ * The redesign switch of ONE request type (redesignFlags.ts): saved in agent_settings (key `redesign_flags`) by the admin only. Returns the mode before and after so the caller writes the audit row. An unknown type or
+ * mode is refused and nothing is written; nothing here touches a money table.
+ */
+export async function setRedesignFlag(client: any, input: { type: unknown; mode: unknown; adminId: string }): Promise<ActionResult<{ before: RedesignMode; after: RedesignMode }>> {
+  if (!isRedesignType(input.type)) return bad(400, "نوع الطلب غير معروف.");
+  if (!(REDESIGN_MODES as ReadonlyArray<unknown>).includes(input.mode)) return bad(400, "الوضع غير معروف.");
+  const mode = input.mode as RedesignMode;
+  const current = await client.from(AGENT_SETTINGS_TABLE).select("value").eq("key", REDESIGN_FLAGS_KEY).maybeSingle();
+  const flags = normalizeRedesignFlags(current.data?.value);
+  const before = flags[input.type];
+  const { error } = await client.from(AGENT_SETTINGS_TABLE).upsert({ key: REDESIGN_FLAGS_KEY, value: { ...flags, [input.type]: mode }, updated_at: new Date().toISOString(), updated_by: input.adminId }, { onConflict: "key" });
+  if (error) return bad(500, "تعذّر حفظ الإعداد.");
+  return { ok: true, before, after: mode };
+}
+
+const SUMMARY_COLUMNS ="id,request_text,status,question_ar,reserved_points,unit_price_points,delivered_units,charged_points,planning_model,planning_llm_usd,execution_model,execution_llm_usd,planning_treg_usd,execution_treg_usd,created_at,updated_at";
 
 /** The page's first load: the worker's heartbeat (alive or not), the model setting, and the latest missions. */
 export async function loadOverview(client: any, now: number = Date.now()) {

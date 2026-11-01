@@ -1,5 +1,6 @@
 import type { CatalogEndpoint, TregCatalog } from "../treg/catalog";
 import { unitCost } from "../modelPlanner/pricing";
+import { canExpress, toolProfile, type ConditionClass } from "./toolProfile";
 
 /**
  * CHEAPEST SOURCE FIRST, BY CODE. For every stage the planner is given the candidate sources of the catalog ranked by their EXPECTED COST PER DELIVERED ITEM, computed here and nowhere else:
@@ -227,3 +228,29 @@ export const EMPTY_ONCE_FACTOR = 5;
 /** The words the planner may give for skipping a cheaper source: recorded with the call. */
 export const SKIP_REASONS = ["wrong_data", "missing_input", "too_few_rows", "known_failing", "other"] as const;
 export type SkipReason = (typeof SKIP_REASONS)[number];
+
+// ---------------------------------------------------------------------------------------------------- coverage first, then price (S1 item 1.5)
+
+/** Which of the wanted conditions this endpoint's own inputs can express, and which not (toolProfile.ts). */
+export function coverageOf(endpoint: CatalogEndpoint, wanted: ReadonlyArray<ConditionClass>): { covered: ConditionClass[]; missing: ConditionClass[] } {
+  const profile = toolProfile(endpoint);
+  const covered = wanted.filter((c) => canExpress(profile, c));
+  return { covered, missing: wanted.filter((c) => !covered.includes(c)) };
+}
+
+export interface CoverageRankedSource extends RankedSource { covered: ConditionClass[]; missing: ConditionClass[] }
+export interface CoverageRanking { ranked: CoverageRankedSource[]; skipped: Ranking["skipped"]; /** Wanted conditions that NO candidate can express (the count is never a gap: the delivery cap is code). */ gaps: ConditionClass[] }
+
+/**
+ * THE CANDIDATES RANKED BY CONDITION COVERAGE, THEN PRICE (owner decision D7: first look for another tool that can express the condition). The tools that can express more of the wanted conditions come first; among equals the usual expected
+ * cost per delivered item decides (rankEndpoints). A condition no candidate can express is returned as a gap, and the ranking then falls back to price for it. The page size does not count toward coverage. Pure.
+ */
+export function rankByCoverage(endpoints: ReadonlyArray<CatalogEndpoint>, catalog: TregCatalog, stats: StatsMap, now: number, wanted: ReadonlyArray<ConditionClass>, options: { /** The rows the request needs: above what one call returns, an endpoint with no cursor ranks below a pageable one (item 1.8). */ rows?: number } = {}): CoverageRanking {
+  const base = rankEndpoints(endpoints, catalog, stats, now);
+  const scored = base.ranked.map((r) => ({ ...r, ...coverageOf(catalog.byId.get(r.id)!, wanted) }));
+  const score = (r: { covered: ConditionClass[] }): number => r.covered.filter((c) => c !== "count").length;
+  const stuck = (r: CoverageRankedSource): number => (options.rows !== undefined && options.rows > r.rowsPerCall && toolProfile(catalog.byId.get(r.id)!).cursor === null ? 1 : 0);
+  scored.sort((a, b) => score(b) - score(a) || stuck(a) - stuck(b) || a.effectiveUsd - b.effectiveUsd || a.id.localeCompare(b.id));
+  const gaps = wanted.filter((c) => c !== "count" && scored.length > 0 && scored.every((r) => !r.covered.includes(c)));
+  return { ranked: scored, skipped: base.skipped, gaps };
+}
