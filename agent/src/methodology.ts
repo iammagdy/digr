@@ -12,6 +12,7 @@ import { reasonTextAr, shortfallClauseAr, stageTruthBodyAr } from "./finalize";
 import { isPeopleStage } from "../../src/lib/agentMission/people";
 import { decisionMakersLeftOutAr } from "../../src/lib/agentMission/roles";
 import { perParentShortfallAr } from "./perParentLimits";
+import { threadCounterLinesOfPlan } from "./threadCounters";
 
 /**
  * THE «المنهجية» SECTION OF THE FIRST SHEET, built by CODE from what the mission RECORDED (the approved plan, the item store's counts, the request's own words, the delivered rows): the model never writes it, and a fact that was not
@@ -308,7 +309,8 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
   for (const s of delivering) {
     const r = facts.stages?.[s.key];
     const got = (rowsByStage[s.key] ?? []).length;
-    if (!r || got >= s.planned_rows) continue;
+    // the replies are an estimate bought on top of the comments the customer asked for: fewer than estimated is not a shortfall (the counter lines below say what each video gave)
+    if (!r || got >= s.planned_rows || s.replies_of !== undefined) continue;
     // WHAT THE STAGE FOUND AND LEFT OUT, from the recorded counts, when our own row rules left out what the source gave (live A1, A2: 31 and 32 people found, none delivered, «the source gave no more»)
     const truth = stageTruthBodyAr({ found: r.found, duplicates: r.duplicates, delivered: got, excludedByReason: r.excludedByReason, pending: r.pending, reviewStop: facts.reviewStop ?? null, stop: r.stop, people: isPeopleStage(s) });
     if (truth) { limits.push(`${many ? `«${s.title_ar}»: ` : ""}سُلّم ${fmt(got)} من ${fmt(s.planned_rows)}: ${truth}.`); continue; }
@@ -318,6 +320,9 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
     const clause = shortfallClauseAr(r.stop, { pending: r.pending, stop: facts.reviewStop ?? null, languageLeftOut: r.excludedByReason.filter_language ?? 0 });
     limits.push(`${many ? `«${s.title_ar}»: ` : ""}سُلّم ${fmt(got)} من ${fmt(s.planned_rows)} ${clause}.`);
   }
+  // THE SOURCE'S OWN COUNTER next to what was delivered, per parent (a video's comments count against the comments and replies delivered under it)
+  const threads = threadCounterLinesOfPlan(plan, rowsByStage, knownNounOf);
+  for (const line of threads.limitLines) limits.push(line);
   // DECISION MAKERS: a people stage that prefers the decision makers says when people who are not fill the count (the titles of the delivered rows; a title the source did not give is not judged)
   for (const s of delivering) {
     const role = (s as { role_preference?: { role?: string } }).role_preference?.role;
@@ -332,6 +337,7 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
     const line = periodLimitLineAr({ filter: (s.filters ?? []).find((f) => isEnabled(f) && f.kind === "period"), covered: lay ? coveredOf(lay) : null, deliveredAt, targetReached: facts.stages?.[s.key]?.stop === "target_reached" });
     if (line) limits.push(many ? `«${s.title_ar}»: ${line}` : line);
   }
+  if (threads.counterLines.length > 0) items.push({ label: "عدّاد المصدر وما سُلّم", values: threads.counterLines.slice(0, 30) });
   items.push({ label: "حدود هذا التسليم", values: limits.length ? limits : ["لا قيود سُجّلت على هذا التسليم"] });
 
   // 9. one sentence the researcher can paste, with the delivery date

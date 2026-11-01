@@ -233,6 +233,15 @@ export const AGENT_EXCLUDED_ROWS_KEPT = 500;
 /** accept_quote_atomic refuses a target volume above this. */
 export const AGENT_MAX_DELIVERED_ROWS = 5_000;
 
+/**
+ * REPLIES (the replies PR, owner decision: researchers analyse FULL threads). The customer's number («١٠ تعليقات») counts TOP-LEVEL comments only; the replies of those comments are delivered IN ADDITION and priced by code. The most replies read for one comment (a thread with
+ * forty replies is cut here, and the limits row says so), and the replies a source is assumed to give in one call when the catalog does not say (the price of the step rests on it).
+ */
+export const AGENT_REPLIES_PER_COMMENT_MAX = 50;
+export const AGENT_REPLIES_ROWS_PER_CALL_ASSUMED = 10;
+/** What a comment is assumed to have in replies when the sampled comments carry no reply counter at all (the plan prices an estimate, never a promise: only the replies really delivered are charged). */
+export const AGENT_REPLIES_UNKNOWN_PER_COMMENT = 2;
+
 // ------------------------------------------------------------- plan and rows
 export const MAX_PLAN_STAGES = 4;
 export const MAX_SAMPLE_ROWS_PER_STAGE = 3;

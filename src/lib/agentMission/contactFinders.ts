@@ -71,7 +71,7 @@ const inputKindOf = (name: string): (typeof INPUT_KINDS)[number]["kind"] | null 
  * under-prices a call that bills per call five-fold (quickenrich's 0.004834 became 0.00097) and the step's cap and the plan's price rested on it. Here the price is the catalog's price of one call (a routed endpoint at its dearest sibling), health and success rate come from the
  * general ranking, and the order is price over success rate, cheapest first, ties by id.
  */
-function rankedHelpers(group: ReadonlyArray<CatalogEndpoint>, catalog: TregCatalog, stats: StatsMap, now: number, options: { rank?: (id: string, usd: number) => number; maxUsd?: number } = {}): FinderInfo[] {
+export function rankedHelpers(group: ReadonlyArray<CatalogEndpoint>, catalog: TregCatalog, stats: StatsMap, now: number, options: { rank?: (id: string, usd: number) => number; maxUsd?: number } = {}): FinderInfo[] {
   const seen = new Set<string>();
   const list: Array<{ key: number; info: FinderInfo }> = [];
   for (const e of group) {

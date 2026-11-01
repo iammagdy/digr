@@ -7,6 +7,7 @@ import { lockedColumnKeys, stagePriceInputs, targetStageKey, type PlanColumn, ty
 import { priceMissionByCode } from "./price";
 import { classifyRows } from "./relevance";
 import { countedQuantities } from "./quantity";
+import { plannedRepliesFor } from "./replies";
 
 /**
  * THE CUSTOMER EDITS THE PLAN ITSELF (the card's «عدّل الخطة»), without cancelling and retyping: the number of items, the period, the language, each exclusion the card shows (replies, reposts, accounts, places) on or off, and the main
@@ -22,6 +23,8 @@ export interface PlanEdits {
     per_parent?: number;
     /** For a people stage read in depth: how many pages of the source are read for each parent (lower = cheaper). */
     pages?: number;
+    /** For the COMMENTS stage: whether the replies of its comments are delivered too (off: the replies stage leaves the plan and the price falls to the comments' own; on: it comes back). */
+    replies?: boolean;
     /** The keys of the columns that stay in the file (the others are hidden; hidden ones may be switched back on). */
     columns?: string[];
     filters?: Array<{ kind: FilterKind; enabled?: boolean; lang?: "ar" | "en"; days?: number }>;
@@ -103,6 +106,23 @@ export function applyPlanEdits(planIn: PricedPlan, editsIn: unknown, ctx: EditCo
     if (!isRecord(e)) return fail("تعذّر قراءة تعديلك. حاول مرة أخرى.");
     const stage = plan.stages.find((s) => s.key === String(e.key ?? ""));
     if (!stage) return fail("هذه المرحلة غير موجودة في الخطة.");
+    // the replies stage is the comments' own: its number per comment, its columns and its filters are code's (replies.ts); the customer's choice is the switch on the comments stage
+    if (stage.replies_of !== undefined && (e.per_parent !== undefined || e.pages !== undefined || e.columns !== undefined || e.filters !== undefined)) return fail("الردود يحدّد برنامجنا عددها وأعمدتها؛ يمكنك إيقافها أو تشغيلها من خيار الردود في التعليقات.");
+    if (e.replies !== undefined) {
+      if (typeof e.replies !== "boolean") return fail("تعذّر قراءة تعديلك. حاول مرة أخرى.");
+      const at = plan.stages.findIndex((x) => x.replies_of === stage.key);
+      if (e.replies === false && at >= 0) {
+        plan.replies_off = plan.stages[at];
+        plan.stages.splice(at, 1);
+        plan.replies_status = "off";
+      } else if (e.replies === true && at < 0) {
+        if (plan.replies_off?.replies_of !== stage.key) return fail("لا ردود متاحة في هذه الخطة.");
+        const back = plan.stages.findIndex((x) => x.key === stage.key);
+        plan.stages.splice(back + 1, 0, plan.replies_off);
+        delete plan.replies_off;
+        delete plan.replies_status;
+      } else if (e.replies === false && at < 0 && plan.replies_off?.replies_of !== stage.key) return fail("لا ردود متاحة في هذه الخطة.");
+    }
     if (e.per_parent !== undefined) {
       // THE COUNT PER ITEM OF THE PARENT («صناع القرار» of each company): a whole number from 1; the stage's rows follow (parent rows x count) and the plan is priced again below
       const per = Number(e.per_parent);
@@ -176,6 +196,15 @@ export function applyPlanEdits(planIn: PricedPlan, editsIn: unknown, ctx: EditCo
     s.sample_matching = counts.match;
     s.yield_share = Math.min(1, Math.max(0.02, (counts.match + 0.5 * counts.review) / mapped.length));
     s.review_share = counts.review / mapped.length;
+  }
+
+  // 3b. THE REPLIES FOLLOW THEIR COMMENTS: the replies planned are the expected replies per comment over the comments now planned (replies.ts), whatever changed the comments' number
+  for (const r of plan.stages.filter((x) => x.replies_of !== undefined)) {
+    const comments = plan.stages.find((x) => x.key === r.replies_of);
+    if (!comments) continue;
+    const elsewhere = plan.stages.filter((x) => x.deliver && x.key !== r.key).reduce((n, x) => n + x.planned_rows, 0);
+    r.planned_rows = Math.max(1, plannedRepliesFor(comments.planned_rows, r.replies_per_comment_expected ?? 0, elsewhere));
+    r.expected_rows = r.planned_rows;
   }
 
   // 4. PRICED AGAIN BY CODE (the same function that priced the plan; the model has no hand in it)

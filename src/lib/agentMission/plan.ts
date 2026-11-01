@@ -8,12 +8,13 @@ import { classifyRows, searchQueryOf, validateRelevanceSpec, type RelevanceSpec 
 import { minimumLineAr, type MissionPricingSettings } from "../missionPricing";
 import { checkCustomerLabel, checkCustomerText } from "./text";
 import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type SourceField } from "./fields";
-import { CONTRACT_ONLY_CLASSES, contractIssuesFor, isPlaceSource, knownColumnTitleAr, type SourceStageKind } from "./taskContracts";
+import { CONTRACT_ONLY_CLASSES, REPLY_TO_KEY, contractIssuesFor, isPlaceSource, knownColumnTitleAr, type SourceStageKind } from "./taskContracts";
 import { neutralPeopleTitleAr, roleLineAr, roleOfNoun, type RoleKey } from "./roles";
 import { toArabicDigits } from "../arabicDigits";
 import { DEFAULT_PEOPLE_PER_PARENT, bindQuantity, bindQuantityDetailed, countedQuantities, ownTitleWords, perParentAskFor, perParentAskOf, perParentQuantities, perSourceQuantities, requestedStageIndexes, sameNounStem, unservedPerParentAsks } from "./quantity";
 import { itemNounOf } from "./itemNoun";
 import { isTextItemStage, textKeyOf } from "./contract";
+import { repliesLinesAr } from "./repliesCard";
 import { childCardTitleAr, childRuleLinesAr } from "./childItems";
 import { platformCostNotesAr } from "./platformNotes";
 import type { DateWindow } from "./dateWindow";
@@ -58,7 +59,7 @@ export interface EngineSpec {
   /** The key of `inputs` the page is handed under (the id of the saved page the code was measured on). */
   map_file_id: string;
   /** A stage with a parent: the input that takes a field of the parent's row (`from` is a column key of the parent stage, or «id»). */
-  parent_binding: { param: string; from: string; /** The OTHER identity inputs the child source takes (the link beside the id, the id beside the link): sent in the same call as the first (a routed source matches its providers on the keys it is sent). */ also?: Array<{ param: string; from: string }>; /** The other fields of a parent that the child source can take (its website, its page, its name): tried in order for a parent with no value for the first, or when the read through the first failed or gave nothing. */ fallbacks?: Array<{ param: string; from: string; domain?: true }> } | null;
+  parent_binding: { param: string; from: string; /** The OTHER identity inputs the child source takes (the link beside the id, the id beside the link): sent in the same call as the first (a routed source matches its providers on the keys it is sent). */ also?: Array<{ param: string; from: string; /** The field is read from the PARENT'S parent (the replies of a comment take the video's id and link). */ grand?: true }>; /** The other fields of a parent that the child source can take (its website, its page, its name): tried in order for a parent with no value for the first, or when the read through the first failed or gave nothing. */ fallbacks?: Array<{ param: string; from: string; domain?: true }> } | null;
   /** The field of the mapped items that keys them when they carry no `id` of their own (chosen by code from the measured page: a platform id, a link, or «$content» for the fingerprint). Absent: the items carry `id`. */
   id_field?: string;
   /** The source's own date inputs, from the catalog (dateWindow.ts): when the source ends before a requested period is reached, the engine asks again with the end of the window moved back. Absent: the source has none documented. */
@@ -168,6 +169,10 @@ export interface PricedStage extends ProposedStage {
   /** PEOPLE DEPTH: pages of the source read for each parent of a people stage that prefers the decision makers (set by code, editable by the customer), and what one page costs (USD, measured). The price carries every page. */
   pages_per_parent?: number;
   page_cost_usd?: number;
+  /** REPLIES (replies.ts): set by code on the stage that reads the replies of the comments of stage `replies_of`; the customer's number counts the top-level comments only, the replies come in addition and are priced. */
+  replies_of?: string;
+  /** The replies a comment is expected to have (the sample's mean, capped): the planned rows follow it when the comments' count is edited. */
+  replies_per_comment_expected?: number;
   sample_examined?: number;
   sample_matching?: number;
 }
@@ -186,6 +191,9 @@ export interface PricedPlan {
   unserved_steps?: UnservedStep[];
   /** THE FINDER STEPS, added by code to every delivered people stage when the request asks for an e-mail or a phone (contactFinders.ts): the engine looks each delivered person up after the stages and fills the cells; the price includes them. */
   contact_steps?: ContactStep[];
+  /** REPLIES (replies.ts): why a comments delivery has no replies stage: no source the plan can feed, the sampled comments carry no reply counter (a paid read is never made blind), none of the sampled comments has a reply, the volume limit, or the customer switched them off (the stage then waits in `replies_off`). Absent: the replies are in the plan or the plan has no comments. */
+  replies_status?: "no_source" | "no_counter" | "none_found" | "no_room" | "off";
+  replies_off?: PricedStage;
 }
 
 export interface UnservedStep {
@@ -215,7 +223,7 @@ const MAX_ASSUMPTIONS = 6;
  * THE PRICE INPUTS OF A PLAN: one per stage. The cost of a contact finder step (per_person_usd per person, contactFinders.ts) is part of the cost per row of the people stage it fills, so the provider cost, the cost per delivered row and the unit price carry it; the step adds no row and no stage.
  * The one place every pricing path uses (the plan check, the approval's re-price, the plan editor).
  */
-export const stagePriceInputs = (stages: ReadonlyArray<PricedStage>, steps?: ReadonlyArray<ContactStep>, options: { withoutDepth?: boolean } = {}) => stages.map((s) => ({ rows: s.planned_rows, costPerRowUsd: depthCostPerRowUsd(s, options.withoutDepth === true) + (steps ?? []).filter((x) => x.stage_key === s.key).reduce((n, x) => n + Math.max(0, x.per_person_usd), 0) + (options.withoutDepth !== true && namesAreWritten(s) ? NAMES_STEP_USD_PER_PERSON : 0), deliver: s.deliver, yield: s.yield_share, reviewShare: s.review_share }));
+export const stagePriceInputs = (stages: ReadonlyArray<PricedStage>, steps?: ReadonlyArray<ContactStep>, options: { withoutDepth?: boolean } = {}) => stages.map((s) => ({ rows: s.planned_rows, costPerRowUsd: depthCostPerRowUsd(s, options.withoutDepth === true) + (steps ?? []).filter((x) => x.stage_key === s.key).reduce((n, x) => n + Math.max(0, x.per_person_usd), 0) + (options.withoutDepth !== true && namesAreWritten(s) ? NAMES_STEP_USD_PER_PERSON : 0), deliver: s.deliver, yield: s.yield_share, reviewShare: s.review_share, ...(s.replies_of !== undefined ? { codeOnly: true } : {}) }));
 /** A delivered stage of decision makers: the Arabic spelling of its people's names is written by one small request (agent/src/namesAr.ts), whose estimate is part of the price (NAMES_STEP_USD_PER_PERSON). The price of the READING alone (the default count of people) leaves it out, like the paid lookups. */
 export const namesAreWritten = (s: Pick<PricedStage, "deliver" | "parent_key" | "role_preference">): boolean => s.deliver && s.parent_key !== null && s.role_preference?.role === "manager";
 /** The cost per delivered person of a stage read in DEPTH: every page of the depth for each parent (pages x one page's cost) shared by the people asked for each parent; never below the measured cost per row. */
@@ -226,6 +234,8 @@ export const depthCostPerRowUsd = (s: PricedStage, withoutDepth = false): number
 };
 /** A column that only holds an internal id (the key says so, or its Arabic title is «معرّف …»): never shown to the customer as a column, never a column of its own in the sheet. */
 export function isInternalColumn(c: { key: string; title_ar: string }): boolean {
+  // the id of the comment a reply answers is a column the customer reads (taskContracts.ts), whatever its title says
+  if (c.key === REPLY_TO_KEY) return false;
   return /^(id|uid|pk|guid|parent_id|parent)$/i.test(c.key) || /(^|_)(id|uid|pk|guid)$/i.test(c.key) || /^id_/i.test(c.key) || /معرّ?ف/.test(c.title_ar);
 }
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -715,6 +725,8 @@ export interface PlanEditorView {
     /** A stage that hangs on another (the people of each company): the number of its items per item of the parent, which the customer can change. */
     per_parent?: number;
     per_parent_label_ar?: string;
+    /** The comments stage only: whether the replies of its comments are in the plan (priced in addition), and the label of the switch. */
+    replies?: { on: boolean; label_ar: string };
     /** A people stage read in DEPTH: the pages of the source read for each parent (the customer may lower it to reduce the price, or raise it up to `pages_max`). */
     pages?: number;
     pages_max?: number;
@@ -744,9 +756,14 @@ export function planEditorView(plan: PricedPlan): PlanEditorView {
     max_rows: AGENT_MAX_DELIVERED_ROWS,
     target_stage_key: targetStageKey(plan),
     stages: plan.stages.map((s) => {
+      // the replies stage is the comments' own (its columns are theirs, its cap is code's): the customer sees one switch on the comments stage, nothing of its own
+      if (s.replies_of !== undefined) return { key: s.key, title_ar: s.title_ar, target: s.planned_rows, columns: [], filters: [] };
       const locked = lockedColumnKeys(s);
+      const hasReplies = plan.stages.some((x) => x.replies_of === s.key);
+      const offReplies = plan.replies_off?.replies_of === s.key;
       return {
         key: s.key, title_ar: s.title_ar, target: s.planned_rows,
+        ...(hasReplies || offReplies ? { replies: { on: hasReplies, label_ar: "تضمين الردود على التعليقات في الملف (يدخل في السعر)" } } : {}),
         ...(s.parent_key !== null && s.deliver && Number(s.pages_per_parent) >= 1 && s.role_preference ? { pages: Math.floor(Number(s.pages_per_parent)), pages_max: AGENT_PEOPLE_PAGES_MAX, pages_label_ar: `عدد صفحات البحث لكل ${itemNounOf(plan.stages.find((p) => p.key === s.parent_key)?.title_ar ?? "").singular}` } : {}),
         ...(s.parent_key !== null && s.deliver && s.per_parent_rows ? { per_parent: s.per_parent_rows, per_parent_label_ar: `عدد «${s.title_ar}» لكل ${itemNounOf(plan.stages.find((p) => p.key === s.parent_key)?.title_ar ?? "").singular}` } : {}),
         columns: [...s.columns.filter((c) => !isInternalColumn(c)).map((c) => ({ key: c.key, title_ar: c.title_ar, on: true, locked: locked.has(c.key) })), ...(s.hidden_columns ?? []).map((c) => ({ key: c.key, title_ar: c.title_ar, on: false, locked: false }))],
@@ -837,7 +854,7 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
   // what the card promises about the items is backed by the filters that are switched ON: a line of the model that promises one is shown only while its filter is on, and a filter that is on gets its own sentence, built by code
   const assumptions = assumptionLinesOf(plan);
   // fewer than the customer asked for: the reason the card shows next to the one target number
-  const notes = [...(plan.notes_ar ?? []), ...(plan.quantity?.reason_ar ? [plan.quantity.reason_ar] : []), ...childRuleLinesAr(plan.stages), ...roleLinesAr(plan.stages), ...priceIncludesLinesAr(plan), ...platformCostNotesAr(plan.stages), ...plan.stages.filter((s) => (s.unresolved_sources ?? []).length > 0 && (s.filters ?? []).some((f) => f.kind === "account" && isEnabled(f))).map((s) => unresolvedSourcesLineAr(s.unresolved_sources!)), ...(plan.stages.some((s) => (s.approx_dates ?? []).length > 0) ? [APPROX_DATES_CARD_LINE_AR] : [])];
+  const notes = [...(plan.notes_ar ?? []), ...(plan.quantity?.reason_ar ? [plan.quantity.reason_ar] : []), ...childRuleLinesAr(plan.stages), ...repliesLinesAr(plan), ...roleLinesAr(plan.stages), ...priceIncludesLinesAr(plan), ...platformCostNotesAr(plan.stages), ...plan.stages.filter((s) => (s.unresolved_sources ?? []).length > 0 && (s.filters ?? []).some((f) => f.kind === "account" && isEnabled(f))).map((s) => unresolvedSourcesLineAr(s.unresolved_sources!)), ...(plan.stages.some((s) => (s.approx_dates ?? []).length > 0) ? [APPROX_DATES_CARD_LINE_AR] : [])];
   return {
     summary_ar: firstSentenceAr(plan.summary_ar),
     ...(notes.length ? { notes_ar: notes } : {}),
