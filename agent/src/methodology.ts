@@ -2,7 +2,7 @@ import type { PricedPlan, PricedStage } from "../../src/lib/agentMission/plan";
 import type { ItemSnapshot, StopReason } from "./items/itemStore";
 import { cairoText, dateOnlyText, isDateValues, parseDateOnly, parseMoment } from "../../src/lib/agentMission/dateCells";
 import { arabicDateLabel } from "../../src/lib/agentMission/fileNames";
-import { countAr, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
+import { countAr, itemNounOf, itemNounOfPlan, knownItemNoun } from "../../src/lib/agentMission/itemNoun";
 import { filterLineAr, isEnabled, type StageFilter } from "../../src/lib/agentMission/filters";
 import { APPROX_DATES_NOTE_AR, approxColumnsOf } from "../../src/lib/agentMission/relativeDates";
 import { unresolvedSourcesLineAr } from "../../src/lib/agentMission/namedSources";
@@ -231,6 +231,8 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
   const orNotRecorded = (xs: string[]): string[] => (xs.length ? xs : [NOT_RECORDED_AR]);
   const delivering = stages.filter((s) => s.deliver);
   const noun = itemNounOfPlan(plan);
+  /** The stage title's own noun when the table knows it (فيديو, تعليق, شركة), else undefined (the callers' defaults). */
+  const knownNounOf = (title: string | undefined): string | undefined => { const n = itemNounOf(title); return knownItemNoun(n.singular) ? n.singular : undefined; };
   const items: MethodologyModel["items"] = [];
 
   // 1. the request, in the customer's own words
@@ -311,7 +313,7 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
     const truth = stageTruthBodyAr({ found: r.found, duplicates: r.duplicates, delivered: got, excludedByReason: r.excludedByReason, pending: r.pending, reviewStop: facts.reviewStop ?? null, stop: r.stop, people: isPeopleStage(s) });
     if (truth) { limits.push(`${many ? `«${s.title_ar}»: ` : ""}سُلّم ${fmt(got)} من ${fmt(s.planned_rows)}: ${truth}.`); continue; }
     // THE COUNTS PER PARENT (companies with no people, with fewer than asked, people beyond the approved number): the shortfall of a child stage is said from them when they explain it (never «the source gave no more» when the other companies had surplus)
-    const perParent = s.parent_key !== null && r.pending === 0 && !s.parent_key.startsWith("__") ? perParentShortfallAr({ parentIds: (rowsByStage[s.parent_key] ?? []).map((x) => String(x.id)), childParentIds: (rowsByStage[s.key] ?? []).map((x) => String(x.parent_id ?? "")), perParent: s.per_parent_rows, surplus: r.excludedByReason.target_reached ?? 0, childNoun: isPeopleStage(s) ? "شخص" : undefined }) : null;
+    const perParent = s.parent_key !== null && r.pending === 0 && !s.parent_key.startsWith("__") ? perParentShortfallAr({ parentIds: (rowsByStage[s.parent_key] ?? []).map((x) => String(x.id)), childParentIds: (rowsByStage[s.key] ?? []).map((x) => String(x.parent_id ?? "")), perParent: s.per_parent_rows, surplus: r.excludedByReason.target_reached ?? 0, parentNoun: knownNounOf(stages.find((x) => x.key === s.parent_key)?.title_ar), childNoun: isPeopleStage(s) ? "شخص" : knownNounOf(s.title_ar) ?? "عنصر" }) : null;
     if (perParent) { limits.push(`${many ? `«${s.title_ar}»: ` : ""}سُلّم ${fmt(got)} من ${fmt(s.planned_rows)}: ${perParent}.`); continue; }
     const clause = shortfallClauseAr(r.stop, { pending: r.pending, stop: facts.reviewStop ?? null, languageLeftOut: r.excludedByReason.filter_language ?? 0 });
     limits.push(`${many ? `«${s.title_ar}»: ` : ""}سُلّم ${fmt(got)} من ${fmt(s.planned_rows)} ${clause}.`);
