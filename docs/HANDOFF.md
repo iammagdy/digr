@@ -4,6 +4,14 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Post-merge facts of #321 and #322 (2026-11-01)
+
+- **#321**: head `60a9541bde7adfdd165fa06ce458f902658a18e8` (preview `dpl_8cFhryX3hUCu18YVRxPMvJeKub8u` READY on it); merge `f2c7cff523f205ad49ea3b00b9104ac1c3536405`, parents `f53e73f85f486293851a46d2eafdc928016d0e32` and `60a9541bde7adfdd165fa06ce458f902658a18e8`; production `dpl_9Zzmm9ZduU7sjp2RaCAktdbcFoLA` READY on that SHA (aliased to diger.tech), about 3 minutes after the merge (10:25 UTC). 15 minutes after the merge (read-only SELECTs, 10:40 UTC): no mission was created or updated in the window and `credit_ledger` had 0 rows in it (nothing to balance); the TREG main key (number 5) `connected`, reason `ok`, balance 6.1797 USD (checked 10:37 UTC).
+- **#322**: head `71f8c3ab96c00d84f2cf0382ef4510e98dd98e7b` (preview `dpl_3z34hUPFcX75cv2WpkBsr9GmxSft` READY on it); merge `52a9c077ecc20920268599ae988ede3ceb754533`, parents `f2c7cff523f205ad49ea3b00b9104ac1c3536405` and `71f8c3ab96c00d84f2cf0382ef4510e98dd98e7b`; production `dpl_6LU9fs3rD1AYoJ3pUgKWpgFG27aG` READY on that SHA (aliased to diger.tech), about 3 minutes after the merge (11:17 UTC). 15 minutes after the merge (read-only SELECTs, 11:33 UTC, 15m34s after it): no mission was created or updated in the window and `credit_ledger` had 0 rows in it (nothing to balance); the TREG main key (number 5) `connected`, reason `ok`, balance 6.1797 USD (checked by the pool health run at 11:32 UTC). Heroku: NOT CHECKED (no access from the session).
+- **No live test of #322 has run yet**: the first mission after it is the proof of the new price (expected hold about 1,393 points and provider cost about 0.198 USD for the standard request) and of the depth reading.
+
+---
+
 ## START HERE (2026-11-01, after #321): the owner opens the two limits (contact budgets and people depth)
 
 `main` before it was `f2c7cff523f205ad49ea3b00b9104ac1c3536405` (#321). Four commits, one per item, one PR. **No SQL, no migration, no Edge Function.** The diff against main of `finalize.ts`, `runMission.ts`, `gateway.ts`, `price.ts`, `callBudget.ts`, `missionPricing.ts`, `src/functions/**`, `supabase/**` is EMPTY: no ledger, settlement, reserve rule, cap (`JOB_MAX_POINTS_CAP` 25,000; provider daily cap 0.80 USD) or pricing constant changed. What changed is what the plan PRICES (the cost inputs) and what the engine may SPEND inside the step's own cap.
