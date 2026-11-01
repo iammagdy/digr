@@ -1,5 +1,5 @@
 import { toArabicDigits } from "../arabicDigits";
-import { AGENT_MAX_DELIVERED_ROWS } from "./constants";
+import { AGENT_MAX_DELIVERED_ROWS, AGENT_PEOPLE_PAGES_MAX } from "./constants";
 import { textKeyOf } from "./contract";
 import { FILTER_KINDS, filterVerdict, isEnabled, kindsPromisedBy, type FilterKind } from "./filters";
 import { countAr, itemNounOf, itemNounOfPlan } from "./itemNoun";
@@ -20,6 +20,8 @@ export interface PlanEdits {
     key: string;
     /** For a stage that hangs on another (the people of each company): how many items per item of the parent. */
     per_parent?: number;
+    /** For a people stage read in depth: how many pages of the source are read for each parent (lower = cheaper). */
+    pages?: number;
     /** The keys of the columns that stay in the file (the others are hidden; hidden ones may be switched back on). */
     columns?: string[];
     filters?: Array<{ kind: FilterKind; enabled?: boolean; lang?: "ar" | "en"; days?: number }>;
@@ -113,6 +115,13 @@ export function applyPlanEdits(planIn: PricedPlan, editsIn: unknown, ctx: EditCo
       // the line that said the count was code's default is the customer's own now; a sentence that still carries the old count is dropped
       plan.assumptions_ar = [...(plan.assumptions_ar ?? []).filter((a) => !a.startsWith("لم تحدد عدد")), `اعتمدنا ${toArabicDigits(per)} لكل ${itemNounOf(parent.title_ar).singular} حسب تعديلك.`];
       perEdited = true;
+    }
+    if (e.pages !== undefined) {
+      // THE DEPTH of a people stage (pages of the source for each company): a whole number from 1 to the maximum; the plan is priced again below by the same function
+      const pages = Number(e.pages);
+      if (!(Number(stage.pages_per_parent) >= 1) || !stage.role_preference) return fail("هذا الخيار خاص بمرحلة صناع القرار في كل شركة.");
+      if (!Number.isInteger(pages) || pages < 1 || pages > AGENT_PEOPLE_PAGES_MAX) return fail(`عدد صفحات البحث لازم يكون رقمًا صحيحًا من ${toArabicDigits(1)} إلى ${toArabicDigits(AGENT_PEOPLE_PAGES_MAX)}.`);
+      stage.pages_per_parent = pages;
     }
     if (Array.isArray(e.columns)) {
       const all: PlanColumn[] = [...stage.columns, ...(stage.hidden_columns ?? [])];

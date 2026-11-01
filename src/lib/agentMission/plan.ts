@@ -1,4 +1,4 @@
-import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE } from "./constants";
+import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, AGENT_PEOPLE_PAGES_DEFAULT, AGENT_PEOPLE_PAGES_MAX, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE } from "./constants";
 import { CONTACT_KINDS, requestWantsContacts, type ContactKind } from "./contacts";
 import { isPeopleStage } from "./people";
 import { buildContactSteps, type ContactAids, type ContactStep, type FinderInfo, type FinderKind } from "./contactFinders";
@@ -160,6 +160,9 @@ export interface PricedStage extends ProposedStage {
   /** Share of the sampled rows that match the request (1 when the stage has no relevance check) and of them the share the model must review: what the price rests on (internal). */
   yield_share?: number;
   review_share?: number;
+  /** PEOPLE DEPTH: pages of the source read for each parent of a people stage that prefers the decision makers (set by code, editable by the customer), and what one page costs (USD, measured). The price carries every page. */
+  pages_per_parent?: number;
+  page_cost_usd?: number;
   sample_examined?: number;
   sample_matching?: number;
 }
@@ -207,7 +210,13 @@ const MAX_ASSUMPTIONS = 6;
  * THE PRICE INPUTS OF A PLAN: one per stage. The cost of a contact finder step (per_person_usd per person, contactFinders.ts) is part of the cost per row of the people stage it fills, so the provider cost, the cost per delivered row and the unit price carry it; the step adds no row and no stage.
  * The one place every pricing path uses (the plan check, the approval's re-price, the plan editor).
  */
-export const stagePriceInputs = (stages: ReadonlyArray<PricedStage>, steps?: ReadonlyArray<ContactStep>) => stages.map((s) => ({ rows: s.planned_rows, costPerRowUsd: s.measured_cost_per_row_usd + (steps ?? []).filter((x) => x.stage_key === s.key).reduce((n, x) => n + Math.max(0, x.per_person_usd), 0), deliver: s.deliver, yield: s.yield_share, reviewShare: s.review_share }));
+export const stagePriceInputs = (stages: ReadonlyArray<PricedStage>, steps?: ReadonlyArray<ContactStep>, options: { withoutDepth?: boolean } = {}) => stages.map((s) => ({ rows: s.planned_rows, costPerRowUsd: depthCostPerRowUsd(s, options.withoutDepth === true) + (steps ?? []).filter((x) => x.stage_key === s.key).reduce((n, x) => n + Math.max(0, x.per_person_usd), 0), deliver: s.deliver, yield: s.yield_share, reviewShare: s.review_share }));
+/** The cost per delivered person of a stage read in DEPTH: every page of the depth for each parent (pages x one page's cost) shared by the people asked for each parent; never below the measured cost per row. */
+export const depthCostPerRowUsd = (s: PricedStage, withoutDepth = false): number => {
+  const pages = Math.floor(Number(s.pages_per_parent ?? 1));
+  if (withoutDepth || !(pages > 1) || !(Number(s.page_cost_usd) > 0) || !(Number(s.per_parent_rows) > 0)) return s.measured_cost_per_row_usd;
+  return Math.max(s.measured_cost_per_row_usd, (pages * Number(s.page_cost_usd)) / Number(s.per_parent_rows));
+};
 /** A column that only holds an internal id (the key says so, or its Arabic title is «معرّف …»): never shown to the customer as a column, never a column of its own in the sheet. */
 export function isInternalColumn(c: { key: string; title_ar: string }): boolean {
   return /^(id|uid|pk|guid|parent_id|parent)$/i.test(c.key) || /(^|_)(id|uid|pk|guid)$/i.test(c.key) || /^id_/i.test(c.key) || /معرّ?ف/.test(c.title_ar);
@@ -557,6 +566,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
       key, title_ar: title.text, endpoint_id: endpointId, expected_rows: rowsHere, parent_key: parentKey,
       ...(parentKey !== null ? { per_parent_rows: perHere } : {}),
       ...(roleOf ? { role_preference: { role: roleOf.key } } : {}),
+      ...(parentKey !== null && roleOf?.key === "manager" && raw.deliver === true && measuredCalls.length > 0 ? { pages_per_parent: AGENT_PEOPLE_PAGES_DEFAULT, page_cost_usd: measuredCalls.reduce((n, c) => n + Math.max(0, c.costUsd), 0) / measuredCalls.length } : {}),
       deliver: raw.deliver === true, columns: cleanColumns, sample_rows: samples.filter(isRecord).slice(0, MAX_SAMPLE_ROWS_PER_STAGE),
       measured_by: measuredBy, ...(how ? { how_ar: how.text } : {}),
       planned_rows: rowsHere, measured_cost_per_row_usd: costPerRow ?? 0, measured_from_calls: measuredBy,
@@ -642,7 +652,9 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   const price = priceMissionByCode(stagePriceInputs(priced, contactSteps), { settings: lookup.pricingSettings });
   if (price.overCap) return { ok: false, issues: [`the mission would hold ${price.reservePoints} points, more than the job limit; lower the expected rows`], ...(impliedUsed && impliedCount > 1 ? { lowerImplied: true } : {}) };
   // the DEFAULT count of people per company is lowered (one fewer at a time, down to one) while the hold is above the target; the cap itself is not touched
-  if (impliedUsed && impliedCount > 1 && price.reservePoints > AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS) return { ok: false, issues: [`the default count of people per company makes the hold ${price.reservePoints} points`], lowerImplied: true };
+  // (owner decision after #321) the paid contact lookup and the deeper search are what the customer asked for and sees the price of: the default count of people is lowered for the price of the READING alone, never to make the lookups fit
+  const baseReserve = priceMissionByCode(stagePriceInputs(priced, undefined, { withoutDepth: true }), { settings: lookup.pricingSettings }).reservePoints;
+  if (impliedUsed && impliedCount > 1 && baseReserve > AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS) return { ok: false, issues: [`the default count of people per company makes the hold ${baseReserve} points`], lowerImplied: true };
   // THE TITLE OF A PEOPLE STAGE THAT ONLY RANKS BY ROLE does not promise the role (roles.ts); done last, so the checks above still read the noun the model wrote
   for (const st of priced) if (st.role_preference && st.parent_key !== null) st.title_ar = neutralPeopleTitleAr(st.title_ar, st.role_preference.role, itemNounOf(priced.find((p) => p.key === st.parent_key)?.title_ar ?? "").singular);
   return { ok: true, plan: { summary_ar: summary.text, stages: priced, price, ...(contactSteps.length ? { contact_steps: contactSteps } : {}), ...(notes.length ? { notes_ar: notes } : {}), ...(assumptions.length ? { assumptions_ar: assumptions } : {}), ...(quantity ? { quantity } : {}), ...(unserved.length ? { unserved_steps: unserved } : {}) }, ...(mediaUnproven.length ? { mediaUnproven } : {}) };
@@ -679,6 +691,10 @@ export interface PlanEditorView {
     /** A stage that hangs on another (the people of each company): the number of its items per item of the parent, which the customer can change. */
     per_parent?: number;
     per_parent_label_ar?: string;
+    /** A people stage read in DEPTH: the pages of the source read for each parent (the customer may lower it to reduce the price, or raise it up to `pages_max`). */
+    pages?: number;
+    pages_max?: number;
+    pages_label_ar?: string;
     columns: Array<{ key: string; title_ar: string; on: boolean; locked: boolean }>;
     filters: Array<{ kind: StageFilter["kind"]; label_ar: string; enabled: boolean; line_ar: string; lang?: "ar" | "en"; days?: number }>;
   }>;
@@ -707,6 +723,7 @@ export function planEditorView(plan: PricedPlan): PlanEditorView {
       const locked = lockedColumnKeys(s);
       return {
         key: s.key, title_ar: s.title_ar, target: s.planned_rows,
+        ...(s.parent_key !== null && s.deliver && Number(s.pages_per_parent) >= 1 && s.role_preference ? { pages: Math.floor(Number(s.pages_per_parent)), pages_max: AGENT_PEOPLE_PAGES_MAX, pages_label_ar: `عدد صفحات البحث لكل ${itemNounOf(plan.stages.find((p) => p.key === s.parent_key)?.title_ar ?? "").singular}` } : {}),
         ...(s.parent_key !== null && s.deliver && s.per_parent_rows ? { per_parent: s.per_parent_rows, per_parent_label_ar: `عدد «${s.title_ar}» لكل ${itemNounOf(plan.stages.find((p) => p.key === s.parent_key)?.title_ar ?? "").singular}` } : {}),
         columns: [...s.columns.filter((c) => !isInternalColumn(c)).map((c) => ({ key: c.key, title_ar: c.title_ar, on: true, locked: locked.has(c.key) })), ...(s.hidden_columns ?? []).map((c) => ({ key: c.key, title_ar: c.title_ar, on: false, locked: false }))],
         filters: (s.filters ?? []).map((f) => ({ kind: f.kind, label_ar: filterLabelAr(f), enabled: isEnabled(f), line_ar: filterLineAr({ ...f, enabled: true }), ...(f.lang ? { lang: f.lang } : {}), ...(f.days !== undefined ? { days: f.days } : {}) })),
@@ -742,6 +759,25 @@ export function assumptionLinesOf(plan: Pick<PricedPlan, "stages" | "assumptions
   return [...base, ...scoped];
 }
 
+/** «٢ صفحتين» / «٣ صفحات» ...: the pages of the depth in correct Arabic, Arabic-Indic digits. */
+const pagesAr = (n: number): string => (n === 1 ? "صفحة واحدة" : n === 2 ? "صفحتين" : n <= 10 ? `${toArabicDigits(n)} صفحات` : `${toArabicDigits(n)} صفحة`);
+
+/**
+ * WHAT THE PRICE INCLUDES, in one plain sentence on the card (owner decision after #321: the customer sees the price before approving and pays for real results): the deeper search for decision makers (up to N pages of the source for each company, stopping early once enough are found) and the
+ * e-mail and phone lookup for each person, and where to lower it. Built by code from the plan; nothing for a plan with neither.
+ */
+export function priceIncludesLinesAr(plan: Pick<PricedPlan, "stages" | "contact_steps">): string[] {
+  const deep = plan.stages.find((s) => s.deliver && s.parent_key !== null && Number(s.pages_per_parent) > 1);
+  const kinds = new Set((plan.contact_steps ?? []).map((x) => x.kind));
+  if (!deep && kinds.size === 0) return [];
+  const parent = deep ? plan.stages.find((p) => p.key === deep.parent_key) : undefined;
+  const noun = parent ? itemNounOf(parent.title_ar).singular : "شركة";
+  const lookup = kinds.size === 0 ? "" : `البحث عن ${kinds.has("email") && kinds.has("phone") ? "الإيميل ورقم التليفون" : kinds.has("email") ? "الإيميل" : "رقم التليفون"} لكل شخص`;
+  const depth = deep ? `بحثًا أعمق عن صناع القرار (نقرأ حتى ${pagesAr(Math.floor(Number(deep.pages_per_parent)))} من النتائج لكل ${noun} ونتوقف مبكرًا عند اكتمال العدد)` : "";
+  const both = [depth, lookup].filter(Boolean).join("، و");
+  return [`السعر يشمل ${both}. تقدر تقلّل العمق أو عدد الأشخاص لكل ${noun} من «عدّل الخطة» لتخفيض السعر.`];
+}
+
 /** One line per delivered people stage that prefers a role: what is preferred and that fewer matching people may come (roles.ts). */
 export function roleLinesAr(stages: ReadonlyArray<Pick<PricedStage, "key" | "title_ar" | "parent_key" | "deliver" | "role_preference">>): string[] {
   const lines: string[] = [];
@@ -771,7 +807,7 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
   // what the card promises about the items is backed by the filters that are switched ON: a line of the model that promises one is shown only while its filter is on, and a filter that is on gets its own sentence, built by code
   const assumptions = assumptionLinesOf(plan);
   // fewer than the customer asked for: the reason the card shows next to the one target number
-  const notes = [...(plan.notes_ar ?? []), ...(plan.quantity?.reason_ar ? [plan.quantity.reason_ar] : []), ...childRuleLinesAr(plan.stages), ...roleLinesAr(plan.stages), ...platformCostNotesAr(plan.stages), ...plan.stages.filter((s) => (s.unresolved_sources ?? []).length > 0 && (s.filters ?? []).some((f) => f.kind === "account" && isEnabled(f))).map((s) => unresolvedSourcesLineAr(s.unresolved_sources!)), ...(plan.stages.some((s) => (s.approx_dates ?? []).length > 0) ? [APPROX_DATES_CARD_LINE_AR] : [])];
+  const notes = [...(plan.notes_ar ?? []), ...(plan.quantity?.reason_ar ? [plan.quantity.reason_ar] : []), ...childRuleLinesAr(plan.stages), ...roleLinesAr(plan.stages), ...priceIncludesLinesAr(plan), ...platformCostNotesAr(plan.stages), ...plan.stages.filter((s) => (s.unresolved_sources ?? []).length > 0 && (s.filters ?? []).some((f) => f.kind === "account" && isEnabled(f))).map((s) => unresolvedSourcesLineAr(s.unresolved_sources!)), ...(plan.stages.some((s) => (s.approx_dates ?? []).length > 0) ? [APPROX_DATES_CARD_LINE_AR] : [])];
   return {
     summary_ar: firstSentenceAr(plan.summary_ar),
     ...(notes.length ? { notes_ar: notes } : {}),

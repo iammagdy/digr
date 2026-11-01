@@ -16,9 +16,10 @@ const FIELD = "min-h-11 rounded-xl border border-ln2 bg-bg px-3 text-sm text-ink
 
 interface StageState { columns: Record<string, boolean>; filters: Record<string, { enabled: boolean; lang?: "ar" | "en"; days?: string }> }
 
-export const initialState = (edit: PlanEditorView): { count: string; perParent: Record<string, string>; stages: Record<string, StageState> } => ({
+export const initialState = (edit: PlanEditorView): { count: string; perParent: Record<string, string>; pages: Record<string, string>; stages: Record<string, StageState> } => ({
   count: String(edit.stages.find((s) => s.key === edit.target_stage_key)?.target ?? ""),
   perParent: Object.fromEntries(edit.stages.filter((s) => s.per_parent !== undefined).map((s) => [s.key, String(s.per_parent)])),
+  pages: Object.fromEntries(edit.stages.filter((s) => s.pages !== undefined).map((s) => [s.key, String(s.pages)])),
   stages: Object.fromEntries(edit.stages.map((s) => [s.key, {
     columns: Object.fromEntries(s.columns.map((c) => [c.key, c.on])),
     filters: Object.fromEntries(s.filters.map((f) => [f.kind, { enabled: f.enabled, ...(f.lang ? { lang: f.lang } : {}), ...(f.days !== undefined ? { days: String(f.days) } : {}) }])),
@@ -39,6 +40,10 @@ export function editsFromState(edit: PlanEditorView, state: ReturnType<typeof in
       const per = Number(normalizeDigits(state.perParent[s.key] ?? "").replace(/[^\d]/g, ""));
       if (Number.isInteger(per) && per !== s.per_parent) e.per_parent = per;
     }
+    if (s.pages !== undefined) {
+      const pages = Number(normalizeDigits(state.pages[s.key] ?? "").replace(/[^\d]/g, ""));
+      if (Number.isInteger(pages) && pages !== s.pages) e.pages = pages;
+    }
     if (s.columns.some((c) => st.columns[c.key] !== c.on)) e.columns = s.columns.filter((c) => st.columns[c.key]).map((c) => c.key);
     const filters = s.filters.flatMap((f) => {
       const cur = st.filters[f.kind];
@@ -47,7 +52,7 @@ export function editsFromState(edit: PlanEditorView, state: ReturnType<typeof in
       return changed ? [{ kind: f.kind, enabled: cur.enabled, ...(cur.lang !== undefined ? { lang: cur.lang } : {}), ...(days !== undefined && Number.isFinite(days) && days !== f.days ? { days } : {}) }] : [];
     });
     if (filters.length > 0) e.filters = filters;
-    if (e.columns || e.filters || e.per_parent !== undefined) stages.push(e);
+    if (e.columns || e.filters || e.per_parent !== undefined || e.pages !== undefined) stages.push(e);
   }
   if (stages.length > 0) out.stages = stages;
   return out;
@@ -77,6 +82,14 @@ export function PlanEditor({ edit, busy = false, onSave, onCancel, onRetype }: {
           <span>{s.per_parent_label_ar}</span>
           <input value={state.perParent[s.key] ?? ""} onChange={(e) => setState((p) => ({ ...p, perParent: { ...p.perParent, [s.key]: e.target.value } }))} inputMode="numeric" className={FIELD} dir="ltr" aria-label={s.per_parent_label_ar} data-testid={`agent-edit-per-parent-${s.key}`} />
           <span className="text-[11px] font-light text-mut">يُحسب السعر من جديد بعد الحفظ.</span>
+        </label>
+      ))}
+
+      {edit.stages.filter((s) => s.pages !== undefined).map((s) => (
+        <label key={`pages-${s.key}`} className="flex flex-col gap-1 text-[13px] text-ink2">
+          <span>{s.pages_label_ar}</span>
+          <input value={state.pages[s.key] ?? ""} onChange={(e) => setState((p) => ({ ...p, pages: { ...p.pages, [s.key]: e.target.value } }))} inputMode="numeric" className={FIELD} dir="ltr" aria-label={s.pages_label_ar} data-testid={`agent-edit-pages-${s.key}`} />
+          <span className="text-[11px] font-light text-mut">كلما قلّت الصفحات قلّ السعر، وقلّت فرصة الوصول إلى صناع القرار. الحد الأقصى {toArabicDigits(s.pages_max ?? 10)}. يُحسب السعر من جديد بعد الحفظ.</span>
         </label>
       ))}
 

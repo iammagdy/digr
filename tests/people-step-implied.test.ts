@@ -10,6 +10,9 @@ import { applyPlanEdits } from "../src/lib/agentMission/planEdit";
 import { editsFromState, initialState } from "../src/components/mission/PlanEditor";
 import { makeHarness } from "./helpers/agentHarness";
 import { tregResult } from "./helpers/agentFakeWorld";
+import { priceMissionByCode } from "../src/lib/agentMission/price";
+import { stagePriceInputs } from "../src/lib/agentMission/plan";
+const readingAlone = (plan: { stages: any[]; price: { settings?: any } }): number => priceMissionByCode(stagePriceInputs(plan.stages, undefined, { withoutDepth: true }), { settings: plan.price.settings }).reservePoints;
 
 /**
  * LIVE INCIDENT 2026-10-31 15:46 (Cairo): «عايز ٥ شركات مصرية في قطاع الكهروميكانيكا، ومعاهم صناع القرار: اسم المدير، المسمى الوظيفي، الإيميل، ورقم التليفون» got a plan WITHOUT the decision makers: the request names people but gives no number, so
@@ -98,7 +101,8 @@ describe("the plan check: the decision makers are never dropped by one sentence"
     const stage = checked.plan.stages.find((s) => s.key === "people")!;
     expect(stage.per_parent_rows).toBe(1);
     expect(stage.planned_rows).toBe(5);
-    expect(checked.plan.price.reservePoints).toBeLessThanOrEqual(600);
+    // CHANGED (owner decision after #321): the 600-point target is the price of the READING alone; the deeper search is the customer's choice and is priced on top
+    expect(readingAlone(checked.plan)).toBeLessThanOrEqual(600);
     expect((checked.plan.assumptions_ar ?? []).join(" ")).toMatch(/لم تحدد عدد/);
   });
   it("a number the customer gave is never lowered by code, however dear the plan (the job cap itself is untouched)", () => {
@@ -179,11 +183,12 @@ describe("the price of «5 Egyptian electromechanical companies + decision maker
   // companies: tomba, 0.000178 USD per 50 companies (live 2026-10-31). People per person: 0.00099 (employee finder + e-mail finder, the cheapest chain measured live), 0.0035 (a middle chain), 0.0115 (the dearest measured: employee finder + a 0.011 e-mail finder)
   const OWNER_PRICES: Array<[number, number, number, number, number]> = [
     // [USD per person, people per company the plan ends with, delivered rows, hold in points, the most that can be charged]
-    [0.00099, 2, 15, 202, 200],
-    [0.0035, 2, 15, 361, 314],
-    [0.0115, 1, 10, 503, 438],
+    // CHANGED (owner decision after #321): the holds now carry the deeper search (up to 3 pages of the people source for each company, priced at the measuring call's cost); before: 202 / 361 / 503 and 200 / 314 / 438. The default count of people is still lowered for the price of the READING alone.
+    [0.00099, 2, 15, 328, 285],
+    [0.0035, 2, 15, 804, 699],
+    [0.0115, 1, 10, 2322, 2019],
   ];
-  it.each(OWNER_PRICES)("%f USD per person: %i per company, %i items, hold %i points (never above 600), at most %i charged", (perPerson, per, rows, hold, max) => {
+  it.each(OWNER_PRICES)("%f USD per person: %i per company, %i items, hold %i points (the reading alone never above 600), at most %i charged", (perPerson, per, rows, hold, max) => {
     const calls = new Map([
       ["call_0001", { id: "call_0001", endpointId: "tomba.companies.search.reveal", ok: true, costUsd: 0.000178, rows: 50, params: { query: "electromechanical" } }],
       ["call_0002", { id: "call_0002", endpointId: "aviato.companies.employees", ok: true, costUsd: perPerson * 2, rows: 2, params: { website: "kahromika-co.com", perPage: 2, page: 0 } }],
@@ -200,6 +205,6 @@ describe("the price of «5 Egyptian electromechanical companies + decision maker
     expect(checked.plan.price.deliveredRows).toBe(rows);
     expect(checked.plan.price.reservePoints).toBe(hold);
     expect(checked.plan.price.maxChargePoints).toBe(max);
-    expect(checked.plan.price.reservePoints).toBeLessThanOrEqual(600);
+    expect(readingAlone(checked.plan)).toBeLessThanOrEqual(600);
   });
 });

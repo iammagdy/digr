@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createMemoryStore } from "../agent/src/memoryStore";
 import { ItemStore } from "../agent/src/items/itemStore";
 import { runContactEnrichment } from "../agent/src/engine/contacts";
-import { EMAIL_FOUND_SHARE, buildContactSteps, verifierSourcesOf, type ContactStep, type FinderInfo } from "../src/lib/agentMission/contactFinders";
+import { buildContactSteps, chainExpectation, verifierSourcesOf, type ContactStep, type FinderInfo } from "../src/lib/agentMission/contactFinders";
 import { emailOnOtherDomain, emailVerdictIn } from "../src/lib/agentMission/emailVerification";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { createJobCallBudget } from "../src/lib/server/callBudget";
@@ -175,6 +175,8 @@ describe("the plan: ranked verifiers from the catalog, priced by code", () => {
     const finders = () => [FIND_A];
     const [step] = buildContactSteps(stages as any, "عايز الإيميل", finders, (kind) => (kind === "email" ? { verifiers: [{ id: "free.verify", usd: 0.000001, inputs: [{ name: "email", required: true }] }, VERIFY_A] } : {}));
     expect(step.verifiers?.map((v) => v.id)).toEqual(["free.verify", VERIFY_A.id]);
-    expect(step.per_person_usd).toBeCloseTo(FIND_A.usd + EMAIL_FOUND_SHARE * VERIFY_A.usd, 9);
+    // CHANGED (owner decision after #321): measured hit rates (an unmeasured finder takes the pooled rate), not the guessed EMAIL_FOUND_SHARE
+    const chain = chainExpectation([FIND_A], "email");
+    expect(step.per_person_usd).toBeCloseTo(chain.costUsd + (1 - chain.missShare) * VERIFY_A.usd, 9);
   });
 });

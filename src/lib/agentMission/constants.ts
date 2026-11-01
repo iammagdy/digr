@@ -194,6 +194,12 @@ export const AGENT_JOB_POINTS_CAP = JOB_MAX_POINTS_CAP;
  */
 export const AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS = 600;
 /**
+ * PEOPLE DEPTH (owner decision after #321): a people source gives a few people a page (5), so a decision maker beyond page 1 was never seen. For the people of each company, when the customer wants the decision makers, up to this many pages are read per company (stopping early once enough decision
+ * makers were found); the price carries them all. The customer may lower it on the plan card (to reduce the price) or raise it, up to the maximum.
+ */
+export const AGENT_PEOPLE_PAGES_DEFAULT = 3;
+export const AGENT_PEOPLE_PAGES_MAX = 10;
+/**
  * THE MODEL'S SHARE OF A MISSION'S PRICE (estimates the quote adds to the provider cost; the real model cost of every mission is stored and compared with them on the admin page).
  * Where they come from (the missions table, 2026-10-28): planning cost 0.0070 (300 tweets), 0.0183 (three companies and their staff); execution 0.0037 for one stage, 0.0070 for two; so planning 0.012 USD (between
  * the two), execution 0.005 USD per stage (rounded up from 0.0037 and 0.0035 per stage). The review of one uncertain row by the small model is about 120 input and 12 output tokens at the list price of the

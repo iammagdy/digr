@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createMemoryStore } from "../agent/src/memoryStore";
 import { ItemStore } from "../agent/src/items/itemStore";
 import { runContactEnrichment } from "../agent/src/engine/contacts";
-import { buildContactSteps, companyPhoneSourcesOf, validatorSourcesOf, withContactColumns, type ContactStep, type FinderInfo } from "../src/lib/agentMission/contactFinders";
+import { buildContactSteps, chainExpectation, companyPhoneSourcesOf, validatorSourcesOf, withContactColumns, type ContactStep, type FinderInfo } from "../src/lib/agentMission/contactFinders";
 import { companyCountryOf, companyPhoneOfRow, mapsParamsFor, phoneStatusOf, phoneVerdictIn, placePhoneIn, validatorParamsFor } from "../src/lib/agentMission/phoneValidation";
 import { companyIdentityOf } from "../src/lib/agentMission/companyIdentity";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
@@ -194,7 +194,9 @@ describe("the plan: validators and company-phone searches ranked from the catalo
     const stages = [{ key: "people", title_ar: "موظفو كل شركة", parent_key: "companies", deliver: true, role_preference: { role: "manager" }, columns: [{ key: "phone", kind: "phone" }] }];
     const [step] = buildContactSteps(stages as any, "رقم التليفون", () => [FIND], (kind) => (kind === "phone" ? { validators: [VALIDATE], company_phone: [MAPS] } : {}));
     expect(step.type_key).toBe("phone_type");
-    expect(step.per_person_usd).toBeCloseTo(FIND.usd + MAPS.usd + VALIDATE.usd, 9);
+    // CHANGED (owner decision after #321): the company-phone search is priced for the share of persons the finder misses (measured), not for everyone
+    const chain = chainExpectation([FIND], "phone");
+    expect(step.per_person_usd).toBeCloseTo(chain.costUsd + chain.missShare * MAPS.usd + VALIDATE.usd, 9);
     const cols = withContactColumns("people", [{ key: "full_name", title_ar: "الاسم" }, { key: "phone", title_ar: "رقم التليفون", kind: "phone" as const }], [step]);
     expect(cols.map((c) => c.key)).toEqual(["full_name", "phone", "phone_status", "phone_type"]);
     expect(cols[3].title_ar).toBe("نوع الرقم");
