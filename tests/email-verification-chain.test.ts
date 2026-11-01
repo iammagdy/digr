@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createMemoryStore } from "../agent/src/memoryStore";
 import { ItemStore } from "../agent/src/items/itemStore";
 import { runContactEnrichment } from "../agent/src/engine/contacts";
-import { buildContactSteps, verifierSourcesOf, type ContactStep, type FinderInfo } from "../src/lib/agentMission/contactFinders";
+import { EMAIL_FOUND_SHARE, buildContactSteps, verifierSourcesOf, type ContactStep, type FinderInfo } from "../src/lib/agentMission/contactFinders";
 import { emailOnOtherDomain, emailVerdictIn } from "../src/lib/agentMission/emailVerification";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { createJobCallBudget } from "../src/lib/server/callBudget";
@@ -170,11 +170,11 @@ describe("the plan: ranked verifiers from the catalog, priced by code", () => {
     const usd = list.map((v) => v.usd);
     expect([...usd].sort((a, b) => a - b)).toEqual(usd);
   });
-  it("a step's price per person is the finder plus the verifier: a free first verifier that may be rate limited is priced at the next one", () => {
+  it("a step's price per person is the finder plus the verifier for the share of people an address is found for: a free first verifier that may be rate limited is priced at the next one", () => {
     const stages = [{ key: "people", title_ar: "موظفو كل شركة", parent_key: "companies", deliver: true, role_preference: { role: "manager" }, columns: [{ key: "email", kind: "work_email" }] }];
     const finders = () => [FIND_A];
     const [step] = buildContactSteps(stages as any, "عايز الإيميل", finders, (kind) => (kind === "email" ? { verifiers: [{ id: "free.verify", usd: 0.000001, inputs: [{ name: "email", required: true }] }, VERIFY_A] } : {}));
     expect(step.verifiers?.map((v) => v.id)).toEqual(["free.verify", VERIFY_A.id]);
-    expect(step.per_person_usd).toBeCloseTo(FIND_A.usd + VERIFY_A.usd, 9);
+    expect(step.per_person_usd).toBeCloseTo(FIND_A.usd + EMAIL_FOUND_SHARE * VERIFY_A.usd, 9);
   });
 });

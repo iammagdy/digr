@@ -122,7 +122,8 @@ describe("the engine fills the cells of the people it delivered", () => {
     const out = await w.run();
     expect(out.stopped).toBe("budget");
     expect(PEOPLE.filter((p) => cellsOf(w.items, p.id).email !== "").length).toBe(2);
-    expect(w.calls.length).toBe(3);
+    // CHANGED (item 4): the people are taken in ONE pass, decision makers first, each with every step: the chief executive and the general manager each had their e-mail call AND their phone call (4 calls) before the third person's e-mail call was refused (the 5th). Before, all e-mails came first (3 calls).
+    expect(w.calls.length).toBe(5);
   });
   it("phones are asked only after every e-mail and only when asked: a plan with no phone step makes no phone call; a resumed run does not look up a filled cell again", async () => {
     const onlyEmail: ContactStep[] = [{ kind: "email", stage_key: "people", column_key: "email", status_key: "email_status", per_person_usd: 0.0005, finders: [EMAIL_A] }];

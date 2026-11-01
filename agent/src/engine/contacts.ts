@@ -49,15 +49,30 @@ const EPS = 1e-9;
 const COMMIT_EVERY = 10;
 const STEP_LABEL_AR = { email: "الإيميل", phone: "رقم التليفون" } as const;
 
+/**
+ * ONE PASS PER PEOPLE STAGE, DECISION MAKERS FIRST: the people are taken in the order of their titles (roles.ts) and EACH person gets every step of the plan (the e-mail with its verifier, then the phone with its validator) before the next person is looked at. When the money or the
+ * time ends, the chief executive and the general manager have all their cells and the ones left without are the people of the lowest titles. Each step keeps its own spend against its own priced cap; the job budget is shared and ends everything at once.
+ */
 export async function runContactEnrichment(deps: ContactDeps): Promise<ContactEnrichmentOutcome> {
   const { items, plan } = deps;
   const out: ContactEnrichmentOutcome = { filled: { email: 0, phone: 0, unverified: 0, verified: 0 }, looked: 0, skipped: 0, spentUsd: 0, stopped: null };
-  // e-mails first, phones after them (a phone is asked only when the e-mails are done and the budget has room)
+  // e-mail before phone for one person (the phone helpers are asked only after the e-mail's)
   const steps = [...(plan.contact_steps ?? [])].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "email" ? -1 : 1));
-  for (const step of steps) {
-    const stage = plan.stages.find((s) => s.key === step.stage_key);
+  const stageKeys = [...new Set(steps.map((x) => x.stage_key))];
+  for (const stageKey of stageKeys) {
+    const stage = plan.stages.find((s) => s.key === stageKey);
     if (!stage) continue;
-    const stopped = await runStep(deps, step, stage, out);
+    const rows = items.acceptedRows(stageKey);
+    const ranked = rankPeopleByRole(rows, (stage as { role_preference?: { role: Parameters<typeof rankPeopleByRole>[1] } }).role_preference?.role ?? "manager").rows;
+    const runners = steps.filter((x) => x.stage_key === stageKey).map((step) => createRunner(deps, step, stage, out, rows.length));
+    const groupStart = deps.budget.spentUsd();
+    let stopped: ContactStop | null = null;
+    try {
+      outer: for (const row of ranked) for (const runner of runners) { stopped = await runner.process(row); if (stopped) break outer; }
+    } finally {
+      for (const runner of runners) await runner.finish();
+      out.spentUsd += deps.budget.spentUsd() - groupStart;
+    }
     if (stopped) { out.stopped = stopped; break; }
   }
   return out;
@@ -66,16 +81,13 @@ export async function runContactEnrichment(deps: ContactDeps): Promise<ContactEn
 /** One call a step wants to make, and what came of it. */
 type Attempt = { t: "stop"; stop: ContactStop } | { t: "skip" } | { t: "failed" } | { t: "page"; page: unknown };
 
-async function runStep(deps: ContactDeps, step: ContactStep, stage: ContactDeps["plan"]["stages"][number], out: ContactEnrichmentOutcome): Promise<ContactStop | null> {
+function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["plan"]["stages"][number], out: ContactEnrichmentOutcome, peopleCount: number): { process(row: Row): Promise<ContactStop | null>; finish(): Promise<void> } {
   const { items, store, gateway, budget } = deps;
   const parents = new Map<string, Row>(stage.parent_key ? items.acceptedRows(stage.parent_key).map((r) => [String(r.id), r] as const) : []);
-  const rows = items.acceptedRows(step.stage_key);
-  const ranked = rankPeopleByRole(rows, (stage as { role_preference?: { role: Parameters<typeof rankPeopleByRole>[1] } }).role_preference?.role ?? "manager").rows;
-  // what this step may spend: what its price carries
-  const capUsd = step.per_person_usd * rows.length;
-  const startedAt = budget.spentUsd();
+  // what this step may spend: what its price carries; `mySpent` is what ITS calls have cost so far (the other step of the same person is not counted against it)
+  const capUsd = step.per_person_usd * peopleCount;
+  let mySpent = 0;
   let pending: Op[] = [];
-  let stopped: ContactStop | null = null;
   let found = 0;
   const flush = async () => { if (pending.length > 0) { const ops = pending; pending = []; await items.commit(ops); } };
   /** A helper that failed twice in a row (a rate limit, an outage) is not asked again by this step. */
@@ -87,9 +99,11 @@ async function runStep(deps: ContactDeps, step: ContactStep, stage: ContactDeps[
   const attempt = async (helper: FinderInfo, params: Record<string, string>): Promise<Attempt> => {
     if (Date.now() >= deps.deadlineMs) return { t: "stop", stop: "time_limit" };
     if (deps.shouldStop?.()) return { t: "stop", stop: "aborted" };
-    if (budget.spentUsd() - startedAt + helper.usd > capUsd + EPS) return { t: "skip" };
+    if (mySpent + helper.usd > capUsd + EPS) return { t: "skip" };
     if (budget.ceilingUsd !== null && budget.spentUsd() + helper.usd > budget.ceilingUsd + EPS) return { t: "stop", stop: "budget" };
+    const before = budget.spentUsd();
     const result = await gateway.tregCall({ endpoint_id: helper.id, params });
+    mySpent += Math.max(0, budget.spentUsd() - before);
     if (!result.ok) {
       const refused = "refused" in result ? String(result.refused) : "";
       if (refused === "over_budget") return { t: "stop", stop: "budget" };
@@ -167,12 +181,13 @@ async function runStep(deps: ContactDeps, step: ContactStep, stage: ContactDeps[
     }
     return { verdict: null, stop: null };
   };
-  try {
-    outer: for (const row of ranked) {
+  return {
+    async process(row: Row): Promise<ContactStop | null> {
+      let stopRun: ContactStop | null = null;
       const existing = String(row[step.column_key] ?? "").trim();
       const existingStatus = String(row[step.status_key] ?? "").trim();
       // a value that already has its final status (an earlier run of this step) is not looked up or verified again
-      if (existing !== "" && (step.kind === "email" ? existingStatus === EMAIL_STATUS_VERIFIED_AR || existingStatus === EMAIL_STATUS_OTHER_COMPANY_AR : existingStatus === PHONE_STATUS_VERIFIED_AR || existingStatus === PHONE_STATUS_OTHER_COUNTRY_AR)) continue;
+      if (existing !== "" && (step.kind === "email" ? existingStatus === EMAIL_STATUS_VERIFIED_AR || existingStatus === EMAIL_STATUS_OTHER_COMPANY_AR : existingStatus === PHONE_STATUS_VERIFIED_AR || existingStatus === PHONE_STATUS_OTHER_COUNTRY_AR)) return null;
       const parentId = String(row.parent_id ?? "");
       const facts = personFactsOf(row, stage.columns, parents.get(parentId) ?? null);
       let typeAr: string | null = null;
@@ -185,7 +200,7 @@ async function runStep(deps: ContactDeps, step: ContactStep, stage: ContactDeps[
           const params = finderParamsFor(finder, facts);
           if (!params) continue;
           const a = await attempt(finder, params);
-          if (a.t === "stop") { stopped = a.stop; break outer; }
+          if (a.t === "stop") { stopRun = a.stop; break; }
           if (a.t === "skip") continue;
           asked = true;
           if (a.t === "failed") continue; // the next ranked finder is tried
@@ -198,7 +213,7 @@ async function runStep(deps: ContactDeps, step: ContactStep, stage: ContactDeps[
         // NO PERSONAL PHONE: the COMPANY's phone goes in the person's row, labelled «رقم الشركة» (one lookup per company)
         if (value === "" && step.kind === "phone" && step.type_key) {
           const cp = await companyPhoneFor(parentId);
-          if (cp.stop) { stopped = cp.stop; break outer; }
+          if (cp.stop) { stopRun = cp.stop; }
           if (cp.value) { value = verifyContactValue("phone", cp.value) ?? cp.value.trim(); typeAr = PHONE_TYPE_COMPANY_AR; asked = true; }
         }
       } else if (step.kind === "phone" && step.type_key && String(row[step.type_key] ?? "").trim() === "") typeAr = PHONE_TYPE_PERSONAL_AR; // a number the source gave with the person
@@ -206,7 +221,7 @@ async function runStep(deps: ContactDeps, step: ContactStep, stage: ContactDeps[
         if (step.kind === "email") {
           // finder, fallback finder, then the VERIFIER: «موثّق» only when a verifier says so
           const verdict = await emailStatusOf(value, facts.domain);
-          if (verdict.stop) stopped = verdict.stop;
+          if (verdict.stop) stopRun = verdict.stop;
           if ((step.verifiers ?? []).length > 0 || verdict.status === "other_company") asked = true;
           statusAr = emailStatusAr(verdict.status);
           if (verdict.status === "unverified") out.filled.unverified += hit ? 1 : 0;
@@ -215,7 +230,7 @@ async function runStep(deps: ContactDeps, step: ContactStep, stage: ContactDeps[
           // EVERY PHONE IS VALIDATED: «رقم من دولة أخرى» when its country is not the company's, «موثّق» only when a validator says the number is valid, «غير موثّق» otherwise
           const company = companyOf(parentId);
           const checked = await phoneVerdictOf(value, company.country);
-          if (checked.stop) stopped = checked.stop;
+          if (checked.stop) stopRun = checked.stop;
           if ((step.validators ?? []).length > 0) asked = true;
           const status = phoneStatusOf({ number: value, verdict: checked.verdict, companyCountry: company.country });
           statusAr = phoneStatusAr(status);
@@ -227,15 +242,14 @@ async function runStep(deps: ContactDeps, step: ContactStep, stage: ContactDeps[
       }
       if (asked) out.looked += 1; else out.skipped += 1;
       if (pending.length >= COMMIT_EVERY) await flush();
-      if (stopped) break outer;
-    }
-  } finally {
-    await flush();
-    await items.mirror(step.stage_key);
-  }
-  out.spentUsd += budget.spentUsd() - startedAt;
-  try {
-    await deps.addEvent({ kind: "progress", message_ar: `بحث ${STEP_LABEL_AR[step.kind]} لصناع القرار: وُجد لـ ${toArabicDigits(found)} من ${toArabicDigits(rows.length)}.`, counts: { saved: found, planned: rows.length } });
-  } catch { /* a lost note never stops a run */ }
-  return stopped;
+      return stopRun;
+    },
+    async finish(): Promise<void> {
+      await flush();
+      await items.mirror(step.stage_key);
+      try {
+        await deps.addEvent({ kind: "progress", message_ar: `بحث ${STEP_LABEL_AR[step.kind]} لصناع القرار: وُجد لـ ${toArabicDigits(found)} من ${toArabicDigits(peopleCount)}.`, counts: { saved: found, planned: peopleCount } });
+      } catch { /* a lost note never stops a run */ }
+    },
+  };
 }

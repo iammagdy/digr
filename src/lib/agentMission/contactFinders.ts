@@ -24,7 +24,7 @@ export interface ContactStep {
   /** The cell that gets the value, and the cell that says whether it is verified. */
   column_key: string;
   status_key: string;
-  /** What one person is expected to cost this step (USD): the cheapest ranked finder's price, the assumed share of the fallback finder (FALLBACK_MISS_SHARE) and, for an e-mail, the verifier. It is part of the price by code (plan.ts `stagePriceInputs`), and it caps what the step may spend (engine). */
+  /** What one person is expected to cost this step (USD): the cheapest ranked finder's price, the assumed share of the fallback finder (FALLBACK_MISS_SHARE) and, for an e-mail, the verifier for the share of people an address is found for (EMAIL_FOUND_SHARE). It is part of the price by code (plan.ts `stagePriceInputs`), and it caps what the step may spend (engine). */
   per_person_usd: number;
   /** The finders this account may buy, cheapest first (at most FINDERS_PER_STEP). */
   finders: FinderInfo[];
@@ -96,10 +96,13 @@ export function verifierSourcesOf(catalog: TregCatalog, isAllowed: (id: string) 
 }
 
 /**
- * THE SHARE OF PEOPLE THE FIRST FINDER IS ASSUMED TO MISS (an ASSUMPTION, not a measurement: the benchmark found 8 of 10 e-mails with the whole chain). The fallback finder is bought only for them, so the step's price carries this share of its price; without it the step's cap
- * would be spent on the first finder and the verifier and the fallback could never run.
+ * WHAT THE STEP'S PRICE ASSUMES (ASSUMPTIONS taken from the owner's benchmark, not measurements; the price is the step's cap too, so they are tunable here and nowhere else):
+ *   FALLBACK_MISS_SHARE  the share of people the first finder misses, so the fallback finder is bought for them only (the benchmark found 8 of 10 e-mails with the whole chain, most by the first finder; the fallback is dearer and is bought on hits only);
+ *   EMAIL_FOUND_SHARE    the share of people an address is found for, so the verifier is bought for them only (8 of 10 in the benchmark).
+ * Without the first the step's cap would be spent on the first finder and the verifier and the fallback could never run; without the second the verifier would be priced for people who have no address.
  */
-export const FALLBACK_MISS_SHARE = 0.2;
+export const FALLBACK_MISS_SHARE = 0.1;
+export const EMAIL_FOUND_SHARE = 0.8;
 
 /**
  * What a chain of helpers is PRICED at per use: the dearest of its first `depth` members. Depth 1 (the default) prices the member that is expected to answer; a fallback member is bought only inside the step's cap and the job budget (the engine checks both before every call), so a
@@ -149,7 +152,7 @@ export function buildContactSteps(
       const company_phone = kind === "phone" && help.company_phone && help.company_phone.length > 0 ? help.company_phone : undefined;
       const column_key = marked?.key ?? DEFAULT_COLUMN[kind].key;
       // what one person is expected to cost: the cheapest finder and the assumed share of the fallback finder; for an e-mail the verifier every found address goes through; for a phone the company-phone search (a person with no personal number is given the company's: priced for every person, the upper bound) and the validator
-      const perPerson = (list[0]?.usd ?? 0) + FALLBACK_MISS_SHARE * (list[1]?.usd ?? 0) + (verifiers ? chainPriceUsd(verifiers, VERIFIER_PRICE_DEPTH) : 0) + (company_phone ? chainPriceUsd(company_phone) : 0) + (validators ? chainPriceUsd(validators) : 0);
+      const perPerson = (list[0]?.usd ?? 0) + FALLBACK_MISS_SHARE * (list[1]?.usd ?? 0) + (verifiers ? EMAIL_FOUND_SHARE * chainPriceUsd(verifiers, VERIFIER_PRICE_DEPTH) : 0) + (company_phone ? chainPriceUsd(company_phone) : 0) + (validators ? chainPriceUsd(validators) : 0);
       out.push({ kind, stage_key: st.key, column_key, status_key: statusKeyOf(column_key), per_person_usd: perPerson, finders: list, ...(verifiers ? { verifiers } : {}), ...(validators ? { validators } : {}), ...(company_phone ? { company_phone } : {}), ...(kind === "phone" ? { type_key: phoneTypeKeyOf(column_key) } : {}) });
     }
   }
