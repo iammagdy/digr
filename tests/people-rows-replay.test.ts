@@ -94,9 +94,12 @@ describe("A1/A2 replay: role mailboxes and nameless rows are company e-mails, no
     for (const mailbox of ["info@", "customer_care@", "webmaster@", "petro.consultants@"]) expect(peopleText).not.toContain(mailbox);
     expect(peopleText).toContain("hossam@orascom-em.com.eg");
     const header = (companiesSheet.getRow(1).values as unknown[]).map((v) => String(v ?? ""));
+    // CHANGED (PR 1 part b, reference A column 5): the best role mailbox of each company is its «الإيميل العام للشركة»; any OTHER mailbox found for it stays in «إيميلات عامة للشركة» (a found value is never dropped)
     const col = header.findIndex((h) => h === "إيميلات عامة للشركة");
+    const mainCol = header.findIndex((h) => h === "الإيميل العام للشركة");
     expect(col).toBeGreaterThan(0);
-    const cell = (n: number) => String(companiesSheet.getRow(n).getCell(col).value ?? "");
+    expect(mainCol).toBeGreaterThan(0);
+    const cell = (n: number) => `${String(companiesSheet.getRow(n).getCell(mainCol).value ?? "")}|${String(companiesSheet.getRow(n).getCell(col).value ?? "")}`;
     const mailboxes = [2, 3, 4].map(cell);
     expect(mailboxes.join("|")).toContain("info@orascom-em.com.eg");
     expect(mailboxes.join("|")).toContain("customer_care@nile-em.com.eg");

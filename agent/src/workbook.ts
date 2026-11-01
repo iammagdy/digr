@@ -13,6 +13,13 @@ import { formatAr } from "../../src/lib/arabicDigits";
 import { parentCountsOf } from "../../src/lib/agentMission/parents";
 import { isTextItemStage, textKeyOf } from "../../src/lib/agentMission/contract";
 import { buildMethodology, type MissionFacts } from "./methodology";
+import { DECISION_MAKER_NO_AR, DECISION_MAKER_YES_AR, NO_DECISION_MAKERS_NOTE_AR, PERSON_NAME_TITLE_AR, PERSON_TITLE_TITLE_AR, ROW_NUMBER_TITLE_AR, contractTypeOf } from "../../src/lib/agentMission/taskContracts";
+import { bilingualName, bilingualTitle } from "../../src/lib/agentMission/titleLexicon";
+import { titleFieldOf, titleTierOf } from "../../src/lib/agentMission/roles";
+import { isPeopleStage } from "../../src/lib/agentMission/people";
+import { isCompanyStage } from "../../src/lib/agentMission/entities";
+import { companiesWithoutDecisionMakers } from "./perParentLimits";
+import { NAME_AR_KEY } from "./namesAr";
 import { cleanRowsForCustomer, isProviderUrl, providerContext, withoutProviderNames, withoutProviderUrls, type ProviderCleanReport } from "../../src/lib/agentMission/providerHosts";
 
 type Row = Record<string, unknown>;
@@ -93,6 +100,12 @@ function textGetter(stage: PricedStage, key: string): ((row: Row) => unknown) | 
 export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): SheetLayout[] {
   const stageByKey = new Map(plan.stages.map((s, i) => [s.key, { s, i }]));
   const layouts: SheetLayout[] = [];
+  // THE REFERENCE'S SHEETS (taskContracts.ts, audit 2026-11 reference A): for «companies and their decision makers» each sheet starts with «م» (a running number of its rows), the decision-maker marker and the per-company notes are computed from the delivered people's titles, and the title and name cells read «العربية (English)»
+  const referenced = contractTypeOf(plan.stages) === "companies_people";
+  const managerStages = referenced ? plan.stages.filter((s) => s.deliver && isPeopleStage(s) && s.role_preference?.role === "manager" && plan.stages.some((p) => p.key === s.parent_key && p.deliver && isCompanyStage(p))) : [];
+  const referencedKeys = new Set<string>([...managerStages.map((s) => s.key), ...managerStages.map((s) => s.parent_key ?? "")]);
+  const noDecisionMaker = new Set<string>();
+  for (const ms of managerStages) for (const id of companiesWithoutDecisionMakers((rowsByStage[ms.parent_key ?? ""] ?? []).map((r) => text(r.id)), rowsByStage[ms.key] ?? [], "manager")) noDecisionMaker.add(id);
   plan.stages.forEach((stage, stageIndex) => {
     const rows = rowsByStage[stage.key] ?? [];
     if (!stage.deliver || rows.length === 0) return;
@@ -103,6 +116,12 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
     const columns: SheetColumn[] = [];
     const titles = new Set<string>();
     const sample = (get: (row: Row, parent: Row | null) => unknown) => rows.map((r) => get(r, parentById.get(text(r.parent_id)) ?? null));
+    // 0. «م»: the running number of the rows of this sheet (one rule for every sheet: per row, in the order of the sheet)
+    if (referencedKeys.has(stage.key)) {
+      const numberOf = new Map<Row, number>(rows.map((r, i) => [r, i + 1] as const));
+      titles.add(ROW_NUMBER_TITLE_AR);
+      columns.push({ title: ROW_NUMBER_TITLE_AR, get: (r) => numberOf.get(r) ?? "", kind: "own", key: "__row_number" });
+    }
     // 1. the context of the parent row, so a child row is understood on its own
     if (parentInfo && parentRows.length > 0) {
       const parentCols = readableColumns(parentInfo.s);
@@ -121,15 +140,26 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
     }
     // 2. the stage's own readable columns, without a repeated title or a copy of another column
     const taken: unknown[][] = columns.map((c) => sample(c.get));
+    // the reference's computed and bilingual columns (taskContracts.ts): the marker and the notes from the delivered people's titles, a decision maker's title and name as «العربية (English)»
+    const isManagerStage = managerStages.includes(stage);
+    const specialGet = (c: (typeof own)[number]): ((r: Row) => unknown) | null => {
+      if (!referencedKeys.has(stage.key)) return null;
+      if (c.computed === "decision_maker" && isManagerStage) return (r) => { const f = titleFieldOf(r); return f && titleTierOf(r[f], "manager") === 0 ? DECISION_MAKER_YES_AR : DECISION_MAKER_NO_AR; };
+      if (c.computed === "notes") return (r) => (noDecisionMaker.has(text(isManagerStage ? r.parent_id : r.id)) ? NO_DECISION_MAKERS_NOTE_AR : "");
+      if (isManagerStage && c.title_ar === PERSON_TITLE_TITLE_AR) return (r) => bilingualTitle(r[c.key]);
+      if (isManagerStage && c.title_ar === PERSON_NAME_TITLE_AR) return (r) => bilingualName(r[c.key], r[NAME_AR_KEY]);
+      return null;
+    };
     for (const c of own) {
       if (titles.has(c.title_ar)) continue;
-      const values = rows.map((r) => r[c.key]);
-      // a status column («موثّق» / «غير موثّق») says the same words on every row by nature: it is never merged into a twin
-      if (c.status_of === undefined && c.type_of === undefined && taken.some((t) => sameValues(t, values))) continue;
+      const special = specialGet(c);
+      const values = rows.map((r) => (special ? special(r) : r[c.key]));
+      // a status column («موثّق» / «غير موثّق») says the same words on every row by nature: it is never merged into a twin; neither is a computed column of the reference
+      if (c.status_of === undefined && c.type_of === undefined && c.computed === undefined && taken.some((t) => sameValues(t, values))) continue;
       titles.add(c.title_ar);
       taken.push(values);
       const ownText = textGetter(stage, c.key);
-      columns.push({ title: c.title_ar, get: ownText ? (r) => ownText(r) : (r) => r[c.key], kind: "own", contact: c.kind !== undefined, link: values.some((v) => isUrl(v)), key: c.key });
+      columns.push({ title: c.title_ar, get: special ? (r) => special(r) : ownText ? (r) => ownText(r) : (r) => r[c.key], kind: "own", contact: c.kind !== undefined, link: values.some((v) => isUrl(v)), key: c.key });
     }
     layouts.push({ stageIndex, stage, rows, columns: columns.map((c) => (isNameColumn(c) ? { ...c, get: (row: Row, parent: Row | null) => withoutDirectionMarks(c.get(row, parent)) } : c)), hasParent: stage.parent_key !== null });
   });
@@ -148,6 +178,21 @@ function withCompanyMailboxes(plan: PricedPlan, rowsIn: Record<string, Row[]>, m
   for (const [stageKey, byParent] of Object.entries(mailboxes ?? {})) {
     const rows = rowsByStage[stageKey];
     if (!rows || ![...byParent.values()].some((v) => v.length > 0)) continue;
+    // A COMPANY STEP EXISTS FOR THIS STAGE (the company's e-mail is a column of the reference, taskContracts.ts): these addresses ARE its candidates, so there is no second column. A company whose e-mail cell is still empty (the step did not reach it) keeps the first one it was given, «غير موثّق»: a found value is never dropped.
+    const step = (plan.contact_steps ?? []).find((x) => x.level === "company" && x.kind === "email" && x.stage_key === stageKey);
+    if (step) {
+      const filled = rows.map((r) => {
+        const have = text(r[step.column_key]).trim();
+        const first = (byParent.get(text(r.id)) ?? [])[0];
+        return have === "" && first ? { ...r, [step.column_key]: first, [step.status_key]: "غير موثّق" } : r;
+      });
+      // the company's e-mail is ONE address (the best role mailbox); any other mailbox found for it stays in the old column, one per line: a found value is never dropped
+      const extras = new Map(filled.map((r) => [text(r.id), (byParent.get(text(r.id)) ?? []).filter((m) => m.toLowerCase() !== text(r[step.column_key]).trim().toLowerCase())] as const));
+      if (![...extras.values()].some((v) => v.length > 0)) { rowsByStage[stageKey] = filled; continue; }
+      rowsByStage[stageKey] = filled.map((r) => ({ ...r, [COMPANY_MAILBOXES_KEY]: (extras.get(text(r.id)) ?? []).join("\n") }));
+      layoutPlan = { ...layoutPlan, stages: layoutPlan.stages.map((st) => (st.key === stageKey ? { ...st, columns: [...st.columns, { key: COMPANY_MAILBOXES_KEY, title_ar: COMPANY_MAILBOXES_HEADER_AR }] } : st)) };
+      continue;
+    }
     rowsByStage[stageKey] = rows.map((r) => ({ ...r, [COMPANY_MAILBOXES_KEY]: (byParent.get(text(r.id)) ?? []).join("\n") }));
     layoutPlan = { ...layoutPlan, stages: layoutPlan.stages.map((s) => (s.key === stageKey ? { ...s, columns: [...s.columns, { key: COMPANY_MAILBOXES_KEY, title_ar: COMPANY_MAILBOXES_HEADER_AR }] } : s)) };
   }
@@ -176,12 +221,13 @@ export function buildExcludedAdminCsv(plan: PricedPlan, excludedByStage: Record<
 }
 
 /** What the first sheet's closing note may say about the file: only what the file really has. */
-export interface WorkbookFacts { sheets: number; hasParentColumn: boolean; parentLinked: boolean; hasDateColumn: boolean; /** Some date of the file was computed from a relative time the source gave («قبل ٣ أيام»). */ hasApproxDates?: boolean }
+export interface WorkbookFacts { sheets: number; hasParentColumn: boolean; parentLinked: boolean; hasDateColumn: boolean; /** The sheets start with «م», the running number of their rows. */ hasRowNumber?: boolean; /** Some date of the file was computed from a relative time the source gave («قبل ٣ أيام»). */ hasApproxDates?: boolean }
 
 /** The closing note of the summary sheet, built from the sheets and columns the file REALLY has: a link between sheets is described only when a parent column and its target sheet exist; the time zone only when a date column exists. */
 export function workbookNoteAr(f: WorkbookFacts): string {
   const where = f.sheets > 1 ? "كل ورقة" : "الورقة";
   const parts = [`الأعمدة الأولى في ${where} مقروءة؛ وفي آخرها «${ID_HEADER_AR}»${f.hasParentColumn ? ` و«${PARENT_HEADER_AR}»` : ""}${f.sheets > 1 && f.hasParentColumn ? " للربط بين الأوراق" : ""}${f.parentLinked ? ` (اضغط على «${PARENT_HEADER_AR}» للانتقال إلى صفّه)` : ""}.`];
+  if (f.hasRowNumber) parts.push(`العمود «${ROW_NUMBER_TITLE_AR}» رقم تسلسلي لصفوف كل ورقة.`);
   if (f.hasDateColumn) parts.push("التواريخ والأوقات بتوقيت القاهرة.");
   if (f.hasApproxDates) parts.push(APPROX_DATES_NOTE_AR);
   return parts.join(" ");
@@ -361,7 +407,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   intro.height = 32;
   intro.font = { name: "Calibri", size: 11, bold: true };
   const parentLinked = layouts.some((l) => l.hasParent && sheetNameOf.has(l.stage.parent_key!) && (idCell.get(l.stage.parent_key!)?.size ?? 0) > 0);
-  const note = summary.addRow([workbookNoteAr({ sheets: layouts.length, hasParentColumn: layouts.some((l) => l.hasParent), parentLinked, hasDateColumn, hasApproxDates })]);
+  const note = summary.addRow([workbookNoteAr({ sheets: layouts.length, hasParentColumn: layouts.some((l) => l.hasParent), parentLinked, hasDateColumn, hasApproxDates, hasRowNumber: layouts.some((l) => l.columns[0]?.key === "__row_number") })]);
   summary.mergeCells(note.number, 1, note.number, 5);
   note.alignment = { wrapText: true, readingOrder: "rtl" as any };
   note.height = 34;

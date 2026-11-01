@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readWorkbook, replay } from "./helpers/agentReplay";
 import { companiesPage, peopleAnswer, peopleOfCompany, planFlow, request } from "./helpers/a1World";
 import { tregResult } from "./helpers/agentFakeWorld";
+// CHANGED (PR 1 part c): the people sheet of «companies and their decision makers» uses the owner's titles (taskContracts.ts): «اسم صانع القرار», «إيميل المسؤول المباشر», «هاتف / محمول المسؤول» and the statuses beside them
 
 /**
  * WHAT THE A1 REPLAY DELIVERS, COUNTED FROM THE FILE (owner's question after #317: «people delivered out of the approved count, and how many have a name, a job title, a professional page, an e-mail, a phone»; and why a limits text could say «سُلّم ٣ من ١٠»).
@@ -25,7 +26,7 @@ describe("the A1 replay, counted from the delivered file", () => {
     const people = Array.from({ length: sheet.rowCount - 1 }, (_, i) => sheet.getRow(i + 2));
     const count = (title: string) => people.filter((row) => cell(row.getCell(at(title)).value) !== "").length;
     const approved = (r.plannedPlan.stages.find((s) => s.key === "people") as { planned_rows?: number; expected_rows?: number }).planned_rows ?? (r.plannedPlan.stages.find((s) => s.key === "people") as { expected_rows: number }).expected_rows;
-    expect({ approved, delivered: people.length, name: count("الاسم"), title: count("المسمى الوظيفي"), page: count("الملف المهني للشخص"), email: count("الإيميل"), phone: count("رقم التليفون") }).toEqual({ approved: 10, delivered: 10, name: 10, title: 10, page: 10, email: 0, phone: 0 });
+    expect({ approved, delivered: people.length, name: count("اسم صانع القرار"), title: count("المسمى الوظيفي"), page: count("الملف المهني للشخص"), email: count("إيميل المسؤول المباشر"), phone: count("هاتف / محمول المسؤول") }).toEqual({ approved: 10, delivered: 10, name: 10, title: 10, page: 10, email: 0, phone: 0 });
   });
 
   it("the file's own table says what happened to the 31 the source gave: 10 delivered, 21 left out because they are beyond the approved two per company; and its limits row says there is no limit", async () => {

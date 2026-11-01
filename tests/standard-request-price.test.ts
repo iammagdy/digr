@@ -5,7 +5,7 @@ import { policyVerdict } from "../src/lib/treg/dataPolicy";
 import { NOT_ADMIN } from "./helpers/agentHarness";
 import { childStepSourcesFor } from "../src/lib/agentMission/childSources";
 import { validateAndPricePlan, type PlanLookup } from "../src/lib/agentMission/plan";
-import { companyPhoneSourcesOf, finderSourcesOf, validatorSourcesOf, verifierSourcesOf } from "../src/lib/agentMission/contactFinders";
+import { companyPhoneSourcesOf, finderSourcesOf, mailboxListerSourcesOf, validatorSourcesOf, verifierSourcesOf } from "../src/lib/agentMission/contactFinders";
 import { executionBudgetUsd } from "../src/lib/agentMission/price";
 import { AGENT_JOB_POINTS_CAP } from "../src/lib/agentMission/constants";
 
@@ -24,6 +24,8 @@ const lookup: PlanLookup = {
   endpointsCalled: () => new Map([["aviato.companies.employees", { rows: 5 }]]),
   isContactSource: (id) => /email/i.test(id),
   contactFinders: (kind) => finderSourcesOf(kind, catalog, allowed),
+  // CHANGED (PR 1 part b): the company's own e-mail step (reference A column 5) is part of the standard request's price
+  mailboxListers: () => mailboxListerSourcesOf(catalog, allowed),
   contactAids: (kind) => (kind === "email" ? { verifiers: verifierSourcesOf(catalog, allowed) } : { validators: validatorSourcesOf(catalog, allowed), company_phone: companyPhoneSourcesOf(catalog, allowed) }),
 };
 const companies = { key: "companies", title_ar: "الشركات المصرية في قطاع الكهروميكانيكا", endpoint_id: "tomba.companies.search.reveal", expected_rows: 5, parent_key: null, deliver: true, columns: [{ key: "name", title_ar: "اسم الشركة" }, { key: "website", title_ar: "الموقع" }, { key: "country", title_ar: "الدولة" }], sample_rows: [{ id: "esweco.com", name: "ESWECO", website: "https://esweco.com", country: "EG" }], measured_by: ["call_0001"] };
@@ -42,11 +44,11 @@ describe("the standard request after the owner's decision (before #321's follow-
     expect(stage.per_parent_rows).toBe(2);
     expect(p.price.deliveredRows).toBe(15);
     expect(stage.pages_per_parent).toBe(3);
-    // the numbers of this run: unit 80.73 points, the most that can be charged 1,211 points, the hold 1,393 (before: 24.81, 373, 429)
-    expect(p.price.maxChargePoints).toBeGreaterThan(1100);
-    expect(p.price.maxChargePoints).toBeLessThan(1300);
-    expect(p.price.reservePoints).toBeGreaterThan(1300);
-    expect(p.price.reservePoints).toBeLessThan(1500);
+    // the numbers of this run: unit 100.58 points, the most that can be charged 1,509 points, the hold 1,736 (CHANGED in PR 1 part b: the company's own e-mail and HQ phone steps are in the price, five companies x 0.0108 USD; before: 80.73, 1,211, 1,393; before #322: 24.81, 373, 429)
+    expect(p.price.maxChargePoints).toBeGreaterThan(1400);
+    expect(p.price.maxChargePoints).toBeLessThan(1600);
+    expect(p.price.reservePoints).toBeGreaterThan(1600);
+    expect(p.price.reservePoints).toBeLessThan(1850);
   });
   it("it stays inside the job cap", () => {
     const p = priced();
@@ -60,7 +62,8 @@ describe("the standard request after the owner's decision (before #321's follow-
     expect(expected / DAILY_CAP_USD).toBeLessThan(1 / 3);
     const people = p.stages.find((s) => s.key === "people")!;
     const pages = people.planned_rows * ((people.pages_per_parent ?? 1) * (people.page_cost_usd ?? 0)) / (people.per_parent_rows ?? 1);
-    const chain = (p.contact_steps ?? []).reduce((n, st) => n + (st.max_person_usd ?? st.per_person_usd) * people.planned_rows, 0);
+    // CHANGED (PR 1 part b): each step's cap is per row of ITS OWN stage (the company steps: the five companies, not the ten people)
+    const chain = (p.contact_steps ?? []).reduce((n, st) => n + (st.max_person_usd ?? st.per_person_usd) * p.stages.find((x) => x.key === st.stage_key)!.planned_rows, 0);
     const worst = pages + chain + 0.0001;
     expect(worst / DAILY_CAP_USD).toBeLessThan(2 / 3);
     expect(worst).toBeLessThan(executionBudgetUsd(p.price.reservePoints));

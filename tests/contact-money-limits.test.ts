@@ -126,7 +126,8 @@ describe("the A1-style plan price includes every step, by code", () => {
     expect(p.price.maxChargePoints).toBeGreaterThan(before.maxChargePoints);
     expect(p.price.deliveredRows).toBe(before.deliveredRows);
     // the step prices are the documented sums
-    for (const s of steps) {
+    // CHANGED (PR 1 part b): the documented sums are the PEOPLE steps' (the company-level steps have their own, tested in company-contact-step.test.ts)
+    for (const s of steps.filter((x) => x.level === undefined)) {
       // CHANGED (owner decision after #321): the expected cost of the chain from the measured hit rates (finderStats.ts), not the guessed shares
       const chain = chainExpectation(s.finders, s.kind);
       const expected = chain.costUsd + (s.kind === "email" ? (1 - chain.missShare) * chainPriceUsd(s.verifiers, VERIFIER_PRICE_DEPTH) : chain.missShare * chainPriceUsd(s.company_phone, FINDERS_PER_STEP) + chainPriceUsd(s.validators));
@@ -139,8 +140,8 @@ describe("the A1-style plan price includes every step, by code", () => {
 
   it("the reserve the customer approves is never below the job's whole spend allowance: the job budget is 40% of the reserve's value, and every step's cap is inside it", async () => {
     const p = await plan();
-    const people = p.stages.find((s) => s.key === "people")!;
-    const stepsCap = p.contact_steps!.reduce((n, s) => n + s.per_person_usd * people.planned_rows, 0);
+    // CHANGED (PR 1 part b): each step's allowance is per row of ITS OWN stage (a company step: the companies, not the people)
+    const stepsCap = p.contact_steps!.reduce((n, s) => n + s.per_person_usd * p.stages.find((x) => x.key === s.stage_key)!.planned_rows, 0);
     // what the steps may spend (their caps together) is part of the provider cost the price rests on
     expect(p.price.providerCostUsd!).toBeGreaterThanOrEqual(stepsCap - 1e-9);
   });

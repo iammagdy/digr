@@ -19,10 +19,12 @@ describe("the finder steps are in the price", () => {
     const r = await run();
     const plan = r.plannedPlan as PricedPlan;
     const steps = plan.contact_steps!;
-    expect(steps.length).toBe(2);
-    const people = plan.stages.find((s) => s.key === "people")!;
+    // CHANGED (PR 1 part b): the plan also carries the company-level steps (the company's e-mail and HQ phone), each priced per row of ITS OWN stage (the companies)
+    expect(steps.filter((s) => s.level === undefined).length).toBe(2);
+    expect(steps.filter((s) => s.level === "company").length).toBeGreaterThan(0);
+    const rowsOf = (key: string) => plan.stages.find((s) => s.key === key)!.planned_rows;
     const without = priceMissionByCode(stagePriceInputs(plan.stages), { settings: plan.price.settings });
-    const extra = steps.reduce((n, s) => n + s.per_person_usd * people.planned_rows, 0);
+    const extra = steps.reduce((n, s) => n + s.per_person_usd * rowsOf(s.stage_key), 0);
     expect(extra).toBeGreaterThan(0);
     expect(plan.price.providerCostUsd).toBeCloseTo((without.providerCostUsd ?? 0) + extra, 9);
     expect(plan.price.costPerFinalRowUsd).toBeGreaterThan(without.costPerFinalRowUsd);

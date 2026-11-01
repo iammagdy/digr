@@ -7,6 +7,7 @@ import type { FakeStep } from "../agent/src/fakeDriver";
 import { countWorkbookSheets } from "../agent/src/finalize";
 import { settlementCharge } from "../src/lib/agentMission/price";
 import type { TregCallOptions } from "../src/functions/shared/tregClient";
+// CHANGED (PR 1 part c): the people sheet of «companies and their decision makers» uses the owner's titles (taskContracts.ts): «اسم صانع القرار», «إيميل المسؤول المباشر», «هاتف / محمول المسؤول» and the statuses beside them
 
 /**
  * REPLAY OF THE LIVE RE-TEST OF 2026-10-31 21:40-22:10 CAIRO, AFTER #316 (test account; `missions`, `mission_events` and `mission_calls` read with SELECT).
@@ -42,7 +43,8 @@ const pickCompany = (o: TregCallOptions) => SLUGS.find((s) => JSON.stringify(o.p
 const peopleAnswer = (o: TregCallOptions) => { const s = pickCompany(o); return tregResult(s ? peopleOfCompany(s) : { results: [] }, 0.0005); };
 
 const columnsOf = (...c: Array<[string, string, string?]>) => c.map(([key, title_ar, kind]) => ({ key, title_ar, ...(kind ? { kind } : {}) }));
-const ccolumns = columnsOf(["name", "اسم الشركة"], ["city", "المدينة"], ["website", "الموقع الإلكتروني"], ["linkedin", "صفحة الشركة على الشبكة المهنية"]);
+// CHANGED (PR 1 part b): the source gives `industry`, so the companies stage maps it (the contract check refuses a plan that drops a field the source gave)
+const ccolumns = columnsOf(["name", "اسم الشركة"], ["industry", "النشاط والتخصص"], ["city", "المدينة"], ["website", "الموقع الإلكتروني"], ["linkedin", "صفحة الشركة على الشبكة المهنية"]);
 /** The approved plan's people columns: name, title, company, professional page, and the e-mail and phone MARKED with a kind. */
 const pcolumns = columnsOf(["full_name", "الاسم"], ["job_title", "المسمى الوظيفي"], ["company", "الشركة"], ["linkedin", "الملف المهني للشخص"], ["email", "الإيميل", "work_email"], ["phone", "رقم التليفون", "phone"]);
 
@@ -51,7 +53,7 @@ const planArgs = (res: Results, assumptions?: string[]) => ({
       assumptions_ar: assumptions ?? ["صناع القرار: المدير التنفيذي والمدير العام والعضو المنتدب أولًا، ثم المديرون ورؤساء الأقسام."],
       stages: [
         { key: "companies", title_ar: "شركات مصرية في المعدات الكهربائية والميكانيكية", endpoint_id: COMPANIES, expected_rows: 5, parent_key: null, deliver: true, columns: ccolumns,
-          sample_rows: [{ id: linkedinOf("orascom-em"), name: "Orascom Electromechanical", city: "Cairo", website: "orascom-em.com.eg", linkedin: linkedinOf("orascom-em") }], measured_by: [callIds(res)[0], firstOutputId(res)] },
+          sample_rows: [{ id: linkedinOf("orascom-em"), name: "Orascom Electromechanical", industry: "Electrical Equipment Manufacturing", city: "Cairo", website: "orascom-em.com.eg", linkedin: linkedinOf("orascom-em") }], measured_by: [callIds(res)[0], firstOutputId(res)] },
         { key: "people", title_ar: "موظفو كل شركة", endpoint_id: PEOPLE, expected_rows: 10, parent_key: "companies", per_parent_rows: 2, deliver: true, columns: pcolumns,
           sample_rows: [{ id: "https://www.linkedin.example/in/orascom-em-2", full_name: "Karim orascom", job_title: "Chief Executive Officer", company: "orascom-em co", linkedin: "https://www.linkedin.example/in/orascom-em-2", email: "", phone: "" }], measured_by: [callIds(res)[1]] },
       ],
@@ -61,7 +63,7 @@ const planFlow = (firstAttempt?: { assumptions_ar: string[] }): FakeStep[] => [
   { tool: "catalog_search", args: { words: ["companies", "search"], limit: 5 } },
   { tool: "describe_endpoint", args: { id: COMPANIES } },
   { tool: "treg_call", args: { endpoint_id: COMPANIES, params: { query: "electromechanical", page: 1 }, why } },
-  { tool: "run_code", args: (r: Results) => ({ code: "return inputs.call_0001.data.companies.map(r => ({ id: r.linkedin_url, name: r.name, city: r.city || '', website: r.website_url || '', linkedin: r.linkedin_url || '' }))", files: [callIds(r)[0]] }) },
+  { tool: "run_code", args: (r: Results) => ({ code: "return inputs.call_0001.data.companies.map(r => ({ id: r.linkedin_url, name: r.name, industry: r.industry || '', city: r.city || '', website: r.website_url || '', linkedin: r.linkedin_url || '' }))", files: [callIds(r)[0]] }) },
   { tool: "describe_endpoint", args: { id: PEOPLE } },
   { tool: "treg_call", args: { endpoint_id: PEOPLE, params: { company_linkedin_url: linkedinOf("orascom-em"), cascade: [{ include_title: ["Chief Executive Officer", "Managing Director", "General Manager", "Chairman"] }, { include_title: ["Director", "Head of", "Manager"] }], max_results: 10 }, why } },
   { tool: "run_code", args: (r: Results) => ({ code: "return inputs.call_0002.results.map(r => { const p = r.person || {}; const exp = (p.experiences && p.experiences[0]) || {}; return { id: p.linkedin_url, full_name: p.full_name, job_title: exp.job_title || '', company: exp.company_name || '', linkedin: p.linkedin_url, email: '', phone: '' }; })", files: [callIds(r)[1]] }) },
@@ -106,16 +108,16 @@ describe("A1 replay: a person with a name and a job title is delivered with empt
     expect(peopleSheet.rowCount).toBe(11);
     const header = (peopleSheet.getRow(1).values as unknown[]).map((v) => String(v ?? ""));
     const col = (title: string) => header.findIndex((h) => h === title);
-    expect(col("الاسم")).toBeGreaterThan(0);
+    expect(col("اسم صانع القرار")).toBeGreaterThan(0);
     expect(col("المسمى الوظيفي")).toBeGreaterThan(0);
     expect(col("الملف المهني للشخص")).toBeGreaterThan(0);
     for (let n = 2; n <= 11; n += 1) {
       const row = peopleSheet.getRow(n);
-      expect(String(row.getCell(col("الاسم")).value ?? "").trim(), `name of row ${n}`).not.toBe("");
+      expect(String(row.getCell(col("اسم صانع القرار")).value ?? "").trim(), `name of row ${n}`).not.toBe("");
       expect(String(row.getCell(col("المسمى الوظيفي")).value ?? "").trim(), `title of row ${n}`).not.toBe("");
       expect(String(row.getCell(col("الملف المهني للشخص")).value ?? "").trim(), `page of row ${n}`).not.toBe("");
-      expect(row.getCell(col("الإيميل")).value ?? null).toBeNull();
-      expect(row.getCell(col("رقم التليفون")).value ?? null).toBeNull();
+      expect(row.getCell(col("إيميل المسؤول المباشر")).value ?? null).toBeNull();
+      expect(row.getCell(col("هاتف / محمول المسؤول")).value ?? null).toBeNull();
     }
     const stored = await r.store.getFileBytes(r.missionId, "result/result.xlsx");
     expect(await countWorkbookSheets(stored as never)).toEqual([5, 10]);

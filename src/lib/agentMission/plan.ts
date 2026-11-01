@@ -1,13 +1,14 @@
-import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, AGENT_PEOPLE_PAGES_DEFAULT, AGENT_PEOPLE_PAGES_MAX, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE } from "./constants";
+import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, AGENT_PEOPLE_PAGES_DEFAULT, AGENT_PEOPLE_PAGES_MAX, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE, NAMES_STEP_USD_PER_PERSON } from "./constants";
 import { CONTACT_KINDS, requestWantsContacts, type ContactKind } from "./contacts";
 import { isPeopleStage } from "./people";
-import { buildContactSteps, type ContactAids, type ContactStep, type FinderInfo, type FinderKind } from "./contactFinders";
+import { buildCompanySteps, buildContactSteps, type ContactAids, type ContactStep, type FinderInfo, type FinderKind } from "./contactFinders";
 import { peopleConditionedOnContactIssues } from "./contactQuestion";
 import { estimateMissionMinutes, measuredCostPerRowUsd, priceMissionByCode, type MissionPriceResult } from "./price";
 import { classifyRows, searchQueryOf, validateRelevanceSpec, type RelevanceSpec } from "./relevance";
 import { minimumLineAr, type MissionPricingSettings } from "../missionPricing";
 import { checkCustomerLabel, checkCustomerText } from "./text";
 import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type SourceField } from "./fields";
+import { CONTRACT_ONLY_CLASSES, contractIssuesFor, isPlaceSource, type SourceStageKind } from "./taskContracts";
 import { neutralPeopleTitleAr, roleLineAr, roleOfNoun, type RoleKey } from "./roles";
 import { toArabicDigits } from "../arabicDigits";
 import { DEFAULT_PEOPLE_PER_PARENT, bindQuantity, bindQuantityDetailed, countedQuantities, ownTitleWords, perParentAskFor, perParentAskOf, perParentQuantities, perSourceQuantities, requestedStageIndexes, sameNounStem, unservedPerParentAsks } from "./quantity";
@@ -37,6 +38,8 @@ export interface PlanColumn {
   status_of?: string;
   /** Set by code on the column that says whose phone number the column it names holds: «شخصي» / «رقم الشركة» (contactFinders.ts). */
   type_of?: string;
+  /** Set by code (taskContracts.ts) on a column the workbook COMPUTES from the delivered rows instead of reading it: the decision-maker marker «صانع قرار» («نعم» / «لا») and the per-company notes. */
+  computed?: "decision_maker" | "notes";
 }
 
 /**
@@ -55,7 +58,7 @@ export interface EngineSpec {
   /** The key of `inputs` the page is handed under (the id of the saved page the code was measured on). */
   map_file_id: string;
   /** A stage with a parent: the input that takes a field of the parent's row (`from` is a column key of the parent stage, or «id»). */
-  parent_binding: { param: string; from: string; /** The other fields of a parent that the child source can take (its website, its page, its name): tried in order for a parent with no value for the first, or when the read through the first failed or gave nothing. */ fallbacks?: Array<{ param: string; from: string; domain?: true }> } | null;
+  parent_binding: { param: string; from: string; /** The OTHER identity inputs the child source takes (the link beside the id, the id beside the link): sent in the same call as the first (a routed source matches its providers on the keys it is sent). */ also?: Array<{ param: string; from: string }>; /** The other fields of a parent that the child source can take (its website, its page, its name): tried in order for a parent with no value for the first, or when the read through the first failed or gave nothing. */ fallbacks?: Array<{ param: string; from: string; domain?: true }> } | null;
   /** The field of the mapped items that keys them when they carry no `id` of their own (chosen by code from the measured page: a platform id, a link, or «$content» for the fingerprint). Absent: the items carry `id`. */
   id_field?: string;
   /** The source's own date inputs, from the catalog (dateWindow.ts): when the source ends before a requested period is reached, the engine asks again with the end of the window moved back. Absent: the source has none documented. */
@@ -147,6 +150,8 @@ export interface PlanLookup {
   contactFinders?(kind: FinderKind): FinderInfo[];
   /** The helpers of the finder steps besides the finders (the e-mail verifiers), ranked and priced from the catalog. */
   contactAids?(kind: FinderKind): ContactAids;
+  /** The mailbox listers this account may buy, cheapest first (contactFinders.ts): the company's e-mail step of «companies and their decision makers» (taskContracts.ts) looks the company's own role mailbox up through them. */
+  mailboxListers?(): FinderInfo[];
 }
 
 export interface PricedStage extends ProposedStage {
@@ -210,7 +215,9 @@ const MAX_ASSUMPTIONS = 6;
  * THE PRICE INPUTS OF A PLAN: one per stage. The cost of a contact finder step (per_person_usd per person, contactFinders.ts) is part of the cost per row of the people stage it fills, so the provider cost, the cost per delivered row and the unit price carry it; the step adds no row and no stage.
  * The one place every pricing path uses (the plan check, the approval's re-price, the plan editor).
  */
-export const stagePriceInputs = (stages: ReadonlyArray<PricedStage>, steps?: ReadonlyArray<ContactStep>, options: { withoutDepth?: boolean } = {}) => stages.map((s) => ({ rows: s.planned_rows, costPerRowUsd: depthCostPerRowUsd(s, options.withoutDepth === true) + (steps ?? []).filter((x) => x.stage_key === s.key).reduce((n, x) => n + Math.max(0, x.per_person_usd), 0), deliver: s.deliver, yield: s.yield_share, reviewShare: s.review_share }));
+export const stagePriceInputs = (stages: ReadonlyArray<PricedStage>, steps?: ReadonlyArray<ContactStep>, options: { withoutDepth?: boolean } = {}) => stages.map((s) => ({ rows: s.planned_rows, costPerRowUsd: depthCostPerRowUsd(s, options.withoutDepth === true) + (steps ?? []).filter((x) => x.stage_key === s.key).reduce((n, x) => n + Math.max(0, x.per_person_usd), 0) + (options.withoutDepth !== true && namesAreWritten(s) ? NAMES_STEP_USD_PER_PERSON : 0), deliver: s.deliver, yield: s.yield_share, reviewShare: s.review_share }));
+/** A delivered stage of decision makers: the Arabic spelling of its people's names is written by one small request (agent/src/namesAr.ts), whose estimate is part of the price (NAMES_STEP_USD_PER_PERSON). The price of the READING alone (the default count of people) leaves it out, like the paid lookups. */
+export const namesAreWritten = (s: Pick<PricedStage, "deliver" | "parent_key" | "role_preference">): boolean => s.deliver && s.parent_key !== null && s.role_preference?.role === "manager";
 /** The cost per delivered person of a stage read in DEPTH: every page of the depth for each parent (pages x one page's cost) shared by the people asked for each parent; never below the measured cost per row. */
 export const depthCostPerRowUsd = (s: PricedStage, withoutDepth = false): number => {
   const pages = Math.floor(Number(s.pages_per_parent ?? 1));
@@ -426,7 +433,10 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
 
     // EVERY USEFUL FIELD THE SOURCE GIVES stays in the file: a date, an author, a link, the counts (likes, replies, shares, views) that the saved page carries must each have a column (the agent maps them in its code)
     if (raw.deliver === true) {
-      const missing = uncoveredFields(sourceFields, cleanColumns);
+      // THE GENERIC RULE covers the classes of any item; a company's or a place's contact fields (phone, address, e-mail, review count) are the CONTRACT's (taskContracts.ts), asked only of the stages it names
+      const missing = uncoveredFields(sourceFields.filter((f) => !CONTRACT_ONLY_CLASSES.includes(f.cls)), cleanColumns);
+      const stageKind: SourceStageKind = !isChild && isCompanyStage({ title_ar: title.text }) ? "company" : !isChild && isPlaceSource(endpointId, lookup.endpointCapability) ? "place" : "other";
+      issues.push(...contractIssuesFor({ key, columns: cleanColumns }, sourceFields, stageKind));
       if (missing.length > 0) issues.push(`${label}: the source gives fields the customer would want in the file that no column holds: ${missing.map((f) => `${FIELD_LABEL_AR[f.cls]} (${f.path})`).join(", ")}. Add a column for each (map it in your run_code and give it an Arabic title like «${FIELD_LABEL_AR[missing[0].cls]}»): the file keeps every useful field of the source`);
     }
     // (a delivered PEOPLE stage is exempt: the e-mail and phone columns and their finder steps are added to it by code, contactFinders.ts)
@@ -648,7 +658,8 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   if (issues.length) return { ok: false, issues };
 
   // THE FINDER STEPS: whatever the planner wrote (or dropped, or excused with a note), a delivered people stage of a request that asks for an e-mail or a phone gets its step per asked kind, finders ranked cheapest first
-  const contactSteps = buildContactSteps(priced, lookup.requestText, (kind) => lookup.contactFinders?.(kind) ?? [], (kind) => lookup.contactAids?.(kind) ?? {});
+  // THE COMPANY STEPS (the company's own e-mail and HQ phone, reference A): beside the people's, for a delivered company stage with delivered people under it
+  const contactSteps = [...buildContactSteps(priced, lookup.requestText, (kind) => lookup.contactFinders?.(kind) ?? [], (kind) => lookup.contactAids?.(kind) ?? {}), ...buildCompanySteps(priced, lookup.mailboxListers?.() ?? [], (kind) => lookup.contactAids?.(kind) ?? {})];
   const price = priceMissionByCode(stagePriceInputs(priced, contactSteps), { settings: lookup.pricingSettings });
   if (price.overCap) return { ok: false, issues: [`the mission would hold ${price.reservePoints} points, more than the job limit; lower the expected rows`], ...(impliedUsed && impliedCount > 1 ? { lowerImplied: true } : {}) };
   // the DEFAULT count of people per company is lowered (one fewer at a time, down to one) while the hold is above the target; the cap itself is not touched
@@ -768,14 +779,20 @@ const pagesAr = (n: number): string => (n === 1 ? "صفحة واحدة" : n === 
  */
 export function priceIncludesLinesAr(plan: Pick<PricedPlan, "stages" | "contact_steps">): string[] {
   const deep = plan.stages.find((s) => s.deliver && s.parent_key !== null && Number(s.pages_per_parent) > 1);
-  const kinds = new Set((plan.contact_steps ?? []).map((x) => x.kind));
-  if (!deep && kinds.size === 0) return [];
+  const kinds = new Set((plan.contact_steps ?? []).filter((x) => x.level === undefined).map((x) => x.kind));
+  const companyKinds = new Set((plan.contact_steps ?? []).filter((x) => x.level === "company").map((x) => x.kind));
+  if (!deep && kinds.size === 0 && companyKinds.size === 0) return [];
   const parent = deep ? plan.stages.find((p) => p.key === deep.parent_key) : undefined;
   const noun = parent ? itemNounOf(parent.title_ar).singular : "شركة";
   const lookup = kinds.size === 0 ? "" : `البحث عن ${kinds.has("email") && kinds.has("phone") ? "الإيميل ورقم التليفون" : kinds.has("email") ? "الإيميل" : "رقم التليفون"} لكل شخص`;
   const depth = deep ? `بحثًا أعمق عن صناع القرار (نقرأ حتى ${pagesAr(Math.floor(Number(deep.pages_per_parent)))} من النتائج لكل ${noun} ونتوقف مبكرًا عند اكتمال العدد)` : "";
   const both = [depth, lookup].filter(Boolean).join("، و");
-  return [`السعر يشمل ${both}. تقدر تقلّل العمق أو عدد الأشخاص لكل ${noun} من «عدّل الخطة» لتخفيض السعر.`];
+  // the company's own e-mail and HQ phone (reference A, columns 5 and 6): a line of their own, so the people's sentence stays as it was
+  const companyLine = companyKinds.size === 0 ? [] : [`السعر يشمل أيضًا البحث عن ${companyKinds.has("email") && companyKinds.has("phone") ? "الإيميل العام للشركة وهاتف المقر الرئيسي" : companyKinds.has("email") ? "الإيميل العام للشركة" : "هاتف المقر الرئيسي"} لكل ${noun}؛ وما لا نجده نكتب مكانه «غير متوفر».`];
+  // a decision makers' delivery writes each name and title in Arabic with the English beside it (taskContracts.ts, titleLexicon.ts); the one small request for the names is part of the price
+  const bilingualLine = plan.stages.some((s) => namesAreWritten(s)) ? ["نكتب اسم كل صانع قرار ومسماه الوظيفي بالعربية وبجانبه الأصل بالإنجليزية بين قوسين، ويدخل ذلك في السعر."] : [];
+  if (both === "") return [...companyLine, ...bilingualLine];
+  return [`السعر يشمل ${both}. تقدر تقلّل العمق أو عدد الأشخاص لكل ${noun} من «عدّل الخطة» لتخفيض السعر.`, ...companyLine, ...bilingualLine];
 }
 
 /** One line per delivered people stage that prefers a role: what is preferred and that fewer matching people may come (roles.ts). */

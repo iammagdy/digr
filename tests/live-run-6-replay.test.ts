@@ -170,10 +170,11 @@ describe("Facebook: five posts, ten comments each (the live plan said «حتى �
 describe("Companies: three companies and their managers (the plan dropped the managers silently and the execution delivered nothing)", () => {
   const COMPANIES = "aiark.companies.search";
   // a source asked for Egypt answers its country as the ISO CODE, with English names, and a city only for some
-  const co = (name: string, site: string, country: string, city = "") => ({ id: site, name, website_url: site, country, city, company_size: "51-200", industry: "Construction" });
+  // CHANGED (PR 1 part b): the stage now maps `industry`, which the relevance check reads: the sports company is a SPORTS company in the source too (it had «Construction» in a fixture that never mapped the field)
+  const co = (name: string, site: string, country: string, city = "", industry = "Construction") => ({ id: site, name, website_url: site, country, city, company_size: "51-200", industry });
   const page = { content: [
     co("Yourwebsite Ltd", "yourwebsite.lu", "LU"),
-    co("Egytic Sports", "egytic.example.com", "EG"),
+    co("Egytic Sports", "egytic.example.com", "EG", "", "Sports"),
     co("Orascom Construction", "orascom.com", "EG", "Cairo"),
     co("The Arab Contractors", "arabcont.example.com", "EG"),
     co("Hassan Allam Contracting", "hassanallam.example.com", "EG"),
@@ -188,15 +189,16 @@ describe("Companies: three companies and their managers (the plan dropped the ma
         progress: "أبحث عن شركات المقاولات", words: ["companies", "search"],
         // the managers' step may be called «unserved» only after the sources the catalog has for it were really tried and gave nothing (fix mission 7): two people sources are sampled with a company's website
         calls: [
-          { endpoint: COMPANIES, params: { page: 1, size: 6 }, code: "return inputs.call_0001.content.map(c => ({ id: c.id, name: c.name, website: 'https://' + c.website_url, country: c.country, city: c.city || '', size: c.company_size }))" },
+          { endpoint: COMPANIES, params: { page: 1, size: 6 }, code: "return inputs.call_0001.content.map(c => ({ id: c.id, name: c.name, industry: c.industry || '', website: 'https://' + c.website_url, country: c.country, city: c.city || '', size: c.company_size }))" },
           { endpoint: "aviato.companies.employees", params: { website: "orascom.com", perPage: 2, page: 1 }, code: "return []" },
           { endpoint: "limadata.people.employees.search", params: { company_domains: ["orascom.com"], limit: 2 }, code: "return []" },
         ],
         plan: (res) => ({
           summary_ar: "ستحصل على شركات مقاولات مصرية مع بياناتها العامة.",
           unserved_steps: [{ reason_ar: "المصادر المتاحة لا تعطي أسماء المديرين لكل شركة بدقة" }],
-          stages: [{ key: "companies", title_ar: "شركات المقاولات في مصر", endpoint_id: COMPANIES, expected_rows: 3, parent_key: null, deliver: true, columns: [{ key: "name", title_ar: "اسم الشركة" }, { key: "website", title_ar: "الموقع الإلكتروني" }, { key: "city", title_ar: "المدينة" }, { key: "size", title_ar: "حجم الشركة" }],
-            sample_rows: [{ id: "orascom.com", name: "Orascom Construction", website: "https://orascom.com", country: "EG", city: "Cairo", size: "51-200" }], measured_by: [callIds(res)[0], firstOutputId(res)] }],
+          stages: [{ key: "companies", title_ar: "شركات المقاولات في مصر", endpoint_id: COMPANIES, expected_rows: 3, parent_key: null, deliver: true, columns: [{ key: "name", title_ar: "اسم الشركة" }, { key: "industry", title_ar: "النشاط والتخصص" }, { key: "website", title_ar: "الموقع الإلكتروني" }, { key: "city", title_ar: "المدينة" }, { key: "size", title_ar: "حجم الشركة" }],
+            // CHANGED (PR 1 part b): the source gives `industry`, so the companies stage maps it (the contract check)
+            sample_rows: [{ id: "orascom.com", name: "Orascom Construction", industry: "Construction", website: "https://orascom.com", country: "EG", city: "Cairo", size: "51-200" }], measured_by: [callIds(res)[0], firstOutputId(res)] }],
         }),
       }),
       execution: () => [],

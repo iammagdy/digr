@@ -5,6 +5,7 @@ import { tregResult } from "./helpers/agentFakeWorld";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { executionBudgetUsd } from "../src/lib/agentMission/price";
 import type { TregCallOptions } from "../src/functions/shared/tregClient";
+// CHANGED (PR 1 part c): the people sheet of «companies and their decision makers» uses the owner's titles (taskContracts.ts): «اسم صانع القرار», «إيميل المسؤول المباشر», «هاتف / محمول المسؤول» and the statuses beside them
 
 vi.stubGlobal("fetch", () => { throw new Error("a real network call was attempted"); });
 
@@ -56,9 +57,9 @@ describe("A1 replay: the people's e-mail and phone cells", () => {
     const r = await a1("none");
     const s = await peopleSheet(r);
     expect(s.people.length).toBe(10);
-    expect(s.col("الإيميل").filter(Boolean).length).toBe(0);
-    expect(s.col("رقم التليفون").filter(Boolean).length).toBe(0);
-    expect(s.col("حالة توثيق الإيميل").filter(Boolean).length).toBe(0);
+    expect(s.col("إيميل المسؤول المباشر").filter(Boolean).length).toBe(0);
+    expect(s.col("هاتف / محمول المسؤول").filter(Boolean).length).toBe(0);
+    expect(s.col("حالة توثيق إيميل المسؤول المباشر").filter(Boolean).length).toBe(0);
   });
 
   it("AFTER: finders that answer: e-mails and phones fill the cells with their Arabic status next to them; the people, the delivered count and the charge are unchanged; the spend is inside the approved reserve", async () => {
@@ -66,8 +67,8 @@ describe("A1 replay: the people's e-mail and phone cells", () => {
     const r = await a1("answer");
     const s = await peopleSheet(r);
     expect(s.people.length).toBe(10);
-    const emails = s.col("الإيميل");
-    const status = s.col("حالة توثيق الإيميل");
+    const emails = s.col("إيميل المسؤول المباشر");
+    const status = s.col("حالة توثيق إيميل المسؤول المباشر");
     const filled = emails.filter(Boolean);
     expect(filled.length).toBeGreaterThan(0);
     // every value has its status beside it, and the empty cells have none
@@ -75,11 +76,11 @@ describe("A1 replay: the people's e-mail and phone cells", () => {
     // CHANGED (item 2): a verifier-backed «موثّق» for the company's own addresses; an address on another domain (gmail.com) is «غير موثّق لهذه الشركة»
     expect(new Set(status.filter(Boolean))).toEqual(new Set(["موثّق", "غير موثّق لهذه الشركة"]));
     emails.forEach((e, i) => { if (e.endsWith("@gmail.com")) expect(status[i]).toBe("غير موثّق لهذه الشركة"); else if (e) expect(status[i]).toBe("موثّق"); });
-    const phones = s.col("رقم التليفون").filter(Boolean);
+    const phones = s.col("هاتف / محمول المسؤول").filter(Boolean);
     expect(phones.length).toBeGreaterThan(0);
-    expect(s.col("حالة توثيق رقم التليفون").filter(Boolean).length).toBe(phones.length);
+    expect(s.col("حالة توثيق هاتف / محمول المسؤول").filter(Boolean).length).toBe(phones.length);
     // the status column sits right after its value column
-    expect(s.header.indexOf("حالة توثيق الإيميل")).toBe(s.header.indexOf("الإيميل") + 1);
+    expect(s.header.indexOf("حالة توثيق إيميل المسؤول المباشر")).toBe(s.header.indexOf("إيميل المسؤول المباشر") + 1);
     // decision-maker titles first: every chief executive / general manager is looked up before an accountant is
     // money: the delivered count and the charge do not depend on what the finders found; the spend stays inside what the reserve allows
     expect(r.mission.delivered_units).toBe(none.mission.delivered_units);
