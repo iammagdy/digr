@@ -36,6 +36,7 @@ import { sourceNameMatches } from "../../src/lib/agentMission/namedSources";
 import { namedSourceRoutes } from "../../src/lib/agentMission/namedRoutes";
 import { redesignActive, type RedesignFlags } from "../../src/lib/agentMission/redesignFlags";
 import { conditionsOfRequest } from "../../src/lib/agentMission/requestConditions";
+import { applyGapNotes } from "../../src/lib/agentMission/gapLines";
 import { coverageOf } from "../../src/lib/agentMission/sourceRanking";
 import { catalogDateKind } from "../../src/lib/agentMission/relativeDates";
 import { PEOPLE_FALLBACK_LINE_AR } from "../../src/lib/agentMission/childSources";
@@ -662,6 +663,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             if (filters) { if (filters.length > 0) st.filters = filters; else delete st.filters; }
             const missing = derived.unresolved.get(st.key);
             if (missing && missing.length > 0) st.unresolved_sources = missing;
+            const stageGaps = derived.gaps.get(st.key);
+            if (stageGaps && stageGaps.length > 0) applyGapNotes(checked.plan, stageGaps);
             const approxDates = derived.approx.get(st.key);
             if (approxDates && approxDates.length > 0) st.approx_dates = approxDates;
           }
