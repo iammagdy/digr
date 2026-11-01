@@ -10,6 +10,7 @@ const hasLatin = (s: string): boolean => /[A-Za-z]/.test(s);
 
 /** Whole titles (cleaned, lower case). */
 const TITLES: Readonly<Record<string, string>> = {
+  "business owner": "صاحب العمل", "company owner": "مالك الشركة", "workforce management": "إدارة القوى العاملة", "vendor management": "إدارة الموردين", "supply chain": "سلاسل الإمداد",
   "chief executive officer": "الرئيس التنفيذي", ceo: "الرئيس التنفيذي", "chief executive": "الرئيس التنفيذي",
   "chief operating officer": "رئيس العمليات التنفيذي", coo: "رئيس العمليات التنفيذي",
   "chief financial officer": "الرئيس المالي التنفيذي", cfo: "الرئيس المالي التنفيذي",
@@ -27,6 +28,7 @@ const TITLES: Readonly<Record<string, string>> = {
 
 /** The departments and fields a title names («Head of Operations», «Finance Manager»). */
 const FIELDS: Readonly<Record<string, string>> = {
+  aftermarket: "خدمات ما بعد البيع", "after sales": "خدمات ما بعد البيع", vendor: "الموردين", vendors: "الموردين", supplier: "الموردين", suppliers: "الموردين", "vendor relationship": "علاقات الموردين", workforce: "القوى العاملة", business: "الأعمال", procurement: "المشتريات", purchasing: "المشتريات", logistics: "اللوجستيات", "supply chain": "سلاسل الإمداد", quality: "الجودة", strategy: "الاستراتيجية", planning: "التخطيط", training: "التدريب", legal: "الشؤون القانونية", warehouse: "المخازن", contracts: "العقود", "customer success": "نجاح العملاء",
   operations: "العمليات", operation: "العمليات", sales: "المبيعات", marketing: "التسويق", finance: "المالية", financial: "المالية", projects: "المشاريع", project: "المشاريع", procurement: "المشتريات", purchasing: "المشتريات", purchases: "المشتريات",
   hr: "الموارد البشرية", "human resources": "الموارد البشرية", it: "تقنية المعلومات", technical: "الفني", technology: "التقنية", engineering: "الهندسة", production: "الإنتاج", manufacturing: "التصنيع", quality: "الجودة", "supply chain": "سلاسل الإمداد", logistics: "اللوجستيات",
   "business development": "تطوير الأعمال", commercial: "التجارية", maintenance: "الصيانة", "customer service": "خدمة العملاء", administration: "الإدارة", administrative: "الإدارية", admin: "الإدارة", legal: "الشؤون القانونية", contracts: "العقود", planning: "التخطيط", construction: "الإنشاءات",
@@ -34,6 +36,7 @@ const FIELDS: Readonly<Record<string, string>> = {
 };
 
 const ROLES_OF_FIELD: ReadonlyArray<readonly [RegExp, (field: string) => string]> = [
+  [/^(.+?)\s+relationship manager$/, (f) => `مدير علاقات ${f}`],
   [/^(?:head of|head)\s+(.+)$/, (f) => `رئيس ${f.startsWith("ال") ? "قسم " : ""}${f}`],
   [/^director of\s+(.+)$/, (f) => `مدير ${f}`],
   [/^manager of\s+(.+)$/, (f) => `مدير ${f}`],
@@ -82,9 +85,10 @@ export function titleArabic(title: unknown): string | null {
 }
 
 /** The cell of a job title: «العربية (English)» when the table reads it, else the title as the source gave it (an Arabic title is not touched; nothing is invented). */
-export function bilingualTitle(title: unknown): string {
+export function bilingualTitle(title: unknown, arabic?: unknown): string {
   const raw = typeof title === "string" ? title.trim() : title === null || title === undefined ? "" : String(title).trim();
-  const ar = titleArabic(raw);
+  // the lexicon first; the model's spelling (the same batched request that writes the names) only for a title the lexicon cannot read, and only when it is Arabic
+  const ar = titleArabic(raw) ?? (raw && !hasArabic(raw) && typeof arabic === "string" && hasArabic(arabic) && !hasLatin(arabic) ? arabic.trim() : null);
   return ar === null ? raw : `${ar} (${raw})`;
 }
 
@@ -94,4 +98,34 @@ export function bilingualName(name: unknown, arabic: unknown): string {
   const ar = typeof arabic === "string" ? arabic.trim() : "";
   if (!raw || hasArabic(raw) || ar === "" || !hasArabic(ar)) return raw;
   return `${ar} (${raw})`;
+}
+
+// ------------------------------------------------------------------------------------------------ the activity
+/** The activities of the companies sources («Machinery Manufacturing»: the industry names a professional network gives), cleaned and lower case. A name the table does not hold is not guessed here: the same batched request that writes the names reads it (namesAr.ts). */
+const ACTIVITIES: Readonly<Record<string, string>> = {
+  "machinery manufacturing": "تصنيع الآلات", "industrial machinery manufacturing": "تصنيع الآلات الصناعية", "electrical equipment manufacturing": "تصنيع المعدات الكهربائية", "electrical and electronic manufacturing": "التصنيع الكهربائي والإلكتروني", "electrical/electronic manufacturing": "التصنيع الكهربائي والإلكتروني",
+  "appliances, electrical, and electronics manufacturing": "تصنيع الأجهزة الكهربائية والإلكترونية", "automation machinery manufacturing": "تصنيع آلات الأتمتة", "construction": "المقاولات والإنشاءات", "civil engineering": "الهندسة المدنية", "mechanical or industrial engineering": "الهندسة الميكانيكية والصناعية",
+  "engineering services": "الخدمات الهندسية", "building materials": "مواد البناء", "wholesale building materials": "تجارة مواد البناء", "oil and gas": "النفط والغاز", "oil, gas, and mining": "النفط والغاز والتعدين", "oil & energy": "النفط والطاقة", "mining": "التعدين", "utilities": "المرافق",
+  "renewable energy semiconductor manufacturing": "الطاقة المتجددة", "renewables & environment": "الطاقة المتجددة والبيئة", "environmental services": "الخدمات البيئية", "facilities services": "خدمات المرافق", "wholesale": "تجارة الجملة", "wholesale machinery": "تجارة الآلات بالجملة", "retail": "تجارة التجزئة",
+  "transportation, logistics, supply chain and storage": "النقل والخدمات اللوجستية والتخزين", "logistics and supply chain": "الخدمات اللوجستية وسلاسل الإمداد", "warehousing and storage": "التخزين", "motor vehicle manufacturing": "تصنيع المركبات", "automotive": "صناعة السيارات", "fabricated metal products": "المنتجات المعدنية",
+  "metal ore mining": "تعدين الخامات المعدنية", "chemical manufacturing": "تصنيع الكيماويات", "plastics manufacturing": "تصنيع البلاستيك", "textile manufacturing": "تصنيع المنسوجات", "paper and forest product manufacturing": "تصنيع الورق", "packaging and containers manufacturing": "تصنيع مواد التعبئة والتغليف",
+  "furniture and home furnishings manufacturing": "تصنيع الأثاث", "food and beverage manufacturing": "تصنيع الأغذية والمشروبات", "food and beverage services": "خدمات الأغذية والمشروبات", "pharmaceutical manufacturing": "تصنيع الأدوية", "medical equipment manufacturing": "تصنيع المعدات الطبية",
+  "hospitals and health care": "المستشفيات والرعاية الصحية", "real estate": "العقارات", "farming": "الزراعة", "agriculture": "الزراعة", "telecommunications": "الاتصالات", "software development": "تطوير البرمجيات", "it services and it consulting": "خدمات تقنية المعلومات والاستشارات", "information technology & services": "خدمات تقنية المعلومات",
+  "business consulting and services": "الاستشارات وخدمات الأعمال", "advertising services": "خدمات الإعلان", "marketing services": "خدمات التسويق", "banking": "الخدمات المصرفية", "insurance": "التأمين", "education": "التعليم", "hospitality": "الضيافة", "restaurants": "المطاعم", "airlines and aviation": "الطيران", "shipbuilding": "بناء السفن", "defense and space manufacturing": "الصناعات الدفاعية",
+};
+const activityKey = (s: string): string => s.toLowerCase().replace(/&amp;/g, "&").replace(/\s+/g, " ").trim();
+
+/** The Arabic of a company's activity, or null (already Arabic, empty, or not in the table). */
+export function activityArabic(activity: unknown): string | null {
+  const raw = typeof activity === "string" ? activity.replace(/[​-‏‪-‮﻿]/g, "").trim() : "";
+  if (!raw || hasArabic(raw) || !hasLatin(raw)) return null;
+  return ACTIVITIES[activityKey(raw)] ?? null;
+}
+
+/** The cell of an activity: «العربية (English)» when the table reads it or the model's spelling is known and is Arabic; else the source's words. */
+export function bilingualActivity(activity: unknown, arabic?: unknown): string {
+  const raw = typeof activity === "string" ? activity.trim() : activity === null || activity === undefined ? "" : String(activity).trim();
+  if (!raw || hasArabic(raw)) return raw;
+  const ar = activityArabic(raw) ?? (typeof arabic === "string" && hasArabic(arabic) && !hasLatin(arabic) ? arabic.trim() : null);
+  return ar === null ? raw : `${ar} (${raw})`;
 }

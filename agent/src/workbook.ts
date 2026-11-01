@@ -14,12 +14,12 @@ import { parentCountsOf } from "../../src/lib/agentMission/parents";
 import { isTextItemStage, textKeyOf } from "../../src/lib/agentMission/contract";
 import { buildMethodology, type MissionFacts } from "./methodology";
 import { DECISION_MAKER_NO_AR, DECISION_MAKER_YES_AR, NO_DECISION_MAKERS_NOTE_AR, PERSON_NAME_TITLE_AR, PERSON_TITLE_TITLE_AR, ROW_NUMBER_TITLE_AR, contractTypeOf } from "../../src/lib/agentMission/taskContracts";
-import { bilingualName, bilingualTitle } from "../../src/lib/agentMission/titleLexicon";
+import { bilingualActivity, bilingualName, bilingualTitle } from "../../src/lib/agentMission/titleLexicon";
 import { titleFieldOf, titleTierOf } from "../../src/lib/agentMission/roles";
 import { isPeopleStage } from "../../src/lib/agentMission/people";
 import { isCompanyStage } from "../../src/lib/agentMission/entities";
 import { companiesWithoutDecisionMakers } from "./perParentLimits";
-import { NAME_AR_KEY } from "./namesAr";
+import { ACTIVITY_AR_KEY, NAME_AR_KEY, TITLE_AR_KEY } from "./namesAr";
 import { cleanRowsForCustomer, isProviderUrl, providerContext, withoutProviderNames, withoutProviderUrls, type ProviderCleanReport } from "../../src/lib/agentMission/providerHosts";
 
 type Row = Record<string, unknown>;
@@ -142,11 +142,13 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
     const taken: unknown[][] = columns.map((c) => sample(c.get));
     // the reference's computed and bilingual columns (taskContracts.ts): the marker and the notes from the delivered people's titles, a decision maker's title and name as «العربية (English)»
     const isManagerStage = managerStages.includes(stage);
+    const ACTIVITY_COLUMN_TITLE_AR = "النشاط والتخصص";
     const specialGet = (c: (typeof own)[number]): ((r: Row) => unknown) | null => {
       if (!referencedKeys.has(stage.key)) return null;
       if (c.computed === "decision_maker" && isManagerStage) return (r) => { const f = titleFieldOf(r); return f && titleTierOf(r[f], "manager") === 0 ? DECISION_MAKER_YES_AR : DECISION_MAKER_NO_AR; };
       if (c.computed === "notes") return (r) => (noDecisionMaker.has(text(isManagerStage ? r.parent_id : r.id)) ? NO_DECISION_MAKERS_NOTE_AR : "");
-      if (isManagerStage && c.title_ar === PERSON_TITLE_TITLE_AR) return (r) => bilingualTitle(r[c.key]);
+      if (isManagerStage && c.title_ar === PERSON_TITLE_TITLE_AR) return (r) => bilingualTitle(r[c.key], r[TITLE_AR_KEY]);
+      if (!isManagerStage && c.title_ar === ACTIVITY_COLUMN_TITLE_AR) return (r) => bilingualActivity(r[c.key], r[ACTIVITY_AR_KEY]);
       if (isManagerStage && c.title_ar === PERSON_NAME_TITLE_AR) return (r) => bilingualName(r[c.key], r[NAME_AR_KEY]);
       return null;
     };
