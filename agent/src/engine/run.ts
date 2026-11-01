@@ -6,6 +6,9 @@ import { rankPeopleByRole, titleFieldOf, titleTierOf } from "../../../src/lib/ag
 import { parseMoment } from "../../../src/lib/agentMission/dateCells";
 import { dayOf, firstWindowEndDay, nextWindowEndDay, windowParams } from "../../../src/lib/agentMission/dateWindow";
 import { isEnabled } from "../../../src/lib/agentMission/filters";
+import { childCountNumber, childCountOf } from "../../../src/lib/agentMission/childCount";
+import { AGENT_REPLIES_PER_COMMENT_MAX } from "../../../src/lib/agentMission/constants";
+import { replyShares } from "../../../src/lib/agentMission/replies";
 import { SOURCE_KEY } from "../../../src/lib/agentMission/namedSources";
 import { isProviderUrl, providerContext } from "../../../src/lib/agentMission/providerHosts";
 import { companyIdentityOf, confirmPersonAtCompany, isPlaceholderCompanyUrl, peopleEvidenceOf } from "../../../src/lib/agentMission/companyIdentity";
@@ -123,13 +126,22 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
   // search had checked 20 videos and kept 15 beyond the five). The parent stage's own spares (matches it checked and kept beyond its volume) stand in, one at a time, so the customer gets the number of parents he asked for, each with children. Only a parent with NO child is replaced
   // (nothing delivered is ever dropped), only when this stage is the only child of that stage, and a spare is read once.
   const onlyChild = deps.plan.stages.filter((x) => x.parent_key === stage.parent_key).length === 1;
-  const swapsLeft = { n: onlyChild && stage.per_parent_rows !== undefined ? Math.max(3, parentRows.length * 3) : 0 };
+  // THE REPLIES OF A COMMENT (replies.ts): a comment with no reply is never replaced by another comment (the replies are in addition to the comments the customer asked for), and each comment is read for the replies its own counter says it has, up to its share of the approved total:
+  // a comment whose counter is 0 gets 0 (no paid read), the others get what they have up to the cap, and when the total is smaller than the need every comment gets an equal part first
+  const isReplies = stage.replies_of !== undefined;
+  const shareById = isReplies ? (() => { const shares = replyShares(parentRows.map((r) => ownChildCount(r)), stage.planned_rows, Number.isFinite(per) ? per : AGENT_REPLIES_PER_COMMENT_MAX); return new Map(parentRows.map((r, i) => [String(r.id), shares[i]] as const)); })() : null;
+  const swapsLeft = { n: onlyChild && stage.per_parent_rows !== undefined && !isReplies ? Math.max(3, parentRows.length * 3) : 0 };
+  // the parent's parent (the video of a comment): the replies' source takes the video's id and link beside the comment's id
+  const grandKey = deps.plan.stages.find((x) => x.key === stage.parent_key)?.parent_key ?? null;
+  const grandRows = new Map<string, Row>((grandKey ? items.acceptedRows(grandKey) : []).map((r) => [String(r.id), r] as const));
   for (const cap of rounds) {
     for (const first of parentRows) {
       let parent: Row = first;
       for (;;) {
         if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
         const parentId = String(parent.id);
+        const parentCap = shareById ? shareById.get(parentId) ?? 0 : cap;
+        if (shareById && parentCap <= 0) break;
         // A PARENT THAT SAYS IT HAS NO CHILD IS NOT READ (audit 2026-11 gap G10, live: 9 of 108 paid comment reads returned nothing): its own count field (comments, replies, reviews) is 0, so no paid read is made. It is replaced by a spare parent the same way a parent
         // the source answered nothing for is, or skipped when none is left. A parent that gives no count at all is read as before.
         if (ownChildCount(parent) === 0) {
@@ -160,10 +172,10 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
         let r: { reason: StopReason; aborted: string | null } = { reason: "source_exhausted", aborted: null };
         for (const u of usable) {
           // the first read of a parent also carries the parent's other identity inputs (its link beside its id): a routed source needs them to keep its providers (spec.ts bindingAlso)
-          const also = u.index === 0 ? Object.fromEntries((spec.parent_binding.also ?? []).map((a) => [a.param, bindingValue(parent[a.from], false)] as const).filter(([, v]) => v !== null && !isProviderUrl(v, providerContext()) && !isPlaceholderCompanyUrl(v))) : {};
+          const also = u.index === 0 ? Object.fromEntries((spec.parent_binding.also ?? []).map((a) => [a.param, bindingValue((a.grand ? grandRows.get(String(parent.parent_id ?? "")) : parent)?.[a.from], false)] as const).filter(([, v]) => v !== null && !isProviderUrl(v, providerContext()) && !isPlaceholderCompanyUrl(v))) : {};
           const params = { ...spec.params, ...also, [u.b.param]: u.value };
           const before = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
-          r = await runStream(deps, stage, spec, u.index === 0 ? `p:${parentId}` : `p:${parentId}:b${u.index}`, params, parentId, cap);
+          r = await runStream(deps, stage, spec, u.index === 0 ? `p:${parentId}` : `p:${parentId}:b${u.index}`, params, parentId, parentCap);
           if (r.aborted) return r;
           const gained = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length - before;
           if (gained > 0 || !(r.reason === "failed" || r.reason === "source_exhausted" || r.reason === "no_new_items")) break;
@@ -247,17 +259,8 @@ function markPeopleNotAtCompany(deps: EngineDeps, stage: Stage, parentId: string
 /** The answers that say «this source has nothing for this input»: not found, gone, the input was rejected. */
 const PARENT_UNKNOWN_HTTP: ReadonlySet<number> = new Set([400, 404, 410, 422]);
 const WEBSITE_PARAM = /^(website|domain|site|url|homepage|web|company_?(website|domain|site))$/i;
-const CHILD_COUNT_KEY = /^(comments?|comments?_?count|comment_?num|num_?comments|replies|reply_?count|reviews?|reviews?_?count)$/i;
-
-/** The parent's own count of its children (a video's comments, a place's reviews), when its row carries a number for it (a numeric text counts); null when the row has none. */
-export function ownChildCount(row: Row): number | null {
-  for (const [k, v] of Object.entries(row)) {
-    if (!CHILD_COUNT_KEY.test(k)) continue;
-    const n = typeof v === "number" ? v : typeof v === "string" && /^\s*\d+\s*$/.test(v) ? Number(v) : NaN;
-    if (Number.isFinite(n) && n >= 0) return n;
-  }
-  return null;
-}
+/** The parent's own count of its children (a video's comments, a place's reviews, a comment's replies), when its row carries a number for it (a numeric text counts); null when the row has none (childCount.ts, shared with the plan). */
+export const ownChildCount = (row: Row): number | null => childCountOf(row);
 
 /** The next spare parent: a match the parent stage checked and kept beyond its volume, never read for children, from the same named source as the parent it replaces (a named source's share is kept). Most children first when the rows say it, else the source's order. */
 function spareParentFor(items: ItemStore, parentKey: string, childKey: string, out: Row): { id: string; row: Row } | null {
@@ -265,7 +268,7 @@ function spareParentFor(items: ItemStore, parentKey: string, childKey: string, o
   // a spare that says it has no child is no replacement (the same rule as for the parent it takes the place of)
   const spares = items.excludedItems(parentKey).filter((i) => i.reason === "target_reached" && i.row && src(i.row) === src(out) && ownChildCount(i.row) !== 0 && !items.streamState(childKey, `p:${i.id}`));
   if (spares.length === 0) return null;
-  const count = (r: Row): number => { for (const [k, v] of Object.entries(r)) if (CHILD_COUNT_KEY.test(k) && typeof v === "number" && Number.isFinite(v)) return v; return -1; };
+  const count = (r: Row): number => childCountNumber(r);
   const best = spares.map((i, index) => ({ i, index, n: count(i.row!) })).sort((a, b) => b.n - a.n || a.index - b.index)[0].i;
   return { id: best.id, row: { ...best.row!, id: best.row!.id ?? best.id } };
 }

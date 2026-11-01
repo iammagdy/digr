@@ -58,7 +58,7 @@ export interface EngineSpec {
   /** The key of `inputs` the page is handed under (the id of the saved page the code was measured on). */
   map_file_id: string;
   /** A stage with a parent: the input that takes a field of the parent's row (`from` is a column key of the parent stage, or «id»). */
-  parent_binding: { param: string; from: string; /** The OTHER identity inputs the child source takes (the link beside the id, the id beside the link): sent in the same call as the first (a routed source matches its providers on the keys it is sent). */ also?: Array<{ param: string; from: string }>; /** The other fields of a parent that the child source can take (its website, its page, its name): tried in order for a parent with no value for the first, or when the read through the first failed or gave nothing. */ fallbacks?: Array<{ param: string; from: string; domain?: true }> } | null;
+  parent_binding: { param: string; from: string; /** The OTHER identity inputs the child source takes (the link beside the id, the id beside the link): sent in the same call as the first (a routed source matches its providers on the keys it is sent). */ also?: Array<{ param: string; from: string; /** The field is read from the PARENT'S parent (the replies of a comment take the video's id and link). */ grand?: true }>; /** The other fields of a parent that the child source can take (its website, its page, its name): tried in order for a parent with no value for the first, or when the read through the first failed or gave nothing. */ fallbacks?: Array<{ param: string; from: string; domain?: true }> } | null;
   /** The field of the mapped items that keys them when they carry no `id` of their own (chosen by code from the measured page: a platform id, a link, or «$content» for the fingerprint). Absent: the items carry `id`. */
   id_field?: string;
   /** The source's own date inputs, from the catalog (dateWindow.ts): when the source ends before a requested period is reached, the engine asks again with the end of the window moved back. Absent: the source has none documented. */
@@ -168,6 +168,10 @@ export interface PricedStage extends ProposedStage {
   /** PEOPLE DEPTH: pages of the source read for each parent of a people stage that prefers the decision makers (set by code, editable by the customer), and what one page costs (USD, measured). The price carries every page. */
   pages_per_parent?: number;
   page_cost_usd?: number;
+  /** REPLIES (replies.ts): set by code on the stage that reads the replies of the comments of stage `replies_of`; the customer's number counts the top-level comments only, the replies come in addition and are priced. */
+  replies_of?: string;
+  /** The replies a comment is expected to have (the sample's mean, capped): the planned rows follow it when the comments' count is edited. */
+  replies_per_comment_expected?: number;
   sample_examined?: number;
   sample_matching?: number;
 }
@@ -186,6 +190,9 @@ export interface PricedPlan {
   unserved_steps?: UnservedStep[];
   /** THE FINDER STEPS, added by code to every delivered people stage when the request asks for an e-mail or a phone (contactFinders.ts): the engine looks each delivered person up after the stages and fills the cells; the price includes them. */
   contact_steps?: ContactStep[];
+  /** REPLIES (replies.ts): why a comments delivery has no replies stage: no source the plan can feed, the sampled comments carry no reply counter (a paid read is never made blind), none of the sampled comments has a reply, the volume limit, or the customer switched them off (the stage then waits in `replies_off`). Absent: the replies are in the plan or the plan has no comments. */
+  replies_status?: "no_source" | "no_counter" | "none_found" | "no_room" | "off";
+  replies_off?: PricedStage;
 }
 
 export interface UnservedStep {

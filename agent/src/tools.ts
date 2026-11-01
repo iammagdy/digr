@@ -24,6 +24,7 @@ import { ItemStore, readSnapshot, type StopReason } from "./items/itemStore";
 import { drainPending, ingestRows } from "./items/ingest";
 import { mirrorLegacyFiles } from "./items/mirror";
 import { codeRunPath, deriveEngineSpecsChecked, type CodeRun } from "./engine/spec";
+import { withRepliesStages } from "../../src/lib/agentMission/replies";
 import { ROW_KEY_FIELDS } from "../../src/lib/agentMission/contract";
 import type { AgentStore, CallPhase, MissionRecord } from "./types";
 import { catalogHitView } from "../../src/lib/modelPlanner/tools";
@@ -637,6 +638,26 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           const contracted = withContractColumns(checked.plan.stages);
           checked.plan.stages.forEach((st, i) => { st.columns = contracted[i].columns as typeof st.columns; });
           if (checked.plan.contact_steps) checked.plan.contact_steps = bindCompanySteps(checked.plan.stages, checked.plan.contact_steps);
+        }
+        // THE REPLIES OF THE COMMENTS (replies.ts, the replies PR): a comments stage with a proven recipe gets, by code, a stage under it that reads the replies of every comment that says it has some, through the cheapest ranked reply source; the plan is priced again with it. The sample the replies
+        // are estimated from is the comments stage's own measured page, mapped by its own proven mapping.
+        if (derived) {
+          const allowedReply = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
+          checked.plan = await withRepliesStages(checked.plan, {
+            catalog: ctx.catalog, isAllowed: allowedReply, stats: ctx.stats,
+            sampleRowsOf: async (st) => {
+              const sp = st.engine;
+              if (!sp) return null;
+              try {
+                const page = await store.getFile(mission.id, `raw/${sp.map_file_id}.json`);
+                if (page === null) return null;
+                const out = await runSandbox(sp.map_code, { [sp.map_file_id]: JSON.parse(page) });
+                if (!out.ok || out.resultJson === null) return null;
+                const rows = JSON.parse(out.resultJson) as unknown;
+                return Array.isArray(rows) ? rows.filter((x): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x)) : null;
+              } catch { return null; }
+            },
+          });
         }
         // A PLAN THAT PROMISES VIDEOS (OR IMAGES) NO SAMPLED SOURCE PROVES is not refused: the planner is sent (a few times) to sample the catalog's media sources (a page's reels, a post search whose items carry a video, a post's detail) and builds the card from the one
         // that proves it. Only after MEDIA_SOURCES_MIN real sources were tried and none proves it does the card say so before approval (the filter keeps only proven items; only what is delivered is charged).
