@@ -1,3 +1,4 @@
+import { MARKS_KEY, MARK_COLUMNS_AR, MARK_COLUMN_ORDER, markCellAr, type RowMarks } from "../../src/lib/agentMission/rawMarks";
 import ExcelJS from "exceljs";
 import { SUMMARY_SHEET_AR } from "../../src/lib/modelPlanner/missionWorkbook";
 import { wordBoundarySheetName } from "../../src/lib/agentMission/fileNames";
@@ -114,6 +115,8 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
     const parentRows = parentInfo ? rowsByStage[parentInfo.s.key] ?? [] : [];
     const parentById = new Map(parentRows.map((r) => [text(r.id), r]));
     const own = readableColumns(stage);
+    // A RAW DELIVERY (S1 items 1.1 and 1.2): its rows carry marks. Its first sheet gets the five mark columns, and no column is dropped for equalling another (the same values under two titles are both the customer's)
+    const rawSheet = stage.parent_key === null && rows.some((r) => r[MARKS_KEY] !== undefined);
     const columns: SheetColumn[] = [];
     const titles = new Set<string>();
     const sample = (get: (row: Row, parent: Row | null) => unknown) => rows.map((r) => get(r, parentById.get(text(r.parent_id)) ?? null));
@@ -133,7 +136,7 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
         const get = (_r: Row, parent: Row | null) => (parent ? (parentText ? parentText(parent) : parent[pc.key] ?? "") : "");
         const values = sample(get);
         const twin = own.find((c) => sameValues(values, rows.map((r) => r[c.key])));
-        if (twin) continue;
+        if (twin && !rawSheet) continue;
         const title = titles.has(pc.title_ar) || own.some((c) => c.title_ar === pc.title_ar) ? `${pc.title_ar} (${parentInfo.s.title_ar})` : pc.title_ar;
         titles.add(title);
         columns.push({ title, get, kind: "context", link: isUrl(values.find((v) => text(v)) ?? "") });
@@ -158,12 +161,13 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
       const special = specialGet(c);
       const values = rows.map((r) => (special ? special(r) : r[c.key]));
       // a status column («موثّق» / «غير موثّق») says the same words on every row by nature: it is never merged into a twin; neither is a computed column of the reference
-      if (c.status_of === undefined && c.type_of === undefined && c.computed === undefined && taken.some((t) => sameValues(t, values))) continue;
+      if (!rawSheet && c.status_of === undefined && c.type_of === undefined && c.computed === undefined && taken.some((t) => sameValues(t, values))) continue;
       titles.add(c.title_ar);
       taken.push(values);
       const ownText = textGetter(stage, c.key);
       columns.push({ title: c.title_ar, get: special ? (r) => special(r) : ownText ? (r) => ownText(r) : (r) => r[c.key], kind: "own", contact: c.kind !== undefined, link: values.some((v) => isUrl(v)), key: c.key });
     }
+    if (rawSheet) for (const k of MARK_COLUMN_ORDER) columns.push({ title: MARK_COLUMNS_AR[k], get: (r) => markCellAr(k, r[MARKS_KEY] as Partial<RowMarks> | undefined), kind: "own", key: `__mark_${k}` });
     layouts.push({ stageIndex, stage, rows, columns: columns.map((c) => (isNameColumn(c) ? { ...c, get: (row: Row, parent: Row | null) => withoutDirectionMarks(c.get(row, parent)) } : c)), hasParent: stage.parent_key !== null });
   });
   return layouts;
