@@ -1,5 +1,5 @@
 import { toArabicDigits } from "../arabicDigits";
-import { AGENT_MAX_DELIVERED_ROWS, AGENT_PEOPLE_PAGES_MAX } from "./constants";
+import { AGENT_MAX_DELIVERED_ROWS, AGENT_PEOPLE_PAGES_MAX, AGENT_REPLIES_PER_COMMENT_DEFAULT, AGENT_REPLIES_PER_COMMENT_MAX } from "./constants";
 import { textKeyOf } from "./contract";
 import { FILTER_KINDS, filterVerdict, isEnabled, kindsPromisedBy, type FilterKind } from "./filters";
 import { countAr, itemNounOf, itemNounOfPlan, type ItemNoun } from "./itemNoun";
@@ -7,7 +7,7 @@ import { lockedColumnKeys, stagePriceInputs, targetStageKey, type PlanColumn, ty
 import { priceMissionByCode } from "./price";
 import { classifyRows } from "./relevance";
 import { countedQuantities } from "./quantity";
-import { plannedRepliesFor } from "./replies";
+import { repliesEstimateFor } from "./replies";
 
 /**
  * THE CUSTOMER EDITS THE PLAN ITSELF (the card's «عدّل الخطة»), without cancelling and retyping: the number of items, the period, the language, each exclusion the card shows (replies, reposts, accounts, places) on or off, and the main
@@ -25,6 +25,8 @@ export interface PlanEdits {
     pages?: number;
     /** For the COMMENTS stage: whether the replies of its comments are delivered too (off: the replies stage leaves the plan and the price falls to the comments' own; on: it comes back). */
     replies?: boolean;
+    /** For the COMMENTS stage while its replies are on: the most replies read for each comment (1 to 50; the default is 10); the replies planned and the price follow it by code. */
+    replies_per_comment?: number;
     /** The keys of the columns that stay in the file (the others are hidden; hidden ones may be switched back on). */
     columns?: string[];
     filters?: Array<{ kind: FilterKind; enabled?: boolean; lang?: "ar" | "en"; days?: number }>;
@@ -129,13 +131,14 @@ export function applyPlanEdits(planIn: PricedPlan, editsIn: unknown, ctx: EditCo
   // 2. THE COLUMNS AND THE FILTERS of each stage named in the edit (a filter whose value the customer changed makes the model's sentence about it stale: it is replaced by the code's own)
   const changedKinds = new Set<FilterKind>();
   let perEdited = false;
+  const repliesPer = new Map<string, number>();
   const stageEdits = Array.isArray(editsIn.stages) ? editsIn.stages : [];
   for (const e of stageEdits) {
     if (!isRecord(e)) return fail("تعذّر قراءة تعديلك. حاول مرة أخرى.");
     const stage = plan.stages.find((s) => s.key === String(e.key ?? ""));
     if (!stage) return fail("هذه المرحلة غير موجودة في الخطة.");
     // the replies stage is the comments' own: its number per comment, its columns and its filters are code's (replies.ts); the customer's choice is the switch on the comments stage
-    if (stage.replies_of !== undefined && (e.per_parent !== undefined || e.pages !== undefined || e.columns !== undefined || e.filters !== undefined)) return fail("الردود يحدّد برنامجنا عددها وأعمدتها؛ يمكنك إيقافها أو تشغيلها من خيار الردود في التعليقات.");
+    if (stage.replies_of !== undefined && (e.per_parent !== undefined || e.pages !== undefined || e.columns !== undefined || e.filters !== undefined || e.replies_per_comment !== undefined)) return fail("الردود يحدّد برنامجنا عددها وأعمدتها؛ يمكنك إيقافها أو تشغيلها من خيار الردود في التعليقات.");
     if (e.replies !== undefined) {
       if (typeof e.replies !== "boolean") return fail("تعذّر قراءة تعديلك. حاول مرة أخرى.");
       const at = plan.stages.findIndex((x) => x.replies_of === stage.key);
@@ -150,6 +153,13 @@ export function applyPlanEdits(planIn: PricedPlan, editsIn: unknown, ctx: EditCo
         delete plan.replies_off;
         delete plan.replies_status;
       } else if (e.replies === false && at < 0 && plan.replies_off?.replies_of !== stage.key) return fail("لا ردود متاحة في هذه الخطة.");
+    }
+    if (e.replies_per_comment !== undefined) {
+      // THE REPLIES READ FOR EACH COMMENT: a whole number from 1 to the cap, only while the stage's replies are in the plan; the replies planned and the price follow it below, by the same rule that built them
+      const n = Number(e.replies_per_comment);
+      if (!plan.stages.some((x) => x.replies_of === stage.key)) return fail("لا ردود متاحة في هذه الخطة.");
+      if (!Number.isInteger(n) || n < 1 || n > AGENT_REPLIES_PER_COMMENT_MAX) return fail(`عدد الردود لكل تعليق لازم يكون رقمًا صحيحًا من ${toArabicDigits(1)} إلى ${toArabicDigits(AGENT_REPLIES_PER_COMMENT_MAX)}.`);
+      repliesPer.set(stage.key, n);
     }
     if (e.per_parent !== undefined) {
       // THE COUNT PER ITEM OF THE PARENT («صناع القرار» of each company): a whole number from 1; the stage's rows follow (parent rows x count) and the plan is priced again below
@@ -233,7 +243,12 @@ export function applyPlanEdits(planIn: PricedPlan, editsIn: unknown, ctx: EditCo
     const comments = plan.stages.find((x) => x.key === r.replies_of);
     if (!comments) continue;
     const elsewhere = plan.stages.filter((x) => x.deliver && x.key !== r.key).reduce((n, x) => n + x.planned_rows, 0);
-    r.planned_rows = Math.max(1, plannedRepliesFor(comments.planned_rows, r.replies_per_comment_expected ?? 0, elsewhere));
+    const per = repliesPer.get(comments.key) ?? r.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_DEFAULT;
+    const est = repliesEstimateFor(r, comments.planned_rows, per, elsewhere);
+    r.per_parent_rows = per;
+    r.planned_rows = est.rows;
+    r.replies_per_comment_expected = est.perCommentExpected;
+    r.measured_cost_per_row_usd = est.costPerRowUsd;
     r.expected_rows = r.planned_rows;
     r.title_ar = `ردود ${comments.title_ar}`;
   }

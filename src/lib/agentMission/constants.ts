@@ -238,6 +238,8 @@ export const AGENT_MAX_DELIVERED_ROWS = 5_000;
  * forty replies is cut here, and the limits row says so), and the replies a source is assumed to give in one call when the catalog does not say (the price of the step rests on it).
  */
 export const AGENT_REPLIES_PER_COMMENT_MAX = 50;
+/** THE DEFAULT NUMBER OF REPLIES READ FOR EACH COMMENT (owner decision after golden run round 2, G4: every sampled comment had more than fifty replies, so the plan estimated 2,500 replies and held 1,605 points for a request of 50 comments). Editable in the plan editor from 1 up to the cap above; the price is computed from it by code. */
+export const AGENT_REPLIES_PER_COMMENT_DEFAULT = 10;
 export const AGENT_REPLIES_ROWS_PER_CALL_ASSUMED = 10;
 /** What a comment is assumed to have in replies when the sampled comments carry no reply counter at all (the plan prices an estimate, never a promise: only the replies really delivered are charged). */
 export const AGENT_REPLIES_UNKNOWN_PER_COMMENT = 2;

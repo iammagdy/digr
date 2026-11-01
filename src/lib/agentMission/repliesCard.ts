@@ -1,5 +1,5 @@
 import { formatAr } from "../arabicDigits";
-import { AGENT_REPLIES_PER_COMMENT_MAX } from "./constants";
+import { AGENT_REPLIES_PER_COMMENT_DEFAULT } from "./constants";
 import { countAr, knownItemNoun } from "./itemNoun";
 import type { PricedPlan } from "./plan";
 
@@ -17,7 +17,7 @@ export function repliesLinesAr(plan: { stages: Stages; replies_status?: PricedPl
   const replies = plan.stages.filter((s) => s.replies_of !== undefined);
   if (replies.length > 0) {
     const planned = replies.reduce((n, s) => n + s.planned_rows, 0);
-    return [`العدد الذي طلبته يخص ${BASIC} وحدها؛ ونضيف إليها ردودها بتقدير نحو ${countAr(planned, REPLY)} (حتى ${countAr(AGENT_REPLIES_PER_COMMENT_MAX, REPLY)} على كل تعليق له ردود)، ويدخل ذلك في السعر، ولا ندفع لقراءة ردود تعليق عدّاد ردوده صفر. تقدر توقف الردود من «عدّل الخطة» لتخفيض السعر.`];
+    return [`العدد الذي طلبته يخص ${BASIC} وحدها؛ ونضيف إليها ردودها بتقدير نحو ${countAr(planned, REPLY)} (حتى ${countAr(Math.max(...replies.map((s) => s.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_DEFAULT)), REPLY)} على كل تعليق له ردود)، ويدخل ذلك في السعر، ولا ندفع لقراءة ردود تعليق عدّاد ردوده صفر. تقدر توقف الردود من «عدّل الخطة» لتخفيض السعر.`];
   }
   switch (plan.replies_status) {
     case "off": return [`أوقفت الردود بتعديلك، فستصلك ${BASIC} وحدها، ويرجع السعر إلى سعرها وحدها.`];
