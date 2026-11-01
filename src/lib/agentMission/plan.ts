@@ -73,7 +73,7 @@ export interface EngineSpec {
   /** The customer's conditions this tool cannot carry (S1 items 1.6 and 1.7): a period, a language, a country, an account or replies with no field of its own (`not_enforced`: a field that only places the request). */
   gaps?: Array<{ cls: string; reason: string }>;
   /** THE NEXT TOOLS, in order (S1 item 1.9): when this tool fails twice or runs dry before the approved count, the engine takes the next one and continues by the remaining count, the date boundary reached and the stored ids. Each alternative carries its own proven mapping. Absent: no fallback. */
-  alternatives?: Array<{ endpoint_id: string; params: Record<string, unknown>; cursor_param: string | null; map_code: string; map_file_id: string; id_field?: string; window?: DateWindow }>;
+  alternatives?: Array<{ endpoint_id: string; params: Record<string, unknown>; cursor_param: string | null; map_code: string; map_file_id: string; id_field?: string; window?: DateWindow; /** A CHILD stage's alternative reads the same parent through its own input (S1 complete count). */ parent_binding?: { param: string; from: string; also?: Array<{ param: string; from: string }> } | null }>;
 }
 
 export interface ProposedStage {
@@ -86,6 +86,8 @@ export interface ProposedStage {
   per_parent_rows?: number;
   /** Every child of every parent is read to the source's end, each parent up to its OWN counter (S1 item 1.10, «كل التعليقات»); `planned_rows` is the estimate from the counters. Set by code only. */
   all_children?: boolean;
+  /** The ids of the parent rows the promised count was computed from (S1 complete count): the engine reads exactly these parents, so a parent published between planning and execution cannot change the promise. Set by code only. */
+  parent_pins?: string[];
   /** Whether this stage's rows go into the customer's files (and count in the charge). */
   deliver: boolean;
   columns: PlanColumn[];

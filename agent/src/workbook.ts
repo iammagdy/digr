@@ -1,3 +1,4 @@
+import { isLanguageColumn, languageLabelAr } from "../../src/lib/agentMission/languageLabel";
 import { MARKS_KEY, MARK_COLUMNS_AR, MARK_COLUMN_ORDER, markCellAr, type RowMarks } from "../../src/lib/agentMission/rawMarks";
 import ExcelJS from "exceljs";
 import { SUMMARY_SHEET_AR } from "../../src/lib/modelPlanner/missionWorkbook";
@@ -328,6 +329,8 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   const sheetNameOf = new Map<string, string>();
   // where each row's id cell is, so a parent id can link to it
   const idCell = new Map<string, Map<string, string>>();
+  // a mission of the new pipeline: some row carries the marks of the raw delivery (items 1.1 and 1.2)
+  const newPipeline = Object.values(rowsByStage).some((rows) => rows.some((r) => r[MARKS_KEY] !== undefined));
   let hasDateColumn = false;
   let hasApproxDates = false;
 
@@ -344,6 +347,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
     const columnValues = lay.columns.map((c) => lay.rows.map((r) => c.get(r, parentByIdRow.get(text(r.parent_id)) ?? null)));
     const dateAt = lay.columns.map((c, k) => isDateValues(c.title, c.key, columnValues[k]));
     if (dateAt.some(Boolean)) hasDateColumn = true;
+    const languageAt = lay.columns.map((c) => isLanguageColumn(c.title, c.key));
     const numericAt = lay.columns.map((c, k) => !dateAt[k] && numericColumn(columnValues[k], Boolean(c.contact)));
     sheet.columns = headers.map((h, j) => ({ width: j >= lay.columns.length ? 16 : /نص|تعليق|وصف|عنوان|تقييم|منشور|تغريدة/.test(h) ? 52 : /رابط|الموقع/.test(h) ? 34 : 24 }));
     const head = sheet.addRow(headers);
@@ -358,7 +362,9 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
       const parent = parentByIdRow.get(text(record.parent_id)) ?? null;
       const cellFormat: Array<string | null> = [];
       const values: ExcelJS.CellValue[] = lay.columns.map((c, k) => {
-        const v = c.get(record, parent);
+        const got = c.get(record, parent);
+        // A LANGUAGE CODE IS NEVER A CUSTOMER VALUE (S1 live findings fix 4): in a mission of the new pipeline the language cells are Arabic words
+        const v = newPipeline && languageAt[k] ? languageLabelAr(got) : got;
         // a missing value is an EMPTY cell, never an empty text
         if (v === null || v === undefined || (typeof v === "string" && v.trim() === "")) { cellFormat[k] = null; return null; }
         if (dateAt[k]) {

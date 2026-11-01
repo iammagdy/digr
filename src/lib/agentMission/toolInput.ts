@@ -1,3 +1,4 @@
+import { cairoDayEndExclusiveMs, cairoDayStartMs, operatorStampUtc, utcDayOf } from "./cairoTime";
 import type { CatalogEndpoint } from "../treg/catalog";
 import { isEnabled, type StageFilter } from "./filters";
 import { placeEntry } from "./places";
@@ -89,9 +90,17 @@ export function buildToolInput(endpoint: CatalogEndpoint, understood: Understood
     const p = understood.period;
     const d = profile.date;
     if (d && (d.from || d.to) && d.format !== "unknown") {
+      // THE DAYS THE CUSTOMER GAVE ARE CAIRO DAYS (S1 live findings fix 5): converted to the moments they start and end, then written in the tool's own format (a source that takes only days gets the UTC days that COVER the range)
+      const stamp = (ms: number): string => new Date(ms).toISOString().replace(".000Z", "Z");
+      const startMs = p.from ? cairoDayStartMs(p.from) : null;
+      const endMs = p.to ? cairoDayEndExclusiveMs(p.to) - 1000 : null;
       const fromDay = p.from ?? (p.days !== undefined ? isoDay(now - p.days * DAY) : null);
       const toDay = p.to ?? (p.days !== undefined && d.to ? isoDay(now) : null);
-      const fmt = (day: string, end: boolean): string | number => (d.format === "iso" ? `${day}T${end ? "23:59:59" : "00:00:00"}Z` : d.format === "unix" ? Math.floor(Date.parse(`${day}T${end ? "23:59:59" : "00:00:00"}Z`) / 1000) : day);
+      const fmt = (day: string, end: boolean): string | number => {
+        const ms = end ? endMs : startMs;
+        if (ms !== null && Number.isFinite(ms) && (end ? p.to === day : p.from === day)) return d.format === "iso" ? stamp(ms) : d.format === "unix" ? Math.floor(ms / 1000) : utcDayOf(ms);
+        return d.format === "iso" ? `${day}T${end ? "23:59:59" : "00:00:00"}Z` : d.format === "unix" ? Math.floor(Date.parse(`${day}T${end ? "23:59:59" : "00:00:00"}Z`) / 1000) : day;
+      };
       if (d.from && fromDay) params[d.from] = fmt(fromDay, false);
       if (d.to && toDay) params[d.to] = fmt(toDay, true);
       written.push("date");
@@ -101,11 +110,11 @@ export function buildToolInput(endpoint: CatalogEndpoint, understood: Understood
       const pick = need === null ? undefined : options.find((o) => o.span >= need);
       if (pick) { params[d.preset.field] = pick.v; written.push("date"); } else gaps.push({ cls: "date", reason: "unknown_format" });
     } else if (profile.queryOperators && query !== null) {
-      const fromDay = p.from ?? (p.days !== undefined ? isoDay(now - p.days * DAY) : null);
-      if (fromDay) addOperator(`since:${fromDay}`, /\bsince:/i);
-      // `until:` excludes its day: the day after the last day asked
-      const toDay = p.to ? isoDay(Date.parse(`${p.to}T00:00:00Z`) + DAY) : null;
-      if (toDay) addOperator(`until:${toDay}`, /\buntil:/i);
+      // the range the customer gave is Cairo time (S1 live findings fix 5): `since:` is the moment the first day starts in Cairo, `until:` (exclusive) the moment the day after the last day starts, both written in UTC with the time of day
+      const sinceStamp = p.from ? operatorStampUtc(cairoDayStartMs(p.from)) : p.days !== undefined ? isoDay(now - p.days * DAY) : null;
+      if (sinceStamp) addOperator(`since:${sinceStamp}`, /\bsince:/i);
+      const untilStamp = p.to ? operatorStampUtc(cairoDayEndExclusiveMs(p.to)) : null;
+      if (untilStamp) addOperator(`until:${untilStamp}`, /\buntil:/i);
       written.push("date");
     } else gaps.push({ cls: "date", reason: "no_field" });
   }

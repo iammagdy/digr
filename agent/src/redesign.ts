@@ -1,5 +1,7 @@
 import type { PricedPlan } from "../../src/lib/agentMission/plan";
 import { isEnabled } from "../../src/lib/agentMission/filters";
+import { isTestAccount } from "../../src/lib/server/testAccounts";
+import type { AgentStore } from "./types";
 import { redesignActive, redesignTypeOf, type RedesignFlags, REDESIGN_TYPES } from "../../src/lib/agentMission/redesignFlags";
 
 /**
@@ -18,3 +20,15 @@ export function redesignStagesOf(plan: Pick<PricedPlan, "stages">, flags: Redesi
 
 /** True when any flag is switched on or to test: only then is the pipeline that ran a mission recorded (all flags off leaves the mission's events exactly as they were). */
 export const anyRedesignFlag = (flags: RedesignFlags): boolean => REDESIGN_TYPES.some((t) => flags[t] !== "off");
+
+/**
+ * IS THIS MISSION'S ACCOUNT A TEST ACCOUNT (S1 live findings fix 1). The classifier knows a test account by its e-mail (the plus-alias `iam.magdy+1@outlook.com`) or by a few known ids; the worker used to ask with the id alone, so the plus-alias account was never a
+ * test account and the `test` flag never applied to it. The e-mail is read once (read-only); an e-mail that cannot be read leaves the answer to the id rule: a failure can never switch the new pipeline on.
+ */
+export async function accountIsTest(store: Pick<AgentStore, "readUserEmail">, userId: string): Promise<boolean> {
+  if (isTestAccount({ id: userId })) return true;
+  try {
+    const email = store.readUserEmail ? await store.readUserEmail(userId) : null;
+    return isTestAccount({ id: userId, email });
+  } catch { return false; }
+}

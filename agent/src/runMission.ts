@@ -34,8 +34,8 @@ import { ItemStore, type ItemSnapshot, type StopReason } from "./items/itemStore
 import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
 import { readRedesignFlags } from "../../src/lib/agentMission/redesignFlags";
-import { anyRedesignFlag, redesignStagesOf } from "./redesign";
-import { isTestAccount } from "../../src/lib/server/testAccounts";
+import { sealFinalPrice } from "../../src/lib/agentMission/finalPrice";
+import { accountIsTest, anyRedesignFlag, redesignStagesOf } from "./redesign";
 import { runContactEnrichment } from "./engine/contacts";
 import { runNamesStep } from "./namesAr";
 
@@ -297,7 +297,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const settings = (await store.readSettings().catch(() => ({}))) as Record<string, unknown>;
   const pricingSettings = normalizeMissionPricingSettings(settings[MISSION_PRICING_SETTING_KEY]);
   // THE REDESIGN FLAGS (S1 item 0.1): read once at the start of the run; every one is off unless the owner switched it
-  const redesign = { flags: readRedesignFlags(settings), isTest: isTestAccount({ id: mission.user_id }) };
+  const redesign = { flags: readRedesignFlags(settings), isTest: await accountIsTest(store, mission.user_id) };
   const ctx: ToolContext = { redesign, phase: "planning", mission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, pricingSettings, stats: sourceStats, now: planningNow };
   // the model cost of earlier runs of this phase (a requeue, a takeover): this run adds to it, and every model message checkpoints the running total, so a run that is killed still leaves its cost on the mission
   const baseLlm = Number((await store.getMission(mission.id))?.planning_llm_usd ?? mission.planning_llm_usd ?? 0);
@@ -337,7 +337,13 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   if (endedByRestart(output) && !state.proposedPlan && !state.question && !state.finish && await requeue(deps, mission, "queued", { planning_llm_usd: base.planning_llm_usd }, "restart")) return;
 
   if (state.proposedPlan) {
-    const plan = state.proposedPlan;
+    // THE CARD HOLDS THE FINAL PRICE (S1 live findings fix 3, redesigned mode only): a stored price that is not the one pricing function's number over the final stages is replaced before the card exists
+    let plan = state.proposedPlan;
+    if (socialRedesignActive(ctx)) {
+      const sealed = sealFinalPrice(plan, pricingSettings);
+      plan = sealed.plan;
+      if (sealed.drift) await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: صُحّح سعر الخطة قبل عرضها.", counts: { price_sealed: 1, rows_before: sealed.drift.rowsBefore, rows_after: sealed.drift.rowsAfter, reserve_before: sealed.drift.reserveBefore, reserve_after: sealed.drift.reserveAfter } }).catch(() => undefined);
+    }
     await store.updateMission(mission.id, { ...base, status: "plan_ready", plan: plan as any, plan_public: customerPlanView(plan) as any, unit_price_points: plan.price.unitPricePoints, reserved_points: plan.price.reservePoints });
     await store.addEvent(mission.id, { kind: "plan", message_ar: plan.summary_ar, counts: { stages: plan.stages.length, rows: plan.price.deliveredRows, unit_points_x1000: Math.round(plan.price.unitPricePoints * 1000), reserve_points: plan.price.reservePoints } });
     deps.log?.(`plan_ready ${mission.id} ${JSON.stringify(customerPlanView(plan).price)}`);
@@ -415,7 +421,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   const engineOn = deps.engine !== false && plan.stages.every((s) => s.engine !== undefined);
   // THE REDESIGN (S1): which stages run the redesigned engine (flag active for this account AND every recipe built by code); recorded as an internal event only when some flag is switched on, so with every flag off the mission's events are exactly as they were
   const redesignFlags = readRedesignFlags((await store.readSettings().catch(() => ({}))) as Record<string, unknown>);
-  const redesignStages = redesignStagesOf(plan, redesignFlags, isTestAccount({ id: mission.user_id }));
+  const redesignStages = redesignStagesOf(plan, redesignFlags, await accountIsTest(store, mission.user_id));
   if (anyRedesignFlag(redesignFlags)) await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي للمسار الذي شغّل المهمة.", counts: { pipe_new: redesignStages.size > 0 ? 1 : 0 } }).catch(() => undefined);
   if (engineOn) {
     // THE MODEL PLANNED, CODE EXECUTES: every stage has a recipe the plan check proved, so no model session is started at all (the only model call left is the small review of items the rule cannot decide)

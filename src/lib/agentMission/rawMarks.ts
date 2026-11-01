@@ -32,7 +32,7 @@ export function markVerdict(filters: ReadonlyArray<StageFilter> | undefined, map
   if (fromField) lang = fromField === "ar" ? "ar" : "other";
   else { const share = arabicShare(text); if (share !== null) lang = share >= 0.5 ? "ar" : "other"; }
   const period = on.find((f) => f.kind === "period");
-  const inPeriod = period ? filterVerdict([period], mapped, { textKey: ctx.textKey, now: ctx.now }) === null : null;
+  const inPeriod = period ? filterVerdict([period], mapped, { textKey: ctx.textKey, now: ctx.now, cairoDays: true }) === null : null;
   const account = on.find((f) => f.kind === "account" && (f.values ?? []).length > 0);
   const named = account ? filterVerdict([account], mapped, { textKey: ctx.textKey, now: ctx.now, ...(ctx.listing ? { listing: true } : {}) }) === null : null;
   return { reply, repost, lang, inPeriod, named };
