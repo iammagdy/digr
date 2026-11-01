@@ -32,3 +32,40 @@ describe("ITEM 3: the limits row says when people who are not decision makers fi
     expect(limitsOf(dms).join("\n")).not.toContain("صناع القرار");
   });
 });
+
+const OLD_CLAIM = "المصدر لم يعد يعطي نتائج أخرى";
+const managers = [p("365ecology", "A", "Operations Manager"), p("365ecology", "B", "Head of Projects"), p("kahromika", "C", "Director"), p("kahromika", "D", "General Manager"), p("melcomec", "E", "Manager"), p("melcomec", "F", "Chief Engineer"), p("ateco", "G", "Chairman"), p("ateco", "H", "CEO")];
+
+describe("ITEM 5: the limits row states what was recorded per company, not «the source gave no more»", () => {
+  it("LIVE: one company with no people and 12 people left out as beyond the approved two per company", () => {
+    const v = limitsOf(managers).join("\n");
+    expect(v).toContain("سُلّم ٨ من ١٠");
+    expect(v).toContain("شركة واحدة لم يُعثر فيها على موظفين");
+    expect(v).toContain("زاد ١٢ شخصًا عن العدد المعتمد");
+    expect(v).not.toContain(OLD_CLAIM);
+    expect(v).not.toMatch(/[0-9]/);
+  });
+  it("two companies with none, and one with fewer than the two asked for", () => {
+    const rows = [p("365ecology", "A", "Manager"), p("365ecology", "B", "Director"), p("kahromika", "C", "Manager"), p("melcomec", "D", "Manager"), p("melcomec", "E", "Director")];
+    const v = limitsOf(rows, facts(record({ found: 5, accepted: 5, excluded: 0, stop: "source_exhausted" }))).join("\n");
+    expect(v).toContain("شركتان لم يُعثر فيهما على موظفين");
+    expect(v).toContain("شركة واحدة وُجد فيها موظفون أقل من العدد المطلوب");
+    expect(v).not.toContain(OLD_CLAIM);
+  });
+  it("more than two companies with none: the count and the plural", () => {
+    const v = limitsOf([p("365ecology", "A", "Manager"), p("365ecology", "B", "Director")], facts(record({ found: 2, accepted: 2, stop: "source_exhausted" }))).join("\n");
+    expect(v).toContain("٤ شركات لم يُعثر فيها على موظفين");
+  });
+  it("every company has ONE person where two were asked for: each is below the number, said per company", () => {
+    const rows = ["alumisr", "365ecology", "kahromika", "melcomec", "ateco"].map((c) => p(c, "A", "Manager"));
+    const v = limitsOf(rows, facts(record({ found: 5, accepted: 5, stop: "source_exhausted" }))).join("\n");
+    expect(v).toContain("سُلّم ٥ من ١٠");
+    expect(v).toContain("٥ شركات وُجد فيها موظفون أقل من العدد المطلوب");
+    expect(v).not.toContain(OLD_CLAIM);
+  });
+  it("the surplus alone (every company has its share) is not a shortfall reason: nothing about a source that gave no more", () => {
+    const rows = ["alumisr", "365ecology", "kahromika", "melcomec", "ateco"].flatMap((c) => [p(c, "A", "Manager"), p(c, "B", "Director")]);
+    const v = limitsOf(rows, facts(record({ found: 14, accepted: 10, excluded: 4, excludedByReason: { target_reached: 4 }, stop: "target_reached" }))).join("\n");
+    expect(v).not.toContain(OLD_CLAIM);
+  });
+});

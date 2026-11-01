@@ -11,6 +11,7 @@ import { plainSearchAr } from "../../src/lib/agentMission/plainSearchAr";
 import { reasonTextAr, shortfallClauseAr, stageTruthBodyAr } from "./finalize";
 import { isPeopleStage } from "../../src/lib/agentMission/people";
 import { decisionMakersLeftOutAr } from "../../src/lib/agentMission/roles";
+import { perParentShortfallAr } from "./perParentLimits";
 
 /**
  * THE «المنهجية» SECTION OF THE FIRST SHEET, built by CODE from what the mission RECORDED (the approved plan, the item store's counts, the request's own words, the delivered rows): the model never writes it, and a fact that was not
@@ -309,6 +310,9 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
     // WHAT THE STAGE FOUND AND LEFT OUT, from the recorded counts, when our own row rules left out what the source gave (live A1, A2: 31 and 32 people found, none delivered, «the source gave no more»)
     const truth = stageTruthBodyAr({ found: r.found, duplicates: r.duplicates, delivered: got, excludedByReason: r.excludedByReason, pending: r.pending, reviewStop: facts.reviewStop ?? null, stop: r.stop, people: isPeopleStage(s) });
     if (truth) { limits.push(`${many ? `«${s.title_ar}»: ` : ""}سُلّم ${fmt(got)} من ${fmt(s.planned_rows)}: ${truth}.`); continue; }
+    // THE COUNTS PER PARENT (companies with no people, with fewer than asked, people beyond the approved number): the shortfall of a child stage is said from them when they explain it (never «the source gave no more» when the other companies had surplus)
+    const perParent = s.parent_key !== null && r.pending === 0 && !s.parent_key.startsWith("__") ? perParentShortfallAr({ parentIds: (rowsByStage[s.parent_key] ?? []).map((x) => String(x.id)), childParentIds: (rowsByStage[s.key] ?? []).map((x) => String(x.parent_id ?? "")), perParent: s.per_parent_rows, surplus: r.excludedByReason.target_reached ?? 0, childNoun: isPeopleStage(s) ? "شخص" : undefined }) : null;
+    if (perParent) { limits.push(`${many ? `«${s.title_ar}»: ` : ""}سُلّم ${fmt(got)} من ${fmt(s.planned_rows)}: ${perParent}.`); continue; }
     const clause = shortfallClauseAr(r.stop, { pending: r.pending, stop: facts.reviewStop ?? null, languageLeftOut: r.excludedByReason.filter_language ?? 0 });
     limits.push(`${many ? `«${s.title_ar}»: ` : ""}سُلّم ${fmt(got)} من ${fmt(s.planned_rows)} ${clause}.`);
   }
