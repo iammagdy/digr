@@ -78,8 +78,9 @@ describe("the system prompt teaches the cell rule, not the old row rule", () => 
   it("a row with no verified value is no longer said to be dropped for a person", () => {
     expect(prompt).not.toMatch(/a row with no verified value is not saved/i);
   });
-  it("it says verification only fills or empties a cell, never decides whether a person is delivered, and that no question is asked about it", () => {
-    expect(prompt).toMatch(/verification (?:only )?(?:fills|decides whether a cell)/i);
+  // CHANGED (owner direction 2026-11-01): an unverified value is no longer emptied; verification decides the status next to a value, never whether a value or a person is delivered
+  it("it says verification decides only the status beside a value, never whether a value or a person is delivered, and that no question is asked about it", () => {
+    expect(prompt).toMatch(/verification decides only the STATUS/i);
     expect(prompt).toMatch(/never (?:ask|a question)[^.]*(?:verified|verification|contact)/i);
   });
 });

@@ -31,6 +31,8 @@ import { buildTools, newRunState, type ToolContext } from "./tools";
 import { ItemStore, type ItemSnapshot, type StopReason } from "./items/itemStore";
 import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
+import { runContactEnrichment } from "./engine/contacts";
+
 import { runInSandbox } from "./sandbox";
 import { trackRun, untrackRun } from "./sessions";
 import { childShortfallClauseAr, countWorkbookSheets, shortfallClauseAr, shortfallFromStopAr, stageTruthBodyAr, zeroDeliveryReasonAr, type ZeroDeliveryFacts } from "./finalize";
@@ -75,6 +77,8 @@ export interface RunnerDeps {
   log?: (line: string) => void;
 }
 
+/** The least time the contact finder steps may take after the stages, even when the stages used the mission's whole wall time (a lookup is about a second per person). */
+const CONTACT_STEP_MIN_WALL_MS = 5 * 60_000;
 const sum = (calls: CallRow[], phase: CallRow["phase"]) => calls.filter((c) => c.phase === phase).reduce((n, c) => n + (Number(c.cost_usd) || 0), 0);
 const lastSeq = (calls: CallRow[]) => calls.reduce((n, c) => Math.max(n, Number(/call_(\d+)$/.exec(c.id)?.[1] ?? 0)), 0);
 const lastOut = async (store: AgentStore, missionId: string): Promise<number> => {
@@ -411,6 +415,14 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   await recordTokens(deps, mission.id, 1, output.usage, { inputTokens: reviewAfter.inputTokens - reviewBefore.inputTokens, outputTokens: reviewAfter.outputTokens - reviewBefore.outputTokens, calls: reviewAfter.calls - reviewBefore.calls }, output.llmCostUsd + reviewSpent);
   if (output.stop === "memory" && !state.finish && await requeue(deps, mission, "approved", { execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(budget.spentUsd().toFixed(6)) }, "memory")) return;
   if (endedByRestart(output) && !state.finish && await requeue(deps, mission, "approved", { execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(budget.spentUsd().toFixed(6)) }, "restart")) return;
+
+  // THE CONTACT FINDER STEPS (plan.contact_steps, contactFinders.ts): every delivered person is looked up for the e-mail and phone cells, within the job's call budget and the step's priced amount. It fills CELLS of persons already stored: no row is added, so the settlement below counts what it always counted.
+  if (plan.contact_steps && plan.contact_steps.length > 0 && output.stop === "end" && !output.error) {
+    try {
+      const enrichment = await runContactEnrichment({ items, store, plan, missionId: mission.id, gateway, addEvent: (e) => store.addEvent(mission.id, e), budget, deadlineMs: Math.max(deadlineMs, Date.now() + CONTACT_STEP_MIN_WALL_MS), log: deps.log });
+      deps.log?.(`contact_steps ${mission.id} email=${enrichment.filled.email} phone=${enrichment.filled.phone} unverified=${enrichment.filled.unverified} looked=${enrichment.looked} skipped=${enrichment.skipped} spent=${enrichment.spentUsd.toFixed(6)} stopped=${enrichment.stopped ?? "no"}`);
+    } catch (e) { deps.log?.(`contact_steps_failed ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 120)}`); /* a lookup that breaks never stops the settlement: the people are delivered with the cells as they are */ }
+  }
 
   await settleExecution(deps, mission, plan, reserve, unit, { llm, executionTregUsd: budget.spentUsd(), summary: state.finish?.summary_ar ?? null, outputError: output.error ?? null, memory: items });
 }

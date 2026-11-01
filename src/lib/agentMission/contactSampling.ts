@@ -6,7 +6,7 @@ import { PHONE_CAPABILITIES } from "./peopleCheck";
  *   - at most a quarter of the planning budget in all (CONTACT_SAMPLE_SHARE);
  *   - one sample per kind (e-mail, phone): a call that was made counts, whatever it gave;
  *   - the cheapest ranked finder of the kind first (the one the ranking puts first among those whose single call fits inside the quarter);
- *   - never a finder whose single call costs more than that quarter: the plan then says the cells are filled only if found during the approved job.
+ *   - never a finder whose single call costs more than that quarter. This limits SAMPLING only: the finder step is in the plan by code (contactFinders.ts) whatever was or was not sampled.
  * Pure: the gateway asks it before it spends. Platform planning spend, not the customer's money: nothing here touches the ledger, a price or a cap.
  */
 export const CONTACT_SAMPLE_SHARE = 0.25;
@@ -56,7 +56,7 @@ const KIND_WORD: Record<ContactFinderKind, string> = { email: "e-mail", phone: "
 /** What the planner is told (English, for the model only, never shown to a customer). */
 export function contactSampleMessage(refusal: ContactSampleRefusal, kind: ContactFinderKind, cheapestId: string | null): string {
   const w = KIND_WORD[kind];
-  const cells = `do not sample it: the planning keeps its budget for the stages of the plan. Write in the plan (assumptions_ar, one line, no number) that the ${w} cells are filled only if found during the approved job; code fills a cell only with a value it verified and leaves it empty otherwise, and a person is delivered either way`;
+  const cells = `do not sample it: the planning keeps its budget for the stages of the plan. The ${w} finder step for the people of the plan is added to the plan by code and is carried out in the approved job for every person delivered, whatever is sampled here: do not plan it, do not drop the ${w} column, and do not write that the ${w} cells may stay empty`;
   if (refusal === "kind_sampled") return `a ${w} finder was already sampled in this mission (one sample per kind is enough to plan with): ${cells}`;
   if (refusal === "too_dear") return `one call of this ${w} finder costs more than a quarter of the planning budget, so it is never sampled during planning: ${cells}`;
   if (refusal === "over_cap") return `the planning has already spent a quarter of its budget on contact finders: ${cells}`;

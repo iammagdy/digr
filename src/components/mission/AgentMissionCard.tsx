@@ -1,5 +1,6 @@
 "use client";
 
+import { refreshBalanceAfterSettle } from "@/lib/missionBalance";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { toArabicDigits } from "@/lib/arabicDigits";
@@ -36,7 +37,7 @@ async function authHeaders(): Promise<Record<string, string>> {
   } catch { return {}; }
 }
 
-export default function AgentMissionCard({ missionId, onEdit, onApproved }: { missionId: string; onEdit?: (requestText: string) => void; onApproved?: () => void }) {
+export default function AgentMissionCard({ missionId, onEdit, onApproved, onSettled }: { missionId: string; onEdit?: (requestText: string) => void; onApproved?: () => void; /** The mission is over: the release and the charge are written, so the page refreshes the balance it shows. */ onSettled?: () => void }) {
   const [answer, setAnswer] = useState<MissionAnswer | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -60,6 +61,10 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved }: { mi
 
   const live = answer?.view?.live ?? true;
   const ended = TERMINAL_PHASES.has(answer?.view?.phase ?? "");
+  // THE BALANCE AFTER THE END (missionBalance.ts): the header kept the hold taken because nothing asked for the balance when the mission ended
+  const onSettledRef = useRef(onSettled);
+  onSettledRef.current = onSettled;
+  useEffect(() => { if (!ended) return undefined; return refreshBalanceAfterSettle(() => onSettledRef.current?.()); }, [ended]);
   // THE CARD NEVER GOES DEAF: it reads every 2 to 3 seconds while the mission works and every few seconds while it waits for the customer (so an approval or an ending that happened elsewhere shows by itself), and reads at once when the tab comes back; it stops only when the mission has ended
   // The loop is startMissionPolling's: every read has a limit, so ONE read that never answers cannot end it (live: the plan was stored and the card showed «تستغرق وقتًا أطول» until a reload)
   useEffect(() => {

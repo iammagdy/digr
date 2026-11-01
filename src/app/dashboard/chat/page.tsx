@@ -1867,7 +1867,7 @@ export default function ChatWorkspacePage() {
     if (m.agentMissionId) {
       return (
         <div key={m.id}>
-          <AgentMissionCard missionId={m.agentMissionId} onEdit={(requestText) => setInputText(requestText)} onApproved={() => void loadBalance()} />
+          <AgentMissionCard missionId={m.agentMissionId} onEdit={(requestText) => setInputText(requestText)} onApproved={() => void loadBalance()} onSettled={() => void loadBalance()} />
         </div>
       );
     }

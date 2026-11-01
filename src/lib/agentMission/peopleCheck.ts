@@ -64,7 +64,9 @@ export function peopleAndContactAdvice(i: PeopleCheckInput): string[] {
 
   // 2. THE PHONE THAT WAS ASKED FOR IS IN THE PLAN, OR THE PLAN SAYS HONESTLY WHY NOT
   const hasPhoneColumn = stages.some((s) => s.columns.some((c) => c.kind === "phone" || PHONE_COLUMN.test(c.key) || PHONE_COLUMN.test(c.title_ar)));
-  if (wants.phone && !hasPhoneColumn) {
+  // a delivered PEOPLE stage gets its phone finder step by code (contactFinders.ts): the planner is not asked to plan, sample or excuse it
+  const peopleStageDelivered = stages.some((s) => s.deliver && isPeopleStage(s));
+  if (wants.phone && !hasPhoneColumn && !peopleStageDelivered) {
     const phoneTried = tried(i.phoneSources);
     const phoneGaveRows = phoneTried.filter((id) => rowsOf(id) > 0);
     const untried = i.phoneSources.filter((id) => !i.calls.has(id));
