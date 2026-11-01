@@ -185,9 +185,10 @@ describe("the price of «5 Egyptian electromechanical companies + decision maker
     // [USD per person, people per company the plan ends with, delivered rows, hold in points, the most that can be charged]
     // CHANGED (owner decision after #321): the holds now carry the deeper search (up to 3 pages of the people source for each company, priced at the measuring call's cost); before: 202 / 361 / 503 and 200 / 314 / 438. The default count of people is still lowered for the price of the READING alone.
     // CHANGED (PR 1 part c): each hold carries the names request's estimate (0.00003 USD per decision maker, plan.ts namesAreWritten); before: 328 / 285, 804 / 699, 2322 / 2019
-    [0.00099, 2, 15, 330, 287],
-    [0.0035, 2, 15, 806, 701],
-    [0.0115, 1, 10, 2323, 2020],
+    // CHANGED (PR 2 price): planning is priced by the plan's shape (two stages 0.016, was a flat 0.012), the names step 0.00007 a person: holds and charges move by about 8%
+    [0.00099, 2, 15, 357, 311],
+    [0.0035, 2, 15, 834, 725],
+    [0.0115, 1, 10, 2349, 2043],
   ];
   it.each(OWNER_PRICES)("%f USD per person: %i per company, %i items, hold %i points (the reading alone never above 600), at most %i charged", (perPerson, per, rows, hold, max) => {
     const calls = new Map([

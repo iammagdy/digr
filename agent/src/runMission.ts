@@ -420,7 +420,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   // THE CONTACT FINDER STEPS (plan.contact_steps, contactFinders.ts): every delivered person is looked up for the e-mail and phone cells, within the job's call budget and the step's priced amount. It fills CELLS of persons already stored: no row is added, so the settlement below counts what it always counted.
   if (plan.contact_steps && plan.contact_steps.length > 0 && output.stop === "end" && !output.error) {
     try {
-      const enrichment = await runContactEnrichment({ items, store, plan, missionId: mission.id, gateway, addEvent: (e) => store.addEvent(mission.id, e), budget, deadlineMs: Math.max(deadlineMs, Date.now() + CONTACT_STEP_MIN_WALL_MS), log: deps.log });
+      const enrichment = await runContactEnrichment({ items, store, plan, missionId: mission.id, requestText: mission.request_text, gateway, addEvent: (e) => store.addEvent(mission.id, e), budget, deadlineMs: Math.max(deadlineMs, Date.now() + CONTACT_STEP_MIN_WALL_MS), log: deps.log });
       deps.log?.(`contact_steps ${mission.id} email=${enrichment.filled.email} phone=${enrichment.filled.phone} unverified=${enrichment.filled.unverified} looked=${enrichment.looked} skipped=${enrichment.skipped} spent=${enrichment.spentUsd.toFixed(6)} stopped=${enrichment.stopped ?? "no"}`);
     } catch (e) { deps.log?.(`contact_steps_failed ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 120)}`); /* a lookup that breaks never stops the settlement: the people are delivered with the cells as they are */ }
   }

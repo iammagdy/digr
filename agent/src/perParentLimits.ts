@@ -20,6 +20,9 @@ export interface PerParentFacts {
   childNoun?: string;
 }
 
+/** «الفيديوهات», «الشركات»: the plural with the definite article. */
+const definitePlural = (plural: string): string => (plural.startsWith("ال") ? plural : `ال${plural}`);
+
 export function perParentShortfallAr(f: PerParentFacts): string | null {
   const parentNoun = knownItemNoun(f.parentNoun ?? "شركة");
   const childNoun = knownItemNoun(f.childNoun ?? "شخص");
@@ -33,10 +36,17 @@ export function perParentShortfallAr(f: PerParentFacts): string | null {
   const fewer = per === null ? 0 : [...counts.values()].filter((n) => n > 0 && n < per).length;
   const surplus = Math.max(0, Math.floor(Number(f.surplus) || 0));
   const parts: string[] = [];
-  if (none > 0) parts.push(none === 1 ? `${countAr(1, parentNoun)} لم يُعثر فيها على موظفين` : none === 2 ? `${countAr(2, parentNoun, { subject: true })} لم يُعثر فيهما على موظفين` : `${countAr(none, parentNoun)} لم يُعثر فيها على موظفين`);
-  if (fewer > 0) parts.push(fewer === 1 ? `${countAr(1, parentNoun)} وُجد فيها موظفون أقل من العدد المطلوب` : fewer === 2 ? `${countAr(2, parentNoun, { subject: true })} وُجد فيهما موظفون أقل من العدد المطلوب` : `${countAr(fewer, parentNoun)} وُجد فيها موظفون أقل من العدد المطلوب`);
+  // THE TASK'S OWN NOUNS (F1, golden G4): people keep «موظفين» / «موظفون»; every other child (comments, replies, reviews) is said with its own noun, in the form that agrees with the parent (فيه / فيها / فيهما; وُجد / وُجدت)
+  const people = childNoun.key === knownItemNoun("شخص")!.key;
+  const childPlural = people ? "موظفين" : childNoun.plural;
+  const childSubject = people ? "موظفون" : childNoun.plural;
+  const foundVerb = people ? "وُجد" : "وُجدت";
+  const inIt = (n: number): string => (n === 2 ? "فيهما" : n === 1 && !parentNoun.feminine ? "فيه" : "فيها");
+  const lead = (n: number): string => (n === 2 ? countAr(2, parentNoun, { subject: true }) : countAr(n, parentNoun));
+  if (none > 0) parts.push(`${lead(none)} لم يُعثر ${inIt(none)} على ${childPlural}`);
+  if (fewer > 0) parts.push(`${lead(fewer)} ${foundVerb} ${inIt(fewer)} ${childSubject} أقل من العدد المطلوب`);
   if (none === 0 && fewer === 0) return null;
-  if (surplus > 0) parts.push(`وزاد ${countAr(surplus, childNoun)} عن العدد المعتمد في بقية الشركات`);
+  if (surplus > 0) parts.push(`وزاد ${countAr(surplus, childNoun)} عن العدد المعتمد في بقية ${definitePlural(parentNoun.plural)}`);
   return parts.join("، ");
 }
 

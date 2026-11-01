@@ -2,7 +2,7 @@ import { unitPricePointsFromCost, UNIT_SCALE, type PricingBasis } from "../recor
 import { DEFAULT_MISSION_PRICING_SETTINGS, priceByRule, settlementChargeFor, type MissionPricingSettings } from "../missionPricing";
 import { holdValueUsd } from "../server/callBudget";
 import {
-  AGENT_EXECUTION_BUDGET_FLOOR_USD, AGENT_EXECUTION_BUDGET_SHARE, AGENT_JOB_POINTS_CAP, AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD, AGENT_MODEL_PLANNING_ESTIMATE_USD, AGENT_PRICING_BASIS, AGENT_RESERVE_MARGIN,
+  AGENT_EXECUTION_BUDGET_FLOOR_USD, AGENT_EXECUTION_BUDGET_SHARE, AGENT_JOB_POINTS_CAP, AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD, AGENT_MODEL_PLANNING_ESTIMATE_USD, AGENT_MODEL_PLANNING_PER_EXTRA_STAGE_ESTIMATE_USD, AGENT_PRICING_BASIS, AGENT_RESERVE_MARGIN,
   AGENT_REVIEW_ROW_ESTIMATE_USD, AGENT_REVIEW_BUDGET_SHARE, AGENT_REVIEW_CEILING_SHARE,
 } from "./constants";
 
@@ -115,7 +115,7 @@ export function estimateModelCostUsd(stages: ReadonlyArray<StagePriceInput>): nu
     const y = s.yield !== undefined && s.yield > 0 ? Math.min(1, s.yield) : 1;
     review += Math.max(0, s.rows) / y * Math.max(0, s.reviewShare ?? 0);
   }
-  return AGENT_MODEL_PLANNING_ESTIMATE_USD + AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD * stages.length + review * AGENT_REVIEW_ROW_ESTIMATE_USD;
+  return AGENT_MODEL_PLANNING_ESTIMATE_USD + AGENT_MODEL_PLANNING_PER_EXTRA_STAGE_ESTIMATE_USD * Math.max(0, stages.length - 1) + AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD * stages.length + review * AGENT_REVIEW_ROW_ESTIMATE_USD;
 }
 
 export function priceMissionByCode(stages: ReadonlyArray<StagePriceInput>, options: MissionPriceOptions = {}): MissionPriceResult {

@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { approveMission, repriceStoredPlan } from "../src/lib/agentMission/lifecycle";
 import { executionBudgetUsd } from "../src/lib/agentMission/price";
-import { AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD, AGENT_MODEL_PLANNING_ESTIMATE_USD } from "../src/lib/agentMission/constants";
+import { AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD, AGENT_MODEL_PLANNING_ESTIMATE_USD, AGENT_MODEL_PLANNING_PER_EXTRA_STAGE_ESTIMATE_USD } from "../src/lib/agentMission/constants";
 import { createFakeDriver, type FakeStep } from "../agent/src/fakeDriver";
 import { createMemoryStore, newMission } from "../agent/src/memoryStore";
 import { runExecution, runPlanning, type RunnerDeps } from "../agent/src/runMission";
@@ -63,8 +63,9 @@ describe("PLANNING with a fake model transcript", () => {
     expect(plan.stages[1].measured_cost_per_row_usd).toBeCloseTo(0.00012, 9);
     expect(plan.price.totalCostUsd).toBeCloseTo(20 * 0.005 + 200 * 0.00012, 9);
     expect(plan.price.deliveredRows).toBe(220);
+    // CHANGED (PR 2 price): the planning estimate follows the plan's shape (a base plus an increment for the second stage)
     // the one pricing rule: provider cost PLUS the estimated model cost (one planning, one execution per stage) per delivered row, x 5,500 (the old line was provider cost alone: ((20 * 0.005 + 200 * 0.00012) / 220) * 5500)
-    expect(plan.price.unitPricePoints).toBeCloseTo(((20 * 0.005 + 200 * 0.00012 + AGENT_MODEL_PLANNING_ESTIMATE_USD + 2 * AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD) / 220) * 5500, 4);
+    expect(plan.price.unitPricePoints).toBeCloseTo(((20 * 0.005 + 200 * 0.00012 + AGENT_MODEL_PLANNING_ESTIMATE_USD + AGENT_MODEL_PLANNING_PER_EXTRA_STAGE_ESTIMATE_USD + 2 * AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD) / 220) * 5500, 4);
     expect(m.reserved_points).toBe(plan.price.reservePoints);
     expect(m.unit_price_points).toBe(plan.price.unitPricePoints);
     // what the model was told after propose_plan carries no price

@@ -42,7 +42,9 @@ export function countCsvItems(csv: string): number {
  */
 export function shortfallClauseAr(reason: StopReason | null, review: { pending: number; stop: "budget" | "failed" | null; /** Items the language of the plan left out (the language rule): when the sources ran dry, this is the reason to say. Never set for a stage of child items: they are delivered raw. */ languageLeftOut?: number; /** The sentence for a child stage whose parents gave fewer children than the number asked for each (see childShortfallClauseAr). */ childShare?: string | null }): string {
   if (review.pending > 0 && review.stop === "failed") return "لأن المراجعة الآلية تعذّر الوصول إليها لبعض ما وُجد، فلم يُسلَّم ما لم يُراجَع";
-  if (review.pending > 0) return "لأن المراجعة الآلية بلغت حدّها المسموح لهذه المهمة قبل فحص كل ما وُجد، فلم يُسلَّم ما لم يُراجَع";
+  // ONLY A RECORDED STOP SAYS THE LIMIT WAS REACHED (audit G13): waiting items with no recorded stop say what is true and nothing about why
+  if (review.pending > 0 && review.stop === "budget") return "لأن المراجعة الآلية بلغت حدّها المسموح لهذه المهمة قبل فحص كل ما وُجد، فلم يُسلَّم ما لم يُراجَع";
+  if (review.pending > 0) return "لأن المراجعة الآلية لم تكتمل لبعض ما وُجد، فلم يُسلَّم ما لم يُراجَع";
   if (review.childShare && (reason === null || reason === "source_exhausted" || reason === "no_new_items" || reason === "target_reached")) return review.childShare;
   if ((review.languageLeftOut ?? 0) > 0 && (reason === null || reason === "source_exhausted" || reason === "no_new_items" || reason === "target_reached")) return "لأن المصادر لم تعطِ ما يكفي من المحتوى باللغة المحددة في خطتك";
   switch (reason) {
@@ -172,6 +174,6 @@ export function stageTruthBodyAr(t: StageTruthFacts): string | null {
   const leftN = byReason.reduce((n, [, c]) => n + c, 0);
   if (leftN > 0) parts.push(`ولم يُسلَّم ${formatAr(leftN)}: ${[...byReason].sort((a, b) => b[1] - a[1]).slice(0, 4).map(([k, c]) => `${formatAr(c)} ${reasonTextAr(k)}`).join("؛ ")}`);
   const pending = Math.max(0, Math.floor(Number(t.pending) || 0));
-  if (pending > 0) parts.push(`وبقي ${formatAr(pending)} دون مراجعة لأن المراجعة الآلية ${t.reviewStop === "failed" ? "تعذّر الوصول إليها" : "بلغت حدّها المسموح لهذه المهمة"}`);
+  if (pending > 0) parts.push(`وبقي ${formatAr(pending)} دون مراجعة${t.reviewStop === "failed" ? " لأن المراجعة الآلية تعذّر الوصول إليها" : t.reviewStop === "budget" ? " لأن المراجعة الآلية بلغت حدّها المسموح لهذه المهمة" : ""}`);
   return parts.join("، ");
 }

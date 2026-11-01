@@ -26,6 +26,7 @@ const col = (cls: ContractClass, title_ar: string, fill: ColumnFill): ContractCo
 
 export const ROW_NUMBER_TITLE_AR = "م";
 export const COMPANY_NAME_TITLE_AR = "اسم الشركة";
+export const COMPANY_ACTIVITY_TITLE_AR = "النشاط والتخصص";
 export const COMPANY_EMAIL_TITLE_AR = "الإيميل العام للشركة";
 export const COMPANY_EMAIL_STATUS_TITLE_AR = "حالة توثيق الإيميل العام للشركة";
 export const COMPANY_PHONE_TITLE_AR = "هاتف المقر الرئيسي";
@@ -47,7 +48,7 @@ export const NOT_AVAILABLE_AR = "غير متوفر";
 export const COMPANY_SHEET_ORDER: ReadonlyArray<ContractColumn> = [
   col("row_number", ROW_NUMBER_TITLE_AR, "code"),
   col("company_name", COMPANY_NAME_TITLE_AR, "source"),
-  col("company_activity", "النشاط والتخصص", "source"),
+  col("company_activity", COMPANY_ACTIVITY_TITLE_AR, "source"),
   col("company_website", "الموقع الإلكتروني", "source"),
   col("company_email", COMPANY_EMAIL_TITLE_AR, "step"),
   col("company_phone", COMPANY_PHONE_TITLE_AR, "source"),
@@ -241,3 +242,14 @@ function personColumns(stage: ContractStageLike, computed = true): Col[] {
 
 /** A column the workbook computes from the delivered rows (the decision-maker marker, the notes) instead of reading it from a row. */
 export const isComputedColumn = (c: { computed?: string }): boolean => c.computed !== undefined;
+
+/**
+ * THE ARABIC TITLE OF A COMMON COLUMN, BY ITS KEY (audit 2026-11 PR 2, G14): the model used to write a title for every column of every stage, and planning time follows the tokens it writes. A key the field classes or the contract know needs no title from the model; an unknown key has none (null: the model
+ * names it). The keys are the ones the planner's own mappings use for these fields.
+ */
+const COLUMN_TITLE_BY_KEY: Readonly<Record<string, string>> = {
+  text: "النص", author: "الكاتب", username: "اسم المستخدم", posted_at: FIELD_LABEL_AR.date, created_at: FIELD_LABEL_AR.date, date: FIELD_LABEL_AR.date, link: FIELD_LABEL_AR.link, url: FIELD_LABEL_AR.link, likes: FIELD_LABEL_AR.like, replies: FIELD_LABEL_AR.reply, replies_count: "عدد الردود", comments: FIELD_LABEL_AR.comment, shares: FIELD_LABEL_AR.share, views: FIELD_LABEL_AR.view,
+  rating: FIELD_LABEL_AR.rating, followers: FIELD_LABEL_AR.followers, name: "الاسم", title: "العنوان", description: "الوصف", website: "الموقع الإلكتروني", industry: COMPANY_ACTIVITY_TITLE_AR, activity: COMPANY_ACTIVITY_TITLE_AR, city: "المدينة", address: "العنوان", street_address: "العنوان", phone: "رقم التليفون", company_phone: COMPANY_PHONE_TITLE_AR,
+  email: "الإيميل", company_email: COMPANY_EMAIL_TITLE_AR, reviews_count: "عدد التقييمات", review_count: "عدد التقييمات", size: "حجم الشركة", linkedin_url: "الرابط", job_title: PERSON_TITLE_TITLE_AR, full_name: PERSON_NAME_TITLE_AR,
+};
+export const knownColumnTitleAr = (key: string): string | null => COLUMN_TITLE_BY_KEY[String(key).toLowerCase()] ?? null;

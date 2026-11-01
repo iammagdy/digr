@@ -8,7 +8,7 @@ import { classifyRows, searchQueryOf, validateRelevanceSpec, type RelevanceSpec 
 import { minimumLineAr, type MissionPricingSettings } from "../missionPricing";
 import { checkCustomerLabel, checkCustomerText } from "./text";
 import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type SourceField } from "./fields";
-import { CONTRACT_ONLY_CLASSES, contractIssuesFor, isPlaceSource, type SourceStageKind } from "./taskContracts";
+import { CONTRACT_ONLY_CLASSES, contractIssuesFor, isPlaceSource, knownColumnTitleAr, type SourceStageKind } from "./taskContracts";
 import { neutralPeopleTitleAr, roleLineAr, roleOfNoun, type RoleKey } from "./roles";
 import { toArabicDigits } from "../arabicDigits";
 import { DEFAULT_PEOPLE_PER_PARENT, bindQuantity, bindQuantityDetailed, countedQuantities, ownTitleWords, perParentAskFor, perParentAskOf, perParentQuantities, perSourceQuantities, requestedStageIndexes, sameNounStem, unservedPerParentAsks } from "./quantity";
@@ -397,7 +397,8 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
     for (const c of columns) {
       if (!isRecord(c) || !KEY_RE.test(String(c.key ?? "")) || colKeys.has(String(c.key))) { issues.push(`${label}: every column needs a unique key (letters, digits, underscores)`); continue; }
       colKeys.add(String(c.key));
-      const t = checkCustomerLabel(c.title_ar);
+      // a column given by its KEY ALONE gets its Arabic title from the code when the contract or the field classes know the key (audit G14: the model need not write what the code holds); an unknown key still needs the model's title
+      const t = checkCustomerLabel(c.title_ar === undefined || c.title_ar === null || c.title_ar === "" ? knownColumnTitleAr(String(c.key)) ?? c.title_ar : c.title_ar);
       if (t.issues.length) issues.push(`${label} column «${c.key}»: ${t.issues.join("; ")}`);
       // every row already carries its own id and its parent's id: a column that only repeats an id, or a second column with the same title, is dropped (the sheet is for people to read)
       if (isInternalColumn({ key: String(c.key), title_ar: t.text }) || colTitles.has(t.text)) continue;
@@ -441,11 +442,21 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
     }
     // (a delivered PEOPLE stage is exempt: the e-mail and phone columns and their finder steps are added to it by code, contactFinders.ts)
     if (lookup.isContactSource?.(endpointId) && !cleanColumns.some((c) => c.kind !== undefined) && !(raw.deliver === true && isPeopleStage({ parent_key: parentKey, title_ar: title.text, ...(isRecord(raw.role_preference) ? { role_preference: raw.role_preference } : {}) }))) issues.push(`${label}: a contact stage must mark its e-mail / phone columns with kind "work_email" or "phone" (their values are verified by code: a verified value fills the cell and an unverified one leaves it EMPTY; a row that is a named person is delivered either way, only a row that is nothing but an address with none verified is not delivered or charged)`);
-    const samples = Array.isArray(raw.sample_rows) ? raw.sample_rows : [];
+    // THE SAMPLE ROWS the model omitted are the first rows of the output it cites (`yield_from`, else a cited output), kept by the relevance rule when there is one (audit G14: they were always copies of rows the code already reads)
+    let samples = Array.isArray(raw.sample_rows) ? raw.sample_rows : [];
+    const sampleSourceIds = [String(raw.yield_from ?? ""), ...(Array.isArray(raw.measured_by) ? raw.measured_by.map(String) : [])].filter((x) => /^out_\d+/.test(x));
+    let samplesDerived = false;
+    if (samples.length === 0) {
+      for (const id of sampleSourceIds) {
+        const text = lookup.evidenceText(id);
+        if (!text) continue;
+        try { const parsed = JSON.parse(text) as unknown; if (Array.isArray(parsed) && parsed.length > 0 && parsed.every(isRecord)) { samples = (parsed as Array<Record<string, unknown>>).slice(0, MAX_SAMPLE_ROWS_PER_STAGE); samplesDerived = true; break; } } catch { /* the next output */ }
+      }
+    }
     if (samples.length < 1 || samples.length > MAX_SAMPLE_ROWS_PER_STAGE) issues.push(`${label}: 1 to ${MAX_SAMPLE_ROWS_PER_STAGE} sample_rows, rows you really saw`);
     for (const s of samples) {
       if (!isRecord(s)) { issues.push(`${label}: a sample row must be an object`); continue; }
-      if (evidence) issues.push(...sampleRowIssues(s, evidence, key));
+      if (evidence && !samplesDerived) issues.push(...sampleRowIssues(s, evidence, key));
     }
 
     // THE ENTITY STAGES (companies, restaurants, places, people, accounts): the place the card names is enforced from the items' fields, and a COMPANY stage whose request names a sector needs a relevance rule that checks the kind of entity
@@ -481,6 +492,8 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
           // the price rests on the cost per MATCHING row: matching rows count fully, uncertain ones (reviewed by the model, about half pass) count half
           yieldShare = Math.min(1, Math.max(0.02, (counts.match + 0.5 * counts.review) / counts.examined));
           reviewShare = counts.review / counts.examined;
+          // sample rows derived by code are the first rows that MATCH the stage's own rule
+          if (samplesDerived) samples = sampleRows.filter((r) => classifyRows(relevance!, [r]).counts.match === 1).slice(0, MAX_SAMPLE_ROWS_PER_STAGE);
           const bad = samples.filter(isRecord).filter((r) => classifyRows(relevance!, [r]).counts.match !== 1);
           if (bad.length) issues.push(`${label}: ${bad.length} of your sample_rows do not match your own relevance rule; show only rows that match`);
         }

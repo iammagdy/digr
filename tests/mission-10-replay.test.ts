@@ -115,10 +115,11 @@ describe("1. YouTube named channels: the source filter asks for the NAME the cus
 // ---------------------------------------------------------------------------------------------------- 2. time depth (msn_24c9027aba2461708331, msn_f00cdcfec7e8703c400b)
 describe("2. the price of 2000 tweets (1,084) against 1000 (242) is the yield the sample measured, and the stored numbers price exactly so", () => {
   it("2000 tweets, 6 of 20 sampled tweets matching (yield 0.3): 1,084; 1000 tweets, 20 of 20 (yield 1): 242 — the same cost per tweet read (0.000027), a third of the tweets read are useful in one and all in the other", () => {
+    // CHANGED (PR 2 price): a one-stage plan's planning is priced 0.004 USD lower (base 0.008, was a flat 0.012): 1,084 -> 1,062 and 242 -> 220 (holds 1,247 -> 1,221 and 279 -> 253)
     const iran = priceMissionByCode([{ rows: 2000, costPerRowUsd: 0.000027, deliver: true, yield: 0.3 } as any]);
     const league = priceMissionByCode([{ rows: 1000, costPerRowUsd: 0.000027, deliver: true, yield: 1 } as any]);
-    expect(iran).toMatchObject({ maxChargePoints: 1084, reservePoints: 1247, deliveredRows: 2000 });
-    expect(league).toMatchObject({ maxChargePoints: 242, reservePoints: 279, deliveredRows: 1000 });
+    expect(iran).toMatchObject({ maxChargePoints: 1062, reservePoints: 1221, deliveredRows: 2000 });
+    expect(league).toMatchObject({ maxChargePoints: 220, reservePoints: 253, deliveredRows: 1000 });
     // provider cost: rows / yield x cost per row
     expect(iran.providerCostUsd).toBeCloseTo(0.18, 6);
     expect(league.providerCostUsd).toBeCloseTo(0.027, 6);

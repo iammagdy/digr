@@ -203,16 +203,21 @@ export const AGENT_PEOPLE_PAGES_MAX = 10;
  * THE MODEL'S SHARE OF A MISSION'S PRICE (estimates the quote adds to the provider cost; the real model cost of every mission is stored and compared with them on the admin page).
  * Where they come from (the missions table, 2026-10-28): planning cost 0.0070 (300 tweets), 0.0183 (three companies and their staff); execution 0.0037 for one stage, 0.0070 for two; so planning 0.012 USD (between
  * the two), execution 0.005 USD per stage (rounded up from 0.0037 and 0.0035 per stage). The review of one uncertain row by the small model is about 120 input and 12 output tokens at the list price of the
- * small model (0.10 / 0.50 per million) = 0.000018 USD; the estimate is 0.00004 (2x) because the SDK's own total cannot be checked against a bill.
+ * small model (0.10 / 0.50 per million) = 0.000018 USD. MEASURED LIVE (msn_ecca2a0d…, 2026-11-01): 2 calls, 5,019 input and 150 output tokens for 50 rows = 0.000577 USD, 0.0000115 a row; the estimate is the table figure, 0.000018, about 1.6x the measured cost (before: 0.00004).
  */
-export const AGENT_MODEL_PLANNING_ESTIMATE_USD = 0.012;
-export const AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD = 0.005;
-export const AGENT_REVIEW_ROW_ESTIMATE_USD = 0.00004;
 /**
- * THE NAMES REQUEST OF A DECISION-MAKERS DELIVERY (audit 2026-11, owner decision 3): one small batched request per mission writes the Arabic spelling of the people's names (agent/src/namesAr.ts). About 15 input and 25 output tokens a name at the small model's list price (0.10 / 0.50 per million) plus a share of
- * the fixed prompt = 0.000015 to 0.00002 USD; the estimate is 0.00003 per delivered person (the same 2x margin the review's estimate has), added to that stage's cost per row by code.
+ * PLANNING BY THE PLAN'S SHAPE (audit G15, live 2026-11-01): planning cost 0.0117 USD for G1 (two stages), 0.0183 for G4 (two stages), 0.006 to 0.0093 for one or two stage posts and comments plans; the older flat 0.012 fitted neither end. One stage costs this base; every further stage adds the increment
+ * (two stages 0.016, between G1 and G4; the live range of two-stage plans today is 0.0117 to 0.0211). Planning output tokens are what it follows (planning at most 15,000 tokens after the contract and the recipe write the columns and the mapping code).
  */
-export const NAMES_STEP_USD_PER_PERSON = 0.00003;
+export const AGENT_MODEL_PLANNING_ESTIMATE_USD = 0.008;
+export const AGENT_MODEL_PLANNING_PER_EXTRA_STAGE_ESTIMATE_USD = 0.008;
+export const AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD = 0.005;
+export const AGENT_REVIEW_ROW_ESTIMATE_USD = 0.000018;
+/**
+ * THE NAMES, TITLES AND ACTIVITIES REQUEST OF A DECISION-MAKERS DELIVERY (audit 2026-11, owner decision 3; F5 adds the titles and activities the code lexicon cannot read): one small batched request per mission writes the Arabic spelling of the people's names and of what the lexicon misses (agent/src/namesAr.ts). Per person about 15 in / 25 out tokens for the name, 10 / 20 for a title, and a share of an activity per company: 0.000033 USD, estimated at 2x = 0.00007. About 15 input and 25 output tokens a name at the small model's list price (0.10 / 0.50 per million) plus a share of
+ * the fixed prompt = 0.000015 to 0.00002 USD; the estimate is 0.00007 per delivered person (the same 2x margin the review's estimate has), added to that stage's cost per row by code.
+ */
+export const NAMES_STEP_USD_PER_PERSON = 0.00007;
 /** What the model review of uncertain rows may cost one mission: this share of the mission's revenue (owner decision of 2026-10-28). Rows beyond it are not delivered and not charged. */
 export const AGENT_REVIEW_BUDGET_SHARE = 0.2;
 /** When the usual review budget is spent and rows the request still needs are waiting, the review may go on up to this share of the RESERVE's value (the hold covers it); only then do rows stay undelivered, with an honest sentence. */
