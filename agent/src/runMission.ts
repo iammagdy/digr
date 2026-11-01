@@ -492,8 +492,12 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
       if (sheets === null) throw new Error("the built file could not be read");
       fileCount = sheets.reduce((n, x) => n + x, 0);
       // the sheets are the delivered stages that have items, in plan order: each stage's own count in the file
-      const withSheet = plan.stages.filter((s) => s.deliver && rowsByStage[s.key].length > 0);
-      if (withSheet.length === sheets.length) fileByStage = Object.fromEntries(withSheet.map((s, i) => [s.key, sheets![i]]));
+      // (the replies are rows of their comments' sheet, so a replies stage has no sheet: its count is the rows it delivered, and its comments' sheet count is the sheet less those)
+      const withSheet = plan.stages.filter((s) => s.deliver && s.replies_of === undefined && rowsByStage[s.key].length > 0);
+      if (withSheet.length === sheets.length) {
+        const repliesOf = (key: string): number => plan.stages.filter((x) => x.replies_of === key && x.deliver).reduce((n, x) => n + rowsByStage[x.key].length, 0);
+        fileByStage = { ...Object.fromEntries(withSheet.map((s, i) => [s.key, Math.max(0, sheets![i] - repliesOf(s.key))])), ...Object.fromEntries(plan.stages.filter((x) => x.replies_of !== undefined && x.deliver).map((x) => [x.key, rowsByStage[x.key].length])) };
+      }
       // the name the customer's download carries, built from the mission: what + count + date in Arabic («تغريدات عن محمد صلاح - ٣٠٠ - ٢٨ أكتوبر ٢٠٢٦»)
       const title = missionFileTitleAr({ plan, requestText: mission.request_text, delivered: Math.min(fileCount, plan.price.deliveredRows), date: new Date() });
       files = published.files.map((f) => ({ ...f, download_name: `${title}.${f.kind}` }));
