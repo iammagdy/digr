@@ -163,7 +163,8 @@ describe("Companies «عايز ٣ شركات مقاولات في مصر، ومن
         }),
       }),
       execution: () => [],
-      answers: [tregResult(companies, 0.0005), tregResult(peopleOf("orascom.com", ["Project Engineer", "Site Manager", "Director of Projects"]), 0.0005), tregResult(companies, 0.0005), ...titles.flatMap((t, i) => [tregResult(peopleOf(["orascom.com", "arabcont.example.com", "hassanallam.example.com"][i], t), 0.0005), ...(t.length < 2 ? [tregResult({ rows: [] }, 0.0005)] : [])])],
+      // CHANGED (owner decision after #321, people depth): a company with fewer than two decision makers on its first page is read once more (the next page: empty here); the fake provider's queue gets that answer
+      answers: [tregResult(companies, 0.0005), tregResult(peopleOf("orascom.com", ["Project Engineer", "Site Manager", "Director of Projects"]), 0.0005), tregResult(companies, 0.0005), ...titles.flatMap((t, i) => [tregResult(peopleOf(["orascom.com", "arabcont.example.com", "hassanallam.example.com"][i], t), 0.0005), ...(t.length < 2 || t.filter((x) => /manager|director/i.test(x)).length < 2 ? [tregResult({ rows: [] }, 0.0005)] : [])])],
     });
   }
   const titles = [["Project Engineer", "Site Manager", "Director of Projects"], ["Accountant", "Employee", "General Manager"], ["Civil Engineer", "Architect", "Safety Officer"]];

@@ -1,4 +1,4 @@
-import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE } from "./constants";
+import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, AGENT_PEOPLE_PAGES_DEFAULT, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE } from "./constants";
 import { CONTACT_KINDS, requestWantsContacts, type ContactKind } from "./contacts";
 import { isPeopleStage } from "./people";
 import { buildContactSteps, type ContactAids, type ContactStep, type FinderInfo, type FinderKind } from "./contactFinders";
@@ -160,6 +160,9 @@ export interface PricedStage extends ProposedStage {
   /** Share of the sampled rows that match the request (1 when the stage has no relevance check) and of them the share the model must review: what the price rests on (internal). */
   yield_share?: number;
   review_share?: number;
+  /** PEOPLE DEPTH: pages of the source read for each parent of a people stage that prefers the decision makers (set by code, editable by the customer), and what one page costs (USD, measured). The price carries every page. */
+  pages_per_parent?: number;
+  page_cost_usd?: number;
   sample_examined?: number;
   sample_matching?: number;
 }
@@ -207,7 +210,13 @@ const MAX_ASSUMPTIONS = 6;
  * THE PRICE INPUTS OF A PLAN: one per stage. The cost of a contact finder step (per_person_usd per person, contactFinders.ts) is part of the cost per row of the people stage it fills, so the provider cost, the cost per delivered row and the unit price carry it; the step adds no row and no stage.
  * The one place every pricing path uses (the plan check, the approval's re-price, the plan editor).
  */
-export const stagePriceInputs = (stages: ReadonlyArray<PricedStage>, steps?: ReadonlyArray<ContactStep>, _options: { withoutDepth?: boolean } = {}) => stages.map((s) => ({ rows: s.planned_rows, costPerRowUsd: s.measured_cost_per_row_usd + (steps ?? []).filter((x) => x.stage_key === s.key).reduce((n, x) => n + Math.max(0, x.per_person_usd), 0), deliver: s.deliver, yield: s.yield_share, reviewShare: s.review_share }));
+export const stagePriceInputs = (stages: ReadonlyArray<PricedStage>, steps?: ReadonlyArray<ContactStep>, options: { withoutDepth?: boolean } = {}) => stages.map((s) => ({ rows: s.planned_rows, costPerRowUsd: depthCostPerRowUsd(s, options.withoutDepth === true) + (steps ?? []).filter((x) => x.stage_key === s.key).reduce((n, x) => n + Math.max(0, x.per_person_usd), 0), deliver: s.deliver, yield: s.yield_share, reviewShare: s.review_share }));
+/** The cost per delivered person of a stage read in DEPTH: every page of the depth for each parent (pages x one page's cost) shared by the people asked for each parent; never below the measured cost per row. */
+export const depthCostPerRowUsd = (s: PricedStage, withoutDepth = false): number => {
+  const pages = Math.floor(Number(s.pages_per_parent ?? 1));
+  if (withoutDepth || !(pages > 1) || !(Number(s.page_cost_usd) > 0) || !(Number(s.per_parent_rows) > 0)) return s.measured_cost_per_row_usd;
+  return Math.max(s.measured_cost_per_row_usd, (pages * Number(s.page_cost_usd)) / Number(s.per_parent_rows));
+};
 /** A column that only holds an internal id (the key says so, or its Arabic title is «معرّف …»): never shown to the customer as a column, never a column of its own in the sheet. */
 export function isInternalColumn(c: { key: string; title_ar: string }): boolean {
   return /^(id|uid|pk|guid|parent_id|parent)$/i.test(c.key) || /(^|_)(id|uid|pk|guid)$/i.test(c.key) || /^id_/i.test(c.key) || /معرّ?ف/.test(c.title_ar);
@@ -557,6 +566,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
       key, title_ar: title.text, endpoint_id: endpointId, expected_rows: rowsHere, parent_key: parentKey,
       ...(parentKey !== null ? { per_parent_rows: perHere } : {}),
       ...(roleOf ? { role_preference: { role: roleOf.key } } : {}),
+      ...(parentKey !== null && roleOf?.key === "manager" && raw.deliver === true && measuredCalls.length > 0 ? { pages_per_parent: AGENT_PEOPLE_PAGES_DEFAULT, page_cost_usd: measuredCalls.reduce((n, c) => n + Math.max(0, c.costUsd), 0) / measuredCalls.length } : {}),
       deliver: raw.deliver === true, columns: cleanColumns, sample_rows: samples.filter(isRecord).slice(0, MAX_SAMPLE_ROWS_PER_STAGE),
       measured_by: measuredBy, ...(how ? { how_ar: how.text } : {}),
       planned_rows: rowsHere, measured_cost_per_row_usd: costPerRow ?? 0, measured_from_calls: measuredBy,

@@ -2,7 +2,7 @@ import { AGENT_COLLECT_MAX_PAGES, AGENT_REVIEW_RETRY_DELAY_MS } from "../../../s
 import type { EngineSpec, PricedPlan } from "../../../src/lib/agentMission/plan";
 import type { Gateway } from "../gateway";
 import { RAW_PATH } from "../gateway";
-import { rankPeopleByRole } from "../../../src/lib/agentMission/roles";
+import { rankPeopleByRole, titleFieldOf, titleTierOf } from "../../../src/lib/agentMission/roles";
 import { parseMoment } from "../../../src/lib/agentMission/dateCells";
 import { dayOf, firstWindowEndDay, nextWindowEndDay, windowParams } from "../../../src/lib/agentMission/dateWindow";
 import { isEnabled } from "../../../src/lib/agentMission/filters";
@@ -180,6 +180,40 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
   return { reason: items.counts(stage.key).accepted >= stage.planned_rows ? "target_reached" : anyFailed ? "failed" : last === "target_reached" ? "source_exhausted" : last, aborted: null };
 }
 
+/** How many pages of the source are read for each parent of a people stage that prefers the decision makers (stage.pages_per_parent, set by code at plan time and editable by the customer); 1 for every other stage and for a source that is not paged. */
+export function depthPagesOf(stage: Stage, spec: EngineSpec): number {
+  const n = Math.floor(Number(stage.pages_per_parent ?? 1));
+  if (!Number.isFinite(n) || n <= 1) return 1;
+  if (stage.parent_key === null || stage.role_preference?.role !== "manager" || !spec.cursor_param || stage.per_parent_rows === undefined) return 1;
+  return n;
+}
+
+/** The rows of a parent's people read so far: accepted, and kept as beyond the approved count (their rows are stored), in the order they were read. */
+function peopleOfParent(items: ItemStore, stage: Stage, parentId: string): { accepted: Row[]; spare: Array<{ id: string; row: Row }> } {
+  const accepted = items.acceptedRows(stage.key).filter((r) => String(r.parent_id) === parentId);
+  const spare = items.excludedItems(stage.key).filter((i) => i.reason === "target_reached" && i.row && String(i.row.parent_id) === parentId).map((i) => ({ id: i.id, row: i.row! }));
+  return { accepted, spare };
+}
+const tierOfRow = (row: Row): number => { const f = titleFieldOf(row); return titleTierOf(f ? row[f] : "", "manager"); };
+
+/** Decision makers (tier 0) among everything read for this parent. */
+function decisionMakersSeen(items: ItemStore, stage: Stage, parentId: string): number {
+  const { accepted, spare } = peopleOfParent(items, stage, parentId);
+  return accepted.filter((r) => tierOfRow(r) === 0).length + spare.filter((s) => tierOfRow(s.row) === 0).length;
+}
+
+/** While a person kept beyond the approved count has a BETTER title tier than the worst person accepted for the same parent, they swap places (the store's `swap`: the delivered count of the parent does not change). */
+async function upgradeDecisionMakers(deps: EngineDeps, stage: Stage, parentId: string): Promise<void> {
+  for (let guard = 0; guard < 50; guard += 1) {
+    const { accepted, spare } = peopleOfParent(deps.items, stage, parentId);
+    if (accepted.length === 0 || spare.length === 0) return;
+    const worst = accepted.map((row, i) => ({ row, i, t: tierOfRow(row) })).sort((a, b) => b.t - a.t || b.i - a.i)[0];
+    const best = spare.map((s, i) => ({ s, i, t: tierOfRow(s.row) })).sort((a, b) => a.t - b.t || a.i - b.i)[0];
+    if (best.t >= worst.t) return;
+    await deps.items.commit([{ t: "swap", stage: stage.key, out: String(worst.row.id), in: best.s.id }]);
+  }
+}
+
 /** Marks the people of a page whose current company is not the parent company: by the source's own experiences for the person, else by the company the row itself names (companyIdentity.ts). A person nothing can be judged for is not marked. */
 function markPeopleNotAtCompany(deps: EngineDeps, stage: Stage, parentId: string, page: unknown, rows: Row[]): Row[] {
   if (!stage.parent_key || !isPeopleStage(stage)) return rows;
@@ -303,16 +337,23 @@ function oldestMomentOf(rows: ReadonlyArray<Record<string, unknown>>, field: str
 async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, streamKey: string, params: Record<string, unknown>, parentId: string | null, perParentCap: number, periodField: string | null = null, source: (SourceShare & { names: string[]; listing?: boolean }) | null = null): Promise<{ reason: StopReason; aborted: string | null }> {
   const { items, store, gateway } = deps;
   const now = deps.now ?? Date.now;
-  const maxPages = deps.maxPagesPerStage ?? enginePageCapFor(stage.planned_rows);
+  // a stage read in DEPTH (up to N pages for each parent) may read parents x N pages
+  const depthPages = parentId !== null ? depthPagesOf(stage, spec) : 1;
+  const maxPages = Math.max(deps.maxPagesPerStage ?? enginePageCapFor(stage.planned_rows), depthPages > 1 && stage.parent_key ? items.acceptedRows(stage.parent_key).length * depthPages : 0);
   let stallStreak = 0;
   let failures = 0;
   for (;;) {
     const counts = items.counts(stage.key);
-    if (counts.accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
+    // (the last parent of a stage read in depth may fill the stage's total with its first page: its later pages are still read for a better title, and swap the page-1 people out; the per-parent check below ends it)
+    if (counts.accepted >= stage.planned_rows && !(parentId !== null && depthPages > 1)) return { reason: "target_reached", aborted: null };
     const state = items.streamState(stage.key, streamKey);
     if (state?.ended) return { reason: "source_exhausted", aborted: null };
     if (state && state.barren >= BARREN_PAGES) return { reason: "no_new_items", aborted: null };
-    if (parentId !== null && items.acceptedRows(stage.key).filter((r) => String(r.parent_id) === parentId).length >= perParentCap) return { reason: "target_reached", aborted: null };
+    if (parentId !== null && items.acceptedRows(stage.key).filter((r) => String(r.parent_id) === parentId).length >= perParentCap) {
+      // DEPTH (people of a company): the page that filled the count may hold lower titles while a decision maker is on the next page; reading goes on until enough decision makers were SEEN for this company, the pages of the depth were read, or the source ended
+      const depth = depthPagesOf(stage, spec);
+      if (depth <= 1 || (state?.pages ?? 0) >= depth || decisionMakersSeen(items, stage, parentId) >= perParentCap) return { reason: "target_reached", aborted: null };
+    }
     // a named source whose share is full is not read further
     if (source && acceptedOfSources(items, stage.key, source.names) >= source.perValue * source.names.length) return { reason: "target_reached", aborted: null };
     if (counts.pages >= maxPages) return { reason: "page_limit", aborted: null };
@@ -359,6 +400,8 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     const have = parentId !== null ? items.acceptedRows(stage.key).filter((r) => String(r.parent_id) === parentId).length : 0;
     const oldestMs = periodField !== null ? oldestMomentOf(incoming, periodField) : null;
     await ingestRows(deps, stage, incoming, { silent: true, idField: spec.id_field ?? null, ...(parentId !== null && Number.isFinite(perParentCap) ? { acceptCap: Math.max(0, perParentCap - have) } : {}), ...(source ? { sourceQuota: { fields: source.fields, values: source.values, perValue: source.perValue, ...(source.listing && source.names.length === 1 ? { defaultSource: source.names[0] } : {}) } } : {}), page: { stream: streamKey, call_id: result.call_id, cursor_in: cursor, cursor_next: nextCursor, has_more: result.has_more, ended, rows_in_page: result.rows_in_page, ...(oldestMs !== null ? { oldest_ms: oldestMs } : {}) } });
+    // a decision maker read on this page takes the place of a lower title accepted from an earlier page of the same company
+    if (parentId !== null && depthPages > 1) await upgradeDecisionMakers(deps, stage, parentId);
     await emitStageProgress(deps, stage, { collecting: true });
     // the review had nothing left to give while items still wait: pages that add nothing are not bought for ever
     const after = items.counts(stage.key);
