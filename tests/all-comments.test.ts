@@ -36,7 +36,7 @@ describe("the estimate from the parents' own counters", () => {
 const stage = (over: Record<string, unknown>) => ({ endpoint_id: "e", expected_rows: 1, planned_rows: 1, parent_key: null, deliver: true, sample_rows: [], measured_by: [], measured_from_calls: [], measured_cost_per_row_usd: 0.0005, ...over }) as unknown as PricedStage;
 function planOf(videoRows: number, perParent: number): PricedPlan {
   const videos = stage({ key: "videos", title_ar: "الفيديوهات", planned_rows: videoRows, expected_rows: videoRows, columns: [{ key: "caption", title_ar: "الوصف" }, { key: "comments", title_ar: "التعليقات" }] });
-  const comments = stage({ key: "comments", title_ar: "التعليقات", parent_key: "videos", per_parent_rows: perParent, planned_rows: videoRows * perParent, expected_rows: videoRows * perParent, columns: [{ key: "text", title_ar: "نص التعليق" }] });
+  const comments = stage({ key: "comments", title_ar: "التعليقات", parent_key: "videos", per_parent_rows: perParent, planned_rows: videoRows * perParent, expected_rows: videoRows * perParent, columns: [{ key: "text", title_ar: "نص التعليق" }], engine: { endpoint_id: "v.comments", params: {}, cursor_param: "cursor", map_code: "return inputs.page", map_file_id: "page", parent_binding: { param: "videoId", from: "id" } } });
   const stages = [videos, comments];
   return { summary_ar: "ستحصل على فيديوهات وتعليقاتها.", stages, price: priceMissionByCode(stagePriceInputs(stages, undefined), {}) } as unknown as PricedPlan;
 }

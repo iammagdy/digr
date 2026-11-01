@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadTregCatalog, type TregCatalog } from "../src/lib/treg/catalog";
 import { discoverCursor } from "../src/lib/agentMission/toolProfile";
 import { rankByCoverage } from "../src/lib/agentMission/sourceRanking";
+import type { MemoryStore } from "../agent/src/memoryStore";
 import { replay } from "./helpers/agentReplay";
 import { ENDPOINT, PER_PAGE, page, planning } from "./helpers/engineXScenario";
 import { tregResult } from "./helpers/agentFakeWorld";
@@ -56,7 +57,7 @@ describe("a replay of three pages on an endpoint whose pagination list is empty"
   const answers = () => [page(0, "cur_20"), page(PER_PAGE, "cur_40"), page(2 * PER_PAGE, "cur_60"), page(3 * PER_PAGE, null)].map((p) => tregResult(p, 0.00075));
   /** The standard X plan asking for 40 instead of 300. */
   const forty = (): FakeStep[] => planning().map((st) => st.tool !== "propose_plan" ? st : { tool: "propose_plan", args: (r) => { const plan = (st.args as (r: unknown) => Record<string, any>)(r); plan.summary_ar = "ستحصل على ٤٠ تغريدة عن محمد صلاح مع نص كل تغريدة ورابطها."; plan.stages[0].expected_rows = 40; return plan; } } as FakeStep);
-  const run = (flags: unknown) => replay({ request: "هات ٤٠ تغريدة عن محمد صلاح", planning: forty(), execution: () => [], answers: [answers()[0], ...answers()], deps: (d) => { d.store.settings.redesign_flags = flags; return { ...d, catalog: unlisted() }; } });
+  const run = (flags: unknown) => replay({ request: "هات ٤٠ تغريدة عن محمد صلاح", planning: forty(), execution: () => [], answers: [answers()[0], ...answers()], deps: (d) => { (d.store as MemoryStore).settings.redesign_flags = flags; return { ...d, catalog: unlisted() }; } });
   it("flag on: the cursor input is discovered, three pages are read and 40 are delivered", async () => {
     const r = await run({ social_posts: "on" });
     expect(r.plannedPlan.stages[0].engine!.cursor_param).toBe("cursor");

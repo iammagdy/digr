@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkCustomerText } from "../src/lib/agentMission/text";
 import { applyGapNotes, gapLinesAr } from "../src/lib/agentMission/gapLines";
+import type { MemoryStore } from "../agent/src/memoryStore";
 import { replay } from "./helpers/agentReplay";
 import { pages, planning } from "./helpers/engineXScenario";
 import type { FakeStep } from "../agent/src/fakeDriver";
@@ -53,7 +54,7 @@ describe("end to end: a tool that carries the period and the language adds no li
     return steps.map((s) => s.tool !== "propose_plan" ? s : { tool: "propose_plan", args: (r) => { const plan = (s.args as (r: unknown) => Record<string, any>)(r); plan.stages[0].filters = [{ kind: "period", days: 30 }, { kind: "language", lang: "ar" }]; return plan; } } as FakeStep);
   }
   it("the X search takes both in its query: the stored plan has no gap and its notes carry no gap line", async () => {
-    const r = await replay({ request: "هات ٣٠٠ تغريدة عن محمد صلاح", planning: withFilters(planning()), execution: () => [], answers: [pages(1)[0], ...pages(30)], deps: (d) => { d.store.settings.redesign_flags = { social_posts: "on" }; return d; } });
+    const r = await replay({ request: "هات ٣٠٠ تغريدة عن محمد صلاح", planning: withFilters(planning()), execution: () => [], answers: [pages(1)[0], ...pages(30)], deps: (d) => { (d.store as MemoryStore).settings.redesign_flags = { social_posts: "on" }; return d; } });
     expect(r.plannedPlan.stages[0].engine!.gaps).toBeUndefined();
     expect((r.plannedPlan.notes_ar ?? []).join(" ")).not.toContain("لا يسمح");
   });

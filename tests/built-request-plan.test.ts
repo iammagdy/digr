@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import type { MemoryStore } from "../agent/src/memoryStore";
 import { replay } from "./helpers/agentReplay";
 import { ENDPOINT, TOPIC, pages, planning } from "./helpers/engineXScenario";
 import { callIds } from "./helpers/agentFakeWorld";
@@ -18,7 +19,7 @@ function withFilters(steps: FakeStep[]): FakeStep[] {
     return { tool: "propose_plan", args: (r) => { const plan = make(r); plan.stages[0].filters = [{ kind: "period", days: 30 }, { kind: "language", lang: "ar" }]; return plan; } } as FakeStep;
   });
 }
-const flags = (value: unknown) => (d: Parameters<NonNullable<Parameters<typeof replay>[0]["deps"]>>[0]) => { d.store.settings.redesign_flags = value; return d; };
+const flags = (value: unknown) => (d: Parameters<NonNullable<Parameters<typeof replay>[0]["deps"]>>[0]) => { (d.store as MemoryStore).settings.redesign_flags = value; return d; };
 
 describe("the recipe is built by code in the redesigned mode", () => {
   it("flag on: built_by is «code», the period and the language are in the query of the stored recipe, the measured topic is kept", async () => {

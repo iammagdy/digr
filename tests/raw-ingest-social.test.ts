@@ -5,6 +5,7 @@ import { ingestRows } from "../agent/src/items/ingest";
 import type { PricedPlan, PricedStage } from "../src/lib/agentMission/plan";
 import { MARKS_KEY } from "../src/lib/agentMission/rawMarks";
 import { isAllowedRemovalRaw } from "../src/lib/agentMission/rawDelivery";
+import type { MemoryStore } from "../agent/src/memoryStore";
 import { replay } from "./helpers/agentReplay";
 import { pages, planning } from "./helpers/engineXScenario";
 import { aboutWords } from "./helpers/agentRelevance";
@@ -98,7 +99,7 @@ const forty = (extraParams: Record<string, unknown> = {}): FakeStep[] => plannin
   return { tool: "propose_plan", args: (r: unknown) => { const plan = (st.args as (r: unknown) => Record<string, any>)(r); plan.summary_ar = "ستحصل على ٤٠ تغريدة عن محمد صلاح مع نص كل تغريدة ورابطها."; plan.stages[0].expected_rows = 40; return plan; } } as FakeStep;
 });
 const answers = () => [0, 1, 2, 3].map((p) => tregResult({ output: { data: { items: Array.from({ length: 20 }, (_, i) => { const n = p * 20 + i; return { id: `18${String(n).padStart(6, "0")}`, text: n % 5 === 4 ? `أخبار عامة عن الطقس رقم ${n} اليوم` : `محمد صلاح يسجل هدفًا رقم ${n} في المباراة`, url: `https://x.example/u/status/18${String(n).padStart(6, "0")}`, author: `user${n % 40}`, createdAt: "2026-10-20T10:00:00Z" }; }), nextCursor: p < 3 ? `cur_${(p + 1) * 20}` : null } } }, 0.00075));
-const run = (flags: unknown, extraParams: Record<string, unknown> = {}) => replay({ request: "هات ٤٠ تغريدة عن محمد صلاح", planning: forty(extraParams), execution: () => [], answers: [answers()[0], ...answers()], deps: (d) => { d.store.settings.redesign_flags = flags; return d; } });
+const run = (flags: unknown, extraParams: Record<string, unknown> = {}) => replay({ request: "هات ٤٠ تغريدة عن محمد صلاح", planning: forty(extraParams), execution: () => [], answers: [answers()[0], ...answers()], deps: (d) => { (d.store as MemoryStore).settings.redesign_flags = flags; return d; } });
 
 describe("THE STAGE 1 ORDERING GATE end to end", () => {
   it("flag on and the request built by code: raw delivery (the 40 first rows, the unrelated ones included, each marked)", async () => {

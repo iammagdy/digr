@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { directEngine, pageOf, type Out } from "./helpers/engineDirect";
+import type { MemoryStore } from "../agent/src/memoryStore";
 import { replay } from "./helpers/agentReplay";
 import { planning } from "./helpers/engineXScenario";
 import { tregResult } from "./helpers/agentFakeWorld";
@@ -53,7 +54,7 @@ describe("the shortfall is stated and charged for what was delivered", () => {
   const fifty = (): FakeStep[] => planning().map((st) => st.tool !== "propose_plan" ? st : { tool: "propose_plan", args: (r: unknown) => { const plan = (st.args as (r: unknown) => Record<string, any>)(r); plan.summary_ar = "ستحصل على ٥٠ تغريدة عن محمد صلاح مع نص كل تغريدة ورابطها."; plan.stages[0].expected_rows = 50; return plan; } } as FakeStep);
   const pg = (p: number, total: number) => tregResult({ output: { data: { items: Array.from({ length: Math.min(20, total - p * 20) }, (_, i) => { const n = p * 20 + i; return { id: `18${String(n).padStart(6, "0")}`, text: `محمد صلاح يسجل هدفًا رقم ${n} في المباراة`, url: `https://x.example/u/status/18${String(n).padStart(6, "0")}`, author: `user${n % 40}`, createdAt: "2026-10-20T10:00:00Z" }; }), nextCursor: (p + 1) * 20 < total ? `c${p + 1}` : null } } }, 0.00075);
   it("30 of 50 in raw mode: «٣٠ من ٥٠», the source's end as the reason, and the charge is for the 30 only", async () => {
-    const r = await replay({ request: "هات ٥٠ تغريدة عن محمد صلاح", planning: fifty(), execution: () => [], answers: [pg(0, 30), pg(0, 30), pg(1, 30)], deps: (d) => { d.store.settings.redesign_flags = { social_posts: "on" }; return d; } });
+    const r = await replay({ request: "هات ٥٠ تغريدة عن محمد صلاح", planning: fifty(), execution: () => [], answers: [pg(0, 30), pg(0, 30), pg(1, 30)], deps: (d) => { (d.store as MemoryStore).settings.redesign_flags = { social_posts: "on" }; return d; } });
     expect(r.mission.delivered_units).toBe(30);
     expect(r.finalView.resultLinesAr[0]).toBe("تم تسليم ٣٠ من ٥٠ تغريدة.");
     expect(r.notices[0].facts.shortfallClauseAr).toBe("لأن المصدر لم يعد يعطي نتائج أخرى لهذا الطلب");

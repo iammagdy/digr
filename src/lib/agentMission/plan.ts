@@ -84,6 +84,8 @@ export interface ProposedStage {
   parent_key: string | null;
   /** Rows taken from each parent row (required for a stage with a parent). */
   per_parent_rows?: number;
+  /** Every child of every parent is read to the source's end, each parent up to its OWN counter (S1 item 1.10, «كل التعليقات»); `planned_rows` is the estimate from the counters. Set by code only. */
+  all_children?: boolean;
   /** Whether this stage's rows go into the customer's files (and count in the charge). */
   deliver: boolean;
   columns: PlanColumn[];

@@ -132,7 +132,8 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
   // a comment whose counter is 0 gets 0 (no paid read), the others get what they have up to the cap, and when the total is smaller than the need every comment gets an equal part first
   const isReplies = stage.replies_of !== undefined;
   const shareById = isReplies ? (() => { const shares = replyShares(parentRows.map((r) => ownChildCount(r)), stage.planned_rows, Number.isFinite(per) ? per : AGENT_REPLIES_PER_COMMENT_MAX); return new Map(parentRows.map((r, i) => [String(r.id), shares[i]] as const)); })() : null;
-  const swapsLeft = { n: onlyChild && stage.per_parent_rows !== undefined && !isReplies ? Math.max(3, parentRows.length * 3) : 0 };
+  const readAll = stage.all_children === true;
+  const swapsLeft = { n: onlyChild && stage.per_parent_rows !== undefined && !isReplies && !readAll ? Math.max(3, parentRows.length * 3) : 0 };
   // the parent's parent (the video of a comment): the replies' source takes the video's id and link beside the comment's id
   const grandKey = deps.plan.stages.find((x) => x.key === stage.parent_key)?.parent_key ?? null;
   const grandRows = new Map<string, Row>((grandKey ? items.acceptedRows(grandKey) : []).map((r) => [String(r.id), r] as const));
@@ -142,7 +143,8 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
       for (;;) {
         if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
         const parentId = String(parent.id);
-        const parentCap = shareById ? shareById.get(parentId) ?? 0 : cap;
+        // «ALL THE COMMENTS» (S1 item 1.10): each parent is read to its OWN counter, not to an equal share
+        const parentCap = shareById ? shareById.get(parentId) ?? 0 : readAll ? ownChildCount(parent) ?? cap : cap;
         if (shareById && parentCap <= 0) break;
         // A PARENT THAT SAYS IT HAS NO CHILD IS NOT READ (audit 2026-11 gap G10, live: 9 of 108 paid comment reads returned nothing): its own count field (comments, replies, reviews) is 0, so no paid read is made. It is replaced by a spare parent the same way a parent
         // the source answered nothing for is, or skipped when none is left. A parent that gives no count at all is read as before.

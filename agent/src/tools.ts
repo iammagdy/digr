@@ -37,6 +37,7 @@ import { namedSourceRoutes } from "../../src/lib/agentMission/namedRoutes";
 import { redesignActive, type RedesignFlags } from "../../src/lib/agentMission/redesignFlags";
 import { conditionsOfRequest } from "../../src/lib/agentMission/requestConditions";
 import { applyGapNotes } from "../../src/lib/agentMission/gapLines";
+import { counterOfRow, withAllChildren } from "../../src/lib/agentMission/allChildren";
 import { coverageOf } from "../../src/lib/agentMission/sourceRanking";
 import { catalogDateKind } from "../../src/lib/agentMission/relativeDates";
 import { PEOPLE_FALLBACK_LINE_AR } from "../../src/lib/agentMission/childSources";
@@ -681,6 +682,24 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         // are estimated from is the comments stage's own measured page, mapped by its own proven mapping.
         if (derived) {
           const allowedReply = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
+          // «ALL THE COMMENTS» (S1 item 1.10, redesigned mode only): each parent is read to its own counter and the plan's estimate follows the counters; done BEFORE the replies stage, which is estimated from the comments' count
+          if (socialRedesignActive(ctx)) {
+            checked.plan = await withAllChildren(checked.plan, {
+              request: `${mission.request_text} ${mission.answer_text ?? ""}`,
+              parentCountersOf: async (parentStage) => {
+                const sp = parentStage.engine;
+                if (!sp) return null;
+                try {
+                  const page = await store.getFile(mission.id, `raw/${sp.map_file_id}.json`);
+                  if (page === null) return null;
+                  const out = await runSandbox(sp.map_code, { [sp.map_file_id]: JSON.parse(page) });
+                  if (!out.ok || out.resultJson === null) return null;
+                  const rows = JSON.parse(out.resultJson) as unknown;
+                  return Array.isArray(rows) ? rows.filter(isObject).map((r) => counterOfRow(r)) : null;
+                } catch { return null; }
+              },
+            });
+          }
           checked.plan = await withRepliesStages(checked.plan, {
             catalog: ctx.catalog, isAllowed: allowedReply, stats: ctx.stats,
             sampleRowsOf: async (st) => {
