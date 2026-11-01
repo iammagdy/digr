@@ -10,6 +10,8 @@ export interface MemoryStore extends AgentStore {
   missions: Map<string, MissionRecord>;
   heartbeats: HeartbeatRow[];
   settings: Record<string, unknown>;
+  /** user id -> e-mail, for the tests of the test-account gate. */
+  userEmails: Map<string, string>;
   published: Array<{ missionId: string; userId: string; jobId: string }>;
 }
 
@@ -28,10 +30,11 @@ export function createMemoryStore(initial: MissionRecord[] = []): MemoryStore {
   const missions = new Map<string, MissionRecord>(initial.map((m) => [m.id, m]));
   const heartbeats: HeartbeatRow[] = [];
   const settings: Record<string, unknown> = {};
+  const userEmails = new Map<string, string>();
   const published: MemoryStore["published"] = [];
   const key = (missionId: string, relPath: string) => `${missionId}/${relPath}`;
   return {
-    files, events, calls, missions, heartbeats, settings, published,
+    files, events, calls, missions, heartbeats, settings, userEmails, published,
     // the real bucket refuses any type outside its list (constants.ts: AGENT_BUCKET_ALLOWED_MIME): so does this one
     async putFile(missionId, relPath, content, contentType) {
       if (!(AGENT_BUCKET_ALLOWED_MIME as readonly string[]).includes(contentType)) throw new Error(`upload: mime type ${contentType} is not supported`);
