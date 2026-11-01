@@ -14,6 +14,7 @@ import { toArabicDigits } from "../arabicDigits";
 import { DEFAULT_PEOPLE_PER_PARENT, bindQuantity, bindQuantityDetailed, countedQuantities, ownTitleWords, perParentAskFor, perParentAskOf, perParentQuantities, perSourceQuantities, requestedStageIndexes, sameNounStem, unservedPerParentAsks } from "./quantity";
 import { itemNounOf } from "./itemNoun";
 import { isTextItemStage, textKeyOf } from "./contract";
+import { repliesLinesAr } from "./repliesCard";
 import { childCardTitleAr, childRuleLinesAr } from "./childItems";
 import { platformCostNotesAr } from "./platformNotes";
 import type { DateWindow } from "./dateWindow";
@@ -222,7 +223,7 @@ const MAX_ASSUMPTIONS = 6;
  * THE PRICE INPUTS OF A PLAN: one per stage. The cost of a contact finder step (per_person_usd per person, contactFinders.ts) is part of the cost per row of the people stage it fills, so the provider cost, the cost per delivered row and the unit price carry it; the step adds no row and no stage.
  * The one place every pricing path uses (the plan check, the approval's re-price, the plan editor).
  */
-export const stagePriceInputs = (stages: ReadonlyArray<PricedStage>, steps?: ReadonlyArray<ContactStep>, options: { withoutDepth?: boolean } = {}) => stages.map((s) => ({ rows: s.planned_rows, costPerRowUsd: depthCostPerRowUsd(s, options.withoutDepth === true) + (steps ?? []).filter((x) => x.stage_key === s.key).reduce((n, x) => n + Math.max(0, x.per_person_usd), 0) + (options.withoutDepth !== true && namesAreWritten(s) ? NAMES_STEP_USD_PER_PERSON : 0), deliver: s.deliver, yield: s.yield_share, reviewShare: s.review_share }));
+export const stagePriceInputs = (stages: ReadonlyArray<PricedStage>, steps?: ReadonlyArray<ContactStep>, options: { withoutDepth?: boolean } = {}) => stages.map((s) => ({ rows: s.planned_rows, costPerRowUsd: depthCostPerRowUsd(s, options.withoutDepth === true) + (steps ?? []).filter((x) => x.stage_key === s.key).reduce((n, x) => n + Math.max(0, x.per_person_usd), 0) + (options.withoutDepth !== true && namesAreWritten(s) ? NAMES_STEP_USD_PER_PERSON : 0), deliver: s.deliver, yield: s.yield_share, reviewShare: s.review_share, ...(s.replies_of !== undefined ? { codeOnly: true } : {}) }));
 /** A delivered stage of decision makers: the Arabic spelling of its people's names is written by one small request (agent/src/namesAr.ts), whose estimate is part of the price (NAMES_STEP_USD_PER_PERSON). The price of the READING alone (the default count of people) leaves it out, like the paid lookups. */
 export const namesAreWritten = (s: Pick<PricedStage, "deliver" | "parent_key" | "role_preference">): boolean => s.deliver && s.parent_key !== null && s.role_preference?.role === "manager";
 /** The cost per delivered person of a stage read in DEPTH: every page of the depth for each parent (pages x one page's cost) shared by the people asked for each parent; never below the measured cost per row. */
@@ -722,6 +723,8 @@ export interface PlanEditorView {
     /** A stage that hangs on another (the people of each company): the number of its items per item of the parent, which the customer can change. */
     per_parent?: number;
     per_parent_label_ar?: string;
+    /** The comments stage only: whether the replies of its comments are in the plan (priced in addition), and the label of the switch. */
+    replies?: { on: boolean; label_ar: string };
     /** A people stage read in DEPTH: the pages of the source read for each parent (the customer may lower it to reduce the price, or raise it up to `pages_max`). */
     pages?: number;
     pages_max?: number;
@@ -751,9 +754,14 @@ export function planEditorView(plan: PricedPlan): PlanEditorView {
     max_rows: AGENT_MAX_DELIVERED_ROWS,
     target_stage_key: targetStageKey(plan),
     stages: plan.stages.map((s) => {
+      // the replies stage is the comments' own (its columns are theirs, its cap is code's): the customer sees one switch on the comments stage, nothing of its own
+      if (s.replies_of !== undefined) return { key: s.key, title_ar: s.title_ar, target: s.planned_rows, columns: [], filters: [] };
       const locked = lockedColumnKeys(s);
+      const hasReplies = plan.stages.some((x) => x.replies_of === s.key);
+      const offReplies = plan.replies_off?.replies_of === s.key;
       return {
         key: s.key, title_ar: s.title_ar, target: s.planned_rows,
+        ...(hasReplies || offReplies ? { replies: { on: hasReplies, label_ar: "تضمين الردود على التعليقات في الملف (يدخل في السعر)" } } : {}),
         ...(s.parent_key !== null && s.deliver && Number(s.pages_per_parent) >= 1 && s.role_preference ? { pages: Math.floor(Number(s.pages_per_parent)), pages_max: AGENT_PEOPLE_PAGES_MAX, pages_label_ar: `عدد صفحات البحث لكل ${itemNounOf(plan.stages.find((p) => p.key === s.parent_key)?.title_ar ?? "").singular}` } : {}),
         ...(s.parent_key !== null && s.deliver && s.per_parent_rows ? { per_parent: s.per_parent_rows, per_parent_label_ar: `عدد «${s.title_ar}» لكل ${itemNounOf(plan.stages.find((p) => p.key === s.parent_key)?.title_ar ?? "").singular}` } : {}),
         columns: [...s.columns.filter((c) => !isInternalColumn(c)).map((c) => ({ key: c.key, title_ar: c.title_ar, on: true, locked: locked.has(c.key) })), ...(s.hidden_columns ?? []).map((c) => ({ key: c.key, title_ar: c.title_ar, on: false, locked: false }))],
@@ -844,7 +852,7 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
   // what the card promises about the items is backed by the filters that are switched ON: a line of the model that promises one is shown only while its filter is on, and a filter that is on gets its own sentence, built by code
   const assumptions = assumptionLinesOf(plan);
   // fewer than the customer asked for: the reason the card shows next to the one target number
-  const notes = [...(plan.notes_ar ?? []), ...(plan.quantity?.reason_ar ? [plan.quantity.reason_ar] : []), ...childRuleLinesAr(plan.stages), ...roleLinesAr(plan.stages), ...priceIncludesLinesAr(plan), ...platformCostNotesAr(plan.stages), ...plan.stages.filter((s) => (s.unresolved_sources ?? []).length > 0 && (s.filters ?? []).some((f) => f.kind === "account" && isEnabled(f))).map((s) => unresolvedSourcesLineAr(s.unresolved_sources!)), ...(plan.stages.some((s) => (s.approx_dates ?? []).length > 0) ? [APPROX_DATES_CARD_LINE_AR] : [])];
+  const notes = [...(plan.notes_ar ?? []), ...(plan.quantity?.reason_ar ? [plan.quantity.reason_ar] : []), ...childRuleLinesAr(plan.stages), ...repliesLinesAr(plan), ...roleLinesAr(plan.stages), ...priceIncludesLinesAr(plan), ...platformCostNotesAr(plan.stages), ...plan.stages.filter((s) => (s.unresolved_sources ?? []).length > 0 && (s.filters ?? []).some((f) => f.kind === "account" && isEnabled(f))).map((s) => unresolvedSourcesLineAr(s.unresolved_sources!)), ...(plan.stages.some((s) => (s.approx_dates ?? []).length > 0) ? [APPROX_DATES_CARD_LINE_AR] : [])];
   return {
     summary_ar: firstSentenceAr(plan.summary_ar),
     ...(notes.length ? { notes_ar: notes } : {}),

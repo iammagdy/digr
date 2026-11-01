@@ -3,6 +3,7 @@ import { SUMMARY_SHEET_AR } from "../../src/lib/modelPlanner/missionWorkbook";
 import { wordBoundarySheetName } from "../../src/lib/agentMission/fileNames";
 import { REASON_AR, type RelevanceReason } from "../../src/lib/agentMission/relevance";
 import { cardTotalOf, deliveryDenominatorOf, requestedRowsOf } from "../../src/lib/agentMission/plan";
+import { topLevelFactsOf } from "../../src/lib/agentMission/repliesCard";
 import { FILTER_REASON_LABEL_AR, type FilterReason } from "../../src/lib/agentMission/filters";
 import { cairoCellDate, cairoText, DATE_NUMBER_FORMAT, DATE_ONLY_NUMBER_FORMAT, dateOnlyCellDate, dateOnlyText, isDateValues, parseDateOnly, parseMoment } from "../../src/lib/agentMission/dateCells";
 import { reconcileParentColumns, type ParentColumnFix } from "../../src/lib/agentMission/parentColumns";
@@ -402,7 +403,9 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   // the one sentence about the delivery is built from the real counts (never from the agent's own words, which may name the requested number): «تم تسليم ٢٥٠ من ٣٠٠ تغريدة.»
   const deliveredCount = plan.stages.filter((st) => st.deliver).reduce((n, st) => n + (rowsByStage[st.key] ?? []).length, 0);
   // a delivery short of the CARD the customer approved is told against the card's total (the same number the final line and the notice say); one that fills a card with a lowered target is told against the request
-  const requestedCount = deliveryDenominatorOf(deliveredCount, cardTotalOf(plan), requestedRowsOf(plan));
+  // the replies come in addition (replies.ts): the delivery is told against the top-level rows the customer asked for, the replies delivered are added to both sides
+  const tl = topLevelFactsOf(plan, Object.fromEntries(plan.stages.map((st) => [st.key, (rowsByStage[st.key] ?? []).length])));
+  const requestedCount = deliveryDenominatorOf(Math.max(0, deliveredCount - tl.repliesDelivered), cardTotalOf(plan) - tl.repliesPlanned, requestedRowsOf(plan) - tl.repliesPlanned) + tl.repliesDelivered;
   const intro = summary.addRow([`تم تسليم ${deliveredOfAr(deliveredCount, requestedCount, itemNounOfPlan(plan))}.`]);
   summary.mergeCells(intro.number, 1, intro.number, 5);
   intro.alignment = { wrapText: true, readingOrder: "rtl" as any, vertical: "middle" };

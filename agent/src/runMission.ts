@@ -16,6 +16,7 @@ import { classifyNoCardEnd, refusalSentenceAr } from "../../src/lib/agentMission
 import { parentCountsOf, parentsBelowShare } from "../../src/lib/agentMission/parents";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
 import { cardTotalOf, customerPlanView, deliveryDenominatorOf, namesAreWritten, requestedRowsOf, type PricedPlan } from "../../src/lib/agentMission/plan";
+import { topLevelFactsOf } from "../../src/lib/agentMission/repliesCard";
 import { toArabicDigits } from "../../src/lib/arabicDigits";
 import { RELEVANCE_REASON_LIST, type RelevanceReason } from "../../src/lib/agentMission/relevance";
 import { FILTER_REASONS, isEnabled, type FilterReason } from "../../src/lib/agentMission/filters";
@@ -521,8 +522,11 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   // ONE SOURCE OF TRUTH for the numbers: the counts and the money are stated by code, from the count of the file and the real settlement; the stored summary is the model's note (kept only when it has no number in it, so it can
   // never disagree with the count) or, when no model carried the mission out, a sentence built here; for a shortfall, the honest reason from the stop reason the run RECORDED (never a number, never «صف» or «سجل»)
   // THE TARGET is what the customer approved and what the charge is settled against; THE REQUEST is what they asked for (the same number unless the model proposed fewer, with a reason the card showed): a delivery below the request is never «complete»
-  const target = plan.price.deliveredRows;
-  const requested = requestedRowsOf(plan);
+  // THE REPLIES COME IN ADDITION (replies.ts): the customer's number counts the videos and the top-level comments; the replies are an estimate bought on top, so a delivery is complete or partial by the top-level rows alone (fewer replies than estimated is never a shortfall)
+  const tl = topLevelFactsOf(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])));
+  const deliveredTop = Math.max(0, delivered - tl.repliesDelivered);
+  const target = plan.price.deliveredRows - tl.repliesPlanned;
+  const requested = requestedRowsOf(plan) - tl.repliesPlanned;
   const internalStage = delivered <= 0 ? plan.stages.find((s) => snap.stage(s.key).stop === "internal_error") : undefined;
   if (internalStage) flags.push("engine_zero_ingest");
   // THE MODEL REVIEW COULD NOT ANSWER AND NOTHING WAS DELIVERED: items were found and are still waiting for a verdict that never came. That is OUR failure (live, 2026-10-31: 50 companies pending, all six review answers unusable, and the customer was told no
@@ -531,7 +535,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   if (reviewFailedOurs) flags.push("review_failed");
   const ourFailure = Boolean(internalStage) || reviewFailedOurs;
   const note = a.summary && !HAS_NUMBER.test(a.summary) ? a.summary.trim() : "";
-  const shortStage = plan.stages.find((s) => s.deliver && snap.counts(s.key).accepted < s.planned_rows);
+  const shortStage = plan.stages.find((s) => s.deliver && s.replies_of === undefined && snap.counts(s.key).accepted < s.planned_rows);
   // the reason is about the stage that fell short: the language rule only ever applies to a stage of top-level items (a child stage is delivered raw), and a child stage that fell short while its parents were read says so
   const parentOfShort = shortStage && shortStage.parent_key !== null ? plan.stages.find((p) => p.key === shortStage.parent_key) : undefined;
   const checkedForShort = {
@@ -553,8 +557,8 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const shortTruth = shortStage && shortCounts ? stageTruthBodyAr({ found: shortCounts.found, duplicates: shortCounts.duplicates, delivered: shortCounts.accepted, excludedByReason: shortCounts.excludedByReason as Record<string, number>, pending: shortCounts.pending, reviewStop: checked.stop, stop: snap.stage(shortStage.key).stop, people: isPeopleStage(shortStage) }) : null;
   const shortClause = shortTruth ? `إذ ${shortTruth}` : shortfallClauseAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort);
   const reason = ourFailure ? INTERNAL_FAILURE_AR
-    : delivered > 0 && delivered < target ? (shortTruth ? `لم يكتمل العدد المطلوب ${shortClause}، ولم يُخصم إلا مقابل ما سُلّم.` : shortfallFromStopAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort))
-    : delivered > 0 && delivered < requested ? loweredTargetAr(plan)
+    : delivered > 0 && deliveredTop < target ? (shortTruth ? `لم يكتمل العدد المطلوب ${shortClause}، ولم يُخصم إلا مقابل ما سُلّم.` : shortfallFromStopAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort))
+    : delivered > 0 && deliveredTop < requested ? loweredTargetAr(plan)
     : delivered <= 0 ? zeroDeliveryReasonAr(zeroFacts) : "";
   const summary = (ourFailure ? reason : [note, reason].filter(Boolean).join(" ")).slice(0, 1100);
   const mismatch = settled.kind === "settled" && !settled.matchesExpectation ? `charge ${settled.chargedPoints} differs from the expected ${settled.expectedChargedPoints}` : null;
@@ -569,8 +573,8 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   // the rows of a stage as the customer receives them: a delivered stage's count in the FILE (its own sheet); a stage that is not delivered (an intermediate one) keeps the items saved
   const stageRowsOf = (s: PricedPlan["stages"][number]): number => (s.deliver ? (fileByStage ? fileByStage[s.key] ?? 0 : plan.stages.filter((x) => x.deliver).length === 1 ? delivered : rowsByStage[s.key].length) : rowsByStage[s.key].length);
   await store.addEvent(mission.id, { kind: "result", message_ar: summary || (delivered > 0 ? "اكتملت المهمة." : "لم يُسلَّم أي شيء."), counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, stageRowsOf(s)])), ...parentCountsOf(plan, rowsByStage) } });
-  const noticeKind: MissionNoticeKind = ourFailure ? "failed" : delivered <= 0 ? "unserved" : delivered < requested ? "partial" : "completed";
-  await tell(deps, mission, jobId, noticeKind, { delivered, planned: deliveryDenominatorOf(delivered, cardTotalOf(plan), requested), chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && delivered < target ? { shortfallClauseAr: shortClause } : delivered > 0 && delivered < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
+  const noticeKind: MissionNoticeKind = ourFailure ? "failed" : delivered <= 0 ? "unserved" : deliveredTop < requested ? "partial" : "completed";
+  await tell(deps, mission, jobId, noticeKind, { delivered, planned: deliveryDenominatorOf(deliveredTop, cardTotalOf(plan) - tl.repliesPlanned, requested) + tl.repliesDelivered, chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && deliveredTop < target ? { shortfallClauseAr: shortClause } : delivered > 0 && deliveredTop < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
 }
 
 /** What the customer is told when the source gave items and our own mapping stored none: it was OUR failure, never «nothing was found». No number: the money line says the rest. */

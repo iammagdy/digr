@@ -42,6 +42,8 @@ export interface StagePriceInput {
   yield?: number;
   /** Share of the sampled rows the model will have to review (uncertain rows), 0 when none. */
   reviewShare?: number;
+  /** A stage that CODE adds (the replies of the comments, replies.ts): the model plans and executes nothing for it, so it adds no planning and no execution estimate. Its provider cost and its rows count as any stage's. */
+  codeOnly?: boolean;
 }
 
 export interface MissionPriceOptions {
@@ -115,7 +117,8 @@ export function estimateModelCostUsd(stages: ReadonlyArray<StagePriceInput>): nu
     const y = s.yield !== undefined && s.yield > 0 ? Math.min(1, s.yield) : 1;
     review += Math.max(0, s.rows) / y * Math.max(0, s.reviewShare ?? 0);
   }
-  return AGENT_MODEL_PLANNING_ESTIMATE_USD + AGENT_MODEL_PLANNING_PER_EXTRA_STAGE_ESTIMATE_USD * Math.max(0, stages.length - 1) + AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD * stages.length + review * AGENT_REVIEW_ROW_ESTIMATE_USD;
+  const planned = stages.filter((s) => s.codeOnly !== true).length || stages.length;
+  return AGENT_MODEL_PLANNING_ESTIMATE_USD + AGENT_MODEL_PLANNING_PER_EXTRA_STAGE_ESTIMATE_USD * Math.max(0, planned - 1) + AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD * planned + review * AGENT_REVIEW_ROW_ESTIMATE_USD;
 }
 
 export function priceMissionByCode(stages: ReadonlyArray<StagePriceInput>, options: MissionPriceOptions = {}): MissionPriceResult {
