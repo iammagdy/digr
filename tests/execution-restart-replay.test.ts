@@ -20,7 +20,7 @@ async function run(flags: unknown, stopAfterCalls: number | null) {
     request: "هات ٣٠٠ تغريدة عن محمد صلاح", planning: planning(), execution: () => [], answers: answers(),
     deps: (d) => {
       (d.store as MemoryStore).settings.redesign_flags = flags;
-      const inner = d.call;
+      const inner = d.call!;
       captured = { ...d, call: (async (o: Parameters<typeof inner>[0]) => { const out = await inner(o); calls += 1; if (stopAfterCalls !== null && calls === stopAfterCalls) abortActiveRuns("memory"); return out; }) as typeof inner };
       return captured;
     },
