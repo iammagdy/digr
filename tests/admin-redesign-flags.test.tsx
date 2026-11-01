@@ -56,7 +56,9 @@ describe("the section", () => {
     expect(row("social_posts")).toContain("الوضع الحالي: تجريبي");
     expect(row("people")).toContain("الوضع الحالي: تشغيل");
     expect(row("places")).toContain("الوضع الحالي: إيقاف");
-    expect(row("social_posts")).toMatch(/data-testid="redesign-flag-social_posts-test"[^>]*aria-pressed="true"/);
+    const tag = (t: string, m: string) => row(t).match(new RegExp(`<button[^>]*data-testid="redesign-flag-${t}-${m}"[^>]*>`))![0];
+    expect(tag("social_posts", "test")).toContain('aria-pressed="true"');
+    expect(tag("social_posts", "off")).toContain('aria-pressed="false"');
   });
   it("Arabic labels, no emoji, no Latin letter and no ASCII digit in what is read", () => {
     const text = visibleText(html({ ...ALL_OFF, social_posts: "on" }, "social_posts"));

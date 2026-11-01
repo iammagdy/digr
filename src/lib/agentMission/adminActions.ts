@@ -118,11 +118,12 @@ const SUMMARY_COLUMNS ="id,request_text,status,question_ar,reserved_points,unit_
 
 /** The page's first load: the worker's heartbeat (alive or not), the model setting, and the latest missions. */
 export async function loadOverview(client: any, now: number = Date.now()) {
-  const [beats, setting, missions, pricing] = await Promise.all([
+  const [beats, setting, missions, pricing, redesign] = await Promise.all([
     client.from(AGENT_HEARTBEAT_TABLE).select("worker_id,beat_at,active_missions,model,version,rss_mb,tree_rss_mb").order("beat_at", { ascending: false }).limit(5),
     client.from(AGENT_SETTINGS_TABLE).select("value").eq("key", PLANNING_MODEL_SETTING_KEY).maybeSingle(),
     client.from(MISSION_TABLE).select(SUMMARY_COLUMNS).order("created_at", { ascending: false }).limit(LIST_LIMIT),
     client.from(AGENT_SETTINGS_TABLE).select("value").eq("key", MISSION_PRICING_SETTING_KEY).maybeSingle(),
+    client.from(AGENT_SETTINGS_TABLE).select("value").eq("key", REDESIGN_FLAGS_KEY).maybeSingle(),
   ]);
   const rows = Array.isArray(beats.data) ? beats.data : [];
   const last = latestBeat(rows);
@@ -137,6 +138,7 @@ export async function loadOverview(client: any, now: number = Date.now()) {
     planningModel: typeof setting.data?.value?.model === "string" ? setting.data.value.model : null,
     allowedModels: AGENT_ALLOWED_MODELS,
     pricing: pricing.data?.value ? normalizeMissionPricingSettings(pricing.data.value) : { ...DEFAULT_MISSION_PRICING_SETTINGS },
+    redesignFlags: normalizeRedesignFlags(redesign.data?.value),
     testAccountEmail: AGENT_TEST_ACCOUNT_EMAIL,
     missions: Array.isArray(missions.data) ? missions.data : [],
   };
