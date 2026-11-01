@@ -1,4 +1,4 @@
-import { CONTACT_STATUS_UNVERIFIED_AR, CONTACT_STATUS_VERIFIED_AR, statusKeyOf } from "../../../src/lib/agentMission/contactFinders";
+import { CONTACT_STATUS_UNVERIFIED_AR, statusKeyOf } from "../../../src/lib/agentMission/contactFinders";
 import { classifyRowDetailed, type RelevanceReason, type RuleBasis } from "../../../src/lib/agentMission/relevance";
 import { CONTACT_KINDS, isContactSource, verifyContactValue } from "../../../src/lib/agentMission/contacts";
 import { isNamedPerson, isPeopleStage, personVerdict } from "../../../src/lib/agentMission/people";
@@ -17,6 +17,9 @@ import type { ItemReason, ItemStore, Op, Row, StageCounts } from "./itemStore";
 
 type Stage = PricedPlan["stages"][number];
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** The engine marks a mapped person row with this when the source's own experiences say the person does not work at the parent company now (not a column: ingest reads it and drops it). */
+export const NOT_AT_COMPANY_MARK = "__not_at_company";
 
 /** Items the review could not reach (the budget, a failed call): never thrown away, asked again. */
 export const PENDING_ITEM_REASONS: ReadonlyArray<ItemReason> = ["not_reviewed", "review_failed"];
@@ -75,7 +78,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   const contactStage = isContactSource(stage.endpoint_id);
   const peopleStage = isPeopleStage(stage);
   const parentIds = stage.parent_key !== null ? new Set(items.acceptedIds(stage.parent_key)) : null;
-  const tally = { saved_now: 0, duplicates_ignored: 0, duplicate_texts: 0, rejected_missing_id: 0, rejected_unknown_parent: 0, rejected_over_limit: 0, rejected_not_object: 0, rejected_no_verified_contact: 0, rejected_not_a_person: 0, rejected_by_filter: 0, contact_values_left_empty: 0 };
+  const tally = { saved_now: 0, duplicates_ignored: 0, duplicate_texts: 0, rejected_missing_id: 0, rejected_unknown_parent: 0, rejected_over_limit: 0, rejected_not_object: 0, rejected_no_verified_contact: 0, rejected_not_a_person: 0, rejected_not_at_company: 0, rejected_by_filter: 0, contact_values_left_empty: 0 };
   const enabledFilters = (stage.filters ?? []).filter(isEnabled).filter((f) => !(isChild && CHILD_RAW_FILTER_KINDS.includes(f.kind)));
   const now = options.now ?? Date.now();
   const placeFilter = enabledFilters.find((f) => f.kind === "place" && f.places && f.places.length > 0);
@@ -184,10 +187,14 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
       const looksLikeValue = c.kind === "work_email" ? /^[^\s@*]+@[^\s@*]+\.[^\s@*]+$/.test(original) : !original.includes("*") && original.replace(/\D/g, "").length >= 7;
       const kept = verified ?? (looksLikeValue ? original : "");
       row[c.key] = kept;
-      if (kept) row[statusKeyOf(c.key)] = verified ? CONTACT_STATUS_VERIFIED_AR : CONTACT_STATUS_UNVERIFIED_AR;
+      // «موثّق» is never written here: a code check says an address or a number is well formed, not that a mailbox exists or a line is live and local. The contact step sends every kept value through a verifier or a validator and writes «موثّق» only on its answer (emailVerification.ts, phoneValidation.ts)
+      if (kept) row[statusKeyOf(c.key)] = CONTACT_STATUS_UNVERIFIED_AR;
       if (verified) verifiedAny = true; else if (original && !kept) tally.contact_values_left_empty += 1;
     }
     if (contactStage && contactColumns.length > 0 && !verifiedAny && !isNamedPerson(raw, stage.columns)) { tally.rejected_no_verified_contact += 1; excludedStructural.push({ id, reason: "no_verified_contact", row }); continue; }
+    // A PERSON DELIVERED UNDER A COMPANY MUST WORK THERE NOW (companyIdentity.ts): the engine read the source's own experiences for this person and none of the current ones names the parent company (live A1: the people of a company named «mycompany» under «falcon misr»). The
+    // person is kept with the reason, not delivered, not counted and not charged; the company's next people take the place.
+    if (peopleStage && raw0[NOT_AT_COMPANY_MARK] === true) { tally.rejected_not_at_company += 1; excludedStructural.push({ id, reason: "not_at_company", row }); continue; }
     // A PERSON ROW MUST BE A PERSON (people.ts): a row of a people stage with no person's name, or whose address is a role or generic mailbox (info@, customer_care@, webmaster@), is a COMPANY e-mail. It is kept with its reason and its address (the company's sheet
     // shows it), and it is not a decision maker, not counted and not charged.
     if (peopleStage && !personVerdict(raw, stage.columns).person) { tally.rejected_not_a_person += 1; excludedStructural.push({ id, reason: "not_a_person", row }); continue; }

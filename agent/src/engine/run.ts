@@ -8,7 +8,9 @@ import { dayOf, firstWindowEndDay, nextWindowEndDay, windowParams } from "../../
 import { isEnabled } from "../../../src/lib/agentMission/filters";
 import { SOURCE_KEY } from "../../../src/lib/agentMission/namedSources";
 import { isProviderUrl, providerContext } from "../../../src/lib/agentMission/providerHosts";
-import { drainPending, emitStageProgress, ingestRows } from "../items/ingest";
+import { companyIdentityOf, isPlaceholderCompanyUrl, peopleEvidenceOf, personAtCompany } from "../../../src/lib/agentMission/companyIdentity";
+import { isPeopleStage, nameKeysOf } from "../../../src/lib/agentMission/people";
+import { NOT_AT_COMPANY_MARK, drainPending, emitStageProgress, ingestRows } from "../items/ingest";
 import type { ItemStore, Row, StopReason } from "../items/itemStore";
 import type { Reviewer } from "../review";
 import type { SandboxResult } from "../sandbox";
@@ -134,7 +136,8 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
         const seenInputs = new Set<string>();
         // an address of a DATA PROVIDER (a record page the companies source cited) is never an input for another source, and an input that was already asked is not asked again
         const usable = bindings.map((b) => ({ b, index: b.index, value: b.index === 0 ? (parent[b.from] === undefined || parent[b.from] === null || parent[b.from] === "" ? null : parent[b.from]) : bindingValue(parent[b.from], b.domain) })).filter((x) => {
-          if (x.value === null || isProviderUrl(x.value, providerContext()) || isProviderUrl(parent[x.b.from], providerContext())) return false;
+          // a PLACEHOLDER company page or website (https://linkedin.com/company/mycompany) is never the key: the source would answer for another company
+          if (x.value === null || isProviderUrl(x.value, providerContext()) || isProviderUrl(parent[x.b.from], providerContext()) || isPlaceholderCompanyUrl(x.value)) return false;
           const key = `${x.b.param}=${String(x.value)}`;
           if (seenInputs.has(key)) return false;
           seenInputs.add(key);
@@ -175,6 +178,22 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
   }
   // a read that failed for some parent is the recorded reason when the volume was not reached (never «the source has no more»)
   return { reason: items.counts(stage.key).accepted >= stage.planned_rows ? "target_reached" : anyFailed ? "failed" : last === "target_reached" ? "source_exhausted" : last, aborted: null };
+}
+
+/** Marks the people of a page whose current experiences do not name the parent company (companyIdentity.ts). A person the source gave no experience for is not marked: nothing contradicts the source. */
+function markPeopleNotAtCompany(deps: EngineDeps, stage: Stage, parentId: string, page: unknown, rows: Row[]): Row[] {
+  if (!stage.parent_key || !isPeopleStage(stage)) return rows;
+  const parentStage = deps.plan.stages.find((s) => s.key === stage.parent_key);
+  const parentRow = deps.items.acceptedRows(stage.parent_key).find((r) => String(r.id) === parentId) ?? null;
+  const company = companyIdentityOf(parentRow, parentStage ? nameKeysOf(parentStage.columns) : []);
+  if (company.names.length === 0 && !company.domain) return rows;
+  const evidence = peopleEvidenceOf(page);
+  if (!evidence.any) return rows;
+  const nameKeys = nameKeysOf(stage.columns);
+  return rows.map((row) => {
+    const experiences = evidence.of(row, nameKeys);
+    return experiences && personAtCompany(experiences, company) === "mismatch" ? { ...row, [NOT_AT_COMPANY_MARK]: true } : row;
+  });
 }
 
 /** The numeric field of a parent row that counts its children (a video's comments, a place's reviews), when the mapping carries one: spares with more children are tried first. */
@@ -331,7 +350,9 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     try { rows = JSON.parse(mapped.resultJson); } catch { rows = null; }
     if (!Array.isArray(rows)) return mapFailed();
     // THE ROLE THE CUSTOMER NAMED among the people of a parent: the people whose job title names it come first (roles.ts), so the parent's share is taken from the top; the page's order is kept inside each group, and a page with no title field is untouched
-    const ranked = parentId !== null && stage.role_preference ? rankPeopleByRole(rows.filter(isObject), stage.role_preference.role).rows : rows.filter(isObject);
+    // THE PEOPLE OF A COMPANY MUST WORK THERE NOW: the source's own experiences for each person are read from the raw page; a person none of whose current jobs names the parent company is marked, and ingest keeps them out (not delivered, not counted, not charged)
+    const confirmed = parentId !== null ? markPeopleNotAtCompany(deps, stage, parentId, page, rows.filter(isObject)) : rows.filter(isObject);
+    const ranked = parentId !== null && stage.role_preference ? rankPeopleByRole(confirmed, stage.role_preference.role).rows : confirmed;
     const incoming: Row[] = ranked.map((r) => (parentId !== null ? { ...r, parent_id: parentId } : r));
     const nextCursor = pageMode ? (result.rows_in_page > 0 ? String((cursor !== null ? Number(cursor) : Number(params.page)) + 1) : null) : result.next_cursor ?? null;
     const ended = pageMode ? result.rows_in_page === 0 : !nextCursor || result.rows_in_page === 0 || result.has_more === false || !spec.cursor_param;

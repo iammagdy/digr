@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { readWorkbook, replay } from "./helpers/agentReplay";
-import { COMPANIES, PEOPLE, companiesPage, peopleAnswer, planFlow, request } from "./helpers/a1World";
+import { COMPANIES, PEOPLE, SLUGS, companiesPage, peopleAnswer, planFlow, request } from "./helpers/a1World";
 import { tregResult } from "./helpers/agentFakeWorld";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { executionBudgetUsd } from "../src/lib/agentMission/price";
@@ -27,10 +27,13 @@ function dispatcher(mode: "none" | "answer") {
     if (capability === "people.email.find" || capability === "people.email.find.personal") {
       if (mode === "none") return tregResult({ found: false }, 0);
       const h = sum(who) % 3;
-      if (h === 0) return tregResult({ found: true, email: `person${sum(who)}@orascom-em.com.eg` }, 0.000495);
+      // CHANGED (item 2): the address is on the domain of the person's OWN company (it was always orascom-em's, whoever the person was), so the company-domain rule can tell it from another company's
+      if (h === 0) return tregResult({ found: true, email: `person${sum(who)}@${SLUGS.find((s) => who.includes(s)) ?? "orascom-em"}.com.eg` }, 0.000495);
       if (h === 1) return tregResult({ found: true, email: `person${sum(who)}@gmail.com` }, 0.000495);
       return tregResult({ found: false }, 0);
     }
+    // CHANGED (item 2): the verifier of the chain answers safe and deliverable (it is the only thing that makes an address «موثّق»)
+    if (capability === "people.email.verify") return tregResult({ status: "safe", deliverable: true, is_catch_all: false }, 0.00178);
     if (capability === "people.phone.find" || capability === "people.phone.find.personal") {
       if (mode === "none" || sum(who) % 2 === 1) return tregResult({ found: false }, 0);
       return tregResult({ found: true, phone: `+2010${String(sum(who) * 7919).padStart(8, "0").slice(0, 8)}` }, 0.000495);
@@ -69,8 +72,9 @@ describe("A1 replay: the people's e-mail and phone cells", () => {
     expect(filled.length).toBeGreaterThan(0);
     // every value has its status beside it, and the empty cells have none
     emails.forEach((e, i) => expect(status[i] === "").toBe(e === ""));
-    expect(new Set(status.filter(Boolean))).toEqual(new Set(["موثّق", "غير موثّق"]));
-    emails.forEach((e, i) => { if (e.endsWith("@gmail.com")) expect(status[i]).toBe("غير موثّق"); else if (e) expect(status[i]).toBe("موثّق"); });
+    // CHANGED (item 2): a verifier-backed «موثّق» for the company's own addresses; an address on another domain (gmail.com) is «غير موثّق لهذه الشركة»
+    expect(new Set(status.filter(Boolean))).toEqual(new Set(["موثّق", "غير موثّق لهذه الشركة"]));
+    emails.forEach((e, i) => { if (e.endsWith("@gmail.com")) expect(status[i]).toBe("غير موثّق لهذه الشركة"); else if (e) expect(status[i]).toBe("موثّق"); });
     const phones = s.col("رقم التليفون").filter(Boolean);
     expect(phones.length).toBeGreaterThan(0);
     expect(s.col("حالة توثيق رقم التليفون").filter(Boolean).length).toBe(phones.length);

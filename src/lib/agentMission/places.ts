@@ -322,3 +322,26 @@ export function placeCellsAr(row: Record<string, unknown>, columns: ReadonlyArra
     row[col.key] = city ?? PLACE_NOT_STATED_AR;
   }
 }
+
+// ------------------------------------------------------------------------------------------------ country helpers for phone numbers (phoneValidation.ts)
+/** The ISO 3166 alpha-3 code of a country of the table (the phone validator names a country by it), and back. */
+export const iso3OfCountry = (iso2: string): string | null => ISO3[String(iso2).toUpperCase()] ?? null;
+export const countryOfIso3 = (iso3: string): string | null => Object.keys(ISO3).find((c) => ISO3[c] === String(iso3).trim().toUpperCase()) ?? null;
+/** The country a value names when it IS a country: an ISO code («EG», «EGY») or a country name in Arabic or Latin («مصر», «Egypt»). Null when it names none (a city of a country names that country too). */
+export function countryOfValue(value: unknown): string | null {
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+  return isoCountryOf(text) ?? placesInText(text)[0]?.country ?? null;
+}
+/** The countries whose international calling code starts these digits (the number without «+» or «00»), the longest code first: «1» is shared by the US and Canada. Empty when no country of the table has that code. */
+export function countriesOfCallingDigits(digits: string): string[] {
+  const d = String(digits ?? "").replace(/\D/g, "");
+  const codes = [...new Set(COUNTRIES.map((c) => c.phone))].sort((a, b) => b.length - a.length);
+  const code = codes.find((c) => d.startsWith(c));
+  return code ? COUNTRIES.filter((c) => c.phone === code).map((c) => c.code) : [];
+}
+/** The country of a website's suffix («.com.eg», «.sa»), when the suffix is one of a country of the table. */
+export function countryOfHostSuffix(value: unknown): string | null {
+  const tld = hostTld(String(value ?? ""));
+  return tld ? COUNTRIES.find((c) => c.tlds.includes(tld))?.code ?? null : null;
+}

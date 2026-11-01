@@ -79,7 +79,9 @@ describe("the engine fills the cells of the people it delivered", () => {
     await w.run();
     expect(w.items.acceptedRows("people").length).toBe(5);
     const first = cellsOf(w.items, "p2");
-    expect(first).toEqual({ email: "person2@orascom-em.com.eg", email_status: "موثّق", phone: "+201001234567", phone_status: "موثّق" });
+    // CHANGED (item 2, owner direction): «موثّق» only when a verifier says deliverable; the steps of this world have no verifier, so a finder's hit is delivered «غير موثّق» (the claim of a finder is not a verification). The chain with a verifier is tests/email-verification-chain.test.ts.
+    // CHANGED (item 3): the phone is «موثّق» only when a validator says the number is valid; this world's steps have no validator, so the number is kept «غير موثّق»
+    expect(first).toEqual({ email: "person2@orascom-em.com.eg", email_status: "غير موثّق", phone: "+201001234567", phone_status: "غير موثّق" });
     expect(w.calls.filter((c) => c.endpoint === EMAIL_A.id).length).toBe(5);
     expect(w.calls.some((c) => c.endpoint === EMAIL_B.id)).toBe(false);
   });
@@ -91,8 +93,10 @@ describe("the engine fills the cells of the people it delivered", () => {
       return null;
     } });
     await w.run();
-    expect(cellsOf(w.items, "p1")).toMatchObject({ email: "one@orascom-em.com.eg", email_status: "موثّق" });
-    expect(cellsOf(w.items, "p3")).toMatchObject({ email: "person3@gmail.com", email_status: "غير موثّق" });
+    // CHANGED (item 2): no verifier in this world, so a found address on the company's domain is «غير موثّق» as well
+    expect(cellsOf(w.items, "p1")).toMatchObject({ email: "one@orascom-em.com.eg", email_status: "غير موثّق" });
+    // CHANGED (item 2): an address on another domain than the company's (gmail.com for orascom-em.com.eg) says so: «غير موثّق لهذه الشركة»
+    expect(cellsOf(w.items, "p3")).toMatchObject({ email: "person3@gmail.com", email_status: "غير موثّق لهذه الشركة" });
     expect(cellsOf(w.items, "p5")).toMatchObject({ email: "", email_status: "", phone: "", phone_status: "" });
     expect(w.items.acceptedRows("people").length).toBe(5);
   });
@@ -118,7 +122,8 @@ describe("the engine fills the cells of the people it delivered", () => {
     const out = await w.run();
     expect(out.stopped).toBe("budget");
     expect(PEOPLE.filter((p) => cellsOf(w.items, p.id).email !== "").length).toBe(2);
-    expect(w.calls.length).toBe(3);
+    // CHANGED (item 4): the people are taken in ONE pass, decision makers first, each with every step: the chief executive and the general manager each had their e-mail call AND their phone call (4 calls) before the third person's e-mail call was refused (the 5th). Before, all e-mails came first (3 calls).
+    expect(w.calls.length).toBe(5);
   });
   it("phones are asked only after every e-mail and only when asked: a plan with no phone step makes no phone call; a resumed run does not look up a filled cell again", async () => {
     const onlyEmail: ContactStep[] = [{ kind: "email", stage_key: "people", column_key: "email", status_key: "email_status", per_person_usd: 0.0005, finders: [EMAIL_A] }];
