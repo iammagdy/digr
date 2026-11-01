@@ -54,7 +54,8 @@ describe("a range of dates", () => {
   it("X recent search: ISO times", () => {
     const x = ep("x.x.search-posts-recent");
     const r = buildToolInput(x, { period: { from: "2026-10-30", to: "2026-10-31" }, count: 20, nowMs: NOW }, { query: "العاصمة الإدارية" });
-    expect(r.params).toMatchObject({ start_time: "2026-10-30T00:00:00Z", end_time: "2026-10-31T23:59:59Z", max_results: 20 });
+    // CHANGED (S1 live findings fix 5): the days are Cairo days; 30 October starts at 22:00 UTC on the 29th (UTC+2 after summer time ended), 31 October ends at 21:59:59 UTC (was UTC midnight)
+    expect(r.params).toMatchObject({ start_time: "2026-10-29T22:00:00Z", end_time: "2026-10-31T21:59:59Z", max_results: 20 });
   });
 });
 
@@ -65,8 +66,9 @@ describe("X search with operators: the conditions go INTO the query", () => {
     expect(r.ok).toBe(true);
     const q = String(r.params.query);
     expect(q.startsWith("العاصمة الإدارية")).toBe(true);
-    expect(q).toContain("since:2026-10-01");
-    expect(q).toContain("until:2026-11-01");
+    // CHANGED (S1 live findings fix 5): October in Cairo time is 21:00 UTC on 30 September to 22:00 UTC on 31 October (was the UTC days 2026-10-01 and 2026-11-01)
+    expect(q).toContain("since:2026-09-30_21:00:00_UTC");
+    expect(q).toContain("until:2026-10-31_22:00:00_UTC");
     expect(q).toContain("lang:ar");
     expect(q).toContain("-filter:replies");
     expect(r.params).toMatchObject({ queryType: "Latest", limit: 20 });

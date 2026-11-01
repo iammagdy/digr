@@ -1,3 +1,4 @@
+import { cairoDayEndExclusiveMs, cairoDayStartMs } from "./cairoTime";
 import { toArabicDigits } from "../arabicDigits";
 import { itemProvesMedia, mediaFieldsOf, mediaLabelAr, mediaLineAr, type MediaKind } from "./mediaProof";
 import { parseMoment } from "./dateCells";
@@ -147,6 +148,8 @@ export interface FilterContext {
   now: number;
   /** The stage reads the source's OWN LISTING (a channel's videos, an account's posts): an item that gives no author at all belongs to the source asked for, so the account filter does not reject it for lacking a name. */
   listing?: boolean;
+  /** The days of a period range are Cairo days (the marks of the new pipeline); false: UTC days, as the old pipeline reads them. */
+  cairoDays?: boolean;
 }
 
 /** Characters that show nothing: zero-width and direction marks, the byte-order mark, the non-breaking space. A text that «starts with» a handle may have any of them in front of it. */
@@ -191,8 +194,9 @@ export function filterVerdict(filters: ReadonlyArray<StageFilter> | undefined, m
       case "period": {
         const value = f.field ? mapped[f.field] : undefined;
         const moment = parseMoment(value);
-        const from = f.days !== undefined ? ctx.now - f.days * 86_400_000 : f.from ? Date.parse(`${f.from}T00:00:00Z`) : Number.NEGATIVE_INFINITY;
-        const to = f.days !== undefined ? Number.POSITIVE_INFINITY : f.to ? Date.parse(`${f.to}T23:59:59Z`) : Number.POSITIVE_INFINITY;
+        // the days of a range are Cairo days when the caller says so (the marks of the new pipeline, S1 live findings fix 5); the old pipeline's rule is UTC days, unchanged
+        const from = f.days !== undefined ? ctx.now - f.days * 86_400_000 : f.from ? (ctx.cairoDays ? cairoDayStartMs(f.from) : Date.parse(`${f.from}T00:00:00Z`)) : Number.NEGATIVE_INFINITY;
+        const to = f.days !== undefined ? Number.POSITIVE_INFINITY : f.to ? (ctx.cairoDays ? cairoDayEndExclusiveMs(f.to) - 1 : Date.parse(`${f.to}T23:59:59Z`)) : Number.POSITIVE_INFINITY;
         if (!moment) {
           // A SOURCE THAT GIVES ONLY A RELATIVE TIME («قبل ٤ أيام», «4 days ago»): the item stands for a RANGE of moments, and it is accepted when that range overlaps the period (relativeDates.ts); any other value has no moment
           const age = parseRelativeAge(value, ctx.now);
