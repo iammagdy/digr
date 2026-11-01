@@ -137,3 +137,16 @@ describe("the engine fills the cells of the people it delivered", () => {
     expect(w.items.acceptedRows("people").length).toBe(1);
   });
 });
+
+describe("which finders the catalog offers for a person", () => {
+  it("only finders that take what a person row gives (a page, a name, a domain): an article-author finder and a webhook finder are never offered, cheapest first", async () => {
+    const { loadTregCatalog } = await import("../src/lib/treg/catalog");
+    const { finderSourcesOf } = await import("../src/lib/agentMission/contactFinders");
+    const catalog = loadTregCatalog();
+    const emails = finderSourcesOf("email", catalog, () => true);
+    expect(emails.length).toBeGreaterThan(0);
+    expect(emails.map((f) => f.id)).not.toContain("tomba.people.email.find.author");
+    expect(emails.every((f) => f.usd > 0)).toBe(true); // in the catalog's own ranking order (expected cost per delivered item)
+    for (const f of [...emails, ...finderSourcesOf("phone", catalog, () => true)]) expect(f.inputs.some((i) => /linkedin|name|domain|company|profile/i.test(i.name))).toBe(true);
+  });
+});

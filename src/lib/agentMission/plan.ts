@@ -199,7 +199,11 @@ const KEY_RE = /^[A-Za-z][A-Za-z0-9_]{0,39}$/;
 const MAX_ASSUMPTIONS = 6;
 
 /** What the price is computed from, per stage: rows, measured cost per raw row, whether it is delivered, and the share of the sample that matches (relevance). The one place the stored plan and a fresh plan are priced alike. */
-export const stagePriceInputs = (stages: ReadonlyArray<PricedStage>) => stages.map((s) => ({ rows: s.planned_rows, costPerRowUsd: s.measured_cost_per_row_usd, deliver: s.deliver, yield: s.yield_share, reviewShare: s.review_share }));
+/**
+ * THE PRICE INPUTS OF A PLAN: one per stage. The cost of a contact finder step (per_person_usd per person, contactFinders.ts) is part of the cost per row of the people stage it fills, so the provider cost, the cost per delivered row and the unit price carry it; the step adds no row and no stage.
+ * The one place every pricing path uses (the plan check, the approval's re-price, the plan editor).
+ */
+export const stagePriceInputs = (stages: ReadonlyArray<PricedStage>, steps?: ReadonlyArray<ContactStep>) => stages.map((s) => ({ rows: s.planned_rows, costPerRowUsd: s.measured_cost_per_row_usd + (steps ?? []).filter((x) => x.stage_key === s.key).reduce((n, x) => n + Math.max(0, x.per_person_usd), 0), deliver: s.deliver, yield: s.yield_share, reviewShare: s.review_share }));
 /** A column that only holds an internal id (the key says so, or its Arabic title is «معرّف …»): never shown to the customer as a column, never a column of its own in the sheet. */
 export function isInternalColumn(c: { key: string; title_ar: string }): boolean {
   return /^(id|uid|pk|guid|parent_id|parent)$/i.test(c.key) || /(^|_)(id|uid|pk|guid)$/i.test(c.key) || /^id_/i.test(c.key) || /معرّ?ف/.test(c.title_ar);
@@ -629,14 +633,14 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   if (delivered > AGENT_MAX_DELIVERED_ROWS) issues.push(`the delivered rows (${delivered}) are more than the limit of ${AGENT_MAX_DELIVERED_ROWS}; lower the expected rows`);
   if (issues.length) return { ok: false, issues };
 
-  const price = priceMissionByCode(stagePriceInputs(priced), { settings: lookup.pricingSettings });
+  // THE FINDER STEPS: whatever the planner wrote (or dropped, or excused with a note), a delivered people stage of a request that asks for an e-mail or a phone gets its step per asked kind, finders ranked cheapest first
+  const contactSteps = buildContactSteps(priced, lookup.requestText, (kind) => lookup.contactFinders?.(kind) ?? []);
+  const price = priceMissionByCode(stagePriceInputs(priced, contactSteps), { settings: lookup.pricingSettings });
   if (price.overCap) return { ok: false, issues: [`the mission would hold ${price.reservePoints} points, more than the job limit; lower the expected rows`], ...(impliedUsed && impliedCount > 1 ? { lowerImplied: true } : {}) };
   // the DEFAULT count of people per company is lowered (one fewer at a time, down to one) while the hold is above the target; the cap itself is not touched
   if (impliedUsed && impliedCount > 1 && price.reservePoints > AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS) return { ok: false, issues: [`the default count of people per company makes the hold ${price.reservePoints} points`], lowerImplied: true };
   // THE TITLE OF A PEOPLE STAGE THAT ONLY RANKS BY ROLE does not promise the role (roles.ts); done last, so the checks above still read the noun the model wrote
   for (const st of priced) if (st.role_preference && st.parent_key !== null) st.title_ar = neutralPeopleTitleAr(st.title_ar, st.role_preference.role, itemNounOf(priced.find((p) => p.key === st.parent_key)?.title_ar ?? "").singular);
-  // THE FINDER STEPS: whatever the planner wrote (or dropped, or excused with a note), a delivered people stage of a request that asks for an e-mail or a phone gets its step per asked kind, finders ranked cheapest first
-  const contactSteps = buildContactSteps(priced, lookup.requestText, (kind) => lookup.contactFinders?.(kind) ?? []);
   return { ok: true, plan: { summary_ar: summary.text, stages: priced, price, ...(contactSteps.length ? { contact_steps: contactSteps } : {}), ...(notes.length ? { notes_ar: notes } : {}), ...(assumptions.length ? { assumptions_ar: assumptions } : {}), ...(quantity ? { quantity } : {}), ...(unserved.length ? { unserved_steps: unserved } : {}) }, ...(mediaUnproven.length ? { mediaUnproven } : {}) };
 }
 

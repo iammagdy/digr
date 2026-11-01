@@ -18,14 +18,13 @@ const proposeWith = (edit: (a: any) => any): FakeStep[] => [...planFlow().slice(
 const run = (planning: FakeStep[]) => replay({ request, planning, execution: () => [], answers: [tregResult(companiesPage, 0.0005), tregResult(peopleOfCompany("orascom-em"), 0.0005), tregResult(companiesPage, 0.0005), ...Array.from({ length: 12 }, () => tregResult({ results: [] }, 0.0005))] });
 
 describe("the plan of a request that asks for e-mails and phones carries the finder steps, by code", () => {
-  it("A1 shape (the planner proposed no finder): the approved plan has an e-mail step and a phone step on the people stage, finders ranked cheapest first", async () => {
+  it("A1 shape (the planner proposed no finder): the approved plan has an e-mail step and a phone step on the people stage, finders in the catalog's ranking (cheapest expected cost first)", async () => {
     const r = await run(planFlow());
     const steps = (r.plannedPlan as any).contact_steps as Array<{ kind: string; stage_key: string; column_key: string; status_key: string; per_person_usd: number; finders: Array<{ id: string; usd: number }> }> | undefined;
     expect(steps?.map((s) => [s.kind, s.stage_key, s.column_key])).toEqual([["email", "people", "email"], ["phone", "people", "phone"]]);
     for (const s of steps!) {
       expect(s.finders.length).toBeGreaterThan(0);
-      const usd = s.finders.map((f) => f.usd);
-      expect([...usd].sort((a, b) => a - b)).toEqual(usd);
+      expect(s.per_person_usd).toBe(s.finders[0].usd); // the step is priced at its first-ranked finder
       expect(s.per_person_usd).toBeGreaterThan(0);
     }
   });

@@ -36,13 +36,13 @@ export const statusKeyOf = (columnKey: string): string => `${columnKey}_status`;
 const KIND_OF: Record<FinderKind, ContactKind> = { email: "work_email", phone: "phone" };
 const DEFAULT_COLUMN: Record<FinderKind, { key: string; title_ar: string }> = { email: { key: "email", title_ar: "الإيميل" }, phone: { key: "phone", title_ar: "رقم التليفون" } };
 
-/** The inputs a person gives a finder: the professional page, the name (whole, first, last), the company's domain and name. A finder that needs anything else (a webhook, a stored id) is not used. */
+/** The inputs a person gives a finder (a bare `url` input is NOT one: it takes an article, not a profile): the professional page, the name (whole, first, last), the company's domain and name. A finder that needs anything else (a webhook, a stored id) is not used. */
 const INPUT_KINDS: ReadonlyArray<{ kind: "linkedin" | "name" | "first" | "last" | "domain" | "company"; test: RegExp }> = [
-  { kind: "linkedin", test: /^(person_)?linkedin(_?url)?$|^linkedin_?handle$|^profile_?url$|^url$/i },
+  { kind: "linkedin", test: /^(person_)?linkedin(_?url)?$|^profile_?url$/i },
   { kind: "first", test: /^first_?name$/i },
   { kind: "last", test: /^last_?name$/i },
   { kind: "name", test: /^(full_?)?name$/i },
-  { kind: "domain", test: /^(company_?)?(domain|url|website)$|^domain_?or_?company$/i },
+  { kind: "domain", test: /^(company_?)?(domain|website)$|^company_?url$|^company_?domain$|^domain_?or_?company$/i },
   { kind: "company", test: /^company(_?name)?$/i },
 ];
 const inputKindOf = (name: string): (typeof INPUT_KINDS)[number]["kind"] | null => INPUT_KINDS.find((k) => k.test.test(name))?.kind ?? null;

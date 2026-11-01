@@ -34,7 +34,7 @@ const fail = (code: string): ApproveResult => ({ ok: false, code, messageAr: APP
 export function repriceStoredPlan(plan: PricedPlan) {
   // a plan stored before the one pricing rule (no `rule` on its price) is approved at the price it showed: the old formula; a new one is priced again with the markup and the minimum it was priced with
   if (plan.price.rule !== 2) return legacyPriceMissionByCode(plan.stages.map((s) => ({ rows: s.planned_rows, costPerRowUsd: s.measured_cost_per_row_usd, deliver: s.deliver })));
-  return priceMissionByCode(stagePriceInputs(plan.stages), { settings: plan.price.settings });
+  return priceMissionByCode(stagePriceInputs(plan.stages, plan.contact_steps), { settings: plan.price.settings });
 }
 
 export async function approveMission(client: any, mission: { id: string; user_id: string; plan: PricedPlan }, options: { now?: Date; expiresInMinutes?: number } = {}): Promise<ApproveResult> {

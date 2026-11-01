@@ -172,7 +172,7 @@ export function applyPlanEdits(planIn: PricedPlan, editsIn: unknown, ctx: EditCo
   // 4. PRICED AGAIN BY CODE (the same function that priced the plan; the model has no hand in it)
   const delivered = plan.stages.filter((s) => s.deliver).reduce((n, s) => n + s.planned_rows, 0);
   if (delivered > AGENT_MAX_DELIVERED_ROWS) return fail("العدد أكبر من الحد المسموح لمهمة واحدة.");
-  const price = priceMissionByCode(stagePriceInputs(plan.stages), { settings: plan.price.settings });
+  const price = priceMissionByCode(stagePriceInputs(plan.stages, plan.contact_steps), { settings: plan.price.settings });
   if (price.overCap) return fail("هذا العدد يتجاوز الحد المسموح لحجز واحد. قلّله ثم أعد المحاولة.");
   plan.price = price;
   return { ok: true, plan };
