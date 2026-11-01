@@ -8,6 +8,7 @@ import { classifyRows, searchQueryOf, validateRelevanceSpec, type RelevanceSpec 
 import { minimumLineAr, type MissionPricingSettings } from "../missionPricing";
 import { checkCustomerLabel, checkCustomerText } from "./text";
 import { FIELD_LABEL_AR, uncoveredFields, usefulFieldsOfPage, type SourceField } from "./fields";
+import { CONTRACT_ONLY_CLASSES, contractIssuesFor, isPlaceSource, type SourceStageKind } from "./taskContracts";
 import { neutralPeopleTitleAr, roleLineAr, roleOfNoun, type RoleKey } from "./roles";
 import { toArabicDigits } from "../arabicDigits";
 import { DEFAULT_PEOPLE_PER_PARENT, bindQuantity, bindQuantityDetailed, countedQuantities, ownTitleWords, perParentAskFor, perParentAskOf, perParentQuantities, perSourceQuantities, requestedStageIndexes, sameNounStem, unservedPerParentAsks } from "./quantity";
@@ -37,6 +38,8 @@ export interface PlanColumn {
   status_of?: string;
   /** Set by code on the column that says whose phone number the column it names holds: «شخصي» / «رقم الشركة» (contactFinders.ts). */
   type_of?: string;
+  /** Set by code (taskContracts.ts) on a column the workbook COMPUTES from the delivered rows instead of reading it: the decision-maker marker «صانع قرار» («نعم» / «لا») and the per-company notes. */
+  computed?: "decision_maker" | "notes";
 }
 
 /**
@@ -426,7 +429,10 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
 
     // EVERY USEFUL FIELD THE SOURCE GIVES stays in the file: a date, an author, a link, the counts (likes, replies, shares, views) that the saved page carries must each have a column (the agent maps them in its code)
     if (raw.deliver === true) {
-      const missing = uncoveredFields(sourceFields, cleanColumns);
+      // THE GENERIC RULE covers the classes of any item; a company's or a place's contact fields (phone, address, e-mail, review count) are the CONTRACT's (taskContracts.ts), asked only of the stages it names
+      const missing = uncoveredFields(sourceFields.filter((f) => !CONTRACT_ONLY_CLASSES.includes(f.cls)), cleanColumns);
+      const stageKind: SourceStageKind = !isChild && isCompanyStage({ title_ar: title.text }) ? "company" : !isChild && isPlaceSource(endpointId, lookup.endpointCapability) ? "place" : "other";
+      issues.push(...contractIssuesFor({ key, columns: cleanColumns }, sourceFields, stageKind));
       if (missing.length > 0) issues.push(`${label}: the source gives fields the customer would want in the file that no column holds: ${missing.map((f) => `${FIELD_LABEL_AR[f.cls]} (${f.path})`).join(", ")}. Add a column for each (map it in your run_code and give it an Arabic title like «${FIELD_LABEL_AR[missing[0].cls]}»): the file keeps every useful field of the source`);
     }
     // (a delivered PEOPLE stage is exempt: the e-mail and phone columns and their finder steps are added to it by code, contactFinders.ts)
