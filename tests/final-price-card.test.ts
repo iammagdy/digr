@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { MemoryStore } from "../agent/src/memoryStore";
 import { sealFinalPrice } from "../src/lib/agentMission/finalPrice";
+import { DEFAULT_MISSION_PRICING_SETTINGS } from "../src/lib/missionPricing";
 import { priceMissionByCode } from "../src/lib/agentMission/price";
 import { stagePriceInputs, type PricedPlan } from "../src/lib/agentMission/plan";
 import { repriceStoredPlan } from "../src/lib/agentMission/lifecycle";
@@ -25,14 +26,14 @@ describe("the final price is the one pricing function over the final stages", ()
   it("a stale price (66 items, minimum 50) is replaced by the final one (12 items, the admin minimum 200) and the drift is reported", () => {
     const plan = planWithPrice(12, 66);
     expect(plan.price.deliveredRows).toBe(66);
-    const sealed = sealFinalPrice(plan);
+    const sealed = sealFinalPrice(plan, DEFAULT_MISSION_PRICING_SETTINGS);
     expect(sealed.plan.price.deliveredRows).toBe(12);
     expect(sealed.plan.price.minChargePoints).toBe(200);
     expect(sealed.plan.price.reservePoints).toBeGreaterThanOrEqual(200);
     expect(sealed.drift).toEqual({ rowsBefore: 66, rowsAfter: 12, reserveBefore: plan.price.reservePoints, reserveAfter: sealed.plan.price.reservePoints });
   });
   it("what the card stores is what approval recomputes (no `plan_changed` is possible)", () => {
-    const sealed = sealFinalPrice(planWithPrice(12, 66)).plan;
+    const sealed = sealFinalPrice(planWithPrice(12, 66), DEFAULT_MISSION_PRICING_SETTINGS).plan;
     const again = repriceStoredPlan(sealed);
     expect(sealed.price.unitPricePoints).toBe(again.unitPricePoints);
     expect(sealed.price.reservePoints).toBe(again.reservePoints);

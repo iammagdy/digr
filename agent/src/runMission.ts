@@ -34,6 +34,7 @@ import { ItemStore, type ItemSnapshot, type StopReason } from "./items/itemStore
 import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
 import { readRedesignFlags } from "../../src/lib/agentMission/redesignFlags";
+import { sealFinalPrice } from "../../src/lib/agentMission/finalPrice";
 import { accountIsTest, anyRedesignFlag, redesignStagesOf } from "./redesign";
 import { runContactEnrichment } from "./engine/contacts";
 import { runNamesStep } from "./namesAr";
@@ -336,7 +337,13 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   if (endedByRestart(output) && !state.proposedPlan && !state.question && !state.finish && await requeue(deps, mission, "queued", { planning_llm_usd: base.planning_llm_usd }, "restart")) return;
 
   if (state.proposedPlan) {
-    const plan = state.proposedPlan;
+    // THE CARD HOLDS THE FINAL PRICE (S1 live findings fix 3, redesigned mode only): a stored price that is not the one pricing function's number over the final stages is replaced before the card exists
+    let plan = state.proposedPlan;
+    if (socialRedesignActive(ctx)) {
+      const sealed = sealFinalPrice(plan, pricingSettings);
+      plan = sealed.plan;
+      if (sealed.drift) await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: صُحّح سعر الخطة قبل عرضها.", counts: { price_sealed: 1, rows_before: sealed.drift.rowsBefore, rows_after: sealed.drift.rowsAfter, reserve_before: sealed.drift.reserveBefore, reserve_after: sealed.drift.reserveAfter } }).catch(() => undefined);
+    }
     await store.updateMission(mission.id, { ...base, status: "plan_ready", plan: plan as any, plan_public: customerPlanView(plan) as any, unit_price_points: plan.price.unitPricePoints, reserved_points: plan.price.reservePoints });
     await store.addEvent(mission.id, { kind: "plan", message_ar: plan.summary_ar, counts: { stages: plan.stages.length, rows: plan.price.deliveredRows, unit_points_x1000: Math.round(plan.price.unitPricePoints * 1000), reserve_points: plan.price.reservePoints } });
     deps.log?.(`plan_ready ${mission.id} ${JSON.stringify(customerPlanView(plan).price)}`);
