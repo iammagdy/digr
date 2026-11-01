@@ -32,7 +32,11 @@ export interface ContactEnrichmentOutcome {
   stopped: ContactStop | null;
   /** The company-level steps (audit 2026-11): companies a value was found for, and the ones written «غير متوفر». */
   companies: { email: number; phone: number; notAvailable: number };
+  /** What the e-mail verifiers answered (counts only; audit F3): for the admin page, never an address. */
+  verifier: VerifierTally;
 }
+export interface VerifierTally { calls: number; deliverable: number; catch_all: number; undeliverable: number; unknown: number; failed: number; second_opinion: number }
+const emptyTally = (): VerifierTally => ({ calls: 0, deliverable: 0, catch_all: 0, undeliverable: 0, unknown: 0, failed: 0, second_opinion: 0 });
 export interface ContactDeps {
   items: ItemStore;
   store: AgentStore;
@@ -57,8 +61,17 @@ const STEP_LABEL_AR = { email: "الإيميل", phone: "رقم التليفون
  * time ends, the chief executive and the general manager have all their cells and the ones left without are the people of the lowest titles. Each step keeps its own spend against its own priced cap; the job budget is shared and ends everything at once.
  */
 export async function runContactEnrichment(deps: ContactDeps): Promise<ContactEnrichmentOutcome> {
+  const out = await runContactSteps(deps);
+  // WHAT THE VERIFIERS SAID, as counts only (audit F3: «غير موثّق» for 7 of 8 addresses could not be told from a skipped verifier): an internal report for the admin page, no address, no provider name
+  if (out.verifier.calls + out.verifier.failed > 0) {
+    try { await deps.addEvent({ kind: "call", message_ar: "تقرير داخلي لتوثيق الإيميلات.", counts: { ver_calls: out.verifier.calls, ver_deliverable: out.verifier.deliverable, ver_catch_all: out.verifier.catch_all, ver_undeliverable: out.verifier.undeliverable, ver_unknown: out.verifier.unknown, ver_failed: out.verifier.failed, ver_second_opinion: out.verifier.second_opinion } }); } catch { /* a lost note never stops a run */ }
+  }
+  return out;
+}
+
+async function runContactSteps(deps: ContactDeps): Promise<ContactEnrichmentOutcome> {
   const { items, plan } = deps;
-  const out: ContactEnrichmentOutcome = { filled: { email: 0, phone: 0, unverified: 0, verified: 0 }, looked: 0, skipped: 0, spentUsd: 0, stopped: null, companies: { email: 0, phone: 0, notAvailable: 0 } };
+  const out: ContactEnrichmentOutcome = { filled: { email: 0, phone: 0, unverified: 0, verified: 0 }, looked: 0, skipped: 0, spentUsd: 0, stopped: null, companies: { email: 0, phone: 0, notAvailable: 0 }, verifier: emptyTally() };
   // e-mail before phone for one person (the phone helpers are asked only after the e-mail's)
   const steps = [...(plan.contact_steps ?? [])].filter((x) => x.level === undefined).sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "email" ? -1 : 1));
   // THE COMPANY'S OWN E-MAIL AND HQ PHONE FIRST (the owner's top priority, reference A columns 5 and 6): before the people's steps spend any of the job's budget
@@ -91,18 +104,25 @@ export async function runContactEnrichment(deps: ContactDeps): Promise<ContactEn
 type Attempt = { t: "stop"; stop: ContactStop } | { t: "skip" } | { t: "failed" } | { t: "page"; page: unknown };
 
 /** The status of an e-mail value: «غير موثّق لهذه الشركة» when it is on another domain (no verifier is paid for it), «موثّق» when a verifier says deliverable, «غير موثّق» in every other case. A definitive answer (deliverable, catch-all, undeliverable) ends the chain; an unknown answer or a failed call goes to the next verifier. */
-async function emailStatusFor(verifiers: ReadonlyArray<FinderInfo>, api: { attempt: (helper: FinderInfo, params: Record<string, string>) => Promise<Attempt>; down: Map<string, number> }, value: string, companyDomain: string | null): Promise<{ status: "verified" | "unverified" | "other_company"; stop: ContactStop | null }> {
+async function emailStatusFor(verifiers: ReadonlyArray<FinderInfo>, api: { attempt: (helper: FinderInfo, params: Record<string, string>) => Promise<Attempt>; down: Map<string, number> }, value: string, companyDomain: string | null, tally: VerifierTally = emptyTally()): Promise<{ status: "verified" | "unverified" | "other_company"; stop: ContactStop | null }> {
   if (emailOnOtherDomain(value, companyDomain)) return { status: "other_company", stop: null };
+  // A CATCH-ALL OR UNKNOWN ANSWER IS NOT THE END (audit F3, golden G1: the free verifier answers «accept_all» for a domain it cannot judge, and the paid one after it was never asked): the next verifier gives a second opinion, inside the step's own priced cap. Only «undeliverable» ends the chain at once.
+  let asked = 0;
   for (const verifier of verifiers) {
     if ((api.down.get(verifier.id) ?? 0) >= 2) continue;
     const params = verifierParamsFor(verifier, value);
     if (!params) continue;
     const a = await api.attempt(verifier, params);
     if (a.t === "stop") return { status: "unverified", stop: a.stop };
+    if (a.t === "failed") { tally.failed += 1; continue; }
     if (a.t !== "page") continue;
+    tally.calls += 1;
+    if (asked > 0) tally.second_opinion += 1;
+    asked += 1;
     const verdict = emailVerdictIn(a.page);
+    tally[verdict] += 1;
     if (verdict === "deliverable") return { status: "verified", stop: null };
-    if (verdict === "catch_all" || verdict === "undeliverable") return { status: "unverified", stop: null };
+    if (verdict === "undeliverable") return { status: "unverified", stop: null };
   }
   return { status: "unverified", stop: null };
 }
@@ -176,7 +196,7 @@ async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: Conta
           if (value !== "") {
             let verdict: Awaited<ReturnType<typeof emailStatusFor>>;
             // A FOUND ADDRESS IS ALWAYS WRITTEN: whatever happens to a verifier the status is «غير موثّق» and the cell is still written
-            try { verdict = await emailStatusFor(emailStep.verifiers ?? [], emailApi, value, domain); } catch { verdict = { status: "unverified", stop: null }; }
+            try { verdict = await emailStatusFor(emailStep.verifiers ?? [], emailApi, value, domain, out.verifier); } catch { verdict = { status: "unverified", stop: null }; }
             cells[emailStep.column_key] = value;
             cells[emailStep.status_key] = emailStatusAr(verdict.status);
             emailFound += 1;
@@ -273,7 +293,7 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
   const flush = async () => { if (pending.length > 0) { const ops = pending; pending = []; await items.commit(ops); } };
   const { attempt, down } = makeAttempt(deps, capUsd);
   /** The status of an e-mail value (see emailStatusFor). */
-  const emailStatusOf = (value: string, companyDomain: string | null) => emailStatusFor(step.verifiers ?? [], { attempt, down }, value, companyDomain);
+  const emailStatusOf = (value: string, companyDomain: string | null) => emailStatusFor(step.verifiers ?? [], { attempt, down }, value, companyDomain, out.verifier);
   // THE COMPANY of each person: who it is, which country it is in (its row, else the country the customer asked for, else its website's suffix), and its phone (its own data first, else ONE map search per company; a miss is remembered too)
   const parentStage = deps.plan.stages.find((s) => s.key === stage.parent_key);
   const requestPlaces = [...(parentStage?.filters ?? []), ...(stage.filters ?? [])].filter((f) => f.kind === "place" && isEnabled(f)).flatMap((f) => (f.places && f.places.length > 0 ? f.places : f.values ?? []));
