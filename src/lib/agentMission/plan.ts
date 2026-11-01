@@ -86,6 +86,8 @@ export interface ProposedStage {
   per_parent_rows?: number;
   /** Every child of every parent is read to the source's end, each parent up to its OWN counter (S1 item 1.10, «كل التعليقات»); `planned_rows` is the estimate from the counters. Set by code only. */
   all_children?: boolean;
+  /** The ids of the parent rows the promised count was computed from (S1 complete count): the engine reads exactly these parents, so a parent published between planning and execution cannot change the promise. Set by code only. */
+  parent_pins?: string[];
   /** Whether this stage's rows go into the customer's files (and count in the charge). */
   deliver: boolean;
   columns: PlanColumn[];

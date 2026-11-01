@@ -37,7 +37,9 @@ import { namedSourceRoutes } from "../../src/lib/agentMission/namedRoutes";
 import { redesignActive, type RedesignFlags } from "../../src/lib/agentMission/redesignFlags";
 import { conditionsOfRequest } from "../../src/lib/agentMission/requestConditions";
 import { applyGapNotes } from "../../src/lib/agentMission/gapLines";
-import { counterOfRow, withAllChildren } from "../../src/lib/agentMission/allChildren";
+import { counterOfRow } from "../../src/lib/agentMission/allChildren";
+import { withCompleteCount } from "../../src/lib/agentMission/completeCount";
+import { deriveItemId } from "../../src/lib/agentMission/contract";
 import { coverageOf } from "../../src/lib/agentMission/sourceRanking";
 import { catalogDateKind } from "../../src/lib/agentMission/relativeDates";
 import { PEOPLE_FALLBACK_LINE_AR } from "../../src/lib/agentMission/childSources";
@@ -682,21 +684,38 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         // are estimated from is the comments stage's own measured page, mapped by its own proven mapping.
         if (derived) {
           const allowedReply = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
-          // «ALL THE COMMENTS» (S1 item 1.10, redesigned mode only): each parent is read to its own counter and the plan's estimate follows the counters; done BEFORE the replies stage, which is estimated from the comments' count
+          // THE COMPLETE COUNT (S1 live findings, redesigned mode only; it includes «all the comments», item 1.10): the promised number of children is computed from the REAL counters of the parents of the stage's own listing, the parents it came from are pinned, and a
+          // shortfall is stated on the card before approval; done BEFORE the replies stage, which is estimated from the comments' count
           if (socialRedesignActive(ctx)) {
-            checked.plan = await withAllChildren(checked.plan, {
+            const mappedRowsOf = async (sp: NonNullable<typeof checked.plan.stages[number]["engine"]>): Promise<Array<Record<string, unknown>> | null> => {
+              try {
+                const page = await store.getFile(mission.id, `raw/${sp.map_file_id}.json`);
+                if (page === null) return null;
+                const out = await runSandbox(sp.map_code, { [sp.map_file_id]: JSON.parse(page) });
+                if (!out.ok || out.resultJson === null) return null;
+                const rows = JSON.parse(out.resultJson) as unknown;
+                return Array.isArray(rows) ? rows.filter(isObject) : null;
+              } catch { return null; }
+            };
+            checked.plan = await withCompleteCount(checked.plan, {
               request: `${mission.request_text} ${mission.answer_text ?? ""}`,
-              parentCountersOf: async (parentStage) => {
+              candidatesOf: async (parentStage) => {
                 const sp = parentStage.engine;
                 if (!sp) return null;
-                try {
-                  const page = await store.getFile(mission.id, `raw/${sp.map_file_id}.json`);
-                  if (page === null) return null;
-                  const out = await runSandbox(sp.map_code, { [sp.map_file_id]: JSON.parse(page) });
-                  if (!out.ok || out.resultJson === null) return null;
-                  const rows = JSON.parse(out.resultJson) as unknown;
-                  return Array.isArray(rows) ? rows.filter(isObject).map((r) => counterOfRow(r)) : null;
-                } catch { return null; }
+                const rows = await mappedRowsOf(sp);
+                return rows ? rows.map((r) => ({ id: deriveItemId(r as never, sp.id_field ?? null), counter: counterOfRow(r) })) : null;
+              },
+              // a child source with no next page gives what one call gives: the rows of its own measured page, when the parent it was measured on has more comments than that page carried
+              pageCapOf: async (child) => {
+                const sp = child.engine;
+                const parentSp = checked.plan.stages.find((x) => x.key === child.parent_key)?.engine;
+                if (!sp || !parentSp || sp.cursor_param !== null || !sp.parent_binding) return null;
+                const [childRows, parentRows] = await Promise.all([mappedRowsOf(sp), mappedRowsOf(parentSp)]);
+                const used = state.callParams.get(sp.map_file_id)?.[sp.parent_binding.param];
+                if (!childRows || !parentRows || used === undefined) return null;
+                const measured = parentRows.find((r) => String(r[sp.parent_binding!.from]) === String(used));
+                const counter = measured ? counterOfRow(measured) : null;
+                return counter !== null && childRows.length > 0 && childRows.length < counter ? childRows.length : null;
               },
             });
           }

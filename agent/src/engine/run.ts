@@ -114,6 +114,8 @@ async function retryReviewLater(deps: EngineDeps, stage: Stage): Promise<void> {
 async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promise<{ reason: StopReason; aborted: string | null }> {
   const { items } = deps;
   if (stage.parent_key === null) return runRoot(deps, stage, spec);
+  // THE COMPLETE COUNT (S1 live findings): the parents the promised count was computed from are the parents read (redesigned stages only)
+  if (deps.redesignStages?.has(stage.key) && (stage.parent_pins ?? []).length > 0) await alignPinnedParents(deps, stage);
   const parentRows = items.acceptedRows(stage.parent_key);
   if (parentRows.length === 0 || !spec.parent_binding) return { reason: "no_parents", aborted: null };
   let last: StopReason = "source_exhausted";
@@ -144,7 +146,7 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
         if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
         const parentId = String(parent.id);
         // «ALL THE COMMENTS» (S1 item 1.10): each parent is read to its OWN counter, not to an equal share
-        const parentCap = shareById ? shareById.get(parentId) ?? 0 : readAll ? ownChildCount(parent) ?? cap : cap;
+        const parentCap = shareById ? shareById.get(parentId) ?? 0 : readAll ? Math.min(ownChildCount(parent) ?? cap, Number.isFinite(per) ? per : Number.POSITIVE_INFINITY) : cap;
         if (shareById && parentCap <= 0) break;
         // A PARENT THAT SAYS IT HAS NO CHILD IS NOT READ (audit 2026-11 gap G10, live: 9 of 108 paid comment reads returned nothing): its own count field (comments, replies, reviews) is 0, so no paid read is made. It is replaced by a spare parent the same way a parent
         // the source answered nothing for is, or skipped when none is left. A parent that gives no count at all is read as before.
@@ -267,6 +269,31 @@ const WEBSITE_PARAM = /^(website|domain|site|url|homepage|web|company_?(website|
 export const ownChildCount = (row: Row): number | null => childCountOf(row);
 
 /** The next spare parent: a match the parent stage checked and kept beyond its volume, never read for children, from the same named source as the parent it replaces (a named source's share is kept). Most children first when the rows say it, else the source's order. */
+/**
+ * THE PINNED PARENTS (S1 complete count): the plan's promised count was computed from the counters of the parents it names (`parent_pins`). The parent stage read its listing again at execution, and a post published in between pushes the planned ones down: each pinned
+ * parent that the listing still carried (accepted, or kept as a spare) takes the place of an accepted parent that is not pinned, through the same swap the engine already uses. A pinned parent the listing no longer carries leaves the live parent in place: what exists is
+ * then delivered, never more than promised.
+ */
+async function alignPinnedParents(deps: EngineDeps, stage: Stage): Promise<void> {
+  const { items } = deps;
+  const parentKey = stage.parent_key!;
+  const pins = new Set(stage.parent_pins ?? []);
+  const accepted = items.acceptedRows(parentKey);
+  const have = new Set(accepted.map((r) => String(r.id)));
+  const spares = new Map(items.excludedItems(parentKey).filter((i) => i.reason === "target_reached" && i.row).map((i) => [i.id, i] as const));
+  const outs = accepted.filter((r) => !pins.has(String(r.id)));
+  let changed = false;
+  for (const id of pins) {
+    if (have.has(id)) continue;
+    const spare = spares.get(id);
+    const out = outs.shift();
+    if (!spare || !out) continue;
+    await items.commit([{ t: "swap", stage: parentKey, out: String(out.id), in: id }]);
+    changed = true;
+  }
+  if (changed) await items.mirror(parentKey);
+}
+
 function spareParentFor(items: ItemStore, parentKey: string, childKey: string, out: Row): { id: string; row: Row } | null {
   const src = (r: Row): string => String(r[SOURCE_KEY] ?? "");
   // a spare that says it has no child is no replacement (the same rule as for the parent it takes the place of)
