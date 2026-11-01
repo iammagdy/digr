@@ -74,22 +74,22 @@ describe("peopleAndContactAdvice", () => {
     expect(issues).toEqual([]);
   });
 
-  it("phones asked, no phone column, no phone source ever sampled: refused, naming the phone sources", () => {
+  // CHANGED (owner direction 2026-11-01): the next three tests asked the planner to plan, sample or excuse the phone for a delivered people stage; the phone finder step is now added to that stage by code (contactFinders.ts), so no advice is given
+  it("phones asked, no phone column, no phone source ever sampled: no advice, the phone finder step is added by code", () => {
     const issues = peopleAndContactAdvice(input({ stages: [companiesStage, peopleStage("blitzapi.people.employee-finder")], called: [["blitzapi.people.employee-finder", 5]] }));
-    expect(text(issues)).toContain("phone");
-    expect(text(issues)).toContain("blitzapi.people.phone.find");
+    expect(issues).toEqual([]);
   });
-  it("a phone source gave a number: the phone is in the plan, not dropped", () => {
+  it("a phone source gave a number: no advice, the phone is in the plan by code", () => {
     const issues = peopleAndContactAdvice(input({ stages: [companiesStage, peopleStage("blitzapi.people.employee-finder")], called: [["blitzapi.people.employee-finder", 5], ["blitzapi.people.phone.find", 1], ["quickenrich.people.phone.find", 0]], assumptions: ["التليفونات غير متاحة"] }));
-    expect(text(issues)).toMatch(/gave (a number|rows)/);
+    expect(issues).toEqual([]);
   });
   it("two phone sources tried and none gave a number, and the plan says so honestly: accepted", () => {
     const issues = peopleAndContactAdvice(input({ stages: [companiesStage, peopleStage("blitzapi.people.employee-finder")], called: [["blitzapi.people.employee-finder", 5], ["blitzapi.people.phone.find", 0], ["quickenrich.people.phone.find", 0]], assumptions: ["لم يعطِ أي مصدر جرّبناه أرقام تليفون لهؤلاء المسؤولين، فلن تظهر في الملف"] }));
     expect(issues).toEqual([]);
   });
-  it("two phone sources tried, none gave a number, and the card does not say so: refused until it does (never dropped silently)", () => {
+  it("two phone sources tried, none gave a number, and the card does not say so: no advice, the finder step still runs in the approved job", () => {
     const issues = peopleAndContactAdvice(input({ stages: [companiesStage, peopleStage("blitzapi.people.employee-finder")], called: [["blitzapi.people.employee-finder", 5], ["blitzapi.people.phone.find", 0], ["quickenrich.people.phone.find", 0]] }));
-    expect(text(issues)).toContain("say honestly");
+    expect(issues).toEqual([]);
   });
   it("a phone column in the plan (a people stage's or the company's own) satisfies the request", () => {
     const withPhone = peopleStage("blitzapi.people.employee-finder", [col("name", "الاسم"), col("title", "المسمى"), col("phone", "التليفون", "phone")]);

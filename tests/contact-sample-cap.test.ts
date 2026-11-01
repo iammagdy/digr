@@ -144,29 +144,29 @@ describe("contact-finder samples are capped, cheapest first, one per kind", () =
 
 describe("what the planner is told matches what the gateway enforces", () => {
   const prompt = readFileSync(new URL("../agent/prompts/system.md", import.meta.url), "utf8");
-  it("the system prompt no longer asks for two phone finder samples: one sample per kind, the cheapest ranked, within a quarter of the planning budget; the cells are filled only if found in the approved job", () => {
+  it("the system prompt no longer asks for two phone finder samples: one sample per kind, the cheapest ranked, within a quarter of the planning budget; the finder step is added by code (owner direction 2026-11-01, was: cells filled only if found)", () => {
     expect(prompt).not.toMatch(/sample at least two phone finders/i);
     expect(prompt).toMatch(/one sample per kind/i);
     expect(prompt).toMatch(/quarter of the planning budget/i);
-    expect(prompt).toMatch(/only if found during the approved job/i);
+    expect(prompt).toMatch(/FINDER STEPS ARE ADDED BY CODE/);
   });
-  it("the plan check's advice about phones says the gateway allows one phone finder sample, so a refused finder is not chased", () => {
+  // CHANGED (owner direction 2026-11-01): a delivered people stage gets its phone finder step by code, so the plan check no longer sends the planner back about phones
+  it("the plan check does not send the planner back about phones when a delivered people stage is there: the phone finder step is added by code", () => {
     const plan = { stages: [{ key: "companies", title_ar: "الشركات", endpoint_id: "tomba.companies.search.reveal", parent_key: null, deliver: true, columns: [{ key: "name", title_ar: "الاسم" }] }, { key: "people", title_ar: "الأشخاص", endpoint_id: "blitzapi.people.waterfall-icp", parent_key: "companies", deliver: true, columns: [{ key: "full_name", title_ar: "الاسم" }] }] };
     const issues = peopleAndContactAdvice({
       plan, requestText: request, capabilityOf: (id: string) => (id.includes("waterfall") ? "people.search" : "companies.search"), peopleSources: ["blitzapi.people.waterfall-icp"], phoneSources: ["blitzapi.people.phone.find", "quickenrich.people.phone.find"],
       calls: new Map([["blitzapi.people.waterfall-icp", { rows: 5 }]]),
     } as never);
-    expect(issues.join(" ")).toMatch(/one phone finder/i);
-    expect(issues.join(" ")).toMatch(/approved job/i);
+    expect(issues).toEqual([]);
   });
-  it("one phone finder tried (or refused by the gateway) is enough: the plan is accepted when it says honestly the phone cells are filled only if found; it is sent back only when it says nothing", () => {
+  it("one phone finder tried (or refused by the gateway) is enough: the plan is accepted with or without a sentence about it (the finder step is added by code)", () => {
     const plan = (assumptions: string[]) => ({ assumptions_ar: assumptions, stages: [{ key: "companies", title_ar: "الشركات", endpoint_id: "tomba.companies.search.reveal", parent_key: null, deliver: true, columns: [{ key: "name", title_ar: "الاسم" }] }, { key: "people", title_ar: "الأشخاص", endpoint_id: "blitzapi.people.waterfall-icp", parent_key: "companies", deliver: true, columns: [{ key: "full_name", title_ar: "الاسم" }] }] });
     const advice = (assumptions: string[]) => peopleAndContactAdvice({
       plan: plan(assumptions), requestText: request, capabilityOf: (id: string) => (id.includes("waterfall") ? "people.search" : "companies.search"), peopleSources: ["blitzapi.people.waterfall-icp"], phoneSources: ["blitzapi.people.phone.find", "quickenrich.people.phone.find"],
       calls: new Map([["blitzapi.people.waterfall-icp", { rows: 5 }], ["tomba.people.phone.find", { rows: 0 }], ["blitzapi.people.phone.find", { rows: 0 }]]),
     } as never);
     expect(advice(["أرقام التليفون تُضاف فقط إذا وُجدت أثناء تنفيذ المهمة المعتمدة."])).toEqual([]);
-    expect(advice([]).join(" ")).toContain("say honestly");
+    expect(advice([])).toEqual([]);
   });
 });
 
