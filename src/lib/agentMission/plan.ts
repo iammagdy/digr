@@ -21,7 +21,7 @@ import type { DateWindow } from "./dateWindow";
 import { unresolvedSourcesLineAr } from "./namedSources";
 import { APPROX_DATES_CARD_LINE_AR } from "./relativeDates";
 import { companyRuleTerms, isCompanyStage, isEntityStage, requestNamesSector, sectorEnglishWords, sectorWordsOf } from "./entities";
-import { placeEntry, placeLabelsAr, placesInText } from "./places";
+import { placeEntry, placeKeysOfValues, placeLabelsAr, placesInText } from "./places";
 import { excludesGovernment } from "./government";
 import { isMediaCapability, keySaysMedia, rawMediaProof, requestedMedia, type MediaKind } from "./mediaProof";
 import { assumptionLinesShown, CHILD_RAW_FILTER_KINDS, defaultLanguageOf, filterVerdict, filterLabelAr, filterLineAr, findFilterFields, isEnabled, kindsPromisedBy, parseFilters, promiseIssues, resolveFilters, type StageFilter } from "./filters";
@@ -561,13 +561,13 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
     const placeFilters = resolvedBase.filters.filter((f) => f.kind === "place" && isEnabled(f));
     let filtersOut = resolvedBase.filters;
     if (askedPlaces.length > 0 || placeFilters.length > 0) {
-      const named = askedPlaces.length > 0 ? askedPlaces : placeFilters.flatMap((f) => placesInText((f.values ?? []).join(" ")));
+      const named = askedPlaces.length > 0 ? askedPlaces : placeFilters.flatMap((f) => (f.places && f.places.length > 0 ? f.places : placeKeysOfValues(f.values ?? [])).map((k) => placeEntry(k)).filter((e): e is NonNullable<typeof e> => e !== null));
       const keys = [...new Set(named.map((e) => e.key))].filter((k) => placeEntry(k));
       if (keys.length > 0) {
         if (fields.placeFields.length === 0) issues.push(`${label}: the card promises items in ${placeLabelsAr(named).join(", ")}, so every item must carry evidence of it from a mapped field (country, city, address, website domain or phone number); the mapping gives none. Map such a field in your run_code on every row, or finish with cannot_serve if the source has none`);
         else {
           const existing = filtersOut.find((f) => f.kind === "place");
-          const placeFilter: StageFilter = { ...(existing ?? { kind: "place" as const }), kind: "place", field: existing?.field ?? fields.place ?? fields.placeFields[0], fields: fields.placeFields, places: keys, values: askedPlaces.length > 0 ? placeLabelsAr(named) : existing?.values ?? placeLabelsAr(named) };
+          const placeFilter: StageFilter = { ...(existing ?? { kind: "place" as const }), kind: "place", field: existing?.field ?? fields.place ?? fields.placeFields[0], fields: fields.placeFields, places: keys, values: placeLabelsAr(named) };
           delete placeFilter.enabled;
           filtersOut = [...filtersOut.filter((f) => f.kind !== "place"), placeFilter];
         }

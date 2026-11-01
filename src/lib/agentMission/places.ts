@@ -348,6 +348,23 @@ export function countryOfRequestText(value: unknown): string | null {
   }
   return null;
 }
+/**
+ * THE PLACES A FILTER'S VALUES NAME, in any form a planner or a customer writes them: an ISO code («EG», «EGY»), a name in Arabic or Latin («مصر», «Egypt»), a city, or a nationality word («مصرية»). The keys of the table («EG», «EG:cairo»), in order, none for a value that
+ * names no known place. Live G1 round 2 (msn_9dc8f2db86bc5cf4959b): the planner wrote the place filter's value as «EG»; a text search cannot find a two-letter code, so the filter stayed a raw text comparison with the CITY cell and left 240 of 242 Egyptian companies out.
+ * Used only to READ a place a filter already promises: the request's own nationality word never creates a filter (the phone helper's country fallback is not a row rule).
+ */
+export function placeKeysOfValues(values: ReadonlyArray<unknown>): string[] {
+  const keys: string[] = [];
+  for (const v of values) {
+    const text = String(v ?? "").trim();
+    if (!text) continue;
+    const iso = isoCountryOf(text);
+    const found = iso ? [iso] : placesInText(text).map((e) => e.key);
+    if (found.length === 0) { const c = countryOfRequestText(text); if (c) found.push(c); }
+    for (const k of found) if (byKey.has(k) && !keys.includes(k)) keys.push(k);
+  }
+  return keys;
+}
 /** The countries whose international calling code starts these digits (the number without «+» or «00»), the longest code first: «1» is shared by the US and Canada. Empty when no country of the table has that code. */
 export function countriesOfCallingDigits(digits: string): string[] {
   const d = String(digits ?? "").replace(/\D/g, "");
