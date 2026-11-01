@@ -558,7 +558,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   };
   // WHAT THE SHORT STAGE FOUND AND LEFT OUT, from its recorded counts, when our own row rules left out what the source gave (never «the source gave no more» for rows it did give)
   const shortCounts = shortStage ? snap.counts(shortStage.key) : null;
-  const shortTruth = shortStage && shortCounts ? stageTruthBodyAr({ found: shortCounts.found, duplicates: shortCounts.duplicates, delivered: shortCounts.accepted, excludedByReason: shortCounts.excludedByReason as Record<string, number>, pending: shortCounts.pending, reviewStop: checked.stop, stop: snap.stage(shortStage.key).stop, people: isPeopleStage(shortStage) }) : null;
+  const shortTruth = shortStage && shortCounts ? stageTruthBodyAr({ found: shortCounts.found, duplicates: shortCounts.duplicates, delivered: shortCounts.accepted, excludedByReason: shortCounts.excludedByReason as Record<string, number>, pending: shortCounts.pending, reviewStop: checked.stop, stop: snap.stage(shortStage.key).stop, people: isPeopleStage(shortStage), noun: itemNounOf(shortStage.title_ar) }) : null;
   const shortClause = shortTruth ? `إذ ${shortTruth}` : shortfallClauseAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort);
   const reason = ourFailure ? INTERNAL_FAILURE_AR
     : delivered > 0 && deliveredTop < target ? (shortTruth ? `لم يكتمل العدد المطلوب ${shortClause}، ولم يُخصم إلا مقابل ما سُلّم.` : shortfallFromStopAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort))

@@ -1,4 +1,4 @@
-import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, AGENT_PEOPLE_PAGES_DEFAULT, AGENT_PEOPLE_PAGES_MAX, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE, NAMES_STEP_USD_PER_PERSON } from "./constants";
+import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, AGENT_REPLIES_PER_COMMENT_DEFAULT, AGENT_REPLIES_PER_COMMENT_MAX, AGENT_PEOPLE_PAGES_DEFAULT, AGENT_PEOPLE_PAGES_MAX, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE, NAMES_STEP_USD_PER_PERSON } from "./constants";
 import { CONTACT_KINDS, requestWantsContacts, type ContactKind } from "./contacts";
 import { isPeopleStage } from "./people";
 import { buildCompanySteps, buildContactSteps, type ContactAids, type ContactStep, type FinderInfo, type FinderKind } from "./contactFinders";
@@ -21,7 +21,7 @@ import type { DateWindow } from "./dateWindow";
 import { unresolvedSourcesLineAr } from "./namedSources";
 import { APPROX_DATES_CARD_LINE_AR } from "./relativeDates";
 import { companyRuleTerms, isCompanyStage, isEntityStage, requestNamesSector, sectorEnglishWords, sectorWordsOf } from "./entities";
-import { placeEntry, placeLabelsAr, placesInText } from "./places";
+import { placeEntry, placeKeysOfValues, placeLabelsAr, placesInText } from "./places";
 import { excludesGovernment } from "./government";
 import { isMediaCapability, keySaysMedia, rawMediaProof, requestedMedia, type MediaKind } from "./mediaProof";
 import { assumptionLinesShown, CHILD_RAW_FILTER_KINDS, defaultLanguageOf, filterVerdict, filterLabelAr, filterLineAr, findFilterFields, isEnabled, kindsPromisedBy, parseFilters, promiseIssues, resolveFilters, type StageFilter } from "./filters";
@@ -173,6 +173,9 @@ export interface PricedStage extends ProposedStage {
   replies_of?: string;
   /** The replies a comment is expected to have (the sample's mean, capped): the planned rows follow it when the comments' count is edited. */
   replies_per_comment_expected?: number;
+  /** The sampled comments' own reply counters (each capped at the most a comment may be read for) and the price of one call of the reply source: with them the replies planned and their price follow an edit of the comments' number or of the replies per comment, by code. */
+  replies_sample_counts?: number[];
+  replies_call_usd?: number;
   sample_examined?: number;
   sample_matching?: number;
 }
@@ -561,13 +564,13 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
     const placeFilters = resolvedBase.filters.filter((f) => f.kind === "place" && isEnabled(f));
     let filtersOut = resolvedBase.filters;
     if (askedPlaces.length > 0 || placeFilters.length > 0) {
-      const named = askedPlaces.length > 0 ? askedPlaces : placeFilters.flatMap((f) => placesInText((f.values ?? []).join(" ")));
+      const named = askedPlaces.length > 0 ? askedPlaces : placeFilters.flatMap((f) => (f.places && f.places.length > 0 ? f.places : placeKeysOfValues(f.values ?? [])).map((k) => placeEntry(k)).filter((e): e is NonNullable<typeof e> => e !== null));
       const keys = [...new Set(named.map((e) => e.key))].filter((k) => placeEntry(k));
       if (keys.length > 0) {
         if (fields.placeFields.length === 0) issues.push(`${label}: the card promises items in ${placeLabelsAr(named).join(", ")}, so every item must carry evidence of it from a mapped field (country, city, address, website domain or phone number); the mapping gives none. Map such a field in your run_code on every row, or finish with cannot_serve if the source has none`);
         else {
           const existing = filtersOut.find((f) => f.kind === "place");
-          const placeFilter: StageFilter = { ...(existing ?? { kind: "place" as const }), kind: "place", field: existing?.field ?? fields.place ?? fields.placeFields[0], fields: fields.placeFields, places: keys, values: askedPlaces.length > 0 ? placeLabelsAr(named) : existing?.values ?? placeLabelsAr(named) };
+          const placeFilter: StageFilter = { ...(existing ?? { kind: "place" as const }), kind: "place", field: existing?.field ?? fields.place ?? fields.placeFields[0], fields: fields.placeFields, places: keys, values: placeLabelsAr(named) };
           delete placeFilter.enabled;
           filtersOut = [...filtersOut.filter((f) => f.kind !== "place"), placeFilter];
         }
@@ -726,7 +729,7 @@ export interface PlanEditorView {
     per_parent?: number;
     per_parent_label_ar?: string;
     /** The comments stage only: whether the replies of its comments are in the plan (priced in addition), and the label of the switch. */
-    replies?: { on: boolean; label_ar: string };
+    replies?: { on: boolean; label_ar: string; /** The most replies read for one comment (editable while the replies are on) and the most the customer may set. */ per_comment?: number; per_comment_max?: number; per_comment_label_ar?: string };
     /** A people stage read in DEPTH: the pages of the source read for each parent (the customer may lower it to reduce the price, or raise it up to `pages_max`). */
     pages?: number;
     pages_max?: number;
@@ -763,7 +766,7 @@ export function planEditorView(plan: PricedPlan): PlanEditorView {
       const offReplies = plan.replies_off?.replies_of === s.key;
       return {
         key: s.key, title_ar: s.title_ar, target: s.planned_rows,
-        ...(hasReplies || offReplies ? { replies: { on: hasReplies, label_ar: "تضمين الردود على التعليقات في الملف (يدخل في السعر)" } } : {}),
+        ...(hasReplies || offReplies ? { replies: { on: hasReplies, label_ar: "تضمين الردود على التعليقات في الملف (يدخل في السعر)", ...(hasReplies ? { per_comment: plan.stages.find((x) => x.replies_of === s.key)!.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_DEFAULT, per_comment_max: AGENT_REPLIES_PER_COMMENT_MAX, per_comment_label_ar: "عدد الردود لكل تعليق" } : {}) } } : {}),
         ...(s.parent_key !== null && s.deliver && Number(s.pages_per_parent) >= 1 && s.role_preference ? { pages: Math.floor(Number(s.pages_per_parent)), pages_max: AGENT_PEOPLE_PAGES_MAX, pages_label_ar: `عدد صفحات البحث لكل ${itemNounOf(plan.stages.find((p) => p.key === s.parent_key)?.title_ar ?? "").singular}` } : {}),
         ...(s.parent_key !== null && s.deliver && s.per_parent_rows ? { per_parent: s.per_parent_rows, per_parent_label_ar: `عدد «${s.title_ar}» لكل ${itemNounOf(plan.stages.find((p) => p.key === s.parent_key)?.title_ar ?? "").singular}` } : {}),
         columns: [...s.columns.filter((c) => !isInternalColumn(c)).map((c) => ({ key: c.key, title_ar: c.title_ar, on: true, locked: locked.has(c.key) })), ...(s.hidden_columns ?? []).map((c) => ({ key: c.key, title_ar: c.title_ar, on: false, locked: false }))],

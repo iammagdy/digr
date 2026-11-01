@@ -2,7 +2,7 @@ import { toArabicDigits } from "../arabicDigits";
 import { itemProvesMedia, mediaFieldsOf, mediaLabelAr, mediaLineAr, type MediaKind } from "./mediaProof";
 import { parseMoment } from "./dateCells";
 import { governmentVerdict, excludesGovernment, EXCLUDES_GOVERNMENT } from "./government";
-import { isPlaceEvidenceKey, placeVerdict } from "./places";
+import { isPlaceEvidenceKey, placeEntry, placeKeysOfValues, placeLabelsAr, placeVerdict } from "./places";
 import { matchesAnyNamedSource } from "./namedSources";
 import { normalizeText } from "./relevance";
 import { parseRelativeAge, rangeOverlaps } from "./relativeDates";
@@ -223,8 +223,11 @@ export function filterVerdict(filters: ReadonlyArray<StageFilter> | undefined, m
       }
       case "place": {
         // WITH named places: the item must carry evidence of one of them from a mapped field; another country or no evidence is not delivered
-        if (f.places && f.places.length > 0) {
-          if (placeVerdict(f.places, mapped, f.fields && f.fields.length > 0 ? f.fields : f.field ? [f.field] : [], { bySource: f.by_source === true }) !== "pass") return "filter_place";
+        // a filter stored with only values (a plan written before the places were read from them) names its places here, by the same reading; the evidence is every place field the item carries (country, city, address, website, phone), never one cell
+        const places = f.places && f.places.length > 0 ? f.places : placeKeysOfValues(f.values ?? []);
+        if (places.length > 0) {
+          const fields = f.fields && f.fields.length > 0 ? f.fields : [...new Set([...(f.field ? [f.field] : []), ...Object.keys(mapped).filter((k) => isPlaceEvidenceKey(k))])];
+          if (placeVerdict(places, mapped, fields, { bySource: f.by_source === true }) !== "pass") return "filter_place";
           break;
         }
         const where = f.field ? normalizeText(String(mapped[f.field] ?? "")) : "";
@@ -320,11 +323,17 @@ export function resolveFilters(declared: ReadonlyArray<StageFilter>, fields: Fil
         if (!f.media || !g.fields.some((k) => (f.media === "video" ? /video|reel/i : /image|photo|picture|display|img/i).test(k)) ) problem = `${label}: the card promises ${f.media === "image" ? "images" : "videos"}, so every item must carry the proof from a mapped field (the source's ${f.media === "image" ? "image or photo" : "video or reel"} field, a ${f.media === "image" ? "photo" : "video"} address, or a type that says so); the mapping gives none. Map the item's own ${f.media === "image" ? "image" : "video"} field on every row, sample a source whose items ARE ${f.media === "image" ? "images" : "videos"} (a video search, a page's reels), or ask the customer whether posts without ${f.media === "image" ? "an image" : "a video"} are fine`;
         break;
       }
-      case "place":
+      case "place": {
         g.field = f.field ?? fields.place ?? fields.placeFields[0] ?? undefined;
-        if (f.places && f.places.length > 0) g.fields = [...new Set([...(g.field ? [g.field] : []), ...fields.placeFields])];
+        // THE PLACE THE VALUES NAME, read by code in any form (an ISO code, a name, a city): a filter with only values is a text comparison with one cell, which a city written in Latin letters («al qahirah») can never satisfy for «EG»
+        if (!(f.places && f.places.length > 0)) {
+          const keys = placeKeysOfValues(f.values ?? []);
+          if (keys.length > 0) { g.places = keys; g.values = placeLabelsAr(keys.map((k) => placeEntry(k)).filter((e): e is NonNullable<typeof e> => e !== null)); }
+        }
+        if (g.places && g.places.length > 0) g.fields = [...new Set([...(g.field ? [g.field] : []), ...fields.placeFields])];
         if (!g.field) problem = `${label}: a place filter needs a mapped place field (city, country, address ...); the mapping gives none`;
         break;
+      }
     }
     if (g.field === undefined) delete g.field;
     if (g.fields !== undefined && g.fields.length === 0) delete g.fields;

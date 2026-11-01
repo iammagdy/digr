@@ -137,6 +137,12 @@ export const reasonTextAr = (reason: string): string => REASON_TEXT_AR[reason] ?
 
 /** The reasons that are OUR row rules (the shape of a row), not the customer's own criteria: when they left out what the source gave, «the source gave no more» is not the truth. */
 const OUR_ROW_RULE_REASONS: ReadonlyArray<string> = ["no_verified_contact", "not_a_person", "unknown_parent"];
+/**
+ * EVERY FILTER OF THE PLAN IS OURS TOO (golden run round 2, G1: 242 companies found, the place filter left 240 out, and the closing sentence said «the source gave no more»): a row a filter of the plan removed (place, period, account, media, replies, reposts, government bodies) or
+ * a person who is not at the company is counted and said, for every stage. The language filter keeps its own sentence (shortfallClauseAr) and the topic check keeps «this is all that matched».
+ */
+const OUR_FILTER_REASONS: ReadonlyArray<string> = ["filter_place", "filter_period", "filter_account", "filter_media", "filter_reply", "filter_repost", "filter_government", "not_at_company"];
+const LEFT_OUT_BY_US: ReadonlyArray<string> = [...OUR_ROW_RULE_REASONS, ...OUR_FILTER_REASONS];
 
 export interface StageTruthFacts {
   /** Items the source gave for the stage (repeats included). */
@@ -159,7 +165,7 @@ export interface StageTruthFacts {
  * WHAT THE STAGE THAT FELL SHORT REALLY FOUND AND LEFT OUT, from the counts the run recorded, in plain Arabic: «وُجد ٣١ شخصًا، ولم يُسلَّم ٣١: ٣١ لا اسم شخص فيه ولا بيانات تواصل موثّقة». Live re-test 2026-10-31 (A1, A2): the delivered file said
  * «سُلّم ٠ من ١٠ لأن المصدر لم يعد يعطي نتائج أخرى لهذا الطلب» although the source had given 31 and 41 people and OUR row rule had left them all out.
  *
- * Returns null (the caller keeps the older, true sentence by the recorded stop reason) when the source gave nothing, or when none of the items the source gave was left out by one of OUR row rules (everything it gave was delivered, or only what
+ * Returns null (the caller keeps the older, true sentence by the recorded stop reason) when the source gave nothing, or when none of the items the source gave was left out by one of OUR row rules or filters (everything it gave was delivered, or only what
  * does not match the request was left out: then «the source gave no more matching results» is true).
  */
 export function stageTruthBodyAr(t: StageTruthFacts): string | null {
@@ -168,7 +174,7 @@ export function stageTruthBodyAr(t: StageTruthFacts): string | null {
   const distinct = Math.max(0, found - duplicates);
   if (distinct <= 0) return null;
   const byReason = Object.entries(t.excludedByReason).filter(([k, n]) => k !== "target_reached" && Number(n) > 0).map(([k, n]) => [k, Math.floor(Number(n))] as const);
-  if (!byReason.some(([k]) => OUR_ROW_RULE_REASONS.includes(k))) return null;
+  if (!byReason.some(([k]) => LEFT_OUT_BY_US.includes(k))) return null;
   const noun = t.people ? knownItemNoun("شخص") ?? GENERIC_ITEM_NOUN : t.noun ?? GENERIC_ITEM_NOUN;
   const parts = [`وُجد ${countAr(distinct, noun)}${duplicates > 0 ? ` (بعد إزالة ${formatAr(duplicates)} مكررًا)` : ""}`];
   const leftN = byReason.reduce((n, [, c]) => n + c, 0);

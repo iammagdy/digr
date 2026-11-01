@@ -67,7 +67,7 @@ export function threadCounterLinesOfPlan(plan: Pick<PricedPlan, "stages">, rowsB
     const replyStage = plan.stages.find((x) => x.replies_of === stage.key);
     const replies = replyStage ? rowsByStage[replyStage.key] ?? [] : [];
     const commentToParent = new Map<string, string>(comments.map((c) => [String(c.id), String(c.parent_id ?? "")] as const));
-    const capped = new Set<string>(comments.filter((c) => (childCountOf(c) ?? 0) > AGENT_REPLIES_PER_COMMENT_MAX).map((c) => String(c.parent_id ?? "")));
+    const capped = new Set<string>(comments.filter((c) => (childCountOf(c) ?? 0) > (replyStage?.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_MAX)).map((c) => String(c.parent_id ?? "")));
     const lines = parentCounterLinesAr({ parentNoun: nounOf(parentStage.title_ar) ?? "عنصر", parents, commentParentIds: comments.map((c) => String(c.parent_id ?? "")), replyParentCommentIds: replies.map((r) => String(r.parent_id ?? "")), commentToParent, cappedParents: capped });
     for (const l of lines) { counterLines.push(l.counterLine); if (l.limitLine) limitLines.push(l.limitLine); }
   }

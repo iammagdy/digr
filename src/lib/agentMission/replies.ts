@@ -1,7 +1,7 @@
 import type { CatalogEndpoint, TregCatalog } from "../treg/catalog";
 import { rankedHelpers } from "./contactFinders";
 import type { StatsMap } from "./sourceRanking";
-import { AGENT_MAX_DELIVERED_ROWS, AGENT_REPLIES_PER_COMMENT_MAX, AGENT_REPLIES_ROWS_PER_CALL_ASSUMED, AGENT_REPLIES_UNKNOWN_PER_COMMENT } from "./constants";
+import { AGENT_MAX_DELIVERED_ROWS, AGENT_REPLIES_PER_COMMENT_DEFAULT, AGENT_REPLIES_PER_COMMENT_MAX, AGENT_REPLIES_ROWS_PER_CALL_ASSUMED, AGENT_REPLIES_UNKNOWN_PER_COMMENT } from "./constants";
 import { childCountOf } from "./childCount";
 import { isPeopleStage } from "./people";
 import { stagePriceInputs, type PricedPlan, type PricedStage } from "./plan";
@@ -197,14 +197,37 @@ export interface RepliesDeps {
   sampleRowsOf: (stage: PricedStage) => Promise<Row[] | null>;
 }
 
-/** What the sampled comments say about their replies: the mean replies a comment has (capped) and the calls that takes; null when no sampled row carries a counter. */
-export function expectedRepliesOf(sample: ReadonlyArray<Row>, cap: number = AGENT_REPLIES_PER_COMMENT_MAX): { perComment: number; callsPerComment: number; counted: boolean } {
-  const known = sample.map(childCountOf).filter((n): n is number => n !== null);
-  if (known.length === 0) return { perComment: AGENT_REPLIES_UNKNOWN_PER_COMMENT, callsPerComment: Math.ceil(AGENT_REPLIES_UNKNOWN_PER_COMMENT / AGENT_REPLIES_ROWS_PER_CALL_ASSUMED), counted: false };
-  const capped = known.map((n) => Math.min(n, cap));
-  const perComment = capped.reduce((a, b) => a + b, 0) / known.length;
-  const callsPerComment = capped.reduce((a, n) => a + (n > 0 ? Math.ceil(n / AGENT_REPLIES_ROWS_PER_CALL_ASSUMED) : 0), 0) / known.length;
+/** What the sampled comments say about their replies: the mean replies a comment has (capped at `cap`, the number read for each comment) and the calls that takes; not counted when no sampled comment carries a counter. */
+export function expectedFromCounts(counts: ReadonlyArray<number>, cap: number = AGENT_REPLIES_PER_COMMENT_DEFAULT): { perComment: number; callsPerComment: number; counted: boolean } {
+  if (counts.length === 0) return { perComment: AGENT_REPLIES_UNKNOWN_PER_COMMENT, callsPerComment: Math.ceil(AGENT_REPLIES_UNKNOWN_PER_COMMENT / AGENT_REPLIES_ROWS_PER_CALL_ASSUMED), counted: false };
+  const capped = counts.map((n) => Math.min(Math.max(0, n), cap));
+  const perComment = capped.reduce((a, b) => a + b, 0) / counts.length;
+  const callsPerComment = capped.reduce((a, n) => a + (n > 0 ? Math.ceil(n / AGENT_REPLIES_ROWS_PER_CALL_ASSUMED) : 0), 0) / counts.length;
   return { perComment, callsPerComment, counted: true };
+}
+
+/** The reply counters of the sampled comments (null counters are not counters). */
+export const replyCountersOf = (sample: ReadonlyArray<Row>): number[] => sample.map(childCountOf).filter((n): n is number => n !== null);
+
+export function expectedRepliesOf(sample: ReadonlyArray<Row>, cap: number = AGENT_REPLIES_PER_COMMENT_DEFAULT): { perComment: number; callsPerComment: number; counted: boolean } {
+  return expectedFromCounts(replyCountersOf(sample), cap);
+}
+
+/**
+ * THE REPLIES OF A COMMENTS STAGE FOR A GIVEN NUMBER PER COMMENT, by code: the replies planned (the expected replies per comment over the comments planned, at most `perComment` for each, at most what the job may deliver) and the cost of one planned row (the calls they take at the price of one call of
+ * the source). Used when the plan is built and again when the customer edits the comments' number or the replies per comment, so the one rule prices both. A plan stored without the sampled counters keeps its own expected number per comment (capped at the new number).
+ */
+export function repliesEstimateFor(r: Pick<PricedStage, "replies_sample_counts" | "replies_per_comment_expected" | "replies_call_usd" | "measured_cost_per_row_usd" | "planned_rows" | "per_parent_rows">, commentsRows: number, perComment: number, deliveredElsewhere: number): { rows: number; perCommentExpected: number; costPerRowUsd: number } {
+  const counts = r.replies_sample_counts && r.replies_sample_counts.length > 0 ? r.replies_sample_counts : [r.replies_per_comment_expected ?? 0];
+  const now = expectedFromCounts(counts, perComment);
+  const rows = Math.max(1, plannedRepliesFor(commentsRows, now.perComment, deliveredElsewhere, perComment));
+  // the price of one call: stored by code when the stage was built; an older stored stage gives it back from its own cost over the calls it was planned with
+  let callUsd = r.replies_call_usd;
+  if (callUsd === undefined) {
+    const before = expectedFromCounts(counts, Math.max(1, r.per_parent_rows ?? perComment));
+    callUsd = (Math.max(0, r.measured_cost_per_row_usd) * Math.max(1, r.planned_rows)) / Math.max(1, commentsRows * before.callsPerComment);
+  }
+  return { rows, perCommentExpected: now.perComment, costPerRowUsd: (callUsd * Math.max(1, commentsRows * now.callsPerComment)) / rows };
 }
 
 /** The planned replies of a comments stage of `commentsRows` comments: the expected replies per comment over all of them, at least 1, never above the cap per comment, never above what the job may deliver in all. */
@@ -231,20 +254,23 @@ export async function withRepliesStages(planIn: PricedPlan, deps: RepliesDeps): 
     if (sources.length === 0) { plan = status("no_source"); continue; }
     const source = sources[0];
     const sample = (await deps.sampleRowsOf(comments)) ?? comments.sample_rows;
-    const expected = expectedRepliesOf(sample);
+    // THE DEFAULT NUMBER PER COMMENT (owner decision): ten, whatever the sample's counters say; the customer may raise it to the cap or lower it in the plan editor
+    const perComment = AGENT_REPLIES_PER_COMMENT_DEFAULT;
+    const counters = replyCountersOf(sample);
+    const expected = expectedFromCounts(counters, perComment);
     // NEVER A BLIND PAID READ: without the comments' own reply counter nothing says which comment has replies, so every comment would be read for them. No counter in the sample: no replies stage (the card says so)
     if (!expected.counted) { plan = status("no_counter"); continue; }
     if (expected.perComment <= 0) { plan = status("none_found"); continue; }
     const delivered = plan.stages.filter((s) => s.deliver).reduce((n, s) => n + s.planned_rows, 0);
-    let planned = plannedRepliesFor(comments.planned_rows, expected.perComment, delivered);
+    let planned = plannedRepliesFor(comments.planned_rows, expected.perComment, delivered, perComment);
     if (planned < 1) { plan = status("no_room"); continue; }
     // the price of the stage: the calls the replies take (at the price of one call of the chosen source) over the replies planned; never below one call's price over the rows one call gives
     const stageOf = (rows: number): PricedStage => {
       const calls = Math.max(1, comments.planned_rows * expected.callsPerComment);
       return {
-        key: repliesKeyOf(comments.key), title_ar: `ردود ${comments.title_ar}`, endpoint_id: source.id, expected_rows: rows, parent_key: comments.key, per_parent_rows: AGENT_REPLIES_PER_COMMENT_MAX, deliver: true,
+        key: repliesKeyOf(comments.key), title_ar: `ردود ${comments.title_ar}`, endpoint_id: source.id, expected_rows: rows, parent_key: comments.key, per_parent_rows: perComment, deliver: true,
         columns: comments.columns.map((c) => ({ ...c })), sample_rows: [], measured_by: [], planned_rows: rows, measured_cost_per_row_usd: (source.usd * calls) / rows, measured_from_calls: [],
-        replies_of: comments.key, replies_per_comment_expected: expected.perComment,
+        replies_of: comments.key, replies_per_comment_expected: expected.perComment, replies_sample_counts: counters.slice(0, 100).map((n) => Math.min(Math.max(0, Math.floor(n)), AGENT_REPLIES_PER_COMMENT_MAX)), replies_call_usd: source.usd,
         engine: {
           endpoint_id: source.id, params: replyCallParams(source), cursor_param: source.cursorParam, map_code: buildReplyMapCode(replyColumnKeysOf(comments.columns)), map_file_id: "page",
           parent_binding: { param: source.commentParam, from: "id", also: [...(source.videoIdParam ? [{ param: source.videoIdParam, from: "id", grand: true as const }] : []), ...(source.urlParam && linkKey ? [{ param: source.urlParam, from: linkKey, grand: true as const }] : [])] },

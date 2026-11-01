@@ -1,4 +1,5 @@
-import { replay } from "./agentReplay";
+import { replay, REPLAY_USER } from "./agentReplay";
+import { editPlanForCustomer } from "../../src/lib/agentMission/customerActions";
 import { callIds, tregResult, type Results } from "./agentFakeWorld";
 import { aboutWords, firstOutputId } from "./agentRelevance";
 import type { FakeStep } from "../../agent/src/fakeDriver";
@@ -51,7 +52,7 @@ const planFlow = (o: { progress: string; words: string[]; platform?: string; cal
 
 export const idOfParams = (p: Record<string, unknown>): string => String(p.commentId ?? p.comment_id ?? "");
 
-export async function runG4(world: World = LIVE_WORLD, options: { sampleWithCounter?: boolean } = {}) {
+export async function runG4(world: World = LIVE_WORLD, options: { sampleWithCounter?: boolean; /** The replies read for each comment (default here: the cap of 50; the product default is 10). */ repliesPerComment?: number } = {}) {
   const counterOf = new Map<string, number>(Object.entries(world.commentsOf).flatMap(([v, list]) => list.map((n, k) => [cid(v, k), n] as const)));
   const videosPage = () => ({ output: { data: { videos: world.ownCounter.map((n, i) => ({ id: vid(i), url: link(i), caption: `${TOPIC} فيديو ${i}`, authorName: `creator${i % 7}`, createdUtc: 1788000000 + i, views: 1000 + i, likes: 50 + i, comments: n, shares: 3, saves: 1, durationSeconds: 30 })) } } });
   const commentsPage = (video: string) => ({ data: { comments: (world.commentsOf[video] ?? []).map((replies, k) => ({ cid: cid(video, k), text: `تعليق ${k} على ${TOPIC}`, user: { nickname: `viewer${k}` }, create_time: 1788100000 + k, digg_count: 10 + k, reply_comment_total: replies, comment_language: "ar", is_author_digged: false, cmt_sticker_struct: null })), cursor: (world.commentsOf[video] ?? []).length, has_more: 0 } });
@@ -92,6 +93,8 @@ export async function runG4(world: World = LIVE_WORLD, options: { sampleWithCoun
     }),
     execution: () => [],
     answers: [tregResult(videosPage(), 0.0005), tregResult(commentsPage(vid(1)), 0.001), ...Array.from({ length: 400 }, () => dispatch)] as never,
+    // CHANGED (golden run round 2, owner decision: the default is ten replies per comment): these replays are about whole threads (the live video's one comment carries 24 replies), so the customer raises the number per comment to the cap of fifty in the plan editor before approving
+    beforeApproval: async ({ client, missionId }) => { if (options.repliesPerComment !== 10) { const r = await editPlanForCustomer(client, { id: missionId, userId: REPLAY_USER, edits: { stages: [{ key: "comments", replies_per_comment: options.repliesPerComment ?? 50 }] } }); void r; /* a plan with no replies stage (no counter in the sample) has nothing to edit */ } },
   });
 }
 
