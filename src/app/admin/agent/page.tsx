@@ -5,6 +5,8 @@ import { adminFetch } from "@/lib/adminApi";
 import { toArabicDigits } from "@/lib/arabicDigits";
 import { useAdmin } from "@/components/admin/AdminShell";
 import { countsLineAr, internalCountsLineAr } from "@/lib/agentMission/eventText";
+import { RedesignFlagsSection, createFlagController, type FlagBody } from "@/components/admin/RedesignFlagsSection";
+import type { RedesignFlags, RedesignMode, RedesignType } from "@/lib/agentMission/redesignFlagTypes";
 
 const SECTION = "flex flex-col gap-3 rounded-[18px] border border-ln bg-bg p-4";
 const BTN = "hit min-h-11 cursor-pointer rounded-xl border border-ln2 bg-sf px-4 text-sm font-semibold text-ink disabled:opacity-50";
@@ -14,7 +16,7 @@ const OVERVIEW_POLL_MS = 10000;
 interface WorkerMemory { rssMb: number; treeRssMb: number | null; limitMb: number; warn: boolean }
 interface WorkerState { alive: boolean; ageSeconds: number | null; lastBeatAt: string | null; workers: Array<{ worker_id: string; active_missions: number; model: string | null; version: string | null }>; memory: WorkerMemory | null }
 interface MissionRow { id: string; request_text: string; status: string; question_ar: string | null; reserved_points: number | null; unit_price_points: number | null; delivered_units: number | null; charged_points: number | null; planning_model: string | null; planning_llm_usd: number; execution_model: string | null; execution_llm_usd: number; planning_treg_usd: number; execution_treg_usd: number; created_at: string }
-interface Overview { tablesReady: boolean; worker: WorkerState; planningModel: string | null; allowedModels: string[]; pricing?: { markup: number; minChargePoints: number }; testAccountEmail: string; missions: MissionRow[] }
+interface Overview { tablesReady: boolean; redesignFlags?: RedesignFlags; worker: WorkerState; planningModel: string | null; allowedModels: string[]; pricing?: { markup: number; minChargePoints: number }; testAccountEmail: string; missions: MissionRow[] }
 interface EventRow { id: number; kind: string; message_ar: string; counts: Record<string, number>; created_at: string }
 interface CustomerStage { key: string; title_ar: string; expected_rows: number; parent_key: string | null; deliver: boolean; columns: Array<{ key: string; title_ar: string }>; sample_rows: Array<Record<string, unknown>>; how_ar?: string }
 interface CustomerPlan { summary_ar: string; stages: CustomerStage[]; price: { unit_price_points: number; reserve_points: number; max_charge_points: number; delivered_rows: number } }
@@ -117,6 +119,23 @@ export default function AgentPage() {
     try { await adminFetch("/api/admin/agent", { method: "POST", body: JSON.stringify({ action: "planning_model", model }) }); await loadOverview(); toast("حُفظ نموذج التخطيط"); } catch (e) { toast(e instanceof Error ? e.message : "تعذّر الحفظ"); }
   }
 
+  // THE REDESIGN FLAGS: one write path, the existing admin route action `redesign_flag`; «on» asks for a confirmation first
+  const [flagBusy, setFlagBusy] = useState(false);
+  const [confirmingFlag, setConfirmingFlag] = useState<RedesignType | null>(null);
+  const overviewRef = useRef<Overview | null>(null);
+  overviewRef.current = overview;
+  const flagController = useRef(createFlagController({
+    current: () => overviewRef.current?.redesignFlags ?? ({} as RedesignFlags),
+    send: async (body: FlagBody) => {
+      setFlagBusy(true);
+      try { await adminFetch("/api/admin/agent", { method: "POST", body: JSON.stringify(body) }); await loadOverview(); toast("حُفظ مفتاح التصميم الجديد"); } catch (e) { toast(e instanceof Error ? e.message : "تعذّر الحفظ"); } finally { setFlagBusy(false); }
+    },
+  })).current;
+  const sync = () => setConfirmingFlag(flagController.confirming());
+  async function pickFlag(type: RedesignType, mode: RedesignMode) { await flagController.pick(type, mode); sync(); }
+  async function confirmFlag() { await flagController.confirm(); sync(); }
+  function cancelFlag() { flagController.cancel(); sync(); }
+
   const w = overview?.worker;
   const m = detail?.mission;
   const plan = detail?.customerPlan;
@@ -159,6 +178,8 @@ export default function AgentPage() {
         <textarea className="min-h-28 w-full rounded-xl border border-ln2 bg-sf p-3 text-sm" placeholder="مثال: هات لي ٣٠٠ منشور عن القهوة في مصر على إكس مع تعليقات كل منشور" value={text} onChange={(e) => setText(e.target.value)} data-testid="agent-text" />
         <div><button type="button" className={BTN} disabled={busy || text.trim().length < 3} onClick={create} data-testid="agent-create">شغّل الوكيل</button></div>
       </section>
+
+      {overview?.redesignFlags ? <RedesignFlagsSection flags={overview.redesignFlags} confirming={confirmingFlag} busy={flagBusy} onPick={(t, m) => { void pickFlag(t, m); }} onConfirm={() => { void confirmFlag(); }} onCancel={cancelFlag} /> : null}
 
       <section className={SECTION} aria-label="صحة المصادر" data-testid="agent-sources">
         <h3 className="m-0 text-[13px] font-semibold text-ink">صحة المصادر (آخر ١٤ يومًا)</h3>
