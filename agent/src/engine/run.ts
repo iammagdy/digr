@@ -466,7 +466,9 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     const ranked = parentId !== null && stage.role_preference ? rankPeopleByRole(confirmed, stage.role_preference.role).rows : confirmed;
     const incoming: Row[] = ranked.map((r) => (parentId !== null ? { ...r, parent_id: parentId } : r));
     const nextCursor = pageMode ? (result.rows_in_page > 0 ? String((cursor !== null ? Number(cursor) : Number(params.page)) + 1) : null) : result.next_cursor ?? null;
-    const ended = pageMode ? result.rows_in_page === 0 : !nextCursor || result.rows_in_page === 0 || result.has_more === false || !spec.cursor_param;
+    // THE COUNT GUARANTEE (S1 item 1.3, redesigned stages): an EMPTY page that still carries a next-page value is a barren page (two in a row end the read, BARREN_PAGES), not the end of the source; the source's own «no more» (no next value, or has_more false) still ends it
+    const guaranteeCount = deps.redesignStages?.has(stage.key) === true;
+    const ended = pageMode ? result.rows_in_page === 0 : !nextCursor || (result.rows_in_page === 0 && !guaranteeCount) || result.has_more === false || !spec.cursor_param;
     const before = items.counts(stage.key).accepted;
     // a parent's share (per_parent_rows) is a cap on what this page may add for it
     const have = parentId !== null ? items.acceptedRows(stage.key).filter((r) => String(r.parent_id) === parentId).length : 0;
