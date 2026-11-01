@@ -55,6 +55,7 @@ export function countsLineAr(counts: Record<string, number> | null | undefined):
 const INTERNAL_LABEL_AR: Record<(typeof MISSION_INTERNAL_COUNT_KEYS)[number], string> = {
   mem_phase: "المرحلة (٠ تخطيط، ١ تنفيذ)", mem_start_rss_mb: "ذاكرة العامل عند البدء (م.ب)", mem_peak_rss_mb: "أعلى ذاكرة للعامل (م.ب)", mem_start_tree_mb: "ذاكرة العامل وعملياته عند البدء (م.ب)",
   mem_peak_tree_mb: "أعلى ذاكرة للعامل وعملياته (م.ب)", mem_samples: "عدد القراءات", mem_seconds: "مدة التشغيل بالثواني", mem_stopped: "أوقفه حارس الذاكرة",
+  turn_n: "رقم الدور", turn_in: "رموز إدخال هذا الدور", turn_out: "رموز إخراج هذا الدور", turn_cache_read: "رموز قراءة الذاكرة المؤقتة في هذا الدور", turn_cache_write: "رموز كتابة الذاكرة المؤقتة في هذا الدور", turn_rss_mb: "ذاكرة العامل في هذا الدور (م.ب)", pipe_new: "المسار الذي شغّل المهمة (١ الجديد، ٠ القديم)",
   tok_phase: "المرحلة (٠ تخطيط، ١ تنفيذ)", tok_in: "رموز الإدخال", tok_out: "رموز الإخراج", tok_cache_read: "رموز قراءة الذاكرة المؤقتة", tok_cache_write: "رموز كتابة الذاكرة المؤقتة",
   tok_review_in: "رموز إدخال المراجعة", tok_review_out: "رموز إخراج المراجعة", tok_review_calls: "طلبات المراجعة", llm_micro_usd: "تكلفة النموذج (بالمليونيم من الدولار)",
   chk_stage: "رقم المرحلة", chk_examined: "عناصر فُحصت", chk_by_rule: "قُبلت بالقاعدة", chk_by_model: "قُبلت بمراجعة النموذج", chk_excluded: "استُبعدت", chk_pending: "بانتظار المراجعة", chk_review_extended: "تجاوزت المراجعة ميزانيتها المعتادة (١ نعم)",

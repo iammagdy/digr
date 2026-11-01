@@ -22,6 +22,7 @@ export function createFakeDriver(script: FakeStep[], options: { /** The steps of
         const args = typeof step.args === "function" ? step.args(results) : step.args;
         const result = await tool.handler(args);
         results.push({ tool: step.tool, result });
+        try { await input.onTurn?.({ turn: turns, usage: { input_tokens: 1200, output_tokens: 150, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } }); } catch { /* telemetry never stops a run */ }
         if (input.state.terminal && options.stopAfterTerminal !== false) break;
       }
       const usage = options.usage ?? { input_tokens: 1200 * turns, output_tokens: 150 * turns, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 };

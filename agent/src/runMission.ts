@@ -158,6 +158,19 @@ async function tell(deps: RunnerDeps, mission: MissionRecord, jobId: string | nu
 }
 
 /**
+ * ONE MODEL TURN OF A PLANNING RUN, stored as an internal event (S1 item 0.4, docs/REDESIGN-PLAN.md F10): the turn number, THIS turn's tokens and the worker's memory at that moment. Counts only: no model text, no provider name. Never throws.
+ */
+async function recordTurn(deps: RunnerDeps, missionId: string, t: { turn: number; usage: TokenUsage }): Promise<void> {
+  try {
+    await deps.store.addEvent(missionId, { kind: "call", message_ar: "قياس داخلي لدور واحد من أدوار النموذج.", counts: {
+      turn_n: t.turn, turn_in: t.usage.input_tokens ?? 0, turn_out: t.usage.output_tokens ?? 0, turn_cache_read: t.usage.cache_read_input_tokens ?? 0, turn_cache_write: t.usage.cache_creation_input_tokens ?? 0,
+      turn_rss_mb: Math.max(1, Math.round(process.memoryUsage().rss / 1_048_576)),
+    } });
+  } catch (e) {
+    deps.log?.(`turn_not_recorded ${missionId} ${shortMessage(e)}`);
+  }
+}
+/**
  * THE TOKENS OF A RUN, stored as an INTERNAL event of the mission (the admin page reads it; the customer never does): the agent's input, output, cache-read and cache-write tokens of this phase, the model review's
  * own tokens, and the model cost in millionths of a dollar. This is the account the cost audit checks the recorded cost against. Never throws.
  */
@@ -285,7 +298,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const checkpoint = async ({ costUsd }: { costUsd: number }) => { try { await store.updateMission(mission.id, { planning_llm_usd: Number((llmBase + costUsd).toFixed(6)) }); } catch { /* a lost checkpoint never stops a run */ } };
   const runOnce = async (userPrompt: string): Promise<Awaited<ReturnType<ModelDriver["run"]>>> => {
     try {
-      return await deps.driver.run({ phase: "planning", systemPrompt: loadSystemPrompt("planning", deps.systemPromptFile, { web: Boolean(web) }), userPrompt, tools: buildTools(ctx), state, model, maxTurns: AGENT_PLANNING_MAX_TURNS, maxBudgetUsd: AGENT_PLANNING_LLM_BUDGET_USD, wallMs: AGENT_PLANNING_WALL_MS, onUsage: checkpoint });
+      return await deps.driver.run({ phase: "planning", systemPrompt: loadSystemPrompt("planning", deps.systemPromptFile, { web: Boolean(web) }), userPrompt, tools: buildTools(ctx), state, model, maxTurns: AGENT_PLANNING_MAX_TURNS, maxBudgetUsd: AGENT_PLANNING_LLM_BUDGET_USD, wallMs: AGENT_PLANNING_WALL_MS, onUsage: checkpoint, onTurn: (t) => recordTurn(deps, mission.id, t) });
     } catch (e) {
       return { llmCostUsd: 0, turns: 0, stop: "error", error: String((e as Error)?.message ?? e).slice(0, 300) } as Awaited<ReturnType<ModelDriver["run"]>>;
     }
