@@ -220,6 +220,8 @@ export function finderParamsFor(finder: FinderInfo, p: PersonFacts): Record<stri
 export interface FoundContact { value: string; status: "verified" | "unverified" }
 const EMAIL_KEYS = /^(work_?)?e-?mail(_address)?$/i;
 const PHONE_KEYS = /^((mobile|direct|work)_?)?(phone|tel)(_?number)?$|^mobile$/i;
+/** A value that is nothing but an address (optionally a mailto: link). */
+const ADDRESS_ONLY = /^[^\s@*]+@[^\s@*]+\.[^\s@*]+$/;
 const GOOD_STATUS = /^(valid|verified|deliverable|ok|safe|good)$/i;
 const BAD_STATUS = /^(invalid|undeliverable|risky|unknown|catch_?all|accept_?all|disposable|bounce|bad)$/i;
 
@@ -228,13 +230,18 @@ export function foundContactIn(kind: FinderKind, page: unknown): FoundContact | 
   const keys = kind === "email" ? EMAIL_KEYS : PHONE_KEYS;
   let sourceStatus: "good" | "bad" | null = null;
   const seen: string[] = [];
+  // LESS SURE FINDS, taken only when no key named like an address gave one: any key with «mail» in its name, then any value that IS an address (live 2026-11-01: a finder BILLED a hit and the cell stayed empty, because the key was not one of the few names above)
+  const loose: string[] = [];
+  const stray: string[] = [];
   const walk = (node: unknown, depth: number): void => {
-    if (depth > 4 || node === null || node === undefined) return;
-    if (Array.isArray(node)) { for (const x of node.slice(0, 5)) { if (typeof x === "string" && kind === "email" && x.includes("@")) seen.push(x); else walk(x, depth + 1); } return; }
+    if (depth > 6 || node === null || node === undefined) return;
+    if (Array.isArray(node)) { for (const x of node.slice(0, 8)) { if (typeof x === "string" && kind === "email" && x.includes("@")) seen.push(x); else walk(x, depth + 1); } return; }
     if (typeof node !== "object") return;
     const o = node as Record<string, unknown>;
     for (const [k, v] of Object.entries(o)) {
       if (keys.test(k) && (typeof v === "string" || typeof v === "number")) { const t = text(v); if (t) seen.push(t); }
+      else if (kind === "email" && typeof v === "string" && /mail/i.test(k) && !/status|valid|verif|deliver|score|quality|domain|provider/i.test(k) && v.includes("@")) { const t = text(v); if (t) loose.push(t); }
+      else if (kind === "email" && typeof v === "string" && ADDRESS_ONLY.test(v.trim().replace(/^mailto:/i, ""))) { stray.push(text(v)); }
       else if (kind === "email" && /^(verification|email_status|status|verified|deliverability|validity)$/i.test(k)) {
         const s = typeof v === "object" && v !== null ? text((v as Record<string, unknown>).status) : text(v);
         if (v === true || GOOD_STATUS.test(s)) sourceStatus = sourceStatus ?? "good"; else if (v === false || BAD_STATUS.test(s)) sourceStatus = "bad";
@@ -242,7 +249,8 @@ export function foundContactIn(kind: FinderKind, page: unknown): FoundContact | 
     }
   };
   walk(page, 0);
-  const raw = seen.find((v) => !v.includes("*") && (kind === "email" ? v.includes("@") : v.replace(/\D/g, "").length >= 7));
+  const usable = (v: string): boolean => !v.includes("*") && (kind === "email" ? v.includes("@") : v.replace(/\D/g, "").length >= 7);
+  const raw = [...seen, ...loose, ...stray].find(usable);
   if (!raw) return null;
   const checked = verifyContactValue(KIND_OF[kind], raw);
   if (checked) return { value: checked, status: sourceStatus === "bad" ? "unverified" : "verified" };
