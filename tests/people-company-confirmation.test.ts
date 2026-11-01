@@ -66,7 +66,7 @@ describe("people are delivered only under the company they currently work at", (
     const { r, calls } = await run();
     expect(calls.filter((c) => JSON.stringify(c.params ?? {}).includes("mycompany")).length).toBe(0);
     const s = await peopleSheet(r);
-    const names = s.col("الاسم");
+    const names = s.col("اسم صانع القرار");
     expect(names.some((n) => /John Smith|Luca Rossi/.test(n))).toBe(false);
     expect(s.col("الشركة").some((c) => /mycompany/i.test(c))).toBe(false);
   });
@@ -74,7 +74,7 @@ describe("people are delivered only under the company they currently work at", (
   it("a person whose current job is at another company, or whose job at the company ended, is not delivered; the company gets the next people who match", async () => {
     const { r, calls } = await run();
     const s = await peopleSheet(r);
-    const names = s.col("الاسم");
+    const names = s.col("اسم صانع القرار");
     expect(names).not.toContain("Wrong Place");
     expect(names).not.toContain("Former Employee");
     // nile-em: its two places are filled by the first two people who match (job_is_current true, or no end date), in the source's order
@@ -94,6 +94,7 @@ describe("people are delivered only under the company they currently work at", (
 
 // ------------------------------------------------------------------------------------------------ the pure rules, on the shapes of the owner's benchmark (blitzapi.people.employee-finder rows)
 import { companyIdentityOf, isPlaceholderCompanyUrl, peopleEvidenceOf, personAtCompany, registrableDomain, sameCompanyName } from "../src/lib/agentMission/companyIdentity";
+// CHANGED (PR 1 part c): the people sheet of «companies and their decision makers» uses the owner's titles (taskContracts.ts): «اسم صانع القرار», «إيميل المسؤول المباشر», «هاتف / محمول المسؤول» and the statuses beside them
 
 describe("placeholder and generic company links", () => {
   it.each([

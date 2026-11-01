@@ -1,4 +1,4 @@
-import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, AGENT_PEOPLE_PAGES_DEFAULT, AGENT_PEOPLE_PAGES_MAX, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE } from "./constants";
+import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, AGENT_PEOPLE_PAGES_DEFAULT, AGENT_PEOPLE_PAGES_MAX, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE, NAMES_STEP_USD_PER_PERSON } from "./constants";
 import { CONTACT_KINDS, requestWantsContacts, type ContactKind } from "./contacts";
 import { isPeopleStage } from "./people";
 import { buildCompanySteps, buildContactSteps, type ContactAids, type ContactStep, type FinderInfo, type FinderKind } from "./contactFinders";
@@ -215,7 +215,9 @@ const MAX_ASSUMPTIONS = 6;
  * THE PRICE INPUTS OF A PLAN: one per stage. The cost of a contact finder step (per_person_usd per person, contactFinders.ts) is part of the cost per row of the people stage it fills, so the provider cost, the cost per delivered row and the unit price carry it; the step adds no row and no stage.
  * The one place every pricing path uses (the plan check, the approval's re-price, the plan editor).
  */
-export const stagePriceInputs = (stages: ReadonlyArray<PricedStage>, steps?: ReadonlyArray<ContactStep>, options: { withoutDepth?: boolean } = {}) => stages.map((s) => ({ rows: s.planned_rows, costPerRowUsd: depthCostPerRowUsd(s, options.withoutDepth === true) + (steps ?? []).filter((x) => x.stage_key === s.key).reduce((n, x) => n + Math.max(0, x.per_person_usd), 0), deliver: s.deliver, yield: s.yield_share, reviewShare: s.review_share }));
+export const stagePriceInputs = (stages: ReadonlyArray<PricedStage>, steps?: ReadonlyArray<ContactStep>, options: { withoutDepth?: boolean } = {}) => stages.map((s) => ({ rows: s.planned_rows, costPerRowUsd: depthCostPerRowUsd(s, options.withoutDepth === true) + (steps ?? []).filter((x) => x.stage_key === s.key).reduce((n, x) => n + Math.max(0, x.per_person_usd), 0) + (options.withoutDepth !== true && namesAreWritten(s) ? NAMES_STEP_USD_PER_PERSON : 0), deliver: s.deliver, yield: s.yield_share, reviewShare: s.review_share }));
+/** A delivered stage of decision makers: the Arabic spelling of its people's names is written by one small request (agent/src/namesAr.ts), whose estimate is part of the price (NAMES_STEP_USD_PER_PERSON). The price of the READING alone (the default count of people) leaves it out, like the paid lookups. */
+export const namesAreWritten = (s: Pick<PricedStage, "deliver" | "parent_key" | "role_preference">): boolean => s.deliver && s.parent_key !== null && s.role_preference?.role === "manager";
 /** The cost per delivered person of a stage read in DEPTH: every page of the depth for each parent (pages x one page's cost) shared by the people asked for each parent; never below the measured cost per row. */
 export const depthCostPerRowUsd = (s: PricedStage, withoutDepth = false): number => {
   const pages = Math.floor(Number(s.pages_per_parent ?? 1));
@@ -787,8 +789,10 @@ export function priceIncludesLinesAr(plan: Pick<PricedPlan, "stages" | "contact_
   const both = [depth, lookup].filter(Boolean).join("، و");
   // the company's own e-mail and HQ phone (reference A, columns 5 and 6): a line of their own, so the people's sentence stays as it was
   const companyLine = companyKinds.size === 0 ? [] : [`السعر يشمل أيضًا البحث عن ${companyKinds.has("email") && companyKinds.has("phone") ? "الإيميل العام للشركة وهاتف المقر الرئيسي" : companyKinds.has("email") ? "الإيميل العام للشركة" : "هاتف المقر الرئيسي"} لكل ${noun}؛ وما لا نجده نكتب مكانه «غير متوفر».`];
-  if (both === "") return companyLine;
-  return [`السعر يشمل ${both}. تقدر تقلّل العمق أو عدد الأشخاص لكل ${noun} من «عدّل الخطة» لتخفيض السعر.`, ...companyLine];
+  // a decision makers' delivery writes each name and title in Arabic with the English beside it (taskContracts.ts, titleLexicon.ts); the one small request for the names is part of the price
+  const bilingualLine = plan.stages.some((s) => namesAreWritten(s)) ? ["نكتب اسم كل صانع قرار ومسماه الوظيفي بالعربية وبجانبه الأصل بالإنجليزية بين قوسين، ويدخل ذلك في السعر."] : [];
+  if (both === "") return [...companyLine, ...bilingualLine];
+  return [`السعر يشمل ${both}. تقدر تقلّل العمق أو عدد الأشخاص لكل ${noun} من «عدّل الخطة» لتخفيض السعر.`, ...companyLine, ...bilingualLine];
 }
 
 /** One line per delivered people stage that prefers a role: what is preferred and that fewer matching people may come (roles.ts). */

@@ -15,7 +15,7 @@ import { statsFromCalls } from "../../src/lib/agentMission/sourceRanking";
 import { classifyNoCardEnd, refusalSentenceAr } from "../../src/lib/agentMission/refusal";
 import { parentCountsOf, parentsBelowShare } from "../../src/lib/agentMission/parents";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
-import { cardTotalOf, customerPlanView, deliveryDenominatorOf, requestedRowsOf, type PricedPlan } from "../../src/lib/agentMission/plan";
+import { cardTotalOf, customerPlanView, deliveryDenominatorOf, namesAreWritten, requestedRowsOf, type PricedPlan } from "../../src/lib/agentMission/plan";
 import { toArabicDigits } from "../../src/lib/arabicDigits";
 import { RELEVANCE_REASON_LIST, type RelevanceReason } from "../../src/lib/agentMission/relevance";
 import { FILTER_REASONS, isEnabled, type FilterReason } from "../../src/lib/agentMission/filters";
@@ -32,6 +32,7 @@ import { ItemStore, type ItemSnapshot, type StopReason } from "./items/itemStore
 import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
 import { runContactEnrichment } from "./engine/contacts";
+import { runNamesStep } from "./namesAr";
 
 import { runInSandbox } from "./sandbox";
 import { trackRun, untrackRun } from "./sessions";
@@ -424,7 +425,18 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
     } catch (e) { deps.log?.(`contact_steps_failed ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 120)}`); /* a lookup that breaks never stops the settlement: the people are delivered with the cells as they are */ }
   }
 
-  await settleExecution(deps, mission, plan, reserve, unit, { llm, executionTregUsd: budget.spentUsd(), summary: state.finish?.summary_ar ?? null, outputError: output.error ?? null, memory: items });
+  // THE ARABIC SPELLING OF THE DECISION MAKERS' NAMES (namesAr.ts, owner decision 3 of audit 2026-11): ONE small batched request for the whole mission, after the people are final. It fills a cell of each person's row (`name_ar`), decides no row, no count and no money; a failed or unusable answer leaves the English names.
+  // Its cost comes from the API's own usage and is part of the mission's model cost (the plan's price carries its estimate, plan.ts NAMES_STEP_USD_PER_PERSON); it is NOT a charge: the settlement below is untouched.
+  let namesCostUsd = 0;
+  if (deps.reviewCall && output.stop === "end" && !output.error && plan.stages.some((s) => namesAreWritten(s))) {
+    try {
+      const names = await runNamesStep({ items, plan, call: deps.reviewCall, log: deps.log });
+      namesCostUsd = names.costUsd;
+      deps.log?.(`names ${mission.id} calls=${names.calls} named=${names.named} cost=${names.costUsd.toFixed(6)}`);
+    } catch (e) { deps.log?.(`names_failed ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 120)}`); /* a name that cannot be spelled stays as the source gave it */ }
+  }
+
+  await settleExecution(deps, mission, plan, reserve, unit, { llm: Number(llm + namesCostUsd), executionTregUsd: budget.spentUsd(), summary: state.finish?.summary_ar ?? null, outputError: output.error ?? null, memory: items });
 }
 
 const sumUsage = (a: TokenUsage | undefined, b: TokenUsage | undefined): TokenUsage => ({

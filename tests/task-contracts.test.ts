@@ -127,6 +127,15 @@ describe("the contract columns of a company and its people, by code", () => {
     expect(once[1].columns.find((c) => c.key === "email")?.title_ar).toBe("إيميل المسؤول المباشر");
     expect(once[1].columns.find((c) => c.key === "name")?.title_ar).toBe("اسم صانع القرار");
   });
+  it("a plan of employees (no decision-maker role) gets the order but neither the marker nor a notes column: there is no such finding to note", () => {
+    const employees = { ...peopleStage, role_preference: undefined };
+    const [c, p] = withContractColumns([companyStage, employees]);
+    expect(c.columns.map((x) => (x as { computed?: string }).computed)).not.toContain("notes");
+    expect(p.columns.map((x) => (x as { computed?: string }).computed ?? null).filter(Boolean)).toEqual([]);
+    expect(p.columns.map((x) => x.title_ar)).not.toContain("صانع قرار");
+    // the planner's own titles are kept for people who are not «decision makers»
+    expect(p.columns.find((x) => x.key === "name")?.title_ar).toBe("الاسم");
+  });
   it("a plan with no people stage, or a stage of posts, is not touched", () => {
     const posts = { key: "posts", title_ar: "تغريدات", parent_key: null, deliver: true, endpoint_id: "x.search", columns: [{ key: "text", title_ar: "النص" }] };
     expect(withContractColumns([posts])[0].columns).toEqual(posts.columns);

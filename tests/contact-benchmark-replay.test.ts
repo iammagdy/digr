@@ -5,6 +5,7 @@ import { tregResult } from "./helpers/agentFakeWorld";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { executionBudgetUsd } from "../src/lib/agentMission/price";
 import type { TregCallOptions } from "../src/functions/shared/tregClient";
+// CHANGED (PR 1 part c): the people sheet of «companies and their decision makers» uses the owner's titles (taskContracts.ts): «اسم صانع القرار», «إيميل المسؤول المباشر», «هاتف / محمول المسؤول» and the statuses beside them
 
 vi.stubGlobal("fetch", () => { throw new Error("a real network call was attempted"); });
 
@@ -70,16 +71,16 @@ describe("the benchmark shapes, through a whole mission", () => {
     const { r, log } = await run("benchmark");
     const s = await peopleSheet(r);
     expect(s.n).toBe(10);
-    const emails = s.col("الإيميل");
-    const emailStatus = s.col("حالة توثيق الإيميل");
+    const emails = s.col("إيميل المسؤول المباشر");
+    const emailStatus = s.col("حالة توثيق إيميل المسؤول المباشر");
     expect(emails.filter(Boolean).length).toBe(8);
     emails.forEach((e, i) => expect(emailStatus[i]).toBe(e ? "موثّق" : ""));
-    const phones = s.col("رقم التليفون");
+    const phones = s.col("هاتف / محمول المسؤول");
     expect(phones.filter(Boolean).length).toBe(10);
-    expect(new Set(s.col("حالة توثيق رقم التليفون"))).toEqual(new Set(["موثّق"]));
+    expect(new Set(s.col("حالة توثيق هاتف / محمول المسؤول"))).toEqual(new Set(["موثّق"]));
     expect(new Set(s.col("نوع الرقم"))).toEqual(new Set(["رقم الشركة"]));
     // the type column sits right after the phone's status column
-    expect(s.header.indexOf("نوع الرقم")).toBe(s.header.indexOf("حالة توثيق رقم التليفون") + 1);
+    expect(s.header.indexOf("نوع الرقم")).toBe(s.header.indexOf("حالة توثيق هاتف / محمول المسؤول") + 1);
     // two decision makers of one company share the company's phone, found by ONE search per company
     expect(log.filter((l) => l.capability === "google.serp.maps").length).toBe(5);
     expect(log.filter((l) => l.capability === "people.email.verify").length).toBe(8);
@@ -98,6 +99,6 @@ describe("the benchmark shapes, through a whole mission", () => {
     const { r } = await run("nothing");
     const s = await peopleSheet(r);
     expect(s.n).toBe(10);
-    for (const title of ["الإيميل", "رقم التليفون", "حالة توثيق الإيميل", "حالة توثيق رقم التليفون", "نوع الرقم"]) expect(s.col(title).filter(Boolean).length).toBe(0);
+    for (const title of ["إيميل المسؤول المباشر", "هاتف / محمول المسؤول", "حالة توثيق إيميل المسؤول المباشر", "حالة توثيق هاتف / محمول المسؤول", "نوع الرقم"]) expect(s.col(title).filter(Boolean).length).toBe(0);
   });
 });

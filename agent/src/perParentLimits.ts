@@ -1,4 +1,5 @@
 import { countAr, knownItemNoun } from "../../src/lib/agentMission/itemNoun";
+import { titleFieldOf, titleTierOf, type RoleKey } from "../../src/lib/agentMission/roles";
 
 /**
  * THE SHORTFALL OF A CHILD STAGE, FROM THE COUNTS RECORDED PER PARENT (live msn_7539ea17512cf58aa0e7, 2026-11-01: 8 of 10 people delivered; one company had NO people and twelve people were left out as beyond the approved two per company, and the limits row said «المصدر لم يعد يعطي نتائج أخرى لهذا الطلب»).
@@ -37,4 +38,20 @@ export function perParentShortfallAr(f: PerParentFacts): string | null {
   if (none === 0 && fewer === 0) return null;
   if (surplus > 0) parts.push(`وزاد ${countAr(surplus, childNoun)} عن العدد المعتمد في بقية الشركات`);
   return parts.join("، ");
+}
+
+/**
+ * THE COMPANIES THAT HAVE NO DECISION MAKER AMONG THEIR DELIVERED PEOPLE (reference A: the note «لم نجد صناع قرار في هذه الشركة», audit 2026-11). Per company, from the delivered people's job titles (roles.ts, tier 0 = a title that names the role): a company with no person at all is marked too (the owner's
+ * sheet marks a company the count of which was filled with other employees; none found is the same finding). Only for the decision makers' role. The set of the parent ids to mark.
+ */
+export function companiesWithoutDecisionMakers(parentIds: ReadonlyArray<string>, people: ReadonlyArray<Record<string, unknown>>, role: RoleKey): Set<string> {
+  const out = new Set<string>();
+  if (role !== "manager") return out;
+  const withDm = new Set<string>();
+  for (const p of people) {
+    const field = titleFieldOf(p);
+    if (field && titleTierOf(p[field], role) === 0) withDm.add(String(p.parent_id ?? ""));
+  }
+  for (const id of parentIds) if (!withDm.has(String(id))) out.add(String(id));
+  return out;
 }

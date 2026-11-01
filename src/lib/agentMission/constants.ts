@@ -208,6 +208,11 @@ export const AGENT_PEOPLE_PAGES_MAX = 10;
 export const AGENT_MODEL_PLANNING_ESTIMATE_USD = 0.012;
 export const AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD = 0.005;
 export const AGENT_REVIEW_ROW_ESTIMATE_USD = 0.00004;
+/**
+ * THE NAMES REQUEST OF A DECISION-MAKERS DELIVERY (audit 2026-11, owner decision 3): one small batched request per mission writes the Arabic spelling of the people's names (agent/src/namesAr.ts). About 15 input and 25 output tokens a name at the small model's list price (0.10 / 0.50 per million) plus a share of
+ * the fixed prompt = 0.000015 to 0.00002 USD; the estimate is 0.00003 per delivered person (the same 2x margin the review's estimate has), added to that stage's cost per row by code.
+ */
+export const NAMES_STEP_USD_PER_PERSON = 0.00003;
 /** What the model review of uncertain rows may cost one mission: this share of the mission's revenue (owner decision of 2026-10-28). Rows beyond it are not delivered and not charged. */
 export const AGENT_REVIEW_BUDGET_SHARE = 0.2;
 /** When the usual review budget is spent and rows the request still needs are waiting, the review may go on up to this share of the RESERVE's value (the hold covers it); only then do rows stay undelivered, with an honest sentence. */

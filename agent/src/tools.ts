@@ -633,10 +633,10 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         // THE FINDER STEPS' COLUMNS (contactFinders.ts): the contact column the planner left out and the Arabic status column beside each are added by code AFTER the recipes were proven on the mapping (the engine's contract checks the columns the MAPPING fills; these are filled by the finder step, never by the mapping)
         if (checked.plan.contact_steps && checked.plan.contact_steps.length > 0) for (const st of checked.plan.stages) st.columns = withContactColumns(st.key, st.columns, checked.plan.contact_steps);
         // THE REFERENCE'S COLUMNS (taskContracts.ts, audit 2026-11): a company's sheet in the order and under the titles of the owner's sheet, with its e-mail and status columns; the company steps then read and write the columns the file has
-        if (checked.plan.contact_steps && checked.plan.contact_steps.some((x) => x.level === "company")) {
-          const contracted = withContractColumns(checked.plan.stages, { sheets: ["company"], computed: false });
+        {
+          const contracted = withContractColumns(checked.plan.stages);
           checked.plan.stages.forEach((st, i) => { st.columns = contracted[i].columns as typeof st.columns; });
-          checked.plan.contact_steps = bindCompanySteps(checked.plan.stages, checked.plan.contact_steps);
+          if (checked.plan.contact_steps) checked.plan.contact_steps = bindCompanySteps(checked.plan.stages, checked.plan.contact_steps);
         }
         // A PLAN THAT PROMISES VIDEOS (OR IMAGES) NO SAMPLED SOURCE PROVES is not refused: the planner is sent (a few times) to sample the catalog's media sources (a page's reels, a post search whose items carry a video, a post's detail) and builds the card from the one
         // that proves it. Only after MEDIA_SOURCES_MIN real sources were tried and none proves it does the card say so before approval (the filter keeps only proven items; only what is delivered is charged).

@@ -7,6 +7,7 @@ import type { FakeStep } from "../agent/src/fakeDriver";
 import { countWorkbookSheets } from "../agent/src/finalize";
 import { settlementCharge } from "../src/lib/agentMission/price";
 import type { TregCallOptions } from "../src/functions/shared/tregClient";
+// CHANGED (PR 1 part c): the people sheet of «companies and their decision makers» uses the owner's titles (taskContracts.ts): «اسم صانع القرار», «إيميل المسؤول المباشر», «هاتف / محمول المسؤول» and the statuses beside them
 
 /**
  * REPLAY OF THE LIVE RE-TEST OF 2026-10-31 21:40-22:10 CAIRO, AFTER #316 (test account; `missions`, `mission_events` and `mission_calls` read with SELECT).
@@ -107,16 +108,16 @@ describe("A1 replay: a person with a name and a job title is delivered with empt
     expect(peopleSheet.rowCount).toBe(11);
     const header = (peopleSheet.getRow(1).values as unknown[]).map((v) => String(v ?? ""));
     const col = (title: string) => header.findIndex((h) => h === title);
-    expect(col("الاسم")).toBeGreaterThan(0);
+    expect(col("اسم صانع القرار")).toBeGreaterThan(0);
     expect(col("المسمى الوظيفي")).toBeGreaterThan(0);
     expect(col("الملف المهني للشخص")).toBeGreaterThan(0);
     for (let n = 2; n <= 11; n += 1) {
       const row = peopleSheet.getRow(n);
-      expect(String(row.getCell(col("الاسم")).value ?? "").trim(), `name of row ${n}`).not.toBe("");
+      expect(String(row.getCell(col("اسم صانع القرار")).value ?? "").trim(), `name of row ${n}`).not.toBe("");
       expect(String(row.getCell(col("المسمى الوظيفي")).value ?? "").trim(), `title of row ${n}`).not.toBe("");
       expect(String(row.getCell(col("الملف المهني للشخص")).value ?? "").trim(), `page of row ${n}`).not.toBe("");
-      expect(row.getCell(col("الإيميل")).value ?? null).toBeNull();
-      expect(row.getCell(col("رقم التليفون")).value ?? null).toBeNull();
+      expect(row.getCell(col("إيميل المسؤول المباشر")).value ?? null).toBeNull();
+      expect(row.getCell(col("هاتف / محمول المسؤول")).value ?? null).toBeNull();
     }
     const stored = await r.store.getFileBytes(r.missionId, "result/result.xlsx");
     expect(await countWorkbookSheets(stored as never)).toEqual([5, 10]);

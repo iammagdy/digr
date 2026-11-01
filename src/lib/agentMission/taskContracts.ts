@@ -156,9 +156,10 @@ export interface ContractColumnOptions {
 export function withContractColumns<S extends ContractStageLike>(stages: ReadonlyArray<S>, options: ContractColumnOptions = {}): S[] {
   if (contractTypeOf(stages) !== "companies_people") return [...stages];
   const sheets = options.sheets ?? ["company", "person"];
-  const computed = options.computed !== false;
   const people = stages.filter((s) => s.deliver && isPeopleStage(s) && stages.some((p) => p.key === s.parent_key && p.deliver && isCompanyStage(p)));
   const companyKeys = new Set(people.map((p) => p.parent_key));
+  // the notes and the decision-maker marker exist only for a delivery of DECISION MAKERS (a plan of «employees» has no such finding to note)
+  const computed = options.computed !== false && people.some((p) => (p.role_preference as { role?: string } | undefined)?.role === "manager");
   return stages.map((st) => {
     if (sheets.includes("company") && companyKeys.has(st.key) && st.parent_key === null) return { ...st, columns: companyColumns(st.columns, computed) } as S;
     if (sheets.includes("person") && people.includes(st)) return { ...st, columns: personColumns(st, computed) } as S;
