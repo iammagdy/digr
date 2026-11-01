@@ -54,7 +54,7 @@ const NAME_KEY = /^(?:name|full_?name|person_?name|contact_?name|employee_?name|
 const EMAIL_KEY = /(?:e-?mail|mail|بريد|ايميل|إيميل)/i;
 const NAME_TITLE = /^(?:ال)?اسم(?:\s|$)|^الاسم/;
 /** The columns that hold a person's NAME (not the company's), from their keys and titles. */
-const nameKeysOf = (columns: ReadonlyArray<PersonColumn>): string[] => columns.filter((c) => !/company|org|account|channel|page/i.test(c.key) && (NAME_KEY.test(c.key) || NAME_TITLE.test(String(c.title_ar ?? "").trim()) && !/شرك/.test(String(c.title_ar ?? "")))).map((c) => c.key);
+export const nameKeysOf = (columns: ReadonlyArray<PersonColumn>): string[] => columns.filter((c) => !/company|org|account|channel|page/i.test(c.key) && (NAME_KEY.test(c.key) || NAME_TITLE.test(String(c.title_ar ?? "").trim()) && !/شرك/.test(String(c.title_ar ?? "")))).map((c) => c.key);
 const emailKeysOf = (columns: ReadonlyArray<PersonColumn>): string[] => columns.filter((c) => c.kind === "work_email" || EMAIL_KEY.test(c.key)).map((c) => c.key);
 
 const textOf = (v: unknown): string => (typeof v === "string" ? v : typeof v === "number" ? String(v) : "").replace(/[​-‏‪-‮⁦-⁩﻿]/g, " ").replace(/\s+/g, " ").trim();

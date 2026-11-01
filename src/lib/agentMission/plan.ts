@@ -1,5 +1,7 @@
 import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE } from "./constants";
 import { CONTACT_KINDS, requestWantsContacts, type ContactKind } from "./contacts";
+import { isPeopleStage } from "./people";
+import { buildContactSteps, type ContactStep, type FinderInfo, type FinderKind } from "./contactFinders";
 import { peopleConditionedOnContactIssues } from "./contactQuestion";
 import { estimateMissionMinutes, measuredCostPerRowUsd, priceMissionByCode, type MissionPriceResult } from "./price";
 import { classifyRows, searchQueryOf, validateRelevanceSpec, type RelevanceSpec } from "./relevance";
@@ -31,6 +33,8 @@ export interface PlanColumn {
   title_ar: string;
   /** Set on a column that holds a work e-mail or a phone: its values are verified by code before a row is saved; an unverified value is left empty. */
   kind?: ContactKind;
+  /** Set by code on the status column that sits next to a contact column: «موثّق» / «غير موثّق» for the value of the column it names (contactFinders.ts). */
+  status_of?: string;
 }
 
 /**
@@ -137,6 +141,8 @@ export interface PlanLookup {
   childStepSources?(noun: string): Array<{ id: string; accepts: string[] }>;
   /** The endpoints this mission has called so far and the most rows one call of each gave. */
   endpointsCalled?(): ReadonlyMap<string, { rows: number }>;
+  /** The e-mail / phone finders this account may buy, cheapest first (the catalog's ranking): what the plan's finder steps are made of. */
+  contactFinders?(kind: FinderKind): FinderInfo[];
 }
 
 export interface PricedStage extends ProposedStage {
@@ -166,6 +172,8 @@ export interface PricedPlan {
   quantity?: PlanQuantity;
   /** A step the customer asked for that the plan does not carry out (the managers of each company): what it is and why, shown on the card BEFORE approval. The customer approves the rest or edits the request; a step is never dropped silently. */
   unserved_steps?: UnservedStep[];
+  /** THE FINDER STEPS, added by code to every delivered people stage when the request asks for an e-mail or a phone (contactFinders.ts): the engine looks each delivered person up after the stages and fills the cells; the price includes them. */
+  contact_steps?: ContactStep[];
 }
 
 export interface UnservedStep {
@@ -404,7 +412,8 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
       const missing = uncoveredFields(sourceFields, cleanColumns);
       if (missing.length > 0) issues.push(`${label}: the source gives fields the customer would want in the file that no column holds: ${missing.map((f) => `${FIELD_LABEL_AR[f.cls]} (${f.path})`).join(", ")}. Add a column for each (map it in your run_code and give it an Arabic title like «${FIELD_LABEL_AR[missing[0].cls]}»): the file keeps every useful field of the source`);
     }
-    if (lookup.isContactSource?.(endpointId) && !cleanColumns.some((c) => c.kind !== undefined)) issues.push(`${label}: a contact stage must mark its e-mail / phone columns with kind "work_email" or "phone" (their values are verified by code: a verified value fills the cell and an unverified one leaves it EMPTY; a row that is a named person is delivered either way, only a row that is nothing but an address with none verified is not delivered or charged)`);
+    // (a delivered PEOPLE stage is exempt: the e-mail and phone columns and their finder steps are added to it by code, contactFinders.ts)
+    if (lookup.isContactSource?.(endpointId) && !cleanColumns.some((c) => c.kind !== undefined) && !(raw.deliver === true && isPeopleStage({ parent_key: parentKey, title_ar: title.text, ...(isRecord(raw.role_preference) ? { role_preference: raw.role_preference } : {}) }))) issues.push(`${label}: a contact stage must mark its e-mail / phone columns with kind "work_email" or "phone" (their values are verified by code: a verified value fills the cell and an unverified one leaves it EMPTY; a row that is a named person is delivered either way, only a row that is nothing but an address with none verified is not delivered or charged)`);
     const samples = Array.isArray(raw.sample_rows) ? raw.sample_rows : [];
     if (samples.length < 1 || samples.length > MAX_SAMPLE_ROWS_PER_STAGE) issues.push(`${label}: 1 to ${MAX_SAMPLE_ROWS_PER_STAGE} sample_rows, rows you really saw`);
     for (const s of samples) {
@@ -584,7 +593,8 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   const notes: string[] = [];
   const wants = requestWantsContacts(lookup.requestText);
   if ((wants.email || wants.phone) && lookup.isContactSource) {
-    const hasContactStage = priced.some((s) => lookup.isContactSource!(s.endpoint_id) || s.columns.some((c) => c.kind !== undefined));
+    // a delivered PEOPLE stage always carries the finder steps (added below by code), so the planner never has to plan or to excuse them
+    const hasContactStage = priced.some((s) => lookup.isContactSource!(s.endpoint_id) || s.columns.some((c) => c.kind !== undefined) || (s.deliver && isPeopleStage(s)));
     const note = input.contacts_note_ar === undefined ? null : checkCustomerText(input.contacts_note_ar, { maxChars: 300 });
     if (note && note.issues.length) issues.push(`contacts_note_ar: ${note.issues.join("; ")}`);
     else if (!hasContactStage && !note) issues.push(`the customer asked for ${wants.email ? "work e-mails" : ""}${wants.email && wants.phone ? " and " : ""}${wants.phone ? "phones" : ""}: add a CONTACT STAGE per person or company (a contact source of the catalog or the page parsers; mark its e-mail / phone columns with kind "work_email" / "phone"), sample it, and deliver verified values only; if no source can give them, pass contacts_note_ar (ONE Arabic sentence saying honestly why they are not in the plan)`);
@@ -625,7 +635,9 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   if (impliedUsed && impliedCount > 1 && price.reservePoints > AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS) return { ok: false, issues: [`the default count of people per company makes the hold ${price.reservePoints} points`], lowerImplied: true };
   // THE TITLE OF A PEOPLE STAGE THAT ONLY RANKS BY ROLE does not promise the role (roles.ts); done last, so the checks above still read the noun the model wrote
   for (const st of priced) if (st.role_preference && st.parent_key !== null) st.title_ar = neutralPeopleTitleAr(st.title_ar, st.role_preference.role, itemNounOf(priced.find((p) => p.key === st.parent_key)?.title_ar ?? "").singular);
-  return { ok: true, plan: { summary_ar: summary.text, stages: priced, price, ...(notes.length ? { notes_ar: notes } : {}), ...(assumptions.length ? { assumptions_ar: assumptions } : {}), ...(quantity ? { quantity } : {}), ...(unserved.length ? { unserved_steps: unserved } : {}) }, ...(mediaUnproven.length ? { mediaUnproven } : {}) };
+  // THE FINDER STEPS: whatever the planner wrote (or dropped, or excused with a note), a delivered people stage of a request that asks for an e-mail or a phone gets its step per asked kind, finders ranked cheapest first
+  const contactSteps = buildContactSteps(priced, lookup.requestText, (kind) => lookup.contactFinders?.(kind) ?? []);
+  return { ok: true, plan: { summary_ar: summary.text, stages: priced, price, ...(contactSteps.length ? { contact_steps: contactSteps } : {}), ...(notes.length ? { notes_ar: notes } : {}), ...(assumptions.length ? { assumptions_ar: assumptions } : {}), ...(quantity ? { quantity } : {}), ...(unserved.length ? { unserved_steps: unserved } : {}) }, ...(mediaUnproven.length ? { mediaUnproven } : {}) };
 }
 
 /** The first sentence of a text: the customer card says what will be delivered in ONE sentence. */
