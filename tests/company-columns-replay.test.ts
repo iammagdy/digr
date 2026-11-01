@@ -39,8 +39,9 @@ describe("G1 replay, part b: the company sheet", () => {
     expect(s.col("هاتف المقر الرئيسي")).toEqual([PHONES[0], PHONES[1], PHONES[2], "+20227770005", "غير متوفر"]);
     const maps = (await r.store.listCalls(r.missionId)).filter((c) => c.phase === "execution" && catalog.byId.get(c.endpoint_id)?.capability === "google.serp.maps");
     // the company step asks once for Cairo (found) and walks the chain for Suez (three searches, nothing); the people's step does not pay for the same search again
-    expect(maps.length).toBe(4);
-    expect(new Set(maps.map((c) => JSON.stringify((c.params_digest as Record<string, unknown>).q ?? (c.params_digest as Record<string, unknown>).query))).size).toBe(2);
+    // CHANGED (PR 2 F4): after a name search that finds no place that is the company, the same helper is asked once with the company's website: Suez has one more search, with a third query
+    expect(maps.length).toBe(5);
+    expect(new Set(maps.map((c) => JSON.stringify((c.params_digest as Record<string, unknown>).q ?? (c.params_digest as Record<string, unknown>).query))).size).toBe(3);
   });
 
   it("the company e-mail: the people source's role mailbox (nile), then a lister's (orascom: info@ before sales@, delta), verified «موثّق» / «غير موثّق»; nothing found or another domain's: «غير متوفر»; never a person's address", async () => {

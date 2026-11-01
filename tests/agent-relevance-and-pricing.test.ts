@@ -5,7 +5,7 @@ import { AgentMissionCardBody } from "../src/components/mission/AgentMissionCard
 import { classifyRow, classifyRows, searchQueryOf, validateRelevanceSpec, type RelevanceSpec } from "../src/lib/agentMission/relevance";
 import { DEFAULT_MISSION_PRICING_SETTINGS, MISSION_PRICING_SETTING_KEY, minimumLineAr, normalizeMissionPricingSettings, priceByRule, readMissionPricingSettings, settlementChargeFor } from "../src/lib/missionPricing";
 import { legacyPriceMissionByCode, priceMissionByCode, reviewBudgetUsdFor, settlementCharge } from "../src/lib/agentMission/price";
-import { AGENT_JOB_POINTS_CAP, AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD, AGENT_MODEL_PLANNING_ESTIMATE_USD, AGENT_REVIEW_BUDGET_SHARE } from "../src/lib/agentMission/constants";
+import { AGENT_JOB_POINTS_CAP, AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD, AGENT_MODEL_PLANNING_ESTIMATE_USD, AGENT_MODEL_PLANNING_PER_EXTRA_STAGE_ESTIMATE_USD, AGENT_REVIEW_BUDGET_SHARE } from "../src/lib/agentMission/constants";
 import { approveMission, repriceStoredPlan, settleMission } from "../src/lib/agentMission/lifecycle";
 import { customerPlanView, validateAndPricePlan, type PlanLookup, type PricedPlan } from "../src/lib/agentMission/plan";
 import { customerMissionView, PRICE_PROMISE_AR } from "../src/lib/agentMission/customerView";
@@ -209,7 +209,8 @@ describe("THE ONE PRICING RULE: (provider + model cost) per delivered matching r
     const provider = (100 / 0.5) * (0.02952 / 6) + 2000 * (0.00188 / 10);
     expect(price.providerCostUsd).toBeCloseTo(provider, 9);
     expect(price.deliveredRows).toBe(2100);
-    const cost = (provider + AGENT_MODEL_PLANNING_ESTIMATE_USD + 2 * AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD) / 2100;
+    // CHANGED (PR 2 price): the planning estimate follows the plan's shape (a base plus an increment for the second stage)
+    const cost = (provider + AGENT_MODEL_PLANNING_ESTIMATE_USD + AGENT_MODEL_PLANNING_PER_EXTRA_STAGE_ESTIMATE_USD + 2 * AGENT_MODEL_EXECUTION_PER_STAGE_ESTIMATE_USD) / 2100;
     expect(price.costPerFinalRowUsd).toBeCloseTo(cost, 12);
     expect(price.ruleUnitPoints).toBeCloseTo(cost * 5500, 5);
     expect(price.minApplied).toBe(false);
@@ -235,7 +236,8 @@ describe("THE ONE PRICING RULE: (provider + model cost) per delivered matching r
     const a = await approveMission(money.client, mission);
     if (!a.ok) throw new Error(a.messageAr);
     // the rule's reserve (cost x 1.15) is 210, above the minimum; the CHARGE of a full delivery is the minimum, 200
-    expect(a.reservePoints).toBe(210);
+    // CHANGED (PR 2 price): one stage is priced 0.004 USD lower (planning base 0.008, was 0.012), so the rule's reserve is now below the minimum and the hold is the minimum, 200
+    expect(a.reservePoints).toBe(200);
     const none = await settleMission(money.client, { jobId: a.jobId, deliveredUnits: 0, unitPricePoints: a.unitPricePoints, reservedPoints: a.reservePoints, costUsd: 0.01, resultPath: null });
     expect(none).toMatchObject({ ok: true, kind: "released", chargedPoints: 0 });
     expect(money.ledger.filter((l) => l.type === "charge")).toHaveLength(0);

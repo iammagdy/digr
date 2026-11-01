@@ -199,26 +199,27 @@ describe("E: the settlement arithmetic of a two-stage mission with different cos
   it("the price is ONE unit for every delivered item of the job: (provider + model cost) / delivered rows, not a unit per stage", () => {
     expect(price.providerCostUsd).toBeCloseTo(5 * 0.005904 + 50 * 0.000188, 10);
     expect(price.deliveredRows).toBe(55);
-    expect(price.unitPricePoints).toBe(6.092);
-    expect(price.maxChargePoints).toBe(336);
-    expect(price.reservePoints).toBe(386);
+    // CHANGED (PR 2 price): the plan's model estimate prices planning by shape (two stages 0.016, was a flat 0.012): unit 6.092 -> 6.492, card 336 -> 358, hold 386 -> 411
+    expect(price.unitPricePoints).toBe(6.492);
+    expect(price.maxChargePoints).toBe(358);
+    expect(price.reservePoints).toBe(411);
   });
 
-  it("the card's 336 is ceil(55 x 6.092 = 335.06); the charge for 42 delivered is ceil(42 x 6.092 = 255.864) = 256, below the hold of 386 and never above it", () => {
-    expect(chargeForDelivered(55, price.unitPricePoints)).toBe(336);
-    expect(chargeForDelivered(42, price.unitPricePoints)).toBe(256);
+  it("the card's 358 is ceil(55 x 6.492 = 357.06); the charge for 42 delivered is ceil(42 x 6.492 = 272.664) = 273, below the hold and never above it", () => {
+    expect(chargeForDelivered(55, price.unitPricePoints)).toBe(358);
+    expect(chargeForDelivered(42, price.unitPricePoints)).toBe(273);
     const settled = settlementCharge({ deliveredUnits: 42, unitPricePoints: price.unitPricePoints, reservedPoints: price.reservePoints });
-    expect(settled).toEqual({ chargedPoints: 256, releasedPoints: 130 });
+    expect(settled).toEqual({ chargedPoints: 273, releasedPoints: 138 });
   });
 
-  it("the charge depends on how many items arrive, not on which stage they came from (5 posts + 37 comments, or 42 comments: the same 256)", () => {
+  it("the charge depends on how many items arrive, not on which stage they came from (5 posts + 37 comments, or 42 comments: the same 273)", () => {
     expect(chargeForDelivered(5 + 37, price.unitPricePoints)).toBe(chargeForDelivered(42, price.unitPricePoints));
-    // the rule «delivered / target x card price» with the card's ROUNDED price would say 257 (42 / 55 x 336 = 256.58): the code rounds once, on the exact product, and charges the customer a point less
-    expect(Math.ceil((42 / 55) * 336)).toBe(257);
-    expect(chargeForDelivered(42, price.unitPricePoints)).toBeLessThanOrEqual(Math.ceil((42 / 55) * 336));
+    // the rule «delivered / target x card price» with the card's ROUNDED price would say 274 (42 / 55 x 358 = 273.38): the code rounds once, on the exact product, and charges the customer a point less
+    expect(Math.ceil((42 / 55) * 358)).toBe(274);
+    expect(chargeForDelivered(42, price.unitPricePoints)).toBeLessThanOrEqual(Math.ceil((42 / 55) * 358));
     // nothing delivered, nothing charged; everything delivered, exactly the card's price; never above the hold
     expect(settlementCharge({ deliveredUnits: 0, unitPricePoints: price.unitPricePoints, reservedPoints: price.reservePoints }).chargedPoints).toBe(0);
-    expect(settlementCharge({ deliveredUnits: 55, unitPricePoints: price.unitPricePoints, reservedPoints: price.reservePoints }).chargedPoints).toBe(336);
+    expect(settlementCharge({ deliveredUnits: 55, unitPricePoints: price.unitPricePoints, reservedPoints: price.reservePoints }).chargedPoints).toBe(358);
     expect(settlementCharge({ deliveredUnits: 500, unitPricePoints: price.unitPricePoints, reservedPoints: price.reservePoints }).chargedPoints).toBeLessThanOrEqual(price.reservePoints);
   });
 });
