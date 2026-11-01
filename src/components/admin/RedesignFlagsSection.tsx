@@ -1,6 +1,6 @@
 "use client";
 
-import { REDESIGN_TYPES, type RedesignFlags, type RedesignMode, type RedesignType } from "@/lib/agentMission/redesignFlags";
+import { REDESIGN_TYPES, type RedesignFlags, type RedesignMode, type RedesignType } from "@/lib/agentMission/redesignFlagTypes";
 
 /**
  * THE TOGGLE OF THE REDESIGN FLAGS on the admin page «الوكيل»: the six request types, each with its current mode (off / test / on) and three buttons. It writes through the EXISTING admin route action `redesign_flag` (the same audit row as before): no new write path.

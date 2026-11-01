@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { NextResponse } from "next/server";
@@ -109,6 +110,16 @@ describe("what a click does", () => {
     expect(db.rows("agent_settings")[0]).toMatchObject({ key: "redesign_flags", value: { social_posts: "test" } });
     expect(state.audits).toEqual(["مفتاح إعادة التصميم"]);
     expect((await (await overviewGET(req("http://x/api/admin/agent"))).json()).redesignFlags).toMatchObject({ social_posts: "test", people: "off" });
+  });
+});
+
+describe("the browser bundle", () => {
+  it("the screen and the page import only the light flag module (the server one pulls the catalog loader and node:fs into the bundle: the build failed on exactly that)", () => {
+    for (const file of ["src/components/admin/RedesignFlagsSection.tsx", "src/app/admin/agent/page.tsx"]) {
+      const src = readFileSync(file, "utf-8");
+      expect(src, file).not.toMatch(/agentMission\/redesignFlags"/);
+    }
+    expect(readFileSync("src/lib/agentMission/redesignFlagTypes.ts", "utf-8")).not.toMatch(/^import /m);
   });
 });
 

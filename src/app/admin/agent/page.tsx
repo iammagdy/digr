@@ -6,7 +6,7 @@ import { toArabicDigits } from "@/lib/arabicDigits";
 import { useAdmin } from "@/components/admin/AdminShell";
 import { countsLineAr, internalCountsLineAr } from "@/lib/agentMission/eventText";
 import { RedesignFlagsSection, createFlagController, type FlagBody } from "@/components/admin/RedesignFlagsSection";
-import type { RedesignFlags, RedesignMode, RedesignType } from "@/lib/agentMission/redesignFlags";
+import type { RedesignFlags, RedesignMode, RedesignType } from "@/lib/agentMission/redesignFlagTypes";
 
 const SECTION = "flex flex-col gap-3 rounded-[18px] border border-ln bg-bg p-4";
 const BTN = "hit min-h-11 cursor-pointer rounded-xl border border-ln2 bg-sf px-4 text-sm font-semibold text-ink disabled:opacity-50";
