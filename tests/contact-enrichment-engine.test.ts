@@ -80,7 +80,8 @@ describe("the engine fills the cells of the people it delivered", () => {
     expect(w.items.acceptedRows("people").length).toBe(5);
     const first = cellsOf(w.items, "p2");
     // CHANGED (item 2, owner direction): «موثّق» only when a verifier says deliverable; the steps of this world have no verifier, so a finder's hit is delivered «غير موثّق» (the claim of a finder is not a verification). The chain with a verifier is tests/email-verification-chain.test.ts.
-    expect(first).toEqual({ email: "person2@orascom-em.com.eg", email_status: "غير موثّق", phone: "+201001234567", phone_status: "موثّق" });
+    // CHANGED (item 3): the phone is «موثّق» only when a validator says the number is valid; this world's steps have no validator, so the number is kept «غير موثّق»
+    expect(first).toEqual({ email: "person2@orascom-em.com.eg", email_status: "غير موثّق", phone: "+201001234567", phone_status: "غير موثّق" });
     expect(w.calls.filter((c) => c.endpoint === EMAIL_A.id).length).toBe(5);
     expect(w.calls.some((c) => c.endpoint === EMAIL_B.id)).toBe(false);
   });

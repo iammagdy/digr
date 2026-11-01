@@ -35,6 +35,8 @@ export interface PlanColumn {
   kind?: ContactKind;
   /** Set by code on the status column that sits next to a contact column: «موثّق» / «غير موثّق» for the value of the column it names (contactFinders.ts). */
   status_of?: string;
+  /** Set by code on the column that says whose phone number the column it names holds: «شخصي» / «رقم الشركة» (contactFinders.ts). */
+  type_of?: string;
 }
 
 /**

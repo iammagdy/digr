@@ -4,7 +4,8 @@ import { requestWantsContacts, verifyContactValue, type ContactKind } from "./co
 import { isPeopleStage, nameKeysOf } from "./people";
 import { PHONE_CAPABILITIES } from "./peopleCheck";
 import { unitCost } from "../modelPlanner/pricing";
-import { rankEndpoints, type StatsMap } from "./sourceRanking";
+import { PHONE_TYPE_COLUMN_AR, phoneTypeKeyOf } from "./phoneValidation";
+import { SOURCE_DEMOTE_FACTOR, expectedCost, sourceHealth, type StatsMap } from "./sourceRanking";
 
 /**
  * THE CONTACT FINDER STEPS, BY CODE. Live test 2026-11-01 (A1 msn_7a8b…, A2 msn_020c…): 14 decision makers delivered, every e-mail and phone cell empty. The approved plans had two stages (companies, people); the people stage maps `email: ''` and `phone: ''`
@@ -29,6 +30,12 @@ export interface ContactStep {
   finders: FinderInfo[];
   /** E-MAIL steps: the verifiers this account may buy, cheapest first (at most FINDERS_PER_STEP). A found or given address goes through them; «موثّق» only when one says deliverable (emailVerification.ts). */
   verifiers?: FinderInfo[];
+  /** PHONE steps: the validators this account may buy, cheapest first. Every phone goes through them; «موثّق» only when one says the number is valid and local (phoneValidation.ts). */
+  validators?: FinderInfo[];
+  /** PHONE steps: the map searches that give a COMPANY's phone, cheapest first, used when no personal phone was found (one lookup per company). */
+  company_phone?: FinderInfo[];
+  /** PHONE steps: the cell that says whose number it is, «شخصي» / «رقم الشركة». */
+  type_key?: string;
 }
 
 export const CONTACT_STATUS_VERIFIED_AR = "موثّق";
@@ -56,19 +63,21 @@ const inputKindOf = (name: string): (typeof INPUT_KINDS)[number]["kind"] | null 
  * general ranking, and the order is price over success rate, cheapest first, ties by id.
  */
 function rankedHelpers(group: ReadonlyArray<CatalogEndpoint>, catalog: TregCatalog, stats: StatsMap, now: number): FinderInfo[] {
-  const ranked = rankEndpoints(group, catalog, stats, now).ranked;
-  return ranked
-    .map((r) => {
-      const e = catalog.byId.get(r.id)!;
-      const own = unitCost(e, catalog)?.usd ?? (typeof e.cost?.usd === "number" ? e.cost.usd : null) ?? r.usdPerItem;
-      const usd = Number(own) > 0 ? Number(own) : 0.000001;
-      // the general ranking's own correction for how often a call gives nothing, and for a demoted source
-      const adjust = r.usdPerItem > 0 ? r.effectiveUsd / r.usdPerItem : 1;
-      return { key: usd * adjust, info: { id: r.id, usd, inputs: e.inputs.map((i) => ({ name: i.name, required: i.required })) } as FinderInfo };
-    })
-    .sort((a, b) => a.key - b.key || a.info.id.localeCompare(b.info.id))
-    .slice(0, FINDERS_PER_STEP)
-    .map((x) => x.info);
+  const seen = new Set<string>();
+  const list: Array<{ key: number; info: FinderInfo }> = [];
+  for (const e of group) {
+    if (seen.has(e.id)) continue;
+    seen.add(e.id);
+    const health = sourceHealth(stats.get(e.id), now);
+    if (health.state === "skipped") continue;
+    const own = unitCost(e, catalog)?.usd ?? (typeof e.cost?.usd === "number" ? e.cost.usd : null);
+    if (own === null) continue; // no usable price: not offered
+    // a FREE call is priced at a token amount (never zero: the budget checks and the price carry a figure), and still ranks first
+    const usd = own > 0 ? own : 0.000001;
+    const successRate = expectedCost(e, catalog, stats.get(e.id)).successRate;
+    list.push({ key: (usd / successRate) * (health.state === "demoted" ? SOURCE_DEMOTE_FACTOR : 1), info: { id: e.id, usd, inputs: e.inputs.map((i) => ({ name: i.name, required: i.required })) } });
+  }
+  return list.sort((a, b) => a.key - b.key || a.info.id.localeCompare(b.info.id)).slice(0, FINDERS_PER_STEP).map((x) => x.info);
 }
 
 /** The finders of a kind this account may buy, cheapest first (the helper ranking above). Only finders that answer at once and need only what a person row gives. */
@@ -92,11 +101,32 @@ export function verifierSourcesOf(catalog: TregCatalog, isAllowed: (id: string) 
  */
 export const FALLBACK_MISS_SHARE = 0.2;
 
-/** What a chain of helpers is PRICED at per use: the dearer of its first two members (a first one that is free may be rate limited, and then the second is what is paid). */
-export const chainPriceUsd = (list: ReadonlyArray<FinderInfo> | undefined): number => Math.max(0, list?.[0]?.usd ?? 0, list?.[1]?.usd ?? 0);
+/**
+ * What a chain of helpers is PRICED at per use: the dearest of its first `depth` members. Depth 1 (the default) prices the member that is expected to answer; a fallback member is bought only inside the step's cap and the job budget (the engine checks both before every call), so a
+ * fallback that does not fit is not called. The e-mail verifiers are priced at depth 2: the owner's benchmark found a FREE verifier (contactout) answering HTTP 429, and a free first member would otherwise leave the plan without the money for the paid one that takes over.
+ */
+export const chainPriceUsd = (list: ReadonlyArray<FinderInfo> | undefined, depth = 1): number => Math.max(0, ...(list ?? []).slice(0, depth).map((f) => f.usd));
+/** How many of the first e-mail verifiers the step's price covers (see chainPriceUsd). */
+export const VERIFIER_PRICE_DEPTH = 2;
 
 /** The helpers of a step besides its finders, from the catalog (empty when there are none). */
-export interface ContactAids { verifiers?: FinderInfo[] }
+export interface ContactAids { verifiers?: FinderInfo[]; validators?: FinderInfo[]; company_phone?: FinderInfo[] }
+
+/** The phone validators of the catalog this account may buy, cheapest first: direct and synchronous, taking only a number (and the country hint of a national one). */
+export function validatorSourcesOf(catalog: TregCatalog, isAllowed: (id: string) => boolean, stats: StatsMap = new Map(), now = Date.now()): FinderInfo[] {
+  const numberInput = /^(telephone_number|phone_number|msisdn|phone|number)$/i;
+  const hint = /^(input_format|output_format|country_code|phone\.country_hint|country_hint|region)$/i;
+  const usable = (e: CatalogEndpoint): boolean => e.capability === "people.phone.verify" && e.kind === "direct" && !e.async && typeof e.cost?.usd === "number" && e.inputs.filter((i) => i.required).every((i) => numberInput.test(i.name) || hint.test(i.name)) && e.inputs.some((i) => numberInput.test(i.name));
+  return rankedHelpers(catalog.endpoints.filter((e) => isAllowed(e.id) && usable(e)), catalog, stats, now);
+}
+
+/** The map searches of the catalog that give a company's phone (a place for a query), cheapest first: they take a query (and a country or a location), nothing else required. */
+export function companyPhoneSourcesOf(catalog: TregCatalog, isAllowed: (id: string) => boolean, stats: StatsMap = new Map(), now = Date.now()): FinderInfo[] {
+  const query = /^(q|query|keyword)$/i;
+  const hint = /^(country|gl|location)$/i;
+  const usable = (e: CatalogEndpoint): boolean => e.capability === "google.serp.maps" && !e.async && typeof e.cost?.usd === "number" && e.inputs.some((i) => query.test(i.name) && !/array/i.test(String(i.type ?? ""))) && e.inputs.filter((i) => i.required).every((i) => query.test(i.name) || hint.test(i.name));
+  return rankedHelpers(catalog.endpoints.filter((e) => isAllowed(e.id) && usable(e)), catalog, stats, now);
+}
 
 /** The steps a plan needs: one per asked kind for every DELIVERED people stage. `finders(kind)` is the catalog's ranked list (empty: the step is still there, with nothing to call, and the file says nothing was found). `aids(kind)` are its other helpers (the e-mail verifiers), priced into the step. */
 export function buildContactSteps(
@@ -115,16 +145,19 @@ export function buildContactSteps(
       const list = finders(kind);
       const help = aids?.(kind) ?? {};
       const verifiers = kind === "email" && help.verifiers && help.verifiers.length > 0 ? help.verifiers : undefined;
+      const validators = kind === "phone" && help.validators && help.validators.length > 0 ? help.validators : undefined;
+      const company_phone = kind === "phone" && help.company_phone && help.company_phone.length > 0 ? help.company_phone : undefined;
       const column_key = marked?.key ?? DEFAULT_COLUMN[kind].key;
-      // what one person is expected to cost: the cheapest finder, plus (e-mail) the verifier every found address goes through
-      out.push({ kind, stage_key: st.key, column_key, status_key: statusKeyOf(column_key), per_person_usd: (list[0]?.usd ?? 0) + FALLBACK_MISS_SHARE * (list[1]?.usd ?? 0) + (verifiers ? chainPriceUsd(verifiers) : 0), finders: list, ...(verifiers ? { verifiers } : {}) });
+      // what one person is expected to cost: the cheapest finder and the assumed share of the fallback finder; for an e-mail the verifier every found address goes through; for a phone the company-phone search (a person with no personal number is given the company's: priced for every person, the upper bound) and the validator
+      const perPerson = (list[0]?.usd ?? 0) + FALLBACK_MISS_SHARE * (list[1]?.usd ?? 0) + (verifiers ? chainPriceUsd(verifiers, VERIFIER_PRICE_DEPTH) : 0) + (company_phone ? chainPriceUsd(company_phone) : 0) + (validators ? chainPriceUsd(validators) : 0);
+      out.push({ kind, stage_key: st.key, column_key, status_key: statusKeyOf(column_key), per_person_usd: perPerson, finders: list, ...(verifiers ? { verifiers } : {}), ...(validators ? { validators } : {}), ...(company_phone ? { company_phone } : {}), ...(kind === "phone" ? { type_key: phoneTypeKeyOf(column_key) } : {}) });
     }
   }
   return out;
 }
 
 /** The stage columns with the step's contact column (added when the planner left it out) and, right after it, the Arabic status column. A plan without steps is returned as it is. Idempotent. */
-export function withContactColumns<C extends { key: string; title_ar: string; kind?: ContactKind; status_of?: string }>(stageKey: string, columns: ReadonlyArray<C>, steps: ReadonlyArray<ContactStep> | undefined): C[] {
+export function withContactColumns<C extends { key: string; title_ar: string; kind?: ContactKind; status_of?: string; type_of?: string }>(stageKey: string, columns: ReadonlyArray<C>, steps: ReadonlyArray<ContactStep> | undefined): C[] {
   const mine = (steps ?? []).filter((s) => s.stage_key === stageKey);
   if (mine.length === 0) return [...columns];
   let out: C[] = [...columns];
@@ -135,6 +168,11 @@ export function withContactColumns<C extends { key: string; title_ar: string; ki
       const at = out.findIndex((c) => c.key === s.column_key);
       const base = out[at].title_ar;
       out.splice(at + 1, 0, { key: s.status_key, title_ar: `حالة توثيق ${base}`, status_of: s.column_key } as C);
+    }
+    // a phone says whose number it is, right after its status: «شخصي» or «رقم الشركة»
+    if (s.type_key && !out.some((c) => c.key === s.type_key)) {
+      const at = out.findIndex((c) => c.key === s.status_key);
+      out.splice(at + 1, 0, { key: s.type_key, title_ar: PHONE_TYPE_COLUMN_AR, type_of: s.column_key } as C);
     }
   }
   return out;

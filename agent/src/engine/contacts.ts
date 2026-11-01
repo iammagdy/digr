@@ -1,6 +1,11 @@
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
 import { contactStatusAr, finderParamsFor, foundContactIn, personFactsOf, verifierParamsFor, type ContactStep, type FinderInfo, type FoundContact } from "../../../src/lib/agentMission/contactFinders";
 import { EMAIL_STATUS_OTHER_COMPANY_AR, EMAIL_STATUS_VERIFIED_AR, emailOnOtherDomain, emailStatusAr, emailVerdictIn } from "../../../src/lib/agentMission/emailVerification";
+import { companyIdentityOf, type CompanyIdentity } from "../../../src/lib/agentMission/companyIdentity";
+import { isEnabled } from "../../../src/lib/agentMission/filters";
+import { nameKeysOf } from "../../../src/lib/agentMission/people";
+import { PHONE_STATUS_OTHER_COUNTRY_AR, PHONE_STATUS_VERIFIED_AR, PHONE_TYPE_COMPANY_AR, PHONE_TYPE_PERSONAL_AR, companyCountryOf, companyPhoneOfRow, mapsParamsFor, phoneStatusAr, phoneStatusOf, phoneVerdictIn, placePhoneIn, validatorParamsFor, type PhoneVerdict } from "../../../src/lib/agentMission/phoneValidation";
+import { verifyContactValue } from "../../../src/lib/agentMission/contacts";
 import { rankPeopleByRole } from "../../../src/lib/agentMission/roles";
 import { toArabicDigits } from "../../../src/lib/arabicDigits";
 import type { Gateway } from "../gateway";
@@ -113,13 +118,64 @@ async function runStep(deps: ContactDeps, step: ContactStep, stage: ContactDeps[
     }
     return { status: "unverified", stop: null };
   };
+  // THE COMPANY of each person: who it is, which country it is in (its row, else the country the customer asked for, else its website's suffix), and its phone (its own data first, else ONE map search per company; a miss is remembered too)
+  const parentStage = deps.plan.stages.find((s) => s.key === stage.parent_key);
+  const requestPlaces = [...(parentStage?.filters ?? []), ...(stage.filters ?? [])].filter((f) => f.kind === "place" && isEnabled(f)).flatMap((f) => (f.places && f.places.length > 0 ? f.places : f.values ?? []));
+  const companies = new Map<string, { identity: CompanyIdentity; country: string | null; phone: { value: string | null } | null; row: Row | null; city: string | null }>();
+  const companyOf = (parentId: string) => {
+    let c = companies.get(parentId);
+    if (!c) {
+      const row = parents.get(parentId) ?? null;
+      const identity = companyIdentityOf(row, parentStage ? nameKeysOf(parentStage.columns) : []);
+      const cityKey = row ? Object.keys(row).find((k) => /(^|_)city$/i.test(k) && String(row[k] ?? "").trim() !== "") : undefined;
+      c = { identity, country: companyCountryOf({ row, requestPlaces, domain: identity.domain }), phone: null, row, city: cityKey && row ? String(row[cityKey]).trim() : null };
+      companies.set(parentId, c);
+    }
+    return c;
+  };
+  /** The company's phone: its own data, else one map search (the helpers in order, each within the limits); remembered for every person of the company. */
+  const companyPhoneFor = async (parentId: string): Promise<{ value: string | null; stop: ContactStop | null }> => {
+    const c = companyOf(parentId);
+    if (c.phone) return { value: c.phone.value, stop: null };
+    const own = companyPhoneOfRow(c.row);
+    if (own) { c.phone = { value: own }; return { value: own, stop: null }; }
+    for (const helper of step.company_phone ?? []) {
+      if ((down.get(helper.id) ?? 0) >= 2) continue;
+      const params = mapsParamsFor(helper, { name: c.identity.names[0] ?? "", city: c.city, country: c.country });
+      if (!params) continue;
+      const a = await attempt(helper, params);
+      if (a.t === "stop") return { value: null, stop: a.stop };
+      if (a.t !== "page") continue;
+      const found = placePhoneIn(a.page, c.identity);
+      if (found) { c.phone = { value: found }; return { value: found, stop: null }; }
+    }
+    // looked for and not found (or nothing to look with): remembered, so the next person of the company does not pay for the same search; a search that was SKIPPED (the cap) is not a miss and is asked again only if room appears
+    if ((step.company_phone ?? []).length > 0) c.phone = { value: null };
+    return { value: null, stop: null };
+  };
+  /** The validator's answer for a number (the helpers in order; the first that says valid or not valid ends the chain). Null when none answered. */
+  const phoneVerdictOf = async (number: string, country: string | null): Promise<{ verdict: PhoneVerdict | null; stop: ContactStop | null }> => {
+    for (const validator of step.validators ?? []) {
+      if ((down.get(validator.id) ?? 0) >= 2) continue;
+      const params = validatorParamsFor(validator, number, country);
+      if (!params) continue;
+      const a = await attempt(validator, params);
+      if (a.t === "stop") return { verdict: null, stop: a.stop };
+      if (a.t !== "page") continue;
+      const verdict = phoneVerdictIn(a.page);
+      if (verdict.valid !== null) return { verdict, stop: null };
+    }
+    return { verdict: null, stop: null };
+  };
   try {
     outer: for (const row of ranked) {
       const existing = String(row[step.column_key] ?? "").trim();
       const existingStatus = String(row[step.status_key] ?? "").trim();
       // a value that already has its final status (an earlier run of this step) is not looked up or verified again
-      if (existing !== "" && (step.kind !== "email" || existingStatus === EMAIL_STATUS_VERIFIED_AR || existingStatus === EMAIL_STATUS_OTHER_COMPANY_AR)) continue;
-      const facts = personFactsOf(row, stage.columns, parents.get(String(row.parent_id)) ?? null);
+      if (existing !== "" && (step.kind === "email" ? existingStatus === EMAIL_STATUS_VERIFIED_AR || existingStatus === EMAIL_STATUS_OTHER_COMPANY_AR : existingStatus === PHONE_STATUS_VERIFIED_AR || existingStatus === PHONE_STATUS_OTHER_COUNTRY_AR)) continue;
+      const parentId = String(row.parent_id ?? "");
+      const facts = personFactsOf(row, stage.columns, parents.get(parentId) ?? null);
+      let typeAr: string | null = null;
       let asked = false;
       let value = existing;
       let statusAr: string | null = null;
@@ -136,9 +192,16 @@ async function runStep(deps: ContactDeps, step: ContactStep, stage: ContactDeps[
           hit = foundContactIn(step.kind, a.page);
           if (!hit) continue;
           value = hit.value;
+          if (step.kind === "phone") typeAr = PHONE_TYPE_PERSONAL_AR;
           break;
         }
-      }
+        // NO PERSONAL PHONE: the COMPANY's phone goes in the person's row, labelled «رقم الشركة» (one lookup per company)
+        if (value === "" && step.kind === "phone" && step.type_key) {
+          const cp = await companyPhoneFor(parentId);
+          if (cp.stop) { stopped = cp.stop; break outer; }
+          if (cp.value) { value = verifyContactValue("phone", cp.value) ?? cp.value.trim(); typeAr = PHONE_TYPE_COMPANY_AR; asked = true; }
+        }
+      } else if (step.kind === "phone" && step.type_key && String(row[step.type_key] ?? "").trim() === "") typeAr = PHONE_TYPE_PERSONAL_AR; // a number the source gave with the person
       if (value !== "") {
         if (step.kind === "email") {
           // finder, fallback finder, then the VERIFIER: «موثّق» only when a verifier says so
@@ -148,13 +211,19 @@ async function runStep(deps: ContactDeps, step: ContactStep, stage: ContactDeps[
           statusAr = emailStatusAr(verdict.status);
           if (verdict.status === "unverified") out.filled.unverified += hit ? 1 : 0;
           else if (verdict.status === "verified") out.filled.verified += 1;
-        } else if (hit) {
-          statusAr = contactStatusAr(hit.status);
-          if (hit.status === "unverified") out.filled.unverified += 1;
+        } else {
+          // EVERY PHONE IS VALIDATED: «رقم من دولة أخرى» when its country is not the company's, «موثّق» only when a validator says the number is valid, «غير موثّق» otherwise
+          const company = companyOf(parentId);
+          const checked = await phoneVerdictOf(value, company.country);
+          if (checked.stop) stopped = checked.stop;
+          if ((step.validators ?? []).length > 0) asked = true;
+          const status = phoneStatusOf({ number: value, verdict: checked.verdict, companyCountry: company.country });
+          statusAr = phoneStatusAr(status);
+          if (status === "verified") out.filled.verified += 1; else if (hit || typeAr === PHONE_TYPE_COMPANY_AR) out.filled.unverified += 1;
         }
-        const cells: Record<string, string> = { ...(hit || existing === "" ? { [step.column_key]: value } : {}), ...(statusAr !== null ? { [step.status_key]: statusAr } : {}) };
+        const cells: Record<string, string> = { ...(hit || existing === "" ? { [step.column_key]: value } : {}), ...(statusAr !== null ? { [step.status_key]: statusAr } : {}), ...(typeAr !== null && step.type_key ? { [step.type_key]: typeAr } : {}) };
         if (Object.keys(cells).length > 0) pending.push({ t: "cells", stage: step.stage_key, id: String(row.id), cells });
-        if (hit) { found += 1; out.filled[step.kind] += 1; }
+        if (hit || (existing === "" && typeAr === PHONE_TYPE_COMPANY_AR)) { found += 1; out.filled[step.kind] += 1; }
       }
       if (asked) out.looked += 1; else out.skipped += 1;
       if (pending.length >= COMMIT_EVERY) await flush();

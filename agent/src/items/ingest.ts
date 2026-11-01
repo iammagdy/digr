@@ -1,4 +1,4 @@
-import { CONTACT_STATUS_UNVERIFIED_AR, CONTACT_STATUS_VERIFIED_AR, statusKeyOf } from "../../../src/lib/agentMission/contactFinders";
+import { CONTACT_STATUS_UNVERIFIED_AR, statusKeyOf } from "../../../src/lib/agentMission/contactFinders";
 import { classifyRowDetailed, type RelevanceReason, type RuleBasis } from "../../../src/lib/agentMission/relevance";
 import { CONTACT_KINDS, isContactSource, verifyContactValue } from "../../../src/lib/agentMission/contacts";
 import { isNamedPerson, isPeopleStage, personVerdict } from "../../../src/lib/agentMission/people";
@@ -187,8 +187,8 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
       const looksLikeValue = c.kind === "work_email" ? /^[^\s@*]+@[^\s@*]+\.[^\s@*]+$/.test(original) : !original.includes("*") && original.replace(/\D/g, "").length >= 7;
       const kept = verified ?? (looksLikeValue ? original : "");
       row[c.key] = kept;
-      // «موثّق» is never written here for an E-MAIL: a code check says an address is well formed, not that a mailbox exists. The contact step sends every kept address through a verifier and writes «موثّق» only on its answer (emailVerification.ts)
-      if (kept) row[statusKeyOf(c.key)] = verified && c.kind !== "work_email" ? CONTACT_STATUS_VERIFIED_AR : CONTACT_STATUS_UNVERIFIED_AR;
+      // «موثّق» is never written here: a code check says an address or a number is well formed, not that a mailbox exists or a line is live and local. The contact step sends every kept value through a verifier or a validator and writes «موثّق» only on its answer (emailVerification.ts, phoneValidation.ts)
+      if (kept) row[statusKeyOf(c.key)] = CONTACT_STATUS_UNVERIFIED_AR;
       if (verified) verifiedAny = true; else if (original && !kept) tally.contact_values_left_empty += 1;
     }
     if (contactStage && contactColumns.length > 0 && !verifiedAny && !isNamedPerson(raw, stage.columns)) { tally.rejected_no_verified_contact += 1; excludedStructural.push({ id, reason: "no_verified_contact", row }); continue; }
