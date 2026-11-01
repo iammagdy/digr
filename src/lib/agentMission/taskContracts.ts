@@ -14,7 +14,7 @@ export type SheetRole = "company" | "person" | "item" | "child";
 export type ContractClass =
   | "row_number" | "company_name" | "company_activity" | "company_website" | "company_email" | "company_phone"
   | "decision_maker_name" | "decision_maker_title" | "decision_maker_flag" | "person_email" | "person_phone" | "notes"
-  | "parent_title" | "parent_link"
+  | "parent_title" | "parent_link" | "comment_kind" | "reply_to"
   | "place_name" | "place_address" | "place_phone" | "place_rating" | "place_reviews" | "place_link"
   | "text" | "date" | "link" | "author" | "engagement";
 
@@ -39,6 +39,16 @@ export const NOTES_TITLE_AR = "ملاحظات";
 /** The values of the decision-maker marker. */
 export const DECISION_MAKER_YES_AR = "نعم";
 export const DECISION_MAKER_NO_AR = "لا";
+/**
+ * THE THREAD COLUMNS OF A COMMENTS DELIVERY (the replies PR, owner decision: researchers analyse FULL threads, so a comments task delivers the top-level comments AND their replies in ONE table). «نوع التعليق» says which a row is; a reply's «معرّف التعليق الأصلي» is the id of the comment it
+ * answers (empty on a comment); the parent video or post's title and link are on every row, replies included.
+ */
+export const COMMENT_KIND_KEY = "comment_kind";
+export const REPLY_TO_KEY = "reply_to";
+export const COMMENT_KIND_TITLE_AR = "نوع التعليق";
+export const COMMENT_KIND_COMMENT_AR = "تعليق";
+export const COMMENT_KIND_REPLY_AR = "رد";
+export const REPLY_TO_TITLE_AR = "معرّف التعليق الأصلي";
 /** The note on a company whose delivered people hold no decision maker (the owner's own sentence). */
 export const NO_DECISION_MAKERS_NOTE_AR = "لم نجد صناع قرار في هذه الشركة";
 /** What a cell says when nothing was found for it (never an empty cell where a value was looked for). */
@@ -72,9 +82,9 @@ export const TASK_CONTRACTS = {
   companies: { company: [col("company_name", COMPANY_NAME_TITLE_AR, "source"), col("company_website", "الموقع الإلكتروني", "source"), col("company_phone", COMPANY_PHONE_TITLE_AR, "source")] },
   posts: { item: [col("text", "النص", "source"), col("date", "التاريخ والوقت", "source"), col("link", "الرابط", "source"), col("author", "الحساب", "source"), col("engagement", "الإعجابات والمشاركات والمشاهدات كما يعطيها المصدر", "source")] },
   comments: {
-    item: [col("text", "نص التعليق", "source"), col("author", "الكاتب", "source"), col("date", "التاريخ والوقت", "source"), col("engagement", "الإعجابات والردود", "source")],
-    // the parent post or video, on EVERY comment row: zero orphan comments (workbook.ts reads this list)
-    child: [col("parent_title", "نص المنشور أو عنوان الفيديو", "code"), col("parent_link", "رابط المنشور أو الفيديو", "code")],
+    item: [col("text", "نص التعليق", "source"), col("author", "الكاتب", "source"), col("date", "التاريخ والوقت", "source"), col("engagement", "الإعجابات والردود", "source"), col("comment_kind", COMMENT_KIND_TITLE_AR, "code")],
+    // the parent post or video, on EVERY comment row and every reply row: zero orphan comments (workbook.ts reads this list); a reply also names the comment it answers
+    child: [col("parent_title", "نص المنشور أو عنوان الفيديو", "code"), col("parent_link", "رابط المنشور أو الفيديو", "code"), col("reply_to", REPLY_TO_TITLE_AR, "code")],
   },
   places: { item: [col("place_name", "الاسم", "source"), col("place_address", "العنوان", "source"), col("place_phone", "الهاتف", "source"), col("place_rating", "التقييم", "source"), col("place_reviews", "عدد التقييمات", "source"), col("place_link", "رابط الخريطة", "source")] },
 } satisfies Record<TaskType, Partial<Record<SheetRole, ContractColumn[]>>>;
