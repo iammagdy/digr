@@ -180,8 +180,11 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
         const found = parentBinding(params, parentRows);
         if (!found) continue;
         const fallbacks = bindingFallbacks(endpoint, found, parentRows);
-        binding = fallbacks.length > 0 ? { ...found, fallbacks } : found;
+        // EVERY IDENTITY INPUT THE SOURCE TAKES goes in the same call (the id AND the link): the ones the measuring call passed, else the ones the parent's rows can give
+        const also = found.also ?? bindingAlso(endpoint, found, parentRows);
+        binding = { param: found.param, from: found.from, ...(also.length > 0 ? { also } : {}), ...(fallbacks.length > 0 ? { fallbacks } : {}) };
         delete params[found.param];
+        for (const a of also) delete params[a.param];
       }
       // a source with no next page and a flat price per call is asked for everything its limit allows (a lower limit only makes the one answer smaller)
       const lifted = stage.parent_key === null && !sources ? liftedVolume(endpoint, params) : null;
@@ -301,8 +304,37 @@ export function bindingFallbacks(endpoint: CatalogEndpoint, primary: { param: st
   return out;
 }
 
-/** Which input of the child's measuring call is a field of a parent row (a value that equals the parent's own id, or one of its columns)? Exactly one input may bind, and it must bind to one field: else no recipe. */
-export function parentBinding(params: Record<string, unknown>, parentRows: Array<Record<string, unknown>>): { param: string; from: string } | null {
+/**
+ * THE IDENTITY INPUTS OF A CHILD SOURCE (audit 2026-11 gap G11): the inputs that name WHICH item to read, by its platform id (video_id, post_id, aweme_id, shortcode) or by its link (url, post_url, permalink). A routed source (`treg.tiktok.video.comments`) takes both and matches its providers on the
+ * keys it is sent: with the id alone the providers that need the link are dropped. Every identity input the source takes is sent, in the same call (no extra cost), from the parent's own id and link.
+ */
+const ID_INPUT = /^(?:video_?id|post_?id|aweme_?id|shortcode|media_?id|code|id)$/i;
+const URL_INPUT = /^(?:url|post_?url|video_?url|link|permalink)$/i;
+const PARENT_ID_FIELD = /^(?:id|video_?id|post_?id|aweme_?id|shortcode)$/i;
+const PARENT_LINK_FIELD = /^(?:url|link|permalink|post_?url|video_?url)$/i;
+const isIdentityPair = (a: string, b: string): boolean => (ID_INPUT.test(a) && URL_INPUT.test(b)) || (URL_INPUT.test(a) && ID_INPUT.test(b));
+const textInput = (endpoint: CatalogEndpoint, re: RegExp): string | null => endpoint.inputs.find((i) => re.test(i.name) && /^(?:str|string|url)$/i.test(String(i.type ?? "string")))?.name ?? null;
+
+/** The other identity inputs of the source (the link beside the id, the id beside the link) with the parent field each takes. Only inputs the source really has and parent fields that carry a value on some row. Pure. */
+export function bindingAlso(endpoint: CatalogEndpoint, primary: { param: string; from: string }, parentRows: ReadonlyArray<Record<string, unknown>>): Array<{ param: string; from: string }> {
+  const keys = [...new Set(parentRows.flatMap((r) => Object.keys(r)))];
+  const hasText = (k: string): boolean => parentRows.some((r) => (typeof r[k] === "string" && String(r[k]).trim() !== "") || typeof r[k] === "number");
+  const hasLink = (k: string): boolean => parentRows.some((r) => typeof r[k] === "string" && /^https?:\/\//i.test(String(r[k]).trim()));
+  const out: Array<{ param: string; from: string }> = [];
+  if (ID_INPUT.test(primary.param)) {
+    const urlParam = textInput(endpoint, URL_INPUT);
+    const field = keys.find((k) => PARENT_LINK_FIELD.test(k) && k !== primary.from && hasLink(k));
+    if (urlParam && urlParam !== primary.param && field) out.push({ param: urlParam, from: field });
+  } else if (URL_INPUT.test(primary.param)) {
+    const idParam = textInput(endpoint, ID_INPUT);
+    const field = keys.find((k) => PARENT_ID_FIELD.test(k) && k !== primary.from && hasText(k));
+    if (idParam && idParam !== primary.param && field) out.push({ param: idParam, from: field });
+  }
+  return out;
+}
+
+/** Which input of the child's measuring call is a field of a parent row (a value that equals the parent's own id, or one of its columns)? Exactly one input may bind, and it must bind to one field: else no recipe. An id AND a link that both bind (the routed sources take both) are ONE binding with the link beside it. */
+export function parentBinding(params: Record<string, unknown>, parentRows: Array<Record<string, unknown>>): { param: string; from: string; also?: Array<{ param: string; from: string }> } | null {
   const found: Array<{ param: string; from: string }> = [];
   for (const [param, value] of Object.entries(params)) {
     if (typeof value !== "string" && typeof value !== "number") continue;
@@ -314,5 +346,7 @@ export function parentBinding(params: Record<string, unknown>, parentRows: Array
     if (fields.size === 0) continue;
     found.push({ param, from: fields.has("id") ? "id" : [...fields].sort()[0] });
   }
-  return found.length === 1 ? found[0] : null;
+  if (found.length === 1) return found[0];
+  if (found.length === 2 && isIdentityPair(found[0].param, found[1].param)) { const [first, second] = ID_INPUT.test(found[0].param) ? [found[0], found[1]] : [found[1], found[0]]; return { ...first, also: [second] }; }
+  return null;
 }

@@ -130,6 +130,19 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
       for (;;) {
         if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
         const parentId = String(parent.id);
+        // A PARENT THAT SAYS IT HAS NO CHILD IS NOT READ (audit 2026-11 gap G10, live: 9 of 108 paid comment reads returned nothing): its own count field (comments, replies, reviews) is 0, so no paid read is made. It is replaced by a spare parent the same way a parent
+        // the source answered nothing for is, or skipped when none is left. A parent that gives no count at all is read as before.
+        if (ownChildCount(parent) === 0) {
+          const spare = swapsLeft.n > 0 ? spareParentFor(items, stage.parent_key, stage.key, parent) : null;
+          if (spare) {
+            swapsLeft.n -= 1;
+            await items.commit([{ t: "swap", stage: stage.parent_key, out: parentId, in: spare.id }]);
+            await items.mirror(stage.parent_key);
+            parent = spare.row;
+            continue;
+          }
+          break;
+        }
         // THE PARENT'S OWN FIELDS, in order (the measuring call's input first, then its website, page and name when the child source takes them): the first that has a value is read; a read that FAILED or gave nothing is retried through the next one
         // the same field read as a BARE DOMAIN too when the source's input is a website («www.x.com», «x.com/home» are not found by a source that knows «x.com»): index 9, so the streams of the other bindings keep their keys
         const bindings = [{ param: spec.parent_binding.param, from: spec.parent_binding.from, domain: false, index: 0 }, ...(WEBSITE_PARAM.test(spec.parent_binding.param) ? [{ param: spec.parent_binding.param, from: spec.parent_binding.from, domain: true, index: 9 }] : []), ...(spec.parent_binding.fallbacks ?? []).map((f, i) => ({ param: f.param, from: f.from, domain: f.domain === true, index: i + 1 }))];
@@ -146,7 +159,9 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
         if (usable.length === 0) break;
         let r: { reason: StopReason; aborted: string | null } = { reason: "source_exhausted", aborted: null };
         for (const u of usable) {
-          const params = { ...spec.params, [u.b.param]: u.value };
+          // the first read of a parent also carries the parent's other identity inputs (its link beside its id): a routed source needs them to keep its providers (spec.ts bindingAlso)
+          const also = u.index === 0 ? Object.fromEntries((spec.parent_binding.also ?? []).map((a) => [a.param, bindingValue(parent[a.from], false)] as const).filter(([, v]) => v !== null && !isProviderUrl(v, providerContext()) && !isPlaceholderCompanyUrl(v))) : {};
+          const params = { ...spec.params, ...also, [u.b.param]: u.value };
           const before = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
           r = await runStream(deps, stage, spec, u.index === 0 ? `p:${parentId}` : `p:${parentId}:b${u.index}`, params, parentId, cap);
           if (r.aborted) return r;
@@ -234,10 +249,21 @@ const PARENT_UNKNOWN_HTTP: ReadonlySet<number> = new Set([400, 404, 410, 422]);
 const WEBSITE_PARAM = /^(website|domain|site|url|homepage|web|company_?(website|domain|site))$/i;
 const CHILD_COUNT_KEY = /^(comments?|comments?_?count|comment_?num|num_?comments|replies|reply_?count|reviews?|reviews?_?count)$/i;
 
+/** The parent's own count of its children (a video's comments, a place's reviews), when its row carries a number for it (a numeric text counts); null when the row has none. */
+export function ownChildCount(row: Row): number | null {
+  for (const [k, v] of Object.entries(row)) {
+    if (!CHILD_COUNT_KEY.test(k)) continue;
+    const n = typeof v === "number" ? v : typeof v === "string" && /^\s*\d+\s*$/.test(v) ? Number(v) : NaN;
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return null;
+}
+
 /** The next spare parent: a match the parent stage checked and kept beyond its volume, never read for children, from the same named source as the parent it replaces (a named source's share is kept). Most children first when the rows say it, else the source's order. */
 function spareParentFor(items: ItemStore, parentKey: string, childKey: string, out: Row): { id: string; row: Row } | null {
   const src = (r: Row): string => String(r[SOURCE_KEY] ?? "");
-  const spares = items.excludedItems(parentKey).filter((i) => i.reason === "target_reached" && i.row && src(i.row) === src(out) && !items.streamState(childKey, `p:${i.id}`));
+  // a spare that says it has no child is no replacement (the same rule as for the parent it takes the place of)
+  const spares = items.excludedItems(parentKey).filter((i) => i.reason === "target_reached" && i.row && src(i.row) === src(out) && ownChildCount(i.row) !== 0 && !items.streamState(childKey, `p:${i.id}`));
   if (spares.length === 0) return null;
   const count = (r: Row): number => { for (const [k, v] of Object.entries(r)) if (CHILD_COUNT_KEY.test(k) && typeof v === "number" && Number.isFinite(v)) return v; return -1; };
   const best = spares.map((i, index) => ({ i, index, n: count(i.row!) })).sort((a, b) => b.n - a.n || a.index - b.index)[0].i;
