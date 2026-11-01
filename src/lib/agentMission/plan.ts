@@ -1,7 +1,7 @@
 import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, AGENT_PEOPLE_PAGES_DEFAULT, AGENT_PEOPLE_PAGES_MAX, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE } from "./constants";
 import { CONTACT_KINDS, requestWantsContacts, type ContactKind } from "./contacts";
 import { isPeopleStage } from "./people";
-import { buildContactSteps, type ContactAids, type ContactStep, type FinderInfo, type FinderKind } from "./contactFinders";
+import { buildCompanySteps, buildContactSteps, type ContactAids, type ContactStep, type FinderInfo, type FinderKind } from "./contactFinders";
 import { peopleConditionedOnContactIssues } from "./contactQuestion";
 import { estimateMissionMinutes, measuredCostPerRowUsd, priceMissionByCode, type MissionPriceResult } from "./price";
 import { classifyRows, searchQueryOf, validateRelevanceSpec, type RelevanceSpec } from "./relevance";
@@ -150,6 +150,8 @@ export interface PlanLookup {
   contactFinders?(kind: FinderKind): FinderInfo[];
   /** The helpers of the finder steps besides the finders (the e-mail verifiers), ranked and priced from the catalog. */
   contactAids?(kind: FinderKind): ContactAids;
+  /** The mailbox listers this account may buy, cheapest first (contactFinders.ts): the company's e-mail step of «companies and their decision makers» (taskContracts.ts) looks the company's own role mailbox up through them. */
+  mailboxListers?(): FinderInfo[];
 }
 
 export interface PricedStage extends ProposedStage {
@@ -654,7 +656,8 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   if (issues.length) return { ok: false, issues };
 
   // THE FINDER STEPS: whatever the planner wrote (or dropped, or excused with a note), a delivered people stage of a request that asks for an e-mail or a phone gets its step per asked kind, finders ranked cheapest first
-  const contactSteps = buildContactSteps(priced, lookup.requestText, (kind) => lookup.contactFinders?.(kind) ?? [], (kind) => lookup.contactAids?.(kind) ?? {});
+  // THE COMPANY STEPS (the company's own e-mail and HQ phone, reference A): beside the people's, for a delivered company stage with delivered people under it
+  const contactSteps = [...buildContactSteps(priced, lookup.requestText, (kind) => lookup.contactFinders?.(kind) ?? [], (kind) => lookup.contactAids?.(kind) ?? {}), ...buildCompanySteps(priced, lookup.mailboxListers?.() ?? [], (kind) => lookup.contactAids?.(kind) ?? {})];
   const price = priceMissionByCode(stagePriceInputs(priced, contactSteps), { settings: lookup.pricingSettings });
   if (price.overCap) return { ok: false, issues: [`the mission would hold ${price.reservePoints} points, more than the job limit; lower the expected rows`], ...(impliedUsed && impliedCount > 1 ? { lowerImplied: true } : {}) };
   // the DEFAULT count of people per company is lowered (one fewer at a time, down to one) while the hold is above the target; the cap itself is not touched
@@ -774,14 +777,18 @@ const pagesAr = (n: number): string => (n === 1 ? "صفحة واحدة" : n === 
  */
 export function priceIncludesLinesAr(plan: Pick<PricedPlan, "stages" | "contact_steps">): string[] {
   const deep = plan.stages.find((s) => s.deliver && s.parent_key !== null && Number(s.pages_per_parent) > 1);
-  const kinds = new Set((plan.contact_steps ?? []).map((x) => x.kind));
-  if (!deep && kinds.size === 0) return [];
+  const kinds = new Set((plan.contact_steps ?? []).filter((x) => x.level === undefined).map((x) => x.kind));
+  const companyKinds = new Set((plan.contact_steps ?? []).filter((x) => x.level === "company").map((x) => x.kind));
+  if (!deep && kinds.size === 0 && companyKinds.size === 0) return [];
   const parent = deep ? plan.stages.find((p) => p.key === deep.parent_key) : undefined;
   const noun = parent ? itemNounOf(parent.title_ar).singular : "شركة";
   const lookup = kinds.size === 0 ? "" : `البحث عن ${kinds.has("email") && kinds.has("phone") ? "الإيميل ورقم التليفون" : kinds.has("email") ? "الإيميل" : "رقم التليفون"} لكل شخص`;
   const depth = deep ? `بحثًا أعمق عن صناع القرار (نقرأ حتى ${pagesAr(Math.floor(Number(deep.pages_per_parent)))} من النتائج لكل ${noun} ونتوقف مبكرًا عند اكتمال العدد)` : "";
   const both = [depth, lookup].filter(Boolean).join("، و");
-  return [`السعر يشمل ${both}. تقدر تقلّل العمق أو عدد الأشخاص لكل ${noun} من «عدّل الخطة» لتخفيض السعر.`];
+  // the company's own e-mail and HQ phone (reference A, columns 5 and 6): a line of their own, so the people's sentence stays as it was
+  const companyLine = companyKinds.size === 0 ? [] : [`السعر يشمل أيضًا البحث عن ${companyKinds.has("email") && companyKinds.has("phone") ? "الإيميل العام للشركة وهاتف المقر الرئيسي" : companyKinds.has("email") ? "الإيميل العام للشركة" : "هاتف المقر الرئيسي"} لكل ${noun}؛ وما لا نجده نكتب مكانه «غير متوفر».`];
+  if (both === "") return companyLine;
+  return [`السعر يشمل ${both}. تقدر تقلّل العمق أو عدد الأشخاص لكل ${noun} من «عدّل الخطة» لتخفيض السعر.`, ...companyLine];
 }
 
 /** One line per delivered people stage that prefers a role: what is preferred and that fewer matching people may come (roles.ts). */

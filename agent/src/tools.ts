@@ -5,7 +5,8 @@ import { isContactSource } from "../../src/lib/agentMission/contacts";
 import { contactVerificationQuestionIssue } from "../../src/lib/agentMission/contactQuestion";
 import { childStepSourcesFor, isPeopleNoun, linkableCompanySources, peopleSourcesForCompanies } from "../../src/lib/agentMission/childSources";
 import { peopleAndContactAdvice, phoneSourcesOf } from "../../src/lib/agentMission/peopleCheck";
-import { companyPhoneSourcesOf, finderSourcesOf, validatorSourcesOf, verifierSourcesOf, withContactColumns } from "../../src/lib/agentMission/contactFinders";
+import { companyPhoneSourcesOf, finderSourcesOf, mailboxListerSourcesOf, validatorSourcesOf, verifierSourcesOf, withContactColumns } from "../../src/lib/agentMission/contactFinders";
+import { bindCompanySteps, withContractColumns } from "../../src/lib/agentMission/taskContracts";
 import { describeAgentSource, isAgentSourceId, searchAgentSources, SESSION_RESTRICTED_SOURCES } from "../../src/lib/agentMission/sources";
 import { usableSearchProvider, webSourceAvailable, type WebAvailability } from "../../src/lib/agentMission/webAvailability";
 import { validateAndPricePlan, type PricedPlan, type RecordedCall } from "../../src/lib/agentMission/plan";
@@ -590,6 +591,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           pricingSettings: ctx.pricingSettings,
           childStepSources: (noun: string) => childStepSourcesFor(noun, ctx.catalog, (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed),
           contactFinders: (kind: "email" | "phone") => finderSourcesOf(kind, ctx.catalog, (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed, ctx.stats),
+          mailboxListers: () => mailboxListerSourcesOf(ctx.catalog, (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed, ctx.stats),
           contactAids: (kind: "email" | "phone") => {
             const allowedHelper = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
             return kind === "email" ? { verifiers: verifierSourcesOf(ctx.catalog, allowedHelper, ctx.stats) } : { validators: validatorSourcesOf(ctx.catalog, allowedHelper, ctx.stats), company_phone: companyPhoneSourcesOf(ctx.catalog, allowedHelper, ctx.stats) };
@@ -630,6 +632,12 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         }
         // THE FINDER STEPS' COLUMNS (contactFinders.ts): the contact column the planner left out and the Arabic status column beside each are added by code AFTER the recipes were proven on the mapping (the engine's contract checks the columns the MAPPING fills; these are filled by the finder step, never by the mapping)
         if (checked.plan.contact_steps && checked.plan.contact_steps.length > 0) for (const st of checked.plan.stages) st.columns = withContactColumns(st.key, st.columns, checked.plan.contact_steps);
+        // THE REFERENCE'S COLUMNS (taskContracts.ts, audit 2026-11): a company's sheet in the order and under the titles of the owner's sheet, with its e-mail and status columns; the company steps then read and write the columns the file has
+        if (checked.plan.contact_steps && checked.plan.contact_steps.some((x) => x.level === "company")) {
+          const contracted = withContractColumns(checked.plan.stages, { sheets: ["company"], computed: false });
+          checked.plan.stages.forEach((st, i) => { st.columns = contracted[i].columns as typeof st.columns; });
+          checked.plan.contact_steps = bindCompanySteps(checked.plan.stages, checked.plan.contact_steps);
+        }
         // A PLAN THAT PROMISES VIDEOS (OR IMAGES) NO SAMPLED SOURCE PROVES is not refused: the planner is sent (a few times) to sample the catalog's media sources (a page's reels, a post search whose items carry a video, a post's detail) and builds the card from the one
         // that proves it. Only after MEDIA_SOURCES_MIN real sources were tried and none proves it does the card say so before approval (the filter keeps only proven items; only what is delivered is charged).
         if (checked.mediaUnproven && checked.mediaUnproven.length > 0) {

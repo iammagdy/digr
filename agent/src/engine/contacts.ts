@@ -1,9 +1,10 @@
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
-import { contactStatusAr, finderParamsFor, foundContactIn, personFactsOf, verifierParamsFor, type ContactStep, type FinderInfo, type FoundContact } from "../../../src/lib/agentMission/contactFinders";
+import { companyMailboxIn, contactStatusAr, finderParamsFor, foundContactIn, personFactsOf, verifierParamsFor, type ContactStep, type FinderInfo, type FoundContact } from "../../../src/lib/agentMission/contactFinders";
+import { NOT_AVAILABLE_AR } from "../../../src/lib/agentMission/taskContracts";
+import { isPeopleStage, mailboxesOf, nameKeysOf } from "../../../src/lib/agentMission/people";
 import { EMAIL_STATUS_OTHER_COMPANY_AR, EMAIL_STATUS_VERIFIED_AR, emailOnOtherDomain, emailStatusAr, emailVerdictIn } from "../../../src/lib/agentMission/emailVerification";
 import { companyIdentityOf, type CompanyIdentity } from "../../../src/lib/agentMission/companyIdentity";
 import { isEnabled } from "../../../src/lib/agentMission/filters";
-import { nameKeysOf } from "../../../src/lib/agentMission/people";
 import { PHONE_STATUS_OTHER_COUNTRY_AR, PHONE_STATUS_VERIFIED_AR, PHONE_TYPE_COMPANY_AR, PHONE_TYPE_PERSONAL_AR, companyCountryOf, companyPhoneOfRow, mapsParamsFor, phoneStatusAr, phoneStatusOf, phoneVerdictIn, placePhoneIn, validatorParamsFor, type PhoneVerdict } from "../../../src/lib/agentMission/phoneValidation";
 import { verifyContactValue } from "../../../src/lib/agentMission/contacts";
 import { rankPeopleByRole } from "../../../src/lib/agentMission/roles";
@@ -29,6 +30,8 @@ export interface ContactEnrichmentOutcome {
   skipped: number;
   spentUsd: number;
   stopped: ContactStop | null;
+  /** The company-level steps (audit 2026-11): companies a value was found for, and the ones written «غير متوفر». */
+  companies: { email: number; phone: number; notAvailable: number };
 }
 export interface ContactDeps {
   items: ItemStore;
@@ -55,9 +58,15 @@ const STEP_LABEL_AR = { email: "الإيميل", phone: "رقم التليفون
  */
 export async function runContactEnrichment(deps: ContactDeps): Promise<ContactEnrichmentOutcome> {
   const { items, plan } = deps;
-  const out: ContactEnrichmentOutcome = { filled: { email: 0, phone: 0, unverified: 0, verified: 0 }, looked: 0, skipped: 0, spentUsd: 0, stopped: null };
+  const out: ContactEnrichmentOutcome = { filled: { email: 0, phone: 0, unverified: 0, verified: 0 }, looked: 0, skipped: 0, spentUsd: 0, stopped: null, companies: { email: 0, phone: 0, notAvailable: 0 } };
   // e-mail before phone for one person (the phone helpers are asked only after the e-mail's)
-  const steps = [...(plan.contact_steps ?? [])].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "email" ? -1 : 1));
+  const steps = [...(plan.contact_steps ?? [])].filter((x) => x.level === undefined).sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "email" ? -1 : 1));
+  // THE COMPANY'S OWN E-MAIL AND HQ PHONE FIRST (the owner's top priority, reference A columns 5 and 6): before the people's steps spend any of the job's budget
+  const companySteps = (plan.contact_steps ?? []).filter((x) => x.level === "company");
+  for (const stageKey of [...new Set(companySteps.map((x) => x.stage_key))]) {
+    const stopped = await runCompanyStage(deps, stageKey, companySteps.filter((x) => x.stage_key === stageKey), out);
+    if (stopped) { out.stopped = stopped; return out; }
+  }
   const stageKeys = [...new Set(steps.map((x) => x.stage_key))];
   for (const stageKey of stageKeys) {
     const stage = plan.stages.find((s) => s.key === stageKey);
@@ -81,16 +90,147 @@ export async function runContactEnrichment(deps: ContactDeps): Promise<ContactEn
 /** One call a step wants to make, and what came of it. */
 type Attempt = { t: "stop"; stop: ContactStop } | { t: "skip" } | { t: "failed" } | { t: "page"; page: unknown };
 
-function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["plan"]["stages"][number], out: ContactEnrichmentOutcome, peopleCount: number): { process(row: Row): Promise<ContactStop | null>; finish(): Promise<void> } {
-  const { items, store, gateway, budget } = deps;
-  const parents = new Map<string, Row>(stage.parent_key ? items.acceptedRows(stage.parent_key).map((r) => [String(r.id), r] as const) : []);
-  // what this step may spend: what its price carries; `mySpent` is what ITS calls have cost so far (the other step of the same person is not counted against it)
-  // the CAP is the whole chain at full price for every person (max_person_usd), so each delivered decision maker can go through every finder and the verifier; a plan stored before has only the expected amount
-  const capUsd = (step.max_person_usd ?? step.per_person_usd) * peopleCount;
-  let mySpent = 0;
+/** The status of an e-mail value: «غير موثّق لهذه الشركة» when it is on another domain (no verifier is paid for it), «موثّق» when a verifier says deliverable, «غير موثّق» in every other case. A definitive answer (deliverable, catch-all, undeliverable) ends the chain; an unknown answer or a failed call goes to the next verifier. */
+async function emailStatusFor(verifiers: ReadonlyArray<FinderInfo>, api: { attempt: (helper: FinderInfo, params: Record<string, string>) => Promise<Attempt>; down: Map<string, number> }, value: string, companyDomain: string | null): Promise<{ status: "verified" | "unverified" | "other_company"; stop: ContactStop | null }> {
+  if (emailOnOtherDomain(value, companyDomain)) return { status: "other_company", stop: null };
+  for (const verifier of verifiers) {
+    if ((api.down.get(verifier.id) ?? 0) >= 2) continue;
+    const params = verifierParamsFor(verifier, value);
+    if (!params) continue;
+    const a = await api.attempt(verifier, params);
+    if (a.t === "stop") return { status: "unverified", stop: a.stop };
+    if (a.t !== "page") continue;
+    const verdict = emailVerdictIn(a.page);
+    if (verdict === "deliverable") return { status: "verified", stop: null };
+    if (verdict === "catch_all" || verdict === "undeliverable") return { status: "unverified", stop: null };
+  }
+  return { status: "unverified", stop: null };
+}
+
+/**
+ * THE COMPANY STEPS, CARRIED OUT (audit 2026-11, reference A columns 5 and 6, the owner's top priority). For every delivered company, before the people's steps spend anything:
+ *   - the COMPANY E-MAIL: its role mailbox (info@, contact@, sales@ on its own domain), taken from where it is cheapest: the cell the source gave, then the role mailboxes the PEOPLE source returned for this company (kept aside as not-a-person rows), then the mailbox listers in order. It goes through the e-mail
+ *     verifier chain: «موثّق» / «غير موثّق» (an address of another domain is never the company's). Nothing found: «غير متوفر».
+ *   - the HQ PHONE: the source's own value is kept (zero cost, never dropped); only a company whose data has none is looked up, once, on a map search (the company must be the place found: its website or its name). Nothing found: «غير متوفر».
+ * The steps fill CELLS of companies already delivered: no row is added, so the delivered count and the charge are untouched. Each step keeps its own spend against its priced cap (max_person_usd x the companies); the job budget is shared. A step stopped by the budget, the daily limit or the time leaves the companies it did not reach EMPTY, and so does a company every lookup of which FAILED (a source that is down): «غير متوفر» is written only when a source ANSWERED and had nothing (or there was nothing to look with).
+ */
+async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: ContactStep[], out: ContactEnrichmentOutcome): Promise<ContactStop | null> {
+  const { items, plan, budget } = deps;
+  const stage = plan.stages.find((s) => s.key === stageKey);
+  if (!stage) return null;
+  const rows = items.acceptedRows(stageKey);
+  if (rows.length === 0) return null;
+  const emailStep = steps.find((x) => x.kind === "email");
+  const phoneStep = steps.find((x) => x.kind === "phone");
+  const emailApi = makeAttempt(deps, (emailStep?.max_person_usd ?? emailStep?.per_person_usd ?? 0) * rows.length);
+  const phoneApi = makeAttempt(deps, (phoneStep?.max_person_usd ?? phoneStep?.per_person_usd ?? 0) * rows.length);
+  // the role mailboxes the people source gave for each company (rows that were not people: kept with their address)
+  const fromPeople = new Map<string, string[]>();
+  for (const ps of plan.stages.filter((x) => x.parent_key === stageKey && isPeopleStage(x))) {
+    for (const it of items.excludedItems(ps.key)) {
+      if (it.reason !== "not_a_person" || !it.row) continue;
+      const parentId = String(it.row.parent_id ?? "").trim();
+      if (!parentId) continue;
+      const have = fromPeople.get(parentId) ?? [];
+      for (const e of mailboxesOf(it.row, ps.columns)) if (!have.includes(e)) have.push(e);
+      fromPeople.set(parentId, have);
+    }
+  }
+  const requestPlaces = (stage.filters ?? []).filter((f) => f.kind === "place" && isEnabled(f)).flatMap((f) => (f.places && f.places.length > 0 ? f.places : f.values ?? []));
   let pending: Op[] = [];
-  let found = 0;
   const flush = async () => { if (pending.length > 0) { const ops = pending; pending = []; await items.commit(ops); } };
+  const groupStart = budget.spentUsd();
+  let stopped: ContactStop | null = null;
+  let emailFound = 0;
+  let phoneFound = 0;
+  try {
+    for (const row of rows) {
+      const id = String(row.id);
+      const cells: Record<string, string> = {};
+      const facts = personFactsOf(row, stage.columns, null);
+      const identity = companyIdentityOf(row, nameKeysOf(stage.columns));
+      const domain = facts.domain ?? identity.domain;
+      if (emailStep) {
+        const own = String(row[emailStep.column_key] ?? "").trim();
+        const ownStatus = String(row[emailStep.status_key] ?? "").trim();
+        const final = own !== "" && own !== NOT_AVAILABLE_AR && (ownStatus === EMAIL_STATUS_VERIFIED_AR || ownStatus === EMAIL_STATUS_OTHER_COMPANY_AR);
+        if (!final) {
+          let value = own !== "" && own !== NOT_AVAILABLE_AR && own.includes("@") ? own.toLowerCase() : "";
+          if (value === "") value = companyMailboxIn({ emails: fromPeople.get(id) ?? [] }, domain) ?? "";
+          let asked = false;
+          if (value === "" && domain) {
+            for (const finder of emailStep.finders) {
+              if ((emailApi.down.get(finder.id) ?? 0) >= 2) continue;
+              const params = finderParamsFor(finder, facts);
+              if (!params) continue;
+              const a = await emailApi.attempt(finder, params);
+              if (a.t === "stop") { stopped = a.stop; break; }
+              if (a.t === "skip") continue;
+              if (a.t === "failed") continue;
+              asked = true;
+              value = companyMailboxIn(a.page, domain) ?? "";
+              if (value !== "") break;
+            }
+          }
+          if (stopped) break;
+          if (value !== "") {
+            let verdict: Awaited<ReturnType<typeof emailStatusFor>>;
+            // A FOUND ADDRESS IS ALWAYS WRITTEN: whatever happens to a verifier the status is «غير موثّق» and the cell is still written
+            try { verdict = await emailStatusFor(emailStep.verifiers ?? [], emailApi, value, domain); } catch { verdict = { status: "unverified", stop: null }; }
+            cells[emailStep.column_key] = value;
+            cells[emailStep.status_key] = emailStatusAr(verdict.status);
+            emailFound += 1;
+            if (verdict.stop) stopped = verdict.stop;
+          } else if (asked || !domain || emailStep.finders.length === 0) { cells[emailStep.column_key] = NOT_AVAILABLE_AR; out.companies.notAvailable += 1; }
+        }
+      }
+      if (phoneStep && !stopped) {
+        const own = String(row[phoneStep.column_key] ?? "").trim();
+        // a value the source gave is kept as it is; «غير متوفر» from an earlier pass is looked up again only if room appears
+        if (own === "" || own === NOT_AVAILABLE_AR) {
+          const cityKey = Object.keys(row).find((k) => /(^|_)city$/i.test(k) && String(row[k] ?? "").trim() !== "");
+          const country = companyCountryOf({ row, requestPlaces, domain: identity.domain });
+          let value = "";
+          let asked = false;
+          for (const helper of phoneStep.company_phone ?? []) {
+            if ((phoneApi.down.get(helper.id) ?? 0) >= 2) continue;
+            const params = mapsParamsFor(helper, { name: identity.names[0] ?? "", city: cityKey ? String(row[cityKey]).trim() : null, country });
+            if (!params) continue;
+            const a = await phoneApi.attempt(helper, params);
+            if (a.t === "stop") { stopped = a.stop; break; }
+            if (a.t === "skip") continue;
+            if (a.t === "failed") continue;
+            asked = true;
+            const found = placePhoneIn(a.page, identity);
+            if (found) { value = verifyContactValue("phone", found) ?? found.trim(); break; }
+          }
+          if (value !== "") { cells[phoneStep.column_key] = value; phoneFound += 1; }
+          else if (!stopped && (asked || (phoneStep.company_phone ?? []).length === 0)) { cells[phoneStep.column_key] = NOT_AVAILABLE_AR; out.companies.notAvailable += 1; }
+        }
+      }
+      if (Object.keys(cells).length > 0) pending.push({ t: "cells", stage: stageKey, id, cells });
+      if (pending.length >= COMMIT_EVERY) await flush();
+      if (stopped) break;
+    }
+  } finally {
+    await flush();
+    await items.mirror(stageKey);
+    out.spentUsd += budget.spentUsd() - groupStart;
+    out.companies.email += emailFound;
+    out.companies.phone += phoneFound;
+    try {
+      await deps.addEvent({ kind: "progress", message_ar: `بحث الإيميل العام وهاتف المقر الرئيسي: وُجد الإيميل لـ ${toArabicDigits(emailFound)} والهاتف لـ ${toArabicDigits(phoneFound)} من ${toArabicDigits(rows.length)} شركة.`, counts: { saved: emailFound + phoneFound, planned: rows.length } });
+    } catch { /* a lost note never stops a run */ }
+  }
+  return stopped;
+}
+
+/**
+ * THE LIMITS OF ONE STEP'S CALLS (shared by the people's steps and the company's): `capUsd` is what the step may spend (its calls are counted against it), `down` remembers a helper that failed twice in a row. Created once per step.
+ */
+function makeAttempt(deps: ContactDeps, capUsd: number): { attempt: (helper: FinderInfo, params: Record<string, string>) => Promise<Attempt>; down: Map<string, number> } {
+  const { store, gateway, budget } = deps;
+  let mySpent = 0;
   /** A helper that failed twice in a row (a rate limit, an outage) is not asked again by this step. */
   const down = new Map<string, number>();
   /**
@@ -119,22 +259,21 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
     try { const raw = await store.getFile(deps.missionId, RAW_PATH(result.call_id)); page = raw === null ? null : JSON.parse(raw); } catch { page = null; }
     return { t: "page", page };
   };
-  /** The status of an e-mail value: «غير موثّق لهذه الشركة» when it is on another domain (no verifier is paid for it), «موثّق» when a verifier says deliverable, «غير موثّق» in every other case. A definitive answer (deliverable, catch-all, undeliverable) ends the chain; an unknown answer or a failed call goes to the next verifier. */
-  const emailStatusOf = async (value: string, companyDomain: string | null): Promise<{ status: "verified" | "unverified" | "other_company"; stop: ContactStop | null }> => {
-    if (emailOnOtherDomain(value, companyDomain)) return { status: "other_company", stop: null };
-    for (const verifier of step.verifiers ?? []) {
-      if ((down.get(verifier.id) ?? 0) >= 2) continue;
-      const params = verifierParamsFor(verifier, value);
-      if (!params) continue;
-      const a = await attempt(verifier, params);
-      if (a.t === "stop") return { status: "unverified", stop: a.stop };
-      if (a.t !== "page") continue;
-      const verdict = emailVerdictIn(a.page);
-      if (verdict === "deliverable") return { status: "verified", stop: null };
-      if (verdict === "catch_all" || verdict === "undeliverable") return { status: "unverified", stop: null };
-    }
-    return { status: "unverified", stop: null };
-  };
+  return { attempt, down };
+}
+
+function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["plan"]["stages"][number], out: ContactEnrichmentOutcome, peopleCount: number): { process(row: Row): Promise<ContactStop | null>; finish(): Promise<void> } {
+  const { items, store, gateway, budget } = deps;
+  const parents = new Map<string, Row>(stage.parent_key ? items.acceptedRows(stage.parent_key).map((r) => [String(r.id), r] as const) : []);
+  // what this step may spend: what its price carries (the calls of the step are counted against it by makeAttempt; the other step of the same person is not)
+  // the CAP is the whole chain at full price for every person (max_person_usd), so each delivered decision maker can go through every finder and the verifier; a plan stored before has only the expected amount
+  const capUsd = (step.max_person_usd ?? step.per_person_usd) * peopleCount;
+  let pending: Op[] = [];
+  let found = 0;
+  const flush = async () => { if (pending.length > 0) { const ops = pending; pending = []; await items.commit(ops); } };
+  const { attempt, down } = makeAttempt(deps, capUsd);
+  /** The status of an e-mail value (see emailStatusFor). */
+  const emailStatusOf = (value: string, companyDomain: string | null) => emailStatusFor(step.verifiers ?? [], { attempt, down }, value, companyDomain);
   // THE COMPANY of each person: who it is, which country it is in (its row, else the country the customer asked for, else its website's suffix), and its phone (its own data first, else ONE map search per company; a miss is remembered too)
   const parentStage = deps.plan.stages.find((s) => s.key === stage.parent_key);
   const requestPlaces = [...(parentStage?.filters ?? []), ...(stage.filters ?? [])].filter((f) => f.kind === "place" && isEnabled(f)).flatMap((f) => (f.places && f.places.length > 0 ? f.places : f.values ?? []));
@@ -156,6 +295,8 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
     if (c.phone) return { value: c.phone.value, stop: null };
     const own = companyPhoneOfRow(c.row);
     if (own) { c.phone = { value: own }; return { value: own, stop: null }; }
+    // the COMPANY STEP already looked for this company's HQ phone and found none (it wrote «غير متوفر» in its phone cell): the same search is not paid for twice
+    if (c.row && Object.entries(c.row).some(([k, v]) => /(^|_)(phone|tel|telephone|mobile|phone_?number)$/i.test(k) && String(v ?? "").trim() === NOT_AVAILABLE_AR)) { c.phone = { value: null }; return { value: null, stop: null }; }
     for (const helper of step.company_phone ?? []) {
       if ((down.get(helper.id) ?? 0) >= 2) continue;
       const params = mapsParamsFor(helper, { name: c.identity.names[0] ?? "", city: c.city, country: c.country });

@@ -148,6 +148,21 @@ function withCompanyMailboxes(plan: PricedPlan, rowsIn: Record<string, Row[]>, m
   for (const [stageKey, byParent] of Object.entries(mailboxes ?? {})) {
     const rows = rowsByStage[stageKey];
     if (!rows || ![...byParent.values()].some((v) => v.length > 0)) continue;
+    // A COMPANY STEP EXISTS FOR THIS STAGE (the company's e-mail is a column of the reference, taskContracts.ts): these addresses ARE its candidates, so there is no second column. A company whose e-mail cell is still empty (the step did not reach it) keeps the first one it was given, «غير موثّق»: a found value is never dropped.
+    const step = (plan.contact_steps ?? []).find((x) => x.level === "company" && x.kind === "email" && x.stage_key === stageKey);
+    if (step) {
+      const filled = rows.map((r) => {
+        const have = text(r[step.column_key]).trim();
+        const first = (byParent.get(text(r.id)) ?? [])[0];
+        return have === "" && first ? { ...r, [step.column_key]: first, [step.status_key]: "غير موثّق" } : r;
+      });
+      // the company's e-mail is ONE address (the best role mailbox); any other mailbox found for it stays in the old column, one per line: a found value is never dropped
+      const extras = new Map(filled.map((r) => [text(r.id), (byParent.get(text(r.id)) ?? []).filter((m) => m.toLowerCase() !== text(r[step.column_key]).trim().toLowerCase())] as const));
+      if (![...extras.values()].some((v) => v.length > 0)) { rowsByStage[stageKey] = filled; continue; }
+      rowsByStage[stageKey] = filled.map((r) => ({ ...r, [COMPANY_MAILBOXES_KEY]: (extras.get(text(r.id)) ?? []).join("\n") }));
+      layoutPlan = { ...layoutPlan, stages: layoutPlan.stages.map((st) => (st.key === stageKey ? { ...st, columns: [...st.columns, { key: COMPANY_MAILBOXES_KEY, title_ar: COMPANY_MAILBOXES_HEADER_AR }] } : st)) };
+      continue;
+    }
     rowsByStage[stageKey] = rows.map((r) => ({ ...r, [COMPANY_MAILBOXES_KEY]: (byParent.get(text(r.id)) ?? []).join("\n") }));
     layoutPlan = { ...layoutPlan, stages: layoutPlan.stages.map((s) => (s.key === stageKey ? { ...s, columns: [...s.columns, { key: COMPANY_MAILBOXES_KEY, title_ar: COMPANY_MAILBOXES_HEADER_AR }] } : s)) };
   }

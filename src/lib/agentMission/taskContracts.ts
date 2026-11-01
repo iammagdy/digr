@@ -101,13 +101,13 @@ export const isPlaceSource = (endpointId: string | undefined, capabilityOf?: (en
 export type SourceStageKind = "company" | "place" | "other";
 /** The field classes a source's page may give that the file MUST then hold, by what the stage lists. Everything else is the generic rule of fields.ts. */
 const REQUIRED: Record<SourceStageKind, ReadonlyArray<FieldClass>> = {
-  company: ["phone", "address", "email"],
+  company: ["activity", "phone", "address", "email"],
   place: ["phone", "address", "rating", "review_count"],
   other: [],
 };
 export const requiredSourceClasses = (kind: SourceStageKind): FieldClass[] => [...REQUIRED[kind]];
 /** The classes only a company or a place stage is checked for (the generic check never asks them of posts, comments or people). */
-export const CONTRACT_ONLY_CLASSES: ReadonlyArray<FieldClass> = ["phone", "email", "address", "review_count"];
+export const CONTRACT_ONLY_CLASSES: ReadonlyArray<FieldClass> = ["phone", "email", "address", "review_count", "activity"];
 
 /**
  * THE CONTRACT CHECK OF A STAGE: the classes the contract requires for this kind of stage that the source's page gives and no column holds. One issue sentence (English, for the planner) naming each in Arabic with the source's own path; empty when nothing is missing.
@@ -147,18 +147,43 @@ const statusKeyOf = (key: string): string => `${key}_status`;
  * THE PLAN'S COLUMNS IN THE REFERENCE'S ORDER AND UNDER ITS TITLES, for «companies and their decision makers» only (the other task types keep the planner's columns; the check above guards what the source gives). The planner's keys are kept (the mapping, the finder steps and
  * the engine still fill them); only titles and the order change, and the code-owned columns are added: the company's e-mail with its status, the decision-maker marker, the notes. Idempotent. Returns the stages as given for any other plan.
  */
-export function withContractColumns<S extends ContractStageLike>(stages: ReadonlyArray<S>): S[] {
+export interface ContractColumnOptions {
+  /** Which sheets are put in the reference's order (default both). */
+  sheets?: ReadonlyArray<"company" | "person">;
+  /** Add the columns the workbook computes from the delivered rows (the decision-maker marker, the notes). Default true. */
+  computed?: boolean;
+}
+export function withContractColumns<S extends ContractStageLike>(stages: ReadonlyArray<S>, options: ContractColumnOptions = {}): S[] {
   if (contractTypeOf(stages) !== "companies_people") return [...stages];
+  const sheets = options.sheets ?? ["company", "person"];
+  const computed = options.computed !== false;
   const people = stages.filter((s) => s.deliver && isPeopleStage(s) && stages.some((p) => p.key === s.parent_key && p.deliver && isCompanyStage(p)));
   const companyKeys = new Set(people.map((p) => p.parent_key));
   return stages.map((st) => {
-    if (companyKeys.has(st.key) && st.parent_key === null) return { ...st, columns: companyColumns(st.columns) } as S;
-    if (people.includes(st)) return { ...st, columns: personColumns(st) } as S;
+    if (sheets.includes("company") && companyKeys.has(st.key) && st.parent_key === null) return { ...st, columns: companyColumns(st.columns, computed) } as S;
+    if (sheets.includes("person") && people.includes(st)) return { ...st, columns: personColumns(st, computed) } as S;
     return st;
   });
 }
 
-function companyColumns(own: ReadonlyArray<Col>): Col[] {
+/**
+ * THE COMPANY STEPS POINT AT THE COLUMNS THE FILE HAS: the planner may have mapped the source's phone under its own key; the step reads and writes that column, and the e-mail column and its status column are the ones withContractColumns put on the company stage. Steps of anything else are returned as they are.
+ */
+export function bindCompanySteps<T extends { kind: "email" | "phone"; stage_key: string; column_key: string; status_key: string; level?: "company" }>(stages: ReadonlyArray<Pick<ContractStageLike, "key" | "columns">>, steps: ReadonlyArray<T>): T[] {
+  return steps.map((step) => {
+    if (step.level !== "company") return step;
+    const stage = stages.find((s) => s.key === step.stage_key);
+    if (!stage) return step;
+    const own = stage.columns;
+    const cls: ContractClass = step.kind === "email" ? "company_email" : "company_phone";
+    const column = findBy(own, cls, new Set());
+    if (!column) return step;
+    const status = own.find((c) => c.status_of === column.key);
+    return { ...step, column_key: column.key, status_key: status?.key ?? step.status_key };
+  });
+}
+
+function companyColumns(own: ReadonlyArray<Col>, computed = true): Col[] {
   const taken = new Set<string>();
   const pick = (cls: ContractClass, title: string, fallbackKey: string | null, extra: Partial<Col> = {}): Col[] => {
     const found = findBy(own, cls, taken);
@@ -175,12 +200,12 @@ function companyColumns(own: ReadonlyArray<Col>): Col[] {
   const phone = pick("company_phone", COMPANY_PHONE_TITLE_AR, "company_phone");
   const notesOwn = own.find((c) => c.computed === "notes");
   const notes: Col = { ...(notesOwn ?? { key: "notes_ar", title_ar: NOTES_TITLE_AR }), title_ar: NOTES_TITLE_AR, computed: "notes" };
-  const used = new Set([...name, ...activity, ...website, ...emailCols, emailStatus, ...phone, notes].map((c) => c.key));
+  const used = new Set([...name, ...activity, ...website, ...emailCols, emailStatus, ...phone, ...(computed ? [notes] : [])].map((c) => c.key));
   const rest = own.filter((c) => !used.has(c.key));
-  return [...name, ...activity, ...website, ...emailCols, emailStatus, ...phone, ...rest, notes];
+  return computed ? [...name, ...activity, ...website, ...emailCols, emailStatus, ...phone, ...rest, notes] : [...name, ...activity, ...website, ...emailCols, emailStatus, ...phone, ...rest.filter((c) => c.computed !== "notes")];
 }
 
-function personColumns(stage: ContractStageLike): Col[] {
+function personColumns(stage: ContractStageLike, computed = true): Col[] {
   const own = stage.columns;
   const manager = (stage.role_preference as { role?: string } | undefined)?.role === "manager";
   const used = new Set<string>();
@@ -192,7 +217,7 @@ function personColumns(stage: ContractStageLike): Col[] {
   const phoneCol = own.find((c) => c.kind === "phone");
   const name = claim(nameCol, manager ? { title_ar: PERSON_NAME_TITLE_AR } : {});
   const title = claim(titleCol, manager ? { title_ar: PERSON_TITLE_TITLE_AR } : {});
-  const flag = manager ? [{ ...(own.find((c) => c.computed === "decision_maker") ?? { key: "decision_maker", title_ar: DECISION_MAKER_FLAG_TITLE_AR }), title_ar: DECISION_MAKER_FLAG_TITLE_AR, computed: "decision_maker" } as Col] : [];
+  const flag = manager && computed ? [{ ...(own.find((c) => c.computed === "decision_maker") ?? { key: "decision_maker", title_ar: DECISION_MAKER_FLAG_TITLE_AR }), title_ar: DECISION_MAKER_FLAG_TITLE_AR, computed: "decision_maker" } as Col] : [];
   for (const f of flag) used.add(f.key);
   const withStatus = (c: Col | undefined, title: string): Col[] => {
     if (!c) return [];
@@ -208,9 +233,9 @@ function personColumns(stage: ContractStageLike): Col[] {
   const phone = withStatus(phoneCol, manager ? PERSON_PHONE_TITLE_AR : phoneCol?.title_ar ?? "");
   const notesOwn = own.find((c) => c.computed === "notes");
   const notes: Col = { ...(notesOwn ?? { key: "notes_ar", title_ar: NOTES_TITLE_AR }), title_ar: NOTES_TITLE_AR, computed: "notes" };
-  used.add(notes.key);
+  if (computed) used.add(notes.key);
   const rest = own.filter((c) => !used.has(c.key));
-  return manager ? [...name, ...title, ...flag, ...email, ...phone, ...rest, notes] : [...name, ...title, ...email, ...phone, ...rest, notes];
+  return computed ? (manager ? [...name, ...title, ...flag, ...email, ...phone, ...rest, notes] : [...name, ...title, ...email, ...phone, ...rest, notes]) : [...name, ...title, ...email, ...phone, ...rest];
 }
 
 /** A column the workbook computes from the delivered rows (the decision-maker marker, the notes) instead of reading it from a row. */

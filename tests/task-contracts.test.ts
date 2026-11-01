@@ -75,7 +75,8 @@ describe("the plan check refuses a plan that drops a class the source gives", ()
     expect(issues[0]).toContain("phone_number");
   });
   it("with a column for each, nothing is refused", () => {
-    const cols = [{ key: "name", title_ar: "اسم الشركة" }, { key: "website", title_ar: "الموقع" }, { key: "phone", title_ar: "هاتف المقر الرئيسي" }, { key: "address", title_ar: "العنوان" }];
+    // (CHANGED in part b: the reference's third column, the sector and activity, is a required class of a company stage too: the source gives `industry`)
+    const cols = [{ key: "name", title_ar: "اسم الشركة" }, { key: "industry", title_ar: "النشاط والتخصص" }, { key: "website", title_ar: "الموقع" }, { key: "phone", title_ar: "هاتف المقر الرئيسي" }, { key: "address", title_ar: "العنوان" }];
     expect(contractIssuesFor(company(cols), fields, "company")).toEqual([]);
   });
   it("the new classes are required only where the contract says so (a company, a place), never on a stage of posts or people", () => {

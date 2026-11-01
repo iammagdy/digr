@@ -7,6 +7,10 @@ import { unitCost } from "../modelPlanner/pricing";
 import { PHONE_TYPE_COLUMN_AR, phoneTypeKeyOf } from "./phoneValidation";
 import { SOURCE_DEMOTE_FACTOR, expectedCost, sourceHealth, type StatsMap } from "./sourceRanking";
 import { finderHitRate } from "./finderStats";
+import { MAILBOX_LISTER_CAPABILITIES } from "./childSources";
+import { isCompanyStage } from "./entities";
+import { emailOnOtherDomain } from "./emailVerification";
+import { isRoleMailbox } from "./people";
 
 /**
  * THE CONTACT FINDER STEPS, BY CODE. Live test 2026-11-01 (A1 msn_7a8b…, A2 msn_020c…): 14 decision makers delivered, every e-mail and phone cell empty. The approved plans had two stages (companies, people); the people stage maps `email: ''` and `phone: ''`
@@ -39,6 +43,8 @@ export interface ContactStep {
   company_phone?: FinderInfo[];
   /** PHONE steps: the cell that says whose number it is, «شخصي» / «رقم الشركة». */
   type_key?: string;
+  /** Set on a step of the COMPANY (audit 2026-11, taskContracts.ts): `stage_key` is the stage whose rows are the companies; the e-mail step looks up the company's own role mailbox (`finders` are mailbox listers), the phone step the company's HQ phone (`company_phone` are the map searches). Absent: a step of the people of a stage. */
+  level?: "company";
 }
 
 export const CONTACT_STATUS_VERIFIED_AR = "موثّق";
@@ -186,7 +192,8 @@ export function buildContactSteps(
 
 /** The stage columns with the step's contact column (added when the planner left it out) and, right after it, the Arabic status column. A plan without steps is returned as it is. Idempotent. */
 export function withContactColumns<C extends { key: string; title_ar: string; kind?: ContactKind; status_of?: string; type_of?: string }>(stageKey: string, columns: ReadonlyArray<C>, steps: ReadonlyArray<ContactStep> | undefined): C[] {
-  const mine = (steps ?? []).filter((s) => s.stage_key === stageKey);
+  // (a step of the COMPANY has its own columns, taskContracts.ts: it never adds a person's e-mail or phone column to the company's stage)
+  const mine = (steps ?? []).filter((s) => s.stage_key === stageKey && s.level === undefined);
   if (mine.length === 0) return [...columns];
   let out: C[] = [...columns];
   for (const s of mine) {
@@ -283,3 +290,70 @@ export function foundContactIn(kind: FinderKind, page: unknown): FoundContact | 
 }
 
 export const contactStatusAr = (s: "verified" | "unverified"): string => (s === "verified" ? CONTACT_STATUS_VERIFIED_AR : CONTACT_STATUS_UNVERIFIED_AR);
+
+
+// ------------------------------------------------------------------------------------------------ the company's own e-mail and HQ phone (audit 2026-11, reference A columns 5 and 6)
+
+/** The mailbox listers of the catalog this account may buy, cheapest first: direct and synchronous, taking only a domain (a company's website), with a known price. They list the addresses found on a domain; the company's own role mailbox is picked from the answer (`companyMailboxIn`). */
+export function mailboxListerSourcesOf(catalog: TregCatalog, isAllowed: (id: string) => boolean, stats: StatsMap = new Map(), now = Date.now()): FinderInfo[] {
+  const domainInput = /^(?:domain|domains|website|domain_?or_?company)$/i;
+  const usable = (e: CatalogEndpoint): boolean => !e.async && e.kind === "direct" && typeof e.cost?.usd === "number" && e.inputs.filter((i) => i.required).every((i) => domainInput.test(i.name)) && e.inputs.some((i) => domainInput.test(i.name));
+  const group = catalog.endpoints.filter((e) => e.capability && MAILBOX_LISTER_CAPABILITIES.has(e.capability) && isAllowed(e.id) && usable(e));
+  return rankedHelpers(group, catalog, stats, now, { maxUsd: FALLBACK_FINDER_MAX_USD });
+}
+
+/** The role mailboxes a company is most often written to on, best first (the owner's «الإيميل العام للشركة»: info@, contact@, sales@). */
+const COMPANY_MAILBOX_ORDER: ReadonlyArray<string> = ["info", "contact", "contactus", "sales", "office", "hello", "enquiries", "inquiries", "admin", "support", "customercare", "customerservice", "marketing", "service", "mail", "reception"];
+
+/** Every address in an answer (a list of mailboxes, nested `data`), lower case, once each. */
+function addressesIn(page: unknown): string[] {
+  const out: string[] = [];
+  const walk = (node: unknown, depth: number): void => {
+    if (depth > 6 || node === null || node === undefined) return;
+    if (typeof node === "string") { const t = text(node).replace(/^mailto:/i, "").toLowerCase(); if (ADDRESS_ONLY.test(t) && !t.includes("*") && !out.includes(t)) out.push(t); return; }
+    if (Array.isArray(node)) { for (const x of node.slice(0, 80)) walk(x, depth + 1); return; }
+    if (typeof node === "object") for (const v of Object.values(node as Record<string, unknown>)) walk(v, depth + 1);
+  };
+  walk(page, 0);
+  return out;
+}
+
+/** THE COMPANY'S OWN MAILBOX in the answer of a lister (or any page): a role mailbox (info@, contact@, sales@) on the company's domain, the order above first. Never a person's address, never another domain's. Null when the answer has none. */
+export function companyMailboxIn(page: unknown, companyDomain: string | null): string | null {
+  const own = addressesIn(page).filter((e) => isRoleMailbox(e) && !emailOnOtherDomain(e, companyDomain));
+  if (own.length === 0) return null;
+  const rank = (e: string): number => { const local = e.split("@")[0].replace(/[._\-+\d]/g, ""); const at = COMPANY_MAILBOX_ORDER.indexOf(local); return at >= 0 ? at : COMPANY_MAILBOX_ORDER.length; };
+  return [...own].sort((a, b) => rank(a) - rank(b))[0];
+}
+
+export const COMPANY_EMAIL_KEY = "company_email";
+export const COMPANY_PHONE_KEY = "company_phone";
+
+/**
+ * THE COMPANY STEPS, BY CODE: for every delivered company stage that has a delivered people stage under it (the reference's «companies and their decision makers»), an e-mail step (the listers, cheapest first, then the e-mail verifiers; found anywhere, a role mailbox goes to the company's e-mail
+ * and is verified «موثّق» / «غير موثّق») and a phone step (the map searches, only for a company whose own data has no phone). Priced by code like the people's steps: the expected cost per company is the first lister and the verifier, and the CAP of one company is the same (a dearer fallback never runs past it).
+ * No step when the catalog offers nothing for a kind.
+ */
+export function buildCompanySteps(
+  stages: ReadonlyArray<{ key: string; title_ar: string; parent_key: string | null; deliver: boolean; role_preference?: unknown }>,
+  listers: ReadonlyArray<FinderInfo>,
+  aids: (kind: FinderKind) => ContactAids,
+): ContactStep[] {
+  const out: ContactStep[] = [];
+  for (const st of stages) {
+    if (!st.deliver || st.parent_key !== null || !isCompanyStage(st)) continue;
+    if (!stages.some((p) => p.deliver && p.parent_key === st.key && isPeopleStage(p))) continue;
+    if (listers.length > 0) {
+      const verifiers = aids("email").verifiers;
+      const verifierUsd = verifiers && verifiers.length > 0 ? chainPriceUsd(verifiers, VERIFIER_PRICE_DEPTH) : 0;
+      const perCompany = listers[0].usd + verifierUsd;
+      out.push({ kind: "email", level: "company", stage_key: st.key, column_key: COMPANY_EMAIL_KEY, status_key: statusKeyOf(COMPANY_EMAIL_KEY), per_person_usd: perCompany, max_person_usd: perCompany, finders: listers.slice(0, FINDERS_PER_STEP), ...(verifiers && verifiers.length > 0 ? { verifiers } : {}) });
+    }
+    const maps = aids("phone").company_phone;
+    if (maps && maps.length > 0) {
+      const first = chainPriceUsd(maps, 1);
+      out.push({ kind: "phone", level: "company", stage_key: st.key, column_key: COMPANY_PHONE_KEY, status_key: statusKeyOf(COMPANY_PHONE_KEY), per_person_usd: first, max_person_usd: Math.max(first, chainPriceUsd(maps, FINDERS_PER_STEP)), finders: [], company_phone: maps });
+    }
+  }
+  return out;
+}

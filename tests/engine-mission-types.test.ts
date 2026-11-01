@@ -200,6 +200,7 @@ describe("companies and the employees of each company", () => {
     });
     await assertOneNumber(r, { delivered: 9, perSheet: { "الشركات": 3, "موظفو كل شركة": 6 }, noun: "عنصر" });
     expect(r.plannedPlan.stages[1].engine).toMatchObject({ parent_binding: { param: "website", from: "url" }, cursor_param: "page" });
-    expect(r.call.mock.calls.length).toBe(2 + 1 + 3);
+    // CHANGED (PR 1 part b): the company's own e-mail step (a plan with a company stage and its people) asks a mailbox lister for each company, and this fixture holds no answers for it (the lookups fail, and a company every lookup of which failed keeps its cells empty): the count is of the calls to the two sources the test is about
+    expect((r.call.mock.calls as Array<[{ endpointId: string }]>).filter((c) => /^(aiark|aviato)\./.test(c[0].endpointId)).length).toBe(2 + 1 + 3);
   });
 });

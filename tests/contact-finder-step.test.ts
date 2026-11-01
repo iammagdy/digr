@@ -21,7 +21,8 @@ const run = (planning: FakeStep[]) => replay({ request, planning, execution: () 
 describe("the plan of a request that asks for e-mails and phones carries the finder steps, by code", () => {
   it("A1 shape (the planner proposed no finder): the approved plan has an e-mail step and a phone step on the people stage, finders in the catalog's ranking (cheapest expected cost first)", async () => {
     const r = await run(planFlow());
-    const steps = (r.plannedPlan as any).contact_steps as Array<{ kind: string; stage_key: string; column_key: string; status_key: string; per_person_usd: number; finders: Array<{ id: string; usd: number }> }> | undefined;
+    // CHANGED (PR 1 part b): contact_steps also holds the COMPANY-level steps (the company's e-mail and HQ phone, level «company»); this test is about the people's steps
+    const steps = ((r.plannedPlan as any).contact_steps as Array<{ kind: string; stage_key: string; column_key: string; status_key: string; per_person_usd: number; level?: string; finders: Array<{ id: string; usd: number }> }> | undefined)?.filter((s) => s.level === undefined);
     expect(steps?.map((s) => [s.kind, s.stage_key, s.column_key])).toEqual([["email", "people", "email"], ["phone", "people", "phone"]]);
     for (const s of steps!) {
       expect(s.finders.length).toBeGreaterThan(0);
@@ -47,7 +48,8 @@ describe("the plan of a request that asks for e-mails and phones carries the fin
 
   it("a note that says the contacts are not in the plan does not remove the step (a people stage is there)", async () => {
     const r = await run(proposeWith((a) => ({ ...a, contacts_note_ar: "الإيميل والتليفون لم يُختبر مصدرهما." })));
-    expect(((r.plannedPlan as any).contact_steps ?? []).length).toBe(2);
+    // CHANGED (PR 1 part b): the two PEOPLE steps (the company-level steps are counted by their own tests)
+    expect(((r.plannedPlan as any).contact_steps ?? []).filter((s: any) => s.level === undefined).length).toBe(2);
   });
 });
 
