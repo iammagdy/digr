@@ -73,8 +73,8 @@ export function estimatedCostPerRecordUsd(e: CatalogEndpoint, catalog: TregCatal
 }
 
 /** One candidate as the planner sees it (the same shape for every ranking): its rank, price label, inputs and observed rate. */
-export function catalogHitView(e: CatalogEndpoint, catalog: TregCatalog, rank: number, costPerRecordUsd: number | null): Record<string, unknown> {
-  return { rank, id: e.id, name: clip(e.name, 80), platform: e.platform, capability: e.capability, summary: clip(e.summary, 140), price: costLabel(e, catalog), costPerRecordUsd: costPerRecordUsd === null ? undefined : Number(costPerRecordUsd.toFixed(6)), requiredInputs: e.inputs.filter((i) => i.required).map((i) => i.name), inputs: e.inputs.slice(0, 10).map((i) => `${i.name}${i.required ? "*" : ""}${i.type ? `:${i.type}` : ""}`), okRate: (e.observed as Record<string, unknown> | null)?.ok_rate };
+export function catalogHitView(e: CatalogEndpoint, catalog: TregCatalog, rank: number, costPerRecordUsd: number | null, options: { allInputs?: boolean } = {}): Record<string, unknown> {
+  return { rank, id: e.id, name: clip(e.name, 80), platform: e.platform, capability: e.capability, summary: clip(e.summary, 140), price: costLabel(e, catalog), costPerRecordUsd: costPerRecordUsd === null ? undefined : Number(costPerRecordUsd.toFixed(6)), requiredInputs: e.inputs.filter((i) => i.required).map((i) => i.name), inputs: (options.allInputs ? e.inputs : e.inputs.slice(0, 10)).map((i) => `${i.name}${i.required ? "*" : ""}${i.type ? `:${i.type}` : ""}`), okRate: (e.observed as Record<string, unknown> | null)?.ok_rate };
 }
 
 export interface SearchToolResult { hits: Array<Record<string, unknown>>; hidden: number; restrictedTop: boolean }

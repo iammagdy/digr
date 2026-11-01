@@ -132,3 +132,23 @@ export function toolProfile(endpoint: CatalogEndpoint): ToolProfile {
 
 /** Inputs that are known and carry no customer condition (they are not unknown, and not conditions): response trimming and the like. */
 const isKnownOther = (name: string): boolean => /^(trim|part|textformat|format|fields|expansions)$/.test(norm(name));
+
+/** The classes of customer condition a tool input can carry. `count` is the page size; it never counts as a gap (the delivery cap is code). */
+export type ConditionClass = "date" | "language" | "country" | "account" | "count" | "sort" | "replies";
+export const CONDITION_CLASSES: ReadonlyArray<ConditionClass> = ["date", "language", "country", "account", "count", "sort", "replies"];
+
+/**
+ * Can this tool EXPRESS the condition in its own inputs? A field of the right class, or (date, language, account, replies) the query's advanced-search operators (`since:`, `until:`, `lang:`, `from:`, `-filter:replies`). A country is only
+ * expressed by a field that really filters (a region input that only places the request, as a proxy does, does not). A country is never written into a query.
+ */
+export function canExpress(profile: ToolProfile, cls: ConditionClass): boolean {
+  switch (cls) {
+    case "date": return profile.date !== null || profile.queryOperators;
+    case "language": return profile.language !== null || profile.queryOperators;
+    case "country": return profile.country !== null && profile.country.enforces;
+    case "account": return profile.account !== null || profile.queryOperators;
+    case "count": return profile.count !== null;
+    case "sort": return profile.sort !== null;
+    case "replies": return profile.replies !== null || profile.queryOperators;
+  }
+}
