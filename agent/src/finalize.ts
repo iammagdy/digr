@@ -99,6 +99,7 @@ const ZERO_REASON_CLAUSES: ReadonlyArray<{ keys: ReadonlyArray<string>; clause: 
   { keys: ["no_text", "no_term", "mention_only", "other_person", "name_extended", "other_meaning", "uncertain", "review_no", "review_failed"], clause: "لا يطابق موضوع طلبك" },
   { keys: ["not_a_person"], clause: "كان عناوين عامة للشركات لا لأشخاص" },
   { keys: ["no_verified_contact"], clause: "لا اسم شخص فيه ولا بيانات تواصل موثّقة" },
+  { keys: ["not_at_company"], clause: "لا يعمل حاليًا في الشركة المقصودة بحسب بيانات المصدر" },
 ];
 const ZERO_ADVICE_AR = "يمكنك تعديل الطلب، كاللغة أو الحساب أو الموضوع، ثم إعادة المحاولة.";
 
@@ -128,12 +129,12 @@ export const REASON_TEXT_AR: Record<string, string> = {
   no_text: "لا نص فيه", no_term: "لا يذكر الموضوع في نصه", mention_only: "إشارة عابرة أو رد فارغ", other_person: "عن شخص آخر يحمل الاسم نفسه", name_extended: "الاسم فيه امتداد يدل على شخص آخر", other_meaning: "عن معنى آخر للاسم نفسه",
   uncertain: "لم يتأكد أنه عن المقصود", not_reviewed: "لم يُراجَع لأن المراجعة الآلية بلغت حدها", review_no: "رُفض عند المراجعة الآلية", review_failed: "تعذّرت مراجعته",
   filter_reply: "رد على غيره", filter_repost: "إعادة نشر", filter_language: "بلغة غير التي حددتها", filter_period: "خارج الفترة المحددة", filter_account: "من مصدر لم تسمّه", filter_place: "من مكان غير الذي حددته", filter_government: "جهة حكومية أو عسكرية", filter_media: "لا يثبت أنه فيديو أو صورة",
-  unknown_parent: "لا ينتمي لعنصر مقروء", no_verified_contact: "لا اسم شخص فيه ولا بيانات تواصل موثّقة", not_a_person: "لا يخص شخصًا بعينه (بريد عام أو اسم جهة أو بلا اسم؛ يظهر البريد في عمود إيميلات الشركة)", target_reached: "زاد عن العدد المعتمد",
+  unknown_parent: "لا ينتمي لعنصر مقروء", no_verified_contact: "لا اسم شخص فيه ولا بيانات تواصل موثّقة", not_a_person: "لا يخص شخصًا بعينه (بريد عام أو اسم جهة أو بلا اسم؛ يظهر البريد في عمود إيميلات الشركة)", not_at_company: "لا يعمل حاليًا في هذه الشركة بحسب بيانات المصدر", target_reached: "زاد عن العدد المعتمد",
 };
 export const reasonTextAr = (reason: string): string => REASON_TEXT_AR[reason] ?? "سبب آخر";
 
 /** The reasons that are OUR row rules (the shape of a row), not the customer's own criteria: when they left out what the source gave, «the source gave no more» is not the truth. */
-const OUR_ROW_RULE_REASONS: ReadonlyArray<string> = ["no_verified_contact", "not_a_person", "unknown_parent"];
+const OUR_ROW_RULE_REASONS: ReadonlyArray<string> = ["no_verified_contact", "not_a_person", "unknown_parent", "not_at_company"];
 
 export interface StageTruthFacts {
   /** Items the source gave for the stage (repeats included). */

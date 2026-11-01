@@ -26,9 +26,9 @@ import type { AgentStore } from "../types";
 export type Row = Record<string, unknown>;
 export type ItemState = "accepted" | "excluded" | "pending" | "unchecked";
 /** Why a structurally valid item was not saved, besides the relevance reasons. */
-export type StructuralReason = "unknown_parent" | "no_verified_contact" | "not_a_person";
+export type StructuralReason = "unknown_parent" | "no_verified_contact" | "not_a_person" | "not_at_company";
 export type ItemReason = RelevanceReason | StructuralReason | FilterReason | "target_reached";
-export const STRUCTURAL_REASONS: ReadonlyArray<ItemReason> = ["unknown_parent", "no_verified_contact", "not_a_person"];
+export const STRUCTURAL_REASONS: ReadonlyArray<ItemReason> = ["unknown_parent", "no_verified_contact", "not_a_person", "not_at_company"];
 
 /** Why a stage's collection stopped: recorded once, by code, and the only source of the shortfall sentence. */
 export type StopReason = "target_reached" | "source_exhausted" | "no_new_items" | "budget" | "daily_cap" | "refused" | "time_limit" | "review_limit" | "failed" | "page_limit" | "no_parents" | "model_stopped"
