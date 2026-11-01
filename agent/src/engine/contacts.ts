@@ -5,6 +5,7 @@ import { isPeopleStage, mailboxesOf, nameKeysOf } from "../../../src/lib/agentMi
 import { EMAIL_STATUS_OTHER_COMPANY_AR, EMAIL_STATUS_VERIFIED_AR, emailOnOtherDomain, emailStatusAr, emailVerdictIn } from "../../../src/lib/agentMission/emailVerification";
 import { companyIdentityOf, type CompanyIdentity } from "../../../src/lib/agentMission/companyIdentity";
 import { isEnabled } from "../../../src/lib/agentMission/filters";
+import { countryOfRequestText } from "../../../src/lib/agentMission/places";
 import { PHONE_STATUS_OTHER_COUNTRY_AR, PHONE_STATUS_VERIFIED_AR, PHONE_TYPE_COMPANY_AR, PHONE_TYPE_PERSONAL_AR, companyCountryOf, companyPhoneOfRow, mapsParamsFor, phoneStatusAr, phoneStatusOf, phoneVerdictIn, placePhoneIn, validatorParamsFor, type PhoneVerdict } from "../../../src/lib/agentMission/phoneValidation";
 import { verifyContactValue } from "../../../src/lib/agentMission/contacts";
 import { rankPeopleByRole } from "../../../src/lib/agentMission/roles";
@@ -47,6 +48,8 @@ export interface ContactDeps {
   /** The job's call budget (the gateway settles every call on it). */
   budget: { ceilingUsd: number | null; spentUsd(): number };
   deadlineMs: number;
+  /** The customer's own words: the country they name («شركات مصرية») is the company's country when its row says none (audit F4). */
+  requestText?: string;
   shouldStop?: () => string | null;
   log?: (line: string) => void;
 }
@@ -209,20 +212,32 @@ async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: Conta
         // a value the source gave is kept as it is; «غير متوفر» from an earlier pass is looked up again only if room appears
         if (own === "" || own === NOT_AVAILABLE_AR) {
           const cityKey = Object.keys(row).find((k) => /(^|_)city$/i.test(k) && String(row[k] ?? "").trim() !== "");
-          const country = companyCountryOf({ row, requestPlaces, domain: identity.domain });
+          // the company's country: its row, the place filter, its website, and last the country the customer's own words name («شركات مصرية»): a helper that needs a location was skipped for a company with no city and no country in its row (audit F4)
+          const country = companyCountryOf({ row, requestPlaces, domain: identity.domain }) ?? (deps.requestText ? countryOfRequestText(deps.requestText) : null);
           let value = "";
           let asked = false;
-          for (const helper of phoneStep.company_phone ?? []) {
-            if ((phoneApi.down.get(helper.id) ?? 0) >= 2) continue;
-            const params = mapsParamsFor(helper, { name: identity.names[0] ?? "", city: cityKey ? String(row[cityKey]).trim() : null, country });
-            if (!params) continue;
+          const cityText = cityKey ? String(row[cityKey]).trim() : null;
+          const lookup = async (helper: FinderInfo, name: string): Promise<boolean> => {
+            const params = mapsParamsFor(helper, { name, city: cityText, country });
+            if (!params) return false;
             const a = await phoneApi.attempt(helper, params);
-            if (a.t === "stop") { stopped = a.stop; break; }
-            if (a.t === "skip") continue;
-            if (a.t === "failed") continue;
+            if (a.t === "stop") { stopped = a.stop; return false; }
+            if (a.t === "skip" || a.t === "failed") return false;
             asked = true;
             const found = placePhoneIn(a.page, identity);
-            if (found) { value = verifyContactValue("phone", found) ?? found.trim(); break; }
+            if (found) { value = verifyContactValue("phone", found) ?? found.trim(); return true; }
+            return false;
+          };
+          const helpers = phoneStep.company_phone ?? [];
+          for (const helper of helpers) {
+            if ((phoneApi.down.get(helper.id) ?? 0) >= 2) continue;
+            if (await lookup(helper, identity.names[0] ?? "")) break;
+            if (stopped) break;
+          }
+          // THE SAME HELPER, ASKED WITH THE COMPANY'S WEBSITE (audit F4): a search by name finds other businesses; the place whose website is the company's domain is the company, the strictest proof there is
+          if (value === "" && !stopped && asked && identity.domain) {
+            const first = helpers.find((h) => (phoneApi.down.get(h.id) ?? 0) < 2 && /^(q|query|keyword)$/i.test(h.inputs.find((i) => /^(q|query|keyword)$/i.test(i.name))?.name ?? ""));
+            if (first) await lookup(first, identity.domain);
           }
           if (value !== "") { cells[phoneStep.column_key] = value; phoneFound += 1; }
           else if (!stopped && (asked || (phoneStep.company_phone ?? []).length === 0)) { cells[phoneStep.column_key] = NOT_AVAILABLE_AR; out.companies.notAvailable += 1; }

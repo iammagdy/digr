@@ -333,6 +333,21 @@ export function countryOfValue(value: unknown): string | null {
   if (!text) return null;
   return isoCountryOf(text) ?? placesInText(text)[0]?.country ?? null;
 }
+/** The nationality words of a request («شركات مصرية», «Egyptian companies») and the country each names. Compared after normalisation (the ta marbuta is written «ه»). */
+const NATIONALITY_STEMS: ReadonlyArray<[string, string]> = [["مصر", "EG"], ["سعود", "SA"], ["امارات", "AE"], ["كويت", "KW"], ["قطر", "QA"], ["بحرين", "BH"], ["عمان", "OM"], ["اردن", "JO"], ["لبنان", "LB"], ["عراق", "IQ"], ["سوري", "SY"], ["ليب", "LY"], ["تونس", "TN"], ["جزائر", "DZ"], ["مغرب", "MA"], ["سودان", "SD"], ["فلسطين", "PS"], ["يمن", "YE"]];
+const ENGLISH_NATIONALITY: Readonly<Record<string, string>> = { egyptian: "EG", saudi: "SA", emirati: "AE", kuwaiti: "KW", qatari: "QA", bahraini: "BH", omani: "OM", jordanian: "JO", lebanese: "LB", iraqi: "IQ", syrian: "SY", libyan: "LY", tunisian: "TN", algerian: "DZ", moroccan: "MA", sudanese: "SD", palestinian: "PS", yemeni: "YE" };
+/** The country a customer's own sentence names: a country or a city (countryOfValue), else a nationality word («شركات مصرية» → EG). Null when it names none. */
+export function countryOfRequestText(value: unknown): string | null {
+  const text = String(value ?? "");
+  const direct = countryOfValue(text);
+  if (direct) return direct;
+  for (const raw of normalizeText(text).split(/\s+/)) {
+    const w = raw.replace(/^(?:و|ب|ل|ف)(?=.{4,})/, "").replace(/^ال/, "");
+    for (const [stem, code] of NATIONALITY_STEMS) if (new RegExp(`^${stem}(?:ي|يه|ين|يون|يات)$`).test(w)) return code;
+    if (ENGLISH_NATIONALITY[w.toLowerCase()]) return ENGLISH_NATIONALITY[w.toLowerCase()];
+  }
+  return null;
+}
 /** The countries whose international calling code starts these digits (the number without «+» or «00»), the longest code first: «1» is shared by the US and Canada. Empty when no country of the table has that code. */
 export function countriesOfCallingDigits(digits: string): string[] {
   const d = String(digits ?? "").replace(/\D/g, "");
