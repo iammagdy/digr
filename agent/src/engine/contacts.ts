@@ -18,7 +18,7 @@ import type { AgentStore, MissionEventInput } from "../types";
  * cheapest phone finder. Decision-maker titles first (roles.ts), so when the money runs out the managers have their cells. A miss goes to the next ranked finder (at most three per person and kind); the first value ends the person. The value goes in the cell, «موثّق» or «غير موثّق»
  * in the status cell; a person is never dropped and a cell stays empty only when nothing was found.
  *
- * MONEY: no ledger, price or cap code is touched. Each call goes through the gateway (the job's call budget, the provider's daily limit, the record), and this step adds two limits of its own: a step may not spend more than what its price carries (per_person_usd x its people), and no
+ * MONEY: no ledger, price or cap code is touched. Each call goes through the gateway (the job's call budget, the provider's daily limit, the record), and this step adds two limits of its own: a step may not spend more than what its cap carries (max_person_usd x its people; per_person_usd for a plan stored before), and no
  * call is made when the job budget (40% of the approved reserve's value) has no room for its price. The first refusal for the budget or the daily limit ends the enrichment. The step fills CELLS: it adds no row, so the delivered count and the charge are what they were.
  */
 export type ContactStop = "budget" | "daily_cap" | "time_limit" | "aborted";
@@ -85,7 +85,8 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
   const { items, store, gateway, budget } = deps;
   const parents = new Map<string, Row>(stage.parent_key ? items.acceptedRows(stage.parent_key).map((r) => [String(r.id), r] as const) : []);
   // what this step may spend: what its price carries; `mySpent` is what ITS calls have cost so far (the other step of the same person is not counted against it)
-  const capUsd = step.per_person_usd * peopleCount;
+  // the CAP is the whole chain at full price for every person (max_person_usd), so each delivered decision maker can go through every finder and the verifier; a plan stored before has only the expected amount
+  const capUsd = (step.max_person_usd ?? step.per_person_usd) * peopleCount;
   let mySpent = 0;
   let pending: Op[] = [];
   let found = 0;

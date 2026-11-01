@@ -111,7 +111,7 @@ import { tregResult } from "./helpers/agentFakeWorld";
 import { stagePriceInputs, type PricedPlan } from "../src/lib/agentMission/plan";
 import { priceMissionByCode } from "../src/lib/agentMission/price";
 import { repriceStoredPlan } from "../src/lib/agentMission/lifecycle";
-import { EMAIL_FOUND_SHARE, FALLBACK_MISS_SHARE, VERIFIER_PRICE_DEPTH, chainPriceUsd } from "../src/lib/agentMission/contactFinders";
+import { FINDERS_PER_STEP, VERIFIER_PRICE_DEPTH, chainExpectation, chainPriceUsd } from "../src/lib/agentMission/contactFinders";
 
 describe("the A1-style plan price includes every step, by code", () => {
   const plan = async () => (await replay({ request, planning: planFlow(), execution: () => [], answers: Array.from({ length: 40 }, () => (o: any) => (o.endpointId.includes("waterfall") ? peopleAnswer(o) : tregResult(companiesPage, 0.0005))) })).plannedPlan as PricedPlan;
@@ -127,7 +127,9 @@ describe("the A1-style plan price includes every step, by code", () => {
     expect(p.price.deliveredRows).toBe(before.deliveredRows);
     // the step prices are the documented sums
     for (const s of steps) {
-      const expected = (s.finders[0]?.usd ?? 0) + FALLBACK_MISS_SHARE * (s.finders[1]?.usd ?? 0) + (s.kind === "email" ? EMAIL_FOUND_SHARE * chainPriceUsd(s.verifiers, VERIFIER_PRICE_DEPTH) : chainPriceUsd(s.company_phone) + chainPriceUsd(s.validators));
+      // CHANGED (owner decision after #321): the expected cost of the chain from the measured hit rates (finderStats.ts), not the guessed shares
+      const chain = chainExpectation(s.finders, s.kind);
+      const expected = chain.costUsd + (s.kind === "email" ? (1 - chain.missShare) * chainPriceUsd(s.verifiers, VERIFIER_PRICE_DEPTH) : chain.missShare * chainPriceUsd(s.company_phone, FINDERS_PER_STEP) + chainPriceUsd(s.validators));
       expect(s.per_person_usd).toBeCloseTo(expected, 9);
     }
     const again = repriceStoredPlan(p);

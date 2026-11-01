@@ -207,7 +207,7 @@ const MAX_ASSUMPTIONS = 6;
  * THE PRICE INPUTS OF A PLAN: one per stage. The cost of a contact finder step (per_person_usd per person, contactFinders.ts) is part of the cost per row of the people stage it fills, so the provider cost, the cost per delivered row and the unit price carry it; the step adds no row and no stage.
  * The one place every pricing path uses (the plan check, the approval's re-price, the plan editor).
  */
-export const stagePriceInputs = (stages: ReadonlyArray<PricedStage>, steps?: ReadonlyArray<ContactStep>) => stages.map((s) => ({ rows: s.planned_rows, costPerRowUsd: s.measured_cost_per_row_usd + (steps ?? []).filter((x) => x.stage_key === s.key).reduce((n, x) => n + Math.max(0, x.per_person_usd), 0), deliver: s.deliver, yield: s.yield_share, reviewShare: s.review_share }));
+export const stagePriceInputs = (stages: ReadonlyArray<PricedStage>, steps?: ReadonlyArray<ContactStep>, _options: { withoutDepth?: boolean } = {}) => stages.map((s) => ({ rows: s.planned_rows, costPerRowUsd: s.measured_cost_per_row_usd + (steps ?? []).filter((x) => x.stage_key === s.key).reduce((n, x) => n + Math.max(0, x.per_person_usd), 0), deliver: s.deliver, yield: s.yield_share, reviewShare: s.review_share }));
 /** A column that only holds an internal id (the key says so, or its Arabic title is «معرّف …»): never shown to the customer as a column, never a column of its own in the sheet. */
 export function isInternalColumn(c: { key: string; title_ar: string }): boolean {
   return /^(id|uid|pk|guid|parent_id|parent)$/i.test(c.key) || /(^|_)(id|uid|pk|guid)$/i.test(c.key) || /^id_/i.test(c.key) || /معرّ?ف/.test(c.title_ar);
@@ -642,7 +642,9 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   const price = priceMissionByCode(stagePriceInputs(priced, contactSteps), { settings: lookup.pricingSettings });
   if (price.overCap) return { ok: false, issues: [`the mission would hold ${price.reservePoints} points, more than the job limit; lower the expected rows`], ...(impliedUsed && impliedCount > 1 ? { lowerImplied: true } : {}) };
   // the DEFAULT count of people per company is lowered (one fewer at a time, down to one) while the hold is above the target; the cap itself is not touched
-  if (impliedUsed && impliedCount > 1 && price.reservePoints > AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS) return { ok: false, issues: [`the default count of people per company makes the hold ${price.reservePoints} points`], lowerImplied: true };
+  // (owner decision after #321) the paid contact lookup and the deeper search are what the customer asked for and sees the price of: the default count of people is lowered for the price of the READING alone, never to make the lookups fit
+  const baseReserve = priceMissionByCode(stagePriceInputs(priced, undefined, { withoutDepth: true }), { settings: lookup.pricingSettings }).reservePoints;
+  if (impliedUsed && impliedCount > 1 && baseReserve > AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS) return { ok: false, issues: [`the default count of people per company makes the hold ${baseReserve} points`], lowerImplied: true };
   // THE TITLE OF A PEOPLE STAGE THAT ONLY RANKS BY ROLE does not promise the role (roles.ts); done last, so the checks above still read the noun the model wrote
   for (const st of priced) if (st.role_preference && st.parent_key !== null) st.title_ar = neutralPeopleTitleAr(st.title_ar, st.role_preference.role, itemNounOf(priced.find((p) => p.key === st.parent_key)?.title_ar ?? "").singular);
   return { ok: true, plan: { summary_ar: summary.text, stages: priced, price, ...(contactSteps.length ? { contact_steps: contactSteps } : {}), ...(notes.length ? { notes_ar: notes } : {}), ...(assumptions.length ? { assumptions_ar: assumptions } : {}), ...(quantity ? { quantity } : {}), ...(unserved.length ? { unserved_steps: unserved } : {}) }, ...(mediaUnproven.length ? { mediaUnproven } : {}) };

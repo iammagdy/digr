@@ -6,6 +6,7 @@ import { PHONE_CAPABILITIES } from "./peopleCheck";
 import { unitCost } from "../modelPlanner/pricing";
 import { PHONE_TYPE_COLUMN_AR, phoneTypeKeyOf } from "./phoneValidation";
 import { SOURCE_DEMOTE_FACTOR, expectedCost, sourceHealth, type StatsMap } from "./sourceRanking";
+import { finderHitRate } from "./finderStats";
 
 /**
  * THE CONTACT FINDER STEPS, BY CODE. Live test 2026-11-01 (A1 msn_7a8b…, A2 msn_020c…): 14 decision makers delivered, every e-mail and phone cell empty. The approved plans had two stages (companies, people); the people stage maps `email: ''` and `phone: ''`
@@ -16,7 +17,7 @@ import { SOURCE_DEMOTE_FACTOR, expectedCost, sourceHealth, type StatsMap } from 
 export type FinderKind = "email" | "phone";
 export interface FinderInput { name: string; required: boolean }
 /** A finder the catalog offers, with what it needs to be called (so the engine can tell, per person, which finders it can call). */
-export interface FinderInfo { id: string; usd: number; inputs: FinderInput[] }
+export interface FinderInfo { id: string; usd: number; inputs: FinderInput[]; /** `success`: the provider bills only an answer that carries the value (a miss is free); `call`: every call is billed. Absent (a plan stored before): `call`, the cautious reading. */ bill?: "success" | "call" }
 export interface ContactStep {
   kind: FinderKind;
   /** The people stage whose persons are enriched. */
@@ -26,6 +27,8 @@ export interface ContactStep {
   status_key: string;
   /** What one person is expected to cost this step (USD): the cheapest ranked finder's price, the assumed share of the fallback finder (FALLBACK_MISS_SHARE) and, for an e-mail, the verifier for the share of people an address is found for (EMAIL_FOUND_SHARE). It is part of the price by code (plan.ts `stagePriceInputs`), and it caps what the step may spend (engine). */
   per_person_usd: number;
+  /** WHAT ONE PERSON MAY COST AT MOST (USD): every finder of the chain, the verifier (or the company-phone search and the validator) each at its full price. It is the step's CAP per person (engine/contacts.ts), so every delivered person can go through the whole chain; absent (a plan stored before): per_person_usd. */
+  max_person_usd?: number;
   /** The finders this account may buy, cheapest first (at most FINDERS_PER_STEP). */
   finders: FinderInfo[];
   /** E-MAIL steps: the verifiers this account may buy, cheapest first (at most FINDERS_PER_STEP). A found or given address goes through them; «موثّق» only when one says deliverable (emailVerification.ts). */
@@ -75,7 +78,7 @@ function rankedHelpers(group: ReadonlyArray<CatalogEndpoint>, catalog: TregCatal
     // a FREE call is priced at a token amount (never zero: the budget checks and the price carry a figure), and still ranks first
     const usd = own > 0 ? own : 0.000001;
     const successRate = expectedCost(e, catalog, stats.get(e.id)).successRate;
-    list.push({ key: (usd / successRate) * (health.state === "demoted" ? SOURCE_DEMOTE_FACTOR : 1), info: { id: e.id, usd, inputs: e.inputs.map((i) => ({ name: i.name, required: i.required })) } });
+    list.push({ key: (usd / successRate) * (health.state === "demoted" ? SOURCE_DEMOTE_FACTOR : 1), info: { id: e.id, usd, bill: e.cost?.type === "per_success" || e.cost?.type === "free" ? "success" : "call", inputs: e.inputs.map((i) => ({ name: i.name, required: i.required })) } });
   }
   return list.sort((a, b) => a.key - b.key || a.info.id.localeCompare(b.info.id)).slice(0, FINDERS_PER_STEP).map((x) => x.info);
 }
@@ -96,13 +99,20 @@ export function verifierSourcesOf(catalog: TregCatalog, isAllowed: (id: string) 
 }
 
 /**
- * WHAT THE STEP'S PRICE ASSUMES (ASSUMPTIONS taken from the owner's benchmark, not measurements; the price is the step's cap too, so they are tunable here and nowhere else):
- *   FALLBACK_MISS_SHARE  the share of people the first finder misses, so the fallback finder is bought for them only (the benchmark found 8 of 10 e-mails with the whole chain, most by the first finder; the fallback is dearer and is bought on hits only);
- *   EMAIL_FOUND_SHARE    the share of people an address is found for, so the verifier is bought for them only (8 of 10 in the benchmark).
- * Without the first the step's cap would be spent on the first finder and the verifier and the fallback could never run; without the second the verifier would be priced for people who have no address.
+ * WHAT THE STEP'S PRICE RESTS ON: the MEASURED hit rate of each finder of the chain (finderStats.ts, from the platform's call log; the earlier guessed shares FALLBACK_MISS_SHARE 0.1 and EMAIL_FOUND_SHARE 0.8 are gone). A person goes down the ranked finders until one gives a value: the expected
+ * cost of a finder is its price x the share of persons that reach it x (its hit rate when the provider bills a HIT only, 1 when it bills every call); the verifier is bought for the share of persons an address was found for. The CAP (`max_person_usd`) is the whole chain at full price for every
+ * person, so no delivered decision maker is left without the dearer finder by the luck of the first person's hit.
  */
-export const FALLBACK_MISS_SHARE = 0.1;
-export const EMAIL_FOUND_SHARE = 0.8;
+export function chainExpectation(list: ReadonlyArray<FinderInfo>, kind: FinderKind): { costUsd: number; missShare: number } {
+  let reach = 1;
+  let costUsd = 0;
+  for (const f of list) {
+    const hit = finderHitRate(f.id, kind);
+    costUsd += reach * (f.bill === "success" ? hit : 1) * f.usd;
+    reach *= 1 - hit;
+  }
+  return { costUsd, missShare: reach };
+}
 
 /**
  * What a chain of helpers is PRICED at per use: the dearest of its first `depth` members. Depth 1 (the default) prices the member that is expected to answer; a fallback member is bought only inside the step's cap and the job budget (the engine checks both before every call), so a
@@ -151,9 +161,15 @@ export function buildContactSteps(
       const validators = kind === "phone" && help.validators && help.validators.length > 0 ? help.validators : undefined;
       const company_phone = kind === "phone" && help.company_phone && help.company_phone.length > 0 ? help.company_phone : undefined;
       const column_key = marked?.key ?? DEFAULT_COLUMN[kind].key;
-      // what one person is expected to cost: the cheapest finder and the assumed share of the fallback finder; for an e-mail the verifier every found address goes through; for a phone the company-phone search (a person with no personal number is given the company's: priced for every person, the upper bound) and the validator
-      const perPerson = (list[0]?.usd ?? 0) + FALLBACK_MISS_SHARE * (list[1]?.usd ?? 0) + (verifiers ? EMAIL_FOUND_SHARE * chainPriceUsd(verifiers, VERIFIER_PRICE_DEPTH) : 0) + (company_phone ? chainPriceUsd(company_phone) : 0) + (validators ? chainPriceUsd(validators) : 0);
-      out.push({ kind, stage_key: st.key, column_key, status_key: statusKeyOf(column_key), per_person_usd: perPerson, finders: list, ...(verifiers ? { verifiers } : {}), ...(validators ? { validators } : {}), ...(company_phone ? { company_phone } : {}), ...(kind === "phone" ? { type_key: phoneTypeKeyOf(column_key) } : {}) });
+      // what one person is EXPECTED to cost (the price): the chain of finders by measured hit rates, then for an e-mail the verifier for those an address was found for, for a phone the company-phone search for those no personal number was found for (one search per company: an upper bound) and
+      // the validator every phone goes through. What one person may cost AT MOST (the cap): every finder of the chain, the verifier or the company-phone search and the validator, each at its full price.
+      const chain = chainExpectation(list, kind);
+      const verifierUsd = verifiers ? chainPriceUsd(verifiers, VERIFIER_PRICE_DEPTH) : 0;
+      const companyUsd = company_phone ? chainPriceUsd(company_phone, FINDERS_PER_STEP) : 0;
+      const validatorUsd = validators ? chainPriceUsd(validators) : 0;
+      const perPerson = chain.costUsd + (1 - chain.missShare) * verifierUsd + chain.missShare * companyUsd + validatorUsd;
+      const maxPerson = list.reduce((n, f) => n + f.usd, 0) + verifierUsd + companyUsd + validatorUsd;
+      out.push({ kind, stage_key: st.key, column_key, status_key: statusKeyOf(column_key), per_person_usd: perPerson, max_person_usd: Math.max(perPerson, maxPerson), finders: list, ...(verifiers ? { verifiers } : {}), ...(validators ? { validators } : {}), ...(company_phone ? { company_phone } : {}), ...(kind === "phone" ? { type_key: phoneTypeKeyOf(column_key) } : {}) });
     }
   }
   return out;

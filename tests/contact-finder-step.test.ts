@@ -5,7 +5,7 @@ import { companiesPage, peopleOfCompany, planArgs, planFlow, request } from "./h
 import { tregResult, type Results } from "./helpers/agentFakeWorld";
 import type { FakeStep } from "../agent/src/fakeDriver";
 import { contactSampleMessage } from "../src/lib/agentMission/contactSampling";
-import { EMAIL_FOUND_SHARE, FALLBACK_MISS_SHARE, VERIFIER_PRICE_DEPTH, chainPriceUsd } from "../src/lib/agentMission/contactFinders";
+import { FINDERS_PER_STEP, VERIFIER_PRICE_DEPTH, chainExpectation, chainPriceUsd } from "../src/lib/agentMission/contactFinders";
 
 vi.stubGlobal("fetch", () => { throw new Error("a real network call was attempted"); });
 
@@ -26,7 +26,9 @@ describe("the plan of a request that asks for e-mails and phones carries the fin
     for (const s of steps!) {
       expect(s.finders.length).toBeGreaterThan(0);
       // CHANGED (items 2 and 3): the step is priced at its first-ranked finder, the assumed share of the fallback finder and, for an e-mail, the verifier every found address goes through; for a phone, the company-phone search and the validator
-      expect(s.per_person_usd).toBeCloseTo(s.finders[0].usd + FALLBACK_MISS_SHARE * (s.finders[1]?.usd ?? 0) + EMAIL_FOUND_SHARE * chainPriceUsd((s as any).verifiers, VERIFIER_PRICE_DEPTH) + chainPriceUsd((s as any).company_phone) + chainPriceUsd((s as any).validators), 9);
+      // CHANGED (owner decision after #321): the price is the expected cost of the chain from the MEASURED hit rates (finderStats.ts), not the guessed shares FALLBACK_MISS_SHARE / EMAIL_FOUND_SHARE
+      const chain = chainExpectation(s.finders as any, s.kind as any);
+      expect(s.per_person_usd).toBeCloseTo(chain.costUsd + (1 - chain.missShare) * chainPriceUsd((s as any).verifiers, VERIFIER_PRICE_DEPTH) + chain.missShare * chainPriceUsd((s as any).company_phone, FINDERS_PER_STEP) + chainPriceUsd((s as any).validators), 9);
       expect(s.per_person_usd).toBeGreaterThan(0);
     }
   });
