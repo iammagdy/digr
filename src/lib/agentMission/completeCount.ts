@@ -93,6 +93,22 @@ export const completeCountNotesAr = (e: CompleteCountEstimate, parentTitle: stri
   return out;
 };
 
+/** The stage with its first pageable alternative (one that reads the same parents) as the recipe, and the source it replaces kept as the next tool. Null when no alternative pages. */
+export function promotePageable(stage: PricedStage): PricedStage | null {
+  const engine = stage.engine;
+  if (!engine || !engine.parent_binding) return null;
+  const alternatives = engine.alternatives ?? [];
+  const at = alternatives.findIndex((a) => a.cursor_param !== null && Boolean(a.parent_binding));
+  if (at < 0) return null;
+  const { alternatives: _a, ...current } = engine;
+  const alt = alternatives[at];
+  const replaced = { endpoint_id: current.endpoint_id, params: current.params, cursor_param: current.cursor_param, map_code: current.map_code, map_file_id: current.map_file_id, ...(current.id_field !== undefined ? { id_field: current.id_field } : {}), parent_binding: engine.parent_binding };
+  const { endpoint_id, params, cursor_param, map_code, map_file_id, id_field, parent_binding } = alt;
+  const next = { ...current, endpoint_id, params, cursor_param, map_code, map_file_id, parent_binding: parent_binding!, alternatives: [replaced, ...alternatives.filter((_x, i) => i !== at)] } as typeof engine;
+  if (id_field !== undefined) next.id_field = id_field; else delete next.id_field;
+  return { ...stage, endpoint_id, engine: next };
+}
+
 const NOTE_CAP_AR = "هذا العدد أكبر من الحد الأقصى للمهمة الواحدة، فسنسلّم عددًا محدودًا منه ضمن هذا الحد.";
 
 /**
@@ -110,12 +126,19 @@ export async function withCompleteCount(plan: PricedPlan, deps: CompleteCountDep
     if (!candidates || candidates.length === 0 || candidates.every((c) => c.counter === null)) continue;
     const perAsked = Number(stage.per_parent_rows);
     const perParent = all || !Number.isFinite(perAsked) || perAsked < 1 ? Number.POSITIVE_INFINITY : Math.floor(perAsked);
-    const pageCap = deps.pageCapOf ? await deps.pageCapOf(stage) : null;
+    let pageCap = deps.pageCapOf ? await deps.pageCapOf(stage) : null;
     const requested = all ? null : Math.max(1, Math.floor(Number(stage.planned_rows) || 1));
-    const e = completeCountEstimate(candidates, { parents: Math.max(1, parent.planned_rows), perParent, requested, pageCap, fallback: Number.isFinite(perParent) ? perParent : Math.max(1, Number(stage.per_parent_rows) || 1) });
+    const input = { parents: Math.max(1, parent.planned_rows), perParent, requested, fallback: Number.isFinite(perParent) ? perParent : Math.max(1, Number(stage.per_parent_rows) || 1) };
+    let e = completeCountEstimate(candidates, { ...input, pageCap });
+    // A PAGEABLE SOURCE FIRST: when the source of the recipe cannot page far enough to reach the promise, the stage's next tool that pages (and reads the same parents) takes its place BEFORE a shortfall is stated; the source it replaces stays as the next tool
+    let chosen: PricedStage = stage;
+    if (e.capped) {
+      const promoted = promotePageable(stage);
+      if (promoted) { chosen = promoted; pageCap = null; e = completeCountEstimate(candidates, { ...input, pageCap }); }
+    }
     if (e.total < 1) continue;
     const stages = out.stages.map((s) => {
-      if (s.key === stage.key) return { ...s, planned_rows: e.total, expected_rows: e.total, per_parent_rows: Number.isFinite(perParent) ? Math.min(perParent, Math.max(1, e.perParent)) : Math.max(1, e.perParent), all_children: true, parent_pins: e.chosen.map((c) => c.id) };
+      if (s.key === stage.key) return { ...chosen, planned_rows: e.total, expected_rows: e.total, per_parent_rows: Number.isFinite(perParent) ? Math.min(perParent, Math.max(1, e.perParent)) : Math.max(1, e.perParent), all_children: true, parent_pins: e.chosen.map((c) => c.id) };
       return s;
     });
     const price = priceMissionByCode(stagePriceInputs(stages, out.contact_steps), { settings: out.price.settings });

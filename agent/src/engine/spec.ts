@@ -208,8 +208,10 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
       const window = stage.parent_key === null && !sources ? dateWindowOf(endpoint, params) : null;
       specs.set(stage.key, { endpoint_id: stage.endpoint_id, params, cursor_param: cursorParam, map_code: mapCode, map_file_id: callId, parent_binding: binding, ...(proof.idField !== "id" ? { id_field: proof.idField } : {}), ...(window ? { window } : {}), ...(sources ? { sources } : {}), ...(sources && listing ? { source_listing: true } : {}), ...(builtBy ? { built_by: builtBy } : {}), ...(stageGaps.length > 0 ? { gaps: stageGaps } : {}) });
       // THE NEXT TOOLS (S1 item 1.9, redesigned mode): another source of the same job that the planner also sampled and mapped, proven the same way, is stored as the stage's alternative
-      if (deps.codeBuild && stage.parent_key === null && !sources) {
-        const alternatives = await nextToolsOf(deps, stage, endpoint, refit.filters);
+      if (deps.codeBuild && !sources) {
+        // a child stage's alternatives read the SAME parents through their own input (S1 complete count)
+        const parentRowsForAlt = stage.parent_key !== null ? [...(mappedRows.get(stage.parent_key) ?? []), ...(plan.stages.find((s) => s.key === stage.parent_key)?.sample_rows ?? [])] : null;
+        const alternatives = await nextToolsOf(deps, stage, endpoint, refit.filters, parentRowsForAlt);
         if (alternatives.length > 0) specs.get(stage.key)!.alternatives = alternatives;
       }
       if (stageGaps.length > 0) gapsOut.set(stage.key, stageGaps);
@@ -244,7 +246,7 @@ const MAX_ALTERNATIVES = 2;
  * THE NEXT TOOLS OF A STAGE (S1 item 1.9). Every OTHER source of the same job (the same capability) that this run called, mapped with its own recorded code, and whose mapping gives exactly the rows of the page it was measured on (the same proof as the main recipe: every row of the page,
  * the stage's columns, an id) is an alternative: its first-page inputs are built by code (toolInput.ts), its cursor input is discovered on its own page, its date window is read from its inputs. Nothing new is measured or paid for: only what the planner already sampled. In the order the planner sampled them.
  */
-async function nextToolsOf(deps: DeriveDeps, stage: PricedPlan["stages"][number], endpoint: CatalogEndpoint, filters: StageFilter[]): Promise<NonNullable<EngineSpec["alternatives"]>> {
+async function nextToolsOf(deps: DeriveDeps, stage: PricedPlan["stages"][number], endpoint: CatalogEndpoint, filters: StageFilter[], parentRows: Array<Record<string, unknown>> | null = null): Promise<NonNullable<EngineSpec["alternatives"]>> {
   const out: NonNullable<EngineSpec["alternatives"]> = [];
   for (const [outId, run] of deps.codeRuns.entries()) {
     if (out.length >= MAX_ALTERNATIVES) break;
@@ -267,11 +269,20 @@ async function nextToolsOf(deps: DeriveDeps, stage: PricedPlan["stages"][number]
     try { if (canon(JSON.parse(again.resultJson)) !== canon(seenJson)) continue; } catch { continue; }
     const proof = proveMappedRows({ rows: seenJson as Array<Record<string, unknown>>, columnKeys: stage.columns.map((c) => c.key), textColumns: stage.relevance?.text_columns, filters, label: `alternative «${other.id}»` });
     if (proof.issues.length > 0) continue;
+    // a CHILD stage's alternative: the input that names the parent is found on the page it was measured on and left to the engine (as for the recipe)
+    let binding: { param: string; from: string; also?: Array<{ param: string; from: string }> } | null = null;
+    if (stage.parent_key !== null) {
+      const found = parentRows ? parentBinding(params, parentRows) : null;
+      if (!found) continue;
+      binding = { param: found.param, from: found.from, ...(found.also && found.also.length > 0 ? { also: found.also } : {}) };
+      delete params[found.param];
+      for (const a of found.also ?? []) delete params[a.param];
+    }
     const built = buildToolInput(other, understoodOfStage(stage, deps.codeBuild!.nowMs), params);
     if (!built.ok) continue;
     const cursor = (other.pagination ?? []).find((p) => !LIMIT_INPUT.test(p)) ?? discoverCursor(other, pageJson);
     const window = dateWindowOf(other, built.params);
-    out.push({ endpoint_id: other.id, params: built.params, cursor_param: cursor, map_code: run.code, map_file_id: callId, ...(proof.idField !== "id" ? { id_field: proof.idField } : {}), ...(window ? { window } : {}) });
+    out.push({ endpoint_id: other.id, params: built.params, cursor_param: cursor, map_code: run.code, map_file_id: callId, ...(proof.idField !== "id" ? { id_field: proof.idField } : {}), ...(window ? { window } : {}), ...(binding ? { parent_binding: binding } : {}) });
   }
   return out;
 }
