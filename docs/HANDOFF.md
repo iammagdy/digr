@@ -4,6 +4,38 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## START HERE (2026-11-01, after #319): the contact chain (right company, verified e-mail, company phone, priced and capped), plus the post-merge facts of #318
+
+`main` before #319 was `17119153261e97767337eaa21f64c14d2a3f30df` (#318). **No SQL, no migration, no Edge Function.** The diff of `finalize.ts`, `price.ts`, `runMission.ts`, `gateway.ts`, `src/functions/**` and `supabase/**` against main is empty: no money function, ledger, settlement, cap (`JOB_MAX_POINTS_CAP` 25,000; provider daily cap 0.80 USD), markup, reserve rule or model string changed.
+
+**Post-merge facts.**
+- **#318**: merge `17119153261e97767337eaa21f64c14d2a3f30df`, parents `964bfd3a820b89cba8342eca3aa1e2510f84a621` and `58c5fcf4b9dc2429d8065c3a082c6f0a0551877e`; production `dpl_7gkHAMVMTFRz95LRhQPHxiNJHqFG` READY on that SHA. Its live test is `msn_4969a50fed8c45b37d8f` (A1, 2026-11-01 07:24 UTC, 15 delivered, charge 203 of reserve 234).
+- **#319**: head `569767f131e872827c2971e3b8e1c6cb4f6d4a5f` (preview `dpl_8tMpKfjGs74NfUsj3KJUs2d5k5dK` READY on it); merge `edb6f7fb14fc82dd773ca86806a4ed30d391b99c`, parents `17119153261e97767337eaa21f64c14d2a3f30df` and `569767f131e872827c2971e3b8e1c6cb4f6d4a5f`; production `dpl_C4gj9edPB3FJw2Jd1b2MdeAtkZMu` READY on that SHA (aliased to diger.tech), about 3 minutes after the merge.
+- 15 minutes after the merge (read-only SELECTs, 09:16 UTC): no mission was created or updated since the merge and `credit_ledger` has 0 rows in that window (nothing to balance). The TREG main key (number 5) was `connected`, reason `ok`, balance 6.2189 USD, last checked by the pool health run at 09:09:03 UTC (after the merge at about 09:01 UTC). Heroku: NOT CHECKED (no access from the session).
+
+**What A1 showed (read-only evidence, `msn_4969…`).** The call log has `blitzapi.people.employee-finder` called with `company_linkedin_url=https://linkedin.com/company/mycompany` (call_0008) and quickenrich e-mail calls with `company_url=falconmisr.com` for people of that company (call_0016, call_0018): wrong-company people, a US number and an e-mail on another company's domain marked «موثّق», and «موثّق» with no verifier call.
+
+**Fix (one commit per item).**
+1. **People at the right company** (`companyIdentity.ts`, `engine/run.ts`, `ingest.ts`): a placeholder or generic company link is never the people key; the source's own `experiences[]` is read from the raw page and a person is delivered only if a CURRENT job (`job_is_current` true or no end date) names the company by domain or name; otherwise the person is kept with reason `not_at_company` (not delivered, not counted, not charged; the company's next people take the place). A person with no experience in the answer is not rejected. `not_at_company` has no dedicated Arabic text (generic «سبب آخر»): the text tables are in `finalize.ts`, which was left as on main on purpose.
+2. **E-mail chain** (`emailVerification.ts`, `contactFinders.ts`, `engine/contacts.ts`, `ingest.ts`): finder, fallback finder, verifier; «موثّق» only when a verifier says deliverable (safe/valid, not catch-all); «غير موثّق»; «غير موثّق لهذه الشركة» when the domain differs from the company's (no verifier is paid for it); a found value is never dropped; ingest never writes «موثّق». Helpers are ranked and PRICED by what one call really costs (the general ranking divided a per-call price by the expected rows per call and under-priced per-call finders five-fold).
+3. **Phones** (`phoneValidation.ts`, `places.ts`): personal phone first, else the company's phone (its own data, else ONE map search per company, accepted only when the place is the company) in the person row; new column «نوع الرقم» («شخصي» / «رقم الشركة»); every phone validated; a number of another country than the company's is «رقم من دولة أخرى»; «موثّق» only when validation passes.
+4. **Price and limits**: `stagePriceInputs` adds the verifier, the company-phone search and the validator; the engine takes the people decision makers first, each with every step before the next, each step capped by its price x people, the job budget (40% of the reserve's value) ending everything.
+
+**A1-style plan price (replay world, 5 companies, 10 people).** Before (#318 rule): provider 0.01123 USD, unit 13.33 points, reserve 211, full charge 200. After: 0.04282 USD, unit 23.77, reserve 410, full charge 357. The owner's benchmark spent 0.031389 USD for 10 people, so this assumes about 36% more. Two NAMED ASSUMPTIONS of mine (not measured) set it: `FALLBACK_MISS_SHARE` 0.1 and `EMAIL_FOUND_SHARE` 0.8 in `contactFinders.ts`.
+
+**Report: ISSS «Oula, Michigan» for an Egypt search.** The companies stage reads `tomba.companies.search.reveal` with `location_country include EG`; city and governorate cells are copied verbatim from the source. The place rule fails a row whose place text names ANOTHER country, but only countries and cities of `places.ts` count, and neither «Michigan» nor «Oula» is there (the US entries are 14 cities); a row of a source that was asked for the place and shows no contradicting evidence passes (`placeVerdict … bySource`). Why the source returned a US company under an Egypt filter is NOT PROVEN (item rows are in storage, not readable by SQL; the plan carries 3 sample rows, none ISSS).
+
+**Tests.** Clean main: 618 files / 7,804 tests passed, 57 skipped. #319: 623 files / 7,878 passed, 57 skipped, 0 failed; `tsc` clean (site and `agent/`), `npm run build` clean, zero client-bundle secrets. Changed existing test lines: 13 removed lines in `contact-enrichment-engine`, `contact-enrichment-replay`, `contact-finder-step`, `people-without-contact-replay`, each with a `CHANGED` comment.
+
+**NOT PROVEN (the live test is still required for «done»).**
+- `orbisearch.people.email.verify` (the owner's benchmark verifier, 0.00124 USD) is NOT in the catalog snapshot (3,276 endpoints, describe pass 2026-10-27), so the block list would refuse it. Ranking is catalog-driven and will pick it once the snapshot lists it (owner catalog update); today's first verifiers are `contactout` (free, HTTP 429 in the benchmark), `millionverifier` 0.00178, `dropleads` 0.0018.
+- The live answer shapes of the verifier, the map search and `hlrlookup.people.phone.validate` (read from catalog examples and the brief, not from live calls).
+- Person confirmation applies on the engine path; a mission carried out by the model (a plan with no proven recipe) is not confirmed.
+- The price assumptions above; real yield of verified e-mails and company phones; the live TREG pool health after the merge beyond the 09:09 UTC reading.
+- Rollback: `git revert -m 1 edb6f7fb14fc82dd773ca86806a4ed30d391b99c`.
+
+---
+
 ## START HERE (2026-11-01, after #317): the finder steps (empty e-mail and phone cells for decision makers, diagnosed and fixed)
 
 `main` before it was `964bfd3a820b89cba8342eca3aa1e2510f84a621` (#317). Four commits, one per item, plus test updates. **No SQL, no migration, no Edge Function.** No money function, ledger, settlement, cap (`JOB_MAX_POINTS_CAP` 25,000; provider daily cap 0.80 USD), markup, reserve rule or model string changed: the charge is still `ceil(delivered x unit)` of the count read back from the file, and the new step adds no row.
