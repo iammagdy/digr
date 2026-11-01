@@ -684,6 +684,21 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         // are estimated from is the comments stage's own measured page, mapped by its own proven mapping.
         if (derived) {
           const allowedReply = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
+          checked.plan = await withRepliesStages(checked.plan, {
+            catalog: ctx.catalog, isAllowed: allowedReply, stats: ctx.stats,
+            sampleRowsOf: async (st) => {
+              const sp = st.engine;
+              if (!sp) return null;
+              try {
+                const page = await store.getFile(mission.id, `raw/${sp.map_file_id}.json`);
+                if (page === null) return null;
+                const out = await runSandbox(sp.map_code, { [sp.map_file_id]: JSON.parse(page) });
+                if (!out.ok || out.resultJson === null) return null;
+                const rows = JSON.parse(out.resultJson) as unknown;
+                return Array.isArray(rows) ? rows.filter((x): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x)) : null;
+              } catch { return null; }
+            },
+          });
           // THE COMPLETE COUNT (S1 live findings, redesigned mode only; it includes «all the comments», item 1.10): the promised number of children is computed from the REAL counters of the parents of the stage's own listing, the parents it came from are pinned, and a
           // shortfall is stated on the card before approval; done BEFORE the replies stage, which is estimated from the comments' count
           if (socialRedesignActive(ctx)) {
@@ -705,6 +720,21 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
                 const rows = await mappedRowsOf(sp);
                 return rows ? rows.map((r) => ({ id: deriveItemId(r as never, sp.id_field ?? null), counter: counterOfRow(r) })) : null;
               },
+              // WHAT THE PARENT'S COUNTER COUNTS (item 2): the child source's own sampled page shows whether the counter includes replies: comments + their reply counters add up to the counter of the parent it was measured on
+              basisOf: async (child) => {
+                const sp = child.engine;
+                const parentSp = checked.plan.stages.find((x) => x.key === child.parent_key)?.engine;
+                if (!sp || !parentSp || !sp.parent_binding) return null;
+                const [childRows, parentRows] = await Promise.all([mappedRowsOf(sp), mappedRowsOf(parentSp)]);
+                const used = state.callParams.get(sp.map_file_id)?.[sp.parent_binding.param];
+                if (!childRows || !parentRows || used === undefined || childRows.length === 0) return null;
+                const measured = parentRows.find((r) => String(r[sp.parent_binding!.from]) === String(used));
+                const counter = measured ? counterOfRow(measured) : null;
+                const replies = childRows.reduce((total, r) => total + (counterOfRow(r) ?? 0), 0);
+                if (counter === null || replies <= 0) return null;
+                const total = childRows.length + replies;
+                return Math.abs(counter - total) <= Math.max(2, Math.ceil(counter * 0.1)) ? { share: childRows.length / total } : null;
+              },
               // a child source with no next page gives what one call gives: the rows of its own measured page, when the parent it was measured on has more comments than that page carried
               pageCapOf: async (child) => {
                 const sp = child.engine;
@@ -719,21 +749,6 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
               },
             });
           }
-          checked.plan = await withRepliesStages(checked.plan, {
-            catalog: ctx.catalog, isAllowed: allowedReply, stats: ctx.stats,
-            sampleRowsOf: async (st) => {
-              const sp = st.engine;
-              if (!sp) return null;
-              try {
-                const page = await store.getFile(mission.id, `raw/${sp.map_file_id}.json`);
-                if (page === null) return null;
-                const out = await runSandbox(sp.map_code, { [sp.map_file_id]: JSON.parse(page) });
-                if (!out.ok || out.resultJson === null) return null;
-                const rows = JSON.parse(out.resultJson) as unknown;
-                return Array.isArray(rows) ? rows.filter((x): x is Record<string, unknown> => typeof x === "object" && x !== null && !Array.isArray(x)) : null;
-              } catch { return null; }
-            },
-          });
         }
         // A PLAN THAT PROMISES VIDEOS (OR IMAGES) NO SAMPLED SOURCE PROVES is not refused: the planner is sent (a few times) to sample the catalog's media sources (a page's reels, a post search whose items carry a video, a post's detail) and builds the card from the one
         // that proves it. Only after MEDIA_SOURCES_MIN real sources were tried and none proves it does the card say so before approval (the filter keeps only proven items; only what is delivered is charged).

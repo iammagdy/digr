@@ -1,4 +1,5 @@
 import { toArabicDigits } from "../arabicDigits";
+import { AGENT_REPLIES_PER_COMMENT_MAX } from "./constants";
 import { wantsAllChildren } from "./allChildren";
 import { isPeopleStage } from "./people";
 import { priceMissionByCode } from "./price";
@@ -25,6 +26,11 @@ export interface CompleteCountDeps {
   candidatesOf: (parent: PricedStage) => Promise<Candidate[] | null>;
   /** The most rows ONE call of the child source can give for a parent (a source with no next page); null when the source pages. */
   pageCapOf?: (child: PricedStage) => Promise<number | null>;
+  /**
+   * WHAT THE PARENT'S COUNTER COUNTS (S1 complete count, item 2): on TikTok, Instagram, Facebook and YouTube a video's counter is its comments AND its replies. `share` is the part of the counter that is top-level comments, measured on the child source's own sampled
+   * page (comments / (comments + their replies counters)) when that page shows the counter includes replies; null when there is no such evidence (the counter is then used as it is).
+   */
+  basisOf?: (child: PricedStage) => Promise<{ share: number | null } | null>;
 }
 
 export interface CompleteCountEstimate {
@@ -109,6 +115,15 @@ export function promotePageable(stage: PricedStage): PricedStage | null {
   return { ...stage, endpoint_id, engine: next };
 }
 
+/** The card's words when the counter includes replies: with the replies stage, the total of comments and replies in two parts; without it, the top-level comments only. */
+export const repliesBasisNotesAr = (e: CompleteCountEstimate, parentTitle: string, replies: number | null): string[] => {
+  const out: string[] = [];
+  if (replies !== null && replies > 0) out.push(`العدد الكلي الذي نسلّمه ${n(e.total + replies)} من التعليقات وردودها (${n(e.total)} تعليقًا أساسيًا و${n(replies)} ردًا)، محسوب من العدّاد الفعلي لكل واحد من ${parentTitle}، ويدخل في السعر.`);
+  else out.push(`عدّاد المنصة يشمل الردود، فالتعليقات الأساسية المتوقعة ${n(e.total)} تعليقًا بحسب العدّاد الفعلي لكل واحد من ${parentTitle}، وهي ما نسلّمه ويدخل في السعر.`);
+  if (e.capped) out.push("المصدر يعطي في كل قراءة عددًا محدودًا من التعليقات لكل عنصر، فالعدد المذكور هو ما يعطيه المصدر فعلًا وقد يقلّ عن عدّاد المنصة.");
+  return out;
+};
+
 const NOTE_CAP_AR = "هذا العدد أكبر من الحد الأقصى للمهمة الواحدة، فسنسلّم عددًا محدودًا منه ضمن هذا الحد.";
 
 /**
@@ -136,14 +151,27 @@ export async function withCompleteCount(plan: PricedPlan, deps: CompleteCountDep
       const promoted = promotePageable(stage);
       if (promoted) { chosen = promoted; pageCap = null; e = completeCountEstimate(candidates, { ...input, pageCap }); }
     }
+    // THE BASIS OF THE COUNTER: when it includes replies, the top-level comments are the share of it that the sample measured, and a replies stage under these comments (comments AND replies asked) is promised the rest, so that comments and replies are one total
+    const basis = deps.basisOf ? await deps.basisOf(stage) : null;
+    const share = basis && basis.share !== null && basis.share > 0 && basis.share < 1 ? basis.share : null;
+    let repliesPlanned: number | null = null;
+    const repliesStage = out.stages.find((x) => x.replies_of === stage.key);
+    if (share !== null) {
+      const top = candidates.map((c) => ({ ...c, counter: c.counter === null ? null : Math.floor(c.counter * share) }));
+      e = completeCountEstimate(top, { ...input, pageCap });
+      const ids = new Set(e.chosen.map((c) => c.id));
+      const counted = candidates.filter((c) => ids.has(c.id)).reduce((n, c) => n + supplyOf(c.counter, input.perParent === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : input.perParent / share, null, input.fallback), 0);
+      if (repliesStage && requested === null) repliesPlanned = Math.max(0, counted - e.total);
+    }
     if (e.total < 1) continue;
     const stages = out.stages.map((s) => {
+      if (repliesPlanned !== null && repliesPlanned > 0 && s.key === repliesStage!.key) return { ...s, planned_rows: repliesPlanned, expected_rows: repliesPlanned, per_parent_rows: AGENT_REPLIES_PER_COMMENT_MAX };
       if (s.key === stage.key) return { ...chosen, planned_rows: e.total, expected_rows: e.total, per_parent_rows: Number.isFinite(perParent) ? Math.min(perParent, Math.max(1, e.perParent)) : Math.max(1, e.perParent), all_children: true, parent_pins: e.chosen.map((c) => c.id) };
       return s;
     });
     const price = priceMissionByCode(stagePriceInputs(stages, out.contact_steps), { settings: out.price.settings });
     if (price.overCap) { if (!(out.notes_ar ?? []).includes(NOTE_CAP_AR)) out = { ...out, notes_ar: [...(out.notes_ar ?? []), NOTE_CAP_AR] }; continue; }
-    const notes = completeCountNotesAr(e, parent.title_ar);
+    const notes = share === null ? completeCountNotesAr(e, parent.title_ar) : repliesBasisNotesAr(e, parent.title_ar, repliesPlanned);
     out = { ...out, stages, price, notes_ar: [...(out.notes_ar ?? []).filter((x) => !notes.includes(x)), ...notes] };
   }
   return out;
