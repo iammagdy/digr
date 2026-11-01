@@ -28,7 +28,8 @@ import { loadSystemPrompt } from "./prompt";
 import { anyWebAvailable, NO_WEB, resolveWebAvailability } from "../../src/lib/agentMission/webAvailability";
 import { PLANNING_NUDGE } from "./nudge";
 import { readRunState, updateRunState, type RunState } from "./runState";
-import { buildTools, newRunState, type ToolContext } from "./tools";
+import { buildTools, newRunState, socialRedesignActive, type ToolContext, type ToolSpec } from "./tools";
+import { applySnapshot, readPlanningState, resumeNoteOf, snapshotOf, writePlanningState } from "./planningState";
 import { ItemStore, type ItemSnapshot, type StopReason } from "./items/itemStore";
 import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
@@ -102,10 +103,10 @@ export const endedSilently = (output: { stop?: string; error?: string }, state: 
 
 
 /** Everything the agent is told at the start of a PLANNING run. */
-export function planningPrompt(mission: MissionRecord, calls: CallRow[]): string {
+export function planningPrompt(mission: MissionRecord, calls: CallRow[], resumeNote = ""): string {
   const followAnswer = availableContactAnswerNote(mission.answer_text);
   const answer = mission.answer_text ? `\n\nYou asked the customer one question and they answered: «${mission.answer_text}». Do not ask again.${followAnswer ? ` ${followAnswer}` : ""}` : "";
-  return `The customer's mission (Arabic):\n«${mission.request_text}»${answer}\n\n${savedCallsNote(calls)}\n\nPlan it now.`;
+  return `The customer's mission (Arabic):\n«${mission.request_text}»${answer}\n\n${savedCallsNote(calls)}${resumeNote ? `\n\n${resumeNote}` : ""}\n\nPlan it now.`;
 }
 
 /** Everything the agent is told at the start of an EXECUTION run: the approved plan (internal view) and what is already saved. */
@@ -302,14 +303,23 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const baseLlm = Number((await store.getMission(mission.id))?.planning_llm_usd ?? mission.planning_llm_usd ?? 0);
   let llmBase = baseLlm;
   const checkpoint = async ({ costUsd }: { costUsd: number }) => { try { await store.updateMission(mission.id, { planning_llm_usd: Number((llmBase + costUsd).toFixed(6)) }); } catch { /* a lost checkpoint never stops a run */ } };
+  // THE PLANNING CHECKPOINT (S1 item 1.11, redesigned mode only): what an earlier, stopped run of this planning learned is restored, and after every tool the state is saved again, so a restart or the memory guard no longer throws the run away
+  const checkpointOn = socialRedesignActive(ctx);
+  let resumeNote = "";
+  let lastNote: string | null = null;
+  if (checkpointOn) {
+    const earlier = await readPlanningState(store, mission.id);
+    if (earlier) { applySnapshot(state, earlier); resumeNote = resumeNoteOf(earlier); lastNote = earlier.summary_ar; }
+  }
+  const toolsOf = (): ToolSpec[] => (checkpointOn ? buildTools(ctx).map((t) => ({ ...t, handler: async (a: Record<string, unknown>) => { const r = await t.handler(a); if (t.name === "report_progress" && typeof a.message_ar === "string") lastNote = a.message_ar; await writePlanningState(store, mission.id, snapshotOf(state, lastNote), deps.log); return r; } })) : buildTools(ctx));
   const runOnce = async (userPrompt: string): Promise<Awaited<ReturnType<ModelDriver["run"]>>> => {
     try {
-      return await deps.driver.run({ phase: "planning", systemPrompt: loadSystemPrompt("planning", deps.systemPromptFile, { web: Boolean(web) }), userPrompt, tools: buildTools(ctx), state, model, maxTurns: AGENT_PLANNING_MAX_TURNS, maxBudgetUsd: AGENT_PLANNING_LLM_BUDGET_USD, wallMs: AGENT_PLANNING_WALL_MS, onUsage: checkpoint, onTurn: (t) => recordTurn(deps, mission.id, t) });
+      return await deps.driver.run({ phase: "planning", systemPrompt: loadSystemPrompt("planning", deps.systemPromptFile, { web: Boolean(web) }), userPrompt, tools: toolsOf(), state, model, maxTurns: AGENT_PLANNING_MAX_TURNS, maxBudgetUsd: AGENT_PLANNING_LLM_BUDGET_USD, wallMs: AGENT_PLANNING_WALL_MS, onUsage: checkpoint, onTurn: (t) => recordTurn(deps, mission.id, t) });
     } catch (e) {
       return { llmCostUsd: 0, turns: 0, stop: "error", error: String((e as Error)?.message ?? e).slice(0, 300) } as Awaited<ReturnType<ModelDriver["run"]>>;
     }
   };
-  let output = await runOnce(planningPrompt(mission, calls));
+  let output = await runOnce(planningPrompt(mission, calls, resumeNote));
   await recordTokens(deps, mission.id, 0, output.usage, { inputTokens: 0, outputTokens: 0, calls: 0 }, output.llmCostUsd);
   // A RUN THAT ENDED WITH NO PLAN, NO QUESTION AND NO ENDING while the sources gave it real rows (live 2026-10-29: Facebook videos, after the customer answered the question, the planner tried two unavailable web searches and stopped): it is asked once more, told to
   // build the plan from what it holds. Never a limit of ours: the run's stop was a plain end, with no budget, turn or time limit reached.
@@ -317,7 +327,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     llmBase += output.llmCostUsd;
     const fresh = await store.listCalls(mission.id);
     if (!fresh.some((c) => (c.phase ?? "planning") === "planning" && c.status === "ok" && Number(c.rows_returned ?? 0) > 0)) break;
-    output = await runOnce(`${planningPrompt(mission, fresh)}\n\n${PLANNING_NUDGE}`);
+    output = await runOnce(`${planningPrompt(mission, fresh, resumeNote)}\n\n${PLANNING_NUDGE}`);
     await recordTokens(deps, mission.id, 0, output.usage, { inputTokens: 0, outputTokens: 0, calls: 0 }, output.llmCostUsd);
   }
   const llm = Number(llmBase + output.llmCostUsd);
