@@ -9,6 +9,7 @@ import { looksLikeDateColumn } from "../../../src/lib/agentMission/dateCells";
 import { isRelativeAge } from "../../../src/lib/agentMission/relativeDates";
 import { placeAskedOfSource } from "../../../src/lib/agentMission/places";
 import { buildToolInput, understoodOfStage, type Gap } from "../../../src/lib/agentMission/toolInput";
+import { discoverCursor } from "../../../src/lib/agentMission/toolProfile";
 import type { CatalogEndpoint, TregCatalog } from "../../../src/lib/treg/catalog";
 import type { SandboxResult } from "../sandbox";
 import type { AgentStore, CallRow } from "../types";
@@ -167,7 +168,8 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
       // A SINGLE RECORDED QUERY CANNOT SERVE SEVERAL NAMED SOURCES: a stage that must give items of three named channels, whose measuring call searched for one of them, would deliver that one only. Such a stage has no recipe: the model
       // searches every named source (one search each) and the same checks keep only the named ones.
       const named = refit.filters.find((f) => isEnabled(f) && f.kind === "account" && (f.values ?? []).length >= 2);
-      const cursorParam = (endpoint.pagination ?? []).find((p) => !LIMIT_INPUT.test(p)) ?? null;
+      // the cursor input: the endpoint's own paging list; in the redesigned mode, else the paging input of its inputs that this very page proves (S1 item 1.8)
+      const cursorParam = (endpoint.pagination ?? []).find((p) => !LIMIT_INPUT.test(p)) ?? (deps.codeBuild ? discoverCursor(endpoint, pageJson) : null);
       // ...unless every named source was read by a measuring call of its own (its own query, or the source's own listing of its items): the engine then reads each of them in turn, each up to its share
       let sources: EngineSpec["sources"] | undefined;
       const listing = stage.parent_key === null && isListingEndpoint(endpoint);

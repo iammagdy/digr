@@ -1,4 +1,5 @@
 import type { CatalogEndpoint, CatalogInput } from "../treg/catalog";
+import { hintsOf, readShape } from "../treg/shapeReader";
 
 /**
  * THE TOOL INPUT PROFILE (docs/REDESIGN.md section 3, S1 item 1.4). For one catalog endpoint: which condition classes its OWN inputs can express (date range or preset, language, country, account, count, sort, replies, cursor and the query
@@ -160,4 +161,16 @@ export function canExpress(profile: ToolProfile, cls: ConditionClass): boolean {
     case "sort": return profile.sort !== null;
     case "replies": return profile.replies !== null || profile.queryOperators;
   }
+}
+
+/**
+ * THE CURSOR INPUT OF AN ENDPOINT, verified on a real page (S1 item 1.8). The endpoint's own `pagination` list decides when it names a paging input; when it does not, a known paging input of `inputs[]` (next_token, pageToken, pagination_token,
+ * max_cursor, next_max_id, continuationToken) is used ONLY if the shape reader finds a next-page value in the page the measuring call returned: a page with no next-page value does not claim paging. Null when there is no cursor input or no proof.
+ */
+export function discoverCursor(endpoint: CatalogEndpoint, page: unknown): string | null {
+  const profile = toolProfile(endpoint);
+  if (!profile.cursor) return null;
+  const listed = (endpoint.pagination ?? []).includes(profile.cursor.field);
+  if (listed) return profile.cursor.field;
+  return readShape(page, hintsOf(endpoint)).nextCursor !== null ? profile.cursor.field : null;
 }

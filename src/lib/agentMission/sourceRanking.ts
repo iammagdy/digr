@@ -245,11 +245,12 @@ export interface CoverageRanking { ranked: CoverageRankedSource[]; skipped: Rank
  * THE CANDIDATES RANKED BY CONDITION COVERAGE, THEN PRICE (owner decision D7: first look for another tool that can express the condition). The tools that can express more of the wanted conditions come first; among equals the usual expected
  * cost per delivered item decides (rankEndpoints). A condition no candidate can express is returned as a gap, and the ranking then falls back to price for it. The page size does not count toward coverage. Pure.
  */
-export function rankByCoverage(endpoints: ReadonlyArray<CatalogEndpoint>, catalog: TregCatalog, stats: StatsMap, now: number, wanted: ReadonlyArray<ConditionClass>): CoverageRanking {
+export function rankByCoverage(endpoints: ReadonlyArray<CatalogEndpoint>, catalog: TregCatalog, stats: StatsMap, now: number, wanted: ReadonlyArray<ConditionClass>, options: { /** The rows the request needs: above what one call returns, an endpoint with no cursor ranks below a pageable one (item 1.8). */ rows?: number } = {}): CoverageRanking {
   const base = rankEndpoints(endpoints, catalog, stats, now);
   const scored = base.ranked.map((r) => ({ ...r, ...coverageOf(catalog.byId.get(r.id)!, wanted) }));
   const score = (r: { covered: ConditionClass[] }): number => r.covered.filter((c) => c !== "count").length;
-  scored.sort((a, b) => score(b) - score(a) || a.effectiveUsd - b.effectiveUsd || a.id.localeCompare(b.id));
+  const stuck = (r: CoverageRankedSource): number => (options.rows !== undefined && options.rows > r.rowsPerCall && toolProfile(catalog.byId.get(r.id)!).cursor === null ? 1 : 0);
+  scored.sort((a, b) => score(b) - score(a) || stuck(a) - stuck(b) || a.effectiveUsd - b.effectiveUsd || a.id.localeCompare(b.id));
   const gaps = wanted.filter((c) => c !== "count" && scored.length > 0 && scored.every((r) => !r.covered.includes(c)));
   return { ranked: scored, skipped: base.skipped, gaps };
 }
