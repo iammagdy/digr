@@ -72,6 +72,8 @@ export interface EngineSpec {
   built_by?: "code" | "model";
   /** The customer's conditions this tool cannot carry (S1 items 1.6 and 1.7): a period, a language, a country, an account or replies with no field of its own (`not_enforced`: a field that only places the request). */
   gaps?: Array<{ cls: string; reason: string }>;
+  /** THE NEXT TOOLS, in order (S1 item 1.9): when this tool fails twice or runs dry before the approved count, the engine takes the next one and continues by the remaining count, the date boundary reached and the stored ids. Each alternative carries its own proven mapping. Absent: no fallback. */
+  alternatives?: Array<{ endpoint_id: string; params: Record<string, unknown>; cursor_param: string | null; map_code: string; map_file_id: string; id_field?: string; window?: DateWindow }>;
 }
 
 export interface ProposedStage {

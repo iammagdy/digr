@@ -33,6 +33,7 @@ import { ItemStore, type ItemSnapshot, type StopReason } from "./items/itemStore
 import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
 import { readRedesignFlags } from "../../src/lib/agentMission/redesignFlags";
+import { anyRedesignFlag, redesignStagesOf } from "./redesign";
 import { isTestAccount } from "../../src/lib/server/testAccounts";
 import { runContactEnrichment } from "./engine/contacts";
 import { runNamesStep } from "./namesAr";
@@ -402,11 +403,15 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   const deadlineMs = Date.now() + AGENT_EXECUTION_WALL_MS;
   let output: Awaited<ReturnType<ModelDriver["run"]>>;
   const engineOn = deps.engine !== false && plan.stages.every((s) => s.engine !== undefined);
+  // THE REDESIGN (S1): which stages run the redesigned engine (flag active for this account AND every recipe built by code); recorded as an internal event only when some flag is switched on, so with every flag off the mission's events are exactly as they were
+  const redesignFlags = readRedesignFlags((await store.readSettings().catch(() => ({}))) as Record<string, unknown>);
+  const redesignStages = redesignStagesOf(plan, redesignFlags, isTestAccount({ id: mission.user_id }));
+  if (anyRedesignFlag(redesignFlags)) await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي للمسار الذي شغّل المهمة.", counts: { pipe_new: redesignStages.size > 0 ? 1 : 0 } }).catch(() => undefined);
   if (engineOn) {
     // THE MODEL PLANNED, CODE EXECUTES: every stage has a recipe the plan check proved, so no model session is started at all (the only model call left is the small review of items the rule cannot decide)
     const tracked = trackRun();
     try {
-      const outcome = await runEngine({ items, store, plan, missionId: mission.id, gateway, sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, ...(deps.sleep ? { sleep: deps.sleep } : {}), log: deps.log });
+      const outcome = await runEngine({ items, store, plan, missionId: mission.id, gateway, sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, ...(redesignStages.size > 0 ? { redesignStages } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}), log: deps.log });
       output = { llmCostUsd: 0, turns: 0, stop: outcome.aborted ?? "end" };
     } finally {
       untrackRun(tracked);

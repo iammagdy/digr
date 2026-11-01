@@ -3,7 +3,7 @@ import type { EngineSpec, PricedPlan } from "../../../src/lib/agentMission/plan"
 import type { Gateway } from "../gateway";
 import { RAW_PATH } from "../gateway";
 import { rankPeopleByRole, titleFieldOf, titleTierOf } from "../../../src/lib/agentMission/roles";
-import { parseMoment } from "../../../src/lib/agentMission/dateCells";
+import { looksLikeDateColumn, parseMoment } from "../../../src/lib/agentMission/dateCells";
 import { dayOf, firstWindowEndDay, nextWindowEndDay, windowParams } from "../../../src/lib/agentMission/dateWindow";
 import { isEnabled } from "../../../src/lib/agentMission/filters";
 import { childCountNumber, childCountOf } from "../../../src/lib/agentMission/childCount";
@@ -51,6 +51,8 @@ export interface EngineDeps {
   maxPagesPerStage?: number;
   /** Asked before every page: a reason (the worker's memory guard) stops the run so the mission can be put back in the queue with everything it saved. */
   shouldStop?: () => string | null;
+  /** The stages that run the REDESIGNED engine behaviour (S1 items 1.1, 1.3, 1.9): the type's flag is active for the account AND the stage's recipe was built by code. Absent or not listed: the engine behaves as it always did. */
+  redesignStages?: ReadonlySet<string>;
   /** The pause before the one delayed review retry (default AGENT_REVIEW_RETRY_DELAY_MS); tests pass a fake that does not wait. */
   sleep?: (ms: number) => Promise<void>;
   log?: (line: string) => void;
@@ -281,6 +283,11 @@ function bindingValue(v: unknown, domain: boolean): string | null {
   return domain ? (t.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "").replace(/^www\./i, "").split(/[/?#]/)[0] || null) : t;
 }
 
+/** The mapped field whose oldest value marks the date boundary a fallback continues from: the period's field, else the stage's own date column (redesigned stages only). */
+function boundaryFieldOf(stage: Stage, now: number): string | null {
+  return periodOf(stage, now)?.field ?? stage.columns.find((c) => looksLikeDateColumn(c.title_ar, c.key))?.key ?? null;
+}
+
 /** The period the customer asked for, as the engine can walk it: the enabled period filter with its date field and a first day. Null when the stage has none (or only an end). */
 function periodOf(stage: Stage, now: number): { field: string; sinceMs: number } | null {
   const f = (stage.filters ?? []).find((x) => x.kind === "period" && isEnabled(x) && x.field);
@@ -295,11 +302,47 @@ function periodOf(stage: Stage, now: number): { field: string; sinceMs: number }
  * (the overlapping day is read again and ignored), the review budget and every cap (calls, pages, time) are the ones of every read.
  */
 async function runRoot(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promise<{ reason: StopReason; aborted: string | null }> {
+  const r = await runRootPrimary(deps, stage, spec);
+  return deps.redesignStages?.has(stage.key) ? continueAcrossTools(deps, stage, spec, r) : r;
+}
+
+/** Why a read of one tool may be continued on the next one: it failed twice, it ran dry before the count, or it only repeated itself. */
+const CONTINUE_ON: ReadonlySet<StopReason> = new Set<StopReason>(["failed", "source_exhausted", "no_new_items"]);
+/** The first day a read goes back to when the customer gave no period. */
+const EARLIEST_DAY = "2000-01-01";
+
+/**
+ * FETCH TO THE COUNT ACROSS TOOLS (S1 item 1.9, owner decisions D7 and D15). When the tool of the recipe could not give the approved count, the next tool of `spec.alternatives` continues: by the remaining count (the stage's own accepted count), by the date boundary
+ * (a tool with date inputs is asked for the days up to the oldest day read so far) and by the stored ids (the item store drops an id it already holds). A cursor never crosses providers; near-duplicates the id check cannot catch are kept. Everything stays inside the
+ * budget: when the reserve refuses before the count is reached the stage ends with `need_new_plan` and says so, never with a silently lower count.
+ */
+async function continueAcrossTools(deps: EngineDeps, stage: Stage, spec: EngineSpec, first: { reason: StopReason; aborted: string | null }): Promise<{ reason: StopReason; aborted: string | null }> {
+  const { items } = deps;
+  const now = (deps.now ?? Date.now)();
+  const period = periodOf(stage, now);
+  let r = first;
+  for (let i = 0; i < (spec.alternatives ?? []).length; i += 1) {
+    if (r.aborted) return r;
+    if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
+    if (!CONTINUE_ON.has(r.reason)) break;
+    const alt = spec.alternatives![i];
+    const oldest = items.streamKeys(stage.key).map((k) => items.streamState(stage.key, k)?.oldest ?? null).filter((x): x is number => x !== null);
+    const params = alt.window && oldest.length > 0 ? windowParams(alt.window, alt.params, period ? dayOf(period.sinceMs) : EARLIEST_DAY, dayOf(Math.min(...oldest))) : { ...alt.params };
+    const { alternatives: _a, sources: _s, id_field: _i, window: _w, ...rest } = spec;
+    const altSpec: EngineSpec = { ...rest, endpoint_id: alt.endpoint_id, params, cursor_param: alt.cursor_param, map_code: alt.map_code, map_file_id: alt.map_file_id, ...(alt.id_field !== undefined ? { id_field: alt.id_field } : {}), ...(alt.window ? { window: alt.window } : {}) };
+    r = await runStream(deps, stage, altSpec, `alt:${i}`, params, null, Number.POSITIVE_INFINITY, boundaryFieldOf(stage, now));
+  }
+  if (r.aborted) return r;
+  if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
+  return r.reason === "budget" ? { reason: "need_new_plan", aborted: null } : r;
+}
+
+async function runRootPrimary(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promise<{ reason: StopReason; aborted: string | null }> {
   const { items } = deps;
   if (spec.sources && spec.sources.length > 0) return runSources(deps, stage, spec, spec.sources);
   const now = (deps.now ?? Date.now)();
   const period = spec.window ? periodOf(stage, now) : null;
-  let r = await runStream(deps, stage, spec, "root", { ...spec.params }, null, Number.POSITIVE_INFINITY, period?.field ?? null);
+  let r = await runStream(deps, stage, spec, "root", { ...spec.params }, null, Number.POSITIVE_INFINITY, period?.field ?? (deps.redesignStages?.has(stage.key) ? boundaryFieldOf(stage, now) : null));
   if (!spec.window || !period) return r;
   const sinceDay = dayOf(period.sinceMs);
   let lastEnd = firstWindowEndDay(spec.window, spec.params, now);

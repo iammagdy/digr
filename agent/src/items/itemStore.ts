@@ -31,7 +31,7 @@ export type ItemReason = RelevanceReason | StructuralReason | FilterReason | "ta
 export const STRUCTURAL_REASONS: ReadonlyArray<ItemReason> = ["unknown_parent", "no_verified_contact", "not_a_person", "not_at_company"];
 
 /** Why a stage's collection stopped: recorded once, by code, and the only source of the shortfall sentence. */
-export type StopReason = "target_reached" | "source_exhausted" | "no_new_items" | "budget" | "daily_cap" | "refused" | "time_limit" | "review_limit" | "failed" | "page_limit" | "no_parents" | "model_stopped"
+export type StopReason = "target_reached" | "source_exhausted" | "no_new_items" | "budget" | "daily_cap" | "refused" | "time_limit" | "review_limit" | "failed" | "page_limit" | "no_parents" | "model_stopped" | "need_new_plan"
   /** The source gave pages with items and NONE was stored: our own mapping or save failed. Never presented to the customer as an empty source: an internal failure (the hold is released whole, the admin is flagged). */
   | "internal_error";
 
