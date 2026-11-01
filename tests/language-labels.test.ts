@@ -46,7 +46,11 @@ const COMMENTS = stage({ key: "comments", title_ar: "التعليقات", parent
 const marks: RowMarks = { reply: false, repost: false, lang: "ar", inPeriod: true, named: null };
 const commentRows = [{ id: "c1", parent_id: "v1", text: "تعليق", lang: "un" }, { id: "c2", parent_id: "v1", text: "تعليق ثان", lang: "ar" }, { id: "c3", parent_id: "v1", text: "تعليق ثالث", lang: "fa" }];
 const load = async (xlsx: Buffer) => { const wb = new ExcelJS.Workbook(); await wb.xlsx.load(xlsx as unknown as ArrayBuffer); return wb; };
-const langCells = (sheet: ExcelJS.Worksheet) => [2, 3, 4].map((r) => String(sheet.getRow(r).getCell(2).value));
+const langCells = (sheet: ExcelJS.Worksheet) => {
+  const col = (sheet.getRow(1).values as unknown[]).findIndex((h) => h === "لغة التعليق");
+  expect(col).toBeGreaterThan(0);
+  return [2, 3, 4].map((r) => String(sheet.getRow(r).getCell(col).value));
+};
 
 describe("the comments sheet of a customer file", () => {
   it("a mission of the new pipeline: the language cells are Arabic words, never a code", async () => {
