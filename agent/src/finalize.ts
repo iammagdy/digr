@@ -129,6 +129,7 @@ export const REASON_TEXT_AR: Record<string, string> = {
   uncertain: "لم يتأكد أنه عن المقصود", not_reviewed: "لم يُراجَع لأن المراجعة الآلية بلغت حدها", review_no: "رُفض عند المراجعة الآلية", review_failed: "تعذّرت مراجعته",
   filter_reply: "رد على غيره", filter_repost: "إعادة نشر", filter_language: "بلغة غير التي حددتها", filter_period: "خارج الفترة المحددة", filter_account: "من مصدر لم تسمّه", filter_place: "من مكان غير الذي حددته", filter_government: "جهة حكومية أو عسكرية", filter_media: "لا يثبت أنه فيديو أو صورة",
   unknown_parent: "لا ينتمي لعنصر مقروء", no_verified_contact: "لا اسم شخص فيه ولا بيانات تواصل موثّقة", not_a_person: "لا يخص شخصًا بعينه (بريد عام أو اسم جهة أو بلا اسم؛ يظهر البريد في عمود إيميلات الشركة)", target_reached: "زاد عن العدد المعتمد",
+  not_at_company: "لا يعمل حاليًا في هذه الشركة (شركته الحالية غير الشركة المطلوبة)",
 };
 export const reasonTextAr = (reason: string): string => REASON_TEXT_AR[reason] ?? "سبب آخر";
 
