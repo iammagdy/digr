@@ -1,7 +1,7 @@
 import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE } from "./constants";
 import { CONTACT_KINDS, requestWantsContacts, type ContactKind } from "./contacts";
 import { isPeopleStage } from "./people";
-import { buildContactSteps, type ContactStep, type FinderInfo, type FinderKind } from "./contactFinders";
+import { buildContactSteps, type ContactAids, type ContactStep, type FinderInfo, type FinderKind } from "./contactFinders";
 import { peopleConditionedOnContactIssues } from "./contactQuestion";
 import { estimateMissionMinutes, measuredCostPerRowUsd, priceMissionByCode, type MissionPriceResult } from "./price";
 import { classifyRows, searchQueryOf, validateRelevanceSpec, type RelevanceSpec } from "./relevance";
@@ -143,6 +143,8 @@ export interface PlanLookup {
   endpointsCalled?(): ReadonlyMap<string, { rows: number }>;
   /** The e-mail / phone finders this account may buy, cheapest first (the catalog's ranking): what the plan's finder steps are made of. */
   contactFinders?(kind: FinderKind): FinderInfo[];
+  /** The helpers of the finder steps besides the finders (the e-mail verifiers), ranked and priced from the catalog. */
+  contactAids?(kind: FinderKind): ContactAids;
 }
 
 export interface PricedStage extends ProposedStage {
@@ -634,7 +636,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   if (issues.length) return { ok: false, issues };
 
   // THE FINDER STEPS: whatever the planner wrote (or dropped, or excused with a note), a delivered people stage of a request that asks for an e-mail or a phone gets its step per asked kind, finders ranked cheapest first
-  const contactSteps = buildContactSteps(priced, lookup.requestText, (kind) => lookup.contactFinders?.(kind) ?? []);
+  const contactSteps = buildContactSteps(priced, lookup.requestText, (kind) => lookup.contactFinders?.(kind) ?? [], (kind) => lookup.contactAids?.(kind) ?? {});
   const price = priceMissionByCode(stagePriceInputs(priced, contactSteps), { settings: lookup.pricingSettings });
   if (price.overCap) return { ok: false, issues: [`the mission would hold ${price.reservePoints} points, more than the job limit; lower the expected rows`], ...(impliedUsed && impliedCount > 1 ? { lowerImplied: true } : {}) };
   // the DEFAULT count of people per company is lowered (one fewer at a time, down to one) while the hold is above the target; the cap itself is not touched

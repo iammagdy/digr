@@ -3,6 +3,7 @@ import { EMAIL_FINDER_CAPABILITIES } from "./contactSampling";
 import { requestWantsContacts, verifyContactValue, type ContactKind } from "./contacts";
 import { isPeopleStage, nameKeysOf } from "./people";
 import { PHONE_CAPABILITIES } from "./peopleCheck";
+import { unitCost } from "../modelPlanner/pricing";
 import { rankEndpoints, type StatsMap } from "./sourceRanking";
 
 /**
@@ -22,10 +23,12 @@ export interface ContactStep {
   /** The cell that gets the value, and the cell that says whether it is verified. */
   column_key: string;
   status_key: string;
-  /** What one person is expected to cost this step (USD): the cheapest ranked finder's price. It is part of the price by code (plan.ts `stagePriceInputs`), and it caps what the step may spend (engine). */
+  /** What one person is expected to cost this step (USD): the cheapest ranked finder's price, the assumed share of the fallback finder (FALLBACK_MISS_SHARE) and, for an e-mail, the verifier. It is part of the price by code (plan.ts `stagePriceInputs`), and it caps what the step may spend (engine). */
   per_person_usd: number;
   /** The finders this account may buy, cheapest first (at most FINDERS_PER_STEP). */
   finders: FinderInfo[];
+  /** E-MAIL steps: the verifiers this account may buy, cheapest first (at most FINDERS_PER_STEP). A found or given address goes through them; «موثّق» only when one says deliverable (emailVerification.ts). */
+  verifiers?: FinderInfo[];
 }
 
 export const CONTACT_STATUS_VERIFIED_AR = "موثّق";
@@ -47,22 +50,60 @@ const INPUT_KINDS: ReadonlyArray<{ kind: "linkedin" | "name" | "first" | "last" 
 ];
 const inputKindOf = (name: string): (typeof INPUT_KINDS)[number]["kind"] | null => INPUT_KINDS.find((k) => k.test.test(name))?.kind ?? null;
 
-/** The finders of a kind this account may buy, cheapest first by the same ranking as every source (measured cost where it exists, the catalog otherwise). Only finders that answer at once and need only what a person row gives. */
+/**
+ * THE HELPERS OF A STEP (finders, verifiers, validators), RANKED AND PRICED BY WHAT ONE CALL REALLY COSTS. The general source ranking divides a per-call price by the rows a call is expected to give (a list source returns many); a lookup returns ONE answer, so that division
+ * under-prices a call that bills per call five-fold (quickenrich's 0.004834 became 0.00097) and the step's cap and the plan's price rested on it. Here the price is the catalog's price of one call (a routed endpoint at its dearest sibling), health and success rate come from the
+ * general ranking, and the order is price over success rate, cheapest first, ties by id.
+ */
+function rankedHelpers(group: ReadonlyArray<CatalogEndpoint>, catalog: TregCatalog, stats: StatsMap, now: number): FinderInfo[] {
+  const ranked = rankEndpoints(group, catalog, stats, now).ranked;
+  return ranked
+    .map((r) => {
+      const e = catalog.byId.get(r.id)!;
+      const own = unitCost(e, catalog)?.usd ?? (typeof e.cost?.usd === "number" ? e.cost.usd : null) ?? r.usdPerItem;
+      const usd = Number(own) > 0 ? Number(own) : 0.000001;
+      // the general ranking's own correction for how often a call gives nothing, and for a demoted source
+      const adjust = r.usdPerItem > 0 ? r.effectiveUsd / r.usdPerItem : 1;
+      return { key: usd * adjust, info: { id: r.id, usd, inputs: e.inputs.map((i) => ({ name: i.name, required: i.required })) } as FinderInfo };
+    })
+    .sort((a, b) => a.key - b.key || a.info.id.localeCompare(b.info.id))
+    .slice(0, FINDERS_PER_STEP)
+    .map((x) => x.info);
+}
+
+/** The finders of a kind this account may buy, cheapest first (the helper ranking above). Only finders that answer at once and need only what a person row gives. */
 export function finderSourcesOf(kind: FinderKind, catalog: TregCatalog, isAllowed: (id: string) => boolean, stats: StatsMap = new Map(), now = Date.now()): FinderInfo[] {
   const caps = kind === "email" ? EMAIL_FINDER_CAPABILITIES : PHONE_CAPABILITIES;
   const usable = (e: CatalogEndpoint): boolean => !e.async && e.inputs.filter((i) => i.required).every((i) => inputKindOf(i.name) !== null) && e.inputs.some((i) => inputKindOf(i.name) !== null);
   const group = catalog.endpoints.filter((e) => e.capability && caps.has(e.capability) && isAllowed(e.id) && usable(e));
-  return rankEndpoints(group, catalog, stats, now).ranked.slice(0, FINDERS_PER_STEP).map((r) => {
-    const e = catalog.byId.get(r.id)!;
-    return { id: r.id, usd: Number(r.usdPerItem) > 0 ? Number(r.usdPerItem) : 0.000001, inputs: e.inputs.map((i) => ({ name: i.name, required: i.required })) };
-  });
+  return rankedHelpers(group, catalog, stats, now);
 }
 
-/** The steps a plan needs: one per asked kind for every DELIVERED people stage. `finders(kind)` is the catalog's ranked list (empty: the step is still there, with nothing to call, and the file says nothing was found). */
+/** The e-mail verifiers of the catalog this account may buy, cheapest first (the same ranking as every source): direct and synchronous (a routed one bills a range, an asynchronous one needs polling), taking only the address, with a known price. */
+export function verifierSourcesOf(catalog: TregCatalog, isAllowed: (id: string) => boolean, stats: StatsMap = new Map(), now = Date.now()): FinderInfo[] {
+  const usable = (e: CatalogEndpoint): boolean => e.capability === "people.email.verify" && e.kind === "direct" && !e.async && typeof e.cost?.usd === "number" && e.inputs.filter((i) => i.required).every((i) => /^e-?mail$/i.test(i.name)) && e.inputs.some((i) => /^e-?mail$/i.test(i.name));
+  const group = catalog.endpoints.filter((e) => isAllowed(e.id) && usable(e));
+  return rankedHelpers(group, catalog, stats, now);
+}
+
+/**
+ * THE SHARE OF PEOPLE THE FIRST FINDER IS ASSUMED TO MISS (an ASSUMPTION, not a measurement: the benchmark found 8 of 10 e-mails with the whole chain). The fallback finder is bought only for them, so the step's price carries this share of its price; without it the step's cap
+ * would be spent on the first finder and the verifier and the fallback could never run.
+ */
+export const FALLBACK_MISS_SHARE = 0.2;
+
+/** What a chain of helpers is PRICED at per use: the dearer of its first two members (a first one that is free may be rate limited, and then the second is what is paid). */
+export const chainPriceUsd = (list: ReadonlyArray<FinderInfo> | undefined): number => Math.max(0, list?.[0]?.usd ?? 0, list?.[1]?.usd ?? 0);
+
+/** The helpers of a step besides its finders, from the catalog (empty when there are none). */
+export interface ContactAids { verifiers?: FinderInfo[] }
+
+/** The steps a plan needs: one per asked kind for every DELIVERED people stage. `finders(kind)` is the catalog's ranked list (empty: the step is still there, with nothing to call, and the file says nothing was found). `aids(kind)` are its other helpers (the e-mail verifiers), priced into the step. */
 export function buildContactSteps(
   stages: ReadonlyArray<{ key: string; title_ar: string; parent_key: string | null; deliver: boolean; role_preference?: unknown; columns: ReadonlyArray<{ key: string; kind?: string }> }>,
   requestText: string | undefined,
   finders: (kind: FinderKind) => FinderInfo[],
+  aids?: (kind: FinderKind) => ContactAids,
 ): ContactStep[] {
   const wants = requestWantsContacts(requestText);
   const out: ContactStep[] = [];
@@ -72,8 +113,11 @@ export function buildContactSteps(
       const marked = st.columns.find((c) => c.kind === KIND_OF[kind]);
       if (!(kind === "email" ? wants.email : wants.phone) && !marked) continue;
       const list = finders(kind);
+      const help = aids?.(kind) ?? {};
+      const verifiers = kind === "email" && help.verifiers && help.verifiers.length > 0 ? help.verifiers : undefined;
       const column_key = marked?.key ?? DEFAULT_COLUMN[kind].key;
-      out.push({ kind, stage_key: st.key, column_key, status_key: statusKeyOf(column_key), per_person_usd: list[0]?.usd ?? 0, finders: list });
+      // what one person is expected to cost: the cheapest finder, plus (e-mail) the verifier every found address goes through
+      out.push({ kind, stage_key: st.key, column_key, status_key: statusKeyOf(column_key), per_person_usd: (list[0]?.usd ?? 0) + FALLBACK_MISS_SHARE * (list[1]?.usd ?? 0) + (verifiers ? chainPriceUsd(verifiers) : 0), finders: list, ...(verifiers ? { verifiers } : {}) });
     }
   }
   return out;
@@ -94,6 +138,12 @@ export function withContactColumns<C extends { key: string; title_ar: string; ki
     }
   }
   return out;
+}
+
+/** The call parameters of a verifier for an address (the input named like an e-mail). */
+export function verifierParamsFor(verifier: FinderInfo, email: string): Record<string, string> | null {
+  const input = verifier.inputs.find((i) => /^e-?mail$/i.test(i.name));
+  return input ? { [input.name]: email } : null;
 }
 
 /** What one person gives a finder. */

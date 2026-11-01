@@ -162,7 +162,7 @@ describe("A2 shape (petroleum): 41 rows read, 9 repeats, 32 distinct people with
   });
 
   // CHANGED (owner direction 2026-11-01: never drop a found contact value for being unverified): the personal address is KEPT in the cell with «غير موثّق» beside it; the work address is «موثّق»
-  it("a personal address is kept in the cell marked «غير موثّق» and the person stays; a verified work address is kept marked «موثّق»", async () => {
+  it("a personal address is kept in the cell marked «غير موثّق» and the person stays; a well-formed work address is kept too, «غير موثّق» until a verifier says otherwise", async () => {
     const { items, ingestRows } = await open();
     const plan = { summary_ar: "x", price: { deliveredRows: 4 }, stages: [companiesStage, stage()] } as never;
     const deps = { items, plan, addEvent: async () => undefined };
@@ -175,7 +175,8 @@ describe("A2 shape (petroleum): 41 rows read, 9 repeats, 32 distinct people with
     expect(rows).toHaveLength(2);
     expect(rows.find((r) => r.job_title === "General Manager")!.email).toBe("mona@gmail.com");
     expect(rows.find((r) => r.job_title === "General Manager")!.email_status).toBe("غير موثّق");
-    expect(rows.find((r) => r.job_title === "Managing Director")!.email_status).toBe("موثّق");
+    // CHANGED (item 2, owner direction): ingest never writes «موثّق» for an e-mail (a code check says the address is well formed, not that a mailbox exists); the contact step writes it on a verifier's answer
+    expect(rows.find((r) => r.job_title === "Managing Director")!.email_status).toBe("غير موثّق");
     expect(rows.find((r) => r.job_title === "Managing Director")!.email).toBe("karim@petro-one.com.eg");
     expect(String(rows.find((r) => r.job_title === "Managing Director")!.phone)).toMatch(/^\+?20/);
   });

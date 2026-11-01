@@ -5,6 +5,7 @@ import { companiesPage, peopleOfCompany, planArgs, planFlow, request } from "./h
 import { tregResult, type Results } from "./helpers/agentFakeWorld";
 import type { FakeStep } from "../agent/src/fakeDriver";
 import { contactSampleMessage } from "../src/lib/agentMission/contactSampling";
+import { FALLBACK_MISS_SHARE, chainPriceUsd } from "../src/lib/agentMission/contactFinders";
 
 vi.stubGlobal("fetch", () => { throw new Error("a real network call was attempted"); });
 
@@ -24,7 +25,8 @@ describe("the plan of a request that asks for e-mails and phones carries the fin
     expect(steps?.map((s) => [s.kind, s.stage_key, s.column_key])).toEqual([["email", "people", "email"], ["phone", "people", "phone"]]);
     for (const s of steps!) {
       expect(s.finders.length).toBeGreaterThan(0);
-      expect(s.per_person_usd).toBe(s.finders[0].usd); // the step is priced at its first-ranked finder
+      // CHANGED (item 2): the step is priced at its first-ranked finder, the assumed share of the fallback finder and, for an e-mail, the verifier every found address goes through
+      expect(s.per_person_usd).toBeCloseTo(s.finders[0].usd + FALLBACK_MISS_SHARE * (s.finders[1]?.usd ?? 0) + chainPriceUsd((s as any).verifiers), 9);
       expect(s.per_person_usd).toBeGreaterThan(0);
     }
   });

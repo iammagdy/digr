@@ -1,5 +1,6 @@
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
-import { contactStatusAr, finderParamsFor, foundContactIn, personFactsOf, type ContactStep } from "../../../src/lib/agentMission/contactFinders";
+import { contactStatusAr, finderParamsFor, foundContactIn, personFactsOf, verifierParamsFor, type ContactStep, type FinderInfo, type FoundContact } from "../../../src/lib/agentMission/contactFinders";
+import { EMAIL_STATUS_OTHER_COMPANY_AR, EMAIL_STATUS_VERIFIED_AR, emailOnOtherDomain, emailStatusAr, emailVerdictIn } from "../../../src/lib/agentMission/emailVerification";
 import { rankPeopleByRole } from "../../../src/lib/agentMission/roles";
 import { toArabicDigits } from "../../../src/lib/arabicDigits";
 import type { Gateway } from "../gateway";
@@ -17,7 +18,7 @@ import type { AgentStore, MissionEventInput } from "../types";
  */
 export type ContactStop = "budget" | "daily_cap" | "time_limit" | "aborted";
 export interface ContactEnrichmentOutcome {
-  filled: { email: number; phone: number; unverified: number };
+  filled: { email: number; phone: number; unverified: number; verified: number };
   /** People a call was made for / people who had nothing to ask with. */
   looked: number;
   skipped: number;
@@ -45,7 +46,7 @@ const STEP_LABEL_AR = { email: "الإيميل", phone: "رقم التليفون
 
 export async function runContactEnrichment(deps: ContactDeps): Promise<ContactEnrichmentOutcome> {
   const { items, plan } = deps;
-  const out: ContactEnrichmentOutcome = { filled: { email: 0, phone: 0, unverified: 0 }, looked: 0, skipped: 0, spentUsd: 0, stopped: null };
+  const out: ContactEnrichmentOutcome = { filled: { email: 0, phone: 0, unverified: 0, verified: 0 }, looked: 0, skipped: 0, spentUsd: 0, stopped: null };
   // e-mails first, phones after them (a phone is asked only when the e-mails are done and the budget has room)
   const steps = [...(plan.contact_steps ?? [])].sort((a, b) => (a.kind === b.kind ? 0 : a.kind === "email" ? -1 : 1));
   for (const step of steps) {
@@ -56,6 +57,9 @@ export async function runContactEnrichment(deps: ContactDeps): Promise<ContactEn
   }
   return out;
 }
+
+/** One call a step wants to make, and what came of it. */
+type Attempt = { t: "stop"; stop: ContactStop } | { t: "skip" } | { t: "failed" } | { t: "page"; page: unknown };
 
 async function runStep(deps: ContactDeps, step: ContactStep, stage: ContactDeps["plan"]["stages"][number], out: ContactEnrichmentOutcome): Promise<ContactStop | null> {
   const { items, store, gateway, budget } = deps;
@@ -69,39 +73,92 @@ async function runStep(deps: ContactDeps, step: ContactStep, stage: ContactDeps[
   let stopped: ContactStop | null = null;
   let found = 0;
   const flush = async () => { if (pending.length > 0) { const ops = pending; pending = []; await items.commit(ops); } };
+  /** A helper that failed twice in a row (a rate limit, an outage) is not asked again by this step. */
+  const down = new Map<string, number>();
+  /**
+   * ONE CALL, within every limit: the time, the outside stop, the step's priced amount (a call its own price would take past it is skipped, so a dearer fallback never runs past it) and the job budget (a call past it ends the step). The gateway settles the cost; a refusal for the
+   * budget or the daily limit ends the step, any other failed or refused call (a source that is down or unhealthy) is not the end: the caller goes on to the next one.
+   */
+  const attempt = async (helper: FinderInfo, params: Record<string, string>): Promise<Attempt> => {
+    if (Date.now() >= deps.deadlineMs) return { t: "stop", stop: "time_limit" };
+    if (deps.shouldStop?.()) return { t: "stop", stop: "aborted" };
+    if (budget.spentUsd() - startedAt + helper.usd > capUsd + EPS) return { t: "skip" };
+    if (budget.ceilingUsd !== null && budget.spentUsd() + helper.usd > budget.ceilingUsd + EPS) return { t: "stop", stop: "budget" };
+    const result = await gateway.tregCall({ endpoint_id: helper.id, params });
+    if (!result.ok) {
+      const refused = "refused" in result ? String(result.refused) : "";
+      if (refused === "over_budget") return { t: "stop", stop: "budget" };
+      if (refused === "daily_cap" || refused === "daily_limit") return { t: "stop", stop: "daily_cap" };
+      down.set(helper.id, (down.get(helper.id) ?? 0) + 1);
+      return { t: "failed" };
+    }
+    down.set(helper.id, 0);
+    let page: unknown = null;
+    try { const raw = await store.getFile(deps.missionId, RAW_PATH(result.call_id)); page = raw === null ? null : JSON.parse(raw); } catch { page = null; }
+    return { t: "page", page };
+  };
+  /** The status of an e-mail value: «غير موثّق لهذه الشركة» when it is on another domain (no verifier is paid for it), «موثّق» when a verifier says deliverable, «غير موثّق» in every other case. A definitive answer (deliverable, catch-all, undeliverable) ends the chain; an unknown answer or a failed call goes to the next verifier. */
+  const emailStatusOf = async (value: string, companyDomain: string | null): Promise<{ status: "verified" | "unverified" | "other_company"; stop: ContactStop | null }> => {
+    if (emailOnOtherDomain(value, companyDomain)) return { status: "other_company", stop: null };
+    for (const verifier of step.verifiers ?? []) {
+      if ((down.get(verifier.id) ?? 0) >= 2) continue;
+      const params = verifierParamsFor(verifier, value);
+      if (!params) continue;
+      const a = await attempt(verifier, params);
+      if (a.t === "stop") return { status: "unverified", stop: a.stop };
+      if (a.t !== "page") continue;
+      const verdict = emailVerdictIn(a.page);
+      if (verdict === "deliverable") return { status: "verified", stop: null };
+      if (verdict === "catch_all" || verdict === "undeliverable") return { status: "unverified", stop: null };
+    }
+    return { status: "unverified", stop: null };
+  };
   try {
     outer: for (const row of ranked) {
-      if (String(row[step.column_key] ?? "").trim() !== "") continue; // already has a value (the source gave one, or an earlier run found it)
+      const existing = String(row[step.column_key] ?? "").trim();
+      const existingStatus = String(row[step.status_key] ?? "").trim();
+      // a value that already has its final status (an earlier run of this step) is not looked up or verified again
+      if (existing !== "" && (step.kind !== "email" || existingStatus === EMAIL_STATUS_VERIFIED_AR || existingStatus === EMAIL_STATUS_OTHER_COMPANY_AR)) continue;
       const facts = personFactsOf(row, stage.columns, parents.get(String(row.parent_id)) ?? null);
       let asked = false;
-      for (const finder of step.finders) {
-        const params = finderParamsFor(finder, facts);
-        if (!params) continue;
-        if (Date.now() >= deps.deadlineMs) { stopped = "time_limit"; break outer; }
-        if (deps.shouldStop?.()) { stopped = "aborted"; break outer; }
-        // no call that its own price would take past the step's priced amount (a dearer fallback finder never runs past it) or past the job's budget
-        if (budget.spentUsd() - startedAt + finder.usd > capUsd + EPS) continue;
-        if (budget.ceilingUsd !== null && budget.spentUsd() + finder.usd > budget.ceilingUsd + EPS) { stopped = "budget"; break outer; }
-        asked = true;
-        const result = await gateway.tregCall({ endpoint_id: finder.id, params });
-        if (!result.ok) {
-          const refused = "refused" in result ? String(result.refused) : "";
-          if (refused === "over_budget") { stopped = "budget"; break outer; }
-          if (refused === "daily_cap" || refused === "daily_limit") { stopped = "daily_cap"; break outer; }
-          continue; // a failed or refused call (a source that is down or unhealthy) is not the end: the next ranked finder is tried
+      let value = existing;
+      let statusAr: string | null = null;
+      let hit: FoundContact | null = null;
+      if (value === "") {
+        for (const finder of step.finders) {
+          const params = finderParamsFor(finder, facts);
+          if (!params) continue;
+          const a = await attempt(finder, params);
+          if (a.t === "stop") { stopped = a.stop; break outer; }
+          if (a.t === "skip") continue;
+          asked = true;
+          if (a.t === "failed") continue; // the next ranked finder is tried
+          hit = foundContactIn(step.kind, a.page);
+          if (!hit) continue;
+          value = hit.value;
+          break;
         }
-        let page: unknown = null;
-        try { const raw = await store.getFile(deps.missionId, RAW_PATH(result.call_id)); page = raw === null ? null : JSON.parse(raw); } catch { page = null; }
-        const hit = page === null ? null : foundContactIn(step.kind, page);
-        if (!hit) continue;
-        pending.push({ t: "cells", stage: step.stage_key, id: String(row.id), cells: { [step.column_key]: hit.value, [step.status_key]: contactStatusAr(hit.status) } });
-        found += 1;
-        out.filled[step.kind] += 1;
-        if (hit.status === "unverified") out.filled.unverified += 1;
-        break;
+      }
+      if (value !== "") {
+        if (step.kind === "email") {
+          // finder, fallback finder, then the VERIFIER: «موثّق» only when a verifier says so
+          const verdict = await emailStatusOf(value, facts.domain);
+          if (verdict.stop) stopped = verdict.stop;
+          if ((step.verifiers ?? []).length > 0 || verdict.status === "other_company") asked = true;
+          statusAr = emailStatusAr(verdict.status);
+          if (verdict.status === "unverified") out.filled.unverified += hit ? 1 : 0;
+          else if (verdict.status === "verified") out.filled.verified += 1;
+        } else if (hit) {
+          statusAr = contactStatusAr(hit.status);
+          if (hit.status === "unverified") out.filled.unverified += 1;
+        }
+        const cells: Record<string, string> = { ...(hit || existing === "" ? { [step.column_key]: value } : {}), ...(statusAr !== null ? { [step.status_key]: statusAr } : {}) };
+        if (Object.keys(cells).length > 0) pending.push({ t: "cells", stage: step.stage_key, id: String(row.id), cells });
+        if (hit) { found += 1; out.filled[step.kind] += 1; }
       }
       if (asked) out.looked += 1; else out.skipped += 1;
       if (pending.length >= COMMIT_EVERY) await flush();
+      if (stopped) break outer;
     }
   } finally {
     await flush();

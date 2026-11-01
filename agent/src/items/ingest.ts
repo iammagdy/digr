@@ -187,7 +187,8 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
       const looksLikeValue = c.kind === "work_email" ? /^[^\s@*]+@[^\s@*]+\.[^\s@*]+$/.test(original) : !original.includes("*") && original.replace(/\D/g, "").length >= 7;
       const kept = verified ?? (looksLikeValue ? original : "");
       row[c.key] = kept;
-      if (kept) row[statusKeyOf(c.key)] = verified ? CONTACT_STATUS_VERIFIED_AR : CONTACT_STATUS_UNVERIFIED_AR;
+      // «موثّق» is never written here for an E-MAIL: a code check says an address is well formed, not that a mailbox exists. The contact step sends every kept address through a verifier and writes «موثّق» only on its answer (emailVerification.ts)
+      if (kept) row[statusKeyOf(c.key)] = verified && c.kind !== "work_email" ? CONTACT_STATUS_VERIFIED_AR : CONTACT_STATUS_UNVERIFIED_AR;
       if (verified) verifiedAny = true; else if (original && !kept) tally.contact_values_left_empty += 1;
     }
     if (contactStage && contactColumns.length > 0 && !verifiedAny && !isNamedPerson(raw, stage.columns)) { tally.rejected_no_verified_contact += 1; excludedStructural.push({ id, reason: "no_verified_contact", row }); continue; }
