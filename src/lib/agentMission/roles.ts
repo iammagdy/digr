@@ -1,3 +1,4 @@
+import { countAr, knownItemNoun } from "./itemNoun";
 import { normalizeText } from "./relevance";
 
 /**
@@ -65,14 +66,57 @@ export function titleFieldOf(row: Record<string, unknown>): string | null {
   return keys.find((k) => TITLE_FIELD.test(k)) ?? keys.find((k) => /title|position|role|مسمى|وظيف/i.test(k) && typeof row[k] === "string") ?? null;
 }
 
-/** The rows of one page of a company's people, best match first (stable inside each group: the source's order is kept). Rows are returned untouched; a page with no title field comes back as it is. */
+/**
+ * DECISION MAKERS ARE NEVER LEFT BEHIND BY THE LOWEST TITLES (live 2026-11-01: a «عامل» and a «محاسب» delivered when the page held nothing better in the ranking's eyes: «unclear» and «other» were one group in the page's order). For the decision makers' role the verdict gets a fourth
+ * tier: 0 = a title that names the role (manager, director, head, chief, owner), 1 = a title the table cannot read, 2 = a title of another role, 3 = the lowest titles (worker, accountant, intern, trainee, junior, driver, receptionist...). A «junior» or an «intern» is tier 3 even
+ * when the title says «manager». For every other role the tiers are the old three-way verdict (0, 1, 2).
+ */
+const LOW_WORDS: ReadonlySet<string> = new Set([
+  "worker", "workers", "labor", "labour", "laborer", "labourer", "helper", "driver", "chauffeur", "receptionist", "cleaner", "clerk", "accountant", "accountants", "bookkeeper", "intern", "interns", "internship", "trainee", "trainees", "apprentice", "junior", "jr", "student", "graduate",
+  "عامل", "عمال", "عاملة", "محاسب", "محاسبة", "محاسبين", "متدرب", "متدربة", "تدريب", "مبتدئ", "سائق", "سكرتير", "سكرتيرة", "ريسيبشن", "مساعد اداري", "طالب", "حديث التخرج",
+].map((w) => normalizeText(w)));
+const DISQUALIFIERS: ReadonlySet<string> = new Set(["junior", "jr", "intern", "interns", "internship", "trainee", "trainees", "apprentice", "student", "متدرب", "متدربة", "تدريب", "مبتدئ", "طالب"].map((w) => normalizeText(w)));
+export type TitleTier = 0 | 1 | 2 | 3;
+
+export function titleTierOf(title: unknown, role: RoleKey): TitleTier {
+  const text = typeof title === "string" ? title.trim() : "";
+  const verdict = titleRoleVerdict(title, role);
+  if (role !== "manager" || !text) return verdict === "match" ? 0 : verdict === "unclear" ? 1 : 2;
+  const words = wordsOf(text).map((w) => w.replace(/^ال(?=.{2,})/, ""));
+  if (words.some((w) => DISQUALIFIERS.has(w))) return 3;
+  if (verdict === "match") return 0;
+  if (words.some((w) => LOW_WORDS.has(w)) || LOW_WORDS.has(normalizeText(text))) return 3;
+  return verdict === "unclear" ? 1 : 2;
+}
+
+/** The rows of one page of a company's people, best match first (stable inside each tier: the source's order is kept). Rows are returned untouched; a page with no title field comes back as it is. */
 export function rankPeopleByRole<T extends Record<string, unknown>>(rows: ReadonlyArray<T>, role: RoleKey): { rows: T[]; matching: number } {
   const field = rows.map(titleFieldOf).find((f) => f !== null) ?? null;
   if (field === null) return { rows: [...rows], matching: 0 };
-  const order: Record<TitleVerdict, number> = { match: 0, unclear: 1, other: 2 };
-  const scored = rows.map((row, i) => ({ row, i, v: titleRoleVerdict(row[field], role) }));
-  scored.sort((a, b) => order[a.v] - order[b.v] || a.i - b.i);
-  return { rows: scored.map((s) => s.row), matching: scored.filter((s) => s.v === "match").length };
+  const scored = rows.map((row, i) => ({ row, i, t: titleTierOf(row[field], role) }));
+  scored.sort((a, b) => a.t - b.t || a.i - b.i);
+  return { rows: scored.map((s) => s.row), matching: scored.filter((s) => s.t === 0).length };
+}
+
+/**
+ * THE LIMITS SENTENCE FOR DECISION MAKERS NOT FOUND: from the delivered people's job titles (a person with no title is not judged), how many are not decision makers and in how many companies, so a file that holds a «consultant» or an engineer where a manager was asked for says it.
+ * Null when every person with a known title is a decision maker (or no title is known). Only for the decision makers' role; Arabic-Indic digits, no provider.
+ */
+export function decisionMakersLeftOutAr(people: ReadonlyArray<Record<string, unknown>>, role: RoleKey): string | null {
+  if (role !== "manager") return null;
+  let notDm = 0;
+  const companies = new Set<string>();
+  for (const p of people) {
+    const field = titleFieldOf(p);
+    const title = field ? String(p[field] ?? "").trim() : "";
+    if (!title) continue;
+    if (titleTierOf(title, role) > 0) { notDm += 1; companies.add(String(p.parent_id ?? "")); }
+  }
+  if (notDm === 0) return null;
+  const person = knownItemNoun("شخص");
+  const company = knownItemNoun("شركة");
+  if (!person || !company) return null;
+  return `لم يوجد في المصدر عدد كافٍ من صناع القرار في ${countAr(companies.size, company)}، فاكتمل العدد بـ${countAr(notDm, person)} من غيرهم بأقرب المسميات الوظيفية المتاحة`;
 }
 
 /** The one line the card shows for a people stage that prefers a role: what is preferred, and that when fewer match the count is completed from the company's other people, with the titles exactly as the source gives them. No number, no provider. */

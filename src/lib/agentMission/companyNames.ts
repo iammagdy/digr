@@ -45,3 +45,32 @@ export function withCleanName<T extends Record<string, unknown>>(item: T, column
 
 /** The mapped fields (keys) of a stage's columns that hold the company's name. */
 export const nameKeysOf = (columns: ReadonlyArray<{ key: string; title_ar?: string }>): string[] => columns.filter((c) => NAME_COLUMN.test(c.key) || /^اسم\s/.test(String(c.title_ar ?? ""))).map((c) => c.key);
+
+/**
+ * A COMPANY NAME AS THE CUSTOMER READS IT (live 2026-11-01: «mitsubishi elevators \ melco-mec egypt» with its backslash in the file and in the map query built from it): stray backslashes and quotation marks are taken out (a backslash that separated two names becomes a space),
+ * spaces collapse, and separators left at the start or the end («,», «;», «:», «|», «/», «-») are cut. A clean name (an apostrophe, a dot or a hyphen inside it, parentheses) is returned as it was.
+ */
+export function tidyCompanyName(value: string): string {
+  return String(value ?? "")
+    .replace(/\\+/g, " ")
+    .replace(/["“”„‟«»]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^[\s,;:|/\-–—·]+|[\s,;:|/\-–—·]+$/g, "")
+    .trim();
+}
+
+const COMPANY_CELL = /^(company|company_name|companyname)$/i;
+/** The item with its COMPANY NAME cells tidied: the name columns of a stage of companies, and the company cell of any stage (a people row says which company the person is at). A person's own name is never touched. The same object when nothing changes. */
+export function withTidyNames<T extends Record<string, unknown>>(item: T, columns: ReadonlyArray<{ key: string; title_ar?: string }>, isChild: boolean): T {
+  let out: T | null = null;
+  const keys = new Set<string>(Object.keys(item).filter((k) => COMPANY_CELL.test(k)));
+  if (!isChild) for (const k of nameKeysOf(columns)) keys.add(k);
+  for (const k of keys) {
+    const v = item[k];
+    if (typeof v !== "string") continue;
+    const t = tidyCompanyName(v);
+    if (t !== v) { out = out ?? ({ ...item } as T); (out as Record<string, unknown>)[k] = t; }
+  }
+  return out ?? item;
+}

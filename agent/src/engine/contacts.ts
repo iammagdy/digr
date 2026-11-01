@@ -102,7 +102,9 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
     if (mySpent + helper.usd > capUsd + EPS) return { t: "skip" };
     if (budget.ceilingUsd !== null && budget.spentUsd() + helper.usd > budget.ceilingUsd + EPS) return { t: "stop", stop: "budget" };
     const before = budget.spentUsd();
-    const result = await gateway.tregCall({ endpoint_id: helper.id, params });
+    // A CALL THAT THROWS (a dropped connection, an unreadable answer) is a failed call, never the end of the person: what was found before it stays
+    let result: Awaited<ReturnType<typeof gateway.tregCall>>;
+    try { result = await gateway.tregCall({ endpoint_id: helper.id, params }); } catch { mySpent += Math.max(0, budget.spentUsd() - before); down.set(helper.id, (down.get(helper.id) ?? 0) + 1); return { t: "failed" }; }
     mySpent += Math.max(0, budget.spentUsd() - before);
     if (!result.ok) {
       const refused = "refused" in result ? String(result.refused) : "";
@@ -219,8 +221,9 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
       } else if (step.kind === "phone" && step.type_key && String(row[step.type_key] ?? "").trim() === "") typeAr = PHONE_TYPE_PERSONAL_AR; // a number the source gave with the person
       if (value !== "") {
         if (step.kind === "email") {
-          // finder, fallback finder, then the VERIFIER: «موثّق» only when a verifier says so
-          const verdict = await emailStatusOf(value, facts.domain);
+          // A FOUND ADDRESS IS ALWAYS WRITTEN: whatever happens to a verifier (rate limit, failure, a thrown error, the budget) the verdict is «غير موثّق» and the cells below are still written (a verifier only ever improves the status)
+          let verdict: { status: "verified" | "unverified" | "other_company"; stop: ContactStop | null };
+          try { verdict = await emailStatusOf(value, facts.domain); } catch { verdict = { status: "unverified", stop: null }; }
           if (verdict.stop) stopRun = verdict.stop;
           if ((step.verifiers ?? []).length > 0 || verdict.status === "other_company") asked = true;
           statusAr = emailStatusAr(verdict.status);

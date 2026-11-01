@@ -8,7 +8,7 @@ import { dayOf, firstWindowEndDay, nextWindowEndDay, windowParams } from "../../
 import { isEnabled } from "../../../src/lib/agentMission/filters";
 import { SOURCE_KEY } from "../../../src/lib/agentMission/namedSources";
 import { isProviderUrl, providerContext } from "../../../src/lib/agentMission/providerHosts";
-import { companyIdentityOf, isPlaceholderCompanyUrl, peopleEvidenceOf, personAtCompany } from "../../../src/lib/agentMission/companyIdentity";
+import { companyIdentityOf, confirmPersonAtCompany, isPlaceholderCompanyUrl, peopleEvidenceOf } from "../../../src/lib/agentMission/companyIdentity";
 import { isPeopleStage, nameKeysOf } from "../../../src/lib/agentMission/people";
 import { NOT_AT_COMPANY_MARK, drainPending, emitStageProgress, ingestRows } from "../items/ingest";
 import type { ItemStore, Row, StopReason } from "../items/itemStore";
@@ -180,7 +180,7 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
   return { reason: items.counts(stage.key).accepted >= stage.planned_rows ? "target_reached" : anyFailed ? "failed" : last === "target_reached" ? "source_exhausted" : last, aborted: null };
 }
 
-/** Marks the people of a page whose current experiences do not name the parent company (companyIdentity.ts). A person the source gave no experience for is not marked: nothing contradicts the source. */
+/** Marks the people of a page whose current company is not the parent company: by the source's own experiences for the person, else by the company the row itself names (companyIdentity.ts). A person nothing can be judged for is not marked. */
 function markPeopleNotAtCompany(deps: EngineDeps, stage: Stage, parentId: string, page: unknown, rows: Row[]): Row[] {
   if (!stage.parent_key || !isPeopleStage(stage)) return rows;
   const parentStage = deps.plan.stages.find((s) => s.key === stage.parent_key);
@@ -188,12 +188,10 @@ function markPeopleNotAtCompany(deps: EngineDeps, stage: Stage, parentId: string
   const company = companyIdentityOf(parentRow, parentStage ? nameKeysOf(parentStage.columns) : []);
   if (company.names.length === 0 && !company.domain) return rows;
   const evidence = peopleEvidenceOf(page);
-  if (!evidence.any) return rows;
   const nameKeys = nameKeysOf(stage.columns);
-  return rows.map((row) => {
-    const experiences = evidence.of(row, nameKeys);
-    return experiences && personAtCompany(experiences, company) === "mismatch" ? { ...row, [NOT_AT_COMPANY_MARK]: true } : row;
-  });
+  // where the company is (its own city / address cells): a partial name match is accepted only in the same governorate (companyIdentity.ts)
+  const companyPlace = parentRow ? Object.entries(parentRow).filter(([k, v]) => /(^|_)(location|city|place|region|governorate|address)$/i.test(k) && typeof v === "string" && v.trim() !== "").map(([, v]) => String(v).trim()).join(" ") : "";
+  return rows.map((row) => (confirmPersonAtCompany(row, { nameKeys, evidence: evidence.any ? evidence : null, company, companyPlace }) === "mismatch" ? { ...row, [NOT_AT_COMPANY_MARK]: true } : row));
 }
 
 /** The numeric field of a parent row that counts its children (a video's comments, a place's reviews), when the mapping carries one: spares with more children are tried first. */

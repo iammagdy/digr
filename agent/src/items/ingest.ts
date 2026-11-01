@@ -5,7 +5,7 @@ import { isNamedPerson, isPeopleStage, personVerdict } from "../../../src/lib/ag
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
 import { dedupeScope, deriveItemId, isTextItemStage, textDedupeKey, textKeyOf } from "../../../src/lib/agentMission/contract";
 import { placeCellsAr } from "../../../src/lib/agentMission/places";
-import { nameKeysOf, withCleanName, withRealName } from "../../../src/lib/agentMission/companyNames";
+import { nameKeysOf, withCleanName, withRealName, withTidyNames } from "../../../src/lib/agentMission/companyNames";
 import { entityDoubt, type DoubtInput } from "../../../src/lib/agentMission/entityDoubts";
 import { namedSourceOf, SOURCE_KEY } from "../../../src/lib/agentMission/namedSources";
 import { looksLikeDateColumn, parseMoment } from "../../../src/lib/agentMission/dateCells";
@@ -116,7 +116,8 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     if (!isObject(raw0)) { tally.rejected_not_object += 1; continue; }
     // a name that is only a web address is replaced by another name field of the same item (never invented); the id is derived from the item as the source gave it
     const named = isChild ? { item: raw0, debris: false } : withCleanName(withRealName(raw0, stage.columns), stage.columns);
-    const raw = named.item;
+    // THE COMPANY NAME AS THE CUSTOMER READS IT: no stray backslash, quote or trailing separator (companyNames.ts)
+    const raw = withTidyNames(named.item, stage.columns, isChild);
     // an item always has an id: its own, the field the recipe chose, a known key field (a platform id, the link), or its fingerprint: the same item read twice is the same id (never rejected for lacking one)
     // (the engine passes the recipe's `idField`, so its items are keyed this way; the model's own save_rows has no such field and keeps refusing an item without an id, which it was told to give)
     const id = options.idField !== undefined ? deriveItemId(raw0, options.idField, parentIds ? String(raw0.parent_id ?? "").trim() || null : null) : String(raw0.id ?? "").trim();

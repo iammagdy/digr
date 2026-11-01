@@ -1,3 +1,4 @@
+import { placesInText } from "./places";
 import { normalizeText } from "./relevance";
 
 /**
@@ -84,6 +85,21 @@ export function sameCompanyName(a: string, b: string): boolean {
   return shorter.length >= 5 && longer.includes(shorter);
 }
 
+export type NameMatch = "exact" | "partial" | "none";
+/**
+ * HOW WELL TWO COMPANY NAMES AGREE, for the confirmation of a person's company (live 2026-11-01: «Ecologi» delivered under «365 Ecology»). `exact` is the same FULL name once the words that only say «company» are dropped («365 Ecology» = «365 Ecology Co.»,
+ * «Falcon Misr» = «falconmisr»); `partial` is one name inside the other («Ecology» in «365 Ecology», a domain label inside a longer name), which proves nothing alone; `none` is anything else.
+ */
+export function companyNameMatch(a: string, b: string): NameMatch {
+  const ta = tokensOf(a);
+  const tb = tokensOf(b);
+  if (ta.length === 0 || tb.length === 0) return "none";
+  const sa = new Set(ta);
+  const sb = new Set(tb);
+  if ((sa.size === sb.size && ta.every((t) => sb.has(t))) || ta.join("") === tb.join("")) return "exact";
+  return sameCompanyName(a, b) ? "partial" : "none";
+}
+
 // ------------------------------------------------------------------------------------------------ the company of a row
 export interface CompanyIdentity {
   /** The company's names (the row's name cells). */
@@ -102,7 +118,15 @@ export function companyIdentityOf(row: Record<string, unknown> | null | undefine
   for (const [k, v] of Object.entries(row)) {
     const t = text(v);
     if (!t) continue;
-    if (nameKeys.includes(k) || /^(company|company_name|name|title|organization|organisation)$/i.test(k)) { if (!/^https?:\/\//i.test(t) && !isPlaceholderCompanyUrl(t) && !names.includes(t)) names.push(t); continue; }
+    if (nameKeys.includes(k) || /^(company|company_name|name|title|organization|organisation)$/i.test(k)) {
+      if (!/^https?:\/\//i.test(t) && !isPlaceholderCompanyUrl(t) && !names.includes(t)) {
+        names.push(t);
+        // a combined name («mitsubishi elevators \ melco-mec egypt») names the company by each of its parts
+        const parts = t.split(/\s*[\\|]\s*|\s+\/\s+/).map((x) => x.trim()).filter((x) => x.length >= 2);
+        if (parts.length > 1) for (const part of parts) if (!names.includes(part)) names.push(part);
+      }
+      continue;
+    }
     if (domain === null && /(website|domain|site|homepage|url)/i.test(k) && !/linkedin/i.test(t) && !isPlaceholderCompanyUrl(t)) domain = registrableDomain(t);
   }
   return { names, domain };
@@ -111,7 +135,7 @@ export function companyIdentityOf(row: Record<string, unknown> | null | undefine
 // ------------------------------------------------------------------------------------------------ experiences
 type Obj = Record<string, unknown>;
 const isObj = (v: unknown): v is Obj => typeof v === "object" && v !== null && !Array.isArray(v);
-const EXPERIENCE_KEYS = ["experiences", "experience", "positions", "work_experience", "jobs"] as const;
+const EXPERIENCE_KEYS = ["experiences", "experience", "positions", "work_experience", "jobs", "positionList", "position_list"] as const;
 
 export type PersonCompanyVerdict = "match" | "mismatch" | "unknown";
 const NAME_KEYS = ["company_name", "companyName", "company", "organization", "organisation", "employer", "name"] as const;
@@ -131,11 +155,24 @@ function isCurrentExperience(e: Obj): boolean {
   return true;
 }
 
+/** Where a person and a company are, as texts (an address, a city, a governorate). */
+export interface PlacePair { personPlace?: string | null; companyPlace?: string | null }
+/** The governorates (cities) a text names. */
+const cityKeysOf = (value: unknown): Set<string> => new Set(placesInText(text(value)).filter((e) => e.kind === "city").map((e) => e.key));
+/** True when both places name a city and share one: the same governorate. Unknown on either side is not the same. */
+export function sameGovernorate(a: unknown, b: unknown): boolean {
+  const ka = cityKeysOf(a);
+  if (ka.size === 0) return false;
+  for (const k of cityKeysOf(b)) if (ka.has(k)) return true;
+  return false;
+}
+
 /**
- * Is the person at this company now? `match`: a current experience names the company (its domain, or its name). `mismatch`: the person has experiences, none of the current ones names the company (or none is current). `unknown`: the source gave no usable
- * experience (or the company has no name and no domain to compare), so nothing contradicts the source's own answer.
+ * Is the person at this company now? `match`: a current experience names the company by its DOMAIN, or by the NORMALISED FULL NAME (companyNameMatch exact). A PARTIAL name match («Ecology» for «365 Ecology») is a match only when the person is in the company's governorate
+ * (a location in another governorate is allowed only for an exact match). `mismatch`: the person has experiences, none of the current ones names the company that way (or none is current). `unknown`: the source gave no usable experience (or the company has no name and no
+ * domain to compare), so nothing contradicts the source's own answer.
  */
-export function personAtCompany(experiences: ReadonlyArray<unknown>, company: CompanyIdentity): PersonCompanyVerdict {
+export function personAtCompany(experiences: ReadonlyArray<unknown>, company: CompanyIdentity, where: PlacePair = {}): PersonCompanyVerdict {
   const exps = experiences.filter(isObj);
   if (exps.length === 0) return "unknown";
   if (company.names.length === 0 && !company.domain) return "unknown";
@@ -143,15 +180,44 @@ export function personAtCompany(experiences: ReadonlyArray<unknown>, company: Co
   if (current.length === 0) return "mismatch";
   let judged = false;
   for (const e of current) {
-    const name = pick(e, NAME_KEYS);
-    const domain = registrableDomain(pick(e, DOMAIN_KEYS));
+    const rawName = pick(e, NAME_KEYS);
+    // a «company name» that is only a web address («co3.eg») is the company's domain
+    const nameDomain = /^(?:https?:\/\/)?(?:www\.)?[a-z0-9-]+(?:\.[a-z0-9-]+)+\/?$/i.test(rawName) ? registrableDomain(rawName) : null;
+    const name = nameDomain ? "" : rawName;
+    const domain = registrableDomain(pick(e, DOMAIN_KEYS)) ?? nameDomain;
     if (name || domain) judged = true;
     if (domain && company.domain && domain === company.domain) return "match";
-    if (name && company.names.some((n) => sameCompanyName(n, name))) return "match";
-    // a company domain label inside the experience's company name («falconmisr» in «Falcon Misr Co»)
-    if (name && company.domain) { const label = company.domain.split(".")[0]; if (label.length >= 5 && compact(name).includes(label.replace(/[^a-z0-9]/g, ""))) return "match"; }
+    let partial = false;
+    if (name) {
+      for (const n of company.names) { const level = companyNameMatch(n, name); if (level === "exact") return "match"; if (level === "partial") partial = true; }
+      // a company domain label inside the experience's company name («365ecology» in «365ecology Trading»): a partial match
+      if (company.domain) {
+        const label = company.domain.split(".")[0].replace(/[^a-z0-9]/g, "");
+        // the name IS the domain's label once the words that only say «company» are dropped («orascom-em co» for orascom-em.com.eg): exact; a longer name that holds the label is partial
+        if (label.length >= 5 && tokensOf(name).join("").replace(/[^a-z0-9]/g, "") === label) return "match";
+        if (label.length >= 5 && compact(name).includes(label)) partial = true;
+      }
+    }
+    if (partial && sameGovernorate(where.personPlace || pick(e, ["location", "city", "place"]), where.companyPlace)) return "match";
   }
   return judged ? "mismatch" : "unknown";
+}
+
+/** The company a person row names itself («company» cell), as one experience (used when the source's page carried no experiences for the person). */
+const ROW_COMPANY_KEY = /^(company|company_name|current_company|employer|organization|organisation)$/i;
+const ROW_PLACE_KEY = /(^|_)(location|city|place|region|governorate|address)$/i;
+const placeOfRow = (row: Record<string, unknown>): string => Object.entries(row).filter(([k, v]) => ROW_PLACE_KEY.test(k) && text(v)).map(([, v]) => text(v)).join(" ");
+
+/**
+ * THE CONFIRMATION OF ONE PERSON ROW: the source's own experiences for the person (found by profile link or name in the raw page) when it gave them, else the company the row itself names (`company` cell), compared with the target company by domain or exact full name
+ * (`personAtCompany`). A row that names no company and has no evidence is `unknown` and is not rejected.
+ */
+export function confirmPersonAtCompany(row: Record<string, unknown>, ctx: { nameKeys: ReadonlyArray<string>; evidence: PeopleEvidence | null; company: CompanyIdentity; companyPlace?: string | null }): PersonCompanyVerdict {
+  const personPlace = placeOfRow(row);
+  const given = ctx.evidence?.of(row, ctx.nameKeys) ?? null;
+  const own = Object.entries(row).filter(([k, v]) => ROW_COMPANY_KEY.test(k) && text(v)).map(([, v]) => text(v));
+  const experiences: ReadonlyArray<unknown> | null = given ?? (own.length > 0 ? [{ company_name: own[0], job_is_current: true }] : null);
+  return experiences ? personAtCompany(experiences, ctx.company, { personPlace, companyPlace: ctx.companyPlace ?? null }) : "unknown";
 }
 
 // ------------------------------------------------------------------------------------------------ the raw page
@@ -176,11 +242,17 @@ export function peopleEvidenceOf(page: unknown): PeopleEvidence {
     const o = node as Obj;
     const key = EXPERIENCE_KEYS.find((k) => Array.isArray(o[k]));
     if (key) {
-      const list = o[key] as unknown[];
+      // the employee's own fields, and its `person` (a result may keep the profile, the name and the links one level down: URLs: { linkedin })
+      const inner = isObj(o.person) ? (o.person as Obj) : null;
+      const linkValues = [...Object.values(o), ...(inner ? [...Object.values(inner), ...Object.values(isObj(inner.URLs) ? (inner.URLs as Obj) : {})] : [])];
       let url: string | null = null;
-      for (const v of Object.values(o)) { url = personUrlKey(v); if (url) break; }
+      for (const v of linkValues) { url = personUrlKey(v); if (url) break; }
+      // an entry that names no company is the employee's company at the employee level («companyName»): the source's answer for the person
+      const holder = pick(o, NAME_KEYS.filter((k) => k !== "name"));
+      const list = (o[key] as unknown[]).map((e) => (isObj(e) && !pick(e, NAME_KEYS.filter((k) => k !== "name")) && !pick(e, DOMAIN_KEYS) && holder ? { ...e, company_name: holder } : e));
       if (url) byUrl.set(url, list);
-      const full = text(o.full_name) || text(o.name) || [text(o.first_name), text(o.last_name)].filter(Boolean).join(" ");
+      const pick2 = (r: Obj | null): string => (r ? text(r.full_name) || text(r.fullName) || text(r.name) || [text(r.first_name), text(r.last_name)].filter(Boolean).join(" ") : "");
+      const full = pick2(o) || pick2(inner);
       if (full) byName.set(nameKey(full), list);
     }
     for (const v of Object.values(o)) if (typeof v === "object") walk(v, depth + 1);
