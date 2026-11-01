@@ -75,6 +75,7 @@ export function createMemoryStore(initial: MissionRecord[] = []): MemoryStore {
     },
     async writeHeartbeat(row) { heartbeats.push(row); },
     async readSettings() { return settings; },
+    async readUserEmail(userId) { return userEmails.get(userId) ?? null; },
     async publishResult({ missionId, userId, jobId, xlsx, csv }) {
       files.set(`${missionId}/result/result.xlsx`, xlsx);
       files.set(`${missionId}/result/result.csv`, csv);

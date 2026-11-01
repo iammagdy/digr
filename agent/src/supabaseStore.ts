@@ -114,5 +114,9 @@ export function createSupabaseStore(client: any): AgentStore {
       if (error || !Array.isArray(data)) return {};
       return Object.fromEntries(data.map((r: any) => [String(r.key), r.value]));
     },
+    async readUserEmail(userId: string) {
+      const { data, error } = await client.from("profiles").select("email").eq("id", userId).maybeSingle();
+      return error || !data || typeof (data as { email?: unknown }).email !== "string" ? null : String((data as { email: string }).email);
+    },
   };
 }

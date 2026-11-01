@@ -96,6 +96,8 @@ export interface AgentStore {
   writeHeartbeat(row: HeartbeatRow): Promise<void>;
   /** The settings the owner sets from the admin page (e.g. planning_model). */
   readSettings(): Promise<Record<string, unknown>>;
+  /** The account's e-mail (a read-only look at profiles), for the test-account rule of the redesign flags; null when it cannot be read. Optional: a store without it classifies by id only. */
+  readUserEmail?(userId: string): Promise<string | null>;
   /**
    * Saves the result files of a settled mission: in the mission's own prefix of the private bucket, and where the website's results screen looks for a job's files
    * (results/<user>/<job>/result.xlsx|csv) with the artifact_versions row the website reads them through. Returns the path settle_job_atomic stores as the result file.
