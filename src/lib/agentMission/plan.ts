@@ -1,4 +1,4 @@
-import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, AGENT_PEOPLE_PAGES_DEFAULT, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE } from "./constants";
+import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, AGENT_PEOPLE_PAGES_DEFAULT, AGENT_PEOPLE_PAGES_MAX, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE } from "./constants";
 import { CONTACT_KINDS, requestWantsContacts, type ContactKind } from "./contacts";
 import { isPeopleStage } from "./people";
 import { buildContactSteps, type ContactAids, type ContactStep, type FinderInfo, type FinderKind } from "./contactFinders";
@@ -691,6 +691,10 @@ export interface PlanEditorView {
     /** A stage that hangs on another (the people of each company): the number of its items per item of the parent, which the customer can change. */
     per_parent?: number;
     per_parent_label_ar?: string;
+    /** A people stage read in DEPTH: the pages of the source read for each parent (the customer may lower it to reduce the price, or raise it up to `pages_max`). */
+    pages?: number;
+    pages_max?: number;
+    pages_label_ar?: string;
     columns: Array<{ key: string; title_ar: string; on: boolean; locked: boolean }>;
     filters: Array<{ kind: StageFilter["kind"]; label_ar: string; enabled: boolean; line_ar: string; lang?: "ar" | "en"; days?: number }>;
   }>;
@@ -719,6 +723,7 @@ export function planEditorView(plan: PricedPlan): PlanEditorView {
       const locked = lockedColumnKeys(s);
       return {
         key: s.key, title_ar: s.title_ar, target: s.planned_rows,
+        ...(s.parent_key !== null && s.deliver && Number(s.pages_per_parent) >= 1 && s.role_preference ? { pages: Math.floor(Number(s.pages_per_parent)), pages_max: AGENT_PEOPLE_PAGES_MAX, pages_label_ar: `عدد صفحات البحث لكل ${itemNounOf(plan.stages.find((p) => p.key === s.parent_key)?.title_ar ?? "").singular}` } : {}),
         ...(s.parent_key !== null && s.deliver && s.per_parent_rows ? { per_parent: s.per_parent_rows, per_parent_label_ar: `عدد «${s.title_ar}» لكل ${itemNounOf(plan.stages.find((p) => p.key === s.parent_key)?.title_ar ?? "").singular}` } : {}),
         columns: [...s.columns.filter((c) => !isInternalColumn(c)).map((c) => ({ key: c.key, title_ar: c.title_ar, on: true, locked: locked.has(c.key) })), ...(s.hidden_columns ?? []).map((c) => ({ key: c.key, title_ar: c.title_ar, on: false, locked: false }))],
         filters: (s.filters ?? []).map((f) => ({ kind: f.kind, label_ar: filterLabelAr(f), enabled: isEnabled(f), line_ar: filterLineAr({ ...f, enabled: true }), ...(f.lang ? { lang: f.lang } : {}), ...(f.days !== undefined ? { days: f.days } : {}) })),
@@ -754,6 +759,25 @@ export function assumptionLinesOf(plan: Pick<PricedPlan, "stages" | "assumptions
   return [...base, ...scoped];
 }
 
+/** «٢ صفحتين» / «٣ صفحات» ...: the pages of the depth in correct Arabic, Arabic-Indic digits. */
+const pagesAr = (n: number): string => (n === 1 ? "صفحة واحدة" : n === 2 ? "صفحتين" : n <= 10 ? `${toArabicDigits(n)} صفحات` : `${toArabicDigits(n)} صفحة`);
+
+/**
+ * WHAT THE PRICE INCLUDES, in one plain sentence on the card (owner decision after #321: the customer sees the price before approving and pays for real results): the deeper search for decision makers (up to N pages of the source for each company, stopping early once enough are found) and the
+ * e-mail and phone lookup for each person, and where to lower it. Built by code from the plan; nothing for a plan with neither.
+ */
+export function priceIncludesLinesAr(plan: Pick<PricedPlan, "stages" | "contact_steps">): string[] {
+  const deep = plan.stages.find((s) => s.deliver && s.parent_key !== null && Number(s.pages_per_parent) > 1);
+  const kinds = new Set((plan.contact_steps ?? []).map((x) => x.kind));
+  if (!deep && kinds.size === 0) return [];
+  const parent = deep ? plan.stages.find((p) => p.key === deep.parent_key) : undefined;
+  const noun = parent ? itemNounOf(parent.title_ar).singular : "شركة";
+  const lookup = kinds.size === 0 ? "" : `البحث عن ${kinds.has("email") && kinds.has("phone") ? "الإيميل ورقم التليفون" : kinds.has("email") ? "الإيميل" : "رقم التليفون"} لكل شخص`;
+  const depth = deep ? `بحثًا أعمق عن صناع القرار (نقرأ حتى ${pagesAr(Math.floor(Number(deep.pages_per_parent)))} من النتائج لكل ${noun} ونتوقف مبكرًا عند اكتمال العدد)` : "";
+  const both = [depth, lookup].filter(Boolean).join("، و");
+  return [`السعر يشمل ${both}. تقدر تقلّل العمق أو عدد الأشخاص لكل ${noun} من «عدّل الخطة» لتخفيض السعر.`];
+}
+
 /** One line per delivered people stage that prefers a role: what is preferred and that fewer matching people may come (roles.ts). */
 export function roleLinesAr(stages: ReadonlyArray<Pick<PricedStage, "key" | "title_ar" | "parent_key" | "deliver" | "role_preference">>): string[] {
   const lines: string[] = [];
@@ -783,7 +807,7 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
   // what the card promises about the items is backed by the filters that are switched ON: a line of the model that promises one is shown only while its filter is on, and a filter that is on gets its own sentence, built by code
   const assumptions = assumptionLinesOf(plan);
   // fewer than the customer asked for: the reason the card shows next to the one target number
-  const notes = [...(plan.notes_ar ?? []), ...(plan.quantity?.reason_ar ? [plan.quantity.reason_ar] : []), ...childRuleLinesAr(plan.stages), ...roleLinesAr(plan.stages), ...platformCostNotesAr(plan.stages), ...plan.stages.filter((s) => (s.unresolved_sources ?? []).length > 0 && (s.filters ?? []).some((f) => f.kind === "account" && isEnabled(f))).map((s) => unresolvedSourcesLineAr(s.unresolved_sources!)), ...(plan.stages.some((s) => (s.approx_dates ?? []).length > 0) ? [APPROX_DATES_CARD_LINE_AR] : [])];
+  const notes = [...(plan.notes_ar ?? []), ...(plan.quantity?.reason_ar ? [plan.quantity.reason_ar] : []), ...childRuleLinesAr(plan.stages), ...roleLinesAr(plan.stages), ...priceIncludesLinesAr(plan), ...platformCostNotesAr(plan.stages), ...plan.stages.filter((s) => (s.unresolved_sources ?? []).length > 0 && (s.filters ?? []).some((f) => f.kind === "account" && isEnabled(f))).map((s) => unresolvedSourcesLineAr(s.unresolved_sources!)), ...(plan.stages.some((s) => (s.approx_dates ?? []).length > 0) ? [APPROX_DATES_CARD_LINE_AR] : [])];
   return {
     summary_ar: firstSentenceAr(plan.summary_ar),
     ...(notes.length ? { notes_ar: notes } : {}),
