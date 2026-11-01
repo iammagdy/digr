@@ -4,6 +4,40 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Replies in comments deliveries: comments AND their replies, one thread sheet (2026-11-01, after #326)
+
+Base `main` = `357b0916ba721187956db768c8664e01cf883898` (#326). One branch, one commit per item (4), one PR. **No SQL, no migration, no Edge Function.** `finalize.ts`, `agent/src/gateway.ts`, `src/functions/**`, `supabase/**` are untouched; `price.ts` changes only `estimateModelCostUsd` (a price INPUT: a stage made by code adds no model planning or execution estimate) and one optional field of `StagePriceInput`; the charge formula, `settlementCharge`, the reserve margin and both caps (job 25,000 points; provider daily 0.80 USD) are unchanged. `delivered` for the settlement is still the rows of the file read back.
+
+**Root cause (owner decision recorded in the older HANDOFF: child items are delivered RAW, researchers analyse FULL threads).** The audit's reference C had missed the replies, so no stage fetched them. Live G4 `msn_3da66037878465ffbfd5`: video `7699049713550593300` shows 25 in its own counter and delivered ONE comment (the comments source returns top-level comments; the rest of the counter are replies). The comment rows already carried `replies_count` (`reply_comment_total`), so nothing needed a new measuring call.
+
+**Reply endpoints of the catalog, by platform** (computed from `data/treg/treg_catalog_sellable.json` by `replySourcesFor`: direct, synchronous, priced, same platform, every required input a comment id plus the video's id or link):
+
+| Platform | Reply endpoints | Usable by the plan (cheapest first) |
+|---|---|---|
+| TikTok | 6 | `anyapi.tiktok.comment_replies` 0.0009, `tikhub.x.tiktok-web-fetch-post-comment-reply` 0.001, `tikhub.x.tiktok-app-v3-fetch-video-comment-replies` 0.001 (the routed `treg.tiktok.comment.replies` is not used: it bills a range) |
+| Instagram | 5 | `tikhub.x.instagram-v1-fetch-comment-replies` 0.001, `anyapi.instagram.comment_replies` 0.0011, `tikhub.x.instagram-v2-fetch-comment-replies` 0.002 |
+| Douyin | 3 | two TikHub endpoints 0.001, one dearer 0.01476 |
+| Kuaishou | 2 | `tikhub.x.kuaishou-app-fetch-video-sub-comments` 0.001 |
+| Bilibili, Zhihu, Xiaohongshu, WeChat Channels | 1 to 2 each | one or two (0.001 to 0.02214) |
+| Facebook, YouTube, LinkedIn, Reddit, Weibo, WeChat MP | 1 to 5 each | **none the plan can feed**: they need a token only the comment's own page carries (`feedbackId` + `expansionToken`, `continuationToken`), a required cursor, or a comment link. Said on the card as «لا يتوفر لهذه المنصة مصدر نقرأ منه ردود التعليقات» |
+| X, Threads | 0 | their «comments» ARE replies to the post: there is no nested endpoint |
+
+**What changed, per item.**
+1. **Reference and contract** (`docs/AUDIT-2026-11.md` section 1C, `taskContracts.ts`): comments tasks deliver the top-level comments AND replies; columns «نوع التعليق» («تعليق» / «رد») and, on a reply, «معرّف التعليق الأصلي»; the parent video's title and link on every row; the file states the source's own counter.
+2. **Engine** (`replies.ts`, `engine/run.ts`, `tools.ts`): after the plan check, a code-built stage `<comments>_replies` is added under every comments stage that has a proven recipe, a reply source the plan can feed and a reply counter in the sampled comments (`replies_count`). The cheapest ranked source is used; its inputs are bound by the engine: the comment's id from the parent row, the video's id and link from the GRANDPARENT row (`parent_binding.also[].grand`). Each comment is read for its own counter up to a per-comment cap (`AGENT_REPLIES_PER_COMMENT_MAX` = 50) and its share of the approved total (`replyShares`: equal parts first, a small comment's unused part goes on); a comment with counter 0 is NEVER read; a comment is never replaced by a spare. Mapping code of a reply page is written by code (`buildReplyMapCode`; both provider shapes).
+3. **Counting and price** (`repliesCard.ts`, `plan.ts`, `planEdit.ts`, `PlanEditor.tsx`, `runMission.ts`, `workbook.ts`): the customer's number counts the TOP-LEVEL comments; replies come in addition, priced by the same one rule (their provider cost is added, their rows are delivered rows), and the card says so in Arabic («العدد الذي طلبته يخص التعليقات الأساسية وحدها؛ ونضيف إليها ردودها بتقدير نحو ... ويدخل ذلك في السعر ... تقدر توقف الردود من «عدّل الخطة»»). The editor has one switch on the comments stage; the replies follow a change of the comments' number. A delivery is complete or partial by the top-level rows alone: fewer replies than estimated is never a shortfall; the notice tells a top-level shortfall as `planned = top-level planned + replies delivered`.
+4. **Thread sheet and limits** (`workbook.ts`, `threadCounters.ts`, `methodology.ts`): the replies are rows of the comments' sheet, each right under its comment; the first sheet's row of the replies stage points to it; the methodology lists «عدّاد المصدر وما سُلّم» per video and puts the difference in «حدود هذا التسليم»: «عداد الفيديو ٢٥، سُلّم تعليق واحد و٢٣ ردًا؛ والفرق لم يعطِه المصدر».
+
+**G4 price, replay in the live shape (fixture; expected cost, not a live run).** Without replies: 55 rows, unit 4.298, hold 272, max charge 237. With replies: 100 replies planned (2 a comment from the sample) at 0.0003 USD a row, 155 rows, unit 2.590, hold 462, max charge 402; the replay delivered 47 rows (5 videos, 9 comments, 33 replies) and charged 122. The model estimate is the same in both (the code-built stage adds none).
+
+**Tests.** Base 8,043 passed, 57 skipped, 0 failed. Now 8,087 passed, 57 skipped, 0 failed. New files: `comments-replies-contract`, `reply-sources`, `comments-replies-g4-replay` (live shape), `comments-replies-price-card`, `comments-replies-thread`, helper `g4RepliesWorld`. **Zero lines of an existing test were removed or changed.**
+
+**Decisions the code took that the owner may change** (all constants): per-comment cap 50; replies are added ONLY when the sampled comments carry a reply counter (never a blind paid read: without it the card says «المصدر لا يعطي عدد الردود»); the estimate of replies is the sample's mean over all the comments asked for.
+
+**NOT PROVEN.** Live: the cheapest source `anyapi.tiktok.comment_replies` (its page size and whether it pages are not in the catalog; the fixture gives it a cursor); the real `replies_count` of the five live comments (the sample is one page of one video); that the video's own counter counts replies (the owner's reading; the file now shows both numbers side by side); how many replies the planner's mapping really carries on other platforms. No live run was made.
+
+---
+
 ## PR 2 of the audit, «review to completion, honest price, faster plan» + the golden-run findings F1-F5 (2026-11-01)
 
 Base `main` = `2e69f907d0d01b63a8d7325d30063781d63320b4` (#325). One branch, one commit per item, one PR. **No SQL, no migration, no Edge Function. `finalize.ts` has TEXT changes only (two closing sentences, no settlement line), `price.ts` changes only `estimateModelCostUsd` (a price INPUT; `chargeForDelivered`, `settlementCharge`, `priceMissionByCode`'s call of the rule are untouched), `agent/src/gateway.ts`, `src/functions/**`, `supabase/**` are untouched.** Caps unchanged (job 25,000 points; provider daily 0.80 USD).
