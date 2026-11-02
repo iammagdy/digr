@@ -614,9 +614,9 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       handler: async (a) => {
         const stagesIn: any[] = Array.isArray(a.stages) ? a.stages : [];
         // NO TOPIC OR RELEVANCE JUDGEMENT IN THE NEW PIPELINE (S3, owner rule): for a social request in the redesigned mode the AI understands the request, builds the tool call and formats the file; it never decides which items belong. The topic is in the request code builds
-        // (the search words), not in a rule that removes what the source returned, so a relevance rule the model wrote is dropped here and cannot refuse the plan or exclude a row. Duplicates by id remain the only removal.
+        // (the search words), not in a rule that removes what the source returned, so a relevance rule the model wrote cannot refuse the plan, and it is dropped below once every stage is built by code (a plan that falls back to the old pipeline keeps it: the old rules need it). Duplicates by id remain the only removal.
         const noRelevance = socialRedesignActive(ctx) && redesignTypeOf(stagesIn as never, { account: stagesIn.some((st) => Array.isArray(st?.filters) && st.filters.some((f: { kind?: string; values?: unknown[] }) => f?.kind === "account" && Array.isArray(f.values) && f.values.length > 0)) }, (id: string) => ctx.catalog.byId.get(id)?.capability ?? null).startsWith("social_");
-        if (noRelevance) for (const st of stagesIn) if (st && typeof st === "object") { delete st.relevance; delete st.yield_from; }
+
         const ids = new Set<string>();
         for (const s of stagesIn) {
           if (s && Array.isArray(s.measured_by)) for (const id of s.measured_by) ids.add(String(id));
@@ -701,6 +701,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             } catch { /* a stage that cannot be proven keeps no recipe */ }
           }
         }
+        // THE WHOLE PLAN IS BUILT BY CODE (S3): the new pipeline delivers raw, so no relevance rule stays on any stage (it is ignored by raw delivery; it is removed so nothing can use it); a plan with a stage built by the model runs the old pipeline and keeps its rules
+        if (noRelevance && derived && checked.plan.stages.length > 0 && checked.plan.stages.every((st) => st.engine?.built_by === "code")) for (const st of checked.plan.stages) { delete st.relevance; delete st.yield_from; }
         // THE FINDER STEPS' COLUMNS (contactFinders.ts): the contact column the planner left out and the Arabic status column beside each are added by code AFTER the recipes were proven on the mapping (the engine's contract checks the columns the MAPPING fills; these are filled by the finder step, never by the mapping)
         if (checked.plan.contact_steps && checked.plan.contact_steps.length > 0) for (const st of checked.plan.stages) st.columns = withContactColumns(st.key, st.columns, checked.plan.contact_steps);
         // THE REFERENCE'S COLUMNS (taskContracts.ts, audit 2026-11): a company's sheet in the order and under the titles of the owner's sheet, with its e-mail and status columns; the company steps then read and write the columns the file has
