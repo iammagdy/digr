@@ -145,6 +145,8 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     seenNow.add(id);
     const row: Row = { id, ...(parentId !== null ? { parent_id: parentId } : {}) };
     for (const k of columnKeys) if (k !== "id" && k !== "parent_id") row[k] = raw[k] ?? "";
+    // the tokens the stage's replies tool needs from the item's own row (rule 6 of the consolidation): kept on the stored row, never a column of the file
+    for (const k of stage.carry_keys ?? []) if (raw[k] !== undefined && raw[k] !== null && raw[k] !== "" && !(k in row)) row[k] = raw[k];
     // THE PLACE CELLS in Arabic («al qahirah» → «القاهرة»); never empty when the card promised the place
     if (!isChild) placeCellsAr(row, stage.columns, raw, promisedPlace);
     // WHAT THE CARD PROMISES, checked here on the mapped item (replies, language, period, account, place): an item a filter rejects is neither delivered nor charged, and is kept with its reason

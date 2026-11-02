@@ -103,8 +103,10 @@ export function toolProfile(endpoint: CatalogEndpoint): ToolProfile {
   const take = (i: CatalogInput | undefined): CatalogInput | undefined => { if (i) recognised.add(i.name); return i; };
 
   const query = take(find(RE.query));
-  const from = take(find(RE.from));
-  const to = take(find(RE.to));
+  // an input whose own note says it is a paging cursor is not a date (Instagram's `after` / `before`: «Forward pagination cursor (end_cursor)»)
+  const notACursor = (i: CatalogInput): boolean => !/pagination|cursor/i.test(i.note ?? "");
+  const from = take(find(RE.from, notACursor));
+  const to = take(find(RE.to, notACursor));
   const presetInput = take(find(RE.preset, (i) => valuesOf(i) !== undefined));
   const language = take(find(RE.language));
   const country = take(find(RE.country));

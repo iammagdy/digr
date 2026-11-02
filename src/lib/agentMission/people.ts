@@ -1,4 +1,4 @@
-import { isPeopleNoun } from "./childSources";
+import { PEOPLE_OF_COMPANY_CAPABILITIES, isPeopleNoun } from "./childSources";
 import { normalizeText } from "./relevance";
 
 /**
@@ -88,9 +88,27 @@ export function isNamedPerson(row: Record<string, unknown>, columns: ReadonlyArr
   return hasLetters(name) && personVerdict(row, columns).person;
 }
 
-/** A stage whose items are the PEOPLE of the items of another stage: a stage with a parent whose title names people («مسؤولو الشركات», «موظفو كل شركة», «صناع القرار») or that prefers a role among them. */
-export function isPeopleStage(stage: { parent_key: string | null; title_ar: string; role_preference?: unknown }): boolean {
+/**
+ * THE PLATFORMS' OWN CAPABILITIES (the catalog's `capability` of a stage's tool): a stage on one of them reads posts, videos, comments or replies, whatever its title says. Rule 9 (consolidation, docs/S1-LIVE-FINDINGS.md): the type of a stage comes from its STRUCTURE, never from the words of its title
+ * (the live bug: «التعليقات الرئيسية» was a people stage because «الرئيسية» starts with the stem of «رئيس»).
+ */
+const SOCIAL_CAPABILITY = /^(?:tiktok|instagram|facebook|youtube|x|twitter|threads|reddit|telegram|weibo|douyin|bilibili|snapchat|pinterest|twitch)\./i;
+export type StageKindByStructure = "people" | "social" | "unknown";
+export function stageKindByCapability(capability: string | null | undefined): StageKindByStructure {
+  if (typeof capability !== "string" || capability === "") return "unknown";
+  if (PEOPLE_OF_COMPANY_CAPABILITIES.has(capability)) return "people";
+  return SOCIAL_CAPABILITY.test(capability) ? "social" : "unknown";
+}
+
+/**
+ * A stage whose items are the PEOPLE of the items of another stage. By STRUCTURE first (rule 9): a stage whose tool's capability is a people capability is one, a stage whose tool is a social platform's is not, whatever its title says. A stage with no stored capability (an old plan, the old pipeline)
+ * keeps the title rule: a stage with a parent whose title names people («مسؤولو الشركات», «موظفو كل شركة», «صناع القرار») or that prefers a role among them.
+ */
+export function isPeopleStage(stage: { parent_key: string | null; title_ar: string; role_preference?: unknown; capability?: string | null }): boolean {
   if (stage.parent_key === null) return false;
   if (stage.role_preference) return true;
+  const kind = stageKindByCapability(stage.capability);
+  if (kind === "people") return true;
+  if (kind === "social") return false;
   return String(stage.title_ar ?? "").replace(/[«»"،,.:؛]/g, " ").split(/\s+/).filter(Boolean).slice(0, 3).some((w) => isPeopleNoun(w));
 }

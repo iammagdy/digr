@@ -42,7 +42,21 @@ export interface ReplySource {
   cursorParam: string | null;
   /** True when the provider bills only a call that answered. */
   billsOnSuccess: boolean;
+  /**
+   * The inputs that take a token carried by the COMMENT'S OWN row (Facebook: `feedback_id` and `expansion_token`; YouTube: the comment's replies continuation token): `param` is the input, `key` the field the comments mapping keeps on the comment row.
+   * Rule 6 of the consolidation: a replies tool that needs them is used when the comments tool's rows have them (the catalog's `item_fields` of the comments tool says so), not given up.
+   */
+  rowTokens: RowToken[];
 }
+export interface RowToken { param: string; key: string }
+
+/** The tokens a comment row can carry for a replies tool, by the replies tool's input: the key stored on the row and the names the comments page gives it. */
+const ROW_TOKENS: ReadonlyArray<{ input: RegExp; key: string; names: string[]; /** The input's note names the token (a bare «cursor» input is a token only when its note says it comes from the comment). */ note?: RegExp }> = [
+  { input: /^feedback_?id$/i, key: "feedback_id", names: ["feedback_id", "feedbackId"] },
+  { input: /^expansion_?token$/i, key: "expansion_token", names: ["expansion_token", "expansionToken"] },
+  { input: /^(?:continuation_?token|cursor|reply_?cursor|replies_?(?:continuation_?)?token)$/i, key: "replies_token", names: ["repliesContinuationToken", "replies_continuation_token", "replyContinuationToken", "repliesToken", "replies_token"], note: /repl(?:y|ies)[\s_-]*(?:continuation|cursor|token)|first-level comment|comment'?s? (?:own )?(?:page|response)/i },
+];
+const tokenNamesOf = (key: string): string[] => ROW_TOKENS.find((t) => t.key === key)?.names ?? [key];
 
 export interface ReplySourceOptions {
   isAllowed: (endpointId: string) => boolean;
@@ -57,10 +71,13 @@ export interface ReplySourceOptions {
 /** The inputs of an endpoint classified, or null when a REQUIRED input is none of: the comment's id, the video's id, the video's link, a page size. A source with no comment id input is not a reply source for one comment. */
 function classify(e: CatalogEndpoint, o: Pick<ReplySourceOptions, "videoIdAvailable" | "urlAvailable">): Omit<ReplySource, "id" | "usd" | "billsOnSuccess"> | null {
   let commentParam: string | null = null;
+  const rowTokens: RowToken[] = [];
   let videoIdParam: string | null = null;
   let urlParam: string | null = null;
   let pageSizeParam: string | null = null;
   for (const i of e.inputs) {
+    const token = i.required ? ROW_TOKENS.find((t) => t.input.test(i.name) && (!t.note || t.note.test(i.note ?? ""))) : undefined;
+    if (token) { rowTokens.push({ param: i.name, key: token.key }); continue; }
     if (COMMENT_ID_INPUT.test(i.name)) commentParam = i.name;
     else if (VIDEO_ID_INPUT.test(i.name)) { if (o.videoIdAvailable) videoIdParam = i.name; else if (i.required) return null; }
     else if (URL_INPUT.test(i.name)) { if (o.urlAvailable) urlParam = i.name; else if (i.required) return null; }
@@ -68,9 +85,10 @@ function classify(e: CatalogEndpoint, o: Pick<ReplySourceOptions, "videoIdAvaila
     else if (i.required && !(e.pagination ?? []).includes(i.name)) return null;
     else if (i.required) return null; // a required PAGING input (a cursor it cannot start without) is a token only an earlier page carries
   }
-  if (!commentParam) return null;
+  // a source with no comment id and no token carried by the comment's row is not a reply source for one comment
+  if (!commentParam && rowTokens.length === 0) return null;
   const cursorParam = (e.pagination ?? []).find((p) => !LIMIT_INPUT.test(p)) ?? null;
-  return { commentParam, videoIdParam, urlParam, pageSizeParam, cursorParam };
+  return { commentParam: commentParam ?? rowTokens[0].param, videoIdParam, urlParam, pageSizeParam, cursorParam, rowTokens };
 }
 
 /** True for an endpoint that lists the replies to one comment. */
@@ -143,8 +161,10 @@ export function replyColumnKeysOf(columns: ReadonlyArray<{ key: string; title_ar
  * THE MAPPING CODE OF A REPLY PAGE: the body of a function over `inputs.page`, turning one saved page of replies into rows keyed like the comments stage's columns. Providers differ in where the list is (`data.comments`, `output.data.comments`, `comments`, `data.replies`...) and in the field names
  * (`cid` / `id`, nested `user.nickname` / flat `author`, `create_time` / `createdUtc` in seconds, `digg_count` / `likes`); every one of those is read here. A row with no id is not a row (it could not be de-duplicated); a reply with no text keeps an empty text (a sticker).
  */
-export function buildReplyMapCode(keys: ReplyColumnKeys): string {
-  return `const K = ${JSON.stringify(keys)};
+export function buildReplyMapCode(keys: ReplyColumnKeys, tokens: ReadonlyArray<RowToken> = []): string {
+  // the extended reading (the tokens a replies tool needs from the comment's row, the nested counters of YouTube, Facebook's reaction count) is written ONLY when tokens are asked for: every other stored mapping stays byte for byte what it was
+  const ext = tokens.length > 0;
+  return `const K = ${JSON.stringify(keys)};${ext ? `\nconst TOK = ${JSON.stringify(tokens.map((t) => ({ key: t.key, names: tokenNamesOf(t.key) })))};` : ""}
 const P = inputs.page;
 const at = (o, path) => { let v = o; for (const k of path) { if (v === null || v === undefined || typeof v !== 'object') return undefined; v = v[k]; } return v; };
 const lists = [at(P, ['data','comments']), at(P, ['output','data','comments']), at(P, ['comments']), at(P, ['data','replies']), at(P, ['output','data','replies']), at(P, ['replies']), at(P, ['data']), at(P, ['output','data']), at(P, ['items']), at(P, ['rows']), P];
@@ -153,18 +173,35 @@ const pick = (o, names) => { for (const n of names) { const v = o[n]; if (v !== 
 const who = (o) => { const u = o.user !== undefined ? o.user : o.author; if (u && typeof u === 'object') return u.nickname || u.unique_id || u.name || u.username || u.display_name || null; return typeof u === 'string' && u !== '' ? u : pick(o, ['authorName','author_name','username','nickname']); };
 const iso = (v) => { if (v === null || v === undefined || v === '') return null; if (typeof v === 'number' || /^\\d{9,13}$/.test(String(v))) { const n = Number(v); const d = new Date(n < 1e12 ? n * 1000 : n); return Number.isNaN(d.getTime()) ? null : d.toISOString(); } return String(v); };
 const num = (v) => { if (v === null || v === undefined || v === '') return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
-return list.filter((r) => r && typeof r === 'object').map((r) => {
+${ext ? "const nest = (o, a, b) => (o && typeof o[a] === 'object' && o[a] !== null ? o[a][b] : undefined);\n" : ""}return list.filter((r) => r && typeof r === 'object').map((r) => {
   const id = pick(r, ['cid','id','comment_id','commentId','rpid']);
   if (id === null) return null;
   const out = { id: String(id) };
   if (K.text) { const t = pick(r, ['text','content','comment','message','comment_text']); out[K.text] = t === null ? '' : String(t); }
   if (K.author) out[K.author] = who(r);
-  if (K.date) out[K.date] = iso(pick(r, ['create_time','createdUtc','created_at','createTime','timestamp','posted_at','time','date']));
-  if (K.likes) out[K.likes] = num(pick(r, ['digg_count','likes','like_count','likeCount','likes_count']));
-  if (K.replies) out[K.replies] = num(pick(r, ['reply_comment_total','reply_count','replies_count','replyCount','replies']));
+  if (K.date) out[K.date] = iso(pick(r, ['create_time','createdUtc','created_at','createTime','timestamp','posted_at',${ext ? "'publishedTime','published_time'," : ""}'time','date']));
+  ${ext ? `if (K.likes) { const l = pick(r, ['digg_count','likes','like_count','likeCount','likes_count','reaction_count']); out[K.likes] = num(l !== null ? l : nest(r, 'engagement', 'likes')); }` : `if (K.likes) out[K.likes] = num(pick(r, ['digg_count','likes','like_count','likeCount','likes_count']));`}
+  ${ext ? `if (K.replies) { const n = pick(r, ['reply_comment_total','reply_count','replies_count','replyCount','replies']); out[K.replies] = num(n !== null && typeof n !== 'object' ? n : nest(r, 'engagement', 'replies')); }` : `if (K.replies) out[K.replies] = num(pick(r, ['reply_comment_total','reply_count','replies_count','replyCount','replies']));`}${ext ? `
+  for (const t of TOK) { const v = pick(r, t.names); if (v !== null) out[t.key] = String(v); }` : ""}
   if (K.language) out[K.language] = pick(r, ['comment_language','language','lang']);
   return out;
 }).filter((r) => r !== null);`;
+}
+
+/**
+ * THE COMMENTS' OWN MAPPING PLUS THE TOKENS THE REPLIES TOOL NEEDS (rule 6 of the consolidation). The mapping the stage already has is kept as it is (its columns, its ids); a second pass over the same page reads each comment's tokens by the comment's id and adds them to the row:
+ * `feedback_id` / `expansion_token` (Facebook), the comment's replies continuation token (YouTube). A comment with no such field simply has no token (its replies are not read). Pure.
+ */
+export function tokenOverlayCode(baseCode: string, tokens: ReadonlyArray<RowToken>): string {
+  const names = JSON.stringify(tokens.map((t) => ({ key: t.key, names: tokenNamesOf(t.key) })));
+  return `const __base = (() => {\n${baseCode}\n})();
+const __P = Object.values(inputs)[0];
+const __at = (o, path) => { let v = o; for (const k of path) { if (v === null || v === undefined || typeof v !== 'object') return undefined; v = v[k]; } return v; };
+const __list = [__at(__P, ['data','comments']), __at(__P, ['output','data','comments']), __at(__P, ['comments']), __at(__P, ['data']), __at(__P, ['output','data']), __at(__P, ['items']), __P].find((x) => Array.isArray(x)) || [];
+const __TOK = ${names};
+const __by = new Map();
+for (const r of __list) { if (!r || typeof r !== 'object') continue; const id = r.id !== undefined ? r.id : r.cid !== undefined ? r.cid : r.comment_id; if (id === undefined || id === null) continue; const t = {}; for (const k of __TOK) { for (const n of k.names) { const v = r[n]; if (v !== undefined && v !== null && v !== '') { t[k.key] = String(v); break; } } } __by.set(String(id), t); }
+return __base.map((r) => (r && typeof r === 'object' ? Object.assign({}, r, __by.get(String(r.id)) || {}) : r));`;
 }
 
 /** The inputs of a call for the replies to one comment: the page size, when the source has the input. The comment's id, the video's id and link are bound per parent by the engine (EngineSpec.parent_binding). */
@@ -199,6 +236,11 @@ export interface RepliesDeps {
   requested?: boolean;
   /** S3: the request asks for ALL the comments: each comment is read to the end of its replies (the largest number per comment the job allows). */
   all?: boolean;
+  /**
+   * Rule 6 (consolidation): a replies tool that needs tokens carried by the comment's own row (Facebook, YouTube). Returns the comments stage's mapping code with those tokens kept on each comment row, PROVEN on the page the planner sampled (same rows, same ids, a token on at least one row), or null when it cannot be
+   * proven. Without it a source that needs row tokens is not used.
+   */
+  remapWithTokens?: (stage: PricedStage, tokens: RowToken[]) => Promise<string | null>;
 }
 
 /** Words of a request that ask for the replies to the comments («والردود»، «ردودها»، «الردود»). */
@@ -262,7 +304,20 @@ export async function withRepliesStages(planIn: PricedPlan, deps: RepliesDeps): 
     const sources = replySourcesFor(comments.endpoint_id, deps.catalog, { isAllowed: deps.isAllowed, videoIdAvailable, urlAvailable: linkKey !== null, ...(deps.stats ? { stats: deps.stats } : {}), ...(deps.now !== undefined ? { now: deps.now } : {}) });
     const status = (replies_status: NonNullable<PricedPlan["replies_status"]>): PricedPlan => ({ ...plan, replies_status });
     if (sources.length === 0) { plan = status("no_source"); continue; }
-    const source = sources[0];
+    // a source whose tokens the comments tool's rows can carry; the first one the mapping can be proven for
+    let source = sources[0];
+    let tokenMap: string | null = null;
+    if (sources.some((x) => x.rowTokens.length > 0) && sources[0].rowTokens.length > 0) {
+      let found: { s: ReplySource; code: string } | null = null;
+      for (const candidate of sources) {
+        if (candidate.rowTokens.length === 0) { found = null; break; }
+        const code = deps.remapWithTokens ? await deps.remapWithTokens(comments, candidate.rowTokens) : null;
+        if (code !== null) { found = { s: candidate, code }; break; }
+      }
+      if (!found) { plan = status("no_source"); continue; }
+      source = found.s;
+      tokenMap = found.code;
+    }
     const sample = (await deps.sampleRowsOf(comments)) ?? comments.sample_rows;
     // THE DEFAULT NUMBER PER COMMENT (owner decision): ten, whatever the sample's counters say; the customer may raise it to the cap or lower it in the plan editor
     const perComment = deps.requested && deps.all ? AGENT_REPLIES_PER_COMMENT_MAX : AGENT_REPLIES_PER_COMMENT_DEFAULT;
@@ -285,17 +340,19 @@ export async function withRepliesStages(planIn: PricedPlan, deps: RepliesDeps): 
       return {
         key: repliesKeyOf(comments.key), title_ar: `ردود ${comments.title_ar}`, endpoint_id: source.id, expected_rows: rows, parent_key: comments.key, per_parent_rows: perComment, deliver: true,
         columns: comments.columns.map((c) => ({ ...c })), sample_rows: [], measured_by: [], planned_rows: rows, measured_cost_per_row_usd: (source.usd * calls) / rows, measured_from_calls: [],
-        replies_of: comments.key, ...(deps.requested ? { replies_read_all: true } : {}), replies_per_comment_expected: expected.perComment, replies_sample_counts: counters.slice(0, 100).map((n) => Math.min(Math.max(0, Math.floor(n)), AGENT_REPLIES_PER_COMMENT_MAX)), replies_call_usd: source.usd,
+        replies_of: comments.key, ...(comments.capability ? { capability: deps.catalog.byId.get(source.id)?.capability ?? comments.capability } : {}), ...(deps.requested ? { replies_read_all: true } : {}), replies_per_comment_expected: expected.perComment, replies_sample_counts: counters.slice(0, 100).map((n) => Math.min(Math.max(0, Math.floor(n)), AGENT_REPLIES_PER_COMMENT_MAX)), replies_call_usd: source.usd,
         // S2 item 1: the replies stage is written by code, so it carries the mark of the stage it sits on (a comments stage the redesigned mode built by code): the whole mission then passes the ordering gate; an old-mode plan is stored exactly as before
         engine: {
           endpoint_id: source.id, params: replyCallParams(source), cursor_param: source.cursorParam, map_code: buildReplyMapCode(replyColumnKeysOf(comments.columns)), map_file_id: "page", ...(spec.built_by === "code" ? { built_by: "code" as const } : {}),
-          parent_binding: { param: source.commentParam, from: "id", also: [...(source.videoIdParam ? [{ param: source.videoIdParam, from: "id", grand: true as const }] : []), ...(source.urlParam && linkKey ? [{ param: source.urlParam, from: linkKey, grand: true as const }] : [])] },
+          parent_binding: { param: source.commentParam, from: source.rowTokens.find((t) => t.param === source.commentParam)?.key ?? "id", also: [...source.rowTokens.filter((t) => t.param !== source.commentParam).map((t) => ({ param: t.param, from: t.key })), ...(source.videoIdParam ? [{ param: source.videoIdParam, from: "id", grand: true as const }] : []), ...(source.urlParam && linkKey ? [{ param: source.urlParam, from: linkKey, grand: true as const }] : [])] },
         },
       };
     };
     const priced = (rows: number): { stages: PricedStage[]; price: ReturnType<typeof priceMissionByCode> } => {
       const at = plan.stages.findIndex((s) => s.key === comments.key);
-      const stages = [...plan.stages.slice(0, at + 1), stageOf(rows), ...plan.stages.slice(at + 1)];
+      // the comments' mapping keeps the tokens the replies tool needs (rule 6)
+      const base = tokenMap === null ? plan.stages : plan.stages.map((s) => (s.key === comments.key && s.engine ? { ...s, carry_keys: source.rowTokens.map((t) => t.key), engine: { ...s.engine, map_code: tokenMap! } } : s));
+      const stages = [...base.slice(0, at + 1), stageOf(rows), ...base.slice(at + 1)];
       return { stages, price: priceMissionByCode(stagePriceInputs(stages, plan.contact_steps), { settings: plan.price.settings }) };
     };
     let built = priced(planned);

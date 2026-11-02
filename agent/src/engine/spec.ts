@@ -39,7 +39,7 @@ export interface DeriveDeps {
   callParams: ReadonlyMap<string, Record<string, unknown>>;
   sandbox: (code: string, inputs: Record<string, unknown>) => Promise<SandboxResult>;
   /** The redesigned mode (S1 item 1.6): the request of each stage is built by code from the tool's own fields and the stage's typed filters. Absent: the model's measured inputs are frozen as they were (the old path, byte for byte). */
-  codeBuild?: { nowMs: number; /** S5: the default for a comments request: the most engaged videos (the tool's most-liked order). */ engaged?: boolean; /** S8: the search words that carry the meaning of the topic. */ topicQuery?: string };
+  codeBuild?: { nowMs: number; /** S5: the default for a comments request: the most engaged videos (the tool's most-liked order). */ engaged?: boolean; /** Rule 2: the customer asked for the newest or gave a date. */ newest?: boolean; /** S8: the search words that carry the meaning of the topic. */ topicQuery?: string };
 }
 
 async function readCodeRun(deps: DeriveDeps, outId: string): Promise<CodeRun | null> {
@@ -199,10 +199,12 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
       let builtBy: "code" | "model" | undefined;
       let stageGaps: Gap[] = [];
       // S11: ONE named account read by its own listing (an account's posts, a channel's videos) is built by code like any other stage (its request is the account's handle and what the customer's conditions add); several named sources keep the model's request
-      if (deps.codeBuild && (!sources || oneListing)) {
-        const built = buildToolInput(endpoint, understoodOfStage(stage, deps.codeBuild.nowMs, { engaged: deps.codeBuild.engaged === true, ...(deps.codeBuild.topicQuery ? { topicQuery: deps.codeBuild.topicQuery } : {}) }), params);
+      // consolidation (rule 7 of the benchmark checks: the request is built by code): SEVERAL named sources that ONE search page showed share one entry, so the stage is one search and is built by code like any other
+      const sharedSearch = sources !== undefined && sources.length === 1 && !listing;
+      if (deps.codeBuild && (!sources || oneListing || sharedSearch)) {
+        const built = buildToolInput(endpoint, understoodOfStage(stage, deps.codeBuild.nowMs, { engaged: deps.codeBuild.engaged === true, newest: deps.codeBuild.newest === true, ...(deps.codeBuild.topicQuery ? { topicQuery: deps.codeBuild.topicQuery } : {}) }), params);
         builtBy = built.ok ? "code" : "model";
-        if (built.ok) { for (const k of Object.keys(params)) delete params[k]; Object.assign(params, built.params); stageGaps = built.gaps; if (oneListing && sources) sources = [{ ...sources[0], params: { ...params } }]; }
+        if (built.ok) { for (const k of Object.keys(params)) delete params[k]; Object.assign(params, built.params); stageGaps = built.gaps; if ((oneListing || sharedSearch) && sources) sources = [{ ...sources[0], params: { ...params } }]; }
       }
       // a source with no next page and a flat price per call is asked for everything its limit allows (a lower limit only makes the one answer smaller)
       const lifted = stage.parent_key === null && !sources ? liftedVolume(endpoint, params) : null;
