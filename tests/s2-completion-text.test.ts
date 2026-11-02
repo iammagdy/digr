@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { repliesShortfallAr } from "../agent/src/repliesShortfall";
 import { checkCustomerText } from "../src/lib/agentMission/text";
 import { FULL_WORLD, LIVE_WORLD, runG4 } from "./helpers/g4RepliesWorld";
+import { REPLAY_USER } from "./helpers/agentReplay";
+import type { MemoryStore } from "../agent/src/memoryStore";
 
 /**
  * S2 ITEM 5 (docs/S1-LIVE-FINDINGS.md, L0.5). Live msn_48f6c7c80eb7068f2a38 promised 322 rows and delivered 42: 279 of the 280 promised replies were not delivered, yet the completion text said only «بعض الفيديوهات عليها تعليقات أقل من العدد المطلوب لكل فيديو». The text now states the true reason
@@ -33,9 +35,12 @@ describe("the sentence about the replies, from the replies stage's recorded stop
   });
 });
 
+// the redesigned mode: the social flags on test, and the plus-alias test account (the mission of a real customer keeps the old text, byte for byte: tests/flags-off-byte-identical.test.ts)
+const flagsOn = (d: never) => { const store = (d as { store: MemoryStore }).store; store.settings.redesign_flags = { social_posts: "test", social_account: "test", social_comments: "test" }; store.userEmails.set(REPLAY_USER, "iam.magdy+1@outlook.com"); return d; };
+
 describe("the completion text of a mission, end to end", () => {
   it("top-level complete, replies below the estimate: the mission is completed, and the text names the replies (never a silent gap, never «fewer comments»)", async () => {
-    const r = await runG4(FULL_WORLD);
+    const r = await runG4(FULL_WORLD, { deps: flagsOn as never });
     const text = String(r.mission.summary_ar ?? "");
     expect(r.mission.status).toBe("completed");
     expect(text).toContain("الردود");
@@ -43,9 +48,16 @@ describe("the completion text of a mission, end to end", () => {
     expect(text).not.toMatch(/لم يكتمل|أقل مما طلبت|تعليقات أقل من العدد/);
   });
   it("a top-level shortfall AND fewer replies than estimated: the text names both reasons", async () => {
-    const r = await runG4(LIVE_WORLD);
+    const r = await runG4(LIVE_WORLD, { deps: flagsOn as never });
     const text = String(r.mission.summary_ar ?? "");
     expect(text).toMatch(/لم يكتمل العدد المطلوب/);
     expect(text).toContain("الردود");
+  });
+});
+
+describe("an old-pipeline mission keeps its text (the flags decide)", () => {
+  it("a real customer with the same world gets no replies sentence", async () => {
+    const r = await runG4(FULL_WORLD);
+    expect(String(r.mission.summary_ar ?? "")).not.toContain("أقل مما قدّرناه");
   });
 });

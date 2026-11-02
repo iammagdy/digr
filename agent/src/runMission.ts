@@ -606,7 +606,8 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
     : delivered <= 0 ? zeroDeliveryReasonAr(zeroFacts) : "";
   // THE REPLIES' OWN SHORTFALL (S2 item 5): the replies stage is never the «short stage» (a delivery is complete or partial by its top-level rows), so a gap made of replies was told as fewer comments or not at all; its true reason is said from the replies stage's recorded stop
   const repliesStage = plan.stages.find((s) => s.deliver && s.replies_of !== undefined);
-  const repliesLine = !ourFailure && delivered > 0 && repliesStage ? repliesShortfallAr({ planned: tl.repliesPlanned, delivered: tl.repliesDelivered, stop: snap.stage(repliesStage.key).stop, review: { pending: 0, stop: null }, withMoney: reason === "" }) : "";
+  // (redesigned missions only: the replies stage of a plan built by code carries `built_by: "code"`; an old-pipeline mission keeps its text byte for byte)
+  const repliesLine = !ourFailure && delivered > 0 && repliesStage?.engine?.built_by === "code" ? repliesShortfallAr({ planned: tl.repliesPlanned, delivered: tl.repliesDelivered, stop: snap.stage(repliesStage.key).stop, review: { pending: 0, stop: null }, withMoney: reason === "" }) : "";
   const summary = (ourFailure ? reason : [note, reason, repliesLine].filter(Boolean).join(" ")).slice(0, 1100);
   const mismatch = settled.kind === "settled" && !settled.matchesExpectation ? `charge ${settled.chargedPoints} differs from the expected ${settled.expectedChargedPoints}` : null;
   const unusableWords = checked.lastUnusable ? checked.lastUnusable.replace(/\s+/g, " ").slice(0, 120) : "";
