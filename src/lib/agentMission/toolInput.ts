@@ -22,6 +22,8 @@ export interface Understood {
   count?: number;
   replies?: "exclude" | "include";
   sort?: "latest" | "top" | "engaged";
+  /** S8: the search words that carry the meaning of the request's topic («عن X»: X with explainer and news wording): written into the tool's query field. */
+  topicQuery?: string;
   /** «Now», for a period counted in days (tests pass a fixed moment). */
   nowMs?: number;
 }
@@ -83,6 +85,8 @@ export function buildToolInput(endpoint: CatalogEndpoint, understood: Understood
 
   const queryField = profile.query?.field ?? null;
   let query = queryField && typeof base[queryField] === "string" ? String(base[queryField]) : null;
+  // THE QUERY CARRIES THE MEANING OF THE TOPIC (S8): built before the tool is called; an exclusion is written only by a search whose query syntax has operators (below), never invented
+  if (queryField && understood.topicQuery) query = understood.topicQuery;
   const addOperator = (text: string, present: RegExp): void => { if (query !== null && !hasOperator(query, present)) query = `${stripQuery(query)} ${text}`; };
 
   // 2. THE PERIOD
@@ -188,10 +192,11 @@ export function buildToolInput(endpoint: CatalogEndpoint, understood: Understood
  * THE UNDERSTOOD RECORD OF A STAGE, read from its typed filters (the plan's own, checked by code: the period, the language, the places, the named accounts, the replies) and its volume. Stage 1 has no separate understanding step (Stage 2 adds
  * it): the record is what the plan already declares. A disabled filter is not asked for. A CHILD stage (comments, replies) is delivered as the source gives it, so it asks for nothing: its inputs are the parent's identity.
  */
-export function understoodOfStage(stage: { planned_rows: number; filters?: ReadonlyArray<StageFilter>; parent_key: string | null }, nowMs: number, options: { engaged?: boolean } = {}): Understood {
+export function understoodOfStage(stage: { planned_rows: number; filters?: ReadonlyArray<StageFilter>; parent_key: string | null }, nowMs: number, options: { engaged?: boolean; topicQuery?: string } = {}): Understood {
   const out: Understood = { nowMs };
   if (stage.parent_key !== null) return out;
   if (options.engaged) out.sort = "engaged";
+  if (options.topicQuery) out.topicQuery = options.topicQuery;
   const filters = (stage.filters ?? []).filter(isEnabled);
   const period = filters.find((f) => f.kind === "period");
   if (period) out.period = period.days !== undefined ? { days: period.days } : { ...(period.from ? { from: period.from } : {}), ...(period.to ? { to: period.to } : {}) };

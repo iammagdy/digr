@@ -147,3 +147,34 @@ describe("an ambiguous request produces the question card before planning", () =
     expect(driver.results.length).toBeGreaterThan(0);
   });
 });
+
+import { runS4, QUERY, STORIES, EXPLAINERS } from "./helpers/s4World";
+import { vid } from "./helpers/g4RepliesWorld";
+
+describe("the exact request end to end, with the stored videos as the search results", () => {
+  const run = () => runS4({ topicStories: true });
+  const callsOf = (r: Awaited<ReturnType<typeof run>>) => (r.call.mock.calls as Array<[{ endpointId: string; params: Record<string, unknown> }]>).map((c) => c[0]);
+  it("a plan on the plain topic search (where the stories come back) is refused: the query must carry the meaning; the search is read again with it and the plan is accepted", async () => {
+    const r = await run();
+    const proposals = r.planningDriver.results.filter((x) => x.tool === "propose_plan");
+    expect(proposals[0].result.ok).toBe(false);
+    expect(JSON.stringify(proposals[0].result)).toContain(QUERY);
+    expect(proposals.slice(-1)[0].result.ok).toBe(true);
+    const search = callsOf(r).filter((c) => c.endpointId === "tikhub.tiktok.search.videos");
+    expect(search.at(-1)!.params.keyword).toBe(QUERY);
+    expect(search.every((c) => c.params.region === "EG")).toBe(true);
+  });
+  it("the chosen tool carries Egypt and the topic's meaning; the videos chosen are the ones that talk about AI, never the viral made-with stories", async () => {
+    const r = await run();
+    const videos = r.plannedPlan.stages[0];
+    expect(videos.engine!.params.region).toBe("EG");
+    expect(String(videos.engine!.params.keyword)).toMatch(/الذكاء الاصطناعي.*(شرح|أخبار)/);
+    const pins = r.plannedPlan.stages.find((s) => s.key === "comments")!.parent_pins!;
+    expect(pins).toEqual(EXPLAINERS.map((e) => vid(e.i)));
+    for (const s of STORIES) expect(pins).not.toContain(vid(s.i));
+  });
+  it("the card says the videos were chosen for talking about the topic", async () => {
+    const r = await run();
+    expect(((r.planView.notesAr ?? []) as string[]).join(" ")).toContain("تتحدث عن الموضوع");
+  });
+});

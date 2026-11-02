@@ -15,7 +15,7 @@ const thread = (n: number) => Array.from({ length: n }, (_, k) => (k % 10 === 0 
 const WORLD: World = { ownCounter: [132, 66, 33, 20, 10, 8, 6, 4], commentsOf: { [vid(0)]: thread(120), [vid(1)]: thread(60), [vid(2)]: thread(30) }, given: (_c, counted) => counted };
 const flagsOn = (d: never) => { const store = (d as { store: MemoryStore }).store; store.settings.redesign_flags = { social_posts: "test", social_account: "test", social_comments: "test" }; store.userEmails.set(REPLAY_USER, "iam.magdy+1@outlook.com"); return d; };
 // what the live plan was: 2 videos, the model's own 800 comments, a mapping of the comments page that no recipe can be proven from
-const run = () => runG4(WORLD, { request: REQUEST, videosPlanned: 2, commentsPlanned: 800, perParent: 400, offTopicCaptions: true, partialCommentsMapping: true, deps: flagsOn as never });
+const run = () => runG4(WORLD, { request: REQUEST, videosPlanned: 2, commentsPlanned: 800, perParent: 400, offTopicCaptions: true, partialCommentsMapping: true, sampleQuery: "الذكاء الاصطناعي شرح وأخبار" /* CHANGED (S8): the request says «عن الذكاء الاصطناعي»: the search words carry that meaning */, deps: flagsOn as never });
 
 describe("the owner's request, end to end, in the new pipeline", () => {
   it("the mission runs the new pipeline: pipe_new = 1, every stage built by code", async () => {
