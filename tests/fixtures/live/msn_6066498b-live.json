@@ -1,0 +1,18 @@
+{
+  "_about": "Facts of the live mission of 2026-11-02 ~12:23 Cairo (test account), read-only from the database: mission_calls (endpoint, input digest, rows returned), the stored plan (stages, promise, columns) and the progress events (rows read and saved after each page). The pages themselves are in storage (not readable by SQL), so the page TEXT is not here: the structure is (rows per call, the cursor chain, the duplicates the saves show). Ids and links of public TikTok videos are replaced by labels; no secret exists in these rows.",
+  "request": "هات فيديوهين تيك توك بالعربي عن الذكاء الاصطناعي من مصر، مع كل التعليقات والردود.",
+  "videos": [
+    { "label": "V1", "counter": 329, "commentCalls": { "tool": "tikhub.tiktok.video.comments", "rowsPerCall": [19, 20, 20, 20, 20, 20, 20, 7], "cursors": [null, "20", "40", "60", "80", "100", "120", "140"], "duplicateRowsInPage": { "3": 4, "5": 3 }, "savedComments": 139 }, "repliesDelivered": 55 },
+    { "label": "V2", "counter": 163, "commentCalls": { "tool": "tikhub.tiktok.video.comments", "rowsPerCall": [11], "cursors": [null], "duplicateRowsInPage": {}, "savedComments": 11 }, "repliesDelivered": 32 }
+  ],
+  "plan": {
+    "stages": [
+      { "key": "videos", "tool": "crawl4ai.tiktok.search.videos", "planned": 2 },
+      { "key": "comments", "tool": "tikhub.tiktok.video.comments", "planned": 421, "perParent": 282, "promiseTotal": 492, "cursorParam": "cursor", "alternatives": ["crawl4ai.tiktok.video.comments"], "columns": ["comments", "author", "username", "posted_at", "likes", "replies_count"] },
+      { "key": "comments_replies", "tool": "anyapi.tiktok.comment_replies", "planned": 71, "perParent": 50, "promiseTotal": 492, "costPerRowUsd": 0.0045, "callUsd": 0.0009 }
+    ],
+    "price": { "providerCostUsd": 0.340597619047619, "modelCostUsd": 0.026, "deliveredRows": 494, "unitPricePoints": 4.081553, "maxChargePoints": 2017, "reservePoints": 2319, "markup": 10, "minChargePoints": 200 }
+  },
+  "delivered": { "videos": 2, "comments": 150, "replies": 87, "total": 239, "chargedPoints": 976 },
+  "executionCalls": { "comments": 9, "replies": 46, "providerUsd": 0.0366 }
+}
