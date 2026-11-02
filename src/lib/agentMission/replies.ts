@@ -271,8 +271,9 @@ export async function withRepliesStages(planIn: PricedPlan, deps: RepliesDeps): 
         key: repliesKeyOf(comments.key), title_ar: `ردود ${comments.title_ar}`, endpoint_id: source.id, expected_rows: rows, parent_key: comments.key, per_parent_rows: perComment, deliver: true,
         columns: comments.columns.map((c) => ({ ...c })), sample_rows: [], measured_by: [], planned_rows: rows, measured_cost_per_row_usd: (source.usd * calls) / rows, measured_from_calls: [],
         replies_of: comments.key, replies_per_comment_expected: expected.perComment, replies_sample_counts: counters.slice(0, 100).map((n) => Math.min(Math.max(0, Math.floor(n)), AGENT_REPLIES_PER_COMMENT_MAX)), replies_call_usd: source.usd,
+        // S2 item 1: the replies stage is written by code, so it carries the mark of the stage it sits on (a comments stage the redesigned mode built by code): the whole mission then passes the ordering gate; an old-mode plan is stored exactly as before
         engine: {
-          endpoint_id: source.id, params: replyCallParams(source), cursor_param: source.cursorParam, map_code: buildReplyMapCode(replyColumnKeysOf(comments.columns)), map_file_id: "page",
+          endpoint_id: source.id, params: replyCallParams(source), cursor_param: source.cursorParam, map_code: buildReplyMapCode(replyColumnKeysOf(comments.columns)), map_file_id: "page", ...(spec.built_by === "code" ? { built_by: "code" as const } : {}),
           parent_binding: { param: source.commentParam, from: "id", also: [...(source.videoIdParam ? [{ param: source.videoIdParam, from: "id", grand: true as const }] : []), ...(source.urlParam && linkKey ? [{ param: source.urlParam, from: linkKey, grand: true as const }] : [])] },
         },
       };

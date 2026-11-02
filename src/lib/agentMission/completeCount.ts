@@ -1,8 +1,9 @@
 import { toArabicDigits } from "../arabicDigits";
-import { AGENT_REPLIES_PER_COMMENT_MAX } from "./constants";
+import { AGENT_REPLIES_PER_COMMENT_DEFAULT, AGENT_REPLIES_PER_COMMENT_MAX } from "./constants";
 import { wantsAllChildren } from "./allChildren";
 import { isPeopleStage } from "./people";
 import { priceMissionByCode } from "./price";
+import { repliesEstimateFor } from "./replies";
 import { stagePriceInputs, type PricedPlan, type PricedStage } from "./plan";
 
 /**
@@ -18,7 +19,7 @@ import { stagePriceInputs, type PricedPlan, type PricedStage } from "./plan";
  *
  * Pure apart from what the caller reads (the candidates).
  */
-export interface Candidate { id: string; counter: number | null }
+export interface Candidate { id: string; counter: number | null; /** The listing's own mapped row of this candidate (S2 item 6): stored on the parent stage when the candidate is pinned. */ row?: Record<string, unknown> }
 
 export interface CompleteCountDeps {
   request: string;
@@ -31,6 +32,10 @@ export interface CompleteCountDeps {
    * page (comments / (comments + their replies counters)) when that page shows the counter includes replies; null when there is no such evidence (the counter is then used as it is).
    */
   basisOf?: (child: PricedStage) => Promise<{ share: number | null } | null>;
+  /** The size input of the child source and the most one call gives, from the source's own catalog schema (pageLimit.ts); null when the source states no maximum. A source with no next page is asked for what the promise needs, up to this maximum (S2 item 3). */
+  /** The stage's next tool that pages, from the catalog (pageableComments.ts), when the stage's recipe has no next page and the planner sampled no pageable one; null when the catalog has none the stage can feed (S2 item 4). */
+  pageableAlternativeOf?: (child: PricedStage) => Promise<NonNullable<NonNullable<PricedStage["engine"]>["alternatives"]>[number] | null>;
+  pageSizeOf?: (child: PricedStage) => Promise<{ param: string; max: number } | null>;
 }
 
 export interface CompleteCountEstimate {
@@ -112,7 +117,7 @@ export function promotePageable(stage: PricedStage): PricedStage | null {
   const { endpoint_id, params, cursor_param, map_code, map_file_id, id_field, parent_binding } = alt;
   const next = { ...current, endpoint_id, params, cursor_param, map_code, map_file_id, parent_binding: parent_binding!, alternatives: [replaced, ...alternatives.filter((_x, i) => i !== at)] } as typeof engine;
   if (id_field !== undefined) next.id_field = id_field; else delete next.id_field;
-  return { ...stage, endpoint_id, engine: next };
+  return { ...stage, endpoint_id, ...(alt.cost_per_row_usd !== undefined ? { measured_cost_per_row_usd: alt.cost_per_row_usd } : {}), engine: { ...next, alternatives: next.alternatives!.map((a, i) => (i === 0 ? { ...a, cost_per_row_usd: stage.measured_cost_per_row_usd } : a)) } };
 }
 
 /** The card's words when the counter includes replies: with the replies stage, the total of comments and replies in two parts; without it, the top-level comments only. */
@@ -146,9 +151,15 @@ export async function withCompleteCount(plan: PricedPlan, deps: CompleteCountDep
     const input = { parents: Math.max(1, parent.planned_rows), perParent, requested, fallback: Number.isFinite(perParent) ? perParent : Math.max(1, Number(stage.per_parent_rows) || 1) };
     let e = completeCountEstimate(candidates, { ...input, pageCap });
     // A PAGEABLE SOURCE FIRST: when the source of the recipe cannot page far enough to reach the promise, the stage's next tool that pages (and reads the same parents) takes its place BEFORE a shortfall is stated; the source it replaces stays as the next tool
+    // S2 item 4: a PAGEABLE source is preferred even when the first source reaches the promise: the catalog's comments tool with a cursor reads a video page after page to its end (the one sampled, else the cheapest the catalog offers that the stage can feed)
     let chosen: PricedStage = stage;
-    if (e.capped) {
-      const promoted = promotePageable(stage);
+    if (stage.engine.cursor_param === null) {
+      let candidate = stage;
+      if (!(stage.engine.alternatives ?? []).some((a) => a.cursor_param !== null && Boolean(a.parent_binding)) && deps.pageableAlternativeOf) {
+        const found = await deps.pageableAlternativeOf(stage);
+        if (found) candidate = { ...stage, engine: { ...stage.engine, alternatives: [found, ...(stage.engine.alternatives ?? [])] } };
+      }
+      const promoted = promotePageable(candidate);
       if (promoted) { chosen = promoted; pageCap = null; e = completeCountEstimate(candidates, { ...input, pageCap }); }
     }
     // THE BASIS OF THE COUNTER: when it includes replies, the top-level comments are the share of it that the sample measured, and a replies stage under these comments (comments AND replies asked) is promised the rest, so that comments and replies are one total
@@ -164,11 +175,36 @@ export async function withCompleteCount(plan: PricedPlan, deps: CompleteCountDep
       if (repliesStage && requested === null) repliesPlanned = Math.max(0, counted - e.total);
     }
     if (e.total < 1) continue;
+    const chosenRows = e.chosen.length > 0 && e.chosen.length === parent.planned_rows && e.chosen.every((c) => c.row !== undefined) ? e.chosen.map((c) => c.row!) : null;
+    // THE REPLIES FOLLOW THE FINAL COMMENTS (S2 item 2): with no measured share, the replies stage was estimated on the comments number the MODEL planned (live: 800 comments x 0.35 = 280 replies); the comments are now final (40), so the replies are derived again by the one rule
+    // the plan editor uses: the sample's measured replies per comment over the final comments, never above the cap per comment, never a number the sample does not support
+    let repliesFromSample: { rows: number; perCommentExpected: number; costPerRowUsd: number } | null = null;
+    if (repliesStage && repliesPlanned === null) {
+      const elsewhere = out.stages.filter((x) => x.deliver && x.key !== repliesStage.key).reduce((n, x) => n + (x.key === stage.key ? e.total : x.planned_rows), 0);
+      repliesFromSample = repliesEstimateFor(repliesStage, e.total, repliesStage.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_DEFAULT, elsewhere);
+    }
     const stages = out.stages.map((s) => {
+      if (repliesFromSample && s.key === repliesStage!.key) return { ...s, planned_rows: repliesFromSample.rows, expected_rows: repliesFromSample.rows, replies_per_comment_expected: repliesFromSample.perCommentExpected, measured_cost_per_row_usd: repliesFromSample.costPerRowUsd };
       if (repliesPlanned !== null && repliesPlanned > 0 && s.key === repliesStage!.key) return { ...s, planned_rows: repliesPlanned, expected_rows: repliesPlanned, per_parent_rows: AGENT_REPLIES_PER_COMMENT_MAX };
+      // THE PINNED PARENTS' ROWS (S2 item 6): the rows the plan measured for the chosen parents, so execution reads THESE parents without a new search (kept only when every chosen parent has its row and they are the parents the stage promises)
+      if (s.key === parent.key) return chosenRows ? { ...s, pinned_rows: chosenRows } : s;
       if (s.key === stage.key) return { ...chosen, planned_rows: e.total, expected_rows: e.total, per_parent_rows: Number.isFinite(perParent) ? Math.min(perParent, Math.max(1, e.perParent)) : Math.max(1, e.perParent), all_children: true, parent_pins: e.chosen.map((c) => c.id) };
       return s;
     });
+    // THE CALL ASKS FOR WHAT THE PROMISE NEEDS (S2 item 3): the recipe froze the planner's sample size (`limit: 20`); a source with no next page is asked for the largest share of any parent, up to the maximum its schema states. The same holds for a next tool with no
+    // next page (the tool a pageable one replaced keeps its place as the fallback, and is read to the same size).
+    if (chosen.engine && deps.pageSizeOf) {
+      const at = stages.findIndex((x) => x.key === stage.key);
+      const target = stages[at];
+      const want = Math.max(1, Math.floor(e.perParent));
+      const lifted = async (endpoint_id: string, cursor: string | null, params: Record<string, unknown>): Promise<Record<string, unknown>> => {
+        if (cursor !== null) return params;
+        const size = await deps.pageSizeOf!({ ...target, endpoint_id, engine: { ...target.engine!, endpoint_id, cursor_param: cursor } });
+        return size ? { ...params, [size.param]: Math.min(size.max, want) } : params;
+      };
+      const engine = target.engine!;
+      stages[at] = { ...target, engine: { ...engine, params: await lifted(engine.endpoint_id, engine.cursor_param, engine.params), ...(engine.alternatives ? { alternatives: await Promise.all(engine.alternatives.map(async (a) => ({ ...a, params: await lifted(a.endpoint_id, a.cursor_param, a.params) }))) } : {}) } };
+    }
     const price = priceMissionByCode(stagePriceInputs(stages, out.contact_steps), { settings: out.price.settings });
     if (price.overCap) { if (!(out.notes_ar ?? []).includes(NOTE_CAP_AR)) out = { ...out, notes_ar: [...(out.notes_ar ?? []), NOTE_CAP_AR] }; continue; }
     const notes = share === null ? completeCountNotesAr(e, parent.title_ar) : repliesBasisNotesAr(e, parent.title_ar, repliesPlanned);

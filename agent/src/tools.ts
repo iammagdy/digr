@@ -39,6 +39,8 @@ import { conditionsOfRequest } from "../../src/lib/agentMission/requestCondition
 import { applyGapNotes } from "../../src/lib/agentMission/gapLines";
 import { counterOfRow } from "../../src/lib/agentMission/allChildren";
 import { withCompleteCount } from "../../src/lib/agentMission/completeCount";
+import { pageCapOfSource, pageLimitOf } from "../../src/lib/agentMission/pageLimit";
+import { pageableCommentAlternative } from "../../src/lib/agentMission/pageableComments";
 import { deriveItemId } from "../../src/lib/agentMission/contract";
 import { coverageOf } from "../../src/lib/agentMission/sourceRanking";
 import { catalogDateKind } from "../../src/lib/agentMission/relativeDates";
@@ -718,7 +720,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
                 const sp = parentStage.engine;
                 if (!sp) return null;
                 const rows = await mappedRowsOf(sp);
-                return rows ? rows.map((r) => ({ id: deriveItemId(r as never, sp.id_field ?? null), counter: counterOfRow(r) })) : null;
+                return rows ? rows.map((r) => ({ id: deriveItemId(r as never, sp.id_field ?? null), counter: counterOfRow(r), row: r })) : null;
               },
               // WHAT THE PARENT'S COUNTER COUNTS (item 2): the child source's own sampled page shows whether the counter includes replies: comments + their reply counters add up to the counter of the parent it was measured on
               basisOf: async (child) => {
@@ -735,17 +737,19 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
                 const total = childRows.length + replies;
                 return Math.abs(counter - total) <= Math.max(2, Math.ceil(counter * 0.1)) ? { share: childRows.length / total } : null;
               },
-              // a child source with no next page gives what one call gives: the rows of its own measured page, when the parent it was measured on has more comments than that page carried
+              // a child source with no next page gives what one call gives: the tool's own stated maximum (S2 item 3), never the size of the planner's sample (it was asked for a number the planner chose); a source with no size input of its own is measured by its page
               pageCapOf: async (child) => {
                 const sp = child.engine;
-                const parentSp = checked.plan.stages.find((x) => x.key === child.parent_key)?.engine;
-                if (!sp || !parentSp || sp.cursor_param !== null || !sp.parent_binding) return null;
-                const [childRows, parentRows] = await Promise.all([mappedRowsOf(sp), mappedRowsOf(parentSp)]);
-                const used = state.callParams.get(sp.map_file_id)?.[sp.parent_binding.param];
-                if (!childRows || !parentRows || used === undefined) return null;
-                const measured = parentRows.find((r) => String(r[sp.parent_binding!.from]) === String(used));
-                const counter = measured ? counterOfRow(measured) : null;
-                return counter !== null && childRows.length > 0 && childRows.length < counter ? childRows.length : null;
+                if (!sp || sp.cursor_param !== null || !sp.parent_binding) return null;
+                const childRows = await mappedRowsOf(sp);
+                return pageCapOfSource(ctx.catalog.byId.get(sp.endpoint_id) ?? { inputs: [], summary: null }, sp.cursor_param, childRows ? childRows.length : null);
+              },
+              // S2 item 4: the catalog's comments tool with a cursor, when the recipe's tool has no next page and the planner sampled no pageable one
+              pageableAlternativeOf: async (child) => pageableCommentAlternative(child, checked.plan.stages.find((x) => x.key === child.parent_key), ctx.catalog, { isAllowed: allowedReply, stats: ctx.stats }),
+              pageSizeOf: async (child) => {
+                const sp = child.engine;
+                const limit = sp ? pageLimitOf(ctx.catalog.byId.get(sp.endpoint_id) ?? { inputs: [], summary: null }) : null;
+                return limit && limit.max !== null ? { param: limit.param, max: limit.max } : null;
               },
             });
           }
