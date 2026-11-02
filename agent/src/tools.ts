@@ -45,6 +45,7 @@ import { pageCapOfSource, pageLimitOf } from "../../src/lib/agentMission/pageLim
 import { isLanguageColumn, textColumnKeyOf } from "../../src/lib/agentMission/languageLabel";
 import { conditionsAsked, matchesCustomerConditions } from "../../src/lib/agentMission/customerConditions";
 import { TOPIC_OPTIONS_AR, topicMeaningFromModel, topicMeaningOf, topicQueryOf, topicQuestionAr } from "../../src/lib/agentMission/topicMeaning";
+import { namedSourceOf } from "../../src/lib/agentMission/namedSources";
 import { engagedDefault, wantsNewestOrDate } from "../../src/lib/agentMission/engaged";
 import { toolProfile } from "../../src/lib/agentMission/toolProfile";
 import { countryToolsFor } from "../../src/lib/agentMission/conditionTools";
@@ -765,14 +766,19 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         }
         // THE MOST COMMENTED POSTS OF AN ACCOUNT (S11, owner decision): the default for a comments request is the most engaged posts, and for an account that means the most commented among its RECENT posts, not the newest two (live: both were minutes old, one comment in all). One page
         // of the account's listing is too few to choose from, so the plan is sent back ONCE to read the next page (the cursor of the first page, the same mapping); the planning budget allows two samples of one source. Unless the customer asked for the newest or gave a date.
-        if (derived && engaged && socialRedesignActive(ctx) && state.accountPageSendBacks < ACCOUNT_PAGE_SEND_BACKS_MAX) {
+        // ROUND 4: the same one more read when the request names a topic or a period and the listing tool has no topic and no date input (a page's posts: the topic and the period cannot be asked of the source, so the posts to read are CHOSEN from what is read)
+        if (derived && socialRedesignActive(ctx) && state.accountPageSendBacks < ACCOUNT_PAGE_SEND_BACKS_MAX) {
           const lines: string[] = [];
           for (const st of checked.plan.stages) {
             if (st.parent_key !== null || !st.engine || !st.engine.sources || st.engine.cursor_param === null) continue;
+            const profile = ctx.catalog.byId.get(st.endpoint_id) ? toolProfile(ctx.catalog.byId.get(st.endpoint_id)!) : null;
+            const topicChoice = (meaning.kind === "about" || meaning.kind === "made_with") && profile !== null && profile.query === null;
+            const periodChoice = (st.filters ?? []).some((f) => f.kind === "period" && f.enabled !== false) && profile !== null && profile.date === null && !profile.queryOperators;
+            if (!engaged && !topicChoice && !periodChoice) continue;
             if (!checked.plan.stages.some((x) => x.parent_key === st.key && x.replies_of === undefined && x.deliver)) continue;
             const pages = calls.filter((c) => c.endpoint_id === st.endpoint_id && c.status === "ok" && (c.phase ?? "planning") === "planning").length;
             if (pages >= 2) continue;
-            lines.push(`stage «${st.key}»: this is a request for comments, so unless the customer asks for the newest or gives a date the posts are the MOST COMMENTED of the account's recent posts, and one page of ${st.endpoint_id} is too few to choose from. Read the next page ONCE more: the same inputs plus ${st.engine.cursor_param} = the next-page token the first page returned (read it in the sample), map the same columns on it, and propose the plan again citing BOTH calls in measured_by. Do not call the posts «the newest» unless the customer asked for the newest`);
+            lines.push(`stage «${st.key}»: ${engaged ? "this is a request for comments, so unless the customer asks for the newest or gives a date the posts are the MOST COMMENTED of the account's recent posts" : "the customer named a topic or a period and this tool has no input for it: the posts to read are CHOSEN from what you read (the ones whose own text discusses the topic, then the most commented), never the two newest by default"}, and one page of ${st.endpoint_id} is too few to choose from. Read the next page ONCE more: the same inputs plus ${st.engine.cursor_param} = the next-page token the first page returned (read it in the sample), map the same columns on it, and propose the plan again citing BOTH calls in measured_by. Do not call the posts «the newest» unless the customer asked for the newest`);
           }
           if (lines.length > 0) { state.accountPageSendBacks += 1; return err("the plan was not accepted yet; fix this and propose again", { issues: lines }); }
         }
@@ -906,6 +912,13 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
               // S2 item 4: the catalog's comments tool with a cursor, when the recipe's tool has no next page and the planner sampled no pageable one
               mostEngaged: engagedOrder,
               topicOf: () => meaning,
+              // ROUND 4: the sources the customer NAMED come first (a listing of one named source needs no test: all its rows belong to it)
+              namedOf: async (parentStage) => {
+                const account = (parentStage.filters ?? []).find((f) => f.kind === "account" && f.enabled !== false && (f.values ?? []).length > 0);
+                if (!account || parentStage.engine?.source_listing === true) return null;
+                const fields = [account.field, ...(account.fields ?? [])].filter((k): k is string => typeof k === "string");
+                return (row) => namedSourceOf(account.values!, fields, row) !== null;
+              },
               matchesOf: async (parentStage) => (conditionsAsked(parentStage.filters ?? []) ? (row) => matchesCustomerConditions(row, parentStage.filters ?? [], parentStage.columns.filter((c) => /^(caption|description|text|title|desc)$/i.test(c.key)).map((c) => c.key)) : null),
               pageableAlternativeOf: async (child) => pageableCommentAlternative(child, checked.plan.stages.find((x) => x.key === child.parent_key), ctx.catalog, { isAllowed: allowedReply, stats: ctx.stats }),
               pageSizeOf: async (child) => {
