@@ -63,6 +63,12 @@ async function run(p: PricedPlan) {
         const total = TOP[String(params.aweme_id)] ?? 0; const from = Number(params.cursor ?? 0); const n = Math.max(0, Math.min(Number(params.count ?? 20), total - from));
         body = { data: { comments: Array.from({ length: n }, (_, k) => ({ cid: `${params.aweme_id}-c${from + k}`, text: `تعليق ${from + k}`, user: { nickname: "u" }, create_time: 1788100000, digg_count: 1, reply_comment_total: hasReply(from + k) ? 1 : 0, comment_language: "ar" })), cursor: from + n, has_more: from + n < total ? 1 : 0 } };
         rowsInPage = n; next = from + n < total ? String(from + n) : null;
+      } else if (endpoint === "crawl4ai.tiktok.video.comments") {
+        // CHANGED (S6): a tool that ends before the counter is not the end of the source: the next tool (the one the planner sampled) reads the video too, from the start; here it has the same comments, so it adds nothing
+        const video = String(params.post).replace(/.*\//, "");
+        const ids = Array.from({ length: TOP[video] ?? 0 }, (_, k) => `${video}-c${k}`);
+        body = { rows: ids.map((id, k) => ({ comment_id: id, text: `تعليق ${k}`, replies: hasReply(k) ? 1 : 0, created_at: "2026-10-20T09:00:00Z", author: "u", likes: 1 })) };
+        rowsInPage = ids.length;
       } else if (endpoint === "anyapi.tiktok.comment_replies") {
         const id = String(params.commentId); const [video, c] = id.split("-c");
         void video; body = { output: { data: { comments: hasReply(Number(c)) ? [{ id: `${id}-r0`, text: "رد", author: "r", createdUtc: 1788200000, likes: 0 }] : [], nextCursor: null } } };
@@ -100,7 +106,7 @@ describe("the live case, replayed with the six fixes", () => {
     expect(r.replies).toHaveLength(47);
     expect(r.comments.length + r.replies.length).toBe(188);
     expect(r.calls.filter((c) => c.endpoint === "tikhub.tiktok.video.comments")).toHaveLength(8);
-    expect(r.calls.map((c) => c.endpoint)).not.toContain("crawl4ai.tiktok.video.comments");
+    // CHANGED (S6): the next tool is now read too when the first ends before the counter (it adds nothing here: the same comments)
   });
   it("the replies: the comments that say they have replies are read (47 exist), a comment with none is never read", async () => {
     const r = await run(await plan());

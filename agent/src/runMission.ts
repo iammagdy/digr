@@ -36,7 +36,7 @@ import { runEngine } from "./engine/run";
 import { readRedesignFlags } from "../../src/lib/agentMission/redesignFlags";
 import { sealFinalPrice } from "../../src/lib/agentMission/finalPrice";
 import { accountIsTest, anyRedesignFlag, redesignStagesOf } from "./redesign";
-import { repliesShortfallAr } from "./repliesShortfall";
+import { promiseShortfallAr, repliesShortfallAr } from "./repliesShortfall";
 import { reportedPlan, withPromiseCaps } from "../../src/lib/agentMission/repliesCard";
 import { runContactEnrichment } from "./engine/contacts";
 import { runNamesStep } from "./namesAr";
@@ -604,14 +604,19 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const shortCounts = shortStage ? snap.counts(shortStage.key) : null;
   const shortTruth = shortStage && shortCounts ? stageTruthBodyAr({ found: shortCounts.found, duplicates: shortCounts.duplicates, delivered: shortCounts.accepted, excludedByReason: shortCounts.excludedByReason as Record<string, number>, pending: shortCounts.pending, reviewStop: checked.stop, stop: snap.stage(shortStage.key).stop, people: isPeopleStage(shortStage), noun: itemNounOf(shortStage.title_ar) }) : null;
   const shortClause = shortTruth ? `إذ ${shortTruth}` : shortfallClauseAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort);
-  const reason = ourFailure ? INTERNAL_FAILURE_AR
+  // THE SOURCE ENDED BEFORE THE PROMISE (S6): the promise for the comments and replies is the platform's counters; when every tool ended short of it, the text says so with the real numbers
+  const promiseStages = plan.stages.filter((x) => x.deliver && x.promise_total !== undefined);
+  const promiseLine = !ourFailure && delivered > 0 && promiseStages.length > 0
+    ? promiseShortfallAr({ delivered: promiseStages.reduce((n, x) => n + rowsByStage[x.key].length, 0), promised: Math.max(...promiseStages.map((x) => x.promise_total!)), stops: promiseStages.map((x) => snap.stage(x.key).stop) })
+    : "";
+  const reason = promiseLine ? promiseLine : ourFailure ? INTERNAL_FAILURE_AR
     : delivered > 0 && deliveredTop < target ? (shortTruth ? `لم يكتمل العدد المطلوب ${shortClause}، ولم يُخصم إلا مقابل ما سُلّم.` : shortfallFromStopAr(shortStage ? snap.stage(shortStage.key).stop : null, checkedForShort))
     : delivered > 0 && deliveredTop < requested ? loweredTargetAr(plan)
     : delivered <= 0 ? zeroDeliveryReasonAr(zeroFacts) : "";
   // THE REPLIES' OWN SHORTFALL (S2 item 5): the replies stage is never the «short stage» (a delivery is complete or partial by its top-level rows), so a gap made of replies was told as fewer comments or not at all; its true reason is said from the replies stage's recorded stop
   const repliesStage = plan.stages.find((s) => s.deliver && s.replies_of !== undefined);
   // (redesigned missions only: the replies stage of a plan built by code carries `built_by: "code"`; an old-pipeline mission keeps its text byte for byte)
-  const repliesLine = !ourFailure && delivered > 0 && repliesStage?.engine?.built_by === "code" ? repliesShortfallAr({ planned: tl.repliesPlanned, delivered: tl.repliesDelivered, stop: snap.stage(repliesStage.key).stop, review: { pending: 0, stop: null }, withMoney: reason === "" }) : "";
+  const repliesLine = !ourFailure && !promiseLine && delivered > 0 && repliesStage?.engine?.built_by === "code" ? repliesShortfallAr({ planned: tl.repliesPlanned, delivered: tl.repliesDelivered, stop: snap.stage(repliesStage.key).stop, review: { pending: 0, stop: null }, withMoney: reason === "" }) : "";
   const summary = (ourFailure ? reason : [note, reason, repliesLine].filter(Boolean).join(" ")).slice(0, 1100);
   const mismatch = settled.kind === "settled" && !settled.matchesExpectation ? `charge ${settled.chargedPoints} differs from the expected ${settled.expectedChargedPoints}` : null;
   const unusableWords = checked.lastUnusable ? checked.lastUnusable.replace(/\s+/g, " ").slice(0, 120) : "";

@@ -126,7 +126,7 @@ export function replyShares(counts: ReadonlyArray<number | null>, planned: numbe
 export interface ReplyColumnKeys { text: string | null; author: string | null; date: string | null; likes: string | null; replies: string | null; language: string | null }
 
 const KEY = {
-  text: /^(text|comment|comment_text|content|body|message)$/i,
+  text: /^(text|comment|comments|comment_text|content|body|message)$/i,
   author: /^(author|author_name|username|user_name|nickname|commenter|writer|handle)$/i,
   date: /^(posted_at|created_at|date|time|datetime|comment_time|create_time|published_at)$/i,
   likes: /^(likes?|like_count|likes_count|digg_count|reactions?)$/i,
@@ -234,8 +234,9 @@ export function repliesEstimateFor(r: Pick<PricedStage, "replies_read_all" | "re
     const before = expectedFromCounts(counts, Math.max(1, r.per_parent_rows ?? perComment));
     callUsd = (Math.max(0, r.measured_cost_per_row_usd) * Math.max(1, r.planned_rows)) / Math.max(1, commentsRows * before.callsPerComment);
   }
-  // a stage that reads EVERY comment (the request asked for the replies) costs at least one call a comment
-  const calls = r.replies_read_all ? Math.max(1, now.callsPerComment) : now.callsPerComment;
+  // a stage that must read EVERY comment because the sample supports no counter (a blind read) costs at least one call a comment; with counters in the sample only the comments that say they have replies are read (S6: the live plan priced a call for every comment while 46 calls were made)
+  const blind = r.replies_read_all === true && (r.replies_sample_counts ?? []).length === 0;
+  const calls = blind ? Math.max(1, now.callsPerComment) : now.callsPerComment;
   return { rows, perCommentExpected: now.perComment, costPerRowUsd: (callUsd * Math.max(1, commentsRows * calls)) / rows };
 }
 
@@ -279,7 +280,8 @@ export async function withRepliesStages(planIn: PricedPlan, deps: RepliesDeps): 
     if (planned < 1) { plan = status("no_room"); continue; }
     // the price of the stage: the calls the replies take (at the price of one call of the chosen source) over the replies planned; never below one call's price over the rows one call gives
     const stageOf = (rows: number): PricedStage => {
-      const calls = Math.max(1, comments.planned_rows * (deps.requested ? Math.max(1, expected.callsPerComment) : expected.callsPerComment));
+      const blind = deps.requested === true && counters.length === 0;
+      const calls = Math.max(1, comments.planned_rows * (blind ? Math.max(1, expected.callsPerComment) : expected.callsPerComment));
       return {
         key: repliesKeyOf(comments.key), title_ar: `ردود ${comments.title_ar}`, endpoint_id: source.id, expected_rows: rows, parent_key: comments.key, per_parent_rows: perComment, deliver: true,
         columns: comments.columns.map((c) => ({ ...c })), sample_rows: [], measured_by: [], planned_rows: rows, measured_cost_per_row_usd: (source.usd * calls) / rows, measured_from_calls: [],

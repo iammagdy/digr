@@ -39,3 +39,12 @@ export function languageOfTextAr(text: unknown): "العربية" | "لغة أخ
   const arabic = letters.filter((l) => ARABIC_LETTERS.test(l)).length;
   return arabic * 2 >= letters.length ? "العربية" : "لغة أخرى";
 }
+
+/**
+ * THE TEXT COLUMN OF A COMMENTS (OR POSTS) STAGE, by its key or its Arabic title (S6, live 2026-11-02 ~12:23: the model called it «comments» and the language column that depends on a column keyed «text» was never added). Null when no column holds a text.
+ */
+const TEXT_KEY = /^(?:text|comment|comments|comment_text|content|body|message|caption|description)$/i;
+const TEXT_TITLE = /(?:^|\s)(?:نص|تعليق|التعليق|التعليقات|الرد|محتوى)(?:\s|$)/;
+export function textColumnKeyOf(columns: ReadonlyArray<{ key: string; title_ar?: string; title?: string }>): string | null {
+  return columns.find((c) => TEXT_KEY.test(c.key))?.key ?? columns.find((c) => TEXT_TITLE.test(String(c.title_ar ?? c.title ?? "").trim()))?.key ?? null;
+}
