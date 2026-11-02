@@ -37,6 +37,7 @@ import { readPlatformFlagsOf, readRedesignFlags } from "../../src/lib/agentMissi
 import { askedTextOf, buildRequestContract } from "../../src/lib/agentMission/requestContract";
 import { sealFinalPrice } from "../../src/lib/agentMission/finalPrice";
 import { accountIsTest, anyRedesignFlag, fallbackStageOf, redesignStagesOf } from "./redesign";
+import { compiledPlatformActive, planByCompiler } from "./compiled";
 import { promiseShortfallAr, repliesShortfallAr } from "./repliesShortfall";
 import { TOPIC_OPTIONS_AR, topicMeaningOf, topicQuestionAr } from "../../src/lib/agentMission/topicMeaning";
 import { reportedPlan, withPromiseCaps, withRepliesJudged } from "../../src/lib/agentMission/repliesCard";
@@ -266,6 +267,9 @@ export function shortfallReasonAr(checked: { pending: number; stop: "budget" | "
 
 const shortMessage = (e: unknown): string => String((e as Error)?.message ?? e).slice(0, 120);
 
+/** The planning run of a compiled plan: no model was asked, nothing was spent on one. */
+const COMPILED_RUN: Awaited<ReturnType<ModelDriver["run"]>> = { llmCostUsd: 0, turns: 0, stop: "end" };
+
 /** A planning that cannot be completed ends here, honestly: nothing was held, the customer is told once. */
 async function endPlanningUnserved(deps: RunnerDeps, mission: MissionRecord, error: string): Promise<void> {
   await deps.store.updateMission(mission.id, { status: "failed", error: error.slice(0, 300), ...clear });
@@ -334,8 +338,17 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
       return { llmCostUsd: 0, turns: 0, stop: "error", error: String((e as Error)?.message ?? e).slice(0, 300) } as Awaited<ReturnType<ModelDriver["run"]>>;
     }
   };
-  let output = await runOnce(planningPrompt(mission, calls, resumeNote));
-  await recordTokens(deps, mission.id, 0, output.usage, { inputTokens: 0, outputTokens: 0, calls: 0 }, output.llmCostUsd);
+  // THE COMPILED PATH (docs/FOUNDATION-PLAN.md PR 2a): TikTok and X, and only when that platform's OWN flag is `on` (or `test` for a test account), are planned by the plan compiler,
+  // by code, with no model: the pool and the exposure check are read through this run's gateway (every cap applies). A request it cannot compile ends with one of the honest classes
+  // below, never on the model's path (F6). With the platform flags unset, as today, this is null and the planning below is exactly what it was.
+  const compiled = compiledPlatformActive(redesign.platformFlags, redesign.platform, redesign.isTest) ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, nowMs: planningNow }) : null;
+  if (compiled) {
+    await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: خطة مبنية بالكود.", counts: { compiled: compiled.kind === "plan" ? 1 : 0, pool_reads: compiled.reads.pool, exposure_reads: compiled.reads.exposure } }).catch(() => undefined);
+    if (compiled.kind === "plan") state.proposedPlan = compiled.plan;
+    else state.finish = { outcome: "cannot_serve", summary_ar: "", kind: compiled.reason === "no_rows" || compiled.reason === "no_parent_with_children" ? "empty" : "unsupported" };
+  }
+  let output = compiled ? COMPILED_RUN : await runOnce(planningPrompt(mission, calls, resumeNote));
+  if (!compiled) await recordTokens(deps, mission.id, 0, output.usage, { inputTokens: 0, outputTokens: 0, calls: 0 }, output.llmCostUsd);
   // A RUN THAT ENDED WITH NO PLAN, NO QUESTION AND NO ENDING while the sources gave it real rows (live 2026-10-29: Facebook videos, after the customer answered the question, the planner tried two unavailable web searches and stopped): it is asked once more, told to
   // build the plan from what it holds. Never a limit of ours: the run's stop was a plain end, with no budget, turn or time limit reached.
   for (let nudge = 0; nudge < AGENT_PLANNING_NUDGES_MAX && endedSilently(output, state); nudge += 1) {

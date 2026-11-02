@@ -1,0 +1,1432 @@
+{
+ "_about": "THE CALL LOG OF THE TIKTOK AND X MISSIONS, anonymised (read-only SELECT on mission_calls, 2026-11-02; listed in the PR). One entry per stored call: [call id, phase, endpoint, status, rows, inputs]. Every link input is reduced to the numeric id it carries (no handle, no name); search inputs are Diger's own request words. M12 and M14: every call; the others: their planning calls only. M5 call_0002 is left out: its stored inputs were cut at 80 characters by the call log, so the page it answered cannot be keyed honestly. The replay gateway (tests/helpers/replayGateway.ts) serves a stored page only for the endpoint and the same inputs.",
+ "missions": {
+  "msn_5851abc92a1e6645a9cd": [
+   [
+    "call_0001",
+    "planning",
+    "crawl4ai.tiktok.search.videos",
+    "failed",
+    0,
+    {
+     "limit": 30,
+     "query": "الذكاء الاصطناعي مصر"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "anyapi.tiktok.search.videos",
+    "ok",
+    20,
+    {
+     "query": "الذكاء الاصطناعي مصر",
+     "sortBy": 2
+    }
+   ],
+   [
+    "call_0003",
+    "planning",
+    "crawl4ai.tiktok.video.comments",
+    "empty",
+    0,
+    {
+     "post": "7701280065874595092",
+     "limit": 50
+    }
+   ],
+   [
+    "call_0004",
+    "planning",
+    "crawl4ai.tiktok.video.comments",
+    "empty",
+    0,
+    {
+     "post": "7701398257066315026",
+     "limit": 50
+    }
+   ],
+   [
+    "call_0005",
+    "planning",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    18,
+    {
+     "url": "7700567581643590944"
+    }
+   ],
+   [
+    "call_0006",
+    "planning",
+    "tikhub.tiktok.search.videos",
+    "ok",
+    10,
+    {
+     "count": 20,
+     "region": "EG",
+     "keyword": "الذكاء الاصطناعي",
+     "sort_type": 2
+    }
+   ],
+   [
+    "call_0007",
+    "planning",
+    "tikhub.tiktok.search.videos",
+    "ok",
+    10,
+    {
+     "count": 20,
+     "region": "EG",
+     "keyword": "الذكاء الاصطناعي",
+     "sort_type": 1
+    }
+   ],
+   [
+    "call_0008",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    20,
+    {
+     "url": "7663879872137252114"
+    }
+   ],
+   [
+    "call_0009",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    20,
+    {
+     "url": "7663879872137252114",
+     "cursor": "cur_wtIJuJNYYy5lyuwW3PE9RQ"
+    }
+   ],
+   [
+    "call_0010",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    19,
+    {
+     "url": "7663879872137252114",
+     "cursor": "cur_Ui5Uwl29O17cABVaFB7Ptg"
+    }
+   ],
+   [
+    "call_0011",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    19,
+    {
+     "url": "7663879872137252114",
+     "cursor": "cur_HGslcuhm83pSX7YbW3_EzQ"
+    }
+   ],
+   [
+    "call_0012",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    19,
+    {
+     "url": "7663879872137252114",
+     "cursor": "cur_-W-3nXTSu632zJWa8dsOoQ"
+    }
+   ],
+   [
+    "call_0013",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    20,
+    {
+     "url": "7663879872137252114",
+     "cursor": "cur_nXHrEuq6MMmxL5l0mflnfQ"
+    }
+   ],
+   [
+    "call_0014",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    20,
+    {
+     "url": "7663879872137252114",
+     "cursor": "cur_G5ERS2y7aEgHBu302BGBlQ"
+    }
+   ],
+   [
+    "call_0015",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    20,
+    {
+     "url": "7663879872137252114",
+     "cursor": "cur_GCKo6qhh-KMHfLt2qRSsaA"
+    }
+   ],
+   [
+    "call_0016",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    19,
+    {
+     "url": "7663879872137252114",
+     "cursor": "cur_0l4B_k6LfUQ9stXRSa-1ag"
+    }
+   ],
+   [
+    "call_0017",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    20,
+    {
+     "url": "7663879872137252114",
+     "cursor": "cur_A6yd5dfkpZvwVO6tyMWDxg"
+    }
+   ],
+   [
+    "call_0018",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    20,
+    {
+     "url": "7663879872137252114",
+     "cursor": "cur_KkkfVpOA85HL8SywK7k5gg"
+    }
+   ],
+   [
+    "call_0019",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    20,
+    {
+     "url": "7690257663250205974"
+    }
+   ],
+   [
+    "call_0020",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    20,
+    {
+     "url": "7690257663250205974",
+     "cursor": "cur_nHcc0GRCVXOXPtGFvWbyQA"
+    }
+   ],
+   [
+    "call_0021",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    20,
+    {
+     "url": "7690257663250205974",
+     "cursor": "cur_dW66k2Z3vJB4WCrlnaz_YA"
+    }
+   ],
+   [
+    "call_0022",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    20,
+    {
+     "url": "7690257663250205974",
+     "cursor": "cur_CwLX-rDDyqN0oEhDVQa5DA"
+    }
+   ],
+   [
+    "call_0023",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    20,
+    {
+     "url": "7690257663250205974",
+     "cursor": "cur_6ikabZ3dl4TUsTb2LRWsXQ"
+    }
+   ],
+   [
+    "call_0024",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    20,
+    {
+     "url": "7690257663250205974",
+     "cursor": "cur_TkwNaf8o1FLJKEuDn-Owiw"
+    }
+   ],
+   [
+    "call_0025",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    20,
+    {
+     "url": "7690257663250205974",
+     "cursor": "cur_SqmB3XX566bwyrbgF1SwTA"
+    }
+   ],
+   [
+    "call_0026",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    20,
+    {
+     "url": "7690257663250205974",
+     "cursor": "cur_e3p4MZQkCNMCwOuIzLA9dw"
+    }
+   ],
+   [
+    "call_0027",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    20,
+    {
+     "url": "7690257663250205974",
+     "cursor": "cur_pTgWEfEwarBGYs9F6worCA"
+    }
+   ],
+   [
+    "call_0028",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    20,
+    {
+     "url": "7690257663250205974",
+     "cursor": "cur_2ip64nX8fvQXTjUVeQAavA"
+    }
+   ],
+   [
+    "call_0029",
+    "execution",
+    "anyapi.tiktok.video.comments",
+    "ok",
+    20,
+    {
+     "url": "7690257663250205974",
+     "cursor": "cur_eK_PTCBYoKUb4ZicvYwekw"
+    }
+   ],
+   [
+    "call_0030",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    3,
+    {
+     "url": "7663879872137252114",
+     "commentId": "7668260475365655314"
+    }
+   ],
+   [
+    "call_0031",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    5,
+    {
+     "url": "7663879872137252114",
+     "commentId": "7664357240506254081"
+    }
+   ],
+   [
+    "call_0032",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    2,
+    {
+     "url": "7663879872137252114",
+     "commentId": "7664297895911146260"
+    }
+   ],
+   [
+    "call_0033",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7663879872137252114",
+     "commentId": "7664321887619171080"
+    }
+   ],
+   [
+    "call_0034",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7663879872137252114",
+     "commentId": "7664574963449758485"
+    }
+   ],
+   [
+    "call_0035",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7663879872137252114",
+     "commentId": "7664276353549714184"
+    }
+   ],
+   [
+    "call_0036",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    2,
+    {
+     "url": "7663879872137252114",
+     "commentId": "7665420541666542357"
+    }
+   ],
+   [
+    "call_0037",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7663879872137252114",
+     "commentId": "7664345014491759381"
+    }
+   ],
+   [
+    "call_0038",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7663879872137252114",
+     "commentId": "7688422605044843272"
+    }
+   ],
+   [
+    "call_0039",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7663879872137252114",
+     "commentId": "7671290319589688085"
+    }
+   ],
+   [
+    "call_0040",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7663879872137252114",
+     "commentId": "7666009434221183762"
+    }
+   ],
+   [
+    "call_0041",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7663879872137252114",
+     "commentId": "7664492732975366932"
+    }
+   ],
+   [
+    "call_0042",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7663879872137252114",
+     "commentId": "7672571868427387668"
+    }
+   ],
+   [
+    "call_0043",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    3,
+    {
+     "url": "7663879872137252114",
+     "commentId": "7664505733429740296"
+    }
+   ],
+   [
+    "call_0044",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7663879872137252114",
+     "commentId": "7664386340901061396"
+    }
+   ],
+   [
+    "call_0045",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7663879872137252114",
+     "commentId": "7664297327666758420"
+    }
+   ],
+   [
+    "call_0046",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    2,
+    {
+     "url": "7663879872137252114",
+     "commentId": "7677095853860864776"
+    }
+   ],
+   [
+    "call_0047",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7663879872137252114",
+     "commentId": "7665038474538500884"
+    }
+   ],
+   [
+    "call_0048",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7663879872137252114",
+     "commentId": "7677861798296945409"
+    }
+   ],
+   [
+    "call_0049",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690508193881490196"
+    }
+   ],
+   [
+    "call_0050",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690496581825282837"
+    }
+   ],
+   [
+    "call_0051",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690289160606810900"
+    }
+   ],
+   [
+    "call_0052",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690652209604264711"
+    }
+   ],
+   [
+    "call_0053",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7691781698997044001"
+    }
+   ],
+   [
+    "call_0054",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690482547503661842"
+    }
+   ],
+   [
+    "call_0055",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690328472707351314"
+    }
+   ],
+   [
+    "call_0056",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690646960400089864"
+    }
+   ],
+   [
+    "call_0057",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690538654117659399"
+    }
+   ],
+   [
+    "call_0058",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7692565625533694742"
+    }
+   ],
+   [
+    "call_0059",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690642659094987528"
+    }
+   ],
+   [
+    "call_0060",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690663303295238920"
+    }
+   ],
+   [
+    "call_0061",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690300017248207637"
+    }
+   ],
+   [
+    "call_0062",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690365721072091924"
+    }
+   ],
+   [
+    "call_0063",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690489817800721173"
+    }
+   ],
+   [
+    "call_0064",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690641131080581896"
+    }
+   ],
+   [
+    "call_0065",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690911393461895957"
+    }
+   ],
+   [
+    "call_0066",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690664501997814546"
+    }
+   ],
+   [
+    "call_0067",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7693500549569200916"
+    }
+   ],
+   [
+    "call_0068",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690356271363375878"
+    }
+   ],
+   [
+    "call_0069",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690483063432151860"
+    }
+   ],
+   [
+    "call_0070",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7691789714017501985"
+    }
+   ],
+   [
+    "call_0071",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690661935175795463"
+    }
+   ],
+   [
+    "call_0072",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690334268111127302"
+    }
+   ],
+   [
+    "call_0073",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690335618333000469"
+    }
+   ],
+   [
+    "call_0074",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690488806935921409"
+    }
+   ],
+   [
+    "call_0075",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690324049357341441"
+    }
+   ],
+   [
+    "call_0076",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690361217249182484"
+    }
+   ],
+   [
+    "call_0077",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7691597079541957383"
+    }
+   ],
+   [
+    "call_0078",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7699098074300613397"
+    }
+   ],
+   [
+    "call_0079",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7694317343036195592"
+    }
+   ],
+   [
+    "call_0080",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690908933650219797"
+    }
+   ],
+   [
+    "call_0081",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690471006297359111"
+    }
+   ],
+   [
+    "call_0082",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690502176700154645"
+    }
+   ],
+   [
+    "call_0083",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690659731359449874"
+    }
+   ],
+   [
+    "call_0084",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690487760663282439"
+    }
+   ],
+   [
+    "call_0085",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    2,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690497565527245575"
+    }
+   ],
+   [
+    "call_0086",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690358476065030920"
+    }
+   ],
+   [
+    "call_0087",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    3,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690333671254229768"
+    }
+   ],
+   [
+    "call_0088",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690329405142942484"
+    }
+   ],
+   [
+    "call_0089",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690354982814581524"
+    }
+   ],
+   [
+    "call_0090",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    3,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7692432845436257030"
+    }
+   ],
+   [
+    "call_0091",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    3,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7691789917626614560"
+    }
+   ],
+   [
+    "call_0092",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690288816787325717"
+    }
+   ],
+   [
+    "call_0093",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    3,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690348111009727240"
+    }
+   ],
+   [
+    "call_0094",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690655906066170632"
+    }
+   ],
+   [
+    "call_0095",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690304188982526721"
+    }
+   ],
+   [
+    "call_0096",
+    "execution",
+    "anyapi.tiktok.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "7690257663250205974",
+     "commentId": "7690359630019969813"
+    }
+   ]
+  ],
+  "msn_b060d3347ed7660f972e": [
+   [
+    "call_0001",
+    "planning",
+    "anyapi.x.search.posts",
+    "ok",
+    20,
+    {
+     "limit": 20,
+     "query": "\"العاصمة الإدارية\" lang:ar since:2026-10-01 until:2026-11-01",
+     "queryType": "Latest"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "anyapi.x.search.posts",
+    "ok",
+    20,
+    {
+     "limit": 20,
+     "query": "\"العاصمة الإدارية\" lang:ar since:2026-10-01 until:2026-10-31",
+     "queryType": "Latest"
+    }
+   ],
+   [
+    "call_0003",
+    "execution",
+    "anyapi.x.search.posts",
+    "ok",
+    20,
+    {
+     "limit": 20,
+     "query": "\"العاصمة الإدارية\" lang:ar since:2026-10-01 until:2026-10-31",
+     "queryType": "Latest"
+    }
+   ]
+  ],
+  "msn_481a78e310d9e68fddce": [
+   [
+    "call_0001",
+    "planning",
+    "crawl4ai.tiktok.search.videos",
+    "failed",
+    0,
+    {
+     "limit": 20,
+     "query": "الذكاء الاصطناعي مصر"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "anyapi.tiktok.search.videos",
+    "ok",
+    20,
+    {
+     "query": "الذكاء الاصطناعي مصر"
+    }
+   ],
+   [
+    "call_0003",
+    "planning",
+    "crawl4ai.tiktok.video.comments",
+    "ok",
+    120,
+    {
+     "post": "7526906057814183176",
+     "limit": 200
+    }
+   ]
+  ],
+  "msn_48f6c7c80eb7068f2a38": [
+   [
+    "call_0001",
+    "planning",
+    "crawl4ai.tiktok.search.videos",
+    "ok",
+    11,
+    {
+     "limit": 20,
+     "query": "الذكاء الاصطناعي مصر"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "tikhub.tiktok.search.videos",
+    "ok",
+    10,
+    {
+     "count": 20,
+     "region": "EG",
+     "keyword": "الذكاء الاصطناعي",
+     "sort_type": 2
+    }
+   ],
+   [
+    "call_0003",
+    "planning",
+    "crawl4ai.tiktok.video.comments",
+    "ok",
+    20,
+    {
+     "post": "7673307869135031574",
+     "limit": 20
+    }
+   ]
+  ],
+  "msn_a6dacebce7e7b7432aa1": [
+   [
+    "call_0001",
+    "planning",
+    "crawl4ai.tiktok.search.videos",
+    "ok",
+    20,
+    {
+     "limit": 20,
+     "query": "الذكاء الاصطناعي مصر"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "tikhub.tiktok.search.videos",
+    "ok",
+    9,
+    {
+     "count": 20,
+     "region": "EG",
+     "keyword": "الذكاء الاصطناعي",
+     "sort_type": 2
+    }
+   ],
+   [
+    "call_0003",
+    "planning",
+    "tikhub.tiktok.search.videos",
+    "ok",
+    10,
+    {
+     "count": 20,
+     "offset": 20,
+     "region": "EG",
+     "keyword": "الذكاء الاصطناعي",
+     "sort_type": 2
+    }
+   ],
+   [
+    "call_0004",
+    "planning",
+    "crawl4ai.tiktok.video.comments",
+    "ok",
+    50,
+    {
+     "post": "7691738771783552274",
+     "limit": 50
+    }
+   ]
+  ],
+  "msn_7a35b44e35e6f3f1b8e9": [
+   [
+    "call_0001",
+    "planning",
+    "crawl4ai.tiktok.search.videos",
+    "failed",
+    0,
+    {
+     "limit": 20,
+     "query": "الذكاء الاصطناعي مصر"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "anyapi.tiktok.search.videos",
+    "ok",
+    19,
+    {
+     "query": "الذكاء الاصطناعي",
+     "sortBy": 2
+    }
+   ],
+   [
+    "call_0003",
+    "planning",
+    "crawl4ai.tiktok.video.comments",
+    "ok",
+    100,
+    {
+     "post": "7703140751328202016",
+     "limit": 100
+    }
+   ]
+  ],
+  "msn_c796a6ff13d79f7a973d": [
+   [
+    "call_0001",
+    "planning",
+    "crawl4ai.tiktok.search.videos",
+    "ok",
+    30,
+    {
+     "limit": 30,
+     "query": "الذكاء الاصطناعي مصر"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "crawl4ai.tiktok.video.comments",
+    "ok",
+    2,
+    {
+     "post": "7679041344287034631",
+     "limit": 50
+    }
+   ]
+  ],
+  "msn_6066498b5da3dd512595": [
+   [
+    "call_0001",
+    "planning",
+    "crawl4ai.tiktok.search.videos",
+    "ok",
+    30,
+    {
+     "limit": 30,
+     "query": "الذكاء الاصطناعي مصر"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "crawl4ai.tiktok.video.comments",
+    "ok",
+    6,
+    {
+     "post": "7689975740116323592",
+     "limit": 50
+    }
+   ],
+   [
+    "call_0003",
+    "planning",
+    "tikhub.tiktok.search.videos",
+    "ok",
+    30,
+    {
+     "count": 30,
+     "region": "EG",
+     "keyword": "الذكاء الاصطناعي مصر",
+     "sort_type": 1
+    }
+   ]
+  ],
+  "msn_5d849cbac96092de0287": [
+   [
+    "call_0001",
+    "planning",
+    "tikhub.tiktok.search.videos",
+    "ok",
+    10,
+    {
+     "count": 20,
+     "region": "EG",
+     "keyword": "الذكاء الاصطناعي",
+     "sort_type": 2
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "tikhub.tiktok.search.videos",
+    "failed",
+    0,
+    {
+     "count": 20,
+     "region": "EG",
+     "keyword": "الذكاء الاصطناعي مصر",
+     "sort_type": 1
+    }
+   ],
+   [
+    "call_0003",
+    "planning",
+    "crawl4ai.tiktok.video.comments",
+    "ok",
+    20,
+    {
+     "post": "7683540859194838293",
+     "limit": 20
+    }
+   ],
+   [
+    "call_0004",
+    "planning",
+    "tikhub.tiktok.search.videos",
+    "ok",
+    10,
+    {
+     "count": 20,
+     "region": "EG",
+     "keyword": "الذكاء الاصطناعي",
+     "sort_type": 1
+    }
+   ]
+  ],
+  "msn_f22426e67810c2ce852e": [
+   [
+    "call_0001",
+    "planning",
+    "crawl4ai.tiktok.search.videos",
+    "ok",
+    13,
+    {
+     "limit": 20,
+     "query": "الذكاء الاصطناعي شرح وأخبار مصر"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "tikhub.tiktok.search.videos",
+    "ok",
+    20,
+    {
+     "count": 20,
+     "region": "EG",
+     "keyword": "الذكاء الاصطناعي شرح وأخبار"
+    }
+   ],
+   [
+    "call_0003",
+    "planning",
+    "crawl4ai.tiktok.video.comments",
+    "ok",
+    50,
+    {
+     "post": "7701763373607750920",
+     "limit": 50
+    }
+   ]
+  ],
+  "msn_e3d679014c58168c3227": [
+   [
+    "call_0001",
+    "planning",
+    "anyapi.x.search.posts",
+    "ok",
+    20,
+    {
+     "limit": 20,
+     "query": "\"العاصمة الإدارية\" lang:ar since:2026-10-01 until:2026-11-01",
+     "queryType": "Latest"
+    }
+   ],
+   [
+    "call_0003",
+    "planning",
+    "tikhub.x.twitter-web-fetch-search-timeline",
+    "ok",
+    1,
+    {
+     "keyword": "conversation_id:2116654976390795707"
+    }
+   ]
+  ]
+ }
+}

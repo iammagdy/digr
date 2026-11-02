@@ -1,0 +1,105 @@
+{
+ "_about": "Written on main = 1b4049a by tests/foundation-flags-off.test.ts (WRITE_FLAGS_OFF_DIGESTS=1), before PR 2a.",
+ "missions": {
+  "msn_a254618740b9b9878126": {
+   "planning_flags_off": "98af62511694b160",
+   "planning_type_flags_test": "2137b7be27bd508b",
+   "selector": "a9e68b3ac7d78355"
+  },
+  "msn_ee599cdbbde993073b15": {
+   "planning_flags_off": "cf0cff277a8a798e",
+   "planning_type_flags_test": "a965c7cfe8568213",
+   "selector": "672c149a9916dd1b"
+  },
+  "msn_481a78e310d9e68fddce": {
+   "planning_flags_off": "800a18b32e1cce56",
+   "planning_type_flags_test": "3a99dcb77ede80e7",
+   "selector": "d91c867f195bc87c"
+  },
+  "msn_3ec7bb6012a36a703180": {
+   "planning_flags_off": "ca4bf17fee11e9a7",
+   "planning_type_flags_test": "f686b1484e896226",
+   "selector": "fa9d1cec77eee724"
+  },
+  "msn_e3d679014c58168c3227": {
+   "planning_flags_off": "5eaf1489e29ae0ae",
+   "planning_type_flags_test": "5a00f4c3d86c713a",
+   "selector": "6904c2de1518c835"
+  },
+  "msn_48f6c7c80eb7068f2a38": {
+   "planning_flags_off": "800a18b32e1cce56",
+   "planning_type_flags_test": "3a99dcb77ede80e7",
+   "selector": "d91c867f195bc87c"
+  },
+  "msn_a6dacebce7e7b7432aa1": {
+   "planning_flags_off": "800a18b32e1cce56",
+   "planning_type_flags_test": "3a99dcb77ede80e7",
+   "selector": "672c149a9916dd1b"
+  },
+  "msn_7a35b44e35e6f3f1b8e9": {
+   "planning_flags_off": "800a18b32e1cce56",
+   "planning_type_flags_test": "3a99dcb77ede80e7",
+   "selector": "d91c867f195bc87c"
+  },
+  "msn_c796a6ff13d79f7a973d": {
+   "planning_flags_off": "800a18b32e1cce56",
+   "planning_type_flags_test": "3a99dcb77ede80e7",
+   "selector": "d91c867f195bc87c"
+  },
+  "msn_6066498b5da3dd512595": {
+   "planning_flags_off": "800a18b32e1cce56",
+   "planning_type_flags_test": "3a99dcb77ede80e7",
+   "selector": "d91c867f195bc87c"
+  },
+  "msn_5d849cbac96092de0287": {
+   "planning_flags_off": "800a18b32e1cce56",
+   "planning_type_flags_test": "3a99dcb77ede80e7",
+   "selector": "d91c867f195bc87c"
+  },
+  "msn_5851abc92a1e6645a9cd": {
+   "planning_flags_off": "800a18b32e1cce56",
+   "planning_type_flags_test": "3a99dcb77ede80e7",
+   "selector": "d91c867f195bc87c"
+  },
+  "msn_f22426e67810c2ce852e": {
+   "planning_flags_off": "800a18b32e1cce56",
+   "planning_type_flags_test": "3a99dcb77ede80e7",
+   "selector": "d91c867f195bc87c"
+  },
+  "msn_b060d3347ed7660f972e": {
+   "planning_flags_off": "5eaf1489e29ae0ae",
+   "planning_type_flags_test": "5a00f4c3d86c713a",
+   "selector": "6904c2de1518c835"
+  },
+  "msn_afe9bb0b436670e35a3c": {
+   "planning_flags_off": "ca4bf17fee11e9a7",
+   "planning_type_flags_test": "f686b1484e896226",
+   "selector": "a9e68b3ac7d78355"
+  },
+  "msn_e3e7632e2fb2d42f9c19": {
+   "planning_flags_off": "ca4bf17fee11e9a7",
+   "planning_type_flags_test": "f686b1484e896226",
+   "selector": "fa9d1cec77eee724"
+  },
+  "msn_6bb78c15d116268b0b9b": {
+   "planning_flags_off": "98af62511694b160",
+   "planning_type_flags_test": "2137b7be27bd508b",
+   "selector": "fa9d1cec77eee724"
+  },
+  "msn_3594a5ab6311c8691f20": {
+   "planning_flags_off": "cf0cff277a8a798e",
+   "planning_type_flags_test": "a965c7cfe8568213",
+   "selector": "672c149a9916dd1b"
+  },
+  "msn_96beb9f7a1d937a90cd0": {
+   "planning_flags_off": "98af62511694b160",
+   "planning_type_flags_test": "2137b7be27bd508b",
+   "selector": "fa9d1cec77eee724"
+  },
+  "msn_adcfafabcdebc27ff803": {
+   "planning_flags_off": "cf0cff277a8a798e",
+   "planning_type_flags_test": "a965c7cfe8568213",
+   "selector": "97b6307b283d6cfd"
+  }
+ }
+}

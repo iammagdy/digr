@@ -67,3 +67,6 @@ src/functions/**/dist
 diger-raw-pages-*.zip
 diger-raw-pages.zip
 /raw-pages/
+
+# anonymised fixtures ZIPs from the owner (the unzipped, scanned files live in tests/fixtures/live/missions): never committed
+diger-fixtures-anon*.zip
