@@ -18,7 +18,7 @@ describe("the sentence about the replies, from the replies stage's recorded stop
     expect(t).toContain("الردود");
     expect(t).toContain("عيّنة");
     expect(t).toContain("أقل مما قدّرناه");
-    expect(checkCustomerText(t).ok).toBe(true);
+    expect(checkCustomerText(t).issues).toEqual([]);
   });
   it("a recorded budget stop says the budget was reached, a recorded failure says the source could not be reached (the clause of the stop, never a guess)", () => {
     expect(repliesShortfallAr({ ...base, stop: "budget" })).toContain("ميزانية القراءة");
@@ -28,7 +28,7 @@ describe("the sentence about the replies, from the replies stage's recorded stop
     for (const stop of ["source_exhausted", "budget", "failed", "time_limit", null] as const) {
       const t = repliesShortfallAr({ ...base, stop });
       expect(t).not.toMatch(/\d|[٠-٩]/);
-      expect(checkCustomerText(t).ok, t).toBe(true);
+      expect(checkCustomerText(t).issues, t).toEqual([]);
     }
   });
 });
