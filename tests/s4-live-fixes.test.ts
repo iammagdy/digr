@@ -76,3 +76,23 @@ describe("3. the comments sheet has the comment language, in Arabic", () => {
   });
 });
 
+
+import { languageOfTextAr } from "../src/lib/agentMission/languageLabel";
+import { countryToolsFor } from "../src/lib/agentMission/conditionTools";
+import { loadTregCatalog } from "../src/lib/treg/catalog";
+
+describe("the pure helpers", () => {
+  it("the language of a text by its script: Arabic, another language, or none (an emoji, a number)", () => {
+    expect(languageOfTextAr("ما شاء الله، كلام جميل جدا")).toBe("العربية");
+    expect(languageOfTextAr("great video, thanks")).toBe("لغة أخرى");
+    expect(languageOfTextAr("😂😂 ١٢٣")).toBe("غير محددة");
+    expect(languageOfTextAr("")).toBe("غير محددة");
+  });
+  it("the catalog's TikTok searches that take the country, cheapest first; the cheapest search that cannot is not among them", () => {
+    const catalog = loadTregCatalog();
+    const ids = countryToolsFor("anyapi.tiktok.search.videos", catalog, { isAllowed: () => true }).map((t) => t.id);
+    expect(ids[0]).toBe("tikhub.tiktok.search.videos");
+    expect(ids).not.toContain("anyapi.tiktok.search.videos");
+    expect(ids).not.toContain("crawl4ai.tiktok.search.videos");
+  });
+});

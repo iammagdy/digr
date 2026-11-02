@@ -319,3 +319,22 @@ Same test account and the exact request «هات فيديوهين تيك توك 
 4. **End to end, the exact request** (`tests/s3-all-comments-e2e.test.ts`, red first): `pipe_new = 1`, every stage `built_by: code`, replies stage present, no `chk_ex_*` exclusion, the two off-topic videos delivered, comments promised = the pinned videos' counters (132 + 66 = 198: 180 comments and 18 replies, not 800) and delivered = promised.
 
 Limits: a world of fakes (the catalog's schemas, not a live source); if no counter is known for any candidate video the plan still keeps the model's number and says so (unchanged from #333); a comments stage whose tool's required inputs are not the video's still has no recipe.
+
+---
+
+# Live test of 2026-11-02 10:26 Cairo after #334 (S4): `msn_7a35b44e35e6f3f1b8e9`
+
+Read-only SELECTs (Q39 the account's missions after 07:45 UTC, Q40 its calls, Q41 per-stage fields, Q42 non-progress events, Q43 plan notes, Q44 progress events). The new pipeline ran end to end (`pipe_new = 1`, every stage `built_by: code`); delivered 69 (2 videos, 67 comments, 0 replies), charged 203.
+
+| Question | Cause (V unless marked) |
+|---|---|
+| Both videos from Iraq | The planner's first search (`crawl4ai`) timed out (503); it then sampled only `anyapi.tiktok.search.videos`, which has NO country input (stage gap `country: no_field`, card line «لا يسمح بتحديد البلد»). The catalog has searches of the same capability with a country input (`tikhub.tiktok.search.videos`: `region`); the rule D7 («a tool that can express the condition wins, even if dearer») existed only in `docs/REDESIGN.md`: no code compared tools by the customer's country, so it depended on the model sampling the right one (the earlier 09:25 mission did, this one did not). |
+| 0 replies (20 planned) | No call of the replies tool was made at all (the call list holds only the comments calls, no reply call; no progress event of stage 3). The engine reads a comment's replies only when the comment's own counter says it has some (`ownChildCount`), and shares the replies by those counters. The plan's estimate (20) came from the PLANNING sample, read through `crawl4ai` (counters on 20 of 100 comments); the delivered comments were read through the promoted tool `anyapi.tiktok.video.comments` (#333's preference for a cursor). **GUESS:** every delivered comment carried the counter 0 (its stored value is in storage, not readable by SQL), so no comment was eligible. A source's counter is not the truth; the replies tool is. |
+| Comments sheet without the language | The model's comments columns had no language column and the `anyapi` comments page has no language field (its item fields: author, createdUtc, id, likes, replies, text); the new-pipeline language labels (#332) apply only to a language column that exists. |
+
+## S4 fixes (one PR, red test first, same flags): `tests/s4-live-fixes.test.ts` with the exact request
+1. **D7 in code** (`src/lib/agentMission/conditionTools.ts`, `agent/src/tools.ts`): a plan whose search tool has no country input while the customer named a country is sent back (at most twice) naming the catalog's tools that take it (cheapest first, price not a reason); the planner samples one with Egypt and proposes again. Test: the first plan on `anyapi` is refused naming `tikhub.tiktok.search.videos`/`region`; the accepted plan's tool has `region = EG`.
+2. **Replies for every comment** (`engine/run.ts`, `replies.ts`, `plan.ts` `replies_read_all`): when the request asked for replies and no delivered comment says it has any, every comment is read for its replies (each up to the cap per comment; the stage still stops at the approved number); priced as at least one call a comment. Test: a comments page whose counter is 0 everywhere, 9 replies exist: 90 reply calls, 9 delivered.
+3. **The comment language** (`workbook.ts`, `languageLabel.ts` `languageOfTextAr`, `tools.ts`): a code-built comments (and replies) sheet has «لغة التعليق»; the source's code is labelled in Arabic, else (empty or undetermined) the text's script decides by code: العربية / لغة أخرى / غير محددة. A mark; nothing is removed.
+
+Limits: the D7 send-back depends on the planner sampling the named tool after the refusal (bounded; after two refusals the plan stands and says it cannot name the country, as before); the blind replies reading costs one call (0.0009 USD) per comment, priced in the plan; the script-based language is a code rule, not a model, and is the fallback only.
