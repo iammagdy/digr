@@ -39,22 +39,32 @@ export interface S4Options {
   conditions?: boolean;
   /** S8: the stored videos of the 13:35 mission (AI-generated drama stories with #قصص_بالذكاء_الاصطناعي) come back for the plain topic search; the search with explainer and news wording also brings videos that talk ABOUT the topic. */
   topicStories?: boolean;
+  /** S9: the live mission of 14:19: two videos whose counters are far above 150 (400 and 380), 150 comments each in the source with reply counters that sum to 40 in all (20 comments each have one reply). */
+  live9?: boolean;
+  /** Runs after the customer read the card and before they approve (the plan editor). */
+  beforeApproval?: Parameters<typeof replay>[0]["beforeApproval"];
 }
+
+// S9: 150 comments per video, 20 of them with one reply: the reply counters of the 300 comments sum to 40
+const LIVE9_THREAD = Array.from({ length: 150 }, (_, k) => (k % 7 === 0 && k < 140 ? 1 : 0));
+export const LIVE9_COUNTERS = [400, 380, 12, 9];
 
 export const flagsOn = (d: never) => { const store = (d as { store: MemoryStore }).store; store.settings.redesign_flags = { social_posts: "test", social_account: "test", social_comments: "test" }; store.userEmails.set(REPLAY_USER, "iam.magdy+1@outlook.com"); return d; };
 
 export async function runS4(o: S4Options = {}) {
+  const counters = o.live9 ? LIVE9_COUNTERS : COUNTERS;
+  const commentsOf: Record<string, number[]> = o.live9 ? { ...COMMENTS_OF, [vid(0)]: LIVE9_THREAD, [vid(1)]: LIVE9_THREAD } : COMMENTS_OF;
   // the cheapest search returns videos of every country (the first two are Iraqi; one of the sample is Egyptian, so the card's promise is not refused for lack of evidence); the search with a region input returns Egyptian videos only
   const countryOf = (tool: "anyapi" | "tikhub", i: number) => (tool === "anyapi" ? (i < 2 ? "IQ" : "EG") : "EG");
   // the cheapest search: no country input, videos from Iraq
-  const anyapiPage = () => ({ output: { data: { videos: COUNTERS.map((n, i) => ({ id: vid(i), url: link(i), caption: `${TOPIC} فيديو ${i}`, authorName: `creator${i}`, createdUtc: 1788000000 + i, views: 1000 + i, likes: 50 + i, comments: n, shares: 3, saves: 1, country: countryOf("anyapi", i) })) } } });
+  const anyapiPage = () => ({ output: { data: { videos: counters.map((n, i) => ({ id: vid(i), url: link(i), caption: `${TOPIC} فيديو ${i}`, authorName: `creator${i}`, createdUtc: 1788000000 + i, views: 1000 + i, likes: 50 + i, comments: n, shares: 3, saves: 1, country: countryOf("anyapi", i) })) } } });
   // the search with a `region` input: the videos of that country
   type Item = { i: number; n: number; us?: boolean; text?: string };
-  const searchList = (sortType: unknown, keyword?: unknown): Item[] => (o.topicStories ? (String(keyword ?? "").includes("شرح") ? [...EXPLAINERS, ...STORIES.slice(0, 2)] : STORIES) : o.conditions ? (Number(sortType) === 1 ? ENGLISH : Number(sortType) === 2 ? NEWEST : RELEVANT) : o.sortAware && Number(sortType) !== 1 ? NEWEST : COUNTERS.map((n, i) => ({ i, n })));
+  const searchList = (sortType: unknown, keyword?: unknown): Item[] => (o.topicStories ? (String(keyword ?? "").includes("شرح") ? [...EXPLAINERS, ...STORIES.slice(0, 2)] : STORIES) : o.conditions ? (Number(sortType) === 1 ? ENGLISH : Number(sortType) === 2 ? NEWEST : RELEVANT) : o.sortAware && Number(sortType) !== 1 ? NEWEST : counters.map((n, i) => ({ i, n })));
   const tikhubPage = (sortType?: unknown, keyword?: unknown) => ({ data: { search_item_list: searchList(sortType, keyword).map(({ i, n, us, text }: Item) => ({ id: vid(i), url: link(i), caption: text ?? (us ? `AI cartoon video ${i}` : `${TOPIC} فيديو ${i}`), authorName: `creator${i}`, createdUtc: 1788000000 + i, views: 1000 + i, likes: 50 + i, comments: n, shares: 3, saves: 1, region: us ? "US" : countryOf("tikhub", i) })), cursor: 20, has_more: 0 } });
-  const commentsPage = (video: string) => ({ data: { comments: (COMMENTS_OF[video] ?? []).map((replies, k) => ({ cid: cid(video, k), text: `تعليق ${k} عن ${TOPIC}`, user: { nickname: `viewer${k}` }, create_time: 1788100000 + k, digg_count: 10 + k, reply_comment_total: o.zeroCounters ? 0 : replies, comment_language: "ar" })), cursor: (COMMENTS_OF[video] ?? []).length, has_more: 0 } });
+  const commentsPage = (video: string) => ({ data: { comments: (commentsOf[video] ?? []).map((replies, k) => ({ cid: cid(video, k), text: `تعليق ${k} عن ${TOPIC}`, user: { nickname: `viewer${k}` }, create_time: 1788100000 + k, digg_count: 10 + k, reply_comment_total: o.zeroCounters ? 0 : replies, comment_language: "ar" })), cursor: (commentsOf[video] ?? []).length, has_more: 0 } });
   const repliesPage = (commentId: string) => ({ output: { data: { comments: [{ id: `${commentId}-r0`, text: `رد على ${commentId}`, author: "replier", createdUtc: 1788200000, likes: 1 }], nextCursor: null } } });
-  const hasReply = (commentId: string): boolean => { const [v, k] = commentId.split("-c"); return (COMMENTS_OF[v] ?? [])[Number(k)] === 1; };
+  const hasReply = (commentId: string): boolean => { const [v, k] = commentId.split("-c"); return (commentsOf[v] ?? [])[Number(k)] === 1; };
   const dispatch = (c: { endpointId: string; params: unknown }) => {
     const p = c.params as Record<string, unknown>;
     if (c.endpointId === "tikhub.tiktok.video.comments") return tregResult(commentsPage(String(p.aweme_id)), 0.001);
@@ -66,7 +76,7 @@ export async function runS4(o: S4Options = {}) {
   const videoMap = (call: string, list: string, country: string) => `return inputs.${call}.${list}.map(v => ({ id: String(v.id), link: v.url, caption: v.caption || '', author: v.authorName, posted_at: new Date(v.createdUtc * 1000).toISOString(), views: v.views, likes: v.likes, comments_count: v.comments, shares: v.shares, country: v.${country} }))`;
   const commentsMap = `return inputs.call_0002.data.comments.map(r => ({ id: String(r.cid), text: r.text || '', author: r.user ? r.user.nickname : '', posted_at: new Date(r.create_time * 1000).toISOString(), likes: r.digg_count, replies_count: r.reply_comment_total${o.noLanguage ? "" : ", language: r.comment_language"} }))`;
   const videoColumns = [{ key: "link", title_ar: "رابط الفيديو" }, { key: "caption", title_ar: "وصف الفيديو" }, { key: "author", title_ar: "صاحب الفيديو" }, { key: "posted_at", title_ar: "تاريخ ووقت النشر" }, { key: "views", title_ar: "المشاهدات" }, { key: "likes", title_ar: "الإعجابات" }, { key: "comments_count", title_ar: "عدد التعليقات" }, { key: "shares", title_ar: "المشاركات" }, { key: "country", title_ar: "الدولة" }];
-  const sampleVideos = (country: string, list: Array<{ i: number; n: number; us?: boolean; text?: string }> = COUNTERS.map((n, i) => ({ i, n }))) => list.slice(0, 2).map(({ i, n, us, text }) => ({ id: vid(i), link: link(i), caption: text ?? (us ? `AI cartoon video ${i}` : `${TOPIC} فيديو ${i}`), author: `creator${i}`, posted_at: "2026-10-19T09:00:00Z", views: 1000 + i, likes: 50 + i, comments_count: n, shares: 3, country }));
+  const sampleVideos = (country: string, list: Array<{ i: number; n: number; us?: boolean; text?: string }> = counters.map((n, i) => ({ i, n }))) => list.slice(0, 2).map(({ i, n, us, text }) => ({ id: vid(i), link: link(i), caption: text ?? (us ? `AI cartoon video ${i}` : `${TOPIC} فيديو ${i}`), author: `creator${i}`, posted_at: "2026-10-19T09:00:00Z", views: 1000 + i, likes: 50 + i, comments_count: n, shares: 3, country }));
   const plan = (endpoint: string, measuredIndex: number, country: string, list?: Array<{ i: number; n: number; us?: boolean; text?: string }>) => (res: Results) => ({
     summary_ar: "ستحصل على فيديوهين من تيك توك عن الذكاء الاصطناعي من مصر، مع تعليقاتهما وردودها.",
     assumptions_ar: ["الأحدث أولًا"],
@@ -133,6 +143,7 @@ export async function runS4(o: S4Options = {}) {
     planning: steps,
     execution: () => [],
     deps: flagsOn as never,
+    ...(o.beforeApproval ? { beforeApproval: o.beforeApproval } : {}),
     answers: [tregResult(anyapiPage(), 0.0006), tregResult(commentsPage(vid(0)), 0.001), ...Array.from({ length: 600 }, () => dispatch)] as never,
   });
 }
