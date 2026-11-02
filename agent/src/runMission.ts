@@ -38,7 +38,7 @@ import { sealFinalPrice } from "../../src/lib/agentMission/finalPrice";
 import { accountIsTest, anyRedesignFlag, redesignStagesOf } from "./redesign";
 import { promiseShortfallAr, repliesShortfallAr } from "./repliesShortfall";
 import { TOPIC_OPTIONS_AR, topicMeaningOf, topicQuestionAr } from "../../src/lib/agentMission/topicMeaning";
-import { reportedPlan, withPromiseCaps } from "../../src/lib/agentMission/repliesCard";
+import { reportedPlan, withPromiseCaps, withRepliesJudged } from "../../src/lib/agentMission/repliesCard";
 import { runContactEnrichment } from "./engine/contacts";
 import { runNamesStep } from "./namesAr";
 
@@ -520,6 +520,12 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   plan = withPromiseCaps(plan);
   for (const s of plan.stages) rowsByStage[s.key] = snap.acceptedRows(s.key, s.planned_rows);
   plan = reportedPlan(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])));
+  // S9: replies that promised no number (all the replies of the chosen comments) are judged against the reply counters of the comments that were delivered; the estimate they were priced from stays only in the price
+  const openKeys = new Set(plan.stages.filter((s) => s.replies_open).map((s) => s.key));
+  const hadOpenReplies = openKeys.size > 0;
+  const openEstimate = plan.stages.filter((s) => openKeys.has(s.key)).reduce((n, s) => n + s.planned_rows, 0);
+  if (hadOpenReplies) plan = withRepliesJudged(plan, rowsByStage);
+  const openGap = openEstimate - plan.stages.filter((s) => openKeys.has(s.key)).reduce((n, s) => n + s.planned_rows, 0);
   const builtCount = plan.stages.filter((s) => s.deliver).reduce((n, s) => n + rowsByStage[s.key].length, 0);
   if (a.memory) for (const s of plan.stages) if (a.memory.counts(s.key).accepted !== snap.counts(s.key).accepted) flags.push("memory_differs_from_store");
 
@@ -585,7 +591,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   // THE REPLIES COME IN ADDITION (replies.ts): the customer's number counts the videos and the top-level comments; the replies are an estimate bought on top, so a delivery is complete or partial by the top-level rows alone (fewer replies than estimated is never a shortfall)
   const tl = topLevelFactsOf(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])));
   const deliveredTop = Math.max(0, delivered - tl.repliesDelivered);
-  const target = plan.price.deliveredRows - tl.repliesPlanned;
+  const target = plan.price.deliveredRows - tl.repliesPlanned - openGap;
   const requested = requestedRowsOf(plan) - tl.repliesPlanned;
   const internalStage = delivered <= 0 ? plan.stages.find((s) => snap.stage(s.key).stop === "internal_error") : undefined;
   if (internalStage) flags.push("engine_zero_ingest");
@@ -634,7 +640,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const unusableWords = checked.lastUnusable ? checked.lastUnusable.replace(/\s+/g, " ").slice(0, 120) : "";
   const adminFlag = flags.length > 0 ? `admin: ${[...new Set(flags)].join(", ")}${internalStage ? ` stage=${internalStage.key} source_rows=${snap.stage(internalStage.key).sourceRows}` : ""}${reviewFailedOurs ? ` pending=${checked.pending} review_failed_calls=${checked.failedCalls} unusable="${unusableWords}"` : ""}` : null;
   await store.updateMission(mission.id, {
-    status: ourFailure ? "failed" : delivered > 0 ? "completed" : "unserved", delivered_units: delivered, charged_points: settled.chargedPoints, summary_ar: summary || null, files: files.length ? files : null,
+    status: ourFailure ? "failed" : delivered > 0 ? "completed" : "unserved", delivered_units: delivered, ...(hadOpenReplies ? { plan_public: customerPlanView(plan) as any } : {}), charged_points: settled.chargedPoints, summary_ar: summary || null, files: files.length ? files : null,
     execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(a.executionTregUsd.toFixed(6)), error: ourFailure ? adminFlag : mismatch ?? a.outputError ?? adminFlag, ...clear,
   });
   if (internalStage) await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: أعطى المصدر عناصر ولم يُحفظ أي منها.", counts: { adm_flag: 1, adm_store: 0, adm_file: 0, adm_source_rows: snap.stage(internalStage.key).sourceRows } });
@@ -643,7 +649,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const stageRowsOf = (s: PricedPlan["stages"][number]): number => (s.deliver ? (fileByStage ? fileByStage[s.key] ?? 0 : plan.stages.filter((x) => x.deliver).length === 1 ? delivered : rowsByStage[s.key].length) : rowsByStage[s.key].length);
   await store.addEvent(mission.id, { kind: "result", message_ar: summary || (delivered > 0 ? "اكتملت المهمة." : "لم يُسلَّم أي شيء."), counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, stageRowsOf(s)])), ...parentCountsOf(plan, rowsByStage) } });
   const noticeKind: MissionNoticeKind = ourFailure ? "failed" : delivered <= 0 ? "unserved" : deliveredTop < requested ? "partial" : "completed";
-  await tell(deps, mission, jobId, noticeKind, { delivered, planned: deliveryDenominatorOf(deliveredTop, cardTotalOf(plan) - tl.repliesPlanned, requested) + tl.repliesDelivered, chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && deliveredTop < target ? { shortfallClauseAr: shortClause } : delivered > 0 && deliveredTop < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
+  await tell(deps, mission, jobId, noticeKind, { delivered, planned: deliveryDenominatorOf(deliveredTop, cardTotalOf(plan) - tl.repliesPlanned, requested) + (hadOpenReplies ? tl.repliesPlanned : tl.repliesDelivered), chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && deliveredTop < target ? { shortfallClauseAr: shortClause } : delivered > 0 && deliveredTop < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
 }
 
 /** What the customer is told when the source gave items and our own mapping stored none: it was OUR failure, never «nothing was found». No number: the money line says the rest. */

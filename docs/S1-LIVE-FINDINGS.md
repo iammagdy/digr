@@ -430,3 +430,17 @@ The search words were the bare topic (`keyword: «الذكاء الاصطناع�
 - **The question card** (`runMission.ts`): for an ambiguous request, before any source is read: «تقصد فيديوهات بتتكلم عن الذكاء الاصطناعي، ولا فيديوهات معمولة بيه؟» with two ready answers; the answer is read with the request and decides the meaning.
 
 Limits: the topics are the technologies a video can be made with (the AI family); other topics keep today's behaviour. The meaning words are a fixed list of Arabic phrases (a different dialect phrasing may read as ambiguous and be asked). If no sampled result discusses the topic, the highest-commented results are delivered and the card says so. The planner (a model) must write the asked query in its second sample; if it does not within the two samples the plan stands and the order alone prefers the videos that discuss the topic.
+
+---
+
+# Live test of 2026-11-02 ~14:19 Cairo after #339 (S9): the replies promise after an edit to 150 comments per video
+
+Data was right (2 videos about AI, Egypt, Arabic; 300 of 300 comments; the reply counters of the 300 comments sum to 40; 40 replies delivered). Only the numbers disagreed: the customer view said «تم تسليم ٣٤٢ من ٦٢٠» while the file summary said «٣٤٢ من ٣٤٢». (V from the owner's report; no new SELECT was needed.)
+
+## S9.1 Cause (V from the code)
+Any plan edit clears `promise_total` (S5), so the replies stage fell back to the sample's ESTIMATE (318 in the live plan) in `planned_rows`, and that number stood as a promise: the customer view reads the stored plan (`plan_public`, card total 2 + 300 + 318 = 620), while the notice and the file summary tell the replies against what was delivered (342). Same defect when the request itself names a number of comments per video below the counters (`completeCount.ts`, the «a number was asked» branch).
+
+## S9.2 Fix (one PR, same flags, red test first: `tests/s9-open-replies.test.ts`, the live mission's numbers as the world)
+- A replies stage whose comments are fewer than the counters of the chosen videos is **open** (`replies_open`, set by code in `planEdit.ts` and `completeCount.ts`): the card says «كل الردود على التعليقات المختارة» with no number and is not in the card's total; the estimate stays in `planned_rows` only as the maximum the price is made from.
+- After the delivery (`runMission.ts`, `repliesCard.ts` `withRepliesJudged`) the replies are judged against the reply counters of the DELIVERED comments (each up to the replies read per comment; never below what came): the stored customer plan is rewritten with that number, so the notice, the card and the file summary show the same numbers (300 comments, counters 40, 40 delivered: «تم تسليم ٣٤٢ من ٣٤٢»). Money is untouched: the charge is settled on the rows delivered; the `target` test still uses the priced estimate.
+Limits: no live proof (no paid calls); a comment whose counter says 0 but has replies is delivered (blind reading) and raises the judged number to what came, never above.

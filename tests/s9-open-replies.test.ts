@@ -67,8 +67,11 @@ describe("the live numbers: 300 comments, reply counters 40, 40 replies delivere
     summary.eachRow((row) => row.eachCell((c) => { if (typeof c.value === "string") texts.push(c.value); }));
     expect(texts.some((t) => t.includes("تم تسليم ٣٤٢ من ٣٤٢"))).toBe(true);
     expect(texts.some((t) => t.includes("٦٢٠"))).toBe(false);
-    // the replies row of the file summary says the real number too (not the estimate)
-    expect(summary.getRow(4).values).toBeDefined();
+    // the replies row of the file summary carries the real number (the 40 counted by the delivered comments), not the estimate the price was made from
+    const repliesRow: string[] = [];
+    summary.eachRow((row) => { if (String(row.getCell(1).value ?? "").startsWith("ردود")) row.eachCell((c) => repliesRow.push(String(c.value ?? ""))); });
+    expect(repliesRow.length).toBeGreaterThan(0);
+    expect(repliesRow.some((v) => v === "40" || v === "٤٠")).toBe(true);
   });
   it("the money is untouched: the charge is the rows delivered at the plan's unit price, never an estimate", async () => {
     const { r } = await world();

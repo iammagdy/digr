@@ -191,6 +191,8 @@ export interface PricedStage extends ProposedStage {
   replies_read_all?: boolean;
   /** S5: the promise for the comments AND the replies together (the chosen videos' counters). Both stages may be read up to it (the source gives no more than the counter in all); the card and the price carry the split. Cleared by a plan edit. */
   promise_total?: number;
+  /** S9: the replies of the chosen comments are ALL of them, with no number promised from an estimate (the comments per video are fewer than the video's counter). `planned_rows` is then only the estimate the price is made from, a maximum; after the delivery it is replaced by the reply counters of the delivered comments (repliesCard.ts `withRepliesJudged`). Set by code. */
+  replies_open?: boolean;
   /** The sampled comments' own reply counters (each capped at the most a comment may be read for) and the price of one call of the reply source: with them the replies planned and their price follow an edit of the comments' number or of the replies per comment, by code. */
   replies_sample_counts?: number[];
   replies_call_usd?: number;
@@ -888,6 +890,7 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
         key: s.key, title_ar: childCardTitleAr(s, plan.stages), expected_rows: s.planned_rows, parent_key: s.parent_key, deliver: s.deliver, columns,
         sample_rows: s.sample_rows.filter((r) => sampleRowPasses(s, r, now)).slice(0, CUSTOMER_SAMPLE_ROWS).map((r) => Object.fromEntries(columns.map((c) => [c.key, String(r[c.key] ?? "").slice(0, SAMPLE_CELL_CHARS)]))),
         ...(s.how_ar ? { how_ar: s.how_ar } : {}),
+        ...(s.replies_open ? { replies_open: true } : {}),
         // the share of the sampled items the plan expected to match (a ratio, no money): the live tracker uses it to judge how much must be read before the target is reached
         ...(typeof s.yield_share === "number" ? { yield_share: Math.round(s.yield_share * 1000) / 1000 } : {}),
       };
