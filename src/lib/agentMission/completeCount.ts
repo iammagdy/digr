@@ -37,6 +37,8 @@ export interface CompleteCountDeps {
   pageableAlternativeOf?: (child: PricedStage) => Promise<NonNullable<NonNullable<PricedStage["engine"]>["alternatives"]>[number] | null>;
   /** S5 (owner decision): the parents are chosen by their counters, the highest first (an order, never a filter); false: the source's own order stands (the customer asked for the newest or gave a date). */
   mostEngaged?: boolean;
+  /** S7: whether a row of the parent's listing matches the customer's country and language (null: the customer asked for neither). The most engaged are chosen among the matching results; the matching come first, then the others (an order, never a filter). */
+  matchesOf?: (parent: PricedStage) => Promise<((row: Record<string, unknown>) => boolean) | null>;
   pageSizeOf?: (child: PricedStage) => Promise<{ param: string; max: number } | null>;
 }
 
@@ -96,6 +98,16 @@ export function completeCountEstimate(candidates: ReadonlyArray<Candidate>, inpu
 }
 
 const n = (v: number): string => toArabicDigits(v);
+
+/** The split of a total promised for comments AND replies (a video's counter counts both): the replies are the sample's measured share of it (a silent sample: a stated quarter), at least 1 and never the whole total; the comments are the rest (S5, S7). */
+export function splitPromise(total: number, sampleCounts: ReadonlyArray<number> | undefined): { comments: number; replies: number } {
+  const counts = (sampleCounts ?? []).filter((v) => Number.isFinite(v) && v >= 0);
+  const mean = counts.length > 0 ? counts.reduce((a, b) => a + b, 0) / counts.length : 0;
+  const share = mean > 0 ? mean / (1 + mean) : AGENT_REPLIES_UNKNOWN_SHARE;
+  const t = Math.max(0, Math.floor(total));
+  const replies = t >= 2 ? Math.min(t - 1, Math.max(1, Math.round(t * share))) : 0;
+  return { comments: t - replies, replies };
+}
 export const completeCountNotesAr = (e: CompleteCountEstimate, parentTitle: string): string[] => {
   const out: string[] = [];
   const read = e.chosen.length - e.skipped;
@@ -147,7 +159,13 @@ export async function withCompleteCount(plan: PricedPlan, deps: CompleteCountDep
     const listed = await deps.candidatesOf(parent);
     if (!listed || listed.length === 0 || listed.every((c) => c.counter === null)) continue;
     // THE MOST ENGAGED FIRST (S5): the highest counters in front; equal counters keep the source's order, a parent with no counter goes last. An order, never a filter.
-    const candidates = deps.mostEngaged ? listed.map((c, i) => ({ c, i })).sort((a, b) => (b.c.counter ?? -1) - (a.c.counter ?? -1) || a.i - b.i).map((x) => x.c) : listed;
+    const match = deps.matchesOf ? await deps.matchesOf(parent) : null;
+    const fits = (c: Candidate): boolean => match === null || (c.row !== undefined && match(c.row));
+    const candidates = deps.mostEngaged ? listed.map((c, i) => ({ c, i })).sort((a, b) => Number(fits(b.c)) - Number(fits(a.c)) || (b.c.counter ?? -1) - (a.c.counter ?? -1) || a.i - b.i).map((x) => x.c) : listed;
+    // THE CARD SAYS HOW THE VIDEOS WERE CHOSEN (S7): the most commented among the results that match the customer's country and language, and how many matched when fewer than needed
+    const matching = match === null ? listed.length : listed.filter(fits).length;
+    const needed = Math.max(1, parent.planned_rows);
+    const chosenNote = deps.mostEngaged && match !== null ? [matching >= needed ? `اخترنا الأعلى تعليقًا من بين النتائج المطابقة لبلدك ولغتك.` : `وجدنا ${n(matching)} من ${n(listed.length)} نتيجة مطابقة لبلدك ولغتك؛ قدّمنا المطابقة، ثم الأعلى تعليقًا لإكمال العدد.`] : [];
     const perAsked = Number(stage.per_parent_rows);
     const perParent = all || !Number.isFinite(perAsked) || perAsked < 1 ? Number.POSITIVE_INFINITY : Math.floor(perAsked);
     let pageCap = deps.pageCapOf ? await deps.pageCapOf(stage) : null;
@@ -191,7 +209,7 @@ export async function withCompleteCount(plan: PricedPlan, deps: CompleteCountDep
       if (requested === null) {
         // «all»: comments + replies = the counters of the chosen parents
         const total = e.total;
-        const replies = total >= 2 ? Math.min(total - 1, Math.max(1, Math.round(total * share))) : 0;
+        const replies = splitPromise(total, repliesStage.replies_sample_counts).replies;
         if (replies >= 1) { repliesFromSample = { rows: replies }; promiseTotal = total; e = { ...e, total: total - replies }; }
       } else {
         // a number was asked for the comments: the replies are what the sample says for them, and never above what is left of the counters
@@ -229,7 +247,7 @@ export async function withCompleteCount(plan: PricedPlan, deps: CompleteCountDep
     const price = priceMissionByCode(stagePriceInputs(stages, out.contact_steps), { settings: out.price.settings });
     if (price.overCap) { if (!(out.notes_ar ?? []).includes(NOTE_CAP_AR)) out = { ...out, notes_ar: [...(out.notes_ar ?? []), NOTE_CAP_AR] }; continue; }
     const notes = share === null ? completeCountNotesAr(e, parent.title_ar) : repliesBasisNotesAr(e, parent.title_ar, repliesPlanned);
-    out = { ...out, stages, price, notes_ar: [...(out.notes_ar ?? []).filter((x) => !notes.includes(x)), ...notes] };
+    out = { ...out, stages, price, notes_ar: [...(out.notes_ar ?? []).filter((x) => !notes.includes(x) && !chosenNote.includes(x)), ...chosenNote, ...notes] };
   }
   return out;
 }

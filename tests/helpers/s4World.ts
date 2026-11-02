@@ -16,7 +16,7 @@ export const COUNTERS = [66, 33, 12, 9];
 /** The newest results (the model's own sort in the live test): brand-new videos with 5 and 1 comments (counters 5 and 1). */
 export const NEWEST = [{ i: 4, n: 5 }, { i: 5, n: 1 }];
 /** S7: global English videos the most-liked order returns, and the Egyptian Arabic results of the default order (not sorted by comments). */
-export const ENGLISH = [{ i: 10, n: 3553, us: true }, { i: 11, n: 1560, us: true }, { i: 12, n: 900, us: true }, { i: 13, n: 700, us: true }];
+export const ENGLISH = [{ i: 10, n: 3553, us: true }, { i: 11, n: 1560, us: true }, { i: 12, n: 900, us: true }, { i: 13, n: 700, us: true }, { i: 14, n: 20 }];
 export const RELEVANT = [{ i: 2, n: 12 }, { i: 0, n: 66 }, { i: 3, n: 9 }, { i: 1, n: 33 }];
 export const COMMENTS_OF: Record<string, number[]> = { [vid(0)]: thread(60), [vid(1)]: thread(30), [vid(2)]: thread(10), [vid(3)]: thread(8), [vid(4)]: [1, 0, 0, 0], [vid(5)]: [0] };
 const link = (i: number) => `https://www.tiktok.com/@creator${i}/video/${vid(i)}`;
@@ -82,17 +82,14 @@ export async function runS4(o: S4Options = {}) {
     { tool: "treg_call", args: { endpoint_id: "tikhub.tiktok.video.comments", params: { aweme_id: vid(0), count: 20 }, why } },
     { tool: "run_code", args: (r: Results) => ({ code: commentsMap.replace("call_0002", callIds(r)[1]), files: [callIds(r)[1]] }) },
     ...(o.conditions ? [
-      // S7: newest, then most liked (global English videos), then the default order (Egyptian Arabic ones); each proposal is judged by the code
+      // S7: the default order (Egyptian Arabic results), then the most-liked order the code asks for (global English videos): the planning budget allows these two samples of the source; the plan cites both
       { tool: "describe_endpoint", args: { id: "tikhub.tiktok.search.videos" } },
-      { tool: "treg_call", args: { endpoint_id: "tikhub.tiktok.search.videos", params: { keyword: TOPIC, region: "EG", count: 20, sort_type: 2 }, why } },
+      { tool: "treg_call", args: { endpoint_id: "tikhub.tiktok.search.videos", params: { keyword: TOPIC, region: "EG", count: 20, sort_type: 0 }, why } },
       { tool: "run_code", args: (r: Results) => ({ code: videoMap(callIds(r)[2], "data.search_item_list", "region"), files: [callIds(r)[2]] }) },
-      { tool: "propose_plan", args: plan("tikhub.tiktok.search.videos", 2, "EG", NEWEST) },
+      { tool: "propose_plan", args: plan("tikhub.tiktok.search.videos", 2, "EG", RELEVANT) },
       { tool: "treg_call", args: { endpoint_id: "tikhub.tiktok.search.videos", params: { keyword: TOPIC, region: "EG", count: 20, sort_type: 1 }, why } },
       { tool: "run_code", args: (r: Results) => ({ code: videoMap(callIds(r)[3], "data.search_item_list", "region"), files: [callIds(r)[3]] }) },
-      { tool: "propose_plan", args: plan("tikhub.tiktok.search.videos", 3, "US", ENGLISH) },
-      { tool: "treg_call", args: { endpoint_id: "tikhub.tiktok.search.videos", params: { keyword: TOPIC, region: "EG", count: 20, sort_type: 0 }, why } },
-      { tool: "run_code", args: (r: Results) => ({ code: videoMap(callIds(r)[4], "data.search_item_list", "region"), files: [callIds(r)[4]] }) },
-      { tool: "propose_plan", args: plan("tikhub.tiktok.search.videos", 4, "EG", RELEVANT) },
+      { tool: "propose_plan", args: (r: Results) => { const p = plan("tikhub.tiktok.search.videos", 3, "US", ENGLISH)(r) as { stages: Array<{ measured_by: string[] }> }; p.stages[0].measured_by = [callIds(r)[2], callIds(r)[3]]; return p; } },
     ] as FakeStep[] : o.sortAware ? [
       // S5: the model samples the search with the country and ITS OWN sort (newest), as in the live test; the plan is refused (most engaged is the default for comments); it samples the most-liked sort and proposes again
       { tool: "describe_endpoint", args: { id: "tikhub.tiktok.search.videos" } },

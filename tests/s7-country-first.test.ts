@@ -3,7 +3,8 @@ import type { MemoryStore } from "../agent/src/memoryStore";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { runS4, ENGLISH, RELEVANT } from "./helpers/s4World";
 import { vid } from "./helpers/g4RepliesWorld";
-import { stagePriceInputs, type PricedPlan, type PricedStage, type StageFilter } from "../src/lib/agentMission/plan";
+import { stagePriceInputs, type PricedPlan, type PricedStage } from "../src/lib/agentMission/plan";
+import type { StageFilter } from "../src/lib/agentMission/filters";
 import { priceMissionByCode } from "../src/lib/agentMission/price";
 import { isRepliesStage, withRepliesStages } from "../src/lib/agentMission/replies";
 import { withCompleteCount } from "../src/lib/agentMission/completeCount";
@@ -80,23 +81,24 @@ const callsOf = (r: Awaited<ReturnType<typeof runS4>>) => (r.call.mock.calls as 
 
 describe("the exact request: the chosen tool receives Egypt, the videos are ordered by comments within the matching results", () => {
   const run = () => runS4({ conditions: true });
-  it("the plan on the most-liked sample (global English videos) is refused; the search is read again in its default order, with Egypt, and the plan is accepted", async () => {
+  it("the planner reads the search in its default order, then (as the most-engaged rule asks) in the most-liked order: every call carries Egypt, and the plan is accepted with both samples (the planning budget allows two)", async () => {
     const r = await run();
-    const proposals = r.planningDriver.results.filter((x) => x.tool === "propose_plan");
-    const verdicts = proposals.map((p) => p.result.ok);
-    expect(verdicts.slice(-1)).toEqual([true]);
-    expect(proposals.some((p) => JSON.stringify(p.result).includes("country") && JSON.stringify(p.result).includes("language"))).toBe(true);
     const search = callsOf(r).filter((c) => c.endpointId === "tikhub.tiktok.search.videos");
-    expect(search.length).toBeGreaterThanOrEqual(3);
+    expect(search.map((c) => c.params.sort_type)).toEqual([0, 1]);
     expect(search.every((c) => c.params.region === "EG")).toBe(true);
+    expect(r.planningDriver.results.filter((x) => x.tool === "propose_plan").slice(-1)[0].result.ok).toBe(true);
   });
-  it("the chosen tool has the country field and carries Egypt; the videos are the two highest-commented of the matching results (66 and 33), never the English ones", async () => {
+  it("the chosen tool has the country field and carries Egypt; the videos are the two highest-commented of the MATCHING results (66 and 33), never the global English ones (3,553 and 1,560)", async () => {
     const r = await run();
     const videos = r.plannedPlan.stages[0];
     expect(videos.engine!.endpoint_id).toBe("tikhub.tiktok.search.videos");
     expect(videos.engine!.params.region).toBe("EG");
     expect(r.plannedPlan.stages.find((s) => s.key === "comments")!.parent_pins).toEqual([vid(0), vid(1)]);
     expect(ENGLISH.length + RELEVANT.length).toBeGreaterThan(0);
+  });
+  it("the card says how they were chosen (the most commented among the results that match Egypt and Arabic)", async () => {
+    const r = await run();
+    expect(((r.planView.notesAr ?? []) as string[]).join(" ")).toContain("المطابقة");
   });
   it("comments + replies = the counters of those videos (66 + 33), delivered == promised", async () => {
     const r = await run();
