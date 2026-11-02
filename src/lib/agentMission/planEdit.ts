@@ -8,6 +8,8 @@ import { priceMissionByCode } from "./price";
 import { classifyRows } from "./relevance";
 import { countedQuantities } from "./quantity";
 import { repliesEstimateFor } from "./replies";
+import { childCountOf } from "./childCount";
+import { splitPromise } from "./completeCount";
 
 /**
  * THE CUSTOMER EDITS THE PLAN ITSELF (the card's «عدّل الخطة»), without cancelling and retyping: the number of items, the period, the language, each exclusion the card shows (replies, reposts, accounts, places) on or off, and the main
@@ -20,7 +22,7 @@ export interface PlanEdits {
   stages?: Array<{
     key: string;
     /** For a stage that hangs on another (the people of each company): how many items per item of the parent. */
-    per_parent?: number;
+    per_parent?: number | "all";
     /** For a people stage read in depth: how many pages of the source are read for each parent (lower = cheaper). */
     pages?: number;
     /** For the COMMENTS stage: whether the replies of its comments are delivered too (off: the replies stage leaves the plan and the price falls to the comments' own; on: it comes back). */
@@ -133,6 +135,7 @@ export function applyPlanEdits(planIn: PricedPlan, editsIn: unknown, ctx: EditCo
   // 2. THE COLUMNS AND THE FILTERS of each stage named in the edit (a filter whose value the customer changed makes the model's sentence about it stale: it is replaced by the code's own)
   const changedKinds = new Set<FilterKind>();
   let perEdited = false;
+  const allEdited = new Set<string>();
   const repliesPer = new Map<string, number>();
   const stageEdits = Array.isArray(editsIn.stages) ? editsIn.stages : [];
   for (const e of stageEdits) {
@@ -165,10 +168,35 @@ export function applyPlanEdits(planIn: PricedPlan, editsIn: unknown, ctx: EditCo
     }
     if (e.per_parent !== undefined) {
       // THE COUNT PER ITEM OF THE PARENT («صناع القرار» of each company): a whole number from 1; the stage's rows follow (parent rows x count) and the plan is priced again below
-      const per = Number(e.per_parent);
       const parent = stage.parent_key === null ? undefined : plan.stages.find((s) => s.key === stage.parent_key);
       if (!parent) return fail("هذا العدد خاص بالمراحل التابعة لمرحلة أخرى.");
-      if (!Number.isInteger(per) || per < 1 || per > 100) return fail(`العدد لكل ${itemNounOf(parent.title_ar).singular} لازم يكون رقمًا صحيحًا من ${toArabicDigits(1)} إلى ${toArabicDigits(100)}.`);
+      // THE REAL COUNTERS OF THE CHOSEN PARENTS (S7): the plan keeps the rows of the parents it chose (`pinned_rows`), with their own comment counters; «all» and any number up to the largest counter are allowed (the limit of 100 contradicted «all comments»)
+      const counters = (parent.pinned_rows ?? []).map((r) => childCountOf(r)).filter((c): c is number => c !== null && c > 0);
+      const largest = counters.length > 0 ? Math.max(...counters) : 0;
+      if (e.per_parent === "all") {
+        if (counters.length === 0) return fail("لا نعرف عدّاد التعليقات لكل فيديو في هذه الخطة، فاكتب العدد المطلوب لكل فيديو.");
+        const total = counters.reduce((a, b) => a + b, 0);
+        const repliesStage = plan.stages.find((x) => x.replies_of === stage.key);
+        const split = repliesStage ? splitPromise(total, repliesStage.replies_sample_counts) : { comments: total, replies: 0 };
+        stage.per_parent_rows = largest;
+        stage.planned_rows = split.comments;
+        stage.expected_rows = split.comments;
+        stage.all_children = true;
+        if (repliesStage && split.replies > 0) {
+          const est = repliesEstimateFor(repliesStage, split.comments, repliesStage.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_DEFAULT, 0);
+          repliesStage.planned_rows = split.replies;
+          repliesStage.expected_rows = split.replies;
+          repliesStage.measured_cost_per_row_usd = est.costPerRowUsd * (est.rows / split.replies);
+          repliesStage.promise_total = total;
+          stage.promise_total = total;
+        }
+        plan.assumptions_ar = [...(plan.assumptions_ar ?? []).filter((a) => !a.startsWith("اعتمدنا")), "اعتمدنا كل التعليقات على كل فيديو حسب تعديلك."];
+        allEdited.add(stage.key);
+        continue;
+      }
+      const per = Number(e.per_parent);
+      const cap = Math.max(100, largest);
+      if (!Number.isInteger(per) || per < 1 || per > cap) return fail(`العدد لكل ${itemNounOf(parent.title_ar).singular} لازم يكون رقمًا صحيحًا من ${toArabicDigits(1)} إلى ${toArabicDigits(cap)}${largest > 100 ? "، أو اكتب «كل»" : ""}.`);
       const perBefore = stage.per_parent_rows ?? per;
       stage.per_parent_rows = per;
       restatePerParent(plan, stage, perBefore, per);
@@ -244,6 +272,8 @@ export function applyPlanEdits(planIn: PricedPlan, editsIn: unknown, ctx: EditCo
   for (const r of plan.stages.filter((x) => x.replies_of !== undefined)) {
     const comments = plan.stages.find((x) => x.key === r.replies_of);
     if (!comments) continue;
+    // «all»: comments + replies are the counters (promise_total), already split by code: not estimated again on top (S7)
+    if (r.promise_total !== undefined && comments.promise_total !== undefined) { r.title_ar = `ردود ${comments.title_ar}`; continue; }
     const elsewhere = plan.stages.filter((x) => x.deliver && x.key !== r.key).reduce((n, x) => n + x.planned_rows, 0);
     const per = repliesPer.get(comments.key) ?? r.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_DEFAULT;
     const est = repliesEstimateFor(r, comments.planned_rows, per, elsewhere);

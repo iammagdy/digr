@@ -15,6 +15,9 @@ const thread = (n: number) => Array.from({ length: n }, (_, k) => (k % 10 === 0 
 export const COUNTERS = [66, 33, 12, 9];
 /** The newest results (the model's own sort in the live test): brand-new videos with 5 and 1 comments (counters 5 and 1). */
 export const NEWEST = [{ i: 4, n: 5 }, { i: 5, n: 1 }];
+/** S7: global English videos the most-liked order returns, and the Egyptian Arabic results of the default order (not sorted by comments). */
+export const ENGLISH = [{ i: 10, n: 3553, us: true }, { i: 11, n: 1560, us: true }, { i: 12, n: 900, us: true }, { i: 13, n: 700, us: true }, { i: 14, n: 20 }];
+export const RELEVANT = [{ i: 2, n: 12 }, { i: 0, n: 66 }, { i: 3, n: 9 }, { i: 1, n: 33 }];
 export const COMMENTS_OF: Record<string, number[]> = { [vid(0)]: thread(60), [vid(1)]: thread(30), [vid(2)]: thread(10), [vid(3)]: thread(8), [vid(4)]: [1, 0, 0, 0], [vid(5)]: [0] };
 const link = (i: number) => `https://www.tiktok.com/@creator${i}/video/${vid(i)}`;
 
@@ -25,6 +28,8 @@ export interface S4Options {
   noLanguage?: boolean;
   /** S5: the search returns the most-liked videos for sort_type 1 and the newest (counters 5 and 1) otherwise; the planner first samples the newest, as in the live test. */
   sortAware?: boolean;
+  /** S7: the live test of 13:06: the most-liked order of the search gives global English videos (counters 3,553 and 1,560) whatever the region input says; the default order gives the Egyptian Arabic ones (counters 12, 66, 9, 33 in that order). */
+  conditions?: boolean;
 }
 
 export const flagsOn = (d: never) => { const store = (d as { store: MemoryStore }).store; store.settings.redesign_flags = { social_posts: "test", social_account: "test", social_comments: "test" }; store.userEmails.set(REPLAY_USER, "iam.magdy+1@outlook.com"); return d; };
@@ -35,8 +40,9 @@ export async function runS4(o: S4Options = {}) {
   // the cheapest search: no country input, videos from Iraq
   const anyapiPage = () => ({ output: { data: { videos: COUNTERS.map((n, i) => ({ id: vid(i), url: link(i), caption: `${TOPIC} فيديو ${i}`, authorName: `creator${i}`, createdUtc: 1788000000 + i, views: 1000 + i, likes: 50 + i, comments: n, shares: 3, saves: 1, country: countryOf("anyapi", i) })) } } });
   // the search with a `region` input: the videos of that country
-  const searchList = (sortType: unknown): Array<{ i: number; n: number }> => (o.sortAware && Number(sortType) !== 1 ? NEWEST : COUNTERS.map((n, i) => ({ i, n })));
-  const tikhubPage = (sortType?: unknown) => ({ data: { search_item_list: searchList(sortType).map(({ i, n }) => ({ id: vid(i), url: link(i), caption: `${TOPIC} فيديو ${i}`, authorName: `creator${i}`, createdUtc: 1788000000 + i, views: 1000 + i, likes: 50 + i, comments: n, shares: 3, saves: 1, region: countryOf("tikhub", i) })), cursor: 20, has_more: 0 } });
+  type Item = { i: number; n: number; us?: boolean };
+  const searchList = (sortType: unknown): Item[] => (o.conditions ? (Number(sortType) === 1 ? ENGLISH : Number(sortType) === 2 ? NEWEST : RELEVANT) : o.sortAware && Number(sortType) !== 1 ? NEWEST : COUNTERS.map((n, i) => ({ i, n })));
+  const tikhubPage = (sortType?: unknown) => ({ data: { search_item_list: searchList(sortType).map(({ i, n, us }: Item) => ({ id: vid(i), url: link(i), caption: us ? `AI cartoon video ${i}` : `${TOPIC} فيديو ${i}`, authorName: `creator${i}`, createdUtc: 1788000000 + i, views: 1000 + i, likes: 50 + i, comments: n, shares: 3, saves: 1, region: us ? "US" : countryOf("tikhub", i) })), cursor: 20, has_more: 0 } });
   const commentsPage = (video: string) => ({ data: { comments: (COMMENTS_OF[video] ?? []).map((replies, k) => ({ cid: cid(video, k), text: `تعليق ${k} عن ${TOPIC}`, user: { nickname: `viewer${k}` }, create_time: 1788100000 + k, digg_count: 10 + k, reply_comment_total: o.zeroCounters ? 0 : replies, comment_language: "ar" })), cursor: (COMMENTS_OF[video] ?? []).length, has_more: 0 } });
   const repliesPage = (commentId: string) => ({ output: { data: { comments: [{ id: `${commentId}-r0`, text: `رد على ${commentId}`, author: "replier", createdUtc: 1788200000, likes: 1 }], nextCursor: null } } });
   const hasReply = (commentId: string): boolean => { const [v, k] = commentId.split("-c"); return (COMMENTS_OF[v] ?? [])[Number(k)] === 1; };
@@ -51,8 +57,8 @@ export async function runS4(o: S4Options = {}) {
   const videoMap = (call: string, list: string, country: string) => `return inputs.${call}.${list}.map(v => ({ id: String(v.id), link: v.url, caption: v.caption || '', author: v.authorName, posted_at: new Date(v.createdUtc * 1000).toISOString(), views: v.views, likes: v.likes, comments_count: v.comments, shares: v.shares, country: v.${country} }))`;
   const commentsMap = `return inputs.call_0002.data.comments.map(r => ({ id: String(r.cid), text: r.text || '', author: r.user ? r.user.nickname : '', posted_at: new Date(r.create_time * 1000).toISOString(), likes: r.digg_count, replies_count: r.reply_comment_total${o.noLanguage ? "" : ", language: r.comment_language"} }))`;
   const videoColumns = [{ key: "link", title_ar: "رابط الفيديو" }, { key: "caption", title_ar: "وصف الفيديو" }, { key: "author", title_ar: "صاحب الفيديو" }, { key: "posted_at", title_ar: "تاريخ ووقت النشر" }, { key: "views", title_ar: "المشاهدات" }, { key: "likes", title_ar: "الإعجابات" }, { key: "comments_count", title_ar: "عدد التعليقات" }, { key: "shares", title_ar: "المشاركات" }, { key: "country", title_ar: "الدولة" }];
-  const sampleVideos = (country: string, list: Array<{ i: number; n: number }> = COUNTERS.map((n, i) => ({ i, n }))) => list.slice(0, 2).map(({ i, n }) => ({ id: vid(i), link: link(i), caption: `${TOPIC} فيديو ${i}`, author: `creator${i}`, posted_at: "2026-10-19T09:00:00Z", views: 1000 + i, likes: 50 + i, comments_count: n, shares: 3, country }));
-  const plan = (endpoint: string, measuredIndex: number, country: string, list?: Array<{ i: number; n: number }>) => (res: Results) => ({
+  const sampleVideos = (country: string, list: Array<{ i: number; n: number; us?: boolean }> = COUNTERS.map((n, i) => ({ i, n }))) => list.slice(0, 2).map(({ i, n, us }) => ({ id: vid(i), link: link(i), caption: us ? `AI cartoon video ${i}` : `${TOPIC} فيديو ${i}`, author: `creator${i}`, posted_at: "2026-10-19T09:00:00Z", views: 1000 + i, likes: 50 + i, comments_count: n, shares: 3, country }));
+  const plan = (endpoint: string, measuredIndex: number, country: string, list?: Array<{ i: number; n: number; us?: boolean }>) => (res: Results) => ({
     summary_ar: "ستحصل على فيديوهين من تيك توك عن الذكاء الاصطناعي من مصر، مع تعليقاتهما وردودها.",
     assumptions_ar: ["الأحدث أولًا"],
     stages: [
@@ -75,7 +81,16 @@ export async function runS4(o: S4Options = {}) {
     { tool: "describe_endpoint", args: { id: "tikhub.tiktok.video.comments" } },
     { tool: "treg_call", args: { endpoint_id: "tikhub.tiktok.video.comments", params: { aweme_id: vid(0), count: 20 }, why } },
     { tool: "run_code", args: (r: Results) => ({ code: commentsMap.replace("call_0002", callIds(r)[1]), files: [callIds(r)[1]] }) },
-    ...(o.sortAware ? [
+    ...(o.conditions ? [
+      // S7: the default order (Egyptian Arabic results), then the most-liked order the code asks for (global English videos): the planning budget allows these two samples of the source; the plan cites both
+      { tool: "describe_endpoint", args: { id: "tikhub.tiktok.search.videos" } },
+      { tool: "treg_call", args: { endpoint_id: "tikhub.tiktok.search.videos", params: { keyword: TOPIC, region: "EG", count: 20, sort_type: 0 }, why } },
+      { tool: "run_code", args: (r: Results) => ({ code: videoMap(callIds(r)[2], "data.search_item_list", "region"), files: [callIds(r)[2]] }) },
+      { tool: "propose_plan", args: plan("tikhub.tiktok.search.videos", 2, "EG", RELEVANT) },
+      { tool: "treg_call", args: { endpoint_id: "tikhub.tiktok.search.videos", params: { keyword: TOPIC, region: "EG", count: 20, sort_type: 1 }, why } },
+      { tool: "run_code", args: (r: Results) => ({ code: videoMap(callIds(r)[3], "data.search_item_list", "region"), files: [callIds(r)[3]] }) },
+      { tool: "propose_plan", args: (r: Results) => { const p = plan("tikhub.tiktok.search.videos", 3, "US", ENGLISH)(r) as { stages: Array<{ measured_by: string[] }> }; p.stages[0].measured_by = [callIds(r)[2], callIds(r)[3]]; return p; } },
+    ] as FakeStep[] : o.sortAware ? [
       // S5: the model samples the search with the country and ITS OWN sort (newest), as in the live test; the plan is refused (most engaged is the default for comments); it samples the most-liked sort and proposes again
       { tool: "describe_endpoint", args: { id: "tikhub.tiktok.search.videos" } },
       { tool: "treg_call", args: { endpoint_id: "tikhub.tiktok.search.videos", params: { keyword: TOPIC, region: "EG", count: 20, sort_type: 2 }, why } },

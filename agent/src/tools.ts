@@ -43,6 +43,7 @@ import { withCompleteCount } from "../../src/lib/agentMission/completeCount";
 import { redesignTypeOf } from "../../src/lib/agentMission/redesignFlags";
 import { pageCapOfSource, pageLimitOf } from "../../src/lib/agentMission/pageLimit";
 import { isLanguageColumn, textColumnKeyOf } from "../../src/lib/agentMission/languageLabel";
+import { conditionsAsked, matchesCustomerConditions } from "../../src/lib/agentMission/customerConditions";
 import { engagedDefault } from "../../src/lib/agentMission/engaged";
 import { toolProfile } from "../../src/lib/agentMission/toolProfile";
 import { countryToolsFor } from "../../src/lib/agentMission/conditionTools";
@@ -673,7 +674,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         }
         // THE MODEL PLANS, CODE EXECUTES: what code needs to carry each stage out without the model is derived from what the agent really did and proven on the measured page (a stage that cannot be proven has no recipe)
         // THE DEFAULT FOR A COMMENTS REQUEST IS THE MOST ENGAGED VIDEOS (S5, owner decision), unless the customer asked for the newest or gave a date: the search tool's most-liked order, else the highest counters among the results (an order, never a filter)
-        const engaged = socialRedesignActive(ctx) && engagedDefault(`${mission.request_text} ${mission.answer_text ?? ""}`, stagesIn.map((st) => ({ key: String(st?.key ?? ""), parent_key: st?.parent_key ?? null, ...(Array.isArray(st?.filters) ? { filters: st.filters } : {}) })));
+        const engagedOrder = socialRedesignActive(ctx) && engagedDefault(`${mission.request_text} ${mission.answer_text ?? ""}`, stagesIn.map((st) => ({ key: String(st?.key ?? ""), parent_key: st?.parent_key ?? null, ...(Array.isArray(st?.filters) ? { filters: st.filters } : {}) })));
+        const engaged = engagedOrder;
         let derived: Awaited<ReturnType<typeof deriveEngineSpecsChecked>> | null = null;
         try {
           derived = await deriveEngineSpecsChecked(checked.plan, { store, missionId: mission.id, catalog: ctx.catalog, calls, codeRuns: state.codeRuns, callParams: state.callParams, sandbox: runSandbox, ...(socialRedesignActive(ctx) ? { codeBuild: { nowMs: ctx.now ?? Date.now(), engaged } } : {}) });
@@ -723,9 +725,12 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             const sort = endpoint ? toolProfile(endpoint).sort : null;
             const liked = sort?.options?.find((o) => o.kind === "liked");
             if (!sort || !liked || !checked.plan.stages.some((x) => x.parent_key === st.key && x.replies_of === undefined)) continue;
-            const measured = st.measured_by.map((id) => calls.find((c) => c.id === `${mission.id}:${id}`)).find((c) => c?.endpoint_id === st.endpoint_id && c.status === "ok");
+            // the stage may cite several samples of the source: the most-liked order is asked once, so ANY sample read in it satisfies the rule
+            const measuredCalls = st.measured_by.map((id) => calls.find((c) => c.id === `${mission.id}:${id}`)).filter((c) => c?.endpoint_id === st.endpoint_id && c.status === "ok");
+            const measured = measuredCalls[0];
             const used = (measured?.params_digest as Record<string, unknown> | undefined)?.[sort.field];
-            if (measured && used !== undefined && String(used) !== String(liked.value)) lines.push(`stage «${st.key}»: this is a request for comments, and unless the customer asks for the newest or gives a date the videos are the MOST ENGAGED ones. ${st.endpoint_id} has the order «most liked» in its input ${sort.field} (value ${liked.value}), and the sample was read with ${sort.field} = ${String(used)}. Sample the same search ONCE more with ${sort.field} = ${liked.value} (keep the country and the topic), map the same columns on its page, and propose the plan again on that sample`);
+            const anyLiked = measuredCalls.some((c) => String((c!.params_digest as Record<string, unknown> | undefined)?.[sort.field]) === String(liked.value));
+            if (measured && !anyLiked && used !== undefined && String(used) !== String(liked.value)) lines.push(`stage «${st.key}»: this is a request for comments, and unless the customer asks for the newest or gives a date the videos are the MOST ENGAGED ones. ${st.endpoint_id} has the order «most liked» in its input ${sort.field} (value ${liked.value}), and the sample was read with ${sort.field} = ${String(used)}. Sample the same search ONCE more with ${sort.field} = ${liked.value} (keep the country and the topic), map the same columns on its page, and propose the plan again on that sample`);
           }
           if (lines.length > 0) { state.sortSendBacks += 1; return err("the plan was not accepted yet; fix this and propose again", { issues: lines }); }
         }
@@ -798,8 +803,24 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
               candidatesOf: async (parentStage) => {
                 const sp = parentStage.engine;
                 if (!sp) return null;
+                // EVERY SAMPLED PAGE OF THE PARENT'S SOURCE is a listing the videos may be chosen from (S7: the planning budget allows two samples of one source, and the second one read in the most-liked order may hold results of other countries and languages: the customer's country
+                // and language come first, so the results of the first sample count too); the same mapping reads each page, an id seen twice is one candidate
                 const rows = await mappedRowsOf(sp);
-                return rows ? rows.map((r) => ({ id: deriveItemId(r as never, sp.id_field ?? null), counter: counterOfRow(r), row: r })) : null;
+                if (!rows) return null;
+                const all = [...rows];
+                for (const id of parentStage.measured_by) {
+                  if (!/^call_\d{4,6}$/.test(id) || id === sp.map_file_id) continue;
+                  const call = (await store.listCalls(mission.id)).find((c) => c.id === `${mission.id}:${id}`);
+                  if (!call || call.endpoint_id !== parentStage.endpoint_id || call.status !== "ok") continue;
+                  try {
+                    const page = await store.getFile(mission.id, `raw/${id}.json`);
+                    const out = page === null ? null : await runSandbox(sp.map_code, { [sp.map_file_id]: JSON.parse(page) });
+                    const more = out && out.ok && out.resultJson !== null ? (JSON.parse(out.resultJson) as unknown) : null;
+                    if (Array.isArray(more)) all.push(...more.filter(isObject));
+                  } catch { /* a page the mapping cannot read adds nothing */ }
+                }
+                const seen = new Set<string>();
+                return all.map((r) => ({ id: deriveItemId(r as never, sp.id_field ?? null), counter: counterOfRow(r), row: r })).filter((c) => (seen.has(c.id) ? false : (seen.add(c.id), true)));
               },
               // WHAT THE PARENT'S COUNTER COUNTS (item 2): the child source's own sampled page shows whether the counter includes replies: comments + their reply counters add up to the counter of the parent it was measured on
               basisOf: async (child) => {
@@ -824,7 +845,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
                 return pageCapOfSource(ctx.catalog.byId.get(sp.endpoint_id) ?? { inputs: [], summary: null }, sp.cursor_param, childRows ? childRows.length : null);
               },
               // S2 item 4: the catalog's comments tool with a cursor, when the recipe's tool has no next page and the planner sampled no pageable one
-              mostEngaged: engaged,
+              mostEngaged: engagedOrder,
+              matchesOf: async (parentStage) => (conditionsAsked(parentStage.filters ?? []) ? (row) => matchesCustomerConditions(row, parentStage.filters ?? [], parentStage.columns.filter((c) => /^(caption|description|text|title|desc)$/i.test(c.key)).map((c) => c.key)) : null),
               pageableAlternativeOf: async (child) => pageableCommentAlternative(child, checked.plan.stages.find((x) => x.key === child.parent_key), ctx.catalog, { isAllowed: allowedReply, stats: ctx.stats }),
               pageSizeOf: async (child) => {
                 const sp = child.engine;
