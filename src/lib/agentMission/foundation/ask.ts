@@ -1,5 +1,5 @@
 import { buildRequestContract, type ChildAsk, type ParentKind } from "../requestContract";
-import { countryOfRequestText } from "../places";
+import { countryOfValue } from "../places";
 import { topicMeaningOf } from "../topicMeaning";
 import { cairoDayEndExclusiveMs, cairoDayOf, cairoDayStartMs } from "../cairoTime";
 import type { SocialPlatform } from "../redesignFlagTypes";
@@ -84,6 +84,13 @@ export function periodOfRequest(text: string, requestedAtMs: number): AskPeriod 
   return periodOf(shiftDays(today, -n), today);
 }
 
+/** The country the customer named after «من / في / داخل» (the request contract's own phrase for a country), as its ISO code: never a nationality word, never a row filter. */
+const COUNTRY_PHRASE = /(?:^|\s)(?:في|من|داخل)\s+((?:ال)?[\u0621-\u064A]+)/g;
+function countryNamedIn(text: string): string | null {
+  for (const m of text.matchAll(COUNTRY_PHRASE)) { const code = countryOfValue(m[1]); if (code) return code; }
+  return null;
+}
+
 const NEWEST = /(?:^|\s)(?:ال)?[أا]حدث(?:\s|$)|الأخيرة|الاخيرة|latest|newest/i;
 const MADE_WITH = /(?:معمول|مصنوع|متعمل|مولد|مصمم)\w*\s*(?:ب|بال)/;
 const ABOUT = /(?:^|\s)(?:عن|حول|بخصوص|فيها|فيه|تذكر)\s/;
@@ -105,7 +112,7 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
     source: { kind: sourceKind, text: c.source.text },
     topic: { text: topicText, relation },
     period: c.period ? periodOfRequest(text, requestedAtMs) : null,
-    country: c.country ? countryOfRequestText(text) : null,
+    country: c.country ? countryNamedIn(text) : null,
     language,
     order: NEWEST.test(text) || c.comments === "none" ? "newest" : "most_commented",
     comments: c.comments,
