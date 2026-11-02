@@ -4,7 +4,8 @@ import type { Gateway } from "../gateway";
 import { RAW_PATH } from "../gateway";
 import { rankPeopleByRole, titleFieldOf, titleTierOf } from "../../../src/lib/agentMission/roles";
 import { looksLikeDateColumn, parseMoment } from "../../../src/lib/agentMission/dateCells";
-import { dayOf, firstWindowEndDay, nextWindowEndDay, windowParams } from "../../../src/lib/agentMission/dateWindow";
+import { dayOf, firstWindowEndDay, nextWindowEndDay, windowParams, type PeriodBounds } from "../../../src/lib/agentMission/dateWindow";
+import { cairoDayEndExclusiveMs, cairoDayStartMs } from "../../../src/lib/agentMission/cairoTime";
 import { isEnabled } from "../../../src/lib/agentMission/filters";
 import { childCountNumber, childCountOf } from "../../../src/lib/agentMission/childCount";
 import { AGENT_REPLIES_PER_COMMENT_MAX } from "../../../src/lib/agentMission/constants";
@@ -345,12 +346,15 @@ function boundaryFieldOf(stage: Stage, now: number): string | null {
 }
 
 /** The period the customer asked for, as the engine can walk it: the enabled period filter with its date field and a first day. Null when the stage has none (or only an end). */
-function periodOf(stage: Stage, now: number): { field: string; sinceMs: number } | null {
+function periodOf(stage: Stage, now: number): { field: string; sinceMs: number; endExclusiveMs: number | null } | null {
   const f = (stage.filters ?? []).find((x) => x.kind === "period" && isEnabled(x) && x.field);
   if (!f?.field) return null;
-  const sinceMs = f.days !== undefined ? now - f.days * 86_400_000 : f.from ? Date.parse(`${f.from}T00:00:00Z`) : NaN;
-  return Number.isFinite(sinceMs) ? { field: f.field, sinceMs } : null;
+  // THE DAYS THE CUSTOMER GAVE ARE CAIRO DAYS (S10): the first moment of the first day and the first moment after the last day, with the zone's own offset for each date (never UTC midnight)
+  const sinceMs = f.days !== undefined ? now - f.days * 86_400_000 : f.from ? cairoDayStartMs(f.from) : NaN;
+  const endExclusiveMs = f.to ? cairoDayEndExclusiveMs(f.to) : NaN;
+  return Number.isFinite(sinceMs) ? { field: f.field, sinceMs, endExclusiveMs: Number.isFinite(endExclusiveMs) ? endExclusiveMs : null } : null;
 }
+const boundsOf = (period: { sinceMs: number; endExclusiveMs: number | null } | null): PeriodBounds | undefined => (period ? { startMs: period.sinceMs, endExclusiveMs: period.endExclusiveMs } : undefined);
 
 /**
  * THE FIRST-LEVEL STAGE: one read of the source as the plan recorded it; and, when a PERIOD was asked for and the source ends before the target is reached, THE WALK BACK THROUGH DATE WINDOWS: the same source is asked again with the end of the
@@ -398,7 +402,7 @@ async function continueAcrossTools(deps: EngineDeps, stage: Stage, spec: EngineS
     if (!CONTINUE_ON.has(r.reason)) break;
     const alt = spec.alternatives![i];
     const oldest = items.streamKeys(stage.key).map((k) => items.streamState(stage.key, k)?.oldest ?? null).filter((x): x is number => x !== null);
-    const params = alt.window && oldest.length > 0 ? windowParams(alt.window, alt.params, period ? dayOf(period.sinceMs) : EARLIEST_DAY, dayOf(Math.min(...oldest))) : { ...alt.params };
+    const params = alt.window && oldest.length > 0 ? windowParams(alt.window, alt.params, period ? dayOf(period.sinceMs) : EARLIEST_DAY, dayOf(Math.min(...oldest)), boundsOf(period)) : { ...alt.params };
     const { alternatives: _a, sources: _s, id_field: _i, window: _w, ...rest } = spec;
     const altSpec: EngineSpec = { ...rest, endpoint_id: alt.endpoint_id, params, cursor_param: alt.cursor_param, map_code: alt.map_code, map_file_id: alt.map_file_id, ...(alt.id_field !== undefined ? { id_field: alt.id_field } : {}), ...(alt.window ? { window: alt.window } : {}) };
     r = await runStream(deps, stage, altSpec, `alt:${i}`, params, null, Number.POSITIVE_INFINITY, boundaryFieldOf(stage, now));
@@ -421,7 +425,7 @@ async function runRootPrimary(deps: EngineDeps, stage: Stage, spec: EngineSpec):
   for (const key of items.streamKeys(stage.key).filter((k) => k.startsWith("w:"))) {
     if (r.aborted || r.reason === "target_reached") return r;
     lastEnd = key.slice(2);
-    r = await runStream(deps, stage, spec, key, windowParams(spec.window, spec.params, sinceDay, lastEnd), null, Number.POSITIVE_INFINITY, period.field);
+    r = await runStream(deps, stage, spec, key, windowParams(spec.window, spec.params, sinceDay, lastEnd, boundsOf(period)), null, Number.POSITIVE_INFINITY, period.field);
   }
   for (let n = 0; n < ENGINE_MAX_WINDOWS; n += 1) {
     if (r.aborted) return r;
@@ -432,7 +436,7 @@ async function runRootPrimary(deps: EngineDeps, stage: Stage, spec: EngineSpec):
     const end = nextWindowEndDay({ oldestMs: oldest.length > 0 ? Math.min(...oldest) : null, lastEndDay: lastEnd, sinceDay });
     if (!end) return r;
     lastEnd = end;
-    r = await runStream(deps, stage, spec, `w:${end}`, windowParams(spec.window, spec.params, sinceDay, end), null, Number.POSITIVE_INFINITY, period.field);
+    r = await runStream(deps, stage, spec, `w:${end}`, windowParams(spec.window, spec.params, sinceDay, end, boundsOf(period)), null, Number.POSITIVE_INFINITY, period.field);
     // a window that reaches back to the first day of the period and gives NOTHING says the source has nothing older: the walk ends (never a call for every remaining day)
     if ((items.streamState(stage.key, `w:${end}`)?.rows ?? 0) === 0) return { reason: "source_exhausted", aborted: r.aborted };
   }
