@@ -1,3 +1,4 @@
+import { stageKindByCapability } from "./people";
 import { itemNounOf } from "./itemNoun";
 import { placesInText } from "./places";
 import { isNumberWord } from "./quantity";
@@ -14,7 +15,7 @@ const ENTITY_NOUN_KEYS = new Set(["شركه", "مطعم", "مكان", "شخص", 
 /** True when a stage's items are entities (judged from the noun of its title). */
 export const isEntityStage = (stage: { title_ar: string }): boolean => ENTITY_NOUN_KEYS.has(itemNounOf(stage.title_ar).key);
 /** True when a stage lists COMPANIES (the sector check). */
-export const isCompanyStage = (stage: { title_ar: string }): boolean => itemNounOf(stage.title_ar).key === normalizeText("شركة");
+export const isCompanyStage = (stage: { title_ar: string; capability?: string | null }): boolean => stageKindByCapability(stage.capability) !== "social" && itemNounOf(stage.title_ar).key === normalizeText("شركة");
 
 const FILLER = new Set(["عايز", "عاوز", "عايزه", "اريد", "ابغي", "ابي", "هات", "هاتلي", "جيب", "جيبلي", "اعطني", "اعطيني", "ابحث", "دور", "لي", "ليا", "لى", "عن", "في", "من", "الى", "على", "علي", "مع", "كل", "كلها", "بس", "فقط", "او", "ثم", "كمان", "ممكن", "لو", "سمحت", "بالله", "عليها", "بتاعت", "بتاعة", "متخصصه", "متخصصة", "تعمل", "تشتغل", "شغاله", "شغالة", "الـ", "جوه", "جوة", "داخل", "وجوه", "وداخل", "ومع", "وكل", "لكل", "بتوع", "اللي", "الي", "التي", "التى", "التابعه", "التابعة", "اسماء", "أسماء", "اسم", "قائمة", "قايمة", "لستة", "ليستة", "عدد", "رقم", "بيانات", "معلومات", "تفاصيل",
   // the frame of a request, never the sector: «sector», «field», «with them», «the decision makers», «the job title»

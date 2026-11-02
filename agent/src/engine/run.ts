@@ -150,7 +150,7 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
         if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
         const parentId = String(parent.id);
         // «ALL THE COMMENTS» (S1 item 1.10): each parent is read to its OWN counter, not to an equal share
-        const parentCap = shareById ? shareById.get(parentId) ?? 0 : readAll ? Math.min(ownChildCount(parent) ?? cap, Number.isFinite(per) ? per : Number.POSITIVE_INFINITY) : cap;
+        const parentCap = shareById ? shareById.get(parentId) ?? 0 : readAll ? Math.min(ownChildCount(parent) ?? (stage.children_open ? (Number.isFinite(per) ? per : Number.POSITIVE_INFINITY) : cap), Number.isFinite(per) ? per : Number.POSITIVE_INFINITY) : cap;
         if (shareById && parentCap <= 0) break;
         // A PARENT THAT SAYS IT HAS NO CHILD IS NOT READ (audit 2026-11 gap G10, live: 9 of 108 paid comment reads returned nothing): its own count field (comments, replies, reviews) is 0, so no paid read is made. It is replaced by a spare parent the same way a parent
         // the source answered nothing for is, or skipped when none is left. A parent that gives no count at all is read as before.

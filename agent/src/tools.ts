@@ -25,7 +25,7 @@ import { drainPending, ingestRows } from "./items/ingest";
 import { mirrorLegacyFiles } from "./items/mirror";
 import { codeRunPath, deriveEngineSpecsChecked, type CodeRun } from "./engine/spec";
 import { wantsAllChildren } from "../../src/lib/agentMission/allChildren";
-import { wantsReplies, withRepliesStages } from "../../src/lib/agentMission/replies";
+import { tokenOverlayCode, wantsReplies, withRepliesStages } from "../../src/lib/agentMission/replies";
 import { ROW_KEY_FIELDS } from "../../src/lib/agentMission/contract";
 import type { AgentStore, CallPhase, MissionRecord } from "./types";
 import { catalogHitView } from "../../src/lib/modelPlanner/tools";
@@ -44,8 +44,8 @@ import { redesignTypeOf } from "../../src/lib/agentMission/redesignFlags";
 import { pageCapOfSource, pageLimitOf } from "../../src/lib/agentMission/pageLimit";
 import { isLanguageColumn, textColumnKeyOf } from "../../src/lib/agentMission/languageLabel";
 import { conditionsAsked, matchesCustomerConditions } from "../../src/lib/agentMission/customerConditions";
-import { topicMeaningOf, topicQueryOf } from "../../src/lib/agentMission/topicMeaning";
-import { engagedDefault } from "../../src/lib/agentMission/engaged";
+import { TOPIC_OPTIONS_AR, topicMeaningFromModel, topicMeaningOf, topicQueryOf, topicQuestionAr } from "../../src/lib/agentMission/topicMeaning";
+import { engagedDefault, wantsNewestOrDate } from "../../src/lib/agentMission/engaged";
 import { toolProfile } from "../../src/lib/agentMission/toolProfile";
 import { countryToolsFor } from "../../src/lib/agentMission/conditionTools";
 import { commentsEngineByCode, pageableCommentAlternative } from "../../src/lib/agentMission/pageableComments";
@@ -626,10 +626,21 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         assumptions_ar: { type: "string[]", description: "Up to 6 short Arabic lines: every choice you made where the request left it open (which meaning of a name, the language, newest first, how many replies...), e.g. «محمد صلاح لاعب كرة القدم، تغريدات عربية، الأحدث أولًا». The customer reads them on the plan card and may change them before approving.", optional: true },
         contacts_note_ar: { type: "string", description: "Only when the customer asked for work e-mails or phones for COMPANIES (no people stage in the plan): ONE Arabic sentence saying honestly why. When the plan has a people stage, the e-mail and phone finder steps are added to it by code: never write that they may not be filled", optional: true },
         unserved_steps: { type: "array", description: "Only when the customer asked for a step PER PARENT item («ومن كل شركة اتنين من المديرين», «مع كل بوست ١٠ تعليقات») that NO stage of your plan carries out because no source could give it: [{reason_ar}] (one entry per missing step, in the request's order; reason_ar is ONE Arabic sentence, no number, saying honestly why). The customer card shows that step as NOT included, with your reason, BEFORE they approve; a step must never be dropped silently, and a plan that drops one without this is refused. When a stage carries the step, do not pass this.", optional: true },
+        topic_meaning: { type: "object", description: "Only for a SOCIAL request about a topic (any topic: a tool, a technology, a style, a product, an event). Your understanding of what the customer means by the topic: {relation: \"about\" (content that talks about, explains or reports on the topic: «عن X», «حول X», «أخبار X») | \"made_with\" (content made with the topic: «معمول بـ X») | \"ambiguous\" (the request names something one can make content with and says neither) | \"none\", topic_ar: the topic exactly as the customer wrote it, search_query: for about / made_with, the search words that carry that meaning (the topic and the words of explainers or news for «about»), made_with_markers_ar: words or hashtags that mark content MADE WITH the topic rather than ABOUT it (قصص, حدوتة, معمول بـ…)}. Code checks it (the topic must be the customer's own words, the query must contain it); an ambiguous reading turns into a question to the customer before any plan.", optional: true },
         stages: { type: "array", description: "[{key, title_ar, endpoint_id, expected_rows, target_reason_ar?, parent_key|null, per_parent_rows (if parent), deliver, columns:[{key, title_ar (only for a key the code does not know)}], sample_rows (omit when the stage cites yield_from), measured_by:[call ids], how_ar?, relevance?:{subject_ar, terms:[...], context_terms?:[...], exclude_terms?:[...], competing_meanings?:[{meaning_ar, extensions?:[words that follow the name in that meaning], titles?:[a title right next to the name], markers?:[words of that meaning]}], text_columns:[column keys], min_own_words?}, yield_from?: out id, filters?:[{kind:\"exclude_replies\"|\"exclude_reposts\"|\"language\"|\"period\"|\"account\"|\"place\", lang?:\"ar\"|\"en\", days?, from?, to?, values?:[...], calls?:[for an account filter: the saved call that read each value, in the same order]}]}]. A stage whose rows were FOUND BY A TEXT SEARCH (a person, entity or topic) REQUIRES relevance and yield_from. expected_rows of the stage that counts what the customer asked for is the customer's number (code reads it from their words and sets it); give a LOWER one only with target_reason_ar (one Arabic sentence, no number) when the sources really cannot give that many. filters: everything the card promises about the items (replies left out, a language, a period, an account, a place) must be a filter: code checks every item with it; a sentence that promises one of these without its filter is refused." },
       },
       handler: async (a) => {
         const stagesIn: any[] = Array.isArray(a.stages) ? a.stages : [];
+        // RULE 4 OF THE CONSOLIDATION: THE MEANING OF THE TOPIC IS THE MODEL'S UNDERSTANDING, FOR ANY TOPIC. A request that names something one can make content with and says neither «about» nor «made with» is asked, before any plan, with two ready answers (the customer's answer is read with the request, and the model reads it again)
+        const modelMeaning = socialRedesignActive(ctx) ? topicMeaningFromModel(a.topic_meaning, `${mission.request_text} ${mission.answer_text ?? ""}`) : null;
+        if (modelMeaning && modelMeaning.kind === "ambiguous" && modelMeaning.topic && !mission.answer_text && state.question === null) {
+          const question = topicQuestionAr(modelMeaning.topic);
+          state.question = question;
+          state.terminal = true;
+          await store.updateMission(mission.id, { plan_public: { question_options: TOPIC_OPTIONS_AR(modelMeaning.topic) } as any });
+          await store.addEvent(mission.id, { kind: "question", message_ar: question });
+          return { ok: true, note: "the question was shown to the customer; stop now" };
+        }
         // NO TOPIC OR RELEVANCE JUDGEMENT IN THE NEW PIPELINE (S3, owner rule): for a social request in the redesigned mode the AI understands the request, builds the tool call and formats the file; it never decides which items belong. The topic is in the request code builds
         // (the search words), not in a rule that removes what the source returned, so a relevance rule the model wrote cannot refuse the plan, and it is dropped below once every stage is built by code (a plan that falls back to the old pipeline keeps it: the old rules need it). Duplicates by id remain the only removal.
         const noRelevance = socialRedesignActive(ctx) && redesignTypeOf(stagesIn as never, { account: stagesIn.some((st) => Array.isArray(st?.filters) && st.filters.some((f: { kind?: string; values?: unknown[] }) => f?.kind === "account" && Array.isArray(f.values) && f.values.length > 0)) }, (id: string) => ctx.catalog.byId.get(id)?.capability ?? null).startsWith("social_");
@@ -681,11 +692,11 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         // THE DEFAULT FOR A COMMENTS REQUEST IS THE MOST ENGAGED VIDEOS (S5, owner decision), unless the customer asked for the newest or gave a date: the search tool's most-liked order, else the highest counters among the results (an order, never a filter)
         const engagedOrder = socialRedesignActive(ctx) && engagedDefault(`${mission.request_text} ${mission.answer_text ?? ""}`, stagesIn.map((st) => ({ key: String(st?.key ?? ""), parent_key: st?.parent_key ?? null, ...(Array.isArray(st?.filters) ? { filters: st.filters } : {}) })));
         const engaged = engagedOrder;
-        const meaning = topicMeaningOf(`${mission.request_text} ${mission.answer_text ?? ""}`);
+        const meaning = modelMeaning && (modelMeaning.kind === "about" || modelMeaning.kind === "made_with") ? modelMeaning : topicMeaningOf(`${mission.request_text} ${mission.answer_text ?? ""}`);
         const topicQuery = socialRedesignActive(ctx) && stagesIn.some((st) => st?.parent_key) ? topicQueryOf(meaning) : null;
         let derived: Awaited<ReturnType<typeof deriveEngineSpecsChecked>> | null = null;
         try {
-          derived = await deriveEngineSpecsChecked(checked.plan, { store, missionId: mission.id, catalog: ctx.catalog, calls, codeRuns: state.codeRuns, callParams: state.callParams, sandbox: runSandbox, ...(socialRedesignActive(ctx) ? { codeBuild: { nowMs: ctx.now ?? Date.now(), engaged, ...(topicQuery ? { topicQuery } : {}) } } : {}) });
+          derived = await deriveEngineSpecsChecked(checked.plan, { store, missionId: mission.id, catalog: ctx.catalog, calls, codeRuns: state.codeRuns, callParams: state.callParams, sandbox: runSandbox, ...(socialRedesignActive(ctx) ? { codeBuild: { nowMs: ctx.now ?? Date.now(), engaged, ...(socialRedesignActive(ctx) && !engaged && (wantsNewestOrDate(`${mission.request_text} ${mission.answer_text ?? ""}`) || stagesIn.some((st) => Array.isArray(st?.filters) && st.filters.some((f: { kind?: string }) => f?.kind === "period"))) ? { newest: true } : {}), ...(topicQuery ? { topicQuery } : {}) } } : {}) });
         } catch { /* a plan without recipes is carried out by the model, through the same item store */ }
         // THE CONTRACT: a mapping that gives what the engine needs but breaks what the card promises (an id, a column, a field a filter reads) is refused here, before the customer sees a card the file cannot match
         if (derived && derived.issues.length > 0) return err("the plan was not accepted; fix these and propose again", { issues: derived.issues.slice(0, 12) });
@@ -703,6 +714,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             if (approxDates && approxDates.length > 0) st.approx_dates = approxDates;
           }
         }
+        // RULE 9 OF THE CONSOLIDATION: the catalog capability of each stage's tool is stored, so a stage's type is read from its structure and never from the words of its title
+        if (socialRedesignActive(ctx)) for (const st of checked.plan.stages) { const cap = ctx.catalog.byId.get(st.endpoint_id)?.capability; if (cap) st.capability = cap; }
         // THE COMMENT LANGUAGE COLUMN (S4): the comments sheet of a code-built plan has the language of each comment as the videos sheet has it; a comments stage whose columns have none gets «لغة التعليق» (the file fills it from the source's code, else from the text's script)
         if (derived && socialRedesignActive(ctx)) {
           for (const st of checked.plan.stages) {
@@ -801,6 +814,23 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             catalog: ctx.catalog, isAllowed: allowedReply, stats: ctx.stats,
             // S3 (redesigned mode only): a request that mentions the replies always has the replies stage; «all» reads each comment to the end of its replies
             ...(socialRedesignActive(ctx) ? { requested: wantsReplies(`${mission.request_text} ${mission.answer_text ?? ""}`), all: wantsAllChildren(`${mission.request_text} ${mission.answer_text ?? ""}`) } : {}),
+            // RULE 6: the comments' own mapping plus the tokens the replies tool needs (Facebook: feedback_id and expansion_token), PROVEN on the sampled page: the same rows with the same ids, a token on at least one comment
+            remapWithTokens: async (st, tokens) => {
+              const sp = st.engine;
+              if (!sp) return null;
+              try {
+                const page = await store.getFile(mission.id, `raw/${sp.map_file_id}.json`);
+                if (page === null) return null;
+                const code = tokenOverlayCode(sp.map_code, tokens);
+                const [before, after] = await Promise.all([runSandbox(sp.map_code, { [sp.map_file_id]: JSON.parse(page) }), runSandbox(code, { [sp.map_file_id]: JSON.parse(page) })]);
+                if (!before.ok || !after.ok || before.resultJson === null || after.resultJson === null) return null;
+                const a1 = JSON.parse(before.resultJson) as unknown;
+                const a2 = JSON.parse(after.resultJson) as unknown;
+                if (!Array.isArray(a1) || !Array.isArray(a2) || a1.length !== a2.length || a2.length === 0) return null;
+                if (!a2.every((r, i) => isObject(r) && String(r.id) === String((a1[i] as { id?: unknown }).id))) return null;
+                return a2.some((r) => isObject(r) && tokens.every((t) => typeof r[t.key] === "string" && r[t.key] !== "")) ? code : null;
+              } catch { return null; }
+            },
             sampleRowsOf: async (st) => {
               const sp = st.engine;
               if (!sp) return null;

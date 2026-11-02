@@ -45,6 +45,8 @@ async function sharedChecks(r: Run, o: { promised: number }): Promise<void> {
   expect(cells.some((c) => /^(true|false)$/i.test(c.trim())), "true/false in the file").toBe(false);
   expect(cells.some((c) => /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})?$/.test(c.trim())), "a language code in the file").toBe(false);
   // rule 8 on the plan card's sample table
+  // the row tokens a replies tool needs (Facebook's feedback and expansion tokens, YouTube's reply tokens) are never in the customer's file
+  expect(cells.some((c) => /^(fbf|fbx|ytr)-\d+-\d+$/.test(c.trim())), "a row token in the file").toBe(false);
   const sample = (r.planView.samples?.rows ?? []).flat();
   expect(sample.some((c) => /^(true|false)$/i.test(c.trim()))).toBe(false);
   expect(sample.some((c) => /^\d+([.,]\d+)?$/.test(c.trim()))).toBe(false);
@@ -85,12 +87,16 @@ describe("2. YouTube: «هات فيديوهات نهائي كأس السوبر �
     const r = await runBench(ytWorld());
     const plan = planOf(r);
     const replies = plan.stages.find(isRepliesStage)!;
+    const comments = plan.stages.find((s) => s.key === "comments")!;
     expect(replies, "a replies stage").toBeDefined();
     expect(loadTregCatalog().byId.get(replies.endpoint_id)?.platform).toBe("youtube");
     expect(plan.replies_status).toBeUndefined();
     // the videos are the official channels' (the unofficial re-upload is not chosen), their comments and the replies of the comments that have one
     const videos = plan.stages.find((s) => s.key === "videos")!;
     expect((videos.pinned_rows ?? []).every((row) => YT.CHANNELS.includes(String(row.author)))).toBe(true);
+    // rule 1: the videos' source gives no comment counter, so the card promises no number for the comments: «كل التعليقات على العناصر المختارة»
+    expect((r.planView.stages ?? []).some((st) => st.rowsAr === "كل التعليقات على العناصر المختارة")).toBe(true);
+    expect(comments.children_open).toBe(true);
     const total = (i: number) => ytCommentsOf(i).length;
     expect(counts(r).stage_2_rows).toBe(total(0) + total(1));
     expect(counts(r).stage_3_rows).toBe(ytRepliesTotal(0) + ytRepliesTotal(1));

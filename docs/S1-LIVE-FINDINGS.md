@@ -486,3 +486,89 @@ Not produced by anything in this app. Checked (V): the text is in no source file
 5. The customer's sample table of a redesigned plan (stages built by code): `true/false` are «نعم/لا», numbers are written in Arabic-Indic digits (`formatSampleValueAr`, idempotent). The old pipeline's table keeps its text byte for byte (flags off; `formatSampleCell` is unchanged). Shared code changed for both pipelines: `isPeopleNoun` (the adjective «main» is not a chief) and the card lines the plan contradicts (`assumptionLinesOf`, only when a replies stage or a most-engaged choice is in the plan).
 The 200-point charge is the pricing rule's minimum (price.ts untouched): 3 items cost less than it.
 Limits: no live proof (no paid calls); the most commented is chosen among at most two pages (24 posts), not the whole account.
+
+---
+
+# Consolidation (one PR, same flags, red tests first): the nine rules over every platform and every request type
+
+Owner order after #342: no more per-platform fixes. The nine general rules the live tests taught are applied to EVERY social request type (search posts, account posts, comments, replies) on EVERY platform (TikTok, Instagram, Facebook, YouTube, X), and each of the five first benchmark requests of `docs/benchmarks/antigravity-10.md` has an end-to-end test with its exact Arabic text (`tests/benchmark-antigravity-1-5.test.ts`: promise == delivered, the rules asserted).
+
+## C.1 The table: rule x platform x request type
+Each cell is **applied** (✔ and the test file that proves it; `tests/consolidation-matrix.test.ts` checks that the file and the test title exist) or **not possible** (✖ and the catalog evidence, computed from the catalog snapshot by the same function that generated this table; it is not typed by hand). A cell for a request type the rule does not concern is not in the table (R1 concerns comments and replies; R2 to R5 posts of a search or an account; R6 replies; R7 comments; R8 and R9 all four).
+<!-- consolidation-matrix:start -->
+**الخلايا: 100؛ مطبَّقة: 76؛ غير ممكنة (بدليل الكتالوج): 24.**
+
+| القاعدة | المنصة | بحث | حساب | تعليقات | ردود |
+|---|---|---|---|---|---|
+| R1 الوعد = عدّادات المنشورات المختارة (تعليقات وردود معًا)، لا تقدير | tiktok | — | — | ✔ benchmark-antigravity-1-5 | ✔ benchmark-antigravity-1-5 |
+| R1 الوعد = عدّادات المنشورات المختارة (تعليقات وردود معًا)، لا تقدير | instagram | — | — | ✔ benchmark-antigravity-1-5 | ✔ benchmark-antigravity-1-5 |
+| R1 الوعد = عدّادات المنشورات المختارة (تعليقات وردود معًا)، لا تقدير | facebook | — | — | ✔ benchmark-antigravity-1-5 | ✔ benchmark-antigravity-1-5 |
+| R1 الوعد = عدّادات المنشورات المختارة (تعليقات وردود معًا)، لا تقدير | youtube | — | — | ✖ 0 of 8 search and 0 of 5 account listing tools give a comment counter field, so no number  | ✖ 0 of 8 search and 0 of 5 account listing tools give a comment counter field, so no number  |
+| R1 الوعد = عدّادات المنشورات المختارة (تعليقات وردود معًا)، لا تقدير | x | — | — | ✔ consolidation-rules | ✖ the catalog has no x.comment.replies tool (0 of 122 x endpoints) |
+| R2 الاختيار الافتراضي = الأكثر تعليقًا (بحثًا وحسابًا) | tiktok | ✔ benchmark-antigravity-1-5 | ✔ consolidation-rules | — | — |
+| R2 الاختيار الافتراضي = الأكثر تعليقًا (بحثًا وحسابًا) | instagram | ✔ consolidation-rules | ✔ benchmark-antigravity-1-5 | — | — |
+| R2 الاختيار الافتراضي = الأكثر تعليقًا (بحثًا وحسابًا) | facebook | ✔ consolidation-rules | ✔ consolidation-rules | — | — |
+| R2 الاختيار الافتراضي = الأكثر تعليقًا (بحثًا وحسابًا) | youtube | ✖ 0 of 8 tools give a comment counter: no comment count to order by; the tool's own order st | ✖ 0 of 5 tools give a comment counter: no comment count to order by; the tool's own order st | — | — |
+| R2 الاختيار الافتراضي = الأكثر تعليقًا (بحثًا وحسابًا) | x | ✔ consolidation-rules | ✔ consolidation-rules | — | — |
+| R3 بلد العميل ولغته أولًا؛ الترتيب بالتفاعل داخل المطابق فقط | tiktok | ✔ benchmark-antigravity-1-5 | ✔ consolidation-rules | — | — |
+| R3 بلد العميل ولغته أولًا؛ الترتيب بالتفاعل داخل المطابق فقط | instagram | ✖ 0 of 4 tools have a country or language input: the card states the gap and the file marks  | ✖ 0 of 8 tools have a country or language input: the card states the gap and the file marks  | — | — |
+| R3 بلد العميل ولغته أولًا؛ الترتيب بالتفاعل داخل المطابق فقط | facebook | ✖ 0 of 1 tools have a country or language input: the card states the gap and the file marks  | ✖ 0 of 5 tools have a country or language input: the card states the gap and the file marks  | — | — |
+| R3 بلد العميل ولغته أولًا؛ الترتيب بالتفاعل داخل المطابق فقط | youtube | ✔ consolidation-rules | ✔ consolidation-rules | — | — |
+| R3 بلد العميل ولغته أولًا؛ الترتيب بالتفاعل داخل المطابق فقط | x | ✔ benchmark-antigravity-1-5 | ✖ 0 of 7 tools have a country or language input: the card states the gap and the file marks  | — | — |
+| R4 معنى الموضوع (عن / معمول بـ / ملتبس) لأي موضوع | tiktok | ✔ benchmark-antigravity-1-5 | ✖ 0 of 8 tools have a query field (an account's listing has no search words): the meaning or | — | — |
+| R4 معنى الموضوع (عن / معمول بـ / ملتبس) لأي موضوع | instagram | ✔ consolidation-rules | ✖ 0 of 8 tools have a query field (an account's listing has no search words): the meaning or | — | — |
+| R4 معنى الموضوع (عن / معمول بـ / ملتبس) لأي موضوع | facebook | ✔ consolidation-rules | ✖ 0 of 5 tools have a query field (an account's listing has no search words): the meaning or | — | — |
+| R4 معنى الموضوع (عن / معمول بـ / ملتبس) لأي موضوع | youtube | ✔ consolidation-rules | ✖ 0 of 5 tools have a query field (an account's listing has no search words): the meaning or | — | — |
+| R4 معنى الموضوع (عن / معمول بـ / ملتبس) لأي موضوع | x | ✔ consolidation-rules | ✖ 0 of 7 tools have a query field (an account's listing has no search words): the meaning or | — | — |
+| R5 حدود يوم القاهرة في كل أداة تأخذ تواريخ | tiktok | ✖ 0 of 5 tools take a calendar date range (1 take only a rolling preset): a Cairo day bounda | ✖ 0 of 8 tools take a calendar date range (0 take only a rolling preset): a Cairo day bounda | — | — |
+| R5 حدود يوم القاهرة في كل أداة تأخذ تواريخ | instagram | ✖ 0 of 4 tools take a calendar date range (1 take only a rolling preset): a Cairo day bounda | ✖ 0 of 8 tools take a calendar date range (0 take only a rolling preset): a Cairo day bounda | — | — |
+| R5 حدود يوم القاهرة في كل أداة تأخذ تواريخ | facebook | ✔ consolidation-rules | ✖ 0 of 5 tools take a calendar date range (0 take only a rolling preset): a Cairo day bounda | — | — |
+| R5 حدود يوم القاهرة في كل أداة تأخذ تواريخ | youtube | ✔ consolidation-rules | ✖ 0 of 5 tools take a calendar date range (0 take only a rolling preset): a Cairo day bounda | — | — |
+| R5 حدود يوم القاهرة في كل أداة تأخذ تواريخ | x | ✔ benchmark-antigravity-1-5 | ✔ consolidation-rules | — | — |
+| R6 أداة الردود في كتالوج المنصة؛ الردود لتعليق عدّاده > ٠ | tiktok | — | — | — | ✔ benchmark-antigravity-1-5 |
+| R6 أداة الردود في كتالوج المنصة؛ الردود لتعليق عدّاده > ٠ | instagram | — | — | — | ✔ benchmark-antigravity-1-5 |
+| R6 أداة الردود في كتالوج المنصة؛ الردود لتعليق عدّاده > ٠ | facebook | — | — | — | ✔ benchmark-antigravity-1-5 |
+| R6 أداة الردود في كتالوج المنصة؛ الردود لتعليق عدّاده > ٠ | youtube | — | — | — | ✔ benchmark-antigravity-1-5 |
+| R6 أداة الردود في كتالوج المنصة؛ الردود لتعليق عدّاده > ٠ | x | — | — | — | ✖ no x.comment.replies capability in the catalog; the replies to a post ARE its comments (x. |
+| R7 الأداة التالية عند انتهاء الأولى قبل الوعد | tiktok | — | — | ✔ s6-live-fixture | — |
+| R7 الأداة التالية عند انتهاء الأولى قبل الوعد | instagram | — | — | ✔ s6-live-fixture | — |
+| R7 الأداة التالية عند انتهاء الأولى قبل الوعد | facebook | — | — | ✔ s6-live-fixture | — |
+| R7 الأداة التالية عند انتهاء الأولى قبل الوعد | youtube | — | — | ✔ s6-live-fixture | — |
+| R7 الأداة التالية عند انتهاء الأولى قبل الوعد | x | — | — | ✔ s6-live-fixture | — |
+| R8 قيم بالعربي فقط (لا true/false ولا رموز لغة) | tiktok | ✔ benchmark-antigravity-1-5 | ✔ consolidation-rules | ✔ benchmark-antigravity-1-5 | ✔ benchmark-antigravity-1-5 |
+| R8 قيم بالعربي فقط (لا true/false ولا رموز لغة) | instagram | ✔ consolidation-rules | ✔ benchmark-antigravity-1-5 | ✔ benchmark-antigravity-1-5 | ✔ benchmark-antigravity-1-5 |
+| R8 قيم بالعربي فقط (لا true/false ولا رموز لغة) | facebook | ✔ consolidation-rules | ✔ benchmark-antigravity-1-5 | ✔ benchmark-antigravity-1-5 | ✔ benchmark-antigravity-1-5 |
+| R8 قيم بالعربي فقط (لا true/false ولا رموز لغة) | youtube | ✔ benchmark-antigravity-1-5 | ✔ consolidation-rules | ✔ benchmark-antigravity-1-5 | ✔ benchmark-antigravity-1-5 |
+| R8 قيم بالعربي فقط (لا true/false ولا رموز لغة) | x | ✔ benchmark-antigravity-1-5 | ✔ consolidation-rules | ✔ consolidation-rules | ✖ no replies sheet exists for x (no replies capability) |
+| R9 نوع المرحلة من بنيتها لا من كلمات عنوانها | tiktok | ✔ consolidation-rules | ✔ consolidation-rules | ✔ consolidation-rules | ✔ consolidation-rules |
+| R9 نوع المرحلة من بنيتها لا من كلمات عنوانها | instagram | ✔ consolidation-rules | ✔ consolidation-rules | ✔ consolidation-rules | ✔ consolidation-rules |
+| R9 نوع المرحلة من بنيتها لا من كلمات عنوانها | facebook | ✔ consolidation-rules | ✔ consolidation-rules | ✔ consolidation-rules | ✔ consolidation-rules |
+| R9 نوع المرحلة من بنيتها لا من كلمات عنوانها | youtube | ✔ consolidation-rules | ✔ consolidation-rules | ✔ consolidation-rules | ✔ consolidation-rules |
+| R9 نوع المرحلة من بنيتها لا من كلمات عنوانها | x | ✔ consolidation-rules | ✔ consolidation-rules | ✔ consolidation-rules | ✖ no x tool for replies in the catalog |
+<!-- consolidation-matrix:end -->
+
+The 24 cells that are not possible are the catalog's own limits, stated by the computed evidence in each cell: YouTube has no search or account tool that gives a comment counter (the promise there is open, never an estimate); Instagram, Facebook and X-account listings have no country or language input; account listings have no query field; TikTok, Instagram search and every account listing take no calendar date range; X has no comment-replies tool (a tweet's replies ARE its comments, `x.post.comments`). Cells proved by a benchmark are proved end to end for that platform and request type; every other applied cell is proved by the test of the same rule over that platform's own catalog tools (the code is platform-agnostic, the tools are not).
+
+## C.2 What running the rules over every platform found (V: the red tests)
+1. **Rule 9, stage type from structure** (`people.ts` `stageKindByCapability`, `entities.ts`, `plan.ts` `capability`, `agent/src/tools.ts`): the catalog capability of the stage's tool is stored on the stage in the redesigned mode; a social capability is never a people or a company stage, a people capability always is, whatever the title says. Plans with no stored capability (the old pipeline, old plans) keep the title rule, byte for byte.
+2. **Rule 6, replies on Facebook and YouTube** (`replies.ts` `rowTokens`, `tokenOverlayCode`, `plan.ts` `carry_keys`, `ingest.ts`): both platforms HAVE replies tools (`anyapi.facebook.comment_replies`: `feedbackId` + `expansionToken`; the YouTube ones: the comment's reply continuation token); the old comment «Facebook and YouTube have none» was stale. The tokens are fields of the comment's own row: the comments mapping keeps them (a second pass by comment id, proven on the sampled page), the stored row carries them beside the columns and never in the file. Test `tests/reply-sources.test.ts` changed accordingly (marked CHANGED).
+3. **Rule 1, no counter means no promised number** (`completeCount.ts`, `repliesCard.ts`, `customerView.ts`, `engine/run.ts`, `runMission.ts`): when the customer asked for ALL the comments and the parents' source gives no comment counter (YouTube, Facebook account lists), the comments stage is open (`children_open`): the card says «كل التعليقات على العناصر المختارة» with no number, the estimate stays as the price's maximum (the charge never goes above the reserve), every parent is read to the source's end, and after the delivery the promise is what the source gave when it ended (a stop for budget or time keeps the estimate, so a shortfall stays visible). Test `tests/complete-count.test.ts` changed accordingly (marked CHANGED).
+4. **Rule 4, the meaning of ANY topic** (`topicMeaning.ts` `topicMeaningFromModel`, `agent/src/tools.ts`, `agent/prompts/system.md`): `propose_plan` carries `topic_meaning` written by the planner from the customer's words (relation about / made_with / ambiguous / none, the topic, the search query, the made-with markers); code checks that the topic is the customer's own phrase and the query holds it, writes the query into the tool's query field, orders the videos by it (an order, never a filter) and turns an ambiguous reading into the question card before any plan. The fixed word list (the AI family) is only the fallback when the model gave none.
+5. **Rule 5, dates** (`toolProfile.ts`, `toolInput.ts`, `engine/spec.ts`): an input whose own note says it is a paging cursor (Instagram `after` / `before`) is no longer read as a date input (it made the tool look date-capable); a customer who asked for the newest or gave a date gets the tool's «latest» order (X: `queryType` = `Latest`, as the benchmark's reference request says).
+6. **Rule 3, several countries** (`toolInput.ts`): a tool whose country input takes ONE country gets the first, and the card now states that it does not enforce the set («مصر أو المنطقة العربية»).
+7. **Rule 8, language codes** (`customerDates.ts`, `plan.ts`): a language code in the sample table of a code-built plan is written as the file writes it (العربية / لغة أخرى / غير محددة).
+8. **Built by code** (`engine/spec.ts`): several named sources that ONE search page showed (the official channels of the benchmark's YouTube request) share one entry, so the stage is one search built by code like any other; before, the whole mission ran on the old path.
+
+## C.3 The five benchmark tests (`tests/benchmark-antigravity-1-5.test.ts`, exact Arabic text, worlds in `tests/helpers/benchWorld.ts`)
+1. Facebook: replies by `anyapi.facebook.comment_replies` through the comment tokens, read only for comments with a counter above zero; the period given means the source order, not the most commented; 11 = the counters of the two chosen posts, delivered.
+2. YouTube: one search built by code for two official channels, replies by the token tools, the open comment promise, delivered.
+3. TikTok: the tool with the country field wins, Egypt written and the set stated as not enforced, the most commented among the matching, the query «about», replies only where counters say, 99 = 66 + 33 delivered.
+4. Instagram: the most commented of two pages of the account, the catalog's replies tool, delivered.
+5. X: the Cairo-day query for October (until 2026-10-31 22:00 UTC), `queryType` Latest, the replies kept and marked, 20 of 20.
+
+## C.4 Limits (stated honestly)
+- No live proof (no paid calls): every shape is the catalog schema's; the page shape of the Facebook and YouTube replies tools is NOT in the catalog (no list path, no item fields): the replies mapping reads the common list names and is unproven on a live page.
+- The counter tool: a listing tool without a comment counter (Facebook `anyapi`, every YouTube listing) is not replaced by a counter-bearing one of the same capability; the plan is open (item 3) instead of sending the planner to another tool.
+- The topic's meaning depends on the planner filling `topic_meaning`; with none, only the AI family is read by the word list.
+- A comments source with no reply counter is read for replies once per comment (priced), as before; the rule «only counters above zero» holds where counters exist.
+- Rule 7 is proved end to end on TikTok only; the other platforms use the same engine over their own catalog tools. A replies stage has one source: the next replies source is not read.

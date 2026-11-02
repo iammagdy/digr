@@ -521,10 +521,10 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   for (const s of plan.stages) rowsByStage[s.key] = snap.acceptedRows(s.key, s.planned_rows);
   plan = reportedPlan(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])));
   // S9: replies that promised no number (all the replies of the chosen comments) are judged against the reply counters of the comments that were delivered; the estimate they were priced from stays only in the price
-  const openKeys = new Set(plan.stages.filter((s) => s.replies_open).map((s) => s.key));
+  const openKeys = new Set(plan.stages.filter((s) => s.replies_open || s.children_open).map((s) => s.key));
   const hadOpenReplies = openKeys.size > 0;
   const openEstimate = plan.stages.filter((s) => openKeys.has(s.key)).reduce((n, s) => n + s.planned_rows, 0);
-  if (hadOpenReplies) plan = withRepliesJudged(plan, rowsByStage);
+  if (hadOpenReplies) plan = withRepliesJudged(plan, rowsByStage, (k) => { const st = snap.stage(k).stop; return !st || st === "source_exhausted"; });
   const openGap = openEstimate - plan.stages.filter((s) => openKeys.has(s.key)).reduce((n, s) => n + s.planned_rows, 0);
   const builtCount = plan.stages.filter((s) => s.deliver).reduce((n, s) => n + rowsByStage[s.key].length, 0);
   if (a.memory) for (const s of plan.stages) if (a.memory.counts(s.key).accepted !== snap.counts(s.key).accepted) flags.push("memory_differs_from_store");

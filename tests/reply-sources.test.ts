@@ -35,12 +35,16 @@ describe("the reply endpoints of the catalog, platform by platform", () => {
     expect(sourcesOf("tikhub.tiktok.video.comments", { id: false, url: false })).toEqual([]);
   });
 
-  it("Instagram, Douyin and Kuaishou have a source; Facebook and YouTube need a token that only the comment's own page carries, so they have none", () => {
+  // CHANGED (consolidation, rule 6): Facebook and YouTube have replies tools whose required inputs are tokens carried by the comment's OWN row (feedback_id and expansion_token; the comment's reply continuation token): they are sources now, each with the tokens the comments mapping must keep
+  it("Instagram, Douyin and Kuaishou have a source; Facebook and YouTube have sources fed by the tokens the comment's own row carries", () => {
     expect(sourcesOf("scrapecreators.instagram.post.comments").map((s) => s.id)).toEqual(expect.arrayContaining(["tikhub.x.instagram-v1-fetch-comment-replies"]));
     expect(sourcesOf("tikhub.x.douyin-web-fetch-video-comments").map((s) => s.id)).toEqual(expect.arrayContaining(["tikhub.x.douyin-web-fetch-video-comment-replies"]));
     expect(sourcesOf("tikhub.x.kuaishou-app-fetch-video-comment").map((s) => s.id)).toEqual(expect.arrayContaining(["tikhub.x.kuaishou-app-fetch-video-sub-comments"]));
-    expect(sourcesOf("scrapecreators.x.v1-facebook-post-comments")).toEqual([]);
-    expect(sourcesOf("scrapecreators.youtube.video.comments")).toEqual([]);
+    for (const id of ["scrapecreators.x.v1-facebook-post-comments", "scrapecreators.youtube.video.comments"]) {
+      const list = replySourcesFor(id, catalog, { isAllowed: () => true, videoIdAvailable: true, urlAvailable: true });
+      expect(list.length, id).toBeGreaterThan(0);
+      expect(list.every((s) => s.rowTokens.length > 0), id).toBe(true);
+    }
   });
 
   it("an endpoint the account may not buy is not offered", () => {

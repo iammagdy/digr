@@ -7,6 +7,8 @@ import { toolProfile } from "../src/lib/agentMission/toolProfile";
 import { buildToolInput } from "../src/lib/agentMission/toolInput";
 import { topicDiscussionClass, topicMeaningFromModel, topicMeaningOf, topicQueryOf } from "../src/lib/agentMission/topicMeaning";
 import { formatSampleValueAr } from "../src/lib/customerDates";
+import { childCountOf } from "../src/lib/agentMission/childCount";
+import { completeCountEstimate, splitPromise } from "../src/lib/agentMission/completeCount";
 import { SOCIAL_PLATFORMS, capabilitiesOf, REQUEST_TYPES } from "./helpers/ruleMatrix";
 
 /**
@@ -143,5 +145,80 @@ describe("rule 8: customer-facing values are Arabic only", () => {
     expect(formatSampleValueAr("en", { column: "language" })).toBe("لغة أخرى");
     expect(formatSampleValueAr("xx", { column: "language" })).toBe("غير محددة");
     expect(formatSampleValueAr("ar")).toBe("ar");
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------- rules 2, 3, 4 and 5, platform by platform over the catalog's own tools
+const NOW = Date.parse("2026-11-02T13:00:00Z");
+const READING: ReadonlyArray<"search" | "account"> = ["search", "account"];
+describe("the listing tools of every platform take the customer's conditions through their own fields", () => {
+  for (const platform of SOCIAL_PLATFORMS) {
+    for (const type of READING) {
+      const tools = capabilitiesOf(catalog, platform, type);
+      if (tools.length === 0) continue;
+      it(`rule 2: ${platform} / ${type}: the engaged default writes the tool's most-liked order when it has one (${tools.filter((e) => toolProfile(e).sort?.options?.some((o) => o.kind === "liked")).length} of ${tools.length} tools), and never fails on a tool that has none`, () => {
+        for (const e of tools) {
+          const r = buildToolInput(e, { sort: "engaged", nowMs: NOW }, {});
+          expect(r.ok, e.id).toBe(true);
+          const liked = toolProfile(e).sort?.options?.find((o) => o.kind === "liked");
+          if (liked) expect(r.params[toolProfile(e).sort!.field], e.id).toBe(liked.value);
+          else expect(r.written, e.id).not.toContain("sort");
+        }
+      });
+      it(`rule 3: ${platform} / ${type}: the customer's country and language are written into the tool's own field when it has one, and are a stated gap when it has none (never dropped silently)`, () => {
+        for (const e of tools) {
+          const pr = toolProfile(e);
+          const r = buildToolInput(e, { country: ["EG"], language: "ar", nowMs: NOW }, pr.query ? { [pr.query.field]: "x" } : {});
+          expect(r.written.includes("country") || r.gaps.some((g) => g.cls === "country"), `${e.id} country`).toBe(true);
+          // a field that only places the request (a proxy region) is written AND stated as a gap; a tool with no field states the gap; a field that filters states none
+          if (pr.country && !pr.country.enforces) expect(r.gaps, `${e.id} country`).toContainEqual({ cls: "country", reason: "not_enforced" });
+          else if (!pr.country) expect(r.gaps, `${e.id} country`).toContainEqual({ cls: "country", reason: "no_field" });
+          else expect(r.gaps.some((g) => g.cls === "country"), `${e.id} country`).toBe(false);
+          expect(r.written.includes("language") || r.gaps.some((g) => g.cls === "language"), `${e.id} language`).toBe(true);
+        }
+      });
+    }
+    const searchTools = capabilitiesOf(catalog, platform, "search");
+    if (searchTools.length > 0) {
+      it(`rule 4: ${platform} / search: the model's query (the meaning of the topic) is written into the query field of every search tool that has one`, () => {
+        for (const e of searchTools) {
+          const field = toolProfile(e).query?.field;
+          if (!field) continue;
+          const r = buildToolInput(e, { topicQuery: "شرح فوتوشوب", nowMs: NOW }, { [field]: "فوتوشوب" });
+          expect(r.params[field], e.id).toContain("شرح فوتوشوب");
+        }
+      });
+    }
+    for (const type of READING) {
+      const dated = capabilitiesOf(catalog, platform, type).filter((e) => { const pr = toolProfile(e); return pr.queryOperators || ((pr.date?.from || pr.date?.to) && pr.date.format !== "unknown"); });
+      if (dated.length === 0) continue;
+      it(`rule 5: ${platform} / ${type}: ${dated.length} date-capable tools get the customer's Cairo days (October 2026: the first moment 2026-09-30 21:00 UTC, the last 2026-10-31 21:59:59 UTC; Egypt's summer time ended 2026-10-29)`, () => {
+        for (const e of dated) {
+          const pr = toolProfile(e);
+          const base: Record<string, unknown> = pr.queryOperators && pr.query ? { [pr.query.field]: "x" } : {};
+          const r = buildToolInput(e, { period: { from: "2026-10-01", to: "2026-10-31" }, nowMs: NOW }, base);
+          expect(r.written, e.id).toContain("date");
+          if (pr.queryOperators && pr.query) { expect(String(r.params[pr.query.field]), e.id).toContain("since:2026-09-30_21:00:00_UTC"); continue; }
+          const from = r.params[pr.date!.from ?? ""];
+          if (pr.date!.format === "iso") expect(from, e.id).toBe("2026-09-30T21:00:00Z");
+          else if (pr.date!.format === "unix") expect(from, e.id).toBe(Date.parse("2026-09-30T21:00:00Z") / 1000);
+          else expect(from, e.id).toBe("2026-09-30");
+        }
+      });
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------------------------------- rule 1 on a platform no benchmark reads comments for
+describe("rule 1: the promise is the real counters, never an estimate on top", () => {
+  it("rule 1: x / comments: the replies to the chosen tweets are promised as the tweets' own reply counters (the catalog's replyCount), the tweets chosen by the highest counters, comments + replies = their sum", () => {
+    expect(Object.keys(catalog.byId.get("anyapi.x.search.posts")!.item_fields ?? {})).toContain("replyCount");
+    const candidates = [12, 7, 0, 30].map((n, i) => ({ id: `t${i}`, counter: childCountOf({ replyCount: n }) }));
+    const sorted = [...candidates].sort((a, b) => (b.counter ?? -1) - (a.counter ?? -1));
+    const e = completeCountEstimate(sorted, { parents: 2, perParent: Number.POSITIVE_INFINITY, requested: null, pageCap: null, fallback: 1 });
+    expect(e.chosen.map((c) => c.id)).toEqual(["t3", "t0"]);
+    expect(e.total).toBe(42);
+    const split = splitPromise(e.total, []);
+    expect(split.comments + split.replies).toBe(42);
   });
 });

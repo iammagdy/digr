@@ -144,6 +144,8 @@ export function buildToolInput(endpoint: CatalogEndpoint, understood: Understood
       const code = understood.country[0];
       const value = allowed ? allowed.find((a) => a.toLowerCase() === code.toLowerCase()) : code;
       if (value !== undefined) { params[profile.country.field] = value; written.push("country"); }
+      // consolidation (rule 3): a tool whose country input takes ONE country cannot express several («مصر أو المنطقة العربية»): the first is sent, and the card says the source does not enforce the set
+      if (value !== undefined && understood.country.length > 1) gaps.push({ cls: "country", reason: "not_enforced" });
       if (value === undefined) gaps.push({ cls: "country", reason: "not_in_enum" });
       else if (!profile.country.enforces) gaps.push({ cls: "country", reason: "not_enforced" });
     } else gaps.push({ cls: "country", reason: "no_field" });
@@ -195,10 +197,12 @@ export function buildToolInput(endpoint: CatalogEndpoint, understood: Understood
  * THE UNDERSTOOD RECORD OF A STAGE, read from its typed filters (the plan's own, checked by code: the period, the language, the places, the named accounts, the replies) and its volume. Stage 1 has no separate understanding step (Stage 2 adds
  * it): the record is what the plan already declares. A disabled filter is not asked for. A CHILD stage (comments, replies) is delivered as the source gives it, so it asks for nothing: its inputs are the parent's identity.
  */
-export function understoodOfStage(stage: { planned_rows: number; filters?: ReadonlyArray<StageFilter>; parent_key: string | null }, nowMs: number, options: { engaged?: boolean; topicQuery?: string } = {}): Understood {
+export function understoodOfStage(stage: { planned_rows: number; filters?: ReadonlyArray<StageFilter>; parent_key: string | null }, nowMs: number, options: { engaged?: boolean; newest?: boolean; topicQuery?: string } = {}): Understood {
   const out: Understood = { nowMs };
   if (stage.parent_key !== null) return out;
   if (options.engaged) out.sort = "engaged";
+  // consolidation (rule 2): the customer asked for the newest or gave a date: the tool's «latest» order (X: queryType Latest), never the engaged default
+  else if (options.newest) out.sort = "latest";
   if (options.topicQuery) out.topicQuery = options.topicQuery;
   const filters = (stage.filters ?? []).filter(isEnabled);
   const period = filters.find((f) => f.kind === "period");

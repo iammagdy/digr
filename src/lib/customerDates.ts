@@ -1,3 +1,4 @@
+import { languageLabelAr } from "./agentMission/languageLabel";
 /**
  * Dates as the customer reads them: Arabic month names, Arabic-Indic digits and the Cairo clock, never the stored ISO text («2026-10-30T21:59:00.000Z»).
  * Display only: nothing here changes a stored value. A date with no time stays a date (no shift across midnight); a real instant is shown in Cairo time.
@@ -49,9 +50,11 @@ const NUMBER_CELL = /^-?\d[\d,]*(?:\.\d+)?$/;
  * A cell of the sample table of a REDESIGNED plan, as the customer reads it (S11: the live card said «false» and showed «16»): true / false are «نعم» / «لا», a number is written in Arabic-Indic digits with the Arabic separators, a date is left for `formatSampleCell` (the table's own step, which writes it in Arabic); every other text is left
  * exactly as it is. Used only for plans built by code: the old pipeline's views stay byte for byte. Idempotent.
  */
-export function formatSampleValueAr(value: unknown): string {
+export function formatSampleValueAr(value: unknown, o: { column?: "language" } = {}): string {
   const text = String(value ?? "");
   const t = text.trim();
+  // rule 8: a language code in a language column is written as the file writes it (العربية / لغة أخرى / غير محددة), never as a code
+  if (o.column === "language" && t !== "") return String(languageLabelAr(t));
   if (/^true$/i.test(t)) return "نعم";
   if (/^false$/i.test(t)) return "لا";
   if (NUMBER_CELL.test(t)) return t.replace(/\d/g, (d) => ARABIC_DIGITS[Number(d)]).replace(/,/g, "٬").replace(/\./g, "٫");

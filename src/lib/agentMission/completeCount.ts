@@ -7,6 +7,7 @@ import { topicDiscussionClass, type TopicMeaning } from "./topicMeaning";
 import { priceMissionByCode } from "./price";
 import { repliesEstimateFor } from "./replies";
 import { stagePriceInputs, type PricedPlan, type PricedStage } from "./plan";
+import { OPEN_COMMENTS_NOTE_AR } from "./repliesCard";
 
 /**
  * THE COMPLETE COUNT (S1 live findings, the owner's top rule; docs/S1-LIVE-FINDINGS.md sections 3 and 4): the count on the approved plan is the count delivered. Redesigned mode only ([PRICE-INPUT]: the estimate that prices the plan is computed here
@@ -161,7 +162,14 @@ export async function withCompleteCount(plan: PricedPlan, deps: CompleteCountDep
     const parent = out.stages.find((s) => s.key === stage.parent_key);
     if (!parent) continue;
     const listed = await deps.candidatesOf(parent);
-    if (!listed || listed.length === 0 || listed.every((c) => c.counter === null)) continue;
+    if (!listed || listed.length === 0 || listed.every((c) => c.counter === null)) {
+      // RULE 1 OF THE CONSOLIDATION: the customer asked for ALL the comments and the parents' source gives no comment counter, so nothing real can be promised and no number is promised from an estimate: the card says «all the comments», the estimate stays only as the price's maximum
+      if (all && !stage.children_open) {
+        const stages = out.stages.map((s) => (s.key === stage.key ? { ...s, children_open: true, all_children: true } : s));
+        out = { ...out, stages, notes_ar: [...(out.notes_ar ?? []).filter((x) => x !== OPEN_COMMENTS_NOTE_AR), OPEN_COMMENTS_NOTE_AR] };
+      }
+      continue;
+    }
     // THE MOST ENGAGED FIRST (S5): the highest counters in front; equal counters keep the source's order, a parent with no counter goes last. An order, never a filter.
     const match = deps.matchesOf ? await deps.matchesOf(parent) : null;
     const fits = (c: Candidate): boolean => match === null || (c.row !== undefined && match(c.row));

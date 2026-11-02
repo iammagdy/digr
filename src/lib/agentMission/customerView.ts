@@ -10,7 +10,7 @@ import { moneyLineAr } from "./moneyText";
 import { fixFileWordingAr } from "./fileWording";
 import { remainingLineAr, stageMetricLines, trackMission } from "./tracker";
 import { deliveryDenominatorOf, type PlanEditorView } from "./plan";
-import { ALL_REPLIES_AR } from "./repliesCard";
+import { ALL_COMMENTS_AR, ALL_REPLIES_AR } from "./repliesCard";
 import { minutesAr } from "./expectedTime";
 import { filterLineAr, isEnabled, type StageFilter } from "./filters";
 import { formatSampleCell } from "../customerDates";
@@ -120,12 +120,13 @@ export function stagesView(plan: any): { stages: CustomerStageView[]; total: num
     const rows = Math.max(0, Math.floor(Number(s?.expected_rows) || 0));
     const deliver = s?.deliver !== false;
     // S9: replies with no promised number (all the replies of the chosen comments) are not in the total: the estimate is only the maximum the price was made from
-    const open = s?.replies_open === true;
+    const openReplies = s?.replies_open === true;
+    const open = openReplies || s?.children_open === true;
     if (deliver && !open) total += rows;
     const parentIndex = typeof s?.parent_key === "string" ? list.findIndex((x) => x?.key === s.parent_key) : -1;
     // a stage that only FEEDS the next one is a ceiling, never a promise: «حتى ١٠ فيديوهات» (how many of them end up with results in the file is counted from the item store at the end)
     const rowsAr = countAr(rows, itemNounOf(String(s?.title_ar ?? "")));
-    stages.push({ n: i + 1, parentN: parentIndex >= 0 ? parentIndex + 1 : null, titleAr: customerSafeText(s?.title_ar, "مرحلة"), rows, rowsAr: open ? ALL_REPLIES_AR : deliver ? rowsAr : `حتى ${rowsAr}`, deliver, noteAr: deliver ? null : "تُستخدم في المرحلة التالية ولا تُحتسب في ملفك", ...(typeof s?.yield_share === "number" ? { yieldShare: s.yield_share } : {}) });
+    stages.push({ n: i + 1, parentN: parentIndex >= 0 ? parentIndex + 1 : null, titleAr: customerSafeText(s?.title_ar, "مرحلة"), rows: open ? 0 : rows, rowsAr: open ? (openReplies ? ALL_REPLIES_AR : ALL_COMMENTS_AR) : deliver ? rowsAr : `حتى ${rowsAr}`, deliver, noteAr: deliver ? null : "تُستخدم في المرحلة التالية ولا تُحتسب في ملفك", ...(typeof s?.yield_share === "number" ? { yieldShare: s.yield_share } : {}) });
   });
   return { stages, total };
 }

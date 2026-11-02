@@ -1,5 +1,6 @@
 import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, AGENT_REPLIES_PER_COMMENT_DEFAULT, AGENT_REPLIES_PER_COMMENT_MAX, AGENT_PEOPLE_PAGES_DEFAULT, AGENT_PEOPLE_PAGES_MAX, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE, NAMES_STEP_USD_PER_PERSON } from "./constants";
 import { formatSampleValueAr } from "../customerDates";
+import { isLanguageColumn } from "./languageLabel";
 import { CONTACT_KINDS, requestWantsContacts, type ContactKind } from "./contacts";
 import { isPeopleStage } from "./people";
 import { buildCompanySteps, buildContactSteps, type ContactAids, type ContactStep, type FinderInfo, type FinderKind } from "./contactFinders";
@@ -81,6 +82,10 @@ export interface ProposedStage {
   key: string;
   title_ar: string;
   endpoint_id: string;
+  /** Fields of the mapped item kept on the stored row beside the columns, never shown (the tokens a replies tool needs from the comment's own row: Facebook's feedback_id and expansion_token). Set by code only. */
+  carry_keys?: string[];
+  /** The catalog capability of the stage's tool, stored by code in the redesigned mode (rule 9 of the consolidation: a stage's type is read from its structure, never from the words of its title). Absent in the old pipeline. */
+  capability?: string;
   expected_rows: number;
   parent_key: string | null;
   /** Rows taken from each parent row (required for a stage with a parent). */
@@ -194,6 +199,8 @@ export interface PricedStage extends ProposedStage {
   promise_total?: number;
   /** S9: the replies of the chosen comments are ALL of them, with no number promised from an estimate (the comments per video are fewer than the video's counter). `planned_rows` is then only the estimate the price is made from, a maximum; after the delivery it is replaced by the reply counters of the delivered comments (repliesCard.ts `withRepliesJudged`). Set by code. */
   replies_open?: boolean;
+  /** Rule 1 of the consolidation: the customer asked for ALL the comments and the parents' source gives no comment counter, so no number is promised from an estimate: the card says «كل التعليقات على العناصر المختارة», the estimate is only the price's maximum, and after the delivery the promise is what the source gave. Set by code only. */
+  children_open?: boolean;
   /** S11: the parent items of this stage were chosen by code as the MOST ENGAGED (the highest comment counters), not the newest: the model's «newest» wording about them is dropped from the card. Set by code. */
   chosen_most_engaged?: boolean;
   /** The sampled comments' own reply counters (each capped at the most a comment may be read for) and the price of one call of the reply source: with them the replies planned and their price follow an edit of the comments' number or of the replies per comment, by code. */
@@ -472,12 +479,12 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
     if (raw.deliver === true) {
       // THE GENERIC RULE covers the classes of any item; a company's or a place's contact fields (phone, address, e-mail, review count) are the CONTRACT's (taskContracts.ts), asked only of the stages it names
       const missing = uncoveredFields(sourceFields.filter((f) => !CONTRACT_ONLY_CLASSES.includes(f.cls)), cleanColumns);
-      const stageKind: SourceStageKind = !isChild && isCompanyStage({ title_ar: title.text }) ? "company" : !isChild && isPlaceSource(endpointId, lookup.endpointCapability) ? "place" : "other";
+      const stageKind: SourceStageKind = !isChild && isCompanyStage({ title_ar: title.text, ...(lookup.noRelevance === true && lookup.endpointCapability ? { capability: lookup.endpointCapability(endpointId) } : {}) }) ? "company" : !isChild && isPlaceSource(endpointId, lookup.endpointCapability) ? "place" : "other";
       issues.push(...contractIssuesFor({ key, columns: cleanColumns }, sourceFields, stageKind));
       if (missing.length > 0) issues.push(`${label}: the source gives fields the customer would want in the file that no column holds: ${missing.map((f) => `${FIELD_LABEL_AR[f.cls]} (${f.path})`).join(", ")}. Add a column for each (map it in your run_code and give it an Arabic title like «${FIELD_LABEL_AR[missing[0].cls]}»): the file keeps every useful field of the source`);
     }
     // (a delivered PEOPLE stage is exempt: the e-mail and phone columns and their finder steps are added to it by code, contactFinders.ts)
-    if (lookup.isContactSource?.(endpointId) && !cleanColumns.some((c) => c.kind !== undefined) && !(raw.deliver === true && isPeopleStage({ parent_key: parentKey, title_ar: title.text, ...(isRecord(raw.role_preference) ? { role_preference: raw.role_preference } : {}) }))) issues.push(`${label}: a contact stage must mark its e-mail / phone columns with kind "work_email" or "phone" (their values are verified by code: a verified value fills the cell and an unverified one leaves it EMPTY; a row that is a named person is delivered either way, only a row that is nothing but an address with none verified is not delivered or charged)`);
+    if (lookup.isContactSource?.(endpointId) && !cleanColumns.some((c) => c.kind !== undefined) && !(raw.deliver === true && isPeopleStage({ parent_key: parentKey, title_ar: title.text, ...(lookup.noRelevance === true && lookup.endpointCapability ? { capability: lookup.endpointCapability(endpointId) } : {}), ...(isRecord(raw.role_preference) ? { role_preference: raw.role_preference } : {}) }))) issues.push(`${label}: a contact stage must mark its e-mail / phone columns with kind "work_email" or "phone" (their values are verified by code: a verified value fills the cell and an unverified one leaves it EMPTY; a row that is a named person is delivered either way, only a row that is nothing but an address with none verified is not delivered or charged)`);
     // THE SAMPLE ROWS the model omitted are the first rows of the output it cites (`yield_from`, else a cited output), kept by the relevance rule when there is one (audit G14: they were always copies of rows the code already reads)
     let samples = Array.isArray(raw.sample_rows) ? raw.sample_rows : [];
     const sampleSourceIds = [String(raw.yield_from ?? ""), ...(Array.isArray(raw.measured_by) ? raw.measured_by.map(String) : [])].filter((x) => /^out_\d+/.test(x));
@@ -497,7 +504,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
 
     // THE ENTITY STAGES (companies, restaurants, places, people, accounts): the place the card names is enforced from the items' fields, and a COMPANY stage whose request names a sector needs a relevance rule that checks the kind of entity
     const entityStage = raw.deliver === true && !isChild && isEntityStage({ title_ar: title.text });
-    const companyStage = entityStage && isCompanyStage({ title_ar: title.text });
+    const companyStage = entityStage && isCompanyStage({ title_ar: title.text, ...(lookup.noRelevance === true && lookup.endpointCapability ? { capability: lookup.endpointCapability(endpointId) } : {}) });
     const requestWords = `${lookup.requestText ?? ""} ${lookup.answerText ?? ""}`;
 
     // RELEVANCE: a stage whose rows were FOUND by a text search must say what «matching» means, and the share of the sample that matches is computed here, by code, from the rows the agent cites
@@ -897,9 +904,10 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
       const columns = s.columns.filter((c) => !isInternalColumn(c));
       return {
         key: s.key, title_ar: childCardTitleAr(s, plan.stages), expected_rows: s.planned_rows, parent_key: s.parent_key, deliver: s.deliver, columns,
-        sample_rows: s.sample_rows.filter((r) => sampleRowPasses(s, r, now)).slice(0, CUSTOMER_SAMPLE_ROWS).map((r) => Object.fromEntries(columns.map((c) => [c.key, (s.engine?.built_by === "code" ? formatSampleValueAr(r[c.key]) : String(r[c.key] ?? "")).slice(0, SAMPLE_CELL_CHARS)]))),
+        sample_rows: s.sample_rows.filter((r) => sampleRowPasses(s, r, now)).slice(0, CUSTOMER_SAMPLE_ROWS).map((r) => Object.fromEntries(columns.map((c) => [c.key, (s.engine?.built_by === "code" ? formatSampleValueAr(r[c.key], { column: isLanguageColumn(c.title_ar, c.key) ? "language" : undefined }) : String(r[c.key] ?? "")).slice(0, SAMPLE_CELL_CHARS)]))),
         ...(s.how_ar ? { how_ar: s.how_ar } : {}),
         ...(s.replies_open ? { replies_open: true } : {}),
+        ...(s.children_open ? { children_open: true } : {}),
         // the share of the sampled items the plan expected to match (a ratio, no money): the live tracker uses it to judge how much must be read before the target is reached
         ...(typeof s.yield_share === "number" ? { yield_share: Math.round(s.yield_share * 1000) / 1000 } : {}),
       };

@@ -83,9 +83,19 @@ describe("the plan promises the real count, pins the parents and states the numb
     expect(c.planned_rows).toBe(5);
     expect((after.notes_ar ?? []).join(" ")).toContain("٥ تعليقًا فقط من ٢٠");
   });
-  it("no counter known for any candidate: the plan is returned as it was (nothing real can be promised)", async () => {
+  // CHANGED (consolidation, rule 1): with no counter known and a NUMBER asked for, the plan is returned as it was; with «all the comments» asked, no number is promised from an estimate: the comments stage is open («كل التعليقات…»), the estimate stays as the price's maximum
+  it("no counter known for any candidate and a number asked: the plan is returned as it was (nothing real can be promised)", async () => {
     const before = planOf(2, 10);
-    expect(await withCompleteCount(before, { request: "كل التعليقات", candidatesOf: async () => cands(null, null) })).toBe(before);
+    expect(await withCompleteCount(before, { request: "عشرة تعليقات من كل فيديو", candidatesOf: async () => cands(null, null) })).toBe(before);
+  });
+  it("no counter known for any candidate and ALL the comments asked: the comments stage is open (no promised number), read to the source's end, and the estimate is unchanged", async () => {
+    const before = planOf(2, 10);
+    const after = await withCompleteCount(before, { request: "كل التعليقات", candidatesOf: async () => cands(null, null) });
+    const stage = after.stages.find((s) => s.key === "comments")!;
+    expect(stage.children_open).toBe(true);
+    expect(stage.all_children).toBe(true);
+    expect(stage.planned_rows).toBe(before.stages.find((s) => s.key === "comments")!.planned_rows);
+    expect(after.price).toEqual(before.price);
   });
 });
 
