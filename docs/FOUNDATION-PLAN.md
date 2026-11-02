@@ -2,7 +2,9 @@
 
 Written 2026-11-02 against `main` = `0268fec` (merge of #345). **Planning only.** No runtime code, no SQL write, no migration, no flag change, no paid provider call, no merge. The only file this PR adds is this one.
 
-Marks: **V** = I read the line, row or catalog entry myself in this session. **V-R** = reported by an earlier document or session (`docs/ROOT-CAUSE.md`, `docs/S1-LIVE-FINDINGS.md`, `docs/REDESIGN-PLAN.md`, `docs/AUDIT-2026-11.md`, `docs/HANDOFF.md`), not re-read here. **GUESS** = inference no line or row proves. **NOT VERIFIED** = needs data this session cannot read.
+**Update 2 (2026-11-02, against `main` = `1b4049a`, the merge of #347).** PR 1 of section 5 has shipped (#347: the admin raw-pages ZIP). The owner downloaded the `raw/` and `rows/` objects of all 28 missions of PR 1: 509 files, 19,603,637 bytes, every manifest equal to `storage.objects`. The ZIPs stay on the owner's device. A reviewer has read M17 so far. This update changes sections 0, 2 (new 2.0; 2.1, 2.2, 2.3), 3.1 (F4), 3.4, 4.1, 5, 6, 7, 8 and 9, and adds section 10 (backlog). Still docs only.
+
+Marks: **V** = I read the line, row or catalog entry myself in this session. **V (owner's ZIP)** = read in the real stored page of the owner's ZIP (M17 only so far). **V-R** = reported by an earlier document or session (`docs/ROOT-CAUSE.md`, `docs/S1-LIVE-FINDINGS.md`, `docs/REDESIGN-PLAN.md`, `docs/AUDIT-2026-11.md`, `docs/HANDOFF.md`), not re-read here. **GUESS** = inference no line or row proves. **NOT VERIFIED** = needs data this session cannot read.
 
 Every database query of this session is listed in section 9 (read-only `SELECT` only; none failed).
 
@@ -13,13 +15,13 @@ Every database query of this session is listed in section 9 (read-only `SELECT` 
 1. Every live failure since #330 has the same shape: **the model composes the plan from a few pages it chose to sample, and about fifteen code passes then repair it**. #345 added a final check, but the check accepts a plan that *states* a gap even when the catalog has a tool that *carries* the condition (V, section 1.5). That is exactly the Facebook failure.
 2. **Tool choice never sees the topic.** The ranking runs inside the model's `catalog_search`; the pool is "tools with the same catalog capability as the first hits", and coverage counts only date, language, country, account, sort, replies (V). There is no topic class, `rankByCoverage` is never called by product code (V), and D7's "prefer a tool that can" is enforced only for the country (V).
 3. **The catalog is better than what the pipeline uses.** Facebook has two post searches with keyword + start/end date (`justoneapi.x.facebook-search-post-v1`, `anyapi.facebook.search_posts`); the second has no catalog capability, so it is never in the pool (V). In M17 the planner *did* sample the first one with `startDate 2026-08-02 / endDate 2026-11-02`, then planned the 3-rows-a-page listing, and the card said «المصدر المختار لا يسمح بتحديد الفترة الزمنية» (V, queries Q6 and Q7).
-4. **Selection happens at planning, over at most two sampled pages per source** (`GATEWAY_MAX_SAMPLES_PER_SOURCE = 2`, protected file, V). With a 3-row listing that is 6 posts. No later pass can choose well from 6.
-5. **I could not read the stored raw pages.** The objects exist (sizes V); SQL reads only their metadata; I have no Storage read tool; the admin file route serves only `result.xlsx/.csv` (V). Section 2 says exactly what is missing and the smallest way to get it.
+4. **Selection happens at planning, over at most two sampled pages per source** (`GATEWAY_MAX_SAMPLES_PER_SOURCE = 2`, protected file, V). With a 3-row listing that is 6 posts. No later pass can choose well from 6. A search tool has the same limit per endpoint, whatever the keyword or cursor (V, `gateway.ts:240-242`). So under today's cap a Facebook search pool is 2 pages of `justoneapi`, about 10 posts (section 7.2).
+5. **The raw pages are now in the owner's hands (PR 1, #347).** The first one read, M17, settles the Facebook points: search rows carry the author (page id, name, URL), a unix-seconds `timestamp`, `comments_count`, `comments_id` and a cursor. The empty comment and reply answers are successful empty answers, not errors (V (owner's ZIP), section 2.3). Every other page is still NOT VERIFIED.
 6. **The foundation (section 3)**: (F1) one ASK record built once and used by everything; (F2) a TOOL CARD per usable endpoint, verified on real stored responses; (F3) a PLAN COMPILER in code that builds parents → comments → replies from the Ask and the cards in one pass (no model-written stages, no send-backs); (F4) a candidate POOL read by code with an exposure check before the card; (F5) a TYPED PROMISE (exact / counter / open, never an estimate); (F6) no fallback to the old pipeline for a flagged platform; (F7) every acceptance test replays real stored responses.
 7. With F1-F7, a new platform problem becomes a **card or fixture change (data)**, not a new pass (code). That is the stopping rule for the loop.
-8. **Remaining work: 7 PRs.** Stage 1 needs three (real pages in; the foundation; Facebook/Instagram/YouTube cards), then one each for Stages 2, 3, 4, and the money PR. Four need the strong model (foundation, Stage 3, Stage 4, money).
-9. Eleven owner decisions are in section 7; the four that block Stage 1 are: where real fixtures may live (**the repo is public**, V), planning pool depth against the protected two-sample cap, the exposure check, and allowing unverified cards for test-account missions only.
-10. Not verified: the content of every raw page, the Heroku and Vercel deploy state, whether the free YouTube detail tool is connected on our TREG account, why the M17 planner dropped the search tool (section 8).
+8. **Remaining work: 7 PRs after PR 1 (8 in all; PR 1 shipped as #347).** Stage 1 needs four in all: real pages in (done), the foundation in two halves (**PR 2a** adds the compiler and deletes nothing; **PR 2b** deletes the passes once 2a is live and benchmarked), and the Facebook/Instagram/YouTube cards. Then one PR each for Stages 2, 3 and 4, and the money PR. Five need the strong model: 2a, 2b, Stage 3, Stage 4 and money.
+9. Owner decisions (section 7): **decided** 7.1 (anonymised fixtures only), 7.3 (exposure check) and 7.4 (`catalog_only` on test accounts, 0.10 USD a mission). Awaiting the owner: 7.2, now restated with the verified cap rule, and 7.5 to 7.11. 7.6's "6 search pages" contradicted 7.2. It is now 2 pages, unless a separate owner brief changes the protected `gateway.ts`.
+10. Not verified: every raw page except M17's, the Heroku and Vercel deploy state of later merges, whether the free YouTube detail tool is connected on our TREG account, why the M17 planner dropped the search tool (section 8).
 
 ---
 
@@ -108,11 +110,18 @@ The posts or videos to read are chosen in `withCompleteCount` at planning, from 
 
 ## 2. Real data: can I read the stored raw pages of the 20 missions?
 
-### 2.1 No. What exists and what is missing.
+### 2.0 Update 2: yes, through the owner (PR 1, #347)
+
+- The admin page `/admin/agent` now downloads, as one ZIP, the `raw/` and `rows/` objects of up to 40 chosen missions. It is admin only, read-only, and logs names and sizes only.
+- The owner downloaded all 28 missions of PR 1: 509 files, 19,603,637 bytes. Every `manifest.json` matched `storage.objects` exactly. The ZIPs stay on the owner's device and are never committed (decision 7.1).
+- The largest stored `raw/` or `rows/` object is 5,535,284 bytes (V, `storage.objects` metadata). The 673 KB in 2.1 and in PR 1's risks was the largest object of M15-M20 only.
+- Read so far: **M17** (`msn_6bb78c15d116268b0b9b`), by a reviewer, with the findings in 2.3. The other 27 missions' pages have not been read yet. Everything they alone can answer stays NOT VERIFIED.
+
+### 2.1 No (first version, before PR 1). What exists and what is missing.
 
 - **Exists (V, Q2-Q4):** bucket `agent-missions` (private), 8,687 objects in `storage.objects`. Per mission: `raw/call_NNNN.json` (one per provider call), `out/*.json`, `rows/<stage>.json` (what was delivered), `result/result.xlsx/.csv`, `planning_state.json`, `run_state.json`. Example, M17 `msn_6bb78c15d116268b0b9b`: 13 raw pages of 714, 5,200, 7,899, **66,738**, **21,812**, 5,847, 113, 113, 7,802, 294, 294, 294, 294 bytes; calls 4 and 5 are the two Facebook keyword-and-date searches.
 - **Missing:** the bytes. SQL reads only object metadata; the content lives in Storage, not in Postgres. This session has a read-only SQL tool, no Storage download tool, no service key (and must not ask for one), no Heroku access. The admin route `src/app/api/admin/agent/[id]/file/route.ts:14` accepts only `result.xlsx` or `result.csv`. The worker reads raw pages itself (`store.getFile(mission.id, "raw/…")`, `tools.ts:798`), so the credentials exist only on Heroku and Vercel.
-- **Smallest way to get them (PR 1):** an admin-only "download the raw pages of these missions as one ZIP" action in the existing admin agent page, using the server's existing Storage client. The owner clicks it once and gives the ZIP to the PR 2 session. No secret changes hands.
+- **Smallest way to get them (PR 1):** an admin-only "download the raw pages of these missions as one ZIP" action in the existing admin agent page, using the server's existing Storage client. The owner clicks it once and gives the ZIPs to the PR 2a session on the owner's own device (see the PR #346 description). No secret changes hands.
 
 ### 2.2 What the call log and object sizes already prove (V, Q4, Q6, Q8; cost = observed per call, except where the tool was never billed: catalog price)
 
@@ -121,10 +130,10 @@ The posts or videos to read are chosen in `withCompleteCount` at planning, from 
 | Facebook | `anyapi.facebook.user.posts` (page listing, cursor) | 30 | **2.9-3.0** | 0 / 1 | 0.0012 | 3 posts a page; M1 read 11 pages = 33 posts |
 | Facebook | `crawl4ai.facebook.user.posts` | 11 | 0 | **11 / 0** | 0 (free when empty) | dead without a session |
 | Facebook | `scrapecreators.x.v1-facebook-profile-posts` | 3 | 1.0 | 0 / 1 | 0.00188 | its own summary: «limited to 3 posts per page» |
-| Facebook | `justoneapi.x.facebook-search-post-v1` (keyword, startDate, endDate, cursor) | 22 | **5.1** | 0 / 2 refused | **0.02952** | the only working keyword+date post search; 0.531 USD spent at planning over 8 missions; never paged with a cursor |
+| Facebook | `justoneapi.x.facebook-search-post-v1` (keyword, startDate, endDate, cursor) | 22 | **5.1** | 0 / 2 refused | **0.02952** | the only working keyword+date post search; 0.531 USD spent at planning over 8 missions; never paged with a cursor, although `data.cursor` was non-empty on both M17 pages (V (owner's ZIP)) |
 | Facebook | `anyapi.facebook.search_posts` (query, dates, location, limit ≤ 20) | 1 | 0 | 0 / 1 | 0.06606 | capability None; failed once (refused) |
-| Facebook | `scrapecreators.x.v1-facebook-post-comments` | 38 | 5.9-8.2 | 6 / 2 | 0.00188 (billed even empty) | empty twice on the same `/posts/pfbid…` link (M17), 500 on a bare domain (M1) |
-| Facebook | `anyapi.facebook.comment_replies`, `scrapecreators.x.v1-facebook-post-comment-replies` | 4 + 4 | 0 | **8 / 0** | 0.0012 / 0.00188 | every Facebook reply read was empty (M17, M19); raw page 294 bytes each |
+| Facebook | `scrapecreators.x.v1-facebook-post-comments` | 38 | 5.9-8.2 | 6 / 2 | 0.00188 a page with rows | empty twice on the same `/posts/pfbid…` link (M17), 500 on a bare domain (M1). The first version said "billed even empty"; that is wrong for M17. Its two empty answers carry `credits_charged 0` (V (owner's ZIP)) and are recorded at 0.000000 USD (V, Q11). The other 4 empty calls were not re-read. |
+| Facebook | `anyapi.facebook.comment_replies`, `scrapecreators.x.v1-facebook-post-comment-replies` | 4 + 4 | 0 | **8 / 0** | 0.0012 / 0.00188 | every Facebook reply read was empty (M17, M19); raw page 294 bytes each. M17's four are successful empty answers (V (owner's ZIP)), each billed 0.0012 USD (V, Q11). |
 | Instagram | `scrapecreators.instagram.user.posts` | 3 | **12** | 0 | 0.00188 | one page of 12; catalog `pagination` is empty although `next_max_id` is an input |
 | Instagram | `crawl4ai.instagram.user.posts` | 9 | 6.8-7.3 | 0 / 2 (503 timeout) | 0.0009 | 12 latest without a session (its summary) |
 | Instagram | `anyapi.instagram.post.comments` | 8 | 2.0-5.0 | 0 / 1 | 0.0008-0.00144 | no reply counter in its fields |
@@ -137,9 +146,41 @@ The posts or videos to read are chosen in `withCompleteCount` at planning, from 
 | YouTube | `tikhub.youtube.channel.videos` (channel id, continuation) | 3 | 30 | 0 / 1 | 0.001 | 30 a page |
 | YouTube | `tikhub.youtube.video.comments` (continuation, reply token) | 9 | 1.0-3.3 | 0 / 2 | 0.001 | carries `reply_continuation_token` (catalog fields) |
 
-### 2.3 What only the raw pages can answer (NOT VERIFIED until PR 1)
+### 2.3 What only the raw pages can answer
 
-For Facebook: whether `justoneapi` search rows carry the page as `author` (id, name, URL) so the named page can be recognised; the date format of `timestamp`; whether `comments_count` counts replies; whether `comments_id` feeds a comments tool; why the comments tool answered 113 bytes for the `pfbid` link; whether the reply tools' 294-byte answers are "no replies" or an error. For Instagram: whether a `scrapecreators` page carries `next_max_id`; the reply counter of `scrapecreators.instagram.post.comments`. For YouTube: the shape of `tikhub.x.youtube-web-search-channel` pages (list path, channel id per row, published time); whether crawl4ai's `replies` field is a count. For all: page size against counters, and how often a counter exceeds what the source exposes.
+**Now V (owner's ZIP, M17 `msn_6bb78c15d116268b0b9b`, read by a reviewer; the call order matches the call log, Q11):**
+
+1. **`justoneapi.x.facebook-search-post-v1` (`raw/call_0004.json`, `raw/call_0005.json`):**
+   - The rows carry `author.id`, `author.name`, `author.url`, `timestamp` (**unix seconds**), `comments_count`, `comments_id`, `post_id` and `url`.
+   - `data.cursor` is **non-empty on both pages**, so more pages existed and were never read.
+   - The stored `requestParams` show the keyword plus `startDate 2026-08-02` / `endDate 2026-11-02`, so the period was sent to the provider.
+   - **3 of the 10 rows were authored by Al Arabiya pages.** The named page can therefore be recognised by `author` (id or URL), as a choice among pool rows (F3 rule 3).
+   - The 10 rows match the call log: 5 rows on each call (Q11).
+2. **`scrapecreators.x.v1-facebook-post-comments`, execution (`raw/call_0007.json`, `raw/call_0008.json`, 113 bytes each):**
+   - `success true`, `credits_charged 0`, `comments []`, `has_next_page false`.
+   - This is a **successful empty answer, not an error**. The call log records both as `empty` at 0.000000 USD (Q11).
+3. **`anyapi.facebook.comment_replies`, execution (`raw/call_0010.json` … `raw/call_0013.json`, 294 bytes each):**
+   - `found true`, `replies []`, `items 0`.
+   - These are **successful empty answers, not errors**. They are billed 0.0012 USD each (Q11).
+
+**Still NOT VERIFIED (pages not read yet, or the question is not answered by an empty answer):**
+
+- **Facebook:**
+  - whether `comments_count` counts replies;
+  - whether `comments_id` feeds a comments tool (not replayed);
+  - **why** the comments tool returned nothing for the `pfbid` post: the post had no visible comments, or that link form does not reach them. The answer says "none" without saying why, and the post's own `comments_count` was not compared;
+  - **why** the reply reads returned nothing: the comments had no replies, or the tool cannot see them. No reply counter on a comment row was compared;
+  - the other seven Facebook search missions' pages;
+  - why `anyapi.facebook.search_posts` was refused.
+- **Instagram:**
+  - whether a `scrapecreators` page carries `next_max_id`;
+  - the reply counter of `scrapecreators.instagram.post.comments`.
+- **YouTube:**
+  - the shape of `tikhub.x.youtube-web-search-channel` pages (list path, channel id per row, published time);
+  - whether crawl4ai's `replies` field is a count.
+- **All platforms:** page size against counters, and how often a counter exceeds what the source exposes.
+
+The PR 2a and PR 3 sessions read these from the owner's ZIPs on the owner's device (see the PR #346 description) and commit only anonymised fixtures (decision 7.1).
 
 ---
 
@@ -157,7 +198,7 @@ For Facebook: whether `justoneapi` search rows carry the page as `author` (id, n
 3. A condition no card can carry becomes, by code, either a **choice among read items** (the named source, the topic relation, the country: choosing, not filtering) or a **mark column**, and the card says so before approval. Never a silent drop.
 Inputs are written by code from the card (`toolInput.ts` already does this for dates and countries). The model never writes stages, mappings, page sizes, or queries.
 
-**F4. THE POOL, read by code at planning, and the EXPOSURE CHECK.** The compiled parent stage is read by code (not by model samples) to a depth that the card and the Ask decide: until the period's start is reached, the listing ends, or the depth limit is hit (decision 7.2: the protected two-sample cap). The parents are chosen in the owner's order (named source → country and language → own text about the topic → most commented, or newest when asked) among **all pool rows**, and N spares are kept. If the parent card has no counter and a counter card exists (YouTube: `youtube.youtube.video.detail`, 50 ids a call, free), the counters of the pool are read in one call. **Exposure check** (decision 7.3): before the card is shown, the first comments page of every chosen parent is read; a parent whose page is empty while its counter is above zero is replaced by the next spare (M17's `pfbid` post would have been swapped before approval, not after).
+**F4. THE POOL, read by code at planning, and the EXPOSURE CHECK.** The compiled parent stage is read by code (not by model samples) to a depth that the card and the Ask decide: until the period's start is reached, the listing ends, or the depth limit is hit (decision 7.2: the protected two-sample cap). Every pool read goes **through the gateway**: the planning budget, the daily-cap reservation and the call record live there, and a code path around it is not allowed. So under today's cap, the depth limit is 2 pages that return rows per search endpoint, and 2 per source value for a listing (V, `gateway.ts:135, 240-242`). The card says how many pages were read and whether the source had more (a non-empty cursor). The parents are chosen in the owner's order (named source → country and language → own text about the topic → most commented, or newest when asked) among **all pool rows**, and N spares are kept. If the parent card has no counter and a counter card exists (YouTube: `youtube.youtube.video.detail`, 50 ids a call, free), the counters of the pool are read in one call. **Exposure check** (decision 7.3): before the card is shown, the first comments page of every chosen parent is read; a parent whose page is empty while its counter is above zero is replaced by the next spare (M17's `pfbid` post would have been swapped before approval, not after).
 
 **F5. THE TYPED PROMISE.** Every stage's number has exactly one type, set by the compiler and shown by one fixed sentence:
 - `exact(n)`: the customer's count of parents (2 posts, 20 tweets);
@@ -186,6 +227,8 @@ An estimate (a sample mean, a model number) **never** becomes a promise; it may 
 
 ### 3.4 Patch code that can be deleted once the compiler serves a platform (social only; companies keep theirs until Stage 3)
 
+**When:** never in PR 2a. These passes are deleted in **PR 2b**, for TikTok and X only, after PR 2a is live and their benchmarks pass. They are deleted for Facebook, Instagram and YouTube only after PR 3 is live and benchmarks 1, 2 and 4 pass (section 5). A pass is deleted only when a replay test has shown it changes nothing on every compiled plan of that platform.
+
 - `agent/src/tools.ts`: the country send-back (730-742), the sort/query send-back (743-769), the account-page send-back (770-787), the comments-recipe-by-code pass (788-807), the media send-back for social (935-952), the named-source send-back (960-972), the derive-recipes-from-samples path for social (695-720), the comment-language-column pass (723-729, moves into the card's columns), the contract send-back (974-984 becomes an assertion), and the `RunState` counters `countrySendBacks`, `sortSendBacks`, `accountPageSendBacks`, `mediaSendBacks`, `contractSendBacks`.
 - `src/lib/agentMission/completeCount.ts`: `basisOf` share estimate, `pageCapOf`, the candidates-from-samples reader, `promise_total` (replaced by F4 and F5).
 - `src/lib/agentMission/replies.ts`: the replies estimate (`plannedRepliesFor`, the "stated unknown 2 a comment"); the replies stage becomes a compiler stage.
@@ -202,20 +245,38 @@ All endpoint facts below are V from `data/treg/treg_catalog_sellable.json` unles
 ### 4.1 Facebook: «منشورات عن [الموضوع] من صفحة قناة العربية آخر ٣ شهور، مع كل التعليقات والردود»
 
 **Parents (posts).**
-1. `justoneapi.x.facebook-search-post-v1`: `keyword` (required), `startDate`, `endDate` (`yyyy-MM-dd`, inclusive), `cursor`; list `data.results`, cursor `data.cursor`; fields `post_id, url, message, timestamp, comments_count, reactions_count, reshare_count, author, author_title, comments_id, …`; 0.02952 USD a successful page; observed 5.1 rows a page (V Q9). The compiler writes the Cairo days of the period (start day and end day; the file's «ضمن الفترة المطلوبة» mark checks the exact instant). The named page is **chosen**, not filtered: the pool rows whose `author` is the page come first. Whether `author` identifies the page: NOT VERIFIED (raw pages).
-2. `anyapi.facebook.search_posts`: `query`, `startDate`, `endDate` (`YYYY-MM-DD`), `location`, `limit` 1-20; list `output.data.items`; fields `authorName, authorUrl, commentCount, createdUtc, id, text, url, …`; 0.06606 USD a call; **no cursor** (one page of ≤ 20); capability `None` in the catalog, so a card must give it its role. One planning call was refused (V Q9; the refusal reason was not read). `authorUrl` makes the page match exact.
+1. `justoneapi.x.facebook-search-post-v1`: `keyword` (required), `startDate`, `endDate` (`yyyy-MM-dd`, inclusive), `cursor`; list `data.results`, cursor `data.cursor`; fields `post_id, url, message, timestamp, comments_count, reactions_count, reshare_count, author, author_title, comments_id, …`; 0.02952 USD a successful page; observed 5.1 rows a page (V Q9).
+   - **Row fields, V (owner's ZIP, M17 calls 4 and 5):**
+     - `author.id`, `author.name`, `author.url`;
+     - `timestamp` in **unix seconds** (the card converts it to a Cairo instant);
+     - `comments_count`, `comments_id`, `post_id`, `url`;
+     - `data.cursor`, non-empty on both pages.
+   - The stored request shows the keyword and `startDate 2026-08-02` / `endDate 2026-11-02`, so the period reaches the provider. The compiler writes the Cairo days of the period: the start day and the end day. The file's «ضمن الفترة المطلوبة» mark checks the exact instant.
+   - The named page is **chosen, not filtered**: the pool rows whose `author.id` or `author.url` is the page come first. In M17, **3 of the 10 rows** were authored by Al Arabiya pages (V (owner's ZIP)). This card can be `verified` in PR 3 from these two pages.
+   - **Pool under today's cap:**
+     - 2 pages with rows per mission at planning, about 10 posts (V, section 7.2).
+     - A named page + topic + period request will therefore often find fewer posts of that page than asked (M17: 3), so decision 7.5 matters.
+     - Whether `comments_count` counts replies: NOT VERIFIED.
+2. `anyapi.facebook.search_posts`: `query`, `startDate`, `endDate` (`YYYY-MM-DD`), `location`, `limit` 1-20; list `output.data.items`; fields `authorName, authorUrl, commentCount, createdUtc, id, text, url, …`; 0.06606 USD a call; **no cursor** (one page of ≤ 20); capability `None` in the catalog, so a card must give it its role. One planning call was refused (V Q9; the refusal reason was not read). `authorUrl` makes the page match exact. Under decision 7.4 it is `catalog_only`, so test accounts only, with a ceiling of 0.10 USD a mission. That allows **one** call (0.06606 USD), not the two the cap would allow (0.132 USD).
 3. Only when the Ask has no topic and no period: the page listing `anyapi.facebook.user.posts` (`url` or `pageId`, `cursor`; 3 a page; fields `author, createdUtc, id, media, text, url`: **no comment counter**), so the promise is `open` or needs a detail read per post.
 
-**Comments.** `scrapecreators.x.v1-facebook-post-comments` (`url` or `feedback_id`, `cursor`; list `comments`; billed per call even when empty), then `anyapi.facebook.post_comments` (`url` or `feedbackId`, `cursor`; list `output.data.comments`; 0.002; capability `None`), then `justoneapi.x.facebook-get-post-comments-v1` (`postId`, `cursor`; 0.02952; no list path: needs a card from a real page, one exists from `msn_25fb87d4b0dd80c6ae12` call 4). The exposure check (F4) reads the first page before the card.
+**Comments.** `scrapecreators.x.v1-facebook-post-comments` (`url` or `feedback_id`, `cursor`; list `comments`; billed per call even when empty), then `anyapi.facebook.post_comments` (`url` or `feedbackId`, `cursor`; list `output.data.comments`; 0.002; capability `None`), then `justoneapi.x.facebook-get-post-comments-v1` (`postId`, `cursor`; 0.02952; no list path: needs a card from a real page, one exists from `msn_25fb87d4b0dd80c6ae12` call 4). The exposure check (F4, decided: 7.3) reads the first page before the card.
+- M17's two execution reads of the `pfbid` post (`raw/call_0007.json`, `call_0008.json`, 113 bytes) are **successful empty answers**: `success true`, `credits_charged 0`, `comments []`, `has_next_page false` (V (owner's ZIP)).
+- So the exposure check must treat "success with no comments" as **empty**, not as an error: replace the parent with the next spare, and do not retry.
+- Why that post gave no comments: NOT VERIFIED.
 
-**Replies.** `anyapi.facebook.comment_replies` and `scrapecreators.x.v1-facebook-post-comment-replies` (both `feedbackId` + `expansionToken` from the comment row). 8 of 8 live reads were empty (V); whether that is "no replies" or a broken read is NOT VERIFIED (raw pages of 294 bytes). Until a real page shows a reply, the replies promise on Facebook is `open`.
+**Replies.** `anyapi.facebook.comment_replies` and `scrapecreators.x.v1-facebook-post-comment-replies` (both `feedbackId` + `expansionToken` from the comment row).
+- 8 of 8 live reads were empty (V).
+- M17's four (`raw/call_0010.json` … `call_0013.json`, 294 bytes) are **successful empty answers**: `found true`, `replies []`, `items 0` (V (owner's ZIP)). They are not errors, and each was billed 0.0012 USD (Q11).
+- Whether those comments really have no replies, or the tool cannot see them: NOT VERIFIED. No reply counter was compared.
+- Until a real page shows a reply, the replies promise on Facebook is `open`. A replies read is spent only on comments whose row shows a reply counter above zero, if the comments card has one (NOT VERIFIED).
 
 **Truly impossible with today's catalog (V):**
 - A tool that takes both an author/page and a keyword. «Posts of page X about Y» is always a search plus a choice, never a server-side filter.
 - A calendar date range on any page listing (5 listing tools, none has a date input).
 - A country or language input on any Facebook post tool (`location` on `anyapi.facebook.search_posts` is a place hint, not a country filter: GUESS from its note).
 - Reading three months of a news page through a listing: at 3 posts a page this is thousands of calls (GUESS on the page's volume); not feasible inside the daily cap.
-- **Cost limit, not impossibility:** at 0.02952 USD a search page, the 0.80 USD daily provider cap allows about 27 pages a day for all customers. The compiler must cap the pool per mission (decision 7.6).
+- **Cost limit, not impossibility:** at 0.02952 USD a search page, the 0.80 USD daily provider cap allows about 27 pages a day for all customers. Today the protected two-sample rule already limits the planning pool to 2 `justoneapi` pages a mission (0.059 USD). A deeper pool needs a protected-file change (decision 7.6).
 
 ### 4.2 Instagram: «منشورين من حساب الحدث (alhadath)، مع كل التعليقات والردود»
 
@@ -243,60 +304,116 @@ All endpoint facts below are V from `data/treg/treg_catalog_sellable.json` unles
 
 ---
 
-## 5. The remaining work as the fewest PRs (7)
+## 5. The remaining work as the fewest PRs (8: PR 1 shipped as #347; PR 2 is split into 2a and 2b for safety; 7 remain)
 
 **Rules for every PR** (unchanged from `REDESIGN-PLAN.md` section 3): red test committed first, then green; flags-off output byte-identical; no SQL; protected files untouched (`agent/src/gateway.ts` caps, `price.ts` charge formula, `jobPointsCap.ts`, `src/functions/**`, `supabase/**`, `finalize.ts` settlement lines, ledger and billing files, the protected PRs); merge commits only; after each merge, **Heroku Activity shows Build succeeded and Deployed on the merge SHA** (site-only PRs: Vercel production READY on the SHA) before any live check.
 
-**The anti-loop rule (new):** after PR 2, a live failure on a platform is first stored as a replay fixture. If the replay shows a card is wrong or missing, the fix is a card change in the same platform PR (PR 3) or a follow-up commit to the open PR. A new code pass in `propose_plan` is not allowed; if the compiler itself is wrong, that is a defect of PR 2, fixed with a replay that proves it.
+**The anti-loop rule (new, decision 7.11 awaiting owner):**
+1. After PR 2a, a live failure on a platform is first stored as a replay fixture (anonymised, decision 7.1).
+2. If the replay shows a card is wrong or missing, the fix is a card change, in the platform PR (PR 3) or as a follow-up commit to the open PR.
+3. A new code pass in `propose_plan` is not allowed.
+4. If the compiler itself is wrong, that is a defect of PR 2a, fixed by the strong model with a replay that proves it.
+5. PR 2b only deletes. It adds no pass, no send-back and no new rule.
+6. A pass may be deleted only when a replay test shows it changes nothing on every compiled plan of that platform.
+7. A pass that **does** change a compiled plan is a compiler defect. It is fixed in the compiler, and the pass stays until that is proven.
 
-### PR 1: Real responses in (Stage 1, part 1)
+### PR 1: Real responses in (Stage 1, part 1): SHIPPED
 
+- **Status:** shipped as #347 (merge `1b4049a`, Vercel production READY on it, V in that session). The owner's live check is done: all 28 missions downloaded, 509 files, 19,603,637 bytes, every manifest equal to `storage.objects`. One defect was found in use: a truncated ZIP at the time limit (backlog, section 10).
 - **Goal:** the owner can download, as one ZIP, the stored `raw/` and `rows/` objects of the missions the owner selects, from the admin agent page. Nothing else.
 - **Files:** `src/app/api/admin/agent/[id]/file/route.ts` or a sibling `raw-zip/route.ts` (admin only, `authenticateAdmin`), the admin agent page button, `tests/admin-raw-zip.test.ts`.
-- **Risks:** exposing raw pages: admin only, same check as today's file route; ZIP size (largest object seen 673 KB, V Q4).
+- **Risks:** exposing raw pages: admin only, same check as today's file route; ZIP size. The first version said the largest object seen was 673 KB (Q4, M15-M20 only). The largest in the bucket is 5,535,284 bytes, and #347 caps a file at 10 MB and a ZIP at 60 MB.
 - **Rollback:** `git revert -m 1 <merge>`.
 - **Acceptance (real):** for `msn_6bb78c15d116268b0b9b` the ZIP lists `raw/call_0001.json` … `raw/call_0013.json` with byte sizes 714, 5,200, 7,899, 66,738, 21,812, 5,847, 113, 113, 7,802, 294, 294, 294, 294 (equal to `storage.objects` metadata, query Q4 of this plan).
 - **Live check (owner):** Vercel production READY on the SHA; download the ZIP for the 20 missions of ROOT-CAUSE.md plus the eight Facebook search missions `msn_71577d2920048f9ebf22`, `msn_aaed7fa9ffecc854edc0`, `msn_5324df5fff82ef3c6a0e`, `msn_a6e52e97658bc41fa7ad`, `msn_25fb87d4b0dd80c6ae12`, `msn_020bf5c4110c15c86ab8`, `msn_e39585e687833914039e`, `msn_980f9a239454964b0583`; the file count equals `select count(*) from storage.objects where bucket_id='agent-missions' and split_part(name,'/',1) = '<id>' and name ~ '/(raw|rows)/'`.
 - **Model:** cheaper model (mechanical route and button).
 
-### PR 2: The foundation (Stage 1, part 2): F1-F7, TikTok and X moved onto it
+### PR 2a: The foundation, added (Stage 1, part 2): F1-F7, TikTok and X routed through the compiler behind their flags. Deletes nothing.
 
-- **Goal:** the Ask, the Tool Cards (TikTok and X cards verified on real pages; the generic counter-card and exposure-check mechanism), the compiler, the pool, the typed promise, no fallback, the replay harness; the social send-backs and passes of 3.4 deleted for compiled platforms. TikTok and X keep their live results.
-- **Files:** new `src/lib/agentMission/ask.ts`, `toolCards/*.ts` (data) + `toolCards/verify.ts`, `compilePlan.ts`, `pool.ts`, `promise.ts`; `agent/src/tools.ts` (social `propose_plan` path replaced by the compiler; model tool `understand_request`), `agent/src/redesign.ts` (F6), `agent/src/engine/run.ts` (typed promise judgement; no change to paging), `src/lib/agentMission/customerView.ts` and card sentences (one per promise type); `tests/fixtures/live/raw/**` (from PR 1, anonymised per decision 7.1), `tests/helpers/replayGateway.ts`, `tests/foundation-*.test.ts`. Not touched: the protected files.
-- **Risks:** the largest change of the plan; a TikTok/X regression (mitigated by the replays below and by the per-platform flag); planning time should fall (the model writes an Ask, not stages and mapping code: G14) but is NOT VERIFIED; deleting passes changes behaviour only for compiled platforms (flags-off byte-identical test stays).
+- **Goal:**
+  - Add the Ask, the Tool Cards (TikTok and X cards verified on real pages; the generic counter-card and exposure-check mechanism), the compiler, the pool, the typed promise, no fallback for compiled platforms, and the replay harness.
+  - TikTok and X missions go through the compiler **only when their per-platform flag is `test` or `on`**.
+  - **No existing pass or send-back is deleted.** Every pass of 3.4 stays in `propose_plan` and still runs for every platform, so a compiled TikTok/X plan still passes through them. 2a adds a test proving that each pass changes nothing on every compiled replay plan.
+  - **Flags off: output byte-identical** to `main`. The existing test stays, plus a replay of all 20 stored missions with every flag off.
+- **Files:**
+  - New: `src/lib/agentMission/ask.ts`, `toolCards/*.ts` (data) + `toolCards/verify.ts`, `compilePlan.ts`, `pool.ts`, `promise.ts`.
+  - `agent/src/tools.ts`: an added, flag-gated compiler path ahead of the model's stages for TikTok/X, and the model tool `understand_request`. **No removal.**
+  - `agent/src/redesign.ts` (F6, for compiled platforms only).
+  - `agent/src/engine/run.ts`: the typed promise judgement; no change to paging.
+  - `src/lib/agentMission/customerView.ts` and the card sentences (one per promise type).
+  - Tests: `tests/fixtures/live/**` (anonymised fixtures only, decision 7.1, made on the owner's device; see the PR #346 description), `tests/helpers/replayGateway.ts`, `tests/foundation-*.test.ts`, and `tests/fixtures-anonymised.test.ts`, which fails if a name, handle, avatar or text field of a committed fixture is not a placeholder.
+  - Not touched: the protected files, including `agent/src/gateway.ts` (pool reads go through it, under today's cap: section 7.2).
+- **Risks:**
+  - The largest addition of the plan.
+  - A TikTok/X regression with the flag on, mitigated by the replays and by the per-platform flag. With the flag off nothing changes.
+  - Planning time should fall (the model writes an Ask, not stages and mapping code: G14), but that is NOT VERIFIED.
+  - Two paths live side by side until PR 2b.
 - **Rollback:** per-platform flag `off` (settings, no deploy); then `git revert -m 1`.
+- **Acceptance (real, on anonymised fixtures of the stored pages):**
+  1. The Ask of each of the 20 stored request texts equals a hand-written table (`replay-missions.json`).
+  2. M12 `msn_5851abc92a1e6645a9cd` (TikTok), replayed:
+     - the compiled plan uses the same tools as the stored plan, with promise type `counter`;
+     - the engine replay delivers the ids of the stored `rows/*.json` (369 rows).
+  3. M14 `msn_b060d3347ed7660f972e` (X): 20 of 20, the same ids.
+  4. M20 `msn_adcfafabcdebc27ff803`: the compiled plan has videos, comments and replies stages from the Ask alone (no model).
+  5. M6, M9, M13: no promise of type estimate exists; the replies promise is `counter` or `open`.
+  6. A flagged, compiled platform's mission cannot run the old pipeline (engine selector test over all 20 stored plans).
+  7. **Every pass and send-back of 3.4 is still present** (a test reads `tools.ts`), and each is a no-op on every compiled TikTok/X replay plan.
+  8. Flags off: byte-identical plans and files for all 20 stored missions.
+- **Live check (owner, after Heroku Build succeeded and Deployed on the 2a merge SHA):**
+  - With the TikTok and X flags in `test` mode, run benchmark 3 (TikTok) and benchmark 5 (X) of `docs/benchmarks/antigravity-10.md`.
+  - Then run `select kind, counts from mission_events where mission_id = '<id>' and kind in ('plan','result','call')`.
+  - Pass when: `pipe_new = 1`; `fallback_stage` is absent; and the delivered count of each stage equals its promise, or the stated per-parent gap with the platform counter.
+- **Model:** **strong model** (the compiler, the pool and the promise types decide every later platform).
+
+### PR 2b: The foundation, cleaned (Stage 1, part 2b): delete the passes of 3.4 for compiled platforms
+
+- **Starts only when all three hold:**
+  - PR 2a is live: Heroku Activity shows **Build succeeded** and **Deployed** on the 2a merge SHA.
+  - Benchmarks 3 (TikTok) and 5 (X) passed in `test` mode by the 2a live check.
+  - 2a's acceptance 7 (each pass a no-op on compiled plans) is green on `main`.
+- **Goal:**
+  - For **TikTok and X only**, the passes and send-backs of 3.4 no longer run. Code that **no** platform still uses is deleted.
+  - Code still used by Facebook, Instagram, YouTube (until PR 3 is live and benchmarked) or companies (until PR 5) stays.
+  - The `RunState` counters go only once no path reads them.
+  - Nothing is added except the tests.
+- **Files:** `agent/src/tools.ts` (removals; one list of platforms whose compiled path is live), `src/lib/agentMission/completeCount.ts`, `replies.ts` (removals for compiled platforms), and the tests. Not touched: the protected files.
+- **Risks:** a pass that was quietly needed. Mitigated by the no-op replays of 2a and by keeping the code for every other platform.
+- **Rollback:** `git revert -m 1` (the passes return). The TikTok/X flags `off` also returns them to the old pipeline in full.
 - **Acceptance (real):**
-  1. The Ask of each of the 20 stored request texts equals a hand-written table (real Arabic texts, `replay-missions.json`).
-  2. Replaying M12 `msn_5851abc92a1e6645a9cd` (TikTok) on its stored pages: the compiled plan uses the same tools as the stored plan, promise type `counter`, and the engine replay delivers the ids of the stored `rows/*.json` (369 rows). M14 `msn_b060d3347ed7660f972e` (X): 20 of 20, the same ids.
-  3. M20 `msn_adcfafabcdebc27ff803`: the compiled plan has videos, comments and replies stages from the Ask alone (no model).
-  4. M6, M9, M13: no promise of type estimate exists; the replies promise is `counter` or `open`.
-  5. A flagged platform's mission cannot run the old pipeline (engine selector test over all 20 stored plans).
-  6. `agent/src/tools.ts` contains none of the deleted counters (a test reads the file).
-- **Live check (owner, after Heroku Build succeeded and Deployed on the SHA):** in `test` mode run benchmark 3 (TikTok) and 5 (X) of `docs/benchmarks/antigravity-10.md`; then `select kind, counts from mission_events where mission_id = '<id>' and kind in ('plan','result','call')`: `pipe_new = 1`, `fallback_stage` absent, delivered per stage equal to the promise per stage (or the stated per-parent gap with the platform counter).
-- **Model:** **strong model** (design-heavy, subtle pipeline logic, many deletions).
+  - For TikTok and X, the 2a replays give the same plans and files with the passes gone.
+  - For all other platforms, and with flags off, plans and files are byte-identical.
+  - A test reads `tools.ts`: no TikTok/X path reaches the deleted passes.
+- **Live check (owner, after Heroku Build succeeded and Deployed on the 2b merge SHA):** the same benchmarks 3 and 5 in `test` mode, with the same SELECT and the same pass rule as 2a.
+- **Later, the same rule for the other platforms:**
+  - **Facebook, Instagram and YouTube:** after PR 3 is live and benchmarks 1, 2 and 4 pass, adding them to the list is a one-line change with its own red/green tests. It is done in PR 4's first commit pair, by the strong model, together with the deletion of the social-only pass code.
+  - **Companies:** in PR 5.
+- **Model:** **strong model** (deletions inside the planning pipeline).
 
 ### PR 3: Facebook, Instagram, YouTube on the foundation (Stage 1, part 3)
 
 - **Goal:** verified cards for the tools of section 4 (data), the role entries for capability-`None` tools, the YouTube counter card, fixtures from the real pages of M1, M2, M4, M15-M20 and the eight Facebook search missions; then the three platform flags can go to `test`.
-- **Files:** `src/lib/agentMission/toolCards/facebook.ts`, `instagram.ts`, `youtube.ts`, fixtures, `tests/platform-cards-*.test.ts`. **No change to the compiler.** If the replay shows a compiler defect, that part goes back to the strong model as a PR 2 defect.
+- **Starts after:** PR 2a is live (PR 3 needs the compiler, not the deletions of 2b).
+- **Files:** `src/lib/agentMission/toolCards/facebook.ts`, `instagram.ts`, `youtube.ts`, anonymised fixtures (decision 7.1), `tests/platform-cards-*.test.ts`. **No change to the compiler.** If the replay shows a compiler defect, that part goes back to the strong model as a PR 2a defect.
+- **Facebook pool:** 2 `justoneapi` search pages a mission under today's cap (section 7.2). On test accounts, at most one `anyapi.facebook.search_posts` call, since it is `catalog_only` (decision 7.4, 0.10 USD a mission).
 - **Risks:** a card the real pages do not support stays `catalog_only` (test accounts only, decision 7.4); Facebook search cost against the daily cap (decision 7.6).
 - **Rollback:** the three platform flags `off`; `git revert -m 1`.
 - **Acceptance (real):**
-  1. M17 `msn_6bb78c15d116268b0b9b` and M19 `msn_96beb9f7a1d937a90cd0` request text, replayed on the stored pages (`raw/call_0004.json`, `raw/call_0005.json` of M17 and the eight search missions): the compiler chooses a Facebook keyword search with `startDate 2026-08-02`, `endDate 2026-11-02` (Cairo days of the request date) over the page listing; the card states, with the real numbers of the stored pages, how many pool posts are from the Al Arabiya page and talk about the topic; no line «لا يسمح بتحديد الفترة الزمنية».
+  1. M17 `msn_6bb78c15d116268b0b9b` and M19 `msn_96beb9f7a1d937a90cd0` request text, replayed on the stored pages (`raw/call_0004.json`, `raw/call_0005.json` of M17 and the eight search missions): the compiler chooses a Facebook keyword search with `startDate 2026-08-02`, `endDate 2026-11-02` (Cairo days of the request date) over the page listing; the card states, with the real numbers of the stored pages, how many pool posts are from the Al Arabiya page and talk about the topic. For M17, 3 of the 10 pool rows are by Al Arabiya pages (V (owner's ZIP)); topic matches are still to be counted. The card has no line «لا يسمح بتحديد الفترة الزمنية». The exposure check, replayed on `raw/call_0007.json`, treats the successful empty comments answer as empty and swaps in a spare.
   2. M16 `msn_e3e7632e2fb2d42f9c19` and M15: the compiled plan reads the account with a pageable card, chooses the two most commented of the pool (from the real stored page), and has a replies stage; the promise types are `counter` for comments and `open` for replies (no reply counter on the comments card).
   3. M2 `msn_ee599cdbbde993073b15`, M18, M20: the compiled videos come from the channel ids of the stored channel-search pages; comments and replies stages exist; the promise is `counter` only if the detail card is verified, else `open`.
-- **Live check (owner, after Heroku Build succeeded and Deployed):** benchmarks 1, 2, 4 in `test` mode; the same SELECTs as PR 2; plus the call log: no `anyapi.facebook.user.posts` call for a request with a topic and a period.
+- **Live check (owner, after Heroku Build succeeded and Deployed):** benchmarks 1, 2, 4 in `test` mode; the same SELECTs as PR 2a; plus the call log: no `anyapi.facebook.user.posts` call for a request with a topic and a period.
 - **Model:** cheaper model, **under the rule** that it may change only `toolCards/` data and fixtures; anything else goes to the strong model.
 
 ### PR 4: Stage 2, understanding cards and the live sheet
 
-- **Goal:** the «فهمنا طلبك» card is the Ask, open and editable; an edit recompiles the plan by code; at most three question cards from the cards' inputs (+ «شيء آخر»); polling feed over the item store (no Realtime); desktop sheet with the file's column names; mobile cards with «X من N» and the notebook line from a code whitelist; the final file equals the rows watched. If all five platform flags are `on` and stable (decision 7.9), the first commit pair deletes the old social content filters.
+- **Goal:** the «فهمنا طلبك» card is the Ask, open and editable; an edit recompiles the plan by code; at most three question cards from the cards' inputs (+ «شيء آخر»); polling feed over the item store (no Realtime); desktop sheet with the file's column names; mobile cards with «X من N» and the notebook line from a code whitelist; the final file equals the rows watched. **First commit pair (strong model):** if PR 3 is live and benchmarks 1, 2 and 4 passed in `test` mode, Facebook, Instagram and YouTube join PR 2b's list of platforms that skip the 3.4 passes, and pass code no longer used by any social platform is deleted (the PR 2b rules apply). If all five platform flags are `on` and stable (decision 7.9), the same pair also deletes the old social content filters.
 - **Files:** `src/components/mission/*`, `src/app/api/missions/[id]/rows/route.ts` (new polling feed), `customerView.ts`, `notebookLines.ts` (whitelist), tests including a scan of every new string by `checkCustomerText`.
 - **Risks:** free-plan polling load (adaptive, jittered, as `startNotificationPolling`); customer-text rules.
 - **Rollback:** `git revert -m 1`; the feed is read-only.
 - **Acceptance (real):** for M12 and M14, the feed served from the stored `rows/*.json` equals the workbook rows of the stored `result.xlsx` (same ids, same order); the Ask card of the 20 stored requests renders the expected fields.
 - **Live check:** Vercel READY and Heroku Build succeeded and Deployed on the SHA; one benchmark run watched on desktop and on a phone (390 px); the counter ends equal to the file.
-- **Model:** cheaper model (UI and a read-only feed; the recompile is a call to the PR 2 compiler).
+- **Model:** cheaper model (UI and a read-only feed; the recompile is a call to the PR 2a compiler), except the first commit pair (deletions): strong model.
 
 ### PR 5: Stage 3, companies and queue
 
@@ -334,48 +451,83 @@ All endpoint facts below are V from `data/treg/treg_catalog_sellable.json` unles
 
 | PR | Model | Why |
 |---|---|---|
-| 1 Real responses in | cheaper | one admin route, one button, one test |
-| 2 Foundation | **strong** | the compiler, the pool, the promise types and the deletions decide every later platform |
+| 1 Real responses in (shipped, #347) | cheaper | one admin route, one button, one test |
+| 2a Foundation, added | **strong** | the compiler, the pool and the promise types decide every later platform; flag-gated, deletes nothing |
+| 2b Foundation, cleaned | **strong** | deletions inside the planning pipeline, after 2a is live and TikTok/X benchmarks pass |
 | 3 FB / IG / YT cards | cheaper, data only | the compiler chooses; the work is cards and fixtures from real pages. Any code change outside `toolCards/` returns to the strong model |
-| 4 Stage 2 | cheaper | UI, a read-only feed, fixed text; the recompile calls PR 2 |
+| 4 Stage 2 | cheaper (first commit pair, the deletions for FB/IG/YT: **strong**) | UI, a read-only feed, fixed text; the recompile calls PR 2a |
 | 5 Stage 3 | **strong** | companies pipeline, contact chain, e-mail limits |
 | 6 Stage 4 | **strong** | versions, review without deletion, edits after delivery |
 | 7 Money | **strong** | money paths, owner brief |
 
-Product models are unchanged: Claude Haiku 5.5 for chat; Haiku 5.5 with extended thinking for planning. With the compiler, planning asks the model only to fill the Ask, which should shorten planning (AUDIT G14: time follows output tokens). NOT VERIFIED until PR 2 runs live.
+Product models are unchanged: Claude Haiku 5.5 for chat; Haiku 5.5 with extended thinking for planning. With the compiler, planning asks the model only to fill the Ask, which should shorten planning (AUDIT G14: time follows output tokens). NOT VERIFIED until PR 2a runs live.
 
 ---
 
 ## 7. Decisions the owner must make (recommendation in one line each)
 
-| # | Decision | Recommendation |
-|---|---|---|
-| 7.1 | **Where real pages may be stored for tests. The GitHub repo `iammagdy/digr` is PUBLIC (V).** Raw pages contain commenters' names and texts. | Commit only anonymised fixtures (person names, handles, avatars and comment texts replaced by stable placeholders; ids, counters, dates, cursors and structure kept); never commit the raw ZIP. |
-| 7.2 | Pool depth at planning versus the protected cap of two samples per source (`gateway.ts:40`). | Keep the cap for PR 2 and PR 3 (search tools put the topic and period in the request, so two pages are usually enough); change it only with a separate owner brief if the replays show it is not. |
-| 7.3 | The exposure check: read the first comments page of each chosen item before the card (our cost, about 0.002 USD an item). | Yes. |
-| 7.4 | Allow `catalog_only` (not yet verified) cards for test-account missions only, so the first live run captures their first real response. | Yes, with a ceiling of 0.10 USD of such calls per mission. |
-| 7.5 | Facebook named page + topic + period when the pool holds fewer than N posts from that page. | Show a question card before approval: only the k found (default), or fill from other pages with the mark «المصدر المسمّى: غير مطابق», or cancel. |
-| 7.6 | Facebook search costs 0.02952 USD a page against the 0.80 USD daily cap. | Keep the cap; limit one mission's search pool to 6 pages (0.18 USD) and say on the card how many were read. |
-| 7.7 | The free YouTube detail tool needs YouTube connected on our TREG account. | Check the TREG dashboard; if connected, use it for YouTube counters; if not, YouTube promises stay `open`. |
-| 7.8 | Delete the patch passes of 3.4 inside PR 2 (not later). | Yes, for compiled platforms only; companies keep theirs until PR 5. |
-| 7.9 | Delete the old pipeline's social content filters. | Yes, in PR 4, once all five platform flags have been `on` for 7 days with clean benchmark runs. |
-| 7.10 | The queue start e-mail needs a template in the `send-email` Edge Function (protected; deploy on your go). | Approve one new template in PR 5 with the usual hash read-back, or drop the e-mail. |
-| 7.11 | The anti-loop rule of section 5 (a live failure becomes a fixture and, normally, a card change; no new pass). | Adopt it as a standing rule in HANDOFF. |
+| # | Decision | Recommendation | Status |
+|---|---|---|---|
+| 7.1 | **Where real pages may be stored for tests. The GitHub repo `iammagdy/digr` is PUBLIC (V).** Raw pages contain commenters' names and texts. | Commit only anonymised fixtures (person names, handles, avatars and comment texts replaced by stable placeholders; ids, counters, dates, cursors and structure kept); never commit the raw ZIP. | **DECIDED by the owner (2026-11-02): yes.** Only anonymised fixtures may enter the repo. Names, handles, avatars and comment texts are replaced by stable placeholders; ids, counters, dates, cursors and structure are kept. The raw ZIPs are never committed and never uploaded anywhere public. |
+| 7.2 | Pool depth at planning versus the protected cap of two samples per source (`gateway.ts:40`). | Keep the cap for PR 2a, 2b and 3. Facebook's pool is then 2 search pages a mission (see the note below the table). A deeper pool is its own owner-approved brief that changes `gateway.ts`. | awaiting owner |
+| 7.3 | The exposure check: read the first comments page of each chosen item before the card (our cost, about 0.002 USD an item). | Yes. A successful empty answer (`success true`, `comments []`, as M17's) counts as empty: swap in a spare. | **DECIDED by the owner (2026-11-02): yes.** |
+| 7.4 | Allow `catalog_only` (not yet verified) cards for test-account missions only, so the first live run captures their first real response. | Yes, with a ceiling of 0.10 USD of such calls per mission. | **DECIDED by the owner (2026-11-02): yes,** test accounts only, capped at 0.10 USD per mission. Consequence: at most one `anyapi.facebook.search_posts` call (0.06606 USD) a mission. |
+| 7.5 | Facebook named page + topic + period when the pool holds fewer than N posts from that page. | Show a question card before approval: only the k found (default), or fill from other pages with the mark «المصدر المسمّى: غير مطابق», or cancel. M17's pool had 3 of 10 by the page (V (owner's ZIP)), so this card will be common. | awaiting owner |
+| 7.6 | Facebook search costs 0.02952 USD a page against the 0.80 USD daily cap. | **Corrected.** Under today's protected cap the pool is **2 `justoneapi` pages a mission (0.059 USD)**, not 6. The card says how many pages were read and that the source had more. **6 pages requires changing the protected `agent/src/gateway.ts`** and must become its own owner-approved brief, not part of PR 2a, 2b or 3. | awaiting owner |
+| 7.7 | The free YouTube detail tool needs YouTube connected on our TREG account. | Check the TREG dashboard; if connected, use it for YouTube counters; if not, YouTube promises stay `open`. | awaiting owner |
+| 7.8 | Delete the patch passes of 3.4 for compiled platforms. | Yes, but **not inside PR 2a**: in PR 2b for TikTok and X, after 2a is live and benchmarks 3 and 5 pass; in PR 4's first commit pair for FB/IG/YT, after PR 3 is live and benchmarks 1, 2 and 4 pass; companies in PR 5. | awaiting owner |
+| 7.9 | Delete the old pipeline's social content filters. | Yes, in PR 4, once all five platform flags have been `on` for 7 days with clean benchmark runs. | awaiting owner |
+| 7.10 | The queue start e-mail needs a template in the `send-email` Edge Function (protected; deploy on your go). | Approve one new template in PR 5 with the usual hash read-back, or drop the e-mail. | awaiting owner |
+| 7.11 | The anti-loop rule of section 5 (a live failure becomes an anonymised fixture and, normally, a card change; no new pass; PR 2b only deletes). | Adopt it as a standing rule in HANDOFF. | awaiting owner |
+
+**7.2 / 7.6: how the pool is read under the current cap, without touching `gateway.ts`.** This resolves the contradiction in the first version, where 7.2 kept the cap while 7.6 and F4 described a 6-page Facebook pool. It answers section 8 point 6.
+
+**Verified by reading the code** (`agent/src/gateway.ts` and `src/lib/agentMission/namedRoutes.ts` at `1b4049a`; neither file is changed by this PR):
+
+1. **The rule applies at planning only** (`gateway.ts:242`: `deps.phase === "planning" && repeated` gives `repeat_sample`). Execution calls are not limited by it, only by the job budget and the daily cap.
+2. **It counts by source value only for a listing endpoint** (`gateway.ts:135`, `sourceKeyOf`). A listing is a capability of the shape `<platform>.(channel|user|page|profile|account).<kind>` with a source input (`namedRoutes.ts:13, 25`).
+   - `justoneapi.x.facebook-search-post-v1` has capability `facebook.search.posts` and inputs `keyword, startDate, endDate, cursor`, so it is **not** a listing.
+   - `anyapi.facebook.search_posts` has capability `null`, so it is **not** a listing either.
+3. **A non-listing endpoint is refused once it has 2 samples with rows** (`gateway.ts:240-241`: `sampled >= GATEWAY_MAX_SAMPLES_PER_SOURCE`, keyed by endpoint id).
+   - A second keyword or a cursor page 2 is one of those two samples.
+   - This was a GUESS in the first version and is now V.
+4. **Only calls with `status ok` and rows above zero count** (`gateway.ts:144, 309`). An empty or refused page does not use up a sample.
+5. **The count survives a customer's answer and a restart.** It is rebuilt from the recorded planning calls (`gateway.ts:136-150`).
+6. **Each endpoint has its own count.** Two different search endpoints give 2 + 2 samples.
+7. **M17 hit the cap exactly:** two `justoneapi` planning calls with 5 rows each (Q11), both with a non-empty `data.cursor` (V (owner's ZIP)).
+
+**Therefore, under today's cap, the Facebook pool at planning is:**
+- **Every account:** 2 `justoneapi` pages, about 10 posts (V: M17 10 rows; 5.1 rows a page on average, Q8), for 0.059 USD.
+- **Test accounts:** plus at most 1 `anyapi.facebook.search_posts` call of up to 20 posts. The limit of 1 comes from decision 7.4's 0.10 USD ceiling, not the cap. That it returns rows is NOT VERIFIED, since its one call was refused.
+- The compiler chooses parents among these rows only, and the card says «قرأنا صفحتين من نتائج البحث» and that more exist.
+- **Not an option:** reading more pages at execution to choose parents. It would choose after approval and break the promise-before-approval rule (3.3).
+- **GUESS:** later pages at execution could serve only as extra spares, never to change the promised parents. That is a PR 2a design question, not a cap change.
+
+**A pool of 6 search pages requires changing `GATEWAY_MAX_SAMPLES_PER_SOURCE` or the per-endpoint rule in the protected `agent/src/gateway.ts`.** That is not allowed in PR 2a, 2b or 3. It becomes its own owner-approved brief, written only if the PR 3 replays show 2 pages are not enough.
 
 ---
 
 ## 8. What I could not verify
 
-1. **The content of every raw page** of the 20 missions and of the eight Facebook search missions (no Storage read; section 2). Everything in 2.3 depends on it.
+1. **The content of the raw pages.**
+   - **Update 2:** PR 1 (#347) shipped and the owner holds all 28 missions' `raw/` and `rows/` (509 files). **M17 has been read** (V (owner's ZIP), section 2.3).
+   - The other 27 missions, including the seven other Facebook search missions, are **NOT VERIFIED** until a session reads them on the owner's device.
 2. Why the M17 planner sampled the Facebook keyword-and-date search and then planned the page listing (the model's reasoning is not stored; GUESS: the named-source rule and the price).
 3. Why the one `anyapi.facebook.search_posts` call was refused (the refusal reason was not read as text).
 4. Page sizes of tools Diger never called: `anyapi.instagram.user.posts`, `anyapi.youtube.*`, `youtube.youtube.video.detail`, `anyapi.facebook.post_comments`.
 5. Whether YouTube is connected on Diger's TREG account (`youtube.youtube.*` "included with the connected account").
-6. How the two-sample cap counts a search tool: listing endpoints are keyed by endpoint + source value (`gateway.ts:135`, V); a search endpoint falls to the per-endpoint count (`gateway.ts:239-241`, V for the line, GUESS that two keywords of one search tool share the two samples).
-7. Heroku: build and deploy state of `0268fec`, worker logs, heartbeat (no access). Vercel production state (not checked in this session).
-8. Whether Facebook's empty reply reads mean "no replies" or a broken read.
+6. ~~How the two-sample cap counts a search tool.~~ **Now V (update 2):**
+   - Listing endpoints are keyed by endpoint + source value (`gateway.ts:135`).
+   - The Facebook search endpoints are not listings (`namedRoutes.ts:13, 25`; capabilities `facebook.search.posts` and `null`), so every keyword and every cursor page of one search endpoint shares the 2 samples with rows (`gateway.ts:240-242`), at planning only.
+   - M17 used exactly 2 (Q11). See the note under section 7.
+   - Still a GUESS: whether 2 pages are enough for most named page + topic + period requests (M17: 3 of 10 rows by the page).
+7. Heroku: build and deploy state of `0268fec` and of later merges, worker logs, heartbeat (no access). Vercel production of `1b4049a` was READY in the PR #347 session (V there; not re-checked in this docs update).
+8. Whether Facebook's empty reads mean "nothing there" or "the tool cannot see it".
+   - **Update 2, V (owner's ZIP, M17):** they are successful empty answers, not errors. Comments: `success true`, `credits_charged 0`, `comments []`, `has_next_page false`. Replies: `found true`, `replies []`, `items 0`.
+   - Still NOT VERIFIED: **why** they are empty. No counter was compared, and M19's reply pages and the other missions' empty pages are not read yet.
 9. Planning time and token use after the compiler (only measurable live).
 10. The test suite was not run (docs-only PR).
+11. **Update 2:** the cause of the truncated ZIP of section 10. The route's own 50-second budget ends the stream after the headers were sent; or the platform ended the function at its 60-second limit; or both. NOT VERIFIED (Vercel's function log for that download was not read).
 
 ---
 
@@ -392,4 +544,31 @@ Product models are unchanged: Claude Haiku 5.5 for chat; Haiku 5.5 with extended
 - Q9 every call of `justoneapi.x.facebook-search-post-v1`, `anyapi.facebook.search_posts`, `justoneapi.x.facebook-get-post-comments-v1`, with the mission's request text.
 - Not SQL: `list_repos` (GitHub metadata: the repository is public); `pull_request_read` and `list_pull_requests` for #329-#345.
 
+**Update 2 (this commit):**
+- Q10, quoted from the PR #347 session: `storage.objects` metadata of the `agent-missions` bucket's `raw/` and `rows/` objects (count, size, nesting). Largest object 5,535,284 bytes; 28 plan missions = 509 objects, 19,603,637 bytes.
+- Q11: `select phase, endpoint_id, status, rows_returned, cost_usd, created_at from mission_calls where mission_id = 'msn_6bb78c15d116268b0b9b' order by created_at;`
+  - 13 rows, in the order of `raw/call_0001` … `call_0013`.
+  - Calls 4 and 5: `justoneapi` planning, `ok`, 5 rows each, 0.02952 USD.
+  - Calls 7 and 8: comments, `empty`, 0.000000 USD.
+  - Calls 10-13: `anyapi.facebook.comment_replies`, `empty`, 0.0012 USD each.
+- Code read, not changed: `agent/src/gateway.ts:40-42, 135-150, 236-242, 309` and `src/lib/agentMission/namedRoutes.ts:13-25`.
+- Catalog read: the capability, inputs and pagination of `justoneapi.x.facebook-search-post-v1`, `anyapi.facebook.search_posts` and `anyapi.facebook.user.posts` in `data/treg/treg_catalog_sellable.json`.
+- The M17 page facts in 2.3 come from the owner's ZIP as read by a reviewer. This session did not open any raw page, and no raw content is quoted here beyond field names, counts, dates and flags.
+- Not SQL: `list_computer_folders` (no folder of the owner's computer is shared with this cloud session) and the environment's Remote Control documentation, for the hand-over answer in the PR #346 description.
+
 No write, no migration, no flag change, no paid call, no secret requested or seen.
+
+---
+
+## 10. Backlog (found, not fixed now)
+
+1. **The raw ZIP can arrive truncated instead of failing clearly (PR 1, #347).**
+   - **What happened:** a download of 392 entries (the size of batch 1 of the owner's download list: 14 missions, 16,638,084 bytes listed) reached the time limit. The browser saved a ZIP with **258 of 392 entries and no central directory**, so it does not open.
+   - **Why it was missed:** the route had already answered 200, so the admin page showed success. The owner noticed only because a reviewer tested the file.
+   - **Workaround used:** smaller batches. All 28 missions then downloaded, and every manifest matched `storage.objects`.
+   - **Cause:** NOT VERIFIED (section 8 point 11). Today the stream is errored after the headers (`src/lib/agentMission/rawZip.ts`, the time-budget check in the stream).
+   - **Proposed fix, in a small site-only PR with a red test first:**
+     - (a) Refuse before the first byte, with a clear Arabic message, when the listed objects or bytes are above an amount measured to finish in time.
+     - (b) The admin page checks the ZIP's end-of-central-directory record, plus that the last entry is `manifest.json`, before saving. Otherwise it shows «لم يكتمل الملف. اختر مهام أقل وأعد المحاولة.» and saves nothing.
+     - (c) Optionally, the page splits a long list into batches by itself.
+   - **Priority:** low (the workaround works; admin only); not blocking PR 2a.
