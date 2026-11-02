@@ -41,6 +41,9 @@ export interface S4Options {
   topicStories?: boolean;
   /** S9: the live mission of 14:19: two videos whose counters are far above 150 (400 and 380), 150 comments each in the source with reply counters that sum to 40 in all (20 comments each have one reply). */
   live9?: boolean;
+  /** The consolidation's benchmark 3: the request text as the customer wrote it, and the place as the planner read it («من مصر أو المنطقة العربية»: Egypt and the Arab countries). */
+  request?: string;
+  arabRegion?: boolean;
   /** Runs after the customer read the card and before they approve (the plan editor). */
   beforeApproval?: Parameters<typeof replay>[0]["beforeApproval"];
 }
@@ -82,7 +85,7 @@ export async function runS4(o: S4Options = {}) {
     assumptions_ar: ["الأحدث أولًا"],
     stages: [
       { key: "videos", title_ar: "فيديوهات تيك توك عن الذكاء الاصطناعي من مصر", endpoint_id: endpoint, expected_rows: 2, parent_key: null, deliver: true, columns: videoColumns, sample_rows: sampleVideos(country, list), measured_by: [callIds(res)[measuredIndex]],
-        filters: [{ kind: "place", field: "country", fields: ["country"], places: ["EG"], values: ["مصر"] }] },
+        filters: [{ kind: "place", field: "country", fields: ["country"], places: o.arabRegion ? ["EG", "SA", "AE", "IQ", "JO", "MA"] : ["EG"], values: o.arabRegion ? ["مصر", "السعودية", "الإمارات", "العراق", "الأردن", "المغرب"] : ["مصر"] }] },
       { key: "comments", title_ar: "تعليقات كل فيديو مختار", endpoint_id: "tikhub.tiktok.video.comments", expected_rows: 800, parent_key: "videos", per_parent_rows: 400, deliver: true,
         columns: [{ key: "text", title_ar: "نص التعليق" }, { key: "author", title_ar: "صاحب التعليق" }, { key: "posted_at", title_ar: "تاريخ ووقت التعليق" }, { key: "likes", title_ar: "الإعجابات" }, { key: "replies_count", title_ar: "عدد الردود" }, ...(o.noLanguage ? [] : [{ key: "language", title_ar: "لغة التعليق" }])],
         sample_rows: [{ text: `تعليق 0 عن ${TOPIC}`, author: "viewer0", posted_at: "2026-10-20T09:00:00Z", likes: 10, replies_count: 1, ...(o.noLanguage ? {} : { language: "ar" }) }], measured_by: [callIds(res)[1]] },
@@ -139,7 +142,7 @@ export async function runS4(o: S4Options = {}) {
     ] as FakeStep[]),
   ];
   return replay({
-    request: REQUEST,
+    request: o.request ?? REQUEST,
     planning: steps,
     execution: () => [],
     deps: flagsOn as never,

@@ -26,7 +26,7 @@ describe("rule 9: a stage's type comes from its structure (the catalog capabilit
       if (tools.length === 0) continue;
       it(`${platform} / ${type}: the capability ${tools[0].capability} is not a people stage and not a company stage under any trap title`, () => {
         for (const title of TRAPS) {
-          const stage = { parent_key: "p", title_ar: title, endpoint_id: tools[0].id, capability: tools[0].capability };
+          const stage = { parent_key: "p", title_ar: title, capability: tools[0].capability };
           expect(isPeopleStage(stage), `${tools[0].capability}: ${title}`).toBe(false);
           expect(isCompanyStage({ title_ar: title, capability: tools[0].capability }), `${tools[0].capability}: ${title}`).toBe(false);
         }
@@ -34,9 +34,9 @@ describe("rule 9: a stage's type comes from its structure (the catalog capabilit
     }
   }
   it("a stage on a people capability is a people stage whatever its title says; a stage with no stored capability keeps the title rule (old plans)", () => {
-    expect(isPeopleStage({ parent_key: "p", title_ar: "زملاء", endpoint_id: "x", capability: "companies.employees" })).toBe(true);
-    expect(isPeopleStage({ parent_key: "p", title_ar: "مديرو الشركات", endpoint_id: "x" })).toBe(true);
-    expect(isPeopleStage({ parent_key: "p", title_ar: "التعليقات الرئيسية", endpoint_id: "x" })).toBe(false);
+    expect(isPeopleStage({ parent_key: "p", title_ar: "زملاء", capability: "companies.employees" })).toBe(true);
+    expect(isPeopleStage({ parent_key: "p", title_ar: "مديرو الشركات" })).toBe(true);
+    expect(isPeopleStage({ parent_key: "p", title_ar: "التعليقات الرئيسية" })).toBe(false);
   });
 });
 
@@ -61,11 +61,11 @@ describe("rule 6: the replies tool of the platform's catalog is used when one ex
     const rows = run({ comments: [{ id: "c1", text: "نص", created_at: "2026-10-01T10:00:00.000Z", reply_count: 2, feedback_id: "fb1", expansion_token: "ex1", author: { name: "س" } }] });
     expect(rows[0]).toMatchObject({ id: "c1", replies_count: 2, feedback_id: "fb1", expansion_token: "ex1" });
   });
-  it("youtube: the replies tool takes the comment's own reply token, and the mapping reads the nested counters (engagement.replies, engagement.likes) and publishedTime", () => {
-    const source = replySourcesFor("scrapecreators.youtube.video.comments", catalog, { isAllowed: allow, videoIdAvailable: true, urlAvailable: true }).find((s) => s.id === "scrapecreators.x.v1-youtube-video-comment-replies")!;
-    expect(source).toBeDefined();
-    expect(source.rowTokens).toEqual([{ param: "continuationToken", key: "replies_token" }]);
-    const code = buildReplyMapCode(replyColumnKeysOf([{ key: "text" }, { key: "likes" }, { key: "posted_at" }, { key: "replies_count" }]), source.rowTokens);
+  it("youtube: the ranked replies tools take the comment's id (no token needed); the tools that take the comment's own reply token are read as row tokens, and the mapping reads the nested counters (engagement.replies, engagement.likes) and publishedTime", () => {
+    const sources = replySourcesFor("scrapecreators.youtube.video.comments", catalog, { isAllowed: allow, videoIdAvailable: true, urlAvailable: true });
+    expect(sources.every((s) => s.id.includes("youtube"))).toBe(true);
+    const tokens = [{ param: "continuationToken", key: "replies_token" }];
+    const code = buildReplyMapCode(replyColumnKeysOf([{ key: "text" }, { key: "likes" }, { key: "posted_at" }, { key: "replies_count" }]), tokens);
     const run = (page: unknown) => new Function("inputs", code)({ page }) as Array<Record<string, unknown>>;
     const rows = run({ comments: [{ id: "y1", content: "رائع", publishedTime: "2025-07-28T11:54:31.516Z", author: { name: "@قناة" }, engagement: { likes: 7, replies: 3 }, repliesContinuationToken: "tok1" }, { id: "y2", content: "بدون ردود", publishedTime: "2025-07-28T11:55:31.516Z", engagement: { likes: 1, replies: 0 } }] });
     expect(rows[0]).toMatchObject({ id: "y1", text: "رائع", likes: 7, replies_count: 3, replies_token: "tok1", posted_at: "2025-07-28T11:54:31.516Z" });

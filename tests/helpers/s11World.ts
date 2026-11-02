@@ -44,6 +44,8 @@ const POSTS_COLUMNS = [["text", "النص"], ["author", "الكاتب"], ["usern
 const COMMENT_COLUMNS = [["text", "النص"], ["author", "الكاتب"], ["posted_at", "التاريخ والوقت"], ["likes", "الإعجابات"], ["verified", "موثق"], ["language", "لغة التعليق"]].map(([key, title_ar]) => ({ key, title_ar }));
 
 export interface S11Options {
+  /** The consolidation's benchmark 4 text (the account named with its @). */
+  request?: string;
   /** After the customer read the card and before they approve. */
   beforeApproval?: Parameters<typeof replay>[0]["beforeApproval"];
 }
@@ -80,7 +82,7 @@ export async function runS11(o: S11Options = {}) {
     { tool: "propose_plan", args: plan((r) => [callIds(r)[0], callIds(r)[2]]) },
   ];
   return replay({
-    request: REQUEST,
+    request: o.request ?? REQUEST,
     planning: steps,
     execution: () => [],
     deps: flagsOn as never,
