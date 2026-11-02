@@ -151,6 +151,9 @@ describe("F3/F5: compiled from real pages of the same search, the comments and t
     if (planned.kind !== "plan") throw new Error("no plan");
     const lines = [planned.plan.summary_ar, ...(planned.plan.notes_ar ?? [])];
     expect(lines.some((l) => l.includes("١٠٠ تعليق من كل"))).toBe(true);
+    // the one sentence never says «all the comments» when the customer asked for a number of them per video
+    expect(planned.plan.summary_ar).not.toMatch(/كل تعليقات/);
+    expect(planned.plan.summary_ar).toContain("١٠٠ تعليق من كل فيديو");
     for (const line of lines) expect(checkCustomerText(line, { maxChars: 400 }).issues, line).toEqual([]);
   });
 
