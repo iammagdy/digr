@@ -6,6 +6,8 @@ import { textColumnKeyOf } from "./languageLabel";
 import { topicDiscussionClass, type TopicMeaning } from "./topicMeaning";
 import { priceMissionByCode } from "./price";
 import { repliesEstimateFor } from "./replies";
+import { cairoDayStartMs } from "./cairoTime";
+import { formatIsoForCustomer } from "../customerDates";
 import { stagePriceInputs, type PricedPlan, type PricedStage } from "./plan";
 import { OPEN_COMMENTS_NOTE_AR } from "./repliesCard";
 
@@ -44,6 +46,8 @@ export interface CompleteCountDeps {
   topicOf?: () => TopicMeaning | null;
   /** S7: whether a row of the parent's listing matches the customer's country and language (null: the customer asked for neither). The most engaged are chosen among the matching results; the matching come first, then the others (an order, never a filter). */
   matchesOf?: (parent: PricedStage) => Promise<((row: Record<string, unknown>) => boolean) | null>;
+  /** Round 4: whether a row of the parent's listing comes from a source the customer NAMED (a channel, a page); null when none was named or every row of the listing belongs to the one named source. The named come first, the others only fill the missing places. */
+  namedOf?: (parent: PricedStage) => Promise<((row: Record<string, unknown>) => boolean) | null>;
   pageSizeOf?: (child: PricedStage) => Promise<{ param: string; max: number } | null>;
 }
 
@@ -104,6 +108,30 @@ export function completeCountEstimate(candidates: ReadonlyArray<Candidate>, inpu
 
 const n = (v: number): string => toArabicDigits(v);
 
+const DATE_KEY = /^(?:posted_at|date|created_at|published_at|published|datetime|time)$/i;
+/**
+ * HOW FAR BACK WHAT WAS READ REACHES (round 4): when the customer asked for a period and the items read do not reach its start, the card says so with the real date; when no period was asked and the engaged default chose among the posts of a named source that were all published within the last
+ * days, the card says how short a time they cover (a fast-posting account: the most commented of the last 24 posts may be minutes old). Empty when the rows carry no date. Pure.
+ */
+export function coverageNoteOf(parent: Pick<PricedStage, "columns" | "filters" | "engine">, listed: ReadonlyArray<Candidate>, engaged: boolean): string[] {
+  const key = parent.columns.find((c) => DATE_KEY.test(c.key))?.key;
+  if (!key || listed.length === 0) return [];
+  const times = listed.map((c) => (c.row === undefined ? NaN : Date.parse(String(c.row[key] ?? "")))).filter((t) => Number.isFinite(t));
+  if (times.length === 0) return [];
+  const oldest = Math.min(...times);
+  const newest = Math.max(...times);
+  const period = (parent.filters ?? []).find((f) => f.kind === "period" && f.enabled !== false && typeof f.from === "string" && f.from !== "");
+  if (period?.from) {
+    const fromMs = cairoDayStartMs(period.from);
+    return Number.isFinite(fromMs) && oldest > fromMs + 86_400_000 ? [`قرأنا ${n(listed.length)} نتيجة، وأقدمها بتاريخ ${formatIsoForCustomer(new Date(oldest).toISOString())}، فهي لم تصل إلى بداية الفترة التي طلبتها (${formatIsoForCustomer(`${period.from}T00:00:00+03:00`)})؛ الاختيار من بين ما قرأناه فقط.`] : [];
+  }
+  const named = Boolean(parent.engine?.sources && parent.engine.sources.length > 0);
+  const hours = Math.max(1, Math.ceil((newest - oldest) / 3_600_000));
+  if (!engaged || !named || hours > 72) return [];
+  const span = hours <= 1 ? "آخر ساعة" : hours === 2 ? "آخر ساعتين" : hours <= 10 ? `آخر ${n(hours)} ساعات` : hours < 48 ? `آخر ${n(hours)} ساعة` : `آخر ${n(Math.ceil(hours / 24))} أيام`;
+  return [`المنشورات الـ${n(listed.length)} التي قرأناها تغطي ${span} فقط، والاختيار من بينها؛ إن أردت منشورات أقدم فاذكر فترة أو تاريخًا.`];
+}
+
 /** The split of a total promised for comments AND replies (a video's counter counts both): the replies are the sample's measured share of it (a silent sample: a stated quarter), at least 1 and never the whole total; the comments are the rest (S5, S7). */
 export function splitPromise(total: number, sampleCounts: ReadonlyArray<number> | undefined): { comments: number; replies: number } {
   const counts = (sampleCounts ?? []).filter((v) => Number.isFinite(v) && v >= 0);
@@ -162,29 +190,44 @@ export async function withCompleteCount(plan: PricedPlan, deps: CompleteCountDep
     const parent = out.stages.find((s) => s.key === stage.parent_key);
     if (!parent) continue;
     const listed = await deps.candidatesOf(parent);
-    if (!listed || listed.length === 0 || listed.every((c) => c.counter === null)) {
-      // RULE 1 OF THE CONSOLIDATION: the customer asked for ALL the comments and the parents' source gives no comment counter, so nothing real can be promised and no number is promised from an estimate: the card says «all the comments», the estimate stays only as the price's maximum
-      if (all && !stage.children_open) {
-        const stages = out.stages.map((s) => (s.key === stage.key ? { ...s, children_open: true, all_children: true } : s));
-        out = { ...out, stages, notes_ar: [...(out.notes_ar ?? []).filter((x) => x !== OPEN_COMMENTS_NOTE_AR), OPEN_COMMENTS_NOTE_AR] };
-      }
-      continue;
-    }
-    // THE MOST ENGAGED FIRST (S5): the highest counters in front; equal counters keep the source's order, a parent with no counter goes last. An order, never a filter.
-    const match = deps.matchesOf ? await deps.matchesOf(parent) : null;
+    // THE CHOICE OF THE PARENTS TO READ (S5, S7, S8 and round 4): the ones from the sources the customer NAMED first (a channel, a page), then the ones that match the customer's country and language, then the ones whose own text discusses the topic (outside hashtags and made-with
+    // markers), then the highest comment counters (only for the engaged default). It chooses which items to read: an order, never a filter, and nothing delivered is removed. A tool that gives no counter is ordered the same way (the source's own order breaks the ties).
+    const match = deps.matchesOf && listed ? await deps.matchesOf(parent) : null;
     const fits = (c: Candidate): boolean => match === null || (c.row !== undefined && match(c.row));
     const meaning = deps.topicOf ? deps.topicOf() : null;
     const textKey = textColumnKeyOf(parent.columns) ?? "text";
+    const named = deps.namedOf && listed ? await deps.namedOf(parent) : null;
+    const isNamed = (c: Candidate): boolean => named === null || (c.row !== undefined && named(c.row));
+    const topicOn = meaning !== null && (meaning.kind === "about" || meaning.kind === "made_with");
     const discussion = (c: Candidate): number => (meaning && meaning.kind !== "none" && meaning.kind !== "ambiguous" && c.row !== undefined ? topicDiscussionClass(c.row[textKey], meaning) : 1);
-    const candidates = deps.mostEngaged ? listed.map((c, i) => ({ c, i })).sort((a, b) => Number(fits(b.c)) - Number(fits(a.c)) || discussion(b.c) - discussion(a.c) || (b.c.counter ?? -1) - (a.c.counter ?? -1) || a.i - b.i).map((x) => x.c) : listed;
-    // THE CARD SAYS HOW THE VIDEOS WERE CHOSEN (S7): the most commented among the results that match the customer's country and language, and how many matched when fewer than needed
-    const matching = match === null ? listed.length : listed.filter(fits).length;
+    const reorder = deps.mostEngaged === true || named !== null || topicOn;
+    const candidates: Candidate[] = !listed ? [] : reorder ? listed.map((c, i) => ({ c, i })).sort((a, b) => Number(isNamed(b.c)) - Number(isNamed(a.c)) || Number(fits(b.c)) - Number(fits(a.c)) || discussion(b.c) - discussion(a.c) || (b.c.counter ?? -1) - (a.c.counter ?? -1) || a.i - b.i).map((x) => x.c) : listed;
+    // THE NEXT TWO CANDIDATES (the best not chosen, with a row and not known to be empty) wait beside the pinned parents: one takes the place of a pinned parent that gives no child from any tool
+    const sparesOf = (chosenIds: ReadonlyArray<string>): Array<Record<string, unknown>> => { const taken = new Set(chosenIds); return candidates.filter((c) => !taken.has(c.id) && c.row !== undefined && c.counter !== 0).slice(0, 2).map((c) => c.row!); };
+    // THE CARD SAYS HOW THEY WERE CHOSEN, WITH THE REAL NUMBERS (S7, S8, round 4): the named sources, the country and language, the topic, and how far back what was read reaches
+    const L = listed ? listed.length : 0;
     const needed = Math.max(1, parent.planned_rows);
-    // THE CARD SAYS WHAT THE TOPIC WAS UNDERSTOOD TO MEAN (S8): videos that talk about it, not stories where it is only a made-with hashtag
-    const about = meaning?.kind === "about" && deps.mostEngaged;
-    const talking = about ? listed.filter((c) => c.row !== undefined && topicDiscussionClass(c.row[textKey], meaning!) === 2).length : 0;
-    const topicNote = about ? [talking >= Math.max(1, parent.planned_rows) ? "اخترنا الفيديوهات التي تتحدث عن الموضوع نفسه، لا التي يظهر فيها وسم لأنها معمولة به." : talking > 0 ? `وجدنا ${n(talking)} فقط من النتائج تتحدث عن الموضوع؛ قدّمناها، ثم الأعلى تعليقًا لإكمال العدد.` : "لم نجد بين النتائج التي قرأناها فيديو يتحدث نصه عن الموضوع؛ سنسلّم الأعلى تعليقًا منها، ويمكنك تعديل الطلب أو الإلغاء قبل الاعتماد."] : [];
-    const chosenNote = [...topicNote, ...(deps.mostEngaged && match !== null ? [matching >= needed ? `اخترنا الأعلى تعليقًا من بين النتائج المطابقة لبلدك ولغتك.` : `وجدنا ${n(matching)} من ${n(listed.length)} نتيجة مطابقة لبلدك ولغتك؛ قدّمنا المطابقة، ثم الأعلى تعليقًا لإكمال العدد.`] : [])];
+    const namedCount = named === null ? L : (listed ?? []).filter(isNamed).length;
+    const namedNote = named === null || L === 0 ? [] : [namedCount >= needed ? "اخترنا من المصادر التي سمّيتها أولًا." : `وجدنا ${n(namedCount)} فقط من ${n(L)} نتيجة من المصادر التي سمّيتها؛ قدّمناها وأكملنا العدد من نتائج أخرى لا تنتمي إليها، وهي مبيَّنة في الملف.`];
+    const talking = meaning?.kind === "about" ? (listed ?? []).filter((c) => c.row !== undefined && topicDiscussionClass(c.row[textKey], meaning) === 2).length : 0;
+    const topicNote = meaning?.kind === "about" && L > 0 ? [talking >= needed ? `قرأنا ${n(L)} نتيجة، ووجدنا ${n(talking)} منها تتحدث عن الموضوع نفسه؛ اخترنا منها، لا ما يظهر فيه الموضوع وسمًا لأنه معمول به.` : talking > 0 ? `قرأنا ${n(L)} نتيجة، ووجدنا ${n(talking)} فقط تتحدث عن الموضوع؛ قدّمناها، ثم الأعلى تعليقًا لإكمال العدد.` : `قرأنا ${n(L)} نتيجة ولم نجد بينها ما يتحدث نصه عن الموضوع؛ سنسلّم الأعلى تعليقًا منها، ويمكنك تعديل الطلب أو الإلغاء قبل الاعتماد.`] : [];
+    const coverageNote = coverageNoteOf(parent, listed ?? [], deps.mostEngaged === true);
+    const matching = match === null ? L : (listed ?? []).filter(fits).length;
+    const chosenNote = [...namedNote, ...topicNote, ...coverageNote, ...(deps.mostEngaged && match !== null && L > 0 ? [matching >= needed ? `اخترنا الأعلى تعليقًا من بين النتائج المطابقة لبلدك ولغتك.` : `وجدنا ${n(matching)} من ${n(L)} نتيجة مطابقة لبلدك ولغتك؛ قدّمنا المطابقة، ثم الأعلى تعليقًا لإكمال العدد.`] : [])];
+    if (!listed || listed.length === 0 || listed.every((c) => c.counter === null)) {
+      let stages = out.stages;
+      let extra: string[] = [];
+      // RULE 1 OF THE CONSOLIDATION: the customer asked for ALL the comments and the parents' source gives no comment counter, so nothing real can be promised and no number is promised from an estimate: the card says «all the comments», the estimate stays only as the price's maximum
+      if (all && !stage.children_open) { stages = stages.map((s) => (s.key === stage.key ? { ...s, children_open: true, all_children: true } : s)); extra = [OPEN_COMMENTS_NOTE_AR]; }
+      // ROUND 4: with no counter to promise from, the parents are still CHOSEN (the named source, the topic) and pinned, so the file holds the ones the card named
+      if (listed && listed.length > 0 && (named !== null || topicOn)) {
+        const picked = candidates.slice(0, needed);
+        if (picked.length === needed && picked.every((c) => c.row !== undefined)) stages = stages.map((s) => (s.key === parent.key ? { ...s, pinned_rows: picked.map((c) => c.row!), ...(sparesOf(picked.map((c) => c.id)).length > 0 ? { spare_rows: sparesOf(picked.map((c) => c.id)) } : {}) } : s.key === stage.key ? { ...s, parent_pins: picked.map((c) => c.id) } : s));
+      }
+      const added = [...chosenNote, ...extra];
+      if (stages !== out.stages || added.length > 0) out = { ...out, stages, notes_ar: [...(out.notes_ar ?? []).filter((x) => !added.includes(x)), ...added] };
+      continue;
+    }
     const perAsked = Number(stage.per_parent_rows);
     const perParent = all || !Number.isFinite(perAsked) || perAsked < 1 ? Number.POSITIVE_INFINITY : Math.floor(perAsked);
     let pageCap = deps.pageCapOf ? await deps.pageCapOf(stage) : null;
@@ -248,7 +291,7 @@ export async function withCompleteCount(plan: PricedPlan, deps: CompleteCountDep
       if (repliesPlanned !== null && repliesPlanned > 0 && s.key === repliesStage!.key) return { ...s, planned_rows: repliesPlanned, expected_rows: repliesPlanned, per_parent_rows: AGENT_REPLIES_PER_COMMENT_MAX, promise_total: e.total + repliesPlanned };
       // THE PINNED PARENTS' ROWS (S2 item 6): the rows the plan measured for the chosen parents, so execution reads THESE parents without a new search (kept only when every chosen parent has its row and they are the parents the stage promises)
       // S11: parents chosen as the most engaged are no longer «the newest»: the model's title that says so is cut («أحدث منشورين من حساب الحدث» -> «منشورين من حساب الحدث»)
-      if (s.key === parent.key) return chosenRows ? { ...s, pinned_rows: chosenRows, ...(deps.mostEngaged ? { chosen_most_engaged: true, title_ar: s.title_ar.replace(/^(?:ال)?(?:أحدث|احدث|أجدد|آخر|اخر)\s+/, "") } : {}) } : s;
+      if (s.key === parent.key) return chosenRows ? { ...s, pinned_rows: chosenRows, ...(sparesOf(e.chosen.map((c) => c.id)).length > 0 ? { spare_rows: sparesOf(e.chosen.map((c) => c.id)) } : {}), ...(deps.mostEngaged ? { chosen_most_engaged: true, title_ar: s.title_ar.replace(/^(?:ال)?(?:أحدث|احدث|أجدد|آخر|اخر)\s+/, "") } : {}) } : s;
       if (s.key === stage.key) return { ...chosen, planned_rows: e.total, expected_rows: e.total, per_parent_rows: Number.isFinite(perParent) ? Math.min(perParent, Math.max(1, e.perParent)) : Math.max(1, e.perParent), all_children: true, ...(promiseTotal !== null ? { promise_total: promiseTotal } : repliesPlanned !== null && repliesPlanned > 0 ? { promise_total: e.total + repliesPlanned } : {}), parent_pins: e.chosen.map((c) => c.id) };
       return s;
     });

@@ -65,10 +65,11 @@ describe("1. Facebook: «هات منشورات صفحة العربية على ف
     expect(replies.endpoint_id).toBe(FB.REPLIES);
     expect(loadTregCatalog().byId.get(replies.endpoint_id)?.platform).toBe("facebook");
     expect(plan.replies_status).toBeUndefined();
-    // the customer gave a period («آخر ٣ شهور»): the posts are not chosen by engagement (rule 2: unless the customer gives a date): the source's order, the first two that have comments (post 1 has none, post 2 has one reply only)
+    // the customer gave a period («آخر ٣ شهور»): the posts are not chosen as the «most engaged default» (rule 2: unless the customer gives a date); CHANGED (round 4): a page and a topic are named and the listing has no topic input, so the posts that talk about the topic come first and the most commented break the tie: all six
+    // posts of this world talk about it, so the two with the most comments (7 and 4) are chosen, post 3 first
     const posts = plan.stages.find((s) => s.key === "posts")!;
     expect(posts.chosen_most_engaged).toBeUndefined();
-    expect((posts.pinned_rows ?? []).map((row) => String(row.url))).toEqual([0, 3].map((i) => `https://www.facebook.com/AlArabiya/posts/${1000 + i}`));
+    expect((posts.pinned_rows ?? []).map((row) => String(row.url))).toEqual([3, 0].map((i) => `https://www.facebook.com/AlArabiya/posts/${1000 + i}`));
     // rule 1: the promise is the counters of the chosen posts (4 and 7): comments + replies = 11, never an estimate on top
     const promised = 2 + FB.COUNTERS[0] + FB.COUNTERS[3];
     expect(comments.planned_rows + replies.planned_rows).toBe(FB.COUNTERS[0] + FB.COUNTERS[3]);

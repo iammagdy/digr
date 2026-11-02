@@ -82,6 +82,8 @@ export interface ProposedStage {
   key: string;
   title_ar: string;
   endpoint_id: string;
+  /** Round 4: the rows of the next candidates of the parent's listing (the best not chosen), kept beside the pinned rows: when a pinned parent gives no child from any tool, the next one takes its place (the live Facebook post whose comments came back empty twice). Set by code only. */
+  spare_rows?: Array<Record<string, unknown>>;
   /** Fields of the mapped item kept on the stored row beside the columns, never shown (the tokens a replies tool needs from the comment's own row: Facebook's feedback_id and expansion_token). Set by code only. */
   carry_keys?: string[];
   /** The catalog capability of the stage's tool, stored by code in the redesigned mode (rule 9 of the consolidation: a stage's type is read from its structure, never from the words of its title). Absent in the old pipeline. */

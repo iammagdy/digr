@@ -572,3 +572,30 @@ The 24 cells that are not possible are the catalog's own limits, stated by the c
 - The topic's meaning depends on the planner filling `topic_meaning`; with none, only the AI family is read by the word list.
 - A comments source with no reply counter is read for replies once per comment (priced), as before; the rule «only counters above zero» holds where counters exist.
 - Rule 7 is proved end to end on TikTok only; the other platforms use the same engine over their own catalog tools. A replies stage has one source: the next replies source is not read.
+
+---
+
+# Round 4: live round after #343 (merge f38519e), 2026-11-02 ~17:30-17:45 Cairo: a named page, account or channel with a topic or a period
+
+Owner report: Instagram @alhadath complete (14 of 14) but both posts were 20 minutes old; YouTube Super Cup 53 of 53 but video 2 from a non-official channel about another cup; Facebook Al Arabiya «about AI, last 3 months»: both posts off topic (the two newest), comments 4 of 8, replies 0, notice «تم تسليم ٦ من ١٠».
+
+## R4.1 Why Facebook delivered 4 of 8 comments and 0 replies (V: read-only SELECTs of `msn_6bb78c15d116268b0b9b`: plan, calls, events, storage object sizes)
+| Fact | Stored value |
+|---|---|
+| posts | `anyapi.facebook.user.posts` read twice at planning (3 rows a page, no topic and no date input), the two NEWEST pinned (2 rows) |
+| comments promise | 6 comments + 2 replies = 8, the platform counters of the two pinned posts (`promise_total` 8); the 2 replies were the stated unknown share: the sample's comment had `replies_count` 0 |
+| comments reads | execution call 7 and 8: the SAME input `…/AlArabiya/posts/pfbid…`, both EMPTY (a 113-byte answer), then call 9 (`…/reel/2959614737717915/`): 4 comments |
+| next tool | none: the stage had 0 alternatives. The catalog's other Facebook comments tools cannot be fed or mapped: `justoneapi.x.facebook-get-post-comments-v1` has no list path in the catalog, `brightdata.x.facebook-comments` is a dataset call, `treg.facebook.post.comments` is routed |
+| replies | 4 calls of `anyapi.facebook.comment_replies` (one per comment: blind read, the sample had no reply counter above 0), all EMPTY: 0 delivered |
+So 4 of 8 is ONE pinned post whose comments the only tool answered empty (V) while the platform counter promised some; the counter includes items the source does not show (GUESS: hidden or removed comments, or the `/posts/pfbid` link form the tool does not resolve). The 0 replies are consistent with the sample (every sampled comment said 0, V); the two promised replies were the stated estimate inside the counters total. The notice told the real numbers.
+
+## R4.2 Fixes (one PR, same flags, red tests first: `tests/round4-named-topic-choice.test.ts`, the exact Arabic requests of benchmarks 1, 2 and 4)
+1. **The choice of the posts or videos to read** (`completeCount.ts`, `agent/src/tools.ts`): the ones from the sources the customer NAMED first, then the ones matching the customer's country and language, then the ones whose own text discusses the topic (the topic-meaning rule), then the highest comment counters. It chooses which items to read; nothing delivered is removed. It applies with or without the engaged default, with or without counters (YouTube gives none: the chosen videos are pinned), and to every platform.
+2. **More of the listing is read** (`agent/src/tools.ts`): the S11 one-more-read send-back now also applies when the request names a topic or a period and the listing tool has no query or date input (a page's posts). The planning guard allows two reads of one source (`gateway.ts`, not touched): the stated limit is two reads of the listing; a tool's page size has no stated maximum in the catalog for the Instagram and Facebook listing tools, so it is not lifted.
+3. **The card says it with the real numbers**: how many of the items read come from the named sources («وجدنا ١ فقط من ٣ نتيجة من المصادر التي سمّيتها»), how many talk about the topic («قرأنا ٦ نتيجة، ووجدنا ٢ منها تتحدث عن الموضوع»), that what was read does not reach the start of the requested period (with the oldest date read), and, for the engaged default on a named account, how short a time the posts read cover («تغطي آخر ٤ ساعات فقط»).
+4. **A pinned parent that gives nothing is replaced** (`completeCount.ts` `spare_rows`, `engine/run.ts`): the next two candidates wait beside the pinned parents; a stage that reads all the comments of pinned parents replaces a parent that gave no child from any tool by one of them, so the promise (the counters) is still delivered instead of 4 of 8.
+
+## R4.3 Limits (stated honestly)
+- No live proof (no paid calls). The two-read limit of the planning guard means a fast-posting account whose last 24 posts cover a few hours still yields posts of those hours; the card now says so and the customer can ask for a period or a date (the period then goes to the tool's own date input where it has one).
+- The topic ordering uses the planner's `topic_meaning` (any topic) or the AI word list; a request whose topic the planner did not read only gets the named-source and counters order.
+- A swapped-in spare has its own counter: after delivery the card is judged on what was delivered, as before.

@@ -139,7 +139,9 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
   const blindReplies = isReplies && deps.redesignStages?.has(stage.key) === true && stage.replies_read_all === true && parentRows.every((r) => (ownChildCount(r) ?? 0) === 0);
   const shareById = isReplies ? (() => { const cap = Number.isFinite(per) ? per : AGENT_REPLIES_PER_COMMENT_MAX; const shares = blindReplies ? parentRows.map(() => cap) : replyShares(parentRows.map((r) => ownChildCount(r)), stage.planned_rows, cap); return new Map(parentRows.map((r, i) => [String(r.id), shares[i]] as const)); })() : null;
   const readAll = stage.all_children === true;
-  const swapsLeft = { n: onlyChild && stage.per_parent_rows !== undefined && !isReplies && !readAll ? Math.max(3, parentRows.length * 3) : 0 };
+  // round 4: a redesigned stage that reads ALL the comments of pinned parents may replace a pinned parent that gives no child from any tool by one of the spares pinned beside them (at most as many as there are spares)
+  const pinnedSpares = deps.redesignStages?.has(stage.key) && readAll && !isReplies ? (deps.plan.stages.find((x) => x.key === stage.parent_key)?.spare_rows ?? []).length : 0;
+  const swapsLeft = { n: onlyChild && stage.per_parent_rows !== undefined && !isReplies && !readAll ? Math.max(3, parentRows.length * 3) : pinnedSpares };
   // the parent's parent (the video of a comment): the replies' source takes the video's id and link beside the comment's id
   const grandKey = deps.plan.stages.find((x) => x.key === stage.parent_key)?.parent_key ?? null;
   const grandRows = new Map<string, Row>((grandKey ? items.acceptedRows(grandKey) : []).map((r) => [String(r.id), r] as const));
@@ -372,7 +374,8 @@ async function runRoot(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promis
 async function runPinnedRows(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promise<{ reason: StopReason; aborted: string | null }> {
   const { items } = deps;
   if (!items.streamState(stage.key, "pinned")?.ended) {
-    const rows = (stage.pinned_rows ?? []).map((r) => ({ ...r }));
+    // the spares wait beside the pinned rows: over the stage's volume they are kept as spare parents, never delivered
+    const rows = [...(stage.pinned_rows ?? []), ...(stage.spare_rows ?? [])].map((r) => ({ ...r }));
     await ingestRows(deps, stage, rows, { silent: true, idField: spec.id_field ?? null, raw: true, page: { stream: "pinned", call_id: null, cursor_in: null, cursor_next: null, has_more: false, ended: true, rows_in_page: rows.length } });
     await emitStageProgress(deps, stage, { collecting: true });
   }
