@@ -140,6 +140,8 @@ export interface RecordedCall {
 }
 
 export interface PlanLookup {
+  /** S3: a social request in the redesigned mode: the AI never judges what belongs, so a text-search stage is accepted without a relevance rule and a rule that does not match the sample refuses nothing (the rule is dropped once the whole plan is built by code; a plan that falls back to the old pipeline keeps it). */
+  noRelevance?: boolean;
   call(id: string): RecordedCall | null;
   /** Text of a saved page or code output (to prove a sample row's id and links were really seen). Null when the id is unknown. */
   evidenceText(id: string): string | null;
@@ -513,14 +515,14 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
           const { counts } = classifyRows(relevance, sampleRows);
           sampleExamined = counts.examined;
           sampleMatching = counts.match;
-          if (counts.match + counts.review === 0) issues.push(`${label}: none of the ${counts.examined} rows of the sample matches your relevance rule (${Object.entries(counts.excluded).map(([k, v]) => `${k}: ${v}`).join(", ")}); fix the rule, sample another source or another query, or finish with cannot_serve`);
+          if (counts.match + counts.review === 0 && !lookup.noRelevance) issues.push(`${label}: none of the ${counts.examined} rows of the sample matches your relevance rule (${Object.entries(counts.excluded).map(([k, v]) => `${k}: ${v}`).join(", ")}); fix the rule, sample another source or another query, or finish with cannot_serve`);
           // the price rests on the cost per MATCHING row: matching rows count fully, uncertain ones (reviewed by the model, about half pass) count half
           yieldShare = Math.min(1, Math.max(0.02, (counts.match + 0.5 * counts.review) / counts.examined));
           reviewShare = counts.review / counts.examined;
           // sample rows derived by code are the first rows that MATCH the stage's own rule
           if (samplesDerived) samples = sampleRows.filter((r) => classifyRows(relevance!, [r]).counts.match === 1).slice(0, MAX_SAMPLE_ROWS_PER_STAGE);
           const bad = samples.filter(isRecord).filter((r) => classifyRows(relevance!, [r]).counts.match !== 1);
-          if (bad.length) issues.push(`${label}: ${bad.length} of your sample_rows do not match your own relevance rule; show only rows that match`);
+          if (bad.length && !lookup.noRelevance) issues.push(`${label}: ${bad.length} of your sample_rows do not match your own relevance rule; show only rows that match`);
         }
       }
     } else if (companyStage && requestNamesSector(requestWords) && cleanColumns.length > 0) {
@@ -529,7 +531,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
       const words = sectorWordsOf(requestWords).slice(0, 4);
       const named = cleanColumns.filter((c) => /name|title|desc|about|industry|sector|summary|text|company/i.test(c.key)).map((c) => c.key).slice(0, 3);
       relevance = { subject_ar: `شركات ${words.slice(0, 3).join(" ")}`, terms: [...new Set(words.flatMap((w) => [w, w.replace(/ات$/, "ة"), ...sectorEnglishWords(w)]))].slice(0, 14), text_columns: named.length > 0 ? named : [cleanColumns[0].key], min_own_words: 0, review: true, entity: true };
-    } else if (foundBySearch && raw.deliver === true && !isChild) {
+    } else if (foundBySearch && raw.deliver === true && !isChild && !lookup.noRelevance) {
       issues.push(`${label}: its rows were found by a text search, so it needs \`relevance\` (subject_ar, terms, context_terms, exclude_terms, text_columns) and \`yield_from\`: code keeps only the rows that are ABOUT what the customer asked and charges only for those`);
     }
 

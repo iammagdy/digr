@@ -90,3 +90,28 @@ export function pageableCommentAlternative(stage: Pick<PricedStage, "engine" | "
     parent_binding: { param: first.parentParam, from: first.from === "id" ? "id" : linkKey! }, cost_per_row_usd: first.usd / first.rowsPerCall,
   };
 }
+
+/**
+ * THE COMMENTS STAGE'S RECIPE, BUILT BY CODE (S3; docs/S1-LIVE-FINDINGS.md, «Live run of 2026-11-02 09:25», msn_a6dacebce7e7b7432aa1). When the model's mapping of the comments page cannot be proven as a recipe, the stage had NO recipe, the whole mission ran on the old
+ * pipeline (the model carried it out, with the old topic rules) and none of the redesigned guarantees applied. In the redesigned mode the recipe of a comments stage is written by code from the tool's own schema: the input that takes the video (its id, else its link), the cursor, and
+ * the code-written comment-page mapping keyed by the stage's columns. The caller PROVES the mapping on the page the planner sampled (every row of the page, each with an id) before the recipe is kept. Null when the stage is not a comments stage of a code-built parent, or the tool's
+ * required inputs are not the video's.
+ */
+const POST_INPUT = /^post$/i;
+export function commentsEngineByCode(stage: Pick<PricedStage, "endpoint_id" | "columns" | "parent_key">, parent: Pick<PricedStage, "columns" | "engine"> | undefined, catalog: TregCatalog, sampleCallId = "page"): NonNullable<PricedStage["engine"]> | null {
+  const endpoint = catalog.byId.get(stage.endpoint_id);
+  if (!endpoint || stage.parent_key === null || !parent || parent.engine?.built_by !== "code") return null;
+  if (!/\.comments$/.test(endpoint.capability ?? "") || endpoint.kind !== "direct" || endpoint.async) return null;
+  const linkKey = parent.columns.find((c) => LINK_KEY.test(c.key))?.key ?? null;
+  let binding: { param: string; from: string } | null = null;
+  for (const i of endpoint.inputs) {
+    if (VIDEO_ID_INPUT.test(i.name) || POST_INPUT.test(i.name)) { if (!binding) binding = { param: i.name, from: "id" }; }
+    else if (URL_INPUT.test(i.name)) { if (!binding && linkKey) binding = { param: i.name, from: linkKey }; else if (i.required && !linkKey && !binding) return null; }
+    else if (SIZE_INPUT.test(i.name) || (endpoint.pagination ?? []).includes(i.name)) continue;
+    else if (i.required) return null;
+  }
+  if (!binding) return null;
+  const cursor = (endpoint.pagination ?? []).find((p) => !SIZE_INPUT.test(p)) ?? null;
+  return { endpoint_id: endpoint.id, params: {}, cursor_param: cursor, // the page is read by its call id like every recipe (`map_file_id`), whatever the file is called: the mapping takes the one input it is given
+    map_code: buildReplyMapCode(replyColumnKeysOf(stage.columns)).replace("const P = inputs.page;", "const P = Object.values(inputs)[0];"), map_file_id: sampleCallId, parent_binding: binding, built_by: "code" };
+}

@@ -24,7 +24,8 @@ import { ItemStore, readSnapshot, type StopReason } from "./items/itemStore";
 import { drainPending, ingestRows } from "./items/ingest";
 import { mirrorLegacyFiles } from "./items/mirror";
 import { codeRunPath, deriveEngineSpecsChecked, type CodeRun } from "./engine/spec";
-import { withRepliesStages } from "../../src/lib/agentMission/replies";
+import { wantsAllChildren } from "../../src/lib/agentMission/allChildren";
+import { wantsReplies, withRepliesStages } from "../../src/lib/agentMission/replies";
 import { ROW_KEY_FIELDS } from "../../src/lib/agentMission/contract";
 import type { AgentStore, CallPhase, MissionRecord } from "./types";
 import { catalogHitView } from "../../src/lib/modelPlanner/tools";
@@ -39,8 +40,9 @@ import { conditionsOfRequest } from "../../src/lib/agentMission/requestCondition
 import { applyGapNotes } from "../../src/lib/agentMission/gapLines";
 import { counterOfRow } from "../../src/lib/agentMission/allChildren";
 import { withCompleteCount } from "../../src/lib/agentMission/completeCount";
+import { redesignTypeOf } from "../../src/lib/agentMission/redesignFlags";
 import { pageCapOfSource, pageLimitOf } from "../../src/lib/agentMission/pageLimit";
-import { pageableCommentAlternative } from "../../src/lib/agentMission/pageableComments";
+import { commentsEngineByCode, pageableCommentAlternative } from "../../src/lib/agentMission/pageableComments";
 import { deriveItemId } from "../../src/lib/agentMission/contract";
 import { coverageOf } from "../../src/lib/agentMission/sourceRanking";
 import { catalogDateKind } from "../../src/lib/agentMission/relativeDates";
@@ -611,6 +613,10 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       },
       handler: async (a) => {
         const stagesIn: any[] = Array.isArray(a.stages) ? a.stages : [];
+        // NO TOPIC OR RELEVANCE JUDGEMENT IN THE NEW PIPELINE (S3, owner rule): for a social request in the redesigned mode the AI understands the request, builds the tool call and formats the file; it never decides which items belong. The topic is in the request code builds
+        // (the search words), not in a rule that removes what the source returned, so a relevance rule the model wrote cannot refuse the plan, and it is dropped below once every stage is built by code (a plan that falls back to the old pipeline keeps it: the old rules need it). Duplicates by id remain the only removal.
+        const noRelevance = socialRedesignActive(ctx) && redesignTypeOf(stagesIn as never, { account: stagesIn.some((st) => Array.isArray(st?.filters) && st.filters.some((f: { kind?: string; values?: unknown[] }) => f?.kind === "account" && Array.isArray(f.values) && f.values.length > 0)) }, (id: string) => ctx.catalog.byId.get(id)?.capability ?? null).startsWith("social_");
+
         const ids = new Set<string>();
         for (const s of stagesIn) {
           if (s && Array.isArray(s.measured_by)) for (const id of s.measured_by) ids.add(String(id));
@@ -620,6 +626,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         const evidence = new Map<string, string | null>();
         for (const id of ids) evidence.set(id, FILE_ID.test(id) ? await store.getFile(mission.id, pathOfFile(id)) : null);
         const lookup = {
+          ...(noRelevance ? { noRelevance: true } : {}),
           call: (id: string): RecordedCall | null => {
             const row = calls.find((c) => c.id === `${mission.id}:${id}`);
             return row ? { id, endpointId: row.endpoint_id, ok: row.status === "ok", costUsd: Number(row.cost_usd) || 0, rows: Number(row.rows_returned) || 0, durationMs: Number(row.duration_ms) || undefined, params: row.params_digest } : null;
@@ -674,6 +681,28 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             if (approxDates && approxDates.length > 0) st.approx_dates = approxDates;
           }
         }
+        // THE COMMENTS STAGE'S RECIPE BY CODE (S3): a comments stage the model's mapping could not give a proven recipe for is NOT left to the model (the whole mission would run on the old pipeline, with the old topic rules): in the redesigned mode its recipe is written by code from the tool's own
+        // schema and PROVEN on the page the planner sampled (every row of the page mapped, each with an id) before it is kept
+        if (derived && socialRedesignActive(ctx)) {
+          for (const st of checked.plan.stages) {
+            if (st.engine || st.parent_key === null || !st.deliver) continue;
+            const sample = st.measured_by.map((id) => ({ id, row: calls.find((c) => c.id === `${mission.id}:${id}`) })).find((m) => FILE_ID.test(m.id) && m.id.startsWith("call_") && m.row?.endpoint_id === st.endpoint_id && m.row.status === "ok" && Number(m.row.rows_returned) > 0);
+            if (!sample) continue;
+            const built = commentsEngineByCode(st, checked.plan.stages.find((x) => x.key === st.parent_key), ctx.catalog, sample.id);
+            if (!built) continue;
+            try {
+              const page = await store.getFile(mission.id, `raw/${sample.id}.json`);
+              if (page === null) continue;
+              const out = await runSandbox(built.map_code, { [built.map_file_id]: JSON.parse(page) });
+              if (!out.ok || out.resultJson === null) continue;
+              const rows = JSON.parse(out.resultJson) as unknown;
+              if (!Array.isArray(rows) || rows.length !== Number(sample.row!.rows_returned) || !rows.every((r) => isObject(r) && String(r.id ?? "").trim() !== "")) continue;
+              st.engine = built;
+            } catch { /* a stage that cannot be proven keeps no recipe */ }
+          }
+        }
+        // THE WHOLE PLAN IS BUILT BY CODE (S3): the new pipeline delivers raw, so no relevance rule stays on any stage (it is ignored by raw delivery; it is removed so nothing can use it); a plan with a stage built by the model runs the old pipeline and keeps its rules
+        if (noRelevance && derived && checked.plan.stages.length > 0 && checked.plan.stages.every((st) => st.engine?.built_by === "code")) for (const st of checked.plan.stages) { delete st.relevance; delete st.yield_from; }
         // THE FINDER STEPS' COLUMNS (contactFinders.ts): the contact column the planner left out and the Arabic status column beside each are added by code AFTER the recipes were proven on the mapping (the engine's contract checks the columns the MAPPING fills; these are filled by the finder step, never by the mapping)
         if (checked.plan.contact_steps && checked.plan.contact_steps.length > 0) for (const st of checked.plan.stages) st.columns = withContactColumns(st.key, st.columns, checked.plan.contact_steps);
         // THE REFERENCE'S COLUMNS (taskContracts.ts, audit 2026-11): a company's sheet in the order and under the titles of the owner's sheet, with its e-mail and status columns; the company steps then read and write the columns the file has
@@ -688,6 +717,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           const allowedReply = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
           checked.plan = await withRepliesStages(checked.plan, {
             catalog: ctx.catalog, isAllowed: allowedReply, stats: ctx.stats,
+            // S3 (redesigned mode only): a request that mentions the replies always has the replies stage; «all» reads each comment to the end of its replies
+            ...(socialRedesignActive(ctx) ? { requested: wantsReplies(`${mission.request_text} ${mission.answer_text ?? ""}`), all: wantsAllChildren(`${mission.request_text} ${mission.answer_text ?? ""}`) } : {}),
             sampleRowsOf: async (st) => {
               const sp = st.engine;
               if (!sp) return null;

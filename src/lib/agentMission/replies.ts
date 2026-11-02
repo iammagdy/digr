@@ -195,7 +195,14 @@ export interface RepliesDeps {
   now?: number;
   /** Every row of the page the comments stage was measured on, mapped by the stage's own proven mapping (null: not available; the stage's sample rows are used). */
   sampleRowsOf: (stage: PricedStage) => Promise<Row[] | null>;
+  /** S3 (owner rule): the request mentions replies («والردود»): the replies stage is ALWAYS in the plan, whatever the sample shows (only a platform with no reply source cannot have it). */
+  requested?: boolean;
+  /** S3: the request asks for ALL the comments: each comment is read to the end of its replies (the largest number per comment the job allows). */
+  all?: boolean;
 }
+
+/** Words of a request that ask for the replies to the comments («والردود»، «ردودها»، «الردود»). */
+export const wantsReplies = (request: unknown): boolean => /ردود/.test(String(request ?? ""));
 
 /** What the sampled comments say about their replies: the mean replies a comment has (capped at `cap`, the number read for each comment) and the calls that takes; not counted when no sampled comment carries a counter. */
 export function expectedFromCounts(counts: ReadonlyArray<number>, cap: number = AGENT_REPLIES_PER_COMMENT_DEFAULT): { perComment: number; callsPerComment: number; counted: boolean } {
@@ -255,11 +262,15 @@ export async function withRepliesStages(planIn: PricedPlan, deps: RepliesDeps): 
     const source = sources[0];
     const sample = (await deps.sampleRowsOf(comments)) ?? comments.sample_rows;
     // THE DEFAULT NUMBER PER COMMENT (owner decision): ten, whatever the sample's counters say; the customer may raise it to the cap or lower it in the plan editor
-    const perComment = AGENT_REPLIES_PER_COMMENT_DEFAULT;
-    const counters = replyCountersOf(sample);
-    const expected = expectedFromCounts(counters, perComment);
-    // NEVER A BLIND PAID READ: without the comments' own reply counter nothing says which comment has replies, so every comment would be read for them. No counter in the sample: no replies stage (the card says so)
-    if (!expected.counted) { plan = status("no_counter"); continue; }
+    const perComment = deps.requested && deps.all ? AGENT_REPLIES_PER_COMMENT_MAX : AGENT_REPLIES_PER_COMMENT_DEFAULT;
+    let counters = replyCountersOf(sample);
+    let expected = expectedFromCounts(counters, perComment);
+    // THE REQUEST ASKED FOR THE REPLIES (S3, owner rule): the stage is in the plan whatever the sample shows. A sample with no counter, or with no reply, supports no number: the estimate is the stated unknown (a few a comment) and the sample's counters are not stored, so the estimate follows the final comments;
+    // every comment is read by its own counter at execution and only what exists is delivered and charged.
+    const unknown = { perComment: AGENT_REPLIES_UNKNOWN_PER_COMMENT, callsPerComment: Math.ceil(AGENT_REPLIES_UNKNOWN_PER_COMMENT / AGENT_REPLIES_ROWS_PER_CALL_ASSUMED), counted: false };
+    if (deps.requested && (!expected.counted || expected.perComment <= 0)) { expected = unknown; counters = []; }
+    // NEVER A BLIND PAID READ for a request that did not ask for replies: without the comments' own reply counter nothing says which comment has replies. No counter in the sample: no replies stage (the card says so)
+    if (!expected.counted && !deps.requested) { plan = status("no_counter"); continue; }
     if (expected.perComment <= 0) { plan = status("none_found"); continue; }
     const delivered = plan.stages.filter((s) => s.deliver).reduce((n, s) => n + s.planned_rows, 0);
     let planned = plannedRepliesFor(comments.planned_rows, expected.perComment, delivered, perComment);
