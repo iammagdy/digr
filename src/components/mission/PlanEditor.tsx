@@ -39,8 +39,13 @@ export function editsFromState(edit: PlanEditorView, state: ReturnType<typeof in
     const st = state.stages[s.key];
     const e: NonNullable<PlanEdits["stages"]>[number] = { key: s.key };
     if (s.per_parent !== undefined) {
-      const per = Number(normalizeDigits(state.perParent[s.key] ?? "").replace(/[^\d]/g, ""));
-      if (Number.isInteger(per) && per !== s.per_parent) e.per_parent = per;
+      const raw = normalizeDigits(state.perParent[s.key] ?? "").trim();
+      // «كل» (or «all»): every comment of every video, the counters of the chosen videos (S7)
+      if (/^(?:all|كل|الكل|كله|كلها)$/i.test(raw)) e.per_parent = "all";
+      else {
+        const per = Number(raw.replace(/[^\d]/g, ""));
+        if (Number.isInteger(per) && per !== s.per_parent) e.per_parent = per;
+      }
     }
     if (s.pages !== undefined) {
       const pages = Number(normalizeDigits(state.pages[s.key] ?? "").replace(/[^\d]/g, ""));
@@ -88,7 +93,7 @@ export function PlanEditor({ edit, busy = false, onSave, onCancel, onRetype }: {
       {edit.stages.filter((s) => s.per_parent !== undefined).map((s) => (
         <label key={`per-${s.key}`} className="flex flex-col gap-1 text-[13px] text-ink2">
           <span>{s.per_parent_label_ar}</span>
-          <input value={state.perParent[s.key] ?? ""} onChange={(e) => setState((p) => ({ ...p, perParent: { ...p.perParent, [s.key]: e.target.value } }))} inputMode="numeric" className={FIELD} dir="ltr" aria-label={s.per_parent_label_ar} data-testid={`agent-edit-per-parent-${s.key}`} />
+          <input value={state.perParent[s.key] ?? ""} onChange={(e) => setState((p) => ({ ...p, perParent: { ...p.perParent, [s.key]: e.target.value } }))} inputMode="text" placeholder="كل" className={FIELD} dir="ltr" aria-label={s.per_parent_label_ar} data-testid={`agent-edit-per-parent-${s.key}`} />
           <span className="text-[11px] font-light text-mut">يُحسب السعر من جديد بعد الحفظ.</span>
         </label>
       ))}

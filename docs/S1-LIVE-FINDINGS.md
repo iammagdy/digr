@@ -386,3 +386,30 @@ The figure 201 is not in the day's missions of the account (the minimum plan is 
 Changed existing test (marked `CHANGED`): `tests/s2-live-replay.test.ts` asserted that the sampled next tool is never called; it is now called when the first tool ends before the counter.
 
 Limits: the page text of this mission is in storage, so the fixture reproduces its structure, not its content; whether `crawl4ai` (or any next tool) gives more comments than `tikhub` for these two videos is not known (the tests cover both outcomes: it gives more, or it gives nothing and the text states the real numbers); a platform counter that includes removed or nested items can still never be reached, and the text says so.
+
+---
+
+# Live test of 2026-11-02 ~13:06 Cairo after #337 (S7): `msn_5d849cbac96092de0287`, country and language first; the editor's «all»; the money check
+
+Read-only SELECTs (Q50 the account's missions after 10:30 UTC, Q51 `credit_ledger` columns, Q52 the job's ledger rows, Q53 the charge arithmetic on the stored values, Q54 events, Q55 stages, Q56 the planning search calls, Q57 the source of `settle_job_atomic`: only whether it contains `ceil` or `floor`). The request was edited from the full plan (5,115 rows, reserve 8,343 points) to 100 comments per video (362 rows, reserve 742) before approval; delivered 347 (2 videos, 200 comments, 145 replies), charged 619.
+
+## S7.1 The money check (V): the charge is ceil(delivered x unit price), never above the reserve; floor was NOT used
+| Item | Stored value |
+|---|---|
+| ledger rows of the job (`job_quote_7b0fcf7da38ded03444287a305102574`) | `res_…` **-742** (13:06:37), `chg_…` **-619** and `rel_…` **+742** (both 13:08:36): net -619, balanced |
+| stored unit price (mission and plan) | 1.781966 points a row |
+| delivered | 347 |
+| exact product | 347 x 1.781966 = **618.342202** |
+| ceil / floor / round | **619** / 618 / 618 |
+| charged | **619 = ceil** (floor would be 618, not 619) |
+| reserve / max charge of the plan | 742 / 646: 619 is below both |
+The code says the same: `chargeForDelivered` (`src/lib/agentMission/price.ts:100-105`) is the exact integer ceil of (unit in micro-points x delivered) / 1,000,000, `settlementCharge` caps it at the reserve and the job cap, and the stored function `settle_job_atomic` contains `ceil` and no `floor`. The tester's «620 instead of 619» cannot be reproduced from the stored values: 348 rows would be 621, 347 rows with a display-rounded unit (1.782) is 618.35, which also rounds up to 619. No money file was touched.
+
+## S7.2 Why both videos were English AI cartoons (V for the calls and the plan, GUESS for the page content, which is in storage)
+The plan was built on `tikhub.tiktok.search.videos` with `region: EG`, `sort_type: 1` (the most-liked order that S5 asks for); the card had no country line because the tool HAS a region input (no gap). The two planning samples were `sort_type` 2 (newest) then 1 (most liked); the videos came from the most-liked sample, whose results (counters 3,553 and 1,560) were global English videos: **a region input is a request to the source, not a proof that every result is from that country, and in the most-liked order it was not honoured**. The place and language filters of the card were marks only (raw delivery) and the choice of videos looked at counters alone.
+
+## S7.3 Fixes (one PR, behind the same flags; red test first: `tests/s7-country-first.test.ts`, the exact request)
+1. **The customer's country and language come first** (`customerConditions.ts`, `completeCount.ts`, `agent/src/tools.ts`): the videos are chosen among the RESULTS THAT MATCH the country (place evidence in the row's own fields: none is never a match) and the language (the source's own, else the script of the caption: code, never a model); the matching come first, ordered by comment counter, then the others fill any missing place. An order, never a filter: nothing is removed. Every sampled page of the search is a listing the videos may be chosen from (the planning budget allows two samples of one source: the most-liked sample may hold English videos while the first holds Egyptian ones). The card says how they were chosen («اخترنا الأعلى تعليقًا من بين النتائج المطابقة لبلدك ولغتك») and, when fewer matched than needed, how many. A tool without the country field is never chosen for its sort.
+2. **The plan editor**: the comments per video can be «كل» (the videos' real counters: comments + replies = their sum again, the price recomputed and shown before approval) or any number up to the largest real counter (the cap of 100 contradicted «all comments»); the refusal names the real number (`planEdit.ts`, `PlanEditor.tsx`).
+
+Limits: matching depends on the evidence the source's rows carry (a source that gives neither a country field nor a language leaves every row unmatched: the order falls back to the counters and the card says how many matched); when no sampled page holds a matching video, the highest-commented results are delivered and the card says so before approval (the customer may edit or cancel). Whether `region` is honoured in the most-liked order of other tools is unknown.
