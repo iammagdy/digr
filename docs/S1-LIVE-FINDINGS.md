@@ -242,8 +242,8 @@ Totals (V: Q27, Q25): promised 322 (2 + 40 + 280), price up to 1,141 points, res
 | Step | Number | Evidence |
 |---|---|---|
 | Model plan, comments stage | 800 (derived) | stage 3's stored cost per row (above); the model's own stored value was overwritten and no event keeps it: **GUESS** for the exact origin of 800 (a model number, such as 400 per video), V for its being 800 at the replies step |
-| `withRepliesStages`, replies | ceil(800 x 0.35) = 280 | V: `replies.ts:245-247`, `plannedRepliesFor` |
-| `withCompleteCount`, comments | 2 x min(counter, page cap 20) = 40, pinned, `all_children = true` | V: stored values; `completeCount.ts:104-107` |
+| `withRepliesStages`, replies | ceil(800 x 0.35) = 280 | V: `replies.ts:265` calling `plannedRepliesFor` (`replies.ts:234`) |
+| `withCompleteCount`, comments | 2 x min(counter, page cap 20) = 40, pinned, `all_children = true` | V: stored values; `completeCount.ts:86` |
 | `withCompleteCount`, replies | unchanged: 280 | `repliesPlanned` is set only when `share !== null` (`completeCount.ts:157-168`); the basis check (`tools.ts:724-736`) needs the sampled page to add up to the parent's counter within 10%, a page of 20 against a counter of about 168 cannot: share = null (V by code; the counter value is NOT VERIFIED here) |
 | Card text | «٤٠ تعليقًا بحسب العدّاد الفعلي» | V: Q28 note 3 is the `share === null` sentence. The card did not state the 280 replies as a number of its own; the price carried them (price `deliveredRows` 322) |
 
