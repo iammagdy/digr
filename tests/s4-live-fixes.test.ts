@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { MemoryStore } from "../agent/src/memoryStore";
 import { readWorkbook } from "./helpers/agentReplay";
-import { runS4, vid } from "./helpers/s4World";
+import { runS4 } from "./helpers/s4World";
 import { isRepliesStage } from "../src/lib/agentMission/replies";
 
 /**
@@ -76,4 +76,3 @@ describe("3. the comments sheet has the comment language, in Arabic", () => {
   });
 });
 
-void vid;
