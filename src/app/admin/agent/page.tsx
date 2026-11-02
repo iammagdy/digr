@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { adminFetch } from "@/lib/adminApi";
+import { adminDownload, adminFetch } from "@/lib/adminApi";
 import { toArabicDigits } from "@/lib/arabicDigits";
 import { useAdmin } from "@/components/admin/AdminShell";
 import { countsLineAr, internalCountsLineAr } from "@/lib/agentMission/eventText";
@@ -57,6 +57,18 @@ export default function AgentPage() {
   const [events, setEvents] = useState<EventRow[]>([]);
   const [answer, setAnswer] = useState("");
   const lastEvent = useRef(0);
+  // PR 1 of docs/FOUNDATION-PLAN.md: the stored raw pages and delivered rows of chosen missions, as one ZIP for the owner's own device
+  const [rawIds, setRawIds] = useState("");
+  const [rawBusy, setRawBusy] = useState(false);
+  async function downloadRawZip() {
+    const ids = rawIds.split(/[\s,،]+/).filter((t) => t.length > 0).join(",");
+    if (!ids) return;
+    setRawBusy(true);
+    try {
+      await adminDownload(`/api/admin/agent/raw-zip?ids=${encodeURIComponent(ids)}`, "diger-raw-pages.zip");
+      toast("نزل الملف المضغوط على جهازك.");
+    } catch (e) { toast(e instanceof Error ? e.message : "تعذّر تنزيل الملف"); } finally { setRawBusy(false); }
+  }
 
   const loadOverview = useCallback(async () => {
     try { setOverview(await adminFetch<Overview>("/api/admin/agent")); } catch (e) { toast(e instanceof Error ? e.message : "تعذّر التحميل"); }
@@ -195,6 +207,13 @@ export default function AgentPage() {
             ))}
           </ul>
         )}
+      </section>
+
+      <section className={SECTION} aria-label="الصفحات الخام" data-testid="agent-raw-zip-section">
+        <h3 className="m-0 text-[13px] font-semibold text-ink">تنزيل الصفحات الخام للمهام</h3>
+        <p className="m-0 text-[12px] leading-[1.8] text-ink2">اكتب أرقام المهام (حتى ٤٠ مهمة)، مفصولة بفاصلة أو بسطر جديد، فينزل ملف مضغوط واحد فيه ما حُفظ من ردود المصادر الخام وصفوف كل مرحلة فقط. الملف لجهازك وحدك: فيه أسماء أصحاب التعليقات ونصوصها، فلا ترفعه إلى أي مكان عام.</p>
+        <textarea value={rawIds} onChange={(e) => setRawIds(e.target.value)} rows={3} dir="ltr" className="w-full rounded-xl border border-ln2 bg-sf p-3 font-mono text-[13px] text-ink" placeholder="msn_…" aria-label="أرقام المهام" data-testid="agent-raw-zip-ids" />
+        <div><button type="button" className={BTN} disabled={rawBusy || rawIds.trim().length === 0} onClick={() => { void downloadRawZip(); }} data-testid="agent-raw-zip">{rawBusy ? "جارٍ التجهيز…" : "نزّل الملف المضغوط"}</button></div>
       </section>
 
       <section className={SECTION} aria-label="المهام">

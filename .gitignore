@@ -62,3 +62,8 @@ src/functions/**/dist
 
 # the agent worker has its own install (the Claude Agent SDK ships a native binary)
 /agent/node_modules
+
+# raw provider pages downloaded from /admin/agent (commenters' names and texts): for the owner's device only, never committed
+diger-raw-pages-*.zip
+diger-raw-pages.zip
+/raw-pages/
