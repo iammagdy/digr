@@ -9,6 +9,7 @@ import { RAW_PATH, type Gateway } from "../agent/src/gateway";
 import { priceMissionByCode } from "../src/lib/agentMission/price";
 import { stagePriceInputs, type PricedPlan, type PricedStage } from "../src/lib/agentMission/plan";
 import { isRepliesStage, withRepliesStages } from "../src/lib/agentMission/replies";
+import { withPromiseCaps } from "../src/lib/agentMission/repliesCard";
 import { withCompleteCount } from "../src/lib/agentMission/completeCount";
 import { pageCapOfSource, pageLimitOf } from "../src/lib/agentMission/pageLimit";
 import { pageableCommentAlternative } from "../src/lib/agentMission/pageableComments";
@@ -23,11 +24,12 @@ import type { RedesignFlags } from "../src/lib/agentMission/redesignFlags";
 const catalog = loadTregCatalog();
 const FLAGS = { social_posts: "test", social_account: "test", social_comments: "test", companies: "off", people: "off", places: "off" } as RedesignFlags;
 const REPLY_SAMPLE = [0, 0, 1, 2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 2, 0, 0, 0, 0].map((n, i) => ({ id: `s${i}`, text: `تعليق ${i}`, replies_count: n }));
-const TOP = { A: 168, B: 20 } as Record<string, number>;
+// CHANGED (S5, owner decision): a video's counter counts comments AND replies together, so the world's counters are the sum: video A 168 = 126 comments + 42 replies, video B 20 = 15 + 5 (47 replies in all)
+const TOP = { A: 126, B: 15 } as Record<string, number>;
 const LISTING = [{ id: "A", link: "https://www.tiktok.com/@x/video/A", caption: "فيديو أ", comments: 168 }, { id: "B", link: "https://www.tiktok.com/@x/video/B", caption: "فيديو ب", comments: 20 }, { id: "C", link: "https://www.tiktok.com/@x/video/C", caption: "فيديو ج", comments: 12 }];
 const AT_EXECUTION = [{ id: "N", link: "https://www.tiktok.com/@x/video/N", caption: "جديد", comments: 3 }, ...LISTING];
-// every fourth comment has one reply: 42 on video A, 5 on video B = 47 replies exist
-const hasReply = (k: number) => k % 4 === 0;
+// every third comment has one reply: 42 on video A, 5 on video B = 47 replies exist
+const hasReply = (k: number) => k % 3 === 0;
 const stage = (o: Record<string, unknown>) => ({ endpoint_id: "e", expected_rows: 1, planned_rows: 1, parent_key: null, deliver: true, sample_rows: [], measured_by: [], measured_from_calls: [], measured_cost_per_row_usd: 0.0002, ...o }) as unknown as PricedStage;
 const COLUMNS = [{ key: "text", title_ar: "نص التعليق" }, { key: "author", title_ar: "صاحب التعليق" }, { key: "posted_at", title_ar: "تاريخ ووقت التعليق" }, { key: "likes", title_ar: "الإعجابات" }, { key: "replies_count", title_ar: "عدد الردود" }, { key: "language", title_ar: "لغة التعليق" }];
 
@@ -73,7 +75,7 @@ async function run(p: PricedPlan) {
   } as unknown as Gateway;
   const items = await ItemStore.open(store, "msn_live");
   const stages = redesignStagesOf(p, FLAGS, true);
-  await runEngine({ items, store, plan: p, missionId: "msn_live", gateway, sandbox: (code, inputs) => (code === "return inputs.page" ? Promise.resolve({ ok: true, resultJson: JSON.stringify(Object.values(inputs)[0]), logs: [] }) : runInSandbox(code, inputs)), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: stages });
+  await runEngine({ items, store, plan: withPromiseCaps(p), missionId: "msn_live", gateway, sandbox: (code, inputs) => (code === "return inputs.page" ? Promise.resolve({ ok: true, resultJson: JSON.stringify(Object.values(inputs)[0]), logs: [] }) : runInSandbox(code, inputs)), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: stages });
   return { calls, videos: items.acceptedRows("videos").map((r) => String(r.id)), comments: items.acceptedRows("comments"), replies: items.acceptedRows("comments_replies") };
 }
 
@@ -81,22 +83,26 @@ describe("the live case, replayed with the six fixes", () => {
   it("the whole mission (videos, comments, replies) passes the gate", async () => {
     expect([...redesignStagesOf(await plan(), FLAGS, true)].sort()).toEqual(["comments", "comments_replies", "videos"]);
   });
-  it("the promise: 2 videos, 188 comments (the real counters, not 40), the replies from the sample's measured 0.35 over the final 188 (66, not 280)", async () => {
+  it("the promise: 2 videos and 188 comments and replies together (the counters), the replies a share of it by the sample's 0.35: never a reply estimate on top", async () => {
     const p = await plan();
     expect(p.stages.find((s) => s.key === "videos")!.planned_rows).toBe(2);
-    expect(p.stages.find((s) => s.key === "comments")!.planned_rows).toBe(188);
-    expect(p.stages.find(isRepliesStage)!.planned_rows).toBe(Math.ceil(188 * 0.35));
-    expect(p.price.deliveredRows).toBe(2 + 188 + 66);
+    const comments = p.stages.find((s) => s.key === "comments")!.planned_rows;
+    const replies = p.stages.find(isRepliesStage)!.planned_rows;
+    expect(comments + replies).toBe(188);
+    expect(replies).toBe(Math.round(188 * (0.35 / 1.35)));
+    expect(p.price.deliveredRows).toBe(2 + 188);
   });
-  it("delivered == promised for the videos and the comments: the pinned videos A and B, no new search, every page read to the end (168 in 9 pages, 20 in one)", async () => {
+  it("delivered == promised: the pinned videos A and B, no new search, every page read to the end (126 in 7 pages, 15 in one), 141 comments and the 47 replies = 188", async () => {
     const r = await run(await plan());
     expect(r.videos.sort()).toEqual(["A", "B"]);
     expect(r.calls.filter((c) => c.endpoint === "v.videos")).toHaveLength(0);
-    expect(r.comments).toHaveLength(188);
-    expect(r.calls.filter((c) => c.endpoint === "tikhub.tiktok.video.comments")).toHaveLength(10);
+    expect(r.comments).toHaveLength(141);
+    expect(r.replies).toHaveLength(47);
+    expect(r.comments.length + r.replies.length).toBe(188);
+    expect(r.calls.filter((c) => c.endpoint === "tikhub.tiktok.video.comments")).toHaveLength(8);
     expect(r.calls.map((c) => c.endpoint)).not.toContain("crawl4ai.tiktok.video.comments");
   });
-  it("the replies: the comments that say they have replies are read (47 exist), a comment with none is never read, and what was delivered is what the source had (below the 66 the sample estimated)", async () => {
+  it("the replies: the comments that say they have replies are read (47 exist), a comment with none is never read", async () => {
     const r = await run(await plan());
     expect(r.replies).toHaveLength(47);
     expect(r.calls.filter((c) => c.endpoint === "anyapi.tiktok.comment_replies")).toHaveLength(47);

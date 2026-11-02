@@ -21,7 +21,7 @@ export interface Understood {
   account?: string[];
   count?: number;
   replies?: "exclude" | "include";
-  sort?: "latest" | "top";
+  sort?: "latest" | "top" | "engaged";
   /** «Now», for a period counted in days (tests pass a fixed moment). */
   nowMs?: number;
 }
@@ -163,7 +163,11 @@ export function buildToolInput(endpoint: CatalogEndpoint, understood: Understood
   }
 
   // 7. THE SORT (only when the record asks for one)
-  if (understood.sort && profile.sort) {
+  // THE MOST ENGAGED (S5, owner decision: the default for a comments request): the order the tool offers for «most liked», the closest its sort field gives; a tool with no such order is read in its own order and the engagement is applied to the results (by counters, an order and never a filter)
+  if (understood.sort === "engaged" && profile.sort) {
+    const liked = profile.sort.options?.find((o) => o.kind === "liked");
+    if (liked) { params[profile.sort.field] = liked.value; written.push("sort"); }
+  } else if (understood.sort && profile.sort) {
     const wantedWord = understood.sort === "latest" ? /^(latest|recent|newest|date-posted|time|date)$/i : /^(top|relevance|most-liked|popular|best)$/i;
     const value = profile.sort.values?.find((v) => wantedWord.test(v));
     if (value !== undefined) { params[profile.sort.field] = value; written.push("sort"); }
@@ -184,9 +188,10 @@ export function buildToolInput(endpoint: CatalogEndpoint, understood: Understood
  * THE UNDERSTOOD RECORD OF A STAGE, read from its typed filters (the plan's own, checked by code: the period, the language, the places, the named accounts, the replies) and its volume. Stage 1 has no separate understanding step (Stage 2 adds
  * it): the record is what the plan already declares. A disabled filter is not asked for. A CHILD stage (comments, replies) is delivered as the source gives it, so it asks for nothing: its inputs are the parent's identity.
  */
-export function understoodOfStage(stage: { planned_rows: number; filters?: ReadonlyArray<StageFilter>; parent_key: string | null }, nowMs: number): Understood {
+export function understoodOfStage(stage: { planned_rows: number; filters?: ReadonlyArray<StageFilter>; parent_key: string | null }, nowMs: number, options: { engaged?: boolean } = {}): Understood {
   const out: Understood = { nowMs };
   if (stage.parent_key !== null) return out;
+  if (options.engaged) out.sort = "engaged";
   const filters = (stage.filters ?? []).filter(isEnabled);
   const period = filters.find((f) => f.kind === "period");
   if (period) out.period = period.days !== undefined ? { days: period.days } : { ...(period.from ? { from: period.from } : {}), ...(period.to ? { to: period.to } : {}) };

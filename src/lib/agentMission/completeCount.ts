@@ -1,5 +1,5 @@
 import { toArabicDigits } from "../arabicDigits";
-import { AGENT_REPLIES_PER_COMMENT_DEFAULT, AGENT_REPLIES_PER_COMMENT_MAX } from "./constants";
+import { AGENT_REPLIES_PER_COMMENT_DEFAULT, AGENT_REPLIES_PER_COMMENT_MAX, AGENT_REPLIES_UNKNOWN_SHARE } from "./constants";
 import { wantsAllChildren } from "./allChildren";
 import { isPeopleStage } from "./people";
 import { priceMissionByCode } from "./price";
@@ -35,6 +35,8 @@ export interface CompleteCountDeps {
   /** The size input of the child source and the most one call gives, from the source's own catalog schema (pageLimit.ts); null when the source states no maximum. A source with no next page is asked for what the promise needs, up to this maximum (S2 item 3). */
   /** The stage's next tool that pages, from the catalog (pageableComments.ts), when the stage's recipe has no next page and the planner sampled no pageable one; null when the catalog has none the stage can feed (S2 item 4). */
   pageableAlternativeOf?: (child: PricedStage) => Promise<NonNullable<NonNullable<PricedStage["engine"]>["alternatives"]>[number] | null>;
+  /** S5 (owner decision): the parents are chosen by their counters, the highest first (an order, never a filter); false: the source's own order stands (the customer asked for the newest or gave a date). */
+  mostEngaged?: boolean;
   pageSizeOf?: (child: PricedStage) => Promise<{ param: string; max: number } | null>;
 }
 
@@ -142,8 +144,10 @@ export async function withCompleteCount(plan: PricedPlan, deps: CompleteCountDep
     if (stage.parent_key === null || !stage.deliver || stage.replies_of !== undefined || isPeopleStage(stage) || stage.engine === undefined) continue;
     const parent = out.stages.find((s) => s.key === stage.parent_key);
     if (!parent) continue;
-    const candidates = await deps.candidatesOf(parent);
-    if (!candidates || candidates.length === 0 || candidates.every((c) => c.counter === null)) continue;
+    const listed = await deps.candidatesOf(parent);
+    if (!listed || listed.length === 0 || listed.every((c) => c.counter === null)) continue;
+    // THE MOST ENGAGED FIRST (S5): the highest counters in front; equal counters keep the source's order, a parent with no counter goes last. An order, never a filter.
+    const candidates = deps.mostEngaged ? listed.map((c, i) => ({ c, i })).sort((a, b) => (b.c.counter ?? -1) - (a.c.counter ?? -1) || a.i - b.i).map((x) => x.c) : listed;
     const perAsked = Number(stage.per_parent_rows);
     const perParent = all || !Number.isFinite(perAsked) || perAsked < 1 ? Number.POSITIVE_INFINITY : Math.floor(perAsked);
     let pageCap = deps.pageCapOf ? await deps.pageCapOf(stage) : null;
@@ -176,19 +180,36 @@ export async function withCompleteCount(plan: PricedPlan, deps: CompleteCountDep
     }
     if (e.total < 1) continue;
     const chosenRows = e.chosen.length > 0 && e.chosen.length === parent.planned_rows && e.chosen.every((c) => c.row !== undefined) ? e.chosen.map((c) => c.row!) : null;
-    // THE REPLIES FOLLOW THE FINAL COMMENTS (S2 item 2): with no measured share, the replies stage was estimated on the comments number the MODEL planned (live: 800 comments x 0.35 = 280 replies); the comments are now final (40), so the replies are derived again by the one rule
-    // the plan editor uses: the sample's measured replies per comment over the final comments, never above the cap per comment, never a number the sample does not support
-    let repliesFromSample: { rows: number; perCommentExpected: number; costPerRowUsd: number } | null = null;
+    // THE PROMISE FOR COMMENTS AND REPLIES IS THE COUNTER, NEVER MORE (S5, owner decision): a video's comment counter counts the comments AND the replies together, so with a replies stage the two stages share the counters of the chosen videos: no reply estimate is added on top of them.
+    // The split is the sample's measured share (replies per comment m: replies are m/(1+m) of the counter; a silent sample: a stated share), the total is fixed by the counters; each stage may be read up to the total (`promise_total`), because the source gives no more than the counter in all.
+    let repliesFromSample: { rows: number } | null = null;
+    let promiseTotal: number | null = null;
     if (repliesStage && repliesPlanned === null) {
-      const elsewhere = out.stages.filter((x) => x.deliver && x.key !== repliesStage.key).reduce((n, x) => n + (x.key === stage.key ? e.total : x.planned_rows), 0);
-      repliesFromSample = repliesEstimateFor(repliesStage, e.total, repliesStage.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_DEFAULT, elsewhere);
+      const counts = (repliesStage.replies_sample_counts ?? []).filter((n) => Number.isFinite(n) && n >= 0);
+      const mean = counts.length > 0 ? counts.reduce((a, b) => a + b, 0) / counts.length : 0;
+      const share = mean > 0 ? mean / (1 + mean) : AGENT_REPLIES_UNKNOWN_SHARE;
+      if (requested === null) {
+        // «all»: comments + replies = the counters of the chosen parents
+        const total = e.total;
+        const replies = total >= 2 ? Math.min(total - 1, Math.max(1, Math.round(total * share))) : 0;
+        if (replies >= 1) { repliesFromSample = { rows: replies }; promiseTotal = total; e = { ...e, total: total - replies }; }
+      } else {
+        // a number was asked for the comments: the replies are what the sample says for them, and never above what is left of the counters
+        const counters = e.chosen.reduce((n, c) => n + (c.counter === null ? 0 : Math.floor(c.counter)), 0);
+        const room = Math.max(0, counters - e.total);
+        const replies = Math.min(room, Math.max(1, Math.round(e.total * (mean > 0 ? mean : share / (1 - share)))));
+        if (replies >= 1) { repliesFromSample = { rows: replies }; promiseTotal = e.total + replies; }
+      }
     }
     const stages = out.stages.map((s) => {
-      if (repliesFromSample && s.key === repliesStage!.key) return { ...s, planned_rows: repliesFromSample.rows, expected_rows: repliesFromSample.rows, replies_per_comment_expected: repliesFromSample.perCommentExpected, measured_cost_per_row_usd: repliesFromSample.costPerRowUsd };
-      if (repliesPlanned !== null && repliesPlanned > 0 && s.key === repliesStage!.key) return { ...s, planned_rows: repliesPlanned, expected_rows: repliesPlanned, per_parent_rows: AGENT_REPLIES_PER_COMMENT_MAX };
+      if (repliesFromSample && s.key === repliesStage!.key) {
+        const est = repliesEstimateFor(s, Math.max(1, e.total), s.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_DEFAULT, 0);
+        return { ...s, planned_rows: repliesFromSample.rows, expected_rows: repliesFromSample.rows, ...(promiseTotal !== null ? { promise_total: promiseTotal } : {}), measured_cost_per_row_usd: est.costPerRowUsd * (est.rows / repliesFromSample.rows) };
+      }
+      if (repliesPlanned !== null && repliesPlanned > 0 && s.key === repliesStage!.key) return { ...s, planned_rows: repliesPlanned, expected_rows: repliesPlanned, per_parent_rows: AGENT_REPLIES_PER_COMMENT_MAX, promise_total: e.total + repliesPlanned };
       // THE PINNED PARENTS' ROWS (S2 item 6): the rows the plan measured for the chosen parents, so execution reads THESE parents without a new search (kept only when every chosen parent has its row and they are the parents the stage promises)
       if (s.key === parent.key) return chosenRows ? { ...s, pinned_rows: chosenRows } : s;
-      if (s.key === stage.key) return { ...chosen, planned_rows: e.total, expected_rows: e.total, per_parent_rows: Number.isFinite(perParent) ? Math.min(perParent, Math.max(1, e.perParent)) : Math.max(1, e.perParent), all_children: true, parent_pins: e.chosen.map((c) => c.id) };
+      if (s.key === stage.key) return { ...chosen, planned_rows: e.total, expected_rows: e.total, per_parent_rows: Number.isFinite(perParent) ? Math.min(perParent, Math.max(1, e.perParent)) : Math.max(1, e.perParent), all_children: true, ...(promiseTotal !== null ? { promise_total: promiseTotal } : repliesPlanned !== null && repliesPlanned > 0 ? { promise_total: e.total + repliesPlanned } : {}), parent_pins: e.chosen.map((c) => c.id) };
       return s;
     });
     // THE CALL ASKS FOR WHAT THE PROMISE NEEDS (S2 item 3): the recipe froze the planner's sample size (`limit: 20`); a source with no next page is asked for the largest share of any parent, up to the maximum its schema states. The same holds for a next tool with no

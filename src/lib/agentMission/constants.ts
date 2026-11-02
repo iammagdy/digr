@@ -244,6 +244,8 @@ export const AGENT_REPLIES_PER_COMMENT_DEFAULT = 10;
 export const AGENT_REPLIES_ROWS_PER_CALL_ASSUMED = 10;
 /** What a comment is assumed to have in replies when the sampled comments carry no reply counter at all (the plan prices an estimate, never a promise: only the replies really delivered are charged). */
 export const AGENT_REPLIES_UNKNOWN_PER_COMMENT = 2;
+/** The share of a video's counter that is replies when the sample supports none (S5): only a SPLIT between the comments and the replies stages; the total is fixed by the counters. */
+export const AGENT_REPLIES_UNKNOWN_SHARE = 0.25;
 
 // ------------------------------------------------------------- plan and rows
 export const MAX_PLAN_STAGES = 4;
