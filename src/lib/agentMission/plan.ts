@@ -229,6 +229,18 @@ export interface PricedPlan {
   /** REPLIES (replies.ts): why a comments delivery has no replies stage: no source the plan can feed, the sampled comments carry no reply counter (a paid read is never made blind), none of the sampled comments has a reply, the volume limit, or the customer switched them off (the stage then waits in `replies_off`). Absent: the replies are in the plan or the plan has no comments. */
   replies_status?: "no_source" | "no_counter" | "none_found" | "no_room" | "off";
   replies_off?: PricedStage;
+  /**
+   * F3-F6 (docs/FOUNDATION-PLAN.md, PR 2a): set ONLY on a plan built by the plan compiler (`foundation/compilePlan.ts`), never by the model's path. Each stage's number has one type
+   * (`exact`: the customer's count; `counter`: the platform counters of the chosen, checked parents; `open`: everything the source shows, `n` being only the reserve's maximum).
+   * A compiled plan always runs the new engine (agent/src/redesign.ts): it never falls back to the old pipeline. Absent: every old behaviour, unchanged.
+   */
+  compiled?: CompiledMark;
+}
+
+export interface CompiledMark {
+  by: "compiler";
+  platform: string;
+  promises: Record<string, { type: "exact" | "counter" | "open"; n: number; counter?: number }>;
 }
 
 export interface UnservedStep {
