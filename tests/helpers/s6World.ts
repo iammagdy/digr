@@ -94,7 +94,7 @@ export async function runS6(o: S6Options = {}) {
     { tool: "report_progress", args: { message_ar: "أجرّب مصادر الفيديوهات", counts: { sources: 2 } } },
     { tool: "catalog_search", args: { words: ["tiktok", "videos"], platform: "tiktok", limit: 5 } },
     { tool: "describe_endpoint", args: { id: "tikhub.tiktok.search.videos" } },
-    { tool: "treg_call", args: { endpoint_id: "tikhub.tiktok.search.videos", params: { keyword: "الذكاء الاصطناعي", region: "EG", count: 20, sort_type: 1 }, why } },
+    { tool: "treg_call", args: { endpoint_id: "tikhub.tiktok.search.videos", params: { keyword: "الذكاء الاصطناعي شرح وأخبار" /* CHANGED (S8): the request says «عن»: the search words carry that meaning */, region: "EG", count: 20, sort_type: 1 }, why } },
     { tool: "run_code", args: (r: Results) => ({ code: `return inputs.${callIds(r)[0]}.data.search_item_list.map(v => ({ id: String(v.id), link: v.url, caption: v.caption || '', author: v.authorName, posted_at: new Date(v.createdUtc * 1000).toISOString(), views: v.views, likes: v.likes, comments_count: v.comments, shares: v.shares, country: v.region }))`, files: [callIds(r)[0]] }) },
     { tool: "describe_endpoint", args: { id: "crawl4ai.tiktok.video.comments" } },
     { tool: "treg_call", args: { endpoint_id: "crawl4ai.tiktok.video.comments", params: { post: vid(0), limit: 50 }, why } },

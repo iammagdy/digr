@@ -2,6 +2,8 @@ import { toArabicDigits } from "../arabicDigits";
 import { AGENT_REPLIES_PER_COMMENT_DEFAULT, AGENT_REPLIES_PER_COMMENT_MAX, AGENT_REPLIES_UNKNOWN_SHARE } from "./constants";
 import { wantsAllChildren } from "./allChildren";
 import { isPeopleStage } from "./people";
+import { textColumnKeyOf } from "./languageLabel";
+import { topicDiscussionClass, type TopicMeaning } from "./topicMeaning";
 import { priceMissionByCode } from "./price";
 import { repliesEstimateFor } from "./replies";
 import { stagePriceInputs, type PricedPlan, type PricedStage } from "./plan";
@@ -37,6 +39,8 @@ export interface CompleteCountDeps {
   pageableAlternativeOf?: (child: PricedStage) => Promise<NonNullable<NonNullable<PricedStage["engine"]>["alternatives"]>[number] | null>;
   /** S5 (owner decision): the parents are chosen by their counters, the highest first (an order, never a filter); false: the source's own order stands (the customer asked for the newest or gave a date). */
   mostEngaged?: boolean;
+  /** S8: what the request means by its topic (about / made with / ambiguous / none): among the results the videos whose own text discusses the topic come before those where it is only a made-with hashtag (an order, never a filter). */
+  topicOf?: () => TopicMeaning | null;
   /** S7: whether a row of the parent's listing matches the customer's country and language (null: the customer asked for neither). The most engaged are chosen among the matching results; the matching come first, then the others (an order, never a filter). */
   matchesOf?: (parent: PricedStage) => Promise<((row: Record<string, unknown>) => boolean) | null>;
   pageSizeOf?: (child: PricedStage) => Promise<{ param: string; max: number } | null>;
@@ -161,11 +165,18 @@ export async function withCompleteCount(plan: PricedPlan, deps: CompleteCountDep
     // THE MOST ENGAGED FIRST (S5): the highest counters in front; equal counters keep the source's order, a parent with no counter goes last. An order, never a filter.
     const match = deps.matchesOf ? await deps.matchesOf(parent) : null;
     const fits = (c: Candidate): boolean => match === null || (c.row !== undefined && match(c.row));
-    const candidates = deps.mostEngaged ? listed.map((c, i) => ({ c, i })).sort((a, b) => Number(fits(b.c)) - Number(fits(a.c)) || (b.c.counter ?? -1) - (a.c.counter ?? -1) || a.i - b.i).map((x) => x.c) : listed;
+    const meaning = deps.topicOf ? deps.topicOf() : null;
+    const textKey = textColumnKeyOf(parent.columns) ?? "text";
+    const discussion = (c: Candidate): number => (meaning && meaning.kind !== "none" && meaning.kind !== "ambiguous" && c.row !== undefined ? topicDiscussionClass(c.row[textKey], meaning) : 1);
+    const candidates = deps.mostEngaged ? listed.map((c, i) => ({ c, i })).sort((a, b) => Number(fits(b.c)) - Number(fits(a.c)) || discussion(b.c) - discussion(a.c) || (b.c.counter ?? -1) - (a.c.counter ?? -1) || a.i - b.i).map((x) => x.c) : listed;
     // THE CARD SAYS HOW THE VIDEOS WERE CHOSEN (S7): the most commented among the results that match the customer's country and language, and how many matched when fewer than needed
     const matching = match === null ? listed.length : listed.filter(fits).length;
     const needed = Math.max(1, parent.planned_rows);
-    const chosenNote = deps.mostEngaged && match !== null ? [matching >= needed ? `اخترنا الأعلى تعليقًا من بين النتائج المطابقة لبلدك ولغتك.` : `وجدنا ${n(matching)} من ${n(listed.length)} نتيجة مطابقة لبلدك ولغتك؛ قدّمنا المطابقة، ثم الأعلى تعليقًا لإكمال العدد.`] : [];
+    // THE CARD SAYS WHAT THE TOPIC WAS UNDERSTOOD TO MEAN (S8): videos that talk about it, not stories where it is only a made-with hashtag
+    const about = meaning?.kind === "about" && deps.mostEngaged;
+    const talking = about ? listed.filter((c) => c.row !== undefined && topicDiscussionClass(c.row[textKey], meaning!) === 2).length : 0;
+    const topicNote = about ? [talking >= Math.max(1, parent.planned_rows) ? "اخترنا الفيديوهات التي تتحدث عن الموضوع نفسه، لا التي يظهر فيها وسم لأنها معمولة به." : talking > 0 ? `وجدنا ${n(talking)} فقط من النتائج تتحدث عن الموضوع؛ قدّمناها، ثم الأعلى تعليقًا لإكمال العدد.` : "لم نجد بين النتائج التي قرأناها فيديو يتحدث نصه عن الموضوع؛ سنسلّم الأعلى تعليقًا منها، ويمكنك تعديل الطلب أو الإلغاء قبل الاعتماد."] : [];
+    const chosenNote = [...topicNote, ...(deps.mostEngaged && match !== null ? [matching >= needed ? `اخترنا الأعلى تعليقًا من بين النتائج المطابقة لبلدك ولغتك.` : `وجدنا ${n(matching)} من ${n(listed.length)} نتيجة مطابقة لبلدك ولغتك؛ قدّمنا المطابقة، ثم الأعلى تعليقًا لإكمال العدد.`] : [])];
     const perAsked = Number(stage.per_parent_rows);
     const perParent = all || !Number.isFinite(perAsked) || perAsked < 1 ? Number.POSITIVE_INFINITY : Math.floor(perAsked);
     let pageCap = deps.pageCapOf ? await deps.pageCapOf(stage) : null;

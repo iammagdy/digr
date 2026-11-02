@@ -44,6 +44,7 @@ import { redesignTypeOf } from "../../src/lib/agentMission/redesignFlags";
 import { pageCapOfSource, pageLimitOf } from "../../src/lib/agentMission/pageLimit";
 import { isLanguageColumn, textColumnKeyOf } from "../../src/lib/agentMission/languageLabel";
 import { conditionsAsked, matchesCustomerConditions } from "../../src/lib/agentMission/customerConditions";
+import { topicMeaningOf, topicQueryOf } from "../../src/lib/agentMission/topicMeaning";
 import { engagedDefault } from "../../src/lib/agentMission/engaged";
 import { toolProfile } from "../../src/lib/agentMission/toolProfile";
 import { countryToolsFor } from "../../src/lib/agentMission/conditionTools";
@@ -676,9 +677,11 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         // THE DEFAULT FOR A COMMENTS REQUEST IS THE MOST ENGAGED VIDEOS (S5, owner decision), unless the customer asked for the newest or gave a date: the search tool's most-liked order, else the highest counters among the results (an order, never a filter)
         const engagedOrder = socialRedesignActive(ctx) && engagedDefault(`${mission.request_text} ${mission.answer_text ?? ""}`, stagesIn.map((st) => ({ key: String(st?.key ?? ""), parent_key: st?.parent_key ?? null, ...(Array.isArray(st?.filters) ? { filters: st.filters } : {}) })));
         const engaged = engagedOrder;
+        const meaning = topicMeaningOf(`${mission.request_text} ${mission.answer_text ?? ""}`);
+        const topicQuery = socialRedesignActive(ctx) && stagesIn.some((st) => st?.parent_key) ? topicQueryOf(meaning) : null;
         let derived: Awaited<ReturnType<typeof deriveEngineSpecsChecked>> | null = null;
         try {
-          derived = await deriveEngineSpecsChecked(checked.plan, { store, missionId: mission.id, catalog: ctx.catalog, calls, codeRuns: state.codeRuns, callParams: state.callParams, sandbox: runSandbox, ...(socialRedesignActive(ctx) ? { codeBuild: { nowMs: ctx.now ?? Date.now(), engaged } } : {}) });
+          derived = await deriveEngineSpecsChecked(checked.plan, { store, missionId: mission.id, catalog: ctx.catalog, calls, codeRuns: state.codeRuns, callParams: state.callParams, sandbox: runSandbox, ...(socialRedesignActive(ctx) ? { codeBuild: { nowMs: ctx.now ?? Date.now(), engaged, ...(topicQuery ? { topicQuery } : {}) } } : {}) });
         } catch { /* a plan without recipes is carried out by the model, through the same item store */ }
         // THE CONTRACT: a mapping that gives what the engine needs but breaks what the card promises (an id, a column, a field a filter reads) is refused here, before the customer sees a card the file cannot match
         if (derived && derived.issues.length > 0) return err("the plan was not accepted; fix these and propose again", { issues: derived.issues.slice(0, 12) });
@@ -717,20 +720,29 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           if (lines.length > 0) { state.countrySendBacks += 1; return err("the plan was not accepted yet; fix this and propose again", { issues: lines }); }
         }
         // THE MOST ENGAGED (S5): when the tool has a most-liked order and the stage was sampled in another order (the live test sampled the newest: counters 5 and 1), the plan is sent back (a few times at most) to sample the tool in that order, so the videos chosen from its page are the engaged ones
-        if (derived && engaged && state.sortSendBacks < SORT_SEND_BACKS_MAX) {
+        // THE QUERY CARRIES THE MEANING OF THE TOPIC (S8): «عن X» means videos that talk about X, so the search words are the topic with explainer and news wording; the planning budget allows two samples of one source, so the order and the query are asked in ONE second sample
+        if (derived && (engaged || topicQuery) && state.sortSendBacks < SORT_SEND_BACKS_MAX) {
           const lines: string[] = [];
           for (const st of checked.plan.stages) {
             if (st.parent_key !== null || !st.engine || st.engine.sources) continue;
+            if (!checked.plan.stages.some((x) => x.parent_key === st.key && x.replies_of === undefined)) continue;
             const endpoint = ctx.catalog.byId.get(st.endpoint_id);
-            const sort = endpoint ? toolProfile(endpoint).sort : null;
+            const profile = endpoint ? toolProfile(endpoint) : null;
+            const sort = profile?.sort ?? null;
             const liked = sort?.options?.find((o) => o.kind === "liked");
-            if (!sort || !liked || !checked.plan.stages.some((x) => x.parent_key === st.key && x.replies_of === undefined)) continue;
-            // the stage may cite several samples of the source: the most-liked order is asked once, so ANY sample read in it satisfies the rule
-            const measuredCalls = st.measured_by.map((id) => calls.find((c) => c.id === `${mission.id}:${id}`)).filter((c) => c?.endpoint_id === st.endpoint_id && c.status === "ok");
+            // the stage may cite several samples of the source: any sample read in the asked order, and any carrying the asked query, satisfies the rule
+            const measuredCalls = st.measured_by.map((id) => calls.find((c) => c.id === `${mission.id}:${id}`)).filter((c): c is NonNullable<typeof c> => c !== undefined && c.endpoint_id === st.endpoint_id && c.status === "ok");
             const measured = measuredCalls[0];
-            const used = (measured?.params_digest as Record<string, unknown> | undefined)?.[sort.field];
-            const anyLiked = measuredCalls.some((c) => String((c!.params_digest as Record<string, unknown> | undefined)?.[sort.field]) === String(liked.value));
-            if (measured && !anyLiked && used !== undefined && String(used) !== String(liked.value)) lines.push(`stage «${st.key}»: this is a request for comments, and unless the customer asks for the newest or gives a date the videos are the MOST ENGAGED ones. ${st.endpoint_id} has the order «most liked» in its input ${sort.field} (value ${liked.value}), and the sample was read with ${sort.field} = ${String(used)}. Sample the same search ONCE more with ${sort.field} = ${liked.value} (keep the country and the topic), map the same columns on its page, and propose the plan again on that sample`);
+            if (!measured) continue;
+            const paramsOf = (c: NonNullable<typeof measured>): Record<string, unknown> => (c.params_digest as Record<string, unknown> | undefined) ?? {};
+            const used = sort ? paramsOf(measured)[sort.field] : undefined;
+            const anyLiked = sort && liked ? measuredCalls.some((c) => String(paramsOf(c)[sort.field]) === String(liked.value)) : true;
+            const needSort = Boolean(engaged && sort && liked && !anyLiked && used !== undefined && String(used) !== String(liked.value));
+            const queryField = profile?.query?.field ?? null;
+            const needQuery = Boolean(topicQuery && queryField && !measuredCalls.some((c) => String(paramsOf(c)[queryField]) === topicQuery));
+            if (!needSort && !needQuery) continue;
+            const asks = [...(needSort ? [`${sort!.field} = ${liked!.value} (the order «most liked»: this is a request for comments, and unless the customer asks for the newest or gives a date the videos are the MOST ENGAGED ones; the sample was read with ${sort!.field} = ${String(used)})`] : []), ...(needQuery ? [`${queryField} = «${topicQuery}» (the customer asked for videos that TALK ABOUT «${meaning.topic}», not videos made with it: the search words carry that meaning)`] : [])];
+            lines.push(`stage «${st.key}»: sample the same search ONCE more with ${asks.join(" AND ")}; keep the country; map the same columns on its page, and propose the plan again on that sample`);
           }
           if (lines.length > 0) { state.sortSendBacks += 1; return err("the plan was not accepted yet; fix this and propose again", { issues: lines }); }
         }
@@ -846,6 +858,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
               },
               // S2 item 4: the catalog's comments tool with a cursor, when the recipe's tool has no next page and the planner sampled no pageable one
               mostEngaged: engagedOrder,
+              topicOf: () => meaning,
               matchesOf: async (parentStage) => (conditionsAsked(parentStage.filters ?? []) ? (row) => matchesCustomerConditions(row, parentStage.filters ?? [], parentStage.columns.filter((c) => /^(caption|description|text|title|desc)$/i.test(c.key)).map((c) => c.key)) : null),
               pageableAlternativeOf: async (child) => pageableCommentAlternative(child, checked.plan.stages.find((x) => x.key === child.parent_key), ctx.catalog, { isAllowed: allowedReply, stats: ctx.stats }),
               pageSizeOf: async (child) => {

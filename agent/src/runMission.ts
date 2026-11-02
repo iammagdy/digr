@@ -37,6 +37,7 @@ import { readRedesignFlags } from "../../src/lib/agentMission/redesignFlags";
 import { sealFinalPrice } from "../../src/lib/agentMission/finalPrice";
 import { accountIsTest, anyRedesignFlag, redesignStagesOf } from "./redesign";
 import { promiseShortfallAr, repliesShortfallAr } from "./repliesShortfall";
+import { TOPIC_OPTIONS_AR, topicMeaningOf, topicQuestionAr } from "../../src/lib/agentMission/topicMeaning";
 import { reportedPlan, withPromiseCaps } from "../../src/lib/agentMission/repliesCard";
 import { runContactEnrichment } from "./engine/contacts";
 import { runNamesStep } from "./namesAr";
@@ -301,6 +302,17 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // THE REDESIGN FLAGS (S1 item 0.1): read once at the start of the run; every one is off unless the owner switched it
   const redesign = { flags: readRedesignFlags(settings), isTest: await accountIsTest(store, mission.user_id) };
   const ctx: ToolContext = { redesign, phase: "planning", mission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, pricingSettings, stats: sourceStats, now: planningNow };
+  // AN AMBIGUOUS TOPIC IS ASKED BEFORE PLANNING (S8, owner decision; redesigned mode only): «فيديوهات الذكاء الاصطناعي» may mean videos that TALK ABOUT it or videos MADE WITH it; «عن X» means about and «معمول بـ X» means made with, so only the request that says neither is asked, by code, with two ready answers,
+  // before any source is read or any model is paid for (the customer's answer is read with the request and decides the meaning)
+  if (socialRedesignActive(ctx) && !mission.answer_text) {
+    const meaning = topicMeaningOf(mission.request_text);
+    if (meaning.kind === "ambiguous" && meaning.topic) {
+      const question = topicQuestionAr(meaning.topic);
+      await store.updateMission(mission.id, { status: "needs_input", question_ar: question, plan_public: { question_options: TOPIC_OPTIONS_AR(meaning.topic) } as any, ...clear });
+      await store.addEvent(mission.id, { kind: "question", message_ar: question });
+      return;
+    }
+  }
   // the model cost of earlier runs of this phase (a requeue, a takeover): this run adds to it, and every model message checkpoints the running total, so a run that is killed still leaves its cost on the mission
   const baseLlm = Number((await store.getMission(mission.id))?.planning_llm_usd ?? mission.planning_llm_usd ?? 0);
   let llmBase = baseLlm;

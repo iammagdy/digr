@@ -39,7 +39,7 @@ export interface DeriveDeps {
   callParams: ReadonlyMap<string, Record<string, unknown>>;
   sandbox: (code: string, inputs: Record<string, unknown>) => Promise<SandboxResult>;
   /** The redesigned mode (S1 item 1.6): the request of each stage is built by code from the tool's own fields and the stage's typed filters. Absent: the model's measured inputs are frozen as they were (the old path, byte for byte). */
-  codeBuild?: { nowMs: number; /** S5: the default for a comments request: the most engaged videos (the tool's most-liked order). */ engaged?: boolean };
+  codeBuild?: { nowMs: number; /** S5: the default for a comments request: the most engaged videos (the tool's most-liked order). */ engaged?: boolean; /** S8: the search words that carry the meaning of the topic. */ topicQuery?: string };
 }
 
 async function readCodeRun(deps: DeriveDeps, outId: string): Promise<CodeRun | null> {
@@ -198,7 +198,7 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
       let builtBy: "code" | "model" | undefined;
       let stageGaps: Gap[] = [];
       if (deps.codeBuild && !sources) {
-        const built = buildToolInput(endpoint, understoodOfStage(stage, deps.codeBuild.nowMs, { engaged: deps.codeBuild.engaged === true }), params);
+        const built = buildToolInput(endpoint, understoodOfStage(stage, deps.codeBuild.nowMs, { engaged: deps.codeBuild.engaged === true, ...(deps.codeBuild.topicQuery ? { topicQuery: deps.codeBuild.topicQuery } : {}) }), params);
         builtBy = built.ok ? "code" : "model";
         if (built.ok) { for (const k of Object.keys(params)) delete params[k]; Object.assign(params, built.params); stageGaps = built.gaps; }
       }
@@ -278,7 +278,7 @@ async function nextToolsOf(deps: DeriveDeps, stage: PricedPlan["stages"][number]
       delete params[found.param];
       for (const a of found.also ?? []) delete params[a.param];
     }
-    const built = buildToolInput(other, understoodOfStage(stage, deps.codeBuild!.nowMs, { engaged: deps.codeBuild!.engaged === true }), params);
+    const built = buildToolInput(other, understoodOfStage(stage, deps.codeBuild!.nowMs, { engaged: deps.codeBuild!.engaged === true, ...(deps.codeBuild!.topicQuery ? { topicQuery: deps.codeBuild!.topicQuery } : {}) }), params);
     if (!built.ok) continue;
     const cursor = (other.pagination ?? []).find((p) => !LIMIT_INPUT.test(p)) ?? discoverCursor(other, pageJson);
     const window = dateWindowOf(other, built.params);
