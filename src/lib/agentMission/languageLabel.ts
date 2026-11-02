@@ -27,3 +27,15 @@ const TITLE = /^(?:لغة|اللغة)(?:\s|$)/;
 const KEY = /^(?:lang|language|comment_language|text_language|post_language|lang_code|language_code)$/i;
 /** A column that holds a language: by its Arabic title («لغة التعليق», «اللغة») or by the key of its source field. The mark column «لغة النص» is already Arabic and is not touched. */
 export const isLanguageColumn = (title: string, key: string | undefined): boolean => !(key ?? "").startsWith("__mark_") && (TITLE.test(title.trim()) || KEY.test(key ?? ""));
+
+/**
+ * THE LANGUAGE OF A TEXT, BY ITS SCRIPT (S4): when the source gives no language for a comment (an empty cell; a source that says it cannot tell keeps «غير محددة»), the file still says which language the text is in, by code and never by a model: «العربية» when most of its letters are Arabic-script letters, «لغة أخرى»
+ * when most are not, «غير محددة» when it has no letters (an emoji, a number). A mark on the row; nothing is ever removed for it. Pure.
+ */
+const LETTER = /\p{L}/gu;
+export function languageOfTextAr(text: unknown): "العربية" | "لغة أخرى" | "غير محددة" {
+  const letters = String(text ?? "").match(LETTER) ?? [];
+  if (letters.length === 0) return "غير محددة";
+  const arabic = letters.filter((l) => ARABIC_LETTERS.test(l)).length;
+  return arabic * 2 >= letters.length ? "العربية" : "لغة أخرى";
+}

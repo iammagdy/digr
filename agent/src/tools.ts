@@ -42,6 +42,8 @@ import { counterOfRow } from "../../src/lib/agentMission/allChildren";
 import { withCompleteCount } from "../../src/lib/agentMission/completeCount";
 import { redesignTypeOf } from "../../src/lib/agentMission/redesignFlags";
 import { pageCapOfSource, pageLimitOf } from "../../src/lib/agentMission/pageLimit";
+import { isLanguageColumn } from "../../src/lib/agentMission/languageLabel";
+import { countryToolsFor } from "../../src/lib/agentMission/conditionTools";
 import { commentsEngineByCode, pageableCommentAlternative } from "../../src/lib/agentMission/pageableComments";
 import { deriveItemId } from "../../src/lib/agentMission/contract";
 import { coverageOf } from "../../src/lib/agentMission/sourceRanking";
@@ -94,12 +96,14 @@ export interface RunState {
   mediaSendBacks: number;
   /** How many times a plan was sent back to try the people sources / the phone sources before it settles (a limit: the planner is never stuck). */
   peopleSendBacks: number;
+  /** How many times a plan whose search tool cannot express the country the customer named was sent back to a tool that can (D7; a limit: the planner is never stuck). */
+  countrySendBacks: number;
   /** Per source stream (a collect_pages source and its inputs): whether the last read says the source has more pages. */
   moreAvailable: Map<string, boolean>;
   /** What each source gave in the planning samples: the rows of every answered call and a key of its inputs (two samples of the same item are one). */
   samples: Map<string, Array<{ rows: number; key: string }>>;
 }
-export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), described: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, giveUpNoRowsRefusals: 0, mediaSendBacks: 0, peopleSendBacks: 0, moreAvailable: new Map(), samples: new Map() });
+export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), described: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, giveUpNoRowsRefusals: 0, mediaSendBacks: 0, peopleSendBacks: 0, countrySendBacks: 0, moreAvailable: new Map(), samples: new Map() });
 /** The redesigned mode of planning: any of the three social flags is active for this mission's account (planning does not know the request type yet; with every flag off this is false and nothing changes). */
 export const socialRedesignActive = (ctx: { redesign?: { flags: RedesignFlags; isTest: boolean } }): boolean =>
   ctx.redesign !== undefined && (["social_posts", "social_account", "social_comments"] as const).some((t) => redesignActive(ctx.redesign!.flags, t, { isTest: ctx.redesign!.isTest }));
@@ -112,6 +116,8 @@ export const MEDIA_SEND_BACKS_MAX = 3;
 export const MEDIA_SOURCES_MIN = 3;
 /** The most times a plan whose people stage reads a mailbox lister, or that drops the phones asked for, is sent back to try the people and phone sources (peopleCheck.ts). */
 export const PEOPLE_SEND_BACKS_MAX = 3;
+/** The most times a plan on a tool with no country input is sent back to a tool that has one (D7). */
+export const COUNTRY_SEND_BACKS_MAX = 2;
 
 export interface ToolContext {
   phase: CallPhase;
@@ -680,6 +686,26 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             const approxDates = derived.approx.get(st.key);
             if (approxDates && approxDates.length > 0) st.approx_dates = approxDates;
           }
+        }
+        // THE COMMENT LANGUAGE COLUMN (S4): the comments sheet of a code-built plan has the language of each comment as the videos sheet has it; a comments stage whose columns have none gets «لغة التعليق» (the file fills it from the source's code, else from the text's script)
+        if (derived && socialRedesignActive(ctx)) {
+          for (const st of checked.plan.stages) {
+            if (st.parent_key === null || !st.deliver || st.engine?.built_by !== "code" || !st.columns.some((c) => c.key === "text")) continue;
+            if (!st.columns.some((c) => isLanguageColumn(c.title_ar, c.key))) st.columns = [...st.columns, { key: "language", title_ar: "لغة التعليق" }];
+          }
+        }
+        // D7, THE COUNTRY (S4): when the customer named a country and the stage's tool has no field that expresses it, the catalog's tools of the same capability that DO are named and the plan is sent back to sample one (a few times at most), even when it costs more.
+        // Both videos of the live test of 2026-11-02 10:26 were Iraqi: the cheapest search had no country input and the plan said so on its card instead of choosing a tool that could carry Egypt.
+        if (derived && socialRedesignActive(ctx) && state.countrySendBacks < COUNTRY_SEND_BACKS_MAX) {
+          const lines: string[] = [];
+          for (const st of checked.plan.stages) {
+            const gap = st.engine?.gaps?.find((g) => g.cls === "country" && g.reason === "no_field");
+            if (!gap || st.parent_key !== null) continue;
+            const better = countryToolsFor(st.endpoint_id, ctx.catalog, { isAllowed: (id) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed, stats: ctx.stats });
+            if (better.length === 0) continue;
+            lines.push(`stage «${st.key}»: the customer named a country, and ${st.endpoint_id} has no input that expresses it, so the results come from any country. A tool that can express it must win over one that cannot, even if it costs more. These tools of the same job take the country: ${better.slice(0, 4).map((t) => `${t.id} (input ${t.field}, ${t.usd} USD a call)`).join(", ")}. Sample the first one ONCE with the country in that input, map the same columns on its page, and propose the plan again on it`);
+          }
+          if (lines.length > 0) { state.countrySendBacks += 1; return err("the plan was not accepted yet; fix this and propose again", { issues: lines }); }
         }
         // THE COMMENTS STAGE'S RECIPE BY CODE (S3): a comments stage the model's mapping could not give a proven recipe for is NOT left to the model (the whole mission would run on the old pipeline, with the old topic rules): in the redesigned mode its recipe is written by code from the tool's own
         // schema and PROVEN on the page the planner sampled (every row of the page mapped, each with an id) before it is kept

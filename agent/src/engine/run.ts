@@ -133,7 +133,10 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
   // THE REPLIES OF A COMMENT (replies.ts): a comment with no reply is never replaced by another comment (the replies are in addition to the comments the customer asked for), and each comment is read for the replies its own counter says it has, up to its share of the approved total:
   // a comment whose counter is 0 gets 0 (no paid read), the others get what they have up to the cap, and when the total is smaller than the need every comment gets an equal part first
   const isReplies = stage.replies_of !== undefined;
-  const shareById = isReplies ? (() => { const shares = replyShares(parentRows.map((r) => ownChildCount(r)), stage.planned_rows, Number.isFinite(per) ? per : AGENT_REPLIES_PER_COMMENT_MAX); return new Map(parentRows.map((r, i) => [String(r.id), shares[i]] as const)); })() : null;
+  // EVERY COMMENT IS READ FOR ITS REPLIES when the request asked for them and no comment says it has any (S4, live 2026-11-02 10:26: the comments tool gave an empty reply counter, so no reply was read and 0 were delivered while replies existed): the counter is the source's, the replies tool is the truth.
+  // Each comment is then read up to the cap per comment; the stage still stops at the approved number of replies.
+  const blindReplies = isReplies && deps.redesignStages?.has(stage.key) === true && stage.replies_read_all === true && parentRows.every((r) => (ownChildCount(r) ?? 0) === 0);
+  const shareById = isReplies ? (() => { const cap = Number.isFinite(per) ? per : AGENT_REPLIES_PER_COMMENT_MAX; const shares = blindReplies ? parentRows.map(() => cap) : replyShares(parentRows.map((r) => ownChildCount(r)), stage.planned_rows, cap); return new Map(parentRows.map((r, i) => [String(r.id), shares[i]] as const)); })() : null;
   const readAll = stage.all_children === true;
   const swapsLeft = { n: onlyChild && stage.per_parent_rows !== undefined && !isReplies && !readAll ? Math.max(3, parentRows.length * 3) : 0 };
   // the parent's parent (the video of a comment): the replies' source takes the video's id and link beside the comment's id
@@ -150,7 +153,7 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
         if (shareById && parentCap <= 0) break;
         // A PARENT THAT SAYS IT HAS NO CHILD IS NOT READ (audit 2026-11 gap G10, live: 9 of 108 paid comment reads returned nothing): its own count field (comments, replies, reviews) is 0, so no paid read is made. It is replaced by a spare parent the same way a parent
         // the source answered nothing for is, or skipped when none is left. A parent that gives no count at all is read as before.
-        if (ownChildCount(parent) === 0) {
+        if (ownChildCount(parent) === 0 && !blindReplies) {
           const spare = swapsLeft.n > 0 ? spareParentFor(items, stage.parent_key, stage.key, parent) : null;
           if (spare) {
             swapsLeft.n -= 1;

@@ -224,7 +224,7 @@ export function expectedRepliesOf(sample: ReadonlyArray<Row>, cap: number = AGEN
  * THE REPLIES OF A COMMENTS STAGE FOR A GIVEN NUMBER PER COMMENT, by code: the replies planned (the expected replies per comment over the comments planned, at most `perComment` for each, at most what the job may deliver) and the cost of one planned row (the calls they take at the price of one call of
  * the source). Used when the plan is built and again when the customer edits the comments' number or the replies per comment, so the one rule prices both. A plan stored without the sampled counters keeps its own expected number per comment (capped at the new number).
  */
-export function repliesEstimateFor(r: Pick<PricedStage, "replies_sample_counts" | "replies_per_comment_expected" | "replies_call_usd" | "measured_cost_per_row_usd" | "planned_rows" | "per_parent_rows">, commentsRows: number, perComment: number, deliveredElsewhere: number): { rows: number; perCommentExpected: number; costPerRowUsd: number } {
+export function repliesEstimateFor(r: Pick<PricedStage, "replies_read_all" | "replies_sample_counts" | "replies_per_comment_expected" | "replies_call_usd" | "measured_cost_per_row_usd" | "planned_rows" | "per_parent_rows">, commentsRows: number, perComment: number, deliveredElsewhere: number): { rows: number; perCommentExpected: number; costPerRowUsd: number } {
   const counts = r.replies_sample_counts && r.replies_sample_counts.length > 0 ? r.replies_sample_counts : [r.replies_per_comment_expected ?? 0];
   const now = expectedFromCounts(counts, perComment);
   const rows = Math.max(1, plannedRepliesFor(commentsRows, now.perComment, deliveredElsewhere, perComment));
@@ -234,7 +234,9 @@ export function repliesEstimateFor(r: Pick<PricedStage, "replies_sample_counts" 
     const before = expectedFromCounts(counts, Math.max(1, r.per_parent_rows ?? perComment));
     callUsd = (Math.max(0, r.measured_cost_per_row_usd) * Math.max(1, r.planned_rows)) / Math.max(1, commentsRows * before.callsPerComment);
   }
-  return { rows, perCommentExpected: now.perComment, costPerRowUsd: (callUsd * Math.max(1, commentsRows * now.callsPerComment)) / rows };
+  // a stage that reads EVERY comment (the request asked for the replies) costs at least one call a comment
+  const calls = r.replies_read_all ? Math.max(1, now.callsPerComment) : now.callsPerComment;
+  return { rows, perCommentExpected: now.perComment, costPerRowUsd: (callUsd * Math.max(1, commentsRows * calls)) / rows };
 }
 
 /** The planned replies of a comments stage of `commentsRows` comments: the expected replies per comment over all of them, at least 1, never above the cap per comment, never above what the job may deliver in all. */
@@ -277,11 +279,11 @@ export async function withRepliesStages(planIn: PricedPlan, deps: RepliesDeps): 
     if (planned < 1) { plan = status("no_room"); continue; }
     // the price of the stage: the calls the replies take (at the price of one call of the chosen source) over the replies planned; never below one call's price over the rows one call gives
     const stageOf = (rows: number): PricedStage => {
-      const calls = Math.max(1, comments.planned_rows * expected.callsPerComment);
+      const calls = Math.max(1, comments.planned_rows * (deps.requested ? Math.max(1, expected.callsPerComment) : expected.callsPerComment));
       return {
         key: repliesKeyOf(comments.key), title_ar: `ردود ${comments.title_ar}`, endpoint_id: source.id, expected_rows: rows, parent_key: comments.key, per_parent_rows: perComment, deliver: true,
         columns: comments.columns.map((c) => ({ ...c })), sample_rows: [], measured_by: [], planned_rows: rows, measured_cost_per_row_usd: (source.usd * calls) / rows, measured_from_calls: [],
-        replies_of: comments.key, replies_per_comment_expected: expected.perComment, replies_sample_counts: counters.slice(0, 100).map((n) => Math.min(Math.max(0, Math.floor(n)), AGENT_REPLIES_PER_COMMENT_MAX)), replies_call_usd: source.usd,
+        replies_of: comments.key, ...(deps.requested ? { replies_read_all: true } : {}), replies_per_comment_expected: expected.perComment, replies_sample_counts: counters.slice(0, 100).map((n) => Math.min(Math.max(0, Math.floor(n)), AGENT_REPLIES_PER_COMMENT_MAX)), replies_call_usd: source.usd,
         // S2 item 1: the replies stage is written by code, so it carries the mark of the stage it sits on (a comments stage the redesigned mode built by code): the whole mission then passes the ordering gate; an old-mode plan is stored exactly as before
         engine: {
           endpoint_id: source.id, params: replyCallParams(source), cursor_param: source.cursorParam, map_code: buildReplyMapCode(replyColumnKeysOf(comments.columns)), map_file_id: "page", ...(spec.built_by === "code" ? { built_by: "code" as const } : {}),
