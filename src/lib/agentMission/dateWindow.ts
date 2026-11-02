@@ -1,4 +1,5 @@
 import type { CatalogEndpoint } from "../treg/catalog";
+import { operatorStampUtc } from "./cairoTime";
 
 /**
  * READING A PERIOD IN DATE WINDOWS. A source that returns its results newest first and stops after a fixed depth (a search that ends after about two thousand results) cannot reach the start of a long period by paging: the live request for
@@ -56,20 +57,41 @@ export function dateWindowOf(endpoint: Pick<CatalogEndpoint, "inputs" | "summary
 
 const asFormat = (day: string, format: "date" | "compact" | "iso", end: boolean): string => (format === "compact" ? day.replace(/-/g, "") : format === "iso" ? `${day}T${end ? "23:59:59" : "00:00:00"}Z` : day);
 
-/** The inputs of a window that reads `sinceDay` .. `endDay` (both days inclusive) from the same source: the first-page inputs with the window's days set. */
-export function windowParams(window: DateWindow, base: Record<string, unknown>, sinceDay: string, endDay: string): Record<string, unknown> {
-  if (window.kind === "range_params") return { ...base, [window.from]: asFormat(sinceDay, window.format, false), [window.to]: asFormat(endDay, window.format, true) };
+/**
+ * THE CUSTOMER'S PERIOD AS MOMENTS (S10): the first moment of the period and the first moment AFTER it, converted from the customer's Cairo days with the zone's own rules (cairoTime.ts). A window never starts before the first, nor ends after the second: the
+ * days the walk uses to page are UTC days, but the boundary of the customer's period is Cairo's, so a window that reaches it is cut there (live: until at UTC midnight let a tweet of 2026-11-01 00:14 Cairo into October).
+ */
+export interface PeriodBounds { startMs: number | null; endExclusiveMs: number | null }
+
+/** The inputs of a window that reads `sinceDay` .. `endDay` (both days inclusive) from the same source: the first-page inputs with the window's days set; with the period's `bounds`, the period's own first and last moments instead of the UTC midnights. */
+export function windowParams(window: DateWindow, base: Record<string, unknown>, sinceDay: string, endDay: string, bounds?: PeriodBounds): Record<string, unknown> {
+  const startMs = bounds?.startMs ?? null;
+  const pageEndMs = dayStartMs(addDays(endDay, 1));
+  const endMs = bounds?.endExclusiveMs != null && bounds.endExclusiveMs < pageEndMs ? bounds.endExclusiveMs : pageEndMs;
+  if (window.kind === "range_params") {
+    if (window.format === "iso" && bounds) {
+      const stamp = (ms: number): string => new Date(ms).toISOString().replace(".000Z", "Z");
+      return { ...base, [window.from]: startMs !== null ? stamp(startMs) : asFormat(sinceDay, window.format, false), [window.to]: bounds.endExclusiveMs != null && bounds.endExclusiveMs < pageEndMs ? stamp(endMs - 1000) : asFormat(endDay, window.format, true) };
+    }
+    // a source that takes only days gets the UTC days that cover the window, and never a day past the one that holds the last moment of the period
+    const lastCovering = bounds?.endExclusiveMs != null ? dayOf(bounds.endExclusiveMs - 1000) : null;
+    return { ...base, [window.from]: asFormat(sinceDay, window.format, false), [window.to]: asFormat(lastCovering !== null && lastCovering < endDay ? lastCovering : endDay, window.format, true) };
+  }
   const text = String(base[window.param] ?? "");
   const cleaned = text.replace(/\s*\b(?:since|until):\S+/gi, "").replace(/\s+/g, " ").trim();
-  // «until:» is exclusive: the end day itself is read by asking for the day after it
+  // the period's moments are written as stamps (UTC, with the time of day); without bounds the window is the UTC days, as it always was («until:» is exclusive: the end day itself is read by asking for the day after it)
+  if (bounds) return { ...base, [window.param]: `${cleaned} since:${startMs !== null ? operatorStampUtc(startMs) : sinceDay} until:${operatorStampUtc(endMs)}`.trim() };
   return { ...base, [window.param]: `${cleaned} since:${sinceDay} until:${addDays(endDay, 1)}`.trim() };
 }
 
 /** The last day the FIRST read of the stage covers: the «until:» day before the end of the recorded text, else the day of `now` (a read with no end day starts from now). */
 export function firstWindowEndDay(window: DateWindow, base: Record<string, unknown>, now: number): string {
   if (window.kind === "query_operators") {
-    const m = /\buntil:(\d{4}-\d{2}-\d{2})/i.exec(String(base[window.param] ?? ""));
-    return m ? addDays(m[1], -1) : dayOf(now);
+    // «until:» is exclusive: the last day read is the day that holds the last moment before it (a stamp written by code carries the time: until:2026-10-31_22:00:00_UTC ends on the 31st; a bare day ends on the day before)
+    const m = /\buntil:(\d{4}-\d{2}-\d{2})(?:_(\d{2}:\d{2}:\d{2})(?:_UTC)?)?/i.exec(String(base[window.param] ?? ""));
+    if (!m) return dayOf(now);
+    if (m[2] !== undefined) { const ms = Date.parse(`${m[1]}T${m[2]}Z`); if (Number.isFinite(ms)) return dayOf(ms - 1000); }
+    return addDays(m[1], -1);
   }
   const raw = String(base[window.to] ?? "");
   const m = /(\d{4})-?(\d{2})-?(\d{2})/.exec(raw);

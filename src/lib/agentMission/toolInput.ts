@@ -64,6 +64,8 @@ function daysOf(period: NonNullable<Understood["period"]>, now: number): number 
 }
 
 const stripQuery = (q: string): string => q.trim();
+/** The query without its `since:` / `until:` operators (S10): the customer's period is the authority, never the model's own day-only operators. */
+const withoutOperator = (q: string, name: "since" | "until"): string => q.replace(new RegExp(`(^|\\s)${name}:\\S+`, "gi"), " ").replace(/\s+/g, " ").trim();
 const hasOperator = (q: string, op: RegExp): boolean => op.test(q);
 
 export function buildToolInput(endpoint: CatalogEndpoint, understood: Understood, base: Record<string, unknown>): BuiltInput {
@@ -115,10 +117,11 @@ export function buildToolInput(endpoint: CatalogEndpoint, understood: Understood
       if (pick) { params[d.preset.field] = pick.v; written.push("date"); } else gaps.push({ cls: "date", reason: "unknown_format" });
     } else if (profile.queryOperators && query !== null) {
       // the range the customer gave is Cairo time (S1 live findings fix 5): `since:` is the moment the first day starts in Cairo, `until:` (exclusive) the moment the day after the last day starts, both written in UTC with the time of day
+      // S10: an operator the model wrote into its own query (day only, UTC midnight: live, until:2026-10-31 let a tweet of 2026-11-01 00:14 Cairo through) is REPLACED by the boundary of the customer's Cairo day
       const sinceStamp = p.from ? operatorStampUtc(cairoDayStartMs(p.from)) : p.days !== undefined ? isoDay(now - p.days * DAY) : null;
-      if (sinceStamp) addOperator(`since:${sinceStamp}`, /\bsince:/i);
+      if (sinceStamp && query !== null) { query = withoutOperator(query, "since"); addOperator(`since:${sinceStamp}`, /\bsince:/i); }
       const untilStamp = p.to ? operatorStampUtc(cairoDayEndExclusiveMs(p.to)) : null;
-      if (untilStamp) addOperator(`until:${untilStamp}`, /\buntil:/i);
+      if (untilStamp && query !== null) { query = withoutOperator(query, "until"); addOperator(`until:${untilStamp}`, /\buntil:/i); }
       written.push("date");
     } else gaps.push({ cls: "date", reason: "no_field" });
   }

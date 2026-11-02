@@ -26,7 +26,7 @@ const CAIRO_TWEETS = { firstMinuteOfOctober: "2026-10-01T00:00:00+03:00", lastMi
 describe("the model's own date operators are replaced by the customer's Cairo days", () => {
   for (const endpoint of ["anyapi.x.search.posts", "crawl4ai.x.search.posts"]) {
     it(`${endpoint}: the live query (since:2026-10-01 until:2026-10-31, day only) becomes since 2026-10-01 00:00 Cairo and until 2026-11-01 00:00 Cairo, in UTC with the right offset, once each`, () => {
-      const r = built(endpoint, { query: MODEL_QUERY, limit: 20, queryType: "Latest" });
+      const r = built(endpoint, endpoint === "anyapi.x.search.posts" ? { query: MODEL_QUERY, limit: 20, queryType: "Latest" } : { query: MODEL_QUERY, limit: 20 });
       expect(r.ok).toBe(true);
       const q = String(r.params.query);
       expect(opOf(q, "since")).toEqual(["2026-09-30_21:00:00_UTC"]);

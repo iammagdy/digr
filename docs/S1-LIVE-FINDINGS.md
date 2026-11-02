@@ -444,3 +444,27 @@ Any plan edit clears `promise_total` (S5), so the replies stage fell back to the
 - A replies stage whose comments are fewer than the counters of the chosen videos is **open** (`replies_open`, set by code in `planEdit.ts` and `completeCount.ts`): the card says «كل الردود على التعليقات المختارة» with no number and is not in the card's total; the estimate stays in `planned_rows` only as the maximum the price is made from.
 - After the delivery (`runMission.ts`, `repliesCard.ts` `withRepliesJudged`) the replies are judged against the reply counters of the DELIVERED comments (each up to the replies read per comment; never below what came): the stored customer plan is rewritten with that number, so the notice, the card and the file summary show the same numbers (300 comments, counters 40, 40 delivered: «تم تسليم ٣٤٢ من ٣٤٢»). Money is untouched: the charge is settled on the rows delivered; the `target` test still uses the priced estimate.
 Limits: no live proof (no paid calls); a comment whose counter says 0 but has replies is delivered (blind reading) and raises the judged number to what came, never above.
+
+---
+
+# Live test of 2026-11-02 ~15:04 Cairo after #340 (S10): `msn_b060d3347ed7660f972e`, the X query's date boundaries
+
+Request: «هات ٢٠ تغريدة على X فيها "العاصمة الإدارية" بالعربي في شهر أكتوبر ٢٠٢٦، مع الردود.» 20 of 20, all Arabic, marks present, money correct. One tweet was 2026-11-01 00:14 Cairo (22:14 UTC on the 31st), marked «ضمن الفترة المطلوبة: لا».
+
+## S10.1 Cause (V: read-only SELECT of the stored plan, `anyapi.x.search.posts`, `built_by: code`)
+The stored query was `"العاصمة الإدارية" lang:ar since:2026-10-01 until:2026-10-31`: the model's OWN operators (day only, UTC midnight), not code's. `buildToolInput` (#332) wrote the Cairo stamps only when the query had no `since:`/`until:` of its own (`addOperator` skips an operator that is present); #332's test used a query without any. A second place used UTC midnight for the period: the engine's walk back through date windows (`periodOf` took the first day at UTC midnight, `windowParams` wrote UTC days).
+
+## S10.2 Fix (one PR, same flags, red test first: `tests/s10-cairo-x-query.test.ts`)
+- `toolInput.ts`: the customer's period replaces the query's own `since:`/`until:` (each only when code writes it): `since:2026-09-30_21:00:00_UTC until:2026-10-31_22:00:00_UTC` for October 2026 (Egypt's summer time ended 2026-10-29, so the end is UTC+2; the start is UTC+3). Both X search tools (`anyapi.x.search.posts`, `crawl4ai.x.search.posts`).
+- `agent/src/engine/run.ts` + `dateWindow.ts`: the period is read in Cairo days (first moment, first moment after the last day); a walk-back window never starts before or ends after them (query operators and ISO inputs get exact stamps; day-only sources get the covering UTC days, never a day past the last covering one); `firstWindowEndDay` reads the end day of a stamp.
+
+## S10.3 Audit of the tools that take date fields (V from the catalog through `toolProfile`, 198 endpoints)
+| How the tool takes dates | Tools (social) | State |
+|---|---|---|
+| Query operators `since:`/`until:` | X search (`anyapi.x.search.posts`, `crawl4ai.x.search.posts`), Weibo advanced search | X: FIXED here. Weibo advanced search has operators in its profile only |
+| Range inputs, ISO / unix / day | X official (`x.x.search-posts-*`), YouTube (`publishedAfter`), Threads, Facebook posts and ads, LinkedIn ads, TikTok ads, Douyin | already Cairo-converted by `toolInput` (#332), and they overwrite what the model wrote; a day-only source gets the UTC days that cover the Cairo range |
+| Range inputs whose format the catalog does not state | Reddit (`after`), Instagram (`after`/`before`), Telegram, LinkedIn company/user posts | NOT written (an honest gap on the card; the mark states membership) |
+| Presets (`datePosted`, `date_posted`, `timeframe`) | TikTok search, Instagram hashtag, LinkedIn posts, Reddit search | rolling windows, cannot hold a Cairo day boundary; the mark states membership |
+| Walk back through date windows | every source with a documented window (X, YouTube activities, Facebook, LinkedIn ads…) | FIXED here (Cairo bounds) |
+| Legacy pipeline (flags off): `withXDateOperators` (`src/lib/xSearchWindow.ts`) | X topic search in the old social worker | NOT changed: it writes UTC days, `since:2026-09-01 until:2026-10-01`; four tests pin it, and the flags-off behaviour stays byte for byte |
+Limits: no live proof (no paid calls); the source's own reading of the stamps (UTC, `until` exclusive) is the catalog's documented form, not observed.
