@@ -3,7 +3,7 @@ import { assertReplayInvariants } from "./helpers/agentReplay";
 import { COMMENTS_TOOL, COUNTERS, PAGE_ONE, POSTS_TOOL, REPLIES_TOOL, postUrl, runS11, topLevelOf, hasReply } from "./helpers/s11World";
 import { isPeopleStage } from "../src/lib/agentMission/people";
 import { isRepliesStage } from "../src/lib/agentMission/replies";
-import { formatSampleCell } from "../src/lib/customerDates";
+import { formatSampleCell, formatSampleValueAr } from "../src/lib/customerDates";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import type { PricedPlan } from "../src/lib/agentMission/plan";
 
@@ -28,22 +28,24 @@ describe("a stage title is not a people stage because it says «main»", () => {
 
 describe("the customer's sample table holds Arabic values only", () => {
   it("true and false are «نعم» and «لا»", () => {
-    expect(formatSampleCell("false")).toBe("لا");
-    expect(formatSampleCell("true")).toBe("نعم");
-    expect(formatSampleCell(false)).toBe("لا");
-    expect(formatSampleCell(true)).toBe("نعم");
+    expect(formatSampleValueAr("false")).toBe("لا");
+    expect(formatSampleValueAr("true")).toBe("نعم");
+    expect(formatSampleValueAr(false)).toBe("لا");
+    expect(formatSampleValueAr(true)).toBe("نعم");
   });
   it("a number is written in Arabic-Indic digits, with the Arabic separators", () => {
-    expect(formatSampleCell("16")).toBe("١٦");
-    expect(formatSampleCell(0)).toBe("٠");
-    expect(formatSampleCell("1,234")).toBe("١٬٢٣٤");
-    expect(formatSampleCell("12.5")).toBe("١٢٫٥");
+    expect(formatSampleValueAr("16")).toBe("١٦");
+    expect(formatSampleValueAr(0)).toBe("٠");
+    expect(formatSampleValueAr("1,234")).toBe("١٬٢٣٤");
+    expect(formatSampleValueAr("12.5")).toBe("١٢٫٥");
   });
-  it("a date is written for the customer (as before); a text is left exactly as it is, and an empty cell stays empty", () => {
+  it("a date is written for the customer by the table's own step (as before); a text is left exactly as it is, and an empty cell stays empty; the old pipeline's cell function is untouched", () => {
     expect(formatSampleCell("2026-11-02T13:35:50.000Z")).toMatch(/٢٠٢٦/);
-    expect(formatSampleCell("كبير مراسلي الحدث في فلسطين 2026")).toBe("كبير مراسلي الحدث في فلسطين 2026");
-    expect(formatSampleCell("")).toBe("");
-    expect(formatSampleCell(null)).toBe("");
+    expect(formatSampleValueAr("كبير مراسلي الحدث في فلسطين 2026")).toBe("كبير مراسلي الحدث في فلسطين 2026");
+    expect(formatSampleValueAr("")).toBe("");
+    expect(formatSampleValueAr(null)).toBe("");
+    expect(formatSampleCell("false")).toBe("false");
+    expect(formatSampleCell("16")).toBe("16");
   });
 });
 

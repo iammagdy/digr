@@ -1,4 +1,5 @@
 import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, AGENT_REPLIES_PER_COMMENT_DEFAULT, AGENT_REPLIES_PER_COMMENT_MAX, AGENT_PEOPLE_PAGES_DEFAULT, AGENT_PEOPLE_PAGES_MAX, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE, NAMES_STEP_USD_PER_PERSON } from "./constants";
+import { formatSampleValueAr } from "../customerDates";
 import { CONTACT_KINDS, requestWantsContacts, type ContactKind } from "./contacts";
 import { isPeopleStage } from "./people";
 import { buildCompanySteps, buildContactSteps, type ContactAids, type ContactStep, type FinderInfo, type FinderKind } from "./contactFinders";
@@ -896,7 +897,7 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
       const columns = s.columns.filter((c) => !isInternalColumn(c));
       return {
         key: s.key, title_ar: childCardTitleAr(s, plan.stages), expected_rows: s.planned_rows, parent_key: s.parent_key, deliver: s.deliver, columns,
-        sample_rows: s.sample_rows.filter((r) => sampleRowPasses(s, r, now)).slice(0, CUSTOMER_SAMPLE_ROWS).map((r) => Object.fromEntries(columns.map((c) => [c.key, String(r[c.key] ?? "").slice(0, SAMPLE_CELL_CHARS)]))),
+        sample_rows: s.sample_rows.filter((r) => sampleRowPasses(s, r, now)).slice(0, CUSTOMER_SAMPLE_ROWS).map((r) => Object.fromEntries(columns.map((c) => [c.key, (s.engine?.built_by === "code" ? formatSampleValueAr(r[c.key]) : String(r[c.key] ?? "")).slice(0, SAMPLE_CELL_CHARS)]))),
         ...(s.how_ar ? { how_ar: s.how_ar } : {}),
         ...(s.replies_open ? { replies_open: true } : {}),
         // the share of the sampled items the plan expected to match (a ratio, no money): the live tracker uses it to judge how much must be read before the target is reached

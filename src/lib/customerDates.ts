@@ -37,18 +37,23 @@ export function formatIsoForCustomer(value: string): string {
   return Number.isNaN(d.getTime()) ? value : dateTime.format(d).replace("،", " في").replace(/\s+/g, " ");
 }
 
+/** A cell of a sample table: an ISO date or instant is written for the customer, every other text is left exactly as it is (and never cut). */
+export function formatSampleCell(value: unknown): string {
+  const text = String(value ?? "");
+  return isIsoDateText(text) ? formatIsoForCustomer(text) : text;
+}
+
 const ARABIC_DIGITS = "٠١٢٣٤٥٦٧٨٩";
 const NUMBER_CELL = /^-?\d[\d,]*(?:\.\d+)?$/;
 /**
- * A cell of a sample table, as the customer reads it (S11: the live card said «false» and showed «16»): an ISO date or instant is written in Arabic, true / false are «نعم» / «لا», a number is written in Arabic-Indic digits with the Arabic separators; every other text is left exactly as it is (and never cut).
- * Idempotent: a cell already written for the customer is returned as it is.
+ * A cell of the sample table of a REDESIGNED plan, as the customer reads it (S11: the live card said «false» and showed «16»): true / false are «نعم» / «لا», a number is written in Arabic-Indic digits with the Arabic separators, a date is left for `formatSampleCell` (the table's own step, which writes it in Arabic); every other text is left
+ * exactly as it is. Used only for plans built by code: the old pipeline's views stay byte for byte. Idempotent.
  */
-export function formatSampleCell(value: unknown): string {
+export function formatSampleValueAr(value: unknown): string {
   const text = String(value ?? "");
   const t = text.trim();
   if (/^true$/i.test(t)) return "نعم";
   if (/^false$/i.test(t)) return "لا";
-  if (isIsoDateText(text)) return formatIsoForCustomer(text);
   if (NUMBER_CELL.test(t)) return t.replace(/\d/g, (d) => ARABIC_DIGITS[Number(d)]).replace(/,/g, "٬").replace(/\./g, "٫");
   return text;
 }
