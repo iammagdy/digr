@@ -191,3 +191,81 @@ A test of the date-dependent pinned digests (`tests/flags-off-byte-identical.tes
 - **The R1 bare-domain re-read** is removed for redesigned stages (item C); the old pipeline keeps it (flags off = old behaviour). Why the second R1 post was never called is still a GUESS (its counter was probably 0, and a counter of 0 is never read); item C reads every parent whose counter is above 0.
 - **R4's first card** (65 items / 50 points) is NOT VERIFIED (section 4); fix 3 removes the only paths by which a stored card could disagree with approval, it does not prove what the browser showed.
 - **Not run live.** No paid provider call and no live mission was run by this session. The planning wiring in `agent/src/tools.ts` (candidates, the page cap and the counter basis read from the measured pages) and the plan-time derivation of child alternatives in `spec.ts` are covered by the type checker and by the pure and engine tests, not by an end-to-end replay.
+
+---
+
+# Live run of 2026-11-02 after #332 (merge `77e837d`): the TikTok comments-and-replies mission `msn_48f6c7c80eb7068f2a38`
+
+Task A of the brief: a READ-ONLY investigation of one mission, the test account `iam.magdy+1@outlook.com`, request «هات فيديوهين تيك توك بالعربي عن الذكاء الاصطناعي من مصر، مع كل التعليقات والردود.», created 2026-11-02 05:42:54 UTC (07:42 Cairo), completed 05:48:41 UTC. Written against `main` = `77e837d`.
+
+Marks: **V** = I read the row or the line myself in this session. **V-R** = reported by someone else or by an earlier section of this file, not re-read now. **GUESS** = inference that no query or line proves. **NOT VERIFIED** = needs data this session cannot read (the delivered file, storage objects, the platform's real counters, the browser).
+
+Safety: only `SELECT` through the read-only database tool; no write, no migration, no paid provider call in Task A. Every query is listed at the end of this section.
+
+## L0. The answer in six lines
+
+1. **The planner ran the new code; execution did not.** Stages 1 and 2 were built by code (`engine.built_by = "code"`, `gaps`, `parent_pins`, `all_children` are stored, V: Q29, Q30) and the plan card carried the language gap line (V: Q28). Execution recorded **`pipe_new = 0`** (event 3431, V: Q25), so the OLD engine and the OLD workbook built the file. That is why the file has no language labels, no comment-language column, no period mark column (V by code: `agent/src/workbook.ts:367` labels only when `newPipeline`; the mark columns only for `redesignStages`, `runMission.ts:430`).
+2. **Why execution fell back (V).** The ordering gate needs EVERY stage to have `engine.built_by === "code"` (`agent/src/redesign.ts:17`). Stage 3, the replies stage, is built by `withRepliesStages` (`src/lib/agentMission/replies.ts:274-279`), which writes an `engine` with no `built_by`. Stored: stage 3 `built_by` = null (V: Q29). So `redesignStagesOf` returned an empty set. The #332 account gate (`accountIsTest`) did work (planning was in the redesigned mode: flags `test`, V: Q32); the failure is the second gate, and every test of #332 used worlds where the replies stage did not exist or was not part of the gate.
+3. **Why reading stopped at 20 per video (V for the mechanism, GUESS for the tool's real limit).** The stored recipe is `crawl4ai.tiktok.video.comments` with `params {limit: 20}`, `cursor_param = null`, `per_parent_rows = 20` (V: Q30). Execution made exactly ONE call per video with `{post: <id>, limit: 20}` (V: Q26, calls 5 and 6): rows 20 and 19. The `limit: 20` was the planner's own sample input (planning call 3 asked `limit: 20` and got 20 rows, V: Q26), and the plan's page cap (`pageCapOf`, `agent/src/tools.ts:739`) was MEASURED on that same call: «rows of the sampled page (20) < the parent's counter, so one call gives 20». The cap is circular: it measures the size the planner asked for. An earlier live run asked this tool for `limit: 200` and got 120 rows (V-R: section 3.2 of this file, mission R3), so 20 is not the tool's limit. Whether any page beyond the first exists is Task B.
+4. **Where 280 comes from (V by arithmetic on stored numbers).** The replies stage was priced and counted BEFORE the complete-count step, from the model's own comments number: stored `measured_cost_per_row_usd` of stage 3 = 0.00064286 = 0.0009 USD x calls / 280, so calls = 200 = comments x 0.25 calls per comment, so the comments number at that moment was **800**; 800 x 0.35 (the sample's mean replies per comment: counters `[0,0,1,2,0,0,0,0,1,0,0,0,0,0,1,2,0,0,0,0]` = 7 over 20) = **280**. The complete-count step then cut the comments to 40 (2 x 20) and **did not re-derive the replies**: `withCompleteCount` (`completeCount.ts:164-168`) rewrites the replies stage only when the counter's reply share was measured (`share !== null`), and here it was null. So the replies promise is the sample's mean applied to a number of comments that no longer existed. With the real 40 comments it would have been about 14. The sample itself supports only 0.35 replies per comment, never 7.
+5. **Why the completion text blamed «fewer comments» (V).** `runMission.ts:581` picks the short stage among stages with `s.replies_of === undefined`: replies stages are never the short stage (a rule of the replies PR: «fewer replies than estimated is never a shortfall»). The comments stage was 1 short (39 of 40, video 2 had 19 top-level comments), so the text says «بعض الفيديوهات عليها تعليقات أقل من العدد المطلوب لكل فيديو» (`finalize.ts:67-72`). The true gap was 322 promised vs 42 delivered, 279 of it replies that were promised and not delivered; the text states none of that.
+6. **The delivered videos are not the planned ones (V).** The plan pinned `7701492215327034631` and `7702838399006362901` (V: Q30). Execution ran a NEW video search (call 4) and read `7701492215327034631` and `7702837860671507720` (V: Q26). The pins are honoured only by the redesigned engine (`alignPinnedParents`); the old engine ignored them.
+
+## L1. Per stage: the path, the tool, the inputs, the rows
+
+| Stage | Built by (V: Q29) | Tool (V: Q30) | Alternatives stored (V: Q29) | Planned | Path at execution |
+|---|---|---|---|---|---|
+| 1 videos | code | `tikhub.tiktok.search.videos` `{count: 2, region: "EG", keyword: "الذكاء الاصطناعي", sort_type: 2}`, `cursor_param = "offset"`, gap `language: no_field` | 0 | 2 | OLD (`pipe_new = 0`) |
+| 2 comments | code | `crawl4ai.tiktok.video.comments` `{limit: 20}` + binding `post <- id`, **`cursor_param = null`**, `per_parent_rows = 20`, `all_children = true`, `parent_pins` = 2 ids | **0** | 40 | OLD |
+| 3 replies | **null** | `anyapi.tiktok.comment_replies` `{}` + binding `commentId <- id`, `url <- link (grandparent)`, `cursor_param = "cursor"`, `per_parent_rows = 10`, replies_per_comment_expected 0.35 | 0 | **280** | OLD |
+
+Why no alternatives: they are stored only for tools the planner SAMPLED (`agent/src/engine/spec.ts` child alternatives, #332 item A). The planner sampled one comments tool (`crawl4ai`, call 3) and no pageable TikTok comments tool. The catalog has pageable ones (V: local catalog `data/treg/treg_catalog_sellable.json`): `tikhub.tiktok.video.comments` and `tikhub.x.tiktok-app-v3-fetch-video-comments` (inputs `aweme_id`, `cursor`, `count`, 0.001), `anyapi.tiktok.video.comments` (`url`, `cursor`, 0.002), `scrapecreators.tiktok.video.comments` (`url`, `cursor`, 0.00188 per call), `justoneapi.tiktok.video.comments` (`awemeId`, `cursor`, 0.01476). The planner never sampled them; nothing in the code makes it (the planner chooses what to sample).
+
+### Calls (V: Q26; secrets are never stored in `params_digest`)
+
+| # | Phase | Tool | Input sent | HTTP | Rows | Cost USD |
+|---|---|---|---|---|---|---|
+| 1 | planning | `crawl4ai.tiktok.search.videos` | `{limit: 20, query: "الذكاء الاصطناعي مصر"}` | 200 | 11 | 0.000500 |
+| 2 | planning | `tikhub.tiktok.search.videos` | `{count: 20, region: "EG", keyword, sort_type: 2}` | 200 | 10 | 0.001000 |
+| 3 | planning | `crawl4ai.tiktok.video.comments` | `{post: "7673307869135031574", limit: 20}` | 200 | 20 | 0.000500 |
+| 4 | execution | `tikhub.tiktok.search.videos` | `{count: 2, region: "EG", keyword, sort_type: 2}` | 200 | 10 | 0.001000 |
+| 5 | execution | `crawl4ai.tiktok.video.comments` | `{post: "7701492215327034631", limit: 20}` | 200 | 20 | 0.000500 |
+| 6 | execution | `crawl4ai.tiktok.video.comments` | `{post: "7702837860671507720", limit: 20}` | 200 | 19 | 0.000500 |
+| 7 | execution | `anyapi.tiktok.comment_replies` | `{url: <video link>, commentId: "7702842256216376085"}` | 200 | 1 | 0.000600 |
+
+Cursor and next-page values returned by the source: **not stored** (`mission_calls` keeps a digest of the input and the row count; the raw pages are in storage: NOT VERIFIED). There is no cursor in any recorded input, which is consistent with `cursor_param = null`. Replies were read for ONE comment only (call 7): the engine read replies for the comments that carried a reply counter; the sampled counters of the 20 comments of the planning video show 5 comments with replies (V: Q30). The comment ids of the executed videos were not sampled; how many of the 39 delivered comments carried a reply counter is NOT VERIFIED (storage).
+
+Totals (V: Q27, Q25): promised 322 (2 + 40 + 280), price up to 1,141 points, reserve 1,312; delivered 42 (2 videos + 39 comments + 1 reply), charged 149; provider cost 0.0046 USD (planning 0.0020, execution 0.0026); the ledger rows were not read (money is out of scope here).
+
+## L2. The promise, step by step
+
+| Step | Number | Evidence |
+|---|---|---|
+| Model plan, comments stage | 800 (derived) | stage 3's stored cost per row (above); the model's own stored value was overwritten and no event keeps it: **GUESS** for the exact origin of 800 (a model number, such as 400 per video), V for its being 800 at the replies step |
+| `withRepliesStages`, replies | ceil(800 x 0.35) = 280 | V: `replies.ts:245-247`, `plannedRepliesFor` |
+| `withCompleteCount`, comments | 2 x min(counter, page cap 20) = 40, pinned, `all_children = true` | V: stored values; `completeCount.ts:104-107` |
+| `withCompleteCount`, replies | unchanged: 280 | `repliesPlanned` is set only when `share !== null` (`completeCount.ts:157-168`); the basis check (`tools.ts:724-736`) needs the sampled page to add up to the parent's counter within 10%, a page of 20 against a counter of about 168 cannot: share = null (V by code; the counter value is NOT VERIFIED here) |
+| Card text | «٤٠ تعليقًا بحسب العدّاد الفعلي» | V: Q28 note 3 is the `share === null` sentence. The card did not state the 280 replies as a number of its own; the price carried them (price `deliveredRows` 322) |
+
+Which counters the promise used: the comments' 40 are `min(counter, 20)` per video: **the counter of video 1 (168 by the reviewer, NOT VERIFIED here) was cut to 20 by the page cap, which is the planner's own `limit: 20`** (see L0.3). The reviewer's 20 for video 2 is below the cap, so that video was complete (19 comments + 1 reply = 20).
+
+## L3. What this means for the fix (inputs for Task C)
+
+Proven by this section alone:
+- **F-1** the replies stage must carry `built_by: "code"` (it is built by code) so the gate passes; a test must run the replay with a replies stage in the plan (the #332 gate tests had none).
+- **F-2** the replies promise must be derived from the final comments count (and from the sample's evidence), after the complete-count step, never from the model's pre-count number; it must be the measured mean x the final comments, or nothing when the sample is silent.
+- **F-3** the page cap must not be measured on a call whose size the planner chose; the real next-page mechanism has to be known per tool (Task B).
+- **F-4** the completion text must name the stage that fell short by its rows including the replies, with the true reason.
+- **F-5** the executed videos must be the pinned ones, or the plan must re-promise.
+
+Not yet knowable without Task B: which tool pages and how, whether the counter includes replies, the real rows per call and per-call cost.
+
+## L4. Task B status
+
+**Not started: no TREG credential was available to this session.** The environment variables of this container were not readable to me and I did not look for a key elsewhere (the provider key pool is stored in the database and in the worker's environment: reading it out would be a credential extraction nobody authorised, and the sandbox refused the attempt). Paid calls therefore: **0 calls, 0.00 USD**. The candidate list for the calls (local catalog, no network) is in L1. Task C waits for the real fixtures, because the brief requires the tests to use them.
+
+## L5. Every query run for this section (read-only `SELECT`)
+
+Q23 columns of `missions`, `mission_events`, `mission_calls` (information_schema; a first query used a column that does not exist and failed). Q24 the mission of the test account created after 2026-11-02 05:00 UTC (one row: `msn_48f6c7c80eb7068f2a38`; one earlier attempt failed on a missing column). Q25 every non-progress event of the mission (one earlier attempt failed on a missing column). Q26 every `mission_calls` row of the mission. Q27 the mission row: status, points, costs, summary, error, files, request text. Q28 the plan without its stages (price, notes, assumptions). Q29 per stage: keys, engine keys, `built_by`, number of alternatives. Q30 per stage: tool, planned and expected rows, per-parent rows, `all_children`, pins, cursor, params, binding, gaps, replies fields, measured by. Q31 per stage: measured cost per row, per-parent rows, expected and planned rows, replies call price. Q32 `agent_settings` key `redesign_flags` (all three social flags `test`, written 2026-11-01 21:02:42 UTC).
+
+Not verified: the delivered file (language cell `un`, the missing columns, the 168 and 20 counters), the raw pages and cursors in storage, the counters of the executed videos' comments, the exact model value before the replies step, the ledger.
