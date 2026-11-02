@@ -89,7 +89,8 @@ export async function runS4(o: S4Options = {}) {
     { tool: "propose_plan", args: plan("anyapi.tiktok.search.videos", 0, "IQ") },
     // after a refusal for the country: the search with a `region` input, sampled with Egypt
     { tool: "describe_endpoint", args: { id: "tikhub.tiktok.search.videos" } },
-    { tool: "treg_call", args: { endpoint_id: "tikhub.tiktok.search.videos", params: { keyword: TOPIC, region: "EG", count: 20, sort_type: 2 }, why } },
+    // (sampled in the most-liked order from the start: S5 sends a plan sampled in another order back, which the S4 tests are not about)
+    { tool: "treg_call", args: { endpoint_id: "tikhub.tiktok.search.videos", params: { keyword: TOPIC, region: "EG", count: 20, sort_type: 1 }, why } },
     { tool: "run_code", args: (r: Results) => ({ code: videoMap(callIds(r)[2], "data.search_item_list", "region"), files: [callIds(r)[2]] }) },
     { tool: "propose_plan", args: plan("tikhub.tiktok.search.videos", 2, "EG") },
     ] as FakeStep[]),

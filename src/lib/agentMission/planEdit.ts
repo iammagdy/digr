@@ -89,6 +89,8 @@ function restateCounts(plan: PricedPlan, from: number, to: number): void {
 export function applyPlanEdits(planIn: PricedPlan, editsIn: unknown, ctx: EditContext = {}): PlanEditResult {
   if (!isRecord(editsIn)) return fail("تعذّر قراءة تعديلك. حاول مرة أخرى.");
   const plan = JSON.parse(JSON.stringify(planIn)) as PricedPlan;
+  // THE CUSTOMER'S EDIT SETS THE NUMBERS (S5): a promise fixed by the counters (`promise_total`) no longer caps a stage the customer changed
+  for (const st of plan.stages) delete st.promise_total;
   const now = ctx.now ?? Date.now();
 
   // 1. THE NUMBER OF ITEMS: the target of the stage the customer's quantity counts; what hangs on it follows in proportion, and a parent that cannot give that many grows

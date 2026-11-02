@@ -37,6 +37,7 @@ import { readRedesignFlags } from "../../src/lib/agentMission/redesignFlags";
 import { sealFinalPrice } from "../../src/lib/agentMission/finalPrice";
 import { accountIsTest, anyRedesignFlag, redesignStagesOf } from "./redesign";
 import { repliesShortfallAr } from "./repliesShortfall";
+import { reportedPlan, withPromiseCaps } from "../../src/lib/agentMission/repliesCard";
 import { runContactEnrichment } from "./engine/contacts";
 import { runNamesStep } from "./namesAr";
 
@@ -428,7 +429,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
     // THE MODEL PLANNED, CODE EXECUTES: every stage has a recipe the plan check proved, so no model session is started at all (the only model call left is the small review of items the rule cannot decide)
     const tracked = trackRun();
     try {
-      const outcome = await runEngine({ items, store, plan, missionId: mission.id, gateway, sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, ...(redesignStages.size > 0 ? { redesignStages } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}), log: deps.log });
+      const outcome = await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: mission.id, gateway, sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, ...(redesignStages.size > 0 ? { redesignStages } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}), log: deps.log });
       output = { llmCostUsd: 0, turns: 0, stop: outcome.aborted ?? "end" };
     } finally {
       untrackRun(tracked);
@@ -503,7 +504,10 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const snap = log.snapshotOfMemory();
   const flags: string[] = [];
   const rowsByStage: Record<string, Array<Record<string, unknown>>> = {};
+  // THE PROMISE FOR COMMENTS AND REPLIES TOGETHER (S5): each of the two stages was read up to the total; the delivery is counted up to it
+  plan = withPromiseCaps(plan);
   for (const s of plan.stages) rowsByStage[s.key] = snap.acceptedRows(s.key, s.planned_rows);
+  plan = reportedPlan(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])));
   const builtCount = plan.stages.filter((s) => s.deliver).reduce((n, s) => n + rowsByStage[s.key].length, 0);
   if (a.memory) for (const s of plan.stages) if (a.memory.counts(s.key).accepted !== snap.counts(s.key).accepted) flags.push("memory_differs_from_store");
 

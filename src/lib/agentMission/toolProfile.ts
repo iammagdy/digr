@@ -13,6 +13,8 @@ export interface FieldRef {
   /** The field is an integer with this maximum (a page size). */
   maximum?: number;
 }
+export interface SortOption { value: string | number; kind: "relevance" | "liked" | "newest" | "other" }
+
 export interface CountryRef extends FieldRef {
   /** False when the input's own note says it does not filter the results (it only places the request, as a proxy region does): the condition is then NOT enforced by the tool. */
   enforces: boolean;
@@ -34,7 +36,7 @@ export interface ToolProfile {
   country: CountryRef | null;
   account: FieldRef | null;
   count: FieldRef | null;
-  sort: FieldRef | null;
+  sort: (FieldRef & { /** The orders the input offers, by what they mean (read from its enumeration and its note): the value to send for «most liked» (the closest the search tools give to «most engaged»), «newest», «relevance». */ options?: SortOption[] }) | null;
   replies: FieldRef | null;
   cursor: FieldRef | null;
   /** The query takes advanced-search operators (`since:`, `until:`, `lang:`, `from:`): the conditions can be written INTO the query. */
@@ -54,7 +56,7 @@ const RE = {
   country: /^(country|region|gl|geo|countrycode|regioncode)$/,
   account: /^(username|user|handle|screenname|account|accountname|channelid|channel|channelurl|profile|profileurl|userid|authorid)$/,
   count: /^(limit|count|pagesize|perpage|size|num|maxresults|maxitems|n|numresults|resultsperpage)$/,
-  sort: /^(sort|sortby|sortorder|order|orderby|querytype|ranking|sorting)$/,
+  sort: /^(sort|sortby|sorttype|sortorder|order|orderby|querytype|ranking|sorting)$/,
   replies: /^(includereplies|excludereplies|replies|filterreplies|withreplies|includeretweets)$/,
 };
 /** The paging inputs, in the order a cursor is looked for when the endpoint's own `pagination` lists none. */
@@ -132,7 +134,7 @@ export function toolProfile(endpoint: CatalogEndpoint): ToolProfile {
     country: country ? { ...refOf(country), enforces: !doesNotFilter(country) } : null,
     account: account ? refOf(account) : null,
     count: count ? refOf(count) : null,
-    sort: sort ? refOf(sort) : null,
+    sort: sort ? { ...refOf(sort), options: sortOptionsOf(sort) } : null,
     replies: replies ? refOf(replies) : null,
     cursor: cursor ? refOf(cursor) : null,
     queryOperators,
@@ -173,4 +175,19 @@ export function discoverCursor(endpoint: CatalogEndpoint, page: unknown): string
   const listed = (endpoint.pagination ?? []).includes(profile.cursor.field);
   if (listed) return profile.cursor.field;
   return readShape(page, hintsOf(endpoint)).nextCursor !== null ? profile.cursor.field : null;
+}
+
+
+const sortKindOf = (label: string): SortOption["kind"] => (/most[\s_-]?liked|popular|likes|top/i.test(label) ? "liked" : /newest|latest|date|recent|time/i.test(label) ? "newest" : /relevan/i.test(label) ? "relevance" : "other");
+/** The orders a sort input offers. A named enumeration says it itself («most-liked»); numbers are read from the note («0 relevance, 1 most liked, 2 newest», «0 for relevance, 1 for most liked, or 2 for newest first»). Pure. */
+export function sortOptionsOf(input: Pick<CatalogInput, "enum" | "note" | "type">): SortOption[] {
+  const numeric = input.type === "integer" || input.type === "number";
+  const out: SortOption[] = [];
+  const fromNote = [...(input.note ?? "").matchAll(/(\d+)\s*(?:for\s+)?(relevance|most[\s_-]?liked|newest(?:\s+first)?|latest)/gi)];
+  for (const m of fromNote) out.push({ value: numeric ? Number(m[1]) : m[1], kind: sortKindOf(m[2]) });
+  if (out.length > 0) return out;
+  for (const v of Array.isArray(input.enum) ? input.enum : []) if (typeof v === "string" && !/^\d+$/.test(v)) out.push({ value: v, kind: sortKindOf(v) });
+  if (out.length > 0) return out;
+  for (const v of (input.note ?? "").split("|").map((x) => x.replace(/\([^)]*\)/g, "").trim()).filter((x) => /^[A-Za-z_]+$/.test(x))) out.push({ value: v, kind: sortKindOf(v) });
+  return out;
 }

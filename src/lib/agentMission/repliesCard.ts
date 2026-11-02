@@ -53,3 +53,20 @@ export function topLevelFactsOf(plan: { stages: Stages }, rowsByStage: Record<st
 export const hasReplies = (plan: { stages: Stages }): boolean => plan.stages.some((s) => s.replies_of !== undefined);
 
 void formatAr;
+
+/**
+ * THE PROMISE FOR COMMENTS AND REPLIES TOGETHER (S5): a video's counter counts both, so the plan fixes ONE total (`promise_total`) and carries an estimated split on the two stages. While the mission runs, each of the two stages may be read up to the total (the source gives no more than the
+ * counter in all), so a split that was estimated wrongly never costs a comment or a reply; the delivery is then told against the total: the replies that were delivered, and the comments that complete the total. Pure.
+ */
+export function withPromiseCaps<P extends { stages: Stages }>(plan: P): P {
+  if (!plan.stages.some((s) => s.promise_total !== undefined)) return plan;
+  return { ...plan, stages: plan.stages.map((s) => (s.promise_total !== undefined ? { ...s, planned_rows: Math.max(s.planned_rows, s.promise_total) } : s)) };
+}
+
+/** The plan as the delivery is told: the replies planned are the replies delivered, the comments planned are the total less them (so «delivered of planned» compares like with like and never above the counters). */
+export function reportedPlan<P extends { stages: Stages }>(plan: P, rowsByStage: Record<string, number>): P {
+  if (!plan.stages.some((s) => s.promise_total !== undefined)) return plan;
+  const total = Math.max(...plan.stages.map((s) => s.promise_total ?? 0));
+  const replies = plan.stages.filter((s) => s.replies_of !== undefined && s.promise_total !== undefined).reduce((n, s) => n + Math.max(0, rowsByStage[s.key] ?? 0), 0);
+  return { ...plan, stages: plan.stages.map((s) => (s.promise_total === undefined ? s : s.replies_of !== undefined ? { ...s, planned_rows: Math.max(0, rowsByStage[s.key] ?? 0) } : { ...s, planned_rows: Math.max(0, total - replies) })) };
+}
