@@ -75,7 +75,7 @@ function fakeClient() {
             h.downloads.push(path);
             const bytes = h.objects.get(path);
             if (!bytes) return { data: null, error: { message: "Object not found" } };
-            return { data: new Blob([bytes]), error: null };
+            return { data: new Blob([bytes as unknown as BlobPart]), error: null };
           },
           upload: write("upload"), update: write("update"), remove: write("remove"), move: write("move"), copy: write("copy"),
           createSignedUrl: write("createSignedUrl"), createSignedUrls: write("createSignedUrls"), createSignedUploadUrl: write("createSignedUploadUrl"),
