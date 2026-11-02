@@ -20,9 +20,27 @@ export function childPromise(counters: ReadonlyArray<number | null>, cap: number
   return { type: "open", n: Math.max(1, Math.floor(cap ?? openMax)) };
 }
 
+/**
+ * The promise of a comments stage when the customer named a number FOR EACH parent («١٠٠ تعليق من كل فيديو»): each parent gives at most that number, and at most what its own
+ * counter says it has; so the promise is the sum of min(number, counter) when every counter is known (type counter), else open with the number x the parents as its maximum.
+ */
+export function perParentPromise(counters: ReadonlyArray<number | null>, perParent: number, parents: number): StagePromise {
+  const per = Math.max(1, Math.floor(perParent));
+  if (counters.length > 0 && counters.every((c) => c !== null && Number.isFinite(c))) {
+    return { type: "counter", n: counters.reduce<number>((s, c) => s + Math.min(per, Math.max(0, Math.floor(c ?? 0))), 0), counter: counters.reduce<number>((s, c) => s + (c ?? 0), 0) };
+  }
+  return { type: "open", n: per * Math.max(1, parents) };
+}
+
 /** The customer's sentence of a promise (Arabic, Arabic-Indic digits; no provider name, no price). `noun`: what is counted («تعليق», «رد»). */
-export function promiseLineAr(p: StagePromise, what: "comments" | "replies", counterIncludesReplies: boolean): string {
+export function promiseLineAr(p: StagePromise, what: "comments" | "replies", counterIncludesReplies: boolean, perParent: number | null = null): string {
   const n = toArabicDigits(p.n);
+  if (what === "comments" && perParent !== null) {
+    const per = toArabicDigits(perParent);
+    if (p.type === "counter" && p.counter !== undefined) return `التعليقات: حتى ${per} تعليق من كل عنصر مختار بحسب العدد الذي طلبته، أي ${n} تعليق على الأكثر، وعدّاد المنصة للعناصر المختارة ${toArabicDigits(p.counter)}${counterIncludesReplies ? " ويشمل الردود" : ""}.`;
+    return `التعليقات: حتى ${per} تعليق من كل عنصر مختار بحسب العدد الذي طلبته، مما يعرضه المصدر.`;
+  }
+  if (what === "replies" && perParent !== null) return `الردود: حتى ${toArabicDigits(perParent)} من الردود على كل تعليق مختار، مما يعرضه المصدر، دون وعد بعدد قبل القراءة؛ والحد الأقصى المحسوب في الحجز ${n} ردّ.`;
   if (what === "comments") {
     if (p.type === "counter" && p.counter !== undefined && p.n < p.counter) return `التعليقات: ${n} تعليق بحسب العدد الذي اخترته، من أصل ${toArabicDigits(p.counter)} بحسب عدّاد المنصة للعناصر المختارة.`;
     if (p.type === "counter") return `التعليقات: كل تعليقات العناصر المختارة، وعددها بحسب عدّاد المنصة ${n}${counterIncludesReplies ? "، وهذا العدّاد يشمل الردود" : ""}. إن عرض المصدر أقل من العدّاد نذكر الفرق لكل عنصر.`;

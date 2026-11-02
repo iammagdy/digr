@@ -41,6 +41,10 @@ export interface Ask {
   order: AskOrder;
   comments: ChildAsk;
   replies: ChildAsk;
+  /** The customer's number of top-level comments FOR EACH parent («١٠٠ تعليق من كل فيديو»), or null when the words give none per parent. */
+  commentsPerParent: number | null;
+  /** The customer's number of replies FOR EACH comment («٣ ردود على كل تعليق»), or null. */
+  repliesPerComment: number | null;
   edits: AskEdits;
 }
 
@@ -91,6 +95,16 @@ function countryNamedIn(text: string): string | null {
   return null;
 }
 
+/** «١٠٠ تعليق من كل فيديو», «٥٠ تعليق لكل فيديو», «أول ٢٠ تعليق على كل منشور»: a number standing before the child's noun, then «كل» and the parent's noun. A number with no «كل» after it is not per parent. */
+const PARENT_NOUN = "(?:فيديو|فيديوهات|منشور|بوست|تغريدة|تغريده|ريل|عنصر|واحد|واحدة)";
+const PER_PARENT_COMMENTS = new RegExp(`(\\d+)\\s*(?:تعليقات|تعليق|كومنتات|كومنت)\\s+(?:(?:من|على|في|عن)\\s+)?ل?كل\\s+${PARENT_NOUN}`);
+const PER_COMMENT_REPLIES = /(\d+)\s*(?:ردود|ردًا|ردا|رد)\s+(?:(?:من|على|في|عن)\s+)?ل?كل\s+(?:تعليق|كومنت)/;
+function perParentOf(text: string, rx: RegExp): number | null {
+  const m = rx.exec(digits(text));
+  const n = m ? Number(m[1]) : NaN;
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 const NEWEST = /(?:^|\s)(?:ال)?[أا]حدث(?:\s|$)|الأخيرة|الاخيرة|latest|newest/i;
 const MADE_WITH = /(?:معمول|مصنوع|متعمل|مولد|مصمم)\w*\s*(?:ب|بال)/;
 const ABOUT = /(?:^|\s)(?:عن|حول|بخصوص|فيها|فيه|تذكر)\s/;
@@ -117,6 +131,8 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
     order: NEWEST.test(text) || c.comments === "none" ? "newest" : "most_commented",
     comments: c.comments,
     replies: c.replies,
+    commentsPerParent: c.comments === "none" ? null : perParentOf(text, PER_PARENT_COMMENTS),
+    repliesPerComment: c.replies === "none" ? null : perParentOf(text, PER_COMMENT_REPLIES),
     edits: { ...edits },
   };
 }

@@ -5,18 +5,19 @@ import { buildAsk, periodOfRequest } from "../src/lib/agentMission/foundation/as
 /**
  * F1, THE ASK, on the 20 stored requests of the test account (docs/ROOT-CAUSE.md section 1; the texts are `tests/fixtures/live/replay-missions.json`, read by SELECT).
  * The table below is written by hand from the customer's words, not from the code's output: what each request asks, value by value. The moment of each request is its
- * stored Cairo time (2026, Cairo = UTC+2 on these days: Egypt's summer time ended on 2026-10-29).
+ * stored Cairo time (2026, Cairo = UTC+2 on these days: Egypt's summer time ended on 2026-10-29). None of the 20 gives a number per parent («N تعليق من كل فيديو»): both per-parent
+ * numbers are null (the live request that does is tests/foundation-live-e32cd467.test.ts).
  */
 interface Fx { id: string; cairo: string; request: string }
 const missions = (JSON.parse(readFileSync(new URL("./fixtures/live/replay-missions.json", import.meta.url), "utf8")) as { missions: Fx[] }).missions;
 const atOf = (cairo: string): number => Date.parse(`2026-${cairo.replace(" ", "T")}:00+02:00`);
 
-const FB = (from: string, to: string) => ({ platform: "facebook", parentKind: "posts", count: 2, source: { kind: "named", text: "العربية" }, topic: { text: "الذكاء الاصطناعي", relation: "about" }, period: { from, to }, country: null, language: null, order: "most_commented", comments: "all", replies: "all" });
-const YT = { platform: "youtube", parentKind: "videos", count: 2, source: { kind: "official", text: null }, topic: { text: "نهائي السوبر المصري الأهلي والزمالك", relation: "about" }, period: null, country: null, language: null, order: "most_commented", comments: "all", replies: "all" };
-const TT = { platform: "tiktok", parentKind: "videos", count: 2, source: { kind: "none", text: null }, topic: { text: "الذكاء الاصطناعي", relation: "about" }, period: null, country: "EG", language: "ar", order: "most_commented", comments: "all", replies: "all" };
-const IG = { platform: "instagram", parentKind: "posts", count: 2, source: { kind: "named", text: "alhadath" }, topic: { text: null, relation: "none" }, period: null, country: null, language: null, order: "most_commented", comments: "all", replies: "all" };
+const FB = (from: string, to: string) => ({ platform: "facebook", parentKind: "posts", count: 2, source: { kind: "named", text: "العربية" }, topic: { text: "الذكاء الاصطناعي", relation: "about" }, period: { from, to }, country: null, language: null, order: "most_commented", comments: "all", replies: "all", commentsPerParent: null, repliesPerComment: null });
+const YT = { platform: "youtube", parentKind: "videos", count: 2, source: { kind: "official", text: null }, topic: { text: "نهائي السوبر المصري الأهلي والزمالك", relation: "about" }, period: null, country: null, language: null, order: "most_commented", comments: "all", replies: "all", commentsPerParent: null, repliesPerComment: null };
+const TT = { platform: "tiktok", parentKind: "videos", count: 2, source: { kind: "none", text: null }, topic: { text: "الذكاء الاصطناعي", relation: "about" }, period: null, country: "EG", language: "ar", order: "most_commented", comments: "all", replies: "all", commentsPerParent: null, repliesPerComment: null };
+const IG = { platform: "instagram", parentKind: "posts", count: 2, source: { kind: "named", text: "alhadath" }, topic: { text: null, relation: "none" }, period: null, country: null, language: null, order: "most_commented", comments: "all", replies: "all", commentsPerParent: null, repliesPerComment: null };
 // X: no comments are asked on X (a reply is a tweet), so the order is the newest; «مع الردود» asks the replies, without «كل»
-const X = { platform: "x", parentKind: "tweets", count: 20, source: { kind: "none", text: null }, topic: { text: "العاصمة الإدارية", relation: "about" }, period: { from: "2026-10-01", to: "2026-10-31" }, country: null, language: "ar", order: "newest", comments: "none", replies: "some" };
+const X = { platform: "x", parentKind: "tweets", count: 20, source: { kind: "none", text: null }, topic: { text: "العاصمة الإدارية", relation: "about" }, period: { from: "2026-10-01", to: "2026-10-31" }, country: null, language: "ar", order: "newest", comments: "none", replies: "some", commentsPerParent: null, repliesPerComment: null };
 
 const TABLE: Record<string, unknown> = {
   msn_a254618740b9b9878126: FB("2026-08-01", "2026-11-01"), // M1, 11-01 23:04

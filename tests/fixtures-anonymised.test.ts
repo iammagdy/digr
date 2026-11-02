@@ -101,6 +101,16 @@ describe("anonymised real pages (decision 7.1): the scan that gates the public r
     for (const calls of Object.values(index.missions)) for (const c of calls) for (const k of ["url", "post", "link"]) if (k in c[5]) expect(String(c[5][k])).toMatch(/^\d{15,}$/);
   });
 
+  it("the stored plan records of live missions (tests/fixtures/live/plans, passed through anonymise.py) pass the same scan", () => {
+    const plans = jsonFiles(path.resolve(__dirname, "fixtures/live/plans"));
+    expect(plans.map((f) => path.basename(f))).toEqual(["msn_e32cd467fe6bbdfa943e.json"]);
+    for (const f of plans) {
+      const violations: Violation[] = [];
+      scan(JSON.parse(readFileSync(f, "utf8")), null, "", path.basename(f), violations, { personal: 0 });
+      expect(violations).toEqual([]);
+    }
+  });
+
   it("the scanner itself catches each rule (so a green run is not an empty run)", () => {
     const out: Violation[] = [];
     const c = { personal: 0 };
