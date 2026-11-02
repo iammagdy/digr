@@ -42,3 +42,18 @@ export function formatSampleCell(value: unknown): string {
   const text = String(value ?? "");
   return isIsoDateText(text) ? formatIsoForCustomer(text) : text;
 }
+
+const ARABIC_DIGITS = "٠١٢٣٤٥٦٧٨٩";
+const NUMBER_CELL = /^-?\d[\d,]*(?:\.\d+)?$/;
+/**
+ * A cell of the sample table of a REDESIGNED plan, as the customer reads it (S11: the live card said «false» and showed «16»): true / false are «نعم» / «لا», a number is written in Arabic-Indic digits with the Arabic separators, a date is left for `formatSampleCell` (the table's own step, which writes it in Arabic); every other text is left
+ * exactly as it is. Used only for plans built by code: the old pipeline's views stay byte for byte. Idempotent.
+ */
+export function formatSampleValueAr(value: unknown): string {
+  const text = String(value ?? "");
+  const t = text.trim();
+  if (/^true$/i.test(t)) return "نعم";
+  if (/^false$/i.test(t)) return "لا";
+  if (NUMBER_CELL.test(t)) return t.replace(/\d/g, (d) => ARABIC_DIGITS[Number(d)]).replace(/,/g, "٬").replace(/\./g, "٫");
+  return text;
+}

@@ -104,12 +104,14 @@ export interface RunState {
   countrySendBacks: number;
   /** How many times a plan sampled in another order than the most engaged was sent back (S5; a limit: the planner is never stuck). */
   sortSendBacks: number;
+  /** How many times a plan that chooses among an account's recent posts on ONE sampled page was sent back to read the next page (S11; a limit: the planner is never stuck). */
+  accountPageSendBacks: number;
   /** Per source stream (a collect_pages source and its inputs): whether the last read says the source has more pages. */
   moreAvailable: Map<string, boolean>;
   /** What each source gave in the planning samples: the rows of every answered call and a key of its inputs (two samples of the same item are one). */
   samples: Map<string, Array<{ rows: number; key: string }>>;
 }
-export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), described: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, giveUpNoRowsRefusals: 0, mediaSendBacks: 0, peopleSendBacks: 0, countrySendBacks: 0, sortSendBacks: 0, moreAvailable: new Map(), samples: new Map() });
+export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), described: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, giveUpNoRowsRefusals: 0, mediaSendBacks: 0, peopleSendBacks: 0, countrySendBacks: 0, sortSendBacks: 0, accountPageSendBacks: 0, moreAvailable: new Map(), samples: new Map() });
 /** The redesigned mode of planning: any of the three social flags is active for this mission's account (planning does not know the request type yet; with every flag off this is false and nothing changes). */
 export const socialRedesignActive = (ctx: { redesign?: { flags: RedesignFlags; isTest: boolean } }): boolean =>
   ctx.redesign !== undefined && (["social_posts", "social_account", "social_comments"] as const).some((t) => redesignActive(ctx.redesign!.flags, t, { isTest: ctx.redesign!.isTest }));
@@ -125,6 +127,8 @@ export const PEOPLE_SEND_BACKS_MAX = 3;
 /** The most times a plan on a tool with no country input is sent back to a tool that has one (D7). */
 export const COUNTRY_SEND_BACKS_MAX = 2;
 export const SORT_SEND_BACKS_MAX = 2;
+/** The most times a plan on one page of an account's posts is sent back to read the next page, so the most commented of its recent posts can be chosen (the planning budget allows two samples of one source). */
+export const ACCOUNT_PAGE_SEND_BACKS_MAX = 1;
 
 export interface ToolContext {
   phase: CallPhase;
@@ -745,6 +749,19 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             lines.push(`stage «${st.key}»: sample the same search ONCE more with ${asks.join(" AND ")}; keep the country; map the same columns on its page, and propose the plan again on that sample`);
           }
           if (lines.length > 0) { state.sortSendBacks += 1; return err("the plan was not accepted yet; fix this and propose again", { issues: lines }); }
+        }
+        // THE MOST COMMENTED POSTS OF AN ACCOUNT (S11, owner decision): the default for a comments request is the most engaged posts, and for an account that means the most commented among its RECENT posts, not the newest two (live: both were minutes old, one comment in all). One page
+        // of the account's listing is too few to choose from, so the plan is sent back ONCE to read the next page (the cursor of the first page, the same mapping); the planning budget allows two samples of one source. Unless the customer asked for the newest or gave a date.
+        if (derived && engaged && socialRedesignActive(ctx) && state.accountPageSendBacks < ACCOUNT_PAGE_SEND_BACKS_MAX) {
+          const lines: string[] = [];
+          for (const st of checked.plan.stages) {
+            if (st.parent_key !== null || !st.engine || !st.engine.sources || st.engine.cursor_param === null) continue;
+            if (!checked.plan.stages.some((x) => x.parent_key === st.key && x.replies_of === undefined && x.deliver)) continue;
+            const pages = calls.filter((c) => c.endpoint_id === st.endpoint_id && c.status === "ok" && (c.phase ?? "planning") === "planning").length;
+            if (pages >= 2) continue;
+            lines.push(`stage «${st.key}»: this is a request for comments, so unless the customer asks for the newest or gives a date the posts are the MOST COMMENTED of the account's recent posts, and one page of ${st.endpoint_id} is too few to choose from. Read the next page ONCE more: the same inputs plus ${st.engine.cursor_param} = the next-page token the first page returned (read it in the sample), map the same columns on it, and propose the plan again citing BOTH calls in measured_by. Do not call the posts «the newest» unless the customer asked for the newest`);
+          }
+          if (lines.length > 0) { state.accountPageSendBacks += 1; return err("the plan was not accepted yet; fix this and propose again", { issues: lines }); }
         }
         // THE COMMENTS STAGE'S RECIPE BY CODE (S3): a comments stage the model's mapping could not give a proven recipe for is NOT left to the model (the whole mission would run on the old pipeline, with the old topic rules): in the redesigned mode its recipe is written by code from the tool's own
         // schema and PROVEN on the page the planner sampled (every row of the page mapped, each with an id) before it is kept

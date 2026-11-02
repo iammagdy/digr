@@ -1,4 +1,5 @@
 import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, AGENT_REPLIES_PER_COMMENT_DEFAULT, AGENT_REPLIES_PER_COMMENT_MAX, AGENT_PEOPLE_PAGES_DEFAULT, AGENT_PEOPLE_PAGES_MAX, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE, NAMES_STEP_USD_PER_PERSON } from "./constants";
+import { formatSampleValueAr } from "../customerDates";
 import { CONTACT_KINDS, requestWantsContacts, type ContactKind } from "./contacts";
 import { isPeopleStage } from "./people";
 import { buildCompanySteps, buildContactSteps, type ContactAids, type ContactStep, type FinderInfo, type FinderKind } from "./contactFinders";
@@ -193,6 +194,8 @@ export interface PricedStage extends ProposedStage {
   promise_total?: number;
   /** S9: the replies of the chosen comments are ALL of them, with no number promised from an estimate (the comments per video are fewer than the video's counter). `planned_rows` is then only the estimate the price is made from, a maximum; after the delivery it is replaced by the reply counters of the delivered comments (repliesCard.ts `withRepliesJudged`). Set by code. */
   replies_open?: boolean;
+  /** S11: the parent items of this stage were chosen by code as the MOST ENGAGED (the highest comment counters), not the newest: the model's «newest» wording about them is dropped from the card. Set by code. */
+  chosen_most_engaged?: boolean;
   /** The sampled comments' own reply counters (each capped at the most a comment may be read for) and the price of one call of the reply source: with them the replies planned and their price follow an edit of the comments' number or of the replies per comment, by code. */
   replies_sample_counts?: number[];
   replies_call_usd?: number;
@@ -806,7 +809,13 @@ export const unservedStepLineAr = (u: UnservedStep): string => `لم تُضَف 
  * THE ASSUMPTION LINES OF THE CARD. The language and the topic are rules for choosing the PARENTS and the top-level items; the items of a child stage (comments, replies, reviews, employees) are delivered as the source gives them. So in a plan with a child stage a line
  * about the language is never stated for the whole plan: the model's own line about it is replaced by one built here that names the items it applies to («اللغة العربية فقط تُطبَّق على التغريدات وحدها، أما الردود فتُسلَّم كما هي»).
  */
-export function assumptionLinesOf(plan: Pick<PricedPlan, "stages" | "assumptions_ar">): string[] {
+/** The model's own lines that the plan built by code now contradicts (S11): «replies are not available» when a replies stage is in the plan, «the newest» about posts the code chose as the most engaged. */
+const NO_REPLIES_LINE = /الردود[^.]*(?:غير\s+متاح|غير\s+متوفر|لن\s+تُجلب|لن\s+تجلب)/;
+const NEWEST_LINE = /(?:^|\s)(?:الأحدث|الاحدث|أحدث|احدث)(?:\s|$|،)/;
+const contradictedByCode = (plan: Pick<PricedPlan, "stages">, line: string): boolean =>
+  (plan.stages.some((s) => s.replies_of !== undefined) && NO_REPLIES_LINE.test(line)) || (plan.stages.some((s) => s.chosen_most_engaged === true) && NEWEST_LINE.test(line));
+export function assumptionLinesOf(planIn: Pick<PricedPlan, "stages" | "assumptions_ar">): string[] {
+  const plan = { ...planIn, assumptions_ar: (planIn.assumptions_ar ?? []).filter((line) => !contradictedByCode(planIn, line)) };
   const filters = plan.stages.flatMap((s) => s.filters ?? []);
   const childOf = (s: { key: string }) => plan.stages.find((c) => c.parent_key === s.key && c.deliver) ?? plan.stages.find((c) => c.parent_key === s.key);
   if (!plan.stages.some((s) => s.parent_key !== null)) return assumptionLinesShown(plan.assumptions_ar ?? [], filters);
@@ -888,7 +897,7 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
       const columns = s.columns.filter((c) => !isInternalColumn(c));
       return {
         key: s.key, title_ar: childCardTitleAr(s, plan.stages), expected_rows: s.planned_rows, parent_key: s.parent_key, deliver: s.deliver, columns,
-        sample_rows: s.sample_rows.filter((r) => sampleRowPasses(s, r, now)).slice(0, CUSTOMER_SAMPLE_ROWS).map((r) => Object.fromEntries(columns.map((c) => [c.key, String(r[c.key] ?? "").slice(0, SAMPLE_CELL_CHARS)]))),
+        sample_rows: s.sample_rows.filter((r) => sampleRowPasses(s, r, now)).slice(0, CUSTOMER_SAMPLE_ROWS).map((r) => Object.fromEntries(columns.map((c) => [c.key, (s.engine?.built_by === "code" ? formatSampleValueAr(r[c.key]) : String(r[c.key] ?? "")).slice(0, SAMPLE_CELL_CHARS)]))),
         ...(s.how_ar ? { how_ar: s.how_ar } : {}),
         ...(s.replies_open ? { replies_open: true } : {}),
         // the share of the sampled items the plan expected to match (a ratio, no money): the live tracker uses it to judge how much must be read before the target is reached

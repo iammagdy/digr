@@ -239,7 +239,8 @@ export async function withCompleteCount(plan: PricedPlan, deps: CompleteCountDep
       }
       if (repliesPlanned !== null && repliesPlanned > 0 && s.key === repliesStage!.key) return { ...s, planned_rows: repliesPlanned, expected_rows: repliesPlanned, per_parent_rows: AGENT_REPLIES_PER_COMMENT_MAX, promise_total: e.total + repliesPlanned };
       // THE PINNED PARENTS' ROWS (S2 item 6): the rows the plan measured for the chosen parents, so execution reads THESE parents without a new search (kept only when every chosen parent has its row and they are the parents the stage promises)
-      if (s.key === parent.key) return chosenRows ? { ...s, pinned_rows: chosenRows } : s;
+      // S11: parents chosen as the most engaged are no longer «the newest»: the model's title that says so is cut («أحدث منشورين من حساب الحدث» -> «منشورين من حساب الحدث»)
+      if (s.key === parent.key) return chosenRows ? { ...s, pinned_rows: chosenRows, ...(deps.mostEngaged ? { chosen_most_engaged: true, title_ar: s.title_ar.replace(/^(?:ال)?(?:أحدث|احدث|أجدد|آخر|اخر)\s+/, "") } : {}) } : s;
       if (s.key === stage.key) return { ...chosen, planned_rows: e.total, expected_rows: e.total, per_parent_rows: Number.isFinite(perParent) ? Math.min(perParent, Math.max(1, e.perParent)) : Math.max(1, e.perParent), all_children: true, ...(promiseTotal !== null ? { promise_total: promiseTotal } : repliesPlanned !== null && repliesPlanned > 0 ? { promise_total: e.total + repliesPlanned } : {}), parent_pins: e.chosen.map((c) => c.id) };
       return s;
     });

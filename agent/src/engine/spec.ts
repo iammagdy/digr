@@ -172,6 +172,7 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
       const cursorParam = (endpoint.pagination ?? []).find((p) => !LIMIT_INPUT.test(p)) ?? (deps.codeBuild ? discoverCursor(endpoint, pageJson) : null);
       // ...unless every named source was read by a measuring call of its own (its own query, or the source's own listing of its items): the engine then reads each of them in turn, each up to its share
       let sources: EngineSpec["sources"] | undefined;
+      let oneListing = false;
       const listing = stage.parent_key === null && isListingEndpoint(endpoint);
       if (named && !namedSourcesInQuery(params, named.values ?? [])) {
         const perSource = sourcesFromPages(named, pages, cursorParam, listing);
@@ -180,7 +181,7 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
       } else if (listing && stage.parent_key === null) {
         // ONE named source read by its own listing (a channel's videos): the engine reads it as that source, so items with no author of their own belong to it
         const one = refit.filters.find((f) => isEnabled(f) && f.kind === "account" && (f.values ?? []).length === 1);
-        if (one) sources = [{ names: [one.values![0]], params }];
+        if (one) { sources = [{ names: [one.values![0]], params }]; oneListing = true; }
       }
       let binding: EngineSpec["parent_binding"] = null;
       if (stage.parent_key !== null) {
@@ -197,10 +198,11 @@ export async function deriveEngineSpecsChecked(plan: PricedPlan, deps: DeriveDep
       // THE REQUEST BUILT BY CODE (S1 item 1.6, only in the redesigned mode): the customer's conditions are written into the tool's own fields; a stage whose inputs are not all real inputs of the endpoint keeps the model's request and is NOT marked as built by code
       let builtBy: "code" | "model" | undefined;
       let stageGaps: Gap[] = [];
-      if (deps.codeBuild && !sources) {
+      // S11: ONE named account read by its own listing (an account's posts, a channel's videos) is built by code like any other stage (its request is the account's handle and what the customer's conditions add); several named sources keep the model's request
+      if (deps.codeBuild && (!sources || oneListing)) {
         const built = buildToolInput(endpoint, understoodOfStage(stage, deps.codeBuild.nowMs, { engaged: deps.codeBuild.engaged === true, ...(deps.codeBuild.topicQuery ? { topicQuery: deps.codeBuild.topicQuery } : {}) }), params);
         builtBy = built.ok ? "code" : "model";
-        if (built.ok) { for (const k of Object.keys(params)) delete params[k]; Object.assign(params, built.params); stageGaps = built.gaps; }
+        if (built.ok) { for (const k of Object.keys(params)) delete params[k]; Object.assign(params, built.params); stageGaps = built.gaps; if (oneListing && sources) sources = [{ ...sources[0], params: { ...params } }]; }
       }
       // a source with no next page and a flat price per call is asked for everything its limit allows (a lower limit only makes the one answer smaller)
       const lifted = stage.parent_key === null && !sources ? liftedVolume(endpoint, params) : null;
