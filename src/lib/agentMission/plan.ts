@@ -88,6 +88,8 @@ export interface ProposedStage {
   all_children?: boolean;
   /** The ids of the parent rows the promised count was computed from (S1 complete count): the engine reads exactly these parents, so a parent published between planning and execution cannot change the promise. Set by code only. */
   parent_pins?: string[];
+  /** The rows of the PARENT stage's pinned parents as measured at planning, mapped by the parent stage's own proven mapping (S2 item 6). Set by code on the parent stage next to the child's `parent_pins`: the redesigned engine ingests exactly these rows at execution, with no new search. */
+  pinned_rows?: Array<Record<string, unknown>>;
   /** Whether this stage's rows go into the customer's files (and count in the charge). */
   deliver: boolean;
   columns: PlanColumn[];

@@ -720,7 +720,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
                 const sp = parentStage.engine;
                 if (!sp) return null;
                 const rows = await mappedRowsOf(sp);
-                return rows ? rows.map((r) => ({ id: deriveItemId(r as never, sp.id_field ?? null), counter: counterOfRow(r) })) : null;
+                return rows ? rows.map((r) => ({ id: deriveItemId(r as never, sp.id_field ?? null), counter: counterOfRow(r), row: r })) : null;
               },
               // WHAT THE PARENT'S COUNTER COUNTS (item 2): the child source's own sampled page shows whether the counter includes replies: comments + their reply counters add up to the counter of the parent it was measured on
               basisOf: async (child) => {

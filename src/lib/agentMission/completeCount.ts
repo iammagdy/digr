@@ -19,7 +19,7 @@ import { stagePriceInputs, type PricedPlan, type PricedStage } from "./plan";
  *
  * Pure apart from what the caller reads (the candidates).
  */
-export interface Candidate { id: string; counter: number | null }
+export interface Candidate { id: string; counter: number | null; /** The listing's own mapped row of this candidate (S2 item 6): stored on the parent stage when the candidate is pinned. */ row?: Record<string, unknown> }
 
 export interface CompleteCountDeps {
   request: string;
@@ -175,6 +175,7 @@ export async function withCompleteCount(plan: PricedPlan, deps: CompleteCountDep
       if (repliesStage && requested === null) repliesPlanned = Math.max(0, counted - e.total);
     }
     if (e.total < 1) continue;
+    const chosenRows = e.chosen.length > 0 && e.chosen.length === parent.planned_rows && e.chosen.every((c) => c.row !== undefined) ? e.chosen.map((c) => c.row!) : null;
     // THE REPLIES FOLLOW THE FINAL COMMENTS (S2 item 2): with no measured share, the replies stage was estimated on the comments number the MODEL planned (live: 800 comments x 0.35 = 280 replies); the comments are now final (40), so the replies are derived again by the one rule
     // the plan editor uses: the sample's measured replies per comment over the final comments, never above the cap per comment, never a number the sample does not support
     let repliesFromSample: { rows: number; perCommentExpected: number; costPerRowUsd: number } | null = null;
@@ -185,6 +186,8 @@ export async function withCompleteCount(plan: PricedPlan, deps: CompleteCountDep
     const stages = out.stages.map((s) => {
       if (repliesFromSample && s.key === repliesStage!.key) return { ...s, planned_rows: repliesFromSample.rows, expected_rows: repliesFromSample.rows, replies_per_comment_expected: repliesFromSample.perCommentExpected, measured_cost_per_row_usd: repliesFromSample.costPerRowUsd };
       if (repliesPlanned !== null && repliesPlanned > 0 && s.key === repliesStage!.key) return { ...s, planned_rows: repliesPlanned, expected_rows: repliesPlanned, per_parent_rows: AGENT_REPLIES_PER_COMMENT_MAX };
+      // THE PINNED PARENTS' ROWS (S2 item 6): the rows the plan measured for the chosen parents, so execution reads THESE parents without a new search (kept only when every chosen parent has its row and they are the parents the stage promises)
+      if (s.key === parent.key) return chosenRows ? { ...s, pinned_rows: chosenRows } : s;
       if (s.key === stage.key) return { ...chosen, planned_rows: e.total, expected_rows: e.total, per_parent_rows: Number.isFinite(perParent) ? Math.min(perParent, Math.max(1, e.perParent)) : Math.max(1, e.perParent), all_children: true, parent_pins: e.chosen.map((c) => c.id) };
       return s;
     });

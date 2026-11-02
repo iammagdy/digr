@@ -351,8 +351,21 @@ function periodOf(stage: Stage, now: number): { field: string; sinceMs: number }
  * (the overlapping day is read again and ignored), the review budget and every cap (calls, pages, time) are the ones of every read.
  */
 async function runRoot(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promise<{ reason: StopReason; aborted: string | null }> {
+  // THE PINNED PARENTS ARE READ, NOT SEARCHED AGAIN (S2 item 6): the plan stored the rows of the parents its promise was computed from; a new search would return a different list (a video published in between) and the promise would be for other parents
+  if (deps.redesignStages?.has(stage.key) && (stage.pinned_rows ?? []).length > 0 && stage.pinned_rows!.length === stage.planned_rows) return runPinnedRows(deps, stage, spec);
   const r = await runRootPrimary(deps, stage, spec);
   return deps.redesignStages?.has(stage.key) ? continueAcrossTools(deps, stage, spec, r) : r;
+}
+
+/** The stage's items are the rows the plan measured for the pinned parents (one stream of one page, ended): no call is made. Resumes like any stream (an ended stream is not read again). */
+async function runPinnedRows(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promise<{ reason: StopReason; aborted: string | null }> {
+  const { items } = deps;
+  if (!items.streamState(stage.key, "pinned")?.ended) {
+    const rows = (stage.pinned_rows ?? []).map((r) => ({ ...r }));
+    await ingestRows(deps, stage, rows, { silent: true, idField: spec.id_field ?? null, raw: true, page: { stream: "pinned", call_id: null, cursor_in: null, cursor_next: null, has_more: false, ended: true, rows_in_page: rows.length } });
+    await emitStageProgress(deps, stage, { collecting: true });
+  }
+  return { reason: items.counts(stage.key).accepted >= stage.planned_rows ? "target_reached" : "source_exhausted", aborted: null };
 }
 
 /** Why a parent that gave nothing is read again (the same input once, then the next tool). */
