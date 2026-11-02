@@ -37,10 +37,10 @@ describe("the page cap: the tool's maximum, not the planner's sample", () => {
     expect(pageCapOfSource(endpoint("tikhub.tiktok.video.comments"), "cursor", 20)).toBeNull();
   });
   it("a tool with no next page and a size input but no maximum is capped at its stated default", () => {
-    expect(pageCapOfSource({ ...endpoint("tikhub.tiktok.video.comments"), pagination: ["count"] }, null, 5)).toBe(20);
+    expect(pageCapOfSource(endpoint("tikhub.tiktok.video.comments"), null, 5)).toBe(20);
   });
   it("a tool with no size input at all gives what its page gives: the sample measures it (nobody chose that size)", () => {
-    expect(pageCapOfSource({ ...endpoint("anyapi.tiktok.video.comments"), pagination: [] }, null, 37)).toBe(37);
+    expect(pageCapOfSource(endpoint("anyapi.tiktok.video.comments"), null, 37)).toBe(37);
   });
 });
 
@@ -48,7 +48,7 @@ describe("the page cap: the tool's maximum, not the planner's sample", () => {
 const COUNTERS = [168, 20];
 const stage = (over: Record<string, unknown>) => ({ endpoint_id: "e", expected_rows: 1, planned_rows: 1, parent_key: null, deliver: true, sample_rows: [], measured_by: [], measured_from_calls: [], measured_cost_per_row_usd: 0.000025, ...over }) as unknown as PricedStage;
 function planOf(): PricedPlan {
-  const videos = stage({ key: "videos", title_ar: "الفيديوهات", endpoint_id: "v.videos", planned_rows: 2, expected_rows: 2, columns: [{ key: "caption", title_ar: "الوصف" }], engine: { endpoint_id: "v.videos", params: {}, cursor_param: null, map_code: "return inputs.page", map_file_id: "page", parent_binding: null, built_by: "code" } });
+  const videos = stage({ key: "videos", title_ar: "الفيديوهات", endpoint_id: "v.videos", planned_rows: 2, expected_rows: 2, columns: [{ key: "caption", title_ar: "الوصف" }, { key: "comments", title_ar: "التعليقات" }], engine: { endpoint_id: "v.videos", params: {}, cursor_param: null, map_code: "return inputs.page", map_file_id: "page", parent_binding: null, built_by: "code" } });
   const comments = stage({ key: "comments", title_ar: "التعليقات", endpoint_id: "crawl4ai.tiktok.video.comments", parent_key: "videos", per_parent_rows: 20, planned_rows: 40, expected_rows: 40, columns: [{ key: "text", title_ar: "نص التعليق" }], engine: { endpoint_id: "crawl4ai.tiktok.video.comments", params: { limit: 20 }, cursor_param: null, map_code: "return inputs.page", map_file_id: "page", parent_binding: { param: "post", from: "id" }, built_by: "code" } });
   const stages = [videos, comments];
   return { summary_ar: "ستحصل على فيديوهات وتعليقاتها.", stages, price: priceMissionByCode(stagePriceInputs(stages, undefined), {}) } as unknown as PricedPlan;
@@ -90,12 +90,13 @@ describe("the plan and the engine with the tool's real limit (the live counters 
     expect(c.planned_rows).toBe(188);
     expect(c.per_parent_rows).toBe(168);
   });
-  it("the call asks for what the promise needs, up to the tool's maximum: limit 168, and the 188 are delivered", async () => {
+  it("the call asks for what the promise needs, up to the tool's maximum: limit 168 for the stage, and the 188 are delivered", async () => {
     const plan = await finalPlan();
     expect(plan.stages.find((s) => s.key === "comments")!.engine!.params.limit).toBe(168);
     const r = await run(plan);
     expect(r.delivered).toBe(188);
-    expect(r.asked.map((p) => p.limit)).toEqual([168, 20]);
+    // one size for the stage (the largest share of any parent); a video with fewer comments simply gives fewer
+    expect(r.asked.map((p) => p.limit)).toEqual([168, 168]);
   });
   it("a video with more comments than the tool's maximum: the promise is capped at 500 and the card says the source gives a limited number", async () => {
     const plan = await finalPlan([{ id: "v0", counter: 900 }, { id: "v1", counter: 20 }]);

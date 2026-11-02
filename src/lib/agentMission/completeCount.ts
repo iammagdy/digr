@@ -32,6 +32,8 @@ export interface CompleteCountDeps {
    * page (comments / (comments + their replies counters)) when that page shows the counter includes replies; null when there is no such evidence (the counter is then used as it is).
    */
   basisOf?: (child: PricedStage) => Promise<{ share: number | null } | null>;
+  /** The size input of the child source and the most one call gives, from the source's own catalog schema (pageLimit.ts); null when the source states no maximum. A source with no next page is asked for what the promise needs, up to this maximum (S2 item 3). */
+  pageSizeOf?: (child: PricedStage) => Promise<{ param: string; max: number } | null>;
 }
 
 export interface CompleteCountEstimate {
@@ -178,6 +180,15 @@ export async function withCompleteCount(plan: PricedPlan, deps: CompleteCountDep
       if (s.key === stage.key) return { ...chosen, planned_rows: e.total, expected_rows: e.total, per_parent_rows: Number.isFinite(perParent) ? Math.min(perParent, Math.max(1, e.perParent)) : Math.max(1, e.perParent), all_children: true, parent_pins: e.chosen.map((c) => c.id) };
       return s;
     });
+    // THE CALL ASKS FOR WHAT THE PROMISE NEEDS (S2 item 3): the recipe froze the planner's sample size (`limit: 20`); a source with no next page is asked for the largest share of any parent, up to the maximum its schema states
+    if (chosen.engine && chosen.engine.cursor_param === null && deps.pageSizeOf) {
+      const size = await deps.pageSizeOf(chosen);
+      if (size) {
+        const at = stages.findIndex((x) => x.key === stage.key);
+        const target = stages[at];
+        stages[at] = { ...target, engine: { ...target.engine!, params: { ...target.engine!.params, [size.param]: Math.max(1, Math.min(size.max, Math.floor(e.perParent))) } } };
+      }
+    }
     const price = priceMissionByCode(stagePriceInputs(stages, out.contact_steps), { settings: out.price.settings });
     if (price.overCap) { if (!(out.notes_ar ?? []).includes(NOTE_CAP_AR)) out = { ...out, notes_ar: [...(out.notes_ar ?? []), NOTE_CAP_AR] }; continue; }
     const notes = share === null ? completeCountNotesAr(e, parent.title_ar) : repliesBasisNotesAr(e, parent.title_ar, repliesPlanned);
