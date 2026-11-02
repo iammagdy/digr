@@ -89,6 +89,18 @@ describe("anonymised real pages (decision 7.1): the scan that gates the public r
     expect(ignore).toMatch(/diger-fixtures-anon\*\.zip/);
   });
 
+  it("the call index and the flags-off digests (PR 2a) pass the same scan, and every link in the index is reduced to its numeric id", () => {
+    for (const name of ["fixtures/live/call-index.json", "fixtures/foundation-flags-off.json"]) {
+      const p = path.resolve(__dirname, name);
+      expect(existsSync(p), name).toBe(true);
+      const violations: Violation[] = [];
+      scan(JSON.parse(readFileSync(p, "utf8")), null, "", name, violations, { personal: 0 });
+      expect(violations).toEqual([]);
+    }
+    const index = JSON.parse(readFileSync(path.resolve(__dirname, "fixtures/live/call-index.json"), "utf8")) as { missions: Record<string, Array<[string, string, string, string, number, Record<string, unknown>]>> };
+    for (const calls of Object.values(index.missions)) for (const c of calls) for (const k of ["url", "post", "link"]) if (k in c[5]) expect(String(c[5][k])).toMatch(/^\d{15,}$/);
+  });
+
   it("the scanner itself catches each rule (so a green run is not an empty run)", () => {
     const out: Violation[] = [];
     const c = { personal: 0 };
