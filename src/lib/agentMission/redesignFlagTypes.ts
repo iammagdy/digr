@@ -32,3 +32,52 @@ export function redesignActive(flags: RedesignFlags, type: RedesignType, who: { 
   const mode = flags[type];
   return mode === "on" || (mode === "test" && who.isTest);
 }
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// PER-PLATFORM FLAGS (docs/ROOT-CAUSE.md, section 5.3). The five social platforms each have an optional mode, stored in the SAME `redesign_flags` value of `agent_settings` beside the six types (no table, no SQL), written by the same admin action with the same audit row. NO KEY means the
+// platform follows its request type's value (the default: today's behaviour); a key overrides the type for a mission on that platform, in both directions. Pure: no I/O.
+export const SOCIAL_PLATFORMS = ["tiktok", "x", "instagram", "facebook", "youtube"] as const;
+export type SocialPlatform = (typeof SOCIAL_PLATFORMS)[number];
+export type PlatformFlags = Partial<Record<SocialPlatform, RedesignMode>>;
+export const isSocialPlatform = (v: unknown): v is SocialPlatform => typeof v === "string" && (SOCIAL_PLATFORMS as ReadonlyArray<string>).includes(v);
+/** The request types a platform key can switch: the three social ones. */
+const SOCIAL_TYPES: ReadonlyArray<RedesignType> = ["social_posts", "social_account", "social_comments"];
+
+/** The platform keys of the stored value: a valid platform with a valid mode is kept, everything else is ignored (an unreadable value is no override at all). */
+export function readPlatformFlags(raw: unknown): PlatformFlags {
+  const out: PlatformFlags = {};
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return out;
+  const o = raw as Record<string, unknown>;
+  for (const p of SOCIAL_PLATFORMS) { const v = o[p]; if (isMode(v)) out[p] = v; }
+  return out;
+}
+/** The platform flags out of the settings the worker read (`store.readSettings()`). */
+export function readPlatformFlagsOf(settings: Record<string, unknown> | null | undefined): PlatformFlags {
+  try { return readPlatformFlags(settings ? settings[REDESIGN_FLAGS_KEY] : undefined); } catch { return {}; }
+}
+
+/** The mode that decides for a request type on a platform: the platform's own value when it has one (a social type only), else the type's. */
+export function redesignActiveFor(flags: RedesignFlags, platformFlags: PlatformFlags, type: RedesignType, platform: SocialPlatform | null, who: { isTest: boolean }): boolean {
+  if (platform !== null && SOCIAL_TYPES.includes(type)) {
+    const own = platformFlags[platform];
+    if (own !== undefined) return own === "on" || (own === "test" && who.isTest);
+  }
+  return redesignActive(flags, type, who);
+}
+
+/** The platform a plan is on, from the STRUCTURE of its stages: the capability the code stored, else the platform words of the tool's own id (never a title). The first stage that names one decides. */
+export function platformOfStages(stages: ReadonlyArray<{ capability?: string; endpoint_id?: string }>): SocialPlatform | null {
+  for (const st of stages) {
+    const cap = typeof st.capability === "string" ? st.capability.split(".")[0] : "";
+    if (isSocialPlatform(cap)) return cap;
+    const id = String(st.endpoint_id ?? "").toLowerCase();
+    if (!id) continue;
+    if (id.includes("tiktok")) return "tiktok";
+    if (id.includes("youtube")) return "youtube";
+    if (id.includes("instagram")) return "instagram";
+    if (id.includes("facebook")) return "facebook";
+    // the `x` between a vendor and a job («tikhub.x.…») is a namespace marker, not the platform: X is a tweet search, an X user or an X post, or a twitter word
+    if (id.includes("twitter") || /(?:^|\.)x\.(?:x\.)?(?:search|user|post|tweet|timeline)/.test(id)) return "x";
+  }
+  return null;
+}

@@ -4,6 +4,12 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## ROOT CAUSE and the ONE fix (2026-11-02, after #344): the request contract, the final gate, per-platform flags
+
+Read `docs/ROOT-CAUSE.md` first: the 20 live missions of the test account, the shared causes with file:line, and the design. In one paragraph: nothing checked the finished plan against what the customer asked (a stage was demanded only by a NUMBER, so «مع كل التعليقات والردود» demanded nothing: the 19:00 YouTube plan had neither comments nor replies and was approved); the plan is rewritten by ~10 ordered passes with no gate after the last; the new pipeline falls back to the old one silently; and the tests described invented worlds. Fix: `src/lib/agentMission/requestContract.ts` (built once from the words; final gate in `propose_plan`), per-platform flags (`tiktok`, `x`, `instagram`, `facebook`, `youtube`, same `redesign_flags` value, no key = follows the type, admin rows, same audit), the recorded `fallback_stage`, and `tests/replay-live-missions.test.ts` (the 20 stored missions; add every new live mission to `tests/fixtures/live/replay-missions.json` BEFORE writing its fix). No SQL, no money file, no flag switched.
+
+---
+
 ## Golden run round 2 (G1, G4): the place filter, the limits text, the edit titles, ten replies per comment (2026-11-01, after #327)
 
 Base `main` = `f044b3165a5ba19191c0e51fa91177a61ffb1afe` (#327). One branch, one commit per item (4), one PR. **No SQL, no migration, no Edge Function.** `price.ts`, `agent/src/gateway.ts`, `src/functions/**`, `supabase/**` are untouched; `finalize.ts` has TEXT changes only (the set of reasons the truthful sentence is said for), no settlement line. Caps unchanged (job 25,000 points; provider daily 0.80 USD).

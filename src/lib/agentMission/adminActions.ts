@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { REDESIGN_FLAGS_KEY, REDESIGN_MODES, isRedesignType, normalizeRedesignFlags, type RedesignMode } from "./redesignFlags";
+import { REDESIGN_FLAGS_KEY, REDESIGN_MODES, isRedesignType, isSocialPlatform, normalizeRedesignFlags, readPlatformFlags, type RedesignMode } from "./redesignFlags";
 import { AGENT_SOURCE_MEASURE_WINDOW_MS, AGENT_ALLOWED_MODELS, AGENT_DYNO_MEMORY_MB, AGENT_BUCKET, AGENT_HEARTBEAT_TABLE, AGENT_SETTINGS_TABLE, AGENT_TEST_ACCOUNT_EMAIL, MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE, PLANNING_MODEL_SETTING_KEY } from "./constants";
 import { memoryWarning } from "./concurrency";
 import { latestBeat, workerAlive } from "./heartbeat";
@@ -99,17 +99,24 @@ export async function setMissionPricing(client: any, input: { markup: unknown; m
 }
 
 /**
- * The redesign switch of ONE request type (redesignFlags.ts): saved in agent_settings (key `redesign_flags`) by the admin only. Returns the mode before and after so the caller writes the audit row. An unknown type or
- * mode is refused and nothing is written; nothing here touches a money table.
+ * The redesign switch of ONE request type OR ONE SOCIAL PLATFORM (redesignFlags.ts): saved in agent_settings (key `redesign_flags`) by the admin only. A platform key (tiktok, x, instagram, facebook, youtube) is stored beside the six types in the same value; the mode
+ * `inherit` (a platform only) removes it, so the platform follows its type again. A write of one key keeps every other key. Returns the mode before and after (`inherit` for an absent platform key) so the caller writes the audit row. An unknown key or mode is refused and
+ * nothing is written; nothing here touches a money table.
  */
-export async function setRedesignFlag(client: any, input: { type: unknown; mode: unknown; adminId: string }): Promise<ActionResult<{ before: RedesignMode; after: RedesignMode }>> {
-  if (!isRedesignType(input.type)) return bad(400, "نوع الطلب غير معروف.");
-  if (!(REDESIGN_MODES as ReadonlyArray<unknown>).includes(input.mode)) return bad(400, "الوضع غير معروف.");
-  const mode = input.mode as RedesignMode;
+export async function setRedesignFlag(client: any, input: { type: unknown; mode: unknown; adminId: string }): Promise<ActionResult<{ before: RedesignMode | "inherit"; after: RedesignMode | "inherit" }>> {
+  const platform = isSocialPlatform(input.type);
+  if (!platform && !isRedesignType(input.type)) return bad(400, "نوع الطلب غير معروف.");
+  const modeOk = (REDESIGN_MODES as ReadonlyArray<unknown>).includes(input.mode) || (platform && input.mode === "inherit");
+  if (!modeOk) return bad(400, "الوضع غير معروف.");
+  const mode = input.mode as RedesignMode | "inherit";
   const current = await client.from(AGENT_SETTINGS_TABLE).select("value").eq("key", REDESIGN_FLAGS_KEY).maybeSingle();
   const flags = normalizeRedesignFlags(current.data?.value);
-  const before = flags[input.type];
-  const { error } = await client.from(AGENT_SETTINGS_TABLE).upsert({ key: REDESIGN_FLAGS_KEY, value: { ...flags, [input.type]: mode }, updated_at: new Date().toISOString(), updated_by: input.adminId }, { onConflict: "key" });
+  const platforms = readPlatformFlags(current.data?.value);
+  const key = input.type as string;
+  const before: RedesignMode | "inherit" = platform ? platforms[key as keyof typeof platforms] ?? "inherit" : flags[key as keyof typeof flags];
+  const value: Record<string, unknown> = { ...flags, ...platforms };
+  if (mode === "inherit") delete value[key]; else value[key] = mode;
+  const { error } = await client.from(AGENT_SETTINGS_TABLE).upsert({ key: REDESIGN_FLAGS_KEY, value, updated_at: new Date().toISOString(), updated_by: input.adminId }, { onConflict: "key" });
   if (error) return bad(500, "تعذّر حفظ الإعداد.");
   return { ok: true, before, after: mode };
 }
@@ -139,6 +146,7 @@ export async function loadOverview(client: any, now: number = Date.now()) {
     allowedModels: AGENT_ALLOWED_MODELS,
     pricing: pricing.data?.value ? normalizeMissionPricingSettings(pricing.data.value) : { ...DEFAULT_MISSION_PRICING_SETTINGS },
     redesignFlags: normalizeRedesignFlags(redesign.data?.value),
+    platformFlags: readPlatformFlags(redesign.data?.value),
     testAccountEmail: AGENT_TEST_ACCOUNT_EMAIL,
     missions: Array.isArray(missions.data) ? missions.data : [],
   };
