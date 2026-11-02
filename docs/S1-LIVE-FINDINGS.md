@@ -293,3 +293,29 @@ Changed existing test: `tests/pageable-source-first.test.ts`, one test, marked `
 - **The replies number is an estimate** (the sample's mean over the final comments). The new sentence says so when the source gives fewer.
 - **Pins and edits.** The pinned rows are used only while the parent stage's planned count still equals the number of pinned rows; a customer edit of that count falls back to the search as before.
 - **Not verified:** the real page size of `anyapi.tiktok.comment_replies`, whether the counter of the platform includes replies for a video with a measured share (the share path of #332 is unchanged), the Heroku worker running this code.
+
+---
+
+# Live run of 2026-11-02 09:25 Cairo (S3): `msn_a6dacebce7e7b7432aa1`, the owner's rule «all means all, the AI never judges»
+
+Same test account and the exact request «هات فيديوهين تيك توك بالعربي عن الذكاء الاصطناعي من مصر، مع كل التعليقات والردود.» after #333 (merge `2526491`). Read-only SELECTs only (Q33 the account's missions after 06:30 UTC, Q34 non-progress events, Q35 per-stage fields, Q36 calls, Q37 plan notes, Q38 per-stage columns and measuring calls). Marks: V = read in this session; GUESS = inference.
+
+## S3.1 What the database says (V)
+
+| Question | Answer |
+|---|---|
+| `pipe_new` | **0** (event 3496, 07:27:59 UTC). The OLD pipeline ran the mission. |
+| `built_by` per stage | stage 1 (videos, `tikhub.tiktok.search.videos`): **code**. Stage 2 (comments, `crawl4ai.tiktok.video.comments`): **no engine at all** (`has_engine = false`), so the stage had no recipe the engine could run. No replies stage. |
+| Fallback reason | The gate needs every stage to have a recipe built by code; stage 2 had none, so the model carried out the mission (execution phase: 11,716 model output tokens, two comment calls `{post: <link>, limit: 500}` written by the model, no video call: the videos came from the planning sample). Why the recipe could not be proven: the code drops a stage's recipe silently when the model's mapping does not reproduce every row of the sampled page or no parent column matches the sampled input (`agent/src/engine/spec.ts`); the stored stage keeps neither the model's mapping nor the reason: **GUESS** for which of the two it was. |
+| Why «استُبعد ٢ لأنه لا يخص طلبك» | Old-pipeline rule on the videos stage: the model's `relevance` (topic terms, `exclude_terms: CapCut`, `review: true`) ran; event 3501: 7 found, 2 duplicates, 5 examined, **2 excluded as `other_person`** (rule `full_name`). In the redesigned mode this rule does not run (raw mode, `ingest.ts`), but the plan could not even be made without it: `plan.ts` demanded a `relevance` rule for every text-search stage and refused a plan whose sample did not match it. |
+| Why no replies | The replies stage is built only under a comments stage that has a recipe (`isCommentsStage`), and, even then, only when the sampled comments carry a reply counter above 0. Stage 2 had no recipe. |
+| Why «من ٨٠٠ تعليق» and 802 | The model's own comments number (800, per video 500) was kept: the real-counters step (`withCompleteCount`) runs only on a stage with a recipe in the redesigned mode. Delivered 163 (2 + 161), charged 41, reserved 218. |
+
+## S3.2 The fixes (one PR, behind the same flags, red test first)
+
+1. **No relevance in the new pipeline** (`agent/src/tools.ts`, `plan.ts`): a social request in the redesigned mode drops the model's `relevance` and `yield_from`, and a text-search stage is accepted without them (`PlanLookup.noRelevance`). Duplicates by id remain the only removal. Test: `tests/s3-all-comments-e2e.test.ts` (videos whose captions carry none of the topic words are delivered).
+2. **The replies stage is always in the plan when the request says «ردود»** (`replies.ts`: `wantsReplies`, `requested`, `all`): a sample with no counter or no reply no longer drops it; the estimate is the stated unknown (2 a comment) and follows the final comments; with «all» each comment is read up to the largest number per comment the job allows (50). A platform with no reply source still cannot have it. Test: `tests/s3-replies-requested.test.ts`.
+3. **The comments stage always gets a recipe** (`pageableComments.ts` `commentsEngineByCode`, wired in `tools.ts`): when the model's mapping gives none, the recipe is written by code from the tool's own schema (the input that takes the video, the cursor, the code-written comment-page mapping) and PROVEN on the page the planner sampled before it is kept. With it the real-counters step and the replies step run, and the mission passes the gate. Tests: `tests/s3-code-built-comments.test.ts`, the end-to-end test.
+4. **End to end, the exact request** (`tests/s3-all-comments-e2e.test.ts`, red first): `pipe_new = 1`, every stage `built_by: code`, replies stage present, no `chk_ex_*` exclusion, the two off-topic videos delivered, comments promised = the pinned videos' counters (132 + 66 = 198: 180 comments and 18 replies, not 800) and delivered = promised.
+
+Limits: a world of fakes (the catalog's schemas, not a live source); if no counter is known for any candidate video the plan still keeps the model's number and says so (unchanged from #333); a comments stage whose tool's required inputs are not the video's still has no recipe.
