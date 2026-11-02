@@ -42,7 +42,7 @@ import { counterOfRow } from "../../src/lib/agentMission/allChildren";
 import { withCompleteCount } from "../../src/lib/agentMission/completeCount";
 import { redesignTypeOf } from "../../src/lib/agentMission/redesignFlags";
 import { pageCapOfSource, pageLimitOf } from "../../src/lib/agentMission/pageLimit";
-import { isLanguageColumn } from "../../src/lib/agentMission/languageLabel";
+import { isLanguageColumn, textColumnKeyOf } from "../../src/lib/agentMission/languageLabel";
 import { engagedDefault } from "../../src/lib/agentMission/engaged";
 import { toolProfile } from "../../src/lib/agentMission/toolProfile";
 import { countryToolsFor } from "../../src/lib/agentMission/conditionTools";
@@ -697,7 +697,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         // THE COMMENT LANGUAGE COLUMN (S4): the comments sheet of a code-built plan has the language of each comment as the videos sheet has it; a comments stage whose columns have none gets «لغة التعليق» (the file fills it from the source's code, else from the text's script)
         if (derived && socialRedesignActive(ctx)) {
           for (const st of checked.plan.stages) {
-            if (st.parent_key === null || !st.deliver || st.engine?.built_by !== "code" || !st.columns.some((c) => c.key === "text")) continue;
+            if (st.parent_key === null || !st.deliver || st.engine?.built_by !== "code" || textColumnKeyOf(st.columns) === null) continue;
             if (!st.columns.some((c) => isLanguageColumn(c.title_ar, c.key))) st.columns = [...st.columns, { key: "language", title_ar: "لغة التعليق" }];
           }
         }

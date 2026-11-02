@@ -15,3 +15,15 @@ export function repliesShortfallAr(o: { planned: number; delivered: number; stop
     : shortfallClauseAr(o.stop, { pending: 0, stop: null }).replace(/^لأن /, "لأن ");
   return `الردود التي سُلّمت أقل مما قدّرناه في الخطة ${clause}${o.withMoney ? "، ولم يُخصم إلا مقابل ما سُلّم" : ""}.`;
 }
+
+/**
+ * THE SOURCE ENDED BEFORE THE PROMISED COUNT, WITH THE REAL NUMBERS (S6, live 2026-11-02 ~12:23: 237 of 492 comments and replies were delivered and the text said «بعض الفيديوهات عليها ردود أقل من العدد المطلوب لكل فيديو»). The promise is the platform's counters of the chosen videos; the counter includes items the source
+ * does not give (removed, hidden, nested), so when every tool read has ended the sentence says so with what was delivered and what was promised. Said only for a source end (never for a budget, a time or a failure: those have their own sentences). Pure, Arabic-Indic numerals, no provider.
+ */
+import { toArabicDigits } from "../../src/lib/arabicDigits";
+export function promiseShortfallAr(o: { delivered: number; promised: number; stops: ReadonlyArray<StopReason | null>; withMoney?: boolean }): string {
+  if (!(o.promised > o.delivered) || o.delivered < 0) return "";
+  const ended = o.stops.every((s) => s === null || s === "source_exhausted" || s === "no_new_items" || s === "target_reached");
+  if (!ended) return "";
+  return `لم يكتمل العدد المطلوب لأن المصدر انتهى قبل بلوغ عدّاد المنصة؛ سُلّم ${toArabicDigits(o.delivered)} من ${toArabicDigits(o.promised)} تعليقًا وردًا، فعدّاد المنصة يشمل عناصر لا يعرضها المصدر${o.withMoney === false ? "" : "، ولم يُخصم إلا مقابل ما سُلّم"}.`;
+}

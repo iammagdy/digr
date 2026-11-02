@@ -62,7 +62,7 @@ describe("3. the comments sheet has the comment language, in Arabic", () => {
   it("the column «لغة التعليق» with Arabic labels, and the comment text (a column called «comments») is in the sheet", async () => {
     const r = await run({ extraFromNextTool: 0 });
     const wb = await readWorkbook(r);
-    const sheet = wb.worksheets.find((s) => /تعليق/.test(s.name) && !/فيديو/.test(s.name)) ?? wb.worksheets[1];
+    const sheet = wb.worksheets.find((s) => s.name.startsWith("تعليقات"))!;
     const header = (sheet.getRow(1).values as unknown[]).map((v) => String(v ?? ""));
     const lang = header.indexOf("لغة التعليق");
     expect(lang).toBeGreaterThan(0);
@@ -70,5 +70,39 @@ describe("3. the comments sheet has the comment language, in Arabic", () => {
     sheet.eachRow((row, n) => { if (n > 1) labels.add(String(row.getCell(lang).value ?? "")); });
     expect([...labels].every((v) => ["العربية", "لغة أخرى", "غير محددة"].includes(v))).toBe(true);
     expect(labels.has("العربية")).toBe(true);
+    // the comment text (the column the model called «comments») is filled on every row, replies included
+    const text = header.indexOf("التعليق");
+    let empty = 0;
+    sheet.eachRow((row, n) => { if (n > 1 && String(row.getCell(text).value ?? "").trim() === "") empty += 1; });
+    expect(empty).toBe(0);
+  });
+});
+
+import { loadTregCatalog } from "../src/lib/treg/catalog";
+import { stagePriceInputs, type PricedPlan, type PricedStage } from "../src/lib/agentMission/plan";
+import { priceMissionByCode } from "../src/lib/agentMission/price";
+import { isRepliesStage, withRepliesStages } from "../src/lib/agentMission/replies";
+import { DEFAULT_MISSION_PRICING_SETTINGS } from "../src/lib/missionPricing";
+
+describe("4. the price of the replies follows the calls they need (the live plan priced a call for every comment, 0.0045 USD a reply, while 46 reply calls were made)", () => {
+  const catalog = loadTregCatalog();
+  const SPEC = { endpoint_id: "tikhub.tiktok.video.comments", params: {}, cursor_param: "cursor", map_code: "return []", map_file_id: "p", parent_binding: { param: "aweme_id", from: "id" }, built_by: "code" };
+  const stage = (o: Partial<PricedStage> & Pick<PricedStage, "key" | "title_ar" | "endpoint_id" | "parent_key" | "planned_rows">): PricedStage => ({ expected_rows: o.planned_rows, deliver: true, columns: [], sample_rows: [], measured_by: [], measured_cost_per_row_usd: 0.00005, measured_from_calls: [], ...o });
+  const plan = (): PricedPlan => {
+    const stages = [
+      stage({ key: "videos", title_ar: "الفيديوهات", endpoint_id: "tikhub.tiktok.search.videos", parent_key: null, planned_rows: 2, columns: [{ key: "link", title_ar: "رابط" }], engine: { ...SPEC, endpoint_id: "tikhub.tiktok.search.videos", parent_binding: null } as never }),
+      stage({ key: "comments", title_ar: "التعليقات", endpoint_id: "tikhub.tiktok.video.comments", parent_key: "videos", planned_rows: 400, per_parent_rows: 200, columns: [{ key: "comments", title_ar: "التعليق" }, { key: "replies_count", title_ar: "عدد الردود" }], engine: SPEC as never }),
+    ];
+    return { summary_ar: "x", stages, price: priceMissionByCode(stagePriceInputs(stages), { settings: DEFAULT_MISSION_PRICING_SETTINGS }) } as unknown as PricedPlan;
+  };
+  const sampleWith = (withCounters: number) => Array.from({ length: 50 }, (_, i) => ({ id: `s${i}`, comments: "x", replies_count: i < withCounters ? 1 : 0 }));
+  const costPerComment = (p: PricedPlan) => { const r = p.stages.find(isRepliesStage)!; return (r.measured_cost_per_row_usd * r.planned_rows) / 400 / 0.0009; };
+  it("a sample where 30% of the comments have replies: about 0.3 calls a comment are priced (only those are read)", async () => {
+    const p = await withRepliesStages(plan(), { catalog, isAllowed: () => true, requested: true, sampleRowsOf: async () => sampleWith(15) });
+    expect(costPerComment(p)).toBeCloseTo(0.3, 1);
+  });
+  it("a silent sample (no counter, no reply): every comment is read blind, so a call a comment is priced", async () => {
+    const p = await withRepliesStages(plan(), { catalog, isAllowed: () => true, requested: true, sampleRowsOf: async () => sampleWith(0) });
+    expect(costPerComment(p)).toBeCloseTo(1, 1);
   });
 });

@@ -352,3 +352,37 @@ Owner report (the stored mission was not re-read for this section): the videos' 
 **CHANGED tests (marked in the files):** `tests/s2-replies-promise-final.test.ts`, `tests/s2-live-replay.test.ts` and one assertion of `tests/s3-replies-requested.test.ts` pinned «the replies estimated on top of the counters»; they now pin comments + replies = the counters. The S4 world samples the search in the most-liked order from the start.
 
 Limits: the highest counters are taken among the results of the one sampled page (a larger page is the planner's choice); «most liked» is a proxy for «most commented» where a tool offers no other order; with the sample silent, the split of the total (a quarter replies) is a stated default, not a measurement; the total is capped by the counters even when the source would give more.
+
+---
+
+# Live test of 2026-11-02 ~12:23 Cairo after #336 (S6): `msn_6066498b5da3dd512595`
+
+Read-only SELECTs (Q45 the account's missions of the day with price fields and stages, Q46 this mission's calls, Q47 its events, Q48 its plan price, Q49 its stages). New pipeline (`pipe_new = 1`, every stage `built_by: code`); delivered 239 (2 videos, 150 comments, 87 replies), charged 976; reserve 2,319. The pages are in storage (not readable by SQL): the fixture `tests/fixtures/live/msn_6066498b-live.json` keeps the stored STRUCTURE (rows per call, the cursor chain, the duplicates the saves show), not the page text.
+
+## S6.1 Why comment reading stopped at 139 and 11 (V from the stored calls and progress events; the source's own has-more value is not stored: GUESS for it)
+| Video | Counter | Tool | Calls | Rows per call | Cursors sent | Saved | Stop |
+|---|---|---|---|---|---|---|---|
+| V1 (`…652`) | 329 | `tikhub.tiktok.video.comments` | 8 | 19, 20, 20, 20, 20, 20, 20, **7** | none, 20, 40, 60, 80, 100, 120, 140 | 139 (146 rows; 7 repeated ids, 4 on page 4 and 3 on page 6) | **source end**: the 8th page held 7 rows (a short page) and no 9th call was made |
+| V2 (`…976`) | 163 | the same | 1 | **11** | none | 11 | **source end**: one short page, no second call |
+Not a page cap (the stage's page limit is far above 8), not a time cap (the 9 calls took 14 s of a 25-minute job limit), not the reserve (execution provider cost 0.0366 USD against a hold of 2,319 points), not barren pages (every page added rows or only repeated ids). The counter of the platform (329 and 163) counts comments, replies and nested items; the source gave 150 comments and 87 replies (the replies tool was called for each comment that has a counter: 46 calls). The promise (492 = the counters) was never reachable from this first tool. **The engine stopped at that first tool's end**: a parent whose first tool ended short of its supply was only re-read when it had given NOTHING (S1 item C); the stage's next tool (the sampled `crawl4ai`, which gives up to 500 comments in one call) was stored and never asked.
+
+## S6.2 The price of this plan (V: Q48, Q49) and why today's TikTok plans were 200, 300, 294, 1,141, 2,017
+Rule (`price.ts`, unchanged): total cost = provider estimate + model estimate (0.026 USD: planning 0.008 + 0.008 a further stage + the review share); max charge = total x 5,500 points a USD (the 10x markup), with a minimum of 200; unit price = max charge / planned rows; hold = max charge + about 15%; charged = delivered x unit.
+| Mission (Cairo) | Planned rows (videos / comments / replies) | Provider estimate | Total | Max charge | Note |
+|---|---|---|---|---|---|
+| 07:42 | 2 / 40 / 280 | 0.1813 | 0.2073 | **1,141** | the 280 replies were a stale estimate (S2 item 2) |
+| 09:25 | 2 / 800 / none | 0.0084 | 0.0344 | **200** | 189 points, the 200 minimum applied |
+| 10:26 | 2 / 80 / 20 | 0.0285 | 0.0545 | **300** | |
+| 11:32 | 2 / 6 / 300 | 0.0273 | 0.0533 | **294** | 300 replies estimated on top (S5) |
+| 12:10 (this one) | 2 / 421 / 71 | 0.3406 | 0.3666 | **2,017** (hold 2,319) | **the replies stage priced a call for EVERY comment**: 355 calls x 0.0009 = 0.3195 USD, 0.0045 USD a reply; only 46 reply calls were made (the real provider cost of the run was 0.0386 USD, model 0.0628 USD) |
+The figure 201 is not in the day's missions of the account (the minimum plan is 200; its hold was 218). The jumps come from the replies stage: its price follows the estimated calls, and S4 priced a call a comment for every plan that asked for replies, even when the sample showed which comments have them.
+
+## S6.3 The fixes (one PR, behind the same flags; red test first: `tests/s6-live-fixture.test.ts`, the world built from the stored facts)
+1. **Keep reading until the promised count or the real end** (`agent/src/engine/run.ts`): a parent whose first tool ended before its supply is read by the stage's next tools too, from the start (an id already stored is ignored), until its supply is reached or every tool has ended. The end is real only then. Cost: on platforms whose counter includes replies the supply is never reached, so the next tool is always read (the sampled `crawl4ai`: one call a video, 0.0005 USD).
+2. **The completion text says the real numbers** (`agent/src/repliesShortfall.ts`, `runMission.ts`): when every tool ended short of the promise: «لم يكتمل العدد المطلوب لأن المصدر انتهى قبل بلوغ عدّاد المنصة؛ سُلّم ٢٣٧ من ٤٩٢ تعليقًا وردًا، فعدّاد المنصة يشمل عناصر لا يعرضها المصدر»; a budget, time or failure stop keeps its own sentence.
+3. **The comment language column** (`languageLabel.ts` `textColumnKeyOf`, `tools.ts`, `workbook.ts`, `replies.ts`): the live plan called the text column «comments», so the S4 rule (which looked for a column keyed `text`) never added the language column and the file's fallback never found the text; the text column is now found by key or Arabic title, and the reply mapping reads a column keyed `comments` too (the replies' text was empty).
+4. **The price of the replies** (`replies.ts`): a call a comment is priced only when the sample supports no counter (a blind read); with counters in the sample only the comments that have replies are priced.
+
+Changed existing test (marked `CHANGED`): `tests/s2-live-replay.test.ts` asserted that the sampled next tool is never called; it is now called when the first tool ends before the counter.
+
+Limits: the page text of this mission is in storage, so the fixture reproduces its structure, not its content; whether `crawl4ai` (or any next tool) gives more comments than `tikhub` for these two videos is not known (the tests cover both outcomes: it gives more, or it gives nothing and the text states the real numbers); a platform counter that includes removed or nested items can still never be reached, and the text says so.

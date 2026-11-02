@@ -196,9 +196,13 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
         }
         if (r.aborted) return r;
         // EVERY SELECTED PARENT IS READ TO THE END (S1 complete count, redesigned stages): a parent that gave nothing (an empty answer or a failure) is read once more with its own input, then by the next suitable tool of the stage (which reads the same parent through its own input)
-        if (deps.redesignStages?.has(stage.key) && !isReplies && items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length === baseline && RETRY_ON.has(r.reason)) {
-          if (primary) r = await runStream(deps, stage, spec, `p:${parentId}:retry`, primary.params, parentId, parentCap);
-          for (let i = 0; !r.aborted && i < (spec.alternatives ?? []).length && items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length === baseline && RETRY_ON.has(r.reason); i += 1) {
+        // A TOOL THAT ENDS BEFORE THE PROMISED COUNT IS NOT THE END OF THE SOURCE (S6, live 2026-11-02 ~12:23: the comments tool ended at 139 of a counter of 329 and the stage stopped): the parent's next tools read it too, from the start (an id already stored is ignored), until the parent's own
+        // supply is reached or every tool has ended; only then is the source's end real. A parent that gave nothing keeps the retry of its own input first.
+        const childrenOf = (): number => items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
+        const shortOfSupply = (): boolean => (Number.isFinite(parentCap) ? childrenOf() < parentCap : childrenOf() === baseline);
+        if (deps.redesignStages?.has(stage.key) && !isReplies && shortOfSupply() && RETRY_ON.has(r.reason)) {
+          if (primary && childrenOf() === baseline) r = await runStream(deps, stage, spec, `p:${parentId}:retry`, primary.params, parentId, parentCap);
+          for (let i = 0; !r.aborted && i < (spec.alternatives ?? []).length && shortOfSupply() && RETRY_ON.has(r.reason); i += 1) {
             const alt = spec.alternatives![i];
             const value = alt.parent_binding ? bindingValue(parent[alt.parent_binding.from], false) : null;
             if (!alt.parent_binding || value === null) continue;
