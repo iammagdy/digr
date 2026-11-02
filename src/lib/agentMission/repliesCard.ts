@@ -1,5 +1,6 @@
 import { formatAr } from "../arabicDigits";
 import { AGENT_REPLIES_PER_COMMENT_DEFAULT } from "./constants";
+import { childCountOf } from "./childCount";
 import { countAr, knownItemNoun } from "./itemNoun";
 import type { PricedPlan } from "./plan";
 
@@ -12,11 +13,15 @@ type Stages = Pick<PricedPlan, "stages">["stages"];
 
 const REPLY = knownItemNoun("رد")!;
 const BASIC = "التعليقات الأساسية";
+/** S9: what the plan says instead of a number when the replies are open. */
+export const ALL_REPLIES_AR = "كل الردود على التعليقات المختارة";
 
 export function repliesLinesAr(plan: { stages: Stages; replies_status?: PricedPlan["replies_status"] }): string[] {
   const replies = plan.stages.filter((s) => s.replies_of !== undefined);
   if (replies.length > 0) {
     const planned = replies.reduce((n, s) => n + s.planned_rows, 0);
+    // S9: replies with no promised number: all the replies of the chosen comments; the estimate prices them as a maximum
+    if (replies.some((s) => s.replies_open)) return [`العدد الذي طلبته يخص ${BASIC} وحدها؛ ونضيف إليها ${ALL_REPLIES_AR} دون أن نعدك برقم قبل القراءة، ويُحسب لها في السعر حدّ أقصى بتقدير نحو ${countAr(planned, REPLY)}، ولا تدفع إلا مقابل ما سُلّم فعلًا. لا ندفع لقراءة ردود تعليق عدّاد ردوده صفر. تقدر توقف الردود من «عدّل الخطة» لتخفيض السعر.`];
     return [`العدد الذي طلبته يخص ${BASIC} وحدها؛ ونضيف إليها ردودها بتقدير نحو ${countAr(planned, REPLY)} (حتى ${countAr(Math.max(...replies.map((s) => s.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_DEFAULT)), REPLY)} على كل تعليق له ردود)، ويدخل ذلك في السعر، ولا ندفع لقراءة ردود تعليق عدّاد ردوده صفر. تقدر توقف الردود من «عدّل الخطة» لتخفيض السعر.`];
   }
   switch (plan.replies_status) {
@@ -47,6 +52,26 @@ export function topLevelFactsOf(plan: { stages: Stages }, rowsByStage: Record<st
     if (s.replies_of !== undefined) { out.repliesPlanned += s.planned_rows; out.repliesDelivered += rows; } else { out.topLevelPlanned += s.planned_rows; out.topLevelDelivered += rows; }
   }
   return out;
+}
+
+/**
+ * THE REPLIES JUDGED AGAINST WHAT WAS DELIVERED (S9). A replies stage that is open (`replies_open`) promised no number: after the delivery its promise is the reply counters of the comments that were DELIVERED (each up to the replies read per comment; never fewer than the replies
+ * that came, since a comment whose counter said 0 may still have had some), so the notice, the card and the file summary all say the same numbers. The price is not touched (the money is settled on the rows delivered). A plan with no open replies is returned as it is. Pure.
+ */
+export function withRepliesJudged<P extends { stages: Stages }>(plan: P, rowsByStage: Record<string, ReadonlyArray<Record<string, unknown>>>): P {
+  if (!plan.stages.some((s) => s.replies_open)) return plan;
+  return {
+    ...plan,
+    stages: plan.stages.map((s) => {
+      if (!s.replies_open || s.replies_of === undefined) return s;
+      const cap = Math.max(1, s.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_DEFAULT);
+      const counters = (rowsByStage[s.replies_of] ?? []).reduce((n, row) => n + Math.min(cap, Math.max(0, childCountOf(row) ?? 0)), 0);
+      const rows = Math.max(counters, (rowsByStage[s.key] ?? []).length);
+      const { replies_open: _open, ...rest } = s;
+      void _open;
+      return { ...rest, planned_rows: rows, expected_rows: rows };
+    }),
+  };
 }
 
 /** True for a plan that has a replies stage. */

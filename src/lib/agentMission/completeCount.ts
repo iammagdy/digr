@@ -213,6 +213,7 @@ export async function withCompleteCount(plan: PricedPlan, deps: CompleteCountDep
     // The split is the sample's measured share (replies per comment m: replies are m/(1+m) of the counter; a silent sample: a stated share), the total is fixed by the counters; each stage may be read up to the total (`promise_total`), because the source gives no more than the counter in all.
     let repliesFromSample: { rows: number } | null = null;
     let promiseTotal: number | null = null;
+    let repliesOpen = false;
     if (repliesStage && repliesPlanned === null) {
       const counts = (repliesStage.replies_sample_counts ?? []).filter((n) => Number.isFinite(n) && n >= 0);
       const mean = counts.length > 0 ? counts.reduce((a, b) => a + b, 0) / counts.length : 0;
@@ -227,13 +228,14 @@ export async function withCompleteCount(plan: PricedPlan, deps: CompleteCountDep
         const counters = e.chosen.reduce((n, c) => n + (c.counter === null ? 0 : Math.floor(c.counter)), 0);
         const room = Math.max(0, counters - e.total);
         const replies = Math.min(room, Math.max(1, Math.round(e.total * (mean > 0 ? mean : share / (1 - share)))));
-        if (replies >= 1) { repliesFromSample = { rows: replies }; promiseTotal = e.total + replies; }
+        // S9: the comments are fewer than the counters: the replies are «all the replies of the chosen comments», never a number promised from an estimate (the estimate only prices them, as a maximum)
+        if (replies >= 1) { repliesFromSample = { rows: replies }; repliesOpen = true; }
       }
     }
     const stages = out.stages.map((s) => {
       if (repliesFromSample && s.key === repliesStage!.key) {
         const est = repliesEstimateFor(s, Math.max(1, e.total), s.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_DEFAULT, 0);
-        return { ...s, planned_rows: repliesFromSample.rows, expected_rows: repliesFromSample.rows, ...(promiseTotal !== null ? { promise_total: promiseTotal } : {}), measured_cost_per_row_usd: est.costPerRowUsd * (est.rows / repliesFromSample.rows) };
+        return { ...s, planned_rows: repliesFromSample.rows, expected_rows: repliesFromSample.rows, ...(promiseTotal !== null ? { promise_total: promiseTotal } : {}), ...(repliesOpen ? { replies_open: true } : {}), measured_cost_per_row_usd: est.costPerRowUsd * (est.rows / repliesFromSample.rows) };
       }
       if (repliesPlanned !== null && repliesPlanned > 0 && s.key === repliesStage!.key) return { ...s, planned_rows: repliesPlanned, expected_rows: repliesPlanned, per_parent_rows: AGENT_REPLIES_PER_COMMENT_MAX, promise_total: e.total + repliesPlanned };
       // THE PINNED PARENTS' ROWS (S2 item 6): the rows the plan measured for the chosen parents, so execution reads THESE parents without a new search (kept only when every chosen parent has its row and they are the parents the stage promises)

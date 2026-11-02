@@ -188,6 +188,7 @@ export function applyPlanEdits(planIn: PricedPlan, editsIn: unknown, ctx: EditCo
           repliesStage.expected_rows = split.replies;
           repliesStage.measured_cost_per_row_usd = est.costPerRowUsd * (est.rows / split.replies);
           repliesStage.promise_total = total;
+          delete repliesStage.replies_open;
           stage.promise_total = total;
         }
         plan.assumptions_ar = [...(plan.assumptions_ar ?? []).filter((a) => !a.startsWith("اعتمدنا")), "اعتمدنا كل التعليقات على كل فيديو حسب تعديلك."];
@@ -277,6 +278,10 @@ export function applyPlanEdits(planIn: PricedPlan, editsIn: unknown, ctx: EditCo
     const elsewhere = plan.stages.filter((x) => x.deliver && x.key !== r.key).reduce((n, x) => n + x.planned_rows, 0);
     const per = repliesPer.get(comments.key) ?? r.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_DEFAULT;
     const est = repliesEstimateFor(r, comments.planned_rows, per, elsewhere);
+    // S9: with the counters of the chosen videos known and the comments no longer promised in full, the replies are «all of them», never a number from an estimate: the estimate only prices them, as a maximum
+    const parent = comments.parent_key === null ? undefined : plan.stages.find((x) => x.key === comments.parent_key);
+    const counters = (parent?.pinned_rows ?? []).map((row) => childCountOf(row)).filter((c): c is number => c !== null && c > 0);
+    if (r.engine?.built_by === "code" && counters.length > 0) r.replies_open = true; else delete r.replies_open;
     r.per_parent_rows = per;
     r.planned_rows = est.rows;
     r.replies_per_comment_expected = est.perCommentExpected;
