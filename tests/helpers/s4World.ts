@@ -44,6 +44,8 @@ export interface S4Options {
   /** The consolidation's benchmark 3: the request text as the customer wrote it, and the place as the planner read it («من مصر أو المنطقة العربية»: Egypt and the Arab countries). */
   request?: string;
   arabRegion?: boolean;
+  /** THE 19:00 YOUTUBE REGRESSION (docs/ROOT-CAUSE.md): the model proposes the plan with the listing stage ONLY, dropping the comments and the replies the customer asked for, every time it is sent back. */
+  dropComments?: boolean;
   /** Runs after the customer read the card and before they approve (the plan editor). */
   beforeApproval?: Parameters<typeof replay>[0]["beforeApproval"];
 }
@@ -81,7 +83,7 @@ export async function runS4(o: S4Options = {}) {
   const videoColumns = [{ key: "link", title_ar: "رابط الفيديو" }, { key: "caption", title_ar: "وصف الفيديو" }, { key: "author", title_ar: "صاحب الفيديو" }, { key: "posted_at", title_ar: "تاريخ ووقت النشر" }, { key: "views", title_ar: "المشاهدات" }, { key: "likes", title_ar: "الإعجابات" }, { key: "comments_count", title_ar: "عدد التعليقات" }, { key: "shares", title_ar: "المشاركات" }, { key: "country", title_ar: "الدولة" }];
   const sampleVideos = (country: string, list: Array<{ i: number; n: number; us?: boolean; text?: string }> = counters.map((n, i) => ({ i, n }))) => list.slice(0, 2).map(({ i, n, us, text }) => ({ id: vid(i), link: link(i), caption: text ?? (us ? `AI cartoon video ${i}` : `${TOPIC} فيديو ${i}`), author: `creator${i}`, posted_at: "2026-10-19T09:00:00Z", views: 1000 + i, likes: 50 + i, comments_count: n, shares: 3, country }));
   const plan = (endpoint: string, measuredIndex: number, country: string, list?: Array<{ i: number; n: number; us?: boolean; text?: string }>) => (res: Results) => ({
-    summary_ar: "ستحصل على فيديوهين من تيك توك عن الذكاء الاصطناعي من مصر، مع تعليقاتهما وردودها.",
+    summary_ar: o.dropComments ? "ستحصل على فيديوهين من تيك توك عن الذكاء الاصطناعي من مصر، مع روابطهما ومشاهداتهما." : "ستحصل على فيديوهين من تيك توك عن الذكاء الاصطناعي من مصر، مع تعليقاتهما وردودها.",
     assumptions_ar: ["الأحدث أولًا"],
     stages: [
       { key: "videos", title_ar: "فيديوهات تيك توك عن الذكاء الاصطناعي من مصر", endpoint_id: endpoint, expected_rows: 2, parent_key: null, deliver: true, columns: videoColumns, sample_rows: sampleVideos(country, list), measured_by: [callIds(res)[measuredIndex]],
@@ -91,6 +93,7 @@ export async function runS4(o: S4Options = {}) {
         sample_rows: [{ text: `تعليق 0 عن ${TOPIC}`, author: "viewer0", posted_at: "2026-10-20T09:00:00Z", likes: 10, replies_count: 1, ...(o.noLanguage ? {} : { language: "ar" }) }], measured_by: [callIds(res)[1]] },
     ],
   });
+  const dropComments = (build: (res: Results) => { stages: unknown[] }) => (res: Results) => { const p = build(res); return { ...p, stages: p.stages.slice(0, 1) }; };
   const why = "the cheaper sources return no author or link fields in their catalog description";
   const steps: FakeStep[] = [
     { tool: "report_progress", args: { message_ar: "أجرّب مصادر الفيديوهات", counts: { sources: 3 } } },
@@ -138,7 +141,8 @@ export async function runS4(o: S4Options = {}) {
     // (sampled in the most-liked order from the start: S5 sends a plan sampled in another order back, which the S4 tests are not about)
     { tool: "treg_call", args: { endpoint_id: "tikhub.tiktok.search.videos", params: { keyword: QUERY, region: "EG", count: 20, sort_type: 1 }, why } },
     { tool: "run_code", args: (r: Results) => ({ code: videoMap(callIds(r)[2], "data.search_item_list", "region"), files: [callIds(r)[2]] }) },
-    { tool: "propose_plan", args: plan("tikhub.tiktok.search.videos", 2, "EG") },
+    { tool: "propose_plan", args: o.dropComments ? dropComments(plan("tikhub.tiktok.search.videos", 2, "EG")) : plan("tikhub.tiktok.search.videos", 2, "EG") },
+    ...(o.dropComments ? [{ tool: "propose_plan", args: dropComments(plan("tikhub.tiktok.search.videos", 2, "EG")) }, { tool: "propose_plan", args: dropComments(plan("tikhub.tiktok.search.videos", 2, "EG")) }] : []),
     ] as FakeStep[]),
   ];
   return replay({

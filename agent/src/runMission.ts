@@ -33,9 +33,10 @@ import { applySnapshot, readPlanningState, resumeNoteOf, snapshotOf, writePlanni
 import { ItemStore, type ItemSnapshot, type StopReason } from "./items/itemStore";
 import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
-import { readRedesignFlags } from "../../src/lib/agentMission/redesignFlags";
+import { readPlatformFlagsOf, readRedesignFlags } from "../../src/lib/agentMission/redesignFlags";
+import { askedTextOf, buildRequestContract } from "../../src/lib/agentMission/requestContract";
 import { sealFinalPrice } from "../../src/lib/agentMission/finalPrice";
-import { accountIsTest, anyRedesignFlag, redesignStagesOf } from "./redesign";
+import { accountIsTest, anyRedesignFlag, fallbackStageOf, redesignStagesOf } from "./redesign";
 import { promiseShortfallAr, repliesShortfallAr } from "./repliesShortfall";
 import { TOPIC_OPTIONS_AR, topicMeaningOf, topicQuestionAr } from "../../src/lib/agentMission/topicMeaning";
 import { reportedPlan, withPromiseCaps, withRepliesJudged } from "../../src/lib/agentMission/repliesCard";
@@ -283,7 +284,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const calls = await store.listCalls(mission.id);
   const access = await deps.resolveAccess(mission.user_id);
   const counter = { seq: lastSeq(calls) };
-  const requestForBudget = `${mission.request_text} ${mission.answer_text ?? ""}`;
+  const requestForBudget = askedTextOf(mission);
   // THE MEASUREMENT AND THE HEALTH OF THE SOURCES, read from the recorded calls of all missions (read only; planning never waits on it): the ranking the planner gets is computed from them
   const planningNow = Date.now();
   const sourceStats = statsFromCalls(await store.recentCalls(planningNow - AGENT_SOURCE_MEASURE_WINDOW_MS).catch(() => []));
@@ -300,7 +301,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const settings = (await store.readSettings().catch(() => ({}))) as Record<string, unknown>;
   const pricingSettings = normalizeMissionPricingSettings(settings[MISSION_PRICING_SETTING_KEY]);
   // THE REDESIGN FLAGS (S1 item 0.1): read once at the start of the run; every one is off unless the owner switched it
-  const redesign = { flags: readRedesignFlags(settings), isTest: await accountIsTest(store, mission.user_id) };
+  const redesign = { flags: readRedesignFlags(settings), isTest: await accountIsTest(store, mission.user_id), platformFlags: readPlatformFlagsOf(settings), platform: buildRequestContract(mission.request_text, mission.answer_text).platform };
   const ctx: ToolContext = { redesign, phase: "planning", mission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, pricingSettings, stats: sourceStats, now: planningNow };
   // AN AMBIGUOUS TOPIC IS ASKED BEFORE PLANNING (S8, owner decision; redesigned mode only): «فيديوهات الذكاء الاصطناعي» may mean videos that TALK ABOUT it or videos MADE WITH it; «عن X» means about and «معمول بـ X» means made with, so only the request that says neither is asked, by code, with two ready answers,
   // before any source is read or any model is paid for (the customer's answer is read with the request and decides the meaning)
@@ -434,9 +435,14 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   let output: Awaited<ReturnType<ModelDriver["run"]>>;
   const engineOn = deps.engine !== false && plan.stages.every((s) => s.engine !== undefined);
   // THE REDESIGN (S1): which stages run the redesigned engine (flag active for this account AND every recipe built by code); recorded as an internal event only when some flag is switched on, so with every flag off the mission's events are exactly as they were
-  const redesignFlags = readRedesignFlags((await store.readSettings().catch(() => ({}))) as Record<string, unknown>);
-  const redesignStages = redesignStagesOf(plan, redesignFlags, await accountIsTest(store, mission.user_id));
-  if (anyRedesignFlag(redesignFlags)) await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي للمسار الذي شغّل المهمة.", counts: { pipe_new: redesignStages.size > 0 ? 1 : 0 } }).catch(() => undefined);
+  const redesignSettings = (await store.readSettings().catch(() => ({}))) as Record<string, unknown>;
+  const redesignFlags = readRedesignFlags(redesignSettings);
+  const platformFlags = readPlatformFlagsOf(redesignSettings);
+  const redesignIsTest = await accountIsTest(store, mission.user_id);
+  const redesignStages = redesignStagesOf(plan, redesignFlags, redesignIsTest, platformFlags);
+  // THE SILENT FALLBACK, NAMED (docs/ROOT-CAUSE.md, cause 3): beside `pipe_new`, the number of the first stage whose recipe was not built by code when the flag was active for this mission
+  const fallbackStage = redesignStages.size === 0 ? fallbackStageOf(plan, redesignFlags, redesignIsTest, platformFlags) : null;
+  if (anyRedesignFlag(redesignFlags, platformFlags)) await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي للمسار الذي شغّل المهمة.", counts: { pipe_new: redesignStages.size > 0 ? 1 : 0, ...(fallbackStage !== null ? { fallback_stage: fallbackStage } : {}) } }).catch(() => undefined);
   if (engineOn) {
     // THE MODEL PLANNED, CODE EXECUTES: every stage has a recipe the plan check proved, so no model session is started at all (the only model call left is the small review of items the rule cannot decide)
     const tracked = trackRun();

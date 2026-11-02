@@ -35,12 +35,13 @@ import { rankedCandidates } from "../../src/lib/agentMission/candidates";
 import { perParentQuantities } from "../../src/lib/agentMission/quantity";
 import { sourceNameMatches } from "../../src/lib/agentMission/namedSources";
 import { namedSourceRoutes } from "../../src/lib/agentMission/namedRoutes";
-import { redesignActive, type RedesignFlags } from "../../src/lib/agentMission/redesignFlags";
+import { redesignActiveFor, type PlatformFlags, type RedesignFlags, type SocialPlatform } from "../../src/lib/agentMission/redesignFlags";
 import { conditionsOfRequest } from "../../src/lib/agentMission/requestConditions";
 import { applyGapNotes } from "../../src/lib/agentMission/gapLines";
 import { counterOfRow } from "../../src/lib/agentMission/allChildren";
 import { withCompleteCount } from "../../src/lib/agentMission/completeCount";
 import { redesignTypeOf } from "../../src/lib/agentMission/redesignFlags";
+import { askedTextOf, buildRequestContract, gateContract, type ContractPlan } from "../../src/lib/agentMission/requestContract";
 import { pageCapOfSource, pageLimitOf } from "../../src/lib/agentMission/pageLimit";
 import { isLanguageColumn, textColumnKeyOf } from "../../src/lib/agentMission/languageLabel";
 import { conditionsAsked, matchesCustomerConditions } from "../../src/lib/agentMission/customerConditions";
@@ -107,15 +108,17 @@ export interface RunState {
   sortSendBacks: number;
   /** How many times a plan that chooses among an account's recent posts on ONE sampled page was sent back to read the next page (S11; a limit: the planner is never stuck). */
   accountPageSendBacks: number;
+  /** How many times a plan with no comments stage for a request that asked for the comments was sent back by the final gate (requestContract.ts: CONTRACT_SEND_BACKS_MAX). */
+  contractSendBacks: number;
   /** Per source stream (a collect_pages source and its inputs): whether the last read says the source has more pages. */
   moreAvailable: Map<string, boolean>;
   /** What each source gave in the planning samples: the rows of every answered call and a key of its inputs (two samples of the same item are one). */
   samples: Map<string, Array<{ rows: number; key: string }>>;
 }
-export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), described: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, giveUpNoRowsRefusals: 0, mediaSendBacks: 0, peopleSendBacks: 0, countrySendBacks: 0, sortSendBacks: 0, accountPageSendBacks: 0, moreAvailable: new Map(), samples: new Map() });
+export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), described: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, giveUpNoRowsRefusals: 0, mediaSendBacks: 0, peopleSendBacks: 0, countrySendBacks: 0, sortSendBacks: 0, accountPageSendBacks: 0, contractSendBacks: 0, moreAvailable: new Map(), samples: new Map() });
 /** The redesigned mode of planning: any of the three social flags is active for this mission's account (planning does not know the request type yet; with every flag off this is false and nothing changes). */
-export const socialRedesignActive = (ctx: { redesign?: { flags: RedesignFlags; isTest: boolean } }): boolean =>
-  ctx.redesign !== undefined && (["social_posts", "social_account", "social_comments"] as const).some((t) => redesignActive(ctx.redesign!.flags, t, { isTest: ctx.redesign!.isTest }));
+export const socialRedesignActive = (ctx: { redesign?: { flags: RedesignFlags; isTest: boolean; platformFlags?: PlatformFlags; platform?: SocialPlatform | null } }): boolean =>
+  ctx.redesign !== undefined && (["social_posts", "social_account", "social_comments"] as const).some((t) => redesignActiveFor(ctx.redesign!.flags, ctx.redesign!.platformFlags ?? {}, t, ctx.redesign!.platform ?? null, { isTest: ctx.redesign!.isTest }));
 /** The most times finish is refused for the same reason in one run. */
 export const FINISH_REFUSALS_MAX = 3;
 /** The most times a planning that already holds real rows is told not to end with «cannot_serve» for a source's price or yield. */
@@ -157,7 +160,7 @@ export interface ToolContext {
   /** «Now» for the health window (tests pass a fixed moment). */
   now?: number;
   /** The redesign flags in force for this mission and whether its account is a test account (redesignFlags.ts). Absent: the old behaviour. */
-  redesign?: { flags: RedesignFlags; isTest: boolean };
+  redesign?: { flags: RedesignFlags; isTest: boolean; /** Per-platform overrides (docs/ROOT-CAUSE.md, section 5.3): absent = every platform follows its type. */ platformFlags?: PlatformFlags; /** The platform the customer's words name (the request contract), null when none. */ platform?: SocialPlatform | null };
 }
 
 const FILE_ID = /^(call|out)_\d{4,6}$/;
@@ -370,7 +373,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         ].sort((x, y) => x.effective - y.effective || x.id.localeCompare(y.id));
         // CONDITION COVERAGE FIRST, THEN PRICE (S1 item 1.5, owner decision D7): in the redesigned mode the tools whose own inputs can carry more of the customer's conditions come first, and each hit says which it can and cannot carry
         if (socialRedesignActive(ctx)) {
-          const wanted = conditionsOfRequest(`${mission.request_text} ${mission.answer_text ?? ""}`);
+          const wanted = conditionsOfRequest(askedTextOf(mission));
           if (wanted.length > 0) {
             const cover = new Map<string, number>();
             for (const m of merged) {
@@ -384,7 +387,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           }
         }
         // THE PEOPLE OF EACH COMPANY («ومن كل شركة اتنين من المديرين»): a company source whose rows a people source can take as input (the website, the page link, the name) ranks first; one that feeds none is demoted and says so
-        if (perParentQuantities(`${mission.request_text} ${mission.answer_text ?? ""}`).some((q) => isPeopleNoun(q.noun ?? ""))) {
+        if (perParentQuantities(askedTextOf(mission)).some((q) => isPeopleNoun(q.noun ?? ""))) {
           const allowed = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
           const linkable = new Map(linkableCompanySources(ctx.catalog, allowed, now).map((l) => [l.id, l]));
           for (const m of merged) {
@@ -449,7 +452,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         // ONE OVER-BUDGET REFUSAL IS NOT THE END OF THE SEARCH (live, 2026-10-31: the only people call was a source dearer than the planning budget; it was refused once and the planner stopped, dropping the decision makers): the answer
         // names the cheapest sources that can do the step (the people sources of a company when the request asks for people), and says the search goes on
         if (ctx.phase === "planning" && "refused" in result && (result.refused === "over_budget" || result.refused === "stage_reserved")) {
-          const wantsPeople = perParentQuantities(`${mission.request_text} ${mission.answer_text ?? ""}`).some((q) => isPeopleNoun(q.noun ?? ""));
+          const wantsPeople = perParentQuantities(askedTextOf(mission)).some((q) => isPeopleNoun(q.noun ?? ""));
           const allowedSource = (x: string): boolean => policyVerdict(x, ctx.access).allowed && !blockedEndpointReason(x) && isSellable(x, ctx.catalog);
           const next = (wantsPeople ? peopleSourcesForCompanies(ctx.catalog, allowedSource).map((p) => p.id) : untriedSources(state, id, 6)).filter((x) => x !== id && !state.tried.has(x)).slice(0, 3);
           return { ...result, next_sources: next, next_step: "this call costs more than the planning budget that is left, so it was NOT made. One refusal does not end the search: sample the cheapest of next_sources (cheapest first) for this step, and give the step up only after two sources were really tried and gave no rows" };
@@ -633,7 +636,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       handler: async (a) => {
         const stagesIn: any[] = Array.isArray(a.stages) ? a.stages : [];
         // RULE 4 OF THE CONSOLIDATION: THE MEANING OF THE TOPIC IS THE MODEL'S UNDERSTANDING, FOR ANY TOPIC. A request that names something one can make content with and says neither «about» nor «made with» is asked, before any plan, with two ready answers (the customer's answer is read with the request, and the model reads it again)
-        const modelMeaning = socialRedesignActive(ctx) ? topicMeaningFromModel(a.topic_meaning, `${mission.request_text} ${mission.answer_text ?? ""}`) : null;
+        const modelMeaning = socialRedesignActive(ctx) ? topicMeaningFromModel(a.topic_meaning, askedTextOf(mission)) : null;
         if (modelMeaning && modelMeaning.kind === "ambiguous" && modelMeaning.topic && !mission.answer_text && state.question === null) {
           const question = topicQuestionAr(modelMeaning.topic);
           state.question = question;
@@ -663,7 +666,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           evidenceText: (id: string) => evidence.get(id) ?? null,
           endpointCapability: (endpointId: string) => ctx.catalog.byId.get(endpointId)?.capability ?? null,
           endpointAllowed: (endpointId: string) => (Boolean(ctx.web) && webSourceAvailable(endpointId, webAvailableOf(ctx))) || (isSellable(endpointId, ctx.catalog) && !blockedEndpointReason(endpointId) && policyVerdict(endpointId, ctx.access).allowed),
-          requestText: `${mission.request_text} ${mission.answer_text ?? ""}`,
+          requestText: askedTextOf(mission),
           ...(mission.answer_text ? { answerText: mission.answer_text } : {}),
           isContactSource,
           pricingSettings: ctx.pricingSettings,
@@ -691,13 +694,13 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         }
         // THE MODEL PLANS, CODE EXECUTES: what code needs to carry each stage out without the model is derived from what the agent really did and proven on the measured page (a stage that cannot be proven has no recipe)
         // THE DEFAULT FOR A COMMENTS REQUEST IS THE MOST ENGAGED VIDEOS (S5, owner decision), unless the customer asked for the newest or gave a date: the search tool's most-liked order, else the highest counters among the results (an order, never a filter)
-        const engagedOrder = socialRedesignActive(ctx) && engagedDefault(`${mission.request_text} ${mission.answer_text ?? ""}`, stagesIn.map((st) => ({ key: String(st?.key ?? ""), parent_key: st?.parent_key ?? null, ...(Array.isArray(st?.filters) ? { filters: st.filters } : {}) })));
+        const engagedOrder = socialRedesignActive(ctx) && engagedDefault(askedTextOf(mission), stagesIn.map((st) => ({ key: String(st?.key ?? ""), parent_key: st?.parent_key ?? null, ...(Array.isArray(st?.filters) ? { filters: st.filters } : {}) })));
         const engaged = engagedOrder;
-        const meaning = modelMeaning && (modelMeaning.kind === "about" || modelMeaning.kind === "made_with") ? modelMeaning : topicMeaningOf(`${mission.request_text} ${mission.answer_text ?? ""}`);
+        const meaning = modelMeaning && (modelMeaning.kind === "about" || modelMeaning.kind === "made_with") ? modelMeaning : topicMeaningOf(askedTextOf(mission));
         const topicQuery = socialRedesignActive(ctx) && stagesIn.some((st) => st?.parent_key) ? topicQueryOf(meaning) : null;
         let derived: Awaited<ReturnType<typeof deriveEngineSpecsChecked>> | null = null;
         try {
-          derived = await deriveEngineSpecsChecked(checked.plan, { store, missionId: mission.id, catalog: ctx.catalog, calls, codeRuns: state.codeRuns, callParams: state.callParams, sandbox: runSandbox, ...(socialRedesignActive(ctx) ? { codeBuild: { nowMs: ctx.now ?? Date.now(), engaged, ...(socialRedesignActive(ctx) && !engaged && (wantsNewestOrDate(`${mission.request_text} ${mission.answer_text ?? ""}`) || stagesIn.some((st) => Array.isArray(st?.filters) && st.filters.some((f: { kind?: string }) => f?.kind === "period"))) ? { newest: true } : {}), ...(topicQuery ? { topicQuery } : {}) } } : {}) });
+          derived = await deriveEngineSpecsChecked(checked.plan, { store, missionId: mission.id, catalog: ctx.catalog, calls, codeRuns: state.codeRuns, callParams: state.callParams, sandbox: runSandbox, ...(socialRedesignActive(ctx) ? { codeBuild: { nowMs: ctx.now ?? Date.now(), engaged, ...(socialRedesignActive(ctx) && !engaged && (wantsNewestOrDate(askedTextOf(mission)) || stagesIn.some((st) => Array.isArray(st?.filters) && st.filters.some((f: { kind?: string }) => f?.kind === "period"))) ? { newest: true } : {}), ...(topicQuery ? { topicQuery } : {}) } } : {}) });
         } catch { /* a plan without recipes is carried out by the model, through the same item store */ }
         // THE CONTRACT: a mapping that gives what the engine needs but breaks what the card promises (an id, a column, a field a filter reads) is refused here, before the customer sees a card the file cannot match
         if (derived && derived.issues.length > 0) return err("the plan was not accepted; fix these and propose again", { issues: derived.issues.slice(0, 12) });
@@ -819,7 +822,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           checked.plan = await withRepliesStages(checked.plan, {
             catalog: ctx.catalog, isAllowed: allowedReply, stats: ctx.stats,
             // S3 (redesigned mode only): a request that mentions the replies always has the replies stage; «all» reads each comment to the end of its replies
-            ...(socialRedesignActive(ctx) ? { requested: wantsReplies(`${mission.request_text} ${mission.answer_text ?? ""}`), all: wantsAllChildren(`${mission.request_text} ${mission.answer_text ?? ""}`) } : {}),
+            ...(socialRedesignActive(ctx) ? { requested: wantsReplies(askedTextOf(mission)), all: wantsAllChildren(askedTextOf(mission)) } : {}),
             // RULE 6: the comments' own mapping plus the tokens the replies tool needs (Facebook: feedback_id and expansion_token), PROVEN on the sampled page: the same rows with the same ids, a token on at least one comment
             remapWithTokens: async (st, tokens) => {
               const sp = st.engine;
@@ -864,7 +867,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
               } catch { return null; }
             };
             checked.plan = await withCompleteCount(checked.plan, {
-              request: `${mission.request_text} ${mission.answer_text ?? ""}`,
+              request: askedTextOf(mission),
               candidatesOf: async (parentStage) => {
                 const sp = parentStage.engine;
                 if (!sp) return null;
@@ -968,6 +971,17 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           }
           if (lines.length > 0) { state.finishRefusals += 1; return err("the plan was not accepted; fix these and propose again", { issues: lines }); }
         }
+        // THE FINAL GATE (docs/ROOT-CAUSE.md, section 5.2): the finished plan, after the last pass, is checked against the REQUEST CONTRACT built once from the customer's words. A comments stage the customer asked for that the plan lacks is sent back to the planner (at most CONTRACT_SEND_BACKS_MAX
+        // times, naming the catalog's comments tools); after that, and for everything the planner cannot fix (the replies, a condition no tool field carries), the plan is repaired by code so the card says what it does NOT carry before approval. Redesigned mode only: with every flag off nothing here runs.
+        if (socialRedesignActive(ctx)) {
+          const contract = buildRequestContract(mission.request_text, mission.answer_text);
+          const commentsCapability = contract.platform ? new RegExp(`^${contract.platform}\\.(?:post|video)\\.comments$`) : null;
+          const commentsTools = commentsCapability ? [...ctx.catalog.byId.values()].filter((e) => commentsCapability.test(String(e.capability ?? "")) && isSellable(e.id, ctx.catalog) && !blockedEndpointReason(e.id) && policyVerdict(e.id, ctx.access).allowed).map((e) => e.id) : [];
+          const gate = gateContract(contract, checked.plan as unknown as ContractPlan, state.contractSendBacks, { commentsTools });
+          if (gate.kind === "send_back") { state.contractSendBacks += 1; return err("the plan was not accepted yet; fix this and propose again", { issues: gate.issues }); }
+          const items = gate.verdict.items;
+          await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي لمطابقة الخطة لطلب العميل.", counts: { contract_carried: items.filter((i) => i.status === "carried").length, contract_stated: items.filter((i) => i.status === "stated").length, contract_missing: items.filter((i) => i.status === "missing").length, contract_written_by_code: gate.added.length, contract_send_backs: state.contractSendBacks } }).catch(() => undefined);
+        }
         state.proposedPlan = checked.plan;
         state.terminal = true;
         await store.updateMission(mission.id, { plan: checked.plan as any });
@@ -1031,7 +1045,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         }
         // NO GIVE-UP BEFORE THE CATALOG WAS REALLY ASKED: no sample gave a row, and fewer than three sources of the request's job were reached (a refused or unavailable call reaches nothing): the untried sources are named, a named channel's own listing first
         if (ctx.phase === "planning" && outcome === "cannot_serve" && state.giveUpNoRowsRefusals < GIVE_UP_NO_ROWS_REFUSALS_MAX) {
-          const found = untriedBeforeGiveUp({ request: `${mission.request_text} ${mission.answer_text ?? ""}`, catalog: ctx.catalog, access: ctx.access, stats: ctx.stats ?? new Map(), now: ctx.now ?? Date.now(), calls: await store.listCalls(mission.id) });
+          const found = untriedBeforeGiveUp({ request: askedTextOf(mission), catalog: ctx.catalog, access: ctx.access, stats: ctx.stats ?? new Map(), now: ctx.now ?? Date.now(), calls: await store.listCalls(mission.id) });
           if (found.applies) { state.giveUpNoRowsRefusals += 1; return err(giveUpRefusalText(found)); }
         }
         // rows the agent itself calls unfiltered are never delivered: it must filter them (the stage's relevance rule does it in save_rows) or say honestly that it cannot serve
