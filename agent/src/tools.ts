@@ -40,6 +40,7 @@ import { applyGapNotes } from "../../src/lib/agentMission/gapLines";
 import { counterOfRow } from "../../src/lib/agentMission/allChildren";
 import { withCompleteCount } from "../../src/lib/agentMission/completeCount";
 import { pageCapOfSource, pageLimitOf } from "../../src/lib/agentMission/pageLimit";
+import { pageableCommentAlternative } from "../../src/lib/agentMission/pageableComments";
 import { deriveItemId } from "../../src/lib/agentMission/contract";
 import { coverageOf } from "../../src/lib/agentMission/sourceRanking";
 import { catalogDateKind } from "../../src/lib/agentMission/relativeDates";
@@ -743,6 +744,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
                 const childRows = await mappedRowsOf(sp);
                 return pageCapOfSource(ctx.catalog.byId.get(sp.endpoint_id) ?? { inputs: [], summary: null }, sp.cursor_param, childRows ? childRows.length : null);
               },
+              // S2 item 4: the catalog's comments tool with a cursor, when the recipe's tool has no next page and the planner sampled no pageable one
+              pageableAlternativeOf: async (child) => pageableCommentAlternative(child, checked.plan.stages.find((x) => x.key === child.parent_key), ctx.catalog, { isAllowed: allowedReply, stats: ctx.stats }),
               pageSizeOf: async (child) => {
                 const sp = child.engine;
                 const limit = sp ? pageLimitOf(ctx.catalog.byId.get(sp.endpoint_id) ?? { inputs: [], summary: null }) : null;

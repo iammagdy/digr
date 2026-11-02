@@ -282,7 +282,8 @@ async function nextToolsOf(deps: DeriveDeps, stage: PricedPlan["stages"][number]
     if (!built.ok) continue;
     const cursor = (other.pagination ?? []).find((p) => !LIMIT_INPUT.test(p)) ?? discoverCursor(other, pageJson);
     const window = dateWindowOf(other, built.params);
-    out.push({ endpoint_id: other.id, params: built.params, cursor_param: cursor, map_code: run.code, map_file_id: callId, ...(proof.idField !== "id" ? { id_field: proof.idField } : {}), ...(window ? { window } : {}), ...(binding ? { parent_binding: binding } : {}) });
+    const callUsd = Number(row.cost_usd ?? 0);
+    out.push({ endpoint_id: other.id, params: built.params, cursor_param: cursor, map_code: run.code, map_file_id: callId, ...(proof.idField !== "id" ? { id_field: proof.idField } : {}), ...(window ? { window } : {}), ...(binding ? { parent_binding: binding } : {}), ...(callUsd > 0 && Number(row.rows_returned) > 0 ? { cost_per_row_usd: callUsd / Number(row.rows_returned) } : {}) });
   }
   return out;
 }

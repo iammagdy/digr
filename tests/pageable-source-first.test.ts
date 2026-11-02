@@ -83,8 +83,16 @@ describe("a pageable source first, a shortfall only when none exists", () => {
     expect(c.engine!.endpoint_id).toBe("v.commentsA");
     expect(c.planned_rows).toBe(131);
   });
-  it("when the first source can page far enough, it stays (nothing is switched for nothing)", async () => {
+  // CHANGED (S2 item 4, owner's instruction): this test pinned «when the first source can page far enough, it stays». The owner now wants a catalog comments tool that has a cursor PREFERRED even when the first source reaches the promise
+  // (the first source stays as the next tool). The case where nothing pageable exists is the test above («no pageable source exists»).
+  it("when the first source can page far enough but a pageable one exists, the pageable one is preferred and the first stays as the next tool", async () => {
     const p = await withCompleteCount(planOf([altOf("v.commentsB", "cursor")]), { request: "كل التعليقات على فيديوهين", candidatesOf: async () => [{ id: "v0", counter: 90 }, { id: "v1", counter: 11 }], pageCapOf: async () => 120 });
+    const c = p.stages.find((s) => s.key === "comments")!;
+    expect(c.engine!.endpoint_id).toBe("v.commentsB");
+    expect((c.engine!.alternatives ?? []).map((a) => a.endpoint_id)).toEqual(["v.commentsA"]);
+  });
+  it("when the first source can page far enough and no pageable one exists, it stays", async () => {
+    const p = await withCompleteCount(planOf(undefined), { request: "كل التعليقات على فيديوهين", candidatesOf: async () => [{ id: "v0", counter: 90 }, { id: "v1", counter: 11 }], pageCapOf: async () => 120 });
     expect(p.stages.find((s) => s.key === "comments")!.engine!.endpoint_id).toBe("v.commentsA");
   });
 });

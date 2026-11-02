@@ -28,7 +28,8 @@ describe("the pageable comments tools of the catalog (TikTok), by their schemas"
     expect(list[0].id).toBe("tikhub.tiktok.video.comments");
     expect(list[0]).toMatchObject({ parentParam: "aweme_id", from: "id", cursorParam: "cursor" });
     const ids = list.map((s) => s.id);
-    expect(ids).toEqual(expect.arrayContaining(["anyapi.tiktok.video.comments", "scrapecreators.tiktok.video.comments"]));
+    expect(ids).toEqual(expect.arrayContaining(["tikhub.tiktok.video.comments", "anyapi.tiktok.video.comments"]));
+    // a tool whose schema does not state the text of its items is not mapped (scrapecreators lists only a part of its item fields)
   });
   it("a tool with no cursor, the tool being replaced, a routed one, and one whose list the mapping cannot read are left out", () => {
     const ids = sourcesOf().map((s) => s.id);
@@ -123,7 +124,7 @@ describe("the plan prefers a comments tool with a cursor and reads it page after
     const r = await run(await finalPlan());
     expect(r.rows.length).toBe(188);
     const mine = r.calls.filter((c) => c.endpoint === "tikhub.tiktok.video.comments");
-    expect(mine.filter((c) => c.params.aweme_id === "0").map((c) => c.params.cursor ?? 0)).toEqual([0, 20, 40, 60, 80, 100, 120, 140, 160]);
+    expect(mine.filter((c) => c.params.aweme_id === "0").map((c) => c.params.cursor ?? 0)).toEqual([0, "20", "40", "60", "80", "100", "120", "140", "160"]);
     expect(mine.filter((c) => c.params.aweme_id === "1")).toHaveLength(1);
     expect(r.calls.map((c) => c.endpoint)).not.toContain("crawl4ai.tiktok.video.comments");
   });
@@ -134,8 +135,8 @@ describe("the plan prefers a comments tool with a cursor and reads it page after
   });
   it("when the pageable tool fails for a parent, the tool it replaced reads that parent (nothing promised is lost)", async () => {
     const r = await run(await finalPlan(), { failPageable: true });
-    expect(r.rows.length).toBe(168 + 20 > 0 ? r.rows.length : 0);
     expect(r.calls.map((c) => c.endpoint)).toContain("crawl4ai.tiktok.video.comments");
-    expect(r.rows.length).toBeGreaterThan(0);
+    // the replaced tool is read as the stage's next tool: its size is the one the promise needed (168), so both videos are complete
+    expect(r.rows.length).toBe(188);
   });
 });
