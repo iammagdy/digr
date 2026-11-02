@@ -1,8 +1,9 @@
 import { toArabicDigits } from "../arabicDigits";
-import { AGENT_REPLIES_PER_COMMENT_MAX } from "./constants";
+import { AGENT_REPLIES_PER_COMMENT_DEFAULT, AGENT_REPLIES_PER_COMMENT_MAX } from "./constants";
 import { wantsAllChildren } from "./allChildren";
 import { isPeopleStage } from "./people";
 import { priceMissionByCode } from "./price";
+import { repliesEstimateFor } from "./replies";
 import { stagePriceInputs, type PricedPlan, type PricedStage } from "./plan";
 
 /**
@@ -164,7 +165,15 @@ export async function withCompleteCount(plan: PricedPlan, deps: CompleteCountDep
       if (repliesStage && requested === null) repliesPlanned = Math.max(0, counted - e.total);
     }
     if (e.total < 1) continue;
+    // THE REPLIES FOLLOW THE FINAL COMMENTS (S2 item 2): with no measured share, the replies stage was estimated on the comments number the MODEL planned (live: 800 comments x 0.35 = 280 replies); the comments are now final (40), so the replies are derived again by the one rule
+    // the plan editor uses: the sample's measured replies per comment over the final comments, never above the cap per comment, never a number the sample does not support
+    let repliesFromSample: { rows: number; perCommentExpected: number; costPerRowUsd: number } | null = null;
+    if (repliesStage && repliesPlanned === null) {
+      const elsewhere = out.stages.filter((x) => x.deliver && x.key !== repliesStage.key).reduce((n, x) => n + (x.key === stage.key ? e.total : x.planned_rows), 0);
+      repliesFromSample = repliesEstimateFor(repliesStage, e.total, repliesStage.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_DEFAULT, elsewhere);
+    }
     const stages = out.stages.map((s) => {
+      if (repliesFromSample && s.key === repliesStage!.key) return { ...s, planned_rows: repliesFromSample.rows, expected_rows: repliesFromSample.rows, replies_per_comment_expected: repliesFromSample.perCommentExpected, measured_cost_per_row_usd: repliesFromSample.costPerRowUsd };
       if (repliesPlanned !== null && repliesPlanned > 0 && s.key === repliesStage!.key) return { ...s, planned_rows: repliesPlanned, expected_rows: repliesPlanned, per_parent_rows: AGENT_REPLIES_PER_COMMENT_MAX };
       if (s.key === stage.key) return { ...chosen, planned_rows: e.total, expected_rows: e.total, per_parent_rows: Number.isFinite(perParent) ? Math.min(perParent, Math.max(1, e.perParent)) : Math.max(1, e.perParent), all_children: true, parent_pins: e.chosen.map((c) => c.id) };
       return s;
