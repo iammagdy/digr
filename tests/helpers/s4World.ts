@@ -26,7 +26,8 @@ export interface S4Options {
 export const flagsOn = (d: never) => { const store = (d as { store: MemoryStore }).store; store.settings.redesign_flags = { social_posts: "test", social_account: "test", social_comments: "test" }; store.userEmails.set(REPLAY_USER, "iam.magdy+1@outlook.com"); return d; };
 
 export async function runS4(o: S4Options = {}) {
-  const countryOf = (tool: "anyapi" | "tikhub", i: number) => (tool === "anyapi" ? "IQ" : "EG") + (i >= 0 ? "" : "");
+  // the cheapest search returns videos of every country (the first two are Iraqi; one of the sample is Egyptian, so the card's promise is not refused for lack of evidence); the search with a region input returns Egyptian videos only
+  const countryOf = (tool: "anyapi" | "tikhub", i: number) => (tool === "anyapi" ? (i < 2 ? "IQ" : "EG") : "EG");
   // the cheapest search: no country input, videos from Iraq
   const anyapiPage = () => ({ output: { data: { videos: COUNTERS.map((n, i) => ({ id: vid(i), url: link(i), caption: `${TOPIC} فيديو ${i}`, authorName: `creator${i}`, createdUtc: 1788000000 + i, views: 1000 + i, likes: 50 + i, comments: n, shares: 3, saves: 1, country: countryOf("anyapi", i) })) } } });
   // the search with a `region` input: the videos of that country
