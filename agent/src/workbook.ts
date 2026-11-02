@@ -364,10 +364,10 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
       const values: ExcelJS.CellValue[] = lay.columns.map((c, k) => {
         const got = c.get(record, parent);
         // A LANGUAGE CODE IS NEVER A CUSTOMER VALUE (S1 live findings fix 4): in a mission of the new pipeline the language cells are Arabic words
-        // the source's own word first; when it gives none, or cannot tell, the language of the text by its script (S4: the comment language column of the comments sheet, a mark, nothing is removed)
+        // the source's own word first; when it gives none (an empty cell), the language of the text by its script; a source that says it cannot tell keeps «غير محددة», its own word (S4: the comment language column of the comments sheet, a mark, nothing is removed)
         const labelled = newPipeline && languageAt[k] ? languageLabelAr(got) : got;
         const textAt = newPipeline && languageAt[k] ? lay.columns.findIndex((x) => x.key === "text") : -1;
-        const v = newPipeline && languageAt[k] && (labelled === null || labelled === undefined || (typeof labelled === "string" && (labelled.trim() === "" || labelled === "غير محددة"))) && textAt >= 0 ? languageOfTextAr(lay.columns[textAt].get(record, parent)) : labelled;
+        const v = newPipeline && languageAt[k] && (labelled === null || labelled === undefined || (typeof labelled === "string" && labelled.trim() === "")) && textAt >= 0 ? languageOfTextAr(lay.columns[textAt].get(record, parent)) : labelled;
         // a missing value is an EMPTY cell, never an empty text
         if (v === null || v === undefined || (typeof v === "string" && v.trim() === "")) { cellFormat[k] = null; return null; }
         if (dateAt[k]) {
