@@ -39,6 +39,7 @@ import { conditionsOfRequest } from "../../src/lib/agentMission/requestCondition
 import { applyGapNotes } from "../../src/lib/agentMission/gapLines";
 import { counterOfRow } from "../../src/lib/agentMission/allChildren";
 import { withCompleteCount } from "../../src/lib/agentMission/completeCount";
+import { redesignTypeOf } from "../../src/lib/agentMission/redesignFlags";
 import { pageCapOfSource, pageLimitOf } from "../../src/lib/agentMission/pageLimit";
 import { pageableCommentAlternative } from "../../src/lib/agentMission/pageableComments";
 import { deriveItemId } from "../../src/lib/agentMission/contract";
@@ -611,6 +612,10 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       },
       handler: async (a) => {
         const stagesIn: any[] = Array.isArray(a.stages) ? a.stages : [];
+        // NO TOPIC OR RELEVANCE JUDGEMENT IN THE NEW PIPELINE (S3, owner rule): for a social request in the redesigned mode the AI understands the request, builds the tool call and formats the file; it never decides which items belong. The topic is in the request code builds
+        // (the search words), not in a rule that removes what the source returned, so a relevance rule the model wrote is dropped here and cannot refuse the plan or exclude a row. Duplicates by id remain the only removal.
+        const noRelevance = socialRedesignActive(ctx) && redesignTypeOf(stagesIn as never, { account: stagesIn.some((st) => Array.isArray(st?.filters) && st.filters.some((f: { kind?: string; values?: unknown[] }) => f?.kind === "account" && Array.isArray(f.values) && f.values.length > 0)) }, (id: string) => ctx.catalog.byId.get(id)?.capability ?? null).startsWith("social_");
+        if (noRelevance) for (const st of stagesIn) if (st && typeof st === "object") { delete st.relevance; delete st.yield_from; }
         const ids = new Set<string>();
         for (const s of stagesIn) {
           if (s && Array.isArray(s.measured_by)) for (const id of s.measured_by) ids.add(String(id));
@@ -620,6 +625,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         const evidence = new Map<string, string | null>();
         for (const id of ids) evidence.set(id, FILE_ID.test(id) ? await store.getFile(mission.id, pathOfFile(id)) : null);
         const lookup = {
+          ...(noRelevance ? { noRelevance: true } : {}),
           call: (id: string): RecordedCall | null => {
             const row = calls.find((c) => c.id === `${mission.id}:${id}`);
             return row ? { id, endpointId: row.endpoint_id, ok: row.status === "ok", costUsd: Number(row.cost_usd) || 0, rows: Number(row.rows_returned) || 0, durationMs: Number(row.duration_ms) || undefined, params: row.params_digest } : null;

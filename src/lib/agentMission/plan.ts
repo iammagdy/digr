@@ -140,6 +140,8 @@ export interface RecordedCall {
 }
 
 export interface PlanLookup {
+  /** S3: a social request in the redesigned mode carries no relevance rule (the AI never judges what belongs): a text-search stage is then accepted without one. */
+  noRelevance?: boolean;
   call(id: string): RecordedCall | null;
   /** Text of a saved page or code output (to prove a sample row's id and links were really seen). Null when the id is unknown. */
   evidenceText(id: string): string | null;
@@ -529,7 +531,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
       const words = sectorWordsOf(requestWords).slice(0, 4);
       const named = cleanColumns.filter((c) => /name|title|desc|about|industry|sector|summary|text|company/i.test(c.key)).map((c) => c.key).slice(0, 3);
       relevance = { subject_ar: `شركات ${words.slice(0, 3).join(" ")}`, terms: [...new Set(words.flatMap((w) => [w, w.replace(/ات$/, "ة"), ...sectorEnglishWords(w)]))].slice(0, 14), text_columns: named.length > 0 ? named : [cleanColumns[0].key], min_own_words: 0, review: true, entity: true };
-    } else if (foundBySearch && raw.deliver === true && !isChild) {
+    } else if (foundBySearch && raw.deliver === true && !isChild && !lookup.noRelevance) {
       issues.push(`${label}: its rows were found by a text search, so it needs \`relevance\` (subject_ar, terms, context_terms, exclude_terms, text_columns) and \`yield_from\`: code keeps only the rows that are ABOUT what the customer asked and charges only for those`);
     }
 
