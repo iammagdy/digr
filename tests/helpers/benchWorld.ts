@@ -77,6 +77,10 @@ export function fbWorld(): BenchRun {
     { tool: "treg_call", args: { endpoint_id: FB.COMMENTS, params: { url: fbUrl(3) }, why: WHY } },
     { tool: "run_code", args: (r: Results) => ({ code: commentsMap(callIds(r)[1]), files: [callIds(r)[1]] }) },
     { tool: "propose_plan", args: plan },
+    // round 4: the listing has no topic and no date input, so the plan is sent back to read the listing once more (the next read, the same mapping), and the plan is proposed again citing both reads
+    { tool: "treg_call", args: { endpoint_id: FB.POSTS, params: { page: "AlArabiya", limit: 20 }, why: WHY } },
+    { tool: "run_code", args: (r: Results) => ({ code: postsMap(callIds(r)[2]), files: [callIds(r)[2]] }) },
+    { tool: "propose_plan", args: (r: Results) => { const p = plan(r) as { stages: Array<{ measured_by: string[] }> }; p.stages[0].measured_by = [callIds(r)[0], callIds(r)[2]]; return p; } },
   ];
   return { request: FB.REQUEST, steps, dispatch };
 }
@@ -199,12 +203,13 @@ export const FBT = {
 const fbtUrl = (i: number) => `https://www.facebook.com/AlArabiya/posts/pfbid0${i}`;
 const fbtPost = (i: number, texts: string[] = FBT.TEXTS) => ({ id: `fbt${i}`, text: texts[i], url: fbtUrl(i), createdUtc: 1793600000 - i * 7200, likes: 50 + i, comments: FBT.COUNTERS[i], shares: 3 });
 export const fbtCommentsOf = (i: number) => Array.from({ length: FBT.COUNTERS[i] }, (_, k) => ({ id: `fbtc-${i}-${k}`, text: `تعليق ${k} على المنشور ${i}`, created_at: "2026-11-02T10:00:00.000Z", reply_count: 0, reaction_count: k, author: { name: `قارئ ${k}` }, feedback_id: `fbtf-${i}-${k}`, expansion_token: `fbtx-${i}-${k}` }));
-export function fbTopicWorld(texts: string[] = FBT.TEXTS): BenchRun {
+/** `emptyFor`: posts whose comments the only comments tool answers EMPTY for (the live post whose url was a /posts/pfbid link). */
+export function fbTopicWorld(texts: string[] = FBT.TEXTS, emptyFor: number[] = []): BenchRun {
   const post = (i: number) => fbtPost(i, texts);
   const dispatch = (c: { endpointId: string; params: unknown }) => {
     const p = c.params as Record<string, unknown>;
     if (c.endpointId === FBT.POSTS) return tregResult({ output: { data: p.cursor === "cur_3" ? { posts: [3, 4, 5].map(post), nextCursor: null } : { posts: [0, 1, 2].map(post), nextCursor: "cur_3" } } }, 0.002);
-    if (c.endpointId === FBT.COMMENTS) { const i = FBT.COUNTERS.findIndex((_, k) => fbtUrl(k) === String(p.url)); return tregResult({ comments: fbtCommentsOf(Math.max(0, i)), cursor: null }, 0.00188); }
+    if (c.endpointId === FBT.COMMENTS) { const i = FBT.COUNTERS.findIndex((_, k) => fbtUrl(k) === String(p.url)); return tregResult({ comments: emptyFor.includes(i) ? [] : fbtCommentsOf(Math.max(0, i)), cursor: null }, 0.00188); }
     if (c.endpointId === FBT.REPLIES) return tregResult({ output: { data: { comments: [], nextCursor: null } } }, 0.0012);
     throw new Error(`unexpected tool ${c.endpointId}`);
   };

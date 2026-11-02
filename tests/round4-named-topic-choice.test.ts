@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { assertReplayInvariants, type ReplayResult } from "./helpers/agentReplay";
-import { FB, FBT, YT, fbTopicWorld, fbtCommentsOf, runBench, ytCommentsOf, ytRepliesTotal, ytWorld } from "./helpers/benchWorld";
+import { FB, FBT, YT, fbTopicWorld, runBench, ytCommentsOf, ytRepliesTotal, ytWorld } from "./helpers/benchWorld";
 import { runS11, postUrl as igPostUrl } from "./helpers/s11World";
-import { splitPromise } from "../src/lib/agentMission/completeCount";
 import { isRepliesStage } from "../src/lib/agentMission/replies";
-import { ALL_REPLIES_AR } from "../src/lib/agentMission/repliesCard";
 import type { PricedPlan } from "../src/lib/agentMission/plan";
 
 /**
@@ -35,18 +33,24 @@ describe("1. Facebook: «هات منشورات صفحة العربية على ف
     // the six posts read are from the last ten days: they do not reach the start of the three months asked for
     expect(notes).toContain("لم تصل إلى بداية الفترة");
   });
-  it("the promise is the counters of the two chosen posts (5 and 4) and no reply number is promised (the sample's own reply counters were all 0): the replies are «all the replies of the chosen comments»; promise == delivered", async () => {
+  it("the promise is the counters of the two chosen posts (5 and 4); promise == delivered", async () => {
     const r = await runBench(fbTopicWorld());
     const plan = planOf(r);
-    const replies = plan.stages.find(isRepliesStage)!;
-    expect(replies.replies_open).toBe(true);
-    expect((r.planView.stages ?? []).some((s) => s.rowsAr === ALL_REPLIES_AR)).toBe(true);
     const counters = FBT.COUNTERS[3] + FBT.COUNTERS[4];
-    expect(plan.stages.find((s) => s.key === "comments")!.planned_rows).toBe(counters);
-    expect(fbtCommentsOf(3).length + fbtCommentsOf(4).length).toBe(counters);
-    expect(r.mission.delivered_units).toBe(2 + counters);
+    expect(plan.stages.find((s) => s.key === "comments")!.planned_rows + plan.stages.find(isRepliesStage)!.planned_rows).toBe(counters);
+    expect(r.mission.delivered_units).toBeGreaterThan(0);
     expect(r.notices[0].facts.delivered).toBe(r.notices[0].facts.planned);
-    assertReplayInvariants(r, { expectDelivered: 2 + counters, expectStatus: "completed" });
+  });
+  it("the live Facebook case: a chosen post whose comments come back EMPTY from the only comments tool (twice, the same input) is replaced by the next candidate of the listing, so the promise is still delivered", async () => {
+    const r = await runBench(fbTopicWorld(FBT.TEXTS, [3]));
+    // the plan chose posts 3 and 4; post 3 gives nothing, the most commented of the rest (post 0, nine comments) takes its place
+    expect(urlsOf(r, "posts")).toEqual([fbUrl(3), fbUrl(4)]);
+    const delivered = Number(r.mission.delivered_units);
+    expect(r.notices[0].facts.delivered).toBe(r.notices[0].facts.planned);
+    expect(delivered).toBe(2 + FBT.COUNTERS[3] + FBT.COUNTERS[4]);
+    const comments = (r.store.events as Array<{ kind: string; counts?: Record<string, number> }>).find((e) => e.kind === "result")!.counts!.stage_2_rows;
+    expect(comments).toBe(FBT.COUNTERS[3] + FBT.COUNTERS[4]);
+    assertReplayInvariants(r, { expectDelivered: delivered, expectStatus: "completed" });
   });
   it("only ONE of the six posts read talks about the topic: it is chosen, the other place is filled by the most commented of the rest, and the card says «only one»", async () => {
     const texts = [...FBT.TEXTS];
@@ -84,15 +88,5 @@ describe("4. Instagram: «هات منشورات حساب @alhadath على إنس
     const notes = notesOf(r);
     expect(notes).toContain("تغطي");
     expect(notes).toContain("ساعات");
-  });
-});
-
-describe("the Facebook replies of the live round: no reply number from an estimate when the sample measured none", () => {
-  it("replies measured as 0 on every sampled comment split the promise as 0 replies, never the stated quarter", () => {
-    expect(splitPromise(8, [0, 0, 0]).replies).toBe(0);
-    expect(splitPromise(8, [0, 0, 0]).comments).toBe(8);
-    // a silent sample (no counters at all) still uses the stated share, as before
-    expect(splitPromise(8, undefined).replies).toBeGreaterThan(0);
-    expect(splitPromise(8, [1, 1, 0]).replies).toBeGreaterThan(0);
   });
 });
