@@ -7,7 +7,7 @@ import type { StageFilter } from "../filters";
 import type { MissionPricingSettings } from "../../missionPricing";
 import type { Ask } from "./ask";
 import { rankPool, factsOf, type PoolRow } from "./pool";
-import { childPromise, promiseLineAr, type StagePromise } from "./promise";
+import { childPromise, perParentPromise, promiseLineAr, type StagePromise } from "./promise";
 import { cardMapCode, cardsFor, CHILD_COLUMNS, COUNTRY_AR, mapPage, type CardRole, type ToolCard } from "./toolCards";
 import type { SocialPlatform } from "../redesignFlagTypes";
 
@@ -107,8 +107,22 @@ const DEFAULT_COUNT = 10;
 /** The least share of replies a comment is assumed to have when the exposure pages show none: it sizes the reserve's maximum only, never a promise. */
 const OPEN_REPLIES_FLOOR = 0.1;
 
+/**
+ * THE MAXIMUM OF AN OPEN REPLIES STAGE (F5: an estimate never becomes a promise; it may only size the hold's maximum). It is bounded by the comments ACTUALLY CHOSEN for the
+ * stage (`comments`: the comments stage's own planned rows, never a whole-video counter) times the replies read for each comment (`perComment`), and sized inside that bound by
+ * the mean replies counter of the comments the exposure check read, each counter cut at `perComment` (a comment is never read for more). Live msn_e32cd467: the 20,541 of the
+ * videos' counters times 9.375 gave 192,572 replies for 200 comments asked.
+ */
+export function openRepliesMax(comments: number, replyCounters: ReadonlyArray<number | null>, perComment: number): number {
+  const cap = Math.max(1, Math.floor(perComment));
+  const n = Math.max(0, Math.floor(comments));
+  const seen = replyCounters.filter((c): c is number => c !== null && Number.isFinite(c)).map((c) => Math.min(cap, Math.max(0, c)));
+  const ratio = seen.length > 0 ? seen.reduce((s, c) => s + c, 0) / seen.length : 0;
+  return Math.max(1, Math.min(n * cap, Math.ceil(n * Math.max(ratio, OPEN_REPLIES_FLOOR))));
+}
+
 /** The customer's one sentence for a compiled plan (Arabic, Arabic-Indic digits, no provider, no price). */
-export function summaryAr(ask: Ask, n: number, shape: ReadonlyArray<StageRole>): string {
+export function summaryAr(ask: Ask, n: number, shape: ReadonlyArray<StageRole>, perParent: number | null = null): string {
   const w = NOUN[ask.platform!];
   const count = n === 1 ? w.one : n === 2 ? w.two : `${toArabicDigits(n)} ${w.many}`;
   const parts = [count, w.where];
@@ -116,7 +130,9 @@ export function summaryAr(ask: Ask, n: number, shape: ReadonlyArray<StageRole>):
   if (ask.country) parts.push(`من ${COUNTRY_AR[ask.country] ?? ask.country}`);
   if (ask.language === "ar") parts.push("بالعربية");
   if (ask.period) parts.push(`بين ${toArabicDigits(ask.period.from)} و${toArabicDigits(ask.period.to)}`);
-  const children = shape.includes("comments") ? (shape.includes("replies") ? "، مع كل تعليقاتها وردودها" : "، مع تعليقاتها") : "";
+  // a number per parent is said as the customer said it («مع ١٠٠ تعليق من كل فيديو»), never as «all the comments»
+  const comments = perParent !== null ? `${toArabicDigits(perParent)} تعليق من كل ${w.one}` : null;
+  const children = shape.includes("comments") ? (shape.includes("replies") ? (comments ? `، مع ${comments} وردودها` : "، مع كل تعليقاتها وردودها") : comments ? `، مع ${comments}` : "، مع تعليقاتها") : "";
   return `${parts.join(" ")}${children}.`;
 }
 
@@ -185,39 +201,43 @@ export function compilePlan(input: CompileInput): CompileResult {
   if (unmet > 0) notes.push(`لم نجد في ما قرأناه ما يكفي مما يطابق المصدر أو الدولة أو اللغة المطلوبة؛ ${toArabicDigits(unmet)} من العناصر المختارة لا تطابق ذلك، وعليها علامة في الملف.`);
   if (ask.language && card.cannot?.includes("language")) notes.push("اللغة: اخترنا من بين النتائج ما كتب باللغة المطلوبة، وفي الملف عمود للغة كل صف.");
 
+  // THE CUSTOMER'S NUMBER PER PARENT («١٠٠ تعليق من كل فيديو», live msn_e32cd467): each chosen parent gives at most that number of top-level comments; the card's edit (a total) comes later and wins
+  const perParent = commentsCard && ask.edits.comments === undefined ? ask.commentsPerParent : null;
   if (commentsCard) {
     const cap = ask.edits.comments ?? null;
     const counters = chosen.map((r) => counter(r));
     const exposureComments = exposurePages.reduce((s, e) => s + e.rows.length, 0);
-    const p = childPromise(card.counter ? counters : [], cap, Math.max(1, exposureComments));
+    const p = perParent !== null ? perParentPromise(card.counter ? counters : [], perParent, chosen.length) : childPromise(card.counter ? counters : [], cap, Math.max(1, exposureComments));
     promises.comments = p;
+    // the rows the stage may read: the number per parent for every parent (a parent with fewer gives what it has), else the promise
+    const planned = perParent !== null ? perParent * chosen.length : p.n;
     stages.push({
       key: "comments", title_ar: "التعليقات", endpoint_id: commentsCard.endpointId, ...(capabilityOf(commentsCard.endpointId) ? { capability: capabilityOf(commentsCard.endpointId)! } : {}),
-      expected_rows: p.n, planned_rows: p.n, parent_key: parentKey, ...(cap !== null ? { per_parent_rows: Math.ceil(p.n / chosen.length) } : {}), deliver: true,
+      expected_rows: planned, planned_rows: planned, parent_key: parentKey, ...(perParent !== null ? { per_parent_rows: perParent } : cap !== null ? { per_parent_rows: Math.ceil(p.n / chosen.length) } : {}), deliver: true,
       columns: CHILD_COLUMNS.map((c) => ({ ...c })), sample_rows: (exposurePages[0]?.rows ?? []).slice(0, 3), measured_by: exposurePages.map((e) => e.callId).filter((x): x is string => x !== null),
       measured_from_calls: exposurePages.map((e) => e.callId).filter((x): x is string => x !== null), measured_cost_per_row_usd: commentsCard.costUsdPerPage / Math.max(1, commentsCard.page.observedRowsPerPage),
-      yield_share: 1, review_share: 0, parent_pins: chosen.map((r) => r.id), ...(ask.comments === "all" ? { all_children: true } : {}), ...(p.type === "open" ? { children_open: true } : {}),
+      yield_share: 1, review_share: 0, parent_pins: chosen.map((r) => r.id), ...(ask.comments === "all" && perParent === null ? { all_children: true } : {}), ...(p.type === "open" ? { children_open: true } : {}),
       engine: { endpoint_id: commentsCard.endpointId, params: {}, cursor_param: commentsCard.inputs.cursor, map_code: cardMapCode(commentsCard), map_file_id: "page", parent_binding: { param: commentsCard.inputs.parent!.param, from: commentsCard.inputs.parent!.from }, built_by: "code" },
     } as PricedStage);
-    notes.push(promiseLineAr(p, "comments", card.counter?.counts === "comments_and_replies"));
+    notes.push(promiseLineAr(p, "comments", card.counter?.counts === "comments_and_replies", perParent));
   }
 
   if (shape.includes("replies")) {
     if (repliesCard && commentsCard) {
       const seen = exposurePages.flatMap((e) => e.rows);
-      const withCounter = seen.map((r) => Number(r.replies_count)).filter((n) => Number.isFinite(n));
-      const ratio = withCounter.length > 0 ? withCounter.reduce((s, n) => s + n, 0) / withCounter.length : 0;
-      const openMax = Math.ceil(promises.comments.n * Math.max(ratio, OPEN_REPLIES_FLOOR));
+      const perComment = ask.edits.replies === undefined && ask.repliesPerComment !== null ? Math.min(ask.repliesPerComment, AGENT_REPLIES_PER_COMMENT_MAX) : null;
+      const commentsRows = stages.find((x) => x.key === "comments")!.planned_rows;
+      const openMax = openRepliesMax(commentsRows, seen.map((r) => Number(r.replies_count)), perComment ?? AGENT_REPLIES_PER_COMMENT_MAX);
       const p: StagePromise = { type: "open", n: Math.max(1, Math.floor(ask.edits.replies ?? openMax)) };
       promises.comments_replies = p;
       stages.push({
         key: "comments_replies", title_ar: "الردود", endpoint_id: repliesCard.endpointId, ...(capabilityOf(repliesCard.endpointId) ? { capability: capabilityOf(repliesCard.endpointId)! } : {}),
-        expected_rows: p.n, planned_rows: p.n, parent_key: "comments", replies_of: "comments", per_parent_rows: AGENT_REPLIES_PER_COMMENT_MAX, deliver: true,
+        expected_rows: p.n, planned_rows: p.n, parent_key: "comments", replies_of: "comments", per_parent_rows: perComment ?? AGENT_REPLIES_PER_COMMENT_MAX, deliver: true,
         columns: CHILD_COLUMNS.map((c) => ({ ...c })), sample_rows: [], measured_by: [], measured_from_calls: [], measured_cost_per_row_usd: repliesCard.costUsdPerPage / Math.max(1, repliesCard.page.observedRowsPerPage),
         yield_share: 1, review_share: 0, replies_open: true, ...(ask.replies === "all" ? { replies_read_all: true } : {}), replies_call_usd: repliesCard.costUsdPerPage,
         engine: { endpoint_id: repliesCard.endpointId, params: {}, cursor_param: repliesCard.inputs.cursor, map_code: cardMapCode(repliesCard), map_file_id: "page", parent_binding: { param: repliesCard.inputs.parent!.param, from: repliesCard.inputs.parent!.from, ...(repliesCard.inputs.parent!.also ? { also: repliesCard.inputs.parent!.also.map((a) => ({ ...a })) } : {}) }, built_by: "code" },
       } as PricedStage);
-      notes.push(promiseLineAr(p, "replies", false));
+      notes.push(promiseLineAr(p, "replies", false, perComment));
     } else {
       // F6: no verified card reads the replies on this platform: the step is NOT included, said before approval (never a model recipe, never the old pipeline)
       unserved.push({ what_ar: "الردود", reason_ar: "لا توجد بعد أداة موثّقة لقراءة الردود على هذه المنصة، فلن تُضاف هذه الخطوة." });
@@ -226,7 +246,7 @@ export function compilePlan(input: CompileInput): CompileResult {
 
   const price = priceMissionByCode(stagePriceInputs(stages), { settings: input.pricingSettings });
   const plan: PricedPlan = {
-    summary_ar: summaryAr(ask, chosen.length, shape.filter((s) => s !== "replies" || stages.some((x) => x.replies_of !== undefined))),
+    summary_ar: summaryAr(ask, chosen.length, shape.filter((s) => s !== "replies" || stages.some((x) => x.replies_of !== undefined)), perParent),
     ...(notes.length > 0 ? { notes_ar: notes } : {}),
     ...(ask.count === null ? { assumptions_ar: [`لم تحدد عددًا، فاخترنا ${toArabicDigits(DEFAULT_COUNT)}؛ يمكنك تعديله قبل الموافقة.`] } : {}),
     stages,
