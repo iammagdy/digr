@@ -272,7 +272,7 @@ export async function withRepliesStages(planIn: PricedPlan, deps: RepliesDeps): 
         columns: comments.columns.map((c) => ({ ...c })), sample_rows: [], measured_by: [], planned_rows: rows, measured_cost_per_row_usd: (source.usd * calls) / rows, measured_from_calls: [],
         replies_of: comments.key, replies_per_comment_expected: expected.perComment, replies_sample_counts: counters.slice(0, 100).map((n) => Math.min(Math.max(0, Math.floor(n)), AGENT_REPLIES_PER_COMMENT_MAX)), replies_call_usd: source.usd,
         engine: {
-          endpoint_id: source.id, params: replyCallParams(source), cursor_param: source.cursorParam, map_code: buildReplyMapCode(replyColumnKeysOf(comments.columns)), map_file_id: "page",
+          endpoint_id: source.id, params: replyCallParams(source), cursor_param: source.cursorParam, map_code: buildReplyMapCode(replyColumnKeysOf(comments.columns)), map_file_id: "page", built_by: "code",
           parent_binding: { param: source.commentParam, from: "id", also: [...(source.videoIdParam ? [{ param: source.videoIdParam, from: "id", grand: true as const }] : []), ...(source.urlParam && linkKey ? [{ param: source.urlParam, from: linkKey, grand: true as const }] : [])] },
         },
       };
