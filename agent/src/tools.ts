@@ -41,7 +41,7 @@ import { counterOfRow } from "../../src/lib/agentMission/allChildren";
 import { withCompleteCount } from "../../src/lib/agentMission/completeCount";
 import { redesignTypeOf } from "../../src/lib/agentMission/redesignFlags";
 import { pageCapOfSource, pageLimitOf } from "../../src/lib/agentMission/pageLimit";
-import { pageableCommentAlternative } from "../../src/lib/agentMission/pageableComments";
+import { commentsEngineByCode, pageableCommentAlternative } from "../../src/lib/agentMission/pageableComments";
 import { deriveItemId } from "../../src/lib/agentMission/contract";
 import { coverageOf } from "../../src/lib/agentMission/sourceRanking";
 import { catalogDateKind } from "../../src/lib/agentMission/relativeDates";
@@ -678,6 +678,26 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             if (stageGaps && stageGaps.length > 0) applyGapNotes(checked.plan, stageGaps);
             const approxDates = derived.approx.get(st.key);
             if (approxDates && approxDates.length > 0) st.approx_dates = approxDates;
+          }
+        }
+        // THE COMMENTS STAGE'S RECIPE BY CODE (S3): a comments stage the model's mapping could not give a proven recipe for is NOT left to the model (the whole mission would run on the old pipeline, with the old topic rules): in the redesigned mode its recipe is written by code from the tool's own
+        // schema and PROVEN on the page the planner sampled (every row of the page mapped, each with an id) before it is kept
+        if (derived && socialRedesignActive(ctx)) {
+          for (const st of checked.plan.stages) {
+            if (st.engine || st.parent_key === null || !st.deliver) continue;
+            const sample = st.measured_by.map((id) => ({ id, row: calls.find((c) => c.id === `${mission.id}:${id}`) })).find((m) => FILE_ID.test(m.id) && m.id.startsWith("call_") && m.row?.endpoint_id === st.endpoint_id && m.row.status === "ok" && Number(m.row.rows_returned) > 0);
+            if (!sample) continue;
+            const built = commentsEngineByCode(st, checked.plan.stages.find((x) => x.key === st.parent_key), ctx.catalog, sample.id);
+            if (!built) continue;
+            try {
+              const page = await store.getFile(mission.id, `raw/${sample.id}.json`);
+              if (page === null) continue;
+              const out = await runSandbox(built.map_code, { [built.map_file_id]: JSON.parse(page) });
+              if (!out.ok || out.resultJson === null) continue;
+              const rows = JSON.parse(out.resultJson) as unknown;
+              if (!Array.isArray(rows) || rows.length !== Number(sample.row!.rows_returned) || !rows.every((r) => isObject(r) && String(r.id ?? "").trim() !== "")) continue;
+              st.engine = built;
+            } catch { /* a stage that cannot be proven keeps no recipe */ }
           }
         }
         // THE FINDER STEPS' COLUMNS (contactFinders.ts): the contact column the planner left out and the Arabic status column beside each are added by code AFTER the recipes were proven on the mapping (the engine's contract checks the columns the MAPPING fills; these are filled by the finder step, never by the mapping)

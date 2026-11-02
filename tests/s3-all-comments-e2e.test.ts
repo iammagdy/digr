@@ -10,9 +10,9 @@ import { isRepliesStage } from "../src/lib/agentMission/replies";
  * excluded two videos («استُبعد ٢ لأنه لا يخص طلبك»), the plan had no replies stage and promised the model's own 800 comments.
  */
 const REQUEST = "هات فيديوهين تيك توك بالعربي عن الذكاء الاصطناعي من مصر، مع كل التعليقات والردود.";
-// the listing: video 1 has 120 comments, video 2 has 60 (about 180 in all); every tenth comment has one reply; the other videos are further down
+// the listing: video 1 has 120 comments and video 2 has 60 (180); every tenth comment has one reply (12 + 6 = 18). TikTok's own counter counts comments AND replies: 132 and 66 (198 in all). The other videos are further down
 const thread = (n: number) => Array.from({ length: n }, (_, k) => (k % 10 === 0 ? 1 : 0));
-const WORLD: World = { ownCounter: [120, 60, 30, 20, 10, 8, 6, 4], commentsOf: { [vid(0)]: thread(120), [vid(1)]: thread(60), [vid(2)]: thread(30) }, given: (_c, counted) => counted };
+const WORLD: World = { ownCounter: [132, 66, 33, 20, 10, 8, 6, 4], commentsOf: { [vid(0)]: thread(120), [vid(1)]: thread(60), [vid(2)]: thread(30) }, given: (_c, counted) => counted };
 const flagsOn = (d: never) => { const store = (d as { store: MemoryStore }).store; store.settings.redesign_flags = { social_posts: "test", social_account: "test", social_comments: "test" }; store.userEmails.set(REPLAY_USER, "iam.magdy+1@outlook.com"); return d; };
 // what the live plan was: 2 videos, the model's own 800 comments, a mapping of the comments page that no recipe can be proven from
 const run = () => runG4(WORLD, { request: REQUEST, videosPlanned: 2, commentsPlanned: 800, perParent: 400, offTopicCaptions: true, partialCommentsMapping: true, deps: flagsOn as never });
@@ -28,11 +28,13 @@ describe("the owner's request, end to end, in the new pipeline", () => {
     const r = await run();
     expect(r.plannedPlan.stages.some(isRepliesStage)).toBe(true);
   });
-  it("«all comments» is the real counters of the chosen videos (120 + 60), never the model's 800", async () => {
+  it("«all comments and replies» is the real counters of the chosen videos (132 + 66 = 198: 180 comments and 18 replies), never the model's 800", async () => {
     const r = await run();
     const comments = r.plannedPlan.stages.find((s) => s.key === "comments")!;
+    const replies = r.plannedPlan.stages.find(isRepliesStage)!;
     expect(comments.planned_rows).toBe(180);
     expect(comments.planned_rows).not.toBe(800);
+    expect(comments.planned_rows + replies.planned_rows).toBe(132 + 66);
     expect(comments.parent_pins).toEqual([vid(0), vid(1)]);
   });
   it("nothing is excluded for relevance: the two videos (their captions do not carry the topic words) and all 180 comments are delivered", async () => {
