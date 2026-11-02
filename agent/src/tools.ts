@@ -24,7 +24,8 @@ import { ItemStore, readSnapshot, type StopReason } from "./items/itemStore";
 import { drainPending, ingestRows } from "./items/ingest";
 import { mirrorLegacyFiles } from "./items/mirror";
 import { codeRunPath, deriveEngineSpecsChecked, type CodeRun } from "./engine/spec";
-import { withRepliesStages } from "../../src/lib/agentMission/replies";
+import { wantsAllChildren } from "../../src/lib/agentMission/allChildren";
+import { wantsReplies, withRepliesStages } from "../../src/lib/agentMission/replies";
 import { ROW_KEY_FIELDS } from "../../src/lib/agentMission/contract";
 import type { AgentStore, CallPhase, MissionRecord } from "./types";
 import { catalogHitView } from "../../src/lib/modelPlanner/tools";
@@ -714,6 +715,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           const allowedReply = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
           checked.plan = await withRepliesStages(checked.plan, {
             catalog: ctx.catalog, isAllowed: allowedReply, stats: ctx.stats,
+            // S3 (redesigned mode only): a request that mentions the replies always has the replies stage; «all» reads each comment to the end of its replies
+            ...(socialRedesignActive(ctx) ? { requested: wantsReplies(`${mission.request_text} ${mission.answer_text ?? ""}`), all: wantsAllChildren(`${mission.request_text} ${mission.answer_text ?? ""}`) } : {}),
             sampleRowsOf: async (st) => {
               const sp = st.engine;
               if (!sp) return null;
