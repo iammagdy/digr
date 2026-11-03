@@ -285,9 +285,10 @@ function addMethodologySection(sheet: ExcelJS.Worksheet, model: ReturnType<typeo
  * THE THREAD SHEET (the replies PR, owner decision: researchers analyse FULL threads): the replies are rows of the SAME sheet as their comments, each right under its comment, with «نوع التعليق» («تعليق» / «رد») and, on a reply, «معرّف التعليق الأصلي». A reply keeps the parent video's id as its own
  * parent, so the video's title and link are on every row. Done on a copy for the layout only: the plan, the stages' rows and the counts the settlement reads are untouched (the rows of the file are still the delivered count).
  */
-function withThreads(plan: PricedPlan, rowsIn: Record<string, Row[]>): { rowsByStage: Record<string, Row[]>; layoutPlan: PricedPlan } {
-  const replyStages = plan.stages.filter((s) => s.deliver && s.replies_of !== undefined);
-  if (replyStages.length === 0) return { rowsByStage: rowsIn, layoutPlan: plan };
+function withThreads(plan: PricedPlan, rowsIn: Record<string, Row[]>): { rowsByStage: Record<string, Row[]>; layoutPlan: PricedPlan; /** The replies stages that were merged into their comments' sheet. */ threaded: ReadonlySet<string> } {
+  // only the replies to COMMENTS are rows of the comments' sheet; the replies to a top-level item (a tweet: live D5) are a sheet of their own, each reply beside its tweet's text and link
+  const replyStages = plan.stages.filter((s) => s.deliver && s.replies_of !== undefined && plan.stages.find((x) => x.key === s.replies_of)?.parent_key !== null);
+  if (replyStages.length === 0) return { rowsByStage: rowsIn, layoutPlan: plan, threaded: new Set() };
   const rowsByStage: Record<string, Row[]> = { ...rowsIn };
   let stages = plan.stages;
   for (const r of replyStages) {
@@ -308,10 +309,10 @@ function withThreads(plan: PricedPlan, rowsIn: Record<string, Row[]>): { rowsByS
     rowsByStage[r.key] = [];
     stages = stages.filter((x) => x.key !== r.key).map((x) => (x.key === commentsKey ? { ...x, columns: [...x.columns.filter((c) => c.key !== COMMENT_KIND_KEY && c.key !== REPLY_TO_KEY), { key: COMMENT_KIND_KEY, title_ar: COMMENT_KIND_TITLE_AR }, { key: REPLY_TO_KEY, title_ar: REPLY_TO_TITLE_AR }] } : x));
   }
-  return { rowsByStage, layoutPlan: { ...plan, stages } };
+  return { rowsByStage, layoutPlan: { ...plan, stages }, threaded: new Set(replyStages.map((r) => r.key)) };
 }
 
-export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string, Row[]>, facts?: MissionFacts, companyMailboxes?: CompanyMailboxes): Promise<{ xlsx: Buffer; csv: string; /** Wrong parent-describing values of a child sheet that were replaced from the row's own parent (for the admin only). */ parentFixes: ParentColumnFix[]; /** What was taken out of the customer's cells because it named a data provider (for the admin only). */ providerFixes: ProviderCleanReport & { final: number } }> {
+export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string, Row[]>, facts?: MissionFacts, companyMailboxes?: CompanyMailboxes, options: { repliesJudged?: boolean } = {}): Promise<{ xlsx: Buffer; csv: string; /** Wrong parent-describing values of a child sheet that were replaced from the row's own parent (for the admin only). */ parentFixes: ParentColumnFix[]; /** What was taken out of the customer's cells because it named a data provider (for the admin only). */ providerFixes: ProviderCleanReport & { final: number } }> {
   // BEFORE THE FILE IS WRITTEN: every value of a child row that describes its parent must be its OWN parent's (parentColumns.ts); a mapping that copied the first company's website onto every person is repaired here and reported to the admin
   const reconciled = reconcileParentColumns(plan.stages, rowsIn, (key) => { const st = plan.stages.find((x) => x.key === key); return st ? readableColumns(st).map((c) => c.key) : []; }, (key) => { const st = plan.stages.find((x) => x.key === key); return st ? readableColumns(st).map((c) => c.key) : []; });
   // NO DATA PROVIDER IN A CUSTOMER FILE (providerHosts.ts): its addresses are taken out of every cell and an id built from one is replaced by a neutral id, the same wherever it is written
@@ -336,7 +337,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
 
   for (const lay of layouts) sheetNameOf.set(lay.stage.key, wordBoundarySheetName(lay.stage.title_ar, used, `مرحلة ${lay.stageIndex + 1}`));
   // the replies stage has no sheet of its own: its row of the first sheet points to the thread sheet
-  for (const st of plan.stages) if (st.replies_of !== undefined && sheetNameOf.has(st.replies_of)) sheetNameOf.set(st.key, sheetNameOf.get(st.replies_of)!);
+  for (const st of plan.stages) if (st.replies_of !== undefined && threaded.threaded.has(st.key) && sheetNameOf.has(st.replies_of)) sheetNameOf.set(st.key, sheetNameOf.get(st.replies_of)!);
 
   for (const lay of layouts) {
     const name = sheetNameOf.get(lay.stage.key)!;
@@ -444,7 +445,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
       // an intermediate stage is not in the file: it says what it read and how many of what it read have results in the file
       summary.addRow([stage.title_ar, "لم تُسلَّم (مرحلة وسيطة)", `قُرئ ${formatAr(read)}، ومنها ${formatAr(used ?? 0)} لها نتائج في الملف`, `حتى ${formatAr(stage.planned_rows)}`, link]);
     } else {
-      const inSheet = stage.replies_of !== undefined ? "ردود التعليقات في ورقة التعليقات نفسها، كل رد تحت تعليقه" : plan.stages.some((x) => x.replies_of === stage.key && x.deliver) ? "ومعها ردودها في الورقة نفسها، كل رد تحت تعليقه" : "";
+      const inSheet = stage.replies_of !== undefined && threaded.threaded.has(stage.key) ? "ردود التعليقات في ورقة التعليقات نفسها، كل رد تحت تعليقه" : plan.stages.some((x) => x.replies_of === stage.key && x.deliver && threaded.threaded.has(x.key)) ? "ومعها ردودها في الورقة نفسها، كل رد تحت تعليقه" : "";
       summary.addRow([stage.title_ar, sheetName ?? (stage.deliver ? "—" : "لم تُسلَّم (مرحلة وسيطة)"), rows, stage.planned_rows, [child && used !== undefined && stage.replies_of === undefined ? `${link}؛ ومنها ${formatAr(used)} لها عناصر تابعة في الملف` : link, inSheet].filter(Boolean).join("؛ ")]);
     }
   });
@@ -454,7 +455,8 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   // a delivery short of the CARD the customer approved is told against the card's total (the same number the final line and the notice say); one that fills a card with a lowered target is told against the request
   // the replies come in addition (replies.ts): the delivery is told against the top-level rows the customer asked for, the replies delivered are added to both sides
   const tl = topLevelFactsOf(plan, Object.fromEntries(plan.stages.map((st) => [st.key, (rowsByStage[st.key] ?? []).length])));
-  const requestedCount = deliveryDenominatorOf(Math.max(0, deliveredCount - tl.repliesDelivered), cardTotalOf(plan) - tl.repliesPlanned, requestedRowsOf(plan) - tl.repliesPlanned) + tl.repliesDelivered;
+  // the replies JUDGED against the counters of the delivered comments (S9: the run applied withRepliesJudged) are told as the site and the notice tell them: against their counters (live D3: «٦٣ من ٦٦» on the site, «٦٣ من ٦٣» here). Otherwise exactly as before.
+  const requestedCount = deliveryDenominatorOf(Math.max(0, deliveredCount - tl.repliesDelivered), cardTotalOf(plan) - tl.repliesPlanned, requestedRowsOf(plan) - tl.repliesPlanned) + (options.repliesJudged === true ? tl.repliesPlanned : tl.repliesDelivered);
   const intro = summary.addRow([`تم تسليم ${deliveredOfAr(deliveredCount, requestedCount, itemNounOfPlan(plan))}.`]);
   summary.mergeCells(intro.number, 1, intro.number, 5);
   intro.alignment = { wrapText: true, readingOrder: "rtl" as any, vertical: "middle" };

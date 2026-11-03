@@ -29,6 +29,8 @@ export interface CompiledPlanningDeps {
   nowMs: number;
   /** The customer's edit of the card (Stage 2 recompiles with it). */
   edits?: Ask["edits"];
+  /** Owner decision 7.4: the account is a TEST account, so a `catalog_only` card may build a stage (within its dollar cap). Absent: never. */
+  catalogOnly?: boolean;
 }
 export type CompiledPlanning =
   | { kind: "plan"; plan: PricedPlan; ask: Ask; result: Extract<CompileResult, { ok: true }>; reads: { pool: number; exposure: number } }
@@ -85,7 +87,7 @@ export async function planByCompiler(deps: CompiledPlanningDeps): Promise<Compil
     }
   }
 
-  const result = compilePlan({ ask, pool: { card, params, pages }, exposure: (id) => exposure.get(id), capabilityOf: (id) => deps.catalog.byId.get(id)?.capability ?? null, pricingSettings: deps.pricingSettings });
+  const result = compilePlan({ ask, pool: { card, params, pages }, exposure: (id) => exposure.get(id), capabilityOf: (id) => deps.catalog.byId.get(id)?.capability ?? null, pricingSettings: deps.pricingSettings, ...(deps.catalogOnly === true ? { catalogOnly: true } : {}) });
   if (!result.ok) return { kind: "cannot", ask, reason: result.reason, reads };
   return { kind: "plan", plan: result.plan, ask, result, reads };
 }

@@ -23,6 +23,13 @@ export function repliesLinesAr(plan: { stages: Stages; replies_status?: PricedPl
   const replies = plan.stages.filter((s) => s.replies_of !== undefined);
   if (replies.length > 0) {
     const planned = replies.reduce((n, s) => n + s.planned_rows, 0);
+    // THE REPLIES TO TOP-LEVEL ITEMS (live D5: the replies to the chosen tweets): the customer's number is the items', the replies come in addition, by the platform's counter of each item
+    const topParent = replies.length === 1 ? plan.stages.find((x) => x.key === replies[0].replies_of && x.parent_key === null) : undefined;
+    if (topParent && plan.compiled?.by === "compiler") {
+      const counted = plan.compiled.promises[replies[0].key];
+      const known = counted?.type === "open" && typeof counted.counted === "number" ? counted.counted : planned;
+      return [`العدد الذي طلبته يخص ${topParent.title_ar} وحدها؛ ونضيف إليها كل الردود على ${topParent.title_ar} المختارة: ${countAr(known, REPLY)} بحسب عدّاد المنصة، وقد يعطي المصدر أقل. لا نقرأ ردود عنصر عدّاد ردوده صفر، ولا تدفع إلا مقابل ما سُلّم فعلًا. تقدر توقف الردود من «عدّل الخطة» لتخفيض السعر.`];
+    }
     // a compiled plan: the replies the comments read at planning already count by their own counters; the rest is a separate «حتى» part, priced apart on the card (live finding C)
     const counted = plan.compiled?.by === "compiler" ? replies.map((s) => plan.compiled!.promises[s.key]).find((p) => p?.type === "open" && typeof p.counted === "number") : undefined;
     if (counted && replies.some((s) => s.replies_open)) {

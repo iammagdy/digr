@@ -210,6 +210,8 @@ export interface PricedStage extends ProposedStage {
   /** The sampled comments' own reply counters (each capped at the most a comment may be read for) and the price of one call of the reply source: with them the replies planned and their price follow an edit of the comments' number or of the replies per comment, by code. */
   replies_sample_counts?: number[];
   replies_call_usd?: number;
+  /** The most pages the engine may read for this stage in all, whatever the planned rows say (a stage that uses a `catalog_only` tool card: owner decision 7.4, the pages 0.10 USD of such calls buys). Set by the plan compiler only. */
+  max_pages?: number;
   sample_examined?: number;
   sample_matching?: number;
 }
@@ -812,7 +814,7 @@ export function planEditorView(plan: PricedPlan): PlanEditorView {
       const offReplies = plan.replies_off?.replies_of === s.key;
       return {
         key: s.key, title_ar: s.title_ar, target: s.planned_rows,
-        ...(hasReplies || offReplies ? { replies: { on: hasReplies, label_ar: "تضمين الردود على التعليقات في الملف (يدخل في السعر)", ...(hasReplies ? { per_comment: plan.stages.find((x) => x.replies_of === s.key)!.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_DEFAULT, per_comment_max: AGENT_REPLIES_PER_COMMENT_MAX, per_comment_label_ar: "عدد الردود لكل تعليق" } : {}) } } : {}),
+        ...(hasReplies || offReplies ? { replies: { on: hasReplies, label_ar: s.parent_key === null ? `تضمين الردود على ${s.title_ar} في الملف (يدخل في السعر)` : "تضمين الردود على التعليقات في الملف (يدخل في السعر)", ...(hasReplies ? { per_comment: plan.stages.find((x) => x.replies_of === s.key)!.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_DEFAULT, per_comment_max: AGENT_REPLIES_PER_COMMENT_MAX, per_comment_label_ar: s.parent_key === null ? "عدد الردود لكل عنصر" : "عدد الردود لكل تعليق" } : {}) } } : {}),
         ...(s.parent_key !== null && s.deliver && Number(s.pages_per_parent) >= 1 && s.role_preference ? { pages: Math.floor(Number(s.pages_per_parent)), pages_max: AGENT_PEOPLE_PAGES_MAX, pages_label_ar: `عدد صفحات البحث لكل ${itemNounOf(plan.stages.find((p) => p.key === s.parent_key)?.title_ar ?? "").singular}` } : {}),
         ...(s.parent_key !== null && s.deliver && s.per_parent_rows ? { per_parent: s.per_parent_rows, per_parent_label_ar: `عدد «${s.title_ar}» لكل ${itemNounOf(plan.stages.find((p) => p.key === s.parent_key)?.title_ar ?? "").singular}` } : {}),
         columns: [...s.columns.filter((c) => !isInternalColumn(c)).map((c) => ({ key: c.key, title_ar: c.title_ar, on: true, locked: locked.has(c.key) })), ...(s.hidden_columns ?? []).map((c) => ({ key: c.key, title_ar: c.title_ar, on: false, locked: false }))],
