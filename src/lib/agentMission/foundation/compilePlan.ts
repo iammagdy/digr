@@ -6,7 +6,9 @@ import { stagePriceInputs, type PricedPlan, type PricedStage } from "../plan";
 import type { StageFilter } from "../filters";
 import type { MissionPricingSettings } from "../../missionPricing";
 import type { Ask } from "./ask";
-import { rankPool, factsOf, pageMatchesSource, type PoolRow } from "./pool";
+import { rankPool, factsOf, type PoolRow } from "./pool";
+import { approxInstantOfRelative } from "./occurrence";
+import { cairoMomentAr } from "./cairoText";
 import { NAMED_MARK_KEY, NAMED_MARK_TITLE_AR, NAMED_MISMATCH_MARK_AR } from "./namedShortfall";
 import { childPromise, perParentPromise, promiseLineAr, type StagePromise } from "./promise";
 import { TOPIC_RELATION_KEY, TOPIC_RELATION_TITLE_AR, topicRelationAr } from "./topicChoice";
@@ -131,6 +133,8 @@ export interface CompileInput {
   pricingSettings?: MissionPricingSettings;
   /** Owner decision 7.4: a `catalog_only` card may build a stage, for a TEST account only (the caller says so); never for another account. */
   catalogOnly?: boolean;
+  /** The moment of planning: a source that says «7 years ago» is placed in time from it (YouTube), to rank by the newest and by the latest occurrence. */
+  nowMs?: number;
 }
 
 export type CompileResult =
@@ -152,6 +156,8 @@ const NOUN: Record<SocialPlatform, { one: string; two: string; many: string; whe
   youtube: { one: "فيديو", two: "فيديوهان", many: "فيديو", where: "من يوتيوب", talks: "يتحدث نصه" },
 };
 const DEFAULT_COUNT = 10;
+/** An OPEN comments stage (the platform gives no counter before reading: YouTube) reads each chosen item up to this many comments; it sizes the hold's maximum and is the per-item limit the card and the file state (never a promise of a count). */
+export const OPEN_COMMENTS_PER_PARENT = 100;
 /** The least share of replies a comment is assumed to have when the exposure pages show none: it sizes the reserve's maximum only, never a promise. */
 const OPEN_REPLIES_FLOOR = 0.1;
 
@@ -224,6 +230,34 @@ const atPath = (o: unknown, path: ReadonlyArray<string> | null): unknown => { if
 const postsCountAr = (n: number): string => (n === 1 ? "منشورًا واحدًا" : n === 2 ? "منشورين" : n >= 3 && n <= 10 ? `${toArabicDigits(n)} منشورات` : `${toArabicDigits(n)} منشورًا`);
 const pagesCountAr = (n: number): string => (n === 1 ? "صفحة واحدة" : n === 2 ? "صفحتين" : `${toArabicDigits(n)} صفحات`);
 
+/** The channels take turns inside each level of the topic relation (the about-the-topic rows first, then the hashtag-only ones, then the rest); a row with no channel keeps its place. */
+function interleaveByChannel(rows: PoolRow[], ask: Ask): PoolRow[] {
+  const tiers = [2, 1, 0] as const;
+  const out: PoolRow[] = [];
+  for (const tier of tiers) {
+    const level = rows.filter((r) => factsOf(r, ask, true).topicTier === tier);
+    const groups = new Map<string, PoolRow[]>();
+    for (const r of level) { const k = String(r.channel_id ?? ""); const g = groups.get(k); if (g) g.push(r); else groups.set(k, [r]); }
+    const lists = [...groups.values()];
+    for (let i = 0; out.length < rows.length && lists.some((l) => l[i]); i += 1) for (const l of lists) if (l[i]) out.push(l[i]);
+  }
+  return out.length === rows.length ? out : rows;
+}
+
+/**
+ * THE POOL IN THE OWNER'S ORDER (shared by the compiler and by the exposure check, which reads the first comments page of the parents in exactly this order): every distinct row of the pages read, with the counters of the free counter card merged by id, a video dated by its relative words
+ * placed in time, ranked by named source, country and language, own text about the topic, the latest occurrence (decision 7), the most commented or the newest; the official channels take turns inside each level (live round 10: both videos were the first channel's).
+ */
+export function rankedPoolOf(input: { ask: Ask; poolCard: ToolCard; pages: ReadonlyArray<{ page: unknown; card?: ToolCard }>; counters?: ReadonlyMap<string, number>; channels?: ReadonlyArray<{ id: string; title?: string }>; nowMs?: number }): PoolRow[] {
+  const { ask, poolCard } = input;
+  const card: ToolCard = poolCard.counter || !input.counters ? poolCard : { ...poolCard, counter: { key: "comments", counts: "comments" } };
+  const mapped = input.pages.flatMap((p) => mapPage(p.card ?? poolCard, p.page)).map((r) => (input.counters && input.counters.has(String(r.id)) ? { ...r, comments: input.counters.get(String(r.id)) } : r))
+    // a source that dates a video only by «7 years ago» (YouTube): placed in time from the moment of planning, for the order «newest» and for the latest occurrence of a recurring event
+    .map((r) => { if ((r.posted_at === undefined || r.posted_at === null) && input.nowMs !== undefined) { const t = approxInstantOfRelative(r.published, input.nowMs); if (t !== null) return { ...r, posted_at: new Date(t).toISOString() }; } return r; });
+  const rankedAll = rankPool(mapped, ask, card, { occurrence: ask.occurrence });
+  return ask.source.kind === "official" && (input.channels?.length ?? 0) > 1 ? interleaveByChannel(rankedAll, ask) : rankedAll;
+}
+
 /** Compiles the plan. Pure: the same Ask and the same pages give the same plan. */
 export function compilePlan(input: CompileInput): CompileResult {
   const { ask } = input;
@@ -233,8 +267,7 @@ export function compilePlan(input: CompileInput): CompileResult {
   // THE COUNTER OF THE POOL: the parent card's own, or (YouTube) the counter card's, merged onto the rows by id
   const counterKey: string | null = poolCard.counter?.key ?? (input.counters ? "comments" : null);
   const card: ToolCard = poolCard.counter || !input.counters ? poolCard : { ...poolCard, counter: { key: "comments", counts: "comments" } };
-  const mapped = input.pool.pages.flatMap((p) => mapPage(p.card ?? poolCard, p.page)).map((r) => (input.counters && input.counters.has(String(r.id)) ? { ...r, comments: input.counters.get(String(r.id)) } : r));
-  const ranked0 = rankPool(mapped, ask, card);
+  const ranked0 = rankedPoolOf({ ask, poolCard, pages: input.pool.pages, ...(input.counters ? { counters: input.counters } : {}), ...(input.channels ? { channels: input.channels } : {}), ...(input.nowMs !== undefined ? { nowMs: input.nowMs } : {}) });
   if (ranked0.length === 0) return { ok: false, reason: "no_rows" };
   const need = Math.max(1, ask.count ?? DEFAULT_COUNT);
   const catalogOnly = input.catalogOnly === true;
@@ -245,7 +278,9 @@ export function compilePlan(input: CompileInput): CompileResult {
   // DECISION 7.5 (Facebook): «only the ones found» keeps the named page's posts only; the choice is the customer's, made before approval
   const bySource = Boolean(poolCard.inputs.source);
   const isNamed = (r: Record<string, unknown>): boolean => factsOf(r, ask, bySource).named;
-  const ranked = input.namedChoice === "only_found" && ask.source.kind === "named" ? ranked0.filter(isNamed) : ranked0;
+  // A POST THE CUSTOMER ASKED FOR from a named page is the page's AND (when a topic is named) about the topic (live round 10: 4 posts of «the page» with 2 about the topic satisfied 3 asked, and no question was asked)
+  const isNamedAbout = (r: Record<string, unknown>): boolean => isNamed(r) && (!ask.topic.text || factsOf(r, ask, bySource).topicTier === 2);
+  const ranked = input.namedChoice === "only_found" && ask.source.kind === "named" ? ranked0.filter(isNamedAbout) : ranked0;
   if (ranked.length === 0) return { ok: false, reason: "no_rows" };
 
   // THE EXPOSURE CHECK (decision 7.3): a parent whose first comments page is empty while its counter says it has comments is replaced by the next one, before the card; a parent that says it has none is never chosen for a comments request
@@ -269,7 +304,7 @@ export function compilePlan(input: CompileInput): CompileResult {
   // DECISION 7.5: a named Facebook page whose deliverable posts in the pool are fewer than asked: the customer decides before approval (the question is asked by the caller; nothing is priced)
   const namedFacebook = ask.platform === "facebook" && ask.source.kind === "named" && poolCard.role === "posts.search";
   if (namedFacebook && input.namedChoice === undefined) {
-    const found = chosen.filter(isNamed).length;
+    const found = chosen.filter(isNamedAbout).length;
     if (found < need) return { ok: false, reason: "named_shortfall", found, need };
   }
   const spares = ranked.slice(scanned).filter((r) => !commentsCard || counter(r) !== 0).slice(0, 2);
@@ -317,7 +352,19 @@ export function compilePlan(input: CompileInput): CompileResult {
     notes.push(parts.join(" "));
   }
   // YOUTUBE: the channels the videos were read from (the official channels are looked up by name and each is read inside: the card says how many, never that they are the official ones)
-  if (ask.platform === "youtube" && input.channels && input.channels.length > 0) notes.push(`قرأنا فيديوهات القنوات الرسمية التي وجدناها بأسمائها في البحث. عدد القنوات التي قرأنا فيديوهاتها: ${toArabicDigits(input.channels.length)}.`);
+  if (ask.platform === "youtube" && input.channels && input.channels.length > 0) {
+    // the channels' names as the customer reads them: the Arabic part of a title («Al Ahly SC - النادي الأهلي» is «النادي الأهلي»); a title with no Arabic part is not listed (Arabic only on the card)
+    const arabicPart = (t: unknown): string | null => (typeof t === "string" ? t.split(/\s*[-–—|]\s*/).map((x) => x.trim()).find((x) => /[؀-ۿ]/.test(x) && !/[A-Za-z0-9_]/.test(x)) ?? null : null);
+    const titles = input.channels.map((c) => arabicPart(c.title)).filter((t): t is string => t !== null);
+    notes.push(`قرأنا فيديوهات القنوات الرسمية التي وجدناها بأسمائها في البحث. عدد القنوات التي قرأنا فيديوهاتها: ${toArabicDigits(input.channels.length)}${titles.length > 0 ? ` (${titles.join("، ")})` : ""}. لا نستطيع أن نتحقق آليًا من أن كل قناة منها هي القناة الرسمية، فراجعها قبل الاعتماد.`);
+  }
+  // AN ACCOUNT'S OR A PAGE'S LISTING (live round 10: the card must say what the choice was made from): the most commented of the last N posts, and the period those posts cover, in Cairo time
+  if ((poolCard.role === "posts.account" || poolCard.role === "posts.page") && ask.order === "most_commented") {
+    const times = ranked0.map((r) => Date.parse(String(r.posted_at ?? ""))).filter((t) => Number.isFinite(t));
+    const n = ranked0.length;
+    const countAr = n === 1 ? "منشور" : n === 2 ? "منشورين" : n >= 3 && n <= 10 ? `${toArabicDigits(n)} منشورات` : `${toArabicDigits(n)} منشورًا`;
+    notes.push(`اخترنا الأكثر تعليقًا من آخر ${countAr}${times.length > 0 ? `، وهي المنشورات التي نُشرت من ${cairoMomentAr(Math.min(...times))} إلى ${cairoMomentAr(Math.max(...times))} بتوقيت القاهرة` : ""}.`);
+  }
   const unmet = chosen.filter((r) => { const f = factsOf(r, ask, bySource); return !f.country || !f.language || !f.named; }).length;
   if (unmet > 0) notes.push(`لم نجد في ما قرأناه ما يكفي مما يطابق المصدر أو الدولة أو اللغة المطلوبة؛ ${toArabicDigits(unmet)} من العناصر المختارة لا تطابق ذلك، وعليها علامة في الملف.`);
   // THE TOPIC, SAID HONESTLY BEFORE APPROVAL (live D1): «عن X» means the item's own text talks about X. A video whose caption names X only in its hashtags is made WITH X (the tool), so it ranks below the videos whose caption body is about X;
@@ -341,20 +388,25 @@ export function compilePlan(input: CompileInput): CompileResult {
     const cap = ask.edits.comments ?? null;
     const counters = chosen.map((r) => counter(r));
     const exposureComments = exposurePages.reduce((s, e) => s + e.rows.length, 0);
-    const p = perParent !== null ? perParentPromise(card.counter ? counters : [], perParent, chosen.length) : childPromise(card.counter ? counters : [], cap, Math.max(1, exposureComments));
+    const p0 = perParent !== null ? perParentPromise(card.counter ? counters : [], perParent, chosen.length) : childPromise(card.counter ? counters : [], cap, Math.max(1, exposureComments));
+    // AN OPEN COMMENTS STAGE (YouTube: no counter before reading) is sized per chosen item, not by the first pages the planning happened to see (live round 10: 40 rows, all of them the first video's, so the second video gave none): each item is read up to the allowance
+    const openAllowance = p0.type === "open" && perParent === null && cap === null && ask.platform === "youtube" ? OPEN_COMMENTS_PER_PARENT : null;
+    const p: StagePromise = openAllowance !== null ? { type: "open", n: openAllowance * chosen.length } : p0;
     promises.comments = p;
     // the rows the stage may read: the number per parent for every parent (a parent with fewer gives what it has), else the promise
     const planned = perParent !== null ? perParent * chosen.length : p.n;
     stages.push({
       key: "comments", title_ar: "التعليقات", endpoint_id: commentsCard.endpointId, ...(capabilityOf(commentsCard.endpointId) ? { capability: capabilityOf(commentsCard.endpointId)! } : {}),
-      expected_rows: planned, planned_rows: planned, parent_key: parentKey, ...(perParent !== null ? { per_parent_rows: perParent } : cap !== null ? { per_parent_rows: Math.ceil(p.n / chosen.length) } : {}), deliver: true,
+      expected_rows: planned, planned_rows: planned, parent_key: parentKey, ...(openAllowance !== null ? { per_parent_rows: openAllowance, children_cap_per_parent: openAllowance } : perParent !== null ? { per_parent_rows: perParent } : cap !== null ? { per_parent_rows: Math.ceil(p.n / chosen.length) } : {}), deliver: true,
+      // THE REPLY TOKENS stay on the stored comment row (the replies stage binds to them): live round 10, the comments stage dropped them and the replies stage made no call
+      ...(shape.includes("replies") && repliesCard && commentsCard.mapping.kind === "replies" && (commentsCard.mapping.tokens ?? []).length > 0 ? { carry_keys: (commentsCard.mapping.tokens ?? []).map((t) => t.key) } : {}),
       columns: CHILD_COLUMNS.map((c) => ({ ...c })), sample_rows: (exposurePages[0]?.rows ?? []).slice(0, 3), measured_by: exposurePages.map((e) => e.callId).filter((x): x is string => x !== null),
       measured_from_calls: exposurePages.map((e) => e.callId).filter((x): x is string => x !== null), measured_cost_per_row_usd: commentsCard.costUsdPerPage / Math.max(1, commentsCard.page.observedRowsPerPage),
       yield_share: 1, review_share: 0, parent_pins: chosen.map((r) => r.id), ...(ask.comments === "all" && perParent === null ? { all_children: true } : {}), ...(p.type === "open" ? { children_open: true } : {}),
       ...(sharedMaxPages(commentsCard) !== null ? { max_pages: sharedMaxPages(commentsCard)! } : {}),
       engine: { endpoint_id: commentsCard.endpointId, params: structuredClone(commentsCard.inputs.fixed ?? {}), cursor_param: commentsCard.inputs.cursor, map_code: cardMapCode(commentsCard), map_file_id: "page", parent_binding: { param: commentsCard.inputs.parent!.param, from: commentsCard.inputs.parent!.from }, built_by: "code" },
     } as PricedStage);
-    notes.push(promiseLineAr(p, "comments", card.counter?.counts === "comments_and_replies", perParent));
+    notes.push(promiseLineAr(p, "comments", card.counter?.counts === "comments_and_replies", perParent, openAllowance));
   }
 
   if (shape.includes("replies")) {

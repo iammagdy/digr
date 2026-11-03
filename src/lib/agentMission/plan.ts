@@ -86,6 +86,8 @@ export interface ProposedStage {
   spare_rows?: Array<Record<string, unknown>>;
   /** Fields of the mapped item kept on the stored row beside the columns, never shown (the tokens a replies tool needs from the comment's own row: Facebook's feedback_id and expansion_token). Set by code only. */
   carry_keys?: string[];
+  /** An OPEN comments stage (no counter before reading): the most comments read from each parent, the limit the card and the file state (it also sizes the hold). */
+  children_cap_per_parent?: number;
   /** The catalog capability of the stage's tool, stored by code in the redesigned mode (rule 9 of the consolidation: a stage's type is read from its structure, never from the words of its title). Absent in the old pipeline. */
   capability?: string;
   expected_rows: number;

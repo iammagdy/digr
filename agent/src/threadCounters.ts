@@ -100,6 +100,43 @@ export function askedGapLinesAr(f: AskedThreadFacts): { counterLines: string[]; 
 }
 
 /**
+ * EVERY GAP OF A COMPILED PLAN'S COMMENTS, PER PARENT, EVEN WITH NO COUNTER (live round 10, msn_67cafa6747d70356d9cb: video 1 gave 40 comments, video 2 none, no reply was read, and «حدود هذا التسليم» said «لا قيود سُجّلت»: the videos carried no counter, so no line was written). For each delivered parent:
+ the comments delivered (against the source's counter when the row has one, else it says the source shows none), the reply counters of the DELIVERED comments against the replies delivered, and a limit line whenever the parent gave no comment, reached the per-parent reading limit, fell short of its counter or its comments'
+ reply counters. The reason of a parent that gave nothing is the recorded stop of the stage, never a guess. Pure: counts in, Arabic out.
+ */
+export function openThreadGapLinesAr(f: { parentNoun: string; parents: ReadonlyArray<{ id: string; counter: number | null }>; comments: ReadonlyArray<{ id: string; parentId: string; replies: number | null }>; replyParentCommentIds: ReadonlyArray<string> | null; repliesCap: number; commentsCap: number | null; commentsStop: string | null | undefined; repliesStop: string | null | undefined }): { counterLines: string[]; limitLines: string[] } {
+  const parentNoun = knownItemNoun(f.parentNoun) ?? GENERIC_ITEM_NOUN;
+  const comment = knownItemNoun("تعليق")!;
+  const reply = knownItemNoun("رد")!;
+  const counterLines: string[] = [];
+  const limitLines: string[] = [];
+  const repliesOfComment = new Map<string, number>();
+  for (const c of f.replyParentCommentIds ?? []) repliesOfComment.set(String(c), (repliesOfComment.get(String(c)) ?? 0) + 1);
+  const stopWhy = (stop: string | null | undefined): string => (stop === "page_limit" ? "بلغت القراءة الحد الأقصى لعدد الصفحات المسموح لهذه المهمة" : stop === "budget" ? "بلغت القراءة حدّ الميزانية المسموح لهذه المهمة" : stop === "time_limit" ? "انتهى الوقت المسموح للقراءة" : stop === "failed" ? "تعذّرت القراءة من المصدر" : "لم يعطِ المصدر تعليقات لهذا" + parentNoun.singular);
+  f.parents.forEach((p, i) => {
+    const mine = f.comments.filter((c) => c.parentId === String(p.id));
+    const got = mine.length;
+    const head = `ال${parentNoun.singular} رقم ${formatAr(i + 1)}`;
+    const hasCounter = p.counter !== null && Number.isFinite(p.counter);
+    let line = `${head}: ${hasCounter ? `عدّاد المنصة ${formatAr(p.counter!)}، وسُلّم ${countAr(got, comment, { subject: true })}` : `لا يعرض المصدر عدّاد تعليقاته، وسُلّم ${countAr(got, comment, { subject: true })}`}`;
+    const parts: string[] = [];
+    if (got === 0) parts.push(`لم يُسلَّم منه أي تعليق، ${stopWhy(f.commentsStop)}`);
+    else if (f.commentsCap !== null && got >= f.commentsCap) parts.push(`بلغت قراءة تعليقاته الحد الأقصى المحسوب لكل ${parentNoun.singular} وهو ${formatAr(f.commentsCap)}، وقد يكون في المصدر المزيد`);
+    else if (hasCounter && got < p.counter!) parts.push(`سُلّم ${countAr(got, comment, { subject: true })} من عدّاد ${formatAr(p.counter!)}، والفرق لم يعطِه المصدر`);
+    if (f.replyParentCommentIds !== null) {
+      const counters = mine.reduce((n, c) => n + Math.min(f.repliesCap, Math.max(0, c.replies ?? 0)), 0);
+      const gotReplies = mine.reduce((n, c) => n + (repliesOfComment.get(c.id) ?? 0), 0);
+      const repliesPart = `ردود التعليقات المسلّمة بحسب عدّاداتها ${countAr(counters, reply, { subject: true })} وسُلّم منها ${countAr(gotReplies, reply, { subject: true })}`;
+      line += `؛ ${repliesPart}`;
+      if (gotReplies < counters) parts.push(`${repliesPart}${f.repliesStop === "page_limit" ? "؛ وتوقفت قراءة الردود عند الحد الأقصى لعدد الصفحات المسموح لهذه المهمة" : f.repliesStop === "budget" || f.repliesStop === "time_limit" || f.repliesStop === "failed" ? `؛ ${stopWhy(f.repliesStop)}` : "؛ والفرق لم يعطِه المصدر"}`);
+    }
+    counterLines.push(line);
+    if (parts.length > 0) limitLines.push(`${head}: ${parts.join("؛ ")}`);
+  });
+  return { counterLines, limitLines };
+}
+
+/**
  * THE REPLIES GAP OF A PARENT THAT HAS NO COMMENTS STAGE (live round 7, msn_9fa5ba384c05a25247e1: 20 tweets, replies by the platform's counters 33, delivered 25; the file said nothing about the replies). For each delivered parent (a tweet), the reply counter its own row carries
  * against the replies delivered under it, and only that: never the whole of the parent's other numbers. A parent with no counter and no reply is not listed (no noise). A gap is a line only when fewer were delivered than the counter says (the cap, when there is one, counts first); more than the counter
  * is told in the counter line and is not called a gap. Pure: counts in, Arabic out.
@@ -157,6 +194,13 @@ export function threadCounterLinesOfPlan(plan: Pick<PricedPlan, "stages"> & { co
     const replies = replyStage ? rowsByStage[replyStage.key] ?? [] : [];
     // a COMPILED plan that asked for a number of comments for each parent: the gap is told against that number and against the reply counters of the delivered comments, never against the parent's whole counter (live D4)
     const asked = Number(stage.per_parent_rows);
+    // a compiled plan whose comments are OPEN (no counter before reading: a per-parent reading limit that is ours, not the customer's number) or whose parents carry no counter: every gap per parent, counter or not (live round 10)
+    if (plan.compiled?.by === "compiler" && (stage.children_cap_per_parent !== undefined || (!(Number.isFinite(asked) && asked > 0) && parents.every((p) => p.counter === null)))) {
+      const lines = openThreadGapLinesAr({ parentNoun: nounOf(parentStage.title_ar) ?? "عنصر", parents, comments: comments.map((c) => ({ id: String(c.id), parentId: String(c.parent_id ?? ""), replies: childCountOf(c) })), replyParentCommentIds: replyStage ? replies.map((r) => String(r.parent_id ?? "")) : null, repliesCap: replyStage && readsAllReplies(plan, replyStage) ? Number.POSITIVE_INFINITY : Math.max(1, replyStage?.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_MAX), commentsCap: stage.children_cap_per_parent ?? null, commentsStop: stops[stage.key], repliesStop: replyStage ? stops[replyStage.key] : null });
+      counterLines.push(...lines.counterLines);
+      limitLines.push(...lines.limitLines);
+      continue;
+    }
     if (plan.compiled?.by === "compiler" && Number.isFinite(asked) && asked > 0) {
       const lines = askedGapLinesAr({ parentNoun: nounOf(parentStage.title_ar) ?? "عنصر", asked, parents: parents.map((p) => ({ id: p.id })), comments: comments.map((c) => ({ id: String(c.id), parentId: String(c.parent_id ?? ""), replies: childCountOf(c) })), replyParentCommentIds: replyStage ? replies.map((r) => String(r.parent_id ?? "")) : null, repliesCap: replyStage && readsAllReplies(plan, replyStage) ? Number.POSITIVE_INFINITY : Math.max(1, replyStage?.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_MAX) });
       counterLines.push(...lines.counterLines);

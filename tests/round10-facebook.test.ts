@@ -46,16 +46,19 @@ describe("1. which author is «قناة العربية» (the page is chosen by 
 /** The real M17 pages with the structure of the live run put back: the page's own posts (some about the topic), a Saudi page, the programme's page. */
 const pageOf = (call: string): { data: { results: Array<Record<string, any>>; cursor?: string } } => JSON.parse(readFileSync(new URL(`./fixtures/live/missions/${M17}/raw/${call}.json`, import.meta.url), "utf8"));
 function patchedStore(base: ReplayStore, shape: { named: Array<{ about: boolean; comments: number }>; saudi: number }): ReplayStore {
+  let searchPages = 0;
   return {
     putFile: async (m, p, body, ct) => {
       try {
         const d = JSON.parse(body) as { data?: { results?: Array<Record<string, any>> } };
         if (Array.isArray(d.data?.results) && d.data!.results!.length > 0) {
-          const rows = d.data!.results!;
-          rows.forEach((r, i) => {
-            const slot = i < shape.named.length ? shape.named[i] : null;
+          const first = searchPages === 0;
+          searchPages += 1;
+          // the shape of the live pool is on the FIRST search page; the next page holds other pages' posts
+          d.data!.results!.forEach((r, i) => {
+            const slot = first && i < shape.named.length ? shape.named[i] : null;
             if (slot) { r.author = { id: "100069103503573", name: CHANNEL, url: "https://www.facebook.com/AlArabiya" }; r.message = slot.about ? `${TOPIC} يدخل غرف الأخبار ${i}` : `نشرة الصباح ${i}`; r.comments_count = slot.comments; }
-            else if (i < shape.named.length + shape.saudi) { r.author = { id: "61593967473726", name: SAUDI, url: "https://www.facebook.com/people/x/61593967473726/" }; r.message = `Hey everyone ${i}`; r.comments_count = 15; }
+            else if (first && i < shape.named.length + shape.saudi) { r.author = { id: "61593967473726", name: SAUDI, url: "https://www.facebook.com/people/x/61593967473726/" }; r.message = `Hey everyone ${i}`; r.comments_count = 15; }
             else { r.author = { id: `9${i}`, name: `صفحة أخرى ${i}`, url: `https://www.facebook.com/other${i}` }; r.message = `نص آخر ${i}`; r.comments_count = 3; }
           });
           return base.putFile(m, p, JSON.stringify(d), ct);

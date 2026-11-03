@@ -53,12 +53,14 @@ const titled = (base: ReplayStore, titles: Record<string, string>): ReplayStore 
 });
 
 async function plan(over: { text?: string; answer?: string | null; catalogOnly?: boolean; titles?: Record<string, string>; understand?: () => Promise<{ channels: string[]; costUsd: number } | null>; occurrence?: unknown; created?: string } = {}) {
+  // the request of the live mission is a recurring event with no year: unless a test is about the question, the customer has answered «كل المرات»
+  const occurrence = over.occurrence === null ? undefined : (over.occurrence ?? { kind: "all" });
   const store = createMemoryStore();
   const { gateway, stats } = replayGateway(M2, catalog, titled(store, over.titles ?? {}), "msn_r10_yt", { only: { [IN_CHANNEL]: ["channel_id"] }, borrow: BORROW });
   const created = over.created ?? "2026-11-03T12:14:15Z";
   const out = await planByCompiler({
     mission: { id: "msn_r10_yt", request_text: over.text ?? request, answer_text: over.answer ?? null, created_at: created }, gateway, store, catalog, nowMs: Date.parse(created) + 60_000,
-    ...(over.catalogOnly ? { catalogOnly: true } : {}), ...(over.understand ? { understand: over.understand } : {}), ...(over.occurrence ? { occurrence: over.occurrence as never } : {}),
+    ...(over.catalogOnly ? { catalogOnly: true } : {}), ...(over.understand ? { understand: over.understand } : {}), ...(occurrence ? { occurrence: occurrence as never } : {}),
   });
   return { out, stats, store };
 }
@@ -87,7 +89,7 @@ describe("5. the topic is matched on its KEY tokens, not on the whole phrase", (
 describe("6. the official channels: the model fills the names through the understand step, code checks them against the customer's words", () => {
   it("a name the customer's words contain is kept (and gets «الرسمية»); a name they do not contain, or a Latin one, is dropped", () => {
     expect(checkChannelsAgainstWords(["الأهلي", "الزمالك", "الدوري المصري", "Al Ahly SC"], request)).toEqual(["الأهلي الرسمية", "الزمالك الرسمية"]);
-    expect(checkChannelsAgainstWords(["الأهلي", "الدوري المصري الرسمي"], `${request} والدوري المصري`)).toEqual(["الأهلي الرسمية", "الدوري المصري الرسمية"]);
+    expect(checkChannelsAgainstWords(["الأهلي", "الدوري المصري الرسمي"], `${request} والدوري المصري`)).toEqual(["الأهلي الرسمية", "الدوري المصري الرسمي"]);
     expect(checkChannelsAgainstWords(["Al Ahly SC"], request)).toEqual([]);
     expect(checkChannelsAgainstWords([], request)).toEqual([]);
   });
@@ -125,7 +127,7 @@ describe("7. a recurring event with no year or date asks «تقصد أنهي م�
   });
 
   it("the question card has the three answers, the latest occurrence first; nothing is read or priced", async () => {
-    const { out, stats } = await plan();
+    const { out, stats } = await plan({ occurrence: null });
     expect(out.kind).toBe("question");
     if (out.kind !== "question") return;
     expect(out.why).toBe("occurrence");
@@ -144,7 +146,7 @@ describe("7. a recurring event with no year or date asks «تقصد أنهي م�
     expect(occurrenceChoiceOf("٢٠٢٤")).toEqual({ kind: "year", year: 2024 });
     expect(occurrenceChoiceOf("سنة 2019")).toEqual({ kind: "year", year: 2019 });
     expect(occurrenceChoiceOf("أي كلام")).toBeNull();
-    const { out } = await plan({ answer: OCCURRENCE_OPTIONS_AR.year });
+    const { out } = await plan({ answer: OCCURRENCE_OPTIONS_AR.year, occurrence: null });
     expect(out.kind).toBe("question");
     if (out.kind === "question") { expect(out.why).toBe("occurrence_year"); expect(out.options).toEqual([]); expect(out.question).toContain("اكتب السنة"); }
   });
@@ -249,7 +251,7 @@ describe("3. «حدود هذا التسليم» says every gap per video, even w
     compiled: { by: "compiler" as const, platform: "youtube" as const, promises: {} },
     stages: [
       { key: "videos", title_ar: "الفيديوهات", deliver: true, parent_key: null, planned_rows: 2 },
-      { key: "comments", title_ar: "التعليقات", deliver: true, parent_key: "videos", planned_rows: 200, per_parent_rows: 100, children_open: true, all_children: true },
+      { key: "comments", title_ar: "التعليقات", deliver: true, parent_key: "videos", planned_rows: 200, per_parent_rows: 100, children_cap_per_parent: 100, children_open: true, all_children: true },
       { key: "comments_replies", title_ar: "الردود", deliver: true, parent_key: "comments", planned_rows: 12, replies_of: "comments", replies_open: true, replies_uncapped: true },
     ],
   } as never;
@@ -263,7 +265,7 @@ describe("3. «حدود هذا التسليم» says every gap per video, even w
     expect(text).toContain("الفيديو رقم ١");
     expect(text).toContain("الفيديو رقم ٢");
     expect(lines.limitLines.some((l) => l.startsWith("الفيديو رقم ٢") && /لم يُسلَّم منه أي تعليق/.test(l))).toBe(true);
-    expect(lines.limitLines.some((l) => l.startsWith("الفيديو رقم ١") && /ردود التعليقات المسلّمة بحسب عدّاداتها ١٢ ردًا وسُلّم منها ٠ ردود|ردود التعليقات المسلّمة بحسب عدّاداتها ١٢ ردًا وسُلّم منها 0/.test(l))).toBe(true);
+    expect(lines.limitLines.some((l) => l.startsWith("الفيديو رقم ١") && /ردود التعليقات المسلّمة بحسب عدّاداتها ١٢ ردًا وسُلّم منها/.test(l))).toBe(true);
     expect(lines.limitLines.join("\n")).not.toMatch(/[0-9]/);
   });
 

@@ -30,6 +30,8 @@ async function plan(requestOf: string, over: { catalogOnly?: boolean; channels?:
   const out = await planByCompiler({
     mission: { id: "msn_replay_yt", request_text: request(requestOf), answer_text: null, created_at: "2026-11-01T21:09:00Z" }, gateway, store, catalog, nowMs: Date.parse("2026-11-01T21:10:00Z"),
     ...(over.channels === null ? {} : { edits: { channels: over.channels ?? CHANNELS } }), ...(over.catalogOnly ? { catalogOnly: true } : {}),
+    // CHANGED (live round 10, decision 7): the request is a recurring event with no year, so the plan first asks «تقصد أنهي مرة؟»; these tests are about the plan, so the customer has answered «كل المرات» (tests/round10-youtube.test.ts covers the question)
+    occurrence: { kind: "all" },
   });
   return { out, stats };
 }
@@ -94,7 +96,7 @@ describe("acceptance 3: M2, M18 and M20 take their videos from the official chan
         return { ok: true as const, call_id: "call_0900", http_status: 200, rows_in_page: ids.length, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: "call_0900" };
       },
     };
-    const out = await planByCompiler({ mission: { id: "msn_replay_yt_d", request_text: request(M2), answer_text: null, created_at: "2026-11-01T21:09:00Z" }, gateway: withDetail, store, catalog, nowMs: Date.now(), edits: { channels: CHANNELS }, catalogOnly: true });
+    const out = await planByCompiler({ mission: { id: "msn_replay_yt_d", request_text: request(M2), answer_text: null, created_at: "2026-11-01T21:09:00Z" }, gateway: withDetail, store, catalog, occurrence: { kind: "all" }, nowMs: Date.now(), edits: { channels: CHANNELS }, catalogOnly: true });
     const p = planOf(out);
     expect(p.result.promises.comments.type).toBe("counter");
     expect(p.result.promises.comments.n).toBeGreaterThan(0);
@@ -116,7 +118,7 @@ describe("acceptance 3: M2, M18 and M20 take their videos from the official chan
   it("with no channel read, the plan is NOT made (never a plan with a plain search that has no channel input, which was why M18 and M20 took a video of another channel)", async () => {
     const store = createMemoryStore();
     const { gateway } = replayGateway(M20, catalog, store, "msn_replay_yt_e");
-    const out = await planByCompiler({ mission: { id: "msn_replay_yt_e", request_text: request(M20), answer_text: null, created_at: "2026-11-02T19:00:00Z" }, gateway, store, catalog, nowMs: Date.now() });
+    const out = await planByCompiler({ mission: { id: "msn_replay_yt_e", request_text: request(M20), answer_text: null, created_at: "2026-11-02T19:00:00Z" }, gateway, store, catalog, occurrence: { kind: "all" }, nowMs: Date.now() });
     expect(out.kind).toBe("cannot");
     if (out.kind === "cannot") expect(["no_rows", "pool_failed"]).toContain(out.reason);
   });

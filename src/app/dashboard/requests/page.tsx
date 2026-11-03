@@ -29,6 +29,7 @@ import OpenMissionsList from "@/components/mission/OpenMissionsList";
 import { MODEL_PLAN_SLUG } from "@/lib/modelPlanner/constants";
 import { useDriverMode } from "@/hooks/useDriverMode";
 import { deliveredOfAr, itemNounOfPlan, knownItemNoun } from "@/lib/agentMission/itemNoun";
+import { promisedRowsOf } from "@/lib/agentMission/promisedTotal";
 import { moneyLineAr } from "@/lib/agentMission/moneyText";
 import { REQUESTS_PAGE_SIZE, hashOfTab, requestsShownCounts, tabFromHash, tabOfKind, type RequestTab } from "@/lib/requests/tabs";
 import { saveRequestFacts } from "@/lib/requests/facts";
@@ -127,6 +128,8 @@ export default function RequestsPage() {
   const [jobs, setJobs] = useState<JobDoc[]>([]);
   const [quotes, setQuotes] = useState<Record<string, QuoteInfo>>({});
   const [nounByJob, setNounByJob] = useState<Record<string, string>>({});
+  // the promised number of a FINISHED agent mission whose replies were judged against their counters (one number on every surface: the file and the chat say it; the job keeps the card's estimate)
+  const [promisedByJob, setPromisedByJob] = useState<Record<string, number>>({});
   const [titles, setTitles] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [failed, setFailed] = useState(false);
@@ -315,13 +318,16 @@ export default function RequestsPage() {
       }
       // an AGENT mission names its items by the noun of its request («تغريدات»), never «سجلات»
       const nounMap: Record<string, string> = {};
+      const promisedMap: Record<string, number> = {};
       for (const m of (missionsRes?.data || []) as any[]) {
         if (m.job_id && Array.isArray(m.stages)) nounMap[String(m.job_id)] = itemNounOfPlan({ stages: m.stages }).singular;
+        if (m.job_id && Array.isArray(m.stages)) { const judged = promisedRowsOf(m.stages, 0); if (judged > 0) promisedMap[String(m.job_id)] = judged; }
         const conversationId = conversationOfMission.get(String(m.id));
         if (m.job_id && conversationId) qMap[String(m.job_id)] = { ...(qMap[String(m.job_id)] ?? { targetVolumeMax: 0 }), conversationId };
       }
       setQuotes(qMap);
       setNounByJob(nounMap);
+      setPromisedByJob(promisedMap);
 
       const tMap: Record<string, string> = {};
       for (const c of (convRes.data || []) as any[]) {
@@ -521,7 +527,7 @@ export default function RequestsPage() {
           const q = quotes[j.$id];
           // the words of the request itself (an agent request), else a title stored before the plural rule says «٥ سجل»: it is read again at display time, the stored row stays as it is.
           const title = pluralizeStoredCountsAr(row.title || (q?.conversationId && titles[q.conversationId]) || (q?.summaryAr ? customerSafeText(q.summaryAr, "") : "") || targetOf(j.params) || `طلب ${customerFacingCapabilityLabel(j.templateSlug)}`);
-          const requested = j.targetVolumeMax || q?.targetVolumeMax;
+          const requested = promisedByJob[j.$id] || j.targetVolumeMax || q?.targetVolumeMax;
           const rows = j.rowsCollected ?? 0;
           // A finished request that delivered no record has no data file to offer: zero files, said once (the same rule as the results panel).
           // A request that did not settle and charge offers no file either, whatever it saved before settlement (resultsReleasable).
