@@ -34,7 +34,7 @@ export function noAboutChoiceOf(answer: unknown): NoAboutChoice | null {
 
 /** The question, in the customer's words: what was not found and what the found videos are. `hashtagsOnly`: some video names the topic only in its hashtags. */
 export function noAboutQuestionAr(topic: string, noun: { one: string; talks: string }, hashtagsOnly: boolean): string {
-  return `لم نجد في ما قرأناه ${noun.one} ${noun.talks} عن «${topic}»؛ ${hashtagsOnly ? "ما وجدناه يذكر الموضوع في الوسوم فقط، أي أنه غالبًا صُنع بالموضوع ولا يتحدث عنه" : "ما وجدناه لا يذكر الموضوع في نصه"}. كيف تريد أن نكمل؟`;
+  return `لم نجد في ما قرأناه ${noun.one} يطابق طلبك و${noun.talks} عن «${topic}»؛ ${hashtagsOnly ? "ما وجدناه يذكر الموضوع في الوسوم فقط، أي أنه غالبًا صُنع بالموضوع ولا يتحدث عنه" : "ما وجدناه لا يذكر الموضوع في نصه"}. كيف تريد أن نكمل؟`;
 }
 
 /** The mark column of a delivery whose videos are not all about the topic: the relation of each one's own text to the topic. */

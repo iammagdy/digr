@@ -1,6 +1,6 @@
 import { buildAsk, type Ask } from "../../src/lib/agentMission/foundation/ask";
 import { chooseCard, compilePlan, parentInputs, COMPILED_PLATFORMS, type CompileResult } from "../../src/lib/agentMission/foundation/compilePlan";
-import { factsOf, rankPool } from "../../src/lib/agentMission/foundation/pool";
+import { factsOf, isAboutAndEligible, rankPool } from "../../src/lib/agentMission/foundation/pool";
 import { aboutQueryOf, noAboutChoiceOf, noAboutQuestionAr, NO_ABOUT_OPTIONS_AR } from "../../src/lib/agentMission/foundation/topicChoice";
 import { mapPage } from "../../src/lib/agentMission/foundation/toolCards";
 import type { PricedPlan } from "../../src/lib/agentMission/plan";
@@ -67,7 +67,7 @@ export async function planByCompiler(deps: CompiledPlanningDeps): Promise<Compil
   const need = Math.max(1, ask.count ?? 10);
   // LIVE ROUND 7: «عن X» on a source whose search also matches hashtags. When no video of the first page has its own text about the topic, the one more read the gateway allows for this source asks the topic with the words of talking about it
   // (built by code from the Ask), and the union of both pages is ranked by the same rule. Only a search with no operators (TikTok); X's query is the quoted words of the text itself.
-  const hasAbout = (): boolean => pages.some((p) => mapPage(card, p.page).some((r) => factsOf(r, ask).topicTier === 2));
+  const hasAbout = (): boolean => pages.some((p) => mapPage(card, p.page).some((r) => isAboutAndEligible(r, ask)));
   const aboutQuery = card.inputs.query && !card.inputs.query.operators && ask.platform === "tiktok" && noAboutChoiceOf(deps.mission.answer_text) !== "use" ? aboutQueryOf(ask) : null;
   if (aboutQuery && card.inputs.query && !hasAbout()) {
     const more = await read(card.endpointId, { ...params, [card.inputs.query.field]: aboutQuery });
