@@ -110,7 +110,12 @@ describe("the engine executes the compiled M16 plan on the stored execution page
     expect(new Set(items.acceptedRows("comments").map((r) => String(r.id)))).toEqual(new Set(rows(M16, "comments").map((r) => String(r.id))));
     expect(items.acceptedRows("comments")).toHaveLength(13);
     expect(new Set(items.acceptedRows("comments_replies").map((r) => String(r.id)))).toEqual(new Set(rows(M16, "comments_replies").map((r) => String(r.id))));
-    expect(exec.stats.unserved).toEqual([]);
+    // CHANGED (round 16): the plan now carries the one verified alternative comments card, so the engine, whose main tool ended before the count for a post, asks it (once more after a failure); the live run never read it, so no stored page answers: the ONLY unserved calls are
+    // those of that planned alternative, nothing outside the plan, and they add no row (the 13 comments above are still exactly the stored ones)
+    const alternatives = (p.plan.stages.find((s) => s.key === "comments")!.engine!.alternatives ?? []).map((a) => a.endpoint_id);
+    expect(alternatives).toEqual(["scrapecreators.instagram.post.comments"]);
+    expect(exec.stats.unserved.length).toBeGreaterThan(0);
+    expect(exec.stats.unserved.every((u) => alternatives.includes(u.endpointId))).toBe(true);
     // F6: the compiled plan runs the new engine whole and never falls back
     expect([...redesignStagesOf(p.plan, OFF, false, {})].sort()).toEqual(["comments", "comments_replies", "posts"]);
     expect(fallbackStageOf(p.plan, OFF, false, {})).toBeNull();

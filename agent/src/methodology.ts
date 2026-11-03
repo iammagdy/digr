@@ -37,6 +37,8 @@ export interface StageRecord {
   acceptedByModel: number;
   excludedByReason: Record<string, number>;
   stop: StopReason | null;
+  /** ROUND 16: for a comments stage, how many ALTERNATIVE routes answered for each parent (parent id -> number), read from the item store's own log of streams (`p:<parent>:alt<i>` with a page recorded). Absent when no alternative was ever read. */
+  routes?: Record<string, number>;
 }
 
 /** The mission's recorded facts that the plan does not hold. Every field is optional: a missing one is written «غير مسجّل». */
@@ -50,11 +52,25 @@ export interface MissionFacts {
   reviewStop?: "budget" | "failed" | null;
 }
 
+/** The alternative routes that ANSWERED for each parent, from the streams the item store persisted (the engine's keys: `p:<parent>` the main route, `p:<parent>:alt<i>` the i-th alternative). A route that never answered left no stream, so it is not counted: the number is a floor, never an overstatement. */
+/** The routes of every stage that has any (stage key -> parent id -> alternatives answered), for the limits lines and the delivery contract. */
+export const routesOfFacts = (facts: MissionFacts | undefined): Record<string, Record<string, number>> => Object.fromEntries(Object.entries(facts?.stages ?? {}).filter(([, v]) => v.routes !== undefined).map(([k, v]) => [k, v.routes!] as const));
+
+export function alternativeRoutesOf(streams: ReadonlyMap<string, { pages: number }>): Record<string, number> {
+  const out: Record<string, number> = {};
+  for (const [key, state] of streams) {
+    const m = /^p:(.+):alt\d+$/.exec(key);
+    if (m && state.pages > 0) out[m[1]] = (out[m[1]] ?? 0) + 1;
+  }
+  return out;
+}
+
 export function missionFactsOf(input: { requestText: string | null | undefined; plan: PricedPlan; snap: ItemSnapshot; reviewStop: "budget" | "failed" | null; deliveredAt?: Date }): MissionFacts {
   const stages: Record<string, StageRecord> = {};
   for (const s of input.plan.stages) {
     const c = input.snap.counts(s.key);
-    stages[s.key] = { found: c.found, duplicates: c.duplicates, accepted: c.accepted, excluded: c.excluded, pending: c.pending, unchecked: c.unchecked, acceptedByRule: c.acceptedByRule, acceptedByModel: c.acceptedByModel, excludedByReason: { ...c.excludedByReason } as Record<string, number>, stop: input.snap.stage(s.key).stop };
+    const routes = alternativeRoutesOf(input.snap.stage(s.key).streams);
+    stages[s.key] = { found: c.found, duplicates: c.duplicates, accepted: c.accepted, excluded: c.excluded, pending: c.pending, unchecked: c.unchecked, acceptedByRule: c.acceptedByRule, acceptedByModel: c.acceptedByModel, excludedByReason: { ...c.excludedByReason } as Record<string, number>, stop: input.snap.stage(s.key).stop, ...(Object.keys(routes).length > 0 ? { routes } : {}) };
   }
   return { requestText: input.requestText ?? null, deliveredAt: input.deliveredAt ?? new Date(), stages, reviewStop: input.reviewStop };
 }
@@ -321,7 +337,7 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
     limits.push(`${many ? `«${s.title_ar}»: ` : ""}سُلّم ${fmt(got)} من ${fmt(s.planned_rows)} ${clause}.`);
   }
   // THE SOURCE'S OWN COUNTER next to what was delivered, per parent (a video's comments count against the comments and replies delivered under it)
-  const threads = threadCounterLinesOfPlan(plan, rowsByStage, knownNounOf, Object.fromEntries(Object.entries(facts.stages ?? {}).map(([k, v]) => [k, v.stop] as const)));
+  const threads = threadCounterLinesOfPlan(plan, rowsByStage, knownNounOf, Object.fromEntries(Object.entries(facts.stages ?? {}).map(([k, v]) => [k, v.stop] as const)), routesOfFacts(facts));
   for (const line of threads.limitLines) limits.push(line);
   // HOW MANY DATES ARE APPROXIMATE (round 14), per delivered stage: the file names them in the column beside the date and says here how many rows carry one
   for (const s of delivering) {

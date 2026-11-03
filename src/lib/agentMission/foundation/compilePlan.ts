@@ -12,6 +12,7 @@ import { cairoMomentAr } from "./cairoText";
 import { NAMED_MARK_KEY, NAMED_MARK_TITLE_AR, NAMED_MISMATCH_MARK_AR } from "./namedShortfall";
 import { childPromise, perParentPromise, promiseLineAr, type StagePromise } from "./promise";
 import { OPEN_REPLIES_FLOOR } from "./openReplies";
+import { ALTERNATIVE_LINE_AR, catalogOnlyPagesOf, commentsAlternativesOf, quoteCostPerRowOf } from "./alternatives";
 import { TOPIC_RELATION_KEY, TOPIC_RELATION_TITLE_AR, topicRelationAr } from "./topicChoice";
 import { cardMapCode, cardsFor, CATALOG_ONLY_CAP_USD, CATALOG_ONLY_PRICE_MARGIN, CHILD_COLUMNS, COUNTRY_AR, mapPage, type CardRole, type ToolCard } from "./toolCards";
 import type { SocialPlatform } from "../redesignFlagTypes";
@@ -208,6 +209,13 @@ export function repliesSizing(input: { comments: number; known: ReadonlyArray<nu
   return { counted, countedComments: seen.length, open: total - counted, total };
 }
 
+/** ROUND 16: how many of the selected items match the customer's conditions and how many are alternatives marked in the file (all counted on the inspected planning rows; Arabic-Indic digits, no provider, no price). */
+export const MATCH_COUNTS_PREFIX_AR = "من العناصر المختارة وعددها";
+export function matchCountsLineAr(selected: number, alternatives: number): string {
+  const alt = Math.max(0, Math.min(selected, Math.floor(alternatives)));
+  return `${MATCH_COUNTS_PREFIX_AR} ${toArabicDigits(selected)}: ${alt === 0 ? "كلها تطابق شروطك، ولا بديل بينها" : `${toArabicDigits(selected - alt)} تطابق شروطك، و${toArabicDigits(alt)} منها بدائل عليها علامة في الملف`}.`;
+}
+
 /** The customer's one sentence for a compiled plan (Arabic, Arabic-Indic digits, no provider, no price). */
 export function summaryAr(ask: Ask, n: number, shape: ReadonlyArray<StageRole>, perParent: number | null = null): string {
   const w = NOUN[ask.platform!];
@@ -337,8 +345,13 @@ export function compilePlan(input: CompileInput): CompileResult {
   const stages: PricedStage[] = [];
   const parentKey = PARENT_KEY[ask.platform];
   // THE 0.20 USD CAP (decision 7.4): the stages that use a catalog_only card share it; each gets the pages its share buys at twice the catalog's price (the stage's own page limit)
-  const catalogOnlyStages = [commentsCard, repliesCard].filter((c): c is ToolCard => c !== null && c.status === "catalog_only").length;
-  const sharedMaxPages = (c: ToolCard): number | null => (c.status === "catalog_only" && c.costUsdPerPage > 0 ? Math.max(1, Math.floor(CATALOG_ONLY_CAP_USD / Math.max(1, catalogOnlyStages) / (c.costUsdPerPage * CATALOG_ONLY_PRICE_MARGIN) + 1e-9)) : null);
+  // ROUND 16: the comments stage's alternatives, decided here by code (never a planning call): the other cards of the platform that pass every rule of alternatives.ts; a `catalog_only` one (a test account only) shares the same cap
+  const alternatives = commentsCard ? commentsAlternativesOf({ platform: ask.platform, primary: commentsCard, parents: chosen, repliesCard: shape.includes("replies") && repliesCard ? repliesCard : null, catalogOnly }) : null;
+  const captureAlternatives = (alternatives?.alternatives ?? []).filter((a) => a.capture);
+  const catalogOnlyStages = [commentsCard, repliesCard].filter((c): c is ToolCard => c !== null && c.status === "catalog_only").length + (captureAlternatives.length > 0 && commentsCard?.status !== "catalog_only" ? 1 : 0);
+  const sharedMaxPages = (c: ToolCard): number | null => (c.status === "catalog_only" && c.costUsdPerPage > 0 ? catalogOnlyPagesOf(c, catalogOnlyStages) : null);
+  /** The comments stage's pages: the cap of its own card, and of a `catalog_only` alternative it may continue with (the cap is the stage's: the engine counts the stage's pages whichever tool read them). */
+  const commentsMaxPages = (c: ToolCard): number | null => { const own = [sharedMaxPages(c), ...captureAlternatives.map((a) => sharedMaxPages(a.card))].filter((x): x is number => x !== null); return own.length > 0 ? Math.min(...own) : null; };
   // THE TOPIC RELATION MARK (live round 7, always since round 11): every item of the stage carries how its own text relates to the topic the customer named, so the file says which is which (a mark, never a drop)
   const tierOf = (r: PoolRow) => factsOf(r, ask, bySource).topicTier;
   // LIVE ROUND 11: the column is on the parent sheet WHENEVER the Ask has a topic, on every platform (a file whose items are all about it said nothing, so «all about it» could not be told from «not checked»)
@@ -391,6 +404,8 @@ export function compilePlan(input: CompileInput): CompileResult {
   }
   const unmet = chosen.filter((r) => { const f = factsOf(r, ask, bySource); return !f.country || !f.language || !f.named; }).length;
   if (unmet > 0) notes.push(`لم نجد في ما قرأناه ما يكفي مما يطابق المصدر أو الدولة أو اللغة المطلوبة؛ ${toArabicDigits(unmet)} من العناصر المختارة لا تطابق ذلك، وعليها علامة في الملف.`);
+  // ROUND 16: the card says how many of the selected items match the conditions the customer named (a source, a country, a language) and how many are alternatives marked in the file, counted on the rows read at planning (a mark, never a drop)
+  if (ask.source.kind === "named" || ask.country !== null || ask.language !== null) notes.push(matchCountsLineAr(chosen.length, unmet));
   // THE TOPIC, SAID HONESTLY BEFORE APPROVAL (live D1): «عن X» means the item's own text talks about X. A video whose caption names X only in its hashtags is made WITH X (the tool), so it ranks below the videos whose caption body is about X;
   // when the pool read has none of the latter the card says so; when some chosen items are below it, it says how many. Ranking only: the items are chosen and delivered either way.
   if (ask.topic.text && ask.topic.relation !== "made_with") {
@@ -426,12 +441,15 @@ export function compilePlan(input: CompileInput): CompileResult {
       ...(shape.includes("replies") && repliesCard && commentsCard.mapping.kind === "replies" && (commentsCard.mapping.tokens ?? []).length > 0 ? { carry_keys: (commentsCard.mapping.tokens ?? []).map((t) => t.key) } : {}),
       ...(commentsCard.mapping.kind === "replies" && commentsCard.mapping.relativeDates === true ? { relative_dates: true } : {}),
       columns: CHILD_COLUMNS.map((c) => ({ ...c })), sample_rows: (exposurePages[0]?.rows ?? []).slice(0, 3), measured_by: exposurePages.map((e) => e.callId).filter((x): x is string => x !== null),
-      measured_from_calls: exposurePages.map((e) => e.callId).filter((x): x is string => x !== null), measured_cost_per_row_usd: commentsCard.costUsdPerPage / Math.max(1, commentsCard.page.observedRowsPerPage),
+      // DECISION A: the quote is the main tool's cost per row, or the dearest compatible alternative's when that costs more than twice as much per expected row (alternatives.ts)
+      measured_from_calls: exposurePages.map((e) => e.callId).filter((x): x is string => x !== null), measured_cost_per_row_usd: quoteCostPerRowOf(commentsCard, alternatives?.alternatives ?? []),
       yield_share: 1, review_share: 0, parent_pins: chosen.map((r) => r.id), ...(ask.comments === "all" && perParent === null ? { all_children: true } : {}), ...(p.type === "open" ? { children_open: true } : {}),
-      ...(sharedMaxPages(commentsCard) !== null ? { max_pages: sharedMaxPages(commentsCard)! } : {}),
-      engine: { endpoint_id: commentsCard.endpointId, params: structuredClone(commentsCard.inputs.fixed ?? {}), cursor_param: commentsCard.inputs.cursor, map_code: cardMapCode(commentsCard), map_file_id: "page", parent_binding: { param: commentsCard.inputs.parent!.param, from: commentsCard.inputs.parent!.from }, built_by: "code" },
+      ...(commentsMaxPages(commentsCard) !== null ? { max_pages: commentsMaxPages(commentsCard)! } : {}),
+      engine: { endpoint_id: commentsCard.endpointId, params: structuredClone(commentsCard.inputs.fixed ?? {}), cursor_param: commentsCard.inputs.cursor, map_code: cardMapCode(commentsCard), map_file_id: "page", parent_binding: { param: commentsCard.inputs.parent!.param, from: commentsCard.inputs.parent!.from }, built_by: "code", ...((alternatives?.alternatives ?? []).length > 0 ? { alternatives: alternatives!.alternatives.map((a) => ({ ...a.entry, params: { ...a.entry.params } })) } : {}) },
     } as PricedStage);
     notes.push(promiseLineAr(p, "comments", card.counter?.counts === "comments_and_replies", perParent, openAllowance));
+    // WHAT THE CARD SAYS ABOUT THE NEXT SOURCE (only when the stage really has one)
+    if ((alternatives?.alternatives ?? []).length > 0) notes.push(ALTERNATIVE_LINE_AR);
   }
 
   if (shape.includes("replies")) {

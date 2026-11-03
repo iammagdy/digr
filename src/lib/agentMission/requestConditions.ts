@@ -14,7 +14,7 @@ export function conditionsOfRequest(textIn: unknown): ConditionClass[] {
   const raw = String(textIn ?? "");
   const text = digits(raw);
   const found = new Set<ConditionClass>();
-  if (new RegExp(`آخر\\s+(?:\\d+\\s+)?(?:${UNITS})|(?:الأسبوع|الاسبوع|الشهر|السنة|العام)\\s+(?:الماضي|الحالي)|(?:^|\\s)(?:اليوم|أمس|امبارح)(?:\\s|$)|(?:في|خلال)\\s+(?:${MONTHS})|(?:${MONTHS})\\s+\\d{4}|\\bمنذ\\s+\\d+`).test(text)) found.add("date");
+  if (new RegExp(`آخر\\s+(?:\\d+\\s+)?(?:${UNITS})|(?:الأسبوع|الاسبوع|الشهر|السنة|العام)\\s+(?:الماضي|الماضى|الحالي)|(?:^|\\s)الشهر\\s+(?:اللي|اللى|الي|الى)\\s+فات|(?:^|\\s)(?:اليوم|أمس|امبارح)(?:\\s|$)|(?:في|خلال)\\s+(?:${MONTHS})|(?:${MONTHS})\\s+\\d{4}|\\bمنذ\\s+\\d+`).test(text)) found.add("date");
   if (/بالعربي|باللغة\s+العربية|(?:عربي|عربية)\s+فقط|بالإنجليزي|بالانجليزي|باللغة\s+الإنجليزية|باللغة\s+الانجليزية|بالفرنسي/.test(raw)) found.add("language");
   if (new RegExp(`(?:^|\\s)(?:في|من|داخل)\\s+(?:${COUNTRIES})`).test(raw)) found.add("country");
   if (/@[A-Za-z0-9_.]{2,}/.test(raw)) found.add("account");

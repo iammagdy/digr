@@ -4,6 +4,7 @@ import { childCountOf } from "../../src/lib/agentMission/childCount";
 import { AGENT_REPLIES_PER_COMMENT_MAX } from "../../src/lib/agentMission/constants";
 import { readsAllReplies } from "../../src/lib/agentMission/repliesCard";
 import type { PricedPlan } from "../../src/lib/agentMission/plan";
+import { alternativesGapLineAr, expectedCommentsOf } from "../../src/lib/agentMission/foundation/deliveryContract";
 
 /**
  * THE SOURCE'S OWN COUNTER NEXT TO WHAT WAS DELIVERED (the replies PR; live G4: a video whose own counter showed 25 delivered one comment, and nothing in the file said why). For every parent (video, post) that has its own counter: «عداد الفيديو ٢٥، سُلّم تعليق واحد و٢٣ ردًا», from the recorded counts and the
@@ -171,7 +172,7 @@ export function tweetRepliesGapLinesAr(f: { parentNoun: string; parents: Readonl
  * THE COUNTER LINES OF A DELIVERY, from the plan and the delivered rows: for every delivered comments stage that has a parent whose rows carry the source's own counter (a video's comments count), one line per parent. Empty for a plan with no such stage. `parentNoun` is the noun the plan's own
  * title says («فيديو»), found by the caller (methodology.ts knownNounOf).
  */
-export function threadCounterLinesOfPlan(plan: Pick<PricedPlan, "stages"> & { compiled?: PricedPlan["compiled"] }, rowsByStage: Record<string, Array<Record<string, unknown>>>, nounOf: (title: string | undefined) => string | null | undefined, stops: Readonly<Record<string, string | null | undefined>> = {}): { counterLines: string[]; limitLines: string[] } {
+export function threadCounterLinesOfPlan(plan: Pick<PricedPlan, "stages"> & { compiled?: PricedPlan["compiled"] }, rowsByStage: Record<string, Array<Record<string, unknown>>>, nounOf: (title: string | undefined) => string | null | undefined, stops: Readonly<Record<string, string | null | undefined>> = {}, routes: Readonly<Record<string, Readonly<Record<string, number>>>> = {}): { counterLines: string[]; limitLines: string[] } {
   const counterLines: string[] = [];
   const limitLines: string[] = [];
   // THE REPLIES OF A TOP-LEVEL PARENT (X: a tweet has no comments stage, its replies are the child stage; live round 7, msn_9fa5ba384c05a25247e1): the gap per tweet, the way TikTok says it per video
@@ -223,6 +224,21 @@ export function threadCounterLinesOfPlan(plan: Pick<PricedPlan, "stages"> & { co
     if (replyStage) for (const c of comments) { const p = String(c.parent_id ?? ""); replyCountersByParent.set(p, (replyCountersByParent.get(p) ?? 0) + Math.min(replyCap, Math.max(0, childCountOf(c) ?? 0))); }
     const lines = parentCounterLinesAr({ parentNoun: nounOf(parentStage.title_ar) ?? "عنصر", parents, commentParentIds: comments.map((c) => String(c.parent_id ?? "")), replyParentCommentIds: replies.map((r) => String(r.parent_id ?? "")), commentToParent, cappedParents: capped, ...(plan.compiled?.by === "compiler" ? { ordinal: true } : {}), ...(replyStage ? { replyCountersByParent } : {}) });
     for (const l of lines) { counterLines.push(l.counterLine); if (l.limitLine) limitLines.push(l.limitLine); }
+  }
+  // ROUND 16: a parent whose comments fell short AFTER an alternative route answered for it says so, per parent: the expected count, the unique comments delivered, the gap, and that the main route and N alternative routes were tried (from the persisted streams only)
+  for (const stage of plan.stages) {
+    if (plan.compiled?.by !== "compiler" || !stage.deliver || stage.parent_key === null || stage.replies_of !== undefined || nounOf(stage.title_ar) !== "تعليق") continue;
+    const tried = routes[stage.key];
+    if (!tried) continue;
+    const parentStage = plan.stages.find((p) => p.key === stage.parent_key);
+    if (!parentStage) continue;
+    const comments = rowsByStage[stage.key] ?? [];
+    (rowsByStage[parentStage.key] ?? []).forEach((p, i) => {
+      const n = tried[String(p.id)] ?? 0;
+      const expected = expectedCommentsOf(stage, p);
+      const got = comments.filter((c) => String(c.parent_id ?? "") === String(p.id)).length;
+      if (n > 0 && expected !== null && got < expected) limitLines.push(alternativesGapLineAr({ parentNoun: nounOf(parentStage.title_ar) ?? "عنصر", n: i + 1, expected, delivered: got, alternatives: n }));
+    });
   }
   return { counterLines, limitLines };
 }
