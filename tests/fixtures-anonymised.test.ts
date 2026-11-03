@@ -55,17 +55,18 @@ function scan(value: unknown, key: string | null, at: string, file: string, out:
 const files = jsonFiles(ROOT);
 
 describe("anonymised real pages (decision 7.1): the scan that gates the public repo", () => {
-  it("holds the 31 missions (28 of FOUNDATION-PLAN PR 1, 2 of live round 7, 1 of live round 8): 533 raw/ and rows/ files, nothing else", () => {
-    expect(files.length).toBe(533);
+  // CHANGED (live round 11): three more missions of the owner's admin ZIP (YouTube 19 files, Instagram 9, Facebook 5)
+  it("holds the 34 missions (28 of FOUNDATION-PLAN PR 1, 2 of live round 7, 1 of live round 8, 3 of live round 11): 566 raw/ and rows/ files, nothing else", () => {
+    expect(files.length).toBe(566);
     const rel = files.map((f) => path.relative(ROOT, f).split(path.sep));
-    expect(new Set(rel.map((r) => r[0])).size).toBe(31);
+    expect(new Set(rel.map((r) => r[0])).size).toBe(34);
     for (const r of rel) {
       expect(r[0]).toMatch(/^msn_[0-9a-f]{20}$/);
       expect(["raw", "rows"]).toContain(r[1]);
       expect(r.length).toBe(3);
     }
-    expect(rel.filter((r) => r[1] === "raw").length).toBe(472);
-    expect(rel.filter((r) => r[1] === "rows").length).toBe(61);
+    expect(rel.filter((r) => r[1] === "raw").length).toBe(499);
+    expect(rel.filter((r) => r[1] === "rows").length).toBe(67);
   });
 
   it("no JWT, no Bearer header, no cookie, no e-mail, and every personal field is a placeholder or empty", () => {

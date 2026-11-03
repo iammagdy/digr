@@ -25,7 +25,7 @@ REDACT = {"token", "cookie", "tt_chain_token"}
 KEEP = {
     # paging
     "cursor", "nextCursor", "next_cursor", "prev_cursor", "next_max_id", "continuation_token",
-    "continuationToken", "expansion_token", "offset", "hasNextPage", "has_next_page",
+    "continuationToken", "reply_continuation_token", "expansion_token", "offset", "hasNextPage", "has_next_page",
     # dates and times
     "created_at", "date", "startDate", "endDate", "posted_at", "published", "publishedTime",
     "publishedTimeText", "published_time", "taken_at", "time", "recordTime", "timestamp",
@@ -43,7 +43,7 @@ KEEP = {
     # counters written as text
     "viewCountText", "subscriberCountText", "subscriber_count_text", "lengthText", "count",
     "likes", "views", "shares", "followers", "saves", "retweets", "plays", "length", "video_length",
-    "replies_count", "reactions_count", "comments_count",
+    "replies_count", "reactions_count", "comments_count", "like_count", "reply_count",
     # Diger flags in delivered rows
     "liked_by_creator", "reply_video_flag", "reply_with_video", "reply_with_video_flag", "video_reply",
 }
