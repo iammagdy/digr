@@ -142,11 +142,14 @@ describe("round 7, item 1: the union still has no video about the topic: the que
     expect(String(sheet.getRow(2).getCell(col).value)).toBe("يذكر الموضوع في الوسوم فقط");
   });
 
-  it("a plan whose chosen videos are all about the topic has no such column (the file is exactly what it was)", async () => {
+  // CHANGED (live round 11, item 3): the column is on the parent sheet whenever the Ask has a topic, even when every chosen video is about it (it said nothing before, so «all about it» could not be told from «not checked»)
+  it("a plan whose chosen videos are all about the topic still has the column, and every video says it talks about the topic", async () => {
     const g = stubGateway([searchPage({ suffix: "", caption: () => ABOUT_BODY })]);
     const r = await plan(g);
     if (r.kind !== "plan") throw new Error(r.kind);
-    expect(r.plan.stages.find((s) => s.key === "videos")!.columns.map((c) => c.title_ar)).not.toContain("علاقة النص بالموضوع");
+    const videos = r.plan.stages.find((s) => s.key === "videos")!;
+    expect(videos.columns.map((c) => c.title_ar)).toContain("علاقة النص بالموضوع");
+    for (const row of (videos.pinned_rows ?? []) as Array<Record<string, unknown>>) expect(row.topic_relation).toBe("يتحدث نصه عن الموضوع");
   });
 });
 

@@ -51,6 +51,8 @@ export function promiseLineAr(p: StagePromise, what: "comments" | "replies", cou
     if (p.type === "counter") return `التعليقات: كل تعليقات العناصر المختارة، وعددها بحسب عدّاد المنصة ${n}${counterIncludesReplies ? "، وهذا العدّاد يشمل الردود" : ""}. إن عرض المصدر أقل من العدّاد نذكر الفرق لكل عنصر.`;
     return `التعليقات: كل ما يعرضه المصدر من تعليقات على العناصر المختارة، بحد أقصى ${n} تعليق.`;
   }
+  // THE SOURCE GIVES NO REPLY COUNTER (live round 11, Instagram: «٠ ردًا بحسب عدّادات ٢٧ تعليقًا» said a counter that was never there): no number is promised, and the line says why
+  if (p.type === "open" && p.counted_comments === 0) return `الردود: كل ما يعرضه المصدر من ردود على كل تعليق مختار، دون حد لعدد الردود على التعليق الواحد. لا تعرض المنصة عدد الردود على كل تعليق قبل قراءته، فلا نعد بعدد منها؛ والحد الأقصى المحسوب في الحجز ${n} ردّ، ولا ندفع إلا مقابل ما سُلّم.`;
   if (p.type === "open" && p.counted !== undefined && p.counted_comments !== undefined) {
     const open = Math.max(0, p.n - p.counted);
     const known = `${toArabicDigits(p.counted)} ردًا بحسب عدّادات ${toArabicDigits(p.counted_comments)} تعليقًا قرأناها`;

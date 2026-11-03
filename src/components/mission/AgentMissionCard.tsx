@@ -3,7 +3,7 @@
 import { refreshBalanceAfterSettle } from "@/lib/missionBalance";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
-import { toArabicDigits } from "@/lib/arabicDigits";
+import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
 import { formatSampleCell } from "@/lib/customerDates";
 import { PLANNING_USUAL_TIME_AR } from "@/lib/missionView";
 import { AGENT_CLOSE_NOTICE_AR } from "@/lib/agentMission/constants";
@@ -12,6 +12,9 @@ import { MISSION_READ_LIMIT_MS, startMissionPolling } from "@/lib/missionPoller"
 import type { CustomerMissionView } from "@/lib/agentMission/customerView";
 import { MissionPlanBody } from "@/components/mission/MissionPlanPanel";
 import { PlanEditor } from "@/components/mission/PlanEditor";
+import { useBalance } from "@/hooks/useBalance";
+import { holdLimitOf } from "@/lib/agentMission/holdLimit";
+import { pointsAr } from "@/lib/pointsFormat";
 import type { PlanEdits } from "@/lib/agentMission/planEdit";
 
 /**
@@ -47,6 +50,9 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [approvedHere, setApprovedHere] = useState(false);
   const alive = useRef(true);
+  // THE CUSTOMER'S BALANCE (the shared provider: null while it loads or when it failed, never a made-up zero): a hold above it is a limit like the job cap
+  const { balance } = useBalance();
+  const balancePoints = balance.status === "ready" ? balance.value : null;
 
   const read = useCallback(async () => {
     // a read that does not answer is cut off (the connection is freed) and the next one is made by the polling loop, which also has its own limit
@@ -76,13 +82,13 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
     return () => { alive.current = false; stop(); if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisible); };
   }, [read, live, ended]);
 
-  async function act(action: "approve" | "cancel" | "edit" | "edit_plan" | "answer", text?: string, edits?: PlanEdits) {
+  async function act(action: "approve" | "cancel" | "edit" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) {
     if (busy) return;
     setBusy(true);
     setPendingAction(action);
     setError(null);
     try {
-      const res = await fetch(`/api/missions/${encodeURIComponent(missionId)}`, { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) }, body: JSON.stringify({ action, ...(text !== undefined ? { text } : {}), ...(edits !== undefined ? { edits } : {}) }) });
+      const res = await fetch(`/api/missions/${encodeURIComponent(missionId)}`, { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) }, body: JSON.stringify({ action, ...(text !== undefined ? { text } : {}), ...(edits !== undefined ? { edits } : {}), ...(action === "smaller" && typeof balancePoints === "number" ? { maxHoldPoints: Math.max(0, Math.floor(balancePoints)) } : {}) }) });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json?.success) { setError(String(json?.error || "تعذّر تنفيذ الطلب الآن؛ حاول بعد قليل. لم يُخصم شيء.")); return; }
       if (action === "edit" && typeof json.requestText === "string") onEdit?.(json.requestText);
@@ -113,16 +119,20 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   if (!v) {
     return <div dir="rtl" data-testid="agent-card" data-phase="loading" className="mt-3 rounded-[18px] border border-ln bg-sf p-4 text-[13px] text-ink2" role="status">جاري تجهيز مهمتك…</div>;
   }
-  return <AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} editing={editing} onEditing={setEditing} />;
+  return <AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} />;
 }
 
 /** The card itself, drawn from one view: pure (no network), so it renders the same on the server and in the tests. */
-export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAction = null, approved = false, error = null, reply = "", onReply = () => undefined, onAct = () => undefined, onDownload = () => undefined, editing = false, onEditing = () => undefined }: { view: CustomerMissionView; isGuest: boolean; busy?: boolean; pendingAction?: string | null; approved?: boolean; error?: string | null; reply?: string; onReply?: (text: string) => void; onAct?: (action: "approve" | "cancel" | "edit" | "edit_plan" | "answer", text?: string, edits?: PlanEdits) => void; onDownload?: (name: string) => void; editing?: boolean; onEditing?: (open: boolean) => void }) {
+export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAction = null, approved = false, error = null, reply = "", onReply = () => undefined, onAct = () => undefined, onDownload = () => undefined, balancePoints = null, editing = false, onEditing = () => undefined }: { view: CustomerMissionView; isGuest: boolean; busy?: boolean; pendingAction?: string | null; approved?: boolean; error?: string | null; reply?: string; onReply?: (text: string) => void; onAct?: (action: "approve" | "cancel" | "edit" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) => void; onDownload?: (name: string) => void; /** The customer's balance in points (null: not known, never zero). */ balancePoints?: number | null; editing?: boolean; onEditing?: (open: boolean) => void }) {
   // the close-page sentence belongs to the status block of the card (on the page, from the moment of approval): the details list below does not say it a second time
   const panelContent = { title: "خطة المهمة", steps: v.steps, currentLineAr: v.currentLineAr, delayAr: v.delayAr, remainingAr: v.remainingAr, closePageAr: null, startedAt: v.startedAt ?? undefined, live: v.live };
   // the plan the customer has just approved is shown as a running mission at once, before the next read of the mission returns
   const planShown = v.phase === "plan" && !approved;
   const approving = pendingAction === "approve";
+  // A PLAN THAT CANNOT BE APPROVED HAS NO APPROVE BUTTON (live round 11): its hold is above the job cap (the plan says so) or above the customer's balance (the card compares it)
+  const hold = v.limit ? holdLimitOf(v.limit.reservePoints, balancePoints) : null;
+  const overLimit = Boolean(v.limit?.over) || hold !== null;
+  const byBalance = !v.limit?.over && hold !== null && hold.kind === "balance";
   const showStarted = v.phase === "running" || (v.phase === "plan" && approved);
   const facts = [
     ...(v.totalRowsAr ? [{ labelAr: "هتستلم", valueAr: v.totalRowsAr }] : []),
@@ -177,10 +187,27 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
 
       {(v.phase === "plan" || v.phase === "running") && v.notesAr.length > 0 ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-notes">{v.notesAr.join(" ")}</p> : null}
 
-      {planShown ? (
+      {planShown && !isGuest && overLimit && v.limit ? (
+        <div className="flex flex-col gap-2 rounded-[14px] border border-ln2 bg-sf2 px-3 py-2.5" role="alert" data-testid="agent-over-limit">
+          <p className="m-0 text-[14px] font-semibold leading-[1.9] text-ink">
+            {byBalance && hold ? `رصيدك الحالي ${pointsAr(hold.limit_points)}، والحجز المؤقت المطلوب لهذه الخطة ${pointsAr(hold.reserve_points)}؛ فلا يمكن اعتمادها كما هي.` : v.limit.sentenceAr ?? `هذه الخطة أكبر من الحد المسموح لحجز واحد (${pointsAr(v.limit.capPoints)})، فلا يمكن اعتمادها كما هي.`}
+          </p>
+          {v.limit.rowsAr && !byBalance ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-over-limit-rows">{v.limit.rowsAr}</p> : null}
+          {v.limit.smaller && !byBalance ? <p className="m-0 text-[13px] leading-[1.9] text-ink" data-testid="agent-smaller-line">{`نسخة أصغر: حتى ${formatAr(v.limit.smaller.perPost)} تعليق من كل منشور، وحجزها المؤقت ${pointsAr(v.limit.smaller.reservePoints)}.`}</p> : null}
+          {byBalance ? <p className="m-0 text-[13px] leading-[1.9] text-ink2">يمكنك اعتماد نسخة أصغر تناسب رصيدك، أو تغيير طلبك، أو إلغاء المهمة؛ ولم يُخصم شيء.</p> : null}
+          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+            {byBalance || v.limit.smaller ? <button type="button" className={`${BTN_PRIMARY} inline-flex min-h-12 w-full items-center justify-center text-[15px] font-semibold sm:w-auto sm:min-w-[200px]`} disabled={busy} onClick={() => onAct("smaller")} data-testid="agent-smaller">{pendingAction === "smaller" ? "جاري التجهيز…" : "جهّز نسخة أصغر"}</button> : null}
+            <button type="button" className={`${BTN_PLAIN} w-full sm:w-auto`} disabled={busy} onClick={() => (v.edit ? onEditing(!editing) : onAct("edit"))} data-testid="agent-edit" aria-expanded={v.edit ? editing : undefined}>عدّل الطلب</button>
+            <button type="button" className={`${BTN_PLAIN} w-full sm:w-auto`} disabled={busy} onClick={() => onAct("cancel")} data-testid="agent-cancel">ألغِ المهمة</button>
+          </div>
+        </div>
+      ) : null}
+
+      {planShown && !(overLimit && !isGuest) ? (
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
           {isGuest
             ? <a href="/register" className={`${BTN_PRIMARY} inline-flex min-h-12 items-center justify-center text-[15px] font-semibold no-underline sm:min-w-[200px]`} data-testid="agent-signup">سجّل لتعتمد</a>
+            : overLimit ? null
             : <button type="button" className={`${BTN_PRIMARY} inline-flex min-h-12 w-full items-center justify-center gap-2 text-[15px] font-semibold sm:w-auto sm:min-w-[200px]`} disabled={busy} onClick={() => onAct("approve")} data-testid="agent-approve">
                 {approving ? <><span className="h-4 w-4 rounded-full border-2 border-onac/30 border-t-onac motion-safe:animate-spin motion-reduce:animate-none" aria-hidden="true" />جاري الاعتماد…</> : "اعتمد"}
               </button>}

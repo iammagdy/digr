@@ -26,7 +26,10 @@ export const CHILD_COLUMNS = [
 export function cardMapCode(card: ToolCard): string {
   if (card.mapping.kind === "replies") {
     const tokens = (card.mapping.tokens ?? []).map((t) => ({ param: "", key: t.key }));
-    return buildReplyMapCode(replyColumnKeysOf(CHILD_COLUMNS), tokens).replace("const P = inputs.page;", "const P = Object.values(inputs)[0];");
+    // A COMMENTS CARD THAT CARRIES NO REPLY COUNTER (Instagram's two) never reads one: a field the source fills with 0, [] or nothing is not a counter, and a 0 written for it says «no replies» when the source does not say so (live round 11)
+    const keys = replyColumnKeysOf(CHILD_COLUMNS);
+    const noCounter = card.counter === null && (card.role === "post.comments" || card.role === "video.comments");
+    return buildReplyMapCode(noCounter ? { ...keys, replies: null } : keys, tokens).replace("const P = inputs.page;", "const P = Object.values(inputs)[0];");
   }
   const link = card.mapping.linkTemplate;
   const numeric = card.mapping.numeric ?? [];

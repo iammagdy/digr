@@ -90,8 +90,9 @@ describe("2b. one promised number everywhere: the orders page says what the file
   it("a mission planned the old way (no compiled plan) keeps the job's own number, whatever its replies stage says", () => {
     expect(promisedRowsOf(stagesAtFinish, 59, false)).toBe(59);
   });
-  it("a mission with no open replies keeps the job's own number, and so does one with no stages", () => {
-    expect(promisedRowsOf(stagesAtFinish.map((s) => ({ key: s.key, expected_rows: s.expected_rows, deliver: s.deliver })), 59)).toBe(59);
+  // CHANGED (live round 11): the stages the orders page reads are the PUBLIC plan's, which never carry `replies_open`; the old line pinned the defect («٤١ من ٤٢» on the orders page, «٤١ من ٤٩» in the file). A compiled plan is promised the sum of its delivered stages.
+  it("the public plan's own stage shape (no `replies_open`) is promised the judged total too, and a plan with no stages keeps the job's number", () => {
+    expect(promisedRowsOf(stagesAtFinish.map((s) => ({ key: s.key, expected_rows: s.expected_rows, deliver: s.deliver })), 59)).toBe(63);
     expect(promisedRowsOf(undefined, 59)).toBe(59);
     expect(promisedRowsOf([], 0)).toBe(0);
   });

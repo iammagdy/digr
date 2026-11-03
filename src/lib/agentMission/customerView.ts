@@ -104,6 +104,20 @@ export interface CustomerMissionView {
   progressLineAr: string | null;
   /** The items saved so far and the total, for a progress bar. */
   savedSoFar: number;
+  /**
+   * THE LIMIT OF THE HOLD (live round 11): for a Facebook, Instagram or YouTube compiled plan, the hold against the job cap, what it is made of, and the smaller version by code. `over`: the plan is above the cap and has NO approve button. Null for every other plan.
+   * `reservePoints` is the hold the customer would be asked to cover (the card compares it with the customer's balance).
+   */
+  limit?: { over: boolean; reservePoints: number; capPoints: number; sentenceAr: string | null; rowsAr: string | null; smaller: { perPost: number; reservePoints: number; maxChargePoints: number; rows: number } | null } | null;
+}
+
+function limitViewOf(plan: any): NonNullable<CustomerMissionView["limit"]> | null {
+  const l = plan?.limit;
+  if (!l || typeof l !== "object") return null;
+  const reserve = Math.round(Number(l.reserve_points));
+  if (!Number.isFinite(reserve) || reserve <= 0) return null;
+  const sm = l.smaller && typeof l.smaller === "object" && Number(l.smaller.per_post) >= 1 ? { perPost: Math.floor(Number(l.smaller.per_post)), reservePoints: Math.round(Number(l.smaller.reserve_points)), maxChargePoints: Math.round(Number(l.smaller.max_charge_points)), rows: Math.round(Number(l.smaller.rows)) } : null;
+  return { over: l.over === true, reservePoints: reserve, capPoints: Math.round(Number(l.cap_points)) || 0, sentenceAr: typeof l.sentence_ar === "string" ? l.sentence_ar : null, rowsAr: typeof l.rows_ar === "string" ? l.rows_ar : null, smaller: sm };
 }
 
 const PHASE_OF_STATUS: Record<string, CustomerPhase> = { queued: "waiting", planning: "planning", needs_input: "question", plan_ready: "plan", approved: "running", executing: "running", completed: "done", unserved: "unserved", failed: "failed", cancelled: "cancelled" };
@@ -411,6 +425,9 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
     progressLineAr: mission.status === "approved" || mission.status === "executing" ? deliveredOfAr(Math.min(savedSoFar, planned), planned, itemNounOfPlan(plan)) : null,
     savedSoFar,
   };
+  // the limit is a key of the view ONLY when the plan carries one (a Facebook, Instagram or YouTube compiled plan): every other view is byte for byte what it was
+  const limit = phase === "plan" ? limitViewOf(plan) : null;
+  if (limit) view.limit = limit;
   return guardViewText(view);
 }
 
@@ -430,6 +447,7 @@ export function guardViewText(v: CustomerMissionView): CustomerMissionView {
     steps: v.steps.map((s) => ({ ...s, titleAr: g(s.titleAr) || "خطوة", ...(typeof s.countAr === "string" ? { countAr: g(s.countAr) } : {}) })),
     currentLineAr: g(v.currentLineAr), delayAr: n(v.delayAr), remainingAr: n(v.remainingAr), closePageAr: n(v.closePageAr),
     resultLinesAr: v.resultLinesAr.map(g).filter(Boolean), resultSummaryAr: n(v.resultSummaryAr), endLineAr: n(v.endLineAr),
+    ...(v.limit ? { limit: { ...v.limit, sentenceAr: n(v.limit.sentenceAr), rowsAr: n(v.limit.rowsAr) } } : {}),
   };
 }
 

@@ -71,10 +71,18 @@ const isNameColumn = (c: SheetColumn): boolean => (c.key !== undefined && NAME_K
 
 const readableColumns = (stage: PricedStage) => stage.columns.filter((c) => !isInternalColumn(c));
 
+/**
+ * A COUNTER THE SOURCE DOES NOT GIVE IS «غير متاح», NEVER 0 (live round 11, Instagram: «عدد الردود» read 0 on every comment while 9 replies were delivered; the Instagram comments tools carry no reply counter). Compiled plans only (the old path writes what it always wrote): a
+ * counter column's cell with no value (nothing, an empty text) says so in words; a number that is there, a real 0 included, is written as it is.
+ */
+export const COUNTER_UNAVAILABLE_AR = "غير متاح";
+const COUNTER_KEYS: ReadonlySet<string> = new Set(["likes", "comments", "shares", "views", "saves", "followers", "subscribers", "replies_count"]);
+const isBlankCell = (v: unknown): boolean => v === null || v === undefined || (typeof v === "string" && v.trim() === "");
+
 /** True when a column's values are numbers and nothing else (no leading zero, at most 15 digits): only then it is stored as a number. */
 function numericColumn(values: unknown[], contact: boolean): boolean {
   if (contact) return false;
-  const filled = values.map((v) => text(v).trim()).filter(Boolean);
+  const filled = values.map((v) => text(v).trim()).filter((v) => Boolean(v) && v !== COUNTER_UNAVAILABLE_AR);
   return filled.length > 0 && filled.every((v) => /^-?(0|[1-9]\d{0,14})(\.\d+)?$/.test(v));
 }
 
@@ -166,7 +174,8 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
       titles.add(c.title_ar);
       taken.push(values);
       const ownText = textGetter(stage, c.key);
-      columns.push({ title: c.title_ar, get: special ? (r) => special(r) : ownText ? (r) => ownText(r) : (r) => r[c.key], kind: "own", contact: c.kind !== undefined, link: values.some((v) => isUrl(v)), key: c.key });
+      const counterWords = plan.compiled?.by === "compiler" && COUNTER_KEYS.has(c.key);
+      columns.push({ title: c.title_ar, get: special ? (r) => special(r) : ownText ? (r) => ownText(r) : counterWords ? (r) => (isBlankCell(r[c.key]) ? COUNTER_UNAVAILABLE_AR : r[c.key]) : (r) => r[c.key], kind: "own", contact: c.kind !== undefined, link: values.some((v) => isUrl(v)), key: c.key });
     }
     if (rawSheet) for (const k of MARK_COLUMN_ORDER) columns.push({ title: MARK_COLUMNS_AR[k], get: (r) => markCellAr(k, r[MARKS_KEY] as Partial<RowMarks> | undefined), kind: "own", key: `__mark_${k}` });
     layouts.push({ stageIndex, stage, rows, columns: columns.map((c) => (isNameColumn(c) ? { ...c, get: (row: Row, parent: Row | null) => withoutDirectionMarks(c.get(row, parent)) } : c)), hasParent: stage.parent_key !== null });
@@ -388,6 +397,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
         if (typeof v === "number" && Number.isFinite(v)) return v;
         if (typeof v === "boolean") return v ? "نعم" : "لا";
         const t = text(v);
+        if (t === COUNTER_UNAVAILABLE_AR) return textCell(t);
         if (numericAt[k]) return Number(t.trim());
         if (isUrl(t)) return { text: t.trim(), hyperlink: t.trim(), tooltip: t.trim() };
         return textCell(t);

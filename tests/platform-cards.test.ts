@@ -193,7 +193,8 @@ describe("Instagram: what the real pages show (M16, M15)", () => {
     expect(c.counter).toBeNull();
     const rows = mapPage(c, page(M16, "call_0008"));
     expect(rows).toHaveLength(8);
-    expect(rows.every((r) => r.replies_count === null)).toBe(true);
+    // CHANGED (live round 11): a comments card with no reply counter never reads the source's field, so its rows carry no counter at all (the key is absent; it was null)
+    expect(rows.every((r) => (r.replies_count ?? null) === null)).toBe(true);
     expect(c.inputs.parent).toEqual({ param: "url", from: "link" });
     const scrape = cardOf("scrapecreators.instagram.post.comments")!;
     expect(mapPage(scrape, page(M15, "call_0004"))).toHaveLength(1);

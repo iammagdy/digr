@@ -1,11 +1,12 @@
 import { randomBytes } from "node:crypto";
-import { AGENT_BUCKET, AGENT_MAX_MISSIONS_PER_HOUR, AGENT_MAX_OPEN_MISSIONS_PER_USER, MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE, AGENT_HEARTBEAT_TABLE } from "./constants";
+import { AGENT_BUCKET, AGENT_JOB_POINTS_CAP, AGENT_MAX_MISSIONS_PER_HOUR, AGENT_MAX_OPEN_MISSIONS_PER_USER, MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE, AGENT_HEARTBEAT_TABLE } from "./constants";
 import { approveMissionOnce } from "./approval";
 import { customerMissionView, type EventForCustomer, type MissionRowForCustomer, type QueueInfo } from "./customerView";
 import { latestBeat, workerAlive } from "./heartbeat";
 import { userWillBeEmailed } from "./emailEligibility";
-import { customerPlanView, type PricedPlan, type PricedStage } from "./plan";
+import { type PricedPlan, type PricedStage } from "./plan";
 import { applyPlanEdits } from "./planEdit";
+import { publicPlanOf, smallerVersionOf } from "./overLimit";
 import { missionDownloadName } from "./fileNames";
 import { listOpenMissions, openLimitMessageAr, type OpenMissionView } from "./openMissions";
 import { excelFromCsv } from "../server/excelFromCsv";
@@ -146,12 +147,32 @@ export async function editPlanForCustomer(client: any, input: { id: string; user
   const rows = await readYieldRows(client, input.id, plan);
   const r = applyPlanEdits(plan, input.edits, { yieldRows: (s: PricedStage) => rows.get(s.key) ?? null });
   if (!r.ok) return bad(400, r.errorAr);
-  const upd = await client.from(MISSION_TABLE).update({ plan: r.plan as any, plan_public: customerPlanView(r.plan) as any, unit_price_points: r.plan.price.unitPricePoints, reserved_points: r.plan.price.reservePoints, updated_at: new Date().toISOString() }).eq("id", input.id).eq("status", "plan_ready").select("id");
+  const upd = await client.from(MISSION_TABLE).update({ plan: r.plan as any, plan_public: publicPlanOf(r.plan) as any, unit_price_points: r.plan.price.unitPricePoints, reserved_points: r.plan.price.reservePoints, updated_at: new Date().toISOString() }).eq("id", input.id).eq("status", "plan_ready").select("id");
   if (upd.error) return bad(500, "تعذّر حفظ تعديلك.");
   // approved or cancelled in the meantime: the stored plan is the one that was priced and held
   if (Array.isArray(upd.data) && upd.data.length === 0) return bad(409, "تغيّرت حالة المهمة؛ لا يمكن تعديل الخطة الآن.");
   await client.from(MISSION_EVENTS_TABLE).insert({ mission_id: input.id, kind: "plan", message_ar: "حدّثنا الخطة بحسب تعديلك، والسعر محسوب من جديد.", counts: { stages: r.plan.stages.length, rows: r.plan.price.deliveredRows, unit_points_x1000: Math.round(r.plan.price.unitPricePoints * 1000), reserve_points: r.plan.price.reservePoints } });
   return { ok: true, status: "plan_ready", requestText: String(mission.request_text ?? "") };
+}
+
+/**
+ * THE SMALLER VERSION OF A PLAN THAT IS ABOVE THE LIMIT (live round 11): the most comments per post whose hold fits the job cap (or the customer's balance, when the card names a lower one), built and priced again BY CODE on the stored plan; the server recomputes it itself
+ * (the client only names its balance, which can only make the plan smaller, never larger than the cap). Only a plan that is still «plan_ready» changes; nothing is held or charged here.
+ */
+export async function smallerVersionForCustomer(client: any, input: { id: string; userId: string; maxHoldPoints?: number }): Promise<CustomerResult<{ status: string }>> {
+  const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,status,plan").eq("id", input.id).maybeSingle();
+  if (!mission || mission.user_id !== input.userId) return bad(404, "المهمة غير موجودة.");
+  if (mission.status !== "plan_ready" || !mission.plan) return bad(409, "لا يمكن تعديل الخطة الآن.");
+  const plan = mission.plan as PricedPlan;
+  const balanceLimit = Number.isFinite(Number(input.maxHoldPoints)) ? Math.max(0, Math.floor(Number(input.maxHoldPoints))) : AGENT_JOB_POINTS_CAP;
+  const smaller = smallerVersionOf(plan, Math.min(AGENT_JOB_POINTS_CAP, balanceLimit));
+  if (!smaller) return bad(400, "لا توجد نسخة أصغر تناسب الحد المسموح أو رصيدك. غيّر طلبك أو ألغِ المهمة؛ ولم يُخصم شيء.");
+  const next = smaller.plan;
+  const upd = await client.from(MISSION_TABLE).update({ plan: next as any, plan_public: publicPlanOf(next) as any, unit_price_points: next.price.unitPricePoints, reserved_points: next.price.reservePoints, updated_at: new Date().toISOString() }).eq("id", input.id).eq("status", "plan_ready").select("id");
+  if (upd.error) return bad(500, "تعذّر حفظ النسخة الأصغر.");
+  if (Array.isArray(upd.data) && upd.data.length === 0) return bad(409, "تغيّرت حالة المهمة؛ لا يمكن تعديل الخطة الآن.");
+  await client.from(MISSION_EVENTS_TABLE).insert({ mission_id: input.id, kind: "plan", message_ar: "جهّزنا نسخة أصغر من الخطة تناسب الحد المسموح، والسعر محسوب من جديد.", counts: { stages: next.stages.length, rows: next.price.deliveredRows, unit_points_x1000: Math.round(next.price.unitPricePoints * 1000), reserve_points: next.price.reservePoints, smaller_per_post: smaller.per_post } });
+  return { ok: true, status: "plan_ready" };
 }
 
 export async function answerForCustomer(client: any, input: { id: string; userId: string; text: unknown }): Promise<CustomerResult> {

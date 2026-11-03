@@ -47,6 +47,7 @@ import { parseChannels, understandChannelsPrompt, UNDERSTAND_SYSTEM } from "../.
 import { llmCostFromUsage } from "./llmCost";
 import { MODEL_HAIKU } from "../../src/lib/agentMission/constants";
 import { reportedPlan, withPromiseCaps, withRepliesJudged } from "../../src/lib/agentMission/repliesCard";
+import { publicPlanOf } from "../../src/lib/agentMission/overLimit";
 import { runContactEnrichment } from "./engine/contacts";
 import { runNamesStep } from "./namesAr";
 
@@ -405,7 +406,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
       plan = sealed.plan;
       if (sealed.drift) await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: صُحّح سعر الخطة قبل عرضها.", counts: { price_sealed: 1, rows_before: sealed.drift.rowsBefore, rows_after: sealed.drift.rowsAfter, reserve_before: sealed.drift.reserveBefore, reserve_after: sealed.drift.reserveAfter } }).catch(() => undefined);
     }
-    await store.updateMission(mission.id, { ...base, status: "plan_ready", plan: plan as any, plan_public: customerPlanView(plan) as any, unit_price_points: plan.price.unitPricePoints, reserved_points: plan.price.reservePoints });
+    await store.updateMission(mission.id, { ...base, status: "plan_ready", plan: plan as any, plan_public: publicPlanOf(plan) as any, unit_price_points: plan.price.unitPricePoints, reserved_points: plan.price.reservePoints });
     await store.addEvent(mission.id, { kind: "plan", message_ar: plan.summary_ar, counts: { stages: plan.stages.length, rows: plan.price.deliveredRows, unit_points_x1000: Math.round(plan.price.unitPricePoints * 1000), reserve_points: plan.price.reservePoints } });
     deps.log?.(`plan_ready ${mission.id} ${JSON.stringify(customerPlanView(plan).price)}`);
   } else if (state.question) {
