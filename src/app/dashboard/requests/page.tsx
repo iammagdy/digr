@@ -211,7 +211,7 @@ export default function RequestsPage() {
           .order("created_at", { ascending: false })
           .limit(100),
         // AGENT missions: the mission names its job; the assistant message that shows its card names the mission and the conversation
-        inGroups((ids) => supabase.from("missions").select("id, job_id, stages:plan_public->stages, compiled:plan_public->compiled, files").eq("user_id", user.id).in("job_id", ids)),
+        inGroups((ids) => supabase.from("missions").select("id, job_id, stages:plan_public->stages, files, compiled:plan_public->compiled").eq("user_id", user.id).in("job_id", ids)),
         supabase
           .from("messages")
           .select("conversation_id, plan")
