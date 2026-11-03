@@ -55,7 +55,7 @@ describe("B: the stored record of the live mission (read by SELECT, anonymised)"
     expect(at).toBeGreaterThanOrEqual(cairoDayEndExclusiveMs("2026-10-31"));
     expect(at).toBeLessThan(Date.UTC(2026, 10, 1));
     // the tweet's own id says the same (snowflake)
-    expect(Number((BigInt(OUTSIDE.id) >> 22n) + 1288834974657n)).toBe(at);
+    expect(Number((BigInt(OUTSIDE.id) >> BigInt(22)) + BigInt("1288834974657"))).toBe(at);
   });
 });
 

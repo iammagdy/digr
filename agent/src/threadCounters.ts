@@ -2,6 +2,7 @@ import { formatAr } from "../../src/lib/arabicDigits";
 import { countAr, GENERIC_ITEM_NOUN, knownItemNoun } from "../../src/lib/agentMission/itemNoun";
 import { childCountOf } from "../../src/lib/agentMission/childCount";
 import { AGENT_REPLIES_PER_COMMENT_MAX } from "../../src/lib/agentMission/constants";
+import { readsAllReplies } from "../../src/lib/agentMission/repliesCard";
 import type { PricedPlan } from "../../src/lib/agentMission/plan";
 
 /**
@@ -52,7 +53,7 @@ export function parentCounterLinesAr(f: ThreadCounterFacts): ThreadCounterLine[]
  * THE COUNTER LINES OF A DELIVERY, from the plan and the delivered rows: for every delivered comments stage that has a parent whose rows carry the source's own counter (a video's comments count), one line per parent. Empty for a plan with no such stage. `parentNoun` is the noun the plan's own
  * title says («فيديو»), found by the caller (methodology.ts knownNounOf).
  */
-export function threadCounterLinesOfPlan(plan: Pick<PricedPlan, "stages">, rowsByStage: Record<string, Array<Record<string, unknown>>>, nounOf: (title: string | undefined) => string | null | undefined): { counterLines: string[]; limitLines: string[] } {
+export function threadCounterLinesOfPlan(plan: Pick<PricedPlan, "stages"> & { compiled?: PricedPlan["compiled"] }, rowsByStage: Record<string, Array<Record<string, unknown>>>, nounOf: (title: string | undefined) => string | null | undefined): { counterLines: string[]; limitLines: string[] } {
   const counterLines: string[] = [];
   const limitLines: string[] = [];
   for (const stage of plan.stages) {
@@ -67,7 +68,8 @@ export function threadCounterLinesOfPlan(plan: Pick<PricedPlan, "stages">, rowsB
     const replyStage = plan.stages.find((x) => x.replies_of === stage.key);
     const replies = replyStage ? rowsByStage[replyStage.key] ?? [] : [];
     const commentToParent = new Map<string, string>(comments.map((c) => [String(c.id), String(c.parent_id ?? "")] as const));
-    const capped = new Set<string>(comments.filter((c) => (childCountOf(c) ?? 0) > (replyStage?.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_MAX)).map((c) => String(c.parent_id ?? "")));
+    // a compiled plan that read every reply of each comment capped none of them (the cap of 50 sized the hold only)
+    const capped = new Set<string>(replyStage && readsAllReplies(plan, replyStage) ? [] : comments.filter((c) => (childCountOf(c) ?? 0) > (replyStage?.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_MAX)).map((c) => String(c.parent_id ?? "")));
     const lines = parentCounterLinesAr({ parentNoun: nounOf(parentStage.title_ar) ?? "عنصر", parents, commentParentIds: comments.map((c) => String(c.parent_id ?? "")), replyParentCommentIds: replies.map((r) => String(r.parent_id ?? "")), commentToParent, cappedParents: capped });
     for (const l of lines) { counterLines.push(l.counterLine); if (l.limitLine) limitLines.push(l.limitLine); }
   }

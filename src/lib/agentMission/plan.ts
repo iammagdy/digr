@@ -240,7 +240,7 @@ export interface PricedPlan {
 export interface CompiledMark {
   by: "compiler";
   platform: string;
-  promises: Record<string, { type: "exact" | "counter" | "open"; n: number; counter?: number }>;
+  promises: Record<string, { type: "exact" | "counter" | "open"; n: number; counter?: number; counted?: number; counted_comments?: number }>;
 }
 
 export interface UnservedStep {
@@ -902,8 +902,24 @@ export function sampleRowPasses(stage: Pick<PricedStage, "filters" | "parent_key
 }
 
 /** The part of a priced plan a customer (and the admin page's customer view) may read: Arabic titles, rows, links between stages, readable columns and sample rows, the price in points, the expected time. No endpoint, no USD, no internal id. */
+/**
+ * THE CARD OF A COMPILED PLAN WITH OPEN REPLIES (live finding C): the replies the comments read at planning COUNT (their own counters); the replies of the comments not read yet are a separate «حتى» part. The rows and the price of each part are
+ * given apart, so the items of the card and the price maximum describe the same thing and nothing is hidden inside the price. Null for every other plan (the card is then exactly as it was).
+ */
+export function repliesSplitOf(plan: PricedPlan): { repliesKey: string; counted: number; openRows: number; countedRows: number; countedMaxPoints: number; openMaxPoints: number } | null {
+  if (plan.compiled?.by !== "compiler") return null;
+  const replies = plan.stages.find((s) => s.replies_of !== undefined && s.replies_open === true);
+  const promise = replies ? plan.compiled.promises[replies.key] : undefined;
+  if (!replies || !promise || promise.type !== "open" || typeof promise.counted !== "number") return null;
+  const openRows = Math.max(0, replies.planned_rows - promise.counted);
+  const countedRows = Math.max(0, plan.price.deliveredRows - openRows);
+  const countedMaxPoints = Math.min(plan.price.maxChargePoints, Math.ceil(countedRows * plan.price.unitPricePoints));
+  return { repliesKey: replies.key, counted: promise.counted, openRows, countedRows, countedMaxPoints, openMaxPoints: Math.max(0, plan.price.maxChargePoints - countedMaxPoints) };
+}
+
 export function customerPlanView(plan: PricedPlan, options: { now?: number } = {}) {
   const now = options.now ?? Date.now();
+  const split = repliesSplitOf(plan);
   // what the card promises about the items is backed by the filters that are switched ON: a line of the model that promises one is shown only while its filter is on, and a filter that is on gets its own sentence, built by code
   const assumptions = assumptionLinesOf(plan);
   // fewer than the customer asked for: the reason the card shows next to the one target number
@@ -921,12 +937,13 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
         sample_rows: s.sample_rows.filter((r) => sampleRowPasses(s, r, now)).slice(0, CUSTOMER_SAMPLE_ROWS).map((r) => Object.fromEntries(columns.map((c) => [c.key, (s.engine?.built_by === "code" ? formatSampleValueAr(r[c.key], { column: isLanguageColumn(c.title_ar, c.key) ? "language" : undefined }) : String(r[c.key] ?? "")).slice(0, SAMPLE_CELL_CHARS)]))),
         ...(s.how_ar ? { how_ar: s.how_ar } : {}),
         ...(s.replies_open ? { replies_open: true } : {}),
+        ...(split && split.repliesKey === s.key ? { replies_counted: split.counted, replies_open_rows: split.openRows } : {}),
         ...(s.children_open ? { children_open: true } : {}),
         // the share of the sampled items the plan expected to match (a ratio, no money): the live tracker uses it to judge how much must be read before the target is reached
         ...(typeof s.yield_share === "number" ? { yield_share: Math.round(s.yield_share * 1000) / 1000 } : {}),
       };
     }),
-    price: { unit_price_points: plan.price.unitPricePoints, reserve_points: plan.price.reservePoints, max_charge_points: plan.price.maxChargePoints, delivered_rows: plan.price.deliveredRows, ...(plan.price.rule === 2 ? { min_charge_points: plan.price.minChargePoints ?? 0, minimum_line_ar: minimumLineAr(plan.price.settings) } : {}) },
+    price: { unit_price_points: plan.price.unitPricePoints, reserve_points: plan.price.reservePoints, max_charge_points: plan.price.maxChargePoints, delivered_rows: plan.price.deliveredRows, ...(split ? { counted_rows: split.countedRows, counted_max_points: split.countedMaxPoints, open_rows: split.openRows, open_max_points: split.openMaxPoints } : {}), ...(plan.price.rule === 2 ? { min_charge_points: plan.price.minChargePoints ?? 0, minimum_line_ar: minimumLineAr(plan.price.settings) } : {}) },
     expected_minutes: estimateMissionMinutes(plan.stages.map((s) => ({ rows: s.planned_rows, msPerRow: s.measured_ms_per_row ?? null }))),
     edit: planEditorView(plan),
   };

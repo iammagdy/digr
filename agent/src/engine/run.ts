@@ -10,6 +10,7 @@ import { isEnabled } from "../../../src/lib/agentMission/filters";
 import { childCountNumber, childCountOf } from "../../../src/lib/agentMission/childCount";
 import { AGENT_REPLIES_PER_COMMENT_MAX } from "../../../src/lib/agentMission/constants";
 import { replyShares } from "../../../src/lib/agentMission/replies";
+import { readsAllReplies } from "../../../src/lib/agentMission/repliesCard";
 import { SOURCE_KEY } from "../../../src/lib/agentMission/namedSources";
 import { isProviderUrl, providerContext } from "../../../src/lib/agentMission/providerHosts";
 import { companyIdentityOf, confirmPersonAtCompany, isPlaceholderCompanyUrl, peopleEvidenceOf } from "../../../src/lib/agentMission/companyIdentity";
@@ -138,7 +139,9 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
   // EVERY COMMENT IS READ FOR ITS REPLIES when the request asked for them and no comment says it has any (S4, live 2026-11-02 10:26: the comments tool gave an empty reply counter, so no reply was read and 0 were delivered while replies existed): the counter is the source's, the replies tool is the truth.
   // Each comment is then read up to the cap per comment; the stage still stops at the approved number of replies.
   const blindReplies = isReplies && deps.redesignStages?.has(stage.key) === true && stage.replies_read_all === true && parentRows.every((r) => (ownChildCount(r) ?? 0) === 0);
-  const shareById = isReplies ? (() => { const cap = Number.isFinite(per) ? per : AGENT_REPLIES_PER_COMMENT_MAX; const shares = blindReplies ? parentRows.map(() => cap) : replyShares(parentRows.map((r) => ownChildCount(r)), stage.planned_rows, cap); return new Map(parentRows.map((r, i) => [String(r.id), shares[i]] as const)); })() : null;
+  // EVERY REPLY THE SOURCE SHOWS (live finding C): a compiled plan whose customer gave no number per comment reads each comment with replies to the end of its replies. The cap of 50 sized the hold only; the counter only says «none» (0: no paid read) or «some»
+  const readsAll = isReplies && deps.redesignStages?.has(stage.key) === true && readsAllReplies(deps.plan, stage);
+  const shareById = isReplies ? (() => { const cap = Number.isFinite(per) ? per : AGENT_REPLIES_PER_COMMENT_MAX; const shares = readsAll ? parentRows.map((r) => (blindReplies || (ownChildCount(r) ?? 1) > 0 ? Number.POSITIVE_INFINITY : 0)) : blindReplies ? parentRows.map(() => cap) : replyShares(parentRows.map((r) => ownChildCount(r)), stage.planned_rows, cap); return new Map(parentRows.map((r, i) => [String(r.id), shares[i]] as const)); })() : null;
   const readAll = stage.all_children === true;
   // round 4: a redesigned stage that reads ALL the comments of pinned parents may replace a pinned parent that gives no child from any tool by one of the spares pinned beside them (at most as many as there are spares)
   const pinnedSpares = deps.redesignStages?.has(stage.key) && readAll && !isReplies ? (deps.plan.stages.find((x) => x.key === stage.parent_key)?.spare_rows ?? []).length : 0;

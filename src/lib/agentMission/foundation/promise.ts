@@ -9,7 +9,11 @@ import { toArabicDigits } from "../../arabicDigits";
  */
 export type PromiseType = "exact" | "counter" | "open";
 export const PROMISE_TYPES: ReadonlyArray<PromiseType> = ["exact", "counter", "open"];
-export interface StagePromise { type: PromiseType; n: number; counter?: number }
+export interface StagePromise {
+  type: PromiseType; n: number; counter?: number;
+  /** An open replies stage: the replies the comments read at planning say they have (their own counters), and how many comments those are. The rest of `n` is the estimate that sizes the hold. */
+  counted?: number; counted_comments?: number;
+}
 
 /** The promise of a child stage that reads every child of the chosen parents: their counters when the parent card has one, else open. `cap`: the customer's edited number. */
 export function childPromise(counters: ReadonlyArray<number | null>, cap: number | null, openMax: number): StagePromise {
@@ -45,6 +49,11 @@ export function promiseLineAr(p: StagePromise, what: "comments" | "replies", cou
     if (p.type === "counter" && p.counter !== undefined && p.n < p.counter) return `التعليقات: ${n} تعليق بحسب العدد الذي اخترته، من أصل ${toArabicDigits(p.counter)} بحسب عدّاد المنصة للعناصر المختارة.`;
     if (p.type === "counter") return `التعليقات: كل تعليقات العناصر المختارة، وعددها بحسب عدّاد المنصة ${n}${counterIncludesReplies ? "، وهذا العدّاد يشمل الردود" : ""}. إن عرض المصدر أقل من العدّاد نذكر الفرق لكل عنصر.`;
     return `التعليقات: كل ما يعرضه المصدر من تعليقات على العناصر المختارة، بحد أقصى ${n} تعليق.`;
+  }
+  if (p.type === "open" && p.counted !== undefined && p.counted_comments !== undefined) {
+    const open = Math.max(0, p.n - p.counted);
+    const known = `${toArabicDigits(p.counted)} ردًا بحسب عدّادات ${toArabicDigits(p.counted_comments)} تعليقًا قرأناها`;
+    return `الردود: كل ما يعرضه المصدر من ردود على كل تعليق مختار، دون حد لعدد الردود على التعليق الواحد. ${open > 0 ? `${known}، وحتى ${toArabicDigits(open)} ردًا لتعليقات لم نقرأ عدّادها بعد` : known}، ولا ندفع إلا مقابل ما سُلّم.`;
   }
   return p.type === "open" ? `الردود: كل ما يعرضه المصدر من ردود على التعليقات، بحد أقصى ${n} ردّ.` : `الردود: ${n} ردّ بحسب عدّاد المنصة.`;
 }

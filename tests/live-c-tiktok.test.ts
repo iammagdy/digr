@@ -11,6 +11,7 @@ import { withPromiseCaps } from "../src/lib/agentMission/repliesCard";
 import { AGENT_MAX_DELIVERED_ROWS, AGENT_REPLIES_PER_COMMENT_MAX } from "../src/lib/agentMission/constants";
 import { checkCustomerText } from "../src/lib/agentMission/text";
 import { pointsAr } from "../src/lib/pointsFormat";
+import { formatAr } from "../src/lib/arabicDigits";
 import { createMemoryStore } from "../agent/src/memoryStore";
 import { ItemStore } from "../agent/src/items/itemStore";
 import { runEngine } from "../agent/src/engine/run";
@@ -149,7 +150,7 @@ describe("C1, the card: the items and the price maximum describe the same thing;
     const line = facts.find((f) => /ردود/.test(f.labelAr) && /حتى/.test(f.labelAr));
     expect(line, JSON.stringify(facts)).toBeDefined();
     expect(line!.valueAr).toContain(pointsAr(max - priceCounted));
-    expect(line!.valueAr).toContain(String(open).replace(/\d/g, (d) => "٠١٢٣٤٥٦٧٨٩"[Number(d)]));
+    expect(line!.valueAr).toContain(formatAr(open));
   });
   it("the hold is unchanged, and the stage line of the replies says what is counted and what is not", () => {
     expect(facts.find((f) => f.labelAr === "حجز مؤقت")!.valueAr).toBe(pointsAr(pub.price.reserve_points));

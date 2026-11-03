@@ -121,6 +121,34 @@ export function openRepliesMax(comments: number, replyCounters: ReadonlyArray<nu
   return Math.max(1, Math.min(n * cap, Math.ceil(n * Math.max(ratio, OPEN_REPLIES_FLOOR))));
 }
 
+export interface RepliesSizing {
+  /** The replies the comments READ AT PLANNING say they have, by their own counters (a comment with 120 counts 120). */
+  counted: number;
+  /** How many comments those counters belong to. */
+  countedComments: number;
+  /** The replies of the comments not read yet: an estimate that sizes the hold only (never a promise). */
+  open: number;
+  /** counted + open: the replies stage's rows in the price. */
+  total: number;
+}
+
+/**
+ * THE REPLIES' SIZE FROM THE REAL COUNTERS (live finding C, msn_b9eb261694fa611013d4: the mean of 40 counters x all 200 comments, cut by a flat cap of 50). The comments read at planning are the first comments of the chosen
+ * videos, so their counters are the REAL counters of chosen comments: each counts as it is (`countedAtCap` false: every reply of the comment is read; true: the customer asked for a number per comment, so a comment counts at most that
+ * number). The comments not read yet are sized by the mean of the counters read, each cut at the per-comment cap, never above the cap each: the cap SIZES THE HOLD for them and never truncates a delivery (agent/src/engine/run.ts).
+ */
+export function repliesSizing(input: { comments: number; known: ReadonlyArray<number | null>; perComment: number; countedAtCap?: boolean }): RepliesSizing {
+  const cap = Math.max(1, Math.floor(input.perComment));
+  const n = Math.max(0, Math.floor(input.comments));
+  const seen = input.known.filter((c): c is number => c !== null && Number.isFinite(c)).slice(0, n).map((c) => Math.max(0, Math.floor(c)));
+  const counted = seen.reduce((s, c) => s + (input.countedAtCap === true ? Math.min(cap, c) : c), 0);
+  const ratio = seen.length > 0 ? seen.reduce((s, c) => s + Math.min(cap, c), 0) / seen.length : 0;
+  const unknown = Math.max(0, n - seen.length);
+  const open = Math.min(unknown * cap, Math.ceil(unknown * Math.max(ratio, OPEN_REPLIES_FLOOR)));
+  const total = Math.max(1, counted + open);
+  return { counted, countedComments: seen.length, open: total - counted, total };
+}
+
 /** The customer's one sentence for a compiled plan (Arabic, Arabic-Indic digits, no provider, no price). */
 export function summaryAr(ask: Ask, n: number, shape: ReadonlyArray<StageRole>, perParent: number | null = null): string {
   const w = NOUN[ask.platform!];
@@ -227,14 +255,17 @@ export function compilePlan(input: CompileInput): CompileResult {
       const seen = exposurePages.flatMap((e) => e.rows);
       const perComment = ask.edits.replies === undefined && ask.repliesPerComment !== null ? Math.min(ask.repliesPerComment, AGENT_REPLIES_PER_COMMENT_MAX) : null;
       const commentsRows = stages.find((x) => x.key === "comments")!.planned_rows;
-      const openMax = openRepliesMax(commentsRows, seen.map((r) => Number(r.replies_count)), perComment ?? AGENT_REPLIES_PER_COMMENT_MAX);
-      const p: StagePromise = { type: "open", n: Math.max(1, Math.floor(ask.edits.replies ?? openMax)) };
+      // THE REAL COUNTERS of the comments read at planning count as they are; the cap of 50 sizes the hold for the comments not read yet (live finding C)
+      const sizing = repliesSizing({ comments: commentsRows, known: seen.map((r) => Number(r.replies_count)), perComment: perComment ?? AGENT_REPLIES_PER_COMMENT_MAX, countedAtCap: perComment !== null });
+      // REPLIES ASKED WITH NO NUMBER PER COMMENT: every reply the source shows is read for each chosen comment (the engine reads past the cap; the cap sizes the reserve only)
+      const readAll = perComment === null && ask.edits.replies === undefined;
+      const p: StagePromise = ask.edits.replies !== undefined ? { type: "open", n: Math.max(1, Math.floor(ask.edits.replies)) } : { type: "open", n: sizing.total, counted: sizing.counted, counted_comments: sizing.countedComments };
       promises.comments_replies = p;
       stages.push({
         key: "comments_replies", title_ar: "الردود", endpoint_id: repliesCard.endpointId, ...(capabilityOf(repliesCard.endpointId) ? { capability: capabilityOf(repliesCard.endpointId)! } : {}),
         expected_rows: p.n, planned_rows: p.n, parent_key: "comments", replies_of: "comments", per_parent_rows: perComment ?? AGENT_REPLIES_PER_COMMENT_MAX, deliver: true,
         columns: CHILD_COLUMNS.map((c) => ({ ...c })), sample_rows: [], measured_by: [], measured_from_calls: [], measured_cost_per_row_usd: repliesCard.costUsdPerPage / Math.max(1, repliesCard.page.observedRowsPerPage),
-        yield_share: 1, review_share: 0, replies_open: true, ...(ask.replies === "all" ? { replies_read_all: true } : {}), replies_call_usd: repliesCard.costUsdPerPage,
+        yield_share: 1, review_share: 0, replies_open: true, ...(readAll || ask.replies === "all" ? { replies_read_all: true } : {}), replies_call_usd: repliesCard.costUsdPerPage,
         engine: { endpoint_id: repliesCard.endpointId, params: {}, cursor_param: repliesCard.inputs.cursor, map_code: cardMapCode(repliesCard), map_file_id: "page", parent_binding: { param: repliesCard.inputs.parent!.param, from: repliesCard.inputs.parent!.from, ...(repliesCard.inputs.parent!.also ? { also: repliesCard.inputs.parent!.also.map((a) => ({ ...a })) } : {}) }, built_by: "code" },
       } as PricedStage);
       notes.push(promiseLineAr(p, "replies", false, perComment));
