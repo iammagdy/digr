@@ -55,12 +55,11 @@ describe("tikhub.youtube.video.comments on the real pages", () => {
     expect(comments.inputs.parent).toEqual({ param: "video_id", from: "id" });
     for (const n of COMMENT_CALLS) expect(raw(n).params.video_id).toBe(String(log(n)[5].video_id));
   });
-  it("a comment's date is never the provider's relative text («11个月前»): that is not a date, and the file said it in Chinese", () => {
+  // CHANGED (round 13): the MAPPING now keeps the source's relative text as it wrote it (the engine's ingest reads it against the moment of the read, or empties it and counts it: tests/round13-youtube-dates.test.ts, which replays the real pages and shows that no delivered cell holds the foreign words). What round 12 pinned still holds at the delivered cell: a comment's date is never the provider's relative text.
+  it("a comment's date is never the provider's relative text in the DELIVERED cell: the mapping carries the text, the stage is flagged to read it, and ingest empties what it cannot read", () => {
     const rows = COMMENT_CALLS.flatMap((n) => mapPage(comments, raw(n)));
-    for (const r of rows) {
-      expect(String(r.posted_at ?? "")).not.toMatch(/[　-鿿]/);
-      expect(r.posted_at === null || r.posted_at === undefined || /^\d{4}-\d{2}-\d{2}/.test(String(r.posted_at)), String(r.posted_at)).toBe(true);
-    }
+    for (const r of rows) expect(r.posted_at === null || r.posted_at === undefined || typeof r.posted_at === "string", String(r.posted_at)).toBe(true);
+    expect(comments.mapping).toMatchObject({ kind: "replies", relativeDates: true });
   });
 });
 

@@ -161,7 +161,7 @@ export function replyColumnKeysOf(columns: ReadonlyArray<{ key: string; title_ar
  * THE MAPPING CODE OF A REPLY PAGE: the body of a function over `inputs.page`, turning one saved page of replies into rows keyed like the comments stage's columns. Providers differ in where the list is (`data.comments`, `output.data.comments`, `comments`, `data.replies`...) and in the field names
  * (`cid` / `id`, nested `user.nickname` / flat `author`, `create_time` / `createdUtc` in seconds, `digg_count` / `likes`); every one of those is read here. A row with no id is not a row (it could not be de-duplicated); a reply with no text keeps an empty text (a sticker).
  */
-export function buildReplyMapCode(keys: ReplyColumnKeys, tokens: ReadonlyArray<RowToken> = []): string {
+export function buildReplyMapCode(keys: ReplyColumnKeys, tokens: ReadonlyArray<RowToken> = [], relativeText = false): string {
   // the extended reading (the tokens a replies tool needs from the comment's row, the nested counters of YouTube, Facebook's reaction count) is written ONLY when tokens are asked for: every other stored mapping stays byte for byte what it was
   const ext = tokens.length > 0;
   return `const K = ${JSON.stringify(keys)};${ext ? `\nconst TOK = ${JSON.stringify(tokens.map((t) => ({ key: t.key, names: tokenNamesOf(t.key) })))};` : ""}
@@ -173,7 +173,7 @@ const pick = (o, names) => { for (const n of names) { const v = o[n]; if (v !== 
 const who = (o) => { const u = o.user !== undefined ? o.user : o.author; if (u && typeof u === 'object') return u.nickname || u.unique_id || u.name || u.username || u.display_name || null; return typeof u === 'string' && u !== '' ? u : pick(o, ['authorName','author_name','username','nickname']); };
 const iso = (v) => { if (v === null || v === undefined || v === '') return null; if (typeof v === 'number' || /^\\d{9,13}$/.test(String(v))) { const n = Number(v); const d = new Date(n < 1e12 ? n * 1000 : n); return Number.isNaN(d.getTime()) ? null : d.toISOString(); } return String(v); };
 const num = (v) => { if (v === null || v === undefined || v === '') return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
-${ext ? "const nest = (o, a, b) => (o && typeof o[a] === 'object' && o[a] !== null ? o[a][b] : undefined);\n// a source that dates a comment only by a relative text («11个月前», «3 days ago») gives no date: the cell stays empty (live round 11: the YouTube file said it in Chinese)\nconst isoDate = (v) => { const d = iso(v); return typeof d === 'string' && !/^\\d{4}-\\d{2}-\\d{2}/.test(d) ? null : d; };\n" : ""}return list.filter((r) => r && typeof r === 'object').map((r) => {
+${ext ? "const nest = (o, a, b) => (o && typeof o[a] === 'object' && o[a] !== null ? o[a][b] : undefined);\n// a source that dates a comment only by a relative text («11个月前», «3 days ago») gives no date: the cell stays empty (live round 11: the YouTube file said it in Chinese)\nconst isoDate = (v) => { const d = iso(v); return typeof d === 'string' && !/^\\d{4}-\\d{2}-\\d{2}/.test(d) ? " + (relativeText ? "(d.length <= 48 ? d : null)" : "null") + " : d; };\n" : ""}return list.filter((r) => r && typeof r === 'object').map((r) => {
   const id = pick(r, ['cid','id','comment_id','commentId','rpid']);
   if (id === null) return null;
   const out = { id: String(id) };

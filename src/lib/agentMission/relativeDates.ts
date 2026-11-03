@@ -53,6 +53,8 @@ const asNumber = (word: string): number | null => {
 function readAge(raw: string): { n: number; unit: keyof typeof UNIT_MS } | null {
   let t = normalizeText(raw).replace(/[​-‏‪-‮﻿]/g, "").replace(/[.,;:!]+$/g, "").trim();
   if (!t || t.length > 48) return null;
+  // the mark YouTube adds to a comment its author changed: «3 days ago (edited)»
+  t = t.replace(/\s*\((?:edited|معدل|تم التعديل)\)$/, "").trim();
   t = t.replace(LEAD_EN, "").replace(LEAD_AR, "").trim();
   if (/^(?:just now|now|الان|حالا|منذ لحظات|قبل لحظات)$/.test(t)) return { n: 0, unit: "minute" };
   if (/^(?:today|اليوم)$/.test(t)) return { n: 0, unit: "day" };
@@ -115,6 +117,15 @@ export const APPROX_DATES_KEY = "_approx_dates";
 /** The columns of a row whose date is approximate (read from the internal mark). */
 export function approxColumnsOf(row: Record<string, unknown>): string[] {
   const v = row[APPROX_DATES_KEY];
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
+/** The key an item's row carries (internal, never a column of the file) listing the date columns whose source text could NOT be read as a date (a relative text in a language the code does not read): the cell is empty and the delivery says how many. */
+export const DATE_UNREAD_KEY = "_date_unread";
+
+/** The date columns of a row whose source text could not be read (read from the internal mark). */
+export function dateUnreadColumnsOf(row: Record<string, unknown>): string[] {
+  const v = row[DATE_UNREAD_KEY];
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 }
 

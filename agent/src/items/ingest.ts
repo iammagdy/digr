@@ -9,7 +9,7 @@ import { nameKeysOf, withCleanName, withRealName, withTidyNames } from "../../..
 import { entityDoubt, type DoubtInput } from "../../../src/lib/agentMission/entityDoubts";
 import { namedSourceOf, SOURCE_KEY } from "../../../src/lib/agentMission/namedSources";
 import { looksLikeDateColumn, parseMoment } from "../../../src/lib/agentMission/dateCells";
-import { APPROX_DATES_KEY, approxDayOf, derivedRelativeDay, parseRelativeAge } from "../../../src/lib/agentMission/relativeDates";
+import { APPROX_DATES_KEY, DATE_UNREAD_KEY, approxDayOf, derivedRelativeDay, parseRelativeAge } from "../../../src/lib/agentMission/relativeDates";
 import { CHILD_RAW_FILTER_KINDS, filterVerdict, governmentUnclear, isEnabled } from "../../../src/lib/agentMission/filters";
 import { MARKS_KEY, markVerdict } from "../../../src/lib/agentMission/rawMarks";
 import type { MissionEventInput } from "../types";
@@ -171,6 +171,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     if (rawMode && !isChild) row[MARKS_KEY] = markVerdict(stage.filters, raw, { textKey: textKeyOf(stage, Object.keys(raw)), now, ...(quota?.defaultSource ? { listing: true } : {}) });
     // A DATE THE SOURCE GIVES ONLY AS A RELATIVE TIME («قبل ٤ أيام», «4 days ago») is written as the approximate day it stands for (from the moment the item was read) and the item is marked, so the file says the date is approximate (relativeDates.ts)
     const approxColumns: string[] = [];
+    const unreadColumns: string[] = [];
     for (const c of stage.columns) {
       if (!looksLikeDateColumn(c.title_ar, c.key)) continue;
       if (parseMoment(row[c.key]) !== null) {
@@ -184,8 +185,11 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
       }
       const age = parseRelativeAge(row[c.key], now);
       if (age) { row[c.key] = approxDayOf(age); approxColumns.push(c.key); }
+      // A SOURCE THAT DATES ITS ITEMS ONLY BY A RELATIVE TEXT (YouTube comments, round 13): a text the code cannot read is no date, so the cell stays EMPTY (never the foreign words) and the item is marked, to be counted in the limits of the delivery
+      else if (stage.relative_dates === true && typeof row[c.key] === "string" && row[c.key] !== "") { row[c.key] = ""; unreadColumns.push(c.key); }
     }
     if (approxColumns.length > 0) row[APPROX_DATES_KEY] = approxColumns;
+    if (unreadColumns.length > 0) row[DATE_UNREAD_KEY] = unreadColumns;
     // CONTACT FIELDS are verified by code: a work e-mail or phone that does not pass is left empty (the CELL). Verification never decides whether a PERSON is delivered: a row that carries a real person's name (people.ts) is delivered with
     // its unverified cells empty (live re-test 2026-10-31, A1 and A2: 31 and 32 named people with job titles were thrown away because the source gave no e-mail or phone). Only a row of a contact source that is NOT a named person (an
     // e-mail finder's row is its address) and has no verified value has nothing to deliver, so it is not delivered (and not charged).
