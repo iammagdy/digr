@@ -79,6 +79,9 @@ const shiftDays = (day: string, n: number): string => new Date(Date.parse(`${day
 
 const periodOf = (from: string, to: string): AskPeriod => ({ from, to, startMs: cairoDayStartMs(from), endExclusiveMs: cairoDayEndExclusiveMs(to) });
 
+/** «الشهر الماضي» (also written with ى), «الشهر اللي فات» / «الشهر الي فات» / «الشهر اللى فات»: the month before the request's month. */
+const PREVIOUS_MONTH = /(?:^|\s)(?:ال)?شهر\s+(?:الماضي|الماضى|(?:اللي|اللى|الي|الى)\s+فات)(?:\s|$|[.،,!؟?])/;
+
 /** The period of the customer's words, as Cairo days: «في شهر أكتوبر ٢٠٢٦» (that month), «آخر ٣ شهور / أسبوعين / ١٠ أيام / سنة» (back from the day of the request, that day included). Null when none is named. */
 export function periodOfRequest(text: string, requestedAtMs: number): AskPeriod | null {
   const t = digits(text);
@@ -88,6 +91,13 @@ export function periodOfRequest(text: string, requestedAtMs: number): AskPeriod 
     if (!m) continue;
     const year = m[1] ? Number(m[1]) : Number(today.slice(0, 4));
     return periodOf(dayOf(year, month, 1), dayOf(year, month, daysInMonth(year, month)));
+  }
+  // «الشهر الماضي» / «الشهر اللي فات» is the previous CALENDAR month in Cairo time (a request on 3 Nov 2026: 1 to 31 Oct 2026); «آخر شهر» below stays the last 30 days
+  if (PREVIOUS_MONTH.test(t)) {
+    const [y, m] = today.split("-").map(Number);
+    const py = m === 1 ? y - 1 : y;
+    const pm = m === 1 ? 12 : m - 1;
+    return periodOf(dayOf(py, pm, 1), dayOf(py, pm, daysInMonth(py, pm)));
   }
   const last = /(?:آخر|اخر)\s+(\d{1,3})?\s*(شهرين|شهر|شهور|أشهر|اشهر|أسبوعين|اسبوعين|أسبوع|اسبوع|أسابيع|اسابيع|يومين|يوم|أيام|ايام|سنة|سنتين|سنوات|سنين)/.exec(t);
   if (!last) return null;

@@ -18,7 +18,7 @@ import { deliveredOfAr, itemNounOfPlan } from "../../src/lib/agentMission/itemNo
 import { formatAr } from "../../src/lib/arabicDigits";
 import { parentCountsOf } from "../../src/lib/agentMission/parents";
 import { isTextItemStage, textKeyOf } from "../../src/lib/agentMission/contract";
-import { buildMethodology, type MissionFacts } from "./methodology";
+import { buildMethodology, routesOfFacts, type MissionFacts } from "./methodology";
 import { COMMENT_KIND_COMMENT_AR, COMMENT_KIND_KEY, COMMENT_KIND_REPLY_AR, COMMENT_KIND_TITLE_AR, DECISION_MAKER_NO_AR, DECISION_MAKER_YES_AR, NO_DECISION_MAKERS_NOTE_AR, PERSON_NAME_TITLE_AR, PERSON_TITLE_TITLE_AR, REPLY_TO_KEY, REPLY_TO_TITLE_AR, ROW_NUMBER_TITLE_AR, contractTypeOf } from "../../src/lib/agentMission/taskContracts";
 import { bilingualActivity, bilingualName, bilingualTitle } from "../../src/lib/agentMission/titleLexicon";
 import { titleFieldOf, titleTierOf } from "../../src/lib/agentMission/roles";
@@ -337,7 +337,7 @@ function withThreads(plan: PricedPlan, rowsIn: Record<string, Row[]>): { rowsByS
  * RUNS THE DELIVERY CONTRACT on the layouts about to be written (round 14). Builds the contract's input from the REAL layouts, the real methodology lines and the production functions of every surface that states the promised number (the summary line's formula, the chat's result line,
  * the orders page's promised number), checks the four rules, and, when `complete`, applies the completions that only complete the description. Rows and values are never touched.
  */
-function runContract(a: { plan: PricedPlan; rowsByStage: Record<string, Row[]>; layouts: SheetLayout[]; methodology: ReturnType<typeof buildMethodology>; repliesJudged: boolean; approvedPlan?: PricedPlan; now: number; complete: boolean }): { violations: ContractViolation[]; completed: Completion[] } {
+function runContract(a: { plan: PricedPlan; rowsByStage: Record<string, Row[]>; layouts: SheetLayout[]; methodology: ReturnType<typeof buildMethodology>; repliesJudged: boolean; approvedPlan?: PricedPlan; now: number; complete: boolean; /** The alternative routes that answered, per stage and parent, from the item store (round 16). */ routes?: Readonly<Record<string, Readonly<Record<string, number>>>> }): { violations: ContractViolation[]; completed: Completion[] } {
   const { plan, rowsByStage, layouts, methodology } = a;
   const limitsItem = methodology.items.find((i) => i.label === "حدود هذا التسليم");
   const limitLines = (limitsItem?.values ?? []).filter((l) => l !== NO_LIMITS_AR);
@@ -359,7 +359,7 @@ function runContract(a: { plan: PricedPlan; rowsByStage: Record<string, Row[]>; 
   // THE CARD'S NUMBER (customerView.stagesView: the card's own «المجموع في ملفك»), plus what the stages that PROMISED NO NUMBER delivered (comments of videos with no counter: judged to what the source gave): that is the number every surface must say after the run
   const card = a.approvedPlan && compiled ? stagesView(customerPlanView(a.approvedPlan)).total + a.approvedPlan.stages.filter((st) => st.deliver && st.children_open === true).reduce((n, st) => n + (rowsByStage[st.key] ?? []).length, 0) : null;
   const input: ContractInput = {
-    plan, rowsByStage, sheets, limitLines, now: a.now,
+    plan, rowsByStage, sheets, limitLines, now: a.now, ...(a.routes && Object.keys(a.routes).length > 0 ? { routes: a.routes } : {}),
     numbers: { card, file: promised, chat: chat ? chat.y : null, notice: promised, orders: compiled ? promisedRowsOf(publicPlan.stages as never, 0, true) || null : null, fileDelivered: delivered, deliveredRows: plan.stages.filter((st) => st.deliver).reduce((n, st) => n + (rowsByStage[st.key] ?? []).length, 0) },
   };
   const violations = checkDeliveryContract(input);
@@ -412,7 +412,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   const methodology = buildMethodology({ plan, layouts, rowsByStage, facts });
   // the contract never blocks or delays a delivery: if it cannot run (a plan shape it does not know), the file is written as it would have been
   let contract: { violations: ContractViolation[]; completed: Completion[]; error?: string } = { violations: [], completed: [] };
-  try { contract = runContract({ plan, rowsByStage, layouts, methodology, repliesJudged: options.repliesJudged === true, approvedPlan: options.approvedPlan, now: options.now ?? Date.now(), complete: options.completeContract !== false && plan.compiled?.by === "compiler" }); } catch (e) { contract = { violations: [], completed: [], error: String((e as Error)?.message ?? e).slice(0, 200) }; /* the file is delivered without the contract */ }
+  try { contract = runContract({ plan, rowsByStage, layouts, methodology, repliesJudged: options.repliesJudged === true, approvedPlan: options.approvedPlan, now: options.now ?? Date.now(), complete: options.completeContract !== false && plan.compiled?.by === "compiler", routes: routesOfFacts(facts) }); } catch (e) { contract = { violations: [], completed: [], error: String((e as Error)?.message ?? e).slice(0, 200) }; /* the file is delivered without the contract */ }
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
   const used = new Set<string>([SUMMARY_SHEET_AR.toLowerCase()]);

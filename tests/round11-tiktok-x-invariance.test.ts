@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { tiktokWorld, xWorld } from "./helpers/round11Worlds";
+import { MATCH_COUNTS_PREFIX_AR } from "../src/lib/agentMission/foundation/compilePlan";
 
 /**
  * TIKTOK AND X ARE CUSTOMERS' TOOLS (live round 11). The pinned hashes below are of the plan, the customer's plan view and the file (every cell of every sheet) that the stored real pages of TikTok (M12) and X (M14 and msn_50e3b83c44e7ebd7f577) gave on
@@ -22,6 +23,12 @@ const withoutConditions = (v: unknown): unknown => {
   if (v && typeof v === "object") return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([k]) => k !== "conditions").map(([k, x]) => [k, withoutConditions(x)]));
   return v;
 };
+// CHANGED (round 16): one more stated diff, set apart before the hash is compared: the card's sentence of how many selected items match the customer's conditions (the sentence starts with MATCH_COUNTS_PREFIX_AR and is one string of `notes_ar` in the plan and in the customer's view). The old unmet-conditions sentence is untouched.
+const withoutMatchCounts = (v: unknown): unknown => {
+  if (Array.isArray(v)) return v.filter((x) => !(typeof x === "string" && x.startsWith(MATCH_COUNTS_PREFIX_AR))).map(withoutMatchCounts);
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, withoutMatchCounts(x)]));
+  return v;
+};
 const dataSheets = (cells: Record<string, string[][]>): Record<string, string[][]> => Object.fromEntries(Object.entries(cells).slice(1));
 
 /** The topic mark taken out: its column entry and its value on every row, anywhere in the document. */
@@ -34,8 +41,8 @@ function withoutTopicMark(v: unknown): unknown {
 describe("TikTok: the plan and the customer's view are byte for byte what they were; the file differs in one stated cell kind only", () => {
   it("plan and view", async () => {
     const w = await tiktokWorld();
-    expect(sha(withoutConditions(w.plan))).toBe(BASE.tiktok.plan);
-    expect(sha(w.view)).toBe(BASE.tiktok.view);
+    expect(sha(withoutMatchCounts(withoutConditions(w.plan)))).toBe(BASE.tiktok.plan);
+    expect(sha(withoutMatchCounts(w.view))).toBe(BASE.tiktok.view);
   }, 120_000);
   it("the file: the only change is «عدد الردود» of the reply rows (20 cells, empty -> «غير متاح»); with those put back the file is the old one", async () => {
     const w = await tiktokWorld();
@@ -58,8 +65,8 @@ describe("TikTok: the plan and the customer's view are byte for byte what they w
 describe("X: the plan, the view and the file are what they were, plus the topic mark", () => {
   it("with the topic mark taken out, the plan and the view are the old ones; the mark itself is there on every chosen tweet", async () => {
     const w = await xWorld();
-    expect(sha(withoutTopicMark(withoutConditions(w.plan)))).toBe(BASE.x.plan);
-    expect(sha(withoutTopicMark(w.view))).toBe(BASE.x.view);
+    expect(sha(withoutTopicMark(withoutMatchCounts(withoutConditions(w.plan))))).toBe(BASE.x.plan);
+    expect(sha(withoutTopicMark(withoutMatchCounts(w.view)))).toBe(BASE.x.view);
     const pinned = (w.plan.stages[0].pinned_rows ?? []) as Array<Record<string, unknown>>;
     expect(pinned.length).toBeGreaterThan(0);
     for (const r of pinned) expect(typeof r.topic_relation).toBe("string");

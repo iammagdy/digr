@@ -54,6 +54,8 @@ export interface ContractInput {
   sheets: ContractSheet[];
   /** The lines of «حدود هذا التسليم». */
   limitLines: string[];
+  /** The alternative routes that ANSWERED for a parent of a stage, from the item store's log (stage key -> parent id -> how many): the only evidence R2 reads for «the main route and N alternative routes were tried». */
+  routes?: Readonly<Record<string, Readonly<Record<string, number>>>>;
   numbers: ContractNumbers;
   now: number;
 }
@@ -72,6 +74,25 @@ export function precisionHeaderOf(headers: ReadonlyArray<string>, dateHeader: st
 /** The words a limits line uses for the numbers of one parent (the same sentence the engine's own lines use). */
 export function gapLineAr(input: { parentNoun: string; n: number; counterLabel: string; counter: number; delivered: number; what: string }): string {
   return `ال${input.parentNoun} رقم ${fmt(input.n)}: ${input.what}، ${input.counterLabel} ${fmt(input.counter)}، وسُلّم ${fmt(input.delivered)}؛ والفرق لم يعطِه المصدر`;
+}
+
+/** The comments a parent should have given: its counter (never above the number asked per parent), else the number asked; null for an OPEN stage (no counter before reading: the expectation is only «gave none» and «reached the limit»). One rule, read by R2 and by the limits lines. */
+export function expectedCommentsOf(stage: Pick<PricedStage, "children_cap_per_parent" | "per_parent_rows">, parent: Record<string, unknown>): number | null {
+  const counter = childCountOf(parent);
+  const asked = Number(stage.per_parent_rows);
+  const open = (stage.children_cap_per_parent ?? null) !== null && counter === null;
+  return open ? null : counter !== null ? (Number.isFinite(asked) && asked > 0 ? Math.min(counter, asked) : counter) : Number.isFinite(asked) && asked > 0 ? asked : null;
+}
+
+/** «مسارًا بديلًا واحدًا», «مسارين بديلين», «٣ مسارات بديلة»: the alternative routes tried (white label: never a provider or an endpoint). */
+export function alternativeRoutesAr(n: number): string {
+  const k = Math.max(1, Math.floor(n));
+  return k === 1 ? "مسارًا بديلًا واحدًا" : k === 2 ? "مسارين بديلين" : `${fmt(k)} مسارات بديلة`;
+}
+
+/** ROUND 16: the line of a parent whose comments fell short AFTER an alternative route was tried: the expected count, the unique comments delivered, the gap, and that the main route and N alternative routes were tried. From persisted execution evidence only (the routes the item store recorded). */
+export function alternativesGapLineAr(input: { parentNoun: string; n: number; expected: number; delivered: number; alternatives: number }): string {
+  return `ال${input.parentNoun} رقم ${fmt(input.n)}: المتوقع ${fmt(input.expected)} تعليقًا، وسُلّم ${fmt(input.delivered)} تعليقًا فريدًا، والفرق ${fmt(Math.max(0, input.expected - input.delivered))}؛ جرّبنا المسار الرئيسي و${alternativeRoutesAr(input.alternatives)} للمنصة نفسها، ولم يعطِ أيٌّ منها الباقي.`;
 }
 
 export function checkDeliveryContract(input: ContractInput): ContractViolation[] {
@@ -121,14 +142,18 @@ function r2(input: ContractInput): ContractViolation[] {
       const mine = comments.filter((c) => String(c.parent_id ?? "") === rowId(p));
       const counter = childCountOf(p);
       const cap = stage.children_cap_per_parent ?? null;
-      const asked = Number(stage.per_parent_rows);
       // the comments the parent should have given: its counter (never above the number asked per parent), else the number asked; an OPEN stage (no counter before reading) has no expectation but «gave none» and «reached the limit»
       const open = cap !== null && counter === null;
-      const expected = open ? null : counter !== null ? (Number.isFinite(asked) && asked > 0 ? Math.min(counter, asked) : counter) : Number.isFinite(asked) && asked > 0 ? asked : null;
+      const expected = expectedCommentsOf(stage, p);
       const head = `ال${parentNoun} رقم ${fmt(i + 1)}`;
       if (expected !== null && mine.length < expected) {
         anyGap = true;
-        if (!limitLines.some((l) => has(l, head, fmt(expected), fmt(mine.length)))) {
+        // ROUND 16: a shortfall that happened AFTER alternative routes were tried must say so: the expected count, the unique delivered, the gap, the main route and the N alternative routes tried (persisted execution evidence only)
+        const tried = input.routes?.[stage.key]?.[rowId(p)] ?? 0;
+        if (tried > 0) {
+          if (!limitLines.some((l) => has(l, head, "المسار الرئيسي", alternativeRoutesAr(tried), fmt(expected), fmt(mine.length)))) out.push({ rule: "R2", sheet: stage.title_ar, rowId: rowId(p), expected: `سطر لـ«${head}» يذكر المتوقع ${fmt(expected)} والفريد المسلّم ${fmt(mine.length)} وأن المسار الرئيسي و${alternativeRoutesAr(tried)} جُرّبت`, found: "لا سطر",
+            fix: { kind: "limit_line", text: alternativesGapLineAr({ parentNoun, n: i + 1, expected, delivered: mine.length, alternatives: tried }) } });
+        } else if (!limitLines.some((l) => has(l, head, fmt(expected), fmt(mine.length)))) {
           out.push({ rule: "R2", sheet: stage.title_ar, rowId: rowId(p), expected: `سطر لـ«${head}» يذكر ${fmt(expected)} و${fmt(mine.length)}`, found: "لا سطر",
             fix: { kind: "limit_line", text: gapLineAr({ parentNoun, n: i + 1, counterLabel: "المتوقع", counter: expected, delivered: mine.length, what: "التعليقات" }) } });
         }
