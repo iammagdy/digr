@@ -1,4 +1,4 @@
-import { NAMED_MARK_KEY } from "./foundation/namedShortfall";
+import { NAMED_MARK_KEY, NAMED_UNAVAILABLE_MARK_AR } from "./foundation/namedShortfall";
 import { arabicShare, flagIsSet, isEnabled, startsWithHandle, filterVerdict, type StageFilter } from "./filters";
 
 /**
@@ -8,6 +8,8 @@ import { arabicShare, flagIsSet, isEnabled, startsWithHandle, filterVerdict, typ
  */
 export const MARKS_KEY = "__marks";
 export interface RowMarks { reply: boolean | null; repost: boolean | null; lang: "ar" | "other" | null; inPeriod: boolean | null; named: boolean | null }
+/** ROUND 17: the marks of a row; `namedUnavailable` is set only when the row carries NO author, so `named` is unknown and the cell says «غير متاح من المصدر». */
+export type RowMarksNote = RowMarks & { namedUnavailable?: true };
 
 const REPLY_FIELD = /^(is_?reply|reply|in_?reply_?to.*|is_?comment_?reply)$/i;
 const REPOST_FIELD = /^(is_?repost|is_?retweet|retweeted|is_?share|reposted)$/i;
@@ -17,7 +19,7 @@ const fieldOf = (row: Record<string, unknown>, re: RegExp): string | null => Obj
 const langCode = (v: unknown): string | null => { const t = String(v ?? "").trim().toLowerCase(); return /^[a-z]{2,3}(-[a-z]{2,4})?$/.test(t) ? t.slice(0, 2) : null; };
 
 /** What is true of one mapped row, from the stage's typed filters (their fields and values) and from the row itself when the stage declares no filter for it. Never removes anything. */
-export function markVerdict(filters: ReadonlyArray<StageFilter> | undefined, mapped: Record<string, unknown>, ctx: { textKey: string | null; now: number; listing?: boolean }): RowMarks {
+export function markVerdict(filters: ReadonlyArray<StageFilter> | undefined, mapped: Record<string, unknown>, ctx: { textKey: string | null; now: number; listing?: boolean }): RowMarksNote {
   const on = (filters ?? []).filter(isEnabled);
   const text = ctx.textKey ? String(mapped[ctx.textKey] ?? "") : "";
   const replyFilter = on.find((f) => f.kind === "exclude_replies");
@@ -37,8 +39,8 @@ export function markVerdict(filters: ReadonlyArray<StageFilter> | undefined, map
   const account = on.find((f) => f.kind === "account" && (f.values ?? []).length > 0);
   // A source named by a page the compiler chose among the pool rows (Facebook): the row carries its own verdict («» = the named page, else the mismatch text), set by code when the plan was made
   const own = mapped[NAMED_MARK_KEY];
-  const named = account ? filterVerdict([account], mapped, { textKey: ctx.textKey, now: ctx.now, ...(ctx.listing ? { listing: true } : {}) }) === null : typeof own === "string" ? own === "" : null;
-  return { reply, repost, lang, inPeriod, named };
+  const named = account ? filterVerdict([account], mapped, { textKey: ctx.textKey, now: ctx.now, ...(ctx.listing ? { listing: true } : {}) }) === null : typeof own === "string" ? (own === NAMED_UNAVAILABLE_MARK_AR ? null : own === "") : null;
+  return { reply, repost, lang, inPeriod, named, ...(!account && own === NAMED_UNAVAILABLE_MARK_AR ? { namedUnavailable: true as const } : {}) };
 }
 
 /** The titles of the five mark columns, in the order they are added to the first sheet. */
@@ -48,13 +50,13 @@ const UNKNOWN_AR = "غير محدد";
 const yesNo = (v: boolean | null): string => (v === null ? UNKNOWN_AR : v ? "نعم" : "لا");
 
 /** The cell a mark column shows for a row's marks. */
-export function markCellAr(key: keyof RowMarks, marks: Partial<RowMarks> | null | undefined): string {
+export function markCellAr(key: keyof RowMarks, marks: (Partial<RowMarks> & { namedUnavailable?: true }) | null | undefined): string {
   const m = marks ?? {};
   switch (key) {
     case "reply": return m.reply === null || m.reply === undefined ? UNKNOWN_AR : m.reply ? "رد" : "أصلي";
     case "lang": return m.lang === "ar" ? "العربية" : m.lang === "other" ? "لغة أخرى" : UNKNOWN_AR;
     // THE NAMED SOURCE reads «مطابق» / «غير مطابق» on every platform (round 14); the other yes-or-no marks keep «نعم» / «لا»
-    case "named": return m.named === null || m.named === undefined ? UNKNOWN_AR : m.named ? "مطابق" : "غير مطابق";
+    case "named": return m.named === null || m.named === undefined ? (m.namedUnavailable === true ? NAMED_UNAVAILABLE_MARK_AR : UNKNOWN_AR) : m.named ? "مطابق" : "غير مطابق";
     default: return yesNo((m[key] as boolean | null | undefined) ?? null);
   }
 }

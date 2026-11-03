@@ -3,7 +3,7 @@ import { isOccurrenceAnswer, isRecurringEvent, occurrenceChoiceOf, OCCURRENCE_OP
 import { checkChannelsAgainstWords } from "../../src/lib/agentMission/foundation/understand";
 import { buildShapeDigest } from "../../src/lib/modelPlanner/digest";
 import { chooseCard, compilePlan, parentInputs, rankedPoolOf, COMPILED_PLATFORMS, type CompileResult } from "../../src/lib/agentMission/foundation/compilePlan";
-import { factsOf, isAboutAndEligible, rankPool } from "../../src/lib/agentMission/foundation/pool";
+import { factsOf, isAboutAndEligible, pageMatchesSource, rankPool } from "../../src/lib/agentMission/foundation/pool";
 import { aboutQueryOf, noAboutChoiceOf, noAboutQuestionAr, NO_ABOUT_OPTIONS_AR } from "../../src/lib/agentMission/foundation/topicChoice";
 import { NAMED_SHORTFALL_OPTIONS_AR, isNamedShortfallAnswer, namedShortfallChoiceOf, namedShortfallQuestionAr } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { budgetOfWords, questionNeeded, type Choices } from "../../src/lib/agentMission/foundation/countChoice";
@@ -68,6 +68,8 @@ export type WithCost<T> = T & { llmCostUsd?: number };
 
 /** The pages a parent may be read for at planning beyond the ones it needs (the exposure check replaces an empty parent by the next one). */
 const EXPOSURE_EXTRA = 3;
+/** ROUND 17: the most pages one listing is walked back through at planning for a period (the gateway's own two samples of a source end the walk earlier today; this only bounds it if that cap ever changes). */
+export const LISTING_WALK_MAX_PAGES = 12;
 
 /** The digest the gateway writes for a call's inputs: strings cut at 80 characters (300 for a key that starts with «_»). */
 const clipped = (k: string, v: unknown): unknown => (typeof v === "string" ? v.slice(0, k.startsWith("_") ? 300 : 80) : v);
@@ -114,8 +116,7 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }): Pro
     if (q && ask.platform && (COMPILED_PLATFORMS as ReadonlyArray<string>).includes(ask.platform)) return { kind: "question", ask, why: q.why, question: q.question, options: q.options, reads };
   }
   const recorded = new Set<string>();
-  const card = chooseCard(ask, "parents", { catalogOnly: deps.catalogOnly === true });
-  if (!card) return { kind: "cannot", ask, reason: "no_parent_card", reads };
+  let card = chooseCard(ask, "parents", { catalogOnly: deps.catalogOnly === true });
   // OWNER DECISION 7.4: the calls made with catalog_only cards cost at most CATALOG_ONLY_CAP_USD a mission; a read that would pass it is not made (it counts as a read that did not answer)
   let catalogOnlySpentUsd = 0;
   const read = async (endpointId: string, params: Record<string, unknown>, using?: ToolCard): Promise<{ callId: string; page: unknown; nextCursor: string | null; hasMore: boolean | null } | { failed: true; refused: boolean }> => {
@@ -142,6 +143,26 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }): Pro
     try { page = raw === null ? null : JSON.parse(raw); } catch { page = null; }
     return { callId: String(r.call_id), page, nextCursor: (r.next_cursor as string | null) ?? null, hasMore: (r.has_more as boolean | null) ?? null };
   };
+  // ROUND 17: A NAMED FACEBOOK PAGE WITH NO TOPIC (live round 14: «منشورين من صفحة قناة العربية آخر ٣ شهور» was refused before any read). The page listing card needs the page's LINK and an Arabic name is not one: ONE read of the keyword search (the page's name as the keyword,
+  // the period's days) finds the page by its author's name, word for word (code, never a filter), and its link is what the listing is read by. The customer's own name stays the Ask's source (the verdict of every row is made against it).
+  let cardAsk: Ask = ask;
+  if (!card && ask.platform === "facebook" && ask.source.kind === "named" && ask.source.text && !ask.topic.text && !/facebook\.com\//i.test(ask.source.text)) {
+    const search = cardsFor("facebook", "posts.search", { catalogOnly: deps.catalogOnly === true }).find((c) => c.status === "verified");
+    if (search) {
+      const found = await read(search.endpointId, { ...(search.inputs.query ? { [search.inputs.query.field]: ask.source.text } : {}), ...(search.inputs.period && ask.period ? { [search.inputs.period.from]: ask.period.from, [search.inputs.period.to]: ask.period.to } : {}) }, search);
+      reads.pool += 1;
+      if (!("failed" in found)) {
+        const hit = mapPage(search, found.page).find((r) => pageMatchesSource(r, ask.source.text!) && typeof r.author_url === "string" && r.author_url !== "");
+        const link = hit ? String(hit.author_url).replace(/[?#].*$/, "").replace(/\/+$/, "") : null;
+        if (link && /^https?:\/\/(?:www\.|m\.)?facebook\.com\/[A-Za-z0-9._-]+$/i.test(link)) {
+          cardAsk = { ...ask, source: { kind: "named", text: link } };
+          card = chooseCard(cardAsk, "parents", { catalogOnly: deps.catalogOnly === true });
+        }
+      }
+      if (!card) return { kind: "cannot", ask, reason: "page_not_found", reads };
+    }
+  }
+  if (!card) return { kind: "cannot", ask, reason: "no_parent_card", reads };
   const need = Math.max(1, ask.count ?? 10);
   const catalogOnly = deps.catalogOnly === true;
 
@@ -189,7 +210,7 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }): Pro
   if (ask.platform === "youtube") return planYoutube();
 
   // F4: THE POOL, the first page of the chosen card (and its next page when the first holds fewer rows than are needed with their spares: the gateway allows two samples of one source)
-  const params = parentInputs(card, ask);
+  const params = parentInputs(card, cardAsk);
   const first = await read(card.endpointId, params, card);
   reads.pool += 1;
   if ("failed" in first) return { kind: "cannot", ask, reason: first.refused ? "pool_refused" : "pool_failed", reads };
@@ -219,7 +240,22 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }): Pro
   } else if ((mapPage(card, first.page).length < need + 2 || wantsSecond) && card.inputs.cursor && cursorOf(first) && first.hasMore !== false) {
     const second = await read(card.endpointId, { ...params, [card.inputs.cursor]: cursorOf(first) }, card);
     reads.pool += 1;
-    if (!("failed" in second)) pages.push({ callId: second.callId, page: second.page });
+    if (!("failed" in second)) {
+      pages.push({ callId: second.callId, page: second.page });
+      // ROUND 17: A LISTING WITH A PERIOD WALKS BACK by its cursor, checking each row's date (Cairo days, by code), until a post older than the period's first day is read, the source has no more, a read does not answer, or the page limit is reached. It runs inside the planning budget and the gateway's own caps
+      // (a read the gateway refuses ends the walk and the card says the period was not reached); no cap is raised here.
+      if (listing && ask.period !== null) {
+        let last: { page: unknown; nextCursor: string | null; hasMore: boolean | null } = second;
+        const oldestOf = (): number => Math.min(...pages.flatMap((p) => mapPage(card, p.page)).map((r) => Date.parse(String(r.posted_at ?? ""))).filter((t) => Number.isFinite(t)), Infinity);
+        while (reads.pool < LISTING_WALK_MAX_PAGES && oldestOf() >= ask.period.startMs && cursorOf(last) && last.hasMore !== false) {
+          const more = await read(card.endpointId, { ...params, [card.inputs.cursor]: cursorOf(last) }, card);
+          reads.pool += 1;
+          if ("failed" in more) break;
+          pages.push({ callId: more.callId, page: more.page });
+          last = more;
+        }
+      }
+    }
   }
   // A TEST ACCOUNT (decision 7.4) also reads the second keyword search once (up to 20 posts, 0.06606 USD of the 0.20): its first real response is what makes the card verifiable
   if (catalogOnly && card.role === "posts.search") {
