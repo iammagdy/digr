@@ -74,14 +74,14 @@ export const YOUTUBE_CARDS: ReadonlyArray<ToolCard> = [
   },
   {
     // the comments with the reply counter (`reply_count`, written as text) and the comment's reply token, paged by `data.continuation_token`. VERIFIED on the 8 real pages of live round 11 (2 videos, 123 comments, 3 with replies). Its `published_time` is a relative text in the provider's own
-    // language («11个月前»), never a date: the mapping leaves the comment's date empty (round 12)
+    // language («11个月前»), never a date: the mapping leaves the comment's date empty (round 12). Round 13: the call sends `language_code: "en"` (a declared input of the catalog entry), so the text is English («3 days ago», «11 months ago (edited)»): the mapping keeps it and the engine turns it into an approximate Cairo day from the moment of the read, marked approximate; a text it cannot read leaves the date empty and is counted in the delivery's limits. NOT SEEN on a real page yet: the English forms are synthetic until the live round.
     endpointId: "tikhub.youtube.video.comments",
     platform: "youtube",
     role: "video.comments",
     status: "verified",
-    inputs: { cursor: "continuation_token", parent: { param: "video_id", from: "id" } },
+    inputs: { cursor: "continuation_token", parent: { param: "video_id", from: "id" }, fixed: { language_code: "en" } },
     page: { list: ["data", "comments"], cursor: ["data", "continuation_token"], observedRowsPerPage: 20 },
-    mapping: { kind: "replies", tokens: [{ key: "reply_continuation_token" }] },
+    mapping: { kind: "replies", tokens: [{ key: "reply_continuation_token" }], relativeDates: true },
     counter: { key: "replies_count", counts: "replies" },
     costUsdPerPage: 0.001,
     verifiedOn: [{ mission: M_R11_YT, calls: ["call_0006", "call_0007", "call_0008", "call_0009", "call_0010", "call_0011", "call_0012", "call_0013"] }],

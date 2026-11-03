@@ -4,7 +4,7 @@ import { cairoText, dateOnlyText, isDateValues, parseDateOnly, parseMoment } fro
 import { arabicDateLabel } from "../../src/lib/agentMission/fileNames";
 import { countAr, itemNounOf, itemNounOfPlan, knownItemNoun } from "../../src/lib/agentMission/itemNoun";
 import { filterLineAr, isEnabled, type StageFilter } from "../../src/lib/agentMission/filters";
-import { APPROX_DATES_NOTE_AR, approxColumnsOf } from "../../src/lib/agentMission/relativeDates";
+import { APPROX_DATES_NOTE_AR, approxColumnsOf, dateUnreadColumnsOf } from "../../src/lib/agentMission/relativeDates";
 import { unresolvedSourcesLineAr } from "../../src/lib/agentMission/namedSources";
 import { formatAr, toArabicDigits } from "../../src/lib/arabicDigits";
 import { plainSearchAr } from "../../src/lib/agentMission/plainSearchAr";
@@ -323,6 +323,12 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
   // THE SOURCE'S OWN COUNTER next to what was delivered, per parent (a video's comments count against the comments and replies delivered under it)
   const threads = threadCounterLinesOfPlan(plan, rowsByStage, knownNounOf, Object.fromEntries(Object.entries(facts.stages ?? {}).map(([k, v]) => [k, v.stop] as const)));
   for (const line of threads.limitLines) limits.push(line);
+  // A DATE THE SOURCE GAVE ONLY AS A RELATIVE TEXT THE CODE COULD NOT READ (YouTube comments, round 13): the cell is empty, and the number is said here
+  for (const s of delivering) {
+    const mine = rowsByStage[s.key] ?? [];
+    const unread = mine.filter((r) => dateUnreadColumnsOf(r).length > 0).length;
+    if (unread > 0) limits.push(`${many ? `«${s.title_ar}»: ` : ""}${fmt(unread)} من ${fmt(mine.length)} سُلّمت بلا تاريخ، لأن المصدر ذكر وقت النشر بنص لم نستطع تحويله إلى تاريخ، فتُرك الحقل فارغًا.`);
+  }
   // DECISION MAKERS: a people stage that prefers the decision makers says when people who are not fill the count (the titles of the delivered rows; a title the source did not give is not judged)
   for (const s of delivering) {
     const role = (s as { role_preference?: { role?: string } }).role_preference?.role;

@@ -51,12 +51,21 @@ export interface ReplayOptions {
   firstSeq?: number;
   /** Per endpoint, the only inputs compared (see `inputKey`): written in the test that needs it, so the loosening is visible there. */
   only?: Readonly<Record<string, ReadonlyArray<string>>>;
+  /** Serve only the stored calls of this phase of the live mission («planning» or «execution»): the same inputs read in the two phases gave DIFFERENT pages (a comments page of the planning read and of the execution read), and the engine must get the execution one. Absent: every phase (as before). */
+  phase?: "planning" | "execution";
+  /** Per endpoint, the inputs the call log keeps only the first 80 characters of (a paging or reply token: `mission_calls.params` cuts them): both sides are compared on their first 80 characters. Written in the test that needs it. */
+  cut80?: Readonly<Record<string, ReadonlyArray<string>>>;
   /** A stored page of ANOTHER mission of the same platform that stands in for a page the live run never read (the compiler's second pool page): written in the test, never implicit. */
   borrow?: ReadonlyArray<{ endpointId: string; fromMission: string; call: string; when: (params: Record<string, unknown>) => boolean }>;
 }
 export function replayGateway(fixtureMission: string, catalog: TregCatalog, store: ReplayStore, targetMission: string, options: ReplayOptions = {}) {
-  const calls = INDEX.missions[fixtureMission] ?? [];
-  const keyOf = (endpointId: string, params: Record<string, unknown>) => inputKey(endpointId, params, options.only?.[endpointId]);
+  const calls = (INDEX.missions[fixtureMission] ?? []).filter((c) => options.phase === undefined || c[1] === options.phase);
+  const cut = (endpointId: string, params: Record<string, unknown>): Record<string, unknown> => {
+    const names = options.cut80?.[endpointId];
+    if (!names) return params;
+    return Object.fromEntries(Object.entries(params).map(([k, v]) => [k, names.includes(k) && typeof v === "string" ? v.slice(0, 80) : v]));
+  };
+  const keyOf = (endpointId: string, params: Record<string, unknown>) => inputKey(endpointId, cut(endpointId, params), options.only?.[endpointId]);
   const byKey = new Map<string, IndexRow>();
   for (const c of calls) if ((c[3] === "ok" || c[3] === "empty") && !byKey.has(keyOf(c[2], c[5]))) byKey.set(keyOf(c[2], c[5]), c);
   const stats: ReplayStats = { served: [], unserved: [] };
