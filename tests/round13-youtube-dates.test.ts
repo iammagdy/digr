@@ -150,8 +150,8 @@ describe("2. the engine replayed on the real pages of msn_41a73a6b2c0b4a76ef0a (
       expect(dateUnreadColumnsOf(r), String(r.id)).toEqual(["posted_at"]);
       expect(r[APPROX_DATES_KEY]).toBeUndefined();
     }
-    // the replies come from another tool with real instants: untouched
-    for (const r of real.replies) { expect(String(r.posted_at)).toMatch(/^\d{4}-\d{2}-\d{2}T/); expect(r[DATE_UNREAD_KEY]).toBeUndefined(); expect(r[APPROX_DATES_KEY]).toBeUndefined(); }
+    // CHANGED (round 14): the replies come from another tool whose `createdUtc` is an instant the PROVIDER computed from «11 months ago» (the minute of the call minus 11 calendar months): round 13 left it as an exact moment, the live file showed «2025-12-03 17:52:00». It is now the approximate day, marked.
+    for (const r of real.replies) { expect(String(r.posted_at)).toBe("2025-12-03"); expect(r[DATE_UNREAD_KEY]).toBeUndefined(); expect(r[APPROX_DATES_KEY]).toEqual(["posted_at"]); }
   });
   it("SYNTHETIC English texts: a readable form is the approximate Cairo day and the row is marked approximate; a form the code cannot read (and the Chinese one) leaves the cell empty and is counted", () => {
     const DAYS: Record<string, string> = { "3 days ago": "2026-10-31", "11 months ago": "2025-12-03", "1 year ago": "2025-11-03", "2 weeks ago": "2026-10-20", "5 hours ago": "2026-11-03", "3 days ago (edited)": "2026-10-31" };

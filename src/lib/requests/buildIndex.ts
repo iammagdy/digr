@@ -36,7 +36,13 @@ async function readAll(make: (from: number, to: number) => any): Promise<any[]> 
 const oneLine = (t: unknown, n: number): string => { const s = String(t ?? "").replace(/\s+/g, " ").trim(); return s.length > n ? `${s.slice(0, n - 1)}…` : s; };
 const ENDED_STATUSES = ["cancelled", "failed", "unserved"] as const;
 const RUNNING_STATUSES = ["queued", "planning", "approved", "executing"] as const;
-const RUNNING_NOTE_AR: Record<string, string> = { queued: "في الدور وتبدأ خلال دقائق", planning: "قيد الدراسة الآن", approved: "اعتُمدت وتبدأ خلال لحظات", executing: "قيد التنفيذ الآن" };
+/** ONE status word per state, and a note that says what happens, never the status word again (round 14: the running card said «قيد التنفيذ» and «قيد الدراسة الآن»). No time is stated: none is measured. */
+const RUNNING_STATE_AR: Record<string, { chip: string; note: string }> = {
+  queued: { chip: "في الانتظار", note: "ستبدأ تلقائيًا عند دورها، ولم يُخصم منك شيء." },
+  planning: { chip: "قيد الدراسة", note: "نجهّز خطتك الآن، ولم يُخصم منك شيء." },
+  approved: { chip: "معتمدة", note: "ستبدأ تلقائيًا، ولن يُخصم منك إلا ما يُسلَّم." },
+  executing: { chip: "قيد التنفيذ", note: "نجمع النتائج الآن، ولن يُخصم منك إلا ما يُسلَّم." },
+};
 const ENDED_NOTE_AR: Record<EndedKind, string> = {
   cancelled: "ألغيت هذه المهمة قبل التنفيذ، ولم يُخصم منك شيء.",
   expired: `${EXPIRED_SENTENCE_AR}؛ لم تُعتمد خلال ٧٢ ساعة، ولم يُخصم منك شيء.`,
@@ -121,7 +127,7 @@ export async function buildRequestIndex(client: any, input: BuildIndexInput): Pr
       continue;
     }
     if ((RUNNING_STATUSES as readonly string[]).includes(m.status)) {
-      rows.push({ type: "mission", id: String(m.id), createdAt: String(m.created_at), tab: "running", title: oneLine(text, 200), endedKind: null, noteAr: RUNNING_NOTE_AR[m.status] ?? "قيد التنفيذ", conversationId: null, text });
+      rows.push({ type: "mission", id: String(m.id), createdAt: String(m.created_at), tab: "running", title: oneLine(text, 200), endedKind: null, chipAr: (RUNNING_STATE_AR[m.status] ?? RUNNING_STATE_AR.executing).chip, noteAr: (RUNNING_STATE_AR[m.status] ?? RUNNING_STATE_AR.executing).note, conversationId: null, text });
       continue;
     }
     if ((ENDED_STATUSES as readonly string[]).includes(m.status)) {

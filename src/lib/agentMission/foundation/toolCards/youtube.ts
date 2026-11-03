@@ -95,7 +95,8 @@ export const YOUTUBE_CARDS: ReadonlyArray<ToolCard> = [
     status: "verified",
     inputs: { cursor: "continuationToken", parent: { param: "continuationToken", from: "reply_continuation_token" } },
     page: { list: ["output", "data", "comments"], cursor: ["output", "data", "nextCursor"], observedRowsPerPage: 10 },
-    mapping: { kind: "replies" },
+    // round 14: `createdUtc` of a reply is an instant the provider computed (the minute of the call minus the age in `publishedTime`, «11 months ago»): the mapping keeps that text beside it (`date_text`), so ingest writes the approximate day and marks it
+    mapping: { kind: "replies", relativeDates: true },
     counter: null,
     costUsdPerPage: 0.0012,
     verifiedOn: [{ mission: M_R11_YT, calls: ["call_0014", "call_0015", "call_0016"] }],

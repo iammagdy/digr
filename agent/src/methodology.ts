@@ -4,7 +4,7 @@ import { cairoText, dateOnlyText, isDateValues, parseDateOnly, parseMoment } fro
 import { arabicDateLabel } from "../../src/lib/agentMission/fileNames";
 import { countAr, itemNounOf, itemNounOfPlan, knownItemNoun } from "../../src/lib/agentMission/itemNoun";
 import { filterLineAr, isEnabled, type StageFilter } from "../../src/lib/agentMission/filters";
-import { APPROX_DATES_NOTE_AR, approxColumnsOf, dateUnreadColumnsOf } from "../../src/lib/agentMission/relativeDates";
+import { APPROX_DATES_NOTE_AR, DATE_PRECISION_TITLE_AR, approxColumnsOf, dateUnreadColumnsOf } from "../../src/lib/agentMission/relativeDates";
 import { unresolvedSourcesLineAr } from "../../src/lib/agentMission/namedSources";
 import { formatAr, toArabicDigits } from "../../src/lib/arabicDigits";
 import { plainSearchAr } from "../../src/lib/agentMission/plainSearchAr";
@@ -323,6 +323,12 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
   // THE SOURCE'S OWN COUNTER next to what was delivered, per parent (a video's comments count against the comments and replies delivered under it)
   const threads = threadCounterLinesOfPlan(plan, rowsByStage, knownNounOf, Object.fromEntries(Object.entries(facts.stages ?? {}).map(([k, v]) => [k, v.stop] as const)));
   for (const line of threads.limitLines) limits.push(line);
+  // HOW MANY DATES ARE APPROXIMATE (round 14), per delivered stage: the file names them in the column beside the date and says here how many rows carry one
+  for (const s of delivering) {
+    const mine = rowsByStage[s.key] ?? [];
+    const approx = mine.filter((r) => approxColumnsOf(r).length > 0).length;
+    if (approx > 0) limits.push(`${many ? `«${s.title_ar}»: ` : ""}${fmt(approx)} من ${fmt(mine.length)} تاريخًا تقريبيًا، حُسب من وقت الجلب لأن المصدر يذكر وقت النشر نسبيًا فقط (مثل «قبل ٣ أيام»)، وهو مُعلَّم بكلمة «تقريبي» في عمود «${DATE_PRECISION_TITLE_AR}».`);
+  }
   // A DATE THE SOURCE GAVE ONLY AS A RELATIVE TEXT THE CODE COULD NOT READ (YouTube comments, round 13): the cell is empty, and the number is said here
   for (const s of delivering) {
     const mine = rowsByStage[s.key] ?? [];

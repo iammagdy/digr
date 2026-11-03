@@ -44,7 +44,7 @@ describe("the mark columns of a raw delivery", () => {
   it("the cells are the marks' words, row by row", async () => {
     const sheet = (await load((await buildMissionFiles(plan([POSTS]), { posts: rawRows })).xlsx)).getWorksheet("المنشورات")!;
     expect([5, 6, 7, 8, 9].map((c) => cell(sheet, 2, c))).toEqual(["أصلي", "لا", "العربية", "نعم", "غير محدد"]);
-    expect([5, 6, 7, 8, 9].map((c) => cell(sheet, 3, c))).toEqual(["رد", "لا", "لغة أخرى", "لا", "نعم"]);
+    expect([5, 6, 7, 8, 9].map((c) => cell(sheet, 3, c))).toEqual(["رد", "لا", "لغة أخرى", "لا", "مطابق"]); // CHANGED (round 14): the named-source mark reads «مطابق» / «غير مطابق»
   });
   it("rows with no marks (every flag off): no mark column, and the twin column is merged as it always was", async () => {
     const sheet = (await load((await buildMissionFiles(plan([POSTS]), { posts: plainRows })).xlsx)).getWorksheet("المنشورات")!;

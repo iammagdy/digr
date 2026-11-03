@@ -12,6 +12,7 @@ import { MISSION_READ_LIMIT_MS, startMissionPolling } from "@/lib/missionPoller"
 import type { CustomerMissionView } from "@/lib/agentMission/customerView";
 import { MissionPlanBody } from "@/components/mission/MissionPlanPanel";
 import { PlanEditor } from "@/components/mission/PlanEditor";
+import { approveWithRecovery } from "@/lib/missionApprove";
 import { useBalance } from "@/hooks/useBalance";
 import { holdLimitOf } from "@/lib/agentMission/holdLimit";
 import { pointsAr } from "@/lib/pointsFormat";
@@ -88,16 +89,29 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
     setPendingAction(action);
     setError(null);
     try {
+      // THE APPROVE CLICK RECOVERS (round 14, missionApprove.ts): a first request that never reaches the money step is retried once with a fresh session, and a lost answer is settled by reading the mission
+      if (action === "approve") {
+        const url = `/api/missions/${encodeURIComponent(missionId)}`;
+        const outcome = await approveWithRecovery({
+          post: async () => { const r = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) }, body: JSON.stringify({ action: "approve" }) }); return { status: r.status, body: await r.json().catch(() => null) }; },
+          refreshSession: async () => { await createClient().auth.refreshSession(); },
+          isApproved: async () => { const r = await fetch(url, { cache: "no-store", headers: await authHeaders() }); const j = await r.json().catch(() => null); return j?.success && typeof j.status === "string" ? j.status !== "plan_ready" : null; },
+          sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+        });
+        if (!outcome.ok) { setError(outcome.error); return; }
+        setApprovedHere(true);
+        onApproved?.();
+        await read();
+        setTimeout(() => { if (alive.current) void read(); }, 1500);
+        return;
+      }
       const res = await fetch(`/api/missions/${encodeURIComponent(missionId)}`, { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) }, body: JSON.stringify({ action, ...(text !== undefined ? { text } : {}), ...(edits !== undefined ? { edits } : {}), ...(action === "smaller" && typeof balancePoints === "number" ? { maxHoldPoints: Math.max(0, Math.floor(balancePoints)) } : {}) }) });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json?.success) { setError(String(json?.error || "تعذّر تنفيذ الطلب الآن؛ حاول بعد قليل. لم يُخصم شيء.")); return; }
       if (action === "edit" && typeof json.requestText === "string") onEdit?.(json.requestText);
-      if (action === "approve") { setApprovedHere(true); onApproved?.(); }
       if (action === "answer") setReply("");
       if (action === "edit_plan") setEditing(false);
       await read();
-      // an approval is followed by a second read at once: the work may already have started (or ended) by the time the first answer was written
-      if (action === "approve") setTimeout(() => { if (alive.current) void read(); }, 1500);
     } catch {
       setError("تعذّر الاتصال الآن؛ حاول بعد قليل. لم يُخصم شيء.");
     } finally {
@@ -234,12 +248,15 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
             {v.stages.length > 0 ? (
               <div data-testid="agent-stages">
                 <p className="m-0 mb-1 text-[12px] font-semibold text-ink">الخطوات</p>
+                {/* ROUND 14 (390 px): a long step line («١٧ ردًا بحسب عدّادات ... وحتى ٥٦٩ ردًا ...») wraps INSIDE the card; the label and the value stack on a narrow screen and sit side by side from 640 px up. The value never takes `shrink-0`: that pushed the label to a letter-wide column and the text off the edge. */}
                 <ol className="m-0 flex list-none flex-col gap-1 p-0">
                   {v.stages.map((s) => (
-                    <li key={s.n} className="flex items-baseline gap-1.5 text-[13px] leading-[1.7] text-ink" data-testid={`agent-stage-${s.n}`}>
+                    <li key={s.n} className="flex min-w-0 items-baseline gap-1.5 text-[13px] leading-[1.7] text-ink" data-testid={`agent-stage-${s.n}`}>
                       <b className="shrink-0 text-mut">{toArabicDigits(s.n)}</b>
-                      <span className="min-w-0 flex-1">{s.titleAr}{s.noteAr ? <span className="block text-[11px] font-light text-mut">{s.noteAr}</span> : null}</span>
-                      <span className="shrink-0 text-ink2">{s.rowsAr}</span>
+                      <div className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3" data-testid={`agent-stage-body-${s.n}`}>
+                        <span className="min-w-0 break-words sm:flex-1">{s.titleAr}{s.noteAr ? <span className="block break-words text-[11px] font-light text-mut">{s.noteAr}</span> : null}</span>
+                        <span className="min-w-0 break-words text-ink2 sm:max-w-[60%] sm:text-end" data-testid={`agent-stage-rows-${s.n}`}>{s.rowsAr}</span>
+                      </div>
                     </li>
                   ))}
                 </ol>
@@ -253,7 +270,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
                 {/* its own scrolling box: the table never widens the card or the page, and a cell wraps instead of being cut */}
                 <div className="max-w-full overflow-x-auto" data-testid="agent-samples-scroll">
                   <table className="w-full min-w-[420px] border-collapse text-[12px]">
-                    <thead><tr className="text-right text-mut">{v.samples.columns.map((c) => <th key={c.key} className="border-b border-ln px-1.5 py-1 font-semibold">{c.titleAr}</th>)}</tr></thead>
+                    <thead><tr className="text-right text-mut">{v.samples.columns.map((c) => <th key={c.key} className="min-w-[88px] whitespace-normal break-words border-b border-ln px-1.5 py-1 font-semibold">{c.titleAr}</th>)}</tr></thead>
                     <tbody>{sampleRows.map((r, i) => <tr key={i}>{r.map((cell, j) => <td key={j} className="min-w-[88px] max-w-[260px] whitespace-normal break-words border-b border-ln px-1.5 py-1 align-top text-ink2">{formatSampleCell(cell) || "—"}</td>)}</tr>)}</tbody>
                   </table>
                 </div>

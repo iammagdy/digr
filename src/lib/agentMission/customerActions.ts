@@ -45,15 +45,18 @@ export async function createCustomerMission(client: any, input: { userId: string
 }
 
 /** The queue the mission stands in: missions waiting before it, missions running now, and whether the worker is alive. Read only. */
-export async function readQueue(client: any, mission: { id: string; created_at: string; status: string }, now: number = Date.now()): Promise<QueueInfo> {
+export async function readQueue(client: any, mission: { id: string; created_at: string; status: string; user_id?: string }, now: number = Date.now()): Promise<QueueInfo> {
   const nowIso = new Date(now).toISOString();
-  const [ahead, running, beats] = await Promise.all([
+  const [ahead, running, beats, aheadOwn, runningOwn] = await Promise.all([
     client.from(MISSION_TABLE).select("id", { count: "exact", head: true }).in("status", ["queued", "approved"]).lt("created_at", mission.created_at).neq("id", mission.id),
     client.from(MISSION_TABLE).select("id", { count: "exact", head: true }).in("status", ["planning", "executing"]).gt("lease_until", nowIso),
     client.from(AGENT_HEARTBEAT_TABLE).select("beat_at").order("beat_at", { ascending: false }).limit(3),
+    // THE CUSTOMER'S OWN requests among them (round 14): a request that waits behind the customer's own running job says so
+    mission.user_id ? client.from(MISSION_TABLE).select("id", { count: "exact", head: true }).in("status", ["queued", "approved"]).lt("created_at", mission.created_at).neq("id", mission.id).eq("user_id", mission.user_id) : Promise.resolve(null),
+    mission.user_id ? client.from(MISSION_TABLE).select("id", { count: "exact", head: true }).in("status", ["planning", "executing"]).gt("lease_until", nowIso).eq("user_id", mission.user_id).neq("id", mission.id) : Promise.resolve(null),
   ]);
   const rows = Array.isArray(beats?.data) ? beats.data : [];
-  return { ahead: typeof ahead?.count === "number" ? ahead.count : 0, running: typeof running?.count === "number" ? running.count : 0, workerAlive: workerAlive(latestBeat(rows), now).alive };
+  return { ahead: typeof ahead?.count === "number" ? ahead.count : 0, running: typeof running?.count === "number" ? running.count : 0, workerAlive: workerAlive(latestBeat(rows), now).alive, ...(typeof aheadOwn?.count === "number" ? { aheadOwn: aheadOwn.count } : {}), ...(typeof runningOwn?.count === "number" ? { runningOwn: runningOwn.count } : {}) };
 }
 
 /** One mission as the customer reads it (never the plan's endpoints, costs, errors or workers): the view the card and the live panel draw. */

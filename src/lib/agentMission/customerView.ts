@@ -3,7 +3,7 @@ import { formatAr, toArabicDigits } from "../arabicDigits";
 import type { ProgressSample } from "../jobEta";
 import { FILES_STEP_TITLE_AR, PLANNING_STEP_TITLES, type PanelStep } from "../missionView";
 import { pointsAr } from "../pointsFormat";
-import { AGENT_CLOSE_PAGE_LINE_AR, AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR, AGENT_QUEUE_LINE_AR, AGENT_SLOW_AFTER_MS, AGENT_STALL_AFTER_MS } from "./constants";
+import { AGENT_CLOSE_PAGE_LINE_AR, AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR, AGENT_SLOW_AFTER_MS, AGENT_STALL_AFTER_MS } from "./constants";
 import { isInternalEvent } from "./eventText";
 import { countAr, deliveredOfAr, itemNounOf, itemNounOfPlan, knownItemNoun } from "./itemNoun";
 import { moneyLineAr } from "./moneyText";
@@ -44,6 +44,10 @@ export interface QueueInfo {
   running: number;
   /** The worker's heartbeat is fresh. */
   workerAlive: boolean;
+  /** Of `ahead`, the ones that are THIS customer's own requests (round 14: a request waits behind the customer's own running job). Absent: not known, counted as other customers'. */
+  aheadOwn?: number;
+  /** Of `running`, the ones that are this customer's own. */
+  runningOwn?: number;
 }
 export interface CustomerStageView { n: number; titleAr: string; rows: number; rowsAr: string; deliver: boolean; noteAr: string | null; yieldShare?: number; /** The number (1-based) of the stage this one hangs on (comments of posts), else null. */ parentN: number | null }
 
@@ -73,7 +77,7 @@ export interface CustomerMissionView {
   priceFacts: Array<{ labelAr: string; valueAr: string }>;
   priceNoteAr: string | null;
   questionAr: string | null;
-  /** «مهمتك في الدور وهتبدأ خلال دقائق» with the position, or null. */
+  /** Why the request waits (round 14: never a time), or null. */
   queueLineAr: string | null;
   queuePosition: number | null;
   /** The live panel «خطة المهمة». */
@@ -238,9 +242,15 @@ export function periodOfPlan(plan: any): string | null {
 export function queueLine(status: string, queue: QueueInfo | null): { lineAr: string | null; position: number | null } {
   if (!queue || (status !== "queued" && status !== "approved")) return { lineAr: null, position: null };
   const position = queue.ahead + 1;
-  if (!queue.workerAlive) return { lineAr: "الخدمة متوقفة مؤقتًا. مهمتك محفوظة وهتبدأ أول ما تعود للعمل.", position };
+  if (!queue.workerAlive) return { lineAr: "الخدمة متوقفة مؤقتًا. مهمتك محفوظة وستبدأ تلقائيًا عند عودة الخدمة للعمل.", position };
   if (queue.ahead === 0 && queue.running === 0) return { lineAr: null, position: 1 };
-  return { lineAr: `${AGENT_QUEUE_LINE_AR} · ترتيبك ${toArabicDigits(position)}`, position };
+  // WHY IT WAITS, never a time (round 14): behind the customer's own running request (it may last over an hour), behind other customers' requests (counted), or both
+  const ownRunning = Math.max(0, Math.floor(queue.runningOwn ?? 0));
+  const others = Math.max(0, queue.ahead - Math.max(0, Math.floor(queue.aheadOwn ?? 0))) + Math.max(0, queue.running - ownRunning);
+  const own = ownRunning + Math.max(0, Math.floor(queue.aheadOwn ?? 0));
+  if (own > 0 && others === 0) return { lineAr: "طلبك ينتظر لأن لديك طلبًا جاريًا؛ سيبدأ تلقائيًا بعد انتهائه.", position };
+  if (own > 0) return { lineAr: `طلبك ينتظر لأن لديك طلبًا جاريًا، وقبله ${toArabicDigits(others)} من طلبات العملاء الآخرين؛ سيبدأ تلقائيًا بعد انتهاء ما قبله.`, position };
+  return { lineAr: `طلبك ينتظر دوره؛ قبله ${toArabicDigits(others)} من الطلبات الجارية أو المنتظرة، وسيبدأ تلقائيًا عند دوره.`, position };
 }
 
 /** The honest lines of a step that is slow. Planning holds NOTHING, and says so; a running mission says it charges only what it delivers. Never an ETA. */

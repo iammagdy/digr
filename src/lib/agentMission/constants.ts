@@ -32,7 +32,8 @@ export const AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR = "تقدر تقفل الصفحة
 /** Shown while a mission waits for the worker to be free. */
 /** Said on the card from the moment the customer approves, on the page itself (not only in the bell): the work is saved on our side, the page can be closed, and the notification comes when it ends. */
 export const AGENT_CLOSE_NOTICE_AR = "تقدر تقفل الصفحة وهنبعتلك إشعار لما يخلص.";
-export const AGENT_QUEUE_LINE_AR = "مهمتك في الدور وهتبدأ خلال دقائق";
+/** Kept for the callers that name the waiting line; round 14: it states no time (nothing measured says «minutes»: the live wait was the customer's own running job, 4.5 minutes here and over an hour for a big one) and says WHY the request waits (customerView.ts queueLine). */
+export const AGENT_QUEUE_LINE_AR = "طلبك في الانتظار وسيبدأ تلقائيًا عند دوره";
 /** A running mission with no new event for this long gets the honest «المصدر أبطأ» line. */
 export const AGENT_SLOW_AFTER_MS = 90_000;
 

@@ -409,7 +409,8 @@ describe("point 10: the wallet estimate uses the real unit prices", () => {
     const wallet = readFileSync("src/app/dashboard/topup/page.tsx", "utf8");
     expect(wallet).not.toContain("ILLUSTRATIVE_SEARCH_PRICES");
     expect(readFileSync("src/lib/pricing.ts", "utf8")).not.toContain("ILLUSTRATIVE_SEARCH_PRICES");
-    expect(wallet).toContain("capacityForPoints(available)");
+    // CHANGED (round 14): the estimate is the plan card's own price rule, with the minimum order (src/lib/walletEstimate.ts, tests/round14-wallet-estimate.test.ts)
+    expect(wallet).toContain("walletCapacityOf(available)");
   });
 
   it("the companies line is exactly what the shared pricing function says the balance DELIVERS (the real unit price, no 15% reserve)", () => {

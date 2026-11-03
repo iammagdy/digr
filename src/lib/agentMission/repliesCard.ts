@@ -79,6 +79,9 @@ export function readsAllReplies(plan: { compiled?: PricedPlan["compiled"] }, sta
   return plan.compiled?.by === "compiler" && stage.replies_of !== undefined && stage.replies_uncapped === true;
 }
 
+/** The compiled platforms whose replies promise stays the card's number after the run (round 14: Facebook, live). TikTok, X and Instagram keep the judged promise their owners already checked (D3 of the TikTok live, round 11 of Instagram). */
+export const FROZEN_PROMISE_PLATFORMS: ReadonlyArray<string> = ["facebook"];
+
 export function withRepliesJudged<P extends { stages: Stages; compiled?: PricedPlan["compiled"] }>(plan: P, rowsByStage: Record<string, ReadonlyArray<Record<string, unknown>>>, endedAtSource: (key: string) => boolean = () => true): P {
   if (!plan.stages.some((s) => s.replies_open || s.children_open)) return plan;
   return {
@@ -96,7 +99,9 @@ export function withRepliesJudged<P extends { stages: Stages; compiled?: PricedP
       // a compiled plan reads EVERY reply of a comment when no number per comment was asked: the promise is the counters as they are (the cap of 50 sized the hold only)
       const cap = readsAllReplies(plan, s) ? Number.POSITIVE_INFINITY : Math.max(1, s.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_DEFAULT);
       const counters = (rowsByStage[s.replies_of] ?? []).reduce((n, row) => n + Math.min(cap, Math.max(0, childCountOf(row) ?? 0)), 0);
-      const rows = Math.max(counters, (rowsByStage[s.key] ?? []).length);
+      // ONE PROMISED NUMBER BEFORE AND AFTER APPROVAL (round 14, live Facebook: the card said «٥٣٧», the file, the chat and the orders page «٤٦٤ من ٦٢٠»): the promise of a COMPILED plan's replies is the number the card showed at approval (its `expected_rows`: the replies the counters read at planning
+      // counted); the replies the delivered comments' counters add are told in the delivery's limits lines (counter against delivered), never as a new promise. A plan the model built keeps the judged promise it always had.
+      const rows = plan.compiled?.by === "compiler" && FROZEN_PROMISE_PLATFORMS.includes(plan.compiled.platform) ? Math.max(0, Math.floor(s.expected_rows)) : Math.max(counters, (rowsByStage[s.key] ?? []).length);
       const { replies_open: _open, ...rest } = s;
       void _open;
       return { ...rest, planned_rows: rows, expected_rows: rows };
