@@ -120,12 +120,12 @@ describe("C2, the compiled plan: the replies stage is sized from the counters of
     expect(plan.compiled!.promises.comments_replies).toMatchObject({ counted: SUM, counted_comments: 40 });
   });
   it("replies were asked with no number per comment: every reply the source shows is read (the cap of 50 only sizes the hold)", () => {
-    expect(replies(plan).replies_read_all).toBe(true);
+    expect(replies(plan).replies_uncapped).toBe(true);
     expect(replies(plan).per_parent_rows).toBe(CAP);
   });
   it("a number per comment from the customer stays a number: not read-all", () => {
     const { plan: p3 } = compiled(`${REQUEST.replace("مع ردود", "مع ٣ ردود على كل تعليق")}`);
-    expect(replies(p3).replies_read_all).toBeUndefined();
+    expect(replies(p3).replies_uncapped).toBeUndefined();
     expect(replies(p3).per_parent_rows).toBe(3);
   });
 });
@@ -176,7 +176,7 @@ describe("C1, the card: the items and the price maximum describe the same thing;
 const catalogOf = catalog;
 const idOf = (url: unknown): string => String(url ?? "").match(/\d{15,}/g)?.pop() ?? "";
 /** A source world over the REAL page shapes of M12: the comments pages are the exposure pages (one page per video), the reply pages are 20 a page with a cursor, `givenOf` replies per comment. */
-function world(givenOf: (commentId: string) => number, videoPages: Map<string, unknown>) {
+function world(givenOf: (commentId: string) => number, videoPages: Map<string, unknown>, options: { trailingCursor?: boolean } = {}) {
   const store = createMemoryStore();
   let seq = 0;
   const replyCalls = new Map<string, number>();
@@ -184,7 +184,7 @@ function world(givenOf: (commentId: string) => number, videoPages: Map<string, u
     const total = givenOf(commentId);
     const from = Number(cursor ?? 0) || 0;
     const n = Math.max(0, Math.min(20, total - from));
-    return { output: { data: { comments: Array.from({ length: n }, (_, i) => ({ id: `${commentId}${String(from + i).padStart(4, "0")}`, text: `نص_رد`, author: `a${from + i}`, authorName: `n${from + i}`, authorUserId: `u${from + i}`, createdUtc: 1790000000 + from + i, likes: i, videoId })), nextCursor: from + n < total ? String(from + n) : null } } };
+    return { output: { data: { comments: Array.from({ length: n }, (_, i) => ({ id: `${commentId}${String(from + i).padStart(4, "0")}`, text: `نص_رد`, author: `a${from + i}`, authorName: `n${from + i}`, authorUserId: `u${from + i}`, createdUtc: 1790000000 + from + i, likes: i, videoId })), nextCursor: from + n < total || (options.trailingCursor === true && n > 0) ? String(from + n) : null } } };
   };
   const gateway = {
     async tregCall(input: { endpoint_id?: unknown; params?: unknown }) {
@@ -251,6 +251,30 @@ describe("C3, the cap of 50 never truncates a delivery: a comment with 120 repli
     for (const id of zero) expect(w.replyCalls.get(id) ?? 0).toBe(0);
     const big = [...ids.entries()].find(([, n]) => n === 120)![0];
     expect(w.replyCalls.get(big)).toBe(6);
+  });
+  it("the real quirk: a page keeps a next-page value after its last row (M12 page 30: 3 rows, counter 3). A comment whose replies reached its counter on a short page is done: no paid page for nothing; an understated counter is still read to the end", async () => {
+    const c = compiled(request);
+    const commentRows = [exposurePage("call_0008", C1), exposurePage("call_0019", C2)];
+    const chosen = (c.result.plan.stages[0].pinned_rows ?? []).map((r) => String(r.id));
+    const ids = new Map<string, number>();
+    commentRows.forEach((p) => mapPage(cardOf("anyapi.tiktok.video.comments")!, p).forEach((r) => ids.set(String(r.id), Number(r.replies_count))));
+    // the counters of 24 and 0..6 are right; the counter of 33 is understated (the source shows 75)
+    const shown = (id: string) => { const n = ids.get(id) ?? 0; return n === 33 ? 75 : n; };
+    const w = world(shown, new Map(chosen.map((id, i) => [id, commentRows[i]])), { trailingCursor: true });
+    const items = await ItemStore.open(w.store, "msn_c_test");
+    await runEngine({ items, store: w.store, plan: withPromiseCaps(c.plan), missionId: "msn_c_test", gateway: w.gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: redesignStagesOf(c.plan, FLAGS, true, { tiktok: "test" }) });
+    const delivered = items.acceptedRows("comments_replies");
+    for (const [id] of ids) expect(delivered.filter((r) => String(r.parent_id) === id), id).toHaveLength(shown(id));
+    // a comment with 6 replies is read once (its page had 6 rows, under a full page); the understated one past its counter, to the source's end
+    const six = [...ids.entries()].find(([, n]) => n === 6)![0];
+    expect(w.replyCalls.get(six)).toBe(1);
+    const understated = [...ids.entries()].find(([, n]) => n === 33)![0];
+    expect(w.replyCalls.get(understated)!).toBeGreaterThanOrEqual(4);
+  });
+  it("a customer's own total of replies (the card edit) stays a limit: the stage is not lifted", () => {
+    const c = compiled(request);
+    const edited = { ...c.plan, stages: c.plan.stages.map((s) => (s.key === "comments_replies" ? { ...s, replies_uncapped: undefined } : s)) } as PricedPlan;
+    expect(replies(withPromiseCaps(edited)).planned_rows).toBe(replies(edited).planned_rows);
   });
   it("the ceiling of the stage while it runs is the job's own limit (the price's maximum protects the customer), never the estimate", async () => {
     const c = compiled(request);

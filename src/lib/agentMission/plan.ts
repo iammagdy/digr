@@ -197,6 +197,8 @@ export interface PricedStage extends ProposedStage {
   replies_per_comment_expected?: number;
   /** S4: the request asked for the replies, so EVERY comment is read for them (a comment whose counter says 0, or says nothing, may still have replies: the counter is the source's, the replies endpoint is the truth). Priced as one call per comment at least. Set by code. */
   replies_read_all?: boolean;
+  /** A COMPILED plan whose customer gave no number of replies (per comment or in all): every reply the source shows is read for each comment that has replies; the per-comment cap sized the hold only (repliesCard.ts readsAllReplies). */
+  replies_uncapped?: boolean;
   /** S5: the promise for the comments AND the replies together (the chosen videos' counters). Both stages may be read up to it (the source gives no more than the counter in all); the card and the price carry the split. Cleared by a plan edit. */
   promise_total?: number;
   /** S9: the replies of the chosen comments are ALL of them, with no number promised from an estimate (the comments per video are fewer than the video's counter). `planned_rows` is then only the estimate the price is made from, a maximum; after the delivery it is replaced by the reply counters of the delivered comments (repliesCard.ts `withRepliesJudged`). Set by code. */

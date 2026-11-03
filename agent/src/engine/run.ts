@@ -8,7 +8,7 @@ import { dayOf, firstWindowEndDay, nextWindowEndDay, windowParams, type PeriodBo
 import { cairoDayEndExclusiveMs, cairoDayStartMs } from "../../../src/lib/agentMission/cairoTime";
 import { isEnabled } from "../../../src/lib/agentMission/filters";
 import { childCountNumber, childCountOf } from "../../../src/lib/agentMission/childCount";
-import { AGENT_REPLIES_PER_COMMENT_MAX } from "../../../src/lib/agentMission/constants";
+import { AGENT_REPLIES_PER_COMMENT_MAX, AGENT_REPLIES_ROWS_PER_CALL_ASSUMED } from "../../../src/lib/agentMission/constants";
 import { replyShares } from "../../../src/lib/agentMission/replies";
 import { readsAllReplies } from "../../../src/lib/agentMission/repliesCard";
 import { SOURCE_KEY } from "../../../src/lib/agentMission/namedSources";
@@ -196,7 +196,7 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
           const params = { ...spec.params, ...also, [u.b.param]: u.value };
           if (u.index === 0) primary = { params };
           const before = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
-          r = await runStream(deps, stage, spec, u.index === 0 ? `p:${parentId}` : `p:${parentId}:b${u.index}`, params, parentId, parentCap);
+          r = await runStream(deps, stage, spec, u.index === 0 ? `p:${parentId}` : `p:${parentId}:b${u.index}`, params, parentId, parentCap, null, null, readsAll ? ownChildCount(parent) : null);
           if (r.aborted) return r;
           const gained = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length - before;
           if (gained > 0 || !(r.reason === "failed" || r.reason === "source_exhausted" || r.reason === "no_new_items")) break;
@@ -490,7 +490,7 @@ function oldestMomentOf(rows: ReadonlyArray<Record<string, unknown>>, field: str
 }
 
 /** One stream of pages (a whole source, or one parent's children): resumes from the log, stops on a recorded reason. */
-async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, streamKey: string, params: Record<string, unknown>, parentId: string | null, perParentCap: number, periodField: string | null = null, source: (SourceShare & { names: string[]; listing?: boolean }) | null = null): Promise<{ reason: StopReason; aborted: string | null }> {
+async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, streamKey: string, params: Record<string, unknown>, parentId: string | null, perParentCap: number, periodField: string | null = null, source: (SourceShare & { names: string[]; listing?: boolean }) | null = null, counterStop: number | null = null): Promise<{ reason: StopReason; aborted: string | null }> {
   const { items, store, gateway } = deps;
   const now = deps.now ?? Date.now;
   // a stage read in DEPTH (up to N pages for each parent) may read parents x N pages
@@ -558,6 +558,12 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     const have = parentId !== null ? items.acceptedRows(stage.key).filter((r) => String(r.parent_id) === parentId).length : 0;
     const oldestMs = periodField !== null ? oldestMomentOf(incoming, periodField) : null;
     await ingestRows(deps, stage, incoming, { silent: true, idField: spec.id_field ?? null, ...(deps.redesignStages?.has(stage.key) ? { raw: true } : {}), ...(parentId !== null && Number.isFinite(perParentCap) ? { acceptCap: Math.max(0, perParentCap - have) } : {}), ...(source ? { sourceQuota: { fields: source.fields, values: source.values, perValue: source.perValue, ...(source.listing && source.names.length === 1 ? { defaultSource: source.names[0] } : {}) } } : {}), page: { stream: streamKey, call_id: result.call_id, cursor_in: cursor, cursor_next: nextCursor, has_more: result.has_more, ended, rows_in_page: result.rows_in_page, ...(oldestMs !== null ? { oldest_ms: oldestMs } : {}) } });
+    // EVERY REPLY, WITHOUT A PAID PAGE FOR NOTHING (live finding C): the replies of a comment read to the end have the comment's own counter as their signal (a real page keeps a next-page value after its last row). When the replies read have reached the counter, the page was
+    // not a full one (fewer rows than a call usually gives) and the counter was not exceeded, the comment is done; a counter that was understated shows itself (more rows than it said, or a full page), and the read goes on to the source's end
+    if (counterStop !== null && parentId !== null && counterStop > 0) {
+      const haveNow = items.acceptedRows(stage.key).filter((r) => String(r.parent_id) === parentId).length;
+      if (haveNow === counterStop && result.rows_in_page < AGENT_REPLIES_ROWS_PER_CALL_ASSUMED) return { reason: "source_exhausted", aborted: null };
+    }
     // a decision maker read on this page takes the place of a lower title accepted from an earlier page of the same company
     if (parentId !== null && depthPages > 1) await upgradeDecisionMakers(deps, stage, parentId);
     await emitStageProgress(deps, stage, { collecting: true });

@@ -69,7 +69,7 @@ export function topLevelFactsOf(plan: { stages: Stages }, rowsByStage: Record<st
  */
 /** A replies stage of a COMPILED plan that reads every reply of each chosen comment (no number per comment was asked): the cap per comment only sized the hold. Never true for a plan the model built. */
 export function readsAllReplies(plan: { compiled?: PricedPlan["compiled"] }, stage: Stages[number]): boolean {
-  return plan.compiled?.by === "compiler" && stage.replies_of !== undefined && stage.replies_read_all === true;
+  return plan.compiled?.by === "compiler" && stage.replies_of !== undefined && stage.replies_uncapped === true;
 }
 
 export function withRepliesJudged<P extends { stages: Stages; compiled?: PricedPlan["compiled"] }>(plan: P, rowsByStage: Record<string, ReadonlyArray<Record<string, unknown>>>, endedAtSource: (key: string) => boolean = () => true): P {
