@@ -38,16 +38,17 @@ const STATUS: Record<string, "verified" | "catalog_only"> = {
   "tikhub.x.youtube-web-search-channel": "verified",
   "youtube.youtube.video.detail": "catalog_only",
   "crawl4ai.youtube.video.comments": "verified",
-  "tikhub.youtube.video.comments": "catalog_only",
-  "anyapi.youtube.comment_replies": "catalog_only",
+  // CHANGED (round 12): both verified on the real pages of the YouTube mission of live round 11
+  "tikhub.youtube.video.comments": "verified",
+  "anyapi.youtube.comment_replies": "verified",
 };
 const NEW_CARDS = TOOL_CARDS.filter((c) => c.platform === "facebook" || c.platform === "instagram" || c.platform === "youtube");
 
 describe("PR 3: the status of every Facebook, Instagram and YouTube card", () => {
-  it("is exactly the table: 10 verified on real pages, 8 catalog_only", () => {
+  it("is exactly the table: 12 verified on real pages, 6 catalog_only", () => {
     expect(Object.fromEntries(NEW_CARDS.map((c) => [c.endpointId, c.status]))).toEqual(STATUS);
-    expect(NEW_CARDS.filter((c) => c.status === "verified")).toHaveLength(10);
-    expect(NEW_CARDS.filter((c) => c.status === "catalog_only")).toHaveLength(8);
+    expect(NEW_CARDS.filter((c) => c.status === "verified")).toHaveLength(12);
+    expect(NEW_CARDS.filter((c) => c.status === "catalog_only")).toHaveLength(6);
     expect(NEW_CARDS.filter((c) => c.status === "broken")).toEqual([]);
   });
 
@@ -235,9 +236,9 @@ describe("YouTube: what the real pages show (M2)", () => {
     expect(rows.map((r) => [r.id, r.comments])).toEqual([["abc", 1234], ["def", null]]);
   });
 
-  it("the comments card that feeds replies (reply token and reply counter) is catalog_only; the verified one (crawl4ai) reads up to 500 in one call and has no token", () => {
+  it("the comments card that feeds replies (reply token and reply counter) is verified since round 12; the other verified one (crawl4ai) reads up to 500 in one call and has no token", () => {
     const feeds = cardOf("tikhub.youtube.video.comments")!;
-    expect(feeds.status).toBe("catalog_only");
+    expect(feeds.status).toBe("verified");
     expect(feeds.mapping.kind === "replies" && feeds.mapping.tokens?.map((t) => t.key)).toEqual(["reply_continuation_token"]);
     const rows = mapPage(feeds, { data: { comments: [{ comment_id: "Ugz1", content: "x", reply_count: "961", reply_continuation_token: "tok1", author: { display_name: "n" }, published_time: "1 year ago" }] } });
     expect(rows[0]).toMatchObject({ id: "Ugz1", replies_count: 961, reply_continuation_token: "tok1" });
@@ -258,6 +259,7 @@ describe("the compiler sees the right cards per role", () => {
     expect(cardsFor("facebook", "comment.replies")).toEqual([]);
     expect(cardsFor("facebook", "comment.replies", { catalogOnly: true })).toHaveLength(2);
     expect(cardsFor("instagram", "comment.replies").map((c) => c.endpointId)).toEqual(["anyapi.instagram.comment_replies"]);
-    expect(cardsFor("youtube", "comment.replies")).toEqual([]);
+    // CHANGED (round 12): YouTube's replies card is verified on the real pages of live round 11
+    expect(cardsFor("youtube", "comment.replies").map((c) => c.endpointId)).toEqual(["anyapi.youtube.comment_replies"]);
   });
 });

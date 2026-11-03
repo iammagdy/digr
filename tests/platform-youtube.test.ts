@@ -64,16 +64,16 @@ describe("acceptance 3: M2, M18 and M20 take their videos from the official chan
     expect(p.plan.stages.map((s) => [s.key, s.endpoint_id])).toEqual([["videos", IN_CHANNEL], ["comments", "tikhub.youtube.video.comments"], ["comments_replies", "anyapi.youtube.comment_replies"]]);
     expect(p.plan.stages[1].engine?.parent_binding).toEqual({ param: "video_id", from: "id" });
     expect(p.plan.stages[2].engine?.parent_binding).toEqual({ param: "continuationToken", from: "reply_continuation_token" });
-    const cost = [p.plan.stages[1], p.plan.stages[2]].reduce((s, x) => s + x.max_pages! * (x.key === "comments" ? 0.001 : 0.0012) * 2, 0);
-    expect(cost).toBeLessThanOrEqual(0.2 + 1e-9);
+    // CHANGED (round 12): both cards are verified on real pages, so neither is a catalog_only card and none carries the 0.20 USD page cap
+    expect([p.plan.stages[1].max_pages, p.plan.stages[2].max_pages]).toEqual([undefined, undefined]);
     expect(p.plan.unserved_steps).toBeUndefined();
   });
 
-  it("M2 on a customer's account: videos and comments by verified cards only (the comments card that reads up to 500 in one call); the replies are said not to be included", async () => {
+  // CHANGED (round 12): the comments card with the reply token and the replies card are verified on the real pages of live round 11, so a customer's account has the replies step too (it said «not included»)
+  it("M2 on a customer's account: videos, comments and replies by verified cards; the comments card is the one that feeds the replies", async () => {
     const p = planOf((await plan(M2)).out);
-    expect(p.plan.stages.map((s) => [s.key, s.endpoint_id])).toEqual([["videos", IN_CHANNEL], ["comments", "crawl4ai.youtube.video.comments"]]);
-    expect(p.plan.stages[1].engine?.params).toEqual({ limit: 500 });
-    expect(p.plan.unserved_steps?.map((s) => s.what_ar)).toEqual(["الردود"]);
+    expect(p.plan.stages.map((s) => [s.key, s.endpoint_id])).toEqual([["videos", IN_CHANNEL], ["comments", "tikhub.youtube.video.comments"], ["comments_replies", "anyapi.youtube.comment_replies"]]);
+    expect(p.plan.unserved_steps).toBeUndefined();
   });
 
   it("the promise: videos exact; comments OPEN (no search or channel page has a comment counter and the free detail card is catalog_only: the detail read is not served here); replies open", async () => {
@@ -108,7 +108,7 @@ describe("acceptance 3: M2, M18 and M20 take their videos from the official chan
   it("M18 and M20 (the same request text) never lose the comments stage: every account has videos and comments; a test account adds the replies", async () => {
     for (const id of [M18, M20, M2]) {
       const customer = planOf((await plan(id)).out);
-      expect(customer.plan.stages.map((s) => s.key), id).toEqual(["videos", "comments"]);
+      expect(customer.plan.stages.map((s) => s.key), id).toEqual(["videos", "comments", "comments_replies"]);
       const test = planOf((await plan(id, { catalogOnly: true })).out);
       expect(test.plan.stages.map((s) => s.key), id).toEqual(["videos", "comments", "comments_replies"]);
       for (const v of test.plan.stages[0].pinned_rows as Array<Record<string, unknown>>) expect(OFFICIAL_IDS.has(String(v.channel_id)), id).toBe(true);

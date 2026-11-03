@@ -173,13 +173,13 @@ const pick = (o, names) => { for (const n of names) { const v = o[n]; if (v !== 
 const who = (o) => { const u = o.user !== undefined ? o.user : o.author; if (u && typeof u === 'object') return u.nickname || u.unique_id || u.name || u.username || u.display_name || null; return typeof u === 'string' && u !== '' ? u : pick(o, ['authorName','author_name','username','nickname']); };
 const iso = (v) => { if (v === null || v === undefined || v === '') return null; if (typeof v === 'number' || /^\\d{9,13}$/.test(String(v))) { const n = Number(v); const d = new Date(n < 1e12 ? n * 1000 : n); return Number.isNaN(d.getTime()) ? null : d.toISOString(); } return String(v); };
 const num = (v) => { if (v === null || v === undefined || v === '') return null; const n = Number(v); return Number.isFinite(n) ? n : null; };
-${ext ? "const nest = (o, a, b) => (o && typeof o[a] === 'object' && o[a] !== null ? o[a][b] : undefined);\n" : ""}return list.filter((r) => r && typeof r === 'object').map((r) => {
+${ext ? "const nest = (o, a, b) => (o && typeof o[a] === 'object' && o[a] !== null ? o[a][b] : undefined);\n// a source that dates a comment only by a relative text («11个月前», «3 days ago») gives no date: the cell stays empty (live round 11: the YouTube file said it in Chinese)\nconst isoDate = (v) => { const d = iso(v); return typeof d === 'string' && !/^\\d{4}-\\d{2}-\\d{2}/.test(d) ? null : d; };\n" : ""}return list.filter((r) => r && typeof r === 'object').map((r) => {
   const id = pick(r, ['cid','id','comment_id','commentId','rpid']);
   if (id === null) return null;
   const out = { id: String(id) };
   if (K.text) { const t = pick(r, ['text','content','comment','message','comment_text']); out[K.text] = t === null ? '' : String(t); }
   if (K.author) out[K.author] = who(r);
-  if (K.date) out[K.date] = iso(pick(r, ['create_time','createdUtc','created_at','createTime','timestamp','posted_at',${ext ? "'publishedTime','published_time'," : ""}'time','date']));
+  if (K.date) out[K.date] = ${ext ? "isoDate(pick(r, ['create_time','createdUtc','created_at','createTime','timestamp','posted_at','publishedTime','published_time','time','date']))" : "iso(pick(r, ['create_time','createdUtc','created_at','createTime','timestamp','posted_at','time','date']))"};
   ${ext ? `if (K.likes) { const l = pick(r, ['digg_count','likes','like_count','likeCount','likes_count','reaction_count']); out[K.likes] = num(l !== null ? l : nest(r, 'engagement', 'likes')); }` : `if (K.likes) out[K.likes] = num(pick(r, ['digg_count','likes','like_count','likeCount','likes_count']));`}
   ${ext ? `if (K.replies) { const n = pick(r, ['reply_comment_total','reply_count','replies_count','replyCount','replies']); out[K.replies] = num(n !== null && typeof n !== 'object' ? n : nest(r, 'engagement', 'replies')); }` : `if (K.replies) out[K.replies] = num(pick(r, ['reply_comment_total','reply_count','replies_count','replyCount','replies']));`}${ext ? `
   for (const t of TOK) { const v = pick(r, t.names); if (v !== null) out[t.key] = String(v); }` : ""}

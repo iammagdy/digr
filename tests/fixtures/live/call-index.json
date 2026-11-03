@@ -2275,6 +2275,288 @@
      "limit": 50
     }
    ]
+  ],
+  "msn_41a73a6b2c0b4a76ef0a": [
+   [
+    "call_0001",
+    "planning",
+    "tikhub.x.youtube-web-v2-search-channels",
+    "ok",
+    3,
+    {
+     "keyword": "الأهلي الرسمية"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "tikhub.x.youtube-web-v2-search-channels",
+    "ok",
+    2,
+    {
+     "keyword": "الزمالك الرسمية"
+    }
+   ],
+   [
+    "call_0003",
+    "planning",
+    "tikhub.x.youtube-web-search-channel",
+    "ok",
+    30,
+    {
+     "channel_id": "UCA86pBGxVPZGrTeTecOtjew",
+     "search_query": "نهائي السوبر المصري الأهلي والزمالك"
+    }
+   ],
+   [
+    "call_0004",
+    "planning",
+    "tikhub.x.youtube-web-search-channel",
+    "ok",
+    30,
+    {
+     "channel_id": "UCeFU0ebL1MK2KlBFniRs6Iw",
+     "search_query": "نهائي السوبر المصري الأهلي والزمالك"
+    }
+   ],
+   [
+    "call_0005",
+    "planning",
+    "youtube.youtube.video.detail",
+    "failed",
+    0,
+    {
+     "id": "VZqp9F8ed2s,gCut2DcB9sM,rYUlts3yqqc,jMk_J6Vuqkg,aJJ05NXn1EU,LdjEa6QLFLk",
+     "part": "statistics"
+    }
+   ],
+   [
+    "call_0006",
+    "planning",
+    "tikhub.youtube.video.comments",
+    "ok",
+    20,
+    {
+     "video_id": "gCut2DcB9sM"
+    }
+   ],
+   [
+    "call_0007",
+    "planning",
+    "tikhub.youtube.video.comments",
+    "ok",
+    8,
+    {
+     "video_id": "GIWkArP7RJE"
+    }
+   ],
+   [
+    "call_0008",
+    "execution",
+    "tikhub.youtube.video.comments",
+    "ok",
+    20,
+    {
+     "video_id": "gCut2DcB9sM"
+    }
+   ],
+   [
+    "call_0009",
+    "execution",
+    "tikhub.youtube.video.comments",
+    "ok",
+    20,
+    {
+     "video_id": "gCut2DcB9sM",
+     "continuation_token": "Eg0SC2dDdXQyRGNCOXNNGAYyhwMKygJnZXRfcmFua2VkX3N0cmVhbXMtLUNxY0JDSUFFRlJlMzBUZ2Fu"
+    }
+   ],
+   [
+    "call_0010",
+    "execution",
+    "tikhub.youtube.video.comments",
+    "ok",
+    20,
+    {
+     "video_id": "gCut2DcB9sM",
+     "continuation_token": "Eg0SC2dDdXQyRGNCOXNNGAYyoQQK5ANnZXRfcmFua2VkX3N0cmVhbXMtLUNvMENDSUFFRlJlMzBUZ2Fn"
+    }
+   ],
+   [
+    "call_0011",
+    "execution",
+    "tikhub.youtube.video.comments",
+    "ok",
+    20,
+    {
+     "video_id": "gCut2DcB9sM",
+     "continuation_token": "Eg0SC2dDdXQyRGNCOXNNGAYynQUK4ARnZXRfcmFua2VkX3N0cmVhbXMtLUN1b0NDSUFFRlJlMzBUZ2Ez"
+    }
+   ],
+   [
+    "call_0012",
+    "execution",
+    "tikhub.youtube.video.comments",
+    "ok",
+    7,
+    {
+     "video_id": "gCut2DcB9sM",
+     "continuation_token": "Eg0SC2dDdXQyRGNCOXNNGAYygwYKxgVnZXRfcmFua2VkX3N0cmVhbXMtLUNyWURDSUFFRlJlMzBUZ2Fx"
+    }
+   ],
+   [
+    "call_0013",
+    "execution",
+    "tikhub.youtube.video.comments",
+    "ok",
+    8,
+    {
+     "video_id": "GIWkArP7RJE"
+    }
+   ],
+   [
+    "call_0014",
+    "execution",
+    "anyapi.youtube.comment_replies",
+    "ok",
+    1,
+    {
+     "continuationToken": "Eg0SC2dDdXQyRGNCOXNNGAYygwEaUBIaVWd3YmVqSnJiQkR1VzFoZGtpbDRBYUFCQWciAggAKhhVQ0E4"
+    }
+   ],
+   [
+    "call_0015",
+    "execution",
+    "anyapi.youtube.comment_replies",
+    "ok",
+    1,
+    {
+     "continuationToken": "Eg0SC2dDdXQyRGNCOXNNGAYygwEaUBIaVWd4T0FZNklxZWZ4Q2VWczE2VjRBYUFCQWciAggAKhhVQ0E4"
+    }
+   ],
+   [
+    "call_0016",
+    "execution",
+    "anyapi.youtube.comment_replies",
+    "ok",
+    2,
+    {
+     "continuationToken": "Eg0SC2dDdXQyRGNCOXNNGAYygwEaUBIaVWd4YURrOHJ2T05Ic0c5aHE4RjRBYUFCQWciAggAKhhVQ0E4"
+    }
+   ]
+  ],
+  "msn_97cdab58dc82fc2039ed": [
+   [
+    "call_0001",
+    "planning",
+    "scrapecreators.instagram.user.posts",
+    "ok",
+    12,
+    {
+     "handle": "txt_a11ce1"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "scrapecreators.instagram.user.posts",
+    "ok",
+    12,
+    {
+     "handle": "txt_a11ce1",
+     "next_max_id": "web:AQHTr7HpbCUTRe_TRKRJS_JOamYWC7H-5vzbbxC7mC914FYlL-Ei8I1pQ2W3g4D1u2ADTszuhmyB"
+    }
+   ],
+   [
+    "call_0003",
+    "planning",
+    "anyapi.instagram.post.comments",
+    "ok",
+    16,
+    {
+     "url": "4022255945447163905"
+    }
+   ],
+   [
+    "call_0004",
+    "planning",
+    "anyapi.instagram.post.comments",
+    "ok",
+    11,
+    {
+     "url": "4022258805106824103"
+    }
+   ],
+   [
+    "call_0005",
+    "execution",
+    "anyapi.instagram.post.comments",
+    "ok",
+    17,
+    {
+     "url": "4022255945447163905"
+    }
+   ],
+   [
+    "call_0006",
+    "execution",
+    "anyapi.instagram.post.comments",
+    "ok",
+    13,
+    {
+     "url": "4022258805106824103"
+    }
+   ]
+  ],
+  "msn_9d196025e7929324983a": [
+   [
+    "call_0001",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    6,
+    {
+     "keyword": "الذكاء الاصطناعي العربية",
+     "startDate": "2026-08-03",
+     "endDate": "2026-11-03"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    5,
+    {
+     "keyword": "الذكاء الاصطناعي العربية",
+     "startDate": "2026-08-03",
+     "endDate": "2026-11-03",
+     "cursor": "{\"page_number\": 0, \"flow_cursors_serialized\": {\"INTERNAL_DEBUG_MODULE\": \"{}\", \"S"
+    }
+   ],
+   [
+    "call_0003",
+    "planning",
+    "anyapi.facebook.search_posts",
+    "ok",
+    20,
+    {
+     "limit": 20,
+     "query": "الذكاء الاصطناعي العربية",
+     "startDate": "2026-08-03",
+     "endDate": "2026-11-03"
+    }
+   ],
+   [
+    "call_0005",
+    "planning",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "1432075358536893"
+    }
+   ]
   ]
  }
 }

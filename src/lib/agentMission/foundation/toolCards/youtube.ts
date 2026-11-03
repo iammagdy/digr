@@ -6,14 +6,15 @@ import type { ToolCard } from "./types";
  *    No video row of either has a comment counter (V: the real pages).
  *  - THE COUNTER: `youtube.youtube.video.detail` (free, up to 50 ids a call, `statistics.commentCount`) has never been called (0 calls ever; it needs YouTube connected on our provider account: owner decision 7.7), so it is catalog_only. A test account reads it;
  *    when it answers, the promise is the counters of the chosen videos; otherwise it is open.
- *  - COMMENTS: `crawl4ai.youtube.video.comments` is VERIFIED on the real pages of M2 and M18 (up to 500 in one call, no cursor, each comment a replies count, no reply token). `tikhub.youtube.video.comments` is the one that carries the reply counter and the
- *    comment's reply token, but no real page of it is stored (0 of the 28 missions), so it is catalog_only: a test account reads it so that its replies can be read; a customer's account reads the verified one and the replies are said not to be included.
- *  - REPLIES: `anyapi.youtube.comment_replies` by the comment's reply token (never called): catalog_only.
+ *  - COMMENTS: `crawl4ai.youtube.video.comments` is VERIFIED on the real pages of M2 and M18 (up to 500 in one call, no cursor, each comment a replies count, no reply token). `tikhub.youtube.video.comments` (the reply counter and the comment's reply token, paged by
+ *    `data.continuation_token`) is VERIFIED since round 12 on the 8 real pages of the YouTube mission of live round 11; the compiler prefers it whenever a replies card can use its token, so every account reads it. Its `published_time` is a relative text in the provider's language: no date.
+ *  - REPLIES: `anyapi.youtube.comment_replies` by the comment's reply token is VERIFIED since round 12 on the 3 real pages of the same mission (not seen: a thread of more than one page).
  */
 const M2 = "msn_ee599cdbbde993073b15";
 const M18 = "msn_3594a5ab6311c8691f20";
 const WATCH = "https://www.youtube.com/watch?v={}";
 
+const M_R11_YT = "msn_41a73a6b2c0b4a76ef0a";
 export const YOUTUBE_CARDS: ReadonlyArray<ToolCard> = [
   {
     endpointId: "tikhub.x.youtube-web-v2-search-channels",
@@ -72,29 +73,31 @@ export const YOUTUBE_CARDS: ReadonlyArray<ToolCard> = [
     verifiedOn: [{ mission: M2, calls: ["call_0009", "call_0011", "call_0013"] }, { mission: M18, calls: ["call_0002", "call_0004", "call_0005"] }],
   },
   {
-    // the comments with the reply counter and the comment's reply token, paged by continuation; no real page stored
+    // the comments with the reply counter (`reply_count`, written as text) and the comment's reply token, paged by `data.continuation_token`. VERIFIED on the 8 real pages of live round 11 (2 videos, 123 comments, 3 with replies). Its `published_time` is a relative text in the provider's own
+    // language («11个月前»), never a date: the mapping leaves the comment's date empty (round 12)
     endpointId: "tikhub.youtube.video.comments",
     platform: "youtube",
     role: "video.comments",
-    status: "catalog_only",
+    status: "verified",
     inputs: { cursor: "continuation_token", parent: { param: "video_id", from: "id" } },
     page: { list: ["data", "comments"], cursor: ["data", "continuation_token"], observedRowsPerPage: 20 },
     mapping: { kind: "replies", tokens: [{ key: "reply_continuation_token" }] },
     counter: { key: "replies_count", counts: "replies" },
     costUsdPerPage: 0.001,
-    verifiedOn: [],
+    verifiedOn: [{ mission: M_R11_YT, calls: ["call_0006", "call_0007", "call_0008", "call_0009", "call_0010", "call_0011", "call_0012", "call_0013"] }],
   },
   {
-    // the replies of one comment by its reply token (the token is the same input that pages the next page: the engine overwrites it with the next page's token)
+    // the replies of one comment by its reply token (the token is the same input that pages the next page: the engine overwrites it with the next page's token). VERIFIED on the 3 real pages of live round 11 (1, 1 and 2 replies for comments whose counters said 1, 1 and 2; each ends on an empty `nextCursor`).
+    // Not seen: a reply thread of more than one page, so the next-page token of a page WITH more replies is the catalog's, not a real one.
     endpointId: "anyapi.youtube.comment_replies",
     platform: "youtube",
     role: "comment.replies",
-    status: "catalog_only",
+    status: "verified",
     inputs: { cursor: "continuationToken", parent: { param: "continuationToken", from: "reply_continuation_token" } },
     page: { list: ["output", "data", "comments"], cursor: ["output", "data", "nextCursor"], observedRowsPerPage: 10 },
     mapping: { kind: "replies" },
     counter: null,
     costUsdPerPage: 0.0012,
-    verifiedOn: [],
+    verifiedOn: [{ mission: M_R11_YT, calls: ["call_0014", "call_0015", "call_0016"] }],
   },
 ];
