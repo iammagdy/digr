@@ -1,0 +1,7 @@
+{
+  "_note": "Round 11 (3 Nov 2026). The stored `plan_public` of two finished missions of the test account, read by SELECT (stages: key, deliver, expected_rows only; no text, no id of a person). `job_target` is the job's own number (the card's total at approval: missions.reserved volume, plan->price->deliveredRows). `file_total` is the number the file and the chat say (the promised total as judged at the end of the run).",
+  "missions": {
+    "msn_97cdab58dc82fc2039ed": { "platform": "instagram", "compiled": true, "job_target": 42, "delivered": 41, "file_total": 49, "stages": [ { "key": "posts", "deliver": true, "expected_rows": 2 }, { "key": "comments", "deliver": true, "expected_rows": 38 }, { "key": "comments_replies", "deliver": true, "expected_rows": 9 } ] },
+    "msn_41a73a6b2c0b4a76ef0a": { "platform": "youtube", "compiled": true, "job_target": 220, "delivered": 101, "file_total": 101, "stages": [ { "key": "videos", "deliver": true, "expected_rows": 2 }, { "key": "comments", "deliver": true, "expected_rows": 95 }, { "key": "comments_replies", "deliver": true, "expected_rows": 4 } ] }
+  }
+}
