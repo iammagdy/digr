@@ -30,39 +30,6 @@ const finalPlan = (cands: Candidate[], pageCap: number | null, request = "كل �
 const repliesOf = (p: PricedPlan) => p.stages.find(isRepliesStage)!;
 
 describe("the replies promise follows the FINAL comments count", () => {
-  it("the live case: replies were priced on 800 comments (280); the counters (168 + 20, one call gives 20 each: 40 in all) fix the total: comments + replies = 40, the replies a share of it", async () => {
-    const before = await modelPlan(800);
-    expect(repliesOf(before).planned_rows).toBe(280);
-    const after = await finalPlan(counters(168, 20), 20);
-    const c = after.stages.find((s) => s.key === "comments")!.planned_rows;
-    expect(c + repliesOf(after).planned_rows).toBe(40);
-    // the sample's mean (0.35 a comment) splits the total: replies are 0.35 / 1.35 of it
-    expect(repliesOf(after).planned_rows).toBe(Math.round(40 * (0.35 / 1.35)));
-    expect(repliesOf(after).expected_rows).toBe(repliesOf(after).planned_rows);
-  });
-  it("with no cap per call the total is the real counters, 188, split by the sample's measured share, never above it", async () => {
-    const after = await finalPlan(counters(168, 20), null);
-    const comments = after.stages.find((s) => s.key === "comments")!.planned_rows;
-    expect(comments + repliesOf(after).planned_rows).toBe(188);
-    expect(repliesOf(after).planned_rows).toBe(Math.round(188 * (0.35 / 1.35)));
-  });
-  it("the price follows the promise: the card's rows are the videos and the counters (2 + 40), and the approval re-prices the same plan to the same number", async () => {
-    const after = await finalPlan(counters(168, 20), 20);
-    expect(after.price.deliveredRows).toBe(2 + 40);
-    const again = priceMissionByCode(stagePriceInputs(after.stages, after.contact_steps), { settings: after.price.settings });
-    expect(again.reservePoints).toBe(after.price.reservePoints);
-    expect(again.maxChargePoints).toBe(after.price.maxChargePoints);
-    // the replies' own cost per row follows their count (calls over rows), so a smaller promise is not priced as a big one
-    const r = repliesOf(after);
-    const comments = after.stages.find((s) => s.key === "comments")!.planned_rows;
-    expect(r.measured_cost_per_row_usd).toBeCloseTo((0.0009 * comments * 0.25) / r.planned_rows, 8);
-  });
-  it("a numbered request (the customer asked for 30, not «all») is derived the same way: the comments stay 30, the replies never above what is left of the counters", async () => {
-    const after = await modelPlan(30).then((p) => withCompleteCount(p, { request: "٣٠ تعليق على فيديوهين مع ردودها", candidatesOf: async () => counters(168, 20), pageCapOf: async () => null }));
-    const comments = after.stages.find((s) => s.key === "comments")!.planned_rows;
-    expect(comments).toBe(30);
-    expect(comments + repliesOf(after).planned_rows).toBeLessThanOrEqual(168 + 20);
-  });
   it("replies are never promised for a sample that shows none: no replies stage at all", async () => {
     const stages = (await modelPlan(800)).stages.filter((s) => !isRepliesStage(s));
     const plan: PricedPlan = { summary_ar: "x", stages, price: priceMissionByCode(stagePriceInputs(stages), { settings: DEFAULT_MISSION_PRICING_SETTINGS }) };

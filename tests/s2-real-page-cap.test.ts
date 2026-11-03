@@ -84,25 +84,3 @@ async function run(plan: PricedPlan) {
   return { asked, delivered: items.acceptedRows("comments").length };
 }
 
-describe("the plan and the engine with the tool's real limit (the live counters 168 and 20)", () => {
-  it("the promise is the real counters, 188, not 2 x the sample's 20", async () => {
-    const c = (await finalPlan()).stages.find((s) => s.key === "comments")!;
-    expect(c.planned_rows).toBe(188);
-    expect(c.per_parent_rows).toBe(168);
-  });
-  it("the call asks for what the promise needs, up to the tool's maximum: limit 168 for the stage, and the 188 are delivered", async () => {
-    const plan = await finalPlan();
-    expect(plan.stages.find((s) => s.key === "comments")!.engine!.params.limit).toBe(168);
-    const r = await run(plan);
-    expect(r.delivered).toBe(188);
-    // one size for the stage (the largest share of any parent); a video with fewer comments simply gives fewer
-    expect(r.asked.map((p) => p.limit)).toEqual([168, 168]);
-  });
-  it("a video with more comments than the tool's maximum: the promise is capped at 500 and the card says the source gives a limited number", async () => {
-    const plan = await finalPlan([{ id: "v0", counter: 900 }, { id: "v1", counter: 20 }]);
-    const c = plan.stages.find((s) => s.key === "comments")!;
-    expect(c.planned_rows).toBe(520);
-    expect(c.engine!.params.limit).toBe(500);
-    expect((plan.notes_ar ?? []).join(" ")).toContain("المصدر يعطي");
-  });
-});

@@ -37,3 +37,6 @@ export function namedShortfallQuestionAr(source: string, found: number, asked: n
 
 /** ROUND 17: a named Facebook page with no topic whose name no read post's author matched: said before any plan, nothing held. */
 export const pageNotFoundAr = (name: string | null | undefined): string => `لم نجد صفحة باسم «${String(name ?? "").trim()}» على فيسبوك بين ما قرأناه، فلم نجهّز خطة ولم يُخصم منك شيء. أرسل رابط الصفحة أو اكتب اسمها كما هو على فيسبوك.`;
+
+/** PR B (round 18): a social platform whose switch is off: the platform is not offered; said before any planning call, nothing held or charged. Arabic only, no provider. */
+export const SOCIAL_NOT_OFFERED_AR = "هذه المنصة غير متاحة للطلب الآن، فلم نبدأ أي تخطيط ولم يُخصم منك شيء. جرّب منصة أخرى أو عُد لاحقًا.";
