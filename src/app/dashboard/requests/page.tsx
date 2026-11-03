@@ -211,7 +211,7 @@ export default function RequestsPage() {
           .order("created_at", { ascending: false })
           .limit(100),
         // AGENT missions: the mission names its job; the assistant message that shows its card names the mission and the conversation
-        inGroups((ids) => supabase.from("missions").select("id, job_id, stages:plan_public->stages, files").eq("user_id", user.id).in("job_id", ids)),
+        inGroups((ids) => supabase.from("missions").select("id, job_id, stages:plan_public->stages, compiled:plan_public->compiled, files").eq("user_id", user.id).in("job_id", ids)),
         supabase
           .from("messages")
           .select("conversation_id, plan")
@@ -321,7 +321,7 @@ export default function RequestsPage() {
       const promisedMap: Record<string, number> = {};
       for (const m of (missionsRes?.data || []) as any[]) {
         if (m.job_id && Array.isArray(m.stages)) nounMap[String(m.job_id)] = itemNounOfPlan({ stages: m.stages }).singular;
-        if (m.job_id && Array.isArray(m.stages)) { const judged = promisedRowsOf(m.stages, 0); if (judged > 0) promisedMap[String(m.job_id)] = judged; }
+        if (m.job_id && Array.isArray(m.stages)) { const judged = promisedRowsOf(m.stages, 0, m.compiled === true); if (judged > 0) promisedMap[String(m.job_id)] = judged; }
         const conversationId = conversationOfMission.get(String(m.id));
         if (m.job_id && conversationId) qMap[String(m.job_id)] = { ...(qMap[String(m.job_id)] ?? { targetVolumeMax: 0 }), conversationId };
       }

@@ -41,7 +41,7 @@ describe("the key-token rule equals the rule it replaces for a topic of one to t
   });
   it("the difference is only where the owner asked for it: four words or more, and a «و» glued to a name", () => {
     expect(keyTokensOf("نهائي السوبر المصري الأهلي والزمالك")).toEqual(["نهايي", "سوبر", "مصري", "اهلي", "زمالك"].map((w) => (w === "نهايي" ? keyTokensOf("نهائي")[0] : w)));
-    const t = { topic: { text: "نهائي السوبر المصري الأهلي والزمالك", relation: "about" } };
+    const t = { topic: { text: "نهائي السوبر المصري الأهلي والزمالك", relation: "about" as const } };
     expect(legacyTier("زيزو رجل نهائي السوبر أمام الزمالك", t)).toBe(0);
     expect(topicTierOf("زيزو رجل نهائي السوبر أمام الزمالك", t)).toBe(2);
   });

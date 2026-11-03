@@ -932,6 +932,8 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
   const notes = [...(plan.notes_ar ?? []), ...(plan.quantity?.reason_ar ? [plan.quantity.reason_ar] : []), ...childRuleLinesAr(plan.stages), ...repliesLinesAr(plan), ...roleLinesAr(plan.stages), ...priceIncludesLinesAr(plan), ...platformCostNotesAr(plan.stages), ...plan.stages.filter((s) => (s.unresolved_sources ?? []).length > 0 && (s.filters ?? []).some((f) => f.kind === "account" && isEnabled(f))).map((s) => unresolvedSourcesLineAr(s.unresolved_sources!)), ...(plan.stages.some((s) => (s.approx_dates ?? []).length > 0) ? [APPROX_DATES_CARD_LINE_AR] : [])];
   return {
     summary_ar: firstSentenceAr(plan.summary_ar),
+    // a plan built by the compiler says so (the orders page promises a finished mission the judged total only for those: one number on every surface)
+    ...(plan.compiled?.by === "compiler" ? { compiled: true } : {}),
     ...(notes.length ? { notes_ar: notes } : {}),
     ...(assumptions.length ? { assumptions_ar: assumptions } : {}),
     ...(plan.quantity ? { quantity: { requested: plan.quantity.requested, target: plan.quantity.target, stage_key: plan.quantity.stage_key } } : {}),

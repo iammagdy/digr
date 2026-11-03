@@ -87,6 +87,9 @@ describe("2b. one promised number everywhere: the orders page says what the file
   it("a finished mission with judged replies is promised the judged total (63) on the orders page too, not the job's 59", () => {
     expect(promisedRowsOf(stagesAtFinish, 59)).toBe(63);
   });
+  it("a mission planned the old way (no compiled plan) keeps the job's own number, whatever its replies stage says", () => {
+    expect(promisedRowsOf(stagesAtFinish, 59, false)).toBe(59);
+  });
   it("a mission with no open replies keeps the job's own number, and so does one with no stages", () => {
     expect(promisedRowsOf(stagesAtFinish.map((s) => ({ key: s.key, expected_rows: s.expected_rows, deliver: s.deliver })), 59)).toBe(59);
     expect(promisedRowsOf(undefined, 59)).toBe(59);
