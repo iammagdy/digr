@@ -43,6 +43,7 @@ import { promiseShortfallAr, repliesShortfallAr } from "./repliesShortfall";
 import { TOPIC_OPTIONS_AR, topicMeaningOf, topicQuestionAr } from "../../src/lib/agentMission/topicMeaning";
 import { noAboutChoiceOf } from "../../src/lib/agentMission/foundation/topicChoice";
 import { occurrenceChoiceOf } from "../../src/lib/agentMission/foundation/occurrence";
+import { pageNotFoundAr } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { BUDGET_QUESTION_AR, BUDGET_TOO_SMALL_AR, choiceAnswerOf, type Choices } from "../../src/lib/agentMission/foundation/countChoice";
 import { parseChannels, understandChannelsPrompt, UNDERSTAND_SYSTEM } from "../../src/lib/agentMission/foundation/understand";
 import { llmCostFromUsage } from "./llmCost";
@@ -403,7 +404,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   if (compiled) {
     await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: خطة مبنية بالكود.", counts: { compiled: compiled.kind === "plan" ? 1 : 0, pool_reads: compiled.reads.pool, exposure_reads: compiled.reads.exposure } }).catch(() => undefined);
     if (compiled.kind === "plan") state.proposedPlan = compiled.plan;
-    else state.finish = { outcome: "cannot_serve", summary_ar: compiled.reason === "budget_too_small" ? BUDGET_TOO_SMALL_AR : "", kind: compiled.reason === "no_rows" || compiled.reason === "no_parent_with_children" ? "empty" : "unsupported" };
+    else state.finish = { outcome: "cannot_serve", summary_ar: compiled.reason === "budget_too_small" ? BUDGET_TOO_SMALL_AR : compiled.reason === "page_not_found" ? pageNotFoundAr(compiled.ask.source.text) : "", kind: compiled.reason === "no_rows" || compiled.reason === "no_parent_with_children" || compiled.reason === "page_not_found" ? "empty" : "unsupported" };
   }
   let output = compiled ? { ...COMPILED_RUN, llmCostUsd: compiled.llmCostUsd ?? 0 } : await runOnce(planningPrompt(mission, calls, resumeNote));
   if (!compiled) await recordTokens(deps, mission.id, 0, output.usage, { inputTokens: 0, outputTokens: 0, calls: 0 }, output.llmCostUsd);

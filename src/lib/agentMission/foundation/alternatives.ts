@@ -20,6 +20,11 @@ export type AltEntry = NonNullable<EngineSpec["alternatives"]>[number];
 export const MAX_COMMENT_ALTERNATIVES = 2;
 /** Decision A (owner): the quote is computed on the dearest compatible alternative only when it costs more than this many times the main tool per expected row. */
 export const ALTERNATIVE_QUOTE_FACTOR = 2;
+/**
+ * ROUND 17: THE PLATFORMS WHERE DECISION A (the 2x rule below) IS ON. EMPTY = OFF EVERYWHERE. Live round 14: a 9-item Instagram request cost 218 points because the quote used the alternative's UNMEASURED price (`scrapecreators.instagram.post.comments`: one page of one comment, 0.00188 USD a row against 0.000288), and the alternative was never used.
+ * Put a platform back here only after its alternative's real page size and real cost per page were measured on real pages (see HANDOFF, round 17).
+ */
+export const ALTERNATIVE_QUOTE_RULE_PLATFORMS: ReadonlySet<SocialPlatform> = new Set<SocialPlatform>();
 
 export type AltExclusion = "status" | "no_evidence" | "no_parent_input" | "needs_also" | "parent_value_missing" | "mapping" | "replies_identity" | "date_semantics" | "ids_unproven";
 
@@ -100,8 +105,10 @@ export function commentsAlternativesOf(input: {
  * DECISION A (owner): the price the customer approved never changes after approval, and the difference an alternative costs is ours. The quote is the main tool's cost per expected row, EXCEPT when the dearest compatible alternative costs more than twice that per
  * expected row: then the quote is computed on that alternative's cost (so the customer's price already covers a source the main one may hand over to). Read by the compiler and fed to the one pricing path (stagePriceInputs / priceMissionByCode); nothing of the pricing is changed.
  */
-export function quoteCostPerRowOf(primary: ToolCard, alternatives: ReadonlyArray<CommentAlternative>): number {
+export function quoteCostPerRowOf(primary: ToolCard, alternatives: ReadonlyArray<CommentAlternative>, ruleOn: boolean = ALTERNATIVE_QUOTE_RULE_PLATFORMS.has(primary.platform)): number {
   const own = costPerRowOf(primary);
+  // ROUND 17: SUSPENDED (owner): the quote is the main card's cost until the alternative's real page size and cost are measured on real pages; the alternative still runs after approval and the difference is ours
+  if (!ruleOn) return own;
   const dearest = alternatives.reduce((m, a) => Math.max(m, costPerRowOf(a.card)), 0);
   return dearest > ALTERNATIVE_QUOTE_FACTOR * own ? dearest : own;
 }

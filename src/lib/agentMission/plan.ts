@@ -251,6 +251,8 @@ export interface CompiledMark {
   promises: Record<string, { type: "exact" | "counter" | "open"; n: number; counter?: number; counted?: number; counted_comments?: number }>;
   /** The conditions the request set (round 14: the delivery contract checks that each has its mark column, filled): set by code from the Ask. */
   conditions?: { named: boolean; period: boolean; language: boolean; country: boolean; topic: boolean };
+  /** ROUND 17: the source the customer named (an account's handle, a page's name or link), so the delivery contract can check a row's named-source cell against the row's own author. Internal; never shown. */
+  source_text?: string;
 }
 
 export interface UnservedStep {

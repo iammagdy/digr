@@ -91,6 +91,19 @@ export function factsOf(row: Record<string, unknown>, ask: Ask, bySource = false
   return { named, country, language, topic: topicTier > 0, topicTier };
 }
 
+/**
+ * ROUND 17, THE NAMED SOURCE OF A ROW BY ITS OWN AUTHOR: true when the row's author (an account's handle, a page's name or its link's last part) is the source the customer named, false when it is someone else's, and null ONLY when the row carries no author at all
+ * (the source did not say who published it). One function for the compiler, the file and the delivery contract. A named source written as a link is read by its last part (`instagram.com/alhadath` is `alhadath`).
+ */
+export function namedAuthorVerdict(row: Record<string, unknown>, platform: Ask["platform"], sourceText: string | null | undefined): boolean | null {
+  const carries = [row.username, row.author, row.author_url].some((v) => String(v ?? "").trim() !== "");
+  const text = String(sourceText ?? "").trim();
+  if (!carries || text === "") return null;
+  const slug = /(?:facebook|instagram)\.com\/([^/?#\s]+)/i.exec(text)?.[1] ?? text;
+  const ask = { platform, source: { kind: "named", text: slug }, country: null, language: null, topic: { text: null, relation: "none" } } as unknown as Ask;
+  return factsOf(row, ask, false).named;
+}
+
 const counterOf = (row: Record<string, unknown>, card: ToolCard): number | null => {
   if (!card.counter) return null;
   const n = Number(row[card.counter.key]);

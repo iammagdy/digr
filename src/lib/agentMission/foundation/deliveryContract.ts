@@ -9,6 +9,7 @@ import { textKeyOf } from "../contract";
 import { isEnabled } from "../filters";
 import type { PricedPlan, PricedStage } from "../plan";
 import { TOPIC_RELATION_TITLE_AR } from "./topicChoice";
+import { namedAuthorVerdict } from "./pool";
 
 /**
  * THE DELIVERY CONTRACT (round 14). Four rules every delivered file must keep, written on the SHAPE «parents -> children», never on a request, and checked by code on the real built file:
@@ -255,7 +256,15 @@ function r4(input: ContractInput): ContractViolation[] {
     if (!sheet.headers.includes(header)) { out.push({ rule: "R4", sheet: sheet.title, rowId: null, expected: `عمود «${header}» في ورقة «${sheet.title}»`, found: "لا عمود" }); continue; }
     for (const sr of sheet.rows) {
       const cell = (sr.cells[header] ?? "").trim();
-      if (cell !== "" && cell !== UNKNOWN_MARK_AR) continue;
+      if (cell !== "" && cell !== UNKNOWN_MARK_AR) {
+        // ROUND 17: «غير متاح من المصدر» in the named-source column is true ONLY when the row carries no author. A row that carries one (an account's handle, a page's name or link) is judged against the named source: the cell must say «مطابق» or «غير مطابق» (every platform)
+        if (cond !== "named" || cell !== MARK_UNAVAILABLE_AR) continue;
+        const own = rows.get(sr.id);
+        const verdict = own ? namedAuthorVerdict(own, plan.compiled?.platform as never, plan.compiled?.source_text) : null;
+        if (verdict === null) continue;
+        out.push({ rule: "R4", sheet: sheet.title, rowId: sr.id, expected: `«${header}» = «${verdict ? "مطابق" : "غير مطابق"}» لأن الصف يحمل صاحبه`, found: cell, fix: { kind: "mark", stageKey: parent.key, rowId: sr.id, header, value: verdict ? "مطابق" : "غير مطابق" } });
+        continue;
+      }
       const src = rows.get(sr.id);
       // filled from data already in the row and the plan's own filters; when the source gives nothing to decide it, the cell says so in words (never blank, never «غير محدد»)
       let value = MARK_UNAVAILABLE_AR;

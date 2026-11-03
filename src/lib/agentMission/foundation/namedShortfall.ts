@@ -24,6 +24,8 @@ export const isNamedShortfallAnswer = (answer: unknown): boolean => namedShortfa
 /** The mark column a delivery carries when the posts of other pages fill the number: the value for a post that is not the named page's, and the column's key and title. */
 export const NAMED_MISMATCH_MARK_AR = "المصدر المسمّى: غير مطابق";
 export const NAMED_MARK_KEY = "named_source";
+/** ROUND 17: the row carries NO author, so the source cannot say whether it is the named source's: the mark column says it in words (never «مطابق», never blank). Used only when the row truly has no author. */
+export const NAMED_UNAVAILABLE_MARK_AR = "غير متاح من المصدر";
 export const NAMED_MARK_TITLE_AR = "المصدر المسمّى";
 
 /** The question, in the customer's words: how many posts of the named page were found among what was read, against how many they asked for. */
@@ -32,3 +34,6 @@ export function namedShortfallQuestionAr(source: string, found: number, asked: n
   const what = topic ? `منشورًا فقط من صفحة «${source}» يتحدث نصه عن «${topic}» ويمكن تسليمه مع تعليقاته` : `منشورًا فقط من صفحة «${source}» يمكن تسليمه مع تعليقاته`;
   return `وجدنا في ما قرأناه ${digits(found)} ${what}، وطلبت ${digits(asked)} منشورًا. كيف تريد أن نكمل؟`;
 }
+
+/** ROUND 17: a named Facebook page with no topic whose name no read post's author matched: said before any plan, nothing held. */
+export const pageNotFoundAr = (name: string | null | undefined): string => `لم نجد صفحة باسم «${String(name ?? "").trim()}» على فيسبوك بين ما قرأناه، فلم نجهّز خطة ولم يُخصم منك شيء. أرسل رابط الصفحة أو اكتب اسمها كما هو على فيسبوك.`;

@@ -6,10 +6,10 @@ import { stagePriceInputs, type PricedPlan, type PricedStage } from "../plan";
 import type { StageFilter } from "../filters";
 import type { MissionPricingSettings } from "../../missionPricing";
 import type { Ask } from "./ask";
-import { rankPool, factsOf, type PoolRow } from "./pool";
+import { rankPool, factsOf, namedAuthorVerdict, type PoolRow } from "./pool";
 import { approxInstantOfRelative } from "./occurrence";
 import { cairoMomentAr } from "./cairoText";
-import { NAMED_MARK_KEY, NAMED_MARK_TITLE_AR, NAMED_MISMATCH_MARK_AR } from "./namedShortfall";
+import { NAMED_MARK_KEY, NAMED_MARK_TITLE_AR, NAMED_MISMATCH_MARK_AR, NAMED_UNAVAILABLE_MARK_AR } from "./namedShortfall";
 import { childPromise, perParentPromise, promiseLineAr, type StagePromise } from "./promise";
 import { OPEN_REPLIES_FLOOR } from "./openReplies";
 import { ALTERNATIVE_LINE_AR, catalogOnlyPagesOf, commentsAlternativesOf, quoteCostPerRowOf } from "./alternatives";
@@ -357,8 +357,15 @@ export function compilePlan(input: CompileInput): CompileResult {
   // LIVE ROUND 11: the column is on the parent sheet WHENEVER the Ask has a topic, on every platform (a file whose items are all about it said nothing, so «all about it» could not be told from «not checked»)
   const markTopic = Boolean(ask.topic.text);
   // THE NAMED-SOURCE MARK (decision 7.5, «fill from other pages»): a post that is not the named page's carries «المصدر المسمّى: غير مطابق», the page's own posts carry nothing (a mark, never a drop)
-  const markNamed = namedFacebook;
-  const shown = (r: PoolRow): PoolRow => ({ ...r, ...(markTopic ? { [TOPIC_RELATION_KEY]: topicRelationAr(tierOf(r)) } : {}), ...(markNamed ? { [NAMED_MARK_KEY]: isNamed(r) ? "" : NAMED_MISMATCH_MARK_AR } : {}) });
+  // ROUND 17: a named source read BY ITS OWN LISTING (an Instagram account, a Facebook page by its link) carries the mark too: each row says by its own author whether it is the named source's («مطابق» / «غير مطابق»), and «غير متاح من المصدر» ONLY when the row carries no author at all (live round 14, Instagram: both posts of the named account read «غير متاح من المصدر»)
+  const namedByListing = ask.source.kind === "named" && (ask.source.text ?? "") !== "" && poolCard.inputs.source !== undefined && poolCard.inputs.source.kind !== "channel_id";
+  const markNamed = namedFacebook || namedByListing;
+  const namedValue = (r: PoolRow): string => {
+    if (namedFacebook) return isNamed(r) ? "" : NAMED_MISMATCH_MARK_AR;
+    const v = namedAuthorVerdict(r, ask.platform, ask.source.text);
+    return v === null ? NAMED_UNAVAILABLE_MARK_AR : v ? "" : NAMED_MISMATCH_MARK_AR;
+  };
+  const shown = (r: PoolRow): PoolRow => ({ ...r, ...(markTopic ? { [TOPIC_RELATION_KEY]: topicRelationAr(tierOf(r)) } : {}), ...(markNamed ? { [NAMED_MARK_KEY]: namedValue(r) } : {}) });
   const fieldKeys = [...Object.keys(card.mapping.kind === "fields" ? card.mapping.fields : {}), ...(card.mapping.kind === "fields" && card.mapping.linkTemplate ? ["link"] : []), ...(input.counters && !poolCard.counter ? ["comments"] : [])];
   const columns = [...fieldKeys.filter((k, i) => k !== "id" && fieldKeys.indexOf(k) === i).map((k) => ({ key: k, title_ar: TITLE[k] ?? k })), ...(markTopic ? [{ key: TOPIC_RELATION_KEY, title_ar: TOPIC_RELATION_TITLE_AR }] : []), ...(markNamed ? [{ key: NAMED_MARK_KEY, title_ar: NAMED_MARK_TITLE_AR }] : [])];
   const pageRows = Math.max(1, card.page.observedRowsPerPage);
@@ -400,7 +407,18 @@ export function compilePlan(input: CompileInput): CompileResult {
     const times = ranked0.map((r) => Date.parse(String(r.posted_at ?? ""))).filter((t) => Number.isFinite(t));
     const n = ranked0.length;
     const countAr = n === 1 ? "منشور" : n === 2 ? "منشورين" : n >= 3 && n <= 10 ? `${toArabicDigits(n)} منشورات` : `${toArabicDigits(n)} منشورًا`;
-    notes.push(`اخترنا الأكثر تعليقًا من آخر ${countAr}${times.length > 0 ? `، وهي المنشورات التي نُشرت من ${cairoMomentAr(Math.min(...times))} إلى ${cairoMomentAr(Math.max(...times))} بتوقيت القاهرة` : ""}.`);
+    // ROUND 17: the highest counter of what was read, said with the choice (a pool of a few minutes of a busy account has small counters: the card shows it before approval, the choice itself is unchanged)
+    const counters = ranked0.map((r) => counterValueOf(r[counterKey ?? "comments"])).filter((c): c is number => c !== null);
+    notes.push(`اخترنا الأكثر تعليقًا من آخر ${countAr}${times.length > 0 ? `، وهي المنشورات التي نُشرت من ${cairoMomentAr(Math.min(...times))} إلى ${cairoMomentAr(Math.max(...times))} بتوقيت القاهرة` : ""}.${counters.length > 0 ? ` أعلى عدّاد تعليقات بين ما قرأناه ${toArabicDigits(Math.max(...counters))}، ولم نقرأ منشورات أقدم منها.` : ""}`);
+  }
+  // ROUND 17: A PERIOD A LISTING DID NOT REACH. A listing has no date input, so the period is reached by paging back; when the pages read (within the planning budget and the gateway's own caps) stop inside the period while the source has more, the card says it before approval: the posts read, the period they cover, the period asked
+  if ((poolCard.role === "posts.account" || poolCard.role === "posts.page") && ask.period) {
+    const dated = readAll.map((r) => Date.parse(String(r.posted_at ?? ""))).filter((t) => Number.isFinite(t));
+    const lastPage = input.pool.pages[input.pool.pages.length - 1];
+    const more = lastPage ? Boolean(atPath(lastPage.page, (lastPage.card ?? poolCard).page.cursor)) : false;
+    if (dated.length > 0 && Math.min(...dated) >= ask.period.startMs && more) {
+      notes.push(`لم نصل إلى بداية الفترة المطلوبة (من ${toArabicDigits(ask.period.from)} إلى ${toArabicDigits(ask.period.to)}): قرأنا ${postsCountAr(readAll.length)} من المصدر تغطي من ${cairoMomentAr(Math.min(...dated))} إلى ${cairoMomentAr(Math.max(...dated))} بتوقيت القاهرة، ولا نستطيع قراءة منشورات أقدم منها قبل الاعتماد؛ فقد يكون في الفترة منشورات أخرى لم نقرأها.`);
+    }
   }
   const unmet = chosen.filter((r) => { const f = factsOf(r, ask, bySource); return !f.country || !f.language || !f.named; }).length;
   if (unmet > 0) notes.push(`لم نجد في ما قرأناه ما يكفي مما يطابق المصدر أو الدولة أو اللغة المطلوبة؛ ${toArabicDigits(unmet)} من العناصر المختارة لا تطابق ذلك، وعليها علامة في الملف.`);
@@ -509,7 +527,7 @@ export function compilePlan(input: CompileInput): CompileResult {
     stages,
     price,
     ...(unserved.length > 0 ? { unserved_steps: unserved } : {}),
-    compiled: { by: "compiler", platform: ask.platform, promises: Object.fromEntries(Object.entries(promises).map(([k, v]) => [k, { ...v }])), conditions: { named: ask.source.kind === "named", period: Boolean(ask.period), language: Boolean(ask.language), country: Boolean(ask.country), topic: Boolean(ask.topic.text) } },
+    compiled: { by: "compiler", platform: ask.platform, promises: Object.fromEntries(Object.entries(promises).map(([k, v]) => [k, { ...v }])), conditions: { named: ask.source.kind === "named", period: Boolean(ask.period), language: Boolean(ask.language), country: Boolean(ask.country), topic: Boolean(ask.topic.text) }, ...(ask.source.kind === "named" && ask.source.text ? { source_text: ask.source.text } : {}) },
   };
   return { ok: true, plan, promises, chosen: chosen.map((r) => r.id), spares: spares.map((r) => r.id) };
 }

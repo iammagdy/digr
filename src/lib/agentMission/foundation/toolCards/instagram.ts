@@ -23,7 +23,7 @@ export const INSTAGRAM_CARDS: ReadonlyArray<ToolCard> = [
     page: { list: ["items"], cursor: ["next_max_id"], observedRowsPerPage: 12 },
     mapping: {
       kind: "fields",
-      fields: { id: ["pk"], text: ["caption", "text"], posted_at: ["taken_at"], likes: ["like_count"], comments: ["comment_count"], views: ["play_count"] },
+      fields: { id: ["pk"], text: ["caption", "text"], author: ["user", "username"], posted_at: ["taken_at"], likes: ["like_count"], comments: ["comment_count"], views: ["play_count"] },
       linkTemplate: { template: LINK, field: ["code"] },
     },
     counter: { key: "comments", counts: "comments" },

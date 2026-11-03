@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { createMemoryStore } from "../agent/src/memoryStore";
 import { planByCompiler, type CompiledPlanning } from "../agent/src/compiled";
-import { ALTERNATIVE_LINE_AR } from "../src/lib/agentMission/foundation/alternatives";
+import { ALTERNATIVE_LINE_AR, ALTERNATIVE_QUOTE_RULE_PLATFORMS, quoteCostPerRowOf } from "../src/lib/agentMission/foundation/alternatives";
 import { cardOf } from "../src/lib/agentMission/foundation/toolCards";
 import { priceMissionByCode } from "../src/lib/agentMission/price";
 import { customerPlanView, stagePriceInputs } from "../src/lib/agentMission/plan";
@@ -51,19 +51,20 @@ describe("Instagram (msn_e3e7632e2fb2d42f9c19's request, its stored planning pag
     expect(shown).not.toMatch(/scrapecreators|anyapi|tikhub|crawl4ai|justoneapi|endpoint/i);
     expect(shown).toContain("نحاول الإكمال من مصدر آخر للمنصة نفسها");
   });
-  it("DECISION A: the dearest compatible alternative costs 6.5 times the main tool per expected row (more than 2x), so the quote is computed on the alternative's cost through the one pricing path; the stage's own tool is unchanged", async () => {
+  // CHANGED (round 17, owner): decision A is SUSPENDED. The alternative's price was never measured on real pages (one page of one comment) and a 9-item request cost 218 points on it while the alternative was never used: the quote is the MAIN card's cost, the alternative still runs after approval, the difference is ours.
+  it("DECISION A SUSPENDED: the alternative costs 6.5 times the main tool per expected row, yet the quote is the MAIN tool's cost; the alternative is still planned; the 2x rule is kept behind a constant and gives its old answer when switched on", async () => {
     const { out } = await plan(IG, requestOf(IG), { createdAt: "2026-11-02T15:31:00Z" });
     const c = commentsOf(out);
     const main = cardOf("anyapi.instagram.post.comments")!;
     const alt = cardOf("scrapecreators.instagram.post.comments")!;
     expect(alt.costUsdPerPage / alt.page.observedRowsPerPage).toBeGreaterThan(2 * (main.costUsdPerPage / main.page.observedRowsPerPage));
-    expect(c.measured_cost_per_row_usd).toBeCloseTo(alt.costUsdPerPage / alt.page.observedRowsPerPage, 10);
-    // the sealed price is the one pricing function's number over these stages (read-only use)
+    expect(ALTERNATIVE_QUOTE_RULE_PLATFORMS.size).toBe(0);
+    expect(c.measured_cost_per_row_usd).toBeCloseTo(main.costUsdPerPage / main.page.observedRowsPerPage, 10);
+    expect(c.engine!.alternatives!.map((a) => a.endpoint_id)).toEqual(["scrapecreators.instagram.post.comments"]);
     expect(out.plan.price.reservePoints).toBe(priceMissionByCode(stagePriceInputs(out.plan.stages)).reservePoints);
-    // and it is higher than the quote the same stages gave on the main tool's cost alone
-    const onMain = priceMissionByCode(stagePriceInputs(out.plan.stages.map((s) => (s.key === "comments" ? { ...s, measured_cost_per_row_usd: main.costUsdPerPage / main.page.observedRowsPerPage } : s))));
-    expect(out.plan.price.reservePoints).toBeGreaterThanOrEqual(onMain.reservePoints);
-    expect(out.plan.price.unitPricePoints).toBeGreaterThanOrEqual(onMain.unitPricePoints);
+    // the rule itself, switched on by its parameter, is what it was
+    expect(quoteCostPerRowOf(main, [{ card: alt, capture: false, entry: {} as never }], true)).toBeCloseTo(alt.costUsdPerPage / alt.page.observedRowsPerPage, 10);
+    expect(quoteCostPerRowOf(main, [{ card: alt, capture: false, entry: {} as never }])).toBeCloseTo(main.costUsdPerPage / main.page.observedRowsPerPage, 10);
   });
 });
 
