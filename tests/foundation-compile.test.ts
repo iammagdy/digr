@@ -33,10 +33,13 @@ describe("acceptance 4: M20 (the lost stages) is compiled with videos, comments 
       else expect(shape).toEqual(["parents", "comments", "replies"]);
     }
   });
-  it("YouTube has no card in PR 2a (PR 3): the compiler builds nothing for it rather than a model recipe", () => {
+  it("PR 3 gave YouTube its cards (tests/platform-youtube.test.ts); a request the Ask cannot place on a platform is still built by nothing rather than by a model recipe", () => {
     const ask = buildAsk(request("msn_adcfafabcdebc27ff803"), null, AT);
-    expect(chooseCard(ask, "parents")).toBeNull();
-    const r = compilePlan({ ask, pool: { card: cardOf("tikhub.tiktok.search.videos")!, params: {}, pages: [] }, exposure: () => undefined, capabilityOf });
+    expect(chooseCard(ask, "parents")!.endpointId).toBe("tikhub.x.youtube-web-search-channel");
+    const none = buildAsk("هات لي بيانات عن الذكاء الاصطناعي", null, AT);
+    expect(none.platform).toBeNull();
+    expect(chooseCard(none, "parents")).toBeNull();
+    const r = compilePlan({ ask: none, pool: { card: cardOf("tikhub.tiktok.search.videos")!, params: {}, pages: [] }, exposure: () => undefined, capabilityOf });
     expect(r).toEqual({ ok: false, reason: "no_platform_card" });
   });
 });

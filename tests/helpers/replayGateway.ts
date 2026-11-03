@@ -13,10 +13,28 @@ type IndexRow = [string, string, string, string, number, Record<string, unknown>
 const INDEX = JSON.parse(readFileSync(new URL("../fixtures/live/call-index.json", import.meta.url), "utf8")) as { missions: Record<string, IndexRow[]> };
 const LINK_KEYS = new Set(["url", "post", "link", "video_url", "postUrl"]);
 
-export function inputKey(endpointId: string, params: Record<string, unknown>): string {
+/** An Instagram post's short code (the `/p/<code>/` of its link) is the media id written in base 64: the id is what the committed call index keeps (a link in the index is only ever a number). */
+const IG_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+export function instagramMediaIdOf(shortCode: string): string {
+  let n = BigInt(0);
+  for (const ch of shortCode) { const i = IG_ALPHABET.indexOf(ch); if (i < 0) return ""; n = n * BigInt(64) + BigInt(i); }
+  return n.toString();
+}
+const linkId = (v: unknown): string => {
+  const s = String(v);
+  const long = s.match(/\d{15,}/g);
+  if (long) return long.pop()!;
+  const ig = /instagram\.com\/(?:p|reel|tv)\/([A-Za-z0-9_-]+)/.exec(s);
+  return ig ? instagramMediaIdOf(ig[1]) : "";
+};
+/** The personal inputs of a call (an account handle): the index keeps a placeholder, so the replay compares nothing of their value (a mission reads one account). */
+const PERSONAL_INPUTS = new Set(["handle", "username"]);
+
+/** `only`: the replay of an endpoint compares only these inputs (the compiler's own query words differ from the words the model used live; the stored page is served by the other inputs). */
+export function inputKey(endpointId: string, params: Record<string, unknown>, only?: ReadonlyArray<string>): string {
   const entries = Object.entries(params)
-    .filter(([k, v]) => !k.startsWith("_") && v !== undefined && v !== null && v !== "")
-    .map(([k, v]) => [k, LINK_KEYS.has(k) ? (String(v).match(/\d{15,}/g) ?? [""]).pop()! : String(v)] as const)
+    .filter(([k, v]) => !k.startsWith("_") && v !== undefined && v !== null && v !== "" && (only === undefined || only.includes(k)))
+    .map(([k, v]) => [k, LINK_KEYS.has(k) ? linkId(v) : PERSONAL_INPUTS.has(k) ? "*" : String(v)] as const)
     .sort((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0));
   return `${endpointId} ${JSON.stringify(entries)}`;
 }
@@ -29,10 +47,18 @@ export interface ReplayStats {
 export interface ReplayStore { putFile: (missionId: string, path: string, content: string, contentType: string) => Promise<unknown> }
 
 /** A gateway over the stored pages of `fixtureMission`; pages are written into `store` under `targetMission` (the engine reads them back from there). */
-export function replayGateway(fixtureMission: string, catalog: TregCatalog, store: ReplayStore, targetMission: string, options: { firstSeq?: number } = {}) {
+export interface ReplayOptions {
+  firstSeq?: number;
+  /** Per endpoint, the only inputs compared (see `inputKey`): written in the test that needs it, so the loosening is visible there. */
+  only?: Readonly<Record<string, ReadonlyArray<string>>>;
+  /** A stored page of ANOTHER mission of the same platform that stands in for a page the live run never read (the compiler's second pool page): written in the test, never implicit. */
+  borrow?: ReadonlyArray<{ endpointId: string; fromMission: string; call: string; when: (params: Record<string, unknown>) => boolean }>;
+}
+export function replayGateway(fixtureMission: string, catalog: TregCatalog, store: ReplayStore, targetMission: string, options: ReplayOptions = {}) {
   const calls = INDEX.missions[fixtureMission] ?? [];
+  const keyOf = (endpointId: string, params: Record<string, unknown>) => inputKey(endpointId, params, options.only?.[endpointId]);
   const byKey = new Map<string, IndexRow>();
-  for (const c of calls) if ((c[3] === "ok" || c[3] === "empty") && !byKey.has(inputKey(c[2], c[5]))) byKey.set(inputKey(c[2], c[5]), c);
+  for (const c of calls) if ((c[3] === "ok" || c[3] === "empty") && !byKey.has(keyOf(c[2], c[5]))) byKey.set(keyOf(c[2], c[5]), c);
   const stats: ReplayStats = { served: [], unserved: [] };
   let seq = options.firstSeq ?? 0;
   const gateway = {
@@ -40,8 +66,9 @@ export function replayGateway(fixtureMission: string, catalog: TregCatalog, stor
       const endpointId = String(input.endpoint_id ?? "");
       const params = (input.params ?? {}) as Record<string, unknown>;
       const callId = `call_${String((seq += 1)).padStart(4, "0")}`;
-      const stored = byKey.get(inputKey(endpointId, params));
-      const file = stored ? new URL(`../fixtures/live/missions/${fixtureMission}/raw/${stored[0]}.json`, import.meta.url) : null;
+      const lent = options.borrow?.find((b) => b.endpointId === endpointId && b.when(params));
+      const stored = lent ? ((INDEX.missions[lent.fromMission] ?? []).find((c) => c[0] === lent.call && c[2] === endpointId) ?? null) : byKey.get(keyOf(endpointId, params));
+      const file = stored ? new URL(`../fixtures/live/missions/${lent ? lent.fromMission : fixtureMission}/raw/${stored[0]}.json`, import.meta.url) : null;
       const endpoint = catalog.byId.get(endpointId);
       if (!stored || !file || !existsSync(file) || !endpoint) {
         stats.unserved.push({ endpointId, params: { ...params } });

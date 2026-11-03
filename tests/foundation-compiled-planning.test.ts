@@ -91,10 +91,14 @@ describe("the compiled path runs only behind the platform's OWN flag", () => {
     expect(r.mission.status).toBe("needs_input");
   });
 
-  it("the X flag does not compile TikTok, and the TikTok flag does not compile X; Facebook, Instagram and YouTube are never compiled in PR 2a", () => {
+  it("the X flag does not compile TikTok, and the TikTok flag does not compile X; Facebook, Instagram and YouTube (PR 3) are compiled only behind their OWN flag, and no other platform's flag compiles them", () => {
     expect(compiledPlatformActive({ x: "on" }, "tiktok", true)).toBe(false);
     expect(compiledPlatformActive({ tiktok: "on" }, "x", true)).toBe(false);
-    for (const p of ["facebook", "instagram", "youtube"] as const) expect(compiledPlatformActive({ [p]: "on" }, p, true)).toBe(false);
+    for (const p of ["facebook", "instagram", "youtube"] as const) {
+      expect(compiledPlatformActive({ [p]: "on" }, p, true)).toBe(true);
+      expect(compiledPlatformActive({ tiktok: "on", x: "on" }, p, true)).toBe(false);
+      expect(compiledPlatformActive({}, p, true)).toBe(false);
+    }
     expect(compiledPlatformActive({}, "tiktok", true)).toBe(false);
     expect(compiledPlatformActive(undefined, "tiktok", true)).toBe(false);
   });

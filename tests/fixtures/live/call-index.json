@@ -1,5 +1,5 @@
 {
- "_about": "THE CALL LOG OF THE TIKTOK AND X MISSIONS, anonymised (read-only SELECT on mission_calls, 2026-11-02; listed in the PR). One entry per stored call: [call id, phase, endpoint, status, rows, inputs]. Every link input is reduced to the numeric id it carries (no handle, no name); search inputs are Diger's own request words. M12 and M14: every call; the others: their planning calls only. M5 call_0002 is left out: its stored inputs were cut at 80 characters by the call log, so the page it answered cannot be keyed honestly. The replay gateway (tests/helpers/replayGateway.ts) serves a stored page only for the endpoint and the same inputs. Live round 8 (3 Nov 2026): msn_50e3b83c44e7ebd7f577, its 14 replies calls only (read-only SELECT on mission_calls), the cursor inputs are the opaque tokens the pages gave.",
+ "_about": "THE CALL LOG OF THE TIKTOK AND X MISSIONS, anonymised (read-only SELECT on mission_calls, 2026-11-02; listed in the PR). One entry per stored call: [call id, phase, endpoint, status, rows, inputs]. Every link input is reduced to the numeric id it carries (no handle, no name); search inputs are Diger's own request words. M12 and M14: every call; the others: their planning calls only. M5 call_0002 is left out: its stored inputs were cut at 80 characters by the call log, so the page it answered cannot be keyed honestly. The replay gateway (tests/helpers/replayGateway.ts) serves a stored page only for the endpoint and the same inputs. Live round 8 (3 Nov 2026): msn_50e3b83c44e7ebd7f577, its 14 replies calls only (read-only SELECT on mission_calls), the cursor inputs are the opaque tokens the pages gave. Added in PR 3 (4 Nov 2026): the Facebook, Instagram and YouTube missions of FOUNDATION-PLAN (read-only SELECT on mission_calls; each SELECT is listed in the PR). Link inputs are reduced to the numeric id they carry (an Instagram short code is converted to its media id by the code's own base-64 rule); the Instagram account handle is a placeholder (a personal field; the replay gateway ignores its value); a post link that carries no numeric id (a pfbid link) is not indexed, so a replay never serves a page for a post it cannot tell apart.",
  "missions": {
   "msn_5851abc92a1e6645a9cd": [
    [
@@ -1617,6 +1617,662 @@
      "requireFields": [
       "nextCursor"
      ]
+    }
+   ]
+  ],
+  "msn_6bb78c15d116268b0b9b": [
+   [
+    "call_0004",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    5,
+    {
+     "keyword": "الذكاء الاصطناعي العربية",
+     "startDate": "2026-08-02",
+     "endDate": "2026-11-02"
+    }
+   ],
+   [
+    "call_0005",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    5,
+    {
+     "keyword": "قناة العربية الذكاء الاصطناعي",
+     "startDate": "2026-08-02",
+     "endDate": "2026-11-02"
+    }
+   ],
+   [
+    "call_0006",
+    "planning",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    3,
+    {
+     "url": "2959614737717915"
+    }
+   ],
+   [
+    "call_0009",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    4,
+    {
+     "url": "2959614737717915"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "anyapi.facebook.user.posts",
+    "ok",
+    3,
+    {
+     "pageId": "100069103503573"
+    }
+   ],
+   [
+    "call_0003",
+    "planning",
+    "anyapi.facebook.user.posts",
+    "ok",
+    3,
+    {
+     "pageId": "100069103503573",
+     "cursor": "cur_CMRBzYagik63dSId-b3b0g"
+    }
+   ]
+  ],
+  "msn_96beb9f7a1d937a90cd0": [
+   [
+    "call_0004",
+    "planning",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    3,
+    {
+     "url": "1471140421825922"
+    }
+   ],
+   [
+    "call_0006",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    1,
+    {
+     "url": "30009422558648028"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "anyapi.facebook.user.posts",
+    "ok",
+    3,
+    {
+     "pageId": "100069103503573"
+    }
+   ],
+   [
+    "call_0003",
+    "planning",
+    "anyapi.facebook.user.posts",
+    "ok",
+    3,
+    {
+     "pageId": "100069103503573",
+     "cursor": "cur_kjoSPQ2lkIt9JZbVGDnALA"
+    }
+   ]
+  ],
+  "msn_71577d2920048f9ebf22": [
+   [
+    "call_0001",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    5,
+    {
+     "keyword": "غلاء الأسعار"
+    }
+   ],
+   [
+    "call_0003",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    5,
+    {
+     "keyword": "غلاء الأسعار في مصر"
+    }
+   ],
+   [
+    "call_0004",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    5,
+    {
+     "keyword": "ارتفاع الأسعار في مصر"
+    }
+   ]
+  ],
+  "msn_aaed7fa9ffecc854edc0": [
+   [
+    "call_0001",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    6,
+    {
+     "keyword": "غلاء الأسعار في مصر"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    5,
+    {
+     "keyword": "غلا الاسعار المصريين"
+    }
+   ]
+  ],
+  "msn_5324df5fff82ef3c6a0e": [
+   [
+    "call_0001",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    5,
+    {
+     "keyword": "غلاء الأسعار"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    5,
+    {
+     "keyword": "غلاء الأسعار في مصر"
+    }
+   ],
+   [
+    "call_0003",
+    "planning",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    2,
+    {
+     "url": "1769232457523043"
+    }
+   ]
+  ],
+  "msn_a6e52e97658bc41fa7ad": [
+   [
+    "call_0001",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    5,
+    {
+     "keyword": "غلاء الأسعار في مصر"
+    }
+   ]
+  ],
+  "msn_25fb87d4b0dd80c6ae12": [
+   [
+    "call_0001",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    5,
+    {
+     "keyword": "منتخب مصر"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    5,
+    {
+     "keyword": "فيديو منتخب مصر"
+    }
+   ]
+  ],
+  "msn_020bf5c4110c15c86ab8": [
+   [
+    "call_0001",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    5,
+    {
+     "keyword": "منتخب مصر"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    5,
+    {
+     "keyword": "فيديو منتخب مصر"
+    }
+   ]
+  ],
+  "msn_e39585e687833914039e": [
+   [
+    "call_0001",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    5,
+    {
+     "keyword": "منتخب مصر"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    5,
+    {
+     "keyword": "فيديو منتخب مصر"
+    }
+   ]
+  ],
+  "msn_980f9a239454964b0583": [
+   [
+    "call_0001",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    6,
+    {
+     "keyword": "منتخب مصر"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    5,
+    {
+     "keyword": "فيديو منتخب مصر"
+    }
+   ]
+  ],
+  "msn_e3e7632e2fb2d42f9c19": [
+   [
+    "call_0002",
+    "planning",
+    "scrapecreators.instagram.user.posts",
+    "ok",
+    12,
+    {
+     "handle": "txt_a11ce1"
+    }
+   ],
+   [
+    "call_0004",
+    "planning",
+    "anyapi.instagram.post.comments",
+    "ok",
+    2,
+    {
+     "url": "4021610972549534647"
+    }
+   ],
+   [
+    "call_0008",
+    "execution",
+    "anyapi.instagram.post.comments",
+    "ok",
+    8,
+    {
+     "url": "4021600644267995751"
+    }
+   ],
+   [
+    "call_0009",
+    "execution",
+    "anyapi.instagram.post.comments",
+    "ok",
+    5,
+    {
+     "url": "4021603152687890369"
+    }
+   ],
+   [
+    "call_0010",
+    "execution",
+    "anyapi.instagram.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "4021600644267995751",
+     "commentId": "18195359617392032"
+    }
+   ],
+   [
+    "call_0011",
+    "execution",
+    "anyapi.instagram.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "4021600644267995751",
+     "commentId": "18097700087545909"
+    }
+   ],
+   [
+    "call_0012",
+    "execution",
+    "anyapi.instagram.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "4021600644267995751",
+     "commentId": "17994519498067653"
+    }
+   ],
+   [
+    "call_0013",
+    "execution",
+    "anyapi.instagram.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "4021600644267995751",
+     "commentId": "18125859181888737"
+    }
+   ],
+   [
+    "call_0014",
+    "execution",
+    "anyapi.instagram.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "4021600644267995751",
+     "commentId": "18135650836671171"
+    }
+   ],
+   [
+    "call_0015",
+    "execution",
+    "anyapi.instagram.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "4021600644267995751",
+     "commentId": "18011352375002262"
+    }
+   ],
+   [
+    "call_0016",
+    "execution",
+    "anyapi.instagram.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "4021600644267995751",
+     "commentId": "17906511462352740"
+    }
+   ],
+   [
+    "call_0017",
+    "execution",
+    "anyapi.instagram.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "4021600644267995751",
+     "commentId": "18028200338864652"
+    }
+   ],
+   [
+    "call_0018",
+    "execution",
+    "anyapi.instagram.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "4021603152687890369",
+     "commentId": "17916759888542548"
+    }
+   ],
+   [
+    "call_0019",
+    "execution",
+    "anyapi.instagram.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "4021603152687890369",
+     "commentId": "18084231203386816"
+    }
+   ],
+   [
+    "call_0020",
+    "execution",
+    "anyapi.instagram.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "4021603152687890369",
+     "commentId": "18000358803031810"
+    }
+   ],
+   [
+    "call_0021",
+    "execution",
+    "anyapi.instagram.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "4021603152687890369",
+     "commentId": "18117130271111939"
+    }
+   ],
+   [
+    "call_0022",
+    "execution",
+    "anyapi.instagram.comment_replies",
+    "ok",
+    1,
+    {
+     "url": "4021603152687890369",
+     "commentId": "18077062529757297"
+    }
+   ]
+  ],
+  "msn_afe9bb0b436670e35a3c": [
+   [
+    "call_0002",
+    "planning",
+    "scrapecreators.instagram.user.posts",
+    "ok",
+    12,
+    {
+     "handle": "txt_a11ce1"
+    }
+   ],
+   [
+    "call_0003",
+    "planning",
+    "anyapi.instagram.post.comments",
+    "ok",
+    1,
+    {
+     "url": "4021551502517678926"
+    }
+   ],
+   [
+    "call_0007",
+    "execution",
+    "scrapecreators.instagram.user.posts",
+    "ok",
+    12,
+    {
+     "handle": "txt_a11ce1"
+    }
+   ],
+   [
+    "call_0008",
+    "execution",
+    "anyapi.instagram.post.comments",
+    "ok",
+    2,
+    {
+     "url": "4021548467888894122"
+    }
+   ],
+   [
+    "call_0004",
+    "planning",
+    "scrapecreators.instagram.post.comments",
+    "ok",
+    1,
+    {
+     "url": "4021551502517678926"
+    }
+   ]
+  ],
+  "msn_ee599cdbbde993073b15": [
+   [
+    "call_0003",
+    "planning",
+    "tikhub.x.youtube-web-v2-search-channels",
+    "ok",
+    2,
+    {
+     "keyword": "Al Ahly SC official"
+    }
+   ],
+   [
+    "call_0004",
+    "planning",
+    "tikhub.x.youtube-web-v2-search-channels",
+    "ok",
+    2,
+    {
+     "keyword": "Zamalek SC official"
+    }
+   ],
+   [
+    "call_0006",
+    "planning",
+    "tikhub.x.youtube-web-search-channel",
+    "ok",
+    30,
+    {
+     "channel_id": "UCA86pBGxVPZGrTeTecOtjew",
+     "search_query": "السوبر المصري الزمالك"
+    }
+   ],
+   [
+    "call_0007",
+    "planning",
+    "tikhub.x.youtube-web-search-channel",
+    "ok",
+    30,
+    {
+     "channel_id": "UCeFU0ebL1MK2KlBFniRs6Iw",
+     "search_query": "نهائي السوبر المصري الأهلي"
+    }
+   ],
+   [
+    "call_0009",
+    "planning",
+    "crawl4ai.youtube.video.comments",
+    "ok",
+    9,
+    {
+     "video": "RmjKXb5gYiw",
+     "limit": 15
+    }
+   ],
+   [
+    "call_0010",
+    "execution",
+    "crawl4ai.youtube.video.comments",
+    "empty",
+    0,
+    {
+     "video": "GBiIDC1QcdQ",
+     "limit": 20
+    }
+   ],
+   [
+    "call_0011",
+    "execution",
+    "crawl4ai.youtube.video.comments",
+    "ok",
+    8,
+    {
+     "video": "GIWkArP7RJE",
+     "limit": 20
+    }
+   ],
+   [
+    "call_0013",
+    "execution",
+    "crawl4ai.youtube.video.comments",
+    "ok",
+    9,
+    {
+     "video": "RmjKXb5gYiw",
+     "limit": 50
+    }
+   ]
+  ],
+  "msn_3594a5ab6311c8691f20": [
+   [
+    "call_0002",
+    "planning",
+    "crawl4ai.youtube.video.comments",
+    "ok",
+    50,
+    {
+     "video": "imtlpooNTI4",
+     "limit": 50
+    }
+   ],
+   [
+    "call_0004",
+    "execution",
+    "crawl4ai.youtube.video.comments",
+    "ok",
+    50,
+    {
+     "video": "0QF0RlE2JIE",
+     "limit": 50
+    }
+   ],
+   [
+    "call_0005",
+    "execution",
+    "crawl4ai.youtube.video.comments",
+    "ok",
+    3,
+    {
+     "video": "G-zB9uoHB9w",
+     "limit": 50
     }
    ]
   ]
