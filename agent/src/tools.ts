@@ -34,6 +34,7 @@ import { applyReverseOrder } from "../../src/lib/treg/reverseOrder";
 import { rankedCandidates } from "../../src/lib/agentMission/candidates";
 import { perParentQuantities } from "../../src/lib/agentMission/quantity";
 import { sourceNameMatches } from "../../src/lib/agentMission/namedSources";
+import { modelPlanningForTests } from "./testSeam";
 import { isSocialPlatform, redesignActiveFor, type PlatformFlags, type RedesignFlags, type SocialPlatform } from "../../src/lib/agentMission/redesignFlags";
 import { applyGapNotes } from "../../src/lib/agentMission/gapLines";
 import { askedTextOf } from "../../src/lib/agentMission/requestContract";
@@ -581,7 +582,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       handler: async (a) => {
         const stagesIn: any[] = Array.isArray(a.stages) ? a.stages : [];
         // PR B (round 18): ONE PATH FOR SOCIAL. A plan whose stages read a social platform is made by the plan compiler (agent/src/compiled.ts), never by the model: a social plan proposed here is not accepted and the request ends honestly (nothing held, nothing charged).
-        if (stagesIn.some((st) => isSocialPlatform(String(ctx.catalog.byId.get(String(st?.endpoint_id ?? ""))?.capability ?? "").split(".")[0]))) {
+        if (!modelPlanningForTests() && stagesIn.some((st) => isSocialPlatform(String(ctx.catalog.byId.get(String(st?.endpoint_id ?? ""))?.capability ?? "").split(".")[0]))) {
           state.finish = { outcome: "cannot_serve", summary_ar: "", kind: "unsupported" };
           state.terminal = true;
           return { ok: true, note: "social requests are planned by code, not by you; the request was ended for the customer; stop now" };

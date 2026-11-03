@@ -39,6 +39,7 @@ import { sealFinalPrice } from "../../src/lib/agentMission/finalPrice";
 import { accountIsTest, anyRedesignFlag, fallbackStageOf, redesignStagesOf } from "./redesign";
 import { compiledPlatformActive, planByCompiler } from "./compiled";
 import { isSocialPlatform } from "../../src/lib/agentMission/redesignFlagTypes";
+import { modelPlanningForTests } from "./testSeam";
 import { SOCIAL_NOT_OFFERED_AR } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { namedShortfallChoiceOf } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { promiseShortfallAr, repliesShortfallAr } from "./repliesShortfall";
@@ -321,7 +322,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // PR B (round 18), ONE PATH FOR SOCIAL: a request on TikTok, X, Instagram, Facebook or YouTube is planned by the plan compiler or not at all. The platform's own switch decides: «تشغيل» (and «تجريبي» for a test account) = the compiled path; «إيقاف» (or no value) = the platform is NOT OFFERED:
   // the customer is told so honestly BEFORE any planning call (no source is read, no model is paid, nothing is held). There is no model-planned social pipeline any more, and no fallback to it.
   const compiledActive = compiledPlatformActive(redesign.platformFlags, redesign.platform, redesign.isTest);
-  if (isSocialPlatform(redesign.platform) && !compiledActive) {
+  if (isSocialPlatform(redesign.platform) && !compiledActive && !modelPlanningForTests()) {
     await store.updateMission(mission.id, { status: "unserved", summary_ar: SOCIAL_NOT_OFFERED_AR, ...clear });
     await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: منصة اجتماعية غير مفعّلة، لم يُجرَ أي تخطيط.", counts: { compiled: 0, social_not_offered: 1 } }).catch(() => undefined);
     await store.addEvent(mission.id, { kind: "result", message_ar: SOCIAL_NOT_OFFERED_AR });
