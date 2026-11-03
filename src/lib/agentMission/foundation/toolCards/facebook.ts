@@ -105,17 +105,18 @@ export const FACEBOOK_CARDS: ReadonlyArray<ToolCard> = [
     verifiedOn: [],
   },
   {
-    // the replies of one comment by the comment's two tokens: catalog_only (8 of 8 real reads were successful empty answers; no reply row was ever seen)
+    // the replies of one comment by the comment's two tokens. VERIFIED since round 14 on the 36 real pages of live round 12 (calls 46 to 81 of msn_236f4af6fe4cb890abee: 95 rows, 2.64 a call, at most 7; one call per comment that has replies; `hasNextPage` false on each, so one page ends a thread;
+    // four comments gave fewer replies than their counters: 5 rows short of 100). Before it, 8 of 8 real reads were successful empty answers. `observedRowsPerPage` is the measured 95 / 36 rounded DOWN (a page never gave less on average): the card used to price a reply as a whole call.
     endpointId: "anyapi.facebook.comment_replies",
     platform: "facebook",
     role: "comment.replies",
-    status: "catalog_only",
+    status: "verified",
     inputs: { cursor: "cursor", parent: { param: "feedbackId", from: "feedback_id", also: [{ param: "expansionToken", from: "expansion_token" }] } },
-    page: { list: ["output", "data", "replies"], cursor: ["output", "data", "nextCursor"], observedRowsPerPage: 1 },
+    page: { list: ["output", "data", "replies"], cursor: ["output", "data", "nextCursor"], observedRowsPerPage: 2.6 },
     mapping: { kind: "replies" },
     counter: null,
     costUsdPerPage: 0.0012,
-    verifiedOn: [],
+    verifiedOn: [{ mission: "msn_236f4af6fe4cb890abee", calls: Array.from({ length: 36 }, (_, i) => `call_${String(46 + i).padStart(4, "0")}`) }],
   },
   {
     endpointId: "scrapecreators.x.v1-facebook-post-comment-replies",

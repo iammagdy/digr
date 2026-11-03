@@ -6,6 +6,8 @@ import { chooseCard, compilePlan, parentInputs, rankedPoolOf, COMPILED_PLATFORMS
 import { factsOf, isAboutAndEligible, rankPool } from "../../src/lib/agentMission/foundation/pool";
 import { aboutQueryOf, noAboutChoiceOf, noAboutQuestionAr, NO_ABOUT_OPTIONS_AR } from "../../src/lib/agentMission/foundation/topicChoice";
 import { NAMED_SHORTFALL_OPTIONS_AR, isNamedShortfallAnswer, namedShortfallChoiceOf, namedShortfallQuestionAr } from "../../src/lib/agentMission/foundation/namedShortfall";
+import { budgetOfWords, questionNeeded, type Choices } from "../../src/lib/agentMission/foundation/countChoice";
+import { fitToBudget } from "../../src/lib/agentMission/foundation/budgetFit";
 import { toArabicDigits } from "../../src/lib/arabicDigits";
 import { cardOf, cardsFor, CATALOG_ONLY_CAP_USD, mapPage, type ToolCard } from "../../src/lib/agentMission/foundation/toolCards";
 import type { PricedPlan } from "../../src/lib/agentMission/plan";
@@ -46,6 +48,11 @@ export interface CompiledPlanningDeps {
   understand?: (input: { request: string; topic: string | null }) => Promise<{ channels: string[]; costUsd: number } | null>;
   /** Decision 7: the occurrence the customer chose earlier in this mission (the answer of a later question replaces `answer_text`). */
   occurrence?: Occurrence;
+  /** ROUND 14, PART B: the production run asks the count and the comments per parent BEFORE any read when the request gives none (`askCount`); a planning made by a test or a tool that does not set it never asks (today's behaviour). `choices` are what the customer chose at those questions, `questionsAsked` how many cards the request has had (at most three), `answerIsChoice` that the current answer is one of them (the request is read without its words). */
+  askCount?: boolean;
+  choices?: Choices;
+  questionsAsked?: number;
+  answerIsChoice?: boolean;
 }
 export type CompiledPlanning =
   | { kind: "plan"; plan: PricedPlan; ask: Ask; result: Extract<CompileResult, { ok: true }>; reads: { pool: number; exposure: number } }
@@ -54,7 +61,7 @@ export type CompiledPlanning =
    * LIVE ROUND 7: no video of the pool read (two queries) is about the topic; the customer is asked before approval how to go on. Nothing is priced or held. PR 3, decision 7.5 (`why: "named_shortfall"`): the named Facebook page has fewer
    * deliverable posts in the pool than asked.
    */
-  | { kind: "question"; ask: Ask; question: string; options: string[]; reads: { pool: number; exposure: number }; why?: "no_about" | "named_shortfall" | "occurrence" | "occurrence_year" };
+  | { kind: "question"; ask: Ask; question: string; options: string[]; reads: { pool: number; exposure: number }; why?: "no_about" | "named_shortfall" | "occurrence" | "occurrence_year" | "count" | "per_parent" };
 
 /** What the understand step cost (USD), carried on the result so the caller adds it to the mission's model cost (never a charge). */
 export type WithCost<T> = T & { llmCostUsd?: number };
@@ -83,9 +90,16 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }): Pro
   // THE CUSTOMER'S ANSWER TO THE NAMED-PAGE QUESTION (decision 7.5) and TO THE OCCURRENCE QUESTION (decision 7) are ready answers: they are read as choices and the request is read without their words
   const shortfallChoice = namedShortfallChoiceOf(deps.mission.answer_text);
   const occurrenceAnswer = occurrenceChoiceOf(deps.mission.answer_text);
-  const answeredReady = isNamedShortfallAnswer(deps.mission.answer_text) || isOccurrenceAnswer(deps.mission.answer_text) || noAboutChoiceOf(deps.mission.answer_text) !== null;
+  const answeredReady = isNamedShortfallAnswer(deps.mission.answer_text) || isOccurrenceAnswer(deps.mission.answer_text) || noAboutChoiceOf(deps.mission.answer_text) !== null || deps.answerIsChoice === true;
   const occurrenceEdit: Occurrence | undefined = occurrenceAnswer && occurrenceAnswer.kind !== "ask_year" ? occurrenceAnswer : deps.occurrence;
   let ask = buildAsk(deps.mission.request_text, answeredReady ? null : deps.mission.answer_text, Number.isFinite(at) ? at : deps.nowMs, { ...(deps.edits ?? {}), ...(occurrenceEdit && !deps.edits?.occurrence ? { occurrence: occurrenceEdit } : {}) });
+  // ROUND 14, PART B: what the customer chose at the count questions and the budget (in the request's words or chosen) join the Ask
+  const choices = deps.choices ?? {};
+  const budget = choices.budget ?? budgetOfWords(deps.mission.request_text) ?? undefined;
+  if (choices.count !== undefined && ask.count === null) ask = { ...ask, count: choices.count };
+  if (choices.perParent === "all" && ask.comments !== "none") ask = { ...ask, comments: "all" };
+  else if (typeof choices.perParent === "number" && ask.comments !== "none") ask = { ...ask, commentsPerParent: choices.perParent };
+  if (budget !== undefined) ask = { ...ask, edits: { ...ask.edits, budget } };
   const reads = { pool: 0, exposure: 0 };
   // DECISION 7, A RECURRING EVENT with no year or date: «تقصد أنهي مرة؟» before anything is read or held (Facebook, Instagram, YouTube). «حدد سنة» asks for the year in words; a ready answer or a year is the choice.
   if (occurrenceAnswer?.kind === "ask_year") return { kind: "question", ask, why: "occurrence_year", question: OCCURRENCE_YEAR_QUESTION_AR, options: [], reads };
@@ -94,6 +108,11 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }): Pro
   }
   // a recurring event whose question was answered earlier (the answer of a later question replaced it) and was not kept: the default, the latest occurrence
   if (!ask.occurrence && answeredReady && isRecurringEvent(ask, deps.mission.request_text)) ask = { ...ask, occurrence: { kind: "latest" } };
+  // THE COUNT AND THE COMMENTS PER PARENT (Part B): asked before anything is read, only by the production run (`askCount`), at most three cards in all
+  if (deps.askCount === true) {
+    const q = questionNeeded(ask, choices, deps.questionsAsked ?? 0);
+    if (q && ask.platform && (COMPILED_PLATFORMS as ReadonlyArray<string>).includes(ask.platform)) return { kind: "question", ask, why: q.why, question: q.question, options: q.options, reads };
+  }
   const recorded = new Set<string>();
   const card = chooseCard(ask, "parents", { catalogOnly: deps.catalogOnly === true });
   if (!card) return { kind: "cannot", ask, reason: "no_parent_card", reads };
@@ -147,15 +166,22 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }): Pro
         if (mapPage(commentsCard, r.page).length > 0) withComments += 1;
       }
     }
-    const result = compilePlan({
-      ask, pool: { card: poolCard, params, pages }, exposure: (id) => exposure.get(id), capabilityOf: (id) => deps.catalog.byId.get(id)?.capability ?? null, pricingSettings: deps.pricingSettings, nowMs: deps.nowMs, ...(catalogOnly ? { catalogOnly: true } : {}),
+    const compileWith = (a: Ask) => compilePlan({
+      ask: a, pool: { card: poolCard, params, pages }, exposure: (id) => exposure.get(id), capabilityOf: (id) => deps.catalog.byId.get(id)?.capability ?? null, pricingSettings: deps.pricingSettings, nowMs: deps.nowMs, ...(catalogOnly ? { catalogOnly: true } : {}),
       ...(extra.counters ? { counters: extra.counters } : {}), ...(extra.channels ? { channels: extra.channels } : {}), ...(shortfallChoice === "only_found" || shortfallChoice === "fill" ? { namedChoice: shortfallChoice } : {}),
     });
+    const result = compileWith(ask);
     if (!result.ok && result.reason === "named_shortfall") {
       // DECISION 7.5: before approval, nothing priced or held
       return { kind: "question", ask, why: "named_shortfall", question: namedShortfallQuestionAr(ask.source.text ?? "", result.found, result.need, toArabicDigits, ask.topic.text), options: [NAMED_SHORTFALL_OPTIONS_AR.onlyFound, NAMED_SHORTFALL_OPTIONS_AR.fill, NAMED_SHORTFALL_OPTIONS_AR.cancel], reads };
     }
     if (!result.ok) return { kind: "cannot", ask, reason: result.reason, reads };
+    // THE BUDGET IS A HARD CEILING on the hold (Part B): the largest version that fits, priced by the same price function; none fits: the plan is not made and the reason is the budget
+    if (ask.edits.budget !== undefined) {
+      const fit = fitToBudget(compileWith, ask, ask.edits.budget, need, ask.parentKind === "videos" ? "فيديو" : ask.parentKind === "tweets" ? "تغريدة" : "منشور");
+      if (!fit.ok) return { kind: "cannot", ask, reason: "budget_too_small", reads };
+      return { kind: "plan", plan: fit.plan, ask: fit.ask, result: fit.result, reads };
+    }
     return { kind: "plan", plan: result.plan, ask, result, reads };
   };
 

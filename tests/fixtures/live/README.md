@@ -38,3 +38,7 @@ Where the compiler's own inputs differ from the words the model used live (the i
 ## Added in live round 11 (3 Nov 2026): `round11/stored-public-plans.json`
 
 No raw page is added. One file of NUMBERS read by SELECT: the stored `plan_public` stages (key, deliver, expected_rows only: no text, no id of a person) of two finished missions of the test account, with the job's own number and the number the file and the chat say, for `tests/round11-orders-count.test.ts`.
+
+## Added in round 14 (3 Nov 2026): the two missions of live round 12
+
+`msn_236f4af6fe4cb890abee` (Facebook, 82 files: 79 raw pages, `rows/posts.json`, `rows/comments.json`, `rows/comments_replies.json`) and `msn_5d5a9b2a933aeaa47d81` (YouTube, 19 files: 16 raw pages and 3 rows files), from the owner's admin ZIP, anonymised with `anonymise.py` (random salt, never written). 101 files in all; the inventory test is CHANGED to 36 missions and 667 files. Their calls are in `call-index.json` (read-only SELECT on `mission_calls`); the paging and reply tokens the log keeps cut at 80 characters are rebuilt from the stored pages in call order and match the logged ones where the log was read (first characters). A Facebook post link that has no numeric id (a `pfbid` link) is indexed by a numeric surrogate (the first 8 bytes of the sha-256 of the first 24 characters of the pfbid, as an 18-digit number: the call log cuts a link at 80 characters; the replay gateway computes the same). Used by `tests/round14-*.test.ts`.

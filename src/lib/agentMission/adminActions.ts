@@ -125,12 +125,14 @@ const SUMMARY_COLUMNS ="id,request_text,status,question_ar,reserved_points,unit_
 
 /** The page's first load: the worker's heartbeat (alive or not), the model setting, and the latest missions. */
 export async function loadOverview(client: any, now: number = Date.now()) {
-  const [beats, setting, missions, pricing, redesign] = await Promise.all([
+  const [beats, setting, missions, pricing, redesign, contract] = await Promise.all([
     client.from(AGENT_HEARTBEAT_TABLE).select("worker_id,beat_at,active_missions,model,version,rss_mb,tree_rss_mb").order("beat_at", { ascending: false }).limit(5),
     client.from(AGENT_SETTINGS_TABLE).select("value").eq("key", PLANNING_MODEL_SETTING_KEY).maybeSingle(),
     client.from(MISSION_TABLE).select(SUMMARY_COLUMNS).order("created_at", { ascending: false }).limit(LIST_LIMIT),
     client.from(AGENT_SETTINGS_TABLE).select("value").eq("key", MISSION_PRICING_SETTING_KEY).maybeSingle(),
     client.from(AGENT_SETTINGS_TABLE).select("value").eq("key", REDESIGN_FLAGS_KEY).maybeSingle(),
+    // READ ONLY (round 14): the last files whose description the delivery contract completed (the worker's internal events), for the admin's «ملفات صُحّحت تلقائيًا»
+    client.from(MISSION_EVENTS_TABLE).select("mission_id,message_ar,counts,created_at").eq("kind", "call").order("created_at", { ascending: false }).limit(300),
   ]);
   const rows = Array.isArray(beats.data) ? beats.data : [];
   const last = latestBeat(rows);
@@ -149,6 +151,7 @@ export async function loadOverview(client: any, now: number = Date.now()) {
     platformFlags: readPlatformFlags(redesign.data?.value),
     testAccountEmail: AGENT_TEST_ACCOUNT_EMAIL,
     missions: Array.isArray(missions.data) ? missions.data : [],
+    contractEvents: (Array.isArray(contract?.data) ? contract.data : []).filter((e: any) => e?.counts && Number(e.counts.adm_contract) === 1).slice(0, 20).map((e: any) => ({ mission_id: String(e.mission_id), message_ar: String(e.message_ar ?? ""), created_at: String(e.created_at ?? ""), r1: Number(e.counts.adm_r1) || 0, r2: Number(e.counts.adm_r2) || 0, r3: Number(e.counts.adm_r3) || 0, r4: Number(e.counts.adm_r4) || 0, completed: Number(e.counts.adm_completed) || 0 })),
   };
 }
 

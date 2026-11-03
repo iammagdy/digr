@@ -20,7 +20,8 @@ const plan = (): PricedPlan => ({
   stages: [
     stage({ key: "posts", title_ar: "المنشورات", expected_rows: 3, planned_rows: 3 }),
     stage({ key: "comments", title_ar: "التعليقات", expected_rows: 517, planned_rows: 517, parent_key: "posts", per_parent_rows: 173 }),
-    stage({ key: "comments_replies", title_ar: "الردود", expected_rows: 17, planned_rows: 586, parent_key: "comments", replies_of: "comments", replies_open: true, replies_uncapped: true, per_parent_rows: 50 }),
+    // CHANGED (round 14, found by the delivery contract's replay): the compiler writes `expected_rows` = `planned_rows` = 586 for open replies (the estimate the hold is made from); the first version of this fixture said 17 and so never had the real shape, and the first fix (read `expected_rows`) gave 1,106 on a real plan
+    stage({ key: "comments_replies", title_ar: "الردود", expected_rows: 586, planned_rows: 586, parent_key: "comments", replies_of: "comments", replies_open: true, replies_uncapped: true, per_parent_rows: 50 }),
   ],
   price: { deliveredRows: 1106, reservePoints: 5749, unitPricePoints: 4.519873, maxChargePoints: 4999, minChargePoints: 200 },
   compiled: { by: "compiler", platform: "facebook", promises: { posts: { type: "exact", n: 3 }, comments: { type: "counter", n: 517, counter: 517 }, comments_replies: { type: "open", n: 586, counted: 17, counted_comments: 15 } } },
@@ -55,11 +56,19 @@ describe("the card before approval and every surface after the run say the same 
   });
 });
 
-describe("a plan of another platform keeps the judged promise it had (TikTok, X and Instagram are unchanged)", () => {
-  it("platform tiktok: the replies are judged against the counters of the delivered comments, as before", () => {
+describe("every compiled platform keeps the card's number (round 14: the delivery contract found TikTok at 369 on the card against 406 in the file, on its stored pages)", () => {
+  it("platform tiktok, x, instagram: the replies promise is the number the planning counted, never the counters of the delivered comments", () => {
+    for (const platform of ["tiktok", "x", "instagram", "youtube"]) {
+      const p = plan();
+      (p.compiled as { platform: string }).platform = platform;
+      const j = withRepliesJudged(reportedPlan(withPromiseCaps(p), { posts: 3, comments: 366, comments_replies: 95 }), rowsByStage, () => true);
+      expect(j.stages.find((s) => s.key === "comments_replies")!.expected_rows, platform).toBe(17);
+    }
+  });
+  it("replies that promised no number (no `counted`) are not in the promise: the card's total does not count them either", () => {
     const p = plan();
-    (p.compiled as { platform: string }).platform = "tiktok";
+    delete (p.compiled!.promises.comments_replies as { counted?: number }).counted;
     const j = withRepliesJudged(reportedPlan(withPromiseCaps(p), { posts: 3, comments: 366, comments_replies: 95 }), rowsByStage, () => true);
-    expect(j.stages.find((s) => s.key === "comments_replies")!.expected_rows).toBe(100);
+    expect(j.stages.find((s) => s.key === "comments_replies")!.expected_rows).toBe(0);
   });
 });

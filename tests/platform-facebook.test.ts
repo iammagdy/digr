@@ -96,7 +96,7 @@ describe("acceptance 1: M17 and M19 choose the keyword search with the two Cairo
     expect(typeof stats.served[1].params.cursor).toBe("string");
     expect(stats.served.some((s) => s.endpointId === "anyapi.facebook.user.posts")).toBe(false);
     expect(p.plan.stages[0].endpoint_id).toBe(FBS);
-    expect(p.plan.stages.map((s) => s.key)).toEqual(["posts", "comments"]);
+    expect(p.plan.stages.map((s) => s.key)).toEqual(["posts", "comments", "comments_replies"]); // CHANGED (round 14): the replies card is verified, so every account's plan has the replies step
     expect(p.plan.compiled?.by).toBe("compiler");
   });
 
@@ -208,14 +208,15 @@ describe("the exposure check on the real empty comments page (decision 7.3)", ()
 });
 
 describe("the comments and replies stages of a Facebook plan", () => {
-  it("every account: the comments stage is the verified comments card, the promise is the sum of the chosen posts' counters, and the replies are said not to be included (no verified replies card: 8 of 8 real reads were empty)", async () => {
+  it("every account: the comments stage is the verified comments card, the promise is the sum of the chosen posts' counters, and the replies step is there (the replies card is verified, round 14)", async () => {
     const p = planOf((await plan({ answer: NAMED_SHORTFALL_OPTIONS_AR.fill })).out);
     const comments = p.plan.stages.find((s) => s.key === "comments")!;
     expect(comments.endpoint_id).toBe("scrapecreators.x.v1-facebook-post-comments");
     expect(comments.engine?.parent_binding).toEqual({ param: "url", from: "link" });
     expect(p.result.promises.comments.type).toBe("counter");
-    expect(p.plan.unserved_steps?.map((s) => s.what_ar)).toEqual(["الردود"]);
-    expect(p.plan.stages.some((s) => s.replies_of !== undefined)).toBe(false);
+    // CHANGED (round 14): the replies card is verified on the real pages of live round 12, so the replies step is in every account's plan
+    expect(p.plan.unserved_steps).toBeUndefined();
+    expect(p.plan.stages.some((s) => s.replies_of !== undefined)).toBe(true);
   });
 
   it("a test account (decision 7.4): the replies stage is built by the catalog_only card, bound to each comment's two tokens, inside the 0.20 USD cap, and its promise is open", async () => {
@@ -223,8 +224,8 @@ describe("the comments and replies stages of a Facebook plan", () => {
     const replies = p.plan.stages.find((s) => s.replies_of !== undefined)!;
     expect(replies.endpoint_id).toBe("anyapi.facebook.comment_replies");
     expect(replies.engine?.parent_binding).toMatchObject({ param: "feedbackId", from: "feedback_id", also: [{ param: "expansionToken", from: "expansion_token" }] });
-    expect(replies.max_pages).toBeGreaterThan(0);
-    expect(replies.max_pages! * 0.0012 * 2).toBeLessThanOrEqual(0.2 + 1e-9);
+    // CHANGED (round 14): the replies card is verified, so it takes no share of the 0.20 USD cap of the catalog-only tools
+    expect(replies.max_pages).toBeUndefined();
     expect(p.result.promises.comments_replies.type).toBe("open");
     expect(p.plan.unserved_steps).toBeUndefined();
   });

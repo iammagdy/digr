@@ -1,5 +1,5 @@
 {
- "_about": "THE CALL LOG OF THE TIKTOK AND X MISSIONS, anonymised (read-only SELECT on mission_calls, 2026-11-02; listed in the PR). One entry per stored call: [call id, phase, endpoint, status, rows, inputs]. Every link input is reduced to the numeric id it carries (no handle, no name); search inputs are Diger's own request words. M12 and M14: every call; the others: their planning calls only. M5 call_0002 is left out: its stored inputs were cut at 80 characters by the call log, so the page it answered cannot be keyed honestly. The replay gateway (tests/helpers/replayGateway.ts) serves a stored page only for the endpoint and the same inputs. Live round 8 (3 Nov 2026): msn_50e3b83c44e7ebd7f577, its 14 replies calls only (read-only SELECT on mission_calls), the cursor inputs are the opaque tokens the pages gave. Added in PR 3 (4 Nov 2026): the Facebook, Instagram and YouTube missions of FOUNDATION-PLAN (read-only SELECT on mission_calls; each SELECT is listed in the PR). Link inputs are reduced to the numeric id they carry (an Instagram short code is converted to its media id by the code's own base-64 rule); the Instagram account handle is a placeholder (a personal field; the replay gateway ignores its value); a post link that carries no numeric id (a pfbid link) is not indexed, so a replay never serves a page for a post it cannot tell apart.",
+ "_about": "THE CALL LOG OF THE TIKTOK AND X MISSIONS, anonymised (read-only SELECT on mission_calls, 2026-11-02; listed in the PR). One entry per stored call: [call id, phase, endpoint, status, rows, inputs]. Every link input is reduced to the numeric id it carries (no handle, no name); search inputs are Diger's own request words. M12 and M14: every call; the others: their planning calls only. M5 call_0002 is left out: its stored inputs were cut at 80 characters by the call log, so the page it answered cannot be keyed honestly. The replay gateway (tests/helpers/replayGateway.ts) serves a stored page only for the endpoint and the same inputs. Live round 8 (3 Nov 2026): msn_50e3b83c44e7ebd7f577, its 14 replies calls only (read-only SELECT on mission_calls), the cursor inputs are the opaque tokens the pages gave. Added in PR 3 (4 Nov 2026): the Facebook, Instagram and YouTube missions of FOUNDATION-PLAN (read-only SELECT on mission_calls; each SELECT is listed in the PR). Link inputs are reduced to the numeric id they carry (an Instagram short code is converted to its media id by the code's own base-64 rule); the Instagram account handle is a placeholder (a personal field; the replay gateway ignores its value); a post link that carries no numeric id (a pfbid link) is not indexed, so a replay never serves a page for a post it cannot tell apart. Round 14 (3 Nov 2026): msn_236f4af6fe4cb890abee (Facebook) and msn_5d5a9b2a933aeaa47d81 (YouTube), every ok call (read-only SELECT on mission_calls, listed in the PR). A Facebook post link without a numeric id (a pfbid link) is indexed by a numeric surrogate (the first 8 bytes of the sha-256 of the pfbid as a decimal number, 18 digits: tests/helpers/replayGateway.ts does the same); the paging and reply tokens are the 80 characters the call log keeps, rebuilt from the stored pages in call order and checked against the logged tokens' first characters.",
  "missions": {
   "msn_5851abc92a1e6645a9cd": [
    [
@@ -2555,6 +2555,1043 @@
     10,
     {
      "url": "1432075358536893"
+    }
+   ]
+  ],
+  "msn_236f4af6fe4cb890abee": [
+   [
+    "call_0001",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    7,
+    {
+     "endDate": "2026-11-03",
+     "keyword": "الذكاء الاصطناعي العربية",
+     "startDate": "2026-08-03"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    5,
+    {
+     "cursor": "{\"page_number\": 0, \"flow_cursors_serialized\": {\"INTERNAL_DEBUG_MODULE\": \"{}\", \"S",
+     "endDate": "2026-11-03",
+     "keyword": "الذكاء الاصطناعي العربية",
+     "startDate": "2026-08-03"
+    }
+   ],
+   [
+    "call_0003",
+    "planning",
+    "anyapi.facebook.search_posts",
+    "ok",
+    20,
+    {
+     "endDate": "2026-11-03",
+     "limit": 20,
+     "query": "الذكاء الاصطناعي العربية",
+     "startDate": "2026-08-03"
+    }
+   ],
+   [
+    "call_0004",
+    "planning",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    5,
+    {
+     "url": "406145635418055703"
+    }
+   ],
+   [
+    "call_0005",
+    "planning",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129"
+    }
+   ],
+   [
+    "call_0008",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    5,
+    {
+     "url": "406145635418055703"
+    }
+   ],
+   [
+    "call_0009",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129"
+    }
+   ],
+   [
+    "call_0010",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNjE0OgF_Hjzf2dc8TUw-fOvdCfcr0VqsBb1GwGPFHoVzPY-zEp-7UbGZOstvGWwf9Xc9"
+    }
+   ],
+   [
+    "call_0011",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNjE4OgF_QfYxTFqMgTrebXOFH058eDFEkW5eIMIhcLMJMQOUEcCX4Q80hhbL6wSmKkvS"
+    }
+   ],
+   [
+    "call_0012",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNjI3OgF_6_FiyKKiZy_7Dd4EhLvhppoTv-lgyU457jGFH0zffaCkw-vCipQH6CtyUUPM"
+    }
+   ],
+   [
+    "call_0013",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNjMyOgF_lZiUqC36Lfnm1tEKrKw6fff62kfYWyzHGQOHs7512AHzpc0f5TwDuPpks0Ho"
+    }
+   ],
+   [
+    "call_0014",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNjM3OgF_S1v5I8jiEZnfgJUO6_U2Ln-W605Np8s5UdrQ2WnhvErugfLK9qe4ASRHLNGh"
+    }
+   ],
+   [
+    "call_0015",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNjQzOgF_B9vX7Z-7JevIE9iEM49_u2a5BDj5SYa8jmGtQrPCVSXu7kfsHobzkPfQS_8r"
+    }
+   ],
+   [
+    "call_0016",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNjQ3OgF_XeZCXXu9KScgc8yeXpuZBlNM0UWUxtO525qXAFVr2WjZwFR1n77f3sQKhdRf"
+    }
+   ],
+   [
+    "call_0017",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNjU2OgF_FQY8JAdGd24GYvvBcspDZdzepa5mDBTFSrtHgYkJJBJtCDp2ZQ5U1c5DHhRC"
+    }
+   ],
+   [
+    "call_0018",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNjYwOgF_oYVDgz6wf1xf-f5VUPVcmPNzfFfhrVvYLw3owvj6YxGHjdp-PQtpGrevUDNz"
+    }
+   ],
+   [
+    "call_0019",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNjY1OgF_2sMRt7wMUe3KuyXzNupDgvsOSVqYBBuiyxYbWoyoG6bA6xDxNQIJocYGKjzp"
+    }
+   ],
+   [
+    "call_0020",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNjcwOgF_8Vprt0sUzFWFMPIRr4SaVLxVG5ZN58X2avoGrA7fBi38a5Q0N3hkF6aoLXJ8"
+    }
+   ],
+   [
+    "call_0021",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNjc1OgF_A8mIHCb7_5Y3F8Fy6THWqEBVEqQz7AifCUFkVD3YcDZ2BG4MbieOY98Jywvv"
+    }
+   ],
+   [
+    "call_0022",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNjgwOgF_Thh-nWWYKe19x6YLrqpatLApVWTpQushFwoT24QeyWnQgZiylXtYrwlXNFtB"
+    }
+   ],
+   [
+    "call_0023",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNjg2OgF_sRRzEQFRS5fumGcaqZVienEC0jPNirgp2S2tuJsSZd4sPnvJA4TtfKvx9P4E"
+    }
+   ],
+   [
+    "call_0024",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNjkwOgF_l2e5VtasSdTLxTkJ22SS_-SMhG0kjODo44EnW2SRAgxElQWF9v5z462EyMTV"
+    }
+   ],
+   [
+    "call_0025",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNjk1OgF_1C1NfVHrgGOqpnxMFmFypvWpyzfKgIxFKtQfIeKxh4Pa_B3FW_6knyVsm8qU"
+    }
+   ],
+   [
+    "call_0026",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNjk5OgF_jxu8BcoiyB5dQFCK-2gNPKWE8xuuOLNZPQLenS2aCNeVj8eIoOSzO7DfepcK"
+    }
+   ],
+   [
+    "call_0027",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNzA5OgF_yWymeDIyOYl6LEJwgLWE2jufIdM9VgoN_AFEZXvgmesNSo4KGmZdZXOCWHvR"
+    }
+   ],
+   [
+    "call_0028",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNzEzOgF_i3fVGCSqchfpFrltXGVWxAL5rfkSQoL_DW1n9VRDW37GLyaCQCAhfZZ9nFN_"
+    }
+   ],
+   [
+    "call_0029",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNzE4OgF__uB3UWbQ5-koX8gqc4S2iby3r0MF9JZ_v4LN9fznjDZPnOq1Y-4L5NJsCeze"
+    }
+   ],
+   [
+    "call_0030",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNzIzOgF_RB9bVRxP63atdv_wUNZCbClzY-LaLX9e5uXDBeyDKz56UEt1FFHRI_mc6JM2"
+    }
+   ],
+   [
+    "call_0031",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNzI4OgF_WeEUfhJ3ebY7kJvNxnlApwfr6tdkIT6_Ua5uzj4qjRqza1UoMPReN21bjQCs"
+    }
+   ],
+   [
+    "call_0032",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNzMyOgF_0-JWGTqVfanUkiiBqhwvomuBq9IMLeO65bzqw_UEtlQiIOF8ggdth0XCZlIb"
+    }
+   ],
+   [
+    "call_0033",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNzM2OgF_olgmN4qZzjAgetURkEvVVhoJrq6mZyg-kaDVcJZ81xJHytBfzlxuZ790TSdg"
+    }
+   ],
+   [
+    "call_0034",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNzQwOgF_QF255I4INubJxgOvaGdZVrYMS_cCejJWOuQxbeLW3KCsVjgfTP6DYAXzZ8bH"
+    }
+   ],
+   [
+    "call_0035",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNzQ3OgF_AtBgoRsQpecTvhFHszwRXUzckgfgbgB8sU7GH4wYL1p1X0bQc0LzkoqXtsZB"
+    }
+   ],
+   [
+    "call_0036",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNzU1OgF_ZktOwanIy29kwdKW6gfyHGb0bT4IfLr3CB1hFD9tlvmOEr65HvOBYRBDxVMl"
+    }
+   ],
+   [
+    "call_0037",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNzYwOgF_Hrk5NBfUO9MWGj7fQjMRB8sB7n6VQ_J7chvHUgrQxJvPkY_EvtmmZKOBEEFk"
+    }
+   ],
+   [
+    "call_0038",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNzY0OgF_N9CkWSHNywIoEg8eRcHZ787Dz2bHlJ2NbzUuQXQ9Kb6TghvaKFqdC4FEdPLW"
+    }
+   ],
+   [
+    "call_0039",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNzY5OgF_dQ5erYi1kxL0Fc_4ausMan01PwSNF3bpwN6t3npOdPDTdG9K62_yPD1pxySF"
+    }
+   ],
+   [
+    "call_0040",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    1,
+    {
+     "url": "111458818502110129",
+     "cursor": "MToxNzkzNzIwNzc0OgF_yNQLdWMLs0uhSPC0YVu76gIWHXygsj5ccXAQEXjvGCy696RQHPo3uBMpdBWR"
+    }
+   ],
+   [
+    "call_0041",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "4499696513603664"
+    }
+   ],
+   [
+    "call_0042",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "4499696513603664",
+     "cursor": "MToxNzkzNzIwNzg1OgF_UukQAU96diGIx-80URpMr9mQDxRw9fgkiQPO3krsrLCaPOwogTVG8eiZuR6B"
+    }
+   ],
+   [
+    "call_0043",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "4499696513603664",
+     "cursor": "MToxNzkzNzIwNzkwOgF_bkQoBc6QEfvIzYXx3-wI1DIj-0yK6WbCvl65EHeIa86Qv2PrNcvm6MBrWuQQ"
+    }
+   ],
+   [
+    "call_0044",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "4499696513603664",
+     "cursor": "MToxNzkzNzIwNzk0OgF_b1HEmacvG_kZtGbamv_0t3g3o-XvA8pJC3iQ0AhhFhge98JQP1B2hGxN-wC4"
+    }
+   ],
+   [
+    "call_0045",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    10,
+    {
+     "url": "4499696513603664",
+     "cursor": "MToxNzkzNzIwNzk4OgF__iUgz5sQmknYc0wv_kSRNewTP9V0SgBlIb3pTy-b1LMqX0K6Ybhw6cZ8Rn7l"
+    }
+   ],
+   [
+    "call_0046",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    1,
+    {
+     "expansionToken": "MjoxNzkzNzIwNjEwOgF_HJm0D0scSpyRFlPsVB6anmpf5aj2GrO0thWbWJv7_3oFViFc4aWnqSrtnpV3",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwMlY4bmgzZDlxYmpWSm5EYnFlZUpBZXBGRkRpZ2hkTDRWV3N0eGMxV3BvQmg5"
+    }
+   ],
+   [
+    "call_0047",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    1,
+    {
+     "expansionToken": "MjoxNzkzNzIwNjE0OgF_zW1OuOF0PdHYcAqCqzuXy37-XjmcVd0eMagemfHPSN5ZVReu6OADwWCWJzre",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwVnhVWVBoZURVYlFLeUJwRkxNenA1QlI0c0h0aXZFYVFlSndzR2tab3NHeFZo"
+    }
+   ],
+   [
+    "call_0048",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    3,
+    {
+     "expansionToken": "MjoxNzkzNzIwNjE0OgF_LieWKEzBJl9t5lqpYYLiZIoNjWkSlF8totwMqJIPyT1IeanHmALA1grSXDhL",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwWEVCUUN0VnZlNW9MRG93QTcxUFgxTWtUTjNIcHJjSE1UVDFidDMxd1VRS2Uz"
+    }
+   ],
+   [
+    "call_0049",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    1,
+    {
+     "expansionToken": "MjoxNzkzNzIwNjE0OgF_ikdTQdqrxlOjxFgNFSCznu9gEudCqpoKFxUCg8BLLVhITBswBUT5yHNcly21",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwNFlTSEJ6U3Z5ckxaZTlMNXZEQmhEOURrTHRCZHV3angyQkJ4S1RNS1FHSjE5"
+    }
+   ],
+   [
+    "call_0050",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    4,
+    {
+     "expansionToken": "MjoxNzkzNzIwNjE0OgF_RlX8fNb0ydknMWYvomUr7Hzn60PPTpLa-GziXPAkhe63cRKMXFIepNp2Y-wY",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwN3JRVm53bmFmN3Fya0FUTGFkcm1KcmlNQnJKSjZWN04xQUxNeFM5dHd0bTlv"
+    }
+   ],
+   [
+    "call_0051",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    3,
+    {
+     "expansionToken": "MjoxNzkzNzIwNjE0OgF_W-AsVBKiWlBxB6NzH0Fqmjxy2YaINHKjUqmtPCOyHbqXhrdnGxGhBu3zcZd9",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwNFdmSGJQN0hXYUJwTGZZMkxXNVVmY1lMWkpZOEZZS3haekJ1Ynl4OVFFR1Bk"
+    }
+   ],
+   [
+    "call_0052",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    2,
+    {
+     "expansionToken": "MjoxNzkzNzIwNjE0OgF_m1cLddZuBur5Rt54_wTHE28TqWeCfzL_9-7fS1pXd_A2kLaClbtEHCz1Cj1w",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwM1MyM2JVaTRmb2F5QXdQaXRtbWl4YThUYkw1NnR1Y29DOHE4U2pvcW53Wk5E"
+    }
+   ],
+   [
+    "call_0053",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    2,
+    {
+     "expansionToken": "MjoxNzkzNzIwNjE0OgF__K_KErGRGd9bqCaYsK6RDMfJtbskG3nLWz4AQVQXrFcGEzlg_JWYqVGX6leh",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwM1h6cXZ4YjljdUsxOFVNQUFYTVZpTnZhVEx2M1ZQdlJ1NmZ4d2E1cE1jTldV"
+    }
+   ],
+   [
+    "call_0054",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    3,
+    {
+     "expansionToken": "MjoxNzkzNzIwNjE4OgF_bnPR3lLfPXNYE1Ius0gSby4Ow4mNo6BXJw_o6jxrKl5jkJZgcszmE0Pbbg3h",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwMk50SDhveEZmSmozeG50czZRMktCY2labXdDYjhvMm1FR3Z1U2lkaGE3RjVH"
+    }
+   ],
+   [
+    "call_0055",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    2,
+    {
+     "expansionToken": "MjoxNzkzNzIwNjMyOgF_inIo6Oejq20uolMBB-yS-UMInCffx-Ic4DvMnsEvFdWrmKwaOQ_Ru6fF6d5K",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwMzhIc0tCTTdEZzJiOWZHOVdYYjdNeDF1UzVXQ0V2QlFkdkY2SE5IYkNQYmlu"
+    }
+   ],
+   [
+    "call_0056",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    3,
+    {
+     "expansionToken": "MjoxNzkzNzIwNjMyOgF_bA8wrSnxZp1QFsS4xWwFwr5GrPgLw2q6bj_mu_rkEqqc3H3jIWrBOE7z_ul7",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwN203RGN6OHJ4MndkQ3JZNGtxc0N1OTZuUlFKS3c1ZnM0U01aeDNHakJwRnJi"
+    }
+   ],
+   [
+    "call_0057",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    1,
+    {
+     "expansionToken": "MjoxNzkzNzIwNjMyOgF_2oxFm_0XeHPRap9d88F3wus5pzWjbjrlEb9bwWqhJnLqmTJhVsqLEyCspjTh",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwNDJxWWpBcVlpVXhkRHJuZ0VMVXZBcExqb01LUENia3d2dHNEOTVtWGtmazZC"
+    }
+   ],
+   [
+    "call_0058",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    2,
+    {
+     "expansionToken": "MjoxNzkzNzIwNjU2OgF_2Py7FwER8cclJGPQ0x71kR96zeHwqPEP_KA_dFtzIiz-HrgJIEIGdYMyYeNL",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwNDlKNWlYREY2cnR3QWs1V2ZwSzh6eDJ5RnN4dEMyQjJyR3BXS0JpV25oejky"
+    }
+   ],
+   [
+    "call_0059",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    1,
+    {
+     "expansionToken": "MjoxNzkzNzIwNjkwOgF_ER3Yx5YEd8dZ_1BaQl62nrcKOtEWqmQ1hcsmy80QcvuVWW_M2Y2lj3e2kHCJ",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwNEhMWjdreVMyenNBYWJSY0x3Q1dCczJFNUJrTWcybU1MRDJFVE1maU5wc1hk"
+    }
+   ],
+   [
+    "call_0060",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    5,
+    {
+     "expansionToken": "MjoxNzkzNzIwNjk5OgF_Zou3ybK-Kb6_VG2JZfXONRmvrgjiv_XVtqWetJlQP6g3HnvsfatR5YwqPn3B",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwMmdzMTh6YnJQeEJiWDRhdnNDRkQ5emN3WFAzTGMxazhuYXBIQ2pqcE1YbVpi"
+    }
+   ],
+   [
+    "call_0061",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    3,
+    {
+     "expansionToken": "MjoxNzkzNzIwNzEzOgF_a7KGQ8dfqmNefj0R7lnjKn2iTgoOqrIGqk9NRPZQda7OEoJV6D4wc-E48vfM",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwaWhUYW1GWE1IUXJmOGRiUkNjcGJaS1lyZXVSRjhXSDZFb2ljTEFpaWRuekxm"
+    }
+   ],
+   [
+    "call_0062",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    2,
+    {
+     "expansionToken": "MjoxNzkzNzIwNzEzOgF_5hlMQ6GxOx61WmtTrptjfF_CiZchubQ1NKblk082kUXOUlpX9JAjiSaFsgLh",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwMno4b1VEdHZVZGdnbU5aRDR1d25OVk5ycGU2THRMNFpOaFllbTcyUXgyMkhU"
+    }
+   ],
+   [
+    "call_0063",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    1,
+    {
+     "expansionToken": "MjoxNzkzNzIwNzIzOgF_FgJH8iw87EL64aJibjPwYXY6fVPRXIzWPZeLvvMBibSupXHxKtv2yDPrAEIU",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwZzhKY3E4NDF3NnloMWFyTVJnV05kNlh6TXlveGtyUkJpcG1vdU52azRCWDZa"
+    }
+   ],
+   [
+    "call_0064",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    3,
+    {
+     "expansionToken": "MjoxNzkzNzIwNzQwOgF_gFHWVP0sZycmoFt0uVUT_wKi8tpwYP4D3_tArG6wniXC7G1HJxWT7ntZQwaD",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwMkdadFlUU29vbjRFN0JkWGtzeXdvUDltNk5CeDhWblROcVNnWXVoeGpldkti"
+    }
+   ],
+   [
+    "call_0065",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    1,
+    {
+     "expansionToken": "MjoxNzkzNzIwNzQ3OgF_SAZbWMIEP5KjfSX_uGGqBAtvkPS8JCaPf3ouiMIOuyjzpspR0BTwlwy60rX-",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwZExFaEpNMWEydE1NeW11VGl4bVpwcGtOdExQUXZFU1NZcnRNd0NEek5yVDFS"
+    }
+   ],
+   [
+    "call_0066",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    1,
+    {
+     "expansionToken": "MjoxNzkzNzIwNzQ3OgF_U7NXI1mfqx-kPKZMJu4g41MlYCcAT2_OyHM5FDKbi3vxeO1UoAoV5C_sW1LB",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwMlBQbTVZMmJZWngxOTVFSmVjcFRXTHhkdnVUQnh2Rzg2V05IbVVmV3NCQ1lm"
+    }
+   ],
+   [
+    "call_0067",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    1,
+    {
+     "expansionToken": "MjoxNzkzNzIwNzYwOgF_hV95WGIoer4H4UliLYgB46BtXVSGWUb4vvTOeqF6oM8k26BJjS7Vxs6c-nay",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwMjk2YXY4ZnhKeXh6MWZaOFpGeHAzaWo2YWFISzJlMnYza1R1ajg5YXB0cnpR"
+    }
+   ],
+   [
+    "call_0068",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    2,
+    {
+     "expansionToken": "MjoxNzkzNzIwNzg1OgF_aGbe3WBfp5AT5YBO-tKvkFsoUZ5r15xxRd4h8Vt9H_gnElDwFJyBjkkDSx9c",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwM3dyazJrTVdGTURnejFTRXRtM3JrWEQ1blhKazU0Q1Z1Rmkyc0w0M0NTTkVM"
+    }
+   ],
+   [
+    "call_0069",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    6,
+    {
+     "expansionToken": "MjoxNzkzNzIwNzg1OgF_ofsr2_Ue_NhymfBQ7PjYmE-Im83KPPXOINCP0DVqoLFpznFl7wubWoUDszwf",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwNDcxMldyQ2NxdUI0UDJ3QlFhWkQxVDFxcGthUE5FOUtGRmJUeWJ5d2RaRzhF"
+    }
+   ],
+   [
+    "call_0070",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    6,
+    {
+     "expansionToken": "MjoxNzkzNzIwNzg1OgF_ltJ1_MrQgqPqI8-rOIVjOg22CIpu0e2N_0MkqvhtYl3wQ6k5rctXy1U94PSn",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwRFVGc2JtblpWR0wyamo0TVBCeTE0NkNnYTE2QXJSWnhyZWpVUlhtVFp6QVR2"
+    }
+   ],
+   [
+    "call_0071",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    3,
+    {
+     "expansionToken": "MjoxNzkzNzIwNzg1OgF_Pm7il31uJm0P7wC4kka5AhqvB8zM_e5TtI2HlbrI15opl9XyLD6PbHitO5dH",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwM0hoZm1aRVdQS0FtM05wdGlCQ0UxTGdYcXJ6MmdpWWJKR04zMnRFZ3ZwSERk"
+    }
+   ],
+   [
+    "call_0072",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    2,
+    {
+     "expansionToken": "MjoxNzkzNzIwNzg1OgF_l3MQsll_rYC3c1E6PFxisMVPvg0ZrVuTdLLFDKmsMrVOP-CMcXWXQXpAbnoz",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwM3BTalpUZ2dyWnNvRm9SWU1pYnhZZGhLSktjUzFhWTFZR040S29aR0JKWENX"
+    }
+   ],
+   [
+    "call_0073",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    5,
+    {
+     "expansionToken": "MjoxNzkzNzIwNzkwOgF_kWGggq4H0zVQWkVilbuzzKeOc29c97QAtwMsQXnzXhaOOXvcmKkANAggXBpD",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwRVM3bVB2MXBDYjc1Wkw1Zk50S2Y1NGtiTXNLYXdxZkp1YnNaYlV4d3dOVEhv"
+    }
+   ],
+   [
+    "call_0074",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    1,
+    {
+     "expansionToken": "MjoxNzkzNzIwNzkwOgF_KFrVuQibLx3OFmzl7xZeVho5D7SqZsk6TqBs05Oc3WcTyL-Ibtd1ac2GZLvD",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwMjlzbjVjWTdSU2tSQ2pVMXpUWEFmZGU2YVF2Rkp4a2FRNDd1c1hFZEhlMVVa"
+    }
+   ],
+   [
+    "call_0075",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    4,
+    {
+     "expansionToken": "MjoxNzkzNzIwNzkwOgF_M9dOWthPjuB8ujJkZCdhUnJAm7shvPvbDdBfdDKOA45XLmHYBSbpop-ive6t",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwb0RKYWdSNlVkQnI4VDFyZ1o0RW51dWFTSjNGcG9YdTczeFBiaXBaSnVLeEox"
+    }
+   ],
+   [
+    "call_0076",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    7,
+    {
+     "expansionToken": "MjoxNzkzNzIwNzkwOgF_x_SwFjcCEAycETn-hIZT_ZLiBV7OQ0GvVW68M3Oa8J6yIAhHPQwiOHlsJha2",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwMloyWkZ5Q1FqcE1NWDFhS1VSNVlKU2c0VnNxcldaQlRvb1VqVlZhdjFpSnd5"
+    }
+   ],
+   [
+    "call_0077",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    4,
+    {
+     "expansionToken": "MjoxNzkzNzIwNzk0OgF_lIx-fnuxchTPaS3Ekye4HI4TIF6n4pQGLlmzIGR0UY14og6UC68uQlYmHHZH",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwQ0VWV2E2RFJUYkI5M1E1S3ZaUGVwUENIUmdqaEV1Q3V1TmhVMjdBVjJXQnpZ"
+    }
+   ],
+   [
+    "call_0078",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    1,
+    {
+     "expansionToken": "MjoxNzkzNzIwNzk4OgF_HUWj2CDFQ0lhcg4xD9OtUQ_MMUTFdapZXQRvOzNSdXKhp1lWo-SRFoO8yvwr",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwMlZFb1JzdFlEN3FQdnFxVVNhMXh6dVRDVjlCdEQ4UWdtSFdRR1dXVWd5cUFW"
+    }
+   ],
+   [
+    "call_0079",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    3,
+    {
+     "expansionToken": "MjoxNzkzNzIwNzk4OgF_s76b8GR3JwICF4wo9oH4BxVv0WOSBwcQAjNCe8a2pmGTuq26Wy2M8_D1nKL4",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwMzVkSDJ6V3JhN1J5RjRnVFlnaEQxa1J0NFRQQWZtN0h2RTlmNzN2aUhYTnhM"
+    }
+   ],
+   [
+    "call_0080",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    3,
+    {
+     "expansionToken": "MjoxNzkzNzIwODAyOgF_BLSBqblO6yCHzw8no-7v3WVLI5cz21IHvZS-X9j9kMoQDij7e4gQ4Ymn5WgD",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwSkN1TTZVRjRLeVZzOXNrdDlKWFU2MXYzcXlaQmtvdmphekxQYzRVRzRhWGZy"
+    }
+   ],
+   [
+    "call_0081",
+    "execution",
+    "anyapi.facebook.comment_replies",
+    "ok",
+    2,
+    {
+     "expansionToken": "MjoxNzkzNzIwODAyOgF_2E6_aLI7zNE8tJmnTFQ0WVeenWGmppxFWlzvvsyURhhA50ApVjRs7QHijsuT",
+     "feedbackId": "ZmVlZGJhY2s6cGZiaWQwMld2QWs0ZHQ2OUJqSm1DUzI5UEtDOEFieVhrYjJGVWFkSHhBbjd4RVRWY3B2"
+    }
+   ]
+  ],
+  "msn_5d5a9b2a933aeaa47d81": [
+   [
+    "call_0001",
+    "planning",
+    "tikhub.x.youtube-web-v2-search-channels",
+    "ok",
+    3,
+    {
+     "keyword": "الأهلي الرسمية"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "tikhub.x.youtube-web-v2-search-channels",
+    "ok",
+    2,
+    {
+     "keyword": "الزمالك الرسمية"
+    }
+   ],
+   [
+    "call_0003",
+    "planning",
+    "tikhub.x.youtube-web-search-channel",
+    "ok",
+    30,
+    {
+     "channel_id": "UCA86pBGxVPZGrTeTecOtjew",
+     "search_query": "نهائي السوبر المصري الأهلي والزمالك"
+    }
+   ],
+   [
+    "call_0004",
+    "planning",
+    "tikhub.x.youtube-web-search-channel",
+    "ok",
+    30,
+    {
+     "channel_id": "UCeFU0ebL1MK2KlBFniRs6Iw",
+     "search_query": "نهائي السوبر المصري الأهلي والزمالك"
+    }
+   ],
+   [
+    "call_0006",
+    "planning",
+    "tikhub.youtube.video.comments",
+    "ok",
+    20,
+    {
+     "video_id": "gCut2DcB9sM",
+     "language_code": "en"
+    }
+   ],
+   [
+    "call_0007",
+    "planning",
+    "tikhub.youtube.video.comments",
+    "ok",
+    8,
+    {
+     "video_id": "GIWkArP7RJE",
+     "language_code": "en"
+    }
+   ],
+   [
+    "call_0008",
+    "execution",
+    "tikhub.youtube.video.comments",
+    "ok",
+    20,
+    {
+     "video_id": "gCut2DcB9sM",
+     "language_code": "en"
+    }
+   ],
+   [
+    "call_0009",
+    "execution",
+    "tikhub.youtube.video.comments",
+    "ok",
+    20,
+    {
+     "video_id": "gCut2DcB9sM",
+     "language_code": "en",
+     "continuation_token": "Eg0SC2dDdXQyRGNCOXNNGAYyhQMKyAJnZXRfcmFua2VkX3N0cmVhbXMtLUNxWUJDSUFFRlJlMzBUZ2Ft"
+    }
+   ],
+   [
+    "call_0010",
+    "execution",
+    "tikhub.youtube.video.comments",
+    "ok",
+    20,
+    {
+     "video_id": "gCut2DcB9sM",
+     "language_code": "en",
+     "continuation_token": "Eg0SC2dDdXQyRGNCOXNNGAYyoAQK4wNnZXRfcmFua2VkX3N0cmVhbXMtLUNvd0NDSUFFRlJlMzBUZ2Fn"
+    }
+   ],
+   [
+    "call_0011",
+    "execution",
+    "tikhub.youtube.video.comments",
+    "ok",
+    20,
+    {
+     "video_id": "gCut2DcB9sM",
+     "language_code": "en",
+     "continuation_token": "Eg0SC2dDdXQyRGNCOXNNGAYynAUK3wRnZXRfcmFua2VkX3N0cmVhbXMtLUN1a0NDSUFFRlJlMzBUZ2Ez"
+    }
+   ],
+   [
+    "call_0012",
+    "execution",
+    "tikhub.youtube.video.comments",
+    "ok",
+    7,
+    {
+     "video_id": "gCut2DcB9sM",
+     "language_code": "en",
+     "continuation_token": "Eg0SC2dDdXQyRGNCOXNNGAYygQYKxAVnZXRfcmFua2VkX3N0cmVhbXMtLUNyVURDSUFFRlJlMzBUZ2Fx"
+    }
+   ],
+   [
+    "call_0013",
+    "execution",
+    "tikhub.youtube.video.comments",
+    "ok",
+    8,
+    {
+     "video_id": "GIWkArP7RJE",
+     "language_code": "en"
+    }
+   ],
+   [
+    "call_0014",
+    "execution",
+    "anyapi.youtube.comment_replies",
+    "ok",
+    1,
+    {
+     "continuationToken": "Eg0SC2dDdXQyRGNCOXNNGAYygwEaUBIaVWd3YmVqSnJiQkR1VzFoZGtpbDRBYUFCQWciAggAKhhVQ0E4"
+    }
+   ],
+   [
+    "call_0015",
+    "execution",
+    "anyapi.youtube.comment_replies",
+    "ok",
+    1,
+    {
+     "continuationToken": "Eg0SC2dDdXQyRGNCOXNNGAYygwEaUBIaVWd4T0FZNklxZWZ4Q2VWczE2VjRBYUFCQWciAggAKhhVQ0E4"
+    }
+   ],
+   [
+    "call_0016",
+    "execution",
+    "anyapi.youtube.comment_replies",
+    "ok",
+    2,
+    {
+     "continuationToken": "Eg0SC2dDdXQyRGNCOXNNGAYygwEaUBIaVWd4YURrOHJ2T05Ic0c5aHE4RjRBYUFCQWciAggAKhhVQ0E4"
     }
    ]
   ]

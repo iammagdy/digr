@@ -28,7 +28,7 @@ const STATUS: Record<string, "verified" | "catalog_only"> = {
   "scrapecreators.x.v1-facebook-post-comments": "verified",
   "anyapi.facebook.post_comments": "catalog_only",
   "scrapecreators.x.v1-facebook-post-comment-replies": "catalog_only",
-  "anyapi.facebook.comment_replies": "catalog_only",
+  "anyapi.facebook.comment_replies": "verified", // CHANGED (round 14): verified on the 36 real pages of live round 12 (tests/round14-facebook-replies-real.test.ts)
   "scrapecreators.instagram.user.posts": "verified",
   "anyapi.instagram.user.posts": "catalog_only",
   "anyapi.instagram.post.comments": "verified",
@@ -45,10 +45,10 @@ const STATUS: Record<string, "verified" | "catalog_only"> = {
 const NEW_CARDS = TOOL_CARDS.filter((c) => c.platform === "facebook" || c.platform === "instagram" || c.platform === "youtube");
 
 describe("PR 3: the status of every Facebook, Instagram and YouTube card", () => {
-  it("is exactly the table: 12 verified on real pages, 6 catalog_only", () => {
+  it("is exactly the table: 13 verified on real pages, 5 catalog_only", () => {
     expect(Object.fromEntries(NEW_CARDS.map((c) => [c.endpointId, c.status]))).toEqual(STATUS);
-    expect(NEW_CARDS.filter((c) => c.status === "verified")).toHaveLength(12);
-    expect(NEW_CARDS.filter((c) => c.status === "catalog_only")).toHaveLength(6);
+    expect(NEW_CARDS.filter((c) => c.status === "verified")).toHaveLength(13);
+    expect(NEW_CARDS.filter((c) => c.status === "catalog_only")).toHaveLength(5);
     expect(NEW_CARDS.filter((c) => c.status === "broken")).toEqual([]);
   });
 
@@ -143,9 +143,10 @@ describe("Facebook: what the real pages show (M17)", () => {
   });
 
   it("the replies cards stay catalog_only: 8 of 8 live reply reads were successful empty answers, no real reply row was ever seen (their reply binding is the comment row's two tokens)", () => {
+    // CHANGED (round 14): `anyapi.facebook.comment_replies` is verified on real reply pages; the scrapecreators one was never used and stays catalog_only
     for (const id of ["scrapecreators.x.v1-facebook-post-comment-replies", "anyapi.facebook.comment_replies"]) {
       const c = cardOf(id)!;
-      expect(c.status).toBe("catalog_only");
+      expect(c.status).toBe(id.startsWith("anyapi") ? "verified" : "catalog_only");
       expect(c.role).toBe("comment.replies");
       expect(c.inputs.parent?.also).toHaveLength(1);
     }
@@ -256,7 +257,7 @@ describe("the compiler sees the right cards per role", () => {
     expect(cardsFor("facebook", "posts.search").map((c) => c.endpointId)).toEqual(["justoneapi.x.facebook-search-post-v1"]);
     expect(cardsFor("facebook", "posts.search", { catalogOnly: true }).map((c) => c.endpointId).sort()).toEqual(["anyapi.facebook.search_posts", "justoneapi.x.facebook-search-post-v1"]);
     expect(cardsFor("facebook", "posts.page").map((c) => c.endpointId)).toEqual(["anyapi.facebook.user.posts"]);
-    expect(cardsFor("facebook", "comment.replies")).toEqual([]);
+    expect(cardsFor("facebook", "comment.replies").map((c) => c.endpointId)).toEqual(["anyapi.facebook.comment_replies"]); // CHANGED (round 14)
     expect(cardsFor("facebook", "comment.replies", { catalogOnly: true })).toHaveLength(2);
     expect(cardsFor("instagram", "comment.replies").map((c) => c.endpointId)).toEqual(["anyapi.instagram.comment_replies"]);
     // CHANGED (round 12): YouTube's replies card is verified on the real pages of live round 11

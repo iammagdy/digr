@@ -9,6 +9,7 @@ import { buildMissionFiles } from "../agent/src/workbook";
 import { customerMissionView } from "../src/lib/agentMission/customerView";
 import { customerPlanView, type PricedPlan } from "../src/lib/agentMission/plan";
 import { reportedPlan, withPromiseCaps, withRepliesJudged } from "../src/lib/agentMission/repliesCard";
+import { formatAr } from "../src/lib/arabicDigits";
 import { replayGateway } from "./helpers/replayGateway";
 
 /**
@@ -124,13 +125,16 @@ describe("D2 to D4 on the compiled TikTok plan of the live shape", () => {
     let p = withPromiseCaps(plan);
     p = reportedPlan(p, Object.fromEntries(p.stages.map((s) => [s.key, live[s.key as keyof typeof live].length])));
     const j = withRepliesJudged(p, live, () => true);
-    expect(j.stages.find((s) => s.key === "comments_replies")!.planned_rows).toBe(24);
+    // CHANGED (round 14): the replies promise stays the number the card showed (the replies the planning counted: 28 on the replay of these pages, 24 on the live plan); the reply counters of the delivered comments (24) are told in the limits line below
+    const counted = (p.compiled?.promises.comments_replies as { counted?: number }).counted ?? 0;
+    expect(j.stages.find((s) => s.key === "comments_replies")!.planned_rows).toBe(counted);
     const mission = { id: "msn_2dfcf9cc113dff442711", status: "completed", question_ar: null, plan_public: customerPlanView(j), reserved_points: 328, unit_price_points: 4.317, delivered_units: 63, charged_points: 272, summary_ar: null, files: [{ name: "result.xlsx", kind: "xlsx" }], created_at: "2026-11-03T07:11:32Z" };
     const site = customerMissionView({ mission, events: [] }).resultLinesAr.find((l) => /^تم تسليم/.test(l))!;
     const built = await buildMissionFiles(j, live, undefined, undefined, { repliesJudged: true });
     const { byName } = await textsOf(built.xlsx);
     const file = Object.values(byName).flat().map((r) => r[0]).find((t) => /^تم تسليم/.test(t))!;
-    expect(site).toBe("تم تسليم ٦٣ من ٦٦ عنصرًا.");
+    // CHANGED (round 14): the promised number is the card's (2 + 40 + the replies counted at planning): «٦٣ من ٧٠» on the replay (the live plan counted 24: «٦٣ من ٦٦»); site, file and notice say the same
+    expect(site).toBe(`تم تسليم ٦٣ من ${formatAr(2 + 40 + counted)} عنصرًا.`);
     expect(file).toBe(site);
     // and the gap line: replies by the counters of the delivered comments (24) against the 21 delivered
     const lines = Object.values(byName).flat().flat().filter((t) => typeof t === "string" && /^الفيديو رقم/.test(t));

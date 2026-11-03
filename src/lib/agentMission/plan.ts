@@ -249,6 +249,8 @@ export interface CompiledMark {
   by: "compiler";
   platform: string;
   promises: Record<string, { type: "exact" | "counter" | "open"; n: number; counter?: number; counted?: number; counted_comments?: number }>;
+  /** The conditions the request set (round 14: the delivery contract checks that each has its mark column, filled): set by code from the Ask. */
+  conditions?: { named: boolean; period: boolean; language: boolean; country: boolean; topic: boolean };
 }
 
 export interface UnservedStep {

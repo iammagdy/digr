@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import { cardOf } from "../src/lib/agentMission/foundation/toolCards";
 import { liveFacebookPlan, FB_REQUEST, LIVE_COUNTERS } from "./helpers/facebookLiveShape";
 import { AGENT_JOB_POINTS_CAP } from "../src/lib/agentMission/constants";
 import { customerPlanView, type PricedPlan } from "../src/lib/agentMission/plan";
@@ -20,6 +21,9 @@ import { REPLAY_USER } from "./helpers/agentReplay";
  * that could only fail («المهمة أكبر من الحد المسموح للحجز الواحد») after the click. The plan of the live run is rebuilt here by the compiler from the real M17 search page and a comments page with the LIVE counters (posts of 15, 1,823 and 58 comments;
  * the 14 comments read at planning say 22 replies), and it reproduces the stored numbers to the point: 4,879 rows, unit 4.750125, maximum charge 23,176, hold 26,653 (read-only SELECT on the mission's plan and price).
  */
+// CHANGED (round 14): the round-11 numbers (unit 4.750125, hold 26,653) were made with a reply priced as a whole call (`observedRowsPerPage` 1). The card is now measured (2.6 rows a page, from the 36 real calls of live round 12), which lowers that same plan's hold to about half; this file keeps the over-limit
+// mechanics on the plan as round 11 priced it, so the card's measured value is put back for this file only (the measured price is in tests/round14-facebook-replies-real.test.ts and tests/round14-contract-*.test.ts).
+cardOf("anyapi.facebook.comment_replies")!.page.observedRowsPerPage = 1;
 const live = liveFacebookPlan();
 const plan: PricedPlan = live.plan;
 

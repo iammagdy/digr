@@ -31,6 +31,8 @@ export interface AskEdits {
   channels?: string[];
   /** Decision 7, a recurring event: which occurrence the customer means (the planning keeps it across the questions that follow). */
   occurrence?: Occurrence;
+  /** Part B (round 14): the budget in points, a hard ceiling on the hold (said in the request, or chosen at the count question). */
+  budget?: number;
 }
 
 export interface Ask {

@@ -491,7 +491,7 @@ export function compilePlan(input: CompileInput): CompileResult {
     stages,
     price,
     ...(unserved.length > 0 ? { unserved_steps: unserved } : {}),
-    compiled: { by: "compiler", platform: ask.platform, promises: Object.fromEntries(Object.entries(promises).map(([k, v]) => [k, { ...v }])) },
+    compiled: { by: "compiler", platform: ask.platform, promises: Object.fromEntries(Object.entries(promises).map(([k, v]) => [k, { ...v }])), conditions: { named: ask.source.kind === "named", period: Boolean(ask.period), language: Boolean(ask.language), country: Boolean(ask.country), topic: Boolean(ask.topic.text) } },
   };
   return { ok: true, plan, promises, chosen: chosen.map((r) => r.id), spares: spares.map((r) => r.id) };
 }

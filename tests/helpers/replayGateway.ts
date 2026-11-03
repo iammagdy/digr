@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { readFileSync, existsSync } from "node:fs";
 import { buildShapeDigest } from "../../src/lib/modelPlanner/digest";
 import type { TregCatalog } from "../../src/lib/treg/catalog";
@@ -25,7 +26,10 @@ const linkId = (v: unknown): string => {
   const long = s.match(/\d{15,}/g);
   if (long) return long.pop()!;
   const ig = /instagram\.com\/(?:p|reel|tv)\/([A-Za-z0-9_-]+)/.exec(s);
-  return ig ? instagramMediaIdOf(ig[1]) : "";
+  if (ig) return instagramMediaIdOf(ig[1]);
+  // a Facebook post link with no numeric id (a pfbid link): the index keeps a numeric surrogate of its first 24 characters (the call log cuts a link at 80 characters; README of the fixtures)
+  const pf = /pfbid[0-9A-Za-z]+/.exec(s);
+  return pf ? (BigInt("0x" + createHash("sha256").update(pf[0].slice(0, 24)).digest("hex").slice(0, 16)) % BigInt(9 * 10 ** 17) + BigInt(10 ** 17)).toString() : "";
 };
 /** The personal inputs of a call (an account handle): the index keeps a placeholder, so the replay compares nothing of their value (a mission reads one account). */
 const PERSONAL_INPUTS = new Set(["handle", "username"]);

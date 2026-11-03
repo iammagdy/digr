@@ -16,7 +16,8 @@ const OVERVIEW_POLL_MS = 10000;
 interface WorkerMemory { rssMb: number; treeRssMb: number | null; limitMb: number; warn: boolean }
 interface WorkerState { alive: boolean; ageSeconds: number | null; lastBeatAt: string | null; workers: Array<{ worker_id: string; active_missions: number; model: string | null; version: string | null }>; memory: WorkerMemory | null }
 interface MissionRow { id: string; request_text: string; status: string; question_ar: string | null; reserved_points: number | null; unit_price_points: number | null; delivered_units: number | null; charged_points: number | null; planning_model: string | null; planning_llm_usd: number; execution_model: string | null; execution_llm_usd: number; planning_treg_usd: number; execution_treg_usd: number; created_at: string }
-interface Overview { tablesReady: boolean; redesignFlags?: RedesignFlags; platformFlags?: PlatformFlags; worker: WorkerState; planningModel: string | null; allowedModels: string[]; pricing?: { markup: number; minChargePoints: number }; testAccountEmail: string; missions: MissionRow[] }
+interface ContractEvent { mission_id: string; message_ar: string; created_at: string; r1: number; r2: number; r3: number; r4: number; completed: number }
+interface Overview { tablesReady: boolean; contractEvents?: ContractEvent[]; redesignFlags?: RedesignFlags; platformFlags?: PlatformFlags; worker: WorkerState; planningModel: string | null; allowedModels: string[]; pricing?: { markup: number; minChargePoints: number }; testAccountEmail: string; missions: MissionRow[] }
 interface EventRow { id: number; kind: string; message_ar: string; counts: Record<string, number>; created_at: string }
 interface CustomerStage { key: string; title_ar: string; expected_rows: number; parent_key: string | null; deliver: boolean; columns: Array<{ key: string; title_ar: string }>; sample_rows: Array<Record<string, unknown>>; how_ar?: string }
 interface CustomerPlan { summary_ar: string; stages: CustomerStage[]; price: { unit_price_points: number; reserve_points: number; max_charge_points: number; delivered_rows: number } }
@@ -192,6 +193,21 @@ export default function AgentPage() {
         <div><button type="button" className={BTN} disabled={busy || text.trim().length < 3} onClick={create} data-testid="agent-create">شغّل الوكيل</button></div>
       </section>
 
+      {/* ROUND 14, READ ONLY: the last files whose DESCRIPTION the delivery contract completed (a missing gap line, a precision cell, a mark cell); no row and no value is ever changed by it */}
+      <section className={SECTION} data-testid="contract-events" aria-label="ملفات صُحّحت تلقائيًا">
+        <b className="text-[13px]">ملفات صُحّحت تلقائيًا</b>
+        <p className="m-0 text-[12px] leading-[1.8] text-ink2">عقد التسليم يفحص كل ملف بأربع قواعد (عدد واحد، بيان كل نقص، تعليم التواريخ التقريبية، تعبئة العلامات) ويُكمل الوصف فقط؛ لا يغيّر صفًا ولا قيمة. آخر ما اكتمل:</p>
+        {(overview?.contractEvents ?? []).length === 0 ? <p className="m-0 text-[13px] text-ink2" data-testid="contract-events-empty">لا ملفات صُحّحت حتى الآن.</p> : (
+          <ul className="m-0 flex list-none flex-col gap-2 p-0">
+            {(overview?.contractEvents ?? []).map((e) => (
+              <li key={`${e.mission_id}_${e.created_at}`} className="rounded-xl border border-ln p-3 text-[12px] leading-[1.9] text-ink" data-testid="contract-event">
+                <span dir="ltr" className="font-mono">{e.mission_id}</span> · {hhmm(e.created_at)} · العدد الواحد {num(e.r1)} · بيان النقص {num(e.r2)} · التواريخ {num(e.r3)} · العلامات {num(e.r4)} · اكتمل {num(e.completed)}
+                <div className="text-ink2">{e.message_ar}</div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
       {overview?.redesignFlags ? <RedesignFlagsSection flags={overview.redesignFlags} platformFlags={overview.platformFlags ?? {}} confirming={confirmingFlag} busy={flagBusy} onPick={(t, m) => { void pickFlag(t, m); }} onConfirm={() => { void confirmFlag(); }} onCancel={cancelFlag} /> : null}
 
       <section className={SECTION} aria-label="صحة المصادر" data-testid="agent-sources">
