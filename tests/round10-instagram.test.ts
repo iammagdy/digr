@@ -84,8 +84,10 @@ describe("the Cairo moment in words (dates in Cairo time)", () => {
 describe("2b. one promised number everywhere: the orders page says what the file and the chat say", () => {
   // the live record (SELECT on missions): the plan promised 2 + 54 + 3 = 59 at approval; the delivery was judged against the reply counters of the delivered comments (7), so the finished card, the file and the notice said «٤٣ من ٦٣»
   const stagesAtFinish = [{ key: "posts", expected_rows: 2, deliver: true }, { key: "comments", expected_rows: 54, deliver: true }, { key: "comments_replies", expected_rows: 7, deliver: true, replies_open: true }];
-  it("a finished mission with judged replies is promised the judged total (63) on the orders page too, not the job's 59", () => {
-    expect(promisedRowsOf(stagesAtFinish, 59)).toBe(63);
+  // CHANGED (round 14): a stage still OPEN (`replies_open`) promised no number, so it is not in the total — the card's own rule (customerView.stagesView); the replies the planning counted join it (`replies_counted`). The stages the orders page reads after a run carry no `replies_open` (second test below).
+  it("a plan whose replies are still open: the open replies are not in the promised total (2 + 54 = 56), the replies the planning counted are (+ 3)", () => {
+    expect(promisedRowsOf(stagesAtFinish, 59)).toBe(56);
+    expect(promisedRowsOf(stagesAtFinish.map((s) => (s.key === "comments_replies" ? { ...s, replies_counted: 3 } : s)), 59)).toBe(59);
   });
   it("a mission planned the old way (no compiled plan) keeps the job's own number, whatever its replies stage says", () => {
     expect(promisedRowsOf(stagesAtFinish, 59, false)).toBe(59);

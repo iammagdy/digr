@@ -4,14 +4,16 @@ import ExcelJS from "exceljs";
 import { SUMMARY_SHEET_AR } from "../../src/lib/modelPlanner/missionWorkbook";
 import { wordBoundarySheetName } from "../../src/lib/agentMission/fileNames";
 import { REASON_AR, type RelevanceReason } from "../../src/lib/agentMission/relevance";
-import { cardTotalOf, deliveryDenominatorOf, requestedRowsOf } from "../../src/lib/agentMission/plan";
-import { topLevelFactsOf } from "../../src/lib/agentMission/repliesCard";
+import { promisedTotalOf } from "../../src/lib/agentMission/promisedNumbers";
+import { promisedRowsOf } from "../../src/lib/agentMission/promisedTotal";
+import { customerMissionView, stagesView } from "../../src/lib/agentMission/customerView";
+import { checkDeliveryContract, parseDeliveredLine, precisionHeaderOf, NO_LIMITS_AR, type Completion, type ContractInput, type ContractSheet, type ContractViolation } from "../../src/lib/agentMission/foundation/deliveryContract";
 import { FILTER_REASON_LABEL_AR, type FilterReason } from "../../src/lib/agentMission/filters";
 import { cairoCellDate, cairoText, DATE_NUMBER_FORMAT, DATE_ONLY_NUMBER_FORMAT, dateOnlyCellDate, dateOnlyText, isDateValues, parseDateOnly, parseMoment } from "../../src/lib/agentMission/dateCells";
 import { reconcileParentColumns, type ParentColumnFix } from "../../src/lib/agentMission/parentColumns";
 import { NAMED_MARK_KEY } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { APPROX_DATES_NOTE_AR, APPROX_DATE_NUMBER_FORMAT, APPROX_WORD_AR, DATE_PRECISION_APPROX_AR, DATE_PRECISION_EXACT_AR, DATE_PRECISION_TITLE_AR, approxColumnsOf } from "../../src/lib/agentMission/relativeDates";
-import { isInternalColumn, type PricedPlan, type PricedStage } from "../../src/lib/agentMission/plan";
+import { customerPlanView, isInternalColumn, type PricedPlan, type PricedStage } from "../../src/lib/agentMission/plan";
 import { deliveredOfAr, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
 import { formatAr } from "../../src/lib/arabicDigits";
 import { parentCountsOf } from "../../src/lib/agentMission/parents";
@@ -331,7 +333,70 @@ function withThreads(plan: PricedPlan, rowsIn: Record<string, Row[]>): { rowsByS
   return { rowsByStage, layoutPlan: { ...plan, stages }, threaded: new Set(replyStages.map((r) => r.key)) };
 }
 
-export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string, Row[]>, facts?: MissionFacts, companyMailboxes?: CompanyMailboxes, options: { repliesJudged?: boolean } = {}): Promise<{ xlsx: Buffer; csv: string; /** Wrong parent-describing values of a child sheet that were replaced from the row's own parent (for the admin only). */ parentFixes: ParentColumnFix[]; /** What was taken out of the customer's cells because it named a data provider (for the admin only). */ providerFixes: ProviderCleanReport & { final: number } }> {
+/**
+ * RUNS THE DELIVERY CONTRACT on the layouts about to be written (round 14). Builds the contract's input from the REAL layouts, the real methodology lines and the production functions of every surface that states the promised number (the summary line's formula, the chat's result line,
+ * the orders page's promised number), checks the four rules, and, when `complete`, applies the completions that only complete the description. Rows and values are never touched.
+ */
+function runContract(a: { plan: PricedPlan; rowsByStage: Record<string, Row[]>; layouts: SheetLayout[]; methodology: ReturnType<typeof buildMethodology>; repliesJudged: boolean; approvedPlan?: PricedPlan; now: number; complete: boolean }): { violations: ContractViolation[]; completed: Completion[] } {
+  const { plan, rowsByStage, layouts, methodology } = a;
+  const limitsItem = methodology.items.find((i) => i.label === "حدود هذا التسليم");
+  const limitLines = (limitsItem?.values ?? []).filter((l) => l !== NO_LIMITS_AR);
+  const sheets: ContractSheet[] = layouts.map((lay) => {
+    const parentByIdRow = new Map((rowsByStage[lay.stage.parent_key ?? ""] ?? []).map((r) => [text(r.id), r]));
+    return { stageKey: lay.stage.key, title: lay.stage.title_ar, headers: lay.columns.map((c) => c.title), rows: lay.rows.map((record) => {
+      const parent = parentByIdRow.get(text(record.parent_id)) ?? null;
+      const cells: Record<string, string> = {};
+      lay.columns.forEach((c) => { const v = c.get(record, parent); cells[c.title] = v === null || v === undefined ? "" : v instanceof Date ? v.toISOString() : String(v); });
+      return { id: text(record.id), parentId: text(record.parent_id) || null, cells };
+    }) };
+  });
+  const deliveredByStage = Object.fromEntries(plan.stages.map((st) => [st.key, (rowsByStage[st.key] ?? []).length]));
+  const { delivered, promised } = promisedTotalOf(plan, deliveredByStage, a.repliesJudged);
+  const publicPlan = customerPlanView(plan);
+  const compiled = plan.compiled?.by === "compiler";
+  const chatLine = customerMissionView({ mission: { id: "contract", status: "completed", question_ar: null, plan_public: publicPlan as never, reserved_points: null, unit_price_points: null, delivered_units: delivered, charged_points: null, summary_ar: null, files: null, created_at: new Date(a.now).toISOString() }, events: [] }).resultLinesAr.find((l) => /^تم تسليم/.test(l)) ?? null;
+  const chat = parseDeliveredLine(chatLine);
+  // THE CARD'S NUMBER (customerView.stagesView: the card's own «المجموع في ملفك»), plus what the stages that PROMISED NO NUMBER delivered (comments of videos with no counter: judged to what the source gave): that is the number every surface must say after the run
+  const card = a.approvedPlan && compiled ? stagesView(customerPlanView(a.approvedPlan)).total + a.approvedPlan.stages.filter((st) => st.deliver && st.children_open === true).reduce((n, st) => n + (rowsByStage[st.key] ?? []).length, 0) : null;
+  const input: ContractInput = {
+    plan, rowsByStage, sheets, limitLines, now: a.now,
+    numbers: { card, file: promised, chat: chat ? chat.y : null, notice: promised, orders: compiled ? promisedRowsOf(publicPlan.stages as never, 0, true) || null : null, fileDelivered: delivered, deliveredRows: plan.stages.filter((st) => st.deliver).reduce((n, st) => n + (rowsByStage[st.key] ?? []).length, 0) },
+  };
+  const violations = checkDeliveryContract(input);
+  const completed: Completion[] = [];
+  if (!a.complete) return { violations, completed };
+  const overrides = new Map<string, string>();
+  const lines: string[] = [];
+  for (const v of violations) {
+    const f = v.fix;
+    if (!f) continue;
+    if (f.kind === "limit_line") { if (!lines.includes(f.text)) { lines.push(f.text); completed.push(f); } continue; }
+    if (f.kind === "precision") {
+      const lay = layouts.find((l) => l.stage.key === f.stageKey) ?? layouts.find((l) => l.stage.replies_of === undefined && plan.stages.some((x) => x.key === f.stageKey && x.replies_of === l.stage.key));
+      if (!lay) continue;
+      const dateCol = lay.columns.find((c) => c.key === f.dateKey);
+      if (!dateCol) continue;
+      const header = precisionHeaderOf(lay.columns.map((c) => c.title), dateCol.title);
+      if (header === null) {
+        const at = lay.columns.indexOf(dateCol);
+        lay.columns.splice(at + 1, 0, { title: DATE_PRECISION_TITLE_AR, get: (r) => (isBlankCell(r[f.dateKey]) ? "" : DATE_PRECISION_EXACT_AR), kind: "own", key: "__acc_completed" });
+      }
+      overrides.set(`${lay.stage.key}|${f.rowId}|${DATE_PRECISION_TITLE_AR}`, DATE_PRECISION_APPROX_AR);
+      completed.push(f);
+      continue;
+    }
+    if (f.kind === "mark") { overrides.set(`${f.stageKey}|${f.rowId}|${f.header}`, f.value); completed.push(f); }
+  }
+  if (overrides.size > 0) {
+    for (const lay of layouts) lay.columns = lay.columns.map((c) => (c.title === DATE_PRECISION_TITLE_AR || c.title.startsWith(`${DATE_PRECISION_TITLE_AR} (`) || [...overrides.keys()].some((k) => k.startsWith(`${lay.stage.key}|`) && k.endsWith(`|${c.title}`)))
+      ? { ...c, get: (row: Row, parent: Row | null) => overrides.get(`${lay.stage.key}|${text(row.id)}|${c.title}`) ?? overrides.get(`${lay.stage.key}|${text(row.id)}|${DATE_PRECISION_TITLE_AR}`) ?? c.get(row, parent) }
+      : c);
+  }
+  if (lines.length > 0 && limitsItem) limitsItem.values = [...limitsItem.values.filter((l) => l !== NO_LIMITS_AR), ...lines];
+  return { violations, completed };
+}
+
+export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string, Row[]>, facts?: MissionFacts, companyMailboxes?: CompanyMailboxes, options: { repliesJudged?: boolean; /** The plan as the customer approved it (the card's number): the contract checks the promised number against it. */ approvedPlan?: PricedPlan; /** Complete the description (a missing limits line, a precision cell, a mark cell) where the delivery contract finds it missing. Default true; tests run with false to see the violations of the code itself. */ completeContract?: boolean; now?: number } = {}): Promise<{ xlsx: Buffer; csv: string; /** The delivery contract (round 14): what it found before any completion, and what was completed. */ contract: { violations: ContractViolation[]; completed: Completion[]; error?: string }; /** Wrong parent-describing values of a child sheet that were replaced from the row's own parent (for the admin only). */ parentFixes: ParentColumnFix[]; /** What was taken out of the customer's cells because it named a data provider (for the admin only). */ providerFixes: ProviderCleanReport & { final: number } }> {
   // BEFORE THE FILE IS WRITTEN: every value of a child row that describes its parent must be its OWN parent's (parentColumns.ts); a mapping that copied the first company's website onto every person is repaired here and reported to the admin
   const reconciled = reconcileParentColumns(plan.stages, rowsIn, (key) => { const st = plan.stages.find((x) => x.key === key); return st ? readableColumns(st).map((c) => c.key) : []; }, (key) => { const st = plan.stages.find((x) => x.key === key); return st ? readableColumns(st).map((c) => c.key) : []; });
   // NO DATA PROVIDER IN A CUSTOMER FILE (providerHosts.ts): its addresses are taken out of every cell and an id built from one is replaced by a neutral id, the same wherever it is written
@@ -342,6 +407,12 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   // the replies sit in their comments' sheet (withThreads); everything else below (the counts, the summary, the methodology) reads the stages' own rows
   const threaded = withThreads(layoutPlan, rowsByStage);
   const layouts = layoutOf(threaded.layoutPlan, threaded.rowsByStage);
+  // THE DELIVERY CONTRACT (round 14, foundation/deliveryContract.ts): it checks the four rules on the file as it is about to be written. It is not a filter: it never removes a row or changes a value. R2, R3 and R4 only COMPLETE the description (a missing limits line, a precision cell, a mark cell
+  // filled from data already in the row); R1 only reports. What it found is returned for the worker to record.
+  const methodology = buildMethodology({ plan, layouts, rowsByStage, facts });
+  // the contract never blocks or delays a delivery: if it cannot run (a plan shape it does not know), the file is written as it would have been
+  let contract: { violations: ContractViolation[]; completed: Completion[]; error?: string } = { violations: [], completed: [] };
+  try { contract = runContract({ plan, rowsByStage, layouts, methodology, repliesJudged: options.repliesJudged === true, approvedPlan: options.approvedPlan, now: options.now ?? Date.now(), complete: options.completeContract !== false && plan.compiled?.by === "compiler" }); } catch (e) { contract = { violations: [], completed: [], error: String((e as Error)?.message ?? e).slice(0, 200) }; /* the file is delivered without the contract */ }
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
   const used = new Set<string>([SUMMARY_SHEET_AR.toLowerCase()]);
@@ -474,9 +545,8 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   const deliveredCount = plan.stages.filter((st) => st.deliver).reduce((n, st) => n + (rowsByStage[st.key] ?? []).length, 0);
   // a delivery short of the CARD the customer approved is told against the card's total (the same number the final line and the notice say); one that fills a card with a lowered target is told against the request
   // the replies come in addition (replies.ts): the delivery is told against the top-level rows the customer asked for, the replies delivered are added to both sides
-  const tl = topLevelFactsOf(plan, Object.fromEntries(plan.stages.map((st) => [st.key, (rowsByStage[st.key] ?? []).length])));
   // the replies JUDGED against the counters of the delivered comments (S9: the run applied withRepliesJudged) are told as the site and the notice tell them: against their counters (live D3: «٦٣ من ٦٦» on the site, «٦٣ من ٦٣» here). Otherwise exactly as before.
-  const requestedCount = deliveryDenominatorOf(Math.max(0, deliveredCount - tl.repliesDelivered), cardTotalOf(plan) - tl.repliesPlanned, requestedRowsOf(plan) - tl.repliesPlanned) + (options.repliesJudged === true ? tl.repliesPlanned : tl.repliesDelivered);
+  const requestedCount = promisedTotalOf(plan, Object.fromEntries(plan.stages.map((st) => [st.key, (rowsByStage[st.key] ?? []).length])), options.repliesJudged === true).promised;
   const intro = summary.addRow([`تم تسليم ${deliveredOfAr(deliveredCount, requestedCount, itemNounOfPlan(plan))}.`]);
   summary.mergeCells(intro.number, 1, intro.number, 5);
   intro.alignment = { wrapText: true, readingOrder: "rtl" as any, vertical: "middle" };
@@ -487,7 +557,7 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   summary.mergeCells(note.number, 1, note.number, 5);
   note.alignment = { wrapText: true, readingOrder: "rtl" as any };
   note.height = 34;
-  addMethodologySection(summary, buildMethodology({ plan, layouts, rowsByStage, facts }));
+  addMethodologySection(summary, methodology);
   summary.autoFilter = { from: { row: 1, column: 1 }, to: { row: plan.stages.length + 1, column: 5 } };
   // THE LAST LOOK, at every cell of every sheet: an address of a provider is taken out; in the texts we write (the first sheet and the headings) a provider's name is taken out too
   let finalFixes = 0;
@@ -520,5 +590,5 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   // the CSV gets the same last look
   const csvOut = withoutProviderUrls(`﻿${lines.join("\r\n")}`, providers);
   if (csvOut !== `﻿${lines.join("\r\n")}`) finalFixes += 1;
-  return { xlsx, csv: csvOut, parentFixes: reconciled.fixes, providerFixes: { ...cleaned.report, final: finalFixes } };
+  return { xlsx, csv: csvOut, contract, parentFixes: reconciled.fixes, providerFixes: { ...cleaned.report, final: finalFixes } };
 }

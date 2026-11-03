@@ -24,8 +24,10 @@ const pageOf = (endpointId: string, n: number): Record<string, unknown> => {
 const requiredOf = (endpointId: string): Record<string, unknown> => Object.fromEntries(catalog.byId.get(endpointId)!.inputs.filter((i) => i.required).map((i) => [i.name, i.example ?? "x"]));
 
 describe("both Facebook replies tools are test-account tools, and each call logs the rows it returned", () => {
-  it("both cards are catalog_only: only a test account's plan can read Facebook replies, so the measurement is made on test accounts only", () => {
-    for (const id of TOOLS) expect(cardOf(id)!.status).toBe("catalog_only");
+  // CHANGED (round 14): `anyapi.facebook.comment_replies` is verified on the real pages of live round 12; the other tool was never used
+  it("the verified tool is read by every account's plan, the other stays a test-account tool", () => {
+    expect(cardOf("anyapi.facebook.comment_replies")!.status).toBe("verified");
+    expect(cardOf("scrapecreators.x.v1-facebook-post-comment-replies")!.status).toBe("catalog_only");
   });
 
   for (const id of TOOLS) {

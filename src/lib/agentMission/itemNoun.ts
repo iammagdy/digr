@@ -106,5 +106,7 @@ export function deliveredOfAr(delivered: number, requested: number, noun: ItemNo
   const d = Math.max(0, Math.floor(Number(delivered) || 0));
   const r = Math.max(0, Math.floor(Number(requested) || 0));
   if (r <= 0) return countAr(d, noun);
+  // MORE THAN THE PROMISED NUMBER (round 14: the replies a source gives beyond the ones the plan counted): the number promised stays the number, and the line says why the delivery is above it
+  if (d > r) return `${formatAr(d)} ${noun.plural} (أكثر من ${countAr(r, noun)} المحسوبة في الخطة، لأن المصدر أعطى ردودًا زيادة)`;
   return d >= 1 && d <= 10 ? `${countAr(d, noun)} من ${countAr(r, noun)}` : `${formatAr(d)} من ${countAr(r, noun)}`;
 }

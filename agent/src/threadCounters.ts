@@ -22,6 +22,10 @@ export interface ThreadCounterFacts {
   commentToParent: ReadonlyMap<string, string>;
   /** Parents with a thread the reply cap cut. */
   cappedParents?: ReadonlySet<string>;
+  /** Round 14 (delivery contract R2): per parent, the reply counters of its DELIVERED comments (each up to the replies read per comment). When given, a parent whose replies delivered are fewer than that has the two numbers in its line. */
+  replyCountersByParent?: ReadonlyMap<string, number>;
+  /** Round 14: the line names the parent by its place in the file («المنشور رقم ١: ...»), as every other gap line does. Only a compiled plan sets it (the old path's lines are what they were). */
+  ordinal?: boolean;
 }
 
 export interface ThreadCounterLine { parentId: string; delivered: { comments: number; replies: number }; counterLine: string; limitLine: string | null }
@@ -36,14 +40,17 @@ export function parentCounterLinesAr(f: ThreadCounterFacts): ThreadCounterLine[]
   for (const p of f.commentParentIds) comments.set(String(p), (comments.get(String(p)) ?? 0) + 1);
   for (const c of f.replyParentCommentIds) { const p = f.commentToParent.get(String(c)); if (p !== undefined) replies.set(p, (replies.get(p) ?? 0) + 1); }
   const out: ThreadCounterLine[] = [];
-  for (const p of f.parents) {
+  for (const [index, p] of f.parents.entries()) {
     if (p.counter === null || !Number.isFinite(p.counter)) continue;
     const c = comments.get(String(p.id)) ?? 0;
     const r = replies.get(String(p.id)) ?? 0;
     const said = [c > 0 ? countAr(c, comment, { subject: true }) : "", r > 0 ? countAr(r, reply, { subject: true }) : ""].filter(Boolean);
-    const counterLine = `عداد ${the} ${formatAr(p.counter)}، ${said.length > 0 ? `سُلّم ${said.join(" و")}` : "ولم يُسلَّم منه شيء"}`;
-    const short = c + r < p.counter;
-    const limitLine = short ? `${counterLine}؛ ${f.cappedParents?.has(String(p.id)) ? "وبعض التعليقات لها ردود أكثر من الحد الأقصى المقروء لكل تعليق، والباقي لم يعطِه المصدر" : "والفرق لم يعطِه المصدر"}` : null;
+    const counterLine = `${f.ordinal === true ? `${the} رقم ${formatAr(index + 1)}: ` : ""}عداد ${the} ${formatAr(p.counter)}، ${said.length > 0 ? `سُلّم ${said.join(" و")}` : "ولم يُسلَّم منه شيء"}`;
+    const replyCounters = f.ordinal === true ? f.replyCountersByParent?.get(String(p.id)) : undefined;
+    const repliesGap = replyCounters !== undefined && r < replyCounters;
+    const repliesPart = repliesGap ? `؛ ردود التعليقات المسلّمة بحسب عدّاداتها ${countAr(replyCounters!, reply, { subject: true })} وسُلّم منها ${countAr(r, reply, { subject: true })}` : "";
+    const short = c + r < p.counter || repliesGap;
+    const limitLine = short ? `${counterLine}${repliesPart}؛ ${f.cappedParents?.has(String(p.id)) ? "وبعض التعليقات لها ردود أكثر من الحد الأقصى المقروء لكل تعليق، والباقي لم يعطِه المصدر" : "والفرق لم يعطِه المصدر"}` : null;
     out.push({ parentId: String(p.id), delivered: { comments: c, replies: r }, counterLine, limitLine });
   }
   return out;
@@ -211,7 +218,10 @@ export function threadCounterLinesOfPlan(plan: Pick<PricedPlan, "stages"> & { co
     const commentToParent = new Map<string, string>(comments.map((c) => [String(c.id), String(c.parent_id ?? "")] as const));
     // a compiled plan that read every reply of each comment capped none of them (the cap of 50 sized the hold only)
     const capped = new Set<string>(replyStage && readsAllReplies(plan, replyStage) ? [] : comments.filter((c) => (childCountOf(c) ?? 0) > (replyStage?.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_MAX)).map((c) => String(c.parent_id ?? "")));
-    const lines = parentCounterLinesAr({ parentNoun: nounOf(parentStage.title_ar) ?? "عنصر", parents, commentParentIds: comments.map((c) => String(c.parent_id ?? "")), replyParentCommentIds: replies.map((r) => String(r.parent_id ?? "")), commentToParent, cappedParents: capped });
+    const replyCap = replyStage && readsAllReplies(plan, replyStage) ? Number.POSITIVE_INFINITY : Math.max(1, replyStage?.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_MAX);
+    const replyCountersByParent = new Map<string, number>();
+    if (replyStage) for (const c of comments) { const p = String(c.parent_id ?? ""); replyCountersByParent.set(p, (replyCountersByParent.get(p) ?? 0) + Math.min(replyCap, Math.max(0, childCountOf(c) ?? 0))); }
+    const lines = parentCounterLinesAr({ parentNoun: nounOf(parentStage.title_ar) ?? "عنصر", parents, commentParentIds: comments.map((c) => String(c.parent_id ?? "")), replyParentCommentIds: replies.map((r) => String(r.parent_id ?? "")), commentToParent, cappedParents: capped, ...(plan.compiled?.by === "compiler" ? { ordinal: true } : {}), ...(replyStage ? { replyCountersByParent } : {}) });
     for (const l of lines) { counterLines.push(l.counterLine); if (l.limitLine) limitLines.push(l.limitLine); }
   }
   return { counterLines, limitLines };

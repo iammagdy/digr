@@ -15,7 +15,7 @@ import { statsFromCalls } from "../../src/lib/agentMission/sourceRanking";
 import { classifyNoCardEnd, refusalSentenceAr } from "../../src/lib/agentMission/refusal";
 import { parentCountsOf, parentsBelowShare } from "../../src/lib/agentMission/parents";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
-import { cardTotalOf, customerPlanView, deliveryDenominatorOf, namesAreWritten, requestedRowsOf, type PricedPlan } from "../../src/lib/agentMission/plan";
+import { customerPlanView, namesAreWritten, requestedRowsOf, type PricedPlan } from "../../src/lib/agentMission/plan";
 import { topLevelFactsOf } from "../../src/lib/agentMission/repliesCard";
 import { toArabicDigits } from "../../src/lib/arabicDigits";
 import { RELEVANCE_REASON_LIST, type RelevanceReason } from "../../src/lib/agentMission/relevance";
@@ -43,9 +43,11 @@ import { promiseShortfallAr, repliesShortfallAr } from "./repliesShortfall";
 import { TOPIC_OPTIONS_AR, topicMeaningOf, topicQuestionAr } from "../../src/lib/agentMission/topicMeaning";
 import { noAboutChoiceOf } from "../../src/lib/agentMission/foundation/topicChoice";
 import { occurrenceChoiceOf } from "../../src/lib/agentMission/foundation/occurrence";
+import { BUDGET_QUESTION_AR, BUDGET_TOO_SMALL_AR, choiceAnswerOf, type Choices } from "../../src/lib/agentMission/foundation/countChoice";
 import { parseChannels, understandChannelsPrompt, UNDERSTAND_SYSTEM } from "../../src/lib/agentMission/foundation/understand";
 import { llmCostFromUsage } from "./llmCost";
 import { MODEL_HAIKU } from "../../src/lib/agentMission/constants";
+import { promisedTotalOf } from "../../src/lib/agentMission/promisedNumbers";
 import { reportedPlan, withPromiseCaps, withRepliesJudged } from "../../src/lib/agentMission/repliesCard";
 import { publicPlanOf } from "../../src/lib/agentMission/overLimit";
 import { runContactEnrichment } from "./engine/contacts";
@@ -368,9 +370,31 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     const got = await deps.reviewCall!({ model: MODEL_HAIKU, system: UNDERSTAND_SYSTEM, user: understandChannelsPrompt(input.request, input.topic), maxTokens: 200 });
     return got ? { channels: parseChannels(got.text) ?? [], costUsd: llmCostFromUsage(MODEL_HAIKU, got.usage) } : null;
   } : undefined;
-  const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, nowMs: planningNow, priorCalls: calls, ...(understand ? { understand } : {}), ...(occurrence ? { occurrence } : {}), ...(redesign.isTest ? { catalogOnly: true } : {}) }) : null;
+  // ROUND 14, PART B: the count, the comments per parent and the budget the customer chose are kept in the run note (each answer replaces `answer_text`); a pending question's answer is read here, before the planning
+  const prior = compiledActive ? await readRunState(store, mission.id) : null;
+  let choices: Choices = prior?.choices ?? {};
+  let answerIsChoice = false;
+  if (compiledActive && prior?.pending) {
+    const parsed = choiceAnswerOf(mission.answer_text, prior.pending);
+    if (parsed) {
+      answerIsChoice = true;
+      if (parsed.kind === "ask_budget") {
+        // «حدد ميزانية بالنقاط»: the next card asks for the number (a typed answer)
+        await updateRunState(store, mission.id, (r) => ({ ...r, pending: "budget", questionsAsked: (r.questionsAsked ?? 0) + 1 }), deps.log);
+        await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: سؤال قبل الخطة، الميزانية بالنقاط.", counts: { adm_flag: 0 } }).catch(() => undefined);
+        await store.updateMission(mission.id, { status: "needs_input", question_ar: BUDGET_QUESTION_AR, plan_public: { question_options: [] } as any, ...clear });
+        await store.addEvent(mission.id, { kind: "question", message_ar: BUDGET_QUESTION_AR });
+        return;
+      }
+      choices = { ...choices, ...(parsed.kind === "count" ? { count: parsed.n } : parsed.kind === "budget" ? { budget: parsed.points } : { perParent: parsed.n }) };
+      await updateRunState(store, mission.id, (r) => { const { pending: _p, ...rest } = r; void _p; return { ...rest, choices }; }, deps.log);
+    }
+  }
+  const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, nowMs: planningNow, priorCalls: calls, ...(understand ? { understand } : {}), ...(occurrence ? { occurrence } : {}), ...(redesign.isTest ? { catalogOnly: true } : {}), askCount: true, choices, questionsAsked: prior?.questionsAsked ?? 0, answerIsChoice }) : null;
   // THE QUESTION BEFORE APPROVAL (live round 7): no video of the two pages read is about the topic; the plan is not made, the customer chooses (the same needs_input card as the topic question)
   if (compiled?.kind === "question") {
+    // every question card counts toward the three a request may have; a count or comments question also waits for its answer
+    await updateRunState(store, mission.id, (r) => ({ ...r, questionsAsked: (r.questionsAsked ?? 0) + 1, ...(compiled.why === "count" || compiled.why === "per_parent" ? { pending: compiled.why } : {}) }), deps.log);
     await store.addEvent(mission.id, { kind: "call", message_ar: compiled.why === "named_shortfall" ? "قياس داخلي: سؤال قبل الخطة، منشورات الصفحة المسمّاة أقل من المطلوب." : compiled.why === "occurrence" || compiled.why === "occurrence_year" ? "قياس داخلي: سؤال قبل الخطة، الحدث يتكرر ولم تُحدَّد سنة." : "قياس داخلي: سؤال قبل الخطة، لا فيديو في ما قُرئ يتحدث عن الموضوع.", counts: { compiled: 0, question: 1, pool_reads: compiled.reads.pool, exposure_reads: compiled.reads.exposure } }).catch(() => undefined);
     await store.updateMission(mission.id, { status: "needs_input", question_ar: compiled.question, plan_public: { question_options: compiled.options } as any, ...(compiled.llmCostUsd ? { planning_llm_usd: Number((Number((await store.getMission(mission.id))?.planning_llm_usd ?? mission.planning_llm_usd ?? 0) + compiled.llmCostUsd).toFixed(6)) } : {}), ...clear });
     await store.addEvent(mission.id, { kind: "question", message_ar: compiled.question });
@@ -379,7 +403,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   if (compiled) {
     await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: خطة مبنية بالكود.", counts: { compiled: compiled.kind === "plan" ? 1 : 0, pool_reads: compiled.reads.pool, exposure_reads: compiled.reads.exposure } }).catch(() => undefined);
     if (compiled.kind === "plan") state.proposedPlan = compiled.plan;
-    else state.finish = { outcome: "cannot_serve", summary_ar: "", kind: compiled.reason === "no_rows" || compiled.reason === "no_parent_with_children" ? "empty" : "unsupported" };
+    else state.finish = { outcome: "cannot_serve", summary_ar: compiled.reason === "budget_too_small" ? BUDGET_TOO_SMALL_AR : "", kind: compiled.reason === "no_rows" || compiled.reason === "no_parent_with_children" ? "empty" : "unsupported" };
   }
   let output = compiled ? { ...COMPILED_RUN, llmCostUsd: compiled.llmCostUsd ?? 0 } : await runOnce(planningPrompt(mission, calls, resumeNote));
   if (!compiled) await recordTokens(deps, mission.id, 0, output.usage, { inputTokens: 0, outputTokens: 0, calls: 0 }, output.llmCostUsd);
@@ -570,6 +594,8 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const flags: string[] = [];
   const rowsByStage: Record<string, Array<Record<string, unknown>>> = {};
   // THE PROMISE FOR COMMENTS AND REPLIES TOGETHER (S5): each of the two stages was read up to the total; the delivery is counted up to it
+  // the plan as the customer approved it (the delivery contract compares the promised number with the card's)
+  const approvedPlan = plan;
   plan = withPromiseCaps(plan);
   for (const s of plan.stages) rowsByStage[s.key] = snap.acceptedRows(s.key, s.planned_rows);
   plan = reportedPlan(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])));
@@ -596,7 +622,14 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   let parentFixedRows = 0;
   if (builtCount > 0) {
     try {
-      const built = await buildMissionFiles(plan, rowsByStage, missionFactsOf({ requestText: mission.request_text, plan, snap, reviewStop: checked.stop }), companyMailboxesOf(plan, snap), hadOpenReplies ? { repliesJudged: true } : {});
+      const built = await buildMissionFiles(plan, rowsByStage, missionFactsOf({ requestText: mission.request_text, plan, snap, reviewStop: checked.stop }), companyMailboxesOf(plan, snap), { ...(hadOpenReplies ? { repliesJudged: true } : {}), approvedPlan });
+      // THE DELIVERY CONTRACT (round 14): what it found is recorded for the admin; the file only had its DESCRIPTION completed (a limits line, a precision cell, a mark cell), never a row or a value
+      if (built.contract.violations.length > 0) {
+        const by = (rule: string) => built.contract.violations.filter((v) => v.rule === rule).length;
+        const said = built.contract.completed.map((c) => (c.kind === "limit_line" ? `سطر في الحدود: ${c.text}` : c.kind === "precision" ? "خلية دقة التاريخ" : `علامة «${c.header}»`)).slice(0, 6).join(" | ");
+        flags.push("delivery_contract");
+        await store.addEvent(mission.id, { kind: "call", message_ar: `علامة داخلية للمشرف: ملف صُحّح وصفه تلقائيًا؛ ما اكتمل: ${said || "لا شيء (مخالفة للتقرير فقط)"}`.slice(0, 1000), counts: { adm_flag: 1, adm_contract: 1, adm_r1: by("R1"), adm_r2: by("R2"), adm_r3: by("R3"), adm_r4: by("R4"), adm_completed: built.contract.completed.length } });
+      }
       if (built.parentFixes.length > 0) { parentFixedRows = built.parentFixes.reduce((n, f) => n + f.rows, 0); flags.push("parent_column_fixed"); deps.log?.(`parent_column_fixed ${mission.id} ${built.parentFixes.map((f) => `${f.stage_key}.${f.column}<-${f.parent_field}x${f.rows}`).join(",")}`); }
       const published = await store.publishResult({ missionId: mission.id, userId: mission.user_id, jobId, xlsx: built.xlsx, csv: built.csv });
       resultPath = published.resultPath;
@@ -702,7 +735,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const stageRowsOf = (s: PricedPlan["stages"][number]): number => (s.deliver ? (fileByStage ? fileByStage[s.key] ?? 0 : plan.stages.filter((x) => x.deliver).length === 1 ? delivered : rowsByStage[s.key].length) : rowsByStage[s.key].length);
   await store.addEvent(mission.id, { kind: "result", message_ar: summary || (delivered > 0 ? "اكتملت المهمة." : "لم يُسلَّم أي شيء."), counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, stageRowsOf(s)])), ...parentCountsOf(plan, rowsByStage) } });
   const noticeKind: MissionNoticeKind = ourFailure ? "failed" : delivered <= 0 ? "unserved" : deliveredTop < requested ? "partial" : "completed";
-  await tell(deps, mission, jobId, noticeKind, { delivered, planned: deliveryDenominatorOf(deliveredTop, cardTotalOf(plan) - tl.repliesPlanned, requested) + (hadOpenReplies ? tl.repliesPlanned : tl.repliesDelivered), chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && deliveredTop < target ? { shortfallClauseAr: shortClause } : delivered > 0 && deliveredTop < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
+  await tell(deps, mission, jobId, noticeKind, { delivered, planned: promisedTotalOf(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])), hadOpenReplies).promised, chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && deliveredTop < target ? { shortfallClauseAr: shortClause } : delivered > 0 && deliveredTop < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
 }
 
 /** What the customer is told when the source gave items and our own mapping stored none: it was OUR failure, never «nothing was found». No number: the money line says the rest. */
