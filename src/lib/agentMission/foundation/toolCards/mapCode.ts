@@ -14,6 +14,8 @@ export const CHILD_COLUMNS = [
   { key: "posted_at", title_ar: "تاريخ ووقت التعليق" },
   { key: "likes", title_ar: "الإعجابات" },
   { key: "replies_count", title_ar: "عدد الردود" },
+  // the language of the comment or reply, named as the parent sheet's mark (live D2: the comments sheet had none): the source's own code when it gives one, else the text's script (the file builder fills it); nothing is removed for it
+  { key: "language", title_ar: "لغة النص" },
 ] as const;
 
 /**

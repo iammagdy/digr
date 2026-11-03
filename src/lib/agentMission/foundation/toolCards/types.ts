@@ -5,7 +5,7 @@ import type { SocialPlatform } from "../../redesignFlagTypes";
  * own, independent of the catalog's capability. The compiler reads only cards: which inputs carry which condition of the Ask, where the list and the next page are, which field
  * of an item is its id, its text, its date, its author, its counter. The mapping code of a stage is generated from the card (`mapCode.ts`), never written by a model.
  */
-export type CardRole = "videos.search" | "tweets.search" | "video.comments" | "comment.replies";
+export type CardRole = "videos.search" | "tweets.search" | "video.comments" | "comment.replies" | "tweet.replies";
 export type CardStatus = "verified" | "catalog_only" | "broken";
 
 /** A path inside a page or an item: the keys to follow. */

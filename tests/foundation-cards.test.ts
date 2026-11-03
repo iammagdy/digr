@@ -16,11 +16,14 @@ const rows = (mission: string, stage: string): Array<Record<string, unknown>> =>
 const catalog = loadTregCatalog();
 
 describe("F2: the tool cards are data, and each is verified on real stored pages", () => {
-  it("PR 2a carries TikTok and X cards only, every one verified, each on at least one real page", () => {
+  it("PR 2a carries TikTok and X cards only; every one is verified on at least one real page, except the one catalog_only card (X replies, owner decision 7.4: test accounts only)", () => {
     expect(new Set(TOOL_CARDS.map((c) => c.platform))).toEqual(new Set(["tiktok", "x"]));
+    expect(TOOL_CARDS.filter((c) => c.status !== "verified").map((c) => [c.endpointId, c.status])).toEqual([["anyapi.x.post.comments", "catalog_only"]]);
     for (const c of TOOL_CARDS) {
-      expect(c.status).toBe("verified");
-      expect(c.verifiedOn.flatMap((v) => v.calls).length).toBeGreaterThan(0);
+      expect(["verified", "catalog_only"]).toContain(c.status);
+      // a verified card was seen on real pages; a catalog_only one has none (that is what the word means)
+      if (c.status === "verified") expect(c.verifiedOn.flatMap((v) => v.calls).length).toBeGreaterThan(0);
+      else expect(c.verifiedOn).toEqual([]);
       // the card's tool exists in the catalog, with the inputs the card writes
       const e = catalog.byId.get(c.endpointId);
       expect(e, c.endpointId).toBeTruthy();

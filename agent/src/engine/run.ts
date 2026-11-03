@@ -495,7 +495,8 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
   const now = deps.now ?? Date.now;
   // a stage read in DEPTH (up to N pages for each parent) may read parents x N pages
   const depthPages = parentId !== null ? depthPagesOf(stage, spec) : 1;
-  const maxPages = Math.max(deps.maxPagesPerStage ?? enginePageCapFor(stage.planned_rows), depthPages > 1 && stage.parent_key ? items.acceptedRows(stage.parent_key).length * depthPages : 0);
+  // a stage with its own page limit (a catalog_only card within its dollar cap, plan.ts `max_pages`) is never read past it
+  const maxPages = Math.min(stage.max_pages ?? Number.POSITIVE_INFINITY, Math.max(deps.maxPagesPerStage ?? enginePageCapFor(stage.planned_rows), depthPages > 1 && stage.parent_key ? items.acceptedRows(stage.parent_key).length * depthPages : 0));
   let stallStreak = 0;
   let failures = 0;
   for (;;) {

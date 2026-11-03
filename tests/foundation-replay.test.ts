@@ -105,7 +105,7 @@ describe("acceptance 3: M14 (X) replayed on its stored pages: NOT MET, and why",
     expect(stats.unserved).toHaveLength(1);
     expect(stats.unserved[0].endpointId).toBe(stored(M14).stages[0].endpoint_id);
     // the compiled query: the customer's words, Arabic, and Cairo October as UTC instants (21:00 on 30 September to 22:00 on 31 October)
-    expect(stats.unserved[0].params).toEqual({ query: "\"العاصمة الإدارية\" lang:ar since:2026-09-30_21:00:00_UTC until:2026-10-31_22:00:00_UTC", queryType: "Latest", limit: 20 });
+    expect(stats.unserved[0].params).toEqual({ query: "\"العاصمة الإدارية\" lang:ar since:2026-09-30_21:00:00_UTC until:2026-10-31_22:00:00_UTC -filter:replies", queryType: "Latest", limit: 20 });
     // the stored delivery was read with the model's own day bound until:2026-10-31 (UTC midnight), which leaves out 31 October; the one stored page with until:2026-11-01 shares 1 tweet of 20 with the delivery
     const execution = storedCalls(M14).filter((c) => c[1] === "execution");
     expect(execution.map((c) => c[5].query)).toEqual(["\"العاصمة الإدارية\" lang:ar since:2026-10-01 until:2026-10-31"]);
@@ -118,7 +118,12 @@ describe("acceptance 3: M14 (X) replayed on its stored pages: NOT MET, and why",
     const page = JSON.parse(readFileSync(new URL(`./fixtures/live/missions/${M14}/raw/call_0003.json`, import.meta.url), "utf8"));
     const r = compilePlan({ ask, pool: { card, params: parentInputs(card, ask), pages: [{ callId: "call_0003", page }] }, exposure: () => undefined, capabilityOf: (id) => catalog.byId.get(id)?.capability ?? null });
     if (!r.ok) throw new Error(r.reason);
-    expect(r.chosen).toEqual(rows(M14, "tweets").map((t) => String(t.id)));
+    // the same 20 tweets (the page holds exactly 20), but the originals now come first: the request says «مع الردود», so a tweet that is itself a reply ranks below them (live D5)
+    expect(new Set(r.chosen)).toEqual(new Set(rows(M14, "tweets").map((t) => String(t.id))));
+    const isReply = new Map(rows(M14, "tweets").map((t) => [String(t.id), ((t.__marks as { reply?: boolean } | undefined)?.reply === true)] as const));
+    const firstReply = r.chosen.findIndex((id) => isReply.get(id));
+    expect(firstReply).toBeGreaterThan(0);
+    expect(r.chosen.slice(firstReply).every((id) => isReply.get(id))).toBe(true);
     expect(r.promises.tweets).toEqual({ type: "exact", n: 20 });
     expect(r.plan.unserved_steps?.map((u) => u.what_ar)).toEqual(["الردود"]);
     expect(r.plan.stages.map((s) => s.key)).toEqual(["tweets"]);

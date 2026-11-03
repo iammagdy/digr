@@ -6,6 +6,12 @@ import { X_CARDS } from "./x";
 export type { CardRole, CardStatus, ToolCard } from "./types";
 export { cardMapCode, mapPage, COUNTRY_AR, CHILD_COLUMNS } from "./mapCode";
 
+/**
+ * OWNER DECISION 7.4 (docs/FOUNDATION-PLAN.md): a `catalog_only` card (a tool no stored real page has verified) may be used by TEST accounts only, and the calls made with such cards cost at most
+ * this much per mission (the catalog's price of a successful call; the stage that uses one is given `max_pages` = floor(cap / price)).
+ */
+export const CATALOG_ONLY_CAP_USD = 0.1;
+
 /** Every tool card (data). PR 2a: TikTok and X. Facebook, Instagram and YouTube cards are PR 3. */
 export const TOOL_CARDS: ReadonlyArray<ToolCard> = [...TIKTOK_CARDS, ...X_CARDS];
 

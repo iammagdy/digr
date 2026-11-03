@@ -341,7 +341,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // THE COMPILED PATH (docs/FOUNDATION-PLAN.md PR 2a): TikTok and X, and only when that platform's OWN flag is `on` (or `test` for a test account), are planned by the plan compiler,
   // by code, with no model: the pool and the exposure check are read through this run's gateway (every cap applies). A request it cannot compile ends with one of the honest classes
   // below, never on the model's path (F6). With the platform flags unset, as today, this is null and the planning below is exactly what it was.
-  const compiled = compiledPlatformActive(redesign.platformFlags, redesign.platform, redesign.isTest) ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, nowMs: planningNow }) : null;
+  const compiled = compiledPlatformActive(redesign.platformFlags, redesign.platform, redesign.isTest) ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, nowMs: planningNow, ...(redesign.isTest ? { catalogOnly: true } : {}) }) : null;
   if (compiled) {
     await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: خطة مبنية بالكود.", counts: { compiled: compiled.kind === "plan" ? 1 : 0, pool_reads: compiled.reads.pool, exposure_reads: compiled.reads.exposure } }).catch(() => undefined);
     if (compiled.kind === "plan") state.proposedPlan = compiled.plan;
@@ -562,7 +562,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   let parentFixedRows = 0;
   if (builtCount > 0) {
     try {
-      const built = await buildMissionFiles(plan, rowsByStage, missionFactsOf({ requestText: mission.request_text, plan, snap, reviewStop: checked.stop }), companyMailboxesOf(plan, snap));
+      const built = await buildMissionFiles(plan, rowsByStage, missionFactsOf({ requestText: mission.request_text, plan, snap, reviewStop: checked.stop }), companyMailboxesOf(plan, snap), hadOpenReplies ? { repliesJudged: true } : {});
       if (built.parentFixes.length > 0) { parentFixedRows = built.parentFixes.reduce((n, f) => n + f.rows, 0); flags.push("parent_column_fixed"); deps.log?.(`parent_column_fixed ${mission.id} ${built.parentFixes.map((f) => `${f.stage_key}.${f.column}<-${f.parent_field}x${f.rows}`).join(",")}`); }
       const published = await store.publishResult({ missionId: mission.id, userId: mission.user_id, jobId, xlsx: built.xlsx, csv: built.csv });
       resultPath = published.resultPath;

@@ -56,7 +56,8 @@ describe("F3: the tool is the one that carries the most of the Ask (D7), its inp
   });
   it("X: the query carries the words in quotes, the language and the Cairo period; the order is the newest (no comments asked)", () => {
     const x = buildAsk(request("msn_b060d3347ed7660f972e"), null, AT);
-    expect(parentInputs(chooseCard(x, "parents")!, x)).toEqual({ query: "\"العاصمة الإدارية\" lang:ar since:2026-09-30_21:00:00_UTC until:2026-10-31_22:00:00_UTC", queryType: "Latest", limit: 20 });
+    // the request says «مع الردود», so the tweets asked for are ORIGINALS (live D5: 10 of 20 were replies): the query ends with -filter:replies
+    expect(parentInputs(chooseCard(x, "parents")!, x)).toEqual({ query: "\"العاصمة الإدارية\" lang:ar since:2026-09-30_21:00:00_UTC until:2026-10-31_22:00:00_UTC -filter:replies", queryType: "Latest", limit: 20 });
     expect(chooseCard(x, "comments")).toBeNull();
     expect(chooseCard(x, "replies")).toBeNull();
   });

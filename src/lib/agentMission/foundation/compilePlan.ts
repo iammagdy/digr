@@ -8,7 +8,7 @@ import type { MissionPricingSettings } from "../../missionPricing";
 import type { Ask } from "./ask";
 import { rankPool, factsOf, type PoolRow } from "./pool";
 import { childPromise, perParentPromise, promiseLineAr, type StagePromise } from "./promise";
-import { cardMapCode, cardsFor, CHILD_COLUMNS, COUNTRY_AR, mapPage, type CardRole, type ToolCard } from "./toolCards";
+import { cardMapCode, cardsFor, CATALOG_ONLY_CAP_USD, CHILD_COLUMNS, COUNTRY_AR, mapPage, type CardRole, type ToolCard } from "./toolCards";
 import type { SocialPlatform } from "../redesignFlagTypes";
 
 /**
@@ -33,7 +33,7 @@ const PARENT_ROLE: Partial<Record<SocialPlatform, CardRole>> = { tiktok: "videos
 const ROLE_OF: Record<StageRole, (p: SocialPlatform) => CardRole | null> = {
   parents: (p) => PARENT_ROLE[p] ?? null,
   comments: (p) => (p === "x" ? null : "video.comments"),
-  replies: () => "comment.replies",
+  replies: (p) => (p === "x" ? "tweet.replies" : "comment.replies"),
 };
 
 /** What the Ask asks that a parent card can carry in an input, and which of them this card carries. */
@@ -68,6 +68,8 @@ export function parentInputs(card: ToolCard, ask: Ask): Record<string, unknown> 
     if (q.operators) {
       if (ask.language) query += ` lang:${ask.language}`;
       if (ask.period) query += ` since:${operatorStampUtc(ask.period.startMs)} until:${operatorStampUtc(ask.period.endExclusiveMs)}`;
+      // TWEETS WITH THEIR REPLIES (live D5, msn_e7612c1fe8697ca03439): the parents of a replies stage are ORIGINAL tweets, so the stage asks the source for originals only (10 of the 20 tweets of that run were themselves replies to other people)
+      if (ask.replies !== "none") query += " -filter:replies";
     }
     p[q.field] = query;
   }
@@ -86,6 +88,8 @@ export interface CompileInput {
   exposure: (parentId: string) => { callId: string | null; page: unknown | null; failed: boolean } | undefined;
   capabilityOf: (endpointId: string) => string | null;
   pricingSettings?: MissionPricingSettings;
+  /** Owner decision 7.4: a `catalog_only` card may build a stage, for a TEST account only (the caller says so); never for another account. */
+  catalogOnly?: boolean;
 }
 
 export type CompileResult =
@@ -96,12 +100,12 @@ const TITLE: Record<string, string> = {
   text: "النص", author: "صاحب الحساب", username: "اسم المستخدم", posted_at: "تاريخ ووقت النشر", link: "الرابط", country: "الدولة", language: "اللغة", likes: "الإعجابات",
   comments: "عدد التعليقات", shares: "المشاركات", views: "المشاهدات", saves: "الحفظ", followers: "المتابعون", is_reply: "رد على تغريدة", replies_count: "عدد الردود",
 };
-const NOUN: Record<SocialPlatform, { one: string; two: string; many: string; where: string }> = {
-  tiktok: { one: "فيديو", two: "فيديوهان", many: "فيديو", where: "من تيك توك" },
-  x: { one: "تغريدة", two: "تغريدتان", many: "تغريدة", where: "من إكس" },
-  instagram: { one: "منشور", two: "منشوران", many: "منشور", where: "من إنستجرام" },
-  facebook: { one: "منشور", two: "منشوران", many: "منشور", where: "من فيسبوك" },
-  youtube: { one: "فيديو", two: "فيديوهان", many: "فيديو", where: "من يوتيوب" },
+const NOUN: Record<SocialPlatform, { one: string; two: string; many: string; where: string; talks: string }> = {
+  tiktok: { one: "فيديو", two: "فيديوهان", many: "فيديو", where: "من تيك توك", talks: "يتحدث نصه" },
+  x: { one: "تغريدة", two: "تغريدتان", many: "تغريدة", where: "من إكس", talks: "يتحدث نصها" },
+  instagram: { one: "منشور", two: "منشوران", many: "منشور", where: "من إنستجرام", talks: "يتحدث نصه" },
+  facebook: { one: "منشور", two: "منشوران", many: "منشور", where: "من فيسبوك", talks: "يتحدث نصه" },
+  youtube: { one: "فيديو", two: "فيديوهان", many: "فيديو", where: "من يوتيوب", talks: "يتحدث نصه" },
 };
 const DEFAULT_COUNT = 10;
 /** The least share of replies a comment is assumed to have when the exposure pages show none: it sizes the reserve's maximum only, never a promise. */
@@ -160,7 +164,7 @@ export function summaryAr(ask: Ask, n: number, shape: ReadonlyArray<StageRole>, 
   if (ask.period) parts.push(`بين ${toArabicDigits(ask.period.from)} و${toArabicDigits(ask.period.to)}`);
   // a number per parent is said as the customer said it («مع ١٠٠ تعليق من كل فيديو»), never as «all the comments»
   const comments = perParent !== null ? `${toArabicDigits(perParent)} تعليق من كل ${w.one}` : null;
-  const children = shape.includes("comments") ? (shape.includes("replies") ? (comments ? `، مع ${comments} وردودها` : "، مع كل تعليقاتها وردودها") : comments ? `، مع ${comments}` : "، مع تعليقاتها") : "";
+  const children = shape.includes("comments") ? (shape.includes("replies") ? (comments ? `، مع ${comments} وردودها` : "، مع كل تعليقاتها وردودها") : comments ? `، مع ${comments}` : "، مع تعليقاتها") : shape.includes("replies") ? "، مع ردودها" : "";
   return `${parts.join(" ")}${children}.`;
 }
 
@@ -183,7 +187,7 @@ export function compilePlan(input: CompileInput): CompileResult {
   if (ranked.length === 0) return { ok: false, reason: "no_rows" };
   const need = Math.max(1, ask.count ?? DEFAULT_COUNT);
   const commentsCard = shape.includes("comments") ? chooseCard(ask, "comments") : null;
-  const repliesCard = shape.includes("replies") ? chooseCard(ask, "replies") : null;
+  const repliesCard = shape.includes("replies") ? chooseCard(ask, "replies", { catalogOnly: input.catalogOnly === true }) : null;
   const counter = (r: PoolRow): number | null => { if (!card.counter) return null; const n = Number(r[card.counter.key]); return Number.isFinite(n) ? n : null; };
 
   // THE EXPOSURE CHECK (decision 7.3): a parent whose first comments page is empty while its counter says it has comments is replaced by the next one, before the card; a parent that says it has none is never chosen for a comments request
@@ -227,6 +231,20 @@ export function compilePlan(input: CompileInput): CompileResult {
   if (chosen.length < need) notes.push(`وجدنا في ما قرأناه ${toArabicDigits(chosen.length)} فقط تناسب طلبك من ${toArabicDigits(need)}.`);
   const unmet = chosen.filter((r) => { const f = factsOf(r, ask); return !f.country || !f.language || !f.named; }).length;
   if (unmet > 0) notes.push(`لم نجد في ما قرأناه ما يكفي مما يطابق المصدر أو الدولة أو اللغة المطلوبة؛ ${toArabicDigits(unmet)} من العناصر المختارة لا تطابق ذلك، وعليها علامة في الملف.`);
+  // THE TOPIC, SAID HONESTLY BEFORE APPROVAL (live D1): «عن X» means the item's own text talks about X. A video whose caption names X only in its hashtags is made WITH X (the tool), so it ranks below the videos whose caption body is about X;
+  // when the pool read has none of the latter the card says so; when some chosen items are below it, it says how many. Ranking only: the items are chosen and delivered either way.
+  const tierOf = (r: PoolRow) => factsOf(r, ask).topicTier;
+  if (ask.topic.text && ask.topic.relation !== "made_with") {
+    const topic = `«${ask.topic.text}»`;
+    if (!ranked.some((r) => tierOf(r) === 2)) {
+      notes.push(`لم نجد في ما قرأناه ${NOUN[ask.platform!].one} ${NOUN[ask.platform!].talks} عن ${topic}؛ ${chosen.some((r) => tierOf(r) === 1) ? `ما اخترناه يذكر الموضوع في الوسوم فقط، وغالبًا يكون الموضوع فيها أداة صُنع بها المحتوى لا موضوعه` : "ما اخترناه لا يذكر الموضوع في نصه"}، فراجع الاختيار قبل الاعتماد أو عدّل طلبك.`);
+    } else {
+      const tags = chosen.filter((r) => tierOf(r) === 1).length;
+      const none = chosen.filter((r) => tierOf(r) === 0).length;
+      if (tags > 0) notes.push(`${toArabicDigits(tags)} من العناصر المختارة يذكر الموضوع في الوسوم فقط، أي أنه غالبًا صُنع بالموضوع ولا يتحدث عنه، ولم نجد في ما قرأناه ما يكفي مما يتحدث نصه عن ${topic}.`);
+      if (none > 0) notes.push(`${toArabicDigits(none)} من العناصر المختارة لا يذكر ${topic} في نصه، ولم نجد في ما قرأناه ما يكفي مما يذكره.`);
+    }
+  }
   if (ask.language && card.cannot?.includes("language")) notes.push("اللغة: اخترنا من بين النتائج ما كتب باللغة المطلوبة، وفي الملف عمود للغة كل صف.");
 
   // THE CUSTOMER'S NUMBER PER PARENT («١٠٠ تعليق من كل فيديو», live msn_e32cd467): each chosen parent gives at most that number of top-level comments; the card's edit (a total) comes later and wins
@@ -269,6 +287,28 @@ export function compilePlan(input: CompileInput): CompileResult {
         engine: { endpoint_id: repliesCard.endpointId, params: {}, cursor_param: repliesCard.inputs.cursor, map_code: cardMapCode(repliesCard), map_file_id: "page", parent_binding: { param: repliesCard.inputs.parent!.param, from: repliesCard.inputs.parent!.from, ...(repliesCard.inputs.parent!.also ? { also: repliesCard.inputs.parent!.also.map((a) => ({ ...a })) } : {}) }, built_by: "code" },
       } as PricedStage);
       notes.push(promiseLineAr(p, "replies", false, perComment));
+    } else if (repliesCard && !commentsCard && repliesCard.role === "tweet.replies") {
+      // THE REPLIES TO THE CHOSEN TWEETS (live D5; owner decision 7.4: a catalog_only card, test accounts only, within CATALOG_ONLY_CAP_USD of calls a mission). The replies are a child stage on the tweets: each tweet is read by its own link, and a tweet that
+      // says (its own counter) it has no reply is never read. The counters of the chosen tweets size the stage; the page limit is what 0.10 USD of the card's calls buys, so the cap holds however the source answers.
+      const perPage = 40;
+      const maxPages = Math.max(1, Math.floor(CATALOG_ONLY_CAP_USD / repliesCard.costUsdPerPage + 1e-9));
+      const counters = chosen.map((r) => counter(r));
+      const sizing = repliesSizing({ comments: chosen.length, known: counters, perComment: AGENT_REPLIES_PER_COMMENT_MAX, countedAtCap: false });
+      if (counters.every((c) => c !== null) && sizing.counted <= 0) {
+        unserved.push({ what_ar: "الردود", reason_ar: "لا يذكر عدّاد المنصة ردودًا على أي من التغريدات المختارة، فلن تُضاف هذه الخطوة." });
+      } else {
+        const n = Math.max(1, Math.min(ask.edits.replies !== undefined ? Math.floor(ask.edits.replies) : sizing.total, maxPages * perPage));
+        const p: StagePromise = { type: "open", n, counted: Math.min(sizing.counted, n), counted_comments: sizing.countedComments };
+        promises.replies = p;
+        const readAll = ask.edits.replies === undefined;
+        stages.push({
+          key: "replies", title_ar: "الردود", endpoint_id: repliesCard.endpointId, ...(capabilityOf(repliesCard.endpointId) ? { capability: capabilityOf(repliesCard.endpointId)! } : {}),
+          expected_rows: n, planned_rows: n, parent_key: parentKey, replies_of: parentKey, per_parent_rows: AGENT_REPLIES_PER_COMMENT_MAX, deliver: true,
+          columns: CHILD_COLUMNS.map((c) => ({ ...c })), sample_rows: [], measured_by: [], measured_from_calls: [], measured_cost_per_row_usd: repliesCard.costUsdPerPage / Math.max(1, repliesCard.page.observedRowsPerPage),
+          yield_share: 1, review_share: 0, replies_open: true, ...(ask.replies === "all" ? { replies_read_all: true } : {}), ...(readAll ? { replies_uncapped: true } : {}), replies_call_usd: repliesCard.costUsdPerPage, max_pages: maxPages,
+          engine: { endpoint_id: repliesCard.endpointId, params: {}, cursor_param: repliesCard.inputs.cursor, map_code: cardMapCode(repliesCard), map_file_id: "page", parent_binding: { param: repliesCard.inputs.parent!.param, from: repliesCard.inputs.parent!.from }, built_by: "code" },
+        } as PricedStage);
+      }
     } else {
       // F6: no verified card reads the replies on this platform: the step is NOT included, said before approval (never a model recipe, never the old pipeline)
       unserved.push({ what_ar: "الردود", reason_ar: "لا توجد بعد أداة موثّقة لقراءة الردود على هذه المنصة، فلن تُضاف هذه الخطوة." });
