@@ -1,4 +1,5 @@
 import { arabicDateLabel } from "./fileNames";
+import { cairoDayOf } from "./cairoTime";
 import { toArabicDigits } from "../arabicDigits";
 
 /**
@@ -39,6 +40,17 @@ function dayLabel(value: string): string | null {
   return date.getUTCMonth() === mo - 1 && date.getUTCDate() === d ? arabicDateLabel(date) : null;
 }
 
+/**
+ * The day an operator value stands for, as the customer counts it (Cairo): a bare day is that day; a moment written by code (`2026-09-30_21:00:00_UTC`) is the Cairo day that holds it, and an `until:` moment is EXCLUSIVE, so it ends on the day that holds the last
+ * second before it (live finding B: the UTC date of the stamp made «من ١ أكتوبر» read «من ٣٠ سبتمبر»).
+ */
+function cairoDayOfOperator(value: string, exclusiveEnd: boolean): string {
+  const m = /^(\d{4}-\d{2}-\d{2})_(\d{2}:\d{2}:\d{2})(?:_UTC)?$/.exec(value);
+  if (!m) return value;
+  const ms = Date.parse(`${m[1]}T${m[2]}Z`);
+  return Number.isFinite(ms) ? cairoDayOf(exclusiveEnd ? ms - 1000 : ms) : value;
+}
+
 /** The meaning of one operator, or null when it is not known (or negated in a way that has no plain sentence). */
 function operatorTerm(neg: boolean, rawKey: string, rawValue: string): Term | null {
   const key = rawKey.toLowerCase();
@@ -49,8 +61,8 @@ function operatorTerm(neg: boolean, rawKey: string, rawValue: string): Term | nu
       const name = LANG_AR[value.toLowerCase()];
       return name ? { key: "lang", value, text: neg ? `بلغة غير ${name}` : `باللغة ${name}` } : null;
     }
-    case "since": { const d = dayLabel(value); return d && !neg ? { key: "since", value, text: `من ${d}` } : null; }
-    case "until": { const d = dayLabel(value); return d && !neg ? { key: "until", value, text: `حتى ${d}` } : null; }
+    case "since": { const d = dayLabel(cairoDayOfOperator(value, false)); return d && !neg ? { key: "since", value, text: `من ${d}` } : null; }
+    case "until": { const d = dayLabel(cairoDayOfOperator(value, true)); return d && !neg ? { key: "until", value, text: `حتى ${d}` } : null; }
     case "from": { const h = value.replace(/^@/, ""); return h ? { key: neg ? "notfrom" : "from", value: h, text: neg ? `دون ما نشره حساب ${quote(h)}` : `من حساب ${quote(h)}` } : null; }
     case "to": { const h = value.replace(/^@/, ""); return h && !neg ? { key: "to", value: h, text: `موجّه إلى حساب ${quote(h)}` } : null; }
     case "filter": case "is": case "has": {

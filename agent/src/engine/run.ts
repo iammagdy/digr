@@ -19,6 +19,7 @@ import type { ItemStore, Row, StopReason } from "../items/itemStore";
 import type { Reviewer } from "../review";
 import type { SandboxResult } from "../sandbox";
 import type { AgentStore, MissionEventInput } from "../types";
+import { withCairoPeriod } from "../periodRequest";
 
 type Stage = PricedPlan["stages"][number];
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -405,7 +406,7 @@ async function continueAcrossTools(deps: EngineDeps, stage: Stage, spec: EngineS
     if (!CONTINUE_ON.has(r.reason)) break;
     const alt = spec.alternatives![i];
     const oldest = items.streamKeys(stage.key).map((k) => items.streamState(stage.key, k)?.oldest ?? null).filter((x): x is number => x !== null);
-    const params = alt.window && oldest.length > 0 ? windowParams(alt.window, alt.params, period ? dayOf(period.sinceMs) : EARLIEST_DAY, dayOf(Math.min(...oldest)), boundsOf(period)) : { ...alt.params };
+    const params = alt.window && oldest.length > 0 ? windowParams(alt.window, alt.params, period ? dayOf(period.sinceMs) : EARLIEST_DAY, dayOf(Math.min(...oldest)), boundsOf(period)) : withCairoPeriod(stage, alt.window, alt.params);
     const { alternatives: _a, sources: _s, id_field: _i, window: _w, ...rest } = spec;
     const altSpec: EngineSpec = { ...rest, endpoint_id: alt.endpoint_id, params, cursor_param: alt.cursor_param, map_code: alt.map_code, map_file_id: alt.map_file_id, ...(alt.id_field !== undefined ? { id_field: alt.id_field } : {}), ...(alt.window ? { window: alt.window } : {}) };
     r = await runStream(deps, stage, altSpec, `alt:${i}`, params, null, Number.POSITIVE_INFINITY, boundaryFieldOf(stage, now));
@@ -420,10 +421,12 @@ async function runRootPrimary(deps: EngineDeps, stage: Stage, spec: EngineSpec):
   if (spec.sources && spec.sources.length > 0) return runSources(deps, stage, spec, spec.sources);
   const now = (deps.now ?? Date.now)();
   const period = spec.window ? periodOf(stage, now) : null;
-  let r = await runStream(deps, stage, spec, "root", { ...spec.params }, null, Number.POSITIVE_INFINITY, period?.field ?? (deps.redesignStages?.has(stage.key) ? boundaryFieldOf(stage, now) : null));
+  // the first read carries the customer's Cairo days (live finding B: the model's own day-only operators were read as UTC days)
+  const firstParams = withCairoPeriod(stage, spec.window, spec.params);
+  let r = await runStream(deps, stage, spec, "root", firstParams, null, Number.POSITIVE_INFINITY, period?.field ?? (deps.redesignStages?.has(stage.key) ? boundaryFieldOf(stage, now) : null));
   if (!spec.window || !period) return r;
   const sinceDay = dayOf(period.sinceMs);
-  let lastEnd = firstWindowEndDay(spec.window, spec.params, now);
+  let lastEnd = firstWindowEndDay(spec.window, firstParams, now);
   // windows read before a restart are continued in the order they were started
   for (const key of items.streamKeys(stage.key).filter((k) => k.startsWith("w:"))) {
     if (r.aborted || r.reason === "target_reached") return r;

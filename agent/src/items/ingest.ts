@@ -151,7 +151,8 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     if (!isChild) placeCellsAr(row, stage.columns, raw, promisedPlace);
     // WHAT THE CARD PROMISES, checked here on the mapped item (replies, language, period, account, place): an item a filter rejects is neither delivered nor charged, and is kept with its reason
     if (!rawMode && enabledFilters.length > 0) {
-      const why = filterVerdict(enabledFilters, raw, { textKey: textKeyOf(stage, Object.keys(raw)), now, ...(quota?.defaultSource ? { listing: true } : {}) });
+      // THE DAYS OF A PERIOD ARE CAIRO DAYS here too (live finding B: the old reading, UTC days, accepted a tweet of 2026-11-01 00:14 Cairo into an October file and refused the first three hours of 1 October)
+      const why = filterVerdict(enabledFilters, raw, { textKey: textKeyOf(stage, Object.keys(raw)), now, cairoDays: true, ...(quota?.defaultSource ? { listing: true } : {}) });
       if (why) { tally.rejected_by_filter += 1; excludedStructural.push({ id, reason: why, row }); continue; }
       if (governmentUnclear(enabledFilters, raw)) govUnclear.add(id);
     }
