@@ -321,7 +321,7 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
     limits.push(`${many ? `«${s.title_ar}»: ` : ""}سُلّم ${fmt(got)} من ${fmt(s.planned_rows)} ${clause}.`);
   }
   // THE SOURCE'S OWN COUNTER next to what was delivered, per parent (a video's comments count against the comments and replies delivered under it)
-  const threads = threadCounterLinesOfPlan(plan, rowsByStage, knownNounOf);
+  const threads = threadCounterLinesOfPlan(plan, rowsByStage, knownNounOf, Object.fromEntries(Object.entries(facts.stages ?? {}).map(([k, v]) => [k, v.stop] as const)));
   for (const line of threads.limitLines) limits.push(line);
   // DECISION MAKERS: a people stage that prefers the decision makers says when people who are not fill the count (the titles of the delivered rows; a title the source did not give is not judged)
   for (const s of delivering) {

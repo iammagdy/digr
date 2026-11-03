@@ -104,7 +104,7 @@ export function askedGapLinesAr(f: AskedThreadFacts): { counterLines: string[]; 
  * against the replies delivered under it, and only that: never the whole of the parent's other numbers. A parent with no counter and no reply is not listed (no noise). A gap is a line only when fewer were delivered than the counter says (the cap, when there is one, counts first); more than the counter
  * is told in the counter line and is not called a gap. Pure: counts in, Arabic out.
  */
-export function tweetRepliesGapLinesAr(f: { parentNoun: string; parents: ReadonlyArray<{ id: string; counter: number | null }>; replyParentIds: ReadonlyArray<string>; repliesCap: number }): { counterLines: string[]; limitLines: string[] } {
+export function tweetRepliesGapLinesAr(f: { parentNoun: string; parents: ReadonlyArray<{ id: string; counter: number | null }>; replyParentIds: ReadonlyArray<string>; repliesCap: number; /** The replies stage stopped because it reached the most pages this mission may read (round 8: the pageable route is followed to its end or to this cap). */ stoppedAtPageLimit?: boolean }): { counterLines: string[]; limitLines: string[] } {
   const parentNoun = knownItemNoun(f.parentNoun) ?? GENERIC_ITEM_NOUN;
   const reply = knownItemNoun("رد")!;
   const got = new Map<string, number>();
@@ -118,7 +118,7 @@ export function tweetRepliesGapLinesAr(f: { parentNoun: string; parents: Readonl
     const head = `ال${parentNoun.singular} رقم ${formatAr(i + 1)}`;
     const line = `${head}: ردودها بحسب عدّاد المنصة ${countAr(counter, reply, { subject: true })} وسُلّم منها ${countAr(delivered, reply, { subject: true })}`;
     counterLines.push(line);
-    if (delivered < counter) limitLines.push(`${line}؛ والفرق لم يعطِه المصدر`);
+    if (delivered < counter) limitLines.push(`${line}؛ ${f.stoppedAtPageLimit === true ? "وتوقفت قراءة الردود عند الحد الأقصى لعدد الصفحات المسموح لهذه المهمة، فلم نقرأ الباقي" : "والفرق لم يعطِه المصدر"}`);
   });
   return { counterLines, limitLines };
 }
@@ -127,7 +127,7 @@ export function tweetRepliesGapLinesAr(f: { parentNoun: string; parents: Readonl
  * THE COUNTER LINES OF A DELIVERY, from the plan and the delivered rows: for every delivered comments stage that has a parent whose rows carry the source's own counter (a video's comments count), one line per parent. Empty for a plan with no such stage. `parentNoun` is the noun the plan's own
  * title says («فيديو»), found by the caller (methodology.ts knownNounOf).
  */
-export function threadCounterLinesOfPlan(plan: Pick<PricedPlan, "stages"> & { compiled?: PricedPlan["compiled"] }, rowsByStage: Record<string, Array<Record<string, unknown>>>, nounOf: (title: string | undefined) => string | null | undefined): { counterLines: string[]; limitLines: string[] } {
+export function threadCounterLinesOfPlan(plan: Pick<PricedPlan, "stages"> & { compiled?: PricedPlan["compiled"] }, rowsByStage: Record<string, Array<Record<string, unknown>>>, nounOf: (title: string | undefined) => string | null | undefined, stops: Readonly<Record<string, string | null | undefined>> = {}): { counterLines: string[]; limitLines: string[] } {
   const counterLines: string[] = [];
   const limitLines: string[] = [];
   // THE REPLIES OF A TOP-LEVEL PARENT (X: a tweet has no comments stage, its replies are the child stage; live round 7, msn_9fa5ba384c05a25247e1): the gap per tweet, the way TikTok says it per video
@@ -140,6 +140,7 @@ export function threadCounterLinesOfPlan(plan: Pick<PricedPlan, "stages"> & { co
       parents: (rowsByStage[parentStage.key] ?? []).map((r) => ({ id: String(r.id), counter: childCountOf(r) })),
       replyParentIds: (rowsByStage[stage.key] ?? []).map((r) => String(r.parent_id ?? "")),
       repliesCap: readsAllReplies(plan, stage) ? Number.POSITIVE_INFINITY : Math.max(1, stage.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_MAX),
+      ...(stops[stage.key] === "page_limit" ? { stoppedAtPageLimit: true } : {}),
     });
     counterLines.push(...lines.counterLines);
     limitLines.push(...lines.limitLines);

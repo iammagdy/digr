@@ -24,6 +24,8 @@ export interface CardInputs {
   cursor: string | null;
   /** A child tool: the input that takes a field of the parent row, and the other identity inputs sent beside it. */
   parent?: { param: string; from: string; also?: Array<{ param: string; from: string; grand?: true }> };
+  /** Inputs the card sends on EVERY call of its stage, as they are (data, never from the customer's words): the X replies card asks for a source that can return a next page. The catalog entry must declare each of them, or the gateway drops it. */
+  fixed?: Readonly<Record<string, unknown>>;
 }
 
 export interface ToolCard {

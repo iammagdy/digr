@@ -14,7 +14,7 @@ import { buildShapeDigest } from "../src/lib/modelPlanner/digest";
 import { buildAsk } from "../src/lib/agentMission/foundation/ask";
 import { chooseCard, compilePlan, parentInputs } from "../src/lib/agentMission/foundation/compilePlan";
 import { rankPool } from "../src/lib/agentMission/foundation/pool";
-import { cardOf, mapPage, CATALOG_ONLY_CAP_USD } from "../src/lib/agentMission/foundation/toolCards";
+import { cardOf, mapPage, CATALOG_ONLY_CAP_USD, CATALOG_ONLY_PRICE_MARGIN } from "../src/lib/agentMission/foundation/toolCards";
 import { customerPlanView, type PricedPlan } from "../src/lib/agentMission/plan";
 import { withPromiseCaps } from "../src/lib/agentMission/repliesCard";
 import { checkCustomerText } from "../src/lib/agentMission/text";
@@ -25,7 +25,7 @@ import type { RedesignFlags } from "../src/lib/agentMission/redesignFlags";
  * The stage asked the source for tweets with no word about replies, so 10 of the 20 chosen tweets were themselves replies to other people, and the replies step was «لم يُنفَّذ: لا توجد بعد أداة موثّقة».
  *   - When the customer asks for tweets WITH their replies, the parents must be original tweets: the stage requests originals only (the query's `-filter:replies`, as the old path did for «دون الردود»);
  *     a tweet that is itself a reply is ranked below the originals in the pool (ranking, never a drop) and keeps its «رد أم أصلي» mark.
- *   - The replies are a child stage on those tweets. Owner decision 7.4: a `catalog_only` card is allowed for TEST accounts only, capped at 0.10 USD of such calls a mission; every other
+ *   - The replies are a child stage on those tweets. Owner decision 7.4: a `catalog_only` card is allowed for TEST accounts only, capped (round 8: 0.20 USD at twice the catalog price) of such calls a mission; every other
  *     account keeps the honest «not included» line.
  *
  * THE DATA. The pool page is the REAL anonymised page of the same search (M14, call_0003: 20 tweets, about half of them replies: `isReply`, counters, dates, languages are real). The replies tool has NO real stored page
@@ -94,7 +94,8 @@ describe("D5: the X replies card is catalog_only, for test accounts only, within
     expect(e.capability).toBe("x.post.comments");
     expect(c.costUsdPerPage).toBe(e.cost?.usd);
     expect(c.inputs.parent).toEqual({ param: "url", from: "link" });
-    expect(CATALOG_ONLY_CAP_USD).toBe(0.1);
+    expect(CATALOG_ONLY_CAP_USD).toBe(0.2);
+    expect(CATALOG_ONLY_PRICE_MARGIN).toBe(2);
   });
   it("another account never gets it: chooseCard returns no X replies card unless the caller allows catalog_only cards", () => {
     const ask = buildAsk(REQUEST, null, AT);
@@ -134,13 +135,13 @@ describe("D5: the X replies card is catalog_only, for test accounts only, within
     expect(r.plan.price.deliveredRows).toBe(20 + counters);
   });
 
-  it("the cap: the replies stage may read at most as many pages as 0.10 USD of catalog_only calls buys", () => {
+  it("the cap: the replies stage may read at most as many pages as 0.20 USD of catalog_only calls buys at twice the catalog price (round 8; 0.10 USD at the catalog price)", () => {
     const r = compile(REQUEST, { catalogOnly: true });
     if (!r.ok) throw new Error(r.reason);
     const replies = r.plan.stages.find((s) => s.key === "replies")!;
     const card = repliesCardOf()!;
-    expect(replies.max_pages).toBe(Math.floor(CATALOG_ONLY_CAP_USD / card.costUsdPerPage));
-    expect(replies.max_pages! * card.costUsdPerPage).toBeLessThanOrEqual(CATALOG_ONLY_CAP_USD + 1e-9);
+    expect(replies.max_pages).toBe(Math.floor(CATALOG_ONLY_CAP_USD / (card.costUsdPerPage * CATALOG_ONLY_PRICE_MARGIN)));
+    expect(replies.max_pages! * card.costUsdPerPage * CATALOG_ONLY_PRICE_MARGIN).toBeLessThanOrEqual(CATALOG_ONLY_CAP_USD + 1e-9);
   });
 
   it("no chosen tweet says it has a reply: no replies stage is built, and the card says so before approval", () => {
@@ -244,12 +245,12 @@ describe("D5: the engine reads the replies of the chosen tweets, only those that
     expect(new Set(delivered.map((r) => String(r.parent_id)))).toEqual(new Set(withReplies));
   });
 
-  it("the cap: a source that never ends is read for at most 200 pages (0.10 USD of catalog_only calls), then the stage stops", async () => {
+  it("the cap: a source that never ends is read for at most 200 pages (0.10 USD of catalog_only calls at the catalog price, 0.20 at twice it), then the stage stops", async () => {
     const { items, replyCalls, plan } = await run({ endless: true });
     const max = plan.stages.find((s) => s.key === "replies")!.max_pages!;
     expect(max).toBe(200);
     expect(replyCalls.length).toBeLessThanOrEqual(max);
-    expect(replyCalls.length * repliesCardOf()!.costUsdPerPage).toBeLessThanOrEqual(CATALOG_ONLY_CAP_USD + 1e-9);
+    expect(replyCalls.length * repliesCardOf()!.costUsdPerPage * CATALOG_ONLY_PRICE_MARGIN).toBeLessThanOrEqual(CATALOG_ONLY_CAP_USD + 1e-9);
     expect(items.counts("replies").pages).toBeLessThanOrEqual(max);
   });
 });
