@@ -24,3 +24,7 @@ Checks run on this version (same rule as the session's scan):
 ## Added in live round 7 (3 Nov 2026)
 
 Two more missions from the owner's admin raw-pages ZIP, anonymised with `anonymise.py` (8 files): `msn_9fa5ba384c05a25247e1` (X; the five REAL replies pages of the first live run of the X replies tool, `raw/call_0003..0007`, and its delivered `rows/tweets.json`, `rows/replies.json`) and `msn_4e68812d396bd5db0a01` (TikTok; the real first search page, `raw/call_0001`). Captions, texts and handles are placeholders, so a test that needs a caption builds it (made up) on the real structure. The provider's `hint` string on the replies pages is replaced by the anonymiser; its words are recorded in `tests/live-e-x-replies-real.test.ts`.
+
+## Added in live round 8 (3 Nov 2026)
+
+One more mission from the owner's admin raw-pages ZIP, anonymised with `anonymise.py` (16 files): `msn_50e3b83c44e7ebd7f577` (X; the 14 REAL replies pages of the first live run of the pageable replies route, `raw/call_0003..0016`, and its delivered `rows/replies.json` and `rows/tweets.json`). The two search pages of that mission are not kept. Cursors are kept by the whitelist (they are the opaque paging tokens the next call asked for); the provider envelope fields (`provider`, `costUsd`, `source`) are kept, the source's name is a placeholder. The 14 calls are in `call-index.json`. Used by `tests/live-g-x-replies-verified.test.ts`.

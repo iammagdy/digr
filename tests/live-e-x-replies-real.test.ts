@@ -90,8 +90,9 @@ describe("the X replies card against its first real responses", () => {
     expect(pages.reduce((n, p) => n + p.page.output.data.items.length, 0)).toBe(delivered.length);
   });
 
-  it("the card is NOT marked verified: the field mapping is right but the route cannot page and gave 16 of at least 23 direct replies, so «every reply the source shows» is not met", () => {
-    expect(card.status).toBe("catalog_only");
-    expect(card.verifiedOn).toEqual([]);
+  it("the ROUND-7 pages alone did not verify the card (the route could not page and gave 16 of at least 23 direct replies); it is verified on the ROUND-8 pages of the pageable route (tests/live-g-x-replies-verified.test.ts), and none of its verified calls is one of these five", () => {
+    expect(card.status).toBe("verified");
+    expect(card.verifiedOn.map((v) => v.mission)).toEqual(["msn_50e3b83c44e7ebd7f577"]);
+    expect(card.verifiedOn.some((v) => v.mission === M)).toBe(false);
   });
 });

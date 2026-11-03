@@ -4,6 +4,16 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Live round 8 verified (3 Nov 2026, after #354): the X replies card is VERIFIED for every account
+
+Base `main` = `14a2fd4` (#354). One branch, one PR. **No SQL write, no migration, no flag change, no paid provider call.** No money, ledger, billing, `gateway.ts`, `price.ts`, `jobPointsCap.ts`, `src/functions/**`, `supabase/**` or settlement line is touched. The owner's live run on the test account (`msn_50e3b83c44e7ebd7f577`, X = test, Heroku on 14a2fd4): 20 original tweets, 31 replies, «٥١ من ٥٤», 189 points on a 200 hold.
+
+- **Read-only SELECTs** on `mission_calls`: the 14 replies calls were all `anyapi.x.post.comments` with `requireFields: ["nextCursor"]`, HTTP 200, 0.00054 USD each (0.00756 USD in all; round 7's calls on the other lane were 0.00045 each; the catalog price is 0.0005). Six tweets, 6 empty terminal pages. The 0.20 USD cap used 3.8% (14 of 200 pages); the day's total of all calls was 0.061 USD against 0.80.
+- **The real pages** (the owner's admin ZIP, anonymised with `anonymise.py`, 16 files under `tests/fixtures/live/missions/msn_50e3b83c44e7ebd7f577`, the 14 calls added to `call-index.json`): every page with rows carries a non-null `nextCursor` (round 7: null everywhere), the next call asked for exactly that token, each tweet's chain ends on an EMPTY page with a null token. The counter-23 tweet gave 16 then 3 (19; 16 in round 7), another 1 then 1. The counters against delivered: 5→4, 3→2, 23→19, and three 1→2 (a counter counts direct replies, a page is the whole conversation). The source ended at an empty page, so the 4 missing for the 23-counter tweet are not on its pages.
+- **The change** (`toolCards/x.ts`): status `verified`, `verifiedOn` = the 14 calls. Every account now gets the replies step (the «not included» line is gone for X); `requireFields` stays on the route; the page cap stays (200 pages = 0.20 USD at twice the catalog price). `observedRowsPerPage` stays 1 (it sizes the hold, one row per call, conservative; the real average was 2.2): nothing about the price changed. Compiled-path only, so flags-off output is unchanged.
+- **Not proven:** a tweet with more than two data pages (the longest chain here has 3 calls); what the lane does for a very large tweet (the cap and the delivered-rows limit bound it); the cost per call at scale.
+- **Tests:** `tests/live-g-x-replies-verified.test.ts` (9, red first: 4 failed on the status and the non-test plan); the tests that pinned the old state were updated (`foundation-cards`, `live-d-x-replies`, `live-e-x-replies-real`, `live-f-x-paging`, `fixtures-anonymised`).
+
 ## Round 8 of the 3 Nov 2026: the pageable route of the X replies tool, TEST accounts only (2026-11-03)
 
 Base `main` = `33e98c9` (#353). One branch, one PR. **No SQL write, no migration, no flag change, no paid provider call.** No money, ledger, billing, `gateway.ts`, `price.ts`, `jobPointsCap.ts`, `src/functions/**`, `supabase/**` or settlement line is touched. The owner approved trying the provider's own suggestion (`requireFields: ["nextCursor"]`) on test accounts only.
