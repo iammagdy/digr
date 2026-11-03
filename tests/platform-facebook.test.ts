@@ -130,7 +130,8 @@ describe("acceptance 1: M17 and M19 choose the keyword search with the two Cairo
 
 describe("decision 7.5: the named page has fewer posts than asked, so the customer decides before approval", () => {
   it("M17: the page has 2 pool posts, one with comments (the other has none, and a comments request cannot use it): a question card with the three answers, nothing priced", async () => {
-    const { out } = await plan();
+    // CHANGED (live round 10): what is counted is the page's posts that are also ABOUT the topic, so the one post the test deliverable needs a caption about it (the same patch the card test below uses)
+    const { out } = await plan({ opts: { captionOnPageRowWithComments: true } });
     expect(out.kind).toBe("question");
     if (out.kind !== "question") return;
     expect(out.options).toEqual([NAMED_SHORTFALL_OPTIONS_AR.onlyFound, NAMED_SHORTFALL_OPTIONS_AR.fill, NAMED_SHORTFALL_OPTIONS_AR.cancel]);
@@ -151,7 +152,7 @@ describe("decision 7.5: the named page has fewer posts than asked, so the custom
   });
 
   it("«only the ones found»: the plan has only the page's posts that can be delivered (1), no other page's post, and says so", async () => {
-    const p = planOf((await plan({ answer: NAMED_SHORTFALL_OPTIONS_AR.onlyFound })).out);
+    const p = planOf((await plan({ answer: NAMED_SHORTFALL_OPTIONS_AR.onlyFound, opts: { captionOnPageRowWithComments: true } })).out);
     expect(p.result.chosen).toHaveLength(1);
     const posts = p.plan.stages[0];
     expect(posts.pinned_rows).toHaveLength(1);
@@ -176,7 +177,7 @@ describe("decision 7.5: the named page has fewer posts than asked, so the custom
   });
 
   it("when the page has enough posts the question is never asked: 1 post asked, the page's one post with comments", async () => {
-    const { out } = await plan({ edits: { count: 1 } });
+    const { out } = await plan({ edits: { count: 1 }, opts: { captionOnPageRowWithComments: true } });
     const p = planOf(out);
     expect(p.result.chosen).toHaveLength(1);
     expect(p.plan.stages[0].pinned_rows).toHaveLength(1);

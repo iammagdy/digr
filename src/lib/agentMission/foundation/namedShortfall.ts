@@ -27,6 +27,8 @@ export const NAMED_MARK_KEY = "named_source";
 export const NAMED_MARK_TITLE_AR = "المصدر المسمّى";
 
 /** The question, in the customer's words: how many posts of the named page were found among what was read, against how many they asked for. */
-export function namedShortfallQuestionAr(source: string, found: number, asked: number, digits: (n: number) => string): string {
-  return `وجدنا في ما قرأناه ${digits(found)} منشورًا فقط من صفحة «${source}» يمكن تسليمه مع تعليقاته، وطلبت ${digits(asked)} منشورًا. كيف تريد أن نكمل؟`;
+export function namedShortfallQuestionAr(source: string, found: number, asked: number, digits: (n: number) => string, topic?: string | null): string {
+  // with a topic, what is counted is the page's posts that talk about it (live round 10: the page's other posts do not answer «posts about X from page Y»)
+  const what = topic ? `منشورًا فقط من صفحة «${source}» يتحدث نصه عن «${topic}» ويمكن تسليمه مع تعليقاته` : `منشورًا فقط من صفحة «${source}» يمكن تسليمه مع تعليقاته`;
+  return `وجدنا في ما قرأناه ${digits(found)} ${what}، وطلبت ${digits(asked)} منشورًا. كيف تريد أن نكمل؟`;
 }

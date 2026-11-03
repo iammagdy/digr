@@ -37,8 +37,9 @@ export function perParentPromise(counters: ReadonlyArray<number | null>, perPare
 }
 
 /** The customer's sentence of a promise (Arabic, Arabic-Indic digits; no provider name, no price). `noun`: what is counted («تعليق», «رد»). */
-export function promiseLineAr(p: StagePromise, what: "comments" | "replies", counterIncludesReplies: boolean, perParent: number | null = null): string {
+export function promiseLineAr(p: StagePromise, what: "comments" | "replies", counterIncludesReplies: boolean, perParent: number | null = null, openPerParent: number | null = null): string {
   const n = toArabicDigits(p.n);
+  if (what === "comments" && p.type === "open" && openPerParent !== null) return `التعليقات: حتى ${toArabicDigits(openPerParent)} تعليق من كل عنصر مختار، لأن المنصة لا تعرض عدد تعليقات العنصر قبل قراءته؛ أي ${n} تعليق على الأكثر، ونذكر في الملف ما سُلّم لكل عنصر.`;
   if (what === "comments" && perParent !== null) {
     const per = toArabicDigits(perParent);
     if (p.type === "counter" && p.counter !== undefined) return `التعليقات: حتى ${per} تعليق من كل عنصر مختار بحسب العدد الذي طلبته، أي ${n} تعليق على الأكثر، وعدّاد المنصة للعناصر المختارة ${toArabicDigits(p.counter)}${counterIncludesReplies ? " ويشمل الردود" : ""}.`;

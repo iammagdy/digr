@@ -55,8 +55,9 @@ describe("acceptance 2: M16 reads the account with the pageable card, chooses th
     const { out, stats } = await plan(M16, { created: "2026-11-02T17:31:00Z" });
     const p = planOf(out);
     expect(p.plan.stages.map((s) => [s.key, s.endpoint_id])).toEqual([["posts", SCRAPE], ["comments", "anyapi.instagram.post.comments"], ["comments_replies", "anyapi.instagram.comment_replies"]]);
-    expect(p.reads).toEqual({ pool: 1, exposure: 2 });
-    expect(stats.unserved).toEqual([]);
+    // CHANGED (live round 10): with no period the listing's next page is read too (the gateway's two samples of a source); no stored second page answers it here, so the read is recorded as not served and the pool is the 12 posts
+    expect(p.reads).toEqual({ pool: 2, exposure: 2 });
+    expect(stats.unserved.map((u) => [u.endpointId, typeof u.params.next_max_id])).toEqual([[SCRAPE, "string"]]);
     expect(stats.served.map((s) => s.storedCall)).toEqual(["call_0002", "call_0008", "call_0009"]);
     expect(p.plan.compiled?.by).toBe("compiler");
     expect(p.plan.unserved_steps).toBeUndefined();
@@ -125,7 +126,8 @@ describe("M15 (the same request, the other stored account page)", () => {
     expect(p.result.promises.comments).toEqual({ type: "counter", n: 7, counter: 7 });
     expect(p.result.promises.comments_replies.type).toBe("open");
     // the page of the first post was never read live, so no stored page answers it: the read is recorded as not served
-    expect(stats.unserved).toHaveLength(1);
+    // (and the second page of the listing, which no stored page answers: round 10)
+    expect(stats.unserved).toHaveLength(2);
   });
 });
 

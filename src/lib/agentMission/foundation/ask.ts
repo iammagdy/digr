@@ -3,6 +3,7 @@ import { countryOfValue } from "../places";
 import { topicMeaningOf } from "../topicMeaning";
 import { cairoDayEndExclusiveMs, cairoDayOf, cairoDayStartMs } from "../cairoTime";
 import type { SocialPlatform } from "../redesignFlagTypes";
+import { occurrenceChoiceOf, requestYearOf, type Occurrence } from "./occurrence";
 
 /**
  * F1, THE ASK (docs/FOUNDATION-PLAN.md section 3.1): what the customer asked, built ONCE by code from their words, their answer to the one question and their edit of the
@@ -28,6 +29,8 @@ export interface AskEdits {
   count?: number; comments?: number; replies?: number;
   /** YouTube, an official source: the names to look the channels up by (the understanding step of Stage 2 gives them; absent, they are read from the topic: `officialChannelQueriesOf`). */
   channels?: string[];
+  /** Decision 7, a recurring event: which occurrence the customer means (the planning keeps it across the questions that follow). */
+  occurrence?: Occurrence;
 }
 
 export interface Ask {
@@ -49,6 +52,8 @@ export interface Ask {
   commentsPerParent: number | null;
   /** The customer's number of replies FOR EACH comment («٣ ردود على كل تعليق»), or null. */
   repliesPerComment: number | null;
+  /** Decision 7: the occurrence of a recurring event the customer chose («آخر مرة» / «كل المرات» / a year), or null when none was chosen or asked. */
+  occurrence?: Occurrence;
   edits: AskEdits;
 }
 
@@ -138,6 +143,11 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
   // A PAGE OR ACCOUNT GIVEN BY ITS LINK (Facebook, Instagram): the request contract reads the words after «من صفحة» and stops at the link's first dot; the link itself is the source
   const link = c.platform === "facebook" || c.platform === "instagram" ? /https?:\/\/(?:www\.|m\.)?(?:facebook|instagram)\.com\/[A-Za-z0-9._-]+\/?/i.exec(text)?.[0] ?? null : null;
   const sourceKind: AskSourceKind = link || c.source.named ? "named" : c.source.official ? "official" : "none";
+  // A YEAR (decision 7; Facebook, Instagram and YouTube only): written by the customer in their words, or typed as the answer of «حدد سنة», is the period of that calendar year; the customer's own number of posts («٢٠٢٠ منشور») is never a year
+  const social = c.platform === "facebook" || c.platform === "instagram" || c.platform === "youtube";
+  const chosen = edits.occurrence ?? (occurrenceChoiceOf(answer) as Occurrence | { kind: "ask_year" } | null);
+  const occurrence: Occurrence | null = chosen && chosen.kind !== "ask_year" ? chosen : social && !c.period && requestYearOf(String(request ?? "")) !== null ? { kind: "year", year: requestYearOf(String(request ?? ""))! } : null;
+  const yearPeriod: AskPeriod | null = social && !c.period && occurrence?.kind === "year" ? periodOf(dayOf(occurrence.year, 1, 1), dayOf(occurrence.year, 12, 31)) : null;
   const language: Ask["language"] = c.language ? (/بالإنجليزي|بالانجليزي|الإنجليزية|الانجليزية|english/i.test(text) ? "en" : "ar") : null;
   return {
     platform: c.platform,
@@ -145,7 +155,7 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
     count: edits.count ?? c.count,
     source: { kind: sourceKind, text: link ?? c.source.text },
     topic: { text: topicText, relation },
-    period: c.period ? periodOfRequest(text, requestedAtMs) : null,
+    period: c.period ? periodOfRequest(text, requestedAtMs) : yearPeriod,
     country: c.country ? countryNamedIn(text) : null,
     language,
     order: NEWEST.test(text) || c.comments === "none" ? "newest" : "most_commented",
@@ -153,6 +163,7 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
     replies: c.replies,
     commentsPerParent: c.comments === "none" ? null : perParentOf(text, PER_PARENT_COMMENTS),
     repliesPerComment: c.replies === "none" ? null : perParentOf(text, PER_COMMENT_REPLIES),
+    ...(social && occurrence ? { occurrence } : {}),
     edits: { ...edits },
   };
 }

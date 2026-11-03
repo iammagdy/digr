@@ -42,6 +42,10 @@ import { namedShortfallChoiceOf } from "../../src/lib/agentMission/foundation/na
 import { promiseShortfallAr, repliesShortfallAr } from "./repliesShortfall";
 import { TOPIC_OPTIONS_AR, topicMeaningOf, topicQuestionAr } from "../../src/lib/agentMission/topicMeaning";
 import { noAboutChoiceOf } from "../../src/lib/agentMission/foundation/topicChoice";
+import { occurrenceChoiceOf } from "../../src/lib/agentMission/foundation/occurrence";
+import { parseChannels, understandChannelsPrompt, UNDERSTAND_SYSTEM } from "../../src/lib/agentMission/foundation/understand";
+import { llmCostFromUsage } from "./llmCost";
+import { MODEL_HAIKU } from "../../src/lib/agentMission/constants";
 import { reportedPlan, withPromiseCaps, withRepliesJudged } from "../../src/lib/agentMission/repliesCard";
 import { runContactEnrichment } from "./engine/contacts";
 import { runNamesStep } from "./namesAr";
@@ -354,11 +358,20 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     await store.addEvent(mission.id, { kind: "result", message_ar: sentence });
     return;
   }
-  const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, nowMs: planningNow, ...(redesign.isTest ? { catalogOnly: true } : {}) }) : null;
+  // DECISION 7 (a recurring event): the occurrence the customer chose is kept in the mission's run note, because the answer of a later question (the Facebook page question) replaces `answer_text`
+  let occurrence = compiledActive ? (await readRunState(store, mission.id)).occurrence : undefined;
+  const occurrenceAnswer = compiledActive ? occurrenceChoiceOf(mission.answer_text) : null;
+  if (occurrenceAnswer && occurrenceAnswer.kind !== "ask_year") { occurrence = occurrenceAnswer; await updateRunState(store, mission.id, (r) => ({ ...r, occurrence: occurrenceAnswer }), deps.log); }
+  // F1, THE UNDERSTAND STEP: one small structured model request that names the official channels of a YouTube request (code checks every name against the customer's words); its cost comes from the API's usage and is added to the mission's model cost (never a charge)
+  const understand = deps.reviewCall ? async (input: { request: string; topic: string | null }): Promise<{ channels: string[]; costUsd: number } | null> => {
+    const got = await deps.reviewCall!({ model: MODEL_HAIKU, system: UNDERSTAND_SYSTEM, user: understandChannelsPrompt(input.request, input.topic), maxTokens: 200 });
+    return got ? { channels: parseChannels(got.text) ?? [], costUsd: llmCostFromUsage(MODEL_HAIKU, got.usage) } : null;
+  } : undefined;
+  const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, nowMs: planningNow, priorCalls: calls, ...(understand ? { understand } : {}), ...(occurrence ? { occurrence } : {}), ...(redesign.isTest ? { catalogOnly: true } : {}) }) : null;
   // THE QUESTION BEFORE APPROVAL (live round 7): no video of the two pages read is about the topic; the plan is not made, the customer chooses (the same needs_input card as the topic question)
   if (compiled?.kind === "question") {
-    await store.addEvent(mission.id, { kind: "call", message_ar: compiled.why === "named_shortfall" ? "قياس داخلي: سؤال قبل الخطة، منشورات الصفحة المسمّاة أقل من المطلوب." : "قياس داخلي: سؤال قبل الخطة، لا فيديو في ما قُرئ يتحدث عن الموضوع.", counts: { compiled: 0, question: 1, pool_reads: compiled.reads.pool, exposure_reads: compiled.reads.exposure } }).catch(() => undefined);
-    await store.updateMission(mission.id, { status: "needs_input", question_ar: compiled.question, plan_public: { question_options: compiled.options } as any, ...clear });
+    await store.addEvent(mission.id, { kind: "call", message_ar: compiled.why === "named_shortfall" ? "قياس داخلي: سؤال قبل الخطة، منشورات الصفحة المسمّاة أقل من المطلوب." : compiled.why === "occurrence" || compiled.why === "occurrence_year" ? "قياس داخلي: سؤال قبل الخطة، الحدث يتكرر ولم تُحدَّد سنة." : "قياس داخلي: سؤال قبل الخطة، لا فيديو في ما قُرئ يتحدث عن الموضوع.", counts: { compiled: 0, question: 1, pool_reads: compiled.reads.pool, exposure_reads: compiled.reads.exposure } }).catch(() => undefined);
+    await store.updateMission(mission.id, { status: "needs_input", question_ar: compiled.question, plan_public: { question_options: compiled.options } as any, ...(compiled.llmCostUsd ? { planning_llm_usd: Number((Number((await store.getMission(mission.id))?.planning_llm_usd ?? mission.planning_llm_usd ?? 0) + compiled.llmCostUsd).toFixed(6)) } : {}), ...clear });
     await store.addEvent(mission.id, { kind: "question", message_ar: compiled.question });
     return;
   }
@@ -367,7 +380,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     if (compiled.kind === "plan") state.proposedPlan = compiled.plan;
     else state.finish = { outcome: "cannot_serve", summary_ar: "", kind: compiled.reason === "no_rows" || compiled.reason === "no_parent_with_children" ? "empty" : "unsupported" };
   }
-  let output = compiled ? COMPILED_RUN : await runOnce(planningPrompt(mission, calls, resumeNote));
+  let output = compiled ? { ...COMPILED_RUN, llmCostUsd: compiled.llmCostUsd ?? 0 } : await runOnce(planningPrompt(mission, calls, resumeNote));
   if (!compiled) await recordTokens(deps, mission.id, 0, output.usage, { inputTokens: 0, outputTokens: 0, calls: 0 }, output.llmCostUsd);
   // A RUN THAT ENDED WITH NO PLAN, NO QUESTION AND NO ENDING while the sources gave it real rows (live 2026-10-29: Facebook videos, after the customer answered the question, the planner tried two unavailable web searches and stopped): it is asked once more, told to
   // build the plan from what it holds. Never a limit of ours: the run's stop was a plain end, with no budget, turn or time limit reached.

@@ -86,6 +86,8 @@ export interface ProposedStage {
   spare_rows?: Array<Record<string, unknown>>;
   /** Fields of the mapped item kept on the stored row beside the columns, never shown (the tokens a replies tool needs from the comment's own row: Facebook's feedback_id and expansion_token). Set by code only. */
   carry_keys?: string[];
+  /** An OPEN comments stage (no counter before reading): the most comments read from each parent, the limit the card and the file state (it also sizes the hold). */
+  children_cap_per_parent?: number;
   /** The catalog capability of the stage's tool, stored by code in the redesigned mode (rule 9 of the consolidation: a stage's type is read from its structure, never from the words of its title). Absent in the old pipeline. */
   capability?: string;
   expected_rows: number;
@@ -930,6 +932,8 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
   const notes = [...(plan.notes_ar ?? []), ...(plan.quantity?.reason_ar ? [plan.quantity.reason_ar] : []), ...childRuleLinesAr(plan.stages), ...repliesLinesAr(plan), ...roleLinesAr(plan.stages), ...priceIncludesLinesAr(plan), ...platformCostNotesAr(plan.stages), ...plan.stages.filter((s) => (s.unresolved_sources ?? []).length > 0 && (s.filters ?? []).some((f) => f.kind === "account" && isEnabled(f))).map((s) => unresolvedSourcesLineAr(s.unresolved_sources!)), ...(plan.stages.some((s) => (s.approx_dates ?? []).length > 0) ? [APPROX_DATES_CARD_LINE_AR] : [])];
   return {
     summary_ar: firstSentenceAr(plan.summary_ar),
+    // a plan built by the compiler says so (the orders page promises a finished mission the judged total only for those: one number on every surface)
+    ...(plan.compiled?.by === "compiler" ? { compiled: true } : {}),
     ...(notes.length ? { notes_ar: notes } : {}),
     ...(assumptions.length ? { assumptions_ar: assumptions } : {}),
     ...(plan.quantity ? { quantity: { requested: plan.quantity.requested, target: plan.quantity.target, stage_key: plan.quantity.stage_key } } : {}),
