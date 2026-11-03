@@ -102,6 +102,25 @@ export function parseCatalog(snapshot: unknown, writeActions: unknown): TregCata
   };
 }
 
+/**
+ * INPUTS THE PROVIDER ACCEPTS THAT THE ATTACHED SNAPSHOT DOES NOT LIST (round 8). The snapshot file is the owner's attached file and is pinned byte for byte (tests/treg-catalog-data.test.ts, data/treg/data_policy.json), so it is never edited; an input the gateway must keep
+ * (it drops every input the catalog does not declare) is declared here, in code, once, and added to the typed catalog when it is loaded. `requireFields` of the X replies route: the provider's own answer to a page it cannot continue is to re-run with ["nextCursor"], to be served by a
+ * source that can return a next-page cursor (it may cost more per request). Only the compiled plan of a TEST account sends it (toolCards/x.ts); the endpoint's catalog price is unchanged.
+ */
+export const DECLARED_EXTRA_INPUTS: Readonly<Record<string, ReadonlyArray<CatalogInput>>> = {
+  "anyapi.x.post.comments": [
+    { name: "requireFields", in: "body", type: "array", required: false, enum: null, minimum: null, maximum: null, default: null, example: ["nextCursor"], note: "Response fields the serving source must be able to return; [\"nextCursor\"] asks for a source that can return a next-page cursor (it may cost more per request). Set by the compiled plan of a test account only." },
+  ],
+};
+
+function declareExtraInputs(catalog: TregCatalog): void {
+  for (const [id, inputs] of Object.entries(DECLARED_EXTRA_INPUTS)) {
+    const endpoint = catalog.byId.get(id);
+    if (!endpoint) continue;
+    for (const input of inputs) if (!endpoint.inputs.some((i) => i.name === input.name)) endpoint.inputs = [...endpoint.inputs, { ...input }].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+  }
+}
+
 const cache = new Map<string, TregCatalog>();
 
 /** Reads data/treg/ once per process (and per directory). No network. */
@@ -112,6 +131,7 @@ export function loadTregCatalog(options: { dir?: string } = {}): TregCatalog {
   const snapshot = JSON.parse(readFileSync(path.join(dir, "treg_catalog_sellable.json"), "utf-8"));
   const writes = JSON.parse(readFileSync(path.join(dir, "treg_write_actions.json"), "utf-8"));
   const catalog = parseCatalog(snapshot, writes);
+  declareExtraInputs(catalog);
   cache.set(dir, catalog);
   return catalog;
 }
