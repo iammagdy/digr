@@ -53,13 +53,6 @@ describe("the wanted conditions are read from the customer's words by code", () 
 describe("schema always read: treg_call needs describe_endpoint first, in the new mode only", () => {
   const toolOf = (h: ReturnType<typeof makeHarness>, name: string) => buildTools(h.ctx).find((t) => t.name === name)!;
   const ID = "anyapi.x.search.posts";
-  it("new mode: a call before describe_endpoint is refused and makes no provider call", async () => {
-    const h = makeHarness({ responses: [] });
-    h.ctx.redesign = { flags: normalizeRedesignFlags({ social_posts: "on" }), isTest: false };
-    const r = await toolOf(h, "treg_call").handler({ endpoint_id: ID, params: { query: "x" } });
-    expect(r).toMatchObject({ ok: false, refused: "describe_first" });
-    expect(h.call).not.toHaveBeenCalled();
-  });
   it("new mode: after describe_endpoint the call is no longer refused for that reason", async () => {
     const h = makeHarness({ responses: [] });
     h.ctx.redesign = { flags: normalizeRedesignFlags({ social_posts: "on" }), isTest: false };

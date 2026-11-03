@@ -1,4 +1,6 @@
 import { vi, expect } from "vitest";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import ExcelJS from "exceljs";
 import { createMemoryDb, type MemoryDb } from "./memoryDb";
 import { fakeMoneyClient } from "./agentMoney";
@@ -133,7 +135,15 @@ export async function replay(input: ReplayInput): Promise<ReplayResult> {
   expect(claimedForPlanning?.id).toBe(missionId);
   expect(claimedForPlanning?.status).toBe("planning");
   const planningDriver = createFakeDriver(input.planning);
-  await runPlanning(wire(planningDriver), store.missions.get(missionId)!);
+  // PR B (round 18): a world whose planning ran through the deleted model path loads the STORED result of that planning (tests/fixtures/stored-plans: the plan, the pages, the call log and the events the planning left, captured once from the code of #364, keyed by the test's name) and goes on from the card: approval, execution, settlement, files are the code under test, with every assertion of the test kept.
+  const stored0 = storedPlanning(nextStoredName(expect.getState().currentTestName ?? ""), missionId);
+  if (stored0) {
+    for (let i = 0; i < stored0.planningProviderCalls; i += 1) queue.shift();
+    Object.assign(store.missions.get(missionId)!, stored0.mission, { id: missionId, user_id: REPLAY_USER });
+    for (const [k, v] of Object.entries(stored0.files)) store.files.set(k, v);
+    for (const c of stored0.calls) await store.addCall(c);
+    for (const e of stored0.events) await store.addEvent(missionId, { kind: e.kind, message_ar: e.message_ar, ...(e.counts ? { counts: e.counts } : {}) } as never);
+  } else await runPlanning(wire(planningDriver), store.missions.get(missionId)!);
   const planned = store.missions.get(missionId)!;
   if (planned.status !== "plan_ready" || !planned.plan) throw new Error(`planning did not end with a plan (status ${planned.status}; ${JSON.stringify(planningDriver.results.slice(-2))})`);
 
@@ -142,9 +152,6 @@ export async function replay(input: ReplayInput): Promise<ReplayResult> {
   if (!planLoad.ok) throw new Error("the customer could not read the mission");
   customerAnswers.push(planLoad);
 
-  // PR B (round 18): the worlds of the redesigned mode (flags on) were written for the code-built new engine. The deleted model path no longer builds recipes by code, so the stored plan is marked as a plan the compiler built (every stage built by code): the engine, the settlement and the files are what those tests always checked.
-  const flags = (store.settings as Record<string, unknown>).redesign_flags as Record<string, string> | undefined;
-  if (flags && Object.values(flags).some((m) => m === "on" || m === "test")) markStoredPlanCompiled(store, missionId);
   if (input.beforeApproval) await input.beforeApproval({ client, missionId, db, store });
   const stored = store.missions.get(missionId)!;
   // the plan the customer approves is the stored one (a plan edit may have replaced it)
@@ -248,11 +255,19 @@ export function pagedAnswers(total: number, perPage: number, costUsd: number, ma
 /** A model review that accepts every row it is given (a fixture whose rows the rule sends to the check: the companies of a sector, whose names do not all say it). Its tokens are small and counted like any review's. */
 export const approvingReview = async ({ user }: { user: string }) => ({ text: JSON.stringify(Array((user.match(/^\d+\./gm) ?? []).length).fill(1)), usage: { input_tokens: 400, output_tokens: 20 } });
 
-/** TEST-ONLY (PR B): a stored plan of the old model path marked as a compiled plan: `compiled.by = "compiler"` and `built_by = "code"` on every stage that has a recipe (so the engine runs it whole, as a compiled plan always does). Nothing else in the plan changes. */
-export function markStoredPlanCompiled(store: MemoryStore, missionId: string): void {
-  const row = store.missions.get(missionId);
-  const plan = row?.plan as unknown as PricedPlan | null | undefined;
-  if (!row || !plan || !Array.isArray(plan.stages)) return;
-  for (const st of plan.stages) if (st.engine) st.engine = { ...st.engine, built_by: "code" } as typeof st.engine;
-  if (!plan.compiled) (plan as { compiled?: unknown }).compiled = { by: "compiler", platform: "tiktok", promises: {} };
+/** The stored planning of the test that is running (null when none was stored): the captured snapshot with the capture's mission id replaced by this run's. */
+function storedPlanning(testName: string, missionId: string): { planningProviderCalls: number; mission: Record<string, unknown>; files: Record<string, string>; calls: any[]; events: any[] } | null {
+  const file = new URL(`../fixtures/stored-plans/${createHash("sha1").update(testName).digest("hex").slice(0, 16)}.json`, import.meta.url);
+  if (!existsSync(file)) return null;
+  const text = readFileSync(file, "utf8");
+  const snap = JSON.parse(text) as { mission: { id: string } };
+  return JSON.parse(text.split(snap.mission.id).join(missionId));
+}
+
+/** The stored planning is keyed by the test's name and the number of the replay inside that test (a test may run several worlds). */
+const replaysSeen = new Map<string, number>();
+function nextStoredName(testName: string): string {
+  const n = (replaysSeen.get(testName) ?? 0) + 1;
+  replaysSeen.set(testName, n);
+  return `${testName}#${n}`;
 }

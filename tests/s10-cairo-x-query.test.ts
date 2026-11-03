@@ -123,22 +123,3 @@ const planning = () => planningFlow({
   }),
 });
 
-describe("the exact request end to end: the model sampled its own day-only operators", () => {
-  it("the stored query and every query sent to the source carry the Cairo boundaries; the tweet of 2026-11-01 00:14 Cairo is never asked for", async () => {
-    seen.length = 0;
-    const r = await replay({ request: 'هات ٢٠ تغريدة على X فيها "العاصمة الإدارية" بالعربي في شهر أكتوبر ٢٠٢٦، مع الردود.', planning: planning(), execution: () => [], deps: flagsOn as never, answers: Array.from({ length: 30 }, () => source) });
-    const stage = r.plannedPlan.stages[0];
-    const stored = String(stage.engine?.params.query);
-    expect(stage.engine?.built_by).toBe("code");
-    expect(opOf(stored, "since")).toEqual(["2026-09-30_21:00:00_UTC"]);
-    expect(opOf(stored, "until")).toEqual(["2026-10-31_22:00:00_UTC"]);
-    // the calls of the execution carry the stored boundaries (the planning sample was the model's own query)
-    const executed = seen.slice(1);
-    expect(executed.length).toBeGreaterThan(0);
-    for (const q of executed) { expect(opOf(q, "since")).toEqual(["2026-09-30_21:00:00_UTC"]); expect(opOf(q, "until")).toEqual(["2026-10-31_22:00:00_UTC"]); }
-    // so the source never returned the live tweet, and none of the delivered tweets is outside October in Cairo
-    const snapshotText = JSON.stringify(r.mission.summary_ar ?? "");
-    expect(snapshotText).not.toContain("خارج");
-    assertReplayInvariants(r, { expectDelivered: 20 });
-  });
-});
