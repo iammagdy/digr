@@ -11,6 +11,7 @@ import { approxInstantOfRelative } from "./occurrence";
 import { cairoMomentAr } from "./cairoText";
 import { NAMED_MARK_KEY, NAMED_MARK_TITLE_AR, NAMED_MISMATCH_MARK_AR } from "./namedShortfall";
 import { childPromise, perParentPromise, promiseLineAr, type StagePromise } from "./promise";
+import { OPEN_REPLIES_FLOOR } from "./openReplies";
 import { TOPIC_RELATION_KEY, TOPIC_RELATION_TITLE_AR, topicRelationAr } from "./topicChoice";
 import { cardMapCode, cardsFor, CATALOG_ONLY_CAP_USD, CATALOG_ONLY_PRICE_MARGIN, CHILD_COLUMNS, COUNTRY_AR, mapPage, type CardRole, type ToolCard } from "./toolCards";
 import type { SocialPlatform } from "../redesignFlagTypes";
@@ -158,9 +159,6 @@ const NOUN: Record<SocialPlatform, { one: string; two: string; many: string; whe
 const DEFAULT_COUNT = 10;
 /** An OPEN comments stage (the platform gives no counter before reading: YouTube) reads each chosen item up to this many comments; it sizes the hold's maximum and is the per-item limit the card and the file state (never a promise of a count). */
 export const OPEN_COMMENTS_PER_PARENT = 100;
-/** The least share of replies a comment is assumed to have when the exposure pages show none: it sizes the reserve's maximum only, never a promise. */
-const OPEN_REPLIES_FLOOR = 0.1;
-
 /**
  * THE MAXIMUM OF AN OPEN REPLIES STAGE (F5: an estimate never becomes a promise; it may only size the hold's maximum). It is bounded by the comments ACTUALLY CHOSEN for the
  * stage (`comments`: the comments stage's own planned rows, never a whole-video counter) times the replies read for each comment (`perComment`), and sized inside that bound by
@@ -173,6 +171,13 @@ export function openRepliesMax(comments: number, replyCounters: ReadonlyArray<nu
   const seen = replyCounters.filter((c): c is number => c !== null && Number.isFinite(c)).map((c) => Math.min(cap, Math.max(0, c)));
   const ratio = seen.length > 0 ? seen.reduce((s, c) => s + c, 0) / seen.length : 0;
   return Math.max(1, Math.min(n * cap, Math.ceil(n * Math.max(ratio, OPEN_REPLIES_FLOOR))));
+}
+
+/** A counter as a number, or null when the row does not carry one (null, undefined, an empty text, a non-number). Never 0 for an absent value: `Number(null)` is 0 (live round 11, Instagram: 27 comments with no counter were «counted» as 27 comments with no replies). */
+export function counterValueOf(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string" && /^\s*\d+(\.\d+)?\s*$/.test(v)) return Number(v);
+  return null;
 }
 
 export interface RepliesSizing {
@@ -274,7 +279,8 @@ export function compilePlan(input: CompileInput): CompileResult {
   const repliesCards = shape.includes("replies") ? cardsFor(ask.platform, REPLY_ROLE[ask.platform], { catalogOnly }) : [];
   const commentsCard = shape.includes("comments") ? chooseCard(ask, "comments", { catalogOnly, repliesCards }) : null;
   const repliesCard = shape.includes("replies") ? chooseCard(ask, "replies", { catalogOnly }) : null;
-  const counter = (r: PoolRow): number | null => { if (!counterKey) return null; const n = Number(r[counterKey]); return Number.isFinite(n) ? n : null; };
+  // a counter the row does not carry is UNKNOWN, never 0 (live round 11: `Number(null)` is 0, so a row with no counter was read as a row that has no children)
+  const counter = (r: PoolRow): number | null => { if (!counterKey) return null; return counterValueOf(r[counterKey]); };
   // DECISION 7.5 (Facebook): «only the ones found» keeps the named page's posts only; the choice is the customer's, made before approval
   const bySource = Boolean(poolCard.inputs.source);
   const isNamed = (r: Record<string, unknown>): boolean => factsOf(r, ask, bySource).named;
@@ -318,9 +324,10 @@ export function compilePlan(input: CompileInput): CompileResult {
   // THE 0.20 USD CAP (decision 7.4): the stages that use a catalog_only card share it; each gets the pages its share buys at twice the catalog's price (the stage's own page limit)
   const catalogOnlyStages = [commentsCard, repliesCard].filter((c): c is ToolCard => c !== null && c.status === "catalog_only").length;
   const sharedMaxPages = (c: ToolCard): number | null => (c.status === "catalog_only" && c.costUsdPerPage > 0 ? Math.max(1, Math.floor(CATALOG_ONLY_CAP_USD / Math.max(1, catalogOnlyStages) / (c.costUsdPerPage * CATALOG_ONLY_PRICE_MARGIN) + 1e-9)) : null);
-  // THE TOPIC RELATION MARK (live round 7): when some chosen item's own text is not about the topic the customer named («عن X»), every item of the stage carries how its text relates to it, so the file says which is which (a mark, never a drop)
+  // THE TOPIC RELATION MARK (live round 7, always since round 11): every item of the stage carries how its own text relates to the topic the customer named, so the file says which is which (a mark, never a drop)
   const tierOf = (r: PoolRow) => factsOf(r, ask, bySource).topicTier;
-  const markTopic = ask.platform !== "x" && Boolean(ask.topic.text) && ask.topic.relation !== "made_with" && chosen.some((r) => tierOf(r) !== 2);
+  // LIVE ROUND 11: the column is on the parent sheet WHENEVER the Ask has a topic, on every platform (a file whose items are all about it said nothing, so «all about it» could not be told from «not checked»)
+  const markTopic = Boolean(ask.topic.text);
   // THE NAMED-SOURCE MARK (decision 7.5, «fill from other pages»): a post that is not the named page's carries «المصدر المسمّى: غير مطابق», the page's own posts carry nothing (a mark, never a drop)
   const markNamed = namedFacebook && chosen.some((r) => !isNamed(r));
   const shown = (r: PoolRow): PoolRow => ({ ...r, ...(markTopic ? { [TOPIC_RELATION_KEY]: topicRelationAr(tierOf(r)) } : {}), ...(markNamed ? { [NAMED_MARK_KEY]: isNamed(r) ? "" : NAMED_MISMATCH_MARK_AR } : {}) });
@@ -415,7 +422,7 @@ export function compilePlan(input: CompileInput): CompileResult {
       const perComment = ask.edits.replies === undefined && ask.repliesPerComment !== null ? Math.min(ask.repliesPerComment, AGENT_REPLIES_PER_COMMENT_MAX) : null;
       const commentsRows = stages.find((x) => x.key === "comments")!.planned_rows;
       // THE REAL COUNTERS of the comments read at planning count as they are; the cap of 50 sizes the hold for the comments not read yet (live finding C)
-      const sizing = repliesSizing({ comments: commentsRows, known: seen.map((r) => Number(r.replies_count)), perComment: perComment ?? AGENT_REPLIES_PER_COMMENT_MAX, countedAtCap: perComment !== null });
+      const sizing = repliesSizing({ comments: commentsRows, known: seen.map((r) => counterValueOf(r.replies_count)), perComment: perComment ?? AGENT_REPLIES_PER_COMMENT_MAX, countedAtCap: perComment !== null });
       // REPLIES ASKED WITH NO NUMBER PER COMMENT: every reply the source shows is read for each chosen comment (the engine reads past the cap; the cap sizes the reserve only)
       const readAll = perComment === null && ask.edits.replies === undefined;
       const p: StagePromise = ask.edits.replies !== undefined ? { type: "open", n: Math.max(1, Math.floor(ask.edits.replies)) } : { type: "open", n: sizing.total, counted: sizing.counted, counted_comments: sizing.countedComments };
