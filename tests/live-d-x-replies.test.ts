@@ -179,11 +179,11 @@ describe("D5: the compiled path hands the account's test status to the compiler"
     };
     const a = mk();
     const withCard = await planByCompiler({ mission: { id: "msn_x", request_text: REQUEST, answer_text: null, created_at: "2026-11-03T07:13:38Z" }, gateway: a.gateway as never, store: a.store, catalog, nowMs: AT, catalogOnly: true });
-    if (withCard.kind !== "plan") throw new Error(withCard.reason);
+    if (withCard.kind !== "plan") throw new Error(withCard.kind);
     expect(withCard.plan.stages.map((s) => s.key)).toEqual(["tweets", "replies"]);
     const b = mk();
     const without = await planByCompiler({ mission: { id: "msn_x", request_text: REQUEST, answer_text: null, created_at: "2026-11-03T07:13:38Z" }, gateway: b.gateway as never, store: b.store, catalog, nowMs: AT });
-    if (without.kind !== "plan") throw new Error(without.reason);
+    if (without.kind !== "plan") throw new Error(without.kind);
     expect(without.plan.stages.map((s) => s.key)).toEqual(["tweets"]);
   });
 });

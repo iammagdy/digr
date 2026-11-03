@@ -100,12 +100,50 @@ export function askedGapLinesAr(f: AskedThreadFacts): { counterLines: string[]; 
 }
 
 /**
+ * THE REPLIES GAP OF A PARENT THAT HAS NO COMMENTS STAGE (live round 7, msn_9fa5ba384c05a25247e1: 20 tweets, replies by the platform's counters 33, delivered 25; the file said nothing about the replies). For each delivered parent (a tweet), the reply counter its own row carries
+ * against the replies delivered under it, and only that: never the whole of the parent's other numbers. A parent with no counter and no reply is not listed (no noise). A gap is a line only when fewer were delivered than the counter says (the cap, when there is one, counts first); more than the counter
+ * is told in the counter line and is not called a gap. Pure: counts in, Arabic out.
+ */
+export function tweetRepliesGapLinesAr(f: { parentNoun: string; parents: ReadonlyArray<{ id: string; counter: number | null }>; replyParentIds: ReadonlyArray<string>; repliesCap: number }): { counterLines: string[]; limitLines: string[] } {
+  const parentNoun = knownItemNoun(f.parentNoun) ?? GENERIC_ITEM_NOUN;
+  const reply = knownItemNoun("رد")!;
+  const got = new Map<string, number>();
+  for (const p of f.replyParentIds) got.set(p, (got.get(p) ?? 0) + 1);
+  const counterLines: string[] = [];
+  const limitLines: string[] = [];
+  f.parents.forEach((p, i) => {
+    const counter = Math.min(f.repliesCap, Math.max(0, p.counter ?? 0));
+    const delivered = got.get(p.id) ?? 0;
+    if (counter === 0 && delivered === 0) return;
+    const head = `ال${parentNoun.singular} رقم ${formatAr(i + 1)}`;
+    const line = `${head}: ردودها بحسب عدّاد المنصة ${countAr(counter, reply, { subject: true })} وسُلّم منها ${countAr(delivered, reply, { subject: true })}`;
+    counterLines.push(line);
+    if (delivered < counter) limitLines.push(`${line}؛ والفرق لم يعطِه المصدر`);
+  });
+  return { counterLines, limitLines };
+}
+
+/**
  * THE COUNTER LINES OF A DELIVERY, from the plan and the delivered rows: for every delivered comments stage that has a parent whose rows carry the source's own counter (a video's comments count), one line per parent. Empty for a plan with no such stage. `parentNoun` is the noun the plan's own
  * title says («فيديو»), found by the caller (methodology.ts knownNounOf).
  */
 export function threadCounterLinesOfPlan(plan: Pick<PricedPlan, "stages"> & { compiled?: PricedPlan["compiled"] }, rowsByStage: Record<string, Array<Record<string, unknown>>>, nounOf: (title: string | undefined) => string | null | undefined): { counterLines: string[]; limitLines: string[] } {
   const counterLines: string[] = [];
   const limitLines: string[] = [];
+  // THE REPLIES OF A TOP-LEVEL PARENT (X: a tweet has no comments stage, its replies are the child stage; live round 7, msn_9fa5ba384c05a25247e1): the gap per tweet, the way TikTok says it per video
+  for (const stage of plan.stages) {
+    if (plan.compiled?.by !== "compiler" || !stage.deliver || stage.replies_of === undefined) continue;
+    const parentStage = plan.stages.find((p) => p.key === stage.replies_of);
+    if (!parentStage || parentStage.parent_key !== null) continue;
+    const lines = tweetRepliesGapLinesAr({
+      parentNoun: nounOf(parentStage.title_ar) ?? "عنصر",
+      parents: (rowsByStage[parentStage.key] ?? []).map((r) => ({ id: String(r.id), counter: childCountOf(r) })),
+      replyParentIds: (rowsByStage[stage.key] ?? []).map((r) => String(r.parent_id ?? "")),
+      repliesCap: readsAllReplies(plan, stage) ? Number.POSITIVE_INFINITY : Math.max(1, stage.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_MAX),
+    });
+    counterLines.push(...lines.counterLines);
+    limitLines.push(...lines.limitLines);
+  }
   for (const stage of plan.stages) {
     if (!stage.deliver || stage.parent_key === null || stage.replies_of !== undefined) continue;
     // only a stage of COMMENTS has a thread (a place's reviews or a company's people are not read against a counter in these words)

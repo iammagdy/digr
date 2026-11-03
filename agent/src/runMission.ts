@@ -40,6 +40,7 @@ import { accountIsTest, anyRedesignFlag, fallbackStageOf, redesignStagesOf } fro
 import { compiledPlatformActive, planByCompiler } from "./compiled";
 import { promiseShortfallAr, repliesShortfallAr } from "./repliesShortfall";
 import { TOPIC_OPTIONS_AR, topicMeaningOf, topicQuestionAr } from "../../src/lib/agentMission/topicMeaning";
+import { noAboutChoiceOf } from "../../src/lib/agentMission/foundation/topicChoice";
 import { reportedPlan, withPromiseCaps, withRepliesJudged } from "../../src/lib/agentMission/repliesCard";
 import { runContactEnrichment } from "./engine/contacts";
 import { runNamesStep } from "./namesAr";
@@ -341,7 +342,23 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // THE COMPILED PATH (docs/FOUNDATION-PLAN.md PR 2a): TikTok and X, and only when that platform's OWN flag is `on` (or `test` for a test account), are planned by the plan compiler,
   // by code, with no model: the pool and the exposure check are read through this run's gateway (every cap applies). A request it cannot compile ends with one of the honest classes
   // below, never on the model's path (F6). With the platform flags unset, as today, this is null and the planning below is exactly what it was.
-  const compiled = compiledPlatformActive(redesign.platformFlags, redesign.platform, redesign.isTest) ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, nowMs: planningNow, ...(redesign.isTest ? { catalogOnly: true } : {}) }) : null;
+  const compiledActive = compiledPlatformActive(redesign.platformFlags, redesign.platform, redesign.isTest);
+  // THE ANSWER TO THE «NO VIDEO IS ABOUT THE TOPIC» QUESTION (live round 7, topicChoice.ts): «change my request» and «cancel» end this mission before anything is read (nothing was held, nothing is charged); «use them as they are» is read by the compiled planning below
+  const noAboutChoice = compiledActive ? noAboutChoiceOf(mission.answer_text) : null;
+  if (noAboutChoice === "cancel" || noAboutChoice === "change") {
+    const sentence = noAboutChoice === "cancel" ? "أُلغيت هذه المهمة ولم يُخصم شيء." : "أُلغيت هذه المهمة ولم يُخصم شيء؛ اكتب طلبك المعدّل في رسالة جديدة.";
+    await store.updateMission(mission.id, { status: "cancelled", ...clear });
+    await store.addEvent(mission.id, { kind: "result", message_ar: sentence });
+    return;
+  }
+  const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, nowMs: planningNow, ...(redesign.isTest ? { catalogOnly: true } : {}) }) : null;
+  // THE QUESTION BEFORE APPROVAL (live round 7): no video of the two pages read is about the topic; the plan is not made, the customer chooses (the same needs_input card as the topic question)
+  if (compiled?.kind === "question") {
+    await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: سؤال قبل الخطة، لا فيديو في ما قُرئ يتحدث عن الموضوع.", counts: { compiled: 0, question: 1, pool_reads: compiled.reads.pool, exposure_reads: compiled.reads.exposure } }).catch(() => undefined);
+    await store.updateMission(mission.id, { status: "needs_input", question_ar: compiled.question, plan_public: { question_options: compiled.options } as any, ...clear });
+    await store.addEvent(mission.id, { kind: "question", message_ar: compiled.question });
+    return;
+  }
   if (compiled) {
     await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: خطة مبنية بالكود.", counts: { compiled: compiled.kind === "plan" ? 1 : 0, pool_reads: compiled.reads.pool, exposure_reads: compiled.reads.exposure } }).catch(() => undefined);
     if (compiled.kind === "plan") state.proposedPlan = compiled.plan;
