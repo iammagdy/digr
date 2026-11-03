@@ -104,14 +104,16 @@ describe("the mission card: stages that add up, readable samples, one price line
 
 describe("the live panel and the queue", () => {
   it("shows the queue line with the position when the worker is busy, and an honest line when the worker is away", () => {
-    expect(queueLine("queued", { ahead: 2, running: 1, workerAlive: true })).toEqual({ lineAr: `${AGENT_QUEUE_LINE_AR} · ترتيبك ٣`, position: 3 });
+    // CHANGED (round 14): the line says WHY the request waits and states no time (tests/round14-queue-notice.test.ts)
+    expect(queueLine("queued", { ahead: 2, running: 1, workerAlive: true })).toEqual({ lineAr: "طلبك ينتظر دوره؛ قبله ٣ من الطلبات الجارية أو المنتظرة، وسيبدأ تلقائيًا عند دوره.", position: 3 });
     expect(queueLine("queued", { ahead: 0, running: 0, workerAlive: true }).lineAr).toBeNull();
     expect(queueLine("queued", { ahead: 0, running: 0, workerAlive: false }).lineAr).toContain("الخدمة متوقفة مؤقتًا");
     expect(queueLine("executing", { ahead: 5, running: 1, workerAlive: true }).lineAr).toBeNull();
     const v = customerMissionView({ mission: row({ status: "queued", plan_public: null }), events: [], queue: { ahead: 1, running: 1, workerAlive: true } });
     expect(v.phase).toBe("waiting");
-    expect(v.queueLineAr).toContain("مهمتك في الدور وهتبدأ خلال دقائق");
-    expect(v.currentLineAr).toContain("مهمتك في الدور");
+    // CHANGED (round 14): no time is promised
+    expect(v.queueLineAr).toContain("طلبك ينتظر دوره");
+    expect(v.currentLineAr).toContain("طلبك ينتظر دوره");
   });
 
   it("ticks the steps from the counts of the events, shows the current step with its count and the coffee line after approval", () => {

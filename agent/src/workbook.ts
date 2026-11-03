@@ -9,7 +9,8 @@ import { topLevelFactsOf } from "../../src/lib/agentMission/repliesCard";
 import { FILTER_REASON_LABEL_AR, type FilterReason } from "../../src/lib/agentMission/filters";
 import { cairoCellDate, cairoText, DATE_NUMBER_FORMAT, DATE_ONLY_NUMBER_FORMAT, dateOnlyCellDate, dateOnlyText, isDateValues, parseDateOnly, parseMoment } from "../../src/lib/agentMission/dateCells";
 import { reconcileParentColumns, type ParentColumnFix } from "../../src/lib/agentMission/parentColumns";
-import { APPROX_DATES_NOTE_AR, APPROX_DATE_NUMBER_FORMAT, APPROX_WORD_AR, approxColumnsOf } from "../../src/lib/agentMission/relativeDates";
+import { NAMED_MARK_KEY } from "../../src/lib/agentMission/foundation/namedShortfall";
+import { APPROX_DATES_NOTE_AR, APPROX_DATE_NUMBER_FORMAT, APPROX_WORD_AR, DATE_PRECISION_APPROX_AR, DATE_PRECISION_EXACT_AR, DATE_PRECISION_TITLE_AR, approxColumnsOf } from "../../src/lib/agentMission/relativeDates";
 import { isInternalColumn, type PricedPlan, type PricedStage } from "../../src/lib/agentMission/plan";
 import { deliveredOfAr, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
 import { formatAr } from "../../src/lib/arabicDigits";
@@ -123,7 +124,9 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
     const parentInfo = stage.parent_key !== null ? stageByKey.get(stage.parent_key) : undefined;
     const parentRows = parentInfo ? rowsByStage[parentInfo.s.key] ?? [] : [];
     const parentById = new Map(parentRows.map((r) => [text(r.id), r]));
-    const own = readableColumns(stage);
+    // the named-source verdict of a row is the mark column of the raw sheet («مطابق» / «غير مطابق»): the plan's own column of that key is not repeated beside it
+    const rawMarked = stage.parent_key === null && rows.some((r) => r[MARKS_KEY] !== undefined);
+    const own = readableColumns(stage).filter((c) => !(rawMarked && c.key === NAMED_MARK_KEY));
     // A RAW DELIVERY (S1 items 1.1 and 1.2): its rows carry marks. Its first sheet gets the five mark columns, and no column is dropped for equalling another (the same values under two titles are both the customer's)
     const rawSheet = stage.parent_key === null && rows.some((r) => r[MARKS_KEY] !== undefined);
     const columns: SheetColumn[] = [];
@@ -176,6 +179,13 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
       const ownText = textGetter(stage, c.key);
       const counterWords = plan.compiled?.by === "compiler" && COUNTER_KEYS.has(c.key);
       columns.push({ title: c.title_ar, get: special ? (r) => special(r) : ownText ? (r) => ownText(r) : counterWords ? (r) => (isBlankCell(r[c.key]) ? COUNTER_UNAVAILABLE_AR : r[c.key]) : (r) => r[c.key], kind: "own", contact: c.kind !== undefined, link: values.some((v) => isUrl(v)), key: c.key });
+      // EVERY APPROXIMATE DATE SAYS SO IN THE FILE (round 14): a date column that holds any date computed from a relative time gets a column beside it, «دقة التاريخ»: «تقريبي» for a computed day, «دقيق» for a real moment, empty when there is no date. The date cell itself stays a date (sortable, filterable);
+      // the word «تقريبًا» in its number format stays too, but a reader of values never saw it
+      if (rows.some((r) => approxColumnsOf(r).includes(c.key))) {
+        const several = own.filter((x) => rows.some((r) => approxColumnsOf(r).includes(x.key))).length > 1;
+        const title = several ? `${DATE_PRECISION_TITLE_AR} (${c.title_ar})` : DATE_PRECISION_TITLE_AR;
+        if (!titles.has(title)) { titles.add(title); columns.push({ title, get: (r) => (isBlankCell(r[c.key]) ? "" : approxColumnsOf(r).includes(c.key) ? DATE_PRECISION_APPROX_AR : DATE_PRECISION_EXACT_AR), kind: "own", key: `__acc_${columns.length}` }); }
+      }
     }
     if (rawSheet) for (const k of MARK_COLUMN_ORDER) columns.push({ title: MARK_COLUMNS_AR[k], get: (r) => markCellAr(k, r[MARKS_KEY] as Partial<RowMarks> | undefined), kind: "own", key: `__mark_${k}` });
     layouts.push({ stageIndex, stage, rows, columns: columns.map((c) => (isNameColumn(c) ? { ...c, get: (row: Row, parent: Row | null) => withoutDirectionMarks(c.get(row, parent)) } : c)), hasParent: stage.parent_key !== null });

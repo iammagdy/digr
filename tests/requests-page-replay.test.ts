@@ -333,10 +333,11 @@ describe("5. the block and the rows: what the customer reads", () => {
   it("the block renders its rows with «إلغاء» and the 72-hour sentence, in Arabic only", async () => {
     seedLive();
     const idx = await index("all");
-    const html = renderToStaticMarkup(createElement(OpenMissionsList, { items: idx.pending, busyId: null, error: "", onCancel: () => {} }));
+    // CHANGED (round 14): the block is one line that expands; the rows are checked opened (defaultOpen)
+    const html = renderToStaticMarkup(createElement(OpenMissionsList, { items: idx.pending, busyId: null, error: "", onCancel: () => {}, defaultOpen: true }));
     expect((html.match(/data-testid="open-mission"/g) ?? []).length).toBe(5);
     expect((html.match(/>إلغاء</g) ?? []).length).toBe(5);
-    expect(html).toContain("مهام قيد الإعداد");
+    expect(html).toContain("تنتظر");
     expect(html).toContain("٧٢ ساعة");
     expect(html).not.toContain("عرض الكل");
     expect(html).not.toMatch(/msn_|USD|treg|provider/i);

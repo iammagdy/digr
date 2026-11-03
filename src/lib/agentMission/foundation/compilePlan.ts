@@ -344,7 +344,7 @@ export function compilePlan(input: CompileInput): CompileResult {
   // LIVE ROUND 11: the column is on the parent sheet WHENEVER the Ask has a topic, on every platform (a file whose items are all about it said nothing, so «all about it» could not be told from «not checked»)
   const markTopic = Boolean(ask.topic.text);
   // THE NAMED-SOURCE MARK (decision 7.5, «fill from other pages»): a post that is not the named page's carries «المصدر المسمّى: غير مطابق», the page's own posts carry nothing (a mark, never a drop)
-  const markNamed = namedFacebook && chosen.some((r) => !isNamed(r));
+  const markNamed = namedFacebook;
   const shown = (r: PoolRow): PoolRow => ({ ...r, ...(markTopic ? { [TOPIC_RELATION_KEY]: topicRelationAr(tierOf(r)) } : {}), ...(markNamed ? { [NAMED_MARK_KEY]: isNamed(r) ? "" : NAMED_MISMATCH_MARK_AR } : {}) });
   const fieldKeys = [...Object.keys(card.mapping.kind === "fields" ? card.mapping.fields : {}), ...(card.mapping.kind === "fields" && card.mapping.linkTemplate ? ["link"] : []), ...(input.counters && !poolCard.counter ? ["comments"] : [])];
   const columns = [...fieldKeys.filter((k, i) => k !== "id" && fieldKeys.indexOf(k) === i).map((k) => ({ key: k, title_ar: TITLE[k] ?? k })), ...(markTopic ? [{ key: TOPIC_RELATION_KEY, title_ar: TOPIC_RELATION_TITLE_AR }] : []), ...(markNamed ? [{ key: NAMED_MARK_KEY, title_ar: NAMED_MARK_TITLE_AR }] : [])];
@@ -451,6 +451,7 @@ export function compilePlan(input: CompileInput): CompileResult {
         columns: CHILD_COLUMNS.map((c) => ({ ...c })), sample_rows: [], measured_by: [], measured_from_calls: [], measured_cost_per_row_usd: repliesCard.costUsdPerPage / Math.max(1, repliesCard.page.observedRowsPerPage),
         yield_share: 1, review_share: 0, replies_open: true, ...(ask.replies === "all" ? { replies_read_all: true } : {}), ...(readAll ? { replies_uncapped: true } : {}), replies_call_usd: repliesCard.costUsdPerPage,
         ...(sharedMaxPages(repliesCard) !== null ? { max_pages: sharedMaxPages(repliesCard)! } : {}),
+        ...(repliesCard.mapping.kind === "replies" && repliesCard.mapping.relativeDates === true ? { relative_dates: true } : {}),
         engine: { endpoint_id: repliesCard.endpointId, params: {}, cursor_param: repliesCard.inputs.cursor, map_code: cardMapCode(repliesCard), map_file_id: "page", parent_binding: { param: repliesCard.inputs.parent!.param, from: repliesCard.inputs.parent!.from, ...(repliesCard.inputs.parent!.also ? { also: repliesCard.inputs.parent!.also.map((a) => ({ ...a })) } : {}) }, built_by: "code" },
       } as PricedStage);
       notes.push(promiseLineAr(p, "replies", false, perComment));

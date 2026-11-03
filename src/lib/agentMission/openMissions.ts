@@ -32,7 +32,7 @@ export function openKindOf(row: Pick<OpenMissionRow, "status" | "lease_until">, 
 }
 
 const STATE_AR: Record<string, string> = {
-  queued: "في الدور وتبدأ خلال دقائق",
+  queued: "في الدور وتبدأ تلقائيًا عند دورها",
   planning: "قيد الدراسة الآن",
   needs_input: "تنتظر إجابتك",
   plan_ready: "الخطة جاهزة وتنتظر اعتمادك",

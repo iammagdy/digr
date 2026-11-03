@@ -105,7 +105,23 @@ export function derivedRelativeDay(value: unknown, relativeText: unknown, now: n
   if (!age) return null;
   const moment = parseMoment(value);
   if (!moment) return null;
-  return Math.abs(moment.getTime() - age.approxMs) <= DERIVED_TOLERANCE_MS ? approxDayOf(age) : null;
+  if (Math.abs(moment.getTime() - age.approxMs) <= DERIVED_TOLERANCE_MS) return approxDayOf(age);
+  // A source that counts in CALENDAR months and years (the replies of YouTube: «11 months ago» is the same day and clock time eleven months back, 335 days, not 30.4375-day months) is recognised by that calendar moment too
+  const calendar = calendarAgoMs(value, relativeText, now);
+  if (calendar !== null && Math.abs(moment.getTime() - calendar) <= DERIVED_TOLERANCE_MS) return cairoText(new Date(calendar)).slice(0, 10);
+  return null;
+}
+
+/** «N months ago» / «N years ago» as the moment N calendar months back from `now` (UTC), or null for any other unit. */
+function calendarAgoMs(_value: unknown, relativeText: unknown, now: number): number | null {
+  if (typeof relativeText !== "string") return null;
+  const age = readAge(relativeText);
+  if (!age || (age.unit !== "month" && age.unit !== "year") || !Number.isFinite(age.n) || age.n < 0 || age.n > 1000) return null;
+  const d = new Date(now);
+  const months = age.unit === "year" ? age.n * 12 : age.n;
+  const target = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() - months, 1, d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds());
+  const day = Math.min(d.getUTCDate(), new Date(Date.UTC(new Date(target).getUTCFullYear(), new Date(target).getUTCMonth() + 1, 0)).getUTCDate());
+  return target + (day - 1) * DAY;
 }
 
 /** True when the range of a relative age overlaps the span [fromMs, toMs]: the item MAY be inside it. */
@@ -128,6 +144,11 @@ export function dateUnreadColumnsOf(row: Record<string, unknown>): string[] {
   const v = row[DATE_UNREAD_KEY];
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
 }
+
+/** The column the file adds beside a date column that holds any approximate date (round 14): a reader of values, a filter or a copy sees it, which a number format never gave. */
+export const DATE_PRECISION_TITLE_AR = "دقة التاريخ";
+export const DATE_PRECISION_APPROX_AR = "تقريبي";
+export const DATE_PRECISION_EXACT_AR = "دقيق";
 
 /** Shown in the file where a date is approximate. */
 export const APPROX_WORD_AR = "تقريبًا";

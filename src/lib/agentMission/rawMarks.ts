@@ -1,3 +1,4 @@
+import { NAMED_MARK_KEY } from "./foundation/namedShortfall";
 import { arabicShare, flagIsSet, isEnabled, startsWithHandle, filterVerdict, type StageFilter } from "./filters";
 
 /**
@@ -34,7 +35,9 @@ export function markVerdict(filters: ReadonlyArray<StageFilter> | undefined, map
   const period = on.find((f) => f.kind === "period");
   const inPeriod = period ? filterVerdict([period], mapped, { textKey: ctx.textKey, now: ctx.now, cairoDays: true }) === null : null;
   const account = on.find((f) => f.kind === "account" && (f.values ?? []).length > 0);
-  const named = account ? filterVerdict([account], mapped, { textKey: ctx.textKey, now: ctx.now, ...(ctx.listing ? { listing: true } : {}) }) === null : null;
+  // A source named by a page the compiler chose among the pool rows (Facebook): the row carries its own verdict («» = the named page, else the mismatch text), set by code when the plan was made
+  const own = mapped[NAMED_MARK_KEY];
+  const named = account ? filterVerdict([account], mapped, { textKey: ctx.textKey, now: ctx.now, ...(ctx.listing ? { listing: true } : {}) }) === null : typeof own === "string" ? own === "" : null;
   return { reply, repost, lang, inPeriod, named };
 }
 
@@ -50,6 +53,8 @@ export function markCellAr(key: keyof RowMarks, marks: Partial<RowMarks> | null 
   switch (key) {
     case "reply": return m.reply === null || m.reply === undefined ? UNKNOWN_AR : m.reply ? "رد" : "أصلي";
     case "lang": return m.lang === "ar" ? "العربية" : m.lang === "other" ? "لغة أخرى" : UNKNOWN_AR;
+    // THE NAMED SOURCE reads «مطابق» / «غير مطابق» on every platform (round 14); the other yes-or-no marks keep «نعم» / «لا»
+    case "named": return m.named === null || m.named === undefined ? UNKNOWN_AR : m.named ? "مطابق" : "غير مطابق";
     default: return yesNo((m[key] as boolean | null | undefined) ?? null);
   }
 }

@@ -14,6 +14,8 @@ export interface MissionIndexRow {
   tab: "running" | "ended";
   title: string;
   endedKind: EndedKind | null;
+  /** The ONE status word of a running request (round 14): «في الانتظار», «قيد الدراسة», «معتمدة» or «قيد التنفيذ»; the note beside it never repeats it. */
+  chipAr?: string;
   /** The state sentence of the row (Arabic, customer-safe). */
   noteAr: string;
   conversationId: string | null;

@@ -7,7 +7,7 @@ import { openJobHref } from "@/lib/requestLinks";
 import { isDeterministicFailureAr } from "@/lib/providerFailureText";
 import { customerSafeText } from "@/lib/agentMission/text";
 import ReportProblemButton from "@/components/ReportProblemButton";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/hooks/useUser";
 import { createClient } from "@/lib/supabase/client";
@@ -74,6 +74,8 @@ const TABS: Array<[RequestTab, string]> = [
   ["ended", "فشلت أو أُلغيت"],
   ["refunded", "حجز مؤقت مُحرَّر"],
 ];
+/** What a tab that is not self-evident says under the tabs (round 14: «حجز مؤقت مُحرَّر ٦٤» read as an item of the list, not a tab). */
+const TAB_EXPLAIN_AR: Partial<Record<RequestTab, string>> = { refunded: "طلبات رُفع حجزها المؤقت كاملًا ولم يُخصم منك شيء." };
 /** The chip of a request that never became a job, by how it ended. */
 const ENDED_CHIP_AR: Record<string, string> = { cancelled: "أُلغيت", expired: "انتهت صلاحية الخطة", failed: "فشلت", unserved: "لم تُنفَّذ" };
 const chunksOf = <T,>(items: T[], size: number): T[][] => { const out: T[][] = []; for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size)); return out; };
@@ -460,7 +462,7 @@ export default function RequestsPage() {
 
   /** One request that never became a job (queued, being planned, cancelled, expired, failed before approval): everything its row shows came with the list. */
   function missionRow(r: MissionIndexRow) {
-    const chip = r.tab === "running" ? REQUEST_STATUS_LABEL_AR.running : ENDED_CHIP_AR[r.endedKind ?? "cancelled"] ?? "أُلغيت";
+    const chip = r.tab === "running" ? r.chipAr ?? REQUEST_STATUS_LABEL_AR.running : ENDED_CHIP_AR[r.endedKind ?? "cancelled"] ?? "أُلغيت";
     const tint = r.tab === "running" ? "var(--gold)" : "var(--mut)";
     return (
       <article key={`m_${r.id}`} data-testid="request-row" data-kind={r.tab} className="flex flex-col gap-1.5 rounded-2xl border border-ln bg-sf px-3.5 py-3">
@@ -477,49 +479,13 @@ export default function RequestsPage() {
     );
   }
 
-  const searching = searched.length > 0;
-  // the tab's number and the footer's number come from the same place (requestsShownCounts)
-  const { shown: loadedCount, total: tabTotal } = requestsShownCounts({ tab: tab ?? "all", counts, listed: shownRows.length, pending: index?.pending.length ?? 0 });
+  // running first (a request that works is what the customer opened the page for), then the rest in the order the list gave them
+  const isRunningRow = (row: (typeof shownRows)[number]): boolean => (row.type === "mission" ? row.tab === "running" : kindOfJob(jobById.get(row.id)!) === "running");
+  const orderedRows = [...shownRows.filter(isRunningRow), ...shownRows.filter((r) => !isRunningRow(r))];
+  const firstOtherAt = orderedRows.findIndex((r) => !isRunningRow(r)) === -1 ? orderedRows.length : orderedRows.findIndex((r) => !isRunningRow(r));
+  const pendingBlock = <OpenMissionsList key="pending-block" items={index?.pending ?? []} busyId={busyId} error={cancelError} onCancel={(id) => void cancelPending(id)} />;
 
-  return (
-    <div data-screen-label="Requests" className="flex-1">
-      <div className="mx-auto flex max-w-[820px] flex-col gap-3 px-4 pb-16 pt-[22px]">
-        <div className="flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h1 className="m-0 font-display text-[32px] font-medium leading-[1.1] text-ink sm:text-[40px]">طلباتي</h1>
-            <p className="mb-0 mt-1.5 text-sm font-light text-mut">كل أبحاثك وملفاتها في مكان واحد — التحميل متاح لمدة ٩٠ يومًا.</p>
-          </div>
-          <button type="button" onClick={() => startNewResearch(() => router.push("/dashboard/chat"))} className="min-h-11 cursor-pointer whitespace-nowrap rounded-full border-0 bg-ac px-[18px] text-[13px] text-onac">+ سؤال بحثي جديد</button>
-        </div>
-
-        <div className="flex max-w-full flex-wrap gap-1 self-start rounded-3xl bg-sf2 p-1" role="tablist">
-          {TABS.map(([id, label]) => {
-            const on = tab === id;
-            return (
-              <button
-                key={id} type="button" role="tab" aria-selected={on} data-testid={`request-tab-${id}`} onClick={() => selectTab(id)}
-                className="min-h-11 shrink-0 cursor-pointer whitespace-nowrap rounded-full border-0 px-3 text-[13px] font-medium"
-                style={{ background: on ? "var(--sf)" : "transparent", color: on ? "var(--ink)" : "var(--mut)", boxShadow: on ? "0 1px 3px rgba(0,0,0,.08)" : "none" }}
-              >
-                {label} <span className="opacity-60" data-testid={`request-count-${id}`}>{index ? formatAr(counts[id]) : "…"}</span>
-              </button>
-            );
-          })}
-        </div>
-
-        <input
-          type="search" dir="rtl" value={query} onChange={(e) => setQuery(e.target.value)} maxLength={80}
-          placeholder="ابحث في نص طلباتك" aria-label="ابحث في نص طلباتك" data-testid="requests-search"
-          className="min-h-11 w-full rounded-full border border-ln bg-sf px-4 text-[14px] text-ink placeholder:text-fnt"
-        />
-
-        {tab === "all" && <OpenMissionsList items={index?.pending ?? []} busyId={busyId} error={cancelError} onCancel={(id) => void cancelPending(id)} />}
-
-        {failed && <p role="alert" className="m-0 text-[13px] text-bad">تعذّر تحميل طلباتك الآن. تحقق من الاتصال ثم حاول مرة أخرى.</p>}
-        {dlError && <p role="alert" className="m-0 text-[13px] text-bad">{dlError}</p>}
-        {loading && [0, 1, 2].map((i) => <div key={i} className="h-20 rounded-2xl bg-sf2 motion-safe:animate-pulse motion-reduce:animate-none" />)}
-
-        {!loading && shownRows.map((row) => {
+  const renderRow = (row: (typeof shownRows)[number]) => {
           if (row.type === "mission") return missionRow(row);
           const j = jobById.get(row.id)!;
           const k = kindOfJob(j);
@@ -601,7 +567,58 @@ export default function RequestsPage() {
               </div>
             </article>
           );
-        })}
+  };
+
+  const searching = searched.length > 0;
+  // the tab's number and the footer's number come from the same place (requestsShownCounts)
+  const { shown: loadedCount, total: tabTotal } = requestsShownCounts({ tab: tab ?? "all", counts, listed: shownRows.length, pending: index?.pending.length ?? 0 });
+
+  return (
+    <div data-screen-label="Requests" className="flex-1">
+      <div className="mx-auto flex max-w-[820px] flex-col gap-3 px-4 pb-16 pt-[22px]">
+        <div className="flex flex-wrap items-end justify-between gap-3">
+          <div>
+            <h1 className="m-0 font-display text-[32px] font-medium leading-[1.1] text-ink sm:text-[40px]">طلباتي</h1>
+            <p className="mb-0 mt-1.5 text-sm font-light text-mut">كل أبحاثك وملفاتها في مكان واحد — التحميل متاح لمدة ٩٠ يومًا.</p>
+          </div>
+          <button type="button" onClick={() => startNewResearch(() => router.push("/dashboard/chat"))} className="min-h-11 cursor-pointer whitespace-nowrap rounded-full border-0 bg-ac px-[18px] text-[13px] text-onac">+ سؤال بحثي جديد</button>
+        </div>
+
+        <div className="flex max-w-full flex-wrap gap-1 self-start rounded-3xl bg-sf2 p-1" role="tablist">
+          {TABS.map(([id, label]) => {
+            const on = tab === id;
+            return (
+              <button
+                key={id} type="button" role="tab" aria-selected={on} data-testid={`request-tab-${id}`} onClick={() => selectTab(id)}
+                className="min-h-11 shrink-0 cursor-pointer whitespace-nowrap rounded-full border-0 px-3 text-[13px] font-medium"
+                style={{ background: on ? "var(--sf)" : "transparent", color: on ? "var(--ink)" : "var(--mut)", boxShadow: on ? "0 1px 3px rgba(0,0,0,.08)" : "none" }}
+              >
+                {label} <span className="opacity-60" data-testid={`request-count-${id}`}>{index ? formatAr(counts[id]) : "…"}</span>
+              </button>
+            );
+          })}
+        </div>
+        {tab && TAB_EXPLAIN_AR[tab] ? <p className="m-0 text-xs leading-[1.8] text-mut" data-testid="tab-explain">{TAB_EXPLAIN_AR[tab]}</p> : null}
+
+        <input
+          type="search" dir="rtl" value={query} onChange={(e) => setQuery(e.target.value)} maxLength={80}
+          placeholder="ابحث في نص طلباتك" aria-label="ابحث في نص طلباتك" data-testid="requests-search"
+          className="min-h-11 w-full rounded-full border border-ln bg-sf px-4 text-[14px] text-ink placeholder:text-fnt"
+        />
+
+
+        {failed && <p role="alert" className="m-0 text-[13px] text-bad">تعذّر تحميل طلباتك الآن. تحقق من الاتصال ثم حاول مرة أخرى.</p>}
+        {dlError && <p role="alert" className="m-0 text-[13px] text-bad">{dlError}</p>}
+        {loading && [0, 1, 2].map((i) => <div key={i} className="h-20 rounded-2xl bg-sf2 motion-safe:animate-pulse motion-reduce:animate-none" />)}
+
+        {/* ROUND 14: the requests that are RUNNING come first, then the one line of plans that wait for approval (it expands), then the rest */}
+        {!loading && orderedRows.map((row, i) => (
+          <Fragment key={`${row.type}_${row.id}`}>
+            {tab === "all" && i === firstOtherAt ? pendingBlock : null}
+            {renderRow(row)}
+          </Fragment>
+        ))}
+        {!loading && tab === "all" && firstOtherAt >= orderedRows.length ? pendingBlock : null}
 
         {!loading && index?.hasMore && (
           <div className="flex flex-col items-center gap-1.5">

@@ -14,7 +14,7 @@ import { formatAr } from "@/lib/arabicDigits";
 import { formatMomentCairo } from "@/lib/customerDates";
 import { CREDIT_LEDGER_COLLECTION, JOBS_COLLECTION, NOTIFICATIONS_COLLECTION, SETTINGS_PUBLIC_COLLECTION, TOPUPS_COLLECTION } from "@/lib/constants";
 import { notificationIdForTopup, rejectionReasonFor, topupIdFromNotificationId } from "@/lib/topupRejectReason";
-import { capacityForPoints } from "@/lib/pricingPage";
+import { BELOW_MINIMUM_AR, CAPACITY_HEAD_AR, CAPACITY_NOTE_AR, walletCapacityOf } from "@/lib/walletEstimate";
 import { Skeleton } from "@/components/ui";
 import { startNotificationPolling } from "@/lib/notificationPolling";
 import { getSlowFactor } from "@/lib/degradedClient";
@@ -32,8 +32,6 @@ const isMethodologyRow = (row: LedgerRow): boolean => isMethodologyChargeId(row.
 const ledgerLabel = (row: LedgerRow): string => (isMethodologyRow(row) ? methodologyPurchaseLineAr(row.delta) : walletDisplayText(row.labelAr || CREDIT_KIND_LABEL_AR[classifyLedgerRow({ type: row.type, kind: row.kind })]));
 const LEDGER_TABS: Array<["all" | LedgerKind, string]> = [["all", "الكل"], ["topup", "شحن"], ["charge", "خصم وحجز"], ["refund", "حجز مُحرَّر"]];
 
-/** The three estimate chips of the balance card: the records the balance delivers, by kind. */
-const CAPACITY_CHIP_AR: Record<string, string> = { "youtube-comments": "تعليق يوتيوب", "x-posts": "منشور إكس", companies: "شركة" };
 
 const ipaFromEnv = process.env.NEXT_PUBLIC_INSTAPAY_HANDLE;
 
@@ -298,6 +296,7 @@ export default function WalletPage() {
   const monthReady = ledgerLoaded;
 
   const available = balance.status === "ready" ? balance.value! : null;
+  const capacity = available === null ? null : walletCapacityOf(available);
   const pendingCount = topups.filter((t) => t.status === "pending").length;
   /* points an approved top-up credited, read from its ledger row (approve_topup_atomic writes it as top_<id> with no topup_id) */
   const creditsByTopup = creditedPointsByTopup(ledger);
@@ -336,13 +335,21 @@ export default function WalletPage() {
                 <div><span className="inline-block rounded-full bg-wallet-pill px-3.5 py-1 text-[15px] font-semibold">≈ {formatAr(Number((available * creditValue).toFixed(2)))} ج.م</span></div>
               )}
               <div className="mt-auto flex flex-col gap-2" data-testid="wallet-capacity">
-                <p className="m-0 text-xs text-wallet-ondark-faint">رصيدك يكفي تقريبًا لـ</p>
-                <div className="flex flex-wrap gap-1.5">
-                  {(available === null ? [] : capacityForPoints(available).filter((line) => line.id in CAPACITY_CHIP_AR)).map((line) => (
-                    <span key={line.id} className="rounded-full bg-wallet-deep px-3 py-1 text-[13px] text-wallet-ondark"><b className="text-white">{formatAr(line.records)}</b> {CAPACITY_CHIP_AR[line.id]}</span>
-                  ))}
-                  {available === null && [0, 1, 2].map((slot) => <Skeleton key={slot} className="h-7 w-28 !rounded-full !bg-none bg-white/10" />)}
-                </div>
+                {/* ROUND 14: the estimate is the plan card's own price rule (walletEstimate.ts); below the minimum order there is no estimate, and the page says so */}
+                {capacity?.kind === "below_minimum" ? (
+                  <p className="m-0 text-[13px] leading-[1.8] text-wallet-ondark" data-testid="wallet-below-minimum">{BELOW_MINIMUM_AR(capacity.minimumPoints)}</p>
+                ) : (
+                  <>
+                    <p className="m-0 text-xs text-wallet-ondark-faint">{CAPACITY_HEAD_AR}</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {capacity?.kind === "ok" && capacity.chips.map((chip) => (
+                        <span key={chip.id} className="rounded-full bg-wallet-deep px-3 py-1 text-[13px] text-wallet-ondark"><b className="text-white">{formatAr(chip.records)}</b> {chip.labelAr}</span>
+                      ))}
+                      {available === null && [0, 1, 2].map((slot) => <Skeleton key={slot} className="h-7 w-28 !rounded-full !bg-none bg-white/10" />)}
+                    </div>
+                    {capacity?.kind === "ok" ? <p className="m-0 text-[11px] leading-[1.7] text-wallet-ondark-faint">{CAPACITY_NOTE_AR}</p> : null}
+                  </>
+                )}
               </div>
             </div>
 
