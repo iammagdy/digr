@@ -1,7 +1,10 @@
 import type { SocialPlatform } from "../../redesignFlagTypes";
+import { FACEBOOK_CARDS } from "./facebook";
+import { INSTAGRAM_CARDS } from "./instagram";
 import { TIKTOK_CARDS } from "./tiktok";
 import type { CardRole, ToolCard } from "./types";
 import { X_CARDS } from "./x";
+import { YOUTUBE_CARDS } from "./youtube";
 
 export type { CardRole, CardStatus, ToolCard } from "./types";
 export { cardMapCode, mapPage, COUNTRY_AR, CHILD_COLUMNS } from "./mapCode";
@@ -15,8 +18,8 @@ export { cardMapCode, mapPage, COUNTRY_AR, CHILD_COLUMNS } from "./mapCode";
 export const CATALOG_ONLY_CAP_USD = 0.2;
 export const CATALOG_ONLY_PRICE_MARGIN = 2;
 
-/** Every tool card (data). PR 2a: TikTok and X. Facebook, Instagram and YouTube cards are PR 3. */
-export const TOOL_CARDS: ReadonlyArray<ToolCard> = [...TIKTOK_CARDS, ...X_CARDS];
+/** Every tool card (data). PR 2a: TikTok and X. PR 3: Facebook, Instagram and YouTube (a card is `verified` only on real stored pages; the rest are `catalog_only`, test accounts only). */
+export const TOOL_CARDS: ReadonlyArray<ToolCard> = [...TIKTOK_CARDS, ...X_CARDS, ...FACEBOOK_CARDS, ...INSTAGRAM_CARDS, ...YOUTUBE_CARDS];
 
 export const cardOf = (endpointId: string, cards: ReadonlyArray<ToolCard> = TOOL_CARDS): ToolCard | null => cards.find((c) => c.endpointId === endpointId) ?? null;
 

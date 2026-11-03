@@ -24,12 +24,17 @@ export const CHILD_COLUMNS = [
  * An item with no id is not a row.
  */
 export function cardMapCode(card: ToolCard): string {
-  if (card.mapping.kind === "replies") return buildReplyMapCode(replyColumnKeysOf(CHILD_COLUMNS)).replace("const P = inputs.page;", "const P = Object.values(inputs)[0];");
+  if (card.mapping.kind === "replies") {
+    const tokens = (card.mapping.tokens ?? []).map((t) => ({ param: "", key: t.key }));
+    return buildReplyMapCode(replyColumnKeysOf(CHILD_COLUMNS), tokens).replace("const P = inputs.page;", "const P = Object.values(inputs)[0];");
+  }
+  const link = card.mapping.linkTemplate;
+  const numeric = card.mapping.numeric ?? [];
   return `const P = Object.values(inputs)[0];
 const LIST = ${JSON.stringify(card.page.list)};
 const ITEM = ${JSON.stringify(card.page.item ?? [])};
 const F = ${JSON.stringify(card.mapping.fields)};
-const AR = ${JSON.stringify(COUNTRY_AR)};
+const AR = ${JSON.stringify(COUNTRY_AR)};${numeric.length > 0 ? `\nconst NUM = ${JSON.stringify(numeric)};` : ""}
 const at = (o, path) => { let v = o; for (const k of path) { if (v === null || v === undefined || typeof v !== 'object') return undefined; v = v[k]; } return v; };
 const iso = (v) => { if (v === null || v === undefined || v === '') return null; if (typeof v === 'number' || /^\\d{9,13}$/.test(String(v))) { const n = Number(v); const d = new Date(n < 1e12 ? n * 1000 : n); return Number.isNaN(d.getTime()) ? null : d.toISOString(); } const d = new Date(String(v)); return Number.isNaN(d.getTime()) ? String(v) : d.toISOString(); };
 const list = at(P, LIST);
@@ -44,8 +49,9 @@ return list.map((w) => {
     if (k === 'posted_at') v = iso(v);
     else if (k === 'link' && typeof v === 'string') v = v.split('?')[0];
     else if (k === 'country' && typeof v === 'string' && v !== '') v = AR[v.toUpperCase()] || v;
-    out[k] = v;
-  }
+    ${numeric.length > 0 ? "if (NUM.includes(k)) { const n = typeof v === 'string' && /^\\d+$/.test(v) ? Number(v) : typeof v === 'number' ? v : null; v = n; }\n    " : ""}out[k] = v;
+  }${link ? `
+  { const part = at(it, ${JSON.stringify(link.field)}); out.link = typeof part === 'string' && part !== '' ? ${JSON.stringify(link.template)}.replace('{}', part) : null; }` : ""}
   if (out.id === null || out.id === undefined || out.id === '') return null;
   out.id = String(out.id);
   return out;

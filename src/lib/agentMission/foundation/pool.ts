@@ -35,11 +35,28 @@ export function topicTierOf(text: string, ask: Pick<Ask, "topic">): TopicTier {
   return ask.topic.relation === "made_with" ? 2 : 1;
 }
 
-/** What a row meets of the Ask (each fact true when the Ask does not ask it). */
-export function factsOf(row: Record<string, unknown>, ask: Ask): RowFacts {
+/** The words that only say what kind of source a name is («قناة العربية» is the page named «العربية»). */
+const SOURCE_KIND_WORDS = new Set(["قناه", "صفحه", "حساب", "موقع", "جريده", "مجله"]);
+const stripAl = (w: string): string => w.replace(/^ال/, "");
+/**
+ * IS THIS POST FROM THE NAMED PAGE (Facebook): the page is CHOSEN among the read posts by its author, never filtered. Every word of the name the customer gave (without «قناة / صفحة / حساب») is in the author's name, or the name is a Latin handle
+ * that is the last part of the author's link (`AlArabiya` in `facebook.com/AlArabiya`). The author id is the page's own (the same id on every post of the page).
+ */
+export function pageMatchesSource(row: Record<string, unknown>, sourceText: string): boolean {
+  const words = norm(sourceText).split(/\s+/).filter((w) => w !== "" && !SOURCE_KIND_WORDS.has(w)).map(stripAl).filter((w) => w.length > 1);
+  if (words.length === 0) return false;
+  const name = norm(String(row.author ?? ""));
+  const slug = String(row.author_url ?? "").replace(/[?#].*$/, "").replace(/\/+$/, "").split("/").pop()?.toLowerCase() ?? "";
+  const latin = /^[a-z0-9._-]+$/i.test(sourceText.trim().replace(/^@/, ""));
+  if (latin) return slug !== "" && slug === sourceText.trim().replace(/^@/, "").toLowerCase();
+  return name !== "" && words.every((w) => name.includes(w));
+}
+
+/** What a row meets of the Ask (each fact true when the Ask does not ask it). `bySource`: the pool was read FROM the named source (an account listing, a channel's own videos), so every row is the source's by construction. */
+export function factsOf(row: Record<string, unknown>, ask: Ask, bySource = false): RowFacts {
   const text = String(row.text ?? "");
   const handle = (v: unknown): string => norm(String(v ?? "").replace(/^@/, ""));
-  const named = ask.source.kind !== "named" || ask.source.text === null || [row.username, row.author].some((v) => handle(v) !== "" && handle(v) === handle(ask.source.text));
+  const named = ask.source.kind !== "named" || ask.source.text === null || bySource || [row.username, row.author].some((v) => handle(v) !== "" && handle(v) === handle(ask.source.text)) || (ask.platform === "facebook" && pageMatchesSource(row, ask.source.text));
   const wantCountry = ask.country === null ? null : [ask.country, COUNTRY_AR[ask.country]].filter(Boolean).map((x) => norm(String(x)));
   const country = wantCountry === null || (typeof row.country === "string" && wantCountry.includes(norm(row.country)));
   const lang = typeof row.language === "string" && row.language !== "" ? row.language.toLowerCase() : null;
@@ -66,7 +83,7 @@ export function rankPool(rows: ReadonlyArray<Record<string, unknown>>, ask: Ask,
     unique.push({ row: { ...r, id } as PoolRow, at });
   });
   const key = (x: { row: PoolRow }): number[] => {
-    const f = factsOf(x.row, ask);
+    const f = factsOf(x.row, ask, Boolean(card.inputs.source));
     const order = ask.order === "newest" ? timeOf(x.row) : counterOf(x.row, card) ?? -1;
     // PARENTS OF A REPLIES STAGE ARE ORIGINALS (live D5): when the customer asked for the replies too, a tweet that is itself a reply to someone ranks below every original (ranking only: it is still in the pool and keeps its mark)
     const original = ask.replies !== "none" && x.row.is_reply === true ? 0 : 1;

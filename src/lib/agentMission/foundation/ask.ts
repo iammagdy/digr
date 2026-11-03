@@ -24,7 +24,11 @@ export interface AskPeriod {
 }
 
 /** The customer's numbers from the card edit (Stage 2 recompiles the plan with them). Absent: the request's own words decide. */
-export interface AskEdits { count?: number; comments?: number; replies?: number }
+export interface AskEdits {
+  count?: number; comments?: number; replies?: number;
+  /** YouTube, an official source: the names to look the channels up by (the understanding step of Stage 2 gives them; absent, they are read from the topic: `officialChannelQueriesOf`). */
+  channels?: string[];
+}
 
 export interface Ask {
   platform: SocialPlatform | null;
@@ -109,6 +113,20 @@ const NEWEST = /(?:^|\s)(?:ال)?[أا]حدث(?:\s|$)|الأخيرة|الاخي�
 const MADE_WITH = /(?:معمول|مصنوع|متعمل|مولد|مصمم)\w*\s*(?:ب|بال)/;
 const ABOUT = /(?:^|\s)(?:عن|حول|بخصوص|فيها|فيه|تذكر)\s/;
 
+/** The names an official YouTube source is looked up by: the edit's (the customer's, or Stage 2's understanding step), else read from the topic. */
+export const channelNamesOf = (ask: Pick<Ask, "topic" | "edits">): string[] => (ask.edits.channels && ask.edits.channels.length > 0 ? ask.edits.channels : officialChannelQueriesOf(ask.topic.text));
+
+/**
+ * THE CHANNEL NAMES OF AN OFFICIAL SOURCE (YouTube): when the topic ends with two names joined by «و» («نهائي السوبر المصري الأهلي والزمالك») each name is looked up with the word «الرسمية»; otherwise the whole topic is. Code only: it
+ * cannot know what a name stands for, so the card says which channels it read, and the customer's edit (or Stage 2's understanding step) can replace the names.
+ */
+export function officialChannelQueriesOf(topic: string | null): string[] {
+  const t = (topic ?? "").replace(/\s+/g, " ").trim();
+  if (t === "") return [];
+  const pair = /(\S+)\s+و(\S+)$/.exec(t);
+  return pair ? [`${pair[1]} الرسمية`, `${pair[2]} الرسمية`] : [`${t} الرسمية`];
+}
+
 /** The Ask of a request (and of the customer's answer and edit). `requestedAtMs` is the moment the mission was created: «آخر ٣ شهور» counts back from that Cairo day. */
 export function buildAsk(request: unknown, answer: unknown, requestedAtMs: number, edits: AskEdits = {}): Ask {
   const text = `${String(request ?? "")} ${String(answer ?? "")}`.replace(/\s+/g, " ").trim();
@@ -117,13 +135,15 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
   const topicText = c.topic ?? meaning.topic ?? null;
   // «عن / حول / فيها X» is about X, «معمول بـ X» is made with X; a topic named with neither, that one can make content with, is ambiguous (asked before planning)
   const relation: TopicRelation = topicText === null ? "none" : MADE_WITH.test(text) ? "made_with" : ABOUT.test(text) ? "about" : meaning.kind === "ambiguous" ? "ambiguous" : "about";
-  const sourceKind: AskSourceKind = c.source.named ? "named" : c.source.official ? "official" : "none";
+  // A PAGE OR ACCOUNT GIVEN BY ITS LINK (Facebook, Instagram): the request contract reads the words after «من صفحة» and stops at the link's first dot; the link itself is the source
+  const link = c.platform === "facebook" || c.platform === "instagram" ? /https?:\/\/(?:www\.|m\.)?(?:facebook|instagram)\.com\/[A-Za-z0-9._-]+\/?/i.exec(text)?.[0] ?? null : null;
+  const sourceKind: AskSourceKind = link || c.source.named ? "named" : c.source.official ? "official" : "none";
   const language: Ask["language"] = c.language ? (/بالإنجليزي|بالانجليزي|الإنجليزية|الانجليزية|english/i.test(text) ? "en" : "ar") : null;
   return {
     platform: c.platform,
     parentKind: c.parentKind,
     count: edits.count ?? c.count,
-    source: { kind: sourceKind, text: c.source.text },
+    source: { kind: sourceKind, text: link ?? c.source.text },
     topic: { text: topicText, relation },
     period: c.period ? periodOfRequest(text, requestedAtMs) : null,
     country: c.country ? countryNamedIn(text) : null,
