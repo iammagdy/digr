@@ -1,6 +1,7 @@
 import { buildAsk, type Ask } from "../../src/lib/agentMission/foundation/ask";
 import { chooseCard, compilePlan, parentInputs, COMPILED_PLATFORMS, type CompileResult } from "../../src/lib/agentMission/foundation/compilePlan";
-import { rankPool } from "../../src/lib/agentMission/foundation/pool";
+import { factsOf, rankPool } from "../../src/lib/agentMission/foundation/pool";
+import { aboutQueryOf, noAboutChoiceOf, noAboutQuestionAr, NO_ABOUT_OPTIONS_AR } from "../../src/lib/agentMission/foundation/topicChoice";
 import { mapPage } from "../../src/lib/agentMission/foundation/toolCards";
 import type { PricedPlan } from "../../src/lib/agentMission/plan";
 import type { MissionPricingSettings } from "../../src/lib/missionPricing";
@@ -34,7 +35,9 @@ export interface CompiledPlanningDeps {
 }
 export type CompiledPlanning =
   | { kind: "plan"; plan: PricedPlan; ask: Ask; result: Extract<CompileResult, { ok: true }>; reads: { pool: number; exposure: number } }
-  | { kind: "cannot"; ask: Ask; reason: string; reads: { pool: number; exposure: number } };
+  | { kind: "cannot"; ask: Ask; reason: string; reads: { pool: number; exposure: number } }
+  /** LIVE ROUND 7: no video of the pool read (two queries) is about the topic; the customer is asked before approval how to go on. Nothing is priced or held. */
+  | { kind: "question"; ask: Ask; question: string; options: string[]; reads: { pool: number; exposure: number } };
 
 /** The pages a parent may be read for at planning beyond the ones it needs (the exposure check replaces an empty parent by the next one). */
 const EXPOSURE_EXTRA = 3;
@@ -62,10 +65,24 @@ export async function planByCompiler(deps: CompiledPlanningDeps): Promise<Compil
   if ("failed" in first) return { kind: "cannot", ask, reason: first.refused ? "pool_refused" : "pool_failed", reads };
   const pages = [{ callId: first.callId, page: first.page }];
   const need = Math.max(1, ask.count ?? 10);
-  if (mapPage(card, first.page).length < need + 2 && card.inputs.cursor && first.nextCursor && first.hasMore !== false) {
+  // LIVE ROUND 7: «عن X» on a source whose search also matches hashtags. When no video of the first page has its own text about the topic, the one more read the gateway allows for this source asks the topic with the words of talking about it
+  // (built by code from the Ask), and the union of both pages is ranked by the same rule. Only a search with no operators (TikTok); X's query is the quoted words of the text itself.
+  const hasAbout = (): boolean => pages.some((p) => mapPage(card, p.page).some((r) => factsOf(r, ask).topicTier === 2));
+  const aboutQuery = card.inputs.query && !card.inputs.query.operators && ask.platform === "tiktok" && noAboutChoiceOf(deps.mission.answer_text) !== "use" ? aboutQueryOf(ask) : null;
+  if (aboutQuery && card.inputs.query && !hasAbout()) {
+    const more = await read(card.endpointId, { ...params, [card.inputs.query.field]: aboutQuery });
+    reads.pool += 1;
+    if (!("failed" in more)) pages.push({ callId: more.callId, page: more.page });
+  } else if (mapPage(card, first.page).length < need + 2 && card.inputs.cursor && first.nextCursor && first.hasMore !== false) {
     const second = await read(card.endpointId, { ...params, [card.inputs.cursor]: first.nextCursor });
     reads.pool += 1;
     if (!("failed" in second)) pages.push({ callId: second.callId, page: second.page });
+  }
+  // STILL NONE: the customer decides before approval (use what was found, marked; change the request; cancel). Their answer «use» (or an amendment they typed, which changes the request and is read with it) is read at the next planning.
+  if (aboutQuery && !hasAbout()) {
+    const rows = pages.flatMap((p) => mapPage(card, p.page));
+    const hashtagsOnly = rows.some((r) => factsOf(r, ask).topicTier === 1);
+    return { kind: "question", ask, question: noAboutQuestionAr(ask.topic.text ?? "", { one: "فيديو", talks: "يتحدث نصه" }, hashtagsOnly), options: [NO_ABOUT_OPTIONS_AR.useAsIs, NO_ABOUT_OPTIONS_AR.change, NO_ABOUT_OPTIONS_AR.cancel], reads };
   }
 
   // THE EXPOSURE CHECK (decision 7.3): the first comments page of the ranked parents, in order, until enough parents with comments are found (a read the gateway refuses, its cap, leaves the parent unchecked)

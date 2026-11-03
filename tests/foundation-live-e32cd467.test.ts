@@ -8,6 +8,7 @@ import { runInSandbox } from "../agent/src/sandbox";
 import { redesignStagesOf } from "../agent/src/redesign";
 import type { Gateway } from "../agent/src/gateway";
 import { planByCompiler, type CompiledPlanning } from "../agent/src/compiled";
+import { NO_ABOUT_OPTIONS_AR } from "../src/lib/agentMission/foundation/topicChoice";
 import { withPromiseCaps } from "../src/lib/agentMission/repliesCard";
 import { buildAsk } from "../src/lib/agentMission/foundation/ask";
 import { openRepliesMax } from "../src/lib/agentMission/foundation/compilePlan";
@@ -101,7 +102,8 @@ describe("F3/F5: compiled from real pages of the same search, the comments and t
     const store = createMemoryStore();
     const target = "msn_replay_e32cd467";
     const planning = replayGateway(M12, catalog, store, target);
-    planned = await planByCompiler({ mission: { id: target, request_text: REQUEST, answer_text: null, created_at: CREATED }, gateway: planning.gateway, store, catalog, nowMs: Date.parse(CREATED) + 5_000 });
+    // the stored pages are ANONYMISED (placeholder captions): no video is «about» the topic by its text, so the customer is taken to have answered «use them as they are» (one pool read, as before)
+    planned = await planByCompiler({ mission: { id: target, request_text: REQUEST, answer_text: NO_ABOUT_OPTIONS_AR.useAsIs, created_at: CREATED }, gateway: planning.gateway, store, catalog, nowMs: Date.parse(CREATED) + 5_000 });
     served = planning.stats.served.map((s) => s.storedCall);
     if (planned.kind !== "plan") return;
     const exec = replayGateway(M12, catalog, store, target, { firstSeq: 100 });

@@ -8,6 +8,7 @@ import { runInSandbox } from "../agent/src/sandbox";
 import { redesignStagesOf, fallbackStageOf } from "../agent/src/redesign";
 import type { Gateway } from "../agent/src/gateway";
 import { planByCompiler, type CompiledPlanning } from "../agent/src/compiled";
+import { NO_ABOUT_OPTIONS_AR } from "../src/lib/agentMission/foundation/topicChoice";
 import { withPromiseCaps } from "../src/lib/agentMission/repliesCard";
 import { chooseCard, compilePlan, parentInputs } from "../src/lib/agentMission/foundation/compilePlan";
 import { buildAsk } from "../src/lib/agentMission/foundation/ask";
@@ -40,7 +41,7 @@ describe("acceptance 2: M12 (TikTok) replayed on its stored pages", () => {
     const target = "msn_replay_m12";
     const { gateway, stats } = replayGateway(M12, catalog, store, target);
     planningStats = stats;
-    planned = await planByCompiler({ mission: { id: target, request_text: stored(M12).request, answer_text: null, created_at: "2026-11-02T11:35:00Z" }, gateway, store, catalog, nowMs: Date.parse("2026-11-02T11:36:00Z"), edits: M12_EDIT });
+    planned = await planByCompiler({ mission: { id: target, request_text: stored(M12).request, answer_text: NO_ABOUT_OPTIONS_AR.useAsIs, created_at: "2026-11-02T11:35:00Z" }, gateway, store, catalog, nowMs: Date.parse("2026-11-02T11:36:00Z"), edits: M12_EDIT });
     if (planned.kind !== "plan") return;
     const exec = replayGateway(M12, catalog, store, target, { firstSeq: 100 });
     const items = await ItemStore.open(store, target);

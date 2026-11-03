@@ -8,6 +8,7 @@ import type { MissionPricingSettings } from "../../missionPricing";
 import type { Ask } from "./ask";
 import { rankPool, factsOf, type PoolRow } from "./pool";
 import { childPromise, perParentPromise, promiseLineAr, type StagePromise } from "./promise";
+import { TOPIC_RELATION_KEY, TOPIC_RELATION_TITLE_AR, topicRelationAr } from "./topicChoice";
 import { cardMapCode, cardsFor, CATALOG_ONLY_CAP_USD, CHILD_COLUMNS, COUNTRY_AR, mapPage, type CardRole, type ToolCard } from "./toolCards";
 import type { SocialPlatform } from "../redesignFlagTypes";
 
@@ -216,14 +217,18 @@ export function compilePlan(input: CompileInput): CompileResult {
   const capabilityOf = input.capabilityOf;
   const stages: PricedStage[] = [];
   const parentKey = ask.platform === "x" ? "tweets" : "videos";
-  const columns = Object.keys(card.mapping.kind === "fields" ? card.mapping.fields : {}).filter((k) => k !== "id").map((k) => ({ key: k, title_ar: TITLE[k] ?? k }));
+  // THE TOPIC RELATION MARK (live round 7): when some chosen item's own text is not about the topic the customer named («عن X»), every item of the stage carries how its text relates to it, so the file says which is which (a mark, never a drop)
+  const tierOf = (r: PoolRow) => factsOf(r, ask).topicTier;
+  const markTopic = ask.platform !== "x" && Boolean(ask.topic.text) && ask.topic.relation !== "made_with" && chosen.some((r) => tierOf(r) !== 2);
+  const shown = (r: PoolRow): PoolRow => (markTopic ? { ...r, [TOPIC_RELATION_KEY]: topicRelationAr(tierOf(r)) } : { ...r });
+  const columns = [...Object.keys(card.mapping.kind === "fields" ? card.mapping.fields : {}).filter((k) => k !== "id").map((k) => ({ key: k, title_ar: TITLE[k] ?? k })), ...(markTopic ? [{ key: TOPIC_RELATION_KEY, title_ar: TOPIC_RELATION_TITLE_AR }] : [])];
   const pageRows = Math.max(1, card.page.observedRowsPerPage);
   promises[parentKey] = { type: "exact", n: chosen.length };
   stages.push({
     key: parentKey, title_ar: ask.platform === "x" ? "التغريدات" : "الفيديوهات", endpoint_id: card.endpointId, ...(capabilityOf(card.endpointId) ? { capability: capabilityOf(card.endpointId)! } : {}),
-    expected_rows: chosen.length, planned_rows: chosen.length, parent_key: null, deliver: true, columns, sample_rows: chosen.slice(0, 3).map((r) => ({ ...r })),
+    expected_rows: chosen.length, planned_rows: chosen.length, parent_key: null, deliver: true, columns, sample_rows: chosen.slice(0, 3).map(shown),
     measured_by: input.pool.pages.map((p) => p.callId), measured_from_calls: input.pool.pages.map((p) => p.callId), measured_cost_per_row_usd: card.costUsdPerPage / pageRows,
-    yield_share: 1, review_share: 0, pinned_rows: chosen.map((r) => ({ ...r })), ...(spares.length > 0 && commentsCard ? { spare_rows: spares.map((r) => ({ ...r })) } : {}),
+    yield_share: 1, review_share: 0, pinned_rows: chosen.map(shown), ...(spares.length > 0 && commentsCard ? { spare_rows: spares.map(shown) } : {}),
     ...(filtersOf(ask).length > 0 ? { filters: filtersOf(ask) } : {}),
     ...(ask.order === "most_commented" && commentsCard ? { chosen_most_engaged: true } : {}),
     engine: { endpoint_id: card.endpointId, params: input.pool.params, cursor_param: card.inputs.cursor, map_code: cardMapCode(card), map_file_id: "page", parent_binding: null, built_by: "code", ...(card.cannot && card.cannot.length > 0 ? { gaps: card.cannot.filter((c) => (c === "language" && ask.language) || (c === "period" && ask.period) || (c === "country" && ask.country)).map((c) => ({ cls: c === "period" ? "date" : c, reason: "no_field" })) } : {}) },
@@ -233,7 +238,6 @@ export function compilePlan(input: CompileInput): CompileResult {
   if (unmet > 0) notes.push(`لم نجد في ما قرأناه ما يكفي مما يطابق المصدر أو الدولة أو اللغة المطلوبة؛ ${toArabicDigits(unmet)} من العناصر المختارة لا تطابق ذلك، وعليها علامة في الملف.`);
   // THE TOPIC, SAID HONESTLY BEFORE APPROVAL (live D1): «عن X» means the item's own text talks about X. A video whose caption names X only in its hashtags is made WITH X (the tool), so it ranks below the videos whose caption body is about X;
   // when the pool read has none of the latter the card says so; when some chosen items are below it, it says how many. Ranking only: the items are chosen and delivered either way.
-  const tierOf = (r: PoolRow) => factsOf(r, ask).topicTier;
   if (ask.topic.text && ask.topic.relation !== "made_with") {
     const topic = `«${ask.topic.text}»`;
     if (!ranked.some((r) => tierOf(r) === 2)) {

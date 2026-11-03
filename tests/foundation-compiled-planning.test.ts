@@ -10,6 +10,7 @@ import type { RedesignFlags } from "../src/lib/agentMission/redesignFlags";
 import { NOT_ADMIN, fakeRecorder, tregResult } from "./helpers/agentHarness";
 import { fakeMoneyClient } from "./helpers/agentMoney";
 import { inputKey, storedCalls } from "./helpers/replayGateway";
+import { NO_ABOUT_OPTIONS_AR } from "../src/lib/agentMission/foundation/topicChoice";
 
 /**
  * THE COMPILED PATH IN THE REAL PLANNING RUN (agent/src/runMission.ts), through the REAL gateway: the provider call is replaced by the stored real pages (only for the same
@@ -35,7 +36,7 @@ function storedProvider(mission: string) {
 async function plan(fixtureMission: string, settings: Record<string, unknown>, email: string | null) {
   const store = createMemoryStore();
   const id = "msn_compiled_1";
-  store.missions.set(id, newMission({ id, user_id: "user_c", request_text: fixture.missions.find((m) => m.id === fixtureMission)!.request, status: "planning" }));
+  store.missions.set(id, newMission({ id, user_id: "user_c", request_text: fixture.missions.find((m) => m.id === fixtureMission)!.request, ...(fixtureMission === M12 ? { answer_text: NO_ABOUT_OPTIONS_AR.useAsIs } : {}), status: "planning" }));
   if (email) store.userEmails.set("user_c", email);
   Object.assign(store.settings, settings);
   const rec = fakeRecorder();

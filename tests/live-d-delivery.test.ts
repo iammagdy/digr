@@ -4,6 +4,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { createMemoryStore } from "../agent/src/memoryStore";
 import { planByCompiler, type CompiledPlanning } from "../agent/src/compiled";
+import { NO_ABOUT_OPTIONS_AR } from "../src/lib/agentMission/foundation/topicChoice";
 import { buildMissionFiles } from "../agent/src/workbook";
 import { customerMissionView } from "../src/lib/agentMission/customerView";
 import { customerPlanView, type PricedPlan } from "../src/lib/agentMission/plan";
@@ -47,8 +48,8 @@ describe("D2 to D4 on the compiled TikTok plan of the live shape", () => {
   beforeAll(async () => {
     const store = createMemoryStore();
     const { gateway } = replayGateway(M12, catalog, store, "msn_live_d");
-    planned = await planByCompiler({ mission: { id: "msn_live_d", request_text: REQUEST, answer_text: null, created_at: "2026-11-02T11:35:00Z" }, gateway, store, catalog, nowMs: Date.parse("2026-11-02T11:36:00Z") });
-    if (planned.kind !== "plan") throw new Error(`no plan: ${planned.reason}`);
+    planned = await planByCompiler({ mission: { id: "msn_live_d", request_text: REQUEST, answer_text: NO_ABOUT_OPTIONS_AR.useAsIs, created_at: "2026-11-02T11:35:00Z" }, gateway, store, catalog, nowMs: Date.parse("2026-11-02T11:36:00Z") });
+    if (planned.kind !== "plan") throw new Error(`no plan: ${planned.kind}`);
     plan = planned.plan;
     const videos = rows("videos").map((r) => ({ ...r }));
     const all = rows("comments");
