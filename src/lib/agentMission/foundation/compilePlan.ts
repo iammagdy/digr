@@ -253,13 +253,25 @@ function interleaveByChannel(rows: PoolRow[], ask: Ask): PoolRow[] {
  * THE POOL IN THE OWNER'S ORDER (shared by the compiler and by the exposure check, which reads the first comments page of the parents in exactly this order): every distinct row of the pages read, with the counters of the free counter card merged by id, a video dated by its relative words
  * placed in time, ranked by named source, country and language, own text about the topic, the latest occurrence (decision 7), the most commented or the newest; the official channels take turns inside each level (live round 10: both videos were the first channel's).
  */
-export function rankedPoolOf(input: { ask: Ask; poolCard: ToolCard; pages: ReadonlyArray<{ page: unknown; card?: ToolCard }>; counters?: ReadonlyMap<string, number>; channels?: ReadonlyArray<{ id: string; title?: string }>; nowMs?: number }): PoolRow[] {
+/** The platforms whose sources take the period as a REQUEST and do not keep to it (live round 11, Facebook: a search sent `startDate` and `endDate` answered posts of January and of last October): their pool is checked row by row. TikTok and X keep what they do. */
+export const PERIOD_CHECKED_PLATFORMS: ReadonlyArray<SocialPlatform> = ["facebook", "instagram", "youtube"];
+/** True when the row is inside the Ask's period (Cairo days, inclusive: from the first moment of the first day to the end of the last). A row with no readable date is not proven inside. */
+export function insidePeriod(row: Record<string, unknown>, ask: Pick<Ask, "period">): boolean {
+  if (!ask.period) return true;
+  const t = Date.parse(String(row.posted_at ?? ""));
+  return Number.isFinite(t) && t >= ask.period.startMs && t < ask.period.endExclusiveMs;
+}
+const periodIsChecked = (ask: Pick<Ask, "period" | "platform">): boolean => ask.period !== null && ask.platform !== null && PERIOD_CHECKED_PLATFORMS.includes(ask.platform);
+
+export function rankedPoolOf(input: { ask: Ask; poolCard: ToolCard; pages: ReadonlyArray<{ page: unknown; card?: ToolCard }>; counters?: ReadonlyMap<string, number>; channels?: ReadonlyArray<{ id: string; title?: string }>; nowMs?: number; /** Count every row read, inside the period or not (the card says how many were read and how many were left out). */ keepOutsidePeriod?: boolean }): PoolRow[] {
   const { ask, poolCard } = input;
   const card: ToolCard = poolCard.counter || !input.counters ? poolCard : { ...poolCard, counter: { key: "comments", counts: "comments" } };
   const mapped = input.pages.flatMap((p) => mapPage(p.card ?? poolCard, p.page)).map((r) => (input.counters && input.counters.has(String(r.id)) ? { ...r, comments: input.counters.get(String(r.id)) } : r))
     // a source that dates a video only by «7 years ago» (YouTube): placed in time from the moment of planning, for the order «newest» and for the latest occurrence of a recurring event
     .map((r) => { if ((r.posted_at === undefined || r.posted_at === null) && input.nowMs !== undefined) { const t = approxInstantOfRelative(r.published, input.nowMs); if (t !== null) return { ...r, posted_at: new Date(t).toISOString() }; } return r; });
-  const rankedAll = rankPool(mapped, ask, card, { occurrence: ask.occurrence });
+  // WHEN THE ASK HAS A PERIOD every parent of the pool is inside it, whichever search read it (live round 11): the chosen parents, the spares and the exposure check all come from this one list
+  const inPeriod = input.keepOutsidePeriod !== true && periodIsChecked(ask) ? mapped.filter((r) => insidePeriod(r, ask)) : mapped;
+  const rankedAll = rankPool(inPeriod, ask, card, { occurrence: ask.occurrence });
   return ask.source.kind === "official" && (input.channels?.length ?? 0) > 1 ? interleaveByChannel(rankedAll, ask) : rankedAll;
 }
 
@@ -276,6 +288,9 @@ export function compilePlan(input: CompileInput): CompileResult {
   if (ranked0.length === 0) return { ok: false, reason: "no_rows" };
   const need = Math.max(1, ask.count ?? DEFAULT_COUNT);
   const catalogOnly = input.catalogOnly === true;
+  // WHAT THE SOURCES ANSWERED OUTSIDE THE PERIOD (live round 11): every row read, and how many the period rule left out (said on the card as a count)
+  const readAll = periodIsChecked(ask) ? rankedPoolOf({ ask, poolCard, pages: input.pool.pages, keepOutsidePeriod: true, ...(input.counters ? { counters: input.counters } : {}), ...(input.channels ? { channels: input.channels } : {}), ...(input.nowMs !== undefined ? { nowMs: input.nowMs } : {}) }) : ranked0;
+  const leftOutOfPeriod = readAll.length - ranked0.length;
   const repliesCards = shape.includes("replies") ? cardsFor(ask.platform, REPLY_ROLE[ask.platform], { catalogOnly }) : [];
   const commentsCard = shape.includes("comments") ? chooseCard(ask, "comments", { catalogOnly, repliesCards }) : null;
   const repliesCard = shape.includes("replies") ? chooseCard(ask, "replies", { catalogOnly }) : null;
@@ -350,14 +365,16 @@ export function compilePlan(input: CompileInput): CompileResult {
     const searchPages = input.pool.pages.filter((p) => (p.card ?? poolCard).role === "posts.search");
     const last = searchPages[searchPages.length - 1];
     const more = last ? Boolean(atPath(last.page, (last.card ?? poolCard).page.cursor)) : false;
-    const parts = [`قرأنا ${postsCountAr(ranked0.length)} من نتائج البحث في ${pagesCountAr(searchPages.length)}${more ? "، وفي المصدر المزيد" : ""}.`];
-    if (ask.source.kind === "named" && ask.source.text) parts.push(`منها من صفحة «${ask.source.text}»: ${toArabicDigits(ranked0.filter(isNamed).length)}.`);
+    const parts = [`قرأنا ${postsCountAr(readAll.length)} من نتائج البحث في ${pagesCountAr(searchPages.length)}${more ? "، وفي المصدر المزيد" : ""}.`];
+    if (ask.source.kind === "named" && ask.source.text) parts.push(`منها من صفحة «${ask.source.text}»: ${toArabicDigits(readAll.filter(isNamed).length)}.`);
     if (ask.topic.text) {
-      parts.push(`منها يتحدث نصه عن «${ask.topic.text}»: ${toArabicDigits(ranked0.filter((r) => factsOf(r, ask, bySource).topicTier === 2).length)}.`);
-      if (ask.source.kind === "named" && ask.source.text) parts.push(`منها من الصفحة ويتحدث نصه عن الموضوع: ${toArabicDigits(ranked0.filter((r) => isNamed(r) && factsOf(r, ask, bySource).topicTier === 2).length)}.`);
+      parts.push(`منها يتحدث نصه عن «${ask.topic.text}»: ${toArabicDigits(readAll.filter((r) => factsOf(r, ask, bySource).topicTier === 2).length)}.`);
+      if (ask.source.kind === "named" && ask.source.text) parts.push(`منها من الصفحة ويتحدث نصه عن الموضوع: ${toArabicDigits(readAll.filter((r) => isNamed(r) && factsOf(r, ask, bySource).topicTier === 2).length)}.`);
     }
     notes.push(parts.join(" "));
   }
+  // THE PERIOD IS KEPT ON THE ROWS (live round 11): no chosen parent and no spare is outside it; the card says how many read ones were left out
+  if (ask.period && leftOutOfPeriod > 0) notes.push(`لم نختر أي ${ask.platform === "youtube" ? "فيديو" : "منشور"} خارج الفترة المطلوبة (من ${toArabicDigits(ask.period.from)} إلى ${toArabicDigits(ask.period.to)})؛ تركنا ${ask.platform === "youtube" ? `${toArabicDigits(leftOutOfPeriod)} فيديو` : postsCountAr(leftOutOfPeriod)} ${leftOutOfPeriod === 1 ? "قرأناه" : leftOutOfPeriod === 2 ? "قرأناهما" : "قرأناها"} خارجها.`);
   // YOUTUBE: the channels the videos were read from (the official channels are looked up by name and each is read inside: the card says how many, never that they are the official ones)
   if (ask.platform === "youtube" && input.channels && input.channels.length > 0) {
     // the channels' names as the customer reads them: the Arabic part of a title («Al Ahly SC - النادي الأهلي» is «النادي الأهلي»); a title with no Arabic part is not listed (Arabic only on the card)
