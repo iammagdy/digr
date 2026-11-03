@@ -14,7 +14,7 @@ export const REDESIGN_TYPE_LABEL_AR: Record<RedesignType, string> = {
   people: "الشركات مع صناع القرار",
   places: "الأماكن",
 };
-/** The five social platforms: each can be switched alone; no value means it follows its request type. */
+/** The five social platforms: each is switched alone; «تشغيل» / «تجريبي» run the compiled path, «إيقاف» or no value means the platform is not offered (PR B). */
 export const PLATFORM_LABEL_AR: Record<SocialPlatform, string> = { tiktok: "تيك توك", x: "إكس", instagram: "إنستجرام", facebook: "فيسبوك", youtube: "يوتيوب" };
 export type FlagKey = RedesignType | SocialPlatform;
 export type FlagMode = RedesignMode | "inherit";
@@ -103,7 +103,7 @@ export function RedesignFlagsSection({ flags, platformFlags = {}, confirming, bu
         ))}
       </ul>
       <h4 className="m-0 mt-2 text-[13px] font-semibold text-ink">مفتاح لكل منصة</h4>
-      <p className="m-0 text-[12px] leading-[1.8] text-ink2">«يتبع النوع» هو الوضع الافتراضي: تعمل المنصة بمفتاح نوع طلبها. أي وضع آخر يغلب مفتاح النوع لهذه المنصة وحدها، ويُسجَّل في سجل الإدارة نفسه.</p>
+      <p className="m-0 text-[12px] leading-[1.8] text-ink2">لكل منصة اجتماعية مسار واحد فقط: المسار المبني بالكود. «تشغيل» يشغّله لكل العملاء، و«تجريبي» لحسابات الاختبار فقط. «إيقاف» (وكذلك «يتبع النوع» بلا قيمة) يعني أن المنصة غير متاحة للطلب: يرى العميل رسالة صادقة قبل أي تخطيط ولا يُخصم منه شيء. يُسجَّل كل تغيير في سجل الإدارة نفسه.</p>
       <ul className="m-0 flex list-none flex-col gap-2 p-0">
         {SOCIAL_PLATFORMS.map((platform) => {
           const current: FlagMode = platformFlags[platform] ?? "inherit";

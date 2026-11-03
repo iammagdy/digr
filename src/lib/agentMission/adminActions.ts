@@ -4,6 +4,8 @@ import { AGENT_SOURCE_MEASURE_WINDOW_MS, AGENT_ALLOWED_MODELS, AGENT_DYNO_MEMORY
 import { memoryWarning } from "./concurrency";
 import { latestBeat, workerAlive } from "./heartbeat";
 import { approveMissionOnce } from "./approval";
+import { EXPIRED_SOCIAL_PLAN_AR, isStaleSocialPlan } from "./staleSocialPlan";
+import { modelPlanningForTests } from "./testSeam";
 import { repriceStoredPlan } from "./lifecycle";
 import { customerPlanView, type PricedPlan } from "./plan";
 import { sourceHealth, statsFromCalls, type RecordedCallFact } from "./sourceRanking";
@@ -69,6 +71,7 @@ export async function approvePlan(client: any, input: { id: string; adminId: str
   const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,status,plan").eq("id", input.id).maybeSingle();
   if (!mission) return bad(404, "المهمة غير موجودة.");
   if (mission.status !== "plan_ready" || !mission.plan) return bad(409, "لا توجد خطة جاهزة للاعتماد.");
+  if (!modelPlanningForTests() && isStaleSocialPlan(mission.plan)) return bad(410, EXPIRED_SOCIAL_PLAN_AR);
   const account = await findTestAccount(client);
   if (!account || account.id !== mission.user_id) return bad(403, "هذه الصفحة تعمل لحساب الاختبار فقط.");
   const r = await approveMissionOnce(client, { id: input.id, actorId: input.adminId, messages: { insufficient_balance: "رصيد حساب الاختبار لا يكفي لحجز هذه المهمة." } });

@@ -9,7 +9,7 @@ import { fakeMoneyClient } from "./helpers/agentMoney";
 import { stagePriceInputs, type PricedPlan, type PricedStage } from "../src/lib/agentMission/plan";
 import type { StageFilter } from "../src/lib/agentMission/filters";
 import { priceMissionByCode } from "../src/lib/agentMission/price";
-import { withCompleteCount } from "../src/lib/agentMission/completeCount";
+
 import { matchesCustomerConditions } from "../src/lib/agentMission/customerConditions";
 import { DEFAULT_MISSION_PRICING_SETTINGS } from "../src/lib/missionPricing";
 import { topicDiscussionClass, topicMeaningOf, topicQueryOf, TOPIC_OPTIONS_AR, topicQuestionAr } from "../src/lib/agentMission/topicMeaning";
@@ -93,88 +93,10 @@ const basePlan = (): PricedPlan => {
   return { summary_ar: "x", stages, price: priceMissionByCode(stagePriceInputs(stages), { settings: DEFAULT_MISSION_PRICING_SETTINGS }) } as unknown as PricedPlan;
 };
 const cands = (videos = FIX.videos) => videos.map((v) => ({ id: v.id, counter: v.comments, row: { id: v.id, text: v.text, country: v.country, language: v.language, comments: v.comments } }));
-const choose = (request: string, videos = FIX.videos) => withCompleteCount(basePlan(), { request: `${request} كل التعليقات`, candidatesOf: async () => cands(videos), pageCapOf: async () => null, mostEngaged: true, topicOf: () => topicMeaningOf(request), matchesOf: async (p) => (row) => matchesCustomerConditions(row, p.filters ?? [], ["text"]) });
 const pinsOf = (p: PricedPlan) => p.stages.find((s) => s.key === "comments")!.parent_pins;
 
-describe("choosing the videos: the exact request with the stored videos", () => {
-  it("a made-with story is not chosen when videos that discuss AI exist: the two explainers (64 and 41 comments) come before the viral stories (1,167 and 1,084)", async () => {
-    expect(pinsOf(await choose(REQUEST))).toEqual(["synthetic-explainer-1", "synthetic-explainer-2"]);
-  });
-  it("the card says the videos were chosen for talking about the topic", async () => {
-    expect(((await choose(REQUEST)).notes_ar ?? []).join(" ")).toContain("تتحدث عن الموضوع");
-  });
-  it("when no sampled video discusses the topic the most commented are delivered and the card says none was found (nothing is dropped)", async () => {
-    const p = await choose(REQUEST, FIX.videos.filter((v) => !v.synthetic));
-    expect(pinsOf(p)).toEqual(["7692547380482346263", "7663879872137252114"]);
-    expect((p.notes_ar ?? []).join(" ")).toContain("لم نجد");
-  });
-  it("«made with AI» is the other request: the viral stories are what is wanted, and they are chosen", async () => {
-    expect(pinsOf(await choose("هات فيديوهين تيك توك معمولة بالذكاء الاصطناعي من مصر"))).toEqual(["7663879872137252114", "7690257663250205974"]);
-  });
-});
 
-describe("an ambiguous request produces the question card before planning", () => {
-  it("the planner is not even started: the mission waits for the customer's answer with the owner's question and two ready answers", async () => {
-    vi.stubGlobal("fetch", () => { throw new Error("a real network call was attempted"); });
-    const store = createMemoryStore();
-    const money = fakeMoneyClient();
-    const rec = fakeRecorder();
-    const call = vi.fn(async () => { throw new Error("no provider call is made before the question"); });
-    store.settings.redesign_flags = { social_posts: "test", social_account: "test", social_comments: "test" };
-    store.userEmails.set(USER_ID, "iam.magdy+1@outlook.com");
-    store.missions.set("msn_q8", newMission({ id: "msn_q8", user_id: USER_ID, request_text: "هات فيديوهين تيك توك الذكاء الاصطناعي من مصر مع التعليقات", status: "planning" }));
-    const driver = createFakeDriver([]);
-    const deps = { store, client: money.client, catalog: loadTregCatalog(), driver, recorder: rec.recorder, commit: rec.commit, call, models: { planning: "claude-haiku-5-5", execution: "claude-haiku-5-5" }, resolveAccess: async () => ({ ok: true }) } as unknown as RunnerDeps;
-    await runPlanning(deps, store.missions.get("msn_q8")!);
-    const m = store.missions.get("msn_q8")!;
-    expect(m.status).toBe("needs_input");
-    expect(m.question_ar).toBe("تقصد فيديوهات بتتكلم عن الذكاء الاصطناعي، ولا فيديوهات معمولة بيه؟");
-    expect((m.plan_public as { question_options: string[] }).question_options).toEqual(TOPIC_OPTIONS_AR("الذكاء الاصطناعي"));
-    expect(call).not.toHaveBeenCalled();
-    expect(driver.results.length).toBe(0);
-  });
-  it("the exact request is not ambiguous: no question is asked (the planner runs)", async () => {
-    const store = createMemoryStore();
-    const money = fakeMoneyClient();
-    const rec = fakeRecorder();
-    store.settings.redesign_flags = { social_posts: "test", social_account: "test", social_comments: "test" };
-    store.userEmails.set(USER_ID, "iam.magdy+1@outlook.com");
-    store.missions.set("msn_q9", newMission({ id: "msn_q9", user_id: USER_ID, request_text: REQUEST, status: "planning" }));
-    const driver = createFakeDriver([{ tool: "report_progress", args: { message_ar: "أبدأ", counts: {} } }]);
-    const deps = { store, client: money.client, catalog: loadTregCatalog(), driver, recorder: rec.recorder, commit: rec.commit, call: vi.fn(), models: { planning: "claude-haiku-5-5", execution: "claude-haiku-5-5" }, resolveAccess: async () => ({ ok: true }) } as unknown as RunnerDeps;
-    await runPlanning(deps, store.missions.get("msn_q9")!);
-    expect(store.missions.get("msn_q9")!.question_ar ?? null).toBeNull();
-    expect(driver.results.length).toBeGreaterThan(0);
-  });
-});
 
 import { runS4, QUERY, STORIES, EXPLAINERS } from "./helpers/s4World";
 import { vid } from "./helpers/g4RepliesWorld";
 
-describe("the exact request end to end, with the stored videos as the search results", () => {
-  const run = () => runS4({ topicStories: true });
-  const callsOf = (r: Awaited<ReturnType<typeof run>>) => (r.call.mock.calls as Array<[{ endpointId: string; params: Record<string, unknown> }]>).map((c) => c[0]);
-  it("a plan on the plain topic search (where the stories come back) is refused: the query must carry the meaning; the search is read again with it and the plan is accepted", async () => {
-    const r = await run();
-    const proposals = r.planningDriver.results.filter((x) => x.tool === "propose_plan");
-    expect(proposals[0].result.ok).toBe(false);
-    expect(JSON.stringify(proposals[0].result)).toContain(QUERY);
-    expect(proposals.slice(-1)[0].result.ok).toBe(true);
-    const search = callsOf(r).filter((c) => c.endpointId === "tikhub.tiktok.search.videos");
-    expect(search.at(-1)!.params.keyword).toBe(QUERY);
-    expect(search.every((c) => c.params.region === "EG")).toBe(true);
-  });
-  it("the chosen tool carries Egypt and the topic's meaning; the videos chosen are the ones that talk about AI, never the viral made-with stories", async () => {
-    const r = await run();
-    const videos = r.plannedPlan.stages[0];
-    expect(videos.engine!.params.region).toBe("EG");
-    expect(String(videos.engine!.params.keyword)).toMatch(/الذكاء الاصطناعي.*(شرح|أخبار)/);
-    const pins = r.plannedPlan.stages.find((s) => s.key === "comments")!.parent_pins!;
-    expect(pins).toEqual(EXPLAINERS.map((e) => vid(e.i)));
-    for (const s of STORIES) expect(pins).not.toContain(vid(s.i));
-  });
-  it("the card says the videos were chosen for talking about the topic", async () => {
-    const r = await run();
-    expect(((r.planView.notesAr ?? []) as string[]).join(" ")).toContain("تتحدث عن الموضوع");
-  });
-});

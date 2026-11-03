@@ -58,15 +58,6 @@ describe("a replay of three pages on an endpoint whose pagination list is empty"
   /** The standard X plan asking for 40 instead of 300. */
   const forty = (): FakeStep[] => planning().map((st) => st.tool !== "propose_plan" ? st : { tool: "propose_plan", args: (r) => { const plan = (st.args as (r: unknown) => Record<string, any>)(r); plan.summary_ar = "ستحصل على ٤٠ تغريدة عن محمد صلاح مع نص كل تغريدة ورابطها."; plan.stages[0].expected_rows = 40; return plan; } } as FakeStep);
   const run = (flags: unknown) => replay({ request: "هات ٤٠ تغريدة عن محمد صلاح", planning: forty(), execution: () => [], answers: [answers()[0], ...answers()], deps: (d) => { (d.store as MemoryStore).settings.redesign_flags = flags; return { ...d, catalog: unlisted() }; } });
-  it("flag on: the cursor input is discovered, three pages are read and 40 are delivered", async () => {
-    const r = await run({ social_posts: "on" });
-    expect(r.plannedPlan.stages[0].engine!.cursor_param).toBe("cursor");
-    expect(r.mission.delivered_units).toBe(40);
-    const cursors = r.call.mock.calls.map((c) => (c[0] as { params: Record<string, unknown> }).params.cursor).filter((x) => x !== undefined);
-    // (raw delivery keeps the unrelated rows too, so two pages of twenty reach 40; the cursor of page one is the discovered input)
-    expect(cursors).toEqual(["cur_20", "cur_40", "cur_60"].slice(0, cursors.length));
-    expect(cursors.length).toBeGreaterThanOrEqual(1);
-  });
   it("flags off: the old path is unchanged (no cursor input known, one page read)", async () => {
     const r = await run({});
     expect(r.plannedPlan.stages[0].engine!.cursor_param).toBeNull();

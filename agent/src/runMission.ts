@@ -38,6 +38,9 @@ import { askedTextOf, buildRequestContract } from "../../src/lib/agentMission/re
 import { sealFinalPrice } from "../../src/lib/agentMission/finalPrice";
 import { accountIsTest, anyRedesignFlag, fallbackStageOf, redesignStagesOf } from "./redesign";
 import { compiledPlatformActive, planByCompiler } from "./compiled";
+import { isSocialPlatform } from "../../src/lib/agentMission/redesignFlagTypes";
+import { modelPlanningForTests } from "../../src/lib/agentMission/testSeam";
+import { SOCIAL_NOT_OFFERED_AR } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { namedShortfallChoiceOf } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { promiseShortfallAr, repliesShortfallAr } from "./repliesShortfall";
 import { TOPIC_OPTIONS_AR, topicMeaningOf, topicQuestionAr } from "../../src/lib/agentMission/topicMeaning";
@@ -316,6 +319,16 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const pricingSettings = normalizeMissionPricingSettings(settings[MISSION_PRICING_SETTING_KEY]);
   // THE REDESIGN FLAGS (S1 item 0.1): read once at the start of the run; every one is off unless the owner switched it
   const redesign = { flags: readRedesignFlags(settings), isTest: await accountIsTest(store, mission.user_id), platformFlags: readPlatformFlagsOf(settings), platform: buildRequestContract(mission.request_text, mission.answer_text).platform };
+  // PR B (round 18), ONE PATH FOR SOCIAL: a request on TikTok, X, Instagram, Facebook or YouTube is planned by the plan compiler or not at all. The platform's own switch decides: «تشغيل» (and «تجريبي» for a test account) = the compiled path; «إيقاف» (or no value) = the platform is NOT OFFERED:
+  // the customer is told so honestly BEFORE any planning call (no source is read, no model is paid, nothing is held). There is no model-planned social pipeline any more, and no fallback to it.
+  const compiledActive = compiledPlatformActive(redesign.platformFlags, redesign.platform, redesign.isTest);
+  if (isSocialPlatform(redesign.platform) && !compiledActive && !modelPlanningForTests()) {
+    await store.updateMission(mission.id, { status: "unserved", summary_ar: SOCIAL_NOT_OFFERED_AR, ...clear });
+    await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: منصة اجتماعية غير مفعّلة، لم يُجرَ أي تخطيط.", counts: { compiled: 0, social_not_offered: 1 } }).catch(() => undefined);
+    await store.addEvent(mission.id, { kind: "result", message_ar: SOCIAL_NOT_OFFERED_AR });
+    await tell(deps, mission, null, "unserved", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false });
+    return;
+  }
   const ctx: ToolContext = { redesign, phase: "planning", mission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, pricingSettings, stats: sourceStats, now: planningNow };
   // AN AMBIGUOUS TOPIC IS ASKED BEFORE PLANNING (S8, owner decision; redesigned mode only): «فيديوهات الذكاء الاصطناعي» may mean videos that TALK ABOUT it or videos MADE WITH it; «عن X» means about and «معمول بـ X» means made with, so only the request that says neither is asked, by code, with two ready answers,
   // before any source is read or any model is paid for (the customer's answer is read with the request and decides the meaning)
@@ -351,7 +364,6 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // THE COMPILED PATH (docs/FOUNDATION-PLAN.md PR 2a): TikTok and X, and only when that platform's OWN flag is `on` (or `test` for a test account), are planned by the plan compiler,
   // by code, with no model: the pool and the exposure check are read through this run's gateway (every cap applies). A request it cannot compile ends with one of the honest classes
   // below, never on the model's path (F6). With the platform flags unset, as today, this is null and the planning below is exactly what it was.
-  const compiledActive = compiledPlatformActive(redesign.platformFlags, redesign.platform, redesign.isTest);
   // THE ANSWER TO THE «NO VIDEO IS ABOUT THE TOPIC» QUESTION (live round 7, topicChoice.ts): «change my request» and «cancel» end this mission before anything is read (nothing was held, nothing is charged); «use them as they are» is read by the compiled planning below
   const noAboutChoice = compiledActive ? noAboutChoiceOf(mission.answer_text) : null;
   // PR 3, decision 7.5 (Facebook, a named page with too few posts): «cancel» ends the mission the same way, before anything is read

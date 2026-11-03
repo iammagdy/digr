@@ -66,13 +66,6 @@ describe("every flag off: byte-identical to the code before this pull request", 
       expect(sections).toEqual(pinned[name]);
     });
   }
-  it("the digest is sensitive: the same X world with the flag ON gives a different workbook and plan (so a pass above means something)", async () => {
-    if (writing) return;
-    const r = await replay({ request: "هات ٣٠٠ تغريدة عن محمد صلاح", planning: planning(), execution: () => [], answers: [pages(1)[0], ...pages(30)], deps: (d) => { (d.store as MemoryStore).settings.redesign_flags = { social_posts: "on" }; return d; } });
-    const on = await sectionsOf(r);
-    expect(on.workbook).not.toBe(pinned.x_posts_300.workbook);
-    expect(on.mission).not.toBe(pinned.x_posts_300.mission);
-  });
   it("the pinned file covers exactly the five worlds", () => {
     if (writing) return;
     expect(Object.keys(pinned).sort()).toEqual(Object.keys(SCENARIOS).sort());

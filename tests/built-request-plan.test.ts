@@ -22,16 +22,6 @@ function withFilters(steps: FakeStep[]): FakeStep[] {
 const flags = (value: unknown) => (d: Parameters<NonNullable<Parameters<typeof replay>[0]["deps"]>>[0]) => { (d.store as MemoryStore).settings.redesign_flags = value; return d; };
 
 describe("the recipe is built by code in the redesigned mode", () => {
-  it("flag on: built_by is «code», the period and the language are in the query of the stored recipe, the measured topic is kept", async () => {
-    const r = await replay({ request: "هات ٣٠٠ تغريدة عن محمد صلاح", planning: withFilters(planning()), execution: () => [], answers: [pages(1)[0], ...pages(30)], deps: flags({ social_posts: "on" }) });
-    const engine = r.plannedPlan.stages[0].engine!;
-    expect(engine.built_by).toBe("code");
-    const q = String(engine.params.query);
-    expect(q.startsWith(TOPIC)).toBe(true);
-    expect(q).toMatch(/since:\d{4}-\d{2}-\d{2}/);
-    expect(q).toContain("lang:ar");
-    expect(engine.endpoint_id).toBe(ENDPOINT);
-  });
   it("flags all off (the default): the model's measured request, no built_by, no gaps", async () => {
     const r = await replay({ request: "هات ٣٠٠ تغريدة عن محمد صلاح", planning: withFilters(planning()), execution: () => [], answers: [pages(1)[0], ...pages(30)] });
     const engine = r.plannedPlan.stages[0].engine!;

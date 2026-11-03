@@ -199,33 +199,7 @@ describe("2. Facebook «هات ٥ فيديوهات ... عن منتخب مصر، 
     return { store, driver, mission: store.missions.get("msn_fbv2")! };
   }
 
-  it("no sampled post proves a video: the plan is NOT refused, it is sent to the catalog's video and reel sources, and the card is built from the one that proves video", async () => {
-    const r = await runFlow(reelsFlow(), [tregResult(page([]), 0.02952), tregResult(commentsPage, 0.00188), tregResult(reelsPage, 0.00188)]);
-    const proposals = r.driver.results.filter((x) => x.tool === "propose_plan").map((x) => x.result as { ok?: boolean; issues?: string[] });
-    expect(proposals[0].ok).toBe(false);
-    const sentBack = JSON.stringify(proposals[0].issues);
-    // it names the catalog's sources that can prove a video: the page's reels first, then the post search that carries a video object, then the post's detail and transcript
-    expect(sentBack).toContain(REELS);
-    expect(sentBack).toContain("anyapi.facebook.profile_reels");
-    expect(sentBack).not.toContain("justoneapi.x.facebook-search-post-v1"); // already sampled: not offered again
-    expect(sentBack).toContain("anyapi.facebook.post_transcript");
-    expect(proposals[1].ok).toBe(true);
-    expect(r.mission.status).toBe("plan_ready");
-    expect(r.mission.plan!.stages[0].endpoint_id).toBe(REELS);
-    // the source's items ARE reels: no media filter is needed and the card does not say that video could not be proven
-    expect((r.mission.plan!.stages[0].filters ?? []).some((f) => f.kind === "media")).toBe(false);
-    expect(JSON.stringify(r.mission.plan_public)).not.toContain("لم نجد في المصادر المتاحة ما يثبت وجود فيديو");
-  });
 
-  it("after three send-backs with fewer than three media sources reached, the plan is accepted and the card tells the customer BEFORE approval (the filter stays, only proven posts are delivered)", async () => {
-    const same = steps([]);
-    const propose = same[same.length - 1];
-    const r = await runFlow([...same, propose, propose, propose], [tregResult(page([]), 0.02952), tregResult(commentsPage, 0.00188)]);
-    const proposals = r.driver.results.filter((x) => x.tool === "propose_plan").map((x) => (x.result as { ok?: boolean }).ok === true);
-    expect(proposals).toEqual([false, false, false, true]);
-    expect(r.mission.status).toBe("plan_ready");
-    expect(JSON.stringify(r.mission.plan_public)).toContain("لم نجد في المصادر المتاحة ما يثبت وجود فيديو");
-  });
 
   it("the catalog's media sources of Facebook, by how they prove it", () => {
     const list = mediaProofSources(catalog, "facebook", "video", () => true);

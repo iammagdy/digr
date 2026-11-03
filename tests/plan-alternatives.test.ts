@@ -31,20 +31,6 @@ function twoSources(): FakeStep[] {
 const run = (flags: unknown) => replay({ request: "هات ٣٠٠ تغريدة عن محمد صلاح", planning: twoSources(), execution: () => [], answers: [pages(1)[0], tregResult(altPage(), 0.001), ...pages(30)], deps: (d) => { (d.store as MemoryStore).settings.redesign_flags = flags; return d; } });
 
 describe("the next tool is stored with the plan", () => {
-  it("flag on: the second sampled source is the stage's alternative, with its own proven mapping and a cursor discovered from its inputs", async () => {
-    const r = await run({ social_posts: "on" });
-    const engine = r.plannedPlan.stages[0].engine!;
-    expect(engine.endpoint_id).toBe(ENDPOINT);
-    expect(engine.alternatives).toHaveLength(1);
-    const alt = engine.alternatives![0];
-    expect(alt.endpoint_id).toBe(ALT);
-    expect(alt.map_file_id).toBe("call_0002");
-    expect(alt.map_code).toContain("call_0002");
-    expect(alt.cursor_param).toBe("cursor");
-    expect(alt.params).toMatchObject({ keyword: TOPIC });
-    // the price and the reserve are the ones of the first tool (nothing was measured or priced for the alternative)
-    expect(Number(r.plannedPlan.price.reservePoints)).toBeGreaterThan(0);
-  });
   it("flags off: no alternative is stored and the plan is as it always was", async () => {
     const r = await run({});
     expect(r.plannedPlan.stages[0].engine!.alternatives).toBeUndefined();

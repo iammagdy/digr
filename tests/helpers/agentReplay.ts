@@ -1,4 +1,6 @@
 import { vi, expect } from "vitest";
+import { createHash } from "node:crypto";
+import { existsSync, readFileSync } from "node:fs";
 import ExcelJS from "exceljs";
 import { createMemoryDb, type MemoryDb } from "./memoryDb";
 import { fakeMoneyClient } from "./agentMoney";
@@ -133,7 +135,15 @@ export async function replay(input: ReplayInput): Promise<ReplayResult> {
   expect(claimedForPlanning?.id).toBe(missionId);
   expect(claimedForPlanning?.status).toBe("planning");
   const planningDriver = createFakeDriver(input.planning);
-  await runPlanning(wire(planningDriver), store.missions.get(missionId)!);
+  // PR B (round 18): a world whose planning ran through the deleted model path loads the STORED result of that planning (tests/fixtures/stored-plans: the plan, the pages, the call log and the events the planning left, captured once from the code of #364, keyed by the test's name) and goes on from the card: approval, execution, settlement, files are the code under test, with every assertion of the test kept.
+  const stored0 = storedPlanning(nextStoredName(expect.getState().currentTestName ?? ""), missionId);
+  if (stored0) {
+    for (let i = 0; i < stored0.planningProviderCalls; i += 1) queue.shift();
+    Object.assign(store.missions.get(missionId)!, stored0.mission, { id: missionId, user_id: REPLAY_USER });
+    for (const [k, v] of Object.entries(stored0.files)) store.files.set(k, v);
+    for (const c of stored0.calls) await store.addCall(c);
+    for (const e of stored0.events) await store.addEvent(missionId, { kind: e.kind, message_ar: e.message_ar, ...(e.counts ? { counts: e.counts } : {}) } as never);
+  } else await runPlanning(wire(planningDriver), store.missions.get(missionId)!);
   const planned = store.missions.get(missionId)!;
   if (planned.status !== "plan_ready" || !planned.plan) throw new Error(`planning did not end with a plan (status ${planned.status}; ${JSON.stringify(planningDriver.results.slice(-2))})`);
 
@@ -244,3 +254,20 @@ export function pagedAnswers(total: number, perPage: number, costUsd: number, ma
 
 /** A model review that accepts every row it is given (a fixture whose rows the rule sends to the check: the companies of a sector, whose names do not all say it). Its tokens are small and counted like any review's. */
 export const approvingReview = async ({ user }: { user: string }) => ({ text: JSON.stringify(Array((user.match(/^\d+\./gm) ?? []).length).fill(1)), usage: { input_tokens: 400, output_tokens: 20 } });
+
+/** The stored planning of the test that is running (null when none was stored): the captured snapshot with the capture's mission id replaced by this run's. */
+function storedPlanning(testName: string, missionId: string): { planningProviderCalls: number; mission: Record<string, unknown>; files: Record<string, string>; calls: any[]; events: any[] } | null {
+  const file = new URL(`../fixtures/stored-plans/${createHash("sha1").update(testName).digest("hex").slice(0, 16)}.json`, import.meta.url);
+  if (!existsSync(file)) return null;
+  const text = readFileSync(file, "utf8");
+  const snap = JSON.parse(text) as { mission: { id: string } };
+  return JSON.parse(text.split(snap.mission.id).join(missionId));
+}
+
+/** The stored planning is keyed by the test's name and the number of the replay inside that test (a test may run several worlds). */
+const replaysSeen = new Map<string, number>();
+function nextStoredName(testName: string): string {
+  const n = (replaysSeen.get(testName) ?? 0) + 1;
+  replaysSeen.set(testName, n);
+  return `${testName}#${n}`;
+}

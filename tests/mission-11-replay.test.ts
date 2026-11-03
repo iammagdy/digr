@@ -177,54 +177,6 @@ describe("1b. the stored YouTube stage: «قبل ٤ أيام» passes a period o
 });
 
 // ---------------------------------------------------------------------------------------------------- 1c. a keyword plan for named channels that no sample shows, while the catalog has the channels' own listings
-describe("1c. a plan that searches by keyword for three channels, none of which the samples show, is sent back to sample the channels' own listings (live: the card said «لم نجد» for all three)", () => {
-  const SEARCH = "crawl4ai.youtube.search.videos";
-  const LISTING = "crawl4ai.youtube.channel.videos";
-  const page = (channel: string) => ({ rows: [0, 1, 2].map((i) => ({ video_id: `${channel.length}x${i}`, title: `حرب إيران وإسرائيل ${channel} ${i}`, channel, url: `https://www.youtube.com/watch?v=${channel.length}x${i}`, published: "3 days ago", views: 5, length: "3:00", description: "حرب" })) });
-  it("the first proposal is refused with the routes the catalog has; after one listing was sampled the same plan is accepted (and says «not found» only for what was really looked for)", async () => {
-    const { runPlanning } = await import("../agent/src/runMission");
-    const { createMemoryStore, newMission } = await import("../agent/src/memoryStore");
-    const { createFakeDriver } = await import("../agent/src/fakeDriver");
-    const { fakeMoneyClient } = await import("./helpers/agentMoney");
-    const { fakeRecorder, NOT_ADMIN, USER_ID } = await import("./helpers/agentHarness");
-    const { loadTregCatalog } = await import("../src/lib/treg/catalog");
-    const store = createMemoryStore();
-    store.missions.set("msn_x", newMission({ id: "msn_x", user_id: USER_ID, status: "planning", request_text: request1 }));
-    const answers = [tregResult(page("AlArabiya العربية"), 0.0009), tregResult(page("اليوم السابع - Youm7"), 0.0009), tregResult(page("BBC News"), 0.0009)];
-    const queue = [...answers];
-    const rec = fakeRecorder();
-    const money = fakeMoneyClient();
-    const call = vi.fn(async () => { const n = queue.shift(); if (!n) throw new Error("no fake answer left"); return n; });
-    const stageOf = (res: Results, calls: string[], endpoint: string) => ({ key: "videos", title_ar: "فيديوهات عن حرب إيران وإسرائيل", endpoint_id: endpoint, expected_rows: 6, parent_key: null, deliver: true,
-      columns: columnsOf(["title", "عنوان الفيديو"], ["channel", "القناة"], ["views", "المشاهدات"], ["published", "وقت النشر"], ["length", "المدة"], ["description", "وصف الفيديو"], ["url", "الرابط"]),
-      filters: [{ kind: "account", values: ["AlArabiya العربية", "Youm7", "BBC News"] }],
-      sample_rows: (({ video_id, ...v }) => [{ id: video_id, ...v }])(page("AlArabiya العربية").rows[0]), measured_by: calls, yield_from: firstOutputId(res),
-      relevance: { subject_ar: "حرب إيران وإسرائيل", terms: ["إيران", "إسرائيل"], context_terms: ["حرب"], text_columns: ["title", "description"], min_own_words: 0 } });
-    const MAP = (n: number) => `return inputs.call_000${n}.rows.map(v => ({ id: v.video_id, title: v.title, channel: v.channel, views: v.views, published: v.published, length: v.length, description: v.description, url: v.url }))`;
-    const driver = createFakeDriver([
-      { tool: "catalog_search", args: { words: ["youtube", "videos"], platform: "youtube", limit: 5 } },
-      { tool: "describe_endpoint", args: { id: SEARCH } },
-      { tool: "treg_call", args: { endpoint_id: SEARCH, params: { query: "العربية حرب إيران وإسرائيل", limit: 20 }, why } },
-      { tool: "run_code", args: (r: Results) => ({ code: MAP(1), files: [callIds(r)[0]] }) },
-      { tool: "propose_plan", args: (r: Results) => ({ summary_ar: "ستحصل على فيديوهات عن حرب إيران وإسرائيل من القنوات الثلاث.", stages: [stageOf(r, [callIds(r)[0]], SEARCH)] }) },
-      // after the refusal: the channel's own listing, once
-      { tool: "describe_endpoint", args: { id: LISTING } },
-      { tool: "treg_call", args: { endpoint_id: LISTING, params: { channel: "@AlArabiya", limit: 12 }, why } },
-      { tool: "propose_plan", args: (r: Results) => ({ summary_ar: "ستحصل على فيديوهات عن حرب إيران وإسرائيل من القنوات الثلاث.", stages: [stageOf(r, [callIds(r)[0]], SEARCH)] }) },
-    ]);
-    const deps = { store, client: money.client, catalog: loadTregCatalog(), driver, recorder: rec.recorder, commit: rec.commit, call: call as never, models: { planning: "claude-haiku-5-5", execution: "claude-haiku-5-5" }, resolveAccess: async () => NOT_ADMIN };
-    await runPlanning(deps as never, store.missions.get("msn_x")!);
-    const proposals = driver.results.filter((x) => x.tool === "propose_plan");
-    expect(proposals).toHaveLength(2);
-    expect(proposals[0].result.ok).toBe(false);
-    const issue = JSON.stringify(proposals[0].result.issues);
-    expect(issue).toContain("take the named source itself");
-    expect(issue).toContain("crawl4ai.youtube.channel.videos");
-    // after the planner sampled a channel's own listing the proposal is accepted
-    expect(proposals[1].result.ok).toBe(true);
-    expect(store.missions.get("msn_x")!.status).toBe("plan_ready");
-  });
-});
 const request1 = "هات من قنوات العربية واليوم السابع وبي بي سي نيوز ٥ فيديوهات من كل قناة عن حرب إيران وإسرائيل";
 
 // ---------------------------------------------------------------------------------------------------- 2. Facebook topic videos: no plan, «تعذّر تجهيز خطة ... بسبب حد من جانبنا» (msn_020bf5c4110c15c86ab8)

@@ -3,7 +3,7 @@ import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { stagePriceInputs, type PricedPlan, type PricedStage } from "../src/lib/agentMission/plan";
 import { priceMissionByCode } from "../src/lib/agentMission/price";
 import { isRepliesStage, wantsReplies, withRepliesStages } from "../src/lib/agentMission/replies";
-import { withCompleteCount } from "../src/lib/agentMission/completeCount";
+
 import { DEFAULT_MISSION_PRICING_SETTINGS } from "../src/lib/missionPricing";
 
 /**
@@ -43,16 +43,6 @@ describe("the replies stage is always in the plan when the request mentions repl
   it("a sample whose comments carry no reply counter: the same", async () => {
     expect((await build(noCounter)).stages.some(isRepliesStage)).toBe(false);
     expect((await build(noCounter, { requested: true })).stages.some(isRepliesStage)).toBe(true);
-  });
-  it("the estimate of a silent sample is the stated unknown (2 a comment), never a number the sample does not support, and it follows the final comments", async () => {
-    const kept = await build(silent, { requested: true });
-    expect(kept.stages.find(isRepliesStage)!.replies_per_comment_expected).toBe(2);
-    const final = await withCompleteCount(kept, { request: "كل التعليقات والردود", candidatesOf: async () => [{ id: "a", counter: 30 }, { id: "b", counter: 10 }], pageCapOf: async () => null });
-    // CHANGED (S5, owner decision): the replies are no longer estimated ON TOP of the counters (30 + 10 = 40): comments + replies = the counters, the unknown share (a quarter) only splits it
-    const c = final.stages.find((s) => s.key === "comments")!.planned_rows;
-    const rp = final.stages.find(isRepliesStage)!.planned_rows;
-    expect(c + rp).toBe(40);
-    expect(rp).toBe(10);
   });
   it("«all» replies: each comment is read to the end of its replies (the largest number per comment the job allows), not to the default of ten", async () => {
     expect((await build(silent, { requested: true, all: true })).stages.find(isRepliesStage)!.per_parent_rows).toBe(50);

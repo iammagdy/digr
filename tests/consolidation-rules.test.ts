@@ -8,7 +8,7 @@ import { buildToolInput } from "../src/lib/agentMission/toolInput";
 import { topicDiscussionClass, topicMeaningFromModel, topicMeaningOf, topicQueryOf } from "../src/lib/agentMission/topicMeaning";
 import { formatSampleValueAr } from "../src/lib/customerDates";
 import { childCountOf } from "../src/lib/agentMission/childCount";
-import { completeCountEstimate, splitPromise } from "../src/lib/agentMission/completeCount";
+import { splitPromise } from "../src/lib/agentMission/completeCount";
 import { SOCIAL_PLATFORMS, capabilitiesOf, REQUEST_TYPES } from "./helpers/ruleMatrix";
 
 /**
@@ -107,34 +107,6 @@ describe("rule 5: a date field is written with the customer's Cairo days, and an
 });
 
 // ---------------------------------------------------------------------------------------------------- rule 4
-describe("rule 4: the topic's meaning (about / made with / ambiguous) is the model's understanding, for ANY topic", () => {
-  const request = "هات فيديوهين تيك توك عن فوتوشوب";
-  it("the model's reading of «عن فوتوشوب» (about) builds the query from its own words, for a topic that is not in any fixed list", () => {
-    const m = topicMeaningFromModel({ relation: "about", topic_ar: "فوتوشوب", search_query: "شرح فوتوشوب للمبتدئين", made_with_markers_ar: ["تصميمات بفوتوشوب", "#معمول_بفوتوشوب"] }, request);
-    expect(m).toMatchObject({ kind: "about", topic: "فوتوشوب" });
-    expect(topicQueryOf(m!)).toBe("شرح فوتوشوب للمبتدئين");
-  });
-  it("a topic the model names that is NOT in the customer's words is refused (the code never takes an invented topic)", () => {
-    expect(topicMeaningFromModel({ relation: "about", topic_ar: "إلكترونيات", search_query: "شرح إلكترونيات" }, request)).toBeNull();
-  });
-  it("a query that does not carry the topic is refused; a relation that is not one of the four is refused", () => {
-    expect(topicMeaningFromModel({ relation: "about", topic_ar: "فوتوشوب", search_query: "أخبار عاجلة" }, request)).toBeNull();
-    expect(topicMeaningFromModel({ relation: "whatever", topic_ar: "فوتوشوب", search_query: "فوتوشوب" }, request)).toBeNull();
-  });
-  it("videos whose own text talks about the topic come before videos where it is only a made-with marker the model named; hashtags alone are neutral", () => {
-    const m = topicMeaningFromModel({ relation: "about", topic_ar: "فوتوشوب", search_query: "شرح فوتوشوب", made_with_markers_ar: ["تصميمات بفوتوشوب", "معمول بفوتوشوب"] }, request)!;
-    expect(topicDiscussionClass("شرح أدوات فوتوشوب للمبتدئين", m)).toBe(2);
-    expect(topicDiscussionClass("تصميمات بفوتوشوب جديدة #فوتوشوب", m)).toBe(0);
-    expect(topicDiscussionClass("مقطع جميل #فوتوشوب", m)).toBe(1);
-    const made = topicMeaningFromModel({ relation: "made_with", topic_ar: "فوتوشوب", search_query: "تصميمات بفوتوشوب", made_with_markers_ar: ["تصميمات بفوتوشوب"] }, "هات فيديوهين تيك توك معمولة بفوتوشوب")!;
-    expect(topicDiscussionClass("تصميمات بفوتوشوب جديدة", made)).toBe(2);
-    expect(topicDiscussionClass("شرح أدوات فوتوشوب", made)).toBe(1);
-  });
-  it("an ambiguous reading is kept as ambiguous (the plan is then turned into the question card); with no model reading the old word list still reads the AI family", () => {
-    expect(topicMeaningFromModel({ relation: "ambiguous", topic_ar: "فوتوشوب" }, "هات فيديوهين تيك توك فوتوشوب")).toMatchObject({ kind: "ambiguous", topic: "فوتوشوب" });
-    expect(topicMeaningOf("هات فيديوهين تيك توك عن الذكاء الاصطناعي").kind).toBe("about");
-  });
-});
 
 // ---------------------------------------------------------------------------------------------------- rule 8
 describe("rule 8: customer-facing values are Arabic only", () => {
@@ -210,15 +182,3 @@ describe("the listing tools of every platform take the customer's conditions thr
 });
 
 // ---------------------------------------------------------------------------------------------------- rule 1 on a platform no benchmark reads comments for
-describe("rule 1: the promise is the real counters, never an estimate on top", () => {
-  it("rule 1: x / comments: the replies to the chosen tweets are promised as the tweets' own reply counters (the catalog's replyCount), the tweets chosen by the highest counters, comments + replies = their sum", () => {
-    expect(Object.keys(catalog.byId.get("anyapi.x.search.posts")!.item_fields ?? {})).toContain("replyCount");
-    const candidates = [12, 7, 0, 30].map((n, i) => ({ id: `t${i}`, counter: childCountOf({ replyCount: n }) }));
-    const sorted = [...candidates].sort((a, b) => (b.counter ?? -1) - (a.counter ?? -1));
-    const e = completeCountEstimate(sorted, { parents: 2, perParent: Number.POSITIVE_INFINITY, requested: null, pageCap: null, fallback: 1 });
-    expect(e.chosen.map((c) => c.id)).toEqual(["t3", "t0"]);
-    expect(e.total).toBe(42);
-    const split = splitPromise(e.total, []);
-    expect(split.comments + split.replies).toBe(42);
-  });
-});

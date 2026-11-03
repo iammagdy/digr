@@ -25,8 +25,7 @@ import { drainPending, ingestRows } from "./items/ingest";
 import { mirrorLegacyFiles } from "./items/mirror";
 import { codeRunPath, deriveEngineSpecsChecked, type CodeRun } from "./engine/spec";
 import { alignedModelCall } from "./periodRequest";
-import { wantsAllChildren } from "../../src/lib/agentMission/allChildren";
-import { tokenOverlayCode, wantsReplies, withRepliesStages } from "../../src/lib/agentMission/replies";
+import { tokenOverlayCode, withRepliesStages } from "../../src/lib/agentMission/replies";
 import { ROW_KEY_FIELDS } from "../../src/lib/agentMission/contract";
 import type { AgentStore, CallPhase, MissionRecord } from "./types";
 import { catalogHitView } from "../../src/lib/modelPlanner/tools";
@@ -35,28 +34,12 @@ import { applyReverseOrder } from "../../src/lib/treg/reverseOrder";
 import { rankedCandidates } from "../../src/lib/agentMission/candidates";
 import { perParentQuantities } from "../../src/lib/agentMission/quantity";
 import { sourceNameMatches } from "../../src/lib/agentMission/namedSources";
-import { namedSourceRoutes } from "../../src/lib/agentMission/namedRoutes";
-import { redesignActiveFor, type PlatformFlags, type RedesignFlags, type SocialPlatform } from "../../src/lib/agentMission/redesignFlags";
-import { conditionsOfRequest } from "../../src/lib/agentMission/requestConditions";
+import { modelPlanningForTests } from "../../src/lib/agentMission/testSeam";
+import { isSocialPlatform, redesignActiveFor, redesignTypeOf, type PlatformFlags, type RedesignFlags, type SocialPlatform } from "../../src/lib/agentMission/redesignFlags";
 import { applyGapNotes } from "../../src/lib/agentMission/gapLines";
-import { counterOfRow } from "../../src/lib/agentMission/allChildren";
-import { withCompleteCount } from "../../src/lib/agentMission/completeCount";
-import { redesignTypeOf } from "../../src/lib/agentMission/redesignFlags";
-import { askedTextOf, buildRequestContract, gateContract, type ContractPlan } from "../../src/lib/agentMission/requestContract";
-import { pageCapOfSource, pageLimitOf } from "../../src/lib/agentMission/pageLimit";
-import { isLanguageColumn, textColumnKeyOf } from "../../src/lib/agentMission/languageLabel";
-import { conditionsAsked, matchesCustomerConditions } from "../../src/lib/agentMission/customerConditions";
-import { TOPIC_OPTIONS_AR, topicMeaningFromModel, topicMeaningOf, topicQueryOf, topicQuestionAr } from "../../src/lib/agentMission/topicMeaning";
-import { namedSourceOf } from "../../src/lib/agentMission/namedSources";
-import { engagedDefault, wantsNewestOrDate } from "../../src/lib/agentMission/engaged";
-import { toolProfile } from "../../src/lib/agentMission/toolProfile";
-import { countryToolsFor } from "../../src/lib/agentMission/conditionTools";
-import { commentsEngineByCode, pageableCommentAlternative } from "../../src/lib/agentMission/pageableComments";
-import { deriveItemId } from "../../src/lib/agentMission/contract";
-import { coverageOf } from "../../src/lib/agentMission/sourceRanking";
+import { askedTextOf } from "../../src/lib/agentMission/requestContract";
 import { catalogDateKind } from "../../src/lib/agentMission/relativeDates";
 import { PEOPLE_FALLBACK_LINE_AR } from "../../src/lib/agentMission/childSources";
-import { mediaProofSources, mediaUnprovenLineAr } from "../../src/lib/agentMission/mediaProof";
 import { giveUpRefusalText, GIVE_UP_NO_ROWS_REFUSALS_MAX, untriedBeforeGiveUp } from "../../src/lib/agentMission/giveUp";
 
 /**
@@ -99,24 +82,14 @@ export interface RunState {
   giveUpRefusals: number;
   /** How many times a PLANNING that no source had given a row to was told to reach more sources of the catalog before it gives up (a limit: the model is never stuck). */
   giveUpNoRowsRefusals: number;
-  /** How many times a plan promising videos (or images) that no sampled source proves was sent back to the catalog's media sources (a limit: the planner is never stuck). */
-  mediaSendBacks: number;
   /** How many times a plan was sent back to try the people sources / the phone sources before it settles (a limit: the planner is never stuck). */
   peopleSendBacks: number;
-  /** How many times a plan whose search tool cannot express the country the customer named was sent back to a tool that can (D7; a limit: the planner is never stuck). */
-  countrySendBacks: number;
-  /** How many times a plan sampled in another order than the most engaged was sent back (S5; a limit: the planner is never stuck). */
-  sortSendBacks: number;
-  /** How many times a plan that chooses among an account's recent posts on ONE sampled page was sent back to read the next page (S11; a limit: the planner is never stuck). */
-  accountPageSendBacks: number;
-  /** How many times a plan with no comments stage for a request that asked for the comments was sent back by the final gate (requestContract.ts: CONTRACT_SEND_BACKS_MAX). */
-  contractSendBacks: number;
   /** Per source stream (a collect_pages source and its inputs): whether the last read says the source has more pages. */
   moreAvailable: Map<string, boolean>;
   /** What each source gave in the planning samples: the rows of every answered call and a key of its inputs (two samples of the same item are one). */
   samples: Map<string, Array<{ rows: number; key: string }>>;
 }
-export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), described: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, giveUpNoRowsRefusals: 0, mediaSendBacks: 0, peopleSendBacks: 0, countrySendBacks: 0, sortSendBacks: 0, accountPageSendBacks: 0, contractSendBacks: 0, moreAvailable: new Map(), samples: new Map() });
+export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), described: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, giveUpNoRowsRefusals: 0, peopleSendBacks: 0, moreAvailable: new Map(), samples: new Map() });
 /** The redesigned mode of planning: any of the three social flags is active for this mission's account (planning does not know the request type yet; with every flag off this is false and nothing changes). */
 export const socialRedesignActive = (ctx: { redesign?: { flags: RedesignFlags; isTest: boolean; platformFlags?: PlatformFlags; platform?: SocialPlatform | null } }): boolean =>
   ctx.redesign !== undefined && (["social_posts", "social_account", "social_comments"] as const).some((t) => redesignActiveFor(ctx.redesign!.flags, ctx.redesign!.platformFlags ?? {}, t, ctx.redesign!.platform ?? null, { isTest: ctx.redesign!.isTest }));
@@ -124,16 +97,8 @@ export const socialRedesignActive = (ctx: { redesign?: { flags: RedesignFlags; i
 export const FINISH_REFUSALS_MAX = 3;
 /** The most times a planning that already holds real rows is told not to end with «cannot_serve» for a source's price or yield. */
 export const GIVE_UP_REFUSALS_MAX = 2;
-/** The most times a plan that promises media no sampled source proves is sent back to sample the catalog's media sources; and the sources that must have been really reached before the card says it is unproven. */
-export const MEDIA_SEND_BACKS_MAX = 3;
-export const MEDIA_SOURCES_MIN = 3;
 /** The most times a plan whose people stage reads a mailbox lister, or that drops the phones asked for, is sent back to try the people and phone sources (peopleCheck.ts). */
 export const PEOPLE_SEND_BACKS_MAX = 3;
-/** The most times a plan on a tool with no country input is sent back to a tool that has one (D7). */
-export const COUNTRY_SEND_BACKS_MAX = 2;
-export const SORT_SEND_BACKS_MAX = 2;
-/** The most times a plan on one page of an account's posts is sent back to read the next page, so the most commented of its recent posts can be chosen (the planning budget allows two samples of one source). */
-export const ACCOUNT_PAGE_SEND_BACKS_MAX = 1;
 
 export interface ToolContext {
   phase: CallPhase;
@@ -358,7 +323,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         // most relevant ones (the same capability: every post search, every company search, every comment source) join the ones the words matched, so a cheaper source the words did not name is still offered
         const matched = (found.hits as Array<Record<string, any>>).map((h) => ctx.catalog.byId.get(String(h.id))).filter((e): e is NonNullable<typeof e> => Boolean(e));
         const ranking = rankedCandidates({ catalog: ctx.catalog, access: ctx.access, words, platform, stats, now, matched });
-        const fromCatalog = ranking.ranked.map((r) => ({ id: r.id, effective: r.effectiveUsd, view: { ...catalogHitView(ctx.catalog.byId.get(r.id)!, ctx.catalog, 0, r.effectiveUsd, { allInputs: socialRedesignActive(ctx) }), expected_usd_per_item: Number(r.usdPerItem.toFixed(6)), rows_per_call: Math.round(r.rowsPerCall * 10) / 10, basis: r.basis, ...(catalogDateKind(ctx.catalog.byId.get(r.id)!) ? { dates: catalogDateKind(ctx.catalog.byId.get(r.id)!) } : {}), ...(r.health.state === "demoted" ? { health: "demoted: recent failures on its inputs" } : {}) } as Record<string, any> }));
+        const fromCatalog = ranking.ranked.map((r) => ({ id: r.id, effective: r.effectiveUsd, view: { ...catalogHitView(ctx.catalog.byId.get(r.id)!, ctx.catalog, 0, r.effectiveUsd), expected_usd_per_item: Number(r.usdPerItem.toFixed(6)), rows_per_call: Math.round(r.rowsPerCall * 10) / 10, basis: r.basis, ...(catalogDateKind(ctx.catalog.byId.get(r.id)!) ? { dates: catalogDateKind(ctx.catalog.byId.get(r.id)!) } : {}), ...(r.health.state === "demoted" ? { health: "demoted: recent failures on its inputs" } : {}) } as Record<string, any> }));
         // the web sources (page parsers, web search / scrape, people search) are candidates too: ONE list for every provider, with the same health and measurement
         const web = ctx.web ? searchAgentSources({ words, platform, isAvailable: (id) => webSourceAvailable(id, webAvailableOf(ctx)) }) : [];
         const webRanked = web.map((c) => {
@@ -372,21 +337,6 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           ...fromCatalog,
           ...webRanked.map(({ c, health, effective }) => ({ id: c.id, effective, view: { id: c.id, name: c.id, platform: c.platform, capability: c.kind, summary: c.summary.slice(0, 140), price: `about ${c.usd_per_call.toFixed(5)} USD a call, up to ${c.rows_per_call} rows`, costPerRecordUsd: Number(effective.toFixed(7)), expected_usd_per_item: Number(c.usd_per_row.toFixed(7)), requiredInputs: [], inputs: [c.inputs], ...(health.state === "demoted" ? { health: "demoted: recent failures on its inputs" } : {}) } })),
         ].sort((x, y) => x.effective - y.effective || x.id.localeCompare(y.id));
-        // CONDITION COVERAGE FIRST, THEN PRICE (S1 item 1.5, owner decision D7): in the redesigned mode the tools whose own inputs can carry more of the customer's conditions come first, and each hit says which it can and cannot carry
-        if (socialRedesignActive(ctx)) {
-          const wanted = conditionsOfRequest(askedTextOf(mission));
-          if (wanted.length > 0) {
-            const cover = new Map<string, number>();
-            for (const m of merged) {
-              const e = ctx.catalog.byId.get(m.id);
-              if (!e) continue;
-              const c = coverageOf(e, wanted);
-              cover.set(m.id, c.covered.filter((x) => x !== "count").length);
-              m.view = { ...m.view, can_carry: c.covered, cannot_carry: c.missing };
-            }
-            merged.sort((x, y) => (cover.get(y.id) ?? 0) - (cover.get(x.id) ?? 0) || x.effective - y.effective || x.id.localeCompare(y.id));
-          }
-        }
         // THE PEOPLE OF EACH COMPANY («ومن كل شركة اتنين من المديرين»): a company source whose rows a people source can take as input (the website, the page link, the name) ranks first; one that feeds none is demoted and says so
         if (perParentQuantities(askedTextOf(mission)).some((q) => isPeopleNoun(q.noun ?? ""))) {
           const allowed = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
@@ -416,10 +366,6 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         const described = await gateway.describeEndpoint({ id });
         if ((described as { ok?: boolean }).ok === true) {
           state.described.add(id);
-          // the redesigned mode shows every input with its WHOLE note (a note that names a condition, «does not filter by region», must not be cut at 140 characters)
-          const e = ctx.catalog.byId.get(id);
-          const ep = (described as { endpoint?: { inputs?: Array<Record<string, unknown>> } }).endpoint;
-          if (socialRedesignActive(ctx) && e && ep && Array.isArray(ep.inputs)) ep.inputs = e.inputs.map((i) => ({ name: i.name, type: i.type, required: i.required, enum: i.enum ?? undefined, minimum: i.minimum ?? undefined, maximum: i.maximum ?? undefined, default: i.default ?? undefined, note: i.note ?? undefined }));
         }
         return described;
       },
@@ -437,8 +383,6 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       },
       handler: async (a) => {
         const id = String(a.endpoint_id ?? "").trim();
-        // SCHEMA ALWAYS READ (S1 item 1.5): in the redesigned mode a source is not called before its description was read in this run (nothing is called, nothing is spent)
-        if (ctx.phase === "planning" && socialRedesignActive(ctx) && !state.described.has(id)) return { ok: false, refused: "describe_first", message: "read this endpoint's description with describe_endpoint first: its inputs say which of the customer's conditions (period, language, country, account) it can carry" };
         const refusal = cheapestFirstMessage(state, id, a.why);
         if (refusal) return { ok: false, refused: "choose_cheapest", message: refusal };
         const sick = unhealthyMessage(ctx, id);
@@ -633,25 +577,19 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         assumptions_ar: { type: "string[]", description: "Up to 6 short Arabic lines: every choice you made where the request left it open (which meaning of a name, the language, newest first, how many replies...), e.g. «محمد صلاح لاعب كرة القدم، تغريدات عربية، الأحدث أولًا». The customer reads them on the plan card and may change them before approving.", optional: true },
         contacts_note_ar: { type: "string", description: "Only when the customer asked for work e-mails or phones for COMPANIES (no people stage in the plan): ONE Arabic sentence saying honestly why. When the plan has a people stage, the e-mail and phone finder steps are added to it by code: never write that they may not be filled", optional: true },
         unserved_steps: { type: "array", description: "Only when the customer asked for a step PER PARENT item («ومن كل شركة اتنين من المديرين», «مع كل بوست ١٠ تعليقات») that NO stage of your plan carries out because no source could give it: [{reason_ar}] (one entry per missing step, in the request's order; reason_ar is ONE Arabic sentence, no number, saying honestly why). The customer card shows that step as NOT included, with your reason, BEFORE they approve; a step must never be dropped silently, and a plan that drops one without this is refused. When a stage carries the step, do not pass this.", optional: true },
-        topic_meaning: { type: "object", description: "Only for a SOCIAL request about a topic (any topic: a tool, a technology, a style, a product, an event). Your understanding of what the customer means by the topic: {relation: \"about\" (content that talks about, explains or reports on the topic: «عن X», «حول X», «أخبار X») | \"made_with\" (content made with the topic: «معمول بـ X») | \"ambiguous\" (the request names something one can make content with and says neither) | \"none\", topic_ar: the topic exactly as the customer wrote it, search_query: for about / made_with, the search words that carry that meaning (the topic and the words of explainers or news for «about»), made_with_markers_ar: words or hashtags that mark content MADE WITH the topic rather than ABOUT it (قصص, حدوتة, معمول بـ…)}. Code checks it (the topic must be the customer's own words, the query must contain it); an ambiguous reading turns into a question to the customer before any plan.", optional: true },
         stages: { type: "array", description: "[{key, title_ar, endpoint_id, expected_rows, target_reason_ar?, parent_key|null, per_parent_rows (if parent), deliver, columns:[{key, title_ar (only for a key the code does not know)}], sample_rows (omit when the stage cites yield_from), measured_by:[call ids], how_ar?, relevance?:{subject_ar, terms:[...], context_terms?:[...], exclude_terms?:[...], competing_meanings?:[{meaning_ar, extensions?:[words that follow the name in that meaning], titles?:[a title right next to the name], markers?:[words of that meaning]}], text_columns:[column keys], min_own_words?}, yield_from?: out id, filters?:[{kind:\"exclude_replies\"|\"exclude_reposts\"|\"language\"|\"period\"|\"account\"|\"place\", lang?:\"ar\"|\"en\", days?, from?, to?, values?:[...], calls?:[for an account filter: the saved call that read each value, in the same order]}]}]. A stage whose rows were FOUND BY A TEXT SEARCH (a person, entity or topic) REQUIRES relevance and yield_from. expected_rows of the stage that counts what the customer asked for is the customer's number (code reads it from their words and sets it); give a LOWER one only with target_reason_ar (one Arabic sentence, no number) when the sources really cannot give that many. filters: everything the card promises about the items (replies left out, a language, a period, an account, a place) must be a filter: code checks every item with it; a sentence that promises one of these without its filter is refused." },
       },
       handler: async (a) => {
         const stagesIn: any[] = Array.isArray(a.stages) ? a.stages : [];
-        // RULE 4 OF THE CONSOLIDATION: THE MEANING OF THE TOPIC IS THE MODEL'S UNDERSTANDING, FOR ANY TOPIC. A request that names something one can make content with and says neither «about» nor «made with» is asked, before any plan, with two ready answers (the customer's answer is read with the request, and the model reads it again)
-        const modelMeaning = socialRedesignActive(ctx) ? topicMeaningFromModel(a.topic_meaning, askedTextOf(mission)) : null;
-        if (modelMeaning && modelMeaning.kind === "ambiguous" && modelMeaning.topic && !mission.answer_text && state.question === null) {
-          const question = topicQuestionAr(modelMeaning.topic);
-          state.question = question;
+        // PR B (round 18): ONE PATH FOR SOCIAL. A plan whose stages read a social platform is made by the plan compiler (agent/src/compiled.ts), never by the model: a social plan proposed here is not accepted and the request ends honestly (nothing held, nothing charged).
+        if (!modelPlanningForTests() && stagesIn.some((st) => isSocialPlatform(String(ctx.catalog.byId.get(String(st?.endpoint_id ?? ""))?.capability ?? "").split(".")[0]))) {
+          state.finish = { outcome: "cannot_serve", summary_ar: "", kind: "unsupported" };
           state.terminal = true;
-          await store.updateMission(mission.id, { plan_public: { question_options: TOPIC_OPTIONS_AR(modelMeaning.topic) } as any });
-          await store.addEvent(mission.id, { kind: "question", message_ar: question });
-          return { ok: true, note: "the question was shown to the customer; stop now" };
+          return { ok: true, note: "social requests are planned by code, not by you; the request was ended for the customer; stop now" };
         }
-        // NO TOPIC OR RELEVANCE JUDGEMENT IN THE NEW PIPELINE (S3, owner rule): for a social request in the redesigned mode the AI understands the request, builds the tool call and formats the file; it never decides which items belong. The topic is in the request code builds
-        // (the search words), not in a rule that removes what the source returned, so a relevance rule the model wrote cannot refuse the plan, and it is dropped below once every stage is built by code (a plan that falls back to the old pipeline keeps it: the old rules need it). Duplicates by id remain the only removal.
-        const noRelevance = socialRedesignActive(ctx) && redesignTypeOf(stagesIn as never, { account: stagesIn.some((st) => Array.isArray(st?.filters) && st.filters.some((f: { kind?: string; values?: unknown[] }) => f?.kind === "account" && Array.isArray(f.values) && f.values.length > 0)) }, (id: string) => ctx.catalog.byId.get(id)?.capability ?? null).startsWith("social_");
 
+        // TEMPORARY, TEST-ONLY (testSeam.ts): the tests that still drive a social mission through a fake model transcript were written for the redesigned mode, where no relevance rule is asked of the model. Production never reaches this (a social plan from the model is refused above).
+        const noRelevance = modelPlanningForTests() && socialRedesignActive(ctx) && redesignTypeOf(stagesIn as never, { account: stagesIn.some((st) => Array.isArray(st?.filters) && st.filters.some((f: { kind?: string; values?: unknown[] }) => f?.kind === "account" && Array.isArray(f.values) && f.values.length > 0)) }, (id: string) => ctx.catalog.byId.get(id)?.capability ?? null).startsWith("social_");
         const ids = new Set<string>();
         for (const s of stagesIn) {
           if (s && Array.isArray(s.measured_by)) for (const id of s.measured_by) ids.add(String(id));
@@ -696,14 +634,9 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           if (advice.length > 0) { state.peopleSendBacks += 1; return err("the plan was not accepted yet; fix this and propose again", { issues: advice.slice(0, 6) }); }
         }
         // THE MODEL PLANS, CODE EXECUTES: what code needs to carry each stage out without the model is derived from what the agent really did and proven on the measured page (a stage that cannot be proven has no recipe)
-        // THE DEFAULT FOR A COMMENTS REQUEST IS THE MOST ENGAGED VIDEOS (S5, owner decision), unless the customer asked for the newest or gave a date: the search tool's most-liked order, else the highest counters among the results (an order, never a filter)
-        const engagedOrder = socialRedesignActive(ctx) && engagedDefault(askedTextOf(mission), stagesIn.map((st) => ({ key: String(st?.key ?? ""), parent_key: st?.parent_key ?? null, ...(Array.isArray(st?.filters) ? { filters: st.filters } : {}) })));
-        const engaged = engagedOrder;
-        const meaning = modelMeaning && (modelMeaning.kind === "about" || modelMeaning.kind === "made_with") ? modelMeaning : topicMeaningOf(askedTextOf(mission));
-        const topicQuery = socialRedesignActive(ctx) && stagesIn.some((st) => st?.parent_key) ? topicQueryOf(meaning) : null;
         let derived: Awaited<ReturnType<typeof deriveEngineSpecsChecked>> | null = null;
         try {
-          derived = await deriveEngineSpecsChecked(checked.plan, { store, missionId: mission.id, catalog: ctx.catalog, calls, codeRuns: state.codeRuns, callParams: state.callParams, sandbox: runSandbox, ...(socialRedesignActive(ctx) ? { codeBuild: { nowMs: ctx.now ?? Date.now(), engaged, ...(socialRedesignActive(ctx) && !engaged && (wantsNewestOrDate(askedTextOf(mission)) || stagesIn.some((st) => Array.isArray(st?.filters) && st.filters.some((f: { kind?: string }) => f?.kind === "period"))) ? { newest: true } : {}), ...(topicQuery ? { topicQuery } : {}) } } : {}) });
+          derived = await deriveEngineSpecsChecked(checked.plan, { store, missionId: mission.id, catalog: ctx.catalog, calls, codeRuns: state.codeRuns, callParams: state.callParams, sandbox: runSandbox });
         } catch { /* a plan without recipes is carried out by the model, through the same item store */ }
         // THE CONTRACT: a mapping that gives what the engine needs but breaks what the card promises (an id, a column, a field a filter reads) is refused here, before the customer sees a card the file cannot match
         if (derived && derived.issues.length > 0) return err("the plan was not accepted; fix these and propose again", { issues: derived.issues.slice(0, 12) });
@@ -721,95 +654,6 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
             if (approxDates && approxDates.length > 0) st.approx_dates = approxDates;
           }
         }
-        // RULE 9 OF THE CONSOLIDATION: the catalog capability of each stage's tool is stored, so a stage's type is read from its structure and never from the words of its title
-        if (socialRedesignActive(ctx)) for (const st of checked.plan.stages) { const cap = ctx.catalog.byId.get(st.endpoint_id)?.capability; if (cap) st.capability = cap; }
-        // THE COMMENT LANGUAGE COLUMN (S4): the comments sheet of a code-built plan has the language of each comment as the videos sheet has it; a comments stage whose columns have none gets «لغة التعليق» (the file fills it from the source's code, else from the text's script)
-        if (derived && socialRedesignActive(ctx)) {
-          for (const st of checked.plan.stages) {
-            if (st.parent_key === null || !st.deliver || st.engine?.built_by !== "code" || textColumnKeyOf(st.columns) === null) continue;
-            if (!st.columns.some((c) => isLanguageColumn(c.title_ar, c.key))) st.columns = [...st.columns, { key: "language", title_ar: "لغة التعليق" }];
-          }
-        }
-        // D7, THE COUNTRY (S4): when the customer named a country and the stage's tool has no field that expresses it, the catalog's tools of the same capability that DO are named and the plan is sent back to sample one (a few times at most), even when it costs more.
-        // Both videos of the live test of 2026-11-02 10:26 were Iraqi: the cheapest search had no country input and the plan said so on its card instead of choosing a tool that could carry Egypt.
-        if (derived && socialRedesignActive(ctx) && state.countrySendBacks < COUNTRY_SEND_BACKS_MAX) {
-          const lines: string[] = [];
-          for (const st of checked.plan.stages) {
-            const gap = st.engine?.gaps?.find((g) => g.cls === "country" && g.reason === "no_field");
-            if (!gap || st.parent_key !== null) continue;
-            const better = countryToolsFor(st.endpoint_id, ctx.catalog, { isAllowed: (id) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed, stats: ctx.stats });
-            if (better.length === 0) continue;
-            lines.push(`stage «${st.key}»: the customer named a country, and ${st.endpoint_id} has no input that expresses it, so the results come from any country. A tool that can express it must win over one that cannot, even if it costs more. These tools of the same job take the country: ${better.slice(0, 4).map((t) => `${t.id} (input ${t.field}, ${t.usd} USD a call)`).join(", ")}. Sample the first one ONCE with the country in that input, map the same columns on its page, and propose the plan again on it`);
-          }
-          if (lines.length > 0) { state.countrySendBacks += 1; return err("the plan was not accepted yet; fix this and propose again", { issues: lines }); }
-        }
-        // THE MOST ENGAGED (S5): when the tool has a most-liked order and the stage was sampled in another order (the live test sampled the newest: counters 5 and 1), the plan is sent back (a few times at most) to sample the tool in that order, so the videos chosen from its page are the engaged ones
-        // THE QUERY CARRIES THE MEANING OF THE TOPIC (S8): «عن X» means videos that talk about X, so the search words are the topic with explainer and news wording; the planning budget allows two samples of one source, so the order and the query are asked in ONE second sample
-        if (derived && (engaged || topicQuery) && state.sortSendBacks < SORT_SEND_BACKS_MAX) {
-          const lines: string[] = [];
-          for (const st of checked.plan.stages) {
-            if (st.parent_key !== null || !st.engine || st.engine.sources) continue;
-            if (!checked.plan.stages.some((x) => x.parent_key === st.key && x.replies_of === undefined)) continue;
-            const endpoint = ctx.catalog.byId.get(st.endpoint_id);
-            const profile = endpoint ? toolProfile(endpoint) : null;
-            const sort = profile?.sort ?? null;
-            const liked = sort?.options?.find((o) => o.kind === "liked");
-            // the stage may cite several samples of the source: any sample read in the asked order, and any carrying the asked query, satisfies the rule
-            const measuredCalls = st.measured_by.map((id) => calls.find((c) => c.id === `${mission.id}:${id}`)).filter((c): c is NonNullable<typeof c> => c !== undefined && c.endpoint_id === st.endpoint_id && c.status === "ok");
-            const measured = measuredCalls[0];
-            if (!measured) continue;
-            const paramsOf = (c: NonNullable<typeof measured>): Record<string, unknown> => (c.params_digest as Record<string, unknown> | undefined) ?? {};
-            const used = sort ? paramsOf(measured)[sort.field] : undefined;
-            const anyLiked = sort && liked ? measuredCalls.some((c) => String(paramsOf(c)[sort.field]) === String(liked.value)) : true;
-            const needSort = Boolean(engaged && sort && liked && !anyLiked && used !== undefined && String(used) !== String(liked.value));
-            const queryField = profile?.query?.field ?? null;
-            const needQuery = Boolean(topicQuery && queryField && !measuredCalls.some((c) => String(paramsOf(c)[queryField]) === topicQuery));
-            if (!needSort && !needQuery) continue;
-            const asks = [...(needSort ? [`${sort!.field} = ${liked!.value} (the order «most liked»: this is a request for comments, and unless the customer asks for the newest or gives a date the videos are the MOST ENGAGED ones; the sample was read with ${sort!.field} = ${String(used)})`] : []), ...(needQuery ? [`${queryField} = «${topicQuery}» (the customer asked for videos that TALK ABOUT «${meaning.topic}», not videos made with it: the search words carry that meaning)`] : [])];
-            lines.push(`stage «${st.key}»: sample the same search ONCE more with ${asks.join(" AND ")}; keep the country; map the same columns on its page, and propose the plan again on that sample`);
-          }
-          if (lines.length > 0) { state.sortSendBacks += 1; return err("the plan was not accepted yet; fix this and propose again", { issues: lines }); }
-        }
-        // THE MOST COMMENTED POSTS OF AN ACCOUNT (S11, owner decision): the default for a comments request is the most engaged posts, and for an account that means the most commented among its RECENT posts, not the newest two (live: both were minutes old, one comment in all). One page
-        // of the account's listing is too few to choose from, so the plan is sent back ONCE to read the next page (the cursor of the first page, the same mapping); the planning budget allows two samples of one source. Unless the customer asked for the newest or gave a date.
-        // ROUND 4: the same one more read when the request names a topic or a period and the listing tool has no topic and no date input (a page's posts: the topic and the period cannot be asked of the source, so the posts to read are CHOSEN from what is read)
-        if (derived && socialRedesignActive(ctx) && state.accountPageSendBacks < ACCOUNT_PAGE_SEND_BACKS_MAX) {
-          const lines: string[] = [];
-          for (const st of checked.plan.stages) {
-            if (st.parent_key !== null || !st.engine || !st.engine.sources || st.engine.cursor_param === null) continue;
-            const profile = ctx.catalog.byId.get(st.endpoint_id) ? toolProfile(ctx.catalog.byId.get(st.endpoint_id)!) : null;
-            const topicChoice = (meaning.kind === "about" || meaning.kind === "made_with") && profile !== null && profile.query === null;
-            const periodChoice = (st.filters ?? []).some((f) => f.kind === "period" && f.enabled !== false) && profile !== null && profile.date === null && !profile.queryOperators;
-            if (!engaged && !topicChoice && !periodChoice) continue;
-            if (!checked.plan.stages.some((x) => x.parent_key === st.key && x.replies_of === undefined && x.deliver)) continue;
-            const pages = calls.filter((c) => c.endpoint_id === st.endpoint_id && c.status === "ok" && (c.phase ?? "planning") === "planning").length;
-            if (pages >= 2) continue;
-            lines.push(`stage «${st.key}»: ${engaged ? "this is a request for comments, so unless the customer asks for the newest or gives a date the posts are the MOST COMMENTED of the account's recent posts" : "the customer named a topic or a period and this tool has no input for it: the posts to read are CHOSEN from what you read (the ones whose own text discusses the topic, then the most commented), never the two newest by default"}, and one page of ${st.endpoint_id} is too few to choose from. Read the next page ONCE more: the same inputs plus ${st.engine.cursor_param} = the next-page token the first page returned (read it in the sample), map the same columns on it, and propose the plan again citing BOTH calls in measured_by. Do not call the posts «the newest» unless the customer asked for the newest`);
-          }
-          if (lines.length > 0) { state.accountPageSendBacks += 1; return err("the plan was not accepted yet; fix this and propose again", { issues: lines }); }
-        }
-        // THE COMMENTS STAGE'S RECIPE BY CODE (S3): a comments stage the model's mapping could not give a proven recipe for is NOT left to the model (the whole mission would run on the old pipeline, with the old topic rules): in the redesigned mode its recipe is written by code from the tool's own
-        // schema and PROVEN on the page the planner sampled (every row of the page mapped, each with an id) before it is kept
-        if (derived && socialRedesignActive(ctx)) {
-          for (const st of checked.plan.stages) {
-            if (st.engine || st.parent_key === null || !st.deliver) continue;
-            const sample = st.measured_by.map((id) => ({ id, row: calls.find((c) => c.id === `${mission.id}:${id}`) })).find((m) => FILE_ID.test(m.id) && m.id.startsWith("call_") && m.row?.endpoint_id === st.endpoint_id && m.row.status === "ok" && Number(m.row.rows_returned) > 0);
-            if (!sample) continue;
-            const built = commentsEngineByCode(st, checked.plan.stages.find((x) => x.key === st.parent_key), ctx.catalog, sample.id);
-            if (!built) continue;
-            try {
-              const page = await store.getFile(mission.id, `raw/${sample.id}.json`);
-              if (page === null) continue;
-              const out = await runSandbox(built.map_code, { [built.map_file_id]: JSON.parse(page) });
-              if (!out.ok || out.resultJson === null) continue;
-              const rows = JSON.parse(out.resultJson) as unknown;
-              if (!Array.isArray(rows) || rows.length !== Number(sample.row!.rows_returned) || !rows.every((r) => isObject(r) && String(r.id ?? "").trim() !== "")) continue;
-              st.engine = built;
-            } catch { /* a stage that cannot be proven keeps no recipe */ }
-          }
-        }
-        // THE WHOLE PLAN IS BUILT BY CODE (S3): the new pipeline delivers raw, so no relevance rule stays on any stage (it is ignored by raw delivery; it is removed so nothing can use it); a plan with a stage built by the model runs the old pipeline and keeps its rules
-        if (noRelevance && derived && checked.plan.stages.length > 0 && checked.plan.stages.every((st) => st.engine?.built_by === "code")) for (const st of checked.plan.stages) { delete st.relevance; delete st.yield_from; }
         // THE FINDER STEPS' COLUMNS (contactFinders.ts): the contact column the planner left out and the Arabic status column beside each are added by code AFTER the recipes were proven on the mapping (the engine's contract checks the columns the MAPPING fills; these are filled by the finder step, never by the mapping)
         if (checked.plan.contact_steps && checked.plan.contact_steps.length > 0) for (const st of checked.plan.stages) st.columns = withContactColumns(st.key, st.columns, checked.plan.contact_steps);
         // THE REFERENCE'S COLUMNS (taskContracts.ts, audit 2026-11): a company's sheet in the order and under the titles of the owner's sheet, with its e-mail and status columns; the company steps then read and write the columns the file has
@@ -824,8 +668,6 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           const allowedReply = (id: string): boolean => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
           checked.plan = await withRepliesStages(checked.plan, {
             catalog: ctx.catalog, isAllowed: allowedReply, stats: ctx.stats,
-            // S3 (redesigned mode only): a request that mentions the replies always has the replies stage; «all» reads each comment to the end of its replies
-            ...(socialRedesignActive(ctx) ? { requested: wantsReplies(askedTextOf(mission)), all: wantsAllChildren(askedTextOf(mission)) } : {}),
             // RULE 6: the comments' own mapping plus the tokens the replies tool needs (Facebook: feedback_id and expansion_token), PROVEN on the sampled page: the same rows with the same ids, a token on at least one comment
             remapWithTokens: async (st, tokens) => {
               const sp = st.engine;
@@ -856,102 +698,6 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
               } catch { return null; }
             },
           });
-          // THE COMPLETE COUNT (S1 live findings, redesigned mode only; it includes «all the comments», item 1.10): the promised number of children is computed from the REAL counters of the parents of the stage's own listing, the parents it came from are pinned, and a
-          // shortfall is stated on the card before approval; done BEFORE the replies stage, which is estimated from the comments' count
-          if (socialRedesignActive(ctx)) {
-            const mappedRowsOf = async (sp: NonNullable<typeof checked.plan.stages[number]["engine"]>): Promise<Array<Record<string, unknown>> | null> => {
-              try {
-                const page = await store.getFile(mission.id, `raw/${sp.map_file_id}.json`);
-                if (page === null) return null;
-                const out = await runSandbox(sp.map_code, { [sp.map_file_id]: JSON.parse(page) });
-                if (!out.ok || out.resultJson === null) return null;
-                const rows = JSON.parse(out.resultJson) as unknown;
-                return Array.isArray(rows) ? rows.filter(isObject) : null;
-              } catch { return null; }
-            };
-            checked.plan = await withCompleteCount(checked.plan, {
-              request: askedTextOf(mission),
-              candidatesOf: async (parentStage) => {
-                const sp = parentStage.engine;
-                if (!sp) return null;
-                // EVERY SAMPLED PAGE OF THE PARENT'S SOURCE is a listing the videos may be chosen from (S7: the planning budget allows two samples of one source, and the second one read in the most-liked order may hold results of other countries and languages: the customer's country
-                // and language come first, so the results of the first sample count too); the same mapping reads each page, an id seen twice is one candidate
-                const rows = await mappedRowsOf(sp);
-                if (!rows) return null;
-                const all = [...rows];
-                for (const id of parentStage.measured_by) {
-                  if (!/^call_\d{4,6}$/.test(id) || id === sp.map_file_id) continue;
-                  const call = (await store.listCalls(mission.id)).find((c) => c.id === `${mission.id}:${id}`);
-                  if (!call || call.endpoint_id !== parentStage.endpoint_id || call.status !== "ok") continue;
-                  try {
-                    const page = await store.getFile(mission.id, `raw/${id}.json`);
-                    const out = page === null ? null : await runSandbox(sp.map_code, { [sp.map_file_id]: JSON.parse(page) });
-                    const more = out && out.ok && out.resultJson !== null ? (JSON.parse(out.resultJson) as unknown) : null;
-                    if (Array.isArray(more)) all.push(...more.filter(isObject));
-                  } catch { /* a page the mapping cannot read adds nothing */ }
-                }
-                const seen = new Set<string>();
-                return all.map((r) => ({ id: deriveItemId(r as never, sp.id_field ?? null), counter: counterOfRow(r), row: r })).filter((c) => (seen.has(c.id) ? false : (seen.add(c.id), true)));
-              },
-              // WHAT THE PARENT'S COUNTER COUNTS (item 2): the child source's own sampled page shows whether the counter includes replies: comments + their reply counters add up to the counter of the parent it was measured on
-              basisOf: async (child) => {
-                const sp = child.engine;
-                const parentSp = checked.plan.stages.find((x) => x.key === child.parent_key)?.engine;
-                if (!sp || !parentSp || !sp.parent_binding) return null;
-                const [childRows, parentRows] = await Promise.all([mappedRowsOf(sp), mappedRowsOf(parentSp)]);
-                const used = state.callParams.get(sp.map_file_id)?.[sp.parent_binding.param];
-                if (!childRows || !parentRows || used === undefined || childRows.length === 0) return null;
-                const measured = parentRows.find((r) => String(r[sp.parent_binding!.from]) === String(used));
-                const counter = measured ? counterOfRow(measured) : null;
-                const replies = childRows.reduce((total, r) => total + (counterOfRow(r) ?? 0), 0);
-                if (counter === null || replies <= 0) return null;
-                const total = childRows.length + replies;
-                return Math.abs(counter - total) <= Math.max(2, Math.ceil(counter * 0.1)) ? { share: childRows.length / total } : null;
-              },
-              // a child source with no next page gives what one call gives: the tool's own stated maximum (S2 item 3), never the size of the planner's sample (it was asked for a number the planner chose); a source with no size input of its own is measured by its page
-              pageCapOf: async (child) => {
-                const sp = child.engine;
-                if (!sp || sp.cursor_param !== null || !sp.parent_binding) return null;
-                const childRows = await mappedRowsOf(sp);
-                return pageCapOfSource(ctx.catalog.byId.get(sp.endpoint_id) ?? { inputs: [], summary: null }, sp.cursor_param, childRows ? childRows.length : null);
-              },
-              // S2 item 4: the catalog's comments tool with a cursor, when the recipe's tool has no next page and the planner sampled no pageable one
-              mostEngaged: engagedOrder,
-              topicOf: () => meaning,
-              // ROUND 4: the sources the customer NAMED come first (a listing of one named source needs no test: all its rows belong to it)
-              namedOf: async (parentStage) => {
-                const account = (parentStage.filters ?? []).find((f) => f.kind === "account" && f.enabled !== false && (f.values ?? []).length > 0);
-                if (!account || parentStage.engine?.source_listing === true) return null;
-                const fields = [account.field, ...(account.fields ?? [])].filter((k): k is string => typeof k === "string");
-                return (row) => namedSourceOf(account.values!, fields, row) !== null;
-              },
-              matchesOf: async (parentStage) => (conditionsAsked(parentStage.filters ?? []) ? (row) => matchesCustomerConditions(row, parentStage.filters ?? [], parentStage.columns.filter((c) => /^(caption|description|text|title|desc)$/i.test(c.key)).map((c) => c.key)) : null),
-              pageableAlternativeOf: async (child) => pageableCommentAlternative(child, checked.plan.stages.find((x) => x.key === child.parent_key), ctx.catalog, { isAllowed: allowedReply, stats: ctx.stats }),
-              pageSizeOf: async (child) => {
-                const sp = child.engine;
-                const limit = sp ? pageLimitOf(ctx.catalog.byId.get(sp.endpoint_id) ?? { inputs: [], summary: null }) : null;
-                return limit && limit.max !== null ? { param: limit.param, max: limit.max } : null;
-              },
-            });
-          }
-        }
-        // A PLAN THAT PROMISES VIDEOS (OR IMAGES) NO SAMPLED SOURCE PROVES is not refused: the planner is sent (a few times) to sample the catalog's media sources (a page's reels, a post search whose items carry a video, a post's detail) and builds the card from the one
-        // that proves it. Only after MEDIA_SOURCES_MIN real sources were tried and none proves it does the card say so before approval (the filter keeps only proven items; only what is delivered is charged).
-        if (checked.mediaUnproven && checked.mediaUnproven.length > 0) {
-          const first = checked.mediaUnproven[0];
-          const platform = ctx.catalog.byId.get(first.endpoint_id)?.platform ?? String(ctx.catalog.byId.get(first.endpoint_id)?.capability ?? "").split(".")[0];
-          const allowed = (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
-          const sources = mediaProofSources(ctx.catalog, String(platform), first.media, allowed);
-          const made = await store.listCalls(mission.id);
-          const reached = new Set(made.filter((c) => (c.phase ?? "planning") === "planning" && (c.status === "ok" || c.status === "empty" || c.status === "failed") && sources.some((x) => x.id === c.endpoint_id)).map((c) => c.endpoint_id)).size;
-          const untried = sources.filter((x) => !made.some((c) => c.endpoint_id === x.id));
-          if (reached < MEDIA_SOURCES_MIN && untried.length > 0 && state.mediaSendBacks < MEDIA_SEND_BACKS_MAX) {
-            state.mediaSendBacks += 1;
-            const word = first.media === "image" ? "images" : "videos";
-            return err("the plan was not accepted yet; fix this and propose again", { issues: [`stage «${first.stage_key}» promises ${word}, but ${first.why === "no_field" ? "no mapped field of its items says an item is one" : "none of the items of its measured page proves one"}. Do not drop the request and do not promise what no sample shows: sample the catalog's own sources that can prove it, cheapest first, and build the stage from the one that does (map the field that proves it, or a source whose items ARE ${word}): ${untried.slice(0, 5).map((x) => `${x.id} (${x.how === "own" ? "its items are the media itself" : x.how === "field" ? "its items carry a field that proves it: map it" : "reads one post and says whether it has one"}; input ${x.inputs.join(", ")})`).join("; ")}. Only ${reached} such source(s) were really reached so far; the card may say the media could not be proven only after ${MEDIA_SOURCES_MIN} were tried or none is left.`] });
-          }
-          const line = mediaUnprovenLineAr(first.media);
-          if (!(checked.plan.notes_ar ?? []).includes(line)) checked.plan.notes_ar = [...(checked.plan.notes_ar ?? []), line];
         }
         // THE PEOPLE OF EVERY COMPANY THAT HAS ANY USABLE INPUT: when the engine will also read a company's people through its website or name, the card says so, and a model-written line that says the companies without a page get no people (true only of the page) is dropped
         if (derived && checked.plan.stages.some((st) => (st.engine?.parent_binding?.fallbacks?.length ?? 0) > 0)) {
@@ -959,31 +705,6 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           checked.plan.assumptions_ar = (checked.plan.assumptions_ar ?? []).filter((l) => !/(?:لن|لا)\s+(?:ي|ت)جلب\s+لها\s+(?:موظف|اشخاص|أشخاص)/.test(stripped(l)));
           if (checked.plan.assumptions_ar.length === 0) delete checked.plan.assumptions_ar;
           if (!(checked.plan.notes_ar ?? []).includes(PEOPLE_FALLBACK_LINE_AR)) checked.plan.notes_ar = [...(checked.plan.notes_ar ?? []), PEOPLE_FALLBACK_LINE_AR];
-        }
-        // A NAMED SOURCE NO SAMPLE SHOWS, WHILE THE CATALOG HAS A SOURCE THAT TAKES THE SOURCE ITSELF (a channel's videos, an account's posts): the stage searched by keyword and found none of the sources the customer named. Sampling the source itself is cheap; the card's
-        // «not found» sentence is for a source that was really looked for and not found. A few refusals at most (the same counter as the early stop), so the planner is never stuck.
-        if (derived && state.finishRefusals < FINISH_REFUSALS_MAX) {
-          const allowed = (id: string) => isSellable(id, ctx.catalog) && !blockedEndpointReason(id) && policyVerdict(id, ctx.access).allowed;
-          const lines: string[] = [];
-          for (const st of checked.plan.stages) {
-            const missing = derived.unresolved.get(st.key);
-            if (!missing || missing.length === 0 || st.parent_key !== null) continue;
-            const routes = namedSourceRoutes(st.endpoint_id, ctx.catalog, allowed);
-            if (routes.length === 0 || routes.some((r) => calls.some((c) => c.endpoint_id === r.id))) continue;
-            lines.push(`stage «${st.key}» names sources (${missing.map((m) => `«${m}»`).join(", ")}) that no sampled item belongs to, and it searches the whole platform by keyword. The catalog has sources that take the named source itself: ${routes.slice(0, 4).map((r) => `${r.id} (input ${r.input})`).join(", ")}. Sample one of them once for each named source (the source's own items; use its handle or id, resolved with the catalog's own lookup endpoint when it needs one), map the items with the same columns, and plan on it: the engine then reads each named source in turn and the topic's items are kept by the relevance rule. Propose again after sampling; only a source that really gives nothing for a name is told on the card as not found`);
-          }
-          if (lines.length > 0) { state.finishRefusals += 1; return err("the plan was not accepted; fix these and propose again", { issues: lines }); }
-        }
-        // THE FINAL GATE (docs/ROOT-CAUSE.md, section 5.2): the finished plan, after the last pass, is checked against the REQUEST CONTRACT built once from the customer's words. A comments stage the customer asked for that the plan lacks is sent back to the planner (at most CONTRACT_SEND_BACKS_MAX
-        // times, naming the catalog's comments tools); after that, and for everything the planner cannot fix (the replies, a condition no tool field carries), the plan is repaired by code so the card says what it does NOT carry before approval. Redesigned mode only: with every flag off nothing here runs.
-        if (socialRedesignActive(ctx)) {
-          const contract = buildRequestContract(mission.request_text, mission.answer_text);
-          const commentsCapability = contract.platform ? new RegExp(`^${contract.platform}\\.(?:post|video)\\.comments$`) : null;
-          const commentsTools = commentsCapability ? [...ctx.catalog.byId.values()].filter((e) => commentsCapability.test(String(e.capability ?? "")) && isSellable(e.id, ctx.catalog) && !blockedEndpointReason(e.id) && policyVerdict(e.id, ctx.access).allowed).map((e) => e.id) : [];
-          const gate = gateContract(contract, checked.plan as unknown as ContractPlan, state.contractSendBacks, { commentsTools });
-          if (gate.kind === "send_back") { state.contractSendBacks += 1; return err("the plan was not accepted yet; fix this and propose again", { issues: gate.issues }); }
-          const items = gate.verdict.items;
-          await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي لمطابقة الخطة لطلب العميل.", counts: { contract_carried: items.filter((i) => i.status === "carried").length, contract_stated: items.filter((i) => i.status === "stated").length, contract_missing: items.filter((i) => i.status === "missing").length, contract_written_by_code: gate.added.length, contract_send_backs: state.contractSendBacks } }).catch(() => undefined);
         }
         state.proposedPlan = checked.plan;
         state.terminal = true;

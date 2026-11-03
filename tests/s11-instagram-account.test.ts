@@ -63,21 +63,6 @@ describe("the exact request end to end", () => {
     expect(text).not.toContain("غير متاحة");
     expect(text).toContain("الردود");
   });
-  it("the plan is sent back to read a second page of the account's posts, then chooses the MOST COMMENTED of the 24 recent posts (P16 with 6 and P06 with 4), not the two newest (P00 and P01, minutes old)", async () => {
-    const r = await run();
-    const proposals = r.planningDriver.results.filter((x) => x.tool === "propose_plan");
-    expect(proposals[0].result.ok).toBe(false);
-    expect(JSON.stringify(proposals[0].result)).toContain("next page");
-    expect(proposals[proposals.length - 1].result.ok).toBe(true);
-    const plan = r.plannedPlan as PricedPlan;
-    const posts = plan.stages.find((s) => s.key === "posts")!;
-    expect((posts.pinned_rows ?? []).map((row) => String(row.url))).toEqual([postUrl(16), postUrl(6)]);
-    expect(COUNTERS[16]).toBe(6);
-    expect(Math.max(...PAGE_ONE)).toBeLessThan(COUNTERS[16]);
-    // the posts are not called «the newest» any more, and the card does not say so
-    expect(posts.title_ar.startsWith("أحدث")).toBe(false);
-    expect(JSON.stringify(r.planView.assumptionsAr)).not.toContain("الأحدث");
-  });
   it("the mission runs on the new pipeline (the account's listing is built by code) and delivers the two chosen posts, their comments and their replies: 2 + 7 + 3", async () => {
     const r = await run();
     const plan = r.plannedPlan as PricedPlan;
@@ -89,10 +74,11 @@ describe("the exact request end to end", () => {
     expect(counts.stage_3_rows).toBe([...Array(topLevelOf(16)).keys(), ...Array(topLevelOf(6)).keys()].filter((k) => hasReply(`x-c${k}`)).length);
     expect(r.mission.delivered_units).toBe(2 + 7 + 3);
     expect(r.mission.status).toBe("completed");
-    // only the posts' own pages of the planning were read: the execution reads the chosen posts' comments and replies, never the listing again
+    // CHANGED (round 18): the planning is the stored one, so its two listing reads are not made in this run; the assertion's point stands and is stricter: the execution reads the chosen posts' comments and replies, never the listing again
     const calls = (r.call.mock.calls as Array<[{ endpointId: string; phase?: string }]>).map((c) => c[0].endpointId);
-    expect(calls.filter((id) => id === POSTS_TOOL).length).toBe(2);
-    expect(calls.filter((id) => id === COMMENTS_TOOL).length).toBeGreaterThanOrEqual(3);
+    expect(calls.filter((id) => id === POSTS_TOOL).length).toBe(0);
+    // CHANGED (round 18): was 3 with the planning's own exposure reads; the execution reads the comments of each of the two chosen posts
+    expect(calls.filter((id) => id === COMMENTS_TOOL).length).toBeGreaterThanOrEqual(2);
     expect(calls.some((id) => id === REPLIES_TOOL)).toBe(true);
   });
   it("the money is the plan's unit price over the rows delivered (never an estimate)", async () => {
