@@ -114,6 +114,29 @@ describe("D2 to D4 on the compiled TikTok plan of the live shape", () => {
     expect(file).toBe("تم تسليم ٦٢ من ٦٢ عنصرًا.");
   });
 
+  it("D3 with the EXACT live numbers (msn_2dfcf9cc113dff442711: plan 2 + 40 + 24 = 66, delivered 2 + 40 + 21 = 63; reply counters 24): the site and the file both say «٦٣ من ٦٦»", async () => {
+    // the live record (SELECT on mission_events): plan event rows 66; result event delivered 63, stage rows 2 / 40 / 21; the plan's replies promise 24 counted from 40 comments
+    const videos = rowsByStage.videos.map((r) => ({ ...r }));
+    const comments = rowsByStage.comments.map((c, i) => ({ ...c, replies_count: i < 24 ? 1 : 0 }));
+    const replies = Array.from({ length: 21 }, (_, i) => ({ ...rowsByStage.comments_replies[0], id: `live_r_${i}`, parent_id: String((comments[i] as Record<string, unknown>).id) }));
+    const live = { videos, comments, comments_replies: replies };
+    let p = withPromiseCaps(plan);
+    p = reportedPlan(p, Object.fromEntries(p.stages.map((s) => [s.key, live[s.key as keyof typeof live].length])));
+    const j = withRepliesJudged(p, live, () => true);
+    expect(j.stages.find((s) => s.key === "comments_replies")!.planned_rows).toBe(24);
+    const mission = { id: "msn_2dfcf9cc113dff442711", status: "completed", question_ar: null, plan_public: customerPlanView(j), reserved_points: 328, unit_price_points: 4.317, delivered_units: 63, charged_points: 272, summary_ar: null, files: [{ name: "result.xlsx", kind: "xlsx" }], created_at: "2026-11-03T07:11:32Z" };
+    const site = customerMissionView({ mission, events: [] }).resultLinesAr.find((l) => /^تم تسليم/.test(l))!;
+    const built = await buildMissionFiles(j, live, undefined, undefined, { repliesJudged: true });
+    const { byName } = await textsOf(built.xlsx);
+    const file = Object.values(byName).flat().map((r) => r[0]).find((t) => /^تم تسليم/.test(t))!;
+    expect(site).toBe("تم تسليم ٦٣ من ٦٦ عنصرًا.");
+    expect(file).toBe(site);
+    // and the gap line: replies by the counters of the delivered comments (24) against the 21 delivered
+    const lines = Object.values(byName).flat().flat().filter((t) => typeof t === "string" && /^الفيديو رقم/.test(t));
+    expect(lines.join("\n")).toMatch(/ردود التعليقات المسلّمة بحسب عدّاداتها/);
+    expect(lines.join("\n")).not.toMatch(/عداد الفيديو/);
+  });
+
   it("D4: the gap is stated against what was asked: comments asked and delivered per video, replies by the reply counters of the delivered comments, never the whole video counter", async () => {
     const built = await buildMissionFiles(judged, rowsByStage, undefined, undefined, { repliesJudged: true });
     const { byName } = await textsOf(built.xlsx);

@@ -80,6 +80,14 @@ describe("D1: the topic only in the hashtags ranks below the topic in the captio
     expect(topicTierOf("شرح عن الذكاء الاصطناعي #تقنية", ask)).toBe(2);
   });
 
+  it("msn_e32cd467fe6bbdfa943e, whose videos WERE about the topic in the caption body, still ranks as «about» (the two caption shapes the owner quoted, rebuilt with made-up words)", () => {
+    const ask = buildAsk(REQUEST, null, AT);
+    // shape 1: a joke sentence, hashtags, then an account mention whose NAME holds the topic words (body, not hashtag)
+    expect(topicTierOf("سؤال سهل 🤣#تحدي #ai #veo3 @حساب الذكاء الاصطناعي 🧠", ask)).toBe(2);
+    // shape 2: a hashtag first, then a short phrase about the topic
+    expect(topicTierOf("#محتوى_هادف محتوى ذكاء اصطناعي", ask)).toBe(2);
+  });
+
   it("a caption with no hashtag at all, the topic in the body, is unchanged (tier 2): the rule only separates hashtags from the body", () => {
     expect(topicTierOf("الذكاء الاصطناعي", buildAsk(REQUEST, null, AT))).toBe(2);
   });
