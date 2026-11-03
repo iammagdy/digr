@@ -34,8 +34,8 @@ import { applyReverseOrder } from "../../src/lib/treg/reverseOrder";
 import { rankedCandidates } from "../../src/lib/agentMission/candidates";
 import { perParentQuantities } from "../../src/lib/agentMission/quantity";
 import { sourceNameMatches } from "../../src/lib/agentMission/namedSources";
-import { modelPlanningForTests } from "./testSeam";
-import { isSocialPlatform, redesignActiveFor, type PlatformFlags, type RedesignFlags, type SocialPlatform } from "../../src/lib/agentMission/redesignFlags";
+import { modelPlanningForTests } from "../../src/lib/agentMission/testSeam";
+import { isSocialPlatform, redesignActiveFor, redesignTypeOf, type PlatformFlags, type RedesignFlags, type SocialPlatform } from "../../src/lib/agentMission/redesignFlags";
 import { applyGapNotes } from "../../src/lib/agentMission/gapLines";
 import { askedTextOf } from "../../src/lib/agentMission/requestContract";
 import { catalogDateKind } from "../../src/lib/agentMission/relativeDates";
@@ -588,6 +588,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           return { ok: true, note: "social requests are planned by code, not by you; the request was ended for the customer; stop now" };
         }
 
+        // TEMPORARY, TEST-ONLY (testSeam.ts): the tests that still drive a social mission through a fake model transcript were written for the redesigned mode, where no relevance rule is asked of the model. Production never reaches this (a social plan from the model is refused above).
+        const noRelevance = modelPlanningForTests() && socialRedesignActive(ctx) && redesignTypeOf(stagesIn as never, { account: stagesIn.some((st) => Array.isArray(st?.filters) && st.filters.some((f: { kind?: string; values?: unknown[] }) => f?.kind === "account" && Array.isArray(f.values) && f.values.length > 0)) }, (id: string) => ctx.catalog.byId.get(id)?.capability ?? null).startsWith("social_");
         const ids = new Set<string>();
         for (const s of stagesIn) {
           if (s && Array.isArray(s.measured_by)) for (const id of s.measured_by) ids.add(String(id));
@@ -597,6 +599,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         const evidence = new Map<string, string | null>();
         for (const id of ids) evidence.set(id, FILE_ID.test(id) ? await store.getFile(mission.id, pathOfFile(id)) : null);
         const lookup = {
+          ...(noRelevance ? { noRelevance: true } : {}),
           call: (id: string): RecordedCall | null => {
             const row = calls.find((c) => c.id === `${mission.id}:${id}`);
             return row ? { id, endpointId: row.endpoint_id, ok: row.status === "ok", costUsd: Number(row.cost_usd) || 0, rows: Number(row.rows_returned) || 0, durationMs: Number(row.duration_ms) || undefined, params: row.params_digest } : null;

@@ -3,7 +3,7 @@ import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { stagePriceInputs, type PricedPlan, type PricedStage } from "../src/lib/agentMission/plan";
 import { priceMissionByCode } from "../src/lib/agentMission/price";
 import { isRepliesStage, plannedRepliesFor, withRepliesStages } from "../src/lib/agentMission/replies";
-import { withCompleteCount, type Candidate } from "../src/lib/agentMission/completeCount";
+
 import { DEFAULT_MISSION_PRICING_SETTINGS } from "../src/lib/missionPricing";
 
 /**
@@ -25,8 +25,6 @@ async function modelPlan(commentsRows: number): Promise<PricedPlan> {
   const plan: PricedPlan = { summary_ar: "ستحصل على فيديوهات وتعليقاتها.", stages, price: priceMissionByCode(stagePriceInputs(stages), { settings: DEFAULT_MISSION_PRICING_SETTINGS }) };
   return withRepliesStages(plan, { catalog, isAllowed: () => true, sampleRowsOf: async () => SAMPLE });
 }
-const counters = (v1: number, v2: number): Candidate[] => [{ id: "v1", counter: v1 }, { id: "v2", counter: v2 }];
-const finalPlan = (cands: Candidate[], pageCap: number | null, request = "كل التعليقات والردود") => modelPlan(800).then((p) => withCompleteCount(p, { request, candidatesOf: async () => cands, pageCapOf: async () => pageCap }));
 const repliesOf = (p: PricedPlan) => p.stages.find(isRepliesStage)!;
 
 describe("the replies promise follows the FINAL comments count", () => {

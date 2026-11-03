@@ -1,6 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { AGENT_BUCKET, AGENT_JOB_POINTS_CAP, AGENT_MAX_MISSIONS_PER_HOUR, AGENT_MAX_OPEN_MISSIONS_PER_USER, MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE, AGENT_HEARTBEAT_TABLE } from "./constants";
 import { approveMissionOnce } from "./approval";
+import { EXPIRED_SOCIAL_PLAN_AR, isStaleSocialPlan } from "./staleSocialPlan";
+import { modelPlanningForTests } from "./testSeam";
 import { customerMissionView, type EventForCustomer, type MissionRowForCustomer, type QueueInfo } from "./customerView";
 import { latestBeat, workerAlive } from "./heartbeat";
 import { userWillBeEmailed } from "./emailEligibility";
@@ -99,9 +101,11 @@ const APPROVE_MESSAGES: Record<string, string> = {
 export async function approveForCustomer(client: any, input: { id: string; userId: string; isGuest: boolean; emailVerified: boolean; precheck?: () => Promise<{ ok: true } | { ok: false; status: number; error: string }>; onApproved?: (r: { jobId: string }) => Promise<void> }): Promise<CustomerResult<{ jobId: string; reservePoints: number }>> {
   if (input.isGuest) return bad(401, SIGNUP_TO_APPROVE_AR);
   if (!input.emailVerified) return bad(403, "فعّل بريدك الإلكتروني أولًا ثم اعتمد المهمة.");
-  const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,status").eq("id", input.id).maybeSingle();
+  const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,status,plan").eq("id", input.id).maybeSingle();
   if (!mission || mission.user_id !== input.userId) return bad(404, "المهمة غير موجودة.");
   if (mission.status !== "plan_ready") return bad(409, mission.status === "approved" || mission.status === "executing" ? "هذه المهمة معتمدة وتعمل بالفعل." : "لا توجد خطة جاهزة للاعتماد.");
+  // PR B: a social plan the compiler did not build is refused BEFORE the reserve (nothing is held, no money function is called)
+  if (!modelPlanningForTests() && isStaleSocialPlan(mission.plan)) return bad(410, EXPIRED_SOCIAL_PLAN_AR);
   if (input.precheck) {
     const gate = await input.precheck();
     if (!gate.ok) return bad(gate.status, gate.error);

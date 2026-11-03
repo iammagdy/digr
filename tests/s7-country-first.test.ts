@@ -7,7 +7,7 @@ import { stagePriceInputs, type PricedPlan, type PricedStage } from "../src/lib/
 import type { StageFilter } from "../src/lib/agentMission/filters";
 import { priceMissionByCode } from "../src/lib/agentMission/price";
 import { isRepliesStage, withRepliesStages } from "../src/lib/agentMission/replies";
-import { withCompleteCount } from "../src/lib/agentMission/completeCount";
+
 import { applyPlanEdits } from "../src/lib/agentMission/planEdit";
 import { matchesCustomerConditions } from "../src/lib/agentMission/customerConditions";
 import { DEFAULT_MISSION_PRICING_SETTINGS } from "../src/lib/missionPricing";
@@ -53,7 +53,6 @@ const basePlan = (): PricedPlan => {
 };
 const cand = (id: string, counter: number, o: Record<string, unknown>) => ({ id, counter, row: { id, comments: counter, ...o } });
 const live = [cand("en1", 3553, { country: "US", caption: "AI cartoon" }), cand("en2", 1560, { country: "US", caption: "AI cartoon 2" }), cand("a", 12, egArabic), cand("b", 66, egArabic), cand("c", 9, egArabic), cand("d", 33, egArabic)];
-const final = (cands = live, o: { mostEngaged?: boolean } = {}) => withCompleteCount(basePlan(), { request: "كل التعليقات على فيديوهين", candidatesOf: async () => cands, pageCapOf: async () => null, mostEngaged: o.mostEngaged ?? true, matchesOf: async (p) => (row) => matchesCustomerConditions(row, p.filters ?? [], TEXT_KEYS) });
 
 
 const resultOf = (r: Awaited<ReturnType<typeof runS4>>) => (r.store as MemoryStore).events.find((e) => e.kind === "result")!.counts as Record<string, number>;

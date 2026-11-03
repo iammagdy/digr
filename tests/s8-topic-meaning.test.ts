@@ -9,7 +9,7 @@ import { fakeMoneyClient } from "./helpers/agentMoney";
 import { stagePriceInputs, type PricedPlan, type PricedStage } from "../src/lib/agentMission/plan";
 import type { StageFilter } from "../src/lib/agentMission/filters";
 import { priceMissionByCode } from "../src/lib/agentMission/price";
-import { withCompleteCount } from "../src/lib/agentMission/completeCount";
+
 import { matchesCustomerConditions } from "../src/lib/agentMission/customerConditions";
 import { DEFAULT_MISSION_PRICING_SETTINGS } from "../src/lib/missionPricing";
 import { topicDiscussionClass, topicMeaningOf, topicQueryOf, TOPIC_OPTIONS_AR, topicQuestionAr } from "../src/lib/agentMission/topicMeaning";
@@ -93,7 +93,6 @@ const basePlan = (): PricedPlan => {
   return { summary_ar: "x", stages, price: priceMissionByCode(stagePriceInputs(stages), { settings: DEFAULT_MISSION_PRICING_SETTINGS }) } as unknown as PricedPlan;
 };
 const cands = (videos = FIX.videos) => videos.map((v) => ({ id: v.id, counter: v.comments, row: { id: v.id, text: v.text, country: v.country, language: v.language, comments: v.comments } }));
-const choose = (request: string, videos = FIX.videos) => withCompleteCount(basePlan(), { request: `${request} كل التعليقات`, candidatesOf: async () => cands(videos), pageCapOf: async () => null, mostEngaged: true, topicOf: () => topicMeaningOf(request), matchesOf: async (p) => (row) => matchesCustomerConditions(row, p.filters ?? [], ["text"]) });
 const pinsOf = (p: PricedPlan) => p.stages.find((s) => s.key === "comments")!.parent_pins;
 
 

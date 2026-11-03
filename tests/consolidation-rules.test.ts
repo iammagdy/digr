@@ -8,7 +8,7 @@ import { buildToolInput } from "../src/lib/agentMission/toolInput";
 import { topicDiscussionClass, topicMeaningFromModel, topicMeaningOf, topicQueryOf } from "../src/lib/agentMission/topicMeaning";
 import { formatSampleValueAr } from "../src/lib/customerDates";
 import { childCountOf } from "../src/lib/agentMission/childCount";
-import { completeCountEstimate, splitPromise } from "../src/lib/agentMission/completeCount";
+import { splitPromise } from "../src/lib/agentMission/completeCount";
 import { SOCIAL_PLATFORMS, capabilitiesOf, REQUEST_TYPES } from "./helpers/ruleMatrix";
 
 /**

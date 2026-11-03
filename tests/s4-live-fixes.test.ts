@@ -18,7 +18,6 @@ const callsOf = (r: Awaited<ReturnType<typeof run>>) => (r.call.mock.calls as Ar
 
 
 import { languageOfTextAr } from "../src/lib/agentMission/languageLabel";
-import { countryToolsFor } from "../src/lib/agentMission/conditionTools";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 
 describe("the pure helpers", () => {

@@ -3,7 +3,7 @@ import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { stagePriceInputs, type PricedPlan, type PricedStage } from "../src/lib/agentMission/plan";
 import { priceMissionByCode } from "../src/lib/agentMission/price";
 import { isRepliesStage, wantsReplies, withRepliesStages } from "../src/lib/agentMission/replies";
-import { withCompleteCount } from "../src/lib/agentMission/completeCount";
+
 import { DEFAULT_MISSION_PRICING_SETTINGS } from "../src/lib/missionPricing";
 
 /**

@@ -6,7 +6,7 @@ import { runEngine } from "../agent/src/engine/run";
 import { RAW_PATH, type Gateway } from "../agent/src/gateway";
 import { priceMissionByCode } from "../src/lib/agentMission/price";
 import { stagePriceInputs, type PricedPlan, type PricedStage } from "../src/lib/agentMission/plan";
-import { withCompleteCount, type Candidate } from "../src/lib/agentMission/completeCount";
+
 import { pageCapOfSource, pageLimitOf } from "../src/lib/agentMission/pageLimit";
 
 /**
@@ -53,10 +53,8 @@ function planOf(): PricedPlan {
   const stages = [videos, comments];
   return { summary_ar: "ستحصل على فيديوهات وتعليقاتها.", stages, price: priceMissionByCode(stagePriceInputs(stages, undefined), {}) } as unknown as PricedPlan;
 }
-const cands: Candidate[] = COUNTERS.map((c, i) => ({ id: `v${i}`, counter: c }));
 const comments = endpoint("crawl4ai.tiktok.video.comments");
 const wiring = { pageCapOf: async () => pageCapOfSource(comments, null, 20), pageSizeOf: async () => { const l = pageLimitOf(comments); return l && l.max !== null ? { param: l.param, max: l.max } : null; } };
-const finalPlan = (counters: Candidate[] = cands) => withCompleteCount(planOf(), { request: "كل التعليقات على فيديوهين", candidatesOf: async () => counters, ...wiring });
 
 async function run(plan: PricedPlan) {
   const store = createMemoryStore();
