@@ -54,17 +54,18 @@ describe("the plan of a TEST account asks the replies tool for a source that can
     expect(replies.engine!.cursor_param).toBe("cursor");
   });
 
-  it("another account: no replies stage, the honest «not included» line word for word, and the string requireFields is nowhere in its plan", () => {
+  it("another account (round 8: the card is verified, so every account): the same replies stage with requireFields, the same plan as the test account's, no «not included» line", () => {
     const r = compile(REQUEST);
-    expect(r.plan.stages.map((s) => s.key)).toEqual(["tweets"]);
-    expect(r.plan.unserved_steps).toEqual([{ what_ar: "الردود", reason_ar: "لا توجد بعد أداة موثّقة لقراءة الردود على هذه المنصة، فلن تُضاف هذه الخطوة." }]);
-    expect(JSON.stringify(r.plan)).not.toMatch(/requireFields/);
-    expect(chooseCard(buildAsk(REQUEST, null, AT), "replies", { catalogOnly: false })).toBeNull();
+    expect(r.plan.stages.map((s) => s.key)).toEqual(["tweets", "replies"]);
+    expect(r.plan.unserved_steps).toBeUndefined();
+    expect(r.plan.stages.find((s) => s.key === "replies")!.engine!.params).toEqual({ requireFields: ["nextCursor"] });
+    expect(JSON.stringify(r.plan)).toBe(JSON.stringify(compile(REQUEST, { catalogOnly: true }).plan));
+    expect(chooseCard(buildAsk(REQUEST, null, AT), "replies", { catalogOnly: false })!.endpointId).toBe(REPLIES_ID);
   });
 
-  it("the card is still catalog_only and unverified: a first live run must show the route works before anything is marked verified", () => {
-    expect(repliesCard.status).toBe("catalog_only");
-    expect(repliesCard.verifiedOn).toEqual([]);
+  it("the card is verified since the owner's live round 8 (tests/live-g-x-replies-verified.test.ts); the route still asks for a source that can page", () => {
+    expect(repliesCard.status).toBe("verified");
+    expect(repliesCard.verifiedOn).toHaveLength(1);
     expect(repliesCard.inputs.fixed).toEqual({ requireFields: ["nextCursor"] });
   });
 

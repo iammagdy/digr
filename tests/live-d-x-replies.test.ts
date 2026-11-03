@@ -84,12 +84,12 @@ describe("D5: tweets with their replies are requested as ORIGINALS ONLY", () => 
   });
 });
 
-describe("D5: the X replies card is catalog_only, for test accounts only, within 0.10 USD of such calls", () => {
-  it("the card is in the catalog's own terms (data/treg/treg_catalog_sellable.json) and is NOT verified", () => {
+describe("D5: the X replies card (catalog_only when D5 was written; VERIFIED since live round 8, tests/live-g-x-replies-verified.test.ts), within its page cap", () => {
+  it("the card is in the catalog's own terms (data/treg/treg_catalog_sellable.json) and is verified on the round-8 pages", () => {
     const c = repliesCardOf()!;
     expect(c).not.toBeNull();
-    expect(c.status).toBe("catalog_only");
-    expect(c.verifiedOn).toEqual([]);
+    expect(c.status).toBe("verified");
+    expect(c.verifiedOn.map((v) => v.mission)).toEqual(["msn_50e3b83c44e7ebd7f577"]);
     const e = catalog.byId.get(c.endpointId)!;
     expect(e.capability).toBe("x.post.comments");
     expect(c.costUsdPerPage).toBe(e.cost?.usd);
@@ -97,18 +97,18 @@ describe("D5: the X replies card is catalog_only, for test accounts only, within
     expect(CATALOG_ONLY_CAP_USD).toBe(0.2);
     expect(CATALOG_ONLY_PRICE_MARGIN).toBe(2);
   });
-  it("another account never gets it: chooseCard returns no X replies card unless the caller allows catalog_only cards", () => {
+  it("every account gets it now that it is verified: chooseCard returns the X replies card with or without catalogOnly (round 8)", () => {
     const ask = buildAsk(REQUEST, null, AT);
-    expect(chooseCard(ask, "replies")).toBeNull();
-    expect(chooseCard(ask, "replies", { catalogOnly: false })).toBeNull();
+    expect(chooseCard(ask, "replies")!.endpointId).toBe("anyapi.x.post.comments");
+    expect(chooseCard(ask, "replies", { catalogOnly: false })!.endpointId).toBe("anyapi.x.post.comments");
     expect(chooseCard(ask, "replies", { catalogOnly: true })!.endpointId).toBe("anyapi.x.post.comments");
   });
 
-  it("NOT a test account: the plan is the tweets only and the honest «not included» line, word for word as before", () => {
+  it("NOT a test account (round 8): the plan is the tweets and the replies stage, exactly the test account's plan, no «not included» line", () => {
     const r = compile(REQUEST);
     if (!r.ok) throw new Error(r.reason);
-    expect(r.plan.stages.map((s) => s.key)).toEqual(["tweets"]);
-    expect(r.plan.unserved_steps).toEqual([{ what_ar: "الردود", reason_ar: "لا توجد بعد أداة موثّقة لقراءة الردود على هذه المنصة، فلن تُضاف هذه الخطوة." }]);
+    expect(r.plan.stages.map((s) => s.key)).toEqual(["tweets", "replies"]);
+    expect(r.plan.unserved_steps).toBeUndefined();
     expect(r.plan.stages[0].engine!.params.query).toMatch(/-filter:replies/);
   });
 
@@ -171,7 +171,7 @@ describe("D5: the X replies card is catalog_only, for test accounts only, within
 });
 
 describe("D5: the compiled path hands the account's test status to the compiler", () => {
-  it("planByCompiler with catalogOnly builds the replies stage from a real-shaped pool page; without it, never", async () => {
+  it("planByCompiler builds the replies stage from a real-shaped pool page, with catalogOnly or without it (round 8: verified)", async () => {
     const mk = () => {
       const store = createMemoryStore();
       let n = 0;
@@ -185,7 +185,7 @@ describe("D5: the compiled path hands the account's test status to the compiler"
     const b = mk();
     const without = await planByCompiler({ mission: { id: "msn_x", request_text: REQUEST, answer_text: null, created_at: "2026-11-03T07:13:38Z" }, gateway: b.gateway as never, store: b.store, catalog, nowMs: AT });
     if (without.kind !== "plan") throw new Error(without.kind);
-    expect(without.plan.stages.map((s) => s.key)).toEqual(["tweets"]);
+    expect(without.plan.stages.map((s) => s.key)).toEqual(["tweets", "replies"]);
   });
 });
 

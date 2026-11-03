@@ -112,7 +112,7 @@ describe("acceptance 3: M14 (X) replayed on its stored pages: NOT MET, and why",
     expect(execution.map((c) => c[5].query)).toEqual(["\"العاصمة الإدارية\" lang:ar since:2026-10-01 until:2026-10-31"]);
   });
 
-  it("what IS met: on the page the stored delivery came from, the compiled tweets stage maps the same 20 ids, the promise is exact 20, and the replies step is stated as not included (no X replies card)", () => {
+  it("what IS met: on the page the stored delivery came from, the compiled tweets stage maps the same 20 ids, the promise is exact 20, and the replies step is the child stage of the verified X replies card (round 8)", () => {
     const ask = buildAsk(stored(M14).request, null, Date.parse("2026-11-02T13:04:00Z"));
     const card = chooseCard(ask, "parents")!;
     expect(card.endpointId).toBe("anyapi.x.search.posts");
@@ -126,8 +126,8 @@ describe("acceptance 3: M14 (X) replayed on its stored pages: NOT MET, and why",
     expect(firstReply).toBeGreaterThan(0);
     expect(r.chosen.slice(firstReply).every((id) => isReply.get(id))).toBe(true);
     expect(r.promises.tweets).toEqual({ type: "exact", n: 20 });
-    expect(r.plan.unserved_steps?.map((u) => u.what_ar)).toEqual(["الردود"]);
-    expect(r.plan.stages.map((s) => s.key)).toEqual(["tweets"]);
+    expect(r.plan.unserved_steps).toBeUndefined();
+    expect(r.plan.stages.map((s) => s.key)).toEqual(["tweets", "replies"]);
     expect(cardOf("anyapi.x.search.posts")!.status).toBe("verified");
   });
 });

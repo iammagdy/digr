@@ -292,7 +292,7 @@ export function compilePlan(input: CompileInput): CompileResult {
       } as PricedStage);
       notes.push(promiseLineAr(p, "replies", false, perComment));
     } else if (repliesCard && !commentsCard && repliesCard.role === "tweet.replies") {
-      // THE REPLIES TO THE CHOSEN TWEETS (live D5; owner decision 7.4: a catalog_only card, test accounts only, within CATALOG_ONLY_CAP_USD of calls a mission). The replies are a child stage on the tweets: each tweet is read by its own link, and a tweet that
+      // THE REPLIES TO THE CHOSEN TWEETS (live D5; a catalog_only card for test accounts until live round 8, VERIFIED since then and offered to every account; the stage keeps its page cap: CATALOG_ONLY_CAP_USD of calls a mission, sized at twice the catalog price). The replies are a child stage on the tweets: each tweet is read by its own link, and a tweet that
       // says (its own counter) it has no reply is never read. The counters of the chosen tweets size the stage; the page limit is what 0.10 USD of the card's calls buys, so the cap holds however the source answers.
       const perPage = 40;
       const maxPages = Math.max(1, Math.floor(CATALOG_ONLY_CAP_USD / (repliesCard.costUsdPerPage * CATALOG_ONLY_PRICE_MARGIN) + 1e-9));

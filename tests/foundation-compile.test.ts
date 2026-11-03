@@ -59,7 +59,8 @@ describe("F3: the tool is the one that carries the most of the Ask (D7), its inp
     // the request says «مع الردود», so the tweets asked for are ORIGINALS (live D5: 10 of 20 were replies): the query ends with -filter:replies
     expect(parentInputs(chooseCard(x, "parents")!, x)).toEqual({ query: "\"العاصمة الإدارية\" lang:ar since:2026-09-30_21:00:00_UTC until:2026-10-31_22:00:00_UTC -filter:replies", queryType: "Latest", limit: 20 });
     expect(chooseCard(x, "comments")).toBeNull();
-    expect(chooseCard(x, "replies")).toBeNull();
+    // the X replies card is verified since live round 8, so every account is offered it
+    expect(chooseCard(x, "replies")!.endpointId).toBe("anyapi.x.post.comments");
   });
 });
 
@@ -115,14 +116,15 @@ describe("acceptance 5: M6, M9 and M13 (their stored promises were estimates: 28
   });
 });
 
-describe("F6 inside the compiler: a stage no verified card can build is stated, never handed to a model", () => {
-  it("X replies: the step is NOT included, with its reason, before approval; every stage is built by code", () => {
+describe("F6 inside the compiler: a stage is built by a verified card, by code, never handed to a model", () => {
+  it("X replies (verified since live round 8): the step IS included for every account, and every stage is built by code; the customer text of the plan is clean", () => {
     const ask = buildAsk(request("msn_b060d3347ed7660f972e"), null, AT);
     const card = chooseCard(ask, "parents")!;
     const r = compilePlan({ ask, pool: { card, params: parentInputs(card, ask), pages: [{ callId: "call_0003", page: page("msn_b060d3347ed7660f972e", "call_0003") }] }, exposure: () => undefined, capabilityOf });
     if (!r.ok) throw new Error(r.reason);
-    expect(r.plan.unserved_steps).toEqual([{ what_ar: "الردود", reason_ar: "لا توجد بعد أداة موثّقة لقراءة الردود على هذه المنصة، فلن تُضاف هذه الخطوة." }]);
+    expect(r.plan.unserved_steps).toBeUndefined();
+    expect(r.plan.stages.map((s) => s.key)).toEqual(["tweets", "replies"]);
     expect(r.plan.stages.every((s) => s.engine?.built_by === "code")).toBe(true);
-    for (const line of [r.plan.summary_ar, ...(r.plan.notes_ar ?? []), ...r.plan.unserved_steps!.map((u) => u.reason_ar)]) expect(checkCustomerText(line, { maxChars: 400 }).issues, line).toEqual([]);
+    for (const line of [r.plan.summary_ar, ...(r.plan.notes_ar ?? [])]) expect(checkCustomerText(line, { maxChars: 400 }).issues, line).toEqual([]);
   });
 });

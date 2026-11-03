@@ -1,5 +1,5 @@
 {
- "_about": "THE CALL LOG OF THE TIKTOK AND X MISSIONS, anonymised (read-only SELECT on mission_calls, 2026-11-02; listed in the PR). One entry per stored call: [call id, phase, endpoint, status, rows, inputs]. Every link input is reduced to the numeric id it carries (no handle, no name); search inputs are Diger's own request words. M12 and M14: every call; the others: their planning calls only. M5 call_0002 is left out: its stored inputs were cut at 80 characters by the call log, so the page it answered cannot be keyed honestly. The replay gateway (tests/helpers/replayGateway.ts) serves a stored page only for the endpoint and the same inputs.",
+ "_about": "THE CALL LOG OF THE TIKTOK AND X MISSIONS, anonymised (read-only SELECT on mission_calls, 2026-11-02; listed in the PR). One entry per stored call: [call id, phase, endpoint, status, rows, inputs]. Every link input is reduced to the numeric id it carries (no handle, no name); search inputs are Diger's own request words. M12 and M14: every call; the others: their planning calls only. M5 call_0002 is left out: its stored inputs were cut at 80 characters by the call log, so the page it answered cannot be keyed honestly. The replay gateway (tests/helpers/replayGateway.ts) serves a stored page only for the endpoint and the same inputs. Live round 8 (3 Nov 2026): msn_50e3b83c44e7ebd7f577, its 14 replies calls only (read-only SELECT on mission_calls), the cursor inputs are the opaque tokens the pages gave.",
  "missions": {
   "msn_5851abc92a1e6645a9cd": [
    [
@@ -1425,6 +1425,198 @@
     1,
     {
      "keyword": "conversation_id:2116654976390795707"
+    }
+   ]
+  ],
+  "msn_50e3b83c44e7ebd7f577": [
+   [
+    "call_0003",
+    "execution",
+    "anyapi.x.post.comments",
+    "ok",
+    4,
+    {
+     "url": "2116302796941300051",
+     "requireFields": [
+      "nextCursor"
+     ]
+    }
+   ],
+   [
+    "call_0004",
+    "execution",
+    "anyapi.x.post.comments",
+    "empty",
+    0,
+    {
+     "url": "2116302796941300051",
+     "cursor": "cur_FWY7OQYZXCyCKkE1z0grKQ",
+     "requireFields": [
+      "nextCursor"
+     ]
+    }
+   ],
+   [
+    "call_0005",
+    "execution",
+    "anyapi.x.post.comments",
+    "ok",
+    2,
+    {
+     "url": "2116165549709316202",
+     "requireFields": [
+      "nextCursor"
+     ]
+    }
+   ],
+   [
+    "call_0006",
+    "execution",
+    "anyapi.x.post.comments",
+    "empty",
+    0,
+    {
+     "url": "2116165549709316202",
+     "cursor": "cur_u2uAITOkb6ErHN5rLHdSNg",
+     "requireFields": [
+      "nextCursor"
+     ]
+    }
+   ],
+   [
+    "call_0007",
+    "execution",
+    "anyapi.x.post.comments",
+    "ok",
+    2,
+    {
+     "url": "2115748393968349652",
+     "requireFields": [
+      "nextCursor"
+     ]
+    }
+   ],
+   [
+    "call_0008",
+    "execution",
+    "anyapi.x.post.comments",
+    "empty",
+    0,
+    {
+     "url": "2115748393968349652",
+     "cursor": "cur_VARVTEGMXYu6tx4BAmQeNA",
+     "requireFields": [
+      "nextCursor"
+     ]
+    }
+   ],
+   [
+    "call_0009",
+    "execution",
+    "anyapi.x.post.comments",
+    "ok",
+    16,
+    {
+     "url": "2115610347260498239",
+     "requireFields": [
+      "nextCursor"
+     ]
+    }
+   ],
+   [
+    "call_0010",
+    "execution",
+    "anyapi.x.post.comments",
+    "ok",
+    3,
+    {
+     "url": "2115610347260498239",
+     "cursor": "cur_g3n3M7pPDt7qZIxRhKKLKg",
+     "requireFields": [
+      "nextCursor"
+     ]
+    }
+   ],
+   [
+    "call_0011",
+    "execution",
+    "anyapi.x.post.comments",
+    "empty",
+    0,
+    {
+     "url": "2115610347260498239",
+     "cursor": "cur_OeJmfrtcXbCf0t2vW9UywA",
+     "requireFields": [
+      "nextCursor"
+     ]
+    }
+   ],
+   [
+    "call_0012",
+    "execution",
+    "anyapi.x.post.comments",
+    "ok",
+    1,
+    {
+     "url": "2115601548273418554",
+     "requireFields": [
+      "nextCursor"
+     ]
+    }
+   ],
+   [
+    "call_0013",
+    "execution",
+    "anyapi.x.post.comments",
+    "ok",
+    1,
+    {
+     "url": "2115601548273418554",
+     "cursor": "cur_N-kPGPmqR-QKLTu113M4Rw",
+     "requireFields": [
+      "nextCursor"
+     ]
+    }
+   ],
+   [
+    "call_0014",
+    "execution",
+    "anyapi.x.post.comments",
+    "empty",
+    0,
+    {
+     "url": "2115601548273418554",
+     "cursor": "cur_G2Cz8xkdbgujOXGbTE_ZxQ",
+     "requireFields": [
+      "nextCursor"
+     ]
+    }
+   ],
+   [
+    "call_0015",
+    "execution",
+    "anyapi.x.post.comments",
+    "ok",
+    2,
+    {
+     "url": "2115564894582136835",
+     "requireFields": [
+      "nextCursor"
+     ]
+    }
+   ],
+   [
+    "call_0016",
+    "execution",
+    "anyapi.x.post.comments",
+    "empty",
+    0,
+    {
+     "url": "2115564894582136835",
+     "cursor": "cur_6rdAdnutTcjMtQzptIR9ug",
+     "requireFields": [
+      "nextCursor"
+     ]
     }
    ]
   ]

@@ -16,9 +16,9 @@ const rows = (mission: string, stage: string): Array<Record<string, unknown>> =>
 const catalog = loadTregCatalog();
 
 describe("F2: the tool cards are data, and each is verified on real stored pages", () => {
-  it("PR 2a carries TikTok and X cards only; every one is verified on at least one real page, except the one catalog_only card (X replies, owner decision 7.4: test accounts only)", () => {
+  it("PR 2a carries TikTok and X cards only; every one is verified on at least one real page, (the X replies card was the one catalog_only card until live round 8, 3 Nov 2026: verified on the pages of msn_50e3b83c44e7ebd7f577)", () => {
     expect(new Set(TOOL_CARDS.map((c) => c.platform))).toEqual(new Set(["tiktok", "x"]));
-    expect(TOOL_CARDS.filter((c) => c.status !== "verified").map((c) => [c.endpointId, c.status])).toEqual([["anyapi.x.post.comments", "catalog_only"]]);
+    expect(TOOL_CARDS.filter((c) => c.status !== "verified").map((c) => [c.endpointId, c.status])).toEqual([]);
     for (const c of TOOL_CARDS) {
       expect(["verified", "catalog_only"]).toContain(c.status);
       // a verified card was seen on real pages; a catalog_only one has none (that is what the word means)
