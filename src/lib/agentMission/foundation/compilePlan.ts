@@ -9,7 +9,7 @@ import type { Ask } from "./ask";
 import { rankPool, factsOf, type PoolRow } from "./pool";
 import { childPromise, perParentPromise, promiseLineAr, type StagePromise } from "./promise";
 import { TOPIC_RELATION_KEY, TOPIC_RELATION_TITLE_AR, topicRelationAr } from "./topicChoice";
-import { cardMapCode, cardsFor, CATALOG_ONLY_CAP_USD, CHILD_COLUMNS, COUNTRY_AR, mapPage, type CardRole, type ToolCard } from "./toolCards";
+import { cardMapCode, cardsFor, CATALOG_ONLY_CAP_USD, CATALOG_ONLY_PRICE_MARGIN, CHILD_COLUMNS, COUNTRY_AR, mapPage, type CardRole, type ToolCard } from "./toolCards";
 import type { SocialPlatform } from "../redesignFlagTypes";
 
 /**
@@ -295,7 +295,7 @@ export function compilePlan(input: CompileInput): CompileResult {
       // THE REPLIES TO THE CHOSEN TWEETS (live D5; owner decision 7.4: a catalog_only card, test accounts only, within CATALOG_ONLY_CAP_USD of calls a mission). The replies are a child stage on the tweets: each tweet is read by its own link, and a tweet that
       // says (its own counter) it has no reply is never read. The counters of the chosen tweets size the stage; the page limit is what 0.10 USD of the card's calls buys, so the cap holds however the source answers.
       const perPage = 40;
-      const maxPages = Math.max(1, Math.floor(CATALOG_ONLY_CAP_USD / repliesCard.costUsdPerPage + 1e-9));
+      const maxPages = Math.max(1, Math.floor(CATALOG_ONLY_CAP_USD / (repliesCard.costUsdPerPage * CATALOG_ONLY_PRICE_MARGIN) + 1e-9));
       const counters = chosen.map((r) => counter(r));
       const sizing = repliesSizing({ comments: chosen.length, known: counters, perComment: AGENT_REPLIES_PER_COMMENT_MAX, countedAtCap: false });
       if (counters.every((c) => c !== null) && sizing.counted <= 0) {
@@ -310,7 +310,7 @@ export function compilePlan(input: CompileInput): CompileResult {
           expected_rows: n, planned_rows: n, parent_key: parentKey, replies_of: parentKey, per_parent_rows: AGENT_REPLIES_PER_COMMENT_MAX, deliver: true,
           columns: CHILD_COLUMNS.map((c) => ({ ...c })), sample_rows: [], measured_by: [], measured_from_calls: [], measured_cost_per_row_usd: repliesCard.costUsdPerPage / Math.max(1, repliesCard.page.observedRowsPerPage),
           yield_share: 1, review_share: 0, replies_open: true, ...(ask.replies === "all" ? { replies_read_all: true } : {}), ...(readAll ? { replies_uncapped: true } : {}), replies_call_usd: repliesCard.costUsdPerPage, max_pages: maxPages,
-          engine: { endpoint_id: repliesCard.endpointId, params: {}, cursor_param: repliesCard.inputs.cursor, map_code: cardMapCode(repliesCard), map_file_id: "page", parent_binding: { param: repliesCard.inputs.parent!.param, from: repliesCard.inputs.parent!.from }, built_by: "code" },
+          engine: { endpoint_id: repliesCard.endpointId, params: structuredClone(repliesCard.inputs.fixed ?? {}), cursor_param: repliesCard.inputs.cursor, map_code: cardMapCode(repliesCard), map_file_id: "page", parent_binding: { param: repliesCard.inputs.parent!.param, from: repliesCard.inputs.parent!.from }, built_by: "code" },
         } as PricedStage);
       }
     } else {
