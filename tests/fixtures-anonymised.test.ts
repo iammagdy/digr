@@ -103,7 +103,7 @@ describe("anonymised real pages (decision 7.1): the scan that gates the public r
 
   it("the stored plan records of live missions (tests/fixtures/live/plans, passed through anonymise.py) pass the same scan", () => {
     const plans = jsonFiles(path.resolve(__dirname, "fixtures/live/plans"));
-    expect(plans.map((f) => path.basename(f))).toEqual(["msn_e32cd467fe6bbdfa943e.json"]);
+    expect(plans.map((f) => path.basename(f))).toEqual(["msn_24fd8dc0470a2c990cc0.json", "msn_b9eb261694fa611013d4.json", "msn_e32cd467fe6bbdfa943e.json"]);
     for (const f of plans) {
       const violations: Violation[] = [];
       scan(JSON.parse(readFileSync(f, "utf8")), null, "", path.basename(f), violations, { personal: 0 });

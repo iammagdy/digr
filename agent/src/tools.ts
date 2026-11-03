@@ -24,6 +24,7 @@ import { ItemStore, readSnapshot, type StopReason } from "./items/itemStore";
 import { drainPending, ingestRows } from "./items/ingest";
 import { mirrorLegacyFiles } from "./items/mirror";
 import { codeRunPath, deriveEngineSpecsChecked, type CodeRun } from "./engine/spec";
+import { alignedModelCall } from "./periodRequest";
 import { wantsAllChildren } from "../../src/lib/agentMission/allChildren";
 import { tokenOverlayCode, wantsReplies, withRepliesStages } from "../../src/lib/agentMission/replies";
 import { ROW_KEY_FIELDS } from "../../src/lib/agentMission/contract";
@@ -444,9 +445,11 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         if (sick) return { ok: false, refused: "source_unhealthy", message: sick };
         const sameJob = cheaperSameJobMessage(ctx, id, a.why, a.skip);
         if (sameJob.refusal) return { ok: false, refused: "choose_cheapest", message: sameJob.refusal };
-        const result = await gateway.tregCall({ endpoint_id: a.endpoint_id, params: a.params, purpose: a.purpose, why: [a.why, sameJob.recorded].filter(Boolean).join(" | ") || undefined });
+        // the model's own request carries the customer's Cairo days (live finding B), never its day-only operators
+        const sent = ctx.phase === "execution" ? alignedModelCall(ctx.plan, ctx.catalog.byId.get(id), a.params) : a.params;
+        const result = await gateway.tregCall({ endpoint_id: a.endpoint_id, params: sent, purpose: a.purpose, why: [a.why, sameJob.recorded].filter(Boolean).join(" | ") || undefined });
         // the full inputs of this call, kept for the plan's execution recipe (the call log keeps short values only)
-        if (isObject(a.params) && typeof result.call_id === "string") state.callParams.set(result.call_id, { ...a.params });
+        if (isObject(sent) && typeof result.call_id === "string") state.callParams.set(result.call_id, { ...(sent as Record<string, unknown>) });
         if (!("refused" in result) || result.refused === "needs_login") state.tried.add(id);
         if (ctx.phase === "planning" && result.ok === true && isObject(a.params)) { const list = state.samples.get(id) ?? []; list.push({ rows: Number(result.rows_in_page ?? 0) || 0, key: JSON.stringify(Object.entries(a.params).filter(([k]) => !/^(?:limit|count|page|cursor|page_size|per_page)$/i.test(k)).sort(([x], [y]) => x.localeCompare(y)))}); state.samples.set(id, list); }
         // ONE OVER-BUDGET REFUSAL IS NOT THE END OF THE SEARCH (live, 2026-10-31: the only people call was a source dearer than the planning budget; it was refused once and the planner stopped, dropping the decision makers): the answer

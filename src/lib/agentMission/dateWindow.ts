@@ -1,5 +1,5 @@
 import type { CatalogEndpoint } from "../treg/catalog";
-import { operatorStampUtc } from "./cairoTime";
+import { cairoDayEndExclusiveMs, cairoDayStartMs, operatorStampUtc } from "./cairoTime";
 
 /**
  * READING A PERIOD IN DATE WINDOWS. A source that returns its results newest first and stops after a fixed depth (a search that ends after about two thousand results) cannot reach the start of a long period by paging: the live request for
@@ -82,6 +82,25 @@ export function windowParams(window: DateWindow, base: Record<string, unknown>, 
   // the period's moments are written as stamps (UTC, with the time of day); without bounds the window is the UTC days, as it always was («until:» is exclusive: the end day itself is read by asking for the day after it)
   if (bounds) return { ...base, [window.param]: `${cleaned} since:${startMs !== null ? operatorStampUtc(startMs) : sinceDay} until:${operatorStampUtc(endMs)}`.trim() };
   return { ...base, [window.param]: `${cleaned} since:${sinceDay} until:${addDays(endDay, 1)}`.trim() };
+}
+
+/**
+ * THE CUSTOMER'S CAIRO DAYS IN A MODEL-WRITTEN QUERY (live finding B, 2026-11-03, flags off). On the old path the first request is the model's own sample: `since:2026-10-01 until:2026-10-31`, day only. The source read `until:2026-10-31` as the WHOLE
+ * UTC day, so a tweet of 2026-11-01 00:14 Cairo (22:14 UTC on the 31st) came back, and `since:2026-10-01` starts at UTC midnight, so the first three hours of 1 October in Cairo were never asked for. Only the DAY-ONLY operators are rewritten: a bare `since:` is the
+ * first moment of the period's first Cairo day; a bare `until:` day D is the end of that UTC day (the way the source reads it), never past the end of the period's last Cairo day. A moment stamp written by code is left as it is (a walk back through windows moves
+ * `until:` and must keep it); an operator the query lacks is added. Nothing else in the query changes. Pure.
+ */
+export function alignQueryToCairoPeriod(query: string, period: { from?: string; to?: string }): string {
+  const startMs = period.from ? cairoDayStartMs(period.from) : Number.NaN;
+  const endExclusiveMs = period.to ? cairoDayEndExclusiveMs(period.to) : Number.NaN;
+  let out = String(query ?? "");
+  const BARE_SINCE = /(^|\s)since:(\d{4}-\d{2}-\d{2})(?=\s|$)/gi;
+  const BARE_UNTIL = /(^|\s)until:(\d{4}-\d{2}-\d{2})(?=\s|$)/gi;
+  if (Number.isFinite(startMs)) out = out.replace(BARE_SINCE, (_m, lead: string) => `${lead}since:${operatorStampUtc(startMs)}`);
+  if (Number.isFinite(endExclusiveMs)) out = out.replace(BARE_UNTIL, (_m, lead: string, day: string) => `${lead}until:${operatorStampUtc(Math.min(dayStartMs(addDays(day, 1)), endExclusiveMs))}`);
+  if (Number.isFinite(startMs) && !/(^|\s)since:/i.test(out)) out = `${out.trim()} since:${operatorStampUtc(startMs)}`;
+  if (Number.isFinite(endExclusiveMs) && !/(^|\s)until:/i.test(out)) out = `${out.trim()} until:${operatorStampUtc(endExclusiveMs)}`;
+  return out.replace(/\s+/g, " ").trim();
 }
 
 /** The last day the FIRST read of the stage covers: the «until:» day before the end of the recorded text, else the day of `now` (a read with no end day starts from now). */

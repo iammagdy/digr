@@ -5,7 +5,7 @@ import { FILES_STEP_TITLE_AR, PLANNING_STEP_TITLES, type PanelStep } from "../mi
 import { pointsAr } from "../pointsFormat";
 import { AGENT_CLOSE_PAGE_LINE_AR, AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR, AGENT_QUEUE_LINE_AR, AGENT_SLOW_AFTER_MS, AGENT_STALL_AFTER_MS } from "./constants";
 import { isInternalEvent } from "./eventText";
-import { countAr, deliveredOfAr, itemNounOf, itemNounOfPlan } from "./itemNoun";
+import { countAr, deliveredOfAr, itemNounOf, itemNounOfPlan, knownItemNoun } from "./itemNoun";
 import { moneyLineAr } from "./moneyText";
 import { fixFileWordingAr } from "./fileWording";
 import { remainingLineAr, stageMetricLines, trackMission } from "./tracker";
@@ -111,6 +111,15 @@ export const isLivePhase = (p: CustomerPhase) => p === "waiting" || p === "plann
 
 export { minutesAr };
 
+const REPLY_NOUN = knownItemNoun("رد")!;
+/** The replies stage of a compiled plan in plain words: what the counters of the comments read already say, and the «حتى» part for the comments not read yet. */
+export const repliesSplitAr = (counted: number, open: number): string => {
+  const known = counted > 0 ? `${countAr(counted, REPLY_NOUN)} بحسب عدّادات التعليقات التي قرأناها` : "لم نعدّ ردودًا بعد";
+  return open > 0 ? `${known}، وحتى ${countAr(open, REPLY_NOUN)} لتعليقات لم نقرأ عدّادها بعد` : known;
+};
+/** The fact line of the replies not counted yet: their rows and the price they add at most. */
+export const openRepliesFactAr = (rows: number, points: number): string => `${countAr(rows, REPLY_NOUN)} · ${pointsAr(Math.round(points))}`;
+
 /** Stages in plain words with the expected rows of each; the delivered ones add up to the total shown. */
 export function stagesView(plan: any): { stages: CustomerStageView[]; total: number } {
   const stages: CustomerStageView[] = [];
@@ -122,11 +131,14 @@ export function stagesView(plan: any): { stages: CustomerStageView[]; total: num
     // S9: replies with no promised number (all the replies of the chosen comments) are not in the total: the estimate is only the maximum the price was made from
     const openReplies = s?.replies_open === true;
     const open = openReplies || s?.children_open === true;
+    // a compiled plan's replies: those the comments read at planning COUNT (their own counters) and join the total; the rest is a separate «حتى» part (live finding C)
+    const split = openReplies && typeof s?.replies_counted === "number" ? { counted: Math.max(0, Math.floor(s.replies_counted)), open: Math.max(0, Math.floor(Number(s.replies_open_rows) || 0)) } : null;
     if (deliver && !open) total += rows;
+    if (deliver && split) total += split.counted;
     const parentIndex = typeof s?.parent_key === "string" ? list.findIndex((x) => x?.key === s.parent_key) : -1;
     // a stage that only FEEDS the next one is a ceiling, never a promise: «حتى ١٠ فيديوهات» (how many of them end up with results in the file is counted from the item store at the end)
     const rowsAr = countAr(rows, itemNounOf(String(s?.title_ar ?? "")));
-    stages.push({ n: i + 1, parentN: parentIndex >= 0 ? parentIndex + 1 : null, titleAr: customerSafeText(s?.title_ar, "مرحلة"), rows: open ? 0 : rows, rowsAr: open ? (openReplies ? ALL_REPLIES_AR : ALL_COMMENTS_AR) : deliver ? rowsAr : `حتى ${rowsAr}`, deliver, noteAr: deliver ? null : "تُستخدم في المرحلة التالية ولا تُحتسب في ملفك", ...(typeof s?.yield_share === "number" ? { yieldShare: s.yield_share } : {}) });
+    stages.push({ n: i + 1, parentN: parentIndex >= 0 ? parentIndex + 1 : null, titleAr: customerSafeText(s?.title_ar, "مرحلة"), rows: open ? 0 : rows, rowsAr: split ? repliesSplitAr(split.counted, split.open) : open ? (openReplies ? ALL_REPLIES_AR : ALL_COMMENTS_AR) : deliver ? rowsAr : `حتى ${rowsAr}`, deliver, noteAr: deliver ? null : "تُستخدم في المرحلة التالية ولا تُحتسب في ملفك", ...(typeof s?.yield_share === "number" ? { yieldShare: s.yield_share } : {}) });
   });
   return { stages, total };
 }
@@ -155,6 +167,16 @@ export function fileContentsAr(plan: any): string | null {
 /** The one honest sentence of the plan card about what is charged: the price shown is the price of the FULL delivery; fewer items cost in proportion; nothing delivered costs nothing. */
 export const PRICE_PROMISE_AR = "السعر المعروض هو سعر التسليم الكامل؛ لو سُلّم أقل يُخصم بنسبة ما سُلّم فقط، ولو لم يُسلَّم شيء لا يُخصم شيء.";
 
+/** The label of the line that holds the replies not counted yet (rows and price). */
+export const OPEN_REPLIES_LABEL_AR = "ردود لم تُعدّ بعد (حتى)";
+/** A compiled plan's price split (plan.ts repliesSplitOf, stored in the public plan): what the counted items cost at most, and what the replies not counted yet add at most. Null: the price is one figure for everything, as it always was. */
+function countedSplitOf(price: any): { countedMax: number; openRows: number; openMax: number } | null {
+  const openRows = Number(price?.open_rows);
+  const countedMax = Number(price?.counted_max_points);
+  const openMax = Number(price?.open_max_points);
+  return Number.isFinite(openRows) && openRows > 0 && Number.isFinite(countedMax) && Number.isFinite(openMax) ? { countedMax, openRows, openMax } : null;
+}
+
 /** price, hold and expected time on one clear line. */
 export function priceLineAr(plan: any): string | null {
   const price = plan?.price;
@@ -162,8 +184,10 @@ export function priceLineAr(plan: any): string | null {
   const maxCharge = Math.round(Number(price.max_charge_points));
   const reserve = Math.round(Number(price.reserve_points));
   const minutes = Math.round(Number(plan?.expected_minutes) || 0);
+  const split = countedSplitOf(price);
   const parts = [
-    `السعر حتى ${pointsAr(maxCharge)} (سعر التسليم الكامل) ويُخصم بنسبة ما يُسلَّم فعلًا`,
+    split ? `السعر حتى ${pointsAr(split.countedMax)} لما عددناه (سعر التسليم الكامل له) ويُخصم بنسبة ما يُسلَّم فعلًا` : `السعر حتى ${pointsAr(maxCharge)} (سعر التسليم الكامل) ويُخصم بنسبة ما يُسلَّم فعلًا`,
+    ...(split ? [`${OPEN_REPLIES_LABEL_AR}: ${openRepliesFactAr(split.openRows, split.openMax)}`] : []),
     `حجز مؤقت ${pointsAr(reserve)} يُحرَّر ما لا يُستخدم منه`,
   ];
   if (minutes > 0) parts.push(`الوقت المتوقع ${minutesAr(minutes)}`);
@@ -175,8 +199,10 @@ export function priceFactsOf(plan: any): { facts: Array<{ labelAr: string; value
   const price = plan?.price;
   if (!price || !(Number(price.max_charge_points) > 0)) return { facts: [], noteAr: null };
   const minutes = Math.round(Number(plan?.expected_minutes) || 0);
+  const split = countedSplitOf(price);
   const facts = [
-    { labelAr: "السعر حتى", valueAr: pointsAr(Math.round(Number(price.max_charge_points))) },
+    { labelAr: "السعر حتى", valueAr: pointsAr(Math.round(split ? split.countedMax : Number(price.max_charge_points))) },
+    ...(split ? [{ labelAr: OPEN_REPLIES_LABEL_AR, valueAr: openRepliesFactAr(split.openRows, split.openMax) }] : []),
     { labelAr: "حجز مؤقت", valueAr: pointsAr(Math.round(Number(price.reserve_points))) },
     ...(minutes > 0 ? [{ labelAr: "الوقت المتوقع", valueAr: minutesAr(minutes) }] : []),
   ];
