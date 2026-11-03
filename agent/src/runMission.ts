@@ -38,6 +38,7 @@ import { askedTextOf, buildRequestContract } from "../../src/lib/agentMission/re
 import { sealFinalPrice } from "../../src/lib/agentMission/finalPrice";
 import { accountIsTest, anyRedesignFlag, fallbackStageOf, redesignStagesOf } from "./redesign";
 import { compiledPlatformActive, planByCompiler } from "./compiled";
+import { namedShortfallChoiceOf } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { promiseShortfallAr, repliesShortfallAr } from "./repliesShortfall";
 import { TOPIC_OPTIONS_AR, topicMeaningOf, topicQuestionAr } from "../../src/lib/agentMission/topicMeaning";
 import { noAboutChoiceOf } from "../../src/lib/agentMission/foundation/topicChoice";
@@ -345,8 +346,10 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const compiledActive = compiledPlatformActive(redesign.platformFlags, redesign.platform, redesign.isTest);
   // THE ANSWER TO THE «NO VIDEO IS ABOUT THE TOPIC» QUESTION (live round 7, topicChoice.ts): «change my request» and «cancel» end this mission before anything is read (nothing was held, nothing is charged); «use them as they are» is read by the compiled planning below
   const noAboutChoice = compiledActive ? noAboutChoiceOf(mission.answer_text) : null;
-  if (noAboutChoice === "cancel" || noAboutChoice === "change") {
-    const sentence = noAboutChoice === "cancel" ? "أُلغيت هذه المهمة ولم يُخصم شيء." : "أُلغيت هذه المهمة ولم يُخصم شيء؛ اكتب طلبك المعدّل في رسالة جديدة.";
+  // PR 3, decision 7.5 (Facebook, a named page with too few posts): «cancel» ends the mission the same way, before anything is read
+  const shortfallChoice = compiledActive ? namedShortfallChoiceOf(mission.answer_text) : null;
+  if (noAboutChoice === "cancel" || noAboutChoice === "change" || shortfallChoice === "cancel") {
+    const sentence = noAboutChoice !== "change" ? "أُلغيت هذه المهمة ولم يُخصم شيء." : "أُلغيت هذه المهمة ولم يُخصم شيء؛ اكتب طلبك المعدّل في رسالة جديدة.";
     await store.updateMission(mission.id, { status: "cancelled", ...clear });
     await store.addEvent(mission.id, { kind: "result", message_ar: sentence });
     return;
@@ -354,7 +357,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, nowMs: planningNow, ...(redesign.isTest ? { catalogOnly: true } : {}) }) : null;
   // THE QUESTION BEFORE APPROVAL (live round 7): no video of the two pages read is about the topic; the plan is not made, the customer chooses (the same needs_input card as the topic question)
   if (compiled?.kind === "question") {
-    await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: سؤال قبل الخطة، لا فيديو في ما قُرئ يتحدث عن الموضوع.", counts: { compiled: 0, question: 1, pool_reads: compiled.reads.pool, exposure_reads: compiled.reads.exposure } }).catch(() => undefined);
+    await store.addEvent(mission.id, { kind: "call", message_ar: compiled.why === "named_shortfall" ? "قياس داخلي: سؤال قبل الخطة، منشورات الصفحة المسمّاة أقل من المطلوب." : "قياس داخلي: سؤال قبل الخطة، لا فيديو في ما قُرئ يتحدث عن الموضوع.", counts: { compiled: 0, question: 1, pool_reads: compiled.reads.pool, exposure_reads: compiled.reads.exposure } }).catch(() => undefined);
     await store.updateMission(mission.id, { status: "needs_input", question_ar: compiled.question, plan_public: { question_options: compiled.options } as any, ...clear });
     await store.addEvent(mission.id, { kind: "question", message_ar: compiled.question });
     return;

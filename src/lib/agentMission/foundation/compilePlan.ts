@@ -6,7 +6,8 @@ import { stagePriceInputs, type PricedPlan, type PricedStage } from "../plan";
 import type { StageFilter } from "../filters";
 import type { MissionPricingSettings } from "../../missionPricing";
 import type { Ask } from "./ask";
-import { rankPool, factsOf, type PoolRow } from "./pool";
+import { rankPool, factsOf, pageMatchesSource, type PoolRow } from "./pool";
+import { NAMED_MARK_KEY, NAMED_MARK_TITLE_AR, NAMED_MISMATCH_MARK_AR } from "./namedShortfall";
 import { childPromise, perParentPromise, promiseLineAr, type StagePromise } from "./promise";
 import { TOPIC_RELATION_KEY, TOPIC_RELATION_TITLE_AR, topicRelationAr } from "./topicChoice";
 import { cardMapCode, cardsFor, CATALOG_ONLY_CAP_USD, CATALOG_ONLY_PRICE_MARGIN, CHILD_COLUMNS, COUNTRY_AR, mapPage, type CardRole, type ToolCard } from "./toolCards";
@@ -19,7 +20,7 @@ import type { SocialPlatform } from "../redesignFlagTypes";
  * A stage no card can build is a «not included» line on the card (F6), never a model recipe. No model, no I/O: the pages the pool and the exposure check read are given
  * (agent/src/compiled.ts reads them through the gateway, within every cap of the gateway).
  */
-export const COMPILED_PLATFORMS: ReadonlyArray<SocialPlatform> = ["tiktok", "x"];
+export const COMPILED_PLATFORMS: ReadonlyArray<SocialPlatform> = ["tiktok", "x", "facebook", "instagram", "youtube"];
 export type StageRole = "parents" | "comments" | "replies";
 
 /** The stages the Ask asks for, in order (from the Ask alone: no model, no catalog). */
@@ -30,11 +31,37 @@ export function stageShapeOf(ask: Pick<Ask, "comments" | "replies" | "platform">
   return shape;
 }
 
-const PARENT_ROLE: Partial<Record<SocialPlatform, CardRole>> = { tiktok: "videos.search", x: "tweets.search" };
-const ROLE_OF: Record<StageRole, (p: SocialPlatform) => CardRole | null> = {
-  parents: (p) => PARENT_ROLE[p] ?? null,
-  comments: (p) => (p === "x" ? null : "video.comments"),
-  replies: (p) => (p === "x" ? "tweet.replies" : "comment.replies"),
+/** The roles whose cards can read a platform's parents (Facebook: a keyword search with dates or a page listing; YouTube: the channel's own search), its comments and its replies. */
+const PARENT_ROLES: Record<SocialPlatform, ReadonlyArray<CardRole>> = {
+  tiktok: ["videos.search"], x: ["tweets.search"], facebook: ["posts.search", "posts.page"], instagram: ["posts.account"], youtube: ["videos.channel"],
+};
+const COMMENT_ROLE: Record<SocialPlatform, CardRole | null> = { tiktok: "video.comments", x: null, facebook: "post.comments", instagram: "post.comments", youtube: "video.comments" };
+const REPLY_ROLE: Record<SocialPlatform, CardRole> = { tiktok: "comment.replies", x: "tweet.replies", facebook: "comment.replies", instagram: "comment.replies", youtube: "comment.replies" };
+const ROLES_OF = (role: StageRole, p: SocialPlatform): ReadonlyArray<CardRole> => (role === "parents" ? PARENT_ROLES[p] : role === "comments" ? (COMMENT_ROLE[p] ? [COMMENT_ROLE[p]!] : []) : [REPLY_ROLE[p]]);
+/** The key of the stage that holds a platform's parents. */
+const PARENT_KEY: Record<SocialPlatform, string> = { tiktok: "videos", x: "tweets", facebook: "posts", instagram: "posts", youtube: "videos" };
+const PARENT_TITLE: Record<SocialPlatform, string> = { tiktok: "الفيديوهات", x: "التغريدات", facebook: "المنشورات", instagram: "المنشورات", youtube: "الفيديوهات" };
+
+/**
+ * THE VALUE A NAMED SOURCE TAKES IN A CARD'S INPUT, or null when the customer's words cannot be written there: an Instagram handle (`alhadath`, `@alhadath`, an account link), a Facebook page link (a page link, or a Latin handle written as one).
+ * An Arabic name is not a handle or a link: code cannot know it, so a card whose only way to carry the source is that input is not eligible (the plan says so honestly, never a guess).
+ */
+export function sourceInputOf(card: ToolCard, ask: Pick<Ask, "source">): string | null {
+  const src = card.inputs.source;
+  const text = (ask.source.text ?? "").trim();
+  if (!src || ask.source.kind !== "named" || text === "") return null;
+  const url = /^https?:\/\/(?:www\.|m\.)?(?:instagram|facebook)\.com\/([A-Za-z0-9._-]+)\/?/i.exec(text);
+  const handle = url ? url[1] : /^@?([A-Za-z0-9._]{1,30})$/.exec(text)?.[1] ?? null;
+  if (src.kind === "handle") return handle;
+  if (src.kind === "page_url") return url ? `https://www.facebook.com/${url[1]}` : handle ? `https://www.facebook.com/${handle}` : null;
+  return null;
+}
+
+/** A card the Ask can use at all: a keyword search needs a topic; a card that takes the source by an input (not a channel id, which the pool resolves) needs a source that can be written there. */
+const eligible = (card: ToolCard, ask: Ask): boolean => {
+  if (card.inputs.query?.required && !ask.topic.text) return false;
+  if (card.inputs.source && card.inputs.source.kind !== "channel_id" && sourceInputOf(card, ask) === null) return false;
+  return true;
 };
 
 /** What the Ask asks that a parent card can carry in an input, and which of them this card carries. */
@@ -45,18 +72,19 @@ export function carriedBy(card: ToolCard, ask: Ask): { asked: string[]; carried:
   if (ask.topic.text) add("topic", Boolean(card.inputs.query));
   if (ask.country) add("country", Boolean(card.inputs.country));
   if (ask.language) add("language", Boolean(card.inputs.query?.operators));
-  if (ask.period) add("period", Boolean(card.inputs.query?.operators));
+  if (ask.period) add("period", Boolean(card.inputs.query?.operators || card.inputs.period));
+  if (ask.source.kind === "named") add("source", Boolean(card.inputs.source && card.inputs.source.kind !== "channel_id"));
   add("order", Boolean(card.inputs.order && card.inputs.order[ask.order] !== undefined));
   return { asked, carried };
 }
 
 /** The card of a stage role: most conditions carried, then pageable, then a counter, then the cheapest page. Null: no usable card (the stage is not included). */
-export function chooseCard(ask: Ask, role: StageRole, options: { cards?: ReadonlyArray<ToolCard>; catalogOnly?: boolean } = {}): ToolCard | null {
+export function chooseCard(ask: Ask, role: StageRole, options: { cards?: ReadonlyArray<ToolCard>; catalogOnly?: boolean; /** The replies cards that may follow (a comments card that gives each comment what such a card needs is chosen first). */ repliesCards?: ReadonlyArray<ToolCard> } = {}): ToolCard | null {
   if (!ask.platform) return null;
-  const r = ROLE_OF[role](ask.platform);
-  if (!r) return null;
-  const cards = cardsFor(ask.platform, r, options);
-  const score = (c: ToolCard): number[] => [role === "parents" ? carriedBy(c, ask).carried.length : 0, c.inputs.cursor ? 1 : 0, c.counter ? 1 : 0, -c.costUsdPerPage];
+  const cards = ROLES_OF(role, ask.platform).flatMap((r) => cardsFor(ask.platform!, r, options)).filter((c) => role !== "parents" || eligible(c, ask));
+  // a comments card that feeds the replies step: the replies card's parent input is the comment's id, or a token the comments card keeps on each row
+  const feeds = (c: ToolCard): number => (role === "comments" && (options.repliesCards ?? []).some((rc) => rc.inputs.parent && (rc.inputs.parent.from === "id" || (c.mapping.kind === "replies" && (c.mapping.tokens ?? []).some((t) => t.key === rc.inputs.parent!.from)))) ? 1 : 0);
+  const score = (c: ToolCard): number[] => [feeds(c), role === "parents" ? carriedBy(c, ask).carried.filter((x) => x === "topic" || x === "period").length : 0, role === "parents" ? carriedBy(c, ask).carried.length : 0, c.inputs.cursor ? 1 : 0, c.counter ? 1 : 0, -c.costUsdPerPage];
   return [...cards].sort((a, b) => { const x = score(a); const y = score(b); for (let i = 0; i < x.length; i += 1) if (x[i] !== y[i]) return y[i] - x[i]; return 0; })[0] ?? null;
 }
 
@@ -72,8 +100,14 @@ export function parentInputs(card: ToolCard, ask: Ask): Record<string, unknown> 
       // TWEETS WITH THEIR REPLIES (live D5, msn_e7612c1fe8697ca03439): the parents of a replies stage are ORIGINAL tweets, so the stage asks the source for originals only (10 of the 20 tweets of that run were themselves replies to other people)
       if (ask.replies !== "none") query += " -filter:replies";
     }
+    // a keyword search that has no input for the page: the named page's name joins the keyword (the pool is then CHOSEN among the rows by their author)
+    if (q.withSource && ask.source.kind === "named" && ask.source.text) query += ` ${/(?:facebook|instagram)\.com\/([^/?#\s]+)/i.exec(ask.source.text)?.[1] ?? ask.source.text}`;
     p[q.field] = query;
   }
+  // the period as two Cairo calendar days (Facebook's search takes the day, inclusive, not an instant)
+  if (card.inputs.period && ask.period) { p[card.inputs.period.from] = ask.period.from; p[card.inputs.period.to] = ask.period.to; }
+  // the named source written in the card's own input (an account's handle, a page's link)
+  if (card.inputs.source && card.inputs.source.kind !== "channel_id") { const v = sourceInputOf(card, ask); if (v !== null) p[card.inputs.source.param] = v; }
   if (card.inputs.country && ask.country) p[card.inputs.country.field] = ask.country;
   const order = card.inputs.order?.[ask.order];
   if (card.inputs.order && order !== undefined) p[card.inputs.order.field] = order;
@@ -83,8 +117,14 @@ export function parentInputs(card: ToolCard, ask: Ask): Record<string, unknown> 
 
 export interface CompileInput {
   ask: Ask;
-  /** The parent card's pages read at planning, in order (their call ids and bodies). */
-  pool: { card: ToolCard; params: Record<string, unknown>; pages: ReadonlyArray<{ callId: string; page: unknown }> };
+  /** The parent card's pages read at planning, in order (their call ids and bodies). A page of ANOTHER card of the same role (a second keyword search) carries its own `card`. */
+  pool: { card: ToolCard; params: Record<string, unknown>; pages: ReadonlyArray<{ callId: string; page: unknown; card?: ToolCard }> };
+  /** YouTube: the counters of the pool's videos from the counter card (id -> comments), when it answered: the promise is then the counters of the chosen videos; absent, it is open. */
+  counters?: ReadonlyMap<string, number>;
+  /** YouTube: the channels the pool was read from (their ids and titles), said on the card. */
+  channels?: ReadonlyArray<{ id: string; title?: string }>;
+  /** Decision 7.5, Facebook: the customer's answer to the named-page question; absent, a shortfall asks it. */
+  namedChoice?: "only_found" | "fill";
   /** The exposure check (decision 7.3): the first comments page of a parent, read before the card (undefined: not read). */
   exposure: (parentId: string) => { callId: string | null; page: unknown | null; failed: boolean } | undefined;
   capabilityOf: (endpointId: string) => string | null;
@@ -95,11 +135,14 @@ export interface CompileInput {
 
 export type CompileResult =
   | { ok: true; plan: PricedPlan; promises: Record<string, StagePromise>; chosen: string[]; spares: string[] }
-  | { ok: false; reason: "no_platform_card" | "no_parent_card" | "no_rows" | "no_parent_with_children" };
+  | { ok: false; reason: "no_platform_card" | "no_parent_card" | "no_rows" | "no_parent_with_children" }
+  /** Decision 7.5: the named page has fewer deliverable posts in the pool than asked and the customer has not answered: the caller asks the question (nothing is priced). */
+  | { ok: false; reason: "named_shortfall"; found: number; need: number };
 
 const TITLE: Record<string, string> = {
   text: "النص", author: "صاحب الحساب", username: "اسم المستخدم", posted_at: "تاريخ ووقت النشر", link: "الرابط", country: "الدولة", language: "اللغة", likes: "الإعجابات",
   comments: "عدد التعليقات", shares: "المشاركات", views: "المشاهدات", saves: "الحفظ", followers: "المتابعون", is_reply: "رد على تغريدة", replies_count: "عدد الردود",
+  author_id: "معرّف الصفحة", author_url: "رابط الصفحة", channel_id: "معرّف القناة", published: "وقت النشر", subscribers: "المشتركون",
 };
 const NOUN: Record<SocialPlatform, { one: string; two: string; many: string; where: string; talks: string }> = {
   tiktok: { one: "فيديو", two: "فيديوهان", many: "فيديو", where: "من تيك توك", talks: "يتحدث نصه" },
@@ -177,19 +220,33 @@ const filtersOf = (ask: Ask): StageFilter[] => {
   return f;
 };
 
+const atPath = (o: unknown, path: ReadonlyArray<string> | null): unknown => { if (!path) return undefined; let v: unknown = o; for (const k of path) { if (v === null || v === undefined || typeof v !== "object") return undefined; v = (v as Record<string, unknown>)[k]; } return v; };
+const postsCountAr = (n: number): string => (n === 1 ? "منشورًا واحدًا" : n === 2 ? "منشورين" : n >= 3 && n <= 10 ? `${toArabicDigits(n)} منشورات` : `${toArabicDigits(n)} منشورًا`);
+const pagesCountAr = (n: number): string => (n === 1 ? "صفحة واحدة" : n === 2 ? "صفحتين" : `${toArabicDigits(n)} صفحات`);
+
 /** Compiles the plan. Pure: the same Ask and the same pages give the same plan. */
 export function compilePlan(input: CompileInput): CompileResult {
   const { ask } = input;
   if (!ask.platform || !(COMPILED_PLATFORMS as ReadonlyArray<string>).includes(ask.platform)) return { ok: false, reason: "no_platform_card" };
   const shape = stageShapeOf(ask);
-  const card = input.pool.card;
-  const mapped = input.pool.pages.flatMap((p) => mapPage(card, p.page));
-  const ranked = rankPool(mapped, ask, card);
-  if (ranked.length === 0) return { ok: false, reason: "no_rows" };
+  const poolCard = input.pool.card;
+  // THE COUNTER OF THE POOL: the parent card's own, or (YouTube) the counter card's, merged onto the rows by id
+  const counterKey: string | null = poolCard.counter?.key ?? (input.counters ? "comments" : null);
+  const card: ToolCard = poolCard.counter || !input.counters ? poolCard : { ...poolCard, counter: { key: "comments", counts: "comments" } };
+  const mapped = input.pool.pages.flatMap((p) => mapPage(p.card ?? poolCard, p.page)).map((r) => (input.counters && input.counters.has(String(r.id)) ? { ...r, comments: input.counters.get(String(r.id)) } : r));
+  const ranked0 = rankPool(mapped, ask, card);
+  if (ranked0.length === 0) return { ok: false, reason: "no_rows" };
   const need = Math.max(1, ask.count ?? DEFAULT_COUNT);
-  const commentsCard = shape.includes("comments") ? chooseCard(ask, "comments") : null;
-  const repliesCard = shape.includes("replies") ? chooseCard(ask, "replies", { catalogOnly: input.catalogOnly === true }) : null;
-  const counter = (r: PoolRow): number | null => { if (!card.counter) return null; const n = Number(r[card.counter.key]); return Number.isFinite(n) ? n : null; };
+  const catalogOnly = input.catalogOnly === true;
+  const repliesCards = shape.includes("replies") ? cardsFor(ask.platform, REPLY_ROLE[ask.platform], { catalogOnly }) : [];
+  const commentsCard = shape.includes("comments") ? chooseCard(ask, "comments", { catalogOnly, repliesCards }) : null;
+  const repliesCard = shape.includes("replies") ? chooseCard(ask, "replies", { catalogOnly }) : null;
+  const counter = (r: PoolRow): number | null => { if (!counterKey) return null; const n = Number(r[counterKey]); return Number.isFinite(n) ? n : null; };
+  // DECISION 7.5 (Facebook): «only the ones found» keeps the named page's posts only; the choice is the customer's, made before approval
+  const bySource = Boolean(poolCard.inputs.source);
+  const isNamed = (r: Record<string, unknown>): boolean => factsOf(r, ask, bySource).named;
+  const ranked = input.namedChoice === "only_found" && ask.source.kind === "named" ? ranked0.filter(isNamed) : ranked0;
+  if (ranked.length === 0) return { ok: false, reason: "no_rows" };
 
   // THE EXPOSURE CHECK (decision 7.3): a parent whose first comments page is empty while its counter says it has comments is replaced by the next one, before the card; a parent that says it has none is never chosen for a comments request
   const chosen: PoolRow[] = [];
@@ -209,6 +266,12 @@ export function compilePlan(input: CompileInput): CompileResult {
     exposurePages.push({ parent: r.id, callId: e.callId, rows });
   }
   if (chosen.length === 0) return { ok: false, reason: commentsCard ? "no_parent_with_children" : "no_rows" };
+  // DECISION 7.5: a named Facebook page whose deliverable posts in the pool are fewer than asked: the customer decides before approval (the question is asked by the caller; nothing is priced)
+  const namedFacebook = ask.platform === "facebook" && ask.source.kind === "named" && poolCard.role === "posts.search";
+  if (namedFacebook && input.namedChoice === undefined) {
+    const found = chosen.filter(isNamed).length;
+    if (found < need) return { ok: false, reason: "named_shortfall", found, need };
+  }
   const spares = ranked.slice(scanned).filter((r) => !commentsCard || counter(r) !== 0).slice(0, 2);
 
   const promises: Record<string, StagePromise> = {};
@@ -216,16 +279,22 @@ export function compilePlan(input: CompileInput): CompileResult {
   const unserved: Array<{ what_ar: string; reason_ar: string }> = [];
   const capabilityOf = input.capabilityOf;
   const stages: PricedStage[] = [];
-  const parentKey = ask.platform === "x" ? "tweets" : "videos";
+  const parentKey = PARENT_KEY[ask.platform];
+  // THE 0.20 USD CAP (decision 7.4): the stages that use a catalog_only card share it; each gets the pages its share buys at twice the catalog's price (the stage's own page limit)
+  const catalogOnlyStages = [commentsCard, repliesCard].filter((c): c is ToolCard => c !== null && c.status === "catalog_only").length;
+  const sharedMaxPages = (c: ToolCard): number | null => (c.status === "catalog_only" && c.costUsdPerPage > 0 ? Math.max(1, Math.floor(CATALOG_ONLY_CAP_USD / Math.max(1, catalogOnlyStages) / (c.costUsdPerPage * CATALOG_ONLY_PRICE_MARGIN) + 1e-9)) : null);
   // THE TOPIC RELATION MARK (live round 7): when some chosen item's own text is not about the topic the customer named («عن X»), every item of the stage carries how its text relates to it, so the file says which is which (a mark, never a drop)
-  const tierOf = (r: PoolRow) => factsOf(r, ask).topicTier;
+  const tierOf = (r: PoolRow) => factsOf(r, ask, bySource).topicTier;
   const markTopic = ask.platform !== "x" && Boolean(ask.topic.text) && ask.topic.relation !== "made_with" && chosen.some((r) => tierOf(r) !== 2);
-  const shown = (r: PoolRow): PoolRow => (markTopic ? { ...r, [TOPIC_RELATION_KEY]: topicRelationAr(tierOf(r)) } : { ...r });
-  const columns = [...Object.keys(card.mapping.kind === "fields" ? card.mapping.fields : {}).filter((k) => k !== "id").map((k) => ({ key: k, title_ar: TITLE[k] ?? k })), ...(markTopic ? [{ key: TOPIC_RELATION_KEY, title_ar: TOPIC_RELATION_TITLE_AR }] : [])];
+  // THE NAMED-SOURCE MARK (decision 7.5, «fill from other pages»): a post that is not the named page's carries «المصدر المسمّى: غير مطابق», the page's own posts carry nothing (a mark, never a drop)
+  const markNamed = namedFacebook && chosen.some((r) => !isNamed(r));
+  const shown = (r: PoolRow): PoolRow => ({ ...r, ...(markTopic ? { [TOPIC_RELATION_KEY]: topicRelationAr(tierOf(r)) } : {}), ...(markNamed ? { [NAMED_MARK_KEY]: isNamed(r) ? "" : NAMED_MISMATCH_MARK_AR } : {}) });
+  const fieldKeys = [...Object.keys(card.mapping.kind === "fields" ? card.mapping.fields : {}), ...(card.mapping.kind === "fields" && card.mapping.linkTemplate ? ["link"] : []), ...(input.counters && !poolCard.counter ? ["comments"] : [])];
+  const columns = [...fieldKeys.filter((k, i) => k !== "id" && fieldKeys.indexOf(k) === i).map((k) => ({ key: k, title_ar: TITLE[k] ?? k })), ...(markTopic ? [{ key: TOPIC_RELATION_KEY, title_ar: TOPIC_RELATION_TITLE_AR }] : []), ...(markNamed ? [{ key: NAMED_MARK_KEY, title_ar: NAMED_MARK_TITLE_AR }] : [])];
   const pageRows = Math.max(1, card.page.observedRowsPerPage);
   promises[parentKey] = { type: "exact", n: chosen.length };
   stages.push({
-    key: parentKey, title_ar: ask.platform === "x" ? "التغريدات" : "الفيديوهات", endpoint_id: card.endpointId, ...(capabilityOf(card.endpointId) ? { capability: capabilityOf(card.endpointId)! } : {}),
+    key: parentKey, title_ar: PARENT_TITLE[ask.platform], endpoint_id: card.endpointId, ...(capabilityOf(card.endpointId) ? { capability: capabilityOf(card.endpointId)! } : {}),
     expected_rows: chosen.length, planned_rows: chosen.length, parent_key: null, deliver: true, columns, sample_rows: chosen.slice(0, 3).map(shown),
     measured_by: input.pool.pages.map((p) => p.callId), measured_from_calls: input.pool.pages.map((p) => p.callId), measured_cost_per_row_usd: card.costUsdPerPage / pageRows,
     yield_share: 1, review_share: 0, pinned_rows: chosen.map(shown), ...(spares.length > 0 && commentsCard ? { spare_rows: spares.map(shown) } : {}),
@@ -234,7 +303,22 @@ export function compilePlan(input: CompileInput): CompileResult {
     engine: { endpoint_id: card.endpointId, params: input.pool.params, cursor_param: card.inputs.cursor, map_code: cardMapCode(card), map_file_id: "page", parent_binding: null, built_by: "code", ...(card.cannot && card.cannot.length > 0 ? { gaps: card.cannot.filter((c) => (c === "language" && ask.language) || (c === "period" && ask.period) || (c === "country" && ask.country)).map((c) => ({ cls: c === "period" ? "date" : c, reason: "no_field" })) } : {}) },
   } as PricedStage);
   if (chosen.length < need) notes.push(`وجدنا في ما قرأناه ${toArabicDigits(chosen.length)} فقط تناسب طلبك من ${toArabicDigits(need)}.`);
-  const unmet = chosen.filter((r) => { const f = factsOf(r, ask); return !f.country || !f.language || !f.named; }).length;
+  // WHAT THE POOL HELD, from the pages' own numbers (Facebook's keyword search): how many posts were read in how many pages, whether the source had more, how many are from the named page and how many talk about the topic
+  if (poolCard.role === "posts.search") {
+    const searchPages = input.pool.pages.filter((p) => (p.card ?? poolCard).role === "posts.search");
+    const last = searchPages[searchPages.length - 1];
+    const more = last ? Boolean(atPath(last.page, (last.card ?? poolCard).page.cursor)) : false;
+    const parts = [`قرأنا ${postsCountAr(ranked0.length)} من نتائج البحث في ${pagesCountAr(searchPages.length)}${more ? "، وفي المصدر المزيد" : ""}.`];
+    if (ask.source.kind === "named" && ask.source.text) parts.push(`منها من صفحة «${ask.source.text}»: ${toArabicDigits(ranked0.filter(isNamed).length)}.`);
+    if (ask.topic.text) {
+      parts.push(`منها يتحدث نصه عن «${ask.topic.text}»: ${toArabicDigits(ranked0.filter((r) => factsOf(r, ask, bySource).topicTier === 2).length)}.`);
+      if (ask.source.kind === "named" && ask.source.text) parts.push(`منها من الصفحة ويتحدث نصه عن الموضوع: ${toArabicDigits(ranked0.filter((r) => isNamed(r) && factsOf(r, ask, bySource).topicTier === 2).length)}.`);
+    }
+    notes.push(parts.join(" "));
+  }
+  // YOUTUBE: the channels the videos were read from (the official channels are looked up by name and each is read inside: the card says how many, never that they are the official ones)
+  if (ask.platform === "youtube" && input.channels && input.channels.length > 0) notes.push(`قرأنا فيديوهات القنوات الرسمية التي وجدناها بأسمائها في البحث. عدد القنوات التي قرأنا فيديوهاتها: ${toArabicDigits(input.channels.length)}.`);
+  const unmet = chosen.filter((r) => { const f = factsOf(r, ask, bySource); return !f.country || !f.language || !f.named; }).length;
   if (unmet > 0) notes.push(`لم نجد في ما قرأناه ما يكفي مما يطابق المصدر أو الدولة أو اللغة المطلوبة؛ ${toArabicDigits(unmet)} من العناصر المختارة لا تطابق ذلك، وعليها علامة في الملف.`);
   // THE TOPIC, SAID HONESTLY BEFORE APPROVAL (live D1): «عن X» means the item's own text talks about X. A video whose caption names X only in its hashtags is made WITH X (the tool), so it ranks below the videos whose caption body is about X;
   // when the pool read has none of the latter the card says so; when some chosen items are below it, it says how many. Ranking only: the items are chosen and delivered either way.
@@ -267,7 +351,8 @@ export function compilePlan(input: CompileInput): CompileResult {
       columns: CHILD_COLUMNS.map((c) => ({ ...c })), sample_rows: (exposurePages[0]?.rows ?? []).slice(0, 3), measured_by: exposurePages.map((e) => e.callId).filter((x): x is string => x !== null),
       measured_from_calls: exposurePages.map((e) => e.callId).filter((x): x is string => x !== null), measured_cost_per_row_usd: commentsCard.costUsdPerPage / Math.max(1, commentsCard.page.observedRowsPerPage),
       yield_share: 1, review_share: 0, parent_pins: chosen.map((r) => r.id), ...(ask.comments === "all" && perParent === null ? { all_children: true } : {}), ...(p.type === "open" ? { children_open: true } : {}),
-      engine: { endpoint_id: commentsCard.endpointId, params: {}, cursor_param: commentsCard.inputs.cursor, map_code: cardMapCode(commentsCard), map_file_id: "page", parent_binding: { param: commentsCard.inputs.parent!.param, from: commentsCard.inputs.parent!.from }, built_by: "code" },
+      ...(sharedMaxPages(commentsCard) !== null ? { max_pages: sharedMaxPages(commentsCard)! } : {}),
+      engine: { endpoint_id: commentsCard.endpointId, params: structuredClone(commentsCard.inputs.fixed ?? {}), cursor_param: commentsCard.inputs.cursor, map_code: cardMapCode(commentsCard), map_file_id: "page", parent_binding: { param: commentsCard.inputs.parent!.param, from: commentsCard.inputs.parent!.from }, built_by: "code" },
     } as PricedStage);
     notes.push(promiseLineAr(p, "comments", card.counter?.counts === "comments_and_replies", perParent));
   }
@@ -288,6 +373,7 @@ export function compilePlan(input: CompileInput): CompileResult {
         expected_rows: p.n, planned_rows: p.n, parent_key: "comments", replies_of: "comments", per_parent_rows: perComment ?? AGENT_REPLIES_PER_COMMENT_MAX, deliver: true,
         columns: CHILD_COLUMNS.map((c) => ({ ...c })), sample_rows: [], measured_by: [], measured_from_calls: [], measured_cost_per_row_usd: repliesCard.costUsdPerPage / Math.max(1, repliesCard.page.observedRowsPerPage),
         yield_share: 1, review_share: 0, replies_open: true, ...(ask.replies === "all" ? { replies_read_all: true } : {}), ...(readAll ? { replies_uncapped: true } : {}), replies_call_usd: repliesCard.costUsdPerPage,
+        ...(sharedMaxPages(repliesCard) !== null ? { max_pages: sharedMaxPages(repliesCard)! } : {}),
         engine: { endpoint_id: repliesCard.endpointId, params: {}, cursor_param: repliesCard.inputs.cursor, map_code: cardMapCode(repliesCard), map_file_id: "page", parent_binding: { param: repliesCard.inputs.parent!.param, from: repliesCard.inputs.parent!.from, ...(repliesCard.inputs.parent!.also ? { also: repliesCard.inputs.parent!.also.map((a) => ({ ...a })) } : {}) }, built_by: "code" },
       } as PricedStage);
       notes.push(promiseLineAr(p, "replies", false, perComment));
