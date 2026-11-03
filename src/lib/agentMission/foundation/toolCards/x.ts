@@ -28,7 +28,8 @@ export const X_CARDS: ReadonlyArray<ToolCard> = [
   {
     // THE REPLIES TO A TWEET by its link, paged by cursor, up to 40 a page (the catalog's input note: «Opaque pagination cursor from a previous response's nextCursor»). CATALOG ONLY: written from the catalog entry
     // (data/treg/treg_catalog_sellable.json: inputs url/cursor/limit, list_path output.data.items, item_fields authorHandle/authorName/createdUtc/id/likeCount/replyCount/text/url/viewCount, price per successful call);
-    // no real response of it has been stored, so where the next-page token sits is the catalog's own word, NOT SEEN. One row per call is assumed for the hold (a tweet with one reply costs a whole call).
+    // FIRST REAL RESPONSES (live round 7, msn_9fa5ba384c05a25247e1, tests/live-e-x-replies-real.test.ts): the list path, the ids, the fields and the parent link (`conversationId` = the tweet asked) are RIGHT; `output.data.nextCursor` is present and NULL on every page and the
+    // response says its source cannot page (it may be incomplete): 16 of at least 23 direct replies came for one tweet. So the card stays catalog_only: «every reply the source shows» is not met. One row per call is assumed for the hold (a tweet with one reply costs a whole call).
     endpointId: "anyapi.x.post.comments",
     platform: "x",
     role: "tweet.replies",

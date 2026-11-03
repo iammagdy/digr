@@ -20,3 +20,7 @@ Checks run on this version (same rule as the session's scan):
   text, message, caption, title, description, bio, place, address; case, _ and - ignored):
   0 that are neither a placeholder nor empty.
 - no "eyJ", no "Bearer ", no tt_chain_token cookie, no e-mail address anywhere.
+
+## Added in live round 7 (3 Nov 2026)
+
+Two more missions from the owner's admin raw-pages ZIP, anonymised with `anonymise.py` (8 files): `msn_9fa5ba384c05a25247e1` (X; the five REAL replies pages of the first live run of the X replies tool, `raw/call_0003..0007`, and its delivered `rows/tweets.json`, `rows/replies.json`) and `msn_4e68812d396bd5db0a01` (TikTok; the real first search page, `raw/call_0001`). Captions, texts and handles are placeholders, so a test that needs a caption builds it (made up) on the real structure. The provider's `hint` string on the replies pages is replaced by the anonymiser; its words are recorded in `tests/live-e-x-replies-real.test.ts`.

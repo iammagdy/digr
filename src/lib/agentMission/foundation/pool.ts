@@ -77,3 +77,12 @@ export function rankPool(rows: ReadonlyArray<Record<string, unknown>>, ask: Ask,
     .sort((a, b) => { for (let i = 0; i < a.k.length; i += 1) if (a.k[i] !== b.k[i]) return b.k[i] - a.k[i]; return a.at - b.at; })
     .map((x) => x.row);
 }
+
+/**
+ * A ROW THE PLAN CAN CHOOSE AS «ABOUT THE TOPIC» (live round 7): its own text is about the topic AND it meets the named source, the country and the language the customer asked, because the owner's order ranks those before the topic (the only video about the topic on the
+ * real round-7 page was Saudi, for a customer who asked for Egypt: it can never be chosen over an Egyptian video, so it is not an answer). Ranking facts only; nothing is removed.
+ */
+export function isAboutAndEligible(row: Record<string, unknown>, ask: Ask): boolean {
+  const f = factsOf(row, ask);
+  return f.topicTier === 2 && f.named && f.country && f.language;
+}

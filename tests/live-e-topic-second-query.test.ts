@@ -110,7 +110,7 @@ describe("round 7, item 1: the union still has no video about the topic: the que
     if (r.kind !== "question") throw new Error(`expected a question, got ${r.kind}`);
     expect(searchCalls(g.calls)).toHaveLength(2);
     expect(r.options).toEqual([NO_ABOUT_OPTIONS_AR.useAsIs, NO_ABOUT_OPTIONS_AR.change, NO_ABOUT_OPTIONS_AR.cancel]);
-    expect(r.question).toMatch(/لم نجد في ما قرأناه فيديو يتحدث نصه عن «الذكاء الاصطناعي»/);
+    expect(r.question).toMatch(/لم نجد في ما قرأناه فيديو يطابق طلبك ويتحدث نصه عن «الذكاء الاصطناعي»/);
     expect(r.question).toMatch(/الوسوم/);
     // Arabic only, Arabic-Indic digits, no provider, no endpoint, no USD, no emoji
     for (const t of [r.question, ...r.options]) { expect(checkCustomerText(t, { maxChars: 600 }).issues, t).toEqual([]); expect(t).not.toMatch(/[0-9]|anyapi|tikhub|usd|\$/i); }
@@ -157,5 +157,49 @@ describe("round 7, item 1: the customer's answer", () => {
     expect(noAboutChoiceOf(NO_ABOUT_OPTIONS_AR.cancel)).toBe("cancel");
     expect(noAboutChoiceOf("فيديوهات بتتكلم عن الذكاء الاصطناعي في التعليم")).toBeNull();
     expect(noAboutChoiceOf(null)).toBeNull();
+  });
+});
+
+/**
+ * THE REAL ROUND-7 PAGE (msn_4e68812d396bd5db0a01, call_0001, anonymised: ids, regions, languages and counters are real). Run on the REAL captions (kept in the scratch folder, not committed): of its 10 videos exactly ONE has the topic in its caption body, and it is a SAUDI video
+ * (region SA); the nine Egyptian ones name the topic in hashtags only. The first version of the check «does the pool have a video about the topic» counted that Saudi video, so no second search and no question happened. A video that is not from the country the customer asked for ranks below
+ * every video that is (the owner's order puts the country and the language before the topic), so it is not a video the plan can choose: only a video that meets the named source, the country and the language counts as «about».
+ */
+describe("round 7, item 1 on the real page: a video about the topic from another country is not an answer", () => {
+  const R7 = JSON.parse(readFileSync(new URL("./fixtures/live/missions/msn_4e68812d396bd5db0a01/raw/call_0001.json", import.meta.url), "utf8")) as { data: { search_item_list: Array<{ aweme_info: Record<string, unknown> }> } };
+  const real = R7.data.search_item_list.map((x) => ({ id: String(x.aweme_info.aweme_id), region: String(x.aweme_info.region) }));
+  const saudi = real.find((r) => r.region === "SA")!;
+  const page = (suffix: string, aboutId: string | null, caption: string = ABOUT_BODY): unknown => {
+    const copy = JSON.parse(JSON.stringify(R7)) as typeof R7;
+    for (const it of copy.data.search_item_list) {
+      const id = String(it.aweme_info.aweme_id);
+      it.aweme_info.aweme_id = `${id}${suffix}`;
+      it.aweme_info.desc = id === aboutId ? caption : HASHTAG_ONLY;
+    }
+    return copy;
+  };
+
+  it("the real page has exactly one Saudi video and nine from other regions (the structure the test stands on)", () => {
+    expect(real).toHaveLength(10);
+    expect(saudi).toBeDefined();
+    expect(real.filter((r) => r.region === "EG").length).toBeGreaterThanOrEqual(6);
+  });
+
+  it("the only video about the topic is Saudi: a second search is made (it is not an answer for a customer who asked for Egypt)", async () => {
+    const egypt = real.find((r) => r.region === "EG")!;
+    const g = stubGateway([page("", saudi.id), page("1", egypt.id)]);
+    const r = await plan(g);
+    expect(searchCalls(g.calls)).toHaveLength(2);
+    if (r.kind !== "plan") throw new Error(r.kind);
+    const videos = r.plan.stages.find((s) => s.key === "videos")!;
+    expect(String(videos.pinned_rows![0].id)).toBe(`${egypt.id}1`);
+    expect(String(videos.pinned_rows![0].text)).toBe(ABOUT_BODY);
+  });
+
+  it("the second page has no Egyptian video about the topic either: the question, whose words do not claim that no video at all talks about it", async () => {
+    const g = stubGateway([page("", saudi.id), page("1", null)]);
+    const r = await plan(g);
+    if (r.kind !== "question") throw new Error(r.kind);
+    expect(r.question).toMatch(/لم نجد في ما قرأناه فيديو يطابق طلبك ويتحدث نصه عن «الذكاء الاصطناعي»/);
   });
 });
