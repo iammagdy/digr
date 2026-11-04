@@ -46,6 +46,8 @@ export const AGENT_SETTINGS_TABLE = "agent_settings";
 export const AGENT_BUCKET = "agent-missions";
 /** The key of the setting the owner flips to move PLANNING to the stronger model. */
 export const PLANNING_MODEL_SETTING_KEY = "planning_model";
+/** ROUND 34: the catalog discovery switch of the social compiler (one value in `agent_settings`: `test` = test accounts only; anything else = off). Read by the worker, written by the admin route only. */
+export const SOCIAL_DISCOVERY_SETTING_KEY = "social_discovery";
 
 export const MODEL_HAIKU = "claude-haiku-5-5";
 export const MODEL_SONNET = "claude-sonnet-5-5";

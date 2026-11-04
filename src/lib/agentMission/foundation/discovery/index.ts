@@ -1,5 +1,6 @@
 import type { TregCatalog } from "../../../treg/catalog";
 import type { AccountAccess } from "../../../treg/dataPolicy";
+import { SOCIAL_DISCOVERY_SETTING_KEY } from "../../constants";
 import { TOOL_CARDS } from "../toolCards";
 import type { ToolCard } from "../toolCards/types";
 import { discoverCards, type Rejection } from "./deriveCards";
@@ -15,7 +16,7 @@ export * from "./plan";
  * ROUND 33, CATALOG DISCOVERY: THE SWITCH. One value in `agent_settings` under `social_discovery`, read by the worker once per run. Only the exact value `test` switches it on, and only for a TEST account (owner decision 7.4: a tool no stored real page has verified is for test accounts, inside the
  * 0.20 USD cap). `on`, an unknown or an unreadable value is OFF: no setting can give a tool derived from the catalog to a customer. Promoting such a tool to every account is a DATA change (a hand-written card verified on stored real pages), never this switch.
  */
-export const SOCIAL_DISCOVERY_KEY = "social_discovery";
+export const SOCIAL_DISCOVERY_KEY = SOCIAL_DISCOVERY_SETTING_KEY;
 export const discoveryActive = (settings: Record<string, unknown> | null | undefined, isTest: boolean): boolean => {
   try { return isTest === true && settings?.[SOCIAL_DISCOVERY_KEY] === "test"; } catch { return false; }
 };

@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { REDESIGN_FLAGS_KEY, REDESIGN_MODES, isRedesignType, isSocialPlatform, normalizeRedesignFlags, readPlatformFlags, type RedesignMode } from "./redesignFlags";
-import { AGENT_SOURCE_MEASURE_WINDOW_MS, AGENT_ALLOWED_MODELS, AGENT_DYNO_MEMORY_MB, AGENT_BUCKET, AGENT_HEARTBEAT_TABLE, AGENT_SETTINGS_TABLE, AGENT_TEST_ACCOUNT_EMAIL, MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE, PLANNING_MODEL_SETTING_KEY } from "./constants";
+import { AGENT_SOURCE_MEASURE_WINDOW_MS, AGENT_ALLOWED_MODELS, AGENT_DYNO_MEMORY_MB, AGENT_BUCKET, AGENT_HEARTBEAT_TABLE, AGENT_SETTINGS_TABLE, AGENT_TEST_ACCOUNT_EMAIL, MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE, PLANNING_MODEL_SETTING_KEY, SOCIAL_DISCOVERY_SETTING_KEY } from "./constants";
 import { memoryWarning } from "./concurrency";
 import { latestBeat, workerAlive } from "./heartbeat";
 import { approveMissionOnce } from "./approval";
@@ -124,11 +124,27 @@ export async function setRedesignFlag(client: any, input: { type: unknown; mode:
   return { ok: true, before, after: mode };
 }
 
+/** ROUND 34: the catalog-discovery switch values the admin may write: `test` (the compiler evaluates the catalog's tools for TEST accounts only) or `off`. Nothing else is accepted (`on` does not exist: no setting can give a derived tool to a customer). */
+export const SOCIAL_DISCOVERY_MODES = ["test", "off"] as const;
+export type SocialDiscoveryMode = (typeof SOCIAL_DISCOVERY_MODES)[number];
+export const readSocialDiscoveryMode = (value: unknown): SocialDiscoveryMode => (value === "test" ? "test" : "off");
+
+/** Writes ONLY the key `social_discovery` of `agent_settings` (the admin only; the route writes the audit row). Returns the mode before and after. An unknown mode is refused and nothing is written; nothing here touches a money table. */
+export async function setSocialDiscovery(client: any, input: { mode: unknown; adminId: string }): Promise<ActionResult<{ before: SocialDiscoveryMode; after: SocialDiscoveryMode }>> {
+  if (!(SOCIAL_DISCOVERY_MODES as ReadonlyArray<unknown>).includes(input.mode)) return bad(400, "الوضع غير معروف.");
+  const current = await client.from(AGENT_SETTINGS_TABLE).select("value").eq("key", SOCIAL_DISCOVERY_SETTING_KEY).maybeSingle();
+  const before = readSocialDiscoveryMode(current.data?.value);
+  const after = input.mode as SocialDiscoveryMode;
+  const { error } = await client.from(AGENT_SETTINGS_TABLE).upsert({ key: SOCIAL_DISCOVERY_SETTING_KEY, value: after, updated_at: new Date().toISOString(), updated_by: input.adminId }, { onConflict: "key" });
+  if (error) return bad(500, "تعذّر حفظ الإعداد.");
+  return { ok: true, before, after };
+}
+
 const SUMMARY_COLUMNS ="id,request_text,status,question_ar,reserved_points,unit_price_points,delivered_units,charged_points,planning_model,planning_llm_usd,execution_model,execution_llm_usd,planning_treg_usd,execution_treg_usd,created_at,updated_at";
 
 /** The page's first load: the worker's heartbeat (alive or not), the model setting, and the latest missions. */
 export async function loadOverview(client: any, now: number = Date.now()) {
-  const [beats, setting, missions, pricing, redesign, contract] = await Promise.all([
+  const [beats, setting, missions, pricing, redesign, contract, discovery] = await Promise.all([
     client.from(AGENT_HEARTBEAT_TABLE).select("worker_id,beat_at,active_missions,model,version,rss_mb,tree_rss_mb").order("beat_at", { ascending: false }).limit(5),
     client.from(AGENT_SETTINGS_TABLE).select("value").eq("key", PLANNING_MODEL_SETTING_KEY).maybeSingle(),
     client.from(MISSION_TABLE).select(SUMMARY_COLUMNS).order("created_at", { ascending: false }).limit(LIST_LIMIT),
@@ -136,6 +152,7 @@ export async function loadOverview(client: any, now: number = Date.now()) {
     client.from(AGENT_SETTINGS_TABLE).select("value").eq("key", REDESIGN_FLAGS_KEY).maybeSingle(),
     // READ ONLY (round 14): the last files whose description the delivery contract completed (the worker's internal events), for the admin's «ملفات صُحّحت تلقائيًا»
     client.from(MISSION_EVENTS_TABLE).select("mission_id,message_ar,counts,created_at").eq("kind", "call").order("created_at", { ascending: false }).limit(300),
+    client.from(AGENT_SETTINGS_TABLE).select("value").eq("key", SOCIAL_DISCOVERY_SETTING_KEY).maybeSingle(),
   ]);
   const rows = Array.isArray(beats.data) ? beats.data : [];
   const last = latestBeat(rows);
@@ -152,6 +169,7 @@ export async function loadOverview(client: any, now: number = Date.now()) {
     pricing: pricing.data?.value ? normalizeMissionPricingSettings(pricing.data.value) : { ...DEFAULT_MISSION_PRICING_SETTINGS },
     redesignFlags: normalizeRedesignFlags(redesign.data?.value),
     platformFlags: readPlatformFlags(redesign.data?.value),
+    socialDiscovery: readSocialDiscoveryMode(discovery?.data?.value),
     testAccountEmail: AGENT_TEST_ACCOUNT_EMAIL,
     missions: Array.isArray(missions.data) ? missions.data : [],
     contractEvents: (Array.isArray(contract?.data) ? contract.data : []).filter((e: any) => e?.counts && Number(e.counts.adm_contract) === 1).slice(0, 20).map((e: any) => ({ mission_id: String(e.mission_id), message_ar: String(e.message_ar ?? ""), created_at: String(e.created_at ?? ""), r1: Number(e.counts.adm_r1) || 0, r2: Number(e.counts.adm_r2) || 0, r3: Number(e.counts.adm_r3) || 0, r4: Number(e.counts.adm_r4) || 0, completed: Number(e.counts.adm_completed) || 0 })),

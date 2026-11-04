@@ -13,22 +13,43 @@ export function completenessOf(paging: "declared" | "unknown", hasMore: boolean 
   return hasMore ? "partial" : "complete_within_source";
 }
 
+/**
+ * ROUND 34, THE EVIDENCE THAT DISCOVERY WAS EVALUATED (every platform): what the compiler looked at before it chose the parents' tool. `eligible` are the tools of the role that passed the catalog check (a verified, hand-written tool and a tool derived from the catalog are
+ * evaluated TOGETHER); `rejected` counts, by reason, the catalog's tools of the platform that could not be used (a tool that already has a verified card counts as `has_hand_card`: the verified card stands for it); `chain_refused` are the candidates whose chain with the
+ * comments and replies cards failed the check before any read. Internal audit only: nothing here is shown to the customer.
+ */
+export interface DiscoveryEvaluation {
+  platform: string;
+  eligible: Array<{ endpoint_id: string; status: ToolCard["status"]; derived: boolean }>;
+  rejected: Record<string, number>;
+  chain_refused: string[];
+}
+
 export interface DiscoveryMark {
+  /** Discovery was entered for this plan (the switch was on for a test account and the compiler evaluated the candidates). */
+  entered: true;
   endpoint_id: string;
   role: CardRole;
-  derived: true;
+  /** The chosen tool was derived from the catalog (false: a verified, hand-written tool that took part in the same evaluation). */
+  derived: boolean;
+  /** The chosen card's own status (`verified` on stored real pages, else `catalog_only`). */
+  status: ToolCard["status"];
   paging: "declared" | "unknown";
   pages_read: number;
   /** The rows the stage will deliver at most (the approved count of parents). */
   rows_planned: number;
   completeness: Completeness;
-  /** How the card was chosen: by the model among the validated candidates, or by the compiler's own ranking. `candidates` are the ids that passed validation (the model never saw another). */
-  selection?: { by: "model" | "rank"; candidates: string[]; reason?: string };
+  /** How the card was chosen: by the model among the validated candidates, by the compiler's own ranking, or because it was the only validated candidate. `candidates` are the ids that passed validation (the model never saw another). */
+  selection?: { by: "model" | "rank" | "only_candidate"; candidates: string[]; reason?: string };
+  evaluation?: DiscoveryEvaluation;
 }
 
-export function discoveryMarkOf(card: ToolCard, read: { pages: number; rows: number; hasMore: boolean | null; selection?: DiscoveryMark["selection"] }): DiscoveryMark {
-  const paging = card.derived?.paging ?? "unknown";
-  return { endpoint_id: card.endpointId, role: card.role, derived: true, paging, pages_read: read.pages, rows_planned: read.rows, completeness: completenessOf(paging, read.hasMore), ...(read.selection ? { selection: read.selection } : {}) };
+/** How a card's pages declare their continuation: a derived card says so itself; a verified card declares it when it has both a cursor input and a cursor place in the answer. */
+export const pagingOf = (card: ToolCard): "declared" | "unknown" => card.derived ? card.derived.paging : card.inputs.cursor && card.page.cursor ? "declared" : "unknown";
+
+export function discoveryMarkOf(card: ToolCard, read: { pages: number; rows: number; hasMore: boolean | null; selection?: DiscoveryMark["selection"]; evaluation?: DiscoveryEvaluation }): DiscoveryMark {
+  const paging = pagingOf(card);
+  return { entered: true, endpoint_id: card.endpointId, role: card.role, derived: card.derived !== undefined, status: card.status, paging, pages_read: read.pages, rows_planned: read.rows, completeness: completenessOf(paging, read.hasMore), ...(read.selection ? { selection: read.selection } : {}), ...(read.evaluation ? { evaluation: read.evaluation } : {}) };
 }
 
 export const DISCOVERED_SOURCE_NOTE_AR = "اخترنا مصدر هذه الخطوة من دليل المصادر، ولم يُجرَّب من قبل على صفحات حقيقية في هذا النظام، فراجع العينة قبل الاعتماد.";
@@ -40,7 +61,8 @@ export const COMPLETENESS_AR: Record<Completeness, string> = {
 
 /** The sentences of the plan card for a discovered source (nothing about providers, prices or tools' names; Arabic-Indic digits). */
 export function discoveryNotesAr(card: ToolCard, ask: Pick<Ask, "topic" | "period">, mark: DiscoveryMark): string[] {
-  const notes = [DISCOVERED_SOURCE_NOTE_AR];
+  // the «not tried before» sentence is true only of a tool derived from the catalog; a verified tool that took part in the evaluation says only what the pages showed about completeness
+  const notes = card.status === "verified" ? [] : [DISCOVERED_SOURCE_NOTE_AR];
   if (card.inputs.query?.format === "hashtag" && ask.topic.text) notes.push(`البحث هنا بالوسم «#${ask.topic.text.trim().replace(/^#+/, "").replace(/\s+/g, "_")}»، فيشمل المنشورات التي وُسمت به فقط، وقد لا يشمل ما كُتب عن الموضوع دون وسم.`);
   notes.push(`قرأنا ${toArabicDigits(mark.pages_read)} ${mark.pages_read === 1 ? "صفحة" : mark.pages_read === 2 ? "صفحتين" : "صفحات"} من المصدر. ${COMPLETENESS_AR[mark.completeness]}`);
   return notes;
@@ -89,7 +111,7 @@ export function parseSelection(text: string, candidates: ReadonlyArray<Candidate
  * a provider's search index is not the platform. Arabic only, no provider name, no price.
  */
 export function deliveryCompletenessLineAr(mark: DiscoveryMark, stageTitle: string, stop: string | null | undefined, delivered: number): string {
-  const head = `«${stageTitle}»: مصدر هذه المرحلة اختير من دليل المصادر.`;
+  const head = mark.status === "verified" ? `«${stageTitle}»: قارنّا المصادر المتاحة لهذه المرحلة في دليل المصادر، واخترنا مصدرًا سبق التحقق منه على صفحات حقيقية.` : `«${stageTitle}»: مصدر هذه المرحلة اختير من دليل المصادر.`;
   const tail = "وهذا الملف من نتائج هذا المصدر فقط، ولا يمثل كل ما نُشر على المنصة.";
   const n = toArabicDigits(delivered);
   if (stop === "source_exhausted") return `${head} انتهت نتائج المصدر قبل بلوغ الحد المعتمد، فالقراءة مكتملة ضمن ما يتيحه المصدر (${n} ${delivered === 1 ? "عنصر" : "عنصرًا"}). ${tail}`;

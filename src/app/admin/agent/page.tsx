@@ -17,7 +17,7 @@ interface WorkerMemory { rssMb: number; treeRssMb: number | null; limitMb: numbe
 interface WorkerState { alive: boolean; ageSeconds: number | null; lastBeatAt: string | null; workers: Array<{ worker_id: string; active_missions: number; model: string | null; version: string | null }>; memory: WorkerMemory | null }
 interface MissionRow { id: string; request_text: string; status: string; question_ar: string | null; reserved_points: number | null; unit_price_points: number | null; delivered_units: number | null; charged_points: number | null; planning_model: string | null; planning_llm_usd: number; execution_model: string | null; execution_llm_usd: number; planning_treg_usd: number; execution_treg_usd: number; created_at: string }
 interface ContractEvent { mission_id: string; message_ar: string; created_at: string; r1: number; r2: number; r3: number; r4: number; completed: number }
-interface Overview { tablesReady: boolean; contractEvents?: ContractEvent[]; redesignFlags?: RedesignFlags; platformFlags?: PlatformFlags; worker: WorkerState; planningModel: string | null; allowedModels: string[]; pricing?: { markup: number; minChargePoints: number }; testAccountEmail: string; missions: MissionRow[] }
+interface Overview { tablesReady: boolean; contractEvents?: ContractEvent[]; redesignFlags?: RedesignFlags; platformFlags?: PlatformFlags; socialDiscovery?: "test" | "off"; worker: WorkerState; planningModel: string | null; allowedModels: string[]; pricing?: { markup: number; minChargePoints: number }; testAccountEmail: string; missions: MissionRow[] }
 interface EventRow { id: number; kind: string; message_ar: string; counts: Record<string, number>; created_at: string }
 interface CustomerStage { key: string; title_ar: string; expected_rows: number; parent_key: string | null; deliver: boolean; columns: Array<{ key: string; title_ar: string }>; sample_rows: Array<Record<string, unknown>>; how_ar?: string }
 interface CustomerPlan { summary_ar: string; stages: CustomerStage[]; price: { unit_price_points: number; reserve_points: number; max_charge_points: number; delivered_rows: number } }
@@ -151,6 +151,11 @@ export default function AgentPage() {
   async function confirmFlag() { await flagController.confirm(); sync(); }
   function cancelFlag() { flagController.cancel(); sync(); }
 
+  // ROUND 34: the catalog-discovery switch (test accounts only): the admin route action `social_discovery`, audited like the other settings
+  async function setDiscovery(mode: "test" | "off") {
+    setFlagBusy(true);
+    try { await adminFetch("/api/admin/agent", { method: "POST", body: JSON.stringify({ action: "social_discovery", mode }) }); await loadOverview(); toast("حُفظ مفتاح اكتشاف المصادر"); } catch (e) { toast(e instanceof Error ? e.message : "تعذّر الحفظ"); } finally { setFlagBusy(false); }
+  }
   const w = overview?.worker;
   const m = detail?.mission;
   const plan = detail?.customerPlan;
@@ -209,6 +214,18 @@ export default function AgentPage() {
           </ul>
         )}
       </section>
+      {overview ? (
+        <section className={SECTION} aria-label="اكتشاف المصادر من الدليل" data-testid="social-discovery">
+          <h3 className="m-0 text-[13px] font-semibold text-ink">اكتشاف المصادر من الدليل (حسابات الاختبار فقط)</h3>
+          <p className="m-0 text-[12px] leading-[1.8] text-ink2">«تجريبي» يجعل المخطط يقيّم أدوات الدليل مع الأدوات الموثّقة لكل المنصات الخمس، لحسابات الاختبار فقط. «إيقاف» يعيد المسار كما كان. لا وضع «تشغيل» للعملاء. يُسجَّل كل تغيير في سجل الإدارة، ويسري على المهام التي تبدأ بعده.</p>
+          <span className="text-[13px] text-ink2" data-testid="social-discovery-current">الوضع الحالي: {overview.socialDiscovery === "test" ? "تجريبي" : "إيقاف"}</span>
+          <div className="flex flex-wrap gap-2">
+            {(["off", "test"] as const).map((mode) => (
+              <button key={mode} type="button" className={`hit min-h-11 cursor-pointer rounded-xl border px-4 text-sm font-semibold disabled:opacity-50 ${(overview.socialDiscovery ?? "off") === mode ? "border-ink bg-ink text-bg" : "border-ln2 bg-sf text-ink"}`} aria-pressed={(overview.socialDiscovery ?? "off") === mode} disabled={flagBusy} onClick={() => { void setDiscovery(mode); }} data-testid={`social-discovery-${mode}`}>{mode === "test" ? "تجريبي" : "إيقاف"}</button>
+            ))}
+          </div>
+        </section>
+      ) : null}
       {overview?.redesignFlags ? <RedesignFlagsSection flags={overview.redesignFlags} platformFlags={overview.platformFlags ?? {}} confirming={confirmingFlag} busy={flagBusy} onPick={(t, m) => { void pickFlag(t, m); }} onConfirm={() => { void confirmFlag(); }} onCancel={cancelFlag} /> : null}
 
       <section className={SECTION} aria-label="صحة المصادر" data-testid="agent-sources">

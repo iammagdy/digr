@@ -16,10 +16,13 @@ export interface RoleRule {
 }
 
 /**
- * The rows of the platforms whose parents have only ONE hand-verified tool shape today (YouTube: a search INSIDE a channel; Instagram: an account's listing). TikTok, X and Facebook already have verified keyword searches; a capability of theirs is added here (one row of data) only when a real
- * capture shows the catalog's other tools are needed: until then no derived card can compete with their verified ones.
+ * The capabilities whose tools may read the parents of a request. ROUND 34: ALL FIVE PLATFORMS ARE IN THE GRAMMAR. TikTok, X and Facebook already have hand-verified keyword searches; their capabilities are listed here so that those verified cards and every OTHER eligible tool of the same capability
+ * are evaluated together as candidates (an endpoint that already has a hand card is refused as `has_hand_card`: the verified card stands in its place, it is not derived twice). A verified card still outranks a derived one on a tie; a derived one competes only where the catalog proves it carries more.
  */
 export const ROLE_RULES: ReadonlyArray<RoleRule> = [
+  { capability: "tiktok.search.videos", role: "videos.search", takes: "keyword" },
+  { capability: "x.search.posts", role: "tweets.search", takes: "keyword" },
+  { capability: "facebook.search.posts", role: "posts.search", takes: "keyword" },
   { capability: "youtube.search.videos", role: "videos.search", takes: "keyword" },
   { capability: "instagram.search.reels", role: "posts.search", takes: "keyword" },
   { capability: "instagram.hashtag.posts", role: "posts.search", takes: "keyword" },
