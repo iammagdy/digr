@@ -6,7 +6,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ## Round 26 (work in progress, 4 Nov 2026, after #376, main = `0bf7b2c`): customer-experience fixes from the live test, NOT FINISHED, NOT MERGED
 
-**Status: draft PR "Round 26 (WIP)". Items 7 and 9 are NOT started, item 10 (verify, merge) is NOT done. Nothing here is merged. No SQL write, no migration, no flag change, no paid provider call, no key or token seen. No forbidden file edited.**
+**Status: draft PR "Round 26 (WIP)". Item 7 remains unresolved, items 2, 8 and 9 need further verification, and final verification is NOT done. Nothing here is merged. No SQL write, no migration, no flag change, no paid provider call, no key or token seen. No forbidden file edited.**
 Branch `claude/tiktok-failure-platform-tests-xvnycn`. The owner's brief (nine items, one PR) is the one in the session that opened this round; this entry is the state at the stop.
 
 ### Continuation (4 Nov 2026): partial, still draft
@@ -25,14 +25,14 @@ No paid call, database write, migration, switch or memory-limit change. GitHub A
 | # | Item | State |
 |---|---|---|
 | 1 | Waiting time | **Partly done.** Polling made faster; the 49-second gap itself is NOT explained and NOT fixed. |
-| 2 | Loading and holding states | **Partly done** (card level only). |
+| 2 | Loading and holding states | **Partly done** (card, composer and template pending states; legacy controls and browser check remain). |
 | 3 | Steps panel order | **Done.** |
 | 4 | «طلبك في الدور» | **Done** for the label; the cause is found from the data (below). |
 | 5 | Arabic count grammar | **Done** for the card headline (`summaryAr`); other card lines already used `countAr`, not audited line by line. |
 | 6 | One counter, one bar | **Done.** |
-| 7 | Methodology PDF text layer | **Not started** (investigation only, see below). |
-| 8 | Titles from the Ask | **Partly done** (file name and `missionTitleAr` done; the chooser card and methodology title callers were not checked). |
-| 9 | First load of the signed-in site | **Not started.** |
+| 7 | Methodology PDF text layer | **Unresolved** (ActualText probe discarded; see continuation above). |
+| 8 | Titles from the Ask | **Partly done** (chooser and PDF now share the recomputed title; live multi-platform verification remains). |
+| 9 | First load of the signed-in site | **Partly done** (session guard and balance skeleton; signed-in timing remains unverified). |
 
 ### Files changed per item
 - **1.** `src/lib/agentMission/pollDelay.ts` (new: `cardPollDelayMs`, `workerPollDelayMs`), `src/components/mission/AgentMissionCard.tsx` (the card polls every 2.5 s while live and for 3 minutes after the customer's own action, 8 s otherwise), `agent/src/worker.ts` (2 s poll for 2 minutes after the worker takes a mission, 5 s idle; a fixed `pollMs` still wins for tests).
