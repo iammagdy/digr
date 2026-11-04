@@ -28,7 +28,7 @@ export interface RereadResult {
   /** Unit key -> the value found (null: the unit was searched and nothing real was found). A unit that was never reached is absent. */
   values: Map<string, string | null>;
   /** Why the run stopped before every unit was reached (null: every unit was reached). */
-  stop: RereadStop | "interrupted";
+  stop: RereadStop | "interrupted" | "lost";
 }
 
 const STOP_REFUSALS: Readonly<Record<string, Exclude<RereadStop, null | "deadline">>> = { daily_cap: "daily_cap", daily_limit: "daily_cap", over_budget: "budget", recording_unavailable: "recording" };
@@ -47,6 +47,8 @@ export async function runReread(input: {
   units: ReadonlyArray<RereadUnit>;
   deadlineMs: number;
   shouldStop: () => boolean;
+  /** True when this worker no longer owns the add-on's row (its lease ended and another worker took it): checked before every unit, so the old worker stops paying for what the new one is reading. */
+  lost?: () => Promise<boolean>;
   log?: (line: string) => void;
 }): Promise<RereadResult> {
   const { store, gateway, catalog } = input;
@@ -99,6 +101,7 @@ export async function runReread(input: {
     if (stop) break;
     if (input.shouldStop()) { stop = "interrupted"; break; }
     if (Date.now() >= input.deadlineMs) { stop = "deadline"; break; }
+    if (input.lost && (await input.lost())) { stop = "lost"; break; }
     const found = await lookup(u);
     // a unit the run could not finish because a limit refused its call is NOT written: it was not searched to the end
     if (found.stopped) break;

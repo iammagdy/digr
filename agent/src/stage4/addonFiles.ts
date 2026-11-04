@@ -8,6 +8,7 @@ import type { AgentStore } from "../types";
  *   addons/<add-on id>/rows/u_<hash>.json   one object per unit the re-read has finished (a resumed run skips them)
  *   addons/<add-on id>/v<NNNN>.json         the new version, PENDING: stored BEFORE the charge, not yet visible
  *   addons/<add-on id>/review.json          the review's report, PENDING
+ *   addons/<add-on id>/freeze.json          the SETTLEMENT SNAPSHOT, written ONCE, first writer wins: the new version and the real cost that paid for it, in ONE object (so no later call of another worker can ever be counted for it)
  *   addons/<add-on id>/outcome.json         what the run found (filled, requested, the real cost): the inputs of the charge, fixed for every retry
  *   versions/v<NNNN>.json                   the published version (the S2 list reads this folder)
  *   reviews/r<NNNN>.json                    the published report of the version NNNN
@@ -15,6 +16,7 @@ import type { AgentStore } from "../types";
 const pad = (n: number): string => String(Math.max(1, Math.floor(n))).padStart(4, "0");
 export const pendingVersionPath = (addonId: string, version: number): string => `addons/${addonId}/v${pad(version)}.json`;
 export const pendingReviewPath = (addonId: string): string => `addons/${addonId}/review.json`;
+export const freezePath = (addonId: string): string => `addons/${addonId}/freeze.json`;
 export const outcomePath = (addonId: string): string => `addons/${addonId}/outcome.json`;
 export const rowsDir = (addonId: string): string => `addons/${addonId}/rows`;
 export const reviewPathOf = (version: number): string => `reviews/r${pad(version)}.json`;
@@ -59,6 +61,30 @@ export async function readJsonOrNull<T>(store: AgentStore, missionId: string, re
   const text = await store.getFile(missionId, rel);
   if (text === null) return null;
   try { return JSON.parse(text) as T; } catch { return null; }
+}
+
+/** The frozen work: the version the run built and the real cost of the calls that paid for it, taken at the same moment. Whoever writes it first decides it for every worker and every retry. */
+export interface AddonFreeze {
+  v: 1;
+  addonId: string;
+  of: string;
+  version: FileVersion;
+  /** The real provider cost of the add-on's own execution calls AT THE MOMENT OF THE FREEZE, USD. */
+  realCostUsd: number;
+  stop: RereadStop;
+  createdAt: string;
+}
+export async function readFreeze(store: AgentStore, of: string, addonId: string): Promise<AddonFreeze | null> {
+  const f = await readJsonOrNull<AddonFreeze>(store, of, freezePath(addonId));
+  return f && f.v === 1 && f.addonId === addonId && f.version && typeof f.realCostUsd === "number" ? f : null;
+}
+/** Create-only: the FIRST writer wins; a later writer gets the stored one back and its own numbers are dropped. */
+export async function writeFreeze(store: AgentStore, freeze: AddonFreeze): Promise<AddonFreeze> {
+  const put = await store.putNewStrict(freeze.of, freezePath(freeze.addonId), JSON.stringify(freeze), JSON_TYPE);
+  if (put.created) return freeze;
+  const stored = await readFreeze(store, freeze.of, freeze.addonId);
+  if (!stored) throw new Error("the freeze exists but cannot be read");
+  return stored;
 }
 
 /** The outcome, if the run already wrote it. */

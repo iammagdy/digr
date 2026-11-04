@@ -11,7 +11,7 @@ import type { RunnerDeps } from "../runMission";
 import { readRunState, updateRunState, type RunState } from "../runState";
 import { trackRun, untrackRun } from "../sessions";
 import type { CallRow, MissionRecord } from "../types";
-import { JSON_TYPE, pendingReviewPath, pendingVersionPath, readJsonOrNull, readOutcome, readVersion, reviewPathOf, versionPathOf, writeOutcome, type AddonOutcome } from "./addonFiles";
+import { JSON_TYPE, type AddonFreeze, pendingReviewPath, pendingVersionPath, readFreeze, readJsonOrNull, readOutcome, writeFreeze, readVersion, reviewPathOf, versionPathOf, writeOutcome, type AddonOutcome } from "./addonFiles";
 import { ADDON_DONE_AR } from "./addonText";
 import { runReread, type RereadUnit } from "./rereadRun";
 
@@ -65,6 +65,38 @@ async function requeue(deps: Deps, id: string, cause: Cause, patch: Record<strin
   return true;
 }
 
+// ---------- a CHARGED file that could not be published yet ----------
+/** The paid retries before a charged file that can never be shown is given up (the administrator refunds by hand). With the waits below this is about a day. */
+export const ADDON_PAID_PARKS_MAX = 48;
+const PARK_FIRST_WAIT_S = 30;
+const PARK_LONGEST_WAIT_S = 1800;
+const WAITING_MARK = "charged_waiting_publish";
+const paidOf = (job: { status: string; charged: number } | null): boolean => job?.status === "completed" && job.charged > 0;
+
+/**
+ * The points are charged and the file is not shown (storage failed, or the folder could not be read): the file is OWED. The row goes back to «approved» with its lease in the future (the claim leaves it alone until then; the wait
+ * doubles up to half an hour), nothing is released or charged again, and the next run only publishes the pending bytes. The customer and the administrator are told once. Past ADDON_PAID_PARKS_MAX tries the row ends «failed» with
+ * a note for the administrator: the charge stays and is refunded by hand.
+ */
+async function parkPaid(deps: Deps, row: MissionRecord, error: unknown, charged: number): Promise<void> {
+  const { store } = deps;
+  const state = await updateRunState(store, row.id, (s) => ({ ...s, errorRequeues: s.errorRequeues + 1 }), deps.log);
+  if (state.errorRequeues > ADDON_PAID_PARKS_MAX) {
+    await adminNote(deps, row.id, "خُصم هذا الطلب ولم يُنشر ملفه بعد كل المحاولات؛ يلزم ردّ النقاط يدويًا بعد مراجعة المشرف.", { adm_charged: charged });
+    await store.updateMission(row.id, { status: "failed", error: "charged_not_published", charged_points: charged, delivered_units: 0, summary_ar: ADDON_DONE_AR.chargedNotShown, ...clear });
+    await store.addEvent(row.id, { kind: "result", message_ar: ADDON_DONE_AR.chargedNotShown });
+    return;
+  }
+  const wait = Math.min(PARK_FIRST_WAIT_S * 2 ** Math.min(state.errorRequeues - 1, 10), PARK_LONGEST_WAIT_S);
+  const first = row.error !== WAITING_MARK;
+  await store.updateMission(row.id, { status: "approved", worker_id: null, lease_until: new Date(Date.now() + wait * 1000).toISOString(), error: WAITING_MARK, charged_points: charged });
+  if (first) {
+    await adminNote(deps, row.id, "خُصم هذا الطلب ولم يُنشر ملفه بعد؛ يُعاد النشر تلقائيًا ويُراجَع إن طال.", { adm_charged: charged });
+    await store.addEvent(row.id, { kind: "system", message_ar: ADDON_DONE_AR.paidPublishing });
+  }
+  deps.log?.(`addon_paid_parked ${row.id} try ${state.errorRequeues} wait ${wait}s ${shortError(error).slice(0, 120)}`);
+}
+
 // ---------- the entry point ----------
 /** Never throws. */
 export async function runAddonSafely(deps: Deps, mission: MissionRecord): Promise<void> {
@@ -82,6 +114,9 @@ export async function recoverAddon(deps: Deps, mission: MissionRecord, error: un
   try {
     const fresh = (await store.getMission(mission.id)) ?? mission;
     if (fresh.status !== "executing") return;
+    // a CHARGED add-on is never released, never failed for good while its file can still be published: it waits and is retried
+    const before = fresh.job_id ? await readJob(deps.client, fresh.job_id) : null;
+    if (paidOf(before)) return parkPaid(deps, fresh, error, before!.charged);
     if (await requeue(deps, fresh.id, "error", { error: shortError(error) })) return;
     const addon = readAddonPlan(fresh.plan);
     const hold = Number(fresh.reserved_points);
@@ -89,6 +124,11 @@ export async function recoverAddon(deps: Deps, mission: MissionRecord, error: un
     if (addon && fresh.job_id && hold >= 1) {
       const s = await settleAddon(deps.client, settleInputOf(addon.kind, fresh.job_id, hold, null, false)).catch(() => null);
       released = Boolean(s?.result.ok);
+    }
+    if (!released && fresh.job_id) {
+      // the release was refused: the job may have been charged in the meantime, or its state cannot be read: never end a possibly charged file as lost
+      const now = await readJob(deps.client, fresh.job_id);
+      if (now === null || paidOf(now)) return parkPaid(deps, fresh, error, now?.charged ?? 0);
     }
     await store.updateMission(fresh.id, { status: "failed", error: shortError(error), charged_points: released ? 0 : null, delivered_units: 0, summary_ar: released ? ADDON_DONE_AR.stuck : ADDON_DONE_AR.chargedNotShown, ...clear });
     await store.addEvent(fresh.id, { kind: "result", message_ar: released ? ADDON_DONE_AR.stuck : ADDON_DONE_AR.chargedNotShown });
@@ -117,17 +157,20 @@ export async function runAddon(deps: Deps, mission: MissionRecord): Promise<void
     return;
   }
   const check = checkAddon(row.id, addon);
+  // WHO OWNS THE ROW: the worker that claimed it. When its lease ends and another worker claims the row, the row's worker id changes: the old worker then stops spending and stops telling the customer (what it already stored is harmless: every object is create-only)
+  const me = row.worker_id;
+  const owns = async (): Promise<boolean> => { if (!me) return true; const now = await store.getMission(row.id); return Boolean(now && now.status === "executing" && now.worker_id === me); };
   const starts = await updateRunState(store, row.id, (r) => ({ ...r, executionStarts: r.executionStarts + 1 }), deps.log);
   const startsExceeded = starts.executionStarts > AGENT_PHASE_STARTS_MAX;
   const job = await readJob(deps.client, jobId);
 
   // a plan that is not what the code computes, or a job the watchdog already released: nothing is run, nothing is spent
   let outcome = await readOutcome(store, addon.of, row.id);
-  if (!check.ok || check.holdPoints !== hold) return finish(deps, row, addon, jobId, hold, { kind: "release", reason: "plan_mismatch" });
-  if (job?.status === "failed") return finish(deps, row, addon, jobId, hold, { kind: "release", reason: "released_earlier" });
+  if (!check.ok || check.holdPoints !== hold) return finish(deps, row, addon, jobId, hold, { kind: "release", reason: "plan_mismatch" }, owns);
+  if (job?.status === "failed") return finish(deps, row, addon, jobId, hold, { kind: "release", reason: "released_earlier" }, owns);
 
   if (!outcome && job?.status !== "completed") {
-    const made = addon.kind === "review" ? await reviewWork(deps, row, addon) : await editWork(deps, row, addon, jobId, hold, startsExceeded);
+    const made = addon.kind === "review" ? await reviewWork(deps, row, addon) : await editWork(deps, row, addon, jobId, hold, startsExceeded, owns);
     if (made === "interrupted") return;
     outcome = made;
   }
@@ -138,7 +181,7 @@ export async function runAddon(deps: Deps, mission: MissionRecord): Promise<void
     await store.addEvent(row.id, { kind: "result", message_ar: ADDON_DONE_AR.chargedNotShown });
     return;
   }
-  return finish(deps, row, addon, jobId, hold, { kind: "settle", outcome });
+  return finish(deps, row, addon, jobId, hold, { kind: "settle", outcome }, owns);
 }
 
 const nothing = (addon: AddonPlan, row: MissionRecord, reason: NonNullable<AddonOutcome["reason"]>, stop: AddonOutcome["stop"], realCostUsd: number, now: Date): AddonOutcome => ({
@@ -163,7 +206,7 @@ async function reviewWork(deps: Deps, row: MissionRecord, addon: AddonPlan): Pro
 }
 
 // ---------- an edit or a review fix ----------
-async function editWork(deps: Deps, row: MissionRecord, addon: AddonPlan, jobId: string, hold: number, startsExceeded: boolean): Promise<AddonOutcome | "interrupted"> {
+async function editWork(deps: Deps, row: MissionRecord, addon: AddonPlan, jobId: string, hold: number, startsExceeded: boolean, owns: () => Promise<boolean>): Promise<AddonOutcome | "interrupted"> {
   const { store } = deps;
   const now = (deps.now ?? (() => new Date()))();
   const calls = await store.listCalls(row.id);
@@ -173,10 +216,12 @@ async function editWork(deps: Deps, row: MissionRecord, addon: AddonPlan, jobId:
   if (addon.newVersion !== null && (await store.getFile(addon.of, versionPathOf(addon.newVersion))) !== null) return writeOutcome(store, nothing(addon, row, "version_exists", null, executionSpend(calls), now));
   const plan = unitsOf(addon, base);
   if (!plan || (plan.units.length > 0 && plan.units.length !== addon.pricing.requested)) return writeOutcome(store, nothing(addon, row, "mismatch", null, executionSpend(calls), now));
-  // A PENDING VERSION IS A FROZEN SETTLEMENT SNAPSHOT: a run that was cut after storing it and before storing the outcome must not re-read (no new spending) nor build another version; the outcome is read FROM the stored bytes
+  // THE FREEZE IS THE SETTLEMENT SNAPSHOT: the version AND the real cost that paid for it, in one create-only object. A run that finds one makes no re-read and builds no other version: everything is read from it.
   const pendingAt = pendingVersionPath(row.id, base.version + 1);
-  const frozenBytes = await store.getFileBytes(addon.of, pendingAt);
-  if (frozenBytes) return frozenOutcome(deps, row, addon, base, plan, pendingAt, frozenBytes, now);
+  const frozen = await readFreeze(store, addon.of, row.id);
+  if (frozen) return settleFrozen(deps, row, addon, base, plan, frozen, pendingAt, now);
+  // a pending version with no freeze is not something this code writes: it cannot be tied to a cost, so it is never charged for nor published
+  if (await store.getFileBytes(addon.of, pendingAt)) return inconsistent(deps, row, "نسخة معلّقة بلا لقطة تسوية لهذا الطلب؛ لم يُخصم ولم يُنشر شيء وبقيت للمراجعة.");
 
   let values = new Map<string, string | null>();
   let stop: AddonOutcome["stop"] = null;
@@ -186,8 +231,10 @@ async function editWork(deps: Deps, row: MissionRecord, addon: AddonPlan, jobId:
     const gateway = createGateway({ store, client: deps.client, missionId: row.id, userId: row.user_id, jobId, phase: "execution", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: row.request_text, counter: { seq: lastSeq(calls) } });
     const tracked = trackRun();
     try {
-      const got = await runReread({ store, gateway, catalog: deps.catalog, of: addon.of, addonId: row.id, base, sheet: plan.sheet, units: plan.units, deadlineMs: startsExceeded ? 0 : Date.now() + AGENT_EXECUTION_WALL_MS, shouldStop: () => tracked.reason.value !== null, log: deps.log });
+      const got = await runReread({ store, gateway, catalog: deps.catalog, of: addon.of, addonId: row.id, base, sheet: plan.sheet, units: plan.units, deadlineMs: startsExceeded ? 0 : Date.now() + AGENT_EXECUTION_WALL_MS, shouldStop: () => tracked.reason.value !== null, lost: async () => !(await owns()), log: deps.log });
       values = got.values;
+      // another worker owns the row now: stop here, spend nothing more, touch nothing (the row is its)
+      if (got.stop === "lost") return "interrupted";
       if (got.stop === "interrupted") {
         const cause: Cause = tracked.reason.value === "memory" ? "memory" : "restart";
         // out of requeues: finish with what is saved (settled like any other end)
@@ -201,32 +248,33 @@ async function editWork(deps: Deps, row: MissionRecord, addon: AddonPlan, jobId:
   const realCostUsd = executionSpend(await store.listCalls(row.id));
   const built = buildVersion(addon, base, plan, values, now);
   if (!built || built.filled === 0) return writeOutcome(store, nothing(addon, row, "nothing", stop, realCostUsd, now));
-  const path = pendingVersionPath(row.id, built.version.version);
-  // the first pending version stands (a cut run's, or a concurrent run's): when it was already there, the outcome is read from IT, never from what this run computed
-  const put = await store.putNewStrict(addon.of, path, JSON.stringify(built.version), JSON_TYPE);
-  if (!put.created) {
-    const existing = await store.getFileBytes(addon.of, path);
-    if (!existing) throw new Error("the pending version exists but cannot be read");
-    return frozenOutcome(deps, row, addon, base, plan, path, existing, now);
-  }
-  return writeOutcome(store, { v: 1, kind: addon.kind, addonId: row.id, of: addon.of, baseVersion: addon.baseVersion, newVersion: built.version.version, filled: built.filled, requested: addon.pricing.requested, realCostUsd, stop, reason: null, pending: path, publishAt: versionPathOf(built.version.version), createdAt: now.toISOString() });
+  if (!(await owns())) return "interrupted";
+  const freeze = await writeFreeze(store, { v: 1, addonId: row.id, of: addon.of, version: built.version, realCostUsd, stop, createdAt: now.toISOString() });
+  return settleFrozen(deps, row, addon, base, plan, freeze, pendingAt, now);
+}
+
+/** An object that cannot be tied to this add-on: nothing is invented, charged or published; the administrator is told, the run stops with an error and the existing recovery takes over (requeue, then the whole hold comes back); the object stays as evidence. */
+async function inconsistent(deps: Deps, row: MissionRecord, noteAr: string): Promise<never> {
+  await adminNote(deps, row.id, noteAr);
+  throw new Error("the stored work does not match this add-on");
 }
 
 /**
- * The outcome of a pending version that is already stored. What it holds is decided by the stored bytes alone: the filled count is the number of REAL values IN THAT OBJECT, found by rebuilding the version from them over the base and
- * requiring the very same bytes (so the object is exactly what this add-on's request makes of this base: right mission, version, parent, digest and cells). The real cost is the add-on's recorded execution calls: no call is made once
- * a pending version exists, so they are the calls that paid for this work. An object that cannot be tied to this add-on is never charged for nor published: the admin is told, the run stops with an error and the existing recovery
- * (requeue, then release of the whole hold) takes over; the object stays as evidence.
+ * The outcome of a FROZEN version. What it holds is decided by the freeze alone: `filled` is the number of REAL values IN THE FROZEN VERSION, found by rebuilding it from its own cells over the base and requiring the very same bytes (so
+ * the object is exactly what this add-on's request makes of this base: right mission, version, parent, digest and cells), and the real cost is the one taken at the moment of the freeze. Calls recorded later (another worker's) are
+ * not part of it. The pending object is written from the freeze (create-only; one that exists must hold the same bytes), then the outcome (first writer wins).
  */
-async function frozenOutcome(deps: Deps, row: MissionRecord, addon: AddonPlan, base: FileVersion, plan: UnitPlan, path: string, bytes: Buffer, now: Date): Promise<AddonOutcome> {
+async function settleFrozen(deps: Deps, row: MissionRecord, addon: AddonPlan, base: FileVersion, plan: UnitPlan, freeze: AddonFreeze, path: string, now: Date): Promise<AddonOutcome> {
   const { store } = deps;
-  const filled = frozenFilled(addon, base, plan, bytes);
-  if (filled === null) {
-    await adminNote(deps, row.id, "النسخة المحفوظة مؤقتًا لهذا الطلب لا تطابق ما طُلب؛ لم يُخصم ولم يُنشر شيء وبقيت للمراجعة.");
-    throw new Error("the stored pending version does not match this add-on");
+  const text = JSON.stringify(freeze.version);
+  const filled = freeze.of === addon.of ? frozenFilled(addon, base, plan, Buffer.from(text, "utf8")) : null;
+  if (filled === null) return inconsistent(deps, row, "لقطة التسوية المحفوظة لهذا الطلب لا تطابق ما طُلب؛ لم يُخصم ولم يُنشر شيء وبقيت للمراجعة.");
+  const put = await store.putNewStrict(addon.of, path, text, JSON_TYPE);
+  if (!put.created) {
+    const there = await store.getFileBytes(addon.of, path);
+    if (!there || !sameBytes(there, Buffer.from(text, "utf8"))) return inconsistent(deps, row, "النسخة المعلّقة لهذا الطلب تخالف لقطة التسوية؛ لم يُخصم ولم يُنشر شيء وبقيت للمراجعة.");
   }
-  const realCostUsd = executionSpend(await store.listCalls(row.id));
-  return writeOutcome(store, { v: 1, kind: addon.kind, addonId: row.id, of: addon.of, baseVersion: addon.baseVersion, newVersion: base.version + 1, filled, requested: addon.pricing.requested, realCostUsd, stop: null, reason: null, pending: path, publishAt: versionPathOf(base.version + 1), createdAt: now.toISOString() });
+  return writeOutcome(store, { v: 1, kind: addon.kind, addonId: row.id, of: addon.of, baseVersion: addon.baseVersion, newVersion: base.version + 1, filled, requested: addon.pricing.requested, realCostUsd: freeze.realCostUsd, stop: freeze.stop, reason: null, pending: path, publishAt: versionPathOf(base.version + 1), createdAt: now.toISOString() });
 }
 
 /** The number of real values in a stored pending version, or null when the bytes are not exactly the version this request makes of this base (or hold no real value: a run never stores such a version). */
@@ -313,8 +361,10 @@ function buildVersion(addon: AddonPlan, base: FileVersion, plan: UnitPlan, value
 // ---------- check, settle, publish, tell ----------
 type Ending = { kind: "release"; reason: "plan_mismatch" | "released_earlier" } | { kind: "settle"; outcome: AddonOutcome };
 
-async function finish(deps: Deps, row: MissionRecord, addon: AddonPlan, jobId: string, hold: number, ending: Ending): Promise<void> {
+async function finish(deps: Deps, row: MissionRecord, addon: AddonPlan, jobId: string, hold: number, ending: Ending, owns: () => Promise<boolean>): Promise<void> {
   const { store, client } = deps;
+  // another worker owns the row now: it finishes (settlement and publishing are idempotent); this one says and changes nothing
+  if (!(await owns())) return;
   const of = addon.of;
   const outcome = ending.kind === "settle" ? ending.outcome : null;
   const workable = Boolean(outcome && outcome.filled > 0 && outcome.pending && outcome.publishAt);
@@ -360,6 +410,8 @@ async function finish(deps: Deps, row: MissionRecord, addon: AddonPlan, jobId: s
   if (zombie && released) await adminNote(deps, row.id, "وُجد عنصر منشور على المسار نفسه قبل التسوية؛ حُرّر الحجز كاملًا ولم يُنشر شيء.");
   if (zombie && charged > 0 && !publishedNow) await adminNote(deps, row.id, "خُصم الطلب وفي المسار عنصر آخر؛ يلزم مراجعة المشرف.", { adm_charged: charged });
 
+  // the money and the file are done and idempotent; the row and the customer's words belong to the worker that owns the row
+  if (!(await owns())) return;
   const filled = publishedNow ? (outcome?.filled ?? 0) : 0;
   // completed: the work is published. A charge with nothing shown, or a hold the watchdog released first, or a plan that is not what the code computes: failed. A release with nothing to show: unserved.
   const mismatch = ending.kind === "release" && ending.reason === "plan_mismatch";
