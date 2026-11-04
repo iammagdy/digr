@@ -22,7 +22,7 @@ export const POINT_VALUE_EGP_AR = "٠٫١٠";
 const MAX_CLASSIFIED_CHARS = 2000;
 
 /** The text as the rules read it: Arabic-Indic digits to ASCII, no diacritics or tatweel, one letter for each hamza and for ى ة, lower case, punctuation as spaces. */
-function normalize(raw: string): string {
+export function normalize(raw: string): string {
   return String(raw ?? "")
     .slice(0, MAX_CLASSIFIED_CHARS)
     .replace(/[٠-٩]/g, (d) => String(d.charCodeAt(0) - 0x0660))

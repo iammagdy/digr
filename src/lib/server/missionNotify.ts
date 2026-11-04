@@ -26,6 +26,8 @@ export async function sendMissionNotice(client: any, input: { userId: string; mi
     const path = conversationId ? (input.jobId ? openJobHref({ jobId: input.jobId, conversationId }) : `/dashboard/chat?c=${encodeURIComponent(conversationId)}`) : input.jobId ? `${notice.link}?job=${encodeURIComponent(input.jobId)}` : notice.link;
     out.inApp = await insertJobNotice(client, input.userId, { title: notice.title, body: notice.body, link: input.kind === "started" ? notice.link : path, id: `notif_${input.kind}_${input.missionId}` }, now);
     if (!out.inApp || !notice.email) return out;
+    // A request declined BEFORE it started (no job: nothing was held, nothing waited) gets the in-site notice only. The e-mail is for work that ran (a job with a measured wait): a declined request must send none (round 23).
+    if (input.kind === "unserved" && !input.jobId) return out;
     const got = await client.auth?.admin?.getUserById?.(input.userId);
     const user = got?.data?.user;
     if (!userWillBeEmailed(user)) return out;
