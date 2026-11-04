@@ -82,6 +82,8 @@ export const ADDON_CREATE_REFUSALS_AR = {
   too_large: ADDON_APPROVE_MESSAGES_AR.too_large,
   plan_changed: ADDON_APPROVE_MESSAGES_AR.plan_changed,
   bad_request: "تعذّر فهم هذا الطلب.",
+  /** An earlier review of this version was CHARGED and its report is not published (or its money state cannot be proved): no second paid review is offered or approved until that is resolved. It never says nothing was charged, and promises no refund. */
+  review_unresolved: "سُجّل خصم لمراجعة سابقة لهذه النسخة ولم يُنشر تقريرها بعد. لا يمكن طلب مراجعة جديدة لها قبل أن يُحسم ذلك، وسيراجع فريقنا الأمر.",
   row_removal_not_offered: "حذف عناصر من الملف غير متاح. يبقى ملفك كاملًا، ويمكنك طلب عمود أو تصحيح خانة.",
 } as const;
 export type AddonCreateRefusal = keyof typeof ADDON_CREATE_REFUSALS_AR;
