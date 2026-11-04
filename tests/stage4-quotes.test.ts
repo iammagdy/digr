@@ -96,8 +96,8 @@ describe("the quotes are display only: no money path can reach them", () => {
   it("no money file imports quotes.ts, directly or through any chain of imports; only stage4 files may import it", () => {
     const r = [...reachers(quotes)].map((f) => path.relative(ROOT, f));
     expect(r.filter((f) => MONEY.test(f))).toEqual([]);
-    // MONEY PR 7c: the one production page-side reader is the READ-ONLY review-price preview route (it shows the card's price; it holds and charges nothing: tests/money7a-isolation.test.ts and tests/stage4-review-quote.test.ts)
-    expect(r.filter((f) => !f.startsWith("src/lib/agentMission/stage4/") && f !== "src/app/api/missions/[id]/review-quote/route.ts")).toEqual([]);
+    // MONEY PR 7c and 7d: the production page-side readers are the READ-ONLY review-price preview route and the review REQUEST route (an unpaid `plan_ready` row, nothing held) (it shows the card's price; it holds and charges nothing: tests/money7a-isolation.test.ts and tests/stage4-review-quote.test.ts)
+    expect(r.filter((f) => !f.startsWith("src/lib/agentMission/stage4/") && f !== "src/app/api/missions/[id]/review-quote/route.ts" && f !== "src/app/api/missions/[id]/review-request/route.ts")).toEqual([]);
   });
   it("quotes.ts itself imports no ledger, billing, charge or settlement code (only the read-only points rate)", () => {
     const deps = (importsOf.get(quotes) ?? []).map((f) => path.relative(ROOT, f));

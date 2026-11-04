@@ -651,3 +651,52 @@ New: `reviewPreview.ts` (server), `reviewPreviewLabels.ts` and `reviewPreviewCli
 ### 15.4 Not verified
 
 Everything ran on fakes. The add-on rows are read with `.eq("plan->addon->>of", id)` (the PostgREST JSON-path form); it was not run against a database, so its behaviour on the live `missions` table is assumed (a failure of the read answers 503, never an offer). The add-on rows are also not created anywhere yet (a later task), so `blocked` and `reuse` were tested on seeded rows. A completed review is recognised by its add-on row (`completed`, kind `review`, same base version), not by the presence of `reviews/rNNNN.json`. No Vercel build, no Heroku worker, no real storage, no real browser.
+
+## 16. Phase 2B-2, task 3: create and manage a review request BEFORE payment
+
+Branch `money/7d-review-request` (a draft PR into `money/7c-review-quote-preview`). The customer has seen the review price and can now make a review **request** that WAITS for approval. **Nothing is reserved, charged, released or refunded, no job exists, and no review runs.** Approval is a later task. `DIGER_STAGE4_REVIEW` (and `DIGER_STAGE4_EDITS`) stay unset; this task sets no flag or variable anywhere.
+
+### 16.1 What the customer can do
+
+After a valid quote the section shows «تجهيز طلب المراجعة». The click makes the request and the section shows «طلب المراجعة جاهز.» with the version, the cells and the price, then «لم يُحجز أو يُخصم من رصيدك شيء.» and «يمكنك اعتماده في الخطوة التالية.», with a cancel button «إلغاء الطلب» and **no approval button**. After a refresh the page finds the waiting request again (it asks the server; it creates nothing). A second click, a refresh or five clicks at once never make a second request. Cancelling is possible only while the request is unpaid.
+
+### 16.2 The concurrency finding in `createAddonRow`, and its fix (no migration)
+
+*What was wrong.* The id of an add-on is deterministic from (mission, base version, attempt), so two clicks on the SAME version make the same id and the primary key refuses the second. But two requests on DIFFERENT versions (a review of version 1 and one of version 2, from two tabs) have different ids, and `canCreateAddon` is a read followed by an insert: both read «nothing is open», both insert, and **two open add-ons existed on one file** (decision D10 broken). The new race test found it: it runs every interleaving of the store calls of two creators and ended with two open rows.
+
+*The fix* (`addonRow.ts`, `settleCreation`; `AddonRowStore` gets `cancelUnpaid`). After its insert the creator reads the open add-ons again. If more than one is open, ONE stays: a started row first (it cannot be cancelled), then the lowest id (every creator computes the same winner). Every other row is cancelled by `cancelUnpaid`, one compare-and-set that matches only an unpaid `plan_ready` row with no job. A creator whose own row did not stay is told «open add-on» with the id of the one that did. Whoever commits LAST always sees every row, so exactly one is open at the end. Proof: `tests/money7a-row-race.test.ts` explores every interleaving of two creators (a review of v1 and v2, the same version twice, a review and an edit) and 300 seeded random interleavings of three, and requires exactly one open row, every other row cancelled, one creator succeeding, and every refusal naming a row that exists; a creator with a stale read never touches a started add-on.
+
+*What stays possible.* A creator that read «only mine» before the other inserted is already told yes; if the other then wins, its row is cancelled and the page shows the one that stays. This needs two tabs of the same customer and the same instant, and it costs nothing (a waiting row holds nothing). A database-level guarantee would be a partial unique index (one open add-on per mission); that is a migration, was NOT made and is NOT needed for safety here. The approval of a later task must still re-check «one open add-on» before it reserves.
+
+### 16.3 The route (`src/app/api/missions/[id]/review-request/route.ts`)
+
+`DIGER_STAGE4_REVIEW` must be exactly `on`, read FIRST (off: 404 before the id, the viewer or the database, for GET and POST).
+
+- `GET`: `{ request }`, the waiting review request of this file, or `null`. Priced again from its stored cells by `reviewCard`, never from a stored points field.
+- `POST {action:"create", version}`: **the body holds the version and nothing else.** Any other field (a price, a cell count, a plan, an owner, a mission id) is a 400. The server reads the published version (`readPublishedVersion`: owner, published, checked), counts its cells (`reviewCellsOf`), prices it (`reviewCard`), and calls `createAddonRow` (the rules of `canCreateAddon`: one open add-on per file, a completed review is reused, the deterministic id, `checkAddon` again). 201 `{created:true}` for a new request; 200 `{created:false}` when the same version's request already waits.
+- `POST {action:"cancel", requestId}`: reads the row, then ONE update `status: "cancelled"` where `id`, `user_id`, `status = plan_ready` and `job_id is null` all match, read back (exactly one row changed). Only the customer's own `review` add-on row of THIS mission is cancellable; a stranger's row, a missing one, an ordinary mission and an edit request all read the same 404 and are untouched. A status that changed between the read and the update (or a job that appeared) matches nothing: 409 `changed`, and the row stays as the other process made it. No refund or settlement function is called.
+
+| Answer | When |
+|---|---|
+| 404 | flag off; not theirs or missing (the same body); a version that is not published (a pending one is not) |
+| 400 | bad id; not JSON; unknown action; an extra field; a version that is not exactly one positive whole number of at most four ASCII digits; a request id that is not an id |
+| 401 | not signed in |
+| 409 | `open_addon` (another add-on is open on this file), `review_exists` (a completed review: free), `too_large`, `nothing_to_review`, `changed` (the request is no longer waiting) |
+| 503 | the storage, the mission read, the add-on rows read, the insert or the cancel failed (never «missing», never «no add-on is open») |
+| 500 | the published object is not this mission's well-formed version (never priced) |
+
+### 16.4 The existing mission approval refuses an add-on row (`customerActions.ts`, one guard)
+
+An add-on row is a `missions` row whose plan is `{ addon }`, `plan_ready`, and the customer is handed its id. The existing `approveForCustomer` crashed on such a plan (a test showed `Cannot read properties of undefined (reading 'rule')`, a 500). It now answers 409 BEFORE the precheck, the claim or any money function when the plan has an `addon` key (an inline check: the module still imports nothing from Stage 4 or the money side). An ordinary mission is approved exactly as before (a regression test pins the three money calls and the single reserve).
+
+### 16.5 Files
+
+New: `addonRowStore.ts` (the Supabase store for ONE customer: list, insert, cancel an unpaid row; the missions table only), `reviewRequest.ts` (create, find, cancel), `reviewRequestLabels.ts` and `reviewRequestClient.ts` (client-safe), the route, tests `money7a-row-race.test.ts`, `stage4-review-request.test.ts`, `stage4-review-request-ui.test.ts`, `money7a-approve-guard.test.ts` and `tests/helpers/reviewRequestWorld.ts` (a stateful fake table with a primary key, compare-and-set updates and counters). Changed: `addonRow.ts` (the fix above), `customerActions.ts` (the guard), `ReviewQuote.tsx` (prepare, waiting, cancel, recovery), `money7a-row.test.ts` (its store gets `cancelUnpaid`), and the three guard tests with explicit, commented allowlist entries plus a stricter check of the request files (missions table only, one insert and one update, no money, approval or provider name, nothing under `agent/`).
+
+### 16.6 Required before `DIGER_STAGE4_REVIEW` is ever turned on (NOT done here)
+
+A waiting review request is a `plan_ready` row of the `missions` table, so the existing readers of open missions see it. They were not changed: `openMissions.ts` and «طلباتي» would list it as a waiting mission; the chat turn (`chatTurn.ts` `REPLACEABLE`) may replace an open `plan_ready` mission; the admin agent page lists it. None of these moves money (a waiting row holds nothing), and with the flag off no row is created, but each must skip add-on rows (`isAddonRow`) first. Also not done: the approval of the request (`approveAddonOnce` exists in the isolated core), the report screen, the watchdog's release of a cancelled add-on, and a request that an approved add-on leaves stuck.
+
+### 16.7 Not verified
+
+Everything ran on fakes (a stateful fake table, a fake bucket, fake auth, `fetch` stubbed). The add-on rows are read with the JSON path `plan->addon->>of`, and the insert relies on the primary key reporting code `23505` for a duplicate id: neither was run against a database (a failed read answers 503; any other insert failure is also 503; a duplicate is recognised by its code or its message). The compare-and-set relies on `.select("id")` after an update returning exactly the changed rows (the same pattern the existing cancel uses). No Vercel build, Heroku worker, real storage or real browser.

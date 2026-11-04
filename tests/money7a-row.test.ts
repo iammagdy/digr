@@ -19,6 +19,7 @@ function memoryStore(initial: Array<AddonRowLike & { user_id?: string }> = []) {
   const store: AddonRowStore = {
     listFor: async (of) => [...rows.values()].filter((r) => (r.plan as any)?.addon?.of === of),
     insert: async (row: AddonRowInsert) => { if (rows.has(row.id)) return { ok: false, duplicate: true }; rows.set(row.id, { ...row }); return { ok: true }; },
+    cancelUnpaid: async (id: string) => { const r = rows.get(id); if (!r || r.status !== "plan_ready") return false; r.status = "cancelled"; return true; },
   };
   return { rows, store };
 }

@@ -98,12 +98,18 @@ const APPROVE_MESSAGES: Record<string, string> = {
  * Approve. A guest is told to sign up first, an unverified account to verify its e-mail. `precheck` is the route's own gate (provider gate, busy state, concurrency): it runs before anything is reserved.
  * The reserve itself is the shared approval path (the existing money functions); on success the customer is told once that the page may be closed.
  */
+const NOT_A_MISSION_AR = "هذا طلب على ملف سُلّم من قبل، وليس طلب بيانات جديدًا؛ لا يُعتمد من هنا.";
+/** A plan with an `addon` key (an add-on row: a review, a review fix or an edit of a delivered file). Inline on purpose: this module reaches no Stage 4 or money-side module. */
+const isAddonPlanShape = (plan: unknown): boolean => Boolean(plan) && typeof plan === "object" && !Array.isArray(plan) && Object.prototype.hasOwnProperty.call(plan, "addon");
+
 export async function approveForCustomer(client: any, input: { id: string; userId: string; isGuest: boolean; emailVerified: boolean; precheck?: () => Promise<{ ok: true } | { ok: false; status: number; error: string }>; onApproved?: (r: { jobId: string }) => Promise<void> }): Promise<CustomerResult<{ jobId: string; reservePoints: number }>> {
   if (input.isGuest) return bad(401, SIGNUP_TO_APPROVE_AR);
   if (!input.emailVerified) return bad(403, "فعّل بريدك الإلكتروني أولًا ثم اعتمد المهمة.");
   const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,status,plan").eq("id", input.id).maybeSingle();
   if (!mission || mission.user_id !== input.userId) return bad(404, "المهمة غير موجودة.");
   if (mission.status !== "plan_ready") return bad(409, mission.status === "approved" || mission.status === "executing" ? "هذه المهمة معتمدة وتعمل بالفعل." : "لا توجد خطة جاهزة للاعتماد.");
+  // MONEY PR 7d: a review, review-fix or edit request of a DELIVERED file is a row of this table whose plan is `{ addon }`, not a mission plan. It is approved by its own function (a later task), never here: refused BEFORE anything is read or held
+  if (isAddonPlanShape(mission.plan)) return bad(409, NOT_A_MISSION_AR);
   // PR B: a social plan the compiler did not build is refused BEFORE the reserve (nothing is held, no money function is called)
   if (!modelPlanningForTests() && isStaleSocialPlan(mission.plan)) return bad(410, EXPIRED_SOCIAL_PLAN_AR);
   if (input.precheck) {

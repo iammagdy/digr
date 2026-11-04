@@ -54,7 +54,7 @@ async function runSchedule(makers: Maker[], choices: number[], initial: Row[] = 
     await settle();
     if (pending.length === 0) continue;
     let pick = 0;
-    if (pending.length > 1) { pick = choices[widths.length] ?? 0; widths.push(pending.length); picks.push(pick); }
+    if (pending.length > 1) { pick = (choices[widths.length] ?? 0) % pending.length; widths.push(pending.length); picks.push(pick); }
     const [p] = pending.splice(pick, 1);
     p.resolve(p.exec());
   }

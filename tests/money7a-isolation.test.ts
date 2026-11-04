@@ -78,12 +78,17 @@ const SIBLINGS = ["src/lib/agentMission/stage4/editVersion.ts"];
  * it prices by the existing card and answers; it holds, charges, releases and writes nothing (tests/stage4-review-quote.test.ts counts every write and scans the source). Nothing else may reach the new modules.
  */
 const PREVIEW = ["src/lib/agentMission/stage4/reviewPreview.ts", "src/app/api/missions/[id]/review-quote/route.ts"];
+/**
+ * MONEY PR 7d (Phase 2B-2 task 3): the review REQUEST before payment. These files MAKE the add-on row of a review (`createAddonRow`, stored `plan_ready`) and CANCEL it while it is unpaid (one compare-and-set on `plan_ready` with no job). They write the
+ * `missions` table and nothing else: no job, no ledger, no wallet, no rpc, no storage, no settlement, approval or reservation function (checked below and by tests/stage4-review-request.test.ts). Nothing else may reach them.
+ */
+const REQUEST = ["src/lib/agentMission/stage4/reviewRequest.ts", "src/lib/agentMission/stage4/addonRowStore.ts", "src/app/api/missions/[id]/review-request/route.ts"];
 const abs = (r: string) => path.join(ROOT, r);
 
 describe("the new modules exist and nothing in production reaches them", () => {
   it("every file is there", () => { for (const r of NEW) expect(existsSync(abs(r))).toBe(true); });
   for (const r of NEW) it(`${r}: only the new modules, the worker's entry point (through the dispatch) and tests reach it`, () => {
-    const who = [...reachers(abs(r))].map(rel).filter((f) => !NEW.includes(f) && !ENTRY.includes(f) && !SIBLINGS.includes(f) && !PREVIEW.includes(f));
+    const who = [...reachers(abs(r))].map(rel).filter((f) => !NEW.includes(f) && !ENTRY.includes(f) && !SIBLINGS.includes(f) && !PREVIEW.includes(f) && !REQUEST.includes(f));
     expect(who).toEqual([]);
   });
   it("agent/src/main.ts imports exactly one new module: the dispatch", () => {
@@ -92,7 +97,7 @@ describe("the new modules exist and nothing in production reaches them", () => {
   });
   it("the displayed prices and the card are never reached from production: addonQuote.ts and quotes.ts are imported by tests and by each other only", () => {
     const quoters = [abs("src/lib/agentMission/stage4/addonQuote.ts"), abs("src/lib/agentMission/stage4/quotes.ts")];
-    for (const q of quoters) expect([...reachers(q)].map(rel).filter((f) => !f.startsWith("src/lib/agentMission/stage4/") && !PREVIEW.includes(f))).toEqual([]);
+    for (const q of quoters) expect([...reachers(q)].map(rel).filter((f) => !f.startsWith("src/lib/agentMission/stage4/") && !PREVIEW.includes(f) && !REQUEST.includes(f))).toEqual([]);
   });
 });
 
@@ -150,7 +155,7 @@ describe("the review-price preview moves no money and reaches no worker or provi
   const route = abs("src/app/api/missions/[id]/review-quote/route.ts");
   it("both preview files exist, and only the route reaches the preview module", () => {
     for (const r of PREVIEW) expect(existsSync(abs(r))).toBe(true);
-    expect([...reachers(abs("src/lib/agentMission/stage4/reviewPreview.ts"))].map(rel).filter((f) => !PREVIEW.includes(f))).toEqual([]);
+    expect([...reachers(abs("src/lib/agentMission/stage4/reviewPreview.ts"))].map(rel).filter((f) => !PREVIEW.includes(f) && !REQUEST.includes(f))).toEqual([]);
   });
   it("the route's imports, followed all the way down, contain nothing under agent/ (no gateway, no worker, no provider client)", () => {
     const deps = [...closure(route)].map(rel);
@@ -162,6 +167,25 @@ describe("the review-price preview moves no money and reaches no worker or provi
     const src = PREVIEW.map((r) => code(abs(r))).join("\n");
     expect(src).not.toMatch(/\.(rpc|insert|update|upsert|delete|upload|remove|createSignedUrl)\(/);
     expect(src).not.toMatch(/settleAddon|approveAddon|createAddon|releaseAddon|reserveAddon|accept_quote_atomic|release_job_atomic|credit_ledger/);
+  });
+});
+
+describe("the review request writes one unpaid row and cancels it by compare-and-set, and nothing else", () => {
+  const route = abs("src/app/api/missions/[id]/review-request/route.ts");
+  it("all three files exist, and nothing else reaches the request logic or the row store", () => {
+    for (const r of REQUEST) expect(existsSync(abs(r))).toBe(true);
+    for (const f of ["src/lib/agentMission/stage4/reviewRequest.ts", "src/lib/agentMission/stage4/addonRowStore.ts"]) expect([...reachers(abs(f))].map(rel).filter((x) => !REQUEST.includes(x)), f).toEqual([]);
+  });
+  it("the route's imports, followed all the way down, contain nothing under agent/ (no gateway, no worker, no provider client)", () => {
+    expect([...closure(route)].map(rel).filter((f) => f.startsWith("agent/"))).toEqual([]);
+  });
+  it("only the missions table is named; no rpc, no upload, no delete, no upsert; no settlement, approval, reservation or refund; no row is ever written in a started status", () => {
+    const src = REQUEST.map((r) => code(abs(r))).join("\n");
+    expect(src).not.toMatch(/\.(rpc|upload|remove|createSignedUrl|upsert|delete)\(/);
+    expect([...new Set([...src.matchAll(/\.from\(\s*([A-Za-z_"]+)/g)].map((m) => m[1]))]).toEqual(["MISSION_TABLE"]);
+    expect(src).not.toMatch(/settleAddon|approveAddon|approveMission|releaseAddon|accept_quote_atomic|release_job_atomic|create_quote_atomic|claim_job_chunk|credit_ledger|refund/i);
+    expect(src).not.toMatch(/status:\s*"(approved|executing|completed|failed|unserved)"/);
+    expect([...src.matchAll(/\.(insert|update)\(/g)].map((m) => m[1]).sort()).toEqual(["insert", "update"]); // one insert (the plan_ready row) and one update (the cancel), no more
   });
 });
 

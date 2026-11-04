@@ -321,6 +321,14 @@ describe("TEST 12, 13: cancelling an unpaid request, and refusing once its statu
     expect(w.rows.get(seed.id).status).toBe("approved");
     expect(w.log).toEqual([]);
   });
+  it("a job appears between the read and the update (money reserved in that instant): the compare-and-set also requires no job, matches nothing, and the answer is 409", async () => {
+    const seed = addonRowOf({ status: "plan_ready", kind: "review", base: 1 });
+    const w = world({ seed: [seed], beforeUpdate: (rows, id) => { if (id === seed.id) rows.get(id)!.job_id = "job_1"; } });
+    const res = await cancel(seed.id);
+    expect(res.status).toBe(409);
+    expect(w.rows.get(seed.id).status).toBe("plan_ready");
+    expect(w.log).toEqual([]);
+  });
   it("only the customer's OWN review request: a stranger's, a missing one, an ordinary mission, and an add-on of another kind are all 404 and untouched", async () => {
     const mine = addonRowOf({ status: "plan_ready", kind: "review", base: 1 });
     const theirs = addonRowOf({ status: "plan_ready", kind: "review", base: 1, user: "u-2", attempt: 4 });

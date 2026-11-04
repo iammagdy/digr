@@ -41,6 +41,11 @@ export interface AddonRowStore {
   listFor(missionId: string): Promise<ReadonlyArray<AddonRowLike>>;
   /** Insert one row. `duplicate: true` = the id already exists (another click got there first). */
   insert(row: AddonRowInsert): Promise<{ ok: true } | { ok: false; duplicate: boolean }>;
+  /**
+   * Cancel an UNPAID add-on row: ONE compare-and-set that matches only a row that is still `plan_ready` and has no job (nothing held). `true` = this call cancelled it; `false` = it matched nothing (the row is gone, or no longer waiting).
+   * It never touches a started row and calls no refund or settlement function: a waiting row holds nothing.
+   */
+  cancelUnpaid(id: string): Promise<boolean>;
 }
 
 export const isAddonRow = (row: { plan?: unknown } | null | undefined): boolean => readAddonPlan(row?.plan) !== null;
@@ -113,5 +118,23 @@ export async function createAddonRow(store: AddonRowStore, input: { userId: stri
     if (inserted.duplicate) return refuse("open_addon", row.id);
     throw new Error("createAddonRow: the row could not be stored");
   }
-  return { ok: true, row };
+  return settleCreation(store, input.of, row);
+}
+
+const isOpen = (r: AddonRowLike): boolean => (OPEN_STATUSES as ReadonlyArray<string>).includes(r.status);
+
+/**
+ * TWO CREATORS AT THE SAME TIME (docs/MONEY-PR-7A.md section 16.2). `canCreateAddon` is a read followed by an insert, and the primary key only stops two requests with the SAME id (the same version and attempt). A review of version 1 and a review of version 2
+ * made from two tabs at the same moment have different ids: both read «nothing is open», both insert, and two open add-ons exist on one file (decision D10 broken). No migration is needed to close this: AFTER its insert the creator reads the open add-ons again.
+ * If more than one is open, ONE of them stays: a started row first (it cannot be cancelled), then the lowest id (a rule every creator computes the same way). Every other row is cancelled by `cancelUnpaid` (a compare-and-set that matches only an unpaid `plan_ready` row),
+ * and a creator whose own row did not stay is told «open add-on» with the id of the one that did. Whoever commits LAST always sees all the rows, so at the end exactly one is open, in every interleaving (tests/money7a-row-race.test.ts runs them all).
+ * Nothing is held at this stage, so a request cancelled here cost nothing; and a creator that read «only mine» before the other inserted was already told yes: its row is the one cancelled, and the page shows the one that stays.
+ */
+async function settleCreation(store: AddonRowStore, of: string, mine: AddonRowInsert): Promise<CreateAddonResult> {
+  const open = addonsOf(await store.listFor(of), of).map(({ row }) => row).filter(isOpen);
+  if (open.length <= 1) return open.length === 1 && open[0].id === mine.id ? { ok: true, row: mine } : refuse("open_addon", open[0]?.id);
+  const rank = (r: AddonRowLike): number => (r.status === "plan_ready" ? 1 : 0);
+  const keeper = [...open].sort((a, b) => rank(a) - rank(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
+  for (const r of open) if (r.id !== keeper.id) await store.cancelUnpaid(r.id);
+  return keeper.id === mine.id ? { ok: true, row: mine } : refuse("open_addon", keeper.id);
 }
