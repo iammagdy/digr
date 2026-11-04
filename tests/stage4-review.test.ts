@@ -37,6 +37,8 @@ describe("the review never deletes or changes a row", () => {
     expect(r.score).toBeLessThanOrEqual(100);
     for (const line of r.reportAr) expect(checkCustomerText(line, { maxChars: 600 }).issues, line).toEqual([]);
     expect(JSON.stringify(reviewFile(v))).toBe(JSON.stringify(r));
+    // «معرّف التعليق الأصلي» is empty BY DESIGN on a comment's own row (it names the comment a reply answers): never a fault
+    expect(r.issues.filter((i) => i.column === "معرّف التعليق الأصلي" && i.code === "empty_cells")).toEqual([]);
   });
 });
 
