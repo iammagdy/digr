@@ -100,7 +100,7 @@ describe("tomba's phone_number boolean never reaches the HQ phone column", () =>
     const pages = [["msn_4969a50fed8c45b37d8f", "call_0001"], ["msn_4969a50fed8c45b37d8f", "call_0007"], ["msn_7539ea17512cf58aa0e7", "call_0001"], ["msn_7539ea17512cf58aa0e7", "call_0004"]] as const;
     for (const [m, c] of pages) {
       const p = page(m, c);
-      const out = await runInSandbox(b2bMapCode(TOMBA), { page: p });
+      const out = await runInSandbox(b2bMapCode(TOMBA)!, { page: p });
       expect(out.ok, `${m}/${c}`).toBe(true);
       const rows = JSON.parse(out.ok ? out.resultJson ?? "[]" : "[]") as Array<Record<string, unknown>>;
       expect(rows).toEqual(JSON.parse(JSON.stringify(readB2BRows(TOMBA, p))));
