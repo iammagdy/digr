@@ -195,12 +195,15 @@ It would be insert-only, with RLS so that only the mission's owner can read it, 
 3. Then call `reviewFile(version)`, store the report (`reviews/rNNNN.json`), and show `reportAr` in a new `src/components/mission/ReviewReport.tsx`: the score as «التقييم: X من ١٠٠», then the lines.
 4. A «أصلح» action turns a chosen issue into an `EditRequest` (`set_cells`) and makes a `review_fix` version. Use `deriveVersion` with `reason: "review_fix"`, or add a `reason` option to `applyEditRequest` with its own test.
 
-**S4. Edit request (behind `DIGER_STAGE4_EDITS`, after the money PR). NOT DONE.**
+**S4. Edit request (behind `DIGER_STAGE4_EDITS`, after the money PR). NOT DONE. Step 2 rewritten for the money PR 7a design (isolated core: Phase 2A; wiring: Phase 2B).**
 1. The customer's words («ضيف عمود ...») become an `EditRequest`:
    - the column title by code, from the words;
    - the values by re-reading only the needed part, through the existing engine with a one-stage plan on the delivered rows' ids.
-2. The real cost of that re-read gives `editQuote(realCostUsd)`, shown before the customer approves. The charge belongs to the money PR.
-3. On approval: `applyEditRequest(prev, request, { createdAt, realCostUsd })`, then store the new version and build its file.
+2. **The quote is made by code BEFORE approval, with NO provider call** (docs/MONEY-PR-7A.md section 2). The old step said "the real cost of that re-read gives `editQuote(realCostUsd)`, shown before the customer approves". To know the real cost before approval the re-read would have to run first, which spends provider money before the customer approves. That breaks the money rule, so it is replaced:
+   - the card shows the **estimate** and the **most it can cost** (the hold: estimate + 15% buffer, at least 100 points), priced by `priceMissionByCode` on a one-stage plan (`stage4/addonQuote.ts`), from the delivered mission's recorded calls, else the catalog, else **no quote**;
+   - on approval the hold is reserved through the existing money functions (`addonSettlement.ts`), and only then does the re-read start, with a provider budget of hold ÷ 5,500 USD;
+   - after the run the **real cost × markup** is charged (`addonChargePoints`), never above the hold, at least the 100-point minimum in proportion to what was filled; the rest of the hold is released. `editQuote` stays a display function and a test pins it equal to the charge.
+3. On approval, after the run: `applyEditRequest(prev, request, { createdAt, realCostUsd })`, then store the new version **pending**, settle, and only then publish it and build its file (the work is stored before the charge and shown after it).
 4. Add a new component `src/components/mission/EditRequestCard.tsx`: an input for the request, the quote line, and the diff summary («أُضيف عمود "..."، ٣٠٠ خانة جديدة، لم يُحذف شيء»). The count in that line must use `countedAr` (S5).
 
 **S5. Wording review. DONE.**

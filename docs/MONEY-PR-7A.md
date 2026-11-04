@@ -2,10 +2,11 @@
 
 Branch `money/7a-design`, from `stage-4/review-edits-versions` at `d5336220`. Draft PR; never merged.
 
-**This is Phase 1 of FOUNDATION-PLAN "PR 7", part 7a.**
+**This is Phase 1 (the design) and Phase 2A (the isolated money core) of FOUNDATION-PLAN "PR 7", part 7a.**
 
-- **What it is.** A design read from the code. Nothing here was run against a database. No code, test, config, flag or environment variable was changed, and no SQL of any kind was run (not even a SELECT).
-- **What it is not.** Phase 2 (the code) needs its own brief naming the files. Staged jobs above 25,000 points are PR 7b (section 9).
+- **Phase 1, the design (sections 1 to 11).** Read from the code. No SQL was run for it.
+- **Phase 2A, the isolated core (section 12).** New files and tests only: the charge, the approval and the settlement of an add-on, the add-on row, the card priced by code, and a money fake that matches the live SQL. **Nothing is wired**: no site file, worker file, route or screen imports any of it. Section 12 also holds the one live-database check (function definitions only) and every place where the code and this design differ.
+- **What it is not.** Phase 2B (the wiring) needs its own brief. Staged jobs above 25,000 points are PR 7b (section 9).
 
 **The design in ten lines.**
 
@@ -351,20 +352,20 @@ All tests use the money fake (hardened, section 6.3), `fetch` stubbed to throw, 
 
 ## 10. Open decisions for the owner
 
-| # | Question | Recommended answer |
-|---|---|---|
-| D1 | Is an edit charged by its **real cost × markup** (as briefed), or like a mission, **per filled cell at the quoted price**? | **Real cost × markup**, as decided; this design. The per-cell way would reuse `approveMissionOnce` unchanged and keep `delivered_units` meaning cells, but the price would no longer follow the real cost. |
-| D2 | When an edit is partial, is the 100-point minimum charged whole, or in proportion to what was filled? | **In proportion** (`ceil(100 × filled ÷ requested)`), as a mission's minimum already is (`missionPricing.ts:127-128`). Never above the hold. |
-| D3 | If the tools ran but filled nothing, is anything charged? | **No**: release the whole hold. The platform absorbs the cost, as for a mission that delivers nothing. |
-| D4 | Does a cell that says «غير متوفر» (every tool answered with nothing) count as filled? | **No**: only a value counts. |
-| D5 | The review's price is exact. Is it held with the 15% buffer, or exactly? | **Exactly P.** The buffer exists for estimates; a review spends nothing on providers. |
-| D6 | One add-on may hold at most 5,000 points (the database's volume limit). Accept, or change the SQL? | **Accept.** It is about the provider's daily cap anyway; 7b can lift it. |
-| D7 | Are ledger ids of the form `res_job_quote_<md5>` acceptable (deterministic, with the mapping in the quote and the add-on row), or must they read `res_edit_<job>_v0002`? | **Accept the existing form.** A readable form needs a new SQL function (a migration). |
-| D8 | Does an add-on count toward the limit of two active jobs (`accept_quote_atomic.sql:143-148`)? | **Yes** (no SQL change). It is short. |
-| D9 | Where does an add-on appear: «طلباتي», the wallet? | **As a line under its request**, in both places; never as a request of its own. The wallet needs the owner's OK (section 6.4). |
-| D10 | One open add-on per file at a time? | **Yes**: it keeps versions in a line (v2 from v1, v3 from v2) with no merge. |
-| D11 | A second review of the same version: free (show the stored report) or charged again? | **Free**: nothing new is done. |
-| D12 | A rename, or cells the customer typed (no provider call): 100 points? | **Yes**, the minimum (owner rule «no free path»). Or decide a lower minimum for edits with no re-read. |
+| # | Question | Recommended answer | Status |
+|---|---|---|---|
+| D1 | Is an edit charged by its **real cost × markup** (as briefed), or like a mission, **per filled cell at the quoted price**? | **Real cost × markup**, as decided; this design. The per-cell way would reuse `approveMissionOnce` unchanged and keep `delivered_units` meaning cells, but the price would no longer follow the real cost. | **Decided (owner):** real cost × markup, minimum 100 points, hold = estimate + 15% buffer, the unused part is released. |
+| D2 | When an edit is partial, is the 100-point minimum charged whole, or in proportion to what was filled? | **In proportion** (`ceil(100 × filled ÷ requested)`), as a mission's minimum already is (`missionPricing.ts:127-128`). Never above the hold. | **Decided (owner):** `ceil(100 × filled ÷ requested)`, never above the hold. |
+| D3 | If the tools ran but filled nothing, is anything charged? | **No**: release the whole hold. The platform absorbs the cost, as for a mission that delivers nothing. | **Decided (owner):** nothing filled = release the whole hold, no charge, no new version. |
+| D4 | Does a cell that says «غير متوفر» (every tool answered with nothing) count as filled? | **No**: only a value counts. | **Decided (owner):** «غير متوفر» and «لم يكتمل البحث» are not filled; only a real value counts. |
+| D5 | The review's price is exact. Is it held with the 15% buffer, or exactly? | **Exactly P.** The buffer exists for estimates; a review spends nothing on providers. | **Decided (owner):** the review is held at its exact price (no buffer) and charged exactly when its report is stored. |
+| D6 | One add-on may hold at most 5,000 points (the database's volume limit). Accept, or change the SQL? | **Accept.** It is about the provider's daily cap anyway; 7b can lift it. | **Decided (owner):** an add-on holds at most 5,000 points; a bigger estimate is refused before any hold. |
+| D7 | Are ledger ids of the form `res_job_quote_<md5>` acceptable (deterministic, with the mapping in the quote and the add-on row), or must they read `res_edit_<job>_v0002`? | **Accept the existing form.** A readable form needs a new SQL function (a migration). | **Decided (owner):** hashed ledger ids as designed. |
+| D8 | Does an add-on count toward the limit of two active jobs (`accept_quote_atomic.sql:143-148`)? | **Yes** (no SQL change). It is short. | **Decided (owner):** an add-on counts toward the two-active-jobs limit. |
+| D9 | Where does an add-on appear: «طلباتي», the wallet? | **As a line under its request**, in both places; never as a request of its own. The wallet needs the owner's OK (section 6.4). | **Open** (not in the owner's decisions; needs the owner's OK for the wallet route, Phase 2B). |
+| D10 | One open add-on per file at a time? | **Yes**: it keeps versions in a line (v2 from v1, v3 from v2) with no merge. | **Decided (owner):** one open add-on per file at a time. |
+| D11 | A second review of the same version: free (show the stored report) or charged again? | **Free**: nothing new is done. | **Decided (owner):** a second review of the same version is free (the stored report; no add-on). |
+| D12 | A rename, or cells the customer typed (no provider call): 100 points? | **Yes**, the minimum (owner rule «no free path»). Or decide a lower minimum for edits with no re-read. | **Decided (owner):** a rename or customer-typed cells with no provider call still cost the 100-point minimum. No free path anywhere. Removing rows is never offered. |
 
 ---
 
@@ -386,11 +387,96 @@ All tests use the money fake (hardened, section 6.3), `fetch` stubbed to throw, 
 
 **Assumed (not verified):**
 
-- **The live database's functions equal the repository's migrations.** They do not for `create_quote_atomic`: the repository caps at 600, while `jobPointsCap.ts:3-6` and `docs/HANDOFF.md` say the live cap is 25,000. Checking that needs a read-only SELECT of the function body, which was not allowed here. **Phase 2 must check it** (`pg_get_functiondef`) before relying on any SQL line quoted above.
-- `agent_claim_mission` is quoted from `docs/proposals/agent-worker/02_agent_claim_function.sql`, not from the live database.
+- **(Phase 1) The live database's functions equal the repository's migrations.** They did not for `create_quote_atomic`: the repository caps at 600, while `jobPointsCap.ts:3-6` and `docs/HANDOFF.md` say the live cap is 25,000. **Checked in Phase 2A (section 12.2): the live cap is 25,000; every other rule this design relies on is the same.**
+- **(Phase 1) `agent_claim_mission` is quoted from `docs/proposals/agent-worker/02_agent_claim_function.sql`.** Checked in Phase 2A (section 12.2): the live logic is the same (the whitespace differs). It claims any `queued` or `approved` mission, which matters for the dispatch (section 12.4).
 - The add-on's per-row cost from the delivered mission's recorded calls is close to the real cost of the re-read. If it is far below, the platform absorbs the difference above the hold; if far above, more of the hold is released.
 - Holding about 0.79 USD at most per add-on is enough for real edits (not measured).
 - The worker can run the engine on a one-stage plan over the delivered rows' ids. That is STAGE-4 S4 engineering, not money, and is not checked here.
 - The «طلباتي» and wallet changes are display only, and no other screen reads `jobs.delivered_units` for an agent job. Not searched exhaustively.
 
-**Not done:** no SQL, no code, no test, no flag, no environment variable, no provider or model call, no e-mail.
+**Not done in Phase 1:** no SQL, no code, no test, no flag, no environment variable, no provider or model call, no e-mail. (Phase 2A: section 12.)
+
+---
+
+## 12. Phase 2A: the isolated core, the live-database check, and where the code and this design differ
+
+**Status.** Phase 2A adds only new files, tests, and the edits to non-money files listed in 12.5. Nothing is wired (12.4). `DIGER_STAGE4_REVIEW` and `DIGER_STAGE4_EDITS` stay unset, and nothing here reads them. No existing money file was edited. No migration, no new SQL function, no new table or column.
+
+### 12.1 What was built
+
+| File | What | Money? |
+|---|---|---|
+| `src/lib/agentMission/addonSettlement.ts` | `addonChargePoints`, `reviewHoldPoints`, `addonProviderBudgetUsd`, the ids (`addonId`, `addonQuoteId`, `addonJobId`, `addonLedgerIds`), `readAddonPlan` / `checkAddon` (the identity and the price again by code), `approveAddonOnce`, `settleAddon` (which calls the existing `settleMission`) | **yes, new** |
+| `src/lib/agentMission/stage4/addonRow.ts` | the shape of the add-on row in `missions.plan`; one open add-on per file; an edit on the latest version; a free second review; `createAddonRow` over an injected store | no |
+| `src/lib/agentMission/stage4/addonQuote.ts` | the cost per row from recorded calls, else the catalog, else no quote; the card priced only through `priceMissionByCode`; the review card | display |
+| `src/lib/agentMission/stage4/quotes.ts` | one new function, `holdLineAr` (display only; no existing function changed) | no |
+
+### 12.2 The live-database check (the one allowed SQL, read-only, function definitions only)
+
+The exact query that was run, once:
+
+```sql
+SELECT p.proname, pg_get_functiondef(p.oid) AS def FROM pg_proc p WHERE p.pronamespace = 'public'::regnamespace AND p.proname IN ('create_quote_atomic','accept_quote_atomic','reserve_credits_atomic','settle_job_atomic','release_job_atomic','complete_chunk','claim_job_chunk','agent_claim_mission');
+```
+
+Eight names; nine definitions came back (`release_job_atomic` has a 2-argument wrapper and a 3-argument function). No table, user or ledger row was read. **"Same" below means the same in every rule this design relies on, found by reading the live text beside the repository file. It is not a byte comparison** (the formatting differs in places, and a newer repository file was compared where there are several).
+
+| Function | Live vs repository | What differs, and does it break a rule the design relies on? |
+|---|---|---|
+| `create_quote_atomic` | **different** | The live cap is **25,000** (`v_cap numeric := 25000`). The repository file says 600 and is marked "Proposal only". **No rule breaks:** the design's 5,000-point limit comes from `accept_quote_atomic`, and an add-on's hold is far below 25,000. Idempotent on the same id and contents (`already_created`), raises on a conflicting re-use, formats `xlsx`/`csv`/`pdf`, expiry in the future: as the design says. |
+| `accept_quote_atomic` | same | Job id `job_quote_<md5(quote id)>`; `already_accepted`; status must be `quoted`; `quote_expired`; one item with a positive unit price; `targetVolumeMax ≤ 5000`; two active jobs (`concurrency_limit`); reserve through `reserve_credits_atomic`; `insufficient_balance` returned before anything is written. |
+| `reserve_credits_atomic` | same | `res_<job id>`; the profile row is locked; idempotent (`already_reserved`); `insufficient_balance` writes nothing; `ON CONFLICT DO NOTHING`. |
+| `settle_job_atomic` | **different, in the default only** | The live default `p_points_cap` is 25,000 (the repository's file says 600). The code always passes `AGENT_JOB_POINTS_CAP`, so nothing changes. The rules are the same: a completed job answers `already_settled`; the job must be `running`; `rel_<job>` is written **first**, then `chg_<job>` = `LEAST(CEIL(delivered × unit), reserved, cap)`, only if absent and above 0; a held lease is cleared when the collection is complete. |
+| `release_job_atomic` (3 arguments) | same | A completed job is refused; `res_` must exist and match; `rel_` written once; an already released failed job answers `already_released`; a held lease blocks it unless `p_force`. |
+| `release_job_atomic` (2 arguments) | same | A wrapper that calls the 3-argument function with `false`. `settleMission` and `approveMission` call this one. |
+| `complete_chunk` | same | Step-idempotent (`already_completed` when the step moved on); delivered units cannot decrease nor pass `target_volume_max` (so an add-on's charge is also bounded by the hold here); clears the lease. |
+| `claim_job_chunk` | same | The job must be `queued` or `running`; it refuses a finished job (`already_completed`), a wrong step, an active lease; it grants the lease. |
+| `agent_claim_mission` | same logic (formatting differs) | It claims any `queued` or `approved` mission whose lease is null or ended (and `planning` / `executing` whose lease ended). **It does not know about add-ons**: see 12.4. |
+
+**Conclusion: no live function differs in a way that breaks a rule the design relies on** (idempotent ids, release before charge, the charge at most the reserve, the 5,000 limit, the two-active-jobs rule). The money fake of the tests (`tests/helpers/agentMoney.ts`) was hardened to this behaviour and has its own self-tests (`tests/agent-money-fake.test.ts`).
+
+### 12.3 Where the code and this design differ (the code is right; the design text above is superseded)
+
+1. **The attempt number counts EVERY add-on row of the mission and base version**, not only the ended ones (section 3.0 said "ended"). With "ended only", a completed review of version 1 and a later edit of version 1 would both be attempt 1 and get the **same id**, so the second insert would fail. `nextAttempt` counts all of them. A double click still computes the same attempt, so it still makes one row.
+2. **A quote left over from a refused approval expires.** The quote id is deterministic (`quote_addon_<id>`) and expires after 30 minutes. If an approval is refused (for example a low balance) the quote stays `quoted`; a retry later than 30 minutes finds the same quote, expired. `approveAddonOnce` ends the add-on (`cancelled`, error `quote_expired`) and the customer asks again, which gets the next attempt number and a new id. Section 4 did not say this.
+3. **A job accepted before the call is never released by it.** After a lost answer the retry finds the quote already accepted. If the claim then fails, the approval puts the row back to `plan_ready` and keeps the hold (it may already be running). If it is "lease active", the earlier attempt's lease counts as the claim.
+4. **The card's estimate includes the fixed model estimate** that `priceMissionByCode` adds (about 0.013 USD, roughly 72 points at the default rate). The edit runs no model, so the card's estimate can be up to about 72 points above what is charged. It is never charged (the charge is the real cost). This only makes the stated "up to" bigger than the charge, never smaller.
+5. **The hold has a second guard** that the design did not list: `complete_chunk` refuses delivered units above `target_volume_max`, which is the hold.
+
+### 12.4 Found while building, and left for Phase 2B (nothing here is fixed in 2A because each needs a file that is not in 2A)
+
+- **An add-on row is not a mission, but `agent_claim_mission` claims it.** Once an add-on is `approved`, the worker's claim will hand it to `runMissionSafely`, which would run it as a mission. **`agent/src/main.ts` must send a row with `isAddonRow(row)` to the add-on runner** before anything else.
+- **Every mission route must refuse an add-on row.** `approveMissionOnce` claims `plan_ready → approved` first and only then reprices `plan.stages`; an add-on plan has none, so it would throw **after** the claim and leave the row `approved`. The approve, cancel, edit-plan, nudge, open-missions and requests-list code must check `isAddonRow` first (`addonRow.ts` exports it).
+- **Cancelling an add-on whose approval was interrupted.** If a call threw after the quote was accepted (the answer lost), the row is `plan_ready` with a held job. A retry converges. But `cancelForCustomer` only changes a status, so a cancel at that point would leave the hold until the watchdog. The wiring must release (idempotent) when a cancelled add-on has a job.
+- **A process that dies between the claim and the money.** The row stays `approved` with no job id. The wiring needs a recovery that re-runs the approval for such a row (the ids are deterministic, so it converges).
+- **Reading the rows.** `addonQuote.ts` takes plain numbers. Reading `mission_calls` and the catalog price, and the Supabase implementation of `AddonRowStore` (listing the add-on rows of a mission by `plan->addon->of`), are 2B.
+- **The runner** (re-read on a one-stage plan with budget `addonProviderBudgetUsd(hold)`, count `filled`, store pending, check, settle, publish), the routes, the screens, the «طلباتي» line, the wallet label (D9, the owner's OK), and the store method that reports an existing create-only object: all 2B.
+
+### 12.5 The edits to existing non-money files, and the tests
+
+| Existing file | Change |
+|---|---|
+| `tests/helpers/agentMoney.ts` | hardened to the live SQL (unique ledger ids, `already_created` and conflicting re-use, `already_accepted`, quote status and expiry, the md5 job id, the 5,000 and two-active-jobs limits, a refused reserve writes nothing, step-idempotent `complete_chunk`, release with force, failure injection) |
+| `tests/stage4-quotes.test.ts` | `lifecycle` added to the money pattern; asserts `lifecycle.ts` and `addonSettlement.ts` are under the rule that `quotes.ts` stays unreachable from money paths |
+| `src/lib/agentMission/stage4/quotes.ts` | `holdLineAr` added at the end |
+| `docs/STAGE-4.md` | S4 step 2 rewritten as section 2 says |
+| `docs/MONEY-PR-7A.md` | section 10 decided; section 11 updated; this section |
+
+| Test file | Proves |
+|---|---|
+| `tests/agent-money-fake.test.ts` | the fake matches the live SQL |
+| `tests/money7a-charge.test.ts` | the charge formula (properties over 20,000 cases), displayed price = charge, the ids, the provider budget |
+| `tests/money7a-approval.test.ts` | the approval, the double click, lost answers, refusals that write nothing, the 5,000 limit, the two-active-jobs limit, an expired quote |
+| `tests/money7a-settlement.test.ts` | review, edit, fix, partial, nothing filled, a provider charging double, twice, a throw before and after the charge, the watchdog first, 300 random scenarios; each ends with the ledger invariant |
+| `tests/money7a-row.test.ts` | one open add-on per file, the latest version, a free second review, ids, the round trip into the approval |
+| `tests/money7a-quote.test.ts` | the cost chain, no quote, the 5,000 limit, the review card, no provider call |
+| `tests/money7a-sentences.test.ts` | every new customer sentence passes `checkCustomerText` (and has no emoji, no ASCII digit) |
+| `tests/money7a-isolation.test.ts` | the new modules are reachable only from tests; the money file reaches no stage4 or worker file and uses only the existing money functions; no environment, no flag, no fetch |
+
+### 12.6 Assumed and not verified in 2A
+
+- The re-read's real cost, from the add-on's own recorded calls, will be close to the card's estimate (section 11).
+- The live check read the function **definitions** only. It did not show the table constraints (for example that `credit_ledger.id` is a primary key, or the `jobs` columns) or the grants.
+- The scenarios run on a fake. Nothing ran against a database: the closest existing check is `tests/sql/job-cap-balance.local-pg.test.ts`, which was not run or extended.
+- The «طلباتي» and wallet screens were not searched for other readers of `jobs.delivered_units` (an add-on job's units are points).
+- No run on the live site, no flag set.
