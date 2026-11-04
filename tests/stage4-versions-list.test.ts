@@ -87,12 +87,14 @@ describe("flag on: owner only", () => {
     state.client = clientWith({});
     expect((await call("not-a-mission")).status).toBe(400);
   });
-  it("«test»: a customer gets 404, a test account gets the list", async () => {
-    vi.stubEnv("DIGER_STAGE4_VERSIONS", "test");
+  it("«test» is not served by this customer-side route (the test-account list is never imported here): 404 for everyone; only «on» lists", async () => {
     const { objects } = await storedVersions();
-    state.client = clientWith(objects, { email: "customer@example.com" });
-    expect((await call()).status).toBe(404);
-    state.client = clientWith(objects, { email: "iam.magdy+1@outlook.com" });
+    for (const email of ["customer@example.com", "iam.magdy+1@outlook.com"]) {
+      vi.stubEnv("DIGER_STAGE4_VERSIONS", "test");
+      state.client = clientWith(objects, { email });
+      expect((await call()).status).toBe(404);
+    }
+    vi.stubEnv("DIGER_STAGE4_VERSIONS", "on");
     expect((await call()).status).toBe(200);
   });
 });

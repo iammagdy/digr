@@ -1,6 +1,5 @@
 import { AGENT_BUCKET, MISSION_TABLE } from "../constants";
-import { isTestAccount } from "../../server/testAccounts";
-import { stage4Enabled, stage4FlagMode } from "./flags";
+import { stage4FlagMode } from "./flags";
 import type { VersionReason } from "./versions";
 import type { VersionSummary } from "./versionLabels";
 export type { VersionSummary } from "./versionLabels";
@@ -15,14 +14,12 @@ export const VERSION_LIST_MAX = 100;
 const NAME = /^v(\d{4,})\.json$/;
 const REASONS: ReadonlyArray<VersionReason> = ["delivery", "edit", "review_fix"];
 
-/** What the flag says for this request: «off» answers 404 before anything is read; «test» only for a test account; «on» for every owner. */
-export async function versionsAvailable(client: any, userId: string, env?: Readonly<Record<string, string | undefined>>): Promise<boolean> {
-  const mode = stage4FlagMode("DIGER_STAGE4_VERSIONS", env);
-  if (mode === "off") return false;
-  if (mode === "on") return true;
-  let email: string | null = null;
-  try { email = (await client.auth?.admin?.getUserById?.(userId))?.data?.user?.email ?? null; } catch { email = null; }
-  return stage4Enabled("DIGER_STAGE4_VERSIONS", isTestAccount({ id: userId, email }), env);
+/**
+ * What the flag says for this request: only «on» shows the list. «test» is NOT served here: telling a test account apart needs the test-account list, and customer-side code must never import it (tests/admin-calls-log.test.ts guards that);
+ * the worker's version 1 (agent/src/stage4/firstVersion.ts) does honour «test». Unset or any other word is off.
+ */
+export function versionsAvailable(env?: Readonly<Record<string, string | undefined>>): boolean {
+  return stage4FlagMode("DIGER_STAGE4_VERSIONS", env) === "on";
 }
 
 /** The mission belongs to this user (the same predicate as the mission route: a row that is not theirs reads as «not found»). */

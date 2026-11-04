@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { resolveMissionViewer, safeMissionId } from "@/lib/server/missionViewer";
-import { stage4FlagMode } from "@/lib/agentMission/stage4/flags";
 import { listVersionSummaries, ownsMission, versionsAvailable } from "@/lib/agentMission/stage4/versionList";
 
 export const dynamic = "force-dynamic";
@@ -15,14 +14,13 @@ const notFound = () => NextResponse.json({ success: false, error: "not_found" },
  */
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   // THE FLAG FIRST: off answers before the id, the viewer or the database is looked at
-  if (stage4FlagMode("DIGER_STAGE4_VERSIONS") === "off") return notFound();
+  if (!versionsAvailable()) return notFound();
   const id = safeMissionId((await ctx.params).id);
   if (!id) return NextResponse.json({ success: false, error: "bad_request" }, { status: 400, headers: NO_STORE });
   const auth = await resolveMissionViewer(req);
   if (!auth.ok) return auth.response;
   const client = createAdminClient();
   try {
-    if (!(await versionsAvailable(client, auth.viewer.userId))) return notFound();
     if (!(await ownsMission(client, id, auth.viewer.userId))) return notFound();
     return NextResponse.json({ success: true, versions: await listVersionSummaries(client, id) }, { headers: NO_STORE });
   } catch {
