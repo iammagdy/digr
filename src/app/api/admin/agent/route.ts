@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { authenticateAdmin } from "../../../../lib/server/adminAuth";
 import { createAdminClient } from "../../../../lib/supabase/server";
-import { createMission, loadOverview, setMissionPricing, setPlanningModel, setRedesignFlag } from "../../../../lib/agentMission/adminActions";
+import { createMission, loadOverview, setMissionPricing, setPlanningModel, setRedesignFlag, setSocialDiscovery } from "../../../../lib/agentMission/adminActions";
 
 export const dynamic = "force-dynamic";
 
@@ -45,6 +45,12 @@ export async function POST(req: NextRequest) {
     const r = await setRedesignFlag(client, { type: body.type, mode: body.mode, adminId: auth.ctx.adminId });
     // every change has an audit row: who, which type, from what to what
     if (r.ok && r.before !== r.after) await auth.ctx.audit("setting", "مفتاح إعادة التصميم", `${String(body.type)}: ${r.before} → ${r.after}`, { targetType: "agent_settings", targetId: "redesign_flags" });
+    return r.ok ? NextResponse.json(r) : NextResponse.json({ error: r.error }, { status: r.status });
+  }
+  if (body?.action === "social_discovery") {
+    const r = await setSocialDiscovery(client, { mode: body.mode, adminId: auth.ctx.adminId });
+    // every change has an audit row: who, from what to what (the switch only ever reaches TEST accounts)
+    if (r.ok && r.before !== r.after) await auth.ctx.audit("setting", "اكتشاف المصادر من الدليل (حسابات الاختبار)", `${r.before} → ${r.after}`, { targetType: "agent_settings", targetId: "social_discovery" });
     return r.ok ? NextResponse.json(r) : NextResponse.json({ error: r.error }, { status: r.status });
   }
   return NextResponse.json({ error: "bad_input" }, { status: 400 });

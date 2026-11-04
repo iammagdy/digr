@@ -55,7 +55,7 @@ export interface World {
   endpoints: () => string[];
 }
 
-export function discoveryWorld(request: string, handlers: Record<string, Handler>, options: { discovery?: boolean; platform?: "youtube" | "instagram"; missionId?: string; /** The store the pages are saved in (a delegate gateway must write into the same one). */ store?: ReturnType<typeof createMemoryStore>; /** An endpoint with no handler is served by the delegate of the current phase (the stored REAL pages of a live mission, through the replay gateway), else it is a call nobody scripted. */ delegates?: Partial<Record<"planning" | "execution", { tregCall: (input: { endpoint_id?: unknown; params?: unknown; purpose?: unknown }) => Promise<unknown> }>> } = {}): World {
+export function discoveryWorld(request: string, handlers: Record<string, Handler>, options: { discovery?: boolean; platform?: "tiktok" | "x" | "facebook" | "instagram" | "youtube"; missionId?: string; /** The store the pages are saved in (a delegate gateway must write into the same one). */ store?: ReturnType<typeof createMemoryStore>; /** An endpoint with no handler is served by the delegate of the current phase (the stored REAL pages of a live mission, through the replay gateway), else it is a call nobody scripted. */ delegates?: Partial<Record<"planning" | "execution", { tregCall: (input: { endpoint_id?: unknown; params?: unknown; purpose?: unknown }) => Promise<unknown> }>> } = {}): World {
   const store = options.store ?? createMemoryStore();
   const missionId = options.missionId ?? "msn_r33_1";
   store.missions.set(missionId, newMission({ id: missionId, user_id: "u", request_text: request, status: "planning", created_at: "2026-11-04T18:00:00Z" }));
@@ -98,7 +98,7 @@ export function discoveryWorld(request: string, handlers: Record<string, Handler
     plan: (over = {}) => planByCompiler({
       mission: { id: missionId, request_text: over.request ?? request, answer_text: over.answer ?? null, created_at: over.created ?? "2026-11-04T18:00:00Z" },
       gateway: gateway as never, store, catalog, nowMs: Date.parse("2026-11-04T18:00:20Z"), catalogOnly: true,
-      ...(discovered ? { cards: discovered.cards, chainIssues: chainCheckerFor(catalog, NO_SENSITIVE_ACCESS) } : {}),
+      ...(discovered ? { cards: discovered.cards, chainIssues: chainCheckerFor(catalog, NO_SENSITIVE_ACCESS), discoveryRejected: discovered.rejected.map((r) => ({ endpointId: r.endpointId, reason: r.reason })) } : {}),
       ...over,
     } as CompiledPlanningDeps),
   };

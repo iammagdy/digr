@@ -4,6 +4,20 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 34 (4 Nov 2026, after #395, main = `f66979c`): the discovery path is entered by ALL FIVE platforms, and the switch has an audited admin write
+
+**What was wrong after round 33.** Merging round 33 did not make TikTok, X or Facebook use discovery: (1) their capabilities had no row in the role grammar (`roleGrammar.ts`), so no catalog tool competed with their hand-written cards; (2) the catalog check of a chain, the model's choice among candidates and the audit mark ran ONLY when a DERIVED card took part, so a verified tool "bypassed" the evaluation; (3) `social_discovery` could only be set by SQL (the admin route had no action for it).
+
+**What changed (one shared mechanism, no per-platform code).**
+- `roleGrammar.ts`: three rows (`tiktok.search.videos`, `x.search.posts`, `facebook.search.posts`). On the real catalog this derives ONE new tool (X: `justoneapi.x.twitter-search-v1`, which cannot carry the period, so the verified X tool still ranks first); every other TikTok/Facebook/X tool is refused with a named reason (`has_hand_card`, `no_list_path`, `no_id_field`, `cost_unknown`, `low_success`…), and the refusals are kept as audit evidence.
+- `compiled.ts`: the catalog check of the chain (`validateChain`) now applies to EVERY candidate (verified ones too); the model's choice runs for any two or more validated candidates (it is shown only validated ids and its answer is checked); the plan's mark (`compiled.discovery`) is made for EVERY plan of a mission with discovery on, with `entered: true`, the chosen tool and its `status`/`derived`, `selection.by` (`model` | `rank` | `only_candidate`) and `evaluation` (`platform`, `eligible`, `rejected` counts by reason, `chain_refused`). `runMission.ts` also writes one internal event (`قياس داخلي: قُيّمت مصادر الدليل…`, counts `discovery`, `eligible`, `rejected`, `chain_refused`, `selected_derived`, `selected_by_model`).
+- Honest wording: the "not tried before on real pages" sentence is said only of a card that is not verified; a verified chosen tool gets a methodology line that says sources were compared and a verified one chosen. Completeness (complete within the source / partial / unknown) is reported for verified tools too (`pagingOf`).
+- `social_discovery` write: the admin route action `social_discovery` (`test` | `off` only; `on` is refused), audit row, and a two-button control on the admin page «الوكيل». It reads the current value first and writes only that key. Equivalent SQL (owner only): `insert into agent_settings(key, value) values ('social_discovery', '"test"') on conflict (key) do update set value = excluded.value;`.
+
+**What is and is not proven.** Tests (`tests/round34-*.test.ts`): discovery is entered for TikTok, Facebook and YouTube on the stored REAL pages (same tools, rows, ids and price as without discovery) and for X and Instagram on SIMULATED pages. No derived tool has ever answered a real call; a verified tool stays the chosen one wherever the catalog shows no better. No paid acceptance mission was run.
+
+---
+
 ## Round 33 (4 Nov 2026, after #387, main = `220e152`): catalog discovery joins the compiled social planner (ONE integration, default OFF, test accounts only)
 
 **The finding that changed the brief's premise (read from the code).** `src/lib/modelPlanner/` is NOT a social planner that the social path "bypasses by mistake": it is the legacy model-composed planner, and round 18 (#364) DELETED the model-planned social pipeline on purpose after thirty live rounds of its repairs (docs/FOUNDATION-PLAN.md section 1). Re-enabling it for social would bring back the model composing recipes and about fifteen repair passes. What the social path really lacked was the DISCOVERY half: a tool existed for a request only if someone wrote a hand card (`toolCards/*`), and each platform had exactly one parent shape (YouTube: a search INSIDE a channel; Instagram: an account's listing). The catalog has 3,276 sellable endpoints; the compiler used 31 of them.

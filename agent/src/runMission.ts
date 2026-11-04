@@ -467,7 +467,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // candidates. Everything else about the mission (the gateway, the price, the hold, the approval, the engine) is what it was.
   const discovered = compiledActive && redesign.platform && discoveryActive(settings, redesign.isTest) ? cardsWithDiscovery(deps.catalog, redesign.platform, access) : null;
   const selectCapability = discovered && deps.reviewCall ? modelSelector(async ({ system, user, maxTokens }) => { const got = await deps.reviewCall!({ model: MODEL_HAIKU, system, user, maxTokens }); return got ? { text: got.text, costUsd: llmCostFromUsage(MODEL_HAIKU, got.usage) } : null; }) : undefined;
-  const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, ...(discovered ? { cards: discovered.cards, chainIssues: chainCheckerFor(deps.catalog, access), ...(selectCapability ? { selectCapability } : {}) } : {}), nowMs: planningNow, priorCalls: calls, ...(understand ? { understand } : {}), ...(occurrence ? { occurrence } : {}), ...(redesign.isTest ? { catalogOnly: true } : {}), askCount: true, choices, questionsAsked: prior?.questionsAsked ?? 0, answerIsChoice }) : null;
+  const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, ...(discovered ? { cards: discovered.cards, chainIssues: chainCheckerFor(deps.catalog, access), discoveryRejected: discovered.rejected.map((r) => ({ endpointId: r.endpointId, reason: r.reason })), ...(selectCapability ? { selectCapability } : {}) } : {}), nowMs: planningNow, priorCalls: calls, ...(understand ? { understand } : {}), ...(occurrence ? { occurrence } : {}), ...(redesign.isTest ? { catalogOnly: true } : {}), askCount: true, choices, questionsAsked: prior?.questionsAsked ?? 0, answerIsChoice }) : null;
   // THE QUESTION BEFORE APPROVAL (live round 7): no video of the two pages read is about the topic; the plan is not made, the customer chooses (the same needs_input card as the topic question)
   if (compiled?.kind === "question") {
     // every question card counts toward the three a request may have; a count or comments question also waits for its answer
@@ -479,6 +479,11 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   }
   if (compiled) {
     await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: خطة مبنية بالكود.", counts: { compiled: compiled.kind === "plan" ? 1 : 0, pool_reads: compiled.reads.pool, exposure_reads: compiled.reads.exposure } }).catch(() => undefined);
+    // ROUND 34: the internal record that the catalog discovery was entered for this plan (the full mark is kept with the plan: `compiled.discovery`)
+    if (compiled.kind === "plan" && compiled.discovery) {
+      const d = compiled.discovery;
+      await store.addEvent(mission.id, { kind: "call", message_ar: `قياس داخلي: قُيّمت مصادر الدليل لخطوة ${d.role}، والمختار ${d.endpoint_id}.`, counts: { discovery: 1, eligible: d.evaluation?.eligible.length ?? 0, rejected: Object.values(d.evaluation?.rejected ?? {}).reduce((a, b) => a + b, 0), chain_refused: d.evaluation?.chain_refused.length ?? 0, selected_derived: d.derived ? 1 : 0, selected_by_model: d.selection?.by === "model" ? 1 : 0 } }).catch(() => undefined);
+    }
     if (compiled.kind === "plan") state.proposedPlan = compiled.plan;
     else state.finish = { outcome: "cannot_serve", summary_ar: compiled.reason === "budget_too_small" ? BUDGET_TOO_SMALL_AR : compiled.reason === "page_not_found" ? pageNotFoundAr(compiled.ask.source.text) : "", kind: compiled.reason === "no_rows" || compiled.reason === "no_parent_with_children" || compiled.reason === "page_not_found" ? "empty" : "unsupported" };
   }

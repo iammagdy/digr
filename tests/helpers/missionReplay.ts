@@ -15,6 +15,8 @@ import type { PricedPlan } from "../../src/lib/agentMission/plan";
 import type { RedesignFlags } from "../../src/lib/agentMission/redesignFlags";
 import type { Occurrence } from "../../src/lib/agentMission/foundation/occurrence";
 import type { PlatformFlags } from "../../src/lib/agentMission/redesignFlagTypes";
+import { cardsWithDiscovery, chainCheckerFor, type SelectCapability } from "../../src/lib/agentMission/foundation/discovery";
+import { NO_SENSITIVE_ACCESS } from "../../src/lib/treg/dataPolicy";
 import { replayGateway, type ReplayOptions } from "./replayGateway";
 
 /**
@@ -44,6 +46,8 @@ export interface MissionReplayInput {
   transformPlanningPage?: (endpointId: string, page: unknown) => unknown;
   /** ROUND 19: the plan as the production planning run SAVED it (`tests/helpers/productionPlanning.ts`): the compile step is skipped and the engine and the contract run on exactly that plan. */
   savedPlan?: PricedPlan;
+  /** ROUND 34: plan with the catalog discovery ON for a test account (the worker's `social_discovery = test` wiring: the hand-written AND the derived cards, the chain check, the rejections as evidence). `select` stands for the model's choice among the validated candidates (it is shown only those; its answer is checked by the compiler). */
+  discovery?: { select?: SelectCapability };
 }
 
 export interface MissionReplay {
@@ -71,6 +75,7 @@ export async function replayMission(input: MissionReplayInput): Promise<MissionR
     mission: { id: target, request_text: input.request, answer_text: input.answer ?? null, created_at: input.createdAt },
     gateway: transformed as never, store, catalog, nowMs: Date.parse(input.planningAt),
     ...(input.edits ? { edits: input.edits } : {}), ...(input.occurrence ? { occurrence: input.occurrence } : {}), ...(input.catalogOnly ? { catalogOnly: true } : {}),
+    ...(input.discovery ? (() => { const d = cardsWithDiscovery(catalog, input.platform, NO_SENSITIVE_ACCESS); return { cards: d.cards, chainIssues: chainCheckerFor(catalog, NO_SENSITIVE_ACCESS), discoveryRejected: d.rejected.map((r) => ({ endpointId: r.endpointId, reason: r.reason })), ...(input.discovery.select ? { selectCapability: input.discovery.select } : {}) }; })() : {}),
   });
   if (planned.kind !== "plan") throw new Error(`no plan for ${input.fixture}: ${planned.kind}${"reason" in planned ? ` ${planned.reason}` : ""}`);
   const plan = planned.plan;

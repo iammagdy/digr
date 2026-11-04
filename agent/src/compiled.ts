@@ -4,7 +4,7 @@ import { checkChannelsAgainstWords } from "../../src/lib/agentMission/foundation
 import { buildShapeDigest } from "../../src/lib/modelPlanner/digest";
 import { carriedBy, chooseCard, compilePlan, parentInputs, rankedCards, rankedPoolOf, COMPILED_PLATFORMS, type CompileResult } from "../../src/lib/agentMission/foundation/compilePlan";
 import { channelAnswerOf, channelEvidenceOf, youtubeChannelChoiceQuestionAr } from "../../src/lib/agentMission/foundation/discovery/channelEvidence";
-import { candidateViewOf, discoveryMarkOf, discoveryNotesAr, type DiscoveryMark, type SelectCapability } from "../../src/lib/agentMission/foundation/discovery/plan";
+import { candidateViewOf, discoveryMarkOf, discoveryNotesAr, pagingOf, type DiscoveryEvaluation, type DiscoveryMark, type SelectCapability } from "../../src/lib/agentMission/foundation/discovery/plan";
 import { factsOf, isAboutAndEligible, pageMatchesSource, rankPool } from "../../src/lib/agentMission/foundation/pool";
 import { aboutQueryOf, noAboutChoiceOf, noAboutQuestionAr, NO_ABOUT_OPTIONS_AR } from "../../src/lib/agentMission/foundation/topicChoice";
 import { NAMED_SHORTFALL_OPTIONS_AR, isNamedShortfallAnswer, namedShortfallChoiceOf, namedShortfallQuestionAr } from "../../src/lib/agentMission/foundation/namedShortfall";
@@ -14,7 +14,7 @@ import { budgetOfWords, questionNeeded, type Choices } from "../../src/lib/agent
 import { fitToBudget } from "../../src/lib/agentMission/foundation/budgetFit";
 import { toArabicDigits } from "../../src/lib/arabicDigits";
 import { cardOf, cardsFor, CATALOG_ONLY_CAP_USD, mapPage, type ToolCard } from "../../src/lib/agentMission/foundation/toolCards";
-import { REPLY_ROLE } from "../../src/lib/agentMission/foundation/compilePlan";
+import { PARENT_ROLES, REPLY_ROLE } from "../../src/lib/agentMission/foundation/compilePlan";
 import type { PricedPlan } from "../../src/lib/agentMission/plan";
 import type { MissionPricingSettings } from "../../src/lib/missionPricing";
 import type { TregCatalog } from "../../src/lib/treg/catalog";
@@ -60,6 +60,8 @@ export interface CompiledPlanningDeps {
   selectCapability?: SelectCapability;
   /** ROUND 33: the catalog check of a chain of cards (parents, comments, replies): what makes a chain unusable (an unknown or blocked endpoint, an input the catalog does not declare, a key the parent does not give). Built by the worker with the full catalog and the account's access. */
   chainIssues?: (cards: ReadonlyArray<ToolCard>) => unknown[];
+  /** ROUND 34: the catalog's tools of the platform the discovery could not use, with the reason (for the audit mark of every plan). */
+  discoveryRejected?: ReadonlyArray<{ endpointId: string; reason: string }>;
   /** Decision 7: the occurrence the customer chose earlier in this mission (the answer of a later question replaces `answer_text`). */
   occurrence?: Occurrence;
   /** ROUND 14, PART B: the production run asks the count and the comments per parent BEFORE any read when the request gives none (`askCount`); a planning made by a test or a tool that does not set it never asks (today's behaviour). `choices` are what the customer chose at those questions, `questionsAsked` how many cards the request has had (at most three), `answerIsChoice` that the current answer is one of them (the request is read without its words). */
@@ -97,7 +99,7 @@ const sameInputs = (digest: Record<string, unknown>, params: Record<string, unkn
 /** Reads the pool and the exposure pages through the gateway, then compiles. */
 export async function planByCompiler(deps: CompiledPlanningDeps): Promise<WithCost<CompiledPlanning>> {
   const cost = { usd: 0 };
-  const seen: { pages: Array<{ card: ToolCard; page: unknown; nextCursor: string | null; hasMore: boolean | null }>; choice?: DiscoveryMark["selection"] } = { pages: [] };
+  const seen: { pages: Array<{ card: ToolCard; page: unknown; nextCursor: string | null; hasMore: boolean | null }>; choice?: DiscoveryMark["selection"]; evaluation?: DiscoveryEvaluation } = { pages: [] };
   let result = await planInner(deps, cost, seen);
   // ROUND 30: a plan made from an account the customer gave (the request named none) says so: the results are that account's, not all of Instagram
   const given = deps.choices?.instagramAccount;
@@ -105,19 +107,23 @@ export async function planByCompiler(deps: CompiledPlanningDeps): Promise<WithCo
     result = { ...result, plan: { ...result.plan, notes_ar: [...(result.plan.notes_ar ?? []), instagramAccountNoteAr(given)] } };
   }
   // ROUND 33: a plan whose parents were read by a tool derived from the catalog says so before approval, with what the pages showed about completeness (never «all of the platform»), and keeps the audit mark of the discovery
+  // ROUND 34: EVERY PLAN OF A MISSION WITH DISCOVERY ON carries the mark, whichever tool was chosen (a verified tool took part in the same evaluation as the derived ones): the audit evidence that discovery was entered, what was eligible and what was chosen
   const planned = result.kind === "plan" ? result : null;
-  if (planned && planned.plan.stages[0]) {
-    const poolCard = (deps.cards ?? []).find((c) => c.endpointId === planned.plan.stages[0].endpoint_id && c.derived);
+  if (planned && deps.cards && planned.plan.stages[0]) {
+    const platformParents = planned.ask.platform ? PARENT_ROLES[planned.ask.platform] : [];
+    const stage = planned.plan.stages.find((s) => deps.cards!.some((c) => c.endpointId === s.endpoint_id && platformParents.includes(c.role))) ?? planned.plan.stages[0];
+    const poolCard = deps.cards.find((c) => c.endpointId === stage.endpoint_id);
     if (poolCard) {
       const last = seen.pages[seen.pages.length - 1];
-      const mark = discoveryMarkOf(poolCard, { pages: seen.pages.length, rows: planned.plan.stages[0].planned_rows, hasMore: last ? last.hasMore ?? (last.nextCursor ? true : poolCard.derived?.paging === "declared" ? false : null) : null, ...(seen.choice ? { selection: seen.choice } : {}) });
+      const hasMore = last ? last.hasMore ?? (last.nextCursor ? true : pagingOf(poolCard) === "declared" ? false : null) : null;
+      const mark = discoveryMarkOf(poolCard, { pages: seen.pages.length, rows: stage.planned_rows, hasMore, ...(seen.choice ? { selection: seen.choice } : {}), ...(seen.evaluation ? { evaluation: seen.evaluation } : {}) });
       result = { ...planned, discovery: mark, plan: { ...planned.plan, notes_ar: [...(planned.plan.notes_ar ?? []), ...discoveryNotesAr(poolCard, planned.ask, mark)], compiled: { ...planned.plan.compiled!, discovery: mark } } };
     }
   }
   return cost.usd > 0 ? { ...result, llmCostUsd: cost.usd } : result;
 }
 
-async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen: { pages: Array<{ card: ToolCard; page: unknown; nextCursor: string | null; hasMore: boolean | null }>; choice?: DiscoveryMark["selection"] }): Promise<CompiledPlanning> {
+async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen: { pages: Array<{ card: ToolCard; page: unknown; nextCursor: string | null; hasMore: boolean | null }>; choice?: DiscoveryMark["selection"]; evaluation?: DiscoveryEvaluation }): Promise<CompiledPlanning> {
   const cardsOpt = deps.cards ? { cards: deps.cards } : {};
   const at = Date.parse(String(deps.mission.created_at ?? ""));
   // THE CUSTOMER'S ANSWER TO THE NAMED-PAGE QUESTION (decision 7.5) and TO THE OCCURRENCE QUESTION (decision 7) are ready answers: they are read as choices and the request is read without their words
@@ -143,8 +149,8 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
     const opt = from ? { cards: from } : {};
     const list = rankedCards(a, "parents", { catalogOnly: catalogOnlyNow, ...opt });
     if (!deps.chainIssues) return list;
+    // ROUND 34: the catalog check applies to EVERY candidate, a verified, hand-written tool as much as a derived one: a verified tool takes part in the same evaluation, it is not trusted past what the catalog now says (an endpoint the catalog dropped, an input it no longer declares)
     return list.filter((c) => {
-      if (!c.derived) return true;
       const repliesCards = a.replies !== "none" && a.platform ? cardsFor(a.platform, REPLY_ROLE[a.platform], { catalogOnly: catalogOnlyNow, ...opt }) : [];
       const comments = a.comments !== "none" ? chooseCard(a, "comments", { catalogOnly: catalogOnlyNow, repliesCards, ...opt }) : null;
       const replies = a.replies !== "none" ? chooseCard(a, "replies", { catalogOnly: catalogOnlyNow, ...opt }) : null;
@@ -193,15 +199,21 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   let card: ToolCard | null = candidates[0] ?? null;
   // ROUND 33: SEVERAL validated candidates, at least one derived from the catalog: the model chooses among them (it sees only these, and its answer is checked to be one of them); no answer, or one that is not a candidate, leaves the best-ranked
   let selection: DiscoveryMark["selection"] | undefined;
-  if (card && deps.selectCapability && candidates.length >= 2 && candidates.some((c) => c.derived)) {
+  if (card && deps.selectCapability && candidates.length >= 2) {
     const views = candidates.map((c) => candidateViewOf(c, carriedBy(c, ask).carried, deps.catalog.byId.get(c.endpointId)?.capability ?? null));
     const said = await deps.selectCapability({ request: deps.mission.request_text, topic: ask.topic.text, candidates: views }).catch(() => null);
     if (said) cost.usd += Math.max(0, Number(said.costUsd) || 0);
     const picked = said ? candidates.find((c) => c.endpointId === said.endpointId) : undefined;
     if (picked) { card = picked; selection = { by: "model", candidates: candidates.map((c) => c.endpointId), reason: said!.reason }; }
     else selection = { by: "rank", candidates: candidates.map((c) => c.endpointId) };
-  } else if (card?.derived) selection = { by: "rank", candidates: candidates.map((c) => c.endpointId) };
+  } else if (card && deps.cards) selection = { by: candidates.length === 1 ? "only_candidate" : "rank", candidates: candidates.map((c) => c.endpointId) };
   seen.choice = selection;
+  // ROUND 34: the evidence of the evaluation (kept with the plan's mark): every candidate that passed, the catalog's tools of the platform that could not be used and why, and the chains refused before any read
+  if (deps.cards && ask.platform) {
+    const rejected: Record<string, number> = {};
+    for (const r of deps.discoveryRejected ?? []) rejected[r.reason] = (rejected[r.reason] ?? 0) + 1;
+    seen.evaluation = { platform: ask.platform, eligible: candidates.map((c) => ({ endpoint_id: c.endpointId, status: c.status, derived: c.derived !== undefined })), rejected, chain_refused: [...new Set(rejectedChains)] };
+  }
   // OWNER DECISION 7.4: the calls made with catalog_only cards cost at most CATALOG_ONLY_CAP_USD a mission; a read that would pass it is not made (it counts as a read that did not answer)
   let catalogOnlySpentUsd = 0;
   const read = async (endpointId: string, params: Record<string, unknown>, using?: ToolCard): Promise<{ callId: string; page: unknown; nextCursor: string | null; hasMore: boolean | null } | { failed: true; refused: boolean }> => {
