@@ -331,6 +331,8 @@ describe("the fence in the source", () => {
     const REVIEWED = new Set([
       // the add-on's own code (it must see add-on rows)
       "src/lib/agentMission/stage4/addonRowStore.ts", "src/lib/agentMission/stage4/reviewRequest.ts", "src/lib/agentMission/stage4/reviewPreview.ts", "src/lib/agentMission/stage4/versionFile.ts", "src/lib/agentMission/stage4/versionList.ts", "src/lib/agentMission/addonSettlement.ts",
+      // STAGE A: the review report reads the delivered mission's own row by id and the owner (read-only; it never lists or writes add-on rows)
+      "src/lib/agentMission/stage4/reviewReport.ts",
       // the shared approval path: its callers are the guarded ones above (asserted in the first test)
       "src/lib/agentMission/approval.ts",
       // a read by job id or by the delivered mission's own id: an add-on row is never the subject of a notice, a conversation link, a job download or a wallet line (it holds no job until the approval task); see docs/MONEY-PR-7A.md section 17.5

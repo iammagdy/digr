@@ -189,6 +189,27 @@ describe("the review request writes one unpaid row and cancels it by compare-and
   });
 });
 
+describe("STAGE A: the review report is a read of a stored report and nothing else", () => {
+  const REPORT = ["src/lib/agentMission/stage4/reviewReport.ts", "src/app/api/missions/[id]/review-report/route.ts"];
+  it("both files exist, and nothing but the route reaches the report module", () => {
+    for (const r of REPORT) expect(existsSync(abs(r))).toBe(true);
+    expect([...reachers(abs("src/lib/agentMission/stage4/reviewReport.ts"))].map(rel).filter((f) => !REPORT.includes(f))).toEqual([]);
+  });
+  it("the route's imports, followed all the way down, contain nothing under agent/, no card, no quotes and no money file", () => {
+    const deps = [...closure(abs("src/app/api/missions/[id]/review-report/route.ts"))].map(rel);
+    expect(deps.filter((f) => f.startsWith("agent/"))).toEqual([]);
+    expect(deps).not.toContain("src/lib/agentMission/stage4/addonQuote.ts");
+    expect(deps).not.toContain("src/lib/agentMission/stage4/quotes.ts");
+    expect(deps).not.toContain("src/lib/agentMission/addonSettlement.ts");
+    expect(deps).toContain("src/lib/agentMission/stage4/review.ts"); // it checks against the review engine's own codes and sentences: the check is not empty
+  });
+  it("neither file writes, calls an rpc, or names a settlement, approval, reservation or add-on creation function", () => {
+    const src = REPORT.map((r) => code(abs(r))).join("\n");
+    expect(src).not.toMatch(/\.(rpc|insert|update|upsert|delete|upload|remove|createSignedUrl)\(/);
+    expect(src).not.toMatch(/settleAddon|approveAddon|createAddon|releaseAddon|reserveAddon|accept_quote_atomic|release_job_atomic|credit_ledger/);
+  });
+});
+
 describe("the flags stay unset", () => {
   it("the Stage 4 flags that would switch the paid features on are not set in this environment", () => {
     expect(process.env.DIGER_STAGE4_REVIEW).toBeUndefined();

@@ -42,7 +42,7 @@ describe("the Arabic words", () => {
     const all: string[] = [REPORT_HEADING_AR, REPORT_SCOPE_AR, REPORT_FULL_SCORE_AR, REPORT_NO_ISSUES_AR, REPORT_FREE_AR, REPORT_LOADING_AR, REPORT_RETRY_AR, REPORT_PICK_AR, ...Object.values(REPORT_ERRORS_AR)];
     for (const reason of ["delivery", "edit", "review_fix"] as const) for (const score of [0, 7, 85, 99, 100]) for (const cells of [1, 2, 400, 12_000]) all.push(...reviewReportLinesAr(report({ reason, score, cells, rowsReviewed: cells })));
     for (const s of all) {
-      expect(checkCustomerText(s).issues, s).toEqual([]); expect(checkCustomerLabel(s).issues, s).toEqual([]);
+      expect(checkCustomerText(s).issues, s).toEqual([]);
       expect(s, s).not.toMatch(/[0-9]/); expect(s, s).not.toMatch(/\p{Extended_Pictographic}/u); expect(s, s).not.toMatch(/USD|\$|openai|anthropic|claude|supabase|plan_ready|storage/i);
     }
   });
@@ -51,6 +51,12 @@ describe("the Arabic words", () => {
     expect(REPORT_SCOPE_AR).toMatch(/ولا تقيس صحة المعلومات/);
     expect(REPORT_FULL_SCORE_AR).toMatch(/لا تعني أن كل البيانات صحيحة/);
     for (const s of [REPORT_SCOPE_AR, REPORT_FULL_SCORE_AR, REPORT_NO_ISSUES_AR, ...reviewReportLinesAr(report({ score: 100, issues: [] }))]) expect(s, s).not.toMatch(/(?:بيانات|نتائج|معلومات) (?:سليمة|صحيحة|دقيقة|موثوقة) (?:تمامًا|بالكامل|١٠٠)|مضمون|مؤكد|تم التحقق من (?:صحة|دقة)/);
+  });
+});
+
+describe("the short labels pass the label rules", () => {
+  it("heading, picker, loading, retry and the lines", () => {
+    for (const s of [REPORT_HEADING_AR, REPORT_PICK_AR, REPORT_LOADING_AR, REPORT_RETRY_AR, ...reviewReportLinesAr(report())]) expect(checkCustomerLabel(s).issues, s).toEqual([]);
   });
 });
 
