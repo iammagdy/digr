@@ -12,6 +12,7 @@ const WIRING: ReadonlyArray<string> = [
   "src/app/api/missions/[id]/route.ts", // S3/S4: «ask_edit» answers 404 and the GET sends no «askCard» unless DIGER_STAGE2_ASK_CARD is on for the viewer
   "src/app/api/missions/[id]/live/route.ts", // S7: 404 unless DIGER_STAGE2_LIVE_SHEET is on for the viewer
   "src/components/mission/AskCard.tsx", // S4: draws only the card the server sent
+  "src/hooks/useLiveSheet.ts", // S8: asks the live route only when the page enables it; the route is 404 while the flag is off
   "src/components/mission/AgentMissionCard.tsx", // S4: shows the card only when the answer carries it and the page asked for Stage 2 (the requests page)
 ];
 const ROOT = path.resolve(__dirname, "..");
