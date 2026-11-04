@@ -248,7 +248,7 @@ describe("approval: refusals write nothing", () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date("2026-11-04T10:00:00Z"));
     const { w, row } = world(50);
-    expect((await approveAddonOnce(w.client, { id: row.id, actorId: USER })).code).toBe("insufficient_balance");
+    expect(await approveAddonOnce(w.client, { id: row.id, actorId: USER })).toMatchObject({ ok: false, code: "insufficient_balance" });
     vi.setSystemTime(new Date("2026-11-04T10:45:00Z"));
     w.ledger.push({ id: "top_2", delta: 5000, type: "topup" });
     const late = await approveAddonOnce(w.client, { id: row.id, actorId: USER });

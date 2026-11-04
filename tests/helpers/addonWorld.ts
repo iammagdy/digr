@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { fakeMoneyClient } from "./agentMoney";
+import { fakeMoneyClient, type LedgerRow } from "./agentMoney";
 import { ADDON_SLUG, addonId, type AddonPlan, type AddonPricing } from "../../src/lib/agentMission/addonSettlement";
 import { priceMissionByCode } from "../../src/lib/agentMission/price";
 import { DEFAULT_MISSION_PRICING_SETTINGS } from "../../src/lib/missionPricing";
@@ -71,7 +71,7 @@ export const slugOf = (kind: keyof typeof ADDON_SLUG) => ADDON_SLUG[kind];
 export const sha = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
 
 /** The invariant every add-on scenario ends with (docs/MONEY-PR-7A.md section 5): res = -R, rel = +R (one each), at most one chg = -C with 0 < C <= R, the net is -C. */
-export function checkAddonLedger(money: ReturnType<typeof fakeMoneyClient>, jobId: string, expect: { reserved: number; charged: number | "none" }): string[] {
+export function checkAddonLedger(money: { ledger: LedgerRow[] }, jobId: string, expect: { reserved: number; charged: number | "none" }): string[] {
   const problems: string[] = [];
   const of = (p: string) => money.ledger.filter((r) => r.id.startsWith(p) && r.id === `${p}${jobId}`);
   const [res, rel, chg] = [of("res_"), of("rel_"), of("chg_")];
