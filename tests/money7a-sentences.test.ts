@@ -20,6 +20,7 @@ describe("the add-on's customer sentences", () => {
   for (const [name, s] of sentences) it(`${name} passes checkCustomerText`, () => {
     expect(text(s).issues).toEqual([]);
     expect(s).not.toMatch(/[0-9]/);
+    expect(s).not.toMatch(/\p{Extended_Pictographic}/u); // checkCustomerText does not catch an emoji: this does
     expect(s).not.toMatch(/USD|\$|دولار|apify|treg|openai|anthropic|claude|gemini/i);
   });
   for (const [k, v] of Object.entries(ADDON_SUMMARY_AR)) it(`the list line ${k} passes checkCustomerLabel`, () => { expect(checkCustomerLabel(v).issues).toEqual([]); });

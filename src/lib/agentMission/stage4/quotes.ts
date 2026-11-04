@@ -29,3 +29,9 @@ export function editQuote(realCostUsd: number, settings: MissionPricingSettings 
 
 /** The card's line for a quote: the price, said to be computed by code, and that nothing was charged. */
 export const quoteLineAr = (kind: "review" | "edit", points: number): string => `${kind === "review" ? "سعر المراجعة" : "سعر التعديل"}: ${pointsAr(points)}، محسوب بالكود. لم يُخصم شيء.`;
+
+/**
+ * The card's line for an add-on that is HELD before it runs (docs/MONEY-PR-7A.md section 2): the estimate, the most it can cost (the hold) and that only what it really cost is charged. Display only, like the lines above;
+ * the hold and the charge are computed by the money side (addonSettlement.ts), and tests pin the two equal.
+ */
+export const holdLineAr = (estimatePoints: number, holdPoints: number): string => `يُقدَّر التعديل بنحو ${pointsAr(estimatePoints)}، ولن يتجاوز ${pointsAr(holdPoints)}؛ يُخصم ما كلّفه فعلًا فقط.`;

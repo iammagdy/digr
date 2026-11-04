@@ -1,0 +1,113 @@
+import { ADDON_APPROVE_MESSAGES_AR, ADDON_KINDS, addonId, checkAddon, readAddonPlan, type AddonKind, type AddonPlan, type AddonPricing } from "../addonSettlement";
+import type { ReviewCode } from "./review";
+
+/**
+ * STAGE 4 / MONEY PR 7a, PHASE 2A: THE SHAPE OF AN ADD-ON ROW (docs/MONEY-PR-7A.md section 3.0). A paid review, a review fix or an edit of a delivered file is a row of the existing `missions` table: its `plan` JSON carries
+ * `addon: { v, kind, of, baseVersion, newVersion, attempt, request, pricing }` (addonSettlement.ts types and checks it: the money side), created as `plan_ready` (priced by code, never planned by the worker).
+ * PURE: no database here. Reading the rows of a mission and inserting the new one go through an injected `AddonRowStore` (the wiring phase gives it a Supabase implementation); tests give it a memory one.
+ *
+ * THE RULES, in code:
+ *   - ONE OPEN ADD-ON PER FILE (decision D10): while an add-on of the mission is not ended and not completed, a second one is refused: the versions stay in a line (v2 from v1, v3 from v2) with no merge.
+ *   - AN EDIT OR A FIX IS MADE ON THE LATEST VERSION (a review may read any version), and a version that already has a completed edit or fix is not edited again (that would fork the line).
+ *   - A SECOND REVIEW OF THE SAME VERSION IS FREE (decision D11): the stored report is shown; no add-on row is made.
+ *   - THE ATTEMPT NUMBER counts EVERY add-on row of the mission and base version (the doc counted only ended ones, which would give a review and a later edit of the same version the same id): a double click computes the same
+ *     attempt and therefore the same id, and the primary key refuses the second insert.
+ */
+
+/** What the customer asked to change, as data BEFORE anything is re-read (the values come from the run). Removing rows is never offered. */
+export type EditIntent =
+  | { kind: "add_column"; sheet: string; titleAr: string; /** The rows to fill (their ids). */ rowIds: ReadonlyArray<string> }
+  | { kind: "rename_column"; sheet: string; from: string; to: string }
+  | { kind: "set_cells"; sheet: string; cells: ReadonlyArray<{ rowId: string; column: string }> }
+  | { kind: "add_rows"; sheet: string; count: number };
+export type AddonRequest =
+  | { kind: "review" }
+  /** A review fix: ONE issue of the review of the base version; its cells are recomputed by code from the whole version (never from the report's first 20 ids). */
+  | { kind: "review_fix"; issue: { code: ReviewCode; sheet: string; column: string } }
+  | { kind: "edit"; edit: EditIntent };
+
+export const OPEN_STATUSES = ["queued", "planning", "needs_input", "plan_ready", "approved", "executing"] as const;
+export const ENDED_STATUSES = ["cancelled", "failed", "unserved"] as const;
+
+export interface AddonRowLike { id: string; status: string; plan: unknown }
+/** What a row of `missions` needs to be inserted (the table's own defaults fill the rest). */
+export interface AddonRowInsert { id: string; user_id: string; request_text: string; status: "plan_ready"; plan: { addon: AddonPlan } }
+export interface AddonRowStore {
+  /** Every add-on row (any status) of this delivered mission. */
+  listFor(missionId: string): Promise<ReadonlyArray<AddonRowLike>>;
+  /** Insert one row. `duplicate: true` = the id already exists (another click got there first). */
+  insert(row: AddonRowInsert): Promise<{ ok: true } | { ok: false; duplicate: boolean }>;
+}
+
+export const isAddonRow = (row: { plan?: unknown } | null | undefined): boolean => readAddonPlan(row?.plan) !== null;
+
+const addonsOf = (rows: ReadonlyArray<AddonRowLike>, of: string): Array<{ row: AddonRowLike; addon: AddonPlan }> =>
+  rows.flatMap((row) => { const addon = readAddonPlan(row.plan); return addon && addon.of === of ? [{ row, addon }] : []; });
+
+/** The attempt number of the next add-on on this base version: 1 + every add-on row the mission already has on it (any kind, any status). */
+export function nextAttempt(rows: ReadonlyArray<AddonRowLike>, of: string, baseVersion: number): number {
+  return 1 + addonsOf(rows, of).filter(({ addon }) => addon.baseVersion === baseVersion).length;
+}
+
+export const ADDON_CREATE_REFUSALS_AR = {
+  open_addon: "لديك طلب مفتوح على هذا الملف؛ أكمله أو ألغه أولًا.",
+  not_latest_version: "اطلب التعديل على أحدث نسخة من الملف.",
+  already_edited: "عُدّلت هذه النسخة من قبل؛ اطلب التعديل على النسخة الأحدث.",
+  review_exists: "راجعنا هذه النسخة من قبل؛ هذا تقريرها بلا مقابل.",
+  too_large: ADDON_APPROVE_MESSAGES_AR.too_large,
+  plan_changed: ADDON_APPROVE_MESSAGES_AR.plan_changed,
+  bad_request: "تعذّر فهم هذا الطلب.",
+  row_removal_not_offered: "حذف عناصر من الملف غير متاح. يبقى ملفك كاملًا، ويمكنك طلب عمود أو تصحيح خانة.",
+} as const;
+export type AddonCreateRefusal = keyof typeof ADDON_CREATE_REFUSALS_AR;
+
+export type CanCreate = { ok: true; attempt: number } | { ok: false; reason: Exclude<AddonCreateRefusal, "too_large" | "plan_changed" | "bad_request" | "row_removal_not_offered">; existingId?: string };
+
+/** May an add-on of this kind be made now on this base version? Pure over the mission's add-on rows. */
+export function canCreateAddon(input: { rows: ReadonlyArray<AddonRowLike>; of: string; kind: AddonKind; baseVersion: number; latestVersion: number }): CanCreate {
+  const mine = addonsOf(input.rows, input.of);
+  const open = mine.find(({ row }) => (OPEN_STATUSES as ReadonlyArray<string>).includes(row.status));
+  if (open) return { ok: false, reason: "open_addon", existingId: open.row.id };
+  // an edit or a fix goes on the latest version; a review may read any version that exists
+  if (input.baseVersion > input.latestVersion || (input.kind !== "review" && input.baseVersion !== input.latestVersion)) return { ok: false, reason: "not_latest_version" };
+  const done = mine.filter(({ row, addon }) => row.status === "completed" && addon.baseVersion === input.baseVersion);
+  if (input.kind === "review") { const r = done.find(({ addon }) => addon.kind === "review"); if (r) return { ok: false, reason: "review_exists", existingId: r.row.id }; }
+  else if (done.some(({ addon }) => addon.kind !== "review")) return { ok: false, reason: "already_edited" };
+  return { ok: true, attempt: nextAttempt(input.rows, input.of, input.baseVersion) };
+}
+
+/** The row for a priced add-on, ready to insert. The id is the deterministic one. */
+export function buildAddonRow(input: { userId: string; of: string; kind: AddonKind; baseVersion: number; attempt: number; request: AddonRequest; pricing: AddonPricing; requestText: string }): AddonRowInsert {
+  const text = input.requestText.trim();
+  if (text.length < 3 || text.length > 4000) throw new Error("buildAddonRow: the customer's words must be 3 to 4000 characters");
+  if (!ADDON_KINDS.includes(input.kind) || input.request.kind !== input.kind) throw new Error("buildAddonRow: the request does not match the kind");
+  const addon: AddonPlan = { v: 1, kind: input.kind, of: input.of, baseVersion: input.baseVersion, newVersion: input.kind === "review" ? null : input.baseVersion + 1, attempt: input.attempt, request: input.request, pricing: input.pricing };
+  return { id: addonId(input.of, input.baseVersion, input.attempt), user_id: input.userId, request_text: text, status: "plan_ready", plan: { addon } };
+}
+
+export type CreateAddonResult =
+  | { ok: true; row: AddonRowInsert }
+  | { ok: false; reason: AddonCreateRefusal; messageAr: string; existingId?: string };
+const refuse = (reason: AddonCreateRefusal, existingId?: string): CreateAddonResult => ({ ok: false, reason, messageAr: ADDON_CREATE_REFUSALS_AR[reason], ...(existingId ? { existingId } : {}) });
+
+/**
+ * Make the add-on row of a priced card. NOTHING is held or charged here and no provider is called: a row that is `plan_ready` costs nothing. Refused before any insert when the rules above say so, when the price is
+ * over the limit of an add-on, or when the stored price is not what the code computes. A second click computes the same id; the store reports `duplicate`, and the answer is the open add-on (the first click's row).
+ */
+export async function createAddonRow(store: AddonRowStore, input: { userId: string; of: string; kind: AddonKind; baseVersion: number; latestVersion: number; request: AddonRequest; pricing: AddonPricing; requestText: string }): Promise<CreateAddonResult> {
+  if ((input.request as { kind?: unknown }).kind === "remove_rows" || (input.request as { kind?: unknown }).kind === "delete_rows") return refuse("row_removal_not_offered");
+  if (input.request.kind !== input.kind) return refuse("bad_request");
+  const rows = await store.listFor(input.of);
+  const can = canCreateAddon({ rows, of: input.of, kind: input.kind, baseVersion: input.baseVersion, latestVersion: input.latestVersion });
+  if (!can.ok) return refuse(can.reason, can.existingId);
+  const row = buildAddonRow({ ...input, attempt: can.attempt });
+  const check = checkAddon(row.id, row.plan.addon);
+  if (!check.ok) return refuse(check.code === "too_large" ? "too_large" : "plan_changed");
+  const inserted = await store.insert(row);
+  if (!inserted.ok) {
+    // the primary key refused: the same click twice. The first click's row is the answer.
+    if (inserted.duplicate) return refuse("open_addon", row.id);
+    throw new Error("createAddonRow: the row could not be stored");
+  }
+  return { ok: true, row };
+}
