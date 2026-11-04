@@ -701,7 +701,9 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
         fileByStage = { ...Object.fromEntries(withSheet.map((s, i) => [s.key, Math.max(0, sheets![i] - repliesOf(s.key))])), ...Object.fromEntries(plan.stages.filter((x) => x.replies_of !== undefined && x.deliver).map((x) => [x.key, rowsByStage[x.key].length])) };
       }
       // the name the customer's download carries, built from the mission: what + count + date in Arabic («تغريدات عن محمد صلاح - ٣٠٠ - ٢٨ أكتوبر ٢٠٢٦»)
-      const title = missionFileTitleAr({ plan, requestText: mission.request_text, delivered: Math.min(fileCount, plan.price.deliveredRows), date: new Date() });
+      // ROUND 27 (item 6): a request with comments and replies is named by its parents: the count of the first delivering stage's rows the file holds
+      const parentStage = plan.stages.find((s) => s.deliver && s.parent_key === null);
+      const title = missionFileTitleAr({ plan, requestText: mission.request_text, delivered: Math.min(fileCount, plan.price.deliveredRows), date: new Date(), parentDelivered: parentStage ? (fileByStage?.[parentStage.key] ?? rowsByStage[parentStage.key]?.length ?? null) : null });
       files = published.files.map((f) => ({ ...f, download_name: `${title}.${f.kind}` }));
     } catch (e) {
       await settleMission(deps.client, { jobId, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath: null, releaseReason: "تعذّر حفظ ملفات النتيجة، فعاد الحجز المؤقت كاملًا." });

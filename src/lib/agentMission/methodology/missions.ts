@@ -1,5 +1,5 @@
 import { MISSION_TABLE } from "../constants";
-import { missionFileTitleAr, missionTitleAr } from "../fileNames";
+import { isCurrentTitleForm, missionFileTitleAr, missionTitleAr } from "../fileNames";
 
 /**
  * THE MISSIONS A DATA-COLLECTION METHODOLOGY CAN BE WRITTEN FOR (round 21): a request of the customer that was DELIVERED (completed, at least one row delivered), carried out on the COMPILED path (the plan the compiler built: `plan_public.compiled`), with its job and its Excel file.
@@ -17,13 +17,9 @@ export interface MethodologyMission {
   createdAt: string | null;
 }
 
-export const METHODOLOGY_MISSION_COLUMNS = "id,user_id,status,job_id,delivered_units,request_text,plan_public,files,created_at";
+export const METHODOLOGY_MISSION_COLUMNS = "id,user_id,status,job_id,delivered_units,request_text,plan_public,files,created_at,updated_at";
 
 type Row = Record<string, unknown>;
-
-/** «<what> - <day month year>»: the name the delivered file gets now. The older form had the count between the parts («<what> - ١٠ - <date>»), which is recomputed. */
-const CURRENT_TITLE_FORM = /^(?!.* - [٠-٩]+ - ).+ - [٠-٩]{1,2} \S+ [٠-٩]{4}$/;
-const isCurrentTitleForm = (name: string): boolean => CURRENT_TITLE_FORM.test(name) && /(?:^|\s)عن\s/.test(name);
 
 /** The mission as a methodology candidate, or null when it is not one (not delivered, not compiled, no job, no Excel file). */
 export function methodologyMissionOf(row: Row | null | undefined): MethodologyMission | null {
@@ -42,7 +38,9 @@ export function methodologyMissionOf(row: Row | null | undefined): MethodologyMi
   const stored = typeof xlsx.download_name === "string" ? xlsx.download_name.trim().replace(/\.xlsx$/i, "") : "";
   const requestText = String(row.request_text ?? "");
   const stages = (plan as { stages?: unknown }).stages;
-  const date = typeof row.created_at === "string" ? new Date(row.created_at) : null;
+  // the date a rebuilt name carries is the mission's last update (the day it finished), as the download's name does
+  const when = typeof row.updated_at === "string" ? row.updated_at : typeof row.created_at === "string" ? row.created_at : null;
+  const date = when ? new Date(when) : null;
   // a stored name already in the current form is the very name of the Excel file (same words and same date, even when the request was made the day before it finished)
   const title = isCurrentTitleForm(stored) ? stored : Array.isArray(stages) && stages.some((s) => s && typeof s === "object" && typeof s.title_ar === "string")
     ? (date && Number.isFinite(date.getTime())

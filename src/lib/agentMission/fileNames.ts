@@ -119,21 +119,55 @@ function withCountAr(countPart: string, noun: string, info: { text: string; resi
   return info.residual && ENTITY_NOUN.test(noun) ? `${countPart} ${info.text}` : `${countPart} عن ${info.text}`;
 }
 
+/** The stage fields the title reads (a plan's stages, or the stored public plan's). */
+type TitleStage = { deliver: boolean; title_ar: string; parent_key?: string | null; expected_rows?: number; planned_rows?: number; relevance?: { terms: string[]; subject_ar: string } };
+
+/**
+ * ROUND 27 (item 6): a request for videos or posts WITH THEIR COMMENTS AND REPLIES is named by its PARENT items, not by the count and the noun of the last stage:
+ * «فيديوهان مع التعليقات والردود عن الذكاء الاصطناعي - ٤ نوفمبر ٢٠٢٦» (never «٣٢٢ ردًا عن ...»). The parents' count is the one the file holds for the first stage (`parentDelivered`), else the stage's planned rows.
+ * Null when the plan is not of that shape (no delivered child stage, a child that is neither comments nor replies, a parent whose noun is unknown): the older rule then names the file.
+ */
+function withChildrenPhraseAr(stages: ReadonlyArray<TitleStage>, parentDelivered: number | null | undefined, info: { text: string; residual: boolean }): string | null {
+  const delivering = stages.filter((s) => s.deliver);
+  const parent = delivering.find((s) => !s.parent_key);
+  const children = delivering.filter((s) => Boolean(s.parent_key));
+  if (!parent || children.length === 0) return null;
+  const kinds = new Set<string>();
+  for (const c of children) {
+    const kind = /^\s*(?:ال)?رد/.test(c.title_ar) ? "replies" : /تعليق/.test(c.title_ar) ? "comments" : null;
+    if (!kind) return null;
+    kinds.add(kind);
+  }
+  const noun = nounOfStageTitle(parent.title_ar);
+  if (!noun || !knownItemNoun(noun)) return null;
+  const count = typeof parentDelivered === "number" && Number.isFinite(parentDelivered) && parentDelivered > 0 ? Math.floor(parentDelivered) : Math.max(0, Math.floor(Number(parent.expected_rows ?? parent.planned_rows) || 0));
+  if (count <= 0) return null;
+  const withWhat = kinds.has("comments") && kinds.has("replies") ? "التعليقات والردود" : kinds.has("comments") ? "التعليقات" : "الردود";
+  return withCountAr(`${countPhraseAr(count, noun)} مع ${withWhat}`, noun, info);
+}
+
 /** The kinds of entity a sector names directly («شركات مقاولات», «مطاعم كشري»): the noun takes it with no «عن». */
 const ENTITY_NOUN = /^(?:ال)?(?:شركات|شركة|مطاعم|مطعم|أماكن|اماكن|مكان|مصانع|مصنع|فنادق|فندق|محلات|محل)$/;
 const phraseOf = (noun: string, info: { text: string; residual: boolean }): string => (info.residual && ENTITY_NOUN.test(noun) ? `${noun} ${info.text}` : `${noun} عن ${info.text}`);
 
 /** The whole file name without its extension: «تغريدات عن محمد صلاح - ٣٠٠ - ٢٨ أكتوبر ٢٠٢٦». Never empty, never longer than 100 characters, no forbidden character. */
-export function missionFileTitleAr(input: { plan: { stages: Array<{ deliver: boolean; title_ar: string; relevance?: { terms: string[]; subject_ar: string } }> }; requestText?: string | null; delivered: number; date: Date }): string {
+export function missionFileTitleAr(input: { plan: { stages: Array<TitleStage> }; requestText?: string | null; delivered: number; date: Date; /** ROUND 27: the parent items the file holds (the first stage), for a request with comments and replies. */ parentDelivered?: number | null }): string {
   const delivering = input.plan.stages.filter((s) => s.deliver);
   const last = delivering[delivering.length - 1];
   const noun = nounOfStageTitle(last?.title_ar ?? "") || "نتائج";
   const info = subjectInfo({ plan: input.plan, requestText: input.requestText });
   // ROUND 26 (item 8): the count with its noun leads («١٠ تغريدات عن الذكاء الاصطناعي - ٤ نوفمبر ٢٠٢٦»), never a bare count between the parts
-  const what = withCountAr(countPhraseAr(Math.max(0, Math.floor(input.delivered)), noun), noun, info);
+  const what = withChildrenPhraseAr(input.plan.stages, input.parentDelivered, info) ?? withCountAr(countPhraseAr(Math.max(0, Math.floor(input.delivered)), noun), noun, info);
   const title = `${what} - ${arabicDateLabel(input.date)}`;
   return title.replace(FORBIDDEN_IN_FILE_NAME, " ").replace(/\s+/g, " ").trim().slice(0, 100).trim();
 }
+
+/**
+ * ROUND 27 (item 6): «<what> - <day month year>», the form of the file's name since round 26 («١٠ تغريدات عن الذكاء الاصطناعي - ٤ نوفمبر ٢٠٢٦»). The older form had the count between the parts («<what> - ١٠ - <date>»). A stored name in the current form is THE name of the file,
+ * in the download and in the methodology list alike (same words and same date, even when the request was made the day before it finished); an older one is built again from the mission by both.
+ */
+const CURRENT_TITLE_FORM = /^(?!.* - [٠-٩]+ - ).+ - [٠-٩]{1,2} \S+ [٠-٩]{4}$/;
+export const isCurrentTitleForm = (name: string): boolean => CURRENT_TITLE_FORM.test(String(name ?? "").trim()) && /(?:^|\s)عن\s/.test(name);
 
 export const EXCEL_SHEET_NAME_MAX = 31;
 
@@ -174,7 +208,7 @@ export function wordBoundarySheetName(title: string, used: Set<string>, fallback
 
 
 /** What the mission is, in a few words, for a notice or an e-mail: «تغريدات عن محمد صلاح» (the file name without its count and date); a mission with no plan (planning failed) is its request, shortened at a word boundary. */
-export function missionTitleAr(input: { plan?: { stages: Array<{ deliver: boolean; title_ar: string; relevance?: { terms: string[]; subject_ar: string } }> } | null; requestText?: string | null; /** ROUND 26 (item 8): the count the title leads with (the delivered count); default: the planned rows of the delivered stages. */ delivered?: number | null }): string {
+export function missionTitleAr(input: { plan?: { stages: Array<TitleStage> } | null; parentDelivered?: number | null; requestText?: string | null; /** ROUND 26 (item 8): the count the title leads with (the delivered count); default: the planned rows of the delivered stages. */ delivered?: number | null }): string {
   if (input.plan && Array.isArray(input.plan.stages) && input.plan.stages.length > 0) {
     const delivering = input.plan.stages.filter((s) => s.deliver);
     const last = delivering[delivering.length - 1] ?? input.plan.stages[input.plan.stages.length - 1];
@@ -183,6 +217,9 @@ export function missionTitleAr(input: { plan?: { stages: Array<{ deliver: boolea
     // ROUND 26 (item 8): the count of the delivered stages leads the title, with its noun
     const planned = input.plan.stages.filter((s) => s.deliver).reduce((n, s) => n + Math.max(0, Math.floor(Number((s as { expected_rows?: unknown }).expected_rows) || 0)), 0);
     const total = typeof input.delivered === "number" && Number.isFinite(input.delivered) ? Math.max(0, Math.floor(input.delivered)) : planned;
+    // ROUND 27 (item 6): a request with comments and replies is named by its parents
+    const withChildren = withChildrenPhraseAr(input.plan.stages, input.parentDelivered, info);
+    if (withChildren) return withChildren.replace(FORBIDDEN_IN_FILE_NAME, " ").replace(/\s+/g, " ").trim();
     if (noun) return (total > 0 ? withCountAr(countPhraseAr(total, noun), noun, info) : info.text ? phraseOf(noun, info) : noun).replace(FORBIDDEN_IN_FILE_NAME, " ").replace(/\s+/g, " ").trim();
   }
   const words = String(input.requestText ?? "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
@@ -198,13 +235,14 @@ const FORBIDDEN_IN_DOWNLOAD = /[/\\?%*:|"<>]/g;
  * THE ONE NAME A DOWNLOAD OF A MISSION'S FILE CARRIES, whichever way the customer reaches it (the completion panel, «طلباتي», the e-mail's link, the admin's link; the Excel and the CSV): the name stored with the file when it was delivered,
  * else the name built from the mission («تغريدات عن محمد صلاح - ٦٧ - ٢٩ أكتوبر ٢٠٢٦.xlsx»), and only for a mission that has no plan at all the file's own name. A generic «result.xlsx» is never what a customer saves.
  */
-export function missionDownloadName(input: { files?: unknown; kind: string; plan?: { stages: Array<{ deliver: boolean; title_ar: string; relevance?: { terms: string[]; subject_ar: string } }> } | null; requestText?: string | null; deliveredUnits?: number | null; date?: Date | string | number | null }): string {
+export function missionDownloadName(input: { files?: unknown; kind: string; plan?: { stages: Array<TitleStage> } | null; requestText?: string | null; deliveredUnits?: number | null; date?: Date | string | number | null }): string {
   const kind = String(input.kind ?? "").toLowerCase();
   const list = Array.isArray(input.files) ? (input.files as Array<Record<string, unknown>>) : [];
   const own = list.find((f) => f && String(f.kind ?? "").toLowerCase() === kind);
   const stored = typeof own?.download_name === "string" ? own.download_name.trim() : "";
   const strip = (name: string): string => name.replace(new RegExp(`\\.${kind}$`, "i"), "");
-  let title = stored ? strip(stored) : "";
+  // ROUND 27: a stored name that is not in the current form is built again from the mission (the methodology list does the same), so both carry the same words
+  let title = stored && (isCurrentTitleForm(strip(stored)) || !(input.plan && Array.isArray(input.plan.stages) && input.plan.stages.length > 0)) ? strip(stored) : "";
   if (!title && input.plan && Array.isArray(input.plan.stages) && input.plan.stages.length > 0) {
     const when = new Date(input.date ?? Date.now());
     title = missionFileTitleAr({ plan: input.plan, requestText: input.requestText, delivered: Number(input.deliveredUnits) || 0, date: Number.isNaN(when.getTime()) ? new Date() : when });
