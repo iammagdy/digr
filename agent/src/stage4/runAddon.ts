@@ -1,11 +1,19 @@
-import { AGENT_ERROR_REQUEUES_MAX, AGENT_MEMORY_REQUEUES_MAX, AGENT_PHASE_STARTS_MAX, AGENT_RESTART_REQUEUES_MAX } from "../../../src/lib/agentMission/constants";
-import { checkAddon, readAddonPlan, settleAddon, type AddonKind, type AddonPlan, type AddonSettleInput } from "../../../src/lib/agentMission/addonSettlement";
-import { reviewCellsOf, reviewFile } from "../../../src/lib/agentMission/stage4/review";
+import { AGENT_ERROR_REQUEUES_MAX, AGENT_MEMORY_REQUEUES_MAX, AGENT_PHASE_STARTS_MAX, AGENT_RESTART_REQUEUES_MAX, AGENT_EXECUTION_WALL_MS } from "../../../src/lib/agentMission/constants";
+import { addonProviderBudgetUsd, checkAddon, readAddonPlan, settleAddon, type AddonKind, type AddonPlan, type AddonSettleInput } from "../../../src/lib/agentMission/addonSettlement";
+import type { AddonRequest } from "../../../src/lib/agentMission/stage4/addonRow";
+import { EDIT_NOT_SEARCHED_AR, applyEditRequest, type EditRequest } from "../../../src/lib/agentMission/stage4/editVersion";
+import { reviewCellsOf, reviewFile, type ReviewIssue } from "../../../src/lib/agentMission/stage4/review";
+import { cellText, isRealValue, readRecipe, type RereadRecipe } from "../../../src/lib/agentMission/stage4/reread";
+import type { FileVersion } from "../../../src/lib/agentMission/stage4/versions";
+import { createJobCallBudget } from "../../../src/lib/server/callBudget";
+import { createGateway } from "../gateway";
 import type { RunnerDeps } from "../runMission";
 import { readRunState, updateRunState, type RunState } from "../runState";
+import { trackRun, untrackRun } from "../sessions";
 import type { CallRow, MissionRecord } from "../types";
-import { JSON_TYPE, pendingReviewPath, readJson, readOutcome, readVersion, reviewPathOf, writeOutcome, type AddonOutcome } from "./addonFiles";
+import { JSON_TYPE, pendingReviewPath, pendingVersionPath, readJson, readOutcome, readVersion, reviewPathOf, versionPathOf, writeOutcome, type AddonOutcome } from "./addonFiles";
 import { ADDON_DONE_AR } from "./addonText";
+import { runReread, type RereadUnit } from "./rereadRun";
 
 /**
  * MONEY PR 7a, PHASE 2B-1: THE WORKER'S RUN OF AN APPROVED ADD-ON (a paid review, a review fix, an edit): docs/MONEY-PR-7A.md section 3.0, in THIS order:
@@ -27,6 +35,7 @@ const shortError = (e: unknown): string => String((e as Error)?.message ?? e).sl
 /** A claimed row whose plan holds an `addon`: the worker sends it here and every other row to the mission runner. */
 export const isAddonMission = (m: { plan?: unknown } | null | undefined): boolean => Boolean(m && typeof m.plan === "object" && m.plan !== null && "addon" in (m.plan as object));
 
+const lastSeq = (calls: CallRow[]) => calls.reduce((n, c) => Math.max(n, Number(/call_(\d+)$/.exec(c.id)?.[1] ?? 0)), 0);
 const executionSpend = (calls: CallRow[]) => calls.filter((c) => c.phase === "execution").reduce((n, c) => n + (Number(c.cost_usd) || 0), 0);
 const sameBytes = (a: Buffer, b: Buffer) => a.length === b.length && a.equals(b);
 
@@ -153,9 +162,105 @@ async function reviewWork(deps: Deps, row: MissionRecord, addon: AddonPlan, _hol
   return writeOutcome(store, { v: 1, kind: "review", addonId: row.id, of: addon.of, baseVersion: addon.baseVersion, newVersion: null, filled: 1, requested: 1, realCostUsd: 0, stop: null, reason: null, pending: pendingReviewPath(row.id), publishAt: reviewPathOf(base.version), createdAt: now.toISOString() });
 }
 
-// ---------- an edit or a review fix (the re-read comes in the next commit: until then it is released whole, nothing spent) ----------
-async function editWork(deps: Deps, row: MissionRecord, addon: AddonPlan, _jobId: string, _hold: number, _startsExceeded: boolean): Promise<AddonOutcome | "interrupted"> {
-  return writeOutcome(deps.store, nothing(addon, row, "nothing", null, 0, (deps.now ?? (() => new Date()))()));
+// ---------- an edit or a review fix ----------
+async function editWork(deps: Deps, row: MissionRecord, addon: AddonPlan, jobId: string, hold: number, startsExceeded: boolean): Promise<AddonOutcome | "interrupted"> {
+  const { store } = deps;
+  const now = (deps.now ?? (() => new Date()))();
+  const calls = await store.listCalls(row.id);
+  const base = await readVersion(store, addon.of, addon.baseVersion);
+  if (!base) return writeOutcome(store, nothing(addon, row, "no_base", null, executionSpend(calls), now));
+  // a version already holds the path this edit would publish (another writer got there first): nothing is spent, the hold comes back
+  if (addon.newVersion !== null && (await store.getFile(addon.of, versionPathOf(addon.newVersion))) !== null) return writeOutcome(store, nothing(addon, row, "version_exists", null, executionSpend(calls), now));
+  const plan = unitsOf(addon, base);
+  if (!plan || (plan.units.length > 0 && plan.units.length !== addon.pricing.requested)) return writeOutcome(store, nothing(addon, row, "mismatch", null, executionSpend(calls), now));
+
+  let values = new Map<string, string | null>();
+  let stop: AddonOutcome["stop"] = null;
+  if (plan.units.length > 0) {
+    const budget = createJobCallBudget({ ceilingUsd: addonProviderBudgetUsd(hold, addon.pricing.settings), spentUsd: executionSpend(calls) });
+    const access = await deps.resolveAccess(row.user_id);
+    const gateway = createGateway({ store, client: deps.client, missionId: row.id, userId: row.user_id, jobId, phase: "execution", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: row.request_text, counter: { seq: lastSeq(calls) } });
+    const tracked = trackRun();
+    try {
+      const got = await runReread({ store, gateway, catalog: deps.catalog, of: addon.of, addonId: row.id, base, sheet: plan.sheet, units: plan.units, deadlineMs: startsExceeded ? 0 : Date.now() + AGENT_EXECUTION_WALL_MS, shouldStop: () => tracked.reason.value !== null, log: deps.log });
+      values = got.values;
+      if (got.stop === "interrupted") {
+        const cause: Cause = tracked.reason.value === "memory" ? "memory" : "restart";
+        // out of requeues: finish with what is saved (settled like any other end)
+        if (await requeue(deps, row.id, cause)) return "interrupted";
+        stop = "deadline";
+      } else stop = got.stop;
+    } finally {
+      untrackRun(tracked);
+    }
+  }
+  const realCostUsd = executionSpend(await store.listCalls(row.id));
+  const built = buildVersion(addon, base, plan, values, now);
+  if (!built || built.filled === 0) return writeOutcome(store, nothing(addon, row, "nothing", stop, realCostUsd, now));
+  const path = pendingVersionPath(row.id, built.version.version);
+  const put = await store.putNewStrict(addon.of, path, JSON.stringify(built.version), JSON_TYPE);
+  void put; // the first pending version stands
+  return writeOutcome(store, { v: 1, kind: addon.kind, addonId: row.id, of: addon.of, baseVersion: addon.baseVersion, newVersion: built.version.version, filled: built.filled, requested: addon.pricing.requested, realCostUsd, stop, reason: null, pending: path, publishAt: versionPathOf(built.version.version), createdAt: now.toISOString() });
+}
+
+interface UnitPlan { sheet: string; units: RereadUnit[]; shape: "add_column" | "set_cells" | "rename" | "add_rows"; edit: Record<string, unknown> }
+
+/** What the approved request asks the run to do, as units of re-read (none for a rename or typed rows). A request the stored data cannot carry out is null. */
+function unitsOf(addon: AddonPlan, base: FileVersion): UnitPlan | null {
+  const req = addon.request as AddonRequest;
+  if (req.kind === "review") return null;
+  if (req.kind === "review_fix") {
+    if (req.issue.code === "exact_duplicate") return { sheet: req.issue.sheet, units: [], shape: "set_cells", edit: {} };
+    const issue: ReviewIssue | undefined = reviewFile(base, { keepRowIds: Number.POSITIVE_INFINITY }).issues.find((i) => i.code === req.issue.code && i.sheet === req.issue.sheet && i.column === req.issue.column);
+    if (!issue) return { sheet: req.issue.sheet, units: [], shape: "set_cells", edit: {} };
+    const recipe = readRecipe(req.reread);
+    return { sheet: issue.sheet, shape: "set_cells", edit: {}, units: issue.rowIds.map((rowId) => ({ key: `${rowId}|${issue.column}`, rowId, column: issue.column, recipe })) };
+  }
+  const e = req.edit;
+  if (e.kind === "add_column") {
+    const recipe = readRecipe(e.reread);
+    return { sheet: e.sheet, shape: "add_column", edit: { titleAr: e.titleAr }, units: [...new Set(e.rowIds)].map((rowId) => ({ key: `${rowId}|${e.titleAr}`, rowId, column: e.titleAr, recipe })) };
+  }
+  if (e.kind === "set_cells") {
+    const seen = new Set<string>();
+    const units: RereadUnit[] = [];
+    for (const c of e.cells) {
+      const key = `${c.rowId}|${c.column}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      units.push({ key, rowId: c.rowId, column: c.column, recipe: readRecipe((e.reread ?? {})[c.column]), ...(typeof c.value === "string" ? { typed: c.value } : {}) });
+    }
+    return { sheet: e.sheet, shape: "set_cells", edit: {}, units };
+  }
+  if (e.kind === "rename_column") return { sheet: e.sheet, shape: "rename", edit: { from: e.from, to: e.to }, units: [] };
+  if (e.kind === "add_rows") return { sheet: e.sheet, shape: "add_rows", edit: { rows: e.rows ?? [] }, units: [] };
+  return null;
+}
+
+/** The new version from what the run found. Cells no tool filled say «لم يكتمل البحث» (never an empty cell, never a guess). `filled` counts REAL values only (D4); a rename or typed rows count as filled when applied. */
+function buildVersion(addon: AddonPlan, base: FileVersion, plan: UnitPlan, values: Map<string, string | null>, now: Date): { version: FileVersion; filled: number } | null {
+  const reason = addon.kind === "review_fix" ? "review_fix" : "edit";
+  const meta = { createdAt: now.toISOString(), reason } as const;
+  let request: EditRequest;
+  let filled = 0;
+  if (plan.shape === "add_column") {
+    const found: Record<string, string> = {};
+    for (const u of plan.units) { const v = values.get(u.key); if (typeof v === "string" && isRealValue(v)) { found[u.rowId] = v; filled += 1; } }
+    request = { kind: "add_column", sheet: plan.sheet, titleAr: String(plan.edit.titleAr), values: found };
+  } else if (plan.shape === "set_cells") {
+    if (plan.units.length === 0) return null;
+    const cells = plan.units.map((u) => { const v = values.get(u.key); const real = typeof v === "string" && isRealValue(v); if (real) filled += 1; return { rowId: u.rowId, column: u.column, value: real ? cellText(v) : EDIT_NOT_SEARCHED_AR }; });
+    request = { kind: "set_cells", sheet: plan.sheet, cells };
+  } else if (plan.shape === "rename") {
+    request = { kind: "rename_column", sheet: plan.sheet, from: String(plan.edit.from), to: String(plan.edit.to) };
+    filled = 1;
+  } else {
+    const rows = (plan.edit.rows ?? []) as Array<{ id: string; parentId?: string | null; values: Record<string, string> }>;
+    request = { kind: "add_rows", sheet: plan.sheet, rows };
+    filled = rows.length;
+  }
+  const out = applyEditRequest(base, request, meta);
+  return out.ok ? { version: out.version, filled } : null;
 }
 
 // ---------- check, settle, publish, tell ----------

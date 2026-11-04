@@ -182,7 +182,7 @@ describe("edits with no provider call still pay the 100-point minimum (decision 
 
 describe("the provider's daily cap", () => {
   it("stops the re-read half way: a partial charge on the cells that were filled, «لم يكتمل البحث» in the rest, the Arabic text said", async () => {
-    const w = await addonRunWorld({ balance: BALANCE, dailyCapUsd: 0.03 });
+    const w = await addonRunWorld({ balance: BALANCE, dailyCapUsd: 0.0305 });
     const a = await commentsEdit(w);
     await runAddonSafely(w.deps, a.row);
     expect(w.call).toHaveBeenCalledTimes(30);
@@ -436,7 +436,7 @@ describe("every sentence the runner says passes the customer-text check, and eve
     for (const s of fixed) { expect(checkCustomerText(s).issues).toEqual([]); expect(s).not.toMatch(/[0-9]/); expect(s).not.toMatch(/\p{Extended_Pictographic}/u); expect(s).not.toMatch(/USD|دولار|apify|treg|tikhub/i); }
   });
   it("a whole run: no event text was replaced by the guard's fallback line", async () => {
-    const w = await addonRunWorld({ balance: BALANCE, dailyCapUsd: 0.03 });
+    const w = await addonRunWorld({ balance: BALANCE, dailyCapUsd: 0.0305 });
     const a = await commentsEdit(w);
     await runAddonSafely(w.deps, a.row);
     const results = w.store.events.filter((e) => e.mission_id === a.id && e.kind === "result").map((e) => e.message_ar);
