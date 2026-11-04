@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 const WIRING: ReadonlyArray<string> = [
   "src/lib/agentMission/customerView.ts", // S5: the new queue line only when the loader passes `stage3Queue` (DIGER_STAGE3_QUEUE on)
   "src/lib/agentMission/customerActions.ts", // S5: reads approved_at and passes `stage3Queue` only when DIGER_STAGE3_QUEUE is on
+  "agent/src/runMission.ts", // S3: the companies plan by code only when DIGER_STAGE3_COMPANIES is on for the account (stage3/b2bPlanning.ts reads the flag first; tests/stage3-planning-wiring.test.ts)
 ];
 const ROOT = path.resolve(__dirname, "..");
 function files(dir: string): string[] {
