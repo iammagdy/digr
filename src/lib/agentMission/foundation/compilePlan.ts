@@ -14,6 +14,7 @@ import { NAMED_MARK_KEY, NAMED_MARK_TITLE_AR, NAMED_MISMATCH_MARK_AR, NAMED_UNAV
 import { childPromise, perParentPromise, promiseLineAr, type StagePromise } from "./promise";
 import { OPEN_REPLIES_FLOOR } from "./openReplies";
 import { ALTERNATIVE_LINE_AR, catalogOnlyPagesOf, commentsAlternativesOf, quoteCostPerRowOf } from "./alternatives";
+import { youtubeChannelNoteAr } from "./youtubeChannel";
 import { TOPIC_RELATION_KEY, TOPIC_RELATION_TITLE_AR, topicRelationAr } from "./topicChoice";
 import { cardMapCode, cardsFor, CATALOG_ONLY_CAP_USD, CATALOG_ONLY_PRICE_MARGIN, CHILD_COLUMNS, COUNTRY_AR, mapPage, type CardRole, type ToolCard } from "./toolCards";
 import type { SocialPlatform } from "../redesignFlagTypes";
@@ -142,6 +143,8 @@ export interface CompileInput {
   counters?: ReadonlyMap<string, number>;
   /** YouTube: the channels the pool was read from (their ids and titles), said on the card. */
   channels?: ReadonlyArray<{ id: string; title?: string }>;
+  /** ROUND 31, YouTube: the channel was given by the customer (not looked up from the topic): the card says it is a search inside that channel. */
+  customerChannel?: { display: string | null };
   /** Decision 7.5, Facebook: the customer's answer to the named-page question; absent, a shortfall asks it. */
   namedChoice?: "only_found" | "fill";
   /** The exposure check (decision 7.3): the first comments page of a parent, read before the card (undefined: not read). */
@@ -414,7 +417,9 @@ export function compilePlan(input: CompileInput): CompileResult {
   // THE PERIOD IS KEPT ON THE ROWS (live round 11): no chosen parent and no spare is outside it; the card says how many read ones were left out
   if (ask.period && leftOutOfPeriod > 0) notes.push(`لم نختر أي ${ask.platform === "youtube" ? "فيديو" : "منشور"} خارج الفترة المطلوبة (من ${toArabicDigits(ask.period.from)} إلى ${toArabicDigits(ask.period.to)})؛ تركنا ${ask.platform === "youtube" ? `${toArabicDigits(leftOutOfPeriod)} فيديو` : postsCountAr(leftOutOfPeriod)} ${leftOutOfPeriod === 1 ? "قرأناه" : leftOutOfPeriod === 2 ? "قرأناهما" : "قرأناها"} خارجها.`);
   // YOUTUBE: the channels the videos were read from (the official channels are looked up by name and each is read inside: the card says how many, never that they are the official ones)
-  if (ask.platform === "youtube" && input.channels && input.channels.length > 0) {
+  if (ask.platform === "youtube" && input.customerChannel) {
+    notes.push(youtubeChannelNoteAr(input.customerChannel.display));
+  } else if (ask.platform === "youtube" && input.channels && input.channels.length > 0) {
     // the channels' names as the customer reads them: the Arabic part of a title («Al Ahly SC - النادي الأهلي» is «النادي الأهلي»); a title with no Arabic part is not listed (Arabic only on the card)
     const arabicPart = (t: unknown): string | null => (typeof t === "string" ? t.split(/\s*[-–—|]\s*/).map((x) => x.trim()).find((x) => /[؀-ۿ]/.test(x) && !/[A-Za-z0-9_]/.test(x)) ?? null : null);
     const titles = input.channels.map((c) => arabicPart(c.title)).filter((t): t is string => t !== null);

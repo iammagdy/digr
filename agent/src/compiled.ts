@@ -6,6 +6,7 @@ import { chooseCard, compilePlan, parentInputs, rankedPoolOf, COMPILED_PLATFORMS
 import { factsOf, isAboutAndEligible, pageMatchesSource, rankPool } from "../../src/lib/agentMission/foundation/pool";
 import { aboutQueryOf, noAboutChoiceOf, noAboutQuestionAr, NO_ABOUT_OPTIONS_AR } from "../../src/lib/agentMission/foundation/topicChoice";
 import { NAMED_SHORTFALL_OPTIONS_AR, isNamedShortfallAnswer, namedShortfallChoiceOf, namedShortfallQuestionAr } from "../../src/lib/agentMission/foundation/namedShortfall";
+import { YOUTUBE_CHANNEL_QUESTION_AR, matchChannel, youtubeChannelOf, type YoutubeChannelRef } from "../../src/lib/agentMission/foundation/youtubeChannel";
 import { INSTAGRAM_ACCOUNT_QUESTION_AR, instagramAccountNoteAr } from "../../src/lib/agentMission/foundation/instagramAccount";
 import { budgetOfWords, questionNeeded, type Choices } from "../../src/lib/agentMission/foundation/countChoice";
 import { fitToBudget } from "../../src/lib/agentMission/foundation/budgetFit";
@@ -62,7 +63,7 @@ export type CompiledPlanning =
    * LIVE ROUND 7: no video of the pool read (two queries) is about the topic; the customer is asked before approval how to go on. Nothing is priced or held. PR 3, decision 7.5 (`why: "named_shortfall"`): the named Facebook page has fewer
    * deliverable posts in the pool than asked.
    */
-  | { kind: "question"; ask: Ask; question: string; options: string[]; reads: { pool: number; exposure: number }; why?: "no_about" | "named_shortfall" | "occurrence" | "occurrence_year" | "count" | "per_parent" | "instagram_account" };
+  | { kind: "question"; ask: Ask; question: string; options: string[]; reads: { pool: number; exposure: number }; why?: "no_about" | "named_shortfall" | "occurrence" | "occurrence_year" | "count" | "per_parent" | "instagram_account" | "youtube_channel" };
 
 /** What the understand step cost (USD), carried on the result so the caller adds it to the mission's model cost (never a charge). */
 export type WithCost<T> = T & { llmCostUsd?: number };
@@ -115,6 +116,16 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }): Pro
     if (choices.instagramAccount) ask = { ...ask, source: { kind: "named", text: choices.instagramAccount } };
     else if (choices.instagramAccountDeclined) return { kind: "cannot", ask, reason: "instagram_account_missing", reads };
     else return { kind: "question", ask, why: "instagram_account", question: INSTAGRAM_ACCOUNT_QUESTION_AR, options: [], reads };
+  }
+  // ROUND 31: YOUTUBE WITH NO CHANNEL. The verified cards find a channel by name and search INSIDE a channel; none searches all of YouTube, and «<topic> الرسمية» is a guess, not a channel. A request that names no channel and does not ask for the official channels of an event
+  // is asked ONCE which channel, before anything is read, held or priced; the answer (read by code, kept with the choices) or the channel named in the request is looked up by the verified channel search and used only if a result carries it. No usable answer ends the request honestly.
+  let customerChannel: { ref: YoutubeChannelRef; said: string } | null = null;
+  if (ask.platform === "youtube" && ask.source.kind !== "official" && !ask.edits.channels) {
+    const said = choices.youtubeChannel ?? (ask.source.kind === "named" ? ask.source.text : null);
+    const ref = said ? youtubeChannelOf(said) : null;
+    if (ref && said) customerChannel = { ref, said };
+    else if (choices.youtubeChannelDeclined || (ask.source.kind === "named" && ask.source.text)) return { kind: "cannot", ask, reason: "youtube_channel_missing", reads };
+    else return { kind: "question", ask, why: "youtube_channel", question: YOUTUBE_CHANNEL_QUESTION_AR, options: [], reads };
   }
   // DECISION 7, A RECURRING EVENT with no year or date: «تقصد أنهي مرة؟» before anything is read or held (Facebook, Instagram, YouTube). «حدد سنة» asks for the year in words; a ready answer or a year is the choice.
   if (occurrenceAnswer?.kind === "ask_year") return { kind: "question", ask, why: "occurrence_year", question: OCCURRENCE_YEAR_QUESTION_AR, options: [], reads };
@@ -180,7 +191,7 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }): Pro
   const catalogOnly = deps.catalogOnly === true;
 
   /** THE EXPOSURE CHECK and the compile, shared by every platform (decision 7.3): the first comments page of the ranked parents, in order, until enough parents with comments are found; a read the gateway refuses leaves the parent unchecked. */
-  const finish = async (poolCard: ToolCard, params: Record<string, unknown>, pages: Array<{ callId: string; page: unknown; card?: ToolCard }>, extra: { counters?: ReadonlyMap<string, number>; channels?: ReadonlyArray<{ id: string; title?: string }> } = {}): Promise<CompiledPlanning> => {
+  const finish = async (poolCard: ToolCard, params: Record<string, unknown>, pages: Array<{ callId: string; page: unknown; card?: ToolCard }>, extra: { counters?: ReadonlyMap<string, number>; channels?: ReadonlyArray<{ id: string; title?: string }>; customerChannel?: { display: string | null } } = {}): Promise<CompiledPlanning> => {
     const exposure = new Map<string, { callId: string | null; page: unknown | null; failed: boolean }>();
     const repliesCards = ask.replies !== "none" ? cardsFor(ask.platform!, "comment.replies", { catalogOnly }) : [];
     const commentsCard = ask.comments !== "none" ? chooseCard(ask, "comments", { catalogOnly, repliesCards }) : null;
@@ -202,7 +213,7 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }): Pro
     }
     const compileWith = (a: Ask) => compilePlan({
       ask: a, pool: { card: poolCard, params, pages }, exposure: (id) => exposure.get(id), capabilityOf: (id) => deps.catalog.byId.get(id)?.capability ?? null, pricingSettings: deps.pricingSettings, nowMs: deps.nowMs, ...(catalogOnly ? { catalogOnly: true } : {}),
-      ...(extra.counters ? { counters: extra.counters } : {}), ...(extra.channels ? { channels: extra.channels } : {}), ...(shortfallChoice === "only_found" || shortfallChoice === "fill" ? { namedChoice: shortfallChoice } : {}),
+      ...(extra.counters ? { counters: extra.counters } : {}), ...(extra.channels ? { channels: extra.channels } : {}), ...(extra.customerChannel ? { customerChannel: extra.customerChannel } : {}), ...(shortfallChoice === "only_found" || shortfallChoice === "fill" ? { namedChoice: shortfallChoice } : {}),
     });
     const result = compileWith(ask);
     if (!result.ok && result.reason === "named_shortfall") {
@@ -220,7 +231,7 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }): Pro
   };
 
   // YOUTUBE: the official channels are resolved first (a channel search by name), then each is read INSIDE (the channel's own videos about the topic): a plain search has no channel input, which is why M18 and M20 once took a video of another channel
-  if (ask.platform === "youtube") return planYoutube();
+  if (ask.platform === "youtube") return customerChannel ? planYoutubeChannel(customerChannel.ref) : planYoutube();
 
   // F4: THE POOL, the first page of the chosen card (and its next page when the first holds fewer rows than are needed with their spares: the gateway allows two samples of one source)
   const params = parentInputs(card, cardAsk);
@@ -286,6 +297,32 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }): Pro
     return { kind: "question", ask, why: "no_about", question: noAboutQuestionAr(ask.topic.text ?? "", { one: "فيديو", talks: "يتحدث نصه" }, hashtagsOnly), options: [NO_ABOUT_OPTIONS_AR.useAsIs, NO_ABOUT_OPTIONS_AR.change, NO_ABOUT_OPTIONS_AR.cancel], reads };
   }
   return finish(card, params, pages);
+
+  /** ROUND 31: A CHANNEL THE CUSTOMER GAVE (an id, a handle or a name). The id is used as it is; a handle or a name is looked up with the verified channel search and used ONLY if a result carries it (never «the first result»); then the channel's own videos about the topic are read. */
+  async function planYoutubeChannel(ref: YoutubeChannelRef): Promise<CompiledPlanning> {
+    const channelsCard = cardsFor("youtube", "channels.search")[0];
+    if (!card?.inputs.source) return { kind: "cannot", ask, reason: "no_parent_card", reads };
+    let chosen: { id: string; title?: string } | null = null;
+    if (ref.kind === "id") chosen = matchChannel(ref, []);
+    else {
+      if (!channelsCard?.inputs.query) return { kind: "cannot", ask, reason: "no_parent_card", reads };
+      const r = await read(channelsCard.endpointId, { [channelsCard.inputs.query.field]: ref.kind === "handle" ? ref.handle : ref.name }, channelsCard);
+      reads.pool += 1;
+      const rows = "failed" in r ? [] : mapPage(channelsCard, r.page).map((x) => ({ id: String(x.id ?? ""), ...(typeof x.title === "string" ? { title: x.title } : {}), ...(typeof x.handle === "string" ? { handle: x.handle } : {}) }));
+      if ("failed" in r && r.refused) return { kind: "cannot", ask, reason: "pool_refused", reads };
+      chosen = matchChannel(ref, rows);
+    }
+    if (!chosen) return { kind: "cannot", ask, reason: "youtube_channel_unidentified", reads };
+    const base = parentInputs(card, ask);
+    const r = await read(card.endpointId, { ...base, [card.inputs.source.param]: chosen.id }, card);
+    reads.pool += 1;
+    if ("failed" in r) return { kind: "cannot", ask, reason: r.refused ? "pool_refused" : "pool_failed", reads };
+    if (mapPage(card, r.page).length === 0) return { kind: "cannot", ask, reason: "no_rows", reads };
+    // the channel as the customer reads it: the Arabic part of its title when it has one
+    const arabic = typeof chosen.title === "string" ? chosen.title.split(/\s*[-–—|]\s*/).map((x) => x.trim()).find((x) => /[؀-ۿ]/.test(x) && !/[A-Za-z0-9_]/.test(x)) ?? null : null;
+    const display = arabic ?? (ref.kind === "name" && /[؀-ۿ]/.test(ref.name) && !/[A-Za-z0-9_]/.test(ref.name) ? ref.name : null);
+    return finish(card, { ...base, [card.inputs.source.param]: chosen.id }, [{ callId: r.callId, page: r.page }], { channels: [chosen], customerChannel: { display } });
+  }
 
   /** YOUTUBE (docs/FOUNDATION-PLAN.md section 4.3): channel names -> channel ids -> each channel's own videos about the topic -> (a test account) the free counter card -> the compiler. */
   async function planYoutube(): Promise<CompiledPlanning> {

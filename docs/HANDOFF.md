@@ -4,6 +4,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 31 (4 Nov 2026, after #383): YouTube with no channel asks for one
+
+- **Live QA:** «عايز ١٠ فيديوهات من يوتيوب عن الذكاء الاصطناعي» ended «مصادرنا لا تخدم» twice (`msn_5349f30a20f414417b5a`, `msn_175b3946d0810ce262be`): ONE call to `tikhub.x.youtube-web-v2-search-channels` (HTTP 200, one row, 1,339 bytes stored) and no video call.
+- **Why it went down that path (proven in code):** the YouTube cards find a channel by name and search INSIDE a channel; none searches all of YouTube. `planYoutube` took the channel names from `channelNamesOf(ask)`, which for a request with no channel is `["<topic> الرسمية"]`: a guess that the first result is an official channel. A channel the customer NAMED in the request was ignored the same way.
+- **Whether the response had a usable channel id: NOT KNOWN.** The stored raw page cannot be read here (only its size). The stored REAL pages of the same card (M2 calls 3 and 4) map every row with its id and its handle, so no mapping defect is proven and no existing mapping was changed (the card now also maps the `handle` field, which those real pages carry, to match a handle).
+- **Behavior now:** in `planInner`, a YouTube Ask that is not «official channels of an event» and has no customer channel gets ONE normal question (`why: "youtube_channel"`, no options) before any read, hold or price: «نقدر نبحث عن الفيديوهات داخل قناة يوتيوب محددة. اكتب اسم القناة أو رابطها عشان نكمل البحث.» The answer is read by code (`foundation/youtubeChannel.ts`: a name, `@handle`, a channel link, a `/channel/UC…` id; post, playlist, Short and other-site links are not channels), kept in the run state choices (the answer's words are not part of the request: topic and count stay as written). A channel NAMED in the request takes the same path.
+- **Lookup (`planYoutubeChannel`):** an id needs no lookup; a name or handle goes through the verified channel search and is used ONLY if a result carries it (every word of the name in the title or handle, or the handle itself): never «the first result», never a guessed official status. Then the channel's own videos about the topic are read. The plan says: «هذا بحث داخل القناة «X» وحدها، وليس بحثًا في كل يوتيوب. راجع أنها القناة المقصودة قبل الاعتماد.»
+- **Endings (nothing charged, never a second question):** no usable answer → «بدون قناة محددة…»; no result carries the channel (including a result with no usable id) → «لم نستطع تحديد قناة…».
+- **Not changed:** the official-channels flow (M2, the understand step, interleaving, its note), provider capabilities, other platforms, prices, reserve, minimum, ledger, settlement.
+- **Not verified live:** no real mission; proven through `runPlanning` on the memory store with the stored real pages of M2 (call 4 for the lookup, call 7 for the channel's videos).
+- **Tests:** `tests/round31-youtube-channel-question.test.ts` (29).
+
 ## Round 30 (4 Nov 2026, after #382): Instagram with no account asks for one
 
 - **Live QA:** «عايز ١٠ منشورات عامة من إنستجرام عن الذكاء الاصطناعي» ended «مصادرنا لا تخدم هذا الطلب» with no provider call (`msn_dd1ea21de1f032dec087`, `msn_9c25ec075605026cbaa0`). Instagram's only verified parent tool is `posts.account` (a username or an account link); there is no keyword search across Instagram, so `chooseCard` found no card (`no_parent_card`).
