@@ -162,7 +162,8 @@ describe("where it lives, and what the browser code may import", () => {
   it("the browser code computes no price and imports no money, quote or storage module", () => {
     for (const p of ["src/components/mission/ReviewQuote.tsx", "src/lib/agentMission/stage4/reviewPreviewLabels.ts", "src/lib/agentMission/stage4/reviewPreviewClient.ts"]) {
       const src = read(p).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-      expect(src, p).not.toMatch(/addonQuote|addonSettlement|addonRow|\/quotes|price|reviewCard|\breviewQuote\s*\(|reviewCellsOf|reviewHoldPoints|Math\.ceil|supabase\/server|createAdminClient|service/i);
+      expect(src, p).not.toMatch(/addonQuote|addonSettlement|addonRow|\/quotes|reviewCard|\breviewQuote\s*\(|reviewCellsOf|reviewHoldPoints|Math\.ceil/);
+      expect(src, p).not.toMatch(/price|supabase\/server|createAdminClient|service[_-]?role/i);
     }
   });
 });

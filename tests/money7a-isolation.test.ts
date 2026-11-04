@@ -73,12 +73,17 @@ const NEW = [...NEW_SRC, ...NEW_WORKER];
 const ENTRY = ["agent/src/main.ts"];
 /** Existing Stage 4 siblings that import a new pure piece (editVersion.ts adds the displayed price to the rules of editCore.ts). */
 const SIBLINGS = ["src/lib/agentMission/stage4/editVersion.ts"];
+/**
+ * MONEY PR 7c (Phase 2B-2 task 2): the review-price PREVIEW is the one production reader of the card (`reviewCard`) and of the add-on rules (`canCreateAddon`): a read-only server module and its route, behind DIGER_STAGE4_REVIEW. It reads, it counts cells,
+ * it prices by the existing card and answers; it holds, charges, releases and writes nothing (tests/stage4-review-quote.test.ts counts every write and scans the source). Nothing else may reach the new modules.
+ */
+const PREVIEW = ["src/lib/agentMission/stage4/reviewPreview.ts", "src/app/api/missions/[id]/review-quote/route.ts"];
 const abs = (r: string) => path.join(ROOT, r);
 
 describe("the new modules exist and nothing in production reaches them", () => {
   it("every file is there", () => { for (const r of NEW) expect(existsSync(abs(r))).toBe(true); });
   for (const r of NEW) it(`${r}: only the new modules, the worker's entry point (through the dispatch) and tests reach it`, () => {
-    const who = [...reachers(abs(r))].map(rel).filter((f) => !NEW.includes(f) && !ENTRY.includes(f) && !SIBLINGS.includes(f));
+    const who = [...reachers(abs(r))].map(rel).filter((f) => !NEW.includes(f) && !ENTRY.includes(f) && !SIBLINGS.includes(f) && !PREVIEW.includes(f));
     expect(who).toEqual([]);
   });
   it("agent/src/main.ts imports exactly one new module: the dispatch", () => {
@@ -87,7 +92,7 @@ describe("the new modules exist and nothing in production reaches them", () => {
   });
   it("the displayed prices and the card are never reached from production: addonQuote.ts and quotes.ts are imported by tests and by each other only", () => {
     const quoters = [abs("src/lib/agentMission/stage4/addonQuote.ts"), abs("src/lib/agentMission/stage4/quotes.ts")];
-    for (const q of quoters) expect([...reachers(q)].map(rel).filter((f) => !f.startsWith("src/lib/agentMission/stage4/"))).toEqual([]);
+    for (const q of quoters) expect([...reachers(q)].map(rel).filter((f) => !f.startsWith("src/lib/agentMission/stage4/") && !PREVIEW.includes(f))).toEqual([]);
   });
 });
 
@@ -138,6 +143,25 @@ describe("the worker's runner is independent of the flags and of the displayed p
     expect([...src.matchAll(/\.from\(\s*"([a-z_]+)"/g)].map((m) => m[1])).toEqual(["jobs"]);
     expect(src).toMatch(/\.select\("status,charged_credits"\)/);
     expect(src).toMatch(/settleAddon\(/);
+  });
+});
+
+describe("the review-price preview moves no money and reaches no worker or provider", () => {
+  const route = abs("src/app/api/missions/[id]/review-quote/route.ts");
+  it("both preview files exist, and only the route reaches the preview module", () => {
+    for (const r of PREVIEW) expect(existsSync(abs(r))).toBe(true);
+    expect([...reachers(abs("src/lib/agentMission/stage4/reviewPreview.ts"))].map(rel).filter((f) => !PREVIEW.includes(f))).toEqual([]);
+  });
+  it("the route's imports, followed all the way down, contain nothing under agent/ (no gateway, no worker, no provider client)", () => {
+    const deps = [...closure(route)].map(rel);
+    expect(deps.filter((f) => f.startsWith("agent/"))).toEqual([]);
+    expect(deps).toContain("src/lib/agentMission/stage4/addonQuote.ts"); // it prices through the existing card: the check is not empty
+    expect(deps).toContain("src/lib/agentMission/stage4/review.ts");
+  });
+  it("neither file moves money: no rpc, no write, and none of the settlement, approval or reservation functions", () => {
+    const src = PREVIEW.map((r) => code(abs(r))).join("\n");
+    expect(src).not.toMatch(/\.(rpc|insert|update|upsert|delete|upload|remove|createSignedUrl)\(/);
+    expect(src).not.toMatch(/settleAddon|approveAddon|createAddon|releaseAddon|reserveAddon|accept_quote_atomic|release_job_atomic|credit_ledger/);
   });
 });
 

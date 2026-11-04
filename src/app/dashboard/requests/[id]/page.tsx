@@ -13,6 +13,7 @@ import { isSafeRequestId, readRequestFacts, type RequestFacts } from "@/lib/requ
 import { openJobHref } from "@/lib/requestLinks";
 import AgentMissionCard from "@/components/mission/AgentMissionCard";
 import VersionList from "@/components/mission/VersionList";
+import ReviewQuote from "@/components/mission/ReviewQuote";
 import { Skeleton } from "@/components/ui";
 
 /**
@@ -113,6 +114,8 @@ export default function RequestDetailsPage({ params }: { params: Promise<{ id: s
         {read === "done" && missionId ? <AgentMissionCard missionId={missionId} /> : null}
         {/* STAGE 4, S2 (behind DIGER_STAGE4_VERSIONS): the file's versions, only on this page, only for a delivered mission; it draws nothing while the route answers «not found» */}
         {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <VersionList missionId={missionId} /> : null}
+        {/* MONEY PR 7c (behind DIGER_STAGE4_REVIEW): the price PREVIEW of a paid review, read-only (no approval, no charge); it draws nothing while the route answers «not found» */}
+        {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <ReviewQuote missionId={missionId} /> : null}
         {read === "done" && !missionId ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="details-no-mission">هذا طلب من النوع القديم: ملفاته في «طلباتي» ونتيجته في المحادثة.</p> : null}
 
         {read === "done" ? (

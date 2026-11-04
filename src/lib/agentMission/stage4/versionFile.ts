@@ -72,15 +72,21 @@ export function versionDownloadName(mission: { files?: unknown; plan?: unknown; 
 export type VersionFileResult =
   | { ok: true; bytes: Buffer; name: string }
   | { ok: false; status: 404 | 500 | 503; error: "not_found" | "damaged" | "unavailable" };
-const no = (status: 404 | 500 | 503, error: "not_found" | "damaged" | "unavailable"): VersionFileResult => ({ ok: false, status, error });
+type Failure = { ok: false; status: 404 | 500 | 503; error: "not_found" | "damaged" | "unavailable" };
+const no = (status: 404 | 500 | 503, error: "not_found" | "damaged" | "unavailable"): Failure => ({ ok: false, status, error });
+
+/** A published version of the customer's own mission, checked, with the mission row and the highest published number. */
+export type PublishedVersionResult = { ok: true; version: FileVersion; mission: Record<string, unknown>; latest: number } | Failure;
+
+const PUBLISHED_NAME = /^v(\d{4,})\.json$/;
 
 /**
- * The Excel file of version `version` of the customer's own mission.
- * 404 «not_found»: the mission is not theirs or does not exist (the same answer), or no such version is published (a pending version is not one).
+ * Version `version` of the customer's own mission, read from the published create-only object `versions/vNNNN.json` and checked to be exactly that version of that mission (docs/MONEY-PR-7A.md section 14.2). Shared by the download and the review preview.
+ * 404 «not_found»: the mission is not theirs or does not exist (the same answer), or no such version is published (a pending add-on version is not one).
  * 503 «unavailable»: the storage or the database could not answer (never taken for «missing»).
- * 500 «damaged»: the published object is not a well-formed version of this mission (never served).
+ * 500 «damaged»: the published object is not a well-formed version of this mission (never served, never priced).
  */
-export async function readVersionFile(client: any, input: { missionId: string; userId: string; version: number }): Promise<VersionFileResult> {
+export async function readPublishedVersion(client: any, input: { missionId: string; userId: string; version: number }): Promise<PublishedVersionResult> {
   try {
     const { data: mission, error: missionError } = await client.from(MISSION_TABLE).select("id,user_id,files,plan,request_text,delivered_units,updated_at").eq("id", input.missionId).maybeSingle();
     if (missionError) return no(503, "unavailable");
@@ -89,8 +95,9 @@ export async function readVersionFile(client: any, input: { missionId: string; u
     const path = versionPathOf(input.version);
     const { data: listed, error: listError } = await bucket.list(`${input.missionId}/versions`, { limit: 1000, sortBy: { column: "name", order: "asc" } });
     if (listError) return no(503, "unavailable");
-    const published = ((listed ?? []) as Array<{ name: string; id?: string | null }>).some((o) => Boolean(o.id) && `versions/${o.name}` === path);
-    if (!published) return no(404, "not_found");
+    const entries = ((listed ?? []) as Array<{ name: string; id?: string | null }>).filter((o) => Boolean(o.id));
+    if (!entries.some((o) => `versions/${o.name}` === path)) return no(404, "not_found");
+    const latest = Math.max(input.version, ...entries.map((o) => Number(PUBLISHED_NAME.exec(o.name)?.[1] ?? 0)));
     const { data: blob, error: readError } = await bucket.download(`${input.missionId}/${path}`);
     if (readError || !blob) return no(503, "unavailable");
     let text: string;
@@ -99,10 +106,19 @@ export async function readVersionFile(client: any, input: { missionId: string; u
     try { parsed = JSON.parse(text); } catch { return no(500, "damaged"); }
     const version = storedVersionOf(parsed, input.missionId, input.version);
     if (!version) return no(500, "damaged");
-    let bytes: Buffer;
-    try { bytes = await generateVersionWorkbook(version); } catch { return no(500, "damaged"); }
-    return { ok: true, bytes, name: versionDownloadName(mission, input.version) };
+    return { ok: true, version, mission, latest };
   } catch {
     return no(503, "unavailable");
+  }
+}
+
+/** The Excel file of version `version` of the customer's own mission (the failures are those of `readPublishedVersion`; a workbook that cannot be built is 500 «damaged»). */
+export async function readVersionFile(client: any, input: { missionId: string; userId: string; version: number }): Promise<VersionFileResult> {
+  const r = await readPublishedVersion(client, input);
+  if (!r.ok) return r;
+  try {
+    return { ok: true, bytes: await generateVersionWorkbook(r.version), name: versionDownloadName(r.mission, input.version) };
+  } catch {
+    return no(500, "damaged");
   }
 }

@@ -612,3 +612,42 @@ New: `versionFile.ts` (server: the read, the checks, the workbook, the name), `v
 ### 14.5 Not verified
 
 Everything ran on fakes (a memory database, a fake bucket, fake auth, `fetch` stubbed): no Vercel build, no Heroku worker, no real Supabase storage listing or download, no real browser (the click is tested as a pure function and the layout as server-rendered markup and class names), no Excel desktop opening of a file (the tests read the file back with the same library that wrote it). The 404-versus-error split relies on the listing (an object is published when the listing shows it) and treats any read failure after that as an error.
+
+## 15. Phase 2B-2, task 2: the customer's review-price preview
+
+Branch `money/7c-review-quote-preview` (a draft PR into `money/7b-version-downloads`). **A preview only.** It does not approve, create, hold, charge, release or refund anything, and it makes no add-on row. `DIGER_STAGE4_REVIEW` (and `DIGER_STAGE4_EDITS`) stay unset; this task sets no flag or variable anywhere.
+
+### 15.1 What the customer sees
+
+On the request's own page, under the versions list (for a delivered mission), a small section «مراجعة الملف» with one button of the same name. When there are two or more published versions a picker (the latest is chosen) lets the customer choose which to review. After the click the page shows what the server answered:
+
+- «مراجعة النسخة ١» / «عدد الخانات التي ستُراجع: ٥٠٠» / «تكلفة المراجعة: ١٠٠ نقطة» / «لم يُخصم من رصيدك شيء.» / «هذا عرض سعر فقط؛ لم تبدأ أي مراجعة.» (the numbers are the server's);
+- or the one fact that stops an offer (below), with no price.
+
+There is **no approval button**. The browser computes no price: it formats the numbers the server sent (`reviewPreviewLabels.ts`; the click is `reviewPreviewClient.ts`, both without any money or quote import: a test reads their sources). With the flag off the route answers 404, the list is empty, and the section draws nothing.
+
+### 15.2 The route (`src/app/api/missions/[id]/review-quote/route.ts`), read-only
+
+`GET ...?version=N` answers `{ quote }`; `GET` with no `version` answers `{ versions: [{ version, reason }] }` (the published versions the page may offer). `DIGER_STAGE4_REVIEW` must be exactly `on` (read FIRST: off is a 404 before the id, the viewer or the database; «test» is not served here, the same rule as the versions list). The versions flag and the edits flag do not matter.
+
+| Answer | When |
+|---|---|
+| 404 `not_found` | flag off; a mission that is not the caller's or does not exist (the same body); a version that is not published (a pending add-on version is not one) |
+| 400 `bad_request` | bad id; `version` repeated or not exactly one positive whole number of at most four ASCII digits |
+| 401 | not signed in (the viewer's own check) |
+| 503 `unavailable` | the storage, the mission read or the add-on rows read failed (never «missing», never a guessed price, never «no add-on is open») |
+| 500 `damaged` | the published object is not this mission's well-formed version N (never priced) |
+| 200 `offer` | `{ state, version, reason, cells, points }`: `cells = reviewCellsOf(version)`, `points = reviewCard(cells).holdPoints` (1 point per 100 cells, at least 100, hold = price) |
+| 200 `reuse` | the version already has a COMPLETED review (decision D11): no price, the stored report is reused, no second charge |
+| 200 `blocked` | another add-on of any kind is OPEN on this file (decision D10: queued, planning, needs_input, plan_ready, approved, executing); an open add-on is checked before a completed review |
+| 200 `too_large` / `nothing_to_review` | more cells than one review may hold (the add-on ceiling, 5,000 points), or no readable cell: no price |
+
+The offer, `reuse` and `blocked` come from the existing `canCreateAddon` (the function the creation will use), over the customer's add-on rows of the mission read with `user_id` and the JSON path `plan->addon->>of`. The version is read by `readPublishedVersion` (`versionFile.ts`), the same strict reader the download uses (it now serves both). No ledger, price formula, settlement, gateway or runner file was changed.
+
+### 15.3 Files
+
+New: `reviewPreview.ts` (server), `reviewPreviewLabels.ts` and `reviewPreviewClient.ts` (client-safe), the route, `components/mission/ReviewQuote.tsx`, tests `stage4-review-quote.test.ts` (server, 24) and `stage4-review-quote-ui.test.ts` (words, layout, click, 17), `tests/helpers/reviewQuoteWorld.ts`. Changed: `versionFile.ts` (`readPublishedVersion` extracted; the download is unchanged and its 19 tests pass), the request page (one line and an import), and three guard tests with an explicit, commented allowlist entry each: `stage4-isolation` (the route and the component are wiring that read the flag first), `money7a-isolation` and `stage4-quotes` (the route is the one production reader of the card, read-only), plus a new check that the route's imports reach nothing under `agent/` and neither file calls a write, an rpc or a settlement function.
+
+### 15.4 Not verified
+
+Everything ran on fakes. The add-on rows are read with `.eq("plan->addon->>of", id)` (the PostgREST JSON-path form); it was not run against a database, so its behaviour on the live `missions` table is assumed (a failure of the read answers 503, never an offer). The add-on rows are also not created anywhere yet (a later task), so `blocked` and `reuse` were tested on seeded rows. A completed review is recognised by its add-on row (`completed`, kind `review`, same base version), not by the presence of `reviews/rNNNN.json`. No Vercel build, no Heroku worker, no real storage, no real browser.
