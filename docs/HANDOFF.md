@@ -4,6 +4,10 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 24 (4 Nov 2026, after #374, main = `6be04f6`): the greeting's name and balance (owner-approved edit of `chatHandler.ts`, item 6 only)
+
+The owner approved editing the greeting block of `src/functions/shared/chatHandler.ts` and nothing else in `src/functions/**`: one import, `balanceLineAr(userBalance)` for the balance line (the Arabic thousands separator, «١١٬٦٧٦»), and `arabicDisplayName` for the name (a name is used only when written in Arabic letters; a Latin or mixed name gives «أهلًا بك، …», also for a name the customer just gave). The handler is imported only by the Next route `src/app/api/chat/route.ts` (Vercel); `supabase/functions` holds only `send-email`, which does not use it: no separate deploy. Tests: the round-24 block of `tests/customer-name.test.ts` (red first with the live symptom).
+
 ## Round 23 (4 Nov 2026, after #373, main = `4aae39a`): six live findings of the 30-scenario test (platform question, privacy, open-missions limit, trust, account questions, greeting name)
 
 **No SQL write, no migration, no flag change, no paid provider call, no key or token seen.** No money, ledger, billing, `gateway.ts`, `price.ts`, `jobPointsCap.ts`, `src/functions/**`, `supabase/**` or settlement line is edited. Item 6 needs `chatHandler.ts` (forbidden): the helper is built and tested, the handler's change is reported, not made.

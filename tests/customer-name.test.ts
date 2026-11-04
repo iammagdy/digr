@@ -151,3 +151,33 @@ describe("welcome screen name (static checks)", () => {
     expect(empty).toContain('"أهلًا بك، بماذا نبدأ؟"');
   });
 });
+
+// ROUND 24 (owner-approved edit of the greeting in chatHandler.ts, item 6 of the 30-scenario test): live «أهلًا codex test، رصيدك المتاح ١١٦٧٦ نقطة» showed a Latin name and a balance with no thousands separator.
+describe("the greeting's name and balance (round 24)", () => {
+  beforeEach(() => clearBriefCacheForTesting());
+  const greet = (message: string, extra: Record<string, unknown>) => new ChatHandler(makeMockTables() as any).handleUserMessage({ userId: `u_g_${Math.random().toString(36).slice(2)}`, message, ...extra } as any);
+
+  it("a Latin account name is not used: «أهلًا بك»; the balance has the Arabic thousands separator", async () => {
+    const res = await greet("هاي", { userBalance: 11676, personaProfile: { name: "codex test" } });
+    expect(res.contentAr).toBe("أهلًا بك، رصيدك المتاح ١١٬٦٧٦ نقطة. كيف أساعدك اليوم؟");
+    expect(res.contentAr).not.toMatch(/[A-Za-z]/);
+  });
+  it("an Arabic name is used, with the separated balance", async () => {
+    const res = await greet("هاي", { userBalance: 11676, personaProfile: { name: "سلمى" } });
+    expect(res.contentAr).toBe("أهلًا سلمى، رصيدك المتاح ١١٬٦٧٦ نقطة. كيف أساعدك اليوم؟");
+  });
+  it("a mixed name (Arabic and Latin letters) is not used", async () => {
+    const res = await greet("هاي", { userBalance: 200, personaProfile: { name: "أحمد Ali" } });
+    expect(res.contentAr).toBe("أهلًا بك، رصيدك المتاح ٢٠٠ نقطة. كيف أساعدك اليوم؟");
+  });
+  it("a name the customer just gave in Latin letters is acknowledged without it; in Arabic letters as before", async () => {
+    const latin = await greet("Omar", { userBalance: 100, capturedName: "Omar" });
+    expect(latin.contentAr).toBe("أهلًا بك، رصيدك المتاح ١٠٠ نقطة. كيف أساعدك اليوم؟");
+    expect(latin.turnStats?.modelCalls).toBe(0);
+    const arabic = await greet("سلمى", { userBalance: 11676, capturedName: "سلمى" });
+    expect(arabic.contentAr).toBe("تشرفنا يا سلمى. رصيدك المتاح ١١٬٦٧٦ نقطة. كيف أساعدك اليوم؟");
+  });
+  it("small balances keep their plural form («نقاط») and no balance is invented when it is unknown", async () => {
+    expect((await greet("هاي", { userBalance: 5, personaProfile: { name: "سلمى" } })).contentAr).toBe("أهلًا سلمى، رصيدك المتاح ٥ نقاط. كيف أساعدك اليوم؟");
+  });
+});
