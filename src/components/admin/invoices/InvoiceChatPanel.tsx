@@ -77,7 +77,7 @@ const Ext = ({ name }: { name: string }) => (extOf(name) ? <span dir="ltr" class
 const Paperclip = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" /></svg>);
 const ArrowUp = () => (<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 19V5M5.5 11.5L12 5l6.5 6.5" /></svg>);
 
-/** the same three moving dots as the customer chat's «جاري العمل على طلبك» */
+/** the same three moving dots as the customer chat's «جارٍ العمل على طلبك» */
 function Typing({ label }: { label: string }) {
   return (
     <div role="status" aria-live="polite" data-testid="agent-busy" className="mt-3 flex items-center gap-2 text-xs font-medium text-ink2" style={{ animation: "up .3s both" }}>

@@ -226,7 +226,7 @@ async function main() {
 
     // Wait for response to appear
     await page.waitForFunction(
-      () => !document.body.innerText.includes("جاري التفكير"),
+      () => !/جار[يٍ] التفكير/.test(document.body.innerText),
       { timeout: 15000 }
     ).catch(() => {});
     await new Promise((r) => setTimeout(r, 1500));

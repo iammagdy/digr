@@ -42,7 +42,8 @@ describe("«عدّل الطلب» opens the plan editor; retyping stays beside i
     const open = html(view, { editing: true });
     expect(open).toContain('data-testid="agent-plan-editor"');
     expect(open).toContain('data-testid="agent-edit-count"');
-    expect(open).toContain('value="300"');
+    // ROUND 27 CHANGED: the count field shows Arabic-Indic digits (it showed «300»); the number still parses from any digit kind
+    expect(open).toContain('value="٣٠٠"');
     expect(open).toContain("استبعاد الردود");
     expect(open).toContain("اللغة");
     expect(open).toContain("الفترة الزمنية");

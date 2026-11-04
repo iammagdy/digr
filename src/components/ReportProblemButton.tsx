@@ -29,7 +29,7 @@ export default function ReportProblemButton({ jobId, className = "" }: { jobId: 
         disabled={state === "sending" || state === "done"}
         className="min-h-11 cursor-pointer rounded-full border border-ln2 bg-transparent px-4 text-xs text-ink disabled:cursor-default disabled:opacity-60"
       >
-        {state === "sending" ? "جاري الإرسال..." : state === "done" ? "تم إرسال البلاغ" : "بلّغ عن مشكلة"}
+        {state === "sending" ? "جارٍ الإرسال..." : state === "done" ? "تم إرسال البلاغ" : "بلّغ عن مشكلة"}
       </button>
       {(state === "done" || state === "error") && (
         <span role="status" aria-live="polite" className="text-[11px] leading-[1.7]" style={{ color: state === "done" ? "var(--ok)" : "var(--bad)" }}>{text}</span>

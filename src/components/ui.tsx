@@ -430,7 +430,7 @@ export function Skeleton({ className = "" }: { className?: string }) {
   return <div aria-hidden="true" className={`skeleton rounded-xl ${className}`} />;
 }
 
-export function Spinner({ label = "جاري التحميل" }: { label?: string }) {
+export function Spinner({ label = "جارٍ التحميل" }: { label?: string }) {
   return (
     <span role="status" aria-label={label} className="inline-flex items-center gap-2 text-sm text-sand-600">
       <svg className="h-4 w-4 motion-safe:animate-spin motion-reduce:animate-none" viewBox="0 0 24 24" fill="none" aria-hidden="true">

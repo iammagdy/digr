@@ -60,7 +60,7 @@ describe("mission card: each control says «جارٍ ...» and is disabled while
   });
   it("3. approve", () => {
     const b = button(card(planView(), { busy: true, pendingAction: "approve" }), "agent-approve");
-    expect(b).toContain("جاري الاعتماد…");
+    expect(b).toContain("جارٍ الاعتماد…");
     expect(isDisabled(b)).toBe(true);
   });
   it("4. edit the plan: save says «جارٍ الحفظ…», close and retype are disabled", () => {

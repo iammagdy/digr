@@ -14,6 +14,7 @@ import { MissionPlanBody } from "@/components/mission/MissionPlanPanel";
 import { PlanEditor } from "@/components/mission/PlanEditor";
 import { approveWithRecovery } from "@/lib/missionApprove";
 import { useBalance } from "@/hooks/useBalance";
+import { countInputValue, displayDigitsAr } from "@/lib/digitsInput";
 import { holdLimitOf } from "@/lib/agentMission/holdLimit";
 import { pointsAr } from "@/lib/pointsFormat";
 import { fileNameFromDisposition } from "@/lib/downloadName";
@@ -98,9 +99,12 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
 
   async function act(action: "approve" | "cancel" | "edit" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) {
     if (busy) return;
+    // ROUND 27 (item 2): the field SHOWS Arabic-Indic digits; an answer that is only a number is SENT as a plain number (Latin, Arabic-Indic or Persian typed alike)
+    const shownText = text;
+    if (action === "answer" && typeof text === "string" && /^\s*[\d٠-٩۰-۹]+\s*$/.test(text)) text = String(countInputValue(text));
     setBusy(true);
     setPendingAction(action);
-    setPendingText(action === "answer" && typeof text === "string" ? text : null);
+    setPendingText(action === "answer" && typeof shownText === "string" ? shownText : null);
     fastUntilRef.current = Date.now() + CARD_FAST_AFTER_ACTION_MS;
     setError(null);
     try {
@@ -171,7 +175,7 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
 
   const v = answer?.view;
   if (!v) {
-    return <div dir="rtl" data-testid="agent-card" data-phase="loading" className="mt-3 rounded-[18px] border border-ln bg-sf p-4 text-[13px] text-ink2" role="status">جاري تجهيز مهمتك…</div>;
+    return <div dir="rtl" data-testid="agent-card" data-phase="loading" className="mt-3 rounded-[18px] border border-ln bg-sf p-4 text-[13px] text-ink2" role="status">جارٍ تجهيز مهمتك…</div>;
   }
   return <AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} pendingText={pendingText} quietSinceMs={quietSinceMs} nowMs={nowMs} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled} />;
 }
@@ -209,7 +213,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
               {v.questionOptionsAr.map((o) => <button key={o} type="button" className={BTN_PLAIN} disabled={busy} onClick={() => onAct("answer", o)}>{busy && pendingAction === "answer" && pendingText === o ? "جارٍ الإرسال…" : o}</button>)}
             </div>
           ) : null}
-          <input value={reply} onChange={(e) => onReply(e.target.value)} disabled={busy} className="min-h-11 rounded-xl border border-ln2 bg-bg px-3 text-sm text-ink disabled:opacity-60" aria-label="أو اكتب إجابتك" />
+          <input value={reply} onChange={(e) => onReply(displayDigitsAr(e.target.value))} disabled={busy} className="min-h-11 rounded-xl border border-ln2 bg-bg px-3 text-sm text-ink disabled:opacity-60" aria-label="أو اكتب إجابتك" />
           <div><button type="button" className={BTN_PRIMARY} disabled={busy || !reply.trim()} onClick={() => onAct("answer", reply)}>{busy && pendingAction === "answer" && pendingText === reply ? "جارٍ الإرسال…" : "أرسل إجابتك"}</button></div>
         </div>
       ) : null}
@@ -252,7 +256,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
           {v.limit.smaller && !byBalance ? <p className="m-0 text-[13px] leading-[1.9] text-ink" data-testid="agent-smaller-line">{`نسخة أصغر: حتى ${formatAr(v.limit.smaller.perPost)} تعليق من كل منشور، وحجزها المؤقت ${pointsAr(v.limit.smaller.reservePoints)}.`}</p> : null}
           {byBalance ? <p className="m-0 text-[13px] leading-[1.9] text-ink2">يمكنك اعتماد نسخة أصغر تناسب رصيدك، أو تغيير طلبك، أو إلغاء المهمة؛ ولم يُخصم شيء.</p> : null}
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-            {byBalance || v.limit.smaller ? <button type="button" className={`${BTN_PRIMARY} inline-flex min-h-12 w-full items-center justify-center text-[15px] font-semibold sm:w-auto sm:min-w-[200px]`} disabled={busy} onClick={() => onAct("smaller")} data-testid="agent-smaller">{pendingAction === "smaller" ? "جاري التجهيز…" : "جهّز نسخة أصغر"}</button> : null}
+            {byBalance || v.limit.smaller ? <button type="button" className={`${BTN_PRIMARY} inline-flex min-h-12 w-full items-center justify-center text-[15px] font-semibold sm:w-auto sm:min-w-[200px]`} disabled={busy} onClick={() => onAct("smaller")} data-testid="agent-smaller">{pendingAction === "smaller" ? "جارٍ التجهيز…" : "جهّز نسخة أصغر"}</button> : null}
             <button type="button" className={`${BTN_PLAIN} w-full sm:w-auto`} disabled={busy} onClick={() => (v.edit ? onEditing(!editing) : onAct("edit"))} data-testid="agent-edit" aria-expanded={v.edit ? editing : undefined}>{pendingAction === "edit" ? "جارٍ التجهيز…" : "عدّل الطلب"}</button>
             <button type="button" className={`${BTN_PLAIN} w-full sm:w-auto`} disabled={busy} onClick={() => onAct("cancel")} data-testid="agent-cancel">{pendingAction === "cancel" ? "جارٍ الإلغاء…" : "ألغِ المهمة"}</button>
           </div>
@@ -265,12 +269,12 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
             ? <a href="/register" className={`${BTN_PRIMARY} inline-flex min-h-12 items-center justify-center text-[15px] font-semibold no-underline sm:min-w-[200px]`} data-testid="agent-signup">سجّل لتعتمد</a>
             : overLimit ? null
             : <button type="button" className={`${BTN_PRIMARY} inline-flex min-h-12 w-full items-center justify-center gap-2 text-[15px] font-semibold sm:w-auto sm:min-w-[200px]`} disabled={busy} onClick={() => onAct("approve")} data-testid="agent-approve">
-                {approving ? <><span className="h-4 w-4 rounded-full border-2 border-onac/30 border-t-onac motion-safe:animate-spin motion-reduce:animate-none" aria-hidden="true" />جاري الاعتماد…</> : "اعتمد"}
+                {approving ? <><span className="h-4 w-4 rounded-full border-2 border-onac/30 border-t-onac motion-safe:animate-spin motion-reduce:animate-none" aria-hidden="true" />جارٍ الاعتماد…</> : "اعتمد"}
               </button>}
           <button type="button" className={`${BTN_PLAIN} w-full sm:w-auto`} disabled={busy} onClick={() => (v.edit ? onEditing(!editing) : onAct("edit"))} data-testid="agent-edit" aria-expanded={v.edit ? editing : undefined}>{pendingAction === "edit" ? "جارٍ التجهيز…" : "عدّل الطلب"}</button>
         </div>
       ) : null}
-      {approving ? <p role="status" aria-live="polite" className="m-0 text-[13px] leading-[1.8] text-ink2" data-testid="agent-approving">جاري اعتماد خطتك… لن تحتاج لفعل شيء بعدها.</p> : null}
+      {approving ? <p role="status" aria-live="polite" className="m-0 text-[13px] leading-[1.8] text-ink2" data-testid="agent-approving">جارٍ اعتماد خطتك… لن تحتاج لفعل شيء بعدها.</p> : null}
       {planShown && v.edit && editing ? <PlanEditor edit={v.edit} busy={busy} pendingAction={pendingAction} onSave={(edits) => onAct("edit_plan", undefined, edits)} onCancel={() => onEditing(false)} onRetype={() => onAct("edit")} /> : null}
       {planShown && isGuest ? <p className="m-0 text-[12px] font-light leading-[1.8] text-mut" data-testid="agent-guest-note">بعد التسجيل تُنقل محادثتك لحسابك؛ اكتب «موافق» فيها ثم اضغط «اعتمد».</p> : null}
 

@@ -93,7 +93,7 @@ describe("activity panel: the in-progress sign", () => {
     for (const status of ["running", "queued"]) {
       const html = render({ status });
       expect(html).toContain('data-testid="running-indicator"');
-      expect(textOf(html)).toContain("جاري العمل على طلبك");
+      expect(textOf(html)).toContain("جارٍ العمل على طلبك");
       expect(html.match(/class="run-dot /g)).toHaveLength(3);
       // after the list, not before it
       expect(html.indexOf('data-testid="running-indicator"')).toBeGreaterThan(html.indexOf('data-testid="activity-events"'));
@@ -105,7 +105,7 @@ describe("activity panel: the in-progress sign", () => {
       const html = render({ status, rowsCollected: 3 });
       expect(html).not.toContain("running-indicator");
       expect(html).not.toContain("run-dot");
-      expect(textOf(html)).not.toContain("جاري العمل على طلبك");
+      expect(textOf(html)).not.toContain("جارٍ العمل على طلبك");
     }
   });
 
@@ -113,7 +113,7 @@ describe("activity panel: the in-progress sign", () => {
     const html = renderToStaticMarkup(createElement(RunningIndicator));
     expect(html).toContain('role="status"');
     expect(html).toContain('aria-hidden="true"');
-    expect(RUNNING_LINE_AR).toBe("جاري العمل على طلبك");
+    expect(RUNNING_LINE_AR).toBe("جارٍ العمل على طلبك");
     const css = readFileSync("src/app/globals.css", "utf8");
     // the last keyframe is the resting state, and the global reduced-motion rule cuts animations to one instant pass
     expect(css).toMatch(/@keyframes run-dots \{.*100% \{ opacity: 1; transform: none \} \}/);

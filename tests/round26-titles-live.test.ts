@@ -15,9 +15,10 @@ const TITLES: Record<string, string> = { posts: "المنشورات", videos: "�
 const DATE = new Date(Date.UTC(2026, 10, 4, 12));
 const DATE_AR = "٤ نوفمبر ٢٠٢٦";
 const platformOf = (m: Fx) => (/tiktok/.test(m.stages[0].endpoint_id) ? "tiktok" : /youtube/.test(m.stages[0].endpoint_id) ? "youtube" : /instagram/.test(m.stages[0].endpoint_id) ? "instagram" : /facebook/.test(m.stages[0].endpoint_id) ? "facebook" : "x");
-const stagesOf = (m: Fx) => m.stages.map((s) => ({ key: s.key, title_ar: TITLES[s.key], expected_rows: s.planned, deliver: true }));
+// CHANGED (round 27): the stages carry their parent, as the real plans do: a request with comments and replies is named by its PARENTS («فيديوهان مع التعليقات والردود عن ...», owner decision, tests/round27-titles-children.test.ts)
+const stagesOf = (m: Fx) => m.stages.map((s) => ({ key: s.key, title_ar: TITLES[s.key], expected_rows: s.planned, parent_key: s.parent_key, deliver: true }));
 const deliveredOf = (m: Fx) => m.stages.reduce((n, s) => n + s.planned, 0);
-const NEW_FORM = new RegExp(`^(?:[٠-٩]+ \\S+|\\S+ واحد|\\S+ واحدة|\\S+ان|\\S+تان) عن \\S.* - ${DATE_AR}$`);
+const NEW_FORM = new RegExp(`^(?:[٠-٩]+ \\S+|\\S+ واحد|\\S+ واحدة|\\S+ان|\\S+تان)(?: مع (?:التعليقات والردود|التعليقات|الردود))? عن \\S.* - ${DATE_AR}$`);
 
 describe("ROUND 26 item 8: the stored live missions of every platform", () => {
   it("the fixture covers the five platforms", () => {

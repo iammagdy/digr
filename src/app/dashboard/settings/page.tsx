@@ -180,7 +180,7 @@ export default function SettingsPage() {
           <select value={persona} onChange={(e) => { setPersona(e.target.value as PersonaType); setPersonaMsg(null); }} className={INPUT} aria-label="نوع الحساب">
             {PERSONA_OPTIONS.map((option) => <option key={option.key} value={option.key}>{option.label}</option>)}
           </select>
-          <button type="button" onClick={savePersona} disabled={personaBusy} className="min-h-11 cursor-pointer self-start rounded-full border-0 bg-ac px-5 text-[13px] text-onac disabled:opacity-60">{personaBusy ? "جاري الحفظ..." : "حفظ نوع الحساب"}</button>
+          <button type="button" onClick={savePersona} disabled={personaBusy} className="min-h-11 cursor-pointer self-start rounded-full border-0 bg-ac px-5 text-[13px] text-onac disabled:opacity-60">{personaBusy ? "جارٍ الحفظ..." : "حفظ نوع الحساب"}</button>
           {personaMsg && <Status ok={personaMsg.ok}>{personaMsg.text}</Status>}
         </section>
 

@@ -109,7 +109,7 @@ import { isCustomerVisibleJobEvent } from "../src/lib/reviewCostEvent";
 import { contractor, empty, foreign, repair, trader, utility } from "./fixtures/relevance-rows";
 
 const JOB = jobIdForQuote("quote_strict");
-const RETRY_NOTE = "جاري إعادة التحقق من ملاءمة السجلات";
+const RETRY_NOTE = "جارٍ إعادة التحقق من ملاءمة السجلات";
 const RELEASE_MESSAGE = "تعذّر التحقق الآلي الآن، ولم يُخصم أي رصيد. حاول مرة أخرى بعد قليل.";
 
 function resetDb(target = 3) {

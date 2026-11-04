@@ -410,7 +410,7 @@ export default function ResultsCanvas({
                       </Button>
                     </div>
                   </div>
-                  {artifactEditing && <p className="text-xs text-sand-600" role="status">جاري إنشاء نسخة جديدة…</p>}
+                  {artifactEditing && <p className="text-xs text-sand-600" role="status">جارٍ إنشاء نسخة جديدة…</p>}
                   {versionHistory.length > 0 && <p className="tnum text-xs text-sand-500">عدد النسخ: {formatNumber(versionHistory.length)} من {formatNumber(30)}</p>}
                 </div>
               </details>
@@ -498,7 +498,7 @@ export default function ResultsCanvas({
                   <p className="mt-1 text-xs leading-relaxed text-sand-600">يعكس محتوى الملفات المولّدة لهذا الطلب — متاح للمعاينة والطباعة.</p>
                 </div>
                 <Button onClick={() => onDownload("pdf")} disabled={downloadingKey === "pdf"} className="w-full">
-                  {downloadingKey === "pdf" ? "جاري التجهيز..." : "فتح وتحميل تقرير بي دي إف"}
+                  {downloadingKey === "pdf" ? "جارٍ التجهيز..." : "فتح وتحميل تقرير بي دي إف"}
                 </Button>
               </div>
             ) : (
@@ -540,7 +540,7 @@ export default function ResultsCanvas({
                   </div>
                 </div>
                 <Button size="sm" variant="secondary" onClick={() => onDownload(f.ext)} disabled={downloadingKey === f.ext || !jobId}>
-                  {downloadingKey === f.ext ? `جاري تنزيل ${f.label}...` : `تحميل ${f.label}`}
+                  {downloadingKey === f.ext ? `جارٍ تنزيل ${f.label}...` : `تحميل ${f.label}`}
                 </Button>
               </div>
             ))}

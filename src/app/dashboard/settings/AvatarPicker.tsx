@@ -18,7 +18,7 @@ export function AvatarPickerView({ letters, url, supported, busy, message, onPic
         {supported && (
           <div className="flex flex-wrap items-center gap-2">
             <button type="button" onClick={() => input.current?.click()} disabled={busy} data-testid="avatar-change" className="min-h-11 cursor-pointer rounded-full border border-ln2 bg-transparent px-4 text-[13px] font-semibold text-ink disabled:opacity-60">
-              {busy ? "جاري الحفظ..." : url ? "تغيير الصورة" : "إضافة صورة"}
+              {busy ? "جارٍ الحفظ..." : url ? "تغيير الصورة" : "إضافة صورة"}
             </button>
             {url && (
               <button type="button" onClick={onRemove} disabled={busy} data-testid="avatar-remove" className="min-h-11 cursor-pointer rounded-full border-0 bg-transparent px-3 text-[13px] text-bad disabled:opacity-60">حذف الصورة</button>

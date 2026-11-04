@@ -30,7 +30,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   if (loading) {
     return (
       <div className="flex min-h-dvh items-center justify-center bg-bg">
-        <Spinner label="جاري تحميل مساحة العمل" />
+        <Spinner label="جارٍ تحميل مساحة العمل" />
       </div>
     );
   }
@@ -43,7 +43,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
     }
     return (
       <div className="flex min-h-dvh items-center justify-center bg-bg">
-        <Spinner label="جاري تحميل مساحة العمل" />
+        <Spinner label="جارٍ تحميل مساحة العمل" />
       </div>
     );
   }
@@ -51,7 +51,7 @@ function DashboardContent({ children }: { children: React.ReactNode }) {
   if (!user.emailVerification) {
     return (
       <div className="flex min-h-dvh items-center justify-center bg-bg">
-        <Spinner label="جاري تحميل مساحة العمل" />
+        <Spinner label="جارٍ تحميل مساحة العمل" />
       </div>
     );
   }

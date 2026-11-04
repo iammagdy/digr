@@ -59,7 +59,7 @@ const PHASE_LABELS: Record<string, { label: string; badgeClass: string; dotClass
     dotClass: "bg-gold animate-pulse",
   },
   running: {
-    label: "جاري التنفيذ",
+    label: "جارٍ التنفيذ",
     badgeClass: "bg-sf border border-ln text-ink",
     dotClass: "bg-ac animate-pulse",
   },

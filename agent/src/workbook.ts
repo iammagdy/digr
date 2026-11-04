@@ -15,7 +15,7 @@ import { NAMED_MARK_KEY } from "../../src/lib/agentMission/foundation/namedShort
 import { APPROX_DATES_NOTE_AR, APPROX_DATE_NUMBER_FORMAT, APPROX_WORD_AR, DATE_PRECISION_APPROX_AR, DATE_PRECISION_EXACT_AR, DATE_PRECISION_TITLE_AR, approxColumnsOf } from "../../src/lib/agentMission/relativeDates";
 import { customerPlanView, isInternalColumn, type PricedPlan, type PricedStage } from "../../src/lib/agentMission/plan";
 import { deliveredOfAr, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
-import { formatAr } from "../../src/lib/arabicDigits";
+import { formatAr, toArabicDigits } from "../../src/lib/arabicDigits";
 import { parentCountsOf } from "../../src/lib/agentMission/parents";
 import { isTextItemStage, textKeyOf } from "../../src/lib/agentMission/contract";
 import { buildMethodology, routesOfFacts, type MissionFacts } from "./methodology";
@@ -58,7 +58,7 @@ const isFormulaLike = (v: string): boolean => /^[=+\-@\t\r]/.test(v) && !/^\+\d[
 const csvText = (v: string): string => (isFormulaLike(v) ? `'${v}` : v);
 const textCell = (v: string): string => v;
 
-export interface SheetColumn { title: string; get: (row: Row, parent: Row | null) => unknown; kind?: "context" | "own"; contact?: boolean; link?: boolean; /** The stage column's key (the date columns are recognised by it and by the title). */ key?: string }
+export interface SheetColumn { title: string; get: (row: Row, parent: Row | null) => unknown; kind?: "context" | "own"; contact?: boolean; link?: boolean; /** The stage column's key (the date columns are recognised by it and by the title). */ key?: string; /** ROUND 27: a counter or a field the source may not give: a missing value reads «غير متاح» and the column is never merged into another. */ availability?: boolean }
 export interface SheetLayout { stageIndex: number; stage: PricedStage; rows: Row[]; columns: SheetColumn[]; hasParent: boolean }
 
 /**
@@ -80,6 +80,10 @@ const readableColumns = (stage: PricedStage) => stage.columns.filter((c) => !isI
  */
 export const COUNTER_UNAVAILABLE_AR = "غير متاح";
 const COUNTER_KEYS: ReadonlySet<string> = new Set(["likes", "comments", "shares", "views", "saves", "followers", "subscribers", "replies_count"]);
+/** ROUND 27 (item 4): on a compiled TikTok video sheet the country is a field the chosen search tool may not give (the same columns for every tool): a missing value reads «غير متاح» too. The language column is never empty by itself: the writer reads the text's language when the tool gave none. */
+const TIKTOK_FIELD_KEYS: ReadonlySet<string> = new Set(["country"]);
+const isAvailabilityKey = (plan: PricedPlan, stage: PricedStage, key: string): boolean =>
+  plan.compiled?.by === "compiler" && (COUNTER_KEYS.has(key) || (stage.parent_key === null && /tiktok\./.test(stage.endpoint_id) && TIKTOK_FIELD_KEYS.has(key)));
 const isBlankCell = (v: unknown): boolean => v === null || v === undefined || (typeof v === "string" && v.trim() === "");
 
 /** True when a column's values are numbers and nothing else (no leading zero, at most 15 digits): only then it is stored as a number. */
@@ -175,12 +179,14 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
       const special = specialGet(c);
       const values = rows.map((r) => (special ? special(r) : r[c.key]));
       // a status column («موثّق» / «غير موثّق») says the same words on every row by nature: it is never merged into a twin; neither is a computed column of the reference
-      if (!rawSheet && c.status_of === undefined && c.type_of === undefined && c.computed === undefined && taken.some((t) => sameValues(t, values))) continue;
+      // ROUND 27 (item 4): a counter (or a field the tool may not give) is never merged into another column because their numbers coincide («0» shares and «0» saves on nine of ten videos dropped «الحفظ»)
+      const availability = isAvailabilityKey(plan, stage, c.key);
+      if (!rawSheet && !availability && c.status_of === undefined && c.type_of === undefined && c.computed === undefined && taken.some((t) => sameValues(t, values))) continue;
       titles.add(c.title_ar);
       taken.push(values);
       const ownText = textGetter(stage, c.key);
-      const counterWords = plan.compiled?.by === "compiler" && COUNTER_KEYS.has(c.key);
-      columns.push({ title: c.title_ar, get: special ? (r) => special(r) : ownText ? (r) => ownText(r) : counterWords ? (r) => (isBlankCell(r[c.key]) ? COUNTER_UNAVAILABLE_AR : r[c.key]) : (r) => r[c.key], kind: "own", contact: c.kind !== undefined, link: values.some((v) => isUrl(v)), key: c.key });
+      const counterWords = availability;
+      columns.push({ title: c.title_ar, get: special ? (r) => special(r) : ownText ? (r) => ownText(r) : counterWords ? (r) => (isBlankCell(r[c.key]) ? COUNTER_UNAVAILABLE_AR : r[c.key]) : (r) => r[c.key], kind: "own", contact: c.kind !== undefined, link: values.some((v) => isUrl(v)), key: c.key, ...(availability ? { availability: true } : {}) });
       // EVERY APPROXIMATE DATE SAYS SO IN THE FILE (round 14): a date column that holds any date computed from a relative time gets a column beside it, «دقة التاريخ»: «تقريبي» for a computed day, «دقيق» for a real moment, empty when there is no date. The date cell itself stays a date (sortable, filterable);
       // the word «تقريبًا» in its number format stays too, but a reader of values never saw it
       if (rows.some((r) => approxColumnsOf(r).includes(c.key))) {
@@ -250,7 +256,8 @@ export function buildExcludedAdminCsv(plan: PricedPlan, excludedByStage: Record<
 }
 
 /** What the first sheet's closing note may say about the file: only what the file really has. */
-export interface WorkbookFacts { sheets: number; hasParentColumn: boolean; parentLinked: boolean; hasDateColumn: boolean; /** The sheets start with «م», the running number of their rows. */ hasRowNumber?: boolean; /** Some date of the file was computed from a relative time the source gave («قبل ٣ أيام»). */ hasApproxDates?: boolean }
+export interface WorkbookFacts { sheets: number; hasParentColumn: boolean; parentLinked: boolean; hasDateColumn: boolean; /** The sheets start with «م», the running number of their rows. */ hasRowNumber?: boolean; /** Some date of the file was computed from a relative time the source gave («قبل ٣ أيام»). */ hasApproxDates?: boolean; /** ROUND 27: the columns whose value the source did not give for some rows (their cells say «غير متاح»). */ unavailable?: UnavailableFact[] }
+export interface UnavailableFact { sheetAr: string; columnAr: string; missing: number; total: number }
 
 /** The closing note of the summary sheet, built from the sheets and columns the file REALLY has: a link between sheets is described only when a parent column and its target sheet exist; the time zone only when a date column exists. */
 export function workbookNoteAr(f: WorkbookFacts): string {
@@ -259,6 +266,8 @@ export function workbookNoteAr(f: WorkbookFacts): string {
   if (f.hasRowNumber) parts.push(`العمود «${ROW_NUMBER_TITLE_AR}» رقم تسلسلي لصفوف كل ورقة.`);
   if (f.hasDateColumn) parts.push("التواريخ والأوقات بتوقيت القاهرة.");
   if (f.hasApproxDates) parts.push(APPROX_DATES_NOTE_AR);
+  // ROUND 27 (item 4): EVERY GAP STATED. A column the source did not fill says «غير متاح» in its cells; the summary names the column and how many rows.
+  for (const u of f.unavailable ?? []) parts.push(u.missing >= u.total ? `العمود «${u.columnAr}» في ورقة «${u.sheetAr}» لم يوفّره المصدر لهذا الطلب؛ كُتب «${COUNTER_UNAVAILABLE_AR}» في كل صفوفه.` : `العمود «${u.columnAr}» في ورقة «${u.sheetAr}» لم يوفّر المصدر قيمته في ${toArabicDigits(u.missing)} من ${toArabicDigits(u.total)}؛ كُتب «${COUNTER_UNAVAILABLE_AR}» في هذه الصفوف.`);
   return parts.join(" ");
 }
 
@@ -553,10 +562,16 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   intro.height = 32;
   intro.font = { name: "Calibri", size: 11, bold: true };
   const parentLinked = layouts.some((l) => l.hasParent && sheetNameOf.has(l.stage.parent_key!) && (idCell.get(l.stage.parent_key!)?.size ?? 0) > 0);
-  const note = summary.addRow([workbookNoteAr({ sheets: layouts.length, hasParentColumn: layouts.some((l) => l.hasParent), parentLinked, hasDateColumn, hasApproxDates, hasRowNumber: layouts.some((l) => l.columns[0]?.key === "__row_number") })]);
+  // ROUND 27 (item 4): the columns whose cells say «غير متاح» (the counters and fields the source did not give), counted per sheet from the real cells
+  const unavailable: UnavailableFact[] = layouts.flatMap((lay) => lay.columns.filter((c) => c.availability).flatMap((c) => {
+    const parentOf = new Map((rowsByStage[lay.stage.parent_key ?? ""] ?? []).map((r) => [text(r.id), r]));
+    const missing = lay.rows.filter((r) => c.get(r, parentOf.get(text(r.parent_id)) ?? null) === COUNTER_UNAVAILABLE_AR).length;
+    return missing > 0 ? [{ sheetAr: lay.stage.title_ar, columnAr: c.title, missing, total: lay.rows.length }] : [];
+  }));
+  const note = summary.addRow([workbookNoteAr({ sheets: layouts.length, hasParentColumn: layouts.some((l) => l.hasParent), parentLinked, hasDateColumn, hasApproxDates, hasRowNumber: layouts.some((l) => l.columns[0]?.key === "__row_number"), ...(unavailable.length > 0 ? { unavailable } : {}) })]);
   summary.mergeCells(note.number, 1, note.number, 5);
   note.alignment = { wrapText: true, readingOrder: "rtl" as any };
-  note.height = 34;
+  note.height = unavailable.length > 0 ? 34 + 17 * unavailable.length : 34;
   addMethodologySection(summary, methodology);
   summary.autoFilter = { from: { row: 1, column: 1 }, to: { row: plan.stages.length + 1, column: 5 } };
   // THE LAST LOOK, at every cell of every sheet: an address of a provider is taken out; in the texts we write (the first sheet and the headings) a provider's name is taken out too

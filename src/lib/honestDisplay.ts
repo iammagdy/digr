@@ -417,7 +417,7 @@ export function groupLedgerEntries(entries: RawLedgerEntry[]): GroupedLedgerRow[
 
 /**
  * A finished run must not keep saying it is still working. An event that ends with an ellipsis is an in-progress line
- * («جاري تجهيز ملفات النتائج…», «…جاري بدء معالجة الطلب...»); once the job reached a final state it is superseded by the
+ * («جارٍ تجهيز ملفات النتائج…», «…جارٍ بدء معالجة الطلب...»); once the job reached a final state it is superseded by the
  * completion line, so it is dropped. Page summaries and every other recorded event stay.
  */
 export function settleTimelineEvents<T extends { textAr: string }>(events: T[], status: string | undefined | null): T[] {

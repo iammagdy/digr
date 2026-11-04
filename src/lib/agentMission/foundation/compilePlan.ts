@@ -45,6 +45,20 @@ const REPLY_ROLE: Record<SocialPlatform, CardRole> = { tiktok: "comment.replies"
 const ROLES_OF = (role: StageRole, p: SocialPlatform): ReadonlyArray<CardRole> => (role === "parents" ? PARENT_ROLES[p] : role === "comments" ? (COMMENT_ROLE[p] ? [COMMENT_ROLE[p]!] : []) : [REPLY_ROLE[p]]);
 /** The key of the stage that holds a platform's parents. */
 const PARENT_KEY: Record<SocialPlatform, string> = { tiktok: "videos", x: "tweets", facebook: "posts", instagram: "posts", youtube: "videos" };
+/**
+ * ROUND 27 (item 4): THE COLUMNS OF A PARENT SHEET, the same for the same platform and type. TikTok's video search has three verified tools (tikhub, anyapi, crawl4ai) that each give a different field set (the language only the first, the country the first two):
+ * two orders of the same kind gave files of 19 and 18 columns. The columns are the union, in the order of the fullest tool; a field the chosen tool does not give is a column that says «غير متاح» on every row (and the summary says which).
+ * Another platform's parent sheet follows its one verified tool (X, YouTube) or its own role (Facebook search or page, Instagram account): nothing changes for them.
+ */
+export const SAME_PARENT_COLUMNS: Partial<Record<SocialPlatform, ReadonlyArray<string>>> = {
+  tiktok: ["id", "text", "author", "username", "posted_at", "link", "country", "language", "likes", "comments", "shares", "views", "saves"],
+};
+export function sameParentColumnsOf(platform: SocialPlatform, cardKeys: ReadonlyArray<string>): string[] {
+  const canonical = SAME_PARENT_COLUMNS[platform];
+  if (!canonical) return [...cardKeys];
+  return [...canonical, ...cardKeys.filter((k) => !canonical.includes(k))];
+}
+
 const PARENT_TITLE: Record<SocialPlatform, string> = { tiktok: "الفيديوهات", x: "التغريدات", facebook: "المنشورات", instagram: "المنشورات", youtube: "الفيديوهات" };
 
 /**
@@ -368,7 +382,9 @@ export function compilePlan(input: CompileInput): CompileResult {
     return v === null ? NAMED_UNAVAILABLE_MARK_AR : v ? "" : NAMED_MISMATCH_MARK_AR;
   };
   const shown = (r: PoolRow): PoolRow => ({ ...r, ...(markTopic ? { [TOPIC_RELATION_KEY]: topicRelationAr(tierOf(r)) } : {}), ...(markNamed ? { [NAMED_MARK_KEY]: namedValue(r) } : {}) });
-  const fieldKeys = [...Object.keys(card.mapping.kind === "fields" ? card.mapping.fields : {}), ...(card.mapping.kind === "fields" && card.mapping.linkTemplate ? ["link"] : []), ...(input.counters && !poolCard.counter ? ["comments"] : [])];
+  const cardFieldKeys = [...Object.keys(card.mapping.kind === "fields" ? card.mapping.fields : {}), ...(card.mapping.kind === "fields" && card.mapping.linkTemplate ? ["link"] : []), ...(input.counters && !poolCard.counter ? ["comments"] : [])];
+  // ROUND 27 (item 4): the parent sheet of a platform whose search has several verified tools has the SAME columns whichever tool read the page; a field the tool does not give stays a column and says «غير متاح» (workbook.ts)
+  const fieldKeys = sameParentColumnsOf(ask.platform, cardFieldKeys);
   const columns = [...fieldKeys.filter((k, i) => k !== "id" && fieldKeys.indexOf(k) === i).map((k) => ({ key: k, title_ar: TITLE[k] ?? k })), ...(markTopic ? [{ key: TOPIC_RELATION_KEY, title_ar: TOPIC_RELATION_TITLE_AR }] : []), ...(markNamed ? [{ key: NAMED_MARK_KEY, title_ar: NAMED_MARK_TITLE_AR }] : [])];
   const pageRows = Math.max(1, card.page.observedRowsPerPage);
   promises[parentKey] = { type: "exact", n: chosen.length };

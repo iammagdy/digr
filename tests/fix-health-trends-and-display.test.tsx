@@ -255,7 +255,7 @@ describe("5 and 6. wallet wording", () => {
 
 describe("7. the run message: while the page drives the job the only guidance is «أبقِ الصفحة مفتوحة حتى تكتمل المهمة»", () => {
   it("no notification promise before it, in the message or in the start notice", () => {
-    expect(POST_APPROVAL_TAB_AR).toBe("جاري سحب البيانات. أبقِ الصفحة مفتوحة حتى تكتمل المهمة.");
+    expect(POST_APPROVAL_TAB_AR).toBe("جارٍ سحب البيانات. أبقِ الصفحة مفتوحة حتى تكتمل المهمة.");
     expect(postApprovalMessageAr(undefined)).toBe(POST_APPROVAL_TAB_AR);
     expect(postApprovalMessageAr("tab")).not.toMatch(/إشعار|سيصلك|سنخبرك/);
     for (const driver of ["tab", undefined] as const) {

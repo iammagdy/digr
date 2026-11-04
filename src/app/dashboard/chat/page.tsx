@@ -1330,7 +1330,7 @@ export default function ChatWorkspacePage() {
         events: [
           {
             $id: `init_${Date.now()}`,
-            textAr: "تم قبول الطلب وجاري بدء التنفيذ...",
+            textAr: "تم قبول الطلب وجارٍ بدء التنفيذ...",
             kind: "info",
             createdAt: new Date().toISOString(),
           },
@@ -1894,7 +1894,7 @@ export default function ChatWorkspacePage() {
               disabled={downloadingKey !== null}
               className="min-h-11 cursor-pointer rounded-full border-0 bg-ac px-5 text-[13px] text-onac disabled:cursor-wait disabled:opacity-60"
             >
-              {downloadingKey === "xlsx:shaped" ? "جاري تجهيز الملف..." : "تحميل الملف المخصص"}
+              {downloadingKey === "xlsx:shaped" ? "جارٍ تجهيز الملف..." : "تحميل الملف المخصص"}
             </button>
             <span className="text-xs font-light text-fnt">{m.fileShape.descriptionAr}</span>
           </div>
@@ -1907,7 +1907,7 @@ export default function ChatWorkspacePage() {
             onClick={() => void handleRequestRest(m.sampleRest!.sampleQuoteId, m.sampleRest!.fullVolume)}
             className="mt-2 min-h-11 cursor-pointer rounded-full border-0 bg-ac px-5 text-[13px] text-onac disabled:cursor-wait disabled:opacity-60"
           >
-            {requestingRest ? "جاري تجهيز الباقي..." : "اطلب الباقي"}
+            {requestingRest ? "جارٍ تجهيز الباقي..." : "اطلب الباقي"}
           </button>
         )}
         {m.planQuote && !canvasOpen && (
@@ -2088,7 +2088,7 @@ export default function ChatWorkspacePage() {
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-2">
               {conversationsLoading ? (
-                <div role="status" aria-label="جاري تحميل المحادثات" className="space-y-2 p-3">
+                <div role="status" aria-label="جارٍ تحميل المحادثات" className="space-y-2 p-3">
                   {[0, 1, 2].map((item) => <div key={item} className="h-14 animate-pulse rounded-xl bg-sf2" />)}
                 </div>
               ) : conversationsList.length === 0 ? (
@@ -2150,8 +2150,8 @@ export default function ChatWorkspacePage() {
             </div>
           )}
           {conversationLoading && (
-            <div role="status" aria-label="جاري تحميل المحادثة" className="mx-auto w-full max-w-[680px] space-y-3 py-4">
-              <span className="sr-only">جاري تحميل المحادثة</span>
+            <div role="status" aria-label="جارٍ تحميل المحادثة" className="mx-auto w-full max-w-[680px] space-y-3 py-4">
+              <span className="sr-only">جارٍ تحميل المحادثة</span>
               {["w-3/5", "w-4/5", "w-2/5"].map((width, index) => (
                 <div key={index} className={`h-10 ${width} rounded-[14px] bg-sf2 motion-safe:animate-pulse motion-reduce:animate-none`} />
               ))}
