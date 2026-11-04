@@ -9,7 +9,9 @@ import { describe, expect, it } from "vitest";
 const WIRING: ReadonlyArray<string> = [
   "agent/src/compiled.ts", // S2: applies the card edits it is GIVEN (none unless the caller passes them)
   "agent/src/runMission.ts", // S2: reads the edits only when DIGER_STAGE2_ASK_CARD is on
-  "src/app/api/missions/[id]/route.ts", // S3: the «ask_edit» action answers 404 unless DIGER_STAGE2_ASK_CARD is on for the viewer
+  "src/app/api/missions/[id]/route.ts", // S3/S4: «ask_edit» answers 404 and the GET sends no «askCard» unless DIGER_STAGE2_ASK_CARD is on for the viewer
+  "src/components/mission/AskCard.tsx", // S4: draws only the card the server sent
+  "src/components/mission/AgentMissionCard.tsx", // S4: shows the card only when the answer carries it and the page asked for Stage 2 (the requests page)
 ];
 const ROOT = path.resolve(__dirname, "..");
 function files(dir: string): string[] {

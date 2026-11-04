@@ -6,7 +6,7 @@ import { resolveMissionViewer, safeMissionId } from "@/lib/server/missionViewer"
 import { getLiveProviderGateStatusFromSettings } from "@/lib/server/providerGate";
 import { getBusyState } from "@/lib/server/busyState";
 import { countActiveJobs, evaluateConcurrentJobs } from "@/lib/server/concurrentJobs";
-import { askEditForCustomer, stage2FlagForViewer } from "@/lib/agentMission/stage2/askEditAction";
+import { askCardForCustomer, askEditForCustomer, stage2FlagForViewer } from "@/lib/agentMission/stage2/askEditAction";
 import { methodologyMissionById } from "@/lib/agentMission/methodology/missions";
 import { isMethodologyPurchased } from "@/lib/server/methodologyPurchase";
 
@@ -28,7 +28,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     const m = await methodologyMissionById(client, { missionId: id, userId: auth.viewer.userId });
     if (m) methodology = { jobId: m.jobId, titleAr: m.titleAr, purchased: await isMethodologyPurchased(client, { userId: auth.viewer.userId, jobId: m.jobId }) };
   }
-  return NextResponse.json({ success: true, isGuest: auth.viewer.isGuest, status: r.status, requestText: r.requestText, view: r.view, ...(methodology ? { methodology } : {}) }, { headers: { "Cache-Control": "no-store" } });
+  // STAGE 2 S4 (docs/STAGE-2.md): the «فهمنا طلبك» card, only while the plan waits for approval and only when DIGER_STAGE2_ASK_CARD is on for the viewer (unset: nothing is read, the answer is today's)
+  const askCard = r.status === "plan_ready" && (await stage2FlagForViewer(client, "DIGER_STAGE2_ASK_CARD", auth.viewer.userId)) ? await askCardForCustomer(client, { id, userId: auth.viewer.userId }) : null;
+  return NextResponse.json({ success: true, isGuest: auth.viewer.isGuest, status: r.status, requestText: r.requestText, view: r.view, ...(methodology ? { methodology } : {}), ...(askCard ? { askCard } : {}) }, { headers: { "Cache-Control": "no-store" } });
 }
 
 /**

@@ -18,7 +18,7 @@ vi.mock("../src/lib/server/missionViewer", async (orig) => {
 });
 vi.mock("../src/lib/server/missionNotify", () => ({ sendMissionNotice: vi.fn(async () => ({ inApp: true, email: false })) }));
 
-import { POST } from "../src/app/api/missions/[id]/route";
+import { GET, POST } from "../src/app/api/missions/[id]/route";
 import { ASK_EDIT_NEW_READ_AR, ASK_EDIT_RECEIVED_AR, askEditForCustomer } from "../src/lib/agentMission/stage2/askEditAction";
 
 const ME = "u-1";
@@ -75,6 +75,38 @@ describe("flag off (unset, as in production): the action does not exist", () => 
     expect((await POST(req({ action: "ask_edit", edit: { field: "count", value: 1 } }), ctx())).status).toBe(404);
     state.client = makeClient(db, "tester@digr.local").client;
     expect((await POST(req({ action: "ask_edit", edit: { field: "count", value: 1 } }), ctx())).status).toBe(200);
+  });
+});
+
+describe("the mission's GET answer carries the «فهمنا طلبك» card only when the flag is on", () => {
+  const get = () => GET(new NextRequest(`http://localhost/api/missions/${MSN}`), ctx());
+  it("flag off: no askCard key and no storage read (the answer is today's)", async () => {
+    vi.stubEnv("DIGER_STAGE2_ASK_CARD", "");
+    db.seed("missions", [mission()]);
+    const c = makeClient(db);
+    const listed = vi.fn(c.client.storage.from().list);
+    c.client.storage = { from: () => ({ ...c.client.storage.from(), list: listed }) };
+    state.client = c.client;
+    const json = await (await get()).json();
+    expect(json.success).toBe(true);
+    expect("askCard" in json).toBe(false);
+    expect(listed).not.toHaveBeenCalled();
+  });
+  it("flag on, a plan waiting: the card of the request, with the kept edits applied", async () => {
+    vi.stubEnv("DIGER_STAGE2_ASK_CARD", "on");
+    db.seed("missions", [mission()]);
+    const c = makeClient(db);
+    c.objects.set(`${MSN}/ask_edits/e0001.json`, JSON.stringify({ field: "count", value: 1 }));
+    state.client = c.client;
+    const json = await (await get()).json();
+    expect(json.askCard.titleAr).toBe("فهمنا طلبك");
+    expect(json.askCard.fields.find((f: { key: string }) => f.key === "count").valueAr).toBe("١");
+  });
+  it("flag on, an approved mission: no card", async () => {
+    vi.stubEnv("DIGER_STAGE2_ASK_CARD", "on");
+    db.seed("missions", [mission({ status: "approved" })]);
+    state.client = makeClient(db).client;
+    expect("askCard" in (await (await get()).json())).toBe(false);
   });
 });
 
