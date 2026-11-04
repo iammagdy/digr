@@ -92,6 +92,9 @@ function subjectInfo(input: SubjectInput): { text: string; residual: boolean } {
     const cut = (opinion ? opinion[1] : rest).split(/\s+(?:في|على|مع|من|خلال|بين|بعد)\s+/)[0].trim();
     if (cut) return { text: cut, residual: false };
   }
+  // ROUND 26 (item 8): a request that quotes its subject and has no «عن» («٢٠ تغريدة على X فيها "العاصمة الإدارية"»): the quoted words are the subject
+  const quoted = /["“«]([^"”»\n]{2,60})["”»]/.exec(request);
+  if (quoted && quoted[1].trim()) return { text: quoted[1].trim(), residual: false };
   // a request about a PLACE or a business names it without «عن» («تقييمات من جوجل ماب لمطعم كشري أبو طارق في القاهرة»): the name starts at the kind of place
   const place = /(?:^|\s)(?<!(?:كل|لكل)\s)(?:ل|لل)?((?:مطعم|مطاعم|كافيه|مقهى|فندق|محل|صيدلية|عيادة|مستشفى|مدرسة|جامعة|مول|بنك|شركة|معرض|مصنع|نادي)\s[^،,.؟?!\n]{1,60})/.exec(request);
   if (place) {
