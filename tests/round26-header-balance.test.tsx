@@ -15,3 +15,9 @@ describe("header balance", () => {
     expect(renderToStaticMarkup(createElement(HeaderBalance, { balance: balanceFailed() }))).not.toContain("٠");
   });
 });
+
+it("never shows another account's cached balance", async () => {
+  const { balanceForUser } = await import("../src/lib/balanceForUser");
+  expect(balanceForUser({ ownerId: "old", balance: balanceReady(125) }, "new").status).toBe("loading");
+  expect(balanceForUser({ ownerId: "old", balance: balanceReady(125) }, "old").value).toBe(125);
+});

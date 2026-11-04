@@ -4,6 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/hooks/useUser";
 import { balanceFailed, balanceLoading, balanceReady, type BalanceView } from "@/lib/honestDisplay";
+import { balanceForUser } from "@/lib/balanceForUser";
 
 interface BalanceContextValue {
   /** Available points = sum of credit_ledger deltas. Holds (reserve) are negative deltas, so held points are already excluded. */
@@ -18,7 +19,8 @@ const BalanceContext = createContext<BalanceContextValue>({ balance: balanceLoad
 
 export function BalanceProvider({ children }: { children: ReactNode }) {
   const { user } = useUser();
-  const [balance, setBalance] = useState<BalanceView>(balanceLoading());
+  const [cached, setCached] = useState<{ ownerId: string | null; balance: BalanceView }>({ ownerId: null, balance: balanceLoading() });
+  const balance = balanceForUser(cached, user?.id ?? null);
   const lastReadAt = useRef(0);
 
   const refresh = useCallback(async () => {
@@ -38,7 +40,7 @@ export function BalanceProvider({ children }: { children: ReactNode }) {
       if (res && res.ok) {
         const json = await res.json().catch(() => null);
         if (json?.success && typeof json.balance === "number") {
-          setBalance(balanceReady(json.balance));
+          setCached({ ownerId: user.id, balance: balanceReady(json.balance) });
           return;
         }
       }
@@ -51,13 +53,13 @@ export function BalanceProvider({ children }: { children: ReactNode }) {
 
       if (error) {
         // A failed request proves nothing about the balance — never show a fake zero.
-        setBalance(balanceFailed());
+        setCached({ ownerId: user.id, balance: balanceFailed() });
         return;
       }
       const total = (data || []).reduce((sum, row) => sum + (Number(row.delta) || 0), 0);
-      setBalance(balanceReady(total));
+      setCached({ ownerId: user.id, balance: balanceReady(total) });
     } catch {
-      setBalance(balanceFailed());
+      setCached({ ownerId: user.id, balance: balanceFailed() });
     }
   }, [user]);
 
