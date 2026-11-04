@@ -151,6 +151,33 @@ At completion, `buildLiveSnapshot(status: "done")` equals the file `buildMission
 
 ## 8. Left for Sonnet (step by step)
 
+### 8.0 Status after the Sonnet session (branch rebased on `main` = `62959fb`)
+
+| Step | Status | Commit | Files | Tests |
+|---|---|---|---|---|
+| S1 | **not done, on purpose** (needs PR 3 live, benchmarks 1, 2, 4 and the strong model) | none | none | none |
+| S2 | done | `8fa59ee` | new `src/lib/agentMission/stage2/askEditStore.ts`, `agent/src/stage2/askEdits.ts`; changed `agent/src/compiled.ts` (optional `askEdits`), `agent/src/runMission.ts` (reads them only behind the flag) | `tests/stage2-ask-edits-planning.test.ts` (replay of M12: a count edit re-plans with **zero** new gateway calls) |
+| S3 | done | `3133228` | new `src/lib/agentMission/stage2/askEditAction.ts`; changed `src/app/api/missions/[id]/route.ts` (action `ask_edit`) | `tests/stage2-ask-edit-action.test.ts` |
+| decision 5 | done | `d769095` | `askCard.ts`: `BUDGET_MAX_POINTS = AGENT_JOB_POINTS_CAP` (25,000) | `tests/stage2-ask-card.test.ts` |
+| S4 | done | `31f220b` | new `src/components/mission/AskCard.tsx`, `src/lib/agentMission/stage2/cardText.ts`; changed `AgentMissionCard.tsx` (optional `stage2` prop, `askCard`), the mission route GET (`askCard` only when the flag is on), `src/app/dashboard/requests/[id]/page.tsx` (`stage2`) | `tests/stage2-ask-card-ui.test.tsx` |
+| S5 | done | `ac359b2` | changed `agent/src/compiled.ts` (optional `questionCards`, `topicRelation`), `agent/src/runMission.ts`, `agent/src/runState.ts` (two optional fields), `stage2/questionCards.ts` (`topicRelationAnswerOf`) | `tests/stage2-question-cards-worker.test.ts` (budget 400 → hold ≤ 400 on M12 pages) |
+| S6 | done | `e21fd7b` | new `agent/src/stage2/liveWriter.ts`; changed `agent/src/runMission.ts` (engine events wrapped only when the flag is on; one done-snapshot call after the file) | `tests/stage2-live-writer.test.ts` (the last snapshot read back from storage equals the M12 file) |
+| S7 | done | `7f2463a` | new `src/app/api/missions/[id]/live/route.ts` | `tests/stage2-live-route.test.ts` |
+| S8 | done | `4602921` | new `src/lib/agentMission/stage2/livePoller.ts`, `src/hooks/useLiveSheet.ts` | `tests/stage2-live-poller.test.ts` |
+| S9 | done | `c1549a4` | new `src/components/mission/LiveSheetGrid.tsx`, `tests/helpers/stage2Live.ts` | `tests/stage2-live-grid.test.tsx` |
+| S10 | done | `10dc2e3` | new `LiveSheetCards.tsx`, `LiveWorkLog.tsx`, `LiveSheetPanel.tsx`; changed `AgentMissionCard.tsx`, the mission route GET (`liveSheet` only when the flag is on) | `tests/stage2-live-sheet-ui.test.tsx` |
+| S11 | done | `9ce6a99` | new `src/lib/agentMission/stage2/arabicCount.ts`; changed `workLog.ts`, `askCard.ts` | `tests/stage2-arabic-count.test.ts`, `tests/stage2-work-log.test.ts` |
+
+How it differs from the steps written below (read these first):
+
+- **Mission status name.** The step text says "status plan"; the real status before approval is `plan_ready` (the card's phase is `plan`). The `ask_edit` action and the card are allowed only in `plan_ready`.
+- **S3 lives in a new file** (`stage2/askEditAction.ts`), not in `customerActions.ts`, so that file is untouched. It reuses today's "answer" path *shape* (status back to `queued`, worker and lease cleared, one `answer` event) and touches **no money line**: no hold, no reservation, no money function, no ledger. The test checks that no money RPC was called and that `reserved_points` and `unit_price_points` are unchanged.
+- **S4 is shown on the requests page only.** `AgentMissionCard` takes a new optional `stage2` prop; only the requests page passes it, so the chat page (locked) never shows Stage 2 surfaces, even with the flags on. Its `askCard` comes from the mission route's GET, not from `customerView`.
+- **S5 asks the first card the compiled planning can ask now**: count and comments-per-parent (the same texts and options as today), or the new topic-relation card. The platform card is never needed on the compiled path (the platform is known there). The occurrence card is still asked by today's code, earlier in the planning. The topic answer is kept in the run note (`stage2Pending`, `topicRelation` in `runState.ts`) because a later answer replaces `answer_text`. The budget option is today's flow («حدد ميزانية بالنقاط», then a typed number).
+- **S6.** Running snapshots come from the **engine** path only (the events it emits through `addEvent`). The model-driven execution path (plans with no proven recipe) writes only the done snapshot. Snapshot names are `live/snap_<seq>_<writer>.json`; the done one is `..._done.json`, which sorts after the running one of the same seq. The work log is made from the events this worker emitted (kept in memory for the run), so a run resumed on another worker has a work log of that worker's events only.
+- **S7 reads the newest name from the end of the listing** (`order: desc`, 20 names), because a long job writes more than 1,000 snapshots.
+- **S10.** The live panel polls only when the mission's GET answer says `liveSheet: true` (the flag is on for the viewer). With the flag unset, the page makes **no** request to the live route.
+
 Do these in order, one small commit each, every new screen string checked by `checkCustomerText` / `checkCustomerLabel` in a test. Never show a provider, endpoint, USD or model name.
 
 **S1. The FOUNDATION-PLAN "first commit pair" of PR 4 is NOT done here.** It (FB/IG/YT joining the PR 2b skip list and deleting social-only pass code) needs PR 3 live and benchmarks 1, 2, 4 passed in `test` mode, and the strong model. Do not do it in the Sonnet session; leave it for a strong-model session.
@@ -188,16 +215,28 @@ Do these in order, one small commit each, every new screen string checked by `ch
 - **`src/app/api/chat/route.ts` / `src/functions/shared/chatHandler.ts`**: if the chat turn should start the Ask card instead of today's plan card, the chat handler must pass the mission's `askCard`. Not needed for the requests page.
 - **`ResultsCanvas.tsx`**: not touched. If the finished live sheet should hand over to the results view, the hand-over belongs there (later).
 - Download routes: not touched. The equality contract is with the file `buildMissionFiles` builds, which those routes serve.
+- **Chat page (Sonnet session):** `AgentMissionCard` is also rendered by the chat page. To show the Ask card and the live sheet there, the chat page must pass `stage2` to `<AgentMissionCard>` (one prop). That is a change in a locked file, so it was not made. Until then, the Stage 2 surfaces appear on the requests page only, even with the flags on.
 
-## 10. Open decisions for the owner
+## 10. Decisions for the owner
 
-1. **Where the live sheet is shown first**: the requests page only (recommended, the chat page is locked) or wait for the chat page.
-2. **Snapshot storage cost**: one small JSON object every ≤ 5 s per running mission in the mission's folder (create-only). Recommended; alternative: build on demand in the route (needs the worker's item log in the site, heavier).
-3. **Edits after a `new_read` edit**: a new planning reads pages again through the gateway (planning cost, small). Recommended: allow, with the line «سنقرأ النتائج من جديد بعد هذا التعديل».
-4. **Question cards: one at a time or all three on one screen** (the policy returns up to three; today's flow asks one). Recommended: one at a time (same flow as today).
-5. **Budget upper bound** typed by a customer (10,000,000 points here; the hold is still capped by the job cap).
+1. **Decided:** the live sheet is shown first on the **requests page only** (`src/app/dashboard/requests/[id]/page.tsx` passes `stage2`; the chat page does not).
+2. **Decided:** snapshots are stored as small **create-only objects** in the mission's folder (`live/snap_*.json`).
+3. **Decided:** an edit that needs a new read is **allowed**, with the line «سنقرأ النتائج من جديد بعد هذا التعديل» (`ASK_EDIT_NEW_READ_AR`, shown in the editor of every `new_read` field).
+4. **Decided:** question cards are asked **one at a time**, in today's flow.
+5. **Decided:** the highest budget a customer can type is the **job points cap**, imported read-only: `AGENT_JOB_POINTS_CAP` (`constants.ts`) = `JOB_MAX_POINTS_CAP` of `src/lib/jobPointsCap.ts` = **25,000 points** (that file is not edited). The `JOB_MAX_POINTS_CAP` environment variable may lower the effective cap of a hold; the card's input uses the constant.
+
+Still open (found in this session, nothing done about them):
+
+6. **An edit that loses a race with an approval** leaves its `ask_edits/eNNNN.json` object in the folder. The mission is not changed (the status guard refuses with 409), and an approved mission is never planned again, so the object is never read. Should such orphans be cleaned up? Recommended: no (create-only, harmless).
+7. **Test mode reads the account's e-mail on every mission GET** (the `test` value of a flag: `auth.admin.getUserById`, while the card polls every few seconds). With the flags unset or `on`, nothing extra is read. Recommended: accept for test mode only.
 
 ## 11. Verified facts vs assumptions
+
+**Sonnet session (after the rebase on `62959fb`):** every test above, and the new ones of section 8.0, were run and passed. Measured nothing in production. **Not measured:**
+- the polling load (one request every 5 to 30 seconds per open requests page, only with the flag on);
+- the cost of writing a snapshot (one fold and one upload, at most every 5 seconds per mission);
+- the extra time `await live.flush()` adds at the end of an engine run (it waits for at most one upload).
+
 
 - Verified by tests in this branch: everything in section 6.
 - Assumption: the polling load (one request every 5-30 s per open card) fits Vercel's free limits. Not measured.
