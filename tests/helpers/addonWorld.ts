@@ -13,14 +13,16 @@ export const SETTINGS = { ...DEFAULT_MISSION_PRICING_SETTINGS, minChargePoints: 
 
 export interface MissionRow { id: string; user_id: string; status: string; plan: any; job_id?: string | null; quote_id?: string | null; reserved_points?: number | null; unit_price_points?: number | null; lease_until?: string | null; error?: string | null; approved_by?: string | null; worker_id?: string | null; [k: string]: unknown }
 
-export function fakeAddonWorld(options: { balance?: number; cap?: number } = {}) {
+export function fakeAddonWorld(options: { balance?: number; cap?: number; /** Share the rows with an agent store (the worker tests): its `missions` map. */ missions?: Map<string, any> } = {}) {
   const money = fakeMoneyClient(options);
-  const missions = new Map<string, MissionRow>();
+  const missions: Map<string, MissionRow> = options.missions ?? new Map<string, MissionRow>();
   const events: Array<Record<string, unknown>> = [];
   const tableCalls: string[] = [];
   const table = (name: string) => {
     tableCalls.push(name);
     if (name === "mission_events") return { insert: async (row: Record<string, unknown>) => { events.push(row); return { error: null }; } };
+    // a read-only look at a job (the worker reads its status to tell a released hold from a settled one); nothing else of the money tables is reachable
+    if (name === "jobs") return { select: () => ({ eq: (_k: string, id: string) => ({ maybeSingle: async () => { const j = money.jobs.get(id); return { data: j ? { status: j.status, charged_credits: j.charged_credits } : null, error: null }; } }) }) };
     if (name !== "missions") throw new Error(`a table was touched by hand: ${name}`);
     const query = (rows: () => MissionRow[]) => {
       const filters: Array<[string, unknown]> = [];
