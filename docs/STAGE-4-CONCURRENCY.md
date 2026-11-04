@@ -2,6 +2,8 @@
 
 **Status: analysis and tests only. No migration was written or applied. Nothing under `supabase/` was changed. No existing source, test or document was edited. No SQL of any kind was run, no database was contacted, no flag was set.** Every test uses fake clients (a stateful `missions` table with a primary key and compare-and-set updates, the hardened money fake `tests/helpers/agentMoney.ts`, a read-only fake bucket). The proposed index was modelled, not run: **a disposable local Postgres was NOT available** in this environment (no `postgres`/`initdb` binaries; the `docker` CLI exists but has no daemon), and no tool was installed. The local-pg tests of `tests/sql/` skip without `DIGR_TEST_PG`; none was added here because a skipped test proves nothing.
 
+> **UPDATE (financial safety round, docs/STAGE-4-FINANCIAL-SAFETY.md):** the statements below that say «no local PostgreSQL was available», «the migration is not written» and «`approveAddonOnce` ignores the error of its last update» are now historical. The server binaries WERE available (`/usr/lib/postgresql/16/bin`); the index was **prepared** as `supabase/migrations/20261104222136_one_open_addon_per_file.sql` (NOT applied) and verified on a disposable local PostgreSQL 16 (51 checks); the last update is now proved by a read-back (Fix A); the stuck request is recovered (Fix C); the charged-but-unpublished review blocks a second paid review (Fix B). The risks that remain are listed in section 4 of that document.
+
 Evidence lives in three new test files and one helper:
 
 | File | What |

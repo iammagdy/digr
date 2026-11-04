@@ -91,7 +91,7 @@ describe("WHAT THE INSERT PATH NEEDS: the primary key and the index are BOTH 235
     const m = String(error.message);
     return m.includes(`"${PK_CONSTRAINT}"`) ? "same_id" : m.includes(`"${INDEX_CONSTRAINT}"`) ? "other_open" : "failed";
   };
-  it("TODAY'S store reports BOTH as `duplicate: true` and cannot tell them apart; the raw errors DO differ by constraint name, so the information is there to be used", async () => {
+  it("CHANGED by the safety round (it pinned that the store could not tell them apart): the store now classifies BOTH `duplicate: true` errors by the constraint name (`same_id` and `other_open`), and the raw errors still differ by name", async () => {
     const { value } = await solo(solid(), async (client) => {
       const store = createSupabaseAddonRowStore(client, ME);
       const first = await store.insert(insertOf(1));
@@ -101,8 +101,8 @@ describe("WHAT THE INSERT PATH NEEDS: the primary key and the index are BOTH 235
       return { first, samePk, otherOpen, rawPk: await raw(insertOf(1)), rawIndex: await raw(insertOf(2)) };
     });
     expect(value.first).toEqual({ ok: true });
-    expect(value.samePk).toEqual({ ok: false, duplicate: true });
-    expect(value.otherOpen).toEqual({ ok: false, duplicate: true });
+    expect(value.samePk).toEqual({ ok: false, duplicate: true, by: "same_id" });
+    expect(value.otherOpen).toEqual({ ok: false, duplicate: true, by: "other_open" });
     expect([classify(value.rawPk), classify(value.rawIndex)]).toEqual(["same_id", "other_open"]);
     expect(value.rawPk.code).toBe("23505"); expect(value.rawIndex.code).toBe("23505");
   });

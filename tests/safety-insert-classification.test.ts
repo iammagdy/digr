@@ -100,7 +100,7 @@ describe("through createReviewRequest on the model of the proposed index", () =>
 
   it("a creator whose read missed an open request is stopped by the INDEX: told «you have an open request», nothing is made, nothing is held; the index error carries the index's own name", async () => {
     const open = { ...addonRowOf({ status: "plan_ready", kind: "review", base: 1 }), request_text: "طلب", job_id: null, approved_at: null } as Row;
-    const { value, out } = await solo(opts({ seed: [open], uniqueOpenIndex: true, stale: (i) => i.n === 1 }), (c) => createReviewRequest(c, { missionId: MISSION, userId: ME, version: 2 }));
+    const { value, out } = await solo(opts({ seed: [open], uniqueOpenIndex: true, stale: (i) => i.n === 2 }), (c) => createReviewRequest(c, { missionId: MISSION, userId: ME, version: 2 }));
     expect(value).toMatchObject({ ok: false, status: 409, error: "open_addon" });
     expect(openRows(out.rows)).toHaveLength(1);
     expect(out.money.calls).toEqual([]);

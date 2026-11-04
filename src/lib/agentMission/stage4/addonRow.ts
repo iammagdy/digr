@@ -146,8 +146,15 @@ export async function createAddonRow(store: AddonRowStore, input: {
   if (!check.ok) return refuse(check.code === "too_large" ? "too_large" : "plan_changed");
   const inserted = await store.insert(row);
   if (!inserted.ok) {
-    // the primary key refused: the same click twice. The first click's row is the answer.
-    if (inserted.duplicate) return refuse("open_addon", row.id);
+    if (inserted.duplicate) {
+      // the one-open-add-on-per-file INDEX refused (prepared, not applied): a DIFFERENT request of this file is open. This row was NOT made, so its id is not the answer: read the file again and answer with the request that stays (one read; nothing is cancelled here)
+      if (inserted.by === "other_open") {
+        const open = addonsOf(await store.listFor(input.of), input.of).map(({ row: r }) => r).filter(isOpen);
+        return refuse("open_addon", addonThatStays(open)?.id);
+      }
+      // the primary key refused (or a constraint nobody here knows): the same click twice. The first click's row is the answer.
+      return refuse("open_addon", row.id);
+    }
     throw new Error("createAddonRow: the row could not be stored");
   }
   return settleCreation(store, input.of, row);

@@ -87,6 +87,75 @@ The creation (`createAddonRow` through an optional guard passed by `createReview
 | `src/lib/agentMission/addonRecovery.ts` (new) | compare-and-set on the request's own row; no rpc |
 | `stage4/addonRow.ts`, `addonRowStore.ts`, `reviewRequest.ts`, `editRequest.ts` | `lease_until` read, optional store hook, `listWithRecovery`; PR B: optional `paidReviewGuard` in `createAddonRow`, the `review_unresolved` sentence |
 | `stage4/paidReview.ts`, `stage4/approvalGuard.ts` (new, PR B) | read only (storage list, money state); the guard is UNWIRED |
+| `supabase/migrations/20261104222136_one_open_addon_per_file.sql` (new, PR C, NOT APPLIED) | one index, preconditions that stop it; see section 5 |
+| `stage4/addonRowStore.ts`, `stage4/addonRow.ts` (PR C) | `classifyInsertError`, the `other_open` branch |
 | `stage4/reviewPreview.ts`, `reviewPreviewLabels.ts`, `reviewPreviewClient.ts`, `reviewRequestLabels.ts`, `reviewRequestClient.ts` (PR B) | the `unresolved` preview state and the refusal code |
 
 `approval.ts` (ordinary missions), `lifecycle.ts`, the watchdog route and every SQL function are **unchanged**; the ordinary mission approval tests pass unchanged.
+
+## 5. The database guard: one open add-on per file (PR C: PREPARED, NOT APPLIED)
+
+**Nothing was applied to any database and no production database was contacted.** The migration was generated with `supabase migration new` (CLI 3.0.0 installed in a scratch directory; it is a local-only command) and exercised **only on a disposable local PostgreSQL 16** (a throw-away cluster on a unix socket, no network, deleted afterwards) that held the `missions` table of `docs/proposals/agent-worker/01_agent_tables.sql`. **The live table, its live constraints and its live grants were NOT read.** The earlier Stage E statement «no local PostgreSQL was available» was wrong: the server binaries existed under `/usr/lib/postgresql/16/bin` (not on `PATH`) and the `postgres` operating-system user could run them.
+
+### 5.1 The file
+
+`supabase/migrations/20261104222136_one_open_addon_per_file.sql` (sorts after every existing migration):
+
+```sql
+CREATE UNIQUE INDEX IF NOT EXISTS missions_one_open_addon_per_file
+  ON public.missions ((plan->'addon'->>'of'))
+  WHERE (plan->'addon'->>'of') IS NOT NULL
+    AND status NOT IN ('completed', 'failed', 'unserved', 'cancelled');
+```
+
+preceded by a block that **stops the migration with an exception and changes nothing** when: the table is missing, `plan` is not `jsonb`, or a file already has two open add-on rows. It creates **one index** and nothing else: no data statement, no function, policy, grant or money table. It is idempotent.
+
+### 5.2 Review of the proposal against the repository's schema (what changed from the Stage E proposal: nothing in the statement; the review confirmed it)
+
+- **Key.** `plan->'addon'->>'of'` is the delivered mission's id, written only by the server through the service role; `readAddonPlan` accepts an add-on only with a non-empty string `of`, so **every valid add-on row has a non-NULL key and is covered**.
+- **Predicate: the key itself, not `plan ? 'addon'`** (a mutation on real PostgreSQL shows the difference only in the index definition, never for a valid add-on, so it is a hygiene choice: it also avoids the `?` character that some drivers read as a placeholder).
+- **Deny-list of the four ended statuses** (`completed`, `failed`, `unserved`, `cancelled`). Every started state holds the slot (`approved`, `executing`, `needs_input`, `planning`, and a `plan_ready` request whose approval was attempted). The four ended statuses plus the six open ones are exactly the ten statuses of the table's `CHECK` (pinned by a test); a status added later **holds** the slot (verified: a future `paused` status does) instead of silently freeing it.
+- **Malformed or null JSON (real PostgreSQL).** `{"addon": null}`, `{"addon": "text"}`, `{"addon": []}`, `{"addon": {}}` and `{"addon": {"of": null}}` have a NULL key: unlimited, never block anything, and are not valid add-ons for the application. A numeric `of` is coerced to text, an object-valued `of` becomes the text of its JSON, an empty string is a key: such rows conflict only with each other, are not valid add-ons (`readAddonPlan` needs a string) and **cannot hide a valid second request or block a valid first one** (verified: a real file id is unaffected by an object-valued key row). A valid add-on can never escape the key.
+- **Existing rows.** Ordinary research missions (no `addon` key, or `plan` NULL) are untouched (verified). No existing row is read as a violator unless two open add-on rows share one file; the migration refuses to build over them.
+- **Writers.** `createAddonRow`'s insert is the only path that creates an add-on row; every other writer moves an existing row open to open (`approved`, `executing`, the worker's requeue), which the index never refuses (verified), or ends it (frees the slot). Reopening an **ended** row while another is open is refused (verified); no code does that.
+- **Interaction with the primary key.** Both refusals are `23505` and differ by constraint name in the message. When one insert violates **both** (same id, file open) the engine reports **`missions_pkey`** (verified), so the same click twice is still read as «same request».
+
+### 5.3 Read-only checks to run BEFORE the migration (documentation; none was run against a real database)
+
+1. **Rows that would violate the index** (must return zero rows; the migration refuses otherwise):
+```sql
+select plan->'addon'->>'of' as of, count(*) as open_rows, array_agg(id order by id) as ids, array_agg(status order by id) as statuses
+from public.missions
+where (plan->'addon'->>'of') is not null and status not in ('completed','failed','unserved','cancelled')
+group by 1 having count(*) > 1;
+```
+2. **Add-on rows whose key is not a string** (informational; they cannot block, they are not valid add-ons): `select id, status, plan->'addon' from public.missions where plan ? 'addon' and jsonb_typeof(plan->'addon'->'of') is distinct from 'string';`
+3. **The live column type and the live status CHECK** (must match the repository's proposal; the migration checks the type itself): `select data_type from information_schema.columns where table_schema='public' and table_name='missions' and column_name='plan';` and `select pg_get_constraintdef(oid) from pg_constraint where conrelid='public.missions'::regclass and contype='c';`
+4. **The name is free and the table is small:** `select indexname from pg_indexes where schemaname='public' and tablename='missions';` and `select count(*) from public.missions;`
+5. **Customers cannot write `plan`** (no insert/update privilege on that column for `anon`/`authenticated`): `select grantee, privilege_type from information_schema.column_privileges where table_schema='public' and table_name='missions' and column_name='plan' and grantee in ('anon','authenticated');`
+6. **Requests approved once and waiting again, no job** (their money state needs `recoverAbandonedAddon` or a person): `select id, status, approved_at, job_id from public.missions where (plan->'addon'->>'of') is not null and status='plan_ready' and approved_at is not null;`
+7. **Open add-on rows whose job already ended** (the stuck rows of Fix C): `select m.id, m.status, j.status as job_status from public.missions m join public.jobs j on j.id = m.job_id where (m.plan->'addon'->>'of') is not null and m.status not in ('completed','failed','unserved','cancelled') and j.status in ('failed','completed');`
+
+**If check 1 returns rows: repair with the existing protocol first** (cancel the UNPAID duplicates, lowest id stays; never touch a started or marked row; a pair that includes a started row needs a person). Nothing is deleted and no customer data is modified by the migration or its checks.
+
+### 5.4 Locking, build time, rollback
+
+- `CREATE UNIQUE INDEX` (plain) takes a SHARE lock: reads continue, writes to `missions` (the worker's leases and status updates) wait for the build. **Measured on 200,000 rows: about 105 ms** (the real table is far smaller). **`CREATE INDEX CONCURRENTLY` cannot run inside a transaction block** (verified: «cannot run inside a transaction block»), so it cannot be the body of a migration that runs in one; whether the Supabase pipeline wraps a migration file in a transaction was **not verified** (so the plain statement is the safe choice). A failed concurrent build would leave an INVALID index that must be dropped.
+- **Rollback:** `drop index if exists public.missions_one_open_addon_per_file;` (written in the file's comment on the index). Verified: it changes no row, and the old behaviour returns immediately. The application never depends on the index: every test passes without it.
+- **Two sessions at the same moment** (real PostgreSQL): the loser waits for the winner's commit and then gets the index's unique violation; exactly one open row remains.
+
+### 5.5 Insert classification (code, in this PR)
+
+`classifyInsertError` (in `addonRowStore.ts`) reads a failed insert: `missions_pkey` → duplicate, `same_id`; `missions_one_open_addon_per_file` → duplicate, `other_open`; any other 23505 → duplicate, `unknown` (still a refusal); anything else (permission, check, timeout, connection, no code, a message that only mentions an index name) → **not** a duplicate, so `createAddonRow` throws and the callers answer 503. **A database error is never success.** On `other_open` the creation reads the file again and answers with the request that stays (one read; it cancels nothing), never with the id of a row it did not make. Until the migration is applied `other_open` never occurs, so the change is backward compatible.
+
+### 5.6 Evidence
+
+- **Real PostgreSQL 16, local, disposable:** `scripts/verify/verify-one-open-addon-index.sh` (needs `DIGR_TEST_PG=<socket>:<port>`; refuses to run without it; reads no other connection setting) ran **51 checks, 0 failed**: transcript in `docs/STAGE-4-ONE-OPEN-ADDON-INDEX-VERIFICATION.txt`. They cover the three preconditions, the index definition, idempotence, the refusals (open, approved, executing, needs_input, planning), the allowances (four ended statuses, a different file, ordinary missions, malformed keys), the constraint reported when both are violated, reopening, open-to-open updates, a future status, a two-session race, build time on 200,000 rows, `CONCURRENTLY`, rollback and the read-only checks.
+- **Mutation evidence on the real engine** (a mutated copy of the migration via `DIGR_MIGRATION_FILE`): without `cancelled` in the deny-list **7 checks fail**; an allow-list of two statuses **6 fail**; a non-unique index **15 fail**; the predicate `plan ? 'addon'` **1 fails** (the index definition only; see 5.2).
+- **Always-running tests (no database needed, none skipped):** `tests/safety-migration-one-open-addon.test.ts` (15: the file's name, shape, deny-list = the code's statuses and the table's CHECK, no data or money statement, the three preconditions, the rollback, equality with the Stage E proposal, the script refuses without `DIGR_TEST_PG`, the transcript is complete, **and the model of the index behaves as the real engine did in each case of the transcript**), `tests/safety-insert-classification.test.ts` (23, red commit `2e40f6c0`: 6 failed on the unfixed store) and `tests/safety-mutations-insert.test.ts` (4).
+- **NOT verified:** the live table (type, CHECK, grants, size), the Supabase migration pipeline (transaction wrapping), PostgREST's exact error body (the PostgreSQL text was captured; PostgREST passes `code` and `message` through), concurrency under production load.
+
+### 5.7 Order for the owner (nothing here was done)
+
+1. Owner approval. 2. Run checks 1 to 7 read-only. 3. Repair violators with the existing protocol. 4. Merge the stack (the classification is harmless without the index). 5. Apply the migration in a low-traffic window (plain build; about a tenth of a second on a small table). 6. Verify `indisvalid` and `indisunique` read-only: `select indisvalid, indisunique from pg_index where indexrelid = 'public.missions_one_open_addon_per_file'::regclass;`. 7. Smoke test on a test account in `test` mode. Rollback is one `drop index`.
+
