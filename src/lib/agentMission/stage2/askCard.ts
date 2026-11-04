@@ -1,4 +1,4 @@
-import { AGENT_MAX_DELIVERED_ROWS, AGENT_REPLIES_PER_COMMENT_MAX } from "../constants";
+import { AGENT_JOB_POINTS_CAP, AGENT_MAX_DELIVERED_ROWS, AGENT_REPLIES_PER_COMMENT_MAX } from "../constants";
 import { cairoDayEndExclusiveMs, cairoDayOf, cairoDayStartMs } from "../cairoTime";
 import { countAr, knownItemNoun } from "../itemNoun";
 import { toArabicDigits } from "../../arabicDigits";
@@ -91,7 +91,8 @@ const PLATFORM_AR: Record<string, string> = { tiktok: "تيك توك", x: "إك�
 const TOPIC_MAX_CHARS = 200;
 const SOURCE_MAX_CHARS = 200;
 const COMMENTS_PER_PARENT_MAX = 5000;
-const BUDGET_MAX_POINTS = 10_000_000;
+/** OWNER DECISION (docs/STAGE-2.md section 10, decision 5): the highest budget a customer can type is the job points cap (jobPointsCap.ts `JOB_MAX_POINTS_CAP`, read only: 25,000 points). */
+export const BUDGET_MAX_POINTS = AGENT_JOB_POINTS_CAP;
 /** The count the compiler plans when the request gives none (compilePlan's DEFAULT_COUNT): the budget fit starts from it. */
 const DEFAULT_COUNT = 10;
 

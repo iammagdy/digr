@@ -4,9 +4,11 @@ import { buildAsk, type Ask } from "../src/lib/agentMission/foundation/ask";
 import { compilePlan, parentInputs } from "../src/lib/agentMission/foundation/compilePlan";
 import { cardOf } from "../src/lib/agentMission/foundation/toolCards";
 import { checkCustomerLabel, checkCustomerText } from "../src/lib/agentMission/text";
+import { AGENT_JOB_POINTS_CAP } from "../src/lib/agentMission/constants";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import {
   ASK_EDIT_REJECTIONS,
+  BUDGET_MAX_POINTS,
   ASK_EDIT_REJECTION_AR,
   ASK_EDITABLE_FIELDS,
   applyAskEdit,
@@ -111,6 +113,7 @@ describe("an edit is checked by code; a refusal is a reason CODE with a fixed Ar
     [{ field: "topic", value: "س".repeat(201) }, "topic_too_long"],
     [{ field: "repliesPerComment", value: 51 }, "out_of_range"],
     [{ field: "budget", value: 0 }, "out_of_range"],
+    [{ field: "budget", value: 25_001 }, "out_of_range"],
     [{ field: "language", value: "fr" }, "unknown_choice"],
     ["count=3", "unknown_field"],
   ];
@@ -123,6 +126,12 @@ describe("an edit is checked by code; a refusal is a reason CODE with a fixed Ar
   it("every reason code has one fixed Arabic sentence that passes the customer-text rules", () => {
     for (const code of ASK_EDIT_REJECTIONS) expect(checkCustomerText(ASK_EDIT_REJECTION_AR[code]).issues, code).toEqual([]);
     expect(Object.keys(ASK_EDIT_REJECTION_AR).sort()).toEqual([...ASK_EDIT_REJECTIONS].sort());
+  });
+  it("the highest budget is the job points cap (owner decision 5): 25,000 is accepted, and the card's input says so", () => {
+    expect(BUDGET_MAX_POINTS).toBe(AGENT_JOB_POINTS_CAP);
+    expect(BUDGET_MAX_POINTS).toBe(25_000);
+    expect(applyAskEdit(m12Ask(), { field: "budget", value: 25_000 }, now).ok).toBe(true);
+    expect(askCardView(m12Ask()).fields.find((f) => f.key === "budget")!.input).toEqual({ kind: "number", min: 1, max: 25_000 });
   });
   it("a comments number on a request with no comments is refused (the stage does not exist)", () => {
     const x = buildAsk(request(M14), null, AT);
