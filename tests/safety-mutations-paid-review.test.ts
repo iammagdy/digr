@@ -16,6 +16,8 @@ afterAll(cleanMutants);
 const PAID = "src/lib/agentMission/stage4/paidReview.ts";
 const ROW = "src/lib/agentMission/stage4/addonRow.ts";
 const GUARD = "src/lib/agentMission/stage4/approvalGuard.ts";
+/** The readable cells of the stored fixture file (6 rows x 3 columns): a request that is approved must carry this count. */
+const FILE_CELLS = 18;
 const MISSION = "msn_5851abc92a1e6645a9cd";
 const ME = "u-1";
 let ONE: Record<string, string>; let v1: FileVersion;
@@ -66,15 +68,15 @@ describe("MUTATION: fix B (no second paid review while the first charged review 
   it("if the approval guard did not look at the verdict, an approval of a second review request of the version would be let through", async () => {
     const m = await loadMutant(GUARD, [{ from: 'if (verdict.kind === "unresolved") return no(409, "review_unresolved", ADDON_CREATE_REFUSALS_AR.review_unresolved);', to: "" }]);
     const first = failedReview();
-    const second = { ...addonRowOf({ status: "plan_ready", kind: "review", base: 1, attempt: 2 }), request_text: "طلب مراجعة", job_id: null, approved_at: null };
+    const second = { ...addonRowOf({ status: "plan_ready", kind: "review", base: 1, attempt: 2, cells: FILE_CELLS }), request_text: "طلب مراجعة", job_id: null, approved_at: null };
     const { value } = await solo<any>(opts([first, second], state(first, "charged")), (c) => m.module.guardApproval(c, { id: second.id, userId: ME }));
     expect(value).toEqual({ ok: true });
   });
   it("if the approval guard did not require this request to be the one that stays, a request next to a STARTED one would be let through (and its row has just been cancelled by the repair)", async () => {
     const m = await loadMutant(GUARD, [{ from: "if (!keeper || keeper.id !== input.id) return no(409, \"open_addon\", ADDON_CREATE_REFUSALS_AR.open_addon);", to: "" }]);
     const started = { ...addonRowOf({ status: "approved", kind: "review", base: 1 }), request_text: "طلب", job_id: "job_started", approved_at: "2026-11-03T09:00:00.000Z" };
-    const waiting = { ...addonRowOf({ status: "plan_ready", kind: "review", base: 2 }), request_text: "طلب", job_id: null, approved_at: null };
-    const { value } = await solo<any>(opts([started, waiting], () => undefined, objectsOf(v1)), (c) => m.module.guardApproval(c, { id: waiting.id, userId: ME }));
+    const waiting = { ...addonRowOf({ status: "plan_ready", kind: "review", base: 1, attempt: 2, cells: FILE_CELLS }), request_text: "طلب", job_id: null, approved_at: null };
+    const { value } = await solo<any>(opts([started, waiting], () => undefined), (c) => m.module.guardApproval(c, { id: waiting.id, userId: ME }));
     expect(value).toEqual({ ok: true });
   });
 });

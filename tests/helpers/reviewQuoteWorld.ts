@@ -10,14 +10,14 @@ export const MISSION = "msn_5851abc92a1e6645a9cd";
 export const OTHER_MISSION = "msn_aaaaaaaaaaaaaaaaaaaa";
 export const ME = "u-1";
 
-export interface AddonSeed { status: string; kind?: "review" | "edit" | "review_fix"; base?: number; of?: string; user?: string; attempt?: number }
+export interface AddonSeed { status: string; kind?: "review" | "edit" | "review_fix"; base?: number; of?: string; user?: string; attempt?: number; /** A review's readable cell count (default 1,000). The approval guard compares it with the published file's. */ cells?: number }
 /** A well-formed add-on row (its plan passes `readAddonPlan`) of the given status. */
 export function addonRowOf(seed: AddonSeed): { id: string; user_id: string; status: string; plan: unknown } {
   const kind = seed.kind ?? "review";
   const base = seed.base ?? 1;
   const of = seed.of ?? MISSION;
   const attempt = seed.attempt ?? 1;
-  const card = kind === "review" ? reviewCard(1000) : editCard({ kind, units: 10, tools: [{ catalogPerRowUsd: 0.001 }] });
+  const card = kind === "review" ? reviewCard(seed.cells ?? 1000) : editCard({ kind, units: 10, tools: [{ catalogPerRowUsd: 0.001 }] });
   if (!card.ok) throw new Error("the fixture card was refused");
   return {
     id: addonId(of, base, attempt),

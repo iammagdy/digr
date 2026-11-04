@@ -20,6 +20,8 @@ const fetchSpy = vi.fn(() => { throw new Error("a real call was attempted"); });
 beforeEach(() => { vi.stubGlobal("fetch", fetchSpy); fetchSpy.mockClear(); });
 afterEach(() => vi.unstubAllGlobals());
 
+/** The readable cells of the stored fixture file (6 rows x 3 columns): a request that is approved must carry this count. */
+const FILE_CELLS = 18;
 const MISSION = "msn_5851abc92a1e6645a9cd";
 const ME = "u-1";
 const START = 100_000;
@@ -32,7 +34,7 @@ beforeAll(() => {
   v2 = r.version; ONE = objectsOf(v1); TWO = objectsOf(v1, v2);
 });
 const opts = (objects: Record<string, string>, more: Partial<SchedOpts> = {}): SchedOpts => ({ objects, balance: START, ...more, seed: [MISSION_ROW, ...(more.seed ?? [])] });
-const waiting = (base: number, over: Record<string, unknown> = {}): Row => ({ ...addonRowOf({ status: "plan_ready", kind: "review", base }), request_text: "طلب مراجعة", job_id: null, approved_at: null, ...over });
+const waiting = (base: number, over: Record<string, unknown> = {}): Row => ({ ...addonRowOf({ status: "plan_ready", kind: "review", base, cells: FILE_CELLS }), request_text: "طلب مراجعة", job_id: null, approved_at: null, ...over });
 
 /** What the planned route would run, in this test only: the guard first (everything that needs no money), then the approval function. */
 const reference = async (c: any, input: { id: string; userId?: string; expectedPoints?: number }) => {

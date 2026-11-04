@@ -22,6 +22,8 @@ const fetchSpy = vi.fn(() => { throw new Error("a real call was attempted"); });
 beforeEach(() => { vi.stubGlobal("fetch", fetchSpy); fetchSpy.mockClear(); });
 afterEach(() => vi.unstubAllGlobals());
 
+/** The readable cells of the stored fixture file (6 rows x 3 columns): a request that is approved must carry this count. */
+const FILE_CELLS = 18;
 const MISSION = "msn_5851abc92a1e6645a9cd";
 const ME = "u-1";
 const START = 100_000;
@@ -190,7 +192,7 @@ describe("FIX B: concurrent creation and repeated approval", () => {
   });
   it("THE APPROVAL GUARD: a second review request of the same version that already exists (made while the first was open, in an outage) is REFUSED at approval; nothing is reserved; asking again is refused again", async () => {
     const first = failedReview(1);
-    const second = { ...addonRowOf({ status: "plan_ready", kind: "review", base: 1, attempt: 2 }), request_text: "طلب مراجعة", job_id: null, approved_at: null };
+    const second = { ...addonRowOf({ status: "plan_ready", kind: "review", base: 1, attempt: 2, cells: FILE_CELLS }), request_text: "طلب مراجعة", job_id: null, approved_at: null };
     const { value, out } = await solo(opts(ONE, { seed: [first, second], setup: money(first, "charged") }), async (c) => ({ once: await guardApproval(c, { id: second.id, userId: ME }), again: await guardApproval(c, { id: second.id, userId: ME }) }));
     expect(value.once).toMatchObject({ ok: false, status: 409, reason: "review_unresolved" });
     expect(value.again).toEqual(value.once);
@@ -198,23 +200,23 @@ describe("FIX B: concurrent creation and repeated approval", () => {
     expect(out.rows.get(second.id as string)!.status, "the guard does not end the request: that is the customer's or an administrator's decision").toBe("plan_ready");
   });
   it("THE APPROVAL GUARD lets a clean request through, refuses another customer's, a missing one, a started one, and a request next to another open one", async () => {
-    const row = { ...addonRowOf({ status: "plan_ready", kind: "review", base: 1 }), request_text: "طلب مراجعة", job_id: null, approved_at: null };
+    const row = { ...addonRowOf({ status: "plan_ready", kind: "review", base: 1, cells: FILE_CELLS }), request_text: "طلب مراجعة", job_id: null, approved_at: null };
     const ok = await solo(opts(ONE, { seed: [row] }), (c) => guardApproval(c, { id: row.id, userId: ME }));
     expect(ok.value).toEqual({ ok: true });
     expect((await solo(opts(ONE, { seed: [row] }), (c) => guardApproval(c, { id: row.id, userId: "u-2" }))).value).toMatchObject({ ok: false, reason: "not_found" });
     expect((await solo(opts(ONE, { seed: [row] }), (c) => guardApproval(c, { id: "msn_nope", userId: ME }))).value).toMatchObject({ ok: false, reason: "not_found" });
     expect((await solo(opts(ONE, { seed: [{ ...row, status: "executing" }] }), (c) => guardApproval(c, { id: row.id, userId: ME }))).value).toMatchObject({ ok: false, reason: "not_ready" });
-    const other = { ...addonRowOf({ status: "plan_ready", kind: "review", base: 2 }), request_text: "طلب مراجعة", job_id: null, approved_at: null };
+    const other = { ...addonRowOf({ status: "plan_ready", kind: "review", base: 2, cells: FILE_CELLS }), request_text: "طلب مراجعة", job_id: null, approved_at: null };
     const both = await solo(opts(TWO, { seed: [row, other] }), (c) => Promise.all([guardApproval(c, { id: row.id, userId: ME }), guardApproval(c, { id: other.id, userId: ME })]));
     expect(both.value.filter((r) => r.ok)).toHaveLength(1);
   });
   it("THE APPROVAL GUARD refuses a request whose earlier review of the same version was completed (free reuse) and one whose report is already published", async () => {
     const done = { ...addonRowOf({ status: "completed", kind: "review", base: 1 }), job_id: "job_x", approved_at: "2026-11-03T09:00:00.000Z" };
-    const second = { ...addonRowOf({ status: "plan_ready", kind: "review", base: 1, attempt: 2 }), request_text: "طلب مراجعة", job_id: null, approved_at: null };
+    const second = { ...addonRowOf({ status: "plan_ready", kind: "review", base: 1, attempt: 2, cells: FILE_CELLS }), request_text: "طلب مراجعة", job_id: null, approved_at: null };
     const a = await solo(opts(ONE, { seed: [done, second] }), (c) => guardApproval(c, { id: second.id, userId: ME }));
     expect(a.value).toMatchObject({ ok: false, reason: "review_exists" });
     const published = { ...ONE, [`${MISSION}/${reviewPathOf(1)}`]: JSON.stringify({}) };
-    const row = { ...addonRowOf({ status: "plan_ready", kind: "review", base: 1 }), request_text: "طلب مراجعة", job_id: null, approved_at: null };
+    const row = { ...addonRowOf({ status: "plan_ready", kind: "review", base: 1, cells: FILE_CELLS }), request_text: "طلب مراجعة", job_id: null, approved_at: null };
     const b = await solo(opts(published, { seed: [row] }), (c) => guardApproval(c, { id: row.id, userId: ME }));
     expect(b.value).toMatchObject({ ok: false, reason: "review_exists" });
   });
@@ -231,7 +233,7 @@ describe("FIX B: the verdict function itself", () => {
 describe("FIX B: the approval guard next to a STARTED request", () => {
   it("a waiting request next to a started one is refused («another request is open»); the repair cancels the waiting one unpaid; nothing is reserved", async () => {
     const started = { ...addonRowOf({ status: "approved", kind: "review", base: 1 }), request_text: "طلب", job_id: "job_started", approved_at: "2026-11-03T09:00:00.000Z" };
-    const waiting = { ...addonRowOf({ status: "plan_ready", kind: "review", base: 2 }), request_text: "طلب", job_id: null, approved_at: null };
+    const waiting = { ...addonRowOf({ status: "plan_ready", kind: "review", base: 2, cells: FILE_CELLS }), request_text: "طلب", job_id: null, approved_at: null };
     const { value, out } = await solo(opts(TWO, { seed: [started, waiting] }), (c) => guardApproval(c, { id: waiting.id, userId: ME }));
     expect(value).toMatchObject({ ok: false, status: 409, reason: "open_addon" });
     expect(out.rows.get(started.id as string)!.status).toBe("approved");
