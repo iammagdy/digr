@@ -66,7 +66,9 @@ function closure(from: string): Set<string> {
 const code = (f: string) => readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 
 /** SAFETY ROUND: `addonMoneyState.ts` (a read-only look at a job and its ledger rows) and `addonRecovery.ts` (ends or finishes an abandoned approval from that state; one compare-and-set on the request's own row, no rpc) are new modules of the add-on's own code, reached only by the money core, each other and the request store. */
-const NEW_SRC = ["src/lib/agentMission/addonSettlement.ts", "src/lib/agentMission/stage4/addonQuote.ts", "src/lib/agentMission/stage4/addonRow.ts", "src/lib/agentMission/addonMoneyState.ts", "src/lib/agentMission/addonRecovery.ts"];
+const NEW_SRC = ["src/lib/agentMission/addonSettlement.ts", "src/lib/agentMission/stage4/addonQuote.ts", "src/lib/agentMission/stage4/addonRow.ts", "src/lib/agentMission/addonMoneyState.ts", "src/lib/agentMission/addonRecovery.ts",
+  // SAFETY FIX B: the verdict on earlier reviews of a version (reads storage and the money state, writes nothing) and the checks the planned approval route must pass first (UNWIRED: no route imports it)
+  "src/lib/agentMission/stage4/paidReview.ts", "src/lib/agentMission/stage4/approvalGuard.ts"];
 /** Phase 2B-1: the worker's add-on runner and the small pure pieces it needs. */
 const NEW_WORKER = ["agent/src/stage4/addonFiles.ts", "agent/src/stage4/addonText.ts", "agent/src/stage4/dispatch.ts", "agent/src/stage4/rereadRun.ts", "agent/src/stage4/runAddon.ts", "src/lib/agentMission/stage4/reread.ts", "src/lib/agentMission/stage4/editCore.ts"];
 const NEW = [...NEW_SRC, ...NEW_WORKER];
@@ -182,7 +184,7 @@ describe("the review request writes one unpaid row and cancels it by compare-and
   const route = abs("src/app/api/missions/[id]/review-request/route.ts");
   it("all three files exist, and nothing else reaches the request logic or the row store", () => {
     for (const r of REQUEST) expect(existsSync(abs(r))).toBe(true);
-    for (const f of ["src/lib/agentMission/stage4/reviewRequest.ts", "src/lib/agentMission/stage4/addonRowStore.ts"]) expect([...reachers(abs(f))].map(rel).filter((x) => !REQUEST.includes(x) && !EDIT_REQUEST.includes(x)), f).toEqual([]);
+    for (const f of ["src/lib/agentMission/stage4/reviewRequest.ts", "src/lib/agentMission/stage4/addonRowStore.ts"]) expect([...reachers(abs(f))].map(rel).filter((x) => !REQUEST.includes(x) && !EDIT_REQUEST.includes(x) && x !== "src/lib/agentMission/stage4/approvalGuard.ts"), f).toEqual([]); // the UNWIRED approval guard (safety fix B) reads add-on rows through the shared store
   });
   it("the route's imports, followed all the way down, contain nothing under agent/ (no gateway, no worker, no provider client)", () => {
     expect([...closure(route)].map(rel).filter((f) => f.startsWith("agent/"))).toEqual([]);

@@ -45,6 +45,27 @@ It calls **no rpc at all**: it never reserves, releases, charges or refunds, so 
 
 **Customer sentences (all pass the customer-text check; Arabic only, no digits, no provider, no id).** Ended after release: «لم يبدأ تنفيذ هذا الطلب، وعادت النقاط التي حُجزت له إلى رصيدك كاملة. لم يُسجَّل أي خصم، ويمكنك تقديم طلب جديد.» The workflow status of such a row is «لم يكتمل الطلب — لم يُسجَّل أي خصم لهذا الطلب» (phase `failed_no_charge`), unchanged code of Stage C.
 
+## 2b. Fix B: no second paid review of a version whose first review was charged and not published (PR B)
+
+**Root cause.** A review that is charged and cannot publish its report ends `failed` with `error charged_not_published` (`agent/src/stage4/runAddon.ts`, `parkPaid` after its retries, or `recoverAddon`). `canCreateAddon` blocks on **open** statuses and reuses a **completed** review only; `failed` blocks nothing. So the customer was offered, and could approve, a second paid review of the same version. A second source: two open review requests of the same version can coexist after a database outage (scenario 5); if the first is approved, charged and fails to publish, the second is still `plan_ready` and approvable.
+
+**Fix.** `stage4/paidReview.ts` judges earlier reviews of the version from authoritative state, not from customer-facing text:
+
+1. **Published?** `reviews/rNNNN.json` in storage settles it: the second review is refused as «reviewed already, free» and the preview shows the stored report (`reuse`).
+2. Otherwise, for each earlier review of this version that **ended** (`failed` or `unserved`), the money state of its **deterministic job** (`readJobMoneyState`, read only, the same reader as Fix C): **charged** → `unresolved`; **active** (the job still holds the points under an ended request) → `unresolved`; **unknown** (a read failed or the ledger contradicts the job) → `unresolved`, never read as free; **none / released / settled with no charge** → not charged, does not block («failed review with no charge» is allowed).
+
+The creation (`createAddonRow` through an optional guard passed by `createReviewRequest`), the **preview** (`reviewQuoteFor`: state `unresolved`, **no price**) and the **approval guard** (`stage4/approvalGuard.ts`, below) all use it. A storage or database error **throws**, so the creation answers `unavailable` (503) and the preview answers 503: never «allowed on a guess». When there is no earlier ended review of the version, nothing is read at all, so the ordinary path performs the same reads as before.
+
+**Customer sentence** (Arabic, passes the customer-text check, never says nothing was charged, promises no refund): «سُجّل خصم لمراجعة سابقة لهذه النسخة ولم يُنشر تقريرها بعد؛ سيراجع فريقنا الأمر.»
+
+**What it does not touch.** No row of the first review is written (its row, job, three ledger rows and pending objects stay as they are, so the worker's own recovery of the pending report stays open). No refund is issued, no charge or reservation is created, nothing is published or marked delivered. Different versions are reviewed normally; an edit is not blocked by an unresolved review (it makes a new version); a completed review is still reused free.
+
+**The approval guard (UNWIRED).** `guardApproval(client, {id, userId})` is what the planned approval route must pass **before** the approval function: owner check, `plan_ready`, `reconcileOpenAddons` (only the request that stays may start: a started request first, then the lowest id), a completed review or a published report → «free reuse», and the paid-review verdict → «unresolved». It decides nothing about money and **no route calls it**; the approval route stays **BLOCKED FOR OWNER APPROVAL**.
+
+**What an administrator does with an `unresolved` review** (not built): publish the stored report (then step 1 applies and the customer sees it free) or resolve the charge by hand. Until then the version cannot be paid-reviewed again. **Owner decision:** how an administrator marks such a review resolved without a published report (for example a refund recorded by hand plus a row marker).
+
+**Evidence.** `tests/safety-paid-review.test.ts` (22; red commit `ca558683`, 15 failed on the unfixed code): the exact scenario, judged by the money state and not the row's words, a held or unprovable state, a published report, storage down then restored, a database error, different versions, completed reuse, an edit, every order of two concurrent creators (same and different versions), repeated and concurrent guard calls, the guard next to a started request. `tests/safety-mutations-paid-review.test.ts` (6) removes the charged branch, the unknown branch, the storage check, the creation guard, the verdict check of the approval guard and the «this request stays» check, and shows each property break.
+
 ## 3. Mutation tests
 
 `tests/safety-mutations-approval.test.ts` (10) removes ONE protection from a copy of the source (`tests/helpers/mutants.ts`: an exact edit that must match once, imports pointed at the original files, copies deleted after) and runs the scenario the protection exists for; the property must break: without the record check or the read-back the approval reports success with no job on the row; with 50 tries the database is asked 50 times; without the uncertain sentence the customer is told «nothing was deducted» while a reserve exists; without the proof of the release a refused release is reported as returned; a failed job without its release row is read as released; a charged job ended as unpaid; without the compare-and-set pin concurrent recoveries end the request repeatedly; without the in-flight guard a live approval is touched; a recovery that called a money function shows in the rpc log.
@@ -64,6 +85,8 @@ It calls **no rpc at all**: it never reserves, releases, charges or refunds, so 
 | `src/lib/agentMission/addonSettlement.ts` | `approveAddonOnce`: proved record (`recordApproval`), stage-aware failure sentences, a proved release before «returned», the released branch of the retry; new messages `approval_unverified`, `record_unverified`, `released_before_start`; new `releasedRowPatch`, `ADDON_RELEASED_*`. **No pricing, no ledger id, no rpc name, no `settleAddon` change.** |
 | `src/lib/agentMission/addonMoneyState.ts` (new) | read-only reader, imports nothing |
 | `src/lib/agentMission/addonRecovery.ts` (new) | compare-and-set on the request's own row; no rpc |
-| `stage4/addonRow.ts`, `addonRowStore.ts`, `reviewRequest.ts`, `editRequest.ts` | `lease_until` read, optional store hook, `listWithRecovery` |
+| `stage4/addonRow.ts`, `addonRowStore.ts`, `reviewRequest.ts`, `editRequest.ts` | `lease_until` read, optional store hook, `listWithRecovery`; PR B: optional `paidReviewGuard` in `createAddonRow`, the `review_unresolved` sentence |
+| `stage4/paidReview.ts`, `stage4/approvalGuard.ts` (new, PR B) | read only (storage list, money state); the guard is UNWIRED |
+| `stage4/reviewPreview.ts`, `reviewPreviewLabels.ts`, `reviewPreviewClient.ts`, `reviewRequestLabels.ts`, `reviewRequestClient.ts` (PR B) | the `unresolved` preview state and the refusal code |
 
 `approval.ts` (ordinary missions), `lifecycle.ts`, the watchdog route and every SQL function are **unchanged**; the ordinary mission approval tests pass unchanged.

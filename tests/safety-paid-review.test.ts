@@ -3,6 +3,7 @@ import { ADDON_RELEASED_ERROR, addonJobId, addonQuoteId } from "../src/lib/agent
 import { ADDON_CREATE_REFUSALS_AR, type AddonRowLike } from "../src/lib/agentMission/stage4/addonRow";
 import { guardApproval } from "../src/lib/agentMission/stage4/approvalGuard";
 import { paidReviewVerdict } from "../src/lib/agentMission/stage4/paidReview";
+import { createEditRequest, parseEditInput } from "../src/lib/agentMission/stage4/editRequest";
 import { createReviewRequest, currentReviewRequest } from "../src/lib/agentMission/stage4/reviewRequest";
 import { reviewQuoteFor } from "../src/lib/agentMission/stage4/reviewPreview";
 import { applyEditRequest } from "../src/lib/agentMission/stage4/editVersion";
@@ -135,7 +136,7 @@ describe("FIX B: what stays allowed", () => {
   });
   it("an edit of the version is not blocked by its unresolved review (it makes a new version; only a second paid REVIEW of this version is refused)", async () => {
     const first = failedReview(1);
-    const { value } = await solo(opts(ONE, { seed: [first], setup: money(first, "charged") }), async (c) => (await import("../src/lib/agentMission/stage4/editRequest")).createEditRequest(c, { missionId: MISSION, userId: ME, version: 1, edit: (await import("../src/lib/agentMission/stage4/editRequest")).parseEditInput({ kind: "rename_column", sheet: "الورقة", from: "عمود 1", to: "اسم جديد" }) as any }));
+    const { value } = await solo(opts(ONE, { seed: [first], setup: money(first, "charged") }), (c) => createEditRequest(c, { missionId: MISSION, userId: ME, version: 1, edit: parseEditInput({ kind: "rename_column", sheet: "الورقة", from: "عمود 1", to: "اسم جديد" }) as any }));
     expect(value).toMatchObject({ ok: true, created: true });
   });
 });
@@ -179,7 +180,10 @@ describe("FIX B: concurrent creation and repeated approval", () => {
   it("a review of version 1 and a review of version 2 at the same moment: version 1 is refused in every order and at most one request is open at the end", async () => {
     const first = failedReview(1);
     await explore([review(1), review(2)], (out) => {
-      const a = out.results[0]; expect(a.ok && (a.value as any).error).toBe("review_unresolved");
+      const a = out.results[0];
+      expect(a.ok && (a.value as any).ok, "version 1 is never created").toBe(false);
+      expect(["review_unresolved", "open_addon"], "refused as unresolved, or as «another request is open» when the version 2 request got in first").toContain(a.ok ? (a.value as any).error : "threw");
+      expect(rowsOf(out).filter((r) => r.plan.addon.baseVersion === 1 && r.status === "plan_ready")).toEqual([]);
       expect(openRows(out.rows).length).toBeLessThanOrEqual(1);
       expect(openRows(out.rows).every((r) => r.plan.addon.baseVersion === 2)).toBe(true);
     }, opts(TWO, { seed: [first], setup: money(first, "charged") }));
@@ -221,5 +225,17 @@ describe("FIX B: the verdict function itself", () => {
   it("no earlier failed or unserved review of the version: clear, and NOTHING is read (no storage, no money table)", async () => {
     const client = { from: () => { throw new Error("must not read"); }, storage: { from: () => { throw new Error("must not read"); } } };
     expect(await paidReviewVerdict(client, { missionId: MISSION, baseVersion: 1, rows: rows(addonRowOf({ status: "cancelled", kind: "review", base: 1 }) as Row, addonRowOf({ status: "failed", kind: "edit", base: 1 }) as Row, addonRowOf({ status: "failed", kind: "review", base: 2 }) as Row) })).toEqual({ kind: "clear" });
+  });
+});
+
+describe("FIX B: the approval guard next to a STARTED request", () => {
+  it("a waiting request next to a started one is refused («another request is open»); the repair cancels the waiting one unpaid; nothing is reserved", async () => {
+    const started = { ...addonRowOf({ status: "approved", kind: "review", base: 1 }), request_text: "طلب", job_id: "job_started", approved_at: "2026-11-03T09:00:00.000Z" };
+    const waiting = { ...addonRowOf({ status: "plan_ready", kind: "review", base: 2 }), request_text: "طلب", job_id: null, approved_at: null };
+    const { value, out } = await solo(opts(TWO, { seed: [started, waiting] }), (c) => guardApproval(c, { id: waiting.id, userId: ME }));
+    expect(value).toMatchObject({ ok: false, status: 409, reason: "open_addon" });
+    expect(out.rows.get(started.id as string)!.status).toBe("approved");
+    expect(out.rows.get(waiting.id as string)!.status).toBe("cancelled");
+    noNewMoney(out, 0);
   });
 });

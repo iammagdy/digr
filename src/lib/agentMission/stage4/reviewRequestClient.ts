@@ -33,7 +33,7 @@ export async function fetchReviewRequest(input: { missionId: string; fetchFn: ty
 }
 
 export type PrepareResult = { ok: true; created: boolean; request: ReviewRequestView } | { ok: false; message: string };
-const REFUSALS = ["open_addon", "review_exists", "too_large", "nothing_to_review"] as const;
+const REFUSALS = ["open_addon", "review_exists", "review_unresolved", "too_large", "nothing_to_review"] as const;
 
 export async function prepareReviewRequest(input: { missionId: string; version: number; fetchFn: typeof fetch; headers: () => Promise<Record<string, string>> }): Promise<PrepareResult> {
   if (!isVersionNumber(input.version)) return { ok: false, message: REVIEW_REQUEST_ERRORS_AR.not_found };

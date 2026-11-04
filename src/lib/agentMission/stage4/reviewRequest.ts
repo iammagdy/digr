@@ -4,6 +4,7 @@ import { addonId, readAddonPlan } from "../addonSettlement";
 import { reviewCard } from "./addonQuote";
 import { addonThatStays, createAddonRow, isUnpaidAddonRow, listWithRecovery, OPEN_STATUSES, reconcileOpenAddons, type AddonRowLike } from "./addonRow";
 import { cancelUnpaidAddonRow, createSupabaseAddonRowStore } from "./addonRowStore";
+import { paidReviewVerdict } from "./paidReview";
 import { reviewCellsOf } from "./review";
 import type { ReviewRequestView } from "./reviewRequestLabels";
 import { readPublishedVersion } from "./versionFile";
@@ -13,7 +14,7 @@ import { readPublishedVersion } from "./versionFile";
  * Nothing is reserved, charged, released or refunded here: the row is `plan_ready` (it WAITS for the approval of a later task), no job exists, no provider or model is called. Nothing the browser sends is trusted: the version is read from storage by the owner's
  * own check, the cells are counted by `reviewCellsOf`, the price is the existing `reviewCard`, the rules are `createAddonRow`/`canCreateAddon` (one open add-on per file, a completed review is reused), and the id is the deterministic one.
  */
-type Failure = { ok: false; status: 404 | 409 | 500 | 503; error: "not_found" | "damaged" | "unavailable" | "open_addon" | "review_exists" | "too_large" | "nothing_to_review" | "changed" | "plan_changed" | "bad_request" };
+type Failure = { ok: false; status: 404 | 409 | 500 | 503; error: "not_found" | "damaged" | "unavailable" | "open_addon" | "review_exists" | "review_unresolved" | "too_large" | "nothing_to_review" | "changed" | "plan_changed" | "bad_request" };
 const no = (status: Failure["status"], error: Failure["error"]): Failure => ({ ok: false, status, error });
 
 /** The words stored in the row's `request_text` (3 to 4,000 characters; a fixed sentence: nothing the browser sent). */
@@ -44,7 +45,7 @@ export async function createReviewRequest(client: any, input: { missionId: strin
   if (!card.ok) return no(409, card.reason === "too_large" ? "too_large" : "nothing_to_review");
   const store = createSupabaseAddonRowStore(client, input.userId);
   try {
-    const made = await createAddonRow(store, { userId: input.userId, of: input.missionId, kind: "review", baseVersion: input.version, latestVersion: read.latest, request: { kind: "review" }, pricing: card.pricing, requestText: requestTextOf(input.version) });
+    const made = await createAddonRow(store, { userId: input.userId, of: input.missionId, kind: "review", baseVersion: input.version, latestVersion: read.latest, request: { kind: "review" }, pricing: card.pricing, requestText: requestTextOf(input.version), paidReviewGuard: (rows, baseVersion) => paidReviewVerdict(client, { missionId: input.missionId, baseVersion, rows }) });
     if (made.ok) {
       const view = viewOf(made.row);
       return view ? { ok: true, created: true, request: view } : no(409, "plan_changed");
@@ -55,7 +56,7 @@ export async function createReviewRequest(client: any, input: { missionId: strin
       const view = open ? viewOf(open) : null;
       if (view && view.version === input.version) return { ok: true, created: false, request: view };
     }
-    return no(409, made.reason === "open_addon" || made.reason === "review_exists" || made.reason === "too_large" ? made.reason : made.reason === "plan_changed" ? "plan_changed" : "bad_request");
+    return no(409, made.reason === "open_addon" || made.reason === "review_exists" || made.reason === "review_unresolved" || made.reason === "too_large" ? made.reason : made.reason === "plan_changed" ? "plan_changed" : "bad_request");
   } catch {
     return no(503, "unavailable");
   }

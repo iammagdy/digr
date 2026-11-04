@@ -16,6 +16,9 @@ export interface WorldOpts {
   missionError?: boolean;
   insertError?: boolean;
   updateError?: boolean;
+  /** The READ-ONLY money tables the paid-review verdict looks at (safety fix B): a job per id and ledger lines per job. Empty by default (no job, no ledger row = «nothing was reserved»). A write to them is recorded in `other`. */
+  jobs?: Array<Record<string, unknown>>;
+  ledger?: Array<Record<string, unknown>>;
   /** called just before an update is matched: a test changes the row here to model another process winning the race */
   beforeUpdate?: (rows: Map<string, any>, id: string | null) => void;
 }
@@ -31,6 +34,7 @@ export function requestClient(objects: Record<string, string>, opts: WorldOpts =
   const log: string[] = [];
   const tables = new Set<string>();
   const other: string[] = [];
+  const moneyReads: string[] = [];
   const valueAt = (row: any, col: string): unknown => col.split(/->>?/).reduce((v: any, k) => (v === null || v === undefined ? v : v[k]), row);
 
   function builder(table: string) {
@@ -42,6 +46,10 @@ export function requestClient(objects: Record<string, string>, opts: WorldOpts =
     const filters: Array<(r: any) => boolean> = [];
     let idFilter: string | null = null;
     const run = (): { data: any; error: any } => {
+      if ((table === "jobs" || table === "credit_ledger") && op === "select") {
+        moneyReads.push(table);
+        return { data: (table === "jobs" ? opts.jobs ?? [] : opts.ledger ?? []).filter((r) => filters.every((f) => f(r))).map((r) => ({ ...r })), error: null };
+      }
       if (table !== "missions") { other.push(`${op} ${table}`); return { data: null, error: { message: `unexpected table ${table}` } }; }
       if (op === "insert") {
         if (opts.insertError) return { data: null, error: { message: "database is down" } };
@@ -82,7 +90,7 @@ export function requestClient(objects: Record<string, string>, opts: WorldOpts =
     storage: base.storage,
     rpc: async (name: string) => { other.push(`rpc ${name}`); return { data: null, error: null }; },
     auth: base.auth,
-    rows, log, tables, other, storageWrites: base.writes,
+    rows, log, tables, other, moneyReads, storageWrites: base.writes,
   };
 }
 export type RequestWorld = ReturnType<typeof requestClient>;

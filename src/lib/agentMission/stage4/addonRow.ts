@@ -83,12 +83,12 @@ export const ADDON_CREATE_REFUSALS_AR = {
   plan_changed: ADDON_APPROVE_MESSAGES_AR.plan_changed,
   bad_request: "تعذّر فهم هذا الطلب.",
   /** An earlier review of this version was CHARGED and its report is not published (or its money state cannot be proved): no second paid review is offered or approved until that is resolved. It never says nothing was charged, and promises no refund. */
-  review_unresolved: "سُجّل خصم لمراجعة سابقة لهذه النسخة ولم يُنشر تقريرها بعد. لا يمكن طلب مراجعة جديدة لها قبل أن يُحسم ذلك، وسيراجع فريقنا الأمر.",
+  review_unresolved: "سُجّل خصم لمراجعة سابقة لهذه النسخة ولم يُنشر تقريرها بعد؛ سيراجع فريقنا الأمر.",
   row_removal_not_offered: "حذف عناصر من الملف غير متاح. يبقى ملفك كاملًا، ويمكنك طلب عمود أو تصحيح خانة.",
 } as const;
 export type AddonCreateRefusal = keyof typeof ADDON_CREATE_REFUSALS_AR;
 
-export type CanCreate = { ok: true; attempt: number } | { ok: false; reason: Exclude<AddonCreateRefusal, "too_large" | "plan_changed" | "bad_request" | "row_removal_not_offered">; existingId?: string };
+export type CanCreate = { ok: true; attempt: number } | { ok: false; reason: Exclude<AddonCreateRefusal, "too_large" | "plan_changed" | "bad_request" | "row_removal_not_offered" | "review_unresolved">; existingId?: string };
 
 /** May an add-on of this kind be made now on this base version? Pure over the mission's add-on rows. */
 export function canCreateAddon(input: { rows: ReadonlyArray<AddonRowLike>; of: string; kind: AddonKind; baseVersion: number; latestVersion: number }): CanCreate {
@@ -121,7 +121,11 @@ const refuse = (reason: AddonCreateRefusal, existingId?: string): CreateAddonRes
  * Make the add-on row of a priced card. NOTHING is held or charged here and no provider is called: a row that is `plan_ready` costs nothing. Refused before any insert when the rules above say so, when the price is
  * over the limit of an add-on, or when the stored price is not what the code computes. A second click computes the same id; the store reports `duplicate`, and the answer is the open add-on (the first click's row).
  */
-export async function createAddonRow(store: AddonRowStore, input: { userId: string; of: string; kind: AddonKind; baseVersion: number; latestVersion: number; request: AddonRequest; pricing: AddonPricing; requestText: string }): Promise<CreateAddonResult> {
+export async function createAddonRow(store: AddonRowStore, input: {
+  userId: string; of: string; kind: AddonKind; baseVersion: number; latestVersion: number; request: AddonRequest; pricing: AddonPricing; requestText: string;
+  /** Safety fix B (paidReview.ts): judges earlier ENDED reviews of this version by their money state and by what is published. Called only for a review, after the ordinary rules, and only with the rows already read; a throw refuses the creation (never «allowed on a guess»). */
+  paidReviewGuard?: (rows: ReadonlyArray<AddonRowLike>, baseVersion: number) => Promise<{ kind: "clear" } | { kind: "report_published"; id: string } | { kind: "unresolved"; id: string }>;
+}): Promise<CreateAddonResult> {
   if ((input.request as { kind?: unknown }).kind === "remove_rows" || (input.request as { kind?: unknown }).kind === "delete_rows") return refuse("row_removal_not_offered");
   if (input.request.kind !== input.kind) return refuse("bad_request");
   const rows = await listWithRecovery(store, input.of);
@@ -132,6 +136,11 @@ export async function createAddonRow(store: AddonRowStore, input: { userId: stri
   }
   const can = canCreateAddon({ rows, of: input.of, kind: input.kind, baseVersion: input.baseVersion, latestVersion: input.latestVersion });
   if (!can.ok) return refuse(can.reason, can.existingId);
+  if (input.kind === "review" && input.paidReviewGuard) {
+    const verdict = await input.paidReviewGuard(rows, input.baseVersion);
+    if (verdict.kind === "report_published") return refuse("review_exists", verdict.id);
+    if (verdict.kind === "unresolved") return refuse("review_unresolved", verdict.id);
+  }
   const row = buildAddonRow({ ...input, attempt: can.attempt });
   const check = checkAddon(row.id, row.plan.addon);
   if (!check.ok) return refuse(check.code === "too_large" ? "too_large" : "plan_changed");

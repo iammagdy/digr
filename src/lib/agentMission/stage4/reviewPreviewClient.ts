@@ -32,7 +32,7 @@ function quoteOf(raw: any): ReviewQuoteView | null {
   const base = { version: raw.version as number, reason: raw.reason as ReviewQuoteView["reason"] };
   switch (raw.state) {
     case "offer": return isCount(raw.cells) && isCount(raw.points) ? { state: "offer", ...base, cells: raw.cells, points: raw.points } : null;
-    case "reuse": case "blocked": return { state: raw.state, ...base };
+    case "reuse": case "blocked": case "unresolved": return { state: raw.state, ...base };
     case "too_large": case "nothing_to_review": return isCount(raw.cells) ? { state: raw.state, ...base, cells: raw.cells } : null;
     default: return null;
   }

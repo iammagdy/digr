@@ -22,6 +22,8 @@ export const REVIEW_REQUEST_ERRORS_AR = {
   /** The same sentence as the add-on rules' `open_addon` (pinned equal by a test; this file must not import the money-side module). */
   open_addon: "لديك طلب مفتوح على هذا الملف؛ أكمله أو ألغه أولًا.",
   review_exists: "راجعنا هذه النسخة من قبل؛ سنعرض تقريرها بلا مقابل ولن يُخصم منك شيء مرة ثانية.",
+  /** The same sentence as the add-on rules' `review_unresolved` (pinned equal by a test). It never says nothing was charged: an earlier review of this version WAS. */
+  review_unresolved: "سُجّل خصم لمراجعة سابقة لهذه النسخة ولم يُنشر تقريرها بعد؛ سيراجع فريقنا الأمر.",
   too_large: "هذه النسخة أكبر من أن تُراجع مرة واحدة. لم يُحجز أو يُخصم شيء.",
   nothing_to_review: "لا توجد خانات في هذه النسخة لتُراجع. لم يُحجز أو يُخصم شيء.",
   changed: "تغيّرت حالة الطلب قبل أن نلغيه. حدّث الصفحة وحاول مرة أخرى.",

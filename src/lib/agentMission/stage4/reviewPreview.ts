@@ -2,6 +2,7 @@ import { MISSION_TABLE } from "../constants";
 import { reviewCard } from "./addonQuote";
 import { canCreateAddon, type AddonRowLike } from "./addonRow";
 import { stage4FlagMode } from "./flags";
+import { paidReviewVerdict } from "./paidReview";
 import { reviewCellsOf } from "./review";
 import type { ReviewQuoteView, ReviewVersionChoice } from "./reviewPreviewLabels";
 import { readPublishedVersion } from "./versionFile";
@@ -54,6 +55,11 @@ export async function reviewQuoteFor(client: any, input: { missionId: string; us
   const { reason } = read.version;
   const gate = canCreateAddon({ rows, of: input.missionId, kind: "review", baseVersion: input.version, latestVersion: read.latest });
   if (!gate.ok) return { ok: true, quote: { state: gate.reason === "review_exists" ? "reuse" : "blocked", version: input.version, reason } };
+  // an earlier review of this version that was CHARGED and not published (safety fix B): no price is offered; a published report is shown free
+  let verdict;
+  try { verdict = await paidReviewVerdict(client, { missionId: input.missionId, baseVersion: input.version, rows }); } catch { return no(503, "unavailable"); }
+  if (verdict.kind === "report_published") return { ok: true, quote: { state: "reuse", version: input.version, reason } };
+  if (verdict.kind === "unresolved") return { ok: true, quote: { state: "unresolved", version: input.version, reason } };
   const cells = reviewCellsOf(read.version);
   if (cells === 0) return { ok: true, quote: { state: "nothing_to_review", version: input.version, reason, cells } };
   const card = reviewCard(cells);
