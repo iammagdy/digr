@@ -4,6 +4,7 @@ import { checkChannelsAgainstWords } from "../../src/lib/agentMission/foundation
 import { buildShapeDigest } from "../../src/lib/modelPlanner/digest";
 import { carriedBy, chooseCard, compilePlan, parentInputs, rankedCards, rankedPoolOf, COMPILED_PLATFORMS, type CompileResult } from "../../src/lib/agentMission/foundation/compilePlan";
 import { channelAnswerOf, channelEvidenceOf, youtubeChannelChoiceQuestionAr } from "../../src/lib/agentMission/foundation/discovery/channelEvidence";
+import { mediaMarkOf, mediaNotesAr, reelsBasisOf, reelsCandidates, type MediaMark } from "../../src/lib/agentMission/foundation/discovery/media";
 import { candidateViewOf, discoveryMarkOf, discoveryNotesAr, pagingOf, type DiscoveryEvaluation, type DiscoveryMark, type SelectCapability } from "../../src/lib/agentMission/foundation/discovery/plan";
 import { factsOf, isAboutAndEligible, pageMatchesSource, rankPool } from "../../src/lib/agentMission/foundation/pool";
 import { aboutQueryOf, noAboutChoiceOf, noAboutQuestionAr, NO_ABOUT_OPTIONS_AR } from "../../src/lib/agentMission/foundation/topicChoice";
@@ -99,12 +100,16 @@ const sameInputs = (digest: Record<string, unknown>, params: Record<string, unkn
 /** Reads the pool and the exposure pages through the gateway, then compiles. */
 export async function planByCompiler(deps: CompiledPlanningDeps): Promise<WithCost<CompiledPlanning>> {
   const cost = { usd: 0 };
-  const seen: { pages: Array<{ card: ToolCard; page: unknown; nextCursor: string | null; hasMore: boolean | null }>; choice?: DiscoveryMark["selection"]; evaluation?: DiscoveryEvaluation } = { pages: [] };
+  const seen: { pages: Array<{ card: ToolCard; page: unknown; nextCursor: string | null; hasMore: boolean | null }>; choice?: DiscoveryMark["selection"]; evaluation?: DiscoveryEvaluation; media?: MediaMark } = { pages: [] };
   let result = await planInner(deps, cost, seen);
   // ROUND 30: a plan made from an account the customer gave (the request named none) says so: the results are that account's, not all of Instagram
   const given = deps.choices?.instagramAccount;
   if (result.kind === "plan" && result.ask.platform === "instagram" && given && result.ask.source.text === given) {
     result = { ...result, plan: { ...result.plan, notes_ar: [...(result.plan.notes_ar ?? []), instagramAccountNoteAr(given)] } };
+  }
+  // ROUND 35: a request for REELS says, before approval, how the media type is served (a reels-only tool, the tool's media-type filter) or that it is unproven; the mark is kept with the plan whether or not discovery is on
+  if (result.kind === "plan" && seen.media) {
+    result = { ...result, plan: { ...result.plan, notes_ar: [...(result.plan.notes_ar ?? []), ...mediaNotesAr(seen.media)], compiled: { ...result.plan.compiled!, media: seen.media } } };
   }
   // ROUND 33: a plan whose parents were read by a tool derived from the catalog says so before approval, with what the pages showed about completeness (never «all of the platform»), and keeps the audit mark of the discovery
   // ROUND 34: EVERY PLAN OF A MISSION WITH DISCOVERY ON carries the mark, whichever tool was chosen (a verified tool took part in the same evaluation as the derived ones): the audit evidence that discovery was entered, what was eligible and what was chosen
@@ -116,14 +121,14 @@ export async function planByCompiler(deps: CompiledPlanningDeps): Promise<WithCo
     if (poolCard) {
       const last = seen.pages[seen.pages.length - 1];
       const hasMore = last ? last.hasMore ?? (last.nextCursor ? true : pagingOf(poolCard) === "declared" ? false : null) : null;
-      const mark = discoveryMarkOf(poolCard, { pages: seen.pages.length, rows: stage.planned_rows, hasMore, ...(seen.choice ? { selection: seen.choice } : {}), ...(seen.evaluation ? { evaluation: seen.evaluation } : {}) });
+      const mark = discoveryMarkOf(poolCard, { pages: seen.pages.length, rows: stage.planned_rows, hasMore, ...(seen.choice ? { selection: seen.choice } : {}), ...(seen.evaluation ? { evaluation: seen.evaluation } : {}), ...(seen.media ? { media: seen.media } : {}) });
       result = { ...planned, discovery: mark, plan: { ...planned.plan, notes_ar: [...(planned.plan.notes_ar ?? []), ...discoveryNotesAr(poolCard, planned.ask, mark)], compiled: { ...planned.plan.compiled!, discovery: mark } } };
     }
   }
   return cost.usd > 0 ? { ...result, llmCostUsd: cost.usd } : result;
 }
 
-async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen: { pages: Array<{ card: ToolCard; page: unknown; nextCursor: string | null; hasMore: boolean | null }>; choice?: DiscoveryMark["selection"]; evaluation?: DiscoveryEvaluation }): Promise<CompiledPlanning> {
+async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen: { pages: Array<{ card: ToolCard; page: unknown; nextCursor: string | null; hasMore: boolean | null }>; choice?: DiscoveryMark["selection"]; evaluation?: DiscoveryEvaluation; media?: MediaMark }): Promise<CompiledPlanning> {
   const cardsOpt = deps.cards ? { cards: deps.cards } : {};
   const at = Date.parse(String(deps.mission.created_at ?? ""));
   // THE CUSTOMER'S ANSWER TO THE NAMED-PAGE QUESTION (decision 7.5) and TO THE OCCURRENCE QUESTION (decision 7) are ready answers: they are read as choices and the request is read without their words
@@ -147,7 +152,9 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   const parentCandidates = (a: Ask, from: ReadonlyArray<ToolCard> | undefined = deps.cards): ToolCard[] => {
     const catalogOnlyNow = deps.catalogOnly === true;
     const opt = from ? { cards: from } : {};
-    const list = rankedCards(a, "parents", { catalogOnly: catalogOnlyNow, ...opt });
+    let list = rankedCards(a, "parents", { catalogOnly: catalogOnlyNow, ...opt });
+    // ROUND 35: a request for REELS is read only by a tool that proves the media type (a reels-only tool, or the tool's own media-type filter, sent on every call); when none can, the candidates stay as they were and the plan says the type is unproven
+    if (a.media === "reels" && a.platform === "instagram") list = reelsCandidates(list).list;
     if (!deps.chainIssues) return list;
     // ROUND 34: the catalog check applies to EVERY candidate, a verified, hand-written tool as much as a derived one: a verified tool takes part in the same evaluation, it is not trusted past what the catalog now says (an endpoint the catalog dropped, an input it no longer declares)
     return list.filter((c) => {
@@ -294,7 +301,7 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
       }
     }
     const compileWith = (a: Ask) => compilePlan({
-      ask: a, pool: { card: poolCard, params, pages }, exposure: (id) => exposure.get(id), capabilityOf: (id) => deps.catalog.byId.get(id)?.capability ?? null, pricingSettings: deps.pricingSettings, nowMs: deps.nowMs, ...(catalogOnly ? { catalogOnly: true } : {}),
+      ask: a, pool: { card: poolCard, params, pages }, exposure: (id) => exposure.get(id), capabilityOf: (id) => deps.catalog.byId.get(id)?.capability ?? null, pricingSettings: deps.pricingSettings, nowMs: deps.nowMs, ...(catalogOnly ? { catalogOnly: true } : {}), ...(ask.media === "reels" && ask.platform === "instagram" && reelsBasisOf(poolCard) !== "unproven" ? { reelsProven: true } : {}),
       ...(extra.counters ? { counters: extra.counters } : {}), ...(extra.channels ? { channels: extra.channels } : {}), ...(extra.customerChannel ? { customerChannel: extra.customerChannel } : {}), ...(shortfallChoice === "only_found" || shortfallChoice === "fill" ? { namedChoice: shortfallChoice } : {}),
     });
     const result = compileWith(ask);
@@ -333,6 +340,7 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   // ROUND 33: a card derived from the catalog does not know how many rows a page holds (the catalog's example is trimmed to one item): the first real page measures it, so the price per row follows what the source really gave
   card = measuredRows(card, first.page);
   track(card, first);
+  if (ask.media === "reels" && ask.platform === "instagram") seen.media = mediaMarkOf(card);
   const pages: Array<{ callId: string; page: unknown; card?: ToolCard }> = [{ callId: first.callId, page: first.page }];
   // LIVE ROUND 7: «عن X» on a source whose search also matches hashtags. When no video of the first page has its own text about the topic, the one more read the gateway allows for this source asks the topic with the words of talking about it
   // (built by code from the Ask), and the union of both pages is ranked by the same rule. Only a search with no operators (TikTok); X's query is the quoted words of the text itself.

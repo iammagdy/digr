@@ -25,6 +25,8 @@ export interface RequestContract {
   period: boolean;
   comments: ChildAsk;
   replies: ChildAsk;
+  /** ROUND 35: the customer asked for REELS (a kind of Instagram post, not a kind of «منشور»): the plan must serve it with a source that proves the media type or say that it cannot. Absent when the words ask for no reels. */
+  media?: "reels";
 }
 
 const digits = (s: string): string => s.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
@@ -35,9 +37,11 @@ const PLATFORM_WORDS: ReadonlyArray<[SocialPlatform, RegExp]> = [
   ["facebook", /فيس\s*بوك|facebook/i],
   ["x", /(?:^|[\s«"'(])(?:X|x|إكس|اكس)(?=$|[\s»"'.,،)؟?])|تويتر|تغريد|twitter/],
 ];
-const KIND_WORDS: ReadonlyArray<[ParentKind, RegExp]> = [["videos", /فيديو|مقطع|مقاطع/], ["posts", /منشور|بوست/], ["tweets", /تغريد|تويت/]];
+// ROUND 35: «ريلز» / «ريل» / «reels»: the word stands alone (a prefix «ال» «و» «ب» «ل» is allowed); «أبريل» and «تريليون» contain the letters and are not reels
+export const REELS_WORD = /(?<![ء-ي])(?:[وبلف])?(?:ال)?ريل(?:ز|س|ات)?(?![ء-ي])|\breels?\b/i;
+const KIND_WORDS: ReadonlyArray<[ParentKind, RegExp]> = [["videos", /فيديو|مقطع|مقاطع/], ["posts", new RegExp(`منشور|بوست|${REELS_WORD.source}`, "i")], ["tweets", /تغريد|تويت/]];
 const DUAL = /(?:فيديوهين|فيديوهان|منشورين|منشوران|تغريدتين|تغريدتان|بوستين|مقطعين)/;
-const COUNT_NOUN = /(?:فيديو|منشور|بوست|تغريد|تويت|مقطع|مقاطع)/;
+const COUNT_NOUN = /(?:فيديو|منشور|بوست|تغريد|تويت|مقطع|مقاطع|ريلز|ريلس|ريلات|ريل(?![ء-ي])|reels?\b)/i;
 const ALL_COMMENTS = /(?:كل|جميع|كافة)\s+(?:ال)?تعليقات/;
 const ALL_REPLIES = /(?:كل|جميع|كافة)\s+(?:ال)?ردود|(?:كل|جميع|كافة)\s+(?:ال)?تعليقات\s+(?:و)?(?:ال)?ردود/;
 const STOP = /^(?:على|من|عن|في|آخر|اخر|مع|بالعربي|بالعربية|باللغة|،|,|\.|\(|«|"|بين|منذ|خلال)$/;
@@ -104,6 +108,7 @@ export function buildRequestContract(request: unknown, answer?: unknown): Reques
   return {
     platform,
     parentKind: kind,
+    ...(REELS_WORD.test(text) && platform === "instagram" ? { media: "reels" as const } : {}),
     count: countOf(text),
     source: sourceOf(text),
     topic: topicOf(text),

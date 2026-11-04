@@ -1,5 +1,6 @@
 import { isLanguageColumn, languageLabelAr, languageOfTextAr, textColumnKeyOf } from "../../src/lib/agentMission/languageLabel";
 import { MARKS_KEY, MARK_COLUMNS_AR, MARK_COLUMN_ORDER, markCellAr, type RowMarks } from "../../src/lib/agentMission/rawMarks";
+import { columnSpec, headerHeightOf, rowHeightOf } from "./sheetLayout";
 import ExcelJS from "exceljs";
 import { SUMMARY_SHEET_AR } from "../../src/lib/modelPlanner/missionWorkbook";
 import { csvText } from "../../src/lib/agentMission/csvText";
@@ -445,14 +446,16 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
     if (dateAt.some(Boolean)) hasDateColumn = true;
     const languageAt = lay.columns.map((c) => isLanguageColumn(c.title, c.key));
     const numericAt = lay.columns.map((c, k) => !dateAt[k] && numericColumn(columnValues[k], Boolean(c.contact)));
-    sheet.columns = headers.map((h, j) => ({ width: j >= lay.columns.length ? 16 : /نص|تعليق|وصف|عنوان|تقييم|منشور|تغريدة/.test(h) ? 52 : /رابط|الموقع/.test(h) ? 34 : 24 }));
+    // ROUND 35: the width, the wrap and the row height come from what each column HOLDS (sheetLayout.ts), not from a word of its header
+    const specs = headers.map((h, j) => (j >= lay.columns.length ? columnSpec({ title: h, values: [], id: true }) : columnSpec({ title: h, values: columnValues[j], date: dateAt[j], numeric: numericAt[j] })));
+    sheet.columns = specs.map((spec) => ({ width: spec.width }));
     const head = sheet.addRow(headers);
     head.eachCell((cell, col) => {
       cell.font = { name: "Calibri", size: 10, bold: true, color: { argb: WHITE } };
       cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: col > lay.columns.length ? GREY : NAVY } };
       cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
     });
-    head.height = 30;
+    head.height = headerHeightOf(headers, specs);
     const ids = new Map<string, string>();
     lay.rows.forEach((record, r) => {
       const parent = parentByIdRow.get(text(record.parent_id)) ?? null;
@@ -492,11 +495,16 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
       if (lay.hasParent) values.push(textCell(text(record.parent_id)));
       const row = sheet.addRow(values);
       ids.set(text(record.id), `${sheet.getColumn(lay.columns.length + 1).letter}${r + 2}`);
-      row.alignment = { vertical: "middle", wrapText: true };
+      // a tall row keeps every cell at its top (the short cells beside a long text are read from the first line); the row's height is set from the longest wrapped cell
+      const height = rowHeightOf(values.map((value, i) => ({ value, spec: specs[i] })));
+      if (height !== undefined) row.height = height;
+      const vertical = height !== undefined && height > 36 ? ("top" as const) : ("middle" as const);
+      row.alignment = { vertical, wrapText: true };
       row.eachCell({ includeEmpty: true }, (cell, col) => {
         cell.border = BORDER;
         cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: r % 2 ? ZEBRA : WHITE } };
-        if (col <= lay.columns.length && dateAt[col - 1] && cellFormat[col - 1]) { cell.numFmt = cellFormat[col - 1]!; cell.alignment = { horizontal: "center", vertical: "middle" }; }
+        cell.alignment = { vertical, wrapText: specs[col - 1]?.wrap ?? true };
+        if (col <= lay.columns.length && dateAt[col - 1] && cellFormat[col - 1]) { cell.numFmt = cellFormat[col - 1]!; cell.alignment = { horizontal: "center", vertical }; }
         if (cell.hyperlink) cell.font = { name: "Calibri", size: 10, color: { argb: "FF0563C1" }, underline: true };
         else if (col > lay.columns.length) cell.font = { name: "Calibri", size: 9, color: { argb: GREY } };
       });
