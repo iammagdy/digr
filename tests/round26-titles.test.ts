@@ -42,3 +42,9 @@ describe("ROUND 26 item 8: the mission title (methodology, chooser card, notices
     expect(missionTitleAr({ plan: plan("التغريدات", 10), requestText: "عن الذكاء الاصطناعي" })).not.toMatch(/^[٠-٩]+ -/);
   });
 });
+
+it("uses the delivered count and subject for the methodology chooser and PDF even for an old filename", async () => {
+  const { methodologyMissionOf } = await import("../src/lib/agentMission/methodology/missions");
+  const mission = methodologyMissionOf({ id: "m", job_id: "j", status: "completed", delivered_units: 10, request_text: "عايز داتا عن رأي الناس في الذكاء الاصطناعي", plan_public: { compiled: true, ...plan("التغريدات", 20) }, files: [{ name: "data.xlsx", path: "m/data.xlsx", download_name: "تغريدات عن رأي الناس - ١٠.xlsx" }], created_at: DATE.toISOString() });
+  expect(mission?.titleAr).toBe("١٠ تغريدات عن الذكاء الاصطناعي - ٤ نوفمبر ٢٠٢٦");
+});

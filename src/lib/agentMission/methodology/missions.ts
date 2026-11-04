@@ -1,5 +1,5 @@
 import { MISSION_TABLE } from "../constants";
-import { missionTitleAr } from "../fileNames";
+import { missionFileTitleAr, missionTitleAr } from "../fileNames";
 
 /**
  * THE MISSIONS A DATA-COLLECTION METHODOLOGY CAN BE WRITTEN FOR (round 21): a request of the customer that was DELIVERED (completed, at least one row delivered), carried out on the COMPILED path (the plan the compiler built: `plan_public.compiled`), with its job and its Excel file.
@@ -37,10 +37,17 @@ export function methodologyMissionOf(row: Row | null | undefined): MethodologyMi
   if (!xlsx) return null;
   const stored = typeof xlsx.download_name === "string" ? xlsx.download_name.trim().replace(/\.xlsx$/i, "") : "";
   const requestText = String(row.request_text ?? "");
+  const stages = (plan as { stages?: unknown }).stages;
+  const date = typeof row.created_at === "string" ? new Date(row.created_at) : null;
+  const title = Array.isArray(stages) && stages.some((s) => s && typeof s === "object" && typeof s.title_ar === "string")
+    ? (date && Number.isFinite(date.getTime())
+      ? missionFileTitleAr({ plan: { stages }, requestText, delivered, date })
+      : missionTitleAr({ plan: { stages }, requestText, delivered }))
+    : stored || missionTitleAr({ plan: null, requestText });
   return {
     missionId: id,
     jobId,
-    titleAr: stored || missionTitleAr({ plan: null, requestText }),
+    titleAr: title,
     deliveredUnits: delivered,
     xlsx: { name: String(xlsx.name), path: String(xlsx.path) },
     requestText,
