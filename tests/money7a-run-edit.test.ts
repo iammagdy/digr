@@ -6,6 +6,7 @@ import { EDIT_NOT_SEARCHED_AR } from "../src/lib/agentMission/stage4/editVersion
 import { firstVersionFromCells, versionPathOf, type FileVersion } from "../src/lib/agentMission/stage4/versions";
 import { tregResult } from "./helpers/agentHarness";
 import { runAddon, runAddonSafely } from "../agent/src/stage4/runAddon";
+import { abortActiveRuns } from "../agent/src/sessions";
 import { ADDON_DONE_AR } from "../agent/src/stage4/addonText";
 import { checkAddonLedger } from "./helpers/addonWorld";
 import { COMMENTS_SHEET, LOOKUP_COST_USD, LOOKUP_ENDPOINT, M12, VIDEOS_SHEET, addonRunWorld, nicknameAnswer, type Answers } from "./helpers/addonRunWorld";
@@ -402,6 +403,45 @@ describe("the watchdog released the hold first: no charge and no publish", () =>
     expect(await w.store.getFile(M12, `addons/${a.id}/v0002.json`)).not.toBeNull();
     expect(w.rowOf(a.id)).toMatchObject({ status: "failed", charged_points: 0 });
   });
+});
+
+describe("the platform stops the run (a deploy, or the memory limit): the row goes back to «approved» with everything it saved", () => {
+  for (const cause of ["restart", "memory"] as const) {
+    it(`${cause}: the finished units are kept, the hold stands, the next worker finishes it without paying twice`, async () => {
+      let calls = 0;
+      const base = nicknameAnswer();
+      const w = await addonRunWorld({ balance: BALANCE, answers: (o) => { calls += 1; if (calls === 3) abortActiveRuns(cause); return base(o); } });
+      const a = await commentsEdit(w);
+      await runAddonSafely(w.deps, a.row);
+      expect(w.rowOf(a.id)).toMatchObject({ status: "approved", worker_id: null, lease_until: null });
+      expect(w.money.ledger.map((r) => r.type)).toEqual(["topup", "reserve"]);
+      expect(w.versionFiles()).toEqual([`${M12}/versions/v0001.json`]);
+      expect(said(w, a.id)).toContain(ADDON_DONE_AR.requeued);
+      const again = await w.store.claimMission("worker-2", 120);
+      await runAddonSafely(w.deps, again!);
+      // 3 units were finished before the stop: 57 are read now, 60 calls in all
+      expect(w.call).toHaveBeenCalledTimes(60);
+      expect(checkAddonLedger(w.money, a.jobId, { reserved: a.hold, charged: chargeBy(spent(w), 60, 60, a.hold) })).toEqual([]);
+      expect(w.rowOf(a.id)).toMatchObject({ status: "completed", delivered_units: 60 });
+    });
+  }
+});
+
+describe("the worker runs an approved add-on whatever the Stage 4 flags say (they gate creation and approval, so a hold is never stranded)", () => {
+  for (const value of ["off", "test", "on", ""]) {
+    it(`DIGER_STAGE4_EDITS and DIGER_STAGE4_REVIEW = «${value}»`, async () => {
+      vi.stubEnv("DIGER_STAGE4_EDITS", value);
+      vi.stubEnv("DIGER_STAGE4_REVIEW", value);
+      vi.stubEnv("DIGER_STAGE4_VERSIONS", value);
+      try {
+        const w = await addonRunWorld({ balance: BALANCE });
+        const a = await commentsEdit(w);
+        await runAddonSafely(w.deps, a.row);
+        expect(checkAddonLedger(w.money, a.jobId, { reserved: a.hold, charged: 330 })).toEqual([]);
+        expect(w.rowOf(a.id).status).toBe("completed");
+      } finally { vi.unstubAllEnvs(); }
+    });
+  }
 });
 
 describe("the runner never throws to the worker loop", () => {

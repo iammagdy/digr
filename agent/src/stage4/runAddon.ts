@@ -127,7 +127,7 @@ export async function runAddon(deps: Deps, mission: MissionRecord): Promise<void
   if (job?.status === "failed") return finish(deps, row, addon, jobId, hold, { kind: "release", reason: "released_earlier" });
 
   if (!outcome && job?.status !== "completed") {
-    const made = addon.kind === "review" ? await reviewWork(deps, row, addon, hold) : await editWork(deps, row, addon, jobId, hold, startsExceeded);
+    const made = addon.kind === "review" ? await reviewWork(deps, row, addon) : await editWork(deps, row, addon, jobId, hold, startsExceeded);
     if (made === "interrupted") return;
     outcome = made;
   }
@@ -146,7 +146,7 @@ const nothing = (addon: AddonPlan, row: MissionRecord, reason: NonNullable<Addon
 });
 
 // ---------- the review: no provider call ----------
-async function reviewWork(deps: Deps, row: MissionRecord, addon: AddonPlan, _hold: number): Promise<AddonOutcome> {
+async function reviewWork(deps: Deps, row: MissionRecord, addon: AddonPlan): Promise<AddonOutcome> {
   const { store } = deps;
   const now = (deps.now ?? (() => new Date()))();
   const base = await readVersion(store, addon.of, addon.baseVersion);
@@ -157,8 +157,8 @@ async function reviewWork(deps: Deps, row: MissionRecord, addon: AddonPlan, _hol
   if (published && published.addonId !== row.id) return writeOutcome(store, nothing(addon, row, "review_exists", null, 0, now));
   const result = reviewFile(base);
   const report = { v: 1, addonId: row.id, missionId: addon.of, version: base.version, baseDigest: base.digest, createdAt: now.toISOString(), ...result };
-  const put = await store.putNewStrict(addon.of, pendingReviewPath(row.id), JSON.stringify(report), JSON_TYPE);
-  void put; // the first pending report stands (a cut run's), whichever run wrote it
+  // the first pending report stands (a cut run's), whichever run wrote it
+  await store.putNewStrict(addon.of, pendingReviewPath(row.id), JSON.stringify(report), JSON_TYPE);
   return writeOutcome(store, { v: 1, kind: "review", addonId: row.id, of: addon.of, baseVersion: addon.baseVersion, newVersion: null, filled: 1, requested: 1, realCostUsd: 0, stop: null, reason: null, pending: pendingReviewPath(row.id), publishAt: reviewPathOf(base.version), createdAt: now.toISOString() });
 }
 
@@ -198,8 +198,8 @@ async function editWork(deps: Deps, row: MissionRecord, addon: AddonPlan, jobId:
   const built = buildVersion(addon, base, plan, values, now);
   if (!built || built.filled === 0) return writeOutcome(store, nothing(addon, row, "nothing", stop, realCostUsd, now));
   const path = pendingVersionPath(row.id, built.version.version);
-  const put = await store.putNewStrict(addon.of, path, JSON.stringify(built.version), JSON_TYPE);
-  void put; // the first pending version stands
+  // the first pending version stands (a cut run's), whichever run wrote it
+  await store.putNewStrict(addon.of, path, JSON.stringify(built.version), JSON_TYPE);
   return writeOutcome(store, { v: 1, kind: addon.kind, addonId: row.id, of: addon.of, baseVersion: addon.baseVersion, newVersion: built.version.version, filled: built.filled, requested: addon.pricing.requested, realCostUsd, stop, reason: null, pending: path, publishAt: versionPathOf(built.version.version), createdAt: now.toISOString() });
 }
 
