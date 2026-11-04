@@ -28,7 +28,8 @@ function deepFreeze<T>(o: T): T {
   if (o && typeof o === "object" && !Object.isFrozen(o)) { Object.freeze(o); for (const v of Object.values(o as Record<string, unknown>)) deepFreeze(v); }
   return o;
 }
-const digestOf = (sheets: ReadonlyArray<VersionSheet>): string => createHash("sha256").update(JSON.stringify(sheets.map((s) => ({ n: s.nameAr, h: s.headers, r: s.rows.map((r) => [r.id, r.parentId, r.cells]) })))).digest("hex");
+/** The digest a version carries: sha-256 of its sheets (names, headers, row ids, parent ids, cells). Exported so a reader can check that a stored object is the content it says it is. */
+export const digestOf = (sheets: ReadonlyArray<VersionSheet>): string => createHash("sha256").update(JSON.stringify(sheets.map((s) => ({ n: s.nameAr, h: s.headers, r: s.rows.map((r) => [r.id, r.parentId, r.cells]) })))).digest("hex");
 
 /** A sheet from its rows of text (the header row first), its rows keyed by the file's own id column. */
 export function sheetFromCells(nameAr: string, table: ReadonlyArray<ReadonlyArray<string>>): VersionSheet {

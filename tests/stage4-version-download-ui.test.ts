@@ -54,10 +54,10 @@ describe("TEST 13: the list is usable on a phone", () => {
     expect(html).toMatch(/<li[^>]*class="[^"]*\bflex-col\b[^"]*\bsm:flex-row\b/);
     expect(html).toMatch(/focus-visible:outline/);
   });
-  it("while a version is downloading its button is disabled and says so, and only that one", () => {
+  it("while a version is downloading its button says so (aria-busy) and no button can start a second download (no double click)", () => {
     const html = render({ busy: 2 });
-    expect(html.match(/disabled=""/g)).toHaveLength(1);
-    expect(html).toContain('aria-busy="true"');
+    expect(html.match(/disabled=""/g)).toHaveLength(3);
+    expect(html.match(/aria-busy="true"/g)).toHaveLength(1);
     expect(html).toContain(VERSION_DOWNLOADING_AR);
     expect(html.match(/>تحميل الملف</g)).toHaveLength(2);
   });

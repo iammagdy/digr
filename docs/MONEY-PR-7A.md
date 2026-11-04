@@ -575,3 +575,40 @@ Existing files changed, all additive: `agent/src/types.ts`, `memoryStore.ts`, `s
 - *Retries are bounded in rate, not in number:* a long storage outage costs one cheap read per wait.
 
 **Assumed, not verified.** The `worker_id` fence relies on the live claim function setting a different worker id per worker process (read from the proposal file `docs/proposals/agent-worker/02_agent_claim_function.sql`, not from the live database, and not run). Two processes with the SAME worker id would not fence each other. The park relies on the live claim ignoring an `approved` row whose lease is in the future (same file). Nothing ran against real storage, a database or a provider.
+
+## 14. Phase 2B-2, task 1: the customer sees and downloads the published versions of their own file
+
+Branch `money/7b-version-downloads` (a draft PR into `money/7a-design`). Read-only: no price, no reservation, no charge, no refund, no write of any kind. Nothing is activated: `DIGER_STAGE4_VERSIONS` (and `DIGER_STAGE4_REVIEW`, `DIGER_STAGE4_EDITS`) stay as they are; this task creates no review or edit request.
+
+### 14.1 What the customer can do
+
+On the request's own page, under the file's versions list (the existing `VersionList`), every **published** version shows «النسخة ١ — الملف الأصلي», «النسخة ٢ — بعد التعديل» or «النسخة ٣ — بعد تصحيح المراجعة», its date, and a button «تحميل الملف». The button asks the server for that version's Excel file and saves it under the mission's own file name followed by « - النسخة ٢». While it runs the buttons are disabled and say «جارٍ التحميل…»; a failure is one Arabic sentence under that version (`role="alert"`). The layout is one column on a phone (button full width, at least 44 px high) and a row from the `sm` breakpoint. With the flag off the list is not drawn at all, as before.
+
+### 14.2 The route (`src/app/api/missions/[id]/file/route.ts`)
+
+`GET /api/missions/[id]/file?name=result.xlsx&version=N&stream=1`. A request **without** `version` runs the old code unchanged (the two-minute link, or the file with `stream=1`); the tests pin the same answers flag off and flag on. A request **with** `version`:
+
+| Situation | Answer |
+|---|---|
+| `DIGER_STAGE4_VERSIONS` is not exactly `on` (read FIRST, before the id, the viewer or the database) | 404 `not_found` |
+| bad mission id, a name other than `result.xlsx` (the CSV included), `version` repeated, or not exactly one positive whole number of at most four ASCII digits (no sign, space, leading zero, exponent, Arabic digit, path) | 400 `bad_request` |
+| not signed in (the viewer's own check, on the server) | 401 |
+| the mission is not the caller's, or does not exist | 404 `not_found`, the same body for both |
+| no such version published (a pending add-on version under `addons/` is not one, nor its `freeze.json`) | 404 `not_found` |
+| the database or the storage could not answer (the listing or the read) | 503 `unavailable` (never «missing») |
+| the published object is not exactly this mission's version N (not JSON, another mission, another number, a digest that does not match its sheets, a row narrower than its headers, cells that are not text) | 500 `damaged`, never served |
+| otherwise | 200, a genuine `.xlsx`, `Content-Disposition` with the Arabic name (`filename*` and an ASCII fallback), `private, no-store`, `nosniff` |
+
+Rules kept: the browser never sees a storage path, a signed link or a key (the file is built on the server from the stored object and answered as bytes); a version request is always answered as the file itself; the original delivery with no `version` still serves the mission's own `result.xlsx` even when the mission has no Stage 4 version object (an old mission); `version=1` of such a mission is a 404, never a substitute.
+
+### 14.3 The file
+
+`generateVersionWorkbook` (`src/lib/agentMission/stage4/versionFile.ts`) builds one sheet per stored sheet: the same Arabic sheet name (through the delivered file's own `safeSheetName`), the same headers, every row, every cell the stored text, with the delivered file's look (navy header, frozen row, filter, zebra rows, right to left). Cells are stored as text and never evaluated (a text that starts with `=` stays that text). Differences from the delivered `result.xlsx`, by design: no «ملخص المهمة» sheet (the stored version does not hold it), and numbers and links are text (the version holds only text). The delivered original with those features is still what the ordinary download serves.
+
+### 14.4 Files
+
+New: `versionFile.ts` (server: the read, the checks, the workbook, the name), `versionDownload.ts` (client-safe: the click), tests `stage4-version-download.test.ts` (route, 19) and `stage4-version-download-ui.test.ts` (labels, layout, click, 10). Changed: the file route, `VersionList.tsx`, `versionLabels.ts` (new labels; the old `versionLabelAr` stays), `versions.ts` (`digestOf` is exported), `fileResponse.ts` (`fileResponseFromBytes`: the same safe headers for a file the site built), `stage4-isolation.test.ts` (the file route is listed as wiring that reads the flag first), `stage4-versions-list.test.ts` (the labels, and the button only when a handler is given).
+
+### 14.5 Not verified
+
+Everything ran on fakes (a memory database, a fake bucket, fake auth, `fetch` stubbed): no Vercel build, no Heroku worker, no real Supabase storage listing or download, no real browser (the click is tested as a pure function and the layout as server-rendered markup and class names), no Excel desktop opening of a file (the tests read the file back with the same library that wrote it). The 404-versus-error split relies on the listing (an object is published when the listing shows it) and treats any read failure after that as an error.

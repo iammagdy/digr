@@ -19,7 +19,9 @@ function files(dir: string): string[] {
 }
 
 /** The wiring: S1 and S2 behind DIGER_STAGE4_VERSIONS (the worker's version 1; the list route and its page), and the worker's dispatch of an add-on row (no flag: see below). */
-const WIRING = ["agent/src/main.ts", "agent/src/runMission.ts", "src/app/api/missions/[id]/versions/route.ts", "src/components/mission/VersionList.tsx"];
+const WIRING = ["agent/src/main.ts", "agent/src/runMission.ts", "src/app/api/missions/[id]/versions/route.ts", "src/app/api/missions/[id]/file/route.ts", "src/components/mission/VersionList.tsx"];
+// src/app/api/missions/[id]/file/route.ts (MONEY PR 7b, 2B-2 task 1): a request with `?version=N` is the customer's download of one published version. It reads DIGER_STAGE4_VERSIONS FIRST (off: 404 before anyone is asked who they are);
+// a request without `version` never reaches a Stage 4 module (tests/stage4-version-download.test.ts proves the same answers flag off and on).
 // agent/src/main.ts (MONEY PR 7a, 2B-1): the worker's one entry point sends a claimed row whose plan has an `addon` key to the add-on runner and every other row to the mission runner (agent/src/stage4/dispatch.ts). It reads no flag:
 // the flags gate the creation and the approval of an add-on, and a hold that was made is always run to its end.
 

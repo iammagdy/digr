@@ -111,7 +111,11 @@ describe("TEST 1-3, 9, 10: each version downloads as its own genuine workbook", 
     const w2 = new ExcelJS.Workbook(); await w2.xlsx.load(b2 as any);
     expect(w1.worksheets[0].columnCount).toBe(v1.sheets[0].headers.length);
     expect(w2.worksheets[0].columnCount).toBe(v1.sheets[0].headers.length + 1);
-    expect(textOf(w2.worksheets[0].getRow(1).getCell(v2.sheets[0].headers.length).value)).toBe("اسم القناة");
+    const at = v2.sheets[0].headers.indexOf("اسم القناة");
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(v1.sheets[0].headers).not.toContain("اسم القناة");
+    expect(textOf(w2.worksheets[0].getRow(1).getCell(at + 1).value)).toBe("اسم القناة");
+    expect(textOf(w2.worksheets[0].getRow(2).getCell(at + 1).value)).toBe("قناة 1");
     await expectWorkbookOf(new Response(b1), v1);
     await expectWorkbookOf(new Response(b2), v2);
   }, 60_000);
