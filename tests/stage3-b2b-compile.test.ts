@@ -22,11 +22,15 @@ import { checkCustomerLabel, checkCustomerText } from "../src/lib/agentMission/t
 const companies = (JSON.parse(readFileSync(new URL("./fixtures/extraction/companies-electricity-eg.json", import.meta.url), "utf8")) as { rows: Array<{ row: Record<string, unknown> }> }).rows.map((r) => r.row);
 const LIVE_7539 = "عايز ٥ شركات مصرية في قطاع الكهروميكانيكا، ومعاهم صناع القرار";
 
-describe("no verified card: nothing is offered to a customer", () => {
-  it("today every B2B card is unverified, so the plan is not made and the unverified tools are named for the admin", () => {
-    const r = compileB2BPlan(buildB2BAsk(LIVE_7539)!);
+describe("no verified card for a role: nothing is offered to a customer", () => {
+  it("a request whose role has only unverified cards is not planned, and the unverified tools are named for the admin (a people request: the people search has no verified card)", () => {
+    const r = compileB2BPlan(buildB2BAsk("هات ١٥ مدير تسويق في مصر مع الإيميل والموبايل")!);
     expect(r.ok).toBe(false);
-    if (!r.ok) { expect(r.reason).toBe("no_verified_card"); expect(r.unverified.length).toBeGreaterThan(0); }
+    if (!r.ok) { expect(r.reason).toBe("no_verified_card"); expect(r.role).toBe("people.search"); expect(r.unverified.length).toBeGreaterThan(0); }
+  });
+  it("with no card at all, the first role is the one named", () => {
+    const r = compileB2BPlan(buildB2BAsk(LIVE_7539)!, { cards: [] });
+    expect(r.ok === false && r.reason === "no_verified_card" && r.role === "companies.search").toBe(true);
   });
 });
 
@@ -43,10 +47,11 @@ describe("the column plan (test switch: unverified cards allowed, never on a cus
     for (const c of [...plan.columns.company, ...(plan.columns.person ?? [])]) expect(checkCustomerLabel(c.titleAr).issues, c.titleAr).toEqual([]);
   });
   it("the chain of each contact column: every relevant tool, cheapest first, the search's own field before a lookup", () => {
-    expect(plan.chains.hq_phone).toEqual(["tomba.companies.search.reveal", "crawl4ai.google.serp.maps", "anyapi.google.serp.maps"]);
+    // the companies tool gives no HQ phone (its `phone_number` is a boolean flag on the real pages), so the chain is the maps lookups only
+    expect(plan.chains.hq_phone).toEqual(["crawl4ai.google.serp.maps", "anyapi.google.serp.maps"]);
     expect(plan.peopleCard).toBe("blitzapi.people.employee-finder");
-    expect(plan.chains.email).toEqual(["treg.people.email.find", "tomba.people.email.find", "hunter.people.email.find"]);
-    expect(plan.chains.mobile).toEqual(["treg.people.phone.find", "aiark.people.phone.find", "tomba.people.phone.find"]);
+    expect(plan.chains.email).toEqual(["blitzapi.people.email.find", "treg.people.email.find", "tomba.people.email.find", "hunter.people.email.find"]);
+    expect(plan.chains.mobile).toEqual(["blitzapi.people.phone.find", "treg.people.phone.find", "aiark.people.phone.find", "tomba.people.phone.find"]);
     expect(plan.chains.general_email).toEqual(["tomba.companies.emails.list"]);
   });
   it("the companies tool is the one that carries the most conditions of the Ask, then the cheapest", () => {
@@ -58,10 +63,10 @@ describe("a condition no chosen tool carries becomes a MARK column, never a filt
   const ask = buildB2BAsk("هات ٢٠ شركة برمجيات في الإمارات عدد موظفيها أكثر من ٥٠ وتأسست بعد ٢٠١٥")!;
   const plan = compileB2BPlan(ask, { allowUnverified: true });
   if (!plan.ok) throw new Error(plan.reason);
-  it("tomba carries the size; the founding year is a mark column before the notes", () => {
+  it("no chosen tool is shown to carry a size or a founding year (the real tomba pages echo only a country and an industry filter), so both are mark columns before the notes", () => {
     expect(plan.companiesCard).toBe("tomba.companies.search.reveal");
-    expect(plan.marks.map((m) => m.titleAr)).toEqual(["تأسست بعد ٢٠١٥"]);
-    expect(plan.columns.company.map((c) => c.titleAr).slice(-2)).toEqual(["تأسست بعد ٢٠١٥", "ملاحظات"]);
+    expect(plan.marks.map((m) => m.titleAr)).toEqual(["عدد الموظفين أكثر من ٥٠", "تأسست بعد ٢٠١٥"]);
+    expect(plan.columns.company.map((c) => c.titleAr).slice(-3)).toEqual(["عدد الموظفين أكثر من ٥٠", "تأسست بعد ٢٠١٥", "ملاحظات"]);
   });
   it("the mark says «نعم», «لا» or «غير معروف» from the row's own value; no row is removed", () => {
     const m = plan.marks[0];

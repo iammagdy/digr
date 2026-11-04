@@ -4,9 +4,9 @@ import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { B2B_CARDS, UNVERIFIED_B2B_CARDS, b2bCardsFor, checkB2BCardOnPage, readB2BRows, type B2BCard } from "../src/lib/agentMission/stage3/b2bCards";
 
 /**
- * STAGE 3 (docs/STAGE-3.md), THE B2B TOOL CARDS: one data record per companies / people / contact tool of the catalog. A card is VERIFIED only on a stored real page in the repo; there is
- * none for a B2B tool yet (the 36 stored missions of tests/fixtures/live are social), so every card is «unverified» and no customer path may use one. The verifier itself is tested on
- * pages built here from the card's own paths, with clearly fake values (never a real company or person).
+ * STAGE 3 (docs/STAGE-3.md), THE B2B TOOL CARDS: one data record per companies / people / contact tool of the catalog. A card is VERIFIED only on a stored real page in the repo: since S1
+ * the six tools of the two real company missions are verified (tests/stage3-b2b-real-pages.test.ts), every other card is «unverified» and no customer path may use one. The verifier
+ * itself is tested on pages built here from the card's own paths, with clearly fake values (never a real company or person).
  */
 const catalog = loadTregCatalog();
 
@@ -19,13 +19,13 @@ describe("every card is honest about its source", () => {
       if (c.page.list && e!.list_path && !/NOT FOUND/.test(e!.list_path)) expect(c.page.list.join("."), c.endpointId).toBe(e!.list_path === "root" ? "" : e!.list_path);
     }
   });
-  it("no stored real B2B page exists in the repo, so every card is unverified with nothing in `verifiedOn`", () => {
-    // not a count of stored missions (main adds social ones): no CALL of the stored missions' call index is a B2B tool of the cards
+  it("a card is verified only with pages listed in `verifiedOn`, and an unverified one lists none; no social mission's stored call is a B2B tool of the cards", () => {
+    // not a count of stored missions (main adds social ones): the SOCIAL missions' call index never calls a B2B tool of the cards
     const index = JSON.parse(readFileSync(new URL("./fixtures/live/call-index.json", import.meta.url), "utf8")) as { missions: Record<string, Array<[string, string, string, ...unknown[]]>> };
     const called = new Set(Object.values(index.missions).flat().map((c) => c[2]));
     for (const c of B2B_CARDS) expect(called.has(c.endpointId), c.endpointId).toBe(false);
-    for (const c of B2B_CARDS) { expect(c.status, c.endpointId).toBe("unverified"); expect(c.verifiedOn).toEqual([]); }
-    expect([...UNVERIFIED_B2B_CARDS].sort()).toEqual(B2B_CARDS.map((c) => c.endpointId).sort());
+    for (const c of B2B_CARDS) { if (c.status === "verified") expect(c.verifiedOn.length, c.endpointId).toBeGreaterThan(0); else expect(c.verifiedOn, c.endpointId).toEqual([]); }
+    expect([...UNVERIFIED_B2B_CARDS].sort()).toEqual(B2B_CARDS.filter((c) => c.status === "unverified").map((c) => c.endpointId).sort());
   });
   it("a card can only say «verified» with the stored pages it was verified on (the type check of the list)", () => {
     for (const c of B2B_CARDS) if (c.status === "verified") expect(c.verifiedOn.length).toBeGreaterThan(0);
@@ -37,11 +37,12 @@ describe("every card is honest about its source", () => {
 });
 
 describe("customer paths never get an unverified card", () => {
-  it("by default no role returns a card; only an explicit test switch returns the unverified ones", () => {
+  it("by default a role returns only verified cards (the roles with none return nothing); only an explicit test switch adds the unverified ones", () => {
     for (const role of ["companies.search", "company.people", "people.search", "person.email", "person.phone", "company.emails", "company.phone"] as const) {
-      expect(b2bCardsFor(role)).toEqual([]);
-      expect(b2bCardsFor(role, { allowUnverified: true }).length).toBeGreaterThan(0);
+      for (const c of b2bCardsFor(role)) expect(c.status, c.endpointId).toBe("verified");
+      expect(b2bCardsFor(role, { allowUnverified: true }).length, role).toBeGreaterThan(b2bCardsFor(role).length === 0 ? 0 : b2bCardsFor(role).length - 1);
     }
+    for (const role of ["people.search", "company.emails"] as const) { expect(b2bCardsFor(role)).toEqual([]); expect(b2bCardsFor(role, { allowUnverified: true }).length).toBeGreaterThan(0); }
   });
   it("a broken card is never returned, even with the test switch", () => {
     const broken: B2BCard = { ...B2B_CARDS[0], endpointId: "x.broken", status: "broken" };
