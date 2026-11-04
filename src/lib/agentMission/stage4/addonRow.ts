@@ -42,7 +42,7 @@ export interface AddonRowStore {
   /** Every add-on row (any status) of this delivered mission. */
   listFor(missionId: string): Promise<ReadonlyArray<AddonRowLike>>;
   /** Insert one row. `duplicate: true` = the id already exists (another click got there first). */
-  insert(row: AddonRowInsert): Promise<{ ok: true } | { ok: false; duplicate: boolean }>;
+  insert(row: AddonRowInsert): Promise<{ ok: true } | { ok: false; duplicate: boolean; /** Which unique constraint refused (only with `duplicate: true`): the primary key (the same request again), the one-open-add-on-per-file index (a DIFFERENT request is open), or one nobody here knows. */ by?: "same_id" | "other_open" | "unknown" }>;
   /**
    * Cancel an UNPAID add-on row: ONE compare-and-set that matches only a row that is still `plan_ready`, has no job and was NEVER put through an approval (`approved_at` empty): nothing was held, and nothing may have been. `true` = this call cancelled it; `false` = it matched
    * nothing (the row is gone, or no longer waiting, or it has been approved at least once). It never touches a started row and calls no refund or settlement function.
