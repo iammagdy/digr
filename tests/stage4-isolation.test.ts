@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 /**
  * STAGE 4 (docs/STAGE-4.md): nothing in this branch changes what a customer sees while the flags are off. Proof by the import graph: no production file outside the Stage 4 folders imports
- * a Stage 4 module, so no customer path can reach it until the wiring (docs/STAGE-4.md, «Left for Sonnet») is added behind `DIGER_STAGE4_*`.
+ * a Stage 4 module EXCEPT the wiring files listed here, each of which reads its flag first (docs/STAGE-4.md section 8). A new importer is a failure until it is listed, reviewed and tested flags-off.
  */
 const ROOT = path.resolve(__dirname, "..");
 function files(dir: string): string[] {
@@ -18,10 +18,13 @@ function files(dir: string): string[] {
   return out;
 }
 
-describe("Stage 4 modules are reached by tests only", () => {
-  it("no file of src/ or agent/src/ outside the stage4 folders imports a stage4 module", () => {
+/** The wiring, each behind DIGER_STAGE4_VERSIONS (S1: the worker's version 1; S2: the list route and its page). */
+const WIRING = ["agent/src/runMission.ts"];
+
+describe("Stage 4 modules are reached by the listed wiring only", () => {
+  it("no file of src/ or agent/src/ outside the stage4 folders imports a stage4 module, except the wiring", () => {
     const prod = [...files(path.join(ROOT, "src")), ...files(path.join(ROOT, "agent", "src"))].filter((f) => !f.includes(`${path.sep}stage4${path.sep}`));
     const importers = prod.filter((f) => /from\s+["'][^"']*\/stage4\/[^"']+["']|import\(\s*["'][^"']*\/stage4\//.test(readFileSync(f, "utf8")));
-    expect(importers.map((f) => path.relative(ROOT, f))).toEqual([]);
+    expect(importers.map((f) => path.relative(ROOT, f).split(path.sep).join("/")).sort()).toEqual([...WIRING].sort());
   });
 });
