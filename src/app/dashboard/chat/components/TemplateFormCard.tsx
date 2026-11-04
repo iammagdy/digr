@@ -55,7 +55,7 @@ export default function TemplateFormCard({ form, onSend, onClose, disabled = fal
         })}
       </div>
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <button type="submit" disabled={disabled || sending} data-testid="template-form-send" className="inline-flex min-h-12 w-full cursor-pointer items-center justify-center rounded-full border-0 bg-ac px-6 text-[15px] font-semibold text-onac disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:min-w-[160px]">أرسل</button>
+        <button type="submit" disabled={disabled || sending} data-testid="template-form-send" className="inline-flex min-h-12 w-full cursor-pointer items-center justify-center rounded-full border-0 bg-ac px-6 text-[15px] font-semibold text-onac disabled:cursor-not-allowed disabled:opacity-50 sm:w-auto sm:min-w-[160px]">{sending || disabled ? "جارٍ الإرسال…" : "أرسل"}</button>
         <p className="m-0 text-[12px] font-light leading-[1.8] text-mut">لن يُخصم شيء قبل أن تراجع الخطة والسعر وتعتمد.</p>
       </div>
     </form>
