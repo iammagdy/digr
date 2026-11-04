@@ -52,6 +52,15 @@ export interface ContactDeps {
   requestText?: string;
   shouldStop?: () => string | null;
   log?: (line: string) => void;
+  /**
+   * STAGE 3, PART B (docs/STAGE-3.md S4): `record` is told of every lookup of a step's chain, per row and column (value, empty, failed, refused: the call was not made, not_tried: the step's own cap);
+   * `cellFor` gives the cell of a company column that got no value by the fallthrough (stage3/b2bEngine.ts: «غير متوفر» only after every tool of the chain answered with nothing, else «لم يكتمل البحث»).
+   * Passed by runMission.ts only when DIGER_STAGE3_COMPANIES is on for the account; absent, nothing is recorded and every step does exactly what it did.
+   */
+  attempts?: {
+    record: (a: { stage: string; row: string; column: string; endpointId: string; outcome: "value" | "empty" | "failed" | "refused" | "not_tried"; value?: string }) => void;
+    cellFor: (stage: string, row: string, column: string, chain: ReadonlyArray<string>) => string;
+  };
 }
 
 const EPS = 1e-9;
@@ -182,16 +191,18 @@ async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: Conta
           if (value === "") value = companyMailboxIn({ emails: fromPeople.get(id) ?? [] }, domain) ?? "";
           let asked = false;
           if (value === "" && domain) {
+            const note = (endpointId: string, outcome: "value" | "empty" | "failed" | "refused" | "not_tried", v?: string) => deps.attempts?.record({ stage: stageKey, row: id, column: emailStep.column_key, endpointId, outcome, ...(v !== undefined ? { value: v } : {}) });
             for (const finder of emailStep.finders) {
               if ((emailApi.down.get(finder.id) ?? 0) >= 2) continue;
               const params = finderParamsFor(finder, facts);
               if (!params) continue;
               const a = await emailApi.attempt(finder, params);
-              if (a.t === "stop") { stopped = a.stop; break; }
-              if (a.t === "skip") continue;
-              if (a.t === "failed") continue;
+              if (a.t === "stop") { note(finder.id, "refused"); stopped = a.stop; break; }
+              if (a.t === "skip") { note(finder.id, "not_tried"); continue; }
+              if (a.t === "failed") { note(finder.id, "failed"); continue; }
               asked = true;
               value = companyMailboxIn(a.page, domain) ?? "";
+              note(finder.id, value !== "" ? "value" : "empty", value !== "" ? value : undefined);
               if (value !== "") break;
             }
           }
@@ -204,6 +215,10 @@ async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: Conta
             cells[emailStep.status_key] = emailStatusAr(verdict.status);
             emailFound += 1;
             if (verdict.stop) stopped = verdict.stop;
+          } else if (deps.attempts) {
+            // STAGE 3 PART B: «غير متوفر» only when every lister of the chain answered with nothing, else «لم يكتمل البحث»
+            cells[emailStep.column_key] = deps.attempts.cellFor(stageKey, id, emailStep.column_key, emailStep.finders.map((f) => f.id));
+            if (cells[emailStep.column_key] === NOT_AVAILABLE_AR) out.companies.notAvailable += 1;
           } else if (asked || !domain || emailStep.finders.length === 0) { cells[emailStep.column_key] = NOT_AVAILABLE_AR; out.companies.notAvailable += 1; }
         }
       }
@@ -221,11 +236,13 @@ async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: Conta
             const params = mapsParamsFor(helper, { name, city: cityText, country });
             if (!params) return false;
             const a = await phoneApi.attempt(helper, params);
-            if (a.t === "stop") { stopped = a.stop; return false; }
-            if (a.t === "skip" || a.t === "failed") return false;
+            const note = (outcome: "value" | "empty" | "failed" | "refused" | "not_tried", v?: string) => deps.attempts?.record({ stage: stageKey, row: id, column: phoneStep.column_key, endpointId: helper.id, outcome, ...(v !== undefined ? { value: v } : {}) });
+            if (a.t === "stop") { note("refused"); stopped = a.stop; return false; }
+            if (a.t === "skip" || a.t === "failed") { note(a.t === "skip" ? "not_tried" : "failed"); return false; }
             asked = true;
             const found = placePhoneIn(a.page, identity);
-            if (found) { value = verifyContactValue("phone", found) ?? found.trim(); return true; }
+            if (found) { value = verifyContactValue("phone", found) ?? found.trim(); note("value", value); return true; }
+            note("empty");
             return false;
           };
           const helpers = phoneStep.company_phone ?? [];
@@ -240,7 +257,10 @@ async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: Conta
             if (first) await lookup(first, identity.domain);
           }
           if (value !== "") { cells[phoneStep.column_key] = value; phoneFound += 1; }
-          else if (!stopped && (asked || (phoneStep.company_phone ?? []).length === 0)) { cells[phoneStep.column_key] = NOT_AVAILABLE_AR; out.companies.notAvailable += 1; }
+          else if (deps.attempts) {
+            // STAGE 3 PART B: the same rule over the map searches; a step stopped here leaves the cell to the pass after the steps
+            if (!stopped) { cells[phoneStep.column_key] = deps.attempts.cellFor(stageKey, id, phoneStep.column_key, helpers.map((h) => h.id)); if (cells[phoneStep.column_key] === NOT_AVAILABLE_AR) out.companies.notAvailable += 1; }
+          } else if (!stopped && (asked || (phoneStep.company_phone ?? []).length === 0)) { cells[phoneStep.column_key] = NOT_AVAILABLE_AR; out.companies.notAvailable += 1; }
         }
       }
       if (Object.keys(cells).length > 0) pending.push({ t: "cells", stage: stageKey, id, cells });
@@ -375,15 +395,17 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
       let statusAr: string | null = null;
       let hit: FoundContact | null = null;
       if (value === "") {
+        const note = (endpointId: string, outcome: "value" | "empty" | "failed" | "refused" | "not_tried", v?: string) => deps.attempts?.record({ stage: step.stage_key, row: String(row.id), column: step.column_key, endpointId, outcome, ...(v !== undefined ? { value: v } : {}) });
         for (const finder of step.finders) {
           const params = finderParamsFor(finder, facts);
           if (!params) continue;
           const a = await attempt(finder, params);
-          if (a.t === "stop") { stopRun = a.stop; break; }
-          if (a.t === "skip") continue;
+          if (a.t === "stop") { note(finder.id, "refused"); stopRun = a.stop; break; }
+          if (a.t === "skip") { note(finder.id, "not_tried"); continue; }
           asked = true;
-          if (a.t === "failed") continue; // the next ranked finder is tried
+          if (a.t === "failed") { note(finder.id, "failed"); continue; } // the next ranked finder is tried
           hit = foundContactIn(step.kind, a.page);
+          note(finder.id, hit ? "value" : "empty", hit ? hit.value : undefined);
           if (!hit) continue;
           value = hit.value;
           if (step.kind === "phone") typeAr = PHONE_TYPE_PERSONAL_AR;

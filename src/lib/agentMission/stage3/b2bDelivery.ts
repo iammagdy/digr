@@ -5,7 +5,7 @@ import { fillColumn, gapLineAr, markCellAr, removeExactDuplicates, type Attempt,
 /**
  * STAGE 3 S2 and S4 (docs/STAGE-3.md): THE B2B DELIVERY, pure. From the compiled B2B plan, the company rows and what each lookup answered per row (`Attempt`), it writes:
  *   - the CONTACT CELLS of the company sheet (the general e-mail and the HQ phone) by the fallthrough: the value of the first tool of the chain that gave one; «غير متوفر» only after EVERY tool of
- *     the chain was tried (answered empty or failed); «لم يكتمل البحث» when a call was refused or the chain has no verified tool (a search that did not run is never a negative answer);
+ *     the chain answered with nothing; «لم يكتمل البحث» when a call failed or was refused or the chain has no verified tool (a search that did not run is never a negative answer);
  *   - the MARK COLUMNS (a condition no chosen tool carries): «نعم» / «لا» / «غير معروف» from the row's own value;
  *   - the removal of EXACT duplicates only (every value identical; a near copy stays);
  *   - the lines for the file's «حدود هذا التسليم»: the duplicates, each column's gap, each mark.

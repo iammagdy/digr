@@ -149,14 +149,17 @@ export function removeExactDuplicates<R extends Record<string, unknown>>(rows: R
 
 // ------------------------------------------------------------------------------------------------ the fallthrough
 
-/** One tool's answer for one row's contact column. `refused`: the call was not made (the daily cap, the budget, the time limit): not a try. */
-export type Attempt = { endpointId: string; outcome: "value"; value: string } | { endpointId: string; outcome: "empty" | "failed" | "refused" };
+/**
+ * One tool's answer for one row's contact column. Only `empty` (the tool ANSWERED and had nothing) is a try that can end in «غير متوفر». `failed` (the source was down or the call broke), `refused`
+ * (the call was not made: the daily cap, the job budget, the time limit) and `not_tried` (the step's own cap, nothing to ask with) are not: the cell is then «لم يكتمل البحث» (Part B).
+ */
+export type Attempt = { endpointId: string; outcome: "value"; value: string } | { endpointId: string; outcome: "empty" | "failed" | "refused" | "not_tried" };
 export type FieldResolution = { kind: "value"; value: string; by: string } | { kind: "unavailable"; tried: string[] } | { kind: "incomplete"; missing: string[] };
 
-/** The cell of one row: the value of the earliest tool of the chain that gave one; «غير متوفر» only when every tool was tried (answered empty or failed); else incomplete. */
+/** The cell of one row: the value of the earliest tool of the chain that gave one; «غير متوفر» only when every tool was tried (ANSWERED with nothing); else incomplete. */
 export function resolveField(chain: ReadonlyArray<string>, attempts: ReadonlyArray<Attempt>): FieldResolution {
   for (const id of chain) { const a = attempts.find((x) => x.endpointId === id && x.outcome === "value"); if (a && a.outcome === "value" && a.value.trim() !== "") return { kind: "value", value: a.value.trim(), by: id }; }
-  const tried = (id: string): boolean => attempts.some((x) => x.endpointId === id && (x.outcome === "empty" || x.outcome === "failed"));
+  const tried = (id: string): boolean => attempts.some((x) => x.endpointId === id && x.outcome === "empty");
   const missing = chain.filter((id) => !tried(id));
   return chain.length > 0 && missing.length === 0 ? { kind: "unavailable", tried: [...chain] } : { kind: "incomplete", missing };
 }

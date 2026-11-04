@@ -93,7 +93,7 @@ describe("in the file", () => {
     expect(body).toHaveLength(6);
     expect(head).toContain("عدد الموظفين أكثر من ٥٠");
     expect(body.map((r) => r[head.indexOf("عدد الموظفين أكثر من ٥٠")])).toEqual(["نعم", "لا", "غير معروف", "نعم", "غير معروف", "لا"]);
-    expect(body.map((r) => r[head.indexOf("هاتف المقر الرئيسي")])).toEqual(["+20 2 0000 0001", NOT_AVAILABLE_AR, NOT_AVAILABLE_AR, B2B_NOT_SEARCHED_AR, "+20 2 0000 0005", NOT_AVAILABLE_AR]);
+    expect(body.map((r) => r[head.indexOf("هاتف المقر الرئيسي")])).toEqual(["+20 2 0000 0001", NOT_AVAILABLE_AR, B2B_NOT_SEARCHED_AR, B2B_NOT_SEARCHED_AR, "+20 2 0000 0005", NOT_AVAILABLE_AR]);
   });
   it("without the option the file is exactly what it was (the summary has none of the lines)", async () => {
     const without = await buildMissionFiles(filePlan as never, { companies: d.rows });

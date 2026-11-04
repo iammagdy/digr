@@ -40,6 +40,7 @@ import { sealFinalPrice } from "../../src/lib/agentMission/finalPrice";
 import { accountIsTest, anyRedesignFlag, fallbackStageOf, redesignStagesOf } from "./redesign";
 import { compiledPlatformActive, planByCompiler } from "./compiled";
 import { planCompaniesByCodeIfOn } from "../../src/lib/agentMission/stage3/b2bPlanning";
+import { b2bContactCells, b2bEngineOn, b2bFlagSet, b2bLimitLines, createAttemptLog } from "../../src/lib/agentMission/stage3/b2bEngine";
 import { isSocialPlatform } from "../../src/lib/agentMission/redesignFlagTypes";
 import { modelPlanningForTests } from "../../src/lib/agentMission/testSeam";
 import { SOCIAL_NOT_OFFERED_AR } from "../../src/lib/agentMission/foundation/namedShortfall";
@@ -578,11 +579,20 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   if (endedByRestart(output) && !state.finish && await requeue(deps, mission, "approved", { execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(budget.spentUsd().toFixed(6)) }, "restart")) return;
 
   // THE CONTACT FINDER STEPS (plan.contact_steps, contactFinders.ts): every delivered person is looked up for the e-mail and phone cells, within the job's call budget and the step's priced amount. It fills CELLS of persons already stored: no row is added, so the settlement below counts what it always counted.
+  // STAGE 3, PART B (docs/STAGE-3.md S4): only when DIGER_STAGE3_COMPANIES is on for the account, every lookup is recorded per row and column and the contact cells follow the fallthrough (b2bEngine.ts); off (unset: always), null and nothing changes
+  const b2bAttempts = b2bEngineOn(redesignIsTest) ? createAttemptLog() : null;
   if (plan.contact_steps && plan.contact_steps.length > 0 && output.stop === "end" && !output.error) {
     try {
-      const enrichment = await runContactEnrichment({ items, store, plan, missionId: mission.id, requestText: mission.request_text, gateway, addEvent: (e) => store.addEvent(mission.id, e), budget, deadlineMs: Math.max(deadlineMs, Date.now() + CONTACT_STEP_MIN_WALL_MS), log: deps.log });
+      const enrichment = await runContactEnrichment({ items, store, plan, missionId: mission.id, requestText: mission.request_text, gateway, addEvent: (e) => store.addEvent(mission.id, e), budget, deadlineMs: Math.max(deadlineMs, Date.now() + CONTACT_STEP_MIN_WALL_MS), log: deps.log, ...(b2bAttempts ? { attempts: b2bAttempts } : {}) });
       deps.log?.(`contact_steps ${mission.id} email=${enrichment.filled.email} phone=${enrichment.filled.phone} unverified=${enrichment.filled.unverified} looked=${enrichment.looked} skipped=${enrichment.skipped} spent=${enrichment.spentUsd.toFixed(6)} stopped=${enrichment.stopped ?? "no"}`);
     } catch (e) { deps.log?.(`contact_steps_failed ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 120)}`); /* a lookup that breaks never stops the settlement: the people are delivered with the cells as they are */ }
+  }
+  // STAGE 3, PART B: every contact cell still without a value gets «غير متوفر» (every tool of its chain answered with nothing) or «لم يكتمل البحث» (refused, failed, not tried). CELLS only: no row is added or removed
+  if (b2bAttempts) {
+    try {
+      const ops = b2bContactCells(plan, Object.fromEntries(plan.stages.map((s) => [s.key, items.acceptedRows(s.key)])), b2bAttempts);
+      if (ops.length > 0) { await items.commit(ops); for (const k of new Set(ops.map((o) => o.stage))) await items.mirror(k); }
+    } catch (e) { deps.log?.(`b2b_cells_failed ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 120)}`); /* the cells stay as the steps left them */ }
   }
 
   // THE ARABIC SPELLING OF THE DECISION MAKERS' NAMES (namesAr.ts, owner decision 3 of audit 2026-11): ONE small batched request for the whole mission, after the people are final. It fills a cell of each person's row (`name_ar`), decides no row, no count and no money; a failed or unusable answer leaves the English names.
@@ -651,7 +661,9 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   let parentFixedRows = 0;
   if (builtCount > 0) {
     try {
-      const built = await buildMissionFiles(plan, rowsByStage, missionFactsOf({ requestText: mission.request_text, plan, snap, reviewStop: checked.stop }), companyMailboxesOf(plan, snap), { ...(hadOpenReplies ? { repliesJudged: true } : {}), approvedPlan });
+      // STAGE 3, PART B: each contact column's gap, read from the cells of these very rows, joins «حدود هذا التسليم» only when DIGER_STAGE3_COMPANIES is on for the account (unset: no line, the file as it was)
+      const b2bLines = b2bFlagSet() && b2bEngineOn(await accountIsTest(store, mission.user_id)) ? b2bLimitLines(plan, rowsByStage) : [];
+      const built = await buildMissionFiles(plan, rowsByStage, missionFactsOf({ requestText: mission.request_text, plan, snap, reviewStop: checked.stop }), companyMailboxesOf(plan, snap), { ...(hadOpenReplies ? { repliesJudged: true } : {}), approvedPlan, ...(b2bLines.length > 0 ? { extraLimitLines: b2bLines } : {}) });
       // THE DELIVERY CONTRACT (round 14): what it found is recorded for the admin; the file only had its DESCRIPTION completed (a limits line, a precision cell, a mark cell), never a row or a value
       if (built.contract.violations.length > 0) {
         const by = (rule: string) => built.contract.violations.filter((v) => v.rule === rule).length;
