@@ -209,8 +209,8 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
               {v.questionOptionsAr.map((o) => <button key={o} type="button" className={BTN_PLAIN} disabled={busy} onClick={() => onAct("answer", o)}>{busy && pendingAction === "answer" && pendingText === o ? "جارٍ الإرسال…" : o}</button>)}
             </div>
           ) : null}
-          <input value={reply} onChange={(e) => onReply(e.target.value)} className="min-h-11 rounded-xl border border-ln2 bg-bg px-3 text-sm text-ink" aria-label="أو اكتب إجابتك" />
-          <div><button type="button" className={BTN_PRIMARY} disabled={busy || !reply.trim()} onClick={() => onAct("answer", reply)}>{busy && pendingAction === "answer" ? "جارٍ الإرسال…" : "أرسل إجابتك"}</button></div>
+          <input value={reply} onChange={(e) => onReply(e.target.value)} disabled={busy} className="min-h-11 rounded-xl border border-ln2 bg-bg px-3 text-sm text-ink disabled:opacity-60" aria-label="أو اكتب إجابتك" />
+          <div><button type="button" className={BTN_PRIMARY} disabled={busy || !reply.trim()} onClick={() => onAct("answer", reply)}>{busy && pendingAction === "answer" && pendingText === reply ? "جارٍ الإرسال…" : "أرسل إجابتك"}</button></div>
         </div>
       ) : null}
 
@@ -254,7 +254,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
             {byBalance || v.limit.smaller ? <button type="button" className={`${BTN_PRIMARY} inline-flex min-h-12 w-full items-center justify-center text-[15px] font-semibold sm:w-auto sm:min-w-[200px]`} disabled={busy} onClick={() => onAct("smaller")} data-testid="agent-smaller">{pendingAction === "smaller" ? "جاري التجهيز…" : "جهّز نسخة أصغر"}</button> : null}
             <button type="button" className={`${BTN_PLAIN} w-full sm:w-auto`} disabled={busy} onClick={() => (v.edit ? onEditing(!editing) : onAct("edit"))} data-testid="agent-edit" aria-expanded={v.edit ? editing : undefined}>{pendingAction === "edit" ? "جارٍ التجهيز…" : "عدّل الطلب"}</button>
-            <button type="button" className={`${BTN_PLAIN} w-full sm:w-auto`} disabled={busy} onClick={() => onAct("cancel")} data-testid="agent-cancel">ألغِ المهمة</button>
+            <button type="button" className={`${BTN_PLAIN} w-full sm:w-auto`} disabled={busy} onClick={() => onAct("cancel")} data-testid="agent-cancel">{pendingAction === "cancel" ? "جارٍ الإلغاء…" : "ألغِ المهمة"}</button>
           </div>
         </div>
       ) : null}

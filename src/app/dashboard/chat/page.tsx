@@ -58,6 +58,7 @@ import { customerFacingConversationTitle } from "@/lib/customerFacingConversatio
 import { buildChatTimeline } from "@/lib/chatTimeline";
 import { type TerminalEvent as JobEvent } from "./components/ActivityTerminal";
 import RunningIndicator from "./components/RunningIndicator";
+import TypingIndicator from "./components/TypingIndicator";
 import AgentMissionCard from "@/components/mission/AgentMissionCard";
 import ResultsCanvas, { ExtractedRecord } from "./components/ResultsCanvas";
 import EmptyChat from "./components/EmptyChat";
@@ -1962,6 +1963,7 @@ export default function ChatWorkspacePage() {
       onSaveEdit={(q, limit, param, formats, country, industry, cap) => handleSaveDirectEdit(q, limit, param, formats, country, industry, undefined, cap)}
       onAcceptDownscaled={(units) => handleSendMessage(`أوافق على الخطة المخفضة حتى ${countPlainAr(units, "records")} تناسب رصيدي المتاح`)}
       isStarting={startingQuoteId === quote.quoteId}
+      sending={loading}
       available={balanceValue}
       creditValue={creditValue}
       onTopupShort={handleTopupShort}
@@ -2185,9 +2187,7 @@ export default function ChatWorkspacePage() {
               {chatTimeline.map((item) => renderNote(item as MessageItem))}
               {loading && (
                 <div className="mt-4 flex flex-wrap items-center gap-3">
-                  <p role="status" className="m-0 text-[15px] font-light text-mut" style={{ animation: "breathe 1.4s infinite" }}>
-                    {loadingStatusText}
-                  </p>
+                  <TypingIndicator textAr={loadingStatusText} />
                   {canStopWaiting && (
                     <button type="button" data-testid="stop-waiting" onClick={() => turnAbort.current?.abort()} className="min-h-11 cursor-pointer rounded-full border border-ln bg-transparent px-4 text-[13px] text-ink">إيقاف الانتظار</button>
                   )}
