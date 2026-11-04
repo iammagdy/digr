@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 /**
@@ -6,7 +6,9 @@ import { dirname, join, resolve } from "node:path";
  * passing), under `tests/.mutants/`, with its relative imports pointed at the original sources (or at another mutant, through `rewire`). The copies are deleted after the run. Nothing here is imported by production code.
  */
 const ROOT = resolve(process.cwd());
-const DIR = join(ROOT, "tests", ".mutants");
+// one directory per test file (process and random suffix): test files run in parallel, so they must never share a name or delete each other's copies
+const PARENT = join(ROOT, "tests", ".mutants");
+const DIR = join(PARENT, `${process.pid}-${Math.random().toString(36).slice(2, 10)}`);
 let counter = 0;
 
 export interface Mutation { from: string; to: string }
@@ -30,4 +32,7 @@ export async function loadMutant<T = any>(file: string, edits: ReadonlyArray<Mut
   writeFileSync(path, text);
   return { module: (await import(/* @vite-ignore */ path)) as T, path };
 }
-export const cleanMutants = (): void => { rmSync(DIR, { recursive: true, force: true }); };
+export const cleanMutants = (): void => {
+  rmSync(DIR, { recursive: true, force: true });
+  try { if (readdirSync(PARENT).length === 0) rmSync(PARENT, { recursive: true, force: true }); } catch { /* another file still has copies, or the folder is gone */ }
+};
