@@ -19,7 +19,7 @@ function files(dir: string): string[] {
 }
 
 /** The wiring, each behind DIGER_STAGE4_VERSIONS (S1: the worker's version 1; S2: the list route and its page). */
-const WIRING = ["agent/src/runMission.ts"];
+const WIRING = ["agent/src/runMission.ts", "src/app/api/missions/[id]/versions/route.ts", "src/components/mission/VersionList.tsx"];
 
 describe("Stage 4 modules are reached by the listed wiring only", () => {
   it("no file of src/ or agent/src/ outside the stage4 folders imports a stage4 module, except the wiring", () => {

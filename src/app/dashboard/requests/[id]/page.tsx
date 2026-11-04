@@ -12,6 +12,7 @@ import { REQUEST_STATUS_LABEL_AR, resolveRequestKind } from "@/lib/jobs/requestS
 import { isSafeRequestId, readRequestFacts, type RequestFacts } from "@/lib/requests/facts";
 import { openJobHref } from "@/lib/requestLinks";
 import AgentMissionCard from "@/components/mission/AgentMissionCard";
+import VersionList from "@/components/mission/VersionList";
 import { Skeleton } from "@/components/ui";
 
 /**
@@ -110,6 +111,8 @@ export default function RequestDetailsPage({ params }: { params: Promise<{ id: s
         {/* THE HEAVY PART, after the facts: the mission's own card (steps, result lines, files); a skeleton while the two reads are on their way */}
         {read === "loading" ? <div data-testid="details-skeleton" role="status" aria-label="جاري تحميل تفاصيل الطلب" className="flex flex-col gap-2"><Skeleton className="h-24 w-full" /><Skeleton className="h-16 w-full" /></div> : null}
         {read === "done" && missionId ? <AgentMissionCard missionId={missionId} /> : null}
+        {/* STAGE 4, S2 (behind DIGER_STAGE4_VERSIONS): the file's versions, only on this page, only for a delivered mission; it draws nothing while the route answers «not found» */}
+        {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <VersionList missionId={missionId} /> : null}
         {read === "done" && !missionId ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="details-no-mission">هذا طلب من النوع القديم: ملفاته في «طلباتي» ونتيجته في المحادثة.</p> : null}
 
         {read === "done" ? (
