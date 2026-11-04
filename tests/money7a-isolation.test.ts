@@ -88,12 +88,14 @@ const REQUEST = ["src/lib/agentMission/stage4/reviewRequest.ts", "src/lib/agentM
  * and nothing else (checked below and by tests/stage4-edit-request.test.ts), and they reach no worker, gateway or provider. Nothing else may reach them.
  */
 const EDIT_REQUEST = ["src/lib/agentMission/stage4/editRequest.ts", "src/app/api/missions/[id]/edit-request/route.ts"];
+/** STAGE C: the file WORKFLOW status reads add-on rows with the money core's pure `readAddonPlan` only to tell kind and version; read-only (checked below and by tests/stage4-file-workflow.test.ts). */
+const WORKFLOW = ["src/lib/agentMission/stage4/fileWorkflow.ts", "src/app/api/missions/[id]/workflow/route.ts"];
 const abs = (r: string) => path.join(ROOT, r);
 
 describe("the new modules exist and nothing in production reaches them", () => {
   it("every file is there", () => { for (const r of NEW) expect(existsSync(abs(r))).toBe(true); });
   for (const r of NEW) it(`${r}: only the new modules, the worker's entry point (through the dispatch) and tests reach it`, () => {
-    const who = [...reachers(abs(r))].map(rel).filter((f) => !NEW.includes(f) && !ENTRY.includes(f) && !SIBLINGS.includes(f) && !PREVIEW.includes(f) && !REQUEST.includes(f) && !EDIT_REQUEST.includes(f));
+    const who = [...reachers(abs(r))].map(rel).filter((f) => !NEW.includes(f) && !ENTRY.includes(f) && !SIBLINGS.includes(f) && !PREVIEW.includes(f) && !REQUEST.includes(f) && !EDIT_REQUEST.includes(f) && !WORKFLOW.includes(f));
     expect(who).toEqual([]);
   });
   it("agent/src/main.ts imports exactly one new module: the dispatch", () => {
@@ -213,6 +215,23 @@ describe("STAGE B: the edit request writes one unpaid row and cancels it by comp
     expect(src).not.toMatch(/\.(rpc|upload|remove|createSignedUrl|upsert|delete|insert|update)\(/);
     expect(src).not.toMatch(/settleAddon|approveAddon|approveMission|releaseAddon|accept_quote_atomic|release_job_atomic|create_quote_atomic|claim_job_chunk|credit_ledger|refund/i);
     expect(src).not.toMatch(/status:\s*"(approved|executing|completed|failed|unserved)"/);
+  });
+});
+
+describe("STAGE C: the file workflow status is a read of add-on rows and two listings, and nothing else", () => {
+  it("both files exist, and nothing but the route reaches the workflow module", () => {
+    for (const r of WORKFLOW) expect(existsSync(abs(r))).toBe(true);
+    expect([...reachers(abs("src/lib/agentMission/stage4/fileWorkflow.ts"))].map(rel).filter((f) => !WORKFLOW.includes(f))).toEqual([]);
+  });
+  it("the route's imports contain nothing under agent/, no card, no quotes, no review or edit request module", () => {
+    const deps = [...closure(abs("src/app/api/missions/[id]/workflow/route.ts"))].map(rel);
+    expect(deps.filter((f) => f.startsWith("agent/"))).toEqual([]);
+    for (const f of ["addonQuote", "quotes", "reviewRequest", "editRequest", "reviewPreview", "addonRowStore"]) expect(deps).not.toContain(`src/lib/agentMission/stage4/${f}.ts`);
+  });
+  it("neither file writes, calls an rpc, or names a settlement, approval, reservation or add-on creation function", () => {
+    const src = WORKFLOW.map((r) => code(abs(r))).join("\n");
+    expect(src).not.toMatch(/\.(rpc|insert|update|upsert|delete|upload|remove|createSignedUrl)\(/);
+    expect(src).not.toMatch(/settleAddon|approveAddon|createAddon|releaseAddon|reserveAddon|accept_quote_atomic|release_job_atomic|credit_ledger/);
   });
 });
 

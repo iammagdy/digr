@@ -335,6 +335,8 @@ describe("the fence in the source", () => {
       "src/lib/agentMission/stage4/reviewReport.ts",
       // STAGE B: the edit request reads the delivered mission's own row by id and the owner, and reads and writes ADD-ON rows through the shared store (it must see them)
       "src/lib/agentMission/stage4/editRequest.ts",
+      // STAGE C: the file workflow status reads the customer's own add-on rows and the delivered mission's own row by id (read-only; it never writes)
+      "src/lib/agentMission/stage4/fileWorkflow.ts",
       // the shared approval path: its callers are the guarded ones above (asserted in the first test)
       "src/lib/agentMission/approval.ts",
       // a read by job id or by the delivered mission's own id: an add-on row is never the subject of a notice, a conversation link, a job download or a wallet line (it holds no job until the approval task); see docs/MONEY-PR-7A.md section 17.5

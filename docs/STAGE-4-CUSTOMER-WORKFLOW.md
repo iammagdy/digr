@@ -6,7 +6,8 @@ Stack (each PR targets its immediate predecessor; every one is a DRAFT; nothing 
 |---|---|---|---|
 | (existing) | `money/7e-addon-isolation` (#388) | `money/7d-review-request` | the stack head this work starts from, `bf649517` |
 | A | `stage-4/a-review-report` (#389) | `money/7e-addon-isolation` | the customer's review report |
-| B | `stage-4/b-edit-requests` | `stage-4/a-review-report` | the customer's edit request before payment |
+| B | `stage-4/b-edit-requests` (#390) | `stage-4/a-review-report` | the customer's edit request before payment |
+| C | `stage-4/c-file-workflow` | `stage-4/b-edit-requests` | one understandable file page: the truthful status of every request |
 
 All flags stay OFF (`DIGER_STAGE4_VERSIONS`, `DIGER_STAGE4_REVIEW`, `DIGER_STAGE4_EDITS`). No file under `supabase/**` and no existing money file is edited.
 
@@ -75,3 +76,37 @@ All flags stay OFF (`DIGER_STAGE4_VERSIONS`, `DIGER_STAGE4_REVIEW`, `DIGER_STAGE
 **Files.** New: `editRequest.ts` (server), `editRequestLabels.ts`, `editRequestForm.ts` and `editRequestClient.ts` (client-safe), the route, `components/mission/EditRequestCard.tsx`, tests `stage4-edit-request.test.ts` (server, 47) and `stage4-edit-request-ui.test.ts` (words, form, card, client, 32). Changed: `versionFile.ts` (additive: `latestPublishedNumber`), the request page (one line and an import), and four guard tests with explicit, commented entries.
 
 **Not verified.** Everything ran on fakes (a stateful fake table with a primary key and compare-and-set updates, a fake bucket). The JSON-path read `plan->addon->>of` and the insert's `23505` are the existing, still-unrun assumptions of the review request. No real browser.
+
+
+---
+
+## C. One understandable file page (`DIGER_STAGE4_REVIEW` or `DIGER_STAGE4_EDITS`)
+
+**What the customer sees.** On the request's page, for a delivered mission, in this order: the mission card (the original file and its download), **«حالة طلباتك على هذا الملف»** (new), the file's versions with an Excel download button for every published version, the review price preview and request, the review report, and the edit request. Nothing existing was redesigned; the page is unchanged while the flags are off (every new route answers 404 and every new component draws nothing).
+
+**The status card** (`FileWorkflow`, route `GET /api/missions/[id]/workflow`, read-only) lists up to five requests on the file (an open one first, then the newest) and says, for each, exactly one of:
+
+| Phase | Label | Decided on the server when | What it may say |
+|---|---|---|---|
+| not requested | (the plain sentence) | no add-on row | what can be asked; nothing moves before approval |
+| waiting for approval | بانتظار اعتمادك | `plan_ready`, no job, no approval time | «لم يُحجز أو يُخصم شيء» (the ONLY place besides «cancelled») |
+| approval unverified | نتحقق من حالة الاعتماد | `plan_ready` but a job or an approval time exists | «قد تكون نقاطك قد حُجزت»; never «nothing held», never a confirmation |
+| approved and processing | اعتُمد الطلب ويجري تنفيذه | `approved` / `executing` / queued / planning | the hold is stated as fact only when the row has a job; otherwise «قد تكون ... حُجزت»; «لم يُنشر الناتج بعد» |
+| delivered | اكتمل وسُلِّم | `completed` AND the output is VERIFIED in storage (a review's `reviews/rNNNN.json`, an edit's or fix's `versions/vNNNN.json`) | where to find it; «سُجّل خصم X نقطة» only with a recorded charge |
+| charged, delivery pending | خُصم الطلب والتسليم لم يكتمل | a recorded charge or the worker's `charged_not_published`, and no published output | the recorded charge, that the output is not published, that it is not complete |
+| failed without charge | لم يكتمل الطلب | `failed` / `unserved`, no recorded charge | only «لم يُسجَّل أي خصم لهذا الطلب.» (what is known, not "points returned") |
+| cancelled | أُلغي الطلب | `cancelled`, never put through an approval attempt | nothing held |
+| closed after an attempt | أُغلق الطلب | `cancelled` but a job or approval time exists | «نتحقق من حالة نقاطك»; no claim either way |
+| completed, no output | اكتمل التنفيذ ولم يُؤكَّد النشر | `completed`, no verified output, no charge | «لن نعرضه لك كمكتمل حتى يُنشر» |
+
+"Price preview" is the review/edit section's own state after «احسب التكلفة» (nothing is stored, nothing moved).
+
+**Rules, each pinned by a test.** Success is never shown before successful publication (a `completed` row with no object in storage is `charged_delivery_pending` or `delivery_pending`, and the word «delivered» never appears in its answer). The view carries a charge only for the two phases that may show one; the browser rejects the whole answer if a charge or hold flag arrives anywhere else, so a payment line cannot be invented. A storage or database failure is a 503, never an empty list or a "delivered". The view carries no request id, job id, path, digest, summary or error text. Customer text is Arabic, in points, and passes `checkCustomerText`; a request that is being processed is announced with `aria-live="polite"` so the change to «delivered» is read out.
+
+**Supported states of the page.** Mobile (one column, wrapping text, 44 px controls), loading (`role=status`), retryable errors (`role=alert` + a real retry button), page refresh and reopening (every section reads its own state from the server), multiple versions (the versions list, the report picker, the edit card always on the latest), and ownership/access errors (404 with one body for a stranger's file and a missing one; 401 hides the card).
+
+**Honest limit.** No approval route exists yet (Stage D), so in production-like use the only phases that can occur are *not requested*, *waiting for approval*, and *cancelled*. The other phases are modelled and tested so that when approval and the worker are wired the page is already truthful. **Do not turn `DIGER_STAGE4_REVIEW` or `DIGER_STAGE4_EDITS` on before the approval route exists:** a customer would be able to prepare a request that nothing can approve.
+
+**Files.** New: `fileWorkflow.ts` (server), `fileWorkflowLabels.ts` and `fileWorkflowClient.ts` (client-safe), the route, `components/mission/FileWorkflow.tsx`, tests `stage4-file-workflow.test.ts` (21) and `stage4-file-workflow-ui.test.ts`. Changed: the request page (one line and an import) and three guard tests with explicit, commented entries.
+
+**Not verified.** Everything ran on fakes; no real browser; the phases past «waiting» have never been produced by a real worker run in this environment.

@@ -16,6 +16,7 @@ import VersionList from "@/components/mission/VersionList";
 import ReviewQuote from "@/components/mission/ReviewQuote";
 import ReviewReport from "@/components/mission/ReviewReport";
 import EditRequestCard from "@/components/mission/EditRequestCard";
+import FileWorkflow from "@/components/mission/FileWorkflow";
 import { Skeleton } from "@/components/ui";
 
 /**
@@ -114,6 +115,8 @@ export default function RequestDetailsPage({ params }: { params: Promise<{ id: s
         {/* THE HEAVY PART, after the facts: the mission's own card (steps, result lines, files); a skeleton while the two reads are on their way */}
         {read === "loading" ? <div data-testid="details-skeleton" role="status" aria-label="جاري تحميل تفاصيل الطلب" className="flex flex-col gap-2"><Skeleton className="h-24 w-full" /><Skeleton className="h-16 w-full" /></div> : null}
         {read === "done" && missionId ? <AgentMissionCard missionId={missionId} /> : null}
+        {/* STAGE C (behind DIGER_STAGE4_REVIEW or DIGER_STAGE4_EDITS): the truthful STATUS of every review or edit request on this file, decided on the server; it draws nothing while the route answers «not found» */}
+        {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <FileWorkflow missionId={missionId} /> : null}
         {/* STAGE 4, S2 (behind DIGER_STAGE4_VERSIONS): the file's versions, only on this page, only for a delivered mission; it draws nothing while the route answers «not found» */}
         {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <VersionList missionId={missionId} /> : null}
         {/* MONEY PR 7c (behind DIGER_STAGE4_REVIEW): the price PREVIEW of a paid review, read-only (no approval, no charge); it draws nothing while the route answers «not found» */}
