@@ -10,7 +10,7 @@ import { NOT_AVAILABLE_AR } from "../src/lib/agentMission/taskContracts";
 import { B2B_NOT_SEARCHED_AR, resolveField } from "../src/lib/agentMission/stage3/b2bCompile";
 import { b2bContactCells, b2bLimitLines, createAttemptLog } from "../src/lib/agentMission/stage3/b2bEngine";
 import { readWorkbook, replay } from "./helpers/agentReplay";
-import { LIVE_7539, stage3Dispatcher, type Stage3World } from "./helpers/stage3World";
+import { LIVE_7539, SLUGS, company, stage3Dispatcher, type Stage3World } from "./helpers/stage3World";
 
 /**
  * STAGE 3, PART B (docs/STAGE-3.md S4, the engine half), behind DIGER_STAGE3_COMPANIES: every lookup the contact steps make is recorded per row and column as an Attempt
@@ -143,6 +143,26 @@ describe("end to end, flag on (fake world): the file says the honest cell and it
     const text = JSON.stringify(wb.worksheets.map((ws) => ws.getSheetValues()));
     expect(text).toContain(`"Ahmed orascom","الرئيس التنفيذي (Chief Executive Officer)","نعم","${NOT_AVAILABLE_AR}"`);
     expect(text).toContain(`"Salma orascom","رئيس مجلس الإدارة (Chairman)","نعم","${B2B_NOT_SEARCHED_AR}"`);
+  }, 60_000);
+});
+
+describe("flag on: only EXACT duplicates are removed, and the delivered count is the rows of the file", () => {
+  it("the source gives one company twice (the same row) and a near copy (another id, the same name): the repeat is delivered once, the near copy stays; marks and gaps remove nothing", async () => {
+    vi.stubEnv("DIGER_STAGE3_COMPANIES", "on");
+    const base = SLUGS.map((s, i) => ({ ...company(s, i), phone_number: false }));
+    // a near copy of the first company: the same name, its own website and profile link. (The companies card's id is the website: two rows with the SAME website are one company to today's item store,
+    // which keeps one row per source id; that rule is today's engine's, unchanged here, docs/STAGE-3.md section 10.) No fuzzy matching removes the near copy.
+    const nearCopy = { ...base[0], id: "orascom-em.com", website_url: "orascom-em.com", linkedin_url: "https://linkedin.example/company/orascom-em-2" };
+    const r = await replay({ request: LIVE_7539, planning: [], execution: () => [], answers: Array.from({ length: 300 }, () => stage3Dispatcher({ companies: () => [base[0], { ...base[0] }, nearCopy, base[1], base[2], base[3]], maps: () => "empty" })) });
+    expect(r.mission.status).toBe("completed");
+    const wb = await readWorkbook(r);
+    const sheet = wb.worksheets.find((ws) => ws.name.startsWith("الشركات"))!;
+    const header = (sheet.getRow(1).values as unknown[]).map(String);
+    const names = (sheet.getRows(2, sheet.rowCount - 1) ?? []).map((row) => String(row.getCell(header.indexOf("اسم الشركة")).value));
+    expect(names).toEqual(["Orascom Electromechanical", "Orascom Electromechanical", "Nile Electromechanical", "Delta Electromechanical", "Cairo Electromechanical"]);
+    const people = wb.worksheets.find((ws) => ws.name.startsWith("صناع"))!;
+    // the delivered count is exactly the rows of the two sheets of the file
+    expect(Number(r.mission.delivered_units)).toBe(names.length + (people.rowCount - 1));
   }, 60_000);
 });
 
