@@ -25,7 +25,8 @@ export function queueStateOf(input: { status: string; queue: QueueInfo | null; q
   return { position: ahead + 1, reason, measuredWaitMs, ahead, aheadOwn };
 }
 
-const requestsAr = (n: number): string => (n === 1 ? "طلب واحد" : n === 2 ? "طلبين" : n >= 3 && n <= 10 ? `${toArabicDigits(n)} طلبات` : `${toArabicDigits(n)} طلبًا`);
+/** The counted noun AFTER «لأن قبله» is accusative (the fronted «قبله» is the predicate of «لأن»): «طلبًا واحدًا», «طلبين», «٣ طلبات», «١١ طلبًا». */
+const requestsAr = (n: number): string => (n === 1 ? "طلبًا واحدًا" : n === 2 ? "طلبين" : n >= 3 && n <= 10 ? `${toArabicDigits(n)} طلبات` : `${toArabicDigits(n)} طلبًا`);
 /** The time ALREADY waited, in words. */
 export function waitedAr(ms: number): string {
   const m = Math.floor(ms / 60_000);

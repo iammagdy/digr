@@ -1,3 +1,4 @@
+import { queueLineV2 } from "./stage3/queueView";
 import { customerSafeText } from "./text";
 import { formatAr, toArabicDigits } from "../arabicDigits";
 import type { ProgressSample } from "../jobEta";
@@ -365,7 +366,7 @@ export function closePageLine(status: string, queue: QueueInfo | null | undefine
   return emailWillBeSent === false ? AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR : AGENT_CLOSE_PAGE_LINE_AR;
 }
 
-export function customerMissionView(input: { mission: MissionRowForCustomer; events: EventForCustomer[]; queue?: QueueInfo | null; callsMade?: number; now?: number; /** Will the completion e-mail really be sent (real address, e-mails on)? Unknown: it is promised (the old default). */ emailWillBeSent?: boolean }): CustomerMissionView {
+export function customerMissionView(input: { mission: MissionRowForCustomer; events: EventForCustomer[]; queue?: QueueInfo | null; callsMade?: number; now?: number; /** Will the completion e-mail really be sent (real address, e-mails on)? Unknown: it is promised (the old default). */ emailWillBeSent?: boolean; /** STAGE 3 S5: the new queue line, with the stored approval time (null: not measured). Absent: today's line. */ stage3Queue?: { approvedAtMs: number | null } }): CustomerMissionView {
   const { mission } = input;
   const now = input.now ?? Date.now();
   // the run's measured memory is for the admin: the customer never sees it
@@ -379,7 +380,8 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   const requestedRows = planned + (quantity ? Math.max(0, Math.floor(Number(quantity.requested) || 0) - Math.floor(Number(quantity.target) || 0)) : 0);
   const delivered = mission.delivered_units;
   const phase: CustomerPhase = basePhase === "done" && delivered !== null && requestedRows > 0 && delivered < requestedRows ? "partial" : basePhase;
-  const q = queueLine(mission.status, input.queue ?? null);
+  // STAGE 3 S5: with `stage3Queue` (DIGER_STAGE3_QUEUE on, passed by the loader) the queue line is the new one; without it, exactly today's
+  const q = input.stage3Queue ? queueLineV2(mission.status, input.queue ?? null, input.stage3Queue.approvedAtMs, now) : queueLine(mission.status, input.queue ?? null);
   const filesReady = Array.isArray(mission.files) && mission.files.length > 0;
   const { steps, track } = stepsOf({ phase, status: mission.status, stages, events, callsMade: input.callsMade ?? 0, hasPlan: plan !== null, delivered, filesReady, now });
 
