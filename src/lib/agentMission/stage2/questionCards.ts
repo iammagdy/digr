@@ -129,3 +129,9 @@ export function answerQuestionCard(ask: Ask, card: QuestionCard, answer: Questio
   }
 }
 
+
+/** The topic-relation card's answer, by its exact option label (the card sends the label as the answer text), or null when the words are something else. */
+export function topicRelationAnswerOf(answer: unknown): "about" | "made_with" | null {
+  const t = String(answer ?? "").replace(/\s+/g, " ").trim();
+  return TOPIC_RELATION_OPTIONS.find((o) => o.labelAr === t)?.value as "about" | "made_with" | undefined ?? null;
+}

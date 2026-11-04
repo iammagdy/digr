@@ -1,5 +1,6 @@
 import { createJobCallBudget } from "../../src/lib/server/callBudget";
 import { stage2Enabled } from "../../src/lib/agentMission/stage2/flags";
+import { topicRelationAnswerOf } from "../../src/lib/agentMission/stage2/questionCards";
 import { readAskEdits } from "./stage2/askEdits";
 import type { CallRecorder, FetchFn } from "../../src/lib/server/multiProvider/adapterTypes";
 import type { TregCallOptions, TregCallResult } from "../../src/functions/shared/tregClient";
@@ -389,6 +390,17 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const prior = compiledActive ? await readRunState(store, mission.id) : null;
   let choices: Choices = prior?.choices ?? {};
   let answerIsChoice = false;
+  // STAGE 2 S5 (docs/STAGE-2.md): the question cards of the Stage 2 policy, only when DIGER_STAGE2_QUESTION_CARDS is on for this account; the topic-relation card's answer is kept in the run note
+  const stage2Questions = compiledActive && stage2Enabled("DIGER_STAGE2_QUESTION_CARDS", redesign.isTest);
+  let topicRelation = stage2Questions ? prior?.topicRelation : undefined;
+  if (stage2Questions && prior?.stage2Pending === "topic_relation") {
+    const rel = topicRelationAnswerOf(mission.answer_text);
+    if (rel) {
+      answerIsChoice = true;
+      topicRelation = rel;
+      await updateRunState(store, mission.id, (r) => { const { stage2Pending: _p, ...rest } = r; void _p; return { ...rest, topicRelation: rel }; }, deps.log);
+    }
+  }
   if (compiledActive && prior?.pending) {
     const parsed = choiceAnswerOf(mission.answer_text, prior.pending);
     if (parsed) {
@@ -407,11 +419,11 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   }
   // STAGE 2 (docs/STAGE-2.md S2): the customer's card edits (create-only objects of the mission's folder), only when DIGER_STAGE2_ASK_CARD is on for this account; unset (today), none is read
   const askEdits = compiledActive && stage2Enabled("DIGER_STAGE2_ASK_CARD", redesign.isTest) ? await readAskEdits(store, mission.id) : [];
-  const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, nowMs: planningNow, priorCalls: calls, ...(askEdits.length > 0 ? { askEdits } : {}), ...(understand ? { understand } : {}), ...(occurrence ? { occurrence } : {}), ...(redesign.isTest ? { catalogOnly: true } : {}), askCount: true, choices, questionsAsked: prior?.questionsAsked ?? 0, answerIsChoice }) : null;
+  const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, nowMs: planningNow, priorCalls: calls, ...(askEdits.length > 0 ? { askEdits } : {}), ...(stage2Questions ? { questionCards: true, ...(topicRelation ? { topicRelation } : {}) } : {}), ...(understand ? { understand } : {}), ...(occurrence ? { occurrence } : {}), ...(redesign.isTest ? { catalogOnly: true } : {}), askCount: true, choices, questionsAsked: prior?.questionsAsked ?? 0, answerIsChoice }) : null;
   // THE QUESTION BEFORE APPROVAL (live round 7): no video of the two pages read is about the topic; the plan is not made, the customer chooses (the same needs_input card as the topic question)
   if (compiled?.kind === "question") {
     // every question card counts toward the three a request may have; a count or comments question also waits for its answer
-    await updateRunState(store, mission.id, (r) => ({ ...r, questionsAsked: (r.questionsAsked ?? 0) + 1, ...(compiled.why === "count" || compiled.why === "per_parent" ? { pending: compiled.why } : {}) }), deps.log);
+    await updateRunState(store, mission.id, (r) => ({ ...r, questionsAsked: (r.questionsAsked ?? 0) + 1, ...(compiled.why === "count" || compiled.why === "per_parent" ? { pending: compiled.why } : {}), ...(compiled.why === "topic_relation" ? { stage2Pending: "topic_relation" as const } : {}) }), deps.log);
     await store.addEvent(mission.id, { kind: "call", message_ar: compiled.why === "named_shortfall" ? "قياس داخلي: سؤال قبل الخطة، منشورات الصفحة المسمّاة أقل من المطلوب." : compiled.why === "occurrence" || compiled.why === "occurrence_year" ? "قياس داخلي: سؤال قبل الخطة، الحدث يتكرر ولم تُحدَّد سنة." : "قياس داخلي: سؤال قبل الخطة، لا فيديو في ما قُرئ يتحدث عن الموضوع.", counts: { compiled: 0, question: 1, pool_reads: compiled.reads.pool, exposure_reads: compiled.reads.exposure } }).catch(() => undefined);
     await store.updateMission(mission.id, { status: "needs_input", question_ar: compiled.question, plan_public: { question_options: compiled.options } as any, ...(compiled.llmCostUsd ? { planning_llm_usd: Number((Number((await store.getMission(mission.id))?.planning_llm_usd ?? mission.planning_llm_usd ?? 0) + compiled.llmCostUsd).toFixed(6)) } : {}), ...clear });
     await store.addEvent(mission.id, { kind: "question", message_ar: compiled.question });
