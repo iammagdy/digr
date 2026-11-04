@@ -7,7 +7,10 @@ Stack (each PR targets its immediate predecessor; every one is a DRAFT; nothing 
 | (existing) | `money/7e-addon-isolation` (#388) | `money/7d-review-request` | the stack head this work starts from, `bf649517` |
 | A | `stage-4/a-review-report` (#389) | `money/7e-addon-isolation` | the customer's review report |
 | B | `stage-4/b-edit-requests` (#390) | `stage-4/a-review-report` | the customer's edit request before payment |
-| C | `stage-4/c-file-workflow` | `stage-4/b-edit-requests` | one understandable file page: the truthful status of every request |
+| C | `stage-4/c-file-workflow` (#391) | `stage-4/b-edit-requests` | one understandable file page: the truthful status of every request |
+| D | `stage-4/d-approval-boundary` (#392) | `stage-4/c-file-workflow` | the financial approval boundary: design, contract, fake-only tests (approval NOT wired) |
+| E | `stage-4/e-concurrency` (#393) | `stage-4/d-approval-boundary` | concurrency and database safety: analysis and fake tests (index: owner approval required) |
+| F | `stage-4/f-e2e-tests` | `stage-4/e-concurrency` | end-to-end regression flows 1 to 10, fake-only, plus this integration section |
 
 All flags stay OFF (`DIGER_STAGE4_VERSIONS`, `DIGER_STAGE4_REVIEW`, `DIGER_STAGE4_EDITS`). No file under `supabase/**` and no existing money file is edited.
 
@@ -110,3 +113,46 @@ All flags stay OFF (`DIGER_STAGE4_VERSIONS`, `DIGER_STAGE4_REVIEW`, `DIGER_STAGE
 **Files.** New: `fileWorkflow.ts` (server), `fileWorkflowLabels.ts` and `fileWorkflowClient.ts` (client-safe), the route, `components/mission/FileWorkflow.tsx`, tests `stage4-file-workflow.test.ts` (21) and `stage4-file-workflow-ui.test.ts`. Changed: the request page (one line and an import) and three guard tests with explicit, commented entries.
 
 **Not verified.** Everything ran on fakes; no real browser; the phases past «waiting» have never been produced by a real worker run in this environment.
+
+
+---
+
+## D, E, F in one paragraph each
+
+- **D** (`docs/STAGE-4-APPROVAL-BOUNDARY.md`): the customer's approval is **not wired and BLOCKED FOR OWNER APPROVAL**. The doc has the endpoint contract the missing route must keep and 17 fake-only tests (the hold reserved equals the price shown; creating a request is free; settlement within the hold; nothing in production can approve).
+- **E** (`docs/STAGE-4-CONCURRENCY.md`): the ten concurrency scenarios, with evidence. **Database-level uniqueness is required before `on`** (a migration, OWNER APPROVAL REQUIRED, not made). New money findings (an unchecked last update inside `approveAddonOnce`; a second paid review after a charged-but-unpublished one; a request stuck after the watchdog released its job) are documented, not fixed, because they sit in protected money code. The index was modelled; no disposable Postgres was available.
+- **F** (`docs/STAGE-4-E2E-TESTS.md`): the ten flows, real routes and engines on fakes, real `.xlsx` read back with exceljs. Findings: the versions list answers 404 (not 503) when the database is down (`ownsMission` reads an error as "not theirs"; nothing exposed or charged); the unresolved "one open add-on per file" risk is shown on purpose; the synthetic delivered original has no summary sheet (the real file does).
+
+## Integration with `main` (rehearsal, local, never pushed)
+
+`main` was `220e152f` when this was written; the stack's base (`stage-4/review-edits-versions`) forked from `0bf7b2cf`, **37 commits behind**. A non-destructive merge of the stack head into `main` in a throwaway worktree conflicts in **four files, all owned by the earlier PRs (#371 to #388), none by Stages A to F**:
+
+| File | Conflict | Resolution used in the rehearsal |
+|---|---|---|
+| `src/app/api/missions/[id]/file/route.ts` | `main` added customer CSV downloads (round 32: `CUSTOMER_CSV_NAMES`, `customerCsvFile`); the stack added `?version=N` | `?version` is branched first and still serves only `result.xlsx`; the ordinary path keeps main's CSV handling and its 400 sentence |
+| `src/lib/agentMission/customerActions.ts` | adjacent imports | keep both |
+| `src/lib/agentMission/methodology/missions.ts` | an import and the column list (`updated_at` vs the add-on marker column) | keep both |
+| `src/lib/agentMission/openMissions.ts` | `main` added `ownRunning`; the stack filters add-on rows | filter add-on rows in both queries (an add-on row with a live lease must not count as a running mission) |
+
+The resolved tree type-checks and was run through the full suite (results in the final report). The resolution is the owner's call and must be done on the owner's PR #371 to #388, not here; no PR base was changed and nothing was pushed to `main`.
+
+## Exact owner approvals required (nothing below is done)
+
+1. **The approval route** (a new file calling `approveAddonOnce`), with the guard of `STAGE-4-CONCURRENCY.md` section 2 (`reconcileOpenAddons` first; refuse unless this request is the keeper).
+2. **The database uniqueness migration** (partial unique index, one open add-on per file) after the read-only pre-checks, plus the small insert-classification change in `createAddonRow`.
+3. **Edits in protected money code** found by Stage E: check the error of the last update in `approveAddonOnce`; refuse a new paid review of a version whose earlier review was charged; end (not leave waiting) a request whose job the watchdog released.
+4. **PR #378 and its financially sensitive descendants (#381 to #388, and Stages A to F on top)** must not be merged until 1 to 3 are decided; the wallet label (decision D9), the watchdog release of a cancelled add-on, and whether an unpaid add-on request expires.
+5. **Deploying the Heroku worker** with the add-on dispatch and the live check of `docs/MONEY-PR-7A.md` section 8 on a `test` account.
+6. **Conflict resolution against `main`** (above) on the owner's earlier PRs.
+7. A **real-browser pass** on a preview with a test account (only a layout check of the components was possible here).
+
+## Recommended merge order (when the approvals exist)
+
+`main` <- #371 <- #378 <- #381 <- #384 <- #386 <- #388 <- #389 (A) <- #390 (B) <- #391 (C) <- #392 (D) <- #393 (E) <- F, each rebased onto the previous result with the four conflicts above resolved once, at #371. A to C only add read-only, flag-off features, so they could land earlier than the approval route, but they depend on #371 to #388 which include the financially sensitive core (#378).
+
+## Before production activation (all flags are OFF and must stay off until every item is done)
+
+1. Items 1 to 3 above merged and tested; the index applied and verified on the real database.
+2. The worker deployed (Heroku) and the live check done with `DIGER_STAGE4_VERSIONS=test`, then `DIGER_STAGE4_EDITS=test`, then `DIGER_STAGE4_REVIEW=test` on a test account only; read-only ledger check after one small edit and one review.
+3. A real-browser pass (phone and desktop) of the request page with the flags on.
+4. Only then `on`, one flag at a time. Rollback: unset the flag; ledger rows are never deleted.
