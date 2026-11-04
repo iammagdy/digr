@@ -51,9 +51,19 @@ export async function readJson<T>(store: AgentStore, missionId: string, rel: str
   return JSON.parse(text) as T;
 }
 
+/**
+ * The object as data, or null when it is NOT THERE or is not well-formed JSON. A STORAGE FAILURE is never turned into null (the store throws it): a failed read is not proof that an object is absent, and the runner decides
+ * «no outcome yet», «no such version» and «no report made» from these answers.
+ */
+export async function readJsonOrNull<T>(store: AgentStore, missionId: string, rel: string): Promise<T | null> {
+  const text = await store.getFile(missionId, rel);
+  if (text === null) return null;
+  try { return JSON.parse(text) as T; } catch { return null; }
+}
+
 /** The outcome, if the run already wrote it. */
 export async function readOutcome(store: AgentStore, of: string, addonId: string): Promise<AddonOutcome | null> {
-  const o = await readJson<AddonOutcome>(store, of, outcomePath(addonId)).catch(() => null);
+  const o = await readJsonOrNull<AddonOutcome>(store, of, outcomePath(addonId));
   return o && o.v === 1 && o.addonId === addonId ? o : null;
 }
 
@@ -68,7 +78,7 @@ export async function writeOutcome(store: AgentStore, outcome: AddonOutcome): Pr
 
 /** A version of the delivered mission, read from its own create-only object; null when it is absent or not a well-formed version. */
 export async function readVersion(store: AgentStore, of: string, version: number): Promise<FileVersion | null> {
-  const v = await readJson<FileVersion>(store, of, versionPathOf(version)).catch(() => null);
+  const v = await readJsonOrNull<FileVersion>(store, of, versionPathOf(version));
   return v && v.v === 1 && v.version === version && Array.isArray(v.sheets) && typeof v.digest === "string" ? v : null;
 }
 

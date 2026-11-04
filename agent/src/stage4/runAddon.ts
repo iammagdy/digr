@@ -11,7 +11,7 @@ import type { RunnerDeps } from "../runMission";
 import { readRunState, updateRunState, type RunState } from "../runState";
 import { trackRun, untrackRun } from "../sessions";
 import type { CallRow, MissionRecord } from "../types";
-import { JSON_TYPE, pendingReviewPath, pendingVersionPath, readJson, readOutcome, readVersion, reviewPathOf, versionPathOf, writeOutcome, type AddonOutcome } from "./addonFiles";
+import { JSON_TYPE, pendingReviewPath, pendingVersionPath, readJsonOrNull, readOutcome, readVersion, reviewPathOf, versionPathOf, writeOutcome, type AddonOutcome } from "./addonFiles";
 import { ADDON_DONE_AR } from "./addonText";
 import { runReread, type RereadUnit } from "./rereadRun";
 
@@ -153,7 +153,7 @@ async function reviewWork(deps: Deps, row: MissionRecord, addon: AddonPlan): Pro
   if (!base) return writeOutcome(store, nothing(addon, row, "no_base", null, 0, now));
   if (reviewCellsOf(base) !== addon.pricing.cells) return writeOutcome(store, nothing(addon, row, "mismatch", null, 0, now));
   // D11: a second review of the same version is free; the first one's report stands
-  const published = await readJson<{ addonId?: string }>(store, addon.of, reviewPathOf(base.version)).catch(() => null);
+  const published = await readJsonOrNull<{ addonId?: string }>(store, addon.of, reviewPathOf(base.version));
   if (published && published.addonId !== row.id) return writeOutcome(store, nothing(addon, row, "review_exists", null, 0, now));
   const result = reviewFile(base);
   const report = { v: 1, addonId: row.id, missionId: addon.of, version: base.version, baseDigest: base.digest, createdAt: now.toISOString(), ...result };
@@ -173,6 +173,10 @@ async function editWork(deps: Deps, row: MissionRecord, addon: AddonPlan, jobId:
   if (addon.newVersion !== null && (await store.getFile(addon.of, versionPathOf(addon.newVersion))) !== null) return writeOutcome(store, nothing(addon, row, "version_exists", null, executionSpend(calls), now));
   const plan = unitsOf(addon, base);
   if (!plan || (plan.units.length > 0 && plan.units.length !== addon.pricing.requested)) return writeOutcome(store, nothing(addon, row, "mismatch", null, executionSpend(calls), now));
+  // A PENDING VERSION IS A FROZEN SETTLEMENT SNAPSHOT: a run that was cut after storing it and before storing the outcome must not re-read (no new spending) nor build another version; the outcome is read FROM the stored bytes
+  const pendingAt = pendingVersionPath(row.id, base.version + 1);
+  const frozenBytes = await store.getFileBytes(addon.of, pendingAt);
+  if (frozenBytes) return frozenOutcome(deps, row, addon, base, plan, pendingAt, frozenBytes, now);
 
   let values = new Map<string, string | null>();
   let stop: AddonOutcome["stop"] = null;
@@ -198,9 +202,52 @@ async function editWork(deps: Deps, row: MissionRecord, addon: AddonPlan, jobId:
   const built = buildVersion(addon, base, plan, values, now);
   if (!built || built.filled === 0) return writeOutcome(store, nothing(addon, row, "nothing", stop, realCostUsd, now));
   const path = pendingVersionPath(row.id, built.version.version);
-  // the first pending version stands (a cut run's), whichever run wrote it
-  await store.putNewStrict(addon.of, path, JSON.stringify(built.version), JSON_TYPE);
+  // the first pending version stands (a cut run's, or a concurrent run's): when it was already there, the outcome is read from IT, never from what this run computed
+  const put = await store.putNewStrict(addon.of, path, JSON.stringify(built.version), JSON_TYPE);
+  if (!put.created) {
+    const existing = await store.getFileBytes(addon.of, path);
+    if (!existing) throw new Error("the pending version exists but cannot be read");
+    return frozenOutcome(deps, row, addon, base, plan, path, existing, now);
+  }
   return writeOutcome(store, { v: 1, kind: addon.kind, addonId: row.id, of: addon.of, baseVersion: addon.baseVersion, newVersion: built.version.version, filled: built.filled, requested: addon.pricing.requested, realCostUsd, stop, reason: null, pending: path, publishAt: versionPathOf(built.version.version), createdAt: now.toISOString() });
+}
+
+/**
+ * The outcome of a pending version that is already stored. What it holds is decided by the stored bytes alone: the filled count is the number of REAL values IN THAT OBJECT, found by rebuilding the version from them over the base and
+ * requiring the very same bytes (so the object is exactly what this add-on's request makes of this base: right mission, version, parent, digest and cells). The real cost is the add-on's recorded execution calls: no call is made once
+ * a pending version exists, so they are the calls that paid for this work. An object that cannot be tied to this add-on is never charged for nor published: the admin is told, the run stops with an error and the existing recovery
+ * (requeue, then release of the whole hold) takes over; the object stays as evidence.
+ */
+async function frozenOutcome(deps: Deps, row: MissionRecord, addon: AddonPlan, base: FileVersion, plan: UnitPlan, path: string, bytes: Buffer, now: Date): Promise<AddonOutcome> {
+  const { store } = deps;
+  const filled = frozenFilled(addon, base, plan, bytes);
+  if (filled === null) {
+    await adminNote(deps, row.id, "النسخة المحفوظة مؤقتًا لهذا الطلب لا تطابق ما طُلب؛ لم يُخصم ولم يُنشر شيء وبقيت للمراجعة.");
+    throw new Error("the stored pending version does not match this add-on");
+  }
+  const realCostUsd = executionSpend(await store.listCalls(row.id));
+  return writeOutcome(store, { v: 1, kind: addon.kind, addonId: row.id, of: addon.of, baseVersion: addon.baseVersion, newVersion: base.version + 1, filled, requested: addon.pricing.requested, realCostUsd, stop: null, reason: null, pending: path, publishAt: versionPathOf(base.version + 1), createdAt: now.toISOString() });
+}
+
+/** The number of real values in a stored pending version, or null when the bytes are not exactly the version this request makes of this base (or hold no real value: a run never stores such a version). */
+function frozenFilled(addon: AddonPlan, base: FileVersion, plan: UnitPlan, bytes: Buffer): number | null {
+  try {
+    const text = bytes.toString("utf8");
+    const stored = JSON.parse(text) as FileVersion;
+    const sheet = stored.sheets.find((s) => s.nameAr === plan.sheet);
+    if (!sheet) return null;
+    const rowById = new Map(sheet.rows.map((r) => [r.id, r]));
+    const values = new Map<string, string | null>();
+    for (const u of plan.units) {
+      const at = sheet.headers.indexOf(plan.shape === "add_column" ? String(plan.edit.titleAr) : u.column);
+      if (at < 0) return null;
+      const cell = rowById.get(u.rowId)?.cells[at];
+      values.set(u.key, typeof cell === "string" ? cell : null);
+    }
+    const rebuilt = buildVersion(addon, base, plan, values, new Date(stored.createdAt));
+    if (!rebuilt || rebuilt.filled < 1 || JSON.stringify(rebuilt.version) !== text) return null;
+    return rebuilt.filled;
+  } catch { return null; }
 }
 
 interface UnitPlan { sheet: string; units: RereadUnit[]; shape: "add_column" | "set_cells" | "rename" | "add_rows"; edit: Record<string, unknown> }
