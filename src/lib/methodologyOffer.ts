@@ -1,7 +1,7 @@
 import { toArabicDigits } from "./arabicDigits";
 
 /** The methodology add-on's price in points, as shown to the customer. The charge itself is made by the server (`/api/jobs/[id]/methodology`). */
-export const METHODOLOGY_POINTS = 10;
+export const METHODOLOGY_POINTS = 50;
 
 /**
  * Whether the methodology add-on is offered for a job: it needs at least one delivered record (a partial delivery counts) and a

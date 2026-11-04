@@ -17,6 +17,7 @@ import { useBalance } from "@/hooks/useBalance";
 import { holdLimitOf } from "@/lib/agentMission/holdLimit";
 import { pointsAr } from "@/lib/pointsFormat";
 import { fileNameFromDisposition } from "@/lib/downloadName";
+import { MethodologyOffer } from "@/components/mission/MethodologyOffer";
 import type { PlanEdits } from "@/lib/agentMission/planEdit";
 
 /**
@@ -25,7 +26,9 @@ import type { PlanEdits } from "@/lib/agentMission/planEdit";
  * «اعتمد» and «عدّل الطلب» (which opens the PLAN EDITOR: the number of items, the period, the language, each exclusion and the columns, priced again by code; retyping the request stays beside it). While the mission waits or works it shows the live panel «خطة المهمة»; when it ends it shows what was delivered and the files.
  * No endpoint, no provider, no cost in dollars and no internal id ever reaches this card: the server leaves them out.
  */
-interface MissionAnswer { success: boolean; isGuest?: boolean; status?: string; requestText?: string; view?: CustomerMissionView; error?: string }
+/** ROUND 21: a delivered compiled mission carries the offer of its data-collection methodology (the job the purchase route takes, and whether it was bought). */
+interface MethodologyOfferInfo { jobId: string; titleAr: string; purchased: boolean }
+interface MissionAnswer { success: boolean; isGuest?: boolean; status?: string; requestText?: string; view?: CustomerMissionView; error?: string; methodology?: MethodologyOfferInfo }
 
 const TERMINAL_PHASES: ReadonlySet<string> = new Set(["done", "partial", "unserved", "failed", "cancelled"]);
 const WAITING_POLL_MS = 8000;
@@ -144,11 +147,11 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   if (!v) {
     return <div dir="rtl" data-testid="agent-card" data-phase="loading" className="mt-3 rounded-[18px] border border-ln bg-sf p-4 text-[13px] text-ink2" role="status">جاري تجهيز مهمتك…</div>;
   }
-  return <AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} />;
+  return <AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled} />;
 }
 
 /** The card itself, drawn from one view: pure (no network), so it renders the same on the server and in the tests. */
-export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAction = null, approved = false, error = null, reply = "", onReply = () => undefined, onAct = () => undefined, onDownload = () => undefined, balancePoints = null, editing = false, onEditing = () => undefined }: { view: CustomerMissionView; isGuest: boolean; busy?: boolean; pendingAction?: string | null; approved?: boolean; error?: string | null; reply?: string; onReply?: (text: string) => void; onAct?: (action: "approve" | "cancel" | "edit" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) => void; onDownload?: (name: string) => void; /** The customer's balance in points (null: not known, never zero). */ balancePoints?: number | null; editing?: boolean; onEditing?: (open: boolean) => void }) {
+export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAction = null, approved = false, error = null, reply = "", onReply = () => undefined, onAct = () => undefined, onDownload = () => undefined, balancePoints = null, editing = false, onEditing = () => undefined, methodology = null, onSettled }: { view: CustomerMissionView; isGuest: boolean; busy?: boolean; pendingAction?: string | null; approved?: boolean; error?: string | null; reply?: string; onReply?: (text: string) => void; onAct?: (action: "approve" | "cancel" | "edit" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) => void; onDownload?: (name: string) => void; /** The customer's balance in points (null: not known, never zero). */ balancePoints?: number | null; editing?: boolean; onEditing?: (open: boolean) => void; /** ROUND 21: the methodology offer of a delivered compiled mission (the same offer the chat's chooser draws). */ methodology?: MethodologyOfferInfo | null; onSettled?: () => void }) {
   // the close-page sentence belongs to the status block of the card (on the page, from the moment of approval): the details list below does not say it a second time
   const panelContent = { title: "خطة المهمة", steps: v.steps, currentLineAr: v.currentLineAr, delayAr: v.delayAr, remainingAr: v.remainingAr, closePageAr: null, startedAt: v.startedAt ?? undefined, live: v.live };
   // the plan the customer has just approved is shown as a running mission at once, before the next read of the mission returns
@@ -334,6 +337,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
           <a href="/dashboard/requests" className={`${BTN_PLAIN} inline-flex items-center no-underline`}>افتح طلباتي</a>
         </div>
       ) : null}
+      {(v.phase === "done" || v.phase === "partial") && methodology ? <MethodologyOffer jobId={methodology.jobId} titleAr={methodology.titleAr} purchased={methodology.purchased} onCharged={onSettled} /> : null}
       {error ? <p role="alert" className="m-0 text-[13px] leading-[1.8]" style={{ color: "var(--bad)" }} data-testid="agent-error">{error}{/رصيد/.test(error) ? <> <a href="/dashboard/topup" className="text-ac">اشحن رصيدك</a></> : null}</p> : null}
     </section>
   );

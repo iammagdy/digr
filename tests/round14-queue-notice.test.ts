@@ -39,7 +39,8 @@ describe("queueLine says why it waits, and never a time", () => {
     noTime(away);
   });
   it("the second line keeps the money promise and states no time; every sentence passes checkCustomerText", () => {
-    expect(PLANNING_USUAL_TIME_AR).toBe("ولن يُخصم شيء قبل موافقتك.");
+    // CHANGED (round 21): the sentence is whole; its first clause had been taken out with the time and the card opened with «ولن»
+    expect(PLANNING_USUAL_TIME_AR).toBe("نقرأ طلبك ونجهّز لك الخطة والسعر، ولن يُخصم شيء قبل موافقتك.");
     expect(PLANNING_USUAL_TIME_AR).toContain("ولن يُخصم شيء قبل موافقتك");
     noTime(PLANNING_USUAL_TIME_AR);
     noTime(AGENT_QUEUE_LINE_AR);

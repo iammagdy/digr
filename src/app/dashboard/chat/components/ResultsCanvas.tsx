@@ -551,7 +551,7 @@ export default function ResultsCanvas({
                   <p className="mt-0.5 text-xs text-sand-500">ملف بي دي إف يوثّق طريقة جمع البيانات وحدودها.</p>
                 </div>
                 <Button size="sm" variant="secondary" onClick={onRequestDocxMethodology} className="tnum shrink-0">
-                  {methodologyPurchased ? "تحميل المنهجية" : `اكتب المنهجية الرسمية (${formatNumber(METHODOLOGY_POINTS)} نقاط)`}
+                  {methodologyPurchased ? "تحميل المنهجية" : `اكتب المنهجية الرسمية (${formatNumber(METHODOLOGY_POINTS)} نقطة)`}
                 </Button>
               </div>
             )}
@@ -580,7 +580,7 @@ export default function ResultsCanvas({
               </Button>
               {methodologyOffered({ status: jobStatus, delivered: deliveredCount, savedRows: records.length }) && (
                 <Button size="sm" variant="secondary" onClick={onRequestDocxMethodology} className="tnum w-full">
-                  {methodologyPurchased ? "تحميل المنهجية" : `اكتب المنهجية الرسمية (${formatNumber(METHODOLOGY_POINTS)} نقاط)`}
+                  {methodologyPurchased ? "تحميل المنهجية" : `اكتب المنهجية الرسمية (${formatNumber(METHODOLOGY_POINTS)} نقطة)`}
                 </Button>
               )}
             </div>

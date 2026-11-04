@@ -70,3 +70,7 @@ diger-raw-pages.zip
 
 # anonymised fixtures ZIPs from the owner (the unzipped, scanned files live in tests/fixtures/live/missions): never committed
 diger-fixtures-anon*.zip
+
+# Python bytecode (the fixture anonymiser is a Python script): never committed
+__pycache__/
+*.pyc
