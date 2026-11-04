@@ -20,7 +20,7 @@ export function AdminGate({ children }: { children: ReactNode }) {
   }, [loading, user, isAdmin, router]);
 
   if (loading || !user) {
-    return <div className="flex min-h-dvh items-center justify-center bg-bg"><Spinner label="جاري التحقق من الصلاحيات" /></div>;
+    return <div className="flex min-h-dvh items-center justify-center bg-bg"><Spinner label="جارٍ التحقق من الصلاحيات" /></div>;
   }
   if (!isAdmin) {
     return (

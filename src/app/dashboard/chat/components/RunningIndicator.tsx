@@ -4,7 +4,7 @@
  * The visible sign that a request is being worked on: three moving dots and the Arabic line. It is rendered only while the job runs
  * (the callers remove it when the job ends or fails). With reduced motion the dots stand still, fully visible (see `.run-dot`).
  */
-export const RUNNING_LINE_AR = "جاري العمل على طلبك";
+export const RUNNING_LINE_AR = "جارٍ العمل على طلبك";
 
 export default function RunningIndicator({ className = "" }: { className?: string }) {
   return (

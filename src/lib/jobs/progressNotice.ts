@@ -13,7 +13,7 @@ export interface ActiveJobState {
 }
 
 /**
- * Pure helper determining whether a progress notice line (e.g. "جاري استخراج السجلات...")
+ * Pure helper determining whether a progress notice line (e.g. "جارٍ استخراج السجلات...")
  * should be rendered for a message.
  *
  * Rules:

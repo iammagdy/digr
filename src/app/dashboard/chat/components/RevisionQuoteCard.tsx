@@ -102,7 +102,7 @@ export default function RevisionQuoteCard({
           disabled={disabled || isApplying || !affordable}
           className="inline-flex min-h-11 cursor-pointer items-center justify-center gap-2 rounded-full border-0 bg-ac px-5 text-[13px] font-medium text-onac transition-opacity focus-visible:outline-2 disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {isApplying ? "جاري تجهيز النسخة الجديدة..." : `اعتماد وتطبيق التعديل (${pointsAr(quote.points)})`}
+          {isApplying ? "جارٍ تجهيز النسخة الجديدة..." : `اعتماد وتطبيق التعديل (${pointsAr(quote.points)})`}
         </button>
       </div>
     </div>

@@ -108,7 +108,7 @@ export default function RequestDetailsPage({ params }: { params: Promise<{ id: s
         {read === "failed" ? <p role="alert" className="m-0 rounded-[18px] border border-ln bg-sf p-4 text-sm text-ink">تعذّر تحميل تفاصيل الطلب الآن. تحقق من الاتصال ثم حاول مرة أخرى.</p> : null}
 
         {/* THE HEAVY PART, after the facts: the mission's own card (steps, result lines, files); a skeleton while the two reads are on their way */}
-        {read === "loading" ? <div data-testid="details-skeleton" role="status" aria-label="جاري تحميل تفاصيل الطلب" className="flex flex-col gap-2"><Skeleton className="h-24 w-full" /><Skeleton className="h-16 w-full" /></div> : null}
+        {read === "loading" ? <div data-testid="details-skeleton" role="status" aria-label="جارٍ تحميل تفاصيل الطلب" className="flex flex-col gap-2"><Skeleton className="h-24 w-full" /><Skeleton className="h-16 w-full" /></div> : null}
         {read === "done" && missionId ? <AgentMissionCard missionId={missionId} /> : null}
         {read === "done" && !missionId ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="details-no-mission">هذا طلب من النوع القديم: ملفاته في «طلباتي» ونتيجته في المحادثة.</p> : null}
 

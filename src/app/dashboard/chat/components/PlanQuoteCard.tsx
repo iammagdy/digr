@@ -661,7 +661,7 @@ export default function PlanQuoteCard({
           <div className="flex items-center justify-end gap-2 pt-1">
             <button type="button" onClick={() => setIsEditing(false)} className="min-h-11 cursor-pointer border-0 bg-transparent px-3 text-xs text-mut">إلغاء</button>
             <button type="button" onClick={handleSave} disabled={savingEdit} className={`${PRIMARY_BTN} min-h-11 px-5 text-xs`}>
-              {savingEdit ? "جاري التحديث..." : "حفظ التعديل"}
+              {savingEdit ? "جارٍ التحديث..." : "حفظ التعديل"}
             </button>
           </div>
         </div>
@@ -771,7 +771,7 @@ export default function PlanQuoteCard({
               {isStarting ? (
                 <>
                   <span className="h-4 w-4 rounded-full border-2 border-onac/30 border-t-onac motion-safe:animate-spin motion-reduce:animate-none" aria-hidden="true" />
-                  جاري البدء...
+                  جارٍ البدء...
                 </>
               ) : (
                 "أوافق وابدأ البحث"

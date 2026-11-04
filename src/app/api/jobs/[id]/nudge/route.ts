@@ -110,7 +110,7 @@ export async function POST(
         success: true,
         nudged: false,
         status: job.status,
-        message: "المهمة قيد المعالجة حالياً وجاري استخراج السجلات المطلوبة.",
+        message: "المهمة قيد المعالجة حالياً وجارٍ استخراج السجلات المطلوبة.",
       });
     }
 

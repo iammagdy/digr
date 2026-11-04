@@ -214,7 +214,7 @@ export default function OnboardingModal({ isOpen, onComplete, onSkip, jwtToken, 
           <Button variant="accent" onClick={() => setStep((s) => (s + 1) as 1 | 2 | 3)}>التالي</Button>
         ) : (
           <Button variant="accent" onClick={handleFinish} disabled={submitting}>
-            {submitting ? "جاري الحفظ..." : "حفظ ومتابعة"}
+            {submitting ? "جارٍ الحفظ..." : "حفظ ومتابعة"}
           </Button>
         )}
       </div>

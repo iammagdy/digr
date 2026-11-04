@@ -74,7 +74,7 @@ export default function ContactForm({ initialSettings = { supportEmail: "", what
           <div aria-hidden="true" style={{ position: "absolute", insetInlineStart: "-9999px", height: 0, overflow: "hidden" }}>
             <label>موقع<input tabIndex={-1} autoComplete="off" value={website} onChange={(e) => setWebsite(e.target.value)} /></label>
           </div>
-          <button type="submit" disabled={busy} className="min-h-12 cursor-pointer rounded-full border-0 bg-ac px-6 text-[14px] font-semibold text-onac disabled:cursor-wait disabled:opacity-60">{busy ? "جاري الإرسال..." : "إرسال الرسالة"}</button>
+          <button type="submit" disabled={busy} className="min-h-12 cursor-pointer rounded-full border-0 bg-ac px-6 text-[14px] font-semibold text-onac disabled:cursor-wait disabled:opacity-60">{busy ? "جارٍ الإرسال..." : "إرسال الرسالة"}</button>
           <p role="status" aria-live="polite" className="m-0 min-h-[1.25rem] text-[13px] leading-[1.8]" style={{ color: result ? (result.ok ? "var(--ok)" : "var(--bad)") : "var(--mut)" }}>{result?.text || ""}</p>
         </form>
       </div>

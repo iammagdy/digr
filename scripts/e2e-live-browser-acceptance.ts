@@ -68,7 +68,7 @@ async function sendUserMessage(page: Page, text: string) {
     () => {
       const textAll = document.body.textContent || "";
       const statusP = document.querySelector('p[role="status"]')?.textContent || "";
-      return !textAll.includes("يكتب الرد...") && !statusP.includes("جاري");
+      return !textAll.includes("يكتب الرد...") && !/جار[يٍ]/.test(statusP);
     },
     { timeout: 25000 }
   ).catch(() => null);

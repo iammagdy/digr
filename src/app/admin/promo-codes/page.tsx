@@ -90,7 +90,7 @@ export default function AdminPromoCodesPage() {
         </div>
         <label className="flex flex-col gap-1.5"><span className="text-xs font-semibold text-mut">ملاحظة داخلية</span><input value={form.note} maxLength={200} onChange={(e) => setForm({ ...form, note: e.target.value })} className={INPUT} placeholder="مثال: إطلاق الأصدقاء والزملاء" /></label>
         <p className="m-0 text-xs text-fnt">كل حساب يستخدم الكود مرة واحدة فقط. تعديل الكود لا يغيّر ما أُضيف فعلًا لمن استخدموه.</p>
-        <button type="submit" disabled={busy} className="min-h-[46px] cursor-pointer self-start rounded-full border-0 bg-ac px-[22px] text-[13px] font-semibold text-onac disabled:opacity-60">{busy ? "جاري الحفظ..." : "حفظ الكود"}</button>
+        <button type="submit" disabled={busy} className="min-h-[46px] cursor-pointer self-start rounded-full border-0 bg-ac px-[22px] text-[13px] font-semibold text-onac disabled:opacity-60">{busy ? "جارٍ الحفظ..." : "حفظ الكود"}</button>
       </form>
 
       <section className={SECTION}>

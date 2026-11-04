@@ -46,7 +46,7 @@ export default function LoginPage() {
   if (authLoading || user) {
     return (
       <div className="flex min-h-dvh items-center justify-center bg-bg">
-        <Spinner label="جاري التحقق من الجلسة" />
+        <Spinner label="جارٍ التحقق من الجلسة" />
       </div>
     );
   }
@@ -60,7 +60,7 @@ export default function LoginPage() {
         />
         <PasswordInput value={password} onChange={setPassword} autoComplete="current-password" />
         <Link href="/forgot" className="self-start p-1.5 text-[13px] text-mut underline decoration-ln2 underline-offset-[5px]">نسيت كلمة المرور؟</Link>
-        <button type="submit" disabled={busy || authLoading} className={`${authPrimaryBtn} mt-2.5`}>{busy ? "جاري التحقق..." : "تسجيل الدخول"}</button>
+        <button type="submit" disabled={busy || authLoading} className={`${authPrimaryBtn} mt-2.5`}>{busy ? "جارٍ التحقق..." : "تسجيل الدخول"}</button>
       </form>
       {error && <AuthToast tone="bad">{error}</AuthToast>}
       {toast && <AuthToast>{toast}</AuthToast>}

@@ -64,7 +64,7 @@ export default function PromoCodeBox({ onRedeemed }: { onRedeemed: () => void })
             disabled={busy || !code.trim()}
             className="min-h-11 shrink-0 cursor-pointer whitespace-nowrap rounded-full border-0 bg-wallet-card px-5 text-[13px] font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {busy ? "جاري التطبيق..." : "تطبيق الكود"}
+            {busy ? "جارٍ التطبيق..." : "تطبيق الكود"}
           </button>
         </div>
       </div>

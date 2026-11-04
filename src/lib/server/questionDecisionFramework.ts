@@ -81,7 +81,7 @@ export function evaluateDiscoveryDecision(intent: ResearchIntentSpec): Discovery
   return {
     action: "PROCEED_TO_PLAN",
     questions: [],
-    rationaleAr: "الطلب مكتمل ومحدد بوضوح (الموضوع والمنصة والهدف وحجم العينة). جاري إعداد الخطة المسعرة فوراً بدون أسئلة متكررة.",
+    rationaleAr: "الطلب مكتمل ومحدد بوضوح (الموضوع والمنصة والهدف وحجم العينة). جارٍ إعداد الخطة المسعرة فوراً بدون أسئلة متكررة.",
     isCompleteWithoutQuestions: true,
     missingCrucialFields: [],
   };

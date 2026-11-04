@@ -44,7 +44,7 @@ function RegisterForm() {
   if (authLoading || user) {
     return (
       <div className="flex min-h-dvh items-center justify-center bg-bg">
-        <Spinner label="جاري التحقق من الجلسة" />
+        <Spinner label="جارٍ التحقق من الجلسة" />
       </div>
     );
   }
@@ -65,7 +65,7 @@ function RegisterForm() {
           type="text" dir="ltr" autoComplete="off" autoCapitalize="characters" spellCheck={false} maxLength={40} placeholder="كود الدعوة (اختياري)"
           aria-label="كود الدعوة" data-testid="signup-promo" value={promo} onChange={(e) => setPromo(e.target.value.toUpperCase())} className={`${authInput} text-left`}
         />
-        <button type="submit" disabled={busy || authLoading} className={`${authPrimaryBtn} mt-2.5`}>{busy ? "جاري إنشاء الحساب..." : "إنشاء الحساب"}</button>
+        <button type="submit" disabled={busy || authLoading} className={`${authPrimaryBtn} mt-2.5`}>{busy ? "جارٍ إنشاء الحساب..." : "إنشاء الحساب"}</button>
       </form>
       {error && <AuthToast tone="bad">{error}</AuthToast>}
       <p className="mb-0 mt-[34px] text-center text-sm font-light text-mut">

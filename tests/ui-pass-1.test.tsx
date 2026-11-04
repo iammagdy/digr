@@ -123,7 +123,7 @@ describe("2. after «اعتمد» the card says what started, how far it is, the
   });
   it("while the approval is on its way the button says so and a status line is shown (no silent frozen page)", () => {
     const markup = html(createElement(AgentMissionCardBody, { view: planView(), isGuest: false, busy: true, pendingAction: "approve" }));
-    expect(markup).toContain("جاري الاعتماد…");
+    expect(markup).toContain("جارٍ الاعتماد…");
     expect(markup).toContain('data-testid="agent-approving"');
     expect(markup).toContain("disabled");
   });

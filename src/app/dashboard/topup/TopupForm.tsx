@@ -283,7 +283,7 @@ export default function TopupForm({
               <div className="min-w-0">
                 <p className="m-0 text-xs text-mut">{paymentLabelAr || "عنوان الدفع اللحظي · منصة ديجر"}</p>
                 {loadingIpa ? (
-                  <p className="mb-0 mt-1 animate-pulse text-sm text-mut">جاري تحميل بيانات الدفع...</p>
+                  <p className="mb-0 mt-1 animate-pulse text-sm text-mut">جارٍ تحميل بيانات الدفع...</p>
                 ) : ipa ? (
                   <p className="mb-0 mt-1 break-all font-mono text-base font-semibold text-ink min-[480px]:text-xl" dir="ltr">{ipa}</p>
                 ) : ipaLoadFailed ? (

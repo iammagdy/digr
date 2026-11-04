@@ -63,7 +63,7 @@ function makeTables() {
 }
 
 const PROFILE = { name: "سلمى" };
-const STARTED = /جاري سحب البيانات/;
+const STARTED = /جار[يٍ] سحب البيانات/;
 const nextTick = () => new Promise((resolve) => setTimeout(resolve, 5));
 
 describe("A6: the owner's exact conversation, offline", () => {
@@ -181,7 +181,7 @@ describe("A6: the owner's exact conversation, offline", () => {
   });
 });
 
-describe("A2: «جاري سحب البيانات» appears only after an explicit approval", () => {
+describe("A2: «جارٍ سحب البيانات» appears only after an explicit approval", () => {
   const walk = (dir: string): string[] =>
     readdirSync(dir).flatMap((name) => {
       const full = path.join(dir, name);
@@ -195,7 +195,7 @@ describe("A2: «جاري سحب البيانات» appears only after an explici
       "src/lib/postApproval.ts",
     ]);
     // No server code, plan text, system prompt or other component spells the phrase out.
-    const spelledOut = walk("src").filter((file) => /جاري سحب البيانات/.test(readFileSync(file, "utf8")));
+    const spelledOut = walk("src").filter((file) => /جار[يٍ] سحب البيانات/.test(readFileSync(file, "utf8")));
     expect(spelledOut.map((file) => file.replaceAll("\\", "/"))).toEqual(["src/lib/postApproval.ts"]);
   });
 

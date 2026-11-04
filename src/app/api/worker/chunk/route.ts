@@ -1261,7 +1261,7 @@ export async function POST(req: NextRequest) {
                 await adminClient.from("job_events").insert({
                   job_id: jobId,
                   user_id: userId,
-                  message: "جاري إعادة التحقق من ملاءمة السجلات",
+                  message: "جارٍ إعادة التحقق من ملاءمة السجلات",
                   units: effectiveDelivered,
                   event_type: "progress",
                 });
@@ -2243,7 +2243,7 @@ export async function POST(req: NextRequest) {
         await adminClient.from("job_events").insert({
           job_id: jobId,
           user_id: userId,
-          message: "جاري تجهيز ملفات النتائج وتنسيقها...",
+          message: "جارٍ تجهيز ملفات النتائج وتنسيقها...",
           units: finalRows.length,
           event_type: "progress",
         });
