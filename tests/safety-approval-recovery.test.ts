@@ -167,10 +167,10 @@ describe("FIX C: a request whose abandoned job was RELEASED is ended safely, onc
     expect(await recover(w, row.id, later())).toEqual({ kind: "ended_released" });
     expect(w.missions.get(row.id)).toMatchObject({ status: "failed", error: ADDON_RELEASED_ERROR, charged_points: 0 });
   });
-  it("the customer's sentences for the ended request pass the customer-text check, say the points came back, and never say anything was charged", () => {
+  it("the customer's sentences for the ended request pass the customer-text check, use the released-hold wording, and never say anything was charged", () => {
     for (const s of [ADDON_RELEASED_SUMMARY_AR, ADDON_APPROVE_MESSAGES_AR.released_before_start]) {
       expect(checkCustomerText(s).issues).toEqual([]);
-      expect(s).toMatch(/عادت/);
+      expect(s).toMatch(/حجز مؤقت مُحرَّر/); // the owner's released-hold wording, never a refund wording
       expect(s).not.toMatch(/خُصم|سُجّل خصم|اكتمل/);
       expect(s).not.toMatch(/[0-9]/);
     }
