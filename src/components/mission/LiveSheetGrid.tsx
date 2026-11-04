@@ -36,7 +36,7 @@ export function LiveSheetGrid({ data, onWindow = () => undefined }: { data: Live
           ))}
         </div>
       ) : null}
-      <div className="max-h-[480px] overflow-auto rounded-[10px] border border-ln" data-testid="live-grid-scroll">
+      <div className="max-h-[480px] overflow-x-auto overflow-y-auto rounded-[10px] border border-ln" data-testid="live-grid-scroll">
         <table className="w-full border-collapse text-[13px]">
           <thead className="sticky top-0 z-10 bg-sf2" data-testid="live-grid-head">
             <tr>{active.headers.map((h) => <th key={h} scope="col" className="whitespace-nowrap border-b border-ln px-2 py-2 text-right font-semibold text-ink">{h}</th>)}</tr>
