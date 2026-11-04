@@ -4,6 +4,72 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 26 (work in progress, 4 Nov 2026, after #376, main = `0bf7b2c`): customer-experience fixes from the live test, NOT FINISHED, NOT MERGED
+
+**Status: draft PR "Round 26 (WIP)". Items 7 and 9 are NOT started, item 10 (verify, merge) is NOT done. Nothing here is merged. No SQL write, no migration, no flag change, no paid provider call, no key or token seen. No forbidden file edited.**
+Branch `claude/tiktok-failure-platform-tests-xvnycn`. The owner's brief (nine items, one PR) is the one in the session that opened this round; this entry is the state at the stop.
+
+### The nine items
+
+| # | Item | State |
+|---|---|---|
+| 1 | Waiting time | **Partly done.** Polling made faster; the 49-second gap itself is NOT explained and NOT fixed. |
+| 2 | Loading and holding states | **Partly done** (card level only). |
+| 3 | Steps panel order | **Done.** |
+| 4 | «طلبك في الدور» | **Done** for the label; the cause is found from the data (below). |
+| 5 | Arabic count grammar | **Done** for the card headline (`summaryAr`); other card lines already used `countAr`, not audited line by line. |
+| 6 | One counter, one bar | **Done.** |
+| 7 | Methodology PDF text layer | **Not started** (investigation only, see below). |
+| 8 | Titles from the Ask | **Partly done** (file name and `missionTitleAr` done; the chooser card and methodology title callers were not checked). |
+| 9 | First load of the signed-in site | **Not started.** |
+
+### Files changed per item
+- **1.** `src/lib/agentMission/pollDelay.ts` (new: `cardPollDelayMs`, `workerPollDelayMs`), `src/components/mission/AgentMissionCard.tsx` (the card polls every 2.5 s while live and for 3 minutes after the customer's own action, 8 s otherwise), `agent/src/worker.ts` (2 s poll for 2 minutes after the worker takes a mission, 5 s idle; a fixed `pollMs` still wins for tests).
+- **2.** `src/components/mission/AgentMissionCard.tsx` (the tapped choice says «جارٍ الإرسال…» and every choice is disabled while it is on its way; the free-text answer button too; a holding line `agent-holding` with the live step and «منذ N ثانية», plus one honest line after 60 s), `src/lib/agentMission/pollDelay.ts` (`holdingLineAr`, `HOLDING_STILL_AR`), `src/lib/agentMission/customerView.ts` (`lastEventAt`). Already existing and unchanged: «جاري الاعتماد…» on approve, «جارٍ التجهيز…» on the methodology buy, the composer's `sending` state.
+- **3.** `src/lib/agentMission/customerView.ts` (`hasPlanStages`, `inOrder`). Cause: a question stores `{question_options}` in `plan_public`, which counted as a plan, so after an answer the planning steps 2 to 4 were checked while «فهمنا طلبك» was still waiting (live shape reproduced: `['waiting','done','done','done']`).
+- **4.** `src/lib/agentMission/openMissions.ts` (queued label «استلمنا طلبك، وسيبدأ تلقائيًا», or «سيبدأ طلبك تلقائيًا بعد انتهاء طلبك الجاري» only when the customer has a planning or executing mission with a live lease; one extra read in `listOpenMissions`), `src/lib/requests/buildIndex.ts` (queued note).
+- **5.** `src/lib/agentMission/foundation/compilePlan.ts` (`summaryAr` uses `countAr`/`itemNounOf`: «١٠ تغريدات»).
+- **6.** `src/lib/agentMission/customerView.ts` (`collectLineAr`: «نجمع التغريدات (٣ من ١٠)» then «جمعنا التغريدات، ونجهّز ملفك الآن»; the panel's `currentLineAr` carries no count; no «جرّبنا N عينات» line), `src/components/mission/MissionPlanPanel.tsx` (a step row draws state only: no count, no bar, no metrics), `src/components/mission/AgentMissionCard.tsx` (the top box: one sentence and the one bar).
+- **8.** `src/lib/agentMission/fileNames.ts` (`OPINION_HEAD`: the subject of «رأي الناس في X» is X; `countPhraseAr`; the title is «<count with its noun> عن <subject> - <date>», e.g. «١٠ تغريدات عن الذكاء الاصطناعي - ٤ نوفمبر ٢٠٢٦»; `missionTitleAr` takes an optional `delivered`).
+
+### Tests
+New (all passing when last run): `tests/round26-count-grammar.test.ts` (9), `tests/round26-steps-order.test.ts` (5), `tests/round26-queue-line.test.ts` (5), `tests/round26-one-counter.test.tsx` (6), `tests/round26-waiting-and-holding.test.tsx` (12), `tests/round26-titles.test.ts` (7). Each was run red first (the live shapes reproduced), then green.
+Older tests updated with a «ROUND 26 ... CHANGED» note because they pinned the behaviour the owner asked to change: `agent-customer-view`, `agent-files-and-panel`, `agent-tracker`, `agent-wording-and-money`, `file-subject-and-media-marker`, `live-run-6-replay`, `namesakes-replies-names-notes`, `open-missions`, `phase3-mission-panel`, `refusals-parents-language-names`, `round14-orders-page`, `ui-pass-1`, `agent-stuck-mission-fix`, `tracker-final-and-stability`. `tests/fixtures/flags-off-digests.json`: only the `planView` and `finalView` digests of the five worlds were re-pinned; mission and plan, workbook, notices, events, provider calls and ledger stay byte-identical to `0bf7b2c`.
+**Full-suite totals last seen** (first run, before the last test fixes): files 3 failed, 790 passed, 5 skipped (798); tests **7 failed, 10035 passed, 57 skipped, 10099 total**. Those 7 were then fixed (the three files pass: 38 of 38), but the second full run was stopped before it finished, so **a green full suite (failed 0, skipped 57) is NOT confirmed**. tsc for the site and for the agent were clean before the test-only fixes. `npm run build` was not run; `npm run check:secrets` was run against an older `.next` folder and is not a valid check.
+
+### Item 1: the timeline measured (mission `msn_ef86659ab11d50f4dfee`, test account, completed; all UTC, 4 Nov 2026)
+| Time | Event | Gap | Cause |
+|---|---|---|---|
+| 12:19:32.4 | created (queued) | | |
+| 12:19:35.0 | worker «بدأ الوكيل دراسة طلبك» | 2.6 s | worker poll |
+| 12:19:36.0 | question «من أنهي منصة؟» | 1.0 s | planning |
+| 12:19:55.8 | answer «إكس» saved | 19.8 s | the customer reading and tapping |
+| **12:20:45.0** | **worker picks it up** | **49.2 s** | **NOT explained.** The worker polls every 5 s, so the poll is not the cause. Leading suspect: `memoryBlocksAdmission` (admit limit 300 MB, `AGENT_MEMORY_ADMIT_LIMIT_MB`; the planning run had started at 297 MB tree RSS and idle readings are 242 to 268 MB); it logs `memory_wait` and takes nothing while blocked. Not provable from the database. |
+| 12:20:46.5 | count question «تحب كام تغريدة؟» | 1.5 s | planning |
+| 12:21:21.0 | count answer «١٠» | 34.5 s | the customer |
+| 12:21:25.2 | worker picks it up | 4.2 s | worker poll (normal) |
+| 12:21:29.0 | plan stored (10 rows, reserve 200) | 3.8 s | planning |
+| 12:23:14.2 | approval | 105 s | the customer |
+| 12:23:16.2 | execution starts | 2.0 s | worker |
+| 12:23:19.1 | completed (10 delivered, charged 200) | 2.9 s | execution |
+Page side: the card asked every 8 s when the mission was not live (question and plan states), so a new card could show up to 8 s late; that is what the faster polling addresses. **Heroku logs are not readable from the sandbox.** To prove or drop the memory hypothesis, paste the Heroku log lines `memory_wait`, `memory_ok` and `claim_failed` for 12:19 to 12:21 UTC. The worker heartbeat history is in Storage (not read, by rule).
+
+### Item 4: which missions were counted
+Read-only SELECTs of missions active between 12:19 and 12:24 UTC returned **only `msn_ef86659ab11d50f4dfee` itself** (no other mission of any customer was queued, approved, planning or executing then). So `readQueue`/`queueLine` could not have produced a queue line from other missions. The words «في الدور» are the state label of a QUEUED mission (`STATE_AR.queued` in `openMissions.ts`, «في الدور وتبدأ تلقائيًا عند دورها»), and the mission was `queued` from 12:19:55 to 12:20:45 (the 49 s gap). The label was true of the mission and misleading to read; it now says what is true (above). Not changed: `readQueue` counts `running` without excluding the mission itself; that does not matter on the queued path (the line is only drawn for queued or approved) but is worth a `neq("id", ...)` later.
+
+### Item 7: what the probe showed (nothing changed in the PDF code yet)
+The methodology PDF is drawn by `src/lib/agentMission/methodology/pdf.ts` (pdfkit, the IBM Plex Sans Arabic font, text passed through `formatArabicRtl`, which reshapes and reverses, so the content stream holds presentation-form glyphs). A probe (outside the repo) drew the words of the owner's list with the same font and `formatArabicRtl` and ran the real `pdftotext` (poppler, at `/usr/bin/pdftotext` in this container): the extracted words are wrong, e.g. «في» → «يف», «الفترة» → «الفرتة», «الإكسل» → «اإلكسل», «لا فترة» → «فرتة ال» (letters swapped or in visual order; the owner's copy-paste lost letters). Drawing the LOGICAL string (no `formatArabicRtl`) with pdfkit also extracts wrongly («يف», «الفرتة»), so "draw logical text and let the font shape it" is NOT a fix by itself. It is a font and ToUnicode problem, not a one-line fix.
+
+### Exact next steps
+**Item 7.** (a) Red test first: build the methodology PDF with `renderMethodologyPdf` from a stored document, run `pdftotext -raw` (or pdf.js) on the bytes, and require every Arabic word of `documentLines(document)` to appear exactly. (b) Try, in this order, measuring each with the independent extractor: an `/ActualText` marked-content span around each drawn word (the standard way to make extraction return the exact text; check that pdfkit can emit it, else write the operators through `doc.addContent`), then an invisible logical-text overlay per line (render mode 3), then a post-processed ToUnicode CMap. (c) Do not touch the price or the charge path (`chg_meth_<jobId>`). (d) Keep `tests/helpers/pdfText.ts` tests green; add the independent check beside them.
+**Item 9.** Diagnose with timings first: where the session is read (the client `createClient().auth.getSession` in the header, versus the server), how many requests run before the header shows, the balance request (`src/hooks/useBalance`, `src/lib/missionBalance.ts`) and its time. Then render the signed-in shell from the server-side session or show a neutral header skeleton until the session is known (never the signed-out buttons first), and a balance skeleton that loads in parallel (never a zero, never a wrong balance). Keep the balance source and its cache rules; no money or ledger file. Measure before and after on a preview build and report both numbers (a real signed-in measurement needs a session the sandbox does not have: say so plainly if it cannot be done, and never ask for a key or token).
+**Item 10 (and finishing 1, 2, 8).** (1) For item 1, get the Heroku lines above and, if `memory_wait` shows, decide on the admission policy for the no-model planning step (a separate, careful change; do not weaken the memory guard blindly). (2) Item 2: the chat typing indicator, the edit button label, and a browser check of the holding line were not done. (3) Item 8: check the chooser card and the methodology title callers (`src/lib/agentMission/methodology/missions.ts`, `methodologyOffer.ts`) pass the delivered count to `missionTitleAr`; test on stored live missions of every platform. (4) Run the full suite until failed = 0 and skipped = 57 exactly, tsc for the site and the agent, `npm run build` with no secrets, `npm run check:secrets` AFTER the build, read the Vercel preview state on the head SHA, run `select status, count(*) from public.missions where status in ('planning','approved','executing') group by status` (no row), then mark the draft PR ready, merge with a merge commit pinned to the head SHA (no force-push), one post-merge check, and remind the owner to confirm in Heroku that Build succeeded AND Deployed on the merge SHA (this round changes the worker).
+
+### Read-only SELECTs run this round (no Storage read)
+(1) the account's missions with the request text; (2) `mission_events` of `msn_ef86659ab11d50f4dfee` (except the memory measurements); (3) `information_schema.columns` of `mission_events`, `missions` and the heartbeat table; (4) `pg_get_functiondef` of `agent_claim_mission`; (5) `mission_events` grouped by mission for 12:15 to 12:25; (6) the five latest rows of `agent_worker_heartbeat`; (7) two reads of missions active between 12:19 and 12:24 and of any mission queued, approved, planning or executing (only the mission itself).
+
+---
+
 ## Round 25 (4 Nov 2026, after #375, main = `42d58e7`): the platform answer survives the count answer; the legacy model path takes only companies and places
 
 **No SQL write, no migration, no flag change, no paid provider call, no key or token seen.** No forbidden file edited (the `runMission.ts` changes are planning routing, not settlement).
