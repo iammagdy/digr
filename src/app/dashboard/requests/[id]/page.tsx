@@ -15,6 +15,7 @@ import AgentMissionCard from "@/components/mission/AgentMissionCard";
 import VersionList from "@/components/mission/VersionList";
 import ReviewQuote from "@/components/mission/ReviewQuote";
 import ReviewReport from "@/components/mission/ReviewReport";
+import EditRequestCard from "@/components/mission/EditRequestCard";
 import { Skeleton } from "@/components/ui";
 
 /**
@@ -119,6 +120,8 @@ export default function RequestDetailsPage({ params }: { params: Promise<{ id: s
         {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <ReviewQuote missionId={missionId} /> : null}
         {/* STAGE A (behind DIGER_STAGE4_REVIEW): «نتيجة مراجعة الملف», the published report of a review that already exists; read-only and free, it draws nothing while the route answers «not found» or no version has a report */}
         {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <ReviewReport missionId={missionId} /> : null}
+        {/* STAGE B (behind DIGER_STAGE4_EDITS): «تعديل الملف», an edit request BEFORE payment (priced by the server, nothing held, no approval button); it draws nothing while the route answers «not found» */}
+        {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <EditRequestCard missionId={missionId} /> : null}
         {read === "done" && !missionId ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="details-no-mission">هذا طلب من النوع القديم: ملفاته في «طلباتي» ونتيجته في المحادثة.</p> : null}
 
         {read === "done" ? (

@@ -83,12 +83,17 @@ const PREVIEW = ["src/lib/agentMission/stage4/reviewPreview.ts", "src/app/api/mi
  * `missions` table and nothing else: no job, no ledger, no wallet, no rpc, no storage, no settlement, approval or reservation function (checked below and by tests/stage4-review-request.test.ts). Nothing else may reach them.
  */
 const REQUEST = ["src/lib/agentMission/stage4/reviewRequest.ts", "src/lib/agentMission/stage4/addonRowStore.ts", "src/app/api/missions/[id]/review-request/route.ts"];
+/**
+ * STAGE B: the EDIT request before payment, the same shape as the review request: these files MAKE the add-on row of an edit whose values the customer typed (`createAddonRow`, stored `plan_ready`, priced by the existing `editCard`) and CANCEL it while it is unpaid. They write the `missions` table
+ * and nothing else (checked below and by tests/stage4-edit-request.test.ts), and they reach no worker, gateway or provider. Nothing else may reach them.
+ */
+const EDIT_REQUEST = ["src/lib/agentMission/stage4/editRequest.ts", "src/app/api/missions/[id]/edit-request/route.ts"];
 const abs = (r: string) => path.join(ROOT, r);
 
 describe("the new modules exist and nothing in production reaches them", () => {
   it("every file is there", () => { for (const r of NEW) expect(existsSync(abs(r))).toBe(true); });
   for (const r of NEW) it(`${r}: only the new modules, the worker's entry point (through the dispatch) and tests reach it`, () => {
-    const who = [...reachers(abs(r))].map(rel).filter((f) => !NEW.includes(f) && !ENTRY.includes(f) && !SIBLINGS.includes(f) && !PREVIEW.includes(f) && !REQUEST.includes(f));
+    const who = [...reachers(abs(r))].map(rel).filter((f) => !NEW.includes(f) && !ENTRY.includes(f) && !SIBLINGS.includes(f) && !PREVIEW.includes(f) && !REQUEST.includes(f) && !EDIT_REQUEST.includes(f));
     expect(who).toEqual([]);
   });
   it("agent/src/main.ts imports exactly one new module: the dispatch", () => {
@@ -97,7 +102,7 @@ describe("the new modules exist and nothing in production reaches them", () => {
   });
   it("the displayed prices and the card are never reached from production: addonQuote.ts and quotes.ts are imported by tests and by each other only", () => {
     const quoters = [abs("src/lib/agentMission/stage4/addonQuote.ts"), abs("src/lib/agentMission/stage4/quotes.ts")];
-    for (const q of quoters) expect([...reachers(q)].map(rel).filter((f) => !f.startsWith("src/lib/agentMission/stage4/") && !PREVIEW.includes(f) && !REQUEST.includes(f))).toEqual([]);
+    for (const q of quoters) expect([...reachers(q)].map(rel).filter((f) => !f.startsWith("src/lib/agentMission/stage4/") && !PREVIEW.includes(f) && !REQUEST.includes(f) && !EDIT_REQUEST.includes(f))).toEqual([]);
   });
 });
 
@@ -174,7 +179,7 @@ describe("the review request writes one unpaid row and cancels it by compare-and
   const route = abs("src/app/api/missions/[id]/review-request/route.ts");
   it("all three files exist, and nothing else reaches the request logic or the row store", () => {
     for (const r of REQUEST) expect(existsSync(abs(r))).toBe(true);
-    for (const f of ["src/lib/agentMission/stage4/reviewRequest.ts", "src/lib/agentMission/stage4/addonRowStore.ts"]) expect([...reachers(abs(f))].map(rel).filter((x) => !REQUEST.includes(x)), f).toEqual([]);
+    for (const f of ["src/lib/agentMission/stage4/reviewRequest.ts", "src/lib/agentMission/stage4/addonRowStore.ts"]) expect([...reachers(abs(f))].map(rel).filter((x) => !REQUEST.includes(x) && !EDIT_REQUEST.includes(x)), f).toEqual([]);
   });
   it("the route's imports, followed all the way down, contain nothing under agent/ (no gateway, no worker, no provider client)", () => {
     expect([...closure(route)].map(rel).filter((f) => f.startsWith("agent/"))).toEqual([]);
@@ -186,6 +191,28 @@ describe("the review request writes one unpaid row and cancels it by compare-and
     expect(src).not.toMatch(/settleAddon|approveAddon|approveMission|releaseAddon|accept_quote_atomic|release_job_atomic|create_quote_atomic|claim_job_chunk|credit_ledger|refund/i);
     expect(src).not.toMatch(/status:\s*"(approved|executing|completed|failed|unserved)"/);
     expect([...src.matchAll(/\.(insert|update)\(/g)].map((m) => m[1]).sort()).toEqual(["insert", "update"]); // one insert (the plan_ready row) and one update (the cancel), no more
+  });
+});
+
+describe("STAGE B: the edit request writes one unpaid row and cancels it by compare-and-set, and nothing else", () => {
+  const route = abs("src/app/api/missions/[id]/edit-request/route.ts");
+  it("both files exist, and nothing else reaches the edit request logic", () => {
+    for (const r of EDIT_REQUEST) expect(existsSync(abs(r))).toBe(true);
+    expect([...reachers(abs("src/lib/agentMission/stage4/editRequest.ts"))].map(rel).filter((x) => !EDIT_REQUEST.includes(x))).toEqual([]);
+  });
+  it("the route's imports, followed all the way down, contain nothing under agent/ (no gateway, no worker, no provider client) and no ordinary approval path", () => {
+    const deps = [...closure(route)].map(rel);
+    expect(deps.filter((f) => f.startsWith("agent/"))).toEqual([]);
+    expect(deps).toContain("src/lib/agentMission/stage4/addonQuote.ts"); // it prices through the existing card: the check is not empty
+    expect(deps).toContain("src/lib/agentMission/stage4/editCore.ts"); // and checks the edit with the engine's own rules
+    // the card reaches the money core's pure helpers (ids, price checks) through addonSettlement.ts exactly as the review request does; what matters is that the two files never CALL a money function (checked in the source below)
+    expect(deps).not.toContain("src/lib/agentMission/approval.ts");
+  });
+  it("no rpc, upload, delete or upsert; no settlement, approval, reservation or refund; no row is ever written in a started status; one insert and one update only (through the shared store)", () => {
+    const src = EDIT_REQUEST.map((r) => code(abs(r))).join("\n");
+    expect(src).not.toMatch(/\.(rpc|upload|remove|createSignedUrl|upsert|delete|insert|update)\(/);
+    expect(src).not.toMatch(/settleAddon|approveAddon|approveMission|releaseAddon|accept_quote_atomic|release_job_atomic|create_quote_atomic|claim_job_chunk|credit_ledger|refund/i);
+    expect(src).not.toMatch(/status:\s*"(approved|executing|completed|failed|unserved)"/);
   });
 });
 

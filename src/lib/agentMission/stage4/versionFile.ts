@@ -122,3 +122,21 @@ export async function readVersionFile(client: any, input: { missionId: string; u
     return no(500, "damaged");
   }
 }
+
+/**
+ * The highest PUBLISHED version number of the customer's own mission (STAGE B: an edit goes on the latest version). Read-only: the mission row (owner) and the listing of `versions/`.
+ * 404 «not_found»: not theirs, does not exist (the same answer), or nothing is published. 503 «unavailable»: the database or the storage could not answer.
+ */
+export async function latestPublishedNumber(client: any, input: { missionId: string; userId: string }): Promise<{ ok: true; latest: number } | Failure> {
+  try {
+    const { data: mission, error: missionError } = await client.from(MISSION_TABLE).select("id,user_id").eq("id", input.missionId).maybeSingle();
+    if (missionError) return no(503, "unavailable");
+    if (!mission || mission.user_id !== input.userId) return no(404, "not_found");
+    const { data: listed, error: listError } = await client.storage.from(AGENT_BUCKET).list(`${input.missionId}/versions`, { limit: 1000, sortBy: { column: "name", order: "asc" } });
+    if (listError) return no(503, "unavailable");
+    const numbers = ((listed ?? []) as Array<{ name: string; id?: string | null }>).filter((o) => Boolean(o.id)).map((o) => Number(PUBLISHED_NAME.exec(o.name)?.[1] ?? 0)).filter((n) => n >= 1);
+    return numbers.length > 0 ? { ok: true, latest: Math.max(...numbers) } : no(404, "not_found");
+  } catch {
+    return no(503, "unavailable");
+  }
+}
