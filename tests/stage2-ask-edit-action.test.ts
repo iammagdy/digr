@@ -68,12 +68,15 @@ describe("flag off (unset, as in production): the action does not exist", () => 
     expect(c.objects.size).toBe(0);
     expect(db.rows("missions")[0].status).toBe("plan_ready");
   });
-  it("«test»: an account that is not a test account gets 404; a test account gets the action", async () => {
+  it("«test»: a mission the worker did not mark as a test account's gets 404; a marked one gets the action (the site never reads the test-account rule itself)", async () => {
     vi.stubEnv("DIGER_STAGE2_ASK_CARD", "test");
     db.seed("missions", [mission()]);
-    state.client = makeClient(db, "customer@example.com").client;
+    const plain = makeClient(db);
+    state.client = plain.client;
     expect((await POST(req({ action: "ask_edit", edit: { field: "count", value: 1 } }), ctx())).status).toBe(404);
-    state.client = makeClient(db, "tester@digr.local").client;
+    const marked = makeClient(db);
+    marked.objects.set(`${MSN}/stage2/test_account.json`, JSON.stringify({ test: true }));
+    state.client = marked.client;
     expect((await POST(req({ action: "ask_edit", edit: { field: "count", value: 1 } }), ctx())).status).toBe(200);
   });
 });

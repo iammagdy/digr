@@ -3,7 +3,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { resolveMissionViewer, safeMissionId } from "@/lib/server/missionViewer";
 import { AGENT_BUCKET, MISSION_TABLE } from "@/lib/agentMission/constants";
 import { parsePollRequest, pollResponse, type LiveSnapshot } from "@/lib/agentMission/stage2/liveSheet";
-import { stage2FlagForViewer } from "@/lib/agentMission/stage2/askEditAction";
+import { stage2FlagForMission } from "@/lib/agentMission/stage2/askEditAction";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -23,7 +23,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   const auth = await resolveMissionViewer(req);
   if (!auth.ok) return auth.response;
   const client = createAdminClient();
-  if (!(await stage2FlagForViewer(client, "DIGER_STAGE2_LIVE_SHEET", auth.viewer.userId))) return NextResponse.json({ success: false, error: "not_found" }, { status: 404, headers: NO_STORE });
+  if (!(await stage2FlagForMission(client, "DIGER_STAGE2_LIVE_SHEET", id))) return NextResponse.json({ success: false, error: "not_found" }, { status: 404, headers: NO_STORE });
   const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id").eq("id", id).maybeSingle();
   if (!mission || mission.user_id !== auth.viewer.userId) return NextResponse.json({ success: false, error: "not_found" }, { status: 404, headers: NO_STORE });
   let snapshot: LiveSnapshot | null = null;

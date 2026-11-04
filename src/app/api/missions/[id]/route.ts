@@ -6,7 +6,7 @@ import { resolveMissionViewer, safeMissionId } from "@/lib/server/missionViewer"
 import { getLiveProviderGateStatusFromSettings } from "@/lib/server/providerGate";
 import { getBusyState } from "@/lib/server/busyState";
 import { countActiveJobs, evaluateConcurrentJobs } from "@/lib/server/concurrentJobs";
-import { askCardForCustomer, askEditForCustomer, stage2FlagForViewer } from "@/lib/agentMission/stage2/askEditAction";
+import { askCardForCustomer, askEditForCustomer, stage2FlagForMission } from "@/lib/agentMission/stage2/askEditAction";
 import { methodologyMissionById } from "@/lib/agentMission/methodology/missions";
 import { isMethodologyPurchased } from "@/lib/server/methodologyPurchase";
 
@@ -29,9 +29,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     if (m) methodology = { jobId: m.jobId, titleAr: m.titleAr, purchased: await isMethodologyPurchased(client, { userId: auth.viewer.userId, jobId: m.jobId }) };
   }
   // STAGE 2 S4 (docs/STAGE-2.md): the «فهمنا طلبك» card, only while the plan waits for approval and only when DIGER_STAGE2_ASK_CARD is on for the viewer (unset: nothing is read, the answer is today's)
-  const askCard = r.status === "plan_ready" && (await stage2FlagForViewer(client, "DIGER_STAGE2_ASK_CARD", auth.viewer.userId)) ? await askCardForCustomer(client, { id, userId: auth.viewer.userId }) : null;
+  const askCard = r.status === "plan_ready" && (await stage2FlagForMission(client, "DIGER_STAGE2_ASK_CARD", id)) ? await askCardForCustomer(client, { id, userId: auth.viewer.userId }) : null;
   // STAGE 2 S10: the page may poll the live sheet (its own route) only when DIGER_STAGE2_LIVE_SHEET is on for the viewer (unset: nothing is read, the answer is today's)
-  const liveSheet = await stage2FlagForViewer(client, "DIGER_STAGE2_LIVE_SHEET", auth.viewer.userId);
+  const liveSheet = await stage2FlagForMission(client, "DIGER_STAGE2_LIVE_SHEET", id);
   return NextResponse.json({ success: true, isGuest: auth.viewer.isGuest, status: r.status, requestText: r.requestText, view: r.view, ...(methodology ? { methodology } : {}), ...(askCard ? { askCard } : {}), ...(liveSheet ? { liveSheet: true } : {}) }, { headers: { "Cache-Control": "no-store" } });
 }
 
@@ -82,7 +82,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   }
   // STAGE 2 S3 (docs/STAGE-2.md): an edit of the «فهمنا طلبك» card, only behind DIGER_STAGE2_ASK_CARD (unset: not found, as before this action existed). No money line is touched.
   if (body?.action === "ask_edit") {
-    if (!(await stage2FlagForViewer(client, "DIGER_STAGE2_ASK_CARD", viewer.userId))) return NextResponse.json({ success: false, error: "not_found" }, { status: 404 });
+    if (!(await stage2FlagForMission(client, "DIGER_STAGE2_ASK_CARD", id))) return NextResponse.json({ success: false, error: "not_found" }, { status: 404 });
     const r = await askEditForCustomer(client, { id, userId: viewer.userId, edit: body.edit });
     return r.ok ? NextResponse.json({ success: true, status: r.status, scope: r.scope }) : NextResponse.json({ success: false, error: r.error, ...(r.reason ? { reason: r.reason } : {}) }, { status: r.status });
   }

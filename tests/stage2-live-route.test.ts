@@ -41,7 +41,7 @@ function makeClient(db: MemoryDb, email = "someone@example.com") {
     auth: { admin: { getUserById: async (id: string) => ({ data: { user: { id, email } }, error: null }) } },
   };
   const put = (name: string, s: LiveSnapshot) => objects.set(`${MSN}/live/${name}`, JSON.stringify(s));
-  return { client, put, calls };
+  return { client, put, calls, objects };
 }
 const get = (query = "") => GET(new NextRequest(`http://localhost/api/missions/${MSN}/live${query}`), { params: Promise.resolve({ id: MSN }) });
 
@@ -59,10 +59,13 @@ describe("flag off (unset, as in production)", () => {
     expect(res.headers.get("Cache-Control")).toBe("no-store");
     expect(c.calls).toEqual({ list: 0, download: 0 });
   });
-  it("«test»: 404 for an account that is not a test account", async () => {
+  it("«test»: 404 unless the worker marked the mission as a test account's; marked: the route answers", async () => {
     vi.stubEnv("DIGER_STAGE2_LIVE_SHEET", "test");
-    state.client = makeClient(db, "customer@example.com").client;
+    const c = makeClient(db);
+    state.client = c.client;
     expect((await get()).status).toBe(404);
+    c.objects.set(`${MSN}/stage2/test_account.json`, JSON.stringify({ test: true }));
+    expect((await get()).status).toBe(200);
   });
 });
 

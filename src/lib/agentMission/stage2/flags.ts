@@ -21,3 +21,13 @@ export function stage2Enabled(name: Stage2Flag, isTestAccount: boolean, env: Env
   const mode = stage2FlagMode(name, env);
   return mode === "on" || (mode === "test" && isTestAccount === true);
 }
+
+/**
+ * «test» MODE ON THE SITE (Sonnet session): the site must not import the test-account rule (the admin screens and the worker own it; the guard
+ * tests/admin-calls-log.test.ts keeps it out of customer code). So the WORKER, which already decides whether a mission's account is a test account (redesign.ts `accountIsTest`), writes this
+ * create-only marker in the mission's folder when the account is one and some Stage 2 flag says «test»; the site reads only the marker. Flags unset or «on»: nothing is written or read.
+ */
+export const STAGE2_TEST_MARKER_FOLDER = "stage2";
+export const STAGE2_TEST_MARKER_NAME = "test_account.json";
+export const STAGE2_TEST_MARKER = `${STAGE2_TEST_MARKER_FOLDER}/${STAGE2_TEST_MARKER_NAME}`;
+export const anyStage2TestMode = (env: Env = processEnv()): boolean => STAGE2_FLAGS.some((f) => stage2FlagMode(f, env) === "test");

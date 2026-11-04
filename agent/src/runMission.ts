@@ -2,6 +2,7 @@ import { createJobCallBudget } from "../../src/lib/server/callBudget";
 import { stage2Enabled } from "../../src/lib/agentMission/stage2/flags";
 import { topicRelationAnswerOf } from "../../src/lib/agentMission/stage2/questionCards";
 import { readAskEdits } from "./stage2/askEdits";
+import { markStage2TestAccount } from "./stage2/testMarker";
 import type { CallRecorder, FetchFn } from "../../src/lib/server/multiProvider/adapterTypes";
 import type { TregCallOptions, TregCallResult } from "../../src/functions/shared/tregClient";
 import type { commitTregSpend } from "../../src/lib/server/tregCallRecord";
@@ -419,6 +420,8 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     }
   }
   // STAGE 2 (docs/STAGE-2.md S2): the customer's card edits (create-only objects of the mission's folder), only when DIGER_STAGE2_ASK_CARD is on for this account; unset (today), none is read
+  // STAGE 2: a TEST account's mission is marked for the site when some Stage 2 flag says «test» (unset or «on»: nothing is written)
+  await markStage2TestAccount(store, mission.id, redesign.isTest);
   const askEdits = compiledActive && stage2Enabled("DIGER_STAGE2_ASK_CARD", redesign.isTest) ? await readAskEdits(store, mission.id) : [];
   const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, nowMs: planningNow, priorCalls: calls, ...(askEdits.length > 0 ? { askEdits } : {}), ...(stage2Questions ? { questionCards: true, ...(topicRelation ? { topicRelation } : {}) } : {}), ...(understand ? { understand } : {}), ...(occurrence ? { occurrence } : {}), ...(redesign.isTest ? { catalogOnly: true } : {}), askCount: true, choices, questionsAsked: prior?.questionsAsked ?? 0, answerIsChoice }) : null;
   // THE QUESTION BEFORE APPROVAL (live round 7): no video of the two pages read is about the topic; the plan is not made, the customer chooses (the same needs_input card as the topic question)

@@ -1,10 +1,9 @@
 import { AGENT_BUCKET, MISSION_EVENTS_TABLE, MISSION_TABLE } from "../constants";
 import { buildAsk } from "../foundation/ask";
-import { isTestAccount } from "../../server/testAccounts";
 import { ASK_EDIT_REJECTION_AR, applyAskEdit, askCardView, editScopeOf, parseAskEdit, type AskCardView, type AskEditRejection, type EditScope } from "./askCard";
 import type { Ask } from "../foundation/ask";
 import { ASK_EDITS_FOLDER, askEditPath, askEditsOf, nextAskEditIndex } from "./askEditStore";
-import { stage2FlagMode, type Stage2Flag } from "./flags";
+import { STAGE2_TEST_MARKER_FOLDER, STAGE2_TEST_MARKER_NAME, stage2FlagMode, type Stage2Flag } from "./flags";
 
 /**
  * STAGE 2 S3 (docs/STAGE-2.md): THE CUSTOMER EDITS THE «فهمنا طلبك» CARD. Only for the customer's own mission in status `plan_ready` (a plan is shown and NOT approved: nothing is held yet).
@@ -25,15 +24,16 @@ export type AskEditActionResult =
   | { ok: false; status: number; error: string; reason?: AskEditRejection };
 
 /**
- * Is a Stage 2 flag on for this viewer? «on»: yes; «test»: only for a test account (its e-mail read with the admin client); unset or anything else: no, and nothing is read.
+ * Is a Stage 2 flag on for this mission's customer? «on»: yes; «test»: only when the worker marked the mission's account as a test account (`stage2/test_account.json`, flags.ts); unset or
+ * anything else: no, and nothing is read. The caller still checks that the viewer owns the mission.
  */
-export async function stage2FlagForViewer(client: any, flag: Stage2Flag, userId: string, env?: Readonly<Record<string, string | undefined>>): Promise<boolean> {
+export async function stage2FlagForMission(client: any, flag: Stage2Flag, missionId: string, env?: Readonly<Record<string, string | undefined>>): Promise<boolean> {
   const mode = stage2FlagMode(flag, env);
   if (mode === "off") return false;
   if (mode === "on") return true;
   try {
-    const user = (await client.auth?.admin?.getUserById?.(userId))?.data?.user;
-    return isTestAccount({ id: userId, email: user?.email ?? null });
+    const listed = await client.storage.from(AGENT_BUCKET).list(`${missionId}/${STAGE2_TEST_MARKER_FOLDER}`, { limit: 10 });
+    return !listed?.error && ((listed?.data ?? []) as Array<{ name: string }>).some((o) => o.name === STAGE2_TEST_MARKER_NAME);
   } catch {
     return false;
   }

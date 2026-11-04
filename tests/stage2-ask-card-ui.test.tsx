@@ -100,6 +100,6 @@ describe("the mission card shows it only when the server sent it", () => {
   });
   it("the mission route sends askCard only while the plan waits and only when the flag is on for the viewer", () => {
     const route = readFileSync("src/app/api/missions/[id]/route.ts", "utf8");
-    expect(route).toContain('const askCard = r.status === "plan_ready" && (await stage2FlagForViewer(client, "DIGER_STAGE2_ASK_CARD", auth.viewer.userId)) ? await askCardForCustomer(client, { id, userId: auth.viewer.userId }) : null;');
+    expect(route).toContain('const askCard = r.status === "plan_ready" && (await stage2FlagForMission(client, "DIGER_STAGE2_ASK_CARD", id)) ? await askCardForCustomer(client, { id, userId: auth.viewer.userId }) : null;');
   });
 });

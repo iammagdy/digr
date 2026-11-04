@@ -43,7 +43,7 @@ describe("where it is shown, and its words", () => {
     const card = readFileSync("src/components/mission/AgentMissionCard.tsx", "utf8");
     expect(card).toContain('const showLive = stage2 && answer?.liveSheet === true && (v.phase === "running" || v.phase === "done" || v.phase === "partial");');
     const route = readFileSync("src/app/api/missions/[id]/route.ts", "utf8");
-    expect(route).toContain('const liveSheet = await stage2FlagForViewer(client, "DIGER_STAGE2_LIVE_SHEET", auth.viewer.userId);');
+    expect(route).toContain('const liveSheet = await stage2FlagForMission(client, "DIGER_STAGE2_LIVE_SHEET", id);');
     expect(readFileSync("src/app/dashboard/chat/page.tsx", "utf8")).not.toMatch(/LiveSheet|stage2/);
   });
   it("every fixed word passes the customer-text rules", () => {
