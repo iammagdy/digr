@@ -118,6 +118,10 @@ class Anon:
             return "redacted"
         if key in PERSONAL_OVERRIDE or norm(key) in PERSONAL_FIELDS:
             return self.text(v)
+        if re.search(r"@[A-Za-z0-9-]+\.[A-Za-z]", v):
+            return self.text(v)
+        if key and ID_KEY.search(key) and re.match(r"^https?://", v):
+            return self.url(v)
         if key in KEEP or (key and ID_KEY.search(key)):
             return v
         if re.match(r"^https?://", v):
