@@ -2,6 +2,7 @@ import { isLanguageColumn, languageLabelAr, languageOfTextAr, textColumnKeyOf } 
 import { MARKS_KEY, MARK_COLUMNS_AR, MARK_COLUMN_ORDER, markCellAr, type RowMarks } from "../../src/lib/agentMission/rawMarks";
 import ExcelJS from "exceljs";
 import { SUMMARY_SHEET_AR } from "../../src/lib/modelPlanner/missionWorkbook";
+import { csvText } from "../../src/lib/agentMission/csvText";
 import { wordBoundarySheetName } from "../../src/lib/agentMission/fileNames";
 import { REASON_AR, type RelevanceReason } from "../../src/lib/agentMission/relevance";
 import { promisedTotalOf } from "../../src/lib/agentMission/promisedNumbers";
@@ -50,12 +51,7 @@ const MAX_PARENT_CONTEXT_COLUMNS = 2;
 
 const text = (v: unknown): string => (v === null || v === undefined ? "" : typeof v === "object" ? JSON.stringify(v) : String(v));
 const isUrl = (v: unknown) => /^https?:\/\//i.test(text(v).trim());
-/**
- * A text that starts like a formula is dangerous in a CSV (a spreadsheet may run it), so the CSV marks it with a leading apostrophe. In the XLSX NO mark is written: a text cell is stored as a string (shared string),
- * which a spreadsheet never runs as a formula, so a customer's reply «@name ...» shows exactly as written.
- */
-const isFormulaLike = (v: string): boolean => /^[=+\-@\t\r]/.test(v) && !/^\+\d[\d\s]*$/.test(v);
-const csvText = (v: string): string => (isFormulaLike(v) ? `'${v}` : v);
+// the CSV formula mark (a leading apostrophe) lives in src/lib/agentMission/csvText.ts, shared with the customer's CSV download; the XLSX writes NO mark (a string cell is never run as a formula)
 const textCell = (v: string): string => v;
 
 export interface SheetColumn { title: string; get: (row: Row, parent: Row | null) => unknown; kind?: "context" | "own"; contact?: boolean; link?: boolean; /** The stage column's key (the date columns are recognised by it and by the title). */ key?: string; /** ROUND 27: a counter or a field the source may not give: a missing value reads «غير متاح» and the column is never merged into another. */ availability?: boolean }

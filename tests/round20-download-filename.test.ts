@@ -168,11 +168,12 @@ describe("the customer's mission file (the Facebook smoke's Excel)", () => {
     expect(fetched).toHaveLength(1);
     expect(fetched[0]).toMatch(/^https:\/\/signed\.example\/msn_ready0001\/result\/result\.xlsx/);
   });
-  it("a customer who asks for the CSV still gets the Excel (the Excel's name and type), as before", async () => {
+  it("CHANGED (round 32): a customer who asks for the CSV is never given the Excel in its place: this storage holds no Excel to build the CSV from, so the answer is an Arabic 404 and nothing is fetched (tests/round32-customer-csv.test.ts covers the CSV itself)", async () => {
     const res = await missionFileRoute(ask("/api/missions/msn_ready0001/file?name=result.csv&stream=1"), { params: Promise.resolve({ id: "msn_ready0001" }) });
-    expect(res.status).toBe(200);
-    expect(fileNameFromDisposition(res.headers.get("Content-Disposition"))).toBe(ARABIC);
-    expect(res.headers.get("Content-Type")).toBe(XLSX_TYPE);
+    expect(res.status).toBe(404);
+    expect(res.headers.get("Content-Type")).not.toBe(XLSX_TYPE);
+    expect((await res.json()).error).toMatch(/[\u0600-\u06ff]/);
+    expect(fetched).toHaveLength(0);
   });
   it("without stream the route is what it was: JSON with the signed link", async () => {
     const res = await missionFileRoute(ask("/api/missions/msn_ready0001/file?name=result.xlsx"), { params: Promise.resolve({ id: "msn_ready0001" }) });

@@ -145,7 +145,8 @@ describe("the live panel and the queue", () => {
     expect(done.phase).toBe("done");
     // one money line: what was charged and for how many items (the hold and its release are the wallet's own rows)
     expect(done.resultLinesAr[done.resultLinesAr.length - 1]).toBe("خُصم ٢٨ نقطة مقابل ١٢٠ عنصرًا.");
-    expect(done.files.map((f) => f.labelAr)).toEqual(["تنزيل ملف إكسل"]);
+    // CHANGED (round 32): the CSV of the customer's data and the CSV of its methodology are offered after the Excel (the Excel button is unchanged)
+    expect(done.files.map((f) => f.labelAr)).toEqual(["تنزيل ملف إكسل", "تنزيل ملف سي إس في", "منهجية سي إس في"]);
     expect(done.steps[done.steps.length - 1]).toMatchObject({ id: "files", state: "done" });
     const partial = customerMissionView({ mission: row({ status: "completed", delivered_units: 40, charged_points: 9, reserved_points: 32 }), events: [] });
     expect(partial.phase).toBe("partial");

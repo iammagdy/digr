@@ -10,6 +10,7 @@ import { AGENT_CLOSE_NOTICE_AR } from "@/lib/agentMission/constants";
 import { panelPollDelayMs } from "@/lib/missionPanelContent";
 import { MISSION_READ_LIMIT_MS, startMissionPolling } from "@/lib/missionPoller";
 import type { CustomerMissionView } from "@/lib/agentMission/customerView";
+import { CSV_PACKAGING_NOTE_AR } from "@/lib/agentMission/csvLabels";
 import { MissionPlanBody } from "@/components/mission/MissionPlanPanel";
 import { PlanEditor } from "@/components/mission/PlanEditor";
 import { approveWithRecovery } from "@/lib/missionApprove";
@@ -365,8 +366,9 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
       {v.phase === "cancelled" ? <p className="m-0 text-[13px] text-ink2" data-testid="agent-cancelled">أُلغيت هذه المهمة ولم يُخصم شيء.</p> : null}
       {v.files.length > 0 ? (
         <div className="flex flex-wrap gap-2" data-testid="agent-files">
-          {v.files.map((f) => <button key={f.name} type="button" className={BTN_PRIMARY} onClick={() => onDownload(f.name)}>{f.labelAr}</button>)}
+          {v.files.map((f) => <button key={f.name} type="button" data-testid={f.kind === "xlsx" ? undefined : `agent-file-${f.kind}`} className={f.kind === "xlsx" ? BTN_PRIMARY : BTN_PLAIN} onClick={() => onDownload(f.name)}>{f.labelAr}</button>)}
           <a href="/dashboard/requests" className={`${BTN_PLAIN} inline-flex items-center no-underline`}>افتح طلباتي</a>
+          {v.files.some((f) => f.kind === "csv") ? <p className="m-0 basis-full text-[12px] leading-[1.7] text-ink2" data-testid="agent-csv-note">{CSV_PACKAGING_NOTE_AR}</p> : null}
         </div>
       ) : null}
       {(v.phase === "done" || v.phase === "partial") && methodology ? <MethodologyOffer jobId={methodology.jobId} titleAr={methodology.titleAr} purchased={methodology.purchased} onCharged={onSettled} /> : null}

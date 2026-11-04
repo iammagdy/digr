@@ -12,7 +12,8 @@ import { formatsAr } from "../src/lib/planExplanation";
 import { customerFormatLabelAr } from "../src/lib/customerFormatLabels";
 
 /**
- * A CUSTOMER NEVER SEES OR DOWNLOADS A CSV (the CSV is still produced and stored for settlement and the admin). Every customer route gives the Excel; an older request with a CSV and no Excel gets an Excel built from its CSV.
+ * THE LEGACY SURFACES (the jobs download route, «طلباتي», the chat canvas) NEVER GIVE A CUSTOMER THE STORED CSV (it is produced and stored for settlement and the admin): they give the Excel; an older request with a CSV and no Excel gets an Excel built from its CSV.
+ * CHANGED (round 32): the MISSION card and its file route now offer the customer a CSV built from the mission's own Excel (tests/round32-customer-csv.test.ts); the stored CSV is still never the customer's file.
  */
 const world = vi.hoisted(() => ({
   admin: false,
@@ -165,9 +166,10 @@ describe("the CSV reader and the Excel built from it", () => {
 });
 
 describe("the mission card and the file link", () => {
-  it("the card offers ONE button, the Excel; a mission that holds only a CSV is offered an Excel too", () => {
-    expect(customerFilesOf([{ name: "result.xlsx", kind: "xlsx" }, { name: "result.csv", kind: "csv" }])).toEqual([{ name: "result.xlsx", kind: "xlsx", labelAr: "تنزيل ملف إكسل" }]);
-    expect(customerFilesOf([{ name: "result.csv", kind: "csv" }])).toEqual([{ name: "result.xlsx", kind: "xlsx", labelAr: "تنزيل ملف إكسل" }]);
+  it("the card offers the Excel first and, for a mission that has its Excel, the CSV and the methodology's CSV (round 32); a mission that holds only a CSV is offered an Excel only", () => {
+    const excel = { name: "result.xlsx", kind: "xlsx", labelAr: "تنزيل ملف إكسل" };
+    expect(customerFilesOf([{ name: "result.xlsx", kind: "xlsx" }, { name: "result.csv", kind: "csv" }])).toEqual([excel, { name: "result.csv", kind: "csv", labelAr: "تنزيل ملف سي إس في" }, { name: "methodology.csv", kind: "methodology", labelAr: "منهجية سي إس في" }]);
+    expect(customerFilesOf([{ name: "result.csv", kind: "csv" }])).toEqual([excel]);
     expect(customerFilesOf([])).toEqual([]);
   });
 
@@ -181,13 +183,11 @@ describe("the mission card and the file link", () => {
     }) },
   });
 
-  it("a link asked for by the CSV's name is the Excel's; the admin's link keeps the CSV", async () => {
+  it("CHANGED (round 32): a signed link asked for by a CSV's name is an invalid request (the customer's CSV is built from the Excel by customerCsvFile), never the Excel; the admin's link keeps the stored CSV", async () => {
     const signed: Array<{ path: string; download?: string }> = [];
     const client = fakeClient(mission([{ kind: "xlsx", name: "result.xlsx", path: "result/result.xlsx" }, { kind: "csv", name: "result.csv", path: "result/result.csv" }]), signed, new Map());
-    expect(await customerFileLink(client, { id: "msn_1", userId: "u1", name: "result.csv" })).toMatchObject({ ok: true });
-    expect(signed[0].path).toBe("msn_1/result/result.xlsx");
-    expect(signed[0].download).toMatch(/\.xlsx$/);
-    signed.length = 0;
+    expect(await customerFileLink(client, { id: "msn_1", userId: "u1", name: "result.csv" })).toMatchObject({ ok: false, status: 400 });
+    expect(signed).toEqual([]);
     expect(await fileLink(client, { id: "msn_1", name: "result.csv" })).toMatchObject({ ok: true });
     expect(signed[0].path).toBe("msn_1/result/result.csv");
     expect(signed[0].download).toMatch(/\.csv$/);

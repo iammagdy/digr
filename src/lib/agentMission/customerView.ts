@@ -1,3 +1,4 @@
+import { CSV_LABEL_AR, CSV_METHODOLOGY_LABEL_AR } from "./csvLabels";
 import { customerSafeText } from "./text";
 import { formatAr, toArabicDigits } from "../arabicDigits";
 import type { ProgressSample } from "../jobEta";
@@ -374,7 +375,10 @@ export function parentCountAr(input: { read: number; max: number; used: number |
   return `قُرئ ${countAr(input.read, input.noun)}، ومنها ${formatAr(input.used)} لها نتائج في ملفك`;
 }
 
-/** The only file a customer is offered is the Excel (the CSV copy is stored for settlement and the admin, never offered). */
+/**
+ * THE FILES A CUSTOMER IS OFFERED (round 32): the Excel, and, for a mission that has its Excel, the CSV of its data and the CSV of its methodology. The CSV is built from the customer's own Excel when it is asked for (customerCsvFile): one stage is a CSV, more
+ * than one is an archive with a CSV per stage and the methodology. The stored CSV copy of the worker (the deepest stage only) is never what a customer is offered.
+ */
 const FILE_LABEL_AR: Record<string, string> = { xlsx: "تنزيل ملف إكسل" };
 
 /**
@@ -383,7 +387,7 @@ const FILE_LABEL_AR: Record<string, string> = { xlsx: "تنزيل ملف إكس�
  */
 export function customerFilesOf(files: ReadonlyArray<{ name: string; kind: string }>): Array<{ name: string; kind: string; labelAr: string }> {
   const excel = files.filter((f) => FILE_LABEL_AR[f.kind]).map((f) => ({ name: f.name, kind: f.kind, labelAr: FILE_LABEL_AR[f.kind] }));
-  if (excel.length > 0) return excel;
+  if (excel.length > 0) return [...excel, { name: "result.csv", kind: "csv", labelAr: CSV_LABEL_AR }, { name: "methodology.csv", kind: "methodology", labelAr: CSV_METHODOLOGY_LABEL_AR }];
   return files.some((f) => f.kind === "csv") ? [{ name: "result.xlsx", kind: "xlsx", labelAr: FILE_LABEL_AR.xlsx }] : [];
 }
 
