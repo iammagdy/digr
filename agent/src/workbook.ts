@@ -396,7 +396,12 @@ function runContract(a: { plan: PricedPlan; rowsByStage: Record<string, Row[]>; 
   return { violations, completed };
 }
 
-export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string, Row[]>, facts?: MissionFacts, companyMailboxes?: CompanyMailboxes, options: { repliesJudged?: boolean; /** The plan as the customer approved it (the card's number): the contract checks the promised number against it. */ approvedPlan?: PricedPlan; /** Complete the description (a missing limits line, a precision cell, a mark cell) where the delivery contract finds it missing. Default true; tests run with false to see the violations of the code itself. */ completeContract?: boolean; now?: number } = {}): Promise<{ xlsx: Buffer; csv: string; /** The delivery contract (round 14): what it found before any completion, and what was completed. */ contract: { violations: ContractViolation[]; completed: Completion[]; error?: string }; /** Wrong parent-describing values of a child sheet that were replaced from the row's own parent (for the admin only). */ parentFixes: ParentColumnFix[]; /** What was taken out of the customer's cells because it named a data provider (for the admin only). */ providerFixes: ProviderCleanReport & { final: number } }> {
+/**
+ * THE SHEETS OF A DELIVERY, laid out before any cell is written (the first steps of `buildMissionFiles`, moved here unchanged): the parent columns reconciled, the provider addresses taken out,
+ * the companies' own e-mails as a column, the replies under their comments, and the layout of every sheet. Exported so the Stage 2 live sheet (`agent/src/stage2/liveSnapshot.ts`) lays out
+ * the rows a customer watches with the SAME code as the file they download. Pure.
+ */
+export function fileLayoutsOf(plan: PricedPlan, rowsIn: Record<string, Row[]>, companyMailboxes?: CompanyMailboxes) {
   // BEFORE THE FILE IS WRITTEN: every value of a child row that describes its parent must be its OWN parent's (parentColumns.ts); a mapping that copied the first company's website onto every person is repaired here and reported to the admin
   const reconciled = reconcileParentColumns(plan.stages, rowsIn, (key) => { const st = plan.stages.find((x) => x.key === key); return st ? readableColumns(st).map((c) => c.key) : []; }, (key) => { const st = plan.stages.find((x) => x.key === key); return st ? readableColumns(st).map((c) => c.key) : []; });
   // NO DATA PROVIDER IN A CUSTOMER FILE (providerHosts.ts): its addresses are taken out of every cell and an id built from one is replaced by a neutral id, the same wherever it is written
@@ -407,12 +412,26 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   // the replies sit in their comments' sheet (withThreads); everything else below (the counts, the summary, the methodology) reads the stages' own rows
   const threaded = withThreads(layoutPlan, rowsByStage);
   const layouts = layoutOf(threaded.layoutPlan, threaded.rowsByStage);
+  return { providers, reconciled, cleaned, rowsByStage, threaded, layouts };
+}
+
+/**
+ * THE SHEETS OF A DELIVERY AS THEY ARE WRITTEN: `fileLayoutsOf`, then the methodology and the delivery contract, whose completions fill a missing mark or precision cell from data already in
+ * the row (moved here unchanged from `buildMissionFiles`). Exported for the Stage 2 live sheet: what the customer watches is laid out and completed by the same code as the file.
+ */
+export function deliveredSheetsOf(plan: PricedPlan, rowsIn: Record<string, Row[]>, facts?: MissionFacts, companyMailboxes?: CompanyMailboxes, options: { repliesJudged?: boolean; approvedPlan?: PricedPlan; completeContract?: boolean; now?: number } = {}) {
+  const { providers, reconciled, cleaned, rowsByStage, threaded, layouts } = fileLayoutsOf(plan, rowsIn, companyMailboxes);
   // THE DELIVERY CONTRACT (round 14, foundation/deliveryContract.ts): it checks the four rules on the file as it is about to be written. It is not a filter: it never removes a row or changes a value. R2, R3 and R4 only COMPLETE the description (a missing limits line, a precision cell, a mark cell
   // filled from data already in the row); R1 only reports. What it found is returned for the worker to record.
   const methodology = buildMethodology({ plan, layouts, rowsByStage, facts });
   // the contract never blocks or delays a delivery: if it cannot run (a plan shape it does not know), the file is written as it would have been
   let contract: { violations: ContractViolation[]; completed: Completion[]; error?: string } = { violations: [], completed: [] };
   try { contract = runContract({ plan, rowsByStage, layouts, methodology, repliesJudged: options.repliesJudged === true, approvedPlan: options.approvedPlan, now: options.now ?? Date.now(), complete: options.completeContract !== false && plan.compiled?.by === "compiler", routes: routesOfFacts(facts) }); } catch (e) { contract = { violations: [], completed: [], error: String((e as Error)?.message ?? e).slice(0, 200) }; /* the file is delivered without the contract */ }
+  return { providers, reconciled, cleaned, rowsByStage, threaded, layouts, methodology, contract };
+}
+
+export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string, Row[]>, facts?: MissionFacts, companyMailboxes?: CompanyMailboxes, options: { repliesJudged?: boolean; /** The plan as the customer approved it (the card's number): the contract checks the promised number against it. */ approvedPlan?: PricedPlan; /** Complete the description (a missing limits line, a precision cell, a mark cell) where the delivery contract finds it missing. Default true; tests run with false to see the violations of the code itself. */ completeContract?: boolean; now?: number } = {}): Promise<{ xlsx: Buffer; csv: string; /** The delivery contract (round 14): what it found before any completion, and what was completed. */ contract: { violations: ContractViolation[]; completed: Completion[]; error?: string }; /** Wrong parent-describing values of a child sheet that were replaced from the row's own parent (for the admin only). */ parentFixes: ParentColumnFix[]; /** What was taken out of the customer's cells because it named a data provider (for the admin only). */ providerFixes: ProviderCleanReport & { final: number } }> {
+  const { providers, reconciled, cleaned, rowsByStage, threaded, layouts, methodology, contract } = deliveredSheetsOf(plan, rowsIn, facts, companyMailboxes, options);
   const wb = new ExcelJS.Workbook();
   wb.creator = "Diger";
   const used = new Set<string>([SUMMARY_SHEET_AR.toLowerCase()]);
