@@ -50,8 +50,8 @@ export interface PlannerEvent { kind: PlannerEventKind; at: number; n?: number; 
 export const PLANNING_STEP_TITLES = ["فهمنا طلبك", "لقينا المصادر", "بنجرب عينة صغيرة للتأكد من الجودة", "بنجهز السعر"] as const;
 
 /** Said once under the planning steps: how long planning usually takes and that nothing is charged before the customer agrees. */
-/** Round 14: no time is stated (none is measured) and the language is formal; the one promise kept is the money one. */
-export const PLANNING_USUAL_TIME_AR = "ولن يُخصم شيء قبل موافقتك.";
+/** Round 14: no time is stated (none is measured) and the language is formal; the one promise kept is the money one. ROUND 21 (finding B): round 14 took the time out of «عادةً دقيقة أو اتنين، ولن يُخصم...» and left only the tail, so the waiting card OPENED with «ولن يُخصم شيء قبل موافقتك.»; the sentence is whole again. */
+export const PLANNING_USUAL_TIME_AR = "نقرأ طلبك ونجهّز لك الخطة والسعر، ولن يُخصم شيء قبل موافقتك.";
 
 const sourcesFoundAr = (n: number): string => {
   if (n <= 0) return "لم نجد مصدرًا مطابقًا بعد، نجرّب كلمات أخرى.";

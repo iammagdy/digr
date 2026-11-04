@@ -104,7 +104,8 @@ describe("where the section is", () => {
     const readers = [...walk("agent/src"), ...walk("src")].filter((p) => /xlsx\.load|readFile\(/.test(readFileSync(p, "utf8")) && /worksheets|getWorksheet/.test(readFileSync(p, "utf8"))).map((p) => p.replace(/\\/g, "/")).sort();
     // finalize.ts skips the first sheet (slice(1)); exclusionFileParser reads the CUSTOMER'S upload; extractionBenchmark reads a workbook of the old chat generator;
     // the invoice assistant's parseFiles reads the ADMIN'S OWN uploaded spreadsheets in memory (never a delivered file, never written back); the builders write, never read
-    expect(readers).toEqual(["agent/src/finalize.ts", "src/lib/server/exclusionFileParser.ts", "src/lib/server/extractionBenchmark.ts", "src/lib/server/invoices/chat/parseFiles.ts"]);
+    // CHANGED (round 21): the data-collection methodology PDF reads the «المنهجية» section and the sheets' layout of the DELIVERED file (read only, for the customer's PDF; never a settlement, nothing is written back)
+    expect(readers).toEqual(["agent/src/finalize.ts", "src/lib/agentMission/methodology/readWorkbook.ts", "src/lib/server/exclusionFileParser.ts", "src/lib/server/extractionBenchmark.ts", "src/lib/server/invoices/chat/parseFiles.ts"]);
     expect(readFileSync("agent/src/finalize.ts", "utf8")).toContain("wb.worksheets.slice(1)");
   });
 });

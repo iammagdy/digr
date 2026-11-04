@@ -6,6 +6,8 @@ import { resolveMissionViewer, safeMissionId } from "@/lib/server/missionViewer"
 import { getLiveProviderGateStatusFromSettings } from "@/lib/server/providerGate";
 import { getBusyState } from "@/lib/server/busyState";
 import { countActiveJobs, evaluateConcurrentJobs } from "@/lib/server/concurrentJobs";
+import { methodologyMissionById } from "@/lib/agentMission/methodology/missions";
+import { isMethodologyPurchased } from "@/lib/server/methodologyPurchase";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -16,8 +18,16 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   if (!id) return NextResponse.json({ success: false, error: "bad_request" }, { status: 400 });
   const auth = await resolveMissionViewer(req);
   if (!auth.ok) return auth.response;
-  const r = await loadCustomerMission(createAdminClient(), { id, userId: auth.viewer.userId });
-  return r.ok ? NextResponse.json({ success: true, isGuest: auth.viewer.isGuest, status: r.status, requestText: r.requestText, view: r.view }, { headers: { "Cache-Control": "no-store" } }) : NextResponse.json({ success: false, error: r.error }, { status: r.status });
+  const client = createAdminClient();
+  const r = await loadCustomerMission(client, { id, userId: auth.viewer.userId });
+  if (!r.ok) return NextResponse.json({ success: false, error: r.error }, { status: r.status });
+  // ROUND 21: a delivered compiled mission carries the offer of its data-collection methodology (the job the purchase route takes, and whether it was already bought); every other mission's answer is what it was
+  let methodology: { jobId: string; titleAr: string; purchased: boolean } | undefined;
+  if (r.status === "completed" && !auth.viewer.isGuest) {
+    const m = await methodologyMissionById(client, { missionId: id, userId: auth.viewer.userId });
+    if (m) methodology = { jobId: m.jobId, titleAr: m.titleAr, purchased: await isMethodologyPurchased(client, { userId: auth.viewer.userId, jobId: m.jobId }) };
+  }
+  return NextResponse.json({ success: true, isGuest: auth.viewer.isGuest, status: r.status, requestText: r.requestText, view: r.view, ...(methodology ? { methodology } : {}) }, { headers: { "Cache-Control": "no-store" } });
 }
 
 /**

@@ -1,7 +1,7 @@
-import { toArabicDigits } from "./arabicDigits";
+import { pointsAr } from "./pointsFormat";
 
 /** The methodology add-on's price in points, as shown to the customer. The charge itself is made by the server (`/api/jobs/[id]/methodology`). */
-export const METHODOLOGY_POINTS = 10;
+export const METHODOLOGY_POINTS = 50;
 
 /**
  * Whether the methodology add-on is offered for a job: it needs at least one delivered record (a partial delivery counts) and a
@@ -37,7 +37,7 @@ export function methodologyUnavailableAr(): string {
 
 /** The answer to that request, by code: where to press and what it costs. */
 export function methodologyAnswerAr(): string {
-  return `ملف المنهجية متاح من لوحة النتائج: افتح تبويب «الملفات» ثم اضغط «اكتب المنهجية الرسمية»، وتكلفته ${toArabicDigits(METHODOLOGY_POINTS)} نقاط ولا تُخصم إلا بعد تأكيدك داخل الصفحة.`;
+  return `ملف المنهجية متاح من لوحة النتائج: افتح تبويب «الملفات» ثم اضغط «اكتب المنهجية الرسمية»، وتكلفته ${pointsAr(METHODOLOGY_POINTS)} ولا تُخصم إلا بعد تأكيدك داخل الصفحة.`;
 }
 
 /** The answer when the delivered job has no saved data to write the document from (the offer button is not shown for it either): nothing to press, nothing charged, and where what was delivered is summarised. */
@@ -60,7 +60,7 @@ export function methodologyPurchasedAr(): string {
  * cases that the full official methodology document is a separate, optional purchase after delivery (the same price the results panel shows).
  */
 export function planPdfLineAr(outputFormats: string[] | undefined | null): string {
-  const points = toArabicDigits(METHODOLOGY_POINTS);
+  const points = pointsAr(METHODOLOGY_POINTS);
   const hasPdf = !outputFormats || outputFormats.length === 0 || outputFormats.includes("pdf");
   return hasPdf
     ? `ملف بي دي إف مشمول في سعر هذه الخطة بلا رسوم إضافية؛ أما المنهجية الرسمية المفصّلة فاختيارية بعد التسليم مقابل ${points} نقاط.`

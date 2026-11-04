@@ -125,7 +125,7 @@ describe("1. wallet: the methodology purchase (chg_meth_<job id>) is a line of i
     expect(src("src/app/api/wallet/history/route.ts")).not.toMatch(/\.insert\(|\.update\(|\.upsert\(|\.delete\(|\.rpc\(/);
     // the purchase itself is as it was: 10 points, the same function, the same deterministic id
     expect(src("src/app/api/jobs/[id]/methodology/route.ts")).toContain('adminClient.rpc("purchase_methodology_atomic"');
-    expect(src("src/lib/methodologyOffer.ts")).toContain("export const METHODOLOGY_POINTS = 10;");
+    expect(src("src/lib/methodologyOffer.ts")).toContain("export const METHODOLOGY_POINTS = 50;");
   });
 });
 

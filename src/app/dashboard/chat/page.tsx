@@ -1,6 +1,10 @@
 "use client";
 
 import { pointsAr } from "@/lib/pointsFormat";
+import { METHODOLOGY_POINTS } from "@/lib/methodologyOffer";
+import { METHODOLOGY_CHOOSER_SENTENCE_AR } from "@/lib/agentMission/messageType";
+import { MethodologyChooser } from "@/components/mission/MethodologyOffer";
+import { fileNameFromDisposition } from "@/lib/downloadName";
 import { markedInvalid } from "@/lib/contactVerification";
 import { PEOPLE_CAPABILITY_SLUG, peopleContactCounts, peopleDeliverySentenceAr } from "@/lib/peopleColumns";
 import { persistedFileShape } from "@/lib/fileShapeMessage";
@@ -71,7 +75,6 @@ import { PANEL_STATE_KEY, defaultPanelState, parsePanelState, newPlannerRequestI
 import { TURN_TIMEOUT_MS, WAIT_CANCEL_AFTER_MS, waitProgressText } from "@/lib/waitProgress";
 import { customerFacingFailure, isRetryableFailure, logClientFailure, readChatResponse, startFailureMessageAr, TEMPORARY_FAILURE_AR } from "@/lib/customerError";
 import { startFailureText, type StartedJobState } from "@/lib/startFailure";
-import { fileNameFromDisposition } from "@/lib/downloadName";
 
 interface ConversationItem { $id: string; title: string; updatedAt: string }
 
@@ -1501,13 +1504,21 @@ export default function ChatWorkspacePage() {
     setMethodologyConfirmOpen(true);
   }
 
-  function saveMethodologyFile(downloadUrl: string, jobId: string) {
-    const link = document.createElement("a");
-    link.href = downloadUrl;
-    link.download = `منهجية البحث - ${jobId.slice(0, 8)}.pdf`;
-    document.body.appendChild(link);
-    link.click();
-    setTimeout(() => link.remove(), 1000);
+  /** The bought file from the site itself (round 21: its own Content-Disposition carries the Arabic name; the storage link's percent-encoded one is never used). */
+  async function saveMethodologyFile(jobId: string): Promise<boolean> {
+    try {
+      const jwtToken = await getAccessToken();
+      const res = await fetch(`/api/jobs/${encodeURIComponent(jobId)}/methodology?file=1`, { headers: jwtToken ? { Authorization: `Bearer ${jwtToken}` } : {}, cache: "no-store" });
+      if (!res.ok) return false;
+      const blobUrl = URL.createObjectURL(await res.blob());
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = fileNameFromDisposition(res.headers.get("Content-Disposition")) || `منهجية البحث - ${jobId.slice(0, 8)}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => { URL.revokeObjectURL(blobUrl); link.remove(); }, 30000);
+      return true;
+    } catch { return false; }
   }
 
   async function confirmGenerateMethodology() {
@@ -1522,7 +1533,7 @@ export default function ChatWorkspacePage() {
       const res = await fetch(`/api/jobs/${activeJob.jobId}/methodology`, {
         method: "POST",
         headers,
-        body: JSON.stringify({ confirmed: true }),
+        body: JSON.stringify({ confirmed: true, expectedPoints: METHODOLOGY_POINTS }),
       });
       const data = await res.json();
       if (!res.ok || !data.success) {
@@ -1541,7 +1552,7 @@ export default function ChatWorkspacePage() {
 
       const boughtJobId = activeJob.jobId;
       setMethodologyBoughtJobs((prev) => ({ ...prev, [boughtJobId]: true }));
-      if (typeof data.downloadUrl === "string" && data.downloadUrl) saveMethodologyFile(data.downloadUrl, boughtJobId);
+      await saveMethodologyFile(boughtJobId);
       // A first purchase is confirmed in the conversation (no link in the text); a repeat download is silent and charges nothing.
       if (Number(data.chargedPoints) > 0) {
         const methodologyMsg: MessageItem = {
@@ -1871,6 +1882,8 @@ export default function ChatWorkspacePage() {
               : customerFacingAssistantCopy(m.content)}
           </p>
         )}
+        {/* ROUND 21: the methodology answer of the chat names the delivered requests the methodology can be written for; the chooser lists them with the price line and the button */}
+        {m.role === "assistant" && typeof m.content === "string" && m.content.includes(METHODOLOGY_CHOOSER_SENTENCE_AR) ? <MethodologyChooser onCharged={() => void loadBalance()} /> : null}
         {m.fileShape && (m.fileShape.jobId || activeJob) && (
           <div className="mt-3 flex flex-wrap items-center gap-2">
             <button
@@ -2271,7 +2284,7 @@ export default function ChatWorkspacePage() {
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-ink/45 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !methodologyPurchasing) setMethodologyConfirmOpen(false); }}>
           <section role="alertdialog" aria-modal="true" aria-labelledby="methodology-purchase-title" className="w-full max-w-md rounded-2xl border border-ln bg-sf p-5 shadow-2xl" dir="rtl">
             <h2 id="methodology-purchase-title" className="m-0 text-lg font-semibold text-ink">صياغة المنهجية الرسمية</h2>
-            <p className="mb-0 mt-2 text-sm leading-7 text-ink2">تُضاف المنهجية إلى نتيجة هذا الطلب مقابل ١٠ نقاط. لن يتم الخصم إلا بعد تجهيزها.</p>
+            <p className="mb-0 mt-2 text-sm leading-7 text-ink2">تُضاف المنهجية إلى نتيجة هذا الطلب مقابل {pointsAr(METHODOLOGY_POINTS)}. لن يتم الخصم إلا بعد تجهيزها.</p>
             <div className="mt-5 flex flex-wrap gap-2">
               <button type="button" disabled={methodologyPurchasing} onClick={() => void confirmGenerateMethodology()} className="min-h-11 rounded-full border-0 bg-ac px-5 text-sm text-onac disabled:opacity-60">{methodologyPurchasing ? "جارٍ التجهيز…" : "تأكيد وطلب المنهجية"}</button>
               <button type="button" disabled={methodologyPurchasing} onClick={() => setMethodologyConfirmOpen(false)} className="min-h-11 rounded-full border border-ln2 bg-transparent px-4 text-sm text-ink">إلغاء</button>

@@ -192,8 +192,8 @@ describe("4. an example opens a small form; the request is built from its fields
 describe("5. the planning steps read plainly and a finished step is not struck through", () => {
   it("the four steps and the usual-time line are the owner's words", () => {
     expect([...PLANNING_STEP_TITLES]).toEqual(["فهمنا طلبك", "لقينا المصادر", "بنجرب عينة صغيرة للتأكد من الجودة", "بنجهز السعر"]);
-    // CHANGED (round 14): no time is stated (none is measured), formal Arabic; the money promise stays
-    expect(PLANNING_USUAL_TIME_AR).toBe("ولن يُخصم شيء قبل موافقتك.");
+    // CHANGED (round 14): no time is stated (none is measured), formal Arabic; the money promise stays. CHANGED (round 21): the sentence is whole (it had lost its first clause and opened with «ولن»)
+    expect(PLANNING_USUAL_TIME_AR).toBe("نقرأ طلبك ونجهّز لك الخطة والسعر، ولن يُخصم شيء قبل موافقتك.");
     const planning = customerMissionView({ mission: row({ status: "planning", plan_public: null }), events: [ev(1, { counts: { samples: 2 } })], callsMade: 2, now: T0 });
     const markup = html(createElement(AgentMissionCardBody, { view: planning, isGuest: false }));
     expect(markup).toContain('data-testid="agent-planning-usual"');
