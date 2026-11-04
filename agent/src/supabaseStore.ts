@@ -37,6 +37,16 @@ export function createSupabaseStore(client: any): AgentStore {
         if (!exists) throw new Error(`upload: ${String(e.message ?? "failed").slice(0, 160)}`);
       }
     },
+    async putNewStrict(missionId, rel, content, contentType) {
+      const body = typeof content === "string" ? Buffer.from(content, "utf8") : content;
+      // the same create-only upload as putNew (upsert off), but an object that already exists is REPORTED, not taken for done
+      const res = await bucket().upload(path(missionId, rel), body, { contentType, upsert: false, cacheControl: "31536000" });
+      if (!res.error) return { created: true };
+      const e = res.error as { statusCode?: string | number; message?: string };
+      const exists = String(e.statusCode ?? "") === "409" || /already exists|duplicate/i.test(String(e.message ?? ""));
+      if (exists) return { created: false };
+      throw new Error(`upload: ${String(e.message ?? "failed").slice(0, 160)}`);
+    },
     async listFiles(missionId, folder) {
       const dir = path(missionId, folder.replace(/\/+$/, ""));
       const out: Array<{ name: string; size: number }> = [];
