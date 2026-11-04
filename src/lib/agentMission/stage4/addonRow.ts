@@ -1,4 +1,5 @@
 import { ADDON_APPROVE_MESSAGES_AR, ADDON_KINDS, addonId, checkAddon, readAddonPlan, type AddonKind, type AddonPlan, type AddonPricing } from "../addonSettlement";
+import type { RereadRecipe } from "./reread";
 import type { ReviewCode } from "./review";
 
 /**
@@ -16,14 +17,17 @@ import type { ReviewCode } from "./review";
 
 /** What the customer asked to change, as data BEFORE anything is re-read (the values come from the run). Removing rows is never offered. */
 export type EditIntent =
-  | { kind: "add_column"; sheet: string; titleAr: string; /** The rows to fill (their ids). */ rowIds: ReadonlyArray<string> }
+  /** `reread`: the tools that find the value of each row (the card wrote it; the worker only carries it out). */
+  | { kind: "add_column"; sheet: string; titleAr: string; /** The rows to fill (their ids). */ rowIds: ReadonlyArray<string>; reread?: RereadRecipe }
   | { kind: "rename_column"; sheet: string; from: string; to: string }
-  | { kind: "set_cells"; sheet: string; cells: ReadonlyArray<{ rowId: string; column: string }> }
-  | { kind: "add_rows"; sheet: string; count: number };
+  /** A cell with a `value` is typed by the customer (no provider call); a cell without one is read through the recipe of its column in `reread`. */
+  | { kind: "set_cells"; sheet: string; cells: ReadonlyArray<{ rowId: string; column: string; value?: string }>; reread?: Readonly<Record<string, RereadRecipe>> }
+  /** `count` rows; `rows` are the rows the customer typed (their values are theirs: no provider call). */
+  | { kind: "add_rows"; sheet: string; count: number; rows?: ReadonlyArray<{ id: string; parentId?: string | null; values: Readonly<Record<string, string>> }> };
 export type AddonRequest =
   | { kind: "review" }
-  /** A review fix: ONE issue of the review of the base version; its cells are recomputed by code from the whole version (never from the report's first 20 ids). */
-  | { kind: "review_fix"; issue: { code: ReviewCode; sheet: string; column: string } }
+  /** A review fix: ONE issue of the review of the base version; its cells are recomputed by code from the whole version (never from the report's first 20 ids). `reread`: the recipe of the issue's column. */
+  | { kind: "review_fix"; issue: { code: ReviewCode; sheet: string; column: string }; reread?: RereadRecipe }
   | { kind: "edit"; edit: EditIntent };
 
 export const OPEN_STATUSES = ["queued", "planning", "needs_input", "plan_ready", "approved", "executing"] as const;

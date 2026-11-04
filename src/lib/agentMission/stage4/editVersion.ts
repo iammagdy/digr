@@ -41,7 +41,8 @@ const badTitle = (t: unknown): boolean => typeof t !== "string" || t.trim() === 
 /** Where a new column goes: before the id columns (the file keeps its ids last). */
 const insertAt = (headers: ReadonlyArray<string>): number => { const i = headers.findIndex((h) => LOCKED.has(h)); return i < 0 ? headers.length : i; };
 
-export function applyEditRequest(prev: FileVersion, req: EditRequest, meta: { createdAt: string; realCostUsd?: number }): EditResult {
+/** `meta.reason`: «edit» (default) or «review_fix» (an edit that corrects the cells of one review issue: same rules, its own reason on the version). */
+export function applyEditRequest(prev: FileVersion, req: EditRequest, meta: { createdAt: string; realCostUsd?: number; reason?: "edit" | "review_fix" }): EditResult {
   const kind = (req as { kind?: unknown }).kind;
   if (kind === "remove_rows" || kind === "delete_rows") return no("row_removal_not_offered");
   if (kind !== "add_column" && kind !== "rename_column" && kind !== "set_cells" && kind !== "add_rows") return no("unknown_edit");
@@ -103,6 +104,6 @@ export function applyEditRequest(prev: FileVersion, req: EditRequest, meta: { cr
       break;
     }
   }
-  const version = deriveVersion(prev, (sheets) => sheets.map((s, i) => (i === sheetAt ? make(s) : s)), { reason: "edit", createdAt: meta.createdAt });
+  const version = deriveVersion(prev, (sheets) => sheets.map((s, i) => (i === sheetAt ? make(s) : s)), { reason: meta.reason ?? "edit", createdAt: meta.createdAt });
   return { ok: true, version, diff: diffVersions(prev, version), reread, quotePoints: typeof meta.realCostUsd === "number" ? editQuote(meta.realCostUsd) : null };
 }

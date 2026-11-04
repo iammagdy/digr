@@ -39,7 +39,8 @@ export const REVIEW_ISSUE_AR: Readonly<Record<ReviewCode, (column: string, count
   stated_gap: (c, k) => `«${c}»: ${countedAr(k, { one: "خانة واحدة ذُكر فيها", two: "خانتان ذُكر فيهما", few: "خانات ذُكر فيها", many: "خانة ذُكر فيها" })} أن القيمة غير متاحة أو لم يكتمل البحث عنها.`,
 };
 
-const STATED_GAP = /^(?:غير متوفر|غير متاح|غير متاح من المصدر|لم يكتمل البحث|غير محدد|غير محددة)$/;
+/** A stated gap: said, never counted as a fault in a review, and never a VALUE in an edit (decision D4). */
+export const STATED_GAP = /^(?:غير متوفر|غير متاح|غير متاح من المصدر|لم يكتمل البحث|غير محدد|غير محددة)$/;
 const EMAIL_COL = /إيميل|ايميل|البريد/;
 const PHONE_COL = /هاتف|محمول|موبايل|جوال/;
 const LINK_COL = /رابط|الموقع الإلكتروني|الموقع الالكتروني/;
@@ -64,12 +65,16 @@ const readable = (headers: ReadonlyArray<string>): number[] => headers.map((h, i
 /** The readable cells of a version (every row times every column but the id columns): what the review is priced on. */
 export const reviewCellsOf = (v: FileVersion): number => v.sheets.reduce((sum, s) => sum + s.rows.length * readable(s.headers).length, 0);
 
-export function reviewFile(v: FileVersion): ReviewResult {
+/**
+ * `keepRowIds`: how many row ids an issue keeps (default 20, the report's own limit). A review FIX asks for all of them (`Infinity`): it must correct every cell of the issue, never only the first 20 the report shows.
+ */
+export function reviewFile(v: FileVersion, options: { keepRowIds?: number } = {}): ReviewResult {
+  const keep = options.keepRowIds ?? 20;
   const issues: ReviewIssue[] = [];
   let cells = 0;
   let faults = 0;
   let rowsReviewed = 0;
-  const add = (code: ReviewCode, sheet: string, column: string, rowIds: string[]): void => { if (rowIds.length > 0) issues.push({ code, sheet, column, count: rowIds.length, rowIds: rowIds.slice(0, 20) }); };
+  const add = (code: ReviewCode, sheet: string, column: string, rowIds: string[]): void => { if (rowIds.length > 0) issues.push({ code, sheet, column, count: rowIds.length, rowIds: Number.isFinite(keep) ? rowIds.slice(0, keep) : [...rowIds] }); };
   for (const s of v.sheets) {
     const cols = readable(s.headers);
     rowsReviewed += s.rows.length;
