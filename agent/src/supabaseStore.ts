@@ -3,6 +3,7 @@ import { guardEvent } from "../../src/lib/agentMission/eventText";
 import { artifactVersionRowId } from "../../src/functions/shared/artifactVersions";
 import type { AgentStore, CallRow, HeartbeatRow, MissionEventInput, MissionRecord } from "./types";
 import type { RecordedCallFact } from "../../src/lib/agentMission/sourceRanking";
+import { illFormedPaths, wellFormedDeep } from "../../src/lib/agentMission/wellFormed";
 
 const XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
@@ -13,6 +14,13 @@ export function createSupabaseStore(client: any): AgentStore {
   const must = <T>(res: { data: T; error: any }, what: string): T => {
     if (res.error) throw new Error(`${what}: ${String(res.error.message ?? res.error.code ?? "failed").slice(0, 160)}`);
     return res.data;
+  };
+  // ROUND 19: every write that carries text from outside (a provider's captions, a customer's words, our own cut strings) is repaired first (a lone UTF-16 surrogate becomes U+FFFD, a NUL is dropped): the database's JSON parser refuses a body holding either
+  // («Empty or invalid json», 400: TikTok 4 Nov 2026, the plan could not be saved). The worker logs WHERE (keys only, never the text) when it repaired something.
+  const clean = <T>(value: T, what: string, id?: string): T => {
+    const at = illFormedPaths(value);
+    if (at.length > 0) console.error(`[agent] text_repaired ${what}${id ? ` ${id}` : ""} at ${at.join(",")}`);
+    return wellFormedDeep(value);
   };
   return {
     async putFile(missionId, rel, content, contentType) {
@@ -56,12 +64,12 @@ export function createSupabaseStore(client: any): AgentStore {
       // a lost note never breaks a mission: the error is logged and the work goes on
       try {
         const g = guardEvent(event);
-        must(await client.from(MISSION_EVENTS_TABLE).insert({ mission_id: missionId, kind: g.kind, message_ar: g.message_ar, counts: g.counts }), "event");
+        must(await client.from(MISSION_EVENTS_TABLE).insert(clean({ mission_id: missionId, kind: g.kind, message_ar: g.message_ar, counts: g.counts }, "event", missionId)), "event");
       } catch (e) {
         console.error(`[agent] event_not_saved ${missionId} ${String((e as Error)?.message ?? e).slice(0, 120)}`);
       }
     },
-    async addCall(row: CallRow) { must(await client.from(MISSION_CALLS_TABLE).insert(row), "call"); },
+    async addCall(row: CallRow) { must(await client.from(MISSION_CALLS_TABLE).insert(clean(row, "call", row.id)), "call"); },
     async listCalls(missionId) {
       // EVERY call of the mission, in pages (the API answers at most its row limit, 1000 by default, whatever limit is asked): a mission of thousands of pages must still find its last call number after a restart and count what it spent
       const out: CallRow[] = [];
@@ -82,7 +90,7 @@ export function createSupabaseStore(client: any): AgentStore {
       if (error) throw new Error(`mission: ${String(error.message ?? "failed").slice(0, 160)}`);
       return (data ?? null) as MissionRecord | null;
     },
-    async updateMission(id, patch) { must(await client.from(MISSION_TABLE).update({ ...patch, updated_at: new Date().toISOString() }).eq("id", id), "mission update"); },
+    async updateMission(id, patch) { must(await client.from(MISSION_TABLE).update(clean({ ...patch, updated_at: new Date().toISOString() }, "mission update", id)).eq("id", id), "mission update"); },
     async claimMission(workerId, leaseSeconds) {
       const { data, error } = await client.rpc("agent_claim_mission", { p_worker_id: workerId, p_lease_seconds: leaseSeconds });
       if (error) throw new Error(`claim: ${String(error.message ?? "failed").slice(0, 160)}`);
@@ -95,7 +103,7 @@ export function createSupabaseStore(client: any): AgentStore {
       const until = new Date(Date.now() + leaseSeconds * 1000).toISOString();
       must(await client.from(MISSION_TABLE).update({ lease_until: until }).eq("worker_id", workerId).in("id", missionIds).in("status", ["planning", "executing"]), "renew");
     },
-    async writeHeartbeat(row: HeartbeatRow) { must(await client.from(AGENT_HEARTBEAT_TABLE).upsert(row, { onConflict: "worker_id" }), "heartbeat"); },
+    async writeHeartbeat(row: HeartbeatRow) { must(await client.from(AGENT_HEARTBEAT_TABLE).upsert(wellFormedDeep(row), { onConflict: "worker_id" }), "heartbeat"); },
     async publishResult({ missionId, userId, jobId, xlsx, csv }) {
       const csvBuf = Buffer.from(csv, "utf8");
       must(await bucket().upload(path(missionId, "result/result.xlsx"), xlsx, { contentType: XLSX_TYPE, upsert: true }), "result xlsx");
