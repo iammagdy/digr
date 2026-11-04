@@ -236,7 +236,9 @@ describe("7. YOUTUBE CHANNEL VIDEOS (a channel the customer gave; SIMULATED list
     const r = await w.plan({ choices: { youtubeChannel: CHANNEL }, answerIsChoice: true });
     if (r.kind !== "plan") throw new Error(`no plan: ${r.kind}`);
     expect(w.endpoints()).toEqual([IN_CHANNEL]);
-    expect(r.plan.compiled?.discovery).toBeUndefined();
+    // ROUND 34: discovery was entered all the same: the mark records that the verified tool was chosen (not derived) among the evaluated candidates, and the derived listing was never read
+    expect(r.plan.compiled?.discovery).toMatchObject({ entered: true, derived: false, status: "verified", endpoint_id: IN_CHANNEL });
+    expect(r.plan.compiled?.discovery?.evaluation?.eligible.map((e) => e.endpoint_id)).toContain(IN_CHANNEL);
   });
 });
 
