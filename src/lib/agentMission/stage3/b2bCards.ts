@@ -41,6 +41,11 @@ export interface B2BCard {
   verifiedOn: ReadonlyArray<{ mission: string; calls: ReadonlyArray<string> }>;
   /** Why the card is not verified, and what is a guess. */
   note: string;
+  /**
+   * PART A: HOW CODE ASKS THIS TOOL (the inputs the stored real pages echo back, nothing else). A search: where the country code and the sector words go, and the fixed inputs (the first page). A tool
+   * that reads the items OF A PARENT (the people of a company): the input that takes the parent row's field, and the fixed inputs. Absent: code does not build a request for the tool (the plan falls back to today's path).
+   */
+  request?: { country?: ReadonlyArray<string>; sector?: ReadonlyArray<string>; parent?: { param: string; from: B2BField }; fixed?: Readonly<Record<string, unknown>> };
 }
 
 const NO_PAGE = "No stored real page of this tool is in the repo.";
@@ -58,6 +63,9 @@ export const B2B_CARDS: ReadonlyArray<B2BCard> = [
     reader: { kind: "list", fields: { id: ["_id"], name: ["name"], website: ["website"], activity: ["industry"], hq: ["address"], hq_phone: ["phone"], employees: ["numberOfEmployees"], founded: ["foundedYear"], linkedin: ["url"] } },
     note: `${NO_PAGE} The free-text query carries the sector and the country words.` }),
   V({ endpointId: "tomba.companies.search.reveal", role: "companies.search", carries: ["sector", "country"], needs: [], page: { list: ["data", "companies"], cursor: null }, costUsd: 0.000178, costUnit: "row",
+    // the four stored pages echo `meta.filters` with exactly these two fields (`location_country.include`, `industry.include`); the catalog documents the same shape with an ISO code («IE») and lowercase industry words.
+    // GUESS (docs/STAGE-3.md section 10): the sector words come from entities.ts `sectorEnglishWords`; whether they are tomba's own industry words is not shown by a stored page (the stored values are anonymised).
+    request: { country: ["filters", "location_country", "include"], sector: ["filters", "industry", "include"], fixed: { page: 1 } },
     reader: { kind: "list", fields: { id: ["website_url"], name: ["name"], website: ["website_url"], activity: ["industry"], hq: ["city"], employees: ["company_size"], founded: ["founded"], linkedin: ["linkedin_url"] } },
     verifiedOn: [{ mission: M_A, calls: calls(1, 7) }, { mission: M_B, calls: calls(1, 4) }],
     note: `${BY_SHAPE} Verified on 4 real pages of 50 companies. The live calls carried a country and an industry filter (the page echoes \`meta.filters\`); no size filter was ever seen, so size is NOT claimed (a size condition becomes a mark column). \`phone_number\` is the boolean «false» on all 200 stored companies (a flag, never a number), so this tool gives NO HQ phone and the card does not map it. \`company_size\` and \`founded\` are text.` }),
@@ -73,6 +81,8 @@ export const B2B_CARDS: ReadonlyArray<B2BCard> = [
     verifiedOn: [{ mission: M_A, calls: calls(3) }, { mission: M_B, calls: calls(3, 7, 8, 9, 10) }],
     note: `${BY_SHAPE} Verified on 6 real pages (5 to 10 people each): the paths person.fullName and positionList[0].title were right.` }),
   V({ endpointId: "blitzapi.people.employee-finder", role: "company.people", carries: ["country", "title"], needs: ["company_linkedin"], page: { list: ["results"], cursor: null }, costUsd: 0.000495, costUnit: "record",
+    // the eight stored pages echo `company_linkedin_url` (the company's profile link) and `max_results` 10; no job level or country input was ever seen, so code sends neither (the titles are ranked by code, roles.ts)
+    request: { parent: { param: "company_linkedin_url", from: "linkedin" }, fixed: { max_results: 10 } },
     reader: { kind: "list", fields: { id: ["linkedin_url"], person_name: ["full_name"], title: ["headline"], linkedin: ["linkedin_url"] } },
     verifiedOn: [{ mission: M_A, calls: calls(6, 8, 9, 10, 11, 12, 13, 14) }],
     note: `${BY_SHAPE} Verified on 8 real pages (the page echoes the company link and \`max_results\` it was asked with); some answers are empty (no result), which is not an issue. The job level and country inputs carry the title and the country.` }),
