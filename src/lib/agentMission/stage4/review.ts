@@ -1,5 +1,6 @@
 import { normalizeDigits, toArabicDigits } from "../../arabicDigits";
 import { COMMENT_KIND_COMMENT_AR, COMMENT_KIND_TITLE_AR, REPLY_TO_TITLE_AR } from "../taskContracts";
+import { countedAr } from "./countAr";
 import { ID_HEADER, PARENT_HEADER, type FileVersion } from "./versions";
 
 /**
@@ -24,15 +25,18 @@ export interface ReviewResult {
 }
 
 const n = (x: number): string => toArabicDigits(x);
-/** THE WHITELIST of the report's sentences: one per code. */
+/**
+ * THE WHITELIST of the report's sentences: one per code. Each counts in correct Arabic (S5, countAr.ts: «خانة واحدة», «خانتان», «٣ خانات», «١١ خانة») and the words that agree with the count agree with it
+ * (the dual takes the dual verb and adjective: «قيمتان لا تبدوان»; the elative «أقصر من» does not change).
+ */
 export const REVIEW_ISSUE_AR: Readonly<Record<ReviewCode, (column: string, count: number) => string>> = {
-  empty_cells: (c, k) => `«${c}»: ${n(k)} خانة فارغة دون ذكر السبب.`,
-  invalid_email: (c, k) => `«${c}»: ${n(k)} قيمة لا تبدو عنوان إيميل صحيحًا.`,
-  invalid_phone: (c, k) => `«${c}»: ${n(k)} رقم هاتف أقصر من سبعة أرقام.`,
-  invalid_link: (c, k) => `«${c}»: ${n(k)} قيمة ليست رابطًا كاملًا.`,
-  invalid_date: (c, k) => `«${c}»: ${n(k)} قيمة لا تُقرأ كتاريخ.`,
-  exact_duplicate: (c, k) => `«${c}»: ${n(k)} عنصر مكرر تمامًا، ولم يُحذف شيء.`,
-  stated_gap: (c, k) => `«${c}»: ${n(k)} خانة مذكور فيها أن القيمة غير متوفرة من المصدر.`,
+  empty_cells: (c, k) => `«${c}»: ${countedAr(k, { one: "خانة واحدة فارغة", two: "خانتان فارغتان", few: "خانات فارغة", many: "خانة فارغة" })} دون ذكر السبب.`,
+  invalid_email: (c, k) => `«${c}»: ${countedAr(k, { one: "قيمة واحدة لا تبدو", two: "قيمتان لا تبدوان", few: "قيم لا تبدو", many: "قيمة لا تبدو" })} عنوان إيميل صحيحًا.`,
+  invalid_phone: (c, k) => `«${c}»: ${countedAr(k, { one: "رقم هاتف واحد", two: "رقما هاتف", few: "أرقام هاتف", many: "رقم هاتف" })} أقصر من سبعة أرقام.`,
+  invalid_link: (c, k) => `«${c}»: ${countedAr(k, { one: "قيمة واحدة ليست", two: "قيمتان ليستا", few: "قيم ليست", many: "قيمة ليست" })} رابطًا كاملًا.`,
+  invalid_date: (c, k) => `«${c}»: ${countedAr(k, { one: "قيمة واحدة لا تُقرأ", two: "قيمتان لا تُقرآن", few: "قيم لا تُقرأ", many: "قيمة لا تُقرأ" })} كتاريخ.`,
+  exact_duplicate: (c, k) => `«${c}»: ${countedAr(k, { one: "عنصر واحد مكرر", two: "عنصران مكرران", few: "عناصر مكررة", many: "عنصرًا مكررًا" })} تمامًا، ولم يُحذف شيء.`,
+  stated_gap: (c, k) => `«${c}»: ${countedAr(k, { one: "خانة واحدة ذُكر فيها", two: "خانتان ذُكر فيهما", few: "خانات ذُكر فيها", many: "خانة ذُكر فيها" })} أن القيمة غير متاحة أو لم يكتمل البحث عنها.`,
 };
 
 const STATED_GAP = /^(?:غير متوفر|غير متاح|غير متاح من المصدر|لم يكتمل البحث|غير محدد|غير محددة)$/;
