@@ -23,7 +23,7 @@ export const YOUTUBE_CARDS: ReadonlyArray<ToolCard> = [
     status: "verified",
     inputs: { query: { field: "keyword", required: true }, cursor: "continuation_token" },
     page: { list: ["data", "channels"], cursor: ["data", "continuation_token"], observedRowsPerPage: 2 },
-    mapping: { kind: "fields", fields: { id: ["channel_id"], title: ["title"], subscribers: ["subscriber_count_text"] } },
+    mapping: { kind: "fields", fields: { id: ["channel_id"], title: ["title"], handle: ["handle"], subscribers: ["subscriber_count_text"] } },
     counter: null,
     costUsdPerPage: 0.001,
     verifiedOn: [{ mission: M2, calls: ["call_0003", "call_0004"] }],
