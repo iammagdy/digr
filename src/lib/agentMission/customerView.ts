@@ -420,7 +420,7 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   const endLineAr = endLineOf(phase, resultLinesAr, storedSummary);
   const view: CustomerMissionView = {
     id: mission.id, phase, summaryAr: plan?.summary_ar ? String(plan.summary_ar) : null, notesAr: Array.isArray(plan?.notes_ar) ? dedupeNearIdentical(plan.notes_ar.map(String)) : [], assumptionsAr: Array.isArray(plan?.assumptions_ar) ? dedupeNearIdentical(plan.assumptions_ar.map(String)) : [], unservedAr: Array.isArray(plan?.unserved_ar) ? dedupeNearIdentical(plan.unserved_ar.map(String)) : [],
-    questionOptionsAr: phase === "question" && Array.isArray((mission.plan_public as any)?.question_options) ? (mission.plan_public as any).question_options.map(String).slice(0, 4) : [], stages, totalRows: total, totalRowsAr: countAr(total, itemNounOfPlan(plan)),
+    questionOptionsAr: phase === "question" && Array.isArray((mission.plan_public as any)?.question_options) ? (mission.plan_public as any).question_options.map(String).slice(0, 6) : [], stages, totalRows: total, totalRowsAr: countAr(total, itemNounOfPlan(plan)),
     samples: plan ? samplesView(plan) : null, fileContentsAr: plan ? fileContentsAr(plan) : null, priceLineAr: plan ? priceLineAr(plan) : null, priceFacts: plan ? priceFactsOf(plan).facts : [], priceNoteAr: plan ? priceFactsOf(plan).noteAr : null, questionAr: phase === "question" ? mission.question_ar : null,
     queueLineAr: q.lineAr, queuePosition: q.position, steps, currentLineAr, delayAr, remainingAr,
     closePageAr: closePageLine(mission.status, input.queue, input.emailWillBeSent),

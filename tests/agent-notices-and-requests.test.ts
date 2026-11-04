@@ -123,11 +123,12 @@ describe("what the sender puts in the mail and in the notice", () => {
   it("a mission with no job (planning failed) opens its conversation; an older request with no conversation opens the list on that job", async () => {
     const { client, rows } = world();
     await sendMissionNotice(client, { userId: "u1", missionId: "msn_aaaa0001", jobId: null, kind: "unserved", facts: CASES[4].facts });
-    expect(sent[0].body.vars.JobURL).toBe("https://diger.tech/dashboard/chat?c=conv_7");
+    // CHANGED (round 23): a request declined before it started (no job) writes the in-site notice only; the e-mail is for work that ran (the owner's rule: a declined request sends no e-mail)
+    expect(sent).toHaveLength(0);
     expect(rows[0].link).toBe("/dashboard/chat?c=conv_7");
     const lone: any = { auth: { admin: { getUserById: async () => ({ data: { user: { id: "u9", email: "z@example.com", user_metadata: {} } }, error: null }) } }, from: () => ({ insert: async () => ({ error: null }) }) };
     await sendMissionNotice(lone, { userId: "u9", missionId: "msn_zzzz0001", jobId: "job_old", kind: "completed", facts: CASES[0].facts });
-    expect(sent[1].body.vars.JobURL).toBe("https://diger.tech/dashboard/requests?job=job_old");
+    expect(sent[0].body.vars.JobURL).toBe("https://diger.tech/dashboard/requests?job=job_old");
   });
 });
 

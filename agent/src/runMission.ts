@@ -34,6 +34,7 @@ import { ItemStore, type ItemSnapshot, type StopReason } from "./items/itemStore
 import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
 import { readPlatformFlagsOf, readRedesignFlags } from "../../src/lib/agentMission/redesignFlags";
+import { PLATFORM_OPTIONS_AR, PLATFORM_QUESTION_AR, platformQuestionNeeded } from "../../src/lib/agentMission/platformQuestion";
 import { askedTextOf, buildRequestContract } from "../../src/lib/agentMission/requestContract";
 import { sealFinalPrice } from "../../src/lib/agentMission/finalPrice";
 import { accountIsTest, anyRedesignFlag, fallbackStageOf, redesignStagesOf } from "./redesign";
@@ -327,6 +328,13 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: منصة اجتماعية غير مفعّلة، لم يُجرَ أي تخطيط.", counts: { compiled: 0, social_not_offered: 1 } }).catch(() => undefined);
     await store.addEvent(mission.id, { kind: "result", message_ar: SOCIAL_NOT_OFFERED_AR });
     await tell(deps, mission, null, "unserved", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false });
+    return;
+  }
+  // A DATA REQUEST WITH NO PLATFORM IS ASKED, NOT PLANNED (round 23, platformQuestion.ts): «عايز داتا عن رأي الناس في الذكاء الاصطناعي» used to run the model-planned path (two paid searches, 20 model turns) and end «خارج مصادرنا». One question card with five one-tap choices comes first, before any model turn or provider call;
+  // the answer is read with the request and its platform takes the normal compiled path. Nothing is held or charged, and no notice is sent for a question.
+  if (!modelPlanningForTests() && !mission.answer_text && platformQuestionNeeded(mission.request_text)) {
+    await store.updateMission(mission.id, { status: "needs_input", question_ar: PLATFORM_QUESTION_AR, plan_public: { question_options: [...PLATFORM_OPTIONS_AR] } as any, ...clear });
+    await store.addEvent(mission.id, { kind: "question", message_ar: PLATFORM_QUESTION_AR });
     return;
   }
   const ctx: ToolContext = { redesign, phase: "planning", mission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, pricingSettings, stats: sourceStats, now: planningNow };

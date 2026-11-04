@@ -3,6 +3,7 @@ import { titleFromFirstRequest, isUntitledConversation } from "../conversationTi
 import { MISSION_TABLE } from "./constants";
 import { getBalance } from "../supabase/ledger";
 import { answerForCustomer, createCustomerMission, editPlanForCustomer } from "./customerActions";
+import { preModelAnswer } from "./guardRules";
 import { decideTurn, type ChatType, type Decision, type OpenRequest, type OpenState } from "./conversationModel";
 import { FULL_RESEARCH_PREFIX_AR, greetingReplyAr, isFullResearchMethodologyAsk, methodologyReplyAr, methodologyTailAr, otherReplyAr, serviceAnswerAr } from "./messageType";
 import { listMethodologyMissions } from "./methodology/missions";
@@ -141,9 +142,16 @@ export async function agentChatTurn(input: AgentChatTurnInput): Promise<AgentCha
   // ROUND 21/22: the type of the message is decided before anything is planned (the chat model names it, code validates it); only a data request goes on, and only code routes to planning.
   // The chat's own button messages (retry, review) are data requests by code and cost no model call.
   if (!isRetrySamePlanMessage(input.message) && !isReviewPlanMessage(input.message)) {
+    // ROUND 23: privacy (personal contact data of private individuals), the account and trust questions have fixed answers written BEFORE the model is called: no mission, no model, no money, and the open-missions limit never sees them
+    const fixed = preModelAnswer(input.message);
+    if (fixed) {
+      console.info(JSON.stringify({ tag: "chat_message_type", type: `fixed_${fixed.kind}`, source: "code" }));
+      await writeAnswer(input, fixed.contentAr);
+      return { ok: false, contentAr: fixed.contentAr, status: 200 };
+    }
     const [open, balancePoints, history] = await Promise.all([readOpenRequest(sb, input.conversationId, input.userId), readBalance(sb, input.userId), readHistory(sb, input)]);
     const decision = await decideTurn({ message: input.message, balancePoints, open, history });
-    console.info(JSON.stringify({ tag: "chat_message_type", type: decision.type, source: decision.source, guarded: decision.guarded, open: open?.state ?? "none" }));
+    console.info(JSON.stringify({ tag: "chat_message_type", type: decision.type, source: decision.source, guarded: decision.guarded, open: open?.state ?? "none", ...(decision.failure ? { failure: decision.failure } : {}) }));
     if (decision.type === "edit_of_open_request" && open) return answerOpenRequest(input, open, decision);
     if (decision.type !== "data_request" && decision.type !== "edit_of_open_request") return answerWithoutMission(input, decision.type, decision);
   }

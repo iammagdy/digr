@@ -43,6 +43,8 @@ export interface Decision {
   source: "model" | "keyword";
   /** The model's reply was blocked by the guard. */
   guarded: boolean;
+  /** Why the keyword rules answered instead of the model: the call's failure code («http_529», «timeout», «no_key») or «unreadable». */
+  failure?: string;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -121,20 +123,45 @@ export function buildSystemPrompt(input: { balancePoints: number | null; open: O
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 const isChatType = (v: unknown): v is ChatType => typeof v === "string" && (CHAT_TYPES as readonly string[]).includes(v);
 
-/** The one line of JSON of a reply (also inside a code fence or after a few words); null when it is not there or its type is not one of the fixed set. */
+/** A JSON string value may hold raw line breaks (a model's habit): inside quotes they become spaces, so the reply is read instead of lost. */
+function mendJson(body: string): string {
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (const ch of body) {
+    if (inString) {
+      if (escaped) { escaped = false; out += ch; continue; }
+      if (ch === "\\") { escaped = true; out += ch; continue; }
+      if (ch === '"') { inString = false; out += ch; continue; }
+      out += ch === "\n" || ch === "\r" || ch === "\t" ? " " : ch;
+    } else {
+      if (ch === '"') inString = true;
+      out += ch;
+    }
+  }
+  return out;
+}
+
+/** The one line of JSON of a reply (also inside a code fence, after a few words, with raw line breaks in its text, or cut at the token limit after its type); null when it is not there or its type is not one of the fixed set. */
 export function parseModelAnswer(text: string): ParsedAnswer | null {
   const body = String(text ?? "");
   const start = body.indexOf("{");
   const end = body.lastIndexOf("}");
-  if (start < 0 || end <= start) return null;
-  let raw: any;
-  try { raw = JSON.parse(body.slice(start, end + 1)); } catch { return null; }
+  let raw: any = null;
+  if (start >= 0 && end > start) {
+    try { raw = JSON.parse(mendJson(body.slice(start, end + 1))); } catch { raw = null; }
+  }
+  if (!raw && start >= 0) {
+    // the reply was cut (the token limit): the type is the first field, so it can still route the message; there is no reply to show
+    const t = /"type"\s*:\s*"([a-z_]+)"/.exec(body.slice(start));
+    if (t && isChatType(t[1])) return { type: t[1], reason: "", reply: "", count: null };
+  }
   if (!raw || typeof raw !== "object" || !isChatType(raw.type)) return null;
   const n = Number(raw.count);
   return {
     type: raw.type,
     reason: oneLine(typeof raw.reason === "string" ? raw.reason : "", 200),
-    reply: typeof raw.reply === "string" ? raw.reply.trim() : "",
+    reply: typeof raw.reply === "string" ? raw.reply.replace(/\s+/g, " ").trim() : "",
     count: raw.count !== null && raw.count !== undefined && Number.isInteger(n) && n >= 1 ? n : null,
   };
 }
@@ -196,8 +223,8 @@ const TIME_OR_PERCENT = /يوم|ايام|اسبوع|اسابيع|شهر|شهور
 const MAX_EDIT_WORDS = 8;
 
 /** The fallback when the model gives nothing usable: the round-21 keyword rules, plus the short edit or answer of an open request. */
-function keywordDecision(ctx: TurnContext): Decision {
-  const base = (type: ChatType, count: number | null = null): Decision => ({ type, reply: null, count, reason: "keyword rules", source: "keyword", guarded: false });
+function keywordDecision(ctx: TurnContext, failure?: string): Decision {
+  const base = (type: ChatType, count: number | null = null): Decision => ({ type, reply: null, count, reason: "keyword rules", source: "keyword", guarded: false, ...(failure ? { failure } : {}) });
   const text = normalizeWords(ctx.message);
   const words = text === "" ? [] : text.split(" ");
   const kind = classifyMessage(ctx.message);
@@ -230,11 +257,13 @@ function conversationFor(ctx: TurnContext): Array<{ role: "user" | "assistant"; 
  */
 export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getChatModel()): Promise<Decision> {
   let answer: ParsedAnswer | null = null;
+  let failure = "unreadable";
   try {
     const result = await model({ system: buildSystemPrompt({ balancePoints: ctx.balancePoints, open: ctx.open }), messages: conversationFor(ctx), maxTokens: CHAT_MODEL_MAX_TOKENS, timeoutMs: CHAT_MODEL_TIMEOUT_MS });
     if (result.ok) answer = parseModelAnswer(result.text);
-  } catch { /* the keyword rules answer */ }
-  if (!answer) return keywordDecision(ctx);
+    else failure = result.failure;
+  } catch { failure = "exception"; /* the keyword rules answer */ }
+  if (!answer) return keywordDecision(ctx, failure);
 
   let type = answer.type;
   // an edit needs an open request to edit; without one the message is a request (nothing is lost)
