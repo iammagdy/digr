@@ -4,6 +4,16 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 30 (4 Nov 2026, after #382): Instagram with no account asks for one
+
+- **Live QA:** «عايز ١٠ منشورات عامة من إنستجرام عن الذكاء الاصطناعي» ended «مصادرنا لا تخدم هذا الطلب» with no provider call (`msn_dd1ea21de1f032dec087`, `msn_9c25ec075605026cbaa0`). Instagram's only verified parent tool is `posts.account` (a username or an account link); there is no keyword search across Instagram, so `chooseCard` found no card (`no_parent_card`).
+- **Behavior now (compiled path, the platform's flag unchanged):** in `planInner` (`agent/src/compiled.ts`), BEFORE any read, hold or price, an Instagram Ask with no parent card gets ONE normal question card of the same mission (`why: "instagram_account"`, no options, so a free-text answer): «نقدر نجمع منشورات من حساب إنستجرام عام محدد. اكتب اسم المستخدم أو رابط الحساب اللي عايز نبحث فيه.»
+- **The answer** is read by code (`src/lib/agentMission/foundation/instagramAccount.ts`): `@user`, a bare username with a letter, an `instagram.com/user` link (with or without the scheme), or an `@user` inside a sentence; post, reel and site links are not accounts. In `runMission.ts` it is kept in the run state's `choices.instagramAccount` (or `instagramAccountDeclined`), and the answer's words are NOT part of the request (the topic and the count stay as written). The account becomes the Ask's named source and planning goes through the existing verified account-posts path; the plan's `notes_ar` gets «النتائج من حساب «@x» وحده، وليست بحثًا في كل إنستجرام.»
+- **No usable answer** (or none): the request ends `unserved` with an honest sentence (an account's posts only, no search of all Instagram, nothing charged, send a new request naming the account), never a second question.
+- **Not changed:** provider capabilities, cards, prices, reserve, minimum, ledger, settlement, other platforms (the rule is guarded by `ask.platform === "instagram"` and the absence of a parent card), an Instagram request that already names its source (by username: no question, no note; by an Arabic name with no username: still the old `no_parent_card` refusal, left as it was and a candidate follow-up: ask for the username).
+- **Not verified live:** no real mission; proven through `runPlanning` on the memory store with the stored real pages of the account. The question card's free-text box (empty options) is the same as the budget question's; not seen in a browser.
+- **Tests:** `tests/round30-instagram-account-question.test.ts` (20).
+
 ## Round 29 (4 Nov 2026, after #380): the approved subset of the pinned rows is executed, no new search
 
 - **Live case:** Facebook `msn_133b26567812f65b49a8`. The customer edited 10 posts to 5, 4, then 3 before approving. `planEdit.ts` changes `planned_rows` and (by design) keeps all 10 `pinned_rows`, because an edit back up needs them. `runRoot` (`agent/src/engine/run.ts`) used the pinned rows only when `pinned.length === planned_rows`, so it read the source again: the 3 delivered posts were not the pinned ones, carried no «علاقة النص بالموضوع», and the methodology said the classification was unavailable (round 28 stated this honestly).

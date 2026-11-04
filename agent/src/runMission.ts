@@ -48,6 +48,7 @@ import { TOPIC_OPTIONS_AR, topicMeaningOf, topicQuestionAr } from "../../src/lib
 import { noAboutChoiceOf } from "../../src/lib/agentMission/foundation/topicChoice";
 import { occurrenceChoiceOf } from "../../src/lib/agentMission/foundation/occurrence";
 import { pageNotFoundAr } from "../../src/lib/agentMission/foundation/namedShortfall";
+import { INSTAGRAM_ACCOUNT_DECLINED_AR, instagramAccountOf } from "../../src/lib/agentMission/foundation/instagramAccount";
 import { BUDGET_QUESTION_AR, BUDGET_TOO_SMALL_AR, choiceAnswerOf, type Choices } from "../../src/lib/agentMission/foundation/countChoice";
 import { parseChannels, understandChannelsPrompt, UNDERSTAND_SYSTEM } from "../../src/lib/agentMission/foundation/understand";
 import { llmCostFromUsage } from "./llmCost";
@@ -425,7 +426,18 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const prior = compiledActive ? await readRunState(store, mission.id) : null;
   let choices: Choices = prior?.choices ?? {};
   let answerIsChoice = false;
-  if (compiledActive && prior?.pending) {
+  // ROUND 30 (Instagram, no account): the customer's answer to «which account» is read by code: an account (username or link) is kept with the choices, anything else is kept as «declined» (the request then ends, it is never asked twice);
+  // either way the answer's words are not part of the request (its topic and count stay as written)
+  if (compiledActive && prior?.pending === "instagram_account") {
+    const handle = instagramAccountOf(mission.answer_text);
+    answerIsChoice = true;
+    choices = { ...choices, ...(handle ? { instagramAccount: handle } : { instagramAccountDeclined: true }) };
+    await updateRunState(store, mission.id, (r) => { const { pending: _p, ...rest } = r; void _p; return { ...rest, choices }; }, deps.log);
+  } else if (compiledActive && choices.instagramAccount !== undefined && instagramAccountOf(mission.answer_text) === choices.instagramAccount) {
+    // a planning that starts again after the answer was read (a restart, a later question): the same answer is still not part of the request
+    answerIsChoice = true;
+  }
+  if (compiledActive && prior?.pending && prior.pending !== "instagram_account") {
     const parsed = choiceAnswerOf(mission.answer_text, prior.pending);
     if (parsed) {
       answerIsChoice = true;
@@ -445,7 +457,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // THE QUESTION BEFORE APPROVAL (live round 7): no video of the two pages read is about the topic; the plan is not made, the customer chooses (the same needs_input card as the topic question)
   if (compiled?.kind === "question") {
     // every question card counts toward the three a request may have; a count or comments question also waits for its answer
-    await updateRunState(store, mission.id, (r) => ({ ...r, questionsAsked: (r.questionsAsked ?? 0) + 1, ...(compiled.why === "count" || compiled.why === "per_parent" ? { pending: compiled.why } : {}) }), deps.log);
+    await updateRunState(store, mission.id, (r) => ({ ...r, questionsAsked: (r.questionsAsked ?? 0) + 1, ...(compiled.why === "count" || compiled.why === "per_parent" || compiled.why === "instagram_account" ? { pending: compiled.why } : {}) }), deps.log);
     await store.addEvent(mission.id, { kind: "call", message_ar: compiled.why === "named_shortfall" ? "قياس داخلي: سؤال قبل الخطة، منشورات الصفحة المسمّاة أقل من المطلوب." : compiled.why === "occurrence" || compiled.why === "occurrence_year" ? "قياس داخلي: سؤال قبل الخطة، الحدث يتكرر ولم تُحدَّد سنة." : "قياس داخلي: سؤال قبل الخطة، لا فيديو في ما قُرئ يتحدث عن الموضوع.", counts: { compiled: 0, question: 1, pool_reads: compiled.reads.pool, exposure_reads: compiled.reads.exposure } }).catch(() => undefined);
     await store.updateMission(mission.id, { status: "needs_input", question_ar: compiled.question, plan_public: { question_options: compiled.options } as any, ...(compiled.llmCostUsd ? { planning_llm_usd: Number((Number((await store.getMission(mission.id))?.planning_llm_usd ?? mission.planning_llm_usd ?? 0) + compiled.llmCostUsd).toFixed(6)) } : {}), ...clear });
     await store.addEvent(mission.id, { kind: "question", message_ar: compiled.question });
@@ -501,7 +513,8 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
       await store.addEvent(mission.id, { kind: "result", message_ar: refusalSentenceAr("internal") });
       await tell(deps, mission, null, "failed", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false, cause: "internal" });
     } else {
-      const sentence = refusalSentenceAr(verdict.cls as "unsupported" | "empty_source");
+      // ROUND 30: no usable Instagram account was given: the honest sentence says what the source can do (an account's posts), not the general «our sources do not serve this»
+      const sentence = compiled?.kind === "cannot" && compiled.reason === "instagram_account_missing" ? INSTAGRAM_ACCOUNT_DECLINED_AR : refusalSentenceAr(verdict.cls as "unsupported" | "empty_source");
       await store.updateMission(mission.id, { ...base, status: "unserved", summary_ar: sentence });
       await store.addEvent(mission.id, { kind: "result", message_ar: sentence });
       await tell(deps, mission, null, "unserved", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false, ...(verdict.cls === "empty_source" ? { cause: "empty" as const } : {}) });

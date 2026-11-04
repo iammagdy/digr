@@ -6,6 +6,7 @@ import { chooseCard, compilePlan, parentInputs, rankedPoolOf, COMPILED_PLATFORMS
 import { factsOf, isAboutAndEligible, pageMatchesSource, rankPool } from "../../src/lib/agentMission/foundation/pool";
 import { aboutQueryOf, noAboutChoiceOf, noAboutQuestionAr, NO_ABOUT_OPTIONS_AR } from "../../src/lib/agentMission/foundation/topicChoice";
 import { NAMED_SHORTFALL_OPTIONS_AR, isNamedShortfallAnswer, namedShortfallChoiceOf, namedShortfallQuestionAr } from "../../src/lib/agentMission/foundation/namedShortfall";
+import { INSTAGRAM_ACCOUNT_QUESTION_AR, instagramAccountNoteAr } from "../../src/lib/agentMission/foundation/instagramAccount";
 import { budgetOfWords, questionNeeded, type Choices } from "../../src/lib/agentMission/foundation/countChoice";
 import { fitToBudget } from "../../src/lib/agentMission/foundation/budgetFit";
 import { toArabicDigits } from "../../src/lib/arabicDigits";
@@ -61,7 +62,7 @@ export type CompiledPlanning =
    * LIVE ROUND 7: no video of the pool read (two queries) is about the topic; the customer is asked before approval how to go on. Nothing is priced or held. PR 3, decision 7.5 (`why: "named_shortfall"`): the named Facebook page has fewer
    * deliverable posts in the pool than asked.
    */
-  | { kind: "question"; ask: Ask; question: string; options: string[]; reads: { pool: number; exposure: number }; why?: "no_about" | "named_shortfall" | "occurrence" | "occurrence_year" | "count" | "per_parent" };
+  | { kind: "question"; ask: Ask; question: string; options: string[]; reads: { pool: number; exposure: number }; why?: "no_about" | "named_shortfall" | "occurrence" | "occurrence_year" | "count" | "per_parent" | "instagram_account" };
 
 /** What the understand step cost (USD), carried on the result so the caller adds it to the mission's model cost (never a charge). */
 export type WithCost<T> = T & { llmCostUsd?: number };
@@ -83,7 +84,12 @@ const sameInputs = (digest: Record<string, unknown>, params: Record<string, unkn
 /** Reads the pool and the exposure pages through the gateway, then compiles. */
 export async function planByCompiler(deps: CompiledPlanningDeps): Promise<WithCost<CompiledPlanning>> {
   const cost = { usd: 0 };
-  const result = await planInner(deps, cost);
+  let result = await planInner(deps, cost);
+  // ROUND 30: a plan made from an account the customer gave (the request named none) says so: the results are that account's, not all of Instagram
+  const given = deps.choices?.instagramAccount;
+  if (result.kind === "plan" && result.ask.platform === "instagram" && given && result.ask.source.text === given) {
+    result = { ...result, plan: { ...result.plan, notes_ar: [...(result.plan.notes_ar ?? []), instagramAccountNoteAr(given)] } };
+  }
   return cost.usd > 0 ? { ...result, llmCostUsd: cost.usd } : result;
 }
 
@@ -103,6 +109,13 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }): Pro
   else if (typeof choices.perParent === "number" && ask.comments !== "none") ask = { ...ask, commentsPerParent: choices.perParent };
   if (budget !== undefined) ask = { ...ask, edits: { ...ask.edits, budget } };
   const reads = { pool: 0, exposure: 0 };
+  // ROUND 30: INSTAGRAM WITH NO ACCOUNT. The only verified parent tool reads the posts of a named public account, so a request that names none is asked ONCE which account to read, before anything is read, held or priced; the account the customer gave
+  // (read by code in the run, kept with the other choices) is the Ask's named source, and the topic and the count stay the request's own. A request that already NAMES a source (an account by an Arabic name, no username) is left exactly as it was. No usable answer ends the request honestly (the question is never asked twice). No provider capability is added.
+  if (ask.platform === "instagram" && ask.source.kind !== "named" && chooseCard(ask, "parents", { catalogOnly: deps.catalogOnly === true }) === null) {
+    if (choices.instagramAccount) ask = { ...ask, source: { kind: "named", text: choices.instagramAccount } };
+    else if (choices.instagramAccountDeclined) return { kind: "cannot", ask, reason: "instagram_account_missing", reads };
+    else return { kind: "question", ask, why: "instagram_account", question: INSTAGRAM_ACCOUNT_QUESTION_AR, options: [], reads };
+  }
   // DECISION 7, A RECURRING EVENT with no year or date: «تقصد أنهي مرة؟» before anything is read or held (Facebook, Instagram, YouTube). «حدد سنة» asks for the year in words; a ready answer or a year is the choice.
   if (occurrenceAnswer?.kind === "ask_year") return { kind: "question", ask, why: "occurrence_year", question: OCCURRENCE_YEAR_QUESTION_AR, options: [], reads };
   if (!ask.occurrence && !answeredReady && isRecurringEvent(ask, `${deps.mission.request_text} ${deps.mission.answer_text ?? ""}`)) {
