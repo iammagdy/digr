@@ -123,6 +123,21 @@ describe("the fallthrough: every relevant tool is tried before «غير متوف
     expect(checkCustomerText(line).issues).toEqual([]);
     expect(checkCustomerText(B2B_NOT_SEARCHED_AR).issues).toEqual([]);
   });
+  it("S7 wording: a column where NOTHING was found never says «لم يوجد» for a search that was not completed", () => {
+    // every source tried and nothing found: «غير متوفر»
+    expect(gapLineAr(COMPANY_EMAIL_TITLE_AR, { total: 5, found: 0, unavailable: 5, incomplete: 0, tools: 3 }, "company")).toBe("الإيميل العام للشركة: غير متوفر لكل الشركات (٥ شركات) بعد تجربة ٣ مصادر.");
+    // no source was tried (none verified, or the cap refused them all): the search is INCOMPLETE, not a negative answer
+    expect(gapLineAr(COMPANY_EMAIL_TITLE_AR, { total: 5, found: 0, unavailable: 0, incomplete: 5, tools: 0 }, "company")).toBe("الإيميل العام للشركة: لم يكتمل البحث لكل الشركات (٥ شركات).");
+    // nothing found, some tried to the end and some not
+    expect(gapLineAr(COMPANY_PHONE_TITLE_AR, { total: 5, found: 0, unavailable: 2, incomplete: 3, tools: 2 }, "company")).toBe("هاتف المقر الرئيسي: غير متوفر لشركتين بعد تجربة مصدرين، ولم يكتمل البحث لـ ٣ شركات.");
+    // one company
+    expect(gapLineAr(COMPANY_PHONE_TITLE_AR, { total: 1, found: 0, unavailable: 1, incomplete: 0, tools: 1 }, "company")).toBe("هاتف المقر الرئيسي: غير متوفر للشركة بعد تجربة مصدر واحد.");
+    for (const g of [{ total: 5, found: 0, unavailable: 5, incomplete: 0, tools: 3 }, { total: 5, found: 0, unavailable: 0, incomplete: 5, tools: 0 }, { total: 5, found: 0, unavailable: 2, incomplete: 3, tools: 2 }, { total: 1, found: 0, unavailable: 1, incomplete: 0, tools: 1 }]) {
+      const line = gapLineAr(COMPANY_PHONE_TITLE_AR, g, "company");
+      expect(checkCustomerText(line).issues, line).toEqual([]);
+      expect(line, line).not.toContain("لم يوجد");
+    }
+  });
   it("no gap: the line says every one was found", () => {
     expect(gapLineAr(COMPANY_PHONE_TITLE_AR, { total: 3, found: 3, unavailable: 0, incomplete: 0, tools: 2 }, "company")).toBe("هاتف المقر الرئيسي: وُجد لكل الشركات (٣ شركات).");
   });
