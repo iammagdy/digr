@@ -70,7 +70,7 @@ B2BAsk = {
   kind: "companies" | "companies_people" | "people";
   companies: number | null; peoplePerCompany: number | null; people: number | null;
   sector: string[];            // entities.ts sectorWordsOf
-  country: string | null;      // places.ts countryOfRequestText (a nationality word counts: «مصرية» → EG)
+  country: string | null;      // places.ts countryOfValue: a country or city NAMED («في مصر»); a nationality word alone is not read (golden G1 guard), see decision 6
   roles: "decision_makers" | null;
   fields: { companyEmail; hqPhone; personEmail; personMobile };   // company columns always for companies; e-mail + mobile for people
   conditions: Array<{ kind: "size_min" | "size_max" | "founded_after" | "founded_before"; value: number }>;
@@ -231,6 +231,8 @@ Guesses are marked in each card's `note`. They are:
 3. **The e-mail template in `src/functions/**`** (section 9). Explicit go needed.
 4. **How the monthly e-mail count is known.** Options: the Resend usage endpoint, or a count of stored markers. Until a count exists, `quota_unknown` sends nothing. Proposal (no migration written): either a small table `email_notices(job_id primary key, sent_at)`, or count the `notices/email_sent.json` markers per month. Recommended: the markers (no schema change).
 5. **The measured wait for the e-mail:** approval to finish (as here), or queue entry to start. Recommended: approval to finish (what the customer actually waited).
+
+6. **A nationality word as the search's country** («شركات مصرية»). The existing guard `tests/golden-r2-request-country-not-a-filter.test.ts` (G1) allows `countryOfRequestText` only in the company-phone step, so the B2B Ask reads only a NAMED country or city. Should a nationality word set the companies search's country INPUT (a request to the source, never a row rule)? If yes, the guard's list must be extended by that one file, with its own test. Recommended: yes, as an input only.
 
 ## 11. Verified facts vs assumptions
 

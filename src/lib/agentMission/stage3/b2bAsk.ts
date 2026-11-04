@@ -1,7 +1,7 @@
 import { normalizeDigits, toArabicDigits } from "../../arabicDigits";
 import { NUMBER_WORDS_SRC, numberOfToken } from "../arabicNumberWords";
 import { sectorWordsOf } from "../entities";
-import { countryOfRequestText } from "../places";
+import { countryOfValue } from "../places";
 import { budgetOfWords } from "../foundation/countChoice";
 
 /**
@@ -26,7 +26,10 @@ export interface B2BAsk {
   people: number | null;
   /** The sector words, as the customer wrote them (entities.ts `sectorWordsOf`). */
   sector: string[];
-  /** ISO code of the country named or implied by a nationality word («شركات مصرية» → EG). */
+  /**
+   * ISO code of the country or city NAMED in the words («في مصر», «في الرياض»). A nationality word alone («شركات مصرية») is not read here: golden run round 2 (G1, tests/golden-r2-request-country-not-a-filter.test.ts)
+   * keeps the nationality reader of places.ts to the company-phone step only. Whether a nationality word may set the search's country input is an owner decision (docs/STAGE-3.md).
+   */
   country: string | null;
   /** The people asked: decision makers (the owner's default for «صناع القرار», «مدير», «المسؤول»). */
   roles: "decision_makers" | null;
@@ -87,7 +90,7 @@ export function buildB2BAsk(request: unknown): B2BAsk | null {
     peoplePerCompany: perCompany,
     people,
     sector: sectorWordsOf(text),
-    country: countryOfRequestText(text),
+    country: countryOfValue(text),
     roles: hasRoles ? "decision_makers" : null,
     fields: { companyEmail: kind !== "people", hqPhone: kind !== "people", personEmail: withPeople, personMobile: withPeople },
     conditions,

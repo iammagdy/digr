@@ -26,7 +26,9 @@ describe("the B2B Ask, by code", () => {
     const a = buildB2BAsk("عايز ٥ شركات مصرية في قطاع الكهروميكانيكا، ومعاهم صناع القرار")!;
     expect(a.kind).toBe("companies_people");
     expect(a.companies).toBe(5);
-    expect(a.country).toBe("EG");
+    // a nationality word alone is not read as the country (golden run round 2, G1): an owner decision (docs/STAGE-3.md)
+    expect(a.country).toBeNull();
+    expect(buildB2BAsk("عايز ٥ شركات في مصر في قطاع الكهروميكانيكا، ومعاهم صناع القرار")!.country).toBe("EG");
     expect(a.sector).toEqual(["الكهروميكانيكا"]);
     expect(a.roles).toBe("decision_makers");
     expect(a.peoplePerCompany).toBeNull();
