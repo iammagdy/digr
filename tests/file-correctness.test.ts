@@ -178,7 +178,8 @@ describe("the words about the files match the files (live: «تم تسليم م�
     });
     expect(v.resultSummaryAr).toContain("تم تسليم ملف إكسل واحد من ورقتين مرتبطتين.");
     expect(v.resultSummaryAr).not.toContain("ملفين");
-    expect(v.files.map((f) => f.kind)).toEqual(["xlsx"]);
+    // CHANGED (round 32): the CSV of the data and the CSV of the methodology are offered after the Excel (still ONE workbook, no second Excel)
+    expect(v.files.map((f) => f.kind)).toEqual(["xlsx", "csv", "methodology"]);
   });
 });
 

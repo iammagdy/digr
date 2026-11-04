@@ -12,6 +12,7 @@ import { publicPlanOf, smallerVersionOf } from "./overLimit";
 import { missionDownloadName } from "./fileNames";
 import { listOpenMissions, openLimitMessageAr, type OpenMissionView } from "./openMissions";
 import { excelFromCsv } from "../server/excelFromCsv";
+import { csvExportFromWorkbook, METHODOLOGY_FILE_NAME, packageCsvExport } from "../server/csvFromExcel";
 
 /**
  * What a CUSTOMER does with a mission, on the server, with the service-role client and an explicit owner check on every call (a customer reaches only their own missions; the browser never
@@ -199,8 +200,10 @@ export async function customerFileLink(client: any, input: { id: string; userId:
   const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,files,plan,request_text,delivered_units,updated_at").eq("id", input.id).maybeSingle();
   if (!mission || mission.user_id !== input.userId) return bad(404, "الملف غير موجود.");
   const files = Array.isArray(mission.files) ? (mission.files as Array<{ name: string; path: string; kind?: string }>) : [];
-  // A CUSTOMER NEVER GETS A CSV: a link asked for by the CSV's name (an old page, an old link) is the mission's Excel; a mission that has only a CSV gets an Excel built from it, saved in the mission's own folder
-  const customerName = input.name.toLowerCase().endsWith(".csv") ? "result.xlsx" : input.name;
+  // ROUND 32: a CSV is never a stored file's link (the stored CSV is the deepest stage only) and never silently the Excel: a customer's CSV is built from the mission's Excel by `customerCsvFile`, which the route calls for a CSV name.
+  // A mission that has only a CSV (the oldest) still gets an Excel built from it, saved in the mission's own folder
+  if (input.name.toLowerCase().endsWith(".csv")) return bad(400, CSV_REQUEST_INVALID_AR);
+  const customerName = input.name;
   let file = files.find((f) => f.name === customerName && f.kind !== "csv") ?? null;
   if (!file && /^result\.(xlsx|csv)$/.test(input.name)) {
     const csv = files.find((f) => f.kind === "csv" || f.name.toLowerCase().endsWith(".csv"));
@@ -222,4 +225,46 @@ export async function customerFileLink(client: any, input: { id: string; userId:
   const { data, error } = await client.storage.from(AGENT_BUCKET).createSignedUrl(`${input.id}/${file.path}`, 120, { download });
   if (error || !data?.signedUrl) return bad(500, "تعذّر إنشاء رابط الملف.");
   return { ok: true, url: String(data.signedUrl), download };
+}
+
+/** The words a customer reads when a CSV cannot be given (never a file of another kind in its place, never a technical word). */
+export const CSV_REQUEST_INVALID_AR = "طلب الملف غير صالح.";
+export const CSV_NOT_READY_AR = "ملف CSV غير جاهز لهذه المهمة بعد.";
+export const CSV_SOURCE_MISSING_AR = "ملف النتائج غير متاح لهذه المهمة، فلا نستطيع تجهيز ملف CSV منها. جرّب ملف إكسل أو تواصل معنا.";
+export const CSV_UNREADABLE_AR = "تعذّر تجهيز ملف CSV من ملف النتائج. جرّب ملف إكسل أو تواصل معنا.";
+export const CSV_STORAGE_FAILED_AR = "تعذّر تجهيز ملف CSV الآن. حاول بعد قليل.";
+/** The two CSV names a customer may ask for: the data (one CSV for one stage, an archive of CSVs for more) and the methodology. */
+export const CUSTOMER_CSV_NAMES: readonly string[] = ["result.csv", METHODOLOGY_FILE_NAME];
+
+const isMissingObject = (error: unknown): boolean => {
+  const e = error as { status?: unknown; statusCode?: unknown; message?: unknown } | null;
+  return String(e?.status ?? e?.statusCode ?? "") === "404" || /not.?found|does not exist|no such/i.test(String(e?.message ?? ""));
+};
+
+/**
+ * THE CUSTOMER'S CSV of a mission of THEIR OWN (the same ownership check as every other file of a mission), built from the mission's own Excel (csvFromExcel.ts): ONE delivered stage is a plain CSV; MORE THAN ONE is an archive with a CSV per stage and the
+ * methodology, so no delivered stage is left out of an export that calls itself the mission's; `methodology.csv` is the methodology alone. Reads the mission's files and nothing else: no admin file (`admin/…`) is ever read, nothing is written, nothing is charged.
+ * A missing or unreadable file is an Arabic error with its own status; the Excel is never given in a CSV's place.
+ */
+export async function customerCsvFile(client: any, input: { id: string; userId: string; name: string }): Promise<CustomerResult<{ body: Buffer; download: string; kind: "csv" | "zip" }>> {
+  if (!CUSTOMER_CSV_NAMES.includes(input.name)) return bad(400, CSV_REQUEST_INVALID_AR);
+  const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,files,plan,request_text,delivered_units,updated_at").eq("id", input.id).maybeSingle();
+  if (!mission || mission.user_id !== input.userId) return bad(404, "الملف غير موجود.");
+  const files = Array.isArray(mission.files) ? (mission.files as Array<{ name?: string; path?: string; kind?: string }>) : [];
+  const source = files.find((f) => typeof f?.path === "string" && (f.kind === "xlsx" || String(f.name ?? "").toLowerCase().endsWith(".xlsx")));
+  if (!source) return bad(404, files.length === 0 ? CSV_NOT_READY_AR : CSV_SOURCE_MISSING_AR);
+  let bytes: Buffer;
+  try {
+    const { data, error } = await client.storage.from(AGENT_BUCKET).download(`${input.id}/${source.path}`);
+    if (error || !data) return isMissingObject(error) || !error ? bad(404, CSV_SOURCE_MISSING_AR) : bad(502, CSV_STORAGE_FAILED_AR);
+    bytes = typeof data.arrayBuffer === "function" ? Buffer.from(await data.arrayBuffer()) : Buffer.from(data as Uint8Array);
+  } catch (e) {
+    return isMissingObject(e) ? bad(404, CSV_SOURCE_MISSING_AR) : bad(502, CSV_STORAGE_FAILED_AR);
+  }
+  let exp;
+  try { exp = await csvExportFromWorkbook(bytes); } catch { return bad(500, CSV_UNREADABLE_AR); }
+  const named = (kind: string) => missionDownloadName({ files: mission.files, kind, plan: mission.plan, requestText: mission.request_text, deliveredUnits: mission.delivered_units, date: mission.updated_at });
+  if (input.name === METHODOLOGY_FILE_NAME) return { ok: true, body: Buffer.from(exp.methodologyCsv, "utf8"), download: `منهجية - ${named("csv")}`.replace(/\s+/g, " "), kind: "csv" };
+  const pack = packageCsvExport(exp);
+  return { ok: true, body: pack.body, download: named(pack.kind), kind: pack.kind };
 }

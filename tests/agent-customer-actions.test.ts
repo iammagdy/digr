@@ -222,8 +222,8 @@ describe("cancel, edit, answer, read and files: only the owner's", () => {
     const { client } = makeClient(db);
     state.client = client;
     expect(await customerFileLink(client, { id: "msn_ready0001", userId: OTHER, name: "result.xlsx" })).toMatchObject({ ok: false, status: 404 });
-    // a link asked for by the CSV's name is the mission's Excel (a customer is never given a CSV)
-    expect(await customerFileLink(client, { id: "msn_ready0001", userId: ME, name: "result.csv" })).toMatchObject({ ok: true, url: "https://signed.example/agent-missions/msn_ready0001/result/result.xlsx" });
+    // CHANGED (round 32): a CSV is no longer redirected to the Excel. The customer's CSV is built from the Excel by `customerCsvFile` (tests/round32-customer-csv.test.ts); a signed link asked for by a CSV's name is an invalid request, never a silent Excel
+    expect(await customerFileLink(client, { id: "msn_ready0001", userId: ME, name: "result.csv" })).toMatchObject({ ok: false, status: 400 });
     const res = await fileGET(req(undefined, "http://localhost/api/missions/msn_ready0001/file?name=result.xlsx"), ctx());
     expect(await res.json()).toMatchObject({ success: true, url: "https://signed.example/agent-missions/msn_ready0001/result/result.xlsx" });
     expect((await fileGET(req(undefined, "http://localhost/f?name=../../x"), ctx())).status).toBe(400);
