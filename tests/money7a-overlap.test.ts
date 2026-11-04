@@ -41,7 +41,7 @@ function workerDeps(w: World, holdAtCall?: number) {
   const entered = deferred();
   const gate = deferred();
   let n = 0;
-  const call = async (o: Parameters<World["deps"]["call"]>[0]) => { n += 1; if (n === holdAtCall) { entered.resolve(); await gate.promise; } return w.call(o); };
+  const call = async (o: Parameters<NonNullable<World["deps"]["call"]>>[0]) => { n += 1; if (n === holdAtCall) { entered.resolve(); await gate.promise; } return w.call(o); };
   return { deps: { ...w.deps, call: call as unknown as World["deps"]["call"] }, entered: entered.promise, release: gate.resolve };
 }
 /** The provider's daily cap on THIS deps' recorder: `n` allowed calls, then refused until `gate.on = false`. */
