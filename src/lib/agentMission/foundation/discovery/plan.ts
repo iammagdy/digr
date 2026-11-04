@@ -1,6 +1,7 @@
 import { toArabicDigits } from "../../../arabicDigits";
 import type { Ask } from "../ask";
 import type { CardRole, ToolCard } from "../toolCards/types";
+import type { MediaMark } from "./media";
 
 /**
  * ROUND 33, CATALOG DISCOVERY: what a plan says about a source that was DISCOVERED (a card derived from the catalog): the audit mark stored with the plan, the choice among candidates, and the customer's sentences. Pure; Arabic only for the customer.
@@ -42,14 +43,16 @@ export interface DiscoveryMark {
   /** How the card was chosen: by the model among the validated candidates, by the compiler's own ranking, or because it was the only validated candidate. `candidates` are the ids that passed validation (the model never saw another). */
   selection?: { by: "model" | "rank" | "only_candidate"; candidates: string[]; reason?: string };
   evaluation?: DiscoveryEvaluation;
+  /** ROUND 35: the customer asked for reels and how the chosen tool serves the media type (the same mark as `compiled.media`, kept with the discovery evidence). */
+  media?: MediaMark;
 }
 
 /** How a card's pages declare their continuation: a derived card says so itself; a verified card declares it when it has both a cursor input and a cursor place in the answer. */
 export const pagingOf = (card: ToolCard): "declared" | "unknown" => card.derived ? card.derived.paging : card.inputs.cursor && card.page.cursor ? "declared" : "unknown";
 
-export function discoveryMarkOf(card: ToolCard, read: { pages: number; rows: number; hasMore: boolean | null; selection?: DiscoveryMark["selection"]; evaluation?: DiscoveryEvaluation }): DiscoveryMark {
+export function discoveryMarkOf(card: ToolCard, read: { pages: number; rows: number; hasMore: boolean | null; selection?: DiscoveryMark["selection"]; evaluation?: DiscoveryEvaluation; media?: MediaMark }): DiscoveryMark {
   const paging = pagingOf(card);
-  return { entered: true, endpoint_id: card.endpointId, role: card.role, derived: card.derived !== undefined, status: card.status, paging, pages_read: read.pages, rows_planned: read.rows, completeness: completenessOf(paging, read.hasMore), ...(read.selection ? { selection: read.selection } : {}), ...(read.evaluation ? { evaluation: read.evaluation } : {}) };
+  return { entered: true, endpoint_id: card.endpointId, role: card.role, derived: card.derived !== undefined, status: card.status, paging, pages_read: read.pages, rows_planned: read.rows, completeness: completenessOf(paging, read.hasMore), ...(read.selection ? { selection: read.selection } : {}), ...(read.evaluation ? { evaluation: read.evaluation } : {}), ...(read.media ? { media: read.media } : {}) };
 }
 
 export const DISCOVERED_SOURCE_NOTE_AR = "اخترنا مصدر هذه الخطوة من دليل المصادر، ولم يُجرَّب من قبل على صفحات حقيقية في هذا النظام، فراجع العينة قبل الاعتماد.";

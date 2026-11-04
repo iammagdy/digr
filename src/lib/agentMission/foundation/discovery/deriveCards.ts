@@ -67,7 +67,11 @@ export function deriveCard(e: CatalogEndpoint, catalog: TregCatalog, access: Acc
   const countryInput = inputOf(e, COUNTRY_INPUT_NAMES);
   // a search for videos is asked for videos only when the catalog says that input takes «video» (YouTube's general search also returns channels and playlists)
   const typeInput = rule.role === "videos.search" ? e.inputs.find((i) => (i.name === "type" || i.name === "search_type") && (Array.isArray(i.enum) ? i.enum.includes("video") : /(?:^|[|,\s])video(?:$|[|,\s])/.test(String(i.note ?? "")))) : undefined;
-  const taken = new Set<string>([queryInput?.name, sourceInput?.name, cursorName, periodPair?.[0], periodPair?.[1], countryInput?.name, typeInput?.name].filter((x): x is string => typeof x === "string"));
+  // ROUND 35: a REELS-only tool (its capability is «…reels»), or a media-type input whose own enum (or, when it has none, its own note) names the reel value: both are what the catalog says, never a guess
+  const reelsNative = /(?:^|\.)reels$/.test(String(e.capability ?? ""));
+  const mediaInput = reelsNative ? undefined : e.inputs.find((i) => /^media_?type$/i.test(i.name) && reelValueOf(i) !== null);
+  const reelsValue = mediaInput ? reelValueOf(mediaInput) : null;
+  const taken = new Set<string>([queryInput?.name, sourceInput?.name, cursorName, periodPair?.[0], periodPair?.[1], countryInput?.name, typeInput?.name, mediaInput?.name].filter((x): x is string => typeof x === "string"));
   const unsatisfied = e.inputs.find((i) => i.required && !taken.has(i.name) && (i.default === null || i.default === undefined));
   if (unsatisfied) return reject(e, "unsatisfied_required_input", unsatisfied.name);
 
@@ -115,9 +119,17 @@ export function deriveCard(e: CatalogEndpoint, catalog: TregCatalog, access: Acc
     costUsdPerPage: cost.usd,
     verifiedOn: [],
     cannot,
+    ...(reelsNative ? { media: { reels: "native" as const } } : mediaInput && reelsValue ? { media: { reels: { field: mediaInput.name, value: reelsValue } } } : {}),
     derived: { from: "catalog", observed: { samples, okRate, hitRate }, paging },
   };
   return { ok: true, card };
+}
+
+/** The value a media-type input takes for REELS, from the catalog's own words: its enum («all», «reel»), else the word its note names («use all … or reels to only return reels»). Null when the catalog does not say. */
+function reelValueOf(i: { enum?: ReadonlyArray<unknown> | null; note?: string | null }): string | null {
+  if (Array.isArray(i.enum)) return i.enum.map(String).find((v) => /^reels?$/i.test(v)) ?? null;
+  const m = /\b(reels?)\b/i.exec(String(i.note ?? ""));
+  return m ? m[1].toLowerCase() : null;
 }
 
 export interface Discovered { cards: ToolCard[]; rejected: Rejection[] }

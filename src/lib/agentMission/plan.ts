@@ -255,6 +255,8 @@ export interface CompiledMark {
   source_text?: string;
   /** ROUND 33 (catalog discovery): set ONLY when the parents were read by a tool derived from the catalog: which tool, how it was chosen among the validated candidates, and whether the pages showed the source complete, partial or unknown. Internal audit; the customer reads the plan's notes. */
   discovery?: import("./foundation/discovery/plan").DiscoveryMark;
+  /** ROUND 35 (Instagram REELS): set when the customer asked for reels: how the chosen tool serves the media type (reels-only tool, the tool's own media-type filter, or unproven: said to the customer before approval). Internal audit; set whether or not discovery is on. */
+  media?: import("./foundation/discovery/media").MediaMark;
 }
 
 export interface UnservedStep {

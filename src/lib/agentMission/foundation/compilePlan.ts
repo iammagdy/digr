@@ -161,6 +161,8 @@ export interface CompileInput {
   customerChannel?: { display: string | null };
   /** Decision 7.5, Facebook: the customer's answer to the named-page question; absent, a shortfall asks it. */
   namedChoice?: "only_found" | "fill";
+  /** ROUND 35: the customer asked for reels and the chosen tool PROVES the media type (reels-only, or its documented media-type filter was sent): the summary says «من نوع ريلز». Never set for an unproven tool. */
+  reelsProven?: boolean;
   /** The exposure check (decision 7.3): the first comments page of a parent, read before the card (undefined: not read). */
   exposure: (parentId: string) => { callId: string | null; page: unknown | null; failed: boolean } | undefined;
   capabilityOf: (endpointId: string) => string | null;
@@ -251,10 +253,11 @@ export function matchCountsLineAr(selected: number, alternatives: number): strin
 }
 
 /** The customer's one sentence for a compiled plan (Arabic, Arabic-Indic digits, no provider, no price). */
-export function summaryAr(ask: Ask, n: number, shape: ReadonlyArray<StageRole>, perParent: number | null = null): string {
+export function summaryAr(ask: Ask, n: number, shape: ReadonlyArray<StageRole>, perParent: number | null = null, reelsProven = false): string {
   const w = NOUN[ask.platform!];
   // ROUND 26 (item 5): the count takes the Arabic plural rules of the item-noun table (1, 2, 3 to 10, 11 and above); «١٠ تغريدات», never «١٠ تغريدة»
-  const count = countAr(n, itemNounOf(w.one), { subject: true });
+  // ROUND 35: a request for reels whose media type the tool PROVES is said as reels («٥ ريلز»); the noun of the stage and of the file stays the post's
+  const count = reelsProven ? (n === 1 ? "ريل واحد" : n === 2 ? "ريلين" : `${toArabicDigits(n)} ريلز`) : countAr(n, itemNounOf(w.one), { subject: true });
   const parts = [count, w.where];
   if (ask.topic.text) parts.push(`عن «${ask.topic.text}»`);
   if (ask.country) parts.push(`من ${COUNTRY_AR[ask.country] ?? ask.country}`);
@@ -562,7 +565,7 @@ export function compilePlan(input: CompileInput): CompileResult {
 
   const price = priceMissionByCode(stagePriceInputs(stages), { settings: input.pricingSettings });
   const plan: PricedPlan = {
-    summary_ar: summaryAr(ask, chosen.length, shape.filter((s) => s !== "replies" || stages.some((x) => x.replies_of !== undefined)), perParent),
+    summary_ar: summaryAr(ask, chosen.length, shape.filter((s) => s !== "replies" || stages.some((x) => x.replies_of !== undefined)), perParent, input.reelsProven === true),
     ...(notes.length > 0 ? { notes_ar: notes } : {}),
     ...(ask.count === null ? { assumptions_ar: [`لم تحدد عددًا، فاخترنا ${toArabicDigits(DEFAULT_COUNT)}؛ يمكنك تعديله قبل الموافقة.`] } : {}),
     stages,

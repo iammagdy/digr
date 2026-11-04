@@ -64,5 +64,10 @@ export interface ToolCard {
    * ROUND 33 (catalog discovery, `foundation/discovery`): set ONLY on a card that code DERIVED from the catalog's own metadata (never written by hand, never verified on a stored real page). It is always `catalog_only`, so it follows owner decision 7.4 (test accounts only,
    * inside the 0.20 USD cap) and needs the discovery switch besides. `catalog` is what the catalog said it was derived from, kept so the plan can be audited.
    */
+  /**
+   * ROUND 35 (Instagram REELS): how the card can serve a request for reels. `native`: the tool's own capability is reels («instagram.search.reels», «instagram.user.reels»): every item it returns is a reel by what the tool IS. `{ field, value }`: the tool lists a media-type input whose
+   * documented value is the reel one (the catalog's enum or its own note), and the plan sends it. Absent: the tool cannot prove reels (a post search of any kind), and a request for reels read with it is said to be unproven before approval.
+   */
+  media?: { reels: "native" | { field: string; value: string } };
   derived?: { from: "catalog"; observed: { samples: number | null; okRate: number | null; hitRate: number | null }; /** The catalog's own example answer was the only evidence of the list path and the cursor. */ paging: "declared" | "unknown" };
 }
