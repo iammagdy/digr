@@ -112,6 +112,32 @@ describe("approval: double click, retry after a lost answer", () => {
   }
 });
 
+describe("approval: a job accepted before this call is never released by it", () => {
+  it("the retry finds the quote already accepted, the claim then fails for another reason: NO release is sent, the hold stands, and the row goes back to plan_ready", async () => {
+    const { w, row } = world();
+    w.inject("accept_quote_atomic", "after");
+    expect((await approveAddonOnce(w.client, { id: row.id, actorId: USER })).ok).toBe(false);
+    const jobId = addonJobId(addonQuoteId(row.id));
+    w.jobs.get(jobId)!.step = 1; // the claim will answer step_mismatch
+    const out = await approveAddonOnce(w.client, { id: row.id, actorId: USER });
+    expect(out).toMatchObject({ ok: false, code: "claim_failed", error: ADDON_APPROVE_MESSAGES_AR.claim_failed });
+    expect(w.calls.filter((c) => c.name === "release_job_atomic")).toEqual([]);
+    expect(reserves(w)).toHaveLength(1);
+    expect(w.ledger.filter((r) => r.type === "release")).toEqual([]);
+    expect(w.missions.get(row.id)!.status).toBe("plan_ready");
+  });
+  it("a claim that fails on a job THIS call accepted releases it whole (nothing was spent), and the row goes back", async () => {
+    const { w, row } = world();
+    const real = w.client.rpc;
+    w.client.rpc = async (name: string, args: any) => (name === "claim_job_chunk" ? (w.calls.push({ name, args }), { data: { claimed: false, error: "backoff_active" } }) : real(name, args));
+    const out = await approveAddonOnce(w.client, { id: row.id, actorId: USER });
+    expect(out).toMatchObject({ ok: false, code: "claim_failed" });
+    expect(w.ledger.map((r) => r.type)).toEqual(["topup", "reserve", "release"]);
+    expect(w.balance()).toBe(10_000);
+    expect(w.missions.get(row.id)!.status).toBe("plan_ready");
+  });
+});
+
 describe("approval: refusals write nothing", () => {
   it("insufficient balance: no ledger row, no job, the quote stays quoted, the row is plan_ready; after a top-up the same add-on is approved", async () => {
     const { w, row } = world(50);
