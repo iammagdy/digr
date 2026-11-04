@@ -149,11 +149,11 @@ describe("the component", () => {
     { version: 2, parent: 1, reason: "edit", createdAt: "2026-11-03T09:30:00.000Z", digest: "b".repeat(64) },
     { version: 3, parent: 2, reason: "review_fix", createdAt: "2026-11-03T10:30:00.000Z", digest: "c".repeat(64) },
   ];
-  it("«النسخة ١ (التسليم)», «النسخة ٢ (تعديل)» and the fix, with Arabic-Indic numerals and no button", () => {
+  it("«النسخة ١ — الملف الأصلي», «النسخة ٢ — بعد التعديل» and the fix, with Arabic-Indic numerals; a button only when the page gives a download handler (Phase 2B-2: tests/stage4-version-download-ui.test.ts)", () => {
     const html = renderToStaticMarkup(createElement(VersionListBody, { versions: rows }));
-    expect(html).toContain("النسخة ١ (التسليم)");
-    expect(html).toContain("النسخة ٢ (تعديل)");
-    expect(html).toContain("النسخة ٣ (إصلاح من المراجعة)");
+    expect(html).toContain("النسخة ١ — الملف الأصلي");
+    expect(html).toContain("النسخة ٢ — بعد التعديل");
+    expect(html).toContain("النسخة ٣ — بعد تصحيح المراجعة");
     expect(html).toContain("مأخوذة من النسخة ١");
     expect(html).toContain(VERSIONS_HEADING_AR);
     expect(html).toContain(VERSIONS_NOTE_AR);
