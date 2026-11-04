@@ -1923,18 +1923,20 @@ export default function ChatWorkspacePage() {
         {m.errorRetryPrompt && (
           <button
             type="button" onClick={() => handleSendMessage(m.errorRetryPrompt!)}
+            disabled={loading}
             className="mt-2 min-h-11 cursor-pointer rounded-full border border-ln2 bg-transparent px-4 text-[13px] text-ink focus-visible:outline-2"
           >
-            إعادة المحاولة الآن
+            {loading ? "جارٍ الإرسال…" : "إعادة المحاولة الآن"}
           </button>
         )}
         {m.retryClarification && (
           <button
             type="button"
             onClick={() => handleSubmitClarification(m.retryClarification!.assistantMessageId, m.retryClarification!.answers)}
+            disabled={loading}
             className="mt-2 min-h-11 cursor-pointer rounded-full border border-ln2 bg-transparent px-4 text-[13px] text-ink focus-visible:outline-2"
           >
-            إعادة إرسال الإجابات الآن
+            {loading ? "جارٍ الإرسال…" : "إعادة إرسال الإجابات الآن"}
           </button>
         )}
       </div>

@@ -195,7 +195,7 @@ export default function DetailsBlanks({ questions, intro, completedAnswers, disa
             type="button" onClick={advance} disabled={disabled || !(currentAnswered || draft.trim())}
             title={step < qs.length - 1 ? "الانتقال إلى السؤال التالي" : "إرسال الإجابات ومتابعة الخطة"}
             className="min-h-11 cursor-pointer rounded-full border-0 bg-ac px-5 text-[13px] text-onac disabled:cursor-not-allowed disabled:opacity-40"
-          >إجابة ومتابعة</button>
+          >{disabled ? "جارٍ الإرسال…" : "إجابة ومتابعة"}</button>
         </div>
         <button type="button" onClick={skipCurrent} disabled={disabled} className="min-h-11 cursor-pointer rounded-full border-0 bg-transparent px-3 text-[13px] text-mut">تخطّي السؤال</button>
       </div>
