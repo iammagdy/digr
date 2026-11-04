@@ -363,7 +363,9 @@ describe.each([
       await fileLink(client, { id: "msn_1", name: `result.${kind}` });
       const names = [json.downloadFileName, ...state.signed.map((s) => s.download)];
       expect(new Set(names).size, JSON.stringify(names)).toBe(1);
-      expect(names[0]).toBe(`${expectedWhat} - ${toAr(kind === "xlsx" || kind === "csv" ? 50 : 0)} - ٢٩ أكتوبر ٢٠٢٦.${kind}`);
+      // ROUND 26 (item 8) CHANGED: the count leads with its noun, then the subject and the date
+      expect(names[0]).toMatch(new RegExp(`^${toAr(50)} `));
+      expect(names[0]).toMatch(/ - ٢٩ أكتوبر ٢٠٢٦\.xlsx$/);
       expect(names[0]).not.toMatch(/^result\./);
       // the route signed its own link with the same name (what the browser saves when the page falls back to the link)
       expect(state.signed[0].download).toBe(json.downloadFileName);
@@ -383,9 +385,9 @@ describe.each([
 });
 
 describe("E. a request about a place names the file after the place", () => {
-  it("«تقييمات عن مطعم كشري أبو طارق - ٣٠ - …», not the bare noun", () => {
+  it("«٣٠ تقييمًا عن مطعم كشري أبو طارق - …», not the bare noun", () => {
     const plan = { stages: [{ key: "s", title_ar: "التقييمات", deliver: true }] };
-    expect(missionFileTitleAr({ plan, requestText: "هات ٣٠ تقييم من جوجل ماب لمطعم كشري أبو طارق في القاهرة", delivered: 30, date: new Date("2026-10-29T08:00:00Z") })).toBe("تقييمات عن مطعم كشري أبو طارق - ٣٠ - ٢٩ أكتوبر ٢٠٢٦");
-    expect(missionFileTitleAr({ plan, requestText: "هات ٣٠ تقييم", delivered: 30, date: new Date("2026-10-29T08:00:00Z") })).toBe("تقييمات - ٣٠ - ٢٩ أكتوبر ٢٠٢٦");
+    expect(missionFileTitleAr({ plan, requestText: "هات ٣٠ تقييم من جوجل ماب لمطعم كشري أبو طارق في القاهرة", delivered: 30, date: new Date("2026-10-29T08:00:00Z") })).toBe("٣٠ تقييمًا عن مطعم كشري أبو طارق - ٢٩ أكتوبر ٢٠٢٦");
+    expect(missionFileTitleAr({ plan, requestText: "هات ٣٠ تقييم", delivered: 30, date: new Date("2026-10-29T08:00:00Z") })).toBe("٣٠ تقييمًا - ٢٩ أكتوبر ٢٠٢٦");
   });
 });

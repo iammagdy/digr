@@ -19,9 +19,10 @@ const load = async (xlsx: Buffer) => { const wb = new ExcelJS.Workbook(); await 
 const TWEETS = stage({ key: "tweets", title_ar: "التغريدات", columns: [{ key: "text", title_ar: "نص التغريدة" }, { key: "url", title_ar: "رابط التغريدة" }, { key: "author", title_ar: "الحساب" }], relevance: { subject_ar: "محمد صلاح لاعب كرة القدم", terms: ["محمد صلاح", "Mohamed Salah"], text_columns: ["text"] } });
 
 describe("the file name is built from the mission: what + count + date, in Arabic", () => {
-  it("«هات ٣٠٠ تغريدة عن محمد صلاح» → «تغريدات عن محمد صلاح - ٣٠٠ - ٢٨ أكتوبر ٢٠٢٦» (Arabic-Indic digits, no Latin, no generic title)", () => {
+  it("«هات ٣٠٠ تغريدة عن محمد صلاح» → «٣٠٠ تغريدة عن محمد صلاح - ٢٨ أكتوبر ٢٠٢٦» (Arabic-Indic digits, no Latin, no generic title)", () => {
     const title = missionFileTitleAr({ plan: plan([TWEETS]), requestText: "هات ٣٠٠ تغريدة عن محمد صلاح", delivered: 300, date: new Date("2026-10-28T10:00:00Z") });
-    expect(title).toBe("تغريدات عن محمد صلاح - ٣٠٠ - ٢٨ أكتوبر ٢٠٢٦");
+    // ROUND 26 (item 8) CHANGED: the title is «<count with its noun> عن <subject> - <date>» (the count leads; no bare count between the parts)
+    expect(title).toBe("٣٠٠ تغريدة عن محمد صلاح - ٢٨ أكتوبر ٢٠٢٦");
     expect(title).not.toMatch(/[0-9A-Za-z]/);
     expect(title).not.toContain("نتائج البحث");
   });
@@ -30,9 +31,9 @@ describe("the file name is built from the mission: what + count + date, in Arabi
     const posts = stage({ key: "posts", title_ar: "المنشورات", columns: [{ key: "text", title_ar: "النص" }] });
     const comments = stage({ key: "comments", title_ar: "تعليقات كل منشور", parent_key: "posts", columns: [{ key: "text", title_ar: "النص" }] });
     const d = new Date("2026-01-05T00:00:00Z");
-    expect(missionFileTitleAr({ plan: plan([posts]), requestText: "هات ٣٠ منشور عن التضخم في مصر", delivered: 30, date: d })).toBe("منشورات عن التضخم - ٣٠ - ٥ يناير ٢٠٢٦");
-    expect(missionFileTitleAr({ plan: plan([posts, comments]), requestText: "هات ١٠٠ منشور عن الغلاء مع تعليقاتها", delivered: 2100, date: d })).toBe("تعليقات عن الغلاء - ٢٬١٠٠ - ٥ يناير ٢٠٢٦");
-    expect(missionFileTitleAr({ plan: plan([stage({ key: "c", title_ar: "الشركات", columns: [{ key: "n", title_ar: "الاسم" }] })]), requestText: "شركات مقاولات في جدة", delivered: 12, date: d })).toBe("شركات مقاولات - ١٢ - ٥ يناير ٢٠٢٦");
+    expect(missionFileTitleAr({ plan: plan([posts]), requestText: "هات ٣٠ منشور عن التضخم في مصر", delivered: 30, date: d })).toBe("٣٠ منشورًا عن التضخم - ٥ يناير ٢٠٢٦");
+    expect(missionFileTitleAr({ plan: plan([posts, comments]), requestText: "هات ١٠٠ منشور عن الغلاء مع تعليقاتها", delivered: 2100, date: d })).toBe("٢٬١٠٠ تعليقًا عن الغلاء - ٥ يناير ٢٠٢٦");
+    expect(missionFileTitleAr({ plan: plan([stage({ key: "c", title_ar: "الشركات", columns: [{ key: "n", title_ar: "الاسم" }] })]), requestText: "شركات مقاولات في جدة", delivered: 12, date: d })).toBe("١٢ شركة مقاولات - ٥ يناير ٢٠٢٦");
     expect(nounOfStageTitle("الموظفون")).toBe("موظفون");
     expect(arabicDateLabel(new Date("2026-12-31T23:00:00Z"))).toBe("٣١ ديسمبر ٢٠٢٦");
   });
@@ -136,7 +137,7 @@ describe("the items that were left out never reach a customer file: they go to a
 });
 
 describe("a delivered mission carries its download name; the download route uses it", () => {
-  it("the Salah replay: the stored files carry «تغريدات عن محمد صلاح - N - date», in both formats, and what was left out is in the admin's file only", async () => {
+  it("the Salah replay: the stored files carry «N تغريدات عن محمد صلاح - date», in both formats, and what was left out is in the admin's file only", async () => {
     const SPEC = { subject_ar: "محمد صلاح لاعب كرة القدم", terms: ["محمد صلاح"], context_terms: ["هدف"], text_columns: ["text"] };
     const items = (n: number) => Array.from({ length: n }, (_, i) => ({ id: `t${i}`, text: i % 2 === 0 ? `محمد صلاح يسجل هدفًا جديدًا رقم ${i}` : `كلام آخر لا علاقة له رقم ${i}`, url: `https://x.example/s/t${i}`, author: i % 2 === 0 ? "fan" : "محمد صلاح الصلاحي" }));
     const r = await replay({
@@ -162,7 +163,7 @@ describe("a delivered mission carries its download name; the download route uses
     });
     const files = r.mission.files!;
     const day = new Date().getUTCDate();
-    expect(files.map((f) => f.download_name)).toEqual([`تغريدات عن محمد صلاح - ٥ - ${arabicDateLabel(new Date())}.xlsx`, `تغريدات عن محمد صلاح - ٥ - ${arabicDateLabel(new Date())}.csv`]);
+    expect(files.map((f) => f.download_name)).toEqual([`٥ تغريدات عن محمد صلاح - ${arabicDateLabel(new Date())}.xlsx`, `٥ تغريدات عن محمد صلاح - ${arabicDateLabel(new Date())}.csv`]);
     expect(String(day)).toBeTruthy();
     const wb = await load(r.store.files.get(`${r.missionId}/result/result.xlsx`) as Buffer);
     // (the old lines expected a third sheet «لم تُحتسب (للمراجعة)» with 1 + 6 rows: excluded items are no longer in a customer file; the six tweets whose only link to the name is the author are in the admin's CSV)

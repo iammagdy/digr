@@ -169,8 +169,9 @@ describe("E. the panel and the compact card are drawn from the tracker", () => {
     expect(step.ratio).toBeGreaterThan(0.3);
     expect(step.excludedAr).toBe("استُبعد ٤٠ لأنه لا يخص طلبك");
     const html = renderToStaticMarkup(createElement(AgentMissionCardBody, { view: v, isGuest: false }));
-    expect(html).toContain("وُجد ٢٤٠ تغريدة في ١٢ صفحة من المصدر");
-    expect(html).toContain('data-testid="step-metrics"');
+    // ROUND 26 (item 6) CHANGED: the internal source line and the step's metrics are not drawn in the panel any more
+    expect(html).not.toContain("وُجد ٢٤٠ تغريدة في ١٢ صفحة من المصدر");
+    expect(html).not.toContain('data-testid="step-metrics"');
   });
 
   it("the plan card is compact: the count, the price, the hold and the time are four short cells with one honest sentence under them (full delivery, fewer, nothing)", () => {

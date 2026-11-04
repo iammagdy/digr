@@ -1,5 +1,5 @@
 import { formatAr, toArabicDigits } from "../arabicDigits";
-import { knownItemNoun } from "./itemNoun";
+import { countAr, knownItemNoun } from "./itemNoun";
 
 /**
  * THE NAMES THE CUSTOMER SEES ON A MISSION'S FILES, built from the mission (never a generic «نتائج البحث»):
@@ -65,6 +65,12 @@ export function subjectOfMission(input: { plan: { stages: Array<{ deliver: boole
 }
 
 type SubjectInput = Parameters<typeof subjectOfMission>[0];
+/**
+ * ROUND 26 (item 8): an opinion request names its subject after a preposition: «رأي الناس في الذكاء الاصطناعي», «آراء الجمهور عن X», «كلام المستخدمين حول X».
+ * The subject is the part after the preposition; the opinion phrase is never the title's subject.
+ */
+const OPINION_HEAD = /^(?:رأي|آراء|أراء|كلام|انطباعات|ردود\s+فعل|مشاعر|موقف|مواقف)\s+(?:ال)?(?:ناس|جمهور|مستخدمين|متابعين|عملاء|زبائن)\s+(?:في|عن|حول|تجاه|بخصوص|على)\s+(.+)$/;
+
 /** The subject and whether it was read from what is left of a title or the request (a sector or a topic: «مقاولات»), which a noun takes without «عن» («شركات مقاولات»). */
 function subjectInfo(input: SubjectInput): { text: string; residual: boolean } {
   const stage = [...input.plan.stages].reverse().find((s) => s.relevance) ?? null;
@@ -79,8 +85,11 @@ function subjectInfo(input: SubjectInput): { text: string; residual: boolean } {
   if (account) return { text: account, residual: false };
   const m = /(?:^|\s)(?:عن|حول|بخصوص)\s+([؀-ۿ0-9٠-٩A-Za-z][^،,.؟?!\n]{1,60})/.exec(request);
   if (m) {
+    // ROUND 26 (item 8): «رأي الناس في الذكاء الاصطناعي» is about the second part: the opinion phrase is not the subject
+    const rest = stripPlatform(m[1]).trim();
+    const opinion = OPINION_HEAD.exec(rest);
     // the subject ends where the request goes on to details (a period, a count, a platform word)
-    const cut = stripPlatform(m[1]).split(/\s+(?:في|على|مع|من|خلال|بين|بعد)\s+/)[0].trim();
+    const cut = (opinion ? opinion[1] : rest).split(/\s+(?:في|على|مع|من|خلال|بين|بعد)\s+/)[0].trim();
     if (cut) return { text: cut, residual: false };
   }
   // a request about a PLACE or a business names it without «عن» («تقييمات من جوجل ماب لمطعم كشري أبو طارق في القاهرة»): the name starts at the kind of place
@@ -95,6 +104,18 @@ function subjectInfo(input: SubjectInput): { text: string; residual: boolean } {
   return { text, residual: true };
 }
 
+/** «١٠ تغريدات» / «تغريدة واحدة» / «تغريدتان» for a count and a noun of the stage title (the plural rules of itemNoun.ts); an unknown noun is the count and the noun. */
+export function countPhraseAr(count: number, noun: string): string {
+  const item = knownItemNoun(noun);
+  return item ? countAr(count, item, { subject: true }) : `${formatAr(count)} ${noun}`;
+}
+
+/** The count phrase with the subject: «١٠ تغريدات عن الذكاء الاصطناعي»; an entity sector takes it with no «عن». */
+function withCountAr(countPart: string, noun: string, info: { text: string; residual: boolean }): string {
+  if (!info.text) return countPart;
+  return info.residual && ENTITY_NOUN.test(noun) ? `${countPart} ${info.text}` : `${countPart} عن ${info.text}`;
+}
+
 /** The kinds of entity a sector names directly («شركات مقاولات», «مطاعم كشري»): the noun takes it with no «عن». */
 const ENTITY_NOUN = /^(?:ال)?(?:شركات|شركة|مطاعم|مطعم|أماكن|اماكن|مكان|مصانع|مصنع|فنادق|فندق|محلات|محل)$/;
 const phraseOf = (noun: string, info: { text: string; residual: boolean }): string => (info.residual && ENTITY_NOUN.test(noun) ? `${noun} ${info.text}` : `${noun} عن ${info.text}`);
@@ -105,8 +126,9 @@ export function missionFileTitleAr(input: { plan: { stages: Array<{ deliver: boo
   const last = delivering[delivering.length - 1];
   const noun = nounOfStageTitle(last?.title_ar ?? "") || "نتائج";
   const info = subjectInfo({ plan: input.plan, requestText: input.requestText });
-  const what = info.text ? phraseOf(noun, info) : noun;
-  const title = `${what} - ${formatAr(Math.max(0, Math.floor(input.delivered)))} - ${arabicDateLabel(input.date)}`;
+  // ROUND 26 (item 8): the count with its noun leads («١٠ تغريدات عن الذكاء الاصطناعي - ٤ نوفمبر ٢٠٢٦»), never a bare count between the parts
+  const what = withCountAr(countPhraseAr(Math.max(0, Math.floor(input.delivered)), noun), noun, info);
+  const title = `${what} - ${arabicDateLabel(input.date)}`;
   return title.replace(FORBIDDEN_IN_FILE_NAME, " ").replace(/\s+/g, " ").trim().slice(0, 100).trim();
 }
 
@@ -149,13 +171,16 @@ export function wordBoundarySheetName(title: string, used: Set<string>, fallback
 
 
 /** What the mission is, in a few words, for a notice or an e-mail: «تغريدات عن محمد صلاح» (the file name without its count and date); a mission with no plan (planning failed) is its request, shortened at a word boundary. */
-export function missionTitleAr(input: { plan?: { stages: Array<{ deliver: boolean; title_ar: string; relevance?: { terms: string[]; subject_ar: string } }> } | null; requestText?: string | null }): string {
+export function missionTitleAr(input: { plan?: { stages: Array<{ deliver: boolean; title_ar: string; relevance?: { terms: string[]; subject_ar: string } }> } | null; requestText?: string | null; /** ROUND 26 (item 8): the count the title leads with (the delivered count); default: the planned rows of the delivered stages. */ delivered?: number | null }): string {
   if (input.plan && Array.isArray(input.plan.stages) && input.plan.stages.length > 0) {
     const delivering = input.plan.stages.filter((s) => s.deliver);
     const last = delivering[delivering.length - 1] ?? input.plan.stages[input.plan.stages.length - 1];
     const noun = nounOfStageTitle(last?.title_ar ?? "");
     const info = subjectInfo({ plan: input.plan, requestText: input.requestText });
-    if (noun) return (info.text ? phraseOf(noun, info) : noun).replace(FORBIDDEN_IN_FILE_NAME, " ").replace(/\s+/g, " ").trim();
+    // ROUND 26 (item 8): the count of the delivered stages leads the title, with its noun
+    const planned = input.plan.stages.filter((s) => s.deliver).reduce((n, s) => n + Math.max(0, Math.floor(Number((s as { expected_rows?: unknown }).expected_rows) || 0)), 0);
+    const total = typeof input.delivered === "number" && Number.isFinite(input.delivered) ? Math.max(0, Math.floor(input.delivered)) : planned;
+    if (noun) return (total > 0 ? withCountAr(countPhraseAr(total, noun), noun, info) : info.text ? phraseOf(noun, info) : noun).replace(FORBIDDEN_IN_FILE_NAME, " ").replace(/\s+/g, " ").trim();
   }
   const words = String(input.requestText ?? "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
   let out = "";

@@ -125,7 +125,9 @@ describe("the live panel and the queue", () => {
     expect(v.steps.map((s) => s.state)).toEqual(["done", "running", "waiting"]);
     // (the old lines expected «٣٠ من ١٠٠»: the count now carries the noun of the stage, correctly: «تعليقًا»)
     expect(v.steps[1].countAr).toBe("٣٠ من ١٠٠ تعليقًا");
-    expect(v.currentLineAr).toContain("٣٠ من ١٠٠ تعليقًا");
+    // ROUND 26 (item 6) CHANGED: the panel's current line names the step only; the count is the top box's one counter
+    expect(v.currentLineAr).not.toContain("٣٠ من ١٠٠ تعليقًا");
+    expect(v.currentLineAr).toBe(v.steps[1].titleAr);
     expect(v.closePageAr).toBe(AGENT_CLOSE_PAGE_LINE_AR);
     expect(v.delayAr).toBeNull();
     // the remaining time comes only from the real speed (two samples that show progress), never a guess

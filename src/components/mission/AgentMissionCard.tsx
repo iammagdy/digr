@@ -18,6 +18,7 @@ import { holdLimitOf } from "@/lib/agentMission/holdLimit";
 import { pointsAr } from "@/lib/pointsFormat";
 import { fileNameFromDisposition } from "@/lib/downloadName";
 import { MethodologyOffer } from "@/components/mission/MethodologyOffer";
+import { CARD_FAST_AFTER_ACTION_MS, cardPollDelayMs, holdingLineAr } from "@/lib/agentMission/pollDelay";
 import type { PlanEdits } from "@/lib/agentMission/planEdit";
 
 /**
@@ -55,6 +56,13 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   const [pendingAction, setPendingAction] = useState<string | null>(null);
   const [approvedHere, setApprovedHere] = useState(false);
   const alive = useRef(true);
+  // ROUND 26 (item 2): the choice on its way (its own label «جارٍ الإرسال…»), and the time of the customer's last action (the card asks fast for a few minutes after it)
+  const [pendingText, setPendingText] = useState<string | null>(null);
+  const fastUntilRef = useRef(0);
+  // ROUND 26 (item 2): when the card last SAW a change (its own clock, so no skew with the server): the holding line counts from it
+  const [quietSinceMs, setQuietSinceMs] = useState<number | null>(null);
+  const [nowMs, setNowMs] = useState(0);
+  const signatureRef = useRef<string | null>(null);
   // THE CUSTOMER'S BALANCE (the shared provider: null while it loads or when it failed, never a made-up zero): a hold above it is a limit like the job cap
   const { balance } = useBalance();
   const balancePoints = balance.status === "ready" ? balance.value : null;
@@ -82,7 +90,8 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
     alive.current = true;
     const hidden = () => typeof document !== "undefined" && document.visibilityState === "hidden";
     const onVisible = () => { if (typeof document !== "undefined" && document.visibilityState === "visible") void read(); };
-    const stop = ended ? (void read(), () => undefined) : startMissionPolling({ read, nextDelayMs: () => (live ? panelPollDelayMs(hidden()) : hidden() ? WAITING_POLL_HIDDEN_MS : WAITING_POLL_MS) });
+    // ROUND 26 (item 1): every 2 to 3 seconds while the mission is live or for a few minutes after the customer's own action; slower otherwise (cardPollDelayMs)
+    const stop = ended ? (void read(), () => undefined) : startMissionPolling({ read, nextDelayMs: () => cardPollDelayMs({ live, fastUntil: fastUntilRef.current, now: Date.now(), hidden: hidden() }) });
     if (typeof document !== "undefined") document.addEventListener("visibilitychange", onVisible);
     return () => { alive.current = false; stop(); if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisible); };
   }, [read, live, ended]);
@@ -91,6 +100,8 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
     if (busy) return;
     setBusy(true);
     setPendingAction(action);
+    setPendingText(action === "answer" && typeof text === "string" ? text : null);
+    fastUntilRef.current = Date.now() + CARD_FAST_AFTER_ACTION_MS;
     setError(null);
     try {
       // THE APPROVE CLICK RECOVERS (round 14, missionApprove.ts): a first request that never reaches the money step is retried once with a fresh session, and a lost answer is settled by reading the mission
@@ -121,8 +132,23 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
     } finally {
       setBusy(false);
       setPendingAction(null);
+      setPendingText(null);
     }
   }
+
+  // ROUND 26 (item 2): a change of what the card shows restarts the quiet clock; the clock ticks once a second while the mission is live
+  const v0 = answer?.view;
+  useEffect(() => {
+    if (!v0) return;
+    const sig = `${v0.phase}|${v0.savedSoFar}|${v0.lastEventAt ?? ""}|${v0.steps.map((s) => s.state).join(",")}|${v0.currentLineAr}`;
+    if (sig !== signatureRef.current) { signatureRef.current = sig; setQuietSinceMs(Date.now()); }
+  }, [v0]);
+  useEffect(() => {
+    if (!live) return undefined;
+    setNowMs(Date.now());
+    const t = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [live]);
 
   async function download(name: string) {
     try {
@@ -147,11 +173,11 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   if (!v) {
     return <div dir="rtl" data-testid="agent-card" data-phase="loading" className="mt-3 rounded-[18px] border border-ln bg-sf p-4 text-[13px] text-ink2" role="status">جاري تجهيز مهمتك…</div>;
   }
-  return <AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled} />;
+  return <AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} pendingText={pendingText} quietSinceMs={quietSinceMs} nowMs={nowMs} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled} />;
 }
 
 /** The card itself, drawn from one view: pure (no network), so it renders the same on the server and in the tests. */
-export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAction = null, approved = false, error = null, reply = "", onReply = () => undefined, onAct = () => undefined, onDownload = () => undefined, balancePoints = null, editing = false, onEditing = () => undefined, methodology = null, onSettled }: { view: CustomerMissionView; isGuest: boolean; busy?: boolean; pendingAction?: string | null; approved?: boolean; error?: string | null; reply?: string; onReply?: (text: string) => void; onAct?: (action: "approve" | "cancel" | "edit" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) => void; onDownload?: (name: string) => void; /** The customer's balance in points (null: not known, never zero). */ balancePoints?: number | null; editing?: boolean; onEditing?: (open: boolean) => void; /** ROUND 21: the methodology offer of a delivered compiled mission (the same offer the chat's chooser draws). */ methodology?: MethodologyOfferInfo | null; onSettled?: () => void }) {
+export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAction = null, pendingText = null, quietSinceMs = null, nowMs = 0, approved = false, error = null, reply = "", onReply = () => undefined, onAct = () => undefined, onDownload = () => undefined, balancePoints = null, editing = false, onEditing = () => undefined, methodology = null, onSettled }: { view: CustomerMissionView; isGuest: boolean; busy?: boolean; pendingAction?: string | null; /** ROUND 26 (item 2): the choice on its way (its own label). */ pendingText?: string | null; /** ROUND 26 (item 2): when the card last saw a change, and the clock now (the holding line). */ quietSinceMs?: number | null; nowMs?: number; approved?: boolean; error?: string | null; reply?: string; onReply?: (text: string) => void; onAct?: (action: "approve" | "cancel" | "edit" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) => void; onDownload?: (name: string) => void; /** The customer's balance in points (null: not known, never zero). */ balancePoints?: number | null; editing?: boolean; onEditing?: (open: boolean) => void; /** ROUND 21: the methodology offer of a delivered compiled mission (the same offer the chat's chooser draws). */ methodology?: MethodologyOfferInfo | null; onSettled?: () => void }) {
   // the close-page sentence belongs to the status block of the card (on the page, from the moment of approval): the details list below does not say it a second time
   const panelContent = { title: "خطة المهمة", steps: v.steps, currentLineAr: v.currentLineAr, delayAr: v.delayAr, remainingAr: v.remainingAr, closePageAr: null, startedAt: v.startedAt ?? undefined, live: v.live };
   // the plan the customer has just approved is shown as a running mission at once, before the next read of the mission returns
@@ -172,17 +198,19 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
   return (
     <section dir="rtl" data-testid="agent-card" data-phase={v.phase} aria-label="مهمتك" className="mt-3 flex w-full max-w-[640px] min-w-0 flex-col gap-3 rounded-[18px] border border-ln bg-sf p-3.5 sm:p-4">
       {v.queueLineAr ? <p role="status" className="m-0 rounded-[12px] bg-sf2 px-3 py-2 text-[13px] leading-[1.8] text-ink" data-testid="agent-queue">{v.queueLineAr}</p> : null}
+      {/* ROUND 26 (item 2): WHILE THE MISSION WAITS OR WORKS, the live step (a real event's title) and the time since the last change; after a minute one honest line */}
+      {v.live && typeof quietSinceMs === "number" && nowMs > 0 ? <p role="status" aria-live="off" className="m-0 text-[12px] leading-[1.8] text-ink2" data-testid="agent-holding">{holdingLineAr(v.currentLineAr || "نعمل على طلبك", nowMs - quietSinceMs)}</p> : null}
 
       {v.phase === "question" && v.questionAr ? (
         <div className="flex flex-col gap-2" data-testid="agent-question">
           <p className="m-0 text-[14px] font-semibold leading-[1.9] text-ink">{v.questionAr}</p>
           {v.questionOptionsAr.length > 0 ? (
             <div className="flex flex-wrap gap-2" role="group" aria-label="إجابات جاهزة" data-testid="agent-question-options">
-              {v.questionOptionsAr.map((o) => <button key={o} type="button" className={BTN_PLAIN} disabled={busy} onClick={() => onAct("answer", o)}>{o}</button>)}
+              {v.questionOptionsAr.map((o) => <button key={o} type="button" className={BTN_PLAIN} disabled={busy} onClick={() => onAct("answer", o)}>{busy && pendingAction === "answer" && pendingText === o ? "جارٍ الإرسال…" : o}</button>)}
             </div>
           ) : null}
           <input value={reply} onChange={(e) => onReply(e.target.value)} className="min-h-11 rounded-xl border border-ln2 bg-bg px-3 text-sm text-ink" aria-label="أو اكتب إجابتك" />
-          <div><button type="button" className={BTN_PRIMARY} disabled={busy || !reply.trim()} onClick={() => onAct("answer", reply)}>أرسل إجابتك</button></div>
+          <div><button type="button" className={BTN_PRIMARY} disabled={busy || !reply.trim()} onClick={() => onAct("answer", reply)}>{busy && pendingAction === "answer" ? "جارٍ الإرسال…" : "أرسل إجابتك"}</button></div>
         </div>
       ) : null}
 
@@ -301,12 +329,12 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
       {/* THE STATUS OF AN APPROVED MISSION, on the page: what was started, how far it is, the time, and that the page can be closed */}
       {showStarted ? (
         <div role="status" aria-live="polite" className="flex flex-col gap-2 rounded-[14px] border border-ln bg-sf2 p-3.5" data-testid="agent-started">
+          {/* ROUND 26 (item 6): ONE sentence that follows the state and carries the one counter; never «بدأنا جمع ... نحو دقيقتين» once collecting is over */}
           <p className="m-0 text-[15px] font-semibold leading-[1.8] text-ink" data-testid="agent-started-line">
-            {v.queueLineAr ? "اعتمدنا خطتك" : "بدأنا جمع"} {v.totalRowsAr}{v.expectedAr ? `، ${v.expectedAr}` : ""}.
+            {v.collectLineAr ?? `نجمع ${v.totalRowsAr}`}
           </p>
           <div className="flex flex-col gap-1" data-testid="agent-progress">
             <div className="flex items-baseline justify-between gap-2 text-[13px] text-ink2">
-              <span data-testid="agent-progress-line">{v.savedSoFar > 0 && v.progressLineAr ? `وصلنا ${v.progressLineAr}` : "لسه ما وصلتش أول دفعة، وهتظهر هنا أول ما تتجمع."}</span>
               {v.remainingAr ? <span className="text-mut" data-testid="agent-remaining">{v.remainingAr}</span> : null}
             </div>
             <div role="progressbar" aria-label="تقدّم المهمة" aria-valuemin={0} aria-valuemax={Math.max(1, v.totalRows)} aria-valuenow={Math.min(v.savedSoFar, Math.max(1, v.totalRows))} className="h-1.5 w-full overflow-hidden rounded-full bg-sf">

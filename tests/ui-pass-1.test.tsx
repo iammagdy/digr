@@ -107,9 +107,10 @@ describe("2. after «اعتمد» the card says what started, how far it is, the
   it("a running mission shows the started line, the progress, the estimate and the close-page sentence ON THE PAGE", () => {
     const markup = html(createElement(AgentMissionCardBody, { view: runningView(), isGuest: false }));
     expect(markup).toContain('data-testid="agent-started"');
-    expect(text(markup)).toContain("بدأنا جمع ٥٠ تغريدة، نحو دقيقتين.");
-    expect(markup).toContain('data-testid="agent-progress-line"');
-    expect(text(markup)).toContain("وصلنا ١٢ من ٥٠ تغريدة");
+    // ROUND 26 (item 6) CHANGED: ONE sentence with the one counter, no «بدأنا جمع» and no time once collecting runs
+    expect(text(markup)).toContain("نجمع التغريدات (١٢ من ٥٠)");
+    expect(text(markup)).not.toContain("بدأنا جمع");
+    expect(text(markup)).not.toContain("وصلنا");
     expect(markup).toMatch(/role="progressbar"[^>]*aria-valuenow="12"/);
     expect(AGENT_CLOSE_NOTICE_AR).toBe("تقدر تقفل الصفحة وهنبعتلك إشعار لما يخلص.");
     expect(markup).toContain(AGENT_CLOSE_NOTICE_AR);

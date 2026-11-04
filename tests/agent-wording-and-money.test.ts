@@ -20,11 +20,11 @@ import { firstOutputId } from "./helpers/agentRelevance";
  * the noun of the request with correct Arabic number agreement, never «صف» or «سجل»; correct titles; the delivered count said once and the same everywhere; the money exactly as the wallet shows it.
  */
 const TYPES = [
-  { name: "X posts", stage: "التغريدات التي تذكر محمد صلاح", noun: "تغريدة", plural: "تغريدات", subject: "محمد صلاح", title: "تغريدات عن محمد صلاح", fem: true },
-  { name: "Facebook posts", stage: "المنشورات", noun: "منشور", plural: "منشورات", subject: "حملة مصر الخير", title: "منشورات عن حملة مصر الخير", fem: false },
-  { name: "TikTok comments", stage: "تعليقات كل فيديو", noun: "تعليق", plural: "تعليقات", subject: "رحلات الأقصر", title: "تعليقات عن رحلات الأقصر", fem: false },
-  { name: "companies", stage: "الشركات", noun: "شركة", plural: "شركات", subject: "الكهروميكانيكا", title: "شركات عن الكهروميكانيكا", fem: true },
-  { name: "Maps reviews", stage: "تقييمات المكان", noun: "تقييم", plural: "تقييمات", subject: "كشري التحرير", title: "تقييمات عن كشري التحرير", fem: false },
+  { name: "X posts", stage: "التغريدات التي تذكر محمد صلاح", noun: "تغريدة", plural: "تغريدات", subject: "محمد صلاح", title: "تغريدات عن محمد صلاح", file: "٢٥٠ تغريدة عن محمد صلاح", fem: true },
+  { name: "Facebook posts", stage: "المنشورات", noun: "منشور", plural: "منشورات", subject: "حملة مصر الخير", title: "منشورات عن حملة مصر الخير", file: "٢٥٠ منشورًا عن حملة مصر الخير", fem: false },
+  { name: "TikTok comments", stage: "تعليقات كل فيديو", noun: "تعليق", plural: "تعليقات", subject: "رحلات الأقصر", title: "تعليقات عن رحلات الأقصر", file: "٢٥٠ تعليقًا عن رحلات الأقصر", fem: false },
+  { name: "companies", stage: "الشركات", noun: "شركة", plural: "شركات", subject: "الكهروميكانيكا", title: "شركات عن الكهروميكانيكا", file: "٢٥٠ شركة عن الكهروميكانيكا", fem: true },
+  { name: "Maps reviews", stage: "تقييمات المكان", noun: "تقييم", plural: "تقييمات", subject: "كشري التحرير", title: "تقييمات عن كشري التحرير", file: "٢٥٠ تقييمًا عن كشري التحرير", fem: false },
 ] as const;
 
 const planOf = (stageTitle: string, subject: string): any => ({ stages: [{ deliver: true, title_ar: stageTitle, relevance: { terms: [subject], subject_ar: subject } }] });
@@ -81,10 +81,11 @@ describe("C. the noun of the request, with the right form for every count", () =
 });
 
 describe("C. titles and file names are correct Arabic phrases", () => {
-  it.each(TYPES)("$name: the mission title is «$title», the stage noun alone (never «تغريدات التي»)", ({ stage, subject, title }) => {
+  it.each(TYPES)("$name: the mission title is «$title», the stage noun alone (never «تغريدات التي»)", ({ stage, subject, title, file }) => {
     expect(missionTitleAr({ plan: planOf(stage, subject), requestText: "" })).toBe(title);
     const date = new Date("2026-10-28T10:00:00Z");
-    expect(missionFileTitleAr({ plan: planOf(stage, subject), requestText: "", delivered: 250, date })).toBe(`${title} - ٢٥٠ - ٢٨ أكتوبر ٢٠٢٦`);
+    // ROUND 26 (item 8) CHANGED: the file title leads with the count and its noun
+    expect(missionFileTitleAr({ plan: planOf(stage, subject), requestText: "", delivered: 250, date })).toBe(`${file} - ٢٨ أكتوبر ٢٠٢٦`);
   });
 
   it("the broken phrase of the live run is fixed", () => {

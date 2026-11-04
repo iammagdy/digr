@@ -297,7 +297,8 @@ describe("the panel's drawing: check mark and strike-through, spinner, plain, st
     expect(html).toContain('data-testid="step-icon-waiting"');
     expect(html).toContain('data-testid="step-icon-stopped"');
     expect(html).toContain("رأينا أن نتائج هذه المرحلة لا تطابق طلبك فأوقفناها.");
-    expect(html).toMatch(/role="progressbar"[^>]*aria-valuenow="20"/);
+    // ROUND 26 (item 6) CHANGED: a step row has no bar of its own; the one bar is the card's top box
+    expect(html).not.toMatch(/role="progressbar"/);
     expect(html).toContain("بنحسب الوقت المتوقع…");
     expect(html).toContain('data-testid="mission-live-rows"');
     expect(html).toContain("تقدر تقفل الصفحة وتروح تشرب قهوة");
