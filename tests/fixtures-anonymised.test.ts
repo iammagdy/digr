@@ -22,6 +22,25 @@ const SECRETS: Array<[string, RegExp]> = [
   ["cookie", /(set-cookie|cookie\s*[:=]|sessionid=|tt_chain_token=|sid_tt=|msToken=|ttwid=|odin_tt=)/i],
 ];
 
+/**
+ * STAGE 3, THE TWO RULES OF THE ANONYMISER PATCH. (1) An e-mail is an e-mail under ANY key (the SECRETS scan above looks at every string). (2) A URL under an ID-LIKE key must have been
+ * anonymised: its host is a platform host or `host-<hex>.invalid` (a profile link on any other host, e.g. a LinkedIn member's, was kept as it was before the patch), and no path segment is a
+ * readable name (a segment must carry a digit, be a placeholder, or be one of the generic words the anonymiser keeps).
+ */
+const ID_KEY = /(^|_)(id|ids|pk|uid|cid|mid|fbid)$|Id$|^id_str$|_id_str$|^sec_uid$|^aweme_id$|^feedback_id$|^comments_id$|^shares_id$|^rest_id$|^fbid_v2$/;
+const PLATFORM_HOSTS = ["facebook.com", "fbcdn.net", "fb.watch", "instagram.com", "cdninstagram.com", "tiktok.com", "tiktokcdn.com", "tiktokcdn-us.com", "tiktokv.com", "byteoversea.com", "ibyteimg.com", "muscdn.com", "youtube.com", "youtu.be", "ytimg.com", "ggpht.com", "googleusercontent.com", "x.com", "twitter.com", "twimg.com", "t.co"];
+const GENERIC_SEGMENTS = new Set(["posts", "videos", "video", "watch", "reel", "reels", "p", "status", "comment", "comments", "photo", "photo.php", "permalink.php", "story.php", "people", "pages", "profile.php", "share", "shorts", "channel", "playlist", "hashtag", "tv"]);
+function idUrlRule(value: string): "id_url:host" | "id_url:segment" | null {
+  if (!/^https?:\/\//i.test(value)) return null;
+  let u: URL;
+  try { u = new URL(value); } catch { return "id_url:host"; }
+  const host = u.hostname.toLowerCase();
+  const ok = /^host-[0-9a-f]+\.invalid$/.test(host) || PLATFORM_HOSTS.some((h) => host === h || host.endsWith(`.${h}`));
+  if (!ok) return "id_url:host";
+  for (const seg of u.pathname.split("/").filter(Boolean)) if (!/\d/.test(seg) && !PLACEHOLDER.test(seg) && !GENERIC_SEGMENTS.has(seg.toLowerCase())) return "id_url:segment";
+  return null;
+}
+
 function jsonFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
   const out: string[] = [];
@@ -46,6 +65,7 @@ function scan(value: unknown, key: string | null, at: string, file: string, out:
   }
   if (typeof value !== "string") return;
   for (const [rule, rx] of SECRETS) if (rx.test(value)) out.push({ file, path: at, rule });
+  if (key !== null && ID_KEY.test(key)) { const r = idUrlRule(value); if (r) out.push({ file, path: at, rule: r }); }
   if (key !== null && PERSONAL.has(normKey(key))) {
     counted.personal += 1;
     if (value !== "" && !PLACEHOLDER.test(value)) out.push({ file, path: at, rule: `personal:${key}` });
