@@ -224,7 +224,7 @@ describe("Companies: three companies and their managers (the plan dropped the ma
     expect(JSON.stringify(r.plannedPlan.stages[0].relevance?.terms)).not.toMatch(/ومن|اتنين/);
     expect(r.plannedPlan.stages[0].relevance?.terms).toContain("مقاولات");
     // the file's name carries the subject
-    expect(missionDownloadName({ kind: "xlsx", plan: r.plannedPlan, requestText: request, deliveredUnits: 3, date: "2026-10-29T13:30:00Z" })).toBe("شركات مقاولات - ٣ - ٢٩ أكتوبر ٢٠٢٦.xlsx");
+    expect(missionDownloadName({ kind: "xlsx", plan: r.plannedPlan, requestText: request, deliveredUnits: 3, date: "2026-10-29T13:30:00Z" })).toBe("٣ شركات مقاولات - ٢٩ أكتوبر ٢٠٢٦.xlsx");
   });
 
   it("a country field that holds only the ISO code is evidence of that country; another code is another country; a state field is not read as a country", () => {

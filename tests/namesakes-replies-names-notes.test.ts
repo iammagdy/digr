@@ -153,8 +153,8 @@ const planOf = (title: string): any => ({ stages: [{ key: "s", title_ar: title, 
 
 describe("D. ONE name for every download of a mission's file", () => {
   const files = (stored: boolean) => [
-    { kind: "xlsx", name: "result.xlsx", path: "result/result.xlsx", ...(stored ? { download_name: "تغريدات عن محمد صلاح - ٦٧ - ٢٩ أكتوبر ٢٠٢٦.xlsx" } : {}) },
-    { kind: "csv", name: "result.csv", path: "result/result.csv", ...(stored ? { download_name: "تغريدات عن محمد صلاح - ٦٧ - ٢٩ أكتوبر ٢٠٢٦.csv" } : {}) },
+    { kind: "xlsx", name: "result.xlsx", path: "result/result.xlsx", ...(stored ? { download_name: "٦٧ تغريدة عن محمد صلاح - ٢٩ أكتوبر ٢٠٢٦.xlsx" } : {}) },
+    { kind: "csv", name: "result.csv", path: "result/result.csv", ...(stored ? { download_name: "٦٧ تغريدة عن محمد صلاح - ٢٩ أكتوبر ٢٠٢٦.csv" } : {}) },
   ];
   const row = (stored: boolean): FakeRow => ({ id: "msn_1", user_id: "u1", files: files(stored), plan: planOf("التغريدات"), request_text: "هات ٣٠٠ تغريدة عن محمد صلاح", delivered_units: 67, updated_at: "2026-10-29T07:00:00Z" });
 
@@ -168,7 +168,8 @@ describe("D. ONE name for every download of a mission's file", () => {
     expect(a.ok && b.ok).toBe(true);
     const viaHelper = missionDownloadName({ files: files(true), kind, plan: planOf("التغريدات"), requestText: "هات ٣٠٠ تغريدة عن محمد صلاح", deliveredUnits: 67, date: "2026-10-29T07:00:00Z" });
     expect(signed.map((s) => s.download)).toEqual([viaHelper, viaHelper]);
-    expect(viaHelper).toBe(`تغريدات عن محمد صلاح - ٦٧ - ٢٩ أكتوبر ٢٠٢٦.${kind}`);
+    // ROUND 26 (item 8) CHANGED: the count leads with its noun
+    expect(viaHelper).toBe(`٦٧ تغريدة عن محمد صلاح - ٢٩ أكتوبر ٢٠٢٦.${kind}`);
     expect(signed.every((s) => s.download !== "result.xlsx" && s.download !== "result.csv")).toBe(true);
   });
 
@@ -178,7 +179,8 @@ describe("D. ONE name for every download of a mission's file", () => {
     await customerFileLink(client, { id: "msn_1", userId: "u1", name: "result.xlsx" });
     await fileLink(client, { id: "msn_1", name: "result.xlsx" });
     const viaHelper = missionDownloadName({ files: files(false), kind: "xlsx", plan: planOf("التغريدات"), requestText: "هات ٣٠٠ تغريدة عن محمد صلاح", deliveredUnits: 67, date: "2026-10-29T07:00:00Z" });
-    expect(viaHelper).toBe("تغريدات عن محمد صلاح - ٦٧ - ٢٩ أكتوبر ٢٠٢٦.xlsx");
+    // ROUND 26 (item 8) CHANGED: the count leads with its noun
+    expect(viaHelper).toBe("٦٧ تغريدة عن محمد صلاح - ٢٩ أكتوبر ٢٠٢٦.xlsx");
     expect(signed.map((s) => s.download)).toEqual([viaHelper, viaHelper]);
   });
 

@@ -38,7 +38,7 @@ const ENDED_STATUSES = ["cancelled", "failed", "unserved"] as const;
 const RUNNING_STATUSES = ["queued", "planning", "approved", "executing"] as const;
 /** ONE status word per state, and a note that says what happens, never the status word again (round 14: the running card said «قيد التنفيذ» and «قيد الدراسة الآن»). No time is stated: none is measured. */
 const RUNNING_STATE_AR: Record<string, { chip: string; note: string }> = {
-  queued: { chip: "في الانتظار", note: "ستبدأ تلقائيًا عند دورها، ولم يُخصم منك شيء." },
+  queued: { chip: "في الانتظار", note: "سيبدأ تلقائيًا، ولم يُخصم منك شيء." },
   planning: { chip: "قيد الدراسة", note: "نجهّز خطتك الآن، ولم يُخصم منك شيء." },
   approved: { chip: "معتمدة", note: "ستبدأ تلقائيًا، ولن يُخصم منك إلا ما يُسلَّم." },
   executing: { chip: "قيد التنفيذ", note: "نجمع النتائج الآن، ولن يُخصم منك إلا ما يُسلَّم." },

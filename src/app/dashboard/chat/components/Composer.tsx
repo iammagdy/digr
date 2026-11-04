@@ -219,13 +219,13 @@ export default function Composer({
           {/* Send Button */}
           <button
             type="submit"
-            aria-label="إرسال"
+            aria-label={disabled || sending ? "جارٍ الإرسال…" : "إرسال"}
             disabled={disabled || sending || (!value.trim() && !attachedFile)}
-            className="flex h-[46px] w-[46px] shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-ac text-onac disabled:cursor-not-allowed disabled:opacity-60 transition-opacity"
+            className="flex min-h-[46px] min-w-[46px] shrink-0 cursor-pointer items-center justify-center rounded-full border-0 bg-ac text-onac px-2 text-xs disabled:cursor-not-allowed disabled:opacity-60 transition-opacity"
           >
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            {disabled || sending ? "جارٍ الإرسال…" : <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M12 19V5M5.5 11.5L12 5l6.5 6.5" />
-            </svg>
+            </svg>}
           </button>
         </form>
         {disabled && (

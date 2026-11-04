@@ -21,7 +21,8 @@ vi.mock("@supabase/ssr", () => ({
 describe("Phase 2: Auth, Account & Middleware Guardrails", () => {
   const middlewareFile = readFileSync("src/middleware.ts", "utf8");
   const useUserFile = readFileSync("src/hooks/useUser.tsx", "utf8");
-  const useBalanceFile = readFileSync("src/hooks/useBalance.tsx", "utf8");
+  // ROUND 26 item 9: the balance read moved from the hook into src/lib/readBalance.ts (same source and rules); the pins read both files.
+  const useBalanceFile = readFileSync("src/hooks/useBalance.tsx", "utf8") + readFileSync("src/lib/readBalance.ts", "utf8");
   const useNotificationsFile = readFileSync("src/hooks/useNotifications.ts", "utf8");
   const adminGateFile = readFileSync("src/components/admin/AdminGate.tsx", "utf8");
   const adminLayoutFile = readFileSync("src/app/admin/layout.tsx", "utf8");

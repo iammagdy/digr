@@ -94,7 +94,8 @@ describe("the customer sees what blocks them", () => {
     expect(r).toMatchObject({ ok: false, status: 429 });
     if (r.ok) return;
     expect(r.blockers).toHaveLength(3);
-    for (const x of ["طلب a", "طلب b", "طلب c", "قيد الدراسة الآن", "في الدور", "لن يُخصم شيء", "«طلباتي»"]) expect(r.error).toContain(x);
+    // ROUND 26 (item 4) CHANGED: the queued label no longer says «في الدور»; here the customer's own mission «طلب b» is planning now, so the queued ones say they start after it
+    for (const x of ["طلب a", "طلب b", "طلب c", "قيد الدراسة الآن", "سيبدأ طلبك تلقائيًا بعد انتهاء طلبك الجاري", "لن يُخصم شيء", "«طلباتي»"]) expect(r.error).toContain(x);
     expect(db.rows("missions")).toHaveLength(3);
     expect(money.calls).toHaveLength(0);
   });

@@ -31,8 +31,14 @@ export function openKindOf(row: Pick<OpenMissionRow, "status" | "lease_until">, 
   return "closed";
 }
 
+/**
+ * ROUND 26 (item 4): the label of a QUEUED mission says what is true. «سيبدأ طلبك تلقائيًا بعد انتهاء طلبك الجاري» only when the customer really has a planning or executing request
+ * with a live lease (`ownRunning`); otherwise the request is received and starts now. Never «في الدور» while nothing of the customer's runs.
+ */
+export const QUEUED_OWN_RUNNING_AR = "سيبدأ طلبك تلقائيًا بعد انتهاء طلبك الجاري";
+export const QUEUED_RECEIVED_AR = "استلمنا طلبك، وسيبدأ تلقائيًا";
 const STATE_AR: Record<string, string> = {
-  queued: "في الدور وتبدأ تلقائيًا عند دورها",
+  queued: QUEUED_RECEIVED_AR,
   planning: "قيد الدراسة الآن",
   needs_input: "تنتظر إجابتك",
   plan_ready: "الخطة جاهزة وتنتظر اعتمادك",
@@ -54,11 +60,12 @@ export interface OpenMissionView {
 
 const shortText = (t: unknown, n: number): string => { const s = String(t ?? "").replace(/\s+/g, " ").trim(); return s.length > n ? `${s.slice(0, n - 1)}…` : s; };
 
-export function openMissionView(row: OpenMissionRow, now: number = Date.now()): OpenMissionView | null {
+export function openMissionView(row: OpenMissionRow, now: number = Date.now(), ctx: { ownRunning?: number } = {}): OpenMissionView | null {
   const kind = openKindOf(row, now);
   if (kind === "closed") return null;
+  const queuedAr = row.status === "queued" && (ctx.ownRunning ?? 0) > 0 ? QUEUED_OWN_RUNNING_AR : null;
   return {
-    id: row.id, status: row.status, kind, stateAr: kind === "stuck" ? STUCK_AR : STATE_AR[row.status] ?? "قيد الإعداد",
+    id: row.id, status: row.status, kind, stateAr: kind === "stuck" ? STUCK_AR : queuedAr ?? STATE_AR[row.status] ?? "قيد الإعداد",
     requestText: shortText(row.request_text, 80), createdAt: row.created_at ?? null,
     blocksNewRequests: kind === "worker", cancellable: kind !== "stuck" && CANCELLABLE_OPEN.includes(row.status),
   };
@@ -95,7 +102,10 @@ export async function listOpenMissions(client: any, input: { userId: string; now
   try { await expireWaitingMissions(client, { userId: input.userId, now }); } catch { /* the list still reads */ }
   const read = await client.from(MISSION_TABLE).select("id,status,request_text,created_at,lease_until,job_id").eq("user_id", input.userId).in("status", OPEN_LIST_STATUSES).order("created_at", { ascending: false }).limit(50);
   if (read?.error || !Array.isArray(read?.data)) return [];
-  return (read.data as OpenMissionRow[]).map((r) => openMissionView(r, now)).filter((v): v is OpenMissionView => v !== null);
+  // the customer's own requests really running now (a planning or executing mission with a live lease); a lease that ran out is not running
+  const running = await client.from(MISSION_TABLE).select("id,status,lease_until").eq("user_id", input.userId).in("status", ["planning", "executing"]).limit(50).then((r: any) => r, () => null);
+  const ownRunning = Array.isArray(running?.data) ? running.data.filter((r: any) => Number.isFinite(Date.parse(String(r.lease_until))) && Date.parse(String(r.lease_until)) > now).length : 0;
+  return (read.data as OpenMissionRow[]).map((r) => openMissionView(r, now, { ownRunning })).filter((v): v is OpenMissionView => v !== null);
 }
 
 /** The refusal sentence of the limit: it names the missions that block, each with its state, and says where they are. */

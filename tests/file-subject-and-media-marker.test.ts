@@ -19,31 +19,32 @@ const D = "٢٩ أكتوبر ٢٠٢٦";
 
 describe("E: the subject is in the file's name for every mission type", () => {
   const cases: Array<{ name: string; request: string; stages: unknown[]; delivered: number; expected: string }> = [
-    { name: "YouTube: videos of a channel and their comments (live: «تعليقات - ٣»)", request: "هات آخر ٣ فيديوهات من قناة أون سبورت على يوتيوب، ومن كل فيديو ١٠ تعليقات", stages: [stage({ key: "videos", title_ar: "آخر فيديوهات أون سبورت" }), stage({ key: "comments", title_ar: "تعليقات على كل فيديو", parent_key: "videos" })], delivered: 33, expected: `تعليقات عن أون سبورت - ٣٣ - ${D}` },
-    { name: "X: tweets of an account and their replies (live: «تعليقات - ٥٥»)", request: "هات آخر ٥ تغريدات من حساب محمد صلاح على إكس، ومع كل تغريدة ١٠ ردود", stages: [stage({ key: "posts", title_ar: "آخر تغريدات محمد صلاح" }), stage({ key: "comments", title_ar: "تعليقات على كل تغريدة", parent_key: "posts" })], delivered: 55, expected: `تعليقات عن محمد صلاح - ٥٥ - ${D}` },
-    { name: "TikTok: videos about a topic and their comments", request: "هات ٥ فيديوهات تيك توك عن منتخب مصر، ومن كل فيديو ١٠ تعليقات", stages: [stage({ key: "videos", title_ar: "فيديوهات تيك توك عن منتخب مصر" }), stage({ key: "comments", title_ar: "تعليقات على فيديوهات منتخب مصر", parent_key: "videos" })], delivered: 46, expected: `تعليقات عن منتخب مصر - ٤٦ - ${D}` },
-    { name: "Facebook: posts about a topic and their comments", request: "هات ٥ بوستات فيسبوك عن غلاء الأسعار في مصر، ومع كل بوست ١٠ تعليقات", stages: [stage({ key: "posts", title_ar: "المنشورات" }), stage({ key: "comments", title_ar: "تعليقات كل بوست", parent_key: "posts" })], delivered: 50, expected: `تعليقات عن غلاء الأسعار - ٥٠ - ${D}` },
-    { name: "tweets about a topic (relevance rule)", request: "هات ٣٠٠ تغريدة عن محمد صلاح", stages: [stage({ key: "tweets", title_ar: "التغريدات", relevance: { subject_ar: "محمد صلاح لاعب كرة القدم", terms: ["محمد صلاح"] } })], delivered: 300, expected: `تغريدات عن محمد صلاح - ٣٠٠ - ${D}` },
-    { name: "reviews of a place", request: "هات ٣٠ تقييم من جوجل ماب لمطعم كشري أبو طارق في القاهرة", stages: [stage({ key: "reviews", title_ar: "التقييمات" })], delivered: 30, expected: `تقييمات عن مطعم كشري أبو طارق - ٣٠ - ${D}` },
-    { name: "companies of a sector (no «عن»: the noun takes the sector)", request: "عايز ٣ شركات مقاولات في مصر، ومن كل شركة اتنين من المديرين", stages: [stage({ key: "companies", title_ar: "شركات المقاولات في مصر" })], delivered: 3, expected: `شركات المقاولات - ٣ - ${D}` },
-    { name: "the same request with the code-built relevance rule (entity)", request: "عايز ٣ شركات مقاولات في مصر", stages: [stage({ key: "companies", title_ar: "الشركات", relevance: { subject_ar: "شركات مقاولات", terms: ["مقاولات", "مقاولة", "construction"], entity: true } })], delivered: 3, expected: `شركات مقاولات - ٣ - ${D}` },
+    { name: "YouTube: videos of a channel and their comments (live: «تعليقات - ٣»)", request: "هات آخر ٣ فيديوهات من قناة أون سبورت على يوتيوب، ومن كل فيديو ١٠ تعليقات", stages: [stage({ key: "videos", title_ar: "آخر فيديوهات أون سبورت" }), stage({ key: "comments", title_ar: "تعليقات على كل فيديو", parent_key: "videos" })], delivered: 33, expected: `٣٣ تعليقًا عن أون سبورت - ${D}` },
+    { name: "X: tweets of an account and their replies (live: «تعليقات - ٥٥»)", request: "هات آخر ٥ تغريدات من حساب محمد صلاح على إكس، ومع كل تغريدة ١٠ ردود", stages: [stage({ key: "posts", title_ar: "آخر تغريدات محمد صلاح" }), stage({ key: "comments", title_ar: "تعليقات على كل تغريدة", parent_key: "posts" })], delivered: 55, expected: `٥٥ تعليقًا عن محمد صلاح - ${D}` },
+    { name: "TikTok: videos about a topic and their comments", request: "هات ٥ فيديوهات تيك توك عن منتخب مصر، ومن كل فيديو ١٠ تعليقات", stages: [stage({ key: "videos", title_ar: "فيديوهات تيك توك عن منتخب مصر" }), stage({ key: "comments", title_ar: "تعليقات على فيديوهات منتخب مصر", parent_key: "videos" })], delivered: 46, expected: `٤٦ تعليقًا عن منتخب مصر - ${D}` },
+    { name: "Facebook: posts about a topic and their comments", request: "هات ٥ بوستات فيسبوك عن غلاء الأسعار في مصر، ومع كل بوست ١٠ تعليقات", stages: [stage({ key: "posts", title_ar: "المنشورات" }), stage({ key: "comments", title_ar: "تعليقات كل بوست", parent_key: "posts" })], delivered: 50, expected: `٥٠ تعليقًا عن غلاء الأسعار - ${D}` },
+    { name: "tweets about a topic (relevance rule)", request: "هات ٣٠٠ تغريدة عن محمد صلاح", stages: [stage({ key: "tweets", title_ar: "التغريدات", relevance: { subject_ar: "محمد صلاح لاعب كرة القدم", terms: ["محمد صلاح"] } })], delivered: 300, expected: `٣٠٠ تغريدة عن محمد صلاح - ${D}` },
+    { name: "reviews of a place", request: "هات ٣٠ تقييم من جوجل ماب لمطعم كشري أبو طارق في القاهرة", stages: [stage({ key: "reviews", title_ar: "التقييمات" })], delivered: 30, expected: `٣٠ تقييمًا عن مطعم كشري أبو طارق - ${D}` },
+    { name: "companies of a sector (no «عن»: the noun takes the sector)", request: "عايز ٣ شركات مقاولات في مصر، ومن كل شركة اتنين من المديرين", stages: [stage({ key: "companies", title_ar: "شركات المقاولات في مصر" })], delivered: 3, expected: `٣ شركات المقاولات - ${D}` },
+    { name: "the same request with the code-built relevance rule (entity)", request: "عايز ٣ شركات مقاولات في مصر", stages: [stage({ key: "companies", title_ar: "الشركات", relevance: { subject_ar: "شركات مقاولات", terms: ["مقاولات", "مقاولة", "construction"], entity: true } })], delivered: 3, expected: `٣ شركات مقاولات - ${D}` },
   ];
   for (const c of cases) {
     it(c.name, () => {
       const title = missionFileTitleAr({ plan: plan(c.stages), requestText: c.request, delivered: c.delivered, date: DATE });
       expect(title).toBe(c.expected);
-      // never the bare noun with the count («تعليقات - ٣ - ...»)
+      // never the bare noun with the count between the parts («تعليقات - ٣ - ...»)
       expect(title).not.toMatch(/^[^ ]+ - [٠-٩]+ - /);
       // the download of the Excel and of the CSV, and the notice's title, are the same words
       const base = { plan: plan(c.stages), requestText: c.request, deliveredUnits: c.delivered, date: DATE };
       expect(missionDownloadName({ ...base, kind: "xlsx" })).toBe(`${c.expected}.xlsx`);
       expect(missionDownloadName({ ...base, kind: "csv" })).toBe(`${c.expected}.csv`);
-      expect(c.expected.startsWith(missionTitleAr({ plan: plan(c.stages), requestText: c.request }))).toBe(true);
+      // ROUND 26 (item 8): the mission title leads with the same count and subject as the file's name
+      expect(c.expected.startsWith(missionTitleAr({ plan: plan(c.stages), requestText: c.request, delivered: c.delivered }))).toBe(true);
     });
   }
 
   it("a request that names nothing about its subject gives the noun alone (nothing to say); the subject function never returns a platform, a verb or a number", () => {
-    expect(missionFileTitleAr({ plan: plan([stage({ key: "t", title_ar: "التغريدات" })]), requestText: "هات ٥٠ تغريدة", delivered: 50, date: DATE })).toBe(`تغريدات - ٥٠ - ${D}`);
+    expect(missionFileTitleAr({ plan: plan([stage({ key: "t", title_ar: "التغريدات" })]), requestText: "هات ٥٠ تغريدة", delivered: 50, date: DATE })).toBe(`٥٠ تغريدة - ${D}`);
     for (const request of ["هات آخر ٥ تغريدات من حساب محمد صلاح على إكس، ومع كل تغريدة ١٠ ردود", "هات آخر ٣ فيديوهات من قناة أون سبورت على يوتيوب"]) {
       const subject = subjectOfMission({ plan: plan([stage({ key: "t", title_ar: "التغريدات" })]), requestText: request });
       expect(subject).not.toMatch(/إكس|يوتيوب|هات|[0-9٠-٩]|قناة|حساب/);

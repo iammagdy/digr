@@ -1,6 +1,7 @@
 import { AGENT_REPLIES_PER_COMMENT_MAX } from "../constants";
 import { operatorStampUtc } from "../cairoTime";
 import { toArabicDigits } from "../../arabicDigits";
+import { countAr, itemNounOf } from "../itemNoun";
 import { priceMissionByCode } from "../price";
 import { stagePriceInputs, type PricedPlan, type PricedStage } from "../plan";
 import type { StageFilter } from "../filters";
@@ -219,7 +220,8 @@ export function matchCountsLineAr(selected: number, alternatives: number): strin
 /** The customer's one sentence for a compiled plan (Arabic, Arabic-Indic digits, no provider, no price). */
 export function summaryAr(ask: Ask, n: number, shape: ReadonlyArray<StageRole>, perParent: number | null = null): string {
   const w = NOUN[ask.platform!];
-  const count = n === 1 ? w.one : n === 2 ? w.two : `${toArabicDigits(n)} ${w.many}`;
+  // ROUND 26 (item 5): the count takes the Arabic plural rules of the item-noun table (1, 2, 3 to 10, 11 and above); «١٠ تغريدات», never «١٠ تغريدة»
+  const count = countAr(n, itemNounOf(w.one), { subject: true });
   const parts = [count, w.where];
   if (ask.topic.text) parts.push(`عن «${ask.topic.text}»`);
   if (ask.country) parts.push(`من ${COUNTRY_AR[ask.country] ?? ask.country}`);

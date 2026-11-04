@@ -106,6 +106,10 @@ export interface CustomerMissionView {
   expectedAr: string | null;
   /** After approval: what has reached the file so far, out of the whole, with the noun of the request («١٢ من ٥٠ تغريدة»); null before approval. */
   progressLineAr: string | null;
+  /** ROUND 26 (item 2): the time (ms) of the last event the customer may read, or null: the card shows how long since anything changed. */
+  lastEventAt: number | null;
+  /** ROUND 26 (item 6): THE ONE SENTENCE of the running card, which follows the state and carries the one counter: «نجمع التغريدات (٣ من ١٠)» while collecting, «جمعنا التغريدات، ونجهّز ملفك الآن» at the count; null before approval. */
+  collectLineAr: string | null;
   /** The items saved so far and the total, for a progress bar. */
   savedSoFar: number;
   /**
@@ -273,6 +277,30 @@ function sampleProgress(events: EventForCustomer[], callsMade: number): { done: 
 
 const stageIndexOf = (e: EventForCustomer): number => Math.max(0, Math.floor(Number(e.counts?.stage) || 0));
 
+/**
+ * ROUND 26 (item 3): a plan is a plan only when it has stages. A question keeps its options in the same column ({question_options}), which is NOT a plan: counting it as one checked
+ * the planning steps after the first one while «فهمنا طلبك» was still open (live msn_ef86659ab11d50f4dfee after the customer's answer).
+ */
+export const hasPlanStages = (plan: any): boolean => Array.isArray(plan?.stages) && plan.stages.length > 0;
+
+/**
+ * ROUND 26 (item 3): a step is CHECKED only when it is done and every step before it is done. The first step that is not done is the current one: working while the mission works,
+ * waiting before that. A stopped step stays stopped. Later steps that were done are shown as waiting until the steps before them are checked.
+ */
+export function inOrder(steps: PanelStep[], working: boolean): PanelStep[] {
+  let openSeen = false;
+  return steps.map((s) => {
+    if (!openSeen) {
+      if (s.state === "done") return s;
+      openSeen = true;
+      if (s.state === "stopped") return s;
+      return { ...s, state: working ? "running" : "waiting" } as PanelStep;
+    }
+    if (s.state === "done" || s.state === "running") return { ...s, state: "waiting" } as PanelStep;
+    return s;
+  });
+}
+
 /** Steps of the live panel. Before the plan: the four planning steps; after approval: the plan's stages and the files. */
 function stepsOf(input: { phase: CustomerPhase; status: string; stages: CustomerStageView[]; events: EventForCustomer[]; callsMade: number; hasPlan: boolean; delivered: number | null; filesReady: boolean; now: number }): { steps: PanelStep[]; samples: ProgressSample[]; savedTotal: number; plannedTotal: number; track: ReturnType<typeof trackMission> } {
   const { phase, status, stages, events, callsMade, hasPlan } = input;
@@ -301,11 +329,11 @@ function stepsOf(input: { phase: CustomerPhase; status: string; stages: Customer
     const progress = sampleProgress(events, callsMade);
     if (!planned && progress.done > 0 && steps[2].state === "running") {
       if (progress.of !== null) { const n = Math.min(progress.done, progress.of); steps[2].countAr = `عينة ${formatAr(n)} من ${formatAr(progress.of)}`; steps[2].ratio = Math.min(1, n / progress.of); }
-      else steps[2].detailAr = progress.done === 1 ? "جرّبنا عينة واحدة" : progress.done === 2 ? "جرّبنا عينتين" : `جرّبنا ${formatAr(progress.done)} عينات`;
+      // ROUND 26 (item 6): no «جرّبنا N عينات» line in the steps panel (a count there was the second counter); the samples stay in the data
     }
     if (phase === "question") { for (const s of steps) if (s.state === "waiting" || s.state === "running") s.state = "waiting"; }
     if (phase === "unserved" || phase === "failed" || phase === "cancelled") for (const s of steps) if (s.state === "running" || s.state === "waiting") s.state = "stopped";
-    return { steps, samples, savedTotal: savedTotalNow, plannedTotal, track };
+    return { steps: inOrder(steps, phase === "planning"), samples, savedTotal: savedTotalNow, plannedTotal, track };
   }
   const finished = status === "completed";
   const firstOpen = stages.findIndex((s) => (savedPerStage.get(s.n) ?? 0) < s.rows);
@@ -337,7 +365,7 @@ function stepsOf(input: { phase: CustomerPhase; status: string; stages: Customer
   const failedStop = status === "failed";
   if (failedStop) for (const s of steps) if (s.state === "running" || s.state === "waiting") { s.state = "stopped"; }
   steps.push({ id: "files", titleAr: FILES_STEP_TITLE_AR, state: input.filesReady ? "done" : finished ? "done" : failedStop ? "stopped" : "waiting" });
-  return { steps, samples, savedTotal: savedTotalNow, plannedTotal, track };
+  return { steps: inOrder(steps, status === "executing" || status === "approved"), samples, savedTotal: savedTotalNow, plannedTotal, track };
 }
 
 /** What a parent stage says about itself: while it works, how many were read of the most it may read; at the end, how many were read and how many of them have items in the file. */
@@ -357,6 +385,17 @@ export function customerFilesOf(files: ReadonlyArray<{ name: string; kind: strin
   const excel = files.filter((f) => FILE_LABEL_AR[f.kind]).map((f) => ({ name: f.name, kind: f.kind, labelAr: FILE_LABEL_AR[f.kind] }));
   if (excel.length > 0) return excel;
   return files.some((f) => f.kind === "csv") ? [{ name: "result.xlsx", kind: "xlsx", labelAr: FILE_LABEL_AR.xlsx }] : [];
+}
+
+/**
+ * ROUND 26 (item 6): the one sentence of the running card. «نجمع التغريدات (٣ من ١٠)» while the items collect; «جمعنا التغريدات، ونجهّز ملفك الآن» once the planned count is in the file.
+ * Only for an approved or executing mission with a planned count; null for every other state (no «بدأنا جمع» after the collection ended, and no time in this line).
+ */
+export function collectLineOf(status: string, saved: number, planned: number, noun: { plural: string }): string | null {
+  if ((status !== "approved" && status !== "executing") || planned <= 0) return null;
+  const what = `ال${noun.plural}`;
+  if (saved >= planned) return `جمعنا ${what}، ونجهّز ملفك الآن`;
+  return `نجمع ${what} (${formatAr(Math.max(0, saved))} من ${formatAr(planned)})`;
 }
 
 export function closePageLine(status: string, queue: QueueInfo | null | undefined, emailWillBeSent: boolean | undefined): string | null {
@@ -381,7 +420,7 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   const phase: CustomerPhase = basePhase === "done" && delivered !== null && requestedRows > 0 && delivered < requestedRows ? "partial" : basePhase;
   const q = queueLine(mission.status, input.queue ?? null);
   const filesReady = Array.isArray(mission.files) && mission.files.length > 0;
-  const { steps, track } = stepsOf({ phase, status: mission.status, stages, events, callsMade: input.callsMade ?? 0, hasPlan: plan !== null, delivered, filesReady, now });
+  const { steps, track } = stepsOf({ phase, status: mission.status, stages, events, callsMade: input.callsMade ?? 0, hasPlan: hasPlanStages(plan), delivered, filesReady, now });
 
   // the items of the DELIVERED stages that have reached the file so far (the one number the progress line and the bar show)
   const savedSoFar = track.stages.reduce((n, t, i) => n + (stages[i]?.deliver ? Math.min(t.saved, stages[i].rows) : 0), 0);
@@ -402,7 +441,8 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
 
   // the time left: by code, from the measured speed, smoothed, and only when the estimates agree (never a number that jumps)
   const remainingAr: string | null = mission.status === "executing" ? remainingLineAr(track.remainingSeconds, track.ratio) : null;
-  const currentLineAr = q.lineAr ?? (running ? (running.countAr ? `${running.titleAr} · ${running.countAr}` : running.titleAr) : progressLine ?? steps.find((s) => s.state === "waiting")?.titleAr ?? "");
+  // ROUND 26 (item 6): the panel's current line names the step only; the one counter is the top box's sentence
+  const currentLineAr = q.lineAr ?? (running ? running.titleAr : progressLine ?? steps.find((s) => s.state === "waiting")?.titleAr ?? "");
 
   // THE RESULT, in the words of the wallet: what was delivered of what was requested (with the noun of the request), then the hold, the charge and the released hold, each with the same number the wallet shows
   const resultLinesAr: string[] = [];
@@ -433,6 +473,8 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
     periodAr: periodOfPlan(plan),
     expectedAr: Number(plan?.expected_minutes) > 0 ? minutesAr(Math.round(Number(plan.expected_minutes))) : null,
     progressLineAr: mission.status === "approved" || mission.status === "executing" ? deliveredOfAr(Math.min(savedSoFar, planned), planned, itemNounOfPlan(plan)) : null,
+    collectLineAr: collectLineOf(mission.status, Math.min(savedSoFar, planned), planned, itemNounOfPlan(plan)),
+    lastEventAt: Number.isFinite(lastAt) ? lastAt : null,
     savedSoFar,
   };
   // the limit is a key of the view ONLY when the plan carries one (a Facebook, Instagram or YouTube compiled plan): every other view is byte for byte what it was
@@ -453,7 +495,7 @@ export function guardViewText(v: CustomerMissionView): CustomerMissionView {
     summaryAr: n(v.summaryAr), notesAr: v.notesAr.map(g).filter(Boolean), assumptionsAr: v.assumptionsAr.map(g).filter(Boolean), unservedAr: v.unservedAr.map(g).filter(Boolean), questionOptionsAr: v.questionOptionsAr.map(g).filter(Boolean),
     stages: v.stages.map((s) => ({ ...s, titleAr: g(s.titleAr) || "مرحلة", noteAr: n(s.noteAr) })),
     samples: v.samples ? { ...v.samples, stageTitleAr: g(v.samples.stageTitleAr) } : null,
-    fileContentsAr: n(v.fileContentsAr), priceLineAr: n(v.priceLineAr), priceNoteAr: n(v.priceNoteAr), questionAr: n(v.questionAr), queueLineAr: n(v.queueLineAr),
+    fileContentsAr: n(v.fileContentsAr), priceLineAr: n(v.priceLineAr), priceNoteAr: n(v.priceNoteAr), questionAr: n(v.questionAr), queueLineAr: n(v.queueLineAr), collectLineAr: n(v.collectLineAr),
     steps: v.steps.map((s) => ({ ...s, titleAr: g(s.titleAr) || "خطوة", ...(typeof s.countAr === "string" ? { countAr: g(s.countAr) } : {}) })),
     currentLineAr: g(v.currentLineAr), delayAr: n(v.delayAr), remainingAr: n(v.remainingAr), closePageAr: n(v.closePageAr),
     resultLinesAr: v.resultLinesAr.map(g).filter(Boolean), resultSummaryAr: n(v.resultSummaryAr), endLineAr: n(v.endLineAr),

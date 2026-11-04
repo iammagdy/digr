@@ -30,7 +30,8 @@ describe("one status word per state, and a note that does not repeat it", () => 
     expect(planning.chipAr).toBe("قيد الدراسة");
     expect(planning.noteAr).toBe("نجهّز خطتك الآن، ولم يُخصم منك شيء.");
     expect(queued.chipAr).toBe("في الانتظار");
-    expect(queued.noteAr).toBe("ستبدأ تلقائيًا عند دورها، ولم يُخصم منك شيء.");
+    // ROUND 26 (item 4) CHANGED: the note no longer says «عند دورها»
+    expect(queued.noteAr).toBe("سيبدأ تلقائيًا، ولم يُخصم منك شيء.");
     for (const r of rows) {
       expect(r.noteAr).not.toContain(r.chipAr!);
       expect(r.noteAr).not.toMatch(/قيد التنفيذ|قيد الدراسة الآن|خلال دقائق|دقيقة|لحظات/);

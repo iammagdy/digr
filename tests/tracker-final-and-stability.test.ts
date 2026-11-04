@@ -54,11 +54,10 @@ describe("the final number is the count of the file", () => {
 describe("the bar's accessible value is the count shown", () => {
   it("aria-valuenow is the saved count, aria-valuemax the volume bought, aria-valuetext the words on screen", () => {
     const html = renderToStaticMarkup(createElement(MissionStepRow, { step: { id: "stage-1", titleAr: "تغريدات عن محمد صلاح", state: "running", countAr: "١٩٢ من ٣٠٠ تغريدة", savedN: 192, plannedN: 300, ratio: 0.8 } }));
-    expect(html).toContain('aria-valuenow="192"');
-    expect(html).toContain('aria-valuemax="300"');
-    expect(html).toContain('aria-valuemin="0"');
-    expect(html).toContain('aria-valuetext="١٩٢ من ٣٠٠ تغريدة"');
-    expect(html).toContain("١٩٢ من ٣٠٠ تغريدة");
+    // ROUND 26 (item 6) CHANGED: a step row draws its state only; the ONE bar (with aria-valuenow = the saved count) is the card's top box (tests/round26-one-counter.test.tsx)
+    expect(html).not.toContain('role="progressbar"');
+    expect(html).not.toContain("١٩٢ من ٣٠٠ تغريدة");
+    expect(html).toContain("تغريدات عن محمد صلاح");
   });
   it("the whole path: the panel's step for a running mission carries the same count in its text and its bar", () => {
     const v = customerMissionView({ mission: row({ status: "executing", delivered_units: null, charged_points: null }), events: INCIDENT, now: Date.parse(at("21:52:20")) });

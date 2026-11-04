@@ -1,6 +1,7 @@
 import {
-  AGENT_HEARTBEAT_HISTORY_EVERY_MS, AGENT_HEARTBEAT_HISTORY_FOLDER, AGENT_HEARTBEAT_HISTORY_SPACE, AGENT_HEARTBEAT_INTERVAL_MS, AGENT_MEMORY_ADMIT_LIMIT_MB, AGENT_MEMORY_HARD_LIMIT_MB, AGENT_MEMORY_RECYCLE_AFTER_MS, AGENT_MEMORY_RECYCLE_MIN_UPTIME_MS, AGENT_MEMORY_WATCH_MS, AGENT_MISSION_LEASE_SECONDS, AGENT_POLL_INTERVAL_MS, AGENT_WORKER_CONCURRENCY,
+  AGENT_HEARTBEAT_HISTORY_EVERY_MS, AGENT_HEARTBEAT_HISTORY_FOLDER, AGENT_HEARTBEAT_HISTORY_SPACE, AGENT_HEARTBEAT_INTERVAL_MS, AGENT_MEMORY_ADMIT_LIMIT_MB, AGENT_MEMORY_HARD_LIMIT_MB, AGENT_MEMORY_RECYCLE_AFTER_MS, AGENT_MEMORY_RECYCLE_MIN_UPTIME_MS, AGENT_MEMORY_WATCH_MS, AGENT_MISSION_LEASE_SECONDS, AGENT_WORKER_CONCURRENCY,
 } from "../../src/lib/agentMission/constants";
+import { workerPollDelayMs } from "../../src/lib/agentMission/pollDelay";
 import { readMemory as readProcessMemory, type MemoryReading } from "./memory";
 import type { AgentStore, MissionRecord } from "./types";
 
@@ -61,6 +62,8 @@ export function createWorker(deps: WorkerDeps) {
   let waitingSince: number | null = null;
   let recycled = false;
   let stopping = false;
+  // ROUND 26 (item 1): when the worker last took a mission (null: none yet)
+  let lastTakeAt: number | null = null;
   /** The measured memory of each running mission: where it started, its highest readings, and whether the worker had to stop it. */
   const peaks = new Map<string, { phase: 0 | 1; startedAt: number; startRss: number; startTree: number | null; peakRss: number; peakTree: number | null; samples: number; stopped: boolean }>();
   const sample = (reading: MemoryReading) => {
@@ -165,6 +168,8 @@ export function createWorker(deps: WorkerDeps) {
         break;
       }
       if (!mission) break;
+      // ROUND 26 (item 1): the worker polls quickly for a while after it took work (workerPollDelayMs)
+      lastTakeAt = now().getTime();
       let startReading: MemoryReading | null = null;
       try { startReading = readMem(); } catch { startReading = null; }
       const claimed = mission;
@@ -188,7 +193,8 @@ export function createWorker(deps: WorkerDeps) {
     stop(): void { stopping = true; },
     /** The production loop: a tick every poll interval, and a heartbeat on its OWN timer every 30 s (a slow poll never delays it), until stop(). */
     async run(options: { pollMs?: number; heartbeatMs?: number; watchMs?: number; sleep?: (ms: number) => Promise<void> } = {}): Promise<void> {
-      const pollMs = options.pollMs ?? AGENT_POLL_INTERVAL_MS;
+      // ROUND 26 (item 1): a fixed poll only when the caller asks for one (tests); otherwise 2 s for two minutes after the last mission taken, 5 s when idle
+      const fixedPollMs = options.pollMs;
       const beatMs = options.heartbeatMs ?? AGENT_HEARTBEAT_INTERVAL_MS;
       const sleep = options.sleep ?? ((ms: number) => new Promise<void>((r) => setTimeout(r, ms)));
       await heartbeat();
@@ -198,7 +204,7 @@ export function createWorker(deps: WorkerDeps) {
       try {
         while (!stopping) {
           await tick();
-          await sleep(pollMs);
+          await sleep(fixedPollMs ?? workerPollDelayMs({ lastTakeAt, now: now().getTime() }));
         }
       } finally {
         clearInterval(timer);

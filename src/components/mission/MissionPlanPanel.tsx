@@ -46,7 +46,6 @@ const STATE_LABEL_AR: Record<StepState, string> = { done: "تمّ", running: "ج
 
 export function MissionStepRow({ step }: { step: PanelStep }) {
   const done = step.state === "done";
-  const percent = typeof step.ratio === "number" ? Math.round(step.ratio * 100) : null;
   return (
     <li className="flex gap-2 py-1.5" data-testid={`mission-step-${step.id}`} data-state={step.state} aria-label={`${step.titleAr}: ${STATE_LABEL_AR[step.state]}`}>
       <StepIcon state={step.state} />
@@ -54,23 +53,7 @@ export function MissionStepRow({ step }: { step: PanelStep }) {
         <p className={`m-0 text-[13px] leading-[1.7] ${done ? "text-ink" : step.state === "waiting" ? "text-ink2" : "font-semibold text-ink"}`}>{step.titleAr}</p>
         {step.detailAr ? <p className="m-0 text-[12px] font-light leading-[1.7] text-ink2" data-testid="step-detail">{step.detailAr}</p> : null}
         {step.state === "stopped" && step.reasonAr ? <p className="m-0 text-[12px] leading-[1.7]" style={{ color: "var(--bad)" }} data-testid="step-reason">{step.reasonAr}</p> : null}
-        {step.metricsAr && step.metricsAr.length > 0 && step.state !== "waiting" ? (
-          <ul className="m-0 mt-0.5 list-none p-0" data-testid="step-metrics" aria-live="off">{step.metricsAr.map((line) => <li key={line} className="text-[12px] font-light leading-[1.7] text-ink2">{line}</li>)}</ul>
-        ) : null}
-        {step.countAr && step.state !== "waiting" ? (
-          <div className="mt-1" data-testid="step-count">
-            <div className="flex items-baseline justify-between gap-2 text-[12px] text-ink2">
-              <span>{step.countAr}</span>
-              {step.excludedAr ? <span className="text-mut">{step.excludedAr}</span> : null}
-            </div>
-            {percent !== null ? (
-              // the accessible value is the count the customer reads (items of the volume bought), not the blended work ratio the bar's width follows
-              <div role="progressbar" aria-label={step.titleAr} aria-valuemin={0} aria-valuemax={typeof step.plannedN === "number" ? step.plannedN : 100} aria-valuenow={typeof step.savedN === "number" ? Math.min(step.savedN, typeof step.plannedN === "number" ? step.plannedN : step.savedN) : percent} aria-valuetext={step.countAr} className="mt-1 h-1 w-full overflow-hidden rounded-full bg-sf2">
-                <div className="h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none" style={{ width: `${percent}%`, background: done ? "var(--ok)" : "var(--ac)" }} />
-              </div>
-            ) : null}
-          </div>
-        ) : null}
+        {/* ROUND 26 (item 6): the steps show their state only: no count, no second bar, no internal source line. The ONE counter and ONE bar are the card's top box. */}
         {step.etaAr && step.state === "running" ? <p className="m-0 mt-1 text-[12px] font-light text-mut" data-testid="step-eta">{step.etaAr.startsWith("بنحسب") ? step.etaAr : `المتبقي ${step.etaAr}`}</p> : null}
       </div>
     </li>

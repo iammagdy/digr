@@ -8,6 +8,10 @@ import { AppShell } from "@/components/app/AppShell";
 import { Spinner } from "@/components/ui";
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
+  return <BalanceProvider><DashboardContent>{children}</DashboardContent></BalanceProvider>;
+}
+
+function DashboardContent({ children }: { children: React.ReactNode }) {
   const { user, loading } = useUser();
   const router = useRouter();
   const pathname = usePathname();
@@ -34,9 +38,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   if (!user) {
     if (isChat) {
       return (
-        <BalanceProvider>
-          <AppShell>{children}</AppShell>
-        </BalanceProvider>
+        <AppShell>{children}</AppShell>
       );
     }
     return (
@@ -55,8 +57,6 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }
 
   return (
-    <BalanceProvider>
-      <AppShell>{children}</AppShell>
-    </BalanceProvider>
+    <AppShell>{children}</AppShell>
   );
 }

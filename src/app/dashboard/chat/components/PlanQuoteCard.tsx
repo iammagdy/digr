@@ -122,6 +122,8 @@ interface PlanQuoteCardProps {
     pointsCap?: number
   ) => Promise<void>;
   onAcceptDownscaled?: (units: number) => void;
+  /** ROUND 26 (item 2): a message of the chat is on its way: the buttons that send one wait for the answer. */
+  sending?: boolean;
   isStarting: boolean;
   /** Live available points (ledger sum). null while unknown: the quote's own snapshot is used. */
   available: number | null;
@@ -176,6 +178,7 @@ export default function PlanQuoteCard({
   onStart,
   onSaveEdit,
   onAcceptDownscaled,
+  sending = false,
   isStarting,
   available,
   creditValue,
@@ -224,6 +227,8 @@ export default function PlanQuoteCard({
   const [editCap, setEditCap] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  // ROUND 26 (item 2): «عينة أولًا» is on its way
+  const [exploring, setExploring] = useState(false);
   const [editError, setEditError] = useState("");
   const [now, setNow] = useState(() => Date.now());
 
@@ -328,6 +333,11 @@ export default function PlanQuoteCard({
     }
   }
 
+  async function handleExplore() {
+    if (exploring || !onExplore) return;
+    setExploring(true);
+    try { await onExplore(quote); } finally { setExploring(false); }
+  }
   async function handleRefresh() {
     setRefreshing(true);
     try { await onRefresh(quote); } finally { setRefreshing(false); }
@@ -678,10 +688,10 @@ export default function PlanQuoteCard({
                 id={`edit-plan-downscaled-btn-${quote.quoteId}`}
                 aria-label={`البدء بـ ${countPlainAr(quote.downscaledOffer.maxAffordableUnits, "records")} فقط`}
                 onClick={() => onAcceptDownscaled && onAcceptDownscaled(quote.downscaledOffer!.maxAffordableUnits)}
-                disabled={quote.isDependent}
+                disabled={quote.isDependent || sending}
                 className={`${SECONDARY_BTN} min-h-11`}
               >
-                البدء بـ {countPlainAr(quote.downscaledOffer.maxAffordableUnits, "records")} فقط
+                {sending ? "جارٍ الإرسال…" : <>البدء بـ {countPlainAr(quote.downscaledOffer.maxAffordableUnits, "records")} فقط</>}
               </button>
             )}
             {!isEditing && (
@@ -743,7 +753,7 @@ export default function PlanQuoteCard({
             {refreshing ? (
               <span className="h-4 w-4 rounded-full border-2 border-onac/30 border-t-onac motion-safe:animate-spin motion-reduce:animate-none" aria-hidden="true" />
             ) : null}
-            تحديث السعر
+            {refreshing ? "جارٍ التحديث…" : "تحديث السعر"}
           </button>
         </div>
       )}
@@ -782,11 +792,11 @@ export default function PlanQuoteCard({
               <button
                 type="button"
                 data-testid="explore-first-btn"
-                onClick={() => void onExplore(quote)}
-                disabled={isStarting || quote.isDependent}
+                onClick={() => void handleExplore()}
+                disabled={isStarting || quote.isDependent || exploring || sending}
                 className={`${SECONDARY_BTN} min-h-11`}
               >
-                عينة أولًا: {countPlainAr(quote.explorationOffer.sampleUnits, "records")} بحجز {pointsAr(quote.explorationOffer.samplePoints)}
+                {exploring ? "جارٍ التجهيز…" : <>عينة أولًا: {countPlainAr(quote.explorationOffer.sampleUnits, "records")} بحجز {pointsAr(quote.explorationOffer.samplePoints)}</>}
               </button>
             )}
           </div>

@@ -1,5 +1,5 @@
 import { MISSION_TABLE } from "../constants";
-import { missionTitleAr } from "../fileNames";
+import { missionFileTitleAr, missionTitleAr } from "../fileNames";
 
 /**
  * THE MISSIONS A DATA-COLLECTION METHODOLOGY CAN BE WRITTEN FOR (round 21): a request of the customer that was DELIVERED (completed, at least one row delivered), carried out on the COMPILED path (the plan the compiler built: `plan_public.compiled`), with its job and its Excel file.
@@ -21,6 +21,10 @@ export const METHODOLOGY_MISSION_COLUMNS = "id,user_id,status,job_id,delivered_u
 
 type Row = Record<string, unknown>;
 
+/** «<what> - <day month year>»: the name the delivered file gets now. The older form had the count between the parts («<what> - ١٠ - <date>»), which is recomputed. */
+const CURRENT_TITLE_FORM = /^(?!.* - [٠-٩]+ - ).+ - [٠-٩]{1,2} \S+ [٠-٩]{4}$/;
+const isCurrentTitleForm = (name: string): boolean => CURRENT_TITLE_FORM.test(name) && /(?:^|\s)عن\s/.test(name);
+
 /** The mission as a methodology candidate, or null when it is not one (not delivered, not compiled, no job, no Excel file). */
 export function methodologyMissionOf(row: Row | null | undefined): MethodologyMission | null {
   if (!row || typeof row !== "object") return null;
@@ -37,10 +41,18 @@ export function methodologyMissionOf(row: Row | null | undefined): MethodologyMi
   if (!xlsx) return null;
   const stored = typeof xlsx.download_name === "string" ? xlsx.download_name.trim().replace(/\.xlsx$/i, "") : "";
   const requestText = String(row.request_text ?? "");
+  const stages = (plan as { stages?: unknown }).stages;
+  const date = typeof row.created_at === "string" ? new Date(row.created_at) : null;
+  // a stored name already in the current form is the very name of the Excel file (same words and same date, even when the request was made the day before it finished)
+  const title = isCurrentTitleForm(stored) ? stored : Array.isArray(stages) && stages.some((s) => s && typeof s === "object" && typeof s.title_ar === "string")
+    ? (date && Number.isFinite(date.getTime())
+      ? missionFileTitleAr({ plan: { stages }, requestText, delivered, date })
+      : missionTitleAr({ plan: { stages }, requestText, delivered }))
+    : stored || missionTitleAr({ plan: null, requestText });
   return {
     missionId: id,
     jobId,
-    titleAr: stored || missionTitleAr({ plan: null, requestText }),
+    titleAr: title,
     deliveredUnits: delivered,
     xlsx: { name: String(xlsx.name), path: String(xlsx.path) },
     requestText,

@@ -33,7 +33,7 @@ export default function OpenMissionsList({ items, busyId, error, onCancel, defau
               </div>
               <div className="flex shrink-0 gap-2">
                 {m.conversationId && <a href={`/dashboard/chat?c=${encodeURIComponent(m.conversationId)}`} className="min-h-11 content-center text-[13px] text-ink underline">افتحها</a>}
-                {m.cancellable && <button type="button" disabled={busyId === m.id} onClick={() => onCancel(m.id)} className="min-h-11 cursor-pointer rounded-full border border-ln2 bg-transparent px-4 text-[13px] text-ink disabled:opacity-60">إلغاء</button>}
+                {m.cancellable && <button type="button" disabled={busyId !== null} onClick={() => onCancel(m.id)} className="min-h-11 cursor-pointer rounded-full border border-ln2 bg-transparent px-4 text-[13px] text-ink disabled:opacity-60">{busyId === m.id ? "جارٍ الإلغاء…" : "إلغاء"}</button>}
               </div>
             </div>
           ))}
