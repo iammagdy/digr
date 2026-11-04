@@ -56,7 +56,8 @@ describe("the incident: three unanswered questions and a worker with nothing to 
     db.rows("missions").length = 0;
     db.seed("missions", ["a", "b", "c"].map((k) => ({ id: `msn_held000${k}`, user_id: ME, status: "queued", request_text: `طلب ${k}`, created_at: ISO("2026-10-30 15:20:00"), lease_until: null, job_id: null })));
     db.seed("messages", [{ id: "u2", conversation_id: "c2", role: "user", request_status: "planning" }, { id: "a2", conversation_id: "c2", role: "assistant", content_ar: "جاري التفكير" }]);
-    const r = await agentChatTurn({ sb: client, userId: ME, conversationId: "c2", userMsgId: "u2", assistantMsgId: "a2", message: "طلب رابع", conversationTitle: "محادثة" });
+    const r = await agentChatTurn({ sb: client, userId: ME, conversationId: "c2", userMsgId: "u2", assistantMsgId: "a2", message: "هات ٣٠٠ تغريدة عن محمد صلاح", conversationTitle: "محادثة" });
+    // CHANGED (round 21): the fourth request is a real data request (a message that is not one is answered by code before the limit is reached)
     expect(r).toMatchObject({ ok: false, status: 429 });
     expect(db.rows("messages").find((m) => m.id === "u2")!.request_status).not.toBe("planning");
   });

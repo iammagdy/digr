@@ -42,7 +42,8 @@ describe("when the methodology add-on is offered", () => {
     expect(beforeOffer.lastIndexOf("producedFormats(fileIds)")).toBeLessThan(beforeOffer.lastIndexOf("))}"));
     const route = readFileSync("src/app/api/jobs/[id]/methodology/route.ts", "utf8");
     expect(route).toContain(`const METHODOLOGY_DEFAULT_POINTS = ${METHODOLOGY_POINTS};`);
-    expect(METHODOLOGY_POINTS).toBe(10);
+    // CHANGED (round 21): 50 points (owner decision)
+    expect(METHODOLOGY_POINTS).toBe(50);
   });
 
   it("the report tab no longer shows the paid button for a job that delivered nothing", () => {
@@ -62,7 +63,8 @@ describe("a request for the methodology document is recognised", () => {
     const answer = methodologyAnswerAr();
     expect(answer).toContain("«الملفات»");
     expect(answer).toContain("اكتب المنهجية الرسمية");
-    expect(answer).toContain("١٠ نقاط");
+    // CHANGED (round 21): 50 points, with the plural form for 11 and more
+    expect(answer).toContain("٥٠ نقطة");
     expect(answer).not.toMatch(/[0-9]|undefined|null|USD|\$/);
     expect(answer.split(/[.؟!]/).filter(Boolean)).toHaveLength(1);
   });

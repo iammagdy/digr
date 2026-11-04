@@ -3,6 +3,7 @@ import { createMemoryDb } from "./helpers/memoryDb";
 import { ChatHandler } from "../src/functions/shared/chatHandler";
 import { METHODOLOGY_CHOOSER_SENTENCE_AR, MESSAGE_TYPES, classifyMessage, greetingReplyAr, isFullResearchMethodologyAsk, methodologyReplyAr, otherReplyAr, serviceAnswerAr, type MessageType } from "../src/lib/agentMission/messageType";
 import { METHODOLOGY_POINTS } from "../src/lib/methodologyOffer";
+import { customerFacingAssistantCopy } from "../src/lib/customerFacingAssistantCopy";
 
 /**
  * ROUND 21, item 1: THE TYPE OF A CHAT MESSAGE, decided by code BEFORE planning. Live (4 Nov 2026): «هاي يا صاحبي» opened a mission card with plan steps, and «عايزك تعملي منهجية بحث تكون pdf» went to planning and ended with
@@ -60,6 +61,9 @@ const CORPUS: Array<[string, MessageType]> = [
   ["هل ممكن تجمعلي ١٠٠ تعليق من فيسبوك؟", "data_request"],
   ["collect 200 tweets about electric cars", "data_request"],
   ["اجمع لي كل الصيدليات في المنصورة مع أرقام الهاتف", "data_request"],
+  // ---- the chat's own button messages belong to the data flow (found by the stuck-missions replay)
+  ["أعد المحاولة بنفس الخطة. اعرض عرض سعر جديدًا فقط، ولا تعتمد أو تبدأ التنفيذ.", "data_request"],
+  ["عايز أراجع الخطة السابقة وأعدّلها. اعرض خطة وعرض سعر جديد فقط، ولا تبدأ أي استخراج قبل ما أوافق بنفسي.", "data_request"],
   // ---- anything else
   ["ايه رأيك في الجو النهاردة", "other"],
   ["احكيلي نكتة", "other"],
@@ -145,6 +149,10 @@ describe("the fixed answers", () => {
     const t = serviceAnswerAr("بكام المنهجية؟");
     customerSafe(t);
     expect(t).toContain("٥٠ نقطة");
+  });
+  it("the page's own text filter leaves every fixed answer exactly as the code wrote it", () => {
+    const all = [greetingReplyAr("هاي"), greetingReplyAr("شكرا"), serviceAnswerAr("بكام النقطة؟"), serviceAnswerAr("كيف تعمل الخدمة؟"), serviceAnswerAr("بكام المنهجية؟"), otherReplyAr(), methodologyReplyAr({ text: "اكتب لي المنهجية", delivered: 0 }), methodologyReplyAr({ text: "اكتب لي المنهجية", delivered: 2 })];
+    for (const t of all) expect(customerFacingAssistantCopy(t)).toBe(t);
   });
   it("other: a short honest reply that says what Diger collects and how to ask", () => {
     const t = otherReplyAr();

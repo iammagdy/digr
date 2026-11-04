@@ -1,4 +1,5 @@
 import { toArabicDigits } from "../arabicDigits";
+import { isReviewPlanMessage, isRetrySamePlanMessage } from "../retryMessage";
 import { METHODOLOGY_POINTS } from "../methodologyOffer";
 import { DEFAULT_MISSION_PRICING_SETTINGS, minimumLineAr } from "../missionPricing";
 
@@ -82,6 +83,8 @@ export function isFullResearchMethodologyAsk(message: string): boolean {
 
 /** The ONE type of a message (see MESSAGE_TYPES). Never throws; anything it cannot read is «other». */
 export function classifyMessage(message: string): MessageType {
+  // the fixed messages the chat's own buttons send («أعد المحاولة بنفس الخطة», «عايز أراجع الخطة...») belong to the data flow: they ask for a new quote of the plan above, never small talk
+  if (isRetrySamePlanMessage(message) || isReviewPlanMessage(message)) return "data_request";
   const raw = String(message ?? "").slice(0, MAX_CLASSIFIED_CHARS);
   const text = normalize(raw);
   const words = wordsOf(text);

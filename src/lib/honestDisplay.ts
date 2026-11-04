@@ -253,7 +253,7 @@ export function methodologyMessageText(
   if (charged === null || balance === null) {
     return `تم توثيق المنهجية الأكاديمية بنجاح:\n\n${methodologyText}${download}`;
   }
-  return `تم توثيق المنهجية الأكاديمية بنجاح وخصم ${formatNumber(charged)} نقاط (رصيدك الحالي: ${pointsAr(balance, formatNumber)}):\n\n${methodologyText}${download}`;
+  return `تم توثيق المنهجية الأكاديمية بنجاح وخصم ${pointsAr(charged, formatNumber)} (رصيدك الحالي: ${pointsAr(balance, formatNumber)}):\n\n${methodologyText}${download}`;
 }
 
 /* ------------------------------------------------------------------ */

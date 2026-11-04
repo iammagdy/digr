@@ -447,16 +447,17 @@ describe("point 11: the monthly released total and the ledger lines are explaine
   });
 });
 
-describe("point 12: each plan card says whether the PDF is included or costs ١٠ نقاط", () => {
+describe("point 12: each plan card says whether the PDF is included or costs ٥٠ نقطة", () => {
   it("states it with the very price the results panel shows", () => {
-    expect(METHODOLOGY_POINTS).toBe(10);
+    // CHANGED (round 21): the methodology costs 50 points (owner decision), said «٥٠ نقطة» (the plural form for 11 and more)
+    expect(METHODOLOGY_POINTS).toBe(50);
     const withPdf = render(quote({ outputFormats: ["xlsx", "pdf"] }));
     expect(withPdf).toContain('data-testid="plan-pdf-line"');
     expect(withPdf).toContain("ملف بي دي إف مشمول في سعر هذه الخطة بلا رسوم إضافية");
-    expect(withPdf).toContain("مقابل ١٠ نقاط");
+    expect(withPdf).toContain("مقابل ٥٠ نقطة");
     const without = render(quote({ outputFormats: ["xlsx"] }));
     expect(without).toContain("هذه الخطة بلا ملف بي دي إف");
-    expect(without).toContain("مقابل ١٠ نقاط");
+    expect(without).toContain("مقابل ٥٠ نقطة");
     expect(planPdfLineAr(["pdf"])).not.toMatch(/[A-Za-z0-9]/);
     const canvas = readFileSync("src/app/dashboard/chat/components/ResultsCanvas.tsx", "utf8");
     expect(canvas).toContain("formatNumber(METHODOLOGY_POINTS)");

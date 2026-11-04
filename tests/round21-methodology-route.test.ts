@@ -223,7 +223,7 @@ describe("the download: the site serves the bought file under its own Arabic nam
   });
   it("bought: the PDF with Content-Disposition filename* (percent-encoded UTF-8) and an ASCII fallback; the storage link carries no download name", async () => {
     await buy();
-    vi.stubGlobal("fetch", vi.fn(async () => new Response(world.uploads[0].body, { status: 200 })));
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(new Uint8Array(world.uploads[0].body), { status: 200 })));
     world.signed = [];
     const res = await call("GET", undefined, "?file=1");
     expect(res.status).toBe(200);
