@@ -177,12 +177,21 @@ const NOUN = { company: knownItemNoun("شركة")!, person: knownItemNoun("شخ�
 const toCount = (n: number, noun: "company" | "person"): string => { const t = countAr(n, NOUN[noun]); return /^[٠-٩]/.test(t) ? `لـ ${t}` : `ل${t}`; };
 const sourcesAr = (n: number): string => (n === 1 ? "مصدر واحد" : n === 2 ? "مصدرين" : n >= 3 && n <= 10 ? `${toArabicDigits(n)} مصادر` : `${toArabicDigits(n)} مصدرًا`);
 
-/** The file's line for a column's gap (no provider name: only how many sources were tried). */
+/**
+ * The file's line for a column's gap (no provider name: only how many sources were tried). Three honest cases: some were found (and the rest are stated), none were found because every source was
+ * tried to its end («غير متوفر»), and none were searched to the end («لم يكتمل البحث»: never «لم يوجد», which would claim a negative answer no source gave).
+ */
 export function gapLineAr(columnTitleAr: string, gap: ColumnGap, noun: "company" | "person"): string {
   const all = noun === "company" ? "الشركات" : "الأشخاص";
+  const single = noun === "company" ? "للشركة" : "للشخص";
   if (gap.total === 0) return `${columnTitleAr}: لا يوجد ما يُبحث له.`;
   if (gap.found === gap.total) return `${columnTitleAr}: وُجد لكل ${all} (${countAr(gap.total, NOUN[noun])}).`;
-  const parts = [gap.found === 0 ? `${columnTitleAr}: لم يوجد لأي ${NOUN[noun].singular} من ${countAr(gap.total, NOUN[noun])}` : `${columnTitleAr}: وُجد ${toCount(gap.found, noun)} من ${countAr(gap.total, NOUN[noun])}`];
+  /** «لكل الشركات (٥ شركات)» when it is every one, else the counted form («لشركتين»). */
+  const who = (n: number): string => (n === gap.total ? (gap.total === 1 ? single : `لكل ${all} (${countAr(gap.total, NOUN[noun])})`) : toCount(n, noun));
+  const unavailable = `غير متوفر ${who(gap.unavailable)} بعد تجربة ${sourcesAr(gap.tools)}`;
+  const incomplete = `لم يكتمل البحث ${who(gap.incomplete)}`;
+  if (gap.found === 0) return `${columnTitleAr}: ${[gap.unavailable > 0 ? unavailable : null, gap.incomplete > 0 ? incomplete : null].filter((x): x is string => x !== null).join("، و")}.`;
+  const parts = [`${columnTitleAr}: وُجد ${toCount(gap.found, noun)} من ${countAr(gap.total, NOUN[noun])}`];
   if (gap.unavailable > 0) parts.push(`وغير متوفر ${toCount(gap.unavailable, noun)} بعد تجربة ${sourcesAr(gap.tools)}`);
   if (gap.incomplete > 0) parts.push(`ولم يكتمل البحث ${toCount(gap.incomplete, noun)}`);
   return `${parts.join("، ")}.`;
