@@ -48,8 +48,9 @@ export interface World {
   rows: Map<string, Row>;
   events: Row[];
   money: ReturnType<typeof fakeMoneyClient>;
-  /** Tables other than `missions` and `mission_events` that were touched (must stay empty). */
+  /** Tables other than `missions` and `mission_events` that were touched (must stay empty). The read-only reads of `jobs` and `credit_ledger` are not touches: they are listed in `reads`. */
   other: string[];
+  reads: string[];
   /** The most open add-on rows ever seen on one file, after any step. */
   maxOpen: number;
 }
@@ -67,7 +68,7 @@ const openCount = (rows: Map<string, Row>): number => {
 export async function runSchedule(makers: Maker[], choices: number[], opts: SchedOpts) {
   const rows = new Map<string, Row>((opts.seed ?? []).map((r) => [String(r.id), JSON.parse(JSON.stringify(r))]));
   const money = fakeMoneyClient({ balance: opts.balance ?? 100_000 });
-  const world: World = { rows, events: [], money, other: [], maxOpen: openCount(rows) };
+  const world: World = { rows, events: [], money, other: [], reads: [], maxOpen: openCount(rows) };
   opts.setup?.(world);
   const storage = previewClient(opts.objects).storage;
   const pending: Pending[] = [];
@@ -92,6 +93,12 @@ export async function runSchedule(makers: Maker[], choices: number[], opts: Sche
           if (failing("events")) return { data: null, error: down };
           world.events.push(payload);
           return { data: null, error: null };
+        }
+        // the money tables are READ-ONLY here (the recovery reads a job's state and its ledger rows); any write to them is recorded as a touch of another table, which every test asserts is empty
+        if ((table === "jobs" || table === "credit_ledger") && op === "select") {
+          world.reads.push(table);
+          const source: any[] = table === "jobs" ? [...money.jobs.values()] : money.ledger;
+          return { data: source.filter((r) => filters.every((f) => f(r))).map((r) => ({ ...r })), error: null };
         }
         if (table !== "missions") { world.other.push(`${op} ${table}`); return { data: null, error: { message: `unexpected table ${table}` } }; }
         if (failing(op)) return { data: null, error: down };

@@ -25,19 +25,23 @@ export function fakeAddonWorld(options: { balance?: number; cap?: number; /** Sh
     if (name === "jobs") return { select: () => ({ eq: (_k: string, id: string) => ({ maybeSingle: async () => { const j = money.jobs.get(id); return { data: j ? { status: j.status, charged_credits: j.charged_credits } : null, error: null }; } }) }) };
     if (name !== "missions") throw new Error(`a table was touched by hand: ${name}`);
     const query = (rows: () => MissionRow[]) => {
-      const filters: Array<[string, unknown]> = [];
+      const filters: Array<[string, unknown, boolean]> = [];
       let patch: Record<string, unknown> | null = null;
-      const run = () => rows().filter((r) => filters.every(([k, v]) => r[k] === v));
+      // a JSON path (`plan->addon->>of`) reads into the row; `.is(col, null)` also matches a column the row does not have
+      const at = (r: MissionRow, k: string): unknown => (k.includes("->") ? k.split(/->>?/).reduce((v: any, key) => (v === null || v === undefined ? v : v[key]), r) : r[k]);
+      const run = () => rows().filter((r) => filters.every(([k, v, nullable]) => (nullable ? (at(r, k) ?? null) === v : at(r, k) === v)));
       const api: any = {
         select: (_cols?: string) => api,
         update: (p: Record<string, unknown>) => { patch = p; return api; },
-        eq: (k: string, v: unknown) => { filters.push([k, v]); return api; },
+        eq: (k: string, v: unknown) => { filters.push([k, v, false]); return api; },
+        is: (k: string, v: unknown) => { filters.push([k, v, true]); return api; },
         maybeSingle: async () => ({ data: run()[0] ? JSON.parse(JSON.stringify(run()[0])) : null, error: null }),
         then: (resolve: (v: any) => void) => {
           // an update(...).eq(...).eq(...).select("id") resolves to the rows it changed
           const hit = run();
           if (patch) for (const r of hit) Object.assign(r, patch);
-          resolve({ data: hit.map((r) => ({ id: r.id })), error: null });
+          // an update(...).select("id") answers the rows it changed; a plain select answers the rows it read
+          resolve({ data: patch ? hit.map((r) => ({ id: r.id })) : hit.map((r) => JSON.parse(JSON.stringify(r))), error: null });
         },
       };
       return api;

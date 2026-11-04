@@ -180,7 +180,12 @@ export const ADDON_APPROVE_MESSAGES_AR = {
   approval_unverified: "لم نتمكن من تأكيد اعتماد الطلب بعد. قد تكون نقاطك حُجزت مؤقتًا، ولن يُخصم منها إلا ما يُنجز. أعد المحاولة بعد قليل؛ لن يُحجز شيء مرتين.",
   /** The hold was reserved but recording it on the request could not be proved (after bounded retries and a read-back). Not success: the request goes back to waiting so a retry converges on the same hold. */
   record_unverified: "لم نتمكن من تأكيد تسجيل اعتماد الطلب بعد. قد تكون نقاطك حُجزت مؤقتًا، ولن يُخصم منها إلا ما يُنجز. أعد المحاولة بعد قليل؛ لن يُحجز شيء مرتين.",
+  /** The abandoned job of this request was RELEASED (proved by its ledger): the points are back and the request is ended. Said only when the release row exists. */
+  released_before_start: "لم يبدأ تنفيذ هذا الطلب، وعادت النقاط التي حُجزت له إلى رصيدك كاملة. يمكنك تقديم طلب جديد.",
 } as const;
+/** How a request ended after its abandoned job was released: the row's `error`, and the sentence the customer reads (it says the points came back and never says anything was charged). */
+export const ADDON_RELEASED_ERROR = "approval_released";
+export const ADDON_RELEASED_SUMMARY_AR = "لم يبدأ تنفيذ هذا الطلب، وعادت النقاط التي حُجزت له إلى رصيدك كاملة. لم يُسجَّل أي خصم، ويمكنك تقديم طلب جديد.";
 export type AddonApproveMessage = keyof typeof ADDON_APPROVE_MESSAGES_AR;
 /** What the job's list line says (the `summaryAr` of the quote item). */
 export const ADDON_SUMMARY_AR: Readonly<Record<AddonKind, string>> = { review: "مراجعة الملف", review_fix: "تصحيح بعد المراجعة", edit: "تعديل الملف" };
