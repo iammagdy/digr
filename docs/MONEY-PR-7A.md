@@ -480,3 +480,66 @@ Eight names; nine definitions came back (`release_job_atomic` has a 2-argument w
 - The scenarios run on a fake. Nothing ran against a database: the closest existing check is `tests/sql/job-cap-balance.local-pg.test.ts`, which was not run or extended.
 - The «طلباتي» and wallet screens were not searched for other readers of `jobs.delivered_units` (an add-on job's units are points).
 - No run on the live site, no flag set.
+
+---
+
+## 13. Phase 2B-1: the worker's run of an approved add-on
+
+**Status.** Phase 2B-1 adds the WORKER side only: it runs an approved add-on (a paid review, a review fix, an edit) and settles it with the money core of Phase 2A. No route, no component, no wallet or «طلباتي» change, no watchdog change (those are Phase 2B-2). No SQL of any kind was run in this phase. `DIGER_STAGE4_REVIEW` and `DIGER_STAGE4_EDITS` stay unset, and the worker runs any approved add-on whatever the flags say (they gate creation and approval).
+
+### 13.1 What was built
+
+| File | What |
+|---|---|
+| `agent/src/stage4/runAddon.ts` | `runAddonSafely` (never throws), `runAddon`, `recoverAddon`, `isAddonMission`: run → store the work PENDING and the outcome → check the published path → `settleAddon` → publish create-only from the pending bytes → mark the add-on row → tell the customer (section 3.0, in that order) |
+| `agent/src/stage4/rereadRun.ts` | the re-read: for each unit, the tools of the approved recipe in order through the **existing gateway** (`tregCall`); the first real value wins; each finished unit is its own create-only object |
+| `agent/src/stage4/addonFiles.ts` | where an add-on keeps its objects (`addons/<id>/…` in the delivered mission's folder) and the **outcome** object |
+| `agent/src/stage4/addonText.ts` | the customer's sentences (checked with `checkCustomerText`) |
+| `agent/src/stage4/dispatch.ts` | `runClaimedSafely`: a row whose plan has an `addon` key → `runAddonSafely`; every other row → `runMissionSafely` |
+| `src/lib/agentMission/stage4/reread.ts` | the recipe types and strict reader, and `isRealValue` (decision D4) |
+| `src/lib/agentMission/stage4/editCore.ts` | the rules of an edit, split out of `editVersion.ts` (see 13.2 item 7) |
+
+Existing files changed, all additive: `agent/src/types.ts`, `memoryStore.ts`, `supabaseStore.ts` (`putNewStrict`), `agent/src/main.ts` (one import and one call), `stage4/review.ts` (`STATED_GAP` exported; `reviewFile(v, { keepRowIds })`, default 20), `stage4/editVersion.ts` (public API unchanged; `meta.reason`), `stage4/addonRow.ts` (request types), two import-graph tests, `tests/helpers/addonWorld.ts`. **No engine file and no money file was touched**: `gateway.ts`, `runMission.ts`, `price.ts`, `lifecycle.ts`, `approval.ts`, `finalize.ts` and the rest of the forbidden list are unchanged.
+
+### 13.2 Where the code differs from, or adds to, this design (the code is the record)
+
+1. **The re-read does not use `runEngine`.** The engine runs a plan whose stages each carry a recipe that PLANNING proved (a mapping function run in the sandbox, a parent binding, the item store with its acceptance and relevance rules). An edit has no planning step, and "never re-planned by the worker" is a rule. So the re-read is a small loop over the same **gateway** the engine uses: the catalog, the block list, the data policy, the budget and the provider's daily cap are all enforced there, before every call, and every call is recorded under the add-on's id. A tool's answer is read with the gateway's own page reader (`buildShapeDigest`). No engine file changed.
+2. **The recipe comes from the card, and nothing builds it yet.** The approved add-on row carries `request.edit.reread` (per target column: the tools in order, each with its fixed inputs, the input that takes a cell of the row, and the field of the answer that holds the value). The runner only carries it out. **Nothing in the repository produces a recipe from a customer's words and the catalog**: that is the card step of 2B-2 (it also gives `addonQuote.ts` its per-row costs). The tests use recipes written by hand in the shape the card will write. Without a recipe a unit is never filled, so the add-on is released whole.
+3. **The outcome object.** `addons/<id>/outcome.json` (filled, requested, the real cost of the add-on's own execution calls, why it stopped) is written create-only **once**, after the pending work; the first writer wins. The charge is computed from it by `addonChargePoints`, so a retry after any crash uses the very same inputs.
+4. **A second path check, before the spend.** Besides the check between the stored work and the charge (section 3.0 step 3), the runner looks at the version's path before it starts the re-read: if another object is already there, nothing is spent and the hold comes back whole.
+5. **The review's path.** The report is published at `reviews/r<NNNN>.json` where NNNN is the number of the **reviewed version** (one review per version: D11). The report carries its add-on's id: a second add-on that finds another add-on's report there is released whole (no second charge) and the first report stands.
+6. **The runner reads the job's status (a read, never a write).** To tell a hold the watchdog already released (never publish) from one that was settled (publish) from a call that only failed (retry), it reads `jobs.status` and `charged_credits` through the service client. This is the only table the runner touches. It is not in the design above.
+7. **`editVersion.ts` was split.** It imports `quotes.ts` (the displayed price), and `tests/stage4-quotes.test.ts` forbids any money path from reaching `quotes.ts` (and any production file outside the Stage 4 source folder). The rules now live in `editCore.ts` with no price; `editVersion.ts` keeps every export and behaviour and adds `quotePoints`. The runner imports `editCore.ts`, so `quotes.ts` stays unreachable from the worker and the existing test was not weakened.
+8. **Request types.** `EditIntent` gained `reread`, typed cell values and typed rows; the review fix carries `reread`. The unit counts in `unitsOfIntent` (2A) are unchanged.
+9. **Ends of an add-on.** `completed`: the work is published. `unserved`: released, nothing to show. `failed`: a hold the watchdog released first, a plan that is not what the code computes, or a charge whose result could not be shown (the admin is told, error `charged_not_published`).
+10. **What a kill costs.** A unit that was being read when the worker died is read again by the next run: at most one unit is paid for twice per kill. The budget counts every recorded call, so the total across restarts stays within hold ÷ 5,500 USD (up to the last call's overshoot). If the provider's real charge is above its estimate, the real cost can pass the budget by that overshoot; the charge is clipped at the hold and the platform absorbs the rest.
+
+### 13.3 The items "for 2B" of section 12.4
+
+| Item | Status |
+|---|---|
+| `main.ts` must send an add-on row to its own runner | **done** (`dispatch.ts`; a row with an `addon` key never reaches `runMissionSafely`) |
+| The runner, store-pending, check, settle, publish, recovery | **done** |
+| The create-only write that reports an existing object | **done** (`putNewStrict`) |
+| Every mission route must refuse an add-on row (`approveMissionOnce` would claim then throw) | **not done: 2B-2** (routes) |
+| Cancelling an interrupted add-on must release its hold | **not done: 2B-2** (`customerActions`, routes) |
+| A process that dies between the claim and the money (row `approved`, no job) | **not done: 2B-2**; note the worker now claims such a row and the runner ends it `failed` (no job, no hold) |
+| Reading `mission_calls` and the catalog for the card's costs; the Supabase `AddonRowStore` | **not done: 2B-2** |
+| «طلباتي», wallet label (D9), `openMissions.ts`, the watchdog route | **not done: 2B-2** |
+
+### 13.4 What remains for 2B-2 and later
+
+- the routes (create, approve, cancel, read) behind `DIGER_STAGE4_REVIEW` / `DIGER_STAGE4_EDITS`, and the guard that makes every existing mission route refuse an add-on row (`isAddonRow`);
+- the card: the recipe builder from the customer's words and the catalog, the per-row cost from recorded calls (`addonQuote.ts`'s inputs), the Supabase `AddonRowStore`;
+- the screens (`ReviewReport`, `EditRequestCard`), the versions list showing «تعديل» / «مراجعة», and the **file of a version** (the version is stored and listed; building and serving its xlsx, `?version=N`, is not done);
+- the customer's notice (an in-site notice and e-mail): the existing notice kinds are worded for a mission, so the add-on's end is told through the add-on row's events only;
+- «طلباتي», the wallet history (D9, the owner's OK), `openMissions.ts`, the watchdog route (release the hold of a cancelled add-on);
+- recovery of a row stuck in `approved` with no job after a crash between the claim and the money.
+
+### 13.5 Assumed and not verified in 2B-1
+
+- Everything ran on fakes (the hardened money fake, a fake recorder with a daily cap, a fake provider, a memory store). Nothing ran against a database, storage or a provider.
+- That the live `jobs` table can be read with a service client by `select status, charged_credits` (it is read the same way elsewhere only by the site, not by the worker): not checked.
+- That the Supabase storage listing returns a unit's object right after its write (the item store relies on the same property).
+- That a real catalog answer for the tool of a recipe is read by `buildShapeDigest` into the row the recipe's `valueField` names: tested on a catalog endpoint with a fake answer shaped like a record.
+- The size of a version object for a very large file (one JSON object): not measured.
