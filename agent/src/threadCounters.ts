@@ -4,7 +4,7 @@ import { childCountOf } from "../../src/lib/agentMission/childCount";
 import { AGENT_REPLIES_PER_COMMENT_MAX } from "../../src/lib/agentMission/constants";
 import { readsAllReplies } from "../../src/lib/agentMission/repliesCard";
 import type { PricedPlan } from "../../src/lib/agentMission/plan";
-import { alternativesGapLineAr, expectedCommentsOf } from "../../src/lib/agentMission/foundation/deliveryContract";
+import { alternativesGapBodyAr, expectedCommentsOf } from "../../src/lib/agentMission/foundation/deliveryContract";
 
 /**
  * THE SOURCE'S OWN COUNTER NEXT TO WHAT WAS DELIVERED (the replies PR; live G4: a video whose own counter showed 25 delivered one comment, and nothing in the file said why). For every parent (video, post) that has its own counter: «عداد الفيديو ٢٥، سُلّم تعليق واحد و٢٣ ردًا», from the recorded counts and the
@@ -27,6 +27,8 @@ export interface ThreadCounterFacts {
   replyCountersByParent?: ReadonlyMap<string, number>;
   /** Round 14: the line names the parent by its place in the file («المنشور رقم ١: ...»), as every other gap line does. Only a compiled plan sets it (the old path's lines are what they were). */
   ordinal?: boolean;
+  /** ROUND 19: false when the source's counter counts the top-level comments ONLY (Instagram, Facebook, YouTube): the replies delivered then never make up a comment that is missing. True (the default, TikTok's video counter) when it counts the comments AND their replies. */
+  counterIncludesReplies?: boolean;
 }
 
 export interface ThreadCounterLine { parentId: string; delivered: { comments: number; replies: number }; counterLine: string; limitLine: string | null }
@@ -50,7 +52,7 @@ export function parentCounterLinesAr(f: ThreadCounterFacts): ThreadCounterLine[]
     const replyCounters = f.ordinal === true ? f.replyCountersByParent?.get(String(p.id)) : undefined;
     const repliesGap = replyCounters !== undefined && r < replyCounters;
     const repliesPart = repliesGap ? `؛ ردود التعليقات المسلّمة بحسب عدّاداتها ${countAr(replyCounters!, reply, { subject: true })} وسُلّم منها ${countAr(r, reply, { subject: true })}` : "";
-    const short = c + r < p.counter || repliesGap;
+    const short = (f.counterIncludesReplies === false ? c : c + r) < p.counter || repliesGap;
     const limitLine = short ? `${counterLine}${repliesPart}؛ ${f.cappedParents?.has(String(p.id)) ? "وبعض التعليقات لها ردود أكثر من الحد الأقصى المقروء لكل تعليق، والباقي لم يعطِه المصدر" : "والفرق لم يعطِه المصدر"}` : null;
     out.push({ parentId: String(p.id), delivered: { comments: c, replies: r }, counterLine, limitLine });
   }
@@ -76,6 +78,8 @@ export interface AskedThreadFacts {
   replyParentCommentIds: ReadonlyArray<string> | null;
   /** The most replies read for one comment (Infinity when every reply of a comment is read). */
   repliesCap: number;
+  /** ROUND 19: each parent's own counter (id -> counter, null when it has none): the comments a parent can give are at most min(asked, counter), and the line says the counter when it is the smaller. */
+  counters?: ReadonlyMap<string, number | null>;
 }
 
 export function askedGapLinesAr(f: AskedThreadFacts): { counterLines: string[]; limitLines: string[] } {
@@ -90,9 +94,12 @@ export function askedGapLinesAr(f: AskedThreadFacts): { counterLines: string[]; 
     const mine = f.comments.filter((c) => c.parentId === String(p.id));
     const delivered = mine.length;
     const head = `ال${parentNoun.singular} رقم ${formatAr(i + 1)}`;
-    const askedPart = `طلبت ${countAr(f.asked, comment, { subject: true })} وسُلّم ${countAr(delivered, comment, { subject: true })}`;
+    // ROUND 19: asked or counter, whichever is smaller: a parent whose counter is below the number asked is told against its counter («المتوقع ٩ بحسب عدّاد المنصة»)
+    const counter = f.counters?.get(String(p.id)) ?? null;
+    const expected = counter !== null && Number.isFinite(counter) ? Math.min(f.asked, Math.max(0, counter)) : f.asked;
+    const askedPart = expected < f.asked ? `المتوقع ${countAr(expected, comment, { subject: true })} بحسب عدّاد المنصة وسُلّم ${countAr(delivered, comment, { subject: true })}` : `طلبت ${countAr(f.asked, comment, { subject: true })} وسُلّم ${countAr(delivered, comment, { subject: true })}`;
     const parts: string[] = [];
-    if (delivered < f.asked) parts.push(askedPart);
+    if (delivered < expected) parts.push(askedPart);
     let line = `${head}: ${askedPart}`;
     if (f.replyParentCommentIds !== null) {
       const counters = mine.reduce((n, c) => n + Math.min(f.repliesCap, Math.max(0, c.replies ?? 0)), 0);
@@ -210,7 +217,7 @@ export function threadCounterLinesOfPlan(plan: Pick<PricedPlan, "stages"> & { co
       continue;
     }
     if (plan.compiled?.by === "compiler" && Number.isFinite(asked) && asked > 0) {
-      const lines = askedGapLinesAr({ parentNoun: nounOf(parentStage.title_ar) ?? "عنصر", asked, parents: parents.map((p) => ({ id: p.id })), comments: comments.map((c) => ({ id: String(c.id), parentId: String(c.parent_id ?? ""), replies: childCountOf(c) })), replyParentCommentIds: replyStage ? replies.map((r) => String(r.parent_id ?? "")) : null, repliesCap: replyStage && readsAllReplies(plan, replyStage) ? Number.POSITIVE_INFINITY : Math.max(1, replyStage?.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_MAX) });
+      const lines = askedGapLinesAr({ parentNoun: nounOf(parentStage.title_ar) ?? "عنصر", asked, counters: new Map(parents.map((p) => [p.id, p.counter] as const)), parents: parents.map((p) => ({ id: p.id })), comments: comments.map((c) => ({ id: String(c.id), parentId: String(c.parent_id ?? ""), replies: childCountOf(c) })), replyParentCommentIds: replyStage ? replies.map((r) => String(r.parent_id ?? "")) : null, repliesCap: replyStage && readsAllReplies(plan, replyStage) ? Number.POSITIVE_INFINITY : Math.max(1, replyStage?.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_MAX) });
       counterLines.push(...lines.counterLines);
       limitLines.push(...lines.limitLines);
       continue;
@@ -222,7 +229,7 @@ export function threadCounterLinesOfPlan(plan: Pick<PricedPlan, "stages"> & { co
     const replyCap = replyStage && readsAllReplies(plan, replyStage) ? Number.POSITIVE_INFINITY : Math.max(1, replyStage?.per_parent_rows ?? AGENT_REPLIES_PER_COMMENT_MAX);
     const replyCountersByParent = new Map<string, number>();
     if (replyStage) for (const c of comments) { const p = String(c.parent_id ?? ""); replyCountersByParent.set(p, (replyCountersByParent.get(p) ?? 0) + Math.min(replyCap, Math.max(0, childCountOf(c) ?? 0))); }
-    const lines = parentCounterLinesAr({ parentNoun: nounOf(parentStage.title_ar) ?? "عنصر", parents, commentParentIds: comments.map((c) => String(c.parent_id ?? "")), replyParentCommentIds: replies.map((r) => String(r.parent_id ?? "")), commentToParent, cappedParents: capped, ...(plan.compiled?.by === "compiler" ? { ordinal: true } : {}), ...(replyStage ? { replyCountersByParent } : {}) });
+    const lines = parentCounterLinesAr({ parentNoun: nounOf(parentStage.title_ar) ?? "عنصر", parents, commentParentIds: comments.map((c) => String(c.parent_id ?? "")), replyParentCommentIds: replies.map((r) => String(r.parent_id ?? "")), commentToParent, cappedParents: capped, ...(plan.compiled?.by === "compiler" ? { ordinal: true, counterIncludesReplies: plan.compiled.platform === "tiktok" } : {}), ...(replyStage ? { replyCountersByParent } : {}) });
     for (const l of lines) { counterLines.push(l.counterLine); if (l.limitLine) limitLines.push(l.limitLine); }
   }
   // ROUND 16: a parent whose comments fell short AFTER an alternative route answered for it says so, per parent: the expected count, the unique comments delivered, the gap, and that the main route and N alternative routes were tried (from the persisted streams only)
@@ -237,7 +244,14 @@ export function threadCounterLinesOfPlan(plan: Pick<PricedPlan, "stages"> & { co
       const n = tried[String(p.id)] ?? 0;
       const expected = expectedCommentsOf(stage, p);
       const got = comments.filter((c) => String(c.parent_id ?? "") === String(p.id)).length;
-      if (n > 0 && expected !== null && got < expected) limitLines.push(alternativesGapLineAr({ parentNoun: nounOf(parentStage.title_ar) ?? "عنصر", n: i + 1, expected, delivered: got, alternatives: n }));
+      if (n > 0 && expected !== null && got < expected) {
+        // ROUND 19: ONE line per parent. The line the stage's own rule already wrote for this parent (asked or counter against delivered, and the replies' part) is replaced by the sentence that also says the routes tried; the replies' part, if any, stays in it.
+        const head = `ال${nounOf(parentStage.title_ar) ?? "عنصر"} رقم ${formatAr(i + 1)}`;
+        const at = limitLines.findIndex((l) => l.startsWith(`${head}:`));
+        const repliesPart = at >= 0 ? /ردود التعليقات المسلّمة بحسب عدّاداتها[^؛]*/.exec(limitLines[at])?.[0] ?? "" : "";
+        const merged = `${head}: ${alternativesGapBodyAr({ expected, delivered: got, alternatives: n })}${repliesPart ? `؛ ${repliesPart}` : ""}.`;
+        if (at >= 0) limitLines[at] = merged; else limitLines.push(merged);
+      }
     });
   }
   return { counterLines, limitLines };

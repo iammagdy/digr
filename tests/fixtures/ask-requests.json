@@ -1,0 +1,600 @@
+[
+ {
+  "request": "هات منشورات عن الذكاء الاصطناعي من صفحة قناة العربية على فيسبوك آخر ٣ شهور، منشورين، مع كل التعليقات والردود.",
+  "source": "live",
+  "expect": {
+   "platform": "facebook",
+   "count": 2,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "all",
+   "question": null
+  }
+ },
+ {
+  "request": "هات فيديوهين على يوتيوب عن نهائي السوبر المصري الأهلي والزمالك من القنوات الرسمية، مع كل التعليقات والردود.",
+  "source": "live",
+  "expect": {
+   "platform": "youtube",
+   "count": 2,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "all",
+   "question": null
+  }
+ },
+ {
+  "request": "هات فيديوهين تيك توك بالعربي عن الذكاء الاصطناعي من مصر، مع كل التعليقات والردود.",
+  "source": "live",
+  "expect": {
+   "platform": "tiktok",
+   "count": 2,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "all",
+   "question": null
+  }
+ },
+ {
+  "request": "هات منشورين من حساب الحدث على إنستجرام (alhadath)، مع كل التعليقات والردود.",
+  "source": "live",
+  "expect": {
+   "platform": "instagram",
+   "count": 2,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "all",
+   "question": null
+  }
+ },
+ {
+  "request": "هات ٢٠ تغريدة على X فيها \"العاصمة الإدارية\" بالعربي في شهر أكتوبر ٢٠٢٦، مع الردود.",
+  "source": "live",
+  "expect": {
+   "platform": "x",
+   "count": 20,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "none",
+   "question": null
+  }
+ },
+ {
+  "request": "هات منشورات عن الذكاء الاصطناعي من صفحة قناة العربية على فيسبوك آخر ٣ شهور، ٣ منشورات، مع كل التعليقات والردود.",
+  "source": "live",
+  "expect": {
+   "platform": "facebook",
+   "count": 3,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "all",
+   "question": null
+  }
+ },
+ {
+  "request": "عايز فيديوهين من تيك توك من مصر بالعربي عن الذكاء الاصطناعي، أكتر فيديوهات عليها تعليقات، و٢٠ تعليق من كل فيديو مع ردودهم",
+  "source": "live",
+  "expect": {
+   "platform": "tiktok",
+   "count": 2,
+   "commentsPerParent": 20,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات فيديوهين تيك توك بالعربي عن الذكاء الاصطناعي من مصر، أكتر فيديوهات عليها تعليقات، و٢٠ تعليق من كل فيديو مع ردودهم",
+  "source": "live",
+  "expect": {
+   "platform": "tiktok",
+   "count": 2,
+   "commentsPerParent": 20,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات فيديوهات تيك توك بالعربي عن الذكاء الاصطناعي من مصر، أكتر فيديوهات عليها تعليقات مع تعليقاتها بميزانية ٣٠٠٠ نقطة",
+  "source": "live",
+  "expect": {
+   "platform": "tiktok",
+   "count": null,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": "count"
+  }
+ },
+ {
+  "request": "هات ٢ فيديو تيك توك من مصر بالعربي عن الذكاء الاصطناعي، مع ١٠ تعليقات من كل فيديو",
+  "source": "live",
+  "expect": {
+   "platform": "tiktok",
+   "count": 2,
+   "commentsPerParent": 10,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات ١٠ تغريدات على X فيها «العاصمة الإدارية» بالعربي في شهر أكتوبر ٢٠٢٦",
+  "source": "live",
+  "expect": {
+   "platform": "x",
+   "count": 10,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "none",
+   "question": null
+  }
+ },
+ {
+  "request": "هات منشورين من حساب الحدث على إنستجرام (alhadath)، مع ١٠ تعليقات من كل منشور",
+  "source": "live",
+  "expect": {
+   "platform": "instagram",
+   "count": 2,
+   "commentsPerParent": 10,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات منشورين من صفحة قناة العربية على فيسبوك آخر ٣ شهور، مع ١٠ تعليقات من كل منشور",
+  "source": "live",
+  "expect": {
+   "platform": "facebook",
+   "count": 2,
+   "commentsPerParent": 10,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات فيديو واحد على يوتيوب عن نهائي السوبر المصري الأهلي والزمالك من القنوات الرسمية، مع ١٠ تعليقات",
+  "source": "live",
+  "expect": {
+   "platform": "youtube",
+   "count": 1,
+   "commentsPerParent": 10,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات منشور واحد من صفحة قناة العربية على فيسبوك، مع ٢٠ تعليق",
+  "source": "variation",
+  "expect": {
+   "platform": "facebook",
+   "count": 1,
+   "commentsPerParent": 20,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات تغريدة واحدة على X فيها «العاصمة الإدارية» مع ٥٠ تعليق",
+  "source": "variation",
+  "expect": {
+   "platform": "x",
+   "count": 1,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "none",
+   "question": null
+  }
+ },
+ {
+  "request": "هات فيديو واحد تيك توك بالعربي عن الذكاء الاصطناعي مع ١٥ تعليق",
+  "source": "variation",
+  "expect": {
+   "platform": "tiktok",
+   "count": 1,
+   "commentsPerParent": 15,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات 1 فيديو على يوتيوب عن نهائي السوبر المصري مع 10 تعليقات",
+  "source": "variation",
+  "expect": {
+   "platform": "youtube",
+   "count": 1,
+   "commentsPerParent": 10,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات فيديو واحد على يوتيوب عن نهائي السوبر المصري، مع كل التعليقات",
+  "source": "variation",
+  "expect": {
+   "platform": "youtube",
+   "count": 1,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "all",
+   "question": null
+  }
+ },
+ {
+  "request": "هات منشور واحد من حساب الحدث على إنستجرام (alhadath)، مع عشر تعليقات",
+  "source": "variation",
+  "expect": {
+   "platform": "instagram",
+   "count": 1,
+   "commentsPerParent": 10,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات منشورين من حساب الحدث على إنستجرام (alhadath)، مع خمس تعليقات من كل منشور",
+  "source": "variation",
+  "expect": {
+   "platform": "instagram",
+   "count": 2,
+   "commentsPerParent": 5,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات تلات فيديوهات تيك توك بالعربي عن الذكاء الاصطناعي، مع عشرة تعليقات من كل فيديو",
+  "source": "variation",
+  "expect": {
+   "platform": "tiktok",
+   "count": 3,
+   "commentsPerParent": 10,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات ثلاث منشورات من صفحة قناة العربية على فيسبوك، مع عشرين تعليق لكل منشور",
+  "source": "variation",
+  "expect": {
+   "platform": "facebook",
+   "count": 3,
+   "commentsPerParent": 20,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات خمس فيديوهات على يوتيوب عن نهائي السوبر المصري، مع كل التعليقات",
+  "source": "variation",
+  "expect": {
+   "platform": "youtube",
+   "count": 5,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "all",
+   "question": null
+  }
+ },
+ {
+  "request": "هات عشر تغريدات على X فيها «العاصمة الإدارية» بالعربي",
+  "source": "variation",
+  "expect": {
+   "platform": "x",
+   "count": 10,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "none",
+   "question": null
+  }
+ },
+ {
+  "request": "هات عشرين تغريدة على X فيها «العاصمة الإدارية» بالعربي",
+  "source": "variation",
+  "expect": {
+   "platform": "x",
+   "count": 20,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "none",
+   "question": null
+  }
+ },
+ {
+  "request": "هات تلاتة فيديوهات تيك توك من مصر بالعربي عن الذكاء الاصطناعي، مع مية تعليق من كل فيديو",
+  "source": "variation",
+  "expect": {
+   "platform": "tiktok",
+   "count": 3,
+   "commentsPerParent": 100,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات أربع منشورات من حساب الحدث على إنستجرام (alhadath)، مع ٥ تعليقات من كل منشور",
+  "source": "variation",
+  "expect": {
+   "platform": "instagram",
+   "count": 4,
+   "commentsPerParent": 5,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات فيديوهين على يوتيوب عن نهائي السوبر المصري، مع ٢٠ تعليق من كل فيديو",
+  "source": "variation",
+  "expect": {
+   "platform": "youtube",
+   "count": 2,
+   "commentsPerParent": 20,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات منشورين من صفحة قناة العربية على فيسبوك، مع ١٠ تعليقات لكل منشور",
+  "source": "variation",
+  "expect": {
+   "platform": "facebook",
+   "count": 2,
+   "commentsPerParent": 10,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات تغريدتين على X فيها «العاصمة الإدارية» بالعربي",
+  "source": "variation",
+  "expect": {
+   "platform": "x",
+   "count": 2,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "none",
+   "question": null
+  }
+ },
+ {
+  "request": "هات 5 فيديوهات تيك توك بالعربي عن الذكاء الاصطناعي، مع 10 تعليقات من كل فيديو",
+  "source": "variation",
+  "expect": {
+   "platform": "tiktok",
+   "count": 5,
+   "commentsPerParent": 10,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات ٥ فيديوهات تيك توك بالعربي عن الذكاء الاصطناعي، مع ١٠ تعليقات من كل فيديو",
+  "source": "variation",
+  "expect": {
+   "platform": "tiktok",
+   "count": 5,
+   "commentsPerParent": 10,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات 3 منشورات من صفحة قناة العربية على فيسبوك، مع 5 تعليقات على كل منشور",
+  "source": "variation",
+  "expect": {
+   "platform": "facebook",
+   "count": 3,
+   "commentsPerParent": 5,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات ٥ فيديوهات تيك توك بالعربي عن الذكاء الاصطناعي، مع ١٠ تعليقات",
+  "source": "variation",
+  "expect": {
+   "platform": "tiktok",
+   "count": 5,
+   "commentsPerParent": null,
+   "commentsBare": 10,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": "per_parent"
+  }
+ },
+ {
+  "request": "هات منشورين من صفحة قناة العربية على فيسبوك، مع ١٠ تعليقات",
+  "source": "variation",
+  "expect": {
+   "platform": "facebook",
+   "count": 2,
+   "commentsPerParent": null,
+   "commentsBare": 10,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": "per_parent"
+  }
+ },
+ {
+  "request": "هات فيديوهين على يوتيوب عن نهائي السوبر المصري، مع عشرين تعليق",
+  "source": "variation",
+  "expect": {
+   "platform": "youtube",
+   "count": 2,
+   "commentsPerParent": null,
+   "commentsBare": 20,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": "per_parent"
+  }
+ },
+ {
+  "request": "هات ٥ فيديوهات تيك توك بالعربي عن الذكاء الاصطناعي، مع ١٠٠ تعليق في المجموع",
+  "source": "variation",
+  "expect": {
+   "platform": "tiktok",
+   "count": 5,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": 100,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات منشورين من صفحة قناة العربية على فيسبوك، مع إجمالي ٥٠ تعليق",
+  "source": "variation",
+  "expect": {
+   "platform": "facebook",
+   "count": 2,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": 50,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات فيديوهات تيك توك بالعربي عن الذكاء الاصطناعي من مصر",
+  "source": "variation",
+  "expect": {
+   "platform": "tiktok",
+   "count": null,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "none",
+   "question": "count"
+  }
+ },
+ {
+  "request": "هات منشورات من صفحة قناة العربية على فيسبوك مع كل التعليقات",
+  "source": "variation",
+  "expect": {
+   "platform": "facebook",
+   "count": null,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "all",
+   "question": "count"
+  }
+ },
+ {
+  "request": "هات تغريدات على X فيها «العاصمة الإدارية» بالعربي",
+  "source": "variation",
+  "expect": {
+   "platform": "x",
+   "count": null,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "none",
+   "question": "count"
+  }
+ },
+ {
+  "request": "هات ٣ فيديوهات تيك توك بالعربي عن الذكاء الاصطناعي مع تعليقاتها",
+  "source": "variation",
+  "expect": {
+   "platform": "tiktok",
+   "count": 3,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": "per_parent"
+  }
+ },
+ {
+  "request": "هات فيديو واحد على يوتيوب عن نهائي السوبر المصري مع تعليقاته",
+  "source": "variation",
+  "expect": {
+   "platform": "youtube",
+   "count": 1,
+   "commentsPerParent": null,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": "per_parent"
+  }
+ },
+ {
+  "request": "هات منشورين من حساب الحدث على إنستجرام (alhadath) مع ١٠٠ تعليق من كل منشور وكل الردود",
+  "source": "variation",
+  "expect": {
+   "platform": "instagram",
+   "count": 2,
+   "commentsPerParent": 100,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": null
+  }
+ },
+ {
+  "request": "هات فيديو تيك توك عن الذكاء الاصطناعي من مصر، ٣٠ تعليق من كل فيديو",
+  "source": "variation",
+  "expect": {
+   "platform": "tiktok",
+   "count": null,
+   "commentsPerParent": 30,
+   "commentsBare": null,
+   "commentsTotal": null,
+   "comments": "some",
+   "question": "count"
+  }
+ }
+]

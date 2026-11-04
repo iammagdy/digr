@@ -56,7 +56,8 @@ export function questionNeeded(ask: Pick<Ask, "count" | "parentKind" | "comments
     return { why: "count", question: COUNT_QUESTION_AR(word.plural), options: [COUNT_OPTIONS_AR.ten, COUNT_OPTIONS_AR.fifty, COUNT_OPTIONS_AR.hundred, COUNT_OPTIONS_AR.budget] };
   }
   // comments asked with no number per parent, and not «all the comments»: «كل التعليقات» or a number (the budget case decides the number by itself)
-  if (ask.comments === "some" && ask.commentsPerParent === null && choices.perParent === undefined && !hasBudget) {
+  // ROUND 19: a number of comments the words made a TOTAL («١٠٠ تعليق في المجموع», `edits.comments`) needs no question either
+  if (ask.comments === "some" && ask.commentsPerParent === null && ask.edits.comments === undefined && choices.perParent === undefined && !hasBudget) {
     return { why: "per_parent", question: PER_PARENT_QUESTION_AR(word.each), options: [PER_PARENT_OPTIONS_AR.all, PER_PARENT_OPTIONS_AR.ten, PER_PARENT_OPTIONS_AR.fifty, PER_PARENT_OPTIONS_AR.hundred] };
   }
   return null;

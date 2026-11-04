@@ -451,7 +451,8 @@ export function compilePlan(input: CompileInput): CompileResult {
     const p: StagePromise = openAllowance !== null ? { type: "open", n: openAllowance * chosen.length } : p0;
     promises.comments = p;
     // the rows the stage may read: the number per parent for every parent (a parent with fewer gives what it has), else the promise
-    const planned = perParent !== null ? perParent * chosen.length : p.n;
+    // ROUND 19 (live Facebook 4 Nov 2026: counters 9 and 6, ١٠ asked per post, the card promised ٢٢ = 2 + 10 + 10): with a number per parent the promise is the sum of min(the number asked, the parent's own counter) (`perParentPromise`, 9 + 6 = 15, so 2 + 15 = 17); only an OPEN stage (no counter before reading) is sized by the number asked for every parent
+    const planned = perParent !== null && p.type !== "counter" ? perParent * chosen.length : p.n;
     stages.push({
       key: "comments", title_ar: "التعليقات", endpoint_id: commentsCard.endpointId, ...(capabilityOf(commentsCard.endpointId) ? { capability: capabilityOf(commentsCard.endpointId)! } : {}),
       expected_rows: planned, planned_rows: planned, parent_key: parentKey, ...(openAllowance !== null ? { per_parent_rows: openAllowance, children_cap_per_parent: openAllowance } : perParent !== null ? { per_parent_rows: perParent } : cap !== null ? { per_parent_rows: Math.ceil(p.n / chosen.length) } : {}), deliver: true,

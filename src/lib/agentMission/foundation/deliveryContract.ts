@@ -93,7 +93,12 @@ export function alternativeRoutesAr(n: number): string {
 
 /** ROUND 16: the line of a parent whose comments fell short AFTER an alternative route was tried: the expected count, the unique comments delivered, the gap, and that the main route and N alternative routes were tried. From persisted execution evidence only (the routes the item store recorded). */
 export function alternativesGapLineAr(input: { parentNoun: string; n: number; expected: number; delivered: number; alternatives: number }): string {
-  return `ال${input.parentNoun} رقم ${fmt(input.n)}: المتوقع ${fmt(input.expected)} تعليقًا، وسُلّم ${fmt(input.delivered)} تعليقًا فريدًا، والفرق ${fmt(Math.max(0, input.expected - input.delivered))}؛ جرّبنا المسار الرئيسي و${alternativeRoutesAr(input.alternatives)} للمنصة نفسها، ولم يعطِ أيٌّ منها الباقي.`;
+  return `ال${input.parentNoun} رقم ${fmt(input.n)}: ${alternativesGapBodyAr(input)}.`;
+}
+
+/** The sentence of that line without its head and its final full stop (ROUND 19: the one line of a parent may carry the replies' part after it). */
+export function alternativesGapBodyAr(input: { expected: number; delivered: number; alternatives: number }): string {
+  return `المتوقع ${fmt(input.expected)} تعليقًا، وسُلّم ${fmt(input.delivered)} تعليقًا فريدًا، والفرق ${fmt(Math.max(0, input.expected - input.delivered))}؛ جرّبنا المسار الرئيسي و${alternativeRoutesAr(input.alternatives)} للمنصة نفسها، ولم يعطِ أيٌّ منها الباقي`;
 }
 
 export function checkDeliveryContract(input: ContractInput): ContractViolation[] {
@@ -113,6 +118,19 @@ function r1(input: ContractInput): ContractViolation[] {
   const present = stated.filter((x): x is [string, number] => x[1] !== null);
   const reference = present[0];
   if (reference) for (const [where, value] of present.slice(1)) if (value !== reference[1]) out.push({ rule: "R1", sheet: null, rowId: null, expected: `${fmt(reference[1])} (${reference[0]})`, found: `${fmt(value)} (${where})` });
+  // ROUND 19: A PROMISE NEVER STANDS ABOVE THE COUNTERS. A comments stage with a number for each parent promises at most the sum of min(that number, the parent's own counter) over its parents: more than that is a number nothing can deliver (live Facebook: 20 promised, counters 9 and 6)
+  for (const stage of input.plan.stages) {
+    if (!stage.deliver || stage.parent_key === null || stage.replies_of !== undefined || itemNounOf(stage.title_ar).singular !== "تعليق") continue;
+    const per = Number(stage.per_parent_rows);
+    if (!(Number.isFinite(per) && per > 0) || (stage.children_cap_per_parent ?? null) !== null) continue;
+    const parents = input.rowsByStage[stage.parent_key] ?? [];
+    const counters = parents.map((p) => childCountOf(p));
+    if (parents.length === 0 || counters.some((c) => c === null)) continue;
+    // the stage planned for a number FOR EACH parent (rows = that number x the parents): at most the sum of min(number, counter); a stage sized by an edited total is held to the sum of the counters
+    const perForm = stage.planned_rows === per * parents.length;
+    const possible = counters.reduce<number>((s, c) => s + (perForm ? Math.min(per, c ?? 0) : (c ?? 0)), 0);
+    if (stage.planned_rows > possible) out.push({ rule: "R1", sheet: stage.title_ar, rowId: null, expected: `${fmt(possible)} تعليقًا على الأكثر (مجموع الأصغر من العدد المطلوب لكل عنصر وعدّاد العنصر)`, found: `${fmt(stage.planned_rows)} في الخطة` });
+  }
   if (n.fileDelivered !== null && n.fileDelivered !== n.deliveredRows) out.push({ rule: "R1", sheet: null, rowId: null, expected: `${fmt(n.deliveredRows)} صفًا في الملف`, found: `${fmt(n.fileDelivered)} في سطر التسليم` });
   return out;
 }
@@ -126,6 +144,8 @@ function r2(input: ContractInput): ContractViolation[] {
   const missing = (text: string): boolean => !limitLines.some((l) => l.includes(text));
   let anyGap = false;
   const has = (l: string, ...parts: string[]): boolean => parts.every((p) => l.includes(p));
+  // ROUND 19: a count of one or two is written in WORDS by the count formatter («تعليق واحد», «تعليقان»), never with a digit: a line that says it so says the number (live YouTube: R2 found no «١» and added a second line to every video that delivered one)
+  const saysNumber = (l: string, n: number): boolean => l.includes(fmt(n)) || (n === 1 && /واحد/.test(l)) || (n === 2 && /(?:ين|ان)(?![ء-ي])/.test(l) && /(?:تعليق|رد|منشور|فيديو|تغريد)\S*(?:ين|ان)(?![ء-ي])/.test(l));
   for (const stage of plan.stages) {
     if (!stage.deliver || stage.parent_key === null || stage.replies_of !== undefined) continue;
     if (itemNounOf(stage.title_ar).singular !== "تعليق") continue;
@@ -147,14 +167,17 @@ function r2(input: ContractInput): ContractViolation[] {
       const open = cap !== null && counter === null;
       const expected = expectedCommentsOf(stage, p);
       const head = `ال${parentNoun} رقم ${fmt(i + 1)}`;
+      // ROUND 19: ONE line per parent in «حدود هذا التسليم» (live Facebook: two different lines for each post): the asked number or the counter, what was delivered, the gap and the routes tried, said once
+      const own = limitLines.filter((l) => l.startsWith(`${head}:`));
+      if (own.length > 1) out.push({ rule: "R2", sheet: stage.title_ar, rowId: rowId(p), expected: `سطر واحد لـ«${head}» في حدود هذا التسليم`, found: `${fmt(own.length)} أسطر` });
       if (expected !== null && mine.length < expected) {
         anyGap = true;
         // ROUND 16: a shortfall that happened AFTER alternative routes were tried must say so: the expected count, the unique delivered, the gap, the main route and the N alternative routes tried (persisted execution evidence only)
         const tried = input.routes?.[stage.key]?.[rowId(p)] ?? 0;
         if (tried > 0) {
-          if (!limitLines.some((l) => has(l, head, "المسار الرئيسي", alternativeRoutesAr(tried), fmt(expected), fmt(mine.length)))) out.push({ rule: "R2", sheet: stage.title_ar, rowId: rowId(p), expected: `سطر لـ«${head}» يذكر المتوقع ${fmt(expected)} والفريد المسلّم ${fmt(mine.length)} وأن المسار الرئيسي و${alternativeRoutesAr(tried)} جُرّبت`, found: "لا سطر",
+          if (!limitLines.some((l) => has(l, head, "المسار الرئيسي", alternativeRoutesAr(tried)) && saysNumber(l, expected) && saysNumber(l, mine.length))) out.push({ rule: "R2", sheet: stage.title_ar, rowId: rowId(p), expected: `سطر لـ«${head}» يذكر المتوقع ${fmt(expected)} والفريد المسلّم ${fmt(mine.length)} وأن المسار الرئيسي و${alternativeRoutesAr(tried)} جُرّبت`, found: "لا سطر",
             fix: { kind: "limit_line", text: alternativesGapLineAr({ parentNoun, n: i + 1, expected, delivered: mine.length, alternatives: tried }) } });
-        } else if (!limitLines.some((l) => has(l, head, fmt(expected), fmt(mine.length)))) {
+        } else if (!limitLines.some((l) => has(l, head) && saysNumber(l, expected) && saysNumber(l, mine.length))) {
           out.push({ rule: "R2", sheet: stage.title_ar, rowId: rowId(p), expected: `سطر لـ«${head}» يذكر ${fmt(expected)} و${fmt(mine.length)}`, found: "لا سطر",
             fix: { kind: "limit_line", text: gapLineAr({ parentNoun, n: i + 1, counterLabel: "المتوقع", counter: expected, delivered: mine.length, what: "التعليقات" }) } });
         }
@@ -170,7 +193,7 @@ function r2(input: ContractInput): ContractViolation[] {
         const got = mine.reduce((n, c) => n + (repliesOf.get(rowId(c)) ?? 0), 0);
         if (got < counters) {
           anyGap = true;
-          if (!limitLines.some((l) => has(l, head, fmt(counters), fmt(got)))) {
+          if (!limitLines.some((l) => has(l, head) && saysNumber(l, counters) && saysNumber(l, got))) {
             out.push({ rule: "R2", sheet: replyStage.title_ar, rowId: rowId(p), expected: `سطر لـ«${head}» يذكر عدّادات الردود ${fmt(counters)} وما سُلّم ${fmt(got)}`, found: "لا سطر",
               fix: { kind: "limit_line", text: `${head}: ردود التعليقات المسلّمة بحسب عدّاداتها ${fmt(counters)} وسُلّم منها ${fmt(got)}؛ والفرق لم يعطِه المصدر` } });
           }

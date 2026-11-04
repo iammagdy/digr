@@ -1,3 +1,4 @@
+import { NUMBER_WORDS_SRC, numberOfWord } from "./arabicNumberWords";
 import { conditionsOfRequest } from "./requestConditions";
 import { GAP_CHOICE_LINE_AR, gapLinesAr } from "./gapLines";
 import { platformOfStages, type SocialPlatform } from "./redesignFlagTypes";
@@ -50,11 +51,17 @@ function firstPlatform(text: string): SocialPlatform | null {
   return best ? best.p : null;
 }
 
+// ROUND 19: the count of top-level items, in digits (Arabic-Indic or Latin), in words («خمس فيديوهات», «تلات منشورات», «عشرين تغريدة»), as «واحد» after the noun («فيديو واحد», «منشور واحد», «تغريدة واحدة») or as the dual («فيديوهين», «منشورين»)
+const COUNT_WORD = new RegExp(`(?:^|\\s)(${NUMBER_WORDS_SRC})\\s+${COUNT_NOUN.source}`);
+const COUNT_ONE = new RegExp(`${COUNT_NOUN.source}[ء-ي]*\\s+(?:ال)?(?:واحد|واحدة|وحدة)(?![ء-ي])`);
 function countOf(text: string): number | null {
   const d = digits(text);
   const numeric = new RegExp(`(?:^|\\s)(\\d{1,6})\\s*${COUNT_NOUN.source}`).exec(d);
   if (numeric) return Number(numeric[1]);
-  return DUAL.test(text) ? 2 : null;
+  if (DUAL.test(text)) return 2;
+  const word = COUNT_WORD.exec(text);
+  if (word) return numberOfWord(word[1]);
+  return COUNT_ONE.test(text) ? 1 : null;
 }
 
 function sourceOf(text: string): RequestContract["source"] {

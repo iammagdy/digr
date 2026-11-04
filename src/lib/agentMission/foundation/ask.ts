@@ -4,6 +4,7 @@ import { topicMeaningOf } from "../topicMeaning";
 import { cairoDayEndExclusiveMs, cairoDayOf, cairoDayStartMs } from "../cairoTime";
 import type { SocialPlatform } from "../redesignFlagTypes";
 import { occurrenceChoiceOf, requestYearOf, type Occurrence } from "./occurrence";
+import { NUMBER_WORDS_SRC, numberOfToken } from "../arabicNumberWords";
 
 /**
  * F1, THE ASK (docs/FOUNDATION-PLAN.md section 3.1): what the customer asked, built ONCE by code from their words, their answer to the one question and their edit of the
@@ -52,6 +53,8 @@ export interface Ask {
   replies: ChildAsk;
   /** The customer's number of top-level comments FOR EACH parent («١٠٠ تعليق من كل فيديو»), or null when the words give none per parent. */
   commentsPerParent: number | null;
+  /** ROUND 19: a number of comments the words give with no «each» and no «total» after it («مع ١٠ تعليقات») while the request has several parents or none counted yet: asked once before the plan. Null when the number is per parent, a total, or absent. */
+  commentsBare: number | null;
   /** The customer's number of replies FOR EACH comment («٣ ردود على كل تعليق»), or null. */
   repliesPerComment: number | null;
   /** Decision 7: the occurrence of a recurring event the customer chose («آخر مرة» / «كل المرات» / a year), or null when none was chosen or asked. */
@@ -116,15 +119,28 @@ function countryNamedIn(text: string): string | null {
   return null;
 }
 
-/** «١٠٠ تعليق من كل فيديو», «٥٠ تعليق لكل فيديو», «أول ٢٠ تعليق على كل منشور»: a number standing before the child's noun, then «كل» and the parent's noun. A number with no «كل» after it is not per parent. */
-const PARENT_NOUN = "(?:فيديو|فيديوهات|منشور|بوست|تغريدة|تغريده|ريل|عنصر|واحد|واحدة)";
-const PER_PARENT_COMMENTS = new RegExp(`(\\d+)\\s*(?:تعليقات|تعليق|كومنتات|كومنت)\\s+(?:(?:من|على|في|عن)\\s+)?ل?كل\\s+${PARENT_NOUN}`);
-const PER_COMMENT_REPLIES = /(\d+)\s*(?:ردود|ردًا|ردا|رد)\s+(?:(?:من|على|في|عن)\s+)?ل?كل\s+(?:تعليق|كومنت)/;
-function perParentOf(text: string, rx: RegExp): number | null {
+/**
+ * THE NUMBER OF COMMENTS FOR EACH PARENT («١٠٠ تعليق من كل فيديو», «٥٠ تعليق لكل فيديو», «أول ٢٠ تعليق على كل منشور», «خمس تعليقات لكل واحد», «١٠ تعليقات للفيديو الواحد»): a number (digits of either script, or words) before the child's noun, then a word that says «each».
+ * ROUND 19: a number with NO «each» after it is not per parent by itself: with ONE parent («فيديو واحد ... مع ١٠ تعليقات») it is that parent's number; with several it is a bare count (`commentsBare`), asked once («كم تعليقًا تريد من كل فيديو؟») unless the words say it is a total («في المجموع», «إجمالي»).
+ */
+const PARENT_NOUN = "(?:فيديوهات|فيديو|منشورات|منشور|بوستات|بوست|تغريدات|تغريدة|تغريده|ريلز|ريل|مقطع|عنصر|واحد|واحدة)";
+const NUM = `(\\d+|${NUMBER_WORDS_SRC})`;
+const COMMENT_NOUN = "(?:تعليقات|تعليقًا|تعليقا|تعليق|كومنتات|كومنت)";
+const REPLY_NOUN = "(?:ردود|ردًا|ردا|رد)";
+const EACH = `(?:(?:(?:من|على|في|عن|تحت)\\s+)?ل?كل\\s+${PARENT_NOUN}|(?:على|في|من|ل)\\s*(?:ال)?(?:فيديو|منشور|بوست|تغريدة|ريل|مقطع)\\s+(?:ال)?(?:واحد|واحدة))`;
+const PER_PARENT_COMMENTS = new RegExp(`(?:^|\\s)(?:و|ب|بـ)?${NUM}\\s*${COMMENT_NOUN}\\s+${EACH}`);
+const PER_COMMENT_REPLIES = new RegExp(`(?:^|\\s)(?:و|ب|بـ)?${NUM}\\s*${REPLY_NOUN}\\s+(?:(?:من|على|في|عن)\\s+)?ل?كل\\s+(?:تعليق|كومنت)`);
+/** A number of comments with NO «each» after it: «مع ١٠ تعليقات», «و٥٠ تعليق». */
+const BARE_COMMENTS = new RegExp(`(?:^|\\s)(?:مع\\s+|و|ب|بـ)?${NUM}\\s*${COMMENT_NOUN}(?![ء-ي])`);
+/** The words that make a number of comments a TOTAL: «١٠٠ تعليق في المجموع», «إجمالي ١٠٠ تعليق». */
+const TOTAL_AFTER = new RegExp(`(?:^|\\s)${NUM}\\s*${COMMENT_NOUN}\\s+(?:في\\s+|ب)?(?:ال)?(?:مجموع|إجمالي|اجمالي|الكل|كلهم|كلها|كامل|الإجمالي)`);
+const TOTAL_BEFORE = new RegExp(`(?:إجمالي|اجمالي|مجموع|المجموع)\\s+${NUM}\\s*${COMMENT_NOUN}`);
+function numberIn(text: string, rx: RegExp): number | null {
   const m = rx.exec(digits(text));
-  const n = m ? Number(m[1]) : NaN;
-  return Number.isInteger(n) && n > 0 ? n : null;
+  const n = m ? numberOfToken(m[1]) : null;
+  return n !== null && Number.isInteger(n) && n > 0 ? n : null;
 }
+const perParentOf = numberIn;
 
 const NEWEST = /(?:^|\s)(?:ال)?[أا]حدث(?:\s|$)|الأخيرة|الاخيرة|latest|newest/i;
 const MADE_WITH = /(?:معمول|مصنوع|متعمل|مولد|مصمم)\w*\s*(?:ب|بال)/;
@@ -161,10 +177,18 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
   const occurrence: Occurrence | null = chosen && chosen.kind !== "ask_year" ? chosen : social && !c.period && requestYearOf(String(request ?? "")) !== null ? { kind: "year", year: requestYearOf(String(request ?? ""))! } : null;
   const yearPeriod: AskPeriod | null = social && !c.period && occurrence?.kind === "year" ? periodOf(dayOf(occurrence.year, 1, 1), dayOf(occurrence.year, 12, 31)) : null;
   const language: Ask["language"] = c.language ? (/بالإنجليزي|بالانجليزي|الإنجليزية|الانجليزية|english/i.test(text) ? "en" : "ar") : null;
+  // ROUND 19: the comments number. «N تعليق من كل فيديو» is per parent; «N تعليق في المجموع» is a total (the card's own edit of the total); a bare «مع N تعليقات» is the one parent's number when the request has ONE parent («فيديو واحد»), else a bare count to ask about
+  const count = edits.count ?? c.count;
+  const eachValue = c.comments === "none" ? null : perParentOf(text, PER_PARENT_COMMENTS);
+  const totalValue = c.comments === "none" ? null : numberIn(text, TOTAL_AFTER) ?? numberIn(text, TOTAL_BEFORE);
+  const bare = c.comments === "none" || eachValue !== null || totalValue !== null ? null : numberIn(text, BARE_COMMENTS);
+  const perParentValue = eachValue ?? (bare !== null && count === 1 ? bare : null);
+  const bareValue = bare !== null && perParentValue === null ? bare : null;
+  const totalEdit = totalValue !== null && edits.comments === undefined ? { comments: totalValue } : {};
   return {
     platform: c.platform,
     parentKind: c.parentKind,
-    count: edits.count ?? c.count,
+    count,
     source: { kind: sourceKind, text: link ?? c.source.text },
     topic: { text: topicText, relation },
     period: c.period ? periodOfRequest(text, requestedAtMs) : yearPeriod,
@@ -173,9 +197,10 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
     order: NEWEST.test(text) || c.comments === "none" ? "newest" : "most_commented",
     comments: c.comments,
     replies: c.replies,
-    commentsPerParent: c.comments === "none" ? null : perParentOf(text, PER_PARENT_COMMENTS),
+    commentsPerParent: perParentValue,
+    commentsBare: bareValue,
     repliesPerComment: c.replies === "none" ? null : perParentOf(text, PER_COMMENT_REPLIES),
     ...(social && occurrence ? { occurrence } : {}),
-    edits: { ...edits },
+    edits: { ...totalEdit, ...edits },
   };
 }
