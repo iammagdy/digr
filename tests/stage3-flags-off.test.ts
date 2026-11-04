@@ -32,7 +32,7 @@ async function digestOf(r: ReplayResult): Promise<Record<string, string>> {
   for (const st of m.plan?.stages ?? []) rows[st.key] = clean(JSON.parse((await r.store.getFile(r.missionId, `rows/${st.key}.json`)) ?? "null"));
   return {
     plan: sha(clean(r.plannedPlan)),
-    status: `${m.status}:${m.delivered_units}:${m.charged_points}:${m.released_points ?? ""}`,
+    status: `${m.status}:${m.delivered_units}:${m.charged_points}:${(m as unknown as Record<string, unknown>).released_points ?? ""}`,
     rows: sha(rows),
     file: sha(clean(cells)),
   };

@@ -43,8 +43,8 @@ describe("flag «on»: the companies plan is made by code", () => {
     expect(m.charged_points).toBe(Math.min(Math.ceil(Math.round(15 * r.plannedPlan.price.unitPricePoints * 1e6) / 1e6 - 1e-9), r.plannedPlan.price.reservePoints));
     const wb = await readWorkbook(r);
     const text = JSON.stringify(wb.worksheets.map((ws) => ws.getSheetValues()));
-    expect(text).toContain("+20 2 2574 0001");
-    expect(text).toContain("p0@orascom-em.com.eg");
+    expect(text).toContain("+20225740001");
+    expect(text).toContain("p2@orascom-em.com.eg");
   }, 60_000);
 });
 

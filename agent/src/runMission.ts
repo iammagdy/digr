@@ -39,6 +39,7 @@ import { askedTextOf, buildRequestContract } from "../../src/lib/agentMission/re
 import { sealFinalPrice } from "../../src/lib/agentMission/finalPrice";
 import { accountIsTest, anyRedesignFlag, fallbackStageOf, redesignStagesOf } from "./redesign";
 import { compiledPlatformActive, planByCompiler } from "./compiled";
+import { planCompaniesByCodeIfOn } from "../../src/lib/agentMission/stage3/b2bPlanning";
 import { isSocialPlatform } from "../../src/lib/agentMission/redesignFlagTypes";
 import { modelPlanningForTests } from "../../src/lib/agentMission/testSeam";
 import { SOCIAL_NOT_OFFERED_AR } from "../../src/lib/agentMission/foundation/namedShortfall";
@@ -426,8 +427,15 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     if (compiled.kind === "plan") state.proposedPlan = compiled.plan;
     else state.finish = { outcome: "cannot_serve", summary_ar: compiled.reason === "budget_too_small" ? BUDGET_TOO_SMALL_AR : compiled.reason === "page_not_found" ? pageNotFoundAr(compiled.ask.source.text) : "", kind: compiled.reason === "no_rows" || compiled.reason === "no_parent_with_children" || compiled.reason === "page_not_found" ? "empty" : "unsupported" };
   }
-  let output = compiled ? { ...COMPILED_RUN, llmCostUsd: compiled.llmCostUsd ?? 0 } : await runOnce(planningPrompt(mission, calls, resumeNote));
-  if (!compiled) await recordTokens(deps, mission.id, 0, output.usage, { inputTokens: 0, outputTokens: 0, calls: 0 }, output.llmCostUsd);
+  // STAGE 3, PART A (docs/STAGE-3.md S3): a companies and decision-makers request is planned BY CODE (stage3/b2bPlanning.ts, verified cards only, priced by the existing function, no read, no model) only when
+  // DIGER_STAGE3_COMPANIES is on for this account; the helper reads the flag first and gives null when it is off (unset: always), so the planning below is exactly today's. A request it does not plan keeps today's path.
+  const b2b = compiled ? null : planCompaniesByCodeIfOn({ requestText: askedTextOf(mission), isTestAccount: redesign.isTest, catalog: deps.catalog, access, stats: sourceStats, now: planningNow, pricingSettings });
+  if (b2b && !(b2b.ok === false && b2b.reason === "not_b2b")) {
+    await store.addEvent(mission.id, { kind: "call", message_ar: b2b.ok ? "قياس داخلي: خطة شركات مبنية بالكود." : "قياس داخلي: لم تُبنَ خطة الشركات بالكود، فبقيت الطريقة الحالية.", counts: { b2b_compiled: b2b.ok ? 1 : 0 } }).catch(() => undefined);
+    if (b2b.ok) state.proposedPlan = b2b.plan;
+  }
+  let output = compiled ? { ...COMPILED_RUN, llmCostUsd: compiled.llmCostUsd ?? 0 } : b2b?.ok ? COMPILED_RUN : await runOnce(planningPrompt(mission, calls, resumeNote));
+  if (!compiled && !b2b?.ok) await recordTokens(deps, mission.id, 0, output.usage, { inputTokens: 0, outputTokens: 0, calls: 0 }, output.llmCostUsd);
   // A RUN THAT ENDED WITH NO PLAN, NO QUESTION AND NO ENDING while the sources gave it real rows (live 2026-10-29: Facebook videos, after the customer answered the question, the planner tried two unavailable web searches and stopped): it is asked once more, told to
   // build the plan from what it holds. Never a limit of ours: the run's stop was a plain end, with no budget, turn or time limit reached.
   for (let nudge = 0; nudge < AGENT_PLANNING_NUDGES_MAX && endedSilently(output, state); nudge += 1) {
