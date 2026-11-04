@@ -83,6 +83,9 @@ function sourceOf(text: string): RequestContract["source"] {
 function topicOf(text: string): string | null {
   const quoted = /(?:عن|حول|بخصوص|فيها|فيه|تذكر)\s+["«“]([^"»”]+)["»”]/.exec(text);
   if (quoted) return quoted[1].trim();
+  // ROUND 25: «رأي الناس في X», «آراء الجمهور عن X», «كلام الناس حول X»: the SUBJECT is X (live: the topic read «رأي الناس» and the search would have looked for that phrase)
+  const opinion = /(?:رأي|راي|آراء|اراء|كلام|انطباعات|ردود\s+فعل|مشاعر|موقف)\s+(?:ال\S+\s+)?(?:في|عن|حول|تجاه|بخصوص)\s+(.+?)(?=\s+(?:من|في|على|آخر|اخر|بالعربي|بالعربية|مع|بين|منذ|خلال)(?:\s|$)|[،,.؟?]|$)/.exec(text);
+  if (opinion) return opinion[1].trim();
   const m = /(?:عن|حول|بخصوص)\s+(.+?)(?=\s+(?:من|في|على|آخر|اخر|بالعربي|بالعربية|مع|بين|منذ|خلال)(?:\s|$)|[،,.]|$)/.exec(text);
   return m ? m[1].trim() : null;
 }

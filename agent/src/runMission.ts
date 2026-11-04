@@ -34,7 +34,7 @@ import { ItemStore, type ItemSnapshot, type StopReason } from "./items/itemStore
 import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
 import { readPlatformFlagsOf, readRedesignFlags } from "../../src/lib/agentMission/redesignFlags";
-import { PLATFORM_OPTIONS_AR, PLATFORM_QUESTION_AR, platformQuestionNeeded } from "../../src/lib/agentMission/platformQuestion";
+import { CLARIFY_OPTIONS_AR, CLARIFY_QUESTION_AR, PLATFORM_OPTIONS_AR, PLATFORM_QUESTION_AR, UNCLEAR_END_AR, legacyRouteOf, platformOptionOf, withPlatformChoice } from "../../src/lib/agentMission/platformQuestion";
 import { askedTextOf, buildRequestContract } from "../../src/lib/agentMission/requestContract";
 import { sealFinalPrice } from "../../src/lib/agentMission/finalPrice";
 import { accountIsTest, anyRedesignFlag, fallbackStageOf, redesignStagesOf } from "./redesign";
@@ -299,6 +299,16 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   if (started.planningStarts > AGENT_PHASE_STARTS_MAX) { await endPlanningUnserved(deps, mission, `planning started ${started.planningStarts} times`); return; }
   await store.updateMission(mission.id, { planning_model: model, error: null });
   await store.addEvent(mission.id, { kind: "system", message_ar: "بدأ الوكيل دراسة طلبك." });
+  // ROUND 25 (live msn_04afab34…): THE PLATFORM THE CUSTOMER CHOSE at «من أنهي منصة؟» is kept in the run note, because the answer of the next card (the count) REPLACES `answer_text`; the request is read with it for the whole mission,
+  // so the count answer no longer drops the platform (it did: the third run saw no platform and went to the legacy model path, one paid search, then «مصادرنا لا تخدم»)
+  {
+    const note = await readRunState(store, mission.id);
+    const tapped = platformOptionOf(mission.answer_text);
+    const noPlatformOfItsOwn = buildRequestContract(mission.request_text).platform === null;
+    const platformChoice = noPlatformOfItsOwn ? (tapped ?? note.platformAnswer ?? null) : null;
+    if (tapped && noPlatformOfItsOwn && note.platformAnswer !== tapped) await updateRunState(store, mission.id, (r) => ({ ...r, platformAnswer: tapped }), deps.log);
+    if (platformChoice) mission = withPlatformChoice(mission, platformChoice);
+  }
   const calls = await store.listCalls(mission.id);
   const access = await deps.resolveAccess(mission.user_id);
   const counter = { seq: lastSeq(calls) };
@@ -330,12 +340,32 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     await tell(deps, mission, null, "unserved", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false });
     return;
   }
-  // A DATA REQUEST WITH NO PLATFORM IS ASKED, NOT PLANNED (round 23, platformQuestion.ts): «عايز داتا عن رأي الناس في الذكاء الاصطناعي» used to run the model-planned path (two paid searches, 20 model turns) and end «خارج مصادرنا». One question card with five one-tap choices comes first, before any model turn or provider call;
-  // the answer is read with the request and its platform takes the normal compiled path. Nothing is held or charged, and no notice is sent for a question.
-  if (!modelPlanningForTests() && !mission.answer_text && platformQuestionNeeded(mission.request_text)) {
-    await store.updateMission(mission.id, { status: "needs_input", question_ar: PLATFORM_QUESTION_AR, plan_public: { question_options: [...PLATFORM_OPTIONS_AR] } as any, ...clear });
-    await store.addEvent(mission.id, { kind: "question", message_ar: PLATFORM_QUESTION_AR });
-    return;
+  // ROUND 25: THE LEGACY MODEL-PLANNED PATH TAKES ONLY COMPANIES OR PLACES (platformQuestion.ts). A request with no platform that looks like social data gets the platform card «من أنهي منصة؟»; anything else unclear gets ONE clarifying card. Both come BEFORE any model turn or
+  // provider call; nothing is held or charged and no notice is sent for a question. A second unclear answer ends the request honestly with no paid call (never «مصادرنا لا تخدم», and an unanswered card is never ended here).
+  if (!modelPlanningForTests() && redesign.platform === null) {
+    const route = legacyRouteOf(mission.request_text, mission.answer_text);
+    if (route !== "legacy") {
+      const note = await readRunState(store, mission.id);
+      const platformAsked = note.platformAsked ?? 0;
+      const clarifyAsked = note.clarifyAsked ?? 0;
+      if (route === "platform_question" && platformAsked === 0 && clarifyAsked === 0) {
+        await updateRunState(store, mission.id, (r) => ({ ...r, platformAsked: (r.platformAsked ?? 0) + 1 }), deps.log);
+        await store.updateMission(mission.id, { status: "needs_input", question_ar: PLATFORM_QUESTION_AR, plan_public: { question_options: [...PLATFORM_OPTIONS_AR] } as any, ...clear });
+        await store.addEvent(mission.id, { kind: "question", message_ar: PLATFORM_QUESTION_AR });
+        return;
+      }
+      if (clarifyAsked === 0) {
+        await updateRunState(store, mission.id, (r) => ({ ...r, clarifyAsked: (r.clarifyAsked ?? 0) + 1 }), deps.log);
+        await store.updateMission(mission.id, { status: "needs_input", question_ar: CLARIFY_QUESTION_AR, plan_public: { question_options: [...CLARIFY_OPTIONS_AR] } as any, ...clear });
+        await store.addEvent(mission.id, { kind: "question", message_ar: CLARIFY_QUESTION_AR });
+        return;
+      }
+      await store.updateMission(mission.id, { status: "unserved", summary_ar: UNCLEAR_END_AR, ...clear });
+      await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: طلب غير واضح بعد سؤالين، لم يُجرَ أي تخطيط.", counts: { compiled: 0, unclear: 1 } }).catch(() => undefined);
+      await store.addEvent(mission.id, { kind: "result", message_ar: UNCLEAR_END_AR });
+      await tell(deps, mission, null, "unserved", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false });
+      return;
+    }
   }
   const ctx: ToolContext = { redesign, phase: "planning", mission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, pricingSettings, stats: sourceStats, now: planningNow };
   // AN AMBIGUOUS TOPIC IS ASKED BEFORE PLANNING (S8, owner decision; redesigned mode only): «فيديوهات الذكاء الاصطناعي» may mean videos that TALK ABOUT it or videos MADE WITH it; «عن X» means about and «معمول بـ X» means made with, so only the request that says neither is asked, by code, with two ready answers,
@@ -457,6 +487,9 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   } else if (state.question) {
     await store.updateMission(mission.id, { ...base, status: "needs_input", question_ar: state.question });
   } else {
+    // ROUND 25: a mission that already shows a plan (a stale run racing the card) is never closed as unserved or failed: the stored plan stays for the customer to approve
+    const current = await store.getMission(mission.id).catch(() => null);
+    if (current && (current.status === "plan_ready" || current.plan)) { deps.log?.(`no_card_kept_plan ${mission.id}`); await store.updateMission(mission.id, { ...clear }).catch(() => undefined); return; }
     // NO CARD: exactly one of four honest classes, decided by code from what the planning really did (src/lib/agentMission/refusal.ts), never from the model's own words
     const planningCalls = await store.listCalls(mission.id);
     const verdict = classifyNoCardEnd({ claim: state.finish?.kind ?? (state.finish ? "unsupported" : null), endedWithoutAnswer: !state.finish, stop: output.error ? `${output.stop}: ${output.error}` : String(output.stop ?? ""), calls: planningCalls });
