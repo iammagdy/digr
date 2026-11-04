@@ -1,6 +1,6 @@
 /**
  * STAGE 4 FLAGS (docs/STAGE-4.md). Each is OFF unless its environment variable says exactly «on» (every account) or «test» (test accounts only). Unset, empty or any other word is off.
- * Nothing in this branch reads them on a customer path. NO CHARGE is wired to any of them: charging waits for the separate money PR (FOUNDATION-PLAN PR 7).
+ * Read only by the wiring listed in tests/stage4-isolation.test.ts (S1: the worker's version 1; S2: the versions list). NO CHARGE is wired to any of them: charging waits for the separate money PR (FOUNDATION-PLAN PR 7).
  */
 export const STAGE4_FLAGS = ["DIGER_STAGE4_VERSIONS", "DIGER_STAGE4_REVIEW", "DIGER_STAGE4_EDITS"] as const;
 export type Stage4Flag = (typeof STAGE4_FLAGS)[number];
