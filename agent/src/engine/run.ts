@@ -369,17 +369,40 @@ const boundsOf = (period: { sinceMs: number; endExclusiveMs: number | null } | n
  */
 async function runRoot(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promise<{ reason: StopReason; aborted: string | null }> {
   // THE PINNED PARENTS ARE READ, NOT SEARCHED AGAIN (S2 item 6): the plan stored the rows of the parents its promise was computed from; a new search would return a different list (a video published in between) and the promise would be for other parents
-  if (deps.redesignStages?.has(stage.key) && (stage.pinned_rows ?? []).length > 0 && stage.pinned_rows!.length === stage.planned_rows) return runPinnedRows(deps, stage, spec);
+  // ROUND 29: the customer may have lowered the number before approving (10 -> 5 -> 3): the plan edit changes `planned_rows` and keeps every pinned row (an edit back up needs them), so the approved posts are the FIRST `planned_rows` of the pinned ones, read with no new search
+  const pinnedRun = deps.redesignStages?.has(stage.key) ? pinnedSubsetOf(stage) : null;
+  if (pinnedRun) return runPinnedRows(deps, stage, spec, pinnedRun);
   const r = await runRootPrimary(deps, stage, spec);
   return deps.redesignStages?.has(stage.key) ? continueAcrossTools(deps, stage, spec, r) : r;
 }
 
+/**
+ * ROUND 29 (live msn_133b26567812f65b49a8): WHICH PINNED ROWS A STAGE EXECUTES. Pure: no I/O.
+ *  - as many pinned rows as approved: all of them, with the spares that were stored (exactly as before);
+ *  - MORE pinned rows than approved (the customer lowered the number): the first `planned_rows` of them, in the order the plan chose them in (the order its sample showed). The pinned rows beyond that are the next-ranked parents: a stage that stored spares
+ *    keeps them in front of the stored spares (a parent that gives nothing is replaced by the next-ranked one, as always), a stage that stored none keeps none, so nothing the customer did not approve is delivered or reported as excluded;
+ *  - the rows used must be real: each of them has an id and no id repeats, else null (the fresh read, the old safe behaviour);
+ *  - FEWER pinned rows than approved (an increase beyond what the plan chose, an older plan), or none: null, the fresh read as before.
+ * The rows are the plan's own, with their marks and links untouched; nothing is made up.
+ */
+export function pinnedSubsetOf(stage: Pick<Stage, "planned_rows" | "pinned_rows" | "spare_rows">): { rows: Array<Record<string, unknown>>; spares: Array<Record<string, unknown>> } | null {
+  const pinned = stage.pinned_rows ?? [];
+  const planned = Number(stage.planned_rows);
+  if (pinned.length === 0 || !Number.isInteger(planned) || planned < 1 || pinned.length < planned) return null;
+  const spares = stage.spare_rows ?? [];
+  if (pinned.length === planned) return { rows: pinned, spares };
+  const rows = pinned.slice(0, planned);
+  const ids = rows.map((r) => (r && (typeof r.id === "string" || typeof r.id === "number") ? String(r.id) : ""));
+  if (ids.some((id) => id === "") || new Set(ids).size !== ids.length) return null;
+  return { rows, spares: spares.length > 0 ? [...pinned.slice(planned), ...spares] : [] };
+}
+
 /** The stage's items are the rows the plan measured for the pinned parents (one stream of one page, ended): no call is made. Resumes like any stream (an ended stream is not read again). */
-async function runPinnedRows(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promise<{ reason: StopReason; aborted: string | null }> {
+async function runPinnedRows(deps: EngineDeps, stage: Stage, spec: EngineSpec, run: { rows: Array<Record<string, unknown>>; spares: Array<Record<string, unknown>> }): Promise<{ reason: StopReason; aborted: string | null }> {
   const { items } = deps;
   if (!items.streamState(stage.key, "pinned")?.ended) {
     // the spares wait beside the pinned rows: over the stage's volume they are kept as spare parents, never delivered
-    const rows = [...(stage.pinned_rows ?? []), ...(stage.spare_rows ?? [])].map((r) => ({ ...r }));
+    const rows = [...run.rows, ...run.spares].map((r) => ({ ...r }));
     await ingestRows(deps, stage, rows, { silent: true, idField: spec.id_field ?? null, raw: true, page: { stream: "pinned", call_id: null, cursor_in: null, cursor_next: null, has_more: false, ended: true, rows_in_page: rows.length } });
     await emitStageProgress(deps, stage, { collecting: true });
   }

@@ -4,6 +4,14 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 29 (4 Nov 2026, after #380): the approved subset of the pinned rows is executed, no new search
+
+- **Live case:** Facebook `msn_133b26567812f65b49a8`. The customer edited 10 posts to 5, 4, then 3 before approving. `planEdit.ts` changes `planned_rows` and (by design) keeps all 10 `pinned_rows`, because an edit back up needs them. `runRoot` (`agent/src/engine/run.ts`) used the pinned rows only when `pinned.length === planned_rows`, so it read the source again: the 3 delivered posts were not the pinned ones, carried no «علاقة النص بالموضوع», and the methodology said the classification was unavailable (round 28 stated this honestly).
+- **Fix (`pinnedSubsetOf`, pure, in `run.ts`):** equal count: all pinned rows and the stored spares (as before). More pinned rows than approved: the FIRST `planned_rows` pinned rows in the plan's order (the order its sample showed), executed with no search. The pinned rows beyond that are kept as spare parents only for a stage that stored spares (a parent with no comments is replaced by the next-ranked one, as always); a stage with no spares keeps none, so nothing unapproved is delivered or counted as excluded. The rows used must each have an id and no id may repeat, else the old fresh read stays the fallback. Fewer pinned rows than approved (an increase beyond the plan, an older plan): the old fresh read.
+- **Not changed:** `planEdit.ts` (pinned, spare and sample rows stay as the plan stored them), pricing, reserve, minimum, ledger, settlement, `gateway.ts`, schema, permissions. The plan's money fields are identical before and after a run (tested).
+- **Not verified live:** no real mission was run; the fix is proven on the real engine and item store with a scripted source and on the real workbook writer. After deploy, a Facebook request lowered before approval should show the sample's first posts in the file and «النص يتحدث عن الموضوع» counts in the methodology.
+- **Tests:** `tests/round29-pinned-rows-after-edit.test.ts` (21).
+
 ## Round 28 (4 Nov 2026, after #379): the methodology states the relation of the delivered items to the topic
 
 - **Confirmed from the delivered TikTok file (independent review):** 10 rows, 10 unique ids and links, 19 columns aligned, «الحفظ» present, no blanks; 3 rows «يتحدث نصه عن الموضوع» and 7 «يذكر الموضوع في الوسوم فقط». The earlier browser report of missing ids, links and misaligned columns was contradicted by the file, so no column or mapping was touched.
