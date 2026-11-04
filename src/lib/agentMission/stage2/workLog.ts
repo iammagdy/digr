@@ -1,6 +1,8 @@
 import { toArabicDigits } from "../../arabicDigits";
 import { CAIRO_TZ } from "../cairoTime";
-import { countAr, deliveredOfAr, itemNounOf, knownItemNoun, type ItemNoun } from "../itemNoun";
+import { formatAr } from "../../arabicDigits";
+import { itemNounOf, knownItemNoun, type ItemNoun } from "../itemNoun";
+import { nounCountAr as countAr } from "./arabicCount";
 
 /**
  * STAGE 2, «دفتر شغل» (docs/STAGE-2.md, FOUNDATION-PLAN PR 4: «the notebook line from a code whitelist»). What the work is doing, said to the customer while they wait, ONE fixed Arabic
@@ -35,6 +37,8 @@ export interface WorkLogLine { code: WorkLogCode; at: number; timeAr: string; te
 const hm = new Intl.DateTimeFormat("en-GB", { timeZone: CAIRO_TZ, hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
 const isCount = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
 const nounOf = (k: unknown): ItemNoun | null => (typeof k === "string" && (WORK_LOG_NOUNS as ReadonlyArray<string>).includes(k) ? knownItemNoun(NOUN_WORD[k as WorkLogNoun]) : null);
+/** «X من N» in Arabic-Indic digits: the noun is named before it in the sentence (S11: «٤٠ من ١٠٠ تعليقًا» and «فيديوهين من فيديوهين» read badly). */
+const xOfN = (x: number, n: number): string => `${formatAr(x)} من ${formatAr(n)}`;
 const pagesAr = (n: number): string => (n === 1 ? "صفحة واحدة" : n === 2 ? "صفحتين" : n >= 3 && n <= 10 ? `${toArabicDigits(n)} صفحات` : `${toArabicDigits(n)} صفحة`);
 
 type Render = (e: WorkLogEvent, noun: ItemNoun | null) => string | null;
@@ -44,14 +48,14 @@ const SENTENCE: Readonly<Record<WorkLogCode, Render>> = {
   plan_approved: () => "اعتمدت الخطة، وبدأنا العمل.",
   stage_started: (_e, noun) => (noun ? `بدأنا جمع ${noun.plural}.` : null),
   page_read: (e) => (isCount(e.n) && e.n > 0 ? `قرأنا ${pagesAr(e.n)} من المصدر حتى الآن.` : null),
-  items_saved: (e, noun) => (noun && isCount(e.n) && isCount(e.total) ? `أضفنا ${countAr(e.n, noun)}، والمجموع الآن ${isCount(e.promised) && e.promised > 0 ? deliveredOfAr(e.total, e.promised, noun) : countAr(e.total, noun)}.` : null),
+  items_saved: (e, noun) => (noun && isCount(e.n) && isCount(e.total) ? `أضفنا ${countAr(e.n, noun)}، والمجموع الآن ${isCount(e.promised) && e.promised > 0 ? xOfN(e.total, e.promised) : countAr(e.total, noun)}.` : null),
   duplicates_removed: (e, noun) => (noun && isCount(e.n) && e.n > 0 ? `حذفنا ${countAr(e.n, noun)} مكررة تمامًا، ولم نحذف شيئًا غيرها.` : null),
   parent_replaced: (_e, noun) => (noun ? `لم يظهر تحت أحد ${noun.plural} أي تعليق، فأكملنا بالتالي في الترتيب.` : null),
   next_tool: () => "توقفت إحدى أدوات الجمع مبكرًا، فأكملنا بأداة أخرى.",
   source_ended: (_e, noun) => (noun ? `انتهى ما يعرضه المصدر من ${noun.plural}.` : null),
   retry_wait: () => "المصدر تأخر في الرد، ونعيد المحاولة.",
-  stage_done: (e, noun) => (noun && isCount(e.n) ? `انتهينا من جمع ${noun.plural}: ${isCount(e.promised) && e.promised > 0 ? deliveredOfAr(e.n, e.promised, noun) : countAr(e.n, noun)}.` : null),
-  gap_stated: (e, noun) => (noun && isCount(e.n) && isCount(e.promised) && e.promised > e.n ? `أعطانا المصدر ${deliveredOfAr(e.n, e.promised, noun)}، وكتبنا ذلك في الملف.` : null),
+  stage_done: (e, noun) => (noun && isCount(e.n) ? `انتهينا من جمع ${noun.plural}: ${isCount(e.promised) && e.promised > 0 ? xOfN(e.n, e.promised) : countAr(e.n, noun)}.` : null),
+  gap_stated: (e, noun) => (noun && isCount(e.n) && isCount(e.promised) && e.promised > e.n ? `أعطانا المصدر ${xOfN(e.n, e.promised)} فقط، وكتبنا ذلك في الملف.` : null),
   file_building: () => "نجهّز الملف الآن.",
   file_ready: () => "الملف جاهز للتنزيل.",
 };

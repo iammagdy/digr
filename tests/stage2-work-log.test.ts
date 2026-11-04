@@ -19,9 +19,12 @@ describe("every code renders one Arabic line", () => {
     expect(line!.textAr).not.toMatch(/[0-9]/);
   });
   it("the numbers are Arabic-Indic, the nouns agree with the number", () => {
-    expect(workLogLine({ code: "items_saved", at: AT, n: 12, total: 40, promised: 100, noun: "comments" })!.textAr).toBe("أضفنا ١٢ تعليقًا، والمجموع الآن ٤٠ من ١٠٠ تعليقًا.");
-    expect(workLogLine({ code: "items_saved", at: AT, n: 2, total: 2, promised: 2, noun: "videos" })!.textAr).toBe("أضفنا فيديوهين، والمجموع الآن فيديوهين من فيديوهين.");
+    expect(workLogLine({ code: "items_saved", at: AT, n: 12, total: 40, promised: 100, noun: "comments" })!.textAr).toBe("أضفنا ١٢ تعليقًا، والمجموع الآن ٤٠ من ١٠٠.");
+    expect(workLogLine({ code: "items_saved", at: AT, n: 2, total: 2, promised: 2, noun: "videos" })!.textAr).toBe("أضفنا فيديوهين، والمجموع الآن ٢ من ٢.");
     expect(workLogLine({ code: "duplicates_removed", at: AT, n: 3, noun: "tweets" })!.textAr).toBe("حذفنا ٣ تغريدات مكررة تمامًا، ولم نحذف شيئًا غيرها.");
+    // S11 wording review: a hundred and up follows the last two digits («١٠٠ تعليق», never «١٠٠ تعليقًا»); «X من N» is digits only
+    expect(workLogLine({ code: "items_saved", at: AT, n: 100, total: 200, promised: 300, noun: "comments" })!.textAr).toBe("أضفنا ١٠٠ تعليق، والمجموع الآن ٢٠٠ من ٣٠٠.");
+    expect(workLogLine({ code: "gap_stated", at: AT, n: 40, promised: 100, noun: "comments" })!.textAr).toBe("أعطانا المصدر ٤٠ من ١٠٠ فقط، وكتبنا ذلك في الملف.");
   });
 });
 
@@ -76,7 +79,7 @@ describe("the stored live events become work-log lines by their NUMBERS only (ne
     const lines = workLogFromEvents(plan, events);
     expect(lines.map((l) => [l.code, l.textAr])).toEqual([
       ["page_read", "قرأنا ٣ صفحات من المصدر حتى الآن."],
-      ["items_saved", "أضفنا ٣٠ تعليقًا، والمجموع الآن ٣٠ من ٤٠ تعليقًا."],
+      ["items_saved", "أضفنا ٣٠ تعليقًا، والمجموع الآن ٣٠ من ٤٠."],
     ]);
     expect(lines.map((l) => l.timeAr)).toEqual(["١٠:٣٠", "١٠:٣١"]);
   });

@@ -1,6 +1,7 @@
 import { AGENT_JOB_POINTS_CAP, AGENT_MAX_DELIVERED_ROWS, AGENT_REPLIES_PER_COMMENT_MAX } from "../constants";
 import { cairoDayEndExclusiveMs, cairoDayOf, cairoDayStartMs } from "../cairoTime";
-import { countAr, knownItemNoun } from "../itemNoun";
+import { knownItemNoun } from "../itemNoun";
+import { nounCountAr as countAr } from "./arabicCount";
 import { toArabicDigits } from "../../arabicDigits";
 import { pointsAr } from "../../pointsFormat";
 import type { Ask } from "../foundation/ask";
