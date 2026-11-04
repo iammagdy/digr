@@ -58,17 +58,18 @@ describe("anonymised real pages (decision 7.1): the scan that gates the public r
   // CHANGED (live round 11): three more missions of the owner's admin ZIP (YouTube 19 files, Instagram 9, Facebook 5)
   // CHANGED (round 14): two more (Facebook msn_236f4af6fe4cb890abee 82 files, YouTube msn_5d5a9b2a933aeaa47d81 19 files)
   // CHANGED (round 20): one more (Facebook msn_934781c56a01a96825af, 11 files: the first real pages of the alternative comments card)
-  it("holds the 37 missions (28 of FOUNDATION-PLAN PR 1, 2 of live round 7, 1 of live round 8, 3 of live round 11, 2 of round 14, 1 of round 20): 678 raw/ and rows/ files, nothing else", () => {
-    expect(files.length).toBe(678);
+  // CHANGED (Stage 3): two more (the first real COMPANIES and DECISION-MAKERS pages: msn_4969a50fed8c45b37d8f 37 files, msn_7539ea17512cf58aa0e7 54 files), anonymised with the anonymise.py that has the two B2B rules
+  it("holds the 39 missions (28 of FOUNDATION-PLAN PR 1, 2 of live round 7, 1 of live round 8, 3 of live round 11, 2 of round 14, 1 of round 20, 2 of Stage 3): 769 raw/ and rows/ files, nothing else", () => {
+    expect(files.length).toBe(769);
     const rel = files.map((f) => path.relative(ROOT, f).split(path.sep));
-    expect(new Set(rel.map((r) => r[0])).size).toBe(37);
+    expect(new Set(rel.map((r) => r[0])).size).toBe(39);
     for (const r of rel) {
       expect(r[0]).toMatch(/^msn_[0-9a-f]{20}$/);
       expect(["raw", "rows"]).toContain(r[1]);
       expect(r.length).toBe(3);
     }
-    expect(rel.filter((r) => r[1] === "raw").length).toBe(603); // CHANGED (round 20): 594 + 9
-    expect(rel.filter((r) => r[1] === "rows").length).toBe(75); // CHANGED (round 20): 73 + 2
+    expect(rel.filter((r) => r[1] === "raw").length).toBe(690); // CHANGED (Stage 3): 603 + 87
+    expect(rel.filter((r) => r[1] === "rows").length).toBe(79); // CHANGED (Stage 3): 75 + 4
   });
 
   it("no JWT, no Bearer header, no cookie, no e-mail, and every personal field is a placeholder or empty", () => {
@@ -122,5 +123,20 @@ describe("anonymised real pages (decision 7.1): the scan that gates the public r
     const out2: Violation[] = [];
     scan({ text: "https://vt.tiktok.com/seg_ab/" , description: "نعم" }, null, "", "probe", out2, c);
     expect(out2.map((v) => v.rule).sort()).toEqual(["personal:description", "personal:text"]);
+  });
+
+  // STAGE 3, the two rules of the anonymiser patch (the gap the first real company pages showed)
+  it("the scanner catches an e-mail under a KEPT key and a URL under an id-like key that was left as it was (a profile link with a person's name)", () => {
+    const hits = (v: unknown): string[] => { const o: Violation[] = []; scan(v, null, "", "probe", o, { personal: 0 }); return o.map((x) => x.rule); };
+    // rule 1: an e-mail is an e-mail under any key, kept or not
+    expect(hits({ id: "someone@example.test" })).toEqual(["email"]);
+    expect(hits({ company_id: "note someone@example.test" })).toEqual(["email"]);
+    // rule 2: a URL under an id-like key must be anonymised: its host is a platform host or `host-<hex>.invalid`, and no path segment is a readable name
+    expect(hits({ employee_id: "https://www.linkedin.com/in/jane-doe" })).toEqual(["id_url:host"]);
+    expect(hits({ rest_id: "https://www.facebook.com/jane.doe" })).toEqual(["id_url:segment"]);
+    expect(hits({ id: "https://host-ab12cd.invalid/txt_ab12cd/12345" })).toEqual([]);
+    expect(hits({ id: "https://www.facebook.com/txt_ab12cd/posts/123456" })).toEqual([]);
+    // a URL under a key that is not id-like is not this rule's (the other scans and the anonymiser's URL rule cover it)
+    expect(hits({ website: "https://example.test/about" })).toEqual([]);
   });
 });
