@@ -1,3 +1,4 @@
+import { contentDispositionOf } from "@/lib/downloadName";
 import { NextRequest, NextResponse } from "next/server";
 
 import { authenticateAdmin } from "@/lib/server/adminAuth";
@@ -37,7 +38,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ file
           "Content-Type": blob.type || guessMime(baseName),
           "Cache-Control": "private, no-store",
           "X-Content-Type-Options": "nosniff",
-          "Content-Disposition": `inline; filename="${baseName.replace(/[^\w.-]/g, "_")}"`,
+          "Content-Disposition": contentDispositionOf(baseName.replace(/[^\w.-]/g, "_"), "inline"),
         },
       });
     }

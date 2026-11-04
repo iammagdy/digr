@@ -71,6 +71,7 @@ import { PANEL_STATE_KEY, defaultPanelState, parsePanelState, newPlannerRequestI
 import { TURN_TIMEOUT_MS, WAIT_CANCEL_AFTER_MS, waitProgressText } from "@/lib/waitProgress";
 import { customerFacingFailure, isRetryableFailure, logClientFailure, readChatResponse, startFailureMessageAr, TEMPORARY_FAILURE_AR } from "@/lib/customerError";
 import { startFailureText, type StartedJobState } from "@/lib/startFailure";
+import { fileNameFromDisposition } from "@/lib/downloadName";
 
 interface ConversationItem { $id: string; title: string; updatedAt: string }
 
@@ -1373,20 +1374,14 @@ export default function ChatWorkspacePage() {
       const jwtToken = await getAccessToken();
       const headers: Record<string, string> = {};
       if (jwtToken) headers["Authorization"] = `Bearer ${jwtToken}`;
-      const res = await fetch(`/api/jobs/${downloadJobId}/download?format=${ext}${spec ? `&spec=${encodeFileSpec(spec)}` : ""}`, { headers });
-      const payload = await res.json();
-      if (!res.ok || !payload?.success || !payload?.signedUrl) {
-        throw new Error(payload?.error || "الملف غير متاح للتحميل حالياً");
+      // ROUND 20: the file itself from the site (its own Content-Disposition: the Arabic name), never a bare storage link, which saves the name percent-encoded («%D8%AA...xlsx»)
+      const res = await fetch(`/api/jobs/${downloadJobId}/download?format=${ext}&stream=1${spec ? `&spec=${encodeFileSpec(spec)}` : ""}`, { headers });
+      if (!res.ok) {
+        const failure = await res.json().catch(() => null);
+        throw new Error(failure?.error || "الملف غير متاح للتحميل حالياً");
       }
-      let blobUrl: string | null = null;
-      try {
-        const fileRes = await fetch(payload.signedUrl);
-        if (fileRes.ok) {
-          blobUrl = URL.createObjectURL(await fileRes.blob());
-        }
-      } catch {
-        // Fall back to direct signed URL navigation
-      }
+      const payload = { downloadFileName: fileNameFromDisposition(res.headers.get("Content-Disposition")) };
+      const blobUrl: string = URL.createObjectURL(await res.blob());
 
       // The download route saves a format made on request; it is now one of this job's ready files.
       // A shaped file is a separate download and never changes which files the job has.
@@ -1396,16 +1391,12 @@ export default function ChatWorkspacePage() {
           : previous);
       }
 
-      if (blobUrl) {
-        const link = document.createElement("a");
-        link.href = blobUrl;
-        link.download = payload.downloadFileName || `diger_${activeJob?.templateSlug || "results"}_${downloadJobId.slice(0, 8)}.${ext}`;
-        document.body.appendChild(link);
-        link.click();
-        setTimeout(() => { URL.revokeObjectURL(blobUrl!); link.remove(); }, 30000);
-      } else {
-        window.location.assign(payload.signedUrl);
-      }
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = payload.downloadFileName || `diger_${activeJob?.templateSlug || "results"}_${downloadJobId.slice(0, 8)}.${ext}`;
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => { URL.revokeObjectURL(blobUrl); link.remove(); }, 30000);
     } catch (err: any) {
       console.error("[chat:download_error]", err);
       if (spec) {

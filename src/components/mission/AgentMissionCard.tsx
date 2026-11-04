@@ -16,6 +16,7 @@ import { approveWithRecovery } from "@/lib/missionApprove";
 import { useBalance } from "@/hooks/useBalance";
 import { holdLimitOf } from "@/lib/agentMission/holdLimit";
 import { pointsAr } from "@/lib/pointsFormat";
+import { fileNameFromDisposition } from "@/lib/downloadName";
 import type { PlanEdits } from "@/lib/agentMission/planEdit";
 
 /**
@@ -122,10 +123,20 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
 
   async function download(name: string) {
     try {
-      const res = await fetch(`/api/missions/${encodeURIComponent(missionId)}/file?name=${encodeURIComponent(name)}`, { headers: await authHeaders() });
-      const json = await res.json();
-      if (json?.success && json.url) window.open(String(json.url), "_blank", "noopener");
-      else setError(String(json?.error || "تعذّر تنزيل الملف الآن."));
+      // ROUND 20: the file itself from the site (its own Content-Disposition: the mission's Arabic name), never a bare storage link, which saves the name percent-encoded («%D8%AA...xlsx»)
+      const res = await fetch(`/api/missions/${encodeURIComponent(missionId)}/file?name=${encodeURIComponent(name)}&stream=1`, { headers: await authHeaders() });
+      if (!res.ok) {
+        const json = await res.json().catch(() => null);
+        setError(String(json?.error || "تعذّر تنزيل الملف الآن."));
+        return;
+      }
+      const blobUrl = URL.createObjectURL(await res.blob());
+      const link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = fileNameFromDisposition(res.headers.get("Content-Disposition")) || name;
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => { URL.revokeObjectURL(blobUrl); link.remove(); }, 30000);
     } catch { setError("تعذّر تنزيل الملف الآن."); }
   }
 

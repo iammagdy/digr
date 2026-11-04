@@ -1,5 +1,6 @@
 "use client";
 
+import { fileNameFromDisposition } from "@/lib/downloadName";
 import { createClient } from "@/lib/supabase/client";
 
 /** Calls an /api/admin/* route with the caller's JWT/session token. The server re-checks `app_metadata.role: admin` on every call. */
@@ -59,7 +60,7 @@ export async function adminDownload(path: string, fallbackName: string): Promise
   }
   const blob = await res.blob();
   const disposition = res.headers.get("Content-Disposition") || "";
-  const name = /filename="([^"]+)"/.exec(disposition)?.[1] || fallbackName;
+  const name = fileNameFromDisposition(disposition) || fallbackName;
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url; a.download = name;

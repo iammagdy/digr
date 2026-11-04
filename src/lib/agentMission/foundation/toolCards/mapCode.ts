@@ -29,7 +29,16 @@ export function cardMapCode(card: ToolCard): string {
     // A COMMENTS CARD THAT CARRIES NO REPLY COUNTER (Instagram's two) never reads one: a field the source fills with 0, [] or nothing is not a counter, and a 0 written for it says «no replies» when the source does not say so (live round 11)
     const keys = replyColumnKeysOf(CHILD_COLUMNS);
     const noCounter = card.counter === null && (card.role === "post.comments" || card.role === "video.comments");
-    return buildReplyMapCode(noCounter ? { ...keys, replies: null } : keys, tokens, card.mapping.relativeDates === true).replace("const P = inputs.page;", "const P = Object.values(inputs)[0];");
+    const base = buildReplyMapCode(noCounter ? { ...keys, replies: null } : keys, tokens, card.mapping.relativeDates === true).replace("const P = inputs.page;", "const P = Object.values(inputs)[0];");
+    // ROUND 20: a card that names the number field of its comment's reactions (`likesFrom`) gets a post-pass over the same page, by the comment's id; every other card's code is returned unchanged
+    const from = card.mapping.likesFrom;
+    if (!from || !keys.likes) return base;
+    return `const __rows = (() => {\n${base}\n})();
+const __at = (o, path) => { let v = o; for (const k of path) { if (v === null || v === undefined || typeof v !== 'object') return undefined; v = v[k]; } return v; };
+const __list = __at(Object.values(inputs)[0], ${JSON.stringify(card.page.list)});
+const __likes = new Map();
+if (Array.isArray(__list)) for (const r of __list) { if (!r || typeof r !== 'object' || r.id === undefined || r.id === null) continue; const n = Number(r[${JSON.stringify(from)}]); __likes.set(String(r.id), typeof r[${JSON.stringify(from)}] !== 'object' && r[${JSON.stringify(from)}] !== null && r[${JSON.stringify(from)}] !== '' && Number.isFinite(n) ? n : null); }
+return __rows.map((r) => (r && typeof r === 'object' && __likes.has(String(r.id)) ? Object.assign({}, r, { [${JSON.stringify(keys.likes)}]: __likes.get(String(r.id)) }) : r));`;
   }
   const link = card.mapping.linkTemplate;
   const numeric = card.mapping.numeric ?? [];

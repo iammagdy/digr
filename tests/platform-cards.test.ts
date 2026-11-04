@@ -26,7 +26,7 @@ const STATUS: Record<string, "verified" | "catalog_only"> = {
   "anyapi.facebook.search_posts": "catalog_only",
   "anyapi.facebook.user.posts": "verified",
   "scrapecreators.x.v1-facebook-post-comments": "verified",
-  "anyapi.facebook.post_comments": "catalog_only",
+  "anyapi.facebook.post_comments": "verified", // CHANGED (round 20): verified on the first real pages of msn_934781c56a01a96825af (calls 8 and 10), ids proven equal to the main card's (tests/round20-facebook-alt-comments.test.ts)
   "scrapecreators.x.v1-facebook-post-comment-replies": "catalog_only",
   "anyapi.facebook.comment_replies": "verified", // CHANGED (round 14): verified on the 36 real pages of live round 12 (tests/round14-facebook-replies-real.test.ts)
   "scrapecreators.instagram.user.posts": "verified",
@@ -45,10 +45,10 @@ const STATUS: Record<string, "verified" | "catalog_only"> = {
 const NEW_CARDS = TOOL_CARDS.filter((c) => c.platform === "facebook" || c.platform === "instagram" || c.platform === "youtube");
 
 describe("PR 3: the status of every Facebook, Instagram and YouTube card", () => {
-  it("is exactly the table: 13 verified on real pages, 5 catalog_only", () => {
+  it("is exactly the table: 14 verified on real pages, 4 catalog_only", () => { // CHANGED (round 20): 13 and 5
     expect(Object.fromEntries(NEW_CARDS.map((c) => [c.endpointId, c.status]))).toEqual(STATUS);
-    expect(NEW_CARDS.filter((c) => c.status === "verified")).toHaveLength(13);
-    expect(NEW_CARDS.filter((c) => c.status === "catalog_only")).toHaveLength(5);
+    expect(NEW_CARDS.filter((c) => c.status === "verified")).toHaveLength(14);
+    expect(NEW_CARDS.filter((c) => c.status === "catalog_only")).toHaveLength(4);
     expect(NEW_CARDS.filter((c) => c.status === "broken")).toEqual([]);
   });
 

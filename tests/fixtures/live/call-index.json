@@ -1,5 +1,5 @@
 {
- "_about": "THE CALL LOG OF THE TIKTOK AND X MISSIONS, anonymised (read-only SELECT on mission_calls, 2026-11-02; listed in the PR). One entry per stored call: [call id, phase, endpoint, status, rows, inputs]. Every link input is reduced to the numeric id it carries (no handle, no name); search inputs are Diger's own request words. M12 and M14: every call; the others: their planning calls only. M5 call_0002 is left out: its stored inputs were cut at 80 characters by the call log, so the page it answered cannot be keyed honestly. The replay gateway (tests/helpers/replayGateway.ts) serves a stored page only for the endpoint and the same inputs. Live round 8 (3 Nov 2026): msn_50e3b83c44e7ebd7f577, its 14 replies calls only (read-only SELECT on mission_calls), the cursor inputs are the opaque tokens the pages gave. Added in PR 3 (4 Nov 2026): the Facebook, Instagram and YouTube missions of FOUNDATION-PLAN (read-only SELECT on mission_calls; each SELECT is listed in the PR). Link inputs are reduced to the numeric id they carry (an Instagram short code is converted to its media id by the code's own base-64 rule); the Instagram account handle is a placeholder (a personal field; the replay gateway ignores its value); a post link that carries no numeric id (a pfbid link) is not indexed, so a replay never serves a page for a post it cannot tell apart. Round 14 (3 Nov 2026): msn_236f4af6fe4cb890abee (Facebook) and msn_5d5a9b2a933aeaa47d81 (YouTube), every ok call (read-only SELECT on mission_calls, listed in the PR). A Facebook post link without a numeric id (a pfbid link) is indexed by a numeric surrogate (the first 8 bytes of the sha-256 of the pfbid as a decimal number, 18 digits: tests/helpers/replayGateway.ts does the same); the paging and reply tokens are the 80 characters the call log keeps, rebuilt from the stored pages in call order and checked against the logged tokens' first characters.",
+ "_about": "THE CALL LOG OF THE TIKTOK AND X MISSIONS, anonymised (read-only SELECT on mission_calls, 2026-11-02; listed in the PR). One entry per stored call: [call id, phase, endpoint, status, rows, inputs]. Every link input is reduced to the numeric id it carries (no handle, no name); search inputs are Diger's own request words. M12 and M14: every call; the others: their planning calls only. M5 call_0002 is left out: its stored inputs were cut at 80 characters by the call log, so the page it answered cannot be keyed honestly. The replay gateway (tests/helpers/replayGateway.ts) serves a stored page only for the endpoint and the same inputs. Live round 8 (3 Nov 2026): msn_50e3b83c44e7ebd7f577, its 14 replies calls only (read-only SELECT on mission_calls), the cursor inputs are the opaque tokens the pages gave. Added in PR 3 (4 Nov 2026): the Facebook, Instagram and YouTube missions of FOUNDATION-PLAN (read-only SELECT on mission_calls; each SELECT is listed in the PR). Link inputs are reduced to the numeric id they carry (an Instagram short code is converted to its media id by the code's own base-64 rule); the Instagram account handle is a placeholder (a personal field; the replay gateway ignores its value); a post link that carries no numeric id (a pfbid link) is not indexed, so a replay never serves a page for a post it cannot tell apart. Round 14 (3 Nov 2026): msn_236f4af6fe4cb890abee (Facebook) and msn_5d5a9b2a933aeaa47d81 (YouTube), every ok call (read-only SELECT on mission_calls, listed in the PR). A Facebook post link without a numeric id (a pfbid link) is indexed by a numeric surrogate (the first 8 bytes of the sha-256 of the pfbid as a decimal number, 18 digits: tests/helpers/replayGateway.ts does the same); the paging and reply tokens are the 80 characters the call log keeps, rebuilt from the stored pages in call order and checked against the logged tokens' first characters. Round 20 (4 Nov 2026): msn_934781c56a01a96825af (Facebook smoke, the first real pages of anyapi.facebook.post_comments), all 10 stored calls (read-only SELECT on mission_calls: id, phase, endpoint_id, status, rows_returned, params_digest). A post link is its numeric surrogate (pfbid rule above); the page is its numeric id (the replay of that listing compares the cursor only: `only` in the test); call_0004 was refused (rows 0, not served); call_0001..0003 and 0005..0010 are the stored pages.",
  "missions": {
   "msn_5851abc92a1e6645a9cd": [
    [
@@ -3592,6 +3592,112 @@
     2,
     {
      "continuationToken": "Eg0SC2dDdXQyRGNCOXNNGAYygwEaUBIaVWd4YURrOHJ2T05Ic0c5aHE4RjRBYUFCQWciAggAKhhVQ0E4"
+    }
+   ]
+  ],
+  "msn_934781c56a01a96825af": [
+   [
+    "call_0001",
+    "planning",
+    "justoneapi.x.facebook-search-post-v1",
+    "ok",
+    5,
+    {
+     "endDate": "2026-11-04",
+     "keyword": "العربية",
+     "startDate": "2026-08-04"
+    }
+   ],
+   [
+    "call_0002",
+    "planning",
+    "anyapi.facebook.user.posts",
+    "ok",
+    3,
+    {
+     "url": "100069103503573"
+    }
+   ],
+   [
+    "call_0003",
+    "planning",
+    "anyapi.facebook.user.posts",
+    "ok",
+    3,
+    {
+     "url": "100069103503573",
+     "cursor": "cur_Kb78hzxOEPnNVb7PhEHdOg"
+    }
+   ],
+   [
+    "call_0004",
+    "planning",
+    "anyapi.facebook.user.posts",
+    "refused",
+    0,
+    {
+     "url": "100069103503573",
+     "cursor": "cur_i4fFhhf3mm6wbBBv9CSlxA"
+    }
+   ],
+   [
+    "call_0005",
+    "planning",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    4,
+    {
+     "url": "388283691080334930"
+    }
+   ],
+   [
+    "call_0006",
+    "planning",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    4,
+    {
+     "url": "159841851699409013"
+    }
+   ],
+   [
+    "call_0007",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    4,
+    {
+     "url": "388283691080334930"
+    }
+   ],
+   [
+    "call_0008",
+    "execution",
+    "anyapi.facebook.post_comments",
+    "ok",
+    4,
+    {
+     "url": "388283691080334930"
+    }
+   ],
+   [
+    "call_0009",
+    "execution",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "ok",
+    4,
+    {
+     "url": "159841851699409013"
+    }
+   ],
+   [
+    "call_0010",
+    "execution",
+    "anyapi.facebook.post_comments",
+    "ok",
+    4,
+    {
+     "url": "159841851699409013"
     }
    ]
   ]

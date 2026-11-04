@@ -24,7 +24,9 @@ describe.each(MISSIONS)("the contract on $label", ({ id, input }) => {
 
   it("the replay served every EXECUTION page from the stored ones (nothing invented); the only planning reads not served are the exposure reads of videos the live plan did not choose (the anonymised titles rank differently: the live videos are pinned)", () => {
     expect(r.unservedExecution).toBe(0);
-    for (const u of r.unserved) expect(["VZqp9F8ed2s", "lLAE4Iy-JNI"]).toContain(String(u.params.video_id));
+    // CHANGED (round 20): the Facebook smoke's third page listing was REFUSED live (its call is stored as refused, so no page answers it); that call is the only other read allowed to stay unserved
+    const refusedLive = (u: { endpointId: string; params: Record<string, unknown> }) => u.endpointId === "anyapi.facebook.user.posts" && u.params.cursor === "cur_i4fFhhf3mm6wbBBv9CSlxA";
+    for (const u of r.unserved.filter((x) => !refusedLive(x))) expect(["VZqp9F8ed2s", "lLAE4Iy-JNI"]).toContain(String(u.params.video_id));
   });
   it("it delivered rows (a replay that delivers nothing proves nothing)", () => {
     const total = Object.values(r.rowsByStage).reduce((n, rows) => n + rows.length, 0);

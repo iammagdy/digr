@@ -373,10 +373,12 @@ describe.each([
   it("the requests page saves the file under the name the route returned (the name of the signed link), and every route calls one function", async () => {
     const { readFileSync } = await import("node:fs");
     const page = readFileSync("src/app/dashboard/requests/page.tsx", "utf8");
-    expect(page).toContain("a.download = payload.downloadFileName");
-    expect(page).toContain("/api/jobs/${job.$id}/download?format=${ext}");
+    // CHANGED (round 20): the page asks the route for the file itself (`stream=1`) and saves it under the name of the route's own Content-Disposition (`filename*`)
+    expect(page).toContain("a.download = fileNameFromDisposition(res.headers.get(\"Content-Disposition\"))");
+    expect(page).toContain("/api/jobs/${job.$id}/download?format=${ext}&stream=1");
     const chat = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
     expect(chat).toContain("link.download = payload.downloadFileName");
+    expect(chat).toContain("fileNameFromDisposition(res.headers.get(\"Content-Disposition\"))");
   });
 });
 

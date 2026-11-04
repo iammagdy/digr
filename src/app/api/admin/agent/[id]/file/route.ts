@@ -2,10 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { authenticateAdmin } from "../../../../../../lib/server/adminAuth";
 import { createAdminClient } from "../../../../../../lib/supabase/server";
 import { fileLink } from "../../../../../../lib/agentMission/adminActions";
+import { fileResponseFromUrl } from "../../../../../../lib/server/fileResponse";
 
 export const dynamic = "force-dynamic";
 
-/** Admin only. ?name=result.xlsx: a two-minute link to that result file of the mission. */
+/** Admin only. ?name=result.xlsx: a two-minute link to that result file of the mission (JSON). ROUND 20, `&stream=1`: the file itself with the site's own `Content-Disposition` (`filename*` and an ASCII fallback). */
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const auth = await authenticateAdmin(req);
   if (!auth.ok) return auth.response;
@@ -13,5 +14,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   const name = new URL(req.url).searchParams.get("name") ?? "";
   if (!/^msn_[a-z0-9]{8,40}$/.test(id) || !/^result\.(xlsx|csv)$/.test(name)) return NextResponse.json({ error: "bad_input" }, { status: 400 });
   const r = await fileLink(createAdminClient(), { id, name });
-  return r.ok ? NextResponse.json(r) : NextResponse.json({ error: r.error }, { status: r.status });
+  if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.status });
+  if (new URL(req.url).searchParams.get("stream") === "1") return fileResponseFromUrl(r.url, r.download);
+  return NextResponse.json({ ok: true, url: r.url });
 }

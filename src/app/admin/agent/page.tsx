@@ -118,7 +118,8 @@ export default function AgentPage() {
   }
   async function download(name: string) {
     if (!selected) return;
-    try { const r = await adminFetch<{ url: string }>(`/api/admin/agent/${selected}/file?name=${encodeURIComponent(name)}`); window.open(r.url, "_blank", "noopener"); } catch (e) { toast(e instanceof Error ? e.message : "تعذّر تنزيل الملف"); }
+    // ROUND 20: the file itself from the site (its own Content-Disposition, the Arabic name as the mission's), not a bare storage link that saves the name percent-encoded
+    try { await adminDownload(`/api/admin/agent/${selected}/file?name=${encodeURIComponent(name)}&stream=1`, name); } catch (e) { toast(e instanceof Error ? e.message : "تعذّر تنزيل الملف"); }
   }
   const [markup, setMarkup] = useState("");
   const [minCharge, setMinCharge] = useState("");

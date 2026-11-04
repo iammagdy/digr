@@ -196,12 +196,12 @@ export async function loadDetail(client: any, input: { id: string; afterEventId?
 }
 
 /** A short-lived link to a result file of a mission (the private bucket is readable only with the service role). */
-export async function fileLink(client: any, input: { id: string; name: string }): Promise<ActionResult<{ url: string }>> {
+export async function fileLink(client: any, input: { id: string; name: string }): Promise<ActionResult<{ url: string; /** ROUND 20: the name the file is saved under (the route that serves the file itself writes it into its own header) */ download: string }>> {
   const { data: mission } = await client.from(MISSION_TABLE).select("id,files,plan,request_text,delivered_units,updated_at").eq("id", input.id).maybeSingle();
   const file = Array.isArray(mission?.files) ? (mission.files as Array<{ name: string; path: string; kind?: string }>).find((f) => f.name === input.name) : null;
   if (!file) return bad(404, "الملف غير موجود.");
   const download = missionDownloadName({ files: mission.files, kind: file.kind ?? input.name.split(".").pop() ?? "", plan: mission.plan, requestText: mission.request_text, deliveredUnits: mission.delivered_units, date: mission.updated_at });
   const { data, error } = await client.storage.from(AGENT_BUCKET).createSignedUrl(`${input.id}/${file.path}`, 120, { download });
   if (error || !data?.signedUrl) return bad(500, "تعذّر إنشاء رابط الملف.");
-  return { ok: true, url: String(data.signedUrl) };
+  return { ok: true, url: String(data.signedUrl), download };
 }

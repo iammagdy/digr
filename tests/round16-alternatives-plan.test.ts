@@ -70,19 +70,20 @@ describe("Instagram (msn_e3e7632e2fb2d42f9c19's request, its stored planning pag
 
 describe("Facebook (msn_6bb78c15d116268b0b9b's stored planning pages)", () => {
   const COMMENTS_ONLY = "هات منشورات عن الذكاء الاصطناعي من صفحة قناة العربية على فيسبوك آخر ٣ شهور، منشورين، مع كل التعليقات.";
-  it("a customer account: one verified comments card, so no alternative and no extra line; the stage is what it was", async () => {
+  // CHANGED (round 20): the second Facebook comments card is verified (first real pages of msn_934781c56a01a96825af, ids proven equal), so it is an alternative on EVERY account, with no capture cap
+  it("a customer account: the verified second comments card is the one alternative (a proven route, no page cap), and the card says it before approval", async () => {
     const { out } = await plan(FB, COMMENTS_ONLY, { createdAt: "2026-11-02T15:36:00Z", answer: NAMED_SHORTFALL_OPTIONS_AR.fill });
     const c = commentsOf(out);
-    expect(c.engine!.alternatives).toBeUndefined();
-    expect(out.plan.notes_ar ?? []).not.toContain(ALTERNATIVE_LINE_AR);
+    expect(c.engine!.alternatives!.map((a) => a.endpoint_id)).toEqual(["anyapi.facebook.post_comments"]);
+    expect(c.max_pages ?? null).toBeNull();
+    expect(out.plan.notes_ar ?? []).toContain(ALTERNATIVE_LINE_AR);
   });
-  it("a TEST account, comments only: the catalog_only card is the one alternative (a capture), the stage's page cap is the 0.20 USD cap of decision 7.4, and the quote is not raised (the alternative is not 2x dearer per row)", async () => {
+  it("a TEST account, comments only: the same one alternative, no longer a capture, so the stage's page cap is not the 0.20 USD cap of decision 7.4, and the quote is not raised (the alternative is not 2x dearer per row)", async () => {
     const { out } = await plan(FB, COMMENTS_ONLY, { createdAt: "2026-11-02T15:36:00Z", catalogOnly: true, answer: NAMED_SHORTFALL_OPTIONS_AR.fill });
     const c = commentsOf(out);
     expect(c.endpoint_id).toBe("scrapecreators.x.v1-facebook-post-comments");
     expect(c.engine!.alternatives!.map((a) => a.endpoint_id)).toEqual(["anyapi.facebook.post_comments"]);
-    const alt = cardOf("anyapi.facebook.post_comments")!;
-    expect(c.max_pages).toBe(Math.max(1, Math.floor(0.2 / (alt.costUsdPerPage * 2) + 1e-9)));
+    expect(c.max_pages ?? null).toBeNull();
     const main = cardOf("scrapecreators.x.v1-facebook-post-comments")!;
     expect(c.measured_cost_per_row_usd).toBeCloseTo(main.costUsdPerPage / main.page.observedRowsPerPage, 10);
   });
