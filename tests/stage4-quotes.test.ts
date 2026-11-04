@@ -79,7 +79,7 @@ function reachers(target: string): Set<string> {
   }
   return out;
 }
-const MONEY = /(?:^|\/)(?:gateway|price|jobPointsCap|finalize|missionPricing|recordPricing|approval|runMission)\.tsx?$|ledger|billing|charge|settle|reserve|topup|wallet|payment|invoice|credit|(?:^|\/)functions\/|(?:^|\/)supabase\//i;
+const MONEY = /(?:^|\/)(?:gateway|price|jobPointsCap|finalize|missionPricing|recordPricing|approval|lifecycle|runMission)\.tsx?$|ledger|billing|charge|settle|reserve|topup|wallet|payment|invoice|credit|(?:^|\/)functions\/|(?:^|\/)supabase\//i;
 
 describe("the quotes are display only: no money path can reach them", () => {
   const quotes = path.join(ROOT, "src/lib/agentMission/stage4/quotes.ts");
@@ -88,6 +88,9 @@ describe("the quotes are display only: no money path can reach them", () => {
     expect(money).toContain("agent/src/gateway.ts");
     expect(money).toContain("agent/src/finalize.ts");
     expect(money).toContain("src/lib/agentMission/price.ts");
+    // the lifecycle (approve and settle) and the add-on money file are under the same rule: neither may reach quotes.ts
+    expect(money).toContain("src/lib/agentMission/lifecycle.ts");
+    expect(money).toContain("src/lib/agentMission/addonSettlement.ts");
     expect(money.length).toBeGreaterThan(20);
   });
   it("no money file imports quotes.ts, directly or through any chain of imports; only stage4 files may import it", () => {
