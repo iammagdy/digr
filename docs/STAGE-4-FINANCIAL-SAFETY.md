@@ -159,3 +159,28 @@ group by 1 having count(*) > 1;
 
 1. Owner approval. 2. Run checks 1 to 7 read-only. 3. Repair violators with the existing protocol. 4. Merge the stack (the classification is harmless without the index). 5. Apply the migration in a low-traffic window (plain build; about a tenth of a second on a small table). 6. Verify `indisvalid` and `indisunique` read-only: `select indisvalid, indisunique from pg_index where indexrelid = 'public.missions_one_open_addon_per_file'::regclass;`. 7. Smoke test on a test account in `test` mode. Rollback is one `drop index`.
 
+## 6. Integration rehearsal against the CURRENT main (local worktree, never pushed)
+
+Main moved to `f66979c6` (Round 33, catalog discovery, PR #395, on top of Round 32's customer CSV). The whole stack (this PR's head `f5709cd3` includes #371 to #394 and the four safety PRs) was merged into it **in a temporary worktree**; nothing was pushed, no PR base changed, the Boost workstream's branches and worktrees were not touched. **The earlier rehearsal in `docs/STAGE-4-CUSTOMER-WORKFLOW.md` merged the head of #392 (stage D), not #393 and #394; this one merges everything.**
+
+| Conflict | Owner PR | Required resolution (applied locally) |
+|---|---|---|
+| `src/app/api/missions/[id]/file/route.ts` | #371 (`?version=N`) vs main Round 32 (CSV by name) | keep both: the CSV branch of main and the version branch of the stack (the file route serves a CSV only for a CSV name, a version only for `?version=N`) |
+| `src/lib/agentMission/customerActions.ts` | the stack (add-on marker) vs main | keep both sets of exports and the marker filter |
+| `src/lib/agentMission/methodology/missions.ts` | same | keep both |
+| `src/lib/agentMission/openMissions.ts` | same | keep both |
+| **`tests/stage4-e2e-resilience.test.ts` FLOW 10 (new in this rehearsal; a stale expectation, not a conflict marker)** | #394 | #394 pinned that a CSV asked for by name returns the mission's Excel through a second signed link. On main (Round 32) a CSV is **built from the customer's own Excel and returned as the file itself**, so exactly one link is signed. Change line `expect(w.routes.signed).toEqual([...xlsx, ...xlsx])` to a single `[...xlsx]` and the comment to say so. Test-only; nothing in production code changes. |
+
+The four source files were not touched by main's new commits, so the earlier resolutions applied unchanged. **Result on the rehearsed tree: `tsc --noEmit` clean; full suite 11,446 passed, 0 failed, 57 skipped (868 files passed, 5 skipped).** The main-only commits and the stack's tests all pass together once the one expectation above is updated.
+
+The required changes belong to the **older PRs** (#371 for the three source files, #394 for the test); they were **not** made here (no existing PR is modified without authorization). Merge order in the report: resolve once at #371.
+
+## 7. Results at the final head
+
+| Gate | Result |
+|---|---|
+| Clean `npm ci` (site and worker), full suite at the head | **11,001 passed, 0 failed, 57 skipped** (850 files: 845 passed, 5 skipped). The stack's own earlier head (#394) was 10,821 / 0 / 57 in the previous round, so the safety round adds 180 tests |
+| `npx tsc --noEmit`, `npm run agent:typecheck` | clean |
+| `npm run build` and `npm run check:secrets` | passed; zero client bundle secrets |
+| Skipped | the 57 that already existed (local-PostgreSQL and replica suites that need `DIGR_TEST_PG`); **none added**; the SQL itself is verified by `scripts/verify/verify-one-open-addon-index.sh` (51 checks) |
+
