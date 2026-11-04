@@ -89,7 +89,7 @@ describe("a review that cannot be made, and a second review of the same version"
   });
   it("the cells of the version are not the cells the review was priced on: released, no charge", async () => {
     const w = await addonRunWorld({ balance: 5000 });
-    const a = await w.createApproved({ kind: "review", request: { kind: "review" }, pricing: reviewPricing(reviewCellsOf(w.v1) + 500_000) });
+    const a = await w.createApproved({ kind: "review", request: { kind: "review" }, pricing: reviewPricing(reviewCellsOf(w.v1) + 20_000) });
     await runAddonSafely(w.deps, a.row);
     expect(checkAddonLedger(w.money, a.jobId, { reserved: a.hold, charged: "none" })).toEqual([]);
     expect(w.reviewFiles()).toEqual([]);
