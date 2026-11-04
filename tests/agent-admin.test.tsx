@@ -196,7 +196,8 @@ describe("questions, cancelling, settings, files, the live view", () => {
   it("a file link is made only for a file the mission lists", async () => {
     db.seed("missions", [{ id: "msn_files0001", user_id: TEST_USER, files: [{ name: "result.xlsx", path: "result/result.xlsx", kind: "xlsx" }] }]);
     const { client } = makeClient(db);
-    expect(await fileLink(client, { id: "msn_files0001", name: "result.xlsx" })).toEqual({ ok: true, url: "https://signed.example/agent-missions/msn_files0001/result/result.xlsx" });
+    // CHANGED (round 20): the result also carries the name the file is saved under (the route that serves the file itself writes it into its own header)
+    expect(await fileLink(client, { id: "msn_files0001", name: "result.xlsx" })).toEqual({ ok: true, url: "https://signed.example/agent-missions/msn_files0001/result/result.xlsx", download: expect.stringMatching(/\.xlsx$/) });
     expect(await fileLink(client, { id: "msn_files0001", name: "../../secret" })).toMatchObject({ ok: false, status: 404 });
   });
 });

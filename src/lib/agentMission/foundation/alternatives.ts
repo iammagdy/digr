@@ -39,11 +39,13 @@ export interface AlternativesResult { alternatives: CommentAlternative[]; exclud
 /**
  * THE PROOF THAT TWO COMMENTS CARDS GIVE THE SAME COMMENT THE SAME ID, taken from stored real pages (tests/round16-comment-id-proofs.test.ts recomputes each from the fixtures): the calls of the two cards on the same parent, and the comments both of them gave (equal ids for the same text and instant).
  *  - Instagram: msn_afe9bb0b436670e35a3c, planning calls 3 (anyapi) and 4 (scrapecreators) read the SAME post: the one comment is `18116498825601057` in both, with the same text and the same instant. One comment is thin evidence; the live round of round 16 is asked for more.
+ *  - Facebook (round 20): msn_934781c56a01a96825af, execution calls 7 and 9 (main) and 8 and 10 (alternative) read the SAME two posts (same link in the call log): the 8 comments (4 and 4) have the same ids, in the same order, with the same text, author, instant, reaction and reply counts (the id decodes to «comment:<post>_<comment>» on both). Neither card gave a second page.
  *  - YouTube: video GIWkArP7RJE was read by crawl4ai (msn_ee599cdbbde993073b15, call 11) and by tikhub (msn_41a73a6b2c0b4a76ef0a, call 7): the native comment ids («UgwoGai9...») are the same. (The pair is left out of a stage by `date_semantics`; the proof is kept because it is true.)
  */
 export interface IdProof { a: string; b: string; mission: { a: string; b: string }; calls: { a: string[]; b: string[] } }
 export const COMMENT_ID_PROOFS: ReadonlyArray<IdProof> = [
   { a: "anyapi.instagram.post.comments", b: "scrapecreators.instagram.post.comments", mission: { a: "msn_afe9bb0b436670e35a3c", b: "msn_afe9bb0b436670e35a3c" }, calls: { a: ["call_0003"], b: ["call_0004"] } },
+  { a: "scrapecreators.x.v1-facebook-post-comments", b: "anyapi.facebook.post_comments", mission: { a: "msn_934781c56a01a96825af", b: "msn_934781c56a01a96825af" }, calls: { a: ["call_0007", "call_0009"], b: ["call_0008", "call_0010"] } },
   { a: "crawl4ai.youtube.video.comments", b: "tikhub.youtube.video.comments", mission: { a: "msn_ee599cdbbde993073b15", b: "msn_41a73a6b2c0b4a76ef0a" }, calls: { a: ["call_0011"], b: ["call_0007"] } },
 ];
 export const idsProvenEqual = (x: string, y: string, proofs: ReadonlyArray<IdProof> = COMMENT_ID_PROOFS): boolean => proofs.some((p) => (p.a === x && p.b === y) || (p.a === y && p.b === x));

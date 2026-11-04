@@ -10,10 +10,14 @@ import type { ToolCard } from "./types";
  *  - The comments card (scrapecreators) is VERIFIED on 8 real pages: each comment carries `reply_count` and the two tokens (`feedback_id`, `expansion_token`) a replies tool needs. Two of its real answers (M17 calls 7 and 8) are successful
  *    empty answers (`success true`, `comments []`, `has_next_page false`): empty, not an error.
  *  - THE REPLIES CARDS ARE catalog_only: all 8 real reply reads (M17 calls 10-13, M19 calls 7-10) were successful empty answers, so no real reply row has ever been seen to map.
- *  - `anyapi.facebook.search_posts`, `anyapi.facebook.post_comments`: never answered with rows (one planning call was refused), so catalog_only.
+ *  - `anyapi.facebook.search_posts`: never answered with rows (one planning call was refused), so catalog_only.
+ *  - `anyapi.facebook.post_comments` (ROUND 20): VERIFIED on its first real pages (msn_934781c56a01a96825af, calls 8 and 10: two posts, 4 comments each, `hasNextPage` false). Its ids are PROVEN equal to the main card's on the SAME two posts (8 of 8 comments: same id, order, text, author, instant, reaction and reply counts;
+ *    `COMMENT_ID_PROOFS`, recomputed by tests/round20-facebook-alt-comments.test.ts), so it is an alternative for every account, never the main card (its catalog page costs 0.002 against the main card's 0.00188). NOT seen: a second page (no post had more than 4 comments readable), so its cursor and its real page size are unmeasured;
+ *    it gives a non-empty `nextCursor` on a last page, so only `hasNextPage` says the list ended (the gateway reads it). It carries no `feedback_id` or `expansion_token`, so it cannot feed a replies step (the alternatives rule leaves it out then).
  */
 const M17 = "msn_6bb78c15d116268b0b9b";
 const M19 = "msn_96beb9f7a1d937a90cd0";
+const M20 = "msn_934781c56a01a96825af";
 
 export const FACEBOOK_CARDS: ReadonlyArray<ToolCard> = [
   {
@@ -92,17 +96,17 @@ export const FACEBOOK_CARDS: ReadonlyArray<ToolCard> = [
     verifiedOn: [{ mission: M17, calls: ["call_0006", "call_0009"] }, { mission: M19, calls: ["call_0004", "call_0006"] }, { mission: "msn_5324df5fff82ef3c6a0e", calls: ["call_0003"] }],
   },
   {
-    // the comments by the post's link or its feedback id; rows carry the replies counter (`replies`) and no token, so this card cannot feed a replies step; never answered with rows by our calls
+    // the comments by the post's link or its feedback id; rows carry the replies counter (`replies`) and the reaction count (`reactions`, a number: `likesFrom`) and no token, so this card cannot feed a replies step. VERIFIED in round 20 on the first real pages (see the header)
     endpointId: "anyapi.facebook.post_comments",
     platform: "facebook",
     role: "post.comments",
-    status: "catalog_only",
+    status: "verified",
     inputs: { cursor: "cursor", parent: { param: "url", from: "link" } },
     page: { list: ["output", "data", "comments"], cursor: ["output", "data", "nextCursor"], observedRowsPerPage: 10 },
-    mapping: { kind: "replies" },
+    mapping: { kind: "replies", likesFrom: "reactions" },
     counter: { key: "replies_count", counts: "replies" },
     costUsdPerPage: 0.002,
-    verifiedOn: [],
+    verifiedOn: [{ mission: M20, calls: ["call_0008", "call_0010"] }],
   },
   {
     // the replies of one comment by the comment's two tokens. VERIFIED since round 14 on the 36 real pages of live round 12 (calls 46 to 81 of msn_236f4af6fe4cb890abee: 95 rows, 2.64 a call, at most 7; one call per comment that has replies; `hasNextPage` false on each, so one page ends a thread;

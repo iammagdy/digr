@@ -281,6 +281,8 @@ describe("export: the CURRENT FILTERED result as CSV and XLSX", () => {
     const res = await body(`/api/admin/calls-log/export?format=csv&${qs}`);
     expect(res.headers.get("content-type")).toContain("text/csv");
     expect(res.headers.get("content-disposition")).toMatch(/attachment; filename="calls-log-\d{4}-\d{2}-\d{2}\.csv"/);
+    // CHANGED (round 20): every file the site serves carries `filename*` beside the plain name
+    expect(res.headers.get("content-disposition")).toMatch(/; filename\*=UTF-8''calls-log-\d{4}-\d{2}-\d{2}\.csv$/);
     const bytes = new Uint8Array(await res.arrayBuffer());
     expect([bytes[0], bytes[1], bytes[2]]).toEqual([0xef, 0xbb, 0xbf]);
     const text = new TextDecoder("utf-8").decode(bytes).replace(/^﻿/, "");

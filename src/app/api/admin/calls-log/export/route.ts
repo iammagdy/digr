@@ -1,3 +1,4 @@
+import { contentDispositionOf } from "@/lib/downloadName";
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { authenticateAdmin } from "@/lib/server/adminAuth";
@@ -23,7 +24,7 @@ export async function GET(req: NextRequest) {
     try { await auth.ctx.audit("setting", "تصدير سجل الاستدعاءات", format); } catch { /* the audit line is best effort */ }
     const day = new Date().toISOString().slice(0, 10);
     const headers: Record<string, string> = {
-      "Content-Disposition": `attachment; filename="calls-log-${day}.${format}"`,
+      "Content-Disposition": contentDispositionOf(`calls-log-${day}.${format}`),
       "Cache-Control": "no-store",
       "X-Export-Rows": String(rows.length),
       "X-Export-Total": String(total),

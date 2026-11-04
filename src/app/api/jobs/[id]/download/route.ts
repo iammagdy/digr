@@ -12,6 +12,7 @@ import { deliveredNothing, NO_RELEASABLE_RESULT_AR, resultsReleasable } from "@/
 import { linkArtifactVersion } from "@/functions/shared/artifactVersionLinking";
 import { customerFacingConversationTitle } from "@/lib/customerFacingConversationTitle";
 import { missionDownloadName } from "@/lib/agentMission/fileNames";
+import { fileResponseFromUrl } from "@/lib/server/fileResponse";
 import { inferSocialRowKind } from "@/lib/server/socialRows";
 import { buildFacebookReportExcelFrom, buildFacebookReportPdfFrom, facebookReportOf } from "@/functions/shared/facebookReportFiles";
 import { excelFromCsv } from "@/lib/server/excelFromCsv";
@@ -428,6 +429,9 @@ export async function GET(
     if (!shapedSpec && (format === "pdf" || format === "xlsx" || format === "csv") && resolvedStoragePath) {
       await linkArtifactVersion(adminClient, job.user_id, jobId, format, resolvedStoragePath);
     }
+
+    // ROUND 20, `stream=1`: the FILE ITSELF, answered with the site's own `Content-Disposition` (`filename*` with the Arabic name, an ASCII fallback). A signed storage link saves an Arabic name percent-encoded («%D8%AA...xlsx»).
+    if (req.nextUrl.searchParams.get("stream") === "1") return fileResponseFromUrl(signedUrl, downloadFileName);
 
     // If caller requested direct redirect
     if (req.nextUrl.searchParams.get("redirect") === "true") {

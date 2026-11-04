@@ -36,10 +36,11 @@ describe("the real cards today (confirmed from the code)", () => {
     const r = commentsAlternativesOf({ platform: "instagram", primary: primaryOf("instagram", { replies: true }), parents: parentsWith(3), repliesCard, catalogOnly: false });
     expect(r.alternatives.map((a) => a.entry.endpoint_id)).toEqual(["scrapecreators.instagram.post.comments"]);
   });
-  it("Facebook, a customer account: one verified comments card, so no alternative; the catalog_only card is left out because of its status", () => {
+  // CHANGED (round 20): the second Facebook comments card is verified on its first real pages and its ids are proven equal to the main card's, so a customer's account gets it as an ordinary alternative (it was left out for its status)
+  it("Facebook, a customer account: the second comments card is VERIFIED and its ids are proven equal (round 20), so it is the one alternative, not a capture", () => {
     const r = commentsAlternativesOf({ platform: "facebook", primary: primaryOf("facebook"), parents: parentsWith(3), repliesCard: null, catalogOnly: false });
-    expect(r.alternatives).toEqual([]);
-    expect(r.excluded).toEqual([{ endpointId: "anyapi.facebook.post_comments", reason: "status" }]);
+    expect(r.alternatives.map((a) => [a.entry.endpoint_id, a.capture])).toEqual([["anyapi.facebook.post_comments", false]]);
+    expect(r.excluded).toEqual([]);
   });
   it("TikTok: one verified comments card, no alternative", () => {
     const r = commentsAlternativesOf({ platform: "tiktok", primary: primaryOf("tiktok"), parents: parentsWith(3), repliesCard: null, catalogOnly: false });
@@ -61,13 +62,17 @@ describe("the real cards today (confirmed from the code)", () => {
 });
 
 describe("decision 2: a catalog_only comments card is an alternative on a TEST account only, and only for a comments stage", () => {
-  it("Facebook, a test account, comments only: the second card is kept and marked as a capture; the customer's account gets none", () => {
+  // CHANGED (round 20): Facebook's second card is no longer catalog_only; the rule is checked on a synthetic catalog_only card (no real card is in that state for a comments stage any more)
+  it("a catalog_only comments card (synthetic): kept and marked as a capture on a test account; the customer's account gets none", () => {
+    const base = cardOf("anyapi.facebook.post_comments")!;
+    const capture: ToolCard = { ...base, endpointId: "syn.facebook.capture", status: "catalog_only", verifiedOn: [] };
     const primary = primaryOf("facebook", { catalogOnly: true });
     expect(primary.endpointId).toBe("scrapecreators.x.v1-facebook-post-comments");
-    const test = commentsAlternativesOf({ platform: "facebook", primary, parents: parentsWith(3), repliesCard: null, catalogOnly: true });
-    expect(test.alternatives.map((a) => [a.entry.endpoint_id, a.capture])).toEqual([["anyapi.facebook.post_comments", true]]);
-    const customer = commentsAlternativesOf({ platform: "facebook", primary, parents: parentsWith(3), repliesCard: null, catalogOnly: false });
+    const test = commentsAlternativesOf({ platform: "facebook", primary, parents: parentsWith(3), repliesCard: null, catalogOnly: true, cards: [primary, capture], idProofs: [] });
+    expect(test.alternatives.map((a) => [a.entry.endpoint_id, a.capture])).toEqual([["syn.facebook.capture", true]]);
+    const customer = commentsAlternativesOf({ platform: "facebook", primary, parents: parentsWith(3), repliesCard: null, catalogOnly: false, cards: [primary, capture], idProofs: [] });
     expect(customer.alternatives).toEqual([]);
+    expect(customer.excluded).toEqual([{ endpointId: "syn.facebook.capture", reason: "status" }]);
   });
   it("Facebook, a test account, replies planned: the second card carries neither feedback_id nor expansion_token, so it is left out", () => {
     const primary = primaryOf("facebook", { catalogOnly: true, replies: true });
@@ -144,12 +149,14 @@ describe("SYNTHETIC cards: every compatibility rule fails closed, before approva
 });
 
 describe("the id proofs are data, with the stored pages they were taken from", () => {
-  it("Instagram's two comments cards and YouTube's two are proven equal; nothing else is", () => {
+  it("Instagram's two comments cards, Facebook's two (round 20) and YouTube's two are proven equal; nothing else is", () => { // CHANGED (round 20): Facebook's pair added
     expect(COMMENT_ID_PROOFS.map((p) => [p.a, p.b]).sort()).toEqual([
       ["anyapi.instagram.post.comments", "scrapecreators.instagram.post.comments"],
       ["crawl4ai.youtube.video.comments", "tikhub.youtube.video.comments"],
+      ["scrapecreators.x.v1-facebook-post-comments", "anyapi.facebook.post_comments"],
     ]);
     expect(idsProvenEqual("scrapecreators.instagram.post.comments", "anyapi.instagram.post.comments")).toBe(true);
-    expect(idsProvenEqual("anyapi.facebook.post_comments", "scrapecreators.x.v1-facebook-post-comments")).toBe(false);
+    expect(idsProvenEqual("anyapi.facebook.post_comments", "scrapecreators.x.v1-facebook-post-comments")).toBe(true);
+    expect(idsProvenEqual("anyapi.facebook.post_comments", "scrapecreators.instagram.post.comments")).toBe(false);
   });
 });

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { violationTextAr } from "../src/lib/agentMission/foundation/deliveryContract";
 import { ALTERNATIVE_LINE_AR } from "../src/lib/agentMission/foundation/alternatives";
 import { replayMission, storedRows, type MissionReplay } from "./helpers/missionReplay";
-import { MISSIONS } from "./helpers/round14Missions";
+import { FB20, MISSIONS } from "./helpers/round14Missions";
 
 /**
  * ROUND 16: THE OFFLINE REPLAYS OF THE FOUR STORED LIVE MISSIONS STAY UNCHANGED where no compatible alternative exists (TikTok msn_5851abc92a1e6645a9cd, YouTube msn_41a73a6b2c0b4a76ef0a and msn_5d5a9b2a933aeaa47d81, Facebook msn_236f4af6fe4cb890abee): no stage carries an alternative, the card has no line about one,
@@ -15,7 +15,8 @@ const STORED: Record<string, Record<string, number>> = {
   msn_236f4af6fe4cb890abee: {},
 };
 
-describe.each(MISSIONS)("$label: unchanged by the alternatives", ({ id, input }) => {
+// CHANGED (round 20): the Facebook smoke of round 20 is left out: its comments card HAS a verified alternative by design (tests/round20-facebook-alt-comments.test.ts replays it with the alternative)
+describe.each(MISSIONS.filter((m) => m.id !== FB20))("$label: unchanged by the alternatives", ({ id, input }) => {
   let r: MissionReplay;
   beforeAll(async () => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date(input.readAt)); r = await replayMission(input); }, 240_000);
   afterAll(() => { vi.useRealTimers(); });

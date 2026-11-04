@@ -195,7 +195,7 @@ export async function answerForCustomer(client: any, input: { id: string; userId
 }
 
 /** A short-lived link to a result file of the customer's own mission. */
-export async function customerFileLink(client: any, input: { id: string; userId: string; name: string }): Promise<CustomerResult<{ url: string }>> {
+export async function customerFileLink(client: any, input: { id: string; userId: string; name: string }): Promise<CustomerResult<{ url: string; /** ROUND 20: the name the file is saved under (the route that serves the file itself writes it into its own header) */ download: string }>> {
   const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,files,plan,request_text,delivered_units,updated_at").eq("id", input.id).maybeSingle();
   if (!mission || mission.user_id !== input.userId) return bad(404, "الملف غير موجود.");
   const files = Array.isArray(mission.files) ? (mission.files as Array<{ name: string; path: string; kind?: string }>) : [];
@@ -221,5 +221,5 @@ export async function customerFileLink(client: any, input: { id: string; userId:
   const download = missionDownloadName({ files: mission.files, kind: file.kind ?? customerName.split(".").pop() ?? "", plan: mission.plan, requestText: mission.request_text, deliveredUnits: mission.delivered_units, date: mission.updated_at });
   const { data, error } = await client.storage.from(AGENT_BUCKET).createSignedUrl(`${input.id}/${file.path}`, 120, { download });
   if (error || !data?.signedUrl) return bad(500, "تعذّر إنشاء رابط الملف.");
-  return { ok: true, url: String(data.signedUrl) };
+  return { ok: true, url: String(data.signedUrl), download };
 }

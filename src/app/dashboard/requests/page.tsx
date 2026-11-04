@@ -35,6 +35,7 @@ import { REQUESTS_PAGE_SIZE, hashOfTab, requestsShownCounts, tabFromHash, tabOfK
 import { saveRequestFacts } from "@/lib/requests/facts";
 import { customerFormatsOf } from "@/lib/requests/files";
 import type { MissionIndexRow, RequestIndex } from "@/lib/requests/types";
+import { fileNameFromDisposition } from "@/lib/downloadName";
 
 interface JobDoc {
   $id: string;
@@ -399,31 +400,16 @@ export default function RequestsPage() {
       if (session?.access_token) {
         headers["Authorization"] = `Bearer ${session.access_token}`;
       }
-      const res = await fetch(`/api/jobs/${job.$id}/download?format=${ext}`, { headers });
+      // ROUND 20: the file itself from the site (its own Content-Disposition: the Arabic name), never a bare storage link, which saves the name percent-encoded («%D8%AA...xlsx»)
+      const res = await fetch(`/api/jobs/${job.$id}/download?format=${ext}&stream=1`, { headers });
       if (!res.ok) throw new Error(String(res.status));
-      const payload = await res.json();
-      if (!payload?.success || !payload?.signedUrl) throw new Error("no_signed_url");
-
-      let blobUrl: string | null = null;
-      try {
-        const fileRes = await fetch(payload.signedUrl);
-        if (fileRes.ok) {
-          blobUrl = URL.createObjectURL(await fileRes.blob());
-        }
-      } catch {
-        // Fall back to direct signed URL navigation
-      }
-
-      if (blobUrl) {
-        const a = document.createElement("a");
-        a.href = blobUrl;
-        a.download = payload.downloadFileName || `diger_data_${job.$id.slice(0, 8)}.${ext}`;
-        document.body.appendChild(a);
-        a.click();
-        setTimeout(() => { URL.revokeObjectURL(blobUrl!); a.remove(); }, 30000);
-      } else {
-        window.location.assign(payload.signedUrl);
-      }
+      const blobUrl = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = fileNameFromDisposition(res.headers.get("Content-Disposition")) || `diger_data_${job.$id.slice(0, 8)}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => { URL.revokeObjectURL(blobUrl); a.remove(); }, 30000);
     } catch {
       setDlError("تعذّر تحميل الملف. يرجى إعادة المحاولة. (التحميل متاح لمدة ٩٠ يومًا)");
     } finally {
