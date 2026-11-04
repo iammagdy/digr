@@ -182,11 +182,11 @@ export const ADDON_APPROVE_MESSAGES_AR = {
   /** The hold was reserved but recording it on the request could not be proved (after bounded retries and a read-back). Not success: the request goes back to waiting so a retry converges on the same hold. */
   record_unverified: "لم نتمكن من تأكيد تسجيل اعتماد الطلب بعد. قد تكون نقاطك حُجزت مؤقتًا، ولن يُخصم منها إلا ما يُنجز. أعد المحاولة بعد قليل؛ لن يُحجز شيء مرتين.",
   /** The abandoned job of this request was RELEASED (proved by its ledger): the points are back and the request is ended. Said only when the release row exists. */
-  released_before_start: "لم يبدأ تنفيذ هذا الطلب، وعادت النقاط التي حُجزت له إلى رصيدك كاملة. يمكنك تقديم طلب جديد.",
+  released_before_start: "لم يبدأ تنفيذ هذا الطلب، والنقاط المحجوزة له حجز مؤقت مُحرَّر كاملًا. يمكنك تقديم طلب جديد.",
 } as const;
 /** How a request ended after its abandoned job was released: the row's `error`, and the sentence the customer reads (it says the points came back and never says anything was charged). */
 export const ADDON_RELEASED_ERROR = "approval_released";
-export const ADDON_RELEASED_SUMMARY_AR = "لم يبدأ تنفيذ هذا الطلب، وعادت النقاط التي حُجزت له إلى رصيدك كاملة. لم يُسجَّل أي خصم، ويمكنك تقديم طلب جديد.";
+export const ADDON_RELEASED_SUMMARY_AR = "لم يبدأ تنفيذ هذا الطلب، والنقاط المحجوزة له حجز مؤقت مُحرَّر كاملًا. لم يُسجَّل أي خصم، ويمكنك تقديم طلب جديد.";
 /** The patch that ENDS a request whose abandoned job was released: failed, no charge, the job recorded for audit. One shape for the approval's own retry and for the recovery. */
 export const releasedRowPatch = (jobId: string, quoteId: string, holdPoints: number) => ({ status: "failed" as const, error: ADDON_RELEASED_ERROR, charged_points: 0, delivered_units: 0, summary_ar: ADDON_RELEASED_SUMMARY_AR, job_id: jobId, quote_id: quoteId, reserved_points: holdPoints, lease_until: null, worker_id: null });
 export type AddonApproveMessage = keyof typeof ADDON_APPROVE_MESSAGES_AR;
