@@ -145,6 +145,8 @@ const perParentOf = numberIn;
 const NEWEST = /(?:^|\s)(?:ال)?[أا]حدث(?:\s|$)|الأخيرة|الاخيرة|latest|newest/i;
 const MADE_WITH = /(?:معمول|مصنوع|متعمل|مولد|مصمم)\w*\s*(?:ب|بال)/;
 const ABOUT = /(?:^|\s)(?:عن|حول|بخصوص|فيها|فيه|تذكر)\s/;
+/** «في آخر كأس عالم», «في أحدث نهائي»: the latest occurrence of a recurring event (the event words of occurrence.ts), with the one word that names it («عالم», «دوري أبطال»). */
+const LATEST_EVENT = /(?:^|\s)(?:في|خلال|أثناء|اثناء)\s+(?:آخر|اخر|أحدث|احدث)\s+((?:ال)?(?:نهائي|نهائيات|كأس|بطولة|دوري|موسم|انتخابات|سوبر|مونديال|أولمبياد|اولمبياد|قمة|مهرجان|ديربي|مؤتمر)(?:\s+(?:ال)?[\u0621-\u064A]+)?)(?=$|[\s،,.!؟?])/;
 
 /** The names an official YouTube source is looked up by: the edit's (the customer's, or Stage 2's understanding step), else read from the topic. */
 export const channelNamesOf = (ask: Pick<Ask, "topic" | "edits">): string[] => (ask.edits.channels && ask.edits.channels.length > 0 ? ask.edits.channels : officialChannelQueriesOf(ask.topic.text));
@@ -165,7 +167,11 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
   const text = `${String(request ?? "")} ${String(answer ?? "")}`.replace(/\s+/g, " ").trim();
   const c = buildRequestContract(request, answer);
   const meaning = topicMeaningOf(text);
-  const topicText = c.topic ?? meaning.topic ?? null;
+  // ROUND 33: «في آخر كأس عالم» / «في أحدث نهائي»: the customer names the LATEST occurrence of a recurring event themselves. The request parser stops the topic at «في» (the topic of «منتخب مصر في آخر كأس عالم» was «منتخب مصر»), so the event was dropped without a trace. It is now part of the topic (what the search and the topic marks read)
+  // and, on the platforms that ask «تقصد أنهي مرة؟» (Facebook, Instagram, YouTube), it is the customer's own answer «آخر مرة»: no question. A request with no such phrase is read exactly as before.
+  const eventLatest = c.platform === "facebook" || c.platform === "instagram" || c.platform === "youtube" ? LATEST_EVENT.exec(text)?.[1]?.replace(/\s+/g, " ").trim() ?? null : null;
+  const baseTopic = c.topic ?? meaning.topic ?? null;
+  const topicText = eventLatest && !(baseTopic ?? "").includes(eventLatest) ? [baseTopic, eventLatest].filter(Boolean).join(" ") : baseTopic;
   // «عن / حول / فيها X» is about X, «معمول بـ X» is made with X; a topic named with neither, that one can make content with, is ambiguous (asked before planning)
   const relation: TopicRelation = topicText === null ? "none" : MADE_WITH.test(text) ? "made_with" : ABOUT.test(text) ? "about" : meaning.kind === "ambiguous" ? "ambiguous" : "about";
   // A PAGE OR ACCOUNT GIVEN BY ITS LINK (Facebook, Instagram): the request contract reads the words after «من صفحة» and stops at the link's first dot; the link itself is the source
@@ -173,7 +179,7 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
   const sourceKind: AskSourceKind = link || c.source.named ? "named" : c.source.official ? "official" : "none";
   // A YEAR (decision 7; Facebook, Instagram and YouTube only): written by the customer in their words, or typed as the answer of «حدد سنة», is the period of that calendar year; the customer's own number of posts («٢٠٢٠ منشور») is never a year
   const social = c.platform === "facebook" || c.platform === "instagram" || c.platform === "youtube";
-  const chosen = edits.occurrence ?? (occurrenceChoiceOf(answer) as Occurrence | { kind: "ask_year" } | null);
+  const chosen = edits.occurrence ?? (occurrenceChoiceOf(answer) as Occurrence | { kind: "ask_year" } | null) ?? (eventLatest && !c.period ? ({ kind: "latest" } as Occurrence) : null);
   const occurrence: Occurrence | null = chosen && chosen.kind !== "ask_year" ? chosen : social && !c.period && requestYearOf(String(request ?? "")) !== null ? { kind: "year", year: requestYearOf(String(request ?? ""))! } : null;
   const yearPeriod: AskPeriod | null = social && !c.period && occurrence?.kind === "year" ? periodOf(dayOf(occurrence.year, 1, 1), dayOf(occurrence.year, 12, 31)) : null;
   const language: Ask["language"] = c.language ? (/بالإنجليزي|بالانجليزي|الإنجليزية|الانجليزية|english/i.test(text) ? "en" : "ar") : null;

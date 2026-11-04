@@ -253,6 +253,8 @@ export interface CompiledMark {
   conditions?: { named: boolean; period: boolean; language: boolean; country: boolean; topic: boolean };
   /** ROUND 17: the source the customer named (an account's handle, a page's name or link), so the delivery contract can check a row's named-source cell against the row's own author. Internal; never shown. */
   source_text?: string;
+  /** ROUND 33 (catalog discovery): set ONLY when the parents were read by a tool derived from the catalog: which tool, how it was chosen among the validated candidates, and whether the pages showed the source complete, partial or unknown. Internal audit; the customer reads the plan's notes. */
+  discovery?: import("./foundation/discovery/plan").DiscoveryMark;
 }
 
 export interface UnservedStep {
