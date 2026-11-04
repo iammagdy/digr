@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { AGENT_JOB_LEASE_SECONDS, MISSION_EVENTS_TABLE, MISSION_TABLE } from "./constants";
+import { settleMission, type SettleResult } from "./lifecycle";
+import { priceMissionByCode } from "./price";
 import { DEFAULT_MISSION_PRICING_SETTINGS, pointsPerCostUsd, type MissionPricingSettings } from "../missionPricing";
 
 /**
@@ -109,3 +112,182 @@ export function addonChargePoints(input: { realCostUsd: number; filled: number; 
   const hold = Math.max(0, Math.floor(holdPoints));
   return Number(holdPoints === Number.POSITIVE_INFINITY ? wanted : wanted < BigInt(hold) ? wanted : BigInt(hold));
 }
+
+// ---------- reading and checking the add-on row ----------
+
+/** The add-on of a row's `plan`, or null when the plan is not an add-on (a normal mission's plan has no `addon`). Strict: every field is checked, nothing is trusted. */
+export function readAddonPlan(plan: unknown): AddonPlan | null {
+  const a = (plan as { addon?: unknown } | null)?.addon as Record<string, any> | undefined;
+  if (!a || typeof a !== "object" || a.v !== 1 || !ADDON_KINDS.includes(a.kind) || typeof a.of !== "string" || a.of === "" || !isCount(a.baseVersion) || !isCount(a.attempt)) return null;
+  if (a.newVersion !== null && !isCount(a.newVersion)) return null;
+  const p = a.pricing as Record<string, any> | undefined;
+  if (!p || typeof p !== "object" || !isCount(p.requested) || !isCount(p.holdPoints) || !isCount(p.estimatePoints) || !p.settings || typeof p.settings.markup !== "number" || typeof p.settings.minChargePoints !== "number") return null;
+  if (a.kind === "review" ? !(Number.isInteger(p.cells) && p.cells >= 0) : !(typeof p.costPerRowUsd === "number" && Number.isFinite(p.costPerRowUsd) && p.costPerRowUsd >= 0)) return null;
+  return a as unknown as AddonPlan;
+}
+
+export type AddonCheck = { ok: true; holdPoints: number; estimatePoints: number } | { ok: false; code: "not_an_addon" | "plan_changed" | "too_large" };
+
+/** The add-on priced AGAIN by code, and its identity checked: what is held is never a stored number that nobody recomputed. */
+export function checkAddon(rowId: string, addon: AddonPlan): AddonCheck {
+  if (rowId !== addonId(addon.of, addon.baseVersion, addon.attempt)) return { ok: false, code: "plan_changed" };
+  if (addon.kind === "review" ? addon.newVersion !== null : addon.newVersion !== addon.baseVersion + 1) return { ok: false, code: "plan_changed" };
+  const p = addon.pricing;
+  let hold: number;
+  let estimate: number;
+  try {
+    if (addon.kind === "review") {
+      hold = reviewHoldPoints(p.cells as number);
+      estimate = hold;
+      if (p.requested !== 1) return { ok: false, code: "plan_changed" };
+    } else {
+      const price = priceMissionByCode([{ rows: p.requested, costPerRowUsd: p.costPerRowUsd as number, deliver: true, codeOnly: true }], { settings: p.settings });
+      if (price.overCap) return { ok: false, code: "too_large" };
+      hold = price.reservePoints;
+      estimate = price.maxChargePoints;
+      if (p.settings.minChargePoints !== ADDON_MIN_POINTS) return { ok: false, code: "plan_changed" };
+    }
+  } catch {
+    return { ok: false, code: "plan_changed" };
+  }
+  if (hold !== p.holdPoints || estimate !== p.estimatePoints) return { ok: false, code: "plan_changed" };
+  if (hold > ADDON_MAX_HOLD_POINTS) return { ok: false, code: "too_large" };
+  return { ok: true, holdPoints: hold, estimatePoints: estimate };
+}
+
+// ---------- approval ----------
+
+export type AddonApprovalResult =
+  | { ok: true; jobId: string; quoteId: string; kind: AddonKind; holdPoints: number; providerBudgetUsd: number }
+  | { ok: false; status: number; error: string; code?: string };
+
+/** The customer's words for every refusal (Arabic only, no provider, no endpoint id, no USD). A refusal before the money call says nothing was held. */
+export const ADDON_APPROVE_MESSAGES_AR = {
+  not_found: "الطلب غير موجود.",
+  not_ready: "لا يوجد طلب جاهز للاعتماد.",
+  already_approved: "هذا الطلب اعتُمد بالفعل.",
+  plan_changed: "تغيّر سعر هذا الطلب عن المعروض؛ اطلبه من جديد. لم يُحجز شيء.",
+  too_large: "هذا التعديل أكبر من الحد المسموح لطلب واحد؛ قسّمه إلى أجزاء أصغر. لم يُحجز شيء.",
+  quote_failed: "تعذّر تجهيز هذا الطلب الآن. لم يُحجز ولم يُخصم شيء.",
+  insufficient_balance: "رصيدك لا يكفي لهذا الطلب. اشحن رصيدك ثم اعتمده؛ لم يُخصم شيء.",
+  concurrency_limit: "لديك طلبان قيد التنفيذ بالفعل؛ انتظر اكتمال أحدهما ثم اعتمد هذا الطلب. لم يُخصم شيء.",
+  quote_expired: "انتهت مهلة اعتماد هذا الطلب؛ اطلبه من جديد. لم يُخصم شيء.",
+  accept_failed: "تعذّر اعتماد الطلب وحجز النقاط. لم يُخصم شيء.",
+  claim_failed: "تعذّر تجهيز الطلب للتنفيذ، فعاد الحجز كاملًا إلى رصيدك.",
+  claim_retry: "تعذّر تجهيز الطلب للتنفيذ الآن. نقاطك محجوزة، فأعد المحاولة بعد قليل ولن يُخصم منها إلا ما يُنجز.",
+  approved_event: "اعتُمد الطلب وحُجزت النقاط؛ يبدأ التنفيذ الآن.",
+} as const;
+export type AddonApproveMessage = keyof typeof ADDON_APPROVE_MESSAGES_AR;
+/** What the job's list line says (the `summaryAr` of the quote item). */
+export const ADDON_SUMMARY_AR: Readonly<Record<AddonKind, string>> = { review: "مراجعة الملف", review_fix: "تصحيح بعد المراجعة", edit: "تعديل الملف" };
+
+export interface AddonApprovalInput {
+  /** The add-on's row id (addonId(...)). */
+  id: string;
+  actorId: string;
+  /** The row must belong to this user (the customer path). */
+  expectUserId?: string;
+  now?: Date;
+  expiresInMinutes?: number;
+}
+
+const bad = (status: number, key: AddonApproveMessage, code?: string): AddonApprovalResult => ({ ok: false, status, error: ADDON_APPROVE_MESSAGES_AR[key], ...(code ? { code } : {}) });
+const quiet = async (f: () => PromiseLike<unknown> | unknown): Promise<void> => { try { await f(); } catch { /* the revert is best effort: the next approval of the same add-on converges (deterministic ids) */ } };
+
+/**
+ * THE ONE APPROVAL PATH OF AN ADD-ON. It copies the shape of approveMissionOnce (approval.ts) for an add-on row:
+ *   1 read the row (it must be an add-on, `plan_ready`, the user's own), check it by code (identity, price again, 5,000-point limit): a refusal here writes NOTHING
+ *   2 claim plan_ready -> approved (compare-and-set: two clicks approve once; the claim must change exactly one row)
+ *   3 the plan is read again after the claim and checked again
+ *   4 create_quote_atomic (deterministic quote id: the same call again is `already_created`) -> accept_quote_atomic (res_<job>; the same call again is `already_accepted`) -> claim_job_chunk
+ *   5 record job, quote and reserve on the row
+ * Any failure puts the row back to `plan_ready` (an expired quote ends it: the customer asks again and the next attempt number makes a new id). A failure NEVER releases a job that was already accepted before this call.
+ */
+export async function approveAddonOnce(client: any, input: AddonApprovalInput): Promise<AddonApprovalResult> {
+  const { data: row } = await client.from(MISSION_TABLE).select("id,user_id,status,plan").eq("id", input.id).maybeSingle();
+  if (!row || (input.expectUserId && row.user_id !== input.expectUserId)) return bad(404, "not_found");
+  const first = readAddonPlan(row.plan);
+  if (!first) return bad(409, "not_ready");
+  if (row.status === "approved" || row.status === "executing" || row.status === "completed") return bad(409, "already_approved");
+  if (row.status !== "plan_ready") return bad(409, "not_ready");
+  const before = checkAddon(row.id, first);
+  if (!before.ok) return bad(409, before.code === "too_large" ? "too_large" : "plan_changed", before.code);
+
+  const claim = await client.from(MISSION_TABLE).update({ status: "approved", approved_at: (input.now ?? new Date()).toISOString(), approved_by: input.actorId, worker_id: null, lease_until: new Date(Date.now() + 3600_000).toISOString() }).eq("id", input.id).eq("status", "plan_ready").select("id");
+  if (claim.error) return { ok: false, status: 500, error: "تعذّر الاعتماد." };
+  if (Array.isArray(claim.data) && claim.data.length === 0) return bad(409, "already_approved");
+  const revert = (error: string, status: "plan_ready" | "cancelled" = "plan_ready") => quiet(() => client.from(MISSION_TABLE).update({ status, lease_until: null, error }).eq("id", input.id));
+
+  try {
+    const { data: claimed } = await client.from(MISSION_TABLE).select("plan").eq("id", input.id).maybeSingle();
+    const addon = readAddonPlan(claimed?.plan ?? row.plan);
+    const price = addon ? checkAddon(row.id, addon) : null;
+    if (!addon || !price || !price.ok) { await revert(price && !price.ok ? price.code : "plan_changed"); return bad(409, price && !price.ok && price.code === "too_large" ? "too_large" : "plan_changed", price && !price.ok ? price.code : "plan_changed"); }
+    const hold = price.holdPoints;
+
+    const quoteId = addonQuoteId(row.id);
+    const slug = ADDON_SLUG[addon.kind];
+    const items = [{ capabilitySlug: slug, endpointId: slug, missionId: addon.of, addonId: row.id, unitPricePoints: 1, targetVolumeMin: 1, targetVolumeMax: hold, summaryAr: ADDON_SUMMARY_AR[addon.kind] }];
+    const formats = ["xlsx", "csv"];
+    const quoteHash = sha256Hex(JSON.stringify({ items, formats }));
+    const expiresAt = new Date((input.now ?? new Date()).getTime() + (input.expiresInMinutes ?? 30) * 60_000).toISOString();
+
+    const created = await client.rpc("create_quote_atomic", { p_user_id: row.user_id, p_quote_id: quoteId, p_quote_hash: quoteHash, p_items: items, p_total_points: hold, p_output_formats: formats, p_expires_at: expiresAt, p_previous_quote_ids: [] });
+    if (created?.error || created?.data?.success === false) { await revert("quote_failed"); return bad(409, "quote_failed", "quote_failed"); }
+
+    const accepted = await client.rpc("accept_quote_atomic", { p_quote_id: quoteId, p_user_id: row.user_id, p_expected_quote_hash: quoteHash });
+    if (accepted?.error) { await revert("accept_failed"); return bad(409, "accept_failed", "accept_failed"); }
+    const body = accepted?.data;
+    if (!body?.success) {
+      const code = typeof body?.error === "string" ? body.error : "accept_failed";
+      if (code === "quote_expired") { await revert("quote_expired", "cancelled"); return bad(409, "quote_expired", code); }
+      const key: AddonApproveMessage = code === "insufficient_balance" || code === "concurrency_limit" ? code : "accept_failed";
+      await revert(code);
+      return bad(key === "insufficient_balance" ? 402 : 409, key, code);
+    }
+    const jobId = String(body.job_id);
+    const alreadyAccepted = body.already_accepted === true;
+
+    const claimJob = await client.rpc("claim_job_chunk", { p_job_id: jobId, p_expected_step: 0, p_lease_seconds: AGENT_JOB_LEASE_SECONDS });
+    // an earlier attempt of THIS add-on that was accepted and claimed but whose answer was lost: the lease is already ours (no other code claims an add-on's job), so it counts as claimed
+    const claimedOk = claimJob?.data?.claimed === true || (alreadyAccepted && claimJob?.data?.error === "lease_active");
+    if (claimJob?.error || !claimedOk) {
+      // a job accepted before this call is never released here: it may already be running
+      if (!alreadyAccepted) await client.rpc("release_job_atomic", { p_job_id: jobId, p_error_message: "تعذّر تجهيز الطلب للتنفيذ، فعاد الحجز المؤقت كاملًا." });
+      await revert("claim_failed");
+      return bad(409, alreadyAccepted ? "claim_retry" : "claim_failed", "claim_failed");
+    }
+
+    await client.from(MISSION_TABLE).update({ job_id: jobId, quote_id: quoteId, reserved_points: hold, unit_price_points: 1, lease_until: null, error: null, updated_at: new Date().toISOString() }).eq("id", input.id);
+    await client.from(MISSION_EVENTS_TABLE).insert({ mission_id: input.id, kind: "system", message_ar: ADDON_APPROVE_MESSAGES_AR.approved_event, counts: {} });
+    return { ok: true, jobId, quoteId, kind: addon.kind, holdPoints: hold, providerBudgetUsd: addon.kind === "review" ? 0 : addonProviderBudgetUsd(hold, addon.pricing.settings) };
+  } catch {
+    // a call that threw (the answer may be lost: the money may or may not have moved): the row goes back, and the deterministic ids make the next approval converge on the same quote, job and ledger rows
+    await revert("accept_failed");
+    return bad(409, "accept_failed", "accept_failed");
+  }
+}
+
+// ---------- settlement ----------
+
+export type AddonSettleInput =
+  | { kind: "review"; jobId: string; holdPoints: number; /** The report was made and stored. */ reportStored: boolean; resultPath?: string | null }
+  | { kind: "review_fix" | "edit"; jobId: string; holdPoints: number; realCostUsd: number; filled: number; requested: number; settings?: MissionPricingSettings; resultPath?: string | null };
+
+export interface AddonSettleResult { result: SettleResult; chargePoints: number }
+
+/**
+ * THE SETTLEMENT OF AN ADD-ON: the charge is computed here by code, then handed to the EXISTING settleMission as "points delivered at 1 point each": complete_chunk, then settle_job_atomic (rel_ first, then chg_;
+ * never above the hold). Nothing charged: complete_chunk(0) then release_job_atomic (the whole hold comes back). Idempotent: the database answers `already_settled` / `already_released` and a retry writes nothing more.
+ * A review is charged its exact hold when its report is stored, and released whole when it is not.
+ */
+export async function settleAddon(client: any, input: AddonSettleInput): Promise<AddonSettleResult> {
+  const hold = Math.floor(input.holdPoints);
+  if (!Number.isInteger(hold) || hold < 1) throw new Error("settleAddon: the hold must be a whole number of 1 or more");
+  const costUsd = input.kind === "review" ? 0 : input.realCostUsd;
+  const chargePoints = input.kind === "review" ? (input.reportStored ? hold : 0) : addonChargePoints({ realCostUsd: input.realCostUsd, filled: input.filled, requested: input.requested, holdPoints: hold, settings: input.settings });
+  const result = await settleMission(client, { jobId: input.jobId, deliveredUnits: chargePoints, unitPricePoints: 1, reservedPoints: hold, costUsd, resultPath: input.resultPath ?? null, releaseReason: "لم يُسلَّم شيء من هذا الطلب، فعاد الحجز كاملًا." });
+  return { result, chargePoints };
+}
+
+

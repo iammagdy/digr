@@ -120,7 +120,7 @@ describe("approval: a job accepted before this call is never released by it", ()
     const jobId = addonJobId(addonQuoteId(row.id));
     w.jobs.get(jobId)!.step = 1; // the claim will answer step_mismatch
     const out = await approveAddonOnce(w.client, { id: row.id, actorId: USER });
-    expect(out).toMatchObject({ ok: false, code: "claim_failed", error: ADDON_APPROVE_MESSAGES_AR.claim_failed });
+    expect(out).toMatchObject({ ok: false, code: "claim_failed", error: ADDON_APPROVE_MESSAGES_AR.claim_retry });
     expect(w.calls.filter((c) => c.name === "release_job_atomic")).toEqual([]);
     expect(reserves(w)).toHaveLength(1);
     expect(w.ledger.filter((r) => r.type === "release")).toEqual([]);
@@ -131,7 +131,7 @@ describe("approval: a job accepted before this call is never released by it", ()
     const real = w.client.rpc;
     w.client.rpc = async (name: string, args: any) => (name === "claim_job_chunk" ? (w.calls.push({ name, args }), { data: { claimed: false, error: "backoff_active" } }) : real(name, args));
     const out = await approveAddonOnce(w.client, { id: row.id, actorId: USER });
-    expect(out).toMatchObject({ ok: false, code: "claim_failed" });
+    expect(out).toMatchObject({ ok: false, code: "claim_failed", error: ADDON_APPROVE_MESSAGES_AR.claim_failed });
     expect(w.ledger.map((r) => r.type)).toEqual(["topup", "reserve", "release"]);
     expect(w.balance()).toBe(10_000);
     expect(w.missions.get(row.id)!.status).toBe("plan_ready");
