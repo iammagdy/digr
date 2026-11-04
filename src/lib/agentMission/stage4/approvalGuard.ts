@@ -17,12 +17,12 @@ import { paidReviewVerdict, reviewReportPublished } from "./paidReview";
  */
 export type ApprovalGuardResult =
   | { ok: true }
-  | { ok: false; status: 404 | 409 | 503; reason: "not_found" | "not_ready" | "open_addon" | "review_exists" | "review_unresolved" | "unavailable"; messageAr: string };
+  | { ok: false; status: 404 | 409 | 503; reason: "not_found" | "not_ready" | "price_mismatch" | "version_changed" | "open_addon" | "review_exists" | "review_unresolved" | "unavailable"; messageAr: string };
 
 const NOTHING_HELD_AR = "تعذّر التحقق من الطلب الآن. لم يُحجز أو يُخصم شيء، فحاول بعد قليل.";
 const no = (status: 404 | 409 | 503, reason: Extract<ApprovalGuardResult, { ok: false }>["reason"], messageAr: string): ApprovalGuardResult => ({ ok: false, status, reason, messageAr });
 
-export async function guardApproval(client: any, input: { id: string; userId: string }): Promise<ApprovalGuardResult> {
+export async function guardApproval(client: any, input: { id: string; userId: string; /** The hold the page showed (the browser sends it; it is only COMPARED with the price the server computes, never used). */ expectedPoints?: number }): Promise<ApprovalGuardResult> {
   try {
     const { data: row, error } = await client.from(MISSION_TABLE).select("id,user_id,status,plan").eq("id", input.id).maybeSingle();
     if (error) return no(503, "unavailable", NOTHING_HELD_AR);
