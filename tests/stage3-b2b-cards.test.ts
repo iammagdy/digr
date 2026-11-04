@@ -1,4 +1,4 @@
-import { readdirSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { B2B_CARDS, UNVERIFIED_B2B_CARDS, b2bCardsFor, checkB2BCardOnPage, readB2BRows, type B2BCard } from "../src/lib/agentMission/stage3/b2bCards";
@@ -20,8 +20,10 @@ describe("every card is honest about its source", () => {
     }
   });
   it("no stored real B2B page exists in the repo, so every card is unverified with nothing in `verifiedOn`", () => {
-    const stored = readdirSync(new URL("./fixtures/live/missions", import.meta.url));
-    expect(stored.length).toBe(36);
+    // not a count of stored missions (main adds social ones): no CALL of the stored missions' call index is a B2B tool of the cards
+    const index = JSON.parse(readFileSync(new URL("./fixtures/live/call-index.json", import.meta.url), "utf8")) as { missions: Record<string, Array<[string, string, string, ...unknown[]]>> };
+    const called = new Set(Object.values(index.missions).flat().map((c) => c[2]));
+    for (const c of B2B_CARDS) expect(called.has(c.endpointId), c.endpointId).toBe(false);
     for (const c of B2B_CARDS) { expect(c.status, c.endpointId).toBe("unverified"); expect(c.verifiedOn).toEqual([]); }
     expect([...UNVERIFIED_B2B_CARDS].sort()).toEqual(B2B_CARDS.map((c) => c.endpointId).sort());
   });
