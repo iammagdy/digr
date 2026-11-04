@@ -9,6 +9,17 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 **Status: draft PR "Round 26 (WIP)". Items 7 and 9 are NOT started, item 10 (verify, merge) is NOT done. Nothing here is merged. No SQL write, no migration, no flag change, no paid provider call, no key or token seen. No forbidden file edited.**
 Branch `claude/tiktok-failure-platform-tests-xvnycn`. The owner's brief (nine items, one PR) is the one in the session that opened this round; this entry is the state at the stop.
 
+### Continuation (4 Nov 2026): partial, still draft
+
+- **1:** Faster polling remains. The 49-second gap is unexplained; Heroku `memory_wait` and `memory_ok` log lines are needed to confirm or reject the memory-admission hypothesis. Memory limits were not changed.
+- **2:** The chat already renders its waiting status while the message request is outstanding. Editor save/retype and template/composer sends now show pending labels; existing mission choice, answer, approve and methodology controls retain their pending states. Tests: `plan-editor-card`, `round26-send-pending`, `round26-waiting-and-holding`. A complete audit of all legacy send controls and a browser check remain outstanding.
+- **3–6:** Previous round-26 changes retained.
+- **7:** Unresolved. Local `pdftotext -raw` reproduced missing/reordered Arabic. An experimental line-level PDF `/ActualText` span containing the logical text was reversed by Poppler; reversing that string restored Arabic words but reversed mixed Arabic-Indic digits (`١٠` became `٠١`). The experiment was discarded and PDF code is unchanged. Other extractors, ligatures, punctuation and a complete ToUnicode solution remain unverified.
+- **8:** The methodology candidate derives the chooser/PDF title from the delivered count, plan, request and creation date instead of preferring an old stored filename when plan stages are present. The old filename remains a fallback when stage information is absent. `round26-titles` covers the old filename and delivered count; live stored missions across platforms and PDF rendering have not been checked.
+- **9:** The existing shell already hides signed-out buttons while authentication is loading. The header now shows a balance skeleton, the dashboard mounts its existing balance provider earlier, and a cached value is displayed only for its account. Tests: `round26-header-balance`. A real signed-in browser timing and account-switch test remain outstanding.
+
+No paid call, database write, migration, switch or memory-limit change. GitHub API access returned Forbidden, so the PR description has not been updated. The draft remains open; do not merge until the outstanding checks and owner preview are complete.
+
 ### The nine items
 
 | # | Item | State |
