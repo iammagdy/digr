@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { AGENT_JOB_LEASE_SECONDS, MISSION_EVENTS_TABLE, MISSION_TABLE } from "./constants";
+import { readJobMoneyState } from "./addonMoneyState";
 import { settleMission, type SettleResult } from "./lifecycle";
 import { priceMissionByCode } from "./price";
 import { DEFAULT_MISSION_PRICING_SETTINGS, pointsPerCostUsd, type MissionPricingSettings } from "../missionPricing";
@@ -186,6 +187,8 @@ export const ADDON_APPROVE_MESSAGES_AR = {
 /** How a request ended after its abandoned job was released: the row's `error`, and the sentence the customer reads (it says the points came back and never says anything was charged). */
 export const ADDON_RELEASED_ERROR = "approval_released";
 export const ADDON_RELEASED_SUMMARY_AR = "لم يبدأ تنفيذ هذا الطلب، وعادت النقاط التي حُجزت له إلى رصيدك كاملة. لم يُسجَّل أي خصم، ويمكنك تقديم طلب جديد.";
+/** The patch that ENDS a request whose abandoned job was released: failed, no charge, the job recorded for audit. One shape for the approval's own retry and for the recovery. */
+export const releasedRowPatch = (jobId: string, quoteId: string, holdPoints: number) => ({ status: "failed" as const, error: ADDON_RELEASED_ERROR, charged_points: 0, delivered_units: 0, summary_ar: ADDON_RELEASED_SUMMARY_AR, job_id: jobId, quote_id: quoteId, reserved_points: holdPoints, lease_until: null, worker_id: null });
 export type AddonApproveMessage = keyof typeof ADDON_APPROVE_MESSAGES_AR;
 /** What the job's list line says (the `summaryAr` of the quote item). */
 export const ADDON_SUMMARY_AR: Readonly<Record<AddonKind, string>> = { review: "مراجعة الملف", review_fix: "تصحيح بعد المراجعة", edit: "تعديل الملف" };
@@ -268,7 +271,15 @@ export async function approveAddonOnce(client: any, input: AddonApprovalInput): 
     const claimedOk = claimJob?.data?.claimed === true || (alreadyAccepted && claimJob?.data?.error === "lease_active");
     if (claimJob?.error || !claimedOk) {
       if (alreadyAccepted) {
-        // a job accepted before this call is never released here: it may already be running
+        // a job accepted before this call is never released here: it may already be running. But a job whose RELEASE is proved by the ledger (the first attempt's own release, or the watchdog) will never run: the request is ended instead of answering «retry» for ever
+        const state = await readJobMoneyState(client, jobId);
+        if (state.kind === "released") {
+          const ended = await client.from(MISSION_TABLE).update({ ...releasedRowPatch(jobId, quoteId, state.holdPoints), updated_at: new Date().toISOString() }).eq("id", input.id).eq("status", "approved").select("id");
+          if (!ended?.error && Array.isArray(ended?.data) && ended.data.length === 1) {
+            await quiet(() => client.from(MISSION_EVENTS_TABLE).insert({ mission_id: input.id, kind: "result", message_ar: ADDON_RELEASED_SUMMARY_AR, counts: {} }));
+            return bad(409, "released_before_start", "released_before_start");
+          }
+        }
         await revert("claim_failed");
         return bad(409, "claim_retry", "claim_failed");
       }

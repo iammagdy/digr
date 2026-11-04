@@ -65,7 +65,8 @@ function closure(from: string): Set<string> {
 }
 const code = (f: string) => readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
 
-const NEW_SRC = ["src/lib/agentMission/addonSettlement.ts", "src/lib/agentMission/stage4/addonQuote.ts", "src/lib/agentMission/stage4/addonRow.ts"];
+/** SAFETY ROUND: `addonMoneyState.ts` (a read-only look at a job and its ledger rows) and `addonRecovery.ts` (ends or finishes an abandoned approval from that state; one compare-and-set on the request's own row, no rpc) are new modules of the add-on's own code, reached only by the money core, each other and the request store. */
+const NEW_SRC = ["src/lib/agentMission/addonSettlement.ts", "src/lib/agentMission/stage4/addonQuote.ts", "src/lib/agentMission/stage4/addonRow.ts", "src/lib/agentMission/addonMoneyState.ts", "src/lib/agentMission/addonRecovery.ts"];
 /** Phase 2B-1: the worker's add-on runner and the small pure pieces it needs. */
 const NEW_WORKER = ["agent/src/stage4/addonFiles.ts", "agent/src/stage4/addonText.ts", "agent/src/stage4/dispatch.ts", "agent/src/stage4/rereadRun.ts", "agent/src/stage4/runAddon.ts", "src/lib/agentMission/stage4/reread.ts", "src/lib/agentMission/stage4/editCore.ts"];
 const NEW = [...NEW_SRC, ...NEW_WORKER];

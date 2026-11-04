@@ -1,4 +1,5 @@
 import { MISSION_TABLE } from "../constants";
+import { recoverRows } from "../addonRecovery";
 import type { AddonRowInsert, AddonRowLike, AddonRowStore } from "./addonRow";
 
 /**
@@ -22,9 +23,9 @@ export function createSupabaseAddonRowStore(client: any, userId: string): AddonR
   return {
     async listFor(missionId: string): Promise<ReadonlyArray<AddonRowLike>> {
       // the customer's own add-on rows of this delivered mission (the JSON path `plan->addon->>of`); a failed read THROWS: «no add-on is open» is never assumed from an error
-      const { data, error } = await client.from(MISSION_TABLE).select("id,status,plan,job_id,approved_at").eq("user_id", userId).eq("plan->addon->>of", missionId);
+      const { data, error } = await client.from(MISSION_TABLE).select("id,status,plan,job_id,approved_at,lease_until").eq("user_id", userId).eq("plan->addon->>of", missionId);
       if (error || !Array.isArray(data)) throw bad("the read failed");
-      return data.map((r: any) => ({ id: String(r.id), status: String(r.status), plan: r.plan, job_id: r.job_id ?? null, approved_at: r.approved_at ?? null }));
+      return data.map((r: any) => ({ id: String(r.id), status: String(r.status), plan: r.plan, job_id: r.job_id ?? null, approved_at: r.approved_at ?? null, lease_until: r.lease_until ?? null }));
     },
     async insert(row: AddonRowInsert) {
       const { error } = await client.from(MISSION_TABLE).insert(row);
@@ -33,5 +34,9 @@ export function createSupabaseAddonRowStore(client: any, userId: string): AddonR
       return { ok: false as const, duplicate: String(error.code ?? "") === "23505" || /duplicate key/i.test(String(error.message ?? "")) };
     },
     cancelUnpaid: (id: string) => cancelUnpaidAddonRow(client, { id, userId }),
+    async recoverAbandoned(rows: ReadonlyArray<AddonRowLike>): Promise<boolean> {
+      const outcomes = await recoverRows(client, { userId, rows });
+      return outcomes.some((o) => o.kind === "ended_released" || (o.kind === "active" && o.recorded));
+    },
   };
 }

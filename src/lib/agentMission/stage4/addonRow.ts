@@ -1,4 +1,5 @@
 import { ADDON_APPROVE_MESSAGES_AR, ADDON_KINDS, addonId, checkAddon, readAddonPlan, type AddonKind, type AddonPlan, type AddonPricing } from "../addonSettlement";
+import { abandonedApproval } from "../addonRecovery";
 import type { RereadRecipe } from "./reread";
 import type { ReviewCode } from "./review";
 
@@ -34,7 +35,7 @@ export const OPEN_STATUSES = ["queued", "planning", "needs_input", "plan_ready",
 export const ENDED_STATUSES = ["cancelled", "failed", "unserved"] as const;
 
 /** `job_id` and `approved_at` are read with every add-on row: they say whether the row was EVER put through an approval (money may have moved), which `status` alone cannot (a failed approval puts the row back to `plan_ready`). */
-export interface AddonRowLike { id: string; status: string; plan: unknown; job_id?: string | null; approved_at?: string | null }
+export interface AddonRowLike { id: string; status: string; plan: unknown; job_id?: string | null; approved_at?: string | null; lease_until?: string | null }
 /** What a row of `missions` needs to be inserted (the table's own defaults fill the rest). */
 export interface AddonRowInsert { id: string; user_id: string; request_text: string; status: "plan_ready"; plan: { addon: AddonPlan } }
 export interface AddonRowStore {
@@ -47,6 +48,20 @@ export interface AddonRowStore {
    * nothing (the row is gone, or no longer waiting, or it has been approved at least once). It never touches a started row and calls no refund or settlement function.
    */
   cancelUnpaid(id: string): Promise<boolean>;
+  /**
+   * Optional (safety fix C): given rows ALREADY READ, end or finish the requests whose approval was abandoned and whose money state is PROVED by the database (addonRecovery.ts). `true` = something changed, so the rows must be read again. Never throws, never calls a money function.
+   * A store without it (the memory stores of the pure tests) behaves exactly as before.
+   */
+  recoverAbandoned?(rows: ReadonlyArray<AddonRowLike>): Promise<boolean>;
+}
+
+/**
+ * The add-on rows of a file, after the abandoned approvals among them were recovered when the store can do it. In the ordinary case (no row is an abandoned approval) it is ONE read, exactly as `listFor`; only when a row is one does it recover, and read again if anything changed.
+ */
+export async function listWithRecovery(store: AddonRowStore, missionId: string): Promise<ReadonlyArray<AddonRowLike>> {
+  const rows = await store.listFor(missionId);
+  if (!store.recoverAbandoned || !rows.some((r) => abandonedApproval(r))) return rows;
+  return (await store.recoverAbandoned(rows)) ? store.listFor(missionId) : rows;
 }
 
 export const isAddonRow = (row: { plan?: unknown } | null | undefined): boolean => readAddonPlan(row?.plan) !== null;
@@ -107,7 +122,7 @@ const refuse = (reason: AddonCreateRefusal, existingId?: string): CreateAddonRes
 export async function createAddonRow(store: AddonRowStore, input: { userId: string; of: string; kind: AddonKind; baseVersion: number; latestVersion: number; request: AddonRequest; pricing: AddonPricing; requestText: string }): Promise<CreateAddonResult> {
   if ((input.request as { kind?: unknown }).kind === "remove_rows" || (input.request as { kind?: unknown }).kind === "delete_rows") return refuse("row_removal_not_offered");
   if (input.request.kind !== input.kind) return refuse("bad_request");
-  const rows = await store.listFor(input.of);
+  const rows = await listWithRecovery(store, input.of);
   // two open add-ons on this file (the end state of a creation whose settlement could not run): repair first, and answer with the one that stays
   if (addonsOf(rows, input.of).filter(({ row }) => isOpen(row)).length > 1) {
     const { keeper } = await reconcileOpenAddons(store, input.of);

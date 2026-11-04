@@ -335,6 +335,8 @@ describe("the fence in the source", () => {
       "src/lib/agentMission/stage4/reviewReport.ts",
       // STAGE B: the edit request reads the delivered mission's own row by id and the owner, and reads and writes ADD-ON rows through the shared store (it must see them)
       "src/lib/agentMission/stage4/editRequest.ts",
+      // SAFETY ROUND: the recovery of an abandoned approval reads ONE add-on row by id (and the file's add-on rows) and ends or finishes it with one compare-and-set pinned to the status, job and approval mark it read; it reads jobs and the ledger read-only and calls no rpc (tests/safety-approval-recovery.test.ts)
+      "src/lib/agentMission/addonRecovery.ts",
       // STAGE C: the file workflow status reads the customer's own add-on rows and the delivered mission's own row by id (read-only; it never writes)
       "src/lib/agentMission/stage4/fileWorkflow.ts",
       // the shared approval path: its callers are the guarded ones above (asserted in the first test)

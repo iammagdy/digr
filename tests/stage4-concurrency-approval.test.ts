@@ -264,7 +264,7 @@ describe("SCENARIO 6 and 8: a failed approval whose money state is unknown, and 
     expect(out.rows.get(row.id as string)!.job_id ?? null).toBeNull();
     expect(heldJobs(out)).toBe(1);
   });
-  it("DOCUMENTED UNRESOLVED RISK (UX, no money loss): if the retry never comes, the watchdog releases the abandoned job (rel_ +hold, no charge: the ledger nets to zero); but the REQUEST stays «waiting» with an approval mark, so it can be neither cancelled nor approved again (the quote is accepted, its job failed: «claim_retry» for ever) and it blocks every new request on the file. A recovery rule is needed in the approval wiring (owner decision)", async () => {
+  it("FIXED by the safety round (it was a DOCUMENTED UNRESOLVED RISK, UX + file blocked): the watchdog releases the abandoned job (rel_ +hold, no charge: the ledger nets to zero); the next approval click now ENDS the request («released before start», failed, no charge) instead of «claim_retry» for ever, and the file is free for a new request (a new attempt number)", async () => {
     const row = waiting(1);
     const { value, out } = await solo(opts(ONE, { seed: [row], setup: (w) => w.money.inject("accept_quote_atomic", "after") }), async (c, w) => {
       await approveAddonOnce(c, { id: row.id as string, actorId: ME, expectUserId: ME });
@@ -272,16 +272,46 @@ describe("SCENARIO 6 and 8: a failed approval whose money state is unknown, and 
       // what the watchdog does to a job nobody claimed: release_job_atomic with force (src/app/api/cron/watchdog/route.ts)
       const released = await w.money.client.rpc("release_job_atomic", { p_job_id: jobId, p_error_message: "x", p_force: true });
       const again = await approveAddonOnce(c, { id: row.id as string, actorId: ME, expectUserId: ME });
-      return { jobId, released, again, cancel: await cancelReviewRequest(c, { missionId: MISSION, userId: ME, requestId: row.id as string }), blocked: await createReviewRequest(c, { missionId: MISSION, userId: ME, version: 1 }) };
+      return { jobId, released, again, cancel: await cancelReviewRequest(c, { missionId: MISSION, userId: ME, requestId: row.id as string }), next: await createReviewRequest(c, { missionId: MISSION, userId: ME, version: 1 }) };
     });
     expect(value.released.data).toMatchObject({ success: true });
     expect(checkAddonLedger(out.money, value.jobId, { reserved: -out.money.ledger.find((l) => l.id === `res_${value.jobId}`)!.delta, charged: "none" })).toEqual([]);
-    expect(out.money.balance(), "the customer got everything back").toBe(START);
-    expect(value.again).toMatchObject({ ok: false, status: 409, error: ADDON_APPROVE_MESSAGES_AR.claim_retry });
-    expect(value.cancel).toMatchObject({ ok: false, error: "changed" });
-    expect(value.blocked).toMatchObject({ ok: false, error: "open_addon" });
-    expect(out.rows.get(row.id as string)).toMatchObject({ status: "plan_ready" });
+    expect(value.again).toMatchObject({ ok: false, status: 409, code: "released_before_start", error: ADDON_APPROVE_MESSAGES_AR.released_before_start });
+    expect(out.rows.get(row.id as string)).toMatchObject({ status: "failed", error: "approval_released", charged_points: 0 });
+    expect(value.cancel, "an ended request is not cancelled (it is over)").toMatchObject({ ok: false, error: "changed" });
+    expect(value.next, "the file is free: a new request is made").toMatchObject({ ok: true, created: true });
     expect(openRows(out.rows)).toHaveLength(1);
+    expect(openRows(out.rows)[0].id).not.toBe(row.id);
+    expect(out.money.ledger.filter((l) => l.type === "release")).toHaveLength(1);
+    ledgerSound(out);
+  });
+  it("…and when NOBODY retries the approval, the customer's own page heals the file: a read of the waiting request (and the creation of a new one) recovers the released request first, so it stops blocking", async () => {
+    for (const reader of ["page", "create"] as const) {
+      const row = waiting(1);
+      const { value, out } = await solo(opts(ONE, { seed: [row], setup: (w) => w.money.inject("accept_quote_atomic", "after") }), async (c, w) => {
+        await approveAddonOnce(c, { id: row.id as string, actorId: ME, expectUserId: ME });
+        await w.money.client.rpc("release_job_atomic", { p_job_id: [...w.money.jobs.keys()][0], p_error_message: "x", p_force: true });
+        return reader === "page" ? currentReviewRequest(c, { missionId: MISSION, userId: ME }) : createReviewRequest(c, { missionId: MISSION, userId: ME, version: 1 });
+      });
+      expect(out.rows.get(row.id as string), reader).toMatchObject({ status: "failed", error: "approval_released" });
+      if (reader === "page") expect(value).toMatchObject({ ok: true, request: null });
+      else expect(value).toMatchObject({ ok: true, created: true });
+      expect(out.money.ledger.filter((l) => l.type === "release")).toHaveLength(1);
+      expect(out.world.other).toEqual([]);
+      expect(out.world.reads.every((t) => t === "jobs" || t === "credit_ledger")).toBe(true);
+    }
+  });
+  it("…and a still-HELD request is NOT freed by a page read: the same read leaves a running hold's request blocking (it is finished for the worker, never ended)", async () => {
+    const row = waiting(1);
+    const { value, out } = await solo(opts(ONE, { seed: [row], setup: (w) => w.money.inject("accept_quote_atomic", "after") }), async (c) => {
+      await approveAddonOnce(c, { id: row.id as string, actorId: ME, expectUserId: ME });
+      return { page: await currentReviewRequest(c, { missionId: MISSION, userId: ME }), blocked: await createReviewRequest(c, { missionId: MISSION, userId: ME, version: 1 }) };
+    });
+    expect(value.blocked).toMatchObject({ ok: false, error: "open_addon" });
+    expect(out.rows.get(row.id as string)!.status).not.toBe("failed");
+    expect(openRows(out.rows)).toHaveLength(1);
+    expect(out.money.ledger.filter((l) => l.type === "release" || l.type === "charge")).toEqual([]);
+    expect(value.page).toMatchObject({ ok: true });
   });
   it("FIXED by the safety round (it was a DOCUMENTED UNRESOLVED RISK, MONEY HELD): the last update of `approveAddonOnce` now fails once, is retried and PROVED by a read-back: the row records the job, the customer is told ok only then, ONE hold, nothing released (tests/safety-approval-record.test.ts has the other shapes)", async () => {
     const row = waiting(1);

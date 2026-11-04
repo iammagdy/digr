@@ -2,7 +2,7 @@ import { formatAr } from "../../arabicDigits";
 import { MISSION_TABLE } from "../constants";
 import { addonId, readAddonPlan } from "../addonSettlement";
 import { reviewCard } from "./addonQuote";
-import { addonThatStays, createAddonRow, isUnpaidAddonRow, OPEN_STATUSES, reconcileOpenAddons, type AddonRowLike } from "./addonRow";
+import { addonThatStays, createAddonRow, isUnpaidAddonRow, listWithRecovery, OPEN_STATUSES, reconcileOpenAddons, type AddonRowLike } from "./addonRow";
 import { cancelUnpaidAddonRow, createSupabaseAddonRowStore } from "./addonRowStore";
 import { reviewCellsOf } from "./review";
 import type { ReviewRequestView } from "./reviewRequestLabels";
@@ -73,7 +73,7 @@ export async function currentReviewRequest(client: any, input: { missionId: stri
     if (error) return no(503, "unavailable");
     if (!data || data.user_id !== input.userId) return no(404, "not_found");
     const store = createSupabaseAddonRowStore(client, input.userId);
-    let rows = await store.listFor(input.missionId);
+    let rows = await listWithRecovery(store, input.missionId);
     const open = rows.filter((r) => (OPEN_STATUSES as ReadonlyArray<string>).includes(r.status) && readAddonPlan(r.plan) !== null);
     if (open.length > 1) {
       let stays: AddonRowLike | null;

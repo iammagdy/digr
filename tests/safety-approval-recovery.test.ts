@@ -153,12 +153,12 @@ describe("FIX C: a request whose abandoned job was RELEASED is ended safely, onc
   it("after the end, the file is free: a new request is allowed (a NEW attempt number, so a new id), and the workflow status says «not completed, no charge»", async () => {
     const { w, row } = make();
     await abandonedReleased(w, row.id);
-    const rows = () => [...w.missions.values()].map((r) => ({ id: r.id, status: r.status, plan: r.plan, job_id: r.job_id ?? null, approved_at: r.approved_at ?? null }));
+    const rows = () => [...w.missions.values()].map((r) => ({ id: r.id, status: r.status, plan: r.plan, job_id: r.job_id ?? null, approved_at: (r.approved_at as string | null | undefined) ?? null }));
     expect(canCreateAddon({ rows: rows(), of: FILE, kind: "review", baseVersion: 1, latestVersion: 1 })).toMatchObject({ ok: false, reason: "open_addon" });
     await recover(w, row.id);
     expect(canCreateAddon({ rows: rows(), of: FILE, kind: "review", baseVersion: 1, latestVersion: 1 })).toEqual({ ok: true, attempt: 2 });
     const r = w.missions.get(row.id)!;
-    expect(addonPhaseOf({ id: r.id, status: String(r.status), plan: r.plan, job_id: r.job_id ?? null, approved_at: r.approved_at ?? null, charged_points: r.charged_points as number, error: r.error as string, created_at: null } as any, { versions: new Set([1]), reviews: new Set() })).toMatchObject({ phase: "failed_no_charge" });
+    expect(addonPhaseOf({ id: r.id, status: String(r.status), plan: r.plan, job_id: r.job_id ?? null, approved_at: (r.approved_at as string | null | undefined) ?? null, charged_points: r.charged_points as number, error: r.error as string, created_at: null } as any, { versions: new Set([1]), reviews: new Set() })).toMatchObject({ phase: "failed_no_charge" });
   });
   it("a request that was RELEASED and is `approved` with no job id (the revert failed too) is ended the same way once its one-hour lease has run out", async () => {
     const { w, row, jobId } = make();

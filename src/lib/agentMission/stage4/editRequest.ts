@@ -2,7 +2,7 @@ import { formatAr } from "../../arabicDigits";
 import { MISSION_TABLE } from "../constants";
 import { readAddonPlan } from "../addonSettlement";
 import { editCard, unitsOfIntent } from "./addonQuote";
-import { addonThatStays, canCreateAddon, createAddonRow, isUnpaidAddonRow, OPEN_STATUSES, reconcileOpenAddons, type AddonRowLike, type EditIntent } from "./addonRow";
+import { addonThatStays, canCreateAddon, createAddonRow, isUnpaidAddonRow, listWithRecovery, OPEN_STATUSES, reconcileOpenAddons, type AddonRowLike, type EditIntent } from "./addonRow";
 import { cancelUnpaidAddonRow, createSupabaseAddonRowStore } from "./addonRowStore";
 import { applyEditCore, EDIT_REJECTION_AR, type EditRequest } from "./editCore";
 import type { EditInput } from "./editRequestForm";
@@ -289,7 +289,7 @@ export async function currentEditRequest(client: any, input: { missionId: string
     if (error) return no(503, "unavailable");
     if (!data || data.user_id !== input.userId) return no(404, "not_found");
     const store = createSupabaseAddonRowStore(client, input.userId);
-    let rows = await store.listFor(input.missionId);
+    let rows = await listWithRecovery(store, input.missionId);
     const open = rows.filter((r) => (OPEN_STATUSES as ReadonlyArray<string>).includes(r.status) && readAddonPlan(r.plan) !== null);
     if (open.length > 1) {
       let stays: AddonRowLike | null;
