@@ -98,8 +98,9 @@ describe("the fallthrough: every relevant tool is tried before «غير متوف
     expect(resolveField(chain, [A("a.cheap", "empty"), A("b.mid", "failed"), A("c.dear", "value", "info@example.eg")])).toEqual({ kind: "value", value: "info@example.eg", by: "c.dear" });
     expect(resolveField(chain, [A("b.mid", "value", "x@example.eg"), A("a.cheap", "value", "y@example.eg")])).toEqual({ kind: "value", value: "y@example.eg", by: "a.cheap" });
   });
-  it("«غير متوفر» only when every tool of the chain answered with nothing or failed", () => {
-    expect(resolveField(chain, [A("a.cheap", "empty"), A("b.mid", "failed"), A("c.dear", "empty")])).toEqual({ kind: "unavailable", tried: chain });
+  it("«غير متوفر» only when every tool of the chain ANSWERED with nothing (Part B: a failed call is not a try, it gives «لم يكتمل البحث»)", () => {
+    expect(resolveField(chain, [A("a.cheap", "empty"), A("b.mid", "empty"), A("c.dear", "empty")])).toEqual({ kind: "unavailable", tried: chain });
+    expect(resolveField(chain, [A("a.cheap", "empty"), A("b.mid", "failed"), A("c.dear", "empty")])).toEqual({ kind: "incomplete", missing: ["b.mid"] });
   });
   it("a tool not tried (or refused by the daily cap) means the search is INCOMPLETE, never «غير متوفر»", () => {
     expect(resolveField(chain, [A("a.cheap", "empty"), A("b.mid", "refused")])).toEqual({ kind: "incomplete", missing: ["b.mid", "c.dear"] });
@@ -111,7 +112,7 @@ describe("the fallthrough: every relevant tool is tried before «غير متوف
       co_1: [A("a.cheap", "value", "info@one.example.eg")],
       co_2: [A("a.cheap", "empty"), A("b.mid", "value", "contact@two.example.eg")],
       co_3: [A("a.cheap", "empty"), A("b.mid", "empty"), A("c.dear", "empty")],
-      co_4: [A("a.cheap", "failed"), A("b.mid", "empty"), A("c.dear", "failed")],
+      co_4: [A("a.cheap", "empty"), A("b.mid", "empty"), A("c.dear", "empty")],
       co_5: [A("a.cheap", "empty")],
     };
     const r = fillColumn(ids, chain, attempts);

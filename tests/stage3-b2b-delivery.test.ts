@@ -46,8 +46,8 @@ describe("buildB2BDelivery", () => {
     expect(d.removedDuplicates).toBe(1);
     expect(d.rows.map((r) => r.id)).toEqual(["co_1", "co_2", "co_3", "co_4", "co_5", "co_2_near"]);
   });
-  it("the contact cells: the value of the first tool that gave one; «غير متوفر» after every tool of the chain was tried (empty or failed); «لم يكتمل البحث» when a call was refused or the chain is empty", () => {
-    expect(d.rows.map((r) => r.hq_phone)).toEqual(["+20 2 0000 0001", NOT_AVAILABLE_AR, NOT_AVAILABLE_AR, B2B_NOT_SEARCHED_AR, "+20 2 0000 0005", NOT_AVAILABLE_AR]);
+  it("the contact cells: the value of the first tool that gave one; «غير متوفر» after every tool of the chain ANSWERED with nothing; «لم يكتمل البحث» when a call failed, was refused or the chain is empty (Part B)", () => {
+    expect(d.rows.map((r) => r.hq_phone)).toEqual(["+20 2 0000 0001", NOT_AVAILABLE_AR, B2B_NOT_SEARCHED_AR, B2B_NOT_SEARCHED_AR, "+20 2 0000 0005", NOT_AVAILABLE_AR]);
     // no verified tool lists a company's general e-mail: nothing was tried, so it is never «غير متوفر»
     expect(d.rows.every((r) => r.general_email === B2B_NOT_SEARCHED_AR)).toBe(true);
   });
@@ -63,12 +63,12 @@ describe("buildB2BDelivery", () => {
     expect(d.limitLines).toEqual([
       "حذفنا شركة واحدة مكررة تمامًا، ولم نحذف شيئًا غيرها.",
       "الإيميل العام للشركة: لم يكتمل البحث لكل الشركات (٦ شركات).",
-      "هاتف المقر الرئيسي: وُجد لشركتين من ٦ شركات، وغير متوفر لـ ٣ شركات بعد تجربة مصدر واحد، ولم يكتمل البحث لشركة واحدة.",
+      "هاتف المقر الرئيسي: وُجد لشركتين من ٦ شركات، وغير متوفر لشركتين بعد تجربة مصدر واحد، ولم يكتمل البحث لشركتين.",
       "«عدد الموظفين أكثر من ٥٠»: كُتب في عمود خاص (نعم أو لا أو غير معروف)، ولم تُحذف أي شركة بسببه.",
       "«تأسست بعد ٢٠١٥»: كُتب في عمود خاص (نعم أو لا أو غير معروف)، ولم تُحذف أي شركة بسببه.",
     ]);
     for (const l of d.limitLines) { expect(checkCustomerText(l).issues, l).toEqual([]); expect(l).not.toMatch(/[0-9]/); }
-    expect(d.gaps.hq_phone).toEqual({ total: 6, found: 2, unavailable: 3, incomplete: 1, tools: 1 });
+    expect(d.gaps.hq_phone).toEqual({ total: 6, found: 2, unavailable: 2, incomplete: 2, tools: 1 });
   });
   it("no duplicate and no gap: no line about them", () => {
     const clean = buildB2BDelivery({ plan, rows: base.slice(0, 1), attempts: { hq_phone: { co_1: [V(MAPS, "+20 2 0000 0001")] } } });
