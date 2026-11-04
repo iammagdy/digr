@@ -61,7 +61,9 @@ describe("the column plan (test switch: unverified cards allowed, never on a cus
 
 describe("a condition no chosen tool carries becomes a MARK column, never a filter", () => {
   const ask = buildB2BAsk("هات ٢٠ شركة برمجيات في الإمارات عدد موظفيها أكثر من ٥٠ وتأسست بعد ٢٠١٥")!;
-  const plan = compileB2BPlan(ask, { allowUnverified: true });
+  // the CUSTOMER path (verified cards only). With the unverified switch on, an unverified card whose size claim is still a GUESS (blitzapi.companies.search) would outrank the verified one:
+  // the compiler ranks by claimed conditions only (docs/STAGE-3.md section 10, for the strong model); no customer path can reach it.
+  const plan = compileB2BPlan(ask);
   if (!plan.ok) throw new Error(plan.reason);
   it("no chosen tool is shown to carry a size or a founding year (the real tomba pages echo only a country and an industry filter), so both are mark columns before the notes", () => {
     expect(plan.companiesCard).toBe("tomba.companies.search.reveal");
@@ -69,7 +71,7 @@ describe("a condition no chosen tool carries becomes a MARK column, never a filt
     expect(plan.columns.company.map((c) => c.titleAr).slice(-3)).toEqual(["عدد الموظفين أكثر من ٥٠", "تأسست بعد ٢٠١٥", "ملاحظات"]);
   });
   it("the mark says «نعم», «لا» or «غير معروف» from the row's own value; no row is removed", () => {
-    const m = plan.marks[0];
+    const m = plan.marks.find((x) => x.condition.kind === "founded_after")!;
     expect(markCellAr(m.condition, { founded: 2018 })).toBe("نعم");
     expect(markCellAr(m.condition, { founded: "2010" })).toBe("لا");
     expect(markCellAr(m.condition, {})).toBe("غير معروف");

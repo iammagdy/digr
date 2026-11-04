@@ -130,7 +130,8 @@ describe("the finders: the stored answers, and the value path on the stored stru
     const found = pages.find((s) => s.page.found === true)!;
     const rows = readB2BRows(card("blitzapi.people.phone.find"), { ...found.page, phone: "+20 2 0000 0000" });
     expect(rows).toHaveLength(1);
-    expect(rows[0].mobile).toBe("+20 2 0000 0000");
+    // the shared contact reader writes the number in its normal form: the digits are the made-up number's
+    expect(String(rows[0].mobile).replace(/\D/g, "")).toBe("20200000000");
   });
   it("both finders take the person's profile link (what the people tool gives)", () => {
     for (const id of ["blitzapi.people.email.find", "blitzapi.people.phone.find"]) expect(card(id).needs, id).toEqual(["person_linkedin"]);
