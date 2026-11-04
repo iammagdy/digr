@@ -33,7 +33,8 @@ import { PLANNING_NUDGE } from "./nudge";
 import { readRunState, updateRunState, type RunState } from "./runState";
 import { buildTools, newRunState, socialRedesignActive, type ToolContext, type ToolSpec } from "./tools";
 import { applySnapshot, readPlanningState, resumeNoteOf, snapshotOf, writePlanningState } from "./planningState";
-import { ItemStore, type ItemSnapshot, type StopReason } from "./items/itemStore";
+import { ItemStore, newWriterId, type ItemSnapshot, type StopReason } from "./items/itemStore";
+import { createLiveWriter, liveSheetOn, writeDoneSnapshot } from "./stage2/liveWriter";
 import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
 import { readPlatformFlagsOf, readRedesignFlags } from "../../src/lib/agentMission/redesignFlags";
@@ -543,14 +544,17 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   // THE SILENT FALLBACK, NAMED (docs/ROOT-CAUSE.md, cause 3): beside `pipe_new`, the number of the first stage whose recipe was not built by code when the flag was active for this mission
   const fallbackStage = redesignStages.size === 0 ? fallbackStageOf(plan, redesignFlags, redesignIsTest, platformFlags) : null;
   if (anyRedesignFlag(redesignFlags, platformFlags)) await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي للمسار الذي شغّل المهمة.", counts: { pipe_new: redesignStages.size > 0 ? 1 : 0, ...(fallbackStage !== null ? { fallback_stage: fallbackStage } : {}) } }).catch(() => undefined);
+  // STAGE 2 S6 (docs/STAGE-2.md): the live sheet, only when DIGER_STAGE2_LIVE_SHEET is on for this account (unset: null, and the engine's events are written exactly as before)
+  const live = (await liveSheetOn(async () => redesignIsTest)) ? createLiveWriter({ store, missionId: mission.id, plan, items, writerId: newWriterId(), log: deps.log }) : null;
   if (engineOn) {
     // THE MODEL PLANNED, CODE EXECUTES: every stage has a recipe the plan check proved, so no model session is started at all (the only model call left is the small review of items the rule cannot decide)
     const tracked = trackRun();
     try {
-      const outcome = await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: mission.id, gateway, sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, ...(redesignStages.size > 0 ? { redesignStages } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}), log: deps.log });
+      const outcome = await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: mission.id, gateway, sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: live ? (e) => live.addEvent(e, () => store.addEvent(mission.id, e)) : (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, ...(redesignStages.size > 0 ? { redesignStages } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}), log: deps.log });
       output = { llmCostUsd: 0, turns: 0, stop: outcome.aborted ?? "end" };
     } finally {
       untrackRun(tracked);
+      if (live) await live.flush();
     }
   } else {
     // the model carries the mission out (a plan whose stages have no proven recipe), still through the one item store. A round that ends while matching items are still needed and a source has more is followed by another round.
@@ -687,6 +691,8 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
     }
     if (fileCount !== builtCount) flags.push("file_differs_from_store");
   }
+  // STAGE 2 S6 (docs/STAGE-2.md): the live sheet's last snapshot, equal to the file just stored; only when DIGER_STAGE2_LIVE_SHEET is on for the account (unset: nothing is read or written). It never throws and touches no money line.
+  if (resultPath !== null && (await liveSheetOn(() => accountIsTest(store, mission.user_id)))) await writeDoneSnapshot({ store, missionId: mission.id, plan: approvedPlan, snap, writerId: newWriterId(), facts: missionFactsOf({ requestText: mission.request_text, plan, snap, reviewStop: checked.stop }), companyMailboxes: companyMailboxesOf(plan, snap), nowMs: Date.now(), log: deps.log });
   // THE ONE NUMBER: the items in the file
   const delivered = Math.min(fileCount, plan.price.deliveredRows);
   if (fileCount > plan.price.deliveredRows) flags.push("file_over_the_volume_sold");

@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
  */
 const WIRING: ReadonlyArray<string> = [
   "agent/src/compiled.ts", // S2/S5: applies the card edits it is GIVEN and asks the Stage 2 cards only when told (`questionCards`)
-  "agent/src/runMission.ts", // S2/S5: reads the edits only when DIGER_STAGE2_ASK_CARD is on; the Stage 2 question cards only when DIGER_STAGE2_QUESTION_CARDS is on
+  "agent/src/runMission.ts", // S2/S5/S6: the edits only when DIGER_STAGE2_ASK_CARD is on; the question cards only when DIGER_STAGE2_QUESTION_CARDS is on; live snapshots only when DIGER_STAGE2_LIVE_SHEET is on
   "src/app/api/missions/[id]/route.ts", // S3/S4: «ask_edit» answers 404 and the GET sends no «askCard» unless DIGER_STAGE2_ASK_CARD is on for the viewer
   "src/components/mission/AskCard.tsx", // S4: draws only the card the server sent
   "src/components/mission/AgentMissionCard.tsx", // S4: shows the card only when the answer carries it and the page asked for Stage 2 (the requests page)
