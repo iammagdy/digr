@@ -1,7 +1,7 @@
 import { AGENT_ERROR_REQUEUES_MAX, AGENT_MEMORY_REQUEUES_MAX, AGENT_PHASE_STARTS_MAX, AGENT_RESTART_REQUEUES_MAX, AGENT_EXECUTION_WALL_MS } from "../../../src/lib/agentMission/constants";
 import { addonProviderBudgetUsd, checkAddon, readAddonPlan, settleAddon, type AddonKind, type AddonPlan, type AddonSettleInput } from "../../../src/lib/agentMission/addonSettlement";
 import type { AddonRequest } from "../../../src/lib/agentMission/stage4/addonRow";
-import { EDIT_NOT_SEARCHED_AR, applyEditRequest, type EditRequest } from "../../../src/lib/agentMission/stage4/editVersion";
+import { EDIT_NOT_SEARCHED_AR, applyEditCore, type EditRequest } from "../../../src/lib/agentMission/stage4/editCore";
 import { reviewCellsOf, reviewFile, type ReviewIssue } from "../../../src/lib/agentMission/stage4/review";
 import { cellText, isRealValue, readRecipe, type RereadRecipe } from "../../../src/lib/agentMission/stage4/reread";
 import type { FileVersion } from "../../../src/lib/agentMission/stage4/versions";
@@ -259,7 +259,7 @@ function buildVersion(addon: AddonPlan, base: FileVersion, plan: UnitPlan, value
     request = { kind: "add_rows", sheet: plan.sheet, rows };
     filled = rows.length;
   }
-  const out = applyEditRequest(base, request, meta);
+  const out = applyEditCore(base, request, meta);
   return out.ok ? { version: out.version, filled } : null;
 }
 

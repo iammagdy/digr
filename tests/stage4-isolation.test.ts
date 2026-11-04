@@ -18,8 +18,10 @@ function files(dir: string): string[] {
   return out;
 }
 
-/** The wiring, each behind DIGER_STAGE4_VERSIONS (S1: the worker's version 1; S2: the list route and its page). */
-const WIRING = ["agent/src/runMission.ts", "src/app/api/missions/[id]/versions/route.ts", "src/components/mission/VersionList.tsx"];
+/** The wiring: S1 and S2 behind DIGER_STAGE4_VERSIONS (the worker's version 1; the list route and its page), and the worker's dispatch of an add-on row (no flag: see below). */
+const WIRING = ["agent/src/main.ts", "agent/src/runMission.ts", "src/app/api/missions/[id]/versions/route.ts", "src/components/mission/VersionList.tsx"];
+// agent/src/main.ts (MONEY PR 7a, 2B-1): the worker's one entry point sends a claimed row whose plan has an `addon` key to the add-on runner and every other row to the mission runner (agent/src/stage4/dispatch.ts). It reads no flag:
+// the flags gate the creation and the approval of an add-on, and a hold that was made is always run to its end.
 
 describe("Stage 4 modules are reached by the listed wiring only", () => {
   it("no file of src/ or agent/src/ outside the stage4 folders imports a stage4 module, except the wiring", () => {

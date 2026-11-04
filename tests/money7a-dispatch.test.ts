@@ -16,7 +16,7 @@ const fetchSpy = vi.fn(() => { throw new Error("a real call was attempted"); });
 beforeEach(() => { vi.stubGlobal("fetch", fetchSpy); });
 afterEach(() => vi.unstubAllGlobals());
 const USER = "11111111-1111-4111-8111-111111111111";
-const deps = { store: createMemoryStore(), client: fakeMoneyClient().client } as unknown as RunnerDeps;
+const deps = { store: createMemoryStore(), client: fakeMoneyClient().client, models: { planning: "none", execution: "none" }, resolveAccess: async () => ({ isAdmin: false, verifiedBusiness: false }), log: () => undefined } as unknown as RunnerDeps;
 
 describe("which row is an add-on", () => {
   it("only a plan with an `addon` key", () => {
@@ -78,7 +78,7 @@ describe("main.ts: the one small change", () => {
   it("the worker's run function is the dispatch; main.ts names no add-on module and no longer calls runMissionSafely itself", () => {
     expect(main).toMatch(/runMission: \(mission\) => runClaimedSafely\(deps\(\), mission\)/);
     expect(main).toContain('from "./stage4/dispatch"');
-    expect(main).not.toMatch(/runMissionSafely|runAddon|stage4\/runAddon|addonSettlement/);
+    expect(main).not.toMatch(/import[^;]*runMissionSafely|runMissionSafely\(|runAddon|addonSettlement/);
     expect([...main.matchAll(/runClaimedSafely/g)]).toHaveLength(2);
   });
 });
