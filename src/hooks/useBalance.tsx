@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { useUser } from "@/hooks/useUser";
 import { balanceFailed, balanceLoading, balanceReady, type BalanceView } from "@/lib/honestDisplay";
 import { balanceForUser } from "@/lib/balanceForUser";
+import { readBalanceForSession } from "@/lib/readBalance";
 
 interface BalanceContextValue {
   /** Available points = sum of credit_ledger deltas. Holds (reserve) are negative deltas, so held points are already excluded. */
@@ -22,48 +23,43 @@ export function BalanceProvider({ children }: { children: ReactNode }) {
   const [cached, setCached] = useState<{ ownerId: string | null; balance: BalanceView }>({ ownerId: null, balance: balanceLoading() });
   const balance = balanceForUser(cached, user?.id ?? null);
   const lastReadAt = useRef(0);
+  const userIdRef = useRef<string | null>(user?.id ?? null);
+  userIdRef.current = user?.id ?? null;
+  /** The read that is on its way, and the account of the last read that started: a read already running is shared, never doubled. */
+  const inflight = useRef<Promise<void> | null>(null);
+  const startedFor = useRef<string | null>(null);
 
+  // The read comes from the stored session itself, so it starts on mount in parallel with the page (it no longer waits for the page to render the user first).
   const refresh = useCallback(async () => {
-    if (!user) return;
     lastReadAt.current = Date.now();
-    try {
-      const supabase = createClient();
-      const { data: sessionData } = await supabase.auth.getSession();
-      const token = sessionData?.session?.access_token;
-      const headers: Record<string, string> = {};
-      if (token) {
-        headers["Authorization"] = `Bearer ${token}`;
+    const run = (async () => {
+      try {
+        const read = await readBalanceForSession(createClient() as any, (input, init) => fetch(input, init), userIdRef.current);
+        if (!read) return;
+        startedFor.current = read.ownerId;
+        setCached({ ownerId: read.ownerId, balance: read.balance });
+      } catch {
+        // A failed request proves nothing about the balance: it stays a skeleton or «غير متاح», never a fake zero.
+        if (userIdRef.current) setCached({ ownerId: userIdRef.current, balance: balanceFailed() });
       }
-
-      // 1. Primary: Shared server-side balance endpoint
-      const res = await fetch("/api/wallet/balance", { headers }).catch(() => null);
-      if (res && res.ok) {
-        const json = await res.json().catch(() => null);
-        if (json?.success && typeof json.balance === "number") {
-          setCached({ ownerId: user.id, balance: balanceReady(json.balance) });
-          return;
-        }
-      }
-
-      // 2. Direct client fallback strictly filtered by user.id
-      const { data, error } = await supabase
-        .from("credit_ledger")
-        .select("delta")
-        .eq("user_id", user.id);
-
-      if (error) {
-        // A failed request proves nothing about the balance — never show a fake zero.
-        setCached({ ownerId: user.id, balance: balanceFailed() });
-        return;
-      }
-      const total = (data || []).reduce((sum, row) => sum + (Number(row.delta) || 0), 0);
-      setCached({ ownerId: user.id, balance: balanceReady(total) });
-    } catch {
-      setCached({ ownerId: user.id, balance: balanceFailed() });
-    }
-  }, [user]);
+    })();
+    inflight.current = run;
+    try { await run; } finally { if (inflight.current === run) inflight.current = null; }
+  }, []);
 
   useEffect(() => { void refresh(); }, [refresh]);
+
+  // A different account (sign-in, sign-out, a switch) is read again, unless the read that is already running (or done) is for that account.
+  const userId = user?.id ?? null;
+  useEffect(() => {
+    if (!userId) { startedFor.current = null; return; }
+    let cancelled = false;
+    void (async () => {
+      if (inflight.current) await inflight.current;
+      if (!cancelled && startedFor.current !== userId) await refresh();
+    })();
+    return () => { cancelled = true; };
+  }, [userId, refresh]);
 
   // Pages dispatch this after anything that moves points (approve quote, top-up, refund).
   useEffect(() => {
