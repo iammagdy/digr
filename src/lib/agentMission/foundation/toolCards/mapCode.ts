@@ -62,7 +62,7 @@ return list.map((w) => {
     let v = at(it, F[k]);
     if (v === undefined) v = null;
     if (k === 'posted_at') v = iso(v);
-    else if (k === 'link' && typeof v === 'string') v = ${fb ? "FBLINK(v)" : "v.split('?')[0]"};
+    else if (k === 'link' && typeof v === 'string') v = ${fb ? "FBLINK(v)" : card.mapping.keepLinkQuery === true ? "v" : "v.split('?')[0]"};
     else if (k === 'country' && typeof v === 'string' && v !== '') v = AR[v.toUpperCase()] || v;
     ${numeric.length > 0 ? "if (NUM.includes(k)) { const n = typeof v === 'string' && /^\\d+$/.test(v) ? Number(v) : typeof v === 'number' ? v : null; v = n; }\n    " : ""}out[k] = v;
   }${link ? `

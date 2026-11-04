@@ -16,7 +16,7 @@ export type FieldPath = ReadonlyArray<string>;
 
 export interface CardInputs {
   /** The input that takes the topic (the customer's own words). `operators`: the query of a search that takes `since:` / `until:` / `lang:` operators. */
-  query?: { field: string; operators?: boolean; quoted?: boolean; /** The named page's name joins the keyword (a keyword search that has no input for the page). */ withSource?: true; /** The source cannot be asked with no words (a keyword search): the card is not eligible for a request with no topic. */ required?: true };
+  query?: { field: string; operators?: boolean; quoted?: boolean; /** ROUND 33 (discovery): the input is a hashtag: the topic is written without spaces and without «#», and the plan says so. */ format?: "hashtag"; /** The named page's name joins the keyword (a keyword search that has no input for the page). */ withSource?: true; /** The source cannot be asked with no words (a keyword search): the card is not eligible for a request with no topic. */ required?: true };
   /** The inputs that take the period as two Cairo calendar days (YYYY-MM-DD, inclusive): the start and the end day. */
   period?: { from: string; to: string };
   /** The input that takes the named source (an account's handle, a page's link, a channel's id): a card with it is eligible only when the Ask's source can be written there. */
@@ -50,7 +50,7 @@ export interface ToolCard {
    * written in Arabic), or `replies` for a comments or replies card: the code-built mapping of `replies.ts` (`buildReplyMapCode`), which reads every provider's comment shape.
    */
   mapping:
-    | { kind: "fields"; fields: Readonly<Record<string, FieldPath>>; /** A key whose link is built from a field of the item (Instagram: the post link from its short code). */ linkTemplate?: { template: string; field: FieldPath }; /** Keys the source writes as numeric strings (YouTube's statistics): written as numbers, null when absent. */ numeric?: ReadonlyArray<string> }
+    | { kind: "fields"; fields: Readonly<Record<string, FieldPath>>; /** A key whose link is built from a field of the item (Instagram: the post link from its short code). */ linkTemplate?: { template: string; field: FieldPath }; /** Keys the source writes as numeric strings (YouTube's statistics): written as numbers, null when absent. */ numeric?: ReadonlyArray<string>; /** ROUND 33: the link's query string is part of the item's address (YouTube's `watch?v=ID`) and is kept; every other card strips it (tracking parameters). */ keepLinkQuery?: true }
     | { kind: "replies"; /** ROUND 20: the field of the comment item that holds its reaction count as a NUMBER when the shared mapping does not read it (the alternative Facebook comments card writes it `reactions`): a post-pass over the same page fills the likes column from it, by the comment's id. Absent: the mapping code is what it was, byte for byte. */ likesFrom?: string; /** The source dates a comment only by a RELATIVE TEXT in the language asked («3 days ago»): the mapping keeps the text as the source wrote it, and the engine reads it against the moment of the read (an approximate day, marked), or leaves the date empty and counts it when it cannot (round 13). */ relativeDates?: true; /** The comment row's own tokens the replies tool needs (Facebook's `feedback_id` and `expansion_token`; YouTube's reply token): kept on the row under `key`. */ tokens?: ReadonlyArray<{ key: string }> };
   /** The item's own counter of its children: which row key holds it and what it counts (TikTok's video counter counts the comments AND their replies). Null: no counter. */
   counter: { key: string; counts: "comments_and_replies" | "comments" | "replies" } | null;
@@ -60,4 +60,9 @@ export interface ToolCard {
   verifiedOn: ReadonlyArray<{ mission: string; calls: ReadonlyArray<string> }>;
   /** What the card cannot carry, said once (the compiler turns it into a choice among read rows or a line on the card). */
   cannot?: ReadonlyArray<"country" | "language" | "period" | "topic" | "order">;
+  /**
+   * ROUND 33 (catalog discovery, `foundation/discovery`): set ONLY on a card that code DERIVED from the catalog's own metadata (never written by hand, never verified on a stored real page). It is always `catalog_only`, so it follows owner decision 7.4 (test accounts only,
+   * inside the 0.20 USD cap) and needs the discovery switch besides. `catalog` is what the catalog said it was derived from, kept so the plan can be audited.
+   */
+  derived?: { from: "catalog"; observed: { samples: number | null; okRate: number | null; hitRate: number | null }; /** The catalog's own example answer was the only evidence of the list path and the cursor. */ paging: "declared" | "unknown" };
 }

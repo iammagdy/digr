@@ -38,12 +38,13 @@ export function stageShapeOf(ask: Pick<Ask, "comments" | "replies" | "platform">
 }
 
 /** The roles whose cards can read a platform's parents (Facebook: a keyword search with dates or a page listing; YouTube: the channel's own search), its comments and its replies. */
-const PARENT_ROLES: Record<SocialPlatform, ReadonlyArray<CardRole>> = {
-  tiktok: ["videos.search"], x: ["tweets.search"], facebook: ["posts.search", "posts.page"], instagram: ["posts.account"], youtube: ["videos.channel"],
+export const PARENT_ROLES: Record<SocialPlatform, ReadonlyArray<CardRole>> = {
+  // ROUND 33 (discovery): YouTube also reads parents by a keyword search (`videos.search`) and Instagram by a keyword or hashtag search (`posts.search`); only a card DERIVED from the catalog has those roles today (a verified card of them does not exist), so a mission without the discovery switch sees no change
+  tiktok: ["videos.search"], x: ["tweets.search"], facebook: ["posts.search", "posts.page"], instagram: ["posts.account", "posts.search"], youtube: ["videos.channel", "videos.search"],
 };
-const COMMENT_ROLE: Record<SocialPlatform, CardRole | null> = { tiktok: "video.comments", x: null, facebook: "post.comments", instagram: "post.comments", youtube: "video.comments" };
-const REPLY_ROLE: Record<SocialPlatform, CardRole> = { tiktok: "comment.replies", x: "tweet.replies", facebook: "comment.replies", instagram: "comment.replies", youtube: "comment.replies" };
-const ROLES_OF = (role: StageRole, p: SocialPlatform): ReadonlyArray<CardRole> => (role === "parents" ? PARENT_ROLES[p] : role === "comments" ? (COMMENT_ROLE[p] ? [COMMENT_ROLE[p]!] : []) : [REPLY_ROLE[p]]);
+export const COMMENT_ROLE: Record<SocialPlatform, CardRole | null> = { tiktok: "video.comments", x: null, facebook: "post.comments", instagram: "post.comments", youtube: "video.comments" };
+export const REPLY_ROLE: Record<SocialPlatform, CardRole> = { tiktok: "comment.replies", x: "tweet.replies", facebook: "comment.replies", instagram: "comment.replies", youtube: "comment.replies" };
+export const ROLES_OF = (role: StageRole, p: SocialPlatform): ReadonlyArray<CardRole> => (role === "parents" ? PARENT_ROLES[p] : role === "comments" ? (COMMENT_ROLE[p] ? [COMMENT_ROLE[p]!] : []) : [REPLY_ROLE[p]]);
 /** The key of the stage that holds a platform's parents. */
 const PARENT_KEY: Record<SocialPlatform, string> = { tiktok: "videos", x: "tweets", facebook: "posts", instagram: "posts", youtube: "videos" };
 /**
@@ -80,6 +81,8 @@ export function sourceInputOf(card: ToolCard, ask: Pick<Ask, "source">): string 
 /** A card the Ask can use at all: a keyword search needs a topic; a card that takes the source by an input (not a channel id, which the pool resolves) needs a source that can be written there. */
 const eligible = (card: ToolCard, ask: Ask): boolean => {
   if (card.inputs.query?.required && !ask.topic.text) return false;
+  // a hashtag takes a short name, not the description of an event: more than three words is not a hashtag (the plan would search for a tag nobody wrote)
+  if (card.inputs.query?.format === "hashtag" && (!ask.topic.text || ask.topic.text.trim().split(/\s+/).length > 3)) return false;
   if (card.inputs.source && card.inputs.source.kind !== "channel_id" && sourceInputOf(card, ask) === null) return false;
   return true;
 };
@@ -98,14 +101,19 @@ export function carriedBy(card: ToolCard, ask: Ask): { asked: string[]; carried:
   return { asked, carried };
 }
 
-/** The card of a stage role: most conditions carried, then pageable, then a counter, then the cheapest page. Null: no usable card (the stage is not included). */
-export function chooseCard(ask: Ask, role: StageRole, options: { cards?: ReadonlyArray<ToolCard>; catalogOnly?: boolean; /** The replies cards that may follow (a comments card that gives each comment what such a card needs is chosen first). */ repliesCards?: ReadonlyArray<ToolCard> } = {}): ToolCard | null {
-  if (!ask.platform) return null;
+/** The cards of a stage role that may build it, BEST FIRST: most conditions carried, then a hand-verified card before one derived from the catalog, then pageable, then a counter, then the cheapest page. */
+export function rankedCards(ask: Ask, role: StageRole, options: { cards?: ReadonlyArray<ToolCard>; catalogOnly?: boolean; /** The replies cards that may follow (a comments card that gives each comment what such a card needs is chosen first). */ repliesCards?: ReadonlyArray<ToolCard> } = {}): ToolCard[] {
+  if (!ask.platform) return [];
   const cards = ROLES_OF(role, ask.platform).flatMap((r) => cardsFor(ask.platform!, r, options)).filter((c) => role !== "parents" || eligible(c, ask));
   // a comments card that feeds the replies step: the replies card's parent input is the comment's id, or a token the comments card keeps on each row
   const feeds = (c: ToolCard): number => (role === "comments" && (options.repliesCards ?? []).some((rc) => rc.inputs.parent && (rc.inputs.parent.from === "id" || (c.mapping.kind === "replies" && (c.mapping.tokens ?? []).some((t) => t.key === rc.inputs.parent!.from)))) ? 1 : 0);
-  const score = (c: ToolCard): number[] => [feeds(c), role === "parents" ? carriedBy(c, ask).carried.filter((x) => x === "topic" || x === "period").length : 0, role === "parents" ? carriedBy(c, ask).carried.length : 0, c.inputs.cursor ? 1 : 0, c.counter ? 1 : 0, -c.costUsdPerPage];
-  return [...cards].sort((a, b) => { const x = score(a); const y = score(b); for (let i = 0; i < x.length; i += 1) if (x[i] !== y[i]) return y[i] - x[i]; return 0; })[0] ?? null;
+  const score = (c: ToolCard): number[] => [feeds(c), role === "parents" ? carriedBy(c, ask).carried.filter((x) => x === "topic" || x === "period").length : 0, role === "parents" ? carriedBy(c, ask).carried.length : 0, c.derived ? 0 : 1, c.inputs.cursor ? 1 : 0, c.counter ? 1 : 0, -c.costUsdPerPage];
+  return [...cards].sort((a, b) => { const x = score(a); const y = score(b); for (let i = 0; i < x.length; i += 1) if (x[i] !== y[i]) return y[i] - x[i]; return 0; });
+}
+
+/** The card of a stage role: the first of `rankedCards`. Null: no usable card (the stage is not included). */
+export function chooseCard(ask: Ask, role: StageRole, options: { cards?: ReadonlyArray<ToolCard>; catalogOnly?: boolean; repliesCards?: ReadonlyArray<ToolCard> } = {}): ToolCard | null {
+  return rankedCards(ask, role, options)[0] ?? null;
 }
 
 /** The first-page inputs of a parent card, written by code from the Ask (the customer's own topic words; the Cairo period as UTC instants; the country; the owner's order; the page size). */
@@ -113,7 +121,8 @@ export function parentInputs(card: ToolCard, ask: Ask): Record<string, unknown> 
   const p: Record<string, unknown> = {};
   const q = card.inputs.query;
   if (q && ask.topic.text) {
-    let query = q.quoted ? `"${ask.topic.text}"` : ask.topic.text;
+    // ROUND 33: a hashtag input takes the topic as one tag (no «#», words joined by «_», the Arabic hashtag convention); the plan says which tag it searched
+    let query = q.format === "hashtag" ? hashtagOf(ask.topic.text) : q.quoted ? `"${ask.topic.text}"` : ask.topic.text;
     if (q.operators) {
       if (ask.language) query += ` lang:${ask.language}`;
       if (ask.period) query += ` since:${operatorStampUtc(ask.period.startMs)} until:${operatorStampUtc(ask.period.endExclusiveMs)}`;
@@ -132,8 +141,13 @@ export function parentInputs(card: ToolCard, ask: Ask): Record<string, unknown> 
   const order = card.inputs.order?.[ask.order];
   if (card.inputs.order && order !== undefined) p[card.inputs.order.field] = order;
   if (card.inputs.pageSize) p[card.inputs.pageSize.field] = card.inputs.pageSize.value;
+  // inputs the card sends on every call as they are (a derived search that asks the source for videos only); no verified parent card has any, so nothing changes for them
+  if (card.inputs.fixed) Object.assign(p, structuredClone(card.inputs.fixed));
   return p;
 }
+
+/** A topic as one hashtag: no «#», words joined by «_». */
+export const hashtagOf = (topic: string): string => topic.trim().replace(/^#+/, "").replace(/\s+/g, "_");
 
 export interface CompileInput {
   ask: Ask;
@@ -155,6 +169,8 @@ export interface CompileInput {
   catalogOnly?: boolean;
   /** The moment of planning: a source that says «7 years ago» is placed in time from it (YouTube), to rank by the newest and by the latest occurrence. */
   nowMs?: number;
+  /** ROUND 33: the cards the plan may be built from (the hand-written ones and the ones derived from the catalog); absent: the hand-written ones, as before. */
+  cards?: ReadonlyArray<ToolCard>;
 }
 
 export type CompileResult =
@@ -318,9 +334,10 @@ export function compilePlan(input: CompileInput): CompileResult {
   // WHAT THE SOURCES ANSWERED OUTSIDE THE PERIOD (live round 11): every row read, and how many the period rule left out (said on the card as a count)
   const readAll = periodIsChecked(ask) ? rankedPoolOf({ ask, poolCard, pages: input.pool.pages, keepOutsidePeriod: true, ...(input.counters ? { counters: input.counters } : {}), ...(input.channels ? { channels: input.channels } : {}), ...(input.nowMs !== undefined ? { nowMs: input.nowMs } : {}) }) : ranked0;
   const leftOutOfPeriod = readAll.length - ranked0.length;
-  const repliesCards = shape.includes("replies") ? cardsFor(ask.platform, REPLY_ROLE[ask.platform], { catalogOnly }) : [];
-  const commentsCard = shape.includes("comments") ? chooseCard(ask, "comments", { catalogOnly, repliesCards }) : null;
-  const repliesCard = shape.includes("replies") ? chooseCard(ask, "replies", { catalogOnly }) : null;
+  const cardsOpt = input.cards ? { cards: input.cards } : {};
+  const repliesCards = shape.includes("replies") ? cardsFor(ask.platform, REPLY_ROLE[ask.platform], { catalogOnly, ...cardsOpt }) : [];
+  const commentsCard = shape.includes("comments") ? chooseCard(ask, "comments", { catalogOnly, repliesCards, ...cardsOpt }) : null;
+  const repliesCard = shape.includes("replies") ? chooseCard(ask, "replies", { catalogOnly, ...cardsOpt }) : null;
   // a counter the row does not carry is UNKNOWN, never 0 (live round 11: `Number(null)` is 0, so a row with no counter was read as a row that has no children)
   const counter = (r: PoolRow): number | null => { if (!counterKey) return null; return counterValueOf(r[counterKey]); };
   // DECISION 7.5 (Facebook): «only the ones found» keeps the named page's posts only; the choice is the customer's, made before approval

@@ -1,3 +1,4 @@
+import { deliveryCompletenessLineAr } from "../../src/lib/agentMission/foundation/discovery/plan";
 import type { PricedPlan, PricedStage } from "../../src/lib/agentMission/plan";
 import type { ItemSnapshot, StopReason } from "./items/itemStore";
 import { cairoText, dateOnlyText, isDateValues, parseDateOnly, parseMoment } from "../../src/lib/agentMission/dateCells";
@@ -350,6 +351,8 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
   const q = plan.quantity;
   if (q && q.requested > q.target) limits.push(`العدد المعتمد في الخطة أقل مما طلبت${q.reason_ar ? ` لأن ${q.reason_ar.replace(/[.،\s]+$/, "")}` : ""}.`);
   for (const u of plan.unserved_steps ?? []) limits.push(`لم يُنفَّذ: ${u.what_ar}؛ ${u.reason_ar}`);
+  // ROUND 33: a source discovered from the catalog says how its reading ended: complete within the source, partial (a limit or a failure) or unknown; a plan without the mark gets no line
+  if (plan.compiled?.discovery) { const parent = stages.find((x) => x.parent_key === null && x.deliver) ?? stages[0]; if (parent) limits.push(deliveryCompletenessLineAr(plan.compiled.discovery, parent.title_ar, facts.stages?.[parent.key]?.stop ?? null, (rowsByStage[parent.key] ?? []).length)); }
   for (const s of stages) if ((s.unresolved_sources ?? []).length) limits.push(unresolvedSourcesLineAr(s.unresolved_sources!));
   for (const s of delivering) {
     const r = facts.stages?.[s.key];
