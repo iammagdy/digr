@@ -90,12 +90,22 @@ export function safetyWorld(options: { balance?: number; cap?: number; missions?
     };
     return q;
   };
-  const client = { rpc: w.client.rpc, from };
+  // an rpc that RETURNS an error (what supabase-js does for a failed request) instead of throwing: "before" = it never ran, "after" = it committed and the answer is an error
+  const rpcErrors = new Map<string, Array<"before" | "after">>();
+  const rpc = async (name: string, args: any) => {
+    const fault = rpcErrors.get(name)?.shift();
+    if (fault === "before") { w.calls.push({ name, args }); return { data: null, error: { message: `${name} failed before it ran` } }; }
+    const out = await w.client.rpc(name, args);
+    return fault === "after" ? { data: null, error: { message: `the answer of ${name} was lost` } } : out;
+  };
+  const client = { rpc, from };
   return {
     ...w,
     client,
     writes,
     ledgerReads,
+    /** The NEXT call of this rpc RETURNS an error (it does not throw). */
+    injectError: (name: string, when: "before" | "after"): void => { rpcErrors.set(name, [...(rpcErrors.get(name) ?? []), when]); },
     /** Make updates fail by rule. */
     failUpdates: (rule: FaultRule): void => { updateFaults.push(rule); },
     failSelects: (rule: SelectRule): void => { selectFaults.push(rule); },

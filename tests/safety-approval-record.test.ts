@@ -35,8 +35,8 @@ const approve = (w: SafetyWorld, id: string) => approveAddonOnce(w.client, { id,
 const recorded = (w: SafetyWorld, id: string) => { const r = w.missions.get(id)!; return r.status === "approved" && r.job_id === addonJobId(addonQuoteId(id)); };
 
 describe("FIX A: the final update of the approval fails AFTER the hold was reserved", () => {
-  for (const mode of ["error_before", "error_after", "throw_before", "throw_after", "none_matched"] as const) {
-    it(`the update that records the job fails for good (${mode}): the approval does NOT report success, the row is not left «approved» without a job, ONE reserve exists, nothing is released or charged`, async () => {
+  for (const mode of ["error_before", "throw_before", "none_matched"] as const) {
+    it(`the update that records the job fails for good, it never commits (${mode}): the approval does NOT report success, the row is not left «approved» without a job, ONE reserve exists, nothing is released or charged`, async () => {
       const { w, row } = world();
       w.failUpdates({ when: recordsJob, mode });
       const out = await approve(w, row.id);
@@ -187,9 +187,9 @@ describe("FIX A: the customer is never told «nothing was reserved» when the re
     expect(await approve(w, row.id)).toMatchObject({ ok: false, code: "quote_failed", error: ADDON_APPROVE_MESSAGES_AR.quote_failed });
     expect(reserves(w)).toHaveLength(0);
   });
-  it("claim_job_chunk fails AND the release that follows fails too: the hold may still exist, so the sentence is the uncertain one, never «the hold was returned in full»", async () => {
+  it("claim_job_chunk RETURNS an error AND the release that follows fails too: the hold may still exist, so the sentence is the uncertain one, never «the hold was returned in full»", async () => {
     const { w, row } = world();
-    w.inject("claim_job_chunk", "before");
+    w.injectError("claim_job_chunk", "before");
     w.inject("release_job_atomic", "before");
     const out = await approve(w, row.id);
     expect(out).toMatchObject({ ok: false, code: "approval_unverified" });
@@ -197,9 +197,30 @@ describe("FIX A: the customer is never told «nothing was reserved» when the re
     expect(w.ledger.filter((l) => l.type === "release")).toEqual([]);
     expect(w.missions.get(row.id)!.status).toBe("plan_ready");
   });
-  it("claim_job_chunk fails and the release SUCCEEDS: the hold really came back, so «returned in full» is true and the ledger shows the release", async () => {
+  it("claim_job_chunk answered an error AFTER it committed (the lease is ours): the release is REFUSED (a lease is active), so the sentence is the uncertain one, the hold stays, and the retry converges with ONE reserve", async () => {
     const { w, row } = world();
-    w.inject("claim_job_chunk", "before");
+    w.injectError("claim_job_chunk", "after");
+    const out = await approve(w, row.id);
+    expect(out).toMatchObject({ ok: false, code: "approval_unverified" });
+    expect(w.ledger.filter((l) => l.type === "release")).toEqual([]);
+    expect((await approve(w, row.id)).ok).toBe(true);
+    expect(reserves(w)).toHaveLength(1);
+    expect(recorded(w, row.id)).toBe(true);
+    sound(w, hold(row));
+  });
+  it("claim_job_chunk THROWS (the answer is lost, the lease may be ours): nothing is released, the sentence is the uncertain one, the retry converges", async () => {
+    const { w, row } = world();
+    w.inject("claim_job_chunk", "after");
+    const out = await approve(w, row.id);
+    expect(out).toMatchObject({ ok: false, code: "approval_unverified" });
+    expect(w.calls.filter((c) => c.name === "release_job_atomic")).toEqual([]);
+    expect((await approve(w, row.id)).ok).toBe(true);
+    expect(reserves(w)).toHaveLength(1);
+    sound(w, hold(row));
+  });
+  it("claim_job_chunk RETURNS an error before it ran and the release SUCCEEDS: the hold really came back, so «returned in full» is true and the ledger shows the release", async () => {
+    const { w, row } = world();
+    w.injectError("claim_job_chunk", "before");
     const out = await approve(w, row.id);
     expect(out).toMatchObject({ ok: false, error: ADDON_APPROVE_MESSAGES_AR.claim_failed, code: "claim_failed" });
     expect(w.ledger.filter((l) => l.type === "release")).toHaveLength(1);

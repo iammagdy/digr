@@ -108,7 +108,7 @@ describe("SCENARIO 3 (continued): approval next to TWO open requests, the end st
       for (const x of a) expect(x.ok).toBe(true);
       expect(heldJobs(out)).toBe(2);
       ledgerSound(out);
-    }, opts(TWO, { seed: [r1, r2] }));
+    }, opts(TWO, { seed: [r1, r2] }), 400_000); // the approval now READS BACK its record (one more atomic step each): more orders to walk, the same property
     expect(both).toBeGreaterThan(0);
   }, 300_000);
   it("THE GUARD AN APPROVAL ROUTE MUST ADD (modelled here in the test, no production code): run `reconcileOpenAddons` BEFORE the claim and refuse unless this request is the one that stays. With it, AT MOST ONE of two approvals succeeds in every order, and the other request is cancelled unpaid", async () => {
@@ -283,15 +283,24 @@ describe("SCENARIO 6 and 8: a failed approval whose money state is unknown, and 
     expect(out.rows.get(row.id as string)).toMatchObject({ status: "plan_ready" });
     expect(openRows(out.rows)).toHaveLength(1);
   });
-  it("DOCUMENTED UNRESOLVED RISK (MONEY HELD, bounded): `approveAddonOnce` does not look at the error of its LAST update (the one that records the job on the row). If that update fails after the hold, the customer is told «approved», the row is `approved` with NO job id, and the worker ends it «failed» without releasing: the hold stays until the watchdog's lease rule frees it (the job lease is 6 hours, the watchdog waits 30 minutes more)", async () => {
+  it("FIXED by the safety round (it was a DOCUMENTED UNRESOLVED RISK, MONEY HELD): the last update of `approveAddonOnce` now fails once, is retried and PROVED by a read-back: the row records the job, the customer is told ok only then, ONE hold, nothing released (tests/safety-approval-record.test.ts has the other shapes)", async () => {
     const row = waiting(1);
     const { value, out } = await solo(opts(ONE, { seed: [row], fault: (i) => i.op === "update" && i.n === 2 }), (c) => approveAddonOnce(c, { id: row.id as string, actorId: ME, expectUserId: ME }));
     expect(value).toMatchObject({ ok: true });
     expect(out.rows.get(row.id as string)).toMatchObject({ status: "approved" });
-    expect(out.rows.get(row.id as string)!.job_id ?? null, "no job id was recorded").toBeNull();
-    expect(heldJobs(out), "yet the hold is in the ledger").toBe(1);
-    const job = [...out.money.jobs.values()][0];
-    expect(job.lease_until! - Date.now(), "the job lease is about six hours").toBeGreaterThan(5.9 * 3600_000);
+    expect(out.rows.get(row.id as string)!.job_id, "the job id is recorded").toBe([...out.money.jobs.keys()][0]);
+    expect(heldJobs(out), "one hold in the ledger").toBe(1);
+    expect(out.money.ledger.filter((l) => l.type === "release")).toEqual([]);
+    ledgerSound(out);
+  });
+  it("RESIDUAL RISK, ON PURPOSE (MONEY HELD, bounded): when EVERY update after the claim fails (the database is down for writes), the approval is NOT reported ok, the revert cannot run either, and the row stays `approved` with its one-hour lease and NO job id: the hold stays reserved and is freed only by the watchdog's lease rule; `recoverAbandonedAddon` (addonRecovery.ts) finishes the record as soon as the database answers", async () => {
+    const row = waiting(1);
+    const { value, out } = await solo(opts(ONE, { seed: [row], fault: (i) => i.op === "update" && i.n >= 2 }), (c) => approveAddonOnce(c, { id: row.id as string, actorId: ME, expectUserId: ME }));
+    expect(value).toMatchObject({ ok: false, code: "record_unverified" });
+    expect(out.rows.get(row.id as string)).toMatchObject({ status: "approved" });
+    expect(out.rows.get(row.id as string)!.job_id ?? null).toBeNull();
+    expect(heldJobs(out)).toBe(1);
+    expect(out.money.ledger.filter((l) => l.type === "release" || l.type === "charge")).toEqual([]);
     ledgerSound(out);
   });
   it("a quote that expired before the retry ENDS the request with no money moved: the row is cancelled (error quote_expired), the ledger is untouched, and the customer can ask again and gets the NEXT attempt number (a new id)", async () => {

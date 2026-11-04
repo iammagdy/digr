@@ -176,6 +176,10 @@ export const ADDON_APPROVE_MESSAGES_AR = {
   claim_failed: "تعذّر تجهيز الطلب للتنفيذ، فعاد الحجز كاملًا إلى رصيدك.",
   claim_retry: "تعذّر تجهيز الطلب للتنفيذ الآن. نقاطك محجوزة، فأعد المحاولة بعد قليل ولن يُخصم منها إلا ما يُنجز.",
   approved_event: "اعتُمد الطلب وحُجزت النقاط؛ يبدأ التنفيذ الآن.",
+  /** The reservation MAY have happened and the answer was lost or never came (accept or claim failed in a way that does not say which). It must never say nothing was held, and never say approved. */
+  approval_unverified: "لم نتمكن من تأكيد اعتماد الطلب بعد. قد تكون نقاطك حُجزت مؤقتًا، ولن يُخصم منها إلا ما يُنجز. أعد المحاولة بعد قليل؛ لن يُحجز شيء مرتين.",
+  /** The hold was reserved but recording it on the request could not be proved (after bounded retries and a read-back). Not success: the request goes back to waiting so a retry converges on the same hold. */
+  record_unverified: "لم نتمكن من تأكيد تسجيل اعتماد الطلب بعد. قد تكون نقاطك حُجزت مؤقتًا، ولن يُخصم منها إلا ما يُنجز. أعد المحاولة بعد قليل؛ لن يُحجز شيء مرتين.",
 } as const;
 export type AddonApproveMessage = keyof typeof ADDON_APPROVE_MESSAGES_AR;
 /** What the job's list line says (the `summaryAr` of the quote item). */
@@ -200,7 +204,7 @@ const quiet = async (f: () => PromiseLike<unknown> | unknown): Promise<void> => 
  *   2 claim plan_ready -> approved (compare-and-set: two clicks approve once; the claim must change exactly one row)
  *   3 the plan is read again after the claim and checked again
  *   4 create_quote_atomic (deterministic quote id: the same call again is `already_created`) -> accept_quote_atomic (res_<job>; the same call again is `already_accepted`) -> claim_job_chunk
- *   5 record job, quote and reserve on the row
+ *   5 record job, quote and reserve on the row, and PROVE it (safety fix A): the update is retried at most three times, each followed by a read-back that must show this very job, quote and hold; an unproved record is NOT success (the row goes back to waiting, the hold is kept for the retry)
  * Any failure puts the row back to `plan_ready` (an expired quote ends it: the customer asks again and the next attempt number makes a new id). A failure NEVER releases a job that was already accepted before this call.
  */
 export async function approveAddonOnce(client: any, input: AddonApprovalInput): Promise<AddonApprovalResult> {
@@ -217,6 +221,8 @@ export async function approveAddonOnce(client: any, input: AddonApprovalInput): 
   if (claim.error) return { ok: false, status: 500, error: "تعذّر الاعتماد." };
   if (Array.isArray(claim.data) && claim.data.length === 0) return bad(409, "already_approved");
   const revert = (error: string, status: "plan_ready" | "cancelled" = "plan_ready") => quiet(() => client.from(MISSION_TABLE).update({ status, lease_until: null, error }).eq("id", input.id));
+  // Where the money stands decides what the customer may be told: before `accept` nothing can be reserved; from `accept` on it MAY be, whatever the answer of the call was.
+  let stage: "plan" | "quote" | "accept" | "claim" | "record" = "plan";
 
   try {
     const { data: claimed } = await client.from(MISSION_TABLE).select("plan").eq("id", input.id).maybeSingle();
@@ -232,11 +238,14 @@ export async function approveAddonOnce(client: any, input: AddonApprovalInput): 
     const quoteHash = sha256Hex(JSON.stringify({ items, formats }));
     const expiresAt = new Date((input.now ?? new Date()).getTime() + (input.expiresInMinutes ?? 30) * 60_000).toISOString();
 
+    stage = "quote";
     const created = await client.rpc("create_quote_atomic", { p_user_id: row.user_id, p_quote_id: quoteId, p_quote_hash: quoteHash, p_items: items, p_total_points: hold, p_output_formats: formats, p_expires_at: expiresAt, p_previous_quote_ids: [] });
     if (created?.error || created?.data?.success === false) { await revert("quote_failed"); return bad(409, "quote_failed", "quote_failed"); }
 
+    stage = "accept";
     const accepted = await client.rpc("accept_quote_atomic", { p_quote_id: quoteId, p_user_id: row.user_id, p_expected_quote_hash: quoteHash });
-    if (accepted?.error) { await revert("accept_failed"); return bad(409, "accept_failed", "accept_failed"); }
+    // an ERROR from accept (not a clean refusal in its body) does not say whether the reservation committed: the sentence is the uncertain one, and the retry converges (deterministic ids)
+    if (accepted?.error) { await revert("approval_unverified"); return bad(409, "approval_unverified", "approval_unverified"); }
     const body = accepted?.data;
     if (!body?.success) {
       const code = typeof body?.error === "string" ? body.error : "accept_failed";
@@ -248,24 +257,57 @@ export async function approveAddonOnce(client: any, input: AddonApprovalInput): 
     const jobId = String(body.job_id);
     const alreadyAccepted = body.already_accepted === true;
 
+    stage = "claim";
     const claimJob = await client.rpc("claim_job_chunk", { p_job_id: jobId, p_expected_step: 0, p_lease_seconds: AGENT_JOB_LEASE_SECONDS });
     // an earlier attempt of THIS add-on that was accepted and claimed but whose answer was lost: the lease is already ours (no other code claims an add-on's job), so it counts as claimed
     const claimedOk = claimJob?.data?.claimed === true || (alreadyAccepted && claimJob?.data?.error === "lease_active");
     if (claimJob?.error || !claimedOk) {
-      // a job accepted before this call is never released here: it may already be running
-      if (!alreadyAccepted) await client.rpc("release_job_atomic", { p_job_id: jobId, p_error_message: "تعذّر تجهيز الطلب للتنفيذ، فعاد الحجز المؤقت كاملًا." });
+      if (alreadyAccepted) {
+        // a job accepted before this call is never released here: it may already be running
+        await revert("claim_failed");
+        return bad(409, "claim_retry", "claim_failed");
+      }
+      // THIS call reserved the hold and could not claim it: give it back, and say «returned» only if the release is PROVED (a refused or lost release leaves the hold, and the sentence says so)
+      const released = await client.rpc("release_job_atomic", { p_job_id: jobId, p_error_message: "تعذّر تجهيز الطلب للتنفيذ، فعاد الحجز المؤقت كاملًا." });
+      if (released?.error || released?.data?.success !== true) { await revert("approval_unverified"); return bad(409, "approval_unverified", "approval_unverified"); }
       await revert("claim_failed");
-      return bad(409, alreadyAccepted ? "claim_retry" : "claim_failed", "claim_failed");
+      return bad(409, "claim_failed", "claim_failed");
     }
 
-    await client.from(MISSION_TABLE).update({ job_id: jobId, quote_id: quoteId, reserved_points: hold, unit_price_points: 1, lease_until: null, error: null, updated_at: new Date().toISOString() }).eq("id", input.id);
+    stage = "record";
+    const record = { job_id: jobId, quote_id: quoteId, reserved_points: hold, unit_price_points: 1, lease_until: null, error: null, updated_at: new Date().toISOString() };
+    if (!(await recordApproval(client, input.id, record))) {
+      // the hold is reserved and the row does not say so: NOT success. The row goes back to waiting (compare-and-set on «approved»: a row that moved on is left alone) so the retry converges on the same quote, job and reserve;
+      // if even that fails the row stays «approved» with its one-hour lease, and `recoverAbandonedAddon` (addonRecovery.ts) finishes the record from the job's own state
+      await quiet(() => client.from(MISSION_TABLE).update({ status: "plan_ready", lease_until: null, error: "record_unverified" }).eq("id", input.id).eq("status", "approved"));
+      return bad(409, "record_unverified", "record_unverified");
+    }
     await client.from(MISSION_EVENTS_TABLE).insert({ mission_id: input.id, kind: "system", message_ar: ADDON_APPROVE_MESSAGES_AR.approved_event, counts: {} });
     return { ok: true, jobId, quoteId, kind: addon.kind, holdPoints: hold, providerBudgetUsd: addon.kind === "review" ? 0 : addonProviderBudgetUsd(hold, addon.pricing.settings) };
   } catch {
     // a call that threw (the answer may be lost: the money may or may not have moved): the row goes back, and the deterministic ids make the next approval converge on the same quote, job and ledger rows
-    await revert("accept_failed");
-    return bad(409, "accept_failed", "accept_failed");
+    if (stage === "accept" || stage === "claim" || stage === "record") { await revert("approval_unverified"); return bad(409, "approval_unverified", "approval_unverified"); }
+    await revert(stage === "quote" ? "quote_failed" : "accept_failed");
+    return stage === "quote" ? bad(409, "quote_failed", "quote_failed") : bad(409, "accept_failed", "accept_failed");
   }
+}
+
+/** The bounded number of tries to record the approval on the row (one update plus one read-back each). A database that stays down is asked exactly this many times: never a loop. */
+export const APPROVAL_RECORD_ATTEMPTS = 3;
+
+/**
+ * RECORD THE APPROVAL ON THE ROW AND PROVE IT. The update is compare-and-set on «approved» (the claim of this very call). Its ANSWER is never trusted, in either direction: an error may hide a commit, «no row» may hide a commit, and an answer of «one row» is only believed
+ * because the row is READ BACK and must carry exactly this job, this quote and this hold. True only when the read-back proves it.
+ */
+async function recordApproval(client: any, id: string, record: { job_id: string; quote_id: string; reserved_points: number }): Promise<boolean> {
+  for (let attempt = 0; attempt < APPROVAL_RECORD_ATTEMPTS; attempt += 1) {
+    try { await client.from(MISSION_TABLE).update(record).eq("id", id).eq("status", "approved").select("id"); } catch { /* proved by the read-back below, never by this answer */ }
+    try {
+      const { data, error } = await client.from(MISSION_TABLE).select("id,status,job_id,quote_id,reserved_points").eq("id", id).maybeSingle();
+      if (!error && data && data.job_id === record.job_id && data.quote_id === record.quote_id && Number(data.reserved_points) === record.reserved_points) return true;
+    } catch { /* not proved: try again, then give up */ }
+  }
+  return false;
 }
 
 // ---------- settlement ----------
