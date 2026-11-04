@@ -348,6 +348,19 @@ describe("the fence in the source", () => {
   });
 });
 
+describe("the admin page (checked in its source: no DOM test library is installed)", () => {
+  const page = readFileSync("src/app/admin/agent/page.tsx", "utf8");
+  it("labels an add-on row in the list, hides the research cancel button for it, and says it is not a research mission", () => {
+    expect(page).toContain("x.is_addon ?");
+    expect(page).toContain("!m.is_addon && [\"queued\", \"needs_input\", \"plan_ready\"]");
+    expect(page).toContain("agent-addon-note");
+  });
+  it("the approve button lives inside the research plan card, which an add-on row never has (its detail answers no plan)", () => {
+    const at = page.indexOf('data-testid="agent-approve"');
+    expect(at).toBeGreaterThan(page.indexOf('data-testid="agent-plan"'));
+  });
+});
+
 describe("nothing here is money or a provider", () => {
   it("running every ordinary reader over the mixed table touched no money table, no rpc, no storage write and no fetch", async () => {
     seedMixed();
