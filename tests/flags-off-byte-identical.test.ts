@@ -16,6 +16,8 @@ import { isInternalEvent } from "../src/lib/agentMission/eventText";
  * telemetry of item 0.4, the pipeline note) are admin-only and are not part of the customer-visible output; they are the one thing that differs and they are excluded here by the same function the customer API uses (isInternalEvent).
  * To regenerate (only ever on the base commit): WRITE_FLAGS_OFF_DIGESTS=1 npx vitest run tests/flags-off-byte-identical.test.ts
  */
+// ROUND 26 CHANGED: the planView and finalView digests of the five worlds were re-pinned for the customer-view changes of round 26 (steps checked in order, one counter, the collecting
+// sentence, the time of the last event); every other section (mission and plan, workbook, notices, events, provider calls, ledger) is byte-identical to the base commit 0bf7b2c.
 // CHANGED (S1 live fixes): the pinned digests include cells that carry today's date in Cairo time, so this file failed on plain `origin/main` as soon as the Cairo day changed (observed 2026-11-02 00:21 Cairo). Only `Date` is pinned, to the day the digests were produced (2026-11-01).
 beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-11-01T12:00:00Z")); });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });

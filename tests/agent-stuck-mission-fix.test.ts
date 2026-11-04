@@ -429,9 +429,11 @@ describe("the customer's panel: elapsed time, progress inside the step, an hones
     expect(step.state).toBe("running");
     expect(step.countAr).toBe("عينة ١ من ٢");
     expect(step.ratio).toBeCloseTo(0.5, 5);
-    expect(withTotal.currentLineAr).toContain("عينة ١ من ٢");
+    // ROUND 26 (item 6) CHANGED: the panel's current line names the step only (the count stays in the data; the one counter on the card is the top box)
+    expect(withTotal.currentLineAr).toBe("بنجرب عينة صغيرة للتأكد من الجودة");
     const noTotal = customerMissionView({ mission: mission({ status: "planning" }), events: [event(1)], callsMade: 2, now: T0 + 20_000 });
-    expect(noTotal.steps.find((s) => s.titleAr === "بنجرب عينة صغيرة للتأكد من الجودة")!.detailAr).toBe("جرّبنا عينتين");
+    // ROUND 26 (item 6) CHANGED: no «جرّبنا N عينات» line in the steps panel (it was a second counter)
+    expect(noTotal.steps.find((s) => s.titleAr === "بنجرب عينة صغيرة للتأكد من الجودة")!.detailAr).toBeUndefined();
     for (const v of [withTotal, noTotal]) expect(checkCustomerText([v.currentLineAr, ...v.steps.flatMap((s) => [s.titleAr, s.countAr ?? "", s.detailAr ?? ""])].join(" ")).issues).toEqual([]);
   });
 
