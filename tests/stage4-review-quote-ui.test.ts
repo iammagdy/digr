@@ -114,7 +114,7 @@ describe("the click: the browser only asks, and shows what the server answered",
   const answer = (quote: unknown) => (async () => new Response(JSON.stringify({ success: true, quote }), { status: 200 })) as any;
   it("asks the review route of its own mission for that version with the bearer token", async () => {
     const fetchFn = vi.fn(answer(offer));
-    const r = await fetchReviewQuote({ missionId: MISSION, version: 1, fetchFn, headers: async () => ({ Authorization: "Bearer t" }) });
+    const r = await fetchReviewQuote({ missionId: MISSION, version: 1, fetchFn: fetchFn as unknown as typeof fetch, headers: async () => ({ Authorization: "Bearer t" }) });
     expect(r).toEqual({ ok: true, quote: offer });
     expect(reviewQuoteUrl(MISSION, 1)).toBe(`/api/missions/${MISSION}/review-quote?version=1`);
     expect(reviewQuoteUrl(MISSION)).toBe(`/api/missions/${MISSION}/review-quote`);
