@@ -138,7 +138,8 @@ function withChildrenPhraseAr(stages: ReadonlyArray<TitleStage>, parentDelivered
     if (!kind) return null;
     kinds.add(kind);
   }
-  const noun = nounOfStageTitle(parent.title_ar);
+  // a parent titled «آخر فيديوهات قناة ...» is named by its noun («فيديوهات»)
+  const noun = nounOfStageTitle(parent.title_ar.replace(/^\s*(?:آخر|اخر|أحدث|احدث)\s+/, ""));
   if (!noun || !knownItemNoun(noun)) return null;
   const count = typeof parentDelivered === "number" && Number.isFinite(parentDelivered) && parentDelivered > 0 ? Math.floor(parentDelivered) : Math.max(0, Math.floor(Number(parent.expected_rows ?? parent.planned_rows) || 0));
   if (count <= 0) return null;

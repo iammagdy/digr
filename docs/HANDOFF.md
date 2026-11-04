@@ -4,6 +4,49 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 27 (4 Nov 2026, after #377, main = `da0c8b5`): spelling, digits, columns, titles (one batched PR)
+
+No SQL write, no migration, no flag change, no paid call, no secret seen. No protected file edited (see the PR's `git diff --stat`): no money, ledger, billing, `gateway.ts`, `price.ts`, `jobPointsCap.ts`, `src/functions/**`, `supabase/**`, `finalize.ts`, `methodology/pdf.ts`, no companies / people / places path.
+
+| # | Task | State |
+|---|---|---|
+| 1 | One spelling of the loading word | **Done.** Every standalone «جاري» (and «وجاري») in `src/app`, `src/components`, `src/lib` is «جارٍ». Test `round27-loading-spelling` fails if the bare form comes back. **Not changed, because protected:** `src/functions/shared/chatHandler.ts` (the stored placeholder «جاري التفكير وتحليل طلبك...», 2 places), `quoteAccept.ts` and `multiStepWorker.ts` (stored progress lines), `turnGuards.ts` (a regex), and the SQL text in `supabase/` / `tests/replica/prod-definitions/accept_quote_atomic.sql` («جاري بدء معالجة الطلب...»). Those still show the old spelling to a customer; the owner must approve an edit of those files. |
+| 2 | Latin digits in the count field | **Done.** `src/lib/digitsInput.ts` (`displayDigitsAr`, `countInputValue`). The plan editor's number fields, the question card's free-text answer and the older plan card's limit and cap fields show Arabic-Indic digits whatever is typed (Latin, Arabic-Indic, Persian all accepted); a number-only answer is sent as a plain number. Test `round27-count-digits`. |
+| 3 | Plan card buttons | **Investigated, nothing changed** (below). |
+| 4 | Column set (TikTok videos) | **Done, cause found.** Two code causes (below). |
+| 5 | Waiting-time estimate | **Investigated, nothing changed** (below): the minutes come from `estimateMissionMinutes` in the protected `price.ts`. |
+| 6 | Title for «all comments and replies» | **Done.** Parent noun and count + «مع التعليقات والردود» + «عن» subject + date. |
+| 7 | Do not change | Unchanged: sample rows in the card, the methodology wording of the request, the greeting. |
+
+### Task 3: where the four controls render (read from the code; no browser)
+The TikTok and X plan card is the **mission card** (`src/components/mission/AgentMissionCard.tsx`, drawn by the chat page for a message that carries `agentMissionId`, `src/app/dashboard/chat/page.tsx`). Its buttons:
+- «اعتمد» (`agent-approve`): `planShown` (phase `plan`, not yet approved here) and not a guest and the hold is under the cap and the balance.
+- «عدّل الطلب» (`agent-edit`): in the same state, and also inside the over-limit box. It opens the plan editor (when the view carries `edit`) or retypes.
+- «تفاصيل الخطة»: a `<details>` shown when the plan has assumptions, stages, samples or file contents.
+- «جهّز نسخة أصغر» (`agent-smaller`): **only** inside the over-limit box: `planShown && !isGuest && overLimit && v.limit` (the plan's hold is above the job cap, or above the customer's balance), and only if `byBalance || v.limit.smaller` (a smaller version exists). A normal plan is under the limit, so it never shows. Tests: `round11-facebook-limit`.
+- «ألغِ المهمة» (`agent-cancel`): **only** in the same over-limit box. A normal plan card has no cancel button; a waiting plan is cancelled from «طلباتي» → «طلبات تنتظرك» (`OpenMissionsList`, `cancellable`), or by retyping. This is how round 11 built it (its test pins the over-limit box); it is the one thing here the owner may want changed (a cancel beside «اعتمد»), but adding a button was out of scope.
+- «عينة أولًا» (`explore-first-btn`) and «تحديث السعر» belong to the **older plan card** (`src/app/dashboard/chat/components/PlanQuoteCard.tsx`), which is drawn only for a message with `planQuote` (the legacy path: companies, people, places, the non-social plans), never for a TikTok or X mission. «عينة أولًا`: `!locked && !low && canApprove && !isEditing && quote.explorationOffer && onExplore && !quote.exploration`, and `explorationOffer` is set only when the estimate of the whole request reaches 1,500 points, one item, not a named link (`src/lib/sampleFirst.ts`, `chatHandler.ts`). «تحديث السعر»: only when the quote has expired (`approvalState.expiredByTime`) and is not inactive. «البدء بعدد أقل» (downscaled): only when the balance is below the quote (`low && !expired`).
+So the live tester saw exactly the normal buttons of the mission card; the four controls #377 labelled are either over-limit-only (smaller, cancel) or legacy-card-only (sample, refresh). Not a bug in the render conditions; nothing changed.
+
+### Task 4: why the two TikTok files differed
+1. The TikTok search has three verified tools (`toolCards/tiktok.ts`: tikhub, anyapi, crawl4ai); the parent sheet's columns followed the tool's field list (tikhub: country and language; anyapi: country; crawl4ai: neither). `compilePlan.ts` now builds the parent columns from one list (`SAME_PARENT_COLUMNS.tiktok`, the order of the fullest tool); a field the tool does not give is a column that reads «غير متاح» (country; the language column is filled by the writer from the text, so it is never empty).
+2. `agent/src/workbook.ts` merged a column into another when their values were equal on 80% of the rows (`sameValues`): ten videos with «0» shares and «0» saves lost «الحفظ». A counter (`likes, comments, shares, views, saves, followers, subscribers, replies_count`) of a compiled plan is never merged now (reproduced by `tests/round27-tiktok-columns.test.ts`). I could not read the two live files (Storage is not read): both causes are real in the code and either gives the 19 / 18 difference; which one produced it is not proven.
+The summary sheet's closing note now states every gap («العمود «الدولة» ... لم يوفّره المصدر»، «... في ٢ من ١٠»). Side effect, stated: the X replies sheet of the invariance fixture regains its «عدد الردود» column (it had been merged into «الإعجابات»); `round11-tiktok-x-invariance` takes that column out before the hash and says so. Other platforms keep their one tool's columns (X, YouTube) or their role's (Facebook, Instagram).
+
+### Task 5: the estimate, with the real numbers (read-only SELECTs on `missions` and `mission_events`, no text, no person)
+The card's «الوقت المتوقع» comes from `plan.expected_minutes` = `estimateMissionMinutes` (in `src/lib/agentMission/price.ts`, **protected**), worded by `src/lib/agentMission/expectedTime.ts` (`minutesAr`). It is an estimate of the **execution after approval** only. Completed missions with a stored estimate (n = 44 X, 27 TikTok, 8 Instagram, 6 Facebook, 6 YouTube; approval to the last «result» event):
+| Platform | estimate median (min) | execution median (min) | execution max (min) | planning median, no question (min) | planning max |
+|---|---|---|---|---|---|
+| X | ٣ | ٠٫٧ | ١٢٫٧ | ١٫٢ | ٣٫٠ |
+| TikTok | ٣ | ٠٫٤ | ٢٫٨ | ٢٫١ | ٥٫٨ |
+| Instagram | ٣٫٥ | ٠٫٣ | ٢٫٠ | ٠٫٦ | ٣٫٣ |
+| Facebook | ٤ | ٠٫٦ | ١٫٢ | ١٫٦ | ٢٫٢ |
+| YouTube | ٣ | ٠٫٣ | ٠٫٤ | ٠٫٧ | ١٫٠ |
+Ten TikTok videos and ten X posts of 4 Nov both executed in about 0.1 minute; the card said «نحو دقيقتين» for both. The «6 to 7 minutes» the tester saw for TikTok is the time BEFORE approval: planning (TikTok reads pages: median 2.1, up to 5.8 minutes) plus the questions and the customer's own reading (created to approved: 6.4 minutes for the 10-video order of 4 Nov, 0.5 and 3.7 for the two X ones). So the estimate is conservative for execution and says nothing of planning. **Nothing was changed**: an honest per-platform range needs the platform in the customer plan view (a change of `plan_public`, which re-pins every plan and view digest) and a calibration of `estimateMissionMinutes` (protected). Smallest safe fix, for the owner to approve: (1) word the card line as «الوقت المتوقع بعد اعتمادك» (`customerView.ts` and `expectedTime.ts`, a label only, digests re-pinned); (2) if wanted, recalibrate `estimateMissionMinutes` in `price.ts` from these medians (a protected file: owner approval).
+
+### Task 6: titles for comments and replies
+`fileNames.ts` (`withChildrenPhraseAr`, `isCurrentTitleForm`): a plan with a delivered parent stage and delivered child stages that are comments or replies is named «<parents with count> مع التعليقات والردود عن <subject> - <date>» («فيديوهان مع التعليقات والردود عن الذكاء الاصطناعي - ٤ نوفمبر ٢٠٢٦», «٢٠ تغريدة مع الردود عن ...»). The count is the parents the file holds (`runMission.ts` passes `parentDelivered`, the title line only), else the parent stage's planned rows. The Excel download, the CSV, the methodology title and the chooser card carry the same words: a stored name in the current form is kept by both (across midnight), an older stored name is rebuilt by both from the mission with the mission's last update as its date (`missionDownloadName`, `methodologyMissionOf`, which now also reads `updated_at`). Missions finished before this round keep the name they were stored with if it is in the round-26 form («٣٢٢ ردًا عن ...»). Tests: `round27-titles-children` (on the 20 stored live missions of five platforms), `round26-titles-live` (updated to carry `parent_key`). Older tests that pinned the child-noun rule were updated with a «ROUND 27 CHANGED» note: `agent-files-and-panel`, `file-subject-and-media-marker`.
+
 ## Round 26 (4 Nov 2026, after #376, main = `0bf7b2c`): customer-experience fixes from the live test (item 7 DEFERRED)
 
 **Status: PR #377, one PR for items 1 to 6, 8 and 9. Item 7 (the methodology PDF text layer) is DEFERRED to a separate round; `src/lib/agentMission/methodology/pdf.ts` is untouched. No SQL write, no migration, no flag change, no paid provider call, no key or token seen, no memory limit changed. No forbidden file edited.**

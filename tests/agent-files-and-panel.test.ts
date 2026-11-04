@@ -32,7 +32,7 @@ describe("the file name is built from the mission: what + count + date, in Arabi
     const comments = stage({ key: "comments", title_ar: "تعليقات كل منشور", parent_key: "posts", columns: [{ key: "text", title_ar: "النص" }] });
     const d = new Date("2026-01-05T00:00:00Z");
     expect(missionFileTitleAr({ plan: plan([posts]), requestText: "هات ٣٠ منشور عن التضخم في مصر", delivered: 30, date: d })).toBe("٣٠ منشورًا عن التضخم - ٥ يناير ٢٠٢٦");
-    expect(missionFileTitleAr({ plan: plan([posts, comments]), requestText: "هات ١٠٠ منشور عن الغلاء مع تعليقاتها", delivered: 2100, date: d })).toBe("٢٬١٠٠ تعليقًا عن الغلاء - ٥ يناير ٢٠٢٦");
+    expect(missionFileTitleAr({ plan: plan([posts, comments]), requestText: "هات ١٠٠ منشور عن الغلاء مع تعليقاتها", delivered: 2100, date: d })).toBe("منشور واحد مع التعليقات عن الغلاء - ٥ يناير ٢٠٢٦"); // ROUND 27 CHANGED (owner decision): a request with comments is named by its PARENT items («٢٬١٠٠ تعليقًا عن الغلاء» before); the fixture's posts stage holds one row
     expect(missionFileTitleAr({ plan: plan([stage({ key: "c", title_ar: "الشركات", columns: [{ key: "n", title_ar: "الاسم" }] })]), requestText: "شركات مقاولات في جدة", delivered: 12, date: d })).toBe("١٢ شركة مقاولات - ٥ يناير ٢٠٢٦");
     expect(nounOfStageTitle("الموظفون")).toBe("موظفون");
     expect(arabicDateLabel(new Date("2026-12-31T23:00:00Z"))).toBe("٣١ ديسمبر ٢٠٢٦");
