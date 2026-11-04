@@ -4,6 +4,15 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 28 (4 Nov 2026, after #379): the methodology states the relation of the delivered items to the topic
+
+- **Confirmed from the delivered TikTok file (independent review):** 10 rows, 10 unique ids and links, 19 columns aligned, «الحفظ» present, no blanks; 3 rows «يتحدث نصه عن الموضوع» and 7 «يذكر الموضوع في الوسوم فقط». The earlier browser report of missing ids, links and misaligned columns was contradicted by the file, so no column or mapping was touched.
+- **Gap:** the methodology said «لا قيود سُجّلت على هذا التسليم» and nothing about the 7 hashtag-only rows (the plan disclosed it before approval and each row carries it).
+- **Source of the count:** the mark column `topic_relation` («علاقة النص بالموضوع») written by `compilePlan.ts` on every item of a stage when the Ask has a topic, with one of exactly three values (`topicRelationAr`). Delivered rows keep it (`pinned_rows` become the stage rows). `buildMethodology` counts only those three exact values; a row with no value or any other text is «تصنيف غير متاح»; nothing is inferred from names, descriptions or provider fields.
+- **Change (`agent/src/methodology.ts`, `topicRelationLinesOf`):** a new item «صلة النتائج بالموضوع», before «حدود هذا التسليم», only when a delivering stage has the mark column and delivered rows. If no row has a recognised value, one line says none was recorded and no breakdown is made. The closing line says these are marks and nothing was removed. «حدود هذا التسليم» is unchanged and still says «لا قيود سُجّلت» when no execution limit exists.
+- **Not changed:** workbook columns, delivered rows and counts, settlement, pricing, ledger, `methodology/pdf.ts`, any protected file. Stages without the mark column (every non-social request, a request with no topic) get exactly the methodology they had.
+- **Tests:** `tests/round28-methodology-topic-relation.test.ts` (14).
+
 ## Round 27 (4 Nov 2026, after #377, main = `da0c8b5`): spelling, digits, columns, titles (one batched PR)
 
 No SQL write, no migration, no flag change, no paid call, no secret seen. No protected file edited (see the PR's `git diff --stat`): no money, ledger, billing, `gateway.ts`, `price.ts`, `jobPointsCap.ts`, `src/functions/**`, `supabase/**`, `finalize.ts`, `methodology/pdf.ts`, no companies / people / places path.

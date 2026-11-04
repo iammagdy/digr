@@ -13,6 +13,7 @@ import { isPeopleStage } from "../../src/lib/agentMission/people";
 import { decisionMakersLeftOutAr } from "../../src/lib/agentMission/roles";
 import { perParentShortfallAr } from "./perParentLimits";
 import { threadCounterLinesOfPlan } from "./threadCounters";
+import { TOPIC_RELATION_KEY, topicRelationAr } from "../../src/lib/agentMission/foundation/topicChoice";
 
 /**
  * THE «المنهجية» SECTION OF THE FIRST SHEET, built by CODE from what the mission RECORDED (the approved plan, the item store's counts, the request's own words, the delivered rows): the model never writes it, and a fact that was not
@@ -234,6 +235,34 @@ const periodLineOf = (filters: ReadonlyArray<StageFilter> | undefined): string |
   return f ? filterLineAr(f).replace(/\.$/, "") : null;
 };
 
+/**
+ * THE RELATION OF THE DELIVERED ITEMS TO THE TOPIC (round 28). A stage whose sheet carries the mark column «علاقة النص بالموضوع» says in the methodology how many delivered rows carry each value, counted from the delivered rows themselves and only from the three exact values the compiled plan writes
+ * (topicRelationAr). A row with no value, or any other text, is counted as «unavailable»: nothing is inferred from the account name, the description or the provider's fields. Information only: the marks never removed a row, and this line never says they did. A stage with no such column
+ * (every non-social stage, and a request with no topic) gets no line; a stage with no delivered rows gets none.
+ */
+export function topicRelationLinesOf(stages: ReadonlyArray<PricedStage>, rowsByStage: Record<string, Row[]>): string[] {
+  const withMark = stages.filter((s) => s.deliver && (s.columns ?? []).some((c) => c.key === TOPIC_RELATION_KEY) && (rowsByStage[s.key] ?? []).length > 0);
+  if (withMark.length === 0) return [];
+  const ABOUT = topicRelationAr(2), TAGS = topicRelationAr(1), NONE = topicRelationAr(0);
+  const many = withMark.length > 1;
+  const out: string[] = [];
+  for (const s of withMark) {
+    const rows = rowsByStage[s.key] ?? [];
+    const noun = itemNounOf(s.title_ar);
+    const n = (v: string) => rows.filter((r) => r[TOPIC_RELATION_KEY] === v).length;
+    const about = n(ABOUT), tags = n(TAGS), none = n(NONE);
+    const unknown = rows.length - about - tags - none;
+    const head = many ? `«${s.title_ar}»: ` : "";
+    if (about + tags + none === 0) { out.push(`${head}لم يُسجَّل تصنيف لعلاقة النص بالموضوع لـ${countAr(rows.length, noun)} سُلّمت، فلا نذكر توزيعًا لها.`); continue; }
+    out.push(`${head}النص يتحدث عن الموضوع: ${countAr(about, noun)}`);
+    out.push(`${head}الموضوع مذكور في الوسوم فقط: ${countAr(tags, noun)}`);
+    if (none > 0) out.push(`${head}لا يذكر الموضوع: ${countAr(none, noun)}`);
+    if (unknown > 0) out.push(`${head}تصنيف غير متاح: ${countAr(unknown, noun)}`);
+    out.push(`${head}هذه علامات في عمود «علاقة النص بالموضوع» فقط؛ لم يُحذف بها شيء من النتائج، وسُلّمت كلها.`);
+  }
+  return out;
+}
+
 export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArray<MethodologyLayout>; rowsByStage: Record<string, Row[]>; facts?: MissionFacts }): MethodologyModel {
   const { plan, layouts, rowsByStage } = input;
   const facts = input.facts ?? {};
@@ -366,6 +395,9 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
     if (line) limits.push(many ? `«${s.title_ar}»: ${line}` : line);
   }
   if (threads.counterLines.length > 0) items.push({ label: "عدّاد المصدر وما سُلّم", values: threads.counterLines.slice(0, 30) });
+  // ROUND 28: the relation of the delivered items to the topic, in an item of its own (a relation mark is not an execution limit, and the line below keeps saying no limit was recorded when none was)
+  const topicLines = topicRelationLinesOf(stages, rowsByStage);
+  if (topicLines.length > 0) items.push({ label: "صلة النتائج بالموضوع", values: topicLines });
   items.push({ label: "حدود هذا التسليم", values: limits.length ? limits : ["لا قيود سُجّلت على هذا التسليم"] });
 
   // 9. one sentence the researcher can paste, with the delivery date
