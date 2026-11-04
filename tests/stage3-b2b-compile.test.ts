@@ -61,8 +61,7 @@ describe("the column plan (test switch: unverified cards allowed, never on a cus
 
 describe("a condition no chosen tool carries becomes a MARK column, never a filter", () => {
   const ask = buildB2BAsk("هات ٢٠ شركة برمجيات في الإمارات عدد موظفيها أكثر من ٥٠ وتأسست بعد ٢٠١٥")!;
-  // the CUSTOMER path (verified cards only). With the unverified switch on, an unverified card whose size claim is still a GUESS (blitzapi.companies.search) would outrank the verified one:
-  // the compiler ranks by claimed conditions only (docs/STAGE-3.md section 10, for the strong model); no customer path can reach it.
+  // the CUSTOMER path (verified cards only). With the unverified switch on, the verified card still ranks first (Part A.4, tests/stage3-b2b-ranking.test.ts).
   const plan = compileB2BPlan(ask);
   if (!plan.ok) throw new Error(plan.reason);
   it("no chosen tool is shown to carry a size or a founding year (the real tomba pages echo only a country and an industry filter), so both are mark columns before the notes", () => {

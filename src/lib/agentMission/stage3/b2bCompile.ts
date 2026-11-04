@@ -55,11 +55,15 @@ function asked(ask: B2BAsk, role: B2BRole): B2BCarry[] {
   return [...out];
 }
 const carried = (card: B2BCard, wants: B2BCarry[]): number => wants.filter((w) => card.carries.includes(w)).length;
-/** The best card of a role: the most conditions carried, then the cheapest (b2bCardsFor sorts by price; the sort is stable). */
+/**
+ * The best card of a role: a VERIFIED card before any unverified one (Part A.4: an unverified card's claim is not proven, so it never outranks a verified card for the same need), then the most
+ * conditions carried, then the cheapest (b2bCardsFor sorts verified first, then by price; the sort is stable).
+ */
 function best(role: B2BRole, ask: B2BAsk, opts: CompileOptions): B2BCard | null {
   const wants = asked(ask, role);
   const list = b2bCardsFor(role, opts);
-  return [...list].sort((a, b) => carried(b, wants) - carried(a, wants))[0] ?? null;
+  const rank = (c: B2BCard): number => (c.status === "verified" ? 0 : 1);
+  return [...list].sort((a, b) => rank(a) - rank(b) || carried(b, wants) - carried(a, wants))[0] ?? null;
 }
 const maps = (card: B2BCard | null, field: B2BField): boolean => Boolean(card && card.reader.kind === "list" && card.reader.fields[field]);
 /** A contact column's chain: the chosen search's own field (when it has one), then every lookup of the role, cheapest first. */

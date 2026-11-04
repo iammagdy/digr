@@ -110,13 +110,14 @@ export const B2B_CARDS: ReadonlyArray<B2BCard> = [
 export const UNVERIFIED_B2B_CARDS: ReadonlyArray<string> = B2B_CARDS.filter((c) => c.status === "unverified").map((c) => c.endpointId);
 
 /**
- * The cards a role may use, cheapest first. A customer path gets VERIFIED cards only. `allowUnverified` exists for tests and for a later owner decision (test accounts, like decision 7.4 of
- * the social cards); no code in this branch passes it outside tests. A broken card is never returned.
+ * The cards a role may use: every VERIFIED card before any unverified one (Part A.4: a verified card always ranks above an unverified one for the same need), then cheapest first. A customer path
+ * gets VERIFIED cards only. `allowUnverified` exists for tests and for a later owner decision (test accounts, like decision 7.4 of the social cards). A broken card is never returned.
  */
 export function b2bCardsFor(role: B2BRole, options: { allowUnverified?: boolean; cards?: ReadonlyArray<B2BCard> } = {}): B2BCard[] {
+  const rank = (c: B2BCard): number => (c.status === "verified" ? 0 : 1);
   return (options.cards ?? B2B_CARDS)
     .filter((c) => c.role === role && (c.status === "verified" || (c.status === "unverified" && options.allowUnverified === true)))
-    .sort((a, b) => a.costUsd - b.costUsd || (a.endpointId < b.endpointId ? -1 : 1));
+    .sort((a, b) => rank(a) - rank(b) || a.costUsd - b.costUsd || (a.endpointId < b.endpointId ? -1 : 1));
 }
 
 const at = (o: unknown, path: ReadonlyArray<string>): unknown => {
