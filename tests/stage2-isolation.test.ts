@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 const WIRING: ReadonlyArray<string> = [
   "agent/src/compiled.ts", // S2: applies the card edits it is GIVEN (none unless the caller passes them)
   "agent/src/runMission.ts", // S2: reads the edits only when DIGER_STAGE2_ASK_CARD is on
+  "src/app/api/missions/[id]/route.ts", // S3: the «ask_edit» action answers 404 unless DIGER_STAGE2_ASK_CARD is on for the viewer
 ];
 const ROOT = path.resolve(__dirname, "..");
 function files(dir: string): string[] {
