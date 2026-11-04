@@ -55,9 +55,9 @@ export const B2B_CARDS: ReadonlyArray<B2BCard> = [
   U({ endpointId: "blitzapi.companies.search", role: "companies.search", carries: ["sector", "country", "size"], needs: [], page: { list: ["results"], cursor: null }, costUsd: 0.000495, costUnit: "record",
     reader: { kind: "list", fields: { id: ["linkedin_url"], name: ["name"], website: ["website"], domain: ["domain"], activity: ["industry"], hq: ["hq"], employees: ["size"], founded: ["founded_year"], linkedin: ["linkedin_url"] } },
     note: `${NO_PAGE} GUESS: the «company» input object carries industry, country and size.` }),
-  U({ endpointId: "aviato.companies.search", role: "companies.search", carries: ["sector", "country", "size", "founded"], needs: [], page: { list: ["items"], cursor: null }, costUsd: 0.0025, costUnit: "call",
+  U({ endpointId: "aviato.companies.search", role: "companies.search", carries: ["sector", "country"], needs: [], page: { list: ["items"], cursor: null }, costUsd: 0.0025, costUnit: "call",
     reader: { kind: "list", fields: { id: ["id"], name: ["name"], activity: ["industryList"], hq: ["locality"] } },
-    note: `${NO_PAGE} GUESS: the «dsl» query carries every condition. No website or phone field in the catalog's item fields.` }),
+    note: `${NO_PAGE} The «dsl» query may carry more (size, founding year): not counted until a stored page shows it. No website or phone field in the catalog's item fields.` }),
   // ---------------------------------------------------------------------------------------------- the people of a company
   U({ endpointId: "aviato.companies.employees", role: "company.people", carries: [], needs: ["domain"], page: { list: ["employees"], cursor: null }, costUsd: 0.005, costUnit: "call",
     reader: { kind: "list", fields: { id: ["personID"], person_name: ["person", "fullName"], title: ["positionList", "0", "title"], company: ["companyName"] } },
