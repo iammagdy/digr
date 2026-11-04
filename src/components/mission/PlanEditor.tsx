@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { normalizeDigits, toArabicDigits } from "@/lib/arabicDigits";
+import { displayDigitsAr } from "@/lib/digitsInput";
 import type { PlanEditorView } from "@/lib/agentMission/plan";
 import type { PlanEdits } from "@/lib/agentMission/planEdit";
 
@@ -17,14 +18,14 @@ const FIELD = "min-h-11 rounded-xl border border-ln2 bg-bg px-3 text-sm text-ink
 interface StageState { columns: Record<string, boolean>; filters: Record<string, { enabled: boolean; lang?: "ar" | "en"; days?: string }> }
 
 export const initialState = (edit: PlanEditorView): { count: string; perParent: Record<string, string>; pages: Record<string, string>; replies: Record<string, boolean>; repliesPer: Record<string, string>; stages: Record<string, StageState> } => ({
-  count: String(edit.stages.find((s) => s.key === edit.target_stage_key)?.target ?? ""),
-  perParent: Object.fromEntries(edit.stages.filter((s) => s.per_parent !== undefined).map((s) => [s.key, String(s.per_parent)])),
-  pages: Object.fromEntries(edit.stages.filter((s) => s.pages !== undefined).map((s) => [s.key, String(s.pages)])),
+  count: toArabicDigits(edit.stages.find((s) => s.key === edit.target_stage_key)?.target ?? ""),
+  perParent: Object.fromEntries(edit.stages.filter((s) => s.per_parent !== undefined).map((s) => [s.key, toArabicDigits(s.per_parent!)])),
+  pages: Object.fromEntries(edit.stages.filter((s) => s.pages !== undefined).map((s) => [s.key, toArabicDigits(s.pages!)])),
   replies: Object.fromEntries(edit.stages.filter((s) => s.replies !== undefined).map((s) => [s.key, s.replies!.on])),
-  repliesPer: Object.fromEntries(edit.stages.filter((s) => s.replies?.per_comment !== undefined).map((s) => [s.key, String(s.replies!.per_comment)])),
+  repliesPer: Object.fromEntries(edit.stages.filter((s) => s.replies?.per_comment !== undefined).map((s) => [s.key, toArabicDigits(s.replies!.per_comment!)])),
   stages: Object.fromEntries(edit.stages.map((s) => [s.key, {
     columns: Object.fromEntries(s.columns.map((c) => [c.key, c.on])),
-    filters: Object.fromEntries(s.filters.map((f) => [f.kind, { enabled: f.enabled, ...(f.lang ? { lang: f.lang } : {}), ...(f.days !== undefined ? { days: String(f.days) } : {}) }])),
+    filters: Object.fromEntries(s.filters.map((f) => [f.kind, { enabled: f.enabled, ...(f.lang ? { lang: f.lang } : {}), ...(f.days !== undefined ? { days: toArabicDigits(f.days) } : {}) }])),
   }])),
 });
 
@@ -85,7 +86,7 @@ export function PlanEditor({ edit, busy = false, pendingAction = null, onSave, o
       {target ? (
         <label className="flex flex-col gap-1 text-[13px] text-ink2">
           <span>العدد المطلوب</span>
-          <input value={state.count} onChange={(e) => setState((p) => ({ ...p, count: e.target.value }))} inputMode="numeric" className={FIELD} dir="ltr" aria-label="العدد المطلوب" data-testid="agent-edit-count" />
+          <input value={state.count} onChange={(e) => setState((p) => ({ ...p, count: displayDigitsAr(e.target.value) }))} inputMode="numeric" className={FIELD} dir="ltr" aria-label="العدد المطلوب" data-testid="agent-edit-count" />
           <span className="text-[11px] font-light text-mut">الحد الأقصى {toArabicDigits(edit.max_rows)}. يُحسب السعر من جديد بعد الحفظ.</span>
         </label>
       ) : null}
@@ -93,7 +94,7 @@ export function PlanEditor({ edit, busy = false, pendingAction = null, onSave, o
       {edit.stages.filter((s) => s.per_parent !== undefined).map((s) => (
         <label key={`per-${s.key}`} className="flex flex-col gap-1 text-[13px] text-ink2">
           <span>{s.per_parent_label_ar}</span>
-          <input value={state.perParent[s.key] ?? ""} onChange={(e) => setState((p) => ({ ...p, perParent: { ...p.perParent, [s.key]: e.target.value } }))} inputMode="text" placeholder="كل" className={FIELD} dir="ltr" aria-label={s.per_parent_label_ar} data-testid={`agent-edit-per-parent-${s.key}`} />
+          <input value={state.perParent[s.key] ?? ""} onChange={(e) => setState((p) => ({ ...p, perParent: { ...p.perParent, [s.key]: displayDigitsAr(e.target.value) } }))} inputMode="text" placeholder="كل" className={FIELD} dir="ltr" aria-label={s.per_parent_label_ar} data-testid={`agent-edit-per-parent-${s.key}`} />
           <span className="text-[11px] font-light text-mut">يُحسب السعر من جديد بعد الحفظ.</span>
         </label>
       ))}
@@ -108,7 +109,7 @@ export function PlanEditor({ edit, busy = false, pendingAction = null, onSave, o
       {edit.stages.filter((s) => s.replies?.per_comment !== undefined && (state.replies[s.key] ?? false)).map((s) => (
         <label key={`replies-per-${s.key}`} className="flex flex-col gap-1 text-[13px] text-ink2">
           <span>{s.replies!.per_comment_label_ar}</span>
-          <input value={state.repliesPer[s.key] ?? ""} onChange={(e) => setState((p) => ({ ...p, repliesPer: { ...p.repliesPer, [s.key]: e.target.value } }))} inputMode="numeric" className={FIELD} dir="ltr" aria-label={s.replies!.per_comment_label_ar} data-testid={`agent-edit-replies-per-${s.key}`} />
+          <input value={state.repliesPer[s.key] ?? ""} onChange={(e) => setState((p) => ({ ...p, repliesPer: { ...p.repliesPer, [s.key]: displayDigitsAr(e.target.value) } }))} inputMode="numeric" className={FIELD} dir="ltr" aria-label={s.replies!.per_comment_label_ar} data-testid={`agent-edit-replies-per-${s.key}`} />
           <span className="text-[11px] font-light text-mut">الحد الأقصى {toArabicDigits(s.replies!.per_comment_max ?? 50)}. كلما قلّ العدد قلّ السعر. يُحسب السعر من جديد بعد الحفظ.</span>
         </label>
       ))}
@@ -116,7 +117,7 @@ export function PlanEditor({ edit, busy = false, pendingAction = null, onSave, o
       {edit.stages.filter((s) => s.pages !== undefined).map((s) => (
         <label key={`pages-${s.key}`} className="flex flex-col gap-1 text-[13px] text-ink2">
           <span>{s.pages_label_ar}</span>
-          <input value={state.pages[s.key] ?? ""} onChange={(e) => setState((p) => ({ ...p, pages: { ...p.pages, [s.key]: e.target.value } }))} inputMode="numeric" className={FIELD} dir="ltr" aria-label={s.pages_label_ar} data-testid={`agent-edit-pages-${s.key}`} />
+          <input value={state.pages[s.key] ?? ""} onChange={(e) => setState((p) => ({ ...p, pages: { ...p.pages, [s.key]: displayDigitsAr(e.target.value) } }))} inputMode="numeric" className={FIELD} dir="ltr" aria-label={s.pages_label_ar} data-testid={`agent-edit-pages-${s.key}`} />
           <span className="text-[11px] font-light text-mut">كلما قلّت الصفحات قلّ السعر، وقلّت فرصة الوصول إلى صناع القرار. الحد الأقصى {toArabicDigits(s.pages_max ?? 10)}. يُحسب السعر من جديد بعد الحفظ.</span>
         </label>
       ))}
@@ -133,7 +134,7 @@ export function PlanEditor({ edit, busy = false, pendingAction = null, onSave, o
                   <select value={cur.lang ?? "ar"} onChange={(e) => setFilter(s.key, f.kind, { lang: e.target.value === "en" ? "en" : "ar" })} className={FIELD} aria-label="اللغة"><option value="ar">العربية</option><option value="en">الإنجليزية</option></select>
                 ) : null}
                 {f.kind === "period" && cur.enabled ? (
-                  <label className="flex items-center gap-1.5"><span>آخر</span><input value={cur.days ?? ""} onChange={(e) => setFilter(s.key, f.kind, { days: e.target.value })} inputMode="numeric" className={`${FIELD} w-20`} dir="ltr" aria-label="عدد الأيام" data-testid="agent-edit-days" /><span>يومًا</span></label>
+                  <label className="flex items-center gap-1.5"><span>آخر</span><input value={cur.days ?? ""} onChange={(e) => setFilter(s.key, f.kind, { days: displayDigitsAr(e.target.value) })} inputMode="numeric" className={`${FIELD} w-20`} dir="ltr" aria-label="عدد الأيام" data-testid="agent-edit-days" /><span>يومًا</span></label>
                 ) : null}
               </div>
             );

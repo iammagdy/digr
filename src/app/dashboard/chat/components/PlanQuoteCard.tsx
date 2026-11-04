@@ -7,6 +7,7 @@ import { customerFacingFailure } from "@/lib/customerError";
 import { useEffect, useMemo, useState } from "react";
 import { formatNumber } from "@/lib/honestDisplay";
 import { formatAr, normalizeDigits as toLatinDigits, toArabicDigits } from "@/lib/arabicDigits";
+import { countInputValue, displayDigitsAr } from "@/lib/digitsInput";
 import { capacityReasonAr, volumeLimitStatementAr } from "@/lib/jobCaps";
 import { defaultVolumeStatementAr, type DefaultNoun } from "@/lib/planDefaults";
 import { socialTopicForDisplay } from "@/lib/socialTopicDisplay";
@@ -630,7 +631,7 @@ export default function PlanQuoteCard({
           <div>
             <label htmlFor={`pq-limit-${quote.quoteId}`} className="mb-1 block font-medium text-ink">العدد الأقصى المطلوب (سجلات)</label>
             <input
-              id={`pq-limit-${quote.quoteId}`} type="number" inputMode="numeric" min={1} max={10000} value={editLimit} onChange={(e) => setEditLimit(Number(e.target.value))}
+              id={`pq-limit-${quote.quoteId}`} type="text" inputMode="numeric" dir="ltr" value={toArabicDigits(editLimit)} onChange={(e) => setEditLimit(countInputValue(e.target.value) ?? 0)}
               className="tnum min-h-11 w-full rounded-xl border border-ln bg-sf px-3 text-sm font-light text-ink outline-none focus:border-ln2"
             />
           </div>
@@ -651,7 +652,7 @@ export default function PlanQuoteCard({
           <div>
             <label htmlFor={`pq-cap-${quote.quoteId}`} className="mb-1 block font-medium text-ink">حد أقصى للنقاط (اختياري)</label>
             <input
-              id={`pq-cap-${quote.quoteId}`} type="text" inputMode="numeric" value={editCap} onChange={(e) => setEditCap(e.target.value)} dir="ltr"
+              id={`pq-cap-${quote.quoteId}`} type="text" inputMode="numeric" value={editCap} onChange={(e) => setEditCap(displayDigitsAr(e.target.value))} dir="ltr"
               placeholder={formatAr(quote.quotedPoints)}
               className="tnum min-h-11 w-full rounded-xl border border-ln bg-sf px-3 text-sm font-light text-ink outline-none focus:border-ln2"
             />

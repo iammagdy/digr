@@ -14,6 +14,7 @@ import { MissionPlanBody } from "@/components/mission/MissionPlanPanel";
 import { PlanEditor } from "@/components/mission/PlanEditor";
 import { approveWithRecovery } from "@/lib/missionApprove";
 import { useBalance } from "@/hooks/useBalance";
+import { countInputValue, displayDigitsAr } from "@/lib/digitsInput";
 import { holdLimitOf } from "@/lib/agentMission/holdLimit";
 import { pointsAr } from "@/lib/pointsFormat";
 import { fileNameFromDisposition } from "@/lib/downloadName";
@@ -98,9 +99,12 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
 
   async function act(action: "approve" | "cancel" | "edit" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) {
     if (busy) return;
+    // ROUND 27 (item 2): the field SHOWS Arabic-Indic digits; an answer that is only a number is SENT as a plain number (Latin, Arabic-Indic or Persian typed alike)
+    const shownText = text;
+    if (action === "answer" && typeof text === "string" && /^\s*[\d٠-٩۰-۹]+\s*$/.test(text)) text = String(countInputValue(text));
     setBusy(true);
     setPendingAction(action);
-    setPendingText(action === "answer" && typeof text === "string" ? text : null);
+    setPendingText(action === "answer" && typeof shownText === "string" ? shownText : null);
     fastUntilRef.current = Date.now() + CARD_FAST_AFTER_ACTION_MS;
     setError(null);
     try {
@@ -209,7 +213,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
               {v.questionOptionsAr.map((o) => <button key={o} type="button" className={BTN_PLAIN} disabled={busy} onClick={() => onAct("answer", o)}>{busy && pendingAction === "answer" && pendingText === o ? "جارٍ الإرسال…" : o}</button>)}
             </div>
           ) : null}
-          <input value={reply} onChange={(e) => onReply(e.target.value)} disabled={busy} className="min-h-11 rounded-xl border border-ln2 bg-bg px-3 text-sm text-ink disabled:opacity-60" aria-label="أو اكتب إجابتك" />
+          <input value={reply} onChange={(e) => onReply(displayDigitsAr(e.target.value))} disabled={busy} className="min-h-11 rounded-xl border border-ln2 bg-bg px-3 text-sm text-ink disabled:opacity-60" aria-label="أو اكتب إجابتك" />
           <div><button type="button" className={BTN_PRIMARY} disabled={busy || !reply.trim()} onClick={() => onAct("answer", reply)}>{busy && pendingAction === "answer" && pendingText === reply ? "جارٍ الإرسال…" : "أرسل إجابتك"}</button></div>
         </div>
       ) : null}
