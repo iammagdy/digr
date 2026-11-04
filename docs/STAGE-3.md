@@ -1,8 +1,8 @@
 # STAGE 3: companies, decision makers and the queue (FOUNDATION-PLAN section 5, "PR 5")
 
-Branch `stage-3/companies-and-queue`, started from `main` = `239ca94`. Draft PR only. **Nothing here changes what a customer sees or receives.** Every new module is reached by tests only (`tests/stage3-isolation.test.ts`). Every new behaviour sits behind a new flag that is OFF when unset. No e-mail is sent and no template is made.
+Branch `stage-3/companies-and-queue`, started from `main` = `239ca94`, now on top of `main` = `42d58e7`. Draft PR only. **With every Stage 3 flag unset, nothing changes what a customer sees or receives** (proved byte for byte by `tests/stage3-flags-off.test.ts` and `tests/stage3-queue-view.test.ts`). Every new behaviour sits behind a new flag that is OFF when unset, and only the wiring files listed in `tests/stage3-isolation.test.ts` import a Stage 3 module. No e-mail is sent and no template is made.
 
-No SQL, no migration, no new table, no paid call, no model call, no money file. **No existing file was changed.**
+No SQL, no migration, no new table, no paid call, no model call, no money file. **Existing files changed** (all behind a flag, section 3): `customerView.ts`, `customerActions.ts` (S5, Sonnet session), `agent/src/workbook.ts` (the `extraLimitLines` option, Sonnet session), `agent/src/runMission.ts` and `agent/src/engine/contacts.ts` (S3 and S4, Opus session of 4 Nov 2026).
 
 ---
 
@@ -38,7 +38,7 @@ A job sends **one e-mail** only when the customer's measured wait was over one m
 
 | Flag | Values | Default | Gates |
 |---|---|---|---|
-| `DIGER_STAGE3_COMPANIES` | `on`, `test` (test accounts only), anything else = off | **off** | the B2B Ask, cards and compiler on the planning path |
+| `DIGER_STAGE3_COMPANIES` | `on`, `test` (test accounts only), anything else = off | **off** | the companies plan by code (S3) and the engine half: attempts, fallthrough cells, gap lines (S4) |
 | `DIGER_STAGE3_QUEUE` | same | **off** | the new queue line (today's `queueLine` stays when off) |
 | `DIGER_STAGE3_EMAIL_NOTICE` | same | **off** | the one-e-mail-per-job decision |
 
@@ -58,10 +58,29 @@ Read with `stage3Enabled(flag, isTestAccount)` (`src/lib/agentMission/stage3/fla
 | `src/lib/agentMission/stage3/queueView.ts` | (Sonnet session) `stage3QueueOn` (only «on» on the site), `queueLineV2` |
 | `src/lib/agentMission/stage3/queue.ts` | `queueStateOf`, `queueLineAr`, `waitedAr` |
 | `src/lib/agentMission/stage3/emailTrigger.ts` | `emailDecision`, `shouldNotifyByEmail`, `measuredWaitMs` |
+| `src/lib/agentMission/stage3/b2bPlan.ts` | (Opus, S3) `planB2BByCode`: the companies and decision-makers plan built by code, priced only by `priceMissionByCode(stagePriceInputs(...))` |
+| `src/lib/agentMission/stage3/b2bMapCode.ts` | (Opus, S3) `b2bMapCode`: a list card's mapping as the engine's sandbox code (equal to `readB2BRows` on every stored page) |
+| `src/lib/agentMission/stage3/b2bRequest.ts` | (Opus, S3) `b2bCompaniesRequest`, `b2bSearchCountry`: the companies search's inputs from the Ask (the nationality word as the country INPUT, decision 6) |
+| `src/lib/agentMission/stage3/b2bPlanning.ts` | (Opus, S3) `planCompaniesByCodeIfOn`: the worker's entry; reads `DIGER_STAGE3_COMPANIES` first |
+| `src/lib/agentMission/stage3/b2bEngine.ts` | (Opus, S4) `createAttemptLog`, `contactColumnsOf`, `b2bContactCells`, `b2bLimitLines`, `b2bEngineOn`, `b2bFlagSet` |
+| `tests/stage3-b2b-ranking.test.ts`, `tests/stage3-b2b-plan.test.ts`, `tests/stage3-flags-off.test.ts` (+ `tests/fixtures/stage3-flags-off.json`), `tests/stage3-planning-wiring.test.ts`, `tests/stage3-engine-attempts.test.ts`, `tests/helpers/stage3World.ts` | (Opus) red-then-green tests and the fake world |
 | `tests/stage3-b2b-ask.test.ts`, `tests/stage3-b2b-cards.test.ts`, `tests/stage3-b2b-compile.test.ts`, `tests/stage3-queue-email.test.ts`, `tests/stage3-isolation.test.ts` | red-then-green tests |
 | `docs/STAGE-3.md` | this file |
 
-**Changed:** none. All new types are in new files, so there is no rebase point with the Stage 2 and Stage 4 branches.
+**Changed (each behind a flag; flag unset = byte for byte today):**
+
+| File | Change | Flag |
+|---|---|---|
+| `src/lib/agentMission/customerView.ts`, `customerActions.ts` | (Sonnet, S5) the queue line | `DIGER_STAGE3_QUEUE` |
+| `agent/src/workbook.ts` | (Sonnet, S2) the additive `extraLimitLines` option of `buildMissionFiles` | none needed: nothing passes it unless the flag below is on |
+| `agent/src/runMission.ts` | (Opus) planning: asks `planCompaniesByCodeIfOn` after the compiled social planning, before the model run; execution: an attempts recorder for the contact steps, the cells pass after them, and `extraLimitLines` on the one `buildMissionFiles` call. No price, reserve, cap, release, charge or ledger line changed | `DIGER_STAGE3_COMPANIES` |
+| `agent/src/engine/contacts.ts` | (Opus) an optional `attempts` dependency: `record` at each lookup, and `cellFor` replaces today's «غير متوفر» write for a company cell only when it is passed. No spend, cap or budget line changed | `DIGER_STAGE3_COMPANIES` (passed only when on) |
+| `src/lib/agentMission/stage3/b2bCards.ts`, `b2bCompile.ts`, `b2bDelivery.ts` | (Opus) Stage 3's own files: the `request` inputs of the two verified search cards, verified-first ranking (A.4), a failed call is not a try (S4) | (Stage 3 files) |
+| `tests/golden-r2-request-country-not-a-filter.test.ts` | the G1 guard allows one more reader of `countryOfRequestText`: `stage3/b2bRequest.ts` (decision 6; the brief said this was done, it was not on this branch) | |
+| `tests/stage3-isolation.test.ts` | `agent/src/runMission.ts` joins the wiring list | |
+| `tests/stage3-b2b-compile.test.ts`, `tests/stage3-b2b-delivery.test.ts` | the expectations of a FAILED call follow the owner's S4 rule (it gives «لم يكتمل البحث», not «غير متوفر») | |
+
+Likely rebase points: `agent/src/workbook.ts` with Stage 2 (decision 13), and `agent/src/runMission.ts` if Stage 2 or 4 also change its planning or settlement block.
 
 ## 4. Data shapes and contracts
 
@@ -88,9 +107,10 @@ B2BCard = { endpointId; role; status: "verified" | "unverified" | "broken"; carr
             needs: ("domain"|"company_linkedin"|"person_name"|"person_linkedin"|"company_name")[];
             page: { list: path | null; cursor: path | null };
             reader: { kind: "list"; fields } | { kind: "found_email" } | { kind: "found_phone" } | { kind: "company_mailbox" };
-            costUsd; costUnit; verifiedOn: { mission; calls }[]; note }
+            costUsd; costUnit; verifiedOn: { mission; calls }[]; note;
+            request?: { country?: path; sector?: path; parent?: { param; from }; fixed? } }   // S3: only the inputs the stored real pages echo (tomba's two filters, blitzapi's company link and max_results)
 roles: companies.search, company.people, people.search, person.email, person.phone, company.emails, company.phone
-b2bCardsFor(role, { allowUnverified?, cards? })   // verified only by default; cheapest first; never a broken card
+b2bCardsFor(role, { allowUnverified?, cards? })   // verified only by default; verified before unverified (A.4), then cheapest first; never a broken card
 ```
 
 - Lookup readers reuse the shared readers of `contactFinders.ts` (`foundContactIn`, `companyMailboxIn`).
@@ -105,15 +125,15 @@ compileB2BPlan(ask, { allowUnverified?, cards? }) ->
 | { ok: false; reason: "no_verified_card"; role; unverified }
 ```
 
-- **Tool choice:** the card that carries the most of the Ask's conditions wins, then the cheapest.
+- **Tool choice:** a verified card before any unverified one (A.4), then the card that carries the most of the Ask's conditions, then the cheapest.
 - **Company columns:** م، اسم الشركة، النشاط والتخصص، الموقع الإلكتروني، **المقر الرئيسي**، الإيميل العام للشركة، هاتف المقر الرئيسي، [marks]، ملاحظات. These are the reference titles of `taskContracts.ts`, plus the HQ.
 - **People columns:** م، اسم صانع القرار، المسمى الوظيفي، (اسم الشركة for a people-only request)، صانع قرار، إيميل المسؤول المباشر، هاتف / محمول المسؤول، ملاحظات.
 - **Marks:** a condition the chosen companies card does not carry becomes a mark column. `markCellAr(condition, row)` returns «نعم» / «لا» / «غير معروف» from the row's `employees` (a number or a range such as «51-200» or «1000+») or `founded`. **A row is never removed.**
 - **Chains:** the chosen search's own field comes first (when it has one), then every lookup of the role, cheapest first.
 - **Fallthrough** (`resolveField(chain, attempts)`):
   - a cell takes the value of the earliest tool in the chain that gave one;
-  - «غير متوفر» is written only when **every** tool answered empty or failed;
-  - a tool that was not tried, or was `refused` (daily cap, budget, time), gives «لم يكتمل البحث» (`incomplete`), never «غير متوفر».
+  - «غير متوفر» is written only when **every** tool ANSWERED with nothing (`empty`);
+  - a tool that was not tried, `failed` (down, broken call) or was `refused` (daily cap, budget, time) gives «لم يكتمل البحث» (`incomplete`), never «غير متوفر» (S4, Opus session: a failed call is not a try).
 - **Exact duplicates** (`removeExactDuplicates`): a row is removed only when an earlier row has exactly the same values (strings compared without their outer spaces). There is no fuzzy matching.
 - **Gap line** (`gapLineAr`), for example: «الإيميل العام للشركة: وُجد لشركتين من ٥ شركات، وغير متوفر لشركتين بعد تجربة ٣ مصادر، ولم يكتمل البحث لشركة واحدة.» It never names a provider.
 
@@ -133,6 +153,33 @@ queueLineAr(state) -> one fixed sentence per reason [+ « ينتظر طلبك م
 emailDecision({ status, approvedAtMs, finishedAtMs, alreadyEmailed, emailable, sentThisMonth }) -> { send; reason; waitMs }
 reasons: waited_long (send) | not_finished | wait_not_measured | already_emailed | not_emailable | short_wait (≤ 60 s) | quota_unknown | monthly_limit (≥ 50,000)
 ```
+
+### 4.6 The plan by code (S3, `b2bPlan.ts`, `b2bPlanning.ts`)
+
+```ts
+planCompaniesByCodeIfOn({ requestText, isTestAccount, catalog, access, stats, now, pricingSettings }) -> null (flag off for this account) | B2BPlanResult
+planB2BByCode({ requestText, catalog, isAllowed, aids, stats?, now?, pricingSettings? }) ->
+  { ok: true; plan: PricedPlan; ask; compiled } | { ok: false; reason: not_b2b | not_companies_people | no_count | has_conditions | no_verified_card | not_allowed | no_request | over_cap }
+```
+
+- **Where:** `runPlanning` (agent/src/runMission.ts), after the compiled social planning and before the model run. `ok: false` (or flag off) = today's model path, unchanged; `ok: true` = the proposed plan, no model turn, then the usual `plan_ready` write.
+- **What it builds:** two stages of the shape the engine runs today: `companies` (the verified companies search; inputs = `b2bCompaniesRequest`, paging input `page`, mapping = `b2bMapCode`) and `people` (the verified people-of-a-company tool, bound to the company's profile link `linkedin`, `max_results` 10, the people depth of plan.ts, `role_preference: manager`). Contact steps = today's `buildContactSteps` and `buildCompanySteps`, whose finders are the compiled CHAINS in their order (today's `rankedHelpers` ranked by chain position); the e-mail verifiers and phone validators are today's helpers. Columns = `withContactColumns`, `withContractColumns`, `bindCompanySteps`, as `propose_plan` leaves them.
+- **Price:** only `priceMissionByCode(stagePriceInputs(stages, steps), { settings })` (the call the social compiler makes); `overCap` = no plan (the job cap). The approval's re-price (`repriceStoredPlan`) gives the same number (the replay harness checks it).
+- **Reads:** none. No page is read and no model is asked at planning, so a replay makes zero provider calls by construction (`tests/stage3-planning-wiring.test.ts` counts them).
+- **Cards:** verified only, for EVERY account (no switch is passed in this path; section 10).
+
+### 4.7 The engine half (S4, `b2bEngine.ts`, `contacts.ts` hook)
+
+```ts
+createAttemptLog() -> { record(a: { stage, row, column, endpointId, outcome: value | empty | failed | refused | not_tried, value? }); of(stage, row, column); cellFor(stage, row, column, chain) }
+contactColumnsOf(plan) -> [{ stage, column, titleAr, chain, noun }]   // each step's column (company HQ phone: its map searches; else its finders) + a reference company column no step fills (chain [])
+b2bContactCells(plan, rowsByStage, log) -> [{ t: "cells", stage, id, cells }]   // only cells with no value; never a value; never a row
+b2bLimitLines(plan, rowsByStage) -> string[]                                    // read from the final cells of the rows the file is built from
+```
+
+- **Rule** (`resolveField`): «غير متوفر» only when every tool of the chain ANSWERED with nothing (`empty`); «لم يكتمل البحث» when any tool was `refused` (daily cap, job budget, time), `failed` (down, broken call) or `not_tried` (the step's own cap, nothing to ask with, a chain with no verified tool). A failed call is no longer a try (owner rule of this brief; the Sonnet session counted it as one).
+- **Where:** `runExecution` passes `attempts` to `runContactEnrichment` and runs `b2bContactCells` after the steps; `settleExecution` passes `b2bLimitLines` as `extraLimitLines` to `buildMissionFiles`. All three only when `DIGER_STAGE3_COMPANIES` is on for the account.
+- **Money:** cells only. No row is added or removed, so the delivered count (the rows of the file, read back) and the settlement are what they were. No price, reserve, cap, release, charge or ledger line was changed.
 
 ## 5. Tool Cards: six verified on real pages, thirteen still unverified
 
@@ -175,9 +222,14 @@ The people's values in the stored pages are placeholders, so the finders' value 
 | `fixtures-anonymised.test.ts` | all 39 missions (769 files) | the privacy scan, extended with the two anonymiser rules |
 | `stage3-b2b-compile.test.ts` | `tests/fixtures/extraction/companies-electricity-eg.json` (already committed, clearly fake: `example.eg`) | column plan; no verified card means no plan; mark columns; exact duplicates only; fallthrough and «غير متوفر» only after every tool; gap lines pass the customer-text rules |
 | `stage3-queue-email.test.ts` | none (pure) | the queue's reasons and positions, no unmeasured time, the measured-time line; the e-mail decision's eight outcomes |
-| `stage3-isolation.test.ts` | the repo's sources | only the two wiring files (`customerView.ts`, `customerActions.ts`) import a `stage3/` module, and each reads the flag first |
+| `stage3-isolation.test.ts` | the repo's sources | only the wiring files (`customerView.ts`, `customerActions.ts`, `agent/src/runMission.ts`) import a `stage3/` module, and each reads the flag first |
+| `stage3-b2b-ranking.test.ts` | the cards | A.4: a verified card ranks above an unverified one in the tool choice and every chain; the customer path unchanged |
+| `stage3-b2b-plan.test.ts` | the live words of 7539; the stored companies pages of both missions (`call_0001`, `call_0004`/`call_0007`) | S3: the plan by code (stages, recipes, chain order = finder order, verified only, price = `priceMissionByCode`, job cap, determinism, customer text); the nationality word is the search's country INPUT only and no stage carries a filter; both missions' live requests carried the same two filter fields the code builds; the mapping code in the sandbox equals `readB2BRows` on all 4 stored companies pages and never yields a phone or a boolean (tomba's `phone_number`); the fallback cases |
+| `stage3-flags-off.test.ts` | the golden G1 and G2 worlds, and the G1 world with the 7539 words | flags unset: the plan object, the delivered rows, every cell of the file and the charge equal digests written BEFORE the wiring (commit `d764008`) |
+| `stage3-planning-wiring.test.ts` | `tests/helpers/stage3World.ts` (fake, shaped like the stored pages) | S3 wiring: flag on: no model turn, zero planning calls, verified cards only, price by the existing function, the mission runs on today's engine to the end (15 rows, the charge on them); `test` only for a test account; a customer with `test` gets today's plan object (same digest); a request with a condition keeps today's path |
+| `stage3-engine-attempts.test.ts` | a fake contact world; the stage3 world end to end | S4: refused → «لم يكتمل البحث»; a whole empty chain → «غير متوفر»; a later tool fills; failed → «لم يكتمل البحث»; the job budget stop; a reference column with no step; no row added or removed; the file's cells and lines end to end; people cells; only exact duplicates; the money files reach no stage3 module of parts A and B |
 
-**Replay of the two real missions' plans (FOUNDATION-PLAN PR 5 acceptance): not done.** The stored pages are in the repo now, but the real plans, the file columns of the two missions and the call log (which tool each call used) are not, and the planning wiring (S3) is not built, so there is nothing to compare a compiled plan with. What is proven on the real pages is in the `stage3-b2b-real-pages.test.ts` row above. Two facts the acceptance text did not expect: the stored delivered rows of both missions have **no general e-mail and no HQ phone column** (the owner's reference sheet has them), and the HQ phone from the companies page is **never filled** (`phone_number` is `false` everywhere).
+**Replay of the two real missions' plans (FOUNDATION-PLAN PR 5 acceptance): partly.** The code path reads no page at planning, so there is no planning read to replay (zero provider calls, by construction and counted). What is checked on the stored pages of both missions: the request fields the code builds equal the live request's (`meta.filters`), and the mapping code gives the card's rows on every stored companies page. The live plan objects and the call log are still not in the repo, so a compiled plan cannot be compared with the live one field by field. Earlier note, kept:  The stored pages are in the repo now, but the real plans, the file columns of the two missions and the call log (which tool each call used) are not, and the planning wiring (S3) is not built, so there is nothing to compare a compiled plan with. What is proven on the real pages is in the `stage3-b2b-real-pages.test.ts` row above. Two facts the acceptance text did not expect: the stored delivered rows of both missions have **no general e-mail and no HQ phone column** (the owner's reference sheet has them), and the HQ phone from the companies page is **never filled** (`phone_number` is `false` everywhere).
 
 ## 7. Done by Opus
 
@@ -189,7 +241,16 @@ The people's values in the stored pages are placeholders, so the finders' value 
 
 ## 8. Left for Sonnet (step by step)
 
-### 8.0 Status after the Sonnet session (branch rebased on `main` = `4aae39a`)
+### 8.0 Status after the Opus session of 4 Nov 2026 (branch on top of `main` = `42d58e7`, no rebase was needed)
+
+| Step | Status | What was done | What is left (and why) |
+|---|---|---|---|
+| A.4 ranking | **done** | verified cards rank above unverified ones in `b2bCardsFor` and in the tool choice (`4c288d2`) | |
+| S3 planning wiring | **done, for one request shape** | `planB2BByCode` + `planCompaniesByCodeIfOn`, wired in `runPlanning` behind `DIGER_STAGE3_COMPANIES` (`476c626`, `4dd8cf9`); end to end on today's engine in a fake world | the code path plans only «N companies + their decision makers» with no size or founding condition. Everything else falls back to today's path: companies only, people only, no number, a condition (its mark column is filled at delivery, not wired: `buildB2BDelivery` writes marks on rows it is given, the engine does not call it yet), over the job cap. Unverified cards stay off for every account (section 10, item 14) |
+| S4 engine half | **done** | attempts per row and column in `contacts.ts` (optional hook), the fallthrough cells after the steps, the gap lines in «حدود هذا التسليم» (`96a9774`) | the per-person notes and the decision-maker mark were already the workbook's; nothing left for S4 |
+| S2 mark columns from the engine | **not done** | | no code-built plan has a condition yet (it falls back); wiring marks needs the plan to carry mark columns the mapping does not fill, and the engine's contract checks only mapped columns: a design step, not mapping |
+
+### 8.0.1 Status after the Sonnet session (branch rebased on `main` = `4aae39a`), kept for the record
 
 | Step | Status | What was done | Why not (if skipped) |
 |---|---|---|---|
@@ -206,7 +267,13 @@ The people's values in the stored pages are placeholders, so the finders' value 
 
 **What changed in S7.** (1) The gap line: when nothing was found it said «لم يوجد لأي شركة من ٥ شركات، وغير متوفر ...», which claims a negative answer even when no source ran. It now says «غير متوفر لكل الشركات (٥ شركات) بعد تجربة ٣ مصادر» when every source was tried, and «لم يكتمل البحث لكل الشركات (٥ شركات)» when none ran to the end. (2) After «لأن قبله» the counted noun is accusative: «طلبًا واحدًا», «طلبين», «٣ طلبات». The mark titles of `b2bAsk.ts` were read and left as they are.
 
-**For the next session, S3 and the engine part of S4, in this order:**
+**For the next session (after the Opus session):**
+1. Owner decision 15 (the industry words) before turning `DIGER_STAGE3_COMPANIES` to `on`; `test` first.
+2. The mark columns of a condition on a code-built plan (S2 above), then drop the `has_conditions` fallback.
+3. Companies-only and people-only shapes (they fall back today).
+4. Decision 14 (unverified cards for test accounts) needs a per-mission dollar cap on the contact steps; `ContactStep` has no field for it today.
+
+**For the next session, S3 and the engine part of S4, in this order (written by the Sonnet session; items 2 and 3 are done above):**
 1. Confirm the page-to-tool attribution with the one query in decision 7.
 2. Planning: build the companies plan from `compileB2BPlan` the way `compilePlan` builds a social plan (stages with a recipe from the card, `cardMapCode`-style map code for the B2B cards, the people stage bound to the company's website or profile link, contact steps from the chains). Flag `DIGER_STAGE3_COMPANIES`, test accounts first.
 3. Engine: record every lookup's outcome per row and column as an `Attempt`, then call `buildB2BDelivery` and pass its `limitLines` to `buildMissionFiles` as `extraLimitLines`.
@@ -264,6 +331,8 @@ The people's values in the stored pages are placeholders, so the finders' value 
   - Sent at most once per job (marker of S6).
 - **`src/app/dashboard/chat/page.tsx` and its routing:** if the queue line should show inside the chat, the chat page renders `queueLineAr` from the mission view (it already does through `AgentMissionCard`, so likely no change is needed).
 - No other locked file is needed.
+- **Found in the Opus session (no change made):** the S5 queue line (`stage3/queueView.ts`, `queue.ts`, `flags.ts`) is reachable in the MODULE GRAPH of two money files, `src/app/api/worker/chunk/route.ts` and the legacy job worker's entry, through `llmClient.ts -> briefManager.ts -> chatHandler.ts -> chatTurn.ts -> customerActions.ts`. `chatHandler.ts` belongs to another session and was not touched. It is a read-only customer line behind `DIGER_STAGE3_QUEUE`, never called by settlement code; no money file imports a Stage 3 module itself, and nothing of S3 or S4 is reachable from any money file (`tests/stage3-engine-attempts.test.ts`). If the owner wants zero reach, the fix is in the chat handler's imports (another session's file).
+- **`buildMissionFiles` is called in `agent/src/runMission.ts` `settleExecution`, not in `finalize.ts`:** the `extraLimitLines` option is added there, next to the settlement. Only the option on that one call changed; the delivered count is still read back from the published file and no settlement line changed (the diff is in the PR description).
 
 ## 10. Open decisions for the owner
 
@@ -286,6 +355,15 @@ The people's values in the stored pages are placeholders, so the finders' value 
 13. **Likely rebase point with the Stage 2 draft (#369).** Both change the top of `buildMissionFiles` in `agent/src/workbook.ts`: Stage 2 moves the first steps into `deliveredSheetsOf`; this branch adds `extraLimitLines` (an option and four lines after the contract step). The conflict is mechanical.
 
 
+**New, found in the Opus session (4 Nov 2026):**
+
+14. **Unverified cards for test accounts (decision 2), in the code path.** Not used for any account yet. The social rule caps a test account's `catalog_only` spend per mission; the B2B contact steps have no such field (`ContactStep` caps by its priced amount only), so an unverified finder could spend up to the job budget. Recommended: add the per-mission cap to the code-built steps before allowing it.
+15. **The industry words sent to the companies search (a GUESS).** The two real missions' calls sent `filters.location_country` and `filters.industry` (the stored pages echo them; the values are anonymised). The code sends the ISO country and the English words of `entities.ts` `sectorEnglishWords` («الكهروميكانيكا» → `electromechanical`, `electro-mechanical`, ...). Whether these are the source's own industry words is NOT shown by any stored page. A wrong word may give fewer companies (the count is then short and said), never a filter on rows. Recommended: one test-account run (`DIGER_STAGE3_COMPANIES=test`), then look at the companies count before `on`.
+16. **«Only exact duplicates» and the item store.** Today's engine keeps one row per source id (for the companies tool the id is the website), so two listings with the same website and different details are one company. This is today's rule, unchanged by Stage 3. Recommended: keep it (a website is a company's identity); say so if the owner means every value.
+17. **A failed call is no longer a try.** The Sonnet session's `resolveField` wrote «غير متوفر» after a failed call; this brief's rule writes «لم يكتمل البحث». Two expectations of the Sonnet tests were changed to the new rule.
+18. **A resumed run and «لم يكتمل البحث».** The company phone step looks again only at an empty cell or «غير متوفر»; a cell marked «لم يكتمل البحث» by an earlier run of the same mission is not looked up again on a resume. Recommended: accept (a resume is rare and the cell stays honest), or teach the step that word in a later session.
+19. **The request words of `msn_4969a50fed8c45b37d8f` are not in the repo**, so its flag-unset check uses the golden G1/G2 worlds and the 7539 words; its stored pages are used for the request fields and the mapping code.
+
 ## 11. Verified facts vs assumptions
 
 - **Verified by tests:** section 6. The catalog prices and list paths match `data/treg`. Six cards map their real pages; the findings of section 5 are read from the stored pages.
@@ -293,4 +371,5 @@ The people's values in the stored pages are placeholders, so the finders' value 
 - **Assumptions still standing** (marked GUESS in the cards): the filter inputs of blitzapi's companies search carry size; none is used on a customer path.
 - **Privacy scan of the two missions before they were committed** (counts only, never values): 0 e-mail addresses, 0 phone-like values, 0 person-profile links, every name-like field a placeholder or empty, every LinkedIn and website host replaced by `host-<hex>.invalid`, every URL path segment a hash or an id; what stays is company-level (ids and counters, the company domains used as ids, dates, country codes, provider error codes). The repo's own scan then passes on all 39 missions.
 - **Not measured:** the load of the new queue line (it is one extra column in a select that already runs on every mission read, only with the flag on).
-- **Read-only SELECT queries run for this stage:** none.
+- **Read-only SELECT queries run for this stage:** none (Opus session included: none).
+- **Opus session, verified by tests:** the rows above in section 6 (A.4, S3, S4, flags off). **Assumed, not verified:** the industry words of decision 15; that the live tools behave as their stored pages (the end-to-end runs use fake answers in the stored pages' shapes).
