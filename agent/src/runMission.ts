@@ -1,4 +1,6 @@
 import { createJobCallBudget } from "../../src/lib/server/callBudget";
+import { stage2Enabled } from "../../src/lib/agentMission/stage2/flags";
+import { readAskEdits } from "./stage2/askEdits";
 import type { CallRecorder, FetchFn } from "../../src/lib/server/multiProvider/adapterTypes";
 import type { TregCallOptions, TregCallResult } from "../../src/functions/shared/tregClient";
 import type { commitTregSpend } from "../../src/lib/server/tregCallRecord";
@@ -403,7 +405,9 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
       await updateRunState(store, mission.id, (r) => { const { pending: _p, ...rest } = r; void _p; return { ...rest, choices }; }, deps.log);
     }
   }
-  const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, nowMs: planningNow, priorCalls: calls, ...(understand ? { understand } : {}), ...(occurrence ? { occurrence } : {}), ...(redesign.isTest ? { catalogOnly: true } : {}), askCount: true, choices, questionsAsked: prior?.questionsAsked ?? 0, answerIsChoice }) : null;
+  // STAGE 2 (docs/STAGE-2.md S2): the customer's card edits (create-only objects of the mission's folder), only when DIGER_STAGE2_ASK_CARD is on for this account; unset (today), none is read
+  const askEdits = compiledActive && stage2Enabled("DIGER_STAGE2_ASK_CARD", redesign.isTest) ? await readAskEdits(store, mission.id) : [];
+  const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, nowMs: planningNow, priorCalls: calls, ...(askEdits.length > 0 ? { askEdits } : {}), ...(understand ? { understand } : {}), ...(occurrence ? { occurrence } : {}), ...(redesign.isTest ? { catalogOnly: true } : {}), askCount: true, choices, questionsAsked: prior?.questionsAsked ?? 0, answerIsChoice }) : null;
   // THE QUESTION BEFORE APPROVAL (live round 7): no video of the two pages read is about the topic; the plan is not made, the customer chooses (the same needs_input card as the topic question)
   if (compiled?.kind === "question") {
     // every question card counts toward the three a request may have; a count or comments question also waits for its answer

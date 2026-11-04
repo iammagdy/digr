@@ -8,6 +8,7 @@ import { aboutQueryOf, noAboutChoiceOf, noAboutQuestionAr, NO_ABOUT_OPTIONS_AR }
 import { NAMED_SHORTFALL_OPTIONS_AR, isNamedShortfallAnswer, namedShortfallChoiceOf, namedShortfallQuestionAr } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { budgetOfWords, questionNeeded, type Choices } from "../../src/lib/agentMission/foundation/countChoice";
 import { fitToBudget } from "../../src/lib/agentMission/foundation/budgetFit";
+import { applyAskEdit, type AskEdit } from "../../src/lib/agentMission/stage2/askCard";
 import { toArabicDigits } from "../../src/lib/arabicDigits";
 import { cardOf, cardsFor, CATALOG_ONLY_CAP_USD, mapPage, type ToolCard } from "../../src/lib/agentMission/foundation/toolCards";
 import type { PricedPlan } from "../../src/lib/agentMission/plan";
@@ -51,6 +52,8 @@ export interface CompiledPlanningDeps {
   /** ROUND 14, PART B: the production run asks the count and the comments per parent BEFORE any read when the request gives none (`askCount`); a planning made by a test or a tool that does not set it never asks (today's behaviour). `choices` are what the customer chose at those questions, `questionsAsked` how many cards the request has had (at most three), `answerIsChoice` that the current answer is one of them (the request is read without its words). */
   askCount?: boolean;
   choices?: Choices;
+  /** STAGE 2 (docs/STAGE-2.md S2, flag DIGER_STAGE2_ASK_CARD, read by the caller): the customer's card edits, applied by code in order after the request is read; a refused edit is skipped. Absent: nothing changes. */
+  askEdits?: ReadonlyArray<AskEdit>;
   questionsAsked?: number;
   answerIsChoice?: boolean;
 }
@@ -102,6 +105,7 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }): Pro
   if (choices.perParent === "all" && ask.comments !== "none") ask = { ...ask, comments: "all" };
   else if (typeof choices.perParent === "number" && ask.comments !== "none") ask = { ...ask, commentsPerParent: choices.perParent };
   if (budget !== undefined) ask = { ...ask, edits: { ...ask.edits, budget } };
+  for (const e of deps.askEdits ?? []) { const r = applyAskEdit(ask, e, { nowMs: deps.nowMs }); if (r.ok) ask = r.ask; }
   const reads = { pool: 0, exposure: 0 };
   // DECISION 7, A RECURRING EVENT with no year or date: «تقصد أنهي مرة؟» before anything is read or held (Facebook, Instagram, YouTube). «حدد سنة» asks for the year in words; a ready answer or a year is the choice.
   if (occurrenceAnswer?.kind === "ask_year") return { kind: "question", ask, why: "occurrence_year", question: OCCURRENCE_YEAR_QUESTION_AR, options: [], reads };
