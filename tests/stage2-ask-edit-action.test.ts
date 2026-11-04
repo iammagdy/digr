@@ -102,6 +102,14 @@ describe("the mission's GET answer carries the «فهمنا طلبك» card only
     expect(json.askCard.titleAr).toBe("فهمنا طلبك");
     expect(json.askCard.fields.find((f: { key: string }) => f.key === "count").valueAr).toBe("١");
   });
+  it("the live sheet: «liveSheet» only when DIGER_STAGE2_LIVE_SHEET is on for the viewer", async () => {
+    vi.stubEnv("DIGER_STAGE2_LIVE_SHEET", "");
+    db.seed("missions", [mission({ status: "executing" })]);
+    state.client = makeClient(db).client;
+    expect("liveSheet" in (await (await get()).json())).toBe(false);
+    vi.stubEnv("DIGER_STAGE2_LIVE_SHEET", "on");
+    expect((await (await get()).json()).liveSheet).toBe(true);
+  });
   it("flag on, an approved mission: no card", async () => {
     vi.stubEnv("DIGER_STAGE2_ASK_CARD", "on");
     db.seed("missions", [mission({ status: "approved" })]);

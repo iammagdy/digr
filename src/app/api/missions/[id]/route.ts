@@ -30,7 +30,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   }
   // STAGE 2 S4 (docs/STAGE-2.md): the «فهمنا طلبك» card, only while the plan waits for approval and only when DIGER_STAGE2_ASK_CARD is on for the viewer (unset: nothing is read, the answer is today's)
   const askCard = r.status === "plan_ready" && (await stage2FlagForViewer(client, "DIGER_STAGE2_ASK_CARD", auth.viewer.userId)) ? await askCardForCustomer(client, { id, userId: auth.viewer.userId }) : null;
-  return NextResponse.json({ success: true, isGuest: auth.viewer.isGuest, status: r.status, requestText: r.requestText, view: r.view, ...(methodology ? { methodology } : {}), ...(askCard ? { askCard } : {}) }, { headers: { "Cache-Control": "no-store" } });
+  // STAGE 2 S10: the page may poll the live sheet (its own route) only when DIGER_STAGE2_LIVE_SHEET is on for the viewer (unset: nothing is read, the answer is today's)
+  const liveSheet = await stage2FlagForViewer(client, "DIGER_STAGE2_LIVE_SHEET", auth.viewer.userId);
+  return NextResponse.json({ success: true, isGuest: auth.viewer.isGuest, status: r.status, requestText: r.requestText, view: r.view, ...(methodology ? { methodology } : {}), ...(askCard ? { askCard } : {}), ...(liveSheet ? { liveSheet: true } : {}) }, { headers: { "Cache-Control": "no-store" } });
 }
 
 /**

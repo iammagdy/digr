@@ -20,6 +20,7 @@ import { fileNameFromDisposition } from "@/lib/downloadName";
 import { MethodologyOffer } from "@/components/mission/MethodologyOffer";
 import type { PlanEdits } from "@/lib/agentMission/planEdit";
 import { AskCard } from "@/components/mission/AskCard";
+import { LiveSheetPanel } from "@/components/mission/LiveSheetPanel";
 import type { AskCardView, AskEdit } from "@/lib/agentMission/stage2/askCard";
 
 /**
@@ -30,7 +31,7 @@ import type { AskCardView, AskEdit } from "@/lib/agentMission/stage2/askCard";
  */
 /** ROUND 21: a delivered compiled mission carries the offer of its data-collection methodology (the job the purchase route takes, and whether it was bought). */
 interface MethodologyOfferInfo { jobId: string; titleAr: string; purchased: boolean }
-interface MissionAnswer { success: boolean; isGuest?: boolean; status?: string; requestText?: string; view?: CustomerMissionView; error?: string; methodology?: MethodologyOfferInfo; /** STAGE 2 S4: present only when DIGER_STAGE2_ASK_CARD is on for the viewer and the plan waits for approval. */ askCard?: AskCardView }
+interface MissionAnswer { success: boolean; isGuest?: boolean; status?: string; requestText?: string; view?: CustomerMissionView; error?: string; methodology?: MethodologyOfferInfo; /** STAGE 2 S4: present only when DIGER_STAGE2_ASK_CARD is on for the viewer and the plan waits for approval. */ askCard?: AskCardView; /** STAGE 2 S10: present only when DIGER_STAGE2_LIVE_SHEET is on for the viewer. */ liveSheet?: true }
 
 const TERMINAL_PHASES: ReadonlySet<string> = new Set(["done", "partial", "unserved", "failed", "cancelled"]);
 const WAITING_POLL_MS = 8000;
@@ -167,7 +168,9 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   if (!v) {
     return <div dir="rtl" data-testid="agent-card" data-phase="loading" className="mt-3 rounded-[18px] border border-ln bg-sf p-4 text-[13px] text-ink2" role="status">جاري تجهيز مهمتك…</div>;
   }
-  return <AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled}  askCard={stage2 ? answer?.askCard ?? null : null} onAskEdit={askEdit} askError={askError} />;
+  // STAGE 2 S10: the live sheet under the card, on the requests page only (`stage2`) and only when the server said the flag is on for this viewer
+  const showLive = stage2 && answer?.liveSheet === true && (v.phase === "running" || v.phase === "done" || v.phase === "partial");
+  return <>{<AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled}  askCard={stage2 ? answer?.askCard ?? null : null} onAskEdit={askEdit} askError={askError} />}{showLive ? <LiveSheetPanel missionId={missionId} enabled /> : null}</>;
 }
 
 /** The card itself, drawn from one view: pure (no network), so it renders the same on the server and in the tests. */
