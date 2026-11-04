@@ -7,6 +7,18 @@ import { illFormedPaths, wellFormedDeep } from "../../src/lib/agentMission/wellF
 
 const XLSX_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
+/**
+ * Did the storage service itself say that the requested OBJECT does not exist? The service answers a missing object with the body {statusCode: "404", error: "not_found", message: "Object not found"} (HTTP 400 on older versions,
+ * 404 on newer ones); the client (`@supabase/storage-js`) turns it into a StorageApiError with `status` (HTTP) and `statusCode` (the body's). A missing BUCKET is also a 404 but says «Bucket not found»; a gateway's 404 has no such
+ * message. Only the exact object message with a 400/404 status and the body's 404 counts: anything ambiguous is NOT proof that an object is absent.
+ */
+export function isObjectNotFound(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const e = error as { status?: unknown; statusCode?: unknown; message?: unknown };
+  const status = Number(e.status);
+  return (status === 400 || status === 404) && String(e.statusCode ?? "") === "404" && typeof e.message === "string" && /^object not found$/i.test(e.message.trim());
+}
+
 /** The real store: the tables and the private bucket of docs/proposals/agent-worker/ through the service-role client. Only the worker (and the admin routes) hold that key. */
 export function createSupabaseStore(client: any): AgentStore {
   const bucket = () => client.storage.from(AGENT_BUCKET);
@@ -61,8 +73,14 @@ export function createSupabaseStore(client: any): AgentStore {
       return out.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
     },
     async getFileBytes(missionId, rel) {
+      // null means ONE thing: the storage service said THIS object does not exist. Any other failure (permission, rate limit, 5xx, a missing bucket, a network error, an answer of an unexpected shape) is an error the caller must see:
+      // the add-on runner decides «the published path is free» from this answer, and a failed read is not proof of an empty path. A thrown exception of the client is not caught here.
       const { data, error } = await bucket().download(path(missionId, rel));
-      if (error || !data) return null;
+      if (error) {
+        if (isObjectNotFound(error)) return null;
+        throw new Error(`download: ${String((error as { message?: unknown }).message ?? "failed").slice(0, 160)}`);
+      }
+      if (!data) throw new Error("download: no data and no error");
       return Buffer.from(await data.arrayBuffer());
     },
     async getFile(missionId, rel) {
