@@ -36,26 +36,26 @@ describe("MUTATION: fix B (no second paid review while the first charged review 
   it("if a CHARGED earlier review were not counted, the verdict would be «clear» and a second paid review would be allowed", async () => {
     const m = await loadMutant(PAID, [{ from: 'if (state.kind === "charged") return { kind: "unresolved", id: r.id, reason: "charged" };', to: "" }]);
     const first = failedReview();
-    const { value } = await solo(opts([first], state(first, "charged")), (c) => m.module.paidReviewVerdict(c, { missionId: MISSION, baseVersion: 1, rows: [first] }));
+    const { value } = await solo<any>(opts([first], state(first, "charged")), (c) => m.module.paidReviewVerdict(c, { missionId: MISSION, baseVersion: 1, rows: [first] }));
     expect(value.kind).toBe("clear");
   });
   it("if an UNPROVABLE money state were read as free, a review whose charge cannot be proved would be allowed a second paid review", async () => {
     const m = await loadMutant(PAID, [{ from: 'if (state.kind === "unknown") return { kind: "unresolved", id: r.id, reason: "unverified" };', to: "" }]);
     const first = failedReview();
-    const { value } = await solo(opts([first], state(first, "unknown")), (c) => m.module.paidReviewVerdict(c, { missionId: MISSION, baseVersion: 1, rows: [first] }));
+    const { value } = await solo<any>(opts([first], state(first, "unknown")), (c) => m.module.paidReviewVerdict(c, { missionId: MISSION, baseVersion: 1, rows: [first] }));
     expect(value.kind).toBe("clear");
   });
   it("without the storage check a PUBLISHED report is not shown free: the customer is told the review is unresolved though the report exists", async () => {
     const m = await loadMutant(PAID, [{ from: "if (await reviewReportPublished(client, input.missionId, input.baseVersion)) return { kind: \"report_published\", id: earlier[0].id };", to: "" }]);
     const first = failedReview();
     const objects = { ...ONE, [`${MISSION}/reviews/r0001.json`]: "{}" };
-    const { value } = await solo(opts([first], state(first, "charged"), objects), (c) => m.module.paidReviewVerdict(c, { missionId: MISSION, baseVersion: 1, rows: [first] }));
+    const { value } = await solo<any>(opts([first], state(first, "charged"), objects), (c) => m.module.paidReviewVerdict(c, { missionId: MISSION, baseVersion: 1, rows: [first] }));
     expect(value.kind).toBe("unresolved");
   });
   it("if the creation did not call the guard, a second paid review request of the version would be MADE next to the charged one", async () => {
     const m = await loadMutant(ROW, [{ from: 'if (input.kind === "review" && input.paidReviewGuard) {', to: "if (false) {" }]);
     const first = failedReview();
-    const { value, out } = await solo(opts([first], state(first, "charged")), async (c) => {
+    const { value, out } = await solo<any>(opts([first], state(first, "charged")), async (c) => {
       const card = reviewCard(1000);
       if (!card.ok) throw new Error("card");
       return m.module.createAddonRow(createSupabaseAddonRowStore(c, ME), { userId: ME, of: MISSION, kind: "review", baseVersion: 1, latestVersion: 1, request: { kind: "review" }, pricing: card.pricing, requestText: "طلب مراجعة", paidReviewGuard: async () => ({ kind: "unresolved", id: "x" }) });
@@ -67,14 +67,14 @@ describe("MUTATION: fix B (no second paid review while the first charged review 
     const m = await loadMutant(GUARD, [{ from: 'if (verdict.kind === "unresolved") return no(409, "review_unresolved", ADDON_CREATE_REFUSALS_AR.review_unresolved);', to: "" }]);
     const first = failedReview();
     const second = { ...addonRowOf({ status: "plan_ready", kind: "review", base: 1, attempt: 2 }), request_text: "طلب مراجعة", job_id: null, approved_at: null };
-    const { value } = await solo(opts([first, second], state(first, "charged")), (c) => m.module.guardApproval(c, { id: second.id, userId: ME }));
+    const { value } = await solo<any>(opts([first, second], state(first, "charged")), (c) => m.module.guardApproval(c, { id: second.id, userId: ME }));
     expect(value).toEqual({ ok: true });
   });
   it("if the approval guard did not require this request to be the one that stays, a request next to a STARTED one would be let through (and its row has just been cancelled by the repair)", async () => {
     const m = await loadMutant(GUARD, [{ from: "if (!keeper || keeper.id !== input.id) return no(409, \"open_addon\", ADDON_CREATE_REFUSALS_AR.open_addon);", to: "" }]);
     const started = { ...addonRowOf({ status: "approved", kind: "review", base: 1 }), request_text: "طلب", job_id: "job_started", approved_at: "2026-11-03T09:00:00.000Z" };
     const waiting = { ...addonRowOf({ status: "plan_ready", kind: "review", base: 2 }), request_text: "طلب", job_id: null, approved_at: null };
-    const { value } = await solo(opts([started, waiting], () => undefined, objectsOf(v1)), (c) => m.module.guardApproval(c, { id: waiting.id, userId: ME }));
+    const { value } = await solo<any>(opts([started, waiting], () => undefined, objectsOf(v1)), (c) => m.module.guardApproval(c, { id: waiting.id, userId: ME }));
     expect(value).toEqual({ ok: true });
   });
 });
