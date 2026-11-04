@@ -148,7 +148,8 @@ describe("writeDoneSnapshotSafely never throws and never waits for ever", () => 
     await expect(writeDoneSnapshotSafely({ ...(await real()), log, store: { putNew: async () => { throw new Error("storage down"); } } as never })).resolves.toBe(false);
     vi.stubEnv("DIGER_STAGE2_LIVE_SHEET", "test");
     await expect(writeDoneSnapshotSafely({ ...(await real()), log, isTest: async () => { throw new Error("lookup failed"); } })).resolves.toBe(false);
-    expect(lines.filter((l) => l.startsWith("live_snapshot_not_written msn_safe"))).toHaveLength(3);
+    // the mailbox builder and the store each log once; a failing account lookup is read as «off» by the flag check (no snapshot, no noise)
+    expect(lines.filter((l) => l.startsWith("live_snapshot_not_written msn_safe"))).toHaveLength(2);
   });
   it("a write that never answers is given up after the time limit (the write WAS attempted)", async () => {
     vi.stubEnv("DIGER_STAGE2_LIVE_SHEET", "on");

@@ -1,7 +1,7 @@
 import { stage2FlagMode } from "../../../src/lib/agentMission/stage2/flags";
 import type { PricedPlan } from "../../../src/lib/agentMission/plan";
-import type { ItemSnapshot } from "../items/itemStore";
-import type { MissionFacts } from "../methodology";
+import { newWriterId, type ItemSnapshot } from "../items/itemStore";
+import { missionFactsOf, type MissionFacts } from "../methodology";
 import type { AgentStore, MissionEventInput } from "../types";
 import type { CompanyMailboxes } from "../workbook";
 import { buildLiveSnapshot } from "./liveSnapshot";
@@ -99,6 +99,51 @@ export async function writeDoneSnapshot(input: {
     return true;
   } catch (e) {
     input.log?.(`live_snapshot_not_written ${input.missionId} done ${String((e as Error)?.message ?? e).slice(0, 120)}`);
+    return false;
+  }
+}
+
+/** The longest the done snapshot may take: past it the write is given up (the run has already been settled; it only delays the mission's last status). */
+export const DONE_SNAPSHOT_TIMEOUT_MS = 10_000;
+
+/**
+ * THE DONE SNAPSHOT, SAFE TO CALL AFTER THE SETTLEMENT (the safety fix): it receives the RAW inputs, and the flag check, the account check, the facts, the mailboxes, the writer id and the write ALL happen
+ * inside one try that logs (`live_snapshot_not_written ...`) and swallows. It never throws, never changes a status or a money value, and gives up after `timeoutMs` so a hung storage cannot hold the
+ * run. Nothing is evaluated unless DIGER_STAGE2_LIVE_SHEET is on for the account and a result file exists (unset: no account lookup, no builder, no write). Returns whether a snapshot was stored.
+ */
+export async function writeDoneSnapshotSafely(input: {
+  store: Pick<AgentStore, "putNew">;
+  missionId: string;
+  /** The plan as the customer approved it. */
+  plan: PricedPlan;
+  snap: ItemSnapshot;
+  /** For the file's facts: the request's words and why the review stopped (the same inputs the file was built with). */
+  requestText: string | null | undefined;
+  reviewStop: "budget" | "failed" | null;
+  /** The plan the file was written with (reported and judged): the facts are built from it. Defaults to `plan`. */
+  filePlan?: PricedPlan;
+  resultPath: string | null;
+  mailboxesOf: (plan: PricedPlan, snap: ItemSnapshot) => CompanyMailboxes;
+  isTest: () => Promise<boolean>;
+  nowMs?: number;
+  log?: (line: string) => void;
+  timeoutMs?: number;
+  env?: Readonly<Record<string, string | undefined>>;
+}): Promise<boolean> {
+  try {
+    if (input.resultPath === null) return false;
+    if (!(await liveSheetOn(input.isTest, input.env))) return false;
+    const filePlan = input.filePlan ?? input.plan;
+    const work = writeDoneSnapshot({
+      store: input.store, missionId: input.missionId, plan: input.plan, snap: input.snap, writerId: newWriterId(),
+      facts: missionFactsOf({ requestText: input.requestText, plan: filePlan, snap: input.snap, reviewStop: input.reviewStop }),
+      companyMailboxes: input.mailboxesOf(filePlan, input.snap), nowMs: input.nowMs ?? Date.now(), log: input.log,
+    });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const limit = new Promise<false>((resolve) => { timer = setTimeout(() => { input.log?.(`live_snapshot_not_written ${input.missionId} done gave up after the time limit`); resolve(false); }, input.timeoutMs ?? DONE_SNAPSHOT_TIMEOUT_MS); });
+    try { return await Promise.race([work, limit]); } finally { if (timer !== undefined) clearTimeout(timer); }
+  } catch (e) {
+    try { input.log?.(`live_snapshot_not_written ${input.missionId} done ${String((e as Error)?.message ?? e).slice(0, 120)}`); } catch { /* a log that fails is not a reason to fail */ }
     return false;
   }
 }

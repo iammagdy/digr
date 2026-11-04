@@ -45,7 +45,10 @@ describe("the flag", () => {
     const src = readFileSync(new URL("../agent/src/runMission.ts", import.meta.url), "utf8");
     expect(src).toContain("const live = (await liveSheetOn(async () => redesignIsTest)) ? createLiveWriter(");
     expect(src).toContain("addEvent: live ? (e) => live.addEvent(e, () => store.addEvent(mission.id, e)) : (e) => store.addEvent(mission.id, e), deadlineMs,");
-    expect(src).toContain("if (resultPath !== null && (await liveSheetOn(() => accountIsTest(store, mission.user_id)))) await writeDoneSnapshot(");
+    // the done snapshot: AFTER the settlement, by the safe helper (its own flag check, arguments and try); never before settleMission
+    expect(src).toContain("await writeDoneSnapshotSafely({ store, missionId: mission.id, plan: approvedPlan, filePlan: plan, snap, requestText: mission.request_text, reviewStop: checked.stop, resultPath, mailboxesOf: companyMailboxesOf, isTest: () => accountIsTest(store, mission.user_id), log: deps.log });");
+    expect(src.indexOf("await writeDoneSnapshotSafely(")).toBeGreaterThan(src.indexOf("const settled = await settleMission("));
+    expect(src).not.toMatch(/await writeDoneSnapshot\(/);
   });
 });
 

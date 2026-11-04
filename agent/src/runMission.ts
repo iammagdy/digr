@@ -35,7 +35,7 @@ import { readRunState, updateRunState, type RunState } from "./runState";
 import { buildTools, newRunState, socialRedesignActive, type ToolContext, type ToolSpec } from "./tools";
 import { applySnapshot, readPlanningState, resumeNoteOf, snapshotOf, writePlanningState } from "./planningState";
 import { ItemStore, newWriterId, type ItemSnapshot, type StopReason } from "./items/itemStore";
-import { createLiveWriter, liveSheetOn, writeDoneSnapshot } from "./stage2/liveWriter";
+import { createLiveWriter, liveSheetOn, writeDoneSnapshotSafely } from "./stage2/liveWriter";
 import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
 import { readPlatformFlagsOf, readRedesignFlags } from "../../src/lib/agentMission/redesignFlags";
@@ -694,12 +694,12 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
     }
     if (fileCount !== builtCount) flags.push("file_differs_from_store");
   }
-  // STAGE 2 S6 (docs/STAGE-2.md): the live sheet's last snapshot, equal to the file just stored; only when DIGER_STAGE2_LIVE_SHEET is on for the account (unset: nothing is read or written). It never throws and touches no money line.
-  if (resultPath !== null && (await liveSheetOn(() => accountIsTest(store, mission.user_id)))) await writeDoneSnapshot({ store, missionId: mission.id, plan: approvedPlan, snap, writerId: newWriterId(), facts: missionFactsOf({ requestText: mission.request_text, plan, snap, reviewStop: checked.stop }), companyMailboxes: companyMailboxesOf(plan, snap), nowMs: Date.now(), log: deps.log });
   // THE ONE NUMBER: the items in the file
   const delivered = Math.min(fileCount, plan.price.deliveredRows);
   if (fileCount > plan.price.deliveredRows) flags.push("file_over_the_volume_sold");
   const settled = await settleMission(deps.client, { jobId, deliveredUnits: delivered, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath, releaseReason: "لم يُسلَّم شيء من هذه المهمة، فعاد الحجز المؤقت كاملًا." });
+  // STAGE 2 S6 (docs/STAGE-2.md): the live sheet's last snapshot, equal to the file just stored. It runs AFTER the settlement (so it can never stand between the customer and the settlement), builds its own arguments inside its own try, and never throws: a failure is logged and ignored. Unset flag: nothing is evaluated or written.
+  await writeDoneSnapshotSafely({ store, missionId: mission.id, plan: approvedPlan, filePlan: plan, snap, requestText: mission.request_text, reviewStop: checked.stop, resultPath, mailboxesOf: companyMailboxesOf, isTest: () => accountIsTest(store, mission.user_id), log: deps.log });
   if (!settled.ok) {
     await store.updateMission(mission.id, { status: "failed", error: `settlement ${settled.code}: ${settled.detail}`, execution_llm_usd: Number(llm.toFixed(6)), ...clear });
     await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّرت التسوية الآلية للمهمة؛ راجع المشرف ولم يُخصم رصيد إضافي." });
