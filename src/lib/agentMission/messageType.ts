@@ -151,12 +151,24 @@ export function otherReplyAr(): string {
   return "لم أفهم من رسالتك أنها طلب لجمع بيانات. ديجر تجمع بيانات البحث (تعليقات ومنشورات وفيديوهات وشركات وأشخاص وبيانات تواصل) وتسلّمها لك في ملف إكسل؛ اكتب ما تريد جمعه ومن أي منصة، ولن يُخصم شيء قبل موافقتك.";
 }
 
+/** The one honest sentence said first to a clear ask for a FULL research methodology (study design, sample, analysis). */
+export const FULL_RESEARCH_PREFIX_AR = "تكتب ديجر حاليًا منهجية جمع البيانات لطلباتك عبرها، وليس منهجية بحث كاملة تشمل تصميم الدراسة والعينة والتحليل. ";
+
+/**
+ * What follows the words of a methodology answer, written by CODE from the customer's delivered requests (`delivered`, read by the caller): with some, the chooser sentence the page recognises and the price the card shows before approval; with none, what the
+ * document is and the offer to start a data request. The model may write the sentences before it (round 22) but never this part: it carries the price.
+ */
+export function methodologyTailAr(delivered: number): string {
+  if (delivered > 0) return `${METHODOLOGY_CHOOSER_SENTENCE_AR} منهجية الجمع لهذا الطلب: ${toArabicDigits(METHODOLOGY_POINTS)} نقطة، ولا يُخصم شيء قبل تأكيدك.`;
+  return `ليس لديك طلب مُسلَّم حتى الآن، فاكتب لي ما تريد جمعه لنبدأ، وبعد تسليمه تطلب منهجيته بسعر ${toArabicDigits(METHODOLOGY_POINTS)} نقطة.`;
+}
+
 /**
  * The answer to a methodology request. `delivered` is how many delivered compiled requests the customer has (read by the caller): with some, the chooser sentence and the price the card shows before approval; with none, what the document is and an offer to start a data request.
  * A clear ask for a full research methodology gets one honest sentence first.
  */
 export function methodologyReplyAr(input: { text: string; delivered: number }): string {
-  const prefix = isFullResearchMethodologyAsk(input.text) ? "تكتب ديجر حاليًا منهجية جمع البيانات لطلباتك عبرها، وليس منهجية بحث كاملة تشمل تصميم الدراسة والعينة والتحليل. " : "";
-  if (input.delivered > 0) return `${prefix}${METHODOLOGY_CHOOSER_SENTENCE_AR} منهجية الجمع لهذا الطلب: ${toArabicDigits(METHODOLOGY_POINTS)} نقطة، ولا يُخصم شيء قبل تأكيدك.`;
-  return `${prefix}تصف المنهجية كيف جُمعت بيانات طلب نفّذته عبر ديجر: المصادر والفترة وما بُحث عنه والخطوات والأعداد المسلّمة وحدود التسليم. ليس لديك طلب مُسلَّم حتى الآن، فاكتب لي ما تريد جمعه لنبدأ، وبعد تسليمه تطلب منهجيته بسعر ${toArabicDigits(METHODOLOGY_POINTS)} نقطة.`;
+  const prefix = isFullResearchMethodologyAsk(input.text) ? FULL_RESEARCH_PREFIX_AR : "";
+  if (input.delivered > 0) return `${prefix}${methodologyTailAr(input.delivered)}`;
+  return `${prefix}تصف المنهجية كيف جُمعت بيانات طلب نفّذته عبر ديجر: المصادر والفترة وما بُحث عنه والخطوات والأعداد المسلّمة وحدود التسليم. ${methodologyTailAr(0)}`;
 }
