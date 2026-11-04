@@ -700,3 +700,70 @@ A waiting review request is a `plan_ready` row of the `missions` table, so the e
 ### 16.7 Not verified
 
 Everything ran on fakes (a stateful fake table, a fake bucket, fake auth, `fetch` stubbed). The add-on rows are read with the JSON path `plan->addon->>of`, and the insert relies on the primary key reporting code `23505` for a duplicate id: neither was run against a database (a failed read answers 503; any other insert failure is also 503; a duplicate is recognised by its code or its message). The compare-and-set relies on `.select("id")` after an update returning exactly the changed rows (the same pattern the existing cancel uses). No Vercel build, Heroku worker, real storage or real browser.
+
+## 17. Phase 2B-2, task 4: a review request is not a research mission
+
+Branch `money/7e-addon-isolation` (a draft PR into `money/7d-review-request`). No money moves, no flag is set, no approval is built. Two parts: every ordinary reader of the `missions` table now leaves add-on rows alone (17.1 to 17.3), and the «one open add-on per file» protocol of 16.2 was tested against the failures it has to survive (17.4 to 17.6).
+
+### 17.1 The one rule
+
+A row of `missions` is an **add-on row** when its `plan` JSON has the key `addon` (`src/lib/agentMission/addonMarker.ts`, no imports). It is the worker's own rule (`agent/src/stage4/runAddon.ts` `isAddonMission`) and it is **structural on purpose**: a malformed plan that still carries the key is not an ordinary mission either (it must never fall through into code that reads `plan.price`). A test runs both rules over the same plans. A reader that does not select `plan` asks for the column `addon:plan->addon` (the JSON-path select form the repository already uses for `plan_public->stages`) and the rule reads either.
+
+### 17.2 What each ordinary reader did with a waiting review request, and does now
+
+| Reader | Before | Now |
+|---|---|---|
+| `openMissions.listOpenMissions` (the limit's list and the chat's blockers) | listed it as «الخطة جاهزة وتنتظر اعتمادك» | not listed, not counted; `failStuckPlanning` never ends it |
+| `requests/expiry.expireWaitingMissions` | expired it after 72 hours, and it took one of the five places, so a request could push an ordinary plan out | ignored by the age rule and the cap (whether an unpaid add-on request expires is the approval task's decision) |
+| `requests/buildIndex` («طلباتي») | showed it as a pending plan with a cancel button, or as a running or ended mission | never a pending, running or ended mission; a JOB an add-on holds later is still a job row |
+| `createCustomerMission`, per-hour limit | counted add-on rows, so making and cancelling requests locked the customer out of new research | the cheap head count is unchanged; only at the limit are the rows read once and add-on rows left out |
+| `approveForCustomer` | (7d) 409 | unchanged: 409, same sentence, now through the shared rule |
+| `cancelForCustomer` | cancelled it without looking at a job or an approval | 409; its own cancel (`reviewRequest.ts`) is the only way |
+| `editPlanForCustomer`, `smallerVersionForCustomer` | crashed on a plan with no price (500) | 409 before any read of a price |
+| `answerForCustomer` | would re-queue a `needs_input` add-on into the planner | 409 |
+| `loadCustomerMission` (`GET /api/missions/[id]`), `customerFileLink` | served it as a mission | 404, the same answer as a missing mission |
+| `chatTurn` open request | a short follow-up («خليها ٥ تعليقات بس») could be applied to it as a plan edit | not an open request |
+| `chatTurn` replace rule | a new chat request cancelled the add-on the last card pointed at | an add-on is never replaced (a failed read leaves the row alone) |
+| admin `cancelMission`, `answerQuestion`, `approvePlan` | `approvePlan` CLAIMED the row (`approved`) and then crashed on its plan | 409 before the account lookup, the claim or any money function; nothing changes |
+| admin `loadOverview`, `loadDetail`, the page | listed it as a research mission with an approve and a cancel | labelled `is_addon` («طلب على ملف مُسلَّم»), no research plan card, no cancel, a note; the detail no longer crashes on it |
+| `methodology/missions` | safe only because an add-on row has no `plan_public.compiled` | structurally refused |
+
+The review request stays visible through its own endpoint (`GET /api/missions/[id]/review-request`) and the customer page; a test runs the ordinary list and the request endpoint over the same table.
+
+### 17.3 Not changed, and why (each is listed in `tests/money7e-isolation.test.ts` with its reason)
+
+- `approval.ts` (`approveMissionOnce`) is money code and was not edited. Its two callers (`customerActions`, `adminActions`) are guarded, and a source test requires that every caller of it uses the marker, so a third caller cannot be added unguarded. A one-line guard inside `approval.ts` would make a single choke point; that is the owner's call.
+- The browser reads of the request page (`dashboard/requests/[id]`, `dashboard/requests`) cannot ask for the `plan` column: the customer's column grant leaves it out (see the SQL proposal test). A direct visit to an add-on's id shows a bare request page; nothing links to it.
+- Reads by JOB id (wallet history, the job download, the conversation link, the notice): an add-on holds no job until the approval task, which must decide the wallet label (decision D9) and the notice words.
+- `readQueue` counts `approved` rows ahead in the queue; an approved add-on does occupy the worker, so that count is right.
+- The worker: nothing under `agent/` was touched.
+
+### 17.4 The strength of «one open add-on per file»
+
+The protocol of 16.2 (read, insert, read again, cancel the unpaid duplicates) is **not a database constraint**. `tests/money7e-concurrency.test.ts` runs every interleaving of the store calls of the creators, with the failures it must survive:
+
+1. **The specified failure.** A made a row. B read before A was visible, inserted its own row, and B's post-insert read failed. *Before:* two open requests stayed (nobody could notice). *Now:* if B can still write, B withdraws its own unpaid row before it reports the failure (at most one is open at the end in every interleaving; zero is possible and safe: the customer is told it failed). If B can neither read nor write after its insert (a total outage), **two open requests can remain**: the test shows that end state on purpose. They are repaired by the next run of the same protocol, which every creator runs before it refuses, and which the customer's own page runs when it finds two open requests (the repair is a cancel of an unpaid row; the one that stays is a started row first, then the lowest id). Between the outage and that next run two waiting requests exist; nothing is held by either.
+2. **An existing waiting request starts approval while another is created.** *Before:* a hole. If the creator picked the OLD request as the loser and the customer's approval claimed it before the creator's cancel, the cancel matched nothing and the creator went on: a request running (approved) and a new one waiting next to it. *Now:* a cancel that matches nothing makes the protocol read again; the request that started now outranks the others, the new request is the one cancelled, and the creator is refused. A started request is never cancelled in any interleaving (tested for the old request having the lower and the higher id).
+3. **A request put back to `plan_ready` by a failed approval.** `approveAddonOnce` (the money core, read only here) claims the row (`approved_at` is set) and, when a call fails, puts the row back to `plan_ready` without clearing it, with no job id recorded even though a quote may have been accepted (it says so: «the money may or may not have moved»). The cancel of 16.3 matched such a row (`plan_ready`, no job). *Now:* the cancel also requires `approved_at` empty (`cancelUnpaidAddonRow`), the creation protocol treats such a row as STARTED (it is never cancelled by a creator; the new request is), and the page does not show it with «لم يُحجز أو يُخصم من رصيدك شيء.». Such a row cannot exist before the approval task.
+4. **What is still possible.** A creator told «ok» can be cancelled a moment later by a creator that saw a lower id (two tabs, the same instant; nothing is held). `approveAddonOnce` itself does **not** check «no other add-on is open»: the approval task must run `reconcileOpenAddons` and refuse when another request is open or started, before it claims.
+
+### 17.5 What a database guarantee would need (NOT done: a migration)
+
+A partial unique index would make the second open add-on of a file impossible, and the insert's `23505` (already handled as «duplicate») would carry it:
+
+```sql
+-- PROPOSAL ONLY, NOT APPLIED, needs the owner's approval and a check of live data first
+create unique index missions_one_open_addon_per_file
+  on public.missions ((plan->'addon'->>'of'))
+  where plan ? 'addon' and status in ('queued','planning','needs_input','plan_ready','approved','executing');
+```
+
+Before it could be applied: look for existing rows that already break it (a read-only query), and make the insert tell «same id» (the primary key) from «another open request» (this index), both `23505`. Nothing was run and no file under `supabase/` was added.
+
+### 17.6 Required before `DIGER_STAGE4_REVIEW` is turned on, and for the approval task
+
+The readers in 17.2 are now isolated. Still open (not done here): the approval of a review request (with the check in 17.4 item 4), the report screen, the watchdog's release of a cancelled add-on, the wallet label (D9), the notice words, and the decision on whether an unpaid add-on request expires.
+
+### 17.7 Not verified
+
+Everything ran on fakes: a strict fake database that returns only the columns a query asks for and understands the JSON-path select and filter, a scheduler for the interleavings, no real database, storage, provider, Vercel, Heroku or browser. Not run against a real database: the select `addon:plan->addon` (the same form as the existing `plan_public->stages` select, but on the `plan` column), the filter `plan->addon->>of`, and the `is null` filter on `approved_at`. The admin page's new label and hidden cancel button are checked in the source and by the type check, not rendered (no DOM test library is installed).

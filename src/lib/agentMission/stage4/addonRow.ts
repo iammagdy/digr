@@ -33,7 +33,8 @@ export type AddonRequest =
 export const OPEN_STATUSES = ["queued", "planning", "needs_input", "plan_ready", "approved", "executing"] as const;
 export const ENDED_STATUSES = ["cancelled", "failed", "unserved"] as const;
 
-export interface AddonRowLike { id: string; status: string; plan: unknown }
+/** `job_id` and `approved_at` are read with every add-on row: they say whether the row was EVER put through an approval (money may have moved), which `status` alone cannot (a failed approval puts the row back to `plan_ready`). */
+export interface AddonRowLike { id: string; status: string; plan: unknown; job_id?: string | null; approved_at?: string | null }
 /** What a row of `missions` needs to be inserted (the table's own defaults fill the rest). */
 export interface AddonRowInsert { id: string; user_id: string; request_text: string; status: "plan_ready"; plan: { addon: AddonPlan } }
 export interface AddonRowStore {
@@ -42,8 +43,8 @@ export interface AddonRowStore {
   /** Insert one row. `duplicate: true` = the id already exists (another click got there first). */
   insert(row: AddonRowInsert): Promise<{ ok: true } | { ok: false; duplicate: boolean }>;
   /**
-   * Cancel an UNPAID add-on row: ONE compare-and-set that matches only a row that is still `plan_ready` and has no job (nothing held). `true` = this call cancelled it; `false` = it matched nothing (the row is gone, or no longer waiting).
-   * It never touches a started row and calls no refund or settlement function: a waiting row holds nothing.
+   * Cancel an UNPAID add-on row: ONE compare-and-set that matches only a row that is still `plan_ready`, has no job and was NEVER put through an approval (`approved_at` empty): nothing was held, and nothing may have been. `true` = this call cancelled it; `false` = it matched
+   * nothing (the row is gone, or no longer waiting, or it has been approved at least once). It never touches a started row and calls no refund or settlement function.
    */
   cancelUnpaid(id: string): Promise<boolean>;
 }
@@ -107,6 +108,11 @@ export async function createAddonRow(store: AddonRowStore, input: { userId: stri
   if ((input.request as { kind?: unknown }).kind === "remove_rows" || (input.request as { kind?: unknown }).kind === "delete_rows") return refuse("row_removal_not_offered");
   if (input.request.kind !== input.kind) return refuse("bad_request");
   const rows = await store.listFor(input.of);
+  // two open add-ons on this file (the end state of a creation whose settlement could not run): repair first, and answer with the one that stays
+  if (addonsOf(rows, input.of).filter(({ row }) => isOpen(row)).length > 1) {
+    const { keeper } = await reconcileOpenAddons(store, input.of);
+    return refuse("open_addon", keeper?.id);
+  }
   const can = canCreateAddon({ rows, of: input.of, kind: input.kind, baseVersion: input.baseVersion, latestVersion: input.latestVersion });
   if (!can.ok) return refuse(can.reason, can.existingId);
   const row = buildAddonRow({ ...input, attempt: can.attempt });
@@ -122,19 +128,54 @@ export async function createAddonRow(store: AddonRowStore, input: { userId: stri
 }
 
 const isOpen = (r: AddonRowLike): boolean => (OPEN_STATUSES as ReadonlyArray<string>).includes(r.status);
+/** UNPAID: waiting, no job, and never put through an approval. Only such a row may be cancelled by the creation protocol; every other open row counts as STARTED (its money state is not ours to guess). */
+export const isUnpaidAddonRow = (r: AddonRowLike): boolean => r.status === "plan_ready" && (r.job_id ?? null) === null && (r.approved_at ?? null) === null;
+
+/** The ONE open add-on that stays when more than one is open: a started row first (it cannot be cancelled), then the lowest id (a rule every creator computes the same way). Pure. */
+export function addonThatStays(open: ReadonlyArray<AddonRowLike>): AddonRowLike | null {
+  const rank = (r: AddonRowLike): number => (isUnpaidAddonRow(r) ? 1 : 0);
+  return [...open].sort((a, b) => rank(a) - rank(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0] ?? null;
+}
+
+/**
+ * MAKE «ONE OPEN ADD-ON PER FILE» TRUE AGAIN (docs/MONEY-PR-7A.md sections 16.2 and 17.2): read the open add-ons of the file; when more than one is open, cancel every unpaid one except `addonThatStays`. The cancel is a compare-and-set that matches only an unpaid row, so a row
+ * that STARTED approval after it was read matches nothing: the read is then repeated (at most `rounds` times) and the started row, which now outranks the others, is the one that stays and the new request is cancelled instead. Returns the add-on that stays (null when none is open).
+ * It cancels nothing that holds money and calls no refund or settlement function. A failing store call throws: nothing is assumed from an error.
+ * This is a protocol over ordinary reads and writes, NOT a database constraint: it is run by every creator right after its insert, by every creator before it refuses, and by the customer's own page when it finds two open requests; a creator that can neither read nor write after
+ * its insert can leave a second open row until the next of those runs (tests/money7e-concurrency.test.ts shows that end state, and that the next run repairs it).
+ */
+export async function reconcileOpenAddons(store: AddonRowStore, of: string, rounds = 4): Promise<{ keeper: AddonRowLike | null }> {
+  let keeper: AddonRowLike | null = null;
+  for (let round = 0; round < rounds; round += 1) {
+    const open = addonsOf(await store.listFor(of), of).map(({ row }) => row).filter(isOpen);
+    keeper = addonThatStays(open);
+    if (open.length <= 1) return { keeper };
+    let allCancelled = true;
+    for (const r of open) if (r.id !== keeper!.id && !(await store.cancelUnpaid(r.id))) allCancelled = false;
+    if (allCancelled) return { keeper };
+  }
+  return { keeper };
+}
+
+/** Withdraw this creator's own unpaid row after a failure (best effort: when it cannot be done either, the next reconcile repairs it). */
+async function withdraw(store: AddonRowStore, id: string): Promise<void> {
+  try { await store.cancelUnpaid(id); } catch { /* the next reconcile repairs it */ }
+}
 
 /**
  * TWO CREATORS AT THE SAME TIME (docs/MONEY-PR-7A.md section 16.2). `canCreateAddon` is a read followed by an insert, and the primary key only stops two requests with the SAME id (the same version and attempt). A review of version 1 and a review of version 2
- * made from two tabs at the same moment have different ids: both read «nothing is open», both insert, and two open add-ons exist on one file (decision D10 broken). No migration is needed to close this: AFTER its insert the creator reads the open add-ons again.
- * If more than one is open, ONE of them stays: a started row first (it cannot be cancelled), then the lowest id (a rule every creator computes the same way). Every other row is cancelled by `cancelUnpaid` (a compare-and-set that matches only an unpaid `plan_ready` row),
- * and a creator whose own row did not stay is told «open add-on» with the id of the one that did. Whoever commits LAST always sees all the rows, so at the end exactly one is open, in every interleaving (tests/money7a-row-race.test.ts runs them all).
- * Nothing is held at this stage, so a request cancelled here cost nothing; and a creator that read «only mine» before the other inserted was already told yes: its row is the one cancelled, and the page shows the one that stays.
+ * made from two tabs at the same moment have different ids: both read «nothing is open», both insert, and two open add-ons exist on one file (decision D10 broken). No migration is needed to close this: AFTER its insert the creator runs `reconcileOpenAddons`.
+ * A creator whose own row did not stay is told «open add-on» with the id of the one that did. Whoever commits LAST sees all the rows, so when every store call works exactly one is open at the end, in every interleaving (tests/money7a-row-race.test.ts and
+ * tests/money7e-concurrency.test.ts run them all, with a failing read and with an approval that starts meanwhile). If the settlement itself FAILS, the creator withdraws its own unpaid row before it reports the failure. Nothing is held at this stage, so a request
+ * cancelled here cost nothing; a creator that read «only mine» before the other inserted was already told yes, and its row is then the one cancelled (the page shows the one that stays).
  */
 async function settleCreation(store: AddonRowStore, of: string, mine: AddonRowInsert): Promise<CreateAddonResult> {
-  const open = addonsOf(await store.listFor(of), of).map(({ row }) => row).filter(isOpen);
-  if (open.length <= 1) return open.length === 1 && open[0].id === mine.id ? { ok: true, row: mine } : refuse("open_addon", open[0]?.id);
-  const rank = (r: AddonRowLike): number => (r.status === "plan_ready" ? 1 : 0);
-  const keeper = [...open].sort((a, b) => rank(a) - rank(b) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
-  for (const r of open) if (r.id !== keeper.id) await store.cancelUnpaid(r.id);
-  return keeper.id === mine.id ? { ok: true, row: mine } : refuse("open_addon", keeper.id);
+  try {
+    const { keeper } = await reconcileOpenAddons(store, of);
+    if (!keeper) return refuse("open_addon");
+    return keeper.id === mine.id ? { ok: true, row: mine } : refuse("open_addon", keeper.id);
+  } catch (e) {
+    await withdraw(store, mine.id);
+    throw e;
+  }
 }

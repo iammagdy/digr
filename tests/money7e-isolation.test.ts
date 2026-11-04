@@ -324,7 +324,7 @@ describe("the fence in the source", () => {
     for (const f of callers) expect(readFileSync(f, "utf8"), f).toContain("hasAddonMarker");
   });
   it("every ordinary reader of the missions table uses the marker (or is listed below with its reason)", () => {
-    const READERS = ["src/lib/agentMission/openMissions.ts", "src/lib/requests/expiry.ts", "src/lib/requests/buildIndex.ts", "src/lib/agentMission/customerActions.ts", "src/lib/agentMission/adminActions.ts", "src/lib/agentMission/chatTurn.ts"];
+    const READERS = ["src/lib/agentMission/openMissions.ts", "src/lib/requests/expiry.ts", "src/lib/requests/buildIndex.ts", "src/lib/agentMission/customerActions.ts", "src/lib/agentMission/adminActions.ts", "src/lib/agentMission/chatTurn.ts", "src/lib/agentMission/methodology/missions.ts"];
     for (const f of READERS) expect(readFileSync(f, "utf8"), f).toContain("addonMarker");
   });
   it("no reader outside the add-on's own code writes or reads add-on rows without the marker: every file that reads the missions table is either a reader above or in the reviewed list", () => {
@@ -333,8 +333,8 @@ describe("the fence in the source", () => {
       "src/lib/agentMission/stage4/addonRowStore.ts", "src/lib/agentMission/stage4/reviewRequest.ts", "src/lib/agentMission/stage4/reviewPreview.ts", "src/lib/agentMission/stage4/versionFile.ts", "src/lib/agentMission/stage4/versionList.ts", "src/lib/agentMission/addonSettlement.ts",
       // the shared approval path: its callers are the guarded ones above (asserted in the first test)
       "src/lib/agentMission/approval.ts",
-      // a read by job id or by the delivered mission's own id and its own columns: an add-on row is never the subject (no `plan_public.compiled`, no files of its own); see docs/MONEY-PR-7A.md section 17.5
-      "src/lib/agentMission/methodology/missions.ts", "src/lib/server/missionNotify.ts", "src/lib/server/jobConversation.ts", "src/app/api/jobs/[id]/download/route.ts", "src/app/api/wallet/history/route.ts",
+      // a read by job id or by the delivered mission's own id: an add-on row is never the subject of a notice, a conversation link, a job download or a wallet line (it holds no job until the approval task); see docs/MONEY-PR-7A.md section 17.5
+      "src/lib/server/missionNotify.ts", "src/lib/server/jobConversation.ts", "src/app/api/jobs/[id]/download/route.ts", "src/app/api/wallet/history/route.ts",
       // the guest-to-customer account transfer moves every row of the guest, whatever it is
       "src/app/api/chat/route.ts",
       // browser reads of the customer's own row by id or job (cannot ask for the plan column): see 17.5

@@ -1,5 +1,6 @@
 import { MISSION_TABLE } from "../constants";
 import { missionTitleAr } from "../fileNames";
+import { ADDON_MARKER_COLUMN, hasAddonMarker } from "../addonMarker";
 
 /**
  * THE MISSIONS A DATA-COLLECTION METHODOLOGY CAN BE WRITTEN FOR (round 21): a request of the customer that was DELIVERED (completed, at least one row delivered), carried out on the COMPILED path (the plan the compiler built: `plan_public.compiled`), with its job and its Excel file.
@@ -17,13 +18,15 @@ export interface MethodologyMission {
   createdAt: string | null;
 }
 
-export const METHODOLOGY_MISSION_COLUMNS = "id,user_id,status,job_id,delivered_units,request_text,plan_public,files,created_at";
+export const METHODOLOGY_MISSION_COLUMNS = `id,user_id,status,job_id,delivered_units,request_text,plan_public,files,created_at,${ADDON_MARKER_COLUMN}`;
 
 type Row = Record<string, unknown>;
 
 /** The mission as a methodology candidate, or null when it is not one (not delivered, not compiled, no job, no Excel file). */
 export function methodologyMissionOf(row: Row | null | undefined): MethodologyMission | null {
   if (!row || typeof row !== "object") return null;
+  // a review, review-fix or edit of a delivered file (an add-on row) is not a research request a methodology can be written for, whatever else its row carries (MONEY PR 7e, docs/MONEY-PR-7A.md section 17)
+  if (hasAddonMarker(row)) return null;
   if (row.status !== "completed") return null;
   const delivered = Number(row.delivered_units);
   if (!(delivered > 0)) return null;

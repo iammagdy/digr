@@ -8,11 +8,12 @@ import type { AddonRowInsert, AddonRowLike, AddonRowStore } from "./addonRow";
 const bad = (what: string): Error => new Error(`add-on rows: ${what}`);
 
 /**
- * Cancel an UNPAID add-on row with ONE compare-and-set: it matches only a row of this customer that is still `plan_ready` AND has no job (nothing was reserved). The update is read back: `true` only when exactly this call changed the row; a row that is gone,
- * already cancelled, started or holding a job matches nothing and answers `false`. A database failure throws. No refund and no settlement function exists on this path.
+ * Cancel an UNPAID add-on row with ONE compare-and-set: it matches only a row of this customer that is still `plan_ready`, has no job AND was never put through an approval (`approved_at` empty). The approval's claim sets `approved_at` and a failed approval puts the row back
+ * to `plan_ready` WITHOUT clearing it, so a row that was ever claimed (its money may have moved before the answer was lost) is never cancelled here: that state is the approval's to settle. The update is read back: `true` only when exactly this call changed the row; a row that is
+ * gone, already cancelled, started, holding a job or ever approved matches nothing and answers `false`. A database failure throws. No refund and no settlement function exists on this path.
  */
 export async function cancelUnpaidAddonRow(client: any, input: { id: string; userId: string }): Promise<boolean> {
-  const upd = await client.from(MISSION_TABLE).update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", input.id).eq("user_id", input.userId).eq("status", "plan_ready").is("job_id", null).select("id");
+  const upd = await client.from(MISSION_TABLE).update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", input.id).eq("user_id", input.userId).eq("status", "plan_ready").is("job_id", null).is("approved_at", null).select("id");
   if (upd.error) throw bad("the cancel failed");
   return Array.isArray(upd.data) && upd.data.length === 1;
 }
@@ -21,9 +22,9 @@ export function createSupabaseAddonRowStore(client: any, userId: string): AddonR
   return {
     async listFor(missionId: string): Promise<ReadonlyArray<AddonRowLike>> {
       // the customer's own add-on rows of this delivered mission (the JSON path `plan->addon->>of`); a failed read THROWS: «no add-on is open» is never assumed from an error
-      const { data, error } = await client.from(MISSION_TABLE).select("id,status,plan").eq("user_id", userId).eq("plan->addon->>of", missionId);
+      const { data, error } = await client.from(MISSION_TABLE).select("id,status,plan,job_id,approved_at").eq("user_id", userId).eq("plan->addon->>of", missionId);
       if (error || !Array.isArray(data)) throw bad("the read failed");
-      return data.map((r: any) => ({ id: String(r.id), status: String(r.status), plan: r.plan }));
+      return data.map((r: any) => ({ id: String(r.id), status: String(r.status), plan: r.plan, job_id: r.job_id ?? null, approved_at: r.approved_at ?? null }));
     },
     async insert(row: AddonRowInsert) {
       const { error } = await client.from(MISSION_TABLE).insert(row);
