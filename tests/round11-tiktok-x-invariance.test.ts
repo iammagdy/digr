@@ -75,10 +75,14 @@ describe("X: the plan, the view and the file are what they were, plus the topic 
   it("the file: the tweets sheet has one more column, «علاقة النص بالموضوع»; with it taken out the file is the old one (no counter was missing, so no «غير متاح»)", async () => {
     const w = await xWorld();
     const back: Record<string, string[][]> = {};
+    // CHANGED (round 27): one more stated diff, taken out before the hash: the replies sheet keeps its counter column «عدد الردود». The workbook used to merge a column into another when their values were the same on 80% of the rows (here the replies' counter and their likes were both «2»); a counter is never merged now (live: «الحفظ» was missing from one TikTok file).
+    const counterSheets: string[] = [];
     for (const [name, rows] of Object.entries(w.cells)) {
-      const at = rows[0].indexOf("علاقة النص بالموضوع");
-      back[name] = at < 0 ? rows : rows.map((r) => r.filter((_, j) => j !== at));
+      const drop = ["علاقة النص بالموضوع", ...(name === "الردود" ? ["عدد الردود"] : [])].map((h) => rows[0].indexOf(h)).filter((at) => at >= 0);
+      if (name === "الردود" && rows[0].includes("عدد الردود")) counterSheets.push(name);
+      back[name] = drop.length === 0 ? rows : rows.map((r) => r.filter((_, j) => !drop.includes(j)));
     }
+    expect(counterSheets).toEqual(["الردود"]);
     expect(JSON.stringify(w.cells)).not.toContain("غير متاح");
     expect(Object.entries(w.cells).filter(([, rows]) => rows[0].includes("علاقة النص بالموضوع")).map(([n]) => n)).toEqual(["التغريدات"]);
     expect(sha(dataSheets(back))).toBe(BASE.x.cells);
