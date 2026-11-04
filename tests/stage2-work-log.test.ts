@@ -8,7 +8,7 @@ import { WORK_LOG_CODES, WORK_LOG_NOUNS, workLogFromEvents, workLogLine, type Wo
  * vendor. An unknown code, or a code without the number its sentence needs, gives NOTHING (never free text).
  */
 const AT = "2026-11-04T08:35:00Z"; // 10:35 in Cairo (UTC+2 in November)
-const full = (code: string): WorkLogEvent => ({ code, at: AT, n: 12, total: 40, promised: 100, noun: "comments" });
+const full = (code: string): WorkLogEvent => ({ code, at: AT, n: 12, total: 40, promised: 100, noun: "comments" }) as WorkLogEvent;
 
 describe("every code renders one Arabic line", () => {
   it.each([...WORK_LOG_CODES])("%s", (code) => {
@@ -27,9 +27,9 @@ describe("every code renders one Arabic line", () => {
 
 describe("unknown or incomplete events give nothing", () => {
   it("an unknown code gives null, whatever it carries", () => {
-    expect(workLogLine({ code: "provider_timeout_tikhub", at: AT, n: 1 } as WorkLogEvent)).toBeNull();
-    expect(workLogLine({ code: "", at: AT } as WorkLogEvent)).toBeNull();
-    expect(workLogLine({ code: "toString", at: AT } as WorkLogEvent)).toBeNull();
+    expect(workLogLine({ code: "provider_timeout_tikhub", at: AT, n: 1 } as unknown as WorkLogEvent)).toBeNull();
+    expect(workLogLine({ code: "", at: AT } as unknown as WorkLogEvent)).toBeNull();
+    expect(workLogLine({ code: "toString", at: AT } as unknown as WorkLogEvent)).toBeNull();
   });
   it("a code whose sentence needs a number or a noun gives null without it", () => {
     expect(workLogLine({ code: "items_saved", at: AT, noun: "comments" })).toBeNull();
