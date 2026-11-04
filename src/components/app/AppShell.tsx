@@ -21,6 +21,7 @@ import { bellBadgeText } from "@/lib/notificationBadge";
 import { getPersonaConfig } from "@/functions/shared/personaConfigs";
 import { Icon, SIDEBAR_ICONS, UI } from "./icons";
 import { Avatar } from "./Avatar";
+import { HeaderBalance } from "./HeaderBalance";
 import { useAvatar } from "@/lib/avatarClient";
 
 /* ── shell context: pages set their header title, anyone can open the drawer / start a new question ── */
@@ -396,7 +397,7 @@ export function AppShell({ children, allowGuest = false }: { children: ReactNode
                   ) : null}
                 </button>
                 <Link href="/dashboard/topup" className="flex min-h-11 items-center gap-1.5 whitespace-nowrap rounded-full bg-sf2 px-3.5">
-                  <span className="text-sm font-medium text-ink">{balanceText(balance)}</span>
+                  <HeaderBalance balance={balance} />
                   <span className="text-xs font-light text-mut">نقطة</span>
                 </Link>
               </div>
