@@ -119,8 +119,9 @@ export function planB2BByCode(input: B2BPlanInput): B2BPlanResult {
   if (price.overCap) return { ok: false, reason: "over_cap" };
   const notes: string[] = [];
   if (!steps.some((s) => s.level === "company" && s.kind === "email")) notes.push(`${COMPANY_EMAIL_TITLE_AR}: لا يوجد بعد مصدر موثّق نبحث فيه عنه، فسيُكتب في الملف أن البحث عنه لم يكتمل.`);
+  const sectorAr = ask.sector.length > 0 ? ` في قطاع ${ask.sector.join(" و")}` : "";
   const plan: PricedPlan = {
-    summary_ar: `ستحصل على ${countAr(n, COMPANY)}${ask.sector.length > 0 ? ` في قطاع ${ask.sector.join(" و")}` : ""}، ومن كل شركة حتى ${toArabicDigits(perParent)} من صناع القرار بالإيميل والموبايل.`,
+    summary_ar: `ستحصل على ${countAr(n, COMPANY)}${sectorAr}، ومن كل شركة حتى ${toArabicDigits(perParent)} من صناع القرار بالإيميل والموبايل.`,
     stages, price, contact_steps: steps, ...(notes.length > 0 ? { notes_ar: notes } : {}),
     quantity: { requested: n, stage_key: "companies", target: n, source: "request" },
   };
