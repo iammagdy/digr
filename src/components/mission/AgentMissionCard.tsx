@@ -253,7 +253,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
           {byBalance ? <p className="m-0 text-[13px] leading-[1.9] text-ink2">يمكنك اعتماد نسخة أصغر تناسب رصيدك، أو تغيير طلبك، أو إلغاء المهمة؛ ولم يُخصم شيء.</p> : null}
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
             {byBalance || v.limit.smaller ? <button type="button" className={`${BTN_PRIMARY} inline-flex min-h-12 w-full items-center justify-center text-[15px] font-semibold sm:w-auto sm:min-w-[200px]`} disabled={busy} onClick={() => onAct("smaller")} data-testid="agent-smaller">{pendingAction === "smaller" ? "جاري التجهيز…" : "جهّز نسخة أصغر"}</button> : null}
-            <button type="button" className={`${BTN_PLAIN} w-full sm:w-auto`} disabled={busy} onClick={() => (v.edit ? onEditing(!editing) : onAct("edit"))} data-testid="agent-edit" aria-expanded={v.edit ? editing : undefined}>عدّل الطلب</button>
+            <button type="button" className={`${BTN_PLAIN} w-full sm:w-auto`} disabled={busy} onClick={() => (v.edit ? onEditing(!editing) : onAct("edit"))} data-testid="agent-edit" aria-expanded={v.edit ? editing : undefined}>{pendingAction === "edit" ? "جارٍ التجهيز…" : "عدّل الطلب"}</button>
             <button type="button" className={`${BTN_PLAIN} w-full sm:w-auto`} disabled={busy} onClick={() => onAct("cancel")} data-testid="agent-cancel">ألغِ المهمة</button>
           </div>
         </div>
@@ -267,11 +267,11 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
             : <button type="button" className={`${BTN_PRIMARY} inline-flex min-h-12 w-full items-center justify-center gap-2 text-[15px] font-semibold sm:w-auto sm:min-w-[200px]`} disabled={busy} onClick={() => onAct("approve")} data-testid="agent-approve">
                 {approving ? <><span className="h-4 w-4 rounded-full border-2 border-onac/30 border-t-onac motion-safe:animate-spin motion-reduce:animate-none" aria-hidden="true" />جاري الاعتماد…</> : "اعتمد"}
               </button>}
-          <button type="button" className={`${BTN_PLAIN} w-full sm:w-auto`} disabled={busy} onClick={() => (v.edit ? onEditing(!editing) : onAct("edit"))} data-testid="agent-edit" aria-expanded={v.edit ? editing : undefined}>عدّل الطلب</button>
+          <button type="button" className={`${BTN_PLAIN} w-full sm:w-auto`} disabled={busy} onClick={() => (v.edit ? onEditing(!editing) : onAct("edit"))} data-testid="agent-edit" aria-expanded={v.edit ? editing : undefined}>{pendingAction === "edit" ? "جارٍ التجهيز…" : "عدّل الطلب"}</button>
         </div>
       ) : null}
       {approving ? <p role="status" aria-live="polite" className="m-0 text-[13px] leading-[1.8] text-ink2" data-testid="agent-approving">جاري اعتماد خطتك… لن تحتاج لفعل شيء بعدها.</p> : null}
-      {planShown && v.edit && editing ? <PlanEditor edit={v.edit} busy={busy} onSave={(edits) => onAct("edit_plan", undefined, edits)} onCancel={() => onEditing(false)} onRetype={() => onAct("edit")} /> : null}
+      {planShown && v.edit && editing ? <PlanEditor edit={v.edit} busy={busy} pendingAction={pendingAction} onSave={(edits) => onAct("edit_plan", undefined, edits)} onCancel={() => onEditing(false)} onRetype={() => onAct("edit")} /> : null}
       {planShown && isGuest ? <p className="m-0 text-[12px] font-light leading-[1.8] text-mut" data-testid="agent-guest-note">بعد التسجيل تُنقل محادثتك لحسابك؛ اكتب «موافق» فيها ثم اضغط «اعتمد».</p> : null}
 
       {/* THE DETAILS, folded: how we understood the request, the steps, the example rows and what the file holds */}

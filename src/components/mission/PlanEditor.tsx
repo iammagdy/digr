@@ -71,7 +71,7 @@ export function editsFromState(edit: PlanEditorView, state: ReturnType<typeof in
   return out;
 }
 
-export function PlanEditor({ edit, busy = false, onSave, onCancel, onRetype }: { edit: PlanEditorView; busy?: boolean; onSave: (edits: PlanEdits) => void; onCancel: () => void; onRetype: () => void }) {
+export function PlanEditor({ edit, busy = false, pendingAction = null, onSave, onCancel, onRetype }: { edit: PlanEditorView; busy?: boolean; pendingAction?: string | null; onSave: (edits: PlanEdits) => void; onCancel: () => void; onRetype: () => void }) {
   const [state, setState] = useState(() => initialState(edit));
   const target = edit.stages.find((s) => s.key === edit.target_stage_key) ?? null;
   const setFilter = (stageKey: string, kind: string, patch: Partial<StageState["filters"][string]>) => setState((p) => ({ ...p, stages: { ...p.stages, [stageKey]: { ...p.stages[stageKey], filters: { ...p.stages[stageKey].filters, [kind]: { ...p.stages[stageKey].filters[kind], ...patch } } } } }));
@@ -153,9 +153,9 @@ export function PlanEditor({ edit, busy = false, onSave, onCancel, onRetype }: {
       ))}
 
       <div className="flex flex-wrap items-center gap-2">
-        <button type="button" className={BTN_PRIMARY} disabled={busy || !changed} onClick={() => onSave(edits)} data-testid="agent-edit-save">احفظ التعديل</button>
+        <button type="button" className={BTN_PRIMARY} disabled={busy || !changed} onClick={() => onSave(edits)} data-testid="agent-edit-save">{pendingAction === "edit_plan" ? "جارٍ الحفظ…" : "احفظ التعديل"}</button>
         <button type="button" className={BTN_PLAIN} disabled={busy} onClick={onCancel} data-testid="agent-edit-close">إغلاق</button>
-        <button type="button" className={`${BTN_PLAIN} border-0 underline`} disabled={busy} onClick={onRetype} data-testid="agent-retype">اكتب الطلب من جديد</button>
+        <button type="button" className={`${BTN_PLAIN} border-0 underline`} disabled={busy} onClick={onRetype} data-testid="agent-retype">{pendingAction === "edit" ? "جارٍ التجهيز…" : "اكتب الطلب من جديد"}</button>
       </div>
     </div>
   );

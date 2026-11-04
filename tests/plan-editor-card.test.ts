@@ -68,6 +68,14 @@ describe("«عدّل الطلب» opens the plan editor; retyping stays beside i
     expect(html(view)).toContain("عدّل الطلب");
   });
 
+  it("shows a pending label while saving or retyping and disables the controls", () => {
+    const view = customerMissionView({ mission: row(), events: [] });
+    const saving = html(view, { editing: true, busy: true, pendingAction: "edit_plan" });
+    expect(saving).toMatch(/data-testid="agent-edit-save">جارٍ الحفظ…/);
+    const retyping = html(view, { editing: true, busy: true, pendingAction: "edit" });
+    expect(retyping).toMatch(/data-testid="agent-retype">جارٍ التجهيز…/);
+  });
+
   it("the editor sends only what changed", () => {
     const edit = customerPlanView(plan()).edit;
     const state = initialState(edit);
