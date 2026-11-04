@@ -100,6 +100,7 @@ import { resolveRequestAttemptStatus } from "../../lib/requestAttempt";
 import { extractNumberFromText } from "../../lib/arabicNumbers";
 import { APPROVAL_NEEDS_BUTTON_AR, hasPendingPlan, isChatControlMessage, isRetrySamePlanMessage, isReviewPlanMessage, isTypedApprovalMessage } from "../../lib/retryMessage";
 import { normalizeDigits, toArabicDigits } from "../../lib/arabicDigits";
+import { arabicDisplayName, balanceLineAr } from "../../lib/greetingName";
 import { ANSWER_END, CHANNELS_SKIPPED_VALUE, capQuestionFor, consultantIntroAr, GENERIC_ASK_ONE_INTRO_AR, isFormStyleIntro, missionCoverageLinesAr, nextStep, questionForStep, typedAnswerLabelFor, PLATFORM_OTHER_QUESTION_AR, FACEBOOK_KEYWORD_SAMPLE_LINE_AR, FACEBOOK_KEYWORD_SLUG_FOR_CARD, understandMission, understoodLineAr } from "../../lib/consultantCopy";
 import { NAME_PROMPT_AR } from "../../lib/customerName";
 import { CONTACT_AVAILABILITY_AR, CONTACT_BILLING_NOTE_AR, CONTACT_EMAIL_BILLING_AR, CONTACT_EXPECTATION_AR, DEFAULT_TITLE_NOTE_AR } from "../../lib/contactExpectation";
@@ -2122,13 +2123,13 @@ export class ChatHandler {
           alreadyAskedName = Boolean(priorNamePrompts?.length);
         } catch {}
       }
-      const balanceLine = typeof userBalance === "number" && Number.isFinite(userBalance)
-        ? `رصيدك المتاح ${pointsAr(Math.max(0, Math.floor(userBalance)), toArabicDigits)}. `
-        : "";
+      const balanceLine = typeof userBalance === "number" ? balanceLineAr(userBalance) : "";
+      // Round 24: the name is used only when it is written in Arabic letters; a Latin or mixed name is not (the greeting says «أهلًا بك»)
+      const arabicName = arabicDisplayName(displayName);
       const greeting = input.capturedName
-        ? `تشرفنا يا ${displayName}. ${balanceLine}كيف أساعدك اليوم؟`
+        ? arabicName ? `تشرفنا يا ${arabicName}. ${balanceLine}كيف أساعدك اليوم؟` : `أهلًا بك، ${balanceLine}كيف أساعدك اليوم؟`
         : displayName
-          ? `أهلًا ${displayName}، ${balanceLine}كيف أساعدك اليوم؟`
+          ? arabicName ? `أهلًا ${arabicName}، ${balanceLine}كيف أساعدك اليوم؟` : `أهلًا بك، ${balanceLine}كيف أساعدك اليوم؟`
           : alreadyAskedName
             ? `أهلًا بك، ${balanceLine}كيف أساعدك اليوم؟`
             : `أهلًا بك، ${NAME_PROMPT_AR}`;
