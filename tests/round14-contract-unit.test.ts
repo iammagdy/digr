@@ -49,18 +49,17 @@ describe("R2..R4 through the real workbook: the description is completed, nothin
   };
   const read = async (xlsx: Buffer) => { const wb = new ExcelJS.Workbook(); await wb.xlsx.load(xlsx as never); return wb; };
   const textsOf = (wb: ExcelJS.Workbook) => { const out: string[] = []; wb.worksheets[0].eachRow((r) => r.eachCell((c) => { if (typeof c.value === "string") out.push(c.value); })); return out; };
-  it("R2: the first video gave 2 of the 5 asked; no line says so, so the contract names it and (in delivery) adds the line", async () => {
+  // CHANGED (round 19): the compiled path's own line for the first video («طلبت ٥ تعليقات وسُلّم تعليقان») was always in the file; R2 looked for the digit «٢», found only the word, and ADDED a second line for the same video (live YouTube, msn_2cc97612deaf5e7f7d6d).
+  // A count of one or two is written in words, so R2 now reads the words: the gap is stated once, nothing is completed, and the stage's own «سُلّم ٧ من ١٠» line is the only thing it still asks for.
+  it("R2: the first video gave 2 of the 5 asked; the file's own line says so (in words), so R2 asks for nothing about that video and adds no second line", async () => {
     const seen = await buildMissionFiles(plan, rows, undefined, undefined, { completeContract: false });
-    const r2 = seen.contract.violations.filter((v) => v.rule === "R2");
-    expect(r2.length).toBeGreaterThan(0);
-    expect(r2[0].expected).toContain("الفيديو رقم ١");
-    expect(r2[0].expected).toContain("٥");
-    expect(r2[0].expected).toContain("٢");
+    expect(seen.contract.violations.filter((v) => v.rule === "R2" && v.rowId !== null)).toEqual([]);
     const done = await buildMissionFiles(plan, rows);
-    expect(done.contract.completed.some((c) => c.kind === "limit_line")).toBe(true);
-    const lines = textsOf(await read(done.xlsx)).join("\n");
-    expect(lines).toContain("الفيديو رقم ١");
-    expect(lines).not.toContain("لا قيود سُجّلت على هذا التسليم");
+    const lines = textsOf(await read(done.xlsx)).filter((t) => t.startsWith("الفيديو رقم ١:") && t.includes("والفرق لم يعطِه المصدر"));
+    expect(lines.length).toBeGreaterThan(0);
+    expect(new Set(lines).size).toBe(1);
+    expect(done.contract.completed.filter((c) => c.kind === "limit_line" && c.text.startsWith("الفيديو رقم ١:"))).toEqual([]);
+    expect(textsOf(await read(done.xlsx)).join("\n")).not.toContain("لا قيود سُجّلت على هذا التسليم");
   });
   it("R3: a day with no time of day from a stage dated relatively, with no mark, is completed as «تقريبي» (column and count), the date cell untouched", async () => {
     const seen = await buildMissionFiles(plan, rows, undefined, undefined, { completeContract: false });

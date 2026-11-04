@@ -42,6 +42,8 @@ export interface MissionReplayInput {
   adjustPlan?: (plan: PricedPlan) => void;
   /** Written in the test that needs it: changes a stored PLANNING page after it is served (the anonymiser replaced the words the live ranking read: a post's text and author), so the compiler ranks as it did live. */
   transformPlanningPage?: (endpointId: string, page: unknown) => unknown;
+  /** ROUND 19: the plan as the production planning run SAVED it (`tests/helpers/productionPlanning.ts`): the compile step is skipped and the engine and the contract run on exactly that plan. */
+  savedPlan?: PricedPlan;
 }
 
 export interface MissionReplay {
@@ -65,7 +67,7 @@ export async function replayMission(input: MissionReplayInput): Promise<MissionR
         return out;
       } }
     : planning.gateway;
-  const planned = await planByCompiler({
+  const planned = input.savedPlan ? ({ kind: "plan", plan: input.savedPlan } as unknown as Extract<CompiledPlanning, { kind: "plan" }>) : await planByCompiler({
     mission: { id: target, request_text: input.request, answer_text: input.answer ?? null, created_at: input.createdAt },
     gateway: transformed as never, store, catalog, nowMs: Date.parse(input.planningAt),
     ...(input.edits ? { edits: input.edits } : {}), ...(input.occurrence ? { occurrence: input.occurrence } : {}), ...(input.catalogOnly ? { catalogOnly: true } : {}),
