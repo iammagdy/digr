@@ -33,7 +33,10 @@ describe("a readable token is answered locally, only when the owner turned it on
     const { data, error } = await c.auth.getUser("jwt");
     expect(error).toBeNull();
     expect(data.user).toMatchObject({ id: "u1", email: "a@b.c", app_metadata: { role: "admin" }, user_metadata: { email_verified: true } });
-    expect(data.user.email_confirmed_at).toBeTruthy();
+    // SECURITY: `user_metadata.email_verified` is writable by the customer, so a locally rebuilt user carries NO confirmation time and is marked:
+    // whatever authorizes points asks the service (resolveTrustedEmailVerified). Before this fix the metadata flag minted a confirmation time.
+    expect(data.user.email_confirmed_at).toBeUndefined();
+    expect(data.user.__localClaims).toBe(true);
     expect(calls).toEqual({ getUser: 0, getClaims: 1 });
   });
 
