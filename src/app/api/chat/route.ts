@@ -201,9 +201,8 @@ export async function POST(req: NextRequest) {
           guestSessionCookie = `gst_${crypto.randomUUID()}`;
           newGuestCookieToSet = guestSessionCookie;
         }
-        // A uuid we generated just now is ours; a cookie the browser sent is hashed, so it can never BE a real user's id.
-        const generatedHere = guestSessionCookie === newGuestCookieToSet ? guestUuidOfCookie(guestSessionCookie) : null;
-        verifiedUserId = generatedHere ?? guestSessionToUuid(guestSessionCookie);
+        // Always the hash of the cookie, on every turn: it is stable for this browser and can never BE a real user's id.
+        verifiedUserId = guestSessionToUuid(guestSessionCookie);
       }
       emailVerified = true;
     } else {

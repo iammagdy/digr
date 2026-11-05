@@ -121,24 +121,33 @@ describe("POST /api/chat with a guest_session_id cookie the browser chose", () =
     expect(owner("conversations", "cv_pseudo")).toBe(ATTACKER);
   });
 
-  it("NOT SIGNED IN + cookie naming a real customer: the request is NOT run as that customer", async () => {
+  it("NOT SIGNED IN + cookie naming a real customer: the request is NOT run as that customer (a fresh guest is made, the customer's rows are untouched)", async () => {
     state.user = null;
     const res = await send(realPost, `gst_${VICTIM}`, { isGuest: true });
     expect(res.status).toBeLessThan(500);
-    const owners = new Set(db.rows("missions").map((r: any) => r.user_id));
-    expect([...db.rows("conversations"), ...db.rows("messages"), ...db.rows("missions")].filter((r: any) => !String(r.id).endsWith("victim") && !String(r.id).endsWith("guest")).every((r: any) => r.user_id !== VICTIM)).toBe(true);
     expect(created, "a fresh guest account was made instead").toBe(1);
-    expect(owners.has(VICTIM)).toBe(true); // only the pre-existing victim mission
-    expect(db.rows("missions").filter((r: any) => r.user_id === VICTIM)).toHaveLength(1);
+    for (const t of ["missions", "conversations", "messages"]) expect(db.rows(t).filter((r: any) => r.user_id === VICTIM), `${t}: only the seeded customer row`).toHaveLength(1);
+    expect(db.rows("conversations").length + db.rows("messages").length, "the request wrote something, under another id").toBeGreaterThan(4);
   });
 
   it("NOT SIGNED IN + cookie naming a real customer + guest creation failing: the hash-pseudo id is used, never the customer's id", async () => {
     world({ createFails: true });
     state.user = null;
     await send(realPost, `gst_${VICTIM}`, { isGuest: true });
-    expect(db.rows("missions").filter((r: any) => r.user_id === VICTIM)).toHaveLength(1);
-    expect(db.rows("conversations").filter((r: any) => r.user_id === VICTIM)).toHaveLength(1);
-    expect(db.rows("messages").filter((r: any) => r.user_id === VICTIM)).toHaveLength(1);
+    for (const t of ["missions", "conversations", "messages"]) expect(db.rows(t).filter((r: any) => r.user_id === VICTIM), `${t}`).toHaveLength(1);
+    expect(db.rows("conversations").length + db.rows("messages").length, "the request wrote something, under another id").toBeGreaterThan(4);
+  });
+
+  it("guest creation failing: the SAME browser keeps ONE identity across turns (cookie hashed every time)", async () => {
+    world({ createFails: true });
+    state.user = null;
+    const first = await send(realPost, null, { isGuest: true });
+    const cookie = /guest_session_id=([^;]+)/.exec(first.headers.get("set-cookie") ?? "")?.[1];
+    expect(cookie).toMatch(/^gst_/);
+    const before = new Set(db.rows("messages").map((r: any) => r.user_id));
+    await send(realPost, decodeURIComponent(cookie!), { isGuest: true });
+    const after = new Set(db.rows("messages").map((r: any) => r.user_id));
+    expect(after.size, "no second identity appeared").toBe(before.size);
   });
 
   it("NOT SIGNED IN + the guest's own cookie: the same guest continues (no new account)", async () => {
@@ -168,10 +177,19 @@ describe("MUTATION: each part of the fix, removed alone, re-opens the takeover",
     expect(created, "the mutant reused the victim's id (no guest made)").toBe(0);
   });
   it("trusting the raw cookie id in the fallback acts as the victim when guest creation fails", async () => {
-    const m = await loadMutant(ROUTE, [{ from: "const generatedHere = guestSessionCookie === newGuestCookieToSet ? guestUuidOfCookie(guestSessionCookie) : null;", to: "const generatedHere = guestUuidOfCookie(guestSessionCookie);" }]);
+    const m = await loadMutant(ROUTE, [{ from: "verifiedUserId = guestSessionToUuid(guestSessionCookie);", to: "verifiedUserId = guestUuidOfCookie(guestSessionCookie) ?? guestSessionToUuid(guestSessionCookie);" }]);
     world({ createFails: true }); state.user = null;
     await send(m.module.POST, `gst_${VICTIM}`, { isGuest: true });
     expect(db.rows("conversations").filter((r: any) => r.user_id === VICTIM).length, "the mutant wrote under the victim's id").toBeGreaterThan(1);
+  });
+  it("dropping the 'not the caller's own id' guard lets a customer carrying their own id as cookie delete themselves", async () => {
+    const m = await loadMutant(ROUTE, [{ from: "if (prevGuestUuid && prevGuestUuid !== verifiedUserId) try {", to: "if (prevGuestUuid) try {" }]);
+    world(); state.user = USERS[GUEST]; // a guest upgraded in place: signed in as the account the cookie names
+    await send(m.module.POST, `gst_${GUEST}`);
+    expect(deleted, "the mutant deletes the signed-in account").toContain(GUEST);
+    world(); state.user = USERS[GUEST];
+    await send(realPost, `gst_${GUEST}`);
+    expect(deleted, "the real route never deletes the account it is serving").toEqual([]);
   });
   it("dropping the 'unconfirmed address' rule makes a confirmed customer disposable", async () => {
     const m = await loadMutant(HELPER, [{ from: "if (user.email_confirmed_at) return false;", to: "" }]);
@@ -186,5 +204,39 @@ describe("MUTATION: each part of the fix, removed alone, re-opens the takeover",
     world();
     (db.auth.admin as any).getUserById = async () => ({ data: { user: { ...USERS[GUEST], id: VICTIM } } });
     expect(await m.module.ownGuestAccountId(db, `gst_${GUEST}`)).toBe(GUEST);
+  });
+});
+
+describe("the other readers of the same cookie", () => {
+  const MV = "src/lib/server/missionViewer.ts";
+  const viewerReq = (cookie: string) => new NextRequest("https://diger.test/api/missions/msn_abcdefgh12", { headers: { cookie: `guest_session_id=${cookie}` } });
+  beforeEach(() => { world(); state.user = null; });
+
+  it("missionViewer: a disposable guest's cookie gives the guest's own view", async () => {
+    const { resolveMissionViewer } = await import("../src/lib/server/missionViewer");
+    const r: any = await resolveMissionViewer(viewerReq(`gst_${GUEST}`));
+    expect(r.ok).toBe(true);
+    expect(r.viewer).toMatchObject({ userId: GUEST, isGuest: true, emailVerified: false });
+  });
+  it("missionViewer: a cookie naming a real customer, or one who wrote is_guest on their own account, gets nothing", async () => {
+    const { resolveMissionViewer } = await import("../src/lib/server/missionViewer");
+    for (const id of [VICTIM, FAKE_GUEST]) expect(((await resolveMissionViewer(viewerReq(`gst_${id}`))) as any).ok, id).toBe(false);
+  });
+  it("MUTATION: reading only the metadata mark in missionViewer shows a customer's missions to anyone with the id", async () => {
+    const m = await loadMutant(MV, [{ from: "const guestId = await ownGuestAccountId(createAdminClient(), `gst_${match[1]}`);", to: "const guestId = (await createAdminClient().auth.admin.getUserById(match[1])).data?.user?.user_metadata?.is_guest ? match[1] : null;" }]);
+    const r: any = await m.module.resolveMissionViewer(viewerReq(`gst_${FAKE_GUEST}`));
+    expect(r.ok, "the mutant admits the self-marked customer").toBe(true);
+  });
+  it("watchdog: purges only disposable guests, never a customer who wrote is_guest themselves", async () => {
+    const old = "2026-10-01T00:00:00Z";
+    const list = [{ ...USERS[GUEST], created_at: old }, { ...USERS[FAKE_GUEST], created_at: old }, { ...USERS[VICTIM], created_at: old }];
+    (db.auth.admin as any).listUsers = async () => ({ data: { users: list } });
+    // every table read answers "nothing": only the guest clean-up step is under test
+    const chain: any = new Proxy(function () {}, { get: (_t, k) => (k === "then" ? (res: any) => res({ data: [], error: null, count: 0 }) : chain), apply: () => chain });
+    (db as any).from = () => chain;
+    process.env.CRON_SECRET = "s3cret";
+    const { GET } = await import("../src/app/api/cron/watchdog/route");
+    await GET(new NextRequest("https://diger.test/api/cron/watchdog", { headers: { authorization: "Bearer s3cret" } }));
+    expect(deleted).toEqual([GUEST]);
   });
 });
