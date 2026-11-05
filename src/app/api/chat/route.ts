@@ -23,7 +23,7 @@ import { findUnresolvedResearchPlaceholder, unresolvedResearchPlaceholderMessage
 import { withDeadline } from "../../../functions/shared/deadline";
 import { AGENT_SERVES_CHAT } from "../../../lib/agentMission/constants";
 import { resolveTrustedEmailVerified } from "../../../lib/server/trustedEmailVerification";
-import { guestUuidOfCookie, ownGuestAccountId } from "../../../lib/server/guestIdentity";
+import { isDisposableGuestAccount, ownGuestAccountId } from "../../../lib/server/guestIdentity";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -168,7 +168,7 @@ export async function POST(req: NextRequest) {
           if (typeof tables.auth.admin.listUsers === "function") {
             try {
               const { data: oldGuests } = await tables.auth.admin.listUsers({ page: 1, perPage: 10 });
-              const guestUsers = (oldGuests?.users || []).filter((u: any) => u.user_metadata?.is_guest);
+              const guestUsers = (oldGuests?.users || []).filter((u: any) => isDisposableGuestAccount(u));
               if (guestUsers.length >= MAX_CONCURRENT_GUESTS) {
                 const oldest = guestUsers[0];
                 if (oldest?.id) {
@@ -210,10 +210,9 @@ export async function POST(req: NextRequest) {
       if (guestSessionCookie) {
         // Only a disposable guest account (or the hash-pseudo id of a cookie that names no account) is ever moved or deleted.
         // `gst_<some other customer's id>` is NOT adopted: nothing is migrated, nothing is deleted.
-        const namesAccount = guestUuidOfCookie(guestSessionCookie) !== null;
-        const prevGuestUuid: string | null = namesAccount
-          ? await ownGuestAccountId(tables, guestSessionCookie)
-          : guestSessionToUuid(guestSessionCookie);
+        // A cookie that names no disposable account still has its hash-pseudo id (a guest whose account could not be created is stored under it, see the fallback above).
+        const ownGuestId = await ownGuestAccountId(tables, guestSessionCookie);
+        const prevGuestUuid: string | null = ownGuestId ?? guestSessionToUuid(guestSessionCookie);
         if (prevGuestUuid && prevGuestUuid !== verifiedUserId) try {
           await Promise.all([
             tables.from("conversations").update({ user_id: verifiedUserId }).eq("user_id", prevGuestUuid),
@@ -221,8 +220,8 @@ export async function POST(req: NextRequest) {
             // the guest's missions (a plan they looked at before signing up) follow them; deleting the guest account below is refused while any mission still points at it
             tables.from("missions").update({ user_id: verifiedUserId, created_by: verifiedUserId }).eq("user_id", prevGuestUuid),
           ]);
-          if (tables.auth?.admin?.deleteUser) {
-            await tables.auth.admin.deleteUser(prevGuestUuid).catch(() => {});
+          if (ownGuestId && tables.auth?.admin?.deleteUser) {
+            await tables.auth.admin.deleteUser(ownGuestId).catch(() => {});
           }
         } catch (migErr) {
           console.warn("[chat:guest_migration_failed]", migErr);

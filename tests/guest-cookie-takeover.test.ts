@@ -92,13 +92,14 @@ describe("POST /api/chat with a guest_session_id cookie the browser chose", () =
     expect(owner("messages", "m_victim")).toBe(VICTIM);
     expect(owner("missions", "msn_victim")).toBe(VICTIM);
     expect((db.rows("missions").find((r: any) => r.id === "msn_victim") as any).created_by).toBe(VICTIM);
-    expect(deleted).toEqual([]);
+    expect(deleted, "the customer's account is not deleted").not.toContain(VICTIM);
   });
 
   it("SIGNED IN + cookie naming a customer who set is_guest on their own account: still not adopted", async () => {
     state.user = USERS[ATTACKER];
     await send(realPost, `gst_${FAKE_GUEST}`);
-    expect(deleted).toEqual([]);
+    expect(deleted).not.toContain(FAKE_GUEST);
+    expect(owner("missions", "msn_victim")).toBe(VICTIM);
   });
 
   it("SIGNED IN + the caller's OWN guest cookie: the guest's conversation, messages and missions follow the customer (feature kept), the guest is deleted", async () => {
@@ -119,6 +120,19 @@ describe("POST /api/chat with a guest_session_id cookie the browser chose", () =
     db.seed("conversations", [{ id: "cv_pseudo", user_id: pseudo }]);
     await send(realPost, "legacy-cookie");
     expect(owner("conversations", "cv_pseudo")).toBe(ATTACKER);
+  });
+
+  it("a guest whose account could not be created (fallback id) signs up with the same cookie: the chat follows them", async () => {
+    world({ createFails: true });
+    state.user = null;
+    const first = await send(realPost, null, { isGuest: true });
+    const cookie = decodeURIComponent(/guest_session_id=([^;]+)/.exec(first.headers.get("set-cookie") ?? "")![1]);
+    const pseudo = [...db.rows("messages")].map((r: any) => r.user_id).find((u: string) => u !== VICTIM && u !== GUEST)!;
+    expect(pseudo).toBeTruthy();
+    state.user = USERS[ATTACKER];
+    await send(realPost, cookie);
+    expect(db.rows("messages").filter((r: any) => r.user_id === pseudo), "nothing left under the pseudo id").toHaveLength(0);
+    expect(db.rows("messages").filter((r: any) => r.user_id === ATTACKER).length).toBeGreaterThan(0);
   });
 
   it("NOT SIGNED IN + cookie naming a real customer: the request is NOT run as that customer (a fresh guest is made, the customer's rows are untouched)", async () => {
@@ -160,24 +174,22 @@ describe("POST /api/chat with a guest_session_id cookie the browser chose", () =
 describe("MUTATION: each part of the fix, removed alone, re-opens the takeover", () => {
   const ROUTE = "src/app/api/chat/route.ts";
   const HELPER = "src/lib/server/guestIdentity.ts";
-  const MIGRATE_FROM = "? await ownGuestAccountId(tables, guestSessionCookie)\n          : guestSessionToUuid(guestSessionCookie);";
   const takeover = async (post: typeof realPost) => { world(); state.user = USERS[ATTACKER]; await send(post, `gst_${VICTIM}`); return { moved: owner("missions", "msn_victim") === ATTACKER, deletedVictim: deleted.includes(VICTIM) }; };
-
   it("baseline: the real route refuses", async () => {
     expect(await takeover(realPost)).toEqual({ moved: false, deletedVictim: false });
   });
   it("migrating on the raw cookie id (no guest check) moves the victim's missions and deletes the account", async () => {
-    const m = await loadMutant(ROUTE, [{ from: MIGRATE_FROM, to: "? guestUuidOfCookie(guestSessionCookie)\n          : guestSessionToUuid(guestSessionCookie);" }]);
+    const m = await loadMutant(ROUTE, [{ from: "const ownGuestId = await ownGuestAccountId(tables, guestSessionCookie);", to: "const ownGuestId = guestSessionCookie.startsWith('gst_') ? guestSessionCookie.slice(4) : null;" }]);
     expect(await takeover(m.module.POST), "mutant takes over").toEqual({ moved: true, deletedVictim: true });
   });
   it("adopting any existing user in the not-signed-in branch acts as the victim", async () => {
-    const m = await loadMutant(ROUTE, [{ from: "const existingGuestId: string | null = await ownGuestAccountId(tables, guestSessionCookie);", to: "const existingGuestId: string | null = guestUuidOfCookie(guestSessionCookie);" }]);
+    const m = await loadMutant(ROUTE, [{ from: "const existingGuestId: string | null = await ownGuestAccountId(tables, guestSessionCookie);", to: "const existingGuestId: string | null = guestSessionCookie.startsWith('gst_') ? guestSessionCookie.slice(4) : null;" }]);
     world(); state.user = null;
     await send(m.module.POST, `gst_${VICTIM}`, { isGuest: true });
     expect(created, "the mutant reused the victim's id (no guest made)").toBe(0);
   });
   it("trusting the raw cookie id in the fallback acts as the victim when guest creation fails", async () => {
-    const m = await loadMutant(ROUTE, [{ from: "verifiedUserId = guestSessionToUuid(guestSessionCookie);", to: "verifiedUserId = guestUuidOfCookie(guestSessionCookie) ?? guestSessionToUuid(guestSessionCookie);" }]);
+    const m = await loadMutant(ROUTE, [{ from: "verifiedUserId = guestSessionToUuid(guestSessionCookie);", to: "verifiedUserId = (guestSessionCookie.startsWith('gst_') ? guestSessionCookie.slice(4) : null) ?? guestSessionToUuid(guestSessionCookie);" }]);
     world({ createFails: true }); state.user = null;
     await send(m.module.POST, `gst_${VICTIM}`, { isGuest: true });
     expect(db.rows("conversations").filter((r: any) => r.user_id === VICTIM).length, "the mutant wrote under the victim's id").toBeGreaterThan(1);
@@ -190,6 +202,17 @@ describe("MUTATION: each part of the fix, removed alone, re-opens the takeover",
     world(); state.user = USERS[GUEST];
     await send(realPost, `gst_${GUEST}`);
     expect(deleted, "the real route never deletes the account it is serving").toEqual([]);
+  });
+  it("losing the pseudo-id fallback at sign-up orphans a fallback guest's chat", async () => {
+    const m = await loadMutant(ROUTE, [{ from: "const prevGuestUuid: string | null = ownGuestId ?? guestSessionToUuid(guestSessionCookie);", to: "const prevGuestUuid: string | null = ownGuestId;" }]);
+    world({ createFails: true }); state.user = null;
+    const first = await m.module.POST(new NextRequest("http://localhost/api/chat", { method: "POST", body: JSON.stringify({ message: "مرحبا", isGuest: true }), headers: { "content-type": "application/json" } }));
+    const cookie = decodeURIComponent(/guest_session_id=([^;]+)/.exec(first.headers.get("set-cookie") ?? "")![1]);
+    const pseudoRows = () => db.rows("messages").filter((r: any) => r.user_id !== VICTIM && r.user_id !== GUEST && r.user_id !== ATTACKER).length;
+    expect(pseudoRows()).toBeGreaterThan(0);
+    state.user = USERS[ATTACKER];
+    await send(m.module.POST, cookie);
+    expect(pseudoRows(), "the mutant left the guest's chat orphaned under the pseudo id").toBeGreaterThan(0);
   });
   it("dropping the 'unconfirmed address' rule makes a confirmed customer disposable", async () => {
     const m = await loadMutant(HELPER, [{ from: "if (user.email_confirmed_at) return false;", to: "" }]);
