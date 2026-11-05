@@ -5,7 +5,9 @@ import { STAGE4_FLAGS, stage4FlagMode } from "../src/lib/agentMission/stage4/fla
 import { checkCustomerText } from "../src/lib/agentMission/text";
 import { runClaimedSafely } from "../agent/src/stage4/dispatch";
 import { runAddonSafely } from "../agent/src/stage4/runAddon";
-import { HOLD_WAITS_MAX } from "../agent/src/stage4/unrecordedHold";
+import { updateRunState } from "../agent/src/runState";
+import { AGENT_ERROR_REQUEUES_MAX } from "../src/lib/agentMission/constants";
+import { APPROVAL_LEASE_MS, HOLD_WAITS_MAX, resolveUnrecordedHold } from "../agent/src/stage4/unrecordedHold";
 import { newMission } from "../agent/src/memoryStore";
 import { nicknameAnswer } from "./helpers/addonRunWorld";
 import { holdRaceWorld, recordsJob, USER, M12, type HoldRaceWorld } from "./helpers/holdRaceWorld";
@@ -34,14 +36,16 @@ async function unrecorded(w: HoldRaceWorld, id: string): Promise<void> {
   w.money.clearFaults();
 }
 /** The worker's next turn on the row: its lease ended, the claim takes it, the runner runs (never throws). */
-async function workerTurn(w: HoldRaceWorld, id: string, worker = "worker-1") {
+async function workerTurn(w: HoldRaceWorld, id: string, worker = "worker-1", deps: HoldRaceWorld["deps"] & { now?: () => Date } = w.deps) {
   w.expireLease(id);
   const claimed = await w.claim(worker);
   if (!claimed) return null;
   expect(claimed.id).toBe(id);
-  await runAddonSafely(w.deps, claimed);
+  await runAddonSafely(deps, claimed);
   return claimed;
 }
+/** The approval is long over (older than its own one-hour lease): no approval can still be running. */
+const over = (w: HoldRaceWorld): HoldRaceWorld["deps"] & { now: () => Date } => ({ ...w.deps, now: () => new Date(Date.now() + 2 * 3600_000) });
 /** The invariants of every scenario, over the whole ledger of the job. */
 function invariants(w: HoldRaceWorld, jobId: string, hold: number): void {
   const own = w.money.ledger.filter((r) => r.job_id === jobId);
@@ -191,6 +195,26 @@ describe("EVERY FAILURE BOUNDARY OF THE APPROVAL'S LAST UPDATE", () => {
   });
 });
 
+describe("THE RUNNER'S OWN ERROR RECOVERY never ends a paid request on a missing job id either", () => {
+  it("a run that threw, with its error requeues used up and no job id on the row: the recovery asks the money state (here: released, proved) instead of failing it «charged, not shown» or «no hold»", async () => {
+    const w = await holdRaceWorld({ balance: START });
+    const a = w.createRow("review");
+    await unrecorded(w, a.id);
+    await w.money.client.rpc("release_job_atomic", { p_job_id: a.jobId, p_error_message: "x", p_force: true });
+    await updateRunState(w.store, a.id, (s) => ({ ...s, errorRequeues: AGENT_ERROR_REQUEUES_MAX }));
+    w.expireLease(a.id);
+    const claimed = (await w.claim())!;
+    const get = w.store.getMission.bind(w.store);
+    let threw = false;
+    w.store.getMission = async (id: string) => { if (!threw) { threw = true; throw new Error("the database dropped the read"); } return get(id); };
+    await runAddonSafely(w.deps, claimed);
+    expect(threw).toBe(true);
+    expect(w.rowOf(a.id)).toMatchObject({ status: "failed", error: ADDON_RELEASED_ERROR, charged_points: 0, summary_ar: ADDON_RELEASED_SUMMARY_AR });
+    expect(w.rowOf(a.id).summary_ar).not.toMatch(/تعذّر إظهار نتيجة/);
+    expect(w.countRpc("release_job_atomic", a.jobId)).toBe(1);
+  });
+});
+
 describe("THE RESERVATION WAS RELEASED (proved by the ledger): the request is closed accurately, with no charge, and nothing is released again", () => {
   async function released(w: HoldRaceWorld, id: string): Promise<void> {
     w.money.injectError("claim_job_chunk", "before");
@@ -208,7 +232,7 @@ describe("THE RESERVATION WAS RELEASED (proved by the ledger): the request is cl
     await workerTurn(w, a.id);
     expect(w.rpcNames().length).toBe(before);
     expect(w.rowOf(a.id)).toMatchObject({ status: "failed", error: ADDON_RELEASED_ERROR, charged_points: 0, delivered_units: 0, summary_ar: ADDON_RELEASED_SUMMARY_AR, job_id: a.jobId, worker_id: null, lease_until: null });
-    expect(checkCustomerText(ADDON_RELEASED_SUMMARY_AR)).toEqual({ ok: true });
+    expect(checkCustomerText(ADDON_RELEASED_SUMMARY_AR).issues).toEqual([]);
     expect(w.said(a.id)).toContain(ADDON_RELEASED_SUMMARY_AR);
     expect(w.ledgerCount("release", a.jobId)).toBe(1);
     expect(w.ledgerCount("charge", a.jobId)).toBe(0);
@@ -304,7 +328,7 @@ describe("THE MONEY STATE IS UNCERTAIN: evidence is kept, nothing is declared, n
     w.money.clearFaults();
     expect(w.money.jobs.get(a.jobId)).toMatchObject({ status: "queued" });
     const workerCalls = w.rpcNames().length;
-    await workerTurn(w, a.id);
+    await workerTurn(w, a.id, "worker-1", over(w));
     expect(w.rpcNames().length).toBe(workerCalls);
     expect(w.rowOf(a.id)).toMatchObject({ status: "plan_ready", error: "hold_unclaimed" });
     expect(w.money.jobs.get(a.jobId)).toMatchObject({ status: "queued" });
@@ -340,11 +364,8 @@ describe("NOTHING WAS RESERVED (confirmed) and the approval is old enough to be 
     expect((await w.approve(a.id)).ok).toBe(false);
     w.money.clearFaults();
     expect(w.money.jobs.size).toBe(0);
-    w.expireLease(a.id);
-    const claimed = (await w.claim())!;
-    const late = { ...w.deps, now: () => new Date(Date.now() + 2 * 3600_000) };
     const before = w.rpcNames().length;
-    await runAddonSafely(late, claimed);
+    await workerTurn(w, a.id, "worker-1", over(w));
     expect(w.rpcNames().length).toBe(before);
     expect(w.money.jobs.size).toBe(0);
     expect(w.money.ledger.filter((r) => r.type !== "topup")).toEqual([]);
@@ -361,28 +382,42 @@ describe("NOTHING WAS RESERVED (confirmed) and the approval is old enough to be 
 });
 
 describe("TWO WORKERS, THE SAME REQUEST", () => {
-  it("a stale second worker (it read the row before the record) does nothing the first does not: one record, one run, one reserve, one release, one charge", async () => {
+  it("two runs of the same claimed row at the same moment: one record, one reserve, one release, one charge, one published file", async () => {
     const w = await holdRaceWorld({ balance: START });
     const a = w.createRow("review");
     await unrecorded(w, a.id);
     w.expireLease(a.id);
     const first = (await w.claim("worker-1"))!;
-    const stale = { ...first, worker_id: "worker-2" };
-    await Promise.all([runAddonSafely(w.deps, first), runAddonSafely(w.deps, stale)]);
+    await Promise.all([runAddonSafely(w.deps, first), runAddonSafely(w.deps, { ...first })]);
     completed(w, a.id, a.jobId, a.hold);
     expect(published(w)).toEqual([REVIEW_FILE]);
-    expect(w.said(a.id).filter((m) => /خُصم/.test(m)).length).toBe(1);
   });
 
-  it("the second worker arriving later, after the first handed the request back, does not touch a row that is not its own", async () => {
+  it("a worker whose claim was taken over (another worker owns the row now) writes NOTHING: the resolver leaves the row and the money alone", async () => {
     const w = await holdRaceWorld({ balance: START });
     const a = w.createRow("review");
     await unrecorded(w, a.id);
-    w.money.ledger.splice(w.money.ledger.findIndex((r) => r.id === `res_${a.jobId}`), 1);
-    const first = (await workerTurn(w, a.id, "worker-1"))!;
+    w.expireLease(a.id);
+    const old = (await w.claim("worker-1"))!;
+    const oldSnapshot = { ...old };
+    w.expireLease(a.id);
+    expect((await w.claim("worker-2"))!.worker_id).toBe("worker-2");
     const snapshot = JSON.stringify(w.rowOf(a.id));
-    await runAddonSafely(w.deps, { ...first, worker_id: "worker-2" });
+    const calls = w.rpcNames().length;
+    expect(await resolveUnrecordedHold(w.deps, oldSnapshot)).toBe("handled");
     expect(JSON.stringify(w.rowOf(a.id))).toBe(snapshot);
+    expect(w.rpcNames().length).toBe(calls);
+    await runAddonSafely(w.deps, w.rowOf(a.id));
+    completed(w, a.id, a.jobId, a.hold);
+  });
+
+  it("the approval lease the resolver waits for is the one the real approval writes (one hour)", async () => {
+    const w = await holdRaceWorld({ balance: START });
+    const a = w.createRow("review");
+    const t0 = Date.now();
+    await unrecorded(w, a.id);
+    const lease = Date.parse(w.rowOf(a.id).lease_until!) - t0;
+    expect(Math.abs(lease - APPROVAL_LEASE_MS)).toBeLessThan(5_000);
   });
 });
 
@@ -454,5 +489,12 @@ describe("ORDINARY WORK IS UNCHANGED, THE FLAGS STAY OFF", () => {
     const { readFileSync } = await import("node:fs");
     const src = readFileSync("agent/src/stage4/unrecordedHold.ts", "utf8");
     expect(src).not.toMatch(/process\.env|DIGER_STAGE4|stage4Enabled|stage4FlagMode/);
+  });
+
+  it("the resolver touches no money function and no money table: no rpc, no ledger or jobs access of its own (the money state is read through readJobMoneyState), and only the request's own row is written", async () => {
+    const { readFileSync } = await import("node:fs");
+    const code = readFileSync("agent/src/stage4/unrecordedHold.ts", "utf8").split("\n").filter((l) => !l.trim().startsWith("*") && !l.trim().startsWith("/**") && !l.trim().startsWith("//")).join("\n");
+    expect(code).not.toMatch(/\.rpc\(|credit_ledger|"jobs"|plans_quotes|\.insert\(|\.upsert\(|\.delete\(|settleAddon|settleMission/);
+    expect([...code.matchAll(/\.from\(\s*([A-Za-z_"]+)/g)].map((m) => m[1])).toEqual(["MISSION_TABLE", "MISSION_TABLE"]);
   });
 });

@@ -70,7 +70,7 @@ const NEW_SRC = ["src/lib/agentMission/addonSettlement.ts", "src/lib/agentMissio
   // SAFETY FIX B: the verdict on earlier reviews of a version (reads storage and the money state, writes nothing) and the checks the planned approval route must pass first (UNWIRED: no route imports it)
   "src/lib/agentMission/stage4/paidReview.ts", "src/lib/agentMission/stage4/approvalGuard.ts"];
 /** Phase 2B-1: the worker's add-on runner and the small pure pieces it needs. */
-const NEW_WORKER = ["agent/src/stage4/addonFiles.ts", "agent/src/stage4/addonText.ts", "agent/src/stage4/dispatch.ts", "agent/src/stage4/rereadRun.ts", "agent/src/stage4/runAddon.ts", "src/lib/agentMission/stage4/reread.ts", "src/lib/agentMission/stage4/editCore.ts"];
+const NEW_WORKER = ["agent/src/stage4/addonFiles.ts", "agent/src/stage4/addonText.ts", "agent/src/stage4/dispatch.ts", "agent/src/stage4/rereadRun.ts", "agent/src/stage4/runAddon.ts", "agent/src/stage4/unrecordedHold.ts", "src/lib/agentMission/stage4/reread.ts", "src/lib/agentMission/stage4/editCore.ts"];
 const NEW = [...NEW_SRC, ...NEW_WORKER];
 /** The only production file outside the new modules that may reach them: the worker's entry point, through dispatch.ts (its one small change). */
 const ENTRY = ["agent/src/main.ts"];

@@ -119,6 +119,8 @@ export async function recoverAddon(deps: Deps, mission: MissionRecord, error: un
     const before = fresh.job_id ? await readJob(deps.client, fresh.job_id) : null;
     if (paidOf(before)) return parkPaid(deps, fresh, error, before!.charged);
     if (await requeue(deps, fresh.id, "error", { error: shortError(error) })) return;
+    // the row does not say what is held: not «nothing is held» and never «lost»: the money's own state decides (unrecordedHold.ts)
+    if (!fresh.job_id || !(Number(fresh.reserved_points) >= 1)) { await resolveUnrecordedHold(deps, fresh); return; }
     const addon = readAddonPlan(fresh.plan);
     const hold = Number(fresh.reserved_points);
     let released = false;
