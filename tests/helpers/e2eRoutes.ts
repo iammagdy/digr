@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { GET as approvalGet, POST as approvalPost } from "../../src/app/api/missions/[id]/addon-approval/route";
 import { GET as editGet, POST as editPost } from "../../src/app/api/missions/[id]/edit-request/route";
 import { GET as fileGet } from "../../src/app/api/missions/[id]/file/route";
 import { GET as reviewQuoteGet } from "../../src/app/api/missions/[id]/review-quote/route";
@@ -24,6 +25,9 @@ export const api = {
   reviewRequest: get(reviewRequestGet, "review-request"),
   reviewRequestPost: post(reviewRequestPost as Get, "review-request"),
   reviewReport: get(reviewReportGet, "review-report"),
+  /** the approval route (launch round): availability, and the customer's approval with `{ requestId, expectedPoints }` as JSON. */
+  approvalAvailable: get(approvalGet as Get, "addon-approval"),
+  approve: (body: unknown, id: string = MISSION): Promise<Response> => (approvalPost as Get)(new NextRequest(url(id, "addon-approval", ""), { method: "POST", headers: { "content-type": "application/json" }, body: typeof body === "string" ? body : JSON.stringify(body) }), { params: Promise.resolve({ id }) }),
   editRequest: get(editGet, "edit-request"),
   editRequestPost: post(editPost as Get, "edit-request"),
 };

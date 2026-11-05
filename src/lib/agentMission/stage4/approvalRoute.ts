@@ -1,5 +1,6 @@
 import { MISSION_TABLE } from "../constants";
-import { ADDON_APPROVE_MESSAGES_AR, ADDON_MAX_HOLD_POINTS, approveAddonOnce, readAddonPlan, type AddonKind } from "../addonSettlement";
+import { ADDON_APPROVE_MESSAGES_AR, ADDON_MAX_HOLD_POINTS, addonJobId, addonQuoteId, approveAddonOnce, readAddonPlan, type AddonKind } from "../addonSettlement";
+import { readJobMoneyState } from "../addonMoneyState";
 import { SIGNUP_TO_APPROVE_AR } from "../customerActions";
 import { guardApproval } from "./approvalGuard";
 import { stage4FlagMode } from "./flags";
@@ -47,6 +48,23 @@ const UNCERTAIN_CODES = new Set(["approval_unverified", "record_unverified", "cl
 const UNCERTAIN_SENTENCES = new Set<string>([ADDON_APPROVE_MESSAGES_AR.approval_unverified, ADDON_APPROVE_MESSAGES_AR.record_unverified, ADDON_APPROVE_MESSAGES_AR.claim_retry]);
 const ALREADY_STARTED = new Set(["approved", "executing", "completed"]);
 
+/** The refusals of the money core that are CLEAN: the database said no and nothing was reserved (insufficient balance, the two-active-jobs limit, a quote or an accept that was refused). */
+const CLEAN_REFUSALS = new Set(["insufficient_balance", "concurrency_limit", "quote_failed", "accept_failed"]);
+
+/**
+ * After a CLEAN refusal the approval function puts the request back to `plan_ready` but leaves the approval time it wrote when it claimed the row, and every reader treats a request «that was ever put through an approval» as possibly paid: it would no longer be offered as waiting (no button,
+ * no cancel), could not be replaced (another open request is refused) and the status panel would say «the points may be held». That is wrong for a refusal that moved nothing, and it leaves the customer stuck after the most common refusal (not enough points). So, ONLY when the job's own
+ * ledger state is proved `none` (no job and no ledger row of its deterministic id), the approval mark is cleared by ONE compare-and-set pinned to `plan_ready` with no job. Anything else (a held, released, charged or unreadable state) keeps the mark: the request stays «possibly paid».
+ * (Found by the end-to-end journey; the money core is not edited.)
+ */
+export async function clearApprovalMarkIfNothingHeld(client: any, requestId: string, userId: string): Promise<void> {
+  try {
+    const state = await readJobMoneyState(client, addonJobId(addonQuoteId(requestId)));
+    if (state.kind !== "none") return;
+    await client.from(MISSION_TABLE).update({ approved_at: null, approved_by: null }).eq("id", requestId).eq("user_id", userId).eq("status", "plan_ready").is("job_id", null).select("id");
+  } catch { /* the mark stays: the request is shown as possibly paid, never as free by a guess */ }
+}
+
 const isRequestId = (v: unknown): v is string => typeof v === "string" && /^msn_[a-z0-9]{8,40}$/.test(v);
 
 export async function approveAddonForCustomer(client: any, input: {
@@ -91,6 +109,7 @@ export async function approveAddonForCustomer(client: any, input: {
     const approved = await approveAddonOnce(client, { id: requestId, actorId: input.userId, expectUserId: input.userId });
     if (approved.ok) return { status: 200, body: { success: true, state: "approved", kind: approved.kind, holdPoints: approved.holdPoints } };
     if (approved.code === "already_approved" || approved.error === ADDON_APPROVE_MESSAGES_AR.already_approved) return { status: 409, body: { success: false, state: "already_approved", error: ALREADY_APPROVED_AR, code: "already_approved", kind: addon.kind } };
+    if (approved.code !== undefined && CLEAN_REFUSALS.has(approved.code)) await clearApprovalMarkIfNothingHeld(client, requestId, input.userId);
     const uncertain = (approved.code !== undefined && UNCERTAIN_CODES.has(approved.code)) || UNCERTAIN_SENTENCES.has(approved.error);
     return answer(approved.status, uncertain ? "uncertain" : "refused", approved.error, approved.code);
   } catch {

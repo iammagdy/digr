@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { ADDON_APPROVE_MESSAGES_AR } from "../src/lib/agentMission/addonSettlement";
-import { approvalAvailable, approveAddonForCustomer, kindFlagOn } from "../src/lib/agentMission/stage4/approvalRoute";
+import { approvalAvailable, approveAddonForCustomer, clearApprovalMarkIfNothingHeld, kindFlagOn } from "../src/lib/agentMission/stage4/approvalRoute";
 import { applyEditRequest } from "../src/lib/agentMission/stage4/editVersion";
 import { createEditRequest, parseEditInput } from "../src/lib/agentMission/stage4/editRequest";
 import { createReviewRequest } from "../src/lib/agentMission/stage4/reviewRequest";
@@ -170,6 +170,49 @@ describe("6 the balance: no negative balance, nothing held when the points are n
     expect(reservesOf(out)).toEqual([]);
     expect(out.money.balance()).toBe(holdOf(row) - 1);
     expect(out.rows.get(row.id as string)).toMatchObject({ status: "plan_ready" });
+  });
+  it("after that refusal the request is STILL a waiting, unpaid request: no approval mark, so it is offered again, can be cancelled, and approves once the balance is topped up (found by the end-to-end journey)", async () => {
+    const row = waiting();
+    const { value, out } = await solo(opts({ seed: [row], balance: holdOf(row) - 1 }), async (c) => {
+      const first = await approve(c, { body: { requestId: row.id, expectedPoints: holdOf(row) } });
+      const afterRefusal = { ...(await c.from("missions").select("status,approved_at,approved_by,job_id").eq("id", row.id).maybeSingle()).data };
+      return { first, afterRefusal };
+    });
+    expect(value.first.status).toBe(402);
+    expect(value.afterRefusal).toMatchObject({ status: "plan_ready", approved_at: null, job_id: null });
+    expect(out.money.balance()).toBe(holdOf(row) - 1);
+    const again = await solo(opts({ seed: [row], balance: holdOf(row) - 1 }), async (c) => {
+      await approve(c, { body: { requestId: row.id, expectedPoints: holdOf(row) } });
+      return approve(c, { body: { requestId: row.id, expectedPoints: holdOf(row) } });
+    });
+    expect(again.value.status).toBe(402);
+    expect(reservesOf(again.out)).toEqual([]);
+  });
+  it("the mark is cleared ONLY on a proved-empty money state: a held, released, charged or unreadable job keeps it (the clearing is never attempted)", async () => {
+    const writes: string[] = [];
+    const clientFor = (job: unknown, ledger: unknown[] | null) => ({
+      from: (t: string) => {
+        const b: any = { select: () => b, eq: () => b, is: () => b, update: () => { writes.push(t); return b; }, maybeSingle: async () => ({ data: t === "jobs" ? job : null, error: null }), then: (r: any) => Promise.resolve(t === "credit_ledger" ? { data: ledger, error: ledger === null ? { message: "x" } : null } : { data: [{ id: "x" }], error: null }).then(r) };
+        return b;
+      },
+    });
+    const held = { id: "j", status: "queued", reserved_credits: 100, charged_credits: 0 };
+    const jobId = "job_quote_" + require("node:crypto").createHash("md5").update("quote_addon_msn_request0000000001").digest("hex");
+    await clearApprovalMarkIfNothingHeld(clientFor(held, [{ id: `res_${jobId}`, delta: -100, type: "reserve" }]), "msn_request0000000001", ME);
+    await clearApprovalMarkIfNothingHeld(clientFor(null, null), "msn_request0000000001", ME);
+    await clearApprovalMarkIfNothingHeld(clientFor(null, [{ id: "stray", delta: -1, type: "reserve" }]), "msn_request0000000001", ME);
+    expect(writes).toEqual([]);
+    await clearApprovalMarkIfNothingHeld(clientFor(null, []), "msn_request0000000001", ME);
+    expect(writes).toEqual(["missions"]);
+  });
+  it("a LOST ANSWER keeps the approval mark (the request stays «possibly paid»): only a proved-empty money state clears it", async () => {
+    const row = waiting();
+    const { value } = await solo(opts({ seed: [row], setup: (w) => w.money.inject("accept_quote_atomic", "after") }), async (c) => {
+      const first = await approve(c, { body: { requestId: row.id, expectedPoints: holdOf(row) } });
+      return { first, mark: (await c.from("missions").select("approved_at").eq("id", row.id).maybeSingle()).data };
+    });
+    expect(value.first.body.state).toBe("uncertain");
+    expect(value.mark.approved_at).not.toBeNull();
   });
   it("exactly the hold: approved, balance zero, never negative", async () => {
     const row = waiting();
