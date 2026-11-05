@@ -211,7 +211,7 @@ export async function sendPlatformEmail(
       let errorField: unknown;
       let upstreamStatus: unknown;
       try { const body = await res.json(); errorField = body?.error; upstreamStatus = body?.status; } catch { /* no body */ }
-      return fail(emailFailureReason(res.status, errorField, upstreamStatus), ` status=${res.status}`);
+      return fail(emailFailureReason(res.status, errorField, upstreamStatus), ` status=${res.status}${typeof upstreamStatus === "number" ? ` upstream=${upstreamStatus}` : ""}`);
     }
     return { ok: true };
   } catch (err: any) {

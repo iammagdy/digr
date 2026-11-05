@@ -20,12 +20,12 @@ const TOKEN_SHAPE = /^[A-Za-z0-9_.-]{1,512}$/;
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 
-function page(title: string, message: string, form?: { action: string; button: string }): NextResponse {
+function page(title: string, message: string, form?: { action: string; button: string }, status = 200): NextResponse {
   const body = `<!DOCTYPE html>
 <html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="robots" content="noindex"><title>${esc(title)}</title>
 <style>body{margin:0;background:#F3F0E8;color:#16201F;font-family:Tahoma,Arial,sans-serif;direction:rtl}main{max-width:480px;margin:12vh auto;padding:28px 24px;background:#FFFDF9;border:1px solid #E6E1D7;border-radius:20px}h1{font-size:22px;margin:0 0 12px}p{font-size:16px;line-height:1.8;margin:0 0 18px}button{font:inherit;font-weight:700;color:#FAF8F4;background:#0E3B43;border:0;border-radius:999px;padding:12px 28px;cursor:pointer}</style></head>
 <body><main><h1>${esc(title)}</h1><p>${esc(message)}</p>${form ? `<form method="post" action="${esc(form.action)}"><input type="hidden" name="from" value="page"><button type="submit">${esc(form.button)}</button></form>` : ""}</main></body></html>`;
-  return new NextResponse(body, { status: 200, headers: { "Content-Type": "text/html; charset=utf-8", ...NO_STORE } });
+  return new NextResponse(body, { status, headers: { "Content-Type": "text/html; charset=utf-8", ...NO_STORE } });
 }
 
 function tokenOf(req: NextRequest): string | null {
@@ -91,7 +91,9 @@ export async function POST(req: NextRequest) {
   } catch {
     // never claim success when the preference was not saved; no detail (no id, no address) in the answer or the log
     console.error("[email:unsubscribe_failed]");
-    return NextResponse.json({ ok: false, error: "unavailable" }, { status: 503, headers: NO_STORE });
+    return fromPage
+      ? page("تعذّر الحفظ الآن", "الخدمة مشغولة مؤقتًا ولم نحفظ طلبك بعد. اضغط الزر مرة أخرى بعد لحظات.", { action: `/api/email/unsubscribe?t=${encodeURIComponent(token ?? "")}`, button: "حاول مرة أخرى" }, 503)
+      : NextResponse.json({ ok: false, error: "unavailable" }, { status: 503, headers: NO_STORE });
   }
 
   return fromPage

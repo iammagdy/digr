@@ -195,8 +195,8 @@ describe("3. the unsubscribe link: a sign-in service outage is a retryable 503, 
 });
 
 describe("4. signing-key rotation does not kill links already mailed", () => {
-  const OLD = "old-service-role-key";
-  const NEW = "dedicated-unsubscribe-secret";
+  const OLD = "old-service-role-key-0123456789-abcdefghij";
+  const NEW = "dedicated-unsubscribe-secret-0123456789";
   it("with no dedicated secret the service-role key signs and verifies (nothing new to configure)", () => {
     const env = { SUPABASE_SERVICE_ROLE_KEY: OLD };
     expect(unsubscribeKeyFromEnv(env)).toBe(OLD);
@@ -223,6 +223,12 @@ describe("4. signing-key rotation does not kill links already mailed", () => {
     expect(verifyUnsubscribeToken(t, [])).toBeNull();
     expect(verifyUnsubscribeToken(t, "")).toBeNull();
   });
+  it("a dedicated secret shorter than 32 characters is ignored: the service-role key keeps signing", () => {
+    const env = { UNSUBSCRIBE_HMAC_SECRET: "short-secret", SUPABASE_SERVICE_ROLE_KEY: OLD };
+    expect(unsubscribeKeyFromEnv(env)).toBe(OLD);
+    expect(unsubscribeVerifyKeysFromEnv(env)).toEqual([OLD]);
+    expect(verifyUnsubscribeToken(signUnsubscribeToken(USER, "short-secret"), unsubscribeVerifyKeysFromEnv(env)), "a guessable secret verified").toBeNull();
+  });
   it("the unsubscribe ROUTE accepts a link signed with the service-role key while a dedicated secret is configured", async () => {
     vi.stubEnv("UNSUBSCRIBE_HMAC_SECRET", NEW);
     s.users = [{ id: USER, email: "a@example.test", user_metadata: { prefs: { notif: { news: true } } }, app_metadata: {} }];
@@ -231,11 +237,39 @@ describe("4. signing-key rotation does not kill links already mailed", () => {
   });
 });
 
+describe("1b. a refused request never touches the lock; 3b. the confirmation page shows a retry page during an outage", () => {
+  it("a real request with a wrong confirm text is refused (400) even while another run holds the lock, and takes no lock of its own", async () => {
+    const route = await import("../src/app/api/admin/launch-email/route");
+    expect(await acquireLaunchLock(createFakeAdmin(), CAMPAIGN, "running", Date.now())).toBe(true);
+    const res = await adminCall(route, { campaign: CAMPAIGN, cap: 5, dryRun: false, confirm: "SEND something else" });
+    expect(res.status).toBe(400);
+    expect((await res.json()).result.refused).toBe("confirm_mismatch");
+    expect(settings().rows.get(launchLockKey(CAMPAIGN))!.value.holder, "the refused request replaced or removed the running lock").toBe("running");
+    expect(s.sent).toEqual([]);
+  });
+
+  it("a POST from the confirmation page during an auth outage gets an Arabic retry page with a form (503), not raw JSON; the preference is not claimed saved", async () => {
+    s.users = [{ id: USER, email: "a@example.test", user_metadata: { prefs: { notif: { news: true } } }, app_metadata: {} }];
+    s.getError = { status: 503, message: "down" };
+    const route = await import("../src/app/api/email/unsubscribe/route");
+    const token = signUnsubscribeToken(USER, KEY);
+    const res = await route.POST(new NextRequest(`https://diger.test/api/email/unsubscribe?t=${token}`, { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded", "x-forwarded-for": "203.0.113.250" }, body: "from=page" }));
+    expect(res.status).toBe(503);
+    expect(res.headers.get("content-type")).toContain("text/html");
+    const html = await res.text();
+    expect(html).toContain("حاول مرة أخرى");
+    expect(html).toContain('<form method="post"');
+    expect(html).not.toContain("تم إلغاء الاشتراك");
+    expect(s.updates).toEqual([]);
+  });
+});
+
 describe("5. a customer-controlled name cannot break a send or burn a claim", () => {
   it("control and bidi-override characters are removed and the name is cut to 80 characters (whole characters, emoji safe)", () => {
     expect(safeGreetingName("منى‮evil\u0000\n\tx")).toBe("منى evil x");
     expect(safeGreetingName("a".repeat(5000))).toHaveLength(80);
     expect(Array.from(safeGreetingName("😀".repeat(200)))).toHaveLength(80);
+    expect(safeGreetingName("a\u200Bb\u2060c\u061Cd\uFEFFe")).toBe("a b c d e".replace(/ /g, " "));
     expect(safeGreetingName("   ")).toBe("");
     expect(safeGreetingName(undefined as unknown as string)).toBe("");
   });
@@ -275,7 +309,7 @@ describe("MUTATIONS: each fix is what makes its test pass", () => {
   const seed2 = () => { s.users = [optedIn("a"), optedIn("b")]; s.sent = []; (globalThis as any).__settingsDb = makeSettingsDb(); };
 
   it("route without the lock: two overlapping runs BOTH run (the 409 disappears)", async () => {
-    const m = await loadMutant(ROUTE, [{ from: "if (!dryRun && !(await acquireLaunchLock(admin, body.campaign, holder))) {", to: "if (false) {" }]);
+    const m = await loadMutant(ROUTE, [{ from: "if (takesLock && !(await acquireLaunchLock(admin, body.campaign, holder))) {", to: "if (false) {" }]);
     seed2();
     const [r1, r2] = await Promise.all([adminCall(m.module), adminCall(m.module)]);
     expect([r1.status, r2.status]).toEqual([200, 200]);
@@ -322,14 +356,14 @@ describe("MUTATIONS: each fix is what makes its test pass", () => {
 
   it("verification that tries only the first key: a link signed with the service-role key stops working once a dedicated secret is set", async () => {
     const m = await loadMutant<typeof import("../src/lib/server/unsubscribeToken")>("src/lib/server/unsubscribeToken.ts", [{ from: "for (const key of keys) {", to: "for (const key of keys.slice(0, 1)) {" }]);
-    const env = { UNSUBSCRIBE_HMAC_SECRET: "dedicated-unsubscribe-secret", SUPABASE_SERVICE_ROLE_KEY: "old-service-role-key" };
-    const oldLink = signUnsubscribeToken(USER, "old-service-role-key");
+    const env = { UNSUBSCRIBE_HMAC_SECRET: "dedicated-unsubscribe-secret-0123456789", SUPABASE_SERVICE_ROLE_KEY: "old-service-role-key-0123456789-abcdefghij" };
+    const oldLink = signUnsubscribeToken(USER, "old-service-role-key-0123456789-abcdefghij");
     expect(m.module.verifyUnsubscribeToken(oldLink, unsubscribeVerifyKeysFromEnv(env)), "the mutant dropped every link mailed before the secret was set").toBeNull();
     expect(verifyUnsubscribeToken(oldLink, unsubscribeVerifyKeysFromEnv(env))).toBe(USER);
   });
 
   it("route that never releases the lock: the next run is refused until the lease expires", async () => {
-    const m = await loadMutant(ROUTE, [{ from: "if (!dryRun) await releaseLaunchLock(admin, body.campaign, holder);", to: "" }]);
+    const m = await loadMutant(ROUTE, [{ from: "if (takesLock) await releaseLaunchLock(admin, body.campaign, holder);", to: "" }]);
     seed2();
     expect((await adminCall(m.module)).status).toBe(200);
     expect(settings().rows.size, "the mutant left the lock behind").toBe(1);
@@ -338,6 +372,19 @@ describe("MUTATIONS: each fix is what makes its test pass", () => {
     seed2();
     expect((await adminCall(await import("../src/app/api/admin/launch-email/route"))).status).toBe(200);
     expect(settings().rows.size).toBe(0);
+  });
+
+  it("route that locks before checking the confirm text: a refused request is answered 409 while a run holds the lock", async () => {
+    const m = await loadMutant(ROUTE, [{ from: "const takesLock = !dryRun && body.confirm === confirmationFor(body.campaign, body.cap);", to: "const takesLock = !dryRun;" }]);
+    expect(await acquireLaunchLock(createFakeAdmin(), CAMPAIGN, "running", Date.now())).toBe(true);
+    const res = await adminCall(m.module, { campaign: CAMPAIGN, cap: 5, dryRun: false, confirm: "SEND something else" });
+    expect(res.status, "the mutant took the lock for a request the runner refuses").toBe(409);
+  });
+
+  it("secret check without a minimum length: a short dedicated secret signs links", async () => {
+    const m = await loadMutant<typeof import("../src/lib/server/unsubscribeToken")>("src/lib/server/unsubscribeToken.ts", [{ from: "return v.length >= UNSUBSCRIBE_SECRET_MIN_LENGTH ? v : \"\";", to: "return v;" }]);
+    expect(m.module.unsubscribeKeyFromEnv({ UNSUBSCRIBE_HMAC_SECRET: "short", SUPABASE_SERVICE_ROLE_KEY: "x".repeat(40) }), "the mutant signs with a guessable secret").toBe("short");
+    expect(unsubscribeKeyFromEnv({ UNSUBSCRIBE_HMAC_SECRET: "short", SUPABASE_SERVICE_ROLE_KEY: "x".repeat(40) })).toBe("x".repeat(40));
   });
 
   it("name that is not cleaned: a 5,000-character name reaches the sender", async () => {

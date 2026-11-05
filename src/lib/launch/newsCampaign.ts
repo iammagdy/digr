@@ -188,7 +188,7 @@ const AMBIGUOUS = new Set(["timeout", "network_error", "function_unavailable", "
 /** A customer-controlled display name: control and bidi-override characters removed, at most 80 characters (a huge name must not break the send and burn the claim). */
 export function safeGreetingName(name: string): string {
   // eslint-disable-next-line no-control-regex
-  const cleaned = String(name ?? "").replace(/[\u0000-\u001F\u007F-\u009F‎‏‪-‮⁦-⁩]/g, " ").replace(/\s+/g, " ").trim();
+  const cleaned = String(name ?? "").replace(/[\u0000-\u001F\u007F-\u009F؜​-‏‪-‮⁠-⁩﻿]/g, " ").replace(/\s+/g, " ").trim();
   return Array.from(cleaned).slice(0, 80).join("").trim();
 }
 

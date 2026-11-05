@@ -24,12 +24,19 @@ function mac(userId: string, key: string): Buffer {
  * set UNSUBSCRIBE_HMAC_SECRET to the OLD key value first (see unsubscribeVerifyKeysFromEnv).
  */
 export function unsubscribeKeyFromEnv(env: Readonly<Record<string, string | undefined>> = process.env): string {
-  return String(env.UNSUBSCRIBE_HMAC_SECRET ?? "").trim() || String(env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
+  return dedicatedSecret(env) || String(env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
+}
+
+/** The dedicated secret counts only when it is at least this long (a short value is guessable, so it is ignored and the service-role key keeps signing). */
+export const UNSUBSCRIBE_SECRET_MIN_LENGTH = 32;
+function dedicatedSecret(env: Readonly<Record<string, string | undefined>>): string {
+  const v = String(env.UNSUBSCRIBE_HMAC_SECRET ?? "").trim();
+  return v.length >= UNSUBSCRIBE_SECRET_MIN_LENGTH ? v : "";
 }
 
 /** Every secret a link may have been signed with: the signing key first, then the service-role key (links mailed before a dedicated secret existed). */
 export function unsubscribeVerifyKeysFromEnv(env: Readonly<Record<string, string | undefined>> = process.env): string[] {
-  const keys = [String(env.UNSUBSCRIBE_HMAC_SECRET ?? "").trim(), String(env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim()].filter(Boolean);
+  const keys = [dedicatedSecret(env), String(env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim()].filter(Boolean);
   return Array.from(new Set(keys));
 }
 
