@@ -1,5 +1,6 @@
 "use client";
 
+import { browserFetch } from "@/lib/agentMission/stage4/browserFetch";
 import { useCallback, useEffect, useState } from "react";
 import { formatAr } from "@/lib/arabicDigits";
 import { createClient } from "@/lib/supabase/client";
@@ -196,7 +197,7 @@ export default function EditRequestCard({ missionId }: { missionId: string }) {
 
   const start = useCallback(async (alive: () => boolean) => {
     setStatus("loading");
-    const [s, request] = await Promise.all([fetchEditSchema({ missionId, fetchFn: fetch, headers: authHeaders }), fetchEditRequest({ missionId, fetchFn: fetch, headers: authHeaders })]);
+    const [s, request] = await Promise.all([fetchEditSchema({ missionId, fetchFn: browserFetch, headers: authHeaders }), fetchEditRequest({ missionId, fetchFn: browserFetch, headers: authHeaders })]);
     if (!alive()) return;
     setWaiting(request);
     if (s.state === "ok") { setSchema(s.schema); setStatus("ready"); }
@@ -216,7 +217,7 @@ export default function EditRequestCard({ missionId }: { missionId: string }) {
     setNotice(null);
     if (!input.ok) { setQuote(null); setError(input.messageAr); return; }
     setBusy(true); setQuote(null); setError(null);
-    const r = await quoteEdit({ missionId, version: schema.version, edit: input.input, fetchFn: fetch, headers: authHeaders });
+    const r = await quoteEdit({ missionId, version: schema.version, edit: input.input, fetchFn: browserFetch, headers: authHeaders });
     if (r.ok) setQuote(r.quote); else setError(r.message);
     setBusy(false);
   }, [form, schema, missionId]);
@@ -225,12 +226,12 @@ export default function EditRequestCard({ missionId }: { missionId: string }) {
     const input = editInputOf(form, schema);
     if (!input.ok) { setError(input.messageAr); return; }
     setPreparing(true); setError(null); setNotice(null);
-    const r = await prepareEditRequest({ missionId, version: schema.version, edit: input.input, fetchFn: fetch, headers: authHeaders });
+    const r = await prepareEditRequest({ missionId, version: schema.version, edit: input.input, fetchFn: browserFetch, headers: authHeaders });
     if (r.ok) { setWaiting(r.request); setQuote(null); }
     else {
       setError(r.message);
       // another tab may have made a request in the meantime: whatever waits is shown
-      const found = await fetchEditRequest({ missionId, fetchFn: fetch, headers: authHeaders });
+      const found = await fetchEditRequest({ missionId, fetchFn: browserFetch, headers: authHeaders });
       if (found) { setWaiting(found); setQuote(null); setError(null); }
     }
     setPreparing(false);
@@ -238,9 +239,9 @@ export default function EditRequestCard({ missionId }: { missionId: string }) {
   const onCancel = useCallback(async () => {
     if (!waiting) return;
     setCancelling(true); setError(null);
-    const r = await cancelEditRequest({ missionId, requestId: waiting.id, fetchFn: fetch, headers: authHeaders });
+    const r = await cancelEditRequest({ missionId, requestId: waiting.id, fetchFn: browserFetch, headers: authHeaders });
     if (r.ok) { setWaiting(null); setQuote(null); setForm(null); setNotice(EDIT_CANCELLED_AR); void start(() => true); }
-    else { setError(r.message); setWaiting(await fetchEditRequest({ missionId, fetchFn: fetch, headers: authHeaders })); }
+    else { setError(r.message); setWaiting(await fetchEditRequest({ missionId, fetchFn: browserFetch, headers: authHeaders })); }
     setCancelling(false);
   }, [missionId, waiting, start]);
   const onRetry = useCallback(() => { setError(null); void start(() => true); }, [start]);
@@ -249,7 +250,7 @@ export default function EditRequestCard({ missionId }: { missionId: string }) {
     // a refusal or an UNCERTAIN answer keeps the request and the button on screen (its alert is the only place the customer reads «the points may be held»); only a request that was approved leaves the waiting state, and its sentence stays as a notice
     if (r.state !== "approved" && r.state !== "already_approved") return;
     setWaiting(null); setQuote(null); setForm(null); setNotice(r.message);
-    void fetchEditRequest({ missionId, fetchFn: fetch, headers: authHeaders }).then((found) => setWaiting(found));
+    void fetchEditRequest({ missionId, fetchFn: browserFetch, headers: authHeaders }).then((found) => setWaiting(found));
   }, [missionId]);
   return <EditRequestBody schema={schema} status={status} form={form} onForm={onForm} onAsk={onAsk} busy={busy} quote={quote} error={error} waiting={waiting} onPrepare={onPrepare} preparing={preparing} onCancel={onCancel} cancelling={cancelling} notice={notice} onRetry={onRetry} approval={waiting ? <ApproveAddon missionId={missionId} requestId={waiting.id} points={waiting.holdPoints} onSettled={onApprovalSettled} /> : null} />;
 }

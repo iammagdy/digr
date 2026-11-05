@@ -1,5 +1,6 @@
 "use client";
 
+import { browserFetch } from "@/lib/agentMission/stage4/browserFetch";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { REVIEW_ASKING_AR, REVIEW_BUTTON_AR, REVIEW_HEADING_AR, REVIEW_INTRO_AR, REVIEW_PICK_AR, reviewQuoteLinesAr, type ReviewQuoteView, type ReviewVersionChoice } from "@/lib/agentMission/stage4/reviewPreviewLabels";
@@ -100,7 +101,7 @@ export default function ReviewQuote({ missionId }: { missionId: string }) {
   useEffect(() => {
     let alive = true;
     // the list of published versions and the request that already waits (a refresh finds it again), asked together
-    Promise.all([fetchReviewVersions({ missionId, fetchFn: fetch, headers: authHeaders }), fetchReviewRequest({ missionId, fetchFn: fetch, headers: authHeaders })]).then(([list, request]) => {
+    Promise.all([fetchReviewVersions({ missionId, fetchFn: browserFetch, headers: authHeaders }), fetchReviewRequest({ missionId, fetchFn: browserFetch, headers: authHeaders })]).then(([list, request]) => {
       if (!alive) return;
       setVersions(list);
       setSelected(list.length > 0 ? list[list.length - 1].version : null);
@@ -112,19 +113,19 @@ export default function ReviewQuote({ missionId }: { missionId: string }) {
   const onAsk = useCallback(async () => {
     if (selected === null) return;
     setBusy(true); setQuote(null); setError(null); setNotice(null);
-    const r = await fetchReviewQuote({ missionId, version: selected, fetchFn: fetch, headers: authHeaders });
+    const r = await fetchReviewQuote({ missionId, version: selected, fetchFn: browserFetch, headers: authHeaders });
     if (r.ok) setQuote(r.quote); else setError(r.message);
     setBusy(false);
   }, [missionId, selected]);
   const onPrepare = useCallback(async () => {
     if (selected === null) return;
     setPreparing(true); setError(null); setNotice(null);
-    const r = await prepareReviewRequest({ missionId, version: selected, fetchFn: fetch, headers: authHeaders });
+    const r = await prepareReviewRequest({ missionId, version: selected, fetchFn: browserFetch, headers: authHeaders });
     if (r.ok) { setWaiting(r.request); setQuote(null); }
     else {
       setError(r.message);
       // another tab may have made a request in the meantime: whatever waits is shown
-      const found = await fetchReviewRequest({ missionId, fetchFn: fetch, headers: authHeaders });
+      const found = await fetchReviewRequest({ missionId, fetchFn: browserFetch, headers: authHeaders });
       if (found) { setWaiting(found); setQuote(null); setError(null); }
     }
     setPreparing(false);
@@ -132,9 +133,9 @@ export default function ReviewQuote({ missionId }: { missionId: string }) {
   const onCancel = useCallback(async () => {
     if (!waiting) return;
     setCancelling(true); setError(null);
-    const r = await cancelReviewRequest({ missionId, requestId: waiting.id, fetchFn: fetch, headers: authHeaders });
+    const r = await cancelReviewRequest({ missionId, requestId: waiting.id, fetchFn: browserFetch, headers: authHeaders });
     if (r.ok) { setWaiting(null); setQuote(null); setNotice(REVIEW_CANCELLED_AR); }
-    else { setError(r.message); setWaiting(await fetchReviewRequest({ missionId, fetchFn: fetch, headers: authHeaders })); }
+    else { setError(r.message); setWaiting(await fetchReviewRequest({ missionId, fetchFn: browserFetch, headers: authHeaders })); }
     setCancelling(false);
   }, [missionId, waiting]);
   // after the approval's answer the waiting request is read again from the server: an approved one no longer waits (the status panel tells its state), an uncertain one is back to waiting
@@ -142,7 +143,7 @@ export default function ReviewQuote({ missionId }: { missionId: string }) {
     // a refusal or an UNCERTAIN answer keeps the request and the button on screen (its alert is the only place the customer reads «the points may be held»); only a request that was approved leaves the waiting state, and its sentence stays as a notice
     if (r.state !== "approved" && r.state !== "already_approved") return;
     setNotice(r.message);
-    void fetchReviewRequest({ missionId, fetchFn: fetch, headers: authHeaders }).then((found) => setWaiting(found));
+    void fetchReviewRequest({ missionId, fetchFn: browserFetch, headers: authHeaders }).then((found) => setWaiting(found));
   }, [missionId]);
   return <ReviewQuoteBody versions={versions} selected={selected} onSelect={onSelect} onAsk={onAsk} busy={busy} quote={quote} error={error} waiting={waiting} onPrepare={onPrepare} preparing={preparing} onCancel={onCancel} cancelling={cancelling} notice={notice} approval={waiting ? <ApproveAddon missionId={missionId} requestId={waiting.id} points={waiting.points} onSettled={onApprovalSettled} /> : null} />;
 }

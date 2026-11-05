@@ -1,5 +1,6 @@
 "use client";
 
+import { browserFetch } from "@/lib/agentMission/stage4/browserFetch";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { APPROVE_CONSENT_AR, APPROVING_AR, FILE_WORKFLOW_REFRESH_EVENT, approveButtonAr, fetchApprovalAvailable, sendApproval, type ApproveResult } from "@/lib/agentMission/stage4/addonApprovalClient";
@@ -49,14 +50,14 @@ export default function ApproveAddon({ missionId, requestId, points, onSettled }
   useEffect(() => {
     let alive = true;
     setResult(null);
-    void fetchApprovalAvailable({ missionId, fetchFn: fetch, headers: authHeaders }).then((ok) => { if (alive) setStatus(ok ? "ready" : "idle"); });
+    void fetchApprovalAvailable({ missionId, fetchFn: browserFetch, headers: authHeaders }).then((ok) => { if (alive) setStatus(ok ? "ready" : "idle"); });
     return () => { alive = false; };
   }, [missionId, requestId]);
   const onApprove = useCallback(async () => {
     if (inFlight.current) return;
     inFlight.current = true;
     setStatus("approving"); setResult(null);
-    const r = await sendApproval({ missionId, requestId, expectedPoints: points, fetchFn: fetch, headers: authHeaders });
+    const r = await sendApproval({ missionId, requestId, expectedPoints: points, fetchFn: browserFetch, headers: authHeaders });
     setResult(r); setStatus("done");
     inFlight.current = false;
     try { window.dispatchEvent(new CustomEvent(FILE_WORKFLOW_REFRESH_EVENT)); } catch { /* the panel refreshes on its own reload */ }
