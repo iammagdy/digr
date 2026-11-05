@@ -14,6 +14,7 @@ import type { CallRow, MissionRecord } from "../types";
 import { JSON_TYPE, type AddonFreeze, pendingReviewPath, pendingVersionPath, readFreeze, readJsonOrNull, readOutcome, writeFreeze, readVersion, reviewPathOf, versionPathOf, writeOutcome, type AddonOutcome } from "./addonFiles";
 import { ADDON_DONE_AR } from "./addonText";
 import { runReread, type RereadUnit } from "./rereadRun";
+import { resolveUnrecordedHold } from "./unrecordedHold";
 
 /**
  * MONEY PR 7a, PHASE 2B-1: THE WORKER'S RUN OF AN APPROVED ADD-ON (a paid review, a review fix, an edit): docs/MONEY-PR-7A.md section 3.0, in THIS order:
@@ -144,7 +145,7 @@ function settleInputOf(kind: AddonKind, jobId: string, hold: number, outcome: Ad
 }
 
 // ---------- the run ----------
-export async function runAddon(deps: Deps, mission: MissionRecord): Promise<void> {
+export async function runAddon(deps: Deps, mission: MissionRecord, afterRecord = false): Promise<void> {
   const { store } = deps;
   const row = (await store.getMission(mission.id)) ?? mission;
   if (row.status !== "executing") return;
@@ -152,9 +153,9 @@ export async function runAddon(deps: Deps, mission: MissionRecord): Promise<void
   const jobId = row.job_id;
   const hold = Number(row.reserved_points);
   if (!addon || !jobId || !(hold >= 1)) {
-    await store.updateMission(row.id, { status: "failed", error: "the add-on has no plan or no hold", summary_ar: ADDON_DONE_AR.planMismatch, ...clear });
-    await store.addEvent(row.id, { kind: "result", message_ar: ADDON_DONE_AR.planMismatch });
-    return;
+    // the row does not say what is held: that is NOT «nothing is held». The money's own state decides (unrecordedHold.ts); the run goes on only when it was verified
+    if ((await resolveUnrecordedHold(deps, row, { afterRecord })) !== "verified" || afterRecord) return;
+    return runAddon(deps, mission, true);
   }
   const check = checkAddon(row.id, addon);
   // WHO OWNS THE ROW: the worker that claimed it. When its lease ends and another worker claims the row, the row's worker id changes: the old worker then stops spending and stops telling the customer (what it already stored is harmless: every object is create-only)
