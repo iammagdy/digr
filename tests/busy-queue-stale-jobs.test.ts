@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
-import { countActiveJobs, isStaleActiveJob, STALE_ACTIVE_JOB_MS } from "../src/lib/jobs/activeJobs";
+import { countActiveJobs, isStaleActiveJob, notStaleActiveJobFilter, STALE_ACTIVE_JOB_MS } from "../src/lib/jobs/activeJobs";
 import { getBusyState, setBusyStateForTesting } from "../src/lib/server/busyState";
 
 const NOW = Date.parse("2026-11-05T20:00:00Z");
@@ -70,24 +70,57 @@ describe("getBusyState uses it (busy copy shows the real queue)", () => {
   const originalEnv = process.env.NODE_ENV;
   afterEach(() => { (process.env as any).NODE_ENV = originalEnv; });
 
-  function adminWith(jobs: any[], spendUsd = 0, capUsd = 0.001) {
-    // daily cap exhausted (cap 0.001, spend 0.5 handled by the provider gate fake below is not needed: we read the queue through the busy message)
+  /** A jobs table that answers exactly the query the busy state sends: select(head count) + in(status) + the PostgREST `or` text, evaluated from the TEXT (not from the module's function). */
+  function adminWith(jobs: any[]) {
+    const evalOr = (text: string, row: any): boolean => {
+      const m = /^lease_until\.gte\.([^,]+),and\(lease_until\.is\.null,updated_at\.gte\.([^)]+)\)$/.exec(text);
+      if (!m) throw new Error(`unexpected or filter: ${text}`);
+      const cutoff = Date.parse(m[1]);
+      if (row.lease_until !== null && row.lease_until !== undefined) return Date.parse(row.lease_until) >= cutoff;
+      return row.updated_at !== null && row.updated_at !== undefined && Date.parse(row.updated_at) >= cutoff;
+    };
     return {
       from: (table: string) => ({
-        select: () => ({
-          in: async () => ({ data: table === "jobs" ? jobs : [], error: null }),
-          eq: () => ({ maybeSingle: async () => ({ data: null, error: null }), then: (r: any) => r({ data: [], error: null }) }),
-          then: (r: any) => r({ data: [], error: null }),
-        }),
+        select: (_cols?: string, opts?: { count?: string; head?: boolean }) => {
+          const q: any = {
+            _status: null as string[] | null, _or: null as string | null,
+            in(_c: string, v: string[]) { q._status = v; return q; },
+            or(text: string) { q._or = text; return q; },
+            eq: () => ({ maybeSingle: async () => ({ data: null, error: null }), then: (r: any) => r({ data: [], error: null }) }),
+            then: (resolve: any) => {
+              if (table !== "jobs") return resolve({ data: [], error: null, count: 0 });
+              const rows = jobs.filter((j) => (q._status ? q._status.includes(j.status) : true) && (q._or ? evalOr(q._or, j) : true));
+              return resolve(opts?.head ? { data: null, error: null, count: rows.length } : { data: rows, error: null });
+            },
+          };
+          return q;
+        },
       }),
       rpc: async () => ({ data: null, error: null }),
     } as any;
   }
 
-  it("source: the busy read asks for rows and counts them through countActiveJobs (not a bare count of statuses)", () => {
+  it("the SQL filter text equals the pure rule on the real fixtures, the boundaries and a spread of random rows (the database counts what the function says)", () => {
+    const text = notStaleActiveJobFilter(NOW);
+    const m = /^lease_until\.gte\.([^,]+),and\(lease_until\.is\.null,updated_at\.gte\.([^)]+)\)$/.exec(text)!;
+    expect(m[1]).toBe(m[2]);
+    expect(Date.parse(m[1])).toBe(NOW - STALE_ACTIVE_JOB_MS);
+    const matches = (row: any) => (row.lease_until != null ? Date.parse(row.lease_until) >= Date.parse(m[1]) : row.updated_at != null && Date.parse(row.updated_at) >= Date.parse(m[1]));
+    const rows: any[] = [...FIXTURES];
+    let seed = 7; const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    for (let i = 0; i < 400; i++) {
+      const off = Math.floor((rnd() - 0.5) * 4 * STALE_ACTIVE_JOB_MS);
+      const hasLease = rnd() < 0.5;
+      rows.push({ status: rnd() < 0.5 ? "queued" : "running", lease_until: hasLease ? iso(NOW + off) : null, updated_at: iso(NOW + Math.floor((rnd() - 0.5) * 4 * STALE_ACTIVE_JOB_MS)) });
+    }
+    for (const edge of [-1, 0, 1]) { rows.push({ status: "running", lease_until: iso(NOW - STALE_ACTIVE_JOB_MS + edge), updated_at: iso(NOW) }); rows.push({ status: "queued", lease_until: null, updated_at: iso(NOW - STALE_ACTIVE_JOB_MS + edge) }); }
+    for (const r of rows) expect(matches(r), JSON.stringify(r)).toBe(!isStaleActiveJob(r, NOW));
+  });
+
+  it("source: the busy read is an exact database count restricted by the not-stale filter (never a bare count of statuses, never a truncated row list)", () => {
     const src = readFileSync("src/lib/server/busyState.ts", "utf8");
-    expect(src).toContain("countActiveJobs(");
-    expect(src).not.toMatch(/head:\s*true/);
+    expect(src).toContain("notStaleActiveJobFilter(now)");
+    expect(src).toMatch(/count:\s*"exact",\s*head:\s*true/);
   });
 
   it("source: the stale window is the watchdog's own 30 minutes and the same two columns", () => {
@@ -125,7 +158,7 @@ describe("getBusyState uses it (busy copy shows the real queue)", () => {
     (process.env as any).NODE_ENV = "production";
     setBusyStateForTesting(undefined);
     const admin: any = {
-      from: () => ({ select: () => ({ in: async () => ({ data: null, error: { message: "boom" } }), eq: () => ({ maybeSingle: async () => ({ data: null }) }), then: (r: any) => r({ data: [], error: null }) }) }),
+      from: () => ({ select: () => ({ in: () => ({ or: async () => ({ data: null, error: { message: "boom" }, count: null }) }), eq: () => ({ maybeSingle: async () => ({ data: null }) }), then: (r: any) => r({ data: [], error: null }) }) }),
       rpc: async () => ({ data: null, error: null }),
     };
     const state = await getBusyState(admin, NOW);

@@ -19,6 +19,15 @@ function ms(value: unknown): number | null {
   return Number.isFinite(t) ? t : null;
 }
 
+/**
+ * The same rule as a PostgREST `or` filter (used with `.in("status", ["queued","running"])` and an exact head count, so a large table is counted by the database, never truncated by the row limit):
+ * NOT stale = the lease has not been out for more than 30 minutes, or there is no lease and the row changed within 30 minutes. The tests evaluate this exact text against `isStaleActiveJob`.
+ */
+export function notStaleActiveJobFilter(nowMs: number = Date.now()): string {
+  const cutoff = new Date(nowMs - STALE_ACTIVE_JOB_MS).toISOString();
+  return `lease_until.gte.${cutoff},and(lease_until.is.null,updated_at.gte.${cutoff})`;
+}
+
 /** True when the watchdog would pick this queued/running job up as abandoned. A row with neither a lease nor a change time is not stale (the watchdog cannot select it either). */
 export function isStaleActiveJob(row: ActiveJobRow, nowMs: number = Date.now()): boolean {
   const cutoff = nowMs - STALE_ACTIVE_JOB_MS;
