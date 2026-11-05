@@ -1,4 +1,40 @@
-# INTEGRATION READINESS: Stage 2 (#369) + Stage 3 (#370) + Stage 4 (#371 to #404) on `main` `9b478568`, then `0728e06f`, then `0728e06f`
+# INTEGRATION READINESS: Stage 2 (#369) + Stage 3 (#370) + Stage 4 (#371 to #404) on `main` `0728e06f`
+
+## ROUND 3 (5 Nov 2026): fresh rehearsal on the CURRENT main `0728e06f7965fba5fee3b76fcfe6212b2c9fed11`
+
+The first rehearsal (round 2) was built on `9b478568` and later merged with `0728e06f`. This is a **new** merge from scratch on `0728e06f` (branch `integration/rehearsal-r3-main-0728e06f`, never a PR, never for merge), in this order: #369 (`74dbff2b`), #406 + #408 (`f45ea5df`), #370 (`36adf28e`), the Stage 4 stack ending #404 (`3575d5fe`), #407 (`ef086d17`). Conflicts reproduced exactly (same files, same rules), and each resolution was checked by diffing the resulting tree against the round-2 merge commit: the only differences are main's Round 38 (9 files, merged cleanly into all of them, `customerView.ts` carries its `export` line next to Stage 3's import) and the two new PRs.
+
+| Step | Conflicting files | Round 38 touched them? |
+|---|---|---|
+| main <- #369 | `compiled.ts`, `runMission.ts`, `runState.ts`, `AgentMissionCard.tsx`, requests `[id]/page.tsx` | no: round-2 union reused and verified |
+| + #408 (+#406) | none | n/a |
+| + #370 | `agent/src/workbook.ts` (round-2 union), `customerView.ts` (both imports, by hand) | `customerView.ts` yes (one line): kept |
+| + #404 (Stage 4 stack) | `file/route.ts`, `customerActions.ts`, `methodology/missions.ts`, `openMissions.ts`, `adminActions.ts`, requests `[id]/page.tsx` | no: round-2 union reused and verified |
+| + #407 | none | n/a |
+
+New in round 3: **#407** (main's red test: `.gitignore` exception for the three Round 37 fixtures; the files themselves are not in any branch and were not recreated: **owner action**) and **#408** (finding F-1: the live counter says in words when the delivery is above the plan's number; stacked on #406).
+
+**F-2 measured (not fixed).** On the stored real rows of M12, at the same moment, the phone card's own progress line says «١٤ من ٤٢ عنصرًا» and the live counter below it says «١٤ من ٧٠»: the card (`customerView.ts`, `planned` = the sum of the delivering stages' rows) does not count the replies' estimate, the live counter and the Excel (`promisedTotalOf`) do. The Excel at completion says 70. This predates Stage 2 (the card's header and the Excel already differed on main); Stage 2 only puts a second number beside it. Not changed: it is main's shared card code and the choice of the one denominator is the owner's (options: the card's progress line uses `promisedTotalOf`; or the line is hidden while the live counter is shown).
+
+**Results of the fresh tree (head before this document: `7ec5cc79`).**
+
+| Gate | Result |
+|---|---|
+| clean `npm ci` (site 368 packages, worker 106) | pass |
+| `tsc --noEmit` (site), `npm run agent:typecheck` (worker) | clean |
+| `next build` + client-bundle secret scan (206 files) | pass, zero secrets |
+| full suite, two shards | **11,878 tests passed, 0 failed, 57 skipped** (shard 1: 5,903 / 27; shard 2: 5,975 / 30); test FILES: 910 passed, 5 skipped, **1 file cannot load** (the skipped count, 57, is the same as in round 2; this round added no skip) |
+| the file that cannot load | `tests/round37-real-reels-excel-acceptance.test.ts`: `ENOENT tests/fixtures/round37/delivered.csv` (fails identically on plain main; #407 removes the `.gitignore` trap, the owner must supply the three real files) |
+| `tests/integration-stage2-3-4-flags.test.ts` (7) | pass |
+| real Chromium on the integrated tree, desktop 1280 + phone 390 (iPhone user agent, locally running app with a dummy configuration, fake API answers made by the repo's own planner, snapshot builder, poll contract and `buildMissionFiles` from stored real rows) | full customer journey **33 of 33** (round 2: 32 of 33; the failure was F-1); counter journey **23 of 23** |
+| money files vs main (`price`, `lifecycle`, `approval`, `missionPricing`, `jobPointsCap`, `src/functions`, `gateway`, `callBudget`) | empty diff |
+| `supabase/` vs main | only the prepared, unapplied migration `20261104222136_one_open_addon_per_file.sql` |
+| real migration history (read-only list, 5 Nov 2026) | newest applied `20261017184147`: the migration is NOT applied |
+| approval route | no site route imports `approvalGuard`, `addonSettlement` approval or `addonRecovery`: UNWIRED |
+
+Not verified: a real mission on a test account; Heroku (no access: the worker revision and any live run); an authenticated Vercel preview session; a physical phone; production.
+
+(The sections below are the round-2 text; where they say `9b478568` read `0728e06f`.)
 
 **This branch is a REHEARSAL. It is not a PR, not for merge, and was never deployed to production.** It is the tree obtained by merging the three independent workstreams into `main` `9b478568069bcc0c9052a8da6635c0f5f6f010ad`, in the order below, with every conflict resolved locally. No existing PR branch was changed or rebased. No migration was applied, no flag set, no provider or payment touched.
 
