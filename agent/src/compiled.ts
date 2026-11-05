@@ -14,6 +14,8 @@ import { YOUTUBE_CHANNEL_QUESTION_AR, matchChannel, youtubeChannelOf, type Youtu
 import { INSTAGRAM_ACCOUNT_QUESTION_AR, instagramAccountNoteAr } from "../../src/lib/agentMission/foundation/instagramAccount";
 import { budgetOfWords, questionNeeded, type Choices } from "../../src/lib/agentMission/foundation/countChoice";
 import { fitToBudget } from "../../src/lib/agentMission/foundation/budgetFit";
+import { applyAskEdit, type AskEdit } from "../../src/lib/agentMission/stage2/askCard";
+import { questionCardsFor } from "../../src/lib/agentMission/stage2/questionCards";
 import { toArabicDigits } from "../../src/lib/arabicDigits";
 import { cardOf, cardsFor, CATALOG_ONLY_CAP_USD, mapPage, type ToolCard } from "../../src/lib/agentMission/foundation/toolCards";
 import { PARENT_ROLES, REPLY_ROLE } from "../../src/lib/agentMission/foundation/compilePlan";
@@ -69,6 +71,12 @@ export interface CompiledPlanningDeps {
   /** ROUND 14, PART B: the production run asks the count and the comments per parent BEFORE any read when the request gives none (`askCount`); a planning made by a test or a tool that does not set it never asks (today's behaviour). `choices` are what the customer chose at those questions, `questionsAsked` how many cards the request has had (at most three), `answerIsChoice` that the current answer is one of them (the request is read without its words). */
   askCount?: boolean;
   choices?: Choices;
+  /** STAGE 2 (docs/STAGE-2.md S2, flag DIGER_STAGE2_ASK_CARD, read by the caller): the customer's card edits, applied by code in order after the request is read; a refused edit is skipped. Absent: nothing changes. */
+  askEdits?: ReadonlyArray<AskEdit>;
+  /** STAGE 2 S5 (DIGER_STAGE2_QUESTION_CARDS, read by the caller): the questions before the plan come from the Stage 2 policy (questionCards.ts), one card at a time. Absent: today's `questionNeeded`. */
+  questionCards?: boolean;
+  /** STAGE 2 S5: the topic relation the customer chose on the topic-relation card. */
+  topicRelation?: "about" | "made_with";
   questionsAsked?: number;
   answerIsChoice?: boolean;
 }
@@ -79,7 +87,7 @@ export type CompiledPlanning =
    * LIVE ROUND 7: no video of the pool read (two queries) is about the topic; the customer is asked before approval how to go on. Nothing is priced or held. PR 3, decision 7.5 (`why: "named_shortfall"`): the named Facebook page has fewer
    * deliverable posts in the pool than asked.
    */
-  | { kind: "question"; ask: Ask; question: string; options: string[]; reads: { pool: number; exposure: number }; why?: "no_about" | "named_shortfall" | "occurrence" | "occurrence_year" | "count" | "per_parent" | "instagram_account" | "youtube_channel" };
+  | { kind: "question"; ask: Ask; question: string; options: string[]; reads: { pool: number; exposure: number }; why?: "no_about" | "named_shortfall" | "occurrence" | "occurrence_year" | "count" | "per_parent" | "instagram_account" | "youtube_channel" | "topic_relation" };
 
 /** What the understand step cost (USD), carried on the result so the caller adds it to the mission's model cost (never a charge). */
 export type WithCost<T> = T & { llmCostUsd?: number };
@@ -149,6 +157,8 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   if (choices.perParent === "all" && ask.comments !== "none") ask = { ...ask, comments: "all" };
   else if (typeof choices.perParent === "number" && ask.comments !== "none") ask = { ...ask, commentsPerParent: choices.perParent };
   if (budget !== undefined) ask = { ...ask, edits: { ...ask.edits, budget } };
+  for (const e of deps.askEdits ?? []) { const r = applyAskEdit(ask, e, { nowMs: deps.nowMs }); if (r.ok) ask = r.ask; }
+  if (deps.topicRelation && ask.topic.text) ask = { ...ask, topic: { ...ask.topic, relation: deps.topicRelation } };
   const reads = { pool: 0, exposure: 0 };
   // ROUND 30: INSTAGRAM WITH NO ACCOUNT. The only verified parent tool reads the posts of a named public account, so a request that names none is asked ONCE which account to read, before anything is read, held or priced; the account the customer gave
   // (read by code in the run, kept with the other choices) is the Ask's named source, and the topic and the count stay the request's own. A request that already NAMES a source (an account by an Arabic name, no username) is left exactly as it was. No usable answer ends the request honestly (the question is never asked twice). No provider capability is added.
@@ -200,7 +210,11 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   // a recurring event whose question was answered earlier (the answer of a later question replaced it) and was not kept: the default, the latest occurrence
   if (!ask.occurrence && answeredReady && isRecurringEvent(ask, deps.mission.request_text)) ask = { ...ask, occurrence: { kind: "latest" } };
   // THE COUNT AND THE COMMENTS PER PARENT (Part B): asked before anything is read, only by the production run (`askCount`), at most three cards in all
-  if (deps.askCount === true) {
+  if (deps.askCount === true && deps.questionCards === true) {
+    // STAGE 2 S5: the policy's most important card that the compiled planning can ask now (the platform is known here and the occurrence was asked above), one at a time
+    const card = questionCardsFor(ask, { requestText: deps.mission.request_text, alreadyAsked: deps.questionsAsked ?? 0 }).find((c) => c.code === "count" || c.code === "per_parent" || c.code === "topic_relation");
+    if (card && ask.platform && (COMPILED_PLATFORMS as ReadonlyArray<string>).includes(ask.platform)) return { kind: "question", ask, why: card.code as "count" | "per_parent" | "topic_relation", question: card.questionAr, options: card.options.map((o) => o.labelAr), reads };
+  } else if (deps.askCount === true) {
     const q = questionNeeded(ask, choices, deps.questionsAsked ?? 0);
     if (q && ask.platform && (COMPILED_PLATFORMS as ReadonlyArray<string>).includes(ask.platform)) return { kind: "question", ask, why: q.why, question: q.question, options: q.options, reads };
   }

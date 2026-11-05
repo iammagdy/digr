@@ -109,7 +109,7 @@ export default function RequestDetailsPage({ params }: { params: Promise<{ id: s
 
         {/* THE HEAVY PART, after the facts: the mission's own card (steps, result lines, files); a skeleton while the two reads are on their way */}
         {read === "loading" ? <div data-testid="details-skeleton" role="status" aria-label="جارٍ تحميل تفاصيل الطلب" className="flex flex-col gap-2"><Skeleton className="h-24 w-full" /><Skeleton className="h-16 w-full" /></div> : null}
-        {read === "done" && missionId ? <AgentMissionCard missionId={missionId} /> : null}
+        {read === "done" && missionId ? <AgentMissionCard missionId={missionId} stage2 /> : null}
         {read === "done" && !missionId ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="details-no-mission">هذا طلب من النوع القديم: ملفاته في «طلباتي» ونتيجته في المحادثة.</p> : null}
 
         {read === "done" ? (
