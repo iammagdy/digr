@@ -1,0 +1,23 @@
+{
+ "_about": "Written by tests/stage3-flags-off.test.ts (WRITE_STAGE3_FLAGS_OFF=1) on the stage-3 branch before the planning and engine wiring.",
+ "worlds": {
+  "g1": {
+   "plan": "1888dae8e59550ef",
+   "status": "completed:15:1166:",
+   "rows": "41f55870952c05e7",
+   "file": "715cf7ae8bf49a2e"
+  },
+  "g2": {
+   "plan": "961143cf26b45bd3",
+   "status": "completed:15:1166:",
+   "rows": "5a2f08c7df649367",
+   "file": "ed96599a2803bafd"
+  },
+  "live_7539_words": {
+   "plan": "1888dae8e59550ef",
+   "status": "completed:15:1166:",
+   "rows": "41f55870952c05e7",
+   "file": "8f1458c2fa572da9"
+  }
+ }
+}

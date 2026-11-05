@@ -11,9 +11,9 @@ import { countryOfRequestText } from "../src/lib/agentMission/places";
 const walk = (dir: string): string[] => readdirSync(dir).flatMap((n) => { const p = join(dir, n); return statSync(p).isDirectory() ? (n === "node_modules" ? [] : walk(p)) : /\.(ts|tsx)$/.test(n) ? [p] : []; });
 
 describe("the request-country fallback is not a row filter", () => {
-  it("countryOfRequestText is used only by the company-phone step (and defined in places.ts)", () => {
+  it("countryOfRequestText is used only by the company-phone step, the Stage 3 companies-search INPUT (owner decision 6, tests/stage3-b2b-plan.test.ts: no row rule), and defined in places.ts", () => {
     const users = [...walk("src"), ...walk("agent/src")].filter((f) => readFileSync(f, "utf8").includes("countryOfRequestText")).map((f) => f.replace(/\\/g, "/"));
-    expect(users.sort()).toEqual(["agent/src/engine/contacts.ts", "src/lib/agentMission/places.ts"]);
+    expect(users.sort()).toEqual(["agent/src/engine/contacts.ts", "src/lib/agentMission/places.ts", "src/lib/agentMission/stage3/b2bRequest.ts"]);
   });
 
   it("the nationality word names a country for the phone helper, and a plan with no declared place filter gets none", () => {
