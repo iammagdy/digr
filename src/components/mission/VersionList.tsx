@@ -1,5 +1,6 @@
 "use client";
 
+import { browserFetch } from "@/lib/agentMission/stage4/browserFetch";
 import { useCallback, useEffect, useState } from "react";
 import { dayLabel } from "@/lib/dayLabel";
 import { createClient } from "@/lib/supabase/client";
@@ -75,7 +76,7 @@ export default function VersionList({ missionId }: { missionId: string }) {
   const onDownload = useCallback(async (version: number) => {
     setBusy(version);
     setFailed(null);
-    const r = await downloadVersionFile({ missionId, version, fetchFn: fetch, headers: authHeaders, save: saveBlob });
+    const r = await downloadVersionFile({ missionId, version, fetchFn: browserFetch, headers: authHeaders, save: saveBlob });
     if (!r.ok) setFailed({ version, message: r.message });
     setBusy(null);
   }, [missionId]);

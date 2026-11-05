@@ -1,5 +1,6 @@
 "use client";
 
+import { browserFetch } from "@/lib/agentMission/stage4/browserFetch";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { FILE_WORKFLOW_HEADING_AR, FILE_WORKFLOW_LOADING_AR, FILE_WORKFLOW_NONE_AR, FILE_WORKFLOW_RETRY_AR, workflowItemLinesAr, workflowItemTitleAr, workflowPhaseLabelAr, type FileWorkflowView } from "@/lib/agentMission/stage4/fileWorkflowLabels";
@@ -66,7 +67,7 @@ export default function FileWorkflow({ missionId }: { missionId: string }) {
   const [error, setError] = useState<string | null>(null);
   const load = useCallback(async (alive: () => boolean) => {
     setStatus("loading"); setError(null);
-    const r = await fetchFileWorkflow({ missionId, fetchFn: fetch, headers: authHeaders });
+    const r = await fetchFileWorkflow({ missionId, fetchFn: browserFetch, headers: authHeaders });
     if (!alive()) return;
     if (r.state === "ok") { setView(r.view); setStatus("ready"); }
     else if (r.state === "off") setStatus("idle");
