@@ -229,6 +229,30 @@ export async function approveAddonOnce(client: any, input: AddonApprovalInput): 
   if (claim.error) return { ok: false, status: 500, error: "تعذّر الاعتماد." };
   if (Array.isArray(claim.data) && claim.data.length === 0) return bad(409, "already_approved");
   const revert = (error: string, status: "plan_ready" | "cancelled" = "plan_ready") => quiet(() => client.from(MISSION_TABLE).update({ status, lease_until: null, error }).eq("id", input.id));
+  /**
+   * THE REVERT AFTER A PROVEN CLEAN REFUSAL (root cause of «a refused approval leaves the request possibly paid»). The claim above wrote `approved_at` and `approved_by`; `revert` puts the status back but cannot know whether money moved, so it keeps them, and every reader
+   * (stage4 workflow view, open-add-on count, cancel) treats a request «that was ever put through an approval» as possibly paid: after the most common refusal (not enough points) the request had no button, no cancel, blocked another request and said «the points may be held».
+   * It is used at ONE site only: the database ANSWERED «no» from `accept_quote_atomic` (a body with success false, not an error). That function takes the profile's row lock before it checks the balance, so an earlier attempt's accept of the SAME quote still in flight would have
+   * been serialized first and answered `already_accepted`: a refusal body means nothing committed for this quote. Every other failure (plan re-check, quote creation, a throw, a lost answer, claim, record) keeps the plain `revert`: an earlier attempt's accept may still be committing
+   * (independent review, launch round), so there «the ledger reads empty» is not a proof.
+   * Even there the mark is cleared ONLY when the job's own ledger state is READ and PROVED empty (`none`: no job row, no ledger row of its deterministic id), in the same compare-and-set that returns the row to `plan_ready` (pinned to `approved` with no job); and the state is READ AGAIN afterwards:
+   * if it is no longer `none` the mark is put back at once. Anything else (held, released, charged, unreadable, contradictory, a refused or errored update, a status that already moved): the plain `revert` runs and the mark STAYS.
+   */
+  const revertAfterCleanRefusal = async (error: string): Promise<void> => {
+    const jobId = addonJobId(addonQuoteId(input.id));
+    try {
+      const state = await readJobMoneyState(client, jobId);
+      if (state.kind === "none") {
+        const cleared = await client.from(MISSION_TABLE).update({ status: "plan_ready", lease_until: null, error, approved_at: null, approved_by: null }).eq("id", input.id).eq("status", "approved").is("job_id", null).select("id");
+        if (!cleared?.error) {
+          const again = await readJobMoneyState(client, jobId);
+          if (again.kind !== "none") await quiet(() => client.from(MISSION_TABLE).update({ approved_at: (input.now ?? new Date()).toISOString(), approved_by: input.actorId }).eq("id", input.id).is("approved_at", null));
+          return; // cleared (one row) or the row already moved on (no row): nothing more to write
+        }
+      }
+    } catch { /* not proved: the plain revert below keeps the mark */ }
+    await revert(error);
+  };
   // Where the money stands decides what the customer may be told: before `accept` nothing can be reserved; from `accept` on it MAY be, whatever the answer of the call was.
   let stage: "plan" | "quote" | "accept" | "claim" | "record" = "plan";
 
@@ -259,7 +283,7 @@ export async function approveAddonOnce(client: any, input: AddonApprovalInput): 
       const code = typeof body?.error === "string" ? body.error : "accept_failed";
       if (code === "quote_expired") { await revert("quote_expired", "cancelled"); return bad(409, "quote_expired", code); }
       const key: AddonApproveMessage = code === "insufficient_balance" || code === "concurrency_limit" ? code : "accept_failed";
-      await revert(code);
+      await revertAfterCleanRefusal(code); // the database ANSWERED «no» (a body, not an error): clean only if the ledger proves it
       return bad(key === "insufficient_balance" ? 402 : 409, key, code);
     }
     const jobId = String(body.job_id);
