@@ -22,6 +22,7 @@ import { toSafeReasonCode, reasonCodeToCustomerMessage } from "../../../function
 import { findUnresolvedResearchPlaceholder, unresolvedResearchPlaceholderMessageAr } from "../../../lib/researchPlaceholders";
 import { withDeadline } from "../../../functions/shared/deadline";
 import { AGENT_SERVES_CHAT } from "../../../lib/agentMission/constants";
+import { resolveTrustedEmailVerified } from "../../../lib/server/trustedEmailVerification";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -117,7 +118,7 @@ export async function POST(req: NextRequest) {
       }
       if (user) {
         verifiedUserId = user.id;
-        emailVerified = !!(user.email_confirmed_at || user.user_metadata?.email_verified);
+        emailVerified = await resolveTrustedEmailVerified(supabase, user, bearer ?? undefined);
         // only a verified account's e-mail counts for the model-planner allowlist (a guest has none)
         verifiedUserEmail = emailVerified && typeof user.email === "string" ? user.email : null;
         // The name is stored in the customer's own account profile through their own session (owner decision D2).

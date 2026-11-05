@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 import crypto from "crypto";
 import { createServerSideClient, createAdminClient } from "@/lib/supabase/server";
+import { resolveTrustedEmailVerified } from "@/lib/server/trustedEmailVerification";
 import {
   sendPlatformEmail,
   resolveDisplayName,
@@ -71,7 +72,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Email verification check
-    const emailVerified = !!user.email_confirmed_at || user.user_metadata?.email_verified === true;
+    const emailVerified = await resolveTrustedEmailVerified(supabase, user, authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : undefined);
     if (!emailVerified) {
       return NextResponse.json(
         { success: false, reason: "email_not_verified", error: TOPUP_ERROR_MESSAGES.email_not_verified },
