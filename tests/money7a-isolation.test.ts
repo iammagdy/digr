@@ -93,12 +93,17 @@ const REQUEST = ["src/lib/agentMission/stage4/reviewRequest.ts", "src/lib/agentM
 const EDIT_REQUEST = ["src/lib/agentMission/stage4/editRequest.ts", "src/app/api/missions/[id]/edit-request/route.ts"];
 /** STAGE C: the file WORKFLOW status reads add-on rows with the money core's pure `readAddonPlan` only to tell kind and version; read-only (checked below and by tests/stage4-file-workflow.test.ts). */
 const WORKFLOW = ["src/lib/agentMission/stage4/fileWorkflow.ts", "src/app/api/missions/[id]/workflow/route.ts"];
+/**
+ * LAUNCH ROUND, WORKSTREAM 2: THE APPROVAL ROUTE (docs/STAGE-4-APPROVAL-ROUTE.md). The ONE production caller of the guard and of `approveAddonOnce`: a thin route behind DIGER_STAGE4_APPROVAL (read FIRST; off is a 404) and the function it calls. It was BLOCKED FOR OWNER APPROVAL in the earlier stages;
+ * the owner authorised preparing it in an isolated DRAFT PR (tests/launch-approval-route.test.ts, the contract tests, the mutation checks). Nothing else may reach the approval function or the guard.
+ */
+const APPROVAL = ["src/lib/agentMission/stage4/approvalRoute.ts", "src/app/api/missions/[id]/addon-approval/route.ts"];
 const abs = (r: string) => path.join(ROOT, r);
 
 describe("the new modules exist and nothing in production reaches them", () => {
   it("every file is there", () => { for (const r of NEW) expect(existsSync(abs(r))).toBe(true); });
   for (const r of NEW) it(`${r}: only the new modules, the worker's entry point (through the dispatch) and tests reach it`, () => {
-    const who = [...reachers(abs(r))].map(rel).filter((f) => !NEW.includes(f) && !ENTRY.includes(f) && !SIBLINGS.includes(f) && !PREVIEW.includes(f) && !REQUEST.includes(f) && !EDIT_REQUEST.includes(f) && !WORKFLOW.includes(f));
+    const who = [...reachers(abs(r))].map(rel).filter((f) => !NEW.includes(f) && !ENTRY.includes(f) && !SIBLINGS.includes(f) && !PREVIEW.includes(f) && !REQUEST.includes(f) && !EDIT_REQUEST.includes(f) && !WORKFLOW.includes(f) && !APPROVAL.includes(f));
     expect(who).toEqual([]);
   });
   it("agent/src/main.ts imports exactly one new module: the dispatch", () => {
@@ -184,7 +189,7 @@ describe("the review request writes one unpaid row and cancels it by compare-and
   const route = abs("src/app/api/missions/[id]/review-request/route.ts");
   it("all three files exist, and nothing else reaches the request logic or the row store", () => {
     for (const r of REQUEST) expect(existsSync(abs(r))).toBe(true);
-    for (const f of ["src/lib/agentMission/stage4/reviewRequest.ts", "src/lib/agentMission/stage4/addonRowStore.ts"]) expect([...reachers(abs(f))].map(rel).filter((x) => !REQUEST.includes(x) && !EDIT_REQUEST.includes(x) && x !== "src/lib/agentMission/stage4/approvalGuard.ts"), f).toEqual([]); // the UNWIRED approval guard (safety fix B) reads add-on rows through the shared store
+    for (const f of ["src/lib/agentMission/stage4/reviewRequest.ts", "src/lib/agentMission/stage4/addonRowStore.ts"]) expect([...reachers(abs(f))].map(rel).filter((x) => !REQUEST.includes(x) && !EDIT_REQUEST.includes(x) && x !== "src/lib/agentMission/stage4/approvalGuard.ts" && !APPROVAL.includes(x)), f).toEqual([]); // the UNWIRED approval guard (safety fix B) reads add-on rows through the shared store
   });
   it("the route's imports, followed all the way down, contain nothing under agent/ (no gateway, no worker, no provider client)", () => {
     expect([...closure(route)].map(rel).filter((f) => f.startsWith("agent/"))).toEqual([]);

@@ -339,6 +339,8 @@ describe("the fence in the source", () => {
       "src/lib/agentMission/addonRecovery.ts",
       // SAFETY FIX B: the approval guard reads ONE add-on row by id and the file's add-on rows through the shared store (UNWIRED); the preview reads the customer's own add-on rows by the JSON path
       "src/lib/agentMission/stage4/approvalGuard.ts",
+      // LAUNCH ROUND (workstream 2): the approval function reads ONE add-on row by id and the owner (the same three fields the guard reads) to tell its kind, file and status before it calls the guard; read-only, the writes are the approval function's own (tests/launch-approval-route.test.ts)
+      "src/lib/agentMission/stage4/approvalRoute.ts",
       // STAGE C: the file workflow status reads the customer's own add-on rows and the delivered mission's own row by id (read-only; it never writes)
       "src/lib/agentMission/stage4/fileWorkflow.ts",
       // the shared approval path: its callers are the guarded ones above (asserted in the first test)

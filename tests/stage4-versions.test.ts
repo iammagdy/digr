@@ -16,7 +16,7 @@ describe("flags: every Stage 4 flag is OFF when it is not set", () => {
       expect(stage4Enabled(name, false, { [name]: "test" })).toBe(false);
       expect(stage4Enabled(name, false, { [name]: "on" })).toBe(true);
     }
-    expect([...STAGE4_FLAGS].sort()).toEqual(["DIGER_STAGE4_EDITS", "DIGER_STAGE4_REVIEW", "DIGER_STAGE4_VERSIONS"]);
+    expect([...STAGE4_FLAGS].sort()).toEqual(["DIGER_STAGE4_APPROVAL", "DIGER_STAGE4_EDITS", "DIGER_STAGE4_REVIEW", "DIGER_STAGE4_VERSIONS"]);
   });
 });
 

@@ -153,10 +153,10 @@ describe("the boundary in the source: no route, no component and no worker path 
   const ROOT = path.resolve(__dirname, "..");
   const walk = (dir: string): string[] => readdirSync(dir).flatMap((n) => (n === "node_modules" || n.startsWith(".") ? [] : statSync(path.join(dir, n)).isDirectory() ? walk(path.join(dir, n)) : /\.(ts|tsx)$/.test(n) ? [path.join(dir, n)] : []));
   const rel = (f: string) => path.relative(ROOT, f).split(path.sep).join("/");
-  it("approveAddonOnce is referenced by its own file only (production); the route files do not even contain the word", () => {
+  it("approveAddonOnce is referenced by its own file and by the ONE approval function (launch round, workstream 2); no route file contains the word or a money function: the route only calls that function", () => {
     const hits = [...walk(path.join(ROOT, "src")), ...walk(path.join(ROOT, "agent", "src"))].filter((f) => /approveAddonOnce/.test(readFileSync(f, "utf8"))).map(rel);
-    expect(hits).toEqual(["src/lib/agentMission/addonSettlement.ts"]);
-    for (const f of walk(path.join(ROOT, "src", "app", "api", "missions"))) expect(readFileSync(f, "utf8"), rel(f)).not.toMatch(/approveAddon|accept_quote_atomic|create_quote_atomic|reserve_credits_atomic/);
+    expect(hits.sort()).toEqual(["src/lib/agentMission/addonSettlement.ts", "src/lib/agentMission/stage4/approvalRoute.ts"]);
+    for (const f of walk(path.join(ROOT, "src", "app", "api", "missions"))) expect(readFileSync(f, "utf8"), rel(f)).not.toMatch(/approveAddonOnce|accept_quote_atomic|create_quote_atomic|reserve_credits_atomic/);
   });
   it("no customer-facing Stage 4 component sends an approval: no «approve» action or url in its code, and no call of a money function", () => {
     const code = (f: string) => readFileSync(path.join(ROOT, f), "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:])\/\/.*$/gm, "$1");
