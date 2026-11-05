@@ -81,6 +81,8 @@ export interface CandidateView {
   status: ToolCard["status"];
   derived: boolean;
   carries: string[];
+  /** ROUND 36: the row fields the tool's mapping fills (what the catalog lists for it): lets the choice weigh the fields the customer named. */
+  fields: string[];
   cannot: string[];
   costUsdPerPage: number;
   paging: "declared" | "unknown" | "verified";
@@ -88,10 +90,10 @@ export interface CandidateView {
 export type SelectCapability = (input: { request: string; topic: string | null; candidates: CandidateView[] }) => Promise<{ endpointId: string; reason: string; costUsd: number } | null>;
 
 export function candidateViewOf(card: ToolCard, carries: string[], capability: string | null = null): CandidateView {
-  return { endpointId: card.endpointId, capability, role: card.role, status: card.status, derived: card.derived !== undefined, carries, cannot: [...(card.cannot ?? [])], costUsdPerPage: card.costUsdPerPage, paging: card.derived ? card.derived.paging : card.inputs.cursor ? "verified" : "unknown" };
+  return { endpointId: card.endpointId, capability, role: card.role, status: card.status, derived: card.derived !== undefined, carries, fields: card.mapping.kind === "fields" ? Object.keys(card.mapping.fields).filter((k) => k !== "id") : [], cannot: [...(card.cannot ?? [])], costUsdPerPage: card.costUsdPerPage, paging: card.derived ? card.derived.paging : card.inputs.cursor ? "verified" : "unknown" };
 }
 
-export const SELECT_SYSTEM = `You choose WHICH data tool reads the items (videos, posts, tweets) of a customer's research request. You are shown only tools that code already validated against the catalog; you cannot name any other. Prefer the tool that carries the most of what the request asks (keyword, period, country) and whose paging is declared; prefer a verified tool to a catalog_only one when they carry the same. Never decide prices. Answer with JSON only: {"endpointId": "<one of the listed ids>", "reason": "<one short English sentence>"}.`;
+export const SELECT_SYSTEM = `You choose WHICH data tool reads the items (videos, posts, tweets) of a customer's research request. You are shown only tools that code already validated against the catalog; you cannot name any other. Prefer the tool that carries the most of what the request asks (keyword, period, country) and whose paging is declared; also prefer the tool whose "fields" include more of the fields the request names (dates, the account, views, likes) — a "fields" list comes from the catalog and may be incomplete, so a tool that lists a requested field beats one that does not; prefer a verified tool to a catalog_only one when they carry the same. Never decide prices. Answer with JSON only: {"endpointId": "<one of the listed ids>", "reason": "<one short English sentence>"}.`;
 
 export function selectPrompt(request: string, topic: string | null, candidates: ReadonlyArray<CandidateView>): string {
   return `Request: ${JSON.stringify(request.slice(0, 600))}\nTopic: ${JSON.stringify(topic)}\nCandidates:\n${candidates.map((c) => JSON.stringify(c)).join("\n")}`;

@@ -27,7 +27,10 @@ export interface RequestContract {
   replies: ChildAsk;
   /** ROUND 35: the customer asked for REELS (a kind of Instagram post, not a kind of «منشور»): the plan must serve it with a source that proves the media type or say that it cannot. Absent when the words ask for no reels. */
   media?: "reels";
+  /** ROUND 36: the DELIVERABLE FIELDS the customer named («مع النصوص والروابط والتواريخ وعدد المشاهدات»), as the row keys that carry them. They take part in the choice of the source and in the plan's review: a field the chosen source cannot give is said before approval, never left out silently. Absent when the words name none of them. */
+  wants?: ReadonlyArray<WantedField>;
 }
+export type WantedField = "posted_at" | "author" | "views" | "likes";
 
 const digits = (s: string): string => s.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)));
 const PLATFORM_WORDS: ReadonlyArray<[SocialPlatform, RegExp]> = [
@@ -39,6 +42,14 @@ const PLATFORM_WORDS: ReadonlyArray<[SocialPlatform, RegExp]> = [
 ];
 // ROUND 35: «ريلز» / «ريل» / «reels»: the word stands alone (a prefix «ال» «و» «ب» «ل» is allowed); «أبريل» and «تريليون» contain the letters and are not reels
 export const REELS_WORD = /(?<![ء-ي])(?:[وبلف])?(?:ال)?ريل(?:ز|س|ات)?(?![ء-ي])|\breels?\b/i;
+// ROUND 36: the fields a request names for the delivered rows. «من تاريخ ١ يناير» is a period, not a date column: the date column is asked with «التواريخ», «تاريخ النشر», «وقت النشر», «مع التاريخ»
+const WANT_WORDS: ReadonlyArray<[WantedField, RegExp]> = [
+  ["posted_at", /(?:ال)?تواريخ|تاريخ\s+(?:ال)?(?:نشر|منشور|ريل|فيديو)|وقت\s+(?:ال)?نشر|(?:مع|و)\s*(?:ال)?تاريخ(?![ء-ي])(?!\s*\d)/],
+  ["author", /صاحب\s+(?:ال)?(?:حساب|منشور|ريل)|أصحاب|اسم\s+(?:ال)?(?:حساب|ناشر|كاتب|مستخدم)|(?:ال)?ناشر|(?:ال)?كاتب(?![ء-ي])|المؤلف|يوزر|بيانات\s+(?:ال)?حساب/],
+  ["views", /مشاهدات/],
+  ["likes", /إعجابات|اعجابات|لايكات/],
+];
+export const wantedFieldsOf = (text: string): WantedField[] => WANT_WORDS.filter(([, re]) => re.test(text)).map(([k]) => k);
 const KIND_WORDS: ReadonlyArray<[ParentKind, RegExp]> = [["videos", /فيديو|مقطع|مقاطع/], ["posts", new RegExp(`منشور|بوست|${REELS_WORD.source}`, "i")], ["tweets", /تغريد|تويت/]];
 const DUAL = /(?:فيديوهين|فيديوهان|منشورين|منشوران|تغريدتين|تغريدتان|بوستين|مقطعين)/;
 const COUNT_NOUN = /(?:فيديو|منشور|بوست|تغريد|تويت|مقطع|مقاطع|ريلز|ريلس|ريلات|ريل(?![ء-ي])|reels?\b)/i;
@@ -109,6 +120,7 @@ export function buildRequestContract(request: unknown, answer?: unknown): Reques
     platform,
     parentKind: kind,
     ...(REELS_WORD.test(text) && platform === "instagram" ? { media: "reels" as const } : {}),
+    ...(wantedFieldsOf(text).length > 0 ? { wants: wantedFieldsOf(text) } : {}),
     count: countOf(text),
     source: sourceOf(text),
     topic: topicOf(text),

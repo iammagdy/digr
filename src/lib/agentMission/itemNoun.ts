@@ -26,6 +26,8 @@ export const ITEM_NOUNS: ReadonlyArray<ItemNoun> = [
   N("تغريدة", "تغريدتان", "تغريدتين", "تغريدات", "تغريدة", true),
   N("منشور", "منشوران", "منشورين", "منشورات", "منشورًا", false),
   // the word customers write for a post («٥ بوستات»): without it a title that starts with it was counted by the next known noun, the page the posts come from
+  // ROUND 36: the reels of Instagram («٥ ريلز»): the plural is the word itself, the stage of a request for reels is titled «الريلز»
+  N("ريل", "ريلان", "ريلين", "ريلز", "ريلز", false, ["ريلز", "ريلس"]),
   N("بوست", "بوستان", "بوستين", "بوستات", "بوست", false),
   N("تعليق", "تعليقان", "تعليقين", "تعليقات", "تعليقًا", false),
   N("فيديو", "فيديوهان", "فيديوهين", "فيديوهات", "فيديو", false, ["مقاطع", "مقطع"]),

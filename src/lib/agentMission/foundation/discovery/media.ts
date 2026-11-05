@@ -36,3 +36,10 @@ export function mediaNotesAr(mark: MediaMark): string[] {
   if (mark.basis === "filter") return ["طلبت ريلز: طلبنا من المصدر الريلز فقط عبر مرشّح نوع المحتوى الذي يصفه دليل المصادر، ولم نستنتج النوع من شكل الرابط."];
   return ["طلبت ريلز، لكن المصدر المتاح لهذا الطلب لا يثبت نوع المحتوى: ما سنسلّمه منشورات إنستجرام العامة، وقد لا تكون كلها ريلز. لم نصفِّ منها شيئًا ولم نسمّها ريلز."];
 }
+
+/** The file's own statement of the media scope (methodology, «حدود التسليم»): what was asked, how the type was served, and that nothing was inferred from a link or removed. */
+export function mediaScopeLineAr(mark: MediaMark): string {
+  if (mark.basis === "native") return "نوع المحتوى: طُلبت ريلز، والمصدر مخصص للريلز وحدها؛ ما في الملف ريلز إنستجرام العامة التي أعادها هذا المصدر.";
+  if (mark.basis === "filter") return "نوع المحتوى: طُلبت ريلز، وطلبنا من المصدر الريلز فقط عبر مرشّح النوع الذي يصفه دليل المصادر؛ لم نستنتج النوع من شكل الرابط ولم نحذف شيئًا مما أعاده.";
+  return "نوع المحتوى: طُلبت ريلز، لكن المصدر لا يثبت نوع المحتوى؛ ما في الملف منشورات إنستجرام العامة وقد لا تكون كلها ريلز، ولم نصفِّ منها شيئًا.";
+}

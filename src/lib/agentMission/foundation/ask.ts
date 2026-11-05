@@ -53,6 +53,8 @@ export interface Ask {
   replies: ChildAsk;
   /** ROUND 35: the customer asked for REELS (Instagram): the parent tool must prove the media type (a reels-only tool, or the tool's own media-type filter) or the plan says it cannot. Absent: no reels asked. */
   media?: "reels";
+  /** ROUND 36: the deliverable fields the customer named (dates, the account, views, likes): they take part in the source's choice and in the plan's review. Absent: none named. */
+  wants?: ReadonlyArray<import("../requestContract").WantedField>;
   /** The customer's number of top-level comments FOR EACH parent («١٠٠ تعليق من كل فيديو»), or null when the words give none per parent. */
   commentsPerParent: number | null;
   /** ROUND 19: a number of comments the words give with no «each» and no «total» after it («مع ١٠ تعليقات») while the request has several parents or none counted yet: asked once before the plan. Null when the number is per parent, a total, or absent. */
@@ -206,6 +208,7 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
     comments: c.comments,
     replies: c.replies,
     ...(c.media ? { media: c.media } : {}),
+    ...(c.wants ? { wants: c.wants } : {}),
     commentsPerParent: perParentValue,
     commentsBare: bareValue,
     repliesPerComment: c.replies === "none" ? null : perParentOf(text, PER_COMMENT_REPLIES),

@@ -16,6 +16,7 @@ import { OPEN_REPLIES_FLOOR } from "./openReplies";
 import { ALTERNATIVE_LINE_AR, catalogOnlyPagesOf, commentsAlternativesOf, quoteCostPerRowOf } from "./alternatives";
 import { youtubeChannelNoteAr } from "./youtubeChannel";
 import { TOPIC_RELATION_KEY, TOPIC_RELATION_TITLE_AR, topicRelationAr } from "./topicChoice";
+import { COLUMN_OF, suppliedWants } from "./discovery/fieldRecovery";
 import { cardMapCode, cardsFor, CATALOG_ONLY_CAP_USD, CATALOG_ONLY_PRICE_MARGIN, CHILD_COLUMNS, COUNTRY_AR, mapPage, type CardRole, type ToolCard } from "./toolCards";
 import type { SocialPlatform } from "../redesignFlagTypes";
 
@@ -61,6 +62,8 @@ export function sameParentColumnsOf(platform: SocialPlatform, cardKeys: Readonly
   return [...canonical, ...cardKeys.filter((k) => !canonical.includes(k))];
 }
 
+/** ROUND 36: the parent sheet of a request for REELS whose media type is proven is «الريلز» (its noun is the one the summary, the methodology and the file's name count by); an unproven one keeps «المنشورات». */
+export const REELS_TITLE_AR = "الريلز";
 const PARENT_TITLE: Record<SocialPlatform, string> = { tiktok: "الفيديوهات", x: "التغريدات", facebook: "المنشورات", instagram: "المنشورات", youtube: "الفيديوهات" };
 
 /**
@@ -107,7 +110,8 @@ export function rankedCards(ask: Ask, role: StageRole, options: { cards?: Readon
   const cards = ROLES_OF(role, ask.platform).flatMap((r) => cardsFor(ask.platform!, r, options)).filter((c) => role !== "parents" || eligible(c, ask));
   // a comments card that feeds the replies step: the replies card's parent input is the comment's id, or a token the comments card keeps on each row
   const feeds = (c: ToolCard): number => (role === "comments" && (options.repliesCards ?? []).some((rc) => rc.inputs.parent && (rc.inputs.parent.from === "id" || (c.mapping.kind === "replies" && (c.mapping.tokens ?? []).some((t) => t.key === rc.inputs.parent!.from)))) ? 1 : 0);
-  const score = (c: ToolCard): number[] => [feeds(c), role === "parents" ? carriedBy(c, ask).carried.filter((x) => x === "topic" || x === "period").length : 0, role === "parents" ? carriedBy(c, ask).carried.length : 0, c.derived ? 0 : 1, c.inputs.cursor ? 1 : 0, c.counter ? 1 : 0, -c.costUsdPerPage];
+  // ROUND 36: a source that supplies MORE of the fields the customer named (dates, the account, views, likes) ranks first, whatever else it carries; with no field named the term is 0 for every card and the order is what it was
+  const score = (c: ToolCard): number[] => [feeds(c), role === "parents" ? suppliedWants(c, ask.wants) : 0, role === "parents" ? carriedBy(c, ask).carried.filter((x) => x === "topic" || x === "period").length : 0, role === "parents" ? carriedBy(c, ask).carried.length : 0, c.derived ? 0 : 1, c.inputs.cursor ? 1 : 0, c.counter ? 1 : 0, -c.costUsdPerPage];
   return [...cards].sort((a, b) => { const x = score(a); const y = score(b); for (let i = 0; i < x.length; i += 1) if (x[i] !== y[i]) return y[i] - x[i]; return 0; });
 }
 
@@ -407,12 +411,14 @@ export function compilePlan(input: CompileInput): CompileResult {
   const shown = (r: PoolRow): PoolRow => ({ ...r, ...(markTopic ? { [TOPIC_RELATION_KEY]: topicRelationAr(tierOf(r)) } : {}), ...(markNamed ? { [NAMED_MARK_KEY]: namedValue(r) } : {}) });
   const cardFieldKeys = [...Object.keys(card.mapping.kind === "fields" ? card.mapping.fields : {}), ...(card.mapping.kind === "fields" && card.mapping.linkTemplate ? ["link"] : []), ...(input.counters && !poolCard.counter ? ["comments"] : [])];
   // ROUND 27 (item 4): the parent sheet of a platform whose search has several verified tools has the SAME columns whichever tool read the page; a field the tool does not give stays a column and says «غير متاح» (workbook.ts)
-  const fieldKeys = sameParentColumnsOf(ask.platform, cardFieldKeys);
+  // ROUND 36: a field the customer NAMED is a column even when the chosen tool cannot give it (its cells say «غير متاح» and the plan said so before approval), never an omission
+  const wantedKeys = (ask.wants ?? []).map((k) => COLUMN_OF[k]).filter((k) => !cardFieldKeys.includes(k));
+  const fieldKeys = sameParentColumnsOf(ask.platform, [...cardFieldKeys, ...wantedKeys]);
   const columns = [...fieldKeys.filter((k, i) => k !== "id" && fieldKeys.indexOf(k) === i).map((k) => ({ key: k, title_ar: TITLE[k] ?? k })), ...(markTopic ? [{ key: TOPIC_RELATION_KEY, title_ar: TOPIC_RELATION_TITLE_AR }] : []), ...(markNamed ? [{ key: NAMED_MARK_KEY, title_ar: NAMED_MARK_TITLE_AR }] : [])];
   const pageRows = Math.max(1, card.page.observedRowsPerPage);
   promises[parentKey] = { type: "exact", n: chosen.length };
   stages.push({
-    key: parentKey, title_ar: PARENT_TITLE[ask.platform], endpoint_id: card.endpointId, ...(capabilityOf(card.endpointId) ? { capability: capabilityOf(card.endpointId)! } : {}),
+    key: parentKey, title_ar: input.reelsProven === true ? REELS_TITLE_AR : PARENT_TITLE[ask.platform], endpoint_id: card.endpointId, ...(capabilityOf(card.endpointId) ? { capability: capabilityOf(card.endpointId)! } : {}),
     expected_rows: chosen.length, planned_rows: chosen.length, parent_key: null, deliver: true, columns, sample_rows: chosen.slice(0, 3).map(shown),
     measured_by: input.pool.pages.map((p) => p.callId), measured_from_calls: input.pool.pages.map((p) => p.callId), measured_cost_per_row_usd: card.costUsdPerPage / pageRows,
     yield_share: 1, review_share: 0, pinned_rows: chosen.map(shown), ...(spares.length > 0 && commentsCard ? { spare_rows: spares.map(shown) } : {}),
@@ -426,7 +432,7 @@ export function compilePlan(input: CompileInput): CompileResult {
     const searchPages = input.pool.pages.filter((p) => (p.card ?? poolCard).role === "posts.search");
     const last = searchPages[searchPages.length - 1];
     const more = last ? Boolean(atPath(last.page, (last.card ?? poolCard).page.cursor)) : false;
-    const parts = [`قرأنا ${postsCountAr(readAll.length)} من نتائج البحث في ${pagesCountAr(searchPages.length)}${more ? "، وفي المصدر المزيد" : ""}.`];
+    const parts = [`قرأنا ${input.reelsProven === true ? (readAll.length === 1 ? "ريلًا واحدًا" : readAll.length === 2 ? "ريلين" : `${toArabicDigits(readAll.length)} ريلز`) : postsCountAr(readAll.length)} من نتائج البحث في ${pagesCountAr(searchPages.length)}${more ? "، وفي المصدر المزيد" : ""}.`];
     if (ask.source.kind === "named" && ask.source.text) parts.push(`منها من صفحة «${ask.source.text}»: ${toArabicDigits(readAll.filter(isNamed).length)}.`);
     if (ask.topic.text) {
       parts.push(`منها يتحدث نصه عن «${ask.topic.text}»: ${toArabicDigits(readAll.filter((r) => factsOf(r, ask, bySource).topicTier === 2).length)}.`);

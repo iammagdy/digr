@@ -4,6 +4,7 @@ import { checkChannelsAgainstWords } from "../../src/lib/agentMission/foundation
 import { buildShapeDigest } from "../../src/lib/modelPlanner/digest";
 import { carriedBy, chooseCard, compilePlan, parentInputs, rankedCards, rankedPoolOf, COMPILED_PLATFORMS, type CompileResult } from "../../src/lib/agentMission/foundation/compilePlan";
 import { channelAnswerOf, channelEvidenceOf, youtubeChannelChoiceQuestionAr } from "../../src/lib/agentMission/foundation/discovery/channelEvidence";
+import { fieldNotesAr, recoverFields, type FieldReport } from "../../src/lib/agentMission/foundation/discovery/fieldRecovery";
 import { mediaMarkOf, mediaNotesAr, reelsBasisOf, reelsCandidates, type MediaMark } from "../../src/lib/agentMission/foundation/discovery/media";
 import { candidateViewOf, discoveryMarkOf, discoveryNotesAr, pagingOf, type DiscoveryEvaluation, type DiscoveryMark, type SelectCapability } from "../../src/lib/agentMission/foundation/discovery/plan";
 import { factsOf, isAboutAndEligible, pageMatchesSource, rankPool } from "../../src/lib/agentMission/foundation/pool";
@@ -100,7 +101,7 @@ const sameInputs = (digest: Record<string, unknown>, params: Record<string, unkn
 /** Reads the pool and the exposure pages through the gateway, then compiles. */
 export async function planByCompiler(deps: CompiledPlanningDeps): Promise<WithCost<CompiledPlanning>> {
   const cost = { usd: 0 };
-  const seen: { pages: Array<{ card: ToolCard; page: unknown; nextCursor: string | null; hasMore: boolean | null }>; choice?: DiscoveryMark["selection"]; evaluation?: DiscoveryEvaluation; media?: MediaMark } = { pages: [] };
+  const seen: { pages: Array<{ card: ToolCard; page: unknown; nextCursor: string | null; hasMore: boolean | null }>; choice?: DiscoveryMark["selection"]; evaluation?: DiscoveryEvaluation; media?: MediaMark; fields?: FieldReport[] } = { pages: [] };
   let result = await planInner(deps, cost, seen);
   // ROUND 30: a plan made from an account the customer gave (the request named none) says so: the results are that account's, not all of Instagram
   const given = deps.choices?.instagramAccount;
@@ -110,6 +111,10 @@ export async function planByCompiler(deps: CompiledPlanningDeps): Promise<WithCo
   // ROUND 35: a request for REELS says, before approval, how the media type is served (a reels-only tool, the tool's media-type filter) or that it is unproven; the mark is kept with the plan whether or not discovery is on
   if (result.kind === "plan" && seen.media) {
     result = { ...result, plan: { ...result.plan, notes_ar: [...(result.plan.notes_ar ?? []), ...mediaNotesAr(seen.media)], compiled: { ...result.plan.compiled!, media: seen.media } } };
+  }
+  // ROUND 36: the fields the customer named and what the real page showed for each (the unavailable ones are said before approval; the recovered ones keep the path they were read from)
+  if (result.kind === "plan" && seen.fields && seen.fields.length > 0) {
+    result = { ...result, plan: { ...result.plan, notes_ar: [...(result.plan.notes_ar ?? []), ...fieldNotesAr(seen.fields)], compiled: { ...result.plan.compiled!, fields: seen.fields } } };
   }
   // ROUND 33: a plan whose parents were read by a tool derived from the catalog says so before approval, with what the pages showed about completeness (never «all of the platform»), and keeps the audit mark of the discovery
   // ROUND 34: EVERY PLAN OF A MISSION WITH DISCOVERY ON carries the mark, whichever tool was chosen (a verified tool took part in the same evaluation as the derived ones): the audit evidence that discovery was entered, what was eligible and what was chosen
@@ -128,7 +133,7 @@ export async function planByCompiler(deps: CompiledPlanningDeps): Promise<WithCo
   return cost.usd > 0 ? { ...result, llmCostUsd: cost.usd } : result;
 }
 
-async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen: { pages: Array<{ card: ToolCard; page: unknown; nextCursor: string | null; hasMore: boolean | null }>; choice?: DiscoveryMark["selection"]; evaluation?: DiscoveryEvaluation; media?: MediaMark }): Promise<CompiledPlanning> {
+async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen: { pages: Array<{ card: ToolCard; page: unknown; nextCursor: string | null; hasMore: boolean | null }>; choice?: DiscoveryMark["selection"]; evaluation?: DiscoveryEvaluation; media?: MediaMark; fields?: FieldReport[] }): Promise<CompiledPlanning> {
   const cardsOpt = deps.cards ? { cards: deps.cards } : {};
   const at = Date.parse(String(deps.mission.created_at ?? ""));
   // THE CUSTOMER'S ANSWER TO THE NAMED-PAGE QUESTION (decision 7.5) and TO THE OCCURRENCE QUESTION (decision 7) are ready answers: they are read as choices and the request is read without their words
@@ -341,6 +346,8 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   card = measuredRows(card, first.page);
   track(card, first);
   if (ask.media === "reels" && ask.platform === "instagram") seen.media = mediaMarkOf(card);
+  // ROUND 36: THE FIELDS THE CUSTOMER NAMED, checked on the REAL first page just read (no extra call): in the card, recovered from the provider's own key (a card derived from the catalog only), or unavailable (said before approval)
+  if (ask.wants && ask.wants.length > 0) { const rec = recoverFields(card, first.page, ask.wants, deps.nowMs); card = rec.card; seen.fields = rec.report; }
   const pages: Array<{ callId: string; page: unknown; card?: ToolCard }> = [{ callId: first.callId, page: first.page }];
   // LIVE ROUND 7: «عن X» on a source whose search also matches hashtags. When no video of the first page has its own text about the topic, the one more read the gateway allows for this source asks the topic with the words of talking about it
   // (built by code from the Ask), and the union of both pages is ranked by the same rule. Only a search with no operators (TikTok); X's query is the quoted words of the text itself.
