@@ -23,6 +23,7 @@ import { findUnresolvedResearchPlaceholder, unresolvedResearchPlaceholderMessage
 import { withDeadline } from "../../../functions/shared/deadline";
 import { AGENT_SERVES_CHAT } from "../../../lib/agentMission/constants";
 import { resolveTrustedEmailVerified } from "../../../lib/server/trustedEmailVerification";
+import { guestUuidOfCookie, ownGuestAccountId } from "../../../lib/server/guestIdentity";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -155,22 +156,8 @@ export async function POST(req: NextRequest) {
       }
 
       isGuest = true;
-      let existingGuestId: string | null = null;
-      if (guestSessionCookie && guestSessionCookie.startsWith("gst_")) {
-        const potentialUuid = guestSessionCookie.slice(4);
-        if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(potentialUuid)) {
-          if (tables.auth?.admin?.getUserById) {
-            try {
-              const { data: userCheck } = await tables.auth.admin.getUserById(potentialUuid);
-              if (userCheck?.user?.id) {
-                existingGuestId = userCheck.user.id;
-              }
-            } catch {}
-          } else {
-            existingGuestId = potentialUuid;
-          }
-        }
-      }
+      // The cookie is the browser's own word: it may name ONLY a disposable guest account Diger created, never a real customer's id.
+      const existingGuestId: string | null = await ownGuestAccountId(tables, guestSessionCookie);
 
       if (existingGuestId) {
         verifiedUserId = existingGuestId;
@@ -214,18 +201,21 @@ export async function POST(req: NextRequest) {
           guestSessionCookie = `gst_${crypto.randomUUID()}`;
           newGuestCookieToSet = guestSessionCookie;
         }
-        verifiedUserId = guestSessionCookie.startsWith("gst_") && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(guestSessionCookie.slice(4))
-          ? guestSessionCookie.slice(4)
-          : guestSessionToUuid(guestSessionCookie);
+        // A uuid we generated just now is ours; a cookie the browser sent is hashed, so it can never BE a real user's id.
+        const generatedHere = guestSessionCookie === newGuestCookieToSet ? guestUuidOfCookie(guestSessionCookie) : null;
+        verifiedUserId = generatedHere ?? guestSessionToUuid(guestSessionCookie);
       }
       emailVerified = true;
     } else {
       // Authenticated user: migrate previous guest conversation if guest session cookie exists
       if (guestSessionCookie) {
-        const prevGuestUuid = guestSessionCookie.startsWith("gst_") && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(guestSessionCookie.slice(4))
-          ? guestSessionCookie.slice(4)
+        // Only a disposable guest account (or the hash-pseudo id of a cookie that names no account) is ever moved or deleted.
+        // `gst_<some other customer's id>` is NOT adopted: nothing is migrated, nothing is deleted.
+        const namesAccount = guestUuidOfCookie(guestSessionCookie) !== null;
+        const prevGuestUuid: string | null = namesAccount
+          ? await ownGuestAccountId(tables, guestSessionCookie)
           : guestSessionToUuid(guestSessionCookie);
-        try {
+        if (prevGuestUuid && prevGuestUuid !== verifiedUserId) try {
           await Promise.all([
             tables.from("conversations").update({ user_id: verifiedUserId }).eq("user_id", prevGuestUuid),
             tables.from("messages").update({ user_id: verifiedUserId }).eq("user_id", prevGuestUuid),
