@@ -67,14 +67,14 @@ export function buildResendPayload(req: SendEmailRequest) {
   return assembleResendPayload(FROM, renderEmailTemplate(req.template, renderVarsWithUnsubscribe(req.vars ?? {}, req.unsubscribeUrl)), req.to, req.unsubscribeUrl);
 }
 
-function json(body: unknown, status: number): Response {
+function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { "Content-Type": "application/json" },
   });
 }
 
-async function handle(req: Request): Promise<Response> {
+export async function handle(req: Request): Promise<Response> {
   if (req.method !== "POST") {
     return json({ ok: false, error: "method_not_allowed" }, 405);
   }
@@ -143,8 +143,14 @@ async function handle(req: Request): Promise<Response> {
     return json({ ok: false, error: "resend_rejected", status: res.status }, 502);
   }
 
-  const data = (await res.json()) as { id?: string };
-  return json({ ok: true, id: data.id ?? null });
+  // Resend accepted the message (2xx). An unreadable body must not turn a delivered email into a reported failure.
+  let data: { id?: string } = {};
+  try {
+    data = (await res.json()) as { id?: string };
+  } catch {
+    data = {};
+  }
+  return json({ ok: true, id: data?.id ?? null });
 }
 
 // Only start the server when run as the function entrypoint (not when imported by tests).

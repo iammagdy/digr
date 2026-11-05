@@ -96,3 +96,61 @@ Deno.test("isValidUnsubscribeUrl: https only, max 2048, no header-breaking chara
   assert(!isValidUnsubscribeUrl("https://diger.tech/" + "a".repeat(2048)));
   assert(!isValidUnsubscribeUrl(42));
 });
+
+// ---- handle(): behaviour of the whole request path with a stubbed Resend (no network) ----
+import { handle } from "./index.ts";
+
+async function withStubbedResend(resendResponse: () => Response, run: (calls: { n: number }) => Promise<void>) {
+  const realFetch = globalThis.fetch;
+  const prevKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+  const prevResend = Deno.env.get("RESEND_API_KEY");
+  Deno.env.set("SUPABASE_SERVICE_ROLE_KEY", "service-test-key");
+  Deno.env.set("RESEND_API_KEY", "re_test_key");
+  const calls = { n: 0 };
+  globalThis.fetch = (() => { calls.n++; return Promise.resolve(resendResponse()); }) as typeof fetch;
+  try { await run(calls); } finally {
+    globalThis.fetch = realFetch;
+    if (prevKey === undefined) Deno.env.delete("SUPABASE_SERVICE_ROLE_KEY"); else Deno.env.set("SUPABASE_SERVICE_ROLE_KEY", prevKey);
+    if (prevResend === undefined) Deno.env.delete("RESEND_API_KEY"); else Deno.env.set("RESEND_API_KEY", prevResend);
+  }
+}
+
+const req = (auth: string | null, body: unknown) => new Request("https://x.test/send-email", {
+  method: "POST",
+  headers: { "Content-Type": "application/json", ...(auth ? { Authorization: auth } : {}) },
+  body: JSON.stringify(body),
+});
+const NEWS_BODY = { template: "news", to: "a@example.test", vars: SAMPLE_VARS["news"], idempotencyKey: "launch:u1", unsubscribeUrl: "https://diger.tech/api/email/unsubscribe?t=a.b" };
+
+Deno.test("handle: a delivered email (Resend 200) with an unreadable body is still reported ok, never a failure", async () => {
+  await withStubbedResend(() => new Response("<<not json>>", { status: 200 }), async (calls) => {
+    const res = await handle(req("Bearer service-test-key", NEWS_BODY));
+    assertEquals(res.status, 200);
+    assertEquals(await res.json(), { ok: true, id: null });
+    assertEquals(calls.n, 1);
+  });
+});
+
+Deno.test("handle: Resend rejection is a 502 with no provider body leaked", async () => {
+  await withStubbedResend(() => new Response(JSON.stringify({ message: "re_secret_detail" }), { status: 422 }), async () => {
+    const res = await handle(req("Bearer service-test-key", NEWS_BODY));
+    assertEquals(res.status, 502);
+    const text = await res.text();
+    assert(!text.includes("re_secret_detail"));
+  });
+});
+
+Deno.test("handle: no/wrong credentials never reach Resend", async () => {
+  await withStubbedResend(() => new Response("{}", { status: 200 }), async (calls) => {
+    assertEquals((await handle(req(null, NEWS_BODY))).status, 401);
+    assertEquals(calls.n, 0);
+  });
+});
+
+Deno.test("handle: a header-breaking unsubscribeUrl is refused before any send", async () => {
+  await withStubbedResend(() => new Response("{}", { status: 200 }), async (calls) => {
+    const res = await handle(req("Bearer service-test-key", { ...NEWS_BODY, unsubscribeUrl: "https://diger.tech/x>\r\nBcc: a@b.c" }));
+    assertEquals(res.status, 400);
+    assertEquals(calls.n, 0);
+  });
+});
