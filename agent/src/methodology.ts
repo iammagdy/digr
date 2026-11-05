@@ -327,6 +327,10 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
         : `فُحصت كل نتيجة مقروءة قبل تسليمها: تُقبل إذا ذكر نصها ${terms.length ? quoted(terms) : "الموضوع المطلوب"}${about}.`;
       return `${base}${review}${counts}`;
     }
+    // ROUND 37: a stage that carries the mark column «علاقة النص بالموضوع» DID record the relation of every row to the topic (it is the item «صلة النتائج بالموضوع», right below). Saying here that no relevance check was applied contradicted that item (live: «لم يُطبَّق فحص صلة» above «النص يتحدث عن الموضوع: ٥»).
+    // The honest statement is that nothing was removed for relevance and that each row is marked.
+    const marked = !s.parent_key && s.deliver && (s.columns ?? []).some((c) => c.key === TOPIC_RELATION_KEY) && (rowsByStage[s.key] ?? []).length > 0;
+    if (marked) return "لم يُحذف أي نتيجة بسبب صلتها بالنص؛ وُسمت كل نتيجة في عمود «علاقة النص بالموضوع»، وتوزيع العلامات في بند «صلة النتائج بالموضوع» أدناه. تُسلَّم النتائج كما أعطاها المصدر بعد المرشّحات إن وُجدت.";
     return s.parent_key !== null ? "عناصر تابعة تُسلَّم كما أعطاها المصدر، بعد المرشّحات إن وُجدت." : "لم يُطبَّق فحص صلة بالنص على هذه المرحلة؛ تُسلَّم النتائج كما أعطاها المصدر بعد المرشّحات إن وُجدت.";
   });
   const RELEVANCE_LABEL = "كيف فُحصت الصلة بطلبك";

@@ -96,8 +96,12 @@ describe("the relation of the delivered items to the topic, in the methodology",
     const withoutMark = modelOf(planOf(false), [...repeat(ABOUT, 3), ...repeat(TAGS, 7)]);
     expect(itemOf(withoutMark, LABEL)).toBeUndefined();
     // the same methodology with the column present differs ONLY by the one new item
+    // ROUND 37 CHANGED: and by the sentence of «كيف فُحصت الصلة بطلبك», which used to say «لم يُطبَّق فحص صلة بالنص» right above the counts of that very relation (a contradiction on the real Reels file). Every OTHER item is still identical.
+    const HOW = "كيف فُحصت الصلة بطلبك";
     const withMark = modelOf(planOf(true), [...repeat(ABOUT, 3), ...repeat(TAGS, 7)]);
-    expect(withMark.items.filter((x) => x.label !== LABEL)).toEqual(withoutMark.items);
+    expect(withMark.items.filter((x) => x.label !== LABEL && x.label !== HOW)).toEqual(withoutMark.items.filter((x) => x.label !== HOW));
+    expect(itemOf(withoutMark, HOW)!.values.join(" ")).toContain("لم يُطبَّق فحص صلة بالنص على هذه المرحلة");
+    expect(itemOf(withMark, HOW)!.values.join(" ")).not.toContain("لم يُطبَّق فحص صلة");
     expect(withMark.table).toEqual(withoutMark.table);
     expect(withMark.reasons).toEqual(withoutMark.reasons);
   });
