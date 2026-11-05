@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { resolveMissionViewer, safeMissionId } from "@/lib/server/missionViewer";
+import { stage4RouteOpen } from "@/lib/agentMission/stage4/testGate";
 import { cancelReviewRequest, createReviewRequest, currentReviewRequest } from "@/lib/agentMission/stage4/reviewRequest";
 import { reviewPreviewAvailable } from "@/lib/agentMission/stage4/reviewPreview";
 import { parseVersionNumber } from "@/lib/agentMission/stage4/versionFile";
@@ -20,7 +21,7 @@ const refuse = (status: number, error: string) => NextResponse.json({ success: f
  * `too_large`, `nothing_to_review`, `changed` (the request is no longer waiting); 503 the storage or the database could not answer; 500 a stored object that is not this mission's version. Never cached.
  */
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  if (!reviewPreviewAvailable()) return refuse(404, "not_found");
+  if (!(await stage4RouteOpen(req, ["DIGER_STAGE4_REVIEW"], reviewPreviewAvailable))) return refuse(404, "not_found");
   const id = safeMissionId((await ctx.params).id);
   if (!id) return refuse(400, "bad_request");
   const auth = await resolveMissionViewer(req);
@@ -32,7 +33,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
 const ALLOWED_KEYS: Record<string, readonly string[]> = { create: ["action", "version"], cancel: ["action", "requestId"] };
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  if (!reviewPreviewAvailable()) return refuse(404, "not_found");
+  if (!(await stage4RouteOpen(req, ["DIGER_STAGE4_REVIEW"], reviewPreviewAvailable))) return refuse(404, "not_found");
   const id = safeMissionId((await ctx.params).id);
   if (!id) return refuse(400, "bad_request");
   const auth = await resolveMissionViewer(req);

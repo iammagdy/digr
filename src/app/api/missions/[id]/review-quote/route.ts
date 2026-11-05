@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { resolveMissionViewer, safeMissionId } from "@/lib/server/missionViewer";
+import { stage4RouteOpen } from "@/lib/agentMission/stage4/testGate";
 import { reviewPreviewAvailable, reviewQuoteFor, reviewableVersions } from "@/lib/agentMission/stage4/reviewPreview";
 import { parseVersionNumber } from "@/lib/agentMission/stage4/versionFile";
 
@@ -18,7 +19,7 @@ const refuse = (status: number, error: string) => NextResponse.json({ success: f
  * 503 the storage or the database could not answer (never «missing», never a guessed price); 500 a stored object that is not this mission's version (never priced). Never cached. No hold, no charge, no release, no refund, no write, no provider, no model.
  */
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  if (!reviewPreviewAvailable()) return refuse(404, "not_found");
+  if (!(await stage4RouteOpen(req, ["DIGER_STAGE4_REVIEW"], reviewPreviewAvailable))) return refuse(404, "not_found");
   const id = safeMissionId((await ctx.params).id);
   const params = new URL(req.url).searchParams;
   const asked = params.getAll("version");

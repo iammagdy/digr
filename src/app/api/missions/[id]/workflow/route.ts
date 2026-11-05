@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { resolveMissionViewer, safeMissionId } from "@/lib/server/missionViewer";
+import { stage4RouteOpen } from "@/lib/agentMission/stage4/testGate";
 import { fileWorkflowFor, workflowAvailable } from "@/lib/agentMission/stage4/fileWorkflow";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +15,7 @@ const refuse = (status: number, error: string) => NextResponse.json({ success: f
  * 503 the database or the storage could not answer (never an empty list, never «delivered»). Never cached. No hold, no charge, no release, no write, no provider.
  */
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  if (!workflowAvailable()) return refuse(404, "not_found");
+  if (!(await stage4RouteOpen(req, ["DIGER_STAGE4_REVIEW", "DIGER_STAGE4_EDITS"], workflowAvailable))) return refuse(404, "not_found");
   const id = safeMissionId((await ctx.params).id);
   if (!id) return refuse(400, "bad_request");
   const auth = await resolveMissionViewer(req);

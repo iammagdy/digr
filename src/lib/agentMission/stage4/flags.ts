@@ -18,3 +18,11 @@ export function stage4Enabled(name: Stage4Flag, isTestAccount: boolean, env: Env
   const mode = stage4FlagMode(name, env);
   return mode === "on" || (mode === "test" && isTestAccount === true);
 }
+
+/**
+ * The ACCOUNT-GATED mode of the site's customer routes (testGate.ts): the variable says exactly «allowlist» (case and spaces ignored). Every other word keeps its old meaning: «on» serves everyone, «test» and anything else is OFF for the site.
+ * It is a separate word on purpose, so every existing «only exactly on serves» rule (and its tests) stays true: nothing becomes served unless someone writes this word.
+ */
+export function stage4AllowlistMode(name: Stage4Flag, env: Env = processEnv()): boolean {
+  return String(env[name] ?? "").trim().toLowerCase() === "allowlist";
+}

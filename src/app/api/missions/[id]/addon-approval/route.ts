@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { resolveMissionViewer, safeMissionId } from "@/lib/server/missionViewer";
 import { approvalAvailable, approveAddonForCustomer } from "@/lib/agentMission/stage4/approvalRoute";
+import { isStage4TestViewer, stage4RouteOpen } from "@/lib/agentMission/stage4/testGate";
 
 export const dynamic = "force-dynamic";
 
@@ -17,7 +18,7 @@ const refuse = (status: number, error: string) => NextResponse.json({ success: f
  * 403 e-mail not verified; 404 not theirs / not this file's / feature off; 503 the database could not answer. Never cached. No job id, quote id, ledger id, provider or USD is ever in an answer.
  */
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  if (!approvalAvailable()) return refuse(404, "not_found");
+  if (!(await stage4RouteOpen(req, ["DIGER_STAGE4_APPROVAL"], approvalAvailable))) return refuse(404, "not_found");
   const id = safeMissionId((await ctx.params).id);
   if (!id) return refuse(400, "bad_request");
   const auth = await resolveMissionViewer(req);
@@ -26,7 +27,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
 }
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  if (!approvalAvailable()) return refuse(404, "not_found");
+  // «on»: everyone, exactly as before (the viewer is not looked at here). «test»: ONLY an authorized test account (testGate.ts); everyone else, signed in or not, gets the same 404 as when the feature is off. Off: 404 first.
+  if (!(await stage4RouteOpen(req, ["DIGER_STAGE4_APPROVAL"], approvalAvailable))) return refuse(404, "not_found");
   const id = safeMissionId((await ctx.params).id);
   if (!id) return refuse(400, "bad_request");
   const auth = await resolveMissionViewer(req);
@@ -36,6 +38,6 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   let body: unknown = null;
   try { body = await req.json(); } catch { /* bad input: the function answers 400 */ }
   const { userId, isGuest, emailVerified } = auth.viewer;
-  const r = await approveAddonForCustomer(createAdminClient(), { missionId: id, userId, isGuest, emailVerified, body });
+  const r = await approveAddonForCustomer(createAdminClient(), { missionId: id, userId, isGuest, emailVerified, body, testAccount: isStage4TestViewer(auth.viewer) });
   return NextResponse.json(r.body, { status: r.status, headers: NO_STORE });
 }

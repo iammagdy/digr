@@ -5,6 +5,7 @@ import { contentDispositionOf, contentTypeOfName } from "@/lib/downloadName";
 import { fileResponseFromBytes, fileResponseFromUrl } from "@/lib/server/fileResponse";
 import { resolveMissionViewer, safeMissionId } from "@/lib/server/missionViewer";
 import { versionsAvailable } from "@/lib/agentMission/stage4/versionList";
+import { stage4RouteOpen } from "@/lib/agentMission/stage4/testGate";
 import { parseVersionNumber, readVersionFile } from "@/lib/agentMission/stage4/versionFile";
 
 export const dynamic = "force-dynamic";
@@ -19,7 +20,7 @@ const refuse = (status: number, error: string) => NextResponse.json({ success: f
  * Read-only: no write, no signed link, no price, no charge. A request without `version` never comes here.
  */
 async function versionFile(req: NextRequest, rawId: string, name: string, versions: string[]): Promise<Response> {
-  if (!versionsAvailable()) return refuse(404, "not_found");
+  if (!(await stage4RouteOpen(req, ["DIGER_STAGE4_VERSIONS"], versionsAvailable))) return refuse(404, "not_found");
   const id = safeMissionId(rawId);
   const version = versions.length === 1 ? parseVersionNumber(versions[0]) : null;
   if (!id || name !== "result.xlsx" || version === null) return refuse(400, "bad_request");
