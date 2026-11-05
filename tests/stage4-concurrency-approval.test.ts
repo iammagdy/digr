@@ -207,7 +207,9 @@ describe("SCENARIO 6 and 8: a failed approval whose money state is unknown, and 
       });
       expect(value.first).toMatchObject({ ok: false, status: 409 });
       expect(value.mid.row.status).toBe("plan_ready");
-      expect(value.mid.row.approved_at, "the row says an approval was attempted").toBeTruthy();
+      // LAUNCH ROUND: a quote that could not be made moves no money and the ledger proves nothing was reserved, so the mark is cleared (the request is plainly unpaid);
+      // every other failure may have moved money (or lost its answer): the mark STAYS, the request is never shown as «nothing was held»
+      expect(Boolean(value.mid.row.approved_at), fn === "create_quote_atomic" ? "a proven clean quote failure leaves no approval mark" : "the row says an approval was attempted").toBe(fn !== "create_quote_atomic");
       // what the first failure left in the ledger depends on where it failed: held (the answer lost after the reserve) or nothing
       const held = fn === "accept_quote_atomic" ? when === "after" : fn === "claim_job_chunk";
       expect(value.mid.reserves).toBe(held ? 1 : 0);
@@ -224,20 +226,22 @@ describe("SCENARIO 6 and 8: a failed approval whose money state is unknown, and 
       ledgerSound(out, ok.holdPoints);
     });
   }
-  it("a refused reserve writes NOTHING (insufficient balance): the balance never goes negative; the row goes back to «waiting» but is marked as approved-once, so the customer CANNOT cancel it though no money moved: DOCUMENTED UNRESOLVED RISK (UX only, no money)", async () => {
+  it("a refused reserve writes NOTHING (insufficient balance): the balance never goes negative; the row goes back to «waiting» with NO approval mark (a PROVEN clean refusal), so the page still shows it, the customer CAN cancel it, and it does not block another request (LAUNCH ROUND: root cause fixed in approveAddonOnce)", async () => {
     const row = waiting(1);
     const { value, out } = await solo(opts(ONE, { seed: [row], balance: 5 }), async (c) => {
       const first = await approveAddonOnce(c, { id: row.id as string, actorId: ME, expectUserId: ME });
-      const cancelled = await cancelReviewRequest(c, { missionId: MISSION, userId: ME, requestId: row.id as string });
       const seen = await currentReviewRequest(c, { missionId: MISSION, userId: ME });
-      return { first, cancelled, seen };
+      const cancelled = await cancelReviewRequest(c, { missionId: MISSION, userId: ME, requestId: row.id as string });
+      return { first, seen, cancelled };
     });
     expect(value.first).toMatchObject({ ok: false, status: 402, error: ADDON_APPROVE_MESSAGES_AR.insufficient_balance });
     expect(heldJobs(out)).toBe(0);
     expect(out.money.balance()).toBe(5);
-    expect(value.cancelled, "cancel is refused for a row that was ever claimed").toMatchObject({ ok: false, status: 409, error: "changed" });
-    expect(value.seen, "and the page no longer shows it as «nothing held»").toEqual({ ok: true, request: null });
-    expect(openRows(out.rows)).toHaveLength(1);
+    expect(out.rows.get(row.id as string)).toMatchObject({ approved_at: null, approved_by: null });
+    expect(value.seen, "the page still shows the waiting request").toMatchObject({ ok: true, request: expect.anything() });
+    expect((value.seen as any).request, "and it is a request, not «nothing»").not.toBeNull();
+    expect(value.cancelled, "cancel works: no money moved and nothing was ever claimed as paid").toMatchObject({ ok: true });
+    expect(openRows(out.rows)).toHaveLength(0);
     ledgerSound(out);
   });
   it("after the customer tops up, the retry of that same request succeeds and reserves once", async () => {

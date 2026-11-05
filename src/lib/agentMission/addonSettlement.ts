@@ -229,6 +229,23 @@ export async function approveAddonOnce(client: any, input: AddonApprovalInput): 
   if (claim.error) return { ok: false, status: 500, error: "تعذّر الاعتماد." };
   if (Array.isArray(claim.data) && claim.data.length === 0) return bad(409, "already_approved");
   const revert = (error: string, status: "plan_ready" | "cancelled" = "plan_ready") => quiet(() => client.from(MISSION_TABLE).update({ status, lease_until: null, error }).eq("id", input.id));
+  /**
+   * THE REVERT AFTER A PROVEN CLEAN REFUSAL (root cause of «a refused approval leaves the request possibly paid»). The claim above wrote `approved_at` and `approved_by`; `revert` puts the status back but cannot know whether money moved, so it keeps them, and every reader
+   * (stage4 workflow view, open-add-on count, cancel) treats a request «that was ever put through an approval» as possibly paid: after the most common refusal (not enough points) the request had no button, no cancel, blocked another request and said «the points may be held».
+   * Here the approval mark is cleared ONLY when the job's OWN ledger state is READ and PROVED empty (`none`: no job row and no ledger row of its deterministic id), in the same compare-and-set that returns the row to `plan_ready` (pinned to `approved` with no job).
+   * Any other state (held, released, charged, settled free), an unreadable or contradictory state, a refused or errored update, a status that already moved: the plain `revert` runs and the mark STAYS. A hold is never judged absent by a guess, and a lost answer is never cleaned here
+   * (it does not call this function at all).
+   */
+  const revertAfterCleanRefusal = async (error: string): Promise<void> => {
+    try {
+      const state = await readJobMoneyState(client, addonJobId(addonQuoteId(input.id)));
+      if (state.kind === "none") {
+        const cleared = await client.from(MISSION_TABLE).update({ status: "plan_ready", lease_until: null, error, approved_at: null, approved_by: null }).eq("id", input.id).eq("status", "approved").is("job_id", null).select("id");
+        if (!cleared?.error) return; // cleared (one row) or the row already moved on (no row): nothing more to write
+      }
+    } catch { /* not proved: the plain revert below keeps the mark */ }
+    await revert(error);
+  };
   // Where the money stands decides what the customer may be told: before `accept` nothing can be reserved; from `accept` on it MAY be, whatever the answer of the call was.
   let stage: "plan" | "quote" | "accept" | "claim" | "record" = "plan";
 
@@ -236,7 +253,7 @@ export async function approveAddonOnce(client: any, input: AddonApprovalInput): 
     const { data: claimed } = await client.from(MISSION_TABLE).select("plan").eq("id", input.id).maybeSingle();
     const addon = readAddonPlan(claimed?.plan ?? row.plan);
     const price = addon ? checkAddon(row.id, addon) : null;
-    if (!addon || !price || !price.ok) { await revert(price && !price.ok ? price.code : "plan_changed"); return bad(409, price && !price.ok && price.code === "too_large" ? "too_large" : "plan_changed", price && !price.ok ? price.code : "plan_changed"); }
+    if (!addon || !price || !price.ok) { await revertAfterCleanRefusal(price && !price.ok ? price.code : "plan_changed"); return bad(409, price && !price.ok && price.code === "too_large" ? "too_large" : "plan_changed", price && !price.ok ? price.code : "plan_changed"); }
     const hold = price.holdPoints;
 
     const quoteId = addonQuoteId(row.id);
@@ -248,7 +265,7 @@ export async function approveAddonOnce(client: any, input: AddonApprovalInput): 
 
     stage = "quote";
     const created = await client.rpc("create_quote_atomic", { p_user_id: row.user_id, p_quote_id: quoteId, p_quote_hash: quoteHash, p_items: items, p_total_points: hold, p_output_formats: formats, p_expires_at: expiresAt, p_previous_quote_ids: [] });
-    if (created?.error || created?.data?.success === false) { await revert("quote_failed"); return bad(409, "quote_failed", "quote_failed"); }
+    if (created?.error || created?.data?.success === false) { await revertAfterCleanRefusal("quote_failed"); return bad(409, "quote_failed", "quote_failed"); }
 
     stage = "accept";
     const accepted = await client.rpc("accept_quote_atomic", { p_quote_id: quoteId, p_user_id: row.user_id, p_expected_quote_hash: quoteHash });
@@ -259,7 +276,7 @@ export async function approveAddonOnce(client: any, input: AddonApprovalInput): 
       const code = typeof body?.error === "string" ? body.error : "accept_failed";
       if (code === "quote_expired") { await revert("quote_expired", "cancelled"); return bad(409, "quote_expired", code); }
       const key: AddonApproveMessage = code === "insufficient_balance" || code === "concurrency_limit" ? code : "accept_failed";
-      await revert(code);
+      await revertAfterCleanRefusal(code); // the database ANSWERED «no» (a body, not an error): clean only if the ledger proves it
       return bad(key === "insufficient_balance" ? 402 : 409, key, code);
     }
     const jobId = String(body.job_id);
@@ -303,7 +320,7 @@ export async function approveAddonOnce(client: any, input: AddonApprovalInput): 
   } catch {
     // a call that threw (the answer may be lost: the money may or may not have moved): the row goes back, and the deterministic ids make the next approval converge on the same quote, job and ledger rows
     if (stage === "accept" || stage === "claim" || stage === "record") { await revert("approval_unverified"); return bad(409, "approval_unverified", "approval_unverified"); }
-    await revert(stage === "quote" ? "quote_failed" : "accept_failed");
+    await revertAfterCleanRefusal(stage === "quote" ? "quote_failed" : "accept_failed"); // before accept no money call of this call can have moved anything; the ledger must still prove it
     return stage === "quote" ? bad(409, "quote_failed", "quote_failed") : bad(409, "accept_failed", "accept_failed");
   }
 }

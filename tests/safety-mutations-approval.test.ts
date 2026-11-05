@@ -104,8 +104,10 @@ describe("MUTATION: fix C (recovery ends only what the database PROVES)", () => 
   it("if the recovery called a money function it would show in the rpc log (this guards the guard: the real recovery calls none)", async () => {
     const rec = await loadMutant(RECOVERY, [{ from: 'case "none": return { kind: "no_reservation" };', to: 'case "none": { await client.rpc("release_job_atomic", { p_job_id: jobId, p_error_message: "x" }); return { kind: "no_reservation" }; }' }]);
     const { w, row } = make();
+    w.failUpdates({ when: (p) => p.approved_at === null, mode: "error_before" }); // the mark stays (the clearing of a clean refusal fails), so the recovery reaches its «none» case
     w.injectError("create_quote_atomic", "before");
     await (await import("../src/lib/agentMission/addonSettlement")).approveAddonOnce(w.client, { id: row.id, actorId: USER, expectUserId: USER });
+    w.clearFaults();
     const before = w.calls.length;
     await rec.module.recoverAbandonedAddon(w.client, { id: row.id, userId: USER });
     expect(w.calls.length, "the mutant calls a money function").toBeGreaterThan(before);
