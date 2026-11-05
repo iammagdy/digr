@@ -1,5 +1,5 @@
-import { formatAr } from "../../arabicDigits";
 import type { WorkLogLine } from "./workLog";
+import { counterAr, counterOfStored } from "./counterWording";
 
 /**
  * STAGE 2, THE LIVE SHEET: THE READ MODEL AND THE POLLING CONTRACT (docs/STAGE-2.md, FOUNDATION-PLAN PR 4). While a job runs, the customer watches the rows the file will hold: on a desktop
@@ -98,7 +98,8 @@ export function parsePollRequest(q: { get(name: string): string | null } | Recor
   return { cursor: cursor && cursor.length <= 200 ? cursor : null, sheet: sheet && sheet.length <= 100 ? sheet : null, offset: whole(get("offset"), 0), limit };
 }
 
-export const counterAr = (delivered: number, promised: number | null): string => (promised !== null && promised > 0 ? `${formatAr(delivered)} من ${formatAr(promised)}` : formatAr(delivered));
+/** The counter's words live in counterWording.ts (finding F-1: over-delivery is said in words); re-exported so the worker and the tests keep one import. */
+export { counterAr };
 
 const cutRow = (r: LiveRow): LiveRow & { cut?: true } => {
   let cut = false;
@@ -119,7 +120,7 @@ export function pollResponse(snapshot: LiveSnapshot | null, req: LivePollRequest
   if (req.cursor !== null && req.cursor === snapshot.cursor && req.offset === 0) return { changed: false, cursor: snapshot.cursor, retryAfterMs: snapshot.status === "done" ? LIVE_SHEET_POLL.maxIntervalMs : delayMs };
   const sheet = snapshot.sheets.find((s) => s.stageKey === req.sheet) ?? snapshot.sheets[0] ?? null;
   const base = {
-    changed: true as const, cursor: snapshot.cursor, status: snapshot.status, delivered: snapshot.delivered, promised: snapshot.promised, counterAr: snapshot.counterAr,
+    changed: true as const, cursor: snapshot.cursor, status: snapshot.status, delivered: snapshot.delivered, promised: snapshot.promised, counterAr: counterOfStored(snapshot),
     workLog: snapshot.workLog.slice(-LIVE_SHEET_POLL.maxWorkLogLines),
     sheets: snapshot.sheets.map((s) => ({ stageKey: s.stageKey, nameAr: s.nameAr, headers: s.headers, total: s.rows.length })),
     retryAfterMs: snapshot.status === "done" ? null : delayMs,

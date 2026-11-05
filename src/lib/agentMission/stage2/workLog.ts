@@ -1,6 +1,6 @@
 import { toArabicDigits } from "../../arabicDigits";
 import { CAIRO_TZ } from "../cairoTime";
-import { formatAr } from "../../arabicDigits";
+import { counterAr } from "./counterWording";
 import { itemNounOf, knownItemNoun, type ItemNoun } from "../itemNoun";
 import { nounCountAr as countAr } from "./arabicCount";
 
@@ -38,7 +38,7 @@ const hm = new Intl.DateTimeFormat("en-GB", { timeZone: CAIRO_TZ, hour: "2-digit
 const isCount = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v >= 0;
 const nounOf = (k: unknown): ItemNoun | null => (typeof k === "string" && (WORK_LOG_NOUNS as ReadonlyArray<string>).includes(k) ? knownItemNoun(NOUN_WORD[k as WorkLogNoun]) : null);
 /** «X من N» in Arabic-Indic digits: the noun is named before it in the sentence (S11: «٤٠ من ١٠٠ تعليقًا» and «فيديوهين من فيديوهين» read badly). */
-const xOfN = (x: number, n: number): string => `${formatAr(x)} من ${formatAr(n)}`;
+const xOfN = (x: number, n: number): string => counterAr(x, n); // above N it is the counter's over-delivery wording (finding F-1): never «١٠٩ من ٧٠»
 const pagesAr = (n: number): string => (n === 1 ? "صفحة واحدة" : n === 2 ? "صفحتين" : n >= 3 && n <= 10 ? `${toArabicDigits(n)} صفحات` : `${toArabicDigits(n)} صفحة`);
 
 type Render = (e: WorkLogEvent, noun: ItemNoun | null) => string | null;

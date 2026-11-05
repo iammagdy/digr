@@ -246,3 +246,25 @@ Still open (found in this session, nothing done about them):
 ## 12. Compatibility with the Stage 4 add-on rows (integration round)
 
 A paid review, review fix or edit request of a delivered file (Money PR 7e) is a row of `missions` whose `plan` has the key `addon`, in `plan_ready` while it waits. It belongs to the same customer, so the Stage 2 readers must treat it as «not found»: **`ask_edit`** (it would have sent the row back to `queued`, i.e. into the research planner: reproduced, answer 200), **the card loader** and **the live-sheet route**. Fixed in `askEditAction.ts` and `live/route.ts` with `stage2/addonMarkerRule.ts` (the same structural rule as `addonMarker.ts` of that PR, written here because this branch does not have that file). Tests: `tests/stage2-addon-rows.test.ts` (7; four fail without the fix). After both branches are merged the rule file can be replaced by an import of `addonMarker.ts`.
+
+## 13. The live counter above the plan's number (finding F-1, integration round 3)
+
+**Reproduced** on the stored real rows of M12 (TikTok, 2 videos, 300 comments, 67 replies delivered against a plan of 70): the phone counter said «١٠٩ من ٧٠» while the delivered Excel says «تم تسليم ١٠٩ … (أكثر من ٧٠ … المحسوبة في الخطة …)». The numbers were always the same (`promisedTotalOf`, the one denominator); only the words were missing, so the counter read as a contradiction.
+
+**Now** one function, `stage2/counterWording.ts`, is the only place that words the counter; the worker's snapshot, the route's answer and the work log all call it:
+
+| state | text |
+| --- | --- |
+| nothing delivered yet of a known number | «٠ من ٤٠» |
+| progress | «١٢ من ٤٠» |
+| exact completion | «٤٠ من ٤٠» (equal is not over-delivery) |
+| delivered ABOVE the plan | «١٠٩ (أكثر من التقدير البالغ ٧٠)» |
+| promised total unknown (none, or zero) | «١٢» (no total is invented) |
+
+Never capped, hidden, removed or invented: the whole delivered number and the plan's number are both on screen, and the sentence says the delivery is above the estimate. No cause is claimed (the Excel's own sentence names the replies; the counter only says what is true of the numbers). **The route now builds the text from the snapshot's numbers** (`counterOfStored`), so a snapshot written by an OLDER worker revision (Heroku was not verifiable from the review environment) is shown with the new wording too; a snapshot whose numbers are not whole numbers keeps its stored text. The work log's «المجموع الآن» and «انتهينا» lines use the same function. The phone counter wraps instead of overflowing (`flex-wrap`).
+
+**Changed expectations (deliberate).** Four existing assertions pinned the old form on over-delivered data: `stage2-live-poll` and `stage2-live-route` (120 of 40), `stage2-live-sheet-ui` and `stage2-live-equality` (the real M12 rows). They now assert the shared function's output and the over-delivery form; the progress and exact forms are unchanged.
+
+**Tests:** `tests/stage2-live-counter-wording.test.ts` (new, every state, the Excel's numbers equal the counter's on the real M12 rows, stale-worker text, refresh, unreadable numbers, phone markup, work log). With the old behaviour restored 8 tests fail. **Real browser** (Chromium, desktop 1280 and phone 390 with an iPhone user agent; the local app with a dummy configuration and fake API answers produced by the repo's own planner, snapshot builder and poll contract from the stored real rows): 23 of 23 checks, including refresh and failed polls. Not verified: a real mission on a test account.
+
+**Still open (owner):** F-2 (the card header on a phone and the live counter may use different bases during a run) needs a real run to be measured; F-3 (no counter on a desktop) is the Stage 2 design.

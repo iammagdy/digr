@@ -18,9 +18,9 @@ export function LiveSheetCards({ data, onWindow = () => undefined }: { data: Liv
   const total = sheet?.total ?? 0;
   return (
     <section dir="rtl" data-testid="live-cards" className="flex flex-col gap-2">
-      <p className="m-0 flex items-baseline justify-between rounded-[12px] bg-sf2 px-3 py-2 text-[14px] text-ink" role="status" data-testid="live-counter">
+      <p className="m-0 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 rounded-[12px] bg-sf2 px-3 py-2 text-[14px] text-ink" role="status" data-testid="live-counter">
         <span className="text-ink2">{LIVE_COUNTER_TITLE_AR}</span>
-        <span className="text-[18px] font-semibold">{data.counterAr}</span>
+        <span className="min-w-0 break-words text-[18px] font-semibold">{data.counterAr}</span>
       </p>
       {sheet ? (
         <ul className="m-0 flex list-none flex-col gap-2 p-0">

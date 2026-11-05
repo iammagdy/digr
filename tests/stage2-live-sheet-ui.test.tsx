@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { liveAnswer } from "./helpers/stage2Live";
 import { LIVE_BACK_AR, LIVE_COUNTER_TITLE_AR, LIVE_MORE_AR, LiveSheetCards } from "../src/components/mission/LiveSheetCards";
 import { LIVE_WORK_LOG_TITLE_AR, LiveWorkLog } from "../src/components/mission/LiveWorkLog";
+import { counterAr } from "../src/lib/agentMission/stage2/liveSheet";
 import { LiveSheetView } from "../src/components/mission/LiveSheetPanel";
 import { checkCustomerLabel, checkCustomerText } from "../src/lib/agentMission/text";
 
@@ -15,7 +16,8 @@ describe("the phone (S10): the counter «X من N», cards and the next window",
     const html = renderToStaticMarkup(createElement(LiveSheetCards, { data }));
     expect(html).toContain(LIVE_COUNTER_TITLE_AR);
     expect(html).toContain(`>${data.counterAr}<`);
-    expect(data.counterAr).toMatch(/^[٠-٩٬]+ من [٠-٩٬]+$/);
+    expect(data.counterAr).toBe(counterAr(data.delivered, data.promised)); // the real M12 rows are above the plan's number: the over-delivery wording (F-1)
+    expect(data.counterAr).toMatch(/^[٠-٩٬]+ \(أكثر من التقدير البالغ [٠-٩٬]+\)$/);
     expect((html.match(/data-testid="live-card"/g) ?? []).length).toBe(data.window.rows.length);
     for (const card of html.split('data-testid="live-card"').slice(1)) expect((card.split("</li>")[0].match(/<dt/g) ?? []).length).toBeLessThanOrEqual(3);
     expect(html).toContain(LIVE_MORE_AR);

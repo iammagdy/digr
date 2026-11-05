@@ -34,7 +34,7 @@ describe("the answer", () => {
     const s = snapshot(120);
     const r = pollResponse(s, { cursor: "old", sheet: "comments", offset: 100, limit: 50 });
     if (!r.changed) throw new Error("unchanged");
-    expect(r.counterAr).toBe("١٢٠ من ٤٠");
+    expect(r.counterAr).toBe(counterAr(120, 40)); expect(r.counterAr).toBe("١٢٠ (أكثر من التقدير البالغ ٤٠)"); // over the plan: said in words (F-1), never «١٢٠ من ٤٠»
     expect(r.workLog).toHaveLength(20);
     expect(r.sheets.map((x) => [x.stageKey, x.total])).toEqual([["videos", 1], ["comments", 120]]);
     expect(r.window.stageKey).toBe("comments");

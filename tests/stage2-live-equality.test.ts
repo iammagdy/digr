@@ -10,6 +10,7 @@ import { compilePlan, parentInputs } from "../src/lib/agentMission/foundation/co
 import { NO_ABOUT_OPTIONS_AR } from "../src/lib/agentMission/foundation/topicChoice";
 import { cardOf } from "../src/lib/agentMission/foundation/toolCards";
 import { reportedPlan, withPromiseCaps, withRepliesJudged } from "../src/lib/agentMission/repliesCard";
+import { counterAr } from "../src/lib/agentMission/stage2/liveSheet";
 import type { PricedPlan } from "../src/lib/agentMission/plan";
 import { SUMMARY_SHEET_AR } from "../src/lib/modelPlanner/missionWorkbook";
 import type { LiveSnapshot } from "../src/lib/agentMission/stage2/liveSheet";
@@ -119,7 +120,10 @@ describe("at completion the live sheet equals the file (stored real missions)", 
     expectEqual(live, await fileOf(plan, log));
     expect(live.sheets.map((s) => s.rows.length)).toEqual([2, expect.any(Number)]);
     expect(live.sheets[1].rows.filter((r) => r.cells.some((c) => c.v === "رد")).length).toBeGreaterThan(0);
-    expect(live.counterAr).toMatch(/^[٠-٩٬]+ من [٠-٩٬]+$/);
+    // the real M12 rows are ABOVE the plan's number (finding F-1): the counter is the shared wording of those very numbers, in the over-delivery form
+    expect(live.delivered).toBeGreaterThan(live.promised ?? 0);
+    expect(live.counterAr).toBe(counterAr(live.delivered, live.promised));
+    expect(live.counterAr).toMatch(/^[٠-٩٬]+ \(أكثر من التقدير البالغ [٠-٩٬]+\)$/);
   });
   it("Instagram (live round 11 rows, M16 plan): 2 posts, 30 comments and 9 replies; «غير متاح» counters are the file's", async () => {
     const { plan, rows } = await instagram();
