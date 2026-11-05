@@ -1,4 +1,8 @@
 import { createJobCallBudget } from "../../src/lib/server/callBudget";
+import { stage2Enabled } from "../../src/lib/agentMission/stage2/flags";
+import { topicRelationAnswerOf } from "../../src/lib/agentMission/stage2/questionCards";
+import { readAskEdits } from "./stage2/askEdits";
+import { markStage2TestAccount } from "./stage2/testMarker";
 import type { CallRecorder, FetchFn } from "../../src/lib/server/multiProvider/adapterTypes";
 import type { TregCallOptions, TregCallResult } from "../../src/functions/shared/tregClient";
 import type { commitTregSpend } from "../../src/lib/server/tregCallRecord";
@@ -30,7 +34,8 @@ import { PLANNING_NUDGE } from "./nudge";
 import { readRunState, updateRunState, type RunState } from "./runState";
 import { buildTools, newRunState, socialRedesignActive, type ToolContext, type ToolSpec } from "./tools";
 import { applySnapshot, readPlanningState, resumeNoteOf, snapshotOf, writePlanningState } from "./planningState";
-import { ItemStore, type ItemSnapshot, type StopReason } from "./items/itemStore";
+import { ItemStore, newWriterId, type ItemSnapshot, type StopReason } from "./items/itemStore";
+import { createLiveWriter, liveSheetOn, writeDoneSnapshotSafely } from "./stage2/liveWriter";
 import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
 import { readPlatformFlagsOf, readRedesignFlags } from "../../src/lib/agentMission/redesignFlags";
@@ -428,6 +433,17 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const prior = compiledActive ? await readRunState(store, mission.id) : null;
   let choices: Choices = prior?.choices ?? {};
   let answerIsChoice = false;
+  // STAGE 2 S5 (docs/STAGE-2.md): the question cards of the Stage 2 policy, only when DIGER_STAGE2_QUESTION_CARDS is on for this account; the topic-relation card's answer is kept in the run note
+  const stage2Questions = compiledActive && stage2Enabled("DIGER_STAGE2_QUESTION_CARDS", redesign.isTest);
+  let topicRelation = stage2Questions ? prior?.topicRelation : undefined;
+  if (stage2Questions && prior?.stage2Pending === "topic_relation") {
+    const rel = topicRelationAnswerOf(mission.answer_text);
+    if (rel) {
+      answerIsChoice = true;
+      topicRelation = rel;
+      await updateRunState(store, mission.id, (r) => { const { stage2Pending: _p, ...rest } = r; void _p; return { ...rest, topicRelation: rel }; }, deps.log);
+    }
+  }
   // ROUND 30 (Instagram, no account): the customer's answer to «which account» is read by code: an account (username or link) is kept with the choices, anything else is kept as «declined» (the request then ends, it is never asked twice);
   // either way the answer's words are not part of the request (its topic and count stay as written)
   if (compiledActive && prior?.pending === "instagram_account") {
@@ -463,15 +479,19 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
       await updateRunState(store, mission.id, (r) => { const { pending: _p, ...rest } = r; void _p; return { ...rest, choices }; }, deps.log);
     }
   }
+  // STAGE 2 (docs/STAGE-2.md S2): the customer's card edits (create-only objects of the mission's folder), only when DIGER_STAGE2_ASK_CARD is on for this account; unset (today), none is read
+  // STAGE 2: a TEST account's mission is marked for the site when some Stage 2 flag says «test» (unset or «on»: nothing is written)
+  await markStage2TestAccount(store, mission.id, redesign.isTest);
+  const askEdits = compiledActive && stage2Enabled("DIGER_STAGE2_ASK_CARD", redesign.isTest) ? await readAskEdits(store, mission.id) : [];
   // ROUND 33, CATALOG DISCOVERY: with the `social_discovery` switch on `test` and a TEST account, the compiler may also build the parents from a tool derived from the catalog (validated against the catalog and against its comments and replies cards); the model may choose among the validated
   // candidates. Everything else about the mission (the gateway, the price, the hold, the approval, the engine) is what it was.
   const discovered = compiledActive && redesign.platform && discoveryActive(settings, redesign.isTest) ? cardsWithDiscovery(deps.catalog, redesign.platform, access) : null;
   const selectCapability = discovered && deps.reviewCall ? modelSelector(async ({ system, user, maxTokens }) => { const got = await deps.reviewCall!({ model: MODEL_HAIKU, system, user, maxTokens }); return got ? { text: got.text, costUsd: llmCostFromUsage(MODEL_HAIKU, got.usage) } : null; }) : undefined;
-  const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, ...(discovered ? { cards: discovered.cards, chainIssues: chainCheckerFor(deps.catalog, access), discoveryRejected: discovered.rejected.map((r) => ({ endpointId: r.endpointId, reason: r.reason })), ...(selectCapability ? { selectCapability } : {}) } : {}), nowMs: planningNow, priorCalls: calls, ...(understand ? { understand } : {}), ...(occurrence ? { occurrence } : {}), ...(redesign.isTest ? { catalogOnly: true } : {}), askCount: true, choices, questionsAsked: prior?.questionsAsked ?? 0, answerIsChoice }) : null;
+  const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, ...(discovered ? { cards: discovered.cards, chainIssues: chainCheckerFor(deps.catalog, access), discoveryRejected: discovered.rejected.map((r) => ({ endpointId: r.endpointId, reason: r.reason })), ...(selectCapability ? { selectCapability } : {}) } : {}), nowMs: planningNow, priorCalls: calls, ...(askEdits.length > 0 ? { askEdits } : {}), ...(stage2Questions ? { questionCards: true, ...(topicRelation ? { topicRelation } : {}) } : {}), ...(understand ? { understand } : {}), ...(occurrence ? { occurrence } : {}), ...(redesign.isTest ? { catalogOnly: true } : {}), askCount: true, choices, questionsAsked: prior?.questionsAsked ?? 0, answerIsChoice }) : null;
   // THE QUESTION BEFORE APPROVAL (live round 7): no video of the two pages read is about the topic; the plan is not made, the customer chooses (the same needs_input card as the topic question)
   if (compiled?.kind === "question") {
     // every question card counts toward the three a request may have; a count or comments question also waits for its answer
-    await updateRunState(store, mission.id, (r) => ({ ...r, questionsAsked: (r.questionsAsked ?? 0) + 1, ...(compiled.why === "count" || compiled.why === "per_parent" || compiled.why === "instagram_account" || compiled.why === "youtube_channel" ? { pending: compiled.why } : {}) }), deps.log);
+    await updateRunState(store, mission.id, (r) => ({ ...r, questionsAsked: (r.questionsAsked ?? 0) + 1, ...(compiled.why === "count" || compiled.why === "per_parent" || compiled.why === "instagram_account" || compiled.why === "youtube_channel" ? { pending: compiled.why } : {}), ...(compiled.why === "topic_relation" ? { stage2Pending: "topic_relation" as const } : {}) }), deps.log);
     await store.addEvent(mission.id, { kind: "call", message_ar: compiled.why === "named_shortfall" ? "قياس داخلي: سؤال قبل الخطة، منشورات الصفحة المسمّاة أقل من المطلوب." : compiled.why === "occurrence" || compiled.why === "occurrence_year" ? "قياس داخلي: سؤال قبل الخطة، الحدث يتكرر ولم تُحدَّد سنة." : "قياس داخلي: سؤال قبل الخطة، لا فيديو في ما قُرئ يتحدث عن الموضوع.", counts: { compiled: 0, question: 1, pool_reads: compiled.reads.pool, exposure_reads: compiled.reads.exposure } }).catch(() => undefined);
     await store.updateMission(mission.id, { status: "needs_input", question_ar: compiled.question, plan_public: { question_options: compiled.options } as any, ...(compiled.llmCostUsd ? { planning_llm_usd: Number((Number((await store.getMission(mission.id))?.planning_llm_usd ?? mission.planning_llm_usd ?? 0) + compiled.llmCostUsd).toFixed(6)) } : {}), ...clear });
     await store.addEvent(mission.id, { kind: "question", message_ar: compiled.question });
@@ -601,14 +621,17 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   // THE SILENT FALLBACK, NAMED (docs/ROOT-CAUSE.md, cause 3): beside `pipe_new`, the number of the first stage whose recipe was not built by code when the flag was active for this mission
   const fallbackStage = redesignStages.size === 0 ? fallbackStageOf(plan, redesignFlags, redesignIsTest, platformFlags) : null;
   if (anyRedesignFlag(redesignFlags, platformFlags)) await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي للمسار الذي شغّل المهمة.", counts: { pipe_new: redesignStages.size > 0 ? 1 : 0, ...(fallbackStage !== null ? { fallback_stage: fallbackStage } : {}) } }).catch(() => undefined);
+  // STAGE 2 S6 (docs/STAGE-2.md): the live sheet, only when DIGER_STAGE2_LIVE_SHEET is on for this account (unset: null, and the engine's events are written exactly as before)
+  const live = (await liveSheetOn(async () => redesignIsTest)) ? createLiveWriter({ store, missionId: mission.id, plan, items, writerId: newWriterId(), log: deps.log }) : null;
   if (engineOn) {
     // THE MODEL PLANNED, CODE EXECUTES: every stage has a recipe the plan check proved, so no model session is started at all (the only model call left is the small review of items the rule cannot decide)
     const tracked = trackRun();
     try {
-      const outcome = await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: mission.id, gateway, sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, ...(redesignStages.size > 0 ? { redesignStages } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}), log: deps.log });
+      const outcome = await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: mission.id, gateway, sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: live ? (e) => live.addEvent(e, () => store.addEvent(mission.id, e)) : (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, ...(redesignStages.size > 0 ? { redesignStages } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}), log: deps.log });
       output = { llmCostUsd: 0, turns: 0, stop: outcome.aborted ?? "end" };
     } finally {
       untrackRun(tracked);
+      if (live) await live.flush();
     }
   } else {
     // the model carries the mission out (a plan whose stages have no proven recipe), still through the one item store. A round that ends while matching items are still needed and a source has more is followed by another round.
@@ -751,6 +774,8 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const delivered = Math.min(fileCount, plan.price.deliveredRows);
   if (fileCount > plan.price.deliveredRows) flags.push("file_over_the_volume_sold");
   const settled = await settleMission(deps.client, { jobId, deliveredUnits: delivered, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath, releaseReason: "لم يُسلَّم شيء من هذه المهمة، فعاد الحجز المؤقت كاملًا." });
+  // STAGE 2 S6 (docs/STAGE-2.md): the live sheet's last snapshot, equal to the file just stored. It runs AFTER the settlement (so it can never stand between the customer and the settlement), builds its own arguments inside its own try, and never throws: a failure is logged and ignored. Unset flag: nothing is evaluated or written.
+  await writeDoneSnapshotSafely({ store, missionId: mission.id, plan: approvedPlan, filePlan: plan, snap, requestText: mission.request_text, reviewStop: checked.stop, resultPath, mailboxesOf: companyMailboxesOf, isTest: () => accountIsTest(store, mission.user_id), log: deps.log });
   if (!settled.ok) {
     await store.updateMission(mission.id, { status: "failed", error: `settlement ${settled.code}: ${settled.detail}`, execution_llm_usd: Number(llm.toFixed(6)), ...clear });
     await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّرت التسوية الآلية للمهمة؛ راجع المشرف ولم يُخصم رصيد إضافي." });

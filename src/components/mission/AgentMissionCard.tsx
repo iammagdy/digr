@@ -22,6 +22,9 @@ import { fileNameFromDisposition } from "@/lib/downloadName";
 import { MethodologyOffer } from "@/components/mission/MethodologyOffer";
 import { CARD_FAST_AFTER_ACTION_MS, cardPollDelayMs, holdingLineAr } from "@/lib/agentMission/pollDelay";
 import type { PlanEdits } from "@/lib/agentMission/planEdit";
+import { AskCard } from "@/components/mission/AskCard";
+import { LiveSheetPanel } from "@/components/mission/LiveSheetPanel";
+import type { AskCardView, AskEdit } from "@/lib/agentMission/stage2/askCard";
 
 /**
  * THE MISSION CARD of the chat: what the agent will deliver, in plain Arabic and in one place. It draws ONE answer of /api/missions/<id> (the customer's own mission): a summary sentence, the
@@ -31,7 +34,7 @@ import type { PlanEdits } from "@/lib/agentMission/planEdit";
  */
 /** ROUND 21: a delivered compiled mission carries the offer of its data-collection methodology (the job the purchase route takes, and whether it was bought). */
 interface MethodologyOfferInfo { jobId: string; titleAr: string; purchased: boolean }
-interface MissionAnswer { success: boolean; isGuest?: boolean; status?: string; requestText?: string; view?: CustomerMissionView; error?: string; methodology?: MethodologyOfferInfo }
+interface MissionAnswer { success: boolean; isGuest?: boolean; status?: string; requestText?: string; view?: CustomerMissionView; error?: string; methodology?: MethodologyOfferInfo; /** STAGE 2 S4: present only when DIGER_STAGE2_ASK_CARD is on for the viewer and the plan waits for approval. */ askCard?: AskCardView; /** STAGE 2 S10: present only when DIGER_STAGE2_LIVE_SHEET is on for the viewer. */ liveSheet?: true }
 
 const TERMINAL_PHASES: ReadonlySet<string> = new Set(["done", "partial", "unserved", "failed", "cancelled"]);
 const WAITING_POLL_MS = 8000;
@@ -48,7 +51,8 @@ async function authHeaders(): Promise<Record<string, string>> {
   } catch { return {}; }
 }
 
-export default function AgentMissionCard({ missionId, onEdit, onApproved, onSettled }: { missionId: string; onEdit?: (requestText: string) => void; onApproved?: () => void; /** The mission is over: the release and the charge are written, so the page refreshes the balance it shows. */ onSettled?: () => void }) {
+export default function AgentMissionCard({ missionId, onEdit, onApproved, onSettled, stage2 = false }: { missionId: string; onEdit?: (requestText: string) => void; onApproved?: () => void; /** The mission is over: the release and the charge are written, so the page refreshes the balance it shows. */ onSettled?: () => void; /** STAGE 2: the page shows the Stage 2 surfaces (the requests page only, owner decision 1); they still appear only when the server sends them (flags on). */ stage2?: boolean }) {
+  const [askError, setAskError] = useState<string | null>(null);
   const [answer, setAnswer] = useState<MissionAnswer | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -154,6 +158,22 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
     const t = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(t);
   }, [live]);
+  /** STAGE 2 S4: one edit of the «فهمنا طلبك» card; the server checks it again, keeps it and plans again (no money line). */
+  async function askEdit(edit: AskEdit) {
+    if (busy) return;
+    setBusy(true);
+    setAskError(null);
+    try {
+      const res = await fetch(`/api/missions/${encodeURIComponent(missionId)}`, { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) }, body: JSON.stringify({ action: "ask_edit", edit }) });
+      const json = await res.json().catch(() => ({}));
+      if (!res.ok || !json?.success) { setAskError(String(json?.error || "تعذّر حفظ تعديلك. حاول مرة أخرى؛ لم يُخصم شيء.")); return; }
+      await read();
+    } catch {
+      setAskError("تعذّر الاتصال الآن؛ حاول بعد قليل. لم يُخصم شيء.");
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function download(name: string) {
     try {
@@ -178,11 +198,13 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   if (!v) {
     return <div dir="rtl" data-testid="agent-card" data-phase="loading" className="mt-3 rounded-[18px] border border-ln bg-sf p-4 text-[13px] text-ink2" role="status">جارٍ تجهيز مهمتك…</div>;
   }
-  return <AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} pendingText={pendingText} quietSinceMs={quietSinceMs} nowMs={nowMs} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled} />;
+  // STAGE 2 S10: the live sheet under the card, on the requests page only (`stage2`) and only when the server said the flag is on for this viewer
+  const showLive = stage2 && answer?.liveSheet === true && (v.phase === "running" || v.phase === "done" || v.phase === "partial");
+  return <>{<AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} pendingText={pendingText} quietSinceMs={quietSinceMs} nowMs={nowMs} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled} askCard={stage2 ? answer?.askCard ?? null : null} onAskEdit={askEdit} askError={askError} />}{showLive ? <LiveSheetPanel missionId={missionId} enabled /> : null}</>;
 }
 
 /** The card itself, drawn from one view: pure (no network), so it renders the same on the server and in the tests. */
-export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAction = null, pendingText = null, quietSinceMs = null, nowMs = 0, approved = false, error = null, reply = "", onReply = () => undefined, onAct = () => undefined, onDownload = () => undefined, balancePoints = null, editing = false, onEditing = () => undefined, methodology = null, onSettled }: { view: CustomerMissionView; isGuest: boolean; busy?: boolean; pendingAction?: string | null; /** ROUND 26 (item 2): the choice on its way (its own label). */ pendingText?: string | null; /** ROUND 26 (item 2): when the card last saw a change, and the clock now (the holding line). */ quietSinceMs?: number | null; nowMs?: number; approved?: boolean; error?: string | null; reply?: string; onReply?: (text: string) => void; onAct?: (action: "approve" | "cancel" | "edit" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) => void; onDownload?: (name: string) => void; /** The customer's balance in points (null: not known, never zero). */ balancePoints?: number | null; editing?: boolean; onEditing?: (open: boolean) => void; /** ROUND 21: the methodology offer of a delivered compiled mission (the same offer the chat's chooser draws). */ methodology?: MethodologyOfferInfo | null; onSettled?: () => void }) {
+export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAction = null, pendingText = null, quietSinceMs = null, nowMs = 0, approved = false, error = null, reply = "", onReply = () => undefined, onAct = () => undefined, onDownload = () => undefined, balancePoints = null, editing = false, onEditing = () => undefined, methodology = null, onSettled, askCard = null, onAskEdit = () => undefined, askError = null }: { /** STAGE 2 S4: the «فهمنا طلبك» card (only when the server sent it). */ askCard?: AskCardView | null; onAskEdit?: (edit: AskEdit) => void; askError?: string | null; view: CustomerMissionView; isGuest: boolean; busy?: boolean; pendingAction?: string | null; /** ROUND 26 (item 2): the choice on its way (its own label). */ pendingText?: string | null; /** ROUND 26 (item 2): when the card last saw a change, and the clock now (the holding line). */ quietSinceMs?: number | null; nowMs?: number; approved?: boolean; error?: string | null; reply?: string; onReply?: (text: string) => void; onAct?: (action: "approve" | "cancel" | "edit" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) => void; onDownload?: (name: string) => void; /** The customer's balance in points (null: not known, never zero). */ balancePoints?: number | null; editing?: boolean; onEditing?: (open: boolean) => void; /** ROUND 21: the methodology offer of a delivered compiled mission (the same offer the chat's chooser draws). */ methodology?: MethodologyOfferInfo | null; onSettled?: () => void }) {
   // the close-page sentence belongs to the status block of the card (on the page, from the moment of approval): the details list below does not say it a second time
   const panelContent = { title: "خطة المهمة", steps: v.steps, currentLineAr: v.currentLineAr, delayAr: v.delayAr, remainingAr: v.remainingAr, closePageAr: null, startedAt: v.startedAt ?? undefined, live: v.live };
   // the plan the customer has just approved is shown as a running mission at once, before the next read of the mission returns
@@ -276,6 +298,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
         </div>
       ) : null}
       {approving ? <p role="status" aria-live="polite" className="m-0 text-[13px] leading-[1.8] text-ink2" data-testid="agent-approving">جارٍ اعتماد خطتك… لن تحتاج لفعل شيء بعدها.</p> : null}
+      {planShown && askCard ? <AskCard view={askCard} busy={busy} onEdit={onAskEdit} errorAr={askError} /> : null}
       {planShown && v.edit && editing ? <PlanEditor edit={v.edit} busy={busy} pendingAction={pendingAction} onSave={(edits) => onAct("edit_plan", undefined, edits)} onCancel={() => onEditing(false)} onRetype={() => onAct("edit")} /> : null}
       {planShown && isGuest ? <p className="m-0 text-[12px] font-light leading-[1.8] text-mut" data-testid="agent-guest-note">بعد التسجيل تُنقل محادثتك لحسابك؛ اكتب «موافق» فيها ثم اضغط «اعتمد».</p> : null}
 
