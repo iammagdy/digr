@@ -92,7 +92,7 @@ describe("flag on", () => {
     c.put("snap_000000007_w1.json", snap(7, 60));
     state.client = c.client;
     const json = await (await get("?sheet=comments&offset=100&limit=10")).json();
-    expect([json.changed, json.cursor, json.counterAr, json.delivered]).toEqual([true, "11.0.running", "١٢٠ من ٤٠", 120]);
+    expect([json.changed, json.cursor, json.counterAr, json.delivered]).toEqual([true, "11.0.running", "١٢٠ (أكثر من التقدير البالغ ٤٠)", 120]);
     expect(json.sheets).toEqual([{ stageKey: "comments", nameAr: "التعليقات", headers: ["نص التعليق", "المعرّف"], total: 120 }]);
     expect(json.window.rows.map((r: { id: string }) => r.id)).toEqual(Array.from({ length: 10 }, (_, i) => `c${100 + i}`));
   });

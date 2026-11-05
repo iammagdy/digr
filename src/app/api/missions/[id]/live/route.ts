@@ -4,6 +4,7 @@ import { resolveMissionViewer, safeMissionId } from "@/lib/server/missionViewer"
 import { AGENT_BUCKET, MISSION_TABLE } from "@/lib/agentMission/constants";
 import { parsePollRequest, pollResponse, type LiveSnapshot } from "@/lib/agentMission/stage2/liveSheet";
 import { stage2FlagForMission } from "@/lib/agentMission/stage2/askEditAction";
+import { ADDON_MARKER_SELECT, isAddonRow } from "@/lib/agentMission/stage2/addonMarkerRule";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
@@ -24,8 +25,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   if (!auth.ok) return auth.response;
   const client = createAdminClient();
   if (!(await stage2FlagForMission(client, "DIGER_STAGE2_LIVE_SHEET", id))) return NextResponse.json({ success: false, error: "not_found" }, { status: 404, headers: NO_STORE });
-  const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id").eq("id", id).maybeSingle();
-  if (!mission || mission.user_id !== auth.viewer.userId) return NextResponse.json({ success: false, error: "not_found" }, { status: 404, headers: NO_STORE });
+  const { data: mission } = await client.from(MISSION_TABLE).select(`id,user_id,${ADDON_MARKER_SELECT}`).eq("id", id).maybeSingle();
+  // an add-on row (a review or edit of a delivered file) is not a research mission and has no live sheet: «not found» (Money PR 7e)
+  if (!mission || mission.user_id !== auth.viewer.userId || isAddonRow(mission)) return NextResponse.json({ success: false, error: "not_found" }, { status: 404, headers: NO_STORE });
   let snapshot: LiveSnapshot | null = null;
   try {
     const bucket = client.storage.from(AGENT_BUCKET);
