@@ -150,6 +150,20 @@ describe("POST /api/topup/submit: UX Simplification and Receipt Deduplication", 
     expect(body.reason).toBe("email_not_verified");
   });
 
+  it("SECURITY: a forged user_metadata.email_verified (no confirmation time from the service) is refused with 403", async () => {
+    const { POST } = await import("@/app/api/topup/submit/route");
+    mockState.user.email_confirmed_at = null;
+    mockState.user.user_metadata.email_verified = true; // the customer can write this themselves
+
+    const req = new NextRequest("http://localhost:3000/api/topup/submit", {
+      method: "POST",
+      body: JSON.stringify({ amountEgp: 100, receiptFileId: `${userId}/rec.png` }),
+    });
+    const res = await POST(req);
+    expect(res.status).toBe(403);
+    expect((await res.json()).reason).toBe("email_not_verified");
+  });
+
   it("rejects file path outside user folder or containing path traversal with 400", async () => {
     const { POST } = await import("@/app/api/topup/submit/route");
 
