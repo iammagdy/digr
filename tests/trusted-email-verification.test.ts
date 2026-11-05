@@ -135,7 +135,8 @@ describe("resolveMissionViewer: only the sign-in service's confirmation counts",
 describe("the helper never reads user_metadata", () => {
   it("isEmailConfirmedByAuth", () => {
     expect(isEmailConfirmedByAuth({ email_confirmed_at: "2026-11-01T00:00:00Z" })).toBe(true);
-    expect(isEmailConfirmedByAuth({ confirmed_at: "2026-11-01T00:00:00Z" })).toBe(true);
+    // `confirmed_at` also covers a phone confirmation: only the E-MAIL confirmation counts
+    expect(isEmailConfirmedByAuth({ confirmed_at: "2026-11-01T00:00:00Z" } as any)).toBe(false);
     expect(isEmailConfirmedByAuth({ email_confirmed_at: null })).toBe(false);
     expect(isEmailConfirmedByAuth({ email_confirmed_at: undefined, user_metadata: { email_verified: true } } as any)).toBe(false);
     expect(isEmailConfirmedByAuth(null)).toBe(false);
@@ -149,7 +150,9 @@ describe("the helper never reads user_metadata", () => {
     expect(await resolveTrustedEmailVerified({ auth: {} }, local)).toBe(false);
     expect(await resolveTrustedEmailVerified({ auth: { getUserFromService: async () => ({ data: null, error: { message: "x" } }) } }, local)).toBe(false);
     expect(await resolveTrustedEmailVerified({ auth: { getUserFromService: async () => { throw new Error("down"); } } }, local)).toBe(false);
-    expect(await resolveTrustedEmailVerified({ auth: { getUserFromService: async () => ({ data: { user: { email_confirmed_at: "2026-11-01T00:00:00Z" } }, error: null }) } }, local)).toBe(true);
+    expect(await resolveTrustedEmailVerified({ auth: { getUserFromService: async () => ({ data: { user: { id: "u1", email_confirmed_at: "2026-11-01T00:00:00Z" } }, error: null }) } }, local)).toBe(true);
+    // an answer about ANOTHER account never verifies this one
+    expect(await resolveTrustedEmailVerified({ auth: { getUserFromService: async () => ({ data: { user: { id: "someone-else", email_confirmed_at: "2026-11-01T00:00:00Z" } }, error: null }) } }, local)).toBe(false);
   });
 });
 

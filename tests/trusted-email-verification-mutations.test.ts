@@ -28,7 +28,7 @@ describe("MUTATION: the verification guards", () => {
   });
 
   it("if the helper also read user_metadata.email_verified, a forged flag would be accepted", async () => {
-    const m = await loadMutant(TRUSTED, [{ from: "return Boolean(user.email_confirmed_at || user.confirmed_at);", to: "return Boolean(user.email_confirmed_at || user.confirmed_at || (user as any).user_metadata?.email_verified);" }]);
+    const m = await loadMutant(TRUSTED, [{ from: "return Boolean(user.email_confirmed_at);", to: "return Boolean(user.email_confirmed_at || (user as any).user_metadata?.email_verified);" }]);
     expect(m.module.isEmailConfirmedByAuth(forged), "the mutant accepts the forged flag").toBe(true);
   });
 
@@ -42,6 +42,19 @@ describe("MUTATION: the verification guards", () => {
     expect(await m.module.resolveTrustedEmailVerified({ auth: {} }, { __localClaims: true }), "the mutant says verified without asking the service").toBe(true);
     const real = await import("../src/lib/server/trustedEmailVerification");
     expect(await real.resolveTrustedEmailVerified({ auth: {} }, { __localClaims: true })).toBe(false);
+  });
+
+  it("if confirmed_at (which a phone confirmation also sets) counted, a phone-only account would pass as e-mail verified", async () => {
+    const m = await loadMutant(TRUSTED, [{ from: "return Boolean(user.email_confirmed_at);", to: "return Boolean(user.email_confirmed_at || (user as any).confirmed_at);" }]);
+    expect(m.module.isEmailConfirmedByAuth({ confirmed_at: "2026-11-01T00:00:00Z" }), "the mutant accepts a phone confirmation").toBe(true);
+  });
+
+  it("without the same-account check, the service's answer about ANOTHER account would verify this one", async () => {
+    const m = await loadMutant(TRUSTED, [{ from: '    if ((data.user as { id?: string }).id !== (user as { id?: string }).id) return false;\n', to: "" }]);
+    const svc = { auth: { getUserFromService: async () => ({ data: { user: { id: "someone-else", email_confirmed_at: "2026-11-01T00:00:00Z" } }, error: null }) } };
+    expect(await m.module.resolveTrustedEmailVerified(svc, { id: "u1", __localClaims: true })).toBe(true);
+    const real = await import("../src/lib/server/trustedEmailVerification");
+    expect(await real.resolveTrustedEmailVerified(svc, { id: "u1", __localClaims: true })).toBe(false);
   });
 
   it("if the service's failure counted as «verified», an unreachable service would verify everyone", async () => {

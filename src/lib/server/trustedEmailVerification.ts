@@ -11,15 +11,15 @@
  */
 
 export interface AuthUserLike {
+  id?: string;
   email_confirmed_at?: string | null;
-  confirmed_at?: string | null;
   __localClaims?: boolean;
 }
 
 /** True only for a user object that came from the service itself AND carries a confirmation time. Never reads `user_metadata`. */
 export function isEmailConfirmedByAuth(user: AuthUserLike | null | undefined): boolean {
   if (!user || user.__localClaims) return false;
-  return Boolean(user.email_confirmed_at || user.confirmed_at);
+  return Boolean(user.email_confirmed_at);
 }
 
 /**
@@ -34,6 +34,8 @@ export async function resolveTrustedEmailVerified(supabase: { auth?: any } | nul
   try {
     const { data, error } = await fromService(token);
     if (error || !data?.user) return false;
+    // the service's answer must be about the SAME account (both calls carry the same token or cookie; checked anyway)
+    if ((data.user as { id?: string }).id !== (user as { id?: string }).id) return false;
     return isEmailConfirmedByAuth(data.user);
   } catch {
     return false;
