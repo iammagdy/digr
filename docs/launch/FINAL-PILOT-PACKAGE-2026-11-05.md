@@ -1,6 +1,6 @@
 # Final pilot package (5 Nov 2026, second pass): ONE controlled decision
 
-Evidence labels: **VERIFIED** (the source is named), **SIMULATED** (fake wallet, fake providers, fake sign-in; not production), **UNVERIFIED** (nothing available proves it). **Nothing was applied, enabled, sent or spent in this pass.** Baseline: `main` = `4ca7dd60eaa0220af64bcc1b4f07e2bc3a6413dd`, last application-code merge `7e37df6102857abe72fc7bb76f6ef84e6afc6fd4`.
+Evidence labels: **VERIFIED** (the source is named), **SIMULATED** (fake wallet, fake providers, fake sign-in; not production), **UNVERIFIED** (nothing available proves it). **Nothing was applied, enabled, sent or spent in this pass.** Baseline of the third pass: `main` = `378825e6b79b26cb10bba92dfd8d6775fc8dba75`, last application-code merge `0974bc829acc253e1b39852b35266ecc205da001` (#424).
 
 ## 1. Deployments
 
@@ -12,6 +12,16 @@ Evidence labels: **VERIFIED** (the source is named), **SIMULATED** (fake wallet,
 | Tree equivalence | `git diff --stat 7e37df61 4ca7dd60` = two files, both under `docs/`; the application code deployed on Vercel and built by Heroku is the same tree | **VERIFIED** |
 | What is still not proven | the running dyno does not report its own commit (heartbeat `version` is the literal `dev`), and Heroku config-var NAMES (e.g. whether `DIGER_STAGE4_VERSIONS` is set) are not readable without Heroku API access | **UNVERIFIED** (see §6 step 3) |
 | Supabase preview check on main | «Supabase Preview» = failure on the merge commit: the integration's *preview branch* cannot replay the migration chain; it does not touch the production database (production history unchanged, §2) | pre-existing, noted |
+
+### Third pass (current `main` `378825e6`), re-verified
+
+| Check | Evidence | Status |
+|---|---|---|
+| Vercel production at current `main` | Vercel `list_deployments` (target production): `dpl_BuNC3AUqHWHvndPjrf3vkuMWdYPT`, `githubCommitSha` = `378825e6b79b26cb10bba92dfd8d6775fc8dba75`, **READY** (created after `d6fe5092` and `0974bc82`, both READY); GitHub deployment `7582522904` environment Production status `success`; `get_runtime_errors` (2 h): none | **VERIFIED** |
+| Heroku at current `main` | GitHub deployment `7582233313`, environment `diger-agent`, `ref` = `378825e6…`, status **success** at 18:49:29 UTC (target `diger-agent-e143d4da7732.herokuapp.com`). The worker process in the heartbeat table changed right after (previous `w_worker.1_f3cf6052` last beat 18:49:10; current `w_worker.1_81409403` beating at 19:08) | **VERIFIED at the release level** (Heroku built that commit) |
+| What this does NOT prove | the running dyno's own commit: its heartbeat `version` is still the literal `dev`, and there is no Heroku API access, so config-var names (e.g. `DIGER_STAGE4_VERSIONS`) cannot be read. The ordering evidence (new process after the success status) is corroboration, not proof of the running SHA. A stronger proof needs either Heroku read access, or a worker change that reports `HEROKU_SLUG_COMMIT` (needs `heroku labs:enable runtime-dyno-metadata`): neither was done | **UNVERIFIED** |
+| Stage 4 migration | `20261104222136_one_open_addon_per_file` **not applied**: applied history ends at `20261017184147`, `pg_indexes` has no `missions_one_open_addon_per_file` | **VERIFIED** (read-only) |
+| Flags | Vercel production env names (values never read): **no** `DIGER_STAGE2_*`, `DIGER_STAGE3_*`, `DIGER_STAGE4_*`, `LAUNCH_EMAIL_ENABLED`, `UNSUBSCRIBE_HMAC_SECRET`. Every pilot and e-mail lock is closed | **VERIFIED** |
 
 ## 2. Production database, read-only (5 Nov, SELECTs only, aggregate counts, no PII)
 
@@ -54,6 +64,10 @@ Evidence labels: **VERIFIED** (the source is named), **SIMULATED** (fake wallet,
 
 **Budget, from evidence.** 204 missions since 25 Oct: provider (source) cost per mission avg **0.021 USD**, max **0.207 USD** (`mission_calls.cost_usd`); the 146 completed agent missions averaged 218 points (max 2,098). The review and edit steps use the model and have **no production measurement**. Proposal: **points ≤ 400** (one mission ≤ 200 + review ≈ 100 + edit 100) and **provider + model spend ≤ 2.00 USD** (about 3× three worst-case missions). The run stops at either ceiling.
 
+**Proposed test account (for the owner's approval; no credential is held or needed by this session):** `47693c59-89f1-405d-bec1-e72271517870` (the HANDOFF test account; masked address `ia***@outlook.com`; created 15 Oct; confirmed, **not** a guest; matches the code's test-account rule; app role none). Its production ledger balance is **351 points**, i.e. **below the 400-point ceiling**: the balance itself is a hard physical cap on points (a hold cannot exceed the balance). Alternative `b0d08be8-db61-4860-841e-fa963045557e` (also a test-rule account, active today) holds 7,026 points, so only the app-level ceiling would limit it: **not recommended**. Both are read-only observations (aggregate balance and counts); nothing was changed. The owner signs in as that account himself; the session never receives its password.
+
+**Automatic stop criteria (any one stops the pilot; the flags are then unset):** balance S0 − current balance > 351 (or > 400 on any other account); one mission quote above 200 points; provider + model spend (`mission_calls.cost_usd` summed for the test account since the start) above 2.00 USD; a ledger row without its pair (`res_` without `rel_`, `chg_` above `res_`); a second hold for one request; a negative balance; a charge different from the price shown; an add-on row left open; a worker or page error that is not a clean refusal; the worker not seen in the heartbeat table for 5 minutes.
+
 **Pre-checks (read-only, must be true immediately before):** the 5 checks of §2 re-run give the same zeros; `list_migrations` unchanged; the test account's balance S0 recorded; Vercel production READY on a `main` SHA that contains #424 (true: `0974bc82`, §1); Heroku deployment status success for the SHA in force.
 
 **Steps.**
@@ -67,15 +81,15 @@ Evidence labels: **VERIFIED** (the source is named), **SIMULATED** (fake wallet,
 
 ## 7. Launch e-mail
 
-Eligible recipients today: **0** (9 accounts, 6 verified non-guest, **0** with `prefs.notif.news = true`, 2 guests). Resend contacts (81) are not consent. Nothing sent. The implementation (template `news`, one-click unsubscribe, consent audience, idempotent runner, caps, double lock `LAUNCH_EMAIL_ENABLED`) is a separate PR; see its description and `LAUNCH-EMAIL-AR.md`.
+Eligible recipients today: **ZERO** (9 accounts, 6 verified non-guest, **0** with `prefs.notif.news = true` (re-queried read-only in the third pass), 2 guests). Resend contacts (81) are not consent. Nothing sent. The implementation (template `news`, one-click unsubscribe, consent audience, idempotent runner, caps, double lock `LAUNCH_EMAIL_ENABLED`, a single-run lock, uncertain deliveries keep their claim) is **PR #425** (open): two independent reviews, defects found by them fixed with regression and mutation tests; see `LAUNCH-EMAIL-AR.md` §9 (residual risks: forged opt-in at sign-up, owner-supplied suppression list) and §10 (the exact authorization text for the seed send). Merging #425 changes nothing for customers; the deployed Edge Function (v5) has no `news` template until the owner deploys it.
 
 ## 8. The single decision
 
 > **AUTHORIZE PILOT (leg A + leg B):**
 > (1) apply `20261104222136_one_open_addon_per_file` to `pfinlfaqwnytesedchik` as in §6 step 2;
 > (2) set on Vercel production, in order: the Stage 2/3 flags to `test`, then `DIGER_STAGE4_TEST_USER_IDS=<test account user id>` and the Stage 4 flags to `allowlist`; on the Heroku worker the same Stage 2/3 flags and `DIGER_STAGE4_VERSIONS=on`;
-> (3) test account: `<email / user id>`;
-> (4) maximum points: **400**;
+> (3) test account: `47693c59-89f1-405d-bec1-e72271517870` (balance 351 points = a natural ceiling; or replace it with another verified non-guest id);
+> (4) maximum points: **400** (on the proposed account the balance of 351 binds first);
 > (5) maximum provider + model spend: **2.00 USD**;
 > (6) stop at the first anomaly of §6 step 6; unset the flags afterwards.
 
