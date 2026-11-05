@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect } from "react";
 import { useLiveSheet } from "@/hooks/useLiveSheet";
 import type { LiveData, LiveWindow } from "@/lib/agentMission/stage2/livePoller";
 import { LiveSheetCards } from "./LiveSheetCards";
@@ -20,8 +21,9 @@ export function LiveSheetView({ data, onWindow }: { data: LiveData; onWindow?: (
   );
 }
 
-export function LiveSheetPanel({ missionId, enabled }: { missionId: string; enabled: boolean }) {
+export function LiveSheetPanel({ missionId, enabled, onData }: { missionId: string; enabled: boolean; /** STAGE 2 F-2: the last data the panel holds (null until its first answer), so the request card can show ONE progress counter on a phone. A failed poll keeps the last data; nothing is reported for it. */ onData?: (data: LiveData | null) => void }) {
   const { data, setWindow } = useLiveSheet(missionId, { enabled });
+  useEffect(() => { onData?.(enabled ? data : null); }, [data, enabled, onData]);
   if (!enabled || !data) return null;
   return <LiveSheetView data={data} onWindow={setWindow} />;
 }
