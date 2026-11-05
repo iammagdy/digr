@@ -1,4 +1,5 @@
 import { AGENT_BUCKET, MISSION_EVENTS_TABLE, MISSION_TABLE } from "../constants";
+import { ADDON_MARKER_SELECT, isAddonRow } from "./addonMarkerRule";
 import { buildAsk } from "../foundation/ask";
 import { ASK_EDIT_REJECTION_AR, applyAskEdit, askCardView, editScopeOf, parseAskEdit, type AskCardView, type AskEditRejection, type EditScope } from "./askCard";
 import type { Ask } from "../foundation/ask";
@@ -40,8 +41,9 @@ export async function stage2FlagForMission(client: any, flag: Stage2Flag, missio
 }
 
 export async function askEditForCustomer(client: any, input: { id: string; userId: string; edit: unknown; nowMs?: number }): Promise<AskEditActionResult> {
-  const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,status,request_text,answer_text,created_at").eq("id", input.id).maybeSingle();
-  if (!mission || mission.user_id !== input.userId) return { ok: false, status: 404, error: NOT_FOUND_AR };
+  const { data: mission } = await client.from(MISSION_TABLE).select(`id,user_id,status,request_text,answer_text,created_at,${ADDON_MARKER_SELECT}`).eq("id", input.id).maybeSingle();
+  // an add-on row (a review or edit of a delivered file) is not a research mission: «not found», before anything is read, kept or written (Money PR 7e)
+  if (!mission || mission.user_id !== input.userId || isAddonRow(mission)) return { ok: false, status: 404, error: NOT_FOUND_AR };
   if (mission.status !== "plan_ready") return { ok: false, status: 409, error: NOT_NOW_AR };
   const parsed = parseAskEdit(input.edit);
   if (!parsed.ok) return { ok: false, status: 400, error: ASK_EDIT_REJECTION_AR[parsed.reason], reason: parsed.reason };
@@ -92,8 +94,8 @@ function askOfMission(mission: { request_text?: unknown; answer_text?: unknown; 
  * Read only. The route calls it only when DIGER_STAGE2_ASK_CARD is on for the viewer.
  */
 export async function askCardForCustomer(client: any, input: { id: string; userId: string; nowMs?: number }): Promise<AskCardView | null> {
-  const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,status,request_text,answer_text,created_at").eq("id", input.id).maybeSingle();
-  if (!mission || mission.user_id !== input.userId || mission.status !== "plan_ready") return null;
+  const { data: mission } = await client.from(MISSION_TABLE).select(`id,user_id,status,request_text,answer_text,created_at,${ADDON_MARKER_SELECT}`).eq("id", input.id).maybeSingle();
+  if (!mission || mission.user_id !== input.userId || mission.status !== "plan_ready" || isAddonRow(mission)) return null;
   const kept = await keptEdits(client, input.id);
   if (!kept) return null;
   const ask = askOfMission(mission, kept.edits, input.nowMs ?? Date.now());
