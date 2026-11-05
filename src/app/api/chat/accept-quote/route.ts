@@ -3,6 +3,7 @@ import { MODEL_PLAN_SLUG } from "@/lib/modelPlanner/constants";
 import { liveDriverMode } from "@/lib/server/driverHeartbeat";
 import { NextRequest, NextResponse } from "next/server";
 import { createServerSideClient, createAdminClient } from "../../../../lib/supabase/server";
+import { resolveTrustedEmailVerified } from "../../../../lib/server/trustedEmailVerification";
 import { acceptQuoteSupabase } from "../../../../lib/supabase/quoteAccept";
 import { getLiveProviderGateStatusFromSettings } from "../../../../lib/server/providerGate";
 import { sanitizeCustomerErrorMessage } from "../../../../functions/shared/catalogClient";
@@ -58,7 +59,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Enforce email verification
-    const emailVerified = !!user.email_confirmed_at || user.user_metadata?.email_verified === true;
+    const emailVerified = await resolveTrustedEmailVerified(supabase, user, authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : undefined);
     if (!emailVerified) {
       return NextResponse.json(
         { success: false, error: "فعّل بريدك الإلكتروني أولًا لبدء البحث." },

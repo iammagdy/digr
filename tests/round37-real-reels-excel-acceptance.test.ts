@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import ExcelJS from "exceljs";
 import { describe, expect, it } from "vitest";
 import { buildMissionFiles, COUNTER_UNAVAILABLE_AR } from "../agent/src/workbook";
@@ -14,6 +14,19 @@ import type { PricedPlan } from "../src/lib/agentMission/plan";
  * No network, no provider, no points.
  */
 const DIR = "tests/fixtures/round37";
+
+/**
+ * KNOWN GAP E-37a (owner-approved 5 Nov 2026, docs/launch/ROUND37-HISTORICAL-TEST-EXCEPTION.md): the three original files (delivered.csv, methodology.csv,
+ * delivered-saved-by-excel-android.xlsx) are PERMANENTLY unavailable and are never recreated, approximated or substituted under these names.
+ * Without them, ONLY the checks that read those files are skipped (reported by vitest as «skipped», never as passed, never as a load failure); every
+ * assertion below is unchanged. The checks that need no real file (group B, and the two methodology checks of group C) keep running; group C then
+ * reads five rows labelled SYNTHETIC. If the three files are ever restored, every check runs again with no edit.
+ * The compensating (and explicitly NOT equivalent) control is tests/round37-synthetic-resave.test.ts.
+ */
+const GAP = "[KNOWN GAP E-37: original files unavailable; not a pass]";
+const REAL_FILES = ["delivered.csv", "methodology.csv", "delivered-saved-by-excel-android.xlsx"].every((f) => existsSync(`${DIR}/${f}`));
+const evidenceDescribe = REAL_FILES ? describe : describe.skip;
+const evidenceIt = REAL_FILES ? it : it.skip;
 const REQUEST = "اجمع ٥ ريلز من إنستجرام عن الذكاء الاصطناعي، مع النصوص والروابط وتاريخ النشر واسم الحساب وعدد المشاهدات.";
 
 /** RFC 4180 reader: quoted cells with embedded line breaks and doubled quotes; BOM removed. Every cell stays a STRING (a 19-digit id is never turned into a number). */
@@ -51,12 +64,12 @@ const cellText = (v: ExcelJS.CellValue): string => {
   return String(v);
 };
 
-const csv = parseCsv(readFileSync(`${DIR}/delivered.csv`, "utf8"));
+const csv = REAL_FILES ? parseCsv(readFileSync(`${DIR}/delivered.csv`, "utf8")) : [[] as string[]];
 const header = csv[0];
 const records = csv.slice(1);
 const col = (title: string) => header.indexOf(title);
 
-describe("the real Excel (1).xlsx against the real CSV (1).csv: no data corruption, cell by cell", () => {
+evidenceDescribe(`${GAP} the real Excel (1).xlsx against the real CSV (1).csv: no data corruption, cell by cell`, () => {
   let wb: ExcelJS.Workbook;
   const load = async () => { if (!wb) { wb = new ExcelJS.Workbook(); await wb.xlsx.readFile(`${DIR}/delivered-saved-by-excel-android.xlsx`); } return wb; };
 
@@ -161,13 +174,15 @@ describe("the methodology of the real mission does not contradict itself", () =>
     quantity: { requested: 5, stage_key: "posts", target: 5, source: "request" },
     compiled: { media: { asked: "reels", basis: "filter", filter: { field: "mediaType", value: "reel" } }, fields: [{ key: "posted_at", path: "createdUtc", status: "card" }, { key: "author", path: "username", status: "card" }, { key: "views", status: "unavailable" }] },
   } as unknown as PricedPlan;
-  const rows = records.map((r) => ({ id: r[13], text: r[0], author: r[1], posted_at: r[2], link: r[3], likes: Number(r[4]), comments: Number(r[5]), views: null, [TOPIC_RELATION_KEY]: r[col("علاقة النص بالموضوع")] }));
+  // E-37a: the real delivered rows when the real CSV exists; otherwise five rows labelled SYNTHETIC (built here, never presented as the customer's file).
+  const SYNTHETIC_ROWS = Array.from({ length: 5 }, (_, i) => ({ id: String(3000000000000000000 + i).padStart(19, "0"), text: `SYNTHETIC reel text ${i + 1}`, author: `synthetic_account_${i + 1}`, posted_at: `2026-10-30 13:2${i}`, link: `https://www.instagram.com/reel/SYNTHETIC${i + 1}/`, likes: i + 1, comments: i, views: null, [TOPIC_RELATION_KEY]: ABOUT }));
+  const rows = REAL_FILES ? records.map((r) => ({ id: r[13], text: r[0], author: r[1], posted_at: r[2], link: r[3], likes: Number(r[4]), comments: Number(r[5]), views: null, [TOPIC_RELATION_KEY]: r[col("علاقة النص بالموضوع")] })) : SYNTHETIC_ROWS;
   const rec: StageRecord = { found: 5, duplicates: 0, accepted: 5, excluded: 0, pending: 0, unchecked: 0, acceptedByRule: 5, acceptedByModel: 0, excludedByReason: {}, stop: "target_reached" };
   const facts: MissionFacts = { requestText: REQUEST, deliveredAt: new Date("2026-11-05T07:32:12Z"), stages: { posts: rec }, reviewStop: null };
   const model = buildMethodology({ plan, layouts: [], rowsByStage: { posts: rows as any }, facts });
   const item = (label: string) => model.items.find((i) => i.label === label)!;
 
-  it("the delivered rows carry the mark the real file counted (5 of 5 are about the topic)", () => {
+  evidenceIt(`${GAP} the delivered rows carry the mark the real file counted (5 of 5 are about the topic)`, () => {
     expect(rows.every((r) => r[TOPIC_RELATION_KEY] === ABOUT)).toBe(true);
     expect(item("صلة النتائج بالموضوع").values[0]).toBe("النص يتحدث عن الموضوع: ٥ ريلز");
   });
@@ -188,7 +203,7 @@ describe("the methodology of the real mission does not contradict itself", () =>
     expect(m.items.find((i) => i.label === "كيف فُحصت الصلة بطلبك")!.values.join(" ")).toContain("لم يُطبَّق فحص صلة بالنص على هذه المرحلة");
   });
 
-  it("the export regenerated locally from the same delivered rows (no collection, no provider): every common column equals the delivered CSV cell by cell, ids as text", async () => {
+  evidenceIt(`${GAP} the export regenerated locally from the same delivered rows (no collection, no provider): every common column equals the delivered CSV cell by cell, ids as text`, async () => {
     const regenRows = records.map((r) => ({ id: r[13], text: r[0], author: r[1], posted_at: utcOfCairo(r[2]), link: r[3], likes: Number(r[4]), comments: Number(r[5]), views: COUNTER_UNAVAILABLE_AR, [TOPIC_RELATION_KEY]: r[col("علاقة النص بالموضوع")] }));
     const out = await buildMissionFiles(plan, { posts: regenRows as any }, facts);
     const wb = new ExcelJS.Workbook(); await wb.xlsx.load(out.xlsx as unknown as ArrayBuffer);
