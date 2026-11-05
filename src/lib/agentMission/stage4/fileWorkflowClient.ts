@@ -36,7 +36,7 @@ export async function fetchFileWorkflow(input: { missionId: string; fetchFn: typ
     if (!Array.isArray(raw)) return { state: "error", message: FILE_WORKFLOW_ERRORS_AR.unavailable };
     const items: WorkflowItemView[] = [];
     for (const r of raw) { const i = itemOf(r); if (!i) return { state: "error", message: FILE_WORKFLOW_ERRORS_AR.unavailable }; items.push(i); }
-    return { state: "ok", view: { items } };
+    return { state: "ok", view: { items, ...(body.workflow?.hasVersions === false ? { hasVersions: false } : {}) } };
   } catch {
     return { state: "error", message: FILE_WORKFLOW_ERRORS_AR.network };
   }

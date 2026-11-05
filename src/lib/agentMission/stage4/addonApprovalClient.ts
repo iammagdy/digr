@@ -7,6 +7,8 @@ import { pointsAr } from "../../pointsFormat";
 export const addonApprovalUrl = (missionId: string): string => `/api/missions/${encodeURIComponent(missionId)}/addon-approval`;
 /** The event the approval fires on the window so the page's own status panel re-reads the truth from the server. */
 export const FILE_WORKFLOW_REFRESH_EVENT = "diger:file-workflow-refresh";
+/** Fired by the status panel when a request of the file stopped being in flight (delivered, failed, ended): the versions, the report and the forms read the server again, so version 2 appears without a manual reload. */
+export const FILE_DELIVERED_EVENT = "diger:file-delivered";
 
 export const APPROVE_HEADING_AR = "اعتماد الطلب";
 export const APPROVE_CONSENT_AR = "عند الاعتماد نحجز نقاط الطلب مؤقتًا من رصيدك، ولا يُخصم منها إلا ما يُنجز فعلًا، ويُحرَّر الحجز المؤقت لما لا يُخصم.";

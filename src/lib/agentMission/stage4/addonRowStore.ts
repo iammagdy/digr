@@ -57,7 +57,7 @@ export function createSupabaseAddonRowStore(client: any, userId: string): AddonR
     cancelUnpaid: (id: string) => cancelUnpaidAddonRow(client, { id, userId }),
     async recoverAbandoned(rows: ReadonlyArray<AddonRowLike>): Promise<boolean> {
       const outcomes = await recoverRows(client, { userId, rows });
-      return outcomes.some((o) => o.kind === "ended_released" || (o.kind === "active" && o.recorded));
+      return outcomes.some((o) => o.kind === "ended_released" || o.kind === "mark_cleared" || (o.kind === "active" && o.recorded));
     },
   };
 }

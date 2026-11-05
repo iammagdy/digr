@@ -10,6 +10,6 @@ export const STATEMENTS = [
 
 export const SHEETS = [
   { name: "ورقة المنهجية", desc: "كيف جُمعت بياناتك وحدودها", z: 1, to: "translate(-52%,4%) rotate(-7deg)", delay: ".15s" },
-  { name: customerFormatLabelAr("pdf"), desc: "ملخص تنفيذي", z: 2, to: "translate(52%,4%) rotate(7deg)", delay: ".15s" },
+  { name: customerFormatLabelAr("pdf"), desc: "المنهجية الرسمية (اختيارية)", z: 2, to: "translate(52%,4%) rotate(7deg)", delay: ".15s" },
   { name: customerFormatLabelAr("xlsx"), desc: "البيانات ودليل الحقول", z: 3, to: "translateY(-6%)", delay: "0s" },
 ];

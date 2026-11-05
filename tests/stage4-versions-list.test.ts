@@ -176,7 +176,7 @@ describe("the component", () => {
 describe("only the request's page shows it", () => {
   const read = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
   it("the requests page renders it; the chat page, the mission card and the results canvas do not mention it", () => {
-    expect(read("src/app/dashboard/requests/[id]/page.tsx")).toContain("<VersionList missionId={missionId} />");
+    expect(read("src/app/dashboard/requests/[id]/page.tsx")).toMatch(/<VersionList key=\{`VersionList-\$\{deliveredEpoch\}`\} missionId=\{missionId\} \/>/); // CHANGED (audit D2): keyed so the list reads the server again when a request of the file finishes
     for (const p of ["src/app/dashboard/chat/page.tsx", "src/components/mission/AgentMissionCard.tsx", "src/components/chat/ResultsCanvas.tsx"]) {
       try { expect(read(p), p).not.toMatch(/VersionList|stage4/); } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e; }
     }

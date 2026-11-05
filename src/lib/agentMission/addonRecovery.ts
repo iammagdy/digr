@@ -8,7 +8,7 @@ import { readJobMoneyState } from "./addonMoneyState";
  * one thing that state proves:
  *   released     the points came back (the ledger says so): END the request (`failed`, no charge, the job recorded for audit). One compare-and-set; a second call finds it ended.
  *   active       the hold is held and the job is RUNNING: finish the record that the approval could not write (same job, same quote, same hold; status `approved` for the worker). A job only QUEUED (reserved, never claimed) is left for the approval's retry, which claims it.
- *   none         nothing was ever reserved: the request stays waiting (the customer may approve again). NOT ended, NOT cancelled by this file.
+ *   none         nothing was ever reserved: the request stays waiting (the customer may approve again). NOT ended, NOT cancelled by this file. When its approval mark is older than STALE_APPROVAL_MARK_MS the mark is cleared (`mark_cleared`) so the page shows the request waiting again.
  *   charged      settled and charged: untouched (the worker or an administrator resolves it). Never ended as unpaid.
  *   anything else (a read failed, the rows contradict each other, a hold that is not what the code computes): untouched, reported as unresolved.
  * It NEVER calls a money function (no rpc at all), never writes a money table (jobs and credit_ledger are read only), never releases, charges or refunds; every write is ONE compare-and-set on the request's own row, conditioned on the status, job and approval mark that were read,
@@ -18,10 +18,17 @@ export type RecoveryOutcome =
   | { kind: "not_applicable" }
   | { kind: "unpaid" }
   | { kind: "no_reservation" }
+  | { kind: "mark_cleared" }
   | { kind: "active"; recorded: boolean }
   | { kind: "ended_released" }
   | { kind: "charged" }
   | { kind: "unresolved"; why: "read_failed" | "inconsistent" | "settled_without_row" | "hold_mismatch" };
+
+/**
+ * How long a request's approval mark must be OLD before a ledger state «none» (nothing ever reserved) frees it. A quote lasts 30 minutes (`expiresInMinutes`, addonSettlement.ts) counted from the quote's creation, which follows the mark by seconds; 35 minutes leaves a margin for clock skew and a slow claim-to-quote gap, so an approval that began that long ago can no longer
+ * reserve anything: a late accept is refused as expired. Younger marks are left alone (an approval may still be in flight in another tab or instance).
+ */
+export const STALE_APPROVAL_MARK_MS = 35 * 60_000;
 
 /** The most add-ons of one file a single call looks at (a file has one open add-on; the bound keeps a damaged file from becoming a loop). */
 export const RECOVERY_MAX_PER_FILE = 3;
@@ -60,7 +67,17 @@ export async function recoverAbandonedAddon(client: any, input: { id: string; us
   const stamp = now.toISOString();
 
   switch (state.kind) {
-    case "none": return { kind: "no_reservation" };
+    case "none": {
+      // The root cause of «after a reload there is no button and no cancel»: an approval that failed with an UNCERTAIN code (quote_failed, a thrown error) keeps the mark, nothing was reserved (the ledger says «none»),
+      // and the page only shows an UNMARKED waiting request. Once the quote has certainly expired, the mark is cleared by ONE compare-and-set on the request's own row (still plan_ready, no job, the same mark), so the SAME request is
+      // waiting again (approve or cancel). No money function is called; a hold that appears later is impossible (expired quote) and would be found by the next call as «active».
+      const markedAt = row.status === "plan_ready" && row.approved_at && !row.job_id ? Date.parse(String(row.approved_at)) : NaN;
+      if (Number.isFinite(markedAt) && now.getTime() - markedAt > STALE_APPROVAL_MARK_MS) {
+        const cleared = await pinned(client.from(MISSION_TABLE).update({ approved_at: null, approved_by: null, updated_at: stamp }).eq("id", row.id).eq("user_id", input.userId), row).select("id");
+        if (!cleared.error && Array.isArray(cleared.data) && cleared.data.length === 1) return { kind: "mark_cleared" };
+      }
+      return { kind: "no_reservation" };
+    }
     case "unknown": return { kind: "unresolved", why: state.why };
     case "settled_free": return { kind: "unresolved", why: "settled_without_row" };
     case "charged": return { kind: "charged" };

@@ -200,3 +200,12 @@ describe("the source: a read of the missions table and two listings, nothing els
 });
 
 void fileWorkflowFor;
+
+describe("AUDIT D3: the answer says whether the file has any published version", () => {
+  it("a file with versions: hasVersions true; a file with none (delivered before versioning): hasVersions false", async () => {
+    world([]);
+    expect((await (await call()).json()).workflow).toEqual({ items: [], hasVersions: true });
+    world([], {});
+    expect((await (await call()).json()).workflow).toEqual({ items: [], hasVersions: false });
+  });
+});

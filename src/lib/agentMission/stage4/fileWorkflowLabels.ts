@@ -21,7 +21,11 @@ export interface WorkflowItemView {
   /** `delivered` and `charged_delivery_pending` only: the recorded charge in points. */
   chargedPoints?: number;
 }
-export interface FileWorkflowView { items: WorkflowItemView[] }
+export interface FileWorkflowView {
+  items: WorkflowItemView[];
+  /** False when the file has no published version at all (a file delivered before versioning was on): the panel then draws nothing, because no review or edit can be asked for it. Absent means «not told». */
+  hasVersions?: boolean;
+}
 
 export const FILE_WORKFLOW_HEADING_AR = "حالة طلباتك على هذا الملف";
 export const FILE_WORKFLOW_LOADING_AR = "جارٍ تحميل حالة الطلبات…";

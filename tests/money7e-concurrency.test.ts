@@ -239,7 +239,8 @@ describe("the store's cancel of an UNPAID request never touches a request that w
     expect(rows[0]).toMatchObject({ id: ID1, status: "plan_ready", approved_at: "2026-11-04T11:00:00Z", job_id: null });
   });
   it("the customer's own cancel answers «changed» for such a row and the page does not offer it as a request that holds nothing", async () => {
-    const db = seed({ approved_at: "2026-11-04T11:00:00Z" });
+    // CHANGED (audit D1): the mark is RECENT here. A mark older than 35 minutes with nothing reserved is freed by recovery on purpose (tests/stage4-stale-approval-mark.test.ts); inside the window the old protection is unchanged.
+    const db = seed({ approved_at: new Date().toISOString() });
     expect(await cancelReviewRequest(db, { missionId: MISSION, userId: USER, requestId: ID1 })).toMatchObject({ ok: false, status: 409, error: "changed" });
     expect(await currentReviewRequest(db, { missionId: MISSION, userId: USER })).toEqual({ ok: true, request: null });
     expect(db.rows("missions").find((r) => r.id === ID1)!.status).toBe("plan_ready");

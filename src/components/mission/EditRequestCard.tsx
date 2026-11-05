@@ -9,7 +9,7 @@ import type { ApproveResult } from "@/lib/agentMission/stage4/addonApprovalClien
 import { cancelEditRequest, fetchEditRequest, fetchEditSchema, prepareEditRequest, quoteEdit } from "@/lib/agentMission/stage4/editRequestClient";
 import { emptyForm, editInputOf, type EditForm } from "@/lib/agentMission/stage4/editRequestForm";
 import {
-  EDIT_ASKING_AR, EDIT_ASK_BUTTON_AR, EDIT_CANCELLED_AR, EDIT_CANCELLING_AR, EDIT_CANCEL_BUTTON_AR, EDIT_HEADING_AR, EDIT_INTRO_AR, EDIT_KINDS_AR, EDIT_LOADING_AR, EDIT_PREPARE_BUTTON_AR, EDIT_PREPARING_AR, EDIT_RETRY_AR,
+  EDIT_ASKING_AR, EDIT_ASK_BUTTON_AR, EDIT_CANCELLED_AR, EDIT_CANCELLING_AR, EDIT_CANCEL_BUTTON_AR, EDIT_HEADING_AR, EDIT_INTRO_AR, EDIT_KINDS_AR, OFFERED_EDIT_KINDS, EDIT_LOADING_AR, EDIT_PREPARE_BUTTON_AR, EDIT_PREPARING_AR, EDIT_RETRY_AR,
   editQuoteLinesAr, editRequestLinesAr, editVersionAr, type EditKind, type EditQuoteView, type EditRequestView, type EditSchemaView,
 } from "@/lib/agentMission/stage4/editRequestLabels";
 
@@ -23,7 +23,7 @@ const FIELD = "min-h-11 w-full rounded-[12px] border border-ln2 bg-transparent p
 const LABEL = "flex flex-col gap-1 text-[13px] text-ink";
 /** What one form may grow to on the page (the server accepts more; a phone form this long is not usable). */
 const UI_MAX = { cells: 20, rows: 10 } as const;
-const KINDS = Object.keys(EDIT_KINDS_AR) as EditKind[];
+const KINDS = OFFERED_EDIT_KINDS;
 
 export interface EditRequestBodyProps {
   schema: EditSchemaView | null;
