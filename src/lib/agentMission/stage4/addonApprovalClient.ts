@@ -9,7 +9,7 @@ export const addonApprovalUrl = (missionId: string): string => `/api/missions/${
 export const FILE_WORKFLOW_REFRESH_EVENT = "diger:file-workflow-refresh";
 
 export const APPROVE_HEADING_AR = "اعتماد الطلب";
-export const APPROVE_CONSENT_AR = "عند الاعتماد نحجز نقاط الطلب مؤقتًا من رصيدك، ولا يُخصم منها إلا ما يُنجز فعلًا، وما لا يُخصم يعود إلى رصيدك.";
+export const APPROVE_CONSENT_AR = "عند الاعتماد نحجز نقاط الطلب مؤقتًا من رصيدك، ولا يُخصم منها إلا ما يُنجز فعلًا، ويُحرَّر الحجز المؤقت لما لا يُخصم.";
 export const APPROVING_AR = "جارٍ الاعتماد…";
 export const APPROVED_AR = "اعتُمد الطلب وحُجزت النقاط؛ يبدأ التنفيذ الآن. تابع حالته في «حالة طلباتك على هذا الملف».";
 export const ALREADY_APPROVED_AR = "هذا الطلب اعتُمد بالفعل أو قيد الاعتماد الآن؛ تابع حالته في «حالة طلباتك على هذا الملف».";
