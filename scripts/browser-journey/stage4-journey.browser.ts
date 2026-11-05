@@ -89,12 +89,37 @@ async function mount(ctx: BrowserContext) {
     await route.fulfill({ status: res.status, headers, body });
   });
 }
-async function newPage(kind: "desktop" | "phone"): Promise<{ ctx: BrowserContext; page: Page }> {
-  const ctx = await browser.newContext(kind === "desktop" ? { viewport: { width: 1280, height: 900 }, locale: "ar-EG", acceptDownloads: true } : { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: "ar-EG", acceptDownloads: true, userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" });
+type Kind = "desktop" | "phone" | "narrow";
+async function newPage(kind: Kind): Promise<{ ctx: BrowserContext; page: Page }> {
+  const ctx = await browser.newContext(kind === "desktop" ? { viewport: { width: 1280, height: 900 }, locale: "ar-EG", acceptDownloads: true } : kind === "narrow" ? { viewport: { width: 320, height: 640 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: "ar-EG", acceptDownloads: true } : { viewport: { width: 390, height: 844 }, deviceScaleFactor: 2, isMobile: true, hasTouch: true, locale: "ar-EG", acceptDownloads: true, userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" });
   const session64 = Buffer.from(JSON.stringify({ access_token: "journey.access.token", refresh_token: "journey-refresh", expires_at: Math.floor(Date.now() / 1000) + 86_400, expires_in: 86_400, token_type: "bearer", user: USER_JSON })).toString("base64url");
   await ctx.addCookies([{ name: "sb-127-auth-token", value: `base64-${session64}`, url: BASE }]);
   await mount(ctx);
   return { ctx, page: await ctx.newPage() };
+}
+
+/** Layout probe (real Chromium): no horizontal page scroll, RTL document, and no visible element pushed outside the viewport. */
+async function layoutProblems(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const out: string[] = [];
+    const de = document.documentElement;
+    if (de.dir !== "rtl") out.push(`dir=${de.dir}`);
+    if (de.scrollWidth > de.clientWidth + 1) out.push(`page scrolls sideways: ${de.scrollWidth} > ${de.clientWidth}`);
+    const vw = de.clientWidth;
+    let n = 0;
+    for (const el of Array.from(document.body.querySelectorAll<HTMLElement>("body *"))) {
+      const cs = getComputedStyle(el);
+      if (cs.display === "none" || cs.visibility === "hidden" || cs.position === "fixed") continue;
+      const r = el.getBoundingClientRect();
+      if (r.width === 0 || r.height === 0) continue;
+      // scrollable containers (tables) may be wider on purpose; skip anything inside one
+      let p: HTMLElement | null = el.parentElement, inScroll = false;
+      while (p && p !== document.body) { const o = getComputedStyle(p).overflowX; if (o === "auto" || o === "scroll" || o === "hidden") { inScroll = true; break; } p = p.parentElement; }
+      if (inScroll) continue;
+      if (r.right > vw + 1 || r.left < -1) { if (n++ < 5) out.push(`${el.tagName.toLowerCase()}${el.dataset.testid ? `[${el.dataset.testid}]` : ""} "${(el.innerText || "").slice(0, 30).replace(/\s+/g, " ")}" ${Math.round(r.left)}..${Math.round(r.right)} of ${vw}`); }
+    }
+    return out;
+  });
 }
 const reserves = () => world.money.ledger.filter((l) => l.type === "reserve").length;
 const types = () => world.money.ledger.map((l) => l.type);
@@ -114,10 +139,10 @@ afterAll(async () => { await browser?.close(); app?.kill("SIGTERM"); await new P
 const results: Array<{ viewport: string; check: string; ok: boolean; note?: string }> = [];
 const check = async (viewport: string, name: string, fn: () => Promise<void>) => { try { await fn(); results.push({ viewport, check: name, ok: true }); } catch (e) { results.push({ viewport, check: name, ok: false, note: String((e as Error).message).split("\n")[0].slice(0, 200) }); throw e; } };
 
-for (const kind of ["desktop", "phone"] as const) {
+for (const kind of ["desktop", "phone", "narrow"] as const) {
   describe(`${kind}: the paid Stage 4 journey in real Chromium`, () => {
     it("delivered file -> versions -> review quote -> request -> approve (double click) -> report -> edit quote -> request -> approve -> version 2 -> download -> final balance", async () => {
-      if (kind === "phone") { world = await e2eWorld({ balance: 10_000 }); session.client = new Proxy(world.routes as any, { get: (t, k) => (k === "rpc" ? (n: string, a: unknown) => world.money.client.rpc(n, a) : k === "from" ? (tb: string) => (tb === "missions" ? t.from(tb) : (world.money.client as any).from(tb)) : t[k]) }); }
+      if (kind !== "desktop") { world = await e2eWorld({ balance: 10_000 }); session.client = new Proxy(world.routes as any, { get: (t, k) => (k === "rpc" ? (n: string, a: unknown) => world.money.client.rpc(n, a) : k === "from" ? (tb: string) => (tb === "missions" ? t.from(tb) : (world.money.client as any).from(tb)) : t[k]) }); }
       const start = world.money.balance();
       const { ctx, page } = await newPage(kind);
       const consoleErrors: string[] = []; page.on("pageerror", (e) => consoleErrors.push(String(e)));
@@ -126,7 +151,9 @@ for (const kind of ["desktop", "phone"] as const) {
       await check(kind, "the details page opens for the signed-in customer", async () => { await page.waitForSelector('[data-testid="details-head"]', { timeout: 60_000 }); });
       await check(kind, "VERSIONS: the file's version 1 is listed", async () => { await page.waitForSelector('[data-testid="version-list"]', { timeout: 30_000 }); expect(await page.locator('[data-testid="version-row"]').count()).toBe(1); });
       await check(kind, "REVIEW QUOTE is shown and NOTHING is held", async () => { await page.waitForSelector('[data-testid="review-ask"]', { timeout: 30_000 }); const sel = page.locator('[data-testid="review-version"]'); if (await sel.count()) await sel.first().selectOption({ index: 0 }).catch(() => {}); await page.click('[data-testid="review-ask"]'); await page.waitForSelector('[data-testid="review-quote"]', { timeout: 30_000 }); expect(world.money.balance()).toBe(start); expect(reserves()).toBe(0); });
+      await check(kind, "LAYOUT after versions + review quote: no sideways scroll, RTL, nothing outside the screen", async () => { expect(await layoutProblems(page)).toEqual([]); });
       await check(kind, "REVIEW REQUEST prepared UNPAID, then the approval control appears", async () => { await page.click('[data-testid="review-prepare"]'); await page.waitForSelector('[data-testid="approve-button"]', { timeout: 30_000 }); expect(reserves()).toBe(0); expect(world.money.balance()).toBe(start); });
+      await check(kind, "LAYOUT with the approval control shown", async () => { expect(await layoutProblems(page)).toEqual([]); });
       await check(kind, "REVIEW APPROVAL with a DOUBLE CLICK: exactly one hold", async () => { await page.dblclick('[data-testid="approve-button"]'); await page.waitForFunction(() => document.body.innerText.length > 0); await expect.poll(() => reserves(), { timeout: 20_000 }).toBe(1); expect(approvals.length).toBeGreaterThanOrEqual(1); });
       await check(kind, "WORKER runs the review: report published, charge once, release first", async () => { await expect.poll(() => types().join(","), { timeout: 60_000 }).toBe("topup,reserve,release,charge"); await page.reload({ waitUntil: "domcontentloaded" }); await page.waitForSelector('[data-testid="review-report"]', { timeout: 60_000 }); });
       const afterReview = world.money.balance();
@@ -167,6 +194,7 @@ for (const kind of ["desktop", "phone"] as const) {
         expect(world.money.balance()).toBeGreaterThanOrEqual(0);
         const ids = world.money.ledger.map((l) => l.id); expect(new Set(ids).size).toBe(ids.length);
       });
+      await check(kind, "LAYOUT at the end (report, two versions, balance)", async () => { expect(await layoutProblems(page)).toEqual([]); });
       await check(kind, "no uncaught page error", async () => { expect(consoleErrors).toEqual([]); });
       await page.screenshot({ path: `${process.env.SHOT_DIR ?? "/tmp"}/journey-${kind}.png`, fullPage: true });
       await ctx.close();
@@ -183,7 +211,7 @@ const toApprovalControl = async (page: Page) => {
   await page.click('[data-testid="review-prepare"]'); await page.waitForSelector('[data-testid="approve-button"]', { timeout: 30_000 });
 };
 describe("failure scenarios in real Chromium", () => {
-  for (const kind of ["desktop", "phone"] as const) {
+  for (const kind of ["desktop", "phone", "narrow"] as const) {
     it(`${kind}: NOT ENOUGH POINTS: nothing held, the request stays waiting WITH its approve button and CAN be cancelled; after a top-up the same request is approved with one hold`, async () => {
       await fresh(5);
       const { ctx, page } = await newPage(kind);
@@ -230,6 +258,27 @@ describe("failure scenarios in real Chromium", () => {
         await page.waitForSelector('[data-testid="file-workflow"]', { timeout: 60_000 });
         expect(reserves()).toBe(1);
       });
+      await ctx.close();
+    }, 300_000);
+  }
+});
+
+describe("signed-in customer pages at three widths (fake backend, EMPTY data: layout and Arabic RTL only)", () => {
+  for (const kind of ["desktop", "phone", "narrow"] as const) {
+    it(`${kind}: dashboard, requests, wallet, settings, chat open signed in with no sideways scroll`, async () => {
+      await fresh(10_000);
+      const { ctx, page } = await newPage(kind);
+      const errors: string[] = []; page.on("pageerror", (e) => errors.push(String(e)));
+      for (const path of ["/dashboard", "/dashboard/requests", "/dashboard/wallet", "/dashboard/settings", "/dashboard/chat"]) {
+        await check(kind, `PAGE ${path}: stays signed in, RTL, no sideways scroll, nothing outside the screen`, async () => {
+          await page.goto(`${BASE}${path}`, { waitUntil: "domcontentloaded" });
+          await page.waitForTimeout(2500);
+          expect(new URL(page.url()).pathname.startsWith("/login")).toBe(false);
+          expect(await layoutProblems(page)).toEqual([]);
+        });
+        await page.screenshot({ path: `${process.env.SHOT_DIR ?? "/tmp"}/page-${kind}-${path.replace(/\//g, "_")}.png`, fullPage: true });
+      }
+      await check(kind, "no uncaught page error on those pages", async () => { expect(errors).toEqual([]); });
       await ctx.close();
     }, 300_000);
   }
