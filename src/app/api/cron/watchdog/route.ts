@@ -6,6 +6,7 @@ import { notifyStalledJobs } from "../../../../lib/server/jobStallNotifier";
 import { getRecipient, sendPlatformEmail } from "../../../../lib/server/sendPlatformEmail";
 import { getBalance } from "../../../../lib/supabase/ledger";
 import { toArabicDigits } from "../../../../lib/arabicDigits";
+import { isDisposableGuestAccount } from "../../../../lib/server/guestIdentity";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60; // Vercel Hobby maximum
@@ -187,7 +188,7 @@ export async function GET(req: NextRequest) {
         const { data: guestList } = await adminClient.auth.admin.listUsers({ page: 1, perPage: 50 });
         for (const u of guestList?.users || []) {
           if (
-            u.user_metadata?.is_guest === true &&
+            isDisposableGuestAccount(u) &&
             u.created_at &&
             new Date(u.created_at) < new Date(sevenDaysAgo)
           ) {

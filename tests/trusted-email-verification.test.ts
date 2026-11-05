@@ -109,7 +109,8 @@ describe("resolveMissionViewer: only the sign-in service's confirmation counts",
   });
 
   it("guest cookie of a real guest account: guest, never verified", async () => {
-    state.adminUsers[GUEST_ID] = { id: GUEST_ID, user_metadata: { is_guest: true, email_verified: true } };
+    // a REAL guest is what /api/chat creates: the generated guest address, unconfirmed (the metadata mark alone no longer counts: tests/guest-cookie-takeover.test.ts)
+    state.adminUsers[GUEST_ID] = { id: GUEST_ID, email: `guest_${"0123456789abcdef".repeat(2)}@diger.tech`, email_confirmed_at: null, user_metadata: { is_guest: true, email_verified: true } };
     const r: any = await resolveMissionViewer(withGuestCookie(`gst_${GUEST_ID}`));
     expect(r).toMatchObject({ ok: true, viewer: { userId: GUEST_ID, isGuest: true, emailVerified: false } });
   });
