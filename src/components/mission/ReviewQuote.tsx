@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/client";
 import { REVIEW_ASKING_AR, REVIEW_BUTTON_AR, REVIEW_HEADING_AR, REVIEW_INTRO_AR, REVIEW_PICK_AR, reviewQuoteLinesAr, type ReviewQuoteView, type ReviewVersionChoice } from "@/lib/agentMission/stage4/reviewPreviewLabels";
 import { fetchReviewQuote, fetchReviewVersions } from "@/lib/agentMission/stage4/reviewPreviewClient";
 import { REVIEW_CANCELLED_AR, REVIEW_CANCEL_BUTTON_AR, REVIEW_CANCELLING_AR, REVIEW_PREPARE_BUTTON_AR, REVIEW_PREPARING_AR, reviewRequestLinesAr, type ReviewRequestView } from "@/lib/agentMission/stage4/reviewRequestLabels";
+import ApproveAddon from "./ApproveAddon";
 import { cancelReviewRequest, fetchReviewRequest, prepareReviewRequest } from "@/lib/agentMission/stage4/reviewRequestClient";
 import { versionTitleAr } from "@/lib/agentMission/stage4/versionLabels";
 
@@ -12,7 +13,7 @@ import { versionTitleAr } from "@/lib/agentMission/stage4/versionLabels";
  * MONEY PR 7c + 7d (2B-2 tasks 2 and 3): THE REVIEW SECTION on the request's own page, under the versions list.
  *   1. «مراجعة الملف» asks the server for the quote of the chosen version and shows exactly what it answered (the version, the cells, the price, that nothing was charged). The browser computes no price.
  *   2. After a valid quote «تجهيز طلب المراجعة» makes a review request that WAITS for approval: nothing is held or charged. The page finds it again after a refresh and offers «إلغاء الطلب» while it is unpaid.
- * There is NO approval button: approval is a later task. While the feature is off (the routes answer 404), or the mission has no published version and no waiting request, it draws NOTHING, so the page is what it was.
+ * The approval button (ApproveAddon, behind DIGER_STAGE4_APPROVAL) is drawn under the waiting request and nothing else here approves. While the feature is off (the routes answer 404), or the mission has no published version and no waiting request, it draws NOTHING, so the page is what it was.
  */
 const BTN = "min-h-11 w-full cursor-pointer rounded-full border border-ln2 bg-transparent px-5 text-[13px] text-ink focus-visible:outline-2 disabled:cursor-wait disabled:opacity-60 sm:w-auto";
 const SELECT = "min-h-11 w-full rounded-[12px] border border-ln2 bg-transparent px-3 text-[13px] text-ink focus-visible:outline-2 disabled:opacity-60 sm:w-auto";
@@ -22,9 +23,11 @@ export interface ReviewQuoteBodyProps {
   busy?: boolean; quote?: ReviewQuoteView | null; error?: string | null;
   /** The request that waits for approval (found again after a refresh, or just made). */
   waiting?: ReviewRequestView | null; onPrepare?: () => void; preparing?: boolean; onCancel?: () => void; cancelling?: boolean; notice?: string | null;
+  /** The approval button (launch round): drawn under the waiting request only when the container passes it (it draws nothing while the approval is off). */
+  approval?: React.ReactNode;
 }
 
-export function ReviewQuoteBody({ versions, selected, onSelect, onAsk, busy = false, quote = null, error = null, waiting = null, onPrepare, preparing = false, onCancel, cancelling = false, notice = null }: ReviewQuoteBodyProps) {
+export function ReviewQuoteBody({ versions, selected, onSelect, onAsk, busy = false, quote = null, error = null, waiting = null, onPrepare, preparing = false, onCancel, cancelling = false, notice = null, approval = null }: ReviewQuoteBodyProps) {
   if (versions.length === 0 && !waiting) return null;
   const alert = error ? <p role="alert" data-testid="review-error" className="m-0 text-[13px] leading-[1.9] text-ink2">{error}</p> : null;
   if (waiting) {
@@ -34,6 +37,7 @@ export function ReviewQuoteBody({ versions, selected, onSelect, onAsk, busy = fa
         <div data-testid="review-request" aria-live="polite" className="flex flex-col gap-1 text-[13px] leading-[1.9] text-ink">
           {reviewRequestLinesAr(waiting).map((line, i) => <p key={i} className={i === 0 ? "m-0 font-medium" : "m-0 text-ink2"}>{line}</p>)}
         </div>
+        {approval}
         {onCancel ? (
           <button type="button" data-testid="review-cancel" className={BTN} disabled={cancelling} aria-busy={cancelling ? true : undefined} onClick={onCancel}>
             {cancelling ? REVIEW_CANCELLING_AR : REVIEW_CANCEL_BUTTON_AR}
@@ -132,5 +136,7 @@ export default function ReviewQuote({ missionId }: { missionId: string }) {
     else { setError(r.message); setWaiting(await fetchReviewRequest({ missionId, fetchFn: fetch, headers: authHeaders })); }
     setCancelling(false);
   }, [missionId, waiting]);
-  return <ReviewQuoteBody versions={versions} selected={selected} onSelect={onSelect} onAsk={onAsk} busy={busy} quote={quote} error={error} waiting={waiting} onPrepare={onPrepare} preparing={preparing} onCancel={onCancel} cancelling={cancelling} notice={notice} />;
+  // after the approval's answer the waiting request is read again from the server: an approved one no longer waits (the status panel tells its state), an uncertain one is back to waiting
+  const onApprovalSettled = useCallback(() => { void fetchReviewRequest({ missionId, fetchFn: fetch, headers: authHeaders }).then((found) => setWaiting(found)); }, [missionId]);
+  return <ReviewQuoteBody versions={versions} selected={selected} onSelect={onSelect} onAsk={onAsk} busy={busy} quote={quote} error={error} waiting={waiting} onPrepare={onPrepare} preparing={preparing} onCancel={onCancel} cancelling={cancelling} notice={notice} approval={waiting ? <ApproveAddon missionId={missionId} requestId={waiting.id} points={waiting.points} onSettled={onApprovalSettled} /> : null} />;
 }

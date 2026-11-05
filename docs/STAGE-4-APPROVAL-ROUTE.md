@@ -59,3 +59,16 @@ The customer's approval **button** (separate draft PR on top of this one). Apply
 2. `DIGER_STAGE4_VERSIONS`, `DIGER_STAGE4_REVIEW`, `DIGER_STAGE4_EDITS` `on` (read-only surfaces and unpaid requests).
 3. `DIGER_STAGE4_APPROVAL=on` on a bounded pilot: one test account, one review (about 100 points), one edit, balances read before and after.
 4. Roll back: unset `DIGER_STAGE4_APPROVAL` (the button disappears and the route answers 404; a hold already made is always run to its end by the worker).
+
+## 6. The customer's approval button (this PR, on top of the route PR)
+
+`src/components/mission/ApproveAddon.tsx` + `src/lib/agentMission/stage4/addonApprovalClient.ts`, drawn under a WAITING review request (`ReviewQuote`) and a WAITING edit request (`EditRequestCard`) and nowhere else.
+
+- **Off means invisible.** On mount it asks `GET /api/missions/[id]/addon-approval`; any answer but `{success:true, available:true}` (404 while `DIGER_STAGE4_APPROVAL` is off, signed out, an outage, a malformed answer, a lost connection) draws NOTHING. The cards' default markup is byte-for-byte unchanged without the button (tested).
+- **Consent is explicit.** One sentence (what approving does: the points are held, only what is delivered is charged, the rest returns) and one button «اعتمد الطلب واحجز N نقطة» whose N is the price the card already shows. Nothing is held before the click.
+- **The browser sends two fields**: `{ requestId, expectedPoints }` (the hold shown). The server recomputes and compares.
+- **One click, one request**: the button is disabled while the request is in flight (and the server is idempotent as well).
+- **Truthful outcomes**: approved → «اعتُمد الطلب وحُجزت النقاط؛ يبدأ التنفيذ الآن»; a second click → «اعتُمد بالفعل»; a refusal → the server's own sentence (it says nothing was held only where that is true); a lost answer, a gateway error or an unreadable reply → «قد تكون نقاطك حُجزت مؤقتًا» (never «nothing was held»), and the button stays so a retry converges on the same hold.
+- **After any answer** the file's status panel (`FileWorkflow`) and the waiting request are re-read from the server (window event `diger:file-workflow-refresh`): the page shows the server's truth, not the browser's guess.
+
+Tests: `tests/launch-approval-button.test.tsx` (21).

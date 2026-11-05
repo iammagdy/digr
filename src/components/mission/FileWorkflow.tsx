@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { FILE_WORKFLOW_HEADING_AR, FILE_WORKFLOW_LOADING_AR, FILE_WORKFLOW_NONE_AR, FILE_WORKFLOW_RETRY_AR, workflowItemLinesAr, workflowItemTitleAr, workflowPhaseLabelAr, type FileWorkflowView } from "@/lib/agentMission/stage4/fileWorkflowLabels";
 import { fetchFileWorkflow } from "@/lib/agentMission/stage4/fileWorkflowClient";
+import { FILE_WORKFLOW_REFRESH_EVENT } from "@/lib/agentMission/stage4/addonApprovalClient";
 
 /**
  * STAGE C: «حالة طلباتك على هذا الملف», the one place on the request's page that says, for every review or edit request on the file, WHICH state it is in: waiting for approval, approval being checked, approved and processing, delivered, charged but delivery pending, failed without a recorded charge,
@@ -77,5 +78,11 @@ export default function FileWorkflow({ missionId }: { missionId: string }) {
     return () => { alive = false; };
   }, [load]);
   const onRetry = useCallback(() => { void load(() => true); }, [load]);
+  // the approval button (launch round) fires this after any answer: the status of the file's requests is read again from the server
+  useEffect(() => {
+    const again = () => { void load(() => true); };
+    window.addEventListener(FILE_WORKFLOW_REFRESH_EVENT, again);
+    return () => window.removeEventListener(FILE_WORKFLOW_REFRESH_EVENT, again);
+  }, [load]);
   return <FileWorkflowBody status={status} view={view} error={error} onRetry={onRetry} />;
 }

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { formatAr } from "@/lib/arabicDigits";
 import { createClient } from "@/lib/supabase/client";
+import ApproveAddon from "./ApproveAddon";
 import { cancelEditRequest, fetchEditRequest, fetchEditSchema, prepareEditRequest, quoteEdit } from "@/lib/agentMission/stage4/editRequestClient";
 import { emptyForm, editInputOf, type EditForm } from "@/lib/agentMission/stage4/editRequestForm";
 import {
@@ -37,6 +38,8 @@ export interface EditRequestBodyProps {
   onCancel?: () => void;
   cancelling?: boolean;
   notice?: string | null;
+  /** The approval button (launch round): drawn under the waiting request only when the container passes it (it draws nothing while the approval is off). */
+  approval?: React.ReactNode;
   onRetry?: () => void;
 }
 
@@ -119,7 +122,7 @@ function Fields({ schema, form, onForm, disabled }: { schema: EditSchemaView; fo
   }
 }
 
-export function EditRequestBody({ schema, status, form, onForm, onAsk, busy = false, quote = null, error = null, waiting = null, onPrepare, preparing = false, onCancel, cancelling = false, notice = null, onRetry }: EditRequestBodyProps) {
+export function EditRequestBody({ schema, status, form, onForm, onAsk, busy = false, quote = null, error = null, waiting = null, onPrepare, preparing = false, onCancel, cancelling = false, notice = null, onRetry, approval = null }: EditRequestBodyProps) {
   if (status === "idle" || (status === "ready" && !schema && !waiting)) return null;
   const head = <h2 id="edit-request-heading" className="m-0 text-[15px] font-medium text-ink">{EDIT_HEADING_AR}</h2>;
   const shell = (children: React.ReactNode) => <section data-testid="edit-request" aria-labelledby="edit-request-heading" dir="rtl" className="flex flex-col gap-3 break-words rounded-[18px] border border-ln bg-sf p-4">{head}{children}</section>;
@@ -140,6 +143,7 @@ export function EditRequestBody({ schema, status, form, onForm, onAsk, busy = fa
         <div data-testid="edit-waiting" aria-live="polite" className="flex flex-col gap-1 text-[13px] leading-[1.9] text-ink">
           {editRequestLinesAr(waiting).map((line, i) => <p key={i} className={i === 0 ? "m-0 font-medium" : "m-0 text-ink2"}>{line}</p>)}
         </div>
+        {approval}
         {onCancel ? <button type="button" data-testid="edit-cancel" className={BTN} disabled={cancelling} aria-busy={cancelling ? true : undefined} onClick={onCancel}>{cancelling ? EDIT_CANCELLING_AR : EDIT_CANCEL_BUTTON_AR}</button> : null}
         {alert}
       </>,
@@ -239,5 +243,7 @@ export default function EditRequestCard({ missionId }: { missionId: string }) {
     setCancelling(false);
   }, [missionId, waiting, start]);
   const onRetry = useCallback(() => { setError(null); void start(() => true); }, [start]);
-  return <EditRequestBody schema={schema} status={status} form={form} onForm={onForm} onAsk={onAsk} busy={busy} quote={quote} error={error} waiting={waiting} onPrepare={onPrepare} preparing={preparing} onCancel={onCancel} cancelling={cancelling} notice={notice} onRetry={onRetry} />;
+  // after the approval's answer the request is read again from the server: an approved one no longer waits (the status panel tells its state), an uncertain one is back to waiting
+  const onApprovalSettled = useCallback(() => { void start(() => true); }, [start]);
+  return <EditRequestBody schema={schema} status={status} form={form} onForm={onForm} onAsk={onAsk} busy={busy} quote={quote} error={error} waiting={waiting} onPrepare={onPrepare} preparing={preparing} onCancel={onCancel} cancelling={cancelling} notice={notice} onRetry={onRetry} approval={waiting ? <ApproveAddon missionId={missionId} requestId={waiting.id} points={waiting.holdPoints} onSettled={onApprovalSettled} /> : null} />;
 }
