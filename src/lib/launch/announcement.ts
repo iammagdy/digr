@@ -1,6 +1,3 @@
-import { stage2FlagMode } from "../agentMission/stage2/flags";
-import { stage3FlagMode } from "../agentMission/stage3/flags";
-import { stage4FlagMode } from "../agentMission/stage4/flags";
 
 /**
  * The launch announcement's words (Arabic), composed ONLY from features that are live for everyone. The sentences are the approved ones of
@@ -47,9 +44,12 @@ const MONEY = "لا نحجز نقاطك إلا بعد أن تعتمد السعر
 
 /** Which flag-gated features are on for EVERYONE in this environment (exactly «on»). */
 export function liveAnnouncementFeatures(env: Env) {
-  const on2 = (n: Parameters<typeof stage2FlagMode>[0]) => stage2FlagMode(n, env) === "on";
-  const on3 = (n: Parameters<typeof stage3FlagMode>[0]) => stage3FlagMode(n, env) === "on";
-  const on4 = (n: Parameters<typeof stage4FlagMode>[0]) => stage4FlagMode(n, env) === "on";
+  // Read locally on purpose (the stage isolation guards forbid importing stage modules here): a feature is announced ONLY when its flag is exactly «on» for everyone.
+  // Same rule as the flag helpers (case and spaces ignored); «test», «allowlist», unset or any other word does NOT announce.
+  const isOn = (n: string) => String(env[n] ?? "").trim().toLowerCase() === "on";
+  const on2 = isOn;
+  const on3 = isOn;
+  const on4 = isOn;
   const approval = on4("DIGER_STAGE4_APPROVAL");
   return {
     liveSheet: on2("DIGER_STAGE2_LIVE_SHEET"),
