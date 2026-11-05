@@ -1,6 +1,7 @@
 import { isRetrySamePlanMessage, isReviewPlanMessage, isTypedApprovalMessage } from "../retryMessage";
 import { titleFromFirstRequest, isUntitledConversation } from "../conversationTitleFromRequest";
 import { MISSION_TABLE } from "./constants";
+import { ADDON_MARKER_COLUMN, hasAddonMarker } from "./addonMarker";
 import { getBalance } from "../supabase/ledger";
 import { answerForCustomer, createCustomerMission, editPlanForCustomer } from "./customerActions";
 import { preModelAnswer } from "./guardRules";
@@ -59,8 +60,10 @@ async function readOpenRequest(sb: any, conversationId: string, userId: string):
   const id = await latestMissionOfConversation(sb, conversationId);
   if (!id) return null;
   try {
-    const { data } = await sb.from(MISSION_TABLE).select("id,user_id,status,question_ar,request_text").eq("id", id).maybeSingle();
+    const { data } = await sb.from(MISSION_TABLE).select(`id,user_id,status,question_ar,request_text,${ADDON_MARKER_COLUMN}`).eq("id", id).maybeSingle();
     if (!data || data.user_id !== userId) return null;
+    // a review, review-fix or edit request of a delivered file is not the customer's open research request: a follow-up is never applied to it as a plan edit or an answer (MONEY PR 7e, docs/MONEY-PR-7A.md section 17)
+    if (hasAddonMarker(data)) return null;
     const state = OPEN_STATE[String(data.status)];
     return state ? { id, state, questionAr: data.question_ar ?? null, requestText: data.request_text ?? null } : null;
   } catch { return null; }
@@ -133,6 +136,17 @@ async function answerOpenRequest(input: AgentChatTurnInput, open: OpenRequest, d
   return r.ok ? card(PLAN_EDITED_AR) : text(r.error);
 }
 
+/**
+ * The mission the last card of the conversation points at may be replaced (cancelled) only when it is a RESEARCH mission: a review request of a delivered file is never replaced by a new chat request (MONEY PR 7e). A read that fails leaves the mission as it is
+ * (the replacement is best effort: the open-missions limit protects either way).
+ */
+async function isResearchMission(sb: any, id: string): Promise<boolean> {
+  try {
+    const { data, error } = await sb.from(MISSION_TABLE).select(`id,${ADDON_MARKER_COLUMN}`).eq("id", id).maybeSingle();
+    return !error && !hasAddonMarker(data);
+  } catch { return false; }
+}
+
 export async function agentChatTurn(input: AgentChatTurnInput): Promise<AgentChatTurnResult> {
   const { sb } = input;
   if (isTypedApprovalMessage(input.message)) {
@@ -157,7 +171,7 @@ export async function agentChatTurn(input: AgentChatTurnInput): Promise<AgentCha
   }
   // the unapproved plan above is replaced by this request (nothing is held before approval, so cancelling is only a status)
   const previous = await latestMissionOfConversation(sb, input.conversationId);
-  if (previous) {
+  if (previous && (await isResearchMission(sb, previous))) {
     try { await sb.from(MISSION_TABLE).update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", previous).eq("user_id", input.userId).in("status", REPLACEABLE); } catch { /* the limit below still protects */ }
   }
   const created = await createCustomerMission(sb, { userId: input.userId, text: input.message });

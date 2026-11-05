@@ -15,7 +15,7 @@ const OVERVIEW_POLL_MS = 10000;
 
 interface WorkerMemory { rssMb: number; treeRssMb: number | null; limitMb: number; warn: boolean }
 interface WorkerState { alive: boolean; ageSeconds: number | null; lastBeatAt: string | null; workers: Array<{ worker_id: string; active_missions: number; model: string | null; version: string | null }>; memory: WorkerMemory | null }
-interface MissionRow { id: string; request_text: string; status: string; question_ar: string | null; reserved_points: number | null; unit_price_points: number | null; delivered_units: number | null; charged_points: number | null; planning_model: string | null; planning_llm_usd: number; execution_model: string | null; execution_llm_usd: number; planning_treg_usd: number; execution_treg_usd: number; created_at: string }
+interface MissionRow { id: string; request_text: string; status: string; question_ar: string | null; reserved_points: number | null; unit_price_points: number | null; delivered_units: number | null; charged_points: number | null; planning_model: string | null; planning_llm_usd: number; execution_model: string | null; execution_llm_usd: number; planning_treg_usd: number; execution_treg_usd: number; created_at: string; /** a review, review-fix or edit request of a delivered file: not a research mission (docs/MONEY-PR-7A.md section 17) */ is_addon?: true }
 interface ContractEvent { mission_id: string; message_ar: string; created_at: string; r1: number; r2: number; r3: number; r4: number; completed: number }
 interface Overview { tablesReady: boolean; contractEvents?: ContractEvent[]; redesignFlags?: RedesignFlags; platformFlags?: PlatformFlags; socialDiscovery?: "test" | "off"; worker: WorkerState; planningModel: string | null; allowedModels: string[]; pricing?: { markup: number; minChargePoints: number }; testAccountEmail: string; missions: MissionRow[] }
 interface EventRow { id: number; kind: string; message_ar: string; counts: Record<string, number>; created_at: string }
@@ -30,6 +30,8 @@ interface Detail {
 }
 
 const STATUS_AR: Record<string, string> = { queued: "في الانتظار", planning: "يخطّط", needs_input: "ينتظر إجابتك", plan_ready: "الخطة جاهزة", approved: "معتمدة", executing: "ينفّذ", completed: "اكتملت", failed: "تعذّرت", unserved: "لا يمكن خدمتها", cancelled: "أُلغيت" };
+/** The label of a review, review-fix or edit request of a delivered file in the research page's lists. */
+const ADDON_LABEL_AR = "طلب على ملف مُسلَّم";
 const TERMINAL = new Set(["completed", "failed", "unserved", "cancelled"]);
 const MODEL_AR: Record<string, string> = { "claude-haiku-5-5": "هايكو ٥٫٥ (الأرخص)", "claude-sonnet-5-5": "سونيت ٥٫٥ (الأقوى)" };
 
@@ -257,7 +259,7 @@ export default function AgentPage() {
             {overview!.missions.map((x) => (
               <li key={x.id}>
                 <button type="button" onClick={() => setSelected(x.id)} className={`w-full cursor-pointer rounded-xl border px-3 py-2 text-right text-[13px] ${selected === x.id ? "border-gold bg-sf2" : "border-ln bg-bg"}`} data-testid={`mission-${x.id}`}>
-                  <b>{STATUS_AR[x.status] ?? x.status}</b> · {hhmm(x.created_at)} · {x.request_text.slice(0, 90)}
+                  {x.is_addon ? <span data-testid={`mission-addon-${x.id}`} className="text-ink2">{ADDON_LABEL_AR} · </span> : null}<b>{STATUS_AR[x.status] ?? x.status}</b> · {hhmm(x.created_at)} · {x.request_text.slice(0, 90)}
                 </button>
               </li>
             ))}
@@ -269,9 +271,10 @@ export default function AgentPage() {
         <section className={SECTION} aria-label="تفاصيل المهمة" data-testid="agent-detail">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="m-0 text-[14px] font-semibold text-ink">{STATUS_AR[m.status] ?? m.status}{live ? " …" : ""}</h3>
-            {["queued", "needs_input", "plan_ready"].includes(m.status) ? <button type="button" className={BTN} disabled={busy} onClick={() => act("cancel")}>إلغاء</button> : null}
+            {!m.is_addon && ["queued", "needs_input", "plan_ready"].includes(m.status) ? <button type="button" className={BTN} disabled={busy} onClick={() => act("cancel")}>إلغاء</button> : null}
           </div>
           <p className="m-0 text-[13px] text-ink2">{m.request_text}</p>
+          {m.is_addon ? <p className="m-0 rounded-xl bg-sf2 p-3 text-[13px] text-ink" data-testid="agent-addon-note">{ADDON_LABEL_AR}: ليس مهمة بحث. لا يُجاب ولا يُعتمد ولا يُلغى من هذه الصفحة؛ له اعتماده وإلغاؤه الخاصان.</p> : null}
 
           <div className="flex flex-col gap-1 rounded-xl border border-ln p-3" data-testid="agent-events" aria-live="polite">
             {events.length === 0 ? <span className="text-[13px] text-ink2">لا أحداث بعد…</span> : events.map((e) => (

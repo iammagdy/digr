@@ -1,4 +1,5 @@
 import { MISSION_TABLE } from "../agentMission/constants";
+import { ADDON_MARKER_COLUMN, hasAddonMarker } from "../agentMission/addonMarker";
 import { WAITING_STATUSES, expireWaitingMissions, isExpiredMission, EXPIRED_SENTENCE_AR } from "./expiry";
 import { failStuckPlanning, openMissionView } from "../agentMission/openMissions";
 import { customerSafeText } from "../agentMission/text";
@@ -101,7 +102,7 @@ export async function buildRequestIndex(client: any, input: BuildIndexInput): Pr
 
   const [jobs, missions] = await Promise.all([
     readAll((a, b) => client.from("jobs").select("id,status,delivered_units,target_volume_max,created_at").eq("user_id", input.userId).order("created_at", { ascending: false }).range(a, b)),
-    readAll((a, b) => client.from(MISSION_TABLE).select("id,status,job_id,request_text,created_at,lease_until,summary_ar,error").eq("user_id", input.userId).order("created_at", { ascending: false }).range(a, b)),
+    readAll((a, b) => client.from(MISSION_TABLE).select(`id,status,job_id,request_text,created_at,lease_until,summary_ar,error,${ADDON_MARKER_COLUMN}`).eq("user_id", input.userId).order("created_at", { ascending: false }).range(a, b)),
   ]);
 
   const missionOfJob = new Map<string, any>();
@@ -119,6 +120,9 @@ export async function buildRequestIndex(client: any, input: BuildIndexInput): Pr
 
   const pendingAll: Array<PendingIndexRow & { text: string }> = [];
   for (const m of missions) {
+    // a review, review-fix or edit request of a delivered file is a row of this table but not a research request: it is never a pending plan, a running mission or an ended one here (MONEY PR 7e, docs/MONEY-PR-7A.md section 17).
+    // A JOB such an add-on holds (a later task) is still listed as a job above, with the request's own words as its title.
+    if (hasAddonMarker(m)) continue;
     if (m.job_id) continue;
     const text = String(m.request_text ?? "");
     if ((WAITING_STATUSES as readonly string[]).includes(m.status)) {
