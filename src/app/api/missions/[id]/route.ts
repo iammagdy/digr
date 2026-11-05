@@ -6,6 +6,7 @@ import { resolveMissionViewer, safeMissionId } from "@/lib/server/missionViewer"
 import { getLiveProviderGateStatusFromSettings } from "@/lib/server/providerGate";
 import { getBusyState } from "@/lib/server/busyState";
 import { countActiveJobs, evaluateConcurrentJobs } from "@/lib/server/concurrentJobs";
+import { askCardForCustomer, askEditForCustomer, stage2FlagForMission } from "@/lib/agentMission/stage2/askEditAction";
 import { methodologyMissionById } from "@/lib/agentMission/methodology/missions";
 import { isMethodologyPurchased } from "@/lib/server/methodologyPurchase";
 
@@ -27,13 +28,18 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     const m = await methodologyMissionById(client, { missionId: id, userId: auth.viewer.userId });
     if (m) methodology = { jobId: m.jobId, titleAr: m.titleAr, purchased: await isMethodologyPurchased(client, { userId: auth.viewer.userId, jobId: m.jobId }) };
   }
-  return NextResponse.json({ success: true, isGuest: auth.viewer.isGuest, status: r.status, requestText: r.requestText, view: r.view, ...(methodology ? { methodology } : {}) }, { headers: { "Cache-Control": "no-store" } });
+  // STAGE 2 S4 (docs/STAGE-2.md): the «فهمنا طلبك» card, only while the plan waits for approval and only when DIGER_STAGE2_ASK_CARD is on for the viewer (unset: nothing is read, the answer is today's)
+  const askCard = r.status === "plan_ready" && (await stage2FlagForMission(client, "DIGER_STAGE2_ASK_CARD", id)) ? await askCardForCustomer(client, { id, userId: auth.viewer.userId }) : null;
+  // STAGE 2 S10: the page may poll the live sheet (its own route) only when DIGER_STAGE2_LIVE_SHEET is on for the viewer (unset: nothing is read, the answer is today's)
+  const liveSheet = await stage2FlagForMission(client, "DIGER_STAGE2_LIVE_SHEET", id);
+  return NextResponse.json({ success: true, isGuest: auth.viewer.isGuest, status: r.status, requestText: r.requestText, view: r.view, ...(methodology ? { methodology } : {}), ...(askCard ? { askCard } : {}), ...(liveSheet ? { liveSheet: true } : {}) }, { headers: { "Cache-Control": "no-store" } });
 }
 
 /**
  * Body {action}: "approve" (a guest signs up first; the reserve goes through the existing money functions), "cancel", "answer" (+ text), "smaller" (the smaller version of a plan above the limit, by code), "edit_plan" (+ edits: the number of items, the period, the language, the
  * exclusions and the columns of the plan itself, priced again by code and shown again for approval), or "edit" (cancels a mission that holds nothing and returns its words so the customer can retype the request).
  * The price is recomputed by code at approval; nothing the agent said sets it.
+ * "ask_edit" (+ edit: one field of the «فهمنا طلبك» card; Stage 2, only when DIGER_STAGE2_ASK_CARD is on for the viewer, else 404) sends a plan that is not approved back to planning with the edit.
  */
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
   const id = safeMissionId((await ctx.params).id);
@@ -73,6 +79,12 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
   if (body?.action === "smaller") {
     const r = await smallerVersionForCustomer(client, { id, userId: viewer.userId, ...(Number.isFinite(Number(body.maxHoldPoints)) ? { maxHoldPoints: Number(body.maxHoldPoints) } : {}) });
     return r.ok ? NextResponse.json({ success: true }) : fail(r);
+  }
+  // STAGE 2 S3 (docs/STAGE-2.md): an edit of the «فهمنا طلبك» card, only behind DIGER_STAGE2_ASK_CARD (unset: not found, as before this action existed). No money line is touched.
+  if (body?.action === "ask_edit") {
+    if (!(await stage2FlagForMission(client, "DIGER_STAGE2_ASK_CARD", id))) return NextResponse.json({ success: false, error: "not_found" }, { status: 404 });
+    const r = await askEditForCustomer(client, { id, userId: viewer.userId, edit: body.edit });
+    return r.ok ? NextResponse.json({ success: true, status: r.status, scope: r.scope }) : NextResponse.json({ success: false, error: r.error, ...(r.reason ? { reason: r.reason } : {}) }, { status: r.status });
   }
   if (body?.action === "answer") {
     const r = await answerForCustomer(client, { id, userId: viewer.userId, text: body.text });
