@@ -6,6 +6,7 @@ import { REVIEW_ASKING_AR, REVIEW_BUTTON_AR, REVIEW_HEADING_AR, REVIEW_INTRO_AR,
 import { fetchReviewQuote, fetchReviewVersions } from "@/lib/agentMission/stage4/reviewPreviewClient";
 import { REVIEW_CANCELLED_AR, REVIEW_CANCEL_BUTTON_AR, REVIEW_CANCELLING_AR, REVIEW_PREPARE_BUTTON_AR, REVIEW_PREPARING_AR, reviewRequestLinesAr, type ReviewRequestView } from "@/lib/agentMission/stage4/reviewRequestLabels";
 import ApproveAddon from "./ApproveAddon";
+import type { ApproveResult } from "@/lib/agentMission/stage4/addonApprovalClient";
 import { cancelReviewRequest, fetchReviewRequest, prepareReviewRequest } from "@/lib/agentMission/stage4/reviewRequestClient";
 import { versionTitleAr } from "@/lib/agentMission/stage4/versionLabels";
 
@@ -137,6 +138,11 @@ export default function ReviewQuote({ missionId }: { missionId: string }) {
     setCancelling(false);
   }, [missionId, waiting]);
   // after the approval's answer the waiting request is read again from the server: an approved one no longer waits (the status panel tells its state), an uncertain one is back to waiting
-  const onApprovalSettled = useCallback(() => { void fetchReviewRequest({ missionId, fetchFn: fetch, headers: authHeaders }).then((found) => setWaiting(found)); }, [missionId]);
+  const onApprovalSettled = useCallback((r: ApproveResult) => {
+    // a refusal or an UNCERTAIN answer keeps the request and the button on screen (its alert is the only place the customer reads «the points may be held»); only a request that was approved leaves the waiting state, and its sentence stays as a notice
+    if (r.state !== "approved" && r.state !== "already_approved") return;
+    setNotice(r.message);
+    void fetchReviewRequest({ missionId, fetchFn: fetch, headers: authHeaders }).then((found) => setWaiting(found));
+  }, [missionId]);
   return <ReviewQuoteBody versions={versions} selected={selected} onSelect={onSelect} onAsk={onAsk} busy={busy} quote={quote} error={error} waiting={waiting} onPrepare={onPrepare} preparing={preparing} onCancel={onCancel} cancelling={cancelling} notice={notice} approval={waiting ? <ApproveAddon missionId={missionId} requestId={waiting.id} points={waiting.points} onSettled={onApprovalSettled} /> : null} />;
 }

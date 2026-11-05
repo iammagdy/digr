@@ -12,10 +12,12 @@ export const APPROVE_HEADING_AR = "اعتماد الطلب";
 export const APPROVE_CONSENT_AR = "عند الاعتماد نحجز نقاط الطلب مؤقتًا من رصيدك، ولا يُخصم منها إلا ما يُنجز فعلًا، وما لا يُخصم يعود إلى رصيدك.";
 export const APPROVING_AR = "جارٍ الاعتماد…";
 export const APPROVED_AR = "اعتُمد الطلب وحُجزت النقاط؛ يبدأ التنفيذ الآن. تابع حالته في «حالة طلباتك على هذا الملف».";
-export const ALREADY_APPROVED_AR = "هذا الطلب اعتُمد بالفعل؛ تابع حالته في «حالة طلباتك على هذا الملف».";
+export const ALREADY_APPROVED_AR = "هذا الطلب اعتُمد بالفعل أو قيد الاعتماد الآن؛ تابع حالته في «حالة طلباتك على هذا الملف».";
 /** The connection failed or the answer is unknown: the points MAY be held, so this never says nothing was held. */
 export const APPROVE_UNKNOWN_AR = "لم نتمكن من تأكيد اعتماد الطلب بعد. قد تكون نقاطك حُجزت مؤقتًا، ولن يُخصم منها إلا ما يُنجز. تحقق من «حالة طلباتك على هذا الملف» قبل أن تعيد المحاولة.";
 export const APPROVE_SIGNED_OUT_AR = "انتهت جلستك. سجّل الدخول ثم حاول مرة أخرى؛ لم يُحجز أو يُخصم شيء.";
+/** The route refused before any money function (the approval is no longer offered, or the request is not this customer's any more). */
+export const APPROVE_NOT_AVAILABLE_AR = "لم يعد اعتماد هذا الطلب متاحًا من هنا. حدّث الصفحة؛ لم يُحجز أو يُخصم شيء.";
 export const approveButtonAr = (points: number): string => `اعتمد الطلب واحجز ${pointsAr(points)}`;
 
 const isRequestId = (v: unknown): v is string => typeof v === "string" && /^msn_[a-z0-9]{8,40}$/.test(v);
@@ -51,7 +53,9 @@ export async function sendApproval(input: { missionId: string; requestId: string
     if (body?.state === "already_approved") return { state: "already_approved", message: ALREADY_APPROVED_AR };
     if (body?.state === "uncertain") return { state: "uncertain", message: sentence(body.error) ?? APPROVE_UNKNOWN_AR };
     if (body?.state === "refused" && sentence(body.error)) return { state: "refused", message: sentence(body.error) as string };
-    if (res.status === 401 && !body) return { state: "refused", message: APPROVE_SIGNED_OUT_AR };
+    // an answer of the route itself with no `state` (the session ended, the feature was switched off, a bad id): these are decided BEFORE any money function, so nothing was held
+    if (res.status === 401) return { state: "refused", message: APPROVE_SIGNED_OUT_AR };
+    if ((res.status === 400 || res.status === 403 || res.status === 404) && !body?.state) return { state: "refused", message: APPROVE_NOT_AVAILABLE_AR };
     // an answer that is not one of ours (a gateway error, an HTML page): the server may have processed the request
     return { state: "uncertain", message: APPROVE_UNKNOWN_AR };
   } catch {

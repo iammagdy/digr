@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ApproveAddonBody } from "../src/components/mission/ApproveAddon";
 import { EditRequestBody } from "../src/components/mission/EditRequestCard";
 import { ReviewQuoteBody } from "../src/components/mission/ReviewQuote";
-import { ALREADY_APPROVED_AR, APPROVED_AR, APPROVE_CONSENT_AR, APPROVE_SIGNED_OUT_AR, APPROVE_UNKNOWN_AR, addonApprovalUrl, approveButtonAr, fetchApprovalAvailable, sendApproval } from "../src/lib/agentMission/stage4/addonApprovalClient";
+import { ALREADY_APPROVED_AR, APPROVED_AR, APPROVE_CONSENT_AR, APPROVE_NOT_AVAILABLE_AR, APPROVE_SIGNED_OUT_AR, APPROVE_UNKNOWN_AR, addonApprovalUrl, approveButtonAr, fetchApprovalAvailable, sendApproval } from "../src/lib/agentMission/stage4/addonApprovalClient";
 import { checkCustomerText } from "../src/lib/agentMission/text";
 
 /**
@@ -59,15 +59,22 @@ describe("what the customer is told, by the server's answer", () => {
       expect(r.message).not.toContain("لم يُحجز");
     }
   });
-  it("a signed-out answer (401 with no body) asks to sign in and says nothing was held", async () => {
+  it("a signed-out answer asks to sign in and says nothing was held, WITH or without the route's JSON body (independent review, finding 2)", async () => {
     expect(await run(401, "")).toEqual({ state: "refused", message: APPROVE_SIGNED_OUT_AR });
+    expect(await run(401, { success: false, error: "غير مصرح. يرجى تسجيل الدخول أولاً." })).toEqual({ state: "refused", message: APPROVE_SIGNED_OUT_AR });
+  });
+  it("the route's own refusals before any money function (the feature switched off mid-session, a bad id, another account) say nothing was held; a 5xx never does", async () => {
+    for (const [status, body] of [[404, { success: false, error: "not_found" }], [400, { success: false, error: "bad_request" }], [403, { success: false, error: "x" }]] as const) {
+      expect(await run(status, body)).toEqual({ state: "refused", message: APPROVE_NOT_AVAILABLE_AR });
+    }
+    for (const status of [500, 502, 503]) expect((await run(status, { success: false, error: "x" })).state).toBe("uncertain");
   });
   it("a refusal with no usable sentence, or an absurdly long one, is not shown as a refusal", async () => {
     expect((await run(409, { success: false, state: "refused" })).state).toBe("uncertain");
     expect((await run(409, { success: false, state: "refused", error: "x".repeat(500) })).state).toBe("uncertain");
   });
   it("every fixed sentence passes the customer-text check, is Arabic only, and has no raw digit", () => {
-    for (const t of [APPROVE_CONSENT_AR, APPROVED_AR, ALREADY_APPROVED_AR, APPROVE_UNKNOWN_AR, APPROVE_SIGNED_OUT_AR, approveButtonAr(100), approveButtonAr(1234)]) {
+    for (const t of [APPROVE_CONSENT_AR, APPROVED_AR, ALREADY_APPROVED_AR, APPROVE_UNKNOWN_AR, APPROVE_SIGNED_OUT_AR, APPROVE_NOT_AVAILABLE_AR, approveButtonAr(100), approveButtonAr(1234)]) {
       expect(checkCustomerText(t).issues, t).toEqual([]);
       expect(t).not.toMatch(/[0-9A-Za-z]/);
     }
@@ -155,6 +162,12 @@ describe("the sources", () => {
       expect(src, f).not.toMatch(/\.rpc\(|accept_quote_atomic|create_quote_atomic|reserve_credits_atomic|claim_job_chunk|release_job_atomic|\.storage\b|createAdminClient|supabase\/server|addonSettlement|approvalGuard|approvalRoute/);
     }
     expect(code("src/lib/agentMission/stage4/addonApprovalClient.ts").match(/fetchFn\(/g)).toHaveLength(2);
+  });
+  it("after an UNCERTAIN or refused answer the cards keep the request and the button mounted (finding 3); only an approved one leaves the waiting state", () => {
+    for (const f of ["src/components/mission/ReviewQuote.tsx", "src/components/mission/EditRequestCard.tsx"]) {
+      const src = code(f);
+      expect(src, f).toMatch(/if \(r\.state !== "approved" && r\.state !== "already_approved"\) return;/);
+    }
   });
   it("the cards draw the button only for a waiting request", () => {
     expect(code("src/components/mission/ReviewQuote.tsx")).toMatch(/approval=\{waiting \? <ApproveAddon/);

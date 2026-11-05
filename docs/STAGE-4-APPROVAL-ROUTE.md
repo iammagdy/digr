@@ -72,3 +72,17 @@ The customer's approval **button** (separate draft PR on top of this one). Apply
 - **After any answer** the file's status panel (`FileWorkflow`) and the waiting request are re-read from the server (window event `diger:file-workflow-refresh`): the page shows the server's truth, not the browser's guess.
 
 Tests: `tests/launch-approval-button.test.tsx` (21).
+
+## 7. Independent review (a separate, unanchored reviewer; read-only) and what was done
+
+No money-without-consent, authorization, double-hold, flag-bypass or ordering defect was found. Real findings and their handling:
+
+| # | Finding | Handling |
+|---|---|---|
+| 1 | a kept hold that cannot start (`claim_failed` code, «نقاطك محجوزة» sentence) was answered `refused` | **Fixed** (route PR): the sentence decides, answered `uncertain`; tested with a clean claim refusal and a convergent retry |
+| 2 | the client called a 401 with the route's JSON body «uncertain» | **Fixed**: 401, and 400/403/404 without a `state`, say nothing was held; 5xx and unreadable answers stay uncertain |
+| 3 | the button unmounted after any answer (the «may be held» warning vanished) | **Fixed**: only an approved request leaves the waiting state; refused/uncertain keep the card and button mounted |
+| 4 | «already approved» asserted while another tab may still be mid-approval | **Fixed**: neutral sentence «اعتُمد بالفعل أو قيد الاعتماد الآن»; a status that moved between reads is mapped to it |
+| 5 | `emailVerified` also reads client-writable `user_metadata.email_verified` (pre-existing in `missionViewer.ts`, shared with mission approval) | **OWNER / separate PR**: use only `email_confirmed_at`; only the account's own points are at stake |
+| 6 | GET reports `available` to guests/unverified (POST gives 401/403) | accepted (comment corrected); a kind flag set to `test` fails closed with a 404 |
+| 7 | CSRF relies on SameSite | **Fixed**: the POST requires `application/json` |
