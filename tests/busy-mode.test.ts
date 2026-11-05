@@ -69,7 +69,7 @@ describe("the live busy state: cached, read only, fails open", () => {
     (process.env as any).NODE_ENV = "production";
     setBusyStateForTesting(undefined);
     let reads = 0;
-    const admin: any = { from: () => { reads += 1; return { select: () => ({ in: async () => ({ count: 4 }), eq: () => ({ maybeSingle: async () => ({ data: null }) }), limit: () => ({ then: (r: any) => r({ data: [], error: null }) }), then: (r: any) => r({ data: [], error: null }) }), }; } };
+    const admin: any = { from: () => { reads += 1; return { select: () => ({ in: () => ({ or: async () => ({ count: 4 }) }), eq: () => ({ maybeSingle: async () => ({ data: null }) }), limit: () => ({ then: (r: any) => r({ data: [], error: null }) }), then: (r: any) => r({ data: [], error: null }) }), }; } };
     const t = 2_000_000_000_000;
     await getBusyState(admin, t);
     const after = reads;
