@@ -1,5 +1,6 @@
 import { AGENT_MAX_OPEN_MISSIONS_PER_USER, AGENT_STUCK_PLANNING_AFTER_MS, MISSION_TABLE } from "./constants";
 import { refusalSentenceAr } from "./refusal";
+import { ADDON_MARKER_COLUMN, hasAddonMarker, withoutAddonRows } from "./addonMarker";
 import { expireWaitingMissions } from "../requests/expiry";
 
 /**
@@ -78,12 +79,13 @@ export function openMissionView(row: OpenMissionRow, now: number = Date.now(), c
  */
 export async function failStuckPlanning(client: any, input: { userId: string; now?: number }): Promise<string[]> {
   const now = input.now ?? Date.now();
-  const read = await client.from(MISSION_TABLE).select("id,status,lease_until,job_id").eq("user_id", input.userId).eq("status", "planning");
+  const read = await client.from(MISSION_TABLE).select(`id,status,lease_until,job_id,${ADDON_MARKER_COLUMN}`).eq("user_id", input.userId).eq("status", "planning");
   if (read?.error || !Array.isArray(read?.data)) return [];
   const cutoff = new Date(now - AGENT_STUCK_PLANNING_AFTER_MS).toISOString();
   const ended: string[] = [];
   for (const row of read.data as OpenMissionRow[]) {
-    if (row.job_id || openKindOf(row, now) !== "stuck") continue;
+    // an add-on row is not a planning mission (MONEY PR 7e, section 17): it is never ended here
+    if (hasAddonMarker(row) || row.job_id || openKindOf(row, now) !== "stuck") continue;
     const upd = await client.from(MISSION_TABLE)
       .update({ status: "failed", summary_ar: refusalSentenceAr("internal"), error: "admin: planning_failed class=internal reason=lease_lost_past_timeout", worker_id: null, lease_until: null, updated_at: new Date(now).toISOString() })
       .eq("id", row.id).eq("user_id", input.userId).eq("status", "planning").lt("lease_until", cutoff);
@@ -100,12 +102,13 @@ export async function listOpenMissions(client: any, input: { userId: string; now
   const now = input.now ?? Date.now();
   try { await failStuckPlanning(client, { userId: input.userId, now }); } catch { /* the list still reads */ }
   try { await expireWaitingMissions(client, { userId: input.userId, now }); } catch { /* the list still reads */ }
-  const read = await client.from(MISSION_TABLE).select("id,status,request_text,created_at,lease_until,job_id").eq("user_id", input.userId).in("status", OPEN_LIST_STATUSES).order("created_at", { ascending: false }).limit(50);
+  const read = await client.from(MISSION_TABLE).select(`id,status,request_text,created_at,lease_until,job_id,${ADDON_MARKER_COLUMN}`).eq("user_id", input.userId).in("status", OPEN_LIST_STATUSES).order("created_at", { ascending: false }).limit(50);
   if (read?.error || !Array.isArray(read?.data)) return [];
-  // the customer's own requests really running now (a planning or executing mission with a live lease); a lease that ran out is not running
-  const running = await client.from(MISSION_TABLE).select("id,status,lease_until").eq("user_id", input.userId).in("status", ["planning", "executing"]).limit(50).then((r: any) => r, () => null);
-  const ownRunning = Array.isArray(running?.data) ? running.data.filter((r: any) => Number.isFinite(Date.parse(String(r.lease_until))) && Date.parse(String(r.lease_until)) > now).length : 0;
-  return (read.data as OpenMissionRow[]).map((r) => openMissionView(r, now, { ownRunning })).filter((v): v is OpenMissionView => v !== null);
+  // the customer's own requests really running now (a planning or executing mission with a live lease); a lease that ran out is not running. A review, review-fix or edit request of a delivered file is a row of this table too,
+  // but it is not a research mission: it is not listed here and never counts, and an add-on that is executing is not a «research request running ahead of» the customer's own (docs/MONEY-PR-7A.md section 17)
+  const running = await client.from(MISSION_TABLE).select(`id,status,lease_until,${ADDON_MARKER_COLUMN}`).eq("user_id", input.userId).in("status", ["planning", "executing"]).limit(50).then((r: any) => r, () => null);
+  const ownRunning = Array.isArray(running?.data) ? withoutAddonRows(running.data as Array<Record<string, unknown>>).filter((r: any) => Number.isFinite(Date.parse(String(r.lease_until))) && Date.parse(String(r.lease_until)) > now).length : 0;
+  return withoutAddonRows(read.data as OpenMissionRow[]).map((r) => openMissionView(r, now, { ownRunning })).filter((v): v is OpenMissionView => v !== null);
 }
 
 /** The refusal sentence of the limit: it names the missions that block, each with its state, and says where they are. */

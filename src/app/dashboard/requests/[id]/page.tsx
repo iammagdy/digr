@@ -12,6 +12,11 @@ import { REQUEST_STATUS_LABEL_AR, resolveRequestKind } from "@/lib/jobs/requestS
 import { isSafeRequestId, readRequestFacts, type RequestFacts } from "@/lib/requests/facts";
 import { openJobHref } from "@/lib/requestLinks";
 import AgentMissionCard from "@/components/mission/AgentMissionCard";
+import VersionList from "@/components/mission/VersionList";
+import ReviewQuote from "@/components/mission/ReviewQuote";
+import ReviewReport from "@/components/mission/ReviewReport";
+import EditRequestCard from "@/components/mission/EditRequestCard";
+import FileWorkflow from "@/components/mission/FileWorkflow";
 import { Skeleton } from "@/components/ui";
 
 /**
@@ -110,6 +115,16 @@ export default function RequestDetailsPage({ params }: { params: Promise<{ id: s
         {/* THE HEAVY PART, after the facts: the mission's own card (steps, result lines, files); a skeleton while the two reads are on their way */}
         {read === "loading" ? <div data-testid="details-skeleton" role="status" aria-label="جارٍ تحميل تفاصيل الطلب" className="flex flex-col gap-2"><Skeleton className="h-24 w-full" /><Skeleton className="h-16 w-full" /></div> : null}
         {read === "done" && missionId ? <AgentMissionCard missionId={missionId} stage2 /> : null}
+        {/* STAGE C (behind DIGER_STAGE4_REVIEW or DIGER_STAGE4_EDITS): the truthful STATUS of every review or edit request on this file, decided on the server; it draws nothing while the route answers «not found» */}
+        {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <FileWorkflow missionId={missionId} /> : null}
+        {/* STAGE 4, S2 (behind DIGER_STAGE4_VERSIONS): the file's versions, only on this page, only for a delivered mission; it draws nothing while the route answers «not found» */}
+        {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <VersionList missionId={missionId} /> : null}
+        {/* MONEY PR 7c (behind DIGER_STAGE4_REVIEW): the price PREVIEW of a paid review, read-only (no approval, no charge); it draws nothing while the route answers «not found» */}
+        {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <ReviewQuote missionId={missionId} /> : null}
+        {/* STAGE A (behind DIGER_STAGE4_REVIEW): «نتيجة مراجعة الملف», the published report of a review that already exists; read-only and free, it draws nothing while the route answers «not found» or no version has a report */}
+        {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <ReviewReport missionId={missionId} /> : null}
+        {/* STAGE B (behind DIGER_STAGE4_EDITS): «تعديل الملف», an edit request BEFORE payment (priced by the server, nothing held, no approval button); it draws nothing while the route answers «not found» */}
+        {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <EditRequestCard missionId={missionId} /> : null}
         {read === "done" && !missionId ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="details-no-mission">هذا طلب من النوع القديم: ملفاته في «طلباتي» ونتيجته في المحادثة.</p> : null}
 
         {read === "done" ? (

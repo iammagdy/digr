@@ -13,7 +13,8 @@ import { ownerAlertRecipient } from "../../src/lib/server/topupOwnerAlert";
 import { AGENT_CONCURRENCY_ENV, AGENT_MODEL_DEFAULT } from "../../src/lib/agentMission/constants";
 import { parseConcurrency } from "../../src/lib/agentMission/concurrency";
 import { resolveModels } from "./modelConfig";
-import { runMissionSafely, type RunnerDeps } from "./runMission";
+import type { RunnerDeps } from "./runMission";
+import { runClaimedSafely } from "./stage4/dispatch";
 import { anthropicReviewCall } from "./review";
 import { createSdkDriver } from "./sdkRuntime";
 import { abortActiveRuns } from "./sessions";
@@ -87,7 +88,7 @@ async function main() {
     // a recycled worker (idle at or above the admit limit for too long) stops its loop; the process exits and the platform restarts it with a fresh heap
     onRecycle: () => { worker.stop(); },
     // every claimed mission ends in a clean state whatever happens in the run (runMission.ts: runMissionSafely)
-    runMission: (mission) => runMissionSafely(deps(), mission),
+    runMission: (mission) => runClaimedSafely(deps(), mission),
   });
 
   // The platform restarts the worker at every deploy of `main` (SIGTERM, then SIGKILL after 30 seconds) and kills the model's own process at the same moment (exit code 143). The runs in flight are stopped here so each mission is put back in the queue with

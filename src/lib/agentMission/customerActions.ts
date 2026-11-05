@@ -14,6 +14,7 @@ import { missionDownloadName } from "./fileNames";
 import { listOpenMissions, openLimitMessageAr, type OpenMissionView } from "./openMissions";
 import { excelFromCsv } from "../server/excelFromCsv";
 import { csvExportFromWorkbook, METHODOLOGY_FILE_NAME, packageCsvExport } from "../server/csvFromExcel";
+import { ADDON_MARKER_COLUMN, hasAddonMarker, withoutAddonRows } from "./addonMarker";
 
 /**
  * What a CUSTOMER does with a mission, on the server, with the service-role client and an explicit owner check on every call (a customer reaches only their own missions; the browser never
@@ -25,9 +26,25 @@ const bad = (status: number, error: string): { ok: false; status: number; error:
 const MIN_TEXT = 3;
 const MAX_TEXT = 4000;
 const CANCELLABLE = ["queued", "needs_input", "plan_ready"];
-const SAFE_COLUMNS = "id,user_id,status,question_ar,plan_public,job_id,reserved_points,unit_price_points,delivered_units,charged_points,summary_ar,files,created_at";
+const SAFE_COLUMNS = `id,user_id,status,question_ar,plan_public,job_id,reserved_points,unit_price_points,delivered_units,charged_points,summary_ar,files,created_at,${ADDON_MARKER_COLUMN}`;
+/**
+ * MONEY PR 7e (docs/MONEY-PR-7A.md section 17): a review, review-fix or edit request of a DELIVERED file is a row of this table whose plan is `{ addon }`, not a research mission. Every action below that is written for a research mission refuses it, BEFORE it reads a plan,
+ * claims a row or calls a money function, and changes nothing. Its own endpoint (stage4/reviewRequest.ts) is the only way to see or cancel it. The approval keeps its own sentence (below); every other action says this one.
+ */
+const ADDON_ROW_REFUSAL_AR = "هذا طلب على ملف سُلّم من قبل، وليس طلب بيانات جديدًا؛ تجده في صفحة الملف.";
 
 export const SIGNUP_TO_APPROVE_AR = "سجّل حسابك أولًا لتعتمد المهمة؛ خطتك محفوظة وتنتظرك بعد التسجيل.";
+
+/**
+ * The per-hour limit counts RESEARCH missions: a review or edit request of a delivered file (an add-on row) is not one and must not use it up (a customer who makes and cancels review requests would otherwise lock themselves out of new requests). The cheap head count above runs
+ * for everyone; only when it reaches the limit are the rows of the hour read once, to leave the add-on rows out. If that read fails the count stands as it was (the conservative answer).
+ */
+async function researchMissionsInTheHour(client: any, userId: string, since: string, counted: number): Promise<number> {
+  try {
+    const { data, error } = await client.from(MISSION_TABLE).select(`id,${ADDON_MARKER_COLUMN}`).eq("user_id", userId).gte("created_at", since).limit(500);
+    return error || !Array.isArray(data) ? counted : withoutAddonRows(data).length;
+  } catch { return counted; }
+}
 
 /** The mission of a chat request: created for the signed-in user (or the guest, who may look at the plan but must sign up before approving). The worker plans it. */
 export async function createCustomerMission(client: any, input: { userId: string; text: unknown }): Promise<CustomerResult<{ id: string }>> {
@@ -39,7 +56,7 @@ export async function createCustomerMission(client: any, input: { userId: string
   if (blockers.length >= AGENT_MAX_OPEN_MISSIONS_PER_USER) return { ...bad(429, openLimitMessageAr(blockers)), blockers };
   const hourAgo = new Date(Date.now() - 3600_000).toISOString();
   const recent = await client.from(MISSION_TABLE).select("id", { count: "exact", head: true }).eq("user_id", input.userId).gte("created_at", hourAgo);
-  if (!recent?.error && typeof recent?.count === "number" && recent.count >= AGENT_MAX_MISSIONS_PER_HOUR) {
+  if (!recent?.error && typeof recent?.count === "number" && recent.count >= AGENT_MAX_MISSIONS_PER_HOUR && (await researchMissionsInTheHour(client, input.userId, hourAgo, recent.count)) >= AGENT_MAX_MISSIONS_PER_HOUR) {
     return bad(429, "أرسلت عددًا كبيرًا من الطلبات في ساعة واحدة. جرّب بعد قليل؛ لن يُخصم شيء.");
   }
   const id = `msn_${randomBytes(10).toString("hex")}`;
@@ -68,7 +85,7 @@ export async function loadCustomerMission(client: any, input: { id: string; user
   // STAGE 3 S5: the approval time is read only when DIGER_STAGE3_QUEUE is on (unset: the select is exactly what it was)
   const stage3Queue = stage3QueueOn();
   const { data: mission } = await client.from(MISSION_TABLE).select(stage3Queue ? `${SAFE_COLUMNS},approved_at` : SAFE_COLUMNS).eq("id", input.id).maybeSingle();
-  if (!mission || mission.user_id !== input.userId) return bad(404, "المهمة غير موجودة.");
+  if (!mission || mission.user_id !== input.userId || hasAddonMarker(mission)) return bad(404, "المهمة غير موجودة.");
   const [events, calls, queue] = await Promise.all([
     client.from(MISSION_EVENTS_TABLE).select("id,kind,message_ar,counts,created_at").eq("mission_id", input.id).order("id", { ascending: true }).limit(500),
     client.from(MISSION_CALLS_TABLE).select("id", { count: "exact", head: true }).eq("mission_id", input.id).neq("status", "refused"),
@@ -102,12 +119,16 @@ const APPROVE_MESSAGES: Record<string, string> = {
  * Approve. A guest is told to sign up first, an unverified account to verify its e-mail. `precheck` is the route's own gate (provider gate, busy state, concurrency): it runs before anything is reserved.
  * The reserve itself is the shared approval path (the existing money functions); on success the customer is told once that the page may be closed.
  */
+const NOT_A_MISSION_AR = "هذا طلب على ملف سُلّم من قبل، وليس طلب بيانات جديدًا؛ لا يُعتمد من هنا.";
+
 export async function approveForCustomer(client: any, input: { id: string; userId: string; isGuest: boolean; emailVerified: boolean; precheck?: () => Promise<{ ok: true } | { ok: false; status: number; error: string }>; onApproved?: (r: { jobId: string }) => Promise<void> }): Promise<CustomerResult<{ jobId: string; reservePoints: number }>> {
   if (input.isGuest) return bad(401, SIGNUP_TO_APPROVE_AR);
   if (!input.emailVerified) return bad(403, "فعّل بريدك الإلكتروني أولًا ثم اعتمد المهمة.");
   const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,status,plan").eq("id", input.id).maybeSingle();
   if (!mission || mission.user_id !== input.userId) return bad(404, "المهمة غير موجودة.");
   if (mission.status !== "plan_ready") return bad(409, mission.status === "approved" || mission.status === "executing" ? "هذه المهمة معتمدة وتعمل بالفعل." : "لا توجد خطة جاهزة للاعتماد.");
+  // MONEY PR 7d: a review, review-fix or edit request of a DELIVERED file is a row of this table whose plan is `{ addon }`, not a mission plan. It is approved by its own function (a later task), never here: refused BEFORE anything is read or held
+  if (hasAddonMarker(mission)) return bad(409, NOT_A_MISSION_AR);
   // PR B: a social plan the compiler did not build is refused BEFORE the reserve (nothing is held, no money function is called)
   if (!modelPlanningForTests() && isStaleSocialPlan(mission.plan)) return bad(410, EXPIRED_SOCIAL_PLAN_AR);
   if (input.precheck) {
@@ -121,8 +142,10 @@ export async function approveForCustomer(client: any, input: { id: string; userI
 }
 
 export async function cancelForCustomer(client: any, input: { id: string; userId: string }): Promise<CustomerResult<{ requestText: string }>> {
-  const { data } = await client.from(MISSION_TABLE).select("id,user_id,status,request_text").eq("id", input.id).maybeSingle();
+  const { data } = await client.from(MISSION_TABLE).select(`id,user_id,status,request_text,${ADDON_MARKER_COLUMN}`).eq("id", input.id).maybeSingle();
   if (!data || data.user_id !== input.userId) return bad(404, "المهمة غير موجودة.");
+  // a review request has its own cancel (stage4/reviewRequest.ts): it checks that the request is unpaid and was never put through an approval, which this one does not know how to
+  if (hasAddonMarker(data)) return bad(409, ADDON_ROW_REFUSAL_AR);
   // before approval nothing is held: cancelling is just a status. A mission that holds money ends by its own settlement.
   if (!CANCELLABLE.includes(data.status)) return bad(409, data.status === "cancelled" ? "هذه المهمة أُلغيت بالفعل." : "لا يمكن إلغاء مهمة بدأ تنفيذها؛ ينتهي حجزها بالتسوية.");
   // the update is read back: a compare-and-set that matched no row (the worker took the mission in the meantime) changed nothing and must never be answered as a cancel that worked
@@ -153,6 +176,7 @@ async function readYieldRows(client: any, missionId: string, plan: PricedPlan): 
 export async function editPlanForCustomer(client: any, input: { id: string; userId: string; edits: unknown }): Promise<CustomerResult<{ status: string; requestText: string }>> {
   const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,status,plan,request_text").eq("id", input.id).maybeSingle();
   if (!mission || mission.user_id !== input.userId) return bad(404, "المهمة غير موجودة.");
+  if (hasAddonMarker(mission)) return bad(409, ADDON_ROW_REFUSAL_AR);
   if (mission.status !== "plan_ready" || !mission.plan) return bad(409, "لا يمكن تعديل الخطة الآن.");
   const plan = mission.plan as PricedPlan;
   const rows = await readYieldRows(client, input.id, plan);
@@ -173,6 +197,7 @@ export async function editPlanForCustomer(client: any, input: { id: string; user
 export async function smallerVersionForCustomer(client: any, input: { id: string; userId: string; maxHoldPoints?: number }): Promise<CustomerResult<{ status: string }>> {
   const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,status,plan").eq("id", input.id).maybeSingle();
   if (!mission || mission.user_id !== input.userId) return bad(404, "المهمة غير موجودة.");
+  if (hasAddonMarker(mission)) return bad(409, ADDON_ROW_REFUSAL_AR);
   if (mission.status !== "plan_ready" || !mission.plan) return bad(409, "لا يمكن تعديل الخطة الآن.");
   const plan = mission.plan as PricedPlan;
   const balanceLimit = Number.isFinite(Number(input.maxHoldPoints)) ? Math.max(0, Math.floor(Number(input.maxHoldPoints))) : AGENT_JOB_POINTS_CAP;
@@ -189,8 +214,9 @@ export async function smallerVersionForCustomer(client: any, input: { id: string
 export async function answerForCustomer(client: any, input: { id: string; userId: string; text: unknown }): Promise<CustomerResult> {
   const text = String(input.text ?? "").replace(/\s+/g, " ").trim();
   if (text.length < 1 || text.length > 1000) return bad(400, "اكتب إجابتك.");
-  const { data } = await client.from(MISSION_TABLE).select("id,user_id,status").eq("id", input.id).maybeSingle();
+  const { data } = await client.from(MISSION_TABLE).select(`id,user_id,status,${ADDON_MARKER_COLUMN}`).eq("id", input.id).maybeSingle();
   if (!data || data.user_id !== input.userId) return bad(404, "المهمة غير موجودة.");
+  if (hasAddonMarker(data)) return bad(409, ADDON_ROW_REFUSAL_AR);
   if (data.status !== "needs_input") return bad(409, "المهمة لا تنتظر إجابة.");
   const upd = await client.from(MISSION_TABLE).update({ answer_text: text, status: "queued", question_ar: null, worker_id: null, lease_until: null, updated_at: new Date().toISOString() }).eq("id", input.id).eq("status", "needs_input");
   if (upd.error) return bad(500, "تعذّر حفظ الإجابة.");
@@ -201,7 +227,8 @@ export async function answerForCustomer(client: any, input: { id: string; userId
 /** A short-lived link to a result file of the customer's own mission. */
 export async function customerFileLink(client: any, input: { id: string; userId: string; name: string }): Promise<CustomerResult<{ url: string; /** ROUND 20: the name the file is saved under (the route that serves the file itself writes it into its own header) */ download: string }>> {
   const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,files,plan,request_text,delivered_units,updated_at").eq("id", input.id).maybeSingle();
-  if (!mission || mission.user_id !== input.userId) return bad(404, "الملف غير موجود.");
+  // a review request has no file of its own to hand out here: the published versions of the delivered file are served by their own route
+  if (!mission || mission.user_id !== input.userId || hasAddonMarker(mission)) return bad(404, "الملف غير موجود.");
   const files = Array.isArray(mission.files) ? (mission.files as Array<{ name: string; path: string; kind?: string }>) : [];
   // ROUND 32: a CSV is never a stored file's link (the stored CSV is the deepest stage only) and never silently the Excel: a customer's CSV is built from the mission's Excel by `customerCsvFile`, which the route calls for a CSV name.
   // A mission that has only a CSV (the oldest) still gets an Excel built from it, saved in the mission's own folder
