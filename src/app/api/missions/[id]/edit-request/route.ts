@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { resolveMissionViewer, safeMissionId } from "@/lib/server/missionViewer";
+import { stage4RouteOpen } from "@/lib/agentMission/stage4/testGate";
 import { cancelEditRequest, createEditRequest, currentEditRequest, editQuoteFor, editSchemaFor, editsAvailable, parseEditInput } from "@/lib/agentMission/stage4/editRequest";
 import { parseVersionNumber } from "@/lib/agentMission/stage4/versionFile";
 
@@ -21,7 +22,7 @@ const refuse = (status: number, error: string, messageAr?: string) => NextRespon
  * `rejected` (with its sentence), `changed`; 503 the storage or the database could not answer; 500 a stored object that is not this mission's version. Never cached.
  */
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  if (!editsAvailable()) return refuse(404, "not_found");
+  if (!(await stage4RouteOpen(req, ["DIGER_STAGE4_EDITS"], editsAvailable))) return refuse(404, "not_found");
   const id = safeMissionId((await ctx.params).id);
   const schema = new URL(req.url).searchParams.getAll("schema");
   if (!id || schema.length > 1 || (schema.length === 1 && schema[0] !== "1")) return refuse(400, "bad_request");
@@ -39,7 +40,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
 const ALLOWED_KEYS: Record<string, readonly string[]> = { quote: ["action", "version", "edit"], create: ["action", "version", "edit"], cancel: ["action", "requestId"] };
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  if (!editsAvailable()) return refuse(404, "not_found");
+  if (!(await stage4RouteOpen(req, ["DIGER_STAGE4_EDITS"], editsAvailable))) return refuse(404, "not_found");
   const id = safeMissionId((await ctx.params).id);
   if (!id) return refuse(400, "bad_request");
   const auth = await resolveMissionViewer(req);

@@ -3,7 +3,7 @@ import { ADDON_APPROVE_MESSAGES_AR, ADDON_MAX_HOLD_POINTS, addonJobId, addonQuot
 import { readJobMoneyState } from "../addonMoneyState";
 import { SIGNUP_TO_APPROVE_AR } from "../customerActions";
 import { guardApproval } from "./approvalGuard";
-import { stage4FlagMode } from "./flags";
+import { stage4AllowlistMode, stage4FlagMode } from "./flags";
 
 /**
  * LAUNCH ROUND, WORKSTREAM 2: THE CUSTOMER'S APPROVAL OF A REVIEW OR AN EDIT QUOTE. The one function behind `POST /api/missions/[id]/addon-approval`. It moves no money itself: it composes the two functions the safety rounds built and tested, in the order the contract
@@ -24,13 +24,15 @@ export interface ApprovalAnswer {
 }
 
 /** The flag read FIRST by the route: approval is served only when this one is exactly «on». */
-export function approvalAvailable(env?: Readonly<Record<string, string | undefined>>): boolean {
-  return stage4FlagMode("DIGER_STAGE4_APPROVAL", env) === "on";
+export function approvalAvailable(env?: Readonly<Record<string, string | undefined>>, testAccount = false): boolean {
+  // «allowlist» serves ONLY an authorized test account, decided by the route from the verified user id (testGate.ts); this function never decides who that is. «test» and every other word stay OFF
+  return stage4FlagMode("DIGER_STAGE4_APPROVAL", env) === "on" || (stage4AllowlistMode("DIGER_STAGE4_APPROVAL", env) && testAccount === true);
 }
 /** The flag of the request's own kind. A kind that cannot be run (`review_fix`) has none. */
-export function kindFlagOn(kind: AddonKind, env?: Readonly<Record<string, string | undefined>>): boolean {
-  if (kind === "review") return stage4FlagMode("DIGER_STAGE4_REVIEW", env) === "on";
-  if (kind === "edit") return stage4FlagMode("DIGER_STAGE4_EDITS", env) === "on";
+export function kindFlagOn(kind: AddonKind, env?: Readonly<Record<string, string | undefined>>, testAccount = false): boolean {
+  const served = (flag: "DIGER_STAGE4_REVIEW" | "DIGER_STAGE4_EDITS") => stage4FlagMode(flag, env) === "on" || (stage4AllowlistMode(flag, env) && testAccount === true);
+  if (kind === "review") return served("DIGER_STAGE4_REVIEW");
+  if (kind === "edit") return served("DIGER_STAGE4_EDITS");
   return false;
 }
 
@@ -75,8 +77,10 @@ export async function approveAddonForCustomer(client: any, input: {
   /** The parsed JSON body of the request, untouched. */
   body: unknown;
   env?: Readonly<Record<string, string | undefined>>;
+  /** SET ONLY BY THE ROUTE, from the verified user id against the server-only allowlist (testGate.ts): never from the body, a header or anything the customer writes. False (the default) means a flag in «test» mode refuses. */
+  testAccount?: boolean;
 }): Promise<ApprovalAnswer> {
-  if (!approvalAvailable(input.env)) return answer(404, "refused", NOT_FOUND_AR, "not_found");
+  if (!approvalAvailable(input.env, input.testAccount === true)) return answer(404, "refused", NOT_FOUND_AR, "not_found");
   if (input.isGuest) return answer(401, "refused", SIGNUP_TO_APPROVE_AR, "guest");
   if (!input.emailVerified) return answer(403, "refused", VERIFY_EMAIL_AR, "unverified");
 
@@ -92,7 +96,7 @@ export async function approveAddonForCustomer(client: any, input: {
     const addon = row && row.user_id === input.userId ? readAddonPlan(row.plan) : null;
     // not theirs, not an add-on, not of THIS file, or a kind that cannot be run: one answer, nothing said about which
     if (!row || !addon || addon.of !== input.missionId || (addon.kind !== "review" && addon.kind !== "edit")) return answer(404, "refused", NOT_FOUND_AR, "not_found");
-    if (!kindFlagOn(addon.kind, input.env)) return answer(404, "refused", NOT_FOUND_AR, "not_found");
+    if (!kindFlagOn(addon.kind, input.env, input.testAccount === true)) return answer(404, "refused", NOT_FOUND_AR, "not_found");
     // a second click (or a refresh after the first): the request is already approved, running or done: no second reservation is even attempted
     if (ALREADY_STARTED.has(String(row.status))) return { status: 409, body: { success: false, state: "already_approved", error: ALREADY_APPROVED_AR, code: "already_approved", kind: addon.kind } };
 

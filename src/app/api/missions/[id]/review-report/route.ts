@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { resolveMissionViewer, safeMissionId } from "@/lib/server/missionViewer";
+import { stage4RouteOpen } from "@/lib/agentMission/stage4/testGate";
 import { listReviewedVersions, readReviewReport, reviewReportAvailable } from "@/lib/agentMission/stage4/reviewReport";
 import { parseVersionNumber } from "@/lib/agentMission/stage4/versionFile";
 
@@ -17,7 +18,7 @@ const refuse = (status: number, error: string) => NextResponse.json({ success: f
  * 503 the storage or the database could not answer (never «missing», never a guessed score); 500 a stored version or report that is not exactly what it claims to be (never shown). Never cached.
  */
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
-  if (!reviewReportAvailable()) return refuse(404, "not_found");
+  if (!(await stage4RouteOpen(req, ["DIGER_STAGE4_REVIEW"], reviewReportAvailable))) return refuse(404, "not_found");
   const id = safeMissionId((await ctx.params).id);
   const asked = new URL(req.url).searchParams.getAll("version");
   const version = asked.length === 1 ? parseVersionNumber(asked[0]) : null;
