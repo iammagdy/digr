@@ -155,7 +155,7 @@ describe("where it lives, and what the browser code may import", () => {
   const read = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
   it("only the request details page renders it, under the versions list, for a delivered mission", () => {
     const page = read("src/app/dashboard/requests/[id]/page.tsx");
-    expect(page).toContain("<ReviewQuote missionId={missionId} />");
+    expect(page).toMatch(/<ReviewQuote key=\{`ReviewQuote-\$\{deliveredEpoch\}`\} missionId=\{missionId\} \/>/); // CHANGED (audit D2): keyed so it reads the server again when a request of the file finishes
     expect(page.indexOf("<ReviewQuote")).toBeGreaterThan(page.indexOf("<VersionList"));
     for (const p of ["src/app/dashboard/chat/page.tsx", "src/components/mission/AgentMissionCard.tsx", "src/components/mission/VersionList.tsx"]) expect(read(p), p).not.toMatch(/ReviewQuote|review-quote/);
   });

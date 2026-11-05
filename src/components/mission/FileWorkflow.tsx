@@ -13,6 +13,9 @@ import { WORKFLOW_POLL_MAX_MS, WORKFLOW_POLL_MS, finishedSince, needsPolling } f
  * cancelled, or closed after an approval attempt. The phase is decided on the server from the request's row and from what is verified published; this component only shows it. It has no button of its own except a retry, and no approval, payment or price control.
  * A request that is processing is announced politely, so the change to «delivered» is read out. While the feature is off (the route answers 404) it draws NOTHING.
  */
+/** The page listens for this (re-exported here so the page itself imports no Stage 4 module: tests/stage4-isolation.test.ts). */
+export { FILE_DELIVERED_EVENT };
+
 const BTN = "min-h-11 w-full cursor-pointer rounded-full border border-ln2 bg-transparent px-5 text-[13px] text-ink focus-visible:outline-2 sm:w-auto";
 
 export interface FileWorkflowBodyProps {

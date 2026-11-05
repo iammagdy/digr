@@ -394,7 +394,7 @@ describe("finding the waiting request again, and cancelling it while it is unpai
     const row = addonRowsIn(w)[0];
     row.status = "approved";
     expect((await (await getCall()).json()).request).toBeNull();
-    row.status = "plan_ready"; row.approved_at = "2026-11-04T10:00:00.000Z";
+    row.status = "plan_ready"; row.approved_at = new Date().toISOString(); // CHANGED (audit D1): a RECENT mark; one older than 35 minutes with nothing reserved is freed on purpose (tests/stage4-stale-approval-mark.test.ts)
     expect((await (await getCall()).json()).request).toBeNull();
     row.approved_at = null; row.job_id = "job_quote_x";
     expect((await (await getCall()).json()).request).toBeNull();

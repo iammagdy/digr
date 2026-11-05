@@ -16,9 +16,8 @@ import VersionList from "@/components/mission/VersionList";
 import ReviewQuote from "@/components/mission/ReviewQuote";
 import ReviewReport from "@/components/mission/ReviewReport";
 import EditRequestCard from "@/components/mission/EditRequestCard";
-import FileWorkflow from "@/components/mission/FileWorkflow";
+import FileWorkflow, { FILE_DELIVERED_EVENT } from "@/components/mission/FileWorkflow";
 import { Skeleton } from "@/components/ui";
-import { FILE_DELIVERED_EVENT } from "@/lib/agentMission/stage4/addonApprovalClient";
 
 /**
  * A REQUEST'S OWN PAGE («التفاصيل»). It opens at once: the title, the state, the date, what was delivered and the points come from the row the customer pressed (no wait), or are skeleton lines when the
