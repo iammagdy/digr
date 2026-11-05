@@ -114,6 +114,8 @@ export async function buildRequestIndex(client: any, input: BuildIndexInput): Pr
     const delivered = j.delivered_units ?? 0;
     const tab = tabOfKind(resolveRequestKind({ status: j.status, delivered, requested: typeof j.target_volume_max === "number" ? j.target_volume_max : undefined }));
     const mission = missionOfJob.get(String(j.id));
+    // AUDIT D4: the job of a review or edit is NOT a research request: it was listed with «وصل ١٠٠ من ١٠٠» (points read as items) and opening it found no mission card. Its state and charge are on the file's own page («حالة طلباتك على هذا الملف») and in the wallet.
+    if (mission && hasAddonMarker(mission)) continue;
     const title = mission ? oneLine(mission.request_text, 200) : null;
     rows.push({ type: "job", id: String(j.id), createdAt: String(j.created_at), tab, title, text: mission ? String(mission.request_text ?? "") : legacy.get(String(j.id)) ?? "" });
   }
@@ -121,7 +123,7 @@ export async function buildRequestIndex(client: any, input: BuildIndexInput): Pr
   const pendingAll: Array<PendingIndexRow & { text: string }> = [];
   for (const m of missions) {
     // a review, review-fix or edit request of a delivered file is a row of this table but not a research request: it is never a pending plan, a running mission or an ended one here (MONEY PR 7e, docs/MONEY-PR-7A.md section 17).
-    // A JOB such an add-on holds (a later task) is still listed as a job above, with the request's own words as its title.
+    // The JOB such an add-on holds (once approved) is skipped above for the same reason (audit D4).
     if (hasAddonMarker(m)) continue;
     if (m.job_id) continue;
     const text = String(m.request_text ?? "");

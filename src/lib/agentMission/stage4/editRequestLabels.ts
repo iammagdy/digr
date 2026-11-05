@@ -44,6 +44,12 @@ export const EDIT_KINDS_AR: Readonly<Record<EditKind, string>> = {
   add_column: "إضافة عمود جديد",
 };
 
+/**
+ * AUDIT D5: the kinds the page OFFERS. «add_column» needs a new lookup of values that nothing in the repository can price or run, so the server answers it «unsupported» («غير متاح بعد») every time: a selectable option that can never be completed is a dead control. It stays
+ * in the type and the labels (the server contract and its tests), and returns to this list the day a re-read recipe and its price exist.
+ */
+export const OFFERED_EDIT_KINDS: ReadonlyArray<EditKind> = ["rename_column", "set_cells", "add_rows"];
+
 export const EDIT_HEADING_AR = "تعديل الملف";
 export const EDIT_LOADING_AR = "جارٍ تحميل خيارات التعديل…";
 export const EDIT_ASKING_AR = "جارٍ حساب التكلفة…";

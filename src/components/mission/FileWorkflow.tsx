@@ -1,11 +1,12 @@
 "use client";
 
 import { browserFetch } from "@/lib/agentMission/stage4/browserFetch";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { FILE_WORKFLOW_HEADING_AR, FILE_WORKFLOW_LOADING_AR, FILE_WORKFLOW_NONE_AR, FILE_WORKFLOW_RETRY_AR, workflowItemLinesAr, workflowItemTitleAr, workflowPhaseLabelAr, type FileWorkflowView } from "@/lib/agentMission/stage4/fileWorkflowLabels";
 import { fetchFileWorkflow } from "@/lib/agentMission/stage4/fileWorkflowClient";
-import { FILE_WORKFLOW_REFRESH_EVENT } from "@/lib/agentMission/stage4/addonApprovalClient";
+import { FILE_DELIVERED_EVENT, FILE_WORKFLOW_REFRESH_EVENT } from "@/lib/agentMission/stage4/addonApprovalClient";
+import { WORKFLOW_POLL_MAX_MS, WORKFLOW_POLL_MS, finishedSince, needsPolling } from "@/lib/agentMission/stage4/workflowPolling";
 
 /**
  * STAGE C: «حالة طلباتك على هذا الملف», the one place on the request's page that says, for every review or edit request on the file, WHICH state it is in: waiting for approval, approval being checked, approved and processing, delivered, charged but delivery pending, failed without a recorded charge,
@@ -39,6 +40,8 @@ export function FileWorkflowBody({ status, view = null, error = null, onRetry }:
     );
   }
   const items = view?.items ?? [];
+  // a file with NO published version cannot be reviewed or edited: no promise of a next step is drawn for it
+  if (items.length === 0 && view?.hasVersions === false) return null;
   if (items.length === 0) return shell(<p data-testid="file-workflow-none" className="m-0 text-[13px] leading-[1.9] text-ink2">{FILE_WORKFLOW_NONE_AR}</p>);
   return shell(
     <ul className="m-0 flex list-none flex-col gap-3 p-0" data-testid="file-workflow-items">
@@ -65,23 +68,41 @@ export default function FileWorkflow({ missionId }: { missionId: string }) {
   const [status, setStatus] = useState<FileWorkflowBodyProps["status"]>("idle");
   const [view, setView] = useState<FileWorkflowView | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const load = useCallback(async (alive: () => boolean) => {
-    setStatus("loading"); setError(null);
+  const lastView = useRef<FileWorkflowView | null>(null);
+  const load = useCallback(async (alive: () => boolean, silent = false) => {
+    if (!silent) { setStatus("loading"); setError(null); }
     const r = await fetchFileWorkflow({ missionId, fetchFn: browserFetch, headers: authHeaders });
     if (!alive()) return;
-    if (r.state === "ok") { setView(r.view); setStatus("ready"); }
-    else if (r.state === "off") setStatus("idle");
-    else { setError(r.message); setStatus("error"); }
+    if (r.state === "ok") {
+      // something that was in flight is over: the versions, the report and the forms read the server again (no manual reload)
+      if (finishedSince(lastView.current, r.view).length > 0) { try { window.dispatchEvent(new CustomEvent(FILE_DELIVERED_EVENT)); } catch { /* the page's own reload shows it */ } }
+      lastView.current = r.view; setView(r.view); setStatus("ready"); setError(null);
+    }
+    else if (r.state === "off") { if (!silent) setStatus("idle"); }
+    else if (!silent) { setError(r.message); setStatus("error"); } // a failed background look keeps what the customer already reads
   }, [missionId]);
   useEffect(() => {
     let alive = true;
     void load(() => alive);
     return () => { alive = false; };
   }, [load]);
+  // while a request is in flight the panel asks again by itself (not while the tab is hidden, and for at most an hour)
+  const inFlight = needsPolling(view);
+  useEffect(() => {
+    if (!inFlight) return;
+    let alive = true;
+    const startedAt = Date.now();
+    const timer = setInterval(() => {
+      if (Date.now() - startedAt > WORKFLOW_POLL_MAX_MS) { clearInterval(timer); return; }
+      if (typeof document !== "undefined" && document.hidden) return;
+      void load(() => alive, true);
+    }, WORKFLOW_POLL_MS);
+    return () => { alive = false; clearInterval(timer); };
+  }, [inFlight, load]);
   const onRetry = useCallback(() => { void load(() => true); }, [load]);
   // the approval button (launch round) fires this after any answer: the status of the file's requests is read again from the server
   useEffect(() => {
-    const again = () => { void load(() => true); };
+    const again = () => { void load(() => true, true); };
     window.addEventListener(FILE_WORKFLOW_REFRESH_EVENT, again);
     return () => window.removeEventListener(FILE_WORKFLOW_REFRESH_EVENT, again);
   }, [load]);

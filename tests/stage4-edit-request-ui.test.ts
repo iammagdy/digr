@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import EditRequestCard, { EditRequestBody } from "../src/components/mission/EditRequestCard";
 import {
-  EDIT_ASK_BUTTON_AR, EDIT_CANCELLED_AR, EDIT_CANCEL_BUTTON_AR, EDIT_ERRORS_AR, EDIT_HEADING_AR, EDIT_KINDS_AR, EDIT_NOT_MOVED_AR, EDIT_PREPARE_BUTTON_AR, EDIT_REFUSALS_AR,
+  EDIT_ASK_BUTTON_AR, EDIT_CANCELLED_AR, EDIT_CANCEL_BUTTON_AR, EDIT_ERRORS_AR, EDIT_HEADING_AR, EDIT_KINDS_AR, OFFERED_EDIT_KINDS, EDIT_NOT_MOVED_AR, EDIT_PREPARE_BUTTON_AR, EDIT_REFUSALS_AR,
   editQuoteLinesAr, editRequestLinesAr, type EditQuoteView, type EditRequestView, type EditSchemaView,
 } from "../src/lib/agentMission/stage4/editRequestLabels";
 import { cancelEditRequest, editRequestUrl, fetchEditRequest, fetchEditSchema, prepareEditRequest, quoteEdit } from "../src/lib/agentMission/stage4/editRequestClient";
@@ -146,7 +146,9 @@ describe("the card on the page", () => {
     expect(html).toContain('data-testid="edit-request"');
     expect(html).toMatch(/<section[^>]*aria-labelledby="edit-request-heading"/);
     expect(html).toMatch(/<h2[^>]*id="edit-request-heading"[^>]*>تعديل الملف<\/h2>/);
-    for (const label of Object.values(EDIT_KINDS_AR)) expect(text(html)).toContain(label);
+    for (const label of OFFERED_EDIT_KINDS.map((k) => EDIT_KINDS_AR[k])) expect(text(html)).toContain(label);
+    // CHANGED (audit D5, deliberate): «إضافة عمود جديد» is no longer selectable: the server answers it «unsupported» every time, so the page does not offer it
+    expect(text(html)).not.toContain(EDIT_KINDS_AR.add_column);
     // every control has a visible label that names it
     expect((html.match(/<label/g) ?? []).length).toBeGreaterThanOrEqual((html.match(/<(?:select|input|textarea)\b/g) ?? []).length);
     expect(html).toMatch(/<select[^>]*class="[^"]*\bmin-h-11\b[^"]*\bw-full\b/);

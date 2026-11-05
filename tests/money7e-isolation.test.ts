@@ -293,6 +293,24 @@ describe("the chat never takes a review request for the customer's open research
   });
 });
 
+describe("AUDIT D4: the job an approved review or edit holds is not listed as a research request in «طلباتي»", () => {
+  it("an ordinary delivered mission's job is listed; the add-on's job (same user, marked row, job_paid) is not, in every tab", async () => {
+    db = projectingDb({ jobs: [
+      { id: "job_1", user_id: ME, status: "completed", delivered_units: 60, target_volume_max: 60, created_at: ago(5 * H) },
+      { id: "job_paid", user_id: ME, status: "completed", delivered_units: 100, target_volume_max: 100, created_at: ago(H) },
+    ], messages: [], conversations: [], mission_events: [], mission_calls: [], agent_heartbeat: [], plans_quotes: [], credit_ledger: [], profiles: [{ id: ME, email: AGENT_TEST_ACCOUNT_EMAIL }] });
+    db.seed("missions", [DELIVERED_ROW, addon({ status: "completed", job_id: "job_paid", delivered_units: 100 })]);
+    for (const tab of ["all", "done", "running", "ended", "refunded"] as const) {
+      const out = await buildRequestIndex(db, { userId: ME, tab, now: NOW } as any);
+      const ids = out.rows.map((r: any) => r.id);
+      expect(ids, tab).not.toContain("job_paid");
+      if (tab === "all" || tab === "done") expect(ids, tab).toContain("job_1");
+    }
+    const all = await buildRequestIndex(db, { userId: ME, tab: "all", now: NOW } as any);
+    expect(all.counts.all).toBe(1);
+  });
+});
+
 describe("the methodology offer cannot pick a review request, and the request still has its own endpoint", () => {
   it("a completed add-on row with delivered values is not a methodology mission", async () => {
     db.seed("missions", [addon({ status: "completed", delivered_units: 40, job_id: "job_a", files: [{ name: "result.xlsx", path: "r.xlsx", kind: "xlsx" }], plan_public: { compiled: true } })]);

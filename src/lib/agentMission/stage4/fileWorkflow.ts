@@ -39,7 +39,10 @@ export function addonPhaseOf(row: WorkflowRow, published: PublishedNumbers): Wor
       if (isPublished) return { ...base, phase: "delivered", ...(charged > 0 ? { chargedPoints: charged } : {}) };
       return charged > 0 ? { ...base, phase: "charged_delivery_pending", chargedPoints: charged } : { ...base, phase: "delivery_pending" };
     case "failed": case "unserved":
-      return charged > 0 || row.error === "charged_not_published" ? { ...base, phase: "charged_delivery_pending", ...(charged > 0 ? { chargedPoints: charged } : {}) } : { ...base, phase: "failed_no_charge" };
+      if (charged > 0 || row.error === "charged_not_published") return { ...base, phase: "charged_delivery_pending", ...(charged > 0 ? { chargedPoints: charged } : {}) };
+      // AUDIT D6: a failed request that HAS a job but never recorded a settled amount (not even 0) is one whose release was refused or unread: the hold may still be there, so «no charge» is not said; the money's own state is being checked
+      if (row.job_id && (row.charged_points === null || row.charged_points === undefined)) return { ...base, phase: "ended_unverified" };
+      return { ...base, phase: "failed_no_charge" };
     case "cancelled": return { ...base, phase: attempted ? "ended_unverified" : "cancelled" };
     default: return null;
   }
@@ -72,7 +75,7 @@ export async function fileWorkflowFor(client: any, input: { missionId: string; u
     const rank = (r: WorkflowRow): number => (OPEN.has(String(r.status)) ? 0 : 1);
     rows.sort((a, b) => rank(a) - rank(b) || String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")) || (a.id < b.id ? -1 : 1));
     const items = rows.slice(0, WORKFLOW_ITEMS_MAX).map((r) => addonPhaseOf(r, published) as WorkflowItemView);
-    return { ok: true, workflow: { items } };
+    return { ok: true, workflow: { items, hasVersions: published.versions.size > 0 } };
   } catch {
     return no(503, "unavailable");
   }

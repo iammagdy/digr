@@ -18,6 +18,7 @@ import ReviewReport from "@/components/mission/ReviewReport";
 import EditRequestCard from "@/components/mission/EditRequestCard";
 import FileWorkflow from "@/components/mission/FileWorkflow";
 import { Skeleton } from "@/components/ui";
+import { FILE_DELIVERED_EVENT } from "@/lib/agentMission/stage4/addonApprovalClient";
 
 /**
  * A REQUEST'S OWN PAGE («التفاصيل»). It opens at once: the title, the state, the date, what was delivered and the points come from the row the customer pressed (no wait), or are skeleton lines when the
@@ -47,6 +48,13 @@ export default function RequestDetailsPage({ params }: { params: Promise<{ id: s
   const [jobId, setJobId] = useState<string | null>(null);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [read, setRead] = useState<"loading" | "done" | "missing" | "failed">("loading");
+  // a review or an edit of this file finished (the status panel saw it): the versions, report and forms are mounted again so they read the new state without a manual reload
+  const [deliveredEpoch, setDeliveredEpoch] = useState(0);
+  useEffect(() => {
+    const bump = () => setDeliveredEpoch((n) => n + 1);
+    window.addEventListener(FILE_DELIVERED_EVENT, bump);
+    return () => window.removeEventListener(FILE_DELIVERED_EVENT, bump);
+  }, []);
 
   // the head start of the list's row (read once on the client, after the first paint, so the server and the browser agree)
   useEffect(() => { if (!facts) setFacts(fromFacts(readRequestFacts(id))); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [id]);
@@ -118,13 +126,13 @@ export default function RequestDetailsPage({ params }: { params: Promise<{ id: s
         {/* STAGE C (behind DIGER_STAGE4_REVIEW or DIGER_STAGE4_EDITS): the truthful STATUS of every review or edit request on this file, decided on the server; it draws nothing while the route answers «not found» */}
         {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <FileWorkflow missionId={missionId} /> : null}
         {/* STAGE 4, S2 (behind DIGER_STAGE4_VERSIONS): the file's versions, only on this page, only for a delivered mission; it draws nothing while the route answers «not found» */}
-        {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <VersionList missionId={missionId} /> : null}
+        {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <VersionList key={`VersionList-${deliveredEpoch}`} missionId={missionId} /> : null}
         {/* MONEY PR 7c (behind DIGER_STAGE4_REVIEW): the price PREVIEW of a paid review, read-only (no approval, no charge); it draws nothing while the route answers «not found» */}
-        {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <ReviewQuote missionId={missionId} /> : null}
+        {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <ReviewQuote key={`ReviewQuote-${deliveredEpoch}`} missionId={missionId} /> : null}
         {/* STAGE A (behind DIGER_STAGE4_REVIEW): «نتيجة مراجعة الملف», the published report of a review that already exists; read-only and free, it draws nothing while the route answers «not found» or no version has a report */}
-        {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <ReviewReport missionId={missionId} /> : null}
+        {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <ReviewReport key={`ReviewReport-${deliveredEpoch}`} missionId={missionId} /> : null}
         {/* STAGE B (behind DIGER_STAGE4_EDITS): «تعديل الملف», an edit request BEFORE payment (priced by the server, nothing held, no approval button); it draws nothing while the route answers «not found» */}
-        {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <EditRequestCard missionId={missionId} /> : null}
+        {read === "done" && missionId && typeof facts?.delivered === "number" && facts.delivered > 0 ? <EditRequestCard key={`EditRequestCard-${deliveredEpoch}`} missionId={missionId} /> : null}
         {read === "done" && !missionId ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="details-no-mission">هذا طلب من النوع القديم: ملفاته في «طلباتي» ونتيجته في المحادثة.</p> : null}
 
         {read === "done" ? (
