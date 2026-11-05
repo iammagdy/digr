@@ -23,6 +23,7 @@ import { findUnresolvedResearchPlaceholder, unresolvedResearchPlaceholderMessage
 import { withDeadline } from "../../../functions/shared/deadline";
 import { AGENT_SERVES_CHAT } from "../../../lib/agentMission/constants";
 import { resolveTrustedEmailVerified } from "../../../lib/server/trustedEmailVerification";
+import { isDisposableGuestAccount, ownGuestAccountId } from "../../../lib/server/guestIdentity";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -155,22 +156,8 @@ export async function POST(req: NextRequest) {
       }
 
       isGuest = true;
-      let existingGuestId: string | null = null;
-      if (guestSessionCookie && guestSessionCookie.startsWith("gst_")) {
-        const potentialUuid = guestSessionCookie.slice(4);
-        if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(potentialUuid)) {
-          if (tables.auth?.admin?.getUserById) {
-            try {
-              const { data: userCheck } = await tables.auth.admin.getUserById(potentialUuid);
-              if (userCheck?.user?.id) {
-                existingGuestId = userCheck.user.id;
-              }
-            } catch {}
-          } else {
-            existingGuestId = potentialUuid;
-          }
-        }
-      }
+      // The cookie is the browser's own word: it may name ONLY a disposable guest account Diger created, never a real customer's id.
+      const existingGuestId: string | null = await ownGuestAccountId(tables, guestSessionCookie);
 
       if (existingGuestId) {
         verifiedUserId = existingGuestId;
@@ -181,7 +168,7 @@ export async function POST(req: NextRequest) {
           if (typeof tables.auth.admin.listUsers === "function") {
             try {
               const { data: oldGuests } = await tables.auth.admin.listUsers({ page: 1, perPage: 10 });
-              const guestUsers = (oldGuests?.users || []).filter((u: any) => u.user_metadata?.is_guest);
+              const guestUsers = (oldGuests?.users || []).filter((u: any) => isDisposableGuestAccount(u));
               if (guestUsers.length >= MAX_CONCURRENT_GUESTS) {
                 const oldest = guestUsers[0];
                 if (oldest?.id) {
@@ -214,26 +201,27 @@ export async function POST(req: NextRequest) {
           guestSessionCookie = `gst_${crypto.randomUUID()}`;
           newGuestCookieToSet = guestSessionCookie;
         }
-        verifiedUserId = guestSessionCookie.startsWith("gst_") && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(guestSessionCookie.slice(4))
-          ? guestSessionCookie.slice(4)
-          : guestSessionToUuid(guestSessionCookie);
+        // Always the hash of the cookie, on every turn: it is stable for this browser and can never BE a real user's id.
+        verifiedUserId = guestSessionToUuid(guestSessionCookie);
       }
       emailVerified = true;
     } else {
       // Authenticated user: migrate previous guest conversation if guest session cookie exists
       if (guestSessionCookie) {
-        const prevGuestUuid = guestSessionCookie.startsWith("gst_") && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(guestSessionCookie.slice(4))
-          ? guestSessionCookie.slice(4)
-          : guestSessionToUuid(guestSessionCookie);
-        try {
+        // Only a disposable guest account (or the hash-pseudo id of a cookie that names no account) is ever moved or deleted.
+        // `gst_<some other customer's id>` is NOT adopted: nothing is migrated, nothing is deleted.
+        // A cookie that names no disposable account still has its hash-pseudo id (a guest whose account could not be created is stored under it, see the fallback above).
+        const ownGuestId = await ownGuestAccountId(tables, guestSessionCookie);
+        const prevGuestUuid: string | null = ownGuestId ?? guestSessionToUuid(guestSessionCookie);
+        if (prevGuestUuid && prevGuestUuid !== verifiedUserId) try {
           await Promise.all([
             tables.from("conversations").update({ user_id: verifiedUserId }).eq("user_id", prevGuestUuid),
             tables.from("messages").update({ user_id: verifiedUserId }).eq("user_id", prevGuestUuid),
             // the guest's missions (a plan they looked at before signing up) follow them; deleting the guest account below is refused while any mission still points at it
             tables.from("missions").update({ user_id: verifiedUserId, created_by: verifiedUserId }).eq("user_id", prevGuestUuid),
           ]);
-          if (tables.auth?.admin?.deleteUser) {
-            await tables.auth.admin.deleteUser(prevGuestUuid).catch(() => {});
+          if (ownGuestId && tables.auth?.admin?.deleteUser) {
+            await tables.auth.admin.deleteUser(ownGuestId).catch(() => {});
           }
         } catch (migErr) {
           console.warn("[chat:guest_migration_failed]", migErr);

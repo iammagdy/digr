@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient, createServerSideClient } from "../supabase/server";
 import { resolveTrustedEmailVerified } from "./trustedEmailVerification";
+import { ownGuestAccountId } from "./guestIdentity";
 
 /**
  * Who is looking at a mission: the signed-in customer (bearer token or session cookie), or the guest of the chat (the `guest_session_id` cookie the chat route set, checked against a real
@@ -26,8 +27,9 @@ export async function resolveMissionViewer(req: NextRequest): Promise<{ ok: true
   const match = GUEST_COOKIE_RE.exec(req.cookies.get("guest_session_id")?.value ?? "");
   if (match) {
     try {
-      const { data } = await createAdminClient().auth.admin.getUserById(match[1]);
-      if (data?.user?.id && data.user.user_metadata?.is_guest) return { ok: true, viewer: { userId: data.user.id, isGuest: true, emailVerified: false } };
+      // The cookie is the browser's word: it counts only for a disposable guest account Diger made (a real customer who wrote `is_guest` on their own account is not one).
+      const guestId = await ownGuestAccountId(createAdminClient(), `gst_${match[1]}`);
+      if (guestId) return { ok: true, viewer: { userId: guestId, isGuest: true, emailVerified: false } };
     } catch { /* not a guest */ }
   }
   return denied(401, "غير مصرح. يرجى تسجيل الدخول أولاً.");
