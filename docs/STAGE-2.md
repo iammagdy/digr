@@ -242,3 +242,7 @@ Still open (found in this session, nothing done about them):
 - Verified by tests in this branch: everything in section 6.
 - Assumption: the polling load (one request every 5-30 s per open card) fits Vercel's free limits. Not measured.
 - Assumption: writing a snapshot every 5 s does not slow the engine noticeably (pure fold + one upload). Not measured.
+
+## 12. Compatibility with the Stage 4 add-on rows (integration round)
+
+A paid review, review fix or edit request of a delivered file (Money PR 7e) is a row of `missions` whose `plan` has the key `addon`, in `plan_ready` while it waits. It belongs to the same customer, so the Stage 2 readers must treat it as «not found»: **`ask_edit`** (it would have sent the row back to `queued`, i.e. into the research planner: reproduced, answer 200), **the card loader** and **the live-sheet route**. Fixed in `askEditAction.ts` and `live/route.ts` with `stage2/addonMarkerRule.ts` (the same structural rule as `addonMarker.ts` of that PR, written here because this branch does not have that file). Tests: `tests/stage2-addon-rows.test.ts` (7; four fail without the fix). After both branches are merged the rule file can be replaced by an import of `addonMarker.ts`.
