@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addonJobId, addonQuoteId, approveAddonOnce } from "../src/lib/agentMission/addonSettlement";
 import { STALE_APPROVAL_MARK_MS, recoverAbandonedAddon, recoverFileAddons } from "../src/lib/agentMission/addonRecovery";
-import { cancelUnpaidAddonRow } from "../src/lib/agentMission/stage4/addonRowStore";
-import { isUnpaidAddonRow } from "../src/lib/agentMission/stage4/addonRow";
+import { createSupabaseAddonRowStore, cancelUnpaidAddonRow } from "../src/lib/agentMission/stage4/addonRowStore";
+import { isUnpaidAddonRow, listWithRecovery } from "../src/lib/agentMission/stage4/addonRow";
 import { addonRowOf, USER } from "./helpers/addonWorld";
 import { safetyWorld, type SafetyWorld } from "./helpers/safetyWorld";
 
@@ -27,7 +27,7 @@ async function failedBeforeQuote(w: SafetyWorld, id: string) {
 }
 
 describe("a stale approval mark with nothing reserved is freed so the customer can approve or cancel the SAME request", () => {
-  it("the window is longer than a quote's life (30 minutes)", () => { expect(STALE_APPROVAL_MARK_MS).toBe(31 * 60_000); });
+  it("the window is longer than a quote's life (30 minutes) with a margin", () => { expect(STALE_APPROVAL_MARK_MS).toBe(35 * 60_000); });
 
   it("a FRESH mark is left alone (an approval may be in flight): no_reservation, mark kept, no write", async () => {
     const { w, row } = make();
@@ -97,5 +97,22 @@ describe("a stale approval mark with nothing reserved is freed so the customer c
     const now = at(STALE_APPROVAL_MARK_MS + 60_000);
     expect(await recoverFileAddons(w.client, { missionId: FILE, userId: USER, now })).toEqual([{ kind: "mark_cleared" }]);
     expect(await recoverFileAddons(w.client, { missionId: FILE, userId: USER, now })).toEqual([]);
+  });
+
+  it("REVIEW FINDING 1: the page's own list (listWithRecovery, used by the review and edit cards and the create/approve guards) hands back the FREED row in the SAME call, not only after the next reload", async () => {
+    const { w, row } = make();
+    await failedBeforeQuote(w, row.id);
+    w.missions.get(row.id)!.approved_at = new Date(Date.now() - 40 * 60_000).toISOString(); // a 40-minute-old mark
+    const store = createSupabaseAddonRowStore(w.client as any, USER);
+    const rows = await listWithRecovery(store, FILE);
+    const mine = rows.find((r) => r.id === row.id)!;
+    expect(mine.approved_at ?? null).toBeNull();
+    expect(isUnpaidAddonRow(mine as any)).toBe(true);
+  });
+  it("a FRESH mark is not freed by the list (the same call returns the marked row)", async () => {
+    const { w, row } = make();
+    await failedBeforeQuote(w, row.id);
+    const rows = await listWithRecovery(createSupabaseAddonRowStore(w.client as any, USER), FILE);
+    expect(rows.find((r) => r.id === row.id)!.approved_at).toBeTruthy();
   });
 });

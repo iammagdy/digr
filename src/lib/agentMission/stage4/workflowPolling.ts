@@ -8,8 +8,8 @@ import type { FileWorkflowView, WorkflowItemView } from "./fileWorkflowLabels";
 export const WORKFLOW_POLL_MS = 10_000;
 export const WORKFLOW_POLL_MAX_MS = 60 * 60_000;
 
-/** The phases that change by themselves (a person is not needed): the worker is running, the approval is being verified, or the delivery is being published. */
-const IN_FLIGHT = new Set<WorkflowItemView["phase"]>(["processing", "approval_unverified", "delivery_pending", "charged_delivery_pending"]);
+/** The phases the WORKER moves by itself: it is running the request, or it is retrying the publication of a charged file. (An unverified approval or a delivery with no object is only changed by a reload of the page's list or by a person, so polling it would ask for an hour and never learn anything.) */
+const IN_FLIGHT = new Set<WorkflowItemView["phase"]>(["processing", "charged_delivery_pending"]);
 
 export const isInFlight = (item: WorkflowItemView): boolean => IN_FLIGHT.has(item.phase);
 

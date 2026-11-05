@@ -12,8 +12,8 @@ const item = (phase: AddonPhase, over: Partial<WorkflowItemView> = {}): Workflow
 const ALL: AddonPhase[] = ["waiting_approval", "approval_unverified", "processing", "delivered", "charged_delivery_pending", "failed_no_charge", "cancelled", "ended_unverified", "delivery_pending"];
 
 describe("which phases are polled", () => {
-  it("exactly the ones that change by themselves", () => {
-    expect(ALL.filter((p) => isInFlight(item(p)))).toEqual(["approval_unverified", "processing", "charged_delivery_pending", "delivery_pending"]);
+  it("exactly the ones the worker moves by itself (an unverified approval or a missing object never changes on its own, so it is not polled)", () => {
+    expect(ALL.filter((p) => isInFlight(item(p)))).toEqual(["processing", "charged_delivery_pending"]);
   });
   it("a customer decision (waiting for approval) and every final phase are never polled", () => {
     for (const p of ["waiting_approval", "delivered", "failed_no_charge", "cancelled", "ended_unverified"] as AddonPhase[]) expect(needsPolling({ items: [item(p)] })).toBe(false);

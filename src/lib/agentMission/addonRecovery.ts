@@ -25,10 +25,10 @@ export type RecoveryOutcome =
   | { kind: "unresolved"; why: "read_failed" | "inconsistent" | "settled_without_row" | "hold_mismatch" };
 
 /**
- * How long a request's approval mark must be OLD before a ledger state «none» (nothing ever reserved) frees it. A quote lasts 30 minutes (`expiresInMinutes`, addonSettlement.ts), so an approval that began more than 31 minutes ago can no longer
+ * How long a request's approval mark must be OLD before a ledger state «none» (nothing ever reserved) frees it. A quote lasts 30 minutes (`expiresInMinutes`, addonSettlement.ts) counted from the quote's creation, which follows the mark by seconds; 35 minutes leaves a margin for clock skew and a slow claim-to-quote gap, so an approval that began that long ago can no longer
  * reserve anything: a late accept is refused as expired. Younger marks are left alone (an approval may still be in flight in another tab or instance).
  */
-export const STALE_APPROVAL_MARK_MS = 31 * 60_000;
+export const STALE_APPROVAL_MARK_MS = 35 * 60_000;
 
 /** The most add-ons of one file a single call looks at (a file has one open add-on; the bound keeps a damaged file from becoming a loop). */
 export const RECOVERY_MAX_PER_FILE = 3;
