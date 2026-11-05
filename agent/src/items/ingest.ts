@@ -9,7 +9,7 @@ import { nameKeysOf, withCleanName, withRealName, withTidyNames } from "../../..
 import { entityDoubt, type DoubtInput } from "../../../src/lib/agentMission/entityDoubts";
 import { namedSourceOf, SOURCE_KEY } from "../../../src/lib/agentMission/namedSources";
 import { looksLikeDateColumn, parseMoment } from "../../../src/lib/agentMission/dateCells";
-import { APPROX_DATES_KEY, DATE_UNREAD_KEY, approxDayOf, derivedRelativeDay, parseRelativeAge } from "../../../src/lib/agentMission/relativeDates";
+import { APPROX_DATES_KEY, DATE_UNREAD_KEY, approxColumnsOf, approxDayOf, approxDayOfMs, derivedRelativeDay, parseRelativeAge } from "../../../src/lib/agentMission/relativeDates";
 import { CHILD_RAW_FILTER_KINDS, filterVerdict, governmentUnclear, isEnabled } from "../../../src/lib/agentMission/filters";
 import { MARKS_KEY, markVerdict } from "../../../src/lib/agentMission/rawMarks";
 import type { MissionEventInput } from "../types";
@@ -174,7 +174,17 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     const unreadColumns: string[] = [];
     for (const c of stage.columns) {
       if (!looksLikeDateColumn(c.title_ar, c.key)) continue;
-      if (parseMoment(row[c.key]) !== null) {
+      const moment = parseMoment(row[c.key]);
+      if (moment !== null) {
+        // ROUND 38: A DATE THE PLANNER COMPUTED from the item's relative text carries the planner's mark: it is an approximate DAY whatever the gap between planning and this run, never an exact moment (live msn_f6caeacd…: three of five computed dates were delivered as «دقيق»).
+        // The day is read from the item's own relative text at this moment when it has one (so the item's date columns name the same day), else it is the day of the computed instant.
+        if (approxColumnsOf(raw).includes(c.key)) {
+          let day: string | null = null;
+          for (const [field, text] of Object.entries(raw)) { if (field === c.key || typeof text !== "string") continue; const age = parseRelativeAge(text, now); if (age) { day = approxDayOf(age); break; } }
+          row[c.key] = day ?? approxDayOfMs(moment.getTime());
+          approxColumns.push(c.key);
+          continue;
+        }
         // A DATE THE SOURCE COMPUTED ITSELF from a relative text it also gives («6 years ago» beside a `publishedTime` of the minute of the call minus six years) is not an exact moment: it is written as the approximate day it stands for (a real timestamp is untouched)
         for (const [field, text] of Object.entries(raw)) {
           if (field === c.key || typeof text !== "string") continue;

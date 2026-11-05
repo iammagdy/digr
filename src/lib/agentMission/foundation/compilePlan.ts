@@ -9,6 +9,7 @@ import type { MissionPricingSettings } from "../../missionPricing";
 import type { Ask } from "./ask";
 import { rankPool, factsOf, namedAuthorVerdict, type PoolRow } from "./pool";
 import { approxInstantOfRelative } from "./occurrence";
+import { APPROX_DATES_KEY, approxColumnsOf } from "../relativeDates";
 import { cairoMomentAr } from "./cairoText";
 import { NAMED_MARK_KEY, NAMED_MARK_TITLE_AR, NAMED_MISMATCH_MARK_AR, NAMED_UNAVAILABLE_MARK_AR } from "./namedShortfall";
 import { childPromise, perParentPromise, promiseLineAr, type StagePromise } from "./promise";
@@ -318,7 +319,8 @@ export function rankedPoolOf(input: { ask: Ask; poolCard: ToolCard; pages: Reado
   const card: ToolCard = poolCard.counter || !input.counters ? poolCard : { ...poolCard, counter: { key: "comments", counts: "comments" } };
   const mapped = input.pages.flatMap((p) => mapPage(p.card ?? poolCard, p.page)).map((r) => (input.counters && input.counters.has(String(r.id)) ? { ...r, comments: input.counters.get(String(r.id)) } : r))
     // a source that dates a video only by «7 years ago» (YouTube): placed in time from the moment of planning, for the order «newest» and for the latest occurrence of a recurring event
-    .map((r) => { if ((r.posted_at === undefined || r.posted_at === null) && input.nowMs !== undefined) { const t = approxInstantOfRelative(r.published, input.nowMs); if (t !== null) return { ...r, posted_at: new Date(t).toISOString() }; } return r; });
+    // ROUND 38: that instant is COMPUTED, never the source's: the row carries the mark (`_approx_dates`), kept in the plan's pinned rows, so the preview and the file call it approximate whatever the gap between planning and the run
+    .map((r) => { if ((r.posted_at === undefined || r.posted_at === null) && input.nowMs !== undefined) { const t = approxInstantOfRelative(r.published, input.nowMs); if (t !== null) return { ...r, posted_at: new Date(t).toISOString(), [APPROX_DATES_KEY]: [...approxColumnsOf(r).filter((k) => k !== "posted_at"), "posted_at"] }; } return r; });
   // WHEN THE ASK HAS A PERIOD every parent of the pool is inside it, whichever search read it (live round 11): the chosen parents, the spares and the exposure check all come from this one list
   const inPeriod = input.keepOutsidePeriod !== true && periodIsChecked(ask) ? mapped.filter((r) => insidePeriod(r, ask)) : mapped;
   const rankedAll = rankPool(inPeriod, ask, card, { occurrence: ask.occurrence });

@@ -166,7 +166,7 @@ export function stagesView(plan: any): { stages: CustomerStageView[]; total: num
   return { stages, total };
 }
 
-function samplesView(plan: any): CustomerMissionView["samples"] {
+export function samplesView(plan: any): CustomerMissionView["samples"] {
   const list: any[] = Array.isArray(plan?.stages) ? plan.stages : [];
   // the deepest delivered stage is what the customer gets: show its rows (else the first stage that has any)
   const delivered = list.filter((s) => s?.deliver !== false && Array.isArray(s?.sample_rows) && s.sample_rows.length > 0);

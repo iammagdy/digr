@@ -1,5 +1,5 @@
 import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, AGENT_REPLIES_PER_COMMENT_DEFAULT, AGENT_REPLIES_PER_COMMENT_MAX, AGENT_PEOPLE_PAGES_DEFAULT, AGENT_PEOPLE_PAGES_MAX, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE, NAMES_STEP_USD_PER_PERSON } from "./constants";
-import { formatSampleValueAr } from "../customerDates";
+import { formatIsoForCustomer, formatSampleValueAr } from "../customerDates";
 import { isLanguageColumn } from "./languageLabel";
 import { CONTACT_KINDS, requestWantsContacts, type ContactKind } from "./contacts";
 import { isPeopleStage } from "./people";
@@ -21,7 +21,7 @@ import { childCardTitleAr, childRuleLinesAr } from "./childItems";
 import { platformCostNotesAr } from "./platformNotes";
 import type { DateWindow } from "./dateWindow";
 import { unresolvedSourcesLineAr } from "./namedSources";
-import { APPROX_DATES_CARD_LINE_AR } from "./relativeDates";
+import { APPROX_DATES_CARD_LINE_AR, APPROX_WORD_AR, approxColumnsOf, approxDayOfMs } from "./relativeDates";
 import { companyRuleTerms, isCompanyStage, isEntityStage, requestNamesSector, sectorEnglishWords, sectorWordsOf } from "./entities";
 import { placeEntry, placeKeysOfValues, placeLabelsAr, placesInText } from "./places";
 import { excludesGovernment } from "./government";
@@ -935,6 +935,13 @@ export function repliesSplitOf(plan: PricedPlan): { repliesKey: string; counted:
   return { repliesKey: replies.key, counted: promise.counted, openRows, countedRows, countedMaxPoints, openMaxPoints: Math.max(0, plan.price.maxChargePoints - countedMaxPoints) };
 }
 
+/** ROUND 38: a sample date the planner COMPUTED from the source's relative text («2 weeks ago») is shown to the customer as the approximate DAY with «تقريبًا», never as an exact moment with a time of day (the file shows the same day with the same word). Null for every other cell. */
+function approxSampleCellAr(row: Record<string, unknown>, key: string): string | null {
+  if (!approxColumnsOf(row).includes(key)) return null;
+  const ms = Date.parse(String(row[key] ?? ""));
+  return Number.isFinite(ms) ? `${APPROX_WORD_AR} ${formatIsoForCustomer(approxDayOfMs(ms))}` : null;
+}
+
 export function customerPlanView(plan: PricedPlan, options: { now?: number } = {}) {
   const now = options.now ?? Date.now();
   const split = repliesSplitOf(plan);
@@ -954,7 +961,7 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
       const columns = s.columns.filter((c) => !isInternalColumn(c));
       return {
         key: s.key, title_ar: childCardTitleAr(s, plan.stages), expected_rows: s.planned_rows, parent_key: s.parent_key, deliver: s.deliver, columns,
-        sample_rows: s.sample_rows.filter((r) => sampleRowPasses(s, r, now)).slice(0, CUSTOMER_SAMPLE_ROWS).map((r) => Object.fromEntries(columns.map((c) => [c.key, (s.engine?.built_by === "code" ? formatSampleValueAr(r[c.key], { column: isLanguageColumn(c.title_ar, c.key) ? "language" : undefined }) : String(r[c.key] ?? "")).slice(0, SAMPLE_CELL_CHARS)]))),
+        sample_rows: s.sample_rows.filter((r) => sampleRowPasses(s, r, now)).slice(0, CUSTOMER_SAMPLE_ROWS).map((r) => Object.fromEntries(columns.map((c) => [c.key, approxSampleCellAr(r, c.key) ?? (s.engine?.built_by === "code" ? formatSampleValueAr(r[c.key], { column: isLanguageColumn(c.title_ar, c.key) ? "language" : undefined }) : String(r[c.key] ?? "")).slice(0, SAMPLE_CELL_CHARS)]))),
         ...(s.how_ar ? { how_ar: s.how_ar } : {}),
         ...(s.replies_open ? { replies_open: true } : {}),
         ...(split && split.repliesKey === s.key ? { replies_counted: split.counted, replies_open_rows: split.openRows } : {}),
