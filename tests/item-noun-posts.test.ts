@@ -21,8 +21,11 @@ describe("the unit of the items is the items', not the source's", () => {
     expect(itemNounOf("البوست").singular).toBe("بوست");
   });
   it("a page, an account or a channel named AFTER a word the table does not know is the source, never the unit: the honest «عنصر»", () => {
-    for (const title of ["سناب حساب فلان", "ريلز صفحة فلان", "كليبات قناة فلان"]) expect(itemNounOf(title).singular, title).toBe("عنصر");
-    expect(countAr(5, itemNounOf("ريلز صفحة فلان"))).toBe("٥ عناصر");
+    for (const title of ["سناب حساب فلان", "ستوريز صفحة فلان", "كليبات قناة فلان"]) expect(itemNounOf(title).singular, title).toBe("عنصر");
+    expect(countAr(5, itemNounOf("ستوريز صفحة فلان"))).toBe("٥ عناصر");
+    // ROUND 36 (the policy changed on purpose): «ريلز» IS a known noun now (the stage of a request for reels is titled «الريلز»), so it was taken out of this list of unknown words
+    expect(countAr(5, itemNounOf("الريلز"))).toBe("٥ ريلز");
+    expect(countAr(1, itemNounOf("ريلز صفحة فلان"))).toBe("ريل واحد");
   });
   it("nothing that worked before changes: a known noun first, a leading modifier before a page or a channel, the people of a company", () => {
     expect(itemNounOf("منشورات حساب مصر للطيران").singular).toBe("منشور");

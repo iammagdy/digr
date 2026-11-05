@@ -257,6 +257,8 @@ export interface CompiledMark {
   discovery?: import("./foundation/discovery/plan").DiscoveryMark;
   /** ROUND 35 (Instagram REELS): set when the customer asked for reels: how the chosen tool serves the media type (reels-only tool, the tool's own media-type filter, or unproven: said to the customer before approval). Internal audit; set whether or not discovery is on. */
   media?: import("./foundation/discovery/media").MediaMark;
+  /** ROUND 36: the deliverable fields the customer named and what the REAL first page showed for each: in the card, recovered from the provider's own key (with its path: the provenance), or unavailable (said before approval; the column's cells say «غير متاح»). Internal audit. */
+  fields?: import("./foundation/discovery/fieldRecovery").FieldReport[];
 }
 
 export interface UnservedStep {

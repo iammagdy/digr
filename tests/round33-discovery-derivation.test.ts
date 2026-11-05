@@ -215,7 +215,7 @@ describe("CANDIDATES AND THEIR ORDER", () => {
   it("the candidate view a model sees carries only facts about the card, never a price in points", () => {
     const { cards } = cardsWithDiscovery(catalog, "youtube", ACCESS);
     const v = candidateViewOf(cards.find((c) => c.endpointId === "tikhub.youtube.search.videos")!, ["topic"]);
-    expect(Object.keys(v).sort()).toEqual(["cannot", "capability", "carries", "costUsdPerPage", "derived", "endpointId", "paging", "role", "status"]);
+    expect(Object.keys(v).sort()).toEqual(["cannot", "capability", "carries", "costUsdPerPage", "derived", "endpointId", "fields", "paging", "role", "status"]);
   });
 });
 

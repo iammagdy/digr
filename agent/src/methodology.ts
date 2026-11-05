@@ -3,6 +3,7 @@ import type { PricedPlan, PricedStage } from "../../src/lib/agentMission/plan";
 import type { ItemSnapshot, StopReason } from "./items/itemStore";
 import { cairoText, dateOnlyText, isDateValues, parseDateOnly, parseMoment } from "../../src/lib/agentMission/dateCells";
 import { arabicDateLabel } from "../../src/lib/agentMission/fileNames";
+import { mediaScopeLineAr } from "../../src/lib/agentMission/foundation/discovery/media";
 import { countAr, itemNounOf, itemNounOfPlan, knownItemNoun } from "../../src/lib/agentMission/itemNoun";
 import { filterLineAr, isEnabled, type StageFilter } from "../../src/lib/agentMission/filters";
 import { APPROX_DATES_NOTE_AR, DATE_PRECISION_TITLE_AR, approxColumnsOf, dateUnreadColumnsOf } from "../../src/lib/agentMission/relativeDates";
@@ -353,6 +354,9 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
   for (const u of plan.unserved_steps ?? []) limits.push(`لم يُنفَّذ: ${u.what_ar}؛ ${u.reason_ar}`);
   // ROUND 33: a source discovered from the catalog says how its reading ended: complete within the source, partial (a limit or a failure) or unknown; a plan without the mark gets no line
   if (plan.compiled?.discovery) { const parent = stages.find((x) => x.parent_key === null && x.deliver) ?? stages[0]; if (parent) limits.push(deliveryCompletenessLineAr(plan.compiled.discovery, parent.title_ar, facts.stages?.[parent.key]?.stop ?? null, (rowsByStage[parent.key] ?? []).length)); }
+  // ROUND 36: THE SCOPE OF A REQUEST FOR REELS, said as approved (the stage is «الريلز» only when the media type is proven; otherwise the file says it is posts whose type the source does not prove), and the fields the customer named that the source did not give
+  if (plan.compiled?.media) limits.push(mediaScopeLineAr(plan.compiled.media));
+  for (const f of plan.compiled?.fields ?? []) if (f.status === "unavailable" && (f.key === "posted_at" || f.key === "author")) limits.push(`${f.key === "posted_at" ? "التواريخ" : "أسماء أصحاب الحسابات"}: طلبتها، ولم يعطها المصدر في ما قرأناه؛ عمودها موجود وقيمه «غير متاح» ولم نكتب شيئًا من عندنا.`);
   for (const s of stages) if ((s.unresolved_sources ?? []).length) limits.push(unresolvedSourcesLineAr(s.unresolved_sources!));
   for (const s of delivering) {
     const r = facts.stages?.[s.key];
