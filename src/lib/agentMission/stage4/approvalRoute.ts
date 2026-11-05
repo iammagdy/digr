@@ -35,10 +35,16 @@ export function kindFlagOn(kind: AddonKind, env?: Readonly<Record<string, string
 
 const NOT_FOUND_AR = ADDON_APPROVE_MESSAGES_AR.not_found;
 const VERIFY_EMAIL_AR = "فعّل بريدك الإلكتروني أولًا ثم اعتمد الطلب.";
+/** «approved», «executing» or «completed» may also be an approval still being made by another tab: the sentence does not claim more than that. */
+const ALREADY_APPROVED_AR = "هذا الطلب اعتُمد بالفعل أو قيد الاعتماد الآن؛ تابع حالته في «حالة طلباتك على هذا الملف».";
 const BAD_REQUEST_AR = "تعذّر قراءة طلب الاعتماد. حدّث الصفحة وحاول مرة أخرى؛ لم يُحجز أو يُخصم شيء.";
 const answer = (status: number, state: ApprovalState, error: string, code?: string): ApprovalAnswer => ({ status, body: { success: false, state, error, ...(code ? { code } : {}) } });
-/** Codes after which the points MAY be held (the lost-answer family): never «nothing was held». */
-const UNCERTAIN = new Set(["approval_unverified", "record_unverified", "claim_retry"]);
+/**
+ * After which answers the points MAY be held (the lost-answer family): never «nothing was held». The money core answers a held-but-not-started job with the code `claim_failed` (the same code as a hold that was proved RELEASED), so the SENTENCE decides, not the code:
+ * `claim_retry` says «نقاطك محجوزة». (Found by the independent review of this route.)
+ */
+const UNCERTAIN_CODES = new Set(["approval_unverified", "record_unverified", "claim_retry"]);
+const UNCERTAIN_SENTENCES = new Set<string>([ADDON_APPROVE_MESSAGES_AR.approval_unverified, ADDON_APPROVE_MESSAGES_AR.record_unverified, ADDON_APPROVE_MESSAGES_AR.claim_retry]);
 const ALREADY_STARTED = new Set(["approved", "executing", "completed"]);
 
 const isRequestId = (v: unknown): v is string => typeof v === "string" && /^msn_[a-z0-9]{8,40}$/.test(v);
@@ -70,15 +76,22 @@ export async function approveAddonForCustomer(client: any, input: {
     if (!row || !addon || addon.of !== input.missionId || (addon.kind !== "review" && addon.kind !== "edit")) return answer(404, "refused", NOT_FOUND_AR, "not_found");
     if (!kindFlagOn(addon.kind, input.env)) return answer(404, "refused", NOT_FOUND_AR, "not_found");
     // a second click (or a refresh after the first): the request is already approved, running or done: no second reservation is even attempted
-    if (ALREADY_STARTED.has(String(row.status))) return { status: 409, body: { success: false, state: "already_approved", error: ADDON_APPROVE_MESSAGES_AR.already_approved, code: "already_approved", kind: addon.kind } };
+    if (ALREADY_STARTED.has(String(row.status))) return { status: 409, body: { success: false, state: "already_approved", error: ALREADY_APPROVED_AR, code: "already_approved", kind: addon.kind } };
 
     const guard = await guardApproval(client, { id: requestId, userId: input.userId, expectedPoints });
-    if (!guard.ok) return answer(guard.status, "refused", guard.messageAr, guard.reason);
+    if (!guard.ok) {
+      // the status moved between the first read and the guard's (another tab started this very request): it is already approved or running, not «no request ready»
+      if (guard.reason === "not_ready") {
+        const { data: again } = await client.from(MISSION_TABLE).select("status").eq("id", requestId).eq("user_id", input.userId).maybeSingle();
+        if (again && ALREADY_STARTED.has(String(again.status))) return { status: 409, body: { success: false, state: "already_approved", error: ALREADY_APPROVED_AR, code: "already_approved", kind: addon.kind } };
+      }
+      return answer(guard.status, "refused", guard.messageAr, guard.reason);
+    }
 
     const approved = await approveAddonOnce(client, { id: requestId, actorId: input.userId, expectUserId: input.userId });
     if (approved.ok) return { status: 200, body: { success: true, state: "approved", kind: approved.kind, holdPoints: approved.holdPoints } };
-    if (approved.code === "already_approved" || approved.error === ADDON_APPROVE_MESSAGES_AR.already_approved) return { status: 409, body: { success: false, state: "already_approved", error: approved.error, code: "already_approved", kind: addon.kind } };
-    const uncertain = approved.code !== undefined && UNCERTAIN.has(approved.code);
+    if (approved.code === "already_approved" || approved.error === ADDON_APPROVE_MESSAGES_AR.already_approved) return { status: 409, body: { success: false, state: "already_approved", error: ALREADY_APPROVED_AR, code: "already_approved", kind: addon.kind } };
+    const uncertain = (approved.code !== undefined && UNCERTAIN_CODES.has(approved.code)) || UNCERTAIN_SENTENCES.has(approved.error);
     return answer(approved.status, uncertain ? "uncertain" : "refused", approved.error, approved.code);
   } catch {
     // the answer of a call may be lost (the money may or may not have moved): never «nothing was held», and the page re-reads the request's status
