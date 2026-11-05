@@ -45,10 +45,93 @@ BEGIN
 END
 $$;
 
+-- AUDIT FIX (PR #398 review): CREATE ... IF NOT EXISTS skips SILENTLY when ANY relation of that name exists, so a plain index, a different predicate or another table would have been taken for the guard
+-- (and the COMMENT below would have labelled it). Step 1 stops the migration, changing nothing, unless the existing object of that name is exactly the guard; step 2 proves the same after the statement.
+  -- the object of that name, if any, must be EXACTLY the guard: an index on public.missions, valid and ready, unique, one key (the expression), the same partial predicate, the same access method, operator class,
+  -- collation and sort order. The reference is built by THIS server on a session-local temp table that has the real column types (so the text of the expression and of the predicate is compared in the server's own
+  -- words, whatever its version) and dropped at once. Anything else (a plain index, another predicate, another key, another table, a view, a table, an INVALID leftover of a failed build) is NOT the guard.
+DO $$
+DECLARE
+  v_oid oid;
+  v_kind "char";
+  v_same boolean;
+BEGIN
+  SELECT c.oid, c.relkind INTO v_oid, v_kind
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public' AND c.relname = 'missions_one_open_addon_per_file';
+  IF v_oid IS NULL THEN
+    RETURN; -- the name is free: the statement below builds the guard
+  END IF;
+  IF v_kind IS DISTINCT FROM 'i' THEN
+    RAISE EXCEPTION 'one_open_addon_per_file: public.missions_one_open_addon_per_file already exists with a different definition (it is a relation of kind %, not an index); it is NOT the safety guard. Drop or rename it, then run this migration again', v_kind;
+  END IF;
+  CREATE TEMP TABLE one_open_addon_ref (LIKE public.missions) ON COMMIT DROP;
+  CREATE UNIQUE INDEX one_open_addon_ref_idx ON one_open_addon_ref ((plan->'addon'->>'of'))
+    WHERE (plan->'addon'->>'of') IS NOT NULL
+      AND status NOT IN ('completed', 'failed', 'unserved', 'cancelled');
+  SELECT e.indrelid = 'public.missions'::regclass
+     AND e.indisunique AND e.indisvalid AND e.indisready AND e.indislive
+     AND e.indnkeyatts = r.indnkeyatts AND e.indnatts = r.indnatts
+     AND e.indkey::text = r.indkey::text AND e.indclass::text = r.indclass::text
+     AND e.indcollation::text = r.indcollation::text AND e.indoption::text = r.indoption::text
+     AND ec.relam = rc.relam AND ec.relpersistence = 'p'
+     AND pg_get_expr(e.indexprs, e.indrelid) IS NOT DISTINCT FROM pg_get_expr(r.indexprs, r.indrelid)
+     AND pg_get_expr(e.indpred, e.indrelid) IS NOT DISTINCT FROM pg_get_expr(r.indpred, r.indrelid)
+  INTO v_same
+  FROM pg_index e
+  JOIN pg_class ec ON ec.oid = e.indexrelid,
+       pg_index r JOIN pg_class rc ON rc.oid = r.indexrelid
+  WHERE e.indexrelid = v_oid AND r.indexrelid = 'pg_temp.one_open_addon_ref_idx'::regclass;
+  DROP TABLE one_open_addon_ref;
+  IF v_same IS NOT TRUE THEN
+    RAISE EXCEPTION 'one_open_addon_per_file: public.missions_one_open_addon_per_file already exists with a different definition (%); it is NOT the safety guard. Drop or rename it, then run this migration again', pg_get_indexdef(v_oid);
+  END IF;
+END
+$$;
+
 CREATE UNIQUE INDEX IF NOT EXISTS missions_one_open_addon_per_file
   ON public.missions ((plan->'addon'->>'of'))
   WHERE (plan->'addon'->>'of') IS NOT NULL
     AND status NOT IN ('completed', 'failed', 'unserved', 'cancelled');
+
+DO $$
+DECLARE
+  v_oid oid;
+  v_kind "char";
+  v_same boolean;
+BEGIN
+  SELECT c.oid, c.relkind INTO v_oid, v_kind
+  FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+  WHERE n.nspname = 'public' AND c.relname = 'missions_one_open_addon_per_file';
+  IF v_oid IS NULL THEN
+    RAISE EXCEPTION 'one_open_addon_per_file: the guard index does not exist after it was created';
+  END IF;
+  IF v_kind IS DISTINCT FROM 'i' THEN
+    RAISE EXCEPTION 'one_open_addon_per_file: public.missions_one_open_addon_per_file already exists with a different definition (it is a relation of kind %, not an index); it is NOT the safety guard. Drop or rename it, then run this migration again', v_kind;
+  END IF;
+  CREATE TEMP TABLE one_open_addon_ref (LIKE public.missions) ON COMMIT DROP;
+  CREATE UNIQUE INDEX one_open_addon_ref_idx ON one_open_addon_ref ((plan->'addon'->>'of'))
+    WHERE (plan->'addon'->>'of') IS NOT NULL
+      AND status NOT IN ('completed', 'failed', 'unserved', 'cancelled');
+  SELECT e.indrelid = 'public.missions'::regclass
+     AND e.indisunique AND e.indisvalid AND e.indisready AND e.indislive
+     AND e.indnkeyatts = r.indnkeyatts AND e.indnatts = r.indnatts
+     AND e.indkey::text = r.indkey::text AND e.indclass::text = r.indclass::text
+     AND e.indcollation::text = r.indcollation::text AND e.indoption::text = r.indoption::text
+     AND ec.relam = rc.relam AND ec.relpersistence = 'p'
+     AND pg_get_expr(e.indexprs, e.indrelid) IS NOT DISTINCT FROM pg_get_expr(r.indexprs, r.indrelid)
+     AND pg_get_expr(e.indpred, e.indrelid) IS NOT DISTINCT FROM pg_get_expr(r.indpred, r.indrelid)
+  INTO v_same
+  FROM pg_index e
+  JOIN pg_class ec ON ec.oid = e.indexrelid,
+       pg_index r JOIN pg_class rc ON rc.oid = r.indexrelid
+  WHERE e.indexrelid = v_oid AND r.indexrelid = 'pg_temp.one_open_addon_ref_idx'::regclass;
+  DROP TABLE one_open_addon_ref;
+  IF v_same IS NOT TRUE THEN
+    RAISE EXCEPTION 'one_open_addon_per_file: public.missions_one_open_addon_per_file already exists with a different definition (%); it is NOT the safety guard. Drop or rename it, then run this migration again', pg_get_indexdef(v_oid);
+  END IF;
+END
+$$;
 
 COMMENT ON INDEX public.missions_one_open_addon_per_file IS
   'One open add-on (review, review fix, edit) per delivered file: plan->addon->>of is unique among add-on rows that are not completed, failed, unserved or cancelled. Rollback: DROP INDEX public.missions_one_open_addon_per_file;';

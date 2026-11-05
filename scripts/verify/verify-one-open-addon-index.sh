@@ -11,6 +11,7 @@ MIGRATION="${DIGR_MIGRATION_FILE:-$(ls "$ROOT"/supabase/migrations/*_one_open_ad
 STUBS="$ROOT/tests/sql/supabase-stubs.sql"
 DDL_SRC="$ROOT/docs/proposals/agent-worker/01_agent_tables.sql"
 PSQL=(psql -h "$HOST" -p "$PORT" -U postgres -X -q -At)
+OUT="$(mktemp -d)"; trap 'rm -rf "$OUT"' EXIT   # the race outputs live in a private temp dir (the script used a fixed /tmp/pgsafety that may not exist)
 pass=0; fail=0
 ok()  { pass=$((pass+1)); echo "PASS  $1"; }
 bad() { fail=$((fail+1)); echo "FAIL  $1  ($2)"; }
@@ -81,12 +82,52 @@ check "a future status 'paused' holds the slot: second open row refused" "$(ins 
 
 echo "--- 6 two sessions at the same moment: exactly one wins"
 R="$(newdb race)"; mktable "$R"; apply "$R" >/dev/null
-( "${PSQL[@]}" -d "$R" -c "begin; insert into public.missions(id,user_id,request_text,status,plan) values ('msn_race0001','11111111-1111-4111-8111-111111111111','request text','queued','{\"addon\":{\"of\":\"msn_fileR\"}}'); select pg_sleep(1.5); commit;" >/tmp/pgsafety/race_a.out 2>&1 ) &
+( "${PSQL[@]}" -d "$R" -c "begin; insert into public.missions(id,user_id,request_text,status,plan) values ('msn_race0001','11111111-1111-4111-8111-111111111111','request text','queued','{\"addon\":{\"of\":\"msn_fileR\"}}'); select pg_sleep(1.5); commit;" >$OUT/race_a.out 2>&1 ) &
 sleep 0.4
-( "${PSQL[@]}" -d "$R" -c "insert into public.missions(id,user_id,request_text,status,plan) values ('msn_race0002','11111111-1111-4111-8111-111111111111','request text','plan_ready','{\"addon\":{\"of\":\"msn_fileR\"}}')" >/tmp/pgsafety/race_b.out 2>&1 ) &
+( "${PSQL[@]}" -d "$R" -c "insert into public.missions(id,user_id,request_text,status,plan) values ('msn_race0002','11111111-1111-4111-8111-111111111111','request text','plan_ready','{\"addon\":{\"of\":\"msn_fileR\"}}')" >$OUT/race_b.out 2>&1 ) &
 wait
 check "after the race exactly ONE open add-on row of the file exists" "$(q "$R" "select count(*) from public.missions where plan->'addon'->>'of'='msn_fileR'")" "1"
-grep -q 'missions_one_open_addon_per_file' /tmp/pgsafety/race_b.out && ok "the loser got the index's unique violation (it waited for the winner's commit)" || bad "the loser's error" "$(head -2 /tmp/pgsafety/race_b.out)"
+grep -q 'missions_one_open_addon_per_file' $OUT/race_b.out && ok "the loser got the index's unique violation (it waited for the winner's commit)" || bad "the loser's error" "$(head -2 $OUT/race_b.out)"
+
+echo "--- 9 an object of the same name with a WRONG definition is never accepted as the guard (PR #398 audit)"
+# `CREATE UNIQUE INDEX IF NOT EXISTS` skips silently when ANY relation of that name exists in the schema, so a non-unique index, a different predicate, another key, another table or an
+# INVALID leftover would be taken for the guard and the COMMENT would label it. The migration must RAISE, change nothing, and leave the other object as it was.
+wrong() { # label, setup sql
+  local d r; d="$(newdb "w$1")"; mktable "$d"
+  if ! "${PSQL[@]}" -v ON_ERROR_STOP=1 -d "$d" -c "$2" >/dev/null 2>&1; then bad "$1: setup" "the setup statement failed"; return; fi
+  r="$(apply "$d")"
+  case "$r" in *"different definition"*) ok "$1: the migration raises";; *) bad "$1: the migration raises" "$r";; esac
+  check "$1: the other object is untouched (no comment was put on it)" "$(q "$d" "select coalesce(obj_description('public.missions_one_open_addon_per_file'::regclass,'pg_class'),'none')")" "none"
+  check "$1: no row changed" "$(q "$d" "select count(*) from public.missions")" "0"
+}
+KEY="((plan->'addon'->>'of'))"; PRED="where (plan->'addon'->>'of') is not null and status not in ('completed','failed','unserved','cancelled')"
+wrong nonunique "create index missions_one_open_addon_per_file on public.missions $KEY $PRED"
+wrong predicate "create unique index missions_one_open_addon_per_file on public.missions $KEY where (plan->'addon'->>'of') is not null and status <> 'completed'"
+wrong nopredicate "create unique index missions_one_open_addon_per_file on public.missions $KEY"
+wrong otherkey "create unique index missions_one_open_addon_per_file on public.missions (id) $PRED"
+wrong othertable "create table public.other_t(id text, plan jsonb, status text); create unique index missions_one_open_addon_per_file on public.other_t $KEY $PRED"
+wrong aview "create view public.missions_one_open_addon_per_file as select 1 as x"
+wrong atable "create table public.missions_one_open_addon_per_file(x int)"
+wrong otherexpr "create unique index missions_one_open_addon_per_file on public.missions ((plan->'addon'->>'kind')) $PRED"
+wrong include "create unique index missions_one_open_addon_per_file on public.missions $KEY include (status) $PRED"
+wrong twocolumns "create unique index missions_one_open_addon_per_file on public.missions ((plan->'addon'->>'of'), status) $PRED"
+VW="$(newdb wview2)"; mktable "$VW"; "${PSQL[@]}" -d "$VW" -c "create view public.missions_one_open_addon_per_file as select 1 as x" >/dev/null 2>&1
+case "$("${PSQL[@]}" -v ON_ERROR_STOP=1 -d "$VW" -f "$MIGRATION" 2>&1 | tr '\n' ' ')" in *"relation of kind v, not an index"*) ok "a view of that name is refused with the plain reason (not an index)";; *) bad "view message" "the reason does not say it is not an index";; esac
+# an INVALID index (what a failed CONCURRENT build leaves): correct text, never usable; needs superuser to forge, which the scratch server allows
+Z="$(newdb winvalid)"; mktable "$Z"; apply "$Z" >/dev/null
+"${PSQL[@]}" -d "$Z" -c "update pg_index set indisvalid=false where indexrelid='public.missions_one_open_addon_per_file'::regclass" >/dev/null
+r="$(apply "$Z")"; case "$r" in *"different definition"*|*"not valid"*) ok "an INVALID index of the right text: the migration raises";; *) bad "invalid index" "$r";; esac
+# the RIGHT index already there (a second run): still a clean no-op, and the comment is kept
+K="$(newdb wright)"; mktable "$K"; apply "$K" >/dev/null; r="$(apply "$K")"; case "$r" in *ERROR*) bad "right index, second run" "$r";; *) ok "the right index already present: the migration is a no-op";; esac
+check "the right index is still valid and unique after the second run" "$(idx "$K")" "true/true"
+check "the right index carries the comment" "$(q "$K" "select (obj_description('public.missions_one_open_addon_per_file'::regclass,'pg_class') is not null)::text")" "true"
+
+echo "--- 10 applied as ONE transaction (what a migration runner that wraps the file does): twice, with no leftover"
+T="$(newdb tx)"; mktable "$T"
+r="$("${PSQL[@]}" -v ON_ERROR_STOP=1 --single-transaction -d "$T" -f "$MIGRATION" 2>&1 | tr '\n' ' ' | cut -c1-200)"; case "$r" in *ERROR*) bad "single-transaction apply" "$r";; *) ok "applies inside one transaction";; esac
+r="$("${PSQL[@]}" -v ON_ERROR_STOP=1 --single-transaction -d "$T" -f "$MIGRATION" 2>&1 | tr '\n' ' ' | cut -c1-200)"; case "$r" in *ERROR*) bad "single-transaction second apply" "$r";; *) ok "a second single-transaction apply is a no-op";; esac
+check "the index is valid and unique" "$(idx "$T")" "true/true"
+check "no temp reference object is left behind" "$(q "$T" "select count(*) from pg_class where relname like 'one_open_addon_ref%'")" "0"
 
 echo "--- 7 lock, build time, CONCURRENTLY, rollback"
 B="$(newdb big)"; mktable "$B"
@@ -103,6 +144,6 @@ echo "--- 8 the pre-migration checks of the document, run on the seeded violator
 check "check 1 (rows that would violate the index) finds the pair" "$(q "$V" "select count(*) from (select plan->'addon'->>'of' from public.missions where (plan->'addon'->>'of') is not null and status not in ('completed','failed','unserved','cancelled') group by 1 having count(*)>1) s")" "1"
 check "check 2 (add-on rows that would escape the key) runs and is zero on the violator database" "$(q "$V" "select count(*) from public.missions where plan ? 'addon' and (plan->'addon'->>'of') is null")" "0"
 check "check 6 (approved once, waiting again, no job) runs" "$(q "$V" "select count(*) from public.missions where (plan->'addon'->>'of') is not null and status='plan_ready' and approved_at is not null")" "0"
-for n in 1 nomissions jsoncol viol future race big; do "${PSQL[@]}" -d postgres -c "drop database if exists digr_idx_$n with (force)" >/dev/null 2>&1; done
+for n in $("${PSQL[@]}" -d postgres -c "select datname from pg_database where datname like 'digr_idx_%'"); do "${PSQL[@]}" -d postgres -c "drop database if exists $n with (force)" >/dev/null 2>&1; done
 echo "=== $pass passed, $fail failed"
 [ "$fail" = "0" ]

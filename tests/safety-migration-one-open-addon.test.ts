@@ -30,7 +30,10 @@ describe("the migration file", () => {
   it("it creates ONE unique partial index on the key plan->addon->>of, with the key and the deny-list of the four ENDED statuses in the predicate, if not exists", () => {
     const c = code().replace(/\s+/g, " ");
     expect(c).toContain("CREATE UNIQUE INDEX IF NOT EXISTS missions_one_open_addon_per_file ON public.missions ((plan->'addon'->>'of')) WHERE (plan->'addon'->>'of') IS NOT NULL AND status NOT IN ('completed', 'failed', 'unserved', 'cancelled');");
-    expect((c.match(/CREATE\s+(UNIQUE\s+)?INDEX/gi) ?? []).length).toBe(1);
+    // exactly ONE persistent index: the other two statements build the REFERENCE index on a session-local temp table (the audit guard compares an existing object of that name with it)
+    const indexes = [...c.matchAll(/CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF NOT EXISTS\s+)?(\S+)\s+ON\s+(\S+)/gi)].map((m) => `${m[1]} on ${m[2]}`);
+    expect(indexes.filter((i) => !i.startsWith("one_open_addon_ref_idx"))).toEqual(["missions_one_open_addon_per_file on public.missions"]);
+    expect(indexes.filter((i) => i.startsWith("one_open_addon_ref_idx")).every((i) => i === "one_open_addon_ref_idx on one_open_addon_ref")).toBe(true);
     expect(c).not.toMatch(/CONCURRENTLY/i);
   });
   it("the four ended statuses are the code's: completed + ENDED_STATUSES, and together with the six open ones they are exactly the ten statuses of the table's CHECK", () => {
@@ -42,7 +45,10 @@ describe("the migration file", () => {
     for (const s of OPEN_STATUSES) expect(code(), `the open status ${s} is never named: it is held by the deny-list`).not.toContain(`'${s}'`);
   });
   it("it only creates the index: no data statement, no table, function, policy or grant, no money table, no CONCURRENTLY", () => {
-    const c = statements();
+    // the ONLY table statements are the reference temp table of the audit guard: created TEMP and ON COMMIT DROP, named one_open_addon_ref, dropped at once. Everything else is checked as before.
+    const tableStatements = statements().match(/(?:CREATE\s+TEMP\s+TABLE|DROP\s+TABLE)[^;]*;/gi) ?? [];
+    expect(tableStatements.map((t) => t.replace(/\s+/g, " "))).toEqual(Array(2).fill(["CREATE TEMP TABLE one_open_addon_ref (LIKE public.missions) ON COMMIT DROP;", "DROP TABLE one_open_addon_ref;"]).flat());
+    const c = statements().replace(/(?:CREATE\s+TEMP\s+TABLE|DROP\s+TABLE)[^;]*;/gi, "");
     expect(c).not.toMatch(/\b(DELETE|TRUNCATE|DROP|ALTER|GRANT|REVOKE|CREATE\s+(OR\s+REPLACE\s+)?(FUNCTION|TABLE|POLICY|TRIGGER|VIEW))\b/i);
     expect(c).not.toMatch(/\bINSERT\b|\bUPDATE\b\s+\S+\s+SET/i);
     expect(c).not.toMatch(/credit_ledger|public\.jobs|topups|plans_quotes|profiles|provider_costs/);
@@ -52,9 +58,28 @@ describe("the migration file", () => {
     expect(c).toContain("to_regclass('public.missions') IS NULL");
     expect(c).toMatch(/IF v_type IS DISTINCT FROM 'jsonb' THEN RAISE EXCEPTION/);
     expect(c).toMatch(/HAVING count\(\*\) > 1/);
-    expect((c.match(/RAISE EXCEPTION/g) ?? []).length).toBe(3);
+    // three preconditions + (before the statement: the existing object of that name must be exactly the guard: 1 kind + 1 comparison) + (after it: 1 missing + 1 kind + 1 comparison)
+    expect((c.match(/RAISE EXCEPTION/g) ?? []).length).toBe(8);
     // the checks come BEFORE the index
-    expect(c.indexOf("RAISE EXCEPTION")).toBeLessThan(c.indexOf("CREATE UNIQUE INDEX"));
+    expect(c.indexOf("RAISE EXCEPTION")).toBeLessThan(c.indexOf("CREATE UNIQUE INDEX IF NOT EXISTS missions_one_open_addon_per_file"));
+  });
+  it("AUDIT (PR #398): an existing object named like the guard is accepted ONLY if it is exactly the guard, before AND after the statement; the comment goes on the proved index only", () => {
+    const c = code().replace(/\s+/g, " ");
+    const guardBlocks = c.split("DO $$").filter((b) => b.includes("one_open_addon_ref"));
+    expect(guardBlocks).toHaveLength(2);
+    // the same comparison in both blocks, and it covers every property that makes the index the guard
+    const comparison = (b: string) => b.slice(b.indexOf("SELECT e.indrelid"), b.indexOf("DROP TABLE one_open_addon_ref"));
+    expect(comparison(guardBlocks[0])).toBe(comparison(guardBlocks[1]));
+    for (const part of ["e.indrelid = 'public.missions'::regclass", "e.indisunique", "e.indisvalid", "e.indisready", "e.indislive", "e.indnkeyatts = r.indnkeyatts", "e.indkey::text = r.indkey::text", "e.indclass::text", "e.indcollation::text", "e.indoption::text", "ec.relam = rc.relam", "ec.relpersistence = 'p'", "pg_get_expr(e.indexprs, e.indrelid)", "pg_get_expr(e.indpred, e.indrelid)"]) expect(comparison(guardBlocks[0]), part).toContain(part);
+    expect(guardBlocks[0]).toContain("IF v_kind IS DISTINCT FROM 'i' THEN");
+    expect(guardBlocks[0]).toContain("IF v_same IS NOT TRUE THEN");
+    expect(guardBlocks[0]).toContain("with a different definition");
+    // order: preconditions, guard before, the statement, guard after, the comment
+    const at = (needle: string) => c.indexOf(needle);
+    expect(at("HAVING count(*) > 1")).toBeLessThan(at("one_open_addon_ref (LIKE"));
+    expect(at("CREATE TEMP TABLE one_open_addon_ref")).toBeLessThan(at("CREATE UNIQUE INDEX IF NOT EXISTS missions_one_open_addon_per_file"));
+    expect(at("CREATE UNIQUE INDEX IF NOT EXISTS missions_one_open_addon_per_file")).toBeLessThan(c.lastIndexOf("CREATE TEMP TABLE one_open_addon_ref"));
+    expect(c.lastIndexOf("CREATE TEMP TABLE one_open_addon_ref")).toBeLessThan(at("COMMENT ON INDEX"));
   });
   it("its rollback is written in the file and is one DROP INDEX of that name (a comment on the index)", () => {
     expect(sql()).toContain("Rollback: DROP INDEX public.missions_one_open_addon_per_file;");
