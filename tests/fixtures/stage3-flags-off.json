@@ -1,0 +1,23 @@
+{
+ "_about": "Written by tests/stage3-flags-off.test.ts (WRITE_STAGE3_FLAGS_OFF=1) on the stage-3 branch before the planning and engine wiring. MERGE-TIME UPDATE (integration rehearsal on main 9b478568): only the three `file` digests changed (main's Round 37 changed the Excel title and the methodology wording); plan, rows and status are unchanged. The new values were first obtained on PLAIN main with this test copied in (no Stage 2, 3 or 4 code), then equal on the integrated tree.",
+ "worlds": {
+  "g1": {
+   "plan": "1888dae8e59550ef",
+   "status": "completed:15:1166:",
+   "rows": "41f55870952c05e7",
+   "file": "70a763c1b7ba7d09"
+  },
+  "g2": {
+   "plan": "961143cf26b45bd3",
+   "status": "completed:15:1166:",
+   "rows": "5a2f08c7df649367",
+   "file": "7fb553063d5674a9"
+  },
+  "live_7539_words": {
+   "plan": "1888dae8e59550ef",
+   "status": "completed:15:1166:",
+   "rows": "41f55870952c05e7",
+   "file": "16ac2fc8b686f485"
+  }
+ }
+}

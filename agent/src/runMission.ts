@@ -44,6 +44,8 @@ import { askedTextOf, buildRequestContract } from "../../src/lib/agentMission/re
 import { sealFinalPrice } from "../../src/lib/agentMission/finalPrice";
 import { accountIsTest, anyRedesignFlag, fallbackStageOf, redesignStagesOf } from "./redesign";
 import { compiledPlatformActive, planByCompiler } from "./compiled";
+import { planCompaniesByCodeIfOn } from "../../src/lib/agentMission/stage3/b2bPlanning";
+import { b2bContactCells, b2bEngineOn, b2bFlagSet, b2bLimitLines, createAttemptLog } from "../../src/lib/agentMission/stage3/b2bEngine";
 import { isSocialPlatform } from "../../src/lib/agentMission/redesignFlagTypes";
 import { modelPlanningForTests } from "../../src/lib/agentMission/testSeam";
 import { SOCIAL_NOT_OFFERED_AR } from "../../src/lib/agentMission/foundation/namedShortfall";
@@ -507,8 +509,15 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     if (compiled.kind === "plan") state.proposedPlan = compiled.plan;
     else state.finish = { outcome: "cannot_serve", summary_ar: compiled.reason === "budget_too_small" ? BUDGET_TOO_SMALL_AR : compiled.reason === "page_not_found" ? pageNotFoundAr(compiled.ask.source.text) : "", kind: compiled.reason === "no_rows" || compiled.reason === "no_parent_with_children" || compiled.reason === "page_not_found" ? "empty" : "unsupported" };
   }
-  let output = compiled ? { ...COMPILED_RUN, llmCostUsd: compiled.llmCostUsd ?? 0 } : await runOnce(planningPrompt(mission, calls, resumeNote));
-  if (!compiled) await recordTokens(deps, mission.id, 0, output.usage, { inputTokens: 0, outputTokens: 0, calls: 0 }, output.llmCostUsd);
+  // STAGE 3, PART A (docs/STAGE-3.md S3): a companies and decision-makers request is planned BY CODE (stage3/b2bPlanning.ts, verified cards only, priced by the existing function, no read, no model) only when
+  // DIGER_STAGE3_COMPANIES is on for this account; the helper reads the flag first and gives null when it is off (unset: always), so the planning below is exactly today's. A request it does not plan keeps today's path.
+  const b2b = compiled ? null : planCompaniesByCodeIfOn({ requestText: askedTextOf(mission), isTestAccount: redesign.isTest, catalog: deps.catalog, access, stats: sourceStats, now: planningNow, pricingSettings });
+  if (b2b && !(b2b.ok === false && b2b.reason === "not_b2b")) {
+    await store.addEvent(mission.id, { kind: "call", message_ar: b2b.ok ? "قياس داخلي: خطة شركات مبنية بالكود." : "قياس داخلي: لم تُبنَ خطة الشركات بالكود، فبقيت الطريقة الحالية.", counts: { b2b_compiled: b2b.ok ? 1 : 0 } }).catch(() => undefined);
+    if (b2b.ok) state.proposedPlan = b2b.plan;
+  }
+  let output = compiled ? { ...COMPILED_RUN, llmCostUsd: compiled.llmCostUsd ?? 0 } : b2b?.ok ? COMPILED_RUN : await runOnce(planningPrompt(mission, calls, resumeNote));
+  if (!compiled && !b2b?.ok) await recordTokens(deps, mission.id, 0, output.usage, { inputTokens: 0, outputTokens: 0, calls: 0 }, output.llmCostUsd);
   // A RUN THAT ENDED WITH NO PLAN, NO QUESTION AND NO ENDING while the sources gave it real rows (live 2026-10-29: Facebook videos, after the customer answered the question, the planner tried two unavailable web searches and stopped): it is asked once more, told to
   // build the plan from what it holds. Never a limit of ours: the run's stop was a plain end, with no budget, turn or time limit reached.
   for (let nudge = 0; nudge < AGENT_PLANNING_NUDGES_MAX && endedSilently(output, state); nudge += 1) {
@@ -659,11 +668,20 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   if (endedByRestart(output) && !state.finish && await requeue(deps, mission, "approved", { execution_llm_usd: Number(llm.toFixed(6)), execution_treg_usd: Number(budget.spentUsd().toFixed(6)) }, "restart")) return;
 
   // THE CONTACT FINDER STEPS (plan.contact_steps, contactFinders.ts): every delivered person is looked up for the e-mail and phone cells, within the job's call budget and the step's priced amount. It fills CELLS of persons already stored: no row is added, so the settlement below counts what it always counted.
+  // STAGE 3, PART B (docs/STAGE-3.md S4): only when DIGER_STAGE3_COMPANIES is on for the account, every lookup is recorded per row and column and the contact cells follow the fallthrough (b2bEngine.ts); off (unset: always), null and nothing changes
+  const b2bAttempts = b2bEngineOn(redesignIsTest) ? createAttemptLog() : null;
   if (plan.contact_steps && plan.contact_steps.length > 0 && output.stop === "end" && !output.error) {
     try {
-      const enrichment = await runContactEnrichment({ items, store, plan, missionId: mission.id, requestText: mission.request_text, gateway, addEvent: (e) => store.addEvent(mission.id, e), budget, deadlineMs: Math.max(deadlineMs, Date.now() + CONTACT_STEP_MIN_WALL_MS), log: deps.log });
+      const enrichment = await runContactEnrichment({ items, store, plan, missionId: mission.id, requestText: mission.request_text, gateway, addEvent: (e) => store.addEvent(mission.id, e), budget, deadlineMs: Math.max(deadlineMs, Date.now() + CONTACT_STEP_MIN_WALL_MS), log: deps.log, ...(b2bAttempts ? { attempts: b2bAttempts } : {}) });
       deps.log?.(`contact_steps ${mission.id} email=${enrichment.filled.email} phone=${enrichment.filled.phone} unverified=${enrichment.filled.unverified} looked=${enrichment.looked} skipped=${enrichment.skipped} spent=${enrichment.spentUsd.toFixed(6)} stopped=${enrichment.stopped ?? "no"}`);
     } catch (e) { deps.log?.(`contact_steps_failed ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 120)}`); /* a lookup that breaks never stops the settlement: the people are delivered with the cells as they are */ }
+  }
+  // STAGE 3, PART B: every contact cell still without a value gets «غير متوفر» (every tool of its chain answered with nothing) or «لم يكتمل البحث» (refused, failed, not tried). CELLS only: no row is added or removed
+  if (b2bAttempts) {
+    try {
+      const ops = b2bContactCells(plan, Object.fromEntries(plan.stages.map((s) => [s.key, items.acceptedRows(s.key)])), b2bAttempts);
+      if (ops.length > 0) { await items.commit(ops); for (const k of new Set(ops.map((o) => o.stage))) await items.mirror(k); }
+    } catch (e) { deps.log?.(`b2b_cells_failed ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 120)}`); /* the cells stay as the steps left them */ }
   }
 
   // THE ARABIC SPELLING OF THE DECISION MAKERS' NAMES (namesAr.ts, owner decision 3 of audit 2026-11): ONE small batched request for the whole mission, after the people are final. It fills a cell of each person's row (`name_ar`), decides no row, no count and no money; a failed or unusable answer leaves the English names.
@@ -732,7 +750,9 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   let parentFixedRows = 0;
   if (builtCount > 0) {
     try {
-      const built = await buildMissionFiles(plan, rowsByStage, missionFactsOf({ requestText: mission.request_text, plan, snap, reviewStop: checked.stop }), companyMailboxesOf(plan, snap), { ...(hadOpenReplies ? { repliesJudged: true } : {}), approvedPlan });
+      // STAGE 3, PART B: each contact column's gap, read from the cells of these very rows, joins «حدود هذا التسليم» only when DIGER_STAGE3_COMPANIES is on for the account (unset: no line, the file as it was)
+      const b2bLines = b2bFlagSet() && b2bEngineOn(await accountIsTest(store, mission.user_id)) ? b2bLimitLines(plan, rowsByStage) : [];
+      const built = await buildMissionFiles(plan, rowsByStage, missionFactsOf({ requestText: mission.request_text, plan, snap, reviewStop: checked.stop }), companyMailboxesOf(plan, snap), { ...(hadOpenReplies ? { repliesJudged: true } : {}), approvedPlan, ...(b2bLines.length > 0 ? { extraLimitLines: b2bLines } : {}) });
       // THE DELIVERY CONTRACT (round 14): what it found is recorded for the admin; the file only had its DESCRIPTION completed (a limits line, a precision cell, a mark cell), never a row or a value
       if (built.contract.violations.length > 0) {
         const by = (rule: string) => built.contract.violations.filter((v) => v.rule === rule).length;

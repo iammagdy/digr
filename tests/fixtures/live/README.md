@@ -42,3 +42,13 @@ No raw page is added. One file of NUMBERS read by SELECT: the stored `plan_publi
 ## Added in round 14 (3 Nov 2026): the two missions of live round 12
 
 `msn_236f4af6fe4cb890abee` (Facebook, 82 files: 79 raw pages, `rows/posts.json`, `rows/comments.json`, `rows/comments_replies.json`) and `msn_5d5a9b2a933aeaa47d81` (YouTube, 19 files: 16 raw pages and 3 rows files), from the owner's admin ZIP, anonymised with `anonymise.py` (random salt, never written). 101 files in all; the inventory test is CHANGED to 36 missions and 667 files. Their calls are in `call-index.json` (read-only SELECT on `mission_calls`); the paging and reply tokens the log keeps cut at 80 characters are rebuilt from the stored pages in call order and match the logged ones where the log was read (first characters). A Facebook post link that has no numeric id (a `pfbid` link) is indexed by a numeric surrogate (the first 8 bytes of the sha-256 of the first 24 characters of the pfbid, as an 18-digit number: the call log cuts a link at 80 characters; the replay gateway computes the same). Used by `tests/round14-*.test.ts`.
+
+## Added in Stage 3 (4 Nov 2026): the first real COMPANIES and DECISION-MAKERS pages
+
+Two missions from the owner's admin raw-pages ZIP, anonymised on the owner's device with `anonymise.py` AFTER its two B2B rules were added (91 files, copied byte for byte, never re-anonymised here): `msn_4969a50fed8c45b37d8f` (35 raw pages, `rows/companies.json`, `rows/people.json`) and `msn_7539ea17512cf58aa0e7` (52 raw pages, `rows/companies.json`, `rows/people.json`). They are the stored pages the Stage 3 company and people cards are verified on.
+
+The two rules, added to `anonymise.py` and to the scan of `tests/fixtures-anonymised.test.ts`:
+- a string that contains an e-mail address is always a placeholder, even under a key the script keeps (an id-like key);
+- a URL under an id-like key goes through the URL rule (its host is replaced unless it is a platform host, and its path segments are hashed): before the patch it was kept as it was, so a profile link with a person's name survived.
+
+Checks run before these files were committed (counts only, never values): 0 e-mail addresses, 0 phone-like values, 0 person-profile links, every name-like field a placeholder or empty, every LinkedIn and website host replaced by `host-<hex>.invalid`, every URL path segment a hash or an id. What stays is allowed by the owner's rule: company-level ids and counters, the company domains used as ids, dates, country codes, and provider error codes. The scan test counts 39 missions and 769 files.
