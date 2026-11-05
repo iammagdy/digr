@@ -1,5 +1,6 @@
 "use client";
 
+import { browserFetch } from "@/lib/agentMission/stage4/browserFetch";
 import { useCallback, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { REPORT_FREE_AR, REPORT_FULL_SCORE_AR, REPORT_HEADING_AR, REPORT_ISSUES_HEADING_AR, REPORT_LOADING_AR, REPORT_NO_ISSUES_AR, REPORT_PICK_AR, REPORT_RETRY_AR, REPORT_SCOPE_AR, reportVersionOptionAr, reviewReportLinesAr, type ReviewReportView } from "@/lib/agentMission/stage4/reviewReportLabels";
@@ -94,14 +95,14 @@ export default function ReviewReport({ missionId }: { missionId: string }) {
 
   const load = useCallback(async (version: number, alive: () => boolean) => {
     setStatus("loading"); setReport(null); setError(null);
-    const r = await fetchReviewReport({ missionId, version, fetchFn: fetch, headers: authHeaders });
+    const r = await fetchReviewReport({ missionId, version, fetchFn: browserFetch, headers: authHeaders });
     if (!alive()) return;
     if (r.ok) { setReport(r.report); setStatus("ready"); }
     else { setError(r.message); setRetryable(r.retryable); setStatus("error"); }
   }, [missionId]);
 
   const start = useCallback(async (alive: () => boolean) => {
-    const list = await fetchReviewedVersions({ missionId, fetchFn: fetch, headers: authHeaders });
+    const list = await fetchReviewedVersions({ missionId, fetchFn: browserFetch, headers: authHeaders });
     if (!alive()) return;
     if (list.state === "off") { setStatus("idle"); return; }
     if (list.state === "error") { setReported([]); setError(list.message); setRetryable(true); setStatus("error"); return; }
