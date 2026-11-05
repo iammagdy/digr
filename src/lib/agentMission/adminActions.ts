@@ -4,6 +4,7 @@ import { AGENT_SOURCE_MEASURE_WINDOW_MS, AGENT_ALLOWED_MODELS, AGENT_DYNO_MEMORY
 import { memoryWarning } from "./concurrency";
 import { latestBeat, workerAlive } from "./heartbeat";
 import { approveMissionOnce } from "./approval";
+import { ADDON_MARKER_COLUMN, hasAddonMarker, withoutMarkerColumn } from "./addonMarker";
 import { EXPIRED_SOCIAL_PLAN_AR, isStaleSocialPlan } from "./staleSocialPlan";
 import { modelPlanningForTests } from "./testSeam";
 import { repriceStoredPlan } from "./lifecycle";
@@ -23,6 +24,11 @@ const MIN_TEXT = 3;
 const MAX_TEXT = 4000;
 /** Missions that may be listed at once. */
 const LIST_LIMIT = 20;
+/**
+ * MONEY PR 7e (docs/MONEY-PR-7A.md section 17): a review, review-fix or edit request of a DELIVERED file is a row of the missions table whose plan is `{ addon }`. This page is the RESEARCH missions' page: its answer, cancel and approve are refused for such a row
+ * (before any account lookup, claim or money function, changing nothing), and the lists mark it `is_addon` so the page labels it and offers no research action. The add-on has its own approval and its own cancel.
+ */
+const ADDON_ROW_REFUSAL_AR = "هذا طلب مراجعة أو تعديل على ملف سُلّم، وليس مهمة بحث؛ لا يُجاب ولا يُعتمد ولا يُلغى من هذه الصفحة.";
 
 /** The id of the test account, found by its e-mail in profiles (read only). Null when the account does not exist. */
 export async function findTestAccount(client: any): Promise<{ id: string; email: string } | null> {
@@ -47,8 +53,9 @@ export async function createMission(client: any, input: { adminId: string; text:
 export async function answerQuestion(client: any, input: { id: string; text: unknown }): Promise<ActionResult> {
   const text = String(input.text ?? "").replace(/\s+/g, " ").trim();
   if (text.length < 1 || text.length > 1000) return bad(400, "اكتب الإجابة.");
-  const { data } = await client.from(MISSION_TABLE).select("id,status").eq("id", input.id).maybeSingle();
+  const { data } = await client.from(MISSION_TABLE).select(`id,status,${ADDON_MARKER_COLUMN}`).eq("id", input.id).maybeSingle();
   if (!data) return bad(404, "المهمة غير موجودة.");
+  if (hasAddonMarker(data)) return bad(409, ADDON_ROW_REFUSAL_AR);
   if (data.status !== "needs_input") return bad(409, "المهمة لا تنتظر إجابة.");
   const upd = await client.from(MISSION_TABLE).update({ answer_text: text, status: "queued", question_ar: null, worker_id: null, lease_until: null, updated_at: new Date().toISOString() }).eq("id", input.id).eq("status", "needs_input");
   if (upd.error) return bad(500, "تعذّر حفظ الإجابة.");
@@ -57,8 +64,9 @@ export async function answerQuestion(client: any, input: { id: string; text: unk
 }
 
 export async function cancelMission(client: any, input: { id: string }): Promise<ActionResult> {
-  const { data } = await client.from(MISSION_TABLE).select("id,status").eq("id", input.id).maybeSingle();
+  const { data } = await client.from(MISSION_TABLE).select(`id,status,${ADDON_MARKER_COLUMN}`).eq("id", input.id).maybeSingle();
   if (!data) return bad(404, "المهمة غير موجودة.");
+  if (hasAddonMarker(data)) return bad(409, ADDON_ROW_REFUSAL_AR);
   // before approval nothing is held: cancelling is just a status. An approved or executing mission holds money; the worker settles or releases it, so it cannot be cancelled here.
   if (!["queued", "needs_input", "plan_ready"].includes(data.status)) return bad(409, "لا يمكن إلغاء مهمة قيد التنفيذ أو معتمدة؛ ينتهي حجزها بالتسوية.");
   const upd = await client.from(MISSION_TABLE).update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", input.id).in("status", ["queued", "needs_input", "plan_ready"]);
@@ -70,6 +78,8 @@ export async function cancelMission(client: any, input: { id: string }): Promise
 export async function approvePlan(client: any, input: { id: string; adminId: string }): Promise<ActionResult<{ jobId: string; reservePoints: number; unitPricePoints: number }>> {
   const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,status,plan").eq("id", input.id).maybeSingle();
   if (!mission) return bad(404, "المهمة غير موجودة.");
+  // before the plan checks, the account lookup, the claim and every money function: an add-on row would be CLAIMED (`approved`) by the shared approval and then crash on a plan that has no price
+  if (hasAddonMarker(mission)) return bad(409, ADDON_ROW_REFUSAL_AR);
   if (mission.status !== "plan_ready" || !mission.plan) return bad(409, "لا توجد خطة جاهزة للاعتماد.");
   if (!modelPlanningForTests() && isStaleSocialPlan(mission.plan)) return bad(410, EXPIRED_SOCIAL_PLAN_AR);
   const account = await findTestAccount(client);
@@ -140,7 +150,10 @@ export async function setSocialDiscovery(client: any, input: { mode: unknown; ad
   return { ok: true, before, after };
 }
 
-const SUMMARY_COLUMNS ="id,request_text,status,question_ar,reserved_points,unit_price_points,delivered_units,charged_points,planning_model,planning_llm_usd,execution_model,execution_llm_usd,planning_treg_usd,execution_treg_usd,created_at,updated_at";
+const SUMMARY_COLUMNS = `id,request_text,status,question_ar,reserved_points,unit_price_points,delivered_units,charged_points,planning_model,planning_llm_usd,execution_model,execution_llm_usd,planning_treg_usd,execution_treg_usd,created_at,updated_at,${ADDON_MARKER_COLUMN}`;
+
+/** A row of the list as the page reads it: an add-on row says so (`is_addon`), and the selected marker column itself is not sent. */
+const listRowOf = (row: Record<string, unknown>) => ({ ...withoutMarkerColumn(row), ...(hasAddonMarker(row) ? { is_addon: true as const } : {}) });
 
 /** The page's first load: the worker's heartbeat (alive or not), the model setting, and the latest missions. */
 export async function loadOverview(client: any, now: number = Date.now()) {
@@ -171,7 +184,7 @@ export async function loadOverview(client: any, now: number = Date.now()) {
     platformFlags: readPlatformFlags(redesign.data?.value),
     socialDiscovery: readSocialDiscoveryMode(discovery?.data?.value),
     testAccountEmail: AGENT_TEST_ACCOUNT_EMAIL,
-    missions: Array.isArray(missions.data) ? missions.data : [],
+    missions: Array.isArray(missions.data) ? (missions.data as Array<Record<string, unknown>>).map(listRowOf) : [],
     contractEvents: (Array.isArray(contract?.data) ? contract.data : []).filter((e: any) => e?.counts && Number(e.counts.adm_contract) === 1).slice(0, 20).map((e: any) => ({ mission_id: String(e.mission_id), message_ar: String(e.message_ar ?? ""), created_at: String(e.created_at ?? ""), r1: Number(e.counts.adm_r1) || 0, r2: Number(e.counts.adm_r2) || 0, r3: Number(e.counts.adm_r3) || 0, r4: Number(e.counts.adm_r4) || 0, completed: Number(e.counts.adm_completed) || 0 })),
   };
 }
@@ -196,15 +209,17 @@ export async function loadSourceHealth(client: any, now: number = Date.now()) {
 export async function loadDetail(client: any, input: { id: string; afterEventId?: number }) {
   const { data: mission } = await client.from(MISSION_TABLE).select("*").eq("id", input.id).maybeSingle();
   if (!mission) return bad(404, "المهمة غير موجودة.");
+  const isAddon = hasAddonMarker(mission);
   const [events, calls] = await Promise.all([
     client.from(MISSION_EVENTS_TABLE).select("id,kind,message_ar,counts,created_at").eq("mission_id", input.id).gt("id", input.afterEventId ?? 0).order("id", { ascending: true }).limit(500),
     client.from(MISSION_CALLS_TABLE).select("id,phase,endpoint_id,status,refused_reason,http_status,duration_ms,rows_returned,cost_usd,params_digest,created_at").eq("mission_id", input.id).order("created_at", { ascending: true }).limit(500),
   ]);
-  const plan = (mission.plan ?? null) as PricedPlan | null;
+  // an add-on row has no research plan: it is shown as what it is (`is_addon`), never drawn through the research plan's card or priced by the research rule
+  const plan = (isAddon ? null : mission.plan ?? null) as PricedPlan | null;
   const callRows: any[] = Array.isArray(calls.data) ? calls.data : [];
   return {
     ok: true as const,
-    mission: { ...mission, plan: undefined },
+    mission: { ...mission, plan: undefined, ...(isAddon ? { is_addon: true as const } : {}) },
     customerPlan: plan ? customerPlanView(plan) : null,
     // the internal view: which source each stage uses and what it measured, and the price recomputed by code from those measurements
     internalPlan: plan ? { stages: plan.stages.map((s) => ({ key: s.key, endpoint_id: s.endpoint_id, measured_cost_per_row_usd: s.measured_cost_per_row_usd, measured_from_calls: s.measured_from_calls })), price: repriceStoredPlan(plan) } : null,

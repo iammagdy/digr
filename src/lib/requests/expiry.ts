@@ -1,10 +1,14 @@
 import { MISSION_TABLE } from "../agentMission/constants";
+import { ADDON_MARKER_COLUMN, hasAddonMarker } from "../agentMission/addonMarker";
 
 /**
  * A QUESTION OR A PLAN THAT NOBODY ANSWERS EXPIRES. Nothing is held before approval and nothing is spent, so ending one is a status change only (no money function, no ledger row):
  *
  *   - older than 72 hours: expired;
  *   - more than 5 waiting for the customer: the OLDEST are expired until 5 remain (this also bounds the planning cost of many abandoned requests).
+ *
+ * A REVIEW, REVIEW-FIX OR EDIT REQUEST of a delivered file (an add-on row, `plan.addon`) is not a research plan that waits: it is never expired here and it does not take one of the five places (MONEY PR 7e, docs/MONEY-PR-7A.md section 17; whether and when an
+ * unpaid add-on request expires is the decision of the later approval task).
  *
  * An expired request is stored as `cancelled` (a status that already exists) with the sentence «انتهت صلاحية الخطة» in `summary_ar` and `error` = `expired: …`; the customer's own cancel has neither.
  * It is done while the customer's lists are read (no background task); the update is a compare-and-set on the waiting statuses, so an answer or an approval that arrives in the same moment wins, and repeating it changes nothing.
@@ -18,11 +22,11 @@ export const EXPIRED_ERROR_PREFIX = "expired:";
 export const isExpiredMission = (row: { summary_ar?: unknown; error?: unknown }): boolean =>
   String(row.error ?? "").startsWith(EXPIRED_ERROR_PREFIX) || String(row.summary_ar ?? "") === EXPIRED_SENTENCE_AR;
 
-interface WaitingRow { id: string; status: string; created_at: string | null; job_id?: string | null }
+interface WaitingRow { id: string; status: string; created_at: string | null; job_id?: string | null; plan?: unknown; addon?: unknown }
 
 /** Which waiting missions expire, and why: pure. `rows` may come in any order. */
 export function missionsToExpire(rows: WaitingRow[], now: number): Array<{ id: string; reason: "age" | "cap" }> {
-  const waiting = rows.filter((r) => !r.job_id && (WAITING_STATUSES as readonly string[]).includes(r.status));
+  const waiting = rows.filter((r) => !hasAddonMarker(r) && !r.job_id && (WAITING_STATUSES as readonly string[]).includes(r.status));
   const at = (r: WaitingRow): number => { const t = r.created_at ? Date.parse(r.created_at) : NaN; return Number.isFinite(t) ? t : 0; };
   const out: Array<{ id: string; reason: "age" | "cap" }> = [];
   const fresh: WaitingRow[] = [];
@@ -35,7 +39,7 @@ export function missionsToExpire(rows: WaitingRow[], now: number): Array<{ id: s
 /** Ends the customer's stale or surplus waiting missions. Returns the ids ended. Never throws; a read error ends nothing. */
 export async function expireWaitingMissions(client: any, input: { userId: string; now?: number }): Promise<string[]> {
   const now = input.now ?? Date.now();
-  const read = await client.from(MISSION_TABLE).select("id,status,created_at,job_id").eq("user_id", input.userId).in("status", [...WAITING_STATUSES]).order("created_at", { ascending: false }).limit(500);
+  const read = await client.from(MISSION_TABLE).select(`id,status,created_at,job_id,${ADDON_MARKER_COLUMN}`).eq("user_id", input.userId).in("status", [...WAITING_STATUSES]).order("created_at", { ascending: false }).limit(500);
   if (read?.error || !Array.isArray(read?.data)) return [];
   const ended: string[] = [];
   for (const { id, reason } of missionsToExpire(read.data as WaitingRow[], now)) {

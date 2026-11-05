@@ -76,6 +76,11 @@ export interface AgentStore {
    * The item store writes ONLY through this: an overwritten object may be served stale by the storage CDN (up to 60 s, documented), a new path never is.
    */
   putNew(missionId: string, relPath: string, content: string | Buffer, contentType: string): Promise<void>;
+  /**
+   * CREATE-ONLY write that REPORTS whether it created the object (MONEY PR 7a, the add-on runner): `created: false` means the path already held an object, which is left exactly as it is. `putNew` treats «already exists» as done; this one tells the caller,
+   * because a version path that already holds another object is the zombie case (release, no charge). Any other failure throws. Additive: `putNew` is unchanged.
+   */
+  putNewStrict(missionId: string, relPath: string, content: string | Buffer, contentType: string): Promise<{ created: boolean }>;
   /** The objects of ONE folder of this mission (non-recursive), names relative to the mission's folder, sorted by name. The listing reads the database, not the CDN: it is consistent right after a write. */
   listFiles(missionId: string, folder: string): Promise<Array<{ name: string; size: number }>>;
   /** A file of THIS mission only (the path is always under the mission's own prefix). Null when absent. */

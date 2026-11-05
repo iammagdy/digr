@@ -45,6 +45,12 @@ export function createMemoryStore(initial: MissionRecord[] = []): MemoryStore {
       // create-only, as the real bucket with upsert off: a path that exists is left as it is (the caller treats «already exists» as done)
       if (!files.has(key(missionId, relPath))) files.set(key(missionId, relPath), content);
     },
+    async putNewStrict(missionId, relPath, content, contentType) {
+      if (!(AGENT_BUCKET_ALLOWED_MIME as readonly string[]).includes(contentType)) throw new Error(`upload: mime type ${contentType} is not supported`);
+      if (files.has(key(missionId, relPath))) return { created: false };
+      files.set(key(missionId, relPath), content);
+      return { created: true };
+    },
     async listFiles(missionId, folder) {
       const prefix = `${missionId}/${folder.replace(/\/+$/, "")}/`;
       return [...files.entries()].filter(([k]) => k.startsWith(prefix) && !k.slice(prefix.length).includes("/")).map(([k, v]) => ({ name: k.slice(`${missionId}/`.length), size: typeof v === "string" ? Buffer.byteLength(v) : v.length })).sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
