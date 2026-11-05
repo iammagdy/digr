@@ -60,6 +60,12 @@ src/functions/**/dist
 /*.xlsx
 /*.csv
 
+# EXCEPTION (Round 37): the three REAL delivered files that tests/round37-real-reels-excel-acceptance.test.ts reads are fixtures, not exports. Without these lines the rules above
+# silently keep them out of every commit and the test cannot load on a clean checkout. Only these three names are allowed (their sha256 are in tests/fixtures/round37/README.md).
+!/tests/fixtures/round37/delivered.csv
+!/tests/fixtures/round37/methodology.csv
+!/tests/fixtures/round37/delivered-saved-by-excel-android.xlsx
+
 # the agent worker has its own install (the Claude Agent SDK ships a native binary)
 /agent/node_modules
 
