@@ -22,3 +22,17 @@ export async function fileResponseFromUrl(signedUrl: string, name: string, fetch
   if (length && /^\d+$/.test(length)) headers.set("Content-Length", length);
   return new Response(upstream.body, { status: 200, headers });
 }
+
+/** A file the site BUILT itself (no storage link to read it from): the same safe headers as above, the bytes as the body. */
+export function fileResponseFromBytes(bytes: Uint8Array, name: string, disposition: "attachment" | "inline" = "attachment"): Response {
+  return new Response(bytes as unknown as BodyInit, {
+    status: 200,
+    headers: {
+      "Content-Type": contentTypeOfName(name),
+      "Content-Disposition": contentDispositionOf(name, disposition),
+      "Cache-Control": "private, no-store",
+      "X-Content-Type-Options": "nosniff",
+      "Content-Length": String(bytes.byteLength),
+    },
+  });
+}

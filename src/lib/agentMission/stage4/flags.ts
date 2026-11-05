@@ -1,0 +1,28 @@
+/**
+ * STAGE 4 FLAGS (docs/STAGE-4.md). Each is OFF unless its environment variable says exactly «on» (every account) or «test» (test accounts only). Unset, empty or any other word is off.
+ * Read only by the wiring listed in tests/stage4-isolation.test.ts (S1: the worker's version 1; S2: the versions list). NO CHARGE is wired to any of them: charging waits for the separate money PR (FOUNDATION-PLAN PR 7).
+ */
+export const STAGE4_FLAGS = ["DIGER_STAGE4_VERSIONS", "DIGER_STAGE4_REVIEW", "DIGER_STAGE4_EDITS", "DIGER_STAGE4_APPROVAL"] as const;
+export type Stage4Flag = (typeof STAGE4_FLAGS)[number];
+export type StageFlagMode = "off" | "test" | "on";
+
+type Env = Readonly<Record<string, string | undefined>>;
+const processEnv = (): Env => (typeof process !== "undefined" && process.env ? process.env : {});
+
+export function stage4FlagMode(name: Stage4Flag, env: Env = processEnv()): StageFlagMode {
+  const v = String(env[name] ?? "").trim().toLowerCase();
+  return v === "on" ? "on" : v === "test" ? "test" : "off";
+}
+
+export function stage4Enabled(name: Stage4Flag, isTestAccount: boolean, env: Env = processEnv()): boolean {
+  const mode = stage4FlagMode(name, env);
+  return mode === "on" || (mode === "test" && isTestAccount === true);
+}
+
+/**
+ * The ACCOUNT-GATED mode of the site's customer routes (testGate.ts): the variable says exactly «allowlist» (case and spaces ignored). Every other word keeps its old meaning: «on» serves everyone, «test» and anything else is OFF for the site.
+ * It is a separate word on purpose, so every existing «only exactly on serves» rule (and its tests) stays true: nothing becomes served unless someone writes this word.
+ */
+export function stage4AllowlistMode(name: Stage4Flag, env: Env = processEnv()): boolean {
+  return String(env[name] ?? "").trim().toLowerCase() === "allowlist";
+}

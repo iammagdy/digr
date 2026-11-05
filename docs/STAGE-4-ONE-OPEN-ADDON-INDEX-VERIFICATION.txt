@@ -1,0 +1,64 @@
+--- 1 preconditions stop the migration and change nothing
+PASS  missing table: the migration raises
+PASS  plan is json, not jsonb: the migration raises
+PASS  existing violators: the migration raises
+PASS  no index was created by the refused migration
+PASS  no row was changed by the refused migration
+--- 2 clean apply, shape, idempotence
+PASS  applies on a clean table
+PASS  the index is valid and unique
+PASS  the index is partial on the key and the deny-list
+PASS  a second apply is a no-op (idempotent)
+--- 3 what the index refuses and allows
+PASS  first open add-on of a file is allowed
+PASS  a SECOND open add-on of the same file is refused with the index's own constraint
+PASS  a approved row holds the slot
+PASS  a executing row holds the slot
+PASS  a needs_input row holds the slot
+PASS  a planning row holds the slot
+PASS  a different file is independent
+PASS  the same id again is refused by the PRIMARY KEY (an ended-looking duplicate of an existing id)
+      engine order when ONE insert violates BOTH (same id AND the file is open): UNIQUE missions_pkey
+PASS  an ended (completed) row does not hold the slot: the file's open row may exist beside it
+PASS  an ended (failed) row does not hold the slot: the file's open row may exist beside it
+PASS  an ended (unserved) row does not hold the slot: the file's open row may exist beside it
+PASS  an ended (cancelled) row does not hold the slot: the file's open row may exist beside it
+PASS  after the open row ends, a new open add-on of the file is allowed
+PASS  REOPENING an ended row while another is open is refused
+PASS  open->open updates (the worker's requeue and the approval) are never refused
+PASS  executing -> approved (requeue) is allowed
+PASS  executing -> approved is allowed
+      the message PostgREST would return: ERROR:  duplicate key value violates unique constraint "missions_one_open_addon_per_file" DETAIL:  Key (((plan -> 'addon'::text) ->> 'of'::text))=(msn_fileA) already exists. 
+--- 4 ordinary missions and malformed JSON
+PASS  ordinary research mission 1 (no addon key) is allowed
+PASS  ordinary research mission 2 (no addon key) is allowed
+PASS  ordinary research mission 3 (no addon key) is allowed
+PASS  a mission with plan NULL is allowed twice
+PASS  malformed plan {"addon":null}: not an add-on for the key (NULL or no text), so it never blocks anything, and it is not a valid add-on for the application either (readAddonPlan rejects it)
+PASS  malformed plan {"addon":"text"}: not an add-on for the key (NULL or no text), so it never blocks anything, and it is not a valid add-on for the application either (readAddonPlan rejects it)
+PASS  malformed plan {"addon":[]}: not an add-on for the key (NULL or no text), so it never blocks anything, and it is not a valid add-on for the application either (readAddonPlan rejects it)
+PASS  malformed plan {"addon":{}}: not an add-on for the key (NULL or no text), so it never blocks anything, and it is not a valid add-on for the application either (readAddonPlan rejects it)
+PASS  malformed plan {"addon":{"of":null}}: not an add-on for the key (NULL or no text), so it never blocks anything, and it is not a valid add-on for the application either (readAddonPlan rejects it)
+PASS  an object-valued key is the text of the JSON (a key, not NULL): the first row, then the second is refused; neither is a valid add-on (readAddonPlan needs a string) and neither can block a real one
+PASS  a numeric key is coerced to text: the first row
+PASS  a numeric key is coerced to text: the second is refused
+PASS  an empty-string key behaves as a key (no valid add-on has one: readAddonPlan rejects it)
+      rows that would ESCAPE the key (add-on object present, key not a text): 10
+--- 5 a status added later holds the slot (deny-list)
+PASS  a future status 'paused' holds the slot: first row
+PASS  a future status 'paused' holds the slot: second open row refused
+--- 6 two sessions at the same moment: exactly one wins
+PASS  after the race exactly ONE open add-on row of the file exists
+PASS  the loser got the index's unique violation (it waited for the winner's commit)
+--- 7 lock, build time, CONCURRENTLY, rollback
+PASS  seeded 200,000 rows
+      the migration took 106 ms on 200,000 rows (plain CREATE UNIQUE INDEX: reads continue, writes to missions wait for the build)
+PASS  the index is valid on the big table
+PASS  CREATE INDEX CONCURRENTLY cannot run inside a transaction block (so it cannot be the body of a migration that runs in one)
+PASS  rollback is one DROP INDEX and changes no row
+PASS  after the rollback the old behaviour returns (a second open row is allowed)
+--- 8 the pre-migration checks of the document, run on the seeded violator database
+PASS  check 1 (rows that would violate the index) finds the pair
+PASS  check 2 (add-on rows that would escape the key) runs and is zero on the violator database
+PASS  check 6 (approved once, waiting again, no job) runs
+=== 51 passed, 0 failed
