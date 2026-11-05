@@ -59,3 +59,7 @@ The customer's approval **button** (separate draft PR on top of this one). Apply
 2. `DIGER_STAGE4_VERSIONS`, `DIGER_STAGE4_REVIEW`, `DIGER_STAGE4_EDITS` `on` (read-only surfaces and unpaid requests).
 3. `DIGER_STAGE4_APPROVAL=on` on a bounded pilot: one test account, one review (about 100 points), one edit, balances read before and after.
 4. Roll back: unset `DIGER_STAGE4_APPROVAL` (the button disappears and the route answers 404; a hold already made is always run to its end by the worker).
+
+## 8. Defect found by the end-to-end journey (fixed in the route, money core untouched)
+
+A CLEAN refusal (not enough points, two active jobs) put the request back to `plan_ready` but left the **approval time** the approval function writes when it claims the row. Every reader treats a request «ever put through an approval» as possibly paid: it was no longer offered as waiting (no button, no cancel), another open request was refused, and the status panel said «your points may be held» although nothing was. The customer was stuck after the most common refusal. `approveAddonForCustomer` now clears the mark by one compare-and-set pinned to `plan_ready` with no job, **only** when the job's own ledger state is proved `none` (`readJobMoneyState`): a held, released, charged or unreadable state keeps it (unit-tested, mutation-checked). A lost answer keeps the mark. The cleaner fix is one line in the `revert` of `addonSettlement.ts` (a protected money file): proposed for the owner, not made.
