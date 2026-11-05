@@ -109,8 +109,31 @@ export function derivedRelativeDay(value: unknown, relativeText: unknown, now: n
   // A source that counts in CALENDAR months and years (the replies of YouTube: «11 months ago» is the same day and clock time eleven months back, 335 days, not 30.4375-day months) is recognised by that calendar moment too
   const calendar = calendarAgoMs(value, relativeText, now);
   if (calendar !== null && Math.abs(moment.getTime() - calendar) <= DERIVED_TOLERANCE_MS) return cairoText(new Date(calendar)).slice(0, 10);
+  // ROUND 38: a plan stored before the planner and this file shared ONE conversion carries instants computed with 30-day months and 365-day years (live msn_f6caeacd…: «1 month», «1 year», «3 years» fell outside both readings above and were delivered as EXACT)
+  const legacy = legacyPlannerMs(relativeText, now);
+  if (legacy !== null && Math.abs(moment.getTime() - legacy) <= DERIVED_TOLERANCE_MS) return approxDayOf(age);
   return null;
 }
+
+/** The instant the planner of rounds 10 to 37 computed from a relative text (30-day months, 365-day years): kept only to recognise the computed dates of plans stored before round 38. */
+function legacyPlannerMs(relativeText: unknown, now: number): number | null {
+  if (typeof relativeText !== "string") return null;
+  const age = readAge(relativeText);
+  if (!age || !Number.isFinite(age.n) || age.n < 0 || age.n > 1000) return null;
+  const unitMs = age.unit === "month" ? 30 * DAY : age.unit === "year" ? 365 * DAY : UNIT_MS[age.unit];
+  return now - age.n * unitMs;
+}
+
+/**
+ * The ONE conversion of a relative text to the moment a plan places the item at («7 years ago» → now minus 7 × 365.25 days). The planner (to order and to filter by period) and the file (`parseRelativeAge`) used to convert with different units, so the file could not tell its own
+ * computed dates from real ones. Null when the text is not a relative age (nothing is invented). Pure.
+ */
+export function relativeInstantMs(text: unknown, nowMs: number): number | null {
+  return parseRelativeAge(text, nowMs)?.approxMs ?? null;
+}
+
+/** The calendar day (Cairo) of a computed instant: the day a computed date is shown as, never a time of day. */
+export const approxDayOfMs = (ms: number): string => cairoText(new Date(ms)).slice(0, 10);
 
 /** «N months ago» / «N years ago» as the moment N calendar months back from `now` (UTC), or null for any other unit. */
 function calendarAgoMs(_value: unknown, relativeText: unknown, now: number): number | null {
@@ -156,6 +179,9 @@ export const APPROX_DATE_NUMBER_FORMAT = `"${APPROX_WORD_AR} "yyyy-mm-dd`;
 
 /** The sentence on the first sheet when any date of the file is approximate (the source gave only «قبل ٣ أيام» and the like). */
 export const APPROX_DATES_NOTE_AR = `بعض التواريخ تقريبية لأن المصدر يذكر وقت النشر نسبيًا فقط (مثل «قبل ٣ أيام»)، فحُسبت من وقت جلبها وتظهر مسبوقة بكلمة «${APPROX_WORD_AR}»، ويُقبل في الفترة المطلوبة كل عنصر يحتمل أن يقع داخلها.`;
+
+/** ROUND 38: what the plan says BEFORE approval when the customer asked for the publication date and the chosen source gives only a relative time (never «unavailable»: the file has a date column, filled with approximate days). */
+export const APPROX_FIELD_NOTE_AR = `طلبت التواريخ، والمصدر المختار يذكر وقت النشر نسبيًا فقط (مثل «قبل ٣ أيام»)، فستكون تواريخ هذه النتائج تقريبية: تُحسب يومًا من وقت قراءتها، وتظهر في الملف مسبوقة بكلمة «${APPROX_WORD_AR}» ومعلَّمة «${DATE_PRECISION_APPROX_AR}» في عمود «${DATE_PRECISION_TITLE_AR}». لم نخمّن أي تاريخ لا يذكره المصدر.`;
 
 /** The line on the plan card when the source gives only relative times for the date the period is checked on. */
 export const APPROX_DATES_CARD_LINE_AR = "هذا المصدر يذكر وقت النشر نسبيًا فقط (مثل «قبل ٣ أيام»)، فتُحسب التواريخ تقريبيًا من وقت الجلب ويُفحص الشرط الزمني بها، وتظهر في الملف مسبوقة بكلمة «تقريبًا».";

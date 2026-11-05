@@ -1,4 +1,5 @@
 import type { Ask } from "./ask";
+import { relativeInstantMs } from "../relativeDates";
 
 /**
  * OWNER DECISION 7 (live round 10, msn_67cafa6747d70356d9cb: a 2019 video was chosen for «نهائي السوبر»): when the topic is a RECURRING EVENT (a final, a cup, a season, an election) and the request gives no year and no period, the customer is asked before approval
@@ -62,9 +63,10 @@ export function isRecurringEvent(ask: Pick<Ask, "topic" | "period" | "platform">
   return RECURRING.test(` ${norm(ask.topic.text)} `);
 }
 
-/** The moment a source's relative words give: «7 years ago», «Streamed 6 years ago», «11 months ago», «3 days ago». Approximate (a year is 365 days, a month 30); null when the words are not of that shape. */
-const UNIT_MS: Record<string, number> = { second: 1000, minute: 60_000, hour: 3_600_000, day: 86_400_000, week: 7 * 86_400_000, month: 30 * 86_400_000, year: 365 * 86_400_000 };
+/**
+ * The moment a source's relative words give: «7 years ago», «Streamed 6 years ago», «11 months ago», «3 days ago». Approximate; null when the words are not a relative age.
+ * ROUND 38: the SAME conversion the file uses (`relativeInstantMs`: a month is 30.4375 days, a year 365.25), so a date the planner computed is recognised, and marked approximate, by the file (the two used different units: «1 month ago» was delivered as an exact date).
+ */
 export function approxInstantOfRelative(text: unknown, nowMs: number): number | null {
-  const m = /(\d+)\s*(second|minute|hour|day|week|month|year)s?\s+ago/i.exec(String(text ?? ""));
-  return m ? nowMs - Number(m[1]) * UNIT_MS[m[2].toLowerCase()] : null;
+  return relativeInstantMs(text, nowMs);
 }
