@@ -1,5 +1,23 @@
 # INTEGRATION READINESS: Stage 2 (#369) + Stage 3 (#370) + Stage 4 (#371 to #404) on `main` `0728e06f`
 
+## ROUND 4 (5 Nov 2026): F-2 closed (#409), Round 37 fixtures searched, final validation (branch `integration/rehearsal-r4-main-0728e06f`, never a PR)
+
+This branch is the round-3 rehearsal plus **#409** (`878b887d`: one progress counter on a phone, stacked on #408). #409 is based on the Stage 2 base, where the card still has its older progress line; main's Round 26 card carries the same competing total inside its status sentence («نجمع العناصر (١٤ من ٤٢)»), so merging conflicts in `AgentMissionCard.tsx` (2 hunks). **Resolution in this tree** (the merge-time edit the owner repeats): main's props (`pendingText`, `quietSinceMs`, `nowMs`) and signature are kept, plus `live`/`onData`; the older progress-line span of #409 is dropped (main's card has none); the rule is applied to main's sentence by `phoneCollectLine` (`stage2/singleCounter.ts`): on a phone with live progress the sentence is shown without its «(X من N)», and «جمعنا العناصر، ونجهّز ملفك الآن» is kept only once the live snapshot is complete (done, or delivered reached promised), else «نجمع العناصر»; the desktop keeps the full sentence. #409's golden (`tests/fixtures/stage2-card-flags-off.json`) was regenerated from main's card without the change (flag off = main's markup byte for byte) and its two progress-line tests were rebased on the sentence; three tests pin `phoneCollectLine` against main's real `collectLineOf`.
+
+**Round 37 fixtures (task B).** The three files (`delivered.csv`, `methodology.csv`, `delivered-saved-by-excel-android.xlsx`, sha256 in `tests/fixtures/round37/README.md`) were searched by **content hash** in every locally authorized artifact: 122 csv/xlsx/zip files on the local disk (outside `node_modules`, `.next`, `.git`) and all 15 csv/xlsx blobs reachable from any ref of the clone: **no match**, and no path in any branch is named like them. No live customer data or production storage was queried. **Not resolved**: PR #407 only removes the `.gitignore` trap. The test stays «cannot load» until the owner supplies the three files (copy from the device that saved them, check the hashes, look at them, commit). Option needing a separate authorization (NOT done): the stored `result/result.csv` of the mission is described as identical in size (6,247 bytes) to `delivered.csv`, but the delivered XLSX was re-saved by Excel for Android (16,140 bytes against the stored 13,418), so the stored files cannot replace it.
+
+**Results of this tree** (head before this paragraph: `dbc8433f`):
+
+| Gate | Result |
+|---|---|
+| `tsc --noEmit` (site), `npm run agent:typecheck` (worker) | clean |
+| `next build` + client-bundle secret scan (206 files) | pass, zero secrets |
+| full suite, two shards | **11,897 tests passed, 0 failed, 57 skipped** (shard 1: 5,922 / 27; shard 2: 5,975 / 30) |
+| test FILES | 911 passed, 5 skipped, **1 could not load**: `tests/round37-real-reels-excel-acceptance.test.ts` (`ENOENT delivered.csv`), counted separately and NOT a pass |
+| real Chromium, 390 px (iPhone user agent) and 1280 px, locally running app with a dummy configuration and fake API answers made by the repo's own planner, snapshot builder, poll contract and customer view from stored real rows | F-2 journey **29 of 29** (loading, progress 1 and 2, over-delivery, exact, unknown total, refresh, failed polls, completed, flag off); full customer journey **33 of 33**; counter journey **23 of 23** |
+
+The suite is **not** described as fully passing: one test file cannot load. Not verified: a real mission on a test account; Heroku (no access); an authenticated Vercel preview session; a physical phone; production.
+
 ## ROUND 3 (5 Nov 2026): fresh rehearsal on the CURRENT main `0728e06f7965fba5fee3b76fcfe6212b2c9fed11`
 
 The first rehearsal (round 2) was built on `9b478568` and later merged with `0728e06f`. This is a **new** merge from scratch on `0728e06f` (branch `integration/rehearsal-r3-main-0728e06f`, never a PR, never for merge), in this order: #369 (`74dbff2b`), #406 + #408 (`f45ea5df`), #370 (`36adf28e`), the Stage 4 stack ending #404 (`3575d5fe`), #407 (`ef086d17`). Conflicts reproduced exactly (same files, same rules), and each resolution was checked by diffing the resulting tree against the round-2 merge commit: the only differences are main's Round 38 (9 files, merged cleanly into all of them, `customerView.ts` carries its `export` line next to Stage 3's import) and the two new PRs.
