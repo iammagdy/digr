@@ -209,6 +209,31 @@ describe("7 double clicks, retries and lost answers", () => {
     expect(reservesOf(out)).toHaveLength(1);
     expect(out.money.ledger.filter((l) => l.type === "release" || l.type === "charge")).toEqual([]);
   });
+  it("a hold that is KEPT but not started (accepted by an earlier attempt, the claim then fails): the words say the points are held, so the state is «uncertain», not «refused»; the next retry converges with ONE reserve (independent review, finding 1)", async () => {
+    const row = waiting();
+    let failClaim = false;
+    const { value, out } = await solo(opts({ seed: [row], setup: (w) => { w.money.inject("accept_quote_atomic", "after"); } }), async (c) => {
+      const body = { requestId: row.id, expectedPoints: holdOf(row) };
+      const wrapped = new Proxy(c as any, { get: (t, k) => (k === "rpc" ? (n: string, a: unknown) => (n === "claim_job_chunk" && failClaim ? Promise.resolve({ data: { claimed: false, error: "not_claimed" } }) : t.rpc(n, a)) : typeof t[k] === "function" ? t[k].bind(t) : t[k]) });
+      const first = await approve(c, { body });
+      failClaim = true;
+      const second = await approve(wrapped, { body });
+      failClaim = false;
+      return { first, second, third: await approve(c, { body }) };
+    });
+    expect(value.first.body.state).toBe("uncertain");
+    expect(value.second.body).toMatchObject({ state: "uncertain", error: ADDON_APPROVE_MESSAGES_AR.claim_retry });
+    expect(value.second.body.error).toContain("نقاطك محجوزة");
+    expect(value.third.body.state).toBe("approved");
+    expect(reservesOf(out)).toHaveLength(1);
+  });
+  it("another tab started the request between our reads: «already approved», not «no request ready» (finding 4); the sentence claims no more than that", async () => {
+    const row = waiting({ status: "executing", job_id: "job_x", approved_at: "2026-11-05T09:00:00.000Z" });
+    const { value, out } = await solo(opts({ seed: [row] }), (c) => approve(c, { body: { requestId: row.id, expectedPoints: holdOf(row) } }));
+    expect(value).toMatchObject({ status: 409, body: { state: "already_approved" } });
+    expect(value.body.error).toContain("أو قيد الاعتماد");
+    noMoney(out);
+  });
   it("an exception thrown by the database is never «nothing was held»: state «uncertain», 503", async () => {
     const row = waiting();
     const { value } = await solo(opts({ seed: [row] }), async (c) => {
