@@ -49,7 +49,7 @@ const UNCERTAIN_SENTENCES = new Set<string>([ADDON_APPROVE_MESSAGES_AR.approval_
 const ALREADY_STARTED = new Set(["approved", "executing", "completed"]);
 
 /** The refusals of the money core that are CLEAN: the database said no and nothing was reserved (insufficient balance, the two-active-jobs limit, a quote or an accept that was refused). */
-const CLEAN_REFUSALS = new Set(["insufficient_balance", "concurrency_limit", "quote_failed", "accept_failed"]);
+const CLEAN_REFUSALS = new Set(["insufficient_balance", "concurrency_limit", "accept_failed"]); // «quote_failed» is NOT here: an earlier attempt's accept may still be committing (independent review), so only the database's own refusal bodies count
 
 /**
  * After a CLEAN refusal the approval function puts the request back to `plan_ready` but leaves the approval time it wrote when it claimed the row, and every reader treats a request «that was ever put through an approval» as possibly paid: it would no longer be offered as waiting (no button,

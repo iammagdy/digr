@@ -207,9 +207,7 @@ describe("SCENARIO 6 and 8: a failed approval whose money state is unknown, and 
       });
       expect(value.first).toMatchObject({ ok: false, status: 409 });
       expect(value.mid.row.status).toBe("plan_ready");
-      // LAUNCH ROUND: a quote that could not be made moves no money and the ledger proves nothing was reserved, so the mark is cleared (the request is plainly unpaid);
-      // every other failure may have moved money (or lost its answer): the mark STAYS, the request is never shown as «nothing was held»
-      expect(Boolean(value.mid.row.approved_at), fn === "create_quote_atomic" ? "a proven clean quote failure leaves no approval mark" : "the row says an approval was attempted").toBe(fn !== "create_quote_atomic");
+      expect(value.mid.row.approved_at, "the row says an approval was attempted").toBeTruthy();
       // what the first failure left in the ledger depends on where it failed: held (the answer lost after the reserve) or nothing
       const held = fn === "accept_quote_atomic" ? when === "after" : fn === "claim_job_chunk";
       expect(value.mid.reserves).toBe(held ? 1 : 0);

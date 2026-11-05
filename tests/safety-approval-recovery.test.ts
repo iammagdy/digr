@@ -253,17 +253,8 @@ describe("FIX C: a request whose money is NOT proved released is never ended, ne
     expect(w.writes.length).toBe(writes);
     expect(w.missions.get(row.id)!.status).toBe("plan_ready");
   });
-  it("LAUNCH ROUND: a quote that could not be made is a PROVEN clean refusal, so the approval mark is cleared and the recovery sees an UNPAID waiting request (nothing to recover); the customer can approve again", async () => {
+  it("MARKED BUT NOTHING RESERVED (the quote could not be made): «no_reservation»; the request stays waiting, so the customer can approve again; nothing is ended", async () => {
     const { w, row } = make();
-    w.injectError("create_quote_atomic", "before");
-    expect(await approve(w, row.id)).toMatchObject({ ok: false, code: "quote_failed" });
-    expect(await recover(w, row.id)).toEqual({ kind: "unpaid" });
-    expect(w.missions.get(row.id)).toMatchObject({ status: "plan_ready", approved_at: null, approved_by: null });
-    expect((await approve(w, row.id)).ok).toBe(true);
-  });
-  it("MARKED BUT NOTHING RESERVED (the quote could not be made AND the mark could not be cleared): «no_reservation»; the request stays waiting, so the customer can approve again; nothing is ended", async () => {
-    const { w, row } = make();
-    w.failUpdates({ when: (p) => p.approved_at === null, mode: "error_before" }); // the clearing fails: the mark stays, as before the fix
     w.injectError("create_quote_atomic", "before");
     expect(await approve(w, row.id)).toMatchObject({ ok: false, code: "quote_failed" });
     expect(await recover(w, row.id)).toEqual({ kind: "no_reservation" });
