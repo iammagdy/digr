@@ -1,6 +1,7 @@
 import type { ToolCard } from "../toolCards/types";
 import { mapPage } from "../toolCards/mapCode";
 import type { WantedField } from "../../requestContract";
+import { APPROX_FIELD_NOTE_AR, parseRelativeAge } from "../../relativeDates";
 
 /**
  * ROUND 36: THE DELIVERABLE FIELDS A CUSTOMER NAMED («مع النصوص والروابط والتواريخ وعدد المشاهدات»), checked against what the source REALLY returned.
@@ -12,7 +13,8 @@ import type { WantedField } from "../../requestContract";
  *  - `unavailable`: neither. The plan says so BEFORE approval, the column stays and its cells say «غير متاح»; no value is ever invented, and no other tool is chosen just to obtain the field.
  * Pure: no I/O.
  */
-export type FieldStatus = "card" | "recovered" | "unavailable";
+/** `approximate` (round 38): the source dates its items ONLY by a relative text («2 weeks ago»); the date column is filled with the approximate day computed from it, marked approximate in the file; never exact, never invented. */
+export type FieldStatus = "card" | "recovered" | "approximate" | "unavailable";
 export interface FieldReport { key: WantedField; status: FieldStatus; /** The path inside an item the value was read from (recovered or card), as the provider wrote it. */ path?: string }
 
 /** The names a provider uses for the same fact, most specific first. A nested path is allowed (`owner.username`). */
@@ -36,6 +38,16 @@ const KIND: Partial<Record<WantedField, (v: unknown, nowMs: number) => boolean>>
 function itemsOf(card: ToolCard, page: unknown): unknown[] {
   const list = at(page, card.page.list);
   return Array.isArray(list) ? list : [];
+}
+
+/**
+ * ROUND 38: THE SOURCE DATES ITS ITEMS ONLY RELATIVELY. The card maps the relative text («published_time» = «2 weeks ago») and the planner places each item at the moment that text gives; the file then holds an approximate day. The field check used to look for a date KEY only
+ * and called such a source «unavailable» (live msn_f6caeacd…: the plan said the dates were unavailable and the file delivered dates). A source is «approximate» only when the mapped relative text is READ by the same reader the file uses on at least 80% of the page's items.
+ */
+function relativeOnly(card: ToolCard, rows: ReadonlyArray<Record<string, unknown>>, nowMs: number): boolean {
+  if (card.mapping.kind !== "fields" || card.mapping.fields.published === undefined || rows.length === 0) return false;
+  const readable = rows.filter((r) => parseRelativeAge(r.published, nowMs) !== null).length;
+  return readable >= 1 && readable / rows.length >= 0.8;
 }
 
 export interface FieldRecovery { card: ToolCard; report: FieldReport[] }
@@ -64,6 +76,7 @@ export function recoverFields(card: ToolCard, page: unknown, wants: ReadonlyArra
       ? (CANDIDATES[key] ?? []).find((path) => { const n = items.filter((it) => ok(at(it, path), nowMs)).length; return n >= 1 && n / items.length >= 0.8; })
       : undefined;
     if (found) { fields[key] = found; changed = true; report.push({ key, status: "recovered", path: found.join(".") }); }
+    else if (key === "posted_at" && relativeOnly(card, rows, nowMs)) report.push({ key, status: "approximate", path: fields.published!.join(".") });
     else report.push({ key, status: "unavailable" });
   }
   return { card: changed ? { ...card, mapping: { ...card.mapping, fields } } : card, report };
@@ -74,9 +87,11 @@ const NAME_AR: Record<WantedField, string> = { posted_at: "التواريخ", au
 /** What the customer reads before approval about the fields they named (Arabic only; no provider, no tool name, no field path). Nothing is said when every field is delivered from the card as it was. */
 export function fieldNotesAr(report: ReadonlyArray<FieldReport>): string[] {
   const missing = report.filter((r) => r.status === "unavailable").map((r) => NAME_AR[r.key]);
+  const approximate = report.some((r) => r.status === "approximate");
   const recovered = report.filter((r) => r.status === "recovered").map((r) => NAME_AR[r.key]);
   const out: string[] = [];
   if (recovered.length > 0) out.push(`قرأنا ${recovered.join(" و")} من بيانات المصدر نفسها كما أعادها، ولم نحسبها ولم نخمّنها.`);
+  if (approximate) out.push(APPROX_FIELD_NOTE_AR);
   if (missing.length > 0) out.push(`طلبت ${missing.join(" و")}، لكن المصدر المختار لا يعيدها في ما قرأناه: ${missing.length === 1 ? "سيظهر عمودها" : "ستظهر أعمدتها"} في الملف و«غير متاح» في كل صفوفه، ولم نكتب أي قيمة من عندنا. ولم نختر مصدرًا بعيدًا عن طلبك لمجرد الحصول عليها.`);
   return out;
 }
