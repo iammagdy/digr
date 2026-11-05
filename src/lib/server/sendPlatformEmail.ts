@@ -162,8 +162,11 @@ const SAFE_FUNCTION_ERRORS: Record<string, EmailFailureReason> = {
 };
 
 /** Maps the Edge Function's answer to a fixed reason code; anything unknown becomes function_unavailable. */
-export function emailFailureReason(status: number, errorField: unknown): EmailFailureReason {
+export function emailFailureReason(status: number, errorField: unknown, upstreamStatus?: unknown): EmailFailureReason {
   const known = typeof errorField === "string" ? SAFE_FUNCTION_ERRORS[errorField] : undefined;
+  // Resend answered 5xx (it may have accepted the mail before failing) or 409 (the same idempotent request is still in flight): delivery is UNCERTAIN, so it is
+  // reported like an unreachable provider. Callers that must never double-send (the launch runner) keep their claim for it. A plain 4xx stays "resend_rejected".
+  if (known === "resend_rejected" && typeof upstreamStatus === "number" && (upstreamStatus >= 500 || upstreamStatus === 409)) return "resend_unreachable";
   if (known) return known;
   return status === 401 ? "unauthorized" : "function_unavailable";
 }
@@ -206,8 +209,9 @@ export async function sendPlatformEmail(
     });
     if (!res.ok) {
       let errorField: unknown;
-      try { errorField = (await res.json())?.error; } catch { /* no body */ }
-      return fail(emailFailureReason(res.status, errorField), ` status=${res.status}`);
+      let upstreamStatus: unknown;
+      try { const body = await res.json(); errorField = body?.error; upstreamStatus = body?.status; } catch { /* no body */ }
+      return fail(emailFailureReason(res.status, errorField, upstreamStatus), ` status=${res.status}`);
     }
     return { ok: true };
   } catch (err: any) {

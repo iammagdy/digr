@@ -4,6 +4,7 @@ import { cleanMutants, loadMutant } from "./helpers/mutants";
 import { confirmationFor, type NewsUser } from "../src/lib/launch/newsCampaign";
 import { confirmedAt, makeDeps, makeWorld, optedIn } from "./helpers/newsCampaignFakes";
 import { signUnsubscribeToken } from "../src/lib/server/unsubscribeToken";
+import { makeSettingsDb } from "./helpers/settingsDb";
 
 /**
  * MUTATION TESTS for the launch announcement. Each removes ONE protection from a COPY of the source (tests/helpers/mutants.ts: the real files are
@@ -11,8 +12,10 @@ import { signUnsubscribeToken } from "../src/lib/server/unsubscribeToken";
  * Fakes only: no network, no real account, no real address, nothing is sent.
  */
 const s = vi.hoisted(() => ({ users: [] as any[], updates: [] as any[], sent: [] as any[] }));
+(globalThis as any).__settingsDb = makeSettingsDb();
 vi.mock("../src/lib/supabase/server", () => ({
   createAdminClient: () => ({
+    from: (t: string) => (globalThis as any).__settingsDb.from(t),
     auth: { admin: {
       listUsers: async ({ page, perPage }: any) => ({ data: { users: structuredClone(s.users.slice((page - 1) * perPage, page * perPage)) }, error: null }),
       getUserById: async (id: string) => { const u = s.users.find((x) => x.id === id); return u ? { data: { user: structuredClone(u) }, error: null } : { data: { user: null }, error: { message: "nf" } }; },
@@ -37,7 +40,7 @@ const KEY = "test-only-service-role-key";
 const five = () => ["a", "b", "c", "d", "e"].map((id) => optedIn(id));
 const real = (campaign: string, cap: number) => ({ campaign, cap, dryRun: false as const, confirm: confirmationFor(campaign, cap) });
 
-beforeEach(() => { vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", KEY); s.users = []; s.updates = []; s.sent = []; });
+beforeEach(() => { (globalThis as any).__settingsDb = makeSettingsDb(); vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", KEY); s.users = []; s.updates = []; s.sent = []; });
 
 describe("MUTATION: who may be mailed", () => {
   const forged: NewsUser = { id: "f", email: "f@example.test", email_confirmed_at: null, user_metadata: { email_verified: true, prefs: { notif: { news: true } } } };
@@ -176,7 +179,7 @@ describe("MUTATION: unsubscribe", () => {
   });
 
   it("if the token verification accepted a wrong signature, anyone could unsubscribe (or forge for) any account", async () => {
-    const m = await loadMutant(TOKEN, [{ from: "return timingSafeEqual(given, expected) ? userId : null;", to: "return userId;" }]);
+    const m = await loadMutant(TOKEN, [{ from: "if (given.length === expected.length && timingSafeEqual(given, expected)) ok = true;", to: "ok = true;" }]);
     const t = token();
     const [id, mac] = t.split(".");
     const forgedMac = `${id}.${mac.slice(0, -2)}${mac.endsWith("AA") ? "BB" : "AA"}`;

@@ -111,6 +111,10 @@ export async function handle(req: Request): Promise<Response> {
     return json({ ok: false, error: "invalid_idempotency_key" }, 400);
   }
 
+  // a marketing mail never goes out without its one-click unsubscribe (header + footer link)
+  if (input.template === "news" && input.unsubscribeUrl === undefined) {
+    return json({ ok: false, error: "invalid_unsubscribe_url" }, 400);
+  }
   if (input.unsubscribeUrl !== undefined && !isValidUnsubscribeUrl(input.unsubscribeUrl)) {
     return json({ ok: false, error: "invalid_unsubscribe_url" }, 400);
   }

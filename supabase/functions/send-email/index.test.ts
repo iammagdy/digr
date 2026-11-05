@@ -154,3 +154,12 @@ Deno.test("handle: a header-breaking unsubscribeUrl is refused before any send",
     assertEquals(calls.n, 0);
   });
 });
+
+Deno.test("handle: a news mail without unsubscribeUrl is refused before any send", async () => {
+  await withStubbedResend(() => new Response("{}", { status: 200 }), async (calls) => {
+    const { unsubscribeUrl: _omit, ...noUrl } = NEWS_BODY;
+    const res = await handle(req("Bearer service-test-key", noUrl));
+    assertEquals(res.status, 400);
+    assertEquals(calls.n, 0);
+  });
+});

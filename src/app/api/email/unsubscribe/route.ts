@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { clientKey, createRateLimiter, RATE_LIMITED_MESSAGE_AR } from "@/lib/server/publicRateLimit";
-import { unsubscribeKeyFromEnv, verifyUnsubscribeToken } from "@/lib/server/unsubscribeToken";
+import { unsubscribeVerifyKeysFromEnv, verifyUnsubscribeToken } from "@/lib/server/unsubscribeToken";
 
 export const dynamic = "force-dynamic";
 
@@ -36,7 +36,7 @@ function tokenOf(req: NextRequest): string | null {
 export async function GET(req: NextRequest) {
   const token = tokenOf(req);
   // verifying the signature touches no database: the page is the same for an unknown or a deleted account
-  if (!token || !verifyUnsubscribeToken(token, unsubscribeKeyFromEnv())) {
+  if (!token || !verifyUnsubscribeToken(token, unsubscribeVerifyKeysFromEnv())) {
     return page("الرابط غير صالح", "هذا الرابط غير صالح أو غير مكتمل. يمكنك إيقاف أخبار ديجر من إعدادات حسابك.");
   }
   return page("إلغاء الاشتراك من أخبار ديجر", "اضغط الزر لإيقاف رسائل الأخبار. رسائل حسابك الضرورية (الشحن واكتمال الطلبات) لا تتأثر.", {
@@ -65,14 +65,18 @@ export async function POST(req: NextRequest) {
     : NextResponse.json(GENERIC_BAD, { status: 400, headers: NO_STORE }));
 
   const token = tokenOf(req);
-  const userId = token ? verifyUnsubscribeToken(token, unsubscribeKeyFromEnv()) : null;
+  const userId = token ? verifyUnsubscribeToken(token, unsubscribeVerifyKeysFromEnv()) : null;
   if (!userId) return bad();
 
   try {
     const admin = createAdminClient();
     const { data, error } = await admin.auth.admin.getUserById(userId);
     const user = data?.user;
-    if (error || !user) return bad(); // same answer as a bad token: never reveals whether the account exists
+    // a deleted account answers like a bad token (never reveals whether an account exists); ANY other failure of the sign-in service (5xx, rate limit,
+    // network) is a retryable 503: answering "invalid link" would tell the mail provider the request is permanently void while the person is still subscribed
+    const notFound = Boolean(error) && (Number((error as any).status) === 404 || (error as any).code === "user_not_found");
+    if (notFound || (!error && !user)) return bad();
+    if (error || !user) throw new Error("auth_unavailable");
 
     const meta = (user.user_metadata && typeof user.user_metadata === "object" ? user.user_metadata : {}) as Record<string, any>;
     const prefs = (meta.prefs && typeof meta.prefs === "object" ? meta.prefs : {}) as Record<string, any>;

@@ -8,7 +8,7 @@ vi.mock("../src/lib/supabase/server", () => ({
   createAdminClient: () => ({
     auth: {
       admin: {
-        getUserById: async (id: string) => (db.users.has(id) ? { data: { user: structuredClone(db.users.get(id)) }, error: null } : { data: { user: null }, error: { message: "not found" } }),
+        getUserById: async (id: string) => (db.users.has(id) ? { data: { user: structuredClone(db.users.get(id)) }, error: null } : { data: { user: null }, error: { status: 404, code: "user_not_found", message: "User not found" } }),
         updateUserById: async (id: string, patch: any) => {
           if (db.failUpdate) return { data: null, error: { message: "boom" } };
           db.updates.push({ id, patch });

@@ -107,7 +107,9 @@ export function planBatches(n: number, size: number = LAUNCH_HARD_CAP): number[]
 
 /** Whether the service-owned mark `app_metadata.campaigns[campaign]` is set. (app_metadata cannot be written by the customer.) */
 export function isCampaignMarked(user: NewsUser, campaign: string): boolean {
-  return Boolean(user.app_metadata?.campaigns?.[campaign]);
+  const marks = user.app_metadata?.campaigns;
+  // own keys only: a campaign called "constructor" must not read as already sent through the prototype
+  return Boolean(marks && typeof marks === "object" && Object.hasOwn(marks, campaign) && marks[campaign]);
 }
 
 export interface SendOutcome { ok: boolean; reason?: string }
@@ -169,7 +171,10 @@ export interface NewsCampaignResult {
   failed: number;
   skipped: Partial<Record<SkipReason, number>>;
   sentUserIds: string[];
+  /** Every failed send (definite and ambiguous). */
   failedUserIds: string[];
+  /** The subset of failedUserIds whose mail MAY have been delivered: they keep their claim and are never mailed again by a later run. */
+  ambiguousUserIds: string[];
   stopped?: NewsStop;
 }
 
@@ -178,14 +183,21 @@ const CAMPAIGN_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 export const confirmationFor = (campaign: string, cap: number): string => `SEND ${campaign} ${cap}`;
 
 /** Failures after which the mail MAY have gone out: the claim stays (an under-send is safe, a double send is not). */
-const AMBIGUOUS = new Set(["timeout", "network_error", "function_unavailable"]);
+const AMBIGUOUS = new Set(["timeout", "network_error", "function_unavailable", "resend_unreachable"]);
+
+/** A customer-controlled display name: control and bidi-override characters removed, at most 80 characters (a huge name must not break the send and burn the claim). */
+export function safeGreetingName(name: string): string {
+  // eslint-disable-next-line no-control-regex
+  const cleaned = String(name ?? "").replace(/[\u0000-\u001F\u007F-\u009F‎‏‪-‮⁦-⁩]/g, " ").replace(/\s+/g, " ").trim();
+  return Array.from(cleaned).slice(0, 80).join("").trim();
+}
 
 export async function runNewsCampaign(deps: NewsCampaignDeps, opts: NewsCampaignOptions): Promise<NewsCampaignResult> {
   const dryRun = opts.dryRun !== false;
   const cap = Number.isInteger(opts.cap) && opts.cap > 0 ? Math.min(opts.cap, LAUNCH_HARD_CAP) : 0;
   const result: NewsCampaignResult = {
     mode: dryRun ? "dry_run" : "send", campaign: String(opts.campaign ?? ""), cap, hasContent: deps.compose("") !== null,
-    scanned: 0, eligible: 0, wouldSend: 0, sent: 0, ambiguous: 0, failed: 0, skipped: {}, sentUserIds: [], failedUserIds: [],
+    scanned: 0, eligible: 0, wouldSend: 0, sent: 0, ambiguous: 0, failed: 0, skipped: {}, sentUserIds: [], failedUserIds: [], ambiguousUserIds: [],
   };
   const refuse = (refused: NewsRefusal): NewsCampaignResult => ({ ...result, mode: "refused", refused });
   const skip = (reason: SkipReason) => { result.skipped[reason] = (result.skipped[reason] ?? 0) + 1; };
@@ -246,7 +258,7 @@ export async function runNewsCampaign(deps: NewsCampaignDeps, opts: NewsCampaign
         continue;
       }
       const key = `${result.campaign}:${fresh.id}`;
-      const vars = deps.compose(resolveDisplayName(fresh));
+      const vars = deps.compose(safeGreetingName(resolveDisplayName(fresh)));
       let outcome: SendOutcome;
       try {
         outcome = vars
@@ -272,6 +284,8 @@ export async function runNewsCampaign(deps: NewsCampaignDeps, opts: NewsCampaign
       if (AMBIGUOUS.has(code)) {
         // the mail may have been delivered: it counts toward the cap, so ambiguous/ok alternation can never exceed it
         result.ambiguous += 1;
+        // listed on their own: these users stay claimed (never re-mailed by a later run) and the owner needs to see exactly who they are
+        result.ambiguousUserIds.push(fresh.id);
       } else {
         try { await deps.unmarkSent(fresh.id, result.campaign); } catch { /* the claim stays: an under-send is the safe side */ }
       }

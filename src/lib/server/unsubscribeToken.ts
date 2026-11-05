@@ -18,9 +18,19 @@ function mac(userId: string, key: string): Buffer {
   return createHmac("sha256", key).update(`${PREFIX}${userId}`).digest();
 }
 
-/** The server secret the app signs with (read lazily so a test can set it). */
+/**
+ * The server secret the app signs NEW links with (read lazily so a test can set it): the dedicated UNSUBSCRIBE_HMAC_SECRET when set, else the
+ * service-role key (no new variable is required). Rotating the service-role key therefore does not have to break links already mailed:
+ * set UNSUBSCRIBE_HMAC_SECRET to the OLD key value first (see unsubscribeVerifyKeysFromEnv).
+ */
 export function unsubscribeKeyFromEnv(env: Readonly<Record<string, string | undefined>> = process.env): string {
-  return String(env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
+  return String(env.UNSUBSCRIBE_HMAC_SECRET ?? "").trim() || String(env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim();
+}
+
+/** Every secret a link may have been signed with: the signing key first, then the service-role key (links mailed before a dedicated secret existed). */
+export function unsubscribeVerifyKeysFromEnv(env: Readonly<Record<string, string | undefined>> = process.env): string[] {
+  const keys = [String(env.UNSUBSCRIBE_HMAC_SECRET ?? "").trim(), String(env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim()].filter(Boolean);
+  return Array.from(new Set(keys));
 }
 
 export function signUnsubscribeToken(userId: string, key: string): string {
@@ -30,8 +40,9 @@ export function signUnsubscribeToken(userId: string, key: string): string {
 }
 
 /** The user id a token was issued for, or null for anything that is not a valid token for this key (malformed, tampered, wrong key). Constant-time MAC comparison. */
-export function verifyUnsubscribeToken(token: unknown, key: string): string | null {
-  if (!key || typeof token !== "string" || token.length > 512) return null;
+export function verifyUnsubscribeToken(token: unknown, keyOrKeys: string | readonly string[]): string | null {
+  const keys = (Array.isArray(keyOrKeys) ? keyOrKeys : [keyOrKeys]).filter((k): k is string => typeof k === "string" && k.length > 0);
+  if (keys.length === 0 || typeof token !== "string" || token.length > 512) return null;
   const parts = token.split(".");
   if (parts.length !== 2 || !B64URL_RE.test(parts[0]) || !B64URL_RE.test(parts[1])) return null;
   let userId: string;
@@ -42,9 +53,13 @@ export function verifyUnsubscribeToken(token: unknown, key: string): string | nu
   }
   if (!USER_ID_RE.test(userId)) return null;
   const given = Buffer.from(parts[1], "base64url");
-  const expected = mac(userId, key);
-  if (given.length !== expected.length) return null;
-  return timingSafeEqual(given, expected) ? userId : null;
+  let ok = false;
+  // every key is always tried (no early exit): the time does not depend on which key matched
+  for (const key of keys) {
+    const expected = mac(userId, key);
+    if (given.length === expected.length && timingSafeEqual(given, expected)) ok = true;
+  }
+  return ok ? userId : null;
 }
 
 /** `<site>/api/email/unsubscribe?t=<token>`: the link in the mail footer and in the List-Unsubscribe header. */

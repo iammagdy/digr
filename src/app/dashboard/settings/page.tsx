@@ -122,7 +122,12 @@ export default function SettingsPage() {
     setPrefs(next);
     try {
       const supabase = createClient();
-      const { error } = await supabase.auth.updateUser({ data: { prefs: { ...(user!.prefs || {}), notif: next } } });
+      // Merge into the CURRENT server-side preferences, changing only the toggled key: a tab opened before an e-mail unsubscribe link was used must not write its old
+      // `news: true` back when another switch is toggled (that would undo the person's withdrawal of consent).
+      const { data: current } = await supabase.auth.getUser();
+      const livePrefs = (current?.user?.user_metadata?.prefs ?? user!.prefs ?? {}) as Record<string, any>;
+      const liveNotif = (livePrefs.notif && typeof livePrefs.notif === "object" ? livePrefs.notif : {}) as Record<string, boolean>;
+      const { error } = await supabase.auth.updateUser({ data: { prefs: { ...livePrefs, notif: { ...liveNotif, [id]: next[id] } } } });
       if (error) throw error;
       await refresh();
     } catch {

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 import { createNewsCampaignDeps } from "../src/lib/launch/newsCampaignWiring";
 import { verifyUnsubscribeToken } from "../src/lib/server/unsubscribeToken";
+import { makeSettingsDb } from "./helpers/settingsDb";
 
 /** FAKES only: the admin check, the sign-in service's admin API and the sender. Nothing here can reach a network or a real account. */
 const w = vi.hoisted(() => ({
@@ -12,6 +13,7 @@ const w = vi.hoisted(() => ({
   adminCalls: [] as string[],
 }));
 
+(globalThis as any).__settingsDb = makeSettingsDb();
 vi.mock("../src/lib/server/adminAuth", () => ({
   authenticateAdmin: async () => w.isAdmin
     ? { ok: true, ctx: { adminId: "admin-1", audit: async (kind: string, label: string, target: string) => { w.audits.push({ kind, label, target }); } } }
@@ -19,6 +21,7 @@ vi.mock("../src/lib/server/adminAuth", () => ({
 }));
 vi.mock("../src/lib/supabase/server", () => ({
   createAdminClient: () => ({
+    from: (t: string) => (globalThis as any).__settingsDb.from(t),
     auth: {
       admin: {
         listUsers: async ({ page, perPage }: any) => { w.adminCalls.push(`list:${page}:${perPage}`); return { data: { users: structuredClone(w.users.slice((page - 1) * perPage, page * perPage)) }, error: null }; },
@@ -44,6 +47,7 @@ beforeEach(() => {
   vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", KEY);
   vi.stubEnv("DIGER_STAGE2_LIVE_SHEET", "on");
   vi.stubEnv("LAUNCH_EMAIL_ENABLED", "");
+  (globalThis as any).__settingsDb = makeSettingsDb();
   w.isAdmin = true; w.audits = []; w.sent = []; w.adminCalls = [];
   w.users = [user("a"), user("b"), user("c", { user_metadata: {} }), user("d", { email_confirmed_at: null }), user("iam", { email: "iam.magdy+3@outlook.com" })];
 });

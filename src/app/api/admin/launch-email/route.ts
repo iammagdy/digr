@@ -8,6 +8,7 @@ import { unsubscribeKeyFromEnv } from "@/lib/server/unsubscribeToken";
 import { isTestAccount } from "@/lib/server/testAccounts";
 import { runNewsCampaign } from "@/lib/launch/newsCampaign";
 import { createNewsCampaignDeps } from "@/lib/launch/newsCampaignWiring";
+import { acquireLaunchLock, releaseLaunchLock } from "@/lib/launch/launchLock";
 
 export const dynamic = "force-dynamic";
 /** One call sends at most what fits in this time (the runner stops cleanly at its own 45 s budget); a larger audience is sent in repeated calls. */
@@ -72,7 +73,18 @@ export async function POST(req: NextRequest) {
     suppressed: new Set((body.suppressedEmails ?? []).map((e) => e.trim().toLowerCase())),
   });
 
-  const result = await runNewsCampaign(deps, { campaign: body.campaign, cap: body.cap, dryRun, confirm: body.confirm });
+  // A REAL run is the only one at a time (the per-recipient claim is not atomic): a second request while one is running is refused BEFORE anything is claimed.
+  const holder = crypto.randomUUID();
+  if (!dryRun && !(await acquireLaunchLock(admin, body.campaign, holder))) {
+    await ctx.audit("launch-email", "refused: another run holds the lock", body.campaign);
+    return NextResponse.json({ success: false, error: "حملة الإطلاق تعمل الآن أو لم يتأكد القفل. لا يُسمح بتشغيلين معًا: انتظر انتهاء التشغيل الحالي (أو مرور دقيقتين ونصف إن توقف)." }, { status: 409 });
+  }
+  let result: Awaited<ReturnType<typeof runNewsCampaign>>;
+  try {
+    result = await runNewsCampaign(deps, { campaign: body.campaign, cap: body.cap, dryRun, confirm: body.confirm });
+  } finally {
+    if (!dryRun) await releaseLaunchLock(admin, body.campaign, holder);
+  }
 
   await ctx.audit(
     "launch-email",
