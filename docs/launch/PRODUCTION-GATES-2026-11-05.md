@@ -7,7 +7,7 @@ Everything below is **read-only evidence** gathered on 5 Nov 2026 (Supabase read
 | Layer | Evidence | Status |
 |---|---|---|
 | Vercel (project `diger`, production, auto-deploys every merge to `main`) | `list_deployments`: production deployment `githubCommitSha` is checked against the merge SHA recorded in §7 | see §7 (filled at the end) |
-| Heroku worker | **No Heroku access in this session** (no CLI, no `HEROKU_API_KEY`, no integration). A worker IS alive: `agent_worker_heartbeat` row `worker.1`, last beat seconds before the check, model `claude-haiku-5-5`. But its `version` field says `dev`, **not a commit SHA** | **UNVERIFIED**: worker running ≠ worker at the merge SHA. BLOCKED for every Stage 4 flag until the owner (or an integration with access) shows `heroku releases:info` commit == merge SHA |
+| Heroku worker | **No Heroku access in this session** (no CLI, no `HEROKU_API_KEY`, no integration). A worker IS alive: `agent_worker_heartbeat` row `worker.1`, last beat seconds before the check, model `claude-haiku-5-5`. But its `version` field says `dev`, **not a commit SHA** | **UPDATED in the second pass (`FINAL-PILOT-PACKAGE-2026-11-05.md` §1): VERIFIED at the release level** through Heroku's own GitHub deployment status (environment `diger-agent`, `ref` = `4ca7dd60…`, `success`), with the application tree identical to `7e37df61…`. The dyno itself still reports `dev` and its config-var names are unreadable (UNVERIFIED) |
 
 ## 2. Supabase read-only checks (5 Nov 2026, aggregate counts only, no PII)
 
@@ -25,7 +25,7 @@ Everything below is **read-only evidence** gathered on 5 Nov 2026 (Supabase read
 | Jobs with `reserved_credits > 0` and no `res_<job>` ledger row | 10, **all created 2026-10-12** (ids `vrun_…`) |
 | Terminal jobs without `rel_<job>` | 4, all 2026-10-12 |
 | Completed jobs whose `charged_credits` ≠ ledger `chg_` | 2, all 2026-10-12 |
-| `chg_` rows without `rel_` | 5 (4 after 17 Oct) |
+| `chg_` rows without `rel_` | 5 (4 after 17 Oct): **CORRECTED in the second pass: all five are `chg_meth_<job>` methodology purchases (a separate idempotent charge by design); every parent job balances. Not an anomaly** |
 
 **Reading.** The anomalies are confined to 12 Oct 2026 `vrun_…` verification-run jobs (docs/CUTOVER.md: verification fixtures, ≤ 10 points each) created before the settlement functions of 12–17 Oct were in place. No customer-money invariant is violated (no negative balance, no overcharge, no mismatched reserve). They are **not** caused by this release. **Not proven** by this check: that all five `chg_`-without-`rel_` rows are fixtures (4 are dated after 17 Oct: they need a person to look at them before any pilot); the 9 stale `queued/running` jobs are pre-existing and hold ≤ 10 points in total. Owner decision: leave, or repair with a reviewed SQL (not prepared here).
 
