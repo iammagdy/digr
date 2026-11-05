@@ -155,7 +155,7 @@ for (const kind of ["desktop", "phone", "narrow"] as const) {
       await check(kind, "REVIEW REQUEST prepared UNPAID, then the approval control appears", async () => { await page.click('[data-testid="review-prepare"]'); await page.waitForSelector('[data-testid="approve-button"]', { timeout: 30_000 }); expect(reserves()).toBe(0); expect(world.money.balance()).toBe(start); });
       await check(kind, "LAYOUT with the approval control shown", async () => { expect(await layoutProblems(page)).toEqual([]); });
       await check(kind, "REVIEW APPROVAL with a DOUBLE CLICK: exactly one hold", async () => { await page.dblclick('[data-testid="approve-button"]'); await page.waitForFunction(() => document.body.innerText.length > 0); await expect.poll(() => reserves(), { timeout: 20_000 }).toBe(1); expect(approvals.length).toBeGreaterThanOrEqual(1); });
-      await check(kind, "WORKER runs the review: report published, charge once, release first", async () => { await expect.poll(() => types().join(","), { timeout: 60_000 }).toBe("topup,reserve,release,charge"); await page.reload({ waitUntil: "domcontentloaded" }); await page.waitForSelector('[data-testid="review-report"]', { timeout: 60_000 }); });
+      await check(kind, "WORKER runs the review: report published, charge once, release first", async () => { await expect.poll(() => types().join(","), { timeout: 60_000 }).toBe("topup,reserve,release,charge"); /* AUDIT D2: NO manual reload: the status panel polls, sees the end, and the report mounts again by itself */ await page.waitForSelector('[data-testid="review-report"]', { timeout: 60_000 }); });
       const afterReview = world.money.balance();
       await check(kind, "REVIEW charged = shown price, balance correct", async () => { expect(afterReview).toBeLessThan(start); expect(afterReview).toBeGreaterThanOrEqual(0); });
 
@@ -177,6 +177,9 @@ for (const kind of ["desktop", "phone", "narrow"] as const) {
         await page.click('[data-testid="approve-button"]');
         await expect.poll(() => types().join(","), { timeout: 90_000 }).toBe("topup,reserve,release,charge,reserve,release,charge");
         expect(reserves()).toBe(2);
+      });
+      await check(kind, "AUDIT D2: version 2 is listed WITHOUT a manual reload (the panel polled and the list read again)", async () => {
+        await expect.poll(async () => page.locator('[data-testid="version-row"]').count(), { timeout: 60_000 }).toBe(2);
       });
       await check(kind, "NEW FILE VERSION listed and version 2 downloads as a real Excel; version 1 unchanged", async () => {
         await page.reload({ waitUntil: "domcontentloaded" });
