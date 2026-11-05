@@ -306,9 +306,11 @@ describe("FLOW 10: flags OFF -> every new route answers 404 first, and the ordin
     const ok = await api.file(MISSION, "name=result.xlsx");
     expect(ok.status).toBe(200);
     expect((await json(ok)).url).toContain(`${MISSION}/result/result.xlsx`);
-    // an old link asked for the CSV by name still gets the mission's Excel (a customer never gets a CSV)
-    expect((await api.file(MISSION, "name=result.csv")).status).toBe(200);
-    expect(w.routes.signed).toEqual([`${MISSION}/result/result.xlsx`, `${MISSION}/result/result.xlsx`]);
+    // REHEARSAL AGAINST main (Round 32, customer CSV): a CSV asked for by name is BUILT from the customer's own Excel and answered as the file itself (a CSV), so NO second link is signed. Before Round 32 the answer was the Excel through a second signed link.
+    const csv = await api.file(MISSION, "name=result.csv");
+    expect(csv.status).toBe(200);
+    expect(csv.headers.get("content-type") ?? "").toContain("csv");
+    expect(w.routes.signed).toEqual([`${MISSION}/result/result.xlsx`]);
     // refusals: a bad name, another customer's file, a missing file, a signed-out visitor
     expect((await api.file(MISSION, "name=../../etc/passwd")).status).toBe(400);
     expect((await api.file(MISSION, "")).status).toBe(400);
