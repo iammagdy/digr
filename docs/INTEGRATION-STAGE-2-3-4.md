@@ -1,5 +1,37 @@
 # INTEGRATION READINESS: Stage 2 (#369) + Stage 3 (#370) + Stage 4 (#371 to #404) on `main` `0728e06f`
 
+## LAUNCH ROUND (5 Nov 2026): the stacked integration PRs on main `0728e06f`, the approval route and button, and the first real-browser run of the paid journey
+
+**Structure (replaces the rehearsal branches as the thing to review and merge; nothing was merged, no existing PR branch was force-pushed, Boost untouched).**
+
+| Order | PR | Branch | What |
+|---|---|---|---|
+| 1 | #416 | `integration/launch-1-stage2-main-0728e06f` (on main) | Stage 2 (#369 + #406 + #408 + #409) + #407. No money. |
+| 2 | #417 | `integration/launch-2-stage3-main-0728e06f` (on #416) | Stage 3 (#370), the three flags-off digests re-recorded. No money. |
+| 3 | #418 | `integration/launch-3-stage4-main-0728e06f` (on #417) | Stage 4 (#371 … #404) with six union resolutions + **the launch round's own work**: approval route (#411), approval button (#413), real-browser fetch fix (#415), F-4 test (#410). **Financial; flags OFF.** |
+
+Satellite PRs (all DRAFT): #410 F-4 regression test (on main), #411 approval route, #413 approval button, #415 browser fetch fix (all on the Stage 4 stack), #412 release documents (`docs/launch/`: Round 37 exception, launch checklist, Arabic launch e-mail), #414 the unique-index migration re-verified on a disposable PostgreSQL + read-only production audit.
+The tree of #418 equals the earlier rehearsal `integration/rehearsal-r4-main-0728e06f` plus exactly these additions (checked by `git diff` of the two trees).
+
+**Results on #418's code (SHA in the PR; the documentation commit that follows changes no code).**
+
+| Gate | Result |
+|---|---|
+| `tsc --noEmit` (site), `npm run agent:typecheck` (worker) | clean |
+| `next build` + client-bundle secret scan | exit 0; 207 client files, zero secrets |
+| full suite, two shards | **11,977 tests passed, 0 failed, 57 skipped**; test files: **916 passed, 5 skipped, 1 could not load** (922 files). The one file that cannot load is `tests/round37-real-reels-excel-acceptance.test.ts` (its three fixtures were never committed; fails identically on plain main). **The suite is NOT fully passing while that file cannot load.** |
+| protected money files and SQL vs main | only the prepared, unapplied `supabase/migrations/20261104222136_one_open_addon_per_file.sql`; no money file, wallet route or worker money code is edited |
+| real Chromium (Playwright), desktop 1280 and phone 390, the real route handlers over the fake money core, fake storage and the real worker runner | **62 of 62** checks: review quote, unpaid request, explicit approval (one hold, double-click safe), status «processing» then «delivered», review report, edit request, second approval, two versions, version 2 downloads as a real Excel, ledger reserve → release → charge, balance = start − charges; not enough points (nothing held, request still waiting); a lost answer («may be held», one hold after the retry); approval flag OFF (no control drawn) |
+
+**Defects found by this round's own checks (each fixed in its own PR, tested):**
+1. **Real-browser `fetch` «Illegal invocation» (#415).** All Stage 4 panels but one never sent a request in a real browser (they said «تعذّر الاتصال الآن»); 1,000+ unit tests missed it because a mock has no `this` rule. Found by the first real-browser run. **Without this fix none of the Stage 4 customer screens would have worked on the day the flags were turned on.**
+2. **A clean refusal (not enough points) left the request «possibly paid» (#411).** The approval function keeps the approval time it wrote when it claimed the row; every reader then hid the request (no button, no cancel), another request was refused, and the status said the points may be held. Now cleared only when the job's own ledger state is proved empty. (The one-line fix inside `addonSettlement.ts`'s `revert` is proposed for the owner; that is a protected money file and was not touched.)
+3. **Independent review of the route (a separate reviewer):** a kept hold that cannot start was reported as «refused» (fixed), the client misread a 401, the «may be held» warning unmounted (fixed), the «already approved» wording, JSON-only POST (fixed). Not fixed here: `emailVerified` also reads client-writable `user_metadata` (pre-existing, shared with mission approval; owner).
+4. **Consent wording** used refund-style words banned by `tests/audit-phase3-release-wording.test.ts`; reworded to «يُحرَّر الحجز المؤقت».
+5. **F-4 retracted.** «The completed card says ٤٢ while the Excel says ٧٠» came from a test fixture that built a completed card from the plan at approval; the worker stores the judged plan in the completing update. 215 deliveries on the stored real rows: card and Excel agree (#410).
+
+**Still not verified (limits):** Heroku and the worker's deployed revision (no access); a real browser against the real Supabase/Vercel app with a logged-in customer; a real mission, real money or real providers; Vercel production. The unique-index migration is **not applied** (read-only audit: 216 missions, 0 add-on rows, 0 duplicates; apply procedure in #414).
+
 ## ROUND 4 (5 Nov 2026): F-2 closed (#409), Round 37 fixtures searched, final validation (branch `integration/rehearsal-r4-main-0728e06f`, never a PR)
 
 This branch is the round-3 rehearsal plus **#409** (`878b887d`: one progress counter on a phone, stacked on #408). #409 is based on the Stage 2 base, where the card still has its older progress line; main's Round 26 card carries the same competing total inside its status sentence («نجمع العناصر (١٤ من ٤٢)»), so merging conflicts in `AgentMissionCard.tsx` (2 hunks). **Resolution in this tree** (the merge-time edit the owner repeats): main's props (`pendingText`, `quietSinceMs`, `nowMs`) and signature are kept, plus `live`/`onData`; the older progress-line span of #409 is dropped (main's card has none); the rule is applied to main's sentence by `phoneCollectLine` (`stage2/singleCounter.ts`): on a phone with live progress the sentence is shown without its «(X من N)», and «جمعنا العناصر، ونجهّز ملفك الآن» is kept only once the live snapshot is complete (done, or delivered reached promised), else «نجمع العناصر»; the desktop keeps the full sentence. #409's golden (`tests/fixtures/stage2-card-flags-off.json`) was regenerated from main's card without the change (flag off = main's markup byte for byte) and its two progress-line tests were rebased on the sentence; three tests pin `phoneCollectLine` against main's real `collectLineOf`.
