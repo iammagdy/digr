@@ -35,7 +35,10 @@ const stripPlatform = (text: string): string => text.split(PLATFORM_CUT)[0];
 
 /** The name of the account, channel or page the request points at («من قناة أون سبورت على يوتيوب» → «أون سبورت», «من حساب محمد صلاح على إكس» → «محمد صلاح»). */
 function accountSubject(requestText: string): string {
-  const m = /(?:^|\s)(?:من|لدى|عند|على|ل|لل)?\s*(?:حساب|الحساب|قناة|القناة|صفحة|الصفحة|بروفايل|البروفايل|ملف|مستخدم)\s+([^،,.؟?!\n]{1,60})/.exec(requestText);
+  // ROUND 37: «الحساب» in a LIST OF FIELDS the customer asks for («… وتاريخ النشر واسم الحساب وعدد المشاهدات») is a column, not an account the request names.
+  // Live (mission msn_b56312efe3a41bef94a8): the words after it, «وعدد المشاهدات», became the subject and the file was named «٥ ريلز عن وعدد المشاهدات».
+  // A noun that follows a field word (name, owner, link, count of …) names a column; only «من حساب X», «قناة X»… name a source.
+  const m = /(?:^|\s)(?:من|لدى|عند|على|ل|لل)?\s*(?<!(?:اسم|أسماء|اسماء|صاحب|أصحاب|اصحاب|رابط|روابط|عدد|عنوان|وصف)\s+)(?:حساب|الحساب|قناة|القناة|صفحة|الصفحة|بروفايل|البروفايل|ملف|مستخدم)\s+([^،,.؟?!\n]{1,60})/.exec(requestText);
   if (!m) return "";
   return stripPlatform(m[1]).split(SUBJECT_END)[0].trim();
 }
