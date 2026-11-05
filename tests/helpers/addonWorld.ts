@@ -22,7 +22,9 @@ export function fakeAddonWorld(options: { balance?: number; cap?: number; /** Sh
     tableCalls.push(name);
     if (name === "mission_events") return { insert: async (row: Record<string, unknown>) => { events.push(row); return { error: null }; } };
     // a read-only look at a job (the worker reads its status to tell a released hold from a settled one); nothing else of the money tables is reachable
-    if (name === "jobs") return { select: () => ({ eq: (_k: string, id: string) => ({ maybeSingle: async () => { const j = money.jobs.get(id); return { data: j ? { status: j.status, charged_credits: j.charged_credits } : null, error: null }; } }) }) };
+    if (name === "jobs") return { select: () => ({ eq: (_k: string, id: string) => ({ maybeSingle: async () => { const j = money.jobs.get(id); return { data: j ? { status: j.status, charged_credits: j.charged_credits, reserved_credits: j.reserved_credits } : null, error: null }; } }) }) };
+    // the ledger rows of one job, read only (the approval route proves «nothing was held» from it before it clears an approval mark)
+    if (name === "credit_ledger") return { select: () => ({ eq: (_k: string, id: string) => Promise.resolve({ data: money.ledger.filter((l) => l.job_id === id).map((l) => ({ id: l.id, delta: l.delta, type: l.type })), error: null }) }) };
     if (name !== "missions") throw new Error(`a table was touched by hand: ${name}`);
     const query = (rows: () => MissionRow[]) => {
       const filters: Array<[string, unknown, boolean]> = [];
