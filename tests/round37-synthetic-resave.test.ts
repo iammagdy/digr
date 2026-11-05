@@ -40,8 +40,8 @@ describe.each(NAMES)("SYNTHETIC re-save of the %s workbook (NOT evidence about E
       // structure a viewer needs
       expect(r.views[0]?.rightToLeft).toBe(o.views[0]?.rightToLeft);
       expect(r.views[0]?.state).toBe(o.views[0]?.state);
-      expect(r.views[0]?.ySplit).toBe(o.views[0]?.ySplit);
-      expect(Object.keys((r.model as { merges?: Record<string, unknown> }).merges ?? {}).length).toBe(Object.keys((o.model as { merges?: Record<string, unknown> }).merges ?? {}).length);
+      expect((r.views[0] as { ySplit?: number } | undefined)?.ySplit).toBe((o.views[0] as { ySplit?: number } | undefined)?.ySplit);
+      expect(Object.keys((r.model as unknown as { merges?: Record<string, unknown> }).merges ?? {}).length).toBe(Object.keys((o.model as unknown as { merges?: Record<string, unknown> }).merges ?? {}).length);
       for (let c = 1; c <= o.columnCount; c += 1) expect(r.getColumn(c).hidden).toBe(o.getColumn(c).hidden);
       for (let rr = 1; rr <= o.rowCount; rr += 1) {
         for (let c = 1; c <= o.columnCount; c += 1) {
