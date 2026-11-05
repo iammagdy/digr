@@ -22,7 +22,9 @@ export type PlatformEmailTemplateId =
   /** A long job's status update (started, stalled temporarily, completed partially): needs the Edge Function with this template deployed. */
   | "job-update"
   /** The owner's alert for a new top-up request (right-to-left, label/value table): needs the Edge Function with this template deployed. */
-  | "admin-topup-alert";
+  | "admin-topup-alert"
+  /** The consent-based announcement (preference category `news`, default OFF): needs the Edge Function with this template deployed. */
+  | "news";
 
 const AR_MONTHS = [
   "يناير",
@@ -72,6 +74,7 @@ export const TEMPLATE_CATEGORY_MAP: Record<PlatformEmailTemplateId, Notification
   refund: "refund",
   "job-update": "done",
   "admin-topup-alert": null,
+  news: "news",
 };
 
 /**
@@ -152,6 +155,7 @@ const SAFE_FUNCTION_ERRORS: Record<string, EmailFailureReason> = {
   invalid_to: "invalid_request",
   invalid_vars: "invalid_request",
   invalid_idempotency_key: "invalid_request",
+  invalid_unsubscribe_url: "invalid_request",
   resend_not_configured: "resend_not_configured",
   resend_unreachable: "resend_unreachable",
   resend_rejected: "resend_rejected",
@@ -175,6 +179,7 @@ export async function sendPlatformEmail(
   to: string,
   vars: Record<string, string>,
   idempotencyKey?: string,
+  opts?: { unsubscribeUrl?: string },
 ): Promise<EmailSendResult> {
   const fail = (reason: EmailFailureReason, extra = ""): EmailSendResult => {
     console.error(`[email:send_failed] template=${template} reason=${reason}${extra}`);
@@ -191,7 +196,12 @@ export async function sendPlatformEmail(
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ template, to, vars, ...(idempotencyKey ? { idempotencyKey } : {}) }),
+      body: JSON.stringify({
+        template, to, vars,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+        // RFC 8058 one-click unsubscribe: the Edge Function turns it into List-Unsubscribe headers. Absent for every other caller (same body as before).
+        ...(opts?.unsubscribeUrl ? { unsubscribeUrl: opts.unsubscribeUrl } : {}),
+      }),
       signal: AbortSignal.timeout(7000),
     });
     if (!res.ok) {

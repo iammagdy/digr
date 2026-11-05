@@ -9,9 +9,10 @@
  *   Headers: Authorization: Bearer <SUPABASE_SERVICE_ROLE_KEY>
  *   Body:    { "template": "welcome" | "topup-received" | "topup-approved"
  *                        | "topup-rejected" | "job-done" | "refund"
- *                        | "job-update" | "admin-topup-alert",
+ *                        | "job-update" | "admin-topup-alert" | "news",
  *              "to": "customer@example.com",
- *              "vars": { "Name": "...", ... } }
+ *              "vars": { "Name": "...", ... },
+ *              "unsubscribeUrl": "https://…" (optional: adds List-Unsubscribe + List-Unsubscribe-Post one-click headers) }
  *   Returns: { "ok": true, "id": "<resend message id>" }
  *
  * Env (Supabase secrets):
@@ -33,6 +34,7 @@ import {
 } from "./templates.ts";
 import { buildResendHeaders } from "./resendHeaders.ts";
 import { isAuthorizedCaller } from "./authorize.ts";
+import { assembleResendPayload, isValidUnsubscribeUrl } from "./payload.ts";
 
 const FROM = "Diger <noreply@diger.tech>";
 const RESEND_URL = "https://api.resend.com/emails";
@@ -46,6 +48,7 @@ const TEMPLATE_IDS: readonly PlatformEmailTemplateId[] = [
   "refund",
   "job-update",
   "admin-topup-alert",
+  "news",
 ];
 
 export type SendEmailRequest = {
@@ -53,17 +56,15 @@ export type SendEmailRequest = {
   to: string;
   vars?: Record<string, string | number | undefined | null>;
   idempotencyKey?: string;
+  /** Optional https URL of a one-click unsubscribe endpoint (RFC 8058). When present, List-Unsubscribe headers are added to the Resend payload. */
+  unsubscribeUrl?: string;
 };
 
-/** Build the Resend API payload for a template. Pure — no network, no secrets. */
+export { isValidUnsubscribeUrl };
+
+/** Build the Resend API payload for a template. Pure — no network, no secrets. The List-Unsubscribe headers are added ONLY when `unsubscribeUrl` is given, so every other caller's payload is unchanged. */
 export function buildResendPayload(req: SendEmailRequest) {
-  const { subject, html } = renderEmailTemplate(req.template, req.vars ?? {});
-  return {
-    from: FROM,
-    to: [req.to],
-    subject,
-    html,
-  };
+  return assembleResendPayload(FROM, renderEmailTemplate(req.template, req.vars ?? {}), req.to, req.unsubscribeUrl);
 }
 
 function json(body: unknown, status: number): Response {
@@ -110,6 +111,10 @@ async function handle(req: Request): Promise<Response> {
     return json({ ok: false, error: "invalid_idempotency_key" }, 400);
   }
 
+  if (input.unsubscribeUrl !== undefined && !isValidUnsubscribeUrl(input.unsubscribeUrl)) {
+    return json({ ok: false, error: "invalid_unsubscribe_url" }, 400);
+  }
+
   const resendKey = Deno.env.get("RESEND_API_KEY") ?? "";
   if (!resendKey) {
     return json({ ok: false, error: "resend_not_configured" }, 500);
@@ -119,6 +124,7 @@ async function handle(req: Request): Promise<Response> {
     template: input.template,
     to: input.to,
     vars: input.vars ?? {},
+    unsubscribeUrl: input.unsubscribeUrl,
   });
 
   let res: Response;

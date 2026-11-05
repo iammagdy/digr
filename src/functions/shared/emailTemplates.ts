@@ -8,13 +8,20 @@
  * renderEmailTemplate() substitutes the {{ .Var }} tokens with HTML-escaped values.
  */
 
+import { renderEmailTemplate as renderEdgeEmailTemplate } from "../../../supabase/functions/send-email/templates";
+
 export type PlatformEmailTemplateId =
   | "welcome"
   | "topup-received"
   | "topup-approved"
   | "topup-rejected"
   | "job-done"
-  | "refund";
+  | "refund"
+  /** The consent-based announcement: its HTML is the Edge Function's (one source, so both copies are identical by construction). */
+  | "news";
+
+/** Templates whose HTML lives in this file. `news` has no copy here: it is rendered by the Edge Function's renderer (see renderEmailTemplate). */
+type LocalTemplateId = Exclude<PlatformEmailTemplateId, "news">;
 
 export const PLATFORM_EMAIL_SUBJECTS: Record<PlatformEmailTemplateId, string> = {
   "welcome": `أهلًا {{ .Name }} — حسابك على ديجر جاهز`,
@@ -23,9 +30,10 @@ export const PLATFORM_EMAIL_SUBJECTS: Record<PlatformEmailTemplateId, string> = 
   "topup-rejected": `تعذّر اعتماد طلب الشحن`,
   "job-done": `ملفاتك جاهزة: {{ .JobTitle }}`,
   "refund": `حجز مؤقت مُحرَّر بقيمة {{ .Points }} نقطة`,
+  "news": `{{ .Subject }}`,
 };
 
-const PLATFORM_EMAIL_TEMPLATES: Record<PlatformEmailTemplateId, string> = {
+const PLATFORM_EMAIL_TEMPLATES: Record<LocalTemplateId, string> = {
   "welcome": `<!DOCTYPE html>
 <html lang="ar" dir="rtl" xmlns="http://www.w3.org/1999/xhtml">
 <head>
@@ -275,6 +283,8 @@ export function renderEmailTemplate(
   for (const [k, v] of Object.entries(vars)) {
     if (v !== undefined && v !== null) all[k] = String(v);
   }
+  // the announcement is rendered by the Edge Function's renderer with this copy's site origin, so the two copies cannot drift
+  if (id === "news") return renderEdgeEmailTemplate("news", all);
   const subject = PLATFORM_EMAIL_SUBJECTS[id].replace(TOKEN_RE, (_, name) => all[name] ?? "");
   const html = PLATFORM_EMAIL_TEMPLATES[id].replace(TOKEN_RE, (_, name) => escapeHtml(all[name] ?? ""));
   return { subject, html };
