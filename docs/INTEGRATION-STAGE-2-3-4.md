@@ -1,4 +1,4 @@
-# INTEGRATION READINESS: Stage 2 (#369) + Stage 3 (#370) + Stage 4 (#371 to #404) on `main` `9b478568`
+# INTEGRATION READINESS: Stage 2 (#369) + Stage 3 (#370) + Stage 4 (#371 to #404) on `main` `9b478568`, then `0728e06f`, then `0728e06f`
 
 **This branch is a REHEARSAL. It is not a PR, not for merge, and was never deployed to production.** It is the tree obtained by merging the three independent workstreams into `main` `9b478568069bcc0c9052a8da6635c0f5f6f010ad`, in the order below, with every conflict resolved locally. No existing PR branch was changed or rebased. No migration was applied, no flag set, no provider or payment touched.
 
@@ -40,7 +40,7 @@ Stage 2's `ask_edit` action, Ask-card loader and live-sheet route read the custo
 | Gate | Result |
 |---|---|
 | clean `npm ci` site + worker, `tsc --noEmit`, `agent:typecheck`, `next build`, client-bundle secret scan | pass |
-| full suite (two shards) | **11,845 passed, 0 failed, 57 skipped**; one FILE cannot load (round37, pre-existing on main, section 3) |
+| full suite (two shards) | **11,865 passed, 0 failed, 57 skipped** (on main `0728e06f`: Round 38 / #405 landed during the round and merged with no conflict; the Stage 3 digests were unaffected); one FILE cannot load (round37, pre-existing on main, section 3) |
 | `tests/integration-stage2-3-4-flags.test.ts` (new, 7) | the same companies mission under all-OFF, Stage 2 ON, Stage 4 ON, Stage 3 ON and all ON: money identical (one reserve, one release, at most one charge, never above the hold), file identical with Stage 2/4 ON, live DONE snapshot = file cell by cell, version 1 = the file's sheets, nothing written for a flag that is off, no add-on objects |
 | real browser (Chromium via Playwright) on the locally running app, API answers produced by the repo's own planner, snapshot builder, poll contract and `buildMissionFiles` from stored real rows: desktop 1280 px and phone 390 px | 32 of 33 checks pass (table in the report); the one failure is finding F-1 |
 
