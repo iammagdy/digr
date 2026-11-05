@@ -80,3 +80,6 @@ diger-fixtures-anon*.zip
 # Python bytecode (the fixture anonymiser is a Python script): never committed
 __pycache__/
 *.pyc
+
+# stray trace output of `next build` when node_modules is a symlink (never source)
+/digr/
