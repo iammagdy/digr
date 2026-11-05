@@ -1,3 +1,4 @@
+import { stage3QueueOn } from "./stage3/queueView";
 import { randomBytes } from "node:crypto";
 import { AGENT_BUCKET, AGENT_JOB_POINTS_CAP, AGENT_MAX_MISSIONS_PER_HOUR, AGENT_MAX_OPEN_MISSIONS_PER_USER, MISSION_CALLS_TABLE, MISSION_EVENTS_TABLE, MISSION_TABLE, AGENT_HEARTBEAT_TABLE } from "./constants";
 import { approveMissionOnce } from "./approval";
@@ -64,7 +65,9 @@ export async function readQueue(client: any, mission: { id: string; created_at: 
 
 /** One mission as the customer reads it (never the plan's endpoints, costs, errors or workers): the view the card and the live panel draw. */
 export async function loadCustomerMission(client: any, input: { id: string; userId: string; now?: number }) {
-  const { data: mission } = await client.from(MISSION_TABLE).select(SAFE_COLUMNS).eq("id", input.id).maybeSingle();
+  // STAGE 3 S5: the approval time is read only when DIGER_STAGE3_QUEUE is on (unset: the select is exactly what it was)
+  const stage3Queue = stage3QueueOn();
+  const { data: mission } = await client.from(MISSION_TABLE).select(stage3Queue ? `${SAFE_COLUMNS},approved_at` : SAFE_COLUMNS).eq("id", input.id).maybeSingle();
   if (!mission || mission.user_id !== input.userId) return bad(404, "المهمة غير موجودة.");
   const [events, calls, queue] = await Promise.all([
     client.from(MISSION_EVENTS_TABLE).select("id,kind,message_ar,counts,created_at").eq("mission_id", input.id).order("id", { ascending: true }).limit(500),
@@ -82,7 +85,7 @@ export async function loadCustomerMission(client: any, input: { id: string; user
   if (mission.status === "approved" || mission.status === "executing") {
     try { emailWillBeSent = userWillBeEmailed((await client.auth?.admin?.getUserById?.(input.userId))?.data?.user); } catch { emailWillBeSent = false; }
   }
-  return { ok: true as const, status: mission.status as string, requestText: String(mission.request_text ?? ""), view: customerMissionView({ mission: row, events: evs, queue, callsMade: typeof calls?.count === "number" ? calls.count : 0, now: input.now, emailWillBeSent }) };
+  return { ok: true as const, status: mission.status as string, requestText: String(mission.request_text ?? ""), view: customerMissionView({ mission: row, events: evs, queue, callsMade: typeof calls?.count === "number" ? calls.count : 0, now: input.now, emailWillBeSent, ...(stage3Queue ? { stage3Queue: { approvedAtMs: Date.parse(String(mission.approved_at ?? "")) || null } } : {}) }) };
 }
 
 const APPROVE_MESSAGES: Record<string, string> = {
