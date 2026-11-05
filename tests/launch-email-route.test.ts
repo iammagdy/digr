@@ -70,7 +70,7 @@ describe("POST /api/admin/launch-email", () => {
     expect(w.adminCalls.every((c) => c.startsWith("list:"))).toBe(true);
     expect(w.audits).toHaveLength(1);
     expect(w.audits[0]).toMatchObject({ kind: "launch-email", target: "launch-2026-11" });
-    expect(w.audits[0].label).toBe("dry_run eligible=2 sent=0 failed=0 cap=5 stopped=end_of_list");
+    expect(w.audits[0].label).toBe("dry_run eligible=2 sent=0 ambiguous=0 failed=0 cap=5 stopped=end_of_list");
   });
 
   it("an explicit dryRun:true is a dry run too, even with LAUNCH_EMAIL_ENABLED on and a correct confirmation", async () => {
@@ -124,7 +124,7 @@ describe("POST /api/admin/launch-email", () => {
     expect(w.users[0].app_metadata.campaigns["launch-2026-11"]).toBeTruthy();
     expect(w.users[2].app_metadata.campaigns).toBeUndefined();
     expect(JSON.stringify(w.audits)).not.toContain("@");
-    expect(w.audits[0].label).toBe("send eligible=2 sent=2 failed=0 cap=5 stopped=end_of_list");
+    expect(w.audits[0].label).toBe("send eligible=2 sent=2 ambiguous=0 failed=0 cap=5 stopped=end_of_list");
   });
 
   it("excludeUserIds and suppressedEmails are honoured and never echoed", async () => {

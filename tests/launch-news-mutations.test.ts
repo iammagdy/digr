@@ -110,7 +110,7 @@ describe("MUTATION: the runner's guards", () => {
   });
 
   it("if the cap were ignored, a run would mail more than it was allowed", async () => {
-    const m = await loadMutant(CAMPAIGN, [{ from: "if (result.sent >= cap) {", to: "if (false) {" }]);
+    const m = await loadMutant(CAMPAIGN, [{ from: 'if (result.sent + result.ambiguous >= cap) { result.stopped = "cap_reached"; break pages; }\n        continue;', to: "continue;" }]);
     const bad = makeWorld(five());
     await m.module.runNewsCampaign(makeDeps(bad), real("c1", 2));
     expect(bad.sends.length, "the mutant exceeded the cap").toBeGreaterThan(2);
@@ -124,7 +124,7 @@ describe("MUTATION: the runner's guards", () => {
   });
 
   it("if a definite failure kept its claim, the customer would never be retried", async () => {
-    const keep = await loadMutant(CAMPAIGN, [{ from: "if (!AMBIGUOUS.has(code)) {", to: "if (false) {" }]);
+    const keep = await loadMutant(CAMPAIGN, [{ from: "if (AMBIGUOUS.has(code)) {", to: "if (true) {" }]);
     const w = makeWorld(five().slice(0, 1), [{ ok: false, reason: "resend_rejected" }]);
     await keep.module.runNewsCampaign(makeDeps(w), real("c1", 5));
     expect(w.events, "the mutant keeps the claim of a mail that was rejected").not.toContain("unclaim:a");
@@ -201,5 +201,78 @@ describe("MUTATION: the admin route's second lock", () => {
     seed();
     await call(m.module);
     expect(s.sent.length, "the mutant sent with the lock closed").toBe(1);
+  });
+});
+
+describe("MUTATION: review fixes", () => {
+  const WIRING = "src/lib/launch/newsCampaignWiring.ts";
+  const PAYLOAD = "supabase/functions/send-email/payload.ts";
+  const users = (n: number) => Array.from({ length: n }, (_, i) => optedIn(`u${i}`));
+  const adminFor = (list: any[], onGet?: (n: number) => void) => { let n = 0; const updates: any[] = []; return { updates, admin: { auth: { admin: {
+    getUserById: async (id: string) => { n += 1; onGet?.(n); const u = list.find((x) => x.id === id); return { data: { user: structuredClone(u) }, error: null }; },
+    updateUserById: async (id: string, patch: any) => { updates.push(patch); return { error: null }; },
+    listUsers: async ({ page }: any) => ({ data: { users: page === 1 ? structuredClone(list) : [] }, error: null }),
+  } } } }; };
+
+  it("if the wiring did not add UnsubscribeURL to the vars, the rendered footer link would be empty", async () => {
+    const { renderEmailTemplate } = await import("../supabase/functions/send-email/templates");
+    const run = async (mod: any) => {
+      const captured: any[] = [];
+      const deps = mod.createNewsCampaignDeps({ admin: adminFor([optedIn("u1")]).admin, env: { DIGER_STAGE2_LIVE_SHEET: "on" }, siteUrl: "https://diger.tech", signingKey: KEY, send: async (i: any) => { captured.push(i); return { ok: true }; }, log: () => undefined });
+      const camp = await import("../src/lib/launch/newsCampaign");
+      await camp.runNewsCampaign(deps, real("c1", 5));
+      return renderEmailTemplate("news", captured[0].vars).html;
+    };
+    expect(await run(await import("../src/lib/launch/newsCampaignWiring"))).not.toContain('href=""');
+    const m = await loadMutant(WIRING, [{ from: "send: (i) => input.send({ ...i, vars: { ...i.vars, UnsubscribeURL: i.unsubscribeUrl } }),", to: "send: input.send," }]);
+    expect(await run(m.module), "the mutant renders an empty unsubscribe link").toContain('href=""');
+  });
+
+  it("if the Edge Function did not inject UnsubscribeURL, an app that sent none would produce an empty footer link", async () => {
+    const { renderEmailTemplate } = await import("../supabase/functions/send-email/templates");
+    const url = "https://diger.tech/api/email/unsubscribe?t=a.b";
+    const m = await loadMutant(PAYLOAD, [{ from: "return { ...vars, UnsubscribeURL: unsubscribeUrl };", to: "return vars;" }]);
+    expect(renderEmailTemplate("news", m.module.renderVarsWithUnsubscribe({ Name: "x" }, url)).html).toContain('href=""');
+    const realMod = await import("../supabase/functions/send-email/payload");
+    expect(renderEmailTemplate("news", realMod.renderVarsWithUnsubscribe({ Name: "x" }, url)).html).toContain(`href="${url}"`);
+  });
+
+  it("if ambiguous failures did not count toward the cap, alternating timeout/ok would exceed it", async () => {
+    const script = Array.from({ length: 10 }, (_, i) => (i % 2 === 0 ? { ok: false, reason: "timeout" } : { ok: true }));
+    const m = await loadMutant(CAMPAIGN, [{ from: "result.ambiguous += 1;", to: "" }]);
+    const bad = makeWorld(users(10), script);
+    await m.module.runNewsCampaign(makeDeps(bad), real("c1", 3));
+    expect(bad.sends.length, "the mutant exceeded the cap").toBeGreaterThan(3);
+  });
+
+  it("if the time budget were not enforced, a run would go on past it (a serverless kill mid-send)", async () => {
+    const m = await loadMutant(CAMPAIGN, [{ from: "const outOfTime = () => deps.now() - startedAt >= budget;", to: "const outOfTime = () => false;" }]);
+    let t = 0;
+    const w = makeWorld(users(5));
+    const deps = makeDeps(w, { now: () => t, send: async (i) => { t += 20_000; w.sends.push(i as any); return { ok: true }; } });
+    const r = await m.module.runNewsCampaign(deps, real("c1", 5));
+    expect(r.stopped, "the mutant never stops for time").not.toBe("time_budget");
+    expect(w.sends.length).toBe(5);
+  });
+
+  it("if markSent used the first (stale) read, another campaign's mark written in between would be lost", async () => {
+    const run = async (mod: any) => {
+      const list = [{ id: "a", email: "a@example.test", app_metadata: { campaigns: {} } }];
+      const f = adminFor(list, (n) => { if (n === 2) list[0].app_metadata = { campaigns: { other2: "t9" } }; });
+      const deps = mod.createNewsCampaignDeps({ admin: f.admin, env: {}, siteUrl: "https://diger.tech", signingKey: KEY, send: async () => ({ ok: true }) });
+      await deps.markSent("a", "c1", "t1");
+      return f.updates[0].app_metadata.campaigns;
+    };
+    expect(await run(await import("../src/lib/launch/newsCampaignWiring"))).toEqual({ other2: "t9", c1: "t1" });
+    const m = await loadMutant(WIRING, [{ from: "const user = await readUser(admin, userId);\n        if (!user || isCampaignMarked(user, campaign)) return false;", to: "const user = first;" }]);
+    expect(await run(m.module), "the mutant drops the newer mark").toEqual({ c1: "t1" });
+  });
+
+  it("if banned_until were ignored, a barred account would be mailed", async () => {
+    const barred = optedIn("x", { banned_until: "2999-01-01T00:00:00Z" });
+    const realMod = await import("../src/lib/launch/newsCampaign");
+    expect(realMod.isEligibleForNews(barred)).toBe(false);
+    const m = await loadMutant(CAMPAIGN, [{ from: 'if (Number.isNaN(until) || until > (ctx.now ?? Date.now)()) return "banned";', to: "" }]);
+    expect(m.module.isEligibleForNews(barred), "the mutant mails a barred account").toBe(true);
   });
 });

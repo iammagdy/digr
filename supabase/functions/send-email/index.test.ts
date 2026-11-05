@@ -80,6 +80,15 @@ Deno.test("buildResendPayload: List-Unsubscribe headers only when unsubscribeUrl
   assertEquals(Object.keys(without), ["from", "to", "subject", "html"]);
 });
 
+Deno.test("buildResendPayload: the news footer link equals the List-Unsubscribe target even when the caller sent no UnsubscribeURL var", () => {
+  const url = "https://diger.tech/api/email/unsubscribe?t=zz.yy";
+  const vars = { ...SAMPLE_VARS["news"] } as Record<string, string>;
+  delete vars.UnsubscribeURL;
+  const payload = buildResendPayload({ template: "news", to: "a@example.test", vars, unsubscribeUrl: url });
+  assert(payload.html.includes(`href="${url}"`), "footer href is not the unsubscribe URL");
+  assert(!payload.html.includes('href=""'), "empty href");
+});
+
 Deno.test("isValidUnsubscribeUrl: https only, max 2048, no header-breaking characters", () => {
   assert(isValidUnsubscribeUrl("https://diger.tech/api/email/unsubscribe?t=a.b"));
   assert(!isValidUnsubscribeUrl("http://diger.tech/x"));

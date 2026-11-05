@@ -45,8 +45,11 @@ export function createNewsCampaignDeps(input: NewsWiringInput): NewsCampaignDeps
     isSent: (user, campaign) => isCampaignMarked(user, campaign),
     async markSent(userId, campaign, at) {
       try {
+        const first = await readUser(admin, userId);
+        if (!first || isCampaignMarked(first, campaign)) return false; // someone else holds the mark: send nothing
+        // re-read the CURRENT app_metadata immediately before the write and merge only THIS campaign's key: another campaign's mark is never dropped
         const user = await readUser(admin, userId);
-        if (!user || isCampaignMarked(user, campaign)) return false; // someone else holds the mark: send nothing
+        if (!user || isCampaignMarked(user, campaign)) return false;
         const app = plain(user.app_metadata);
         const { error } = await admin.auth.admin.updateUserById(userId, { app_metadata: { ...app, campaigns: { ...plain(app.campaigns), [campaign]: at } } });
         return !error;
@@ -61,7 +64,8 @@ export function createNewsCampaignDeps(input: NewsWiringInput): NewsCampaignDeps
       const { [campaign]: _removed, ...rest } = plain(app.campaigns);
       await admin.auth.admin.updateUserById(userId, { app_metadata: { ...app, campaigns: rest } });
     },
-    send: input.send,
+    // the footer link of the news template reads {{ .UnsubscribeURL }}: it is the SAME per-recipient URL as the List-Unsubscribe header
+    send: (i) => input.send({ ...i, vars: { ...i.vars, UnsubscribeURL: i.unsubscribeUrl } }),
     compose: (name) => composeLaunchAnnouncement(input.env, name) as unknown as Record<string, string> | null,
     unsubscribeUrl: (userId) => buildUnsubscribeUrl(input.siteUrl, userId, input.signingKey),
     now: input.now ?? Date.now,

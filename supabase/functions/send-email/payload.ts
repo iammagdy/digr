@@ -19,6 +19,17 @@ export function unsubscribeHeaders(url: string): Record<string, string> {
 }
 
 /**
+ * The variables to render with. When an `unsubscribeUrl` is given and the caller did not supply `UnsubscribeURL`, it is injected as
+ * `UnsubscribeURL`, so the visible footer link of the news template always equals the List-Unsubscribe target (whatever the deployment order).
+ */
+export function renderVarsWithUnsubscribe<T extends Record<string, unknown>>(vars: T, unsubscribeUrl?: string): T & { UnsubscribeURL?: string } {
+  if (!unsubscribeUrl) return vars;
+  const given = (vars as Record<string, unknown>).UnsubscribeURL;
+  if (given !== undefined && given !== null && String(given) !== "") return vars;
+  return { ...vars, UnsubscribeURL: unsubscribeUrl };
+}
+
+/**
  * The Resend payload. The List-Unsubscribe headers are added ONLY when `unsubscribeUrl` is given, so every other caller's payload is
  * exactly { from, to, subject, html }, as before.
  */

@@ -10,6 +10,8 @@ import { runNewsCampaign } from "@/lib/launch/newsCampaign";
 import { createNewsCampaignDeps } from "@/lib/launch/newsCampaignWiring";
 
 export const dynamic = "force-dynamic";
+/** One call sends at most what fits in this time (the runner stops cleanly at its own 45 s budget); a larger audience is sent in repeated calls. */
+export const maxDuration = 60;
 
 const schema = z.object({
   campaign: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/, "اسم الحملة غير صالح"),
@@ -74,7 +76,7 @@ export async function POST(req: NextRequest) {
 
   await ctx.audit(
     "launch-email",
-    `${result.mode} eligible=${result.eligible} sent=${result.sent} failed=${result.failed} cap=${result.cap}${result.stopped ? ` stopped=${result.stopped}` : ""}${result.refused ? ` refused=${result.refused}` : ""}`,
+    `${result.mode} eligible=${result.eligible} sent=${result.sent} ambiguous=${result.ambiguous} failed=${result.failed} cap=${result.cap}${result.stopped ? ` stopped=${result.stopped}` : ""}${result.refused ? ` refused=${result.refused}` : ""}`,
     body.campaign,
   );
   return NextResponse.json({ success: result.mode !== "refused", result }, { status: result.mode === "refused" ? 400 : 200 });

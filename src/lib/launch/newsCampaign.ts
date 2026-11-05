@@ -18,6 +18,8 @@ export const LAUNCH_HARD_CAP = 500;
 export const NEWS_PAGE_SIZE = 200;
 const MAX_PAGES = 5000;
 const MAX_CONSECUTIVE_FAILURES = 2;
+/** Wall-clock budget of one real run. The admin route's maxDuration is 60 s; this leaves room for the last re-read, claim, send (7 s timeout) and audit. */
+export const LAUNCH_TIME_BUDGET_MS = 45_000;
 
 export interface NewsUser {
   id: string;
@@ -25,11 +27,14 @@ export interface NewsUser {
   email_confirmed_at?: string | null;
   user_metadata?: Record<string, any> | null;
   app_metadata?: Record<string, any> | null;
+  /** ISO time until which the sign-in service bars the account; in the future = banned. */
+  banned_until?: string | null;
 }
 
 export type SkipReason =
   | "guest"
   | "unconfirmed"
+  | "banned"
   | "invalid_address"
   | "not_opted_in"
   | "test_account"
@@ -48,6 +53,8 @@ export interface EligibilityContext {
   suppressed?: ReadonlySet<string>;
   /** A bounded test send: when given, ONLY these user ids may be mailed (every other check still applies). */
   onlyUserIds?: ReadonlySet<string>;
+  /** Clock for the ban check (default Date.now). */
+  now?: () => number;
 }
 
 const GUEST_ADDRESS = /^guest_[0-9a-f]{32}@diger\.tech$/i;
@@ -72,6 +79,11 @@ export function newsSkipReason(user: NewsUser, ctx: EligibilityContext = {}): Sk
   if (isGuestAccount(user)) return "guest";
   // the sign-in service's own confirmation time; `user_metadata.email_verified` is customer-writable and proves nothing
   if (!user.email_confirmed_at) return "unconfirmed";
+  // a barred account is not mailed; an unreadable ban time counts as barred (fail closed)
+  if (user.banned_until) {
+    const until = Date.parse(user.banned_until);
+    if (Number.isNaN(until) || until > (ctx.now ?? Date.now)()) return "banned";
+  }
   if (!isValidNewsAddress(user.email)) return "invalid_address";
   if (user.user_metadata?.prefs?.notif?.news !== true) return "not_opted_in";
   if (ctx.testAccountIds?.has(user.id) || ctx.isTestAccount?.(user)) return "test_account";
@@ -132,9 +144,11 @@ export interface NewsCampaignOptions {
   /** DEFAULT true. Only `false` sends. */
   dryRun?: boolean;
   confirm?: string;
+  /** Wall-clock budget of a real run in ms (default LAUNCH_TIME_BUDGET_MS); on expiry the run stops cleanly with stopped = "time_budget". */
+  budgetMs?: number;
 }
 
-export type NewsStop = "end_of_list" | "cap_reached" | "consecutive_failures" | "unauthorized" | "resend_not_configured" | "list_failed";
+export type NewsStop = "end_of_list" | "cap_reached" | "time_budget" | "consecutive_failures" | "unauthorized" | "resend_not_configured" | "list_failed";
 export type NewsRefusal = "invalid_campaign" | "invalid_cap" | "confirm_mismatch" | "nothing_to_announce";
 
 export interface NewsCampaignResult {
@@ -150,6 +164,8 @@ export interface NewsCampaignResult {
   eligible: number;
   wouldSend: number;
   sent: number;
+  /** Sends that failed ambiguously (timeout, network): the mail MAY have gone out, so each counts toward the cap. */
+  ambiguous: number;
   failed: number;
   skipped: Partial<Record<SkipReason, number>>;
   sentUserIds: string[];
@@ -169,7 +185,7 @@ export async function runNewsCampaign(deps: NewsCampaignDeps, opts: NewsCampaign
   const cap = Number.isInteger(opts.cap) && opts.cap > 0 ? Math.min(opts.cap, LAUNCH_HARD_CAP) : 0;
   const result: NewsCampaignResult = {
     mode: dryRun ? "dry_run" : "send", campaign: String(opts.campaign ?? ""), cap, hasContent: deps.compose("") !== null,
-    scanned: 0, eligible: 0, wouldSend: 0, sent: 0, failed: 0, skipped: {}, sentUserIds: [], failedUserIds: [],
+    scanned: 0, eligible: 0, wouldSend: 0, sent: 0, ambiguous: 0, failed: 0, skipped: {}, sentUserIds: [], failedUserIds: [],
   };
   const refuse = (refused: NewsRefusal): NewsCampaignResult => ({ ...result, mode: "refused", refused });
   const skip = (reason: SkipReason) => { result.skipped[reason] = (result.skipped[reason] ?? 0) + 1; };
@@ -181,13 +197,17 @@ export async function runNewsCampaign(deps: NewsCampaignDeps, opts: NewsCampaign
     if (!result.hasContent) return refuse("nothing_to_announce");
   }
 
-  const ctx: EligibilityContext = { testAccountIds: deps.testAccountIds, isTestAccount: deps.isTestAccount, suppressed: deps.suppressed, onlyUserIds: deps.onlyUserIds };
+  const ctx: EligibilityContext = { testAccountIds: deps.testAccountIds, isTestAccount: deps.isTestAccount, suppressed: deps.suppressed, onlyUserIds: deps.onlyUserIds, now: deps.now };
+  const budget = Number.isFinite(opts.budgetMs) && (opts.budgetMs as number) > 0 ? (opts.budgetMs as number) : LAUNCH_TIME_BUDGET_MS;
+  const startedAt = deps.now();
+  const outOfTime = () => deps.now() - startedAt >= budget;
   const seen = new Set<string>();
   let consecutiveFailures = 0;
   deps.log("campaign_start", { campaign: result.campaign, mode: result.mode, cap });
 
   pages:
   for (let page = 1; page <= MAX_PAGES; page++) {
+    if (!dryRun && outOfTime()) { result.stopped = "time_budget"; break; }
     let users: NewsUser[];
     try {
       users = await deps.listUsers(page);
@@ -208,7 +228,8 @@ export async function runNewsCampaign(deps: NewsCampaignDeps, opts: NewsCampaign
       result.eligible += 1;
       if (dryRun) continue;
 
-      // ----- a real send: re-read and re-check immediately before this recipient -----
+      // ----- a real send: stop cleanly when the time is up (claims already made stay), else re-read and re-check immediately before this recipient -----
+      if (outOfTime()) { result.stopped = "time_budget"; break pages; }
       let fresh: NewsUser | null = null;
       try { fresh = await deps.getUserById(listed.id); } catch { fresh = null; }
       if (!fresh) { skip("unreadable"); continue; }
@@ -240,7 +261,7 @@ export async function runNewsCampaign(deps: NewsCampaignDeps, opts: NewsCampaign
         result.sentUserIds.push(fresh.id);
         consecutiveFailures = 0;
         deps.log("sent", { userId: fresh.id, key, result: "ok" });
-        if (result.sent >= cap) { result.stopped = "cap_reached"; break pages; }
+        if (result.sent + result.ambiguous >= cap) { result.stopped = "cap_reached"; break pages; }
         continue;
       }
 
@@ -248,16 +269,20 @@ export async function runNewsCampaign(deps: NewsCampaignDeps, opts: NewsCampaign
       result.failed += 1;
       result.failedUserIds.push(fresh.id);
       consecutiveFailures += 1;
-      if (!AMBIGUOUS.has(code)) {
+      if (AMBIGUOUS.has(code)) {
+        // the mail may have been delivered: it counts toward the cap, so ambiguous/ok alternation can never exceed it
+        result.ambiguous += 1;
+      } else {
         try { await deps.unmarkSent(fresh.id, result.campaign); } catch { /* the claim stays: an under-send is the safe side */ }
       }
       deps.log("failed", { userId: fresh.id, key, result: code });
       if (code === "unauthorized" || code === "resend_not_configured") { result.stopped = code; break pages; }
       if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES) { result.stopped = "consecutive_failures"; break pages; }
+      if (result.sent + result.ambiguous >= cap) { result.stopped = "cap_reached"; break pages; }
     }
   }
 
   result.wouldSend = dryRun ? Math.min(result.eligible, cap) : 0;
-  deps.log("campaign_end", { campaign: result.campaign, mode: result.mode, eligible: result.eligible, sent: result.sent, failed: result.failed, stopped: result.stopped ?? "none" });
+  deps.log("campaign_end", { campaign: result.campaign, mode: result.mode, eligible: result.eligible, sent: result.sent, ambiguous: result.ambiguous, failed: result.failed, stopped: result.stopped ?? "none" });
   return result;
 }

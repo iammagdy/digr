@@ -34,7 +34,7 @@ import {
 } from "./templates.ts";
 import { buildResendHeaders } from "./resendHeaders.ts";
 import { isAuthorizedCaller } from "./authorize.ts";
-import { assembleResendPayload, isValidUnsubscribeUrl } from "./payload.ts";
+import { assembleResendPayload, isValidUnsubscribeUrl, renderVarsWithUnsubscribe } from "./payload.ts";
 
 const FROM = "Diger <noreply@diger.tech>";
 const RESEND_URL = "https://api.resend.com/emails";
@@ -64,7 +64,7 @@ export { isValidUnsubscribeUrl };
 
 /** Build the Resend API payload for a template. Pure — no network, no secrets. The List-Unsubscribe headers are added ONLY when `unsubscribeUrl` is given, so every other caller's payload is unchanged. */
 export function buildResendPayload(req: SendEmailRequest) {
-  return assembleResendPayload(FROM, renderEmailTemplate(req.template, req.vars ?? {}), req.to, req.unsubscribeUrl);
+  return assembleResendPayload(FROM, renderEmailTemplate(req.template, renderVarsWithUnsubscribe(req.vars ?? {}, req.unsubscribeUrl)), req.to, req.unsubscribeUrl);
 }
 
 function json(body: unknown, status: number): Response {
