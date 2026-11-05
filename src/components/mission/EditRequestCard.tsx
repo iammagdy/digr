@@ -250,7 +250,7 @@ export default function EditRequestCard({ missionId }: { missionId: string }) {
     // a refusal or an UNCERTAIN answer keeps the request and the button on screen (its alert is the only place the customer reads «the points may be held»); only a request that was approved leaves the waiting state, and its sentence stays as a notice
     if (r.state !== "approved" && r.state !== "already_approved") return;
     setWaiting(null); setQuote(null); setForm(null); setNotice(r.message);
-    void fetchEditRequest({ missionId, fetchFn: fetch, headers: authHeaders }).then((found) => setWaiting(found));
+    void fetchEditRequest({ missionId, fetchFn: browserFetch, headers: authHeaders }).then((found) => setWaiting(found));
   }, [missionId]);
   return <EditRequestBody schema={schema} status={status} form={form} onForm={onForm} onAsk={onAsk} busy={busy} quote={quote} error={error} waiting={waiting} onPrepare={onPrepare} preparing={preparing} onCancel={onCancel} cancelling={cancelling} notice={notice} onRetry={onRetry} approval={waiting ? <ApproveAddon missionId={missionId} requestId={waiting.id} points={waiting.holdPoints} onSettled={onApprovalSettled} /> : null} />;
 }
