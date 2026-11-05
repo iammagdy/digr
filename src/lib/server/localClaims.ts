@@ -20,7 +20,6 @@ export function localClaimsEnabled(): boolean {
 /** The fields the server reads from a user (id, e-mail, roles, metadata, verified e-mail), rebuilt from the token's claims. */
 export function userFromClaims(claims: Record<string, any>): Record<string, any> {
   const metadata = claims.user_metadata && typeof claims.user_metadata === "object" ? claims.user_metadata : {};
-  const issuedAt = typeof claims.iat === "number" ? new Date(claims.iat * 1000).toISOString() : undefined;
   return {
     id: String(claims.sub),
     aud: claims.aud,
@@ -30,8 +29,11 @@ export function userFromClaims(claims: Record<string, any>): Record<string, any>
     is_anonymous: Boolean(claims.is_anonymous),
     app_metadata: claims.app_metadata && typeof claims.app_metadata === "object" ? claims.app_metadata : {},
     user_metadata: metadata,
-    // The token does not carry the confirmation time; the confirmed flag in the metadata is what the server already accepts.
-    email_confirmed_at: metadata.email_verified === true ? issuedAt : undefined,
+    // The token does not carry the confirmation time, and `user_metadata.email_verified` is writable by the customer, so it is NOT trusted:
+    // a locally rebuilt user has no confirmation time and is marked, and anything that authorizes points asks the service
+    // (`resolveTrustedEmailVerified`, see trustedEmailVerification.ts).
+    email_confirmed_at: undefined,
+    __localClaims: true,
     created_at: undefined,
   };
 }
@@ -45,6 +47,7 @@ export function withLocalClaims<T extends { auth?: any }>(client: T): T {
   const auth = client?.auth;
   if (!auth || typeof auth.getClaims !== "function" || typeof auth.getUser !== "function" || auth.__localClaims) return client;
   const original = auth.getUser.bind(auth);
+  auth.getUserFromService = original;
   auth.getUser = async (jwt?: string) => {
     try {
       const { data, error } = await auth.getClaims(jwt);

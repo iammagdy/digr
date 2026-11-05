@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient, createServerSideClient } from "../supabase/server";
+import { resolveTrustedEmailVerified } from "./trustedEmailVerification";
 
 /**
  * Who is looking at a mission: the signed-in customer (bearer token or session cookie), or the guest of the chat (the `guest_session_id` cookie the chat route set, checked against a real
@@ -14,10 +15,12 @@ export async function resolveMissionViewer(req: NextRequest): Promise<{ ok: true
   try {
     const supabase = await createServerSideClient();
     const authHeader = req.headers.get("authorization");
-    const result = authHeader?.startsWith("Bearer ") ? await supabase.auth.getUser(authHeader.substring(7).trim()) : await supabase.auth.getUser();
+    const token = authHeader?.startsWith("Bearer ") ? authHeader.substring(7).trim() : undefined;
+    const result = token ? await supabase.auth.getUser(token) : await supabase.auth.getUser();
     const user = result.data?.user;
     if (user && !user.user_metadata?.is_guest) {
-      return { ok: true, viewer: { userId: user.id, isGuest: false, emailVerified: Boolean(user.email_confirmed_at || user.user_metadata?.email_verified) } };
+      // Only the sign-in service's own confirmation counts: `user_metadata` is writable by the customer and is never read here.
+      return { ok: true, viewer: { userId: user.id, isGuest: false, emailVerified: await resolveTrustedEmailVerified(supabase, user, token) } };
     }
   } catch { /* try the guest cookie */ }
   const match = GUEST_COOKIE_RE.exec(req.cookies.get("guest_session_id")?.value ?? "");
