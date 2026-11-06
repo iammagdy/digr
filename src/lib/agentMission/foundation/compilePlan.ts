@@ -131,8 +131,9 @@ export function parentInputs(card: ToolCard, ask: Ask): Record<string, unknown> 
     if (q.operators) {
       if (ask.language) query += ` lang:${ask.language}`;
       if (ask.period) query += ` since:${operatorStampUtc(ask.period.startMs)} until:${operatorStampUtc(ask.period.endExclusiveMs)}`;
-      // TWEETS WITH THEIR REPLIES (live D5, msn_e7612c1fe8697ca03439): the parents of a replies stage are ORIGINAL tweets, so the stage asks the source for originals only (10 of the 20 tweets of that run were themselves replies to other people)
-      if (ask.replies !== "none") query += " -filter:replies";
+      // THE PARENTS ON X ARE ORIGINAL POSTS (live D5, msn_e7612c1fe8697ca03439; NOV 6 2026 CAMPAIGN, msn_d31f37958788a24ec46d): the stage asks the source for originals only. It was sent only when the replies were asked, and the replies
+      // word «ردين» was not read, so a request for «منشورين» was answered by two tweets that were themselves replies to other people (`isReply: true`), delivered and billed as the posts asked
+      query += " -filter:replies";
     }
     // a keyword search that has no input for the page: the named page's name joins the keyword (the pool is then CHOSEN among the rows by their author)
     if (q.withSource && ask.source.kind === "named" && ask.source.text) query += ` ${/(?:facebook|instagram)\.com\/([^/?#\s]+)/i.exec(ask.source.text)?.[1] ?? ask.source.text}`;
@@ -322,9 +323,17 @@ export function rankedPoolOf(input: { ask: Ask; poolCard: ToolCard; pages: Reado
     // ROUND 38: that instant is COMPUTED, never the source's: the row carries the mark (`_approx_dates`), kept in the plan's pinned rows, so the preview and the file call it approximate whatever the gap between planning and the run
     .map((r) => { if ((r.posted_at === undefined || r.posted_at === null) && input.nowMs !== undefined) { const t = approxInstantOfRelative(r.published, input.nowMs); if (t !== null) return { ...r, posted_at: new Date(t).toISOString(), [APPROX_DATES_KEY]: [...approxColumnsOf(r).filter((k) => k !== "posted_at"), "posted_at"] }; } return r; });
   // WHEN THE ASK HAS A PERIOD every parent of the pool is inside it, whichever search read it (live round 11): the chosen parents, the spares and the exposure check all come from this one list
-  const inPeriod = input.keepOutsidePeriod !== true && periodIsChecked(ask) ? mapped.filter((r) => insidePeriod(r, ask)) : mapped;
+  const inPeriodAll = input.keepOutsidePeriod !== true && periodIsChecked(ask) ? mapped.filter((r) => insidePeriod(r, ask)) : mapped;
+  // AN X PARENT IS AN ORIGINAL POST (NOV 6 2026 CAMPAIGN): a tweet the source marks as a reply to someone else is never a parent, even when the source ignored `-filter:replies` (one list for the chosen parents, the spares and the exposure check)
+  const inPeriod = input.keepOutsidePeriod !== true ? inPeriodAll.filter((r) => parentEligible(r, ask)) : inPeriodAll;
   const rankedAll = rankPool(inPeriod, ask, card, { occurrence: ask.occurrence });
   return ask.source.kind === "official" && (input.channels?.length ?? 0) > 1 ? interleaveByChannel(rankedAll, ask) : rankedAll;
+}
+
+/** A row the plan may choose as a PARENT: on X, never a tweet that is itself a reply (`is_reply: true`, the source's own mark). */
+export function parentEligible(row: Record<string, unknown>, ask: Pick<Ask, "platform">): boolean {
+  if (ask.platform === "x" && (row.is_reply === true || row.is_reply === "true" || row.is_reply === "True")) return false;
+  return true;
 }
 
 /** Compiles the plan. Pure: the same Ask and the same pages give the same plan. */
@@ -341,8 +350,9 @@ export function compilePlan(input: CompileInput): CompileResult {
   const need = Math.max(1, ask.count ?? DEFAULT_COUNT);
   const catalogOnly = input.catalogOnly === true;
   // WHAT THE SOURCES ANSWERED OUTSIDE THE PERIOD (live round 11): every row read, and how many the period rule left out (said on the card as a count)
-  const readAll = periodIsChecked(ask) ? rankedPoolOf({ ask, poolCard, pages: input.pool.pages, keepOutsidePeriod: true, ...(input.counters ? { counters: input.counters } : {}), ...(input.channels ? { channels: input.channels } : {}), ...(input.nowMs !== undefined ? { nowMs: input.nowMs } : {}) }) : ranked0;
-  const leftOutOfPeriod = readAll.length - ranked0.length;
+  const readAll = rankedPoolOf({ ask, poolCard, pages: input.pool.pages, keepOutsidePeriod: true, ...(input.counters ? { counters: input.counters } : {}), ...(input.channels ? { channels: input.channels } : {}), ...(input.nowMs !== undefined ? { nowMs: input.nowMs } : {}) });
+  const notOriginal = readAll.filter((r) => !parentEligible(r, ask)).length;
+  const leftOutOfPeriod = periodIsChecked(ask) ? readAll.filter((r) => parentEligible(r, ask)).length - ranked0.length : 0;
   const cardsOpt = input.cards ? { cards: input.cards } : {};
   const repliesCards = shape.includes("replies") ? cardsFor(ask.platform, REPLY_ROLE[ask.platform], { catalogOnly, ...cardsOpt }) : [];
   const commentsCard = shape.includes("comments") ? chooseCard(ask, "comments", { catalogOnly, repliesCards, ...cardsOpt }) : null;
@@ -361,7 +371,10 @@ export function compilePlan(input: CompileInput): CompileResult {
   const chosen: PoolRow[] = [];
   const exposurePages: Array<{ parent: string; callId: string | null; rows: Array<Record<string, unknown>> }> = [];
   let scanned = 0;
-  for (const r of ranked) {
+  // X WITH ITS REPLIES: a tweet whose own counter says it has replies is chosen before one that says it has none (a parent with nothing to give for the step the customer asked); ordering only, the counters stay the source's
+  const xReplies = ask.platform === "x" && shape.includes("replies") && counterKey !== null;
+  const candidates = xReplies ? [...ranked.filter((r) => counter(r) !== 0), ...ranked.filter((r) => counter(r) === 0)] : ranked;
+  for (const r of candidates) {
     if (chosen.length >= need) break;
     scanned += 1;
     if (!commentsCard) { chosen.push(r); continue; }
@@ -381,7 +394,7 @@ export function compilePlan(input: CompileInput): CompileResult {
     const found = chosen.filter(isNamedAbout).length;
     if (found < need) return { ok: false, reason: "named_shortfall", found, need };
   }
-  const spares = ranked.slice(scanned).filter((r) => !commentsCard || counter(r) !== 0).slice(0, 2);
+  const spares = candidates.slice(scanned).filter((r) => !commentsCard || counter(r) !== 0).slice(0, 2);
 
   const promises: Record<string, StagePromise> = {};
   const notes: string[] = [];
@@ -429,6 +442,7 @@ export function compilePlan(input: CompileInput): CompileResult {
     engine: { endpoint_id: card.endpointId, params: input.pool.params, cursor_param: card.inputs.cursor, map_code: cardMapCode(card), map_file_id: "page", parent_binding: null, built_by: "code", ...(card.cannot && card.cannot.length > 0 ? { gaps: card.cannot.filter((c) => (c === "language" && ask.language) || (c === "period" && ask.period) || (c === "country" && ask.country)).map((c) => ({ cls: c === "period" ? "date" : c, reason: "no_field" })) } : {}) },
   } as PricedStage);
   if (chosen.length < need) notes.push(`وجدنا في ما قرأناه ${toArabicDigits(chosen.length)} فقط تناسب طلبك من ${toArabicDigits(need)}.`);
+  if (notOriginal > 0) notes.push(`لم نختر أي تغريدة هي نفسها ردّ على حساب آخر؛ تركنا ${toArabicDigits(notOriginal)} من هذا النوع مما قرأناه، لأنك طلبت منشورات أصلية.`);
   // WHAT THE POOL HELD, from the pages' own numbers (Facebook's keyword search): how many posts were read in how many pages, whether the source had more, how many are from the named page and how many talk about the topic
   if (poolCard.role === "posts.search") {
     const searchPages = input.pool.pages.filter((p) => (p.card ?? poolCard).role === "posts.search");
@@ -549,17 +563,20 @@ export function compilePlan(input: CompileInput): CompileResult {
       const perPage = 40;
       const maxPages = Math.max(1, Math.floor(CATALOG_ONLY_CAP_USD / (repliesCard.costUsdPerPage * CATALOG_ONLY_PRICE_MARGIN) + 1e-9));
       const counters = chosen.map((r) => counter(r));
-      const sizing = repliesSizing({ comments: chosen.length, known: counters, perComment: AGENT_REPLIES_PER_COMMENT_MAX, countedAtCap: false });
+      // THE CUSTOMER'S NUMBER FOR EACH TWEET («ردين على كل منشور», NOV 6 2026 CAMPAIGN): each tweet gives at most that many replies, and at most what its own counter says it has
+      const perTweet = ask.edits.replies === undefined && ask.repliesPerTweet !== undefined ? Math.min(Math.max(1, Math.floor(ask.repliesPerTweet)), AGENT_REPLIES_PER_COMMENT_MAX) : null;
+      const sizing = repliesSizing({ comments: chosen.length, known: counters, perComment: perTweet ?? AGENT_REPLIES_PER_COMMENT_MAX, countedAtCap: perTweet !== null });
       if (counters.every((c) => c !== null) && sizing.counted <= 0) {
         unserved.push({ what_ar: "الردود", reason_ar: "لا يذكر عدّاد المنصة ردودًا على أي من التغريدات المختارة، فلن تُضاف هذه الخطوة." });
       } else {
         const n = Math.max(1, Math.min(ask.edits.replies !== undefined ? Math.floor(ask.edits.replies) : sizing.total, maxPages * perPage));
         const p: StagePromise = { type: "open", n, counted: Math.min(sizing.counted, n), counted_comments: sizing.countedComments };
         promises.replies = p;
-        const readAll = ask.edits.replies === undefined;
+        const readAll = ask.edits.replies === undefined && perTweet === null;
+        if (perTweet !== null) notes.push(`الردود: حتى ${toArabicDigits(perTweet)} من الردود على كل تغريدة مختارة بحسب العدد الذي طلبته، مما يعرضه المصدر، دون وعد بعدد قبل القراءة؛ والحد الأقصى المحسوب في الحجز ${toArabicDigits(n)} ردّ، ولا ندفع إلا مقابل ما سُلّم.`);
         stages.push({
           key: "replies", title_ar: "الردود", endpoint_id: repliesCard.endpointId, ...(capabilityOf(repliesCard.endpointId) ? { capability: capabilityOf(repliesCard.endpointId)! } : {}),
-          expected_rows: n, planned_rows: n, parent_key: parentKey, replies_of: parentKey, per_parent_rows: AGENT_REPLIES_PER_COMMENT_MAX, deliver: true,
+          expected_rows: n, planned_rows: n, parent_key: parentKey, replies_of: parentKey, per_parent_rows: perTweet ?? AGENT_REPLIES_PER_COMMENT_MAX, deliver: true,
           columns: CHILD_COLUMNS.map((c) => ({ ...c })), sample_rows: [], measured_by: [], measured_from_calls: [], measured_cost_per_row_usd: repliesCard.costUsdPerPage / Math.max(1, repliesCard.page.observedRowsPerPage),
           yield_share: 1, review_share: 0, replies_open: true, ...(ask.replies === "all" ? { replies_read_all: true } : {}), ...(readAll ? { replies_uncapped: true } : {}), replies_call_usd: repliesCard.costUsdPerPage, max_pages: maxPages,
           engine: { endpoint_id: repliesCard.endpointId, params: structuredClone(repliesCard.inputs.fixed ?? {}), cursor_param: repliesCard.inputs.cursor, map_code: cardMapCode(repliesCard), map_file_id: "page", parent_binding: { param: repliesCard.inputs.parent!.param, from: repliesCard.inputs.parent!.from }, built_by: "code" },
@@ -571,6 +588,10 @@ export function compilePlan(input: CompileInput): CompileResult {
     }
   }
 
+  // THE REQUESTED STEP IS CARRIED OR SAID (NOV 6 2026 CAMPAIGN): a request for replies whose plan has no replies stage always says so before approval; the final contract gate of the old planner is not on this path, so the compiler holds it
+  if (shape.includes("replies") && !stages.some((x) => x.replies_of !== undefined) && !unserved.some((u) => /الردود/.test(u.what_ar))) {
+    unserved.push({ what_ar: "الردود", reason_ar: "لم نجد مصدرًا موثّقًا نقرأ منه هذه الردود، فلن تُضاف هذه الخطوة ولن تُحسب في السعر." });
+  }
   const price = priceMissionByCode(stagePriceInputs(stages), { settings: input.pricingSettings });
   const plan: PricedPlan = {
     summary_ar: summaryAr(ask, chosen.length, shape.filter((s) => s !== "replies" || stages.some((x) => x.replies_of !== undefined)), perParent, input.reelsProven === true),

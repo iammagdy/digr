@@ -132,12 +132,12 @@ describe("at completion the live sheet equals the file (stored real missions)", 
     expectEqual(live, await fileOf(plan, log));
     expect(live.sheets[1].rows.some((r) => r.cells.some((c) => c.v === "غير متاح"))).toBe(true);
   });
-  it("M14 X: 20 tweets, dates in Cairo time, the same order", async () => {
+  it("M14 X: the original tweets of the page (9 of its 20 since NOV 6 2026: a reply is never a parent), dates in Cairo time, the same order", async () => {
     const { plan, rows } = x();
     const { log } = await runLog(rows, ["tweets"], 6);
     const live = buildLiveSnapshot({ missionId: "msn_live_x", plan, snap: log.snapshotOfMemory(), status: "done", nowMs: 0 });
     expectEqual(live, await fileOf(plan, log));
-    expect(live.sheets[0].rows).toHaveLength(20);
+    expect(live.sheets[0].rows).toHaveLength(9);
     const dated = live.sheets[0].rows[0].cells.find((c) => c.k === "date");
     expect(dated?.d).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
   });

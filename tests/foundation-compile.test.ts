@@ -57,10 +57,10 @@ describe("F3: the tool is the one that carries the most of the Ask (D7), its inp
   it("the inputs are the customer's own topic words, the country, the most-engaged order and the page size: exactly the stored M12 call that found the delivered videos", () => {
     expect(parentInputs(cardOf("tikhub.tiktok.search.videos")!, tt)).toEqual(storedCalls("msn_5851abc92a1e6645a9cd").find((c) => c[0] === "call_0007")![5]);
   });
-  it("X: the query carries the words in quotes, the language and the Cairo period; the order is the newest (no comments asked)", () => {
+  it("X: the query carries the words in quotes, the language and the Cairo period; with the replies asked the tweets are the most engaged (NOV 6 2026: «Latest» gave tweets seconds old, with no reply)", () => {
     const x = buildAsk(request("msn_b060d3347ed7660f972e"), null, AT);
     // the request says «مع الردود», so the tweets asked for are ORIGINALS (live D5: 10 of 20 were replies): the query ends with -filter:replies
-    expect(parentInputs(chooseCard(x, "parents")!, x)).toEqual({ query: "\"العاصمة الإدارية\" lang:ar since:2026-09-30_21:00:00_UTC until:2026-10-31_22:00:00_UTC -filter:replies", queryType: "Latest", limit: 20 });
+    expect(parentInputs(chooseCard(x, "parents")!, x)).toEqual({ query: "\"العاصمة الإدارية\" lang:ar since:2026-09-30_21:00:00_UTC until:2026-10-31_22:00:00_UTC -filter:replies", queryType: "Top", limit: 20 });
     expect(chooseCard(x, "comments")).toBeNull();
     // the X replies card is verified since live round 8, so every account is offered it
     expect(chooseCard(x, "replies")!.endpointId).toBe("anyapi.x.post.comments");

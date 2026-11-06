@@ -82,7 +82,9 @@ describe("1. THE LIVE MISSION replayed: platform «إكس», then the count «١
     expect(String(w.calls[0].params.query ?? "")).not.toContain("رأي الناس");
     expect(w.m().status).toBe("plan_ready");
     expect(w.m().plan!.compiled?.by).toBe("compiler");
-    expect(w.m().plan!.price.deliveredRows).toBe(10);
+    // NOV 6 2026 CAMPAIGN: the parents on X are ORIGINAL posts; one tweet of the served page is itself a reply, so 9 of the 10 asked are planned and the card says so
+    expect(w.m().plan!.price.deliveredRows).toBe(9);
+    expect((w.m().plan!.notes_ar ?? []).join(" ")).toContain("وجدنا في ما قرأناه ٩ فقط تناسب طلبك من ١٠");
     expect(w.m().summary_ar ?? "").not.toContain("مصادرنا لا تخدم");
     expect(w.notes).not.toContain("unserved");
   });

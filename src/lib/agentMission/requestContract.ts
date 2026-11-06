@@ -55,6 +55,19 @@ const DUAL = /(?:فيديوهين|فيديوهان|منشورين|منشوران
 const COUNT_NOUN = /(?:فيديو|منشور|بوست|تغريد|تويت|مقطع|مقاطع|ريلز|ريلس|ريلات|ريل(?![ء-ي])|reels?\b)/i;
 const ALL_COMMENTS = /(?:كل|جميع|كافة)\s+(?:ال)?تعليقات/;
 const ALL_REPLIES = /(?:كل|جميع|كافة)\s+(?:ال)?ردود|(?:كل|جميع|كافة)\s+(?:ال)?تعليقات\s+(?:و)?(?:ال)?ردود/;
+/**
+ * NOV 6 2026 CAMPAIGN (X, msn_d31f37958788a24ec46d: «منشورين عامين من إكس عن الذكاء الاصطناعي، مع ردين حقيقيين على كل منشور»): the reply words were read by `/ردود/` only, so the DUAL «ردين» (and «ردان», a counted singular
+ * «٣ رد», «ردًا واحدًا», «مع الرد») asked for nothing: the plan had no replies stage and said nothing about it. Every form of the noun is read now; «ردود فعل» / «رد فعل» / «ردة فعل» are REACTIONS (an opinion request), never replies.
+ */
+const REPLY_WORDS = [
+  /ردود(?!\s+(?:ال)?فعل)/,
+  /(?<![ء-ي])و?ردّ?(?:ين|ان)(?![ء-ي])/,
+  /(?:\d|[٠-٩])\s*ردّ?(?:ًا|ا)?(?![ء-ي])/,
+  /(?<![ء-ي])(?:ال)?ردّ?(?:ًا|ا)?\s+(?:واحد|واحدًا|واحدا)(?![ء-ي])/,
+  /(?:^|\s)(?:مع|و)\s*الردّ?(?![ء-ي])(?!\s+(?:ال)?فعل)/,
+  /ريبلاي|\breplies\b/i,
+];
+export const repliesAskedIn = (text: string): boolean => REPLY_WORDS.some((re) => re.test(text));
 const STOP = /^(?:على|من|عن|في|آخر|اخر|مع|بالعربي|بالعربية|باللغة|،|,|\.|\(|«|"|بين|منذ|خلال)$/;
 
 function firstPlatform(text: string): SocialPlatform | null {
@@ -115,7 +128,7 @@ export function buildRequestContract(request: unknown, answer?: unknown): Reques
   const kind = KIND_WORDS.find(([, re]) => re.test(text))?.[0] ?? (platform === "x" ? "tweets" : null);
   const classes = conditionsOfRequest(text);
   const commentsAsked = /تعليق/.test(text) && platform !== "x";
-  const repliesAsked = /ردود|ريبلاي|replies/i.test(text);
+  const repliesAsked = repliesAskedIn(text);
   return {
     platform,
     parentKind: kind,
@@ -234,8 +247,10 @@ export function checkPlanAgainstContract(contract: RequestContract, plan: Contra
     items.push({ what: "platform", status: actual === null || actual === contract.platform ? "carried" : "missing" });
   }
   if (contract.count !== null && top) items.push({ what: "count", status: top.planned_rows === contract.count ? "carried" : "missing" });
-  // THE STAGES: X has no comments or replies source (a tweet's replies ARE its search results), so no stage is demanded there
+  // THE STAGES: X has no comments source, so no comments stage is demanded there. Its REPLIES are a child stage on the tweets (the verified `tweet.replies` card, live round 8): NOV 6 2026 CAMPAIGN (msn_d31f37958788a24ec46d), the gate
+  // exempted X from the replies check too, so a plan with no replies stage for «مع ردين على كل منشور» passed without a word. A replies stage is now demanded on every platform (carried, or stated before approval).
   const needsStages = contract.platform !== "x" && top !== undefined;
+  const needsReplies = top !== undefined;
   if (needsStages && contract.comments !== "none") {
     const present = commentsStageOf(plan) !== undefined;
     const stated = commentsStated(plan);
@@ -243,7 +258,7 @@ export function checkPlanAgainstContract(contract: RequestContract, plan: Contra
     if (!present && !stated) missingStages.push("comments");
     if (!present && /تعليق/.test(plan.summary_ar ?? "")) overclaims.push("comments");
   }
-  if (needsStages && contract.replies !== "none") {
+  if (needsReplies && contract.replies !== "none") {
     const present = repliesStageOf(plan) !== undefined;
     const stated = repliesStated(plan);
     items.push({ what: "replies", status: present ? "carried" : stated ? "stated" : "missing" });
@@ -267,6 +282,7 @@ export function checkPlanAgainstContract(contract: RequestContract, plan: Contra
 const nounOf = (kind: ParentKind | null): string => (kind === "videos" ? "فيديو" : kind === "posts" ? "منشور" : "عنصر");
 const STEP_REASON_COMMENTS_AR = "لم نجد في هذه الخطة مصدرًا نقرأ منه التعليقات لهذه المنصة";
 const STEP_REASON_REPLIES_AR = "لم نجد في هذه الخطة مصدرًا نقرأ منه ردود التعليقات لهذه المنصة";
+const STEP_REASON_X_REPLIES_AR = "لم نجد في هذه الخطة مصدرًا نقرأ منه الردود على التغريدات، فلن تُضاف هذه الخطوة ولن تُحسب في السعر";
 
 /**
  * Makes the plan say what it does not carry (idempotent: a second call adds nothing; a plan that satisfies the contract is not touched). A missing stage becomes a step that is NOT INCLUDED on the card; a condition no field carries gets its sentence in the notes.
@@ -278,6 +294,7 @@ export function repairPlanByContract(contract: RequestContract, plan: ContractPl
   const unserved = (what_ar: string, reason_ar: string): void => { plan.unserved_steps = [...(plan.unserved_steps ?? []), { what_ar, reason_ar }]; };
   for (const stage of verdict.missingStages) {
     if (stage === "comments") unserved(`التعليقات على كل ${nounOf(contract.parentKind)}`, STEP_REASON_COMMENTS_AR);
+    else if (contract.platform === "x") unserved("الردود على كل تغريدة", STEP_REASON_X_REPLIES_AR);
     else unserved("الردود على كل تعليق", STEP_REASON_REPLIES_AR);
     added.push(stage);
   }
