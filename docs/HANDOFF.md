@@ -4,6 +4,53 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 40 (6 Nov 2026, after #435, main = `182074a`): corrective release from the Nov 6 five-platform acceptance campaign (#432, #433, #434, #435)
+
+**No SQL write, no refund or ledger action, no flag change, no migration, no paid or provider call.** All production facts are read-only SELECTs on the test account. The full evidence is in `docs/evidence/nov6-campaign/README.md`, including the X charge eligibility note for the owner. The targeted retest is in `docs/WEGZ-RETEST-NOV6.md` and is **not authorized** until the owner sets a ceiling.
+
+1. **X (#432)**
+   - **Defect:** «مع ردين حقيقيين على كل منشور» produced `replies: none`, because the reply words were read by `/ردود/` only.
+   - **Consequences:** no replies stage; `-filter:replies` was not sent; two replies to other accounts were chosen and billed as the «منشورين». The contract gate exempted X and is not on the compiled path, so nothing was stated.
+   - **Fixes:**
+     - All reply forms are read; «ردود/رد فعل» are not replies.
+     - Dual nouns count per parent.
+     - An X parent is an original post: `-filter:replies` is always sent and `is_reply` rows are never chosen.
+     - X with replies is ranked by engagement.
+     - The replies stage honours the per-tweet number.
+     - A requested replies step with no stage is always stated.
+     - The card's approve button becomes «اعتمد بدون هذه الخطوة».
+   - **Collateral finding:** the stored M5 and M14 X plans had also dropped their replies step unseen.
+2. **Topic (#433)**
+   - **Defect:** optional clauses («(… لو متاح)», «إن أمكن», «if available») leaked into the topic, the provider keyword and the parent kind.
+   - **Fix:** they are now `Ask.preferences`, stated on the card.
+   - **Relevance gate:** on Facebook and Instagram keyword searches with no named source, a row whose text never names the topic is never chosen. If nothing is relevant, the use / change / cancel question is asked, now on every platform. Tag-only rows stay, marked.
+   - **Unchanged on purpose:** named-source flows, X and TikTok.
+   - **Stated limit:** a post that names the topic in its body (the Facebook joke) is «يتحدث نصه»; code does not judge seriousness.
+3. **Instagram (#434)**
+   - **Account names:** «أسماء الحسابات/الصفحات/القنوات» are read as the account.
+   - **Standard columns:** Instagram parent sheets carry account, date and likes. Each comes from the card, is recovered from the real page's keys, or is shown «غير متاح» with a sentence before approval.
+   - **Denominator:** a comments number per parent that the customer gave (`per_parent_asked`) stays the promise. The stored public plan had been judged down to 1, giving «3 of 3». All surfaces now say 3 of 6.
+   - **Money:** unchanged. Settlement is `min(file rows, plan.price.deliveredRows)`.
+4. **Facebook chat table (#435)**
+   - **Not proven:** the source of «1,602 / 584,517». Neither number is in any DB row, and the Storage snapshots were not readable.
+   - **Proven and fixed:** a running live snapshot could outrank the done snapshot (fresh writer id at an equal sequence). Plan samples were titled «أمثلة من النتيجة»; they are now «عينة أولية قبل التنفيذ».
+   - **New test:** the final live table equals the workbook for the stored Facebook posts.
+5. **Gates on each PR**
+   - Full suite green: 12,214 passed after #435.
+   - `tsc` passes for site and worker.
+   - `next build` passes, and the client-bundle secret scan is clean.
+   - Vercel preview passed.
+   - Real Chromium (SIMULATED): the live-sheet journey passed 48/48 and the card UI check 18/18 at 1280, 390 and 320.
+6. **Deploy**
+   - Vercel production built each merge SHA: `7af0206`, `e159d9e`, `a13bb55` and `182074a`.
+   - Heroku: the dyno reports `version: dev`, so its commit is **unknown**. New worker ids started 1–2 minutes after each merge, which is inferred auto-deploy, not verified.
+7. **Owner decisions pending**
+   - Remediation of the X 200 points, and possibly the Instagram and Facebook charges. Evidence only; nothing was done.
+   - A ceiling for the targeted retest.
+   - One Storage read of `msn_60fd71cf5e4d1c9fc5f2/live/snap_*` to close the Facebook table question.
+
+---
+
 ## Round 39 (5 Nov 2026, after #429, main = `95409ad3`): release campaign: busy counter, PDF contract, Stage 4 customer surfaces, migration prechecks, the pilot's file dependency
 
 **No SQL write, no flag change, no paid call, no e-mail.** The owner confirmed `b0d08be8-db61-4860-841e-fa963045557e` is a dedicated test account and that the research mission `msn_c0442abad375bb23938d` (job `job_quote_b0f9d9acc147f45340058a026b2eafc1`, 5 records, 200 held / 200 released / 200 charged, USD 0.00217) is genuine; it is NOT repeated.

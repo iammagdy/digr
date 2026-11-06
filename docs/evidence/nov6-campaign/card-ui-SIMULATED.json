@@ -1,0 +1,113 @@
+{
+ "evidence": "SIMULATED (real Chromium, real card component and production CSS, compiled plan of the stored X request with no replies card; synthetic original tweets); NOT production",
+ "results": [
+  {
+   "viewport": "desktop",
+   "width": 1280,
+   "check": "no sideways scroll",
+   "ok": true
+  },
+  {
+   "viewport": "desktop",
+   "width": 1280,
+   "check": "approve names the scope decision",
+   "ok": true
+  },
+  {
+   "viewport": "desktop",
+   "width": 1280,
+   "check": "approve fully on screen",
+   "ok": true
+  },
+  {
+   "viewport": "desktop",
+   "width": 1280,
+   "check": "excluded step and its choice shown",
+   "ok": true
+  },
+  {
+   "viewport": "desktop",
+   "width": 1280,
+   "check": "samples labelled preliminary",
+   "ok": true
+  },
+  {
+   "viewport": "desktop",
+   "width": 1280,
+   "check": "rtl",
+   "ok": true
+  },
+  {
+   "viewport": "phone",
+   "width": 390,
+   "check": "no sideways scroll",
+   "ok": true
+  },
+  {
+   "viewport": "phone",
+   "width": 390,
+   "check": "approve names the scope decision",
+   "ok": true
+  },
+  {
+   "viewport": "phone",
+   "width": 390,
+   "check": "approve fully on screen",
+   "ok": true
+  },
+  {
+   "viewport": "phone",
+   "width": 390,
+   "check": "excluded step and its choice shown",
+   "ok": true
+  },
+  {
+   "viewport": "phone",
+   "width": 390,
+   "check": "samples labelled preliminary",
+   "ok": true
+  },
+  {
+   "viewport": "phone",
+   "width": 390,
+   "check": "rtl",
+   "ok": true
+  },
+  {
+   "viewport": "narrow",
+   "width": 320,
+   "check": "no sideways scroll",
+   "ok": true
+  },
+  {
+   "viewport": "narrow",
+   "width": 320,
+   "check": "approve names the scope decision",
+   "ok": true
+  },
+  {
+   "viewport": "narrow",
+   "width": 320,
+   "check": "approve fully on screen",
+   "ok": true
+  },
+  {
+   "viewport": "narrow",
+   "width": 320,
+   "check": "excluded step and its choice shown",
+   "ok": true
+  },
+  {
+   "viewport": "narrow",
+   "width": 320,
+   "check": "samples labelled preliminary",
+   "ok": true
+  },
+  {
+   "viewport": "narrow",
+   "width": 320,
+   "check": "rtl",
+   "ok": true
+  }
+ ]
+}
