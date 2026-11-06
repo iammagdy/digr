@@ -25,6 +25,8 @@ export interface RequestContract {
   period: boolean;
   comments: ChildAsk;
   replies: ChildAsk;
+  /** NOV 6 2026: the optional preferences the customer wrote («منشورات فيديو لو متاح»), cut from the topic, the keywords, the kind and the count; stated on the plan. Absent: none. */
+  preferences?: string[];
   /** ROUND 35: the customer asked for REELS (a kind of Instagram post, not a kind of «منشور»): the plan must serve it with a source that proves the media type or say that it cannot. Absent when the words ask for no reels. */
   media?: "reels";
   /** ROUND 36: the DELIVERABLE FIELDS the customer named («مع النصوص والروابط والتواريخ وعدد المشاهدات»), as the row keys that carry them. They take part in the choice of the source and in the plan's review: a field the chosen source cannot give is said before approval, never left out silently. Absent when the words name none of them. */
@@ -118,14 +120,31 @@ function topicOf(text: string): string | null {
   return m ? m[1].trim() : null;
 }
 
+/**
+ * NOV 6 2026 CAMPAIGN (Facebook msn_60fd71cf5e4d1c9fc5f2, Instagram msn_34dcf09434697a62995c): «عن الذكاء الاصطناعي (منشورات فيديو لو متاح)» and «(ريلز لو متاح)» are OPTIONAL FORMAT PREFERENCES, not part of the topic. The topic
+ * parser stopped at «،» only, so the topic became «الذكاء الاصطناعي (منشورات فيديو لو متاح)»: it was sent to the source as the search keyword, it named the files, it made every row «لا يذكر الموضوع» (the words «لو متاح» are in no post), and
+ * «فيديو» made a Facebook posts request a «videos» request. An optional clause is a parenthesis, or a clause after «،» / «-», that holds a conditional of availability («لو متاح», «إن أمكن», «إن وجد», «إذا توفر», «if available»).
+ * It is cut from the text that decides the topic, the keywords, the kind and the count; it is kept, as written, as a preference the plan states.
+ */
+const IF_AVAILABLE = /(?:لو|إن|ان|إذا|اذا)\s+(?:كان\s+|كانت\s+)?(?:متاح|متاحة|متاحه|متوفر|متوفرة|متوفره|موجود|موجودة|موجوده|أمكن|امكن|وجد|وُجد|توفر|توفّر|تيسر|يتاح)|if\s+(?:available|possible)|when\s+available/i;
+export function optionalPartsOf(text: string): { required: string; preferences: string[] } {
+  const preferences: string[] = [];
+  let required = String(text ?? "").replace(/\(([^()]*)\)/g, (all, inner: string) => (IF_AVAILABLE.test(inner) ? (preferences.push(inner.trim()), " ") : all));
+  // a clause after a comma or a dash that is itself conditional («، ويفضل فيديو لو متاح»): cut up to the next comma or the end
+  required = required.replace(/[،,\-–]\s*([^،,.؟?()]*)/g, (all, clause: string) => (IF_AVAILABLE.test(clause) ? (preferences.push(clause.trim()), "،") : all));
+  return { required: required.replace(/\s+/g, " ").replace(/\s+([،,.])/g, "$1").replace(/(?:[،,]\s*){2,}/g, "، ").trim(), preferences };
+}
+
 /** THE ONE JOIN of the customer's words and their answer to the one question (it was written by hand at a dozen call sites, `${request_text} ${answer_text ?? ""}`): every reader of «what was asked» takes it from here. */
 export const askedTextOf = (mission: { request_text: string; answer_text?: string | null }): string => `${mission.request_text} ${mission.answer_text ?? ""}`;
 
 /** The contract of a request, from the customer's words and the answer they gave to the one question (either may be empty). */
 export function buildRequestContract(request: unknown, answer?: unknown): RequestContract {
   const text = `${String(request ?? "")} ${String(answer ?? "")}`.replace(/\s+/g, " ").trim();
+  // THE REQUIRED WORDS decide the kind, the count and the topic; an optional preference never does (NOV 6 2026)
+  const { required, preferences } = optionalPartsOf(text);
   const platform = firstPlatform(text);
-  const kind = KIND_WORDS.find(([, re]) => re.test(text))?.[0] ?? (platform === "x" ? "tweets" : null);
+  const kind = KIND_WORDS.find(([, re]) => re.test(required))?.[0] ?? (platform === "x" ? "tweets" : null);
   const classes = conditionsOfRequest(text);
   const commentsAsked = /تعليق/.test(text) && platform !== "x";
   const repliesAsked = repliesAskedIn(text);
@@ -134,9 +153,10 @@ export function buildRequestContract(request: unknown, answer?: unknown): Reques
     parentKind: kind,
     ...(REELS_WORD.test(text) && platform === "instagram" ? { media: "reels" as const } : {}),
     ...(wantedFieldsOf(text).length > 0 ? { wants: wantedFieldsOf(text) } : {}),
-    count: countOf(text),
+    count: countOf(required),
     source: sourceOf(text),
-    topic: topicOf(text),
+    topic: topicOf(required),
+    ...(preferences.length > 0 ? { preferences } : {}),
     country: classes.includes("country"),
     language: classes.includes("language"),
     period: classes.includes("date"),

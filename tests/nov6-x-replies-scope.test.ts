@@ -72,9 +72,10 @@ describe("the parents are ORIGINAL posts (root cause 2)", () => {
   });
 
   it("a tweet the source marks as a reply is never a parent", () => {
-    expect(parentEligible({ is_reply: true }, { platform: "x" })).toBe(false);
-    expect(parentEligible({ is_reply: false }, { platform: "x" })).toBe(true);
-    expect(parentEligible({ is_reply: true }, { platform: "tiktok" })).toBe(true);
+    const noTopic = { topic: { text: null, relation: "none" as const }, source: { kind: "none" as const, text: null } };
+    expect(parentEligible({ is_reply: true }, { platform: "x", ...noTopic })).toBe(false);
+    expect(parentEligible({ is_reply: false }, { platform: "x", ...noTopic })).toBe(true);
+    expect(parentEligible({ is_reply: true }, { platform: "tiktok", ...noTopic })).toBe(true);
   });
 
   it("THE FAILURE SHAPE: the stored replies come first in the page; the plan chooses only the originals, never bills a reply as a post, and says what it left out", () => {
