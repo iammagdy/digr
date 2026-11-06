@@ -10,7 +10,7 @@ import { compilePlan, parentInputs } from "../src/lib/agentMission/foundation/co
 import { NO_ABOUT_OPTIONS_AR } from "../src/lib/agentMission/foundation/topicChoice";
 import { cardOf } from "../src/lib/agentMission/foundation/toolCards";
 import { reportedPlan, withPromiseCaps, withRepliesJudged } from "../src/lib/agentMission/repliesCard";
-import { counterAr } from "../src/lib/agentMission/stage2/liveSheet";
+import { counterAr, newestSnapshotName } from "../src/lib/agentMission/stage2/liveSheet";
 import type { PricedPlan } from "../src/lib/agentMission/plan";
 import { SUMMARY_SHEET_AR } from "../src/lib/modelPlanner/missionWorkbook";
 import type { LiveSnapshot } from "../src/lib/agentMission/stage2/liveSheet";
@@ -199,3 +199,56 @@ describe("the live builder reads the rows the way runMission.ts does (a pin: cha
     expect(d.rowsByStage.videos.map((r) => r.id)).toEqual(rows.videos.map((r) => r.id));
   });
 });
+
+/**
+ * NOV 6 2026 CAMPAIGN, FACEBOOK (msn_60fd71cf5e4d1c9fc5f2): the tester's chat showed a table with a post of «1,602» likes and «584,517» views while the delivered workbook had 105 likes, 107 comments, 34 shares
+ * and no view count. Those two numbers are in NO database row of the mission (plan, public plan, spares, samples, events, messages; read-only SELECTs); the stored snapshots and pages were not readable here
+ * (SQL access only), so their source is NOT PROVEN. What this proves: the FINAL live table of that plan is the workbook (the same records, headers and cells), it has no views column (the Facebook card gives none),
+ * it never carries a number that is not in a delivered row, the comments sheet never shows a post's date, and the done snapshot always wins over a running one.
+ * DATA: the two posts are the STORED pinned rows of the plan (texts shortened); the comments are SYNTHETIC.
+ */
+describe("Facebook (NOV 6 2026): the final live table is the workbook, field for field", () => {
+  const AT = Date.parse("2026-11-06T18:19:13Z");
+  const REQUEST = "اجمع لي منشورين عامين من فيسبوك عن الذكاء الاصطناعي، مع تعليقين حقيقيين على كل منشور، والروابط وأسماء الصفحات.";
+  const card = cardOf("justoneapi.x.facebook-search-post-v1")!;
+  const raw = (id: string, message: string, name: string, ts: number, comments: number, reactions: number, shares: number) => ({ post_id: id, message, author: { name, id: `a${id}`, url: `https://www.facebook.com/${id}` }, timestamp: ts, url: `https://www.facebook.com/p/${id}`, comments_count: comments, reactions_count: reactions, reshare_count: shares });
+  const page = { data: { results: [
+    raw("1168324279060979", "🚨 عاجل: الذكاء الاصطناعي بقى يقدر يعملك 30 فيديو شورتس في يوم واحد", "Zeyad Wael", 1_794_000_000, 107, 105, 34),
+    raw("4043709562436479", "حتى الذكاء الاصطناعي طلع #يكذب أرسلت له صورتي", "قطعة سكرة", 1_793_999_000, 35, 15, 0),
+  ], cursor: null } };
+  const plan = (): PricedPlan => {
+    const ask = buildAsk(REQUEST, null, AT);
+    const r = compilePlan({ ask, pool: { card, params: parentInputs(card, ask), pages: [{ callId: "call_0001", page }] }, exposure: () => ({ callId: null, page: null, failed: true }), capabilityOf: (id) => catalog.byId.get(id)?.capability ?? null, nowMs: AT });
+    if (!r.ok) throw new Error(r.reason);
+    return r.plan;
+  };
+  const rows = (p: PricedPlan): Record<string, Row[]> => {
+    const posts = (p.stages[0].pinned_rows ?? []) as Row[];
+    const comments = posts.flatMap((post, i) => [0, 1].map((k) => ({ id: `c_${i}_${k}`, parent_id: String(post.id), text: `synthetic comment ${k}`, author: "synthetic", posted_at: "2026-11-06T18:00:00.000Z", likes: k, replies_count: 0, language: "ar" })));
+    return { posts, comments };
+  };
+
+  it("at completion: same sheets, headers, rows and cells as the file; 105 / 107 / 34 as delivered; no views column; no number from outside the delivered rows", async () => {
+    const p = plan();
+    expect(p.stages.map((s) => s.key)).toEqual(["posts", "comments"]);
+    const { log } = await runLog(rows(p), ["posts", "comments"], 3);
+    const live = buildLiveSnapshot({ missionId: "msn_live_fb", plan: p, snap: log.snapshotOfMemory(), status: "done", nowMs: 0 });
+    expectEqual(live, await fileOf(p, log));
+    const posts = live.sheets[0];
+    expect(posts.headers).not.toContain("المشاهدات");
+    const cellOf = (title: string, r: number) => posts.rows[r].cells[posts.headers.indexOf(title)]?.v;
+    expect(cellOf("الإعجابات", 0)).toMatch(/^(105|١٠٥)$/);
+    expect(cellOf("عدد التعليقات", 0)).toMatch(/^(107|١٠٧)$/);
+    expect(JSON.stringify(live.sheets)).not.toMatch(/1,?602|584,?517|١٬?٦٠٢|٥٨٤٬?٥١٧/);
+    // the comments sheet shows the post's text and link as context, never the post's date as the comment's
+    const comments = live.sheets[1];
+    expect(comments.headers.filter((h) => /تاريخ/.test(h))).toEqual(["تاريخ ووقت التعليق"]);
+  });
+
+  it("the done snapshot wins over a running one at the same sequence, whatever the writer ids", () => {
+    expect(newestSnapshotName(["snap_000000005_zzzz9999.json", "snap_000000005_aaaa0000_done.json", "snap_000000004_zzzz9999.json"])).toBe("snap_000000005_aaaa0000_done.json");
+    expect(newestSnapshotName(["snap_000000003_b.json", "snap_000000004_a.json"])).toBe("snap_000000004_a.json");
+    expect(newestSnapshotName(["junk.json", "snap_1_a.json"])).toBeNull();
+  });
+});
+
