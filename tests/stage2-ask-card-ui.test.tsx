@@ -94,9 +94,11 @@ describe("the mission card shows it only when the server sent it", () => {
   it("with askCard, on a plan: the «فهمنا طلبك» card is in the mission card", () => {
     expect(renderToStaticMarkup(createElement(AgentMissionCardBody, { view: plan, isGuest: false, askCard: view }))).toContain('data-testid="ask-card"');
   });
-  it("only the requests page asks for the Stage 2 surfaces; the chat page file is not touched", () => {
+  it("only the requests page asks for the Stage 2 surfaces (the Ask card); the chat page asks for the live sheet only, never `stage2`", () => {
     expect(readFileSync("src/app/dashboard/requests/[id]/page.tsx", "utf8")).toContain("<AgentMissionCard missionId={missionId} stage2 />");
-    expect(readFileSync("src/app/dashboard/chat/page.tsx", "utf8")).not.toContain("stage2");
+    const chat = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
+    expect(chat).not.toMatch(/<AgentMissionCard[^>]*\bstage2\b/);
+    expect(chat).toContain("<AgentMissionCard missionId={m.agentMissionId} liveSheet={lastMissionMessageIds(messages).has(m.id)}");
   });
   it("the mission route sends askCard only while the plan waits and only when the flag is on for the viewer", () => {
     const route = readFileSync("src/app/api/missions/[id]/route.ts", "utf8");

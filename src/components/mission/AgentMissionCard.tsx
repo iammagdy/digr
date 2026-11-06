@@ -53,7 +53,7 @@ async function authHeaders(): Promise<Record<string, string>> {
   } catch { return {}; }
 }
 
-export default function AgentMissionCard({ missionId, onEdit, onApproved, onSettled, stage2 = false }: { missionId: string; onEdit?: (requestText: string) => void; onApproved?: () => void; /** The mission is over: the release and the charge are written, so the page refreshes the balance it shows. */ onSettled?: () => void; /** STAGE 2: the page shows the Stage 2 surfaces (the requests page only, owner decision 1); they still appear only when the server sends them (flags on). */ stage2?: boolean }) {
+export default function AgentMissionCard({ missionId, onEdit, onApproved, onSettled, stage2 = false, liveSheet = stage2 }: { missionId: string; onEdit?: (requestText: string) => void; onApproved?: () => void; /** The mission is over: the release and the charge are written, so the page refreshes the balance it shows. */ onSettled?: () => void; /** STAGE 2: the page shows the Stage 2 surfaces (the requests page only, owner decision 1); they still appear only when the server sends them (flags on). */ stage2?: boolean; /** LAUNCH ROUND: the page shows the LIVE SHEET (the requests page through `stage2`, and the conversation, where the customer asked); still only when the server says DIGER_STAGE2_LIVE_SHEET is on for the viewer. Nothing else of Stage 2 comes with it. */ liveSheet?: boolean }) {
   const [askError, setAskError] = useState<string | null>(null);
   // STAGE 2 F-2: the last live data the live sheet reported (null until its first answer). The card reads it to show ONE progress counter on a phone; it is passed on only while the live sheet is shown.
   const [liveData, setLiveData] = useState<LiveData | null>(null);
@@ -202,9 +202,10 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   if (!v) {
     return <div dir="rtl" data-testid="agent-card" data-phase="loading" className="mt-3 rounded-[18px] border border-ln bg-sf p-4 text-[13px] text-ink2" role="status">جارٍ تجهيز مهمتك…</div>;
   }
-  // STAGE 2 S10: the live sheet under the card, on the requests page only (`stage2`) and only when the server said the flag is on for this viewer
-  const showLive = stage2 && answer?.liveSheet === true && (v.phase === "running" || v.phase === "done" || v.phase === "partial");
-  return <>{<AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} pendingText={pendingText} quietSinceMs={quietSinceMs} nowMs={nowMs} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled} askCard={stage2 ? answer?.askCard ?? null : null} onAskEdit={askEdit} askError={askError} live={showLive ? liveData : null} />}{showLive ? <LiveSheetPanel missionId={missionId} enabled onData={setLiveData} /> : null}</>;
+  // STAGE 2 S10 + LAUNCH ROUND: the live sheet under the card, where the page asks for it (`liveSheet`: the requests page and the conversation) and only when the server said the flag is on for this
+  // viewer; from the moment the customer approves here (the plan is shown as started at once) or the mission works, and after it ends (the final rows stay)
+  const showLive = liveSheet && answer?.liveSheet === true && (v.phase === "running" || v.phase === "done" || v.phase === "partial" || (v.phase === "plan" && approvedHere));
+  return <>{<AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} pendingText={pendingText} quietSinceMs={quietSinceMs} nowMs={nowMs} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled} askCard={stage2 ? answer?.askCard ?? null : null} onAskEdit={askEdit} askError={askError} live={showLive ? liveData : null} />}{showLive ? <div className="mt-3 w-full max-w-[640px] min-w-0 sm:max-w-none" data-testid="agent-live"><LiveSheetPanel missionId={missionId} enabled missionLive={!ended} onData={setLiveData} /></div> : null}</>;
 }
 
 /** The card itself, drawn from one view: pure (no network), so it renders the same on the server and in the tests. */
@@ -370,13 +371,8 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
         <div role="status" aria-live="polite" className="flex flex-col gap-2 rounded-[14px] border border-ln bg-sf2 p-3.5" data-testid="agent-started">
           {/* ROUND 26 (item 6): ONE sentence that follows the state and carries the one counter; never «بدأنا جمع ... نحو دقيقتين» once collecting is over */}
           <p className="m-0 text-[15px] font-semibold leading-[1.8] text-ink" data-testid="agent-started-line">
-            {/* STAGE 2 F-2 (merge with main's Round 26 sentence): with live data and a known promised total the phone shows ONE counter (the live one, below), so the sentence's own «(X من N)» (another total) and its «collection is over» claim (made on that other total) are for a desktop only */}
-            {liveProgress && v.collectLineAr ? (
-              <>
-                <span className="hidden sm:inline">{v.collectLineAr}</span>
-                <span className="sm:hidden" data-testid="agent-started-line-phone">{phoneCollectLine(v.collectLineAr, live)}</span>
-              </>
-            ) : (v.collectLineAr ?? `نجمع ${v.totalRowsAr}`)}
+            {/* STAGE 2 F-2 + LAUNCH ROUND: with live data and a known promised total the live counter is THE progress on EVERY width (the desktop grid now shows it too), so the sentence drops its own «(X من N)» (another total) and its «collection is over» claim (made on that other total) until the live snapshot is complete */}
+            {liveProgress && v.collectLineAr ? <span data-testid="agent-started-line-phone">{phoneCollectLine(v.collectLineAr, live)}</span> : (v.collectLineAr ?? `نجمع ${v.totalRowsAr}`)}
           </p>
           <div className="flex flex-col gap-1" data-testid="agent-progress">
             <div className="flex items-baseline justify-between gap-2 text-[13px] text-ink2">
@@ -384,8 +380,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
             </div>
             {liveProgress ? (
               <>
-                <div className="hidden sm:block">{cardBar}</div>
-                <div className="sm:hidden" data-testid="agent-progress-live">
+                <div className="w-full" data-testid="agent-progress-live">
                   <div role="progressbar" aria-label="تقدّم المهمة" aria-valuemin={0} aria-valuemax={liveProgress.promised} aria-valuenow={Math.min(liveProgress.delivered, liveProgress.promised)} className="h-1.5 w-full overflow-hidden rounded-full bg-sf">
                     <div className="h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none" style={{ width: `${Math.round(liveProgress.ratio * 100)}%`, background: "var(--ac)" }} />
                   </div>
