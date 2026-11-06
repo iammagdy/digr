@@ -363,7 +363,7 @@ function runContract(a: { plan: PricedPlan; rowsByStage: Record<string, Row[]>; 
   const chatLine = customerMissionView({ mission: { id: "contract", status: "completed", question_ar: null, plan_public: publicPlan as never, reserved_points: null, unit_price_points: null, delivered_units: delivered, charged_points: null, summary_ar: null, files: null, created_at: new Date(a.now).toISOString() }, events: [] }).resultLinesAr.find((l) => /^تم تسليم/.test(l)) ?? null;
   const chat = parseDeliveredLine(chatLine);
   // THE CARD'S NUMBER (customerView.stagesView: the card's own «المجموع في ملفك»), plus what the stages that PROMISED NO NUMBER delivered (comments of videos with no counter: judged to what the source gave): that is the number every surface must say after the run
-  const card = a.approvedPlan && compiled ? stagesView(customerPlanView(a.approvedPlan)).total + a.approvedPlan.stages.filter((st) => st.deliver && st.children_open === true).reduce((n, st) => n + (rowsByStage[st.key] ?? []).length, 0) : null;
+  const card = a.approvedPlan && compiled ? stagesView(customerPlanView(a.approvedPlan)).total + a.approvedPlan.stages.filter((st) => st.deliver && st.children_open === true && !st.per_parent_asked).reduce((n, st) => n + (rowsByStage[st.key] ?? []).length, 0) : null;
   const input: ContractInput = {
     plan, rowsByStage, sheets, limitLines, now: a.now, ...(a.routes && Object.keys(a.routes).length > 0 ? { routes: a.routes } : {}),
     numbers: { card, file: promised, chat: chat ? chat.y : null, notice: promised, orders: compiled ? promisedRowsOf(publicPlan.stages as never, 0, true) || null : null, fileDelivered: delivered, deliveredRows: plan.stages.filter((st) => st.deliver).reduce((n, st) => n + (rowsByStage[st.key] ?? []).length, 0) },

@@ -4,7 +4,7 @@ import { checkChannelsAgainstWords } from "../../src/lib/agentMission/foundation
 import { buildShapeDigest } from "../../src/lib/modelPlanner/digest";
 import { carriedBy, chooseCard, compilePlan, parentInputs, rankedCards, rankedPoolOf, COMPILED_PLATFORMS, type CompileResult } from "../../src/lib/agentMission/foundation/compilePlan";
 import { channelAnswerOf, channelEvidenceOf, youtubeChannelChoiceQuestionAr } from "../../src/lib/agentMission/foundation/discovery/channelEvidence";
-import { fieldNotesAr, recoverFields, type FieldReport } from "../../src/lib/agentMission/foundation/discovery/fieldRecovery";
+import { fieldNotesAr, recoverFields, sheetWantsOf, type FieldReport } from "../../src/lib/agentMission/foundation/discovery/fieldRecovery";
 import { mediaMarkOf, mediaNotesAr, reelsBasisOf, reelsCandidates, type MediaMark } from "../../src/lib/agentMission/foundation/discovery/media";
 import { candidateViewOf, discoveryMarkOf, discoveryNotesAr, pagingOf, type DiscoveryEvaluation, type DiscoveryMark, type SelectCapability } from "../../src/lib/agentMission/foundation/discovery/plan";
 import { factsOf, isAboutAndEligible, pageMatchesSource, rankPool } from "../../src/lib/agentMission/foundation/pool";
@@ -125,7 +125,7 @@ export async function planByCompiler(deps: CompiledPlanningDeps): Promise<WithCo
   }
   // ROUND 36: the fields the customer named and what the real page showed for each (the unavailable ones are said before approval; the recovered ones keep the path they were read from)
   if (result.kind === "plan" && seen.fields && seen.fields.length > 0) {
-    result = { ...result, plan: { ...result.plan, notes_ar: [...(result.plan.notes_ar ?? []), ...fieldNotesAr(seen.fields)], compiled: { ...result.plan.compiled!, fields: seen.fields } } };
+    result = { ...result, plan: { ...result.plan, notes_ar: [...(result.plan.notes_ar ?? []), ...fieldNotesAr(seen.fields, result.ask.wants ?? [])], compiled: { ...result.plan.compiled!, fields: seen.fields } } };
   }
   // ROUND 33: a plan whose parents were read by a tool derived from the catalog says so before approval, with what the pages showed about completeness (never «all of the platform»), and keeps the audit mark of the discovery
   // ROUND 34: EVERY PLAN OF A MISSION WITH DISCOVERY ON carries the mark, whichever tool was chosen (a verified tool took part in the same evaluation as the derived ones): the audit evidence that discovery was entered, what was eligible and what was chosen
@@ -371,7 +371,9 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   track(card, first);
   if (ask.media === "reels" && ask.platform === "instagram") seen.media = mediaMarkOf(card);
   // ROUND 36: THE FIELDS THE CUSTOMER NAMED, checked on the REAL first page just read (no extra call): in the card, recovered from the provider's own key (a card derived from the catalog only), or unavailable (said before approval)
-  if (ask.wants && ask.wants.length > 0) { const rec = recoverFields(card, first.page, ask.wants, deps.nowMs); card = rec.card; seen.fields = rec.report; }
+  // NOV 6 2026: the platform's STANDARD parent fields too (Instagram: the account, the date, the likes), checked on the same page
+  const sheetWants = sheetWantsOf(ask);
+  if (sheetWants.length > 0) { const rec = recoverFields(card, first.page, sheetWants, deps.nowMs); card = rec.card; seen.fields = rec.report; }
   const pages: Array<{ callId: string; page: unknown; card?: ToolCard }> = [{ callId: first.callId, page: first.page }];
   // LIVE ROUND 7: «عن X» on a source whose search also matches hashtags. When no video of the first page has its own text about the topic, the one more read the gateway allows for this source asks the topic with the words of talking about it
   // (built by code from the Ask), and the union of both pages is ranked by the same rule. Only a search with no operators (TikTok); X's query is the quoted words of the text itself.

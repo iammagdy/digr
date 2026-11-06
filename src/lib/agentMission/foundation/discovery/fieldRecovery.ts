@@ -71,6 +71,8 @@ export function recoverFields(card: ToolCard, page: unknown, wants: ReadonlyArra
       continue;
     }
     if (fields[key] !== undefined && rows.some((r) => r[key] !== null && r[key] !== undefined && r[key] !== "")) { report.push({ key, status: "card", path: fields[key]!.join(".") }); continue; }
+    // the ACCOUNT is given by the card's handle column as well as by a display name (NOV 6 2026: an «account» column is never «غير متاح» while the handle is on every row)
+    if (key === "author" && fields.username !== undefined && rows.some((r) => r.username !== null && r.username !== undefined && r.username !== "")) { report.push({ key, status: "card", path: fields.username.join(".") }); continue; }
     const ok = KIND[key];
     const found = card.derived && ok && items.length > 0
       ? (CANDIDATES[key] ?? []).find((path) => { const n = items.filter((it) => ok(at(it, path), nowMs)).length; return n >= 1 && n / items.length >= 0.8; })
@@ -84,15 +86,33 @@ export function recoverFields(card: ToolCard, page: unknown, wants: ReadonlyArra
 
 const NAME_AR: Record<WantedField, string> = { posted_at: "التواريخ", author: "أسماء أصحاب الحسابات", views: "المشاهدات", likes: "الإعجابات" };
 
-/** What the customer reads before approval about the fields they named (Arabic only; no provider, no tool name, no field path). Nothing is said when every field is delivered from the card as it was. */
-export function fieldNotesAr(report: ReadonlyArray<FieldReport>): string[] {
-  const missing = report.filter((r) => r.status === "unavailable").map((r) => NAME_AR[r.key]);
+/**
+ * NOV 6 2026 (Instagram msn_34dcf09434697a62995c: the Reels sheet was «النص، الرابط، المشاهدات، علاقة النص بالموضوع» only): THE STANDARD FIELDS of a platform's parent sheet. They are columns of every such sheet whether or not the
+ * customer named them: read from the card, recovered from the real page's own keys (a catalog-derived card), or «غير متاح» on every row with a sentence before approval. Never a value written by us.
+ */
+export const STANDARD_PARENT_FIELDS: Partial<Record<string, ReadonlyArray<WantedField>>> = { instagram: ["author", "posted_at", "likes"] };
+/** The fields a parent sheet must account for: the ones the customer named, then the platform's standard ones. */
+export function sheetWantsOf(ask: { platform: string | null; wants?: ReadonlyArray<WantedField> }): WantedField[] {
+  const out = [...(ask.wants ?? [])];
+  for (const k of (ask.platform ? STANDARD_PARENT_FIELDS[ask.platform] : undefined) ?? []) if (!out.includes(k)) out.push(k);
+  return out;
+}
+
+/**
+ * What the customer reads before approval about the fields of the sheet (Arabic only; no provider, no tool name, no field path). Nothing is said when every field is delivered from the card as it was. `requested`: the fields the
+ * customer NAMED (absent: all of the report); a standard field that is missing is said without «طلبت».
+ */
+export function fieldNotesAr(report: ReadonlyArray<FieldReport>, requested?: ReadonlyArray<WantedField>): string[] {
+  const asked = (k: WantedField): boolean => requested === undefined || requested.includes(k);
+  const missingStandard = report.filter((r) => r.status === "unavailable" && !asked(r.key)).map((r) => NAME_AR[r.key]);
+  const missing = report.filter((r) => r.status === "unavailable" && asked(r.key)).map((r) => NAME_AR[r.key]);
   const approximate = report.some((r) => r.status === "approximate");
   const recovered = report.filter((r) => r.status === "recovered").map((r) => NAME_AR[r.key]);
   const out: string[] = [];
   if (recovered.length > 0) out.push(`قرأنا ${recovered.join(" و")} من بيانات المصدر نفسها كما أعادها، ولم نحسبها ولم نخمّنها.`);
   if (approximate) out.push(APPROX_FIELD_NOTE_AR);
   if (missing.length > 0) out.push(`طلبت ${missing.join(" و")}، لكن المصدر المختار لا يعيدها في ما قرأناه: ${missing.length === 1 ? "سيظهر عمودها" : "ستظهر أعمدتها"} في الملف و«غير متاح» في كل صفوفه، ولم نكتب أي قيمة من عندنا. ولم نختر مصدرًا بعيدًا عن طلبك لمجرد الحصول عليها.`);
+  if (missingStandard.length > 0) out.push(`لا يعيد المصدر المختار ${missingStandard.join(" و")} في ما قرأناه: ${missingStandard.length === 1 ? "سيظهر عمودها" : "ستظهر أعمدتها"} في الملف و«غير متاح» في كل صفوفه، ولم نكتب أي قيمة من عندنا.`);
   return out;
 }
 

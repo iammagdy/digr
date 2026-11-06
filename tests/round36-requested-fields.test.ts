@@ -134,7 +134,8 @@ describe("SOURCE ELIGIBILITY: the fields the customer named take part in the cho
     expect(mark.endpoint_id).toBe(ANY);
     expect(mark.media).toMatchObject({ basis: "filter", filter: { field: "mediaType", value: "reel" } });
     expect(w.calls[0].params).toMatchObject({ mediaType: "reel" });
-    expect(r.plan.compiled!.fields!.map((f) => [f.key, f.status])).toEqual([["posted_at", "card"], ["author", "card"]]);
+    // NOV 6 2026: the Instagram parent sheet's standard fields (the account, the date, the likes) are checked with the ones named: the likes are given by this card
+    expect(r.plan.compiled!.fields!.map((f) => [f.key, f.status])).toEqual([["posted_at", "card"], ["author", "card"], ["likes", "card"]]);
     for (const e of mark.evaluation!.eligible) expect(["anyapi.instagram.hashtag.posts", "scrapecreators.x.v1-instagram-search-hashtag", "scrapecreators.x.v2-instagram-reels-search"]).toContain(e.endpoint_id);
     expect(r.plan.summary_ar).toBe("٥ ريلز من إنستجرام عن «الذكاء الاصطناعي».");
   });
