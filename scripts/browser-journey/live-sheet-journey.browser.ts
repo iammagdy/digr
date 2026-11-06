@@ -250,7 +250,7 @@ beforeAll(async () => {
   if (planned.kind !== "plan") throw new Error(planned.kind);
   plan = planned.plan;
   await startFake();
-  app = spawn("npx", ["next", "dev", "-p", String(APP_PORT), "-H", "127.0.0.1"], { cwd: APP, env: { ...process.env, NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${FAKE_PORT}`, NEXT_PUBLIC_SUPABASE_ANON_KEY: "dummy-anon-key", SUPABASE_SERVICE_ROLE_KEY: "dummy-service-key", PORT: String(APP_PORT), NEXT_TELEMETRY_DISABLED: "1" }, stdio: "pipe" });
+  app = spawn("npx", ["next", "dev", "-p", String(APP_PORT), "-H", "127.0.0.1"], { cwd: APP, env: { ...process.env, NEXT_PUBLIC_SUPABASE_URL: `http://127.0.0.1:${FAKE_PORT}`, NEXT_PUBLIC_SUPABASE_ANON_KEY: "dummy-anon-key", SUPABASE_SERVICE_ROLE_KEY: "dummy-service-key", PORT: String(APP_PORT), NEXT_TELEMETRY_DISABLED: "1" }, stdio: "pipe", detached: true });
   await waitFor(`${BASE}/login`);
   browser = await chromium.launch();
   // compile the two pages once (dev mode compiles on first visit)
@@ -260,7 +260,7 @@ beforeAll(async () => {
 }, 600_000);
 afterAll(async () => {
   writeFileSync(process.env.JOURNEY_OUT ?? "live-sheet-journey-results.json", JSON.stringify({ evidence: "SIMULATED (real Chromium, local app, fake sign-in, real live route and worker snapshot code, stored M12 rows); NOT production", results }, null, 1));
-  await browser?.close(); app?.kill("SIGTERM"); await new Promise((r) => fake?.close(() => r(null))); vi.unstubAllEnvs();
+  await browser?.close(); try { if (app?.pid) process.kill(-app.pid, "SIGTERM"); } catch { app?.kill("SIGTERM"); } // the whole group: npx and the dev server it started await new Promise((r) => fake?.close(() => r(null))); vi.unstubAllEnvs();
 });
 
 const KINDS: Kind[] = ["desktop", "phone", "narrow"];

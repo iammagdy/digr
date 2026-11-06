@@ -139,6 +139,25 @@ describe("the loop keeps true data and keeps asking while the mission works", ()
     expect(l.asked).toHaveLength(1 + LIVE_EMPTY_LIMIT);
     expect(l.seen.map((d) => d.cursor)).toEqual(["5"]); // the rows already shown stay
   });
+  it("REVIEW FIX: after that end the sheet shown stays usable: a page or sheet turn is ONE ask, nothing loops", async () => {
+    const l = loop([data("5"), unchanged("5"), unchanged("5"), unchanged("5"), data("5", false, 50)], { isMissionLive: () => false });
+    await flush();
+    for (let i = 0; i < 4; i += 1) await l.clock.advance(30_000);
+    expect(l.ends).toEqual(["empty"]);
+    l.poller.setWindow({ offset: 50 });
+    await flush();
+    expect(l.asked.at(-1)).toEqual({ cursor: null, offset: 50, sheet: null });
+    expect(l.seen.at(-1)!.window.offset).toBe(50);
+    await l.clock.advance(600_000);
+    expect(l.asked).toHaveLength(1 + LIVE_EMPTY_LIMIT + 1);
+  });
+  it("REVIEW FIX: failed asks for a mission that has ended are counted: a route that keeps failing is not asked forever", async () => {
+    const l = loop([data("5"), null, null, null, null, null], { isMissionLive: () => false });
+    await flush();
+    for (let i = 0; i < 6; i += 1) await l.clock.advance(30_000);
+    expect(l.ends).toEqual(["empty"]);
+    expect(l.asked).toHaveLength(1 + LIVE_EMPTY_LIMIT);
+  });
   it("a page that comes back starts from the data it held: the first ask carries its cursor and window, so «nothing changed» keeps it", async () => {
     const l = loop([unchanged("7"), data("8", false, 50)], { start: { cursor: "7", window: { sheet: "comments", offset: 50 } } });
     await flush();
@@ -325,6 +344,8 @@ describe("in the conversation", () => {
   it("the live sheet goes under the LAST card of each mission only (one sheet, one loop per mission)", () => {
     const ids = lastMissionMessageIds([{ id: "u1" }, { id: "a1", agentMissionId: "msn_1" }, { id: "u2" }, { id: "a2", agentMissionId: "msn_1" }, { id: "a3", agentMissionId: "msn_2" }]);
     expect([...ids].sort()).toEqual(["a2", "a3"]);
+    const list = [{ id: "a1", agentMissionId: "msn_1" }];
+    expect(lastMissionMessageIds(list)).toBe(lastMissionMessageIds(list)); // once per message list
   });
   it("the chat card asks for the live sheet only (never the Ask card), and the card shows it from the approval on, while the server says the flag is on", () => {
     const chat = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");

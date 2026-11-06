@@ -24,7 +24,7 @@ async function authHeaders(): Promise<Record<string, string>> {
 }
 
 const lastLiveData = new Map<string, LiveData>();
-/** The tests and a sign-out clear it. */
+/** Clears what the tab remembers (the tests). A viewer who may not see a mission never keeps its rows: the route's first «off» answer removes them (see `onReach`). */
 export const clearLiveSheetMemory = (): void => lastLiveData.clear();
 export const rememberedLiveData = (missionId: string): LiveData | null => lastLiveData.get(missionId) ?? null;
 
@@ -62,7 +62,10 @@ export function useLiveSheet(missionId: string, options: { enabled: boolean; /**
     if (!options.enabled) return undefined;
     setEnded(null);
     const remembered = lastLiveData.get(missionId) ?? null;
-    if (remembered) setData(remembered);
+    // another mission in the same card: nothing of the previous one stays on screen
+    setData(remembered);
+    setWaiting(false);
+    setReach("ok");
     const fetchPage = async (q: { cursor: string | null } & LiveWindow): Promise<LiveFetchResult> => {
       const p = new URLSearchParams();
       if (q.cursor) p.set("cursor", q.cursor);

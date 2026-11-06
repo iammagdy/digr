@@ -41,12 +41,13 @@ export function startLivePolling(o: LivePollerOptions, start: LivePollerStart = 
   let delay: number = LIVE_SHEET_POLL.intervalMs;
   let empties = 0;
   let stopped = false;
-  // DONE is not STOPPED: the results stay on screen and the customer still turns pages and sheets; each of those is ONE ask (no loop: the done snapshot is the last one)
+  // DONE is not STOPPED: the results stay on screen and the customer still turns pages and sheets; each of those is ONE ask (no loop: the done snapshot is the last one). The same holds
+  // after an «empty» end of a mission that has ended (the last snapshot shown stays usable). Only `stop()` (the page left) ends everything.
   let done = false;
   let inFlight = false;
   let pendingWindow = false;
   let cancel: (() => void) | null = null;
-  const end = (why: LiveEnd) => { if (stopped || done) return; if (why === "done") done = true; else stopped = true; cancel?.(); cancel = null; o.onEnd?.(why); };
+  const end = (why: LiveEnd) => { if (stopped || done) return; if (why === "stopped") stopped = true; else done = true; cancel?.(); cancel = null; o.onEnd?.(why); };
   const later = (ms: number) => { cancel?.(); cancel = schedule(() => { void run(); }, ms); };
   async function run(): Promise<void> {
     if (stopped || inFlight) return;
@@ -70,9 +71,10 @@ export function startLivePolling(o: LivePollerOptions, start: LivePollerStart = 
     } else {
       const off = r === "off";
       const waiting = r !== null && r !== "off" && "empty" in r && r.empty === true;
-      // the rules for the end: the route is off (always counted); no snapshot (counted unless the mission still works); once the mission has ended, any answer with no news is counted
+      // the rules for the end: the route is off (always counted); no snapshot (counted unless the mission still works); once the mission has ended, ANY answer with no news is counted,
+      // a failed ask too (a route that keeps failing for a finished mission is not asked for the rest of the page's life)
       const missionLive = o.isMissionLive ? o.isMissionLive() : null;
-      const counts = off || (waiting && missionLive !== true) || (missionLive === false && r !== null);
+      const counts = off || (waiting && missionLive !== true) || missionLive === false;
       if (counts) { empties += 1; if (empties >= LIVE_EMPTY_LIMIT) { end("empty"); return; } }
       else if (r !== null) empties = 0;
       delay = nextPollDelayMs(delay, false, o.random);
