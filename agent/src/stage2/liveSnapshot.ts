@@ -7,7 +7,7 @@ import { SUMMARY_SHEET_AR } from "../../../src/lib/modelPlanner/missionWorkbook"
 import { isLanguageColumn, languageLabelAr, languageOfTextAr, textColumnKeyOf } from "../../../src/lib/agentMission/languageLabel";
 import { cairoCellDate, cairoText, dateOnlyCellDate, dateOnlyText, isDateValues, parseDateOnly, parseMoment } from "../../../src/lib/agentMission/dateCells";
 import { counterAr, type LiveCell, type LiveRow, type LiveSheet, type LiveSnapshot, type LiveStatus } from "../../../src/lib/agentMission/stage2/liveSheet";
-import { workLogFromEvents, type WorkLogLine } from "../../../src/lib/agentMission/stage2/workLog";
+import { workLogFromEvents, workLogLine, type WorkLogLine } from "../../../src/lib/agentMission/stage2/workLog";
 import type { ItemSnapshot } from "../items/itemStore";
 import { COUNTER_UNAVAILABLE_AR, deliveredSheetsOf, ID_HEADER_AR, PARENT_HEADER_AR, type CompanyMailboxes, type SheetLayout } from "../workbook";
 import type { MissionFacts } from "../methodology";
@@ -108,6 +108,9 @@ export function buildLiveSnapshot(input: LiveSnapshotInput): LiveSnapshot {
   const deliveredByStage = Object.fromEntries(plan.stages.map((s) => [s.key, (rowsByStage[s.key] ?? []).length]));
   const { delivered, promised } = promisedTotalOf(plan, deliveredByStage, repliesJudged);
   const workLog: WorkLogLine[] = input.events ? workLogFromEvents(plan, input.events) : [];
+  // LAUNCH ROUND: the DONE snapshot is written only after the file was built and stored and the mission settled (liveWriter.ts `writeDoneSnapshotSafely`): its last line says the file is ready,
+  // at the moment it was built. A running snapshot never says so.
+  if (input.status === "done" && input.events) { const ready = workLogLine({ code: "file_ready", at: input.nowMs }); if (ready) workLog.push(ready); }
   const promisedOrNull = promised > 0 ? promised : null;
   return {
     v: 1, missionId: input.missionId, cursor: `${input.snap.lastSeq}.${workLog.length}.${input.status}`, status: input.status,

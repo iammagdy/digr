@@ -60,6 +60,7 @@ import { type TerminalEvent as JobEvent } from "./components/ActivityTerminal";
 import RunningIndicator from "./components/RunningIndicator";
 import TypingIndicator from "./components/TypingIndicator";
 import AgentMissionCard from "@/components/mission/AgentMissionCard";
+import { lastMissionMessageIds } from "@/lib/agentMission/stage2/livePlacement";
 import ResultsCanvas, { ExtractedRecord } from "./components/ResultsCanvas";
 import EmptyChat from "./components/EmptyChat";
 import { FilesSection } from "./components/RunSections";
@@ -1870,7 +1871,7 @@ export default function ChatWorkspacePage() {
     if (m.agentMissionId) {
       return (
         <div key={m.id}>
-          <AgentMissionCard missionId={m.agentMissionId} onEdit={(requestText) => setInputText(requestText)} onApproved={() => void loadBalance()} onSettled={() => void loadBalance()} />
+          <AgentMissionCard missionId={m.agentMissionId} liveSheet={lastMissionMessageIds(messages).has(m.id)} onEdit={(requestText) => setInputText(requestText)} onApproved={() => void loadBalance()} onSettled={() => void loadBalance()} />
         </div>
       );
     }

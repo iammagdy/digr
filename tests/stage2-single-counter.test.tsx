@@ -11,7 +11,7 @@ import type { LiveData } from "../src/lib/agentMission/stage2/livePoller";
 /**
  * FINDING F-2 (integration rounds 2, 3 and 4): on a PHONE, while the live sheet is shown, the request card said «وصلنا ١٤ من ٤٢ عنصرًا» (its own total: the delivering stages' rows, no replies) and a bar of 14/70, while the live counter said «١٤ من ٧٠»
  * (`promisedTotalOf`, the total the final Excel uses). Worse, at the next step the card said «٤٢ من ٤٢» (collection over) while the live counter said «٦٢ من ٧٠». Now, when live data with a KNOWN promised total is visible, the phone shows ONE progress counter (the live one) and the card's bar follows it;
- * the card's own progress line is kept for desktop (the grid has no mission-wide counter). Nothing else changes: with the flag off, with no live data yet, with an unknown promised total and for a finished mission the card's markup is byte-for-byte today's (golden fixture generated from the unmodified card).
+ * LAUNCH ROUND: the desktop grid now shows the same live counter, so the rule holds on EVERY width (one counter, one bar; the card's own «(X من N)» and its other-total bar are not drawn while live progress is known). Nothing else changes: with the flag off, with no live data yet, with an unknown promised total and for a finished mission the card's markup is byte-for-byte today's (golden fixture generated from the unmodified card).
  * Real stored rows and the real customer view of M12 (tests/helpers/stage2CardFixture.ts); display only: no money, no rows, no file.
  */
 const golden = JSON.parse(readFileSync("tests/fixtures/stage2-card-flags-off.json", "utf8")) as Record<string, string>;
@@ -24,6 +24,8 @@ beforeAll(async () => { fx = await m12Fixture(); }, 120_000);
 
 const body = (view: ReturnType<M12Fixture["view"]>, live?: LiveData | null) => renderToStaticMarkup(createElement(AgentMissionCardBody, { view, isGuest: false, ...(live !== undefined ? { live } : {}) }));
 const element = (html: string, testid: string): string => new RegExp(`<[a-z]+[^>]*data-testid="${testid}"[^>]*>[\\s\\S]*?</(?:span|div|p)>`).exec(html)?.[0] ?? "";
+/** The live bar of the status block (the one bar drawn while live progress is known). */
+const liveBar = (html: string) => bars(html).find((x) => x.wrapper === "w-full")!;
 const bars = (html: string): Array<{ now: number; max: number; width: string; wrapper: string }> =>
   [...html.matchAll(/<div class="([^"]*)"[^>]*>(?:<div[^>]*>)?<div role="progressbar"[^>]*aria-valuemax="(\d+)"[^>]*aria-valuenow="(\d+)"[^>]*><div[^>]*style="width:([\d.]+%)/g)].map((m) => ({ wrapper: m[1], max: Number(m[2]), now: Number(m[3]), width: m[4] }));
 
@@ -66,61 +68,54 @@ describe("flags OFF, loading, unknown total, finished mission: the card is EXACT
 });
 
 describe("a phone with live data visible: ONE progress counter", () => {
-  it("main's sentence «نجمع العناصر (١٤ من ٤٢)» is for 640 px up only; the phone reads it WITHOUT its count, and no phone-visible element says «من ٤٢»", async () => {
+  it("main's sentence «نجمع العناصر (١٤ من ٤٢)» is read WITHOUT its count on every width, and no element of the card says «من ٤٢» (the other total)", async () => {
     const html = body(fx.view(P1, "executing"), await fx.live(P1, "running"));
     const line = element(html, "agent-started-line");
-    expect(line).toContain('<span class="hidden sm:inline">نجمع العناصر (١٤ من ٤٢)</span>'); // the desktop reads it unchanged
+    expect(line).not.toContain("hidden sm:inline");
     expect(element(html, "agent-started-line-phone")).toContain(">نجمع العناصر<");
-    // every «من ٤٢» of the card sits inside the desktop-only span
-    const desktopOnly = (line.match(/<span class="hidden sm:inline">[^<]*<\/span>/g) ?? []).join("");
-    expect((html.match(/من ٤٢/g) ?? []).length).toBe((desktopOnly.match(/من ٤٢/g) ?? []).length);
+    expect(html).not.toContain("من ٤٢");
   });
-  it("the card's bar follows the live counter on a phone (delivered of promised), and keeps its own basis from 640 px up", async () => {
+  it("the card's bar follows the live counter (delivered of promised) on every width", async () => {
     const live = await fx.live(P1, "running");
     const html = body(fx.view(P1, "executing"), live);
-    const b = bars(html);
-    const phone = b.filter((x) => /\bsm:hidden\b/.test(x.wrapper));
-    const desk = b.filter((x) => /\bhidden\b/.test(x.wrapper) && /\bsm:block\b/.test(x.wrapper));
-    expect(phone).toHaveLength(1);
-    expect(desk).toHaveLength(1);
-    expect([phone[0].now, phone[0].max]).toEqual([live.delivered, live.promised]);
-    expect(phone[0].width).toBe(`${Math.round((live.delivered / (live.promised as number)) * 100)}%`);
-    // the desktop bar is the card's own, as today
-    expect([desk[0].now, desk[0].max]).toEqual([14, 70]);
+    const bar = liveBar(html);
+    expect([bar.now, bar.max]).toEqual([live.delivered, live.promised]);
+    expect(bar.width).toBe(`${Math.round((live.delivered / (live.promised as number)) * 100)}%`);
+    expect(bars(html).some((x) => x.now === 14 && x.max === 70 && x.wrapper !== "w-full")).toBe(false);
   });
-  it("exactly one bar is visible per width: one for the phone, one for the desktop", async () => {
+  it("exactly one bar in the status block, visible at every width", async () => {
     const html = body(fx.view(P1, "executing"), await fx.live(P1, "running"));
     // the status block only: the plan panel below draws its own per-stage bars
     const status = html.slice(html.indexOf('data-testid="agent-started"'), html.indexOf('data-testid="agent-close-notice"'));
-    expect((status.match(/role="progressbar"/g) ?? []).length).toBe(2);
-    expect((status.match(/class="hidden sm:block"/g) ?? []).length).toBe(1);
-    expect((status.match(/class="sm:hidden" data-testid="agent-progress-live"/g) ?? []).length).toBe(1);
+    expect((status.match(/role="progressbar"/g) ?? []).length).toBe(1);
+    expect(status).not.toMatch(/sm:hidden|hidden sm:block/);
+    expect((status.match(/class="w-full" data-testid="agent-progress-live"/g) ?? []).length).toBe(1);
   });
-  it("the next step: the card used to say «٤٢ من ٤٢» (collection over) while the live counter said «٦٢ من ٧٠»; on a phone the bar now says 62 of 70", async () => {
+  it("the next step: the card used to say «٤٢ من ٤٢» (collection over) while the live counter said «٦٢ من ٧٠»; the bar now says 62 of 70 and the sentence does not claim the end", async () => {
     const live = await fx.live(P2, "running");
     expect(live.delivered).toBe(62);
     expect(live.promised).toBe(70);
     const html = body(fx.view(P2, "executing"), live);
-    const phone = bars(html).find((x) => /\bsm:hidden\b/.test(x.wrapper))!;
-    expect([phone.now, phone.max, phone.width]).toEqual([62, 70, "89%"]);
-    // main's sentence claims «جمعنا العناصر، ونجهّز ملفك الآن» on the card's 42-row total: the desktop keeps it, the phone (live 62 of 70, not complete) says «نجمع العناصر»
-    expect(element(html, "agent-started-line")).toContain('<span class="hidden sm:inline">جمعنا العناصر، ونجهّز ملفك الآن</span>');
+    const bar = liveBar(html);
+    expect([bar.now, bar.max, bar.width]).toEqual([62, 70, "89%"]);
+    // main's sentence claims «جمعنا العناصر، ونجهّز ملفك الآن» on the card's 42-row total: while live says 62 of 70 (not complete) every width reads «نجمع العناصر»
+    expect(element(html, "agent-started-line")).not.toContain("جمعنا العناصر");
     expect(element(html, "agent-started-line-phone")).toContain(">نجمع العناصر<");
   });
   it("over-delivery while running: the bar is full, never above the promised total", async () => {
     const live = await fx.live(OVER, "running");
     expect(live.delivered).toBeGreaterThan(live.promised as number);
-    const phone = bars(body(fx.view(P2, "executing"), live)).find((x) => /\bsm:hidden\b/.test(x.wrapper))!;
+    const phone = liveBar(body(fx.view(P2, "executing"), live));
     expect([phone.now, phone.max, phone.width]).toEqual([live.promised, live.promised, "100%"]);
   });
   it("exact completion (delivered equals promised): a full bar", async () => {
     const live = { ...(await fx.live(P1, "running")), delivered: 70, promised: 70 };
-    const phone = bars(body(fx.view(P2, "executing"), live)).find((x) => /\bsm:hidden\b/.test(x.wrapper))!;
+    const phone = liveBar(body(fx.view(P2, "executing"), live));
     expect([phone.now, phone.max, phone.width]).toEqual([70, 70, "100%"]);
   });
   it("nothing delivered yet of a known total: an empty bar", async () => {
     const live = { ...(await fx.live(P1, "running")), delivered: 0, promised: 70 };
-    const phone = bars(body(fx.view(P1, "executing"), live)).find((x) => /\bsm:hidden\b/.test(x.wrapper))!;
+    const phone = liveBar(body(fx.view(P1, "executing"), live));
     expect([phone.now, phone.max, phone.width]).toEqual([0, 70, "0%"]);
   });
   it("once the live snapshot is complete (done, or delivered reached promised) the phone keeps the card's own «collection is over» sentence", async () => {
@@ -169,7 +164,7 @@ describe("how the card knows (wiring)", () => {
     const card = readFileSync("src/components/mission/AgentMissionCard.tsx", "utf8");
     expect(card).toContain("useState<LiveData | null>(null)");
     expect(card).toContain("live={showLive ? liveData : null}");
-    expect(card).toContain("<LiveSheetPanel missionId={missionId} enabled onData={setLiveData} />");
+    expect(card).toContain("<LiveSheetPanel missionId={missionId} enabled missionLive={!ended} onData={setLiveData} />");
     const panel = readFileSync("src/components/mission/LiveSheetPanel.tsx", "utf8");
     expect(panel).toContain("onData");
   });

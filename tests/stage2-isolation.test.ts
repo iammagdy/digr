@@ -18,6 +18,7 @@ const WIRING: ReadonlyArray<string> = [
   "src/components/mission/LiveWorkLog.tsx", // S10: draws only the whitelisted lines the route sent
   "src/components/mission/LiveSheetPanel.tsx", // S10: polls only when the mission answer says DIGER_STAGE2_LIVE_SHEET is on (requests page)
   "src/components/mission/AgentMissionCard.tsx", // S4: shows the card only when the answer carries it and the page asked for Stage 2 (the requests page)
+  "src/app/dashboard/chat/page.tsx", // LAUNCH ROUND: imports only the pure placement rule (the last card of a mission carries the live sheet); the sheet itself appears only when the mission answer says DIGER_STAGE2_LIVE_SHEET is on
 ];
 const ROOT = path.resolve(__dirname, "..");
 function files(dir: string): string[] {

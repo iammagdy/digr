@@ -19,7 +19,8 @@ describe("the phone (S10): the counter «X من N», cards and the next window",
     expect(data.counterAr).toBe(counterAr(data.delivered, data.promised)); // the real M12 rows are above the plan's number: the over-delivery wording (F-1)
     expect(data.counterAr).toMatch(/^[٠-٩٬]+ \(أكثر من التقدير البالغ [٠-٩٬]+\)$/);
     expect((html.match(/data-testid="live-card"/g) ?? []).length).toBe(data.window.rows.length);
-    for (const card of html.split('data-testid="live-card"').slice(1)) expect((card.split("</li>")[0].match(/<dt/g) ?? []).length).toBeLessThanOrEqual(3);
+    // at most three fields lead each card; every other field is one tap away under «كل الحقول» (nothing of the row is out of reach)
+    for (const card of html.split('data-testid="live-card"').slice(1)) expect((card.split("</li>")[0].split("<details")[0].match(/<dt/g) ?? []).length).toBeLessThanOrEqual(3);
     expect(html).toContain(LIVE_MORE_AR);
     expect(html).not.toContain(LIVE_BACK_AR);
   });
@@ -41,12 +42,14 @@ describe("the phone (S10): the counter «X من N», cards and the next window",
 });
 
 describe("where it is shown, and its words", () => {
-  it("on the requests page only, and only when the mission answer says the flag is on", () => {
+  it("on the requests page and in the conversation, and only when the mission answer says the flag is on", () => {
     const card = readFileSync("src/components/mission/AgentMissionCard.tsx", "utf8");
-    expect(card).toContain('const showLive = stage2 && answer?.liveSheet === true && (v.phase === "running" || v.phase === "done" || v.phase === "partial");');
+    expect(card).toContain('const showLive = liveSheet && answer?.liveSheet === true && (v.phase === "running" || v.phase === "done" || v.phase === "partial" || (v.phase === "plan" && approvedHere));');
+    expect(card).toContain("stage2 = false, liveSheet = stage2 }");
     const route = readFileSync("src/app/api/missions/[id]/route.ts", "utf8");
     expect(route).toContain('const liveSheet = await stage2FlagForMission(client, "DIGER_STAGE2_LIVE_SHEET", id);');
-    expect(readFileSync("src/app/dashboard/chat/page.tsx", "utf8")).not.toMatch(/LiveSheet|stage2/);
+    expect(readFileSync("src/app/dashboard/requests/[id]/page.tsx", "utf8")).toContain("<AgentMissionCard missionId={missionId} stage2 />");
+    expect(readFileSync("src/app/dashboard/chat/page.tsx", "utf8")).toContain("liveSheet={lastMissionMessageIds(messages).has(m.id)}");
   });
   it("every fixed word passes the customer-text rules", () => {
     for (const t of [LIVE_COUNTER_TITLE_AR, LIVE_MORE_AR, LIVE_BACK_AR, LIVE_WORK_LOG_TITLE_AR]) {
