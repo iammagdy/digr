@@ -431,7 +431,11 @@ describe("SIMULATED live sheet journey (real Chromium; NOT production)", () => {
         await visible(page, "live-final").waitFor({ timeout: 60_000 });
         expect(await page.locator("[data-testid='agent-live']").innerText()).not.toContain("ما جمعناه حتى الآن");
         await sleep(12_000);
-        expect(liveCalls.filter((c) => c.id === fastId)).toHaveLength(1);
+        // ONE ask per mount: `next dev` runs React StrictMode, which mounts every effect twice (mount, unmount, mount), so up to two asks land in the first moment and none after the done answer
+        const calls = liveCalls.filter((c) => c.id === fastId);
+        expect(calls.length).toBeGreaterThanOrEqual(1);
+        expect(calls.length).toBeLessThanOrEqual(2);
+        expect(calls.at(-1)!.at - calls[0].at).toBeLessThan(3_000);
       });
       await check(kind, "chat", "7b fast mission in the conversation: the same final sheet", async () => {
         await page.goto(`${BASE}/dashboard/chat?c=conv_fast_${kind}`, { waitUntil: "load" });

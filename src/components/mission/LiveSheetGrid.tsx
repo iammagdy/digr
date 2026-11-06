@@ -58,20 +58,24 @@ export function LiveSheetTabs({ data, activeKey, onWindow }: { data: LiveData; a
 
 export function LiveSheetGrid({ data, onWindow = () => undefined }: { data: LiveData; onWindow?: (w: Partial<LiveWindow>) => void }) {
   const active = data.sheets.find((s) => s.stageKey === data.window.stageKey) ?? data.sheets[0];
-  if (!active) return null;
+  const title = liveTitleOf(data);
+  const head = (
+    <div className="flex flex-col gap-1.5" data-testid="live-grid-head-line">
+      <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+        <h3 className="m-0 text-[15px] font-semibold text-ink">{title}</h3>
+        <p className="m-0 text-[14px] font-semibold text-ink" role="status" data-testid="live-grid-counter">{data.counterAr}</p>
+      </div>
+      <LiveProgressBar data={data} />
+    </div>
+  );
+  // nothing saved yet (a snapshot with no sheet): the counter «٠ من N» and its empty bar are still the desktop's progress; no empty table is drawn
+  if (!active) return <section dir="rtl" data-testid="live-grid" className="flex flex-col gap-2" aria-label={title}>{head}</section>;
   const offset = data.window.offset;
   const rows = data.window.rows;
   const total = active.total;
-  const title = liveTitleOf(data);
   return (
     <section dir="rtl" data-testid="live-grid" className="flex flex-col gap-2" aria-label={title}>
-      <div className="flex flex-col gap-1.5" data-testid="live-grid-head-line">
-        <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <h3 className="m-0 text-[15px] font-semibold text-ink">{title}</h3>
-          <p className="m-0 text-[14px] font-semibold text-ink" role="status" data-testid="live-grid-counter">{data.counterAr}</p>
-        </div>
-        <LiveProgressBar data={data} />
-      </div>
+      {head}
       <LiveSheetTabs data={data} activeKey={active.stageKey} onWindow={onWindow} />
       <div className="max-h-[480px] overflow-x-auto overflow-y-auto rounded-[10px] border border-ln" data-testid="live-grid-scroll">
         <table className="w-full border-collapse text-[13px]">

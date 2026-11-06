@@ -183,6 +183,13 @@ describe("the desktop grid: progress, title and the rows the route sent", () => 
     expect(html).not.toContain('role="progressbar"');
     expect(html).toContain('data-testid="live-grid-counter">١٢<');
   });
+  it("zero rows (a snapshot with no sheet yet): the desktop still shows the counter «٠ من N» and an empty bar, and no table", async () => {
+    const d = { ...(await liveAnswer({ sheet: null, offset: 0, limit: 5 })), sheets: [], window: { stageKey: "", offset: 0, rows: [] }, delivered: 0, promised: 70, counterAr: "٠ من ٧٠" };
+    const html = renderToStaticMarkup(createElement(LiveSheetGrid, { data: d }));
+    expect(html).toContain('data-testid="live-grid-counter">٠ من ٧٠<');
+    expect(html).toContain('aria-valuenow="0"');
+    expect(html).not.toContain("<table");
+  });
   it("the done snapshot is titled as the final result", async () => {
     const d = { ...(await liveAnswer({ sheet: null, offset: 0, limit: 5 })), status: "done" as const, retryAfterMs: null };
     const html = renderToStaticMarkup(createElement(LiveSheetGrid, { data: d }));
