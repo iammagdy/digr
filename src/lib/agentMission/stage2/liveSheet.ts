@@ -138,3 +138,15 @@ export function nextPollDelayMs(previousMs: number, changed: boolean, random: ()
   const jitter = 1 + (random() * 2 - 1) * LIVE_SHEET_POLL.jitterShare;
   return Math.min(LIVE_SHEET_POLL.maxIntervalMs, Math.max(LIVE_SHEET_POLL.minIntervalMs, Math.round(base * jitter)));
 }
+
+/**
+ * THE SNAPSHOT A POLL SERVES (NOV 6 2026 campaign review of the Facebook chat table): the newest name of the listing, except that the FINAL snapshot (`…_done.json`, written after the file, equal to it) always wins.
+ * The done snapshot is written by a fresh writer id, so at the same item-log sequence as the last running snapshot the plain name order could put a running «ما جمعناه حتى الآن» snapshot after it (a writer id
+ * that sorts higher), and the chat would keep a preliminary table under a finished mission. Pure.
+ */
+export const LIVE_SNAPSHOT_NAME = /^snap_\d{9}_[a-z0-9]+(?:_done)?\.json$/;
+export function newestSnapshotName(names: ReadonlyArray<string>): string | null {
+  const valid = names.filter((n) => LIVE_SNAPSHOT_NAME.test(n)).sort();
+  const done = valid.filter((n) => n.endsWith("_done.json"));
+  return done.length > 0 ? done[done.length - 1] : valid[valid.length - 1] ?? null;
+}

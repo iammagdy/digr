@@ -42,6 +42,12 @@ interface MissionAnswer { success: boolean; isGuest?: boolean; status?: string; 
  * NOV 6 2026 CAMPAIGN (X, msn_d31f37958788a24ec46d): a step the customer asked for that the plan cannot carry is a SCOPE DECISION, not a footnote. The approve button names it («اعتمد بدون هذه الخطوة»), next to «عدّل الطلب»;
  * the step is not in the price and nothing is charged for it.
  */
+/**
+ * NOV 6 2026 (Facebook chat table): the plan's sample rows are what the planning READ, before any execution; they were titled «أمثلة من النتيجة» (examples of the result) and their counters could be taken for the delivered ones.
+ * They are a PRELIMINARY SAMPLE, said as such; the final numbers are the file's (and the live sheet's «النتائج النهائية», built from the same rows).
+ */
+export const SAMPLES_TITLE_AR = "عينة أولية قبل التنفيذ";
+export const SAMPLES_NOTE_AR = "قرأنا هذه الصفوف عند إعداد الخطة؛ الأرقام في ملفك تُقرأ عند التنفيذ وقد تختلف، وقد لا تكون هذه الصفوف نفسها في الملف.";
 export const APPROVE_WITHOUT_UNSERVED_AR = "اعتمد بدون هذه الخطوة";
 export const UNSERVED_CHOICE_AR = "هذه الخطوة ليست في السعر ولن تُنفَّذ. اعتمد الخطة بدونها، أو عدّل طلبك.";
 const TERMINAL_PHASES: ReadonlySet<string> = new Set(["done", "partial", "unserved", "failed", "cancelled"]);
@@ -354,8 +360,9 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
             ) : null}
 
             {v.samples ? (
-              <div className="rounded-[12px] border border-ln bg-bg p-2" data-testid="agent-samples" aria-label="أمثلة من النتيجة">
-                <p className="m-0 mb-1 text-[12px] font-semibold text-ink">أمثلة من النتيجة{v.samples.stageTitleAr ? ` · ${v.samples.stageTitleAr}` : ""}</p>
+              <div className="rounded-[12px] border border-ln bg-bg p-2" data-testid="agent-samples" aria-label={SAMPLES_TITLE_AR}>
+                <p className="m-0 mb-1 text-[12px] font-semibold text-ink">{SAMPLES_TITLE_AR}{v.samples.stageTitleAr ? ` · ${v.samples.stageTitleAr}` : ""}</p>
+                <p className="m-0 mb-1 text-[11px] leading-[1.7] text-mut" data-testid="agent-samples-note">{SAMPLES_NOTE_AR}</p>
                 {/* its own scrolling box: the table never widens the card or the page, and a cell wraps instead of being cut */}
                 <div className="max-w-full overflow-x-auto" data-testid="agent-samples-scroll">
                   <table className="w-full min-w-[420px] border-collapse text-[12px]">

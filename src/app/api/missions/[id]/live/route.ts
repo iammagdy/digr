@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { resolveMissionViewer, safeMissionId } from "@/lib/server/missionViewer";
 import { AGENT_BUCKET, MISSION_TABLE } from "@/lib/agentMission/constants";
-import { parsePollRequest, pollResponse, type LiveSnapshot } from "@/lib/agentMission/stage2/liveSheet";
+import { newestSnapshotName, parsePollRequest, pollResponse, type LiveSnapshot } from "@/lib/agentMission/stage2/liveSheet";
 import { stage2FlagForMission } from "@/lib/agentMission/stage2/askEditAction";
 import { ADDON_MARKER_SELECT, isAddonRow } from "@/lib/agentMission/stage2/addonMarkerRule";
 
@@ -33,8 +33,8 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
     const bucket = client.storage.from(AGENT_BUCKET);
     // the newest names first (a long job writes many snapshots: the listing is read from its end, never from its first page)
     const listed = await bucket.list(`${id}/${LIVE_FOLDER}`, { limit: 20, sortBy: { column: "name", order: "desc" } });
-    const names = ((listed?.data ?? []) as Array<{ name: string }>).map((o) => o.name).filter((n) => /^snap_\d{9}_[a-z0-9]+(?:_done)?\.json$/.test(n)).sort();
-    const newest = names[names.length - 1];
+    // the final snapshot (equal to the file) always wins over a running one (NOV 6 2026: a fresh writer id could sort the done name before a running one at the same sequence)
+    const newest = newestSnapshotName(((listed?.data ?? []) as Array<{ name: string }>).map((o) => o.name));
     if (newest) {
       const got = await bucket.download(`${id}/${LIVE_FOLDER}/${newest}`);
       if (!got?.error && got?.data) {
