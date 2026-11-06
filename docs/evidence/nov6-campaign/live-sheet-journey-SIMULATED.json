@@ -1,0 +1,341 @@
+{
+ "evidence": "SIMULATED (real Chromium, local app, fake sign-in, real live route and worker snapshot code, stored M12 rows); NOT production",
+ "results": [
+  {
+   "viewport": "desktop",
+   "page": "chat",
+   "check": "1 before approval: plan card, no live sheet, no live request",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "desktop",
+   "page": "chat",
+   "check": "2 after approval: waiting line, nothing invented",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "desktop",
+   "page": "chat",
+   "check": "2b still asking while the mission works and has no snapshot",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "desktop",
+   "page": "chat",
+   "check": "3 zero rows: the counter says ٠ of the promised total",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "desktop",
+   "page": "chat",
+   "check": "4 first row: exactly the stored video",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "desktop",
+   "page": "chat",
+   "check": "5 several rows: the videos sheet shows both stored videos; the work-log line is the newest event",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "desktop",
+   "page": "chat",
+   "check": "6 sheet switch and next page: the comments in the stored order",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "desktop",
+   "page": "chat",
+   "check": "11 temporary failure: rows kept, reconnect line, then recovery",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "desktop",
+   "page": "chat",
+   "check": "12 hidden tab asks nothing; restored tab asks at once",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "desktop",
+   "page": "chat",
+   "check": "8 final result: titled final, said to be the file's data, rows = the workbook's rows",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "desktop",
+   "page": "requests",
+   "check": "9 request page shows the same final sheet; back to the chat shows it at once",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "desktop",
+   "page": "requests",
+   "check": "10 reload: the final sheet again from the route",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "desktop",
+   "page": "requests",
+   "check": "7 fast mission: final at once, one request, no progressive claim",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "desktop",
+   "page": "chat",
+   "check": "7b fast mission in the conversation: the same final sheet",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "desktop",
+   "page": "api",
+   "check": "ownership: another customer's mission is not found",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "desktop",
+   "page": "all",
+   "check": "no uncaught page error",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "phone",
+   "page": "chat",
+   "check": "1 before approval: plan card, no live sheet, no live request",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "phone",
+   "page": "chat",
+   "check": "2 after approval: waiting line, nothing invented",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "phone",
+   "page": "chat",
+   "check": "2b still asking while the mission works and has no snapshot",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "phone",
+   "page": "chat",
+   "check": "3 zero rows: the counter says ٠ of the promised total",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "phone",
+   "page": "chat",
+   "check": "4 first row: exactly the stored video",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "phone",
+   "page": "chat",
+   "check": "5 several rows: the videos sheet shows both stored videos; the work-log line is the newest event",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "phone",
+   "page": "chat",
+   "check": "6 sheet switch and next page: the comments in the stored order",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "phone",
+   "page": "chat",
+   "check": "11 temporary failure: rows kept, reconnect line, then recovery",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "phone",
+   "page": "chat",
+   "check": "12 hidden tab asks nothing; restored tab asks at once",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "phone",
+   "page": "chat",
+   "check": "8 final result: titled final, said to be the file's data, rows = the workbook's rows",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "phone",
+   "page": "requests",
+   "check": "9 request page shows the same final sheet; back to the chat shows it at once",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "phone",
+   "page": "requests",
+   "check": "10 reload: the final sheet again from the route",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "phone",
+   "page": "requests",
+   "check": "7 fast mission: final at once, one request, no progressive claim",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "phone",
+   "page": "chat",
+   "check": "7b fast mission in the conversation: the same final sheet",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "phone",
+   "page": "api",
+   "check": "ownership: another customer's mission is not found",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "phone",
+   "page": "all",
+   "check": "no uncaught page error",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "narrow",
+   "page": "chat",
+   "check": "1 before approval: plan card, no live sheet, no live request",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "narrow",
+   "page": "chat",
+   "check": "2 after approval: waiting line, nothing invented",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "narrow",
+   "page": "chat",
+   "check": "2b still asking while the mission works and has no snapshot",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "narrow",
+   "page": "chat",
+   "check": "3 zero rows: the counter says ٠ of the promised total",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "narrow",
+   "page": "chat",
+   "check": "4 first row: exactly the stored video",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "narrow",
+   "page": "chat",
+   "check": "5 several rows: the videos sheet shows both stored videos; the work-log line is the newest event",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "narrow",
+   "page": "chat",
+   "check": "6 sheet switch and next page: the comments in the stored order",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "narrow",
+   "page": "chat",
+   "check": "11 temporary failure: rows kept, reconnect line, then recovery",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "narrow",
+   "page": "chat",
+   "check": "12 hidden tab asks nothing; restored tab asks at once",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "narrow",
+   "page": "chat",
+   "check": "8 final result: titled final, said to be the file's data, rows = the workbook's rows",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "narrow",
+   "page": "requests",
+   "check": "9 request page shows the same final sheet; back to the chat shows it at once",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "narrow",
+   "page": "requests",
+   "check": "10 reload: the final sheet again from the route",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "narrow",
+   "page": "requests",
+   "check": "7 fast mission: final at once, one request, no progressive claim",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "narrow",
+   "page": "chat",
+   "check": "7b fast mission in the conversation: the same final sheet",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "narrow",
+   "page": "api",
+   "check": "ownership: another customer's mission is not found",
+   "ok": true,
+   "evidence": "SIMULATED"
+  },
+  {
+   "viewport": "narrow",
+   "page": "all",
+   "check": "no uncaught page error",
+   "ok": true,
+   "evidence": "SIMULATED"
+  }
+ ]
+}
