@@ -6,7 +6,7 @@ import { customerMissionView, queueLine, stagesView, type EventForCustomer, type
 import { estimateMissionMinutes } from "../src/lib/agentMission/price";
 import { checkCustomerText } from "../src/lib/agentMission/text";
 import { AGENT_CLOSE_PAGE_LINE_AR, AGENT_QUEUE_LINE_AR } from "../src/lib/agentMission/constants";
-import { AgentMissionCardBody } from "../src/components/mission/AgentMissionCard";
+import { AgentMissionCardBody, APPROVE_WITHOUT_UNSERVED_AR, UNSERVED_CHOICE_AR } from "../src/components/mission/AgentMissionCard";
 
 const calls = new Map([
   ["call_0001", { id: "call_0001", endpointId: "x.x.search-posts-all", ok: true, costUsd: 0.05, rows: 10, durationMs: 3000 }],
@@ -80,6 +80,17 @@ describe("the mission card: stages that add up, readable samples, one price line
     expect(v.priceLineAr!.split("\n")).toHaveLength(1);
     // all of it Arabic with Arabic-Indic digits: no Latin word, no ASCII digit, no id, no dollar
     for (const text of [v.summaryAr!, v.priceLineAr!, ...v.stages.map((s) => `${s.titleAr} ${s.rowsAr}`)]) { expect(checkCustomerText(text).issues).toEqual([]); expect(text).not.toMatch(/[0-9]/); }
+  });
+
+  it("NOV 6 2026: a requested step the plan does not carry makes approval an explicit scope choice («اعتمد بدون هذه الخطوة»), with «عدّل الطلب» beside it", () => {
+    const view = customerMissionView({ mission: row(), events: [] });
+    const plain = renderToStaticMarkup(createElement(AgentMissionCardBody, { view, isGuest: false }));
+    expect(plain).not.toContain(APPROVE_WITHOUT_UNSERVED_AR);
+    const html = renderToStaticMarkup(createElement(AgentMissionCardBody, { view: { ...view, unservedAr: ["الردود: لم نجد مصدرًا موثّقًا نقرأ منه هذه الردود، فلن تُضاف هذه الخطوة ولن تُحسب في السعر."] }, isGuest: false }));
+    expect(html).toContain(APPROVE_WITHOUT_UNSERVED_AR);
+    expect(html).toContain(UNSERVED_CHOICE_AR);
+    expect(html).toContain("عدّل الطلب");
+    expect(checkCustomerText(UNSERVED_CHOICE_AR).issues).toEqual([]);
   });
 
   it("an intermediate stage is not counted in the total", () => {

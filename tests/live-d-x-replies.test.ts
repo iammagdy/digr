@@ -58,12 +58,12 @@ describe("D5: tweets with their replies are requested as ORIGINALS ONLY", () => 
   it("the query carries -filter:replies when the customer asked for the replies", () => {
     const ask = buildAsk(REQUEST, null, AT);
     expect(ask.replies).not.toBe("none");
-    expect(parentInputs(searchCard, ask)).toEqual({ query: "\"العاصمة الإدارية\" lang:ar since:2026-09-30_21:00:00_UTC until:2026-10-31_22:00:00_UTC -filter:replies", queryType: "Latest", limit: 20 });
+    expect(parentInputs(searchCard, ask)).toEqual({ query: "\"العاصمة الإدارية\" lang:ar since:2026-09-30_21:00:00_UTC until:2026-10-31_22:00:00_UTC -filter:replies", queryType: "Top", limit: 20 });
   });
-  it("no replies asked: the query is exactly what it was (a tweet that is a reply is a row with a mark, nothing is excluded)", () => {
+  it("no replies asked: the tweets are STILL original posts (NOV 6 2026 CAMPAIGN, msn_d31f37958788a24ec46d: two replies to other accounts were delivered and billed as «منشورين»); the order stays the newest", () => {
     const ask = buildAsk(REQUEST_NO_REPLIES, null, AT);
     expect(ask.replies).toBe("none");
-    expect(parentInputs(searchCard, ask).query).not.toMatch(/filter:replies/);
+    expect(parentInputs(searchCard, ask)).toEqual({ query: "\"العاصمة الإدارية\" lang:ar since:2026-09-30_21:00:00_UTC until:2026-10-31_22:00:00_UTC -filter:replies", queryType: "Latest", limit: 20 });
   });
   it("TikTok is untouched (its search has no operators)", () => {
     const tt = buildAsk("هات فيديوهين تيك توك بالعربي عن الذكاء الاصطناعي من مصر، مع كل التعليقات والردود.", null, AT);
@@ -129,10 +129,12 @@ describe("D5: the X replies card (catalog_only when D5 was written; VERIFIED sin
     const chosen = new Set(r.chosen);
     const counters = mapPage(searchCard, page).filter((t) => chosen.has(String(t.id))).reduce((n, t) => n + (Number(t.replies_count) || 0), 0);
     expect(counters).toBeGreaterThan(0);
-    expect(r.promises.replies).toMatchObject({ type: "open", n: counters, counted: counters, counted_comments: 20 });
-    expect(tweets.planned_rows).toBe(20);
+    // NOV 6 2026: only the ORIGINAL tweets of the page are chosen (the replies among them are left out and counted on the card)
+    expect(r.chosen.length).toBe(mapPage(searchCard, page).filter((t) => t.is_reply !== true).length);
+    expect(r.promises.replies).toMatchObject({ type: "open", n: counters, counted: counters, counted_comments: r.chosen.length });
+    expect(tweets.planned_rows).toBe(r.chosen.length);
     // the hold: the replies are priced as rows (each read costs the catalog's price of one call)
-    expect(r.plan.price.deliveredRows).toBe(20 + counters);
+    expect(r.plan.price.deliveredRows).toBe(r.chosen.length + counters);
   });
 
   it("the cap: the replies stage may read at most as many pages as 0.20 USD of catalog_only calls buys at twice the catalog price (round 8; 0.10 USD at the catalog price)", () => {

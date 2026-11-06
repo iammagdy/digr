@@ -76,10 +76,10 @@ describe("the gate over a plan", () => {
     expect(v.missingStages).toEqual([]);
     expect(v.overclaims).toEqual(["replies"]);
   });
-  it("X needs no comments or replies stage", () => {
+  it("X needs no comments stage, but the replies it asked are carried or stated (NOV 6 2026 CAMPAIGN: X was exempt and the step vanished)", () => {
     const v = checkPlanAgainstContract(buildRequestContract(X), { stages: [stage({ key: "tweets", parent_key: null, planned_rows: 20, endpoint_id: "anyapi.x.search.posts", engine: { params: { limit: 20, query: "\"العاصمة الإدارية\" lang:ar since:2026-10-01 until:2026-10-31", queryType: "Latest" } } })] });
-    expect(v.missingStages).toEqual([]);
-    expect(v.items.filter((i) => i.status === "missing")).toEqual([]);
+    expect(v.missingStages).toEqual(["replies"]);
+    expect(v.items.filter((i) => i.status === "missing").map((i) => i.what)).toEqual(["replies"]);
   });
   it("a country in the words and in no tool field is not carried; with the field or a stated gap it is", () => {
     const base = (engine: St["engine"]): ContractPlan => ({ stages: [stage({ key: "videos", parent_key: null, endpoint_id: "anyapi.tiktok.search.videos", engine }), stage({ key: "comments", parent_key: "videos" }), replies()] });

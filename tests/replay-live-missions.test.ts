@@ -39,9 +39,14 @@ const MISSING_BEFORE: Record<string, string[]> = {
   msn_adcfafabcdebc27ff803: ["comments", "replies"], // the 19:00 YouTube regression: the plan dropped both
   msn_a6dacebce7e7b7432aa1: ["replies"],
   msn_afe9bb0b436670e35a3c: ["replies"],
+  // NOV 6 2026 CAMPAIGN: the two stored X plans asked «مع الردود» and had no replies stage; the gate exempted X, so it never saw it
+  msn_e3d679014c58168c3227: ["replies"],
+  msn_b060d3347ed7660f972e: ["replies"],
 };
 const OVERCLAIM_BEFORE: Record<string, string[]> = {
   msn_a254618740b9b9878126: ["replies"], msn_ee599cdbbde993073b15: ["replies"], msn_3594a5ab6311c8691f20: ["replies"],
+  // NOV 6 2026 CAMPAIGN: M14's stored summary promised the replies with no stage to carry them (X was exempt from the check)
+  msn_b060d3347ed7660f972e: ["replies"],
 };
 
 describe("the fixture is the stored record", () => {
@@ -99,8 +104,8 @@ describe("every mission: the new code yields a plan that satisfies the contract"
     expect(r.before.items.find((i) => i.what === "topic")?.status).toBe("missing");
     expect(r.after.items.find((i) => i.what === "topic")?.status).toBe("stated");
   });
-  it("the X plans carry the period, the language and the topic in the query itself and need nothing added", () => {
-    for (const id of ["msn_e3d679014c58168c3227", "msn_b060d3347ed7660f972e"]) expect(runGate(fixture.missions.find((m) => m.id === id)!).added, id).toEqual([]);
+  it("the X plans carry the period, the language and the topic in the query itself; the replies they dropped are now stated (NOV 6 2026: X is no longer exempt)", () => {
+    for (const id of ["msn_e3d679014c58168c3227", "msn_b060d3347ed7660f972e"]) expect(runGate(fixture.missions.find((m) => m.id === id)!).added, id).toEqual(["replies"]);
   });
 });
 

@@ -30,7 +30,8 @@ function liveShape() {
   const ask = buildAsk(REQUEST, null, AT);
   const r = compilePlan({ ask, pool: { card: searchCard, params: parentInputs(searchCard, ask), pages: [{ callId: "call_0001", page }] }, exposure: () => undefined, capabilityOf: (id) => catalog.byId.get(id)?.capability ?? null, catalogOnly: true });
   if (!r.ok) throw new Error(r.reason);
-  const chosen = mapPage(searchCard, page).filter((t) => r.chosen.includes(String(t.id)));
+  // the live shape had 20 tweets; since NOV 6 2026 the compiler chooses only the ORIGINALS of this page, so the 20 rows of the page itself make the shape (the gap lines are what is tested here)
+  const chosen = mapPage(searchCard, page);
   const tweets = chosen.slice(0, 20).map((t, i): Record<string, any> => ({ ...t, replies_count: LIVE_COUNTERS[i] ?? 0, __marks: { reply: false, repost: false, lang: "ar", inPeriod: true, named: null } }));
   const replies = tweets.flatMap((t, i) => Array.from({ length: LIVE_DELIVERED[i] ?? 0 }, (_, k) => ({ id: `r_${i}_${k}`, parent_id: String(t.id), text: `نص ${k}`, author: "a", posted_at: "2026-10-05T10:00:00.000Z", likes: 0, replies_count: 0, language: "" })));
   return { plan: r.plan as PricedPlan, tweets, replies };

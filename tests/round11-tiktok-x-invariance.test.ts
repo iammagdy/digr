@@ -13,7 +13,9 @@ import { MATCH_COUNTS_PREFIX_AR } from "../src/lib/agentMission/foundation/compi
 const sha = (v: unknown): string => createHash("sha256").update(typeof v === "string" ? v : JSON.stringify(v, null, 1)).digest("hex").slice(0, 16);
 const BASE = {
   tiktok: { plan: "64ac1c1f853a75d8", view: "2913468a4b2c2011", cells: "59ba5e3413bfa6d4" },
-  x: { plan: "a5d7cb783a72fb6d", view: "70e91a16497dd798", cells: "1371f3d7a2ac1209" },
+  // CHANGED (NOV 6 2026 CAMPAIGN, msn_d31f37958788a24ec46d): an X parent is an ORIGINAL post (a tweet that is itself a reply is never chosen, the card counts the ones left out) and, with the replies asked, the tweets are the most engaged
+  // («Top»): the M14 page holds 20 tweets of which 9 are originals, so the plan, its view and the file are re-pinned here (before: plan a5d7cb783a72fb6d, view 70e91a16497dd798, cells 1371f3d7a2ac1209)
+  x: { plan: "d693a8da6f2521a4", view: "0acbd23faf4cac1e", cells: "c5f472b49aafe654" },
 };
 
 // CHANGED (round 14): three more stated diffs, each removed or set apart before the hash is compared. (1) the plan carries `compiled.conditions` (the delivery contract reads which conditions the request set); (2) the FIRST sheet (the summary: its promised number, its limits and its methodology lines) is set apart: round 14 makes
@@ -70,6 +72,7 @@ describe("X: the plan, the view and the file are what they were, plus the topic 
     const pinned = (w.plan.stages[0].pinned_rows ?? []) as Array<Record<string, unknown>>;
     expect(pinned.length).toBeGreaterThan(0);
     for (const r of pinned) expect(typeof r.topic_relation).toBe("string");
+    for (const r of pinned) expect(r.is_reply).not.toBe(true);
     expect(w.plan.stages[0].columns.map((c) => c.key)).toContain("topic_relation");
   }, 120_000);
   it("the file: the tweets sheet has one more column, «علاقة النص بالموضوع»; with it taken out the file is the old one (no counter was missing, so no «غير متاح»)", async () => {

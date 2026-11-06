@@ -18,7 +18,7 @@ const YT = { platform: "youtube", parentKind: "videos", count: 2, source: { kind
 const TT = { platform: "tiktok", parentKind: "videos", count: 2, source: { kind: "none", text: null }, topic: { text: "الذكاء الاصطناعي", relation: "about" }, period: null, country: "EG", language: "ar", order: "most_commented", comments: "all", replies: "all", commentsPerParent: null, commentsBare: null, repliesPerComment: null };
 const IG = { platform: "instagram", parentKind: "posts", count: 2, source: { kind: "named", text: "alhadath" }, topic: { text: null, relation: "none" }, period: null, country: null, language: null, order: "most_commented", comments: "all", replies: "all", commentsPerParent: null, commentsBare: null, repliesPerComment: null };
 // X: no comments are asked on X (a reply is a tweet), so the order is the newest; «مع الردود» asks the replies, without «كل»
-const X = { platform: "x", parentKind: "tweets", count: 20, source: { kind: "none", text: null }, topic: { text: "العاصمة الإدارية", relation: "about" }, period: { from: "2026-10-01", to: "2026-10-31" }, country: null, language: "ar", order: "newest", comments: "none", replies: "some", commentsPerParent: null, commentsBare: null, repliesPerComment: null };
+const X = { platform: "x", parentKind: "tweets", count: 20, source: { kind: "none", text: null }, topic: { text: "العاصمة الإدارية", relation: "about" }, period: { from: "2026-10-01", to: "2026-10-31" }, country: null, language: "ar", order: "most_commented", comments: "none", replies: "some", commentsPerParent: null, commentsBare: null, repliesPerComment: null };
 
 const TABLE: Record<string, unknown> = {
   msn_a254618740b9b9878126: FB("2026-08-01", "2026-11-01"), // M1, 11-01 23:04

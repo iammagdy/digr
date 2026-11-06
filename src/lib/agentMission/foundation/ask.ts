@@ -61,6 +61,8 @@ export interface Ask {
   commentsBare: number | null;
   /** The customer's number of replies FOR EACH comment («٣ ردود على كل تعليق»), or null. */
   repliesPerComment: number | null;
+  /** X: the customer's number of replies FOR EACH TWEET («ردين على كل منشور»). Absent: none named (every reply the source shows, within the stage's cap). */
+  repliesPerTweet?: number;
   /** Decision 7: the occurrence of a recurring event the customer chose («آخر مرة» / «كل المرات» / a year), or null when none was chosen or asked. */
   occurrence?: Occurrence;
   edits: AskEdits;
@@ -130,10 +132,23 @@ function countryNamedIn(text: string): string | null {
 const PARENT_NOUN = "(?:فيديوهات|فيديو|منشورات|منشور|بوستات|بوست|تغريدات|تغريدة|تغريده|ريلز|ريل|مقطع|عنصر|واحد|واحدة)";
 const NUM = `(\\d+|${NUMBER_WORDS_SRC})`;
 const COMMENT_NOUN = "(?:تعليقات|تعليقًا|تعليقا|تعليق|كومنتات|كومنت)";
-const REPLY_NOUN = "(?:ردود|ردًا|ردا|رد)";
+const REPLY_NOUN = "(?:ردود|ردًا|ردا|ردّ|رد)";
 const EACH = `(?:(?:(?:من|على|في|عن|تحت)\\s+)?ل?كل\\s+${PARENT_NOUN}|(?:على|في|من|ل)\\s*(?:ال)?(?:فيديو|منشور|بوست|تغريدة|ريل|مقطع)\\s+(?:ال)?(?:واحد|واحدة))`;
 const PER_PARENT_COMMENTS = new RegExp(`(?:^|\\s)(?:و|ب|بـ)?${NUM}\\s*${COMMENT_NOUN}\\s+${EACH}`);
 const PER_COMMENT_REPLIES = new RegExp(`(?:^|\\s)(?:و|ب|بـ)?${NUM}\\s*${REPLY_NOUN}\\s+(?:(?:من|على|في|عن)\\s+)?ل?كل\\s+(?:تعليق|كومنت)`);
+/**
+ * NOV 6 2026 CAMPAIGN: THE DUAL is a number. «مع تعليقين حقيقيين على كل منشور» (Facebook, TikTok, YouTube) and «مع ردين حقيقيين على كل منشور» (X) named 2 per parent; neither was read (the per-parent rules needed a digit or a number
+ * word), so the Facebook mission asked «كم تعليقًا تريد من كل فيديو؟» and the X mission lost its replies. Up to two describing words may sit between the noun and «each» («حقيقيين», «عامين»).
+ */
+const DESCRIBED = "(?:\\s+[ء-ي]+(?:ين|ان|ة|ه)){0,2}";
+const DUAL_COMMENTS = new RegExp(`(?:^|\\s)(?:مع\\s+|و|ب)?(?:تعليقين|تعليقان|كومنتين)${DESCRIBED}\\s+${EACH}`);
+/** X: the replies FOR EACH TWEET («ردين على كل منشور», «٣ ردود على كل تغريدة»): a tweet's replies are its children (X has no comments). */
+const PER_TWEET_REPLIES = new RegExp(`(?:^|\\s)(?:مع\\s+|و|ب|بـ)?${NUM}\\s*${REPLY_NOUN}${DESCRIBED}\\s+${EACH}`);
+const DUAL_REPLIES = new RegExp(`(?:^|\\s)(?:مع\\s+|و|ب)?(?:ردّين|ردين|ردّان|ردان)${DESCRIBED}\\s+${EACH}`);
+export function repliesPerTweetOf(text: string): number | null {
+  if (DUAL_REPLIES.test(text)) return 2;
+  return numberIn(text, PER_TWEET_REPLIES);
+}
 /** A number of comments with NO «each» after it: «مع ١٠ تعليقات», «و٥٠ تعليق». */
 const BARE_COMMENTS = new RegExp(`(?:^|\\s)(?:مع\\s+|و|ب|بـ)?${NUM}\\s*${COMMENT_NOUN}(?![ء-ي])`);
 /** The words that make a number of comments a TOTAL: «١٠٠ تعليق في المجموع», «إجمالي ١٠٠ تعليق». */
@@ -189,7 +204,7 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
   const language: Ask["language"] = c.language ? (/بالإنجليزي|بالانجليزي|الإنجليزية|الانجليزية|english/i.test(text) ? "en" : "ar") : null;
   // ROUND 19: the comments number. «N تعليق من كل فيديو» is per parent; «N تعليق في المجموع» is a total (the card's own edit of the total); a bare «مع N تعليقات» is the one parent's number when the request has ONE parent («فيديو واحد»), else a bare count to ask about
   const count = edits.count ?? c.count;
-  const eachValue = c.comments === "none" ? null : perParentOf(text, PER_PARENT_COMMENTS);
+  const eachValue = c.comments === "none" ? null : perParentOf(text, PER_PARENT_COMMENTS) ?? (DUAL_COMMENTS.test(text) ? 2 : null);
   const totalValue = c.comments === "none" ? null : numberIn(text, TOTAL_AFTER) ?? numberIn(text, TOTAL_BEFORE);
   const bare = c.comments === "none" || eachValue !== null || totalValue !== null ? null : numberIn(text, BARE_COMMENTS);
   const perParentValue = eachValue ?? (bare !== null && count === 1 ? bare : null);
@@ -204,7 +219,8 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
     period: c.period ? periodOfRequest(text, requestedAtMs) : yearPeriod,
     country: c.country ? countryNamedIn(text) : null,
     language,
-    order: NEWEST.test(text) || c.comments === "none" ? "newest" : "most_commented",
+    // X WITH ITS REPLIES (NOV 6 2026 CAMPAIGN): the replies are the children of an X request, so their tweets are chosen by the replies counter like any parent with children (the newest tweets of a «Latest» search have none yet)
+    order: NEWEST.test(text) || (c.comments === "none" && !(c.platform === "x" && c.replies !== "none")) ? "newest" : "most_commented",
     comments: c.comments,
     replies: c.replies,
     ...(c.media ? { media: c.media } : {}),
@@ -212,6 +228,7 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
     commentsPerParent: perParentValue,
     commentsBare: bareValue,
     repliesPerComment: c.replies === "none" ? null : perParentOf(text, PER_COMMENT_REPLIES),
+    ...(c.platform === "x" && c.replies !== "none" && repliesPerTweetOf(text) !== null ? { repliesPerTweet: repliesPerTweetOf(text)! } : {}),
     ...(social && occurrence ? { occurrence } : {}),
     edits: { ...totalEdit, ...edits },
   };

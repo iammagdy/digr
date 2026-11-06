@@ -38,6 +38,12 @@ import { liveProgressOf, phoneCollectLine } from "@/lib/agentMission/stage2/sing
 interface MethodologyOfferInfo { jobId: string; titleAr: string; purchased: boolean }
 interface MissionAnswer { success: boolean; isGuest?: boolean; status?: string; requestText?: string; view?: CustomerMissionView; error?: string; methodology?: MethodologyOfferInfo; /** STAGE 2 S4: present only when DIGER_STAGE2_ASK_CARD is on for the viewer and the plan waits for approval. */ askCard?: AskCardView; /** STAGE 2 S10: present only when DIGER_STAGE2_LIVE_SHEET is on for the viewer. */ liveSheet?: true }
 
+/**
+ * NOV 6 2026 CAMPAIGN (X, msn_d31f37958788a24ec46d): a step the customer asked for that the plan cannot carry is a SCOPE DECISION, not a footnote. The approve button names it («اعتمد بدون هذه الخطوة»), next to «عدّل الطلب»;
+ * the step is not in the price and nothing is charged for it.
+ */
+export const APPROVE_WITHOUT_UNSERVED_AR = "اعتمد بدون هذه الخطوة";
+export const UNSERVED_CHOICE_AR = "هذه الخطوة ليست في السعر ولن تُنفَّذ. اعتمد الخطة بدونها، أو عدّل طلبك.";
 const TERMINAL_PHASES: ReadonlySet<string> = new Set(["done", "partial", "unserved", "failed", "cancelled"]);
 const WAITING_POLL_MS = 8000;
 const WAITING_POLL_HIDDEN_MS = 20000;
@@ -265,6 +271,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
         <div className="rounded-[12px] border border-ln2 bg-sf2 px-3 py-2" role="note" data-testid="agent-unserved">
           <p className="m-0 text-[12px] font-semibold text-ink">خطوة لم تُضَف إلى الخطة</p>
           <ul className="m-0 mt-0.5 list-disc pe-4 text-[13px] leading-[1.75] text-ink">{v.unservedAr.map((a) => <li key={a}>{a}</li>)}</ul>
+          <p className="m-0 mt-1 text-[12px] leading-[1.75] text-ink2" data-testid="agent-unserved-choice">{UNSERVED_CHOICE_AR}</p>
         </div>
       ) : null}
 
@@ -304,7 +311,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
             ? <a href="/register" className={`${BTN_PRIMARY} inline-flex min-h-12 items-center justify-center text-[15px] font-semibold no-underline sm:min-w-[200px]`} data-testid="agent-signup">سجّل لتعتمد</a>
             : overLimit ? null
             : <button type="button" className={`${BTN_PRIMARY} inline-flex min-h-12 w-full items-center justify-center gap-2 text-[15px] font-semibold sm:w-auto sm:min-w-[200px]`} disabled={busy} onClick={() => onAct("approve")} data-testid="agent-approve">
-                {approving ? <><span className="h-4 w-4 rounded-full border-2 border-onac/30 border-t-onac motion-safe:animate-spin motion-reduce:animate-none" aria-hidden="true" />جارٍ الاعتماد…</> : "اعتمد"}
+                {approving ? <><span className="h-4 w-4 rounded-full border-2 border-onac/30 border-t-onac motion-safe:animate-spin motion-reduce:animate-none" aria-hidden="true" />جارٍ الاعتماد…</> : v.unservedAr.length > 0 ? APPROVE_WITHOUT_UNSERVED_AR : "اعتمد"}
               </button>}
           <button type="button" className={`${BTN_PLAIN} w-full sm:w-auto`} disabled={busy} onClick={() => (v.edit ? onEditing(!editing) : onAct("edit"))} data-testid="agent-edit" aria-expanded={v.edit ? editing : undefined}>{pendingAction === "edit" ? "جارٍ التجهيز…" : "عدّل الطلب"}</button>
         </div>
