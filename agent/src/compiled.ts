@@ -31,6 +31,9 @@ import type { AgentStore, CallRow, MissionRecord } from "./types";
  * is `on`, or `test` for a test account (an unset platform flag, «inherit», keeps today's path: nothing changes by default). Every page is read THROUGH THE GATEWAY passed in
  * (the planning budget, the daily cap, the two-samples-per-source cap of the protected gateway.ts and the call record all apply); nothing here calls a provider by itself.
  */
+/** The words of the «no row about the topic» question, per platform. */
+const NO_ABOUT_NOUN: Record<string, { one: string; talks: string }> = { tiktok: { one: "فيديو", talks: "يتحدث نصه" }, youtube: { one: "فيديو", talks: "يتحدث نصه" }, x: { one: "تغريدة", talks: "يتحدث نصها" }, facebook: { one: "منشور", talks: "يتحدث نصه" }, instagram: { one: "منشور", talks: "يتحدث نصه" } };
+
 export function compiledPlatformActive(platformFlags: PlatformFlags | undefined, platform: SocialPlatform | null | undefined, isTest: boolean): boolean {
   if (!platform || !(COMPILED_PLATFORMS as ReadonlyArray<string>).includes(platform) || !isSocialPlatform(platform)) return false;
   const own = platformFlags?.[platform];
@@ -304,8 +307,10 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
     const repliesCards = ask.replies !== "none" ? cardsFor(ask.platform!, "comment.replies", { catalogOnly }) : [];
     const commentsCard = ask.comments !== "none" ? chooseCard(ask, "comments", { catalogOnly, repliesCards }) : null;
     const counterKey = poolCard.counter?.key ?? (extra.counters ? "comments" : null);
+    // NOV 6 2026: the customer's answer «أكمل بما وجدتموه كما هو» lets rows that do not name the topic be chosen (marked); otherwise they are never parents, and the exposure check reads only the eligible ones
+    const allowUnrelated = noAboutChoiceOf(deps.mission.answer_text) === "use";
     if (commentsCard?.inputs.parent) {
-      const ranked = rankedPoolOf({ ask, poolCard, pages, ...(extra.counters ? { counters: extra.counters } : {}), ...(extra.channels ? { channels: extra.channels } : {}), nowMs: deps.nowMs });
+      const ranked = rankedPoolOf({ ask, poolCard, pages, ...(extra.counters ? { counters: extra.counters } : {}), ...(extra.channels ? { channels: extra.channels } : {}), nowMs: deps.nowMs, ...(allowUnrelated ? { allowUnrelated: true } : {}) });
       let withComments = 0;
       for (const row of ranked) {
         if (withComments >= need || reads.exposure >= need + EXPOSURE_EXTRA) break;
@@ -322,11 +327,16 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
     const compileWith = (a: Ask) => compilePlan({
       ask: a, pool: { card: poolCard, params, pages }, exposure: (id) => exposure.get(id), capabilityOf: (id) => deps.catalog.byId.get(id)?.capability ?? null, pricingSettings: deps.pricingSettings, nowMs: deps.nowMs, ...(catalogOnly ? { catalogOnly: true } : {}), ...(ask.media === "reels" && ask.platform === "instagram" && reelsBasisOf(poolCard) !== "unproven" ? { reelsProven: true } : {}),
       ...(extra.counters ? { counters: extra.counters } : {}), ...(extra.channels ? { channels: extra.channels } : {}), ...(extra.customerChannel ? { customerChannel: extra.customerChannel } : {}), ...(shortfallChoice === "only_found" || shortfallChoice === "fill" ? { namedChoice: shortfallChoice } : {}),
+      ...(allowUnrelated ? { allowUnrelated: true } : {}),
     });
     const result = compileWith(ask);
     if (!result.ok && result.reason === "named_shortfall") {
       // DECISION 7.5: before approval, nothing priced or held
       return { kind: "question", ask, why: "named_shortfall", question: namedShortfallQuestionAr(ask.source.text ?? "", result.found, result.need, toArabicDigits, ask.topic.text), options: [NAMED_SHORTFALL_OPTIONS_AR.onlyFound, NAMED_SHORTFALL_OPTIONS_AR.fill, NAMED_SHORTFALL_OPTIONS_AR.cancel], reads };
+    }
+    if (!result.ok && result.reason === "no_relevant_rows") {
+      // NOV 6 2026: rows were read and none names the topic: the customer decides before approval, on every platform (the TikTok second query is above); nothing priced or held
+      return { kind: "question", ask, why: "no_about", question: noAboutQuestionAr(ask.topic.text ?? "", NO_ABOUT_NOUN[ask.platform!], result.tagOnly > 0), options: [NO_ABOUT_OPTIONS_AR.useAsIs, NO_ABOUT_OPTIONS_AR.change, NO_ABOUT_OPTIONS_AR.cancel], reads };
     }
     if (!result.ok) return { kind: "cannot", ask, reason: result.reason, reads };
     // THE BUDGET IS A HARD CEILING on the hold (Part B): the largest version that fits, priced by the same price function; none fits: the plan is not made and the reason is the budget

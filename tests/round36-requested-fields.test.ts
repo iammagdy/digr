@@ -123,9 +123,10 @@ describe("the plan and the file, end to end (SIMULATED pages)", () => {
 });
 
 describe("SOURCE ELIGIBILITY: the fields the customer named take part in the choice (no model)", () => {
+  // NOV 6 2026: the synthetic captions name the topic (an Instagram keyword search now never chooses a reel whose text does not name it)
   it("ranked by the catalog, the Reels-capable tool that LISTS the date and the account (the hashtag search with its documented reel filter) comes before the reels search whose field list is truncated; both prove reels; no non-Reels tool is a candidate", async () => {
     const ANY = "anyapi.instagram.hashtag.posts";
-    const w = discoveryWorld("اجمع ٥ ريلز من إنستجرام عن الذكاء الاصطناعي مع التواريخ وأسماء أصحاب الحسابات", { [ANY]: () => catalogPage(ANY, Array.from({ length: 10 }, (_, i) => ({ id: `3940000000000${i}`, shortcode: `A${i}`, url: `https://www.instagram.com/reel/A${i}/`, caption: `ريل ${i}`, username: `u${i}`, createdUtc: 1_788_000_000 + i, likes: i, comments: i, type: "XDTGraphVideo" })), "c2") }, { discovery: true, platform: "instagram" });
+    const w = discoveryWorld("اجمع ٥ ريلز من إنستجرام عن الذكاء الاصطناعي مع التواريخ وأسماء أصحاب الحسابات", { [ANY]: () => catalogPage(ANY, Array.from({ length: 10 }, (_, i) => ({ id: `3940000000000${i}`, shortcode: `A${i}`, url: `https://www.instagram.com/reel/A${i}/`, caption: `ريل عن الذكاء الاصطناعي ${i}`, username: `u${i}`, createdUtc: 1_788_000_000 + i, likes: i, comments: i, type: "XDTGraphVideo" })), "c2") }, { discovery: true, platform: "instagram" });
     const r = await w.plan();
     expect(r.kind).toBe("plan");
     if (r.kind !== "plan") return;

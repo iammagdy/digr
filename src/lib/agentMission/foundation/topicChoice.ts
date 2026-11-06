@@ -18,15 +18,17 @@ export function aboutQueryOf(ask: Pick<Ask, "topic" | "language">): string | nul
 
 /** The three ready answers of the question card; each is read by its exact words (noAboutChoiceOf). Any other text the customer types is an amendment of the request, read with it. */
 export const NO_ABOUT_OPTIONS_AR = {
-  useAsIs: "أكمل بما وجدتموه كما هو، مع علامة على كل فيديو",
+  // NOV 6 2026: asked on every platform now, so the words name no kind of item; the TikTok-era wording is still read as the same answer (LEGACY_USE_AS_IS_AR)
+  useAsIs: "أكمل بما وجدتموه كما هو، مع علامة على كل عنصر",
   change: "سأعدّل طلبي",
   cancel: "ألغِ المهمة",
 } as const;
 
+const LEGACY_USE_AS_IS_AR = "أكمل بما وجدتموه كما هو، مع علامة على كل فيديو";
 export type NoAboutChoice = "use" | "change" | "cancel";
 export function noAboutChoiceOf(answer: unknown): NoAboutChoice | null {
   const t = String(answer ?? "").replace(/\s+/g, " ").trim();
-  if (t === NO_ABOUT_OPTIONS_AR.useAsIs) return "use";
+  if (t === NO_ABOUT_OPTIONS_AR.useAsIs || t === LEGACY_USE_AS_IS_AR) return "use";
   if (t === NO_ABOUT_OPTIONS_AR.change) return "change";
   if (t === NO_ABOUT_OPTIONS_AR.cancel) return "cancel";
   return null;

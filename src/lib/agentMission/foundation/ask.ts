@@ -1,4 +1,4 @@
-import { buildRequestContract, type ChildAsk, type ParentKind } from "../requestContract";
+import { buildRequestContract, optionalPartsOf, type ChildAsk, type ParentKind } from "../requestContract";
 import { countryOfValue } from "../places";
 import { topicMeaningOf } from "../topicMeaning";
 import { cairoDayEndExclusiveMs, cairoDayOf, cairoDayStartMs } from "../cairoTime";
@@ -55,6 +55,8 @@ export interface Ask {
   media?: "reels";
   /** ROUND 36: the deliverable fields the customer named (dates, the account, views, likes): they take part in the source's choice and in the plan's review. Absent: none named. */
   wants?: ReadonlyArray<import("../requestContract").WantedField>;
+  /** NOV 6 2026: the optional preferences the customer wrote («منشورات فيديو لو متاح»): never a keyword, never the topic; the plan states how it treated them. Absent: none. */
+  preferences?: ReadonlyArray<string>;
   /** The customer's number of top-level comments FOR EACH parent («١٠٠ تعليق من كل فيديو»), or null when the words give none per parent. */
   commentsPerParent: number | null;
   /** ROUND 19: a number of comments the words give with no «each» and no «total» after it («مع ١٠ تعليقات») while the request has several parents or none counted yet: asked once before the plan. Null when the number is per parent, a total, or absent. */
@@ -185,7 +187,8 @@ export function officialChannelQueriesOf(topic: string | null): string[] {
 export function buildAsk(request: unknown, answer: unknown, requestedAtMs: number, edits: AskEdits = {}): Ask {
   const text = `${String(request ?? "")} ${String(answer ?? "")}`.replace(/\s+/g, " ").trim();
   const c = buildRequestContract(request, answer);
-  const meaning = topicMeaningOf(text);
+  // NOV 6 2026: an optional preference («(منشورات فيديو لو متاح)») never reaches the topic's meaning either
+  const meaning = topicMeaningOf(optionalPartsOf(text).required);
   // ROUND 33: «في آخر كأس عالم» / «في أحدث نهائي»: the customer names the LATEST occurrence of a recurring event themselves. The request parser stops the topic at «في» (the topic of «منتخب مصر في آخر كأس عالم» was «منتخب مصر»), so the event was dropped without a trace. It is now part of the topic (what the search and the topic marks read)
   // and, on the platforms that ask «تقصد أنهي مرة؟» (Facebook, Instagram, YouTube), it is the customer's own answer «آخر مرة»: no question. A request with no such phrase is read exactly as before.
   const eventLatest = c.platform === "facebook" || c.platform === "instagram" || c.platform === "youtube" ? LATEST_EVENT.exec(text)?.[1]?.replace(/\s+/g, " ").trim() ?? null : null;
@@ -225,6 +228,7 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
     replies: c.replies,
     ...(c.media ? { media: c.media } : {}),
     ...(c.wants ? { wants: c.wants } : {}),
+    ...(c.preferences ? { preferences: c.preferences } : {}),
     commentsPerParent: perParentValue,
     commentsBare: bareValue,
     repliesPerComment: c.replies === "none" ? null : perParentOf(text, PER_COMMENT_REPLIES),
