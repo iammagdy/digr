@@ -88,7 +88,8 @@ export function withRepliesJudged<P extends { stages: Stages; compiled?: PricedP
       if (s.children_open && s.replies_of === undefined) {
         const { children_open: _c, ...kept } = s;
         void _c;
-        if (!endedAtSource(s.key)) return kept;
+        // the customer's own number per parent («تعليقين على كل منشور») stays the promise: a short delivery is told as short, never as complete (NOV 6 2026)
+        if (!endedAtSource(s.key) || s.per_parent_asked) return kept;
         const delivered = (rowsByStage[s.key] ?? []).length;
         return { ...kept, planned_rows: delivered, expected_rows: delivered };
       }

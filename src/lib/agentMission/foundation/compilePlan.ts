@@ -17,7 +17,7 @@ import { OPEN_REPLIES_FLOOR } from "./openReplies";
 import { ALTERNATIVE_LINE_AR, catalogOnlyPagesOf, commentsAlternativesOf, quoteCostPerRowOf } from "./alternatives";
 import { youtubeChannelNoteAr } from "./youtubeChannel";
 import { TOPIC_RELATION_KEY, TOPIC_RELATION_TITLE_AR, topicRelationAr } from "./topicChoice";
-import { COLUMN_OF, suppliedWants } from "./discovery/fieldRecovery";
+import { COLUMN_OF, sheetWantsOf, suppliedWants } from "./discovery/fieldRecovery";
 import { cardMapCode, cardsFor, CATALOG_ONLY_CAP_USD, CATALOG_ONLY_PRICE_MARGIN, CHILD_COLUMNS, COUNTRY_AR, mapPage, type CardRole, type ToolCard } from "./toolCards";
 import type { SocialPlatform } from "../redesignFlagTypes";
 
@@ -456,7 +456,8 @@ export function compilePlan(input: CompileInput): CompileResult {
   const cardFieldKeys = [...Object.keys(card.mapping.kind === "fields" ? card.mapping.fields : {}), ...(card.mapping.kind === "fields" && card.mapping.linkTemplate ? ["link"] : []), ...(input.counters && !poolCard.counter ? ["comments"] : [])];
   // ROUND 27 (item 4): the parent sheet of a platform whose search has several verified tools has the SAME columns whichever tool read the page; a field the tool does not give stays a column and says «غير متاح» (workbook.ts)
   // ROUND 36: a field the customer NAMED is a column even when the chosen tool cannot give it (its cells say «غير متاح» and the plan said so before approval), never an omission
-  const wantedKeys = (ask.wants ?? []).map((k) => COLUMN_OF[k]).filter((k) => !cardFieldKeys.includes(k));
+  // NOV 6 2026: and the platform's standard parent fields (Instagram: the account, the date, the likes); an account given by the handle column is the account
+  const wantedKeys = sheetWantsOf(ask).map((k) => COLUMN_OF[k]).filter((k) => !cardFieldKeys.includes(k) && !(k === "author" && cardFieldKeys.includes("username")));
   const fieldKeys = sameParentColumnsOf(ask.platform, [...cardFieldKeys, ...wantedKeys]);
   const columns = [...fieldKeys.filter((k, i) => k !== "id" && fieldKeys.indexOf(k) === i).map((k) => ({ key: k, title_ar: TITLE[k] ?? k })), ...(markTopic ? [{ key: TOPIC_RELATION_KEY, title_ar: TOPIC_RELATION_TITLE_AR }] : []), ...(markNamed ? [{ key: NAMED_MARK_KEY, title_ar: NAMED_MARK_TITLE_AR }] : [])];
   const pageRows = Math.max(1, card.page.observedRowsPerPage);
@@ -558,7 +559,7 @@ export function compilePlan(input: CompileInput): CompileResult {
       columns: CHILD_COLUMNS.map((c) => ({ ...c })), sample_rows: (exposurePages[0]?.rows ?? []).slice(0, 3), measured_by: exposurePages.map((e) => e.callId).filter((x): x is string => x !== null),
       // DECISION A: the quote is the main tool's cost per row, or the dearest compatible alternative's when that costs more than twice as much per expected row (alternatives.ts)
       measured_from_calls: exposurePages.map((e) => e.callId).filter((x): x is string => x !== null), measured_cost_per_row_usd: quoteCostPerRowOf(commentsCard, alternatives?.alternatives ?? []),
-      yield_share: 1, review_share: 0, parent_pins: chosen.map((r) => r.id), ...(ask.comments === "all" && perParent === null ? { all_children: true } : {}), ...(p.type === "open" ? { children_open: true } : {}),
+      yield_share: 1, review_share: 0, parent_pins: chosen.map((r) => r.id), ...(ask.comments === "all" && perParent === null ? { all_children: true } : {}), ...(p.type === "open" ? { children_open: true, ...(perParent !== null && openAllowance === null ? { per_parent_asked: true } : {}) } : {}),
       ...(commentsMaxPages(commentsCard) !== null ? { max_pages: commentsMaxPages(commentsCard)! } : {}),
       engine: { endpoint_id: commentsCard.endpointId, params: structuredClone(commentsCard.inputs.fixed ?? {}), cursor_param: commentsCard.inputs.cursor, map_code: cardMapCode(commentsCard), map_file_id: "page", parent_binding: { param: commentsCard.inputs.parent!.param, from: commentsCard.inputs.parent!.from }, built_by: "code", ...((alternatives?.alternatives ?? []).length > 0 ? { alternatives: alternatives!.alternatives.map((a) => ({ ...a.entry, params: { ...a.entry.params } })) } : {}) },
     } as PricedStage);

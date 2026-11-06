@@ -209,6 +209,11 @@ export interface PricedStage extends ProposedStage {
   replies_open?: boolean;
   /** Rule 1 of the consolidation: the customer asked for ALL the comments and the parents' source gives no comment counter, so no number is promised from an estimate: the card says «كل التعليقات على العناصر المختارة», the estimate is only the price's maximum, and after the delivery the promise is what the source gave. Set by code only. */
   children_open?: boolean;
+  /**
+   * NOV 6 2026 (Instagram msn_34dcf09434697a62995c: «تعليقين على كل منشور», 2 posts, 1 comment delivered; the file said 3 of 6, the orders page and the details «٣ من ٣»): the number per parent of this OPEN stage is the CUSTOMER'S
+   * («N تعليق من كل منشور»), not a default allowance. The stage promises «up to N for each parent»: its rows count in every total (the card's, the file's, the orders page's), and the end of the run never lowers them to what the source gave.
+   */
+  per_parent_asked?: boolean;
   /** S11: the parent items of this stage were chosen by code as the MOST ENGAGED (the highest comment counters), not the newest: the model's «newest» wording about them is dropped from the card. Set by code. */
   chosen_most_engaged?: boolean;
   /** The sampled comments' own reply counters (each capped at the most a comment may be read for) and the price of one call of the reply source: with them the replies planned and their price follow an edit of the comments' number or of the replies per comment, by code. */
@@ -965,7 +970,7 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
         ...(s.how_ar ? { how_ar: s.how_ar } : {}),
         ...(s.replies_open ? { replies_open: true } : {}),
         ...(split && split.repliesKey === s.key ? { replies_counted: split.counted, replies_open_rows: split.openRows } : {}),
-        ...(s.children_open ? { children_open: true } : {}),
+        ...(s.children_open && !s.per_parent_asked ? { children_open: true } : {}),
         // the share of the sampled items the plan expected to match (a ratio, no money): the live tracker uses it to judge how much must be read before the target is reached
         ...(typeof s.yield_share === "number" ? { yield_share: Math.round(s.yield_share * 1000) / 1000 } : {}),
       };
