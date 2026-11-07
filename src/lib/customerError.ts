@@ -37,7 +37,16 @@ export function isCustomerSafeArabic(text: unknown): text is string {
  * Server reason codes whose cause is the request itself (no capability, no price that can be built): the same text sent again fails the
  * same way. The server already words them for a customer, so that sentence is shown as it is and no «try again» button is offered.
  */
-const DETERMINISTIC_FAILURE_REASONS: ReadonlySet<string> = new Set(["plan_build_failed", "capability_not_found", "unsupported_platform"]);
+const DETERMINISTIC_FAILURE_REASONS: ReadonlySet<string> = new Set(["plan_build_failed", "capability_not_found", "unsupported_platform", "not_found", "bad_request"]);
+
+/**
+ * Some of our routes answer a permanent failure with an English code instead of a sentence («not_found», «bad_request»). Arabic that says
+ * what is true replaces the code, so the customer is not told to «try again» for something that cannot change.
+ */
+const DETERMINISTIC_REASON_TEXT_AR: Readonly<Record<string, string>> = {
+  not_found: "هذا الطلب غير موجود أو لم يعد متاحًا.",
+  bad_request: "تعذّر فهم هذا الطلب. حدّث الصفحة وابدأ من جديد.",
+};
 
 /** False for a failure that a repeat of the same request cannot change; true for a network drop, a timeout or a server hiccup. */
 export function isRetryableFailure(err: unknown): boolean {
@@ -76,6 +85,7 @@ export function customerFacingFailure(
     ? (err.status >= 400 && err.status < 500 && err.status !== 408) || !isRetryableFailure(err)
     : code === "unknown";
   if (deliberate && isCustomerSafeArabic(message)) return { text: message.trim(), code };
+  if (err instanceof ChatRequestError && DETERMINISTIC_REASON_TEXT_AR[err.reason]) return { text: DETERMINISTIC_REASON_TEXT_AR[err.reason], code };
   return { text: temporary, code };
 }
 

@@ -17,7 +17,7 @@ export async function POST(req: NextRequest) {
 
     if (!parseResult.success) {
       return NextResponse.json(
-        { success: false, error: "البيانات المدخلة غير صحيحة", details: parseResult.error.format() },
+        { success: false, error: "البيانات المدخلة غير صحيحة" },
         { status: 400 }
       );
     }
