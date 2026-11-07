@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { useUser } from "@/hooks/useUser";
 import { Spinner } from "@/components/ui";
-import { AuthLayout, AuthToast, PasswordInput, authErrorMessage, authInput, authPrimaryBtn } from "@/components/AuthLayout";
+import { AuthField, AuthLayout, AuthToast, PasswordInput, authErrorMessage, authPrimaryBtn } from "@/components/AuthLayout";
 
 export default function LoginPage() {
   const { user, loading: authLoading, login } = useUser();
@@ -54,9 +54,9 @@ export default function LoginPage() {
   return (
     <AuthLayout title="مرحبًا بعودتك" subtitle="سجّل الدخول لمتابعة أبحاثك وملفاتك ورصيدك.">
       <form onSubmit={handleSubmit} className="mt-8 flex flex-col gap-3">
-        <input
-          type="email" dir="ltr" required autoComplete="email" placeholder="name@example.com"
-          value={email} onChange={(e) => setEmail(e.target.value)} className={`${authInput} text-left`}
+        <AuthField
+          label="البريد الإلكتروني" type="email" dir="ltr" required autoComplete="email" placeholder="name@example.com"
+          value={email} onChange={(e) => setEmail(e.target.value)} className="text-left"
         />
         <PasswordInput value={password} onChange={setPassword} autoComplete="current-password" />
         <Link href="/forgot" className="self-start p-1.5 text-[13px] text-mut underline decoration-ln2 underline-offset-[5px]">نسيت كلمة المرور؟</Link>
