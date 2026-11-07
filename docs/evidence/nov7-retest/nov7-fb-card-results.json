@@ -1,0 +1,113 @@
+{
+ "evidence": "SIMULATED (real Chromium, real card component and production CSS, the real compiler over the Nov 7 retest's stored rows: first search empty, second search with the posts); NOT production",
+ "results": [
+  {
+   "viewport": "desktop",
+   "width": 1280,
+   "check": "no sideways scroll (the long link wraps)",
+   "ok": true
+  },
+  {
+   "viewport": "desktop",
+   "width": 1280,
+   "check": "the permalink is shown whole, with its id",
+   "ok": true
+  },
+  {
+   "viewport": "desktop",
+   "width": 1280,
+   "check": "no cut permalink anywhere in the samples",
+   "ok": true
+  },
+  {
+   "viewport": "desktop",
+   "width": 1280,
+   "check": "the page names are in the samples",
+   "ok": true
+  },
+  {
+   "viewport": "desktop",
+   "width": 1280,
+   "check": "no false «account names unavailable» line",
+   "ok": true
+  },
+  {
+   "viewport": "desktop",
+   "width": 1280,
+   "check": "rtl",
+   "ok": true
+  },
+  {
+   "viewport": "phone",
+   "width": 390,
+   "check": "no sideways scroll (the long link wraps)",
+   "ok": true
+  },
+  {
+   "viewport": "phone",
+   "width": 390,
+   "check": "the permalink is shown whole, with its id",
+   "ok": true
+  },
+  {
+   "viewport": "phone",
+   "width": 390,
+   "check": "no cut permalink anywhere in the samples",
+   "ok": true
+  },
+  {
+   "viewport": "phone",
+   "width": 390,
+   "check": "the page names are in the samples",
+   "ok": true
+  },
+  {
+   "viewport": "phone",
+   "width": 390,
+   "check": "no false «account names unavailable» line",
+   "ok": true
+  },
+  {
+   "viewport": "phone",
+   "width": 390,
+   "check": "rtl",
+   "ok": true
+  },
+  {
+   "viewport": "narrow",
+   "width": 320,
+   "check": "no sideways scroll (the long link wraps)",
+   "ok": true
+  },
+  {
+   "viewport": "narrow",
+   "width": 320,
+   "check": "the permalink is shown whole, with its id",
+   "ok": true
+  },
+  {
+   "viewport": "narrow",
+   "width": 320,
+   "check": "no cut permalink anywhere in the samples",
+   "ok": true
+  },
+  {
+   "viewport": "narrow",
+   "width": 320,
+   "check": "the page names are in the samples",
+   "ok": true
+  },
+  {
+   "viewport": "narrow",
+   "width": 320,
+   "check": "no false «account names unavailable» line",
+   "ok": true
+  },
+  {
+   "viewport": "narrow",
+   "width": 320,
+   "check": "rtl",
+   "ok": true
+  }
+ ]
+}

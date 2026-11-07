@@ -2,7 +2,7 @@
 import "./react-global";
 // plan the REAL compiler (planByCompiler, test-account mode) makes from the Nov 7 Facebook retest's stored rows (msn_365928deea447ca8ae92: first search empty, second search with the posts), then the REAL production CSS in real Chromium at 1280, 390 and 320 px.
 // No backend, no provider, no points.
-import { writeFileSync, readFileSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { chromium } from "playwright";
@@ -52,7 +52,9 @@ const comments = (post: string) => ({ success: true, comments: [1, 2, 3].map((i)
   const mission = { id: "msn_ui_fb", status: "plan_ready", question_ar: null, plan_public: plan_public as never, reserved_points: 248, unit_price_points: 36, delivered_units: null, charged_points: null, summary_ar: null, files: null, created_at: new Date(NOW).toISOString() };
   const view = customerMissionView({ mission, events: [] });
   const body = renderToStaticMarkup(createElement(AgentMissionCardBody, { view, isGuest: false }));
-  const css = readFileSync(".next/static/css/app/layout.css", "utf8");
+  // the production build names its stylesheet by hash; a dev build writes app/layout.css
+  const cssDir = ".next/static/css";
+  const css = existsSync(`${cssDir}/app/layout.css`) ? readFileSync(`${cssDir}/app/layout.css`, "utf8") : readdirSync(cssDir).filter((f) => f.endsWith(".css")).map((f) => readFileSync(`${cssDir}/${f}`, "utf8")).join("\n");
   const html = `<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body class="bg-bg"><main style="padding:16px">${body}</main></body></html>`;
   const results: Array<Record<string, unknown>> = [];
   const browser = await chromium.launch();
