@@ -31,6 +31,12 @@ const withoutMatchCounts = (v: unknown): unknown => {
   if (v && typeof v === "object") return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, x]) => [k, withoutMatchCounts(x)]));
   return v;
 };
+// CHANGED (NOV 7 2026): one more stated diff, set apart before the hash is compared: each public stage carries `links_whole: true` (its sample links are shown whole, sampleLinks.ts). Every other byte of the view is what it was (no link of these plans was longer than 120 characters).
+const withoutLinksWhole = (v: unknown): unknown => {
+  if (Array.isArray(v)) return v.map(withoutLinksWhole);
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([k]) => k !== "links_whole").map(([k, x]) => [k, withoutLinksWhole(x)]));
+  return v;
+};
 const dataSheets = (cells: Record<string, string[][]>): Record<string, string[][]> => Object.fromEntries(Object.entries(cells).slice(1));
 
 /** The topic mark taken out: its column entry and its value on every row, anywhere in the document. */
@@ -44,7 +50,7 @@ describe("TikTok: the plan and the customer's view are byte for byte what they w
   it("plan and view", async () => {
     const w = await tiktokWorld();
     expect(sha(withoutMatchCounts(withoutConditions(w.plan)))).toBe(BASE.tiktok.plan);
-    expect(sha(withoutMatchCounts(w.view))).toBe(BASE.tiktok.view);
+    expect(sha(withoutLinksWhole(withoutMatchCounts(w.view)))).toBe(BASE.tiktok.view);
   }, 120_000);
   it("the file: the only change is «عدد الردود» of the reply rows (20 cells, empty -> «غير متاح»); with those put back the file is the old one", async () => {
     const w = await tiktokWorld();
@@ -68,7 +74,7 @@ describe("X: the plan, the view and the file are what they were, plus the topic 
   it("with the topic mark taken out, the plan and the view are the old ones; the mark itself is there on every chosen tweet", async () => {
     const w = await xWorld();
     expect(sha(withoutTopicMark(withoutMatchCounts(withoutConditions(w.plan))))).toBe(BASE.x.plan);
-    expect(sha(withoutTopicMark(withoutMatchCounts(w.view)))).toBe(BASE.x.view);
+    expect(sha(withoutLinksWhole(withoutTopicMark(withoutMatchCounts(w.view))))).toBe(BASE.x.view);
     const pinned = (w.plan.stages[0].pinned_rows ?? []) as Array<Record<string, unknown>>;
     expect(pinned.length).toBeGreaterThan(0);
     for (const r of pinned) expect(typeof r.topic_relation).toBe("string");

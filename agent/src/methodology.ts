@@ -361,6 +361,7 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
   // ROUND 36: THE SCOPE OF A REQUEST FOR REELS, said as approved (the stage is «الريلز» only when the media type is proven; otherwise the file says it is posts whose type the source does not prove), and the fields the customer named that the source did not give
   if (plan.compiled?.media) limits.push(mediaScopeLineAr(plan.compiled.media));
   for (const f of plan.compiled?.fields ?? []) if (f.status === "unavailable" && (f.key === "posted_at" || f.key === "author")) limits.push(`${f.key === "posted_at" ? "التواريخ" : "أسماء أصحاب الحسابات"}: طلبتها، ولم يعطها المصدر في ما قرأناه؛ عمودها موجود وقيمه «غير متاح» ولم نكتب شيئًا من عندنا.`);
+  for (const f of plan.compiled?.fields ?? []) if (f.status === "partial" && f.of && (f.key === "posted_at" || f.key === "author")) limits.push(`${f.key === "posted_at" ? "التواريخ" : "أسماء أصحاب الحسابات"}: أعطاها المصدر لبعض العناصر فقط؛ الباقي قيمه «غير متاح» ولم نكتب شيئًا من عندنا.`);
   for (const s of stages) if ((s.unresolved_sources ?? []).length) limits.push(unresolvedSourcesLineAr(s.unresolved_sources!));
   for (const s of delivering) {
     const r = facts.stages?.[s.key];

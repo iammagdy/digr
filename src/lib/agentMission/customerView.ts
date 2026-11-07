@@ -16,6 +16,7 @@ import { ALL_COMMENTS_AR, ALL_REPLIES_AR } from "./repliesCard";
 import { minutesAr } from "./expectedTime";
 import { filterLineAr, isEnabled, type StageFilter } from "./filters";
 import { formatSampleCell } from "../customerDates";
+import { sampleCellText, storedSampleCell } from "./sampleLinks";
 import { dedupeNearIdentical } from "../dedupeLines";
 
 /**
@@ -175,7 +176,9 @@ export function samplesView(plan: any): CustomerMissionView["samples"] {
   if (!stage) return null;
   const columns: Array<{ key: string; titleAr: string }> = (Array.isArray(stage.columns) ? stage.columns : []).map((c: any) => ({ key: String(c.key), titleAr: String(c.title_ar ?? c.titleAr ?? "") })).filter((c: { titleAr: string }) => c.titleAr).slice(0, 6);
   if (columns.length === 0) return null;
-  const rows = (stage.sample_rows as Array<Record<string, unknown>>).slice(0, 3).map((r) => columns.map((c) => formatSampleCell(String(r?.[c.key] ?? "").slice(0, 600))));
+  // NOV 7 2026: a link is shown whole; a link stored cut by an older card (no `links_whole` mark) is said to be cut, never shown as if it worked (sampleLinks.ts)
+  const linksWhole = stage.links_whole === true;
+  const rows = (stage.sample_rows as Array<Record<string, unknown>>).slice(0, 3).map((r) => columns.map((c) => formatSampleCell(storedSampleCell(sampleCellText(String(r?.[c.key] ?? ""), 600), linksWhole))));
   return { stageTitleAr: customerSafeText(stage.title_ar, "مرحلة"), columns, rows };
 }
 

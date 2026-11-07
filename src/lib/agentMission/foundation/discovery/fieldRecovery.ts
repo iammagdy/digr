@@ -2,6 +2,7 @@ import type { ToolCard } from "../toolCards/types";
 import { mapPage } from "../toolCards/mapCode";
 import type { WantedField } from "../../requestContract";
 import { APPROX_FIELD_NOTE_AR, parseRelativeAge } from "../../relativeDates";
+import { toArabicDigits } from "../../../arabicDigits";
 
 /**
  * ROUND 36: THE DELIVERABLE FIELDS A CUSTOMER NAMED («مع النصوص والروابط والتواريخ وعدد المشاهدات»), checked against what the source REALLY returned.
@@ -14,8 +15,9 @@ import { APPROX_FIELD_NOTE_AR, parseRelativeAge } from "../../relativeDates";
  * Pure: no I/O.
  */
 /** `approximate` (round 38): the source dates its items ONLY by a relative text («2 weeks ago»); the date column is filled with the approximate day computed from it, marked approximate in the file; never exact, never invented. */
-export type FieldStatus = "card" | "recovered" | "approximate" | "unavailable";
-export interface FieldReport { key: WantedField; status: FieldStatus; /** The path inside an item the value was read from (recovered or card), as the provider wrote it. */ path?: string }
+/** `partial` (NOV 7 2026): the rows CHOSEN for the file carry the field on some of them only (`of`: how many of how many); the others read «غير متاح». */
+export type FieldStatus = "card" | "recovered" | "approximate" | "partial" | "unavailable";
+export interface FieldReport { key: WantedField; status: FieldStatus; /** The path inside an item the value was read from (recovered or card), as the provider wrote it. */ path?: string; /** `partial` only: the chosen rows that carry a value, of all the chosen rows. */ of?: { n: number; total: number } }
 
 /** The names a provider uses for the same fact, most specific first. A nested path is allowed (`owner.username`). */
 const CANDIDATES: Partial<Record<WantedField, ReadonlyArray<ReadonlyArray<string>>>> = {
@@ -84,6 +86,27 @@ export function recoverFields(card: ToolCard, page: unknown, wants: ReadonlyArra
   return { card: changed ? { ...card, mapping: { ...card.mapping, fields } } : card, report };
 }
 
+/** A cell the source really filled: not nothing, not an empty text, not the «غير متاح» the file writes for a missing value. A real 0 counts. */
+const filled = (v: unknown): boolean => v !== null && v !== undefined && !(typeof v === "string" && (v.trim() === "" || v.trim() === "غير متاح"));
+
+/**
+ * NOV 7 2026 (Facebook retest msn_365928deea447ca8ae92): THE FIELD CHECK IS JUDGED ON THE ROWS CHOSEN FOR THE FILE, not only on the first page of the first tool. The first keyword search answered empty, the rows were chosen from the second
+ * search of the same platform (a test account reads both), and every chosen post carried its page's name; the check had run on the empty page and the card said «طلبت أسماء أصحاب الحسابات، لكن المصدر المختار لا يعيدها».
+ * A `card` or `unavailable` report is re-decided on `rows` (the chosen parents, as mapped from their own source): every row has the value: `card`; some: `partial` with the count; none: `unavailable`. `recovered` and `approximate` keep their
+ * provenance. The account also counts when the row carries the handle (`username`), as `recoverFields` does. No value is ever written here: only what the rows already hold is counted. Pure.
+ */
+export function confirmFieldsOnRows(report: ReadonlyArray<FieldReport>, rows: ReadonlyArray<Record<string, unknown>>): FieldReport[] {
+  if (rows.length === 0) return [...report];
+  return report.map((f) => {
+    if (f.status !== "card" && f.status !== "unavailable" && f.status !== "partial") return f;
+    const n = rows.filter((r) => filled(r[COLUMN_OF[f.key]]) || (f.key === "author" && filled(r.username))).length;
+    const path = f.path !== undefined ? { path: f.path } : {};
+    if (n === rows.length) return { key: f.key, status: "card", ...path };
+    if (n === 0) return { key: f.key, status: "unavailable" };
+    return { key: f.key, status: "partial", ...path, of: { n, total: rows.length } };
+  });
+}
+
 const NAME_AR: Record<WantedField, string> = { posted_at: "التواريخ", author: "أسماء أصحاب الحسابات", views: "المشاهدات", likes: "الإعجابات" };
 
 /**
@@ -108,10 +131,12 @@ export function fieldNotesAr(report: ReadonlyArray<FieldReport>, requested?: Rea
   const missing = report.filter((r) => r.status === "unavailable" && asked(r.key)).map((r) => NAME_AR[r.key]);
   const approximate = report.some((r) => r.status === "approximate");
   const recovered = report.filter((r) => r.status === "recovered").map((r) => NAME_AR[r.key]);
+  const partial = report.filter((r) => r.status === "partial" && r.of !== undefined);
   const out: string[] = [];
   if (recovered.length > 0) out.push(`قرأنا ${recovered.join(" و")} من بيانات المصدر نفسها كما أعادها، ولم نحسبها ولم نخمّنها.`);
   if (approximate) out.push(APPROX_FIELD_NOTE_AR);
   if (missing.length > 0) out.push(`طلبت ${missing.join(" و")}، لكن المصدر المختار لا يعيدها في ما قرأناه: ${missing.length === 1 ? "سيظهر عمودها" : "ستظهر أعمدتها"} في الملف و«غير متاح» في كل صفوفه، ولم نكتب أي قيمة من عندنا. ولم نختر مصدرًا بعيدًا عن طلبك لمجرد الحصول عليها.`);
+  for (const r of partial) out.push(`${NAME_AR[r.key]}: أعادها المصدر في ${toArabicDigits(r.of!.n)} من ${toArabicDigits(r.of!.total)} من العناصر المختارة؛ الباقي يظهر «غير متاح» في الملف، ولم نكتب أي قيمة من عندنا.`);
   if (missingStandard.length > 0) out.push(`لا يعيد المصدر المختار ${missingStandard.join(" و")} في ما قرأناه: ${missingStandard.length === 1 ? "سيظهر عمودها" : "ستظهر أعمدتها"} في الملف و«غير متاح» في كل صفوفه، ولم نكتب أي قيمة من عندنا.`);
   return out;
 }
