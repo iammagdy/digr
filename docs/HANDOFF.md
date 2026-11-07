@@ -4,6 +4,23 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 41 (7 Nov 2026, after #436, main = `059806b`): the Nov 7 Facebook retest, two card defects (launch release)
+
+**No SQL write, no refund or ledger action, no flag change, no migration, no paid or provider call, no Storage read.** Evidence: read-only SELECTs on `missions`, `mission_calls`, `mission_events` and `storage.objects` (names only) for the retest mission `msn_365928deea447ca8ae92` (test account, 22:16 UTC 6 Nov = 00:16 Cairo 7 Nov, 215 points charged, 6 rows delivered).
+
+1. **Incomplete permalink (fixed).**
+   - **Proven:** the private plan's first chosen post holds the source's whole link (155 chars, `permalink.php?story_fbid=pfbid02V4…Kl&id=61570030318692`). The stored PUBLIC plan's sample cut every cell at 120 chars, so the card showed `…story_fbid=pfbid02V4…VPfT`: the `id` was gone and the link opened nothing. The page link (`author_url`) was cut the same way.
+   - **Not affected:** the file and the live sheet never cut a cell.
+   - **Fix (`sampleLinks.ts`, `plan.ts`, `customerView.ts`):** a link cell is shown whole, exactly as the source gave it (up to 2,048 chars; longer: a sentence, never a partial link). New public stages carry `links_whole: true`. A public plan stored before this rule (no mark) that holds a link of exactly 120 chars is shown as «الرابط مقتطع في هذه المعاينة…»: nothing is rebuilt, no id is guessed. Text cells keep the 120-char limit.
+2. **Inaccurate account-name warning (fixed).**
+   - **Proven:** call_0001 (`justoneapi.x.facebook-search-post-v1`) answered EMPTY; the test account's second search (call_0002, `anyapi.facebook.search_posts`, 20 posts) gave the rows. The field check ran on the empty first page, so the card said «طلبت أسماء أصحاب الحسابات، لكن المصدر المختار لا يعيدها…» while both chosen posts carried their page's name.
+   - **Fix (`fieldRecovery.ts` `confirmFieldsOnRows`, `agent/src/compiled.ts`):** the report is re-decided on the parents CHOSEN for the file: all carry the field → `card` (no sentence); some → `partial` with the count (sentence; the workbook writes «غير متاح» in the empty cells; the methodology says so); none → `unavailable` (the old sentence). No value is ever written.
+3. **Tests:** `tests/nov7-facebook-retest-link-and-account.test.ts` (5; the real compiler over the retest's stored rows). Each fix reverted alone turns its test red.
+4. **Browser (SIMULATED, not production):** `scripts/browser-journey/nov7-facebook-card.chromium.ts`, the real card and production CSS at 1280/390/320.
+5. **Heroku:** the worker still reports `version: dev`; its commit cannot be verified from this session.
+
+---
+
 ## Round 40 (6 Nov 2026, after #435, main = `182074a`): corrective release from the Nov 6 five-platform acceptance campaign (#432, #433, #434, #435)
 
 **No SQL write, no refund or ledger action, no flag change, no migration, no paid or provider call.** All production facts are read-only SELECTs on the test account. The full evidence is in `docs/evidence/nov6-campaign/README.md`, including the X charge eligibility note for the owner. The targeted retest is in `docs/WEGZ-RETEST-NOV6.md` and is **not authorized** until the owner sets a ceiling.

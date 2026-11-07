@@ -4,7 +4,7 @@ import { checkChannelsAgainstWords } from "../../src/lib/agentMission/foundation
 import { buildShapeDigest } from "../../src/lib/modelPlanner/digest";
 import { carriedBy, chooseCard, compilePlan, parentInputs, rankedCards, rankedPoolOf, COMPILED_PLATFORMS, type CompileResult } from "../../src/lib/agentMission/foundation/compilePlan";
 import { channelAnswerOf, channelEvidenceOf, youtubeChannelChoiceQuestionAr } from "../../src/lib/agentMission/foundation/discovery/channelEvidence";
-import { fieldNotesAr, recoverFields, sheetWantsOf, type FieldReport } from "../../src/lib/agentMission/foundation/discovery/fieldRecovery";
+import { confirmFieldsOnRows, fieldNotesAr, recoverFields, sheetWantsOf, type FieldReport } from "../../src/lib/agentMission/foundation/discovery/fieldRecovery";
 import { mediaMarkOf, mediaNotesAr, reelsBasisOf, reelsCandidates, type MediaMark } from "../../src/lib/agentMission/foundation/discovery/media";
 import { candidateViewOf, discoveryMarkOf, discoveryNotesAr, pagingOf, type DiscoveryEvaluation, type DiscoveryMark, type SelectCapability } from "../../src/lib/agentMission/foundation/discovery/plan";
 import { factsOf, isAboutAndEligible, pageMatchesSource, rankPool } from "../../src/lib/agentMission/foundation/pool";
@@ -125,7 +125,10 @@ export async function planByCompiler(deps: CompiledPlanningDeps): Promise<WithCo
   }
   // ROUND 36: the fields the customer named and what the real page showed for each (the unavailable ones are said before approval; the recovered ones keep the path they were read from)
   if (result.kind === "plan" && seen.fields && seen.fields.length > 0) {
-    result = { ...result, plan: { ...result.plan, notes_ar: [...(result.plan.notes_ar ?? []), ...fieldNotesAr(seen.fields, result.ask.wants ?? [])], compiled: { ...result.plan.compiled!, fields: seen.fields } } };
+    // NOV 7 2026: judged on the parents CHOSEN for the file (their own source's mapping), not only on the first page of the first tool (an empty first search made the card say the page names were unavailable while every chosen post carried one)
+    const parent = result.plan.stages.find((s) => s.parent_key === null && Array.isArray(s.pinned_rows) && s.pinned_rows.length > 0);
+    const fields = parent ? confirmFieldsOnRows(seen.fields, parent.pinned_rows as Array<Record<string, unknown>>) : seen.fields;
+    result = { ...result, plan: { ...result.plan, notes_ar: [...(result.plan.notes_ar ?? []), ...fieldNotesAr(fields, result.ask.wants ?? [])], compiled: { ...result.plan.compiled!, fields } } };
   }
   // ROUND 33: a plan whose parents were read by a tool derived from the catalog says so before approval, with what the pages showed about completeness (never «all of the platform»), and keeps the audit mark of the discovery
   // ROUND 34: EVERY PLAN OF A MISSION WITH DISCOVERY ON carries the mark, whichever tool was chosen (a verified tool took part in the same evaluation as the derived ones): the audit evidence that discovery was entered, what was eligible and what was chosen

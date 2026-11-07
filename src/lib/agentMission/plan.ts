@@ -1,3 +1,4 @@
+import { sampleCellText } from "./sampleLinks";
 import { AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS, AGENT_MAX_DELIVERED_ROWS, AGENT_REPLIES_PER_COMMENT_DEFAULT, AGENT_REPLIES_PER_COMMENT_MAX, AGENT_PEOPLE_PAGES_DEFAULT, AGENT_PEOPLE_PAGES_MAX, MAX_COLUMNS_PER_STAGE, MAX_PLAN_STAGES, MAX_SAMPLE_ROWS_PER_STAGE, NAMES_STEP_USD_PER_PERSON } from "./constants";
 import { formatIsoForCustomer, formatSampleValueAr } from "../customerDates";
 import { isLanguageColumn } from "./languageLabel";
@@ -966,7 +967,9 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
       const columns = s.columns.filter((c) => !isInternalColumn(c));
       return {
         key: s.key, title_ar: childCardTitleAr(s, plan.stages), expected_rows: s.planned_rows, parent_key: s.parent_key, deliver: s.deliver, columns,
-        sample_rows: s.sample_rows.filter((r) => sampleRowPasses(s, r, now)).slice(0, CUSTOMER_SAMPLE_ROWS).map((r) => Object.fromEntries(columns.map((c) => [c.key, approxSampleCellAr(r, c.key) ?? (s.engine?.built_by === "code" ? formatSampleValueAr(r[c.key], { column: isLanguageColumn(c.title_ar, c.key) ? "language" : undefined }) : String(r[c.key] ?? "")).slice(0, SAMPLE_CELL_CHARS)]))),
+        // NOV 7 2026: a link is never cut (a cut permalink opened nothing); every other cell keeps its limit. `links_whole` marks a stage written under that rule (sampleLinks.ts)
+        sample_rows: s.sample_rows.filter((r) => sampleRowPasses(s, r, now)).slice(0, CUSTOMER_SAMPLE_ROWS).map((r) => Object.fromEntries(columns.map((c) => [c.key, approxSampleCellAr(r, c.key) ?? sampleCellText(s.engine?.built_by === "code" ? formatSampleValueAr(r[c.key], { column: isLanguageColumn(c.title_ar, c.key) ? "language" : undefined }) : String(r[c.key] ?? ""), SAMPLE_CELL_CHARS)]))),
+        links_whole: true,
         ...(s.how_ar ? { how_ar: s.how_ar } : {}),
         ...(s.replies_open ? { replies_open: true } : {}),
         ...(split && split.repliesKey === s.key ? { replies_counted: split.counted, replies_open_rows: split.openRows } : {}),

@@ -80,7 +80,7 @@ const COUNTER_KEYS: ReadonlySet<string> = new Set(["likes", "comments", "shares"
 /** ROUND 27 (item 4): on a compiled TikTok video sheet the country is a field the chosen search tool may not give (the same columns for every tool): a missing value reads «غير متاح» too. The language column is never empty by itself: the writer reads the text's language when the tool gave none. */
 const TIKTOK_FIELD_KEYS: ReadonlySet<string> = new Set(["country"]);
 const isAvailabilityKey = (plan: PricedPlan, stage: PricedStage, key: string): boolean =>
-  plan.compiled?.by === "compiler" && (COUNTER_KEYS.has(key) || (stage.parent_key === null && (plan.compiled.fields ?? []).some((f) => f.key === key && f.status === "unavailable")) || (stage.parent_key === null && /tiktok\./.test(stage.endpoint_id) && TIKTOK_FIELD_KEYS.has(key)));
+  plan.compiled?.by === "compiler" && (COUNTER_KEYS.has(key) || (stage.parent_key === null && (plan.compiled.fields ?? []).some((f) => f.key === key && (f.status === "unavailable" || f.status === "partial"))) || (stage.parent_key === null && /tiktok\./.test(stage.endpoint_id) && TIKTOK_FIELD_KEYS.has(key)));
 const isBlankCell = (v: unknown): boolean => v === null || v === undefined || (typeof v === "string" && v.trim() === "");
 
 /** True when a column's values are numbers and nothing else (no leading zero, at most 15 digits): only then it is stored as a number. */
