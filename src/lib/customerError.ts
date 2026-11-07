@@ -44,7 +44,7 @@ const DETERMINISTIC_FAILURE_REASONS: ReadonlySet<string> = new Set(["plan_build_
  * what is true replaces the code, so the customer is not told to «try again» for something that cannot change.
  */
 const DETERMINISTIC_REASON_TEXT_AR: Readonly<Record<string, string>> = {
-  not_found: "هذا الطلب غير موجود أو لم يعد متاحًا.",
+  not_found: "العنصر المطلوب غير موجود أو لم يعد متاحًا.",
   bad_request: "تعذّر فهم هذا الطلب. حدّث الصفحة وابدأ من جديد.",
 };
 

@@ -51,14 +51,37 @@ async function defaultAccessToken(): Promise<string> {
   }
 }
 
-const CODE_LIKE = /^[a-z][a-z0-9_]{2,40}$/;
+/** Said when the caller asked for anything but one of our own `/api/` routes. Nothing is sent and no token is read. */
+export const REQUEST_REFUSED_AR = "تعذّر إرسال الطلب. حدّث الصفحة وجرّب مرة أخرى.";
 
-/** The server's reason code: its own `reason`, else an English code in `error` («not_found»), else «not_found» for a 404 page. */
+const PATH_BASE = "http://same-origin.invalid";
+
+/**
+ * The only address this helper will call: one of our own routes, `/api/...`, on this origin. The session token is attached to the request,
+ * so it must never travel to another host: `https://other.example/x`, `//other.example/x`, `javascript:`, a backslash form and a path whose
+ * `..` leaves `/api/` are all refused. The address is resolved the way the browser resolves it, and that RESOLVED path (never the raw text) is what is sent.
+ */
+export function safeApiPath(path: unknown): string | null {
+  if (typeof path !== "string" || !path.startsWith("/api/")) return null;
+  if (/[\\\u0000-\u001f\u007f]/.test(path)) return null;
+  let url: URL;
+  try { url = new URL(path, PATH_BASE); } catch { return null; }
+  if (url.origin !== PATH_BASE || !url.pathname.startsWith("/api/")) return null;
+  return url.pathname + url.search;
+}
+
+/** Only these English codes in `error` are read as a reason (they are the codes our routes use for a permanent failure); any other text is not a code. */
+const ERROR_CODES_READ_AS_REASON: ReadonlySet<string> = new Set(["not_found", "bad_request"]);
+
+/**
+ * The server's reason code: its own `reason`, else an `error` that is exactly `not_found` or `bad_request` on a 4xx answer (a 5xx that carries
+ * such a word is a server failure, so it stays temporary). A bare 404 (a page, an empty body, a proxy) is NOT a reason: it may be temporary.
+ */
 function reasonOf(data: unknown, status: number): string {
   const body = data && typeof data === "object" ? data as { reason?: unknown; error?: unknown } : {};
   if (typeof body.reason === "string" && body.reason) return body.reason;
-  if (typeof body.error === "string" && CODE_LIKE.test(body.error)) return body.error;
-  return status === 404 ? "not_found" : "";
+  if (status >= 400 && status < 500 && typeof body.error === "string" && ERROR_CODES_READ_AS_REASON.has(body.error)) return body.error;
+  return "";
 }
 
 function wrap(err: unknown, options: ApiFetchOptions, aborted: boolean): ApiFetchError {
@@ -81,6 +104,10 @@ async function readBody(res: Response): Promise<{ data: unknown; parsed: boolean
  * answer without a `success` field). Every failure throws an `ApiFetchError` with an Arabic `message`.
  */
 export async function apiFetch<T = any>(path: string, options: ApiFetchOptions = {}): Promise<T> {
+  // BEFORE the token is read or any request is built: a refused address never reaches `fetch` and never sees a credential
+  const target = safeApiPath(path);
+  if (target === null) throw new ApiFetchError(REQUEST_REFUSED_AR, 0, "bad_path", "bad_path", false);
+
   const { body, timeoutMs = DEFAULT_API_TIMEOUT_MS, noCharge: _noCharge, fallback: _fallback, getAccessToken, signal: callerSignal, headers: callerHeaders, ...init } = options;
 
   const controller = new AbortController();
@@ -101,15 +128,19 @@ export async function apiFetch<T = any>(path: string, options: ApiFetchOptions =
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...Object.fromEntries(new Headers(callerHeaders).entries()),
     };
-    const res = await fetch(path, {
+    // `redirect: "error"`: the Authorization header must not follow a redirect to another host (our routes do not redirect; a redirect is a failure)
+    const res = await fetch(target, {
       cache: "no-store",
       ...init,
+      credentials: "same-origin",
+      redirect: "error",
       headers,
       signal: controller.signal,
       ...(body === undefined ? {} : { body: (isRaw ? body : JSON.stringify(body)) as BodyInit }),
     });
     const { data, parsed } = await readBody(res);
-    if (!parsed) throw new ChatRequestError("", res.status || 502, res.status === 404 ? "not_found" : "bad_response");
+    // a page that is not JSON (a platform error page, an empty body) is never a permanent failure, even on a 404
+    if (!parsed) throw new ChatRequestError("", res.status || 502, "bad_response");
     const failed = !res.ok || (data && typeof data === "object" && (data as { success?: unknown }).success === false);
     if (failed) {
       const message = data && typeof data === "object" && typeof (data as { error?: unknown }).error === "string" ? (data as { error: string }).error : "";
