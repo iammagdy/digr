@@ -20,6 +20,8 @@ const CONTRACT: Record<PlatformEmailTemplateId, string[]> = {
   // (Preheader added: the line a mail list shows next to the subject; optional, a caller that sends none gets its heading) 
   "job-update": ["Name", "Subject", "Preheader", "Heading", "Lead", "DetailOne", "DetailTwo", "ButtonLabel", "JobURL", "SiteURL"].sort(),
   "admin-topup-alert": ["AdminURL", "AmountEgp", "CustomerEmail", "CustomerName", "Points", "RequestTime", "SiteURL"],
+  // the consent-based announcement: every word comes from the caller (src/lib/launch/announcement.ts); UnsubscribeURL is the signed one-click link
+  "news": ["ButtonLabel", "Heading", "Item1", "Item2", "Item3", "Item4", "Item5", "Item6", "Lead", "Name", "SiteURL", "Subject", "UnsubscribeURL"],
 };
 
 /** Realistic values, all in Arabic-Indic digits: what the app sends. */
@@ -27,7 +29,8 @@ const SAMPLE: Record<string, string> = {
   Name: "منى السيد", AmountEgp: "٢٥٠", Credits: "٢٥٠٠", ReviewNote: TOPUP_REVIEW_DEFAULT_AR, CreatedAt: "٢٥ أكتوبر ٢٠٢٦", ConfirmedAmountEgp: "٢٥٠", Balance: "٣٠٠٠",
   RejectReason: "الإيصال غير واضح", JobTitle: "قائمة شركات", JobURL: "https://diger.tech/dashboard/requests", Delivered: "٤٠", Requested: "١٠٠", Charged: "٣٦٠", Refunded: "٠",
   Points: "٢٠٧", Reason: "توقف تنفيذ الطلب عن التقدم قبل اكتماله", Subject: "اكتمل طلبك جزئيًا", Heading: "اكتمل طلبك جزئيًا", Lead: "وصلك ٤٠ من ١٠٠.", DetailOne: "خُصم ٣٦٠ نقطة.", DetailTwo: "حجز مؤقت مُحرَّر ١٤٠ نقطة.",
-  ButtonLabel: "افتح طلباتي", CustomerName: "منى السيد", CustomerEmail: "customer@example.test", RequestTime: "٢٥ أكتوبر ٢٠٢٦ في ١:٠٠ م", AdminURL: "https://diger.tech/admin/topups",
+  ButtonLabel: "افتح طلباتي", Item1: "• جدول حيّ لنتائجك.", Item2: "• بطاقة «فهمنا طلبك».", Item3: "• أبحاث الشركات مع ترتيب الدور.", Item4: "• تقرير مراجعة لملفك.", Item5: "• تعديلات مدعومة على ملفك.", Item6: "لا نخصم إلا ما سُلّم فعلًا.",
+  UnsubscribeURL: "https://diger.tech/api/email/unsubscribe?t=abc.def", CustomerName: "منى السيد", CustomerEmail: "customer@example.test", RequestTime: "٢٥ أكتوبر ٢٠٢٦ في ١:٠٠ م", AdminURL: "https://diger.tech/admin/topups",
 };
 const render = (id: PlatformEmailTemplateId) => renderEmailTemplate(id, SAMPLE);
 /** What a person reads: no tags, style block or comments. */
@@ -36,8 +39,8 @@ const lum = (hex: string) => { const [r, g, b] = [1, 3, 5].map((i) => parseInt(h
 const contrast = (a: string, b: string) => { const [hi, lo] = [lum(a), lum(b)].sort((x, y) => y - x); return (hi + 0.05) / (lo + 0.05); };
 
 describe("one base layout for every template", () => {
-  it("there are eight templates and every one has a subject", () => {
-    expect(IDS.sort()).toEqual(["admin-topup-alert", "job-done", "job-update", "refund", "topup-approved", "topup-received", "topup-rejected", "welcome"]);
+  it("there are nine templates and every one has a subject", () => {
+    expect(IDS.sort()).toEqual(["admin-topup-alert", "job-done", "job-update", "news", "refund", "topup-approved", "topup-received", "topup-rejected", "welcome"]);
     for (const id of IDS) expect(PLATFORM_EMAIL_SUBJECTS[id], id).toMatch(/\S/);
   });
 
@@ -99,7 +102,7 @@ describe("one base layout for every template", () => {
 });
 
 describe("footers by audience", () => {
-  it.each(CUSTOMER)("%s (customer): the preferences footer, the support address and the platform line", (id) => {
+  it.each(CUSTOMER.filter((id) => id !== "news"))("%s (customer): the preferences footer, the support address and the platform line", (id) => {
     const text = visibleText(render(id).html);
     expect(text).toContain("تصلك هذه الرسالة لأنك فعّلت إشعارات البريد.");
     expect(text).toContain("غيّر تفضيلاتك");
@@ -107,6 +110,20 @@ describe("footers by audience", () => {
     expect(text).toContain("ديجر (Diger) — مصادر متاحة جاهزة للتحليل · القاهرة، مصر");
     expect(text).toContain("support@diger.tech");
     expect(text).not.toContain("تنبيه داخلي للإدارة");
+  });
+  it("news (customer): the preferences link AND a visible one-click unsubscribe link, the support address and the platform line", () => {
+    const { html } = render("news");
+    const text = visibleText(html);
+    expect(text).toContain("تصلك هذه الرسالة لأنك اخترت استقبال أخبار ديجر.");
+    expect(text).toContain("غيّر تفضيلاتك");
+    expect(text).toContain("إلغاء الاشتراك من الأخبار");
+    expect(html).toContain('href="https://diger.tech/dashboard/settings"');
+    expect(html).toContain('<a href="https://diger.tech/api/email/unsubscribe?t=abc.def" style="color:#66685F;text-decoration:underline">إلغاء الاشتراك من الأخبار</a>');
+    expect(text).toContain("ديجر (Diger) — مصادر متاحة جاهزة للتحليل · القاهرة، مصر");
+    expect(text).toContain("support@diger.tech");
+  });
+  it("only the news template carries an unsubscribe link: every other template's footer is unchanged", () => {
+    for (const id of IDS.filter((x) => x !== "news")) expect(render(id).html, id).not.toMatch(/unsubscribe|إلغاء الاشتراك/i);
   });
   it.each(ADMIN)("%s (admin): the admin footer ONLY, with the support address and the platform line", (id) => {
     const { html } = render(id);
@@ -190,10 +207,10 @@ describe("the inventory: every sender in the app uses a template that exists, fo
   const walk = (dir: string) => { for (const name of readdirSync(new URL(`../${dir}`, import.meta.url))) { const rel = `${dir}/${name}`; (statSync(new URL(`../${rel}`, import.meta.url)).isDirectory() ? walk : (r: string) => /\.tsx?$/.test(r) && files.push(r))(rel); } };
   walk("src/app"); walk("src/lib");
 
-  it("each literal template key sent by the app is one of the eight, and the admin alert is the only admin one", () => {
+  it("each literal template key sent by the app is one of the nine, and the admin alert is the only admin one", () => {
     const used = new Set<string>();
     for (const file of files) for (const match of src(file).matchAll(/sendPlatformEmail\(\s*"([a-z-]+)"/g)) used.add(match[1]);
-    expect([...used].sort()).toEqual(["job-done", "job-update", "refund", "topup-approved", "topup-received", "topup-rejected"]);
+    expect([...used].sort()).toEqual(["job-done", "job-update", "news", "refund", "topup-approved", "topup-received", "topup-rejected"]);
     for (const key of used) expect(IDS).toContain(key);
     expect(src("src/lib/server/topupOwnerAlert.ts")).toContain('"admin-topup-alert"');
     // the welcome e-mail is sent by the database trigger, with the customer's name only

@@ -22,7 +22,9 @@ export type PlatformEmailTemplateId =
   /** A long job's status update (started, stalled temporarily, completed partially): needs the Edge Function with this template deployed. */
   | "job-update"
   /** The owner's alert for a new top-up request (right-to-left, label/value table): needs the Edge Function with this template deployed. */
-  | "admin-topup-alert";
+  | "admin-topup-alert"
+  /** The consent-based announcement (preference category `news`, default OFF): needs the Edge Function with this template deployed. */
+  | "news";
 
 const AR_MONTHS = [
   "يناير",
@@ -72,6 +74,7 @@ export const TEMPLATE_CATEGORY_MAP: Record<PlatformEmailTemplateId, Notification
   refund: "refund",
   "job-update": "done",
   "admin-topup-alert": null,
+  news: "news",
 };
 
 /**
@@ -152,14 +155,18 @@ const SAFE_FUNCTION_ERRORS: Record<string, EmailFailureReason> = {
   invalid_to: "invalid_request",
   invalid_vars: "invalid_request",
   invalid_idempotency_key: "invalid_request",
+  invalid_unsubscribe_url: "invalid_request",
   resend_not_configured: "resend_not_configured",
   resend_unreachable: "resend_unreachable",
   resend_rejected: "resend_rejected",
 };
 
 /** Maps the Edge Function's answer to a fixed reason code; anything unknown becomes function_unavailable. */
-export function emailFailureReason(status: number, errorField: unknown): EmailFailureReason {
+export function emailFailureReason(status: number, errorField: unknown, upstreamStatus?: unknown): EmailFailureReason {
   const known = typeof errorField === "string" ? SAFE_FUNCTION_ERRORS[errorField] : undefined;
+  // Resend answered 5xx (it may have accepted the mail before failing) or 409 (the same idempotent request is still in flight): delivery is UNCERTAIN, so it is
+  // reported like an unreachable provider. Callers that must never double-send (the launch runner) keep their claim for it. A plain 4xx stays "resend_rejected".
+  if (known === "resend_rejected" && typeof upstreamStatus === "number" && (upstreamStatus >= 500 || upstreamStatus === 409)) return "resend_unreachable";
   if (known) return known;
   return status === 401 ? "unauthorized" : "function_unavailable";
 }
@@ -175,6 +182,7 @@ export async function sendPlatformEmail(
   to: string,
   vars: Record<string, string>,
   idempotencyKey?: string,
+  opts?: { unsubscribeUrl?: string },
 ): Promise<EmailSendResult> {
   const fail = (reason: EmailFailureReason, extra = ""): EmailSendResult => {
     console.error(`[email:send_failed] template=${template} reason=${reason}${extra}`);
@@ -191,13 +199,19 @@ export async function sendPlatformEmail(
         Authorization: `Bearer ${key}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ template, to, vars, ...(idempotencyKey ? { idempotencyKey } : {}) }),
+      body: JSON.stringify({
+        template, to, vars,
+        ...(idempotencyKey ? { idempotencyKey } : {}),
+        // RFC 8058 one-click unsubscribe: the Edge Function turns it into List-Unsubscribe headers. Absent for every other caller (same body as before).
+        ...(opts?.unsubscribeUrl ? { unsubscribeUrl: opts.unsubscribeUrl } : {}),
+      }),
       signal: AbortSignal.timeout(7000),
     });
     if (!res.ok) {
       let errorField: unknown;
-      try { errorField = (await res.json())?.error; } catch { /* no body */ }
-      return fail(emailFailureReason(res.status, errorField), ` status=${res.status}`);
+      let upstreamStatus: unknown;
+      try { const body = await res.json(); errorField = body?.error; upstreamStatus = body?.status; } catch { /* no body */ }
+      return fail(emailFailureReason(res.status, errorField, upstreamStatus), ` status=${res.status}${typeof upstreamStatus === "number" ? ` upstream=${upstreamStatus}` : ""}`);
     }
     return { ok: true };
   } catch (err: any) {
