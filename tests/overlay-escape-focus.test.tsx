@@ -1,54 +1,31 @@
 import { readFileSync } from "node:fs";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { trapDialog } from "../src/hooks/useDialogA11y";
+import { openDialogCount, trapDialog } from "../src/hooks/useDialogA11y";
 import { Drawer, Modal } from "../src/components/ui";
 import { MissionPlanSheet } from "../src/components/mission/MissionPlanPanel";
+import { FakeDoc, FakeEl, windowOf } from "./helpers/fakeDialogDom";
 
-/* The suite runs in node (no DOM): a window is a few fake elements that implement only what the focus rules touch. */
-class FakeDoc {
-  activeElement: FakeEl | null = null;
-  body = new FakeEl(this, "body");
-  private listeners = new Map<string, Set<(event: any) => void>>();
-  addEventListener(type: string, fn: (event: any) => void) { (this.listeners.get(type) ?? this.listeners.set(type, new Set()).get(type)!).add(fn); }
-  removeEventListener(type: string, fn: (event: any) => void) { this.listeners.get(type)?.delete(fn); }
-  fire(type: string, event: object) { for (const fn of [...(this.listeners.get(type) ?? [])]) fn(event); }
-  listenerCount() { return [...this.listeners.values()].reduce((n, set) => n + set.size, 0); }
-  key(key: string, shiftKey = false) {
-    const event = { key, shiftKey, prevented: false, stopped: false, preventDefault() { this.prevented = true; }, stopPropagation() { this.stopped = true; } };
-    this.fire("keydown", event);
-    return event;
-  }
-}
-class FakeEl {
-  children: FakeEl[] = [];
-  parent: FakeEl | null = null;
-  attrs = new Map<string, string>();
-  tabIndex = 0;
-  constructor(public doc: FakeDoc, public name: string, public focusable = false) {}
-  add(child: FakeEl) { child.parent = this; this.children.push(child); return child; }
-  get isConnected() { return true; }
-  all(): FakeEl[] { return this.children.flatMap((c) => [c, ...c.all()]); }
-  querySelectorAll() { return this.all().filter((el) => el.focusable); }
-  getClientRects() { return [{}]; }
-  getAttribute(name: string) { return this.attrs.get(name) ?? null; }
-  hasAttribute(name: string) { return this.attrs.has(name) || name === "tabindex" && this.tabIndex !== 0; }
-  contains(other: FakeEl | null): boolean { return !!other && (other === this || this.all().includes(other)); }
-  focus() { this.doc.activeElement = this; this.doc.fire("focusin", { target: this }); }
-}
-function windowOf(doc: FakeDoc, name: string, buttons = 3) {
-  const root = new FakeEl(doc, name);
-  const items = Array.from({ length: buttons }, (_, i) => root.add(new FakeEl(doc, `${name}-${i}`, true)));
-  return { root, items };
-}
-const open = (doc: FakeDoc, root: FakeEl, options: { onClose?: () => void; initialFocus?: FakeEl } = {}) =>
-  trapDialog(doc as unknown as Document, root as unknown as HTMLElement, { onClose: options.onClose ?? (() => {}), initialFocus: options.initialFocus as unknown as HTMLElement });
+/** Every window a test opens is closed after it, so one test can never leave a trap (or a listener) behind for the next. */
+const docs: FakeDoc[] = [];
+const ends: Array<(end?: { restoreFocus?: boolean }) => void> = [];
+const newDoc = () => { const doc = new FakeDoc(); docs.push(doc); return doc; };
+const open = (doc: FakeDoc, root: FakeEl, options: { onClose?: () => void; initialFocus?: FakeEl; trapFocus?: boolean } = {}) => {
+  const end = trapDialog(doc as unknown as Document, root as unknown as HTMLElement, { onClose: options.onClose ?? (() => {}), initialFocus: options.initialFocus as unknown as HTMLElement, trapFocus: options.trapFocus });
+  ends.push(end);
+  return end;
+};
+afterEach(() => {
+  for (const end of ends.splice(0)) end();
+  expect(openDialogCount(), "a window was left open by the test").toBe(0);
+  for (const doc of docs.splice(0)) expect(doc.listenerCount(), "a listener was left on the document").toBe(0);
+});
 
 describe("a window over the page: Escape closes it, focus stays inside, focus goes back", () => {
   it("Escape calls onClose; after the window is closed Escape does nothing and no listener is left", () => {
-    const doc = new FakeDoc();
+    const doc = newDoc();
     const { root } = windowOf(doc, "w");
     const onClose = vi.fn();
     const end = open(doc, root, { onClose });
@@ -58,10 +35,25 @@ describe("a window over the page: Escape closes it, focus stays inside, focus go
     doc.key("Escape");
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(doc.listenerCount()).toBe(0);
+    expect(openDialogCount()).toBe(0);
+  });
+
+  it("ending a window twice is harmless (the second call neither throws nor moves focus again)", () => {
+    const doc = newDoc();
+    const opener = doc.body.add(new FakeEl(doc, "opener", true));
+    opener.focus();
+    const { root } = windowOf(doc, "w");
+    const end = open(doc, root);
+    end();
+    expect(doc.activeElement).toBe(opener);
+    const elsewhere = doc.body.add(new FakeEl(doc, "elsewhere", true));
+    elsewhere.focus();
+    end();
+    expect(doc.activeElement).toBe(elsewhere);
   });
 
   it("focus moves to the first control on open (or to the one named), and returns to the opener on close", () => {
-    const doc = new FakeDoc();
+    const doc = newDoc();
     const opener = doc.body.add(new FakeEl(doc, "opener", true));
     opener.focus();
     const { root, items } = windowOf(doc, "w");
@@ -77,8 +69,19 @@ describe("a window over the page: Escape closes it, focus stays inside, focus go
     expect(doc.activeElement).toBe(opener);
   });
 
+  it("focus does not go back to an opener that is no longer on the page", () => {
+    const doc = newDoc();
+    const opener = doc.body.add(new FakeEl(doc, "opener", true));
+    opener.focus();
+    const { root, items } = windowOf(doc, "w");
+    const end = open(doc, root);
+    opener.connected = false;
+    end();
+    expect(doc.activeElement).toBe(items[0]);
+  });
+
   it("Tab on the last control goes to the first, Shift+Tab on the first goes to the last, and the page behind never gets the key", () => {
-    const doc = new FakeDoc();
+    const doc = newDoc();
     const { root, items } = windowOf(doc, "w");
     open(doc, root);
     items[2].focus();
@@ -91,7 +94,7 @@ describe("a window over the page: Escape closes it, focus stays inside, focus go
   });
 
   it("a window without any control keeps focus on itself", () => {
-    const doc = new FakeDoc();
+    const doc = newDoc();
     const { root } = windowOf(doc, "empty", 0);
     open(doc, root);
     expect(doc.activeElement).toBe(root);
@@ -100,7 +103,7 @@ describe("a window over the page: Escape closes it, focus stays inside, focus go
   });
 
   it("focus that lands behind the window (a click, a script) is brought back inside", () => {
-    const doc = new FakeDoc();
+    const doc = newDoc();
     const behind = doc.body.add(new FakeEl(doc, "behind", true));
     const { root, items } = windowOf(doc, "w");
     open(doc, root);
@@ -109,7 +112,7 @@ describe("a window over the page: Escape closes it, focus stays inside, focus go
   });
 
   it("with two windows open, Escape and Tab belong to the top one only; closing it hands them back to the one below", () => {
-    const doc = new FakeDoc();
+    const doc = newDoc();
     const below = windowOf(doc, "below");
     const top = windowOf(doc, "top");
     const closeBelow = vi.fn();
@@ -124,6 +127,62 @@ describe("a window over the page: Escape closes it, focus stays inside, focus go
     endTop();
     doc.key("Escape");
     expect(closeBelow).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a window the page opened by itself (trapFocus: false) never takes focus from what the customer is typing", () => {
+  it("focus is not moved in, Tab is not held, focus elsewhere is not pulled back, and nothing is restored on close", () => {
+    const doc = newDoc();
+    const composer = doc.body.add(new FakeEl(doc, "composer", true));
+    composer.focus();
+    const { root } = windowOf(doc, "auto-panel");
+    const end = open(doc, root, { trapFocus: false });
+    expect(doc.activeElement).toBe(composer);
+    expect(doc.key("Tab").prevented).toBe(false);
+    composer.focus();
+    expect(doc.activeElement).toBe(composer);
+    expect(root.hasAttribute("tabindex")).toBe(false);
+    const elsewhere = doc.body.add(new FakeEl(doc, "elsewhere", true));
+    elsewhere.focus();
+    end();
+    expect(doc.activeElement).toBe(elsewhere);
+  });
+
+  it("Escape still closes it", () => {
+    const doc = newDoc();
+    const { root } = windowOf(doc, "auto-panel");
+    const onClose = vi.fn();
+    open(doc, root, { trapFocus: false, onClose });
+    expect(doc.key("Escape").stopped).toBe(true);
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it("when the customer opens it with a button (trapFocus: true) the same window does take focus and hold it", () => {
+    const doc = newDoc();
+    const opener = doc.body.add(new FakeEl(doc, "open-button", true));
+    opener.focus();
+    const { root, items } = windowOf(doc, "panel");
+    const end = open(doc, root, { trapFocus: true });
+    expect(doc.activeElement).toBe(items[0]);
+    items[2].focus();
+    expect(doc.key("Tab").prevented).toBe(true);
+    end();
+    expect(doc.activeElement).toBe(opener);
+  });
+
+  it("a window that does not trap does not take Tab away from a trapping window below it; Escape goes to the one on top", () => {
+    const doc = newDoc();
+    const below = windowOf(doc, "below");
+    const closeBelow = vi.fn();
+    const closeAuto = vi.fn();
+    open(doc, below.root, { onClose: closeBelow });
+    open(doc, windowOf(doc, "auto").root, { trapFocus: false, onClose: closeAuto });
+    below.items[2].focus();
+    expect(doc.key("Tab").prevented).toBe(true); // the lower window still holds focus
+    expect(doc.activeElement).toBe(below.items[0]);
+    doc.key("Escape");
+    expect(closeAuto).toHaveBeenCalledTimes(1);
+    expect(closeBelow).not.toHaveBeenCalled();
   });
 });
 
@@ -149,14 +208,22 @@ describe("the windows of the app use it, and name themselves for a screen reader
     expect(html).toContain(`<h2 id="${id}"`);
   });
 
-  it("the chat page gives the history drawer, the results sheet (below lg only) and the methodology confirmation to the hook", () => {
+  it("the chat page gives the history drawer and the results sheet (below lg only) to the hook; the results sheet holds focus only when the customer opened it", () => {
     const chat = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
     expect(chat).toContain("useDialogA11y({ open: historyOpen, onClose: closeHistoryPanel, containerRef: historyRef })");
-    expect(chat).toContain("useDialogA11y({ open: canvasOpen, enabled: belowLg,");
-    expect(chat).toContain("useDialogA11y({ open: methodologyConfirmOpen,");
+    expect(chat).toContain("useDialogA11y({ open: canvasOpen, enabled: belowLg, trapFocus: canvasOpenedByCustomer,");
     expect(chat).toMatch(/<aside ref=\{historyRef\} role="dialog" aria-modal="true" aria-labelledby="chat-history-title"/);
-    expect(chat).toContain('role={belowLg ? "dialog" : "region"} aria-modal={belowLg ? true : undefined}');
-    // a purchase in progress is never cancelled by Escape
-    expect(chat).toContain("if (!methodologyPurchasing) setMethodologyConfirmOpen(false)");
+    expect(chat).toContain('role={belowLg ? "dialog" : "region"} aria-modal={belowLg && canvasOpenedByCustomer ? true : undefined}');
+    // the three buttons that open the panel are the customer's; every other setCanvasOpen(true) is the page opening it by itself
+    // (the first two keep their original onClick text; the mark is set in onClickCapture, which runs first on the same tap)
+    expect(chat.match(/onClickCapture=\{\(\) => setCanvasOpenedByCustomer\(true\)\}/g)?.length).toBe(2);
+    expect(chat).toContain("onOpenCanvas={() => { setCanvasOpenedByCustomer(true); setCanvasOpen((v) => !v); }}");
+    expect(chat).toContain("useEffect(() => { if (!canvasOpen) setCanvasOpenedByCustomer(false); }, [canvasOpen]);");
+  });
+
+  it("the chat page renders the methodology confirmation through its own component, wired to the purchase state", () => {
+    const chat = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
+    expect(chat).toContain("<MethodologyConfirmDialog open={methodologyConfirmOpen} methodologyPurchasing={methodologyPurchasing}");
+    expect(chat).toContain("confirmGenerateMethodology={confirmGenerateMethodology}");
   });
 });

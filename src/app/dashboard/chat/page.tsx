@@ -64,6 +64,7 @@ import AgentMissionCard from "@/components/mission/AgentMissionCard";
 import { lastMissionMessageIds } from "@/lib/agentMission/stage2/livePlacement";
 import ResultsCanvas, { ExtractedRecord } from "./components/ResultsCanvas";
 import EmptyChat from "./components/EmptyChat";
+import MethodologyConfirmDialog from "./components/MethodologyConfirmDialog";
 import { FilesSection } from "./components/RunSections";
 import Composer, { AttachedFile } from "./components/Composer";
 import { getJobIdForQuote } from "@/lib/md5";
@@ -233,11 +234,11 @@ export default function ChatWorkspacePage() {
   const belowLg = useMediaQuery(BELOW_LG_QUERY);
   const historyRef = useRef<HTMLElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
-  const methodologyRef = useRef<HTMLElement>(null);
-  const methodologyCancelRef = useRef<HTMLButtonElement>(null);
+  // The results panel also opens by itself (a plan arrives, a job starts): then it only closes with Escape and never takes focus from what the customer is typing; focus is held in it only when they opened it with a button.
+  const [canvasOpenedByCustomer, setCanvasOpenedByCustomer] = useState(false);
+  useEffect(() => { if (!canvasOpen) setCanvasOpenedByCustomer(false); }, [canvasOpen]);
   useDialogA11y({ open: historyOpen, onClose: closeHistoryPanel, containerRef: historyRef });
-  useDialogA11y({ open: canvasOpen, enabled: belowLg, onClose: () => setCanvasOpen(false), containerRef: canvasRef });
-  useDialogA11y({ open: methodologyConfirmOpen, onClose: () => { if (!methodologyPurchasing) setMethodologyConfirmOpen(false); }, containerRef: methodologyRef, initialFocusRef: methodologyCancelRef });
+  useDialogA11y({ open: canvasOpen, enabled: belowLg, trapFocus: canvasOpenedByCustomer, onClose: () => setCanvasOpen(false), containerRef: canvasRef });
   // Which jobs' methodology file is already bought, read from the ledger row `chg_meth_<jobId>` (survives reload, device and conversation).
   const [methodologyBoughtJobs, setMethodologyBoughtJobs] = useState<Record<string, boolean>>({});
   const [guestRemaining, setGuestRemaining] = useState<number | null>(null);
@@ -1925,6 +1926,7 @@ export default function ChatWorkspacePage() {
           <button
             type="button"
             data-testid="open-plan-btn"
+            onClickCapture={() => setCanvasOpenedByCustomer(true)}
             onClick={() => setCanvasOpen(true)}
             aria-controls="results-canvas"
             className="mt-2 min-h-11 cursor-pointer rounded-full border border-ln2 bg-transparent px-4 text-[13px] text-ink focus-visible:outline-2"
@@ -2039,6 +2041,7 @@ export default function ChatWorkspacePage() {
           <div className="flex justify-start">
             <button
               type="button"
+              onClickCapture={() => setCanvasOpenedByCustomer(true)}
               onClick={() => setCanvasOpen(true)}
               className="flex items-center gap-2 rounded-full border border-ln2 bg-sf px-4 py-2 text-xs font-semibold text-ink hover:bg-sf2 transition-colors cursor-pointer"
             >
@@ -2078,7 +2081,7 @@ export default function ChatWorkspacePage() {
           fileIds={activeJob.fileIds}
           downloadingKey={downloadingKey}
           onDownload={handleDownload}
-          onOpenCanvas={() => setCanvasOpen((v) => !v)}
+          onOpenCanvas={() => { setCanvasOpenedByCustomer(true); setCanvasOpen((v) => !v); }}
           canvasOpen={canvasOpen}
         />
       )}
@@ -2234,7 +2237,7 @@ export default function ChatWorkspacePage() {
             aria-hidden="true"
             className="fixed inset-0 z-40 bg-ink/40 backdrop-blur-xs lg:hidden"
           />
-          <div ref={canvasRef} id="results-canvas" role={belowLg ? "dialog" : "region"} aria-modal={belowLg ? true : undefined} aria-label={panelShowsPlan ? "لوحة الخطة" : "لوحة النتائج"} className="fixed inset-x-0 bottom-0 z-50 flex h-[85dvh] max-h-[85vh] w-full flex-col overflow-hidden rounded-t-[28px] bg-sf pb-[env(safe-area-inset-bottom)] shadow-2xl motion-reduce:animate-none lg:pb-0 lg:static lg:inset-auto lg:h-full lg:max-h-none lg:w-[460px] lg:rounded-none lg:border-s lg:border-ln lg:shadow-none" style={{ animation: "sheetUp .25s cubic-bezier(.2,.7,.2,1) both" }}>
+          <div ref={canvasRef} id="results-canvas" role={belowLg ? "dialog" : "region"} aria-modal={belowLg && canvasOpenedByCustomer ? true : undefined} aria-label={panelShowsPlan ? "لوحة الخطة" : "لوحة النتائج"} className="fixed inset-x-0 bottom-0 z-50 flex h-[85dvh] max-h-[85vh] w-full flex-col overflow-hidden rounded-t-[28px] bg-sf pb-[env(safe-area-inset-bottom)] shadow-2xl motion-reduce:animate-none lg:pb-0 lg:static lg:inset-auto lg:h-full lg:max-h-none lg:w-[460px] lg:rounded-none lg:border-s lg:border-ln lg:shadow-none" style={{ animation: "sheetUp .25s cubic-bezier(.2,.7,.2,1) both" }}>
             {panelShowsPlan && latestPlanQuote ? (
               <div className="flex h-full min-h-0 flex-col bg-sf" data-testid="plan-panel">
                 <div className="flex items-center justify-between border-b border-sand-200 bg-sand-50/70 px-4 py-3">
@@ -2293,18 +2296,7 @@ export default function ChatWorkspacePage() {
           </div>
         </>
       )}
-      {methodologyConfirmOpen && (
-        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-ink/45 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !methodologyPurchasing) setMethodologyConfirmOpen(false); }}>
-          <section ref={methodologyRef} role="alertdialog" aria-modal="true" aria-labelledby="methodology-purchase-title" className="w-full max-w-md rounded-2xl border border-ln bg-sf p-5 shadow-2xl" dir="rtl">
-            <h2 id="methodology-purchase-title" className="m-0 text-lg font-semibold text-ink">صياغة المنهجية الرسمية</h2>
-            <p className="mb-0 mt-2 text-sm leading-7 text-ink2">تُضاف المنهجية إلى نتيجة هذا الطلب مقابل {pointsAr(METHODOLOGY_POINTS)}. لن يتم الخصم إلا بعد تجهيزها.</p>
-            <div className="mt-5 flex flex-wrap gap-2">
-              <button type="button" disabled={methodologyPurchasing} onClick={() => void confirmGenerateMethodology()} className="min-h-11 rounded-full border-0 bg-ac px-5 text-sm text-onac disabled:opacity-60">{methodologyPurchasing ? "جارٍ التجهيز…" : "تأكيد وطلب المنهجية"}</button>
-              <button ref={methodologyCancelRef} type="button" disabled={methodologyPurchasing} onClick={() => setMethodologyConfirmOpen(false)} className="min-h-11 rounded-full border border-ln2 bg-transparent px-4 text-sm text-ink">إلغاء</button>
-            </div>
-          </section>
-        </div>
-      )}
+      <MethodologyConfirmDialog open={methodologyConfirmOpen} methodologyPurchasing={methodologyPurchasing} pointsText={pointsAr(METHODOLOGY_POINTS)} confirmGenerateMethodology={confirmGenerateMethodology} onCancel={() => setMethodologyConfirmOpen(false)} />
     </div>
   );
 }

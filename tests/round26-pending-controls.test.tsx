@@ -104,7 +104,8 @@ describe("methodology purchase", () => {
     expect(isDisabled(button(html, "methodology-offer-download"))).toBe(true);
   });
   it("11. the chat's own methodology confirmation", () => {
-    const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
+    // the confirmation moved from the page into its own component (MethodologyConfirmDialog.tsx) with the same markup; the same assertion reads both files
+    const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8") + readFileSync("src/app/dashboard/chat/components/MethodologyConfirmDialog.tsx", "utf8");
     expect(page).toMatch(/disabled=\{methodologyPurchasing\} onClick=\{\(\) => void confirmGenerateMethodology\(\)\}[^>]*>\{methodologyPurchasing \? "جارٍ التج/);
   });
 });
