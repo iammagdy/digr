@@ -34,6 +34,7 @@ import { postApprovalMessageAr } from "@/lib/postApproval";
 import { resolvePlanningPending } from "@/lib/planningClient";
 import { closePageLineAr, normalizeDriverMode } from "@/lib/driverMode";
 import { useDriverMode } from "@/hooks/useDriverMode";
+import { BELOW_LG_QUERY, useDialogA11y, useMediaQuery } from "@/hooks/useDialogA11y";
 import { nextPollDelayMs } from "@/lib/pollSchedule";
 import { getSlowFactor } from "@/lib/degradedClient";
 import BusyBanner from "@/components/BusyBanner";
@@ -228,6 +229,15 @@ export default function ChatWorkspacePage() {
   const [livePreview, setLivePreview] = useState<{ jobId: string; sample: LivePreviewSample | null } | null>(null);
   const [methodologyConfirmOpen, setMethodologyConfirmOpen] = useState(false);
   const [methodologyPurchasing, setMethodologyPurchasing] = useState(false);
+  // Windows over the page (history, results sheet, methodology confirmation): Escape closes the top one, Tab stays inside it, focus returns to the button that opened it (src/hooks/useDialogA11y.ts).
+  const belowLg = useMediaQuery(BELOW_LG_QUERY);
+  const historyRef = useRef<HTMLElement>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const methodologyRef = useRef<HTMLElement>(null);
+  const methodologyCancelRef = useRef<HTMLButtonElement>(null);
+  useDialogA11y({ open: historyOpen, onClose: closeHistoryPanel, containerRef: historyRef });
+  useDialogA11y({ open: canvasOpen, enabled: belowLg, onClose: () => setCanvasOpen(false), containerRef: canvasRef });
+  useDialogA11y({ open: methodologyConfirmOpen, onClose: () => { if (!methodologyPurchasing) setMethodologyConfirmOpen(false); }, containerRef: methodologyRef, initialFocusRef: methodologyCancelRef });
   // Which jobs' methodology file is already bought, read from the ledger row `chg_meth_<jobId>` (survives reload, device and conversation).
   const [methodologyBoughtJobs, setMethodologyBoughtJobs] = useState<Record<string, boolean>>({});
   const [guestRemaining, setGuestRemaining] = useState<number | null>(null);
@@ -2082,9 +2092,9 @@ export default function ChatWorkspacePage() {
       {historyOpen && (
         <>
           <button type="button" aria-label="إغلاق سجل المحادثات" onClick={closeHistoryPanel} className="fixed inset-0 z-[44] cursor-default border-0 bg-black/30" />
-          <aside role="dialog" aria-label="سجل المحادثات" className="fixed inset-y-0 left-0 z-[45] flex w-[min(90vw,380px)] flex-col border-r border-ln bg-sf shadow-2xl" dir="rtl">
+          <aside ref={historyRef} role="dialog" aria-modal="true" aria-labelledby="chat-history-title" className="fixed inset-y-0 left-0 z-[45] flex w-[min(90vw,380px)] flex-col border-r border-ln bg-sf shadow-2xl" dir="rtl">
             <div className="flex min-h-16 items-center justify-between border-b border-ln px-4">
-              <h2 className="m-0 text-base font-semibold text-ink">سجل المحادثات</h2>
+              <h2 id="chat-history-title" className="m-0 text-base font-semibold text-ink">سجل المحادثات</h2>
               <button type="button" aria-label="إغلاق" onClick={closeHistoryPanel} className="h-11 w-11 cursor-pointer rounded-full border-0 bg-transparent text-lg text-mut hover:bg-sf2">×</button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto p-2">
@@ -2224,7 +2234,7 @@ export default function ChatWorkspacePage() {
             aria-hidden="true"
             className="fixed inset-0 z-40 bg-ink/40 backdrop-blur-xs lg:hidden"
           />
-          <div id="results-canvas" role="region" aria-label={panelShowsPlan ? "لوحة الخطة" : "لوحة النتائج"} className="fixed inset-x-0 bottom-0 z-50 flex h-[85dvh] max-h-[85vh] w-full flex-col overflow-hidden rounded-t-[28px] bg-sf pb-[env(safe-area-inset-bottom)] shadow-2xl motion-reduce:animate-none lg:pb-0 lg:static lg:inset-auto lg:h-full lg:max-h-none lg:w-[460px] lg:rounded-none lg:border-s lg:border-ln lg:shadow-none" style={{ animation: "sheetUp .25s cubic-bezier(.2,.7,.2,1) both" }}>
+          <div ref={canvasRef} id="results-canvas" role={belowLg ? "dialog" : "region"} aria-modal={belowLg ? true : undefined} aria-label={panelShowsPlan ? "لوحة الخطة" : "لوحة النتائج"} className="fixed inset-x-0 bottom-0 z-50 flex h-[85dvh] max-h-[85vh] w-full flex-col overflow-hidden rounded-t-[28px] bg-sf pb-[env(safe-area-inset-bottom)] shadow-2xl motion-reduce:animate-none lg:pb-0 lg:static lg:inset-auto lg:h-full lg:max-h-none lg:w-[460px] lg:rounded-none lg:border-s lg:border-ln lg:shadow-none" style={{ animation: "sheetUp .25s cubic-bezier(.2,.7,.2,1) both" }}>
             {panelShowsPlan && latestPlanQuote ? (
               <div className="flex h-full min-h-0 flex-col bg-sf" data-testid="plan-panel">
                 <div className="flex items-center justify-between border-b border-sand-200 bg-sand-50/70 px-4 py-3">
@@ -2285,12 +2295,12 @@ export default function ChatWorkspacePage() {
       )}
       {methodologyConfirmOpen && (
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-ink/45 p-4" onMouseDown={(event) => { if (event.target === event.currentTarget && !methodologyPurchasing) setMethodologyConfirmOpen(false); }}>
-          <section role="alertdialog" aria-modal="true" aria-labelledby="methodology-purchase-title" className="w-full max-w-md rounded-2xl border border-ln bg-sf p-5 shadow-2xl" dir="rtl">
+          <section ref={methodologyRef} role="alertdialog" aria-modal="true" aria-labelledby="methodology-purchase-title" className="w-full max-w-md rounded-2xl border border-ln bg-sf p-5 shadow-2xl" dir="rtl">
             <h2 id="methodology-purchase-title" className="m-0 text-lg font-semibold text-ink">صياغة المنهجية الرسمية</h2>
             <p className="mb-0 mt-2 text-sm leading-7 text-ink2">تُضاف المنهجية إلى نتيجة هذا الطلب مقابل {pointsAr(METHODOLOGY_POINTS)}. لن يتم الخصم إلا بعد تجهيزها.</p>
             <div className="mt-5 flex flex-wrap gap-2">
               <button type="button" disabled={methodologyPurchasing} onClick={() => void confirmGenerateMethodology()} className="min-h-11 rounded-full border-0 bg-ac px-5 text-sm text-onac disabled:opacity-60">{methodologyPurchasing ? "جارٍ التجهيز…" : "تأكيد وطلب المنهجية"}</button>
-              <button type="button" disabled={methodologyPurchasing} onClick={() => setMethodologyConfirmOpen(false)} className="min-h-11 rounded-full border border-ln2 bg-transparent px-4 text-sm text-ink">إلغاء</button>
+              <button ref={methodologyCancelRef} type="button" disabled={methodologyPurchasing} onClick={() => setMethodologyConfirmOpen(false)} className="min-h-11 rounded-full border border-ln2 bg-transparent px-4 text-sm text-ink">إلغاء</button>
             </div>
           </section>
         </div>
