@@ -12,7 +12,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock("../src/lib/server/adminAuth", () => ({
   authenticateAdmin: vi.fn(async () => (state.admin
-    ? { ok: true, ctx: { adminId: "adm-1", audit: vi.fn(async (...args: any[]) => { state.audit.push(args); }) } }
+    ? { ok: true, ctx: { adminId: "adm-1", adminEmail: "owner@diger.tech", audit: vi.fn(async (...args: any[]) => { state.audit.push(args); }) } }
     : { ok: false, response: NextResponse.json({ error: "forbidden" }, { status: 403 }) })),
 }));
 
@@ -124,7 +124,7 @@ describe("the admin route: who it goes to, what may be attached", () => {
     expect(sent.from).toBe("Diger <noreply@diger.tech>");
     expect(sent.reply_to).toBe("support@diger.tech");
     expect(sent.subject).toBe(good.subject);
-    expect((init.headers as Record<string, string>)["Idempotency-Key"]).toBe(`admin-mail:${CUSTOMER}:key-12345678`);
+    expect((init.headers as Record<string, string>)["Idempotency-Key"]).toBe(`admin-mail:send:${CUSTOMER}:key-12345678`);
     expect(state.audit).toHaveLength(1);
     expect(state.audit[0][3]).toMatchObject({ targetType: "user", targetId: CUSTOMER });
   });
@@ -156,6 +156,52 @@ describe("the admin route: who it goes to, what may be attached", () => {
     expect(j.missions.map((m: any) => m.id)).not.toContain("msn_dddddddddddd");
     expect((await post({ ...good, action: "send", idempotencyKey: "key-addon-001", missionId: "msn_dddddddddddd" })).status).toBe(404);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("a file from the admin's computer is attached (multipart), alone or with a mission's file", async () => {
+    const xlsx = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from("sheet-bytes")]);
+    const form = new FormData();
+    form.append("payload", JSON.stringify({ ...good, action: "send", idempotencyKey: "key-upload-01", missionId: "msn_aaaaaaaaaaaa" }));
+    form.append("file", new Blob([new Uint8Array(xlsx)]), "نتائج الغسل الأخضر.xlsx");
+    const r = await POST(new NextRequest(`http://localhost/api/admin/users/${CUSTOMER}/email`, { method: "POST", body: form }), ctx());
+    expect(r.status, await r.clone().text()).toBe(200);
+    const sent = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body));
+    expect(sent.to).toEqual(["hala@example.com"]);
+    expect(sent.attachments.map((a: any) => a.filename)).toContain("نتائج الغسل الأخضر.xlsx");
+    expect(sent.attachments).toHaveLength(2);
+    expect(Buffer.from(sent.attachments.find((a: any) => a.filename === "نتائج الغسل الأخضر.xlsx").content, "base64").equals(xlsx)).toBe(true);
+  });
+
+  it("an upload of another type, or whose bytes do not match its name, is refused and nothing is sent", async () => {
+    for (const [name, bytes] of [["virus.exe", Buffer.from("MZ")], ["fake.xlsx", Buffer.from("not a zip")], ["report.pdf", Buffer.from("PK\u0003\u0004")]] as const) {
+      const form = new FormData();
+      form.append("payload", JSON.stringify({ ...good, action: "send", idempotencyKey: "key-upload-02" }));
+      form.append("file", new Blob([new Uint8Array(bytes)]), name);
+      const r = await POST(new NextRequest(`http://localhost/api/admin/users/${CUSTOMER}/email`, { method: "POST", body: form }), ctx());
+      expect(r.status, name).toBe(400);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("«test» goes to the ADMIN's own address only, marked as a test, and is not audited as a customer e-mail", async () => {
+    const r = await post({ ...good, action: "test", idempotencyKey: "key-test-0002" });
+    expect(r.status).toBe(200);
+    const sent = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body));
+    expect(sent.to).toEqual(["owner@diger.tech"]);
+    expect(sent.subject).toMatch(/^\[نسخة تجريبية\]/);
+    expect(state.audit).toHaveLength(0);
+  });
+
+  it("a mail service that never answers gives the admin a clear sentence, never a bare failure", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    fetchMock.mockImplementationOnce(() => new Promise(() => {}));
+    const pending = post({ ...good, action: "send", idempotencyKey: "key-hang-0001" });
+    await vi.advanceTimersByTimeAsync(26_000);
+    const r = await pending;
+    vi.useRealTimers();
+    expect(r.status).toBe(504);
+    expect((await r.json()).error).toMatch(/خدمة البريد/);
+    expect(state.audit).toHaveLength(0);
   });
 
   it("without the Resend key nothing is sent and the admin is told why", async () => {

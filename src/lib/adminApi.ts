@@ -28,8 +28,17 @@ export async function adminFetch<T = any>(path: string, init: RequestInit = {}):
     cache: "no-store",
   });
   const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(json?.error || "تعذّر تنفيذ الطلب"), { status: res.status });
+  if (!res.ok) throw Object.assign(new Error(json?.error || failureWithoutMessageAr(res.status)), { status: res.status });
   return json as T;
+}
+
+/**
+ * The sentence when the server answered with no message of its own (the platform cut the request off, or it never reached the route): the status code
+ * is said, so the cause can be told apart (504 = took too long, 413 = too large, 404 = no such route), never a bare «تعذّر تنفيذ الطلب».
+ */
+export function failureWithoutMessageAr(status: number): string {
+  const why = status === 504 ? "استغرق الطلب وقتًا أطول من المسموح" : status === 413 ? "حجم البيانات أو الملف أكبر من المسموح" : status === 404 ? "المسار غير موجود" : status === 429 ? "طلبات كثيرة في وقت قصير" : status >= 500 ? "خطأ في الخادم" : "";
+  return `تعذّر تنفيذ الطلب${why ? `: ${why}` : ""} (رمز ${status})`;
 }
 
 /** UTF-8 CSV download (with BOM so Excel opens Arabic correctly). */
