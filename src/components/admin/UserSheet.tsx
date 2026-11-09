@@ -6,6 +6,7 @@ import { adminFetch } from "@/lib/adminApi";
 import { formatAr, normalizeDigits } from "@/lib/arabicDigits";
 import { useAdmin } from "./AdminShell";
 import { KV, Sheet, SheetHandle } from "./Sheet";
+import { CustomerEmailPanel } from "./CustomerEmailPanel";
 import { EGP, agoAr, badgeFor, dateTimeAr, initials } from "./format";
 
 interface HistoryRow { id: string; at: string; kind: string; kindAr: string; amount: number; runningBalance: number; note: string; grantedBy: string | null; jobId: string | null }
@@ -109,6 +110,7 @@ export function UserSheet({ userId, onClose }: { userId: string; onClose: () => 
                 <p role="status" aria-live="polite" className="m-0 min-h-[1.1rem] text-xs text-fnt">{vb && vb.available === false ? "الميزة غير مُفعَّلة بعد في قاعدة البيانات." : vbMsg}</p>
               </div>
             </section>
+            <CustomerEmailPanel userId={u.id} />
             <section>
               <h3 className="mb-1.5 mt-0 text-[13px] font-semibold text-mut">إضافة رصيد يدوي</h3>
               <form onSubmit={grant} className="flex flex-col gap-2.5 rounded-[14px] border border-ln p-3">
