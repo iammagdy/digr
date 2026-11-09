@@ -297,12 +297,20 @@ describe("C. the rest of the language rule", () => {
     expect(defaultLanguageOf("هات ٥٠ تعليق عن الأكل المصري بكل اللغات")).toBeNull();
     expect(defaultLanguageOf("هات ٥٠ تعليق عن الأكل المصري English only")).toBeNull();
     expect(defaultLanguageOf("")).toBeNull();
-    const en = planFor("get me 50 comments about Egyptian food", "التعليقات");
+    // (Nov 9 2026: a guessed language stays on only when the measured page shows items in it, so this page carries an English item too)
+    const en = validateAndPricePlan({ summary_ar: "ستحصل على عناصر عن الموضوع مع نص كل عنصر.", stages: [textStage("التعليقات", { relevance: { subject_ar: "الموضوع", terms: ["نص", "food"], text_columns: ["text"], min_own_words: 0 } })] }, {
+      ...lookup("get me 50 comments about Egyptian food"),
+      evidenceText: (id: string) => (id === "call_0001" ? JSON.stringify([{ id: "1", text: "x" }]) : id === "out_0001" ? JSON.stringify([{ id: "1", text: "نص", language: "ar", is_reply: false }, { id: "2", text: "great food", language: "en", is_reply: false }]) : null),
+    } as PlanLookup);
     expect(en.ok && en.plan.stages[0].filters!.find((x) => x.kind === "language")).toMatchObject({ lang: "en" });
     expect(en.ok && isEnabled(en.plan.stages[0].filters!.find((x) => x.kind === "language")!)).toBe(true);
     const other = planFor("هات ٥٠ تعليق عن الأكل المصري بالإنجليزي", "التعليقات");
     expect(other.ok && isEnabled(other.plan.stages[0].filters!.find((x) => x.kind === "language")!)).toBe(false);
-    const own = planFor("هات ٥٠ تعليق عن الأكل المصري", "التعليقات", { filters: [{ kind: "language", lang: "en" }] });
+    // (Nov 9 2026: a filter that leaves no item of the measured page is refused before the card, so this page carries an English item too)
+    const own = validateAndPricePlan({ summary_ar: "ستحصل على عناصر عن الموضوع مع نص كل عنصر.", stages: [textStage("التعليقات", { filters: [{ kind: "language", lang: "en" }], relevance: { subject_ar: "الموضوع", terms: ["نص", "food"], text_columns: ["text"], min_own_words: 0 } })] }, {
+      ...lookup("هات ٥٠ تعليق عن الأكل المصري"),
+      evidenceText: (id: string) => (id === "call_0001" ? JSON.stringify([{ id: "1", text: "x" }]) : id === "out_0001" ? JSON.stringify([{ id: "1", text: "نص", language: "ar", is_reply: false }, { id: "2", text: "great food", language: "en", is_reply: false }]) : null),
+    } as PlanLookup);
     expect(own.ok && own.plan.stages[0].filters!.find((x) => x.kind === "language")).toMatchObject({ lang: "en" });
     const companies = planFor("عايز ١٠ شركات مقاولات في مصر", "شركات المقاولات");
     expect(companies.ok && isEnabled(companies.plan.stages[0].filters!.find((x) => x.kind === "language")!)).toBe(false);

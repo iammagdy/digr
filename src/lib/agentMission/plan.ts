@@ -28,6 +28,7 @@ import { placeEntry, placeKeysOfValues, placeLabelsAr, placesInText } from "./pl
 import { excludesGovernment } from "./government";
 import { isMediaCapability, keySaysMedia, rawMediaProof, requestedMedia, type MediaKind } from "./mediaProof";
 import { assumptionLinesShown, CHILD_RAW_FILTER_KINDS, defaultLanguageOf, filterVerdict, filterLabelAr, filterLineAr, findFilterFields, isEnabled, kindsPromisedBy, parseFilters, promiseIssues, resolveFilters, type StageFilter } from "./filters";
+import { conditionsOfRequest } from "./requestConditions";
 
 /**
  * A mission PLAN: stages (a stage runs once per row of its parent stage), the rows each is expected to give, sample rows the agent really saw, and the calls that MEASURED the cost.
@@ -180,6 +181,8 @@ export interface PlanLookup {
   contactAids?(kind: FinderKind): ContactAids;
   /** The mailbox listers this account may buy, cheapest first (contactFinders.ts): the company's e-mail step of «companies and their decision makers» (taskContracts.ts) looks the company's own role mailbox up through them. */
   mailboxListers?(): FinderInfo[];
+  /** The clock of the planning (ms): a period of «the last N days» is judged on the measured page from it. Date.now() when absent. */
+  now?: number;
 }
 
 export interface PricedStage extends ProposedStage {
@@ -374,11 +377,21 @@ export function validateAndPricePlan(input: unknown, lookup: PlanLookup): PlanCh
   }
 }
 
+/** The filters that judge each item by its own fields: the plan's price counts only the measured items that pass them, as the engine will (ingest.ts). The account filter is judged by the sources the plan reads, the government one partly by the model check. */
+const PRICED_FILTER_KINDS: ReadonlyArray<StageFilter["kind"]> = ["place", "media", "language", "period", "exclude_replies", "exclude_reposts"];
+
+/** The card's line when the request's language was only guessed and the measured items of the source are in another one: nothing is cut for language, and the customer may still switch the filter on. */
+export const languageOffLineAr = (lang: "ar" | "en"): string =>
+  `لم نقصر النتائج على اللغة ${lang === "ar" ? "العربية" : "الإنجليزية"}: العينة التي قرأناها من المصدر عن موضوعك كانت بلغة أخرى، فلو قصرناها لما بقي شيء. يمكنك تفعيل خيار اللغة من الخطة إن أردتها وحدها.`;
+
 function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCount: number): PlanCheck {
   const issues: string[] = [];
   if (!isRecord(input)) return { ok: false, issues: ["the plan must be an object"] };
   const stagesIn = Array.isArray(input.stages) ? input.stages : [];
   const mediaUnproven: MediaUnproven[] = [];
+  const now = lookup.now ?? Date.now();
+  // a default language the measured page could not show is left OFF, and the card says so (one line per language)
+  const languageOffNotes = new Set<string>();
   if (stagesIn.length < 1 || stagesIn.length > MAX_PLAN_STAGES) return { ok: false, issues: [`a plan has 1 to ${MAX_PLAN_STAGES} stages`] };
   const summary = checkCustomerText(input.summary_ar, { maxChars: 600 });
   if (summary.issues.length) issues.push(`summary_ar: ${summary.issues.join("; ")}`);
@@ -601,6 +614,11 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
     const declaredWithLanguage = requestLang && !declared.filters.some((f) => f.kind === "language" && isEnabled(f))
       ? [...declared.filters.filter((f) => f.kind !== "language"), { kind: "language" as const, lang: requestLang }]
       : declared.filters;
+    // A DEFAULT IS NOT AN ASK (live, Nov 9 2026: an Arabic request for Reddit posts about the greenwashing of Arab companies; the search was English, every item was English, the default «Arabic only» removed them all after the customer paid and waited).
+    // The request's language is only a guess at the content's language unless the customer SAYS it («بالعربي», «باللغة العربية», «عربي فقط»: requestConditions.ts, deliberately strict: «الشركات العربية» names companies, not a language).
+    // A guessed language (code's default, or the planner repeating it) stays on only when the measured page shows items in it; otherwise it is left OFF, the customer reads why on the card and may switch it on.
+    const languageAsked = conditionsOfRequest(`${lookup.requestText ?? ""} ${lookup.answerText ?? ""}`).includes("language");
+    const guessedLanguage = requestLang !== null && !languageAsked ? declaredWithLanguage.find((f) => f.kind === "language" && isEnabled(f) && f.lang === requestLang) : undefined;
     // GOVERNMENT BODIES: a request (or a card sentence) that leaves them out is a filter of the stage, applied from the website's suffix and the name (government.ts); never only a promise
     const wantsNoGovernment = entityStage && excludesGovernment(`${lookup.requestText ?? ""} ${lookup.answerText ?? ""}`);
     const declaredFull = wantsNoGovernment && !declaredWithLanguage.some((f) => f.kind === "exclude_government" && isEnabled(f))
@@ -644,18 +662,43 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
         }
       }
     }
-    const resolved = { ...resolvedBase, filters: filtersOut };
-    // THE PRICE RESTS ON THE ITEMS THAT PASS THE PLACE TOO: the place the card promises takes its share of the measured page away (a source that lists companies of every country), and the cost per DELIVERED item rises with it
-    const pricedFilters = resolved.filters.filter((f) => isEnabled(f) && (f.kind === "place" || f.kind === "media"));
+    let resolvedFilters = filtersOut;
+    // the guessed language against the measured page (the topic's items when a relevance rule chooses them): no item in that language, the filter is switched off and the card says so
+    if (guessedLanguage) {
+      const page = yieldRows ?? samples.filter(isRecord);
+      const onTopic = relevance && page.length > 0 ? page.filter((r) => { const c = classifyRows(relevance!, [r]).counts; return c.match + c.review > 0; }) : page;
+      const judged = onTopic.length > 0 ? onTopic : page;
+      const langF = resolvedFilters.find((f) => f.kind === "language" && isEnabled(f));
+      if (langF && judged.length > 0) {
+        const textKey = textKeyOf({ relevance, columns: cleanColumns, filters: [langF] }, Object.keys(judged[0] ?? {}));
+        if (!judged.some((r) => filterVerdict([langF], r, { textKey, now }) === null)) {
+          resolvedFilters = resolvedFilters.map((f) => (f === langF ? { ...f, enabled: false } : f));
+          languageOffNotes.add(languageOffLineAr(langF.lang === "en" ? "en" : "ar"));
+        }
+      }
+    }
+    const resolved = { ...resolvedBase, filters: resolvedFilters };
+    // THE PRICE RESTS ON THE ITEMS THAT PASS EVERY FILTER CODE APPLIES TO THE ITEM, exactly as the engine will (ingest.ts) and as the editor recounts it (planEdit.ts): the place, the media, the language, the period, replies and reposts.
+    // Live, Nov 9 2026: the language and the period were left out here, so a card promised 9 rows from a page those two filters emptied; the run then read 250 items and delivered none.
+    const pricedFilters = resolved.filters.filter((f) => isEnabled(f) && PRICED_FILTER_KINDS.includes(f.kind));
     if (relevance && yieldRows && yieldRows.length > 0 && pricedFilters.length > 0) {
       const textKey = textKeyOf({ relevance, columns: cleanColumns, filters: pricedFilters }, Object.keys(yieldRows[0] ?? {}));
-      const passing = yieldRows.filter((r) => filterVerdict(pricedFilters, r, { textKey, now: 0 }) === null);
+      const verdicts = yieldRows.map((r) => filterVerdict(pricedFilters, r, { textKey, now, cairoDays: true }));
+      const passing = yieldRows.filter((_, i) => verdicts[i] === null);
       if (passing.length === 0) {
         const mediaF = pricedFilters.find((f) => f.kind === "media");
         const placeOnly = pricedFilters.filter((f) => f.kind === "place");
+        // the media alone empties the page when every other filter keeps at least one item of it
+        const others = pricedFilters.filter((f) => f.kind !== "media");
+        const mediaAlone = mediaF !== undefined && placeOnly.length === 0 && (others.length === 0 || yieldRows.some((r) => filterVerdict(others, r, { textKey, now, cairoDays: true }) === null));
         // THE SAMPLE PROVES NO VIDEO (live: the card promised videos from a post search whose sampled posts carried none that the mapping could show): said before the card, so the customer is never asked to approve what no sample showed
-        if (mediaF && placeOnly.length === 0) mediaUnproven.push({ stage_key: key, endpoint_id: endpointId, media: mediaF.media ?? "video", why: "no_proof" });
-        else issues.push(`${label}: none of the ${yieldRows.length} items of your measured page carries evidence of ${placeOnly.flatMap((f) => f.values ?? []).join("، ")}${mediaF ? " together with the media the card promises" : ""} in a mapped field; map the country, city, address, website or phone field of every item, or sample a source that gives one`);
+        const why = new Map<string, number>();
+        for (const v of verdicts) if (v) why.set(v, (why.get(v) ?? 0) + 1);
+        if (mediaAlone) mediaUnproven.push({ stage_key: key, endpoint_id: endpointId, media: mediaF.media ?? "video", why: "no_proof" });
+        else if (placeOnly.length > 0 && [...why.keys()].every((k) => k === "filter_place" || k === "filter_media")) issues.push(`${label}: none of the ${yieldRows.length} items of your measured page carries evidence of ${placeOnly.flatMap((f) => f.values ?? []).join("، ")}${mediaF ? " together with the media the card promises" : ""} in a mapped field; map the country, city, address, website or phone field of every item, or sample a source that gives one`);
+        else {
+          issues.push(`${label}: none of the ${yieldRows.length} items of your measured page passes the stage's filters (${[...why].map(([k, n]) => `${k}: ${n}`).join(", ")}), so the run would deliver nothing; sample again with a query or a sort that reaches them (the period's dates, the language's own words), sample another source, or finish with cannot_serve`);
+        }
       }
       // a sample that proves no media leaves the price as the topic share made it (the filter still keeps only proven items, and only what is delivered is charged)
       if (passing.length > 0 || !pricedFilters.every((f) => f.kind === "media")) {
@@ -762,6 +805,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   if (impliedUsed && impliedCount > 1 && baseReserve > AGENT_IMPLIED_PEOPLE_RESERVE_TARGET_POINTS) return { ok: false, issues: [`the default count of people per company makes the hold ${baseReserve} points`], lowerImplied: true };
   // THE TITLE OF A PEOPLE STAGE THAT ONLY RANKS BY ROLE does not promise the role (roles.ts); done last, so the checks above still read the noun the model wrote
   for (const st of priced) if (st.role_preference && st.parent_key !== null) st.title_ar = neutralPeopleTitleAr(st.title_ar, st.role_preference.role, itemNounOf(priced.find((p) => p.key === st.parent_key)?.title_ar ?? "").singular);
+  notes.push(...languageOffNotes);
   return { ok: true, plan: { summary_ar: summary.text, stages: priced, price, ...(contactSteps.length ? { contact_steps: contactSteps } : {}), ...(notes.length ? { notes_ar: notes } : {}), ...(assumptions.length ? { assumptions_ar: assumptions } : {}), ...(quantity ? { quantity } : {}), ...(unserved.length ? { unserved_steps: unserved } : {}) }, ...(mediaUnproven.length ? { mediaUnproven } : {}) };
 }
 
