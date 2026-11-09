@@ -93,7 +93,17 @@ function failure(e: unknown, where: string): NextResponse {
  * send: to the customer's REGISTERED address only (there is no free recipient field), from noreply@diger.tech with replies to support@diger.tech; audited.
  * test: the same e-mail to the ADMIN'S OWN address, to see it in a real inbox before the customer does.
  */
-export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string }> }) {
+  // ONE LINE IN, ONE LINE OUT for every send (no address, no text): a failure the admin sees can then be told apart from one that never reached this route
+  const started = Date.now();
+  const multipart = (req.headers.get("content-type") || "").toLowerCase().startsWith("multipart/form-data");
+  console.info(`[admin-mail:in] multipart=${multipart ? 1 : 0} bytes=${req.headers.get("content-length") ?? "?"}`);
+  const res = await handlePost(req, ctx);
+  console.info(`[admin-mail:out] status=${res.status} ms=${Date.now() - started}`);
+  return res;
+}
+
+async function handlePost(req: NextRequest, { params }: { params: Promise<{ id: string }> }): Promise<NextResponse> {
   const auth = await authenticateAdmin(req);
   if (!auth.ok) return auth.response;
   const { id } = await params;
