@@ -27,9 +27,25 @@ export async function adminFetch<T = any>(path: string, init: RequestInit = {}):
     },
     cache: "no-store",
   });
-  const json = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(json?.error || failureWithoutMessageAr(res.status)), { status: res.status });
+  const text = await res.text().catch(() => "");
+  let json: any = {};
+  try { json = text ? JSON.parse(text) : {}; } catch { json = {}; }
+  if (!res.ok) {
+    const own = typeof json?.error === "string" && json.error ? json.error : "";
+    throw Object.assign(new Error(own || `${failureWithoutMessageAr(res.status)} ${answerTraceOf(res, text)}`), { status: res.status });
+  }
   return json as T;
+}
+
+/**
+ * WHO ANSWERED a request that came back with no message of its own: the server's name, the platform's request id and the first words of the answer.
+ * A 403 or a 504 that Diger never wrote (a browser extension, a network proxy, the platform) is then told apart at a glance, and the request id finds it in the logs.
+ */
+export function answerTraceOf(res: { headers: { get(name: string): string | null } }, text: string): string {
+  const server = (res.headers.get("server") || "?").slice(0, 24);
+  const id = (res.headers.get("x-vercel-id") || "").split("::").pop()?.slice(0, 40) || "-";
+  const words = text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 80) || "-";
+  return `[server: ${server} · id: ${id} · ${words}]`;
 }
 
 /**
