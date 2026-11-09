@@ -26,6 +26,8 @@ export interface MissionNoticeFacts {
   cause?: "internal" | "empty";
   /** Why fewer items than requested were delivered, as the run recorded it («لأن المصدر لم يعد يعطي نتائج أخرى لهذا الطلب»): a partial notice states it instead of the general sentence. */
   shortfallClauseAr?: string;
+  /** A free re-run by the Diger team: the money line says nothing was paid (what was charged is given back right after the settlement). */
+  free?: boolean;
 }
 
 export interface MissionNotice {
@@ -53,7 +55,7 @@ export function buildMissionNotice(kind: MissionNoticeKind, f: MissionNoticeFact
   const t = customerSafeText(String(titleIn ?? "").replace(/[«»]/g, "").trim(), "مهمتك") || "مهمتك";
   // the noun the mission was settled with (a plan whose stages name different things, posts and their comments, says «عنصر»: the panel says the same)
   const noun = knownItemNoun(f.noun ?? "") ?? (f.noun === GENERIC_ITEM_NOUN.singular ? GENERIC_ITEM_NOUN : itemNounOf(t));
-  const money = moneyLineAr({ reservedPoints: heldPointsOf(f), chargedPoints: f.chargedPoints, delivered: f.delivered, noun });
+  const money = moneyLineAr({ reservedPoints: heldPointsOf(f), chargedPoints: f.chargedPoints, delivered: f.delivered, noun, ...(f.free ? { free: true } : {}) });
   const deliveredOf = deliveredOfAr(f.delivered, f.planned, noun);
   if (kind === "completed" || kind === "partial") {
     const partial = kind === "partial";

@@ -9,6 +9,7 @@ import { AGENT_CLOSE_PAGE_LINE_AR, AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR, AGENT_SLOW
 import { isInternalEvent } from "./eventText";
 import { countAr, deliveredOfAr, itemNounOf, itemNounOfPlan, knownItemNoun } from "./itemNoun";
 import { moneyLineAr } from "./moneyText";
+import { isFreeRerunEvents } from "./freeRerunMark";
 import { fixFileWordingAr } from "./fileWording";
 import { remainingLineAr, stageMetricLines, trackMission } from "./tracker";
 import { deliveryDenominatorOf, type PlanEditorView } from "./plan";
@@ -460,7 +461,7 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
     // a delivery short of the CARD is told against the card's total (what the customer approved); one that fills a card with a lowered target, against the request
     if (requestedRows > 0 && delivered > 0) resultLinesAr.push(`تم تسليم ${deliveredOfAr(delivered, deliveryDenominatorOf(delivered, planned, requestedRows), noun)}.`);
     else if (requestedRows > 0) resultLinesAr.push("لم يُسلَّم أي شيء.");
-    if (mission.charged_points !== null && Number(mission.reserved_points ?? 0) > 0) resultLinesAr.push(`${moneyLineAr({ reservedPoints: Number(mission.reserved_points), chargedPoints: Number(mission.charged_points), delivered, noun })}.`);
+    if (mission.charged_points !== null && Number(mission.reserved_points ?? 0) > 0) resultLinesAr.push(`${moneyLineAr({ reservedPoints: Number(mission.reserved_points), chargedPoints: Number(mission.charged_points), delivered, noun, ...(isFreeRerunEvents(input.events) ? { free: true } : {}) })}.`);
   }
   // a stored summary that carries a number (written before the counts were stated by code) could disagree with the delivered count: it is not shown
   // the words about the files are the files': one workbook with a sheet per stage, never «ملفين» (fileWording.ts)

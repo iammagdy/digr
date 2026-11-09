@@ -19,6 +19,7 @@ import { statsFromCalls } from "../../src/lib/agentMission/sourceRanking";
 import { classifyNoCardEnd, refusalSentenceAr } from "../../src/lib/agentMission/refusal";
 import { parentCountsOf, parentsBelowShare } from "../../src/lib/agentMission/parents";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
+import { compensateFreeRerun } from "../../src/lib/agentMission/freeRerun";
 import { customerPlanView, namesAreWritten, requestedRowsOf, type PricedPlan } from "../../src/lib/agentMission/plan";
 import { topLevelFactsOf } from "../../src/lib/agentMission/repliesCard";
 import { toArabicDigits } from "../../src/lib/arabicDigits";
@@ -802,6 +803,13 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
     await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّرت التسوية الآلية للمهمة؛ راجع المشرف ولم يُخصم رصيد إضافي." });
     return;
   }
+  // A FREE RE-RUN BY THE DIGER TEAM (src/lib/agentMission/freeRerun.ts): what the settlement charged is given back at once, through the existing admin grant (one request id per mission, so
+  // never twice), and the notice says the mission was free. An ordinary mission is «not_free» and nothing happens. Never throws and never changes the settlement; a failed grant is logged and
+  // the admin page grants it again (same request id).
+  // only a mission an admin created can be one (a customer's own mission is never looked up)
+  const freeRerun = mission.created_by && mission.created_by !== mission.user_id ? await compensateFreeRerun(deps.client, { missionId: mission.id, chargedPoints: settled.chargedPoints }) : null;
+  if (freeRerun?.status === "failed") deps.log?.(`free_rerun_refund_failed ${mission.id} ${freeRerun.reason}`);
+  const isFreeRerun = freeRerun !== null && freeRerun.status !== "not_free" && freeRerun.status !== "failed";
   if (flags.length > 0) {
     await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: أرقام المهمة لا تتطابق تمامًا.", counts: { adm_flag: 1, adm_store: builtCount, adm_file: fileCount, adm_memory: a.memory ? plan.stages.filter((s) => s.deliver).reduce((n, s) => n + a.memory!.counts(s.key).accepted, 0) : -1, ...(parentFixedRows > 0 ? { adm_parent_fixed: parentFixedRows } : {}) } });
     deps.log?.(`settle_flags ${mission.id} ${flags.join(",")}`);
@@ -870,7 +878,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const stageRowsOf = (s: PricedPlan["stages"][number]): number => (s.deliver ? (fileByStage ? fileByStage[s.key] ?? 0 : plan.stages.filter((x) => x.deliver).length === 1 ? delivered : rowsByStage[s.key].length) : rowsByStage[s.key].length);
   await store.addEvent(mission.id, { kind: "result", message_ar: summary || (delivered > 0 ? "اكتملت المهمة." : "لم يُسلَّم أي شيء."), counts: { delivered, charged_points: settled.chargedPoints, ...Object.fromEntries(plan.stages.map((s, i) => [`stage_${i + 1}_rows`, stageRowsOf(s)])), ...parentCountsOf(plan, rowsByStage) } });
   const noticeKind: MissionNoticeKind = ourFailure ? "failed" : delivered <= 0 ? "unserved" : deliveredTop < requested ? "partial" : "completed";
-  await tell(deps, mission, jobId, noticeKind, { delivered, planned: promisedTotalOf(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])), hadOpenReplies).promised, chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && deliveredTop < target ? { shortfallClauseAr: shortClause } : delivered > 0 && deliveredTop < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
+  await tell(deps, mission, jobId, noticeKind, { delivered, planned: promisedTotalOf(plan, Object.fromEntries(plan.stages.map((s) => [s.key, rowsByStage[s.key].length])), hadOpenReplies).promised, chargedPoints: settled.chargedPoints, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true, ...(isFreeRerun ? { free: true } : {}), ...(ourFailure ? { cause: "internal" as const } : delivered <= 0 ? { cause: "empty" as const } : {}), ...(delivered > 0 && deliveredTop < target ? { shortfallClauseAr: shortClause } : delivered > 0 && deliveredTop < requested ? { shortfallClauseAr: loweredTargetClauseAr(plan) } : {}) });
   // STAGE 4, S1 (behind DIGER_STAGE4_VERSIONS): version 1 of the delivered file, AFTER the file is stored and the mission is settled and told. Never throws, never changes the mission, never touches a money value (agent/src/stage4/firstVersion.ts).
   if (resultPath && delivered > 0 && !ourFailure) await storeFirstVersion({ store, log: deps.log }, { missionId: mission.id, userId: mission.user_id });
 }

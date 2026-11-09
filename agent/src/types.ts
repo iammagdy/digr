@@ -4,6 +4,8 @@ import type { PricedPlan } from "../../src/lib/agentMission/plan";
 export interface MissionRecord {
   id: string;
   user_id: string;
+  /** Who created the row: the customer, or an admin (the test account's missions and a customer's free re-run, src/lib/agentMission/freeRerun.ts). The claim returns the whole row. */
+  created_by?: string | null;
   request_text: string;
   status: MissionStatus;
   /** The customer's answer to the one question the agent asked (null until answered). */
