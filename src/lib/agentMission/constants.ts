@@ -144,7 +144,9 @@ export const MISSION_INTERNAL_COUNT_KEYS = ["mem_phase", "mem_start_rss_mb", "me
   // the admin flag of a run whose model review could not answer (items left pending, review calls that gave no usable answer)
   "adm_pending", "adm_review_failed_calls",
   // the delivery contract (round 14): a file whose description was completed by code; the count of violations per rule and of completions (admin only)
-  "adm_contract", "adm_r1", "adm_r2", "adm_r3", "adm_r4", "adm_completed"] as const;
+  "adm_contract", "adm_r1", "adm_r2", "adm_r3", "adm_r4", "adm_completed",
+  // a free re-run by the Diger team (freeRerun.ts): its marker, the reserve granted before the approval, and the charge given back after the settlement (admin only)
+  "free_rerun", "free_rerun_hold_grant", "free_rerun_refund"] as const;
 export const AGENT_POLL_INTERVAL_MS = 5_000;
 /** The worker writes a heartbeat row this often; the admin page calls it alive while the last beat is younger than AGENT_HEARTBEAT_ALIVE_MS. */
 export const AGENT_HEARTBEAT_INTERVAL_MS = 30_000;

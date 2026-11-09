@@ -11,6 +11,9 @@ import { repriceStoredPlan } from "./lifecycle";
 import { customerPlanView, type PricedPlan } from "./plan";
 import { sourceHealth, statsFromCalls, type RecordedCallFact } from "./sourceRanking";
 import { missionDownloadName } from "./fileNames";
+import { eventsOf as freeRerunEventsOf, holdRequestId as freeRerunHoldRequestId } from "./freeRerun";
+import { FREE_RERUN_HOLD_GRANT, isFreeRerunEvents } from "./freeRerunMark";
+import { grantCreditAsAdmin } from "../server/adminCredit";
 import { DEFAULT_MISSION_PRICING_SETTINGS, MISSION_PRICING_SETTING_KEY, missionPricingSettingsProblemAr, normalizeMissionPricingSettings, type MissionPricingSettings } from "../missionPricing";
 
 /**
@@ -86,6 +89,33 @@ export async function approvePlan(client: any, input: { id: string; adminId: str
   if (!account || account.id !== mission.user_id) return bad(403, "هذه الصفحة تعمل لحساب الاختبار فقط.");
   const r = await approveMissionOnce(client, { id: input.id, actorId: input.adminId, messages: { insufficient_balance: "رصيد حساب الاختبار لا يكفي لحجز هذه المهمة." } });
   return r.ok ? { ok: true, jobId: r.jobId, reservePoints: r.reservePoints, unitPricePoints: r.unitPricePoints } : bad(r.status, r.error);
+}
+
+/**
+ * THE ADMIN APPROVES A FREE RE-RUN ON THE CUSTOMER'S ACCOUNT (freeRerun.ts). The ordinary approval path holds the reserve from the customer's balance; when the balance is short,
+ * the reserve is granted first (`admin_grant_credit_atomic`, one request id per mission) and the approval is tried once more. What the settlement charges is given back by
+ * `compensateFreeRerun`. Only a mission carrying the free re-run marker is approved here; an add-on row or an ordinary mission is refused.
+ */
+export async function approveFreeRerun(client: any, input: { id: string; adminId: string }): Promise<ActionResult<{ jobId: string; reservePoints: number; holdGranted: number }>> {
+  const { data: mission } = await client.from(MISSION_TABLE).select("id,user_id,created_by,status,plan").eq("id", input.id).maybeSingle();
+  if (!mission) return bad(404, "المهمة غير موجودة.");
+  if (hasAddonMarker(mission)) return bad(409, ADDON_ROW_REFUSAL_AR);
+  if (!mission.created_by || mission.created_by === mission.user_id || !isFreeRerunEvents(await freeRerunEventsOf(client, input.id))) return bad(403, "هذه ليست مهمة تشغيل مجاني.");
+  if (mission.status !== "plan_ready" || !mission.plan) return bad(409, "لا توجد خطة جاهزة للاعتماد.");
+  if (!modelPlanningForTests() && isStaleSocialPlan(mission.plan)) return bad(410, EXPIRED_SOCIAL_PLAN_AR);
+  const approve = () => approveMissionOnce(client, { id: input.id, actorId: input.adminId, expectUserId: mission.user_id, messages: { insufficient_balance: "رصيد العميل لا يكفي للحجز." } });
+  let r = await approve();
+  let holdGranted = 0;
+  if (!r.ok && r.code === "insufficient_balance") {
+    const reserve = Math.ceil(Number(repriceStoredPlan(mission.plan as PricedPlan).reservePoints) || 0);
+    if (reserve <= 0) return bad(409, "تعذّر حساب الحجز.");
+    const g = await grantCreditAsAdmin(client, { adminId: input.adminId, userId: mission.user_id, points: reserve, note: "تشغيل مجاني من فريق ديجر: رصيد لحجز طلبك.", requestId: freeRerunHoldRequestId(input.id) });
+    if (!g.ok) return bad(502, g.messageAr);
+    if (!g.alreadyGranted) await client.from(MISSION_EVENTS_TABLE).insert({ mission_id: input.id, kind: "call", message_ar: "علامة داخلية للمشرف: مُنح العميل رصيد الحجز للتشغيل المجاني.", counts: { [FREE_RERUN_HOLD_GRANT]: reserve } });
+    holdGranted = reserve;
+    r = await approve();
+  }
+  return r.ok ? { ok: true, jobId: r.jobId, reservePoints: r.reservePoints, holdGranted } : bad(r.status, r.error);
 }
 
 export async function setPlanningModel(client: any, input: { model: unknown; adminId: string }): Promise<ActionResult<{ model: string }>> {
