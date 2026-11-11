@@ -1,0 +1,1613 @@
+{
+ "now_iso": "2026-11-11T09:00:00Z",
+ "cases": [
+  {
+   "id": "sa-01",
+   "group": "egyptian_paraphrase",
+   "text": "عايز كومنتات فيديوهات تيكتوك عن السياحة",
+   "source": "audit 11.3 S-A / 3.5",
+   "expected": {
+    "platform": "tiktok",
+    "kind": "videos",
+    "comments": "some",
+    "topic": "السياحة",
+    "route": "compiled",
+    "prefilter": "agent"
+   },
+   "known_gap": {
+    "ref": "L1",
+    "why": "«كومنتات» is not read as comments: the comments stage is dropped silently",
+    "observed": {
+     "comments": "none"
+    }
+   }
+  },
+  {
+   "id": "sa-02",
+   "group": "egyptian_paraphrase",
+   "text": "هات تعليقات فيديوهات تيك توك الخاصة بالسياحه",
+   "source": "audit 11.3 S-A / 3.3 L5",
+   "expected": {
+    "platform": "tiktok",
+    "kind": "videos",
+    "comments": "some",
+    "topic": "السياحه",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L5",
+    "why": "topic is read only after عن/حول/بخصوص: «الخاصة بالسياحه» gives topic null (a keyword-less pool)",
+    "observed": {
+     "topic": null
+    }
+   }
+  },
+  {
+   "id": "sa-03",
+   "group": "egyptian_paraphrase",
+   "text": "محتاج comments بتاعة TikTok عن السياحة",
+   "source": "audit 11.3 S-A / 3.3 L1",
+   "expected": {
+    "platform": "tiktok",
+    "comments": "some",
+    "topic": "السياحة",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L1",
+    "why": "the English word «comments» is not read as comments",
+    "observed": {
+     "comments": "none"
+    }
+   }
+  },
+  {
+   "id": "sa-04",
+   "group": "egyptian_paraphrase",
+   "text": "عاوز الكومنتس على فيديوهات السياحة في تك توك",
+   "source": "audit 11.3 S-A / 3.3 L1+L3+L5",
+   "expected": {
+    "platform": "tiktok",
+    "kind": "videos",
+    "comments": "some",
+    "topic": "السياحة",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L1+L3+L5",
+    "why": "«تك توك» not a platform (a platform card is asked), «الكومنتس» not comments, no topic after «على»",
+    "observed": {
+     "platform": null,
+     "comments": "none",
+     "topic": null,
+     "route": "platform_question"
+    }
+   }
+  },
+  {
+   "id": "sa-05",
+   "group": "egyptian_paraphrase",
+   "text": "هات تعليقات فيديوهات تيك توك عن السياحة",
+   "source": "audit 11.3 S-A (control)",
+   "expected": {
+    "platform": "tiktok",
+    "kind": "videos",
+    "comments": "some",
+    "replies": "none",
+    "topic": "السياحة",
+    "route": "compiled",
+    "prefilter": "agent",
+    "message_type": "data_request"
+   }
+  },
+  {
+   "id": "sa-06",
+   "group": "egyptian_paraphrase",
+   "text": "عاوز الكومنتس والردود على فيديوهات السياحة",
+   "source": "audit 3.5 row 4",
+   "expected": {
+    "platform": null,
+    "kind": "videos",
+    "comments": "some",
+    "replies": "some",
+    "topic": "السياحة",
+    "route": "platform_question"
+   },
+   "known_gap": {
+    "ref": "L1+L5",
+    "why": "platform is genuinely missing (asked, correct); but «الكومنتس» is not comments and the topic after «على» is null",
+    "observed": {
+     "comments": "none",
+     "topic": null
+    }
+   }
+  },
+  {
+   "id": "sa-07",
+   "group": "egyptian_paraphrase",
+   "text": "هات تعليقات وريبلايز فيديوهات تيك توك عن السياحة",
+   "source": "audit 11.3 S-A (replies variant, control)",
+   "expected": {
+    "platform": "tiktok",
+    "comments": "some",
+    "replies": "some",
+    "topic": "السياحة",
+    "route": "compiled"
+   }
+  },
+  {
+   "id": "sa-08",
+   "group": "egyptian_paraphrase",
+   "text": "هات الكومنتات والريبلايز على فيديوهات تيكتوك عن السياحة",
+   "source": "audit 11.3 scenario #4",
+   "expected": {
+    "platform": "tiktok",
+    "kind": "videos",
+    "comments": "some",
+    "replies": "some",
+    "topic": "السياحة",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L1",
+    "why": "«الكومنتات» is not read as comments while the replies word is: a replies-without-comments request",
+    "observed": {
+     "comments": "none"
+    }
+   }
+  },
+  {
+   "id": "sb-01",
+   "group": "companies_b2b",
+   "text": "عايز ٥٠ شركه مقاولات فمصر مع الاميلات",
+   "source": "audit 11.3 S-B",
+   "expected": {
+    "platform": null,
+    "route": "legacy",
+    "country": "EG",
+    "wants_email": true,
+    "prefilter": "agent"
+   },
+   "known_gap": {
+    "ref": "L4",
+    "why": "«فمصر» (fused ف) is not a country: the country is dropped silently",
+    "observed": {
+     "country": null
+    }
+   }
+  },
+  {
+   "id": "sb-02",
+   "group": "companies_b2b",
+   "text": "محتاج 50 contracting companies in Egypt and their official emails",
+   "source": "audit 11.3 S-B",
+   "expected": {
+    "platform": null,
+    "route": "legacy",
+    "country": "EG",
+    "wants_email": true
+   },
+   "known_gap": {
+    "ref": "L4",
+    "why": "Latin «in Egypt» is not a country: dropped silently",
+    "observed": {
+     "country": null
+    }
+   }
+  },
+  {
+   "id": "sb-03",
+   "group": "companies_b2b",
+   "text": "هات ٥٠ شركة مقاولات في مصر وإيميلاتها الرسمية",
+   "source": "audit 11.3 S-B (control)",
+   "expected": {
+    "platform": null,
+    "route": "legacy",
+    "country": "EG",
+    "wants_email": true
+   }
+  },
+  {
+   "id": "sb-05",
+   "group": "companies_b2b",
+   "text": "هات شركات المقاولات في مصر ووسائل التواصل العامة بتاعتها",
+   "source": "audit 3.5 row 7 (the K3 re-route itself needs the worker: not testable here)",
+   "expected": {
+    "platform": null,
+    "route": "legacy",
+    "country": "EG",
+    "prefilter": "agent"
+   }
+  },
+  {
+   "id": "sb-06",
+   "group": "companies_b2b",
+   "text": "إيميلات الموظفين في شركات المقاولات",
+   "source": "audit 11.3 S-C (people/b2b path, not refused)",
+   "expected": {
+    "platform": null,
+    "route": "legacy",
+    "wants_email": true,
+    "prefilter": "agent"
+   }
+  },
+  {
+   "id": "sb-07",
+   "group": "companies_b2b",
+   "text": "٣ مديرين من كل شركة برمجيات في السعودية مع إيميلات الشغل",
+   "source": "audit 11.3 scenario #15 (control)",
+   "expected": {
+    "platform": null,
+    "route": "legacy",
+    "country": "SA",
+    "wants_email": true,
+    "prefilter": "agent"
+   }
+  },
+  {
+   "id": "sb-09",
+   "group": "companies_b2b",
+   "text": "تقييمات مطعم X على جوجل ماب، آخر ٢٠٠ ريفيو",
+   "source": "audit 11.3 scenario #14",
+   "expected": {
+    "platform": null,
+    "route": "legacy",
+    "prefilter": "agent"
+   },
+   "known_gap": {
+    "ref": "L3",
+    "why": "a standalone capital «X» (a restaurant's name) is read as the platform X: the request takes the compiled X path",
+    "observed": {
+     "platform": "x",
+     "route": "compiled"
+    }
+   }
+  },
+  {
+   "id": "sb-10",
+   "group": "companies_b2b",
+   "text": "هات ٥٠ شركة مقاولات في مصر وحساباتهم على السوشيال ميديا",
+   "source": "audit 3.5 row 7 / K3 (company enrichment, not social content)",
+   "expected": {
+    "platform": null,
+    "route": "legacy",
+    "country": "EG",
+    "prefilter": "agent"
+   }
+  },
+  {
+   "id": "sb-11",
+   "group": "companies_b2b",
+   "text": "رأي العميل في خدمة التوصيل على تيك توك",
+   "source": "audit L6 / K8 (the audit wrote the plural «آراء العملاء»: that form does NOT trip the rule, the singular «عميل» does)",
+   "expected": {
+    "platform": "tiktok",
+    "wants_email": false,
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L6",
+    "why": "«عميل» contains the bare e-mail word «ميل»: a false e-mail request (send-backs, turns exhausted)",
+    "observed": {
+     "wants_email": true
+    }
+   }
+  },
+  {
+   "id": "sb-12",
+   "group": "companies_b2b",
+   "text": "هات تعليقات تحميل التطبيق على تيك توك",
+   "source": "audit L6",
+   "expected": {
+    "platform": "tiktok",
+    "comments": "some",
+    "wants_email": false
+   },
+   "known_gap": {
+    "ref": "L6",
+    "why": "«تحميل» contains «ميل»: a false e-mail request",
+    "observed": {
+     "wants_email": true
+    }
+   }
+  },
+  {
+   "id": "sb-13",
+   "group": "companies_b2b",
+   "text": "هات تعليقات تيك توك عن مسلسل جميل",
+   "source": "audit L6",
+   "expected": {
+    "platform": "tiktok",
+    "comments": "some",
+    "topic": "مسلسل جميل",
+    "wants_email": false
+   },
+   "known_gap": {
+    "ref": "L6",
+    "why": "«جميل» contains «ميل»: a false e-mail request",
+    "observed": {
+     "wants_email": true
+    }
+   }
+  },
+  {
+   "id": "pl-01",
+   "group": "platform_spelling",
+   "text": "عايز تعليقات تيك توك عن السياحة",
+   "source": "audit L3 (control)",
+   "expected": {
+    "platform": "tiktok",
+    "comments": "some",
+    "topic": "السياحة",
+    "route": "compiled"
+   }
+  },
+  {
+   "id": "pl-04",
+   "group": "platform_spelling",
+   "text": "عايز تعليقات تك توك عن السياحة",
+   "source": "audit L3 / scenario #3",
+   "expected": {
+    "platform": "tiktok",
+    "comments": "some",
+    "topic": "السياحة",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L3",
+    "why": "«تك توك» (one letter short) is no platform: the platform card is asked",
+    "observed": {
+     "platform": null,
+     "route": "platform_question"
+    }
+   }
+  },
+  {
+   "id": "pl-05",
+   "group": "platform_spelling",
+   "text": "عايز تعليقات tik tok عن السياحة",
+   "source": "audit L3",
+   "expected": {
+    "platform": "tiktok",
+    "comments": "some",
+    "topic": "السياحة",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L3",
+    "why": "«tik tok» with a space is no platform",
+    "observed": {
+     "platform": null,
+     "route": "platform_question"
+    }
+   }
+  },
+  {
+   "id": "pl-06",
+   "group": "platform_spelling",
+   "text": "عايز تعليقات انستجرام عن السياحة",
+   "source": "audit L3 (control)",
+   "expected": {
+    "platform": "instagram",
+    "comments": "some",
+    "topic": "السياحة",
+    "route": "compiled"
+   }
+  },
+  {
+   "id": "pl-07",
+   "group": "platform_spelling",
+   "text": "عايز تعليقات انستاجرام عن السياحة",
+   "source": "audit L3 / scenario #5",
+   "expected": {
+    "platform": "instagram",
+    "comments": "some",
+    "topic": "السياحة",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L3",
+    "why": "«انستاجرام» (extra alef) is no platform",
+    "observed": {
+     "platform": null,
+     "route": "platform_question"
+    }
+   }
+  },
+  {
+   "id": "pl-11",
+   "group": "platform_spelling",
+   "text": "عايز تعليقات الفيس عن السياحة",
+   "source": "audit L3 / scenario #6",
+   "expected": {
+    "platform": "facebook",
+    "comments": "some",
+    "topic": "السياحة",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L3",
+    "why": "«الفيس» is no platform",
+    "observed": {
+     "platform": null,
+     "route": "platform_question"
+    }
+   }
+  },
+  {
+   "id": "pl-13",
+   "group": "platform_spelling",
+   "text": "عايز تعليقات يوتيوب عن السياحة",
+   "source": "audit L3 (control)",
+   "expected": {
+    "platform": "youtube",
+    "comments": "some",
+    "topic": "السياحة",
+    "route": "compiled"
+   }
+  },
+  {
+   "id": "pl-14",
+   "group": "platform_spelling",
+   "text": "عايز تعليقات يوتوب عن السياحة",
+   "source": "audit L3",
+   "expected": {
+    "platform": "youtube",
+    "comments": "some",
+    "topic": "السياحة",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L3",
+    "why": "«يوتوب» is no platform",
+    "observed": {
+     "platform": null,
+     "route": "platform_question"
+    }
+   }
+  },
+  {
+   "id": "pl-15",
+   "group": "platform_spelling",
+   "text": "عايز تعليقات Twitter عن السياحة",
+   "source": "audit L3",
+   "expected": {
+    "platform": "x",
+    "comments": "some",
+    "topic": "السياحة",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L3",
+    "why": "capitalised «Twitter»: the X pattern has no i flag",
+    "observed": {
+     "platform": null,
+     "route": "platform_question"
+    }
+   }
+  },
+  {
+   "id": "pl-16",
+   "group": "platform_spelling",
+   "text": "عايز tweets عن السياحة",
+   "source": "audit L3",
+   "expected": {
+    "platform": "x",
+    "route": "compiled",
+    "topic": "السياحة"
+   },
+   "known_gap": {
+    "ref": "L3",
+    "why": "«tweets» is not read as platform X",
+    "observed": {
+     "platform": null,
+     "route": "clarify"
+    }
+   }
+  },
+  {
+   "id": "pl-17",
+   "group": "platform_spelling",
+   "text": "عايز ٢٠ تويتة عن الدوري مع الردود بتاعتها",
+   "source": "audit 11.3 scenario #2",
+   "expected": {
+    "platform": "x",
+    "kind": "tweets",
+    "count": 20,
+    "replies": "some",
+    "topic": "الدوري",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L3",
+    "why": "«تويتة» is not read as X: a clarifying card is asked instead of the compiled X path",
+    "observed": {
+     "platform": null,
+     "route": "clarify"
+    }
+   }
+  },
+  {
+   "id": "pl-19",
+   "group": "platform_spelling",
+   "text": "هات ٥٠ تعليق من ريديت عن شركات التكنولوجيا",
+   "source": "audit 3.4 production evidence 2026-11-09 (Reddit)",
+   "expected": {
+    "platform": null,
+    "route": "clarify"
+   },
+   "known_gap": {
+    "ref": "K2",
+    "why": "«شركات» sends a Reddit request to the legacy model planner (COMPANIES_OR_PLACES is checked before OTHER_PLATFORM)",
+    "observed": {
+     "route": "legacy"
+    }
+   }
+  },
+  {
+   "id": "pl-21",
+   "group": "platform_spelling",
+   "text": "هات تعليقات tiktok about tourism in Egypt",
+   "source": "mixed Arabic/English",
+   "expected": {
+    "platform": "tiktok",
+    "comments": "some",
+    "country": "EG",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L4",
+    "why": "Latin «in Egypt» is not a country",
+    "observed": {
+     "country": null
+    }
+   }
+  },
+  {
+   "id": "pl-22",
+   "group": "platform_spelling",
+   "text": "give me 50 comments from TikTok videos about tourism",
+   "source": "pure English request",
+   "expected": {
+    "platform": "tiktok",
+    "comments": "some",
+    "topic": "tourism",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L1",
+    "why": "English «comments» not read; English «about» is not a topic marker",
+    "observed": {
+     "comments": "none",
+     "topic": null
+    }
+   }
+  },
+  {
+   "id": "pl-23",
+   "group": "platform_spelling",
+   "text": "get tweets about elections last 3 months",
+   "source": "pure English request",
+   "expected": {
+    "platform": "x",
+    "period_present": true,
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L3",
+    "why": "«tweets» is not X and an English period («last 3 months») is not read",
+    "observed": {
+     "platform": null,
+     "period_present": false,
+     "route": "clarify"
+    }
+   }
+  },
+  {
+   "id": "pl-24",
+   "group": "platform_spelling",
+   "text": "عايز comments و replies من youtube عن الرياضة",
+   "source": "mixed Arabic/English",
+   "expected": {
+    "platform": "youtube",
+    "comments": "some",
+    "replies": "some",
+    "topic": "الرياضة",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L1",
+    "why": "«comments» not read while «replies» is: replies-without-comments",
+    "observed": {
+     "comments": "none"
+    }
+   }
+  },
+  {
+   "id": "pl-25",
+   "group": "platform_spelling",
+   "text": "عايز الكومنتس بتاعة التك توك عن الاكل",
+   "source": "audit 11.3 scenario #21 (voice transcript)",
+   "expected": {
+    "platform": "tiktok",
+    "comments": "some",
+    "topic": "الاكل",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L1+L3",
+    "why": "«التك توك» and «الكومنتس» are both unread: platform card asked, comments dropped",
+    "observed": {
+     "platform": null,
+     "comments": "none",
+     "route": "clarify"
+    }
+   }
+  },
+  {
+   "id": "cm-02",
+   "group": "comments_replies_topic",
+   "text": "هات الكومنتس و الريبلايز تيك توك عن السياحة",
+   "source": "audit L1",
+   "expected": {
+    "platform": "tiktok",
+    "comments": "some",
+    "replies": "some",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L1",
+    "why": "«الكومنتس» not comments",
+    "observed": {
+     "comments": "none"
+    }
+   }
+  },
+  {
+   "id": "cm-03",
+   "group": "comments_replies_topic",
+   "text": "عايز replies فيديوهات تيك توك عن السياحة",
+   "source": "audit 11.3 scenario #4 (control)",
+   "expected": {
+    "platform": "tiktok",
+    "replies": "some",
+    "topic": "السياحة",
+    "route": "compiled"
+   }
+  },
+  {
+   "id": "cm-04",
+   "group": "comments_replies_topic",
+   "text": "هات تعليقات وردين على كل فيديو تيك توك عن السياحة",
+   "source": "round 40 dual replies (control)",
+   "expected": {
+    "platform": "tiktok",
+    "comments": "some",
+    "replies": "some",
+    "route": "compiled"
+   }
+  },
+  {
+   "id": "cm-05",
+   "group": "comments_replies_topic",
+   "text": "هات تعليقات فيديوهات تيك توك عن السياحة والردود",
+   "source": "audit 3.3 L5 (topic runs on into the replies noun)",
+   "expected": {
+    "platform": "tiktok",
+    "comments": "some",
+    "replies": "some",
+    "topic": "السياحة",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L5",
+    "why": "the topic is read as «السياحة والردود» (the replies word leaks into the provider keyword)",
+    "observed": {
+     "topic": "السياحة والردود"
+    }
+   }
+  },
+  {
+   "id": "cm-06",
+   "group": "comments_replies_topic",
+   "text": "عايز التعليقات بتاعة تيك توك عن السياحه والردود عليها",
+   "source": "audit 3.3 L5",
+   "expected": {
+    "platform": "tiktok",
+    "comments": "some",
+    "replies": "some",
+    "topic": "السياحه",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L5",
+    "why": "the topic is read as «السياحه والردود عليها»",
+    "observed": {
+     "topic": "السياحه والردود عليها"
+    }
+   }
+  },
+  {
+   "id": "cm-08",
+   "group": "comments_replies_topic",
+   "text": "فيديوهات تيك توك السياحة",
+   "source": "audit 3.3 L5 / scenario S-A",
+   "expected": {
+    "platform": "tiktok",
+    "kind": "videos",
+    "topic": "السياحة",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L5",
+    "why": "topic with no marker word is null",
+    "observed": {
+     "topic": null
+    }
+   }
+  },
+  {
+   "id": "cm-09",
+   "group": "comments_replies_topic",
+   "text": "اعمل لي تعليقات تيك توك عن السياحة بس استبعد الحسابات اللي في الملف",
+   "source": "audit 11.3 scenario #25 / X1",
+   "expected": {
+    "platform": "tiktok",
+    "comments": "some",
+    "topic": "السياحة",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "X1",
+    "why": "the topic runs on into the exclusion clause («السياحة بس استبعد الحسابات اللي»); the uploaded exclusion file is also never applied (worker-side, not testable here)",
+    "observed": {
+     "topic": "السياحة بس استبعد الحسابات اللي"
+    }
+   }
+  },
+  {
+   "id": "cm-11",
+   "group": "comments_replies_topic",
+   "text": "عايز داتا عن رأي الناس في الذكاء الاصطناعي",
+   "source": "audit 11.3 scenario #23 (control)",
+   "expected": {
+    "platform": null,
+    "topic": "الذكاء الاصطناعي",
+    "route": "platform_question"
+   }
+  },
+  {
+   "id": "cm-13",
+   "group": "comments_replies_topic",
+   "text": "كل التعليقات على بوستات فيسبوك عن غلاء الأسعار",
+   "source": "audit 11.3 scenario #7 / L7",
+   "expected": {
+    "platform": "facebook",
+    "kind": "posts",
+    "comments": "all",
+    "topic": "غلاء الأسعار",
+    "route": "compiled",
+    "message_type": "data_request"
+   },
+   "known_gap": {
+    "ref": "L7",
+    "why": "the chat keyword classifier calls this «other» (no ask verb): it is rescued only if the model says data_request",
+    "observed": {
+     "message_type": "other"
+    }
+   }
+  },
+  {
+   "id": "dt-01",
+   "group": "dates",
+   "text": "هات تعليقات فيديوهات تيك توك عن السياحة آخر ٣ شهور",
+   "source": "audit L4 (control)",
+   "expected": {
+    "platform": "tiktok",
+    "period_present": true,
+    "period": {
+     "from": "2026-08-11",
+     "to": "2026-11-11"
+    }
+   }
+  },
+  {
+   "id": "dt-02",
+   "group": "dates",
+   "text": "هات تعليقات فيديوهات تيك توك عن السياحة اخر ٣ شهور",
+   "source": "audit 3.3 L4",
+   "expected": {
+    "platform": "tiktok",
+    "period_present": true,
+    "period": {
+     "from": "2026-08-11",
+     "to": "2026-11-11"
+    }
+   },
+   "known_gap": {
+    "ref": "L4",
+    "why": "«اخر» without the madda is no period: dropped silently",
+    "observed": {
+     "period_present": false,
+     "period": null
+    }
+   }
+  },
+  {
+   "id": "dt-03",
+   "group": "dates",
+   "text": "هات تعليقات فيديوهات تيك توك عن السياحة الشهر الماضي",
+   "source": "audit scenario #1 (control for the period)",
+   "expected": {
+    "platform": "tiktok",
+    "period_present": true,
+    "period": {
+     "from": "2026-10-01",
+     "to": "2026-10-31"
+    }
+   }
+  },
+  {
+   "id": "dt-04",
+   "group": "dates",
+   "text": "هات تعليقات فيديوهات تيك توك عن السياحة الشهر الماضي",
+   "source": "audit 3.3 L5 (period words leak into the topic)",
+   "expected": {
+    "platform": "tiktok",
+    "topic": "السياحة"
+   },
+   "known_gap": {
+    "ref": "L5",
+    "why": "the topic is read as «السياحة الشهر الماضي»",
+    "observed": {
+     "topic": "السياحة الشهر الماضي"
+    }
+   }
+  },
+  {
+   "id": "dt-07",
+   "group": "dates",
+   "text": "هات تعليقات فيديوهات تيك توك عن السياحة امبارح",
+   "source": "dates (relative day)",
+   "expected": {
+    "platform": "tiktok",
+    "period_present": true,
+    "period": {
+     "from": "2026-11-10",
+     "to": "2026-11-10"
+    }
+   },
+   "known_gap": {
+    "ref": "L4",
+    "why": "the contract says a period was asked, but the Ask holds none: «امبارح» is flagged and its value is never read",
+    "observed": {
+     "period": null
+    }
+   }
+  },
+  {
+   "id": "dt-08",
+   "group": "dates",
+   "text": "هات تعليقات فيديوهات تيك توك عن السياحة السنة اللي فاتت",
+   "source": "dates (relative year)",
+   "expected": {
+    "platform": "tiktok",
+    "period_present": true
+   },
+   "known_gap": {
+    "ref": "L4",
+    "why": "«السنة اللي فاتت» is no period: dropped silently",
+    "observed": {
+     "period_present": false
+    }
+   }
+  },
+  {
+   "id": "dt-09",
+   "group": "dates",
+   "text": "هات تعليقات فيديوهات تيك توك عن السياحة من يناير لحد مارس ٢٠٢٦",
+   "source": "dates (month range)",
+   "expected": {
+    "platform": "tiktok",
+    "period": {
+     "from": "2026-01-01",
+     "to": "2026-03-31"
+    }
+   },
+   "known_gap": {
+    "ref": "L4",
+    "why": "a range of months is read as its FIRST month only (January): the period is silently narrowed",
+    "observed": {
+     "period": {
+      "from": "2026-01-01",
+      "to": "2026-01-31"
+     }
+    }
+   }
+  },
+  {
+   "id": "dt-10",
+   "group": "dates",
+   "text": "تغريدات عن الانتخابات من ١ لـ ١٥ أكتوبر ٢٠٢٦ بس",
+   "source": "audit 11.3 scenario #27",
+   "expected": {
+    "platform": "x",
+    "period": {
+     "from": "2026-10-01",
+     "to": "2026-10-15"
+    }
+   },
+   "known_gap": {
+    "ref": "L4",
+    "why": "«من ١ لـ ١٥ أكتوبر» is read as the WHOLE month (1 to 31 Oct): the strict range is silently widened",
+    "observed": {
+     "period": {
+      "from": "2026-10-01",
+      "to": "2026-10-31"
+     }
+    }
+   }
+  },
+  {
+   "id": "dt-11",
+   "group": "dates",
+   "text": "هات ١٠٠ تغريدة عن العاصمة الإدارية الشهر اللي فات",
+   "source": "audit 11.3 scenario #1",
+   "expected": {
+    "platform": "x",
+    "kind": "tweets",
+    "count": 100,
+    "topic": "العاصمة الإدارية",
+    "period": {
+     "from": "2026-10-01",
+     "to": "2026-10-31"
+    }
+   },
+   "known_gap": {
+    "ref": "L5",
+    "why": "the period is right but the topic is read as «العاصمة الإدارية الشهر اللي فات» (it leaks into the provider keyword)",
+    "observed": {
+     "topic": "العاصمة الإدارية الشهر اللي فات"
+    }
+   }
+  },
+  {
+   "id": "ct-01",
+   "group": "countries_language",
+   "text": "هات تعليقات فيديوهات تيك توك عن السياحة من مصر",
+   "source": "control",
+   "expected": {
+    "platform": "tiktok",
+    "country": "EG"
+   }
+  },
+  {
+   "id": "ct-03",
+   "group": "countries_language",
+   "text": "هات تعليقات فيديوهات تيك توك عن السياحة من السعودية",
+   "source": "control",
+   "expected": {
+    "platform": "tiktok",
+    "country": "SA"
+   }
+  },
+  {
+   "id": "ct-04",
+   "group": "countries_language",
+   "text": "فيديوهات تيك توك من السعوديه بس",
+   "source": "audit 11.3 scenario #28",
+   "expected": {
+    "platform": "tiktok",
+    "kind": "videos",
+    "country": "SA",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L4",
+    "why": "«السعوديه» (ه for ة) is no country: dropped silently",
+    "observed": {
+     "country": null
+    }
+   }
+  },
+  {
+   "id": "ct-05",
+   "group": "countries_language",
+   "text": "هات تعليقات فيديوهات تيك توك عن السياحة فمصر",
+   "source": "audit L4",
+   "expected": {
+    "platform": "tiktok",
+    "country": "EG"
+   },
+   "known_gap": {
+    "ref": "L4",
+    "why": "«فمصر» is no country",
+    "observed": {
+     "country": null
+    }
+   }
+  },
+  {
+   "id": "ct-07",
+   "group": "countries_language",
+   "text": "محتاج 200 comments من TikTok videos عن AI في مصر",
+   "source": "audit 11.3 scenario #22",
+   "expected": {
+    "platform": "tiktok",
+    "comments": "some",
+    "topic": "AI",
+    "country": "EG",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L1",
+    "why": "the country is read; the English «comments» is not",
+    "observed": {
+     "comments": "none"
+    }
+   }
+  },
+  {
+   "id": "ct-08",
+   "group": "countries_language",
+   "text": "هات تعليقات فيديوهات تيك توك عن السياحة بالعربي",
+   "source": "control",
+   "expected": {
+    "platform": "tiktok",
+    "language": "ar"
+   }
+  },
+  {
+   "id": "ct-10",
+   "group": "countries_language",
+   "text": "هات تعليقات فيديوهات تيك توك عن السياحة باللغه العربيه",
+   "source": "audit L4",
+   "expected": {
+    "platform": "tiktok",
+    "language": "ar"
+   },
+   "known_gap": {
+    "ref": "L4",
+    "why": "«باللغه العربيه» (ه for ة) is no language",
+    "observed": {
+     "language": null
+    }
+   }
+  },
+  {
+   "id": "rt-01",
+   "group": "routing_sources",
+   "text": "بالظبط ٥٠٠ تعليق، لا أكتر ولا أقل",
+   "source": "audit 11.3 scenario #29 (the platform is genuinely missing: asked)",
+   "expected": {
+    "platform": null,
+    "comments": "some",
+    "route": "platform_question"
+   }
+  },
+  {
+   "id": "rt-03",
+   "group": "routing_sources",
+   "text": "اسحب لي اللي الناس كاتباه تحت فيديوهات عمرو أديب",
+   "source": "audit 11.3 scenario #32",
+   "expected": {
+    "platform": null,
+    "kind": "videos",
+    "comments": "some",
+    "route": "platform_question"
+   },
+   "known_gap": {
+    "ref": "L1",
+    "why": "«اللي الناس كاتباه تحت الفيديو» (a paraphrase of comments) is not read: comments none",
+    "observed": {
+     "comments": "none"
+    }
+   }
+  },
+  {
+   "id": "rt-04",
+   "group": "routing_sources",
+   "text": "بيانات حساب انستاجرام بتاع وزارة السياحة وآخر ١٠ بوستات",
+   "source": "audit 11.3 scenario #5",
+   "expected": {
+    "platform": "instagram",
+    "kind": "posts",
+    "count": 10,
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L3",
+    "why": "«انستاجرام» is no platform: a platform card is asked although the customer named it",
+    "observed": {
+     "platform": null,
+     "route": "platform_question"
+    }
+   }
+  },
+  {
+   "id": "rt-05",
+   "group": "routing_sources",
+   "text": "منشورات صفحة الأهلي الرسمية على الفيس آخر شهر",
+   "source": "audit 11.3 scenario #6",
+   "expected": {
+    "platform": "facebook",
+    "kind": "posts",
+    "period_present": true,
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "L3",
+    "why": "«الفيس» is no platform",
+    "observed": {
+     "platform": null,
+     "route": "platform_question"
+    }
+   }
+  },
+  {
+   "id": "rt-06",
+   "group": "routing_sources",
+   "text": "استخرج لي بيانات حساب عام على تيك توك مع الإحصائيات العامة",
+   "source": "audit 3.4 production evidence 2026-11-04",
+   "expected": {
+    "platform": "tiktok",
+    "source_named": false,
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "K5",
+    "why": "«حساب عام» («a public account») is read as an account NAMED «عام»",
+    "observed": {
+     "source_named": true
+    }
+   }
+  },
+  {
+   "id": "rt-07",
+   "group": "routing_sources",
+   "text": "هات ٣ فيديوهات من حساب @brand_eg على تيك توك مع تعليقاتهم",
+   "source": "control (a named account)",
+   "expected": {
+    "platform": "tiktok",
+    "kind": "videos",
+    "count": 3,
+    "comments": "some",
+    "source_named": true,
+    "route": "compiled"
+   }
+  },
+  {
+   "id": "pf-01",
+   "group": "prefilter_false_positive",
+   "text": "هات تعليقات من حساب [@brand_eg] على انستجرام",
+   "source": "audit W1",
+   "expected": {
+    "prefilter": "agent",
+    "platform": "instagram"
+   },
+   "known_gap": {
+    "ref": "W1",
+    "why": "a bracketed real handle is rejected as an unresolved template placeholder (HTTP 400)",
+    "observed": {
+     "prefilter": "placeholder"
+    }
+   }
+  },
+  {
+   "id": "pf-02",
+   "group": "prefilter_false_positive",
+   "text": "هات ٥٠ تعليق عن السياحة [آخر ٣ شهور] على تيك توك",
+   "source": "audit W1",
+   "expected": {
+    "prefilter": "agent",
+    "platform": "tiktok"
+   },
+   "known_gap": {
+    "ref": "W1",
+    "why": "a bracketed real period is rejected as a template placeholder",
+    "observed": {
+     "prefilter": "placeholder"
+    }
+   }
+  },
+  {
+   "id": "pf-03",
+   "group": "prefilter_false_positive",
+   "text": "هات تعليقات من انتخابات مجلس النواب على تيك توك",
+   "source": "audit W2",
+   "expected": {
+    "prefilter": "agent",
+    "platform": "tiktok",
+    "comments": "some"
+   },
+   "known_gap": {
+    "ref": "W2",
+    "why": "the unanchored phrase «من ان…» inside «من انتخابات» is read as «من انت»: the request never reaches the agent",
+    "observed": {
+     "prefilter": "general_question"
+    }
+   }
+  },
+  {
+   "id": "pf-04",
+   "group": "prefilter_false_positive",
+   "text": "هل يمكنك مساعدتي في جمع تعليقات تيك توك عن السياحة",
+   "source": "audit W2",
+   "expected": {
+    "prefilter": "agent",
+    "platform": "tiktok",
+    "comments": "some"
+   },
+   "known_gap": {
+    "ref": "W2",
+    "why": "«هل يمكنك مساعدتي» (unanchored) turns a real request into a general question",
+    "observed": {
+     "prefilter": "general_question"
+    }
+   }
+  },
+  {
+   "id": "pf-05",
+   "group": "prefilter_false_positive",
+   "text": "هات ١٠٠ تعليق من تيك توك عن ChatGPT",
+   "source": "audit W3",
+   "expected": {
+    "prefilter": "agent",
+    "platform": "tiktok",
+    "topic": "ChatGPT"
+   },
+   "known_gap": {
+    "ref": "W3",
+    "why": "a vendor word as the TOPIC makes it an identity question: fixed deflection, no mission",
+    "observed": {
+     "prefilter": "identity"
+    }
+   }
+  },
+  {
+   "id": "pf-06",
+   "group": "prefilter_false_positive",
+   "text": "عايز موبايلات سامسونج على تيك توك",
+   "source": "audit W4",
+   "expected": {
+    "prefilter": "agent",
+    "platform": "tiktok"
+   },
+   "known_gap": {
+    "ref": "W4",
+    "why": "«موبايلات» as a product topic trips the private-contact refusal",
+    "observed": {
+     "prefilter": "privacy_refusal"
+    }
+   }
+  },
+  {
+   "id": "pf-07",
+   "group": "prefilter_false_positive",
+   "text": "جروبات واتساب عن السياحة",
+   "source": "audit W4",
+   "expected": {
+    "prefilter": "agent"
+   },
+   "known_gap": {
+    "ref": "W4",
+    "why": "«واتساب» as a topic trips the private-contact refusal",
+    "observed": {
+     "prefilter": "privacy_refusal"
+    }
+   }
+  },
+  {
+   "id": "pf-08",
+   "group": "prefilter_false_positive",
+   "text": "قائمة مكاتب شحن في جدة",
+   "source": "audit W5",
+   "expected": {
+    "prefilter": "agent",
+    "route": "legacy"
+   },
+   "known_gap": {
+    "ref": "W5",
+    "why": "«شحن» (shipping) is read as a wallet top-up: the fixed top-up answer is returned",
+    "observed": {
+     "prefilter": "account"
+    }
+   }
+  },
+  {
+   "id": "pf-09",
+   "group": "prefilter_false_positive",
+   "text": "هات تعليقات تيك توك عن نصب الاستثمار",
+   "source": "audit W6",
+   "expected": {
+    "prefilter": "agent",
+    "platform": "tiktok",
+    "comments": "some"
+   },
+   "known_gap": {
+    "ref": "W6",
+    "why": "«نصب» as a topic is read as a trust question about Diger",
+    "observed": {
+     "prefilter": "trust"
+    }
+   }
+  },
+  {
+   "id": "pf-10",
+   "group": "prefilter_false_positive",
+   "text": "هات تعليقات تيك توك عن حملات النصب الإلكتروني",
+   "source": "audit W6 (the audit's own sentence: NOT reproduced; the attached «ال» keeps it out of the trust rule)",
+   "expected": {
+    "prefilter": "agent",
+    "platform": "tiktok",
+    "comments": "some"
+   }
+  },
+  {
+   "id": "pg-01",
+   "group": "prefilter_guards_kept",
+   "text": "[الموضوع]",
+   "source": "audit W1 (a true template slot is rejected: control)",
+   "expected": {
+    "prefilter": "placeholder"
+   }
+  },
+  {
+   "id": "pg-04",
+   "group": "prefilter_guards_kept",
+   "text": "كيف تعمل المنصة",
+   "source": "audit W2 (a real general question: control)",
+   "expected": {
+    "prefilter": "general_question"
+   }
+  },
+  {
+   "id": "pg-06",
+   "group": "prefilter_guards_kept",
+   "text": "انت مين",
+   "source": "audit W3 (control)",
+   "expected": {
+    "prefilter": "identity"
+   }
+  },
+  {
+   "id": "pg-09",
+   "group": "prefilter_guards_kept",
+   "text": "عايز اشحن رصيدي",
+   "source": "audit W5 (a real top-up question: control)",
+   "expected": {
+    "prefilter": "account"
+   }
+  },
+  {
+   "id": "pg-12",
+   "group": "prefilter_guards_kept",
+   "text": "الموقع ده نصب ولا ايه",
+   "source": "audit W6 (a real trust question: control)",
+   "expected": {
+    "prefilter": "trust"
+   }
+  },
+  {
+   "id": "sc-01",
+   "group": "privacy_security",
+   "text": "أرقام موبايلات الناس اللي علّقوا على البوست ده",
+   "source": "audit 11.3 scenario #31 (must stay refused)",
+   "expected": {
+    "prefilter": "privacy_refusal"
+   }
+  },
+  {
+   "id": "sc-02",
+   "group": "privacy_security",
+   "text": "ايميلات الناس اللي علقوا على الفيديو",
+   "source": "audit 11.3 S-C (must stay refused)",
+   "expected": {
+    "prefilter": "privacy_refusal"
+   }
+  },
+  {
+   "id": "sc-04",
+   "group": "privacy_security",
+   "text": "هات رقم الواتساب بتاع احمد",
+   "source": "private contact of an individual (must stay refused)",
+   "expected": {
+    "prefilter": "privacy_refusal"
+   }
+  },
+  {
+   "id": "sc-05",
+   "group": "privacy_security",
+   "text": "عنوان سكن محمد صلاح",
+   "source": "private home address (must stay refused)",
+   "expected": {
+    "prefilter": "privacy_refusal"
+   }
+  },
+  {
+   "id": "sc-08",
+   "group": "privacy_security",
+   "text": "هات أرقام تليفون شركات المقاولات",
+   "source": "business contacts stay allowed (control)",
+   "expected": {
+    "prefilter": "agent",
+    "route": "legacy"
+   }
+  },
+  {
+   "id": "sc-09",
+   "group": "privacy_security",
+   "text": "هات ايميل مدير شركة المقاولات",
+   "source": "business decision-maker contact stays allowed (control)",
+   "expected": {
+    "prefilter": "agent",
+    "route": "legacy"
+   }
+  },
+  {
+   "id": "sc-10",
+   "group": "privacy_security",
+   "text": "عايز رسايل الواتساب بتاعة جروب الشغل",
+   "source": "audit 11.3 scenario #19",
+   "expected": {
+    "prefilter": "privacy_refusal"
+   },
+   "known_gap": {
+    "ref": "S19",
+    "why": "SECURITY: private messages are NOT refused by the pre-model guard (it only matches contact-data words); the request goes on to the chat model and the agent",
+    "observed": {
+     "prefilter": "agent"
+    }
+   }
+  },
+  {
+   "id": "sc-11",
+   "group": "privacy_security",
+   "text": "الرقم القومي لأحمد",
+   "source": "audit 16 (national id of a person)",
+   "expected": {
+    "prefilter": "privacy_refusal"
+   },
+   "known_gap": {
+    "ref": "S19",
+    "why": "SECURITY: a national-id request is NOT refused by the pre-model guard",
+    "observed": {
+     "prefilter": "agent"
+    }
+   }
+  },
+  {
+   "id": "mt-01",
+   "group": "multi_turn",
+   "text": "عايز تعليقات عن السياحة",
+   "answer": "تيك توك",
+   "source": "audit 11.3 scenario #23 (a tapped platform card)",
+   "expected": {
+    "platform": "tiktok",
+    "comments": "some",
+    "topic": "السياحة",
+    "route": "compiled"
+   }
+  },
+  {
+   "id": "mt-03",
+   "group": "multi_turn",
+   "text": "عايز تعليقات عن السياحة",
+   "answer": "تك توك",
+   "source": "audit K2 (a TYPED answer)",
+   "expected": {
+    "platform": "tiktok",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "K2",
+    "why": "a typed «تك توك» is not the card option and is not read as a platform: the platform card is asked again, then the request ends «unserved»",
+    "observed": {
+     "platform": null,
+     "route": "platform_question"
+    }
+   }
+  },
+  {
+   "id": "mt-04",
+   "group": "multi_turn",
+   "text": "عايز تعليقات عن السياحة",
+   "answer": "انستاجرام",
+   "source": "audit K2 (a TYPED answer)",
+   "expected": {
+    "platform": "instagram",
+    "route": "compiled"
+   },
+   "known_gap": {
+    "ref": "K2",
+    "why": "a typed «انستاجرام» is not read as a platform",
+    "observed": {
+     "platform": null,
+     "route": "platform_question"
+    }
+   }
+  },
+  {
+   "id": "mt-06",
+   "group": "multi_turn",
+   "text": "عايز ٢٠ فيديو يوتيوب عن الدوري",
+   "answer": "لا خليهم تيك توك",
+   "source": "audit 3.6 item 4 (latest explicit correction wins)",
+   "expected": {
+    "platform": "tiktok"
+   },
+   "known_gap": {
+    "ref": "W8",
+    "why": "the platform stays YouTube: the first platform in the text wins, a correction is never read",
+    "observed": {
+     "platform": "youtube"
+    }
+   }
+  },
+  {
+   "id": "mt-07",
+   "group": "multi_turn",
+   "text": "عايز ٢٠ فيديو يوتيوب عن الدوري",
+   "answer": "لا، أقصد تيك توك مش يوتيوب",
+   "source": "audit 11.3 scenario #24",
+   "expected": {
+    "platform": "tiktok"
+   },
+   "known_gap": {
+    "ref": "W8",
+    "why": "the platform stays YouTube; the correction is appended to the topic",
+    "observed": {
+     "platform": "youtube"
+    }
+   }
+  },
+  {
+   "id": "mt-09",
+   "group": "multi_turn",
+   "text": "عايز فيديوهات تيك توك عن السياحة",
+   "answer": "والتعليقات",
+   "source": "audit W8 (a follow-up that adds comments)",
+   "expected": {
+    "platform": "tiktok",
+    "comments": "some",
+    "topic": "السياحة"
+   },
+   "known_gap": {
+    "ref": "W9",
+    "why": "comments are added, but the answer text is also appended to the topic («السياحة والتعليقات»)",
+    "observed": {
+     "topic": "السياحة والتعليقات"
+    }
+   }
+  },
+  {
+   "id": "mt-10",
+   "group": "multi_turn",
+   "text": "عايز فيديوهات تيك توك عن السياحة",
+   "answer": "وكمان الكومنتات",
+   "source": "audit W8 (a follow-up that adds comments)",
+   "expected": {
+    "platform": "tiktok",
+    "comments": "some"
+   },
+   "known_gap": {
+    "ref": "L1",
+    "why": "«الكومنتات» in a follow-up is not read as comments",
+    "observed": {
+     "comments": "none"
+    }
+   }
+  },
+  {
+   "id": "mt-11",
+   "group": "multi_turn",
+   "text": "عايز فيديوهات تيك توك عن السياحة",
+   "answer": "بس من مصر",
+   "source": "audit W8 (a follow-up that adds a country)",
+   "expected": {
+    "platform": "tiktok",
+    "country": "EG"
+   }
+  }
+ ]
+}
