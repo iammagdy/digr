@@ -15,6 +15,7 @@ import { listOpenMissions, openLimitMessageAr, type OpenMissionView } from "./op
 import { excelFromCsv } from "../server/excelFromCsv";
 import { csvExportFromWorkbook, METHODOLOGY_FILE_NAME, packageCsvExport } from "../server/csvFromExcel";
 import { ADDON_MARKER_COLUMN, hasAddonMarker, withoutAddonRows } from "./addonMarker";
+import { privacyRefusalAr } from "./guardRules";
 
 /**
  * What a CUSTOMER does with a mission, on the server, with the service-role client and an explicit owner check on every call (a customer reaches only their own missions; the browser never
@@ -51,6 +52,9 @@ export async function createCustomerMission(client: any, input: { userId: string
   const text = String(input.text ?? "").replace(/\s+/g, " ").trim();
   if (text.length < MIN_TEXT) return bad(400, "اكتب نص المهمة.");
   if (text.length > MAX_TEXT) return bad(400, "نص المهمة أطول من المسموح.");
+  // SECURITY: the same fixed refusal the chat applies before the model (personal contact data, private conversations, personal identifiers), repeated where the words become a request, so no caller of this function can skip it
+  const refusal = privacyRefusalAr(text);
+  if (refusal) return bad(422, refusal);
   // the limit counts exactly the missions `listOpenMissions` shows as the worker's (one definition, `openMissions.ts`); a planning mission with no live worker is ended there, and a question or plan that waits for the customer never blocks
   const blockers = (await listOpenMissions(client, { userId: input.userId })).filter((m) => m.blocksNewRequests);
   if (blockers.length >= AGENT_MAX_OPEN_MISSIONS_PER_USER) return { ...bad(429, openLimitMessageAr(blockers)), blockers };
@@ -214,10 +218,13 @@ export async function smallerVersionForCustomer(client: any, input: { id: string
 export async function answerForCustomer(client: any, input: { id: string; userId: string; text: unknown }): Promise<CustomerResult> {
   const text = String(input.text ?? "").replace(/\s+/g, " ").trim();
   if (text.length < 1 || text.length > 1000) return bad(400, "اكتب إجابتك.");
-  const { data } = await client.from(MISSION_TABLE).select(`id,user_id,status,${ADDON_MARKER_COLUMN}`).eq("id", input.id).maybeSingle();
+  const { data } = await client.from(MISSION_TABLE).select(`id,user_id,status,request_text,${ADDON_MARKER_COLUMN}`).eq("id", input.id).maybeSingle();
   if (!data || data.user_id !== input.userId) return bad(404, "المهمة غير موجودة.");
   if (hasAddonMarker(data)) return bad(409, ADDON_ROW_REFUSAL_AR);
   if (data.status !== "needs_input") return bad(409, "المهمة لا تنتظر إجابة.");
+  // SECURITY: an answer is read WITH the request (the worker reads both as one text), so a request that was allowed alone cannot become a private-conversation or identifier request by its answer. Nothing is written when it is refused.
+  const refusal = privacyRefusalAr(`${String(data.request_text ?? "")} ${text}`);
+  if (refusal) return bad(422, refusal);
   const upd = await client.from(MISSION_TABLE).update({ answer_text: text, status: "queued", question_ar: null, worker_id: null, lease_until: null, updated_at: new Date().toISOString() }).eq("id", input.id).eq("status", "needs_input");
   if (upd.error) return bad(500, "تعذّر حفظ الإجابة.");
   await client.from(MISSION_EVENTS_TABLE).insert({ mission_id: input.id, kind: "answer", message_ar: "وصلت إجابتك وعاد الوكيل إلى التخطيط.", counts: {} });
