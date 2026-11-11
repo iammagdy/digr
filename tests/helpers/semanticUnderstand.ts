@@ -19,7 +19,7 @@ import { requestWantsContacts } from "../../src/lib/agentMission/contacts";
  *   - `message_type` is the KEYWORD classifier only. In production the chat model decides first and this classifier only rescues a data request or answers when the model call fails.
  */
 export interface Understood {
-  prefilter: "placeholder" | "identity" | "greeting" | "general_question" | "privacy_refusal" | "account" | "trust" | "agent";
+  prefilter: "placeholder" | "identity" | "greeting" | "general_question" | "privacy_refusal" | "privacy_clarify" | "account" | "trust" | "agent";
   platform: string | null;
   kind: string | null;
   count: number | null;

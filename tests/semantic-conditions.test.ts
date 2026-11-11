@@ -343,22 +343,24 @@ describe("PR-1.3 measured on the 98-scenario baseline through the real contract 
   const FIXED_BY_PR_1_2 = ["sa-01", "sa-02", "sa-03", "sa-08", "sb-09", "pl-04", "pl-05", "pl-07", "pl-11", "pl-14", "pl-16", "pl-17", "pl-22", "pl-24", "pl-25", "cm-02", "cm-05", "cm-06", "cm-09", "ct-07", "rt-04", "rt-05", "mt-09"];
   /** Fixed by this PR (14): the L4 dates, countries and languages, plus the period leaking into the topic (L5). */
   const FIXED_BY_PR_1_3 = ["dt-02", "dt-04", "dt-07", "dt-08", "dt-09", "dt-10", "dt-11", "ct-04", "ct-05", "ct-10", "pl-21", "pl-23", "sb-01", "sb-02"];
+  /** CONSOLIDATED MISSION (docs/AGENT-UNDERSTANDING-V1.md): the customer's typed answer read on its own (flag ON): its platform fills or corrects, its comments are added. */
+  const FIXED_BY_CONSOLIDATED = ["mt-03", "mt-04", "mt-06", "mt-07", "mt-10"];
   const PARTIAL = ["sa-04", "sa-06", "pl-15"];
 
-  it("OFF: the known gaps are all still gaps, exactly as PR #446 pinned them (62 originally; PR-1.4 closed the 7 pre-filter ones in the chat path, 55 remain)", () => {
+  it("OFF: the known gaps are all still gaps, exactly as PR #446 pinned them (62 originally; PR-1.4 closed 7 in the chat path and the consolidated mission 7 more for every customer, 48 remain)", () => {
     expect(baselineCases).toHaveLength(98);
-    expect(baselineCases.filter((c) => c.known_gap)).toHaveLength(55);
-    expect(baselineCases.filter((c) => c.closed_gap).map((c) => c.id)).toEqual(["pf-01", "pf-02", "pf-03", "pf-04", "pf-05", "pf-08", "pf-09"]);
+    expect(baselineCases.filter((c) => c.known_gap)).toHaveLength(48);
+    expect(baselineCases.filter((c) => c.closed_gap).map((c) => c.id)).toEqual(["sb-11", "sb-12", "sb-13", "cm-13", "rt-06", "pf-01", "pf-02", "pf-03", "pf-04", "pf-05", "pf-06", "pf-07", "pf-08", "pf-09"]);
     for (const c of baselineCases.filter((x) => x.known_gap)) for (const [k, v] of Object.entries(c.known_gap!.observed)) expect(run(c, OFF)[k as keyof Understood], `${c.id}.${k}`).toEqual(v);
   });
-  it("ON: 37 of the 55 remaining gaps are fixed (the 23 of PR-1.2, still fixed, and the 14 of PR-1.3), 3 improve partly, 15 are untouched, and NONE regresses or changes wrongly (PR-1.4 closed pf-02 and six more in the chat path)", () => {
+  it("ON: 42 of the 48 remaining gaps are fixed (the 23 of PR-1.2, the 14 of PR-1.3, the 5 multi-turn answers of the consolidated mission), 3 improve partly, 3 are untouched (cm-08, rt-03, pl-19), and NONE regresses or changes wrongly", () => {
     const gaps = baselineCases.filter((c) => c.known_gap);
     const by = (k: string) => gaps.filter((c) => outcome(c) === k).map((c) => c.id);
-    expect(by("fixed")).toEqual([...FIXED_BY_PR_1_2, ...FIXED_BY_PR_1_3].sort((a, b) => baselineCases.findIndex((c) => c.id === a) - baselineCases.findIndex((c) => c.id === b)));
+    expect(by("fixed")).toEqual([...FIXED_BY_PR_1_2, ...FIXED_BY_PR_1_3, ...FIXED_BY_CONSOLIDATED].sort((a, b) => baselineCases.findIndex((c) => c.id === a) - baselineCases.findIndex((c) => c.id === b)));
     for (const id of FIXED_BY_PR_1_2) expect(outcome(baselineCases.find((c) => c.id === id)!), id).toBe("fixed");
     expect(by("partial")).toEqual(PARTIAL);
     expect(by("changed_still_wrong")).toEqual([]); // pf-02 (the placeholder pre-filter, W1) was the only one: PR-1.4 fixed it in the chat path
-    expect(by("unchanged")).toHaveLength(55 - 37 - 3);
+    expect(by("unchanged")).toEqual(["pl-19", "cm-08", "rt-03"]);
     expect(baselineCases.filter((c) => !c.known_gap && outcome(c) === "regression").map((c) => c.id)).toEqual([]);
   });
   it("every date, country and language scenario of the baseline (the 36 not-gap ones included) holds with the flag ON: the controls dt-01, dt-03, ct-01, ct-03, ct-08 stay right", () => {

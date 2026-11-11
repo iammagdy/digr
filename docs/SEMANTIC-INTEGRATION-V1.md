@@ -1,5 +1,8 @@
 # Semantic integration v1 (PR-1.2, PR-1.3): the reading inside the real request contract
 
+> **Update (agent understanding v1, docs/AGENT-UNDERSTANDING-V1.md):** the flag can now be ON for named test accounts (`{"user_ids":[…]}`), read the same way by the worker and the server card; with it ON the typed answer is read on its own. Measured: 42 of the 48 remaining gaps fully right.
+
+
 **Flag `semantic_normalization_v1`: OFF by default. Nothing in the repository, the database or the environment sets it. With it OFF the worker and the server read every request exactly as before (tested). Fixed for ordinary customers today: 0.**
 
 ## What is connected

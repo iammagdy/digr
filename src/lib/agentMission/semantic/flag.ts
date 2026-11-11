@@ -1,5 +1,6 @@
 import { AGENT_SETTINGS_TABLE } from "../constants";
 import { interpretRequest, type SemanticInterpretation } from "./interpret";
+import { readSettingValue, scopedFlagOn } from "../scopedFlag";
 
 /**
  * PR-1.1: THE SWITCH of the semantic layer, and the only door to it. Server-controlled and OFF by default, in the same place and with the same discipline as the redesign flags (`redesignFlagTypes.ts`): one value in the `agent_settings` settings object the
@@ -13,10 +14,14 @@ import { interpretRequest, type SemanticInterpretation } from "./interpret";
  */
 export const SEMANTIC_NORMALIZATION_FLAG_KEY = "semantic_normalization_v1";
 
-export function readSemanticNormalizationFlag(settings: Record<string, unknown> | null | undefined): boolean {
+/**
+ * CONSOLIDATED MISSION: the value may also be `{ "user_ids": [...] }`: ON only for those test accounts (`scopedFlagOn`), compared with the mission owner's user id. The worker passes `mission.user_id`, the server card passes the same mission's
+ * `user_id`: one value, one id, one answer on both sides. Without a user id only `true` / `"on"` turn it on (as before).
+ */
+export function readSemanticNormalizationFlag(settings: Record<string, unknown> | null | undefined, userId?: string | null): boolean {
   try {
     const value = settings ? settings[SEMANTIC_NORMALIZATION_FLAG_KEY] : undefined;
-    return value === true || value === "on";
+    return scopedFlagOn(value, userId);
   } catch {
     return false;
   }
@@ -28,12 +33,6 @@ export function interpretIfEnabled(settings: Record<string, unknown> | null | un
 }
 
 /** The flag as the SERVER reads it from `agent_settings` (service-role client, the same row the worker reads). Any failure or a missing row is OFF. */
-export async function readSemanticNormalizationFlagFromClient(client: any): Promise<boolean> {
-  try {
-    const { data, error } = await client.from(AGENT_SETTINGS_TABLE).select("value").eq("key", SEMANTIC_NORMALIZATION_FLAG_KEY).maybeSingle();
-    if (error || !data) return false;
-    return readSemanticNormalizationFlag({ [SEMANTIC_NORMALIZATION_FLAG_KEY]: (data as { value?: unknown }).value });
-  } catch {
-    return false;
-  }
+export async function readSemanticNormalizationFlagFromClient(client: any, userId?: string | null): Promise<boolean> {
+  return readSemanticNormalizationFlag({ [SEMANTIC_NORMALIZATION_FLAG_KEY]: await readSettingValue(client, SEMANTIC_NORMALIZATION_FLAG_KEY, AGENT_SETTINGS_TABLE) }, userId);
 }

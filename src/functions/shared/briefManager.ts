@@ -2,7 +2,7 @@ import { TablesDB, Query } from "./dbCompat";
 import { detectMentionedPlatforms, getPlatformLabelAr } from "./capabilityRegistry";
 import { extractDateHint, extractTopicChips } from "./chatHandler";
 import { isFileShapingMessage, isStandaloneResearchRequest } from "./requestScope";
-import { namesCollectibleData } from "../../lib/agentMission/messageType";
+import { carriesResearchRequest } from "../../lib/agentMission/messageType";
 
 export interface ResearchBrief {
   platforms: string[];
@@ -46,7 +46,8 @@ export function isGreetingOrGeneralQuestion(text: string): {
 
   return {
     isGreeting: greetingPattern.test(trimmed),
-    isGeneralQuestion: generalQuestionPattern.test(trimmed) && !namesCollectibleData(trimmed),
+    // CONSOLIDATED MISSION: also a generic data ask («إنت بتعمل إيه؟ وعايز داتا عن السياحة»): the research request reaches the agent instead of being lost behind the general answer
+    isGeneralQuestion: generalQuestionPattern.test(trimmed) && !carriesResearchRequest(trimmed),
   };
 }
 

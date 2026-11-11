@@ -10,7 +10,11 @@ import { CONTACT_PARSER_IDS } from "./sources";
 export type ContactKind = "work_email" | "phone";
 export const CONTACT_KINDS: readonly ContactKind[] = ["work_email", "phone"];
 
-const EMAIL_WORDS = /(?:e-?mail|mail|بريد|ايميل|إيميل|اميل|إميل|ميل)/i;
+/**
+ * CONSOLIDATED MISSION (sb-11, sb-12, sb-13): the e-mail words are WHOLE words («ميل» inside «عميل», «تحميل», «جميل» is not an e-mail; nor is «mail» inside «gmail»). A clitic in front (و ب ل ال) and a plural or pronoun ending
+ * («الإيميلات», «إيميلاتها», «ايميلاتهم») are kept.
+ */
+const EMAIL_WORDS = /(?<![\u0621-\u064A])(?:[وبل]?(?:ال)?)(?:ايميل|إيميل|أيميل|اميل|إميل|ميل|ايمايل)(?:ات|ه|ها|هم|اتها|اتهم|اتهن|ك|كم)?(?![\u0621-\u064A])|بريد|\be-?mails?\b|\bmail\b/i;
 const PHONE_WORDS = /(?:phone|mobile|tel\b|whats?app|هاتف|تليفون|تلفون|موبايل|جوال|محمول|واتس|رقم(?:\s+(?:تليفون|هاتف|موبايل|جوال))|أرقام|ارقام)/i;
 
 /** What the customer's words ask for: work e-mails and/or phones. */

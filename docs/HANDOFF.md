@@ -4,6 +4,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 42 (11 Nov 2026, after #452, main = `8f29a56`): agent understanding v1 (one consolidated PR, docs/AGENT-UNDERSTANDING-V1.md)
+
+**No SQL write, no flag change, no migration, no paid model or provider call, no money/ledger/pricing/approval/auth/infrastructure line.**
+
+1. **For every customer (no switch):** the privacy contact rule judges each collection objective on its own (the «شركات … وهات أرقام تليفونات الناس اللي علقوا» bypass is refused); a bare app/product word is the product with a brand, a clarification question without one (pf-06 goes on, pf-07 is asked; never planned); general/identity questions that also ask for data reach the agent; whole-word e-mail detection (sb-11..13); «حساب عام» is not a name (rt-06); the keyword fallback reads cm-13.
+2. **Behind `chat_research_brief_v1` (OFF; `true`/`"on"` or `{"user_ids":[…]}` in `agent_settings`):** the same one chat-model call leads discovery and returns a research brief; the backend validates it (schema, privacy, numbers and platforms the customer wrote, consistency with the parser the worker plans from) and creates the mission from the consolidated request, or asks the model's question, or replaces an unapproved plan with the whole updated request. Cost cap: one call per message, output ceiling 700 tokens (≈ +$0.0002 per message on the default chat model).
+3. **`semantic_normalization_v1`** also accepts `{"user_ids":[…]}` (worker and server card read the same value for the mission owner); with it ON the typed answer is read on its own (platform correction, comments).
+4. **Measured:** flag-OFF gaps 55 → 48 (14 closed in total); flag-ON 42 of the 48 fully right (was 37 of 55); 0 regressions; 0 privacy regressions. Brief mode: 29 offline conversation tests with a scripted model (not proof of the real model's behaviour).
+5. **Owner decision:** enabling the two switches for the test account (SQL in the doc, not run).
+
+---
+
 ## Round 41 (7 Nov 2026, after #436, main = `059806b`): the Nov 7 Facebook retest, two card defects (launch release)
 
 **No SQL write, no refund or ledger action, no flag change, no migration, no paid or provider call, no Storage read.** Evidence: read-only SELECTs on `missions`, `mission_calls`, `mission_events` and `storage.objects` (names only) for the retest mission `msn_365928deea447ca8ae92` (test account, 22:16 UTC 6 Nov = 00:16 Cairo 7 Nov, 215 points charged, 6 rows delivered).

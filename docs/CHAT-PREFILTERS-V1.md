@@ -1,5 +1,8 @@
 # PR-1.4 — Stop false-positive filters blocking research requests
 
+> **Update (agent understanding v1, docs/AGENT-UNDERSTANDING-V1.md):** the security-reviewed change of section 3 is made: pf-06 goes on (a brand is the product), pf-07 is a clarification, and the business-word bypass is refused objective by objective.
+
+
 Status: NOT behind a flag (the corrections are narrowings of existing filters, so they apply to ordinary customers once deployed). `semantic_normalization_v1` is untouched and stays OFF.
 Baseline: PR #446 (98 scenarios), #447 (privacy), #449 / #450 / #451 (semantic layer, flag OFF).
 
