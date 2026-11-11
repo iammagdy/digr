@@ -16,7 +16,7 @@ import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { blockedEndpointReason } from "../src/lib/treg/blockList";
 import { policyVerdict } from "../src/lib/treg/dataPolicy";
 import {
-  buildCapabilityRegistry, capabilitySelectionOf, CAPABILITY_DISCOVERY_FLAG_KEY, discoverCapabilities, plannerCapabilitySection, planStageIssues, readCapabilityDiscoveryFlag, researchNeedOf, validateCapabilityChoice, verifyApprovedScope,
+  buildCapabilityRegistry, capabilitySelectionOf, CAPABILITY_DISCOVERY_FLAG_KEY, planParamsDigest, resealCapabilitySelection, discoverCapabilities, plannerCapabilitySection, planStageIssues, readCapabilityDiscoveryFlag, researchNeedOf, validateCapabilityChoice, verifyApprovedScope,
   type CapabilityRegistry,
 } from "../src/lib/agentMission/capabilities";
 import { CAPABILITY_SCOPE_OPTIONS_AR, runPlanning, type RunnerDeps } from "../agent/src/runMission";
@@ -26,6 +26,8 @@ import { parseCatalog } from "../src/lib/treg/catalog";
 import { newMission } from "../agent/src/memoryStore";
 import { fakeRecorder, NOT_ADMIN } from "./helpers/agentHarness";
 import type { PricedPlan } from "../src/lib/agentMission/plan";
+import { editPlanForCustomer } from "../src/lib/agentMission/customerActions";
+import { applyPlanEdits } from "../src/lib/agentMission/planEdit";
 
 /**
  * UNIFIED REQUEST-TO-EXECUTION (docs/UNIFIED-CAPABILITY-DISCOVERY.md), OFFLINE. Each scenario goes through the real code paths: the chat turn (`agentChatTurn`, a SCRIPTED chat model in the real one-line JSON format), the worker's planning
@@ -312,6 +314,38 @@ describe("4. a TREG social request through the unified social path: the compiled
     for (const s of rec.stages) expect(["discovery", "code"]).toContain(s.source);
     expect(verifyApprovedScope(on.plan!, catalog)).toEqual({ ok: true, checked: true });
   });
+
+  it("12b (review of PR #454). the approved EXECUTION PARAMETERS are protected too: the customer's own edit before approval re-seals them (through the real edit path); any other change of a count, filter or pin is refused at execution", async () => {
+    const on = await plan({ [CAPABILITY_DISCOVERY_FLAG_KEY]: true });
+    const stored = on.plan!;
+    expect(stored.capability_selection!.params_digest).toBe(planParamsDigest(stored));
+    // the plan as the database gives it back (jsonb reorders the keys, drops undefined members): the same digest
+    const reorder = (v: unknown): unknown => (Array.isArray(v) ? v.map(reorder) : v && typeof v === "object" ? Object.fromEntries(Object.entries(v as Record<string, unknown>).reverse().map(([k, x]) => [k, reorder(x)])) : v);
+    expect(verifyApprovedScope(reorder(JSON.parse(JSON.stringify(stored))) as PricedPlan, catalog)).toEqual({ ok: true, checked: true });
+    // a count changed after the plan was priced, by anything but the customer's edit: never executed
+    const bumped = JSON.parse(JSON.stringify(stored)) as PricedPlan;
+    const child = bumped.stages.find((s) => s.parent_key !== null)!;
+    child.planned_rows += 500;
+    expect(verifyApprovedScope(bumped, catalog)).toMatchObject({ ok: false, issues: ["approved_parameters_changed"] });
+    const filtered = JSON.parse(JSON.stringify(stored)) as PricedPlan;
+    filtered.stages[0].filters = [...(filtered.stages[0].filters ?? []), { kind: "account", values: ["someone"] } as never];
+    expect(verifyApprovedScope(filtered, catalog)).toMatchObject({ ok: false, issues: ["approved_parameters_changed"] });
+    // the same edit made by the edit code but not re-sealed is refused; through the customer's real edit path it is re-sealed and runs
+    const raw = applyPlanEdits(stored, { count: 1 });
+    expect(raw.ok).toBe(true);
+    if (raw.ok) {
+      expect(verifyApprovedScope(raw.plan, catalog)).toMatchObject({ ok: false, issues: ["approved_parameters_changed"] });
+      expect(verifyApprovedScope(resealCapabilitySelection(raw.plan), catalog)).toEqual({ ok: true, checked: true });
+    }
+    const db = createMemoryDb();
+    db.seed("missions", [{ id: "msn_capscope00001", user_id: REPLAY_USER, status: "plan_ready", plan: JSON.parse(JSON.stringify(stored)), request_text: TT }]);
+    expect(await editPlanForCustomer(db as never, { id: "msn_capscope00001", userId: REPLAY_USER, edits: { count: 1 } })).toMatchObject({ ok: true });
+    const edited = db.rows("missions")[0].plan as PricedPlan;
+    expect(planParamsDigest(edited)).not.toBe(stored.capability_selection!.params_digest);
+    expect(verifyApprovedScope(edited, catalog)).toEqual({ ok: true, checked: true });
+    // the capabilities themselves are never re-sealed by an edit
+    expect(edited.capability_selection!.digest).toBe(stored.capability_selection!.digest);
+  });
 });
 
 // ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -470,6 +504,27 @@ describe("7, 13, 14. a multi-stage company request (TREG companies → employees
     expect(JSON.stringify(proposals[0].result.issues)).toContain("anyapi.tiktok.video.comments is not one of the validated capabilities");
     expect(proposals[1].result).toMatchObject({ ok: true });
     expect(r.plannedPlan.stages.find((s) => s.key === "emails")!.endpoint_id).toBe("contextdev.parse.emails");
+    assertReplayInvariants(r, { expectDelivered: 13, expectStatus: "partial" });
+  });
+
+  it("11b (review of PR #454). a capability validated for ANOTHER stage of the chain is refused at this stage: the work e-mails parser planned under the employees (its validated parent is the companies) is not accepted", async () => {
+    const web = contactWeb();
+    const misplaced = (res: Results) => { const p = proposal(res); return { ...p, stages: p.stages.map((st): Record<string, unknown> => (st.key === "emails" ? { ...st, parent_key: "employees" } : st)) }; };
+    const r = await replay({
+      request: REQUEST, web, answers: answers(),
+      makeStore: () => flagOn(createMemoryStore()),
+      deps: (base) => ({ ...base, reviewCall: approvingReview as never }),
+      planning: planningSteps([
+        { tool: "propose_plan", args: misplaced },
+        { tool: "propose_plan", args: (res: Results) => proposal(res) },
+      ]),
+      execution: executionSteps,
+    });
+    const proposals = r.planningDriver.results.filter((x) => x.tool === "propose_plan");
+    expect(proposals[0].result).toMatchObject({ ok: false });
+    expect(JSON.stringify(proposals[0].result.issues)).toContain("contextdev.parse.emails is validated only for stage company_emails");
+    expect(proposals[1].result).toMatchObject({ ok: true });
+    expect(r.plannedPlan.stages.find((s) => s.key === "emails")!.parent_key).toBe("companies");
     assertReplayInvariants(r, { expectDelivered: 13, expectStatus: "partial" });
   });
 
@@ -646,16 +701,45 @@ describe("8, 9 (worker). an unavailable step is asked about before any plan; a p
 });
 
 describe("the selection record", () => {
-  it("records every stage with its capability; a removed stage (a customer's edit before approval) is allowed, an added or switched one is not", () => {
+  it("records every stage with its capability; a removed stage (a customer's edit before approval, re-sealed) is allowed, an added or switched one is not", () => {
     const d = discover("عايز تقييمات فنادق في القاهرة");
     const plan = { stages: [{ key: "p", endpoint_id: d.stages[0].selected!, parent_key: null }, { key: "r", endpoint_id: d.stages[1].selected!, parent_key: "p" }] };
     const rec = capabilitySelectionOf(plan, d);
     expect(verifyApprovedScope({ ...plan, capability_selection: rec })).toEqual({ ok: true, checked: true });
-    expect(verifyApprovedScope({ stages: [plan.stages[0]], capability_selection: rec })).toEqual({ ok: true, checked: true });
-    expect(verifyApprovedScope({ stages: [...plan.stages, { key: "x", endpoint_id: d.stages[1].selected!, parent_key: "p" }], capability_selection: rec })).toMatchObject({ ok: false, issues: ["stage_added:x"] });
+    expect(verifyApprovedScope(resealCapabilitySelection({ stages: [plan.stages[0]], capability_selection: rec }))).toEqual({ ok: true, checked: true });
+    const added = verifyApprovedScope({ stages: [...plan.stages, { key: "x", endpoint_id: d.stages[1].selected!, parent_key: "p" }], capability_selection: rec });
+    expect(added.ok).toBe(false);
+    if (!added.ok) expect(added.issues).toContain("stage_added:x");
     const tampered = { ...rec, stages: rec.stages.map((s) => (s.stage_key === "r" ? { ...s, capability_id: "anyapi.google.maps.reviews" } : s)) };
-    expect(verifyApprovedScope({ stages: [plan.stages[0], { ...plan.stages[1], endpoint_id: "anyapi.google.maps.reviews" }], capability_selection: tampered })).toMatchObject({ ok: false, issues: ["selection_record_altered"] });
+    const switched = verifyApprovedScope({ stages: [plan.stages[0], { ...plan.stages[1], endpoint_id: "anyapi.google.maps.reviews" }], capability_selection: tampered });
+    expect(switched.ok).toBe(false);
+    if (!switched.ok) expect(switched.issues).toContain("selection_record_altered");
     // a plan with no record (switch off) is not checked
     expect(verifyApprovedScope(plan)).toEqual({ ok: true, checked: false });
+  });
+
+  it("(review of PR #454) a capability is accepted only at ITS stage of the chain: a child-only capability planned as a first stage, or under the wrong parent, binds to nothing and is refused", () => {
+    const d = discover("عايز ٣ شركات كهروميكانيكا في مصر، وجوه كل شركة موظفين اتنين، وإيميل وموبايل كل شركة من موقعها");
+    const keyOf = (op: string) => d.stages.find((s) => s.stage.operation === op && (op !== "company.contacts" || s.stage.key.includes("email")))!;
+    const companies = keyOf("companies.discover");
+    const emails = keyOf("company.contacts");
+    const people = keyOf("people.discover");
+    expect(emails.stage.parentKey).toBe(companies.stage.key);
+    const ok = [{ key: "c", endpoint_id: companies.selected!, parent_key: null }, { key: "e", endpoint_id: emails.selected!, parent_key: "c" }, { key: "p", endpoint_id: people.selected!, parent_key: "c" }];
+    expect(planStageIssues(ok, d, catalog)).toEqual([]);
+    // the contact-page parser as the FIRST stage: it is validated only as a child of the companies
+    const asRoot = planStageIssues([{ key: "e", endpoint_id: emails.selected!, parent_key: null }], d, catalog);
+    expect(asRoot.join(" ")).toContain(`validated only for stage ${emails.stage.key}`);
+    // the e-mails under the employees: the e-mails stage's validated parent is the companies, not the people
+    const wrongParent = planStageIssues([ok[0], ok[2], { key: "e", endpoint_id: emails.selected!, parent_key: "p" }], d, catalog);
+    expect(wrongParent).toHaveLength(1);
+    expect(wrongParent[0]).toContain("stage e:");
+    // a child under a parent that is itself misplaced binds to nothing either
+    const chainOff = planStageIssues([{ key: "p", endpoint_id: people.selected!, parent_key: null }, { key: "e", endpoint_id: emails.selected!, parent_key: "p" }], d, catalog);
+    expect(chainOff).toHaveLength(2);
+    // the record names each stage's own operation
+    const rec = capabilitySelectionOf({ stages: ok }, d);
+    expect(rec.stages.map((s) => [s.stage_key, s.operation, s.source])).toEqual([["c", "companies.discover", "discovery"], ["e", "company.contacts", "discovery"], ["p", "people.discover", "discovery"]]);
+    expect(capabilitySelectionOf({ stages: [{ key: "e", endpoint_id: emails.selected!, parent_key: null }] }, d).stages[0]).toMatchObject({ operation: null, source: "code" });
   });
 });

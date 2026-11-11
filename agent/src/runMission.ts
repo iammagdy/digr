@@ -607,7 +607,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     // UNIFIED CAPABILITY DISCOVERY: the plan shown with its price carries the record of the exact capability each stage executes (checked again before execution) and, on the model-planned and companies paths, the limitations said before approval
     if (discovery) {
       const limits = compiled ? [] : limitationLinesAr(discovery);
-      plan = { ...plan, ...(limits.length > 0 ? { notes_ar: [...new Set([...(plan.notes_ar ?? []), ...limits])] } : {}), capability_selection: capabilitySelectionOf(plan, discovery) };
+      plan = { ...plan, ...(limits.length > 0 ? { notes_ar: [...new Set([...(plan.notes_ar ?? []), ...limits])] } : {}), capability_selection: capabilitySelectionOf(plan, discovery, { limitationsShown: !compiled }) };
       const rec = plan.capability_selection!;
       await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: سُجّلت المصادر المعتمدة لكل خطوة مع الخطة.", counts: { capability_record: 1, from_discovery: rec.stages.filter((x) => x.source === "discovery").length, by_code: rec.stages.filter((x) => x.source === "code").length } }).catch(() => undefined);
     }
@@ -662,11 +662,12 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
     await settleExecution(deps, mission, plan, reserve, unit, { llm: Number(stuck.execution_llm_usd ?? 0), executionTregUsd: Number(stuck.execution_treg_usd ?? 0), summary: null, outputError: `execution started ${started.executionStarts} times` });
     return;
   }
-  // UNIFIED CAPABILITY DISCOVERY: the STORED approved plan must still execute exactly the capabilities recorded when it was shown and priced; a stage added or switched to another capability is never run (nothing is called, the hold is released whole)
+  // UNIFIED CAPABILITY DISCOVERY: the STORED approved plan must still execute exactly the capabilities AND the parameters recorded when it was shown and priced (or last edited by the customer before approval); a stage added, switched to another
+  // capability, or whose counts / filters / pins / pages changed after that is never run (nothing is called, the hold is released whole by the existing settlement)
   const scope = verifyApprovedScope(plan, deps.catalog);
   if (!scope.ok) {
     await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: الخطة المخزنة لا تطابق المصادر المعتمدة، فلم يُنفَّذ شيء.", counts: { adm_flag: 1, scope_issues: scope.issues.length } }).catch(() => undefined);
-    await settleExecution(deps, mission, plan, reserve, unit, { llm: 0, executionTregUsd: 0, summary: null, outputError: `admin: approved_scope_changed ${scope.issues.slice(0, 6).join(",")}`.slice(0, 300) });
+    await settleExecution(deps, mission, plan, reserve, unit, { llm: Number(mission.execution_llm_usd ?? 0), executionTregUsd: Number(mission.execution_treg_usd ?? 0), summary: null, outputError: `admin: approved_scope_changed ${scope.issues.slice(0, 6).join(",")}`.slice(0, 300) });
     return;
   }
   await store.updateMission(mission.id, { execution_model: model, error: null });

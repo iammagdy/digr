@@ -9,6 +9,7 @@ import { latestBeat, workerAlive } from "./heartbeat";
 import { userWillBeEmailed } from "./emailEligibility";
 import { type PricedPlan, type PricedStage } from "./plan";
 import { applyPlanEdits } from "./planEdit";
+import { resealCapabilitySelection } from "./capabilities/selection";
 import { publicPlanOf, smallerVersionOf } from "./overLimit";
 import { missionDownloadName } from "./fileNames";
 import { listOpenMissions, openLimitMessageAr, type OpenMissionView } from "./openMissions";
@@ -186,11 +187,13 @@ export async function editPlanForCustomer(client: any, input: { id: string; user
   const rows = await readYieldRows(client, input.id, plan);
   const r = applyPlanEdits(plan, input.edits, { yieldRows: (s: PricedStage) => rows.get(s.key) ?? null });
   if (!r.ok) return bad(400, r.errorAr);
-  const upd = await client.from(MISSION_TABLE).update({ plan: r.plan as any, plan_public: publicPlanOf(r.plan) as any, unit_price_points: r.plan.price.unitPricePoints, reserved_points: r.plan.price.reservePoints, updated_at: new Date().toISOString() }).eq("id", input.id).eq("status", "plan_ready").select("id");
+  // capability_discovery_v1 plans only: the customer's edit is the one change of the stored parameters allowed before approval; the record of the approved scope follows it (no record: unchanged)
+  const edited = resealCapabilitySelection(r.plan);
+  const upd = await client.from(MISSION_TABLE).update({ plan: edited as any, plan_public: publicPlanOf(edited) as any, unit_price_points: edited.price.unitPricePoints, reserved_points: edited.price.reservePoints, updated_at: new Date().toISOString() }).eq("id", input.id).eq("status", "plan_ready").select("id");
   if (upd.error) return bad(500, "تعذّر حفظ تعديلك.");
   // approved or cancelled in the meantime: the stored plan is the one that was priced and held
   if (Array.isArray(upd.data) && upd.data.length === 0) return bad(409, "تغيّرت حالة المهمة؛ لا يمكن تعديل الخطة الآن.");
-  await client.from(MISSION_EVENTS_TABLE).insert({ mission_id: input.id, kind: "plan", message_ar: "حدّثنا الخطة بحسب تعديلك، والسعر محسوب من جديد.", counts: { stages: r.plan.stages.length, rows: r.plan.price.deliveredRows, unit_points_x1000: Math.round(r.plan.price.unitPricePoints * 1000), reserve_points: r.plan.price.reservePoints } });
+  await client.from(MISSION_EVENTS_TABLE).insert({ mission_id: input.id, kind: "plan", message_ar: "حدّثنا الخطة بحسب تعديلك، والسعر محسوب من جديد.", counts: { stages: edited.stages.length, rows: edited.price.deliveredRows, unit_points_x1000: Math.round(edited.price.unitPricePoints * 1000), reserve_points: edited.price.reservePoints } });
   return { ok: true, status: "plan_ready", requestText: String(mission.request_text ?? "") };
 }
 
@@ -207,7 +210,7 @@ export async function smallerVersionForCustomer(client: any, input: { id: string
   const balanceLimit = Number.isFinite(Number(input.maxHoldPoints)) ? Math.max(0, Math.floor(Number(input.maxHoldPoints))) : AGENT_JOB_POINTS_CAP;
   const smaller = smallerVersionOf(plan, Math.min(AGENT_JOB_POINTS_CAP, balanceLimit));
   if (!smaller) return bad(400, "لا توجد نسخة أصغر تناسب الحد المسموح أو رصيدك. غيّر طلبك أو ألغِ المهمة؛ ولم يُخصم شيء.");
-  const next = smaller.plan;
+  const next = resealCapabilitySelection(smaller.plan);
   const upd = await client.from(MISSION_TABLE).update({ plan: next as any, plan_public: publicPlanOf(next) as any, unit_price_points: next.price.unitPricePoints, reserved_points: next.price.reservePoints, updated_at: new Date().toISOString() }).eq("id", input.id).eq("status", "plan_ready").select("id");
   if (upd.error) return bad(500, "تعذّر حفظ النسخة الأصغر.");
   if (Array.isArray(upd.data) && upd.data.length === 0) return bad(409, "تغيّرت حالة المهمة؛ لا يمكن تعديل الخطة الآن.");
