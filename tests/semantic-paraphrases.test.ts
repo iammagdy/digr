@@ -90,17 +90,19 @@ describe("PR-0.1 the fixture itself", () => {
     }
   });
 
-  it("asserts the privacy refusals of the audit as REFUSED where the code refuses them, and lists the ones it does not as security gaps", () => {
+  it("asserts the privacy refusals of the audit as REFUSED where the code refuses them (the private-chat and national-id gaps S19 were closed by PR #447)", () => {
     const refused = cases.filter((c) => c.group === "privacy_security" && c.expected.prefilter === "privacy_refusal" && !c.known_gap);
     expect(refused.length).toBeGreaterThanOrEqual(4);
     // scenario #31 (phones of the people who commented) is refused today
     const s31 = cases.find((c) => c.id === "sc-01")!;
     expect(s31.known_gap).toBeUndefined();
     expect(run(s31).prefilter).toBe("privacy_refusal");
-    // scenario #19 (private WhatsApp group messages) is NOT refused by the pre-model guard today: a verified security gap, never hidden
-    const s19 = cases.find((c) => c.id === "sc-10")!;
-    expect(s19.known_gap?.ref).toBe("S19");
-    expect(run(s19).prefilter).toBe("agent");
+    // scenario #19 (private WhatsApp group messages) and the national id of a person were security gaps until PR #447; both are now ordinary refusals
+    for (const id of ["sc-10", "sc-11"]) {
+      const c = cases.find((x) => x.id === id)!;
+      expect(c.known_gap, id).toBeUndefined();
+      expect(run(c).prefilter, id).toBe("privacy_refusal");
+    }
   });
 
   it("the legitimate guards still intercept AND the business-contact requests still go through (both directions of the privacy rule)", () => {
