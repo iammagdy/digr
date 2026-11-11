@@ -51,6 +51,9 @@ import { b2bContactCells, b2bEngineOn, b2bFlagSet, b2bLimitLines, createAttemptL
 import { isSocialPlatform } from "../../src/lib/agentMission/redesignFlagTypes";
 import { modelPlanningForTests } from "../../src/lib/agentMission/testSeam";
 import { SOCIAL_NOT_OFFERED_AR } from "../../src/lib/agentMission/foundation/namedShortfall";
+import { blockedEndpointReason } from "../../src/lib/treg/blockList";
+import { policyVerdict } from "../../src/lib/treg/dataPolicy";
+import { buildCapabilityRegistry, capabilitySelectionOf, discoverCapabilities, limitationLinesAr, plannerCapabilitySection, readCapabilityDiscoveryFlag, researchNeedOf, verifyApprovedScope, type CapabilityDiscovery } from "../../src/lib/agentMission/capabilities";
 import { namedShortfallChoiceOf } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { promiseShortfallAr, repliesShortfallAr } from "./repliesShortfall";
 import { TOPIC_OPTIONS_AR, topicMeaningOf, topicQuestionAr } from "../../src/lib/agentMission/topicMeaning";
@@ -113,7 +116,15 @@ export interface RunnerDeps {
   /** The pause before the one delayed review retry (tests pass a fake that does not wait). */
   sleep?: (ms: number) => Promise<void>;
   log?: (line: string) => void;
+  /** UNIFIED CAPABILITY DISCOVERY (capability_discovery_v1 only): the web providers' daily caps in USD from the admin's provider limits (0 = spend nothing). Absent (tests): unknown, and the call recorder still refuses a call over the cap. */
+  providerDailyCaps?: () => Promise<Partial<Record<"firecrawl" | "contextdev", number>>>;
 }
+
+/** The two answers of the reduced-scope card (UNIFIED CAPABILITY DISCOVERY): the customer chooses, nothing is planned or held before. */
+export const CAPABILITY_SCOPE_OPTIONS_AR = ["نعم، اجمع المتاح فقط", "لا، ألغِ الطلب"] as const;
+const CAPABILITY_SCOPE_YES = /^\s*(?:نعم|ايوه|أيوه|ايوة|أيوة|تمام|موافق|ماشي|اوك|أوك|ok|yes)(?![ء-ي\w])|اجمع المتاح/i;
+/** The mission ends honestly before any planning call: what no available capability can do, and the feasible alternative (nothing was held). */
+export const capabilityEndAr = (d: CapabilityDiscovery): string => [d.messageAr, d.alternativeAr ? `${d.alternativeAr} اكتب طلبك بالنطاق الذي يناسبك في رسالة جديدة.` : null, "لم يُخصم منك شيء."].filter((x): x is string => typeof x === "string" && x.trim() !== "").join(" ");
 
 /** The least time the contact finder steps may take after the stages, even when the stages used the mission's whole wall time (a lookup is about a second per person). */
 const CONTACT_STEP_MIN_WALL_MS = 5 * 60_000;
@@ -356,9 +367,48 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     await tell(deps, mission, null, "unserved", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false });
     return;
   }
+  // UNIFIED CAPABILITY DISCOVERY (docs/UNIFIED-CAPABILITY-DISCOVERY.md), only when `capability_discovery_v1` is on for this account (off: null, and the planning below is exactly what it was). Read from the local catalog, the web sources, the
+  // account's policy, the providers' keys and caps: NO provider call and no model call. The social compiled path keeps its own cards (its plan is recorded against the discovery); the model-planned path may plan only validated capabilities.
+  let discovery: CapabilityDiscovery | null = null;
+  if (readCapabilityDiscoveryFlag(settings, mission.user_id)) {
+    const caps = deps.providerDailyCaps ? await deps.providerDailyCaps().catch(() => undefined) : undefined;
+    const registry = buildCapabilityRegistry(deps.catalog, { isAllowed: (id) => !blockedEndpointReason(id) && policyVerdict(id, access).allowed, webKeys: deps.providerKey ? webAvailable : NO_WEB, ...(caps ? { dailyCapUsd: caps } : {}) });
+    discovery = discoverCapabilities(researchNeedOf({ request: mission.request_text, answer: mission.answer_text, semantic }), registry);
+    await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: اكتشاف المصادر القادرة على الطلب.", counts: { capability_discovery: 1, stages: discovery.stages.length, eligible: discovery.stages.reduce((n, s) => n + s.eligible.length, 0), unsupported: discovery.unsupported.length, limitations: discovery.limitations.length } }).catch(() => undefined);
+    deps.log?.(`capability_discovery ${mission.id} status=${discovery.status} ${discovery.stages.map((s) => `${s.stage.key}:${s.selected ?? "none"}`).join("|")}`);
+    if (!compiledActive) {
+      if (discovery.status === "blocked" || discovery.status === "unsupported") {
+        const sentence = capabilityEndAr(discovery);
+        await store.updateMission(mission.id, { status: "unserved", summary_ar: sentence, ...clear });
+        await store.addEvent(mission.id, { kind: "result", message_ar: sentence });
+        await tell(deps, mission, null, "unserved", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false });
+        return;
+      }
+      if (discovery.status === "partial") {
+        const note = await readRunState(store, mission.id);
+        if (note.capabilityScope === "asked") {
+          if (!CAPABILITY_SCOPE_YES.test(String(mission.answer_text ?? ""))) {
+            await store.updateMission(mission.id, { status: "cancelled", ...clear });
+            await store.addEvent(mission.id, { kind: "result", message_ar: "أُلغيت هذه المهمة ولم يُخصم شيء؛ اكتب طلبك المعدّل في رسالة جديدة إن أردت." });
+            return;
+          }
+          await updateRunState(store, mission.id, (r) => ({ ...r, capabilityScope: "accepted" }), deps.log);
+        } else if (note.capabilityScope !== "accepted") {
+          // the reduced scope is ASKED before any plan or price: a step is never dropped or replaced silently
+          await updateRunState(store, mission.id, (r) => ({ ...r, capabilityScope: "asked" }), deps.log);
+          const question = [discovery.messageAr, discovery.alternativeAr].filter(Boolean).join(" ");
+          await store.updateMission(mission.id, { status: "needs_input", question_ar: question, plan_public: { question_options: [...CAPABILITY_SCOPE_OPTIONS_AR] } as any, ...clear });
+          await store.addEvent(mission.id, { kind: "question", message_ar: question });
+          return;
+        }
+      }
+    }
+  }
   // ROUND 25: THE LEGACY MODEL-PLANNED PATH TAKES ONLY COMPANIES OR PLACES (platformQuestion.ts). A request with no platform that looks like social data gets the platform card «من أنهي منصة؟»; anything else unclear gets ONE clarifying card. Both come BEFORE any model turn or
   // provider call; nothing is held or charged and no notice is sent for a question. A second unclear answer ends the request honestly with no paid call (never «مصادرنا لا تخدم», and an unanswered card is never ended here).
-  if (!modelPlanningForTests() && redesign.platform === null) {
+  // with capability discovery on, a request whose data operations code recognized (companies, places, people, the public web) is routed by the discovery above, not by the keyword route: the public web reaches the planner with its validated web capabilities
+  const routedByDiscovery = discovery !== null && discovery.need.kind !== "unknown" && discovery.status !== "needs_clarification";
+  if (!modelPlanningForTests() && redesign.platform === null && !routedByDiscovery) {
     const route = legacyRouteOf(mission.request_text, mission.answer_text);
     if (route !== "legacy") {
       const note = await readRunState(store, mission.id);
@@ -383,7 +433,8 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
       return;
     }
   }
-  const ctx: ToolContext = { redesign, phase: "planning", mission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, pricingSettings, stats: sourceStats, now: planningNow };
+  const capabilityPrompt = discovery && !compiledActive && discovery.stages.length > 0 ? `\n\n${plannerCapabilitySection(discovery)}` : "";
+  const ctx: ToolContext = { redesign, phase: "planning", mission, plan: null, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, pricingSettings, stats: sourceStats, now: planningNow, ...(discovery && !compiledActive && discovery.stages.length > 0 ? { capabilities: discovery } : {}) };
   // AN AMBIGUOUS TOPIC IS ASKED BEFORE PLANNING (S8, owner decision; redesigned mode only): «فيديوهات الذكاء الاصطناعي» may mean videos that TALK ABOUT it or videos MADE WITH it; «عن X» means about and «معمول بـ X» means made with, so only the request that says neither is asked, by code, with two ready answers,
   // before any source is read or any model is paid for (the customer's answer is read with the request and decides the meaning)
   if (socialRedesignActive(ctx) && !mission.answer_text) {
@@ -528,7 +579,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     await store.addEvent(mission.id, { kind: "call", message_ar: b2b.ok ? "قياس داخلي: خطة شركات مبنية بالكود." : "قياس داخلي: لم تُبنَ خطة الشركات بالكود، فبقيت الطريقة الحالية.", counts: { b2b_compiled: b2b.ok ? 1 : 0 } }).catch(() => undefined);
     if (b2b.ok) state.proposedPlan = b2b.plan;
   }
-  let output = compiled ? { ...COMPILED_RUN, llmCostUsd: compiled.llmCostUsd ?? 0 } : b2b?.ok ? COMPILED_RUN : await runOnce(planningPrompt(mission, calls, resumeNote));
+  let output = compiled ? { ...COMPILED_RUN, llmCostUsd: compiled.llmCostUsd ?? 0 } : b2b?.ok ? COMPILED_RUN : await runOnce(planningPrompt(mission, calls, resumeNote) + capabilityPrompt);
   if (!compiled && !b2b?.ok) await recordTokens(deps, mission.id, 0, output.usage, { inputTokens: 0, outputTokens: 0, calls: 0 }, output.llmCostUsd);
   // A RUN THAT ENDED WITH NO PLAN, NO QUESTION AND NO ENDING while the sources gave it real rows (live 2026-10-29: Facebook videos, after the customer answered the question, the planner tried two unavailable web searches and stopped): it is asked once more, told to
   // build the plan from what it holds. Never a limit of ours: the run's stop was a plain end, with no budget, turn or time limit reached.
@@ -536,7 +587,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     llmBase += output.llmCostUsd;
     const fresh = await store.listCalls(mission.id);
     if (!fresh.some((c) => (c.phase ?? "planning") === "planning" && c.status === "ok" && Number(c.rows_returned ?? 0) > 0)) break;
-    output = await runOnce(`${planningPrompt(mission, fresh, resumeNote)}\n\n${PLANNING_NUDGE}`);
+    output = await runOnce(`${planningPrompt(mission, fresh, resumeNote)}${capabilityPrompt}\n\n${PLANNING_NUDGE}`);
     await recordTokens(deps, mission.id, 0, output.usage, { inputTokens: 0, outputTokens: 0, calls: 0 }, output.llmCostUsd);
   }
   const llm = Number(llmBase + output.llmCostUsd);
@@ -552,6 +603,13 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
       const sealed = sealFinalPrice(plan, pricingSettings);
       plan = sealed.plan;
       if (sealed.drift) await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: صُحّح سعر الخطة قبل عرضها.", counts: { price_sealed: 1, rows_before: sealed.drift.rowsBefore, rows_after: sealed.drift.rowsAfter, reserve_before: sealed.drift.reserveBefore, reserve_after: sealed.drift.reserveAfter } }).catch(() => undefined);
+    }
+    // UNIFIED CAPABILITY DISCOVERY: the plan shown with its price carries the record of the exact capability each stage executes (checked again before execution) and, on the model-planned and companies paths, the limitations said before approval
+    if (discovery) {
+      const limits = compiled ? [] : limitationLinesAr(discovery);
+      plan = { ...plan, ...(limits.length > 0 ? { notes_ar: [...new Set([...(plan.notes_ar ?? []), ...limits])] } : {}), capability_selection: capabilitySelectionOf(plan, discovery) };
+      const rec = plan.capability_selection!;
+      await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: سُجّلت المصادر المعتمدة لكل خطوة مع الخطة.", counts: { capability_record: 1, from_discovery: rec.stages.filter((x) => x.source === "discovery").length, by_code: rec.stages.filter((x) => x.source === "code").length } }).catch(() => undefined);
     }
     await store.updateMission(mission.id, { ...base, status: "plan_ready", plan: plan as any, plan_public: publicPlanOf(plan) as any, unit_price_points: plan.price.unitPricePoints, reserved_points: plan.price.reservePoints });
     await store.addEvent(mission.id, { kind: "plan", message_ar: plan.summary_ar, counts: { stages: plan.stages.length, rows: plan.price.deliveredRows, unit_points_x1000: Math.round(plan.price.unitPricePoints * 1000), reserve_points: plan.price.reservePoints } });
@@ -602,6 +660,13 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   if (started.executionStarts > AGENT_PHASE_STARTS_MAX) {
     const stuck = (await store.getMission(mission.id)) ?? mission;
     await settleExecution(deps, mission, plan, reserve, unit, { llm: Number(stuck.execution_llm_usd ?? 0), executionTregUsd: Number(stuck.execution_treg_usd ?? 0), summary: null, outputError: `execution started ${started.executionStarts} times` });
+    return;
+  }
+  // UNIFIED CAPABILITY DISCOVERY: the STORED approved plan must still execute exactly the capabilities recorded when it was shown and priced; a stage added or switched to another capability is never run (nothing is called, the hold is released whole)
+  const scope = verifyApprovedScope(plan, deps.catalog);
+  if (!scope.ok) {
+    await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: الخطة المخزنة لا تطابق المصادر المعتمدة، فلم يُنفَّذ شيء.", counts: { adm_flag: 1, scope_issues: scope.issues.length } }).catch(() => undefined);
+    await settleExecution(deps, mission, plan, reserve, unit, { llm: 0, executionTregUsd: 0, summary: null, outputError: `admin: approved_scope_changed ${scope.issues.slice(0, 6).join(",")}`.slice(0, 300) });
     return;
   }
   await store.updateMission(mission.id, { execution_model: model, error: null });

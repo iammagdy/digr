@@ -14,6 +14,7 @@ import { checkCustomerText } from "../../src/lib/agentMission/text";
 import { blockedEndpointReason } from "../../src/lib/treg/blockList";
 import { isSellable, type TregCatalog } from "../../src/lib/treg/catalog";
 import { policyVerdict, type AccountAccess } from "../../src/lib/treg/dataPolicy";
+import { isPrivateCapabilityString, planStageIssues, type CapabilityDiscovery } from "../../src/lib/agentMission/capabilities";
 import { digestValue } from "../../src/lib/modelPlanner/digest";
 import type { Gateway } from "./gateway";
 import { RAW_PATH } from "./gateway";
@@ -126,6 +127,8 @@ export interface ToolContext {
   /** «Now» for the health window (tests pass a fixed moment). */
   now?: number;
   /** The redesign flags in force for this mission and whether its account is a test account (redesignFlags.ts). Absent: the old behaviour. */
+  /** UNIFIED CAPABILITY DISCOVERY (capability_discovery_v1 only, model-planned path): the validated capabilities of each stage; a proposed stage reading anything else is refused by code. Absent: today's behaviour. */
+  capabilities?: CapabilityDiscovery;
   redesign?: { flags: RedesignFlags; isTest: boolean; /** Per-platform overrides (docs/ROOT-CAUSE.md, section 5.3): absent = every platform follows its type. */ platformFlags?: PlatformFlags; /** The platform the customer's words name (the request contract), null when none. */ platform?: SocialPlatform | null };
 }
 
@@ -383,6 +386,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       },
       handler: async (a) => {
         const id = String(a.endpoint_id ?? "").trim();
+        // UNIFIED CAPABILITY DISCOVERY: a capability that returns private personal data is never called, whatever the model asks (refused before the gateway, costs nothing)
+        if (ctx.capabilities && isPrivateCapabilityString(ctx.catalog.byId.get(id)?.capability)) return { ok: false, refused: "private_data", message: "this source returns private personal data; Diger never collects it. It was NOT called and cost nothing" };
         const refusal = cheapestFirstMessage(state, id, a.why);
         if (refusal) return { ok: false, refused: "choose_cheapest", message: refusal };
         const sick = unhealthyMessage(ctx, id);
@@ -588,6 +593,11 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           return { ok: true, note: "social requests are planned by code, not by you; the request was ended for the customer; stop now" };
         }
 
+        // UNIFIED CAPABILITY DISCOVERY: every stage reads one of the capabilities code validated for this request (inputs, outputs, availability, policy, price); the model recommends, code decides
+        if (ctx.capabilities) {
+          const capIssues = planStageIssues(stagesIn.map((st) => ({ key: String(st?.key ?? ""), endpoint_id: String(st?.endpoint_id ?? ""), parent_key: st?.parent_key ?? null })), ctx.capabilities, ctx.catalog);
+          if (capIssues.length > 0) return err("the plan was not accepted; fix these and propose again", { issues: capIssues.slice(0, 12) });
+        }
         // TEMPORARY, TEST-ONLY (testSeam.ts): the tests that still drive a social mission through a fake model transcript were written for the redesigned mode, where no relevance rule is asked of the model. Production never reaches this (a social plan from the model is refused above).
         const noRelevance = modelPlanningForTests() && socialRedesignActive(ctx) && redesignTypeOf(stagesIn as never, { account: stagesIn.some((st) => Array.isArray(st?.filters) && st.filters.some((f: { kind?: string; values?: unknown[] }) => f?.kind === "account" && Array.isArray(f.values) && f.values.length > 0)) }, (id: string) => ctx.catalog.byId.get(id)?.capability ?? null).startsWith("social_");
         const ids = new Set<string>();

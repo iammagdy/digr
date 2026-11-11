@@ -4,6 +4,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 43 (11 Nov 2026, after #453, main = `efacb0a`): unified request-to-execution, capability discovery (docs/UNIFIED-CAPABILITY-DISCOVERY.md)
+
+**No SQL write, no flag change, no migration, no paid model or provider call, no money/ledger/pricing/approval/auth/infrastructure line.**
+
+1. **Behind `capability_discovery_v1` (OFF; `true`/`"on"` or `{"user_ids":[…]}` in `agent_settings`):** one capability registry built from the local TREG snapshot and the documented Firecrawl / Context.dev sources; the request read as data operations; candidates ranked by ability to serve the request, then price; private-data capabilities never eligible.
+2. **Chat (brief mode):** the model's discovery question is grounded in the kinds of data code found available (same one call); an unsupported or partly supported ready brief is answered with the honest limitation and the feasible scope, no mission.
+3. **Worker:** unsupported → unserved before any call; partial → a question card before any plan; the model planner gets the validated set and `propose_plan` refuses anything else; the public web is routed to the planner; the plan stores `capability_selection`; execution refuses a stored plan whose sources changed (nothing called, hold released).
+4. **Tests:** `tests/unified-capability-discovery.test.ts` (24, offline, scripted model and fake providers through approval, execution and settlement). Not proof of real model or provider behaviour.
+5. **Owner decision:** enabling the switch for the test account (SQL in the doc, not run).
+
+---
+
 ## Round 42 (11 Nov 2026, after #452, main = `8f29a56`): agent understanding v1 (one consolidated PR, docs/AGENT-UNDERSTANDING-V1.md)
 
 **No SQL write, no flag change, no migration, no paid model or provider call, no money/ledger/pricing/approval/auth/infrastructure line.**

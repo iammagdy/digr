@@ -252,6 +252,11 @@ export interface PricedPlan {
    * A compiled plan always runs the new engine (agent/src/redesign.ts): it never falls back to the old pipeline. Absent: every old behaviour, unchanged.
    */
   compiled?: CompiledMark;
+  /**
+   * UNIFIED CAPABILITY DISCOVERY (capability_discovery_v1 only, docs/UNIFIED-CAPABILITY-DISCOVERY.md): the exact validated capability each stage executes, its operation, its parent and how it is fed, written by code when the plan is shown with
+   * its price. Execution checks the stored approved plan against it before any call. Internal; never shown to the customer. Absent: the switch was off.
+   */
+  capability_selection?: import("./capabilities/selection").CapabilitySelection;
 }
 
 export interface CompiledMark {

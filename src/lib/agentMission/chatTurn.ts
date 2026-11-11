@@ -11,6 +11,10 @@ import { listMethodologyMissions } from "./methodology/missions";
 import { buildRequestContract } from "./requestContract";
 import { briefNumbersAr, contractIsComplete, differsOnlyByCount, sameContract, storedBriefOf, validateBrief, type ResearchBrief } from "./researchBrief";
 import { readSettingValue, scopedFlagOn } from "./scopedFlag";
+import { buildCapabilityRegistry, chatCapabilityLines, discoverCapabilities, researchNeedOf, CAPABILITY_DISCOVERY_FLAG_KEY, type CapabilityDiscovery, type CapabilityRegistry } from "./capabilities";
+import { loadTregCatalog } from "../treg/catalog";
+import { blockedEndpointReason } from "../treg/blockList";
+import { policyVerdict } from "../treg/dataPolicy";
 
 /**
  * ONE CHAT TURN ANSWERED BY THE AGENT. The customer's request becomes a mission for the signed-in user (or the guest, who must sign up before approving); the worker plans it; the chat card
@@ -171,8 +175,8 @@ export async function agentChatTurn(input: AgentChatTurnInput): Promise<AgentCha
     // what the customer asked in this conversation: the open request's stored words (typed earlier, maybe beyond the recent messages), the recent messages, this one
     const customerTurns = [...(open?.requestText ? [open.requestText] : []), ...history.filter((m) => m.role === "user").map((m) => m.content), input.message];
     const assistantQuestion = [...history].reverse().find((m) => m.role === "assistant")?.content ?? null;
-    const decision = await decideTurn({ message: input.message, balancePoints, open, history, ...(mode.enabled ? { brief: { enabled: true, soFar: prior, numbersAr: briefNumbersAr({ customerTurns, prior }) } } : {}) });
-    const briefCtx: BriefTurnContext = { customerTurns, assistantQuestion, prior, semantic: mode.semantic, outcome: "off" };
+    const decision = await decideTurn({ message: input.message, balancePoints, open, history, ...(mode.enabled ? { brief: { enabled: true, soFar: prior, numbersAr: briefNumbersAr({ customerTurns, prior }), ...(mode.registry ? { capabilityLines: chatCapabilityLines(mode.registry) } : {}) } } : {}) });
+    const briefCtx: BriefTurnContext = { customerTurns, assistantQuestion, prior, semantic: mode.semantic, outcome: "off", ...(mode.registry ? { registry: mode.registry } : {}) };
     const viaBrief = mode.enabled ? await briefTurn(input, decision, open, briefCtx) : null;
     console.info(JSON.stringify({ tag: "chat_message_type", type: decision.type, source: decision.source, guarded: decision.guarded, open: open?.state ?? "none", brief: mode.enabled ? briefCtx.outcome : "off", ...(decision.failure ? { failure: decision.failure } : {}) }));
     if (viaBrief) return viaBrief;
@@ -227,10 +231,31 @@ async function startMission(input: AgentChatTurnInput, requestText: string, extr
  */
 export const CHAT_RESEARCH_BRIEF_FLAG_KEY = "chat_research_brief_v1";
 
-async function readBriefMode(sb: any, userId: string): Promise<{ enabled: boolean; semantic: boolean }> {
+async function readBriefMode(sb: any, userId: string): Promise<{ enabled: boolean; semantic: boolean; registry: CapabilityRegistry | null }> {
   // the consistency check reads the consolidated request with the parser as it is with the semantic flag OFF: the stricter reading (with the flag ON the reading only fills or corrects from the same words), and the chat never imports the
   // semantic layer (the isolation rule of PR-1.2: the privacy rules, the chat and mission creation stay independent of it)
-  return { enabled: scopedFlagOn(await readSettingValue(sb, CHAT_RESEARCH_BRIEF_FLAG_KEY), userId), semantic: false };
+  const enabled = scopedFlagOn(await readSettingValue(sb, CHAT_RESEARCH_BRIEF_FLAG_KEY), userId);
+  // UNIFIED CAPABILITY DISCOVERY (capability_discovery_v1, read only in brief mode): the registry the discovery question and the brief are checked against. Off, or unreadable: null, and brief mode is exactly what it was.
+  const registry = enabled && scopedFlagOn(await readSettingValue(sb, CAPABILITY_DISCOVERY_FLAG_KEY), userId) ? chatRegistry() : null;
+  return { enabled, semantic: false, registry };
+}
+
+/**
+ * The chat's registry: the local catalog snapshot (shipped with the chat route) and the documented web sources. The account's sensitive-data access is not read here (null access: the stricter policy), and the providers' keys and caps are
+ * not known to the site: the worker re-runs the discovery with them and decides. Built once per process; nothing is fetched.
+ */
+let chatRegistryCache: CapabilityRegistry | null = null;
+function chatRegistry(): CapabilityRegistry | null {
+  if (chatRegistryCache) return chatRegistryCache;
+  try {
+    chatRegistryCache = buildCapabilityRegistry(loadTregCatalog(), { isAllowed: (id) => !blockedEndpointReason(id) && policyVerdict(id, null).allowed });
+  } catch { chatRegistryCache = null; }
+  return chatRegistryCache;
+}
+
+/** Said with the honest limitation when the ready brief asks for something no available capability can do: the customer chooses the reduced scope (or another source) before any mission exists. */
+export function capabilityLimitReplyAr(d: CapabilityDiscovery): string {
+  return [d.messageAr, d.alternativeAr].filter((x): x is string => typeof x === "string" && x.trim() !== "").join(" ");
 }
 
 /** The brief of this conversation: the one stored with the latest assistant card or question (`plan.researchBrief`). A newer card without a brief (a request of the old path) ends it. Read only. */
@@ -253,6 +278,8 @@ interface BriefTurnContext {
   semantic: boolean;
   /** What happened, for the log line (a code: never the customer's words). */
   outcome: string;
+  /** UNIFIED CAPABILITY DISCOVERY: the registry the ready brief is checked against (absent: the switch is off). */
+  registry?: CapabilityRegistry;
 }
 
 /** Said when an unapproved plan (or a question card) is replaced by the updated request. */
@@ -295,8 +322,26 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     await writeAnswer(input, decision.reply, { researchBrief: brief });
     return { ok: false, contentAr: decision.reply, status: 200 };
   }
+  const gated = await capabilityGate(input, brief, ctx);
+  if (gated) return gated;
   ctx.outcome = brief.status === "ready" ? "ready" : "ready_by_contract";
   return startMission(input, brief.request, { brief: { ...brief, status: "ready" }, noteAr: brief.status === "ready" ? decision.reply : null });
+}
+
+/**
+ * UNIFIED CAPABILITY DISCOVERY (capability_discovery_v1): a request no available capability can (fully) serve never becomes a mission silently reduced or substituted. The customer is told what is unavailable and offered the feasible scope
+ * (the brief is kept as «needs_clarification», so the next turn revises the same request); nothing is created, held or charged. Null: the request can be served (or the switch is off), the caller goes on.
+ */
+async function capabilityGate(input: AgentChatTurnInput, brief: ResearchBrief, ctx: BriefTurnContext): Promise<AgentChatTurnResult | null> {
+  if (!ctx.registry) return null;
+  const d = discoverCapabilities(researchNeedOf({ request: brief.request, brief }), ctx.registry);
+  if (d.status !== "unsupported" && d.status !== "partial" && d.status !== "blocked") return null;
+  // a social request whose platform is served goes on: the social plan compiler has its own validated cards for the child steps (replies, comments) and states before approval, with the price, any step it cannot serve
+  if (d.status === "partial" && d.need.kind === "social") { ctx.outcome = "capability_partial_social_compiler"; return null; }
+  ctx.outcome = `capability_${d.status}`;
+  const contentAr = capabilityLimitReplyAr(d);
+  await writeAnswer(input, contentAr, d.status === "blocked" ? undefined : { researchBrief: { ...brief, status: "needs_clarification" } });
+  return { ok: false, contentAr, status: 200 };
 }
 
 /**
@@ -312,17 +357,23 @@ async function briefEditOfOpen(input: AgentChatTurnInput, decision: Decision, op
   const ready = { ...brief, status: "ready" as const };
   if (open.state === "plan_ready") {
     if (sameContract(contract, openContract) || (decision.count !== null && differsOnlyByCount(contract, openContract))) { ctx.outcome = "edit_same_path"; return null; }
+    const gated = await capabilityGate(input, brief, ctx);
+    if (gated) return gated;
     ctx.outcome = "edit_replaced";
     return startMission(input, brief.request, { brief: ready, contentAr: REQUEST_UPDATED_AR });
   }
   if (open.state === "needs_input") {
     const platformChange = contract.platform !== null && contract.platform !== openContract.platform;
     if (!platformChange) { ctx.outcome = "answer_same_path"; return null; }
+    const gated = await capabilityGate(input, brief, ctx);
+    if (gated) return gated;
     ctx.outcome = "answer_replaced";
     return startMission(input, brief.request, { brief: ready, contentAr: REQUEST_UPDATED_AR });
   }
   // planning
   if (sameContract(contract, openContract)) { ctx.outcome = "planning_same"; return null; }
+  const gated = await capabilityGate(input, brief, ctx);
+  if (gated) return gated;
   let withdrawn = false;
   try {
     const upd = await input.sb.from(MISSION_TABLE).update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", open.id).eq("user_id", input.userId).eq("status", "queued").select("id");

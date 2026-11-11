@@ -6,6 +6,7 @@ import { resolveAccountAccess } from "../../src/lib/server/sensitiveAccess";
 import { sendMissionNotice } from "../../src/lib/server/missionNotify";
 import { resolveProviderKey, useProviderKeyStoreClient } from "../../src/lib/server/providerKeys";
 import { last4Of } from "../../src/lib/server/providerKeyCrypto";
+import { resolveAllProviderDailyCaps } from "../../src/lib/server/multiProvider/providerCaps";
 import { sendPlatformEmail } from "../../src/lib/server/sendPlatformEmail";
 import { configureTregKeyPool } from "../../src/lib/server/tregKeyPool";
 import { buildPoolAlertVars } from "../../src/lib/server/tregPoolAlerts";
@@ -76,6 +77,8 @@ async function main() {
     // the Firecrawl and Context.dev keys come from the SAME encrypted provider key store the website uses (needs PROVIDER_KEYS_ENCRYPTION_KEY, the same value as the website's); when the store gives no key the site's
     // environment names are read (CONTEXT_DEV_API_KEY / FIRECRAWL_API_KEY, see providerKeyCrypto.ts); with neither, the web tools answer «source unavailable» and the agent uses the catalog
     providerKey: async (provider) => (await resolveProviderKey(provider)).key || null,
+    // read ONLY when capability_discovery_v1 is on for the mission's account: the web providers' daily caps (read only; the admin's provider limits)
+    providerDailyCaps: async () => { const c = await resolveAllProviderDailyCaps(client); return { firecrawl: c.firecrawl, contextdev: c.contextdev }; },
     log,
   });
 
