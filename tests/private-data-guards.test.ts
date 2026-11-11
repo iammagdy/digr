@@ -242,7 +242,7 @@ describe("the chat: refused before the model, no mission, no money, no network",
 describe("the mission creation: a second line of defence for every caller", () => {
   it("refuses a private-conversation or identifier request without writing a row, and creates the allowed ones", async () => {
     const db = world();
-    for (const text of ["عايز رسايل الواتساب بتاعة جروب الشغل", "الرقم القومي لأحمد", "هات ارقام تليفونات الناس العاديين من فيسبوك"]) {
+    for (const text of ["عايز رسايل الواتساب بتاعة جروب الشغل", "الرقم القومي لأحمد", "هات رسائل جروب تليجرام بتاع الشركة", "هات رقم جواز السفر بتاع احمد"]) {
       const r = await createCustomerMission(db, { userId: USER, text });
       expect(r, text).toMatchObject({ ok: false, status: 422 });
       expect(db.rows("missions"), text).toHaveLength(0);
@@ -250,6 +250,10 @@ describe("the mission creation: a second line of defence for every caller", () =
     const ok = await createCustomerMission(db, { userId: USER, text: "هات منشورات عامة عن حماية الرقم القومي" });
     expect(ok.ok).toBe(true);
     expect(db.rows("missions")).toHaveLength(1);
+  });
+  it("does NOT repeat the personal-contact rule there (no eligibility changes outside the chat): a product word the chat rule over-reads still creates the mission, as before", async () => {
+    const db = world();
+    expect((await createCustomerMission(db, { userId: USER, text: "عايز ٥ اسعار موبايلات من امازون مصر" })).ok).toBe(true);
   });
 });
 

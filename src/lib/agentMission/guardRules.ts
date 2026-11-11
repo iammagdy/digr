@@ -116,14 +116,19 @@ export const PRIVATE_MESSAGES_REFUSAL_AR = "لا أستطيع جمع رسائل 
 export const SENSITIVE_ID_REFUSAL_AR = "لا أستطيع جمع الأرقام القومية أو أرقام البطاقات والهويات وجوازات السفر ورخص القيادة أو غيرها من المعرّفات الشخصية، فهذه بيانات حساسة تحميها خصوصية أصحابها. يمكنني بدلًا من ذلك جمع المنشورات والتعليقات العامة، ومنها النقاش العام عن حماية هذه البيانات، وبيانات التواصل المهنية للشركات المتاحة علنًا. اكتب لي ما تريد وسأجهّز لك الخطة والسعر، ولا يُخصم شيء قبل موافقتك.";
 
 /**
- * The fixed refusal of a request that asks for personal contact data, private conversations or personal identifiers, or null. ONE function for every place a customer's words become a request (the chat, the answer to a question card, the creation of a mission),
- * so the rule cannot be applied in one place and missed in another. The contact rule is the one above, unchanged; the two new rules come after it.
+ * The fixed refusal of a request for private conversations or personal identifiers (the two rules of this section only), or null. It is the ONE definition applied wherever a customer's words become a request after the chat (the creation of a mission, the answer
+ * to a question card), so the same words cannot be refused in the chat and accepted through another door. The personal-contact rule above is deliberately NOT repeated there: it keeps being applied exactly where it was (the chat), so no eligibility changes elsewhere.
  */
-export function privacyRefusalAr(message: string): string | null {
-  if (privateContactAsk(message)) return PRIVACY_REFUSAL_AR;
+export function sensitiveRequestRefusalAr(message: string): string | null {
   if (privateMessagesAsk(message)) return PRIVATE_MESSAGES_REFUSAL_AR;
   if (personalIdentifierAsk(message)) return SENSITIVE_ID_REFUSAL_AR;
   return null;
+}
+
+/** The chat's fixed privacy refusal: the personal-contact rule (unchanged), then the two rules above. */
+export function privacyRefusalAr(message: string): string | null {
+  if (privateContactAsk(message)) return PRIVACY_REFUSAL_AR;
+  return sensitiveRequestRefusalAr(message);
 }
 
 // ---- 2. account questions -------------------------------------------------------------------------------------------------------------------------------------------------
