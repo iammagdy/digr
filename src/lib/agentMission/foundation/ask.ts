@@ -1,4 +1,4 @@
-import { buildRequestContract, optionalPartsOf, type ChildAsk, type ParentKind } from "../requestContract";
+import { buildRequestContract, optionalPartsOf, type ChildAsk, type ContractOptions, type ParentKind } from "../requestContract";
 import { countryOfValue } from "../places";
 import { topicMeaningOf } from "../topicMeaning";
 import { cairoDayEndExclusiveMs, cairoDayOf, cairoDayStartMs } from "../cairoTime";
@@ -184,9 +184,9 @@ export function officialChannelQueriesOf(topic: string | null): string[] {
 }
 
 /** The Ask of a request (and of the customer's answer and edit). `requestedAtMs` is the moment the mission was created: «آخر ٣ شهور» counts back from that Cairo day. */
-export function buildAsk(request: unknown, answer: unknown, requestedAtMs: number, edits: AskEdits = {}): Ask {
+export function buildAsk(request: unknown, answer: unknown, requestedAtMs: number, edits: AskEdits = {}, options: ContractOptions = {}): Ask {
   const text = `${String(request ?? "")} ${String(answer ?? "")}`.replace(/\s+/g, " ").trim();
-  const c = buildRequestContract(request, answer);
+  const c = buildRequestContract(request, answer, options);
   // NOV 6 2026: an optional preference («(منشورات فيديو لو متاح)») never reaches the topic's meaning either
   const meaning = topicMeaningOf(optionalPartsOf(text).required);
   // ROUND 33: «في آخر كأس عالم» / «في أحدث نهائي»: the customer names the LATEST occurrence of a recurring event themselves. The request parser stops the topic at «في» (the topic of «منتخب مصر في آخر كأس عالم» was «منتخب مصر»), so the event was dropped without a trace. It is now part of the topic (what the search and the topic marks read)

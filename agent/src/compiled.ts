@@ -49,6 +49,8 @@ export interface CompiledPlanningDeps {
   nowMs: number;
   /** The customer's edit of the card (Stage 2 recompiles with it). */
   edits?: Ask["edits"];
+  /** PR-1.2: the flag `semantic_normalization_v1`, read ONCE by the run from the trusted settings (never from the customer). Absent or false: the request is read exactly as before. */
+  semantic?: boolean;
   /** Owner decision 7.4: the account is a TEST account, so a `catalog_only` card may build a stage (within its dollar cap). Absent: never. */
   catalogOnly?: boolean;
   /**
@@ -155,7 +157,7 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   const occurrenceAnswer = occurrenceChoiceOf(deps.mission.answer_text);
   const answeredReady = isNamedShortfallAnswer(deps.mission.answer_text) || isOccurrenceAnswer(deps.mission.answer_text) || noAboutChoiceOf(deps.mission.answer_text) !== null || deps.answerIsChoice === true;
   const occurrenceEdit: Occurrence | undefined = occurrenceAnswer && occurrenceAnswer.kind !== "ask_year" ? occurrenceAnswer : deps.occurrence;
-  let ask = buildAsk(deps.mission.request_text, answeredReady ? null : deps.mission.answer_text, Number.isFinite(at) ? at : deps.nowMs, { ...(deps.edits ?? {}), ...(occurrenceEdit && !deps.edits?.occurrence ? { occurrence: occurrenceEdit } : {}) });
+  let ask = buildAsk(deps.mission.request_text, answeredReady ? null : deps.mission.answer_text, Number.isFinite(at) ? at : deps.nowMs, { ...(deps.edits ?? {}), ...(occurrenceEdit && !deps.edits?.occurrence ? { occurrence: occurrenceEdit } : {}) }, { semantic: deps.semantic === true });
   // ROUND 14, PART B: what the customer chose at the count questions and the budget (in the request's words or chosen) join the Ask
   const choices = deps.choices ?? {};
   const budget = choices.budget ?? budgetOfWords(deps.mission.request_text) ?? undefined;
