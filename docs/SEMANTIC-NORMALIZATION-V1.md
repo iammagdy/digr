@@ -1,6 +1,6 @@
 # Semantic normalization v1 (PR-1.1): an isolated, flag-gated foundation
 
-**Status (PR-1.1): the isolated foundation. PR-1.2 connected it to the real request contract behind the flag `semantic_normalization_v1` (OFF by default, nothing sets it): see `docs/SEMANTIC-INTEGRATION-V1.md`. No customer sees any change while the flag is OFF.**
+**Status (PR-1.1): the isolated foundation. PR-1.2 connected it to the real request contract behind the flag `semantic_normalization_v1` (OFF by default, nothing sets it): see `docs/SEMANTIC-INTEGRATION-V1.md`; PR-1.3 adds the dates, countries and languages (`semantic/conditions.ts`). No customer sees any change while the flag is OFF.**
 
 ## What exists
 

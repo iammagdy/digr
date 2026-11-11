@@ -104,7 +104,7 @@ describe("the real request contract: flag OFF is today, flag ON is the corrected
       const missing = buildRequestContractWithReport(c.text, c.answer ?? undefined);
       expect(off.contract, c.id).toEqual(plain);
       expect(missing.contract, c.id).toEqual(plain);
-      expect(off.report, c.id).toEqual({ filled: [], tightened: [], cleared: [], disagreements: [] });
+      expect(off.report, c.id).toEqual({ filled: [], tightened: [], cleared: [], corrected: [], disagreements: [] });
     }
   });
 });
@@ -132,8 +132,10 @@ describe("fill-only: a value the parser produced is kept; the reading fills, tig
       if (off.parentKind !== null && on.parentKind !== off.parentKind) expect(on.platform, `${c.id} kind`).not.toBe(off.platform);
       if (off.topic === null && on.topic !== null) expect(report.filled, `${c.id} topic`).toContain("topic");
       if (off.topic !== null && on.topic !== off.topic) { expect(report.tightened, `${c.id} topic`).toContain("topic"); expect(off.topic.startsWith(`${on.topic} `), c.id).toBe(true); }
-      // what the reading does not read stays exactly as it was
-      expect({ count: on.count, source: on.source, country: on.country, language: on.language, period: on.period }, c.id).toEqual({ count: off.count, source: off.source, country: off.country, language: off.language, period: off.period });
+      // what the reading does not read stays exactly as it was; the period, the country and the language are PR-1.3's (a flag the parser missed is filled and reported, a language flag the parser got wrong is corrected and reported)
+      expect({ count: on.count, source: on.source }, c.id).toEqual({ count: off.count, source: off.source });
+      for (const f of ["period", "country"] as const) if (on[f] !== off[f]) { expect([off[f], on[f]], `${c.id} ${f}`).toEqual([false, true]); expect(report.filled, `${c.id} ${f}`).toContain(f); }
+      if (on.language !== off.language) expect(report.corrected, `${c.id} language`).toContain("language");
     }
     expect(changed).toBeGreaterThan(20);
   });
@@ -180,6 +182,7 @@ describe("the 98-scenario baseline with the flag ON, measured through the real c
     return { kind: same(on, off) ? "unchanged" : "changed_still_wrong" };
   };
 
+  // PR-1.2's 23 (still fixed, see `semantic-conditions.test.ts` for the 14 PR-1.3 adds and the pins of the whole baseline)
   const FIXED = [
     "sa-01", "sa-02", "sa-03", "sa-08", "sb-09", "pl-04", "pl-05", "pl-07", "pl-11", "pl-14", "pl-16", "pl-17", "pl-22", "pl-24", "pl-25", "cm-02", "cm-05", "cm-06", "cm-09", "ct-07", "rt-04", "rt-05", "mt-09",
   ];
@@ -198,16 +201,13 @@ describe("the 98-scenario baseline with the flag ON, measured through the real c
     const gaps = baselineCases.filter((c) => c.known_gap);
     const fixed = gaps.filter((c) => outcome(c).kind === "fixed").map((c) => c.id);
     const partial = gaps.filter((c) => outcome(c).kind === "partial").map((c) => c.id);
-    expect(fixed).toEqual(FIXED);
-    expect(partial).toEqual(PARTIAL);
-    expect(fixed.length).toBeGreaterThanOrEqual(15);
+    // PR-1.3 fixes more (dates, countries, languages): every one of PR-1.2's 23 is still fixed
+    for (const id of FIXED) expect(fixed, id).toContain(id);
+    expect(partial.every((id) => PARTIAL.includes(id))).toBe(true);
+    expect(fixed.length).toBeGreaterThanOrEqual(23);
     // no scenario that was right with the flag OFF is wrong with it ON
     expect(baselineCases.filter((c) => !c.known_gap && outcome(c).kind === "regression").map((c) => c.id)).toEqual([]);
-    // and the rest: the gaps this PR does not touch (dates, countries, language, e-mail, pre-filters, routing, messages types) are exactly as before, except one whose topic got cleaner and is still wrong (pl-21: the country gap)
-    const rest = gaps.filter((c) => !FIXED.includes(c.id) && !PARTIAL.includes(c.id));
-    expect(rest).toHaveLength(62 - FIXED.length - PARTIAL.length);
-    expect(rest.filter((c) => outcome(c).kind === "changed_still_wrong").map((c) => c.id)).toEqual(["pl-21"]);
-    expect(rest.filter((c) => outcome(c).kind === "unchanged")).toHaveLength(rest.length - 1);
+    // the rest of the gaps (dates, countries, languages: PR-1.3; e-mail, pre-filters, routing, message types: later) is pinned, case by case, in `semantic-conditions.test.ts`
   });
 
   it("the pre-filters, the privacy guard and the routing of every scenario are the same ON and OFF (the semantic layer is not in front of them)", () => {

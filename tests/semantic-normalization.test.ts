@@ -340,7 +340,7 @@ describe("flag semantic_normalization_v1: OFF by default, strict, and the only d
     expect(interpretIfEnabled(on, "هات كومنتات من تك توك")?.content.comments).toBe(true);
   });
 
-  it("only the three integration points import the semantic module (PR-1.2): the contract, the worker's planning run and the server's card; never the privacy rules, the chat or mission creation", () => {
+  it("only the integration points import the semantic module (PR-1.2, PR-1.3): the contract, the Ask, the worker's planning run and its compiled path, and the server's card; never the privacy rules, the chat or mission creation", () => {
     const hits: string[] = [];
     const walk = (dir: string) => {
       for (const name of readdirSync(dir)) {
@@ -351,7 +351,7 @@ describe("flag semantic_normalization_v1: OFF by default, strict, and the only d
     };
     walk(new URL("../src", import.meta.url).pathname);
     walk(new URL("../agent/src", import.meta.url).pathname);
-    expect(hits.sort()).toEqual(["agent/src/runMission.ts", "src/lib/agentMission/requestContract.ts", "src/lib/agentMission/stage2/askEditAction.ts"]);
+    expect(hits.sort()).toEqual(["agent/src/compiled.ts", "agent/src/runMission.ts", "src/lib/agentMission/foundation/ask.ts", "src/lib/agentMission/requestContract.ts", "src/lib/agentMission/stage2/askEditAction.ts"]);
   });
 });
 

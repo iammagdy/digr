@@ -1,5 +1,6 @@
 import { buildRequestContract, optionalPartsOf, type ChildAsk, type ContractOptions, type ParentKind } from "../requestContract";
 import { countryOfValue } from "../places";
+import { clarifyOf, readConditions, type ClarifyCode, type ClarifyField } from "../semantic/conditions";
 import { topicMeaningOf } from "../topicMeaning";
 import { cairoDayEndExclusiveMs, cairoDayOf, cairoDayStartMs } from "../cairoTime";
 import type { SocialPlatform } from "../redesignFlagTypes";
@@ -46,7 +47,12 @@ export interface Ask {
   period: AskPeriod | null;
   /** ISO 3166 alpha-2 code of the country the customer named («من مصر» → EG), or null. */
   country: string | null;
+  /** The language of the COLLECTED CONTENT the customer asked for (never the language of the report or of the chat). */
   language: "ar" | "en" | null;
+  /** PR-1.3 (flag `semantic_normalization_v1` only): the language the customer asked the REPORT in. Not a filter of the data; the plan says what it does with it. Absent: none asked (or the flag is off). */
+  reportLanguage?: "ar" | "en";
+  /** PR-1.3 (flag only): what the words leave undecided about the period, the country or the language. The planning asks it BEFORE any read, plan or price; a card edit of the field answers it. Absent: nothing to ask (always, with the flag off). */
+  clarify?: ReadonlyArray<{ code: ClarifyCode; field: ClarifyField }>;
   /** The owner's order: the most commented items, unless the customer asked for the newest (or asked for no comments at all: then the newest). */
   order: AskOrder;
   comments: ChildAsk;
@@ -204,7 +210,11 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
   const chosen = edits.occurrence ?? (occurrenceChoiceOf(answer) as Occurrence | { kind: "ask_year" } | null) ?? (eventLatest && !c.period ? ({ kind: "latest" } as Occurrence) : null);
   const occurrence: Occurrence | null = chosen && chosen.kind !== "ask_year" ? chosen : social && !c.period && requestYearOf(String(request ?? "")) !== null ? { kind: "year", year: requestYearOf(String(request ?? ""))! } : null;
   const yearPeriod: AskPeriod | null = social && !c.period && occurrence?.kind === "year" ? periodOf(dayOf(occurrence.year, 1, 1), dayOf(occurrence.year, 12, 31)) : null;
-  const language: Ask["language"] = c.language ? (/بالإنجليزي|بالانجليزي|الإنجليزية|الانجليزية|english/i.test(text) ? "en" : "ar") : null;
+  const oldLanguage: Ask["language"] = c.language ? (/بالإنجليزي|بالانجليزي|الإنجليزية|الانجليزية|english/i.test(text) ? "en" : "ar") : null;
+  // PR-1.3 (flag on only): the period, the country and the language are read from the words by the conditions reader, with the moment of the request and Africa/Cairo days (semantic/conditions.ts). A value it proves replaces the parser's; what it cannot settle is a clarification
+  const conditions = options.semantic === true ? readConditions(request, [String(answer ?? ""), options.conditionsAnswer ?? ""].filter((x) => x !== "").join(" "), requestedAtMs) : null;
+  const language: Ask["language"] = conditions === null || !conditions.language.found ? oldLanguage : conditions.language.content === "ar" || conditions.language.content === "en" ? conditions.language.content : null;
+  const clarify = conditions ? clarifyOf(conditions) : [];
   // ROUND 19: the comments number. «N تعليق من كل فيديو» is per parent; «N تعليق في المجموع» is a total (the card's own edit of the total); a bare «مع N تعليقات» is the one parent's number when the request has ONE parent («فيديو واحد»), else a bare count to ask about
   const count = edits.count ?? c.count;
   const eachValue = c.comments === "none" ? null : perParentOf(text, PER_PARENT_COMMENTS) ?? (DUAL_COMMENTS.test(text) ? 2 : null);
@@ -219,9 +229,11 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
     count,
     source: { kind: sourceKind, text: link ?? c.source.text },
     topic: { text: topicText, relation },
-    period: c.period ? periodOfRequest(text, requestedAtMs) : yearPeriod,
-    country: c.country ? countryNamedIn(text) : null,
+    period: conditions && conditions.period.status === "resolved" ? periodOf(conditions.period.from, conditions.period.to) : conditions && conditions.period.status === "clarify" ? null : c.period ? periodOfRequest(text, requestedAtMs) : yearPeriod,
+    country: conditions && conditions.country.status === "resolved" ? conditions.country.code : conditions && (conditions.country.status === "many" || conditions.country.status === "any") ? null : c.country ? countryNamedIn(text) : null,
     language,
+    ...(conditions && conditions.language.report ? { reportLanguage: conditions.language.report } : {}),
+    ...(clarify.length > 0 ? { clarify } : {}),
     // X WITH ITS REPLIES (NOV 6 2026 CAMPAIGN): the replies are the children of an X request, so their tweets are chosen by the replies counter like any parent with children (the newest tweets of a «Latest» search have none yet)
     order: NEWEST.test(text) || (c.comments === "none" && !(c.platform === "x" && c.replies !== "none")) ? "newest" : "most_commented",
     comments: c.comments,
