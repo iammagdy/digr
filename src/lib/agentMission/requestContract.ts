@@ -2,6 +2,8 @@ import { NUMBER_WORDS_SRC, numberOfWord } from "./arabicNumberWords";
 import { conditionsOfRequest } from "./requestConditions";
 import { GAP_CHOICE_LINE_AR, gapLinesAr } from "./gapLines";
 import { platformOfStages, type SocialPlatform } from "./redesignFlagTypes";
+import { emptyFillReport, platformWithReading, topicWithReading, type FillReport } from "./semantic/contractFill";
+import { interpretRequest } from "./semantic/interpret";
 
 /**
  * THE REQUEST CONTRACT (docs/ROOT-CAUSE.md, cause 1 and section 5). What the customer asked is built ONCE, by code, from their words (and the answer they gave to the one question), and every plan is checked against it before it is stored: for each thing
@@ -139,24 +141,46 @@ export function optionalPartsOf(text: string): { required: string; preferences: 
 /** THE ONE JOIN of the customer's words and their answer to the one question (it was written by hand at a dozen call sites, `${request_text} ${answer_text ?? ""}`): every reader of «what was asked» takes it from here. */
 export const askedTextOf = (mission: { request_text: string; answer_text?: string | null }): string => `${mission.request_text} ${mission.answer_text ?? ""}`;
 
+/** How the contract is read. `semantic`: PR-1.2, the server-controlled flag `semantic_normalization_v1` (OFF unless the caller, which read it from the trusted settings, says true). The caller never takes it from the customer. */
+export interface ContractOptions { semantic?: boolean }
+
 /** The contract of a request, from the customer's words and the answer they gave to the one question (either may be empty). */
-export function buildRequestContract(request: unknown, answer?: unknown): RequestContract {
+export function buildRequestContract(request: unknown, answer?: unknown, options: ContractOptions = {}): RequestContract {
+  return buildRequestContractWithReport(request, answer, options).contract;
+}
+
+/**
+ * The same, with the report of what the semantic reading did (field names only: never the customer's words). With `semantic` off the contract is built exactly as before and the report is empty. With it on, the parser's values are kept; the reading only fills what it left
+ * empty from an unambiguous reading, cuts an instruction out of an over-read topic, and clears an X platform that only a bare «X» gave in «مطعم اسمه X» (`semantic/contractFill.ts`).
+ */
+export function buildRequestContractWithReport(request: unknown, answer?: unknown, options: ContractOptions = {}): { contract: RequestContract; report: FillReport } {
   const text = `${String(request ?? "")} ${String(answer ?? "")}`.replace(/\s+/g, " ").trim();
   // THE REQUIRED WORDS decide the kind, the count and the topic; an optional preference never does (NOV 6 2026)
   const { required, preferences } = optionalPartsOf(text);
-  const platform = firstPlatform(text);
-  const kind = KIND_WORDS.find(([, re]) => re.test(required))?.[0] ?? (platform === "x" ? "tweets" : null);
+  const report = emptyFillReport();
+  const readingOfText = options.semantic === true ? interpretRequest(text) : null;
+  const readingOfRequired = options.semantic === true ? interpretRequest(required) : null;
+  const parsedPlatform = firstPlatform(text);
+  const platform = readingOfText ? platformWithReading(parsedPlatform, readingOfText, report) : parsedPlatform;
+  let kind = KIND_WORDS.find(([, re]) => re.test(required))?.[0] ?? (platform === "x" ? "tweets" : null);
+  if (kind === null && readingOfRequired?.parent_kind) { kind = readingOfRequired.parent_kind; report.filled.push("parentKind"); }
   const classes = conditionsOfRequest(text);
-  const commentsAsked = /تعليق/.test(text) && platform !== "x";
-  const repliesAsked = repliesAskedIn(text);
-  return {
+  const parsedComments = /تعليق/.test(text) && platform !== "x";
+  const commentsAsked = parsedComments || (readingOfText?.content.comments === true && platform !== "x");
+  if (commentsAsked && !parsedComments) report.filled.push("comments");
+  const parsedReplies = repliesAskedIn(text);
+  const repliesAsked = parsedReplies || readingOfText?.content.replies === true;
+  if (repliesAsked && !parsedReplies) report.filled.push("replies");
+  const parsedTopic = topicOf(required);
+  const topic = readingOfRequired ? topicWithReading(parsedTopic, readingOfRequired, report) : parsedTopic;
+  const contract: RequestContract = {
     platform,
     parentKind: kind,
     ...(REELS_WORD.test(text) && platform === "instagram" ? { media: "reels" as const } : {}),
     ...(wantedFieldsOf(text).length > 0 ? { wants: wantedFieldsOf(text) } : {}),
     count: countOf(required),
     source: sourceOf(text),
-    topic: topicOf(required),
+    topic,
     ...(preferences.length > 0 ? { preferences } : {}),
     country: classes.includes("country"),
     language: classes.includes("language"),
@@ -164,6 +188,7 @@ export function buildRequestContract(request: unknown, answer?: unknown): Reques
     comments: commentsAsked ? (ALL_COMMENTS.test(text) ? "all" : "some") : "none",
     replies: repliesAsked ? (ALL_REPLIES.test(text) || ALL_COMMENTS.test(text) && /ردود/.test(text) ? "all" : "some") : "none",
   };
+  return { contract, report };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------

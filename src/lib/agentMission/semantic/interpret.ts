@@ -34,6 +34,8 @@ export interface SemanticInterpretation {
   parent_kind: "posts" | "videos" | "tweets" | null;
   /** The research topic in the customer's own letters, or null when no topic marker settles it. */
   topic: string | null;
+  /** Why the topic ended before the end of the text: an output field («والردود»), an exclusion («استبعد …»), a platform introduced as the source («على تيك توك»); null when it ran to the end. */
+  topic_cut: "output_field" | "exclusion" | "platform" | null;
   /** What the words leave undecided, as stable codes. */
   ambiguities: string[];
 }
@@ -50,7 +52,7 @@ const PLATFORM_CUES: ReadonlySet<string> = new Set(["منصه", "موقع", "ت�
 const isArabicToken = (key: string): boolean => /^[ء-ي]+$/.test(key);
 const contentId = (m: TermMatch): ContentId | null => (m.entry.category === "content" ? (m.entry.id as ContentId) : null);
 
-function topicSpan(keys: readonly string[], tokens: readonly string[], terms: readonly TermMatch[]): { marker: number; start: number; end: number; firstToken: string | null } | null {
+function topicSpan(keys: readonly string[], tokens: readonly string[], terms: readonly TermMatch[]): { marker: number; start: number; end: number; firstToken: string | null; cut: SemanticInterpretation["topic_cut"] } | null {
   let marker = -1;
   let start = -1;
   let firstToken: string | null = null;
@@ -62,28 +64,29 @@ function topicSpan(keys: readonly string[], tokens: readonly string[], terms: re
   }
   if (marker < 0 || start >= keys.length) return null;
   let end = keys.length;
+  let cut: SemanticInterpretation["topic_cut"] = null;
   const termAt = (j: number) => terms.find((t) => t.start === j);
   for (let j = start + 1; j < keys.length; j++) {
     const t = termAt(j);
     // a platform introduced by a preposition ends the topic («عن السياحة على تيك توك»)
-    if (t && t.entry.category === "platform" && PREPOSITIONS.has(keys[j - 1]) && j - 1 > start) { end = j - 1; break; }
+    if (t && t.entry.category === "platform" && PREPOSITIONS.has(keys[j - 1]) && j - 1 > start) { end = j - 1; cut = "platform"; break; }
     // a collecting word joined by «و» (or «مع») starts a new ask, and so does a content word joined that way («عن السياحة والردود»)
     const joined = keys[j].startsWith("و") && keys[j].length > 2 ? findTerms([keys[j].slice(1)]).find((m) => m.start === 0 && (m.entry.category === "content" || (m.entry.category === "ask" && isArabicToken(keys[j])))) : undefined;
-    if (joined) { end = j; break; }
+    if (joined) { end = j; cut = "output_field"; break; }
     if ((keys[j] === "و" || keys[j] === "مع") && j + 1 < keys.length) {
       const next = termAt(j + 1);
-      if (next && (next.entry.category === "content" || (next.entry.category === "ask" && isArabicToken(keys[j + 1])))) { end = j; break; }
+      if (next && (next.entry.category === "content" || (next.entry.category === "ask" && isArabicToken(keys[j + 1])))) { end = j; cut = "output_field"; break; }
     }
-    if (EXCLUSION_CUES.has(keys[j])) { end = j; break; }
+    if (EXCLUSION_CUES.has(keys[j])) { end = j; cut = "exclusion"; break; }
   }
   // trailing filler («بس») left in front of a cut
   while (end > start + 1 && TRAILING_FILLERS.has(keys[end - 1])) end -= 1;
-  return { marker, start, end, firstToken };
+  return { marker, start, end, firstToken, cut };
 }
 
 export function interpretRequest(raw: unknown): SemanticInterpretation {
   const text = semanticText(raw);
-  const { keys, tokens } = text;
+  const { keys, tokens, cased } = text;
   const terms = findTerms(keys);
   const span = topicSpan(keys, tokens, terms);
   const inTopic = (t: TermMatch): boolean => span !== null && t.start >= span.start && t.start < span.end;
@@ -140,10 +143,10 @@ export function interpretRequest(raw: unknown): SemanticInterpretation {
 
   let topic: string | null = null;
   if (span) {
-    const parts = tokens.slice(span.start, span.end);
-    if (span.firstToken !== null) parts[0] = span.firstToken;
+    const parts = cased.slice(span.start, span.end);
+    if (span.firstToken !== null) parts[0] = cased[span.start].slice(1);
     topic = parts.join(" ").trim() || null;
   }
 
-  return { original: text.original, normalized: text.normalized, is_request: asks.length > 0, asks, platform, content, parent_kind, topic, ambiguities };
+  return { original: text.original, normalized: text.normalized, is_request: asks.length > 0, asks, platform, content, parent_kind, topic, topic_cut: topic === null ? null : span?.cut ?? null, ambiguities };
 }

@@ -30,6 +30,8 @@ export interface ProductionPlanningInput {
   transformPlanningPage?: (endpointId: string, page: unknown) => unknown;
   /** The planning moment (the compiler's «now»). */
   planningAt?: string;
+  /** Extra trusted settings of the worker (`agent_settings`), e.g. `{ semantic_normalization_v1: true }` (PR-1.2). Absent: none, so every flag is off. */
+  settings?: Record<string, unknown>;
 }
 
 const catalog = loadTregCatalog();
@@ -58,7 +60,7 @@ export async function runProductionPlanning(input: ProductionPlanningInput): Pro
     memory.missions.set(id, newMission({ id, user_id: "user_prod", request_text: input.request, ...(input.answer ? { answer_text: input.answer } : {}), status: "planning", created_at: input.createdAt }));
     rest.rowsOf("missions").push({ id });
     if (input.testAccount) memory.userEmails.set("user_prod", "iam.magdy+1@outlook.com");
-    Object.assign(memory.settings, { redesign_flags: { ...FLAGS_OFF, [input.platform]: input.testAccount ? "test" : "on" } });
+    Object.assign(memory.settings, { redesign_flags: { ...FLAGS_OFF, [input.platform]: input.testAccount ? "test" : "on" } }, input.settings ?? {});
     const cut = (endpointId: string, params: Record<string, unknown>): Record<string, unknown> => {
       const names = input.replay?.cut80?.[endpointId];
       return names ? Object.fromEntries(Object.entries(params).map(([k, v]) => [k, names.includes(k) && typeof v === "string" ? v.slice(0, 80) : v])) : params;

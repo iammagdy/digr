@@ -42,6 +42,7 @@ import { runEngine } from "./engine/run";
 import { readPlatformFlagsOf, readRedesignFlags } from "../../src/lib/agentMission/redesignFlags";
 import { CLARIFY_OPTIONS_AR, CLARIFY_QUESTION_AR, PLATFORM_OPTIONS_AR, PLATFORM_QUESTION_AR, UNCLEAR_END_AR, legacyRouteOf, platformOptionOf, withPlatformChoice } from "../../src/lib/agentMission/platformQuestion";
 import { askedTextOf, buildRequestContract } from "../../src/lib/agentMission/requestContract";
+import { readSemanticNormalizationFlag } from "../../src/lib/agentMission/semantic/flag";
 import { sealFinalPrice } from "../../src/lib/agentMission/finalPrice";
 import { accountIsTest, anyRedesignFlag, fallbackStageOf, redesignStagesOf } from "./redesign";
 import { compiledPlatformActive, planByCompiler } from "./compiled";
@@ -311,12 +312,16 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   if (started.planningStarts > AGENT_PHASE_STARTS_MAX) { await endPlanningUnserved(deps, mission, `planning started ${started.planningStarts} times`); return; }
   await store.updateMission(mission.id, { planning_model: model, error: null });
   await store.addEvent(mission.id, { kind: "system", message_ar: "بدأ الوكيل دراسة طلبك." });
+  // PR-1.2: THE SETTINGS, read ONCE for the whole planning run, and the flag `semantic_normalization_v1` taken from them (OFF unless the owner set it; never from the customer). The same boolean reads the request at every place below that builds its contract, and goes to the
+  // compiler, so the platform decision, the route and the plan's parameters can never disagree about it. The stored plan is what execution runs, so the worker does not read the request again there.
+  const settings = (await store.readSettings().catch(() => ({}))) as Record<string, unknown>;
+  const semantic = readSemanticNormalizationFlag(settings);
   // ROUND 25 (live msn_04afab34…): THE PLATFORM THE CUSTOMER CHOSE at «من أنهي منصة؟» is kept in the run note, because the answer of the next card (the count) REPLACES `answer_text`; the request is read with it for the whole mission,
   // so the count answer no longer drops the platform (it did: the third run saw no platform and went to the legacy model path, one paid search, then «مصادرنا لا تخدم»)
   {
     const note = await readRunState(store, mission.id);
     const tapped = platformOptionOf(mission.answer_text);
-    const noPlatformOfItsOwn = buildRequestContract(mission.request_text).platform === null;
+    const noPlatformOfItsOwn = buildRequestContract(mission.request_text, undefined, { semantic }).platform === null;
     const platformChoice = noPlatformOfItsOwn ? (tapped ?? note.platformAnswer ?? null) : null;
     if (tapped && noPlatformOfItsOwn && note.platformAnswer !== tapped) await updateRunState(store, mission.id, (r) => ({ ...r, platformAnswer: tapped }), deps.log);
     if (platformChoice) mission = withPlatformChoice(mission, platformChoice);
@@ -338,10 +343,9 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   deps.log?.(`web_tools ${mission.id} firecrawl=${webAvailable.firecrawl} contextdev=${webAvailable.contextdev}`);
   const web = deps.providerKey && anyWebAvailable(webAvailable) ? createWebGateway({ store, missionId: mission.id, jobId: null, phase: "planning", budget, recorder: deps.recorder, providerKey: deps.providerKey, fetchFn: deps.fetchFn, counter }) : undefined;
   const state = newRunState(await lastOut(store, mission.id));
-  const settings = (await store.readSettings().catch(() => ({}))) as Record<string, unknown>;
   const pricingSettings = normalizeMissionPricingSettings(settings[MISSION_PRICING_SETTING_KEY]);
   // THE REDESIGN FLAGS (S1 item 0.1): read once at the start of the run; every one is off unless the owner switched it
-  const redesign = { flags: readRedesignFlags(settings), isTest: await accountIsTest(store, mission.user_id), platformFlags: readPlatformFlagsOf(settings), platform: buildRequestContract(mission.request_text, mission.answer_text).platform };
+  const redesign = { flags: readRedesignFlags(settings), isTest: await accountIsTest(store, mission.user_id), platformFlags: readPlatformFlagsOf(settings), platform: buildRequestContract(mission.request_text, mission.answer_text, { semantic }).platform };
   // PR B (round 18), ONE PATH FOR SOCIAL: a request on TikTok, X, Instagram, Facebook or YouTube is planned by the plan compiler or not at all. The platform's own switch decides: «تشغيل» (and «تجريبي» for a test account) = the compiled path; «إيقاف» (or no value) = the platform is NOT OFFERED:
   // the customer is told so honestly BEFORE any planning call (no source is read, no model is paid, nothing is held). There is no model-planned social pipeline any more, and no fallback to it.
   const compiledActive = compiledPlatformActive(redesign.platformFlags, redesign.platform, redesign.isTest);
@@ -491,7 +495,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // candidates. Everything else about the mission (the gateway, the price, the hold, the approval, the engine) is what it was.
   const discovered = compiledActive && redesign.platform && discoveryActive(settings, redesign.isTest) ? cardsWithDiscovery(deps.catalog, redesign.platform, access) : null;
   const selectCapability = discovered && deps.reviewCall ? modelSelector(async ({ system, user, maxTokens }) => { const got = await deps.reviewCall!({ model: MODEL_HAIKU, system, user, maxTokens }); return got ? { text: got.text, costUsd: llmCostFromUsage(MODEL_HAIKU, got.usage) } : null; }) : undefined;
-  const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, ...(discovered ? { cards: discovered.cards, chainIssues: chainCheckerFor(deps.catalog, access), discoveryRejected: discovered.rejected.map((r) => ({ endpointId: r.endpointId, reason: r.reason })), ...(selectCapability ? { selectCapability } : {}) } : {}), nowMs: planningNow, priorCalls: calls, ...(askEdits.length > 0 ? { askEdits } : {}), ...(stage2Questions ? { questionCards: true, ...(topicRelation ? { topicRelation } : {}) } : {}), ...(understand ? { understand } : {}), ...(occurrence ? { occurrence } : {}), ...(redesign.isTest ? { catalogOnly: true } : {}), askCount: true, choices, questionsAsked: prior?.questionsAsked ?? 0, answerIsChoice }) : null;
+  const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, ...(discovered ? { cards: discovered.cards, chainIssues: chainCheckerFor(deps.catalog, access), discoveryRejected: discovered.rejected.map((r) => ({ endpointId: r.endpointId, reason: r.reason })), ...(selectCapability ? { selectCapability } : {}) } : {}), nowMs: planningNow, priorCalls: calls, ...(askEdits.length > 0 ? { askEdits } : {}), ...(stage2Questions ? { questionCards: true, ...(topicRelation ? { topicRelation } : {}) } : {}), ...(understand ? { understand } : {}), ...(occurrence ? { occurrence } : {}), ...(redesign.isTest ? { catalogOnly: true } : {}), askCount: true, choices, questionsAsked: prior?.questionsAsked ?? 0, answerIsChoice, ...(semantic ? { semantic: true } : {}) }) : null;
   // THE QUESTION BEFORE APPROVAL (live round 7): no video of the two pages read is about the topic; the plan is not made, the customer chooses (the same needs_input card as the topic question)
   if (compiled?.kind === "question") {
     // every question card counts toward the three a request may have; a count or comments question also waits for its answer

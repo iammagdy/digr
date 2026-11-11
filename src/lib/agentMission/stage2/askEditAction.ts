@@ -1,6 +1,7 @@
 import { AGENT_BUCKET, MISSION_EVENTS_TABLE, MISSION_TABLE } from "../constants";
 import { ADDON_MARKER_SELECT, isAddonRow } from "./addonMarkerRule";
 import { buildAsk } from "../foundation/ask";
+import { readSemanticNormalizationFlagFromClient } from "../semantic/flag";
 import { ASK_EDIT_REJECTION_AR, applyAskEdit, askCardView, editScopeOf, parseAskEdit, type AskCardView, type AskEditRejection, type EditScope } from "./askCard";
 import type { Ask } from "../foundation/ask";
 import { ASK_EDITS_FOLDER, askEditPath, askEditsOf, nextAskEditIndex } from "./askEditStore";
@@ -53,7 +54,7 @@ export async function askEditForCustomer(client: any, input: { id: string; userI
   const kept = await keptEdits(client, input.id);
   if (!kept) return { ok: false, status: 500, error: SAVE_FAILED_AR };
   const names = kept.names;
-  const ask = askOfMission(mission, kept.edits, nowMs);
+  const ask = askOfMission(mission, kept.edits, nowMs, await readSemanticNormalizationFlagFromClient(client));
   const applied = applyAskEdit(ask, parsed.edit, { nowMs });
   if (!applied.ok) return { ok: false, status: 400, error: ASK_EDIT_REJECTION_AR[applied.reason], reason: applied.reason };
   // create-only: a second edit racing for the same name is refused by the storage (never overwritten)
@@ -82,9 +83,9 @@ async function keptEdits(client: any, missionId: string): Promise<{ names: strin
 }
 
 /** The Ask of a mission as the card shows it: the request and its answer read by code, then every kept edit in order (a refused one is skipped). */
-function askOfMission(mission: { request_text?: unknown; answer_text?: unknown; created_at?: unknown }, edits: ReturnType<typeof askEditsOf>, nowMs: number): Ask {
+function askOfMission(mission: { request_text?: unknown; answer_text?: unknown; created_at?: unknown }, edits: ReturnType<typeof askEditsOf>, nowMs: number, semantic = false): Ask {
   const createdAt = Date.parse(String(mission.created_at ?? ""));
-  let ask = buildAsk(mission.request_text, mission.answer_text, Number.isFinite(createdAt) ? createdAt : nowMs);
+  let ask = buildAsk(mission.request_text, mission.answer_text, Number.isFinite(createdAt) ? createdAt : nowMs, {}, { semantic });
   for (const e of edits) { const r = applyAskEdit(ask, e, { nowMs }); if (r.ok) ask = r.ask; }
   return ask;
 }
@@ -98,6 +99,6 @@ export async function askCardForCustomer(client: any, input: { id: string; userI
   if (!mission || mission.user_id !== input.userId || mission.status !== "plan_ready" || isAddonRow(mission)) return null;
   const kept = await keptEdits(client, input.id);
   if (!kept) return null;
-  const ask = askOfMission(mission, kept.edits, input.nowMs ?? Date.now());
+  const ask = askOfMission(mission, kept.edits, input.nowMs ?? Date.now(), await readSemanticNormalizationFlagFromClient(client));
   return ask.platform ? askCardView(ask) : null;
 }

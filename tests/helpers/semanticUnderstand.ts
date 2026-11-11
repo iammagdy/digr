@@ -43,14 +43,14 @@ export interface Understood {
 /** The moment the fixture's relative dates count back from: the Cairo day 2026-11-11 (a Wednesday). */
 export const SEMANTIC_NOW_MS = Date.parse("2026-11-11T09:00:00Z");
 
-export function understand(text: string, answer: string | null = null, nowMs: number = SEMANTIC_NOW_MS): Understood {
+export function understand(text: string, answer: string | null = null, nowMs: number = SEMANTIC_NOW_MS, options: { semantic?: boolean } = {}): Understood {
   let mission: { request_text: string; answer_text: string | null } = { request_text: text, answer_text: answer };
   // runMission: the platform the customer TAPPED is kept for the whole mission when the request names none of its own
   const tapped = platformOptionOf(mission.answer_text);
-  if (tapped && buildRequestContract(mission.request_text).platform === null) mission = withPlatformChoice(mission, tapped);
+  if (tapped && buildRequestContract(mission.request_text, undefined, options).platform === null) mission = withPlatformChoice(mission, tapped);
 
-  const contract = buildRequestContract(mission.request_text, mission.answer_text);
-  const ask = buildAsk(mission.request_text, mission.answer_text, nowMs);
+  const contract = buildRequestContract(mission.request_text, mission.answer_text, options);
+  const ask = buildAsk(mission.request_text, mission.answer_text, nowMs, {}, options);
   const general = isGreetingOrGeneralQuestion(text);
   const fixed = preModelAnswer(text);
   const prefilter: Understood["prefilter"] = findUnresolvedResearchPlaceholder(text)

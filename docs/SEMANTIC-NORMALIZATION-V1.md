@@ -1,6 +1,6 @@
 # Semantic normalization v1 (PR-1.1): an isolated, flag-gated foundation
 
-**Status: code and tests only. Not connected to the product. Flag `semantic_normalization_v1` is OFF by default and nothing sets it. No customer sees any change.**
+**Status (PR-1.1): the isolated foundation. PR-1.2 connected it to the real request contract behind the flag `semantic_normalization_v1` (OFF by default, nothing sets it): see `docs/SEMANTIC-INTEGRATION-V1.md`. No customer sees any change while the flag is OFF.**
 
 ## What exists
 

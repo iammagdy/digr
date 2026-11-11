@@ -340,18 +340,18 @@ describe("flag semantic_normalization_v1: OFF by default, strict, and the only d
     expect(interpretIfEnabled(on, "هات كومنتات من تك توك")?.content.comments).toBe(true);
   });
 
-  it("no file of the product (src/, agent/src/) imports the semantic module: flag OFF is the current behavior by construction", () => {
+  it("only the three integration points import the semantic module (PR-1.2): the contract, the worker's planning run and the server's card; never the privacy rules, the chat or mission creation", () => {
     const hits: string[] = [];
     const walk = (dir: string) => {
       for (const name of readdirSync(dir)) {
         const p = join(dir, name);
         if (statSync(p).isDirectory()) { if (name === "node_modules" || name === "semantic") continue; walk(p); }
-        else if (/\.(ts|tsx)$/.test(name) && /agentMission\/semantic\/|from ["']\.\/semantic\/|from ["']\.\.\/semantic\//.test(readFileSync(p, "utf8"))) hits.push(p);
+        else if (/\.(ts|tsx)$/.test(name) && /\/semantic\//.test(readFileSync(p, "utf8").split("\n").filter((l) => /^\s*import\b/.test(l)).join("\n"))) hits.push(p.slice(new URL("..", import.meta.url).pathname.length));
       }
     };
     walk(new URL("../src", import.meta.url).pathname);
     walk(new URL("../agent/src", import.meta.url).pathname);
-    expect(hits).toEqual([]);
+    expect(hits.sort()).toEqual(["agent/src/runMission.ts", "src/lib/agentMission/requestContract.ts", "src/lib/agentMission/stage2/askEditAction.ts"]);
   });
 });
 

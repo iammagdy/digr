@@ -43,7 +43,7 @@ export const NORMALIZATION_STEPS: readonly NormalizationStep[] = [
   { id: "case", why: "Latin letters are compared in lower case.", apply: (t) => t.toLowerCase() },
   // a real Arabic word never repeats one letter three times; a voice transcript or a stretched typing does («كومنتااات», «تعليقاااات»). Latin runs are cut to two (a legitimate double letter stays).
   { id: "elongation", why: "A letter repeated three times or more is cut (Arabic to one, Latin to two): stretched typing and voice artifacts.", apply: (t) => t.replace(/([ء-ي])\1{2,}/g, "$1").replace(/([a-z])\1{2,}/g, "$1$1") },
-  { id: "links", why: "A link is one token (its words are not read as vocabulary).", apply: (t) => t.replace(/(?:https?:\/\/|www\.)\S+/g, " url ") },
+  { id: "links", why: "A link is one token (its words are not read as vocabulary).", apply: (t) => t.replace(/(?:https?:\/\/|www\.)\S+/gi, " url ") },
   // «بtiktok» / «٥٠شركة» (no space between a script or a digit and the next): the two sides become separate tokens
   { id: "script_boundary", why: "A space is put between an Arabic letter and a Latin letter or a digit stuck to it.", apply: (t) => t.replace(/([ء-ي])(?=[a-z0-9])/g, "$1 ").replace(/([a-z0-9])(?=[ء-ي])/g, "$1 ") },
   { id: "separators", why: "A . or , between two digits is kept (5.5, 1,000).", apply: (t) => t.replace(/(?<=\d)\.(?=\d)/g, DOT).replace(/(?<=\d),(?=\d)/g, COMMA) },
@@ -52,10 +52,13 @@ export const NORMALIZATION_STEPS: readonly NormalizationStep[] = [
   { id: "whitespace", why: "One space between tokens; none at the ends.", apply: (t) => t.replace(/\s+/g, " ").trim() },
 ];
 
-/** The conservative text: no meaning removed, every Arabic letter as typed. Pure and idempotent. */
-export function normalizeArabic(raw: unknown): string {
+/**
+ * The conservative text: no meaning removed, every Arabic letter as typed. Pure and idempotent. `keepCase` skips only the lower-casing of Latin letters (every other step is case-insensitive, so the tokens of both forms line up one to one): it
+ * is how a TOPIC keeps the customer's own «ChatGPT» while the vocabulary is still matched in lower case.
+ */
+export function normalizeArabic(raw: unknown, options: { keepCase?: boolean } = {}): string {
   let text = String(raw ?? "");
-  for (const step of NORMALIZATION_STEPS) text = step.apply(text);
+  for (const step of NORMALIZATION_STEPS) if (!(options.keepCase && step.id === "case")) text = step.apply(text);
   return text;
 }
 
@@ -90,6 +93,8 @@ export interface SemanticText {
   normalized: string;
   /** The conservative tokens (the customer's own letters). */
   tokens: string[];
+  /** The same tokens with the customer's Latin capitalization kept (aligned one to one with `tokens`). */
+  cased: string[];
   /** `matchKey` of each token: the same length as `tokens`, aligned one to one. */
   keys: string[];
 }
@@ -98,5 +103,7 @@ export function semanticText(raw: unknown): SemanticText {
   const original = String(raw ?? "");
   const normalized = normalizeArabic(original);
   const tokens = normalized === "" ? [] : normalized.split(" ");
-  return { original, normalized, tokens, keys: tokens.map(matchKey) };
+  const casedText = normalizeArabic(original, { keepCase: true });
+  const casedTokens = casedText === "" ? [] : casedText.split(" ");
+  return { original, normalized, tokens, cased: casedTokens.length === tokens.length ? casedTokens : tokens, keys: tokens.map(matchKey) };
 }
