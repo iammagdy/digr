@@ -61,6 +61,17 @@ function splitAtPublicTopic(text: string): { head: string; tail: string | null }
   return PUBLIC_CONTENT.test(head) ? { head, tail: text.slice(m.index) } : { head: text, tail: null };
 }
 
+/**
+ * A SECOND ASK hidden behind a public topic («هات منشورات عن حماية الرقم القومي واستخرج الأرقام القومية اللي فيها»): after the topic marker, a collecting verb («استخرج», «اسحب», «هات», «extract» …) or an additive cue («وكمان», «also») starts a NEW object, and
+ * that object is judged as a request of its own. The subject of the public content stays free; what the customer asks to pull OUT of it does not.
+ */
+const SECOND_ASK = new RegExp(`(?<![ء-ي])و?(?:استخرج|اطلع|طلع|جمع|اجمع|اسحب|سحب|هات|جيب|حمل|نزل|ضيف|اضف|وكمان|كمان|وبرضه|تجمع|تسحب|تستخرج|تطلع|تجيب|تنزل|تحمل|عايز|عاوز|اعرض)${END}|\\b(?:extract|collect|scrape|pull|harvest|gather|export|download|also|plus|and\\s+get)\\b`);
+function secondAsk(tail: string | null): string | null {
+  if (tail === null) return null;
+  const m = SECOND_ASK.exec(tail);
+  return m ? tail.slice(m.index) : null;
+}
+
 // -- private messages
 const MESSENGER_APP = new RegExp(`${PFX}(?:واتس[ء-ي]*|تيليجرام|تليجرام|تلجرام|سيجنال|ماسنجر|فايبر|ايميسج)|\\b(?:whats\\s?app|telegram|messenger|viber|imessage|signal)\\b`);
 const MESSAGE_NOUN = new RegExp(`${PFX}(?:رسايل|رسائل|رساله|محادثات|محادثه|دردشات|دردشه|مراسلات)${END}|\\b(?:messages?|chats|conversations?|dms?)\\b|(?:اللي|الي|ما)\\s+(?:اتكتب|اتبعت|اتقال|كتبوه|كتبوا|بيتكتب|اتبادل|اتبادلوه)`);
@@ -71,7 +82,9 @@ const BROADCAST_CHANNEL = ARABIC_OR_LATIN("قناه|قنوات", "channels?");
 
 /** True when the customer asks for the messages of a private conversation (a group chat, a chat between people, a messenger inbox). */
 export function privateMessagesAsk(message: string): boolean {
-  const { head } = splitAtPublicTopic(normalize(message));
+  const { head, tail } = splitAtPublicTopic(normalize(message));
+  const extra = secondAsk(tail);
+  if (extra !== null && privateMessagesAsk(extra)) return true;
   // «شات» / «شاتات» alone is also a product word («شات جي بي تي»): it counts as a message noun only with a messenger app or a group beside it
   const appOrGroup = MESSENGER_APP.test(head) || GROUP_CHAT.test(head);
   if (!MESSAGE_NOUN.test(head) && !(appOrGroup && LOOSE_CHAT.test(head))) return false;
@@ -105,10 +118,13 @@ export function personalIdentifierAsk(message: string): boolean {
   if (!PERSONAL_ID.test(text)) return false;
   if (HARVEST_ID.test(text)) return true;
   const { head, tail } = splitAtPublicTopic(text);
+  // a collecting verb after the topic starts a second ask, judged on its own («… عن الحماية واستخرج الأرقام القومية منها»)
+  const extra = secondAsk(tail);
+  if (extra !== null && personalIdentifierAsk(extra)) return true;
   // the identifier is only in the SUBJECT of public content («منشورات عامة عن حماية الرقم القومي»)
   if (tail !== null && !PERSONAL_ID.test(head)) return false;
-  // public content about a policy or its protection, written with no topic marker («أخبار تسريب الأرقام القومية»)
-  if (PUBLIC_CONTENT.test(text) && POLICY_CONTEXT.test(text)) return false;
+  // public content about a policy or its protection, written with NO topic marker («أخبار تسريب الأرقام القومية»): a marker means the head is what is collected, and an identifier in it stays refused
+  if (tail === null && PUBLIC_CONTENT.test(text) && POLICY_CONTEXT.test(text)) return false;
   return true;
 }
 
