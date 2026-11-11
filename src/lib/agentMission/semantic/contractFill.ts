@@ -35,6 +35,29 @@ export function platformWithReading(existing: SocialPlatform | null, reading: Se
   return existing;
 }
 
+/**
+ * CONSOLIDATED MISSION (mt-03, mt-04, mt-06, mt-07): THE CUSTOMER'S ANSWER, READ ON ITS OWN, is their latest word. A platform it names alone («تك توك», «انستاجرام», «لا خليهم تيك توك») fills the request's empty platform or REPLACES the one the request named
+ * (a correction is never appended to the old value). «أقصد تيك توك مش يوتيوب» names two: the one after a negation («مش», «بدل», «not», «instead of») is the superseded one, so the other is kept. Anything else (two platforms with no negation, none) changes nothing.
+ * Reported by field name only (`filled` or `corrected`).
+ */
+const NEGATED = /(?:^|\s)(?:مش|مو|ليس|بدل|بدلا\s+من|بدال|not|instead\s+of)\s+(\S+(?:\s+\S+)?)/gi;
+export function platformFromAnswer(existing: SocialPlatform | null, answerReading: SemanticInterpretation | null, negatedPlatformsOf: (phrase: string) => SocialPlatform[], answer: string, report: FillReport): SocialPlatform | null {
+  if (!answerReading) return existing;
+  const p = answerReading.platform;
+  let chosen: SocialPlatform | null = null;
+  if (p.status === "resolved") chosen = p.id;
+  else if (p.status === "multiple") {
+    const negated = new Set<SocialPlatform>();
+    for (const m of answer.matchAll(NEGATED)) for (const id of negatedPlatformsOf(m[1])) negated.add(id);
+    const kept = p.ids.filter((id) => !negated.has(id));
+    if (negated.size > 0 && kept.length === 1) chosen = kept[0];
+  }
+  if (chosen === null || chosen === existing) return existing;
+  if (existing === null) report.filled.push("platform");
+  else report.corrected.push("platform");
+  return chosen;
+}
+
 /** The words after which the request contract's own topic rule stops (the same list as its lookahead): a country, a period, a language, a count, a source are not the topic. */
 const TOPIC_STOP: ReadonlySet<string> = new Set(["من", "في", "على", "علي", "آخر", "اخر", "بالعربي", "بالعربية", "مع", "بين", "منذ", "خلال", "in", "on", "from", "with", "between", "during", "since", "last"]);
 const cutAtStop = (topic: string): string => {

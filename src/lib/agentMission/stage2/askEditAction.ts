@@ -54,7 +54,7 @@ export async function askEditForCustomer(client: any, input: { id: string; userI
   const kept = await keptEdits(client, input.id);
   if (!kept) return { ok: false, status: 500, error: SAVE_FAILED_AR };
   const names = kept.names;
-  const ask = askOfMission(mission, kept.edits, nowMs, await readSemanticNormalizationFlagFromClient(client));
+  const ask = askOfMission(mission, kept.edits, nowMs, await readSemanticNormalizationFlagFromClient(client, mission.user_id));
   const applied = applyAskEdit(ask, parsed.edit, { nowMs });
   if (!applied.ok) return { ok: false, status: 400, error: ASK_EDIT_REJECTION_AR[applied.reason], reason: applied.reason };
   // create-only: a second edit racing for the same name is refused by the storage (never overwritten)
@@ -99,6 +99,6 @@ export async function askCardForCustomer(client: any, input: { id: string; userI
   if (!mission || mission.user_id !== input.userId || mission.status !== "plan_ready" || isAddonRow(mission)) return null;
   const kept = await keptEdits(client, input.id);
   if (!kept) return null;
-  const ask = askOfMission(mission, kept.edits, input.nowMs ?? Date.now(), await readSemanticNormalizationFlagFromClient(client));
+  const ask = askOfMission(mission, kept.edits, input.nowMs ?? Date.now(), await readSemanticNormalizationFlagFromClient(client, mission.user_id));
   return ask.platform ? askCardView(ask) : null;
 }

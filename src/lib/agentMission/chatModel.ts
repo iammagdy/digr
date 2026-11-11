@@ -7,6 +7,11 @@ import { resolveProviderKey } from "../server/providerKeys";
  * The model decides no money and starts nothing: what it returns is validated by `conversationModel.ts` and only code routes to planning.
  */
 export const CHAT_MODEL_MAX_TOKENS = 400;
+/**
+ * CONSOLIDATED MISSION, COST CAP (docs/AGENT-UNDERSTANDING-V1.md): in research-brief mode (a server switch, off by default) the SAME one call per message also returns the brief, so its output may be longer. The hard ceiling of ANY chat call is this
+ * number of output tokens; there is still exactly one call per customer message and never a second one.
+ */
+export const CHAT_MODEL_BRIEF_MAX_TOKENS = 700;
 export const CHAT_MODEL_TIMEOUT_MS = 12_000;
 const DEFAULT_MODEL = "claude-haiku-5-5";
 
@@ -42,7 +47,7 @@ export async function callClaudeChatWith(input: ChatModelInput, deps: ChatModelD
       method: "POST",
       headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
       signal: controller.signal,
-      body: JSON.stringify({ model, max_tokens: Math.min(CHAT_MODEL_MAX_TOKENS, Math.max(1, Math.floor(input.maxTokens))), ...(withThinkingOff ? { thinking: { type: "disabled" } } : {}), system: input.system, messages: input.messages }),
+      body: JSON.stringify({ model, max_tokens: Math.min(CHAT_MODEL_BRIEF_MAX_TOKENS, Math.max(1, Math.floor(input.maxTokens))), ...(withThinkingOff ? { thinking: { type: "disabled" } } : {}), system: input.system, messages: input.messages }),
     });
     let response = await send(true);
     // the API refused the request while it carried the thinking parameter: the SAME request once more without it (as the product's other short calls do)

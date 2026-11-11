@@ -3,7 +3,7 @@ import { conditionsOfRequest } from "./requestConditions";
 import { GAP_CHOICE_LINE_AR, gapLinesAr } from "./gapLines";
 import { platformOfStages, type SocialPlatform } from "./redesignFlagTypes";
 import { readConditions } from "./semantic/conditions";
-import { emptyFillReport, platformWithReading, topicWithoutConditions, topicWithReading, type FillReport } from "./semantic/contractFill";
+import { emptyFillReport, platformFromAnswer, platformWithReading, topicWithoutConditions, topicWithReading, type FillReport } from "./semantic/contractFill";
 import { interpretRequest } from "./semantic/interpret";
 
 /**
@@ -85,6 +85,20 @@ function firstPlatform(text: string): SocialPlatform | null {
   return best ? best.p : null;
 }
 
+/**
+ * CONSOLIDATED MISSION: EVERY platform a text names (not only the first), by the contract's own words and by the semantic reading's spellings (also a name the reading holds only as a candidate). Used by the research brief's grounding check:
+ * a platform in the consolidated request must have been named by the customer (or by the question they answered). Pure.
+ */
+export function platformsNamedIn(text: string): SocialPlatform[] {
+  const out = new Set<SocialPlatform>();
+  for (const [p, re] of PLATFORM_WORDS) if (re.test(text)) out.add(p);
+  const r = interpretRequest(text).platform;
+  if (r.status === "resolved") out.add(r.id);
+  else if (r.status === "multiple") for (const id of r.ids) out.add(id);
+  else if (r.status === "ambiguous") for (const id of r.candidates) out.add(id);
+  return [...out].sort();
+}
+
 // ROUND 19: the count of top-level items, in digits (Arabic-Indic or Latin), in words («خمس فيديوهات», «تلات منشورات», «عشرين تغريدة»), as «واحد» after the noun («فيديو واحد», «منشور واحد», «تغريدة واحدة») or as the dual («فيديوهين», «منشورين»)
 const COUNT_WORD = new RegExp(`(?:^|\\s)(${NUMBER_WORDS_SRC})\\s+${COUNT_NOUN.source}`);
 const COUNT_ONE = new RegExp(`${COUNT_NOUN.source}[ء-ي]*\\s+(?:ال)?(?:واحد|واحدة|وحدة)(?![ء-ي])`);
@@ -105,7 +119,8 @@ function sourceOf(text: string): RequestContract["source"] {
   const m = /(?:^|\s)(?:صفحة|صفحه|حساب|قناة|قنوات)\s+((?:(?:صفحة|قناة|حساب|ال\S+|[^\s،,.()«»"]+)\s*){1,3})/.exec(text);
   let named: string | null = null;
   if (m) {
-    const words = m[1].trim().split(/\s+/).filter((w) => !/^(?:صفحة|قناة|حساب|قنوات|الرسمية|الرسمي)$/.test(w));
+    // rt-06: «حساب عام» is «a public account», never an account NAMED «عام» (a describing word is not a name; the customer is asked which account, as for no name at all)
+    const words = m[1].trim().split(/\s+/).filter((w) => !/^(?:صفحة|قناة|حساب|قنوات|الرسمية|الرسمي|عام|عامة|عامه|معين|معينة|معينه|ما|واحد)$/.test(w));
     const kept: string[] = [];
     for (const w of words) { if (STOP.test(w)) break; kept.push(w); }
     named = kept.length > 0 ? kept.join(" ") : null;
@@ -162,15 +177,19 @@ export function buildRequestContractWithReport(request: unknown, answer?: unknow
   const readingOfText = options.semantic === true ? interpretRequest(text) : null;
   const readingOfRequired = options.semantic === true ? interpretRequest(required) : null;
   const parsedPlatform = firstPlatform(text);
-  const platform = readingOfText ? platformWithReading(parsedPlatform, readingOfText, report) : parsedPlatform;
+  const answerText = String(answer ?? "").replace(/\s+/g, " ").trim();
+  // CONSOLIDATED MISSION: with the reading on, the customer's ANSWER is also read on its own (their latest word): its platform fills or corrects, its comments are added
+  const readingOfAnswer = options.semantic === true && answerText !== "" ? interpretRequest(answerText) : null;
+  const readPlatform = readingOfText ? platformWithReading(parsedPlatform, readingOfText, report) : parsedPlatform;
+  const platform = readingOfAnswer ? platformFromAnswer(readPlatform, readingOfAnswer, (phrase) => { const r = interpretRequest(phrase).platform; return r.status === "resolved" ? [r.id] : r.status === "multiple" ? r.ids : []; }, answerText, report) : readPlatform;
   let kind = KIND_WORDS.find(([, re]) => re.test(required))?.[0] ?? (platform === "x" ? "tweets" : null);
   if (kind === null && readingOfRequired?.parent_kind) { kind = readingOfRequired.parent_kind; report.filled.push("parentKind"); }
   const classes = conditionsOfRequest(text);
   const parsedComments = /تعليق/.test(text) && platform !== "x";
-  const commentsAsked = parsedComments || (readingOfText?.content.comments === true && platform !== "x");
+  const commentsAsked = parsedComments || ((readingOfText?.content.comments === true || readingOfAnswer?.content.comments === true) && platform !== "x");
   if (commentsAsked && !parsedComments) report.filled.push("comments");
   const parsedReplies = repliesAskedIn(text);
-  const repliesAsked = parsedReplies || readingOfText?.content.replies === true;
+  const repliesAsked = parsedReplies || readingOfText?.content.replies === true || readingOfAnswer?.content.replies === true;
   if (repliesAsked && !parsedReplies) report.filled.push("replies");
   const parsedTopic = topicOf(required);
   // PR-1.3: the conditions of the words (a period, a country, a language), read with no clock: only WHETHER each is asked is needed here (the values and the clarifications are the Ask's, which has the moment of the request)

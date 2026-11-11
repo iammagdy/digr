@@ -121,8 +121,9 @@ describe("fill-only: a value the parser produced is kept; the reading fills, tig
       const { contract: on, report } = buildRequestContractWithReport(c.text, c.answer ?? undefined, ON);
       if (JSON.stringify(on) !== JSON.stringify(off)) changed += 1;
       // platform
-      if (on.platform !== off.platform) expect(off.platform === null ? report.filled : report.cleared, `${c.id} platform`).toContain("platform");
-      if (off.platform !== null && on.platform !== null) expect(on.platform, c.id).toBe(off.platform);
+      // CHANGED (consolidated mission): a platform the customer's typed ANSWER names fills or corrects the request's (their latest word, mt-03/04/06/07); a change without an answer is still only filled or cleared
+      if (on.platform !== off.platform) expect(off.platform === null ? report.filled : c.answer !== undefined ? report.corrected : report.cleared, `${c.id} platform`).toContain("platform");
+      if (off.platform !== null && on.platform !== null && c.answer === undefined) expect(on.platform, c.id).toBe(off.platform);
       // comments / replies: never taken away by the reading (X has no comments stage: a platform change may do that, and it is reported as a platform change)
       for (const f of ["comments", "replies"] as const) {
         if (off[f] !== "none" && on[f] !== off[f]) expect(on.platform, `${c.id} ${f}`).not.toBe(off.platform);
@@ -159,8 +160,11 @@ describe("fill-only: a value the parser produced is kept; the reading fills, tig
     const withAnswer = buildRequestContract("هات كومنتات عن السياحة", "انستجرام", ON);
     expect(withAnswer).toMatchObject({ platform: "instagram", comments: "some" });
     expect(withAnswer.topic).toBe(buildRequestContract("هات كومنتات عن السياحة", "انستجرام", OFF).topic); // the parser's own reading of the joined words (the worker adds a tapped platform to the request instead, `withPlatformChoice`)
-    // the request names TikTok (in a spelling the parser reads); an answer naming another platform does not change it
-    expect(buildRequestContract("هات تعليقات تيك توك عن السياحة", "انستجرام", ON).platform).toBe("tiktok");
+    // CHANGED (consolidated mission, mt-06 / mt-07): the answer is the customer's LATEST word: a platform it names alone replaces the request's (a correction is never kept behind the old value); with the flag OFF nothing changes
+    expect(buildRequestContract("هات تعليقات تيك توك عن السياحة", "انستجرام", ON).platform).toBe("instagram");
+    expect(buildRequestContract("هات تعليقات تيك توك عن السياحة", "انستجرام", OFF).platform).toBe("tiktok");
+    expect(buildRequestContract("عايز ٢٠ فيديو يوتيوب عن الدوري", "لا، أقصد تيك توك مش يوتيوب", ON).platform).toBe("tiktok");
+    expect(buildRequestContract("عايز ٢٠ فيديو يوتيوب عن الدوري", "يوتيوب وتيك توك", ON).platform).toBe("youtube"); // two platforms and no negation: undecided, the request's stays
     expect(buildRequestContract("هات تعليقات تك توك عن السياحة", "انستجرام", ON).platform).toBe("instagram"); // two platforms in the words: undecided by the reading, the parser's only platform stays
   });
 });
@@ -188,17 +192,18 @@ describe("the 98-scenario baseline with the flag ON, measured through the real c
   ];
   const PARTIAL = ["sa-04", "sa-06", "pl-15", "pl-23"];
 
-  it("OFF: the baseline of PR #446 is untouched except the 7 pre-filter gaps PR-1.4 closed in the chat path (62 = 55 still gaps with the flag OFF + 7 closed)", () => {
+  // CHANGED (consolidated mission, docs/AGENT-UNDERSTANDING-V1.md): 7 more gaps are closed for every customer (sb-11, sb-12, sb-13, cm-13, rt-06, pf-06; pf-07 by a clarification): 62 = 48 still gaps with the flag OFF + 14 closed
+  it("OFF: the baseline of PR #446 is untouched except the gaps closed in the chat path and for every customer (62 = 48 still gaps with the flag OFF + 14 closed)", () => {
     expect(baselineCases).toHaveLength(98);
-    expect(baselineCases.filter((c) => c.known_gap)).toHaveLength(55);
-    expect(baselineCases.filter((c) => c.closed_gap)).toHaveLength(7);
+    expect(baselineCases.filter((c) => c.known_gap)).toHaveLength(48);
+    expect(baselineCases.filter((c) => c.closed_gap)).toHaveLength(14);
     for (const c of baselineCases.filter((x) => x.known_gap)) {
       const off = run(c, OFF);
       for (const [k, v] of Object.entries(c.known_gap!.observed)) expect(off[k as keyof Understood], `${c.id}.${k}`).toEqual(v);
     }
   });
 
-  it(`ON: ${FIXED.length} of the 55 remaining known gaps are FIXED end to end (every expected field of the case holds), ${PARTIAL.length} improve partly, none regresses`, () => {
+  it(`ON: ${FIXED.length} of the 48 remaining known gaps are FIXED end to end (every expected field of the case holds), ${PARTIAL.length} improve partly, none regresses`, () => {
     const gaps = baselineCases.filter((c) => c.known_gap);
     const fixed = gaps.filter((c) => outcome(c).kind === "fixed").map((c) => c.id);
     const partial = gaps.filter((c) => outcome(c).kind === "partial").map((c) => c.id);

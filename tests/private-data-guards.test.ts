@@ -5,7 +5,7 @@ import { fakeChatModel } from "./helpers/fakeChatModel";
 import { agentChatTurn } from "../src/lib/agentMission/chatTurn";
 import { setChatModelForTesting } from "../src/lib/agentMission/chatModel";
 import { answerForCustomer, createCustomerMission } from "../src/lib/agentMission/customerActions";
-import { PRIVACY_REFUSAL_AR, PRIVATE_MESSAGES_REFUSAL_AR, SENSITIVE_ID_REFUSAL_AR, personalIdentifierAsk, preModelAnswer, privacyRefusalAr, privateContactAsk, privateMessagesAsk } from "../src/lib/agentMission/guardRules";
+import { contactAskVerdict, PRIVACY_REFUSAL_AR, PRIVATE_MESSAGES_REFUSAL_AR, SENSITIVE_ID_REFUSAL_AR, personalIdentifierAsk, preModelAnswer, privacyRefusalAr, privateContactAsk, privateMessagesAsk } from "../src/lib/agentMission/guardRules";
 import { checkCustomerText } from "../src/lib/agentMission/text";
 import { categoryOf } from "../src/lib/treg/dataPolicy";
 
@@ -192,8 +192,13 @@ describe("the existing personal-contact refusals are unchanged", () => {
     expect(privateContactAsk(m), m).toBe(true);
     expect(preModelAnswer(m)).toEqual({ kind: "privacy_refusal", contentAr: PRIVACY_REFUSAL_AR });
   });
-  it("the sentences the contact rule refused before for a bare «واتساب» or product word with NO topic marker stay refused", () => {
-    for (const m of ["جروبات واتساب عن السياحة", "عايز موبايلات سامسونج على تيك توك"]) expect(privateContactAsk(m), m).toBe(true);
+  // CHANGED (consolidated mission, the security-reviewed change docs/CHAT-PREFILTERS-V1.md asked for): a bare «واتساب» or product word with nothing that says WHOSE number is wanted is no longer refused outright. A product cue (a brand) means the
+  // product and the request goes on; with no cue the customer is ASKED what they mean (no mission, nothing collected). A person after the word, «أرقام», an explicit private word, or a second objective keep the refusal (tests/agent-understanding-privacy.test.ts).
+  it("a bare «واتساب» or product word: a brand means the product (not refused); with no cue the customer is asked, never refused and never planned", () => {
+    expect(contactAskVerdict("عايز موبايلات سامسونج على تيك توك")).toBe("allow");
+    expect(contactAskVerdict("جروبات واتساب عن السياحة")).toBe("clarify");
+    expect(preModelAnswer("جروبات واتساب عن السياحة")?.kind).toBe("privacy_clarify");
+    for (const m of ["عايز موبايلات الناس على تيك توك", "هات واتساب البنات اللي في الجروب", "عايز ارقام موبايلات سامسونج بتاعة الناس"]) expect(privateContactAsk(m), m).toBe(true);
   });
 });
 

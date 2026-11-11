@@ -62,6 +62,19 @@ export function namesCollectibleData(text: string): boolean {
   return STRONG_NOUN_RE.test(normalize(text));
 }
 
+/**
+ * CONSOLIDATED MISSION: a message that CARRIES a research request (it names something Diger collects, or the classifier below reads a data request in it, e.g. «إنت مين؟ وعايز داتا عن السياحة»). The fixed-answer filters in front of the agent
+ * (general question, identity) stand aside for it, so the research request is never silently dropped behind a fixed answer: the agent's model sees both intentions.
+ */
+export function carriesResearchRequest(text: string): boolean {
+  return namesCollectibleData(text) || WANTS_DATA_RE.test(normalize(text)) || classifyMessage(text) === "data_request";
+}
+/** An explicit ask for data, also with «و» in front («وعايز داتا عن …», «عايز بيانات عن …»). */
+const WANTS_DATA_RE = /(?:^| )و?(?:عايز|عاوز|محتاج|احتاج|اريد|هات|جيب|اجمع|ابغي)\S*(?: \S+){0,2} (?:داتا|بيانات|معلومات|data)(?: |$)/;
+
+/** A platform the service collects from, named in the text (a subset of STRONG_NOUN_RE). */
+const PLATFORM_NAME_RE = /tiktok|تيك توك|تيكتوك|انستجرام|انستغرام|انستا|instagram|فيسبوك|فيس بوك|facebook|يوتيوب|youtube|twitter|تويتر|(?:^| )اكس(?: |$)/;
+
 const GENERIC_NOUN_RE = /بيانات|داتا|معلومات|(?:^| )data(?: |$)/;
 const ASK_RE = /(?:^| )(?:عايز\S*|عاوز\S*|محتاج\S*|احتاج\S*|اريد|ابغي|ابي|ودي|نفسي|اطلب\S*|ممكن|هات\S*|جيب\S*|اعطني|اعطيني|وفر\S*|اعمل\S*|جهز\S*|want|need|give)(?: |$)/;
 const COLLECT_STRONG_RE = /(?:^| )(?:اجمع\S*|جمعلي|جمّع\S*|اسحب\S*|استخرج\S*|collect|scrape|extract|download|fetch)(?: |$)/;
@@ -114,6 +127,8 @@ export function classifyMessage(message: string): MessageType {
   if (asksQuestion && SERVICE_RE.test(text) && !command && !(strongNoun && (ask || number || url))) return "service_question";
 
   if (strongNoun && (ask || collectStrong || SEARCH_RE.test(text) || GET_RE.test(text) || number || url)) return "data_request";
+  // cm-13: a statement that names what to collect AND a platform, with no question («كل التعليقات على بوستات فيسبوك عن غلاء الأسعار»), is a request even without an ask verb
+  if (strongNoun && !asksQuestion && PLATFORM_NAME_RE.test(` ${text} `) && words.length >= 4) return "data_request";
   if (collectStrong && words.length >= 3) return "data_request";
   if (SEARCH_RE.test(text) && words.length >= 4) return "data_request";
   if (generic && (ask || collectStrong || GET_RE.test(text)) && words.length >= 3) return "data_request";

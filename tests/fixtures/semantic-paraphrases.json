@@ -285,12 +285,13 @@
     "wants_email": false,
     "route": "compiled"
    },
-   "known_gap": {
+   "closed_gap": {
     "ref": "L6",
     "why": "«عميل» contains the bare e-mail word «ميل»: a false e-mail request (send-backs, turns exhausted)",
     "observed": {
      "wants_email": true
-    }
+    },
+    "closed_by": "AGENT-UNDERSTANDING-V1"
    }
   },
   {
@@ -303,12 +304,13 @@
     "comments": "some",
     "wants_email": false
    },
-   "known_gap": {
+   "closed_gap": {
     "ref": "L6",
     "why": "«تحميل» contains «ميل»: a false e-mail request",
     "observed": {
      "wants_email": true
-    }
+    },
+    "closed_by": "AGENT-UNDERSTANDING-V1"
    }
   },
   {
@@ -322,12 +324,13 @@
     "topic": "مسلسل جميل",
     "wants_email": false
    },
-   "known_gap": {
+   "closed_gap": {
     "ref": "L6",
     "why": "«جميل» contains «ميل»: a false e-mail request",
     "observed": {
      "wants_email": true
-    }
+    },
+    "closed_by": "AGENT-UNDERSTANDING-V1"
    }
   },
   {
@@ -789,12 +792,13 @@
     "route": "compiled",
     "message_type": "data_request"
    },
-   "known_gap": {
+   "closed_gap": {
     "ref": "L7",
     "why": "the chat keyword classifier calls this «other» (no ask verb): it is rescued only if the model says data_request",
     "observed": {
      "message_type": "other"
-    }
+    },
+    "closed_by": "AGENT-UNDERSTANDING-V1"
    }
   },
   {
@@ -1154,12 +1158,13 @@
     "source_named": false,
     "route": "compiled"
    },
-   "known_gap": {
+   "closed_gap": {
     "ref": "K5",
     "why": "«حساب عام» («a public account») is read as an account NAMED «عام»",
     "observed": {
      "source_named": true
-    }
+    },
+    "closed_by": "AGENT-UNDERSTANDING-V1"
    }
   },
   {
@@ -1278,12 +1283,13 @@
     "prefilter": "agent",
     "platform": "tiktok"
    },
-   "known_gap": {
+   "closed_gap": {
     "ref": "W4",
     "why": "«موبايلات» as a product topic trips the private-contact refusal",
     "observed": {
      "prefilter": "privacy_refusal"
-    }
+    },
+    "closed_by": "AGENT-UNDERSTANDING-V1"
    }
   },
   {
@@ -1292,14 +1298,16 @@
    "text": "جروبات واتساب عن السياحة",
    "source": "audit W4",
    "expected": {
-    "prefilter": "agent"
+    "prefilter": "privacy_clarify"
    },
-   "known_gap": {
+   "closed_gap": {
     "ref": "W4",
     "why": "«واتساب» as a topic trips the private-contact refusal",
     "observed": {
      "prefilter": "privacy_refusal"
-    }
+    },
+    "closed_by": "AGENT-UNDERSTANDING-V1",
+    "revised_expectation": "agent -> privacy_clarify (owner directive of the consolidated mission: «جروبات واتساب» is ambiguous between public directories and private group content, so the customer is ASKED, never refused and never planned; the clarification states that private group messages and members numbers are not collected)"
    }
   },
   {

@@ -19,15 +19,72 @@ const PRIVATE_EXPLICIT = /ناس\s*عادي|اشخاص\s*عادي|افراد\s*�
 /** The business side that stays allowed: companies, shops, clinics, offices and the decision makers of them. */
 const BUSINESS = /شركات?|شركه|مؤسس|مصنع|مصانع|مطاعم|مطعم|عيادات|عياده|صيدليات|صيدليه|فنادق|فندق|متاجر|متجر|محلات|مكاتب|مكتب|مراكز|مركز|مقاول|مدير|مديري|مدراء|صناع\s*(?:ال)?قرار|مسؤول|مسئول|تنفيذي|اعمال|business|compan|b2b|decision|مورد|جهات|هيئات|جامعات|مدارس|اطباء|دكاتره|محامي|مهندس|ورش|وكالات|وكاله|بنوك|بنك|فروع|فرع/;
 
+/**
+ * CONSOLIDATED MISSION: what the contact rule decides for a message. «refuse»: it asks for personal contact data of private individuals. «clarify»: the only contact-looking words are a bare app or product word («موبايلات», «واتساب») with
+ * nothing that says whose number is wanted, so the customer is ASKED what they mean (nothing is collected, no mission is created). «allow»: no personal contact data is asked.
+ */
+export type ContactVerdict = "refuse" | "clarify" | "allow";
+
+/**
+ * EACH COLLECTION OBJECTIVE IS JUDGED ON ITS OWN. A collecting verb joined by «و» («… وهات أرقام …», «وكمان …») starts a new objective. A business word exempts only the objective it is in: «تعليقات عن شركات الاتصالات وهات أرقام تليفونات الناس اللي علقوا»
+ * was allowed because «شركات» was anywhere in the sentence; the second objective is now refused on its own.
+ */
+const OBJECTIVE_BREAK = new RegExp(`(?<![ء-ي])(?:و(?:هات|جيب|اجمع|جمع|اسحب|استخرج|طلع|اطلع|نزل|حمل|ضيف|اضف|عايز|عاوز|محتاج|ابعت|ابعتلي|كمان|برضه|برضو)|كمان|برضه|برضو)(?![ء-ي])|\\b(?:and\\s+(?:also|get|collect|extract|give)|also|plus)\\b`, "g");
+function objectivesOf(text: string): string[] {
+  const cuts = [0];
+  for (const m of text.matchAll(OBJECTIVE_BREAK)) if (m.index! > 0) cuts.push(m.index!);
+  return cuts.map((start, i) => text.slice(start, cuts[i + 1] ?? text.length).trim()).filter((s) => s !== "");
+}
+/** The ordinary people a contact noun points at, right after it («أرقام موبايلات الناس», «تليفونات عملاء الشركة», «واتساب البنات»): a person target never takes the business exemption. */
+const CONTACT_NOUN = "(?:ارقام?|رقم|تليفونات|تليفون|تلفون|هاتف|هواتف|موبايلات|موبايل|جوال|محمول|واتساب|واتس|ايميلات|ايميل|اميلات|بريد|عناوين|عنوان|phones?|numbers?|emails?|whatsapp|addresses)";
+const PERSON_AFTER_CONTACT = new RegExp(`(?<![ء-ي])${CONTACT_NOUN}(?![ء-ي])(?:\\s+\\S+){0,2}\\s+(?:ال)?(?:ناس|عملاء|زباين|زبائن|مشتركين|اعضاء|بنات|شباب|ستات|رجاله|سكان|طلاب|طلبه|اهالي)(?![ء-ي])|(?<![ء-ي])${CONTACT_NOUN}(?![ء-ي])(?:\\s+\\S+){0,3}\\s+(?:اللي|الي)\\s+(?:علق|بيعلق|علقوا|بيعلقوا|كتبوا|نشروا|بيتابعوا|تابعوا|عملوا)|\\b(?:phones?|numbers?|emails?|addresses)\\b(?:\\s+\\S+){0,2}\\s+(?:of\\s+)?(?:people|customers|users|members|followers|commenters)\\b`);
+/** A product or app word that reads as the PRODUCT, not a number: a brand, a model, a price, a review, a business version. */
+const PRODUCT_CUE = /(?<![ء-ي])(?:سامسونج|سامسونغ|ايفون|ابل|شاومي|هواوي|اوبو|ريلمي|نوكيا|انفنكس|انفينكس|فيفو|اونر|موتورولا|بكسل|جالكسي|اسعار|سعر|مراجعات|مراجعه|ريفيو|ريفيوهات|عروض|مواصفات|جديده|مستعمله|بيزنس|تحديث|تحديثات|مميزات|عيوب)(?![ء-ي])|\b(?:samsung|iphone|apple|xiaomi|huawei|oppo|realme|nokia|infinix|vivo|honor|pixel|galaxy|prices?|reviews?|specs|business|update)\b/;
+
+/** The verdict of the contact rule (see ContactVerdict). Pure. */
+export function contactAskVerdict(message: string): ContactVerdict {
+  const text = normalize(message);
+  if (!PERSONAL_CONTACT.test(text)) return "allow";
+  // explicit private words anywhere keep the old answer: refused, whatever else the sentence says (unchanged)
+  if (PRIVATE_EXPLICIT.test(text) && contactObjectiveIn(text)) return "refuse";
+  let clarify = false;
+  for (const objective of objectivesOf(text)) {
+    const v = objectiveVerdict(objective);
+    if (v === "refuse") return "refuse";
+    if (v === "clarify") clarify = true;
+  }
+  return clarify ? "clarify" : "allow";
+}
+
+/** Whether a part of the text asks for contact data at all (a bare app or product word in the SUBJECT of public content does not). */
+function contactObjectiveIn(part: string): boolean {
+  if (!PERSONAL_CONTACT.test(part)) return false;
+  // SECURITY PR: a request for PUBLIC content whose SUBJECT is an app or a product («منشورات عامة عن واتساب») asks for nobody's number: the bare app and product words (never «ارقام» + a contact word) are read only BEFORE the topic marker
+  const { head, tail } = splitAtPublicTopic(part);
+  return !(tail !== null && !PERSONAL_CONTACT.test(`${head} ${tail.replace(BARE_APP_OR_PRODUCT, " ")}`));
+}
+
+function objectiveVerdict(objective: string): ContactVerdict {
+  if (!contactObjectiveIn(objective)) return "allow";
+  if (PERSON_AFTER_CONTACT.test(objective)) return "refuse";
+  if (BUSINESS.test(objective)) return "allow";
+  // only bare app / product words («موبايلات», «واتساب»), no «أرقام», no address, no personal e-mail: a product cue means the product; otherwise the customer is asked
+  const bareOnly = !PERSONAL_CONTACT.test(objective.replace(BARE_APP_OR_PRODUCT, " "));
+  if (bareOnly) return PRODUCT_CUE.test(objective) ? "allow" : "clarify";
+  return "refuse";
+}
+
 /** True when the message asks for personal contact data of private individuals. */
 export function privateContactAsk(message: string): boolean {
-  const text = normalize(message);
-  if (!PERSONAL_CONTACT.test(text)) return false;
-  // SECURITY PR: a request for PUBLIC content whose SUBJECT is an app or a product («منشورات عامة عن واتساب») asks for nobody's number: the bare app and product words (never «ارقام» + a contact word) are read only BEFORE the topic marker
-  const { head, tail } = splitAtPublicTopic(text);
-  if (tail !== null && !PERSONAL_CONTACT.test(`${head} ${tail.replace(BARE_APP_OR_PRODUCT, " ")}`)) return false;
-  if (PRIVATE_EXPLICIT.test(text)) return true;
-  return !BUSINESS.test(text);
+  return contactAskVerdict(message) === "refuse";
+}
+
+/** Asked (never refused) when the only contact-looking word is a bare app or product word: nothing is collected, no mission is created. */
+export const CONTACT_CLARIFY_APP_AR = "هل تقصد المحتوى العام المنشور عن هذا الموضوع، مثل المنشورات أو الفيديوهات أو التعليقات العامة على تيك توك أو إكس أو إنستجرام أو فيسبوك أو يوتيوب؟ لا أستطيع جمع رسائل المجموعات أو المحادثات الخاصة ولا أرقام أعضائها، لكن يمكنني جمع ما يُنشر علنًا عنها. اكتب لي ما تريد جمعه بالتحديد وسأجهّز لك الخطة والسعر، ولا يُخصم شيء قبل موافقتك.";
+export const CONTACT_CLARIFY_PRODUCT_AR = "هل تقصد المحتوى العام عن هذه الأجهزة نفسها، مثل الفيديوهات أو المنشورات أو التعليقات أو المراجعات عنها؟ إن كان هذا قصدك فاكتب لي المنصة وما تريد جمعه بالتحديد وسأجهّز لك الخطة والسعر، ولا يُخصم شيء قبل موافقتك. أما أرقام هواتف الأشخاص فلا أجمعها لأنها بيانات خاصة.";
+/** The clarification of a «clarify» verdict: about an app (a messenger, its groups) or about a product. */
+export function contactClarifyAr(message: string): string {
+  return MESSENGER_APP.test(normalize(message)) ? CONTACT_CLARIFY_APP_AR : CONTACT_CLARIFY_PRODUCT_AR;
 }
 
 export const PRIVACY_REFUSAL_AR = "لا أستطيع جمع أرقام الهواتف أو عناوين السكن أو البريد الشخصي لأشخاص عاديين، فهذه بيانات خاصة تحميها خصوصيتهم. يمكنني بدلًا من ذلك جمع المنشورات والتعليقات العامة، وبيانات التواصل المهنية للشركات وصناع القرار فيها المتاحة علنًا. اكتب لي ما تريد وسأجهّز لك الخطة والسعر، ولا يُخصم شيء قبل موافقتك.";
@@ -217,12 +274,16 @@ export function isTrustQuestion(message: string): boolean {
 export const TRUST_REPLY_AR = "أفهم حرصك. لا يُخصم منك شيء قبل أن ترى الخطة والسعر وتعتمدها بنفسك بزر «اعتمد»، ولا تدفع إلا مقابل ما سُلّم لك فعلًا، وما حُجز مؤقتًا ولم يُسلَّم يُحرَّر كاملًا. وفي كل طلب تجد ما جُمع وما سُلّم وما خُصم، ويمكنك أن تبدأ بأقل طلب لتجرّب بنفسك.";
 
 // ---- the order -------------------------------------------------------------------------------------------------------------------------------------------------------------
-export type PreModelAnswer = { kind: "privacy_refusal" | "trust"; contentAr: string } | { kind: "account"; contentAr: string; topic: AccountTopic };
+export type PreModelAnswer = { kind: "privacy_refusal" | "privacy_clarify" | "trust"; contentAr: string } | { kind: "account"; contentAr: string; topic: AccountTopic };
 
-/** The fixed answer of the first rule the message matches, or null (the chat model reads it). Privacy first, then the account, then trust. */
+/**
+ * The fixed answer of the first rule the message matches, or null (the chat model reads it). Privacy first, then the account, then trust.
+ * CONSOLIDATED MISSION: a message whose only contact-looking word is a bare app or product word, with no private conversation or identifier asked, is ASKED what it means («privacy_clarify»), never refused and never planned.
+ */
 export function preModelAnswer(message: string): PreModelAnswer | null {
   const refusal = privacyRefusalAr(message);
   if (refusal) return { kind: "privacy_refusal", contentAr: refusal };
+  if (contactAskVerdict(message) === "clarify") return { kind: "privacy_clarify", contentAr: contactClarifyAr(message) };
   const topic = accountTopicOf(message);
   if (topic) return { kind: "account", contentAr: accountAnswerAr(topic), topic };
   if (isTrustQuestion(message)) return { kind: "trust", contentAr: TRUST_REPLY_AR };

@@ -192,11 +192,13 @@ describe("the privacy guard is NOT in front of this PR's changes and loses nothi
     for (const text of ["هات أرقام تليفونات ناس عادية عن نصب الاستثمار", "هات رسايل جروب واتساب عن ChatGPT", "هات الرقم القومي لاحمد عن السياحة"]) expect(preModelAnswer(text)?.kind, text).toBe("privacy_refusal");
   });
 
-  it("pf-06 and pf-07 stay as PR #447 pinned them: refused by the contact rule. This PR does not touch the private-data guard (see docs/CHAT-PREFILTERS-V1.md: a security-reviewed change is needed)", () => {
-    for (const text of ["عايز موبايلات سامسونج على تيك توك", "جروبات واتساب عن السياحة"]) {
-      expect(privateContactAsk(text), text).toBe(true);
-      expect(preModelAnswer(text)?.kind, text).toBe("privacy_refusal");
-    }
+  // CHANGED (consolidated mission): the security-reviewed change this test deferred is made in guardRules.ts (`contactAskVerdict`): pf-06 (a brand) is a product request and reaches the agent; pf-07 (no cue) is ASKED what it means, never refused,
+  // never planned. The pieces of the private-data section are still named here (and every refusal corpus still passes unchanged).
+  it("pf-06 reaches the agent (a brand is the product); pf-07 is a clarification, not a refusal; the private-data section's pieces are all still there", () => {
+    expect(privateContactAsk("عايز موبايلات سامسونج على تيك توك")).toBe(false);
+    expect(preModelAnswer("عايز موبايلات سامسونج على تيك توك")).toBeNull();
+    expect(privateContactAsk("جروبات واتساب عن السياحة")).toBe(false);
+    expect(preModelAnswer("جروبات واتساب عن السياحة")?.kind).toBe("privacy_clarify");
     const guard = readFileSync(new URL("../src/lib/agentMission/guardRules.ts", import.meta.url), "utf8");
     // the whole private-data section is the code of PR #447, byte for byte (its pieces are named here; a change to any of them fails this test)
     for (const piece of ["const PERSONAL_CONTACT =", "const BARE_APP_OR_PRODUCT =", "const PRIVATE_EXPLICIT =", "export function privateContactAsk", "export function privateMessagesAsk", "export function personalIdentifierAsk", "export function sensitiveRequestRefusalAr"]) expect(guard, piece).toContain(piece);

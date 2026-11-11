@@ -315,7 +315,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // PR-1.2: THE SETTINGS, read ONCE for the whole planning run, and the flag `semantic_normalization_v1` taken from them (OFF unless the owner set it; never from the customer). The same boolean reads the request at every place below that builds its contract, and goes to the
   // compiler, so the platform decision, the route and the plan's parameters can never disagree about it. The stored plan is what execution runs, so the worker does not read the request again there.
   const settings = (await store.readSettings().catch(() => ({}))) as Record<string, unknown>;
-  const semantic = readSemanticNormalizationFlag(settings);
+  const semantic = readSemanticNormalizationFlag(settings, mission.user_id);
   // ROUND 25 (live msn_04afab34…): THE PLATFORM THE CUSTOMER CHOSE at «من أنهي منصة؟» is kept in the run note, because the answer of the next card (the count) REPLACES `answer_text`; the request is read with it for the whole mission,
   // so the count answer no longer drops the platform (it did: the third run saw no platform and went to the legacy model path, one paid search, then «مصادرنا لا تخدم»)
   {

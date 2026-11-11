@@ -4,10 +4,13 @@ import { MISSION_TABLE } from "./constants";
 import { ADDON_MARKER_COLUMN, hasAddonMarker } from "./addonMarker";
 import { getBalance } from "../supabase/ledger";
 import { answerForCustomer, createCustomerMission, editPlanForCustomer } from "./customerActions";
-import { preModelAnswer } from "./guardRules";
+import { contactAskVerdict, contactClarifyAr, preModelAnswer, privacyRefusalAr } from "./guardRules";
 import { decideTurn, type ChatType, type Decision, type OpenRequest, type OpenState } from "./conversationModel";
 import { FULL_RESEARCH_PREFIX_AR, greetingReplyAr, isFullResearchMethodologyAsk, methodologyReplyAr, methodologyTailAr, otherReplyAr, serviceAnswerAr } from "./messageType";
 import { listMethodologyMissions } from "./methodology/missions";
+import { buildRequestContract } from "./requestContract";
+import { briefNumbersAr, contractIsComplete, differsOnlyByCount, sameContract, storedBriefOf, validateBrief, type ResearchBrief } from "./researchBrief";
+import { readSettingValue, scopedFlagOn } from "./scopedFlag";
 
 /**
  * ONE CHAT TURN ANSWERED BY THE AGENT. The customer's request becomes a mission for the signed-in user (or the guest, who must sign up before approving); the worker plans it; the chat card
@@ -84,7 +87,7 @@ async function readHistory(sb: any, input: AgentChatTurnInput): Promise<Array<{ 
 }
 
 /** Writes the answer on the assistant message and ends the customer's message «completed» (as every early answer of the handler does), so it never stays «planning». */
-async function writeAnswer(input: AgentChatTurnInput, contentAr: string, plan?: { agentMissionId: string }): Promise<void> {
+async function writeAnswer(input: AgentChatTurnInput, contentAr: string, plan?: { agentMissionId?: string; researchBrief?: ResearchBrief }): Promise<void> {
   const { sb } = input;
   try {
     await Promise.all([
@@ -163,18 +166,33 @@ export async function agentChatTurn(input: AgentChatTurnInput): Promise<AgentCha
       await writeAnswer(input, fixed.contentAr);
       return { ok: false, contentAr: fixed.contentAr, status: 200 };
     }
-    const [open, balancePoints, history] = await Promise.all([readOpenRequest(sb, input.conversationId, input.userId), readBalance(sb, input.userId), readHistory(sb, input)]);
-    const decision = await decideTurn({ message: input.message, balancePoints, open, history });
-    console.info(JSON.stringify({ tag: "chat_message_type", type: decision.type, source: decision.source, guarded: decision.guarded, open: open?.state ?? "none", ...(decision.failure ? { failure: decision.failure } : {}) }));
+    const mode = await readBriefMode(sb, input.userId);
+    const [open, balancePoints, history, prior] = await Promise.all([readOpenRequest(sb, input.conversationId, input.userId), readBalance(sb, input.userId), readHistory(sb, input), mode.enabled ? readPriorBrief(sb, input.conversationId) : Promise.resolve(null)]);
+    // what the customer asked in this conversation: the open request's stored words (typed earlier, maybe beyond the recent messages), the recent messages, this one
+    const customerTurns = [...(open?.requestText ? [open.requestText] : []), ...history.filter((m) => m.role === "user").map((m) => m.content), input.message];
+    const assistantQuestion = [...history].reverse().find((m) => m.role === "assistant")?.content ?? null;
+    const decision = await decideTurn({ message: input.message, balancePoints, open, history, ...(mode.enabled ? { brief: { enabled: true, soFar: prior, numbersAr: briefNumbersAr({ customerTurns, prior }) } } : {}) });
+    const briefCtx: BriefTurnContext = { customerTurns, assistantQuestion, prior, semantic: mode.semantic, outcome: "off" };
+    const viaBrief = mode.enabled ? await briefTurn(input, decision, open, briefCtx) : null;
+    console.info(JSON.stringify({ tag: "chat_message_type", type: decision.type, source: decision.source, guarded: decision.guarded, open: open?.state ?? "none", brief: mode.enabled ? briefCtx.outcome : "off", ...(decision.failure ? { failure: decision.failure } : {}) }));
+    if (viaBrief) return viaBrief;
     if (decision.type === "edit_of_open_request" && open) return answerOpenRequest(input, open, decision);
     if (decision.type !== "data_request" && decision.type !== "edit_of_open_request") return answerWithoutMission(input, decision.type, decision);
   }
-  // the unapproved plan above is replaced by this request (nothing is held before approval, so cancelling is only a status)
+  return startMission(input, input.message);
+}
+
+/**
+ * A NEW MISSION FROM A REQUEST (the customer's own message, or the research brief's consolidated request in brief mode). The unapproved plan above is replaced by it (nothing is held before approval, so cancelling is only a status). The worker plans
+ * it; nothing is held or charged here. `brief` is stored with the card so the next turn can revise the same brief; `noteAr` is a short checked sentence of the model put in front of the card's line.
+ */
+async function startMission(input: AgentChatTurnInput, requestText: string, extra: { brief?: ResearchBrief; noteAr?: string | null; contentAr?: string } = {}): Promise<AgentChatTurnResult> {
+  const { sb } = input;
   const previous = await latestMissionOfConversation(sb, input.conversationId);
   if (previous && (await isResearchMission(sb, previous))) {
     try { await sb.from(MISSION_TABLE).update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", previous).eq("user_id", input.userId).in("status", REPLACEABLE); } catch { /* the limit below still protects */ }
   }
-  const created = await createCustomerMission(sb, { userId: input.userId, text: input.message });
+  const created = await createCustomerMission(sb, { userId: input.userId, text: requestText });
   if (!created.ok) {
     const contentAr = created.error;
     // the answer is the sentence itself: the request never became a mission, so its message must not stay «planning» (the early answers of the handler end theirs «completed»)
@@ -186,15 +204,130 @@ export async function agentChatTurn(input: AgentChatTurnInput): Promise<AgentCha
     } catch { /* shown anyway */ }
     return { ok: false, contentAr, status: created.status };
   }
-  const derived = isUntitledConversation(input.conversationTitle) ? titleFromFirstRequest([{ role: "user", content: input.message }]) : null;
+  const contentAr = extra.contentAr ?? (extra.noteAr ? `${extra.noteAr} ${AGENT_TURN_CONTENT_AR}` : AGENT_TURN_CONTENT_AR);
+  const derived = isUntitledConversation(input.conversationTitle) ? titleFromFirstRequest([{ role: "user", content: requestText }]) : null;
   try {
     await Promise.all([
-      sb.from("messages").update({ content_ar: AGENT_TURN_CONTENT_AR, plan: { agentMissionId: created.id } }).eq("id", input.assistantMsgId),
+      sb.from("messages").update({ content_ar: contentAr, plan: { agentMissionId: created.id, ...(extra.brief ? { researchBrief: extra.brief } : {}) } }).eq("id", input.assistantMsgId),
       sb.from("messages").update({ request_status: "planning" }).eq("id", input.userMsgId),
       ...(derived ? [sb.from("conversations").update({ title: derived, updated_at: new Date().toISOString() }).eq("id", input.conversationId).eq("user_id", input.userId)] : []),
     ]);
   } catch (e) {
     console.warn(`[chat:agent_persist_failed] ${String((e as Error)?.message ?? "").slice(0, 80)}`);
   }
-  return { ok: true, missionId: created.id, contentAr: AGENT_TURN_CONTENT_AR, ...(derived ? { conversationTitle: derived } : {}) };
+  return { ok: true, missionId: created.id, contentAr, ...(derived ? { conversationTitle: derived } : {}) };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// CONSOLIDATED MISSION: THE RESEARCH BRIEF (docs/AGENT-UNDERSTANDING-V1.md)
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+/**
+ * The server switch of research-brief mode: `agent_settings` key below, `true` / `"on"` for everyone or `{ "user_ids": [...] }` for named test accounts (scopedFlag.ts). OFF by default; nothing in the repository sets it. The account is the signed-in
+ * user id the route verified (never anything the customer sends). Off: the chat behaves exactly as before (one model call, the same prompt, the same routing).
+ */
+export const CHAT_RESEARCH_BRIEF_FLAG_KEY = "chat_research_brief_v1";
+
+async function readBriefMode(sb: any, userId: string): Promise<{ enabled: boolean; semantic: boolean }> {
+  // the consistency check reads the consolidated request with the parser as it is with the semantic flag OFF: the stricter reading (with the flag ON the reading only fills or corrects from the same words), and the chat never imports the
+  // semantic layer (the isolation rule of PR-1.2: the privacy rules, the chat and mission creation stay independent of it)
+  return { enabled: scopedFlagOn(await readSettingValue(sb, CHAT_RESEARCH_BRIEF_FLAG_KEY), userId), semantic: false };
+}
+
+/** The brief of this conversation: the one stored with the latest assistant card or question (`plan.researchBrief`). A newer card without a brief (a request of the old path) ends it. Read only. */
+async function readPriorBrief(sb: any, conversationId: string): Promise<ResearchBrief | null> {
+  try {
+    const { data } = await sb.from("messages").select("plan").eq("conversation_id", conversationId).eq("role", "assistant").order("created_at", { ascending: false }).limit(20);
+    for (const row of Array.isArray(data) ? data : []) {
+      const plan = row?.plan;
+      if (!plan || typeof plan !== "object") continue;
+      if ("researchBrief" in plan || "agentMissionId" in plan) return storedBriefOf(plan);
+    }
+  } catch { /* no brief */ }
+  return null;
+}
+
+interface BriefTurnContext {
+  customerTurns: string[];
+  assistantQuestion: string | null;
+  prior: ResearchBrief | null;
+  semantic: boolean;
+  /** What happened, for the log line (a code: never the customer's words). */
+  outcome: string;
+}
+
+/** Said when an unapproved plan (or a question card) is replaced by the updated request. */
+export const REQUEST_UPDATED_AR = "حدّثنا طلبك بحسب رسالتك، ويجهّز الوكيل الآن خطة جديدة بسعرها؛ ولن يُخصم شيء قبل موافقتك.";
+/** Said when the earlier request was already in the worker's hands: it is not stopped mid-planning, and nothing of it runs without the customer's own approval. */
+export const PREVIOUS_STILL_PLANNING_AR = "حدّثنا طلبك بحسب رسالتك، ويجهّز الوكيل خطة جديدة بسعرها. أما الخطة السابقة فكانت قيد التجهيز، ولن يُنفَّذ منها شيء ولن يُخصم شيء إلا إذا اعتمدتها بنفسك.";
+
+/**
+ * ONE TURN IN BRIEF MODE. Returns the turn's answer, or null when today's path should answer (the model gave no usable brief, the brief failed a check that is not about privacy, or the message is not a request): the old behaviour is the fallback,
+ * so brief mode can never do worse than today. What it never does: approve, price, hold, or start anything that the customer did not ask for.
+ */
+async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: OpenRequest | null, ctx: BriefTurnContext): Promise<AgentChatTurnResult | null> {
+  // the model could not be read: a pending discovery question is still answered (the customer's answer joins the request so far, privacy checked again), never lost
+  if (decision.source === "keyword") {
+    const pending = ctx.prior && ctx.prior.status === "needs_clarification" && !open;
+    if (!pending || decision.type === "greeting_or_small_talk" || decision.type === "service_question" || decision.type === "methodology_request") { ctx.outcome = "model_unavailable"; return null; }
+    const joined = `${ctx.prior!.request}، ${input.message}`;
+    const privacy = privacyRefusalAr(joined) ?? (contactAskVerdict(joined) === "clarify" ? contactClarifyAr(joined) : null);
+    if (privacy) { ctx.outcome = "privacy"; await writeAnswer(input, privacy); return { ok: false, contentAr: privacy, status: 200 }; }
+    ctx.outcome = "fallback_joined";
+    return startMission(input, joined);
+  }
+  if (decision.type !== "data_request" && decision.type !== "edit_of_open_request") { ctx.outcome = "not_a_request"; return null; }
+  const parsed = decision.brief;
+  if (!parsed) { ctx.outcome = "none"; return null; }
+  if (!parsed.ok) { ctx.outcome = `schema_${parsed.issue}`; return null; }
+  const v = validateBrief(parsed.brief, { customerTurns: ctx.customerTurns, assistantQuestion: ctx.assistantQuestion, prior: ctx.prior, semantic: ctx.semantic });
+  if (!v.ok) {
+    ctx.outcome = `rejected_${v.reason}`;
+    // a private component is never planned: the same fixed answer as a typed one
+    if (v.contentAr) { await writeAnswer(input, v.contentAr); return { ok: false, contentAr: v.contentAr, status: 200 }; }
+    return null;
+  }
+  const brief = v.brief;
+  if (decision.type === "edit_of_open_request" && open) return briefEditOfOpen(input, decision, open, brief, v.contract, ctx);
+  // a new research request (or the next step of the discovery): a question while something that matters is missing, else a mission from the WHOLE request
+  if (brief.status === "needs_clarification" && !contractIsComplete(v.contract)) {
+    if (decision.reply === null) { ctx.outcome = "clarify_without_question"; return null; }
+    ctx.outcome = "clarify";
+    await writeAnswer(input, decision.reply, { researchBrief: brief });
+    return { ok: false, contentAr: decision.reply, status: 200 };
+  }
+  ctx.outcome = brief.status === "ready" ? "ready" : "ready_by_contract";
+  return startMission(input, brief.request, { brief: { ...brief, status: "ready" }, noteAr: brief.status === "ready" ? decision.reply : null });
+}
+
+/**
+ * A FOLLOW-UP ON THE OPEN REQUEST in brief mode. The brief holds the WHOLE updated request; the trusted contract of it is compared with the open request's:
+ *   - the same request: today's path (a count the customer wrote edits the plan already priced; otherwise the card's editor);
+ *   - only the count differs, and the customer wrote it: today's plan edit, priced again by code (no new planning);
+ *   - anything else changed (an addition, a correction of the platform, the period, the topic...): the unapproved plan is replaced by a new mission of the whole updated request, planned and priced again; nothing was held, nothing is charged.
+ * A question card is answered as today unless the answer changes the platform (or gives the one the request lacked): then the request is restated whole. A request still being planned is withdrawn only while it is still queued (a compare-and-set);
+ * once the worker has it, the new request is started next to it and the customer is told plainly that the earlier plan runs only if they approve it.
+ */
+async function briefEditOfOpen(input: AgentChatTurnInput, decision: Decision, open: OpenRequest, brief: ResearchBrief, contract: ReturnType<typeof buildRequestContract>, ctx: BriefTurnContext): Promise<AgentChatTurnResult | null> {
+  const openContract = buildRequestContract(open.requestText ?? "", undefined, { semantic: ctx.semantic });
+  const ready = { ...brief, status: "ready" as const };
+  if (open.state === "plan_ready") {
+    if (sameContract(contract, openContract) || (decision.count !== null && differsOnlyByCount(contract, openContract))) { ctx.outcome = "edit_same_path"; return null; }
+    ctx.outcome = "edit_replaced";
+    return startMission(input, brief.request, { brief: ready, contentAr: REQUEST_UPDATED_AR });
+  }
+  if (open.state === "needs_input") {
+    const platformChange = contract.platform !== null && contract.platform !== openContract.platform;
+    if (!platformChange) { ctx.outcome = "answer_same_path"; return null; }
+    ctx.outcome = "answer_replaced";
+    return startMission(input, brief.request, { brief: ready, contentAr: REQUEST_UPDATED_AR });
+  }
+  // planning
+  if (sameContract(contract, openContract)) { ctx.outcome = "planning_same"; return null; }
+  let withdrawn = false;
+  try {
+    const upd = await input.sb.from(MISSION_TABLE).update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", open.id).eq("user_id", input.userId).eq("status", "queued").select("id");
+    withdrawn = !upd?.error && Array.isArray(upd?.data) && upd.data.length === 1;
+  } catch { withdrawn = false; }
+  ctx.outcome = withdrawn ? "planning_withdrawn_replaced" : "planning_parallel_replaced";
+  return startMission(input, brief.request, { brief: ready, contentAr: withdrawn ? REQUEST_UPDATED_AR : PREVIOUS_STILL_PLANNING_AR });
 }
