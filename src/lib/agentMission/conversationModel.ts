@@ -34,7 +34,7 @@ export interface TurnContext {
    * CONSOLIDATED MISSION: research-brief mode (a server switch for this account, off by default). The same one call also returns the brief; `soFar` is the brief validated on an earlier turn; `numbersAr` are the numbers the customer wrote in this
    * conversation (a discovery question may repeat them).
    */
-  brief?: { enabled: boolean; soFar: ResearchBrief | null; numbersAr?: string[] };
+  brief?: { enabled: boolean; soFar: ResearchBrief | null; numbersAr?: string[]; /** UNIFIED CAPABILITY DISCOVERY (capability_discovery_v1): the kinds of public data that can be collected now, written by code from the registry (no provider name). */ capabilityLines?: string[] };
 }
 
 export interface ParsedAnswer { type: ChatType; reason: string; reply: string; count: number | null; /** the raw brief object (brief mode), checked by `parseBrief` */ brief?: unknown }
@@ -151,7 +151,7 @@ export function buildSystemPrompt(input: { balancePoints: number | null; open: O
     "- لا تقل إنك نفّذت أو اعتمدت أو خصمت شيئًا، ولا تطلب من العميل مفتاحًا أو كلمة سر.",
     "- اكتب «بي دي إف» و«إكسل» بالحروف العربية، ولا تكتب كلمات لاتينية.",
   );
-  if (input.brief?.enabled) lines.push(...briefPromptLines(input.brief.soFar));
+  if (input.brief?.enabled) lines.push(...briefPromptLines(input.brief.soFar), ...(input.brief.capabilityLines ?? []));
   return lines.join("\n");
 }
 
