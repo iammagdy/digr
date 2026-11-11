@@ -14,7 +14,7 @@ import { SEMANTIC_NOW_MS, understand, type Understood } from "./helpers/semantic
  * An `expected` value is never edited to match the code: it is the correct reading. `observed` is what the code returns today, verified by running the functions (2026-11-11, main 001cbeb).
  */
 interface Gap { ref: string; why: string; observed: Partial<Record<keyof Understood, unknown>> }
-interface Case { id: string; group: string; text: string; answer?: string; source: string; expected: Partial<Record<keyof Understood, unknown>>; known_gap?: Gap }
+interface Case { id: string; group: string; text: string; answer?: string; source: string; expected: Partial<Record<keyof Understood, unknown>>; known_gap?: Gap; /** PR-1.4: a gap CLOSED in the real chat path; kept as history, and now an ordinary assertion */ closed_gap?: Gap & { closed_by: string } }
 interface Fixture { now_iso: string; cases: Case[] }
 
 const fixture = JSON.parse(readFileSync(new URL("./fixtures/semantic-paraphrases.json", import.meta.url), "utf8")) as Fixture;
@@ -76,6 +76,17 @@ describe("PR-0.1 the fixture itself", () => {
     }
   });
 
+  it("PR-1.4: the 7 pre-filter gaps closed in the real chat path keep their history (`closed_gap`), and are now ORDINARY assertions of the correct meaning", () => {
+    const closed = cases.filter((c) => c.closed_gap);
+    expect(closed.map((c) => c.id)).toEqual(["pf-01", "pf-02", "pf-03", "pf-04", "pf-05", "pf-08", "pf-09"]);
+    for (const c of closed) {
+      expect(c.known_gap, c.id).toBeUndefined();
+      expect(c.closed_gap!.closed_by, c.id).toBe("PR-1.4");
+      for (const k of Object.keys(c.closed_gap!.observed)) expect(JSON.stringify(c.closed_gap!.observed[k as keyof Understood]), `${c.id}.${k}: what was observed differs from the correct meaning`).not.toBe(JSON.stringify(c.expected[k as keyof Understood]));
+      expect(pick(run(c), Object.keys(c.expected)), c.id).toEqual(c.expected);
+    }
+  });
+
   it("names every misunderstanding the audit listed (chapter 16 acceptance)", () => {
     // each entry: a word of the audit's list, and whether today's code gets it wrong (gap) or the audit's own sentence does NOT reproduce
     const AUDIT: Array<[string, "gap" | "not_reproduced"]> = [
@@ -85,7 +96,7 @@ describe("PR-0.1 the fixture itself", () => {
     for (const [word, status] of AUDIT) {
       const hit = cases.filter((c) => (c.text + " " + (c.answer ?? "")).includes(word));
       expect(hit.length, word).toBeGreaterThan(0);
-      if (status === "gap") expect(hit.some((c) => c.known_gap), word).toBe(true);
+      if (status === "gap") expect(hit.some((c) => c.known_gap || c.closed_gap), word).toBe(true);
       else expect(hit.every((c) => !c.known_gap), `${word}: the audit's own sentence is NOT reproduced by today's code`).toBe(true);
     }
   });

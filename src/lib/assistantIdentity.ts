@@ -3,6 +3,8 @@
  * behind it, never depend on what a model happens to write.
  * Customer-facing name: «ديجر الذكي» (Diger AI) in Arabic script, as the product copy requires Arabic only.
  */
+import { namesCollectibleData } from "./agentMission/messageType";
+
 export const DIGER_AI_NAME_AR = "ديجر الذكي";
 
 export const IDENTITY_ANSWER_AR =
@@ -24,7 +26,8 @@ export function identityQuestionKind(text: string): IdentityQuestionKind | null 
   if (!t || t.length > 120) return null;
   const technology =
     /(مين\s+(?:اللي\s+)?(?:عملك|صنعك|صمّمك|صممك|طوّرك|طورك|برمجك|شغّلك|شغلك)|مين\s+ورا(?:ك)?|(?:شغال|بتشتغل|تعمل|مبني|مبنى)\s+(?:على|ب|بـ)\s*(?:اي|ايه|إيه|أي|ماذا|تقنية|موديل|نموذج)|أي\s+نموذج|اي\s+نموذج|انهي\s+موديل|ايه\s+الموديل|إيه\s+الموديل|what\s+model|which\s+model|who\s+(?:made|built|created)\s+you|are\s+you\s+(?:chat)?gpt|are\s+you\s+claude)/i.test(t) ||
-    (VENDOR_WORDS.test(t) && /(انت|إنت|أنت|you|هل|بتاع|تابع|من|مين)/i.test(t));
+    // PR-1.4: a vendor word makes it a question about the assistant only when the customer is not asking Diger to collect something ABOUT that vendor («هات ١٠٠ تعليق من تيك توك عن ChatGPT» is research; «إنت ChatGPT؟» is the identity question)
+    (VENDOR_WORDS.test(t) && /(?<![ء-ي])(?:انت|إنت|أنت|هل|بتاع\S*|تابع\S*|مين)(?![ء-ي])|\byou\b/i.test(t) && !namesCollectibleData(t));
   if (technology) return "technology";
   if (/(^|\s)(?:انت|إنت|أنت)\s+(?:مين|من)(?![\p{L}])|(?:من|مين)\s+(?:انت|إنت|أنت)(?![\p{L}])|عرّفني بنفسك|عرفني بنفسك|who\s+are\s+you|(?:انت|إنت|أنت)\s+(?:بوت|روبوت|انسان|إنسان|ذكاء\s*اصطناعي|ai)(?![\p{L}])/iu.test(t)) return "who";
   return null;

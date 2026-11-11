@@ -54,6 +54,14 @@ const HOW_RE = /كيف|ازاي|تعمل|تشتغل|بتعمل|بتشتغل|ال
 
 /** What a data request is about: the kinds of data, the platforms and the file kinds the service collects and delivers. */
 const STRONG_NOUN_RE = /تعليق|تغريد|تويت|تويتر|بوست|منشور|فيديو|ريلز|ريل |ستوري|حسابات|حساب |شركات|شركه|موظف|مديري|مديرين|مسؤول|ايميل|الايميل|بريد|هاتف|هواتف|ارقام|رقم |مراجعات|مراجعه|تقييم|خرائط|مطعم|مطاعم|صيدلي|عياد|مستشفي|فندق|فنادق|متابع|هاشتاج|هاشتاغ|قائمه|قوائم|اكسل|excel|xlsx|csv|tweet|post|comment|video|review|compan|email|lead|follower|account|ريديت|reddit|tiktok|تيك توك|تيكتوك|انستجرام|انستغرام|انستا|instagram|فيسبوك|فيس بوك|facebook|يوتيوب|youtube|لينكد|linkedin|twitter|(?:^| )اكس(?: |$)/;
+/**
+ * PR-1.4: true when the words NAME something Diger collects (a kind of data or a platform). The fixed-answer filters that run before the agent (the general question, the identity question, the account and trust rules) use it to STAND ASIDE: a message that asks for comments, posts, a
+ * list or a platform is a research request and goes to the agent, whatever sensitive-sounding word its TOPIC contains («عن ChatGPT», «عن نصب الاستثمار», «من انتخابات»). It is the same noun list the message-type classifier above already uses; no second classifier.
+ */
+export function namesCollectibleData(text: string): boolean {
+  return STRONG_NOUN_RE.test(normalize(text));
+}
+
 const GENERIC_NOUN_RE = /بيانات|داتا|معلومات|(?:^| )data(?: |$)/;
 const ASK_RE = /(?:^| )(?:عايز\S*|عاوز\S*|محتاج\S*|احتاج\S*|اريد|ابغي|ابي|ودي|نفسي|اطلب\S*|ممكن|هات\S*|جيب\S*|اعطني|اعطيني|وفر\S*|اعمل\S*|جهز\S*|want|need|give)(?: |$)/;
 const COLLECT_STRONG_RE = /(?:^| )(?:اجمع\S*|جمعلي|جمّع\S*|اسحب\S*|استخرج\S*|collect|scrape|extract|download|fetch)(?: |$)/;

@@ -1185,12 +1185,13 @@
     "prefilter": "agent",
     "platform": "instagram"
    },
-   "known_gap": {
+   "closed_gap": {
     "ref": "W1",
     "why": "a bracketed real handle is rejected as an unresolved template placeholder (HTTP 400)",
     "observed": {
      "prefilter": "placeholder"
-    }
+    },
+    "closed_by": "PR-1.4"
    }
   },
   {
@@ -1202,12 +1203,13 @@
     "prefilter": "agent",
     "platform": "tiktok"
    },
-   "known_gap": {
+   "closed_gap": {
     "ref": "W1",
     "why": "a bracketed real period is rejected as a template placeholder",
     "observed": {
      "prefilter": "placeholder"
-    }
+    },
+    "closed_by": "PR-1.4"
    }
   },
   {
@@ -1220,12 +1222,13 @@
     "platform": "tiktok",
     "comments": "some"
    },
-   "known_gap": {
+   "closed_gap": {
     "ref": "W2",
     "why": "the unanchored phrase «من ان…» inside «من انتخابات» is read as «من انت»: the request never reaches the agent",
     "observed": {
      "prefilter": "general_question"
-    }
+    },
+    "closed_by": "PR-1.4"
    }
   },
   {
@@ -1238,12 +1241,13 @@
     "platform": "tiktok",
     "comments": "some"
    },
-   "known_gap": {
+   "closed_gap": {
     "ref": "W2",
     "why": "«هل يمكنك مساعدتي» (unanchored) turns a real request into a general question",
     "observed": {
      "prefilter": "general_question"
-    }
+    },
+    "closed_by": "PR-1.4"
    }
   },
   {
@@ -1256,12 +1260,13 @@
     "platform": "tiktok",
     "topic": "ChatGPT"
    },
-   "known_gap": {
+   "closed_gap": {
     "ref": "W3",
     "why": "a vendor word as the TOPIC makes it an identity question: fixed deflection, no mission",
     "observed": {
      "prefilter": "identity"
-    }
+    },
+    "closed_by": "PR-1.4"
    }
   },
   {
@@ -1306,12 +1311,13 @@
     "prefilter": "agent",
     "route": "legacy"
    },
-   "known_gap": {
+   "closed_gap": {
     "ref": "W5",
     "why": "«شحن» (shipping) is read as a wallet top-up: the fixed top-up answer is returned",
     "observed": {
      "prefilter": "account"
-    }
+    },
+    "closed_by": "PR-1.4"
    }
   },
   {
@@ -1324,12 +1330,13 @@
     "platform": "tiktok",
     "comments": "some"
    },
-   "known_gap": {
+   "closed_gap": {
     "ref": "W6",
     "why": "«نصب» as a topic is read as a trust question about Diger",
     "observed": {
      "prefilter": "trust"
-    }
+    },
+    "closed_by": "PR-1.4"
    }
   },
   {
