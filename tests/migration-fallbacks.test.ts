@@ -74,7 +74,17 @@ describe("BEFORE the migrations are applied: nothing breaks, nothing is written 
 
   it("the finance page still answers, with the credit split computed from row types", async () => {
     state.admin = before();
-    const res = await financeGet(req("/api/admin/finance?range=30"));
+    // The route's range=30 window is "the last 30 days from now", and the fixture rows are dated
+    // October 2026. Pin only Date.now() to a day inside that window so the test does not depend on
+    // the real calendar (timers stay real, and the clock is restored in the finally below).
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-20T12:00:00Z"));
+    let res: Response;
+    try {
+      res = await financeGet(req("/api/admin/finance?range=30"));
+    } finally {
+      vi.useRealTimers();
+    }
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.credit.realIncome.points).toBe(300);
