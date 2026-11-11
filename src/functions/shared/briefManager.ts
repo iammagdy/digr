@@ -2,6 +2,7 @@ import { TablesDB, Query } from "./dbCompat";
 import { detectMentionedPlatforms, getPlatformLabelAr } from "./capabilityRegistry";
 import { extractDateHint, extractTopicChips } from "./chatHandler";
 import { isFileShapingMessage, isStandaloneResearchRequest } from "./requestScope";
+import { namesCollectibleData } from "../../lib/agentMission/messageType";
 
 export interface ResearchBrief {
   platforms: string[];
@@ -39,12 +40,13 @@ export function isGreetingOrGeneralQuestion(text: string): {
   const trimmed = text.trim();
   const greetingPattern =
     /^(هاي|ازيك|ازيك يا فندم|مرحبا|مرحباً|أهلاً|أهلا|اهلا|صباح الخير|مساء الخير|سلام عليكم|السلام عليكم|هلا|hello|hi)[\s!.؟?]*$/i;
+  // PR-1.4: every phrase must END at the edge of a word («من انتخابات» is not «من انت»), and a message that NAMES something Diger collects (comments, posts, a list, a platform) is a research request, never a general question about the service.
   const generalQuestionPattern =
-    /(انت بتعمل ايه|أنت بتعمل ايه|بتعمل ايه|بتساعد في ايه|ازاي بتشتغل|ما وظيفتك|ما هي خدماتك|كيف تعمل|كيف تعمل المنصة|ماذا تفعل|ماذا تقدم|من انت|من أنت|إنت مين|انت مين|عرفني بنفسك|هل يمكنك مساعدتي)/i;
+    /(?<![ء-ي])(?:انت بتعمل ايه|أنت بتعمل ايه|بتعمل ايه|بتساعد في ايه|ازاي بتشتغل|ما وظيفتك|ما هي خدماتك|كيف تعمل|كيف تعمل المنصة|ماذا تفعل|ماذا تقدم|من انت|من أنت|إنت مين|انت مين|عرفني بنفسك|هل يمكنك مساعدتي)(?![ء-ي])/i;
 
   return {
     isGreeting: greetingPattern.test(trimmed),
-    isGeneralQuestion: generalQuestionPattern.test(trimmed),
+    isGeneralQuestion: generalQuestionPattern.test(trimmed) && !namesCollectibleData(trimmed),
   };
 }
 

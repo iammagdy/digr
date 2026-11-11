@@ -234,7 +234,7 @@ describe("PR-1.3 languages: the language of the collected content, of the report
 });
 
 // ---- 11. the contract and the Ask, OFF and ON --------------------------------------------------------------------------------------------------------------------------------------------
-interface Case { id: string; group: string; text: string; answer?: string; expected: Partial<Record<keyof Understood, unknown>>; known_gap?: { ref: string; observed: Partial<Record<keyof Understood, unknown>> } }
+interface Case { id: string; group: string; text: string; answer?: string; expected: Partial<Record<keyof Understood, unknown>>; known_gap?: { ref: string; observed: Partial<Record<keyof Understood, unknown>> }; closed_gap?: { ref: string } }
 const baselineCases = (JSON.parse(readFileSync(new URL("./fixtures/semantic-paraphrases.json", import.meta.url), "utf8")) as { cases: Case[] }).cases;
 const TOPIC = "هات تعليقات فيديوهات تيك توك عن السياحة";
 
@@ -345,19 +345,20 @@ describe("PR-1.3 measured on the 98-scenario baseline through the real contract 
   const FIXED_BY_PR_1_3 = ["dt-02", "dt-04", "dt-07", "dt-08", "dt-09", "dt-10", "dt-11", "ct-04", "ct-05", "ct-10", "pl-21", "pl-23", "sb-01", "sb-02"];
   const PARTIAL = ["sa-04", "sa-06", "pl-15"];
 
-  it("OFF: the 62 known gaps are all still gaps, exactly as PR #446 pinned them", () => {
+  it("OFF: the known gaps are all still gaps, exactly as PR #446 pinned them (62 originally; PR-1.4 closed the 7 pre-filter ones in the chat path, 55 remain)", () => {
     expect(baselineCases).toHaveLength(98);
-    expect(baselineCases.filter((c) => c.known_gap)).toHaveLength(62);
+    expect(baselineCases.filter((c) => c.known_gap)).toHaveLength(55);
+    expect(baselineCases.filter((c) => c.closed_gap).map((c) => c.id)).toEqual(["pf-01", "pf-02", "pf-03", "pf-04", "pf-05", "pf-08", "pf-09"]);
     for (const c of baselineCases.filter((x) => x.known_gap)) for (const [k, v] of Object.entries(c.known_gap!.observed)) expect(run(c, OFF)[k as keyof Understood], `${c.id}.${k}`).toEqual(v);
   });
-  it("ON: 37 of the 62 gaps are fixed (the 23 of PR-1.2, still fixed, and the 14 of this PR), 3 improve partly, 21 are untouched, 1 changed and is still wrong, and NONE regresses", () => {
+  it("ON: 37 of the 55 remaining gaps are fixed (the 23 of PR-1.2, still fixed, and the 14 of PR-1.3), 3 improve partly, 15 are untouched, and NONE regresses or changes wrongly (PR-1.4 closed pf-02 and six more in the chat path)", () => {
     const gaps = baselineCases.filter((c) => c.known_gap);
     const by = (k: string) => gaps.filter((c) => outcome(c) === k).map((c) => c.id);
     expect(by("fixed")).toEqual([...FIXED_BY_PR_1_2, ...FIXED_BY_PR_1_3].sort((a, b) => baselineCases.findIndex((c) => c.id === a) - baselineCases.findIndex((c) => c.id === b)));
     for (const id of FIXED_BY_PR_1_2) expect(outcome(baselineCases.find((c) => c.id === id)!), id).toBe("fixed");
     expect(by("partial")).toEqual(PARTIAL);
-    expect(by("changed_still_wrong")).toEqual(["pf-02"]); // its topic is cleaner («السياحة»); the template-placeholder pre-filter (W1) is another stage, untouched
-    expect(by("unchanged")).toHaveLength(62 - 37 - 3 - 1);
+    expect(by("changed_still_wrong")).toEqual([]); // pf-02 (the placeholder pre-filter, W1) was the only one: PR-1.4 fixed it in the chat path
+    expect(by("unchanged")).toHaveLength(55 - 37 - 3);
     expect(baselineCases.filter((c) => !c.known_gap && outcome(c) === "regression").map((c) => c.id)).toEqual([]);
   });
   it("every date, country and language scenario of the baseline (the 36 not-gap ones included) holds with the flag ON: the controls dt-01, dt-03, ct-01, ct-03, ct-08 stay right", () => {

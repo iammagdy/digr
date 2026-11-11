@@ -110,7 +110,7 @@ describe("the real request contract: flag OFF is today, flag ON is the corrected
 });
 
 // ---- 2. FILL-ONLY: the parser stays authoritative ----------------------------------------------------------------------------------------------------------------------------------------------------
-interface Case { id: string; group: string; text: string; answer?: string; expected: Partial<Record<keyof Understood, unknown>>; known_gap?: { ref: string; observed: Partial<Record<keyof Understood, unknown>> } }
+interface Case { id: string; group: string; text: string; answer?: string; expected: Partial<Record<keyof Understood, unknown>>; known_gap?: { ref: string; observed: Partial<Record<keyof Understood, unknown>> }; closed_gap?: { ref: string } }
 const baselineCases = (JSON.parse(readFileSync(new URL("./fixtures/semantic-paraphrases.json", import.meta.url), "utf8")) as { cases: Case[] }).cases;
 
 describe("fill-only: a value the parser produced is kept; the reading fills, tightens a topic, or clears a bare «X» name, and says which", () => {
@@ -188,16 +188,17 @@ describe("the 98-scenario baseline with the flag ON, measured through the real c
   ];
   const PARTIAL = ["sa-04", "sa-06", "pl-15", "pl-23"];
 
-  it("OFF: the baseline of PR #446 is untouched (the 62 gaps are all still gaps with the flag OFF)", () => {
+  it("OFF: the baseline of PR #446 is untouched except the 7 pre-filter gaps PR-1.4 closed in the chat path (62 = 55 still gaps with the flag OFF + 7 closed)", () => {
     expect(baselineCases).toHaveLength(98);
-    expect(baselineCases.filter((c) => c.known_gap)).toHaveLength(62);
+    expect(baselineCases.filter((c) => c.known_gap)).toHaveLength(55);
+    expect(baselineCases.filter((c) => c.closed_gap)).toHaveLength(7);
     for (const c of baselineCases.filter((x) => x.known_gap)) {
       const off = run(c, OFF);
       for (const [k, v] of Object.entries(c.known_gap!.observed)) expect(off[k as keyof Understood], `${c.id}.${k}`).toEqual(v);
     }
   });
 
-  it(`ON: ${FIXED.length} of the 62 known gaps are FIXED end to end (every expected field of the case holds), ${PARTIAL.length} improve partly, none regresses`, () => {
+  it(`ON: ${FIXED.length} of the 55 remaining known gaps are FIXED end to end (every expected field of the case holds), ${PARTIAL.length} improve partly, none regresses`, () => {
     const gaps = baselineCases.filter((c) => c.known_gap);
     const fixed = gaps.filter((c) => outcome(c).kind === "fixed").map((c) => c.id);
     const partial = gaps.filter((c) => outcome(c).kind === "partial").map((c) => c.id);

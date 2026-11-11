@@ -1,4 +1,4 @@
-import { normalize } from "./messageType";
+import { namesCollectibleData, normalize } from "./messageType";
 
 /**
  * THE RULES CODE APPLIES BEFORE THE CHAT MODEL IS CALLED (round 23). Four kinds of message have an answer that must not depend on a model's mood: they are checked here, in this order, and answered with fixed words:
@@ -157,7 +157,12 @@ const NAME_OBJ = /(?:^| )(?:اسمي|اسمى|الاسم|اسم الحساب|ا�
 const EMAIL_OBJ = /ايميلي|(?:^| )الايميل|(?:^| )الاميل|(?:^| )البريد|بريدي|اميلي/;
 const PASSWORD_OBJ = /كلمه (?:ال)?(?:سر|مرور)|باسورد|باسوورد|(?:ال)?رقم (?:ال)?سري/;
 const DELETE_ASK = /(?:احذف|حذف|امسح|مسح|الغاء|الغي|الغا|اقفل|قفل|ازاله|ازيل)\S*\s*(?:ال)?(?:حساب|اكونت|اكاونت)|(?:حسابي|اكونتي|الاكونت|الاكاونت)\s*(?:ده|دا|هذا)?\s*(?:ال)?(?:حذف|مسح|الغاء)/;
-const TOPUP_ASK = /اشحن|شحن\s*(?:ال)?(?:رصيد|حساب|محفظ)|(?:ال)?شحن(?: |$)|اضيف\s*(?:ال)?رصيد|اضافه\s*(?:ال)?رصيد|اشتري\s*(?:ال)?نقاط|شراء\s*(?:ال)?نقاط|طرق\s*(?:ال)?دفع|ادفع\s*ازاي|ازاي\s*ادفع|زياده\s*(?:ال)?رصيد|اعبي\s*(?:ال)?رصيد/;
+const TOPUP_ASK = /اشحن|شحن\s*(?:ال)?(?:رصيد|حساب|محفظ)|اضيف\s*(?:ال)?رصيد|اضافه\s*(?:ال)?رصيد|اشتري\s*(?:ال)?نقاط|شراء\s*(?:ال)?نقاط|طرق\s*(?:ال)?دفع|ادفع\s*ازاي|ازاي\s*ادفع|زياده\s*(?:ال)?رصيد|اعبي\s*(?:ال)?رصيد/;
+/**
+ * PR-1.4: the bare noun «شحن» («الشحن ازاي؟») is a top-up question only when nothing else says it is about SHIPPING or about data to collect: «قائمة مكاتب شحن في جدة» asks for shipping offices. A short message with no shipping or data word keeps its fixed top-up answer.
+ */
+const TOPUP_BARE = /(?:ال)?شحن(?: |$)/;
+const SHIPPING_CONTEXT = /مكاتب|مكتب|شركات|شركه|خدمات|خدمه|اسعار|سعر|تكلفه|بضاع|بضايع|شحنات|شحنه|دولي|بحري|جوي|جمارك|توصيل|مناديب|تجار|مستورد|موردين|مورد|(?:^| )(?:في|من|الي|الى|لـ)(?: |$)/;
 
 /** The account question a message asks, or null. A message that asks for data (it only mentions «حسابات» or «البريد») is never an account question. */
 export function accountTopicOf(message: string): AccountTopic | null {
@@ -167,6 +172,7 @@ export function accountTopicOf(message: string): AccountTopic | null {
   if (DELETE_ASK.test(text) && !/حسابات/.test(text)) return "delete";
   if (PASSWORD_OBJ.test(text) && (CHANGE.test(text) || /نسيت|ازاي|كيف|عايز|اريد|ممكن|اعمل/.test(text))) return "password";
   if (TOPUP_ASK.test(text) && !/تعليق|منشور|فيديو|شركات|تغريد/.test(text)) return "topup";
+  if (TOPUP_BARE.test(text) && !dataLike && !namesCollectibleData(text) && !SHIPPING_CONTEXT.test(text) && text.split(" ").length <= 4) return "topup";
   if (dataLike) return null;
   if (EMAIL_OBJ.test(text) && CHANGE.test(text)) return "email";
   if (NAME_OBJ.test(text) && CHANGE.test(text)) return "name";
@@ -190,11 +196,22 @@ export function accountAnswerAr(topic: AccountTopic): string {
 }
 
 // ---- 3. trust ---------------------------------------------------------------------------------------------------------------------------------------------------------------
-const TRUST = /(?:^| )(?:نصب|نصاب\S*|نصبتوا|نصبو|احتيال\S*|حرام[يه]\S*|وهم[يه]|مزيف\S*|مضمون\S*|موثوق\S*|ضمان)(?: |$)|الوثوق|اثق |ثقه فيكم|ثقه في|هتسرقوا|بتسرقوا|سرقه|فلوسي\s*(?:هتضيع|ضاعت|راحت)|(?:ال)?موقع\s*(?:ده|دا|هذا)?\s*(?:حقيقي|امن|امان|مضمون)/;
+/**
+ * PR-1.4: the bare words of TRUST («نصب», «احتيال», «مضمون», «ضمان» …) are also the SUBJECT of public research («هات تعليقات تيك توك عن نصب الاستثمار»). A bare word is a doubt about Diger only when it is not the subject of a topic marker («عن نصب …») and the message does not name data to
+ * collect; the phrases that are about the service itself («نصبتوا», «هتسرقوا», «ثقه فيكم», «الموقع ده حقيقي») are unchanged.
+ */
+const TRUST_BARE = /(?:^| )(?:نصب|نصاب\S*|احتيال\S*|حرام[يه]\S*|وهم[يه]|مزيف\S*|مضمون\S*|موثوق\S*|ضمان)(?: |$)|سرقه|الوثوق|اثق /;
+const TRUST_SELF = /(?:نصبتوا|نصبو|ثقه فيكم|ثقه في|هتسرقوا|بتسرقوا|فلوسي\s*(?:هتضيع|ضاعت|راحت)|(?:ال)?موقع\s*(?:ده|دا|هذا)?\s*(?:حقيقي|امن|امان|مضمون))/;
+const SUBJECT_OF = /(?:^| )(?:عن|حول|بخصوص|في موضوع|رايك في|رايكم في|about|regarding)\s+(?:ال)?(?:\S+\s+){0,2}$/;
 
 /** A message that doubts whether the service is honest or safe. */
 export function isTrustQuestion(message: string): boolean {
-  return TRUST.test(` ${normalize(message)} `);
+  const text = ` ${normalize(message)} `;
+  if (TRUST_SELF.test(text)) return true;
+  const bare = TRUST_BARE.exec(text);
+  if (!bare) return false;
+  if (namesCollectibleData(message)) return false;
+  return !SUBJECT_OF.test(text.slice(0, bare.index + 1));
 }
 
 export const TRUST_REPLY_AR = "أفهم حرصك. لا يُخصم منك شيء قبل أن ترى الخطة والسعر وتعتمدها بنفسك بزر «اعتمد»، ولا تدفع إلا مقابل ما سُلّم لك فعلًا، وما حُجز مؤقتًا ولم يُسلَّم يُحرَّر كاملًا. وفي كل طلب تجد ما جُمع وما سُلّم وما خُصم، ويمكنك أن تبدأ بأقل طلب لتجرّب بنفسك.";
