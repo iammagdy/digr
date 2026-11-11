@@ -2,7 +2,8 @@ import { NUMBER_WORDS_SRC, numberOfWord } from "./arabicNumberWords";
 import { conditionsOfRequest } from "./requestConditions";
 import { GAP_CHOICE_LINE_AR, gapLinesAr } from "./gapLines";
 import { platformOfStages, type SocialPlatform } from "./redesignFlagTypes";
-import { emptyFillReport, platformWithReading, topicWithReading, type FillReport } from "./semantic/contractFill";
+import { readConditions } from "./semantic/conditions";
+import { emptyFillReport, platformWithReading, topicWithoutConditions, topicWithReading, type FillReport } from "./semantic/contractFill";
 import { interpretRequest } from "./semantic/interpret";
 
 /**
@@ -142,7 +143,7 @@ export function optionalPartsOf(text: string): { required: string; preferences: 
 export const askedTextOf = (mission: { request_text: string; answer_text?: string | null }): string => `${mission.request_text} ${mission.answer_text ?? ""}`;
 
 /** How the contract is read. `semantic`: PR-1.2, the server-controlled flag `semantic_normalization_v1` (OFF unless the caller, which read it from the trusted settings, says true). The caller never takes it from the customer. */
-export interface ContractOptions { semantic?: boolean }
+export interface ContractOptions { semantic?: boolean; /** PR-1.3: what the customer typed to the question about a period, a country or a language (kept by the worker with the choices): read by the conditions reader together with the answer, never part of the request. */ conditionsAnswer?: string }
 
 /** The contract of a request, from the customer's words and the answer they gave to the one question (either may be empty). */
 export function buildRequestContract(request: unknown, answer?: unknown, options: ContractOptions = {}): RequestContract {
@@ -172,7 +173,21 @@ export function buildRequestContractWithReport(request: unknown, answer?: unknow
   const repliesAsked = parsedReplies || readingOfText?.content.replies === true;
   if (repliesAsked && !parsedReplies) report.filled.push("replies");
   const parsedTopic = topicOf(required);
-  const topic = readingOfRequired ? topicWithReading(parsedTopic, readingOfRequired, report) : parsedTopic;
+  // PR-1.3: the conditions of the words (a period, a country, a language), read with no clock: only WHETHER each is asked is needed here (the values and the clarifications are the Ask's, which has the moment of the request)
+  const conditions = options.semantic === true ? readConditions(request, answer, 0) : null;
+  const readTopic = readingOfRequired ? topicWithReading(parsedTopic, readingOfRequired, report) : parsedTopic;
+  const topic = conditions ? topicWithoutConditions(readTopic, conditions.phrases, report) : readTopic;
+  const periodAsked = classes.includes("date") || (conditions !== null && conditions.period.status !== "none");
+  const countryAsked = classes.includes("country") || (conditions !== null && (conditions.country.status === "resolved" || conditions.country.status === "many"));
+  // the old language reading cannot tell the language of the CONTENT from the language of the REPORT or of the chat: when the words carry any language word the conditions reader decides
+  const languageAsked = conditions !== null && conditions.language.found
+    ? conditions.language.content === "ar" || conditions.language.content === "en" || conditions.language.content === "unsupported"
+    : classes.includes("language");
+  if (conditions !== null) {
+    if (periodAsked && !classes.includes("date")) report.filled.push("period");
+    if (countryAsked && !classes.includes("country")) report.filled.push("country");
+    if (conditions.language.found && languageAsked !== classes.includes("language")) report.corrected.push("language");
+  }
   const contract: RequestContract = {
     platform,
     parentKind: kind,
@@ -182,9 +197,9 @@ export function buildRequestContractWithReport(request: unknown, answer?: unknow
     source: sourceOf(text),
     topic,
     ...(preferences.length > 0 ? { preferences } : {}),
-    country: classes.includes("country"),
-    language: classes.includes("language"),
-    period: classes.includes("date"),
+    country: countryAsked,
+    language: languageAsked,
+    period: periodAsked,
     comments: commentsAsked ? (ALL_COMMENTS.test(text) ? "all" : "some") : "none",
     replies: repliesAsked ? (ALL_REPLIES.test(text) || ALL_COMMENTS.test(text) && /ردود/.test(text) ? "all" : "some") : "none",
   };

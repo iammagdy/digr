@@ -1,4 +1,5 @@
 import { buildAsk, channelNamesOf, type Ask } from "../../src/lib/agentMission/foundation/ask";
+import { CLARIFY_QUESTION_AR } from "../../src/lib/agentMission/semantic/conditions";
 import { isOccurrenceAnswer, isRecurringEvent, occurrenceChoiceOf, OCCURRENCE_OPTIONS_AR, OCCURRENCE_QUESTION_AR, OCCURRENCE_YEAR_QUESTION_AR, type Occurrence } from "../../src/lib/agentMission/foundation/occurrence";
 import { checkChannelsAgainstWords } from "../../src/lib/agentMission/foundation/understand";
 import { buildShapeDigest } from "../../src/lib/modelPlanner/digest";
@@ -92,7 +93,7 @@ export type CompiledPlanning =
    * LIVE ROUND 7: no video of the pool read (two queries) is about the topic; the customer is asked before approval how to go on. Nothing is priced or held. PR 3, decision 7.5 (`why: "named_shortfall"`): the named Facebook page has fewer
    * deliverable posts in the pool than asked.
    */
-  | { kind: "question"; ask: Ask; question: string; options: string[]; reads: { pool: number; exposure: number }; why?: "no_about" | "named_shortfall" | "occurrence" | "occurrence_year" | "count" | "per_parent" | "instagram_account" | "youtube_channel" | "topic_relation" };
+  | { kind: "question"; ask: Ask; question: string; options: string[]; reads: { pool: number; exposure: number }; why?: "no_about" | "named_shortfall" | "occurrence" | "occurrence_year" | "count" | "per_parent" | "instagram_account" | "youtube_channel" | "topic_relation" | "conditions" };
 
 /** What the understand step cost (USD), carried on the result so the caller adds it to the mission's model cost (never a charge). */
 export type WithCost<T> = T & { llmCostUsd?: number };
@@ -157,7 +158,7 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   const occurrenceAnswer = occurrenceChoiceOf(deps.mission.answer_text);
   const answeredReady = isNamedShortfallAnswer(deps.mission.answer_text) || isOccurrenceAnswer(deps.mission.answer_text) || noAboutChoiceOf(deps.mission.answer_text) !== null || deps.answerIsChoice === true;
   const occurrenceEdit: Occurrence | undefined = occurrenceAnswer && occurrenceAnswer.kind !== "ask_year" ? occurrenceAnswer : deps.occurrence;
-  let ask = buildAsk(deps.mission.request_text, answeredReady ? null : deps.mission.answer_text, Number.isFinite(at) ? at : deps.nowMs, { ...(deps.edits ?? {}), ...(occurrenceEdit && !deps.edits?.occurrence ? { occurrence: occurrenceEdit } : {}) }, { semantic: deps.semantic === true });
+  let ask = buildAsk(deps.mission.request_text, answeredReady ? null : deps.mission.answer_text, Number.isFinite(at) ? at : deps.nowMs, { ...(deps.edits ?? {}), ...(occurrenceEdit && !deps.edits?.occurrence ? { occurrence: occurrenceEdit } : {}) }, { semantic: deps.semantic === true, ...(deps.choices?.conditionsAnswer ? { conditionsAnswer: deps.choices.conditionsAnswer } : {}) });
   // ROUND 14, PART B: what the customer chose at the count questions and the budget (in the request's words or chosen) join the Ask
   const choices = deps.choices ?? {};
   const budget = choices.budget ?? budgetOfWords(deps.mission.request_text) ?? undefined;
@@ -168,6 +169,13 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   for (const e of deps.askEdits ?? []) { const r = applyAskEdit(ask, e, { nowMs: deps.nowMs }); if (r.ok) ask = r.ask; }
   if (deps.topicRelation && ask.topic.text) ask = { ...ask, topic: { ...ask.topic, relation: deps.topicRelation } };
   const reads = { pool: 0, exposure: 0 };
+  // PR-1.3 (flag `semantic_normalization_v1` only; `ask.clarify` is absent with it off): a period, a country or a language the words leave undecided («من نوفمبر لحد فبراير» with no year, two countries, «بالفرنسي») is asked ONCE, before anything is read, held or priced.
+  // A card edit of the field answers it. After three questions of the mission the request ends honestly instead of a fourth question.
+  const openClarify = (ask.clarify ?? []).filter((c) => (c.field === "period" ? ask.period === null : c.field === "country" ? ask.country === null : ask.language === null));
+  if (openClarify.length > 0) {
+    if ((deps.questionsAsked ?? 0) >= 3) return { kind: "cannot", ask, reason: "conditions_unclear", reads };
+    return { kind: "question", ask, why: "conditions", question: CLARIFY_QUESTION_AR[openClarify[0].code], options: [], reads };
+  }
   // ROUND 30: INSTAGRAM WITH NO ACCOUNT. The only verified parent tool reads the posts of a named public account, so a request that names none is asked ONCE which account to read, before anything is read, held or priced; the account the customer gave
   // (read by code in the run, kept with the other choices) is the Ask's named source, and the topic and the count stay the request's own. A request that already NAMES a source (an account by an Arabic name, no username) is left exactly as it was. No usable answer ends the request honestly (the question is never asked twice). No provider capability is added.
   // ROUND 33: THE CANDIDATE TOOLS of the parents, best first. A tool derived from the catalog stays only if its chain with the comments and replies cards the request needs passes the catalog check (an identifier the next tool cannot take is refused HERE, before any read or hold)

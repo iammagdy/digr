@@ -465,13 +465,19 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     answerIsChoice = true;
     choices = { ...choices, ...(ref ? { youtubeChannel: String(mission.answer_text).replace(/\s+/g, " ").trim().slice(0, 120) } : { youtubeChannelDeclined: true }) };
     await updateRunState(store, mission.id, (r) => { const { pending: _p, ...rest } = r; void _p; return { ...rest, choices }; }, deps.log);
+  } else if (compiledActive && prior?.pending === "conditions") {
+    // PR-1.3 (flag on only): the answer to the question about a period, a country or a language is kept with the choices (a later question's answer replaces `answer_text`); the conditions reader takes it from there and its words are not part of the request
+    answerIsChoice = true;
+    const said = String(mission.answer_text ?? "").replace(/\s+/g, " ").trim().slice(0, 200);
+    choices = { ...choices, conditionsAnswer: [choices.conditionsAnswer, said].filter((x): x is string => Boolean(x)).join(" ").slice(-400) };
+    await updateRunState(store, mission.id, (r) => { const { pending: _p, ...rest } = r; void _p; return { ...rest, choices }; }, deps.log);
   } else if (compiledActive && choices.youtubeChannel !== undefined && String(mission.answer_text ?? "").replace(/\s+/g, " ").trim().slice(0, 120) === choices.youtubeChannel) {
     answerIsChoice = true;
   } else if (compiledActive && choices.instagramAccount !== undefined && instagramAccountOf(mission.answer_text) === choices.instagramAccount) {
     // a planning that starts again after the answer was read (a restart, a later question): the same answer is still not part of the request
     answerIsChoice = true;
   }
-  if (compiledActive && prior?.pending && prior.pending !== "instagram_account" && prior.pending !== "youtube_channel") {
+  if (compiledActive && prior?.pending && prior.pending !== "instagram_account" && prior.pending !== "youtube_channel" && prior.pending !== "conditions") {
     const parsed = choiceAnswerOf(mission.answer_text, prior.pending);
     if (parsed) {
       answerIsChoice = true;
@@ -499,8 +505,8 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // THE QUESTION BEFORE APPROVAL (live round 7): no video of the two pages read is about the topic; the plan is not made, the customer chooses (the same needs_input card as the topic question)
   if (compiled?.kind === "question") {
     // every question card counts toward the three a request may have; a count or comments question also waits for its answer
-    await updateRunState(store, mission.id, (r) => ({ ...r, questionsAsked: (r.questionsAsked ?? 0) + 1, ...(compiled.why === "count" || compiled.why === "per_parent" || compiled.why === "instagram_account" || compiled.why === "youtube_channel" ? { pending: compiled.why } : {}), ...(compiled.why === "topic_relation" ? { stage2Pending: "topic_relation" as const } : {}) }), deps.log);
-    await store.addEvent(mission.id, { kind: "call", message_ar: compiled.why === "named_shortfall" ? "قياس داخلي: سؤال قبل الخطة، منشورات الصفحة المسمّاة أقل من المطلوب." : compiled.why === "occurrence" || compiled.why === "occurrence_year" ? "قياس داخلي: سؤال قبل الخطة، الحدث يتكرر ولم تُحدَّد سنة." : "قياس داخلي: سؤال قبل الخطة، لا فيديو في ما قُرئ يتحدث عن الموضوع.", counts: { compiled: 0, question: 1, pool_reads: compiled.reads.pool, exposure_reads: compiled.reads.exposure } }).catch(() => undefined);
+    await updateRunState(store, mission.id, (r) => ({ ...r, questionsAsked: (r.questionsAsked ?? 0) + 1, ...(compiled.why === "count" || compiled.why === "per_parent" || compiled.why === "instagram_account" || compiled.why === "youtube_channel" || compiled.why === "conditions" ? { pending: compiled.why } : {}), ...(compiled.why === "topic_relation" ? { stage2Pending: "topic_relation" as const } : {}) }), deps.log);
+    await store.addEvent(mission.id, { kind: "call", message_ar: compiled.why === "named_shortfall" ? "قياس داخلي: سؤال قبل الخطة، منشورات الصفحة المسمّاة أقل من المطلوب." : compiled.why === "occurrence" || compiled.why === "occurrence_year" ? "قياس داخلي: سؤال قبل الخطة، الحدث يتكرر ولم تُحدَّد سنة." : compiled.why === "conditions" ? "قياس داخلي: سؤال قبل الخطة، فترة أو دولة أو لغة في الطلب تحتاج توضيحًا." : "قياس داخلي: سؤال قبل الخطة، لا فيديو في ما قُرئ يتحدث عن الموضوع.", counts: { compiled: 0, question: 1, pool_reads: compiled.reads.pool, exposure_reads: compiled.reads.exposure } }).catch(() => undefined);
     await store.updateMission(mission.id, { status: "needs_input", question_ar: compiled.question, plan_public: { question_options: compiled.options } as any, ...(compiled.llmCostUsd ? { planning_llm_usd: Number((Number((await store.getMission(mission.id))?.planning_llm_usd ?? mission.planning_llm_usd ?? 0) + compiled.llmCostUsd).toFixed(6)) } : {}), ...clear });
     await store.addEvent(mission.id, { kind: "question", message_ar: compiled.question });
     return;

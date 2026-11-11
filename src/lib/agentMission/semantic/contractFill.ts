@@ -11,15 +11,17 @@ import { normalizeArabic } from "./normalizeArabic";
  *   - CLEAR one wrong value: an X platform that only a bare «X» gave, when the words name it («مطعم اسمه X»).
  * A disagreement (both have a value, they differ) keeps the parser's value and is reported by field name only (never the customer's words).
  */
-export type FillField = "platform" | "comments" | "replies" | "parentKind" | "topic";
+export type FillField = "platform" | "comments" | "replies" | "parentKind" | "topic" | "period" | "country" | "language";
 export interface FillReport {
   filled: FillField[];
   tightened: FillField[];
   cleared: FillField[];
+  /** PR-1.3: the parser's value was DEMONSTRABLY wrong for the words typed (a month range read as its first month, «فمصر» read as no country) and the explicit wording replaced it. Field names only. */
+  corrected: FillField[];
   /** Both the parser and the reading have a value and they differ: the parser's is kept. */
   disagreements: FillField[];
 }
-export const emptyFillReport = (): FillReport => ({ filled: [], tightened: [], cleared: [], disagreements: [] });
+export const emptyFillReport = (): FillReport => ({ filled: [], tightened: [], cleared: [], corrected: [], disagreements: [] });
 
 /** The platform after the reading: the parser's value, filled, or cleared (a bare «X» that the words show is a name). */
 export function platformWithReading(existing: SocialPlatform | null, reading: SemanticInterpretation, report: FillReport): SocialPlatform | null {
@@ -40,6 +42,26 @@ const cutAtStop = (topic: string): string => {
   const at = words.findIndex((w, i) => i > 0 && TOPIC_STOP.has(w));
   return (at < 0 ? words : words.slice(0, at)).join(" ");
 };
+
+/**
+ * PR-1.3: a phrase the conditions reader found (a period, a language word, a country with its locative) is never part of the research topic. When the topic ENDS with such a phrase («السياحة الشهر اللي فات», «السياحة بالفرنسي») it is cut off.
+ * Compared word by word on the normalized words, so the customer's own spelling in the topic is kept.
+ */
+export function topicWithoutConditions(topic: string | null, phrases: ReadonlyArray<ReadonlyArray<string>>, report: FillReport): string | null {
+  if (topic === null || phrases.length === 0) return topic;
+  const words = topic.split(/\s+/).filter(Boolean);
+  const normalized = words.map((w) => normalizeArabic(w));
+  let cut = words.length;
+  for (const phrase of phrases) {
+    if (phrase.length === 0) continue;
+    for (let at = 1; at + phrase.length <= words.length; at += 1) {
+      if (phrase.every((t, o) => normalized[at + o] === t)) { cut = Math.min(cut, at); break; }
+    }
+  }
+  if (cut >= words.length) return topic;
+  report.tightened.push("topic");
+  return words.slice(0, cut).join(" ");
+}
 
 /** The topic after the reading: the parser's, filled when it has none, or tightened when it kept an output field or an exclusion inside it. */
 export function topicWithReading(existing: string | null, reading: SemanticInterpretation, report: FillReport): string | null {

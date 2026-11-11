@@ -535,6 +535,8 @@ export function compilePlan(input: CompileInput): CompileResult {
     }
   }
   if (ask.language && card.cannot?.includes("language")) notes.push("اللغة: اخترنا من بين النتائج ما كتب باللغة المطلوبة، وفي الملف عمود للغة كل صف.");
+  // PR-1.3 (flag on only): a REPORT language the customer asked for is not a filter of the data, and the file and its summary stay in Arabic: said before approval, never silently ignored
+  if (ask.reportLanguage === "en") notes.push("لغة التقرير: طلبت التقرير بالإنجليزية، وملف النتائج وملخصه بالعربية حاليًا؛ لم نُصفِّ المحتوى حسب لغته بسبب ذلك.");
 
   // THE CUSTOMER'S NUMBER PER PARENT («١٠٠ تعليق من كل فيديو», live msn_e32cd467): each chosen parent gives at most that number of top-level comments; the card's edit (a total) comes later and wins
   const perParent = commentsCard && ask.edits.comments === undefined ? ask.commentsPerParent : null;

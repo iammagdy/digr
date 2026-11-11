@@ -4,6 +4,7 @@ import { createFakeDriver } from "../../agent/src/fakeDriver";
 import { createMemoryStore, newMission } from "../../agent/src/memoryStore";
 import { createSupabaseStore } from "../../agent/src/supabaseStore";
 import { runPlanning, type RunnerDeps } from "../../agent/src/runMission";
+import { AGENT_RUN_STATE_FILE } from "../../src/lib/agentMission/constants";
 import { loadTregCatalog } from "../../src/lib/treg/catalog";
 import { setModelPlanningForTests } from "../../src/lib/agentMission/testSeam";
 import type { PricedPlan } from "../../src/lib/agentMission/plan";
@@ -32,6 +33,8 @@ export interface ProductionPlanningInput {
   planningAt?: string;
   /** Extra trusted settings of the worker (`agent_settings`), e.g. `{ semantic_normalization_v1: true }` (PR-1.2). Absent: none, so every flag is off. */
   settings?: Record<string, unknown>;
+  /** The worker's run note as an earlier planning left it (PR-1.3: `{ pending: "conditions", questionsAsked: 1 }` after a clarification question), written before the planning starts. Absent: a fresh mission. */
+  runState?: Record<string, unknown>;
 }
 
 const catalog = loadTregCatalog();
@@ -81,6 +84,7 @@ export async function runProductionPlanning(input: ProductionPlanningInput): Pro
     const rec = fakeRecorder();
     const driver = createFakeDriver([{ tool: "ask_question", args: { question_ar: "؟", options_ar: ["أ", "ب"] } }]);
     const deps: RunnerDeps = { store, client: fakeMoneyClient().client, catalog, driver, recorder: rec.recorder, commit: rec.commit, call: call as never, models: { planning: "claude-haiku-5-5", execution: "claude-haiku-5-5" }, resolveAccess: async () => NOT_ADMIN };
+    if (input.runState) await memory.putFile(id, AGENT_RUN_STATE_FILE, JSON.stringify({ planningStarts: 1, ...input.runState }), "application/json");
     if (input.planningAt) vi.setSystemTime(new Date(input.planningAt));
     await runPlanning(deps, memory.missions.get(id)!);
     const m = memory.missions.get(id)!;

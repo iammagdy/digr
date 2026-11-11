@@ -137,9 +137,9 @@ export function askCardView(ask: Ask, poolCard?: ToolCard): AskCardView {
     { key: "count", labelAr: "العدد", valueAr: ask.count === null ? "لم يُحدد بعد" : toArabicDigits(ask.count), customerWords: false, editable: true, input: { kind: "number", min: 1, max: AGENT_MAX_DELIVERED_ROWS }, scope: scope("count", { field: "count", value: 1 }) },
     { key: "topic", labelAr: "الموضوع", valueAr: ask.topic.text ?? "بدون موضوع محدد", customerWords: ask.topic.text !== null, editable: true, input: { kind: "text", maxChars: TOPIC_MAX_CHARS }, scope: scope("topic", { field: "topic", value: "x" }) },
     { key: "source", labelAr: "المصدر", valueAr: src.valueAr, customerWords: src.customerWords, editable: true, input: { kind: "text", maxChars: SOURCE_MAX_CHARS }, scope: scope("source", { field: "source", value: null }) },
-    { key: "period", labelAr: "الفترة", valueAr: ask.period ? `من ${toArabicDigits(ask.period.from)} إلى ${toArabicDigits(ask.period.to)}` : "بدون فترة محددة", customerWords: false, editable: true, input: { kind: "period" }, scope: scope("period", { field: "period", value: null }) },
-    { key: "country", labelAr: "الدولة", valueAr: ask.country ? COUNTRY_AR[ask.country] ?? "دولة غير معروفة" : "أي دولة", customerWords: false, editable: true, input: { kind: "choice", options: COUNTRY_OPTIONS }, scope: scope("country", { field: "country", value: null }) },
-    { key: "language", labelAr: "اللغة", valueAr: ask.language === "ar" ? "العربية" : ask.language === "en" ? "الإنجليزية" : "أي لغة", customerWords: false, editable: true, input: { kind: "choice", options: LANGUAGE_OPTIONS }, scope: scope("language", { field: "language", value: null }) },
+    { key: "period", labelAr: "الفترة", valueAr: ask.period ? `من ${toArabicDigits(ask.period.from)} إلى ${toArabicDigits(ask.period.to)}` : ask.clarify?.some((c) => c.field === "period") ? "نحتاج توضيح الفترة قبل الخطة" : "بدون فترة محددة", customerWords: false, editable: true, input: { kind: "period" }, scope: scope("period", { field: "period", value: null }) },
+    { key: "country", labelAr: "الدولة", valueAr: ask.country ? COUNTRY_AR[ask.country] ?? "دولة غير معروفة" : ask.clarify?.some((c) => c.field === "country") ? "نحتاج توضيح الدولة قبل الخطة" : "أي دولة", customerWords: false, editable: true, input: { kind: "choice", options: COUNTRY_OPTIONS }, scope: scope("country", { field: "country", value: null }) },
+    { key: "language", labelAr: "اللغة", valueAr: ask.language === "ar" ? "العربية" : ask.language === "en" ? "الإنجليزية" : ask.clarify?.some((c) => c.field === "language") ? "نحتاج توضيح اللغة قبل الخطة" : "أي لغة", customerWords: false, editable: true, input: { kind: "choice", options: LANGUAGE_OPTIONS }, scope: scope("language", { field: "language", value: null }) },
     { key: "order", labelAr: "الترتيب", valueAr: ask.order === "newest" ? "الأحدث" : "الأكثر تعليقًا", customerWords: false, editable: true, input: { kind: "choice", options: ORDER_OPTIONS }, scope: scope("order", { field: "order", value: ask.order }) },
     { key: "comments", labelAr: "التعليقات", valueAr: commentsValue(ask), customerWords: false, editable: ask.platform !== "x", input: { kind: "choice", options: COMMENTS_OPTIONS }, scope: "recompile" },
     { key: "commentsPerParent", labelAr: `التعليقات من كل ${parentEach(ask)}`, valueAr: ask.commentsPerParent !== null ? toArabicDigits(ask.commentsPerParent) : "غير محدد", customerWords: false, editable: commentsOn, input: { kind: "number", min: 1, max: COMMENTS_PER_PARENT_MAX }, scope: "recompile" },
@@ -172,6 +172,9 @@ const realDay = (d: unknown): d is string => {
 type Applied = { ok: true; ask: Ask } | { ok: false; reason: AskEditRejection };
 const reject = (reason: AskEditRejection): Applied => ({ ok: false, reason });
 
+/** PR-1.3: the customer's edit of a field answers the clarification the planning would have asked about it. */
+const answered = (ask: Ask, field: "period" | "country" | "language"): void => { if (ask.clarify) { const rest = ask.clarify.filter((c) => c.field !== field); if (rest.length > 0) ask.clarify = rest; else delete ask.clarify; } };
+
 /** Applies one edit to the Ask: a NEW Ask (the old one is never changed), or a reason code. Persistable numbers are also kept in `edits` so a later planning rebuilds the same Ask. */
 export function applyAskEdit(ask: Ask, edit: AskEdit, ctx: { nowMs: number }): Applied {
   const next: Ask = structuredClone(ask);
@@ -200,25 +203,28 @@ export function applyAskEdit(ask: Ask, edit: AskEdit, ctx: { nowMs: number }): A
       return { ok: true, ask: next };
     }
     case "period": {
-      if (edit.value === null) { next.period = null; return { ok: true, ask: next }; }
+      if (edit.value === null) { next.period = null; answered(next, "period"); return { ok: true, ask: next }; }
       const v = edit.value as { from?: unknown; to?: unknown } | undefined;
       if (!v || typeof v !== "object" || !realDay(v.from) || !realDay(v.to)) return reject("period_bad_day");
       if (v.from > v.to) return reject("period_reversed");
       if (v.to > cairoDayOf(ctx.nowMs)) return reject("period_in_future");
       next.period = { from: v.from, to: v.to, startMs: cairoDayStartMs(v.from), endExclusiveMs: cairoDayEndExclusiveMs(v.to) };
+      answered(next, "period");
       return { ok: true, ask: next };
     }
     case "country": {
-      if (edit.value === null || edit.value === "any") { next.country = null; return { ok: true, ask: next }; }
+      if (edit.value === null || edit.value === "any") { next.country = null; answered(next, "country"); return { ok: true, ask: next }; }
       if (typeof edit.value !== "string" || !(edit.value in COUNTRY_AR)) return reject("country_unknown");
       next.country = edit.value;
+      answered(next, "country");
       return { ok: true, ask: next };
     }
     case "language": {
       const v = edit.value as unknown;
-      if (v === null || v === "any") { next.language = null; return { ok: true, ask: next }; }
+      if (v === null || v === "any") { next.language = null; answered(next, "language"); return { ok: true, ask: next }; }
       if (v !== "ar" && v !== "en") return reject("unknown_choice");
       next.language = v;
+      answered(next, "language");
       return { ok: true, ask: next };
     }
     case "order": {
