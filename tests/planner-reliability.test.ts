@@ -108,3 +108,22 @@ describe("round 51: the planner is told WHICH TOOL calls each provider's capabil
     if (!r.ok) expect(r.issues.join(" ")).toMatch(/column «maps_url»: code has no Arabic title for this key, so give it `title_ar`/);
   });
 });
+
+describe("round 51 (real planner, Z14): the phones of PLACES are their listing's phone, not a company contact stage", () => {
+  const lookup = {
+    call: (id: string) => (id === "call_0001" ? { id, endpointId: "crawl4ai.google.serp.maps", ok: true, costUsd: 0.01, rows: 10 } : null),
+    evidenceText: (id: string) => (id === "call_0001" ? JSON.stringify([{ name: "مطعم الريادة", phone: "+201020000000", address: "شارع النخبة، المهندسين، الجيزة", rating: 4.2 }]) : null),
+    endpointAllowed: () => true,
+    endpointCapability: () => "google.serp.maps",
+    isContactSource: () => false,
+    requestText: "هات مطاعم المهندسين وأرقام تليفوناتها",
+  };
+  const plan = (columns: Array<{ key: string }>) => validateAndPricePlan({ summary_ar: "ستحصل على مطاعم المهندسين.", stages: [{ key: "places", title_ar: "المطاعم", endpoint_id: "crawl4ai.google.serp.maps", expected_rows: 10, parent_key: null, deliver: true, columns, sample_rows: [{ name: "مطعم الريادة", phone: "+201020000000" }], measured_by: ["call_0001"] }] }, lookup as never);
+  const issuesOf = (r: ReturnType<typeof plan>) => (r.ok ? [] : r.issues).join(" | ");
+  it("a delivered place stage with the phone column answers «أرقام تليفوناتها»", () => {
+    expect(issuesOf(plan([{ key: "name" }, { key: "phone" }, { key: "address" }, { key: "rating" }]))).not.toMatch(/add a CONTACT STAGE/);
+  });
+  it("without the phone column the plan is still sent back", () => {
+    expect(issuesOf(plan([{ key: "name" }, { key: "address" }, { key: "rating" }]))).toMatch(/add a CONTACT STAGE|phone/);
+  });
+});

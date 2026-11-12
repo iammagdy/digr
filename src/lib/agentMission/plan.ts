@@ -793,7 +793,10 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   const wants = requestWantsContacts(lookup.requestText);
   if ((wants.email || wants.phone) && lookup.isContactSource) {
     // a delivered PEOPLE stage always carries the finder steps (added below by code), so the planner never has to plan or to excuse them
-    const hasContactStage = priced.some((s) => lookup.isContactSource!(s.endpoint_id) || s.columns.some((c) => c.kind !== undefined) || (s.deliver && isPeopleStage(s)));
+    // (round 51, live evaluation Z14 «مطاعم المهندسين … وأرقام تليفوناتها»: the PLACES' own phone, the number of the business's public listing that the places contract already delivers, is what was asked; the planner was sent to add a
+    // company contact stage. Phones only: an e-mail still needs its contact stage)
+    const placePhones = wants.phone && !wants.email && priced.some((s) => s.deliver && s.parent_key === null && (isPlaceSource(s.endpoint_id, lookup.endpointCapability) || s.endpoint_id === "contextdev.parse.google-maps") && s.columns.some((c) => /(?:^|_)(?:phone|tel|telephone)(?:$|_)/i.test(c.key)));
+    const hasContactStage = placePhones || priced.some((s) => lookup.isContactSource!(s.endpoint_id) || s.columns.some((c) => c.kind !== undefined) || (s.deliver && isPeopleStage(s)));
     const note = input.contacts_note_ar === undefined ? null : checkCustomerText(input.contacts_note_ar, { maxChars: 300 });
     if (note && note.issues.length) issues.push(`contacts_note_ar: ${note.issues.join("; ")}`);
     else if (!hasContactStage && !note) issues.push(`the customer asked for ${wants.email ? "work e-mails" : ""}${wants.email && wants.phone ? " and " : ""}${wants.phone ? "phones" : ""}: add a CONTACT STAGE per person or company (a contact source of the catalog or the page parsers; mark its e-mail / phone columns with kind "work_email" / "phone"), sample it, and deliver verified values only; if no source can give them, pass contacts_note_ar (ONE Arabic sentence saying honestly why they are not in the plan)`);
