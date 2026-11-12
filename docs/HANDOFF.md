@@ -4,6 +4,17 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 52 (12 Nov 2026): planner reliability (docs/DIGER-INTELLIGENCE-FINAL-ACCEPTANCE.md section 10)
+
+* **What:** the formal refusals behind the four R4 planner failures (J3, G2, Z16, Z35), traced from the recorded transcripts of six real-planner runs (504 proposals, 363 refused).
+  * Common column keys (`source`, `maps_url`, `developer`, `snippet`, `country`, `company`, …) have a code title; an unknown untitled key is still refused.
+  * Every catalog sample answers `rows_in_code`, the exact expression of its rows; `run_code` returning `[]` over a page with rows gets a warning naming it; the run_code example no longer teaches `data.items`.
+  * The yield_from diagnosis offers only a list of row objects.
+  * Eval only: synthetic provider rows answer structured filters, name companies by sector, give App Store pages for App Store searches (`evals/live-intelligence/synthetic.ts`).
+* **Not changed:** validators, give-up guard, contact-stage rule, privacy, pricing, approval, settlement, flags (OFF), the evaluation key.
+* **Measured:** no real run in this round (no spending authorized): the real planner rate stays **83.9% (R4)**, below 90%. Offline replay: 86 of 88 recorded untitled-key issues removed; 9 of 363 refused proposals would now pass that check.
+* **Tests:** `tests/planner-reliability-r52.test.ts` (11), mutation-checked.
+
 ## Round 51 (12 Nov 2026, PR #462): intelligence layer completion (docs/DIGER-INTELLIGENCE-FINAL-ACCEPTANCE.md)
 
 **No SQL write, no flag change, no migration, no schema change, no live provider call, no money/ledger/pricing/approval/settlement/infrastructure line.** `chat_research_brief_v1` and `capability_discovery_v1` stay OFF.

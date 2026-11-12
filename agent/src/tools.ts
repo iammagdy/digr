@@ -92,6 +92,8 @@ export interface RunState {
   samples: Map<string, Array<{ rows: number; key: string }>>;
   /** Plans propose_plan refused, and what the last refusal was about («data»: no sampled row matches the stage's rule; else «formal»). Read when the planning ends without a card (refusal.ts). */
   planRejections?: { count: number; last: "formal" | "data" };
+  /** Where the rows of each answered sample are, as code (`rows_in_code` of its answer), by call id: an EMPTY run_code result over such a page is told where its rows are (round 52). */
+  rowsAt?: Map<string, { rows: number; expr: string }>;
 }
 export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), described: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, giveUpNoRowsRefusals: 0, peopleSendBacks: 0, moreAvailable: new Map(), samples: new Map() });
 /** The redesigned mode of planning: any of the three social flags is active for this mission's account (planning does not know the request type yet; with every flag off this is false and nothing changes). */
@@ -241,6 +243,23 @@ export function unhealthyMessage(ctx: Pick<ToolContext, "stats" | "now" | "phase
 
 /** The sources of the last catalog_search that have not been tried yet, cheapest first: what a failed sample moves on to. */
 export const untriedSources = (state: RunState, except: string, n = 3): string[] => (state.ranking ?? []).filter((x) => x !== except && !state.tried.has(x)).slice(0, n);
+
+/**
+ * AN EMPTY MAPPING OF A PAGE THAT HAS ROWS (round 52, planner reliability): the real planner read a wrong path, got `[]`, cited it, and its plan was refused for its sample rows two or three times before it gave up (J3, Z16, Z35 of the
+ * recorded runs). The run_code answer now says at once where the rows of its input pages are. It only informs: the output is saved as it is, and the plan checks are unchanged.
+ */
+export function emptyMappingWarning(files: ReadonlyArray<string>, inputs: Record<string, unknown>, rowsAt: ReadonlyMap<string, { rows: number; expr: string }> | undefined): string | null {
+  const where: string[] = [];
+  for (const f of files) {
+    if (!f.startsWith("call_")) continue;
+    const known = rowsAt?.get(f);
+    if (known && known.rows > 0) { where.push(`${f} holds ${known.rows} rows at ${known.expr}`); continue; }
+    const page = inputs[f];
+    const rows = page && typeof page === "object" && !Array.isArray(page) ? (page as Record<string, unknown>).rows : undefined;
+    if (Array.isArray(rows) && rows.length > 0) where.push(`${f} holds ${rows.length} rows at inputs.${f}.rows`);
+  }
+  return where.length === 0 ? null : `the result is an EMPTY array, but ${where.join("; ")}: read the rows there and map every one of them (an empty output measures nothing, and a stage that cites it is refused)`;
+}
 
 const valueAt = (value: unknown, path: string | null | undefined): unknown => {
   if (!path || path === "root") return value;
@@ -412,6 +431,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         const result = await gateway.tregCall({ endpoint_id: a.endpoint_id, params: sent, purpose: a.purpose, why: [a.why, sameJob.recorded].filter(Boolean).join(" | ") || undefined });
         // the full inputs of this call, kept for the plan's execution recipe (the call log keeps short values only)
         if (isObject(sent) && typeof result.call_id === "string") state.callParams.set(result.call_id, { ...(sent as Record<string, unknown>) });
+        if (result.ok === true && typeof result.rows_in_code === "string") (state.rowsAt ??= new Map()).set(result.call_id, { rows: Number(result.rows_in_page ?? 0) || 0, expr: result.rows_in_code });
         if (!("refused" in result) || result.refused === "needs_login") state.tried.add(id);
         if (ctx.phase === "planning" && result.ok === true && isObject(a.params)) { const list = state.samples.get(id) ?? []; list.push({ rows: Number(result.rows_in_page ?? 0) || 0, key: JSON.stringify(Object.entries(a.params).filter(([k]) => !/^(?:limit|count|page|cursor|page_size|per_page)$/i.test(k)).sort(([x], [y]) => x.localeCompare(y)))}); state.samples.set(id, list); }
         // ONE OVER-BUDGET REFUSAL IS NOT THE END OF THE SEARCH (live, 2026-10-31: the only people call was a source dearer than the planning budget; it was refused once and the planner stopped, dropping the decision makers): the answer
@@ -516,7 +536,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       description: "Run JavaScript in an isolated sandbox on files of THIS mission (saved pages call_0001..., earlier outputs out_0001...). No network, no environment, no secrets, a time limit and a memory limit. Your code is the body of a function: the files arrive as the object `inputs` (inputs.call_0001 is the parsed page) and you `return` a JSON-serialisable value (rows, counts, ids). The returned value is saved as a new output file (id returned) that you can pass to later run_code calls or to save_rows.",
       phases: ["planning", "execution"],
       params: {
-        code: { type: "string", description: "Function body. Example: const rows = inputs.call_0001.data.items; return rows.map(r => ({id: String(r.id), text: r.text}));" },
+        code: { type: "string", description: "Function body. Read the rows where the call's answer says (`rows_in_code`; an answer saved as { rows }: inputs.call_0001.rows). Example: const rows = inputs.call_0001.items; return rows.map(r => ({id: String(r.id), text: r.text}));" },
         files: { type: "string[]", description: "Ids of the files to load into `inputs`, e.g. [\"call_0001\"]" },
       },
       handler: async (a) => {
@@ -537,7 +557,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         try { await store.putNew(mission.id, codeRunPath(id), JSON.stringify({ code, files }), "application/json"); } catch { /* the copy in memory serves this run */ }
         const value = JSON.parse(result.resultJson) as unknown;
         const inline = result.resultJson.length <= SANDBOX_INLINE_RESULT_CHARS;
-        return { ok: true, output_id: id, size_chars: result.resultJson.length, ...(inline ? { result: value } : { preview: previewOf(value), note: "the result is large: only a preview is shown; the whole output is saved under output_id" }), logs: result.logs.slice(0, 20) };
+        const emptyOverRows = Array.isArray(value) && value.length === 0 ? emptyMappingWarning(files, loaded.inputs, state.rowsAt) : null;
+        return { ok: true, output_id: id, size_chars: result.resultJson.length, ...(inline ? { result: value } : { preview: previewOf(value), note: "the result is large: only a preview is shown; the whole output is saved under output_id" }), ...(emptyOverRows ? { warning: emptyOverRows } : {}), logs: result.logs.slice(0, 20) };
       },
     },
     {

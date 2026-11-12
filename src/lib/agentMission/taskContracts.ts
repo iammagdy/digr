@@ -261,5 +261,10 @@ const COLUMN_TITLE_BY_KEY: Readonly<Record<string, string>> = {
   text: "النص", author: "الكاتب", username: "اسم المستخدم", posted_at: FIELD_LABEL_AR.date, created_at: FIELD_LABEL_AR.date, date: FIELD_LABEL_AR.date, link: FIELD_LABEL_AR.link, url: FIELD_LABEL_AR.link, likes: FIELD_LABEL_AR.like, replies: FIELD_LABEL_AR.reply, replies_count: "عدد الردود", comments: FIELD_LABEL_AR.comment, shares: FIELD_LABEL_AR.share, views: FIELD_LABEL_AR.view,
   rating: FIELD_LABEL_AR.rating, followers: FIELD_LABEL_AR.followers, name: "الاسم", title: "العنوان", description: "الوصف", website: "الموقع الإلكتروني", industry: COMPANY_ACTIVITY_TITLE_AR, activity: COMPANY_ACTIVITY_TITLE_AR, city: "المدينة", address: "العنوان", street_address: "العنوان", phone: "رقم التليفون", company_phone: COMPANY_PHONE_TITLE_AR,
   email: "الإيميل", company_email: COMPANY_EMAIL_TITLE_AR, reviews_count: "عدد التقييمات", review_count: "عدد التقييمات", size: "حجم الشركة", linkedin_url: "الرابط", job_title: PERSON_TITLE_TITLE_AR, full_name: PERSON_NAME_TITLE_AR,
+  // (planner reliability, round 52: the keys the real planner wrote most often WITHOUT a title in six recorded evaluation runs, each a formal rejection: «source» in 35 missions, «maps_url» 15, «developer» 10, «snippet» 8, «country» 7, ...;
+  // the rule is unchanged: a key code does not know still needs the model's title, and a title the model writes always wins)
+  source: "المصدر", source_url: "رابط المصدر", source_page: "رابط المصدر", maps_url: "رابط الخريطة", google_maps_url: "رابط الخريطة", google_reviews_url: "رابط التقييمات", profile_url: "رابط الحساب", linkedin: "حساب لينكدإن",
+  developer: "المطوّر", snippet: "مقتطف", summary: "الملخص", country: "الدولة", category: "الفئة", company: "الشركة", company_name: "الشركة", published: "تاريخ النشر", published_at: "تاريخ النشر", employees: "عدد الموظفين",
+  reviews_total: "عدد التقييمات", language: "اللغة", domain: "نطاق الموقع",
 };
 export const knownColumnTitleAr = (key: string): string | null => COLUMN_TITLE_BY_KEY[String(key).toLowerCase()] ?? null;

@@ -103,9 +103,9 @@ describe("round 51: the planner is told WHICH TOOL calls each provider's capabil
     expect(String(driver.results[0].result.error)).toMatch(/web provider source, not a catalog endpoint: call it with parse_page \{parser:"google-maps-reviews", url\}/);
   });
   it("a column whose key code does not know and has no title: the rejection says what to do", () => {
-    const r = validateAndPricePlan({ summary_ar: "خطة.", stages: [{ key: "places", title_ar: "الفنادق", endpoint_id: "crawl4ai.google.serp.maps", expected_rows: 5, parent_key: null, deliver: true, columns: [{ key: "maps_url" }], measured_by: [] }] }, { call: () => null, evidenceText: () => null, endpointAllowed: () => true } as never);
+    const r = validateAndPricePlan({ summary_ar: "خطة.", stages: [{ key: "places", title_ar: "الفنادق", endpoint_id: "crawl4ai.google.serp.maps", expected_rows: 5, parent_key: null, deliver: true, columns: [{ key: "zz_place_note" }], measured_by: [] }] }, { call: () => null, evidenceText: () => null, endpointAllowed: () => true } as never);
     expect(r.ok).toBe(false);
-    if (!r.ok) expect(r.issues.join(" ")).toMatch(/column «maps_url»: code has no Arabic title for this key, so give it `title_ar`/);
+    if (!r.ok) expect(r.issues.join(" ")).toMatch(/column «zz_place_note»: code has no Arabic title for this key, so give it `title_ar`/);
   });
 });
 

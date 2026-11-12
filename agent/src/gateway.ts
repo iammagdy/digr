@@ -47,7 +47,7 @@ export type RefusalCode =
   | "missing_params" | "over_budget" | "daily_cap" | "recording_unavailable" | "needs_login" | "repeat_sample" | "stage_reserved" | "contact_sample";
 
 export type GatewayCallResult =
-  | { ok: true; call_id: string; http_status: number; rows_in_page: number; has_more: boolean | null; next_cursor: string | null; shape: unknown; first_rows: unknown[]; warnings: string[]; saved: string }
+  | { ok: true; call_id: string; http_status: number; rows_in_page: number; has_more: boolean | null; next_cursor: string | null; shape: unknown; first_rows: unknown[]; warnings: string[]; saved: string; /** the JavaScript expression that reads this page's rows in run_code */ rows_in_code?: string }
   | { ok: false; call_id: string; refused: RefusalCode; message: string }
   | { ok: false; call_id: string; failed: true; http_status: number; message: string };
 
@@ -81,6 +81,18 @@ export interface GatewayDeps {
 }
 
 const clip = (s: unknown, n: number): string => String(s ?? "").slice(0, n);
+
+/**
+ * WHERE THE ROWS OF A SAVED PAGE ARE, AS CODE (round 52, planner reliability): in six recorded evaluation runs the real planner mapped `inputs.call_N.data.items` (the run_code example) on pages whose rows were at `items`, at `data` or at the
+ * root, got an EMPTY array, and its plan was refused for its sample rows (J3, Z16, Z35). The answer of every sample now says the exact expression; the rows and the rules are unchanged. Null when the page has no list.
+ */
+export function rowsExpressionOf(callId: string, listPath: string | null | undefined, strategy?: string | null): string | null {
+  if (!listPath) return null;
+  const base = `inputs.${callId}`;
+  const expr = listPath === "root" ? base : base + listPath.split(".").map((p) => (/^[A-Za-z_$][\w$]*$/.test(p) ? `.${p}` : /^\d+$/.test(p) ? `[${p}]` : `[${JSON.stringify(p)}]`)).join("");
+  // an answer that IS one record (a profile, a company detail) is one row: wrapped, so the mapping code is the same as for a list
+  return strategy === "single_object" || strategy === "root_object" ? `[${expr}]` : expr;
+}
 
 function pageRowsOf(endpoint: CatalogEndpoint, params: Record<string, unknown>): number {
   const input = endpoint.inputs.find((i) => LIMIT_PARAM_NAMES.includes(i.name));
@@ -317,13 +329,15 @@ export function createGateway(deps: GatewayDeps) {
       if (!result.ok) {
         return { ok: false, call_id: id, failed: true, http_status: result.httpStatus, message: clip(result.errorDetails || result.detail || result.error || "the source answered with an error", 240) };
       }
+      const rowsIn = storagePath && rows > 0 ? rowsExpressionOf(id, digest?.listPath, digest?.listStrategy) : null;
       return {
         ok: true, call_id: id, http_status: result.httpStatus, rows_in_page: rows,
         has_more: reading?.hasMore ?? null, next_cursor: reading?.nextCursor ?? null,
         shape: digest ? { rows_in_page: digest.rowsInSample, list_path: digest.listPath, fields: digest.fields, next_cursor_path: digest.nextCursorPath, cursor_kind: digest.cursorKind } : null,
         first_rows: (reading?.rows ?? []).slice(0, AGENT_FIRST_ROWS).map((r) => digestValue(r)),
         warnings: reading?.warnings ?? [],
-        saved: storagePath ? `${id} (the full page is saved; give "${id}" to run_code to process it)` : "not saved",
+        saved: storagePath ? `${id} (the full page is saved; give "${id}" to run_code to process it${rowsIn ? `: its rows are ${rowsIn}` : ""})` : "not saved",
+        ...(rowsIn ? { rows_in_code: rowsIn } : {}),
       };
     },
   };
