@@ -79,6 +79,24 @@ They ran three more times, chat only, on code after round 3:
 
 ## 2. What changed (each from a real-model or real-planner failure, each with a deterministic regression test)
 
+**Where each change applies.**
+
+* **Behind the two switches (OFF in production), the chat-turn changes:**
+  * the own-business question;
+  * the open question asked;
+  * «كمّل»;
+  * the apps vocabulary for the model.
+* **For EVERY customer now (no switch):**
+  * the period reader (`ask.ts`, `requestConditions.ts`; the worker plans from it on every path, the compiled social path included);
+  * the spelled hundreds;
+  * the two privacy-rule changes;
+  * the planner's refusal messages, schema descriptions and prompt sentence;
+  * the places-phone and app-entity planning rules;
+  * the `treg_call` redirect;
+  * the give-up classification.
+
+Each of these changes makes the system execute what the customer asked, or refuse more precisely. None widens what is collected, and the full suite passes with them.
+
 Tests: `tests/intelligence-final-acceptance.test.ts` (chat layer, 60) and `tests/planner-reliability.test.ts` (planner, 10): 70 tests. Two fixes were also mutation-checked: the places-phone rule and the app relevance rule (each test fails with its fix removed).
 
 ### 2.1 Clarification in the chat (defect A, D2)
