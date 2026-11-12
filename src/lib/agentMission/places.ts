@@ -21,7 +21,7 @@ const COUNTRIES: ReadonlyArray<Country> = [
   { code: "EG", labelAr: "مصر", names: ["مصر", "جمهورية مصر العربية", "egypt", "arab republic of egypt", "eg"], tlds: ["eg"], phone: "20", cities: [
     { id: "cairo", labelAr: "القاهرة", names: ["القاهرة", "cairo", "al qahirah", "al-qahirah", "al qahira", "el qahira", "el-qahira", "qahira", "new cairo", "القاهرة الجديدة", "التجمع الخامس", "مدينة نصر", "nasr city", "المعادي", "maadi", "heliopolis", "مصر الجديدة"] },
     { id: "giza", labelAr: "الجيزة", names: ["الجيزة", "giza", "al jizah", "al-jizah", "el giza", "6 اكتوبر", "6th of october", "october city", "الشيخ زايد", "sheikh zayed", "المهندسين", "mohandessin", "الدقي", "dokki"] },
-    { id: "alexandria", labelAr: "الإسكندرية", names: ["الاسكندريه", "الإسكندرية", "alexandria", "alex", "al iskandariyah", "al-iskandariyah", "iskandariya"] },
+    { id: "alexandria", labelAr: "الإسكندرية", names: ["الاسكندريه", "الإسكندرية", "اسكندريه", "اسكندرية", "إسكندرية", "alexandria", "alex", "al iskandariyah", "al-iskandariyah", "iskandariya"] },
     { id: "mansoura", labelAr: "المنصورة", names: ["المنصوره", "المنصورة", "mansoura"] },
     { id: "tanta", labelAr: "طنطا", names: ["طنطا", "tanta"] },
     { id: "assiut", labelAr: "أسيوط", names: ["اسيوط", "أسيوط", "assiut", "asyut"] },

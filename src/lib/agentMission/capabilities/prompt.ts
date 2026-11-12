@@ -54,6 +54,8 @@ export const OBJECTIVE_PROMPT_LINES: readonly string[] = [
   "  إن كان في الطلب أكثر من هدف أول (parent: null) فاكتب في كل هدف أول الحقل request: طلب هذا الجزء وحده في جملة قصيرة كاملة بنفس قواعد request العامة (المنصة باسمها، ما يُجمع، «عن» قبل موضوعه، شروط العميل وأرقامه لهذا الجزء فقط). كل جزء تُجهَّز له خطة بسعرها، ولا تطلب من العميل أن يختار جزءًا واحدًا.",
   "  شروط العميل: ما ينطبق على الطلب كله (فترة أو مكان أو لغة) اكتبه مرة واحدة في period وcountry وlanguage العامة بكلماته. وما ينطبق على جزء واحد فقط اكتبه في الهدف الأول لهذا الجزء: period وcountry وlanguage بكلمات العميل نفسها، وcount بالعدد الذي كتبه لهذا الجزء. لا تنقل شرط جزء لجزء آخر، ولا تغيّر قيمته (آخر شهر تبقى آخر شهر، والغردقة تبقى الغردقة)، واكتبه كما هو في request الجزء.",
   "  اختصر: احذف من كل هدف أي حقل فارغ (platform وparent وcontacts وwhat)، واكتب what فقط مع unsupported، واجعل reason كلمات قليلة، وreply فارغًا عند ready لطلب فيه أكثر من جزء.",
+  "  حقول الهدف المسموحة فقط: id وoperation وplatform وparent وcontacts وwhat وrequest وperiod وcountry وlanguage وcount؛ لا تضف حقلًا غيرها (مثل topic). والشروط (period وcountry وlanguage وcount) تُكتب في الهدف الأول للجزء فقط، لا في الهدف الذي يتفرع منه.",
+  '  مثال شكل طلب فيه جزءان (الكلمات للتوضيح فقط): "objectives":[{"id":"o1","operation":"social.parents","platform":"tiktok","request":"تعليقات تيك توك عن ..."},{"id":"o2","operation":"social.comments","platform":"tiktok","parent":"o1"},{"id":"o3","operation":"places.discover","request":"تقييمات فنادق ...","country":"..."},{"id":"o4","operation":"places.reviews","parent":"o3"}]',
 ];
 
 const usd = (n: number | null): string => (n === null ? "unpriced" : `${n.toFixed(6)} USD/row`);

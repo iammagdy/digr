@@ -20,7 +20,11 @@ import { buildRequestContract, platformsNamedIn, type RequestContract } from "./
  */
 export const RESEARCH_BRIEF_VERSION = 1 as const;
 export const BRIEF_PLATFORMS = ["tiktok", "x", "instagram", "facebook", "youtube"] as const;
-export const BRIEF_CONTENT = ["posts", "videos", "comments", "replies", "tweets", "accounts", "companies", "people", "places", "reviews"] as const;
+/**
+ * What is collected. `articles` (public news, articles and web pages) and `contacts` (the PUBLIC business e-mail or phone of companies) were added after the live evaluation of 2026-11-12 (docs/LIVE-INTELLIGENCE-EVAL.md finding 3): the real
+ * model writes them for capabilities the system has (web.search, company.contacts), and without them a correct reading was discarded. Each is checked against the objective that serves it (`objectivesIssue`).
+ */
+export const BRIEF_CONTENT = ["posts", "videos", "comments", "replies", "tweets", "accounts", "companies", "people", "places", "reviews", "articles", "contacts"] as const;
 export const BRIEF_STATUSES = ["ready", "needs_clarification"] as const;
 export type BriefPlatform = (typeof BRIEF_PLATFORMS)[number];
 export type BriefContent = (typeof BRIEF_CONTENT)[number];
@@ -86,6 +90,13 @@ export const BRIEF_REQUEST_MAX = 1000;
 const FIELD_MAX = 120;
 const KNOWN_FIELDS = new Set(["status", "request", "platforms", "content", "count", "topic", "period", "country", "language", "objectives", "v"]);
 const OBJECTIVE_FIELDS = new Set(["id", "operation", "platform", "parent", "contacts", "what", "request", "period", "country", "language", "count"]);
+/**
+ * DESCRIPTIVE keys a real model adds to an objective (live evaluation 2026-11-12: «topic»). They describe the goal and are never executed: their text joins `what` (internal, privacy-checked by `validateBrief`) instead of discarding the
+ * whole reading. Every OTHER unknown key (an endpoint, a provider, a field list, a price...) still rejects the objectives.
+ */
+const DESCRIPTIVE_OBJECTIVE_FIELDS = new Set(["topic", "description"]);
+type Conds = Pick<BriefObjective, "period" | "country" | "language" | "count">;
+const sameCond = (a: unknown, b: unknown) => String(a).replace(/\s+/g, " ").trim() === String(b).replace(/\s+/g, " ").trim();
 
 export type ParsedBrief = { ok: true; brief: ResearchBrief; unknown: string[] } | { ok: false; issue: string };
 
@@ -114,7 +125,7 @@ function parseObjectives(v: unknown): BriefObjective[] | null | false {
   for (const raw of v) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
     const o = raw as Record<string, unknown>;
-    if (Object.keys(o).some((k) => !OBJECTIVE_FIELDS.has(k))) return false;
+    if (Object.keys(o).some((k) => !OBJECTIVE_FIELDS.has(k) && !DESCRIPTIVE_OBJECTIVE_FIELDS.has(k))) return false;
     const id = typeof o.id === "string" ? o.id.trim() : "";
     if (!/^[A-Za-z0-9_-]{1,12}$/.test(id) || out.some((x) => x.id === id)) return false;
     const operation = typeof o.operation === "string" ? o.operation.trim().toLowerCase() : "";
@@ -136,12 +147,44 @@ function parseObjectives(v: unknown): BriefObjective[] | null | false {
       if (!Number.isSafeInteger(n) || n < 1 || n > 1_000_000) return false;
       count = n;
     }
-    const conds: Pick<BriefObjective, "period" | "country" | "language" | "count"> = {};
+    const conds: Conds = {};
     for (const k of ["period", "country", "language"] as const) { const v = text(o[k], FIELD_MAX); if (v) conds[k] = v; }
     if (count !== null) conds.count = count;
-    // a condition of one part is written on that part's FIRST objective (the brief's own fields hold the conditions of the whole request)
-    if (Object.keys(conds).length > 0 && parent !== null) return false;
-    out.push({ id, operation: operation as ObjectiveOperation, platform, parent, contacts, what: text(o.what, FIELD_MAX), ...(partRequest ? { request: partRequest } : {}), ...conds });
+    const described = [...DESCRIPTIVE_OBJECTIVE_FIELDS].map((k) => text(o[k], FIELD_MAX)).filter((v): v is string => v !== null);
+    const what = [text(o.what, FIELD_MAX), ...described].filter((v): v is string => v !== null).join(" — ").slice(0, FIELD_MAX) || null;
+    out.push({ id, operation: operation as ObjectiveOperation, platform, parent, contacts, what, ...(partRequest ? { request: partRequest } : {}), ...conds });
+  }
+  return hoistChildConditions(out);
+}
+
+/**
+ * A condition of one part belongs on that part's FIRST objective (the brief's own fields hold the conditions of the whole request). A real model often writes it on the child it is about (the period of the reviews, the count of the
+ * comments; live evaluation 2026-11-12, E1 and H1). It is the SAME part's condition, so it is moved to the part's first objective; when that objective states ANOTHER value of the same kind, the reading is ambiguous and rejected
+ * (false). A parent written after its child, or unknown, is left to `objectivesIssue` (structure).
+ */
+function hoistChildConditions(list: BriefObjective[]): BriefObjective[] | false {
+  const byId = new Map(list.map((o) => [o.id, o]));
+  const rootOf = (o: BriefObjective): BriefObjective | null => {
+    let cur: BriefObjective | undefined = o;
+    for (let i = 0; i <= list.length && cur; i += 1) { if (cur.parent === null) return cur; cur = byId.get(cur.parent); }
+    return null;
+  };
+  const out = list.map((o) => ({ ...o }));
+  const outById = new Map(out.map((o) => [o.id, o]));
+  for (const child of out) {
+    if (child.parent === null) continue;
+    const kinds = (["period", "country", "language", "count"] as const).filter((k) => child[k] !== undefined && child[k] !== null);
+    if (kinds.length === 0) continue;
+    const root0 = rootOf(child);
+    // no reachable first objective: the conditions cannot be placed (structure is judged later; the objectives are rejected here as before)
+    if (!root0) return false;
+    const root = outById.get(root0.id)!;
+    for (const k of kinds) {
+      const v = child[k];
+      if (root[k] !== undefined && root[k] !== null) { if (!sameCond(root[k], v)) return false; }
+      else (root as Record<string, unknown>)[k] = v;
+      delete (child as Record<string, unknown>)[k];
+    }
   }
   return out;
 }
@@ -256,6 +299,18 @@ export function validateBrief(brief: ResearchBrief, ctx: BriefContext): Validate
   return { ok: true, brief: { ...brief, request }, contract };
 }
 
+/**
+ * THE COUNT OF A MULTI-PART BRIEF. A request of several parts has no one number: each part's number is its own (its first objective's `count`, its sentence). A brief-level `count` that IS one of the parts' numbers is that part's, so it is
+ * cleared from the whole request before validation (live evaluation 2026-11-12, J1: the whole request «… تيك توك، وتقييمات فنادق …» was rejected for not writing the TikTok part's 300). Any other brief-level count stays and is checked.
+ */
+export function withPartCounts(brief: ResearchBrief): ResearchBrief {
+  const objectives = brief.objectives ?? [];
+  if (brief.count === null || objectives.filter((o) => o.parent === null).length < 2) return brief;
+  const n = brief.count;
+  const ofParts = objectives.some((o) => o.count === n || (typeof o.request === "string" && numbersWritten(o.request).has(n)));
+  return ofParts ? { ...brief, count: null } : brief;
+}
+
 /** The SERVED social platforms (the five the brief schema knows); any other platform an objective names is said honestly as unavailable, never executed. */
 export const isServedPlatform = (p: string | null): p is BriefPlatform => p !== null && (BRIEF_PLATFORMS as readonly string[]).includes(p);
 /** Which operation an objective of each operation may hang on (null: written alone; for a child operation code then adds the step its chain needs, need.ts). The chain the capabilities can actually execute; the people of a company or a first «people» search are both valid. */
@@ -298,7 +353,7 @@ export function objectivesIssue(brief: ResearchBrief, named: ReadonlySet<string>
   const ops = new Set(executable.map((o) => o.operation));
   for (const p of brief.platforms) if (!executable.some((o) => o.platform === p)) return "objective_dropped";
   for (const p of executable.map((o) => o.platform).filter(isServedPlatform)) if (!brief.platforms.includes(p)) return "objective_dropped";
-  const needs: Array<[BriefContent, ObjectiveOperation[]]> = [["comments", ["social.comments", "social.replies"]], ["replies", ["social.replies", "social.comments"]], ["companies", ["companies.discover"]], ["places", ["places.discover"]], ["reviews", ["places.reviews"]], ["people", ["people.discover"]]];
+  const needs: Array<[BriefContent, ObjectiveOperation[]]> = [["comments", ["social.comments", "social.replies"]], ["replies", ["social.replies", "social.comments"]], ["companies", ["companies.discover"]], ["places", ["places.discover"]], ["reviews", ["places.reviews"]], ["people", ["people.discover"]], ["articles", ["web.search", "web.read"]], ["contacts", ["company.contacts"]]];
   for (const [c, wanted] of needs) if (brief.content.includes(c) && !wanted.some((w) => ops.has(w))) return "objective_dropped";
   return null;
 }

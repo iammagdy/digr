@@ -219,8 +219,18 @@ describe("whole-request conditions and one-part conditions", () => {
     expect(briefs.map((b) => [b.period, b.country, b.language])).toEqual([["آخر شهر", null, null], ["آخر سنة", "الغردقة", null], ["آخر سنة", "مصر", null]]);
   });
 
-  it("the schema: per-part conditions only on a FIRST objective; a count is a whole number", () => {
-    expect(parseBrief(briefOf({ ...three(), objectives: [o("o1", "social.parents", { platform: "tiktok", request: TIKTOK }), o("o2", "social.comments", { platform: "tiktok", parent: "o1", period: "آخر شهر" })] }))).toMatchObject({ ok: false, issue: "objectives" });
+  it("the schema: per-part conditions live on the part's FIRST objective (a child's condition is that part's, moved there; a conflicting one rejects); a count is a whole number", () => {
+    // live evaluation 2026-11-12 (E1, H1): the real model writes the part's period on the child it is about; it is the SAME part's condition, moved to its first objective, never to another part
+    const hoisted = parseBrief(briefOf({ ...three(), objectives: [o("o1", "social.parents", { platform: "tiktok", request: TIKTOK }), o("o2", "social.comments", { platform: "tiktok", parent: "o1", period: "آخر شهر" })] }));
+    expect(hoisted.ok).toBe(true);
+    if (hoisted.ok) {
+      expect(hoisted.brief.objectives![0]).toMatchObject({ id: "o1", period: "آخر شهر" });
+      expect(hoisted.brief.objectives![1].period).toBeUndefined();
+    }
+    // the same kind with ANOTHER value on the first objective: ambiguous, rejected (never guessed)
+    expect(parseBrief(briefOf({ ...three(), objectives: [o("o1", "social.parents", { platform: "tiktok", request: TIKTOK, period: "آخر أسبوع" }), o("o2", "social.comments", { platform: "tiktok", parent: "o1", period: "آخر شهر" })] }))).toMatchObject({ ok: false, issue: "objectives" });
+    // a child whose first objective cannot be reached: rejected
+    expect(parseBrief(briefOf({ ...three(), objectives: [o("o2", "social.comments", { platform: "tiktok", parent: "o9", period: "آخر شهر" })] }))).toMatchObject({ ok: false, issue: "objectives" });
     expect(parseBrief(briefOf({ ...three(), objectives: [o("o1", "social.parents", { platform: "tiktok", request: TIKTOK, count: -3 as never })] }))).toMatchObject({ ok: false, issue: "objectives" });
   });
 });

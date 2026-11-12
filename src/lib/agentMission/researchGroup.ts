@@ -42,13 +42,15 @@ export function partsOf(brief: Pick<ResearchBrief, "objectives"> & { request?: s
     const members: BriefObjective[] = [root];
     for (const o of objectives) if (o.parent !== null && ids.has(o.parent)) { ids.add(o.id); members.push(o); }
     const unresolved = members.every((o) => o.operation === "unsupported") || (root.operation.startsWith("social.") && !isServedPlatform(root.platform));
-    // a request with ONE part: that part's sentence is the whole request when the model wrote none for it
-    return { key: root.id, objectives: members, request: root.request ?? (roots.length === 1 && brief.request ? brief.request : null), unresolved };
+    // the part's sentence: the one written on its DEEPEST objective that has one (what the part delivers: «٣٠٠ تعليق من تيك توك عن …», not the intermediate «فيديوهات تيك توك عن …»; live evaluation 2026-11-12, J1), else its first
+    // objective's; a request with ONE part: the whole request when the model wrote none for it
+    const written = [...members].reverse().find((o) => typeof o.request === "string" && o.request.trim() !== "")?.request ?? null;
+    return { key: root.id, objectives: members, request: written ?? (roots.length === 1 && brief.request ? brief.request : null), unresolved };
   });
 }
 
 const CONTENT_OF: Partial<Record<BriefObjective["operation"], BriefContent>> = {
-  "social.comments": "comments", "social.replies": "replies", "companies.discover": "companies", "people.discover": "people", "places.discover": "places", "places.reviews": "reviews",
+  "social.comments": "comments", "social.replies": "replies", "companies.discover": "companies", "people.discover": "people", "places.discover": "places", "places.reviews": "reviews", "web.search": "articles", "company.contacts": "contacts",
 };
 
 /** The brief of ONE part, validated exactly like a brief of its own (`validateBrief`): its sentence, its platforms, what it collects, its number when its sentence writes exactly one, its objectives. Null without a sentence. */
@@ -205,7 +207,7 @@ export function samePartRequest(a: string | null, b: string | null, sameByParser
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 export type ConditionKind = "period" | "place" | "language" | "count" | "replies";
 export interface ConditionPhrases { period?: string | null; country?: string | null; language?: string | null; count?: number | null }
-export interface ConditionDrift { kind: ConditionKind; reason: "contradicts" | "missing" | "other_part"; phrase: string | null }
+export interface ConditionDrift { kind: ConditionKind; reason: "contradicts" | "missing" | "other_part"; phrase: string | null; /** the phrase is the MODEL's, not the customer's (never quoted to them as «what you wrote») */ invented?: boolean }
 
 /** Letters and digits only, with the spellings of one letter made one (أ/إ/آ → ا, ى → ي, ة → ه, Arabic-Indic digits → 0-9): for «the customer's own words are carried», never a list of words. */
 export function normWords(t: string | null | undefined): string {
@@ -238,31 +240,47 @@ export function conditionDriftOf(input: { partRequest: string; own: ConditionPhr
   const { partRequest, own, global, elsewhere, customerTexts, nowMs } = input;
   const written = (phrase: string) => customerTexts.some((t) => carries(t, phrase));
   for (const kind of ["period", "language"] as const) {
-    const phrase = own[kind] ?? global[kind] ?? null;
+    let phrase = own[kind] ?? global[kind] ?? null;
     const got = valueOf(kind, partRequest, nowMs);
+    // a condition the MODEL wrote in a field (never the customer's words, no value their words give) that the sentence does not execute is not the customer's requirement: it is ignored, never asked as if they wrote it (live evaluation
+    // 2026-11-12, I1: language «العربية» the customer never wrote); one the sentence DOES execute is checked below like any value the customer never gave
+    if (phrase && !written(phrase)) {
+      const want0 = valueOf(kind, phrase, nowMs);
+      if (want0 === null || !customerValues(kind, customerTexts, nowMs).has(want0)) phrase = null;
+    }
     if (phrase) {
       const want = valueOf(kind, phrase, nowMs);
       // words the reader does not understand: carried as the customer wrote them, never refused
       if (want === null) { if (written(phrase) && !carries(partRequest, phrase)) return { kind, reason: "missing", phrase }; continue; }
-      // the attributed words must be the customer's own (or give a value their words give)
-      if (!written(phrase) && !customerValues(kind, customerTexts, nowMs).has(want)) return { kind, reason: "contradicts", phrase };
       if (got === null) return { kind, reason: "missing", phrase };
       if (got !== want) return { kind, reason: "contradicts", phrase };
       continue;
     }
     if (got === null) continue;
     if (elsewhere.has(kind)) return { kind, reason: "other_part", phrase: null };
-    if (!customerValues(kind, customerTexts, nowMs).has(got)) return { kind, reason: "contradicts", phrase: null };
+    if (!customerValues(kind, customerTexts, nowMs).has(got)) return { kind, reason: "contradicts", phrase: null, invented: true };
   }
   // the place: the cities and the country the customer's words for this part name must be the part's (never another, never wider or narrower)
-  const where = own.country ?? global.country ?? null;
+  let where = own.country ?? global.country ?? null;
+  if (where && !written(where)) {
+    // a place the MODEL wrote in a field: the country of a city the customer named («الإسكندرية» → «مصر», live evaluation C2 and G1), or one the sentence does not carry, is not a requirement of the customer's (ignored); a place
+    // the sentence DOES carry and the customer never named is asked as the model's, never quoted as theirs
+    const customerPlaces = new Set(customerTexts.flatMap((t) => [...placeKeys(t)]));
+    const wantKeys = placeKeys(where);
+    const implied = wantKeys.size > 0 && [...wantKeys].every((k) => customerPlaces.has(k));
+    const carried = [...wantKeys].some((k) => placeKeys(partRequest).has(k)) || carries(partRequest, where);
+    if (implied || !carried) where = null;
+    else return { kind: "place", reason: "contradicts", phrase: where, invented: true };
+  }
   if (where) {
     const wantKeys = placeKeys(where);
     const gotKeys = placeKeys(partRequest);
     if (wantKeys.size === 0) { if (written(where) && !carries(partRequest, where)) return { kind: "place", reason: "missing", phrase: where }; }
     else {
       for (const k of wantKeys) if (!gotKeys.has(k)) return { kind: "place", reason: gotKeys.size > 0 ? "contradicts" : "missing", phrase: where };
-      for (const c of citiesOf(partRequest)) if (!wantKeys.has(c)) return { kind: "place", reason: "contradicts", phrase: where };
+      // a city the sentence names must be the attributed place's, unless the CUSTOMER named that very city and it lies in the attributed country (the country was attributed, the customer's own city kept)
+      const customerPlaces = new Set(customerTexts.flatMap((t) => [...placeKeys(t)]));
+      for (const c of citiesOf(partRequest)) if (!wantKeys.has(c) && !(customerPlaces.has(c) && wantKeys.has(c.split(":")[0]))) return { kind: "place", reason: "contradicts", phrase: where };
       const wantCode = countryCodeOf(where, nowMs) ?? countryCodeOf(`في ${where}`, nowMs);
       const gotCode = countryCodeOf(partRequest, nowMs);
       if (wantCode && gotCode && wantCode !== gotCode) return { kind: "place", reason: "contradicts", phrase: where };
@@ -280,11 +298,47 @@ export function conditionDriftOf(input: { partRequest: string; own: ConditionPhr
 
 /** Whether two sentences EXECUTE the same conditions (period window, country, content language, places, numbers), read as the worker reads them: a corrected value («آخر شهر» → «آخر أسبوع») is never the same part. */
 export function sameExecutedValues(a: string, b: string, nowMs: number): boolean {
-  const x = buildAsk(a, null, nowMs, {}, { semantic: false });
-  const y = buildAsk(b, null, nowMs, {}, { semantic: false });
   const key = (s: Set<string> | Set<number>) => JSON.stringify([...s].map(String).sort());
-  return JSON.stringify([x.period?.from ?? null, x.period?.to ?? null, x.country, x.language]) === JSON.stringify([y.period?.from ?? null, y.period?.to ?? null, y.country, y.language])
-    && key(placeKeys(a)) === key(placeKeys(b)) && key(numbersWritten(a)) === key(numbersWritten(b));
+  return sameExecutedConditions(a, b, nowMs) && key(numbersWritten(a)) === key(numbersWritten(b));
+}
+
+/** The executed conditions of a sentence (period window, country code, content language, places), as the worker reads them. */
+function conditionsOf(t: string, nowMs: number) {
+  const x = buildAsk(t, null, nowMs, {}, { semantic: false });
+  return { period: x.period ? `${x.period.from}..${x.period.to}` : null, country: x.country, language: x.language, places: [...placeKeys(t)].sort() };
+}
+/** The same, without the numbers (a count is compared elsewhere, by the code that edits a plan's count). */
+export function sameExecutedConditions(a: string, b: string, nowMs: number): boolean {
+  return JSON.stringify(conditionsOf(a, nowMs)) === JSON.stringify(conditionsOf(b, nowMs));
+}
+/** Whether `b` CHANGES a condition `a` already states (a period, a country, a language or the places, present in both with another value): a correction, never an addition. */
+export function conditionChanged(a: string, b: string, nowMs: number): boolean {
+  const x = conditionsOf(a, nowMs);
+  const y = conditionsOf(b, nowMs);
+  return (x.period !== null && y.period !== null && x.period !== y.period) || (x.country !== null && y.country !== null && x.country !== y.country)
+    || (x.language !== null && y.language !== null && x.language !== y.language) || (x.places.length > 0 && y.places.length > 0 && JSON.stringify(x.places) !== JSON.stringify(y.places));
+}
+
+/**
+ * The brief's CONDITION FIELDS kept only when they are the customer's (their own words, a value their words give, or the country of a place they named): a period, a country or a language the model filled in by itself is cleared before
+ * the brief is stored or shown to the model again (BRIEF_SO_FAR), so it never becomes «what the customer said». The sentences are untouched (what they execute is checked by `conditionDriftOf`).
+ */
+export function groundedConditions<T extends ConditionPhrases>(fields: T, customerTexts: ReadonlyArray<string>, nowMs: number): T {
+  const written = (phrase: string) => customerTexts.some((t) => carries(t, phrase));
+  const out = { ...fields };
+  for (const kind of ["period", "language"] as const) {
+    const phrase = out[kind];
+    if (!phrase || written(phrase)) continue;
+    const v = valueOf(kind, phrase, nowMs);
+    if (v === null || !customerValues(kind, customerTexts, nowMs).has(v)) out[kind] = null;
+  }
+  const where = out.country;
+  if (where && !written(where)) {
+    const customerPlaces = new Set(customerTexts.flatMap((t) => [...placeKeys(t)]));
+    const keys = placeKeys(where);
+    if (!(keys.size > 0 && [...keys].every((k) => customerPlaces.has(k)))) out.country = null;
+  }
+  return out;
 }
 
 /**

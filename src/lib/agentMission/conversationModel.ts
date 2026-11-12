@@ -53,6 +53,8 @@ export interface Decision {
   failure?: string;
   /** Brief mode: the brief the model proposed, checked against the schema (null: none, or it failed the schema). Not yet validated against the conversation (researchBrief.ts `validateBrief`). */
   brief?: ParsedBrief | null;
+  /** Brief mode: how many first objectives (parts) the model's raw brief described, before any check (a rejected multi-part reading is asked, never reduced to the words). */
+  briefParts?: number;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -70,19 +72,23 @@ const OPEN_LINES: Record<OpenState, string> = {
  * CONSOLIDATED MISSION: THE DISCOVERY SECTION of the prompt (brief mode only). The model leads the conversation like a research consultant: it understands the goal, keeps what the customer already said, asks only what matters, in its own words,
  * one natural question at a time, and maintains ONE revisable brief across turns. The code validates the brief (researchBrief.ts) and alone decides whether a mission is created; prices, approval and money stay with the code.
  */
-export function briefPromptLines(soFar: ResearchBrief | null): string[] {
+export function briefPromptLines(soFar: ResearchBrief | null, withObjectives = false): string[] {
   const lines = [
     "",
     "فهم طلب البحث (أنت مستشار بحث يقود الحوار، لا استمارة أسئلة):",
     "- افهم هدف العميل وما قاله بالفعل في المحادثة كلها، وحدّد ما ينقص فعلًا فقط.",
     "- مع كل data_request وكل edit_of_open_request أضف الحقل brief في نفس سطر الـ JSON:",
-    '  "brief":{"status":"ready","request":"...","platforms":[],"content":[],"count":null,"topic":"","period":"","country":"","language":""}',
+    withObjectives
+      ? '  "brief":{"status":"ready","request":"...","platforms":[],"content":[],"count":null,"topic":"","period":"","country":"","language":"","objectives":[...]}'
+      : '  "brief":{"status":"ready","request":"...","platforms":[],"content":[],"count":null,"topic":"","period":"","country":"","language":""}',
+    ...(withObjectives ? ["  objectives حقل داخل brief نفسه (آخر حقوله قبل قوس إغلاقه)، وليس حقلًا بجانب brief في الـ JSON."] : []),
     "- request: طلب البحث الكامل في جملة أو جملتين بالعربية يجمع كل ما طلبه العميل في هذه المحادثة لهذا الطلب (والملخص السابق إن وُجد)، مع تطبيق تصحيحاته: القيمة الجديدة تحل محل القديمة، وكل ما لم يغيّره يبقى كما هو.",
     "  اكتب المنصة باسمها: تيك توك أو إكس أو إنستجرام أو فيسبوك أو يوتيوب. اكتب صراحة ما يُجمع: فيديوهات، منشورات، تغريدات، تعليقات، ردود. اكتب الموضوع بعد كلمة «عن». اكتب الفترة والبلد واللغة بكلمات العميل نفسها (مثل «آخر شهر»، «في مصر»).",
     "  لا تكتب في request أي رقم لم يكتبه العميل، ولا تضف منصة أو نوع بيانات أو فترة أو عددًا لم يطلبه، ولا تحذف شيئًا طلبه.",
     "  لا تضع في request أبدًا بيانات خاصة لأفراد عاديين (أرقام هواتفهم أو عناوين سكنهم أو بريدهم الشخصي، الرسائل والمحادثات الخاصة، الأرقام القومية والهويات). إن طلبها العميل مع شيء عام فاكتب في request الجزء العام فقط، واشرح في reply أننا لا نجمع الجزء الخاص.",
-    "- platforms: من tiktok وx وinstagram وfacebook وyoutube فقط، وما ذكره العميل صراحة (أو وافق عليه بعد سؤالك). content: من posts وvideos وcomments وreplies وtweets وaccounts وcompanies وpeople وplaces وreviews. count: العدد الذي كتبه العميل وإلا null. topic وperiod وcountry وlanguage: كما قالها العميل وإلا نصًا فارغًا.",
-    "- status = ready عندما يُعرف ما يُجمع وعن أي موضوع (والمنصة إن كانت بيانات من وسائل التواصل). وإلا needs_clarification، واكتب في reply سؤالًا واحدًا طبيعيًا مفتوحًا عمّا ينقص فقط، بكلماتك أنت، ويقدر العميل أن يجيبه بكلماته.",
+    "- platforms: من tiktok وx وinstagram وfacebook وyoutube فقط، وما ذكره العميل صراحة (أو وافق عليه بعد سؤالك). content: من هذه القيم فقط ولا غيرها: posts وvideos وcomments وreplies وtweets وaccounts وcompanies وpeople وplaces وreviews وarticles (أخبار ومقالات وصفحات ويب عامة) وcontacts (إيميل أو تليفون العمل الرسمي المنشور للشركات). count: العدد الذي كتبه العميل وإلا null. topic وperiod وcountry وlanguage: كما قالها العميل وإلا نصًا فارغًا.",
+    "- لا تستنتج شرطًا لم يكتبه العميل: لا تكتب country لأن المدينة في بلد ما (الإسكندرية أو الغردقة لا تعني أن تكتب مصر)، ولا language لأن العميل كتب بالعربية، ولا period لم يذكره. الحقل الفارغ أفضل من قيمة لم يقلها.",
+    "- status = ready عندما يُعرف ما يُجمع وعن أي موضوع (والمنصة إن كانت بيانات من وسائل التواصل). وإلا needs_clarification، واكتب في reply سؤالًا واحدًا طبيعيًا مفتوحًا عمّا ينقص فقط، بكلماتك أنت، ويقدر العميل أن يجيبه بكلماته. needs_clarification بدون سؤال في reply خطأ.",
     "- لا تسأل عن شيء ذكره العميل. لا تسأل عن العدد أو الفترة أو البلد إلا إذا كان الطلب لا يُفهم بدونها؛ فالنظام يجهّز الخطة ويعرض العدد والسعر قبل أي خصم، ويسأل هو عن العدد إن احتاجه.",
     "- إن طلب العميل شيئًا لا نقدمه (منصة أخرى غير الخمس، تقرير بالإنجليزية، ردود على إكس كتعليقات...) فقل ذلك بصدق في reply في جملة واحدة واقترح بديلًا، وأبقِ في request ما نقدر عليه، ولا تدّعِ قدرة غير موجودة.",
     "- رسالة تضيف شيئًا («والتعليقات كمان») أو تصحح شيئًا («لا، خليها إنستجرام بدل تيك توك وآخر أسبوعين بس») هي تكملة لنفس الطلب: اكتب request كاملًا محدّثًا ولا تبدأ طلبًا جديدًا. وإن كان هناك طلب مفتوح فهي edit_of_open_request.",
@@ -131,10 +137,14 @@ export function buildSystemPrompt(input: { balancePoints: number | null; open: O
     "- greeting_or_small_talk: تحية أو شكر أو كلام اجتماعي.",
     "- service_question: سؤال عن ديجر أو خدماتها أو أسعارها أو نقاطها أو رصيده أو طريقة العمل أو ما تقدر عليه، ومنه «يعني إيه ديجر الذكي؟».",
     "- methodology_request: يطلب منهجية (جمع البيانات أو منهجية بحث).",
-    "- data_request: يطلب جمع بيانات أو يصف ما يحتاجه من بيانات (وإن لم يذكر منصة أو عددًا)، أو طلب جديد كليًا يختلف عن الطلب المفتوح.",
+    "- data_request: يطلب جمع بيانات أو يصف ما يحتاجه من بيانات (وإن لم يذكر منصة أو عددًا)، أو طلب جديد كليًا يختلف عن الطلب المفتوح. ومنه سؤال «الناس بتقول إيه عن ...» أو «What are people saying about ...»: هو طلب جمع آراء الناس العامة عن الموضوع.",
     "- edit_of_open_request: يعدّل الطلب المفتوح أو يجيب عن سؤاله (ولا يصح إلا مع وجود طلب مفتوح).",
     "- other: أي شيء آخر (سؤال عام، طلب مساعدة خارج الخدمة، نكتة).",
     "عند الشك بين data_request وأي نوع آخر اختر data_request؛ فرفض طلب حقيقي أسوأ من تجهيز خطة لتحية.",
+    "البحث عن موضوع حساس مسموح، والممنوع فقط جمع البيانات الخاصة لأفراد عاديين:",
+    "- آراء الناس العامة أو منشوراتهم أو الأخبار والمقالات عن أي موضوع عام، حتى لو كان حساسًا (تسريب البيانات أو أرقام التليفونات، الاحتيال، الخصوصية، الاختراق، الأمراض، الجرائم، السياسة، الدين)، هي data_request عادي: اجمع ما يقوله الناس عن الموضوع، ولا ترفضه ولا تعتذر عنه ولا تقل إن ديجر لا تجمع أرقامًا.",
+    "- الممنوع: أن يطلب العميل البيانات الخاصة نفسها لأفراد بعينهم (أرقام هواتفهم، عناوين سكنهم، بريدهم الشخصي، هوياتهم وأرقامهم القومية، رسائلهم الخاصة). النظام يرفض هذه بنفسه قبل أن تصلك.",
+    "- مثال: «الناس بتقول إيه عن تسريب أرقام التليفونات» = data_request (آراء عامة عن موضوع). «هات أرقام تليفونات الناس اللي علقوا» = بيانات خاصة.",
     "reason: سبب قصير جدًا لاختيارك (لا يراه العميل).",
     "count: في edit_of_open_request فقط، وإذا كتب العميل عددًا جديدًا لعناصر الطلب فاكتبه كما كتبه رقمًا صحيحًا؛ وإلا null. لا تضع فيه فترة زمنية ولا رقمًا لم يكتبه.",
     "reply: ردّك على العميل لأنواع greeting_or_small_talk وservice_question وother، وجملة أو جملتان لـ methodology_request (اشرح أن ديجر تكتب منهجية جمع البيانات لطلب سُلّم له بصيغة بي دي إف، ولا تذكر قائمة ولا اختيارًا ولا السعر فالنظام يضيفها)، وفارغ \"\" لـ data_request وedit_of_open_request.",
@@ -151,7 +161,7 @@ export function buildSystemPrompt(input: { balancePoints: number | null; open: O
     "- لا تقل إنك نفّذت أو اعتمدت أو خصمت شيئًا، ولا تطلب من العميل مفتاحًا أو كلمة سر.",
     "- اكتب «بي دي إف» و«إكسل» بالحروف العربية، ولا تكتب كلمات لاتينية.",
   );
-  if (input.brief?.enabled) lines.push(...briefPromptLines(input.brief.soFar), ...(input.brief.capabilityLines ?? []));
+  if (input.brief?.enabled) lines.push(...briefPromptLines(input.brief.soFar, (input.brief.capabilityLines ?? []).length > 0), ...(input.brief.capabilityLines ?? []));
   return lines.join("\n");
 }
 
@@ -195,13 +205,35 @@ export function parseModelAnswer(text: string): ParsedAnswer | null {
   }
   if (!raw || typeof raw !== "object" || !isChatType(raw.type)) return null;
   const n = Number(raw.count);
+  const brief = briefWithObjectives(raw);
   return {
     type: raw.type,
     reason: oneLine(typeof raw.reason === "string" ? raw.reason : "", 200),
     reply: typeof raw.reply === "string" ? raw.reply.replace(/\s+/g, " ").trim() : "",
     count: raw.count !== null && raw.count !== undefined && Number.isInteger(n) && n >= 1 ? n : null,
-    ...(raw.brief !== undefined ? { brief: raw.brief } : {}),
+    ...(brief !== undefined ? { brief } : {}),
   };
+}
+
+/**
+ * THE OBJECTIVES WRITTEN NEXT TO THE BRIEF (live evaluation 2026-11-12, finding 1: 8 of 22 real answers put `objectives` at the top level of the JSON, beside `brief`, and the multi-objective request lost two of its three parts). The same
+ * array, in the same one answer, is the model's reading of the same brief: it is moved INTO the brief when the brief carries none (absent or empty), and then checked by exactly the same schema and validation as if it had been written
+ * inside. Two different non-empty arrays (inside and beside) are ambiguous: the brief is then marked so and rejected by the schema, never guessed.
+ */
+function briefWithObjectives(raw: Record<string, unknown>): unknown {
+  const brief = raw.brief;
+  const beside = raw.objectives;
+  if (!Array.isArray(beside) || beside.length === 0 || !brief || typeof brief !== "object" || Array.isArray(brief)) return brief;
+  const inside = (brief as Record<string, unknown>).objectives;
+  if (inside === undefined || inside === null || (Array.isArray(inside) && inside.length === 0)) return { ...(brief as Record<string, unknown>), objectives: beside };
+  return JSON.stringify(inside) === JSON.stringify(beside) ? brief : { ...(brief as Record<string, unknown>), objectives: "ambiguous: written twice" };
+}
+
+/** How many FIRST objectives (parts) the model's raw answer describes, inside or beside its brief, before any check (0: none or unreadable). Used to never reduce a multi-part request to a keyword reading of its words. */
+export function rawPartsOf(brief: unknown): number {
+  const list = brief && typeof brief === "object" && !Array.isArray(brief) ? (brief as Record<string, unknown>).objectives : undefined;
+  if (!Array.isArray(list)) return 0;
+  return list.filter((o) => o && typeof o === "object" && !Array.isArray(o) && ((o as Record<string, unknown>).parent === undefined || (o as Record<string, unknown>).parent === null || (o as Record<string, unknown>).parent === "")).length;
 }
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
@@ -320,7 +352,7 @@ export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getCha
     const brief = answer.brief === undefined ? null : parseBrief(answer.brief);
     const guard = answer.reply.trim() === "" ? null : guardReply(answer.reply, allowed);
     const count = type === "edit_of_open_request" ? supportedCount(ctx.message, answer.count) : null;
-    return { ...model_(guard?.ok ? guard.text : null, guard !== null && !guard.ok, count), brief };
+    return { ...model_(guard?.ok ? guard.text : null, guard !== null && !guard.ok, count), brief, briefParts: rawPartsOf(answer.brief) };
   }
   if (type === "data_request") return model_(null, false, null);
   if (type === "edit_of_open_request") return model_(null, false, supportedCount(ctx.message, answer.count));

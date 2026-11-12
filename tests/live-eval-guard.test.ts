@@ -135,7 +135,8 @@ describe("live-eval guard: the transport's 400-retry is a second, counted and bu
     // the first attempt carried thinking off, the retry did not
     expect(net.calls[1].body.thinking).toEqual({ type: "disabled" });
     expect(net.calls[3].body.thinking).toBeUndefined();
-    expect(g.state.ledger[0].actualUsd).toBe(0);
+    // a 400 is not billed by the API, but the guard charges its input conservatively (2000 counted + the margin, at the input price)
+    expect(g.state.ledger[0].actualUsd).toBeCloseTo(((2000 + COUNT_MARGIN_TOKENS) * 0.1) / 1_000_000, 12);
     expect(g.state.halted).toBe(false);
   });
   it("at 29 attempts, a 400 uses the 30th and its retry is refused (the transport answers a failure, nothing is sent)", async () => {
@@ -158,7 +159,7 @@ describe("live-eval guard: the transport's 400-retry is a second, counted and bu
 });
 
 describe("live-eval preflight: the harness refuses to start in an unisolated environment", () => {
-  const ok = { LIVE_EVAL_CONFIRM: CONFIRM_VALUE, DIGER_EVAL_ANTHROPIC_KEY: "x" };
+  const ok = { LIVE_EVAL_CONFIRM: CONFIRM_VALUE, DIGER_EVAL_ANTHROPIC_KEY: "x", LIVE_EVAL_BUDGET_DIR: "/tmp/outside-the-repo" };
   it("a clean, confirmed environment with the evaluation key passes", () => {
     expect(preflight(ok)).toEqual([]);
   });
@@ -174,8 +175,11 @@ describe("live-eval preflight: the harness refuses to start in an unisolated env
     expect(preflight({ ...ok, LIVE_EVAL_CONFIRM: "30calls-2usd" })).toContain("confirmation_missing:LIVE_EVAL_CONFIRM");
   });
   it("refuses without the evaluation key", () => {
-    expect(preflight({ LIVE_EVAL_CONFIRM: CONFIRM_VALUE })).toEqual(["key_missing:DIGER_EVAL_ANTHROPIC_KEY"]);
-    expect(preflight({ LIVE_EVAL_CONFIRM: CONFIRM_VALUE, DIGER_EVAL_ANTHROPIC_KEY: "  " })).toEqual(["key_missing:DIGER_EVAL_ANTHROPIC_KEY"]);
+    expect(preflight({ LIVE_EVAL_CONFIRM: CONFIRM_VALUE, LIVE_EVAL_BUDGET_DIR: "/tmp/x" })).toEqual(["key_missing:DIGER_EVAL_ANTHROPIC_KEY"]);
+    expect(preflight({ LIVE_EVAL_CONFIRM: CONFIRM_VALUE, LIVE_EVAL_BUDGET_DIR: "/tmp/x", DIGER_EVAL_ANTHROPIC_KEY: "  " })).toEqual(["key_missing:DIGER_EVAL_ANTHROPIC_KEY"]);
+  });
+  it("refuses without the persistent budget folder (the cumulative ceiling cannot be enforced without it)", () => {
+    expect(preflight({ LIVE_EVAL_CONFIRM: CONFIRM_VALUE, DIGER_EVAL_ANTHROPIC_KEY: "x" })).toEqual(["budget_dir_missing:LIVE_EVAL_BUDGET_DIR"]);
   });
   it("refuses when the product's transport is switched off (the run would measure nothing)", () => {
     expect(preflight({ ...ok, LLM_PROVIDER: "fake" })).toEqual(["transport_disabled:LLM_PROVIDER"]);

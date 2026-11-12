@@ -1,0 +1,245 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { createMemoryDb } from "./helpers/memoryDb";
+import { REPLAY_USER } from "./helpers/agentReplay";
+import { agentChatTurn, CHAT_RESEARCH_BRIEF_FLAG_KEY, MULTI_PART_RETRY_AR, PLAN_NOT_READY_AR, REQUEST_UPDATED_AR } from "../src/lib/agentMission/chatTurn";
+import { setChatModelForTesting, type ChatModelInput } from "../src/lib/agentMission/chatModel";
+import { buildSystemPrompt, decideTurn, parseModelAnswer } from "../src/lib/agentMission/conversationModel";
+import { parseBrief } from "../src/lib/agentMission/researchBrief";
+import { buildCapabilityRegistry, CAPABILITY_DISCOVERY_FLAG_KEY, chatCapabilityLines, discoverCapabilities, researchNeedOf } from "../src/lib/agentMission/capabilities";
+import { classifyMessage } from "../src/lib/agentMission/messageType";
+import { conditionDriftOf } from "../src/lib/agentMission/researchGroup";
+import { buildAsk } from "../src/lib/agentMission/foundation/ask";
+import { loadTregCatalog } from "../src/lib/treg/catalog";
+import { blockedEndpointReason } from "../src/lib/treg/blockList";
+import { policyVerdict } from "../src/lib/treg/dataPolicy";
+import { NOT_ADMIN } from "./helpers/agentHarness";
+
+/**
+ * THE LLM QUALITY FIXES (docs/LIVE-INTELLIGENCE-EVAL.md, round 50), OFFLINE. Each test scripts the chat model with the SHAPE the real claude-haiku-5-5 wrote in the live evaluation of 2026-11-12 (objectives beside the brief, a period on
+ * a child objective, content «articles» / «contacts», an objective key «topic», a country inferred from a city, an empty clarification, a refusal of public research, an honest «Snapchat is not offered» re-typed by the keyword rule) and
+ * runs it through the REAL chat turn. No network, no paid call: these prove what the backend now does with what the real model wrote; the live rounds measure what the model writes.
+ */
+type Obj = { id: string; operation: string; platform?: string | null; parent?: string | null; request?: string; period?: string; country?: string; language?: string; count?: number | null; contacts?: string[]; what?: string; topic?: string };
+const o = (id: string, operation: string, x: Partial<Obj> = {}): Obj => ({ id, operation, ...x });
+const briefOf = (b: Record<string, unknown>) => ({ status: "ready", platforms: [], content: [], count: null, topic: "", period: "", country: "", language: "", ...b });
+let modelCalls: ChatModelInput[] = [];
+function scripted(steps: Array<Record<string, unknown>>) {
+  modelCalls = [];
+  const script = [...steps];
+  setChatModelForTesting(async (input) => {
+    modelCalls.push(input);
+    const s = script.shift();
+    return s ? { ok: true, text: JSON.stringify(s), usage: { inputTokens: 1800, outputTokens: 420 } } : { ok: false, failure: "http_529" };
+  });
+}
+const USER = REPLAY_USER;
+function world() {
+  const db: any = createMemoryDb();
+  db.seed("conversations", [{ id: "conv1", user_id: USER, title: "محادثة جديدة", status: "active" }]);
+  db.seed("credit_ledger", [{ user_id: USER, delta: 5000 }]);
+  for (const t of ["mission_events", "messages", "missions"]) db.seed(t, []);
+  db.seed("agent_settings", [{ key: CHAT_RESEARCH_BRIEF_FLAG_KEY, value: { user_ids: [USER] } }, { key: CAPABILITY_DISCOVERY_FLAG_KEY, value: { user_ids: [USER] } }]);
+  const base = db.from;
+  db.from = (name: string) => { const b = base(name); if (name === "missions") { const ins = b.insert; b.insert = (row: any) => ins(row.created_at ? row : { ...row, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }); } return b; };
+  return db;
+}
+let seq = 0;
+async function turn(db: any, message: string) {
+  seq += 1;
+  const at = Date.parse("2026-11-12T09:00:00Z") + seq * 10_000;
+  db.rows("messages").push(
+    { id: `u${seq}`, conversation_id: "conv1", user_id: USER, role: "user", content_ar: message, request_status: "planning", created_at: new Date(at).toISOString() },
+    { id: `a${seq}`, conversation_id: "conv1", user_id: USER, role: "assistant", content_ar: "…", created_at: new Date(at + 1).toISOString() },
+  );
+  const r = await agentChatTurn({ sb: db, userId: USER, conversationId: "conv1", userMsgId: `u${seq}`, assistantMsgId: `a${seq}`, message, conversationTitle: "محادثة جديدة" });
+  return { r, assistant: db.rows("messages").find((m: any) => m.id === `a${seq}`) };
+}
+const missions = (db: any) => db.rows("missions") as Array<{ id: string; status: string; request_text: string; job_id?: string | null }>;
+const live = (db: any) => missions(db).filter((m) => m.status !== "cancelled");
+let infos: string[] = [];
+const lastLog = () => { const line = [...infos].reverse().find((l) => l.includes("chat_message_type")); return line ? JSON.parse(line) : null; };
+const NOW = Date.parse("2026-11-12T09:00:00Z");
+const registry = () => buildCapabilityRegistry(loadTregCatalog(), { isAllowed: (id) => !blockedEndpointReason(id) && policyVerdict(id, NOT_ADMIN).allowed });
+beforeEach(() => {
+  infos = [];
+  vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("no network in this test"); }));
+  vi.spyOn(console, "info").mockImplementation((line: unknown) => { infos.push(String(line)); });
+});
+afterEach(() => { setChatModelForTesting(null); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+describe("finding 1: objectives written BESIDE the brief (8 of 22 real answers) are read as the brief's own", () => {
+  const J1 = "عايز ٣٠٠ تعليق عن السياحة من تيك توك، وتقييمات ٢٠٠ فندق في الغردقة، وآخر أخبار السياحة في مصر";
+  // the real answer's shape: the brief closed WITHOUT objectives, the objectives next to it; a brief-level count of the TikTok part; requests on the parents AND on the comments
+  const realJ1 = {
+    type: "data_request", reason: "ثلاثة أجزاء", reply: "", count: null,
+    brief: briefOf({ request: "تعليقات من تيك توك عن السياحة، وتقييمات فنادق الغردقة، ومقالات وأخبار السياحة في مصر", platforms: ["tiktok"], content: ["comments"], count: 300, topic: "السياحة", country: "مصر" }),
+    objectives: [
+      o("o1", "social.parents", { platform: "tiktok", request: "فيديوهات تيك توك عن السياحة", what: "", period: "", country: "", language: "", count: null }),
+      o("o2", "social.comments", { platform: "tiktok", parent: "o1", request: "٣٠٠ تعليق عن السياحة من تيك توك", count: 300 }),
+      o("o3", "places.reviews", { platform: null, parent: null, request: "تقييمات ٢٠٠ فندق في الغردقة", country: "الغردقة", count: 200 }),
+      o("o4", "web.search", { platform: null, parent: null, request: "آخر أخبار السياحة في مصر", period: "آخر", country: "مصر" }),
+    ],
+  };
+  it("the parser moves them into the brief (absent or empty inside), and the schema reads them", () => {
+    const a = parseModelAnswer(JSON.stringify(realJ1))!;
+    const p = parseBrief(a.brief);
+    expect(p.ok).toBe(true);
+    if (p.ok) expect(p.brief.objectives?.map((x) => x.id)).toEqual(["o1", "o2", "o3", "o4"]);
+    const empty = parseModelAnswer(JSON.stringify({ ...realJ1, brief: { ...realJ1.brief, objectives: [] } }))!;
+    expect((empty.brief as any).objectives).toHaveLength(4);
+  });
+  it("two DIFFERENT non-empty arrays (inside and beside) are ambiguous: rejected by the schema, never guessed", () => {
+    const a = parseModelAnswer(JSON.stringify({ ...realJ1, brief: { ...realJ1.brief, objectives: [o("o1", "web.search")] } }))!;
+    expect(parseBrief(a.brief)).toMatchObject({ ok: false, issue: "objectives" });
+  });
+  it("J1 end to end: THREE parts, each its own mission with its own number and place; nothing is reduced to the words", async () => {
+    scripted([realJ1]);
+    const db = world();
+    const { r } = await turn(db, J1);
+    expect(r.ok).toBe(true);
+    const texts = live(db).map((m) => m.request_text);
+    expect(texts).toHaveLength(3);
+    expect(texts.find((t) => /تيك توك/.test(t))).toMatch(/٣٠٠/);
+    expect(texts.find((t) => /فندق/.test(t))).toMatch(/٢٠٠.*الغردقة/);
+    expect(texts.find((t) => /أخبار/.test(t))).toMatch(/مصر/);
+    expect(live(db).every((m) => m.status === "queued" && !m.job_id)).toBe(true);
+    expect(db.rows("credit_ledger")).toHaveLength(1);
+  });
+  it("a multi-part reading that cannot be used as written is ASKED («كمّل»), never one mission from the words", async () => {
+    // a part with an operation outside the vocabulary: the whole objectives array is rejected by the schema
+    scripted([{ ...realJ1, objectives: [...realJ1.objectives.slice(0, 3), o("o4", "news.search")] }]);
+    const db = world();
+    const { r } = await turn(db, J1);
+    expect(r).toMatchObject({ ok: false, contentAr: MULTI_PART_RETRY_AR });
+    expect(missions(db)).toHaveLength(0);
+    expect(lastLog().brief).toBe("multi_part_unsafe_schema_objectives");
+  });
+  it("the prompt shows objectives INSIDE the brief, and says so", () => {
+    const p = buildSystemPrompt({ balancePoints: 100, open: null, brief: { enabled: true, soFar: null, capabilityLines: chatCapabilityLines(registry()) } });
+    expect(p).toMatch(/"language":"","objectives":\[\.\.\.\]\}/);
+    expect(p).toContain("objectives حقل داخل brief نفسه");
+  });
+});
+
+describe("finding 2: research ABOUT a sensitive subject is a request, never a refusal", () => {
+  for (const t of ["What are people saying about phone number leaks", "الناس بتقول إيه عن تسريب أرقام التليفونات", "آراء الناس عن الاحتيال الإلكتروني"]) {
+    it(`the keyword rule reads «${t}» as a data request (the WHEN-UNSURE backstop)`, () => expect(classifyMessage(t)).toBe("data_request"));
+  }
+  it("a private ask is still refused by code BEFORE any model call", async () => {
+    scripted([]);
+    const db = world();
+    const { r } = await turn(db, "هات أرقام تليفونات الناس اللي علقوا");
+    expect(r.ok).toBe(false);
+    expect(modelCalls).toHaveLength(0);
+    expect(missions(db)).toHaveLength(0);
+  });
+  it("the real refusal («ديجر … لا تجمع أرقام هواتف») of the public question is re-typed as a request: no refusal reaches the customer", async () => {
+    scripted([{ type: "service_question", reason: "x", reply: "ديجر تجمع بيانات بحث عامة، ولا تجمع أرقام هواتف أو بيانات شخصية لأفراد.", count: null }]);
+    const db = world();
+    const { r } = await turn(db, "الناس بتقول إيه عن تسريب أرقام التليفونات");
+    expect(r.contentAr).not.toContain("لا تجمع أرقام");
+    expect(lastLog().type).toBe("data_request");
+  });
+  it("the prompt states the rule and its example", () => {
+    const p = buildSystemPrompt({ balancePoints: null, open: null });
+    expect(p).toContain("البحث عن موضوع حساس مسموح");
+    expect(p).toContain("«الناس بتقول إيه عن تسريب أرقام التليفونات» = data_request");
+  });
+});
+
+describe("finding 3: schema values the real model writes for capabilities the system has", () => {
+  it("content «articles» (I1): a news request is planned as web research, not companies", async () => {
+    scripted([{ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "جمع أحدث الأخبار والمقالات العامة عن شركات الاتصالات في مصر", content: ["articles"], topic: "شركات الاتصالات في مصر", period: "أحدث الأخبار", country: "مصر", language: "العربية", objectives: [o("o1", "web.search", { platform: null, parent: null, request: "جمع أحدث الأخبار والمقالات العامة عن شركات الاتصالات في مصر", period: "أحدث الأخبار", country: "مصر", language: "العربية" })] }) }]);
+    const db = world();
+    const { r } = await turn(db, "عايز آخر الأخبار عن شركات الاتصالات في مصر");
+    expect(r.ok).toBe(true);
+    expect(live(db)).toHaveLength(1);
+    // the language the customer never wrote is not asked and not stored as theirs
+    const card = db.rows("messages").find((m: any) => m.plan?.agentMissionId);
+    expect(card.plan.researchBrief.language).toBeNull();
+    expect(discoverCapabilities(researchNeedOf({ request: live(db)[0].request_text, brief: card.plan.researchBrief }), registry()).need.kind).toBe("web");
+  });
+  it("the words alone (fallback): «الأخبار عن شركات …» is web research, «شركات … وإيميلاتها» stays companies", () => {
+    expect(researchNeedOf({ request: "عايز آخر الأخبار عن شركات الاتصالات في مصر" }).kind).toBe("web");
+    expect(researchNeedOf({ request: "عايز شركات الاتصالات في مصر وإيميلاتها الرسمية" }).kind).toBe("companies");
+  });
+  it("content «contacts» (G1) with a company.contacts objective is valid; «contacts» without one is a dropped objective", () => {
+    const ok = parseBrief(briefOf({ request: "شركات السياحة في الغردقة وإيميلاتها الرسمية", content: ["companies", "contacts"], objectives: [o("o1", "companies.discover"), o("o2", "company.contacts", { parent: "o1", contacts: ["email", "phone"] })] }));
+    expect(ok.ok).toBe(true);
+    expect(parseBrief(briefOf({ request: "x y z", content: ["news"] }))).toMatchObject({ ok: false, issue: "content" });
+  });
+  it("an objective key «topic» (B1) joins `what`; an endpoint key still rejects the objectives", () => {
+    const p = parseBrief(briefOf({ request: "جمع ٣٠٠ تعليق من تيك توك عن iPhone 17", platforms: ["tiktok"], content: ["comments"], objectives: [o("o1", "social.parents", { platform: "tiktok", topic: "iPhone 17" }), o("o2", "social.comments", { platform: "tiktok", parent: "o1", count: 300 })] }));
+    expect(p.ok).toBe(true);
+    if (p.ok) expect(p.brief.objectives![0]).toMatchObject({ what: "iPhone 17", count: 300 });
+    expect(parseBrief(briefOf({ request: "x y z", objectives: [{ ...o("o1", "web.search"), endpoint: "google.search" }] }))).toMatchObject({ ok: false, issue: "objectives" });
+  });
+  it("a period on the CHILD objective (H1) is the part's: the reviews request is prepared with its period", async () => {
+    scripted([{ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "جمع تقييمات فنادق الغردقة خلال آخر شهر من الخرائط، بنصوص التقييمات.", content: ["reviews"], topic: "فنادق", period: "آخر شهر", country: "الغردقة", objectives: [o("o1", "places.discover", { platform: null, parent: null, request: "جمع الفنادق في الغردقة من الخرائط", period: "", country: "الغردقة", language: "", count: null, what: "" }), o("o2", "places.reviews", { platform: null, parent: "o1", request: "جمع تقييمات تلك الفنادق خلال آخر شهر", period: "آخر شهر" })] }) }]);
+    const db = world();
+    const { r } = await turn(db, "عايز تقييمات فنادق الغردقة آخر شهر");
+    expect(r.ok).toBe(true);
+    expect(live(db)).toHaveLength(1);
+    expect(live(db)[0].request_text).toMatch(/آخر شهر/);
+  });
+});
+
+describe("findings 4–7: corrections, invented places, empty questions, unsupported platforms", () => {
+  it("K1: «آخر شهر» → «آخر أسبوع» while the first plan is still queued: the request is REPLACED with the corrected period (never «still being prepared»)", async () => {
+    const first = { type: "data_request", reason: "x", reply: "", brief: briefOf({ request: "جمع تعليقات تيك توك عن السياحة في الغردقة خلال آخر شهر", platforms: ["tiktok"], content: ["comments"], topic: "السياحة في الغردقة", period: "آخر شهر", objectives: [o("o1", "social.parents", { platform: "tiktok", request: "جمع فيديوهات تيك توك عن السياحة في الغردقة خلال آخر شهر", period: "آخر شهر" }), o("o2", "social.comments", { platform: "tiktok", parent: "o1" })] }), count: null };
+    const second = { type: "edit_of_open_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "جمع تعليقات تيك توك عن السياحة في الغردقة خلال آخر أسبوع", platforms: ["tiktok"], content: ["comments"], topic: "السياحة في الغردقة", period: "آخر أسبوع", objectives: [o("o1", "social.parents", { platform: "tiktok", what: "فيديوهات تيك توك عن السياحة في الغردقة", period: "آخر أسبوع" }), o("o2", "social.comments", { platform: "tiktok", parent: "o1" })] }) };
+    scripted([first, second]);
+    const db = world();
+    await turn(db, "هات تعليقات تيك توك عن السياحة في الغردقة آخر شهر");
+    const { r } = await turn(db, "لا خليها آخر أسبوع");
+    expect(r.contentAr).not.toBe(PLAN_NOT_READY_AR);
+    expect(r.contentAr).toBe(REQUEST_UPDATED_AR);
+    expect(live(db)).toHaveLength(1);
+    const ask = buildAsk(live(db)[0].request_text, null, NOW);
+    expect(JSON.stringify(ask.period)).toBe(JSON.stringify(buildAsk("آخر أسبوع", null, NOW).period));
+  });
+  it("C2: a country the model inferred from the customer's city is not asked, and is not quoted as the customer's", async () => {
+    scripted([{ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "تعليقات فيسبوك عن مطاعم الإسكندرية", platforms: ["facebook"], content: ["comments"], topic: "مطاعم", country: "مصر", objectives: [o("o1", "social.parents", { platform: "facebook", period: "", country: "مصر", language: "", what: "منشورات عن مطاعم الإسكندرية" }), o("o2", "social.comments", { platform: "facebook", parent: "o1" })] }) }]);
+    const db = world();
+    const { r } = await turn(db, "هات كومنتات الفيس عن مطاعم اسكندريه");
+    expect(r.ok).toBe(true);
+    expect(live(db)[0].request_text).toMatch(/الإسكندرية/);
+    expect(r.contentAr).not.toContain("اللي كتبته");
+  });
+  it("a place the model invented AND executed is asked as the model's, never quoted as «what you wrote»", () => {
+    const d = conditionDriftOf({ partRequest: "تعليقات فيسبوك عن مطاعم القاهرة", own: { country: "القاهرة" }, global: {}, elsewhere: new Set(), customerTexts: ["هات كومنتات الفيس عن المطاعم"], nowMs: NOW });
+    expect(d).toMatchObject({ kind: "place", invented: true });
+  });
+  it("A1: needs_clarification with an EMPTY reply: the code asks what is missing; no mission is made from the words", async () => {
+    scripted([{ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ status: "needs_clarification", request: "جمع آراء الناس عن السياحة في مصر", topic: "السياحة في مصر", country: "مصر" }), objectives: [o("o1", "web.search", { what: "مقالات وآراء عامة عن السياحة في مصر" })] }]);
+    const db = world();
+    const { r } = await turn(db, "عايز أعرف الناس بتقول إيه عن السياحة في مصر");
+    expect(r.ok).toBe(false);
+    expect(r.contentAr).toMatch(/[؟?]/);
+    expect(missions(db)).toHaveLength(0);
+    expect(lastLog().brief).toBe("clarify_code_question");
+  });
+  it("O1: the honest «Snapchat is not offered», re-typed as a request by the keyword rule, is answered honestly: no mission that could only end «unserved»", async () => {
+    scripted([{ type: "other", reason: "x", reply: "للأسف لا نجمع حاليًا بيانات من سناب شات.", count: null }]);
+    const db = world();
+    const { r } = await turn(db, "هات ستوريز سناب شات عن السياحة في مصر");
+    expect(r.ok).toBe(false);
+    expect(missions(db)).toHaveLength(0);
+    expect(lastLog().brief).toBe("words_unsupported_platform");
+  });
+  it("a new request's own number the model's sentence dropped is asked, never silently lost", async () => {
+    scripted([{ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "تعليقات تيك توك عن السياحة", platforms: ["tiktok"], content: ["comments"], objectives: [o("o1", "social.parents", { platform: "tiktok" }), o("o2", "social.comments", { platform: "tiktok", parent: "o1" })] }) }]);
+    const db = world();
+    const { r } = await turn(db, "هات ٤٠٠ تعليق تيك توك عن السياحة");
+    expect(r.ok).toBe(false);
+    expect(r.contentAr).toContain("العدد ٤٠٠");
+    expect(missions(db)).toHaveLength(0);
+  });
+});
+
+describe("decideTurn reports the parts of a raw brief (before any check)", () => {
+  it("counts first objectives inside or beside the brief", async () => {
+    const d = await decideTurn({ message: "x", balancePoints: null, open: null, brief: { enabled: true, soFar: null } }, async () => ({ ok: true, text: JSON.stringify({ type: "data_request", reason: "", reply: "", brief: briefOf({ request: "abc" }), objectives: [o("o1", "web.search"), o("o2", "places.discover"), o("o3", "places.reviews", { parent: "o2" })] }) }));
+    expect(d.briefParts).toBe(2);
+  });
+});
