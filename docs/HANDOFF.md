@@ -25,6 +25,11 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 * **Spending this mission:**
   * Anthropic $3.3098;
   * TREG, Firecrawl and Context.dev $0 (no credentials in the session).
+* **Post-merge facts:**
+  * PR #465 merged as `dd6c9ec24bc59d12625d6178f62ebb7ce4870bbf`, pinned to head `8776c70` (Vercel status success).
+  * Vercel production is READY on `dd6c9ec` (`dpl_6gokYqLdnCpAEKpf15nm8dNMLDK3`).
+  * Heroku: a new worker (`w_worker.1_8a9b1986`) began beating at about 21:00 UTC, right after the merge, and still reports `version: "dev"`. Either that restart was not a rebuild of `dd6c9ec`, or the build did not pass `SOURCE_VERSION` to `heroku-postbuild`.
+  * Only the Heroku build log can tell which, and this session has no Heroku access. **The deployed worker commit stays unverified.**
 
 ## Round 52 (12 Nov 2026): planner reliability (docs/DIGER-INTELLIGENCE-FINAL-ACCEPTANCE.md section 10)
 
