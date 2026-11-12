@@ -31,11 +31,11 @@ describe("workerVersion", () => {
   });
 });
 
-describe("scripts/write-build-info.mjs (run by heroku-postbuild)", () => {
-  const run = (env: Record<string, string>) => spawnSync(process.execPath, [path.join(ROOT, "scripts", "write-build-info.mjs")], { env: { PATH: process.env.PATH ?? "", ...env } as unknown as NodeJS.ProcessEnv, encoding: "utf8" });
+describe("agent/scripts/write-build-info.mjs (run by heroku-postbuild)", () => {
+  const run = (env: Record<string, string>) => spawnSync(process.execPath, [path.join(ROOT, "agent", "scripts", "write-build-info.mjs")], { env: { PATH: process.env.PATH ?? "", ...env } as unknown as NodeJS.ProcessEnv, encoding: "utf8" });
   it("heroku-postbuild runs it after the worker typecheck", () => {
     const pkg = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf8")) as { scripts: Record<string, string> };
-    expect(pkg.scripts["heroku-postbuild"]).toBe("npm ci --prefix agent --no-audit --no-fund && tsc -p agent/tsconfig.json && node scripts/write-build-info.mjs");
+    expect(pkg.scripts["heroku-postbuild"]).toBe("npm ci --prefix agent --no-audit --no-fund && tsc -p agent/tsconfig.json && node agent/scripts/write-build-info.mjs");
   });
   it("writes the build commit, which the worker then reports; never fails the build", () => {
     const had = existsSync(BUILD_INFO_FILE);

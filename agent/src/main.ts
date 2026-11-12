@@ -30,7 +30,7 @@ import { workerVersion } from "./buildVersion";
  *   AGENT_CONCURRENCY is optional (default 1, at most 4).
  */
 const REQUIRED = ["ANTHROPIC_API_KEY", "TREG_TOKEN", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"] as const;
-// the commit this worker runs: the build writes it (scripts/write-build-info.mjs), so the heartbeat no longer says "dev" on Heroku
+// the commit this worker runs: the build writes it (agent/scripts/write-build-info.mjs), so the heartbeat no longer says "dev" on Heroku
 const VERSION = workerVersion(process.env);
 
 async function main() {

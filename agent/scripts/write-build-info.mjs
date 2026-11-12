@@ -1,5 +1,7 @@
 // Writes agent/build-info.json with the commit Heroku is building (SOURCE_VERSION is set only during the build), so the worker can report it
 // in its heartbeat (agent/src/buildVersion.ts). It NEVER fails the build: any problem is printed and the script exits 0.
+// It lives in agent/ (not scripts/) because the root .slugignore removes scripts/ BEFORE the build runs: on 12 Nov 2026 the builds of
+// dd6c9ec and a577d16 failed with "Cannot find module .../scripts/write-build-info.mjs" (tests/heroku-slugignore-build.test.ts).
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -7,7 +9,7 @@ import { fileURLToPath } from "node:url";
 try {
   const commit = String(process.env.SOURCE_VERSION ?? process.env.HEROKU_SLUG_COMMIT ?? "").trim();
   if (/^[0-9a-f]{7,40}$/i.test(commit)) {
-    const file = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "agent", "build-info.json");
+    const file = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "build-info.json");
     writeFileSync(file, `${JSON.stringify({ commit, built_at: new Date().toISOString() })}\n`);
     console.log(`build-info: ${commit.slice(0, 7)}`);
   } else console.log("build-info: no build commit in this environment (the worker will report \"dev\")");
