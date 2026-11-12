@@ -4,6 +4,25 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 48 (12 Nov 2026, after #458, main = `4cb55cb`): pre-rollout acceptance (docs/PRE-ROLLOUT-ACCEPTANCE.md)
+
+**No SQL write, no flag change, no migration, no schema change, no permission change, no paid model or provider call, no money/ledger/pricing/approval/settlement/infrastructure line.** The three switches stay OFF.
+
+**Verdict:** ready for a CONTROLLED TEST-ACCOUNT rollout only. This needs the owner's approval, a spending cap, and the switches scoped to named test `user_ids`. It is not general production readiness.
+
+**Four customer-facing defects found and fixed, each with regression tests:**
+
+1. **English false refusal:** «What are people saying about phone number leaks» and four more phrasings. Fixed with English parity for the public-content opinion verbs.
+2. **English privacy gap:** personal e-mails and home addresses of private people passed every code guard. Fixed with narrow English parity of the Arabic rule; business contacts still pass.
+3. **A delivered part was re-prepared** as a new priced card on a later turn. `LIVE_STATUSES` listed statuses the worker never writes; it now uses `completed` and `unserved`.
+4. **Stale duplicate cards** when the model labels follow-ups as new requests. In the same brief conversation, the follow-up now goes through the existing update path.
+
+**Tests and gates:**
+
+* `tests/pre-rollout-acceptance.test.ts` (80).
+* Real-Chromium checks of the real card components and the compiled CSS: 28 of 28 pass, on desktop and iPhone 13 (component level; the full chat page is not covered).
+* Full suite: 951 files, 13,103 passed, 0 failed.
+
 ## Round 47 (12 Nov 2026, after #457, main = `8ba4078`): exact customer requirements across research parts (docs/MULTI-OBJECTIVE-RESEARCH.md section 12)
 
 **No SQL write, no flag change, no migration, no schema change, no permission change, no paid model or provider call, no money/ledger/pricing/approval/settlement/infrastructure line.** Brief mode and discovery stay OFF.
