@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { isServedPlatform, numbersWritten, RESEARCH_BRIEF_VERSION, type BriefContent, type BriefObjective, type BriefPlatform, type ResearchBrief } from "./researchBrief";
 import { buildRequestContract, type WantedField } from "./requestContract";
-import { placesInText } from "./places";
+import { districtLabelsIn, placesInText } from "./places";
 import { buildAsk } from "./foundation/ask";
 
 /**
@@ -44,9 +44,31 @@ export function partsOf(brief: Pick<ResearchBrief, "objectives"> & { request?: s
     const unresolved = members.every((o) => o.operation === "unsupported") || (root.operation.startsWith("social.") && !isServedPlatform(root.platform));
     // the part's sentence: the one written on its DEEPEST objective that has one (what the part delivers: «٣٠٠ تعليق من تيك توك عن …», not the intermediate «فيديوهات تيك توك عن …»; live evaluation 2026-11-12, J1), else its first
     // objective's; a request with ONE part: the whole request when the model wrote none for it
-    const written = [...members].reverse().find((o) => typeof o.request === "string" && o.request.trim() !== "")?.request ?? null;
+    // (when the part has a number of its own, the deepest sentence that CARRIES that number)
+    const withText = [...members].reverse().filter((o) => typeof o.request === "string" && o.request.trim() !== "");
+    const counted = members.find((o) => o.count !== undefined && o.count !== null)?.count ?? null;
+    const written = (counted !== null ? withText.find((o) => numbersWritten(o.request!).has(counted)) : undefined)?.request ?? withText[0]?.request ?? null;
     return { key: root.id, objectives: members, request: written ?? (roots.length === 1 && brief.request ? brief.request : null), unresolved };
   });
+}
+
+/**
+ * A PART'S SENTENCE SAYS EVERYTHING ITS OBJECTIVES COLLECT (live evaluation 2026-11-12: the real model often writes the part's sentence for its FIRST step only, «منشورات تيك توك عن السياحة», while its objectives collect the comments;
+ * the sentence was then rejected as dropping the comments, and a card would have read less than the part collects). The child steps the model's own objectives name (comments, replies, reviews, official e-mails and phones) are added
+ * to the sentence in fixed words when the sentence does not say them already. Nothing the objectives do not carry is ever added; the sentence is then validated like any other (privacy, numbers, platforms, consistency).
+ */
+export function completedPartSentence(request: string, objectives: ReadonlyArray<BriefObjective>): string {
+  const has = (re: RegExp) => re.test(request);
+  const ops = new Set(objectives.map((o) => o.operation));
+  const social = objectives.find((o) => o.platform !== null);
+  const add: string[] = [];
+  if (ops.has("social.comments") && social?.platform !== "x" && !has(/تعليق|كومنت|comment/i)) add.push("والتعليقات عليها");
+  if (ops.has("social.replies") && !has(/(?:^|[^ء-ي])(?:و|ب|ال)*ردود|الرد على|replies/i)) add.push(social?.platform === "x" ? "والردود عليها" : "والردود على التعليقات");
+  if (ops.has("places.reviews") && !has(/تقييم|مراجع|ريفيو|review/i)) add.push("وتقييماتها");
+  const contacts = new Set(objectives.filter((o) => o.operation === "company.contacts").flatMap((o) => o.contacts));
+  if (contacts.has("email") && !has(/[إا]يميل|بريد|email/i)) add.push("وإيميلاتها الرسمية");
+  if (contacts.has("phone") && !has(/تليفون|هاتف|هواتف|phone/i)) add.push("وتليفوناتها الرسمية");
+  return add.length === 0 ? request : `${request.replace(/[.،,\s]+$/u, "")} ${add.join(" ")}`;
 }
 
 const CONTENT_OF: Partial<Record<BriefObjective["operation"], BriefContent>> = {
@@ -56,13 +78,14 @@ const CONTENT_OF: Partial<Record<BriefObjective["operation"], BriefContent>> = {
 /** The brief of ONE part, validated exactly like a brief of its own (`validateBrief`): its sentence, its platforms, what it collects, its number when its sentence writes exactly one, its objectives. Null without a sentence. */
 export function partBriefOf(part: ResearchPart, global: { period?: string | null; country?: string | null; language?: string | null } = {}): ResearchBrief | null {
   if (!part.request) return null;
+  const sentence = completedPartSentence(part.request, part.objectives);
   // the part's own conditions (its first objective), else those of the whole request: kept as the customer's words, never a value of the model
   const root = part.objectives[0];
   const platforms = [...new Set(part.objectives.map((o) => o.platform).filter((p): p is BriefPlatform => isServedPlatform(p)))].sort();
   const content = [...new Set(part.objectives.map((o) => CONTENT_OF[o.operation]).filter((c): c is BriefContent => c !== undefined))];
-  const numbers = [...numbersWritten(part.request)];
+  const numbers = [...numbersWritten(sentence)];
   return {
-    v: RESEARCH_BRIEF_VERSION, status: "ready", request: part.request, platforms, content, count: root?.count ?? (numbers.length === 1 ? numbers[0] : null), topic: null,
+    v: RESEARCH_BRIEF_VERSION, status: "ready", request: sentence, platforms, content, count: root?.count ?? (numbers.length === 1 ? numbers[0] : null), topic: null,
     period: root?.period ?? global.period ?? null, country: root?.country ?? global.country ?? null, language: root?.language ?? global.language ?? null,
     objectives: part.objectives.map((o) => { const { request: _r, ...rest } = o; void _r; return rest; }),
   };
@@ -305,7 +328,7 @@ export function sameExecutedValues(a: string, b: string, nowMs: number): boolean
 /** The executed conditions of a sentence (period window, country code, content language, places), as the worker reads them. */
 function conditionsOf(t: string, nowMs: number) {
   const x = buildAsk(t, null, nowMs, {}, { semantic: false });
-  return { period: x.period ? `${x.period.from}..${x.period.to}` : null, country: x.country, language: x.language, places: [...placeKeys(t)].sort() };
+  return { period: x.period ? `${x.period.from}..${x.period.to}` : null, country: x.country, language: x.language, places: [...placeKeys(t)].sort(), districts: districtLabelsIn(t) };
 }
 /** The same, without the numbers (a count is compared elsewhere, by the code that edits a plan's count). */
 export function sameExecutedConditions(a: string, b: string, nowMs: number): boolean {
@@ -316,7 +339,8 @@ export function conditionChanged(a: string, b: string, nowMs: number): boolean {
   const x = conditionsOf(a, nowMs);
   const y = conditionsOf(b, nowMs);
   return (x.period !== null && y.period !== null && x.period !== y.period) || (x.country !== null && y.country !== null && x.country !== y.country)
-    || (x.language !== null && y.language !== null && x.language !== y.language) || (x.places.length > 0 && y.places.length > 0 && JSON.stringify(x.places) !== JSON.stringify(y.places));
+    || (x.language !== null && y.language !== null && x.language !== y.language) || (x.places.length > 0 && y.places.length > 0 && JSON.stringify(x.places) !== JSON.stringify(y.places))
+    || (x.districts.length > 0 && y.districts.length > 0 && JSON.stringify(x.districts) !== JSON.stringify(y.districts));
 }
 
 /**

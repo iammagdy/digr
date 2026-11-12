@@ -73,7 +73,7 @@ export function createEvalPlannerDriver(o: { fetch: typeof fetch; key: () => str
             if (!spec) result = { ok: false, error: `no such tool: ${String(b.name).slice(0, 40)}` };
             else if (input.state.terminal && spec.name !== "report_progress") result = { ok: false, error: "the run is over; stop now and write nothing more" };
             else { try { result = await spec.handler((b.input ?? {}) as Record<string, unknown>); } catch (e) { result = { ok: false, error: String((e as Error)?.message ?? e).slice(0, 200) }; } }
-            record.toolCalls.push({ name: String(b.name), input: b.input, ok: typeof result.ok === "boolean" ? result.ok : null, error: typeof result.error === "string" ? result.error.slice(0, 300) : null });
+            record.toolCalls.push({ name: String(b.name), input: b.input, ok: typeof result.ok === "boolean" ? result.ok : null, error: result.ok === false ? JSON.stringify({ error: result.error, ...Object.fromEntries(Object.entries(result).filter(([k]) => k !== "ok" && k !== "error" && /issue|problem|error|reason|fix/i.test(k))) }).slice(0, 900) : null });
             results.push({ type: "tool_result", tool_use_id: b.id, content: clipToolResult(JSON.stringify(result)), ...(result.ok === false ? { is_error: true } : {}) });
           }
           o.onTurnRecord?.(record);

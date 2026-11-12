@@ -331,7 +331,15 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
       return { ok: false, contentAr: TRUNCATED_AR, status: 200 };
     }
     const pending = ctx.prior && ctx.prior.status === "needs_clarification" && !open;
-    if (!pending || decision.type === "greeting_or_small_talk" || decision.type === "service_question" || decision.type === "methodology_request") { ctx.outcome = "model_unavailable"; return null; }
+    // a conversation in progress (a brief or a request being prepared) whose message could not be read: never a new mission from a fragment of words («٥٠٠ تعليق والردود كمان», «كمّل»; live evaluation 2026-11-12, E1 and J1);
+    // the customer sends it again. An answer to a question card still goes to that card (today's path)
+    const nonRequest = decision.type === "greeting_or_small_talk" || decision.type === "service_question" || decision.type === "methodology_request";
+    if (!pending && ctx.registry && (ctx.prior !== null || ctx.priorGroup || (open && open.state !== "needs_input")) && !nonRequest) {
+      ctx.outcome = "model_unreadable_in_conversation";
+      await writeAnswer(input, MODEL_RETRY_AR);
+      return { ok: false, contentAr: MODEL_RETRY_AR, status: 200 };
+    }
+    if (!pending || nonRequest) { ctx.outcome = "model_unavailable"; return null; }
     const joined = `${ctx.prior!.request}، ${input.message}`;
     const privacy = privacyRefusalAr(joined) ?? (contactAskVerdict(joined) === "clarify" ? contactClarifyAr(joined) : null);
     if (privacy) { ctx.outcome = "privacy"; await writeAnswer(input, privacy); return { ok: false, contentAr: privacy, status: 200 }; }
@@ -340,7 +348,22 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
   }
   if (decision.type !== "data_request" && decision.type !== "edit_of_open_request") { ctx.outcome = "not_a_request"; return null; }
   const parsed = decision.brief;
-  if (!parsed) { ctx.outcome = "none"; return null; }
+  /**
+   * NO MISSION FROM WORDS THAT NAME NO DATA (live evaluation 2026-11-12: «محتاج داتا عن سوق العقارات», «عايز داتا», «اعملي تحليل إحصائي…» became missions when the model's brief was empty, rejected or absent): a NEW request whose brief cannot be used
+   * and whose own words name no kind of data the system collects is asked (the model's question when it wrote one, else the code's), never planned from the words. Words that do name a kind (a platform, companies, places, news...)
+   * keep today's path.
+   */
+  const askInsteadOfWords = async (reason: string): Promise<AgentChatTurnResult | null> => {
+    if (!ctx.registry || open !== null || decision.type === "edit_of_open_request") return null;
+    const words = researchNeedOf({ request: currentMessageOf(ctx) });
+    if (words.kind !== "unknown" || words.privacy === "blocked") return null;
+    // the model's own question, unless the model did not read a request at all (its type was overruled by the keyword rule: its reply answers something else, possibly a refusal)
+    const question = (!decision.overruled && decision.reply) || missingQuestionAr(buildRequestContract(currentMessageOf(ctx)));
+    ctx.outcome = reason;
+    await writeAnswer(input, question, ctx.prior ? { researchBrief: { ...ctx.prior, status: "needs_clarification" } } : undefined);
+    return { ok: false, contentAr: question, status: 200 };
+  };
+  if (!parsed) { ctx.outcome = "none"; return askInsteadOfWords("none"); }
   // MULTI-OBJECTIVE RESEARCH: a reading of SEVERAL parts that cannot be used as written is never replaced by one mission read from the words (it would silently keep one part and drop the others): the customer continues with one word
   const multiPartUnsafe = async (reason: string): Promise<AgentChatTurnResult> => {
     ctx.outcome = `multi_part_unsafe_${reason}`;
@@ -348,14 +371,14 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     return { ok: false, contentAr: MULTI_PART_RETRY_AR, status: 200 };
   };
   const multiPart = ctx.registry !== undefined && (decision.briefParts ?? 0) >= 2;
-  if (!parsed.ok) { if (multiPart) return multiPartUnsafe(`schema_${parsed.issue}`); ctx.outcome = `schema_${parsed.issue}`; return null; }
+  if (!parsed.ok) { if (multiPart) return multiPartUnsafe(`schema_${parsed.issue}`); ctx.outcome = `schema_${parsed.issue}`; return askInsteadOfWords(`schema_${parsed.issue}`); }
   const v = validateBrief(withPartCounts(parsed.brief), { customerTurns: ctx.customerTurns, assistantQuestion: ctx.assistantQuestion, prior: ctx.prior, semantic: ctx.semantic });
   if (!v.ok) {
     ctx.outcome = `rejected_${v.reason}`;
     // a private component is never planned: the same fixed answer as a typed one
     if (v.contentAr) { await writeAnswer(input, v.contentAr); return { ok: false, contentAr: v.contentAr, status: 200 }; }
     if (multiPart) return multiPartUnsafe(v.reason);
-    return null;
+    return askInsteadOfWords(`rejected_${v.reason}`);
   }
   // the condition fields the model filled in by itself (a country inferred from a city, a language never said) are cleared before the brief is stored or shown to the model again; the sentences are checked below
   const customerTexts = [...ctx.customerTurns, ctx.prior?.request ?? ""].filter((t) => t.trim() !== "");
@@ -391,6 +414,12 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     ctx.outcome = decision.reply === null ? "clarify_code_question" : "clarify";
     await writeAnswer(input, question, { researchBrief: brief });
     return { ok: false, contentAr: question, status: 200 };
+  }
+  // a request with NO TOPIC the customer gave (only a platform, «تيك توك»): the model may fill one in («عن الموضوع المطلوب»); it is asked, never planned (live evaluation 2026-11-12, S1)
+  if (isNewRequest(ctx, open) && !brief.topic && !customerGaveTopic(ctx.customerTurns)) {
+    ctx.outcome = "clarify_topic";
+    await writeAnswer(input, TOPIC_QUESTION_AR, { researchBrief: { ...brief, status: "needs_clarification" } });
+    return { ok: false, contentAr: TOPIC_QUESTION_AR, status: 200 };
   }
   // A NEW REQUEST'S OWN REQUIREMENTS: every number, period, place, language, field and «the replies» the customer wrote in this message must be in the sentence that will be planned; one the model left out is asked, never dropped
   const lostNow = isNewRequest(ctx, open) ? standaloneOnly(droppedRequirementsOf(currentMessageOf(ctx), [brief.request]), currentMessageOf(ctx)) : [];
@@ -450,6 +479,10 @@ const WITHDRAWABLE = ["queued", "needs_input", "plan_ready"];
 export const TRUNCATED_AR = "وصلني طلبك بكل أجزائه، لكن تلخيصه طلع أطول من المسموح في رد واحد. اكتب «كمّل» وأنا أكمّل تجهيز كل الأجزاء من غير ما تعيد كتابة طلبك؛ ولن يُخصم شيء قبل اعتمادك.";
 /** Said when the model's reading of a request of SEVERAL parts could not be used as written: nothing is prepared from part of it (never one part kept and the others dropped); the customer continues with one word. */
 export const MULTI_PART_RETRY_AR = "فهمت إن طلبك فيه أكتر من جزء، ومش هجهّز جزء منه وأسيب الباقي. اكتب «كمّل» وأنا أرتّب كل الأجزاء من غير ما تعيد كتابة طلبك، ولو حابب وضّح كل جزء في سطر لوحده؛ ولن يُخصم شيء قبل اعتمادك.";
+/** Said when the model's answer to a message of a conversation in progress could not be read (twice): nothing is prepared from a fragment of the conversation. */
+export const MODEL_RETRY_AR = "ما قدرتش أقرا رسالتك دي صح بسبب خلل مؤقت. ابعتها تاني من فضلك؛ طلبك اللي فات محفوظ زي ما هو، ومفيش حاجة اتجهّزت جديدة ولا اتخصم حاجة.";
+/** Asked when a request names no topic. */
+export const TOPIC_QUESTION_AR = "تمام. عايز نجمع عن أنهي موضوع بالظبط؟ اكتبلي الموضوع أو الكلمات اللي تحب ندوّر بيها.";
 /** Asked by code when a request lacks what decides the plan and the model wrote no question (or its question was blocked). */
 export function missingQuestionAr(contract: ReturnType<typeof buildRequestContract>): string {
   if (contract.platform === null) return "عشان أجهّز طلبك صح: تحب نجمع كلام الناس من أنهي منصة (تيك توك، إكس، إنستجرام، فيسبوك، يوتيوب)؟ ولا تقصد أخبار ومقالات، أو شركات، أو أماكن وتقييماتها؟";
@@ -460,6 +493,12 @@ export function requirementMissingAr(lost: IntentRequirement[]): string {
   return `فهمت طلبك، بس ${[...new Set(lost.map(requirementLabelAr))].map((x) => `«${x}»`).join(" و")} اللي كتبته مش ظاهر في الطلب اللي هجهّزه. أضيفه زي ما كتبته؟ ومش هنجهّز ولا هنخصم حاجة قبل ما توضّح وتعتمد.`;
 }
 /** A new research request: no brief, no group and no open request of this conversation before it (its first message is the whole of what the customer asked). */
+/** Words that only say WHERE or WHAT KIND (platforms, collecting verbs, data nouns, fillers): a message made of nothing else gives no topic. */
+const NO_TOPIC_WORDS = new Set("عايز عاوز محتاج هات هاتلي جيب جيبلي اجمع اجمعلي ابغي اريد ممكن لو سمحت من فضلك داتا بيانات معلومات تعليقات تعليق كومنتات كومنت منشورات منشور بوستات بوست فيديوهات فيديو تغريدات تغريده ريلز ستوري ستوريز ردود من على عن في علي و تيك توك تيكتوك tiktok انستجرام انستغرام انستا instagram فيسبوك فيس بوك الفيس facebook يوتيوب youtube اكس تويتر twitter x بس كمان برضه بقي يا".split(" "));
+function customerGaveTopic(turns: ReadonlyArray<string>): boolean {
+  const words = turns.join(" ").replace(/[ً-ْـ]/g, "").replace(/[أإآ]/g, "ا").replace(/ة/g, "ه").replace(/ى/g, "ي").toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+  return words.some((w) => w.length >= 2 && !NO_TOPIC_WORDS.has(w) && !NO_TOPIC_WORDS.has(w.replace(/^ال/, "")));
+}
 const isNewRequest = (ctx: BriefTurnContext, open: OpenRequest | null): boolean => ctx.prior === null && !ctx.priorGroup && open === null;
 const currentMessageOf = (ctx: BriefTurnContext): string => ctx.customerTurns[ctx.customerTurns.length - 1] ?? "";
 /** A number the customer wrote as a NUMBER (standing alone), not a digit inside a word: Arabizi writes letters with digits («3ayez», «7aga»), and a model or product name carries digits that are part of the name only when glued to it. */
@@ -590,7 +629,10 @@ async function groupTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     }
   }
   const prior = ctx.priorGroup ?? null;
-  const priorParts = prior?.parts.filter((p) => p.missionId) ?? [];
+  // a request that grows into several parts while its single mission waits (the customer adds «وكمان تقييمات …»): that mission is the first part prepared before, matched like any part (kept when unchanged, withdrawn while it waits
+  // when changed), never left live next to a second copy of itself (live evaluation 2026-11-12, K6)
+  const openAsPart = !prior && open !== null && ctx.prior !== null && open.state !== "needs_input" && (await isResearchMission(sb, open.id));
+  const priorParts = prior?.parts.filter((p) => p.missionId) ?? (openAsPart ? [{ key: "open", request: open!.requestText ?? null, missionId: open!.id, outcome: "planned" as PartOutcome }] : []);
   const [statuses, cards] = await Promise.all([missionStatuses(sb, input.userId, priorParts.map((p) => p.missionId!)), cardsOfConversation(sb, input.conversationId)]);
   // the same request read by the trusted parser only when it reads a topic in both (two parts with no topic the parser can read are compared by their words)
   // and only when both EXECUTE the same values (a corrected period, place, language or number is a changed part, never a kept one)
@@ -622,8 +664,8 @@ async function groupTurn(input: AgentChatTurnInput, decision: Decision, open: Op
       if (!(Array.isArray(upd?.data) && upd.data.length === 1)) leftRunning.push(p.request ?? "");
     } catch { leftRunning.push(p.request ?? ""); }
   }
-  // a single unapproved card of the old path above is replaced, as a new request always replaces it
-  if (!prior) {
+  // a single unapproved card of the old path above is replaced, as a new request always replaces it (unless it was matched above as this request's own first part)
+  if (!prior && !openAsPart) {
     const previous = await latestMissionOfConversation(sb, input.conversationId);
     if (previous && (await isResearchMission(sb, previous))) {
       try { await sb.from(MISSION_TABLE).update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", previous).eq("user_id", input.userId).in("status", REPLACEABLE); } catch { /* the limit still protects */ }
@@ -815,6 +857,7 @@ const DRIFT_LABEL_AR: Record<ConditionKind, string> = { period: "الفترة", 
 export function conditionDriftAr(d: ConditionDrift): string {
   if (d.kind === "replies") return "انت طلبت الردود كمان، والجزء ده هيجمع التعليقات من غير ردودها؛ نضيف الردود؟";
   const label = `شرط ${DRIFT_LABEL_AR[d.kind]}`;
+  if (d.kind === "count" && d.phrase) d = { ...d, phrase: d.phrase.replace(/\d/g, (x) => "٠١٢٣٤٥٦٧٨٩"[Number(x)]) };
   // a condition the customer never wrote is never quoted to them as theirs
   if (d.invented) return `الجزء ده فيه ${label}${d.phrase ? ` «${d.phrase}»` : ""} انت ما ذكرتهوش؛ نجهّزه من غيره ولا تقصده؟`;
   const yours = d.phrase ? ` («${d.phrase}»)` : "";
@@ -864,7 +907,8 @@ async function briefEditOfOpen(input: AgentChatTurnInput, decision: Decision, op
     return startMission(input, brief.request, { brief: ready, contentAr: REQUEST_UPDATED_AR });
   }
   // planning
-  if (sameContract(contract, openContract) && sameConditions) { ctx.outcome = "planning_same"; return null; }
+  // the numbers too («خليهم ١٠٠ بس» while the plan is being prepared: K3); a count edit of a READY plan is the plan editor's (above)
+  if (sameContract(contract, openContract) && sameConditions && sameExecutedValues(brief.request, open.requestText ?? "", editNow)) { ctx.outcome = "planning_same"; return null; }
   const gated = await capabilityGate(input, brief, ctx);
   if (gated) return gated;
   let withdrawn = false;

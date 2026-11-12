@@ -132,6 +132,20 @@ function regexesOf(entry: PlaceEntry): RegExp[] {
   return list;
 }
 
+/** The DISTRICTS a text names (their Arabic labels): a district is read as its city by `placesInText`, so «المعادي» → «الزمالك» is the same city; this tells the two apart (a corrected district is a changed request). */
+const districtRegexCache = new Map<string, RegExp[]>();
+export function districtLabelsIn(text: unknown): string[] {
+  const t = normalizeText(String(text ?? ""));
+  if (!t) return [];
+  const out: string[] = [];
+  for (const d of DISTRICTS) {
+    let list = districtRegexCache.get(d.labelAr);
+    if (!list) { list = d.names.filter((n) => normalizeText(n).length >= 3).map((n) => termRegex(n, "u")).filter((r): r is RegExp => r !== null); districtRegexCache.set(d.labelAr, list); }
+    if (list.some((r) => r.test(t)) && !out.includes(d.labelAr)) out.push(d.labelAr);
+  }
+  return out.sort();
+}
+
 /** The countries and cities a text names (the request's words), most specific first; none when it names none. */
 export function placesInText(text: unknown): PlaceEntry[] {
   const t = normalizeText(String(text ?? ""));

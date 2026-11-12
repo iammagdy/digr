@@ -10,10 +10,11 @@ import { namesCollectibleData, normalize } from "./messageType";
 
 // ---- 1. privacy ----------------------------------------------------------------------------------------------------------------------------------------------------------
 /** A kind of contact data that belongs to a person: a phone or WhatsApp number, a home address, a personal e-mail. */
-const PERSONAL_CONTACT = /(?:ارقام?|رقم)\s*(?:ال)?(?:تليفون|تلفون|هاتف|هواتف|موبايل|جوال|محمول|واتس)|(?:^| )(?:تليفونات|موبايلات|واتساب|واتس اب|phone numbers?|mobile numbers?|whatsapp)(?: |$)|عنوان\s*(?:ال)?(?:سكن|بيت|منزل)|عناوين\s*(?:ال)?(?:سكن|بيوت|منازل|ناس|اشخاص|افراد|مواطنين)|(?:ايميل|ايميلات|اميل|بريد)\s*(?:ات)?\s*(?:ال)?(?:شخصي|شخصيه)|(?:ايميلات|بريد)\s*(?:ال)?(?:ناس|اشخاص|افراد|متابعين|معلقين|مستخدمين)|\b(?:personal|private)\s+e-?mails?\b|\be-?mails?\s+(?:of\s+)?(?:the\s+)?(?:people|users|followers|commenters|individuals|reviewers|customers|members)\b|\b(?:home|residential)\s+addresse?s?\b|\baddresses\s+of\s+(?:the\s+)?(?:people|users|followers|commenters|individuals|reviewers|customers|members)\b/;
+const PERSONAL_CONTACT = /(?:ارقام?|رقم)\s*(?:ال)?(?:تليفون|تلفون|هاتف|هواتف|موبايل|جوال|محمول|واتس)|(?:^| )(?:ال)?(?:تليفونات|موبايلات|واتساب|واتس اب|phone numbers?|mobile numbers?|whatsapp)(?: |$)|عنوان\s*(?:ال)?(?:سكن|بيت|منزل)|عناوين\s*(?:ال)?(?:سكن|بيوت|منازل|ناس|اشخاص|افراد|مواطنين)|(?:ايميل|ايميلات|اميل|بريد)\s*(?:ات)?\s*(?:ال)?(?:شخصي|شخصيه)|(?:ايميلات|بريد)\s*(?:ال)?(?:ناس|اشخاص|افراد|متابعين|معلقين|مستخدمين)|\b(?:personal|private)\s+e-?mails?\b|\be-?mails?\s+(?:of\s+)?(?:the\s+)?(?:people|users|followers|commenters|individuals|reviewers|customers|members)\b|\b(?:home|residential)\s+addresse?s?\b|\baddresses\s+of\s+(?:the\s+)?(?:people|users|followers|commenters|individuals|reviewers|customers|members)\b/;
 /** The bare words of PERSONAL_CONTACT that name an app or a product, not a number. */
 // never a token that follows «ارقام» / «رقم» («ارقام تليفونات» and «رقم واتساب» ask for numbers): those stay in the text the contact rule reads
-const BARE_APP_OR_PRODUCT = /(?<!(?:ارقام?|رقم)\s*(?:ال)?)(?:^| )(?:تليفونات|موبايلات|واتساب|واتس اب|whatsapp)(?= |$)/g;
+// «الواتساب» with the article is the same word (live evaluation 2026-11-12, N5: «عايز الواتساب الشخصي للمعلقين» passed the rule)
+const BARE_APP_OR_PRODUCT = /(?<!(?:ارقام?|رقم)\s*(?:ال)?)(?:^| )(?:ال)?(?:تليفونات|موبايلات|واتساب|واتس اب|whatsapp)(?= |$)/g;
 /** Words that make the target an ordinary individual, whatever else the sentence says. */
 const PRIVATE_EXPLICIT = /ناس\s*عادي|اشخاص\s*عادي|افراد\s*عادي|(?:ال)?مواطنين|اصحاب\s*(?:ال)?حسابات|(?:ال)?معلقين|(?:ال)?متابعين|ordinary people|private (?:individuals|people)|عنوان\s*(?:ال)?(?:سكن|بيت|منزل)|عناوين\s*(?:ال)?(?:سكن|بيوت|منازل)/;
 /** The business side that stays allowed: companies, shops, clinics, offices and the decision makers of them. */
@@ -120,7 +121,7 @@ const ARABIC_OR_LATIN = (arabic: string, latin: string): RegExp => new RegExp(`$
 /** What a customer collects that is PUBLIC (the head noun of «هات منشورات عامة عن …»). */
 const PUBLIC_CONTENT = ARABIC_OR_LATIN("بيقول|بيقولوا|بتقول|بيتكلموا|بيتكلم|بتتكلم|بيكتبوا|بتكتب|كلام|منشورات|منشور|بوستات|بوست|تعليقات|تعليق|تغريدات|تغريده|تويتات|فيديوهات|فيديو|ريلز|مقالات|مقال|اخبار|خبر|نقاشات|مناقشات|مناقشه|اراء|راي|مراجعات|تقييمات|هاشتاجات|ترند|دراسات|ابحاث|بحوث|تحليلات", "posts?|comments?|tweets?|videos?|reels?|articles?|news|discussions?|opinions?|reviews?|trends?|studies|research|saying|says|said|talking|think|thinks|discussing|writing");
 /** A word that turns what follows into the SUBJECT of the collected content, not the thing collected. */
-const TOPIC_MARK = /(?<![ء-ي])(?:عن|حول|بخصوص|بشان|تتناول|تناقش|تتحدث|بتتكلم|بتتناول|تتعلق|متعلقه|المتعلقه)(?![ء-ي])|\b(?:about|regarding|concerning|on|related to)\b/;
+const TOPIC_MARK = /(?<![ء-ي])(?:عن|حول|بخصوص|بشان|تتناول|تناقش|تتحدث|بتتكلم|بتتناول|تتعلق|متعلقه|المتعلقه)(?![ء-ي])|\b(?:about|regarding|concerning|on|related to|discussing|discuss|discusses|mentioning|covering)\b/;
 
 /** The text split at the first topic marker that follows PUBLIC content: `head` is what is collected, `tail` its subject. `tail` is null when the sentence has no such shape (the whole sentence is the object). */
 function splitAtPublicTopic(text: string): { head: string; tail: string | null } {

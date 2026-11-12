@@ -244,15 +244,26 @@ describe("LIVE intelligence evaluation (real claude-haiku-5-5, guarded, cumulati
   }, 120 * 60_000);
 });
 
-/** Generic SYNTHETIC rows for a TREG endpoint (never real data): the fields the catalog's capabilities give, on the topic the planner asked. */
+/**
+ * REALISTIC SYNTHETIC provider rows (never real data, nothing is fetched): plausible FICTIONAL names, Arabic text on the topic the planner searched, recent dates, shaped by what the endpoint serves. Round 1 used obvious placeholders
+ * («نتيجة تجريبية», example.org) and the real planner rightly refused to plan from them ("any company I delivered would be invented"): the planner is now measured on rows it can reason about. The names are invented for this evaluation.
+ */
+const NAMES = ["النخبة", "الريادة", "الأفق", "المرجان", "الواحة", "لؤلؤة البحر", "النجمة الذهبية", "الصفوة", "البيان", "المدار", "الشروق", "الياسمين"];
+const LATIN = ["alnokhba", "alreyada", "alofok", "almorgan", "alwaha", "loloat-albahr", "golden-star", "alsafwa", "albayan", "almadar", "alshorouk", "alyasmin"];
 function syntheticTreg(endpointId: string, params: Record<string, unknown>): unknown {
-  const q = String(params?.query ?? params?.q ?? params?.keyword ?? params?.keywords ?? params?.search ?? params?.term ?? "موضوع الطلب").slice(0, 60);
-  const rows = Array.from({ length: 10 }, (_, i) => ({
-    id: `syn_${i}`, name: `${q} — نتيجة تجريبية ${i + 1}`, title: `${q} ${i + 1}`, text: `نص تجريبي عن ${q} رقم ${i + 1}`, snippet: `مقتطف عن ${q}`, url: `https://example.org/${endpointId.replace(/[^a-z0-9]/gi, "-")}/${i}`,
-    link: `https://example.org/r/${i}`, website: `https://company${i}.example`, domain: `company${i}.example`, rating: 3 + (i % 3), date: "2026-11-01T10:00:00Z", author: `كاتب ${i}`, address: "عنوان تجريبي", city: "القاهرة", country: "EG",
-    place_id: `place_${i}`, review_count: 20 + i, industry: "قطاع تجريبي",
-  }));
-  return { data: rows, results: rows, next_cursor: null };
+  const q = String(params?.query ?? params?.q ?? params?.keyword ?? params?.keywords ?? params?.search ?? params?.term ?? params?.company ?? "").replace(/\s+/g, " ").trim().slice(0, 60) || "السوق المحلي";
+  const id = endpointId.toLowerCase();
+  const n = 10;
+  const day = (i: number) => `2026-11-${String(10 - (i % 9)).padStart(2, "0")}T0${i % 9}:15:00Z`;
+  let rows: Array<Record<string, unknown>>;
+  if (/review/.test(id)) rows = Array.from({ length: n }, (_, i) => ({ review_id: `r${i}${id.length}`, rating: 2 + (i % 4), text: ["الخدمة ممتازة والموظفين محترمين", "المكان نظيف بس الأسعار عالية شوية", "تجربة متوسطة والانتظار كان طويل", "أنصح بيه جدًا للعائلات"][i % 4], author: `زائر ${i + 1}`, date: day(i), place_id: `pl_${i}` }));
+  else if (/maps|places|local|apple_maps|business/.test(id) && !/compan/.test(id)) rows = Array.from({ length: n }, (_, i) => ({ place_id: `pl_${i}`, name: `${NAMES[i]} — ${q}`, address: `شارع ${NAMES[(i + 3) % 12]}، ${/غردق/.test(q) ? "الغردقة" : /معادي/.test(q) ? "المعادي، القاهرة" : "القاهرة"}`, rating: 3.6 + (i % 4) / 5, reviews_count: 40 + i * 13, phone: `+2010${String(2000000 + i * 3571).slice(0, 7)}`, website: `https://${LATIN[i]}.com`, maps_url: `https://maps.google.com/?cid=${1000 + i}`, category: q }));
+  else if (/employee|people|linkedin|person|contact\.search/.test(id)) rows = Array.from({ length: n }, (_, i) => ({ person_id: `p${i}`, full_name: ["أحمد سمير", "منى خالد", "كريم فؤاد", "سارة عادل", "محمود نبيل", "ريم حسن", "عمرو صلاح", "نهى إبراهيم", "طارق عزت", "دينا مصطفى"][i], title: ["مدير التسويق", "مديرة التسويق الرقمي", "رئيس قسم المبيعات", "مديرة العلامة التجارية"][i % 4], company: `${NAMES[i]} ${q}`, company_domain: `${LATIN[i]}.com`, profile_url: `https://www.linkedin.com/in/${LATIN[i]}-${i}` }));
+  else if (/email|phone/.test(id)) rows = Array.from({ length: 3 }, (_, i) => ({ value: ["info@", "sales@", "contact@"][i] + `${LATIN[0]}.com`, type: "generic", source_page: `https://${LATIN[0]}.com/contact` }));
+  else if (/compan|organization|firm|openmart/.test(id)) rows = Array.from({ length: n }, (_, i) => ({ company_id: `c${i}`, name: `${NAMES[i]} ${q}`, website: `https://${LATIN[i]}.com`, domain: `${LATIN[i]}.com`, industry: q, city: /غردق/.test(q) ? "الغردقة" : /دبي/.test(q) ? "دبي" : "القاهرة", country: /دبي|امارات|الإمارات/.test(q) ? "AE" : "EG", employees: 15 + i * 7, description: `شركة ${q} تأسست في ${2008 + i}` }));
+  else if (/scrape|extract|contents|fetch|read/.test(id)) rows = [{ url: String(params?.url ?? `https://${LATIN[1]}-news.com/a1`), title: `${q}: تطورات جديدة`, text: `يتناول هذا المقال ${q} من عدة زوايا، ويعرض آراء المختصين وأحدث الأرقام المنشورة رسميًا.`, published_at: day(1) }];
+  else rows = Array.from({ length: n }, (_, i) => ({ title: [`${q}: تطورات جديدة هذا الأسبوع`, `خبراء يعلّقون على ${q}`, `أرقام رسمية حول ${q}`, `${q} بين التحديات والفرص`][i % 4], url: `https://${LATIN[i]}-news.com/${2026}/11/article-${i + 1}`, snippet: `تقرير عن ${q} يتناول آخر المستجدات وآراء المختصين.`, source: `${NAMES[i]} نيوز`, date: day(i), position: i + 1 }));
+  return { data: rows, results: rows, items: rows, next_cursor: null };
 }
 
 /**
@@ -278,9 +289,9 @@ async function planSafely(id: string, request: string, brief: ResearchBrief | nu
   const providerCalls: string[] = [];
   const prompts: string[] = [];
   const web = fakeContextDev({
-    parse: (parser, _url, body) => (parser === "google-maps" ? { data: mapsPlace("مكان تجريبي"), credits: 1 } : parser === "google-maps-reviews" ? { data: mapsReviews(Math.min(20, Number(body?.parseParams?.limit) || 20)), credits: 1 } : { fail: { error_code: "NOT_FOUND" } }),
-    search: () => Array.from({ length: 8 }, (_, i) => ({ title: `مقال تجريبي ${i + 1}`, url: `https://news.example/a${i}`, description: "ملخص تجريبي", snippet: "ملخص تجريبي", date: "2026-11-01" })),
-    scrape: () => ({ markdown: "# مقال تجريبي\n\nنص تجريبي للمقال.", credits: 1 }),
+    parse: (parser, _url, body) => (parser === "google-maps" ? { data: mapsPlace("مطعم المرجان"), credits: 1 } : parser === "google-maps-reviews" ? { data: mapsReviews(Math.min(20, Number(body?.parseParams?.limit) || 20)), credits: 1 } : { fail: { error_code: "NOT_FOUND" } }),
+    search: (body: any) => Array.from({ length: 8 }, (_, i) => ({ title: `${String(body?.query ?? "الموضوع").slice(0, 50)}: ${["تطورات جديدة", "آراء الخبراء", "أرقام رسمية", "ما الذي تغيّر"][i % 4]}`, url: `https://${LATIN[i]}-news.com/2026/11/a${i + 1}`, description: "تقرير يتناول آخر المستجدات وآراء المختصين.", snippet: "تقرير يتناول آخر المستجدات وآراء المختصين.", date: `2026-11-0${1 + (i % 9)}` })),
+    scrape: (url: string) => ({ markdown: `# تقرير\n\nيتناول هذا التقرير الموضوع من عدة زوايا ويعرض آراء المختصين وأحدث الأرقام المنشورة رسميًا. (${url.slice(0, 60)})`, credits: 1 }),
   });
   const base = real ? createEvalPlannerDriver({ fetch: real.guardFetch, key: () => process.env[KEY_ENV] ?? "", model: EVAL_MODEL, maxOutputTokens: PLANNER_MAX_OUTPUT_TOKENS, maxTurns: Number(process.env.LIVE_EVAL_PLANNER_MAX_TURNS) || 30, onTurnRecord: (r) => real.records.push(r) }) : createFakeDriver([]);
   const driver = { run: async (i: Parameters<RunnerDeps["driver"]["run"]>[0]) => { prompts.push(String(i.userPrompt ?? "")); return base.run(i); } } as RunnerDeps["driver"];

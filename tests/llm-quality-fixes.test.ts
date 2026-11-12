@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryDb } from "./helpers/memoryDb";
 import { REPLAY_USER } from "./helpers/agentReplay";
-import { agentChatTurn, CHAT_RESEARCH_BRIEF_FLAG_KEY, MULTI_PART_RETRY_AR, PLAN_NOT_READY_AR, REQUEST_UPDATED_AR } from "../src/lib/agentMission/chatTurn";
+import { agentChatTurn, CHAT_RESEARCH_BRIEF_FLAG_KEY, MODEL_RETRY_AR, MULTI_PART_RETRY_AR, PLAN_NOT_READY_AR, REQUEST_UPDATED_AR, TOPIC_QUESTION_AR } from "../src/lib/agentMission/chatTurn";
 import { setChatModelForTesting, type ChatModelInput } from "../src/lib/agentMission/chatModel";
-import { buildSystemPrompt, decideTurn, parseModelAnswer } from "../src/lib/agentMission/conversationModel";
+import { buildSystemPrompt, decideTurn, FORMAT_REMINDER_AR, FORMAT_RETRY_AR, parseModelAnswer } from "../src/lib/agentMission/conversationModel";
 import { parseBrief } from "../src/lib/agentMission/researchBrief";
 import { buildCapabilityRegistry, CAPABILITY_DISCOVERY_FLAG_KEY, chatCapabilityLines, discoverCapabilities, researchNeedOf } from "../src/lib/agentMission/capabilities";
 import { classifyMessage } from "../src/lib/agentMission/messageType";
-import { conditionDriftOf } from "../src/lib/agentMission/researchGroup";
+import { completedPartSentence, conditionDriftOf } from "../src/lib/agentMission/researchGroup";
+import { privacyRefusalAr } from "../src/lib/agentMission/guardRules";
 import { buildAsk } from "../src/lib/agentMission/foundation/ask";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { blockedEndpointReason } from "../src/lib/treg/blockList";
@@ -241,5 +242,121 @@ describe("decideTurn reports the parts of a raw brief (before any check)", () =>
   it("counts first objectives inside or beside the brief", async () => {
     const d = await decideTurn({ message: "x", balancePoints: null, open: null, brief: { enabled: true, soFar: null } }, async () => ({ ok: true, text: JSON.stringify({ type: "data_request", reason: "", reply: "", brief: briefOf({ request: "abc" }), objectives: [o("o1", "web.search"), o("o2", "places.discover"), o("o3", "places.reviews", { parent: "o2" })] }) }));
     expect(d.briefParts).toBe(2);
+  });
+});
+
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// ROUND 1 OF THE QUALITY MISSION (real model, 61 conversations): the failures it found, each pinned here
+// ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+const tiktok = (request: string, extra: Record<string, unknown> = {}) => ({ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ request, platforms: ["tiktok"], content: ["comments"], topic: "السياحة", objectives: [o("o1", "social.parents", { platform: "tiktok" }), o("o2", "social.comments", { platform: "tiktok", parent: "o1" })], ...extra }) });
+
+describe("round 1: the JSON format in long conversations", () => {
+  it("the format reminder closes every prompt; an answer in prose is asked ONCE more with a format note, and read", async () => {
+    const seen: string[] = [];
+    const answers = ["تمام، سجّلت طلبك.", JSON.stringify({ type: "greeting_or_small_talk", reason: "x", reply: "أهلًا بك.", count: null })];
+    const d = await decideTurn({ message: "أهلا", balancePoints: null, open: null }, async (i) => { seen.push(i.system); return { ok: true, text: answers.shift()! }; });
+    expect(seen).toHaveLength(2);
+    expect(seen[0].endsWith(FORMAT_REMINDER_AR)).toBe(true);
+    expect(seen[1].endsWith(FORMAT_RETRY_AR)).toBe(true);
+    expect(d).toMatchObject({ type: "greeting_or_small_talk", source: "model", reply: "أهلًا بك." });
+  });
+  it("prose twice in a conversation in progress: «send it again», never a new mission from a fragment («٥٠٠ تعليق والردود كمان»)", async () => {
+    const db = world();
+    scripted([tiktok("تعليقات تيك توك عن السياحة")]);
+    await turn(db, "هات تعليقات تيك توك عن السياحة");
+    setChatModelForTesting(async () => ({ ok: true, text: "تمام، سجّلت طلبك الآن: ٥٠٠ تعليق." }));
+    const { r } = await turn(db, "٥٠٠ تعليق والردود كمان");
+    expect(r.contentAr).toBe(MODEL_RETRY_AR);
+    expect(live(db)).toHaveLength(1);
+  });
+});
+
+describe("round 1: no mission from words that name no data", () => {
+  for (const [message, raw] of [
+    ["محتاج داتا عن سوق العقارات في مصر", { type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ status: "needs_clarification", request: "", topic: "سوق العقارات", objectives: [] }) }],
+    ["عايز داتا", { type: "data_request", reason: "x", reply: "تمام، عايز بيانات عن إيه بالتحديد؟", count: null, brief: briefOf({ status: "needs_clarification", request: "" }) }],
+    ["عايز أعرف الناس بتقول إيه عن السياحة في مصر", { type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "منشورات الناس عن السياحة في مصر", objectives: [o("o1", "social.parents", { request: "منشورات الناس عن السياحة في مصر" })] }) }],
+  ] as Array<[string, Record<string, unknown>]>) {
+    it(`«${message}»: an unusable brief and words with no data kind → a question, no mission`, async () => {
+      scripted([raw]);
+      const db = world();
+      const { r } = await turn(db, message);
+      expect(r.ok).toBe(false);
+      expect(r.contentAr).toMatch(/[؟?]/);
+      expect(missions(db)).toHaveLength(0);
+    });
+  }
+  it("a refusal the keyword rule overruled is never shown as the question: the code asks", async () => {
+    scripted([{ type: "service_question", reason: "x", reply: "ديجر لا تقدم التحليل الإحصائي.", count: null }]);
+    const db = world();
+    const { r } = await turn(db, "اعملي تحليل إحصائي للبيانات واكتبلي فصل النتائج");
+    expect(missions(db)).toHaveLength(0);
+    expect(r.contentAr).not.toContain("لا تقدم");
+  });
+  it("«تيك توك» alone: the model's invented topic («الموضوع المطلوب») is asked, not planned; a real topic the parser cannot read is not asked", async () => {
+    scripted([{ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "منشورات وفيديوهات تيك توك عن الموضوع المطلوب", platforms: ["tiktok"], content: ["posts", "videos"], objectives: [o("o1", "social.parents", { platform: "tiktok" })] }) }]);
+    const db = world();
+    const { r } = await turn(db, "تيك توك");
+    expect(r.contentAr).toBe(TOPIC_QUESTION_AR);
+    expect(missions(db)).toHaveLength(0);
+    scripted([{ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "فيديوهات تيك توك عن موبايلات سامسونج", platforms: ["tiktok"], content: ["videos"], objectives: [o("o1", "social.parents", { platform: "tiktok" })] }) }]);
+    const db2 = world();
+    expect((await turn(db2, "عايز موبايلات سامسونج على تيك توك")).r.ok).toBe(true);
+  });
+});
+
+describe("round 1: a part's sentence says what its objectives collect", () => {
+  it("comments, replies, reviews and official contacts the objectives carry are added when the sentence omits them; nothing else is added", () => {
+    expect(completedPartSentence("منشورات تيك توك عن السياحة", [o("o1", "social.parents", { platform: "tiktok" }) as any, { ...o("o2", "social.comments", { platform: "tiktok", parent: "o1" }), contacts: [] } as any])).toBe("منشورات تيك توك عن السياحة والتعليقات عليها");
+    expect(completedPartSentence("المدارس الدولية في القاهرة على خرائط جوجل", [{ ...o("o1", "places.discover"), platform: null, parent: null, contacts: [] } as any, { ...o("o2", "places.reviews", { parent: "o1" }), platform: null, contacts: [] } as any])).toBe("المدارس الدولية في القاهرة على خرائط جوجل وتقييماتها");
+    expect(completedPartSentence("شركات التسويق في دبي", [{ ...o("o1", "companies.discover"), platform: null, parent: null, contacts: [] } as any, { ...o("o2", "company.contacts", { parent: "o1" }), platform: null, contacts: ["email"] } as any])).toBe("شركات التسويق في دبي وإيميلاتها الرسمية");
+    expect(completedPartSentence("تعليقات تيك توك عن السياحة", [o("o1", "social.parents", { platform: "tiktok" }) as any, { ...o("o2", "social.comments", { platform: "tiktok", parent: "o1" }), contacts: [] } as any])).toBe("تعليقات تيك توك عن السياحة");
+  });
+  it("K7: «تعليقات تيك توك … وآخر أخبار …» with the TikTok sentence written for its posts: BOTH parts are prepared", async () => {
+    scripted([{ type: "data_request", reason: "x", reply: "", brief: briefOf({ request: "تعليقات تيك توك عن السياحة، وأخبار السياحة في مصر", platforms: ["tiktok"], content: ["comments", "articles"], topic: "السياحة", objectives: [o("o1", "social.parents", { platform: "tiktok", request: "منشورات تيك توك عن السياحة" }), o("o2", "social.comments", { platform: "tiktok", parent: "o1" }), o("o3", "web.search", { request: "آخر أخبار السياحة في مصر", country: "مصر" })] }) }]);
+    const db = world();
+    await turn(db, "عايز تعليقات تيك توك عن السياحة، وآخر أخبار السياحة في مصر");
+    expect(live(db).map((m) => m.request_text).sort()).toEqual(["آخر أخبار السياحة في مصر", "منشورات تيك توك عن السياحة والتعليقات عليها"]);
+  });
+});
+
+describe("round 1: corrections while the plan is being prepared", () => {
+  it("K3: «خليهم ١٠٠ بس» replaces the 300-comment request (the count is part of the request)", async () => {
+    scripted([tiktok("جمع ٣٠٠ تعليق تيك توك عن السياحة", { count: 300 }), { ...tiktok("جمع ١٠٠ تعليق تيك توك عن السياحة", { count: 100 }), type: "edit_of_open_request", count: 100 }]);
+    const db = world();
+    await turn(db, "هات ٣٠٠ تعليق تيك توك عن السياحة");
+    const { r } = await turn(db, "خليهم ١٠٠ بس");
+    expect(r.contentAr).not.toBe(PLAN_NOT_READY_AR);
+    expect(live(db).map((m) => m.request_text)).toEqual(["جمع ١٠٠ تعليق تيك توك عن السياحة"]);
+  });
+  it("K8: «الزمالك بدل المعادي» (two districts of one city) replaces the request", async () => {
+    const places = (where: string) => ({ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ request: `مطاعم ${where} مع تقييماتها`, content: ["places", "reviews"], topic: `مطاعم ${where}`, objectives: [o("o1", "places.discover", { request: `مطاعم ${where}` }), o("o2", "places.reviews", { parent: "o1" })] }) });
+    scripted([places("المعادي"), { ...places("الزمالك"), type: "edit_of_open_request" }]);
+    const db = world();
+    await turn(db, "هات مطاعم المعادي وتقييماتها");
+    await turn(db, "لا خليها الزمالك بدل المعادي");
+    expect(live(db).map((m) => m.request_text)).toEqual(["مطاعم الزمالك مع تقييماتها"]);
+  });
+  it("K6: an added part while the single mission waits: that mission is matched as the first part, never left live next to a copy", async () => {
+    scripted([
+      tiktok("تعليقات تيك توك عن المدارس الدولية في القاهرة"),
+      { type: "edit_of_open_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "تعليقات تيك توك عن المدارس الدولية في القاهرة، وتقييمات المدارس على خرائط جوجل", platforms: ["tiktok"], content: ["comments", "reviews"], objectives: [o("o1", "social.parents", { platform: "tiktok", request: "تعليقات تيك توك عن المدارس الدولية في القاهرة" }), o("o2", "social.comments", { platform: "tiktok", parent: "o1" }), o("o3", "places.discover", { request: "المدارس الدولية في القاهرة على خرائط جوجل" }), o("o4", "places.reviews", { parent: "o3" })] }) },
+    ]);
+    const db = world();
+    await turn(db, "هات تعليقات تيك توك عن المدارس الدولية في القاهرة");
+    await turn(db, "وكمان تقييمات المدارس دي على جوجل ماب");
+    const texts = live(db).map((m) => m.request_text);
+    expect(texts).toHaveLength(2);
+    expect(texts.filter((t) => /تيك توك/.test(t))).toHaveLength(1);
+    expect(texts.find((t) => /خرائط/.test(t))).toMatch(/تقييم/);
+  });
+});
+
+describe("round 1: two privacy-rule gaps", () => {
+  it("«الواتساب الشخصي للمعلقين» is refused by code; «comments discussing phone number leaks» (the model's English rephrase) is public research", () => {
+    expect(privacyRefusalAr("عايز الواتساب الشخصي للمعلقين على البوست ده")).not.toBeNull();
+    expect(privacyRefusalAr("Public posts and comments discussing phone number leaks")).toBeNull();
+    expect(privacyRefusalAr("comments discussing the phone numbers of the people who commented")).not.toBeNull();
+    expect(privacyRefusalAr("منشورات عامة عن الواتساب")).toBeNull();
   });
 });
