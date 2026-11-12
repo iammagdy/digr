@@ -102,7 +102,8 @@ async function main() {
     runMission: async (mission) => {
       const view = ownedStore(store, mission.id);
       owned.set(mission.id, view);
-      try { await runClaimedSafely({ ...deps(), store: view.store, leaseLost: view.revoked }, mission); } finally { if (owned.get(mission.id) === view) owned.delete(mission.id); }
+      const revokeOwnership = () => { view.revoke(); abortRunsOf(mission.id, "lease_lost"); };
+      try { await runClaimedSafely({ ...deps(), store: view.store, leaseLost: view.revoked, ownerId: workerId, revokeOwnership }, mission); } finally { if (owned.get(mission.id) === view) owned.delete(mission.id); }
     },
     // another worker owns a mission this one runs: its writes are refused from now on and its model run is stopped (the new owner finishes it)
     onLeaseLost: (missionId) => { owned.get(missionId)?.revoke(); abortRunsOf(missionId, "lease_lost"); },

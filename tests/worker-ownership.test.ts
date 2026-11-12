@@ -3,7 +3,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { createMemoryStore, newMission } from "../agent/src/memoryStore";
 import { createWorker } from "../agent/src/worker";
-import { assertOwned, LeaseLostError, ownedStore, STORE_WRITE_METHODS } from "../agent/src/ownership";
+import { assertOwned, ensureOwned, LeaseLostError, ownedStore, STORE_WRITE_METHODS } from "../agent/src/ownership";
 import { abortRunsOf, trackRun, untrackRun } from "../agent/src/sessions";
 import { runMissionSafely, type RunnerDeps } from "../agent/src/runMission";
 import type { MissionRecord } from "../agent/src/types";
@@ -50,6 +50,21 @@ describe("the money guard", () => {
     expect(() => assertOwned(() => true, "m")).toThrow(LeaseLostError);
   });
 
+  it("ensureOwned reads the row: another worker's row revokes and throws; no worker or this worker passes", async () => {
+    const store = createMemoryStore([newMission({ id: "msn_m", user_id: U, status: "executing", worker_id: "w2" })]);
+    let revoked = 0;
+    const deps = { store, ownerId: "w1", leaseLost: () => false, revokeOwnership: () => { revoked += 1; } };
+    await expect(ensureOwned(deps, "msn_m")).rejects.toBeInstanceOf(LeaseLostError); // the heartbeat has not noticed yet: the row decides
+    expect(revoked).toBe(1);
+    store.missions.get("msn_m")!.worker_id = "w1";
+    await expect(ensureOwned(deps, "msn_m")).resolves.toBeUndefined();
+    store.missions.get("msn_m")!.worker_id = null;
+    await expect(ensureOwned(deps, "msn_m")).resolves.toBeUndefined();
+    await expect(ensureOwned({ ...deps, leaseLost: () => true }, "msn_m")).rejects.toBeInstanceOf(LeaseLostError);
+    store.getMission = async () => { throw new Error("db down"); };
+    await expect(ensureOwned(deps, "msn_m")).resolves.toBeUndefined();
+  });
+
   it("every settlement call in the worker is guarded on the line before it", () => {
     const files: string[] = [];
     const walk = (d: string) => { for (const f of readdirSync(d)) { const p = path.join(d, f); if (statSync(p).isDirectory()) walk(p); else if (p.endsWith(".ts")) files.push(p); } };
@@ -60,7 +75,7 @@ describe("the money guard", () => {
       lines.forEach((l, i) => {
         if (!/\bawait (settleMission|settleAddon)\(/.test(l)) return;
         calls += 1;
-        expect(lines[i - 1], `${path.basename(f)}:${i + 1} settles without assertOwned on the line before`).toMatch(/assertOwned\(deps\.leaseLost, /);
+        expect(lines[i - 1], `${path.basename(f)}:${i + 1} settles without assertOwned on the line before`).toMatch(/await ensureOwned\(deps, /);
       });
     }
     expect(calls).toBe(5);

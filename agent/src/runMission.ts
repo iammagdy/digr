@@ -19,7 +19,7 @@ import { statsFromCalls } from "../../src/lib/agentMission/sourceRanking";
 import { classifyNoCardEnd, refusalSentenceAr } from "../../src/lib/agentMission/refusal";
 import { parentCountsOf, parentsBelowShare } from "../../src/lib/agentMission/parents";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
-import { assertOwned } from "./ownership";
+import { ensureOwned } from "./ownership";
 import { compensateFreeRerun } from "../../src/lib/agentMission/freeRerun";
 import { customerPlanView, namesAreWritten, requestedRowsOf, type PricedPlan } from "../../src/lib/agentMission/plan";
 import { topLevelFactsOf } from "../../src/lib/agentMission/repliesCard";
@@ -95,6 +95,10 @@ export interface RunnerDeps {
   store: AgentStore;
   /** True once ANOTHER worker owns this run's mission (ownership.ts): the run's writes are refused and its error recovery writes nothing (the new owner owns the row). */
   leaseLost?: () => boolean;
+  /** The worker that claimed this run's mission (ownership.ts ensureOwned reads the row against it before every settlement). */
+  ownerId?: string;
+  /** Revokes this run's ownership: its writes are refused and its model run is stopped. */
+  revokeOwnership?: () => void;
   /** Supabase client (money functions, spend recording, sensitive audit). */
   client: any;
   catalog: TregCatalog;
@@ -947,7 +951,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
       const title = missionFileTitleAr({ plan, requestText: mission.request_text, delivered: Math.min(fileCount, plan.price.deliveredRows), date: new Date(), parentDelivered: parentStage ? (fileByStage?.[parentStage.key] ?? rowsByStage[parentStage.key]?.length ?? null) : null });
       files = published.files.map((f) => ({ ...f, download_name: `${title}.${f.kind}` }));
     } catch (e) {
-      assertOwned(deps.leaseLost, mission.id);
+      await ensureOwned(deps, mission.id);
       await settleMission(deps.client, { jobId, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath: null, releaseReason: "تعذّر حفظ ملفات النتيجة، فعاد الحجز المؤقت كاملًا." });
       await store.updateMission(mission.id, { status: "failed", error: `files: ${String((e as Error)?.message ?? e).slice(0, 200)}`, execution_llm_usd: Number(llm.toFixed(6)), charged_points: 0, delivered_units: 0, ...clear });
       await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّر حفظ ملفات النتائج؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد." });
@@ -959,7 +963,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   // THE ONE NUMBER: the items in the file
   const delivered = Math.min(fileCount, plan.price.deliveredRows);
   if (fileCount > plan.price.deliveredRows) flags.push("file_over_the_volume_sold");
-  assertOwned(deps.leaseLost, mission.id);
+  await ensureOwned(deps, mission.id);
   const settled = await settleMission(deps.client, { jobId, deliveredUnits: delivered, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath, releaseReason: "لم يُسلَّم شيء من هذه المهمة، فعاد الحجز المؤقت كاملًا." });
   // STAGE 2 S6 (docs/STAGE-2.md): the live sheet's last snapshot, equal to the file just stored. It runs AFTER the settlement (so it can never stand between the customer and the settlement), builds its own arguments inside its own try, and never throws: a failure is logged and ignored. Unset flag: nothing is evaluated or written.
   await writeDoneSnapshotSafely({ store, missionId: mission.id, plan: approvedPlan, filePlan: plan, snap, requestText: mission.request_text, reviewStop: checked.stop, resultPath, mailboxesOf: companyMailboxesOf, isTest: () => accountIsTest(store, mission.user_id), log: deps.log });
@@ -1089,7 +1093,7 @@ export async function recoverFromError(deps: RunnerDeps, mission: MissionRecord,
     } catch (e) {
       // last resort: nothing delivered, the whole hold released through the existing function
       deps.log?.(`settle_failed ${mission.id} ${shortError(e).slice(0, 120)}`);
-      assertOwned(deps.leaseLost, mission.id);
+      await ensureOwned(deps, mission.id);
       await settleMission(deps.client, { jobId: fresh.job_id, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: Number(fresh.planning_treg_usd ?? 0) + Number(fresh.execution_treg_usd ?? 0), resultPath: null, releaseReason: "تعذّر إكمال المهمة، فعاد الحجز المؤقت كاملًا." });
       await store.updateMission(mission.id, { status: "failed", error: message, charged_points: 0, delivered_units: 0, ...clear });
       await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّر إكمال المهمة؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد." });

@@ -1,5 +1,5 @@
 import { AGENT_ERROR_REQUEUES_MAX, AGENT_MEMORY_REQUEUES_MAX, AGENT_PHASE_STARTS_MAX, AGENT_RESTART_REQUEUES_MAX, AGENT_EXECUTION_WALL_MS } from "../../../src/lib/agentMission/constants";
-import { assertOwned } from "../ownership";
+import { ensureOwned } from "../ownership";
 import { addonProviderBudgetUsd, checkAddon, readAddonPlan, settleAddon, type AddonKind, type AddonPlan, type AddonSettleInput } from "../../../src/lib/agentMission/addonSettlement";
 import type { AddonRequest } from "../../../src/lib/agentMission/stage4/addonRow";
 import { EDIT_NOT_SEARCHED_AR, applyEditCore, type EditRequest } from "../../../src/lib/agentMission/stage4/editCore";
@@ -128,7 +128,7 @@ export async function recoverAddon(deps: Deps, mission: MissionRecord, error: un
     const hold = Number(fresh.reserved_points);
     let released = false;
     if (addon && fresh.job_id && hold >= 1) {
-      assertOwned(deps.leaseLost, mission.id);
+      await ensureOwned(deps, mission.id);
       const s = await settleAddon(deps.client, settleInputOf(addon.kind, fresh.job_id, hold, null, false)).catch(() => null);
       released = Boolean(s?.result.ok);
     }
@@ -385,7 +385,7 @@ async function finish(deps: Deps, row: MissionRecord, addon: AddonPlan, jobId: s
     if (there) { if (sameBytes(there, pendingBytes)) alreadyPublished = true; else zombie = true; }
   }
   const charging = ending.kind === "settle" && workable && !zombie;
-  assertOwned(deps.leaseLost, row.id);
+  await ensureOwned(deps, row.id);
   const settled = await settleAddon(client, settleInputOf(addon.kind, jobId, hold, outcome, charging, addon.pricing.settings));
   let charged = 0;
   let released = false;

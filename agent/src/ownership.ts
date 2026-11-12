@@ -31,6 +31,26 @@ export function assertOwned(leaseLost: (() => boolean) | undefined, missionId: s
   if (leaseLost?.()) throw new LeaseLostError(missionId);
 }
 
+/**
+ * THE MONEY GUARD, CHECKED IN THE DATABASE (security review of round 55): the in-memory flag is set only by the heartbeat, up to 30 s after a takeover, and a run
+ * resuming from a stall can reach its settlement first. So right before every settle or release the row is READ: when it names ANOTHER worker, this run's
+ * ownership is revoked (`revokeOwnership`: writes refused, model run stopped) and it throws. A row that names no worker or this one passes (our own run may
+ * have released it); a row that cannot be read passes too (the settlement itself needs the same database).
+ */
+export async function ensureOwned(
+  deps: { leaseLost?: () => boolean; ownerId?: string; revokeOwnership?: () => void; store: Pick<AgentStore, "getMission"> },
+  missionId: string,
+): Promise<void> {
+  assertOwned(deps.leaseLost, missionId);
+  if (!deps.ownerId) return;
+  let owner: string | null = null;
+  try { owner = (await deps.store.getMission(missionId))?.worker_id ?? null; } catch { return; }
+  if (owner && owner !== deps.ownerId) {
+    try { deps.revokeOwnership?.(); } catch { /* the throw below is what stops the settlement */ }
+    throw new LeaseLostError(missionId);
+  }
+}
+
 export interface OwnedStore {
   /** The store to give the run. */
   store: AgentStore;
