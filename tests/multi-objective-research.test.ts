@@ -316,19 +316,19 @@ describe("NO FALSE REFUSALS: legitimate public-data requests reach the agent", (
 // ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 const WHY = "the planner sampled the validated capability it ranks first for these fields";
 const lastRows = (r: Results) => (r.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 3);
-function hotelsPartReplay(o2: { reviewsDelivered?: number } = {}) {
+function hotelsPartReplay(o2: { reviewsDelivered?: number; request?: string; brief?: Record<string, unknown> } = {}) {
   const web = fakeContextDev({ parse: (parser, _url, body) => (parser === "google-maps" ? { data: { results: mapsPlace("فندق الشاطئ الغردقة").results.map((p) => ({ ...p, address: "طريق الشيراتون، الغردقة", city: "الغردقة", google_category: ["فندق"] })) }, credits: 1 } : { data: mapsReviews(Math.min(o2.reviewsDelivered ?? 1000, body.parseParams.limit)), credits: 1 }) });
   const SEARCH = "https://www.google.com/maps/search/%D9%85%D8%B7%D8%B9%D9%85+%D8%A3%D8%A8%D9%88+%D8%B7%D8%A7%D8%B1%D9%82+%D8%A7%D9%84%D9%82%D8%A7%D9%87%D8%B1%D8%A9/";
   const PLACE = "https://www.google.com/maps/place/?q=place_id:ChIJplace0001";
   return replay({
-    request: REQUEST,
+    request: o2.request ?? REQUEST,
     web,
     makeStore: () => { const s = createMemoryStore(); Object.assign(s.settings, { [CAPABILITY_DISCOVERY_FLAG_KEY]: { user_ids: [REPLAY_USER] } }); return s; },
     beforeChat: (db) => {
       db.seed("agent_settings", [{ key: CHAT_RESEARCH_BRIEF_FLAG_KEY, value: { user_ids: [REPLAY_USER] } }, { key: CAPABILITY_DISCOVERY_FLAG_KEY, value: { user_ids: [REPLAY_USER] } }]);
-      scripted([say(THREE_PARTS())]);
+      scripted([say(o2.brief ?? THREE_PARTS())]);
     },
-    chooseMission: (t) => t.extraMissions![1].id,
+    chooseMission: (t) => t.extraMissions!.find((c) => (c.contentAr ?? "").includes(HOTELS_PART))!.id,
       planning: [
         { tool: "parse_page", args: { parser: "google-maps", url: SEARCH, why: WHY } },
         { tool: "parse_page", args: { parser: "google-maps-reviews", url: PLACE, sort: "newest", limit: 100, why: WHY } },
@@ -379,6 +379,20 @@ describe("H, I, L, M. the customer approves ONE part: only that part is held, ex
     expect(r.call).not.toHaveBeenCalled();
     // every objective of the part has its outcome
     expect(r.store.events.map((e) => e.message_ar).find((m) => m.startsWith("نتيجة كل هدف"))).toContain("سُلّم كاملًا");
+  });
+
+  it("EXACT REQUIREMENTS end to end: the TikTok part drifted («آخر شهر» → «آخر سنة») is asked and never becomes a mission; the hotels part, its place attributed exactly, is planned, approved on its own card, executed and settled", async () => {
+    const request = REQUEST.replace("تعليقات تيك توك عن السياحة", "تعليقات تيك توك عن السياحة آخر شهر");
+    const brief = { ...THREE_PARTS(), request, objectives: THREE_PARTS().objectives.map((x: any) => (x.id === "o1" ? { ...x, request: "هات تعليقات تيك توك عن السياحة آخر سنة", period: "آخر شهر" } : x.id === "o3" ? { ...x, country: "الغردقة" } : x.id === "o5" ? { ...x, country: "مصر" } : x)) };
+    const r = await hotelsPartReplay({ request, brief });
+    const all = r.db.rows("missions") as Array<{ id: string; status: string; request_text: string; job_id?: string | null }>;
+    expect(all.map((m) => m.request_text)).toEqual([HOTELS_PART, NEWS_PART]);
+    expect(r.mission.request_text).toBe(HOTELS_PART);
+    assertReplayInvariants(r, { expectDelivered: 201 });
+    // the other part waits for its own approval: nothing held, nothing run
+    expect(all.find((m) => m.request_text === NEWS_PART)).toMatchObject({ status: "queued" });
+    expect(r.money.ledger.filter((l) => l.type === "reserve")).toHaveLength(1);
+    expect(r.call).not.toHaveBeenCalled();
   });
 
   it("I. a source that gives fewer reviews than approved: the part ends PARTIAL, the outcome of each objective is said, and only the delivered rows are charged", async () => {

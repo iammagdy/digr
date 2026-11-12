@@ -190,10 +190,7 @@ No new vocabulary. The chat still imports no semantic module.
 * **Invented:** a part states a period, a language, a place or a field the customer never wrote (in any turn, or the request already grounded). That part is asked with a natural sentence and is not prepared; the other parts go on. A number the customer never wrote was already the existing check's.
 * **Dropped:** a requirement of the whole request (period, language, country, city, field, number) that no part carries. Nothing is prepared, and the customer is asked which part it belongs to. A part that also states something unwritten is named in the same answer.
 * **A clarification keeps the group:** the parts already prepared keep their missions (no second mission), and only the asked part is prepared next.
-* **What it cannot see:** the request contract reads WHETHER a period or a language is stated, not its value.
-  * A part that changes «آخر شهر» into «آخر سنة» is not caught here. The worker reads the part's own sentence and the card states the period on the plan before approval.
-  * A period phrase the contract does not read («الأسبوع اللي فات») is not compared.
-  * Platforms, comments and replies are still checked by `validateBrief`.
+* **What it cannot see:** the request contract reads WHETHER a period or a language is stated, not its value. The value check of section 12 closes this.
 
 ## 11. Offline tests (`tests/multi-objective-reliability.test.ts`)
 
@@ -217,3 +214,58 @@ No new vocabulary. The chat still imports no semantic module.
 * a real browser (the project has no browser runner);
 * real Supabase error codes beyond the documented `23505`;
 * the deployed worker's revision.
+
+## 12. Exact requirements across the split (round 47)
+
+**The gap (traced).**
+
+* The brief's `period`, `country` and `language` were parsed but used by nothing. Only the request SENTENCE is executed: it is the mission's `request_text`, and the worker's `buildAsk` reads its period, country and language.
+* Sections 10 and 11 compared only WHETHER a condition was stated, so «آخر شهر» → «آخر سنة» passed.
+* Worse: the part matcher (`samePartRequest`) read both sentences with the parser's booleans. A customer's correction of a period («آخر شهر» → «آخر أسبوع») therefore counted as the SAME part. The old mission was kept and the correction was silently lost. Fixed.
+
+**The understanding stays the model's, in the same single call, with no extra call.** The prompt asks:
+
+* a condition of the WHOLE request is written once, in the brief's own `period`, `country` and `language`;
+* a condition of ONE part is written on that part's first objective (`period`, `country`, `language` in the customer's own words, and `count`, the number the customer wrote for that part);
+* a condition is never moved to another part or changed.
+
+The fields are allowed only on a first objective (schema). They travel as structured fields in each part's brief (`partBriefOf`: the part's own conditions, else the whole request's) and are given back to the model in `BRIEF_SO_FAR`, so corrections keep them.
+
+**The code compares VALUES (`conditionDriftOf`), never words of a new list.**
+
+* **Reader:** the period, the country and the content language are read by `buildAsk`, the very reader the worker executes with, with the semantic flag OFF (as on the chat), at the same moment for the phrase and for the sentence. So a relative period keeps its meaning: «آخر شهر» is the same Cairo window on both sides.
+* **Cities:** read with the existing places list.
+* **Grounding:** the attributed words must be the customer's own (normalized letters and digits only), or give a value their words give.
+* **Never refused:** words no reader understands are only required to be CARRIED by the part as written.
+
+| The part's sentence | Result |
+|---|---|
+| executes another period, country, city or language than the customer's words for it | asked, not created |
+| narrows a country to a city, or widens a city | asked, not created |
+| loses a condition of the whole request, or of its own | asked, not created |
+| carries a condition the model gave to ANOTHER part only (forced onto it) | asked, not created |
+| gives another number than the one written for it | asked, not created (the existing `count_mismatch`, now with a clear sentence) |
+| asks for replies that its objectives never collect | asked, not created |
+| keeps every value | prepared |
+
+* **Across the split:** a whole-request requirement no part carries is still asked about. It is not asked when a part that is itself being asked states that same kind of requirement differently, since that question already covers it. The other parts go on.
+* **The single request:** the consolidated sentence must execute the customer's own period, place and language (`drift_*` outcome). Otherwise the customer is asked; nothing is created.
+* **Corrections:** a part is the SAME only when it executes the same values (`sameExecutedValues`).
+  * A corrected value withdraws only that part, and only while it is still unapproved.
+  * An approved part is never touched.
+
+**Why the chat may read with `buildAsk`:**
+
+* `foundation/ask.ts` is an existing integration point.
+* The chat calls it with the semantic flag OFF and never reads the flag.
+* The isolation tests are unchanged (no new semantic import).
+* The check can only ASK. It never widens, narrows, refuses, prices or approves.
+
+**What it cannot see:**
+
+* **Model fidelity:** a model that ignores a correction in BOTH the attribution and the sentence.
+* **Unfamiliar phrases:** the value of a period phrase no reader understands. It is carried verbatim, and the planner reads the same words.
+* **Cities:** only those in the places list.
+* **Semantic flag on:** with the flag ON, the worker reads conditions with the semantic reader, and this check compares the flag-OFF reading.
+
+**Offline tests:** `tests/exact-intent-across-parts.test.ts` (17) and multi-objective-research «EXACT REQUIREMENTS end to end». The second runs the real chat → worker planning → the customer's own approval → execution → settlement, with a drifted part never becoming a mission.

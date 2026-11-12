@@ -52,6 +52,15 @@ export interface BriefObjective {
    * by name, what is collected, «عن» before the topic, the customer's own conditions and numbers). Each part becomes its own plan, priced and approved on its own card; the sentence is validated like a brief (privacy, numbers, platforms).
    */
   request?: string | null;
+  /**
+   * EXACT REQUIREMENTS OF ONE PART (docs/MULTI-OBJECTIVE-RESEARCH.md section 12), on a FIRST objective only: the customer's OWN words for a condition that applies to THIS part only (a period «آخر شهر», a place «الغردقة», a content language
+   * «بالعربي»), and the number they wrote for this part. A condition of the whole request is written once in the brief's own fields instead. Never a value the customer did not write: the code reads the values (the same reader the worker
+   * executes with) and compares them with the part's sentence.
+   */
+  period?: string | null;
+  country?: string | null;
+  language?: string | null;
+  count?: number | null;
 }
 
 export interface ResearchBrief {
@@ -76,7 +85,7 @@ export const BRIEF_REQUEST_MIN = 3;
 export const BRIEF_REQUEST_MAX = 1000;
 const FIELD_MAX = 120;
 const KNOWN_FIELDS = new Set(["status", "request", "platforms", "content", "count", "topic", "period", "country", "language", "objectives", "v"]);
-const OBJECTIVE_FIELDS = new Set(["id", "operation", "platform", "parent", "contacts", "what", "request"]);
+const OBJECTIVE_FIELDS = new Set(["id", "operation", "platform", "parent", "contacts", "what", "request", "period", "country", "language", "count"]);
 
 export type ParsedBrief = { ok: true; brief: ResearchBrief; unknown: string[] } | { ok: false; issue: string };
 
@@ -121,7 +130,18 @@ function parseObjectives(v: unknown): BriefObjective[] | null | false {
     const contacts = listOf(o.contacts, ["email", "phone"] as const);
     if (!contacts) return false;
     const partRequest = text(o.request, BRIEF_REQUEST_MAX);
-    out.push({ id, operation: operation as ObjectiveOperation, platform, parent, contacts, what: text(o.what, FIELD_MAX), ...(partRequest ? { request: partRequest } : {}) });
+    let count: number | null = null;
+    if (o.count !== undefined && o.count !== null && o.count !== "") {
+      const n = Number(normalizeDigits(String(o.count)));
+      if (!Number.isSafeInteger(n) || n < 1 || n > 1_000_000) return false;
+      count = n;
+    }
+    const conds: Pick<BriefObjective, "period" | "country" | "language" | "count"> = {};
+    for (const k of ["period", "country", "language"] as const) { const v = text(o[k], FIELD_MAX); if (v) conds[k] = v; }
+    if (count !== null) conds.count = count;
+    // a condition of one part is written on that part's FIRST objective (the brief's own fields hold the conditions of the whole request)
+    if (Object.keys(conds).length > 0 && parent !== null) return false;
+    out.push({ id, operation: operation as ObjectiveOperation, platform, parent, contacts, what: text(o.what, FIELD_MAX), ...(partRequest ? { request: partRequest } : {}), ...conds });
   }
   return out;
 }

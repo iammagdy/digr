@@ -53,7 +53,7 @@ export interface ReplayInput {
   /** Runs before the chat turn (seed the chat's settings, e.g. brief mode, or the conversation's earlier messages). */
   beforeChat?: (db: MemoryDb) => void;
   /** A multi-part request makes several missions in one turn: the one this replay drives (default: the turn's first). The others stay as the chat left them. */
-  chooseMission?: (turn: { missionId: string; extraMissions?: Array<{ id: string }> }, db: MemoryDb) => string;
+  chooseMission?: (turn: { missionId: string; extraMissions?: Array<{ id: string; contentAr?: string }> }, db: MemoryDb) => string;
 }
 
 export interface ReplayResult {

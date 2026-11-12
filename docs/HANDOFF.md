@@ -4,6 +4,19 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 47 (12 Nov 2026, after #457, main = `8ba4078`): exact customer requirements across research parts (docs/MULTI-OBJECTIVE-RESEARCH.md section 12)
+
+**No SQL write, no flag change, no migration, no schema change, no permission change, no paid model or provider call, no money/ledger/pricing/approval/settlement/infrastructure line.** Brief mode and discovery stay OFF.
+
+1. **Value checks, not presence checks.** A part (or the single consolidated request) must EXECUTE the customer's own period, country, city, content language and number.
+   * Values are read with the worker's own `buildAsk` (semantic flag off) at one moment, and with the places list.
+   * A part that would run another value, lose a whole-request or own condition, borrow another part's condition, or drop asked replies is asked and never created.
+   * Unfamiliar wording is never refused, only required to be carried as written.
+2. **Model attribution in the same call.** Optional `period`, `country`, `language` and `count` on a part's first objective (the customer's words). The brief's own fields mean "the whole request". These are carried into each part brief and back to the model.
+3. **Correction bug fixed.** A period correction («آخر شهر» → «آخر أسبوع») used to count as the same part, so the old mission was kept and the correction lost. Parts now match only when their executed values are equal.
+4. **Group question relaxed.** A dropped whole-request requirement is no longer asked for the whole group when an asked part states that kind of requirement differently. One #457 expectation (Hurghada → Sharm) was updated accordingly: the drifted part is asked, the healthy parts go on.
+5. **Tests:** `tests/exact-intent-across-parts.test.ts`, plus an end-to-end replay in `multi-objective-research`.
+
 ## Round 46 (12 Nov 2026, after #456, main = `1f70198`): multi-objective reliability (docs/MULTI-OBJECTIVE-RESEARCH.md sections 8-11)
 
 **No SQL write, no flag change, no migration, no schema change, no permission change, no paid model or provider call, no money/ledger/pricing/approval/settlement/infrastructure line.** Everything still runs only where `chat_research_brief_v1` and `capability_discovery_v1` are on (both OFF).

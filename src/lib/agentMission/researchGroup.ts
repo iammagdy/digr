@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { isServedPlatform, numbersWritten, RESEARCH_BRIEF_VERSION, type BriefContent, type BriefObjective, type BriefPlatform, type ResearchBrief } from "./researchBrief";
 import { buildRequestContract, type WantedField } from "./requestContract";
 import { placesInText } from "./places";
+import { buildAsk } from "./foundation/ask";
 
 /**
  * MULTI-OBJECTIVE RESEARCH (docs/MULTI-OBJECTIVE-RESEARCH.md). ONE customer research brief, several research objectives, executed by the EXISTING plans:
@@ -51,13 +52,16 @@ const CONTENT_OF: Partial<Record<BriefObjective["operation"], BriefContent>> = {
 };
 
 /** The brief of ONE part, validated exactly like a brief of its own (`validateBrief`): its sentence, its platforms, what it collects, its number when its sentence writes exactly one, its objectives. Null without a sentence. */
-export function partBriefOf(part: ResearchPart): ResearchBrief | null {
+export function partBriefOf(part: ResearchPart, global: { period?: string | null; country?: string | null; language?: string | null } = {}): ResearchBrief | null {
   if (!part.request) return null;
+  // the part's own conditions (its first objective), else those of the whole request: kept as the customer's words, never a value of the model
+  const root = part.objectives[0];
   const platforms = [...new Set(part.objectives.map((o) => o.platform).filter((p): p is BriefPlatform => isServedPlatform(p)))].sort();
   const content = [...new Set(part.objectives.map((o) => CONTENT_OF[o.operation]).filter((c): c is BriefContent => c !== undefined))];
   const numbers = [...numbersWritten(part.request)];
   return {
-    v: RESEARCH_BRIEF_VERSION, status: "ready", request: part.request, platforms, content, count: numbers.length === 1 ? numbers[0] : null, topic: null, period: null, country: null, language: null,
+    v: RESEARCH_BRIEF_VERSION, status: "ready", request: part.request, platforms, content, count: root?.count ?? (numbers.length === 1 ? numbers[0] : null), topic: null,
+    period: root?.period ?? global.period ?? null, country: root?.country ?? global.country ?? null, language: root?.language ?? global.language ?? null,
     objectives: part.objectives.map((o) => { const { request: _r, ...rest } = o; void _r; return rest; }),
   };
 }
@@ -123,7 +127,7 @@ export function partCardIdOf(missionId: string): string {
 // ASK, never refuse, reduce or change a request.
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 export type IntentRequirement =
-  | { kind: "period" } | { kind: "language" } | { kind: "country" } | { kind: "place"; key: string; labelAr: string } | { kind: "field"; field: WantedField } | { kind: "number"; n: number };
+  | { kind: "period" } | { kind: "language" } | { kind: "country" } | { kind: "place"; key: string; labelAr: string } | { kind: "field"; field: WantedField } | { kind: "number"; n: number } | { kind: "replies" };
 
 const FIELD_AR: Record<WantedField, string> = { posted_at: "تاريخ النشر", author: "اسم الحساب", views: "عدد المشاهدات", likes: "عدد الإعجابات" };
 const AR_D = ["٠", "١", "٢", "٣", "٤", "٥", "٦", "٧", "٨", "٩"];
@@ -135,17 +139,18 @@ export function requirementLabelAr(r: IntentRequirement): string {
     case "country": return "الدولة";
     case "place": return r.labelAr;
     case "field": return FIELD_AR[r.field];
+    case "replies": return "الردود";
     case "number": return `العدد ${String(r.n).replace(/\d/g, (d) => AR_D[Number(d)])}`;
   }
 }
 
-interface Reading { period: boolean; language: boolean; country: boolean; places: Set<string>; fields: Set<WantedField>; numbers: Set<number> }
+interface Reading { period: boolean; language: boolean; country: boolean; replies: boolean; places: Set<string>; fields: Set<WantedField>; numbers: Set<number> }
 function readingOf(texts: ReadonlyArray<string>): Reading {
-  const out: Reading = { period: false, language: false, country: false, places: new Set(), fields: new Set(), numbers: new Set() };
+  const out: Reading = { period: false, language: false, country: false, replies: false, places: new Set(), fields: new Set(), numbers: new Set() };
   for (const t of texts) {
     if (!t || !t.trim()) continue;
     const c = buildRequestContract(t);
-    out.period ||= c.period; out.language ||= c.language; out.country ||= c.country;
+    out.period ||= c.period; out.language ||= c.language; out.country ||= c.country; out.replies ||= c.replies !== "none";
     for (const f of c.wants ?? []) out.fields.add(f);
     for (const e of placesInText(t)) { out.places.add(e.key); out.places.add(e.country); }
     for (const n of numbersWritten(t)) out.numbers.add(n);
@@ -183,10 +188,121 @@ export function droppedRequirementsOf(wholeRequest: string, partTexts: ReadonlyA
   if (whole.country && !parts.country && !wholePlaces.some((e) => parts.places.has(e.country))) out.push({ kind: "country" });
   for (const f of whole.fields) if (!parts.fields.has(f)) out.push({ kind: "field", field: f });
   for (const n of whole.numbers) if (!parts.numbers.has(n)) out.push({ kind: "number", n });
+  if (whole.replies && !parts.replies) out.push({ kind: "replies" });
   return out;
 }
 /** Whether a part of the new brief is the same request as a part prepared before (its sentence, or, read by the trusted parser, the same request). */
 export function samePartRequest(a: string | null, b: string | null, sameByParser: (x: string, y: string) => boolean): boolean {
   if (!a || !b) return false;
   return norm(a) === norm(b) || sameByParser(a, b);
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// EXACT REQUIREMENTS ACROSS THE SPLIT (docs/MULTI-OBJECTIVE-RESEARCH.md section 12). The checks above see whether a period, a place or a language is STATED; these compare the VALUES, read by the very reader the worker executes with
+// (`buildAsk`, foundation/ask.ts, with the semantic flag off as on the chat: the period as Cairo days from the same moment, the country code, the content language) and the places list for cities. The model says, in the same call, which
+// of the customer's own words apply to which part (a first objective's `period` / `country` / `language` / `count`; the brief's own fields apply to every part). A part whose sentence would EXECUTE another value than the customer's words,
+// lose a condition that applies to it, or carry one the customer gave to another part is asked, never created. Words no reader understands are never refused: they must only be carried as the customer wrote them.
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+export type ConditionKind = "period" | "place" | "language" | "count" | "replies";
+export interface ConditionPhrases { period?: string | null; country?: string | null; language?: string | null; count?: number | null }
+export interface ConditionDrift { kind: ConditionKind; reason: "contradicts" | "missing" | "other_part"; phrase: string | null }
+
+/** Letters and digits only, with the spellings of one letter made one (أ/إ/آ → ا, ى → ي, ة → ه, Arabic-Indic digits → 0-9): for «the customer's own words are carried», never a list of words. */
+export function normWords(t: string | null | undefined): string {
+  return ` ${String(t ?? "").replace(/[ً-ْـ]/g, "").replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه").replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))).replace(/[^\p{L}\p{N}]+/gu, " ").trim().toLowerCase()} `;
+}
+const carries = (text: string, phrase: string): boolean => normWords(phrase).trim() !== "" && normWords(text).includes(normWords(phrase));
+
+/** The executed value of one condition of a text, as the worker reads it (null: the text states none the reader understands). */
+function valueOf(kind: "period" | "language", text: string, nowMs: number): string | null {
+  const a = buildAsk(text, null, nowMs, {}, { semantic: false });
+  if (kind === "period") return a.period ? `${a.period.from}..${a.period.to}` : null;
+  return a.language;
+}
+const countryCodeOf = (text: string, nowMs: number): string | null => buildAsk(text, null, nowMs, {}, { semantic: false }).country;
+const placeKeys = (text: string): Set<string> => { const out = new Set<string>(); for (const e of placesInText(text)) { out.add(e.key); out.add(e.country); } return out; };
+const citiesOf = (text: string): string[] => placesInText(text).filter((e) => e.kind === "city").map((e) => e.key);
+
+/** The values the customer's own words give (each turn, and each sentence of a turn: one turn may give one part a month and another a year). */
+function customerValues(kind: "period" | "language", texts: ReadonlyArray<string>, nowMs: number): Set<string> {
+  const out = new Set<string>();
+  for (const t of texts) for (const piece of [t, ...t.split(/[،,.؛;\n]+/)]) { const v = piece.trim() ? valueOf(kind, piece, nowMs) : null; if (v) out.add(v); }
+  return out;
+}
+
+/**
+ * Whether ONE part's sentence keeps the customer's exact requirements. `own`: the conditions the model attributed to this part; `global`: those of the whole request; `elsewhere`: the kinds the model attributed to OTHER parts only;
+ * `customerTexts`: everything the customer typed (and the request already grounded). Null: nothing drifts.
+ */
+export function conditionDriftOf(input: { partRequest: string; own: ConditionPhrases; global: ConditionPhrases; elsewhere: ReadonlySet<ConditionKind>; customerTexts: ReadonlyArray<string>; nowMs: number; repliesWithoutObjective?: boolean }): ConditionDrift | null {
+  const { partRequest, own, global, elsewhere, customerTexts, nowMs } = input;
+  const written = (phrase: string) => customerTexts.some((t) => carries(t, phrase));
+  for (const kind of ["period", "language"] as const) {
+    const phrase = own[kind] ?? global[kind] ?? null;
+    const got = valueOf(kind, partRequest, nowMs);
+    if (phrase) {
+      const want = valueOf(kind, phrase, nowMs);
+      // words the reader does not understand: carried as the customer wrote them, never refused
+      if (want === null) { if (written(phrase) && !carries(partRequest, phrase)) return { kind, reason: "missing", phrase }; continue; }
+      // the attributed words must be the customer's own (or give a value their words give)
+      if (!written(phrase) && !customerValues(kind, customerTexts, nowMs).has(want)) return { kind, reason: "contradicts", phrase };
+      if (got === null) return { kind, reason: "missing", phrase };
+      if (got !== want) return { kind, reason: "contradicts", phrase };
+      continue;
+    }
+    if (got === null) continue;
+    if (elsewhere.has(kind)) return { kind, reason: "other_part", phrase: null };
+    if (!customerValues(kind, customerTexts, nowMs).has(got)) return { kind, reason: "contradicts", phrase: null };
+  }
+  // the place: the cities and the country the customer's words for this part name must be the part's (never another, never wider or narrower)
+  const where = own.country ?? global.country ?? null;
+  if (where) {
+    const wantKeys = placeKeys(where);
+    const gotKeys = placeKeys(partRequest);
+    if (wantKeys.size === 0) { if (written(where) && !carries(partRequest, where)) return { kind: "place", reason: "missing", phrase: where }; }
+    else {
+      for (const k of wantKeys) if (!gotKeys.has(k)) return { kind: "place", reason: gotKeys.size > 0 ? "contradicts" : "missing", phrase: where };
+      for (const c of citiesOf(partRequest)) if (!wantKeys.has(c)) return { kind: "place", reason: "contradicts", phrase: where };
+      const wantCode = countryCodeOf(where, nowMs) ?? countryCodeOf(`في ${where}`, nowMs);
+      const gotCode = countryCodeOf(partRequest, nowMs);
+      if (wantCode && gotCode && wantCode !== gotCode) return { kind: "place", reason: "contradicts", phrase: where };
+    }
+  } else if (elsewhere.has("place") && citiesOf(partRequest).length > 0) return { kind: "place", reason: "other_part", phrase: null };
+  // the number the customer wrote for this part (a number they never wrote is already refused by the brief's check)
+  if (own.count !== null && own.count !== undefined) {
+    const nums = numbersWritten(partRequest);
+    if (!nums.has(own.count)) return { kind: "count", reason: nums.size > 0 ? "contradicts" : "missing", phrase: String(own.count) };
+  }
+  // the sentence asks the replies the part's objectives never collect: they would be silently lost
+  if (input.repliesWithoutObjective) return { kind: "replies", reason: "missing", phrase: null };
+  return null;
+}
+
+/** Whether two sentences EXECUTE the same conditions (period window, country, content language, places, numbers), read as the worker reads them: a corrected value («آخر شهر» → «آخر أسبوع») is never the same part. */
+export function sameExecutedValues(a: string, b: string, nowMs: number): boolean {
+  const x = buildAsk(a, null, nowMs, {}, { semantic: false });
+  const y = buildAsk(b, null, nowMs, {}, { semantic: false });
+  const key = (s: Set<string> | Set<number>) => JSON.stringify([...s].map(String).sort());
+  return JSON.stringify([x.period?.from ?? null, x.period?.to ?? null, x.country, x.language]) === JSON.stringify([y.period?.from ?? null, y.period?.to ?? null, y.country, y.language])
+    && key(placeKeys(a)) === key(placeKeys(b)) && key(numbersWritten(a)) === key(numbersWritten(b));
+}
+
+/**
+ * The dropped requirements no part being ASKED accounts for: a part asked because it states the same kind of requirement differently (a number, a period, a place…) is where the customer's own value goes once answered, so the other parts
+ * need not wait for it. What remains is asked for the whole request.
+ */
+export function unaccountedRequirements(lost: IntentRequirement[], askedTexts: ReadonlyArray<string>): IntentRequirement[] {
+  if (askedTexts.length === 0) return lost;
+  const asked = readingOf(askedTexts);
+  return lost.filter((r) => {
+    switch (r.kind) {
+      case "number": return asked.numbers.size === 0;
+      case "period": return !asked.period;
+      case "language": return !asked.language;
+      case "country": return !asked.country && asked.places.size === 0;
+      case "place": return asked.places.size === 0;
+      case "field": return asked.fields.size === 0;
+      case "replies": return !asked.replies;
+    }
+  });
 }
