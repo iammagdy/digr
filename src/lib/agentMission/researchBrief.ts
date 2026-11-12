@@ -95,6 +95,11 @@ const OBJECTIVE_FIELDS = new Set(["id", "operation", "platform", "parent", "cont
  * whole reading. Every OTHER unknown key (an endpoint, a provider, a field list, a price...) still rejects the objectives.
  */
 const DESCRIPTIVE_OBJECTIVE_FIELDS = new Set(["topic", "description"]);
+/**
+ * PLACE keys a real model writes instead of `country` (live evaluation round 4, C2: «city»): the brief's `country` already holds the customer's own words for the PLACE of a part («الغردقة», «الإسكندرية»), so these are the same field. Read
+ * as `country` when it is absent; a different value in both is ambiguous and rejects the objectives.
+ */
+const PLACE_OBJECTIVE_FIELDS = ["city", "place", "location"] as const;
 type Conds = Pick<BriefObjective, "period" | "country" | "language" | "count">;
 const sameCond = (a: unknown, b: unknown) => String(a).replace(/\s+/g, " ").trim() === String(b).replace(/\s+/g, " ").trim();
 
@@ -125,7 +130,7 @@ function parseObjectives(v: unknown): BriefObjective[] | null | false {
   for (const raw of v) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
     const o = raw as Record<string, unknown>;
-    if (Object.keys(o).some((k) => !OBJECTIVE_FIELDS.has(k) && !DESCRIPTIVE_OBJECTIVE_FIELDS.has(k))) return false;
+    if (Object.keys(o).some((k) => !OBJECTIVE_FIELDS.has(k) && !DESCRIPTIVE_OBJECTIVE_FIELDS.has(k) && !(PLACE_OBJECTIVE_FIELDS as readonly string[]).includes(k))) return false;
     const id = typeof o.id === "string" ? o.id.trim() : "";
     if (!/^[A-Za-z0-9_-]{1,12}$/.test(id) || out.some((x) => x.id === id)) return false;
     const operation = typeof o.operation === "string" ? o.operation.trim().toLowerCase() : "";
@@ -149,6 +154,12 @@ function parseObjectives(v: unknown): BriefObjective[] | null | false {
     }
     const conds: Conds = {};
     for (const k of ["period", "country", "language"] as const) { const v = text(o[k], FIELD_MAX); if (v) conds[k] = v; }
+    for (const k of PLACE_OBJECTIVE_FIELDS) {
+      const v = text(o[k], FIELD_MAX);
+      if (!v) continue;
+      if (conds.country && !sameCond(conds.country, v)) return false;
+      conds.country = v;
+    }
     if (count !== null) conds.count = count;
     const described = [...DESCRIPTIVE_OBJECTIVE_FIELDS].map((k) => text(o[k], FIELD_MAX)).filter((v): v is string => v !== null);
     const what = [text(o.what, FIELD_MAX), ...described].filter((v): v is string => v !== null).join(" — ").slice(0, FIELD_MAX) || null;

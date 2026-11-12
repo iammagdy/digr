@@ -365,6 +365,8 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     await writeAnswer(input, question, ctx.prior ? { researchBrief: { ...ctx.prior, status: "needs_clarification" } } : undefined);
     return { ok: false, contentAr: question, status: 200 };
   };
+  // a follow-up with no brief on a request whose parts are already prepared («كمّل», «تمام»): nothing changes, and the customer is told so (live evaluation round 4, J1)
+  if (!parsed && ctx.priorGroup && ctx.priorGroup.parts.some((p) => p.missionId)) { ctx.outcome = "group_unchanged_no_brief"; await writeAnswer(input, GROUP_UNCHANGED_AR); return { ok: false, contentAr: GROUP_UNCHANGED_AR, status: 200 }; }
   if (!parsed) { ctx.outcome = "none"; return askInsteadOfWords("none"); }
   // MULTI-OBJECTIVE RESEARCH: a reading of SEVERAL parts that cannot be used as written is never replaced by one mission read from the words (it would silently keep one part and drop the others): the customer continues with one word
   const multiPartUnsafe = async (reason: string): Promise<AgentChatTurnResult> => {

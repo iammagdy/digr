@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryDb } from "./helpers/memoryDb";
 import { REPLAY_USER } from "./helpers/agentReplay";
-import { agentChatTurn, CHAT_RESEARCH_BRIEF_FLAG_KEY, MODEL_RETRY_AR, MULTI_PART_RETRY_AR, PLAN_NOT_READY_AR, REQUEST_UPDATED_AR, TOPIC_QUESTION_AR } from "../src/lib/agentMission/chatTurn";
+import { agentChatTurn, CHAT_RESEARCH_BRIEF_FLAG_KEY, GROUP_UNCHANGED_AR, MODEL_RETRY_AR, MULTI_PART_RETRY_AR, PLAN_NOT_READY_AR, REQUEST_UPDATED_AR, TOPIC_QUESTION_AR } from "../src/lib/agentMission/chatTurn";
 import { setChatModelForTesting, type ChatModelInput } from "../src/lib/agentMission/chatModel";
 import { buildSystemPrompt, decideTurn, FORMAT_REMINDER_AR, FORMAT_RETRY_AR, parseModelAnswer } from "../src/lib/agentMission/conversationModel";
 import { parseBrief } from "../src/lib/agentMission/researchBrief";
@@ -399,5 +399,25 @@ describe("round 3", () => {
     const { r } = await turn(db, "شيل الأخبار، خلي التعليقات بس");
     expect(live(db).map((m) => m.request_text)).toEqual(["تعليقات تيك توك عن السياحة"]);
     expect(r.contentAr).toContain("«آخر أخبار السياحة في مصر» اتلغت");
+  });
+});
+
+describe("round 4", () => {
+  it("C2: an objective key «city» is the part's place (as «country»); two different places reject", () => {
+    const p = parseBrief(briefOf({ request: "تعليقات فيسبوك عن المطاعم في الإسكندرية", platforms: ["facebook"], content: ["comments"], objectives: [o("o1", "social.parents", { platform: "facebook", city: "الإسكندرية" } as any), o("o2", "social.comments", { platform: "facebook", parent: "o1" })] }));
+    expect(p.ok).toBe(true);
+    if (p.ok) expect(p.brief.objectives![0].country).toBe("الإسكندرية");
+    expect(parseBrief(briefOf({ request: "x y z", objectives: [o("o1", "places.discover", { country: "القاهرة", city: "الجيزة" } as any)] }))).toMatchObject({ ok: false, issue: "objectives" });
+  });
+  it("J1: «كمّل» with no brief after every part is prepared: «already prepared», nothing new", async () => {
+    scripted([
+      { type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "تعليقات تيك توك عن السياحة، وأخبار السياحة في مصر", platforms: ["tiktok"], content: ["comments", "articles"], objectives: [o("o1", "social.parents", { platform: "tiktok", request: "تعليقات تيك توك عن السياحة" }), o("o2", "social.comments", { platform: "tiktok", parent: "o1" }), o("o3", "web.search", { request: "آخر أخبار السياحة في مصر" })] }) },
+      { type: "edit_of_open_request", reason: "x", reply: "", count: null },
+    ]);
+    const db = world();
+    await turn(db, "عايز تعليقات تيك توك عن السياحة، وكمان آخر أخبار السياحة في مصر");
+    const { r } = await turn(db, "كمّل");
+    expect(r.contentAr).toBe(GROUP_UNCHANGED_AR);
+    expect(live(db)).toHaveLength(2);
   });
 });
