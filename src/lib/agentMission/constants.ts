@@ -143,6 +143,8 @@ export const MISSION_INTERNAL_COUNT_KEYS = ["mem_phase", "mem_start_rss_mb", "me
   "chk_ex_filter_reply", "chk_ex_filter_repost", "chk_ex_filter_language", "chk_ex_filter_period", "chk_ex_filter_account", "chk_ex_filter_place", "adm_source_rows", "adm_parent_fixed",
   // the admin flag of a run whose model review could not answer (items left pending, review calls that gave no usable answer)
   "adm_pending", "adm_review_failed_calls",
+  // whether the worker could reach the web providers when it planned (round 53: 1 = a key was resolved; never the key itself)
+  "adm_web_firecrawl", "adm_web_contextdev",
   // the delivery contract (round 14): a file whose description was completed by code; the count of violations per rule and of completions (admin only)
   "adm_contract", "adm_r1", "adm_r2", "adm_r3", "adm_r4", "adm_completed",
   // a free re-run by the Diger team (freeRerun.ts): its marker, the reserve granted before the approval, and the charge given back after the settlement (admin only)
