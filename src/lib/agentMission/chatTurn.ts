@@ -1,4 +1,5 @@
 import { isRetrySamePlanMessage, isReviewPlanMessage, isTypedApprovalMessage } from "../retryMessage";
+import { selfReferenceOf, selfReferenceQuestionAr, selfReferenceUnresolved } from "./selfReference";
 import { titleFromFirstRequest, isUntitledConversation } from "../conversationTitleFromRequest";
 import { MISSION_TABLE } from "./constants";
 import { ADDON_MARKER_COLUMN, hasAddonMarker } from "./addonMarker";
@@ -419,6 +420,14 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     await writeAnswer(input, contentAr, { researchBrief: { ...brief, status: "needs_clarification" } });
     return { ok: false, contentAr, status: 200 };
   }
+  // THE CUSTOMER'S OWN BUSINESS, NOT NAMED (live evaluation round 9, D2: «محتاج معلومات عن منافسين شركتي»): no source can find «my company»; the chat asks which one, in the conversation, before any mission or card
+  const ownUnnamed = selfReferenceUnresolved(ctx.customerTurns);
+  if (ownUnnamed) {
+    ctx.outcome = `clarify_self_reference_${ownUnnamed}`;
+    const contentAr = (brief.status === "needs_clarification" && !decision.overruled && decision.reply) || selfReferenceQuestionAr(ownUnnamed);
+    await writeAnswer(input, contentAr, { researchBrief: { ...brief, status: "needs_clarification" } });
+    return { ok: false, contentAr, status: 200 };
+  }
   if (decision.type === "edit_of_open_request" && open) return briefEditOfOpen(input, decision, open, brief, v.contract, ctx);
   // a new research request (or the next step of the discovery): a question while something that matters is missing, else a mission from the WHOLE request
   // a request whose first objective is web, companies, places or people research is complete without a platform (the social contract's completeness says nothing about it): the model's own question is still asked, but the code
@@ -567,6 +576,9 @@ function judgePart(part: ResearchPart, ctx: BriefTurnContext, registry: Capabili
   }
   const pb = partBriefOf(part, global);
   if (!pb) return { ...base, outcome: "needs_clarification", noteAr: null };
+  // a part about the customer's own business that nothing in the conversation names (D2 inside a multi-part request): this part is asked, the others go on
+  const ownUnnamed = selfReferenceOf([pb.request, ...part.objectives.map((o) => o.what ?? "")].join(" ")) ? selfReferenceUnresolved(ctx.customerTurns) : null;
+  if (ownUnnamed) return { ...base, outcome: "needs_clarification", noteAr: selfReferenceQuestionAr(ownUnnamed) };
   const v = validateBrief(pb, { customerTurns: ctx.customerTurns, assistantQuestion: ctx.assistantQuestion, prior: ctx.prior, semantic: ctx.semantic });
   if (!v.ok) return { ...base, outcome: v.reason === "privacy_refusal" || v.reason === "privacy_clarify" ? "refused_private" : "needs_clarification", noteAr: v.contentAr ?? (v.reason === "count_mismatch" && pb.count !== null ? conditionDriftAr({ kind: "count", reason: "contradicts", phrase: String(pb.count) }) : null) };
   const d = discoverCapabilities(researchNeedOf({ request: v.brief.request, brief: v.brief }), registry);
