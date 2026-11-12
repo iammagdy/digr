@@ -6,6 +6,7 @@ import { createMemoryDb } from "../../tests/helpers/memoryDb";
 import { REPLAY_USER } from "../../tests/helpers/agentReplay";
 import { fakeRecorder, NOT_ADMIN, tregResult } from "../../tests/helpers/agentHarness";
 import { fakeContextDev, mapsPlace, mapsReviews } from "../../tests/helpers/fakeContextDev";
+import { LATIN, REVIEW_TEXTS, syntheticTreg } from "./synthetic";
 import { agentChatTurn, AGENT_PRESS_APPROVE_AR, CHAT_RESEARCH_BRIEF_FLAG_KEY } from "../../src/lib/agentMission/chatTurn";
 import { callClaudeChatWith, setChatModelForTesting, type ChatModelResult } from "../../src/lib/agentMission/chatModel";
 import { parseModelAnswer } from "../../src/lib/agentMission/conversationModel";
@@ -260,37 +261,6 @@ describe("LIVE intelligence evaluation (real claude-haiku-5-5, guarded, cumulati
   }, 120 * 60_000);
 });
 
-/**
- * REALISTIC SYNTHETIC provider rows (never real data, nothing is fetched): plausible FICTIONAL names, Arabic text on the topic the planner searched, recent dates, shaped by what the endpoint serves. Round 1 used obvious placeholders
- * («نتيجة تجريبية», example.org) and the real planner rightly refused to plan from them ("any company I delivered would be invented"): the planner is now measured on rows it can reason about. The names are invented for this evaluation.
- */
-const NAMES = ["النخبة", "الريادة", "الأفق", "المرجان", "الواحة", "لؤلؤة البحر", "النجمة الذهبية", "الصفوة", "البيان", "المدار", "الشروق", "الياسمين"];
-const LATIN = ["alnokhba", "alreyada", "alofok", "almorgan", "alwaha", "loloat-albahr", "golden-star", "alsafwa", "albayan", "almadar", "alshorouk", "alyasmin"];
-function syntheticTreg(endpointId: string, params: Record<string, unknown>): unknown {
-  // (round 51: company and people searches name their topic in other inputs, «industry», «name», «title»: any text input is the topic, so a sector search returns rows of that sector instead of a generic «السوق المحلي» the planner rightly refused)
-  const anyText = Object.entries(params ?? {}).filter(([k, v]) => typeof v === "string" && v.trim().length >= 3 && !/^(?:url|link|domain|website|country|gl|hl|lang|language|location_?code|cursor|next|page|sort|order|engine|type|format)$/i.test(k) && !/^https?:/i.test(String(v))).map(([, v]) => String(v));
-  const q = String(params?.query ?? params?.q ?? params?.keyword ?? params?.keywords ?? params?.search ?? params?.term ?? params?.company ?? anyText.join(" ") ?? "").replace(/\s+/g, " ").trim().slice(0, 60) || "السوق المحلي";
-  const id = endpointId.toLowerCase();
-  const n = 10;
-  // (round 51: the place and the country of the synthetic rows follow the planner's own query, for every city of the corpus: rows from «القاهرة» for a Sharm El-Sheikh or Dubai search were rightly refused by the planner as not matching)
-  const allText = `${q} ${Object.values(params ?? {}).filter((v) => typeof v === "string").join(" ")}`;
-  const PLACES: Array<[RegExp, string, string]> = [[/شرم|sharm/i, "شرم الشيخ", "EG"], [/غردق|hurghada/i, "الغردقة", "EG"], [/اقصر|أقصر|luxor/i, "الأقصر", "EG"], [/اسكندري|إسكندري|alexandria/i, "الإسكندرية", "EG"], [/معادي|maadi/i, "المعادي، القاهرة", "EG"], [/زمالك|zamalek/i, "الزمالك، القاهرة", "EG"], [/مهندسين|mohandes/i, "المهندسين، الجيزة", "EG"], [/دبي|dubai/i, "دبي", "AE"], [/رياض|riyadh/i, "الرياض", "SA"], [/جدة|jeddah/i, "جدة", "SA"]];
-  const place = PLACES.find(([re]) => re.test(allText));
-  const cityOf = place ? place[1] : "القاهرة";
-  const countryOf = place ? place[2] : /امارات|الإمارات|uae|emirates/i.test(allText) ? "AE" : /سعودي|saudi/i.test(allText) ? "SA" : "EG";
-  const day = (i: number) => `2026-11-${String(10 - (i % 9)).padStart(2, "0")}T0${i % 9}:15:00Z`;
-  let rows: Array<Record<string, unknown>>;
-  // round 51: app stores (a search of apps; the reviews of one app)
-  if (/search\.apps|search_apps/.test(id)) rows = Array.from({ length: 6 }, (_, i) => ({ app_id: `com.${LATIN[i].replace(/-/g, "")}.app`, id: `${1400000000 + i}`, title: `${q} ${["", "Pay", "Wallet", "Plus", "Lite", "Pro"][i]}`.trim(), name: `${q} ${["", "Pay", "Wallet", "Plus", "Lite", "Pro"][i]}`.trim(), developer: `${NAMES[i]} للتقنية`, rating: 3.8 + (i % 3) / 5, reviews_count: 12000 - i * 900, link: `https://play.google.com/store/apps/details?id=com.${LATIN[i].replace(/-/g, "")}.app`, url: `https://play.google.com/store/apps/details?id=com.${LATIN[i].replace(/-/g, "")}.app` }));
-  else if (/review/.test(id)) rows = Array.from({ length: n }, (_, i) => ({ review_id: `r${i}${id.length}`, rating: 2 + (i % 4), text: ["الخدمة ممتازة والموظفين محترمين", "المكان نظيف بس الأسعار عالية شوية", "تجربة متوسطة والانتظار كان طويل", "أنصح بيه جدًا للعائلات"][i % 4], author: `زائر ${i + 1}`, date: day(i), place_id: `pl_${i}` }));
-  else if (/maps|places|local|apple_maps|business/.test(id) && !/compan/.test(id)) rows = Array.from({ length: n }, (_, i) => ({ place_id: `pl_${i}`, name: `${NAMES[i]} — ${q}`, address: `شارع ${NAMES[(i + 3) % 12]}، ${cityOf}`, city: cityOf, rating: 3.6 + (i % 4) / 5, reviews_count: 40 + i * 13, phone: `+2010${String(2000000 + i * 3571).slice(0, 7)}`, website: `https://${LATIN[i]}.com`, maps_url: `https://maps.google.com/?cid=${1000 + i}`, category: q }));
-  else if (/employee|people|linkedin|person|contact\.search/.test(id)) rows = Array.from({ length: n }, (_, i) => ({ person_id: `p${i}`, full_name: ["أحمد سمير", "منى خالد", "كريم فؤاد", "سارة عادل", "محمود نبيل", "ريم حسن", "عمرو صلاح", "نهى إبراهيم", "طارق عزت", "دينا مصطفى"][i], title: ["مدير التسويق", "مديرة التسويق الرقمي", "رئيس قسم المبيعات", "مديرة العلامة التجارية"][i % 4], company: `${NAMES[i]} ${q}`, company_domain: `${LATIN[i]}.com`, location: cityOf, profile_url: `https://www.linkedin.com/in/${LATIN[i]}-${i}` }));
-  else if (/email|phone/.test(id)) rows = Array.from({ length: 3 }, (_, i) => ({ value: ["info@", "sales@", "contact@"][i] + `${LATIN[0]}.com`, type: "generic", source_page: `https://${LATIN[0]}.com/contact` }));
-  else if (/compan|organization|firm|openmart/.test(id)) rows = Array.from({ length: n }, (_, i) => ({ company_id: `c${i}`, name: `${NAMES[i]} ${q}`, website: `https://${LATIN[i]}.com`, domain: `${LATIN[i]}.com`, industry: q, city: cityOf, country: countryOf, employees: 15 + i * 7, description: `شركة ${q} تأسست في ${2008 + i}` }));
-  else if (/scrape|extract|contents|fetch|read/.test(id)) rows = [{ url: String(params?.url ?? `https://${LATIN[1]}-news.com/a1`), title: `${q}: تطورات جديدة`, text: `يتناول هذا المقال ${q} من عدة زوايا، ويعرض آراء المختصين وأحدث الأرقام المنشورة رسميًا.`, published_at: day(1) }];
-  else rows = Array.from({ length: n }, (_, i) => ({ title: [`${q}: تطورات جديدة هذا الأسبوع`, `خبراء يعلّقون على ${q}`, `أرقام رسمية حول ${q}`, `${q} بين التحديات والفرص`][i % 4], url: `https://${LATIN[i]}-news.com/${2026}/11/article-${i + 1}`, snippet: `تقرير عن ${q} يتناول آخر المستجدات وآراء المختصين.`, source: `${NAMES[i]} نيوز`, date: day(i), position: i + 1 }));
-  return { data: rows, results: rows, items: rows, next_cursor: null };
-}
 
 /**
  * The worker's planning of one mission (`runPlanning`, the production path). `real`: the planning model is the REAL one through the guarded driver; null: the scripted model that proposes nothing. Every provider answer is synthetic
@@ -316,7 +286,7 @@ async function planSafely(id: string, request: string, brief: ResearchBrief | nu
   const prompts: string[] = [];
   const web = fakeContextDev({
     // (round 51: the company contact parsers answer too, from the company's own site the planner opens: before this every e-mail or phone parse was «NOT_FOUND» and contacts could never be sampled)
-    parse: (parser, url, body) => (parser === "emails" ? { data: { emails: ["info", "sales"].map((box) => ({ email: `${box}@${String(url).replace(/^https?:\/\//, "").split("/")[0]}`, source_url: url })) }, credits: 1 } : parser === "phone-numbers" ? { data: { phone_numbers: [{ number: "+20653440000", raw: "065 344 0000", source_url: url }] }, credits: 1 } : parser === "google-play-reviews" || parser === "app-store-reviews" ? { data: { reviews: Array.from({ length: 20 }, (_, i) => ({ id: `ar${i}`, rating: 1 + (i % 5), date: `2026-11-0${1 + (i % 9)}`, title: ["تطبيق ممتاز", "بطيء أحيانًا", "مشكلة في الدخول", "سهل الاستخدام"][i % 4], text: ["التطبيق سهل وسريع في التحويلات", "بيعلق وقت الضغط", "الرسائل بتتأخر", "التحديث الأخير حلو"][i % 4], author: `مستخدم ${i + 1}` })) }, credits: 1 } : parser === "google-maps" ? { data: mapsPlace("مطعم المرجان"), credits: 1 } : parser === "google-maps-reviews" ? { data: mapsReviews(Math.min(20, Number(body?.parseParams?.limit) || 20)), credits: 1 } : { fail: { error_code: "NOT_FOUND" } }),
+    parse: (parser, url, body) => (parser === "emails" ? { data: { emails: ["info", "sales"].map((box) => ({ email: `${box}@${String(url).replace(/^https?:\/\//, "").split("/")[0]}`, source_url: url })) }, credits: 1 } : parser === "phone-numbers" ? { data: { phone_numbers: [{ number: "+20653440000", raw: "065 344 0000", source_url: url }] }, credits: 1 } : parser === "google-play-reviews" || parser === "app-store-reviews" ? { data: { reviews: Array.from({ length: 20 }, (_, i) => ({ id: `ar${i}`, rating: 1 + ((i * 3) % 5), date: `2026-11-${String(1 + (i % 9)).padStart(2, "0")}`, title: ["تطبيق ممتاز", "بطيء أحيانًا", "مشكلة في الدخول", "سهل الاستخدام", "محتاج تحسين", "أفضل من الأول"][i % 6], text: REVIEW_TEXTS[(i * 7) % REVIEW_TEXTS.length], author: ["أحمد سمير", "منى خالد", "كريم فؤاد", "سارة عادل", "محمود نبيل", "ريم حسن", "عمرو صلاح", "نهى إبراهيم", "طارق عزت", "دينا مصطفى", "يوسف رأفت", "هبة علي"][(i * 5) % 12] })) }, credits: 1 } : parser === "google-maps" ? { data: mapsPlace("مطعم المرجان"), credits: 1 } : parser === "google-maps-reviews" ? { data: mapsReviews(Math.min(20, Number(body?.parseParams?.limit) || 20)), credits: 1 } : { fail: { error_code: "NOT_FOUND" } }),
     search: (body: any) => Array.from({ length: 8 }, (_, i) => ({ title: `${String(body?.query ?? "الموضوع").slice(0, 50)}: ${["تطورات جديدة", "آراء الخبراء", "أرقام رسمية", "ما الذي تغيّر"][i % 4]}`, url: `https://${LATIN[i]}-news.com/2026/11/a${i + 1}`, description: "تقرير يتناول آخر المستجدات وآراء المختصين.", snippet: "تقرير يتناول آخر المستجدات وآراء المختصين.", date: `2026-11-0${1 + (i % 9)}` })),
     scrape: (url: string) => ({ markdown: `# تقرير\n\nيتناول هذا التقرير الموضوع من عدة زوايا ويعرض آراء المختصين وأحدث الأرقام المنشورة رسميًا. (${url.slice(0, 60)})`, credits: 1 }),
   });

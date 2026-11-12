@@ -333,8 +333,10 @@ export function yieldFromDiagnosis(yieldId: string, text: string | null): string
   if (Array.isArray(parsed)) return parsed.length === 0 ? `«${yieldId}» is an EMPTY array: map the rows of a page that returned rows.` : `«${yieldId}» is an array whose items are not all objects: each item must be one row object keyed by this stage's column keys.`;
   if (parsed && typeof parsed === "object") {
     const keys = Object.keys(parsed as Record<string, unknown>).slice(0, 8);
-    const arrayKey = keys.find((k) => Array.isArray((parsed as Record<string, unknown>)[k]));
-    return `«${yieldId}» holds a JSON OBJECT (keys: ${keys.join(", ") || "none"}), not an array${arrayKey ? `: return the «${arrayKey}» array itself from run_code (not wrapped in an object) and cite the new out_ id` : ""}.`;
+    // only a list of ROW OBJECTS is offered as the fix (round 52, Z35: an output {keys: [...names], sample: "..."} was answered «return the «keys» array», a list of field names, and the planner lost two more turns)
+    const isRowList = (v: unknown): boolean => Array.isArray(v) && v.length > 0 && v.every((x) => x !== null && typeof x === "object" && !Array.isArray(x));
+    const arrayKey = keys.find((k) => isRowList((parsed as Record<string, unknown>)[k]));
+    return `«${yieldId}» holds a JSON OBJECT (keys: ${keys.join(", ") || "none"}), not an array${arrayKey ? `: return the «${arrayKey}» array itself from run_code (not wrapped in an object) and cite the new out_ id` : ": none of its keys holds a list of row objects; map the rows of the measured page (where its call's answer says: rows_in_code) and return that array itself"}.`;
   }
   return `«${yieldId}» holds a single value, not an array of rows.`;
 }

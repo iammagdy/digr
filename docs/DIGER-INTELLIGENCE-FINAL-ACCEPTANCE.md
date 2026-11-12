@@ -356,3 +356,31 @@ On real Anthropic responses it reached:
 * **The browser journey and the deployed worker** were not exercised.
 
 The next step is the owner's test-account rollout with real providers, watching the planner's admin-flagged failures.
+
+## 10. Round 52: planner reliability (no new spending)
+
+**Scope.** One focused PR on the planner's FORMAL refusals, traced from the recorded transcripts of the six real-planner runs of round 51 (R1, R2, R3, P4, P5, R4: 504 `propose_plan` calls, 363 refused). The validators are unchanged. No Anthropic, provider or other paid call was made in this round; the evaluation key and its configuration were not touched; flags stay OFF.
+
+### 10.1 The four failed missions of R4, traced
+
+| Mission | Provider evidence (synthetic) | Model tool calls | Plan rejections | Final outcome |
+|---|---|---|---|---|
+| J3 (Dubai marketing companies + e-mails) | a structured Dubai filter answered generic Cairo rows («السوق المحلي»); a query answered names that repeat the whole query | sampled Tomba, Maps, Icypeas, web search; read the rows as placeholders | untitled `country`; missing `industry` column; sample rows citing no `out_` id | `cannot_serve` after 2 refused give-ups → our failure (admin flagged) |
+| G2 (marketing managers at pharma companies) | the people filter `company_keywords` was ignored (same 10 people twice); company names repeated «pharmaceutical companies in Egypt» | Wiza ×2, Tomba | untitled `company`, `linkedin`; a root people stage on a contact source with no contact column | `cannot_serve` → our failure |
+| Z16 (solar companies + e-mails) | both company sources ignored the structured solar filter | mapped `inputs.call_0002.data.companies` (wrong path) → `[]` | `out_0001` a wrapped object, then `out_0002` an EMPTY array | `cannot_serve` (empty) → our failure |
+| Z35 (300 App Store reviews of talabat) | the App Store search answered Google Play ids and links; reviews were 4 texts repeating, authors «مستخدم N» | mapped `inputs.call_0004.data.items` (wrong path) → `[]`; probed with `{keys, sample}` | EMPTY array; then «return the «keys» array» (a list of field NAMES offered as the rows) | `cannot_serve` → our failure |
+
+**Root causes (each has a regression test in `tests/planner-reliability-r52.test.ts`, 11 tests; the three production fixes were mutation-checked: reverting each fails its tests):**
+
+1. **Common column keys had no code title.** Over the six runs the planner wrote `source` untitled in 35 missions, `maps_url` 15, `developer` 10, `snippet` 8, `country` 7, `company` 5 … each a formal refusal. They now have an everyday Arabic title in the code's dictionary (`taskContracts.ts`). An unknown untitled key is still refused; a title the model writes still wins.
+2. **The saved page was read at a guessed path.** The `run_code` example taught `inputs.call_0001.data.items`; pages hold their rows at `items`, `data` or the root, and the empty mapping was refused 2–3 times. Every catalog sample now answers `rows_in_code`, the exact expression (`inputs.call_0002.items`; one record → `[inputs.call_0002.data]`), and the example and the system prompt say to use it. A `run_code` that returns `[]` over a page with rows is told at once where the rows are (`warning`); the output is saved as it is and the plan rule is unchanged (a plan citing it is still refused — tested).
+3. **The yield_from diagnosis offered a non-row list** (Z35). It now offers only a key holding a list of row OBJECTS, else says to map the measured page at `rows_in_code`.
+4. **Evaluation fidelity (never production):** the synthetic provider rows now answer structured filters at any depth (country, industry, job title, company keywords), name companies by their sector («النخبة للطاقة الشمسية», «Alnokhba Pharmaceutical») instead of repeating the query, answer App Store searches with App Store pages, give the searched name to one app only, and vary review texts and authors. The generator moved to `evals/live-intelligence/synthetic.ts` so it is tested without the paid harness.
+
+**Not changed, deliberately:** the give-up guard (owner decision 2026-10-29), the contact-stage rule G2 hit (it guides the planner to companies → people; relaxing it would weaken a validator), every privacy, pricing, approval and settlement path.
+
+### 10.2 Measured results (honest)
+
+* **Real planner acceptance: still 26/31 (83.9%, R4), below the 90% target.** No real run was authorized in this round, so the effect of these fixes on the real planner is NOT measured. The 90% target is not claimed.
+* **Offline replay of the recorded rejections** (deterministic, no model): of 88 recorded «code has no Arabic title» issues, **86** are removed by the new titles (the 2 left, `email_type` and `position`, are ambiguous and stay the model's to name). **9** of the 363 refused proposals had title issues ONLY and would now pass that check (R2 M5, R3 J3, P4 I1/J3/Z10/Z13, P5 Z5, R4 J3's articles mission and Z7, both of which then succeeded after the planner retitled: each saved one turn); none of the four R4 failures is fully fixed by titles alone (each also had content or mapping issues). **27** refused proposals cited an empty or wrapped output: `rows_in_code` and the empty-mapping warning target them, but only a real run can show the effect. (Issue lists of the records are clipped at 900 characters, so title issues are, if anything, under-counted.)
+* **Next measurement:** one real planner run of the 31 planning missions under a fresh, separate owner authorization, compared with R4 and P5 on the same cases.
