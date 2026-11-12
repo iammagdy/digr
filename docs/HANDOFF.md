@@ -32,6 +32,11 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 **Not verified:** the browser journey, the deployed Heroku worker, and live providers.
 
+**Post-merge facts:**
+
+* PR #462 merged as `d7c0ba1`; Vercel production READY on it (`dpl_BNCdKJ2c1Y7oMEpguUuH3gfqcnkM`).
+* Heroku: new worker processes began beating right after the merge, but they report `version: dev`, so the commit is unproven.
+
 ---
 
 ## Round 48 (12 Nov 2026, after #458, main = `4cb55cb`): pre-rollout acceptance (docs/PRE-ROLLOUT-ACCEPTANCE.md)

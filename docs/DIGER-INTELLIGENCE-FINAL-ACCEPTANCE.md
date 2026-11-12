@@ -324,9 +324,16 @@ Everything below was read from the repository's own files. Nothing was fetched, 
 
 ## 8. Delivery and deployment
 
-The PR, its merge SHA and the Vercel production deployment are recorded in `docs/HANDOFF.md` (round 51).
-
-Heroku: not verifiable from this session.
+* **PR:** [iammagdy/digr#462](https://github.com/iammagdy/digr/pull/462).
+  * Head `daa85d9`; Vercel status «success» and merge state clean before merging.
+  * Merged as **`d7c0ba15478a2890e442187dd5229903b2ba832c`**, pinned to the head SHA.
+* **Vercel production:** **READY on `d7c0ba1`** (deployment `dpl_BNCdKJ2c1Y7oMEpguUuH3gfqcnkM`, target production, branch main).
+* **Heroku worker: not verified.**
+  * Read with one read-only SELECT on `agent_worker_heartbeat`.
+  * Two NEW worker processes started beating at 17:23:52 and 17:25:46 UTC, right after the merge at about 17:22. That is consistent with an automatic redeploy.
+  * Every worker reports `version: "dev"`, so the commit it runs cannot be proven from this session.
+  * Models reported: `claude-haiku-5-5` for planning and execution. 0 active missions.
+* **Browser:** not exercised. The authenticated chat page needs a test-account session with the two switches on for that account, which this mission was not authorized to set.
 
 ## 9. Readiness recommendation
 
