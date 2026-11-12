@@ -25,14 +25,17 @@ export const MAX_USD = 1.0;
 export const MAX_OUTPUT_TOKENS = 700;
 /** The highest output ceiling any evaluation call may ask (the real-planner driver's turns). */
 export const PLANNER_MAX_OUTPUT_TOKENS = 4096;
-/** THE OWNER'S CUMULATIVE AUTHORIZATION for the LLM quality mission (2026-11-12): $10 in total across every run, retry and failure. The persistent budget never accepts a ceiling above it. */
-export const AUTHORIZED_TOTAL_USD = 10;
+/**
+ * THE OWNER'S CUMULATIVE AUTHORIZATION: $30 in total across every evaluation run, retry and failure (raised from $10 by the owner on 2026-11-12, intelligence completion mission). The persistent budget never accepts a ceiling above it.
+ * The earlier mission's reported $4.2746 counts inside it: the state of this mission was created with a ceiling of $30 − $4.2746 = $25.7254 (docs/DIGER-INTELLIGENCE-FINAL-ACCEPTANCE.md).
+ */
+export const AUTHORIZED_TOTAL_USD = 30;
 /** The most paid attempts the cumulative budget accepts in total (a second, independent stop). */
-export const AUTHORIZED_TOTAL_ATTEMPTS = 3000;
+export const AUTHORIZED_TOTAL_ATTEMPTS = 9000;
 /** Added to every input count: in the live run (2026-11-12) the billed input exceeded count_tokens by up to 5 tokens (the count request then carried no `thinking` field); the margin keeps the reservation a true upper bound. */
 export const COUNT_MARGIN_TOKENS = 32;
 export const CONFIRM_ENV = "LIVE_EVAL_CONFIRM";
-export const CONFIRM_VALUE = "llm-quality-10usd-cumulative";
+export const CONFIRM_VALUE = "intelligence-30usd-cumulative";
 /** The folder of the persistent cumulative budget (state file and lock): must be outside the repository. */
 export const BUDGET_DIR_ENV = "LIVE_EVAL_BUDGET_DIR";
 export const KEY_ENV = "DIGER_EVAL_ANTHROPIC_KEY";

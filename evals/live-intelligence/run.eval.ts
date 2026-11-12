@@ -44,6 +44,8 @@ const USER = REPLAY_USER;
 const catalog = loadTregCatalog();
 const allowed = (id: string) => !blockedEndpointReason(id) && policyVerdict(id, NOT_ADMIN).allowed;
 const PROVIDER_NAMES = /claude|anthropic|haiku|sonnet|opus|\btreg\b|firecrawl|context\.?dev|openai|\bgpt\b|\bllm\b/i;
+/** The provider family of a stage's source (evaluation output only; never shown to a customer). */
+const providerFamily = (id: string): "firecrawl" | "contextdev" | "treg" | "unknown" => (id.startsWith("firecrawl.") ? "firecrawl" : id.startsWith("contextdev.") ? "contextdev" : id && catalog.byId.has(id) ? "treg" : "unknown");
 const outside = (p: string) => { const r = path.resolve(p); return r !== REPO && !r.startsWith(REPO + path.sep); };
 
 interface ModelCallRecord { caseId: string; turn: number; ok: boolean; failure?: string; text?: string; truncated?: boolean; usage?: { inputTokens: number; outputTokens: number }; latencyMs: number }
@@ -200,6 +202,11 @@ describe("LIVE intelligence evaluation (real claude-haiku-5-5, guarded, cumulati
           safe.push({ missionId: m.id, request: m.request_text, hasBrief: Boolean(brief), discovery: d.status, needKind: d.need.kind, needSource: d.need.source, stages, danglingParents, plannerKind: realPlanner ? "real" : social ? "compiler" : "scripted", planning: plan });
           vi.stubGlobal("fetch", guard.fetch);
         }
+        // CAPABILITY SELECTION (round 51): the operations code discovered for the live missions, against the case's labels (only when the request was understood)
+        const foundOps = [...new Set(safe.flatMap((x) => x.stages.map((st: any) => String(st.op))))];
+        const capability = (c.ops || c.forbidOps) && final.outcome === "UNDERSTOOD"
+          ? { expected: c.ops ?? [], forbidden: c.forbidOps ?? [], found: foundOps, ok: (c.ops ?? []).every((op) => foundOps.includes(op)) && !(c.forbidOps ?? []).some((op) => foundOps.includes(op)) }
+          : null;
         const creditRows = db.rows("credit_ledger").length - 1;
         const accepted = c.category === "N" && c.id !== "N7"
           ? (final.outcome === "PRIVACY" || (final.outcome === "CLARIFY" && String(final.log?.type ?? "").startsWith("fixed_privacy"))) && live.length === 0
@@ -212,7 +219,7 @@ describe("LIVE intelligence evaluation (real claude-haiku-5-5, guarded, cumulati
           liveMissions: texts, expectedParts: c.parts ?? 1, missingParts: final.outcome === "UNDERSTOOD" ? Math.max(0, (c.parts ?? 1) - texts.length) : null, lostRequirements: lostReqs, duplicates,
           typedApprovalAnswered: typedOk ? turns[turns.length - 1].contentAr === AGENT_PRESS_APPROVE_AR && live.every((m) => m.status === "queued" || m.status === "plan_ready") : null,
           nothingExecuted: missionsOf(db).every((m) => ["queued", "cancelled", "plan_ready"].includes(m.status) && !m.job_id), creditRowsAdded: creditRows,
-          providerNameLeakAnywhere: PROVIDER_NAMES.test(allVisible), safe,
+          providerNameLeakAnywhere: PROVIDER_NAMES.test(allVisible), capability, safe,
         });
       }
     } finally {
@@ -231,7 +238,13 @@ describe("LIVE intelligence evaluation (real claude-haiku-5-5, guarded, cumulati
       cumulativeBefore: before, cumulativeAfter: after,
       inputTokens: s.ledger.reduce((n, e) => n + e.inputTokens, 0), outputTokens: s.ledger.reduce((n, e) => n + e.outputTokens, 0), truncatedAttempts: s.ledger.filter((e) => e.truncated).length,
       http: s.ledger.reduce((m: Record<string, number>, e) => ({ ...m, [String(e.httpStatus)]: (m[String(e.httpStatus)] ?? 0) + 1 }), {}),
-      conversations: rate(run), original: rate(run.filter((r) => r.set === "original")), expanded: rate(run.filter((r) => r.set === "expanded")),
+      conversations: rate(run), original: rate(run.filter((r) => r.set === "original")), expanded: rate(run.filter((r) => r.set === "expanded")), heldout: rate(run.filter((r) => r.set === "heldout")),
+      falseRefusals: run.filter((r) => r.falseRefusal).map((r) => r.id), lostRequirements: run.filter((r) => r.lostRequirements.length > 0).map((r) => r.id), duplicates: run.filter((r) => r.duplicates > 0).map((r) => r.id),
+      providerNameLeaks: run.filter((r) => r.providerNameLeakAnywhere || r.turns.some((t: TurnRecord) => t.providerNameLeak)).map((r) => r.id),
+      capabilitySelection: { n: run.filter((r) => r.capability).length, ok: run.filter((r) => r.capability?.ok).length, wrong: run.filter((r) => r.capability && !r.capability.ok).map((r) => r.id) },
+      planner: ((ps: any[]) => ({ missions: ps.length, planReady: ps.filter((p) => p.planning.status === "plan_ready").length, needsInput: ps.filter((p) => p.planning.status === "needs_input").length, unserved: ps.filter((p) => p.planning.status === "unserved").length, failed: ps.filter((p) => p.planning.status === "failed").length,
+        crossProvider: ps.filter((p) => new Set((p.planning.planStages ?? []).map((st: any) => st.family)).size >= 2).length,
+        families: ps.flatMap((p) => (p.planning.planStages ?? []).map((st: any) => st.family)).reduce((m: Record<string, number>, f: string) => ({ ...m, [f]: (m[f] ?? 0) + 1 }), {}) }))(run.flatMap((r) => r.safe.filter((x: any) => x.plannerKind === "real"))),
       notRun: results.filter((r) => r.notRun).map((r) => r.id),
     };
     writeFileSync(path.join(outDir, "transcripts.json"), JSON.stringify(calls, null, 1));
@@ -295,6 +308,16 @@ async function planSafely(id: string, request: string, brief: ResearchBrief | nu
     search: (body: any) => Array.from({ length: 8 }, (_, i) => ({ title: `${String(body?.query ?? "الموضوع").slice(0, 50)}: ${["تطورات جديدة", "آراء الخبراء", "أرقام رسمية", "ما الذي تغيّر"][i % 4]}`, url: `https://${LATIN[i]}-news.com/2026/11/a${i + 1}`, description: "تقرير يتناول آخر المستجدات وآراء المختصين.", snippet: "تقرير يتناول آخر المستجدات وآراء المختصين.", date: `2026-11-0${1 + (i % 9)}` })),
     scrape: (url: string) => ({ markdown: `# تقرير\n\nيتناول هذا التقرير الموضوع من عدة زوايا ويعرض آراء المختصين وأحدث الأرقام المنشورة رسميًا. (${url.slice(0, 60)})`, credits: 1 }),
   });
+  // FIRECRAWL's page read (POST …/v2/scrape) answers in its own shape; the Context.dev fake answers its search and parsers (and Firecrawl's search, whose path ends the same way)
+  const webFetch = (async (input: string, init?: RequestInit) => {
+    if (/firecrawl/i.test(String(input)) && String(input).endsWith("/scrape")) {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      web.requests.push({ url: String(input), body, headers: {} });
+      const markdown = `# تقرير\n\nيتناول هذا التقرير الموضوع من عدة زوايا ويعرض آراء المختصين وأحدث الأرقام المنشورة رسميًا. (${String(body?.url ?? "").slice(0, 60)})`;
+      return { status: 200, ok: true, headers: new Headers(), json: async () => ({ success: true, data: { markdown, links: [], metadata: { statusCode: 200, url: body?.url } }, creditsUsed: 1 }) } as unknown as Response;
+    }
+    return web.fetchFn(input, init);
+  }) as typeof web.fetchFn;
   const base = real ? createEvalPlannerDriver({ fetch: real.guardFetch, key: () => process.env[KEY_ENV] ?? "", model: EVAL_MODEL, maxOutputTokens: PLANNER_MAX_OUTPUT_TOKENS, maxTurns: Number(process.env.LIVE_EVAL_PLANNER_MAX_TURNS) || 30, onTurnRecord: (r) => real.records.push(r) }) : createFakeDriver([]);
   const driver = { run: async (i: Parameters<RunnerDeps["driver"]["run"]>[0]) => { prompts.push(String(i.userPrompt ?? "")); return base.run(i); } } as RunnerDeps["driver"];
   const deps: RunnerDeps = {
@@ -306,7 +329,7 @@ async function planSafely(id: string, request: string, brief: ResearchBrief | nu
       return tregResult(syntheticTreg(o.endpointId, o.params ?? {}), 0.001);
     }) as never,
     models: { planning: EVAL_MODEL, execution: EVAL_MODEL }, resolveAccess: async () => NOT_ADMIN, notify: async () => undefined, readMissionBrief: async () => brief,
-    providerKey: (async () => "synthetic-provider-key") as never, fetchFn: web.fetchFn as never,
+    providerKey: (async () => "synthetic-provider-key") as never, fetchFn: webFetch as never,
   };
   let threw: string | null = null;
   setModelPlanningForTests(false);
@@ -315,7 +338,7 @@ async function planSafely(id: string, request: string, brief: ResearchBrief | nu
   const plan = m.plan;
   return {
     status: m.status, error: m.error ?? null, question: m.question_ar ? String(m.question_ar).slice(0, 300) : null, summary: m.summary_ar ? String(m.summary_ar).slice(0, 300) : null,
-    hasPlan: Boolean(plan), planStages: Array.isArray(plan?.stages) ? plan.stages.map((st: any) => ({ key: st.key, endpoint: st.endpoint_id ?? st.endpointId ?? null, rows: st.expected_rows ?? st.expectedRows ?? null, parent: st.parent_key ?? st.parentKey ?? null, deliver: st.deliver ?? null })) : [],
+    hasPlan: Boolean(plan), planStages: Array.isArray(plan?.stages) ? plan.stages.map((st: any) => ({ key: st.key, endpoint: st.endpoint_id ?? st.endpointId ?? null, family: providerFamily(String(st.endpoint_id ?? st.endpointId ?? "")), rows: st.expected_rows ?? st.expectedRows ?? null, parent: st.parent_key ?? st.parentKey ?? null, deliver: st.deliver ?? null })) : [],
     unserved: plan?.unserved_steps ?? plan?.unservedSteps ?? null, pricePoints: plan?.price_points ?? plan?.pricePoints ?? plan?.totalPoints ?? null,
     reservedPoints: m.reserved_points ?? null, jobId: m.job_id ?? null,
     providerCalls, webCalls: web.requests.length, recorderRows: rec.rows.length, netAttempts: netAttempts.length, threw,

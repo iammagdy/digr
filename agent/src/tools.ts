@@ -89,6 +89,8 @@ export interface RunState {
   moreAvailable: Map<string, boolean>;
   /** What each source gave in the planning samples: the rows of every answered call and a key of its inputs (two samples of the same item are one). */
   samples: Map<string, Array<{ rows: number; key: string }>>;
+  /** Plans propose_plan refused, and what the last refusal was about («data»: no sampled row matches the stage's rule; else «formal»). Read when the planning ends without a card (refusal.ts). */
+  planRejections?: { count: number; last: "formal" | "data" };
 }
 export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), described: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, giveUpNoRowsRefusals: 0, peopleSendBacks: 0, moreAvailable: new Map(), samples: new Map() });
 /** The redesigned mode of planning: any of the three social flags is active for this mission's account (planning does not know the request type yet; with every flag off this is false and nothing changes). */
@@ -154,6 +156,14 @@ export const EXCLUDED_PATH = (stageKey: string) => `excluded/${stageKey}.json`;
 const outId = (n: number) => `out_${String(n).padStart(4, "0")}`;
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const err = (error: string, extra: Record<string, unknown> = {}) => ({ ok: false, error, ...extra });
+/** A refusal that is about the DATA (no sampled row matches the stage's own rule), not about the plan's form. */
+const DATA_REJECTION = /none of the \d+ rows of the sample matches your relevance rule/;
+/** propose_plan refuses a plan: the issues go back to the planner, and the run remembers the refusal and its kind (refusal.ts classifies an ending without a card from it). */
+function rejectPlan(state: RunState, message: string, issues: ReadonlyArray<string>): ReturnType<typeof err> {
+  state.planRejections = { count: (state.planRejections?.count ?? 0) + 1, last: issues.some((i) => DATA_REJECTION.test(i)) ? "data" : "formal" };
+  return err(message, { issues: issues.slice(0, 12) });
+}
+
 
 function previewOf(value: unknown): unknown {
   if (Array.isArray(value)) return { type: "array", length: value.length, first_items: value.slice(0, 5).map((v) => digestValue(v)) };
@@ -596,7 +606,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         // UNIFIED CAPABILITY DISCOVERY: every stage reads one of the capabilities code validated for this request (inputs, outputs, availability, policy, price); the model recommends, code decides
         if (ctx.capabilities) {
           const capIssues = planStageIssues(stagesIn.map((st) => ({ key: String(st?.key ?? ""), endpoint_id: String(st?.endpoint_id ?? ""), parent_key: st?.parent_key ?? null })), ctx.capabilities, ctx.catalog);
-          if (capIssues.length > 0) return err("the plan was not accepted; fix these and propose again", { issues: capIssues.slice(0, 12) });
+          if (capIssues.length > 0) return rejectPlan(state, "the plan was not accepted; fix these and propose again", capIssues);
         }
         // TEMPORARY, TEST-ONLY (testSeam.ts): the tests that still drive a social mission through a fake model transcript were written for the redesigned mode, where no relevance rule is asked of the model. Production never reaches this (a social plan from the model is refused above).
         const noRelevance = modelPlanningForTests() && socialRedesignActive(ctx) && redesignTypeOf(stagesIn as never, { account: stagesIn.some((st) => Array.isArray(st?.filters) && st.filters.some((f: { kind?: string; values?: unknown[] }) => f?.kind === "account" && Array.isArray(f.values) && f.values.length > 0)) }, (id: string) => ctx.catalog.byId.get(id)?.capability ?? null).startsWith("social_");
@@ -631,7 +641,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           endpointsCalled: () => { const m = new Map<string, { rows: number }>(); for (const c of calls) m.set(c.endpoint_id, { rows: Math.max(m.get(c.endpoint_id)?.rows ?? 0, c.status === "ok" ? Number(c.rows_returned) || 0 : 0) }); return m; },
         };
         const checked = validateAndPricePlan({ summary_ar: a.summary_ar, stages: stagesIn, ...(a.contacts_note_ar !== undefined ? { contacts_note_ar: a.contacts_note_ar } : {}), ...(a.unserved_steps !== undefined ? { unserved_steps: a.unserved_steps } : {}), ...(a.assumptions_ar !== undefined ? { assumptions_ar: a.assumptions_ar } : {}) }, lookup);
-        if (!checked.ok) return err("the plan was not accepted; fix these and propose again", { issues: checked.issues.slice(0, 12) });
+        if (!checked.ok) return rejectPlan(state, "the plan was not accepted; fix these and propose again", checked.issues);
         // THE PEOPLE AND THEIR PHONES (live, 2026-10-31): a people stage that reads a mailbox lister, or phones dropped while no phone source was sampled, is sent back (a few times at most) to the sources that serve it; a plan that really tried them and says so is accepted
         if (state.peopleSendBacks < PEOPLE_SEND_BACKS_MAX) {
           const allowedSource = (x: string): boolean => policyVerdict(x, ctx.access).allowed && !blockedEndpointReason(x) && isSellable(x, ctx.catalog);
@@ -649,7 +659,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           derived = await deriveEngineSpecsChecked(checked.plan, { store, missionId: mission.id, catalog: ctx.catalog, calls, codeRuns: state.codeRuns, callParams: state.callParams, sandbox: runSandbox });
         } catch { /* a plan without recipes is carried out by the model, through the same item store */ }
         // THE CONTRACT: a mapping that gives what the engine needs but breaks what the card promises (an id, a column, a field a filter reads) is refused here, before the customer sees a card the file cannot match
-        if (derived && derived.issues.length > 0) return err("the plan was not accepted; fix these and propose again", { issues: derived.issues.slice(0, 12) });
+        if (derived && derived.issues.length > 0) return rejectPlan(state, "the plan was not accepted; fix these and propose again", derived.issues);
         if (derived) {
           for (const st of checked.plan.stages) {
             const spec = derived.specs.get(st.key);

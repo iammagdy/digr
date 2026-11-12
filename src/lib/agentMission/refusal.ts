@@ -21,6 +21,11 @@ export interface NoCardEndInput {
   /** Why it ended without an answer (for the admin only). */
   stop?: string;
   calls: ReadonlyArray<PlanningCallFact>;
+  /**
+   * PLANNER RELIABILITY (docs/DIGER-INTELLIGENCE-FINAL-ACCEPTANCE.md): the plans the planner proposed that code refused, and what the LAST refusal was about. «formal»: the plan's form (yield_from, sample rows, columns, filters,
+   * capabilities); «data»: what the sources returned contradicts the request (no sampled row matches the stage's rule). Absent: no plan was proposed.
+   */
+  planRejections?: { count: number; last: "formal" | "data" };
 }
 
 /** The refusals that mean the PLANNING ran out of something of ours (its source budget, the provider's daily limit, the cost recorder). */
@@ -36,6 +41,8 @@ export function classifyNoCardEnd(input: NoCardEndInput): { cls: RefusalClass; r
   // every source it tried failed or was unavailable: nothing was learned about the request, and that is ours
   if (planning.length > 0 && real.length === 0 && planning.some((c) => c.status === "failed" || SOURCE_DOWN.test(String(c.refused_reason ?? "")))) return { cls: "internal", reason: "sources_failed" };
   if (input.claim === "empty" && real.length > 0 && real.every((c) => (c.rows_returned ?? 0) === 0)) return { cls: "empty_source", reason: "sample_empty" };
+  // the sources gave rows and the planner proposed plans that code refused for their FORM, then gave up: the data may well be available, the failure is OUR planner's, never «our sources do not serve this» (defect C)
+  if (input.planRejections && input.planRejections.count > 0 && input.planRejections.last === "formal" && real.some((c) => (c.rows_returned ?? 0) > 0)) return { cls: "internal", reason: `plan_invalid_after_${Math.min(input.planRejections.count, 99)}_rejections` };
   return { cls: "unsupported", reason: input.claim === "empty" ? "claimed_empty_but_rows_returned" : "not_served" };
 }
 

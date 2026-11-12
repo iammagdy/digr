@@ -320,6 +320,32 @@ export function isInternalColumn(c: { key: string; title_ar: string }): boolean 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /** Every string value of a sample row that looks like an id or a link must be present in the evidence the stage cites. */
+/**
+ * WHY A CITED OUTPUT COULD NOT BE READ (live evaluation, the real planner: plans rejected again and again for yield_from and sample rows, and the planner did not see why). Only the REASON of the same rule is made explicit: what the cited
+ * id holds. Nothing is accepted that was refused before.
+ */
+export function yieldFromDiagnosis(yieldId: string, text: string | null): string {
+  if (!yieldId) return "You gave no yield_from: map the rows of the measured page in run_code, return the ARRAY itself, and cite the out_ id it returns.";
+  if (!/^out_\d+/.test(yieldId)) return `«${yieldId.slice(0, 40)}» is not an output id: a call id (call_…) is the raw page; cite the out_ id that run_code returned for the mapped rows.`;
+  if (text === null) return `«${yieldId}» is not an output of this mission: cite an out_ id that run_code returned in this planning.`;
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { return `«${yieldId}» is not JSON: run_code must return the array of mapped rows itself.`; }
+  if (Array.isArray(parsed)) return parsed.length === 0 ? `«${yieldId}» is an EMPTY array: map the rows of a page that returned rows.` : `«${yieldId}» is an array whose items are not all objects: each item must be one row object keyed by this stage's column keys.`;
+  if (parsed && typeof parsed === "object") {
+    const keys = Object.keys(parsed as Record<string, unknown>).slice(0, 8);
+    const arrayKey = keys.find((k) => Array.isArray((parsed as Record<string, unknown>)[k]));
+    return `«${yieldId}» holds a JSON OBJECT (keys: ${keys.join(", ") || "none"}), not an array${arrayKey ? `: return the «${arrayKey}» array itself from run_code (not wrapped in an object) and cite the new out_ id` : ""}.`;
+  }
+  return `«${yieldId}» holds a single value, not an array of rows.`;
+}
+
+/** Why no sample row could be taken from the outputs a stage cites (see yieldFromDiagnosis). */
+export function sampleRowsDiagnosis(ids: ReadonlyArray<string>, evidenceText: (id: string) => string | null): string {
+  const outs = ids.filter((x) => x !== "");
+  if (outs.length === 0) return "This stage cites no out_ id (measured_by lists only call_ ids, and yield_from is empty).";
+  return outs.slice(0, 3).map((id) => yieldFromDiagnosis(id, evidenceText(id))).join(" ");
+}
+
 function sampleRowIssues(row: Record<string, unknown>, evidence: string, stageKey: string): string[] {
   const issues: string[] = [];
   for (const [k, v] of Object.entries(row)) {
@@ -552,7 +578,8 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
         try { const parsed = JSON.parse(text) as unknown; if (Array.isArray(parsed) && parsed.length > 0 && parsed.every(isRecord)) { samples = (parsed as Array<Record<string, unknown>>).slice(0, MAX_SAMPLE_ROWS_PER_STAGE); samplesDerived = true; break; } } catch { /* the next output */ }
       }
     }
-    if (samples.length < 1 || samples.length > MAX_SAMPLE_ROWS_PER_STAGE) issues.push(`${label}: 1 to ${MAX_SAMPLE_ROWS_PER_STAGE} sample_rows, rows you really saw`);
+    if (samples.length > MAX_SAMPLE_ROWS_PER_STAGE) issues.push(`${label}: 1 to ${MAX_SAMPLE_ROWS_PER_STAGE} sample_rows, rows you really saw (you gave ${samples.length})`);
+    else if (samples.length < 1) issues.push(`${label}: 1 to ${MAX_SAMPLE_ROWS_PER_STAGE} sample_rows, rows you really saw. Either write them, or cite in yield_from (or measured_by) the out_ id of a run_code output that is a JSON ARRAY of the mapped rows: code then takes the samples from it. ${sampleRowsDiagnosis(sampleSourceIds, lookup.evidenceText)}`);
     for (const s of samples) {
       if (!isRecord(s)) { issues.push(`${label}: a sample row must be an object`); continue; }
       if (evidence && !samplesDerived) issues.push(...sampleRowIssues(s, evidence, key));
@@ -581,7 +608,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
         const yieldText = yieldId ? lookup.evidenceText(yieldId) : null;
         let sampleRows: Array<Record<string, unknown>> | null = null;
         if (yieldText) { try { const parsed = JSON.parse(yieldText) as unknown; if (Array.isArray(parsed) && parsed.every(isRecord)) sampleRows = parsed as Array<Record<string, unknown>>; } catch { sampleRows = null; } }
-        if (!sampleRows || sampleRows.length < 1) issues.push(`${label}: yield_from must be the id of a run_code output (out_0001 ...) that holds an ARRAY of ALL the rows of the page you measured, mapped to this stage's columns (so the code can count how many match; never only the best rows)`);
+        if (!sampleRows || sampleRows.length < 1) issues.push(`${label}: yield_from must be the id of a run_code output (out_0001 ...) that holds an ARRAY of ALL the rows of the page you measured, mapped to this stage's columns (so the code can count how many match; never only the best rows). ${yieldFromDiagnosis(yieldId, yieldText)}`);
         else {
           yieldRows = sampleRows;
           const { counts } = classifyRows(relevance, sampleRows);
