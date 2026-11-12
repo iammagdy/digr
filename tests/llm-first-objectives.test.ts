@@ -206,19 +206,20 @@ describe("2. different natural phrasings, one goal", () => {
 
 describe("3. a mixed request keeps every objective", () => {
   chatHooks();
-  it("social comments + hotel reviews + news articles: nothing is cut; the customer is asked which part is prepared first; every objective stays in the brief; no mission, no provider call", async () => {
+  it("social comments + hotel reviews + news articles: nothing is cut; every part is said; every objective stays in the brief; no provider call", async () => {
     const text = "عايز تعليقات تيك توك عن السياحة في مصر، وتقييمات الفنادق في الغردقة، ومقالات الأخبار عن الموسم";
     const objectives = [obj("o1", "social.parents", { platform: "tiktok" }), obj("o2", "social.comments", { platform: "tiktok", parent: "o1" }), obj("o3", "places.discover"), obj("o4", "places.reviews", { parent: "o3" }), obj("o5", "web.search"), obj("o6", "web.read", { parent: "o5" })];
     scripted([say({ request: text, platforms: ["tiktok"], content: ["comments", "places", "reviews"], objectives })]);
     const db = chatWorld();
     const { r, assistant } = await turn(db, text);
+    // (since docs/MULTI-OBJECTIVE-RESEARCH.md: no part is cut and the customer is never made to choose one; here the model wrote no sentence for each part, so each part is clarified, never guessed)
     expect(r.ok).toBe(false);
     for (const part of ["تعليقات تيك توك", "تقييمات الأماكن ونصوصها", "نصوص صفحات الويب العامة"]) expect(r.contentAr).toContain(part);
-    expect(r.contentAr).toContain("نبدأ بأنهي جزء؟");
+    expect(r.contentAr).toContain("محتاج توضيح بسيط");
     expect(missions(db)).toHaveLength(0);
-    expect(assistant.plan.researchBrief.status).toBe("needs_clarification");
-    expect(assistant.plan.researchBrief.objectives.map((o: Obj) => o.operation)).toEqual(objectives.map((o) => o.operation));
-    expect(lastOutcome()).toBe("objectives_mixed_ask");
+    expect(assistant.plan.researchGroup.brief.status).toBe("needs_clarification");
+    expect(assistant.plan.researchGroup.brief.objectives.map((o: Obj) => o.operation)).toEqual(objectives.map((o) => o.operation));
+    expect(lastOutcome()).toBe("group_0_created_0_kept_3_other");
     expect(fetchSpy).not.toHaveBeenCalled();
     // the next turn's prompt carries the objectives so far (confirmed information is preserved)
     scripted([say({ request: "عايز تقييمات الفنادق في الغردقة", objectives: [obj("o3", "places.discover"), obj("o4", "places.reviews", { parent: "o3" })] })]);
@@ -267,7 +268,7 @@ describe("4. a goal no capability serves is clarified usefully, never guessed an
     expect(r.contentAr).toContain("سناب شات");
     expect(r.contentAr).toContain("تعليقات تيك توك");
     expect(missions(db)).toHaveLength(0);
-    expect(lastOutcome()).toBe("capability_partial");
+    expect(lastOutcome()).toBe("group_0_created_0_kept_2_other");
   });
 
   it("Snapchat alone: honest limitation and a served alternative, no mission", async () => {

@@ -54,7 +54,7 @@ import { modelPlanningForTests } from "../../src/lib/agentMission/testSeam";
 import { SOCIAL_NOT_OFFERED_AR } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { blockedEndpointReason } from "../../src/lib/treg/blockList";
 import { policyVerdict } from "../../src/lib/treg/dataPolicy";
-import { buildCapabilityRegistry, capabilitySelectionOf, discoverCapabilities, limitationLinesAr, mixedPartsAr, plannerCapabilitySection, readCapabilityDiscoveryFlag, researchNeedOf, scopeAnchorBody, scopeAnchorOf, SCOPE_ANCHOR_FOLDER, verifyApprovedScope, type CapabilityDiscovery, type ScopeAnchor } from "../../src/lib/agentMission/capabilities";
+import { buildCapabilityRegistry, capabilitySelectionOf, discoverCapabilities, limitationLinesAr, mixedPartsAr, operationLabelAr, plannerCapabilitySection, readCapabilityDiscoveryFlag, researchNeedOf, scopeAnchorBody, scopeAnchorOf, SCOPE_ANCHOR_FOLDER, verifyApprovedScope, type CapabilityDiscovery, type ScopeAnchor } from "../../src/lib/agentMission/capabilities";
 import { namedShortfallChoiceOf } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { promiseShortfallAr, repliesShortfallAr } from "./repliesShortfall";
 import { TOPIC_OPTIONS_AR, topicMeaningOf, topicQuestionAr } from "../../src/lib/agentMission/topicMeaning";
@@ -147,6 +147,27 @@ async function writeCapabilityAnchor(store: AgentStore, missionId: string, diges
     if (r.created) return;
   }
   throw new Error("capability anchor not written");
+}
+
+const AR_DIGITS = ["٠", "١", "٢", "٣", "٤", "٥", "٦", "٧", "٨", "٩"];
+/**
+ * THE OUTCOME OF EACH OBJECTIVE of an approved multi-stage plan (docs/MULTI-OBJECTIVE-RESEARCH.md): each delivering stage, named by the operation its record validated, with what the file holds against what was approved: delivered, partial or
+ * none. Null for a plan with a single delivering stage (the mission's own status says it). Counts only; never a provider name.
+ */
+export function objectiveOutcomesLineAr(plan: PricedPlan, deliveredByStage: Record<string, number>): string | null {
+  const ar = (n: number) => String(Math.max(0, Math.round(n))).replace(/\d/g, (d) => AR_DIGITS[Number(d)]);
+  const rec = new Map((plan.capability_selection?.stages ?? []).map((x) => [x.stage_key, x]));
+  const stages = plan.stages.filter((st) => st.deliver);
+  if (stages.length < 2) return null;
+  const parts = stages.map((st) => {
+    const got = Number(deliveredByStage[st.key] ?? 0);
+    const op = rec.get(st.key)?.operation ?? null;
+    // the stage's own title on the card (checked customer text); the validated operation's name when the title is empty
+    const label = st.title_ar?.trim() ? st.title_ar.trim() : op ? operationLabelAr(op, null) : st.key;
+    const outcome = got <= 0 ? "لم يُسلَّم منه شيء، ولم تدفع عنه" : got >= st.planned_rows ? "سُلّم كاملًا" : "سُلّم جزئيًا، ولا تدفع إلا عن المسلَّم";
+    return `${label}: ${ar(got)} من ${ar(st.planned_rows)} (${outcome})`;
+  });
+  return `نتيجة كل هدف من طلبك: ${parts.join("؛ ")}.`;
 }
 
 /**
@@ -943,6 +964,11 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   // never twice), and the notice says the mission was free. An ordinary mission is «not_free» and nothing happens. Never throws and never changes the settlement; a failed grant is logged and
   // the admin page grants it again (same request id).
   // only a mission an admin created can be one (a customer's own mission is never looked up)
+  // MULTI-OBJECTIVE RESEARCH (capability_discovery_v1 plans only): every objective of the approved plan gets its own explicit outcome, counted from the file (never claimed complete when one objective fell short)
+  if (approvedPlan.capability_selection) {
+    const line = objectiveOutcomesLineAr(approvedPlan, fileByStage ?? Object.fromEntries(plan.stages.map((st) => [st.key, rowsByStage[st.key].length])));
+    if (line) await store.addEvent(mission.id, { kind: "result", message_ar: line });
+  }
   const freeRerun = mission.created_by && mission.created_by !== mission.user_id ? await compensateFreeRerun(deps.client, { missionId: mission.id, chargedPoints: settled.chargedPoints }) : null;
   if (freeRerun?.status === "failed") deps.log?.(`free_rerun_refund_failed ${mission.id} ${freeRerun.reason}`);
   const isFreeRerun = freeRerun !== null && freeRerun.status !== "not_free" && freeRerun.status !== "failed";

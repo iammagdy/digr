@@ -22,7 +22,7 @@ export interface ChatModelInput {
   timeoutMs: number;
 }
 export type ChatModelResult =
-  | { ok: true; text: string; usage?: { inputTokens: number; outputTokens: number } }
+  | { ok: true; text: string; usage?: { inputTokens: number; outputTokens: number }; /** The answer stopped at the output ceiling (`stop_reason: "max_tokens"`): its JSON may be cut. */ truncated?: boolean }
   | { ok: false; failure: string };
 export type ChatModelCall = (input: ChatModelInput) => Promise<ChatModelResult>;
 
@@ -56,7 +56,7 @@ export async function callClaudeChatWith(input: ChatModelInput, deps: ChatModelD
     const data: any = await response.json();
     const text = Array.isArray(data?.content) ? data.content.map((part: any) => (typeof part?.text === "string" ? part.text : "")).join("") : "";
     if (text.trim() === "") return fail("empty");
-    return { ok: true, text, usage: { inputTokens: Number(data?.usage?.input_tokens) || 0, outputTokens: Number(data?.usage?.output_tokens) || 0 } };
+    return { ok: true, text, usage: { inputTokens: Number(data?.usage?.input_tokens) || 0, outputTokens: Number(data?.usage?.output_tokens) || 0 }, ...(data?.stop_reason === "max_tokens" ? { truncated: true } : {}) };
   } catch (err: any) {
     return fail(err?.name === "AbortError" || controller.signal.aborted ? "timeout" : "network");
   } finally {

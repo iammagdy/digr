@@ -61,8 +61,20 @@ function contactObjectiveIn(part: string): boolean {
   if (!PERSONAL_CONTACT.test(part)) return false;
   // SECURITY PR: a request for PUBLIC content whose SUBJECT is an app or a product («منشورات عامة عن واتساب») asks for nobody's number: the bare app and product words (never «ارقام» + a contact word) are read only BEFORE the topic marker
   const { head, tail } = splitAtPublicTopic(part);
-  return !(tail !== null && !PERSONAL_CONTACT.test(`${head} ${tail.replace(BARE_APP_OR_PRODUCT, " ")}`));
+  if (tail === null) return true;
+  if (!PERSONAL_CONTACT.test(`${head} ${tail.replace(BARE_APP_OR_PRODUCT, " ")}`)) return false;
+  // NO FALSE REFUSALS (docs/MULTI-OBJECTIVE-RESEARCH.md): the ROLE of the words decides, as for identifiers. Contact words that are only the SUBJECT of public content («تعليقات عن تسريب أرقام التليفونات», «الناس بتقول إيه عن
+  // سرقة أرقام الموبايلات») ask for nobody's number: what is collected is the public content. They stay an ask when they point at private people, when they are what is collected: in the head, after a second collecting verb («… واستخرج الأرقام»), or as what the content
+  // must CONTAIN («تعليقات فيها أرقام تليفونات»).
+  if (PERSONAL_CONTACT.test(head)) return true;
+  // the contact words point at private people («أرقام تليفونات الناس العاديين», «وأرقام تليفونات المعلقين»): never only a subject
+  if (PERSON_AFTER_CONTACT.test(tail) || PRIVATE_EXPLICIT.test(tail)) return true;
+  const extra = secondAsk(tail);
+  if (extra !== null && PERSONAL_CONTACT.test(extra)) return true;
+  return HARVEST_CONTACT.test(part);
 }
+/** Content collected FOR the contact data it contains («تعليقات فيها أرقام موبايلات»): harvesting, the same request as the numbers themselves. */
+const HARVEST_CONTACT = new RegExp(`(?:فيها|فيه|تحتوي|تحتوى|تتضمن|يحتوي|كاتبين|كاتبه|كتبوا|نشروا|بيكتبوا|containing|contains|that\\s+include|with)(?:\\s+\\S+){0,3}\\s+(?:${CONTACT_NOUN})(?![ء-ي])`);
 
 function objectiveVerdict(objective: string): ContactVerdict {
   if (!contactObjectiveIn(objective)) return "allow";
@@ -106,7 +118,7 @@ const word = (alts: string): RegExp => new RegExp(`${PFX}(?:${alts})${END}`);
 const ARABIC_OR_LATIN = (arabic: string, latin: string): RegExp => new RegExp(`${PFX}(?:${arabic})${END}|\\b(?:${latin})\\b`);
 
 /** What a customer collects that is PUBLIC (the head noun of «هات منشورات عامة عن …»). */
-const PUBLIC_CONTENT = ARABIC_OR_LATIN("منشورات|منشور|بوستات|بوست|تعليقات|تعليق|تغريدات|تغريده|تويتات|فيديوهات|فيديو|ريلز|مقالات|مقال|اخبار|خبر|نقاشات|مناقشات|مناقشه|اراء|راي|مراجعات|تقييمات|هاشتاجات|ترند|دراسات|ابحاث|بحوث|تحليلات", "posts?|comments?|tweets?|videos?|reels?|articles?|news|discussions?|opinions?|reviews?|trends?|studies|research");
+const PUBLIC_CONTENT = ARABIC_OR_LATIN("بيقول|بيقولوا|بتقول|بيتكلموا|بيتكلم|بتتكلم|بيكتبوا|بتكتب|كلام|منشورات|منشور|بوستات|بوست|تعليقات|تعليق|تغريدات|تغريده|تويتات|فيديوهات|فيديو|ريلز|مقالات|مقال|اخبار|خبر|نقاشات|مناقشات|مناقشه|اراء|راي|مراجعات|تقييمات|هاشتاجات|ترند|دراسات|ابحاث|بحوث|تحليلات", "posts?|comments?|tweets?|videos?|reels?|articles?|news|discussions?|opinions?|reviews?|trends?|studies|research");
 /** A word that turns what follows into the SUBJECT of the collected content, not the thing collected. */
 const TOPIC_MARK = /(?<![ء-ي])(?:عن|حول|بخصوص|بشان|تتناول|تناقش|تتحدث|بتتكلم|بتتناول|تتعلق|متعلقه|المتعلقه)(?![ء-ي])|\b(?:about|regarding|concerning|on|related to)\b/;
 
@@ -268,7 +280,9 @@ export function isTrustQuestion(message: string): boolean {
   const bare = TRUST_BARE.exec(text);
   if (!bare) return false;
   if (namesCollectibleData(message)) return false;
-  return !SUBJECT_OF.test(text.slice(0, bare.index + 1));
+  // the text BEFORE the word: a match that starts at its own leading space keeps that space, a match inside the text (e.g. «سرقه») starts at the word itself (cutting one letter of it made «عن سرقة الهوية» look like no topic marker)
+  const start = bare[0].startsWith(" ") ? bare.index + 1 : bare.index;
+  return !SUBJECT_OF.test(text.slice(0, start));
 }
 
 export const TRUST_REPLY_AR = "أفهم حرصك. لا يُخصم منك شيء قبل أن ترى الخطة والسعر وتعتمدها بنفسك بزر «اعتمد»، ولا تدفع إلا مقابل ما سُلّم لك فعلًا، وما حُجز مؤقتًا ولم يُسلَّم يُحرَّر كاملًا. وفي كل طلب تجد ما جُمع وما سُلّم وما خُصم، ويمكنك أن تبدأ بأقل طلب لتجرّب بنفسك.";

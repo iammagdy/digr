@@ -47,6 +47,11 @@ export interface BriefObjective {
   contacts: Array<"email" | "phone">;
   /** The goal in a few words of the customer's language (internal: never executed, never shown as such). */
   what: string | null;
+  /**
+   * MULTI-OBJECTIVE RESEARCH (docs/MULTI-OBJECTIVE-RESEARCH.md): on a FIRST objective of a request with several first objectives, that part's own request in one self-contained sentence (the same rules as the brief's `request`: the platform
+   * by name, what is collected, «عن» before the topic, the customer's own conditions and numbers). Each part becomes its own plan, priced and approved on its own card; the sentence is validated like a brief (privacy, numbers, platforms).
+   */
+  request?: string | null;
 }
 
 export interface ResearchBrief {
@@ -71,7 +76,7 @@ export const BRIEF_REQUEST_MIN = 3;
 export const BRIEF_REQUEST_MAX = 1000;
 const FIELD_MAX = 120;
 const KNOWN_FIELDS = new Set(["status", "request", "platforms", "content", "count", "topic", "period", "country", "language", "objectives", "v"]);
-const OBJECTIVE_FIELDS = new Set(["id", "operation", "platform", "parent", "contacts", "what"]);
+const OBJECTIVE_FIELDS = new Set(["id", "operation", "platform", "parent", "contacts", "what", "request"]);
 
 export type ParsedBrief = { ok: true; brief: ResearchBrief; unknown: string[] } | { ok: false; issue: string };
 
@@ -115,7 +120,8 @@ function parseObjectives(v: unknown): BriefObjective[] | null | false {
     if (parent !== null && !/^[A-Za-z0-9_-]{1,12}$/.test(parent)) return false;
     const contacts = listOf(o.contacts, ["email", "phone"] as const);
     if (!contacts) return false;
-    out.push({ id, operation: operation as ObjectiveOperation, platform, parent, contacts, what: text(o.what, FIELD_MAX) });
+    const partRequest = text(o.request, BRIEF_REQUEST_MAX);
+    out.push({ id, operation: operation as ObjectiveOperation, platform, parent, contacts, what: text(o.what, FIELD_MAX), ...(partRequest ? { request: partRequest } : {}) });
   }
   return out;
 }
