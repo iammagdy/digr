@@ -22,6 +22,7 @@ import { createSdkDriver } from "./sdkRuntime";
 import { abortActiveRuns } from "./sessions";
 import { createSupabaseStore } from "./supabaseStore";
 import { createWorker } from "./worker";
+import { workerVersion } from "./buildVersion";
 
 /**
  * The entry point of the Heroku worker dyno (`worker: npx tsx agent/src/main.ts`). Required environment variables (names only; the values are set in Heroku, never in the repository):
@@ -29,7 +30,8 @@ import { createWorker } from "./worker";
  *   AGENT_CONCURRENCY is optional (default 1, at most 4).
  */
 const REQUIRED = ["ANTHROPIC_API_KEY", "TREG_TOKEN", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"] as const;
-const VERSION = process.env.SOURCE_VERSION?.slice(0, 7) || process.env.HEROKU_SLUG_COMMIT?.slice(0, 7) || "dev";
+// the commit this worker runs: the build writes it (scripts/write-build-info.mjs), so the heartbeat no longer says "dev" on Heroku
+const VERSION = workerVersion(process.env);
 
 async function main() {
   // the site's e-mail helper (src/lib/server/sendPlatformEmail.ts) reads the Supabase URL under its public name: the worker has the same project URL under SUPABASE_URL
