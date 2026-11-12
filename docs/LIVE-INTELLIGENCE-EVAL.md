@@ -241,9 +241,18 @@ For every one:
 ## Gates
 
 * **Guard tests:** `tests/live-eval-guard.test.ts`, 34 passed.
+* **Privacy and money suites, by name:** 8 files, 280 passed. They are `private-data-guards`, `pre-rollout-acceptance`, `agent-understanding-privacy`, `agent-price-and-settlement`, `engine-settlement`, `ledger`, `explicit-quote-approval` and `financial-audit-truncation`.
 * **Root and worker typechecks:** pass.
-* **Full `npm test`, `npm run build` and the client-bundle secret scan:** see the PR.
-* **Key check:** a grep of the diff for the evaluation key's value finds nothing.
+* **Full `npm test`:** 952 files passed (5 skipped); 13,137 tests passed, 0 failed.
+  * The 48 expected-fail and 65 skipped tests are unchanged from round 48.
+  * 13,137 is round 48's 13,103 plus the 34 new guard tests.
+* **`npm run build` and the client-bundle secret scan:** pass. 209 files scanned, zero secrets.
+* **Key check:** a grep for the evaluation key's VALUE finds nothing in:
+  * the diff;
+  * the repository;
+  * the build output;
+  * the scratchpad ledger, transcripts and results;
+  * the session logs.
 
 The diff is test code, harness and documentation only. Not changed:
 
