@@ -75,6 +75,9 @@ const WANTS_DATA_RE = /(?:^| )و?(?:عايز|عاوز|محتاج|احتاج|ار
 /** A platform the service collects from, named in the text (a subset of STRONG_NOUN_RE). */
 const PLATFORM_NAME_RE = /tiktok|تيك توك|تيكتوك|انستجرام|انستغرام|انستا|instagram|فيسبوك|فيس بوك|facebook|يوتيوب|youtube|twitter|تويتر|(?:^| )اكس(?: |$)/;
 
+/** «What people say / think about …»: the opinions of the public on a subject (normalized text, padded with spaces). */
+const OPINION_RE = / (?:الناس|الجمهور|العملاء|المستخدمين|المصريين|المتابعين|الشباب) (?:\S+ )?(?:بتقول|بيقولوا|بيقول|يقولون|يقولوا|بيتكلموا|يتكلمون|بيتكلم|شايفين|رايهم|رايه|بيعلقوا|يعلقون)|(?: |^)(?:اراء?|راي) (?:ال)?(?:ناس|جمهور|عملاء|مستخدمين|متابعين)| ردود (?:ال)?فعل | what (?:are |do )?(?:people|users|customers|fans) (?:are )?(?:saying|say|think|thinking|feel)| public (?:opinion|reaction|sentiment) /;
+const ABOUT_RE = / (?:عن|حول|بخصوص|بشان|في|about|on|of|regarding) /;
 const GENERIC_NOUN_RE = /بيانات|داتا|معلومات|(?:^| )data(?: |$)/;
 const ASK_RE = /(?:^| )(?:عايز\S*|عاوز\S*|محتاج\S*|احتاج\S*|اريد|ابغي|ابي|ودي|نفسي|اطلب\S*|ممكن|هات\S*|جيب\S*|اعطني|اعطيني|وفر\S*|اعمل\S*|جهز\S*|want|need|give)(?: |$)/;
 const COLLECT_STRONG_RE = /(?:^| )(?:اجمع\S*|جمعلي|جمّع\S*|اسحب\S*|استخرج\S*|collect|scrape|extract|download|fetch)(?: |$)/;
@@ -127,6 +130,9 @@ export function classifyMessage(message: string): MessageType {
   if (asksQuestion && SERVICE_RE.test(text) && !command && !(strongNoun && (ask || number || url))) return "service_question";
 
   if (strongNoun && (ask || collectStrong || SEARCH_RE.test(text) || GET_RE.test(text) || number || url)) return "data_request";
+  // what PEOPLE SAY about a subject is public-opinion research, whatever the subject (live evaluation 2026-11-12: «الناس بتقول إيه عن تسريب أرقام التليفونات» and «What are people saying about phone number leaks» were refused by the model):
+  // a request, so the WHEN-UNSURE rule never lets a model's refusal stand. Private data itself is refused before this by the privacy guard (guardRules.ts)
+  if (OPINION_RE.test(` ${text} `) && ABOUT_RE.test(` ${text} `)) return "data_request";
   // cm-13: a statement that names what to collect AND a platform, with no question («كل التعليقات على بوستات فيسبوك عن غلاء الأسعار»), is a request even without an ask verb
   if (strongNoun && !asksQuestion && PLATFORM_NAME_RE.test(` ${text} `) && words.length >= 4) return "data_request";
   if (collectStrong && words.length >= 3) return "data_request";

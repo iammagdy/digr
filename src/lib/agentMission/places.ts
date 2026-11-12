@@ -21,7 +21,7 @@ const COUNTRIES: ReadonlyArray<Country> = [
   { code: "EG", labelAr: "مصر", names: ["مصر", "جمهورية مصر العربية", "egypt", "arab republic of egypt", "eg"], tlds: ["eg"], phone: "20", cities: [
     { id: "cairo", labelAr: "القاهرة", names: ["القاهرة", "cairo", "al qahirah", "al-qahirah", "al qahira", "el qahira", "el-qahira", "qahira", "new cairo", "القاهرة الجديدة", "التجمع الخامس", "مدينة نصر", "nasr city", "المعادي", "maadi", "heliopolis", "مصر الجديدة"] },
     { id: "giza", labelAr: "الجيزة", names: ["الجيزة", "giza", "al jizah", "al-jizah", "el giza", "6 اكتوبر", "6th of october", "october city", "الشيخ زايد", "sheikh zayed", "المهندسين", "mohandessin", "الدقي", "dokki"] },
-    { id: "alexandria", labelAr: "الإسكندرية", names: ["الاسكندريه", "الإسكندرية", "alexandria", "alex", "al iskandariyah", "al-iskandariyah", "iskandariya"] },
+    { id: "alexandria", labelAr: "الإسكندرية", names: ["الاسكندريه", "الإسكندرية", "اسكندريه", "اسكندرية", "إسكندرية", "alexandria", "alex", "al iskandariyah", "al-iskandariyah", "iskandariya"] },
     { id: "mansoura", labelAr: "المنصورة", names: ["المنصوره", "المنصورة", "mansoura"] },
     { id: "tanta", labelAr: "طنطا", names: ["طنطا", "tanta"] },
     { id: "assiut", labelAr: "أسيوط", names: ["اسيوط", "أسيوط", "assiut", "asyut"] },
@@ -130,6 +130,20 @@ function regexesOf(entry: PlaceEntry): RegExp[] {
     regexCache.set(entry.key, list);
   }
   return list;
+}
+
+/** The DISTRICTS a text names (their Arabic labels): a district is read as its city by `placesInText`, so «المعادي» → «الزمالك» is the same city; this tells the two apart (a corrected district is a changed request). */
+const districtRegexCache = new Map<string, RegExp[]>();
+export function districtLabelsIn(text: unknown): string[] {
+  const t = normalizeText(String(text ?? ""));
+  if (!t) return [];
+  const out: string[] = [];
+  for (const d of DISTRICTS) {
+    let list = districtRegexCache.get(d.labelAr);
+    if (!list) { list = d.names.filter((n) => normalizeText(n).length >= 3).map((n) => termRegex(n, "u")).filter((r): r is RegExp => r !== null); districtRegexCache.set(d.labelAr, list); }
+    if (list.some((r) => r.test(t)) && !out.includes(d.labelAr)) out.push(d.labelAr);
+  }
+  return out.sort();
 }
 
 /** The countries and cities a text names (the request's words), most specific first; none when it names none. */

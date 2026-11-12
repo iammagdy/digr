@@ -1,5 +1,8 @@
 # Live intelligence evaluation: the real chat model in research-brief mode (round 49)
 
+> **Round 50 (the LLM quality mission) supersedes the findings below:** every finding was fixed and re-measured against the real model over 9 rounds and an expanded corpus of 61 conversations; see `docs/LLM-QUALITY-MISSION.md`. The harness now
+> runs under a persistent cumulative budget (`evals/live-intelligence/cumulative.ts`) with the confirmation value `llm-quality-10usd-cumulative`; the command at the end of this page is the round-49 one.
+
 **Baseline:** main `ab66f3b` (after #459).
 
 **Approval:** the owner approved one isolated run against the real Anthropic API, capped at **30 paid HTTP attempts and $1.00**. The run used an evaluation-only key, read only inside the harness.

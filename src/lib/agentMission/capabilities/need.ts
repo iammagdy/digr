@@ -63,6 +63,8 @@ const REVIEW_WORDS = /تقييمات|تقييم|ريفيوهات|ريفيو|مر
 const WEBSITE_WORDS = /مواقعهم|مواقعها|موقعهم|مواقع\s*(?:ال)?(?:شركات|الكترونيه|ويب)|ويب\s*سايت|websites?|domains?|روابط\s*(?:ال)?مواقع/;
 const PEOPLE_WORDS = /مديرين|مدراء|مسؤولين|صناع\s*(?:ال)?قرار|موظفين|decision\s*makers|managers|executives|ceos?/;
 const WEB_WORDS = /اخبار|مقالات|مدونات|منتديات|مواقع\s*(?:ال)?اخبار|صحف|جرايد|news|articles|blogs|forums|web\s*pages|اراء\s*(?:ال)?ناس|اراء/;
+/** Words that ask for news or articles themselves (a subset of WEB_WORDS: not «آراء»). */
+const NEWS_WORDS = /اخبار|مقالات|مدونات|صحف|جرايد|(?:^|[^a-z])(?:news|articles|blogs)(?:[^a-z]|$)/;
 const COMMENT_WORDS = /تعليق|كومنت|comments?/;
 const REPLY_WORDS = /ردود|الرد(?:ود)?|ريبلاي|replies/;
 /** Platforms no provider of the registry serves (the five social platforms, the web, maps and companies are served). */
@@ -137,8 +139,12 @@ export function researchNeedOf(input: NeedInput): ResearchNeed {
   const places = content.has("places") || PLACE_WORDS.test(t);
   const reviews = content.has("reviews") || REVIEW_WORDS.test(t);
   const people = content.has("people") || PEOPLE_WORDS.test(t);
+  // NEWS AND ARTICLES ABOUT a sector are web research, not the sector's companies (live evaluation 2026-11-12, I1: «آخر الأخبار عن شركات الاتصالات» was read as companies): the news words win unless the customer asks the companies'
+  // websites or contacts, or reviews
+  const news = content.has("articles") || NEWS_WORDS.test(t);
   let kind: NeedKind = "unknown";
   if (platforms.length > 0) kind = "social";
+  else if (news && !contacts.email && !contacts.phone && !WEBSITE_WORDS.test(t) && !reviews && !people) kind = "web";
   else if (places && (reviews || !companies)) kind = "places";
   else if (companies) kind = "companies";
   else if (people) kind = "people";
