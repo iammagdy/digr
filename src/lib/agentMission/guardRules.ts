@@ -119,7 +119,8 @@ const word = (alts: string): RegExp => new RegExp(`${PFX}(?:${alts})${END}`);
 const ARABIC_OR_LATIN = (arabic: string, latin: string): RegExp => new RegExp(`${PFX}(?:${arabic})${END}|\\b(?:${latin})\\b`);
 
 /** What a customer collects that is PUBLIC (the head noun of «هات منشورات عامة عن …»). */
-const PUBLIC_CONTENT = ARABIC_OR_LATIN("بيقول|بيقولوا|بتقول|بيتكلموا|بيتكلم|بتتكلم|بيكتبوا|بتكتب|كلام|منشورات|منشور|بوستات|بوست|تعليقات|تعليق|تغريدات|تغريده|تويتات|فيديوهات|فيديو|ريلز|مقالات|مقال|اخبار|خبر|نقاشات|مناقشات|مناقشه|اراء|راي|مراجعات|تقييمات|هاشتاجات|ترند|دراسات|ابحاث|بحوث|تحليلات", "posts?|comments?|tweets?|videos?|reels?|articles?|news|discussions?|opinions?|reviews?|trends?|studies|research|saying|says|said|talking|think|thinks|discussing|writing");
+// (round 51, live evaluation M2: the real model rephrased «الناس بتقول إيه عن تسريب أرقام التليفونات» in formal Arabic, «جمع ما يقوله الناس عن …», and the formal verbs were not public content: the code refused legitimate research)
+const PUBLIC_CONTENT = ARABIC_OR_LATIN("يقوله|يقولونه|يقولون|يقال|يكتبه|يكتبون|يتداوله|يتداولونه|يتداولون|يتحدثون|يتحدث|يناقشون|يناقشه|ينشرون|ينشره|بيقول|بيقولوا|بتقول|بيتكلموا|بيتكلم|بتتكلم|بيكتبوا|بتكتب|كلام|منشورات|منشور|بوستات|بوست|تعليقات|تعليق|تغريدات|تغريده|تويتات|فيديوهات|فيديو|ريلز|مقالات|مقال|اخبار|خبر|نقاشات|مناقشات|مناقشه|اراء|راي|مراجعات|تقييمات|هاشتاجات|ترند|دراسات|ابحاث|بحوث|تحليلات", "posts?|comments?|tweets?|videos?|reels?|articles?|news|discussions?|opinions?|reviews?|trends?|studies|research|saying|says|said|talking|think|thinks|discussing|writing");
 /** A word that turns what follows into the SUBJECT of the collected content, not the thing collected. */
 const TOPIC_MARK = /(?<![ء-ي])(?:عن|حول|بخصوص|بشان|تتناول|تناقش|تتحدث|بتتكلم|بتتناول|تتعلق|متعلقه|المتعلقه)(?![ء-ي])|\b(?:about|regarding|concerning|on|related to|discussing|discuss|discusses|mentioning|covering)\b/;
 
