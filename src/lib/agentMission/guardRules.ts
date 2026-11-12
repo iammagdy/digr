@@ -10,7 +10,7 @@ import { namesCollectibleData, normalize } from "./messageType";
 
 // ---- 1. privacy ----------------------------------------------------------------------------------------------------------------------------------------------------------
 /** A kind of contact data that belongs to a person: a phone or WhatsApp number, a home address, a personal e-mail. */
-const PERSONAL_CONTACT = /(?:ارقام?|رقم)\s*(?:ال)?(?:تليفون|تلفون|هاتف|هواتف|موبايل|جوال|محمول|واتس)|(?:^| )(?:تليفونات|موبايلات|واتساب|واتس اب|phone numbers?|mobile numbers?|whatsapp)(?: |$)|عنوان\s*(?:ال)?(?:سكن|بيت|منزل)|عناوين\s*(?:ال)?(?:سكن|بيوت|منازل|ناس|اشخاص|افراد|مواطنين)|(?:ايميل|ايميلات|اميل|بريد)\s*(?:ات)?\s*(?:ال)?(?:شخصي|شخصيه)|(?:ايميلات|بريد)\s*(?:ال)?(?:ناس|اشخاص|افراد|متابعين|معلقين|مستخدمين)/;
+const PERSONAL_CONTACT = /(?:ارقام?|رقم)\s*(?:ال)?(?:تليفون|تلفون|هاتف|هواتف|موبايل|جوال|محمول|واتس)|(?:^| )(?:تليفونات|موبايلات|واتساب|واتس اب|phone numbers?|mobile numbers?|whatsapp)(?: |$)|عنوان\s*(?:ال)?(?:سكن|بيت|منزل)|عناوين\s*(?:ال)?(?:سكن|بيوت|منازل|ناس|اشخاص|افراد|مواطنين)|(?:ايميل|ايميلات|اميل|بريد)\s*(?:ات)?\s*(?:ال)?(?:شخصي|شخصيه)|(?:ايميلات|بريد)\s*(?:ال)?(?:ناس|اشخاص|افراد|متابعين|معلقين|مستخدمين)|\b(?:personal|private)\s+e-?mails?\b|\be-?mails?\s+(?:of\s+)?(?:the\s+)?(?:people|users|followers|commenters|individuals|reviewers|customers|members)\b|\b(?:home|residential)\s+addresse?s?\b|\baddresses\s+of\s+(?:the\s+)?(?:people|users|followers|commenters|individuals|reviewers|customers|members)\b/;
 /** The bare words of PERSONAL_CONTACT that name an app or a product, not a number. */
 // never a token that follows «ارقام» / «رقم» («ارقام تليفونات» and «رقم واتساب» ask for numbers): those stay in the text the contact rule reads
 const BARE_APP_OR_PRODUCT = /(?<!(?:ارقام?|رقم)\s*(?:ال)?)(?:^| )(?:تليفونات|موبايلات|واتساب|واتس اب|whatsapp)(?= |$)/g;
@@ -37,7 +37,7 @@ function objectivesOf(text: string): string[] {
 }
 /** The ordinary people a contact noun points at, right after it («أرقام موبايلات الناس», «تليفونات عملاء الشركة», «واتساب البنات»): a person target never takes the business exemption. */
 const CONTACT_NOUN = "(?:ارقام?|رقم|تليفونات|تليفون|تلفون|هاتف|هواتف|موبايلات|موبايل|جوال|محمول|واتساب|واتس|ايميلات|ايميل|اميلات|بريد|عناوين|عنوان|phones?|numbers?|emails?|whatsapp|addresses)";
-const PERSON_AFTER_CONTACT = new RegExp(`(?<![ء-ي])${CONTACT_NOUN}(?![ء-ي])(?:\\s+\\S+){0,2}\\s+(?:ال)?(?:ناس|عملاء|زباين|زبائن|مشتركين|اعضاء|بنات|شباب|ستات|رجاله|سكان|طلاب|طلبه|اهالي)(?![ء-ي])|(?<![ء-ي])${CONTACT_NOUN}(?![ء-ي])(?:\\s+\\S+){0,3}\\s+(?:اللي|الي)\\s+(?:علق|بيعلق|علقوا|بيعلقوا|كتبوا|نشروا|بيتابعوا|تابعوا|عملوا)|\\b(?:phones?|numbers?|emails?|addresses)\\b(?:\\s+\\S+){0,2}\\s+(?:of\\s+)?(?:people|customers|users|members|followers|commenters)\\b`);
+const PERSON_AFTER_CONTACT = new RegExp(`(?<![ء-ي])${CONTACT_NOUN}(?![ء-ي])(?:\\s+\\S+){0,2}\\s+(?:ال)?(?:ناس|عملاء|زباين|زبائن|مشتركين|اعضاء|بنات|شباب|ستات|رجاله|سكان|طلاب|طلبه|اهالي)(?![ء-ي])|(?<![ء-ي])${CONTACT_NOUN}(?![ء-ي])(?:\\s+\\S+){0,3}\\s+(?:اللي|الي)\\s+(?:علق|بيعلق|علقوا|بيعلقوا|كتبوا|نشروا|بيتابعوا|تابعوا|عملوا)|\\b(?:phones?|numbers?|emails?|addresses)\\b(?:\\s+\\S+){0,2}\\s+(?:of\\s+)?(?:the\\s+)?(?:people|customers|users|members|followers|commenters|reviewers|individuals)\\b`);
 /** A product or app word that reads as the PRODUCT, not a number: a brand, a model, a price, a review, a business version. */
 const PRODUCT_CUE = /(?<![ء-ي])(?:سامسونج|سامسونغ|ايفون|ابل|شاومي|هواوي|اوبو|ريلمي|نوكيا|انفنكس|انفينكس|فيفو|اونر|موتورولا|بكسل|جالكسي|اسعار|سعر|مراجعات|مراجعه|ريفيو|ريفيوهات|عروض|مواصفات|جديده|مستعمله|بيزنس|تحديث|تحديثات|مميزات|عيوب)(?![ء-ي])|\b(?:samsung|iphone|apple|xiaomi|huawei|oppo|realme|nokia|infinix|vivo|honor|pixel|galaxy|prices?|reviews?|specs|business|update)\b/;
 
@@ -118,7 +118,7 @@ const word = (alts: string): RegExp => new RegExp(`${PFX}(?:${alts})${END}`);
 const ARABIC_OR_LATIN = (arabic: string, latin: string): RegExp => new RegExp(`${PFX}(?:${arabic})${END}|\\b(?:${latin})\\b`);
 
 /** What a customer collects that is PUBLIC (the head noun of «هات منشورات عامة عن …»). */
-const PUBLIC_CONTENT = ARABIC_OR_LATIN("بيقول|بيقولوا|بتقول|بيتكلموا|بيتكلم|بتتكلم|بيكتبوا|بتكتب|كلام|منشورات|منشور|بوستات|بوست|تعليقات|تعليق|تغريدات|تغريده|تويتات|فيديوهات|فيديو|ريلز|مقالات|مقال|اخبار|خبر|نقاشات|مناقشات|مناقشه|اراء|راي|مراجعات|تقييمات|هاشتاجات|ترند|دراسات|ابحاث|بحوث|تحليلات", "posts?|comments?|tweets?|videos?|reels?|articles?|news|discussions?|opinions?|reviews?|trends?|studies|research");
+const PUBLIC_CONTENT = ARABIC_OR_LATIN("بيقول|بيقولوا|بتقول|بيتكلموا|بيتكلم|بتتكلم|بيكتبوا|بتكتب|كلام|منشورات|منشور|بوستات|بوست|تعليقات|تعليق|تغريدات|تغريده|تويتات|فيديوهات|فيديو|ريلز|مقالات|مقال|اخبار|خبر|نقاشات|مناقشات|مناقشه|اراء|راي|مراجعات|تقييمات|هاشتاجات|ترند|دراسات|ابحاث|بحوث|تحليلات", "posts?|comments?|tweets?|videos?|reels?|articles?|news|discussions?|opinions?|reviews?|trends?|studies|research|saying|says|said|talking|think|thinks|discussing|writing");
 /** A word that turns what follows into the SUBJECT of the collected content, not the thing collected. */
 const TOPIC_MARK = /(?<![ء-ي])(?:عن|حول|بخصوص|بشان|تتناول|تناقش|تتحدث|بتتكلم|بتتناول|تتعلق|متعلقه|المتعلقه)(?![ء-ي])|\b(?:about|regarding|concerning|on|related to)\b/;
 

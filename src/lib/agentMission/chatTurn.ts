@@ -366,6 +366,15 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
   }
   const gated = await capabilityGate(input, brief, ctx);
   if (gated) return gated;
+  // the SAME research conversation goes on while its request is still being prepared (queued or planning): the updated whole request replaces it as an update does (withdrawn while still queued, compare-and-set; once the worker
+  // has it, said plainly), never a second live card of an older scope next to it, whatever type the model gave the message
+  if (open && open.state === "planning" && ctx.prior !== null && decision.type === "data_request") {
+    const asUpdate = await briefEditOfOpen(input, { ...decision, type: "edit_of_open_request" }, open, brief, v.contract, ctx);
+    if (asUpdate) return asUpdate;
+    ctx.outcome = "planning_same_request";
+    await writeAnswer(input, PLAN_NOT_READY_AR);
+    return { ok: false, contentAr: PLAN_NOT_READY_AR, status: 200 };
+  }
   ctx.outcome = brief.status === "ready" ? "ready" : "ready_by_contract";
   return startMission(input, brief.request, { brief: { ...brief, status: "ready" }, noteAr: brief.status === "ready" ? decision.reply : null });
 }
@@ -397,7 +406,9 @@ async function capabilityGate(input: AgentChatTurnInput, brief: ResearchBrief, c
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 // MULTI-OBJECTIVE RESEARCH (docs/MULTI-OBJECTIVE-RESEARCH.md)
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-const LIVE_STATUSES = new Set(["queued", "planning", "needs_input", "plan_ready", "approved", "executing", "delivered", "partial"]);
+/** The statuses of a part that EXISTS for the customer (waiting for them, running, or finished with its result: the statuses the worker writes). A finished part is never prepared again by a later turn; a failed, cancelled or expired one is. */
+const LIVE_STATUSES = new Set(["queued", "planning", "needs_input", "plan_ready", "approved", "executing", "completed", "unserved"]);
+const FINISHED_STATUSES = new Set(["completed", "unserved"]);
 const WITHDRAWABLE = ["queued", "needs_input", "plan_ready"];
 /** Said when the model's reading of a long request was cut before it ended: nothing is lost, the customer only says «كمّل». */
 export const TRUNCATED_AR = "وصلني طلبك بكل أجزائه، لكن تلخيصه طلع أطول من المسموح في رد واحد. اكتب «كمّل» وأنا أكمّل تجهيز كل الأجزاء من غير ما تعيد كتابة طلبك؛ ولن يُخصم شيء قبل اعتمادك.";
@@ -615,7 +626,8 @@ async function groupTurn(input: AgentChatTurnInput, decision: Decision, open: Op
   judged.forEach((j, i) => {
     const st = partOf(j);
     const n = `${arNum(i + 1)}) ${j.label}${j.partBrief ? ` «${j.partBrief.request}»` : j.part.request ? ` «${j.part.request}»` : ""}`;
-    if (st.outcome === "planned") lines.push(`${n}: ${kept.has(j.part.key) && !keptWithoutCard.includes(j) ? "خطته جاهزة أو بتتجهز في بطاقته ومش هتتغير." : "بنجهّز خطته وسعره في بطاقته."}${j.noteAr ? ` ${j.noteAr}` : ""}`);
+    const keptStatus = kept.has(j.part.key) ? statuses.get(kept.get(j.part.key)!.missionId!) ?? "" : "";
+    if (st.outcome === "planned") lines.push(`${n}: ${FINISHED_STATUSES.has(keptStatus) ? "اتنفّذ قبل كده ونتيجته في بطاقته، ومش هنجهّزه تاني." : kept.has(j.part.key) && !keptWithoutCard.includes(j) ? "خطته جاهزة أو بتتجهز في بطاقته ومش هتتغير." : "بنجهّز خطته وسعره في بطاقته."}${j.noteAr ? ` ${j.noteAr}` : ""}`);
     else if (st.outcome === "waiting") lines.push(`${n}: مستني؛ ${unsaved.has(j.part.key) ? CARD_UNSAVED_AR : `${waiting.get(j.part.key)} وهيتجهّز أول ما تكتب «كمّل» من غير ما تعيد طلبك.`}`);
     else if (st.outcome === "refused_private") lines.push(`${n}: مش هنجمعه لأنه بيانات خاصة لأفراد.`);
     else if (st.outcome === "needs_clarification") lines.push(`${n}: محتاج توضيح بسيط قبل ما نجهّزه.${j.noteAr ? ` ${j.noteAr}` : ""}`);
