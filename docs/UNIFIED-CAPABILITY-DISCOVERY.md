@@ -78,6 +78,8 @@ Rollback: delete the row (or set `false`). The worker reads the web providers' d
 
 ## 5. Known limits
 
+* Superseded in part by `docs/LLM-FIRST-OBJECTIVES.md`: the model's validated objectives are now the primary reading of the need (the keyword reading is the fallback), and a plan made through discovery can no longer skip the scope check by losing its record.
+
 * The operation map covers the capability strings above; a catalog endpoint with no capability string (about a third of the snapshot) is not a discovery candidate (the compiler's own cards still use them, recorded as `source: "code"`).
 * The chat does not know the worker's keys and caps: it can say a source does not exist, never that a key is missing; the worker decides with the real availability.
 * A city is not a filter (unchanged); «في القاهرة» is a country-less place word for the planner.

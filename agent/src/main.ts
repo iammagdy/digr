@@ -7,6 +7,7 @@ import { sendMissionNotice } from "../../src/lib/server/missionNotify";
 import { resolveProviderKey, useProviderKeyStoreClient } from "../../src/lib/server/providerKeys";
 import { last4Of } from "../../src/lib/server/providerKeyCrypto";
 import { resolveAllProviderDailyCaps } from "../../src/lib/server/multiProvider/providerCaps";
+import { storedBriefOf } from "../../src/lib/agentMission/researchBrief";
 import { sendPlatformEmail } from "../../src/lib/server/sendPlatformEmail";
 import { configureTregKeyPool } from "../../src/lib/server/tregKeyPool";
 import { buildPoolAlertVars } from "../../src/lib/server/tregPoolAlerts";
@@ -79,6 +80,8 @@ async function main() {
     providerKey: async (provider) => (await resolveProviderKey(provider)).key || null,
     // read ONLY when capability_discovery_v1 is on for the mission's account: the web providers' daily caps (read only; the admin's provider limits)
     providerDailyCaps: async () => { const c = await resolveAllProviderDailyCaps(client); return { firecrawl: c.firecrawl, contextdev: c.contextdev }; },
+    // LLM-FIRST OBJECTIVES (read only while capability_discovery_v1 is on for the mission's account): the brief the chat server stored on the assistant message that carries this mission's card
+    readMissionBrief: async (missionId, userId) => { const { data } = await client.from("messages").select("plan,created_at").eq("user_id", userId).eq("role", "assistant").eq("plan->>agentMissionId", missionId).order("created_at", { ascending: false }).limit(1); return storedBriefOf(Array.isArray(data) ? data[0]?.plan : null); },
     log,
   });
 

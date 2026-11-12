@@ -26,6 +26,29 @@ export type BriefPlatform = (typeof BRIEF_PLATFORMS)[number];
 export type BriefContent = (typeof BRIEF_CONTENT)[number];
 export type BriefStatus = (typeof BRIEF_STATUSES)[number];
 
+/**
+ * THE RESEARCH OBJECTIVES (docs/LLM-FIRST-OBJECTIVES.md): the model's structured reading of WHAT the customer wants to research, written in the same one call as the brief. Each objective names the data OPERATION that would serve it (the
+ * operations the capability registry knows, `capabilities/registry.ts` OPERATIONS), the platform when it is social data, and the objective it hangs on (comments hang on the posts they are read from). These operations are the system's
+ * vocabulary of what can be EXECUTED, not a closed list of what a customer may ask: a goal no operation serves is written as `unsupported` (with the customer's goal in `what`), and the code then asks the customer instead of guessing.
+ * The objectives never carry a provider, an endpoint, a price, a number or a field list: the backend finds the capabilities, ranks them and prices the plan.
+ */
+export const OBJECTIVE_OPERATIONS = ["social.parents", "social.comments", "social.replies", "companies.discover", "company.contacts", "places.discover", "places.reviews", "web.search", "web.read", "people.discover", "unsupported"] as const;
+export type ObjectiveOperation = (typeof OBJECTIVE_OPERATIONS)[number];
+export const OBJECTIVES_MAX = 8;
+export interface BriefObjective {
+  /** A short id unique in the brief («o1», «o2» …), used by `parent`. */
+  id: string;
+  operation: ObjectiveOperation;
+  /** Social data: the platform id (one of the five served ones, or the lower-case name of another platform the customer named, e.g. «snapchat»); null for any other operation. */
+  platform: string | null;
+  /** The objective this one is read from (comments ← posts, replies ← comments, reviews ← places, contacts and people ← companies, page text ← search results), or null for a first objective. */
+  parent: string | null;
+  /** company.contacts only: which PUBLIC business contacts («email», «phone»). */
+  contacts: Array<"email" | "phone">;
+  /** The goal in a few words of the customer's language (internal: never executed, never shown as such). */
+  what: string | null;
+}
+
 export interface ResearchBrief {
   v: typeof RESEARCH_BRIEF_VERSION;
   status: BriefStatus;
@@ -40,12 +63,15 @@ export interface ResearchBrief {
   period: string | null;
   country: string | null;
   language: string | null;
+  /** The model's structured research objectives (absent: the brief carried none; the request is then read from its words, as before). */
+  objectives?: BriefObjective[];
 }
 
 export const BRIEF_REQUEST_MIN = 3;
 export const BRIEF_REQUEST_MAX = 1000;
 const FIELD_MAX = 120;
-const KNOWN_FIELDS = new Set(["status", "request", "platforms", "content", "count", "topic", "period", "country", "language", "v"]);
+const KNOWN_FIELDS = new Set(["status", "request", "platforms", "content", "count", "topic", "period", "country", "language", "objectives", "v"]);
+const OBJECTIVE_FIELDS = new Set(["id", "operation", "platform", "parent", "contacts", "what"]);
 
 export type ParsedBrief = { ok: true; brief: ResearchBrief; unknown: string[] } | { ok: false; issue: string };
 
@@ -65,6 +91,34 @@ const listOf = <T extends string>(v: unknown, allowed: readonly T[]): T[] | null
   }
   return out;
 };
+
+/** The objectives the model proposed, checked against the schema (an unknown operation, field or value rejects them: an unsupported value is never mapped to a supported one). Null: absent; false: invalid. */
+function parseObjectives(v: unknown): BriefObjective[] | null | false {
+  if (v === undefined || v === null) return null;
+  if (!Array.isArray(v) || v.length > OBJECTIVES_MAX) return false;
+  const out: BriefObjective[] = [];
+  for (const raw of v) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+    const o = raw as Record<string, unknown>;
+    if (Object.keys(o).some((k) => !OBJECTIVE_FIELDS.has(k))) return false;
+    const id = typeof o.id === "string" ? o.id.trim() : "";
+    if (!/^[A-Za-z0-9_-]{1,12}$/.test(id) || out.some((x) => x.id === id)) return false;
+    const operation = typeof o.operation === "string" ? o.operation.trim().toLowerCase() : "";
+    if (!(OBJECTIVE_OPERATIONS as readonly string[]).includes(operation)) return false;
+    let platform: string | null = null;
+    if (o.platform !== undefined && o.platform !== null && o.platform !== "") {
+      const p = typeof o.platform === "string" ? o.platform.trim().toLowerCase() : "";
+      if (!/^[a-z][a-z0-9_.-]{0,29}$/.test(p)) return false;
+      platform = p;
+    }
+    const parent = o.parent === undefined || o.parent === null || o.parent === "" ? null : typeof o.parent === "string" ? o.parent.trim() : "\u0000";
+    if (parent !== null && !/^[A-Za-z0-9_-]{1,12}$/.test(parent)) return false;
+    const contacts = listOf(o.contacts, ["email", "phone"] as const);
+    if (!contacts) return false;
+    out.push({ id, operation: operation as ObjectiveOperation, platform, parent, contacts, what: text(o.what, FIELD_MAX) });
+  }
+  return out;
+}
 
 /** The brief the model proposed, checked against the schema. Never throws. */
 export function parseBrief(raw: unknown): ParsedBrief {
@@ -86,10 +140,12 @@ export function parseBrief(raw: unknown): ParsedBrief {
     if (!Number.isSafeInteger(n) || n < 1 || n > 1_000_000) return { ok: false, issue: "count" };
     count = n;
   }
+  const objectives = parseObjectives(o.objectives);
+  if (objectives === false) return { ok: false, issue: "objectives" };
   return {
     ok: true,
     unknown,
-    brief: { v: RESEARCH_BRIEF_VERSION, status, request, platforms, content, count, topic: text(o.topic, FIELD_MAX), period: text(o.period, FIELD_MAX), country: text(o.country, FIELD_MAX), language: text(o.language, FIELD_MAX) },
+    brief: { v: RESEARCH_BRIEF_VERSION, status, request, platforms, content, count, topic: text(o.topic, FIELD_MAX), period: text(o.period, FIELD_MAX), country: text(o.country, FIELD_MAX), language: text(o.language, FIELD_MAX), ...(objectives && objectives.length > 0 ? { objectives } : {}) },
   };
 }
 
@@ -127,7 +183,10 @@ export type BriefRejection =
   | "platform_mismatch"
   | "count_mismatch"
   | "comments_dropped"
-  | "replies_dropped";
+  | "replies_dropped"
+  | "objectives_structure"
+  | "objective_platform_not_named"
+  | "objective_dropped";
 
 export type ValidatedBrief =
   | { ok: true; brief: ResearchBrief; contract: RequestContract }
@@ -163,7 +222,59 @@ export function validateBrief(brief: ResearchBrief, ctx: BriefContext): Validate
   // X has no comments stage in the contract: «تعليقات إكس» is stated by the plan as replies, not dropped here
   if (brief.content.includes("comments") && contract.comments === "none" && contract.platform !== "x") return { ok: false, reason: "comments_dropped" };
   if (brief.content.includes("replies") && contract.replies === "none") return { ok: false, reason: "replies_dropped" };
+  if (brief.objectives) {
+    const issue = objectivesIssue(brief, named);
+    if (issue) return { ok: false, reason: issue };
+    for (const o of brief.objectives) if (o.what && privacyRefusalAr(o.what)) return { ok: false, reason: "privacy_refusal", contentAr: privacyRefusalAr(o.what)! };
+  }
   return { ok: true, brief: { ...brief, request }, contract };
+}
+
+/** The SERVED social platforms (the five the brief schema knows); any other platform an objective names is said honestly as unavailable, never executed. */
+export const isServedPlatform = (p: string | null): p is BriefPlatform => p !== null && (BRIEF_PLATFORMS as readonly string[]).includes(p);
+/** Which operation an objective of each operation may hang on (null: written alone; for a child operation code then adds the step its chain needs, need.ts). The chain the capabilities can actually execute; the people of a company or a first «people» search are both valid. */
+export const OBJECTIVE_PARENTS: Record<Exclude<ObjectiveOperation, "unsupported">, ReadonlyArray<ObjectiveOperation | null>> = {
+  "social.parents": [null],
+  "social.comments": ["social.parents", null],
+  "social.replies": ["social.comments", "social.parents", null],
+  "companies.discover": [null],
+  "company.contacts": ["companies.discover", null],
+  "places.discover": [null],
+  "places.reviews": ["places.discover", null],
+  "web.search": [null],
+  "web.read": ["web.search", null],
+  "people.discover": [null, "companies.discover"],
+};
+
+/**
+ * THE OBJECTIVES AGAINST THE CONVERSATION (the model interprets; the code checks it executes nothing the customer did not ask for and drops nothing the model itself understood):
+ *   - structure: every parent exists and is written before its child; a child hangs only on an operation that can feed it; a social objective names its platform and a non-social one names none; contacts only on company.contacts;
+ *   - grounding: a served platform an objective names was named by the customer (the same rule as the brief's platforms);
+ *   - nothing dropped: every platform and content of the brief has its objective (a brief that says «comments» with no comments objective is rejected; the conversation then falls back to today's reading of the words).
+ */
+export function objectivesIssue(brief: ResearchBrief, named: ReadonlySet<string>): BriefRejection | null {
+  const objectives = brief.objectives ?? [];
+  const seen = new Map<string, BriefObjective>();
+  for (const o of objectives) {
+    if (o.operation === "unsupported") { if (o.parent !== null || o.contacts.length > 0) return "objectives_structure"; seen.set(o.id, o); continue; }
+    const social = o.operation.startsWith("social.");
+    if (social ? o.platform === null : o.platform !== null) return "objectives_structure";
+    if (o.contacts.length > 0 && o.operation !== "company.contacts") return "objectives_structure";
+    if (o.operation === "company.contacts" && o.contacts.length === 0) return "objectives_structure";
+    const parent = o.parent === null ? null : seen.get(o.parent) ?? null;
+    if (o.parent !== null && (!parent || parent.operation === "unsupported")) return "objectives_structure";
+    if (!OBJECTIVE_PARENTS[o.operation].includes(parent ? parent.operation : null)) return "objectives_structure";
+    if (social && parent && parent.platform !== o.platform) return "objectives_structure";
+    if (social && isServedPlatform(o.platform) && !named.has(o.platform)) return "objective_platform_not_named";
+    seen.set(o.id, o);
+  }
+  const executable = objectives.filter((o) => o.operation !== "unsupported");
+  const ops = new Set(executable.map((o) => o.operation));
+  for (const p of brief.platforms) if (!executable.some((o) => o.platform === p)) return "objective_dropped";
+  for (const p of executable.map((o) => o.platform).filter(isServedPlatform)) if (!brief.platforms.includes(p)) return "objective_dropped";
+  const needs: Array<[BriefContent, ObjectiveOperation[]]> = [["comments", ["social.comments", "social.replies"]], ["replies", ["social.replies", "social.comments"]], ["companies", ["companies.discover"]], ["places", ["places.discover"]], ["reviews", ["places.reviews"]], ["people", ["people.discover"]]];
+  for (const [c, wanted] of needs) if (brief.content.includes(c) && !wanted.some((w) => ops.has(w))) return "objective_dropped";
+  return null;
 }
 
 /**

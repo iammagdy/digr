@@ -35,8 +35,23 @@ export function chatCapabilityLines(registry: CapabilityRegistry): string[] {
     ...kinds.map((k) => `- ${k}`),
     "- قبل أن تسأل: إن كان هدف العميل يحتمل أكثر من نوع من هذه الأنواع (مثل آراء الناس أو التعليقات أو الشركات أو الأماكن وتقييماتها أو صفحات الويب)، فاسأله سؤالًا واحدًا طبيعيًا يحدد النوع المناسب لهدفه، بكلماتك أنت.",
     "- لا تَعِد بنوع غير موجود في هذه القائمة، ولا تذكر اسم أي مزود أو مصدر تقني. ولا نجمع أبدًا بيانات خاصة لأفراد (أرقامهم أو إيميلاتهم الشخصية أو رسائلهم).",
+    ...OBJECTIVE_PROMPT_LINES,
   ];
 }
+
+/**
+ * LLM-FIRST OBJECTIVES (docs/LLM-FIRST-OBJECTIVES.md): the model writes, inside the SAME brief of the SAME call, its structured reading of the customer's research goals as data operations. The operation names are the execution vocabulary of the
+ * registry (what can be RUN), not a list of acceptable requests: any goal is understood, and one no operation serves is written «unsupported» so the code asks the customer. The code validates every objective (researchBrief.ts) and maps it to
+ * the capabilities (need.ts, discover.ts); the model never names a provider, an endpoint, a field or a price.
+ */
+export const OBJECTIVE_PROMPT_LINES: readonly string[] = [
+  "- أهداف البحث: داخل brief أضف الحقل objectives، قائمة بكل هدف فهمته من طلب العميل كله (لا تحذف هدفًا ولا تضف هدفًا لم يطلبه):",
+  '  "objectives":[{"id":"o1","operation":"social.parents","platform":"tiktok","parent":null,"contacts":[],"what":"..."},{"id":"o2","operation":"social.comments","platform":"tiktok","parent":"o1","contacts":[],"what":"..."}]',
+  "  operation واحدة من: social.parents (منشورات أو فيديوهات أو تغريدات منصة)، social.comments (تعليقات عليها)، social.replies (ردود على التعليقات)، companies.discover (شركات وأنشطة تجارية)، company.contacts (إيميل أو تليفون العمل الرسمي المنشور للشركة، وcontacts فيها email أو phone أو الاثنين)، people.discover (مهنيون عامون وأدوارهم، وparent شركاتهم إن طُلبوا من شركات)، places.discover (أماكن من الخرائط)، places.reviews (تقييمات الأماكن)، web.search (مقالات وأخبار وصفحات ويب عامة)، web.read (نصوص تلك الصفحات).",
+  "  هذه أسماء ما يقدر النظام ينفّذه، وليست قائمة بما يحق للعميل طلبه: افهم أي هدف بكلماته، فإن لم تطابقه أي operation فاكتب operation بالقيمة unsupported وفي what الهدف بكلمات قليلة، ولا تحوّله لعملية أخرى.",
+  "  platform: لبيانات وسائل التواصل فقط (tiktok أو x أو instagram أو facebook أو youtube، أو اسم المنصة الأخرى التي ذكرها العميل بحروف إنجليزية صغيرة مثل snapchat)، وnull لغيرها. parent: id الهدف الذي يُقرأ منه هذا الهدف (التعليقات من المنشورات، التقييمات من الأماكن، التواصل والمهنيون من الشركات، نص الصفحة من نتائج البحث) وإلا null.",
+  "  طلب فيه أكثر من نوع (مثل تعليقات وفنادق ومقالات) يُكتب كل نوع هدفًا مستقلًا. وفي كل تكملة أو تصحيح اكتب objectives كاملة محدّثة: ما أكده العميل يبقى، وما صحّحه يتغير.",
+];
 
 const usd = (n: number | null): string => (n === null ? "unpriced" : `${n.toFixed(6)} USD/row`);
 

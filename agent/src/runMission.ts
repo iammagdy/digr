@@ -41,7 +41,8 @@ import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
 import { readPlatformFlagsOf, readRedesignFlags } from "../../src/lib/agentMission/redesignFlags";
 import { CLARIFY_OPTIONS_AR, CLARIFY_QUESTION_AR, PLATFORM_OPTIONS_AR, PLATFORM_QUESTION_AR, UNCLEAR_END_AR, legacyRouteOf, platformOptionOf, withPlatformChoice } from "../../src/lib/agentMission/platformQuestion";
-import { askedTextOf, buildRequestContract } from "../../src/lib/agentMission/requestContract";
+import { askedTextOf, buildRequestContract, platformsNamedIn } from "../../src/lib/agentMission/requestContract";
+import { objectivesIssue, type ResearchBrief } from "../../src/lib/agentMission/researchBrief";
 import { readSemanticNormalizationFlag } from "../../src/lib/agentMission/semantic/flag";
 import { sealFinalPrice } from "../../src/lib/agentMission/finalPrice";
 import { accountIsTest, anyRedesignFlag, fallbackStageOf, redesignStagesOf } from "./redesign";
@@ -53,7 +54,7 @@ import { modelPlanningForTests } from "../../src/lib/agentMission/testSeam";
 import { SOCIAL_NOT_OFFERED_AR } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { blockedEndpointReason } from "../../src/lib/treg/blockList";
 import { policyVerdict } from "../../src/lib/treg/dataPolicy";
-import { buildCapabilityRegistry, capabilitySelectionOf, discoverCapabilities, limitationLinesAr, plannerCapabilitySection, readCapabilityDiscoveryFlag, researchNeedOf, verifyApprovedScope, type CapabilityDiscovery } from "../../src/lib/agentMission/capabilities";
+import { buildCapabilityRegistry, capabilitySelectionOf, discoverCapabilities, limitationLinesAr, mixedPartsAr, plannerCapabilitySection, readCapabilityDiscoveryFlag, researchNeedOf, scopeAnchorBody, scopeAnchorOf, SCOPE_ANCHOR_FOLDER, verifyApprovedScope, type CapabilityDiscovery, type ScopeAnchor } from "../../src/lib/agentMission/capabilities";
 import { namedShortfallChoiceOf } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { promiseShortfallAr, repliesShortfallAr } from "./repliesShortfall";
 import { TOPIC_OPTIONS_AR, topicMeaningOf, topicQuestionAr } from "../../src/lib/agentMission/topicMeaning";
@@ -118,6 +119,8 @@ export interface RunnerDeps {
   log?: (line: string) => void;
   /** UNIFIED CAPABILITY DISCOVERY (capability_discovery_v1 only): the web providers' daily caps in USD from the admin's provider limits (0 = spend nothing). Absent (tests): unknown, and the call recorder still refuses a call over the cap. */
   providerDailyCaps?: () => Promise<Partial<Record<"firecrawl" | "contextdev", number>>>;
+  /** LLM-FIRST OBJECTIVES (capability_discovery_v1 only): the research brief the chat stored with this mission's card (`messages.plan.researchBrief`, written by the server only), read back with its schema. Absent (tests that do not need it): none. */
+  readMissionBrief?: (missionId: string, userId: string) => Promise<ResearchBrief | null>;
 }
 
 /** The two answers of the reduced-scope card (UNIFIED CAPABILITY DISCOVERY): the customer chooses, nothing is planned or held before. */
@@ -125,6 +128,67 @@ export const CAPABILITY_SCOPE_OPTIONS_AR = ["نعم، اجمع المتاح فق
 const CAPABILITY_SCOPE_YES = /^\s*(?:نعم|ايوه|أيوه|ايوة|أيوة|تمام|موافق|ماشي|اوك|أوك|ok|yes)(?![ء-ي\w])|اجمع المتاح/i;
 /** The mission ends honestly before any planning call: what no available capability can do, and the feasible alternative (nothing was held). */
 export const capabilityEndAr = (d: CapabilityDiscovery): string => [d.messageAr, d.alternativeAr ? `${d.alternativeAr} اكتب طلبك بالنطاق الذي يناسبك في رسالة جديدة.` : null, "لم يُخصم منك شيء."].filter((x): x is string => typeof x === "string" && x.trim() !== "").join(" ");
+
+/** The server's anchor of this mission's approved scope (selection.ts `ScopeAnchor`): the LATEST file of the mission's create-only anchor folder (the listing reads the database, never a stale CDN copy). A failed read throws: execution never
+ *  runs a plan it could not check. */
+export async function capabilityAnchorOf(store: AgentStore, missionId: string): Promise<ScopeAnchor> {
+  const files = (await store.listFiles(missionId, SCOPE_ANCHOR_FOLDER)).filter((f) => f.name.endsWith(".json"));
+  if (files.length === 0) return { required: false, digest: null };
+  const latest = files[files.length - 1].name;
+  const body = await store.getFile(missionId, latest);
+  return scopeAnchorOf(body ?? "unreadable");
+}
+
+/** Writes the anchor (create-only: a new name each time, sortable by time). A failure throws: a plan with a record is never shown without its anchor. */
+async function writeCapabilityAnchor(store: AgentStore, missionId: string, digest: string | null): Promise<void> {
+  for (let i = 0; i < 5; i += 1) {
+    const name = `${SCOPE_ANCHOR_FOLDER}/${String(Date.now()).padStart(15, "0")}_${i}.json`;
+    const r = await store.putNewStrict(missionId, name, scopeAnchorBody(digest), "application/json");
+    if (r.created) return;
+  }
+  throw new Error("capability anchor not written");
+}
+
+/**
+ * THE REDUCED SCOPE IS ASKED before any plan or price (a step no capability serves, or the non-social part of a mixed request): a step is never dropped or replaced silently. Returns true when the mission stops here (asked, or cancelled by the
+ * customer's «لا»); false when the customer accepted the reduced scope and planning goes on.
+ */
+async function askReducedScope(deps: RunnerDeps, mission: MissionRecord, question: string): Promise<boolean> {
+  const { store } = deps;
+  const note = await readRunState(store, mission.id);
+  if (note.capabilityScope === "accepted") return false;
+  if (note.capabilityScope === "asked") {
+    if (!CAPABILITY_SCOPE_YES.test(String(mission.answer_text ?? ""))) {
+      await store.updateMission(mission.id, { status: "cancelled", ...clear });
+      await store.addEvent(mission.id, { kind: "result", message_ar: "أُلغيت هذه المهمة ولم يُخصم شيء؛ اكتب طلبك المعدّل في رسالة جديدة إن أردت." });
+      return true;
+    }
+    await updateRunState(store, mission.id, (r) => ({ ...r, capabilityScope: "accepted" }), deps.log);
+    return false;
+  }
+  await updateRunState(store, mission.id, (r) => ({ ...r, capabilityScope: "asked" }), deps.log);
+  await store.updateMission(mission.id, { status: "needs_input", question_ar: question, plan_public: { question_options: [...CAPABILITY_SCOPE_OPTIONS_AR] } as any, ...clear });
+  await store.addEvent(mission.id, { kind: "question", message_ar: question });
+  return true;
+}
+
+/**
+ * LLM-FIRST OBJECTIVES IN THE WORKER (docs/LLM-FIRST-OBJECTIVES.md): the brief the chat validated and stored with THIS mission's card, when it is the brief of exactly these words, its objectives still pass the structure and grounding check
+ * against this mission's own words, and the customer has not since changed the request by answering a question (a reduced-scope «yes» changes nothing). Otherwise null: the words are read, as before. Never throws.
+ */
+async function missionObjectivesBrief(deps: RunnerDeps, mission: MissionRecord, note: { capabilityScope?: string }): Promise<ResearchBrief | null> {
+  if (!deps.readMissionBrief) return null;
+  try {
+    const brief = await deps.readMissionBrief(mission.id, mission.user_id);
+    if (!brief?.objectives || brief.objectives.length === 0) return null;
+    const norm = (t: unknown) => String(t ?? "").replace(/\s+/g, " ").trim();
+    if (norm(brief.request) !== norm(mission.request_text)) return null;
+    if (mission.answer_text && !(note.capabilityScope && CAPABILITY_SCOPE_YES.test(String(mission.answer_text)))) return null;
+    const named = new Set<string>(platformsNamedIn(`${mission.request_text} ${mission.answer_text ?? ""}`));
+    if (objectivesIssue(brief, named)) { deps.log?.(`objectives_not_used ${mission.id}`); return null; }
+    return brief;
+  } catch { return null; }
+}
 
 /** The least time the contact finder steps may take after the stages, even when the stages used the mission's whole wall time (a lookup is about a second per person). */
 const CONTACT_STEP_MIN_WALL_MS = 5 * 60_000;
@@ -373,9 +437,17 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   if (readCapabilityDiscoveryFlag(settings, mission.user_id)) {
     const caps = deps.providerDailyCaps ? await deps.providerDailyCaps().catch(() => undefined) : undefined;
     const registry = buildCapabilityRegistry(deps.catalog, { isAllowed: (id) => !blockedEndpointReason(id) && policyVerdict(id, access).allowed, webKeys: deps.providerKey ? webAvailable : NO_WEB, ...(caps ? { dailyCapUsd: caps } : {}) });
-    discovery = discoverCapabilities(researchNeedOf({ request: mission.request_text, answer: mission.answer_text, semantic }), registry);
+    // LLM-FIRST OBJECTIVES: the research objectives the chat model proposed and the chat validated, read from the brief the SERVER stored with this mission's card (customers cannot write it), checked again against this mission's own words;
+    // absent or not usable: the words are read, as before
+    const objectiveBrief = await missionObjectivesBrief(deps, mission, await readRunState(store, mission.id));
+    discovery = discoverCapabilities(researchNeedOf({ request: mission.request_text, answer: mission.answer_text, semantic, ...(objectiveBrief ? { brief: objectiveBrief } : {}) }), registry);
     await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: اكتشاف المصادر القادرة على الطلب.", counts: { capability_discovery: 1, stages: discovery.stages.length, eligible: discovery.stages.reduce((n, s) => n + s.eligible.length, 0), unsupported: discovery.unsupported.length, limitations: discovery.limitations.length } }).catch(() => undefined);
     deps.log?.(`capability_discovery ${mission.id} status=${discovery.status} ${discovery.stages.map((s) => `${s.stage.key}:${s.selected ?? "none"}`).join("|")}`);
+    // social data and another kind in one request reach the social compiler, which plans social data only: the other part is never cut silently; the customer is asked first (as for a step no capability serves)
+    if (compiledActive && discovery.need.kind === "mixed") {
+      const asked = await askReducedScope(deps, mission, `${mixedPartsAr(discovery)} نجهّز الآن جزء وسائل التواصل فقط بخطته وسعره، والجزء الآخر تكتبه في رسالة جديدة؟`);
+      if (asked) return;
+    }
     if (!compiledActive) {
       if (discovery.status === "blocked" || discovery.status === "unsupported") {
         const sentence = capabilityEndAr(discovery);
@@ -384,24 +456,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
         await tell(deps, mission, null, "unserved", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false });
         return;
       }
-      if (discovery.status === "partial") {
-        const note = await readRunState(store, mission.id);
-        if (note.capabilityScope === "asked") {
-          if (!CAPABILITY_SCOPE_YES.test(String(mission.answer_text ?? ""))) {
-            await store.updateMission(mission.id, { status: "cancelled", ...clear });
-            await store.addEvent(mission.id, { kind: "result", message_ar: "أُلغيت هذه المهمة ولم يُخصم شيء؛ اكتب طلبك المعدّل في رسالة جديدة إن أردت." });
-            return;
-          }
-          await updateRunState(store, mission.id, (r) => ({ ...r, capabilityScope: "accepted" }), deps.log);
-        } else if (note.capabilityScope !== "accepted") {
-          // the reduced scope is ASKED before any plan or price: a step is never dropped or replaced silently
-          await updateRunState(store, mission.id, (r) => ({ ...r, capabilityScope: "asked" }), deps.log);
-          const question = [discovery.messageAr, discovery.alternativeAr].filter(Boolean).join(" ");
-          await store.updateMission(mission.id, { status: "needs_input", question_ar: question, plan_public: { question_options: [...CAPABILITY_SCOPE_OPTIONS_AR] } as any, ...clear });
-          await store.addEvent(mission.id, { kind: "question", message_ar: question });
-          return;
-        }
-      }
+      if (discovery.status === "partial" && (await askReducedScope(deps, mission, [discovery.messageAr, discovery.alternativeAr].filter(Boolean).join(" ")))) return;
     }
   }
   // ROUND 25: THE LEGACY MODEL-PLANNED PATH TAKES ONLY COMPANIES OR PLACES (platformQuestion.ts). A request with no platform that looks like social data gets the platform card «من أنهي منصة؟»; anything else unclear gets ONE clarifying card. Both come BEFORE any model turn or
@@ -609,7 +664,12 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
       const limits = compiled ? [] : limitationLinesAr(discovery);
       plan = { ...plan, ...(limits.length > 0 ? { notes_ar: [...new Set([...(plan.notes_ar ?? []), ...limits])] } : {}), capability_selection: capabilitySelectionOf(plan, discovery, { limitationsShown: !compiled }) };
       const rec = plan.capability_selection!;
+      // the server's own mark that this plan must carry this record (a removed or replaced record is refused at execution); written BEFORE the plan is shown, and a failure stops here (the mission is retried by the existing error path)
+      await writeCapabilityAnchor(store, mission.id, rec.digest);
       await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: سُجّلت المصادر المعتمدة لكل خطوة مع الخطة.", counts: { capability_record: 1, from_discovery: rec.stages.filter((x) => x.source === "discovery").length, by_code: rec.stages.filter((x) => x.source === "code").length } }).catch(() => undefined);
+    } else if (started.planningStarts > 1) {
+      // a later planning of a mission whose earlier plan was made through discovery (the switch was turned off since): this plan has no record, and the anchor says so (only a re-planning reads the folder; a first planning has no anchor)
+      try { if ((await capabilityAnchorOf(store, mission.id)).required) await writeCapabilityAnchor(store, mission.id, null); } catch (e) { deps.log?.(`capability_anchor_not_cleared ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 80)}`); }
     }
     await store.updateMission(mission.id, { ...base, status: "plan_ready", plan: plan as any, plan_public: publicPlanOf(plan) as any, unit_price_points: plan.price.unitPricePoints, reserved_points: plan.price.reservePoints });
     await store.addEvent(mission.id, { kind: "plan", message_ar: plan.summary_ar, counts: { stages: plan.stages.length, rows: plan.price.deliveredRows, unit_points_x1000: Math.round(plan.price.unitPricePoints * 1000), reserve_points: plan.price.reservePoints } });
@@ -664,7 +724,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   }
   // UNIFIED CAPABILITY DISCOVERY: the STORED approved plan must still execute exactly the capabilities AND the parameters recorded when it was shown and priced (or last edited by the customer before approval); a stage added, switched to another
   // capability, or whose counts / filters / pins / pages changed after that is never run (nothing is called, the hold is released whole by the existing settlement)
-  const scope = verifyApprovedScope(plan, deps.catalog);
+  const scope = verifyApprovedScope(plan, deps.catalog, await capabilityAnchorOf(store, mission.id));
   if (!scope.ok) {
     await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: الخطة المخزنة لا تطابق المصادر المعتمدة، فلم يُنفَّذ شيء.", counts: { adm_flag: 1, scope_issues: scope.issues.length } }).catch(() => undefined);
     await settleExecution(deps, mission, plan, reserve, unit, { llm: Number(mission.execution_llm_usd ?? 0), executionTregUsd: Number(mission.execution_treg_usd ?? 0), summary: null, outputError: `admin: approved_scope_changed ${scope.issues.slice(0, 6).join(",")}`.slice(0, 300) });
