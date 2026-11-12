@@ -251,7 +251,8 @@ describe("8. robustness: a cut model answer never drops the objectives; the open
     expect(second.r.ok).toBe(true);
     expect(missions(db)).toHaveLength(3);
     // the model was given the original request in the conversation history
-    expect(JSON.stringify(modelCalls[0].messages)).toContain("تقييمات فنادق الغردقة");
+    // brief mode: the earlier turns are in the system prompt's conversation (round 50); the model still reads the whole request
+    expect(JSON.stringify([modelCalls[0].system, modelCalls[0].messages])).toContain("تقييمات فنادق الغردقة");
   });
 
   it("four parts with the worker's limit of three open requests: the fourth WAITS (said, kept) and is prepared on «كمّل», never dropped", async () => {

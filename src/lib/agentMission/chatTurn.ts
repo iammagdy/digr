@@ -375,14 +375,17 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     return { ok: false, contentAr: MULTI_PART_RETRY_AR, status: 200 };
   };
   const multiPart = ctx.registry !== undefined && (decision.briefParts ?? 0) >= 2;
-  if (!parsed.ok) { if (multiPart) return multiPartUnsafe(`schema_${parsed.issue}`); ctx.outcome = `schema_${parsed.issue}`; return askInsteadOfWords(`schema_${parsed.issue}`); }
+  // words that name no data are asked first (a model that invented parts the customer never named, M5); only then is a multi-part reading that cannot be used kept from being reduced to the words
+  if (!parsed.ok) { ctx.outcome = `schema_${parsed.issue}`; const asked = await askInsteadOfWords(`schema_${parsed.issue}`); if (asked) return asked; if (multiPart) return multiPartUnsafe(`schema_${parsed.issue}`); return null; }
   const v = validateBrief(withPartCounts(parsed.brief), { customerTurns: ctx.customerTurns, assistantQuestion: ctx.assistantQuestion, prior: ctx.prior, semantic: ctx.semantic });
   if (!v.ok) {
     ctx.outcome = `rejected_${v.reason}`;
     // a private component is never planned: the same fixed answer as a typed one
     if (v.contentAr) { await writeAnswer(input, v.contentAr); return { ok: false, contentAr: v.contentAr, status: 200 }; }
+    const asked = await askInsteadOfWords(`rejected_${v.reason}`);
+    if (asked) return asked;
     if (multiPart) return multiPartUnsafe(v.reason);
-    return askInsteadOfWords(`rejected_${v.reason}`);
+    return null;
   }
   // the condition fields the model filled in by itself (a country inferred from a city, a language never said) are cleared before the brief is stored or shown to the model again; the sentences are checked below
   const customerTexts = [...ctx.customerTurns, ctx.prior?.request ?? ""].filter((t) => t.trim() !== "");

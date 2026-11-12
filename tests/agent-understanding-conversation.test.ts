@@ -124,7 +124,8 @@ describe("discovery is a conversation: vague requests are explored, clear ones a
       (input) => {
         // the model sees the brief so far and the conversation (its own question included)
         expect(input.system).toContain("«عايز فيديوهات عن السياحة»");
-        expect(input.messages.map((m) => m.content).join(" | ")).toContain("من أنهي منصة تحب نجمعها؟");
+        // brief mode: the earlier turns are given to the model in its system prompt, as the conversation so far (round 50); the model still sees the question it asked
+        expect([input.system, ...input.messages.map((m) => m.content)].join(" | ")).toContain("من أنهي منصة تحب نجمعها؟");
         return say("data_request", brief({ request: "هات فيديوهات تيك توك عن السياحة", platforms: ["tiktok"], content: ["videos"], topic: "السياحة" }), "تمام.");
       },
     ]);

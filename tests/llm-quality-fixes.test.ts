@@ -257,8 +257,9 @@ describe("round 1: the JSON format in long conversations", () => {
     const d = await decideTurn({ message: "أهلا", balancePoints: null, open: null }, async (i) => { seen.push(i); return { ok: true, text: answers.shift()! }; });
     expect(seen).toHaveLength(2);
     expect(seen[0].system.endsWith(FORMAT_REMINDER_AR)).toBe(true);
-    // the retry shows the model its own prose answer, then asks for the JSON line as the LAST user turn; the customer's message is still there
-    expect(seen[1].messages.slice(-3)).toEqual([{ role: "user", content: "أهلا" }, { role: "assistant", content: "تمام، سجّلت طلبك." }, { role: "user", content: FORMAT_RETRY_AR }]);
+    // the retry adds a note at the end of the SYSTEM prompt (never a user turn: rounds 5–6, the model refused such a turn as an extraction attempt); the messages are the same
+    expect(seen[1].system.endsWith(FORMAT_RETRY_AR)).toBe(true);
+    expect(seen[1].messages).toEqual(seen[0].messages);
     expect(d).toMatchObject({ type: "greeting_or_small_talk", source: "model", reply: "أهلًا بك." });
   });
   it("prose twice in a conversation in progress: «send it again», never a new mission from a fragment («٥٠٠ تعليق والردود كمان»)", async () => {
@@ -435,7 +436,24 @@ describe("round 5", () => {
     expect(r.ok).toBe(true);
     expect(live(db)).toHaveLength(1);
   });
-  it("the format retry is a plain request (no «message from the system» inside a user turn)", () => {
-    expect(FORMAT_RETRY_AR).not.toContain("النظام");
+  it("brief mode: the earlier turns are given as a transcript in the system prompt and the customer's message is the ONE user turn (no prose assistant turn to imitate)", async () => {
+    const seen: ChatModelInput[] = [];
+    await decideTurn({ message: "آخر شهر", balancePoints: null, open: null, history: [{ role: "user", content: "تعليقات تيك توك عن السياحة" }, { role: "assistant", content: "تمام، بنجهّز طلبك." }], brief: { enabled: true, soFar: null } }, async (i) => { seen.push(i); return { ok: true, text: JSON.stringify({ type: "data_request", reason: "", reply: "", count: null }) }; });
+    expect(seen[0].messages).toEqual([{ role: "user", content: "آخر شهر" }]);
+    expect(seen[0].system).toContain("العميل: «تعليقات تيك توك عن السياحة»");
+    expect(seen[0].system).toContain("المساعد: «تمام، بنجهّز طلبك.»");
+    expect(seen[0].system.endsWith(FORMAT_REMINDER_AR)).toBe(true);
+    // brief mode off: the conversation is sent as before
+    seen.length = 0;
+    await decideTurn({ message: "آخر شهر", balancePoints: null, open: null, history: [{ role: "user", content: "تعليقات تيك توك عن السياحة" }, { role: "assistant", content: "تمام، بنجهّز طلبك." }] }, async (i) => { seen.push(i); return { ok: true, text: JSON.stringify({ type: "data_request", reason: "", reply: "", count: null }) }; });
+    expect(seen[0].messages).toHaveLength(3);
+  });
+  it("M5: a brief that invents platforms for an open question is ASKED (words name no data), never answered «اكتب كمّل»", async () => {
+    scripted([{ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "منشورات وتعليقات عن تطبيقات الصحة النفسية", platforms: ["tiktok", "x"], content: ["posts", "comments"], objectives: [o("o1", "social.parents", { platform: "tiktok", request: "منشورات تيك توك عن تطبيقات الصحة النفسية" }), o("o2", "social.parents", { platform: "x", request: "تغريدات عن تطبيقات الصحة النفسية" })] }) }]);
+    const db = world();
+    const { r } = await turn(db, "What do people think about mental health apps?");
+    expect(r.contentAr).not.toBe(MULTI_PART_RETRY_AR);
+    expect(r.contentAr).toMatch(/[؟?]/);
+    expect(missions(db)).toHaveLength(0);
   });
 });
