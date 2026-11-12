@@ -357,9 +357,10 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     if (!ctx.registry || open !== null || decision.type === "edit_of_open_request") return null;
     const words = researchNeedOf({ request: currentMessageOf(ctx) });
     // the words name a kind of data: today's path, unless the MODEL itself said something decisive is missing (live evaluation round 2, D2: «معلومات عن منافسين شركتي»)
-    if (words.privacy === "blocked" || (words.kind !== "unknown" && decision.briefRawStatus !== "needs_clarification")) return null;
+    // (and words that give no TOPIC, «تيك توك» alone: live evaluation round 3, S1)
+    if (words.privacy === "blocked" || (words.kind !== "unknown" && decision.briefRawStatus !== "needs_clarification" && customerGaveTopic(ctx.customerTurns))) return null;
     // the model's own question, unless the model did not read a request at all (its type was overruled by the keyword rule: its reply answers something else, possibly a refusal)
-    const question = (!decision.overruled && decision.reply) || missingQuestionAr(buildRequestContract(currentMessageOf(ctx)));
+    const question = (!decision.overruled && decision.reply) || (customerGaveTopic(ctx.customerTurns) ? missingQuestionAr(buildRequestContract(currentMessageOf(ctx))) : TOPIC_QUESTION_AR);
     ctx.outcome = reason;
     await writeAnswer(input, question, ctx.prior ? { researchBrief: { ...ctx.prior, status: "needs_clarification" } } : undefined);
     return { ok: false, contentAr: question, status: 200 };
@@ -739,6 +740,9 @@ async function groupTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     else if (st.outcome === "needs_clarification") lines.push(`${n}: محتاج توضيح بسيط قبل ما نجهّزه.${j.noteAr ? ` ${j.noteAr}` : ""}`);
     else lines.push(`${n}: ${j.noteAr ?? "مش متاح حاليًا."}`);
   });
+  // the parts the customer removed and that were withdrawn are said (live evaluation round 3, K7: «شيل الأخبار» was done, but not said)
+  const withdrawnNow = dropped.filter((p) => !leftRunning.includes(p.request ?? "") && p.request);
+  if (withdrawnNow.length > 0) lines.push(`النسخة السابقة من ${withdrawnNow.map((p) => `«${p.request}»`).join(" و")} اتلغت (اتشالت أو اتعدّلت بحسب رسالتك)، ومش هيتجهّز منها حاجة.`);
   if (leftRunning.length > 0) lines.push(PREVIOUS_STILL_PLANNING_AR);
   if (savedCards.length > 0 || judged.some((j) => partOf(j).outcome === "planned")) lines.push(GROUP_APPROVAL_AR);
   const summary = lines.join("\n");

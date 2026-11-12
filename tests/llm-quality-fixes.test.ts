@@ -376,3 +376,28 @@ describe("round 2", () => {
     expect(missions(db)).toHaveLength(0);
   });
 });
+
+describe("round 3", () => {
+  it("S1: «تيك توك» alone with NO brief from the model: the topic is asked, no mission from the words", async () => {
+    scripted([{ type: "data_request", reason: "x", reply: "", count: null }]);
+    const db = world();
+    const { r } = await turn(db, "تيك توك");
+    expect(r.contentAr).toBe(TOPIC_QUESTION_AR);
+    expect(missions(db)).toHaveLength(0);
+  });
+  it("J1: words no reader executes («آخر أخبار») written on the whole request are not asked of every part; a part's OWN such words must be carried", () => {
+    const base = { partRequest: "تعليقات تيك توك عن السياحة", global: {}, elsewhere: new Set<any>(), customerTexts: ["عايز تعليقات تيك توك عن السياحة، وكمان آخر أخبار السياحة في مصر"], nowMs: NOW };
+    expect(conditionDriftOf({ ...base, own: {}, global: { period: "آخر أخبار" } })).toBeNull();
+    expect(conditionDriftOf({ ...base, own: { period: "آخر أخبار" } })).toMatchObject({ kind: "period", reason: "missing" });
+  });
+  it("K7: a part removed by the customer is withdrawn AND said; the kept part stays", async () => {
+    const two = { type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "تعليقات تيك توك عن السياحة، وأخبار السياحة في مصر", platforms: ["tiktok"], content: ["comments", "articles"], objectives: [o("o1", "social.parents", { platform: "tiktok", request: "تعليقات تيك توك عن السياحة" }), o("o2", "social.comments", { platform: "tiktok", parent: "o1" }), o("o3", "web.search", { request: "آخر أخبار السياحة في مصر" })] }) };
+    const one = { type: "edit_of_open_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "تعليقات تيك توك عن السياحة", platforms: ["tiktok"], content: ["comments"], objectives: [o("o1", "social.parents", { platform: "tiktok", request: "تعليقات تيك توك عن السياحة" }), o("o2", "social.comments", { platform: "tiktok", parent: "o1" })] }) };
+    scripted([two, one]);
+    const db = world();
+    await turn(db, "عايز تعليقات تيك توك عن السياحة، وآخر أخبار السياحة في مصر");
+    const { r } = await turn(db, "شيل الأخبار، خلي التعليقات بس");
+    expect(live(db).map((m) => m.request_text)).toEqual(["تعليقات تيك توك عن السياحة"]);
+    expect(r.contentAr).toContain("«آخر أخبار السياحة في مصر» اتلغت");
+  });
+});

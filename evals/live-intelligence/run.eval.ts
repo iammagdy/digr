@@ -72,6 +72,8 @@ function outcomeOf(db: any, r: { ok: boolean; contentAr: string }, log: Record<s
   if (fixed === "fixed_privacy_refusal") return "PRIVACY";
   if (fixed === "fixed_privacy_clarify") return "CLARIFY";
   if (r.ok && liveOf(db).length > 0) return "UNDERSTOOD";
+  // round 3: a turn that only updates the parts already prepared (a part removed, the others kept) answers with the summary and draws no new card: the request is understood when live parts remain and nothing is asked
+  if (!r.ok && liveOf(db).length > 0 && String(log?.brief ?? "").startsWith("group_") && !/[؟?]/.test(r.contentAr)) return "UNDERSTOOD";
   const brief = String(log?.brief ?? "");
   if (brief.startsWith("capability_unsupported") || brief === "objectives_unresolved_ask" || brief === "words_unsupported_platform") return "UNSUPPORTED";
   if (brief === "privacy" || brief === "group_privacy" || brief === "rejected_privacy_refusal") return "PRIVACY";

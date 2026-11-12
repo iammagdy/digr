@@ -277,7 +277,9 @@ export function conditionDriftOf(input: { partRequest: string; own: ConditionPhr
     if (phrase) {
       const want = valueOf(kind, phrase, nowMs);
       // words the reader does not understand: carried as the customer wrote them, never refused
-      if (want === null) { if (written(phrase) && !carries(partRequest, phrase)) return { kind, reason: "missing", phrase }; continue; }
+      // words no reader executes («آخر أخبار» is «the latest news», not a window): the part's OWN words must be carried as written; the same words attributed to the whole request are not a condition imposed on every part (live evaluation
+      // round 3, J1: the TikTok and hotels parts were asked whether «آخر أخبار» applied to them)
+      if (want === null) { if (own[kind] && written(phrase) && !carries(partRequest, phrase)) return { kind, reason: "missing", phrase }; continue; }
       if (got === null) return { kind, reason: "missing", phrase };
       if (got !== want) return { kind, reason: "contradicts", phrase };
       continue;
