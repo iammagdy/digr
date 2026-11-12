@@ -10,7 +10,7 @@ import { FULL_RESEARCH_PREFIX_AR, greetingReplyAr, isFullResearchMethodologyAsk,
 import { listMethodologyMissions } from "./methodology/missions";
 import { buildRequestContract } from "./requestContract";
 import { briefNumbersAr, contractIsComplete, differsOnlyByCount, parseBrief, sameContract, storedBriefOf, validateBrief, type ResearchBrief } from "./researchBrief";
-import { droppedRequirementsOf, inventedRequirementOf, partBriefOf, partCardIdOf, partMissionIdOf, partsOf, PART_ID_ATTEMPTS, requirementLabelAr, RESEARCH_GROUP_MAX_PARTS, RESEARCH_GROUP_VERSION, samePartRequest, storedGroupOf, type IntentRequirement, type PartOutcome, type ResearchPart, type StoredGroupPart, type StoredResearchGroup } from "./researchGroup";
+import { conditionDriftOf, droppedRequirementsOf, sameExecutedValues, unaccountedRequirements, inventedRequirementOf, type ConditionDrift, type ConditionKind, type ConditionPhrases, partBriefOf, partCardIdOf, partMissionIdOf, partsOf, PART_ID_ATTEMPTS, requirementLabelAr, RESEARCH_GROUP_MAX_PARTS, RESEARCH_GROUP_VERSION, samePartRequest, storedGroupOf, type IntentRequirement, type PartOutcome, type ResearchPart, type StoredGroupPart, type StoredResearchGroup } from "./researchGroup";
 import { randomUUID } from "node:crypto";
 import { readSettingValue, scopedFlagOn } from "./scopedFlag";
 import { buildCapabilityRegistry, chatCapabilityLines, discoverCapabilities, operationLabelAr, PLATFORM_AR, researchNeedOf, CAPABILITY_DISCOVERY_FLAG_KEY, type CapabilityDiscovery, type CapabilityRegistry } from "./capabilities";
@@ -348,6 +348,14 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     }
     return groupTurn(input, decision, open, { ...brief, status: "ready" }, parts, ctx);
   }
+  // EXACT REQUIREMENTS of the single request: the consolidated sentence must execute the customer's own period, place and language (the same reader the worker executes with); otherwise the customer is asked, never run on another value
+  const drift = conditionDriftOf({ partRequest: brief.request, own: { period: brief.period, country: brief.country, language: brief.language }, global: {}, elsewhere: new Set(), customerTexts: [...ctx.customerTurns, ctx.prior?.request ?? ""].filter((t) => t.trim() !== ""), nowMs: Date.now() });
+  if (drift) {
+    ctx.outcome = `drift_${drift.kind}`;
+    const contentAr = conditionDriftAr(drift).replace("الجزء ده", "طلبك");
+    await writeAnswer(input, contentAr, { researchBrief: { ...brief, status: "needs_clarification" } });
+    return { ok: false, contentAr, status: 200 };
+  }
   if (decision.type === "edit_of_open_request" && open) return briefEditOfOpen(input, decision, open, brief, v.contract, ctx);
   // a new research request (or the next step of the discovery): a question while something that matters is missing, else a mission from the WHOLE request
   if (brief.status === "needs_clarification" && !contractIsComplete(v.contract)) {
@@ -417,17 +425,17 @@ function partLabelAr(part: ResearchPart): string {
 }
 
 /** What can be done with ONE part now: its sentence validated like a brief, then the capabilities of its objectives (the same discovery a single request gets). Pure apart from the registry read. */
-function judgePart(part: ResearchPart, ctx: BriefTurnContext, registry: CapabilityRegistry): JudgedPart {
+function judgePart(part: ResearchPart, ctx: BriefTurnContext, registry: CapabilityRegistry, global: ConditionPhrases = {}): JudgedPart {
   const label = partLabelAr(part);
   const base = { part, partBrief: null, label, discovery: null };
   if (part.unresolved) {
     const d = discoverCapabilities(researchNeedOf({ request: part.request ?? "", brief: { platforms: [], content: [], count: null, objectives: part.objectives } }), registry);
     return { ...base, outcome: "unsupported", noteAr: [d.messageAr, d.alternativeAr].filter(Boolean).join(" ") || null };
   }
-  const pb = partBriefOf(part);
+  const pb = partBriefOf(part, global);
   if (!pb) return { ...base, outcome: "needs_clarification", noteAr: null };
   const v = validateBrief(pb, { customerTurns: ctx.customerTurns, assistantQuestion: ctx.assistantQuestion, prior: ctx.prior, semantic: ctx.semantic });
-  if (!v.ok) return { ...base, outcome: v.reason === "privacy_refusal" || v.reason === "privacy_clarify" ? "refused_private" : "needs_clarification", noteAr: v.contentAr ?? null };
+  if (!v.ok) return { ...base, outcome: v.reason === "privacy_refusal" || v.reason === "privacy_clarify" ? "refused_private" : "needs_clarification", noteAr: v.contentAr ?? (v.reason === "count_mismatch" && pb.count !== null ? conditionDriftAr({ kind: "count", reason: "contradicts", phrase: String(pb.count) }) : null) };
   const d = discoverCapabilities(researchNeedOf({ request: v.brief.request, brief: v.brief }), registry);
   if (d.status === "blocked") return { ...base, partBrief: v.brief, discovery: d, outcome: "refused_private", noteAr: d.messageAr };
   if (d.status === "unsupported") {
@@ -462,7 +470,8 @@ async function groupTurn(input: AgentChatTurnInput, decision: Decision, open: Op
   const { sb } = input;
   const registry = ctx.registry!;
   // EVERY part is judged and stored, whatever their number (at most OBJECTIVES_MAX): a part not prepared in this turn waits, said, and is prepared on a later one; none is ever left out of the stored group
-  const judged = parts.map((p) => judgePart(p, ctx, registry));
+  const global: ConditionPhrases = { period: brief.period, country: brief.country, language: brief.language };
+  const judged = parts.map((p) => judgePart(p, ctx, registry, global));
   // a private component is refused like a typed one when it is the WHOLE request; a private part among public ones is refused alone (the public parts go on)
   if (judged.length > 0 && judged.every((j) => j.outcome === "refused_private")) {
     ctx.outcome = "group_privacy";
@@ -478,8 +487,26 @@ async function groupTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     const invented = inventedRequirementOf(j.partBrief.request, ground);
     if (invented) { j.outcome = "needs_clarification"; j.noteAr = intentInventedAr(invented); }
   }
+  // EXACT REQUIREMENTS: the values each part's sentence would execute are the customer's (the same reader the worker executes with); a part that would run another period, place, language or number, lose a condition of the whole
+  // request or of its own, carry one the customer gave another part, or collect comments without the replies its sentence asks is asked, never created
+  const customerTexts = [...ground, ...(ctx.priorGroup?.parts.map((p) => p.request ?? "") ?? [])].filter((t) => t.trim() !== "");
+  const nowMs = Date.now();
+  const kindsOf = (o: ConditionPhrases): ConditionKind[] => [...(o.period ? ["period" as const] : []), ...(o.country ? ["place" as const] : []), ...(o.language ? ["language" as const] : [])];
+  const globalKinds = new Set(kindsOf(global));
+  for (const j of judged) {
+    if (j.outcome !== "planned" || !j.partBrief) continue;
+    const root = j.part.objectives[0];
+    const ownKinds = new Set(kindsOf(root));
+    const elsewhere = new Set<ConditionKind>(judged.filter((x) => x !== j).flatMap((x) => kindsOf(x.part.objectives[0])).filter((k) => !ownKinds.has(k) && !globalKinds.has(k)));
+    const social = j.part.objectives.find((x) => x.platform);
+    const repliesWithoutObjective = buildRequestContract(j.partBrief.request).replies !== "none" && social?.platform !== "x" && !j.part.objectives.some((x) => x.operation === "social.replies");
+    const drift = conditionDriftOf({ partRequest: j.partBrief.request, own: root, global, elsewhere, customerTexts, nowMs, repliesWithoutObjective });
+    if (drift) { j.outcome = "needs_clarification"; j.noteAr = conditionDriftAr(drift); }
+  }
   if (partTexts.every((t) => t !== "")) {
-    const lost = droppedRequirementsOf(brief.request, partTexts);
+    // a part asked about its own conditions still accounts for them (the question names them; nothing of it is created meanwhile)
+    const covering = judged.map((j, i) => (j.outcome === "needs_clarification" ? [partTexts[i], j.part.objectives[0].period, j.part.objectives[0].country, j.part.objectives[0].language, j.part.objectives[0].count ? String(j.part.objectives[0].count) : null].filter(Boolean).join(" ") : partTexts[i]));
+    const lost = unaccountedRequirements(droppedRequirementsOf(brief.request, covering), judged.filter((j) => j.outcome === "needs_clarification").map((j) => j.partBrief?.request ?? j.part.request ?? ""));
     if (lost.length > 0) {
       // nothing is prepared until the customer says where it belongs (a part that also states something they never wrote is asked in the same answer)
       ctx.outcome = "group_intent_dropped";
@@ -492,7 +519,9 @@ async function groupTurn(input: AgentChatTurnInput, decision: Decision, open: Op
   const priorParts = prior?.parts.filter((p) => p.missionId) ?? [];
   const [statuses, cards] = await Promise.all([missionStatuses(sb, input.userId, priorParts.map((p) => p.missionId!)), cardsOfConversation(sb, input.conversationId)]);
   // the same request read by the trusted parser only when it reads a topic in both (two parts with no topic the parser can read are compared by their words)
-  const sameByParser = (x: string, y: string) => { const a = buildRequestContract(x); const b = buildRequestContract(y); return a.topic !== null && b.topic !== null && a.topic.trim() !== "" && sameContract(a, b); };
+  // and only when both EXECUTE the same values (a corrected period, place, language or number is a changed part, never a kept one)
+  const matchNow = Date.now();
+  const sameByParser = (x: string, y: string) => { const a = buildRequestContract(x); const b = buildRequestContract(y); return a.topic !== null && b.topic !== null && a.topic.trim() !== "" && sameContract(a, b) && sameExecutedValues(x, y, matchNow); };
   const kept = new Map<string, StoredGroupPart>();
   for (const j of judged) {
     if (j.outcome !== "planned" || !j.partBrief) continue;
@@ -704,6 +733,17 @@ async function saveSummary(sb: any, input: AgentChatTurnInput, summary: string, 
 function keptBriefPlan(ctx: BriefTurnContext, brief: ResearchBrief): { researchGroup: StoredResearchGroup } | { researchBrief: ResearchBrief } {
   const asked = { ...brief, status: "needs_clarification" as const };
   return ctx.priorGroup ? { researchGroup: { ...ctx.priorGroup, brief: asked } } : { researchBrief: asked };
+}
+
+const DRIFT_LABEL_AR: Record<ConditionKind, string> = { period: "الفترة", place: "المكان", language: "لغة المحتوى", count: "العدد", replies: "الردود" };
+/** Asked when a part (or the single request) would execute another value than the customer's own words, or lose or borrow a condition. */
+export function conditionDriftAr(d: ConditionDrift): string {
+  if (d.kind === "replies") return "انت طلبت الردود كمان، والجزء ده هيجمع التعليقات من غير ردودها؛ نضيف الردود؟";
+  const label = `شرط ${DRIFT_LABEL_AR[d.kind]}`;
+  const yours = d.phrase ? ` («${d.phrase}»)` : "";
+  if (d.reason === "missing") return `${label} اللي كتبته${yours} مش ظاهر في الجزء ده؛ ينطبق عليه ولا لأ؟`;
+  if (d.reason === "other_part") return `${label} اللي في الجزء ده انت قلته لجزء تاني؛ ينطبق على الجزء ده كمان ولا لأ؟`;
+  return d.phrase ? `الجزء ده اتكتب بـ${label} مختلف عن اللي كتبته${yours}؛ نجهّزه على اللي كتبته ولا تقصد حاجة تانية؟` : `الجزء ده اتكتب بـ${label} مش زي اللي في كلامك؛ تقصد أنهي؟`;
 }
 
 const quoteList = (xs: string[]): string => xs.map((x) => `«${x}»`).join(" و");

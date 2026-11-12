@@ -424,15 +424,15 @@ describe("ISSUE 3. splitting never invents, drops or alters a requirement; what 
     expect(missions(db)).toHaveLength(0);
   });
 
-  it("the model's part CHANGES the city (Hurghada → Sharm): nothing is prepared with a place the customer did not write, and the customer's own city is not lost: both are asked, nothing is created", async () => {
+  it("the model's part CHANGES the city (Hurghada → Sharm): that part is asked and never created with a place the customer did not write; the customer's own city stays in the brief; the other parts go on", async () => {
     scripted([say(THREE({ hotels: "تقييمات فنادق شرم الشيخ" }))]);
     const db = world();
     const { r, assistant } = await turn(db, REQUEST);
-    expect(r.ok).toBe(false);
-    expect(r.contentAr).toContain("«الغردقة»");
     expect(r.contentAr).toContain("«شرم الشيخ» وانت ما ذكرتهوش");
-    expect(missions(db)).toHaveLength(0);
-    expect(assistant.plan.researchBrief.status).toBe("needs_clarification");
+    expect(live(db).map((m) => m.request_text)).toEqual([TIKTOK_PART, NEWS_PART]);
+    const group = storedGroupOf(assistant.plan, strict)!;
+    expect(group.parts.map((p) => p.outcome)).toEqual(["planned", "needs_clarification", "planned"]);
+    expect(group.brief.request).toContain("الغردقة");
   });
 
   it("the model's part ADDS a period the customer never wrote (the city and the whole request intact): only that part is asked, the others are prepared", async () => {
