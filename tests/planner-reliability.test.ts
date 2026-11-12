@@ -127,3 +127,18 @@ describe("round 51 (real planner, Z14): the phones of PLACES are their listing's
     expect(issuesOf(plan([{ key: "name" }, { key: "address" }, { key: "rating" }]))).toMatch(/add a CONTACT STAGE|phone/);
   });
 });
+
+describe("round 51 (real planner, Z30): an app found by a store search is an entity named by its title", () => {
+  const rows = [{ id: "com.instapay.app", name: "إنستاباي InstaPay", rating: 4.1, url: "https://play.google.com/store/apps/details?id=com.instapay.app" }, { id: "com.other.app", name: "محفظة أخرى", rating: 3.9, url: "https://play.google.com/store/apps/details?id=com.other.app" }];
+  const lookup = {
+    call: (id: string) => (id === "call_0001" ? { id, endpointId: "litescrape.google_play.search.apps", ok: true, costUsd: 0.01, rows: 2, params: { q: "إنستاباي" } } : null),
+    evidenceText: (id: string) => (id === "call_0001" ? JSON.stringify({ items: rows }) : id === "out_0001" ? JSON.stringify(rows) : null),
+    endpointAllowed: () => true,
+    endpointCapability: (id: string) => (id === "litescrape.google_play.search.apps" ? "google-play.search.apps" : null),
+    requestText: "عايز تقييمات تطبيق إنستاباي على جوجل بلاي",
+  };
+  it("the app whose name carries the term matches (was «mention_only» for every app)", () => {
+    const r = validateAndPricePlan({ summary_ar: "ستحصل على تطبيق إنستاباي.", stages: [{ key: "apps", title_ar: "التطبيقات", endpoint_id: "litescrape.google_play.search.apps", expected_rows: 1, parent_key: null, deliver: true, columns: [{ key: "name" }, { key: "rating" }, { key: "url" }], measured_by: ["call_0001"], yield_from: "out_0001", relevance: { subject_ar: "تطبيق إنستاباي", terms: ["إنستاباي", "InstaPay"], text_columns: ["name"] } }] }, lookup as never);
+    expect(r.ok ? "" : r.issues.join(" | ")).not.toMatch(/none of the \d+ rows of the sample matches your relevance rule/);
+  });
+});

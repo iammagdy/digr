@@ -605,7 +605,10 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
       if (!checkedRel.ok) issues.push(...checkedRel.issues.map((m) => `${label}: ${m}`));
       else {
         // a COMPANY stage's terms are the sector in Arabic AND English with the request's frame words taken out (entities.ts): the model's own list is kept, never trusted alone
-        relevance = companyStage ? { ...checkedRel.spec, entity: true, terms: companyRuleTerms(checkedRel.spec.terms, requestWords) } : checkedRel.spec;
+        // (round 51, live evaluation Z30: an APP of a store search is an entity named by its title, as a company is; read as text it was «mention_only» and every app was refused. The rule's terms are the model's, unchanged; an app
+        // whose name carries no term goes to the model check, never straight to delivery)
+        const appStage = !isChild && /^(?:google-play|app-store)\.search\.apps$/.test(String(lookup.endpointCapability?.(endpointId) ?? ""));
+        relevance = companyStage ? { ...checkedRel.spec, entity: true, terms: companyRuleTerms(checkedRel.spec.terms, requestWords) } : appStage ? { ...checkedRel.spec, entity: true } : checkedRel.spec;
         const yieldId = String(raw.yield_from ?? "");
         const yieldText = yieldId ? lookup.evidenceText(yieldId) : null;
         let sampleRows: Array<Record<string, unknown>> | null = null;
