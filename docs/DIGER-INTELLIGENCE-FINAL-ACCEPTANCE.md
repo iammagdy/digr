@@ -5,53 +5,81 @@
 **Authorization:** real Anthropic testing with the dedicated evaluation key. The owner raised the cumulative evaluation ceiling from $10 to **$30** during this round. The earlier mission's reported $4.2746 counts inside it, so this round's budget state was created with a ceiling of **$25.7254**.
 **Not changed:** production flags, database, schema, SQL, pricing, auth, deployment settings. No live provider call and no customer execution.
 
-## 0. Results at a glance
+## 1. Results at a glance
 
-| | Previous mission (final, 61 conv.) | Round 1 (this mission) | Round 2 | **Round 3 (final chat code)** |
-|---|---|---|---|---|
-| All conversations accepted | 60/61 (98.4%) | 88/95 (92.6%) | 96/97 (99.0%) | **97/97 (100%)** |
-| Original 22 (labels unchanged) | 21/22 | 21/22 | 22/22 | **22/22** |
-| Expanded 39 | 39/39 | 39/39 | 38/39 | **39/39** |
-| Held-out 34–36 (new, labelled before any run) | – | 28/34 | 36/36 | **36/36** |
-| Capability selection (labelled cases) | – | 16/16 | 19/19 | **19/19** |
-| False privacy refusals | 0 | 1 (a label error, see 4.3) | 0 | **0** |
-| Lost customer requirements | 0 | 1 (Z19, a real bug) | 0 | **0** |
-| Duplicate live missions | 0 | 0 | 0 | **0** |
-| Provider or model names shown to the customer | 0 | 0 | 0 | **0** |
-| Missions executed, jobs, credit rows | 0 | 0 | 0 | **0** |
-
-| Real planner, synthetic provider data | R1 | R2 | R3 | P4 | **P5 (final planner code)** |
+| | Previous mission (final, 61 conv.) | Round 1 | Round 2 | Round 3 | Round 4 (all but the last fix) |
 |---|---|---|---|---|---|
-| Valid plans (`plan_ready`) | 18/27 (67%) | 25/33 (76%) | 23/32 (72%) | 24/31 (77%) | **25/31 (80.6%)** |
-| Planner asked the customer | 4 | 3 | 3 | 5 | 4 |
-| Ended «not served» | 1 | 3 | 2 | 1 | 0 |
-| Our own failure (admin flagged) | 4 | 2 | 4 | 1 | 2 |
-| Plans that combine two provider families | 0 | 3 | 5 | 2 | **7** |
-| Stages on Context.dev sources | 0 | 7 | 5 | 2 | **15** |
+| All conversations accepted | 60/61 (98.4%) | 88/95 (92.6%) | 96/97 (99.0%) | **97/97 (100%)** | 96/97 (99.0%) |
+| Original 22 (labels unchanged) | 21/22 | 21/22 | 22/22 | **22/22** | 21/22 (M2, fixed after) |
+| Expanded 39 | 39/39 | 39/39 | 38/39 | **39/39** | 39/39 |
+| Held-out 34–36 (new, labelled before any run) | – | 28/34 | 36/36 | **36/36** | 36/36 |
+| Capability selection (labelled cases) | – | 16/16 | 19/19 | **19/19** | 19/19 |
+| False privacy refusals | 0 | 1 (Z28, a label error: section 5) | 0 | **0** | 1 (M2, a real defect, fixed) |
+| Lost customer requirements | 0 | 1 (Z19, a real bug) | 0 | **0** | 0 |
+| Duplicate live missions | 0 | 0 | 0 | **0** | 0 |
+| Provider or model names shown to the customer | 0 | 0 | 0 | **0** | 0 |
+| Missions executed, jobs, credit rows | 0 | 0 | 0 | **0** | 0 |
 
-**Reading the planner figures.** In P5, 4 of the 6 non-plans were the planner ASKING the customer because the synthetic rows were ambiguous or did not fit the request:
+**Over rounds 2–4 (the code after the round-1 fixes)**, 289 of 291 conversations were accepted (**99.3%**). The two misses are M5 (round 2) and M2 (round 4). Each was traced to its root cause and fixed with a regression test.
 
-* several apps called «إنستاباي»;
-* companies outside the asked sector;
-* «which pharma companies?».
+* **The M2 fix (the last change)** was re-measured on the 20 sensitive-topic and private-data conversations, three times: 60/60 accepted, 0 false refusals, every private request refused.
 
-The other 2 (J3, Z35) were our own failures, admin flagged and told to the customer as ours.
+| Real planner, synthetic provider data | R1 | R2 | R3 | P4 | P5 | **R4 (final planner code)** |
+|---|---|---|---|---|---|---|
+| Valid plans (`plan_ready`) | 18/27 (67%) | 25/33 (76%) | 23/32 (72%) | 24/31 (77%) | 25/31 (80.6%) | **26/31 (83.9%)** |
+| Planner asked the customer | 4 | 3 | 3 | 5 | 4 | 1 |
+| Ended «not served» | 1 | 3 | 2 | 1 | 0 | 0 |
+| Our own failure (admin flagged) | 4 | 2 | 4 | 1 | 2 | 4 |
+| Plans that combine two provider families | 0 | 3 | 5 | 2 | 7 | **9** |
+| Stages on Context.dev sources | 0 | 7 | 5 | 2 | 15 | **9** |
 
-* **Strictly**, valid plans are 25/31 = **80.6%**: below the 90% target.
-* **Without the 4 data-driven questions** (the «provider data contradicts the request» class the brief asks to report apart), they are 25/27 = 92.6%.
+**Reading the planner figures.**
 
-Both figures are given. The strict one is the acceptance figure, and the 90% target is **not met** on it.
+* **The final planner code (R4)** produced valid plans for **26 of 31** missions (**83.9%**).
+  * 1 non-plan was a question caused by the synthetic data: several fictional apps named «إنستاباي».
+  * 4 were our own failures: J3, G2, Z16 and Z35, after formal plan refusals. Each is now admin flagged and told to the customer as OUR failure, never as «not available».
+* **The strict figure is the acceptance figure.** The **90% target is NOT met**. Without the one data-driven question the rate is 26/30 = 86.7%, still below.
+* **Measured over the last two planner runs on the final planner code** (P5 and R4): 51/62 valid plans (82.3%). The failures change from run to run (planner variability). Section 7 lists them.
 
 **Spending.**
 
-* **2,276 paid requests**, all HTTP 200, plus the two stability passes in section 6.
-* **$5.16** this mission before the stability passes (exact figures in section 7).
+* **2,920 paid requests**, all HTTP 200.
+* **$6.3030** this mission; **$10.5776** in total with the previous mission's $4.2746, out of the owner's **$30**.
+* Exact figures are in section 4.
 
-<!--STABILITY-->
+## 1b. Stability of the critical conversations (repeated real runs)
+
+**The 37 critical conversations:**
+
+* every multi-part request;
+* every correction (period, quantity, city, district, platform, country, language, added and removed parts);
+* «كمّل»;
+* the sensitive public research M1, M2, M3, M6;
+* the mixed public + private requests N7 and Z26;
+* private data Z24 and Z25;
+* prompt injection Z29;
+* own-business clarification D2 and Z6;
+* app reviews Z30, Z35 and Z36.
+
+They ran three more times, chat only, on code after round 3:
+
+| Run | Accepted | Lost requirements | Duplicates | False refusals | Paid requests | USD |
+|---|---|---|---|---|---|---|
+| Stability A | **37/37** | 0 | 0 | 0 | 53 | $0.0471 |
+| Stability B | 36/37 | 1 (Z9: a judge error, plus a REAL reader gap it revealed, fixed) | 0 | 0 | 53 | $0.0471 |
+| Stability C (final code but the M2 fix) | 36/37 | 0 | 0 | 0 | 53 | $0.0470 |
+
+* **B, Z9.** The model wrote the corrected count as «مائة».
+  * The worker reads it as 100, so nothing was lost, but the judge read digits only.
+  * Looking closer showed that **«ثلاثمائة» was read by no reader at all**, so a spelled count of 300–900 would have been lost.
+  * Fixed: the hundreds, formal and dialect, are now numbers. The judge also reads number words.
+* **C, Z36.** The model attributed the news part's «مصر» to the app-reviews part. The code ASKED whether that place applies to the app part instead of dropping or applying it: safe, though not the label. Z36 passed in round 4.
+* **The sensitive and privacy subset** (20 conversations) ran three more times on the final code: **60/60**.
+
 
 ## 2. What changed (each from a real-model or real-planner failure, each with a deterministic regression test)
 
-Tests: `tests/intelligence-final-acceptance.test.ts` (chat layer) and `tests/planner-reliability.test.ts` (planner), 59 tests. Every fix was mutation-checked (the test fails with the fix removed) where the fix is a single line.
+Tests: `tests/intelligence-final-acceptance.test.ts` (chat layer, 60) and `tests/planner-reliability.test.ts` (planner, 10): 70 tests. Two fixes were also mutation-checked: the places-phone rule and the app relevance rule (each test fails with its fix removed).
 
 ### 2.1 Clarification in the chat (defect A, D2)
 
@@ -129,7 +157,7 @@ The same applies to:
 * **The planner's refusal reasons are recorded.** Before, 46 refused calls had been logged as `{}`.
 
 
-## 1. Provider catalogs actually inspected
+## 3. Provider catalogs actually inspected
 
 Everything below was read from the repository's own files. Nothing was fetched, and no provider was called.
 
@@ -188,3 +216,118 @@ Everything below was read from the repository's own files. Nothing was fetched, 
 
 * 10 Context.dev parsers still serve no operation: app details, G2 reviews, TikTok and Instagram profiles, followers and following, user search, links.
 * Catalog endpoints for Reddit (52), Telegram (9) and Snapchat (3) map to no operation. Such requests are answered as unavailable.
+
+## 4. Real Anthropic spending (this mission)
+
+**The budget state.**
+
+* **The previous state file was not in this container.** The previous session's transcript was not reachable, so the reported $4.2746 could not be independently verified.
+  * Paid calls were held until the owner raised the authorization to **$30** during this mission.
+  * The $4.2746 was then counted inside it: a new state file was created once with a ceiling of **$25.7254**.
+* **Every attempt** was reserved at its worst case on disk before it was sent, and settled at its actual cost after.
+* **Only `api.anthropic.com` could be reached.** No provider, Supabase or other host could.
+
+| Run | What | Paid requests | USD | Cumulative (this mission) |
+|---|---|---|---|---|
+| smoke | D2, 1 conversation | 1 | $0.0008 | $0.0008 |
+| R1 | 95 conversations + real planner | 463 | $1.0052 | $1.0060 |
+| R2 | 97 + planner | 535 | $1.2096 | $2.2155 |
+| R3 | 97 + planner | 520 | $1.1453 | $3.3608 |
+| P4 | 27 planner conversations | 384 | $0.9203 | $4.2811 |
+| P5 | 27 planner conversations | 373 | $0.8771 | $5.1582 |
+| Stability A, B | 37 + 37 critical, chat only | 106 | $0.0942 | $5.2524 |
+| R4 | 97 + planner | 458 | $0.9804 | $6.2328 |
+| Stability C | 37 critical, chat only | 53 | $0.0470 | $6.2799 |
+| Privacy ×3 | 20 sensitive and private, three times | 27 | $0.0231 | **$6.3030** |
+
+* **Total this mission:** **2,920 paid requests**, all HTTP 200, **$6.3030**. No halt, no truncation.
+* **With the previous mission:** **$10.5776** of the owner's **$30**.
+
+**The evaluation key.**
+
+* Its VALUE is in 0 of 6,078 files: the repository, the build output and every evaluation transcript and ledger.
+* It is in 0 lines of the 146 MB git history.
+* It was never printed.
+* **It is still ACTIVE.** This session has no tool that can revoke an Anthropic key, so revocation is the owner's to do in the Anthropic console.
+
+## 5. Corpus and label changes (disclosed)
+
+**The corpus.**
+
+* **Original 22:** labels unchanged.
+* **Expanded 39:** labels unchanged.
+* **Held-out 36:** written before their first run; Z35 and Z36 were added with the apps capability.
+
+**Label changes after a run**, each written in `cases.ts` where it is made:
+
+| Case | Change | Why |
+|---|---|---|
+| Z28 «هات رسائل جروبات تليجرام» | from «legitimate, unsupported» to «private chats» | The existing privacy rule refuses the messages of chat groups by design. The label was wrong. |
+| Z30 «تقييمات تطبيق إنستاباي» | from unsupported to understood | Apps and their reviews became a served operation during the mission. |
+
+**Judge changes:**
+
+* «كمّل» on a single request counts as understood (`continue_open_*`), as for multi-part requests;
+* a count written in words counts as the number.
+
+## 6. Gates (head of PR #462)
+
+| Gate | Result |
+|---|---|
+| Full `npm test` | 956 files passed, 5 skipped. **13,278 passed**, 0 failed, 47 expected-fail, 65 skipped. Before: 13,208 passed and 48 expected-fail; dt-08 moved from expected-fail to an ordinary test. |
+| Root typecheck, worker typecheck | pass |
+| `npm run build` and the client-bundle secret scan | pass; 209 files, zero secrets |
+| Privacy and money suites | 8 files, 280 tests, pass, unchanged in count: `private-data-guards`, `pre-rollout-acceptance`, `agent-understanding-privacy`, `agent-price-and-settlement`, `engine-settlement`, `ledger`, `explicit-quote-approval`, `financial-audit-truncation` |
+| New tests | `intelligence-final-acceptance` (60) and `planner-reliability` (10): 70 |
+
+**Test files whose assertions changed**, each for a deliberate behaviour change and each asserting more, not less:
+
+* **`round16-previous-month`:** «الشهر الحالي» is now asserted as the current month. It was asserted as unread, and it is still never the previous month.
+* **The semantic baseline pins** (`semantic-paraphrases`, `semantic-conditions`, `semantic-contract-integration`, `semantic-normalization`): dt-08 is closed for every customer (47 known gaps remain, 15 closed). pl-23's English period is no longer a gap; its «tweets is not X» gap stays.
+* **No validator was loosened**, and no test was skipped or deleted.
+
+## 7. Remaining defects and what is not proven
+
+1. **The real planner is at 82–84% valid plans, not 90%.** The remaining failures change from run to run:
+   * a planner that does not map a field the plan promises (city, sector);
+   * one that plans app reviews without their app stage;
+   * one that keeps a people stage on a contact source without marking its contact columns.
+
+   Each now ends as OUR failure (admin flagged, the customer told so), never as «not available». The validators were not weakened to raise the rate.
+2. **Model attribution of a condition to the wrong part** (Z36, 1 in 4 runs): the part is asked, never mis-planned.
+3. **«ألف» (1,000) written in words is not read as a count**, because it is also a word of names. A count of 1,000 written in words would be asked or carried as words.
+4. **The synthetic providers are fiction.** The planner's figures are its behaviour on plausible fictional rows: they are not proof of the plan on real TREG, Firecrawl or Context.dev answers.
+5. **Not exercised by this mission:**
+   * live providers;
+   * the authenticated chat page in a browser (no test account session or isolated environment was authorized; the flags must stay off);
+   * the deployed Heroku worker (its heartbeat has reported `version: dev` in earlier rounds, and this session has no Heroku access);
+   * production's `ANTHROPIC_MODEL` and `planning_model` values;
+   * `semantic_normalization_v1` ON.
+
+## 8. Delivery and deployment
+
+The PR, its merge SHA and the Vercel production deployment are recorded in `docs/HANDOFF.md` (round 51).
+
+Heroku: not verifiable from this session.
+
+## 9. Readiness recommendation
+
+**The chat intelligence layer is ready for a CONTROLLED TEST-ACCOUNT rollout:**
+
+* `chat_research_brief_v1` and `capability_discovery_v1` scoped to named test `user_ids`;
+* a spending cap;
+* `semantic_normalization_v1` kept OFF.
+
+On real Anthropic responses it reached:
+
+* 97/97 conversations in round 3, and 289/291 over rounds 2–4;
+* 0 lost requirements, 0 duplicate missions and 0 leaks in every round;
+* 0 false refusals in rounds 2 and 3;
+* no private-data request accepted in any run.
+
+**It is NOT general-production ready.**
+
+* **The real planner** is below its 90% target on synthetic data and is unproven on real provider answers.
+* **The browser journey and the deployed worker** were not exercised.
+
+The next step is the owner's test-account rollout with real providers, watching the planner's admin-flagged failures.
