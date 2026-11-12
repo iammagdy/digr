@@ -536,7 +536,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       description: "Run JavaScript in an isolated sandbox on files of THIS mission (saved pages call_0001..., earlier outputs out_0001...). No network, no environment, no secrets, a time limit and a memory limit. Your code is the body of a function: the files arrive as the object `inputs` (inputs.call_0001 is the parsed page) and you `return` a JSON-serialisable value (rows, counts, ids). The returned value is saved as a new output file (id returned) that you can pass to later run_code calls or to save_rows.",
       phases: ["planning", "execution"],
       params: {
-        code: { type: "string", description: "Function body. Read the rows where the call's answer says (`rows_in_code`; a parse_page or web answer: inputs.call_0001.rows). Example: const rows = inputs.call_0001.items; return rows.map(r => ({id: String(r.id), text: r.text}));" },
+        code: { type: "string", description: "Function body. Read the rows where the call's answer says (`rows_in_code`; an answer saved as { rows }: inputs.call_0001.rows). Example: const rows = inputs.call_0001.items; return rows.map(r => ({id: String(r.id), text: r.text}));" },
         files: { type: "string[]", description: "Ids of the files to load into `inputs`, e.g. [\"call_0001\"]" },
       },
       handler: async (a) => {

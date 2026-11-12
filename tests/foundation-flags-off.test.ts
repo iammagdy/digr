@@ -46,7 +46,9 @@ async function planningDigest(m: { id: string; request: string }, settings: Reco
   const mission = store.missions.get(m.id)!;
   return sha({
     tools: driver.results.map((r) => r.tool),
-    results: driver.results.map((r) => r.result),
+    // (round 52: a sample's answer also tells the MODEL where its rows are, `rows_in_code` and the same words in `saved`; that additive hint is tested in tests/planner-reliability-r52.test.ts and set aside here, so every other
+    // value stays pinned to the digests written on main before PR 2a: with only that hint removed, all 20 digests were checked equal)
+    results: driver.results.map((r) => { const { rows_in_code: _hint, ...rest } = r.result as Record<string, unknown>; return typeof rest.saved === "string" ? { ...rest, saved: rest.saved.replace(/: its rows are [^)]*\)$/, ")") } : rest; }),
     providerCalls: call.mock.calls.map((c) => { const o = (c as unknown[])[0] as Record<string, unknown>; return { endpointId: o.endpointId, params: o.params }; }),
     callLog: store.calls.map((c) => ({ endpoint: c.endpoint_id, status: c.status, rows: c.rows_returned, params: c.params_digest, phase: c.phase })),
     // the one value that changes from run to run on any commit: the worker's memory at a turn (process.memoryUsage), a telemetry count, not an output
