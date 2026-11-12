@@ -465,3 +465,25 @@ describe("round 7", () => {
     expect(conditionDriftOf({ ...base, elsewherePlaces: ["الغردقة"] })).toMatchObject({ kind: "place", reason: "other_part" });
   });
 });
+
+describe("round 8", () => {
+  it("K3: «خليهم ١٠٠ بس» with 100 in the count field only: the sentence states it and the request is replaced (never «still being prepared»)", async () => {
+    scripted([tiktok("تعليقات تيك توك عن السياحة، ٣٠٠ تعليق", { count: 300 }), { ...tiktok("تعليقات تيك توك عن السياحة", { count: 100 }), type: "edit_of_open_request", count: 100 }]);
+    const db = world();
+    await turn(db, "هات ٣٠٠ تعليق تيك توك عن السياحة");
+    const { r } = await turn(db, "خليهم ١٠٠ بس");
+    expect(r.contentAr).not.toBe(PLAN_NOT_READY_AR);
+    expect(live(db).map((m) => m.request_text)).toEqual(["تعليقات تيك توك عن السياحة، العدد ١٠٠"]);
+  });
+  it("J1: «كمّل» read as «other» after every part is prepared: «already prepared», never «not a request»", async () => {
+    scripted([
+      { type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "تعليقات تيك توك عن السياحة، وأخبار السياحة في مصر", platforms: ["tiktok"], content: ["comments", "articles"], objectives: [o("o1", "social.parents", { platform: "tiktok", request: "تعليقات تيك توك عن السياحة" }), o("o2", "social.comments", { platform: "tiktok", parent: "o1" }), o("o3", "web.search", { request: "آخر أخبار السياحة في مصر" })] }) },
+      { type: "other", reason: "x", reply: "", count: null },
+    ]);
+    const db = world();
+    await turn(db, "عايز تعليقات تيك توك عن السياحة، وكمان آخر أخبار السياحة في مصر");
+    const { r } = await turn(db, "كمّل");
+    expect(r.contentAr).toBe(GROUP_UNCHANGED_AR);
+    expect(live(db)).toHaveLength(2);
+  });
+});

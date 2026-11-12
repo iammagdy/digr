@@ -9,7 +9,7 @@ import { decideTurn, type ChatType, type Decision, type OpenRequest, type OpenSt
 import { FULL_RESEARCH_PREFIX_AR, greetingReplyAr, isFullResearchMethodologyAsk, methodologyReplyAr, methodologyTailAr, otherReplyAr, serviceAnswerAr } from "./messageType";
 import { listMethodologyMissions } from "./methodology/missions";
 import { buildRequestContract } from "./requestContract";
-import { briefNumbersAr, contractIsComplete, differsOnlyByCount, parseBrief, sameContract, storedBriefOf, validateBrief, withPartCounts, type ResearchBrief } from "./researchBrief";
+import { briefNumbersAr, contractIsComplete, differsOnlyByCount, numbersWritten, parseBrief, sameContract, storedBriefOf, validateBrief, withPartCounts, type ResearchBrief } from "./researchBrief";
 import { conditionChanged, conditionDriftOf, droppedRequirementsOf, groundedConditions, sameExecutedConditions, sameExecutedValues, unaccountedRequirements, inventedRequirementOf, type ConditionDrift, type ConditionKind, type ConditionPhrases, partBriefOf, partCardIdOf, partMissionIdOf, partsOf, PART_ID_ATTEMPTS, requirementLabelAr, RESEARCH_GROUP_MAX_PARTS, RESEARCH_GROUP_VERSION, samePartRequest, storedGroupOf, type IntentRequirement, type PartOutcome, type ResearchPart, type StoredGroupPart, type StoredResearchGroup } from "./researchGroup";
 import { randomUUID } from "node:crypto";
 import { normalizeDigits } from "../arabicDigits";
@@ -346,6 +346,12 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     ctx.outcome = "fallback_joined";
     return startMission(input, joined);
   }
+  // a short follow-up the model did not read as a request («كمّل», «تمام») in a conversation whose parts are already prepared: nothing changes, and the customer is told so (live evaluation round 8, J1), never «this is not a request»
+  if (decision.type === "other" && ctx.priorGroup && ctx.priorGroup.parts.some((p) => p.missionId) && currentMessageOf(ctx).trim().split(/\s+/).length <= 3) {
+    ctx.outcome = "group_unchanged_other";
+    await writeAnswer(input, GROUP_UNCHANGED_AR);
+    return { ok: false, contentAr: GROUP_UNCHANGED_AR, status: 200 };
+  }
   if (decision.type !== "data_request" && decision.type !== "edit_of_open_request") { ctx.outcome = "not_a_request"; return null; }
   const parsed = decision.brief;
   /**
@@ -377,7 +383,7 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
   const multiPart = ctx.registry !== undefined && (decision.briefParts ?? 0) >= 2;
   // words that name no data are asked first (a model that invented parts the customer never named, M5); only then is a multi-part reading that cannot be used kept from being reduced to the words
   if (!parsed.ok) { ctx.outcome = `schema_${parsed.issue}`; const asked = await askInsteadOfWords(`schema_${parsed.issue}`); if (asked) return asked; if (multiPart) return multiPartUnsafe(`schema_${parsed.issue}`); return null; }
-  const v = validateBrief(withPartCounts(parsed.brief), { customerTurns: ctx.customerTurns, assistantQuestion: ctx.assistantQuestion, prior: ctx.prior, semantic: ctx.semantic });
+  const v = validateBrief(withCountInSentence(withPartCounts(parsed.brief), currentMessageOf(ctx)), { customerTurns: ctx.customerTurns, assistantQuestion: ctx.assistantQuestion, prior: ctx.prior, semantic: ctx.semantic });
   if (!v.ok) {
     ctx.outcome = `rejected_${v.reason}`;
     // a private component is never planned: the same fixed answer as a typed one
@@ -503,6 +509,15 @@ export function missingQuestionAr(contract: ReturnType<typeof buildRequestContra
 /** Asked when the sentence to be planned leaves out something the customer wrote in this message. */
 export function requirementMissingAr(lost: IntentRequirement[]): string {
   return `فهمت طلبك، بس ${[...new Set(lost.map(requirementLabelAr))].map((x) => `«${x}»`).join(" و")} اللي كتبته مش ظاهر في الطلب اللي هجهّزه. أضيفه زي ما كتبته؟ ومش هنجهّز ولا هنخصم حاجة قبل ما توضّح وتعتمد.`;
+}
+/**
+ * THE COUNT IN THE SENTENCE (live evaluation round 8, E1 and K3: «خليهم ١٠٠ بس» → the model wrote 100 in `count` only; the brief was rejected and the correction waited). When the brief's count is a number the customer wrote in THIS message
+ * and the sentence writes no number at all, the sentence states it («، العدد ١٠٠») and is then validated like any other. A sentence that writes another number is left as it is (and rejected: never guessed).
+ */
+function withCountInSentence(brief: ResearchBrief, message: string): ResearchBrief {
+  if (brief.count === null || (brief.objectives ?? []).filter((o) => o.parent === null).length >= 2) return brief;
+  if (numbersWritten(brief.request).size > 0 || !numbersWritten(message).has(brief.count)) return brief;
+  return { ...brief, request: `${brief.request.replace(/[.،,\s]+$/u, "")}، العدد ${String(brief.count).replace(/\d/g, (d) => "٠١٢٣٤٥٦٧٨٩"[Number(d)])}` };
 }
 /** A new research request: no brief, no group and no open request of this conversation before it (its first message is the whole of what the customer asked). */
 /** Words that only say WHERE or WHAT KIND (platforms, collecting verbs, data nouns, fillers): a message made of nothing else gives no topic. */
