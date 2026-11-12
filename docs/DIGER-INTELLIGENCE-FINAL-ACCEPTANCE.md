@@ -531,3 +531,13 @@ The next step is the owner's test-account rollout with real providers, watching 
 **Decision:** NO-GO for customers until gates 4, 5 and 9 pass. The owner's two actions that unblock them:
 1. Give the Heroku worker `PROVIDER_KEYS_ENCRYPTION_KEY`, the same value as the website's.
 2. Provide a disposable test account, by name only, scoped through the existing test-account flags.
+
+### 11.10 Post-merge facts
+
+* **PR:** [iammagdy/digr#465](https://github.com/iammagdy/digr/pull/465) merged as **`dd6c9ec24bc59d12625d6178f62ebb7ce4870bbf`**, pinned to head `8776c70` (Vercel status «success»).
+* **Vercel production:** READY on `dd6c9ec` (`dpl_6gokYqLdnCpAEKpf15nm8dNMLDK3`).
+* **Heroku: not verified.**
+  * A new worker process (`w_worker.1_8a9b1986`) began beating at about 21:00 UTC, right after the merge.
+  * It still reports `version: "dev"` (read at 21:04:40 UTC).
+  * Either that restart was not a rebuild of `dd6c9ec`, or the build did not pass `SOURCE_VERSION` to `heroku-postbuild`. Only the Heroku build log can tell, and this session has no Heroku access.
+  * The new code reports "dev" exactly as before when no commit is available, so nothing is worse.
