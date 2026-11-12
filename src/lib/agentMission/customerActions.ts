@@ -22,7 +22,7 @@ import { sensitiveRequestRefusalAr } from "./guardRules";
  * What a CUSTOMER does with a mission, on the server, with the service-role client and an explicit owner check on every call (a customer reaches only their own missions; the browser never
  * holds the service key). The agent plans and works in the worker; the site creates the mission, shows it, approves it through the existing money functions, and cancels or answers it.
  */
-export type CustomerResult<T = Record<string, unknown>> = ({ ok: true } & T) | { ok: false; status: number; error: string; blockers?: OpenMissionView[] };
+export type CustomerResult<T = Record<string, unknown>> = ({ ok: true } & T) | { ok: false; status: number; error: string; blockers?: OpenMissionView[]; /** MULTI-OBJECTIVE RELIABILITY: the id the caller chose already exists (another turn created it); nothing was written. */ conflict?: true };
 const bad = (status: number, error: string): { ok: false; status: number; error: string } => ({ ok: false, status, error });
 
 const MIN_TEXT = 3;
@@ -49,7 +49,10 @@ async function researchMissionsInTheHour(client: any, userId: string, since: str
 }
 
 /** The mission of a chat request: created for the signed-in user (or the guest, who may look at the plan but must sign up before approving). The worker plans it. */
-export async function createCustomerMission(client: any, input: { userId: string; text: unknown }): Promise<CustomerResult<{ id: string }>> {
+/** The form of a mission id (random, or chosen by the chat for one part of a multi-part request: `msn_` and 20 hex). */
+export const MISSION_ID_FORM = /^msn_[a-f0-9]{20}$/;
+
+export async function createCustomerMission(client: any, input: { userId: string; text: unknown; /** MULTI-OBJECTIVE RELIABILITY: an id chosen by the server (never the customer) so a retried or concurrent turn cannot create the same part twice: the primary key refuses the second insert. */ id?: string }): Promise<CustomerResult<{ id: string }>> {
   const text = String(input.text ?? "").replace(/\s+/g, " ").trim();
   if (text.length < MIN_TEXT) return bad(400, "اكتب نص المهمة.");
   if (text.length > MAX_TEXT) return bad(400, "نص المهمة أطول من المسموح.");
@@ -64,9 +67,10 @@ export async function createCustomerMission(client: any, input: { userId: string
   if (!recent?.error && typeof recent?.count === "number" && recent.count >= AGENT_MAX_MISSIONS_PER_HOUR && (await researchMissionsInTheHour(client, input.userId, hourAgo, recent.count)) >= AGENT_MAX_MISSIONS_PER_HOUR) {
     return bad(429, "أرسلت عددًا كبيرًا من الطلبات في ساعة واحدة. جرّب بعد قليل؛ لن يُخصم شيء.");
   }
-  const id = `msn_${randomBytes(10).toString("hex")}`;
+  if (input.id !== undefined && !MISSION_ID_FORM.test(input.id)) return bad(400, "تعذّر بدء المهمة الآن. حاول بعد قليل؛ لم يُخصم شيء.");
+  const id = input.id ?? `msn_${randomBytes(10).toString("hex")}`;
   const { error } = await client.from(MISSION_TABLE).insert({ id, user_id: input.userId, created_by: input.userId, request_text: text, status: "queued" });
-  if (error) return bad(500, "تعذّر بدء المهمة الآن. حاول بعد قليل؛ لم يُخصم شيء.");
+  if (error) return { ...bad(500, "تعذّر بدء المهمة الآن. حاول بعد قليل؛ لم يُخصم شيء."), ...(input.id !== undefined && String(error?.code ?? "") === "23505" ? { conflict: true as const } : {}) };
   return { ok: true, id };
 }
 

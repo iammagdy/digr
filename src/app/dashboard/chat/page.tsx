@@ -1,6 +1,7 @@
 "use client";
 
 import { pointsAr } from "@/lib/pointsFormat";
+import { appendNewMessages, partCardMessagesOf, storedCardMissionOf } from "@/lib/agentMission/chatCards";
 import { METHODOLOGY_POINTS } from "@/lib/methodologyOffer";
 import { METHODOLOGY_CHOOSER_SENTENCE_AR } from "@/lib/agentMission/messageType";
 import { MethodologyChooser } from "@/components/mission/MethodologyOffer";
@@ -781,12 +782,8 @@ export default function ChatWorkspacePage() {
       };
 
       // MULTI-OBJECTIVE RESEARCH: every other part of the same request has its own stored message and card (the same messages a reload shows)
-      const partMessages: MessageItem[] = Array.isArray(data.agentMissionParts)
-        ? data.agentMissionParts
-            .filter((p: any) => typeof p?.id === "string" && typeof p?.messageId === "string")
-            .map((p: any) => ({ id: p.messageId, role: "assistant" as const, content: String(p.contentAr ?? ""), agentMissionId: p.id, createdAt: new Date().toISOString() }))
-        : [];
-      setMessages((prev) => [...prev, assistantMsg, ...partMessages]);
+      const partMessages: MessageItem[] = partCardMessagesOf(data.agentMissionParts, new Date().toISOString());
+      setMessages((prev) => appendNewMessages([...prev, assistantMsg], partMessages));
       return true;
     } catch (err: any) {
       clearTimeout(timeoutId);
@@ -1004,7 +1001,7 @@ export default function ChatWorkspacePage() {
             content: String(document.content_ar || document.content || "").slice(0, 20000),
             clarificationItems: document.clarification_items,
             fileShape: persistedFileShape(document.plan),
-            ...(typeof document.plan?.agentMissionId === "string" ? { agentMissionId: document.plan.agentMissionId } : {}),
+            ...(storedCardMissionOf(document.plan) ? { agentMissionId: storedCardMissionOf(document.plan)! } : {}),
             planQuote: savedQuote
               ? { ...savedQuote, status: quoteStatusById.get(quoteId) || "unknown" }
               : null,
