@@ -15,6 +15,7 @@ import type { AccountAccess } from "../../src/lib/treg/dataPolicy";
 import type { PricedPlan } from "../../src/lib/agentMission/plan";
 import { agentChatTurn } from "../../src/lib/agentMission/chatTurn";
 import { approveForCustomer, loadCustomerMission } from "../../src/lib/agentMission/customerActions";
+import { storedBriefOf } from "../../src/lib/agentMission/researchBrief";
 import { checkCustomerText } from "../../src/lib/agentMission/text";
 import { repriceStoredPlan } from "../../src/lib/agentMission/lifecycle";
 import type { CustomerMissionView } from "../../src/lib/agentMission/customerView";
@@ -49,6 +50,8 @@ export interface ReplayInput {
   makeStore?: () => MemoryStore;
   /** Runs after the customer read the card and before they approve (the plan editor, a second card read): the plan the worker then executes is the stored one at that moment. */
   beforeApproval?: (ctx: { client: any; missionId: string; db: MemoryDb; store: MemoryStore }) => Promise<void>;
+  /** Runs before the chat turn (seed the chat's settings, e.g. brief mode, or the conversation's earlier messages). */
+  beforeChat?: (db: MemoryDb) => void;
 }
 
 export interface ReplayResult {
@@ -115,6 +118,7 @@ export async function replay(input: ReplayInput): Promise<ReplayResult> {
   // 1. the chat turn
   db.seed("conversations", [{ id: "conv1", user_id: REPLAY_USER, title: "محادثة جديدة" }]);
   db.seed("messages", [{ id: "u1", conversation_id: "conv1", role: "user", user_id: REPLAY_USER }, { id: "a1", conversation_id: "conv1", role: "assistant", user_id: REPLAY_USER }]);
+  input.beforeChat?.(db);
   const turn = await agentChatTurn({ sb: client, userId: REPLAY_USER, conversationId: "conv1", userMsgId: "u1", assistantMsgId: "a1", message: input.request, conversationTitle: "محادثة جديدة" });
   if (!turn.ok) throw new Error(`the chat turn did not create a mission: ${turn.contentAr}`);
   const missionId = turn.missionId;
@@ -126,6 +130,8 @@ export async function replay(input: ReplayInput): Promise<ReplayResult> {
     store, client, catalog: loadTregCatalog(), driver, recorder: rec.recorder, commit: rec.commit, call: call as any, models: input.models ?? MODELS,
     resolveAccess: async () => input.access ?? NOT_ADMIN,
     notify: async (n) => { notices.push({ kind: n.kind, facts: n.facts, jobId: n.jobId }); },
+    // the brief the chat stored with the mission's card, read as the worker reads it (main.ts): only used while capability_discovery_v1 is on
+    readMissionBrief: async (missionId, userId) => storedBriefOf(db.rows("messages").filter((m: any) => m.role === "assistant" && m.user_id === userId && m.plan?.agentMissionId === missionId).pop()?.plan ?? null),
     ...(input.web ? { providerKey: async () => "test-provider-key", fetchFn: input.web.fetchFn as any } : {}),
   });
   const wire = (driver: ReturnType<typeof createFakeDriver>) => (input.deps ? input.deps(base(driver)) : base(driver));

@@ -154,7 +154,9 @@ export function discoverCapabilities(need: ResearchNeed, registry: CapabilityReg
     };
   }
   const stages = stagesOfNeed(need);
-  if (stages.length === 0) return { ...base, status: "needs_clarification" };
+  const unresolved = need.unresolved ?? [];
+  // the model understood a goal that no operation serves (or nothing executable at all): the customer is ASKED, with what can be collected now; never «unsupported» because a word was not recognised
+  if (stages.length === 0) return unresolved.length > 0 ? { ...base, status: "needs_clarification", messageAr: UNRESOLVED_AR, alternativeAr: availableAlternativeAr(registry) } : { ...base, status: "needs_clarification" };
 
   const out: StageDiscovery[] = [];
   const unsupported: CapabilityDiscovery["unsupported"] = [];
@@ -204,14 +206,51 @@ export function discoverCapabilities(need: ResearchNeed, registry: CapabilityReg
 
   const missing = unsupported.filter((u) => u.reason !== "unsupported_platform");
   const rootsFailed = stages.filter((s) => s.parentKey === null).every((s) => failedKeys.has(s.key));
-  const status: CapabilityDiscovery["status"] = missing.length === 0 ? "supported" : rootsFailed ? "unsupported" : "partial";
+  const status: CapabilityDiscovery["status"] = missing.length === 0 ? (unresolved.length > 0 ? "partial" : "supported") : rootsFailed ? "unsupported" : "partial";
   if (status === "supported") return { ...base, status, stages: out, limitations };
+  if (missing.length === 0) {
+    // every executable objective is served, but the model also understood a part nothing serves: that part is asked about with the feasible scope, never dropped silently
+    const kept = [...new Set(out.map((s) => operationLabelAr(s.stage.operation, s.stage.platform)))];
+    const platforms = [...new Set(unresolved.map((u) => u.platform).filter((p): p is string => p !== null && !(p in PLATFORM_AR)))];
+    const messageAr = platforms.length > 0 ? `${platforms.map((p) => `منصة ${UNSUPPORTED_PLATFORM_AR[p] ?? p}`).join(" و")} ليست من المصادر التي نجمع منها حاليًا، وجزء من طلبك يعتمد عليها.` : UNRESOLVED_AR;
+    return { ...base, status, stages: out, unsupported, limitations, messageAr, alternativeAr: `نقدر نجمع لك ${kept.join(" و")} بدون هذا الجزء. هل يناسبك هذا النطاق، أم تحب توضّح الجزء الآخر بطريقة تانية؟` };
+  }
   const missingLabels = [...new Set(missing.map((u) => operationLabelAr(u.operation, stages.find((s) => s.key === u.stageKey)?.platform ?? null)))];
   const why = missing.every((u) => u.reason === "provider_unavailable") ? "المصدر الذي يقدّمها غير متاح الآن" : missing.every((u) => u.reason === "not_permitted") ? "المصادر التي تقدّمها غير مسموح بها لحسابك" : "لا يوجد مصدر متاح يقدّمها بالبيانات المطلوبة";
   const messageAr = `لا نقدر حاليًا على جمع: ${missingLabels.join("، ")}، لأن ${why}.`;
   const kept = out.filter((s) => s.selected).map((s) => operationLabelAr(s.stage.operation, s.stage.platform));
   const alternativeAr = status === "partial" && kept.length > 0 ? `نقدر نجمع لك ${[...new Set(kept)].join(" و")} بدون الجزء غير المتاح. هل يناسبك هذا النطاق؟` : need.kind === "social" ? "نقدر نجمع بيانات عامة مشابهة من صفحات الويب العامة أو من منصة أخرى من المنصات المتاحة. أي بديل يناسبك؟" : "نقدر نبحث في صفحات الويب العامة عن نفس الموضوع. هل يناسبك ذلك؟";
   return { ...base, status, stages: out, unsupported, limitations, messageAr, alternativeAr };
+}
+
+/** Said when the model understood a goal no data operation serves: honest, and followed by what can be collected now. */
+export const UNRESOLVED_AR = "فهمت هدفك، لكن جزءًا منه لا يطابق أي نوع من البيانات العامة التي نقدر نجمعها حاليًا، ولن نستبدله بشيء آخر من غير ما نسألك.";
+
+/** The kinds of public data some available capability serves now (one Arabic phrase per operation), offered when the customer's goal must be re-stated. */
+export function availableAlternativeAr(registry: CapabilityRegistry): string {
+  const usable = registry.all.filter((c) => c.privacy === "public" && c.unavailable === null);
+  const ops = ["social.comments", "companies.discover", "company.contacts", "people.discover", "places.reviews", "web.search"] as const;
+  const labels = ops.filter((op) => usable.some((c) => c.operation === op)).map((op) => operationLabelAr(op, null));
+  return labels.length > 0 ? `المتاح الآن مثلًا: ${labels.join("، ")}. أي نوع منها يخدم هدفك؟ أو احكيلي هدفك بطريقة تانية.` : "احكيلي هدفك بطريقة تانية.";
+}
+
+/** Whether the request's objectives join social data with another kind of data (the chat asks which part first; the worker asks before the social compiler plans its part). */
+export function mixesSocialAndOther(d: CapabilityDiscovery): boolean {
+  const roots = (d.need.objectives ?? []).filter((o) => o.parent === null);
+  return d.need.kind === "mixed" && roots.some((o) => o.operation.startsWith("social.")) && roots.some((o) => !o.operation.startsWith("social."));
+}
+
+/** The parts of a mixed request, said back to the customer with the choice (code's words; the labels are the operations', never a provider). */
+export function mixedPartsAr(d: CapabilityDiscovery): string {
+  const roots = d.stages.filter((s) => s.stage.parentKey === null);
+  const chainLabel = (rootKey: string): string => {
+    const chain = [rootKey];
+    for (let i = 0; i < chain.length; i += 1) for (const s of d.stages) if (s.stage.parentKey === chain[i]) chain.push(s.stage.key);
+    const deepest = d.stages.filter((s) => chain.includes(s.stage.key)).pop()!;
+    return operationLabelAr(deepest.stage.operation, deepest.stage.platform);
+  };
+  const parts = [...new Set(roots.map((r) => chainLabel(r.stage.key)))];
+  return `طلبك فيه أكتر من جزء: ${parts.join("، ")}. بيانات وسائل التواصل بتتجهز في خطة لوحدها، وكل جزء تاني في خطة لوحده بسعره، ومفيش حاجة هتتشال من طلبك من غير ما تقرر. نبدأ بأنهي جزء؟`;
 }
 
 /** The customer-facing limitation sentences of a discovery (deduplicated, in stage order). */

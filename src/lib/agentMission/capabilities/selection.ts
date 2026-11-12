@@ -149,10 +149,32 @@ export function capabilitySelectionOf(plan: PlanLike, d: CapabilityDiscovery, op
 
 export type ScopeVerdict = { ok: true; checked: boolean } | { ok: false; issues: string[] };
 
-/** The stored approved plan still executes exactly the validated capabilities of its record. A plan with no record (made with the switch off) is not checked. */
-export function verifyApprovedScope(plan: PlanLike, catalog?: TregCatalog): ScopeVerdict {
+/**
+ * THE SERVER'S OWN MARK THAT A PLAN WAS MADE THROUGH CAPABILITY DISCOVERY (docs/LLM-FIRST-OBJECTIVES.md): written by the worker, create-only, in the mission's private folder when the plan with its record is shown (`required`, with the record's
+ * digest), and again with no digest when a later planning of the same mission made a plan without a record. Neither the customer nor the site can write it. With it, a stored plan whose record was REMOVED, or REPLACED by another record,
+ * is refused; without it (every plan made before discovery existed, or with the switch off) the plan is exactly as compatible as before.
+ */
+export interface ScopeAnchor { required: boolean; digest: string | null }
+export const SCOPE_ANCHOR_FOLDER = "capability_scope";
+
+/** The anchor written by the worker as a file body. */
+export const scopeAnchorBody = (digest: string | null): string => JSON.stringify({ v: DISCOVERY_VERSION, digest });
+/** The anchor read back from its file body (an unreadable body still REQUIRES a record: the server wrote it, so the plan was made through discovery). */
+export function scopeAnchorOf(body: string | null): ScopeAnchor {
+  if (body === null) return { required: false, digest: null };
+  try {
+    const o = JSON.parse(body) as { v?: unknown; digest?: unknown };
+    if (o && o.v === DISCOVERY_VERSION && o.digest === null) return { required: false, digest: null };
+    if (o && o.v === DISCOVERY_VERSION && typeof o.digest === "string" && /^[0-9a-f]{8}$/.test(o.digest)) return { required: true, digest: o.digest };
+  } catch { /* unreadable */ }
+  return { required: true, digest: null };
+}
+
+/** The stored approved plan still executes exactly the validated capabilities of its record. A plan with no record is not checked, UNLESS the server's anchor says it was made through capability discovery (then it is refused). */
+export function verifyApprovedScope(plan: PlanLike, catalog?: TregCatalog, anchor: ScopeAnchor = { required: false, digest: null }): ScopeVerdict {
   const rec = plan.capability_selection;
-  if (!rec) return { ok: true, checked: false };
+  if (!rec) return anchor.required ? { ok: false, issues: ["selection_record_missing"] } : { ok: true, checked: false };
+  if (anchor.required && anchor.digest !== null && rec.digest !== anchor.digest) return { ok: false, issues: ["selection_record_replaced"] };
   const issues: string[] = [];
   if (rec.v !== DISCOVERY_VERSION || !Array.isArray(rec.stages)) return { ok: false, issues: ["selection_record_unreadable"] };
   if (fnv(scopeText(rec.stages)) !== rec.digest) issues.push("selection_record_altered");

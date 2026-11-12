@@ -4,6 +4,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 44 (12 Nov 2026, after #454, main = `f5703c6`): LLM-first research objectives → verified capabilities (docs/LLM-FIRST-OBJECTIVES.md)
+
+**No SQL write, no flag change, no migration, no permission change, no paid model or provider call, no money/ledger/pricing/approval/auth/infrastructure line.**
+
+1. **Same one chat call (brief mode + discovery switch only):** the model adds structured `objectives` to its brief: the registry's operations as the execution vocabulary; a goal none serves is written `unsupported`. They are validated by code (schema, structure, grounding, nothing dropped, privacy).
+2. **Primary reading:** validated objectives are the need (several kinds per request, chain steps added by code); the keyword patterns of `need.ts` are only the fallback. The worker reads the brief the server stored with the mission's card and re-checks it against the mission's words.
+3. **Clarify, never guess:** an unclassifiable request is not «unsupported»; a goal nothing serves is asked with what is available; social data mixed with another kind is asked (which part first), never cut.
+4. **Approved plan integrity:** a create-only anchor in the mission's private folder marks plans made through discovery; a removed or replaced selection record is refused at execution (hold released whole); plans without an anchor (legacy) unchanged.
+5. **Tests:** `tests/llm-first-objectives.test.ts` (28, offline, scripted model, fake providers). Not proof of real model or provider behaviour.
+
+---
+
 ## Round 43 (11 Nov 2026, after #453, main = `efacb0a`): unified request-to-execution, capability discovery (docs/UNIFIED-CAPABILITY-DISCOVERY.md)
 
 **No SQL write, no flag change, no migration, no paid model or provider call, no money/ledger/pricing/approval/auth/infrastructure line.**

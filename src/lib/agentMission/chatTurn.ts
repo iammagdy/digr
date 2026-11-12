@@ -11,7 +11,7 @@ import { listMethodologyMissions } from "./methodology/missions";
 import { buildRequestContract } from "./requestContract";
 import { briefNumbersAr, contractIsComplete, differsOnlyByCount, sameContract, storedBriefOf, validateBrief, type ResearchBrief } from "./researchBrief";
 import { readSettingValue, scopedFlagOn } from "./scopedFlag";
-import { buildCapabilityRegistry, chatCapabilityLines, discoverCapabilities, researchNeedOf, CAPABILITY_DISCOVERY_FLAG_KEY, type CapabilityDiscovery, type CapabilityRegistry } from "./capabilities";
+import { buildCapabilityRegistry, chatCapabilityLines, discoverCapabilities, mixedPartsAr, mixesSocialAndOther, researchNeedOf, CAPABILITY_DISCOVERY_FLAG_KEY, type CapabilityDiscovery, type CapabilityRegistry } from "./capabilities";
 import { loadTregCatalog } from "../treg/catalog";
 import { blockedEndpointReason } from "../treg/blockList";
 import { policyVerdict } from "../treg/dataPolicy";
@@ -335,9 +335,25 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
 async function capabilityGate(input: AgentChatTurnInput, brief: ResearchBrief, ctx: BriefTurnContext): Promise<AgentChatTurnResult | null> {
   if (!ctx.registry) return null;
   const d = discoverCapabilities(researchNeedOf({ request: brief.request, brief }), ctx.registry);
+  // LLM-FIRST OBJECTIVES: social data and another kind in ONE request (comments and hotels' reviews, posts and articles): the social plan compiler plans social data only, so the parts are never silently cut to one: the customer chooses which
+  // part is prepared first (each part is its own plan and price); every objective stays in the brief until they answer
+  if (mixesSocialAndOther(d)) {
+    ctx.outcome = "objectives_mixed_ask";
+    const contentAr = mixedPartsAr(d);
+    await writeAnswer(input, contentAr, { researchBrief: { ...brief, status: "needs_clarification" } });
+    return { ok: false, contentAr, status: 200 };
+  }
+  // the model understood a goal nothing serves, and nothing else: the customer is asked (with what can be collected now), never told «unsupported» because a word was not recognised
+  if (d.status === "needs_clarification" && d.messageAr) {
+    ctx.outcome = "objectives_unresolved_ask";
+    const contentAr = capabilityLimitReplyAr(d);
+    await writeAnswer(input, contentAr, { researchBrief: { ...brief, status: "needs_clarification" } });
+    return { ok: false, contentAr, status: 200 };
+  }
   if (d.status !== "unsupported" && d.status !== "partial" && d.status !== "blocked") return null;
   // a social request whose platform is served goes on: the social plan compiler has its own validated cards for the child steps (replies, comments) and states before approval, with the price, any step it cannot serve
-  if (d.status === "partial" && d.need.kind === "social") { ctx.outcome = "capability_partial_social_compiler"; return null; }
+  // (a part the model understood that no operation serves is still asked: it is not a child step of the compiler)
+  if (d.status === "partial" && d.need.kind === "social" && (d.need.unresolved ?? []).length === 0) { ctx.outcome = "capability_partial_social_compiler"; return null; }
   ctx.outcome = `capability_${d.status}`;
   const contentAr = capabilityLimitReplyAr(d);
   await writeAnswer(input, contentAr, d.status === "blocked" ? undefined : { researchBrief: { ...brief, status: "needs_clarification" } });
