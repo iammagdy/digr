@@ -437,6 +437,9 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // THE WEB TOOLS ONLY WHEN THE WORKER HAS A KEY FOR THEM (webAvailability.ts): a tool that would only be refused is not offered, not listed, not named in the prompt
   const webAvailable = deps.providerKey ? await resolveWebAvailability(deps.providerKey) : NO_WEB;
   deps.log?.(`web_tools ${mission.id} firecrawl=${webAvailable.firecrawl} contextdev=${webAvailable.contextdev}`);
+  // (round 53) the same two booleans for the ADMIN, in the database: production had 71 web calls refused «no key» on Oct 29-30 and none offered since, although the keys are stored; whether the deployed worker can
+  // reach Firecrawl and Context.dev is now provable per mission (never a key, never shown to the customer)
+  if (deps.providerKey) await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي للمشرف: توفر مصادر الويب لهذا التخطيط.", counts: { adm_web_firecrawl: webAvailable.firecrawl ? 1 : 0, adm_web_contextdev: webAvailable.contextdev ? 1 : 0 } }).catch(() => undefined);
   const web = deps.providerKey && anyWebAvailable(webAvailable) ? createWebGateway({ store, missionId: mission.id, jobId: null, phase: "planning", budget, recorder: deps.recorder, providerKey: deps.providerKey, fetchFn: deps.fetchFn, counter }) : undefined;
   const state = newRunState(await lastOut(store, mission.id));
   const pricingSettings = normalizeMissionPricingSettings(settings[MISSION_PRICING_SETTING_KEY]);

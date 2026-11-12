@@ -384,3 +384,150 @@ The next step is the owner's test-account rollout with real providers, watching 
 * **Real planner acceptance: still 26/31 (83.9%, R4), below the 90% target.** No real run was authorized in this round, so the effect of these fixes on the real planner is NOT measured. The 90% target is not claimed.
 * **Offline replay of the recorded rejections** (deterministic, no model): of 88 recorded «code has no Arabic title» issues, **86** are removed by the new titles (the 2 left, `email_type` and `position`, are ambiguous and stay the model's to name). **9** of the 363 refused proposals had title issues ONLY and would now pass that check (R2 M5, R3 J3, P4 I1/J3/Z10/Z13, P5 Z5, R4 J3's articles mission and Z7, both of which then succeeded after the planner retitled: each saved one turn); none of the four R4 failures is fully fixed by titles alone (each also had content or mapping issues). **27** refused proposals cited an empty or wrapped output: `rows_in_code` and the empty-mapping warning target them, but only a real run can show the effect. (Issue lists of the records are clipped at 900 characters, so title issues are, if anything, under-counted.)
 * **Next measurement:** one real planner run of the 31 planning missions under a fresh, separate owner authorization, compared with R4 and P5 on the same cases.
+
+## 11. Round 53: comprehensive real-world acceptance (12 Nov 2026)
+
+**Authorization:** Budget A $20 for new non-TREG spending; Budget B $1 for new TREG spending. The earlier missions' $10.5776 is NOT counted here. A new mission-only ledger was opened, with a separate cumulative guard state (Anthropic cap $12, worst-case reservation before every attempt).
+
+**Credentials in this environment:** only the dedicated Anthropic evaluation key. There is no TREG, Firecrawl, Context.dev, Supabase-write, Heroku or browser test-account credential. So:
+
+* no real TREG, Firecrawl or Context.dev call was made from here;
+* real-provider evidence below comes from production's own call log (read-only SQL);
+* nothing was copied out of production secrets.
+
+### 11.1 Results, separated by kind of evidence
+
+| Kind | What was measured | Result |
+|---|---|---|
+| **Real Anthropic, planner** (synthetic providers) | The frozen suite, 4 full runs | a1 on main `092a010`: **29/32** (R4's 31 missions: **28/31 = 90.3%**). After the fixes: a2 **31/32**, a3 **30/32**, a4 (final code) **30/31**. Together **91/95 = 95.8%**. **0 internal planner failures** after the fixes (a1: 1, G2). Every remaining miss is a question about the synthetic app-store data (Z35, Z30, M5). |
+| **Real Anthropic, chat** | 97 conversations per run | a1 97/97, a2 97/97, a3 95/97, a4 **97/97**. Capability selection 20/20, 20/20, 19/20, 19/19. Lost requirements 0, 0, **1** (a3 E1, below), 0. Duplicates, provider-name leaks and false refusals: 0 in every run. |
+| **Provider selection in plans** | Families per run | 9–11 cross-provider plans per run (catalog + Context.dev parsers), 11–15 Context.dev stages per run. |
+| **Real providers (production history, read-only)** | `mission_calls`, last 30 days | §11.3 |
+| **Financial safety (production, read-only)** | `missions`, `credit_ledger` | §11.4 |
+| **Browser** | Real Chromium on diger.tech | Public pages only (§11.5). The authenticated journey is BLOCKED: no disposable test-account credentials. |
+| **Deployed worker** | Heartbeat | `version: "dev"` until this round's fix deploys (§11.6). |
+| **Offline** | Full suite on the final head | §11.7 |
+
+### 11.2 Root causes found and fixed (each with a regression test, mutation-checked)
+
+| Case | Evidence | Class | Fix |
+|---|---|---|---|
+| **G2** «أسماء مديري التسويق في شركات الأدوية» | a1: the chat model wrote one first `people.discover`; discovery validated a first-level people stage only. The plan check refuses a first-level people stage on a contact source (it asks for companies → people), and discovery then refused the companies → people plan. Every plan was refused. | C, capability discovery | A first people objective whose own words name companies gets the companies step as its parent: the chain the registry, the plan check and the prompt already require. «مديري» was added to the people words. (`need.ts`) |
+| **P1** «هات مطاعم المعادي وتقييماتها» | a1: both stages were sampled, then the planner asked «كم تقييمًا تريد من كل مطعم؟». | B, prompt | A number the customer did not give is a stated default on the card, never a question. A question stays for an unclear SCOPE. (`system.md`) |
+| **E1**, turn 3 «آخر شهر» | a3: the real model gave no brief. The code's fallback question read the last message only and asked «من أنهي منصة؟» right after «تعليقات من تيك توك». | G, chat code | The platform is read from every turn. (`chatTurn.ts`) |
+| **Fragment mission** (found by a probe of E1) | With a request already open, a follow-up the model answers with no brief made a SECOND live mission of the fragment alone. The words path replaces only `plan_ready`/`needs_input`. | H, chat code | Nothing is prepared from a fragment of a conversation in progress. The customer gets the existing «ابعتها تاني» answer. A follow-up that is itself a whole request still becomes one. (`chatTurn.ts`) |
+| **Context.dev people search** | It answered no person in every earlier eval run. | I, fixture | The eval answers synthetic people. (`run.eval.ts`) |
+
+**Not fixed, documented:**
+
+* **E1 in a3 also lost the topic «السياحة»** at turn 4: the model's brief dropped it. This happened in 1 of the 4 runs of this round, and in none of rounds 2–4 or the stability runs. The card shows the request before approval, and nothing is held. Widening the code's requirement check to earlier turns would break legitimate corrections («خليها القاهرة بدل الإسكندرية»), so it stays a model-variability defect.
+* **Z36** (the place attributed to the wrong part; the customer is asked) is the known round-51 case.
+* The app-store questions (Z35, Z30, M5) come from fixtures that still repeat reviews and never put the topic into app names.
+* `email_type` and `position` stay untitled on purpose.
+* «ألف» written in words is still not read as a count.
+
+### 11.3 Real provider evidence (production `mission_calls`, last 30 days, read-only)
+
+| Area (catalog) | Calls | ok | Rows | USD | Verdict |
+|---|---|---|---|---|---|
+| X posts / comments / replies | 858 / 189 / 7 | 821 / 167 / 0 | 14,855 / 1,369 / 0 | 1.75 / 0.28 / 0.02 | PROVEN_WORKING; X **replies** gave 0 rows in 7 calls (6 empty) |
+| TikTok posts / comments / replies | 83 / 201 / 258 | 73 / 183 / 258 | 1,138 / 3,723 / 752 | 0.06 / 0.13 / 0.15 | PROVEN_WORKING |
+| Instagram posts / comments / replies | 30 / 45 / 78 | 28 / 39 / 77 | 281 / 361 / 85 | 0.04 / 0.03 / 0.08 | PROVEN_WORKING |
+| Facebook posts / comments / replies | 58 / 2 / 81 | 39 / 2 / 77 | 232 / 8 / 166 | 0.25 / 0.00 / 0.10 | PROVEN_WORKING |
+| YouTube videos / comments / replies | 55 / 102 / 9 | 33 / 84 / 9 | 549 / 1,095 / 12 | 0.04 / 0.09 / 0.01 | PROVEN_WORKING |
+| Companies | 360 | 259 | 7,369 | 1.12 | PROVEN_WORKING (62 failed calls) |
+| People | 273 | 174 | 375 | 0.32 | PROVEN_WORKING (67 empty) |
+| Places / place reviews | 34 / 9 | 17 / 6 | 48 / 180 | 0.01 / 0.00 | PROVEN_WORKING, thin volume |
+| App stores | 0 | – | – | – | NOT_TESTED in production (capability added in round 51) |
+| **Firecrawl** (search, scrape) | 24 | 0 | 0 | 0 | **PROVIDER_ERROR on the deployed worker**: all refused `source_unavailable` (Oct 29–30), none offered since |
+| **Context.dev** (search, scrape, people, maps, phones) | 47 | 0 | 0 | 0 | **PROVIDER_ERROR on the deployed worker**, same cause |
+
+**The Firecrawl/Context.dev finding:**
+
+* **Both keys ARE in the encrypted provider store** (`provider_api_keys`, set Oct 23).
+* **The worker uses TREG pool keys successfully:** 2,490 calls since Oct 23, under a separate secret.
+* **But it resolved no web key:** 71 refusals on Oct 29–30, then 0 web calls in the 133 missions since. On Oct 31 web tools began to be hidden when there is no key.
+* **The most likely cause** is that the worker lacks `PROVIDER_KEYS_ENCRYPTION_KEY` (the website's store secret). This is an infrastructure setting, not changed here.
+* **Consequence:** every cross-provider plan the planner now makes (9–11 per eval run) would fall back to the catalog on the deployed worker until that is set.
+* **Making it provable:** each planning run now records `adm_web_firecrawl` / `adm_web_contextdev` (0/1, never a key) for the admin.
+
+### 11.4 Financial safety (production, read-only; nothing written)
+
+* Over the last 30 days, 166 missions were completed.
+* Every one of the following is **0**:
+  * completed without approval;
+  * a job without approval;
+  * charged above the reservation;
+  * a negative charge;
+  * charged with nothing delivered;
+  * a user with a negative balance;
+  * a job reserved, released or settled twice.
+* Five jobs carry two `charge` rows. Each second row is a separate add-on purchase («شراء صياغة المنهجية الأكاديمية»), not a repeated settlement.
+* Release-first settlement was observed: release and charge share one timestamp.
+* The offline financial suites are part of the full suite (§11.7).
+* **No financial code was changed in this round.**
+
+### 11.5 Browser (real Chromium against https://diger.tech)
+
+* Desktop 1366×900 and iPhone 13: `/` and `/login` answer 200, `lang="ar"`, `dir="rtl"`, with no horizontal overflow. The login page renders correctly in Arabic on the phone (screenshot kept as session evidence).
+* `/chat` is 404: the chat lives behind login.
+* **The authenticated chat → plan → approval → files journey was NOT exercised.** No disposable test account's credentials are available. Creating a production account was not authorized.
+
+### 11.6 Deployment verifiability
+
+**Worker version:**
+
+* **Why it says "dev":** Heroku sets `SOURCE_VERSION` only during the build, and `HEROKU_SLUG_COMMIT` only with the dyno-metadata feature, an infrastructure setting.
+* **The fix:** `heroku-postbuild` now ends with `node scripts/write-build-info.mjs`. It writes the build commit to `agent/build-info.json` (gitignored) and never fails the build. The worker reports it, and only a hexadecimal commit id is ever reported.
+* **Not changed:** no Heroku setting, credential, release phase or permission.
+
+**Delivered files:**
+
+* Recent completed missions carry `result.xlsx` and `result.csv` in storage, with correct MIME types; for example, 11.5 KB and 2.1 KB for a 5-unit mission.
+* Their CONTENT was not opened: read-only SQL cannot read storage objects.
+* The PDF methodology is a separate, purchased add-on.
+
+### 11.7 Offline gates (head `2aca9c1`)
+
+* **Full suite:** 13,308 passed, 0 failed, 47 expected-fail, 65 skipped (961 files).
+* **Typechecks:** root and worker clean.
+* **Production build:** OK. Client-bundle secret scan: 209 files, clean.
+* **Evaluation key:** found in 0 of 6,045 files and 0 times in git history.
+* **New tests:**
+  * `planner-reliability-r53` (7);
+  * `chat-fallback-question-r53` (4);
+  * `worker-build-version` (5);
+  * `worker-web-availability-event` (3).
+
+### 11.8 Spending audit (this mission only)
+
+| Provider | Spent | Ceiling |
+|---|---|---|
+| Anthropic (`claude-haiku-5-5`, evaluation key) | **$3.3098**: 1,598 requests, all HTTP 200, 30.2M input + 0.59M output tokens. Computed by the guard from billed usage at list price; not an invoice | $12 cap inside Budget A |
+| TREG | **$0.00** (no credential here) | $1.00 |
+| Firecrawl | **0 credits, $0.00** (no credential here) | Budget A |
+| Context.dev | **$0.00** (no credential here) | Budget A |
+| **Total non-TREG** | **$3.3098** | $20.00 |
+| **Total TREG** | **$0.00** | $1.00 |
+| **Total incremental** | **$3.3098** | $21.00 |
+
+### 11.9 Go / no-go for a limited customer test
+
+| Gate | Status |
+|---|---|
+| 1. Real planner ≥ 28/31 | **MET** on synthetic providers: a1 28/31 on R4's missions; after the fixes 91/95 over 3 runs |
+| 2. No silent loss of requirements | **MET with one exception**: the model dropped a topic in 1 of 4 runs (shown on the card before approval) |
+| 3. Provider choices backed by evidence | **PARTLY**: catalog sources proven in production; web providers not reachable from the worker |
+| 4. Real calls for TREG, Firecrawl, Context.dev | **TREG MET** (production history). **Firecrawl / Context.dev FAILED** on the worker (most likely a missing secret) |
+| 5. Cross-provider execution in real execution | **NOT MET**: never executed in production |
+| 6. No execution before approval | **MET** (production SQL and offline tests) |
+| 7. Pricing and settlement safety | **MET** (production SQL and offline suites) |
+| 8. Real Excel / CSV / PDF correct | **PARTLY**: files exist with correct types; content not opened |
+| 9. Browser journey | **NOT MET**: blocked by the missing test-account credentials |
+| 10. No critical privacy or security defect | **MET** (no leak, key scan clean, private requests refused) |
+| 11. Deployed commits verified | Vercel: yes. Heroku: proven only once the worker reports a commit after this round's merge |
+| 12. Experimental features restricted | **MET**: production flags unchanged and OFF for customers |
+
+**Decision:** NO-GO for customers until gates 4, 5 and 9 pass. The owner's two actions that unblock them:
+1. Give the Heroku worker `PROVIDER_KEYS_ENCRYPTION_KEY`, the same value as the website's.
+2. Provide a disposable test account, by name only, scoped through the existing test-account flags.

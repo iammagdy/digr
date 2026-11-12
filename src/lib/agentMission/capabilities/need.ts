@@ -65,7 +65,7 @@ const COMPANY_WORDS = /شركا?ت|شركه|مكاتب|وكالات|وكاله|�
 const PLACE_WORDS = /فنادق|فندق|مطاعم|مطعم|كافيهات|كافيه|اماكن|محلات|عيادات|مستشفيات|صيدليات|منتجعات|معالم|hotels?|restaurants?|cafes?|places|clinics|resorts|attractions/;
 const REVIEW_WORDS = /تقييمات|تقييم|ريفيوهات|ريفيو|مراجعات|اراء\s+(?:الزوار|النزلاء|العملاء)|reviews?|ratings?/;
 const WEBSITE_WORDS = /مواقعهم|مواقعها|موقعهم|مواقع\s*(?:ال)?(?:شركات|الكترونيه|ويب)|ويب\s*سايت|websites?|domains?|روابط\s*(?:ال)?مواقع/;
-const PEOPLE_WORDS = /مديرين|مدراء|مسؤولين|صناع\s*(?:ال)?قرار|موظفين|decision\s*makers|managers|executives|ceos?/;
+const PEOPLE_WORDS = /مديرين|مديري|مدراء|مسؤولين|مسئولين|صناع\s*(?:ال)?قرار|موظفين|decision\s*makers|managers|executives|ceos?/;
 const WEB_WORDS = /اخبار|مقالات|مدونات|منتديات|مواقع\s*(?:ال)?اخبار|صحف|جرايد|news|articles|blogs|forums|web\s*pages|اراء\s*(?:ال)?ناس|اراء/;
 /** Words that ask for news or articles themselves (a subset of WEB_WORDS: not «آراء»). */
 const NEWS_WORDS = /اخبار|مقالات|مدونات|صحف|جرايد|(?:^|[^a-z])(?:news|articles|blogs)(?:[^a-z]|$)/;
@@ -103,6 +103,16 @@ function needOfObjectives(objectives: ReadonlyArray<BriefObjective>, text: strin
     if (o.operation === "unsupported" || (social && !isServedPlatform(o.platform)) || (o.parent !== null && dropped.has(o.parent))) {
       dropped.add(o.id);
       unresolved.push({ operation: o.operation, platform: o.platform });
+      continue;
+    }
+    // PEOPLE AT COMPANIES ARE READ FROM THE COMPANIES (round 53, real planner G2): «أسماء مديري التسويق في شركات الأدوية» written by the model as ONE first people search was validated as a first-level stage only, while the plan
+    // check refuses a first-level people stage on a contact source and asks for companies → people: every plan was refused. When the objective's own words name companies, the companies step is added as its parent (the chain the
+    // registry, the plan check and the planner's prompt already require); a people search that names no companies stays a first search.
+    if (o.operation === "people.discover" && o.parent === null && COMPANY_WORDS.test(fold(o.request ?? (objectives.length === 1 ? text : "")))) {
+      const companies = executable.find((x) => x.operation === "companies.discover" && x.parent === null);
+      const parentId = companies?.id ?? `${o.id}_companies`;
+      if (!companies) executable.push({ id: parentId, operation: "companies.discover", platform: null, parent: null, contacts: [] });
+      executable.push({ id: o.id, operation: "people.discover", platform: null, parent: parentId, contacts: [] });
       continue;
     }
     executable.push({ id: o.id, operation: o.operation as NeedObjective["operation"], platform: social ? (o.platform as SocialPlatform) : null, parent: o.parent, contacts: [...o.contacts] });

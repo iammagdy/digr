@@ -379,15 +379,28 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     if (words.privacy === "blocked" || (words.kind !== "unknown" && decision.briefRawStatus !== "needs_clarification" && customerGaveTopic(ctx.customerTurns))) return null;
     // the model's own question, unless the model did not read a request at all (its type was overruled by the keyword rule: its reply answers something else, possibly a refusal)
     // (a request about the customer's own business that nobody named is asked WHICH one, not which platform: live evaluation round 51, D2)
+    // (the platform is read from EVERY turn of the conversation, not the last one: «آخر شهر» after «تعليقات من تيك توك» was asked which platform again, round 53, E1)
     const ownUnnamed = selfReferenceUnresolved(ctx.customerTurns);
-    const question = (!decision.overruled && decision.reply) || (ownUnnamed ? selfReferenceQuestionAr(ownUnnamed) : customerGaveTopic(ctx.customerTurns) ? missingQuestionAr(buildRequestContract(currentMessageOf(ctx))) : TOPIC_QUESTION_AR);
+    const question = (!decision.overruled && decision.reply) || (ownUnnamed ? selfReferenceQuestionAr(ownUnnamed) : customerGaveTopic(ctx.customerTurns) ? missingQuestionAr(buildRequestContract(ctx.customerTurns.join(" "))) : TOPIC_QUESTION_AR);
     ctx.outcome = reason;
     await writeAnswer(input, question, ctx.prior ? { researchBrief: { ...ctx.prior, status: "needs_clarification" } } : undefined);
     return { ok: false, contentAr: question, status: 200 };
   };
   // a follow-up with no brief on a request whose parts are already prepared («كمّل», «تمام»): nothing changes, and the customer is told so (live evaluation round 4, J1)
   if (!parsed && ctx.priorGroup && ctx.priorGroup.parts.some((p) => p.missionId)) { ctx.outcome = "group_unchanged_no_brief"; await writeAnswer(input, GROUP_UNCHANGED_AR); return { ok: false, contentAr: GROUP_UNCHANGED_AR, status: 200 }; }
-  if (!parsed) { ctx.outcome = "none"; return askInsteadOfWords("none"); }
+  if (!parsed) {
+    ctx.outcome = "none";
+    const asked = await askInsteadOfWords("none");
+    if (asked) return asked;
+    // A REQUEST IS OPEN and the model answered this follow-up with no brief (round 53, a probe of the real a3 run, E1): the words path made a SECOND live mission of the fragment alone («آخر شهر»), because a request still being planned is not
+    // replaced there. As when the model could not be read at all: nothing is prepared from a fragment of a conversation in progress; the customer sends it again and the open request is kept as it is.
+    if ((ctx.prior !== null || ctx.priorGroup || (open && open.state !== "needs_input")) && researchNeedOf({ request: currentMessageOf(ctx) }).kind === "unknown") {
+      ctx.outcome = "no_brief_in_conversation";
+      await writeAnswer(input, MODEL_RETRY_AR);
+      return { ok: false, contentAr: MODEL_RETRY_AR, status: 200 };
+    }
+    return null;
+  }
   // MULTI-OBJECTIVE RESEARCH: a reading of SEVERAL parts that cannot be used as written is never replaced by one mission read from the words (it would silently keep one part and drop the others): the customer continues with one word
   const multiPartUnsafe = async (reason: string): Promise<AgentChatTurnResult> => {
     ctx.outcome = `multi_part_unsafe_${reason}`;
