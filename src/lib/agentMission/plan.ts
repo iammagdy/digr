@@ -320,6 +320,32 @@ export function isInternalColumn(c: { key: string; title_ar: string }): boolean 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
 /** Every string value of a sample row that looks like an id or a link must be present in the evidence the stage cites. */
+/**
+ * WHY A CITED OUTPUT COULD NOT BE READ (live evaluation, the real planner: plans rejected again and again for yield_from and sample rows, and the planner did not see why). Only the REASON of the same rule is made explicit: what the cited
+ * id holds. Nothing is accepted that was refused before.
+ */
+export function yieldFromDiagnosis(yieldId: string, text: string | null): string {
+  if (!yieldId) return "You gave no yield_from: map the rows of the measured page in run_code, return the ARRAY itself, and cite the out_ id it returns.";
+  if (!/^out_\d+/.test(yieldId)) return `«${yieldId.slice(0, 40)}» is not an output id: a call id (call_…) is the raw page; cite the out_ id that run_code returned for the mapped rows.`;
+  if (text === null) return `«${yieldId}» is not an output of this mission: cite an out_ id that run_code returned in this planning.`;
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { return `«${yieldId}» is not JSON: run_code must return the array of mapped rows itself.`; }
+  if (Array.isArray(parsed)) return parsed.length === 0 ? `«${yieldId}» is an EMPTY array: map the rows of a page that returned rows.` : `«${yieldId}» is an array whose items are not all objects: each item must be one row object keyed by this stage's column keys.`;
+  if (parsed && typeof parsed === "object") {
+    const keys = Object.keys(parsed as Record<string, unknown>).slice(0, 8);
+    const arrayKey = keys.find((k) => Array.isArray((parsed as Record<string, unknown>)[k]));
+    return `«${yieldId}» holds a JSON OBJECT (keys: ${keys.join(", ") || "none"}), not an array${arrayKey ? `: return the «${arrayKey}» array itself from run_code (not wrapped in an object) and cite the new out_ id` : ""}.`;
+  }
+  return `«${yieldId}» holds a single value, not an array of rows.`;
+}
+
+/** Why no sample row could be taken from the outputs a stage cites (see yieldFromDiagnosis). */
+export function sampleRowsDiagnosis(ids: ReadonlyArray<string>, evidenceText: (id: string) => string | null): string {
+  const outs = ids.filter((x) => x !== "");
+  if (outs.length === 0) return "This stage cites no out_ id (measured_by lists only call_ ids, and yield_from is empty).";
+  return outs.slice(0, 3).map((id) => yieldFromDiagnosis(id, evidenceText(id))).join(" ");
+}
+
 function sampleRowIssues(row: Record<string, unknown>, evidence: string, stageKey: string): string[] {
   const issues: string[] = [];
   for (const [k, v] of Object.entries(row)) {
@@ -497,8 +523,10 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
       if (!isRecord(c) || !KEY_RE.test(String(c.key ?? "")) || colKeys.has(String(c.key))) { issues.push(`${label}: every column needs a unique key (letters, digits, underscores)`); continue; }
       colKeys.add(String(c.key));
       // a column given by its KEY ALONE gets its Arabic title from the code when the contract or the field classes know the key (audit G14: the model need not write what the code holds); an unknown key still needs the model's title
-      const t = checkCustomerLabel(c.title_ar === undefined || c.title_ar === null || c.title_ar === "" ? knownColumnTitleAr(String(c.key)) ?? c.title_ar : c.title_ar);
-      if (t.issues.length) issues.push(`${label} column «${c.key}»: ${t.issues.join("; ")}`);
+      const untitled = c.title_ar === undefined || c.title_ar === null || c.title_ar === "";
+      const t = checkCustomerLabel(untitled ? knownColumnTitleAr(String(c.key)) ?? c.title_ar : c.title_ar);
+      // (round 51: the real planner left out the title of keys code does not know, «maps_url», and read only «the text is empty»: the reason is now said with the fix; the rule is unchanged)
+      if (t.issues.length) issues.push(untitled && knownColumnTitleAr(String(c.key)) === null ? `${label} column «${c.key}»: code has no Arabic title for this key, so give it \`title_ar\` (a short everyday Arabic title, e.g. «رابط الخريطة»), or rename the key to one code knows (link, url, name, rating, …)` : `${label} column «${c.key}»: ${t.issues.join("; ")}`);
       // every row already carries its own id and its parent's id: a column that only repeats an id, or a second column with the same title, is dropped (the sheet is for people to read)
       if (isInternalColumn({ key: String(c.key), title_ar: t.text }) || colTitles.has(t.text)) continue;
       colTitles.add(t.text);
@@ -540,7 +568,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
       if (missing.length > 0) issues.push(`${label}: the source gives fields the customer would want in the file that no column holds: ${missing.map((f) => `${FIELD_LABEL_AR[f.cls]} (${f.path})`).join(", ")}. Add a column for each (map it in your run_code and give it an Arabic title like «${FIELD_LABEL_AR[missing[0].cls]}»): the file keeps every useful field of the source`);
     }
     // (a delivered PEOPLE stage is exempt: the e-mail and phone columns and their finder steps are added to it by code, contactFinders.ts)
-    if (lookup.isContactSource?.(endpointId) && !cleanColumns.some((c) => c.kind !== undefined) && !(raw.deliver === true && isPeopleStage({ parent_key: parentKey, title_ar: title.text, ...(lookup.noRelevance === true && lookup.endpointCapability ? { capability: lookup.endpointCapability(endpointId) } : {}), ...(isRecord(raw.role_preference) ? { role_preference: raw.role_preference } : {}) }))) issues.push(`${label}: a contact stage must mark its e-mail / phone columns with kind "work_email" or "phone" (their values are verified by code: a verified value fills the cell and an unverified one leaves it EMPTY; a row that is a named person is delivered either way, only a row that is nothing but an address with none verified is not delivered or charged)`);
+    if (lookup.isContactSource?.(endpointId) && !cleanColumns.some((c) => c.kind !== undefined) && !(raw.deliver === true && isPeopleStage({ parent_key: parentKey, title_ar: title.text, ...(lookup.noRelevance === true && lookup.endpointCapability ? { capability: lookup.endpointCapability(endpointId) } : {}), ...(isRecord(raw.role_preference) ? { role_preference: raw.role_preference } : {}) }))) issues.push(`${label}: a contact stage must mark its e-mail / phone columns with kind "work_email" or "phone" (their values are verified by code: a verified value fills the cell and an unverified one leaves it EMPTY; a row that is a named person is delivered either way, only a row that is nothing but an address with none verified is not delivered or charged)${parentKey === null ? `. Add the source's e-mail / phone field as a column with that kind; or, when the customer wants the people's names and roles at companies, plan the companies first and this stage under them (parent_key: the companies' stage), and code adds the e-mail and phone finder steps itself` : ""}`);
     // THE SAMPLE ROWS the model omitted are the first rows of the output it cites (`yield_from`, else a cited output), kept by the relevance rule when there is one (audit G14: they were always copies of rows the code already reads)
     let samples = Array.isArray(raw.sample_rows) ? raw.sample_rows : [];
     const sampleSourceIds = [String(raw.yield_from ?? ""), ...(Array.isArray(raw.measured_by) ? raw.measured_by.map(String) : [])].filter((x) => /^out_\d+/.test(x));
@@ -552,7 +580,8 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
         try { const parsed = JSON.parse(text) as unknown; if (Array.isArray(parsed) && parsed.length > 0 && parsed.every(isRecord)) { samples = (parsed as Array<Record<string, unknown>>).slice(0, MAX_SAMPLE_ROWS_PER_STAGE); samplesDerived = true; break; } } catch { /* the next output */ }
       }
     }
-    if (samples.length < 1 || samples.length > MAX_SAMPLE_ROWS_PER_STAGE) issues.push(`${label}: 1 to ${MAX_SAMPLE_ROWS_PER_STAGE} sample_rows, rows you really saw`);
+    if (samples.length > MAX_SAMPLE_ROWS_PER_STAGE) issues.push(`${label}: 1 to ${MAX_SAMPLE_ROWS_PER_STAGE} sample_rows, rows you really saw (you gave ${samples.length})`);
+    else if (samples.length < 1) issues.push(`${label}: 1 to ${MAX_SAMPLE_ROWS_PER_STAGE} sample_rows, rows you really saw. Either write them, or cite in yield_from (or measured_by) the out_ id of a run_code output that is a JSON ARRAY of the mapped rows: code then takes the samples from it. ${sampleRowsDiagnosis(sampleSourceIds, lookup.evidenceText)}`);
     for (const s of samples) {
       if (!isRecord(s)) { issues.push(`${label}: a sample row must be an object`); continue; }
       if (evidence && !samplesDerived) issues.push(...sampleRowIssues(s, evidence, key));
@@ -576,12 +605,15 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
       if (!checkedRel.ok) issues.push(...checkedRel.issues.map((m) => `${label}: ${m}`));
       else {
         // a COMPANY stage's terms are the sector in Arabic AND English with the request's frame words taken out (entities.ts): the model's own list is kept, never trusted alone
-        relevance = companyStage ? { ...checkedRel.spec, entity: true, terms: companyRuleTerms(checkedRel.spec.terms, requestWords) } : checkedRel.spec;
+        // (round 51, live evaluation Z30: an APP of a store search is an entity named by its title, as a company is; read as text it was «mention_only» and every app was refused. The rule's terms are the model's, unchanged; an app
+        // whose name carries no term goes to the model check, never straight to delivery)
+        const appStage = !isChild && /^(?:google-play|app-store)\.search\.apps$/.test(String(lookup.endpointCapability?.(endpointId) ?? ""));
+        relevance = companyStage ? { ...checkedRel.spec, entity: true, terms: companyRuleTerms(checkedRel.spec.terms, requestWords) } : appStage ? { ...checkedRel.spec, entity: true } : checkedRel.spec;
         const yieldId = String(raw.yield_from ?? "");
         const yieldText = yieldId ? lookup.evidenceText(yieldId) : null;
         let sampleRows: Array<Record<string, unknown>> | null = null;
         if (yieldText) { try { const parsed = JSON.parse(yieldText) as unknown; if (Array.isArray(parsed) && parsed.every(isRecord)) sampleRows = parsed as Array<Record<string, unknown>>; } catch { sampleRows = null; } }
-        if (!sampleRows || sampleRows.length < 1) issues.push(`${label}: yield_from must be the id of a run_code output (out_0001 ...) that holds an ARRAY of ALL the rows of the page you measured, mapped to this stage's columns (so the code can count how many match; never only the best rows)`);
+        if (!sampleRows || sampleRows.length < 1) issues.push(`${label}: yield_from must be the id of a run_code output (out_0001 ...) that holds an ARRAY of ALL the rows of the page you measured, mapped to this stage's columns (so the code can count how many match; never only the best rows). ${yieldFromDiagnosis(yieldId, yieldText)}`);
         else {
           yieldRows = sampleRows;
           const { counts } = classifyRows(relevance, sampleRows);
@@ -728,7 +760,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
     });
   }
 
-  if (!priced.some((s) => s.deliver)) issues.push("at least one stage must be delivered (deliver: true)");
+  if (!priced.some((s) => s.deliver)) issues.push("at least one stage must be delivered: set `deliver: true` on every stage whose rows the customer receives (a stage with no `deliver` field is not delivered)");
   // A STEP THE CUSTOMER ASKED FOR THAT THE PLAN DOES NOT HAVE is never dropped silently («ومن كل شركة اتنين من المديرين» with a plan of companies only): the plan carries it as a stage, or says which step it leaves out and why, and the card shows that
   // BEFORE the customer approves. A per-parent number whose noun is the noun of a top-level stage is a split of that stage's total («١٠ تغريدات لكل لاعب»), not a step of its own.
   const topTitles = priced.filter((s) => s.parent_key === null).map((s) => s.title_ar);
@@ -764,7 +796,10 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
   const wants = requestWantsContacts(lookup.requestText);
   if ((wants.email || wants.phone) && lookup.isContactSource) {
     // a delivered PEOPLE stage always carries the finder steps (added below by code), so the planner never has to plan or to excuse them
-    const hasContactStage = priced.some((s) => lookup.isContactSource!(s.endpoint_id) || s.columns.some((c) => c.kind !== undefined) || (s.deliver && isPeopleStage(s)));
+    // (round 51, live evaluation Z14 «مطاعم المهندسين … وأرقام تليفوناتها»: the PLACES' own phone, the number of the business's public listing that the places contract already delivers, is what was asked; the planner was sent to add a
+    // company contact stage. Phones only: an e-mail still needs its contact stage)
+    const placePhones = wants.phone && !wants.email && priced.some((s) => s.deliver && s.parent_key === null && (isPlaceSource(s.endpoint_id, lookup.endpointCapability) || s.endpoint_id === "contextdev.parse.google-maps") && s.columns.some((c) => /(?:^|_)(?:phone|tel|telephone)(?:$|_)/i.test(c.key)));
+    const hasContactStage = placePhones || priced.some((s) => lookup.isContactSource!(s.endpoint_id) || s.columns.some((c) => c.kind !== undefined) || (s.deliver && isPeopleStage(s)));
     const note = input.contacts_note_ar === undefined ? null : checkCustomerText(input.contacts_note_ar, { maxChars: 300 });
     if (note && note.issues.length) issues.push(`contacts_note_ar: ${note.issues.join("; ")}`);
     else if (!hasContactStage && !note) issues.push(`the customer asked for ${wants.email ? "work e-mails" : ""}${wants.email && wants.phone ? " and " : ""}${wants.phone ? "phones" : ""}: add a CONTACT STAGE per person or company (a contact source of the catalog or the page parsers; mark its e-mail / phone columns with kind "work_email" / "phone"), sample it, and deliver verified values only; if no source can give them, pass contacts_note_ar (ONE Arabic sentence saying honestly why they are not in the plan)`);

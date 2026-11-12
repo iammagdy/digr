@@ -1,4 +1,5 @@
 import { isRetrySamePlanMessage, isReviewPlanMessage, isTypedApprovalMessage } from "../retryMessage";
+import { selfReferenceOf, selfReferenceQuestionAr, selfReferenceUnresolved } from "./selfReference";
 import { titleFromFirstRequest, isUntitledConversation } from "../conversationTitleFromRequest";
 import { MISSION_TABLE } from "./constants";
 import { ADDON_MARKER_COLUMN, hasAddonMarker } from "./addonMarker";
@@ -352,6 +353,17 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     await writeAnswer(input, GROUP_UNCHANGED_AR);
     return { ok: false, contentAr: GROUP_UNCHANGED_AR, status: 200 };
   }
+  // «كمّل» (CONTINUE) in a conversation whose request is already prepared or being prepared, whatever type the model gave it (live evaluation round 51, J1 and Z12: the model read «كمّل» as small talk and asked «طلب جديد ولا تعديل؟»):
+  // the research conversation goes on with what exists; nothing is created, approved, held or charged (an approval is only the card's button)
+  if (decision.type !== "data_request" && decision.type !== "edit_of_open_request" && isContinueWord(currentMessageOf(ctx))) {
+    if (ctx.priorGroup && ctx.priorGroup.parts.some((p) => p.missionId)) { ctx.outcome = "group_unchanged_continue"; await writeAnswer(input, GROUP_UNCHANGED_AR); return { ok: false, contentAr: GROUP_UNCHANGED_AR, status: 200 }; }
+    if (open) {
+      const contentAr = open.state === "planning" ? PLAN_NOT_READY_AR : open.state === "needs_input" && open.questionAr ? `${CONTINUE_QUESTION_AR} ${open.questionAr}` : CONTINUE_READY_AR;
+      ctx.outcome = `continue_open_${open.state}`;
+      await writeAnswer(input, contentAr);
+      return { ok: false, contentAr, status: 200 };
+    }
+  }
   if (decision.type !== "data_request" && decision.type !== "edit_of_open_request") { ctx.outcome = "not_a_request"; return null; }
   const parsed = decision.brief;
   /**
@@ -366,7 +378,9 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     // (and words that give no TOPIC, «تيك توك» alone: live evaluation round 3, S1)
     if (words.privacy === "blocked" || (words.kind !== "unknown" && decision.briefRawStatus !== "needs_clarification" && customerGaveTopic(ctx.customerTurns))) return null;
     // the model's own question, unless the model did not read a request at all (its type was overruled by the keyword rule: its reply answers something else, possibly a refusal)
-    const question = (!decision.overruled && decision.reply) || (customerGaveTopic(ctx.customerTurns) ? missingQuestionAr(buildRequestContract(currentMessageOf(ctx))) : TOPIC_QUESTION_AR);
+    // (a request about the customer's own business that nobody named is asked WHICH one, not which platform: live evaluation round 51, D2)
+    const ownUnnamed = selfReferenceUnresolved(ctx.customerTurns);
+    const question = (!decision.overruled && decision.reply) || (ownUnnamed ? selfReferenceQuestionAr(ownUnnamed) : customerGaveTopic(ctx.customerTurns) ? missingQuestionAr(buildRequestContract(currentMessageOf(ctx))) : TOPIC_QUESTION_AR);
     ctx.outcome = reason;
     await writeAnswer(input, question, ctx.prior ? { researchBrief: { ...ctx.prior, status: "needs_clarification" } } : undefined);
     return { ok: false, contentAr: question, status: 200 };
@@ -402,6 +416,14 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
   };
   // MULTI-OBJECTIVE RESEARCH: several first objectives, or a follow-up on the parts prepared before: every part keeps its own existing plan (docs/MULTI-OBJECTIVE-RESEARCH.md)
   const parts = brief.objectives ? partsOf(brief) : [];
+  // AN OPEN QUESTION IS NOT SPLIT INTO SOURCES THE CUSTOMER NEVER NAMED (live evaluation round 51, M5: «What do people think about mental health apps?» became two missions, app-store reviews and web pages): a NEW request whose own words
+  // name no kind of data is asked which source fits its goal (the model's question, else the code's), never prepared as several parts the model chose
+  if (ctx.registry && parts.length >= 2 && isNewRequest(ctx, open) && researchNeedOf({ request: ctx.customerTurns.join(" ") }).kind === "unknown") {
+    ctx.outcome = "clarify_unnamed_parts";
+    const question = (!decision.overruled && decision.reply && /[؟?]/.test(decision.reply) ? decision.reply : null) ?? missingQuestionAr(v.contract);
+    await writeAnswer(input, question, { researchBrief: { ...brief, status: "needs_clarification" } });
+    return { ok: false, contentAr: question, status: 200 };
+  }
   if (ctx.registry && (parts.length >= 2 || (ctx.priorGroup && parts.length >= 1))) {
     // the model still asks something it needs (a genuinely missing requirement): its question, with the whole brief kept
     if (brief.status === "needs_clarification" && decision.reply !== null) {
@@ -416,6 +438,14 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
   if (drift) {
     ctx.outcome = `drift_${drift.kind}`;
     const contentAr = conditionDriftAr(drift).replace("الجزء ده", "طلبك");
+    await writeAnswer(input, contentAr, { researchBrief: { ...brief, status: "needs_clarification" } });
+    return { ok: false, contentAr, status: 200 };
+  }
+  // THE CUSTOMER'S OWN BUSINESS, NOT NAMED (live evaluation round 9, D2: «محتاج معلومات عن منافسين شركتي»): no source can find «my company»; the chat asks which one, in the conversation, before any mission or card
+  const ownUnnamed = selfReferenceUnresolved(ctx.customerTurns);
+  if (ownUnnamed) {
+    ctx.outcome = `clarify_self_reference_${ownUnnamed}`;
+    const contentAr = (brief.status === "needs_clarification" && !decision.overruled && decision.reply) || selfReferenceQuestionAr(ownUnnamed);
     await writeAnswer(input, contentAr, { researchBrief: { ...brief, status: "needs_clarification" } });
     return { ok: false, contentAr, status: 200 };
   }
@@ -535,6 +565,16 @@ function standaloneOnly(lost: IntentRequirement[], message: string): IntentRequi
   return lost.filter((r) => r.kind !== "number" || alone.has(r.n));
 }
 /** Said when the request's parts are already prepared and nothing changed (a «تمام جهّزهم» or a repetition): nothing new is created. */
+/** «كمّل» and its short equivalents (Egyptian, Arabizi, English): continue the research conversation in progress. */
+const CONTINUE_WORDS = /^(?:كمل|كملي|كمللي|كمل يا (?:باشا|فندم)|استمر|تابع|يلا|يلا بينا|ماشي|تمام|اوك|اوكي|ok|okay|continue|go on|go ahead|kamel|kammel|kamal)$/;
+export function isContinueWord(message: string): boolean {
+  const t = message.replace(/[ً-ْـّ]/g, "").replace(/[أإآ]/g, "ا").replace(/[.!؟?،,]+/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+  return t.split(" ").length <= 3 && CONTINUE_WORDS.test(t);
+}
+/** Said to «كمّل» when the request's plan is ready on its card. */
+export const CONTINUE_READY_AR = "طلبك متجهّز وخطته وسعره في بطاقته؛ راجعها واعتمدها من زر «اعتمد» لو مناسبة، أو قولّي تحب تعدّل إيه. ولن يُخصم شيء قبل اعتمادك.";
+/** Said before the card's pending question when the customer writes «كمّل». */
+export const CONTINUE_QUESTION_AR = "عشان نكمّل محتاجين ردّك على سؤال البطاقة:";
 export const GROUP_UNCHANGED_AR = "أجزاء طلبك متجهّزة بالفعل، وكل جزء له بطاقته بخطته وسعره. اعتمد الجزء اللي يناسبك من بطاقته، ولن يُخصم شيء قبل اعتمادك.";
 /** Said for a part whose card could not be stored: it is not prepared, not claimed, and comes back on the next turn. */
 export const CARD_UNSAVED_AR = "ما قدرناش نحفظ بطاقته دلوقتي بسبب مشكلة مؤقتة، فمش هيتجهّز منه حاجة ولا يتخصم عليه حاجة؛ اكتب «كمّل» ونجهّزه من غير ما تعيد طلبك.";
@@ -567,6 +607,9 @@ function judgePart(part: ResearchPart, ctx: BriefTurnContext, registry: Capabili
   }
   const pb = partBriefOf(part, global);
   if (!pb) return { ...base, outcome: "needs_clarification", noteAr: null };
+  // a part about the customer's own business that nothing in the conversation names (D2 inside a multi-part request): this part is asked, the others go on
+  const ownUnnamed = selfReferenceOf([pb.request, ...part.objectives.map((o) => o.what ?? "")].join(" ")) ? selfReferenceUnresolved(ctx.customerTurns) : null;
+  if (ownUnnamed) return { ...base, outcome: "needs_clarification", noteAr: selfReferenceQuestionAr(ownUnnamed) };
   const v = validateBrief(pb, { customerTurns: ctx.customerTurns, assistantQuestion: ctx.assistantQuestion, prior: ctx.prior, semantic: ctx.semantic });
   if (!v.ok) return { ...base, outcome: v.reason === "privacy_refusal" || v.reason === "privacy_clarify" ? "refused_private" : "needs_clarification", noteAr: v.contentAr ?? (v.reason === "count_mismatch" && pb.count !== null ? conditionDriftAr({ kind: "count", reason: "contradicts", phrase: String(pb.count) }) : null) };
   const d = discoverCapabilities(researchNeedOf({ request: v.brief.request, brief: v.brief }), registry);

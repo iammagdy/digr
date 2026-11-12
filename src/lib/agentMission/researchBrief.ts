@@ -36,7 +36,7 @@ export type BriefStatus = (typeof BRIEF_STATUSES)[number];
  * vocabulary of what can be EXECUTED, not a closed list of what a customer may ask: a goal no operation serves is written as `unsupported` (with the customer's goal in `what`), and the code then asks the customer instead of guessing.
  * The objectives never carry a provider, an endpoint, a price, a number or a field list: the backend finds the capabilities, ranks them and prices the plan.
  */
-export const OBJECTIVE_OPERATIONS = ["social.parents", "social.comments", "social.replies", "companies.discover", "company.contacts", "places.discover", "places.reviews", "web.search", "web.read", "people.discover", "unsupported"] as const;
+export const OBJECTIVE_OPERATIONS = ["social.parents", "social.comments", "social.replies", "companies.discover", "company.contacts", "places.discover", "places.reviews", "web.search", "web.read", "people.discover", "apps.discover", "apps.reviews", "unsupported"] as const;
 export type ObjectiveOperation = (typeof OBJECTIVE_OPERATIONS)[number];
 export const OBJECTIVES_MAX = 8;
 export interface BriefObjective {
@@ -336,6 +336,8 @@ export const OBJECTIVE_PARENTS: Record<Exclude<ObjectiveOperation, "unsupported"
   "web.search": [null],
   "web.read": ["web.search", null],
   "people.discover": [null, "companies.discover"],
+  "apps.discover": [null],
+  "apps.reviews": ["apps.discover", null],
 };
 
 /**
@@ -364,7 +366,7 @@ export function objectivesIssue(brief: ResearchBrief, named: ReadonlySet<string>
   const ops = new Set(executable.map((o) => o.operation));
   for (const p of brief.platforms) if (!executable.some((o) => o.platform === p)) return "objective_dropped";
   for (const p of executable.map((o) => o.platform).filter(isServedPlatform)) if (!brief.platforms.includes(p)) return "objective_dropped";
-  const needs: Array<[BriefContent, ObjectiveOperation[]]> = [["comments", ["social.comments", "social.replies"]], ["replies", ["social.replies", "social.comments"]], ["companies", ["companies.discover"]], ["places", ["places.discover"]], ["reviews", ["places.reviews"]], ["people", ["people.discover"]], ["articles", ["web.search", "web.read"]], ["contacts", ["company.contacts"]]];
+  const needs: Array<[BriefContent, ObjectiveOperation[]]> = [["comments", ["social.comments", "social.replies"]], ["replies", ["social.replies", "social.comments"]], ["companies", ["companies.discover"]], ["places", ["places.discover"]], ["reviews", ["places.reviews", "apps.reviews"]], ["people", ["people.discover"]], ["articles", ["web.search", "web.read"]], ["contacts", ["company.contacts"]]];
   for (const [c, wanted] of needs) if (brief.content.includes(c) && !wanted.some((w) => ops.has(w))) return "objective_dropped";
   return null;
 }

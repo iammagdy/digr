@@ -349,14 +349,15 @@ describe("PR-1.3 measured on the 98-scenario baseline through the real contract 
 
   it("OFF: the known gaps are all still gaps, exactly as PR #446 pinned them (62 originally; PR-1.4 closed 7 in the chat path and the consolidated mission 7 more for every customer, 48 remain)", () => {
     expect(baselineCases).toHaveLength(98);
-    expect(baselineCases.filter((c) => c.known_gap)).toHaveLength(48);
-    expect(baselineCases.filter((c) => c.closed_gap).map((c) => c.id)).toEqual(["sb-11", "sb-12", "sb-13", "cm-13", "rt-06", "pf-01", "pf-02", "pf-03", "pf-04", "pf-05", "pf-06", "pf-07", "pf-08", "pf-09"]);
+    // (round 51, DIGER-INTELLIGENCE-FINAL-ACCEPTANCE: dt-08 «السنة اللي فاتت» closed for every customer by the flag-off period reader: 47 gaps remain, 15 closed)
+    expect(baselineCases.filter((c) => c.known_gap)).toHaveLength(47);
+    expect(baselineCases.filter((c) => c.closed_gap).map((c) => c.id)).toEqual(["sb-11", "sb-12", "sb-13", "cm-13", "dt-08", "rt-06", "pf-01", "pf-02", "pf-03", "pf-04", "pf-05", "pf-06", "pf-07", "pf-08", "pf-09"]);
     for (const c of baselineCases.filter((x) => x.known_gap)) for (const [k, v] of Object.entries(c.known_gap!.observed)) expect(run(c, OFF)[k as keyof Understood], `${c.id}.${k}`).toEqual(v);
   });
-  it("ON: 42 of the 48 remaining gaps are fixed (the 23 of PR-1.2, the 14 of PR-1.3, the 5 multi-turn answers of the consolidated mission), 3 improve partly, 3 are untouched (cm-08, rt-03, pl-19), and NONE regresses or changes wrongly", () => {
+  it("ON: 41 of the 47 remaining gaps are fixed (dt-08 is now closed for every customer, round 51) (the 23 of PR-1.2, the 14 of PR-1.3, the 5 multi-turn answers of the consolidated mission), 3 improve partly, 3 are untouched (cm-08, rt-03, pl-19), and NONE regresses or changes wrongly", () => {
     const gaps = baselineCases.filter((c) => c.known_gap);
     const by = (k: string) => gaps.filter((c) => outcome(c) === k).map((c) => c.id);
-    expect(by("fixed")).toEqual([...FIXED_BY_PR_1_2, ...FIXED_BY_PR_1_3, ...FIXED_BY_CONSOLIDATED].sort((a, b) => baselineCases.findIndex((c) => c.id === a) - baselineCases.findIndex((c) => c.id === b)));
+    expect(by("fixed")).toEqual([...FIXED_BY_PR_1_2, ...FIXED_BY_PR_1_3, ...FIXED_BY_CONSOLIDATED].filter((id) => gaps.some((c) => c.id === id)).sort((a, b) => baselineCases.findIndex((c) => c.id === a) - baselineCases.findIndex((c) => c.id === b)));
     for (const id of FIXED_BY_PR_1_2) expect(outcome(baselineCases.find((c) => c.id === id)!), id).toBe("fixed");
     expect(by("partial")).toEqual(PARTIAL);
     expect(by("changed_still_wrong")).toEqual([]); // pf-02 (the placeholder pre-filter, W1) was the only one: PR-1.4 fixed it in the chat path

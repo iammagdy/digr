@@ -26,6 +26,15 @@ const WORDS: ReadonlyArray<[number, string]> = [
   [90, "تسعين|تسعون"],
   [100, "مية|ميه|مائة|مئة|مائه|مئه"],
   [200, "ميتين|مئتين|مائتين"],
+  // round 51 (live evaluation, stability pass B: the model wrote the customer's «٣٠٠» as «ثلاثمائة» in the sentence the worker plans from, and the worker read no number): the hundreds, formal and dialect. Not «ألف»: it is also a word of
+  // names and titles («ألف ليلة وليلة»)
+  [300, "ثلاثمائة|ثلاثمئة|ثلثمائة|تلتمية|تلتميه|تلاتمية|تلاتميه"],
+  [400, "أربعمائة|اربعمائة|أربعمئة|اربعمئة|ربعمية|ربعميه|اربعمية"],
+  [500, "خمسمائة|خمسمئة|خمسمية|خمسميه"],
+  [600, "ستمائة|ستمئة|ستمية|ستميه"],
+  [700, "سبعمائة|سبعمئة|سبعمية|سبعميه"],
+  [800, "ثمانمائة|ثمانمئة|ثمنمائة|تمنمية|تمنميه|تمانمية"],
+  [900, "تسعمائة|تسعمئة|تسعمية|تسعميه"],
 ];
 
 const MAP = new Map<string, number>();

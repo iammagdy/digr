@@ -76,13 +76,14 @@ describe("PR-0.1 the fixture itself", () => {
     }
   });
 
-  it("PR-1.4 and the consolidated mission: the 14 gaps closed in the real chat path keep their history (`closed_gap`), and are now ORDINARY assertions of the correct meaning", () => {
+  it("PR-1.4, the consolidated mission and round 51: the 15 gaps closed in the real chat path keep their history (`closed_gap`), and are now ORDINARY assertions of the correct meaning", () => {
     const closed = cases.filter((c) => c.closed_gap);
     // CHANGED (consolidated mission): 7 more closed for every customer (sb-11, sb-12, sb-13: whole-word e-mail; cm-13: the keyword type; rt-06: «حساب عام»; pf-06: a brand is the product; pf-07: a clarification, its expectation revised and recorded)
-    expect(closed.map((c) => c.id)).toEqual(["sb-11", "sb-12", "sb-13", "cm-13", "rt-06", "pf-01", "pf-02", "pf-03", "pf-04", "pf-05", "pf-06", "pf-07", "pf-08", "pf-09"]);
+    // (round 51, DIGER-INTELLIGENCE-FINAL-ACCEPTANCE: dt-08 «السنة اللي فاتت» closed for every customer by the flag-off period reader: 47 gaps remain, 15 closed)
+    expect(closed.map((c) => c.id)).toEqual(["sb-11", "sb-12", "sb-13", "cm-13", "dt-08", "rt-06", "pf-01", "pf-02", "pf-03", "pf-04", "pf-05", "pf-06", "pf-07", "pf-08", "pf-09"]);
     for (const c of closed) {
       expect(c.known_gap, c.id).toBeUndefined();
-      expect(["PR-1.4", "AGENT-UNDERSTANDING-V1"], c.id).toContain(c.closed_gap!.closed_by);
+      expect(["PR-1.4", "AGENT-UNDERSTANDING-V1", "DIGER-INTELLIGENCE-FINAL-ACCEPTANCE"], c.id).toContain(c.closed_gap!.closed_by);
       for (const k of Object.keys(c.closed_gap!.observed)) expect(JSON.stringify(c.closed_gap!.observed[k as keyof Understood]), `${c.id}.${k}: what was observed differs from the correct meaning`).not.toBe(JSON.stringify(c.expected[k as keyof Understood]));
       expect(pick(run(c), Object.keys(c.expected)), c.id).toEqual(c.expected);
     }

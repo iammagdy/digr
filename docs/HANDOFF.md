@@ -4,6 +4,36 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 51 (12 Nov 2026, PR #462): intelligence layer completion (docs/DIGER-INTELLIGENCE-FINAL-ACCEPTANCE.md)
+
+**No SQL write, no flag change, no migration, no schema change, no live provider call, no money/ledger/pricing/approval/settlement/infrastructure line.** `chat_research_brief_v1` and `capability_discovery_v1` stay OFF.
+
+**Real Anthropic chat** (`claude-haiku-5-5`):
+
+* round 3: **97/97 conversations** (original 22, expanded 39, held-out 36);
+* rounds 2–4: 289/291;
+* 0 lost requirements, duplicates or provider-name leaks in every round; 0 false refusals in rounds 2 and 3;
+* M2 (round 4) fixed, then re-measured 60/60 on the sensitive and private set.
+
+**Real planner on synthetic provider data:** 26/31 valid plans (83.9%), below the 90% target. 9 plans combine providers.
+
+**Spending and key:** 2,920 paid requests, $6.3030, within the owner's $30 cumulative ($10.5776 with the previous mission). The evaluation key is still active; revoking it is the owner's to do.
+
+**Fixed (each with tests):**
+
+* **D2:** a request about the customer's own unnamed business is asked in the chat.
+* **Open questions:** asked, not split into sources the customer never named.
+* **«كمّل»:** continues the conversation.
+* **Periods** «الأسبوع الماضي / السنة اللي فاتت / الشهر ده», and English periods, are now EXECUTED: they were read as asked but given no value.
+* **Spelled hundreds** are counts.
+* **Privacy:** «العنوان الشخصي» is refused by code, and formal opinion verbs are public content.
+* **Providers:** the planner is told which tool calls each provider's capability, and app-store discovery plus reviews are a new cross-provider chain.
+* **Planner give-ups after formal refusals** are our failure (admin flagged), never «not available». The refusal messages say why.
+
+**Not verified:** the browser journey, the deployed Heroku worker, and live providers.
+
+---
+
 ## Round 48 (12 Nov 2026, after #458, main = `4cb55cb`): pre-rollout acceptance (docs/PRE-ROLLOUT-ACCEPTANCE.md)
 
 **No SQL write, no flag change, no migration, no schema change, no permission change, no paid model or provider call, no money/ledger/pricing/approval/settlement/infrastructure line.** The three switches stay OFF.

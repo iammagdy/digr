@@ -195,8 +195,9 @@ describe("the 98-scenario baseline with the flag ON, measured through the real c
   // CHANGED (consolidated mission, docs/AGENT-UNDERSTANDING-V1.md): 7 more gaps are closed for every customer (sb-11, sb-12, sb-13, cm-13, rt-06, pf-06; pf-07 by a clarification): 62 = 48 still gaps with the flag OFF + 14 closed
   it("OFF: the baseline of PR #446 is untouched except the gaps closed in the chat path and for every customer (62 = 48 still gaps with the flag OFF + 14 closed)", () => {
     expect(baselineCases).toHaveLength(98);
-    expect(baselineCases.filter((c) => c.known_gap)).toHaveLength(48);
-    expect(baselineCases.filter((c) => c.closed_gap)).toHaveLength(14);
+    // (round 51, DIGER-INTELLIGENCE-FINAL-ACCEPTANCE: dt-08 «السنة اللي فاتت» closed for every customer by the flag-off period reader: 47 gaps remain, 15 closed)
+    expect(baselineCases.filter((c) => c.known_gap)).toHaveLength(47);
+    expect(baselineCases.filter((c) => c.closed_gap)).toHaveLength(15);
     for (const c of baselineCases.filter((x) => x.known_gap)) {
       const off = run(c, OFF);
       for (const [k, v] of Object.entries(c.known_gap!.observed)) expect(off[k as keyof Understood], `${c.id}.${k}`).toEqual(v);

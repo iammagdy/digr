@@ -703,7 +703,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     if (current && (current.status === "plan_ready" || current.plan)) { deps.log?.(`no_card_kept_plan ${mission.id}`); await store.updateMission(mission.id, { ...clear }).catch(() => undefined); return; }
     // NO CARD: exactly one of four honest classes, decided by code from what the planning really did (src/lib/agentMission/refusal.ts), never from the model's own words
     const planningCalls = await store.listCalls(mission.id);
-    const verdict = classifyNoCardEnd({ claim: state.finish?.kind ?? (state.finish ? "unsupported" : null), endedWithoutAnswer: !state.finish, stop: output.error ? `${output.stop}: ${output.error}` : String(output.stop ?? ""), calls: planningCalls });
+    const verdict = classifyNoCardEnd({ claim: state.finish?.kind ?? (state.finish ? "unsupported" : null), endedWithoutAnswer: !state.finish, stop: output.error ? `${output.stop}: ${output.error}` : String(output.stop ?? ""), calls: planningCalls, ...(state.planRejections ? { planRejections: state.planRejections } : {}) });
     deps.log?.(`no_card ${mission.id} class=${verdict.cls} reason=${verdict.reason}`);
     if (verdict.cls === "internal") {
       // OUR failure: nothing was held; the admin is flagged (the mission's error and an internal event), the customer is told it was ours

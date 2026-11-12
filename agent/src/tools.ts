@@ -15,6 +15,7 @@ import { blockedEndpointReason } from "../../src/lib/treg/blockList";
 import { isSellable, type TregCatalog } from "../../src/lib/treg/catalog";
 import { policyVerdict, type AccountAccess } from "../../src/lib/treg/dataPolicy";
 import { isPrivateCapabilityString, planStageIssues, type CapabilityDiscovery } from "../../src/lib/agentMission/capabilities";
+import { toolHint } from "../../src/lib/agentMission/capabilities/prompt";
 import { digestValue } from "../../src/lib/modelPlanner/digest";
 import type { Gateway } from "./gateway";
 import { RAW_PATH } from "./gateway";
@@ -89,6 +90,8 @@ export interface RunState {
   moreAvailable: Map<string, boolean>;
   /** What each source gave in the planning samples: the rows of every answered call and a key of its inputs (two samples of the same item are one). */
   samples: Map<string, Array<{ rows: number; key: string }>>;
+  /** Plans propose_plan refused, and what the last refusal was about («data»: no sampled row matches the stage's rule; else «formal»). Read when the planning ends without a card (refusal.ts). */
+  planRejections?: { count: number; last: "formal" | "data" };
 }
 export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), described: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, giveUpNoRowsRefusals: 0, peopleSendBacks: 0, moreAvailable: new Map(), samples: new Map() });
 /** The redesigned mode of planning: any of the three social flags is active for this mission's account (planning does not know the request type yet; with every flag off this is false and nothing changes). */
@@ -154,6 +157,14 @@ export const EXCLUDED_PATH = (stageKey: string) => `excluded/${stageKey}.json`;
 const outId = (n: number) => `out_${String(n).padStart(4, "0")}`;
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const err = (error: string, extra: Record<string, unknown> = {}) => ({ ok: false, error, ...extra });
+/** A refusal that is about the DATA (no sampled row matches the stage's own rule), not about the plan's form. */
+const DATA_REJECTION = /none of the \d+ rows of the sample matches your relevance rule/;
+/** propose_plan refuses a plan: the issues go back to the planner, and the run remembers the refusal and its kind (refusal.ts classifies an ending without a card from it). */
+function rejectPlan(state: RunState, message: string, issues: ReadonlyArray<string>): ReturnType<typeof err> {
+  state.planRejections = { count: (state.planRejections?.count ?? 0) + 1, last: issues.some((i) => DATA_REJECTION.test(i)) ? "data" : "formal" };
+  return err(message, { issues: issues.slice(0, 12) });
+}
+
 
 function previewOf(value: unknown): unknown {
   if (Array.isArray(value)) return { type: "array", length: value.length, first_items: value.slice(0, 5).map((v) => digestValue(v)) };
@@ -386,6 +397,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       },
       handler: async (a) => {
         const id = String(a.endpoint_id ?? "").trim();
+        // a WEB PROVIDER's id is not a catalog endpoint (round 51, live evaluation): the refusal names the tool that calls it, so the planner does not drop that provider
+        if (isAgentSourceId(id)) return err(`«${id}» is a web provider source, not a catalog endpoint: call it with ${toolHint(id) ?? "its own tool"} (nothing was called, nothing was charged)`);
         // UNIFIED CAPABILITY DISCOVERY: a capability that returns private personal data is never called, whatever the model asks (refused before the gateway, costs nothing)
         if (ctx.capabilities && isPrivateCapabilityString(ctx.catalog.byId.get(id)?.capability)) return { ok: false, refused: "private_data", message: "this source returns private personal data; Diger never collects it. It was NOT called and cost nothing" };
         const refusal = cheapestFirstMessage(state, id, a.why);
@@ -579,10 +592,10 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       phases: ["planning"],
       params: {
         summary_ar: { type: "string", description: "ONE Arabic sentence: what the customer will get (the customer card shows only this sentence)" },
-        assumptions_ar: { type: "string[]", description: "Up to 6 short Arabic lines: every choice you made where the request left it open (which meaning of a name, the language, newest first, how many replies...), e.g. «محمد صلاح لاعب كرة القدم، تغريدات عربية، الأحدث أولًا». The customer reads them on the plan card and may change them before approving.", optional: true },
+        assumptions_ar: { type: "string[]", description: "Up to 6 short Arabic lines: every choice you made where the request left it open (which meaning of a name, newest first, how many replies...), e.g. «محمد صلاح لاعب كرة القدم، الأحدث أولًا». A language, a period, a place or «replies left out» written here is a PROMISE: write it only when the stage has that filter (code refuses it otherwise). The customer reads them on the plan card and may change them before approving.", optional: true },
         contacts_note_ar: { type: "string", description: "Only when the customer asked for work e-mails or phones for COMPANIES (no people stage in the plan): ONE Arabic sentence saying honestly why. When the plan has a people stage, the e-mail and phone finder steps are added to it by code: never write that they may not be filled", optional: true },
         unserved_steps: { type: "array", description: "Only when the customer asked for a step PER PARENT item («ومن كل شركة اتنين من المديرين», «مع كل بوست ١٠ تعليقات») that NO stage of your plan carries out because no source could give it: [{reason_ar}] (one entry per missing step, in the request's order; reason_ar is ONE Arabic sentence, no number, saying honestly why). The customer card shows that step as NOT included, with your reason, BEFORE they approve; a step must never be dropped silently, and a plan that drops one without this is refused. When a stage carries the step, do not pass this.", optional: true },
-        stages: { type: "array", description: "[{key, title_ar, endpoint_id, expected_rows, target_reason_ar?, parent_key|null, per_parent_rows (if parent), deliver, columns:[{key, title_ar (only for a key the code does not know)}], sample_rows (omit when the stage cites yield_from), measured_by:[call ids], how_ar?, relevance?:{subject_ar, terms:[...], context_terms?:[...], exclude_terms?:[...], competing_meanings?:[{meaning_ar, extensions?:[words that follow the name in that meaning], titles?:[a title right next to the name], markers?:[words of that meaning]}], text_columns:[column keys], min_own_words?}, yield_from?: out id, filters?:[{kind:\"exclude_replies\"|\"exclude_reposts\"|\"language\"|\"period\"|\"account\"|\"place\", lang?:\"ar\"|\"en\", days?, from?, to?, values?:[...], calls?:[for an account filter: the saved call that read each value, in the same order]}]}]. A stage whose rows were FOUND BY A TEXT SEARCH (a person, entity or topic) REQUIRES relevance and yield_from. expected_rows of the stage that counts what the customer asked for is the customer's number (code reads it from their words and sets it); give a LOWER one only with target_reason_ar (one Arabic sentence, no number) when the sources really cannot give that many. filters: everything the card promises about the items (replies left out, a language, a period, an account, a place) must be a filter: code checks every item with it; a sentence that promises one of these without its filter is refused." },
+        stages: { type: "array", description: "[{key, title_ar, endpoint_id, expected_rows, target_reason_ar?, parent_key|null, per_parent_rows (if parent), deliver (true for every stage whose rows the customer receives: at least one; false only for a helper stage whose rows are not in the file), columns:[{key, title_ar (only for a key the code does not know)}], sample_rows (omit when the stage cites yield_from), measured_by:[call ids], how_ar?, relevance?:{subject_ar, terms:[...], context_terms?:[...], exclude_terms?:[...], competing_meanings?:[{meaning_ar, extensions?:[words that follow the name in that meaning], titles?:[a title right next to the name], markers?:[words of that meaning]}], text_columns:[column keys], min_own_words?}, yield_from?: out id, filters?:[{kind:\"exclude_replies\"|\"exclude_reposts\"|\"language\"|\"period\"|\"account\"|\"place\", lang?:\"ar\"|\"en\", days?, from?, to?, values?:[...], calls?:[for an account filter: the saved call that read each value, in the same order]}]}]. A stage whose rows were FOUND BY A TEXT SEARCH (a person, entity or topic) REQUIRES relevance and yield_from. expected_rows of the stage that counts what the customer asked for is the customer's number (code reads it from their words and sets it); give a LOWER one only with target_reason_ar (one Arabic sentence, no number) when the sources really cannot give that many. filters: everything the card promises about the items (replies left out, a language, a period, an account, a place) must be a filter: code checks every item with it; a sentence that promises one of these without its filter is refused." },
       },
       handler: async (a) => {
         const stagesIn: any[] = Array.isArray(a.stages) ? a.stages : [];
@@ -596,7 +609,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
         // UNIFIED CAPABILITY DISCOVERY: every stage reads one of the capabilities code validated for this request (inputs, outputs, availability, policy, price); the model recommends, code decides
         if (ctx.capabilities) {
           const capIssues = planStageIssues(stagesIn.map((st) => ({ key: String(st?.key ?? ""), endpoint_id: String(st?.endpoint_id ?? ""), parent_key: st?.parent_key ?? null })), ctx.capabilities, ctx.catalog);
-          if (capIssues.length > 0) return err("the plan was not accepted; fix these and propose again", { issues: capIssues.slice(0, 12) });
+          if (capIssues.length > 0) return rejectPlan(state, "the plan was not accepted; fix these and propose again", capIssues);
         }
         // TEMPORARY, TEST-ONLY (testSeam.ts): the tests that still drive a social mission through a fake model transcript were written for the redesigned mode, where no relevance rule is asked of the model. Production never reaches this (a social plan from the model is refused above).
         const noRelevance = modelPlanningForTests() && socialRedesignActive(ctx) && redesignTypeOf(stagesIn as never, { account: stagesIn.some((st) => Array.isArray(st?.filters) && st.filters.some((f: { kind?: string; values?: unknown[] }) => f?.kind === "account" && Array.isArray(f.values) && f.values.length > 0)) }, (id: string) => ctx.catalog.byId.get(id)?.capability ?? null).startsWith("social_");
@@ -631,7 +644,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           endpointsCalled: () => { const m = new Map<string, { rows: number }>(); for (const c of calls) m.set(c.endpoint_id, { rows: Math.max(m.get(c.endpoint_id)?.rows ?? 0, c.status === "ok" ? Number(c.rows_returned) || 0 : 0) }); return m; },
         };
         const checked = validateAndPricePlan({ summary_ar: a.summary_ar, stages: stagesIn, ...(a.contacts_note_ar !== undefined ? { contacts_note_ar: a.contacts_note_ar } : {}), ...(a.unserved_steps !== undefined ? { unserved_steps: a.unserved_steps } : {}), ...(a.assumptions_ar !== undefined ? { assumptions_ar: a.assumptions_ar } : {}) }, lookup);
-        if (!checked.ok) return err("the plan was not accepted; fix these and propose again", { issues: checked.issues.slice(0, 12) });
+        if (!checked.ok) return rejectPlan(state, "the plan was not accepted; fix these and propose again", checked.issues);
         // THE PEOPLE AND THEIR PHONES (live, 2026-10-31): a people stage that reads a mailbox lister, or phones dropped while no phone source was sampled, is sent back (a few times at most) to the sources that serve it; a plan that really tried them and says so is accepted
         if (state.peopleSendBacks < PEOPLE_SEND_BACKS_MAX) {
           const allowedSource = (x: string): boolean => policyVerdict(x, ctx.access).allowed && !blockedEndpointReason(x) && isSellable(x, ctx.catalog);
@@ -649,7 +662,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           derived = await deriveEngineSpecsChecked(checked.plan, { store, missionId: mission.id, catalog: ctx.catalog, calls, codeRuns: state.codeRuns, callParams: state.callParams, sandbox: runSandbox });
         } catch { /* a plan without recipes is carried out by the model, through the same item store */ }
         // THE CONTRACT: a mapping that gives what the engine needs but breaks what the card promises (an id, a column, a field a filter reads) is refused here, before the customer sees a card the file cannot match
-        if (derived && derived.issues.length > 0) return err("the plan was not accepted; fix these and propose again", { issues: derived.issues.slice(0, 12) });
+        if (derived && derived.issues.length > 0) return rejectPlan(state, "the plan was not accepted; fix these and propose again", derived.issues);
         if (derived) {
           for (const st of checked.plan.stages) {
             const spec = derived.specs.get(st.key);

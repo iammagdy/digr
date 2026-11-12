@@ -64,7 +64,7 @@ export function completedPartSentence(request: string, objectives: ReadonlyArray
   const add: string[] = [];
   if (ops.has("social.comments") && social?.platform !== "x" && !has(/تعليق|كومنت|comment/i)) add.push("والتعليقات عليها");
   if (ops.has("social.replies") && !has(/(?:^|[^ء-ي])(?:و|ب|ال)*ردود|الرد على|replies/i)) add.push(social?.platform === "x" ? "والردود عليها" : "والردود على التعليقات");
-  if (ops.has("places.reviews") && !has(/تقييم|مراجع|ريفيو|review/i)) add.push("وتقييماتها");
+  if ((ops.has("places.reviews") || ops.has("apps.reviews")) && !has(/تقييم|مراجع|ريفيو|review/i)) add.push("وتقييماتها");
   const contacts = new Set(objectives.filter((o) => o.operation === "company.contacts").flatMap((o) => o.contacts));
   if (contacts.has("email") && !has(/[إا]يميل|بريد|email/i)) add.push("وإيميلاتها الرسمية");
   if (contacts.has("phone") && !has(/تليفون|هاتف|هواتف|phone/i)) add.push("وتليفوناتها الرسمية");
@@ -75,7 +75,7 @@ export function completedPartSentence(request: string, objectives: ReadonlyArray
 }
 
 const CONTENT_OF: Partial<Record<BriefObjective["operation"], BriefContent>> = {
-  "social.comments": "comments", "social.replies": "replies", "companies.discover": "companies", "people.discover": "people", "places.discover": "places", "places.reviews": "reviews", "web.search": "articles", "company.contacts": "contacts",
+  "social.comments": "comments", "social.replies": "replies", "companies.discover": "companies", "people.discover": "people", "places.discover": "places", "places.reviews": "reviews", "apps.reviews": "reviews", "web.search": "articles", "company.contacts": "contacts",
 };
 
 /** The brief of ONE part, validated exactly like a brief of its own (`validateBrief`): its sentence, its platforms, what it collects, its number when its sentence writes exactly one, its objectives. Null without a sentence. */

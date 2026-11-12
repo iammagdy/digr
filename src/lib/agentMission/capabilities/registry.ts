@@ -27,13 +27,16 @@ export const OPERATIONS = [
   "web.search",
   "web.read",
   "people.discover",
+  // round 51: mobile apps in the stores, and their reviews (TREG store searches and reviews; Context.dev's store review parsers)
+  "apps.discover",
+  "apps.reviews",
 ] as const;
 export type Operation = (typeof OPERATIONS)[number];
 
 /** The classes of output field the stages need from one another and the customer needs in the file. */
-export type OutputClass = "id" | "url" | "text" | "date" | "author" | "rating" | "name" | "website" | "email" | "phone" | "place_ref" | "comment_count" | "title" | "company";
+export type OutputClass = "id" | "url" | "text" | "date" | "author" | "rating" | "name" | "website" | "email" | "phone" | "place_ref" | "comment_count" | "title" | "company" | "app_ref";
 /** The classes of input a capability takes. `query` comes from the customer's topic; every other one must come from the parent stage's rows. */
-export type InputClass = "query" | "url" | "post_ref" | "comment_ref" | "place_ref" | "domain";
+export type InputClass = "query" | "url" | "post_ref" | "comment_ref" | "place_ref" | "domain" | "app_ref";
 
 export interface Capability {
   /** The id the plan, the gateway and the call log use: a catalog endpoint id, or a web source id (`firecrawl.search`, `contextdev.parse.google-maps-reviews` …). */
@@ -79,6 +82,8 @@ const TREG_RULES: ReadonlyArray<{ re: RegExp; operation: Operation }> = [
   { re: /^(google\.maps\.reviews|tripadvisor\.business\.reviews|yelp\.business\.reviews|apple-maps\.reviews)$/, operation: "places.reviews" },
   { re: /^(web\.search|google\.serp\.organic|google\.serp\.news|bing\.serp\.organic|web\.search\.news)$/, operation: "web.search" },
   { re: /^(web\.extract|web\.scrape\.structured)$/, operation: "web.read" },
+  { re: /^(google-play|app-store)\.search\.apps$/, operation: "apps.discover" },
+  { re: /^(google-play|app-store)\.reviews$/, operation: "apps.reviews" },
   { re: /^(people\.search|linkedin\.search\.people|companies\.employees(\.list|\.search)?|linkedin\.company\.people|people\.employees\.search|people\.decision_makers)$/, operation: "people.discover" },
 ];
 
@@ -97,6 +102,7 @@ export function operationOfCapability(capability: string | null | undefined): Op
 }
 
 const FIELD_RULES: ReadonlyArray<[OutputClass, RegExp]> = [
+  ["app_ref", /^(app_?id|product_?id|bundle_?id)$/i],
   ["place_ref", /^(place_?id|placeid|cid|data_?id|data_?cid|fid|google_?maps_?url|reviews_?link|place_?id_?search|place)$/i],
   ["comment_count", /^(comments?_?count|comment_?count|commentcount|num_?comments|reply_?count|replies_?count|comments)$/i],
   ["email", /e-?mails?|email_?domain|home_?page_?email/i],
@@ -118,6 +124,7 @@ function outputsOfFields(fields: ReadonlyArray<string>): OutputClass[] {
 }
 
 const INPUT_RULES: ReadonlyArray<[InputClass, RegExp]> = [
+  ["app_ref", /^(product_?id|app_?id|bundle_?id)$/i],
   ["comment_ref", /^(comment_?id|commentid|cid|parent_?comment_?id|comment)$/i],
   ["place_ref", /^(place_?id|placeid|place|cid|data_?id|fid|location_?id|business_?id|business|location)$/i],
   ["post_ref", /^(aweme_?id|video_?id|post_?id|tweet_?id|media_?id|shortcode|code|id|post|video|feedback_?id|item_?id|urn)$/i],
@@ -131,7 +138,7 @@ function takesOf(endpoint: CatalogEndpoint, operation: Operation): InputClass[] 
   if (profile.query) out.add("query");
   for (const input of endpoint.inputs) for (const [cls, re] of INPUT_RULES) if (re.test(input.name)) { out.add(cls); break; }
   // an endpoint with no input of its own (a routed search that takes filters only) is fed from the customer's words
-  if ((operation === "companies.discover" || operation === "people.discover" || operation === "places.discover") && out.size === 0) out.add("query");
+  if ((operation === "companies.discover" || operation === "people.discover" || operation === "places.discover" || operation === "apps.discover") && out.size === 0) out.add("query");
   return [...out];
 }
 
@@ -162,6 +169,8 @@ const PARSER_CAPABILITIES: Partial<Record<ParserName, Array<{ operation: Operati
   "tiktok-comments": [{ operation: "social.comments", takes: ["url"], outputs: ["id", "text", "author", "date"], pagination: false }],
   "instagram-feed": [{ operation: "social.parents", takes: ["query"], outputs: ["id", "url", "text", "author", "comment_count"], pagination: false }],
   "instagram-post": [{ operation: "social.comments", takes: ["url"], outputs: ["id", "text", "author"], pagination: false }],
+  "google-play-reviews": [{ operation: "apps.reviews", takes: ["url"], outputs: ["rating", "date", "text", "author"], pagination: false }],
+  "app-store-reviews": [{ operation: "apps.reviews", takes: ["url"], outputs: ["rating", "date", "text", "author"], pagination: false }],
   emails: [{ operation: "company.contacts", takes: ["url", "domain"], outputs: ["email"], pagination: false }],
   "phone-numbers": [{ operation: "company.contacts", takes: ["url", "domain"], outputs: ["phone"], pagination: false }],
 };
@@ -189,7 +198,8 @@ export function buildCapabilityRegistry(catalog: TregCatalog, availability: Regi
     const profile = toolProfile(e);
     const fields = e.item_fields ? Object.keys(e.item_fields) : [];
     // a field that is an OBJECT (a wrapper such as `aweme_info` or `basic_info`) hides the row's real fields: the keys its example shows are read too, but the outputs are then UNPROVEN (proven on a sampled page before a plan relies on them)
-    const objectFields = fields.filter((f) => e.item_fields![f].type === "object");
+    // (a LIST wrapper named items / results / data / list hides them the same way: round 51, the Google Play app searches)
+    const objectFields = fields.filter((f) => e.item_fields![f].type === "object" || (e.item_fields![f].type === "array" && /^(items|results|data|list)$/i.test(f)));
     const nested = objectFields.flatMap((f) => [...String(e.item_fields![f].example ?? "").matchAll(/"([A-Za-z_][A-Za-z0-9_]*)"\s*:/g)].map((m) => m[1]));
     const cost = expectedCost(e, catalog, undefined);
     const sellable = isSellable(e.id, catalog);
@@ -199,7 +209,7 @@ export function buildCapabilityRegistry(catalog: TregCatalog, availability: Regi
       id: e.id,
       provider: "treg",
       operation,
-      platform: operation.startsWith("social.") ? platformOf : operation.startsWith("places.") ? "google_maps" : operation.startsWith("web.") ? "web" : null,
+      platform: operation.startsWith("social.") ? platformOf : operation.startsWith("places.") ? "google_maps" : operation.startsWith("web.") ? "web" : operation.startsWith("apps.") ? platformOf.replace("-", "_") : null,
       takes: takesOf(e, operation),
       outputs: outputsOfFields([...fields, ...nested]),
       outputsKnown: fields.length > 0 && objectFields.length === 0,

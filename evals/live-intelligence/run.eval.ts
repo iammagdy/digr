@@ -44,6 +44,8 @@ const USER = REPLAY_USER;
 const catalog = loadTregCatalog();
 const allowed = (id: string) => !blockedEndpointReason(id) && policyVerdict(id, NOT_ADMIN).allowed;
 const PROVIDER_NAMES = /claude|anthropic|haiku|sonnet|opus|\btreg\b|firecrawl|context\.?dev|openai|\bgpt\b|\bllm\b/i;
+/** The provider family of a stage's source (evaluation output only; never shown to a customer). */
+const providerFamily = (id: string): "firecrawl" | "contextdev" | "treg" | "unknown" => (id.startsWith("firecrawl.") ? "firecrawl" : id.startsWith("contextdev.") ? "contextdev" : id && catalog.byId.has(id) ? "treg" : "unknown");
 const outside = (p: string) => { const r = path.resolve(p); return r !== REPO && !r.startsWith(REPO + path.sep); };
 
 interface ModelCallRecord { caseId: string; turn: number; ok: boolean; failure?: string; text?: string; truncated?: boolean; usage?: { inputTokens: number; outputTokens: number }; latencyMs: number }
@@ -73,7 +75,8 @@ function outcomeOf(db: any, r: { ok: boolean; contentAr: string }, log: Record<s
   if (fixed === "fixed_privacy_clarify") return "CLARIFY";
   if (r.ok && liveOf(db).length > 0) return "UNDERSTOOD";
   // round 3: a turn that only updates the parts already prepared (a part removed, the others kept) answers with the summary and draws no new card: the request is understood when live parts remain and nothing is asked
-  if (!r.ok && liveOf(db).length > 0 && String(log?.brief ?? "").startsWith("group_") && !/[؟?]/.test(r.contentAr)) return "UNDERSTOOD";
+  // (round 51: likewise «كمّل» on a single request in progress, «continue_open_*»: the live mission is kept and nothing is asked)
+  if (!r.ok && liveOf(db).length > 0 && /^(?:group_|continue_open_)/.test(String(log?.brief ?? "")) && !/[؟?]/.test(r.contentAr)) return "UNDERSTOOD";
   const brief = String(log?.brief ?? "");
   if (brief.startsWith("capability_unsupported") || brief === "objectives_unresolved_ask" || brief === "words_unsupported_platform") return "UNSUPPORTED";
   if (brief === "privacy" || brief === "group_privacy" || brief === "rejected_privacy_refusal") return "PRIVACY";
@@ -200,6 +203,11 @@ describe("LIVE intelligence evaluation (real claude-haiku-5-5, guarded, cumulati
           safe.push({ missionId: m.id, request: m.request_text, hasBrief: Boolean(brief), discovery: d.status, needKind: d.need.kind, needSource: d.need.source, stages, danglingParents, plannerKind: realPlanner ? "real" : social ? "compiler" : "scripted", planning: plan });
           vi.stubGlobal("fetch", guard.fetch);
         }
+        // CAPABILITY SELECTION (round 51): the operations code discovered for the live missions, against the case's labels (only when the request was understood)
+        const foundOps = [...new Set(safe.flatMap((x) => x.stages.map((st: any) => String(st.op))))];
+        const capability = (c.ops || c.forbidOps) && final.outcome === "UNDERSTOOD"
+          ? { expected: c.ops ?? [], forbidden: c.forbidOps ?? [], found: foundOps, ok: (c.ops ?? []).every((op) => foundOps.includes(op)) && !(c.forbidOps ?? []).some((op) => foundOps.includes(op)) }
+          : null;
         const creditRows = db.rows("credit_ledger").length - 1;
         const accepted = c.category === "N" && c.id !== "N7"
           ? (final.outcome === "PRIVACY" || (final.outcome === "CLARIFY" && String(final.log?.type ?? "").startsWith("fixed_privacy"))) && live.length === 0
@@ -212,7 +220,7 @@ describe("LIVE intelligence evaluation (real claude-haiku-5-5, guarded, cumulati
           liveMissions: texts, expectedParts: c.parts ?? 1, missingParts: final.outcome === "UNDERSTOOD" ? Math.max(0, (c.parts ?? 1) - texts.length) : null, lostRequirements: lostReqs, duplicates,
           typedApprovalAnswered: typedOk ? turns[turns.length - 1].contentAr === AGENT_PRESS_APPROVE_AR && live.every((m) => m.status === "queued" || m.status === "plan_ready") : null,
           nothingExecuted: missionsOf(db).every((m) => ["queued", "cancelled", "plan_ready"].includes(m.status) && !m.job_id), creditRowsAdded: creditRows,
-          providerNameLeakAnywhere: PROVIDER_NAMES.test(allVisible), safe,
+          providerNameLeakAnywhere: PROVIDER_NAMES.test(allVisible), capability, safe,
         });
       }
     } finally {
@@ -231,7 +239,13 @@ describe("LIVE intelligence evaluation (real claude-haiku-5-5, guarded, cumulati
       cumulativeBefore: before, cumulativeAfter: after,
       inputTokens: s.ledger.reduce((n, e) => n + e.inputTokens, 0), outputTokens: s.ledger.reduce((n, e) => n + e.outputTokens, 0), truncatedAttempts: s.ledger.filter((e) => e.truncated).length,
       http: s.ledger.reduce((m: Record<string, number>, e) => ({ ...m, [String(e.httpStatus)]: (m[String(e.httpStatus)] ?? 0) + 1 }), {}),
-      conversations: rate(run), original: rate(run.filter((r) => r.set === "original")), expanded: rate(run.filter((r) => r.set === "expanded")),
+      conversations: rate(run), original: rate(run.filter((r) => r.set === "original")), expanded: rate(run.filter((r) => r.set === "expanded")), heldout: rate(run.filter((r) => r.set === "heldout")),
+      falseRefusals: run.filter((r) => r.falseRefusal).map((r) => r.id), lostRequirements: run.filter((r) => r.lostRequirements.length > 0).map((r) => r.id), duplicates: run.filter((r) => r.duplicates > 0).map((r) => r.id),
+      providerNameLeaks: run.filter((r) => r.providerNameLeakAnywhere || r.turns.some((t: TurnRecord) => t.providerNameLeak)).map((r) => r.id),
+      capabilitySelection: { n: run.filter((r) => r.capability).length, ok: run.filter((r) => r.capability?.ok).length, wrong: run.filter((r) => r.capability && !r.capability.ok).map((r) => r.id) },
+      planner: ((ps: any[]) => ({ missions: ps.length, planReady: ps.filter((p) => p.planning.status === "plan_ready").length, needsInput: ps.filter((p) => p.planning.status === "needs_input").length, unserved: ps.filter((p) => p.planning.status === "unserved").length, failed: ps.filter((p) => p.planning.status === "failed").length,
+        crossProvider: ps.filter((p) => new Set((p.planning.planStages ?? []).map((st: any) => st.family)).size >= 2).length,
+        families: ps.flatMap((p) => (p.planning.planStages ?? []).map((st: any) => st.family)).reduce((m: Record<string, number>, f: string) => ({ ...m, [f]: (m[f] ?? 0) + 1 }), {}) }))(run.flatMap((r) => r.safe.filter((x: any) => x.plannerKind === "real"))),
       notRun: results.filter((r) => r.notRun).map((r) => r.id),
     };
     writeFileSync(path.join(outDir, "transcripts.json"), JSON.stringify(calls, null, 1));
@@ -253,16 +267,26 @@ describe("LIVE intelligence evaluation (real claude-haiku-5-5, guarded, cumulati
 const NAMES = ["النخبة", "الريادة", "الأفق", "المرجان", "الواحة", "لؤلؤة البحر", "النجمة الذهبية", "الصفوة", "البيان", "المدار", "الشروق", "الياسمين"];
 const LATIN = ["alnokhba", "alreyada", "alofok", "almorgan", "alwaha", "loloat-albahr", "golden-star", "alsafwa", "albayan", "almadar", "alshorouk", "alyasmin"];
 function syntheticTreg(endpointId: string, params: Record<string, unknown>): unknown {
-  const q = String(params?.query ?? params?.q ?? params?.keyword ?? params?.keywords ?? params?.search ?? params?.term ?? params?.company ?? "").replace(/\s+/g, " ").trim().slice(0, 60) || "السوق المحلي";
+  // (round 51: company and people searches name their topic in other inputs, «industry», «name», «title»: any text input is the topic, so a sector search returns rows of that sector instead of a generic «السوق المحلي» the planner rightly refused)
+  const anyText = Object.entries(params ?? {}).filter(([k, v]) => typeof v === "string" && v.trim().length >= 3 && !/^(?:url|link|domain|website|country|gl|hl|lang|language|location_?code|cursor|next|page|sort|order|engine|type|format)$/i.test(k) && !/^https?:/i.test(String(v))).map(([, v]) => String(v));
+  const q = String(params?.query ?? params?.q ?? params?.keyword ?? params?.keywords ?? params?.search ?? params?.term ?? params?.company ?? anyText.join(" ") ?? "").replace(/\s+/g, " ").trim().slice(0, 60) || "السوق المحلي";
   const id = endpointId.toLowerCase();
   const n = 10;
+  // (round 51: the place and the country of the synthetic rows follow the planner's own query, for every city of the corpus: rows from «القاهرة» for a Sharm El-Sheikh or Dubai search were rightly refused by the planner as not matching)
+  const allText = `${q} ${Object.values(params ?? {}).filter((v) => typeof v === "string").join(" ")}`;
+  const PLACES: Array<[RegExp, string, string]> = [[/شرم|sharm/i, "شرم الشيخ", "EG"], [/غردق|hurghada/i, "الغردقة", "EG"], [/اقصر|أقصر|luxor/i, "الأقصر", "EG"], [/اسكندري|إسكندري|alexandria/i, "الإسكندرية", "EG"], [/معادي|maadi/i, "المعادي، القاهرة", "EG"], [/زمالك|zamalek/i, "الزمالك، القاهرة", "EG"], [/مهندسين|mohandes/i, "المهندسين، الجيزة", "EG"], [/دبي|dubai/i, "دبي", "AE"], [/رياض|riyadh/i, "الرياض", "SA"], [/جدة|jeddah/i, "جدة", "SA"]];
+  const place = PLACES.find(([re]) => re.test(allText));
+  const cityOf = place ? place[1] : "القاهرة";
+  const countryOf = place ? place[2] : /امارات|الإمارات|uae|emirates/i.test(allText) ? "AE" : /سعودي|saudi/i.test(allText) ? "SA" : "EG";
   const day = (i: number) => `2026-11-${String(10 - (i % 9)).padStart(2, "0")}T0${i % 9}:15:00Z`;
   let rows: Array<Record<string, unknown>>;
-  if (/review/.test(id)) rows = Array.from({ length: n }, (_, i) => ({ review_id: `r${i}${id.length}`, rating: 2 + (i % 4), text: ["الخدمة ممتازة والموظفين محترمين", "المكان نظيف بس الأسعار عالية شوية", "تجربة متوسطة والانتظار كان طويل", "أنصح بيه جدًا للعائلات"][i % 4], author: `زائر ${i + 1}`, date: day(i), place_id: `pl_${i}` }));
-  else if (/maps|places|local|apple_maps|business/.test(id) && !/compan/.test(id)) rows = Array.from({ length: n }, (_, i) => ({ place_id: `pl_${i}`, name: `${NAMES[i]} — ${q}`, address: `شارع ${NAMES[(i + 3) % 12]}، ${/غردق|hurghada/i.test(q) ? "الغردقة" : /معادي|maadi/i.test(q) ? "المعادي، القاهرة" : /زمالك|zamalek/i.test(q) ? "الزمالك، القاهرة" : "القاهرة"}`, rating: 3.6 + (i % 4) / 5, reviews_count: 40 + i * 13, phone: `+2010${String(2000000 + i * 3571).slice(0, 7)}`, website: `https://${LATIN[i]}.com`, maps_url: `https://maps.google.com/?cid=${1000 + i}`, category: q }));
-  else if (/employee|people|linkedin|person|contact\.search/.test(id)) rows = Array.from({ length: n }, (_, i) => ({ person_id: `p${i}`, full_name: ["أحمد سمير", "منى خالد", "كريم فؤاد", "سارة عادل", "محمود نبيل", "ريم حسن", "عمرو صلاح", "نهى إبراهيم", "طارق عزت", "دينا مصطفى"][i], title: ["مدير التسويق", "مديرة التسويق الرقمي", "رئيس قسم المبيعات", "مديرة العلامة التجارية"][i % 4], company: `${NAMES[i]} ${q}`, company_domain: `${LATIN[i]}.com`, profile_url: `https://www.linkedin.com/in/${LATIN[i]}-${i}` }));
+  // round 51: app stores (a search of apps; the reviews of one app)
+  if (/search\.apps|search_apps/.test(id)) rows = Array.from({ length: 6 }, (_, i) => ({ app_id: `com.${LATIN[i].replace(/-/g, "")}.app`, id: `${1400000000 + i}`, title: `${q} ${["", "Pay", "Wallet", "Plus", "Lite", "Pro"][i]}`.trim(), name: `${q} ${["", "Pay", "Wallet", "Plus", "Lite", "Pro"][i]}`.trim(), developer: `${NAMES[i]} للتقنية`, rating: 3.8 + (i % 3) / 5, reviews_count: 12000 - i * 900, link: `https://play.google.com/store/apps/details?id=com.${LATIN[i].replace(/-/g, "")}.app`, url: `https://play.google.com/store/apps/details?id=com.${LATIN[i].replace(/-/g, "")}.app` }));
+  else if (/review/.test(id)) rows = Array.from({ length: n }, (_, i) => ({ review_id: `r${i}${id.length}`, rating: 2 + (i % 4), text: ["الخدمة ممتازة والموظفين محترمين", "المكان نظيف بس الأسعار عالية شوية", "تجربة متوسطة والانتظار كان طويل", "أنصح بيه جدًا للعائلات"][i % 4], author: `زائر ${i + 1}`, date: day(i), place_id: `pl_${i}` }));
+  else if (/maps|places|local|apple_maps|business/.test(id) && !/compan/.test(id)) rows = Array.from({ length: n }, (_, i) => ({ place_id: `pl_${i}`, name: `${NAMES[i]} — ${q}`, address: `شارع ${NAMES[(i + 3) % 12]}، ${cityOf}`, city: cityOf, rating: 3.6 + (i % 4) / 5, reviews_count: 40 + i * 13, phone: `+2010${String(2000000 + i * 3571).slice(0, 7)}`, website: `https://${LATIN[i]}.com`, maps_url: `https://maps.google.com/?cid=${1000 + i}`, category: q }));
+  else if (/employee|people|linkedin|person|contact\.search/.test(id)) rows = Array.from({ length: n }, (_, i) => ({ person_id: `p${i}`, full_name: ["أحمد سمير", "منى خالد", "كريم فؤاد", "سارة عادل", "محمود نبيل", "ريم حسن", "عمرو صلاح", "نهى إبراهيم", "طارق عزت", "دينا مصطفى"][i], title: ["مدير التسويق", "مديرة التسويق الرقمي", "رئيس قسم المبيعات", "مديرة العلامة التجارية"][i % 4], company: `${NAMES[i]} ${q}`, company_domain: `${LATIN[i]}.com`, location: cityOf, profile_url: `https://www.linkedin.com/in/${LATIN[i]}-${i}` }));
   else if (/email|phone/.test(id)) rows = Array.from({ length: 3 }, (_, i) => ({ value: ["info@", "sales@", "contact@"][i] + `${LATIN[0]}.com`, type: "generic", source_page: `https://${LATIN[0]}.com/contact` }));
-  else if (/compan|organization|firm|openmart/.test(id)) rows = Array.from({ length: n }, (_, i) => ({ company_id: `c${i}`, name: `${NAMES[i]} ${q}`, website: `https://${LATIN[i]}.com`, domain: `${LATIN[i]}.com`, industry: q, city: /غردق|hurghada/i.test(q) ? "الغردقة" : /دبي|dubai/i.test(q) ? "دبي" : "القاهرة", country: /دبي|امارات|الإمارات|dubai|uae|emirates/i.test(q) ? "AE" : "EG", employees: 15 + i * 7, description: `شركة ${q} تأسست في ${2008 + i}` }));
+  else if (/compan|organization|firm|openmart/.test(id)) rows = Array.from({ length: n }, (_, i) => ({ company_id: `c${i}`, name: `${NAMES[i]} ${q}`, website: `https://${LATIN[i]}.com`, domain: `${LATIN[i]}.com`, industry: q, city: cityOf, country: countryOf, employees: 15 + i * 7, description: `شركة ${q} تأسست في ${2008 + i}` }));
   else if (/scrape|extract|contents|fetch|read/.test(id)) rows = [{ url: String(params?.url ?? `https://${LATIN[1]}-news.com/a1`), title: `${q}: تطورات جديدة`, text: `يتناول هذا المقال ${q} من عدة زوايا، ويعرض آراء المختصين وأحدث الأرقام المنشورة رسميًا.`, published_at: day(1) }];
   else rows = Array.from({ length: n }, (_, i) => ({ title: [`${q}: تطورات جديدة هذا الأسبوع`, `خبراء يعلّقون على ${q}`, `أرقام رسمية حول ${q}`, `${q} بين التحديات والفرص`][i % 4], url: `https://${LATIN[i]}-news.com/${2026}/11/article-${i + 1}`, snippet: `تقرير عن ${q} يتناول آخر المستجدات وآراء المختصين.`, source: `${NAMES[i]} نيوز`, date: day(i), position: i + 1 }));
   return { data: rows, results: rows, items: rows, next_cursor: null };
@@ -291,10 +315,21 @@ async function planSafely(id: string, request: string, brief: ResearchBrief | nu
   const providerCalls: string[] = [];
   const prompts: string[] = [];
   const web = fakeContextDev({
-    parse: (parser, _url, body) => (parser === "google-maps" ? { data: mapsPlace("مطعم المرجان"), credits: 1 } : parser === "google-maps-reviews" ? { data: mapsReviews(Math.min(20, Number(body?.parseParams?.limit) || 20)), credits: 1 } : { fail: { error_code: "NOT_FOUND" } }),
+    // (round 51: the company contact parsers answer too, from the company's own site the planner opens: before this every e-mail or phone parse was «NOT_FOUND» and contacts could never be sampled)
+    parse: (parser, url, body) => (parser === "emails" ? { data: { emails: ["info", "sales"].map((box) => ({ email: `${box}@${String(url).replace(/^https?:\/\//, "").split("/")[0]}`, source_url: url })) }, credits: 1 } : parser === "phone-numbers" ? { data: { phone_numbers: [{ number: "+20653440000", raw: "065 344 0000", source_url: url }] }, credits: 1 } : parser === "google-play-reviews" || parser === "app-store-reviews" ? { data: { reviews: Array.from({ length: 20 }, (_, i) => ({ id: `ar${i}`, rating: 1 + (i % 5), date: `2026-11-0${1 + (i % 9)}`, title: ["تطبيق ممتاز", "بطيء أحيانًا", "مشكلة في الدخول", "سهل الاستخدام"][i % 4], text: ["التطبيق سهل وسريع في التحويلات", "بيعلق وقت الضغط", "الرسائل بتتأخر", "التحديث الأخير حلو"][i % 4], author: `مستخدم ${i + 1}` })) }, credits: 1 } : parser === "google-maps" ? { data: mapsPlace("مطعم المرجان"), credits: 1 } : parser === "google-maps-reviews" ? { data: mapsReviews(Math.min(20, Number(body?.parseParams?.limit) || 20)), credits: 1 } : { fail: { error_code: "NOT_FOUND" } }),
     search: (body: any) => Array.from({ length: 8 }, (_, i) => ({ title: `${String(body?.query ?? "الموضوع").slice(0, 50)}: ${["تطورات جديدة", "آراء الخبراء", "أرقام رسمية", "ما الذي تغيّر"][i % 4]}`, url: `https://${LATIN[i]}-news.com/2026/11/a${i + 1}`, description: "تقرير يتناول آخر المستجدات وآراء المختصين.", snippet: "تقرير يتناول آخر المستجدات وآراء المختصين.", date: `2026-11-0${1 + (i % 9)}` })),
     scrape: (url: string) => ({ markdown: `# تقرير\n\nيتناول هذا التقرير الموضوع من عدة زوايا ويعرض آراء المختصين وأحدث الأرقام المنشورة رسميًا. (${url.slice(0, 60)})`, credits: 1 }),
   });
+  // FIRECRAWL's page read (POST …/v2/scrape) answers in its own shape; the Context.dev fake answers its search and parsers (and Firecrawl's search, whose path ends the same way)
+  const webFetch = (async (input: string, init?: RequestInit) => {
+    if (/firecrawl/i.test(String(input)) && String(input).endsWith("/scrape")) {
+      const body = init?.body ? JSON.parse(String(init.body)) : {};
+      web.requests.push({ url: String(input), body, headers: {} });
+      const markdown = `# تقرير\n\nيتناول هذا التقرير الموضوع من عدة زوايا ويعرض آراء المختصين وأحدث الأرقام المنشورة رسميًا. (${String(body?.url ?? "").slice(0, 60)})`;
+      return { status: 200, ok: true, headers: new Headers(), json: async () => ({ success: true, data: { markdown, links: [], metadata: { statusCode: 200, url: body?.url } }, creditsUsed: 1 }) } as unknown as Response;
+    }
+    return web.fetchFn(input, init);
+  }) as typeof web.fetchFn;
   const base = real ? createEvalPlannerDriver({ fetch: real.guardFetch, key: () => process.env[KEY_ENV] ?? "", model: EVAL_MODEL, maxOutputTokens: PLANNER_MAX_OUTPUT_TOKENS, maxTurns: Number(process.env.LIVE_EVAL_PLANNER_MAX_TURNS) || 30, onTurnRecord: (r) => real.records.push(r) }) : createFakeDriver([]);
   const driver = { run: async (i: Parameters<RunnerDeps["driver"]["run"]>[0]) => { prompts.push(String(i.userPrompt ?? "")); return base.run(i); } } as RunnerDeps["driver"];
   const deps: RunnerDeps = {
@@ -306,7 +341,7 @@ async function planSafely(id: string, request: string, brief: ResearchBrief | nu
       return tregResult(syntheticTreg(o.endpointId, o.params ?? {}), 0.001);
     }) as never,
     models: { planning: EVAL_MODEL, execution: EVAL_MODEL }, resolveAccess: async () => NOT_ADMIN, notify: async () => undefined, readMissionBrief: async () => brief,
-    providerKey: (async () => "synthetic-provider-key") as never, fetchFn: web.fetchFn as never,
+    providerKey: (async () => "synthetic-provider-key") as never, fetchFn: webFetch as never,
   };
   let threw: string | null = null;
   setModelPlanningForTests(false);
@@ -315,7 +350,7 @@ async function planSafely(id: string, request: string, brief: ResearchBrief | nu
   const plan = m.plan;
   return {
     status: m.status, error: m.error ?? null, question: m.question_ar ? String(m.question_ar).slice(0, 300) : null, summary: m.summary_ar ? String(m.summary_ar).slice(0, 300) : null,
-    hasPlan: Boolean(plan), planStages: Array.isArray(plan?.stages) ? plan.stages.map((st: any) => ({ key: st.key, endpoint: st.endpoint_id ?? st.endpointId ?? null, rows: st.expected_rows ?? st.expectedRows ?? null, parent: st.parent_key ?? st.parentKey ?? null, deliver: st.deliver ?? null })) : [],
+    hasPlan: Boolean(plan), planStages: Array.isArray(plan?.stages) ? plan.stages.map((st: any) => ({ key: st.key, endpoint: st.endpoint_id ?? st.endpointId ?? null, family: providerFamily(String(st.endpoint_id ?? st.endpointId ?? "")), rows: st.expected_rows ?? st.expectedRows ?? null, parent: st.parent_key ?? st.parentKey ?? null, deliver: st.deliver ?? null })) : [],
     unserved: plan?.unserved_steps ?? plan?.unservedSteps ?? null, pricePoints: plan?.price_points ?? plan?.pricePoints ?? plan?.totalPoints ?? null,
     reservedPoints: m.reserved_points ?? null, jobId: m.job_id ?? null,
     providerCalls, webCalls: web.requests.length, recorderRows: rec.rows.length, netAttempts: netAttempts.length, threw,
