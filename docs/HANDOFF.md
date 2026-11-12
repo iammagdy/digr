@@ -4,6 +4,28 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 53 (12 Nov 2026): comprehensive real-world acceptance (docs/DIGER-INTELLIGENCE-FINAL-ACCEPTANCE.md section 11)
+
+* **Real planner** (real Anthropic, synthetic providers):
+  * on main `092a010`: 29/32, R4's 31 missions 28/31;
+  * after this round's fixes: 31/32, 30/32 and 30/31 (91/95), with 0 internal failures.
+* **Chat:** 97/97 on the final code. Over the 4 runs, one lost topic by the model (E1 in a3).
+* **Fixed** (each with a mutation-checked test):
+  * G2: people at companies now get the companies step as their parent in discovery;
+  * P1: an unstated count is a default, never a question;
+  * E1: the fallback question reads every turn;
+  * a fragment no longer becomes a second live mission when the model returns no brief;
+  * the eval's Context.dev people search was empty.
+* **Deployment verifiability:**
+  * the worker reports its build commit (`scripts/write-build-info.mjs` in `heroku-postbuild`; never fails the build);
+  * each planning run records for the admin whether Firecrawl / Context.dev keys resolved.
+* **Blockers** (owner):
+  * the Heroku worker cannot reach Firecrawl / Context.dev: 71 refusals, none offered since Oct 31, keys stored; most likely `PROVIDER_KEYS_ENCRYPTION_KEY` is missing on Heroku;
+  * no disposable test-account credentials, so no authenticated browser journey.
+* **Spending this mission:**
+  * Anthropic $3.3098;
+  * TREG, Firecrawl and Context.dev $0 (no credentials in the session).
+
 ## Round 52 (12 Nov 2026): planner reliability (docs/DIGER-INTELLIGENCE-FINAL-ACCEPTANCE.md section 10)
 
 * **What:** the formal refusals behind the four R4 planner failures (J3, G2, Z16, Z35), traced from the recorded transcripts of six real-planner runs (504 proposals, 363 refused).
