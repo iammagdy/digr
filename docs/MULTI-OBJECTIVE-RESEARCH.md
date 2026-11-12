@@ -121,6 +121,99 @@ Every existing refusal corpus is unchanged and green (`private-data-guards`, `ag
 * the chat page in a browser (the extra cards are appended by code that was read and typechecked, not run in a browser);
 * the deployed worker's revision.
 
-## 7. Rollout
+## 7. Rollout (unchanged by sections 8 to 11)
 
 Unchanged: the same two switches; the SQL is in `docs/AGENT-UNDERSTANDING-V1.md` and `docs/UNIFIED-CAPABILITY-DISCOVERY.md`. **Not run.**
+
+## 8. Reliability: cards that are really stored (round 46)
+
+**The failure found in #456.**
+
+* The cards were written with `Promise.all`, and only a THROWN error was caught.
+* A Supabase write that RESOLVES with `{ error }` counted as saved. The missions stayed, and the response listed cards that a reload would not show.
+* A retry then created the same parts again, because the group was never stored.
+* Two turns of the same request at the same moment created every part twice.
+
+**Now** (`chatTurn.ts` `groupTurn`):
+
+* **Layout:**
+  * every part's card is its own assistant row with a derived id (`partCardIdOf(missionId)`);
+  * the answer is the summary of the parts and draws no card (`summaryOnly`, so the handler sends no `agentMission`).
+* **Checked writes:** cards are written one at a time and each result is checked.
+  * An error object or a throw is a failure.
+  * When the answer to a write is lost, the row is read back by its id.
+* **A card that is not stored:**
+  * Its mission is withdrawn when this turn created it (compare-and-set on the waiting statuses; nothing is held before approval).
+  * The part is said «waiting» and is never claimed.
+  * It is prepared again on «كمّل».
+  * If the mission cannot be withdrawn (the worker took it), the group keeps its id, and the next turn writes ITS card. No second mission is created.
+* **The summary:** written last, carrying the group with the true outcome of every card, and retried once. The cards also carry the group as it was just before they were written. The next turn prefers the summary of the same group (`readPriorBrief`).
+* **Nothing stored:** no live mission is left, and the customer reads that nothing was prepared or charged and to say «كمّل».
+* **Idempotency (no schema change).** A part's mission id is `partMissionIdOf(user, conversation, sentence, n)`, and both ids are existing TEXT primary keys.
+  * A retried or concurrent turn meets the same id. The primary key refuses the second insert (`23505`), and that turn ADOPTS the live mission and its stored card.
+  * A finished or withdrawn mission is never reused; the part takes `n + 1`.
+  * The page appends a card it already shows only once (`chatCards.ts`).
+* **Still possible:** two concurrent turns whose two model calls write DIFFERENT sentences for the same part get two ids. Both missions are visible, each on its own card, unapproved and holding nothing.
+
+## 9. Every part accounted for: parts 7 and 8
+
+**Before:**
+
+* A brief carries up to 8 objectives (OBJECTIVES_MAX), so up to 8 parts.
+* Only the first 6 (RESEARCH_GROUP_MAX_PARTS) were judged and stored.
+* «كمّل» rebuilt the same brief and processed the same first 6, so parts 7 and 8 never reached mission creation.
+
+**Now:**
+
+* **All parts are stored:** every part is judged and stored in the group.
+* **Waiting parts:** a part not prepared in this turn is stored «waiting» with its reason and prepared on a later «كمّل», from the kept brief, without retyping.
+* **Limits, all existing and unchanged:**
+  * the open-missions limit (3 being planned at once);
+  * the hourly limit;
+  * at most 6 new missions per turn;
+  * the expiry of plans nobody answers (`requests/expiry.ts`): at most 5 wait for the customer, and the OLDEST beyond them are expired.
+* **Room check:** a new part is created only while there is room among those 5, so preparing a later part never expires an earlier one. Without room, a part may still adopt its own existing mission.
+* **Approval:** an approved part no longer waits, so it makes room. No part is ever executed without its own «اعتمد».
+
+**Not done (needs infrastructure or an authorization change):** an automatic continuation when room appears (when a plan is approved or expires). The customer says «كمّل».
+
+## 10. The customer's intent across the split
+
+The model writes each part's sentence, and the code checks it with the trusted readers every request already goes through:
+
+* the request contract with the semantic flag OFF (period, content language, country, rows' fields);
+* the places list (countries and cities);
+* the numbers written.
+
+No new vocabulary. The chat still imports no semantic module.
+
+* **Invented:** a part states a period, a language, a place or a field the customer never wrote (in any turn, or the request already grounded). That part is asked with a natural sentence and is not prepared; the other parts go on. A number the customer never wrote was already the existing check's.
+* **Dropped:** a requirement of the whole request (period, language, country, city, field, number) that no part carries. Nothing is prepared, and the customer is asked which part it belongs to. A part that also states something unwritten is named in the same answer.
+* **A clarification keeps the group:** the parts already prepared keep their missions (no second mission), and only the asked part is prepared next.
+* **What it cannot see:** the request contract reads WHETHER a period or a language is stated, not its value.
+  * A part that changes «آخر شهر» into «آخر سنة» is not caught here. The worker reads the part's own sentence and the card states the period on the plan before approval.
+  * A period phrase the contract does not read («الأسبوع اللي فات») is not compared.
+  * Platforms, comments and replies are still checked by `validateBrief`.
+
+## 11. Offline tests (`tests/multi-objective-reliability.test.ts`)
+
+| Scenario | Proven |
+|---|---|
+| layout | the summary draws no card; each part's card is its own row with a derived id; the response lists exactly the stored cards |
+| a card's write resolves with an error / throws / two of three fail | that part is withdrawn and said «waiting», never returned; reload shows exactly the stored cards |
+| the write's answer is lost but the row was stored | counted saved, never withdrawn |
+| a card fails and its mission cannot be withdrawn | the next turn writes its card for the same mission, never a second mission |
+| retry after a failure | «كمّل» prepares only the failed part (next id); kept parts are not re-created; a third turn changes nothing |
+| the summary fails | the stored cards stand; the next turn knows the parts from the cards' group |
+| nothing can be stored | no live mission is left; the retry prepares each part once |
+| concurrent duplicate requests | 3 missions and 3 cards, never 6; both answers list the same stored cards |
+| 8 parts | all stored from turn 1; «كمّل» prepares more within the open-missions and 5-waiting limits; parts 7 and 8 get missions after earlier parts are approved; nothing expired |
+| intent | invented period, place or field asked; dropped period or number asked; a changed city asked with both places named; a clarification keeps the group; no false question on the acceptance request |
+| page | the same cards after the answer and after a reload; a repeated answer adds none; each card loads its own mission with its own price and «اعتمد» |
+
+**Not proven:**
+
+* what the real model writes;
+* a real browser (the project has no browser runner);
+* real Supabase error codes beyond the documented `23505`;
+* the deployed worker's revision.

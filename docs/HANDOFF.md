@@ -4,6 +4,29 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 46 (12 Nov 2026, after #456, main = `1f70198`): multi-objective reliability (docs/MULTI-OBJECTIVE-RESEARCH.md sections 8-11)
+
+**No SQL write, no flag change, no migration, no schema change, no permission change, no paid model or provider call, no money/ledger/pricing/approval/settlement/infrastructure line.** Everything still runs only where `chat_research_brief_v1` and `capability_discovery_v1` are on (both OFF).
+
+1. **Cards are stored and checked, one write at a time.**
+   * Every part's card is its own assistant row, and the answer itself is the summary (it draws no card).
+   * Each write's own result is checked: an error object counts as a failure, like a throw.
+   * A part whose card was not stored is withdrawn (compare-and-set, nothing held) and said «waiting». The response lists only stored cards. The summary is written last, with the true outcomes.
+2. **Idempotency with no schema change.** A part's mission id and its card's message id are derived from the customer, the conversation and the part's sentence (both are existing TEXT primary keys).
+   * A retried, partly failed or concurrent turn adopts the live mission and the stored card instead of creating its own.
+   * A finished or withdrawn mission is never reused; the part takes its next id.
+   * `createCustomerMission` takes an optional server-chosen id and reports a key conflict.
+3. **Every part is stored, whatever their number.** At most 8 parts (OBJECTIVES_MAX) were possible before, but only the first 6 were stored, and parts 7 and 8 could never be created. Now all parts are judged and stored. The ones not prepared yet wait and are prepared on «كمّل».
+   * The existing open-missions limit (3 being planned) and hourly limit apply unchanged.
+   * The existing expiry keeps 5 waiting plans and expires the oldest. A new part is created only while there is room, so preparing a later part never expires an earlier one.
+4. **The customer's intent across the split.** Using the existing readers (the request contract with the semantic flag off, the places list, the numbers):
+   * a part stating a period, language, place or field the customer never wrote is asked;
+   * a requirement of the whole request that no part carries is asked (which part it belongs to);
+   * nothing is refused or silently changed.
+   * The chat still imports no semantic module (the isolation test is unchanged).
+5. **Page:** the cards come from one pure module (`chatCards.ts`), the same after the answer and after a reload, and a card already shown is never appended twice.
+6. **Tests:** `tests/multi-objective-reliability.test.ts`, plus updated layout assertions in `multi-objective-research` and `llm-first-objectives`. The project has no browser runner, so the page is tested with its pure functions and server-rendered cards.
+
 ## Round 45 (12 Nov 2026, after #455, main = `245535c`): multi-objective research (docs/MULTI-OBJECTIVE-RESEARCH.md)
 
 **No SQL write, no flag change, no migration, no permission change, no paid model or provider call, no money/ledger/pricing/approval/settlement/infrastructure line.**

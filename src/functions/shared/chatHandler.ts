@@ -1617,7 +1617,8 @@ export class ChatHandler {
     ctx.turn.model = "agent";
     const base = { conversationId: ctx.conversationId, messageId: ctx.assistantMsgId, role: "assistant" as const, intent: "research" as const, tokensUsed: { input: 0, output: 0, costUsd: 0 }, turnStats: ctx.stats() };
     if (!r.ok) return { ...base, contentAr: r.contentAr, outputType: "answer_question" } as ChatHandlerResponse;
-    return { ...base, contentAr: r.contentAr, outputType: "agent_mission" as any, agentMission: { id: r.missionId }, ...(r.extraMissions && r.extraMissions.length > 0 ? { agentMissionParts: r.extraMissions } : {}), ...(r.conversationTitle ? { conversationTitle: r.conversationTitle } : {}) } as ChatHandlerResponse;
+    // a multi-part request: the answer is the summary of the parts (it draws no card); every part's card is its own stored message
+    return { ...base, contentAr: r.contentAr, outputType: "agent_mission" as any, ...(r.summaryOnly ? {} : { agentMission: { id: r.missionId } }), ...(r.extraMissions && r.extraMissions.length > 0 ? { agentMissionParts: r.extraMissions } : {}), ...(r.conversationTitle ? { conversationTitle: r.conversationTitle } : {}) } as ChatHandlerResponse;
   }
 
   /**

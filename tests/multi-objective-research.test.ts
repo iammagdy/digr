@@ -105,7 +105,9 @@ describe("A, G, L. one request with three objectives: every objective understood
     expect(modelCalls).toHaveLength(1);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
-    expect(r.extraMissions).toHaveLength(2);
+    // every part's card is its own stored message (the answer itself is the summary and draws no card)
+    expect(r.extraMissions).toHaveLength(3);
+    expect(r.summaryOnly).toBe(true);
     expect(missions(db).map((m) => m.request_text)).toEqual([TIKTOK_PART, HOTELS_PART, NEWS_PART]);
     expect(missions(db).every((m) => m.status === "queued")).toBe(true);
     // the summary names every part and says approvals are per part
@@ -115,7 +117,9 @@ describe("A, G, L. one request with three objectives: every objective understood
     const cards = cardMessages(db);
     expect(cards.map((m: any) => m.plan.agentMissionId)).toEqual(missions(db).map((m) => m.id));
     expect(cards.map((m: any) => m.plan.researchBrief.request)).toEqual([TIKTOK_PART, HOTELS_PART, NEWS_PART]);
-    expect(cards[0].id).toBe(assistant.id);
+    expect(cards.map((m: any) => m.id)).toEqual(r.extraMissions!.map((c) => c.messageId));
+    expect(assistant.plan.agentMissionId).toBeUndefined();
+    expect(assistant.plan.researchGroup.parts.map((p: any) => p.missionId)).toEqual(missions(db).map((m) => m.id));
     const group = storedGroupOf(cards[2].plan, (raw) => { const p = parseBrief(raw); return p.ok ? p.brief : null; })!;
     expect(group.brief.objectives).toHaveLength(6);
     expect(group.parts.map((p) => p.outcome)).toEqual(["planned", "planned", "planned"]);
@@ -324,7 +328,7 @@ function hotelsPartReplay(o2: { reviewsDelivered?: number } = {}) {
       db.seed("agent_settings", [{ key: CHAT_RESEARCH_BRIEF_FLAG_KEY, value: { user_ids: [REPLAY_USER] } }, { key: CAPABILITY_DISCOVERY_FLAG_KEY, value: { user_ids: [REPLAY_USER] } }]);
       scripted([say(THREE_PARTS())]);
     },
-    chooseMission: (t) => t.extraMissions![0].id,
+    chooseMission: (t) => t.extraMissions![1].id,
       planning: [
         { tool: "parse_page", args: { parser: "google-maps", url: SEARCH, why: WHY } },
         { tool: "parse_page", args: { parser: "google-maps-reviews", url: PLACE, sort: "newest", limit: 100, why: WHY } },
