@@ -84,5 +84,5 @@ __pycache__/
 # stray trace output of `next build` when node_modules is a symlink (never source)
 /digr/
 
-# the worker's build commit, written by the Heroku build (scripts/write-build-info.mjs)
+# the worker's build commit, written by the Heroku build (agent/write-build-info.mjs)
 /agent/build-info.json
