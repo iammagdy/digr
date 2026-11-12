@@ -757,7 +757,7 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
     });
   }
 
-  if (!priced.some((s) => s.deliver)) issues.push("at least one stage must be delivered (deliver: true)");
+  if (!priced.some((s) => s.deliver)) issues.push("at least one stage must be delivered: set `deliver: true` on every stage whose rows the customer receives (a stage with no `deliver` field is not delivered)");
   // A STEP THE CUSTOMER ASKED FOR THAT THE PLAN DOES NOT HAVE is never dropped silently («ومن كل شركة اتنين من المديرين» with a plan of companies only): the plan carries it as a stage, or says which step it leaves out and why, and the card shows that
   // BEFORE the customer approves. A per-parent number whose noun is the noun of a top-level stage is a split of that stage's total («١٠ تغريدات لكل لاعب»), not a step of its own.
   const topTitles = priced.filter((s) => s.parent_key === null).map((s) => s.title_ar);

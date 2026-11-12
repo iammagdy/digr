@@ -256,3 +256,27 @@ describe("round 51: «كمّل» continues the research conversation whatever ty
     expect(lastLog()?.brief).toMatch(/^continue_open_/);
   });
 });
+
+describe("round 51 (real model, M5): an open question is not split into sources the customer never named", () => {
+  it("«What do people think about mental health apps?» read as app reviews + web pages: asked, no mission", async () => {
+    scripted([{ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({
+      request: "User reviews of mental health apps, and web articles about them", content: ["reviews", "articles"],
+      objectives: [o("o1", "apps.discover", { request: "User reviews of mental health apps from app stores" }), o("o2", "apps.reviews", { parent: "o1" }), o("o3", "web.search", { request: "Web articles about mental health apps" })],
+    }) }]);
+    const db = world();
+    const r = await turn(db, "What do people think about mental health apps?");
+    expect(r.ok).toBe(false);
+    expect(r.contentAr).toMatch(/[؟?]/);
+    expect(missions(db)).toHaveLength(0);
+    expect(lastLog()?.brief).toBe("clarify_unnamed_parts");
+  });
+  it("a request whose words NAME the kinds keeps its parts", async () => {
+    scripted([{ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({
+      request: "تقييمات تطبيق فوري على جوجل بلاي، وآخر أخبار المدفوعات الرقمية في مصر", content: ["reviews", "articles"],
+      objectives: [o("o1", "apps.discover", { request: "تقييمات تطبيق فوري على جوجل بلاي" }), o("o2", "apps.reviews", { parent: "o1" }), o("o3", "web.search", { request: "آخر أخبار المدفوعات الرقمية في مصر" })],
+    }) }]);
+    const db = world();
+    await turn(db, "عايز تقييمات تطبيق فوري على جوجل بلاي، وآخر أخبار المدفوعات الرقمية في مصر");
+    expect(live(db)).toHaveLength(2);
+  });
+});

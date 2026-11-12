@@ -170,7 +170,8 @@ export function createGateway(deps: GatewayDeps) {
 
   const refuse = async (id: string, endpointId: string, params: Record<string, unknown>, code: RefusalCode, detail: string = ""): Promise<GatewayCallResult> => {
     await logCall({ id, endpoint_id: endpointId, params, status: "refused", refused_reason: `${code}${detail ? `:${detail}` : ""}`.slice(0, 120) });
-    return { ok: false, call_id: id, refused: code, message: REFUSAL_TEXT[code] };
+    // (round 51: the names of the missing inputs are said to the planner, not only logged: the real planner repeated such calls without knowing what was missing)
+    return { ok: false, call_id: id, refused: code, message: code === "missing_params" && detail ? `${REFUSAL_TEXT[code]}: ${detail.slice(0, 200)} (describe_endpoint shows each one)` : REFUSAL_TEXT[code] };
   };
 
   return {

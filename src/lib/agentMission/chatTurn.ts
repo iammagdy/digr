@@ -416,6 +416,14 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
   };
   // MULTI-OBJECTIVE RESEARCH: several first objectives, or a follow-up on the parts prepared before: every part keeps its own existing plan (docs/MULTI-OBJECTIVE-RESEARCH.md)
   const parts = brief.objectives ? partsOf(brief) : [];
+  // AN OPEN QUESTION IS NOT SPLIT INTO SOURCES THE CUSTOMER NEVER NAMED (live evaluation round 51, M5: «What do people think about mental health apps?» became two missions, app-store reviews and web pages): a NEW request whose own words
+  // name no kind of data is asked which source fits its goal (the model's question, else the code's), never prepared as several parts the model chose
+  if (ctx.registry && parts.length >= 2 && isNewRequest(ctx, open) && researchNeedOf({ request: ctx.customerTurns.join(" ") }).kind === "unknown") {
+    ctx.outcome = "clarify_unnamed_parts";
+    const question = (!decision.overruled && decision.reply && /[؟?]/.test(decision.reply) ? decision.reply : null) ?? missingQuestionAr(v.contract);
+    await writeAnswer(input, question, { researchBrief: { ...brief, status: "needs_clarification" } });
+    return { ok: false, contentAr: question, status: 200 };
+  }
   if (ctx.registry && (parts.length >= 2 || (ctx.priorGroup && parts.length >= 1))) {
     // the model still asks something it needs (a genuinely missing requirement): its question, with the whole brief kept
     if (brief.status === "needs_clarification" && decision.reply !== null) {
