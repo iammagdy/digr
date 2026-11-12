@@ -1,4 +1,5 @@
 import { buildAsk } from "../../src/lib/agentMission/foundation/ask";
+import { NUMBER_WORDS_SRC, numberOfWord } from "../../src/lib/agentMission/arabicNumberWords";
 
 /**
  * THE SYNTHETIC REQUESTS OF THE LIVE INTELLIGENCE EVALUATION (docs/LIVE-INTELLIGENCE-EVAL.md). No customer data: every sentence below was written for this evaluation.
@@ -35,7 +36,8 @@ export interface EvalCase {
 
 const NOW = Date.parse("2026-11-12T09:00:00Z");
 const latin = (t: string) => t.replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d))).replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)));
-export const hasNumber = (t: string, n: number) => new RegExp(`(^|[^0-9])${n}([^0-9]|$)`).test(latin(t));
+// (round 51: a number the sentence writes in WORDS, «مائة تعليق», is the same requirement; the worker reads it with the same table. Before this the judge counted it as lost: stability pass B, Z9)
+export const hasNumber = (t: string, n: number) => new RegExp(`(^|[^0-9])${n}([^0-9]|$)`).test(latin(t)) || [...t.matchAll(new RegExp(`(?:^|[^\\p{L}])(${NUMBER_WORDS_SRC})(?=$|[^\\p{L}])`, "gu"))].some((m) => numberOfWord(m[1]) === n);
 const ask = (t: string) => buildAsk(t, null, NOW);
 const samePeriod = (t: string, phrase: string) => JSON.stringify(ask(t).period) === JSON.stringify(ask(phrase).period) && ask(phrase).period !== null;
 const lost = (checks: Array<[boolean, string]>) => checks.filter(([ok]) => !ok).map(([, what]) => what);

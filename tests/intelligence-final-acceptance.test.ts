@@ -280,3 +280,17 @@ describe("round 51 (real model, M5): an open question is not split into sources 
     expect(live(db)).toHaveLength(2);
   });
 });
+
+import { buildAsk as askNow } from "../src/lib/agentMission/foundation/ask";
+import { hasNumber } from "../evals/live-intelligence/cases";
+describe("round 51 (stability pass B): a count the model wrote in WORDS is executed by the worker", () => {
+  const AT = Date.parse("2026-11-12T09:00:00Z");
+  it.each([["ثلاثمائة", 300], ["تلتمية", 300], ["خمسمية", 500], ["أربعمائة", 400], ["مائة", 100]] as const)("«%s تعليق من يوتيوب عن العاصمة الإدارية» → %i comments", (w, n) => {
+    expect((askNow(`${w} تعليق من يوتيوب عن العاصمة الإدارية`, null, AT) as any).commentsBare).toBe(n);
+  });
+  it("the evaluation judge reads the same words", () => {
+    expect(hasNumber("مائة تعليق من يوتيوب", 100)).toBe(true);
+    expect(hasNumber("ثلاثمائة تعليق", 100)).toBe(false);
+    expect(hasNumber("١٠٠ تعليق", 100)).toBe(true);
+  });
+});
