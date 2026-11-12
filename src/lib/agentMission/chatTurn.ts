@@ -621,7 +621,8 @@ async function groupTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     const elsewhere = new Set<ConditionKind>(judged.filter((x) => x !== j).flatMap((x) => kindsOf(x.part.objectives[0])).filter((k) => !ownKinds.has(k) && !globalKinds.has(k)));
     const social = j.part.objectives.find((x) => x.platform);
     const repliesWithoutObjective = buildRequestContract(j.partBrief.request).replies !== "none" && social?.platform !== "x" && !j.part.objectives.some((x) => x.operation === "social.replies");
-    const drift = conditionDriftOf({ partRequest: j.partBrief.request, own: root, global, elsewhere, customerTexts, nowMs, repliesWithoutObjective });
+    const elsewherePlaces = judged.filter((x) => x !== j).map((x) => x.part.objectives[0]?.country ?? "").filter((w) => w.trim() !== "");
+    const drift = conditionDriftOf({ partRequest: j.partBrief.request, own: root, global, elsewhere, customerTexts, nowMs, repliesWithoutObjective, elsewherePlaces });
     if (drift) { j.outcome = "needs_clarification"; j.noteAr = conditionDriftAr(drift); }
   }
   if (partTexts.every((t) => t !== "")) {

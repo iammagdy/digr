@@ -457,3 +457,11 @@ describe("round 5", () => {
     expect(missions(db)).toHaveLength(0);
   });
 });
+
+describe("round 7", () => {
+  it("J1: the hotels' own city («الغردقة», written by the customer) is not «another part's» because the news part's place is «مصر»; a city another part claims still is", () => {
+    const base = { partRequest: "تقييمات ٢٠٠ فندق في الغردقة", own: {}, global: {}, elsewhere: new Set<any>(["place"]), customerTexts: ["عايز ٣٠٠ تعليق عن السياحة من تيك توك، وتقييمات ٢٠٠ فندق في الغردقة، وآخر أخبار السياحة في مصر"], nowMs: NOW };
+    expect(conditionDriftOf({ ...base, elsewherePlaces: ["مصر"] })).toBeNull();
+    expect(conditionDriftOf({ ...base, elsewherePlaces: ["الغردقة"] })).toMatchObject({ kind: "place", reason: "other_part" });
+  });
+});

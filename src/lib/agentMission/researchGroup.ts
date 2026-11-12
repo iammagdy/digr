@@ -268,7 +268,7 @@ function customerValues(kind: "period" | "language", texts: ReadonlyArray<string
  * Whether ONE part's sentence keeps the customer's exact requirements. `own`: the conditions the model attributed to this part; `global`: those of the whole request; `elsewhere`: the kinds the model attributed to OTHER parts only;
  * `customerTexts`: everything the customer typed (and the request already grounded). Null: nothing drifts.
  */
-export function conditionDriftOf(input: { partRequest: string; own: ConditionPhrases; global: ConditionPhrases; elsewhere: ReadonlySet<ConditionKind>; customerTexts: ReadonlyArray<string>; nowMs: number; repliesWithoutObjective?: boolean }): ConditionDrift | null {
+export function conditionDriftOf(input: { partRequest: string; own: ConditionPhrases; global: ConditionPhrases; elsewhere: ReadonlySet<ConditionKind>; customerTexts: ReadonlyArray<string>; nowMs: number; repliesWithoutObjective?: boolean; /** the place words the model attributed to OTHER parts (round 7) */ elsewherePlaces?: ReadonlyArray<string> }): ConditionDrift | null {
   const { partRequest, own, global, elsewhere, customerTexts, nowMs } = input;
   const written = (phrase: string) => customerTexts.some((t) => carries(t, phrase));
   for (const kind of ["period", "language"] as const) {
@@ -319,7 +319,12 @@ export function conditionDriftOf(input: { partRequest: string; own: ConditionPhr
       const gotCode = countryCodeOf(partRequest, nowMs);
       if (wantCode && gotCode && wantCode !== gotCode) return { kind: "place", reason: "contradicts", phrase: where };
     }
-  } else if (elsewhere.has("place") && citiesOf(partRequest).length > 0) return { kind: "place", reason: "other_part", phrase: null };
+  } else if (elsewhere.has("place") && citiesOf(partRequest).length > 0) {
+    // a city of this sentence is «another part's» only when it IS a place attributed to another part, or the customer never wrote it (live evaluation round 7, J1: the hotels' «الغردقة» was asked because the news part's place was «مصر»)
+    const others = input.elsewherePlaces ? new Set(input.elsewherePlaces.flatMap((w) => [...placeKeys(w)].filter((k) => k.includes(":")))) : null;
+    const customerPlaces = new Set(customerTexts.flatMap((t) => [...placeKeys(t)]));
+    if (others === null || citiesOf(partRequest).some((c) => others.has(c) || !customerPlaces.has(c))) return { kind: "place", reason: "other_part", phrase: null };
+  }
   // the number the customer wrote for this part (a number they never wrote is already refused by the brief's check)
   if (own.count !== null && own.count !== undefined) {
     const nums = numbersWritten(partRequest);
