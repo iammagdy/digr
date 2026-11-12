@@ -76,7 +76,9 @@ describe("with the flags unset an ordinary mission is identical with and without
 describe("main.ts: the one small change", () => {
   const main = readFileSync(new URL("../agent/src/main.ts", import.meta.url), "utf8");
   it("the worker's run function is the dispatch; main.ts names no add-on module and no longer calls runMissionSafely itself", () => {
-    expect(main).toMatch(/runMission: \(mission\) => runClaimedSafely\(deps\(\), mission\)/);
+    // round 55: the dispatch gets the run's OWN view of the store (ownership.ts), still through runClaimedSafely only
+    expect(main).toMatch(/runMission: async \(mission\) => \{/);
+    expect(main).toMatch(/runClaimedSafely\(\{ \.\.\.deps\(\), store: view\.store, leaseLost: view\.revoked, ownerId: workerId, revokeOwnership \}, mission\)/);
     expect(main).toContain('from "./stage4/dispatch"');
     expect(main).not.toMatch(/import[^;]*runMissionSafely|runMissionSafely\(|runAddon|addonSettlement/);
     expect([...main.matchAll(/runClaimedSafely/g)]).toHaveLength(2);
