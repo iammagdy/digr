@@ -523,8 +523,10 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
       if (!isRecord(c) || !KEY_RE.test(String(c.key ?? "")) || colKeys.has(String(c.key))) { issues.push(`${label}: every column needs a unique key (letters, digits, underscores)`); continue; }
       colKeys.add(String(c.key));
       // a column given by its KEY ALONE gets its Arabic title from the code when the contract or the field classes know the key (audit G14: the model need not write what the code holds); an unknown key still needs the model's title
-      const t = checkCustomerLabel(c.title_ar === undefined || c.title_ar === null || c.title_ar === "" ? knownColumnTitleAr(String(c.key)) ?? c.title_ar : c.title_ar);
-      if (t.issues.length) issues.push(`${label} column «${c.key}»: ${t.issues.join("; ")}`);
+      const untitled = c.title_ar === undefined || c.title_ar === null || c.title_ar === "";
+      const t = checkCustomerLabel(untitled ? knownColumnTitleAr(String(c.key)) ?? c.title_ar : c.title_ar);
+      // (round 51: the real planner left out the title of keys code does not know, «maps_url», and read only «the text is empty»: the reason is now said with the fix; the rule is unchanged)
+      if (t.issues.length) issues.push(untitled && knownColumnTitleAr(String(c.key)) === null ? `${label} column «${c.key}»: code has no Arabic title for this key, so give it \`title_ar\` (a short everyday Arabic title, e.g. «رابط الخريطة»), or rename the key to one code knows (link, url, name, rating, …)` : `${label} column «${c.key}»: ${t.issues.join("; ")}`);
       // every row already carries its own id and its parent's id: a column that only repeats an id, or a second column with the same title, is dropped (the sheet is for people to read)
       if (isInternalColumn({ key: String(c.key), title_ar: t.text }) || colTitles.has(t.text)) continue;
       colTitles.add(t.text);

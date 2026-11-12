@@ -75,7 +75,8 @@ function outcomeOf(db: any, r: { ok: boolean; contentAr: string }, log: Record<s
   if (fixed === "fixed_privacy_clarify") return "CLARIFY";
   if (r.ok && liveOf(db).length > 0) return "UNDERSTOOD";
   // round 3: a turn that only updates the parts already prepared (a part removed, the others kept) answers with the summary and draws no new card: the request is understood when live parts remain and nothing is asked
-  if (!r.ok && liveOf(db).length > 0 && String(log?.brief ?? "").startsWith("group_") && !/[؟?]/.test(r.contentAr)) return "UNDERSTOOD";
+  // (round 51: likewise «كمّل» on a single request in progress, «continue_open_*»: the live mission is kept and nothing is asked)
+  if (!r.ok && liveOf(db).length > 0 && /^(?:group_|continue_open_)/.test(String(log?.brief ?? "")) && !/[؟?]/.test(r.contentAr)) return "UNDERSTOOD";
   const brief = String(log?.brief ?? "");
   if (brief.startsWith("capability_unsupported") || brief === "objectives_unresolved_ask" || brief === "words_unsupported_platform") return "UNSUPPORTED";
   if (brief === "privacy" || brief === "group_privacy" || brief === "rejected_privacy_refusal") return "PRIVACY";
@@ -266,7 +267,9 @@ describe("LIVE intelligence evaluation (real claude-haiku-5-5, guarded, cumulati
 const NAMES = ["النخبة", "الريادة", "الأفق", "المرجان", "الواحة", "لؤلؤة البحر", "النجمة الذهبية", "الصفوة", "البيان", "المدار", "الشروق", "الياسمين"];
 const LATIN = ["alnokhba", "alreyada", "alofok", "almorgan", "alwaha", "loloat-albahr", "golden-star", "alsafwa", "albayan", "almadar", "alshorouk", "alyasmin"];
 function syntheticTreg(endpointId: string, params: Record<string, unknown>): unknown {
-  const q = String(params?.query ?? params?.q ?? params?.keyword ?? params?.keywords ?? params?.search ?? params?.term ?? params?.company ?? "").replace(/\s+/g, " ").trim().slice(0, 60) || "السوق المحلي";
+  // (round 51: company and people searches name their topic in other inputs, «industry», «name», «title»: any text input is the topic, so a sector search returns rows of that sector instead of a generic «السوق المحلي» the planner rightly refused)
+  const anyText = Object.entries(params ?? {}).filter(([k, v]) => typeof v === "string" && v.trim().length >= 3 && !/^(?:url|link|domain|website|country|gl|hl|lang|language|location_?code|cursor|next|page|sort|order|engine|type|format)$/i.test(k) && !/^https?:/i.test(String(v))).map(([, v]) => String(v));
+  const q = String(params?.query ?? params?.q ?? params?.keyword ?? params?.keywords ?? params?.search ?? params?.term ?? params?.company ?? anyText.join(" ") ?? "").replace(/\s+/g, " ").trim().slice(0, 60) || "السوق المحلي";
   const id = endpointId.toLowerCase();
   const n = 10;
   const day = (i: number) => `2026-11-${String(10 - (i % 9)).padStart(2, "0")}T0${i % 9}:15:00Z`;

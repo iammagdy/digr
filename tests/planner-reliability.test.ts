@@ -70,3 +70,41 @@ describe("a give-up after the planner's plans were refused for their FORM is our
     expect(r.m.job_id ?? null).toBeNull();
   });
 });
+
+import { plannerCapabilitySection, toolHint, buildCapabilityRegistry, discoverCapabilities, researchNeedOf } from "../src/lib/agentMission/capabilities";
+import { blockedEndpointReason } from "../src/lib/treg/blockList";
+import { policyVerdict } from "../src/lib/treg/dataPolicy";
+import { validateAndPricePlan } from "../src/lib/agentMission/plan";
+
+describe("round 51: the planner is told WHICH TOOL calls each provider's capability (it called parser ids with treg_call and fell back to the catalog)", () => {
+  it("tool hints for every web-provider id; none for catalog ids", () => {
+    expect(toolHint("contextdev.parse.google-maps-reviews")).toBe('parse_page {parser:"google-maps-reviews", url}');
+    expect(toolHint("firecrawl.search")).toBe('web_search {provider:"firecrawl", query}');
+    expect(toolHint("contextdev.scrape")).toBe('web_scrape {provider:"contextdev", url}');
+    expect(toolHint("contextdev.people.search")).toBe("people_search {query}");
+    expect(toolHint("crawl4ai.google.maps.reviews")).toBeNull();
+  });
+  it("the capability section marks them and says one plan may combine providers", () => {
+    const reg = buildCapabilityRegistry(loadTregCatalog(), { isAllowed: (id) => !blockedEndpointReason(id) && policyVerdict(id, null).allowed, webKeys: { firecrawl: true, contextdev: true } });
+    const text = plannerCapabilitySection(discoverCapabilities(researchNeedOf({ request: "عايز تقييمات فنادق الغردقة" }), reg));
+    expect(text).toContain('contextdev.parse.google-maps-reviews [contextdev; call with parse_page {parser:"google-maps-reviews", url}]');
+    expect(text).toMatch(/One plan may combine sources of different providers/);
+  });
+  it("treg_call on a web-provider id is refused with the right tool, nothing called", async () => {
+    const store = createMemoryStore();
+    const call = vi.fn();
+    const rec = fakeRecorder();
+    const deps: RunnerDeps = { store, client: fakeMoneyClient().client, catalog: loadTregCatalog(), driver: createFakeDriver([{ tool: "treg_call", args: { endpoint_id: "contextdev.parse.google-maps-reviews", params: { url: "https://maps.google.com/?cid=1" } } }, { tool: "finish", args: { outcome: "cannot_serve", kind: "unsupported", summary_ar: "لا." } }]), recorder: rec.recorder, commit: rec.commit, call: call as never, models: { planning: "claude-haiku-5-5", execution: "claude-haiku-5-5" }, resolveAccess: async () => NOT_ADMIN, notify: async () => undefined };
+    store.missions.set("msn_w", newMission({ id: "msn_w", user_id: USER_ID, status: "planning", request_text: "عايز تقييمات فنادق الغردقة" }));
+    const driver = deps.driver as ReturnType<typeof createFakeDriver>;
+    await runPlanning(deps, store.missions.get("msn_w")!);
+    expect(call).not.toHaveBeenCalled();
+    expect(driver.results[0].result).toMatchObject({ ok: false });
+    expect(String(driver.results[0].result.error)).toMatch(/web provider source, not a catalog endpoint: call it with parse_page \{parser:"google-maps-reviews", url\}/);
+  });
+  it("a column whose key code does not know and has no title: the rejection says what to do", () => {
+    const r = validateAndPricePlan({ summary_ar: "خطة.", stages: [{ key: "places", title_ar: "الفنادق", endpoint_id: "crawl4ai.google.serp.maps", expected_rows: 5, parent_key: null, deliver: true, columns: [{ key: "maps_url" }], measured_by: [] }] }, { call: () => null, evidenceText: () => null, endpointAllowed: () => true } as never);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.issues.join(" ")).toMatch(/column «maps_url»: code has no Arabic title for this key, so give it `title_ar`/);
+  });
+});

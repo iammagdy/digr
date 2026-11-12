@@ -58,6 +58,18 @@ export const OBJECTIVE_PROMPT_LINES: readonly string[] = [
   '  مثال شكل طلب فيه جزءان (الكلمات للتوضيح فقط): "objectives":[{"id":"o1","operation":"social.parents","platform":"tiktok","request":"تعليقات تيك توك عن ..."},{"id":"o2","operation":"social.comments","platform":"tiktok","parent":"o1"},{"id":"o3","operation":"places.discover","request":"تقييمات فنادق ...","country":"..."},{"id":"o4","operation":"places.reviews","parent":"o3"}]',
 ];
 
+/**
+ * WHICH TOOL CALLS A NON-CATALOG CAPABILITY (round 51, live evaluation: the real planner called Context.dev parser ids with treg_call, was refused, and fell back to the catalog every time, so no plan ever combined providers). The catalog's own
+ * ids are called with treg_call / collect_pages; the web providers' ids with their own tools.
+ */
+export function toolHint(id: string): string | null {
+  if (id.startsWith("contextdev.parse.")) return `parse_page {parser:"${id.slice("contextdev.parse.".length)}", url}`;
+  if (id === "firecrawl.search" || id === "contextdev.search") return `web_search {provider:"${id.split(".")[0]}", query}`;
+  if (id === "firecrawl.scrape" || id === "contextdev.scrape") return `web_scrape {provider:"${id.split(".")[0]}", url}`;
+  if (id === "contextdev.people.search") return "people_search {query}";
+  return null;
+}
+
 const usd = (n: number | null): string => (n === null ? "unpriced" : `${n.toFixed(6)} USD/row`);
 
 /** The VALIDATED CAPABILITIES section of the planning prompt. */
@@ -67,10 +79,11 @@ export function plannerCapabilitySection(d: CapabilityDiscovery, max = 8): strin
     lines.push(`- stage ${s.stage.key} (${s.stage.operation}${s.stage.platform ? `, ${s.stage.platform}` : ""}${s.stage.parentKey ? `, child of ${s.stage.parentKey}` : ""}; must give: ${s.stage.requires.join(", ")})`);
     if (s.eligible.length === 0) { lines.push("    no validated capability: this step is NOT available; do not plan it, say so in unserved_steps"); continue; }
     if (s.eligible.length > max) lines.push(`    (the first ${max} of ${s.eligible.length} validated; any of the ${s.eligible.length} may be planned, describe_endpoint shows the others)`);
-    for (const e of s.eligible.slice(0, max)) lines.push(`    ${e.rank}. ${e.id} [${e.provider}] gives ${e.outputs.join("/") || "unknown fields (prove them on a sample)"}; takes ${e.takes.join("/")}; ${e.pagination ? "pages" : `one call, up to ${e.maxRowsPerCall} rows`}; ${usd(e.usdPerRow)}${e.limits ? `; ${e.limits}` : ""}`);
+    for (const e of s.eligible.slice(0, max)) lines.push(`    ${e.rank}. ${e.id} [${e.provider}${toolHint(e.id) ? `; call with ${toolHint(e.id)}` : ""}] gives ${e.outputs.join("/") || "unknown fields (prove them on a sample)"}; takes ${e.takes.join("/")}; ${e.pagination ? "pages" : `one call, up to ${e.maxRowsPerCall} rows`}; ${usd(e.usdPerRow)}${e.limits ? `; ${e.limits}` : ""}`);
   }
   const lim = d.limitations.filter((l) => l.textAr);
   if (lim.length > 0) lines.push(`Limitations the customer is told before approval (never claim these conditions were applied): ${lim.map((l) => `${l.stageKey}:${l.code}${l.filter ? `:${l.filter}` : ""}`).join(", ")}`);
+  lines.push("Ids marked «call with …» are web providers: call them with that tool, never with treg_call; every other id is a catalog source (treg_call / collect_pages). One plan may combine sources of different providers, stage by stage (e.g. places from the catalog and their reviews from a parser): pick per stage what serves it best.");
   lines.push("Plan stages ONLY with these ids (a stage reading any other id is refused by code). Sample them in this order unless one cannot give the fields; never call an id that is not listed for a stage you plan.");
   return lines.join("\n");
 }

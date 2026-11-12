@@ -353,6 +353,17 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     await writeAnswer(input, GROUP_UNCHANGED_AR);
     return { ok: false, contentAr: GROUP_UNCHANGED_AR, status: 200 };
   }
+  // «كمّل» (CONTINUE) in a conversation whose request is already prepared or being prepared, whatever type the model gave it (live evaluation round 51, J1 and Z12: the model read «كمّل» as small talk and asked «طلب جديد ولا تعديل؟»):
+  // the research conversation goes on with what exists; nothing is created, approved, held or charged (an approval is only the card's button)
+  if (decision.type !== "data_request" && decision.type !== "edit_of_open_request" && isContinueWord(currentMessageOf(ctx))) {
+    if (ctx.priorGroup && ctx.priorGroup.parts.some((p) => p.missionId)) { ctx.outcome = "group_unchanged_continue"; await writeAnswer(input, GROUP_UNCHANGED_AR); return { ok: false, contentAr: GROUP_UNCHANGED_AR, status: 200 }; }
+    if (open) {
+      const contentAr = open.state === "planning" ? PLAN_NOT_READY_AR : open.state === "needs_input" && open.questionAr ? `${CONTINUE_QUESTION_AR} ${open.questionAr}` : CONTINUE_READY_AR;
+      ctx.outcome = `continue_open_${open.state}`;
+      await writeAnswer(input, contentAr);
+      return { ok: false, contentAr, status: 200 };
+    }
+  }
   if (decision.type !== "data_request" && decision.type !== "edit_of_open_request") { ctx.outcome = "not_a_request"; return null; }
   const parsed = decision.brief;
   /**
@@ -546,6 +557,16 @@ function standaloneOnly(lost: IntentRequirement[], message: string): IntentRequi
   return lost.filter((r) => r.kind !== "number" || alone.has(r.n));
 }
 /** Said when the request's parts are already prepared and nothing changed (a «تمام جهّزهم» or a repetition): nothing new is created. */
+/** «كمّل» and its short equivalents (Egyptian, Arabizi, English): continue the research conversation in progress. */
+const CONTINUE_WORDS = /^(?:كمل|كملي|كمللي|كمل يا (?:باشا|فندم)|استمر|تابع|يلا|يلا بينا|ماشي|تمام|اوك|اوكي|ok|okay|continue|go on|go ahead|kamel|kammel|kamal)$/;
+export function isContinueWord(message: string): boolean {
+  const t = message.replace(/[ً-ْـّ]/g, "").replace(/[أإآ]/g, "ا").replace(/[.!؟?،,]+/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+  return t.split(" ").length <= 3 && CONTINUE_WORDS.test(t);
+}
+/** Said to «كمّل» when the request's plan is ready on its card. */
+export const CONTINUE_READY_AR = "طلبك متجهّز وخطته وسعره في بطاقته؛ راجعها واعتمدها من زر «اعتمد» لو مناسبة، أو قولّي تحب تعدّل إيه. ولن يُخصم شيء قبل اعتمادك.";
+/** Said before the card's pending question when the customer writes «كمّل». */
+export const CONTINUE_QUESTION_AR = "عشان نكمّل محتاجين ردّك على سؤال البطاقة:";
 export const GROUP_UNCHANGED_AR = "أجزاء طلبك متجهّزة بالفعل، وكل جزء له بطاقته بخطته وسعره. اعتمد الجزء اللي يناسبك من بطاقته، ولن يُخصم شيء قبل اعتمادك.";
 /** Said for a part whose card could not be stored: it is not prepared, not claimed, and comes back on the next turn. */
 export const CARD_UNSAVED_AR = "ما قدرناش نحفظ بطاقته دلوقتي بسبب مشكلة مؤقتة، فمش هيتجهّز منه حاجة ولا يتخصم عليه حاجة؛ اكتب «كمّل» ونجهّزه من غير ما تعيد طلبك.";

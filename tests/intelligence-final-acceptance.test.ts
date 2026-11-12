@@ -200,3 +200,59 @@ describe("round 51: «apps» alone is not an app-store request", () => {
     expect(needOf({ request: "reviews of banking apps in Egypt" }).kind).toBe("apps");
   });
 });
+
+import { buildAsk as askOf } from "../src/lib/agentMission/foundation/ask";
+import { privacyRefusalAr as refusal } from "../src/lib/agentMission/guardRules";
+import { isContinueWord, CONTINUE_READY_AR, PLAN_NOT_READY_AR } from "../src/lib/agentMission/chatTurn";
+
+describe("round 51: periods the contract reads as ASKED now have a value (they were not executed)", () => {
+  const AT = Date.parse("2026-11-12T09:00:00Z");
+  const p = (t: string) => askOf(t, null, AT).period;
+  it.each([
+    ["تغريدات إكس عن أزمة المياه خلال الأسبوع الماضي", "2026-11-05", "2026-11-12"],
+    ["تعليقات تيك توك عن الأهلي الأسبوع اللي فات", "2026-11-05", "2026-11-12"],
+    ["أخبار السياحة السنة اللي فاتت", "2025-01-01", "2025-12-31"],
+    ["منشورات فيسبوك عن الدوري العام الماضي", "2025-01-01", "2025-12-31"],
+    ["تعليقات يوتيوب عن العاصمة الإدارية الشهر ده", "2026-11-01", "2026-11-12"],
+    ["مقالات عن الاقتصاد هذا العام", "2026-01-01", "2026-11-12"],
+    ["Find public news articles about electric cars in Egypt from the last month", "2026-10-12", "2026-11-12"],
+    ["tiktok comments about Ahly from the past 2 weeks", "2026-10-29", "2026-11-12"],
+    ["posts from the last 24 hours", "2026-11-11", "2026-11-12"],
+    ["news this year", "2026-01-01", "2026-11-12"],
+  ])("%s → %s .. %s", (t, from, to) => expect(p(t)).toMatchObject({ from, to }));
+  it("unchanged: آخر شهر, الشهر الماضي, no period, and a newspaper named «اليوم السابع»", () => {
+    expect(p("آخر شهر")).toMatchObject({ from: "2026-10-12", to: "2026-11-12" });
+    expect(p("الشهر الماضي")).toMatchObject({ from: "2026-10-01", to: "2026-10-31" });
+    expect(p("تعليقات تيك توك عن السياحة")).toBeNull();
+    expect(p("أخبار اليوم السابع عن الانتخابات")).toBeNull();
+    expect(p("the past few days of comments")).toBeNull();
+  });
+});
+
+describe("round 51: a person's personal address is refused by code, before any model call", () => {
+  it("Arabic «العنوان الشخصي» joins «عنوان السكن / البيت»", () => {
+    expect(refusal("عايز العنوان الشخصي لمذيعة مشهورة")).not.toBeNull();
+    expect(refusal("هات العناوين الشخصية للاعبين")).not.toBeNull();
+    expect(refusal("عايز عناوين فروع شركة فودافون")).toBeNull();
+  });
+});
+
+describe("round 51: «كمّل» continues the research conversation whatever type the model gave it", () => {
+  it("continuation words", () => {
+    for (const w of ["كمّل", "كمل.", "تمام", "يلا", "continue", "ok", "kammel"]) expect(isContinueWord(w), w).toBe(true);
+    for (const w of ["كمّل الطلب بتاع تيك توك وزود ١٠٠", "تمام بس خليها ٢٠٠", "عايز تعليقات"]) expect(isContinueWord(w), w).toBe(false);
+  });
+  it("a single request being prepared: «كمّل» read as small talk keeps it, says so, creates nothing", async () => {
+    scripted([
+      { type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "تعليقات إنستجرام عن الموضة المحتشمة في مصر", platforms: ["instagram"], content: ["comments"], topic: "الموضة المحتشمة", objectives: [o("o1", "social.parents", { platform: "instagram" }), o("o2", "social.comments", { platform: "instagram", parent: "o1" })] }) },
+      { type: "greeting_or_small_talk", reason: "x", reply: "تمام، تحب طلب جديد ولا تعديل؟", count: null },
+    ]);
+    const db = world();
+    await turn(db, "عايز تعليقات إنستجرام عن الموضة المحتشمة في مصر");
+    expect(live(db)).toHaveLength(1);
+    const r = await turn(db, "كمّل");
+    expect([PLAN_NOT_READY_AR, CONTINUE_READY_AR]).toContain(r.contentAr);
+    expect(live(db)).toHaveLength(1);
+    expect(lastLog()?.brief).toMatch(/^continue_open_/);
+  });
+});

@@ -15,6 +15,7 @@ import { blockedEndpointReason } from "../../src/lib/treg/blockList";
 import { isSellable, type TregCatalog } from "../../src/lib/treg/catalog";
 import { policyVerdict, type AccountAccess } from "../../src/lib/treg/dataPolicy";
 import { isPrivateCapabilityString, planStageIssues, type CapabilityDiscovery } from "../../src/lib/agentMission/capabilities";
+import { toolHint } from "../../src/lib/agentMission/capabilities/prompt";
 import { digestValue } from "../../src/lib/modelPlanner/digest";
 import type { Gateway } from "./gateway";
 import { RAW_PATH } from "./gateway";
@@ -396,6 +397,8 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
       },
       handler: async (a) => {
         const id = String(a.endpoint_id ?? "").trim();
+        // a WEB PROVIDER's id is not a catalog endpoint (round 51, live evaluation): the refusal names the tool that calls it, so the planner does not drop that provider
+        if (isAgentSourceId(id)) return err(`«${id}» is a web provider source, not a catalog endpoint: call it with ${toolHint(id) ?? "its own tool"} (nothing was called, nothing was charged)`);
         // UNIFIED CAPABILITY DISCOVERY: a capability that returns private personal data is never called, whatever the model asks (refused before the gateway, costs nothing)
         if (ctx.capabilities && isPrivateCapabilityString(ctx.catalog.byId.get(id)?.capability)) return { ok: false, refused: "private_data", message: "this source returns private personal data; Diger never collects it. It was NOT called and cost nothing" };
         const refusal = cheapestFirstMessage(state, id, a.why);

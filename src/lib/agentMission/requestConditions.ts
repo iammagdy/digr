@@ -14,6 +14,8 @@ export function conditionsOfRequest(textIn: unknown): ConditionClass[] {
   const raw = String(textIn ?? "");
   const text = digits(raw);
   const found = new Set<ConditionClass>();
+  // (round 51: the forms the period reader now gives a value for, Arabic and English: ask.ts periodOfRequest)
+  if (/(?:الأسبوع|الاسبوع|الشهر|السنة|السنه|العام)\s+(?:الماضية|الماضيه|الحالية|الحاليه|الجاري|ده|دا|دي|(?:اللي|اللى|الي|الى)\s+فاتت?)(?:\s|$|[.،,!؟?])|هذا\s+(?:الأسبوع|الاسبوع|الشهر|العام)|هذه\s+السنة/.test(text) || /(?:^|[^a-z])(?:last|past|previous)\s+(?:\d{1,3}\s+)?(?:hours?|days?|weeks?|months?|years?)(?:[^a-z]|$)|(?:^|[^a-z])this\s+(?:week|month|year)(?:[^a-z]|$)/i.test(text)) found.add("date");
   if (new RegExp(`آخر\\s+(?:\\d+\\s+)?(?:${UNITS})|(?:الأسبوع|الاسبوع|الشهر|السنة|العام)\\s+(?:الماضي|الماضى|الحالي)|(?:^|\\s)الشهر\\s+(?:اللي|اللى|الي|الى)\\s+فات|(?:^|\\s)(?:اليوم|أمس|امبارح)(?:\\s|$)|(?:في|خلال)\\s+(?:${MONTHS})|(?:${MONTHS})\\s+\\d{4}|\\bمنذ\\s+\\d+`).test(text)) found.add("date");
   if (/بالعربي|باللغة\s+العربية|(?:عربي|عربية)\s+فقط|بالإنجليزي|بالانجليزي|باللغة\s+الإنجليزية|باللغة\s+الانجليزية|بالفرنسي/.test(raw)) found.add("language");
   if (new RegExp(`(?:^|\\s)(?:في|من|داخل)\\s+(?:${COUNTRIES})`).test(raw)) found.add("country");

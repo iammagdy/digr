@@ -116,6 +116,27 @@ export function periodOfRequest(text: string, requestedAtMs: number): AskPeriod 
     const pm = m === 1 ? 12 : m - 1;
     return periodOf(dayOf(py, pm, 1), dayOf(py, pm, daysInMonth(py, pm)));
   }
+  // ROUND 51 (live evaluation Z19, Z17): periods the request contract already reads as ASKED but this reader gave no value for, so the customer's period was not executed:
+  //   «الأسبوع الماضي / اللي فات» and «الأسبوع ده / الحالي» → the last 7 days (as «آخر أسبوع»); «السنة / العام الماضي(ة) / اللي فاتت» → the previous CALENDAR year (as «الشهر الماضي» is the previous calendar month);
+  //   «الشهر ده / الحالي / هذا الشهر» → the 1st of this month to today; «السنة دي / الحالية / هذا العام» → 1 January to today; English «(the) last / past N days|weeks|months|years», «last 24 hours», «this week|month|year» (rolling windows, as «آخر»)
+  const lc = t.toLowerCase();
+  if (/(?:ال)?(?:أسبوع|اسبوع)\s+(?:الماضي|الماضى|(?:اللي|اللى|الي|الى)\s+فات|ده|دا|الحالي|الحالى|الجاري)(?:\s|$|[.،,!؟?])|هذا\s+(?:الأسبوع|الاسبوع)/.test(t)) return periodOf(shiftDays(today, -7), today);
+  if (/(?:السنة|السنه|العام)\s+(?:الماضية|الماضيه|الماضي|الماضى|(?:اللي|اللى|الي|الى)\s+فاتت?)(?:\s|$|[.،,!؟?])/.test(t)) { const y = Number(today.slice(0, 4)) - 1; return periodOf(dayOf(y, 1, 1), dayOf(y, 12, 31)); }
+  if (/(?:ال)?شهر\s+(?:ده|دا|الحالي|الحالى|الجاري)(?:\s|$|[.،,!؟?])|هذا\s+الشهر/.test(t)) return periodOf(`${today.slice(0, 7)}-01`, today);
+  if (/(?:السنة|السنه|العام)\s+(?:دي|ده|الحالية|الحاليه|الحالي|الحالى|الجاري|الجارية)(?:\s|$|[.،,!؟?])|هذا\s+العام|هذه\s+السنة/.test(t)) return periodOf(`${today.slice(0, 4)}-01-01`, today);
+  const en = /(?:^|[^a-z])(?:the\s+)?(?:last|past|previous)\s+(\d{1,3}\s+)?(hours?|days?|weeks?|months?|years?)(?:[^a-z]|$)/.exec(lc);
+  if (en) {
+    const n = en[1] ? Number(en[1]) : 1;
+    const unit = en[2];
+    if (/^hour/.test(unit)) return periodOf(shiftDays(today, -Math.max(1, Math.ceil(n / 24))), today);
+    if (/^day/.test(unit)) return periodOf(shiftDays(today, -n), today);
+    if (/^week/.test(unit)) return periodOf(shiftDays(today, -7 * n), today);
+    if (/^month/.test(unit)) return periodOf(monthsBack(today, n), today);
+    return periodOf(monthsBack(today, 12 * n), today);
+  }
+  if (/(?:^|[^a-z])this\s+week(?:[^a-z]|$)/.test(lc)) return periodOf(shiftDays(today, -7), today);
+  if (/(?:^|[^a-z])this\s+month(?:[^a-z]|$)/.test(lc)) return periodOf(`${today.slice(0, 7)}-01`, today);
+  if (/(?:^|[^a-z])this\s+year(?:[^a-z]|$)/.test(lc)) return periodOf(`${today.slice(0, 4)}-01-01`, today);
   const last = /(?:آخر|اخر)\s+(\d{1,3})?\s*(شهرين|شهر|شهور|أشهر|اشهر|أسبوعين|اسبوعين|أسبوع|اسبوع|أسابيع|اسابيع|يومين|يوم|أيام|ايام|سنة|سنتين|سنوات|سنين)/.exec(t);
   if (!last) return null;
   const unit = last[2];
