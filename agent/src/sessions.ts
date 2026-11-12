@@ -4,14 +4,14 @@ import { AGENT_SDK_SESSIONS_AT_ONCE } from "../../src/lib/agentMission/constants
  * The SDK sessions of this process, kept apart from the SDK itself (sdkRuntime.ts imports it; the tests do not): ONE session at a time, because each one is a native process of its own on a 512 MB dyno,
  * and a registry of the runs in flight so the worker can stop them when the dyno's memory gets too high.
  */
-export interface TrackedRun { abort: AbortController; reason: { value: string | null } }
+export interface TrackedRun { abort: AbortController; reason: { value: string | null }; missionId?: string }
 
 const activeRuns = new Set<TrackedRun>();
 const waiting: Array<() => void> = [];
 let openSessions = 0;
 
-export function trackRun(): TrackedRun {
-  const run: TrackedRun = { abort: new AbortController(), reason: { value: null } };
+export function trackRun(missionId?: string): TrackedRun {
+  const run: TrackedRun = { abort: new AbortController(), reason: { value: null }, ...(missionId ? { missionId } : {}) };
   activeRuns.add(run);
   return run;
 }
@@ -21,6 +21,13 @@ export function untrackRun(run: TrackedRun): void { activeRuns.delete(run); }
 export function abortActiveRuns(reason: string): number {
   let n = 0;
   for (const r of activeRuns) { r.reason.value = reason; r.abort.abort(); n += 1; }
+  return n;
+}
+
+/** Stops the runs of ONE mission only (a mission this worker lost to another worker, ownership.ts). Returns how many were stopped. */
+export function abortRunsOf(missionId: string, reason: string): number {
+  let n = 0;
+  for (const r of activeRuns) if (r.missionId === missionId) { r.reason.value = reason; r.abort.abort(); n += 1; }
   return n;
 }
 

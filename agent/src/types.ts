@@ -98,8 +98,11 @@ export interface AgentStore {
   updateMission(id: string, patch: Partial<MissionRecord> & Record<string, unknown>): Promise<void>;
   /** Takes the next mission to plan (`queued`) or execute (`approved`), or a mission whose lease ran out; null when there is none. */
   claimMission(workerId: string, leaseSeconds: number): Promise<MissionRecord | null>;
-  /** Extends the lease of EXACTLY these missions (the ones the worker is really running in memory) and of no other: a mission this worker no longer runs must be free to be taken over. */
-  renewLeases(workerId: string, leaseSeconds: number, missionIds: string[]): Promise<void>;
+  /**
+   * Extends the lease of EXACTLY these missions (the ones the worker is really running in memory) and of no other: a mission this worker no longer runs must be free to be taken over.
+   * Returns the ids it really renewed (the row still names this worker and is running): a running mission missing from it may have been taken over (ownership.ts). A store that cannot tell returns nothing.
+   */
+  renewLeases(workerId: string, leaseSeconds: number, missionIds: string[]): Promise<string[] | void>;
   writeHeartbeat(row: HeartbeatRow): Promise<void>;
   /** The settings the owner sets from the admin page (e.g. planning_model). */
   readSettings(): Promise<Record<string, unknown>>;

@@ -1,4 +1,5 @@
 import { AGENT_ERROR_REQUEUES_MAX, AGENT_MEMORY_REQUEUES_MAX, AGENT_PHASE_STARTS_MAX, AGENT_RESTART_REQUEUES_MAX, AGENT_EXECUTION_WALL_MS } from "../../../src/lib/agentMission/constants";
+import { assertOwned } from "../ownership";
 import { addonProviderBudgetUsd, checkAddon, readAddonPlan, settleAddon, type AddonKind, type AddonPlan, type AddonSettleInput } from "../../../src/lib/agentMission/addonSettlement";
 import type { AddonRequest } from "../../../src/lib/agentMission/stage4/addonRow";
 import { EDIT_NOT_SEARCHED_AR, applyEditCore, type EditRequest } from "../../../src/lib/agentMission/stage4/editCore";
@@ -104,6 +105,8 @@ export async function runAddonSafely(deps: Deps, mission: MissionRecord): Promis
   try {
     await runAddon(deps, mission);
   } catch (e) {
+    // another worker owns this row now (ownership.ts): its recovery is that worker's, nothing is written here
+    if (deps.leaseLost?.()) { deps.log?.(`lease_lost_stop ${mission.id}: no recovery, another worker owns it`); return; }
     await recoverAddon(deps, mission, e);
   }
 }
@@ -125,6 +128,7 @@ export async function recoverAddon(deps: Deps, mission: MissionRecord, error: un
     const hold = Number(fresh.reserved_points);
     let released = false;
     if (addon && fresh.job_id && hold >= 1) {
+      assertOwned(deps.leaseLost, mission.id);
       const s = await settleAddon(deps.client, settleInputOf(addon.kind, fresh.job_id, hold, null, false)).catch(() => null);
       released = Boolean(s?.result.ok);
     }
@@ -232,7 +236,7 @@ async function editWork(deps: Deps, row: MissionRecord, addon: AddonPlan, jobId:
     const budget = createJobCallBudget({ ceilingUsd: addonProviderBudgetUsd(hold, addon.pricing.settings), spentUsd: executionSpend(calls) });
     const access = await deps.resolveAccess(row.user_id);
     const gateway = createGateway({ store, client: deps.client, missionId: row.id, userId: row.user_id, jobId, phase: "execution", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: row.request_text, counter: { seq: lastSeq(calls) } });
-    const tracked = trackRun();
+    const tracked = trackRun(row.id);
     try {
       const got = await runReread({ store, gateway, catalog: deps.catalog, of: addon.of, addonId: row.id, base, sheet: plan.sheet, units: plan.units, deadlineMs: startsExceeded ? 0 : Date.now() + AGENT_EXECUTION_WALL_MS, shouldStop: () => tracked.reason.value !== null, lost: async () => !(await owns()), log: deps.log });
       values = got.values;
@@ -381,6 +385,7 @@ async function finish(deps: Deps, row: MissionRecord, addon: AddonPlan, jobId: s
     if (there) { if (sameBytes(there, pendingBytes)) alreadyPublished = true; else zombie = true; }
   }
   const charging = ending.kind === "settle" && workable && !zombie;
+  assertOwned(deps.leaseLost, row.id);
   const settled = await settleAddon(client, settleInputOf(addon.kind, jobId, hold, outcome, charging, addon.pricing.settings));
   let charged = 0;
   let released = false;

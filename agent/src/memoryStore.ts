@@ -77,7 +77,9 @@ export function createMemoryStore(initial: MissionRecord[] = []): MemoryStore {
       return null;
     },
     async renewLeases(workerId, leaseSeconds, missionIds) {
-      for (const m of missions.values()) if (missionIds.includes(m.id) && m.worker_id === workerId && (m.status === "planning" || m.status === "executing")) m.lease_until = new Date(Date.now() + leaseSeconds * 1000).toISOString();
+      const renewed: string[] = [];
+      for (const m of missions.values()) if (missionIds.includes(m.id) && m.worker_id === workerId && (m.status === "planning" || m.status === "executing")) { m.lease_until = new Date(Date.now() + leaseSeconds * 1000).toISOString(); renewed.push(m.id); }
+      return renewed;
     },
     async writeHeartbeat(row) { heartbeats.push(row); },
     async readSettings() { return settings; },

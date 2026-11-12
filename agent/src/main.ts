@@ -19,7 +19,8 @@ import type { RunnerDeps } from "./runMission";
 import { runClaimedSafely } from "./stage4/dispatch";
 import { anthropicReviewCall } from "./review";
 import { createSdkDriver } from "./sdkRuntime";
-import { abortActiveRuns } from "./sessions";
+import { abortActiveRuns, abortRunsOf } from "./sessions";
+import { ownedStore, type OwnedStore } from "./ownership";
 import { createSupabaseStore } from "./supabaseStore";
 import { createWorker } from "./worker";
 import { workerVersion } from "./buildVersion";
@@ -88,6 +89,8 @@ async function main() {
   });
 
   const concurrency = parseConcurrency(process.env[AGENT_CONCURRENCY_ENV]);
+  // each claimed run writes through its OWN view of the store, revoked if another worker takes the mission over (ownership.ts)
+  const owned = new Map<string, OwnedStore>();
   const worker = createWorker({
     store, workerId, version: VERSION, log, concurrency,
     // at the memory hard limit the running model run is stopped; the mission goes back to the queue instead of the dyno being killed
@@ -96,7 +99,13 @@ async function main() {
     // a recycled worker (idle at or above the admit limit for too long) stops its loop; the process exits and the platform restarts it with a fresh heap
     onRecycle: () => { worker.stop(); },
     // every claimed mission ends in a clean state whatever happens in the run (runMission.ts: runMissionSafely)
-    runMission: (mission) => runClaimedSafely(deps(), mission),
+    runMission: async (mission) => {
+      const view = ownedStore(store, mission.id);
+      owned.set(mission.id, view);
+      try { await runClaimedSafely({ ...deps(), store: view.store, leaseLost: view.revoked }, mission); } finally { if (owned.get(mission.id) === view) owned.delete(mission.id); }
+    },
+    // another worker owns a mission this one runs: its writes are refused from now on and its model run is stopped (the new owner finishes it)
+    onLeaseLost: (missionId) => { owned.get(missionId)?.revoke(); abortRunsOf(missionId, "lease_lost"); },
   });
 
   // The platform restarts the worker at every deploy of `main` (SIGTERM, then SIGKILL after 30 seconds) and kills the model's own process at the same moment (exit code 143). The runs in flight are stopped here so each mission is put back in the queue with

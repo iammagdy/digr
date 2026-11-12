@@ -8,6 +8,8 @@ import type { CallPhase } from "./types";
  */
 export interface RunInput {
   phase: CallPhase;
+  /** The mission this run works on: its run can then be stopped alone (sessions.ts abortRunsOf). */
+  missionId?: string;
   systemPrompt: string;
   userPrompt: string;
   tools: ToolSpec[];
