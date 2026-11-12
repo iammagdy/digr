@@ -1,8 +1,9 @@
 // Writes agent/build-info.json with the commit Heroku is building (SOURCE_VERSION is set only during the build), so the worker can report it
 // in its heartbeat (agent/src/buildVersion.ts). It NEVER fails the build: any problem is printed and the script exits 0.
-// It lives directly in agent/, on a path with NO directory named in .slugignore: Heroku removes .slugignore paths BEFORE the build runs, and
-// the rules are gitignore-like, so an unanchored `scripts/` may match a scripts/ directory at ANY depth (agent/scripts/ too). On 12 Nov 2026
-// the builds of dd6c9ec and a577d16 failed with "Cannot find module .../scripts/write-build-info.mjs" (tests/heroku-slugignore-build.test.ts).
+// It lives directly in agent/, on a path with NO directory named in .slugignore: Heroku removes .slugignore paths BEFORE the build runs. On
+// 12 Nov 2026 the builds of dd6c9ec and a577d16 failed with "Cannot find module .../scripts/write-build-info.mjs". The .slugignore rules are
+// anchored ("/scripts/") so they mean the same under Heroku's observed root-only matching and under gitignore's any-depth reading
+// (tests/heroku-slugignore-build.test.ts).
 import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
