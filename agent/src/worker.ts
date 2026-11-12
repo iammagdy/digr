@@ -40,6 +40,11 @@ export interface WorkerDeps {
   memoryRecycleAfterMs?: number;
   /** A worker younger than this never asks to be restarted (a process that boots above the limit must not restart in a loop). */
   memoryRecycleMinUptimeMs?: number;
+  /**
+   * Called ONCE when a mission this worker runs is found owned by ANOTHER worker (its lease lapsed and the claim gave it to someone else; ownership.ts): the entry
+   * point revokes that run's writes and aborts its model run. The mission stays in the active set until its run returns.
+   */
+  onLeaseLost?: (missionId: string, newOwner: string) => void;
   leaseSeconds?: number;
   now?: () => Date;
   log?: (line: string) => void;
@@ -96,9 +101,30 @@ export function createWorker(deps: WorkerDeps) {
       const memory = (deps.readMemory ?? readProcessMemory)();
       await deps.store.writeHeartbeat({ worker_id: deps.workerId, beat_at: now().toISOString(), active_missions: active.size, model: deps.modelLabel(), version: deps.version, rss_mb: memory.rssMb, tree_rss_mb: memory.treeRssMb });
       await writeHistory(memory);
-      await deps.store.renewLeases(deps.workerId, leaseSeconds, [...active.keys()]);
+      const running = [...active.keys()];
+      const renewed = await deps.store.renewLeases(deps.workerId, leaseSeconds, running);
+      if (Array.isArray(renewed)) await checkOwnership(running, renewed);
     } catch (e) {
       deps.log?.(`heartbeat_failed ${String((e as Error)?.message ?? e).slice(0, 120)}`);
+    }
+  }
+
+  /** The missions this worker found owned by another worker (each reported once). */
+  const lost = new Set<string>();
+  /**
+   * A running mission whose lease was not renewed is read once: it is LOST only when the row names ANOTHER worker. A row that names no worker or this one was
+   * released by our own run as it ended (or the update raced it), and is left alone.
+   */
+  async function checkOwnership(running: string[], renewed: string[]): Promise<void> {
+    for (const id of running) {
+      if (renewed.includes(id) || lost.has(id) || !active.has(id)) continue;
+      let row: MissionRecord | null = null;
+      try { row = await deps.store.getMission(id); } catch { continue; }
+      const owner = row?.worker_id ?? null;
+      if (!owner || owner === deps.workerId) continue;
+      lost.add(id);
+      deps.log?.(`lease_lost ${id} now ${owner}: this run is stopped and writes nothing more`);
+      try { deps.onLeaseLost?.(id, owner); } catch { /* the stop is best effort; the store refuses the writes either way */ }
     }
   }
 
@@ -168,13 +194,15 @@ export function createWorker(deps: WorkerDeps) {
         break;
       }
       if (!mission) break;
+      // our OWN running mission came back (its lease lapsed and the claim gave it to us again, so it is ours with a fresh lease): its run goes on, a second one is never started
+      if (active.has(mission.id)) { deps.log?.(`reclaimed_own ${mission.id}: already running here, not started twice`); continue; }
       // ROUND 26 (item 1): the worker polls quickly for a while after it took work (workerPollDelayMs)
       lastTakeAt = now().getTime();
       let startReading: MemoryReading | null = null;
       try { startReading = readMem(); } catch { startReading = null; }
       const claimed = mission;
       if (startReading) peaks.set(claimed.id, { phase: claimed.status === "executing" ? 1 : 0, startedAt: now().getTime(), startRss: startReading.rssMb, startTree: startReading.treeRssMb, peakRss: startReading.rssMb, peakTree: startReading.treeRssMb, samples: 1, stopped: false });
-      const run = deps.runMission(claimed).catch((e) => deps.log?.(`mission_crashed ${claimed.id} ${String((e as Error)?.message ?? e).slice(0, 160)}`)).then(() => recordPeak(claimed.id)).finally(() => { active.delete(claimed.id); });
+      const run = deps.runMission(claimed).catch((e) => deps.log?.(`mission_crashed ${claimed.id} ${String((e as Error)?.message ?? e).slice(0, 160)}`)).then(() => recordPeak(claimed.id)).finally(() => { lost.delete(claimed.id); active.delete(claimed.id); });
       active.set(claimed.id, run);
       started += 1;
     }

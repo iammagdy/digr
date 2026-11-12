@@ -19,6 +19,7 @@ import { statsFromCalls } from "../../src/lib/agentMission/sourceRanking";
 import { classifyNoCardEnd, refusalSentenceAr } from "../../src/lib/agentMission/refusal";
 import { parentCountsOf, parentsBelowShare } from "../../src/lib/agentMission/parents";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
+import { ensureOwned } from "./ownership";
 import { compensateFreeRerun } from "../../src/lib/agentMission/freeRerun";
 import { customerPlanView, namesAreWritten, requestedRowsOf, type PricedPlan } from "../../src/lib/agentMission/plan";
 import { topLevelFactsOf } from "../../src/lib/agentMission/repliesCard";
@@ -92,6 +93,12 @@ import type { MissionNoticeFacts, MissionNoticeKind } from "../../src/lib/agentM
 
 export interface RunnerDeps {
   store: AgentStore;
+  /** True once ANOTHER worker owns this run's mission (ownership.ts): the run's writes are refused and its error recovery writes nothing (the new owner owns the row). */
+  leaseLost?: () => boolean;
+  /** The worker that claimed this run's mission (ownership.ts ensureOwned reads the row against it before every settlement). */
+  ownerId?: string;
+  /** Revokes this run's ownership: its writes are refused and its model run is stopped. */
+  revokeOwnership?: () => void;
   /** Supabase client (money functions, spend recording, sensitive audit). */
   client: any;
   catalog: TregCatalog;
@@ -540,7 +547,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const toolsOf = (): ToolSpec[] => (checkpointOn ? buildTools(ctx).map((t) => ({ ...t, handler: async (a: Record<string, unknown>) => { const r = await t.handler(a); if (t.name === "report_progress" && typeof a.message_ar === "string") lastNote = a.message_ar; await writePlanningState(store, mission.id, snapshotOf(state, lastNote), deps.log); return r; } })) : buildTools(ctx));
   const runOnce = async (userPrompt: string): Promise<Awaited<ReturnType<ModelDriver["run"]>>> => {
     try {
-      return await deps.driver.run({ phase: "planning", systemPrompt: loadSystemPrompt("planning", deps.systemPromptFile, { web: Boolean(web) }), userPrompt, tools: toolsOf(), state, model, maxTurns: AGENT_PLANNING_MAX_TURNS, maxBudgetUsd: AGENT_PLANNING_LLM_BUDGET_USD, wallMs: AGENT_PLANNING_WALL_MS, onUsage: checkpoint, onTurn: (t) => recordTurn(deps, mission.id, t) });
+      return await deps.driver.run({ phase: "planning", missionId: mission.id, systemPrompt: loadSystemPrompt("planning", deps.systemPromptFile, { web: Boolean(web) }), userPrompt, tools: toolsOf(), state, model, maxTurns: AGENT_PLANNING_MAX_TURNS, maxBudgetUsd: AGENT_PLANNING_LLM_BUDGET_USD, wallMs: AGENT_PLANNING_WALL_MS, onUsage: checkpoint, onTurn: (t) => recordTurn(deps, mission.id, t) });
     } catch (e) {
       return { llmCostUsd: 0, turns: 0, stop: "error", error: String((e as Error)?.message ?? e).slice(0, 300) } as Awaited<ReturnType<ModelDriver["run"]>>;
     }
@@ -796,7 +803,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   const live = (await liveSheetOn(async () => redesignIsTest)) ? createLiveWriter({ store, missionId: mission.id, plan, items, writerId: newWriterId(), log: deps.log }) : null;
   if (engineOn) {
     // THE MODEL PLANNED, CODE EXECUTES: every stage has a recipe the plan check proved, so no model session is started at all (the only model call left is the small review of items the rule cannot decide)
-    const tracked = trackRun();
+    const tracked = trackRun(mission.id);
     try {
       const outcome = await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: mission.id, gateway, sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: live ? (e) => live.addEvent(e, () => store.addEvent(mission.id, e)) : (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, ...(redesignStages.size > 0 ? { redesignStages } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}), log: deps.log });
       output = { llmCostUsd: 0, turns: 0, stop: outcome.aborted ?? "end" };
@@ -812,7 +819,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
       const saved = Object.fromEntries(plan.stages.map((s) => [s.key, items.counts(s.key).accepted]));
       let r: Awaited<ReturnType<ModelDriver["run"]>>;
       try {
-        r = await deps.driver.run({ phase: "execution", systemPrompt: loadSystemPrompt("execution", deps.systemPromptFile, { web: Boolean(web) }), userPrompt: round === 0 ? executionPrompt(mission, plan, calls, savedBefore) : continuationPrompt(mission, plan, await store.listCalls(mission.id), saved), tools: buildTools(ctx), state, model, maxTurns: AGENT_EXECUTION_MAX_TURNS, maxBudgetUsd: llmBudget, wallMs: AGENT_EXECUTION_WALL_MS, onUsage: checkpoint });
+        r = await deps.driver.run({ phase: "execution", missionId: mission.id, systemPrompt: loadSystemPrompt("execution", deps.systemPromptFile, { web: Boolean(web) }), userPrompt: round === 0 ? executionPrompt(mission, plan, calls, savedBefore) : continuationPrompt(mission, plan, await store.listCalls(mission.id), saved), tools: buildTools(ctx), state, model, maxTurns: AGENT_EXECUTION_MAX_TURNS, maxBudgetUsd: llmBudget, wallMs: AGENT_EXECUTION_WALL_MS, onUsage: checkpoint });
       } catch (e) {
         r = { llmCostUsd: 0, turns: 0, stop: "error", error: String((e as Error)?.message ?? e).slice(0, 300) } as Awaited<ReturnType<ModelDriver["run"]>>;
       }
@@ -944,6 +951,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
       const title = missionFileTitleAr({ plan, requestText: mission.request_text, delivered: Math.min(fileCount, plan.price.deliveredRows), date: new Date(), parentDelivered: parentStage ? (fileByStage?.[parentStage.key] ?? rowsByStage[parentStage.key]?.length ?? null) : null });
       files = published.files.map((f) => ({ ...f, download_name: `${title}.${f.kind}` }));
     } catch (e) {
+      await ensureOwned(deps, mission.id);
       await settleMission(deps.client, { jobId, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath: null, releaseReason: "تعذّر حفظ ملفات النتيجة، فعاد الحجز المؤقت كاملًا." });
       await store.updateMission(mission.id, { status: "failed", error: `files: ${String((e as Error)?.message ?? e).slice(0, 200)}`, execution_llm_usd: Number(llm.toFixed(6)), charged_points: 0, delivered_units: 0, ...clear });
       await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّر حفظ ملفات النتائج؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد." });
@@ -955,6 +963,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   // THE ONE NUMBER: the items in the file
   const delivered = Math.min(fileCount, plan.price.deliveredRows);
   if (fileCount > plan.price.deliveredRows) flags.push("file_over_the_volume_sold");
+  await ensureOwned(deps, mission.id);
   const settled = await settleMission(deps.client, { jobId, deliveredUnits: delivered, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath, releaseReason: "لم يُسلَّم شيء من هذه المهمة، فعاد الحجز المؤقت كاملًا." });
   // STAGE 2 S6 (docs/STAGE-2.md): the live sheet's last snapshot, equal to the file just stored. It runs AFTER the settlement (so it can never stand between the customer and the settlement), builds its own arguments inside its own try, and never throws: a failure is logged and ignored. Unset flag: nothing is evaluated or written.
   await writeDoneSnapshotSafely({ store, missionId: mission.id, plan: approvedPlan, filePlan: plan, snap, requestText: mission.request_text, reviewStop: checked.stop, resultPath, mailboxesOf: companyMailboxesOf, isTest: () => accountIsTest(store, mission.user_id), log: deps.log });
@@ -1084,6 +1093,7 @@ export async function recoverFromError(deps: RunnerDeps, mission: MissionRecord,
     } catch (e) {
       // last resort: nothing delivered, the whole hold released through the existing function
       deps.log?.(`settle_failed ${mission.id} ${shortError(e).slice(0, 120)}`);
+      await ensureOwned(deps, mission.id);
       await settleMission(deps.client, { jobId: fresh.job_id, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: Number(fresh.planning_treg_usd ?? 0) + Number(fresh.execution_treg_usd ?? 0), resultPath: null, releaseReason: "تعذّر إكمال المهمة، فعاد الحجز المؤقت كاملًا." });
       await store.updateMission(mission.id, { status: "failed", error: message, charged_points: 0, delivered_units: 0, ...clear });
       await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّر إكمال المهمة؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد." });
@@ -1104,9 +1114,11 @@ export async function runMissionSafely(deps: RunnerDeps, mission: MissionRecord)
     else if (mission.status === "executing") await runExecution(deps, mission);
     else return;
   } catch (e) {
+    if (deps.leaseLost?.()) { deps.log?.(`lease_lost_stop ${mission.id}: no recovery, another worker owns it`); return; }
     await recoverFromError(deps, mission, e);
     return;
   }
+  if (deps.leaseLost?.()) { deps.log?.(`lease_lost_stop ${mission.id}: no recovery, another worker owns it`); return; }
   try {
     const after = await deps.store.getMission(mission.id);
     // the run returned but left the mission «planning» / «executing» under this worker: that is a lease nobody works on

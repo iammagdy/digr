@@ -47,7 +47,7 @@ export function createSdkDriver(env: Record<string, string | undefined> = proces
     async run(input: RunInput): Promise<RunOutput> {
       await acquireSession();
       const server = createSdkMcpServer({ name: MCP_SERVER_NAME, version: "1.0.0", tools: input.tools.map((t) => toSdkTool(t, input)) });
-      const run = trackRun();
+      const run = trackRun(input.missionId);
       const abort = run.abort;
       const timer = setTimeout(() => abort.abort(), input.wallMs);
       const cwd = mkdtempSync(path.join(tmpdir(), "diger-agent-"));

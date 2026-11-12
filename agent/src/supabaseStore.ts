@@ -127,9 +127,12 @@ export function createSupabaseStore(client: any): AgentStore {
     },
     async renewLeases(workerId, leaseSeconds, missionIds) {
       // only the missions this worker really runs: a mission it no longer runs keeps its old lease, which ends, and another worker takes it over
-      if (missionIds.length === 0) return;
+      if (missionIds.length === 0) return [];
       const until = new Date(Date.now() + leaseSeconds * 1000).toISOString();
-      must(await client.from(MISSION_TABLE).update({ lease_until: until }).eq("worker_id", workerId).in("id", missionIds).in("status", ["planning", "executing"]), "renew");
+      const res = await client.from(MISSION_TABLE).update({ lease_until: until }).eq("worker_id", workerId).in("id", missionIds).in("status", ["planning", "executing"]).select("id");
+      must(res, "renew");
+      // the ids really renewed: a running mission missing here may belong to another worker now (ownership.ts)
+      return Array.isArray(res.data) ? (res.data as Array<{ id: unknown }>).map((r) => String(r.id)) : undefined;
     },
     async writeHeartbeat(row: HeartbeatRow) { must(await client.from(AGENT_HEARTBEAT_TABLE).upsert(wellFormedDeep(row), { onConflict: "worker_id" }), "heartbeat"); },
     async publishResult({ missionId, userId, jobId, xlsx, csv }) {
