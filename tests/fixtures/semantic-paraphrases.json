@@ -598,10 +598,9 @@
    },
    "known_gap": {
     "ref": "L3",
-    "why": "«tweets» is not X and an English period («last 3 months») is not read",
+    "why": "«tweets» is not X (the English period «last 3 months» is read since round 51, DIGER-INTELLIGENCE-FINAL-ACCEPTANCE)",
     "observed": {
      "platform": null,
-     "period_present": false,
      "route": "clarify"
     }
    }
@@ -898,12 +897,13 @@
     "platform": "tiktok",
     "period_present": true
    },
-   "known_gap": {
+   "closed_gap": {
     "ref": "L4",
     "why": "«السنة اللي فاتت» is no period: dropped silently",
     "observed": {
      "period_present": false
-    }
+    },
+    "closed_by": "DIGER-INTELLIGENCE-FINAL-ACCEPTANCE"
    }
   },
   {

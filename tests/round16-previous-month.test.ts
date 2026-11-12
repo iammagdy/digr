@@ -44,7 +44,8 @@ describe("the previous calendar month, in Cairo time", () => {
   });
   it("a named month wins over the words around it, and «الشهر الحالي» is not read as the previous month", () => {
     expect(day(periodOfRequest("في شهر أكتوبر ٢٠٢٦", at("2026-11-03T12:00:00Z")))).toEqual(["2026-10-01", "2026-10-31"]);
-    expect(periodOfRequest("الشهر الحالي", at("2026-11-03T12:00:00Z"))).toBeNull();
+    // (round 51: «الشهر الحالي» is now read, as the CURRENT month from its 1st to the day of the request; still never the previous month)
+    expect(day(periodOfRequest("الشهر الحالي", at("2026-11-03T12:00:00Z")))).toEqual(["2026-11-01", "2026-11-03"]);
   });
 });
 

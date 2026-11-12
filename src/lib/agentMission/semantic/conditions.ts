@@ -200,6 +200,13 @@ function findPeriods(keys: readonly string[], tokens: readonly string[]): Found[
         if (k === "this") { found.push({ draft: { k: "current", unit }, start: i, end: at }); i = at; continue; }
       }
     }
+    // «الأسبوع اللي فات / الماضي / ده / الحالي» (round 51): the last week, the same window as «آخر أسبوع» (the flag-off reader reads them alike, ask.ts)
+    if (k === "الاسبوع" || (k === "this" && keys[i + 1] === "week")) {
+      const at = k === "this" ? i + 2 : i + 1;
+      const w = keys[at];
+      if (k === "this") { found.push({ draft: { k: "last", n: 1, unit: "week" }, start: i, end: at }); i = at; continue; }
+      if (w !== undefined && (PAST_WORDS.has(w) || CURRENT_WORDS.has(w) || ((w === "اللي" || w === "الي") && /^(?:فات|فايت)$/.test(keys[at + 1] ?? "")))) { const end = PAST_WORDS.has(w) || CURRENT_WORDS.has(w) ? at + 1 : at + 2; found.push({ draft: { k: "last", n: 1, unit: "week" }, start: i, end }); i = end; continue; }
+    }
     if (k === "امبارح" || k === "امس" || k === "yesterday") { found.push({ draft: { k: "day", offset: -1 }, start: i, end: i + 1 }); i += 1; continue; }
     // a single month or day: «في أكتوبر ٢٠٢٦», «في ١٥ أكتوبر», «october 2026». A month name with nothing before it that says «a period» is a NAME («حرب أكتوبر», «ثورة ٢٥ يناير», «شركات ٦ أكتوبر»), not a period: it needs a year, «في / خلال / شهر / يوم / in / during», or a day word.
     if (keys[i] !== "اول" && keys[i] !== "اخر") {

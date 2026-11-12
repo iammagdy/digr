@@ -374,8 +374,9 @@ describe("against the baseline of PR #446: nothing is converted, and what the vo
   it("keeps all 98 scenarios and all 62 known gaps (none deleted, none rewritten, none converted; PR-1.4 closed 7 of them in the chat path and kept each as `closed_gap`)", () => {
     expect(baseline).toHaveLength(98);
     // CHANGED (consolidated mission): 7 more closed for every customer and kept as `closed_gap` (48 known + 14 closed = 62)
-    expect(baseline.filter((c) => c.known_gap)).toHaveLength(48);
-    expect(baseline.filter((c) => (c as { closed_gap?: unknown }).closed_gap)).toHaveLength(14);
+    // (round 51, DIGER-INTELLIGENCE-FINAL-ACCEPTANCE: dt-08 «السنة اللي فاتت» closed for every customer by the flag-off period reader: 47 gaps remain, 15 closed)
+    expect(baseline.filter((c) => c.known_gap)).toHaveLength(47);
+    expect(baseline.filter((c) => (c as { closed_gap?: unknown }).closed_gap)).toHaveLength(15);
   });
 
   it("FLAG OFF compatibility: understanding all 98 scenarios is identical before and after the semantic layer runs ON over the same texts (no shared state, no side effect)", () => {
@@ -413,7 +414,7 @@ describe("against the baseline of PR #446: nothing is converted, and what the vo
 
   it("every other known gap (dates, countries, languages, e-mail, pre-filters, routing, multi-turn) is untouched by this layer and stays for PR-1.2 or later", () => {
     const outOfScope = baseline.filter((c) => c.known_gap && !IN_SCOPE_GAPS.includes(c));
-    expect(outOfScope.length + IN_SCOPE_GAPS.length).toBe(48);
+    expect(outOfScope.length + IN_SCOPE_GAPS.length).toBe(47); // (round 51: dt-08 closed)
     // the categories the vocabulary does NOT address
     const refs = new Set(outOfScope.map((c) => c.known_gap!.ref));
     for (const ref of ["L4", "K2", "W8"]) expect(refs.has(ref), ref).toBe(true); // CHANGED: W4 (pf-06, pf-07) and L6 (sb-11..13) were closed by the consolidated mission
