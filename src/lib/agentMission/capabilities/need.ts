@@ -21,7 +21,9 @@ import type { InputClass, Operation, OutputClass } from "./registry";
  * Then the CHAIN: the ordered stages that would carry the request out, each with its operation, its parent and what it needs from the parent's rows (a comments stage needs a post reference or link; a reviews stage a place reference or link;
  * a contacts stage a company's website or domain). Pure; never throws.
  */
-export type NeedKind = "social" | "companies" | "places" | "web" | "people" | "mixed" | "unknown";
+export type NeedKind = "social" | "companies" | "places" | "web" | "people" | "apps" | "mixed" | "unknown";
+/** The app store a request names (round 51): Google Play, the App Store, or null (either). */
+export type AppStore = "google_play" | "app_store";
 
 export interface ResearchNeed {
   kind: NeedKind;
@@ -29,8 +31,10 @@ export interface ResearchNeed {
   platforms: SocialPlatform[];
   comments: boolean;
   replies: boolean;
-  /** Places: the reviews of each place. */
+  /** Places: the reviews of each place. Apps: the reviews of each app. */
   reviews: boolean;
+  /** Apps: the store the customer named (null: either store). */
+  appStore?: AppStore | null;
   /** Companies: their websites (a column, and the input of a contacts stage). */
   websites: boolean;
   /** Companies: their PUBLIC business contacts (a work e-mail or the company's phone written on its own public pages). Never a private person's. */
@@ -66,6 +70,11 @@ const WEB_WORDS = /اخبار|مقالات|مدونات|منتديات|مواق�
 /** Words that ask for news or articles themselves (a subset of WEB_WORDS: not «آراء»). */
 const NEWS_WORDS = /اخبار|مقالات|مدونات|صحف|جرايد|(?:^|[^a-z])(?:news|articles|blogs)(?:[^a-z]|$)/;
 const COMMENT_WORDS = /تعليق|كومنت|comments?/;
+/** Mobile apps (round 51). A store named is enough; «تطبيق» alone is an app only with reviews (it is also «applying» a law). */
+const STORE_WORDS = /جوجل\s*بلاي|بلاي\s*ستور|اب\s*(?:ا)?ستور|متجر\s*(?:ال)?تطبيقات|google\s*play|play\s*store|app\s*store/;
+/** (the English «app» too, only with reviews: «what do people think about mental health apps» is an opinion question, live evaluation M5) */
+const APP_WORDS = /تطبيق|تطبيقات|ابلكيشن|ابليكيشن|ابلكيشنات|ابليكشن|applications?|(?:^|[^a-z])apps?(?:[^a-z]|$)/;
+const appStoreOf = (t: string): AppStore | null => (/جوجل\s*بلاي|بلاي\s*ستور|google\s*play|play\s*store|اندرويد|android/.test(t) ? "google_play" : /اب\s*(?:ا)?ستور|app\s*store|ايفون|iphone|ios/.test(t) ? "app_store" : null);
 const REPLY_WORDS = /ردود|الرد(?:ود)?|ريبلاي|replies/;
 /** Platforms no provider of the registry serves (the five social platforms, the web, maps and companies are served). */
 const UNSUPPORTED_PLATFORMS: ReadonlyArray<[string, RegExp]> = [["snapchat", /سناب\s*شات|سناب(?![ء-ي])|snapchat/], ["clubhouse", /كلوب\s*هاوس|clubhouse/], ["discord", /ديسكورد|discord/]];
@@ -80,7 +89,7 @@ export interface NeedInput {
 
 const KIND_OF_ROOT: Record<NeedObjective["operation"], NeedKind> = {
   "social.parents": "social", "social.comments": "social", "social.replies": "social",
-  "companies.discover": "companies", "company.contacts": "companies", "places.discover": "places", "places.reviews": "places", "web.search": "web", "web.read": "web", "people.discover": "people",
+  "companies.discover": "companies", "company.contacts": "companies", "places.discover": "places", "places.reviews": "places", "web.search": "web", "web.read": "web", "people.discover": "people", "apps.discover": "apps", "apps.reviews": "apps",
 };
 
 /** The need read from validated objectives (see the header). The count, the conditions, the topic and privacy are still read by the trusted contract from the words (numbers are never the model's). */
@@ -109,7 +118,8 @@ function needOfObjectives(objectives: ReadonlyArray<BriefObjective>, text: strin
     platforms: [...new Set(executable.map((o) => o.platform).filter((p): p is SocialPlatform => p !== null))].sort(),
     comments: ops.has("social.comments"),
     replies: ops.has("social.replies"),
-    reviews: ops.has("places.reviews"),
+    reviews: ops.has("places.reviews") || ops.has("apps.reviews"),
+    appStore: ops.has("apps.discover") || ops.has("apps.reviews") ? appStoreOf(fold(text)) : null,
     websites: contacts.email || contacts.phone,
     contacts,
     people: executable.some((o) => o.operation === "people.discover" && o.parent !== null),
@@ -142,8 +152,10 @@ export function researchNeedOf(input: NeedInput): ResearchNeed {
   // NEWS AND ARTICLES ABOUT a sector are web research, not the sector's companies (live evaluation 2026-11-12, I1: «آخر الأخبار عن شركات الاتصالات» was read as companies): the news words win unless the customer asks the companies'
   // websites or contacts, or reviews
   const news = content.has("articles") || NEWS_WORDS.test(t);
+  const apps = STORE_WORDS.test(t) || (APP_WORDS.test(t) && reviews);
   let kind: NeedKind = "unknown";
   if (platforms.length > 0) kind = "social";
+  else if (apps && !news) kind = "apps";
   else if (news && !contacts.email && !contacts.phone && !WEBSITE_WORDS.test(t) && !reviews && !people) kind = "web";
   else if (places && (reviews || !companies)) kind = "places";
   else if (companies) kind = "companies";
@@ -156,7 +168,8 @@ export function researchNeedOf(input: NeedInput): ResearchNeed {
     platforms: kind === "social" ? platforms : [],
     comments,
     replies,
-    reviews: kind === "places" && reviews,
+    reviews: (kind === "places" || kind === "apps") && reviews,
+    appStore: kind === "apps" ? appStoreOf(t) : null,
     websites: kind === "companies" && (WEBSITE_WORDS.test(t) || contacts.email || contacts.phone),
     contacts: kind === "companies" ? contacts : { email: false, phone: false },
     people: kind === "companies" && people,
@@ -219,6 +232,12 @@ export function stagesOfNeed(need: ResearchNeed): StageNeed[] {
     if (need.reviews) out.push({ key: "place_reviews", operation: "places.reviews", platform: null, parentKey: "places", requires: ["text", "rating"], prefers: ["date", "author", "url"], accepts: ["place_ref", "url"], volume: need.count, deliver: true });
     return out;
   }
+  if (need.kind === "apps") {
+    const store = need.appStore ?? null;
+    out.push({ key: "apps", operation: "apps.discover", platform: store, parentKey: null, requires: ["name"], prefers: ["app_ref", "url", "rating"], accepts: ["query"], volume: need.reviews ? null : need.count, deliver: true });
+    if (need.reviews) out.push({ key: "app_reviews", operation: "apps.reviews", platform: store, parentKey: "apps", requires: ["text", "rating"], prefers: ["date", "author"], accepts: ["app_ref", "url"], volume: need.count, deliver: true });
+    return out;
+  }
   if (need.kind === "people") {
     out.push({ key: "people", operation: "people.discover", platform: null, parentKey: null, requires: ["name"], prefers: ["title", "company", "url"], accepts: ["query"], volume: need.count, deliver: true });
     return out;
@@ -242,14 +261,17 @@ function stageShape(op: NeedObjective["operation"], hasChild: boolean, isRoot: b
     case "web.search": return { requires: ["url"], prefers: ["name", "text"], accepts: ["query"] };
     case "web.read": return { requires: ["text"], prefers: ["url"], accepts: ["url"] };
     case "people.discover": return { requires: ["name"], prefers: ["title", "company", "url"], accepts: isRoot ? ["query"] : ["domain", "url", "query"] };
+    case "apps.discover": return { requires: ["name"], prefers: ["app_ref", "url", "rating"], accepts: ["query"] };
+    case "apps.reviews": return { requires: ["text", "rating"], prefers: ["date", "author"], accepts: ["app_ref", "url"] };
   }
 }
 /** The step an objective needs before it when the model wrote it alone (comments are read from posts, reviews from places …): added by code, as the chain requires, never a new goal. */
-const IMPLIED_PARENT: Partial<Record<NeedObjective["operation"], NeedObjective["operation"]>> = { "social.comments": "social.parents", "social.replies": "social.comments", "company.contacts": "companies.discover", "places.reviews": "places.discover", "web.read": "web.search" };
+const IMPLIED_PARENT: Partial<Record<NeedObjective["operation"], NeedObjective["operation"]>> = { "social.comments": "social.parents", "social.replies": "social.comments", "company.contacts": "companies.discover", "places.reviews": "places.discover", "web.read": "web.search", "apps.reviews": "apps.discover" };
 const BASE_KEY: Record<NeedObjective["operation"], (o: NeedObjective, rootChild: boolean) => string> = {
   "social.parents": (o) => `${o.platform}_parents`, "social.comments": (o) => `${o.platform}_comments`, "social.replies": (o) => `${o.platform}_replies`,
   "companies.discover": () => "companies", "company.contacts": () => "company_contacts", "places.discover": () => "places", "places.reviews": () => "place_reviews",
   "web.search": () => "web_results", "web.read": () => "web_pages", "people.discover": (_o, child) => (child ? "company_people" : "people"),
+  "apps.discover": () => "apps", "apps.reviews": () => "app_reviews",
 };
 
 /**
@@ -312,13 +334,13 @@ function stagesOfObjectives(need: ResearchNeed, objectivesIn: ReadonlyArray<Need
       continue;
     }
     const key = uniqueKey(BASE_KEY[o.operation](o, parentKey !== null));
-    out.push({ key, operation: o.operation, platform: o.platform, parentKey, ...shape, volume: null, deliver: true });
+    out.push({ key, operation: o.operation, platform: o.operation.startsWith("apps.") ? need.appStore ?? null : o.platform, parentKey, ...shape, volume: null, deliver: true });
     keyOf.set(o.id, [key]);
   }
   // the customer's count: the items they counted, the deepest «counted» stage (comments, reviews) of the FIRST chain, else its first stage
   if (need.count !== null && out.length > 0) {
     let target = out[0];
-    for (;;) { const child = out.find((s) => s.parentKey === target.key && (s.operation === "social.comments" || s.operation === "places.reviews")); if (!child) break; target = child; }
+    for (;;) { const child = out.find((s) => s.parentKey === target.key && (s.operation === "social.comments" || s.operation === "places.reviews" || s.operation === "apps.reviews")); if (!child) break; target = child; }
     target.volume = need.count;
   }
   return out;
@@ -326,7 +348,7 @@ function stagesOfObjectives(need: ResearchNeed, objectivesIn: ReadonlyArray<Need
 
 /** What the parent's rows give that the child stage can take as its input (null: nothing links them; the chain cannot be built). */
 export function linkOf(parentOutputs: ReadonlyArray<OutputClass>, childTakes: ReadonlyArray<InputClass>): { from: OutputClass; to: InputClass } | null {
-  const pairs: Array<[OutputClass, InputClass]> = [["place_ref", "place_ref"], ["url", "url"], ["id", "post_ref"], ["id", "comment_ref"], ["website", "domain"], ["website", "url"]];
+  const pairs: Array<[OutputClass, InputClass]> = [["place_ref", "place_ref"], ["app_ref", "app_ref"], ["id", "app_ref"], ["url", "url"], ["id", "post_ref"], ["id", "comment_ref"], ["website", "domain"], ["website", "url"]];
   for (const [from, to] of pairs) if (parentOutputs.includes(from) && childTakes.includes(to)) return { from, to };
   return null;
 }

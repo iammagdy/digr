@@ -83,6 +83,8 @@ export function operationLabelAr(operation: Operation, platform: string | null):
     case "web.search": return "صفحات الويب العامة";
     case "web.read": return "نصوص صفحات الويب العامة";
     case "people.discover": return "المهنيين وأدوارهم من الملفات المهنية العامة";
+    case "apps.discover": return "التطبيقات من متاجر التطبيقات";
+    case "apps.reviews": return "تقييمات التطبيقات ونصوصها من متاجر التطبيقات";
   }
 }
 const FILTER_AR = { period: "الفترة", country: "الدولة", language: "اللغة" } as const;
@@ -229,7 +231,7 @@ export const UNRESOLVED_AR = "فهمت هدفك، لكن جزءًا منه لا 
 /** The kinds of public data some available capability serves now (one Arabic phrase per operation), offered when the customer's goal must be re-stated. */
 export function availableAlternativeAr(registry: CapabilityRegistry): string {
   const usable = registry.all.filter((c) => c.privacy === "public" && c.unavailable === null);
-  const ops = ["social.comments", "companies.discover", "company.contacts", "people.discover", "places.reviews", "web.search"] as const;
+  const ops = ["social.comments", "companies.discover", "company.contacts", "people.discover", "places.reviews", "apps.reviews", "web.search"] as const;
   const labels = ops.filter((op) => usable.some((c) => c.operation === op)).map((op) => operationLabelAr(op, null));
   return labels.length > 0 ? `المتاح الآن مثلًا: ${labels.join("، ")}. أي نوع منها يخدم هدفك؟ أو احكيلي هدفك بطريقة تانية.` : "احكيلي هدفك بطريقة تانية.";
 }

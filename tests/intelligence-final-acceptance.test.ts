@@ -135,3 +135,68 @@ describe("selfReference: precise, never a false question on research about OTHER
     expect(selfReferenceUnresolved(["تعليقات تيك توك عن السياحة"])).toBeNull();
   });
 });
+
+describe("D2, round 51 (real model): an EMPTY brief on «منافسين شركتي» asks which company, not which platform", () => {
+  it("schema_request_missing → the own-business question", async () => {
+    scripted([{ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ status: "needs_clarification", request: "" }) }]);
+    const db = world();
+    const r = await turn(db, D2);
+    expect(r.contentAr).toBe(selfReferenceQuestionAr("company"));
+    expect(missions(db)).toHaveLength(0);
+  });
+});
+
+import { buildCapabilityRegistry as buildRegistry, discoverCapabilities as discover, researchNeedOf as needOf } from "../src/lib/agentMission/capabilities";
+import { loadTregCatalog as loadCatalog } from "../src/lib/treg/catalog";
+import { blockedEndpointReason as blocked } from "../src/lib/treg/blockList";
+import { policyVerdict as verdict } from "../src/lib/treg/dataPolicy";
+
+describe("APP REVIEWS ACROSS PROVIDERS (round 51): an app is found in its store, and its reviews read by any provider that serves them", () => {
+  const reg = () => buildRegistry(loadCatalog(), { isAllowed: (id) => !blocked(id) && verdict(id, null).allowed, webKeys: { firecrawl: true, contextdev: true } });
+  const fam = (id: string) => (id.startsWith("contextdev.") ? "contextdev" : id.startsWith("firecrawl.") ? "firecrawl" : "treg");
+  it.each([
+    ["عايز تقييمات تطبيق إنستاباي على جوجل بلاي", "google_play"],
+    ["هات ريفيوهات أبلكيشن طلبات على الآب ستور", "app_store"],
+    ["reviews of the Fawry app on Google Play", "google_play"],
+  ])("%s → apps.discover → apps.reviews on %s, review sources from two provider families", (request, store) => {
+    const d = discover(needOf({ request }), reg());
+    expect(d.status).toBe("supported");
+    expect(d.stages.map((s) => [s.stage.operation, s.stage.platform, s.stage.parentKey])).toEqual([["apps.discover", store, null], ["apps.reviews", store, "apps"]]);
+    expect(d.stages[0].eligible.length).toBeGreaterThan(0);
+    expect(new Set(d.stages[1].eligible.map((e) => fam(e.id)))).toEqual(new Set(["treg", "contextdev"]));
+  });
+  it("no store named: both stores' capabilities are candidates", () => {
+    const d = discover(needOf({ request: "تقييمات تطبيقات البنوك المصرية" }), reg());
+    expect(d.need.kind).toBe("apps");
+    expect(new Set(d.stages[1].eligible.map((e) => e.id))).toEqual(new Set(["contextdev.parse.app-store-reviews", "contextdev.parse.google-play-reviews", "litescrape.google_play.reviews", "litescrape.app_store.reviews"]));
+  });
+  it("«تطبيق» meaning «applying» a law stays news; hotel reviews stay places", () => {
+    expect(needOf({ request: "أخبار تطبيق قانون الإيجار القديم" }).kind).toBe("web");
+    expect(needOf({ request: "عايز تقييمات فنادق الغردقة" }).kind).toBe("places");
+    expect(needOf({ request: "تعليقات تيك توك عن تطبيق إنستاباي" }).kind).toBe("social");
+  });
+  it("chat: the model's app objectives become ONE mission (no unsupported answer, no provider named)", async () => {
+    scripted([{ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "تقييمات تطبيق إنستاباي على جوجل بلاي", content: ["reviews"], topic: "إنستاباي", objectives: [o("o1", "apps.discover", { what: "تطبيق إنستاباي" }), o("o2", "apps.reviews", { parent: "o1" })] }) }]);
+    const db = world();
+    const r = await turn(db, "عايز تقييمات تطبيق إنستاباي على جوجل بلاي");
+    expect(r.ok).toBe(true);
+    expect(live(db)).toHaveLength(1);
+    expect(r.contentAr).not.toMatch(/treg|firecrawl|context|litescrape|serpapi/i);
+  });
+  it("chat: app reviews as one part of a multi-part request keep their own part", async () => {
+    scripted([{ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({
+      request: "تقييمات تطبيق فوري على جوجل بلاي، وآخر أخبار المدفوعات الرقمية في مصر", content: ["reviews", "articles"],
+      objectives: [o("o1", "apps.discover", { request: "تقييمات تطبيق فوري على جوجل بلاي" }), o("o2", "apps.reviews", { parent: "o1" }), o("o3", "web.search", { request: "آخر أخبار المدفوعات الرقمية في مصر" })],
+    }) }]);
+    const db = world();
+    await turn(db, "عايز تقييمات تطبيق فوري على جوجل بلاي، وآخر أخبار المدفوعات الرقمية في مصر");
+    expect(live(db)).toHaveLength(2);
+  });
+});
+
+describe("round 51: «apps» alone is not an app-store request", () => {
+  it("an opinion question about apps keeps its reading; app reviews in English are apps", () => {
+    expect(needOf({ request: "What do people think about mental health apps?" }).kind).not.toBe("apps");
+    expect(needOf({ request: "reviews of banking apps in Egypt" }).kind).toBe("apps");
+  });
+});

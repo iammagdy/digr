@@ -367,7 +367,9 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     // (and words that give no TOPIC, «تيك توك» alone: live evaluation round 3, S1)
     if (words.privacy === "blocked" || (words.kind !== "unknown" && decision.briefRawStatus !== "needs_clarification" && customerGaveTopic(ctx.customerTurns))) return null;
     // the model's own question, unless the model did not read a request at all (its type was overruled by the keyword rule: its reply answers something else, possibly a refusal)
-    const question = (!decision.overruled && decision.reply) || (customerGaveTopic(ctx.customerTurns) ? missingQuestionAr(buildRequestContract(currentMessageOf(ctx))) : TOPIC_QUESTION_AR);
+    // (a request about the customer's own business that nobody named is asked WHICH one, not which platform: live evaluation round 51, D2)
+    const ownUnnamed = selfReferenceUnresolved(ctx.customerTurns);
+    const question = (!decision.overruled && decision.reply) || (ownUnnamed ? selfReferenceQuestionAr(ownUnnamed) : customerGaveTopic(ctx.customerTurns) ? missingQuestionAr(buildRequestContract(currentMessageOf(ctx))) : TOPIC_QUESTION_AR);
     ctx.outcome = reason;
     await writeAnswer(input, question, ctx.prior ? { researchBrief: { ...ctx.prior, status: "needs_clarification" } } : undefined);
     return { ok: false, contentAr: question, status: 200 };
