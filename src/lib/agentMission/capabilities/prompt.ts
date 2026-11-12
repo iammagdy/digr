@@ -46,11 +46,13 @@ export function chatCapabilityLines(registry: CapabilityRegistry): string[] {
  */
 export const OBJECTIVE_PROMPT_LINES: readonly string[] = [
   "- أهداف البحث: داخل brief أضف الحقل objectives، قائمة بكل هدف فهمته من طلب العميل كله (لا تحذف هدفًا ولا تضف هدفًا لم يطلبه):",
-  '  "objectives":[{"id":"o1","operation":"social.parents","platform":"tiktok","parent":null,"contacts":[],"what":"..."},{"id":"o2","operation":"social.comments","platform":"tiktok","parent":"o1","contacts":[],"what":"..."}]',
+  '  "objectives":[{"id":"o1","operation":"social.parents","platform":"tiktok"},{"id":"o2","operation":"social.comments","platform":"tiktok","parent":"o1"}]',
   "  operation واحدة من: social.parents (منشورات أو فيديوهات أو تغريدات منصة)، social.comments (تعليقات عليها)، social.replies (ردود على التعليقات)، companies.discover (شركات وأنشطة تجارية)، company.contacts (إيميل أو تليفون العمل الرسمي المنشور للشركة، وcontacts فيها email أو phone أو الاثنين)، people.discover (مهنيون عامون وأدوارهم، وparent شركاتهم إن طُلبوا من شركات)، places.discover (أماكن من الخرائط)، places.reviews (تقييمات الأماكن)، web.search (مقالات وأخبار وصفحات ويب عامة)، web.read (نصوص تلك الصفحات).",
   "  هذه أسماء ما يقدر النظام ينفّذه، وليست قائمة بما يحق للعميل طلبه: افهم أي هدف بكلماته، فإن لم تطابقه أي operation فاكتب operation بالقيمة unsupported وفي what الهدف بكلمات قليلة، ولا تحوّله لعملية أخرى.",
   "  platform: لبيانات وسائل التواصل فقط (tiktok أو x أو instagram أو facebook أو youtube، أو اسم المنصة الأخرى التي ذكرها العميل بحروف إنجليزية صغيرة مثل snapchat)، وnull لغيرها. parent: id الهدف الذي يُقرأ منه هذا الهدف (التعليقات من المنشورات، التقييمات من الأماكن، التواصل والمهنيون من الشركات، نص الصفحة من نتائج البحث) وإلا null.",
-  "  طلب فيه أكثر من نوع (مثل تعليقات وفنادق ومقالات) يُكتب كل نوع هدفًا مستقلًا. وفي كل تكملة أو تصحيح اكتب objectives كاملة محدّثة: ما أكده العميل يبقى، وما صحّحه يتغير.",
+  "  طلب فيه أكثر من نوع (مثل تعليقات وفنادق ومقالات، أو منصتين) يُكتب كل نوع هدفًا مستقلًا. وفي كل تكملة أو تصحيح اكتب objectives كاملة محدّثة: ما أكده العميل يبقى، وما صحّحه يتغير.",
+  "  إن كان في الطلب أكثر من هدف أول (parent: null) فاكتب في كل هدف أول الحقل request: طلب هذا الجزء وحده في جملة قصيرة كاملة بنفس قواعد request العامة (المنصة باسمها، ما يُجمع، «عن» قبل موضوعه، شروط العميل وأرقامه لهذا الجزء فقط). كل جزء تُجهَّز له خطة بسعرها، ولا تطلب من العميل أن يختار جزءًا واحدًا.",
+  "  اختصر: احذف من كل هدف أي حقل فارغ (platform وparent وcontacts وwhat)، واكتب what فقط مع unsupported، واجعل reason كلمات قليلة، وreply فارغًا عند ready لطلب فيه أكثر من جزء.",
 ];
 
 const usd = (n: number | null): string => (n === null ? "unpriced" : `${n.toFixed(6)} USD/row`);

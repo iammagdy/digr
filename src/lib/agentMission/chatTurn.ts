@@ -4,14 +4,16 @@ import { MISSION_TABLE } from "./constants";
 import { ADDON_MARKER_COLUMN, hasAddonMarker } from "./addonMarker";
 import { getBalance } from "../supabase/ledger";
 import { answerForCustomer, createCustomerMission, editPlanForCustomer } from "./customerActions";
-import { contactAskVerdict, contactClarifyAr, preModelAnswer, privacyRefusalAr } from "./guardRules";
+import { contactAskVerdict, contactClarifyAr, preModelAnswer, privacyRefusalAr, PRIVACY_REFUSAL_AR } from "./guardRules";
 import { decideTurn, type ChatType, type Decision, type OpenRequest, type OpenState } from "./conversationModel";
 import { FULL_RESEARCH_PREFIX_AR, greetingReplyAr, isFullResearchMethodologyAsk, methodologyReplyAr, methodologyTailAr, otherReplyAr, serviceAnswerAr } from "./messageType";
 import { listMethodologyMissions } from "./methodology/missions";
 import { buildRequestContract } from "./requestContract";
-import { briefNumbersAr, contractIsComplete, differsOnlyByCount, sameContract, storedBriefOf, validateBrief, type ResearchBrief } from "./researchBrief";
+import { briefNumbersAr, contractIsComplete, differsOnlyByCount, parseBrief, sameContract, storedBriefOf, validateBrief, type ResearchBrief } from "./researchBrief";
+import { partBriefOf, partsOf, RESEARCH_GROUP_MAX_PARTS, RESEARCH_GROUP_VERSION, samePartRequest, storedGroupOf, type PartOutcome, type ResearchPart, type StoredGroupPart, type StoredResearchGroup } from "./researchGroup";
+import { randomUUID } from "node:crypto";
 import { readSettingValue, scopedFlagOn } from "./scopedFlag";
-import { buildCapabilityRegistry, chatCapabilityLines, discoverCapabilities, mixedPartsAr, mixesSocialAndOther, researchNeedOf, CAPABILITY_DISCOVERY_FLAG_KEY, type CapabilityDiscovery, type CapabilityRegistry } from "./capabilities";
+import { buildCapabilityRegistry, chatCapabilityLines, discoverCapabilities, operationLabelAr, PLATFORM_AR, researchNeedOf, CAPABILITY_DISCOVERY_FLAG_KEY, type CapabilityDiscovery, type CapabilityRegistry } from "./capabilities";
 import { loadTregCatalog } from "../treg/catalog";
 import { blockedEndpointReason } from "../treg/blockList";
 import { policyVerdict } from "../treg/dataPolicy";
@@ -33,7 +35,7 @@ export interface AgentChatTurnInput {
 }
 
 export type AgentChatTurnResult =
-  | { ok: true; missionId: string; contentAr: string; conversationTitle?: string }
+  | { ok: true; missionId: string; contentAr: string; conversationTitle?: string; /** MULTI-OBJECTIVE RESEARCH: the other parts of the same request, each on its own new assistant message with its own card. */ extraMissions?: Array<{ id: string; messageId: string; contentAr: string }> }
   | { ok: false; contentAr: string; status: number };
 
 /** Consent is given with the card's button, never with typed words: a typed «موافق» is answered with where to press and starts nothing. */
@@ -91,7 +93,7 @@ async function readHistory(sb: any, input: AgentChatTurnInput): Promise<Array<{ 
 }
 
 /** Writes the answer on the assistant message and ends the customer's message «completed» (as every early answer of the handler does), so it never stays «planning». */
-async function writeAnswer(input: AgentChatTurnInput, contentAr: string, plan?: { agentMissionId?: string; researchBrief?: ResearchBrief }): Promise<void> {
+async function writeAnswer(input: AgentChatTurnInput, contentAr: string, plan?: { agentMissionId?: string; researchBrief?: ResearchBrief; researchGroup?: StoredResearchGroup }): Promise<void> {
   const { sb } = input;
   try {
     await Promise.all([
@@ -171,12 +173,13 @@ export async function agentChatTurn(input: AgentChatTurnInput): Promise<AgentCha
       return { ok: false, contentAr: fixed.contentAr, status: 200 };
     }
     const mode = await readBriefMode(sb, input.userId);
-    const [open, balancePoints, history, prior] = await Promise.all([readOpenRequest(sb, input.conversationId, input.userId), readBalance(sb, input.userId), readHistory(sb, input), mode.enabled ? readPriorBrief(sb, input.conversationId) : Promise.resolve(null)]);
+    const [open, balancePoints, history, priorState] = await Promise.all([readOpenRequest(sb, input.conversationId, input.userId), readBalance(sb, input.userId), readHistory(sb, input), mode.enabled ? readPriorBrief(sb, input.conversationId) : Promise.resolve({ brief: null, group: null })]);
+    const prior = priorState.brief;
     // what the customer asked in this conversation: the open request's stored words (typed earlier, maybe beyond the recent messages), the recent messages, this one
     const customerTurns = [...(open?.requestText ? [open.requestText] : []), ...history.filter((m) => m.role === "user").map((m) => m.content), input.message];
     const assistantQuestion = [...history].reverse().find((m) => m.role === "assistant")?.content ?? null;
     const decision = await decideTurn({ message: input.message, balancePoints, open, history, ...(mode.enabled ? { brief: { enabled: true, soFar: prior, numbersAr: briefNumbersAr({ customerTurns, prior }), ...(mode.registry ? { capabilityLines: chatCapabilityLines(mode.registry) } : {}) } } : {}) });
-    const briefCtx: BriefTurnContext = { customerTurns, assistantQuestion, prior, semantic: mode.semantic, outcome: "off", ...(mode.registry ? { registry: mode.registry } : {}) };
+    const briefCtx: BriefTurnContext = { customerTurns, assistantQuestion, prior, semantic: mode.semantic, outcome: "off", ...(mode.registry ? { registry: mode.registry } : {}), ...(priorState.group ? { priorGroup: priorState.group } : {}) };
     const viaBrief = mode.enabled ? await briefTurn(input, decision, open, briefCtx) : null;
     console.info(JSON.stringify({ tag: "chat_message_type", type: decision.type, source: decision.source, guarded: decision.guarded, open: open?.state ?? "none", brief: mode.enabled ? briefCtx.outcome : "off", ...(decision.failure ? { failure: decision.failure } : {}) }));
     if (viaBrief) return viaBrief;
@@ -258,18 +261,22 @@ export function capabilityLimitReplyAr(d: CapabilityDiscovery): string {
   return [d.messageAr, d.alternativeAr].filter((x): x is string => typeof x === "string" && x.trim() !== "").join(" ");
 }
 
-/** The brief of this conversation: the one stored with the latest assistant card or question (`plan.researchBrief`). A newer card without a brief (a request of the old path) ends it. Read only. */
-async function readPriorBrief(sb: any, conversationId: string): Promise<ResearchBrief | null> {
+/** The brief of this conversation: the one stored with the latest assistant card or question (`plan.researchBrief`, or the whole brief of a multi-part request `plan.researchGroup.brief`), and that group. A newer card without a brief (a request of the old path) ends it. Read only. */
+async function readPriorBrief(sb: any, conversationId: string): Promise<{ brief: ResearchBrief | null; group: StoredResearchGroup | null }> {
   try {
     const { data } = await sb.from("messages").select("plan").eq("conversation_id", conversationId).eq("role", "assistant").order("created_at", { ascending: false }).limit(20);
     for (const row of Array.isArray(data) ? data : []) {
       const plan = row?.plan;
       if (!plan || typeof plan !== "object") continue;
-      if ("researchBrief" in plan || "agentMissionId" in plan) return storedBriefOf(plan);
+      if ("researchBrief" in plan || "agentMissionId" in plan || "researchGroup" in plan) {
+        const group = storedGroupOf(plan, strictBrief);
+        return { brief: group ? group.brief : storedBriefOf(plan), group };
+      }
     }
   } catch { /* no brief */ }
-  return null;
+  return { brief: null, group: null };
 }
+const strictBrief = (raw: unknown): ResearchBrief | null => { const p = parseBrief(raw); return p.ok && p.unknown.length === 0 ? p.brief : null; };
 
 interface BriefTurnContext {
   customerTurns: string[];
@@ -280,6 +287,8 @@ interface BriefTurnContext {
   outcome: string;
   /** UNIFIED CAPABILITY DISCOVERY: the registry the ready brief is checked against (absent: the switch is off). */
   registry?: CapabilityRegistry;
+  /** MULTI-OBJECTIVE RESEARCH: the parts prepared on an earlier turn of this conversation (absent: none). */
+  priorGroup?: StoredResearchGroup;
 }
 
 /** Said when an unapproved plan (or a question card) is replaced by the updated request. */
@@ -294,6 +303,13 @@ export const PREVIOUS_STILL_PLANNING_AR = "حدّثنا طلبك بحسب رسا
 async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: OpenRequest | null, ctx: BriefTurnContext): Promise<AgentChatTurnResult | null> {
   // the model could not be read: a pending discovery question is still answered (the customer's answer joins the request so far, privacy checked again), never lost
   if (decision.source === "keyword") {
+    // MULTI-OBJECTIVE RESEARCH: the model's answer was cut at its output ceiling (a long request with many parts): its objectives are not dropped by reading the words alone; the customer continues with one word, the request is not retyped
+    // (no second call is made: one call per message, the ceiling unchanged)
+    if (decision.failure === "truncated" && ctx.registry && decision.type !== "greeting_or_small_talk" && decision.type !== "service_question" && decision.type !== "methodology_request") {
+      ctx.outcome = "model_truncated";
+      await writeAnswer(input, TRUNCATED_AR);
+      return { ok: false, contentAr: TRUNCATED_AR, status: 200 };
+    }
     const pending = ctx.prior && ctx.prior.status === "needs_clarification" && !open;
     if (!pending || decision.type === "greeting_or_small_talk" || decision.type === "service_question" || decision.type === "methodology_request") { ctx.outcome = "model_unavailable"; return null; }
     const joined = `${ctx.prior!.request}، ${input.message}`;
@@ -314,6 +330,17 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     return null;
   }
   const brief = v.brief;
+  // MULTI-OBJECTIVE RESEARCH: several first objectives, or a follow-up on the parts prepared before: every part keeps its own existing plan (docs/MULTI-OBJECTIVE-RESEARCH.md)
+  const parts = brief.objectives ? partsOf(brief) : [];
+  if (ctx.registry && (parts.length >= 2 || (ctx.priorGroup && parts.length >= 1))) {
+    // the model still asks something it needs (a genuinely missing requirement): its question, with the whole brief kept
+    if (brief.status === "needs_clarification" && decision.reply !== null) {
+      ctx.outcome = "group_clarify";
+      await writeAnswer(input, decision.reply, { researchBrief: brief });
+      return { ok: false, contentAr: decision.reply, status: 200 };
+    }
+    return groupTurn(input, decision, open, { ...brief, status: "ready" }, parts, ctx);
+  }
   if (decision.type === "edit_of_open_request" && open) return briefEditOfOpen(input, decision, open, brief, v.contract, ctx);
   // a new research request (or the next step of the discovery): a question while something that matters is missing, else a mission from the WHOLE request
   if (brief.status === "needs_clarification" && !contractIsComplete(v.contract)) {
@@ -335,14 +362,6 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
 async function capabilityGate(input: AgentChatTurnInput, brief: ResearchBrief, ctx: BriefTurnContext): Promise<AgentChatTurnResult | null> {
   if (!ctx.registry) return null;
   const d = discoverCapabilities(researchNeedOf({ request: brief.request, brief }), ctx.registry);
-  // LLM-FIRST OBJECTIVES: social data and another kind in ONE request (comments and hotels' reviews, posts and articles): the social plan compiler plans social data only, so the parts are never silently cut to one: the customer chooses which
-  // part is prepared first (each part is its own plan and price); every objective stays in the brief until they answer
-  if (mixesSocialAndOther(d)) {
-    ctx.outcome = "objectives_mixed_ask";
-    const contentAr = mixedPartsAr(d);
-    await writeAnswer(input, contentAr, { researchBrief: { ...brief, status: "needs_clarification" } });
-    return { ok: false, contentAr, status: 200 };
-  }
   // the model understood a goal nothing serves, and nothing else: the customer is asked (with what can be collected now), never told «unsupported» because a word was not recognised
   if (d.status === "needs_clarification" && d.messageAr) {
     ctx.outcome = "objectives_unresolved_ask";
@@ -358,6 +377,177 @@ async function capabilityGate(input: AgentChatTurnInput, brief: ResearchBrief, c
   const contentAr = capabilityLimitReplyAr(d);
   await writeAnswer(input, contentAr, d.status === "blocked" ? undefined : { researchBrief: { ...brief, status: "needs_clarification" } });
   return { ok: false, contentAr, status: 200 };
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+// MULTI-OBJECTIVE RESEARCH (docs/MULTI-OBJECTIVE-RESEARCH.md)
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+const LIVE_STATUSES = new Set(["queued", "planning", "needs_input", "plan_ready", "approved", "executing", "delivered", "partial"]);
+const WITHDRAWABLE = ["queued", "needs_input", "plan_ready"];
+/** Said when the model's reading of a long request was cut before it ended: nothing is lost, the customer only says «كمّل». */
+export const TRUNCATED_AR = "وصلني طلبك بكل أجزائه، لكن تلخيصه طلع أطول من المسموح في رد واحد. اكتب «كمّل» وأنا أكمّل تجهيز كل الأجزاء من غير ما تعيد كتابة طلبك؛ ولن يُخصم شيء قبل اعتمادك.";
+/** Said when the request's parts are already prepared and nothing changed (a «تمام جهّزهم» or a repetition): nothing new is created. */
+export const GROUP_UNCHANGED_AR = "أجزاء طلبك متجهّزة بالفعل، وكل جزء له بطاقته بخطته وسعره. اعتمد الجزء اللي يناسبك من بطاقته، ولن يُخصم شيء قبل اعتمادك.";
+/** Said after the summary of the parts: approvals are per part. */
+export const GROUP_APPROVAL_AR = "كل جزء له خطة وسعر في بطاقته، وتعتمد كل جزء لوحده بزر «اعتمد»؛ ولن يُخصم شيء قبل اعتمادك، ولا تدفع إلا عن المسلَّم فعلًا.";
+
+interface JudgedPart { part: ResearchPart; partBrief: ResearchBrief | null; outcome: PartOutcome; label: string; noteAr: string | null; discovery: CapabilityDiscovery | null }
+
+/** The customer-facing name of a part (the operations it carries and its platform; never a provider). */
+function partLabelAr(part: ResearchPart): string {
+  const deepest = [...part.objectives].reverse().find((o) => o.operation !== "unsupported");
+  if (!deepest) return "جزء من طلبك لا يطابق أي نوع بيانات نقدر نجمعه";
+  if (deepest.operation.startsWith("social.") && deepest.platform && !(deepest.platform in PLATFORM_AR)) return `بيانات ${deepest.platform}`;
+  return operationLabelAr(deepest.operation as Exclude<typeof deepest.operation, "unsupported">, deepest.platform);
+}
+
+/** What can be done with ONE part now: its sentence validated like a brief, then the capabilities of its objectives (the same discovery a single request gets). Pure apart from the registry read. */
+function judgePart(part: ResearchPart, ctx: BriefTurnContext, registry: CapabilityRegistry): JudgedPart {
+  const label = partLabelAr(part);
+  const base = { part, partBrief: null, label, discovery: null };
+  if (part.unresolved) {
+    const d = discoverCapabilities(researchNeedOf({ request: part.request ?? "", brief: { platforms: [], content: [], count: null, objectives: part.objectives } }), registry);
+    return { ...base, outcome: "unsupported", noteAr: [d.messageAr, d.alternativeAr].filter(Boolean).join(" ") || null };
+  }
+  const pb = partBriefOf(part);
+  if (!pb) return { ...base, outcome: "needs_clarification", noteAr: null };
+  const v = validateBrief(pb, { customerTurns: ctx.customerTurns, assistantQuestion: ctx.assistantQuestion, prior: ctx.prior, semantic: ctx.semantic });
+  if (!v.ok) return { ...base, outcome: v.reason === "privacy_refusal" || v.reason === "privacy_clarify" ? "refused_private" : "needs_clarification", noteAr: v.contentAr ?? null };
+  const d = discoverCapabilities(researchNeedOf({ request: v.brief.request, brief: v.brief }), registry);
+  if (d.status === "blocked") return { ...base, partBrief: v.brief, discovery: d, outcome: "refused_private", noteAr: d.messageAr };
+  if (d.status === "unsupported") {
+    const unavailable = d.unsupported.length > 0 && d.unsupported.every((u) => u.reason === "provider_unavailable" || u.reason === "not_permitted");
+    return { ...base, partBrief: v.brief, discovery: d, outcome: unavailable ? "unavailable" : "unsupported", noteAr: [d.messageAr, d.alternativeAr].filter(Boolean).join(" ") || null };
+  }
+  if (d.status === "needs_clarification") return { ...base, partBrief: v.brief, discovery: d, outcome: "needs_clarification", noteAr: [d.messageAr, d.alternativeAr].filter(Boolean).join(" ") || null };
+  // supported, or partial (a later step of the part is unavailable: its own card asks the reduced scope before any plan or price, as for a single request)
+  return { ...base, partBrief: v.brief, discovery: d, outcome: "planned", noteAr: d.status === "partial" ? d.messageAr : null };
+}
+
+/** The statuses of the missions of the parts prepared before (the customer's own missions only). */
+async function missionStatuses(sb: any, userId: string, ids: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (ids.length === 0) return out;
+  try {
+    const { data } = await sb.from(MISSION_TABLE).select(`id,user_id,status,${ADDON_MARKER_COLUMN}`).in("id", ids);
+    for (const row of Array.isArray(data) ? data : []) if (row?.user_id === userId && !hasAddonMarker(row)) out.set(String(row.id), String(row.status));
+  } catch { /* unknown: treated as not live */ }
+  return out;
+}
+
+const AR_DIGITS = ["٠", "١", "٢", "٣", "٤", "٥", "٦", "٧", "٨", "٩"];
+const arNum = (n: number) => String(n).replace(/\d/g, (d) => AR_DIGITS[Number(d)]);
+
+/**
+ * ONE TURN OF A MULTI-PART REQUEST. Every part is judged; each part that can be prepared becomes (or stays) its own mission with its own card; a part prepared before and unchanged keeps its mission (never planned twice); a part the customer
+ * removed or changed is withdrawn only while it waits for them (queued, a question, a plan not approved: nothing is held then); an approved part is never touched. Parts that cannot be prepared are said, with why and the alternative, and
+ * stay in the brief. Nothing is priced, held, approved or charged here: each card does that, by the existing code, for its own part.
+ */
+async function groupTurn(input: AgentChatTurnInput, decision: Decision, open: OpenRequest | null, brief: ResearchBrief, parts: ResearchPart[], ctx: BriefTurnContext): Promise<AgentChatTurnResult | null> {
+  const { sb } = input;
+  const registry = ctx.registry!;
+  const judged = parts.slice(0, RESEARCH_GROUP_MAX_PARTS).map((p) => judgePart(p, ctx, registry));
+  const overflow = parts.slice(RESEARCH_GROUP_MAX_PARTS);
+  // a private component is refused like a typed one when it is the WHOLE request; a private part among public ones is refused alone (the public parts go on)
+  if (judged.length > 0 && judged.every((j) => j.outcome === "refused_private")) {
+    ctx.outcome = "group_privacy";
+    const contentAr = judged.find((j) => j.noteAr)?.noteAr ?? PRIVACY_REFUSAL_AR;
+    await writeAnswer(input, contentAr);
+    return { ok: false, contentAr, status: 200 };
+  }
+  const prior = ctx.priorGroup ?? null;
+  const priorParts = prior?.parts.filter((p) => p.missionId) ?? [];
+  const statuses = await missionStatuses(sb, input.userId, priorParts.map((p) => p.missionId!));
+  // the same request read by the trusted parser only when it reads a topic in both (two parts with no topic the parser can read are compared by their words)
+  const sameByParser = (x: string, y: string) => { const a = buildRequestContract(x); const b = buildRequestContract(y); return a.topic !== null && b.topic !== null && a.topic.trim() !== "" && sameContract(a, b); };
+  const kept = new Map<string, StoredGroupPart>();
+  for (const j of judged) {
+    if (j.outcome !== "planned" || !j.partBrief) continue;
+    const match = priorParts.find((p) => !Array.from(kept.values()).includes(p) && LIVE_STATUSES.has(statuses.get(p.missionId!) ?? "") && samePartRequest(p.request, j.partBrief!.request, sameByParser));
+    if (match) kept.set(j.part.key, match);
+  }
+  const toCreate = judged.filter((j) => j.outcome === "planned" && j.partBrief && !kept.has(j.part.key));
+  const keptIds = new Set(Array.from(kept.values()).map((p) => p.missionId));
+  const dropped = priorParts.filter((p) => !keptIds.has(p.missionId) && LIVE_STATUSES.has(statuses.get(p.missionId!) ?? ""));
+  // nothing changed: the parts are already prepared (an answer to an open card goes to that card, as today)
+  if (prior && toCreate.length === 0 && dropped.length === 0 && judged.every((j) => j.outcome === "planned")) {
+    if (decision.type === "edit_of_open_request" && open) { ctx.outcome = "group_unchanged_open"; return null; }
+    ctx.outcome = "group_unchanged";
+    await writeAnswer(input, GROUP_UNCHANGED_AR);
+    return { ok: false, contentAr: GROUP_UNCHANGED_AR, status: 200 };
+  }
+  // withdraw what the customer removed or changed, only while it waits for them (compare-and-set: a part the worker or an approval took meanwhile is left as it is)
+  const leftRunning: string[] = [];
+  for (const p of dropped) {
+    try {
+      const upd = await sb.from(MISSION_TABLE).update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", p.missionId).eq("user_id", input.userId).in("status", WITHDRAWABLE).select("id");
+      if (!(Array.isArray(upd?.data) && upd.data.length === 1)) leftRunning.push(p.request ?? "");
+    } catch { leftRunning.push(p.request ?? ""); }
+  }
+  // a single unapproved card of the old path above is replaced, as a new request always replaces it
+  if (!prior) {
+    const previous = await latestMissionOfConversation(sb, input.conversationId);
+    if (previous && (await isResearchMission(sb, previous))) {
+      try { await sb.from(MISSION_TABLE).update({ status: "cancelled", updated_at: new Date().toISOString() }).eq("id", previous).eq("user_id", input.userId).in("status", REPLACEABLE); } catch { /* the limit still protects */ }
+    }
+  }
+  // create the new parts' missions, in order (the open-missions limit is the existing one: a part it refuses waits, said)
+  const created: Array<{ j: JudgedPart; id: string }> = [];
+  const waiting: Array<{ j: JudgedPart; why: string }> = [];
+  for (const j of toCreate) {
+    const r = await createCustomerMission(sb, { userId: input.userId, text: j.partBrief!.request });
+    if (r.ok) created.push({ j, id: r.id });
+    else waiting.push({ j, why: r.error });
+  }
+  const groupId = `grp_${randomUUID().replace(/-/g, "").slice(0, 16)}`;
+  const outcomeOf = (j: JudgedPart): StoredGroupPart => {
+    const c = created.find((x) => x.j === j);
+    const k = kept.get(j.part.key);
+    const w = waiting.find((x) => x.j === j);
+    return { key: j.part.key, request: j.partBrief?.request ?? j.part.request, missionId: c ? c.id : k ? k.missionId : null, outcome: w ? "waiting" : j.outcome };
+  };
+  const group: StoredResearchGroup = { v: RESEARCH_GROUP_VERSION, id: groupId, brief: { ...brief, status: created.length + kept.size > 0 ? "ready" : "needs_clarification" }, parts: judged.map(outcomeOf) };
+
+  // the customer's summary: every part with what happens to it (none is silently dropped)
+  const lines: string[] = [];
+  const total = judged.length + overflow.length;
+  lines.push(total > 1 ? `فهمت إن طلبك فيه ${arNum(total)} أجزاء:` : "حدّثنا طلبك:");
+  judged.forEach((j, i) => {
+    const st = outcomeOf(j);
+    const n = `${arNum(i + 1)}) ${j.label}${j.partBrief ? ` «${j.partBrief.request}»` : ""}`;
+    if (st.outcome === "planned") lines.push(`${n}: ${kept.has(j.part.key) ? "خطته جاهزة أو بتتجهز في بطاقته أعلاه ومش هتتغير." : "بنجهّز خطته وسعره في بطاقته."}${j.noteAr ? ` ${j.noteAr}` : ""}`);
+    else if (st.outcome === "waiting") lines.push(`${n}: مستني؛ ${waiting.find((x) => x.j === j)!.why} وهيتجهّز أول ما تكتب «كمّل» من غير ما تعيد طلبك.`);
+    else if (st.outcome === "refused_private") lines.push(`${n}: مش هنجمعه لأنه بيانات خاصة لأفراد.`);
+    else if (st.outcome === "needs_clarification") lines.push(`${n}: محتاج توضيح بسيط قبل ما نجهّزه.${j.noteAr ? ` ${j.noteAr}` : ""}`);
+    else lines.push(`${n}: ${j.noteAr ?? "مش متاح حاليًا."}`);
+  });
+  overflow.forEach((p, i) => lines.push(`${arNum(judged.length + i + 1)}) ${partLabelAr(p)}: هيتجهّز بعد الأجزاء اللي فوق؛ اكتب «كمّل».`));
+  if (leftRunning.length > 0) lines.push(PREVIOUS_STILL_PLANNING_AR);
+  if (created.length + kept.size > 0) lines.push(GROUP_APPROVAL_AR);
+  const summary = lines.join("\n");
+
+  const firstPlan = (id: string, j: JudgedPart) => ({ agentMissionId: id, researchBrief: j.partBrief!, researchGroup: group });
+  ctx.outcome = `group_${created.length}_created_${kept.size}_kept_${judged.length - created.length - kept.size}_other`;
+  if (created.length === 0) {
+    await writeAnswer(input, summary, { researchGroup: group });
+    return { ok: false, contentAr: summary, status: 200 };
+  }
+  // the first new part's card goes on this answer; every other new part gets its own assistant message (its own card), written by the server only
+  const [first, ...rest] = created;
+  const extraMissions: Array<{ id: string; messageId: string; contentAr: string }> = [];
+  const now = Date.now();
+  const writes: Array<Promise<unknown>> = [
+    sb.from("messages").update({ content_ar: summary, plan: firstPlan(first.id, first.j) }).eq("id", input.assistantMsgId),
+    sb.from("messages").update({ request_status: "planning" }).eq("id", input.userMsgId),
+  ];
+  rest.forEach((c, i) => {
+    const messageId = randomUUID();
+    const contentAr = `الجزء ${arNum(judged.indexOf(c.j) + 1)}: ${c.j.label} «${c.j.partBrief!.request}». ${AGENT_TURN_CONTENT_AR}`;
+    extraMissions.push({ id: c.id, messageId, contentAr });
+    writes.push(sb.from("messages").insert({ id: messageId, conversation_id: input.conversationId, user_id: input.userId, role: "assistant", content_ar: contentAr, plan: firstPlan(c.id, c.j), created_at: new Date(now + i + 1).toISOString() }));
+  });
+  try { await Promise.all(writes); } catch (e) { console.warn(`[chat:agent_group_persist_failed] ${String((e as Error)?.message ?? "").slice(0, 80)}`); }
+  return { ok: true, missionId: first.id, contentAr: summary, ...(extraMissions.length > 0 ? { extraMissions } : {}) };
 }
 
 /**

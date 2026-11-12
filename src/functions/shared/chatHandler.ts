@@ -488,6 +488,8 @@ export interface ChatHandlerResponse {
   planning?: { sessionId: string };
   /** The request is a mission of the agent: the page draws the mission card from this id (see lib/agentMission/chatTurn.ts). */
   agentMission?: { id: string };
+  /** MULTI-OBJECTIVE RESEARCH: the other parts of the same request, each already stored as its own assistant message with its own card (the page appends them after this answer). */
+  agentMissionParts?: Array<{ id: string; messageId: string; contentAr: string }>;
   planQuote?: any;
   revisionQuote?: any;
   /** A validated file spec for the result on screen; the page turns it into a download of the shaped file. */
@@ -1615,7 +1617,7 @@ export class ChatHandler {
     ctx.turn.model = "agent";
     const base = { conversationId: ctx.conversationId, messageId: ctx.assistantMsgId, role: "assistant" as const, intent: "research" as const, tokensUsed: { input: 0, output: 0, costUsd: 0 }, turnStats: ctx.stats() };
     if (!r.ok) return { ...base, contentAr: r.contentAr, outputType: "answer_question" } as ChatHandlerResponse;
-    return { ...base, contentAr: r.contentAr, outputType: "agent_mission" as any, agentMission: { id: r.missionId }, ...(r.conversationTitle ? { conversationTitle: r.conversationTitle } : {}) } as ChatHandlerResponse;
+    return { ...base, contentAr: r.contentAr, outputType: "agent_mission" as any, agentMission: { id: r.missionId }, ...(r.extraMissions && r.extraMissions.length > 0 ? { agentMissionParts: r.extraMissions } : {}), ...(r.conversationTitle ? { conversationTitle: r.conversationTitle } : {}) } as ChatHandlerResponse;
   }
 
   /**

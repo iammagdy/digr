@@ -780,7 +780,13 @@ export default function ChatWorkspacePage() {
         createdAt: new Date().toISOString(),
       };
 
-      setMessages((prev) => [...prev, assistantMsg]);
+      // MULTI-OBJECTIVE RESEARCH: every other part of the same request has its own stored message and card (the same messages a reload shows)
+      const partMessages: MessageItem[] = Array.isArray(data.agentMissionParts)
+        ? data.agentMissionParts
+            .filter((p: any) => typeof p?.id === "string" && typeof p?.messageId === "string")
+            .map((p: any) => ({ id: p.messageId, role: "assistant" as const, content: String(p.contentAr ?? ""), agentMissionId: p.id, createdAt: new Date().toISOString() }))
+        : [];
+      setMessages((prev) => [...prev, assistantMsg, ...partMessages]);
       return true;
     } catch (err: any) {
       clearTimeout(timeoutId);

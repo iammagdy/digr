@@ -4,6 +4,19 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 45 (12 Nov 2026, after #455, main = `245535c`): multi-objective research (docs/MULTI-OBJECTIVE-RESEARCH.md)
+
+**No SQL write, no flag change, no migration, no permission change, no paid model or provider call, no money/ledger/pricing/approval/settlement/infrastructure line.**
+
+1. **One brief, several existing missions** (brief mode + discovery switch only). Each first objective is a part with its own model-written sentence, validated like a brief. Each part becomes its own mission with its own card, plan, price and «اعتمد»; one approval never covers another part. No composite plan and no composite money.
+2. **Nothing dropped:** unsupported, unavailable, unclear, private or over-the-limit parts are said and kept in the brief. Corrections change only the changed part, unchanged parts are never planned twice, and approved parts are never touched.
+3. **Explicit outcomes:** per part (the mission's status) and per objective inside a part (a result line with each objective's count).
+4. **Robustness:** an answer cut at the 700-token ceiling is detected. The customer types «كمّل» with no retyping and no keyword-read mission. Output instructions were compacted.
+5. **No false refusals (every customer):** the trust check's slice bug was fixed. Contact words that are only the subject of public content are no longer refused; private targets, collection verbs and «content containing numbers» stay refused.
+6. **Tests:** `tests/multi-objective-research.test.ts` (37, offline, the real chat → worker → approval → execution → settlement code with fakes).
+
+---
+
 ## Round 44 (12 Nov 2026, after #454, main = `f5703c6`): LLM-first research objectives → verified capabilities (docs/LLM-FIRST-OBJECTIVES.md)
 
 **No SQL write, no flag change, no migration, no permission change, no paid model or provider call, no money/ledger/pricing/approval/auth/infrastructure line.**

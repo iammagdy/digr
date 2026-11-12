@@ -111,6 +111,10 @@ Still exactly one chat-model call per message. With both switches on, the prompt
 
 **Not proven:** what the real chat model writes (how often its objectives pass validation, latency, real token use), live provider answers, and the deployed worker's revision.
 
-## 6. Rollout
+## 6. Superseded in part
+
+The «ask which part first» behaviour for a mixed request is replaced by `docs/MULTI-OBJECTIVE-RESEARCH.md`: every part is prepared on its own card, none is cut.
+
+## 7. Rollout
 
 Unchanged: the same two switches and the test-account SQL already documented in `docs/AGENT-UNDERSTANDING-V1.md` and `docs/UNIFIED-CAPABILITY-DISCOVERY.md`. **Not run by this PR.**

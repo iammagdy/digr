@@ -52,6 +52,8 @@ export interface ReplayInput {
   beforeApproval?: (ctx: { client: any; missionId: string; db: MemoryDb; store: MemoryStore }) => Promise<void>;
   /** Runs before the chat turn (seed the chat's settings, e.g. brief mode, or the conversation's earlier messages). */
   beforeChat?: (db: MemoryDb) => void;
+  /** A multi-part request makes several missions in one turn: the one this replay drives (default: the turn's first). The others stay as the chat left them. */
+  chooseMission?: (turn: { missionId: string; extraMissions?: Array<{ id: string }> }, db: MemoryDb) => string;
 }
 
 export interface ReplayResult {
@@ -121,7 +123,7 @@ export async function replay(input: ReplayInput): Promise<ReplayResult> {
   input.beforeChat?.(db);
   const turn = await agentChatTurn({ sb: client, userId: REPLAY_USER, conversationId: "conv1", userMsgId: "u1", assistantMsgId: "a1", message: input.request, conversationTitle: "محادثة جديدة" });
   if (!turn.ok) throw new Error(`the chat turn did not create a mission: ${turn.contentAr}`);
-  const missionId = turn.missionId;
+  const missionId = input.chooseMission ? input.chooseMission(turn, db) : turn.missionId;
   const row = db.rows("missions").find((m) => m.id === missionId)!;
   Object.assign(row, { created_at: new Date().toISOString() }, Object.fromEntries(Object.entries(newMission({ id: missionId, user_id: REPLAY_USER })).filter(([k]) => row[k] === undefined)));
   store.missions.set(missionId, row as MissionRecord);
