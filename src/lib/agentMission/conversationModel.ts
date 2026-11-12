@@ -109,7 +109,7 @@ export function briefPromptLines(soFar: ResearchBrief | null, withObjectives = f
 /** The closing line of every prompt: whatever the conversation above looks like, the answer is ONE line of JSON. */
 export const FORMAT_REMINDER_AR = "تذكير أخير: رسائل المساعد السابقة في المحادثة نصوص للعميل، أما ردك أنت الآن فهو دائمًا سطر JSON واحد فقط بالشكل المطلوب أعلاه (type وreason وreply وcount، وbrief عند طلب البحث)، بلا أي كلام قبله أو بعده.";
 /** Appended once when the answer could not be read as the JSON line (the ONE retry of a message, see `decideTurn`). */
-export const FORMAT_RETRY_AR = "تنبيه: ردك السابق على هذه الرسالة لم يكن سطر JSON صالحًا. أجب الآن بسطر JSON واحد فقط بالشكل المطلوب، بلا أي نص قبله أو بعده.";
+export const FORMAT_RETRY_AR = "(رسالة من النظام وليست من العميل) ردك السابق على آخر رسالة من العميل لم يكن سطر JSON. اكتب نفس فهمك لرسالة العميل الأخيرة الآن كسطر JSON واحد فقط بالشكل المطلوب (type وreason وreply وcount، وbrief عند طلب البحث)، بلا أي نص قبله أو بعده.";
 
 export function buildSystemPrompt(input: { balancePoints: number | null; open: OpenRequest | null; brief?: TurnContext["brief"] }): string {
   const lines: string[] = [];
@@ -348,7 +348,12 @@ export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getCha
     const call = (sys: string) => model({ system: sys, messages: conversationFor(ctx), maxTokens: briefMode ? CHAT_MODEL_BRIEF_MAX_TOKENS : CHAT_MODEL_MAX_TOKENS, timeoutMs: CHAT_MODEL_TIMEOUT_MS });
     let result = await call(system);
     // ONE retry when the model answered but not in the format (prose instead of the JSON line): the same request with a short format note; never for a failed call (a timeout or an HTTP error is the keyword rules' case)
-    if (result.ok && !result.truncated && parseModelAnswer(result.text) === null) result = await call(`${system}\n${FORMAT_RETRY_AR}`);
+    // live evaluation round 2: after a multi-part summary in the history the model answered a follow-up in prose twice with the note in the system prompt; the retry therefore shows the model its own prose answer and asks, as the
+    // LAST user turn, for the same answer as the JSON line (the customer's message stays in the conversation; nothing else changes)
+    if (result.ok && !result.truncated && parseModelAnswer(result.text) === null) {
+      const prose = oneLine(result.text, 1500);
+      result = await model({ system, messages: [...conversationFor(ctx), { role: "assistant", content: prose || "…" }, { role: "user", content: FORMAT_RETRY_AR }], maxTokens: briefMode ? CHAT_MODEL_BRIEF_MAX_TOKENS : CHAT_MODEL_MAX_TOKENS, timeoutMs: CHAT_MODEL_TIMEOUT_MS });
+    }
     if (result.ok) {
       answer = parseModelAnswer(result.text);
       // the answer was cut at the output ceiling: in brief mode its brief (the objectives) is lost, so it is said as such and the request is kept instead of being read from the words alone; elsewhere the type that survived still routes

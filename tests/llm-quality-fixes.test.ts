@@ -252,12 +252,13 @@ const tiktok = (request: string, extra: Record<string, unknown> = {}) => ({ type
 
 describe("round 1: the JSON format in long conversations", () => {
   it("the format reminder closes every prompt; an answer in prose is asked ONCE more with a format note, and read", async () => {
-    const seen: string[] = [];
+    const seen: ChatModelInput[] = [];
     const answers = ["تمام، سجّلت طلبك.", JSON.stringify({ type: "greeting_or_small_talk", reason: "x", reply: "أهلًا بك.", count: null })];
-    const d = await decideTurn({ message: "أهلا", balancePoints: null, open: null }, async (i) => { seen.push(i.system); return { ok: true, text: answers.shift()! }; });
+    const d = await decideTurn({ message: "أهلا", balancePoints: null, open: null }, async (i) => { seen.push(i); return { ok: true, text: answers.shift()! }; });
     expect(seen).toHaveLength(2);
-    expect(seen[0].endsWith(FORMAT_REMINDER_AR)).toBe(true);
-    expect(seen[1].endsWith(FORMAT_RETRY_AR)).toBe(true);
+    expect(seen[0].system.endsWith(FORMAT_REMINDER_AR)).toBe(true);
+    // the retry shows the model its own prose answer, then asks for the JSON line as the LAST user turn; the customer's message is still there
+    expect(seen[1].messages.slice(-3)).toEqual([{ role: "user", content: "أهلا" }, { role: "assistant", content: "تمام، سجّلت طلبك." }, { role: "user", content: FORMAT_RETRY_AR }]);
     expect(d).toMatchObject({ type: "greeting_or_small_talk", source: "model", reply: "أهلًا بك." });
   });
   it("prose twice in a conversation in progress: «send it again», never a new mission from a fragment («٥٠٠ تعليق والردود كمان»)", async () => {
@@ -358,5 +359,20 @@ describe("round 1: two privacy-rule gaps", () => {
     expect(privacyRefusalAr("Public posts and comments discussing phone number leaks")).toBeNull();
     expect(privacyRefusalAr("comments discussing the phone numbers of the people who commented")).not.toBeNull();
     expect(privacyRefusalAr("منشورات عامة عن الواتساب")).toBeNull();
+  });
+});
+
+describe("round 2", () => {
+  it("J1: a part whose sentence writes no number gets the count the model attributed to it, in Arabic digits", () => {
+    expect(completedPartSentence("تعليقات تيك توك عن السياحة", [{ ...o("o1", "social.parents", { platform: "tiktok" }), parent: null, contacts: [], count: 300 } as any, { ...o("o2", "social.comments", { platform: "tiktok", parent: "o1" }), contacts: [] } as any])).toBe("تعليقات تيك توك عن السياحة، العدد ٣٠٠");
+    expect(completedPartSentence("٣٠٠ تعليق تيك توك عن السياحة", [{ ...o("o1", "social.parents", { platform: "tiktok" }), parent: null, contacts: [], count: 300 } as any, { ...o("o2", "social.comments", { platform: "tiktok", parent: "o1" }), contacts: [] } as any])).toBe("٣٠٠ تعليق تيك توك عن السياحة");
+  });
+  it("D2: the model says something decisive is missing and wrote no usable brief: asked, even when the words name a kind of data", async () => {
+    scripted([{ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ status: "needs_clarification", request: "" }) }]);
+    const db = world();
+    const { r } = await turn(db, "محتاج معلومات عن منافسين شركتي");
+    expect(r.ok).toBe(false);
+    expect(r.contentAr).toMatch(/[؟?]/);
+    expect(missions(db)).toHaveLength(0);
   });
 });

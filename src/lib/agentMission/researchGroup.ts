@@ -68,7 +68,10 @@ export function completedPartSentence(request: string, objectives: ReadonlyArray
   const contacts = new Set(objectives.filter((o) => o.operation === "company.contacts").flatMap((o) => o.contacts));
   if (contacts.has("email") && !has(/[إا]يميل|بريد|email/i)) add.push("وإيميلاتها الرسمية");
   if (contacts.has("phone") && !has(/تليفون|هاتف|هواتف|phone/i)) add.push("وتليفوناتها الرسمية");
-  return add.length === 0 ? request : `${request.replace(/[.،,\s]+$/u, "")} ${add.join(" ")}`;
+  // the part's own number (the customer's, attributed to this part by the model's objectives) when its sentence writes no number at all (live evaluation round 2, J1: «٣٠٠» only in the count field)
+  const count = objectives.find((o) => o.count !== undefined && o.count !== null)?.count ?? null;
+  const counted = count !== null && numbersWritten(request).size === 0 ? `، العدد ${String(count).replace(/\d/g, (d) => "٠١٢٣٤٥٦٧٨٩"[Number(d)])}` : "";
+  return add.length === 0 && !counted ? request : `${request.replace(/[.،,\s]+$/u, "")}${add.length > 0 ? ` ${add.join(" ")}` : ""}${counted}`;
 }
 
 const CONTENT_OF: Partial<Record<BriefObjective["operation"], BriefContent>> = {

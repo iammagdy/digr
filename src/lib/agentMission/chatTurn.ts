@@ -356,7 +356,8 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
   const askInsteadOfWords = async (reason: string): Promise<AgentChatTurnResult | null> => {
     if (!ctx.registry || open !== null || decision.type === "edit_of_open_request") return null;
     const words = researchNeedOf({ request: currentMessageOf(ctx) });
-    if (words.kind !== "unknown" || words.privacy === "blocked") return null;
+    // the words name a kind of data: today's path, unless the MODEL itself said something decisive is missing (live evaluation round 2, D2: «معلومات عن منافسين شركتي»)
+    if (words.privacy === "blocked" || (words.kind !== "unknown" && decision.briefRawStatus !== "needs_clarification")) return null;
     // the model's own question, unless the model did not read a request at all (its type was overruled by the keyword rule: its reply answers something else, possibly a refusal)
     const question = (!decision.overruled && decision.reply) || missingQuestionAr(buildRequestContract(currentMessageOf(ctx)));
     ctx.outcome = reason;
@@ -486,7 +487,7 @@ export const TOPIC_QUESTION_AR = "تمام. عايز نجمع عن أنهي مو
 /** Asked by code when a request lacks what decides the plan and the model wrote no question (or its question was blocked). */
 export function missingQuestionAr(contract: ReturnType<typeof buildRequestContract>): string {
   if (contract.platform === null) return "عشان أجهّز طلبك صح: تحب نجمع كلام الناس من أنهي منصة (تيك توك، إكس، إنستجرام، فيسبوك، يوتيوب)؟ ولا تقصد أخبار ومقالات، أو شركات، أو أماكن وتقييماتها؟";
-  return "عشان أجهّز طلبك صح: عايز نجمع إيه بالظبط (منشورات ولا فيديوهات ولا تعليقات) وعن أنهي موضوع؟";
+  return "عشان أجهّز طلبك صح: وضّحلي أكتر، عايز نجمع إيه بالظبط وعن مين أو عن أنهي موضوع (وفي أنهي بلد لو يفرق معاك)؟";
 }
 /** Asked when the sentence to be planned leaves out something the customer wrote in this message. */
 export function requirementMissingAr(lost: IntentRequirement[]): string {
