@@ -412,7 +412,12 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
   }
   if (decision.type === "edit_of_open_request" && open) return briefEditOfOpen(input, decision, open, brief, v.contract, ctx);
   // a new research request (or the next step of the discovery): a question while something that matters is missing, else a mission from the WHOLE request
-  if (brief.status === "needs_clarification" && !contractIsComplete(v.contract)) {
+  // a request whose first objective is web, companies, places or people research is complete without a platform (the social contract's completeness says nothing about it): the model's own question is still asked, but the code
+  // never asks a platform for it (live evaluation round 5, W1: «مقالات عن الذكاء الاصطناعي في التعليم» was asked «من أنهي منصة؟»)
+  // (only when the CUSTOMER's own words name that kind of data, «مقالات»: a model that guessed web research for «what people say» still asks, A1)
+  const wordsKind = researchNeedOf({ request: ctx.customerTurns.join(" ") }).kind;
+  const nonSocialComplete = wordsKind !== "unknown" && wordsKind !== "social" && (brief.objectives ?? []).some((o) => o.parent === null && o.operation !== "unsupported" && !o.operation.startsWith("social.")) && customerGaveTopic(ctx.customerTurns);
+  if (brief.status === "needs_clarification" && !contractIsComplete(v.contract) && !(nonSocialComplete && decision.reply === null)) {
     // the model asked nothing (or its question was blocked by the guard): the code asks what is missing, never a mission read from the words (live evaluation 2026-11-12, A1)
     const question = decision.reply ?? missingQuestionAr(v.contract);
     ctx.outcome = decision.reply === null ? "clarify_code_question" : "clarify";

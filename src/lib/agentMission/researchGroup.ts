@@ -241,6 +241,12 @@ export function normWords(t: string | null | undefined): string {
 }
 const carries = (text: string, phrase: string): boolean => normWords(phrase).trim() !== "" && normWords(text).includes(normWords(phrase));
 
+/** «آخر الأخبار», «أحدث المقالات»: the recency of news, not a time window (live evaluation rounds 3 and 5, J1 and I1: asked as a missing «period»). Only these words: anything else stays a condition to carry. */
+function recencyOfNews(phrase: string): boolean {
+  const words = normWords(phrase).trim().split(" ").filter(Boolean);
+  return words.length > 0 && words.every((w) => /^(?:و)?(?:ال)?(?:اخر|احدث|جديد|جديده|الجديده|اخبار|خبر|مقالات|مقال|تقارير|news|latest)$/.test(w));
+}
+
 /** The executed value of one condition of a text, as the worker reads it (null: the text states none the reader understands). */
 function valueOf(kind: "period" | "language", text: string, nowMs: number): string | null {
   const a = buildAsk(text, null, nowMs, {}, { semantic: false });
@@ -279,7 +285,7 @@ export function conditionDriftOf(input: { partRequest: string; own: ConditionPhr
       // words the reader does not understand: carried as the customer wrote them, never refused
       // words no reader executes («آخر أخبار» is «the latest news», not a window): the part's OWN words must be carried as written; the same words attributed to the whole request are not a condition imposed on every part (live evaluation
       // round 3, J1: the TikTok and hotels parts were asked whether «آخر أخبار» applied to them)
-      if (want === null) { if (own[kind] && written(phrase) && !carries(partRequest, phrase)) return { kind, reason: "missing", phrase }; continue; }
+      if (want === null) { if (own[kind] && written(phrase) && !recencyOfNews(phrase) && !carries(partRequest, phrase)) return { kind, reason: "missing", phrase }; continue; }
       if (got === null) return { kind, reason: "missing", phrase };
       if (got !== want) return { kind, reason: "contradicts", phrase };
       continue;

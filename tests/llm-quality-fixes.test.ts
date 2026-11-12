@@ -388,7 +388,7 @@ describe("round 3", () => {
   it("J1: words no reader executes («آخر أخبار») written on the whole request are not asked of every part; a part's OWN such words must be carried", () => {
     const base = { partRequest: "تعليقات تيك توك عن السياحة", global: {}, elsewhere: new Set<any>(), customerTexts: ["عايز تعليقات تيك توك عن السياحة، وكمان آخر أخبار السياحة في مصر"], nowMs: NOW };
     expect(conditionDriftOf({ ...base, own: {}, global: { period: "آخر أخبار" } })).toBeNull();
-    expect(conditionDriftOf({ ...base, own: { period: "آخر أخبار" } })).toMatchObject({ kind: "period", reason: "missing" });
+    expect(conditionDriftOf({ ...base, own: { period: "موسم الصيف" }, customerTexts: ["عايز تعليقات تيك توك عن السياحة في موسم الصيف"] })).toMatchObject({ kind: "period", reason: "missing" });
   });
   it("K7: a part removed by the customer is withdrawn AND said; the kept part stays", async () => {
     const two = { type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "تعليقات تيك توك عن السياحة، وأخبار السياحة في مصر", platforms: ["tiktok"], content: ["comments", "articles"], objectives: [o("o1", "social.parents", { platform: "tiktok", request: "تعليقات تيك توك عن السياحة" }), o("o2", "social.comments", { platform: "tiktok", parent: "o1" }), o("o3", "web.search", { request: "آخر أخبار السياحة في مصر" })] }) };
@@ -419,5 +419,23 @@ describe("round 4", () => {
     const { r } = await turn(db, "كمّل");
     expect(r.contentAr).toBe(GROUP_UNCHANGED_AR);
     expect(live(db)).toHaveLength(2);
+  });
+});
+
+describe("round 5", () => {
+  it("I1: «آخر الأخبار» is the recency of news, not a period to carry", () => {
+    expect(conditionDriftOf({ partRequest: "جمع أحدث الأخبار عن شركات الاتصالات في مصر", own: { period: "آخر الأخبار" }, global: {}, elsewhere: new Set(), customerTexts: ["عايز آخر الأخبار عن شركات الاتصالات في مصر"], nowMs: NOW })).toBeNull();
+    // a real window the reader understands is still checked
+    expect(conditionDriftOf({ partRequest: "جمع أحدث الأخبار عن شركات الاتصالات في مصر", own: { period: "آخر شهر" }, global: {}, elsewhere: new Set(), customerTexts: ["عايز أخبار آخر شهر عن شركات الاتصالات في مصر"], nowMs: NOW })).toMatchObject({ kind: "period" });
+  });
+  it("W1: a web-articles request the model marks needs_clarification WITHOUT a question is prepared, never asked for a platform", async () => {
+    scripted([{ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ status: "needs_clarification", request: "جمع مقالات وأخبار عامة عن الذكاء الاصطناعي في التعليم", content: ["articles"], topic: "الذكاء الاصطناعي في التعليم", objectives: [o("o1", "web.search", { request: "جمع مقالات وأخبار عامة عن الذكاء الاصطناعي في التعليم" })] }) }]);
+    const db = world();
+    const { r } = await turn(db, "عايز مقالات عن الذكاء الاصطناعي في التعليم");
+    expect(r.ok).toBe(true);
+    expect(live(db)).toHaveLength(1);
+  });
+  it("the format retry is a plain request (no «message from the system» inside a user turn)", () => {
+    expect(FORMAT_RETRY_AR).not.toContain("النظام");
   });
 });

@@ -109,7 +109,8 @@ export function briefPromptLines(soFar: ResearchBrief | null, withObjectives = f
 /** The closing line of every prompt: whatever the conversation above looks like, the answer is ONE line of JSON. */
 export const FORMAT_REMINDER_AR = "تذكير أخير: رسائل المساعد السابقة في المحادثة نصوص للعميل، أما ردك أنت الآن فهو دائمًا سطر JSON واحد فقط بالشكل المطلوب أعلاه (type وreason وreply وcount، وbrief عند طلب البحث)، بلا أي كلام قبله أو بعده.";
 /** Appended once when the answer could not be read as the JSON line (the ONE retry of a message, see `decideTurn`). */
-export const FORMAT_RETRY_AR = "(رسالة من النظام وليست من العميل) ردك السابق على آخر رسالة من العميل لم يكن سطر JSON. اكتب نفس فهمك لرسالة العميل الأخيرة الآن كسطر JSON واحد فقط بالشكل المطلوب (type وreason وreply وcount، وbrief عند طلب البحث)، بلا أي نص قبله أو بعده.";
+// a plain request, never «a message from the system» inside a user turn (live evaluation round 5: the model read that as an attempt to extract its instructions and declined)
+export const FORMAT_RETRY_AR = "من فضلك أعد نفس ردك على رسالتي قبل الأخيرة بالصيغة المطلوبة في تعليماتك: سطر JSON واحد فيه type وreason وreply وcount (وbrief لو كانت طلب بحث)، من غير أي كلام قبله أو بعده.";
 
 export function buildSystemPrompt(input: { balancePoints: number | null; open: OpenRequest | null; brief?: TurnContext["brief"] }): string {
   const lines: string[] = [];
