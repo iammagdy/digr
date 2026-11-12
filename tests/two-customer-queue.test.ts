@@ -5,7 +5,10 @@ import type { MissionRecord } from "../agent/src/types";
 
 /**
  * TWO CUSTOMERS SUBMIT AT THE SAME TIME (Heroku capacity audit, 12 Nov 2026). Simulated with the real worker loop (createWorker) and the
- * in-memory store, whose claim mirrors the live `agent_claim_mission` (FIFO by created_at, FOR UPDATE SKIP LOCKED, 120 s lease):
+ * in-memory store. Its claim takes missions in INSERTION order (the missions here are inserted in submission order, as the live
+ * `agent_claim_mission` orders by created_at) and honours the 120 s lease the same way. What this does NOT prove: the atomicity of the real
+ * claim under truly parallel workers; that comes from the live SQL (`FOR UPDATE SKIP LOCKED` then `UPDATE … RETURNING`, read from pg_proc
+ * on 12 Nov 2026, docs/HANDOFF.md round 54). Here it checks the worker loop's own bookkeeping:
  *  - one worker at the production concurrency (1): the second customer waits for the first mission, then BOTH complete, each run exactly once;
  *  - a worker that dies mid-mission: its lease runs out and the next worker finishes the mission (no stuck mission);
  *  - two worker processes against one queue: they never run the same mission.
@@ -45,7 +48,7 @@ describe("two customers submit missions at the same time", () => {
     await worker.idle();
 
     expect([...store.missions.values()].map((m) => m.status)).toEqual(["completed", "completed"]);
-    expect(runs.starts.map((s) => s.id)).toEqual(["msn_A", "msn_B"]); // FIFO, no duplicate start
+    expect(runs.starts.map((s) => s.id)).toEqual(["msn_A", "msn_B"]); // in submission order, no duplicate start
   });
 
   it("with concurrency 2 both customers start at once (what a second slot buys)", async () => {
@@ -91,7 +94,7 @@ describe("two customers submit missions at the same time", () => {
     expect(runs.starts.map((s) => `${s.id}@${s.worker}`)).toEqual(["msn_A@w_old", "msn_A@w_new", "msn_B@w_new"]);
   });
 
-  it("two worker processes on one queue never run the same mission", async () => {
+  it("two worker loops on one queue each take a different mission and nothing is left to take twice", async () => {
     const store = createMemoryStore([newMission({ id: "msn_A", user_id: A, status: "queued" }), newMission({ id: "msn_B", user_id: B, status: "approved", job_id: "job_b" })]);
     const runs = controlledRuns(store);
     const w1 = createWorker({ store, workerId: "w1", version: "t", modelLabel: () => "m", runMission: runs.runFor("w1"), readMemory: () => ({ rssMb: 150, treeRssMb: 200 }) });

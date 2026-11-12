@@ -6,28 +6,40 @@ import path from "node:path";
  * HEROKU REMOVES .slugignore PATHS BEFORE THE BUILD (12 Nov 2026). The builds of dd6c9ec and a577d16 failed with
  * `Error: Cannot find module '/tmp/build_…/scripts/write-build-info.mjs'`: the root .slugignore lists `scripts/`, Heroku deletes those paths
  * right after checkout and BEFORE `heroku-postbuild` runs, so `node scripts/write-build-info.mjs` exited 1 and the push was rejected
- * (the worker stayed on 092a010). The script now lives in agent/scripts/.
+ * (the worker stayed on 092a010). The script now lives directly in agent/ (agent/write-build-info.mjs).
  *
  * These tests simulate that pruning: every file the build runs, and every file the worker loads at runtime (the Procfile entry, its whole
  * static import graph, the system prompt), must survive .slugignore.
+ *
+ * The matcher is deliberately the STRICTER reading. Heroku documents .slugignore as "roughly the same as .gitignore", and under gitignore
+ * rules a pattern with no leading or middle slash (`scripts/`) matches a directory of that name at ANY depth: `agent/scripts/` included.
+ * A leading slash (`/scripts/`) anchors it to the root. A path that survives this matcher survives either reading.
  */
 const ROOT = path.join(__dirname, "..");
 const rel = (p: string) => path.relative(ROOT, p).split(path.sep).join("/");
 
-/** The .slugignore rules as root-anchored path prefixes. Any syntax this simple matcher does not understand fails the test (so it never silently passes). */
-function slugignoreRules(): string[] {
+type Rule = { name: string; anchored: boolean; source: string };
+/** The .slugignore rules. Any syntax this simple matcher does not understand fails the test (so it never silently passes). */
+function slugignoreRules(): Rule[] {
   return readFileSync(path.join(ROOT, ".slugignore"), "utf8")
     .split("\n")
     .map((l) => l.trim())
     .filter((l) => l && !l.startsWith("#"))
     .map((l) => {
       if (/[*?[\]!]/.test(l)) throw new Error(`.slugignore rule "${l}" uses glob syntax: extend heroku-slugignore-build.test.ts before adding it`);
-      return l.replace(/^\/+/, "").replace(/\/+$/, "");
+      const name = l.replace(/^\/+/, "").replace(/\/+$/, "");
+      // a slash left in the middle anchors the rule to the root, as a leading slash does (gitignore)
+      return { name, anchored: l.startsWith("/") || name.includes("/"), source: l };
     });
 }
-export function removedBySlugignore(file: string, rules: string[] = slugignoreRules()): string | null {
+export function removedBySlugignore(file: string, rules: Rule[] = slugignoreRules()): string | null {
   const f = file.replace(/^\.\//, "");
-  return rules.find((r) => f === r || f.startsWith(`${r}/`)) ?? null;
+  const segments = f.split("/");
+  const hit = rules.find((r) => {
+    if (r.anchored) return f === r.name || f.startsWith(`${r.name}/`);
+    return segments.includes(r.name); // unanchored: the name at any depth
+  });
+  return hit ? hit.source : null;
 }
 
 /** Relative paths the heroku-postbuild script runs or points at (`node X`, `tsc -p X`, `--prefix X`). */
@@ -73,14 +85,25 @@ describe(".slugignore never removes what the Heroku build or worker needs", () =
   const entry = (workerLine.match(/(\S+\.ts)\s*$/) ?? [])[1];
 
   it("the simulated pruning reproduces the 12 Nov failure (the old path is removed, the new one kept)", () => {
-    expect(removedBySlugignore("scripts/write-build-info.mjs")).toBe("scripts");
-    expect(removedBySlugignore("agent/scripts/write-build-info.mjs")).toBeNull();
+    expect(removedBySlugignore("scripts/write-build-info.mjs")).toBe("/scripts/");
+    expect(removedBySlugignore("agent/write-build-info.mjs")).toBeNull();
+    // the matcher's stricter reading: an UNANCHORED rule reaches nested directories of the same name
+    const unanchored: Rule[] = [{ name: "scripts", anchored: false, source: "scripts/" }, { name: "supabase", anchored: false, source: "supabase/" }];
+    expect(removedBySlugignore("agent/scripts/write-build-info.mjs", unanchored)).toBe("scripts/");
+    expect(removedBySlugignore("src/lib/supabase/server.ts", unanchored)).toBe("supabase/");
+    expect(removedBySlugignore("src/lib/supabase/server.ts")).toBeNull();
     expect(postbuildPaths("npm ci --prefix agent && tsc -p agent/tsconfig.json && node scripts/write-build-info.mjs")).toContain("scripts/write-build-info.mjs");
+  });
+
+  it("every .slugignore rule is anchored to the root (no rule can reach a nested directory such as src/lib/supabase/)", () => {
+    const rules = slugignoreRules();
+    expect(rules.length).toBeGreaterThan(0);
+    expect(rules.filter((r) => !r.anchored).map((r) => r.source)).toEqual([]);
   });
 
   it("every path heroku-postbuild runs exists in the repository and survives .slugignore", () => {
     const paths = postbuildPaths(pkg.scripts["heroku-postbuild"]);
-    expect(paths).toEqual(["agent/scripts/write-build-info.mjs", "agent/tsconfig.json", "agent/package.json"]);
+    expect(paths).toEqual(["agent/write-build-info.mjs", "agent/tsconfig.json", "agent/package.json"]);
     for (const p of paths) {
       expect(existsSync(path.join(ROOT, p)), `${p} exists`).toBe(true);
       expect(removedBySlugignore(p), `${p} is removed by .slugignore before the build`).toBeNull();
@@ -98,8 +121,8 @@ describe(".slugignore never removes what the Heroku build or worker needs", () =
     expect(existsSync(path.join(ROOT, "agent/prompts/system.md"))).toBe(true);
   });
 
-  it("the build-info script is not under the root scripts/ directory any more", () => {
+  it("the build-info script is on no path a .slugignore rule names", () => {
     expect(existsSync(path.join(ROOT, "scripts/write-build-info.mjs"))).toBe(false);
-    expect(existsSync(path.join(ROOT, "agent/scripts/write-build-info.mjs"))).toBe(true);
+    expect(existsSync(path.join(ROOT, "agent/write-build-info.mjs"))).toBe(true);
   });
 });

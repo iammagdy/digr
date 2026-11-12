@@ -478,7 +478,7 @@ The next step is the owner's test-account rollout with real providers, watching 
 **Worker version:**
 
 * **Why it says "dev":** Heroku sets `SOURCE_VERSION` only during the build, and `HEROKU_SLUG_COMMIT` only with the dyno-metadata feature, an infrastructure setting.
-* **The fix:** `heroku-postbuild` now ends with `node agent/scripts/write-build-info.mjs` (moved in round 54: `.slugignore` removes `scripts/` before the build). It writes the build commit to `agent/build-info.json` (gitignored) and never fails the build. The worker reports it, and only a hexadecimal commit id is ever reported.
+* **The fix:** `heroku-postbuild` now ends with `node agent/write-build-info.mjs` (moved in round 54: `.slugignore` removes `scripts/` before the build). It writes the build commit to `agent/build-info.json` (gitignored) and never fails the build. The worker reports it, and only a hexadecimal commit id is ever reported.
 * **Not changed:** no Heroku setting, credential, release phase or permission.
 
 **Delivered files:**

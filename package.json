@@ -15,7 +15,7 @@
     "lint": "next lint",
     "agent:typecheck": "tsc -p agent/tsconfig.json",
     "agent:worker": "tsx agent/src/main.ts",
-    "heroku-postbuild": "npm ci --prefix agent --no-audit --no-fund && tsc -p agent/tsconfig.json && node agent/scripts/write-build-info.mjs"
+    "heroku-postbuild": "npm ci --prefix agent --no-audit --no-fund && tsc -p agent/tsconfig.json && node agent/write-build-info.mjs"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",

@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 
 /**
  * WHICH COMMIT THE WORKER RUNS (round 53). The heartbeat reported `version: "dev"` on every Heroku dyno: Heroku sets `SOURCE_VERSION` only DURING the build, and `HEROKU_SLUG_COMMIT` only with the dyno-metadata feature (an
- * infrastructure setting this repository does not change). The build now writes the commit it built into `agent/build-info.json` (agent/scripts/write-build-info.mjs, run by `heroku-postbuild`), and the worker reads it at start.
+ * infrastructure setting this repository does not change). The build now writes the commit it built into `agent/build-info.json` (agent/write-build-info.mjs, run by `heroku-postbuild`), and the worker reads it at start.
  * Order: the runtime variables when present, then the build file, else "dev". Only a hexadecimal commit id is ever reported.
  */
 const here = typeof __dirname !== "undefined" ? __dirname : path.dirname(fileURLToPath(import.meta.url));
