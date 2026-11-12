@@ -182,7 +182,7 @@ They ran twice more on the final code, chat only:
 | Stability A | **18/18** | 0 | 0 | 0 | 30 | $0.0264 |
 | Stability B | **18/18** | 0 | 0 | 0 | 30 | $0.0265 |
 
-With round 9 (17/18; D2 is not among them, but the round's J-cases and corrections all passed), the critical conversations passed in all three final-code runs. J1, the three-part request of the original failure, prepared all three parts in rounds 4, 8 and 9 and in both stability runs.
+With round 9 (18/18 on the same cases), the critical conversations passed in all three final-code runs: 54 of 54. J1, the three-part request of the original failure, prepared all three parts in rounds 4, 8 and 9 and in both stability runs.
 
 ## 7. Real worker-planner evidence (synthetic provider data)
 
