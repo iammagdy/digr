@@ -173,7 +173,16 @@ In every round, for every conversation:
 
 ## 6. Stability of the critical conversations
 
-STABILITY_PLACEHOLDER
+**The 18 critical conversations:** every multi-part request (J1, J2, J3, LG1), every correction (E1, K1–K8), the sensitive public research (M1, M2, M3, M6) and the mixed public + private request (N7).
+
+They ran twice more on the final code, chat only:
+
+| Run | Accepted | Lost requirements | Duplicates | False refusals | Attempts | USD |
+|---|---|---|---|---|---|---|
+| Stability A | **18/18** | 0 | 0 | 0 | 30 | $0.0264 |
+| Stability B | **18/18** | 0 | 0 | 0 | 30 | $0.0265 |
+
+With round 9 (17/18; D2 is not among them, but the round's J-cases and corrections all passed), the critical conversations passed in all three final-code runs. J1, the three-part request of the original failure, prepared all three parts in rounds 4, 8 and 9 and in both stability runs.
 
 ## 7. Real worker-planner evidence (synthetic provider data)
 
@@ -205,7 +214,33 @@ STABILITY_PLACEHOLDER
 
 ## 8. Offline regression and security gates (on the final code)
 
-GATES_PLACEHOLDER
+| Gate | Result |
+|---|---|
+| Full `npm test` | 954 files passed, 5 skipped. 13,208 tests passed (13,137 before this mission, +71 new). The 48 expected-fail and 65 skipped are unchanged. |
+| Root typecheck (`tsc --noEmit`) and worker typecheck (`npm run agent:typecheck`) | pass |
+| Privacy and money suites, by name: `private-data-guards`, `pre-rollout-acceptance`, `agent-understanding-privacy`, `agent-price-and-settlement`, `engine-settlement`, `ledger`, `explicit-quote-approval`, `financial-audit-truncation` | 8 files, 280 tests passed |
+| `npm run build` and the client-bundle secret scan | pass; 209 files scanned, zero secrets |
+| Evaluation key | Its VALUE is found in 0 files of the repository (the build output included), 0 lines of the branch history, and 0 files of the scratchpad and session logs. |
+
+**Test files whose assertions changed**, each for a deliberate behaviour change and each now asserting more, not less:
+
+* `exact-intent-across-parts`: a child's condition is moved to its part instead of rejected; a conflicting one is still rejected.
+* `live-eval-guard`: the preflight now also needs the budget folder, and a 400 is charged its input.
+* `agent-understanding-conversation` and `multi-objective-research`: in brief mode the earlier turns are in the system prompt; the model still sees them.
+
+No test was skipped or weakened.
+
+**Not changed:**
+
+* production flags;
+* the database, schema or SQL;
+* pricing;
+* auth;
+* deployment or infrastructure.
+
+**Product changes** are limited to the chat LLM layer: `chatTurn`, `conversationModel`, `researchBrief`, `researchGroup`, `messageType`, `guardRules`, `places` and capabilities `need` and `prompt`.
+
+**Total real spending: 2,134 paid requests (all HTTP 200), $4.2746 of the $10.** This is read from the cumulative state file, which matches the per-run ledgers. The round-49 run ($0.018) was under its own earlier authorization.
 
 ## 9. Remaining defects and unverified behaviour
 
