@@ -4,6 +4,19 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 56 (13 Nov 2026): the money guard fails closed (ownership before settlement)
+
+* **Defect (main `b61a514`):** `ensureOwned` (agent/src/ownership.ts) let a settlement go on when the mission row could not be read (`catch { return; }`), when the row was missing, and when it named no worker. A worker that could not establish ownership could settle, release or charge.
+* **Fix (no SQL, no permission, no ledger/pricing/settlement-formula change):**
+  * Ownership is proven only by an atomic lease renewal for this worker (`renewLeases` → `UPDATE … WHERE worker_id = me AND status IN (planning, executing) RETURNING id`). This also keeps any other worker from claiming the mission for the next 120 s, which closes the read-check-write window.
+  * Every other outcome refuses: another worker on the row → `LeaseLostError` (revoked); read error, timeout, missing row, no owner, not running, or an unconfirmed renewal → `OwnershipUnverifiedError`.
+  * On either refusal, `runMissionSafely` / `runAddonSafely` write nothing. Recovery is the existing lease path: the lease runs out, `agent_claim_mission` reclaims the mission, and the next run resumes from the item log and settles once.
+* **Review fixes in the same PR:**
+  * A stale planning run no longer clears the worker and lease of a row another worker is executing. A running row with no lease is never claimed again.
+  * A release the database refuses (files failed, or the last resort) is no longer reported to the customer as «nothing was charged». It ends with `settlement <code>` for the admin.
+* **Tests:** `tests/ownership-fail-closed.test.ts` (28). These include deterministic faults at the exact moment between the published file and the settlement, the lease-path recovery, two workers, the race window, crash then retry, a failed delivery, the add-on settlement, and cancellation. They are mutation-checked against `b61a514`.
+* **Residual (needs SQL, owner approval):** the settlement RPC itself is not fenced. See `docs/proposals/ownership-fenced-settlement.md`. Double charge stays impossible (idempotent per job).
+
 ## Round 54 (12 Nov 2026): Heroku diagnosis, deployment repair, capacity audit (first session with read-only Heroku API access)
 
 * **App:** `diger-agent` (heroku-24, eu). Formation: `worker` ×1 **Basic** (512 MB), `web` ×0. No add-ons. Slug 518,738,772 bytes (≈495 MiB, near Heroku's 500 MiB limit).

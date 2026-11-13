@@ -1,3 +1,4 @@
+import { AGENT_MISSION_LEASE_SECONDS } from "../../src/lib/agentMission/constants";
 import type { AgentStore } from "./types";
 
 /**
@@ -32,23 +33,70 @@ export function assertOwned(leaseLost: (() => boolean) | undefined, missionId: s
 }
 
 /**
- * THE MONEY GUARD, CHECKED IN THE DATABASE (security review of round 55): the in-memory flag is set only by the heartbeat, up to 30 s after a takeover, and a run
- * resuming from a stall can reach its settlement first. So right before every settle or release the row is READ: when it names ANOTHER worker, this run's
- * ownership is revoked (`revokeOwnership`: writes refused, model run stopped) and it throws. A row that names no worker or this one passes (our own run may
- * have released it); a row that cannot be read passes too (the settlement itself needs the same database).
+ * OWNERSHIP COULD NOT BE ESTABLISHED (round 56): the database could not be read, the row is missing, or the row names no worker / is no longer running. This
+ * is NOT a loss to another worker (nothing is revoked), but it never authorizes money either: the settlement is not made, the run's error recovery writes
+ * nothing (it could otherwise overwrite a row another worker now owns), and the mission is recovered by the existing lease path: the run ends, this worker
+ * stops renewing the lease, and once it runs out the claim (`agent_claim_mission`, expired-lease branch) gives the mission to a worker that resumes it from
+ * its stored item log and settles it then (settlement is idempotent per job in the database).
+ */
+export type OwnershipUnverifiedReason = "renew_failed" | "read_failed" | "row_missing" | "no_owner" | "not_running";
+export class OwnershipUnverifiedError extends Error {
+  constructor(readonly missionId: string, readonly reason: OwnershipUnverifiedReason) {
+    super(`ownership_unverified ${missionId} ${reason}: this run does not settle, release or charge`);
+    this.name = "OwnershipUnverifiedError";
+  }
+}
+
+/** True for both ownership refusals: the run must stop and its error recovery must write nothing. */
+export const isOwnershipError = (e: unknown): e is LeaseLostError | OwnershipUnverifiedError => e instanceof LeaseLostError || e instanceof OwnershipUnverifiedError;
+
+const RUNNING = new Set(["planning", "executing"]);
+
+/**
+ * THE MONEY GUARD, FAIL-CLOSED (round 56; the round 55 version let a row that could not be read, a missing row and a row naming no worker PASS). Called on the
+ * line before every settle or release of a run. Ownership is established only by POSITIVE evidence:
+ *
+ *  1. the lease is RENEWED for this mission (one UPDATE … WHERE id = m AND worker_id = me AND status IN (planning, executing) RETURNING id). The database
+ *     itself confirms the row is ours and running, and the fresh lease means no other worker can claim it through the expired-lease branch for the next
+ *     lease period: the read-check-write window before the settlement call is closed for that time, not just checked.
+ *  2. Only when the renewal did not return the id is the row read, to say WHY:
+ *       another worker on the row      → LeaseLostError (the run's ownership is revoked: writes refused, model run stopped);
+ *       read error / timeout           → OwnershipUnverifiedError("read_failed");
+ *       no row                          → OwnershipUnverifiedError("row_missing");
+ *       no worker on the row            → OwnershipUnverifiedError("no_owner");
+ *       our id but not running          → OwnershipUnverifiedError("not_running") (it was ended or put back: someone else settles it);
+ *       our id and running, but the renewal did not confirm it (a race, or a store that cannot say what it renewed) → OwnershipUnverifiedError("renew_failed").
+ *
+ * A run with no `ownerId` was not claimed by a worker (an in-process harness): no lease exists to check. The production worker always passes its id
+ * (main.ts; pinned by tests/ownership-fail-closed.test.ts).
  */
 export async function ensureOwned(
-  deps: { leaseLost?: () => boolean; ownerId?: string; revokeOwnership?: () => void; store: Pick<AgentStore, "getMission"> },
+  deps: { leaseLost?: () => boolean; ownerId?: string; revokeOwnership?: () => void; leaseSeconds?: number; store: Pick<AgentStore, "getMission" | "renewLeases"> },
   missionId: string,
 ): Promise<void> {
   assertOwned(deps.leaseLost, missionId);
-  if (!deps.ownerId) return;
-  let owner: string | null = null;
-  try { owner = (await deps.store.getMission(missionId))?.worker_id ?? null; } catch { return; }
-  if (owner && owner !== deps.ownerId) {
+  const me = deps.ownerId;
+  if (!me) return;
+  let renewed: string[] | void;
+  try {
+    renewed = await deps.store.renewLeases(me, deps.leaseSeconds ?? AGENT_MISSION_LEASE_SECONDS, [missionId]);
+  } catch (e) {
+    if (e instanceof LeaseLostError) throw e; // the run's view was already revoked
+    throw new OwnershipUnverifiedError(missionId, "renew_failed");
+  }
+  if (Array.isArray(renewed) && renewed.includes(missionId)) return;
+  let row: Awaited<ReturnType<AgentStore["getMission"]>>;
+  try { row = await deps.store.getMission(missionId); } catch { throw new OwnershipUnverifiedError(missionId, "read_failed"); }
+  if (!row) throw new OwnershipUnverifiedError(missionId, "row_missing");
+  const owner = row.worker_id ?? null;
+  if (owner && owner !== me) {
     try { deps.revokeOwnership?.(); } catch { /* the throw below is what stops the settlement */ }
     throw new LeaseLostError(missionId);
   }
+  if (!owner) throw new OwnershipUnverifiedError(missionId, "no_owner");
+  if (!RUNNING.has(String(row.status))) throw new OwnershipUnverifiedError(missionId, "not_running");
+  // ours and running, yet the renewal matched nothing (a race) or the store could not say what it renewed: a read alone is never proof (it does not keep another worker out)
+  throw new OwnershipUnverifiedError(missionId, "renew_failed");
 }
 
 export interface OwnedStore {
