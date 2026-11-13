@@ -20,3 +20,13 @@ export const WEB_VIA_TREG_FLAG_KEY = "web_via_treg";
 export function readWebViaTregFlag(settings: Record<string, unknown> | null | undefined, userId: string | null | undefined): boolean {
   return scopedFlagOn(settings?.[WEB_VIA_TREG_FLAG_KEY], userId ?? null);
 }
+
+/**
+ * PHASE 4: the switch of the intelligent tool router (router.ts): discovery ranks and filters with the reviewed registry's verification levels, Diger's measured yield and runtime health, and includes the hand ToolCards. Same reader and
+ * scopes; OFF by default and set by nothing in the repository or the database. It acts only where capability discovery itself is on.
+ */
+export const REGISTRY_ROUTER_FLAG_KEY = "registry_router";
+
+export function readRegistryRouterFlag(settings: Record<string, unknown> | null | undefined, userId: string | null | undefined): boolean {
+  return scopedFlagOn(settings?.[REGISTRY_ROUTER_FLAG_KEY], userId ?? null);
+}
