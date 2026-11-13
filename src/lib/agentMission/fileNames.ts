@@ -1,3 +1,4 @@
+import { entityBreakdownOf } from "./entityCount";
 import { formatAr, toArabicDigits } from "../arabicDigits";
 import { countAr, knownItemNoun } from "./itemNoun";
 
@@ -123,7 +124,7 @@ function withCountAr(countPart: string, noun: string, info: { text: string; resi
 }
 
 /** The stage fields the title reads (a plan's stages, or the stored public plan's). */
-type TitleStage = { deliver: boolean; title_ar: string; parent_key?: string | null; expected_rows?: number; planned_rows?: number; relevance?: { terms: string[]; subject_ar: string } };
+type TitleStage = { key?: string; deliver: boolean; title_ar: string; parent_key?: string | null; expected_rows?: number; planned_rows?: number; relevance?: { terms: string[]; subject_ar: string } };
 
 /**
  * ROUND 27 (item 6): a request for videos or posts WITH THEIR COMMENTS AND REPLIES is named by its PARENT items, not by the count and the noun of the last stage:
@@ -150,6 +151,21 @@ function withChildrenPhraseAr(stages: ReadonlyArray<TitleStage>, parentDelivered
   return withCountAr(`${countPhraseAr(count, noun)} مع ${withWhat}`, noun, info);
 }
 
+/**
+ * ROUND 58 (live, msn_088c): companies WITH THEIR DETAILS (published contacts, people) are named by the companies the file holds: «٩ شركات مستحضرات تجميل - ١٣ نوفمبر ٢٠٢٦», never by the total of every step in the noun of the
+ * last one («١٣ إيميل والتليفون عن مستحضرات تجميل», 9 companies and 4 contact rows). Null when the plan is not one counted thing with details (entityCount.ts): the older rules then name the file.
+ */
+function withEntityDetailsPhraseAr(stages: ReadonlyArray<TitleStage>, parentDelivered: number | null | undefined, info: { text: string; residual: boolean }): string | null {
+  const b = entityBreakdownOf(stages.map((s, i) => ({ key: String((s as { key?: unknown }).key ?? `s${i}`), titleAr: String(s.title_ar ?? ""), parentKey: s.parent_key ?? null, deliver: s.deliver, rows: Math.max(0, Math.floor(Number(s.expected_rows ?? s.planned_rows) || 0)) })));
+  if (!b) return null;
+  const count = typeof parentDelivered === "number" && Number.isFinite(parentDelivered) && parentDelivered > 0 ? Math.floor(parentDelivered) : b.root.rows;
+  if (count <= 0) return null;
+  // «شركة مستحضرات تجميل» as the subject of a companies file: the noun is said once («٩ شركات مستحضرات تجميل», never «٩ شركات عن شركة مستحضرات تجميل»)
+  const [firstWord, ...rest] = info.text.split(/\s+/);
+  const sameNoun = rest.length > 0 && knownItemNoun(firstWord ?? "")?.key === b.root.noun.key;
+  return withCountAr(countPhraseAr(count, b.root.noun.singular), b.root.noun.plural, sameNoun ? { text: rest.join(" "), residual: true } : info);
+}
+
 /** The kinds of entity a sector names directly («شركات مقاولات», «مطاعم كشري»): the noun takes it with no «عن». */
 const ENTITY_NOUN = /^(?:ال)?(?:شركات|شركة|مطاعم|مطعم|أماكن|اماكن|مكان|مصانع|مصنع|فنادق|فندق|محلات|محل)$/;
 const phraseOf = (noun: string, info: { text: string; residual: boolean }): string => (info.residual && ENTITY_NOUN.test(noun) ? `${noun} ${info.text}` : `${noun} عن ${info.text}`);
@@ -161,7 +177,7 @@ export function missionFileTitleAr(input: { plan: { stages: Array<TitleStage> };
   const noun = nounOfStageTitle(last?.title_ar ?? "") || "نتائج";
   const info = subjectInfo({ plan: input.plan, requestText: input.requestText });
   // ROUND 26 (item 8): the count with its noun leads («١٠ تغريدات عن الذكاء الاصطناعي - ٤ نوفمبر ٢٠٢٦»), never a bare count between the parts
-  const what = withChildrenPhraseAr(input.plan.stages, input.parentDelivered, info) ?? withCountAr(countPhraseAr(Math.max(0, Math.floor(input.delivered)), noun), noun, info);
+  const what = withChildrenPhraseAr(input.plan.stages, input.parentDelivered, info) ?? withEntityDetailsPhraseAr(input.plan.stages, input.parentDelivered, info) ?? withCountAr(countPhraseAr(Math.max(0, Math.floor(input.delivered)), noun), noun, info);
   const title = `${what} - ${arabicDateLabel(input.date)}`;
   return title.replace(FORBIDDEN_IN_FILE_NAME, " ").replace(/\s+/g, " ").trim().slice(0, 100).trim();
 }
@@ -224,6 +240,9 @@ export function missionTitleAr(input: { plan?: { stages: Array<TitleStage> } | n
     // ROUND 27 (item 6): a request with comments and replies is named by its parents
     const withChildren = withChildrenPhraseAr(input.plan.stages, input.parentDelivered, info);
     if (withChildren) return withChildren.replace(FORBIDDEN_IN_FILE_NAME, " ").replace(/\s+/g, " ").trim();
+    // ROUND 58 (live, msn_088c: the notice's title was «١٨ إيميل والتليفون عن مستحضرات تجميل»): companies with their details are named by the companies
+    const withDetails = withEntityDetailsPhraseAr(input.plan.stages, input.parentDelivered, info);
+    if (withDetails) return withDetails.replace(FORBIDDEN_IN_FILE_NAME, " ").replace(/\s+/g, " ").trim();
     if (noun) return (total > 0 ? withCountAr(countPhraseAr(total, noun), noun, info) : info.text ? phraseOf(noun, info) : noun).replace(FORBIDDEN_IN_FILE_NAME, " ").replace(/\s+/g, " ").trim();
   }
   const words = String(input.requestText ?? "").replace(/\s+/g, " ").trim().split(" ").filter(Boolean);

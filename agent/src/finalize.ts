@@ -69,6 +69,8 @@ export function shortfallClauseAr(reason: StopReason | null, review: { pending: 
  */
 export function childShortfallClauseAr(parentSingular: string, parentPlural: string, childPlural: string): string {
   const withArticle = (w: string): string => (w.startsWith("ال") ? w : `ال${w}`);
+  // ROUND 58 (live, msn_088c): a detail step whose items have no noun of their own (the published e-mail and phone of each company) is said as what it is, never as «عليها منشورات/عناصر أقل»
+  if (childPlural === GENERIC_ITEM_NOUN.plural) return `لأن بعض ${withArticle(parentPlural)} لم نجد لها في المصدر ما طُلب لكل ${parentSingular}`;
   return `لأن بعض ${withArticle(parentPlural)} عليها ${childPlural} أقل من العدد المطلوب لكل ${parentSingular}`;
 }
 

@@ -78,6 +78,9 @@ export function itemNounOf(text: string | null | undefined): ItemNoun {
   for (let i = 0; i < words.length; i += 1) {
     const n = knownItemNoun(words[i]);
     if (!n) continue;
+    // ROUND 58 (live, msn_088c): a definite word right after a definite word is an ADJECTIVE agreeing with it («الإيميل والتليفون المنشورين»: «published», not «posts»); a definite word after an indefinite one is a noun of an idafa
+    // («بيانات تواصل الشركات», «تعليقات الفيديوهات») and stays a noun
+    if (i > 0 && /^(?:و?ال)/.test(normalizeText(words[i])) && /^(?:و?ال)/.test(normalizeText(words[i - 1]))) continue;
     if (i > 0 && SOURCE_NOUN_KEYS.has(n.key) && !words.slice(0, i).every((w) => LEADING_MODIFIERS.has(normalizeText(w)))) continue;
     return n;
   }

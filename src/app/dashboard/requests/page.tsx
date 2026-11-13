@@ -28,7 +28,7 @@ import MissionPlanInline from "@/components/mission/MissionPlanInline";
 import OpenMissionsList from "@/components/mission/OpenMissionsList";
 import { MODEL_PLAN_SLUG } from "@/lib/modelPlanner/constants";
 import { useDriverMode } from "@/hooks/useDriverMode";
-import { deliveredOfAr, itemNounOfPlan, knownItemNoun } from "@/lib/agentMission/itemNoun";
+import { deliveredOfAr, GENERIC_ITEM_NOUN, itemNounOfPlan, knownItemNoun } from "@/lib/agentMission/itemNoun";
 import { promisedRowsOf } from "@/lib/agentMission/promisedTotal";
 import { moneyLineAr } from "@/lib/agentMission/moneyText";
 import { REQUESTS_PAGE_SIZE, hashOfTab, requestsShownCounts, tabFromHash, tabOfKind, type RequestTab } from "@/lib/requests/tabs";
@@ -487,7 +487,8 @@ export default function RequestsPage() {
           const pct = requested ? Math.min(100, (rows / requested) * 100) : 0;
           const stalled = k === "running" && isJobStalled({ status: j.status, updated_at: j.updatedAt ?? j.createdAt, lease_until: j.leaseUntil }, Date.now());
           // an agent mission says «تغريدات» / «تعليقات» / «شركات» (the noun of its request) where the older requests say «السجلات»
-          const agentNoun = nounByJob[j.$id] ? knownItemNoun(nounByJob[j.$id]) : null;
+          // ROUND 58 (live, msn_088c): a plan of mixed steps is counted as «عنصر», which is not in the table of known nouns; it must not fall back to the older «سجل» sentence
+          const agentNoun = nounByJob[j.$id] ? (knownItemNoun(nounByJob[j.$id]) ?? (nounByJob[j.$id] === GENERIC_ITEM_NOUN.singular ? GENERIC_ITEM_NOUN : null)) : null;
           // the same one line as the completion panel, the notification, the e-mail and the wallet: what was charged and for how many items
           const agentMoneyLine = agentNoun ? moneyLineAr({ reservedPoints: j.reservedCredits || 0, chargedPoints: j.chargedCredits ?? 0, delivered: rows, noun: agentNoun }) : "";
           const note = k === "running" ? `جارٍ الجمع — ${closePageLineAr(driverMode)}`
