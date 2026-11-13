@@ -4,6 +4,24 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 60 (13 Nov 2026): one paid fetch per page (docs/PAGE-REUSE-R60.md)
+
+* **Root cause:** each contact field was its own paid page fetch. The reply masks e-mails and phones, and the model bought the pages again to read them, though the full values were in the saved answer.
+* **Execution only** (planning untouched, so prices are unchanged):
+  * `emails` / `phone-numbers` / `links` buy the page once (same one credit), and code reads every field from it.
+  * Later fields and scrapes of the page are free (`page.reuse`).
+  * The cache is `pages/<sha256>.json`, with the raw answer as fallback after a restart.
+  * Requests for one page run one at a time.
+  * Failed pages are tried at most twice (once if definitive). A no-answer call counts at its estimate.
+  * Pages are bought only for companies already saved, or pages linked from them.
+  * Kill switch: `DIGER_WEB_PAGE_REUSE=0`.
+* **Offline replay of msn_088c:**
+  * paid calls 37 → 11, repeats 24 → 0, spend $0.094 → $0.028;
+  * the same 3 e-mails and 9 phones; all 6 delivered values are read;
+  * no false positives.
+  * The fixture is the same public pages fetched directly, because the provider's 13 Nov markdown is in the private bucket.
+* **Spend gate:** implementation-ready spec in `docs/proposals/spend-gate-spec.md`, not applied.
+
 ## Round 59 (13 Nov 2026): research credibility and execution cost safety (docs/QUALITY-COST-R59.md)
 
 * **No paid call.** Evidence comes from msn_088c's recorded calls and delivered rows.

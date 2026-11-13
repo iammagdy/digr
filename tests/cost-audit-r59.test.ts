@@ -122,7 +122,7 @@ describe("round 59 cost audit: the budget did NOT fail open; its ceiling was far
   });
 });
 
-describe("round 59 cost audit: what the gateway does with an empty page and with the same page read again (pinned as it is today)", () => {
+describe("round 59 cost audit: what the gateway does with an empty page and with the same page read again WITHOUT the round-60 page rules (planning, or the kill switch)", () => {
   function setup(budget = 0.2) {
     const store = createMemoryStore();
     const mission = newMission({ id: "msn_cost0001", user_id: USER_ID, status: "executing" });
