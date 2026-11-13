@@ -1,4 +1,4 @@
-# Spend gate threat model (round 61, 14 Nov 2026)
+# Spend gate threat model (round 61, 13 Nov 2026)
 
 Status: **analysis. Nothing here is enforced in production.**
 

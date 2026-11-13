@@ -4,6 +4,152 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## CURRENT STATE: read this first (account switch, 13 Nov 2026)
+
+> Companion files:
+> * `docs/NEW_ACCOUNT_START.md`: how a fresh session starts;
+> * `docs/NEXT_STEPS.md`: everything unfinished, prioritized.
+>
+> The round sections below this one are the detailed history, newest first.
+> **Statuses used everywhere:**
+> * **Implemented**: code written.
+> * **Tested**: tests named and run.
+> * **Merged**: in `main`.
+> * **Deployed**: running in production and verified.
+> * **Not independently verified**: none of the above can be shown.
+
+### Identity
+
+* **Project:** Diger (ديجر), an Arabic-first research and data-extraction platform.
+* **What a customer does:** describes in chat what they need (companies, contacts, social posts, reviews…). The platform plans it, prices it in points, and after approval an agent collects the data from paid providers. The result is delivered as Excel/CSV/PDF/JSON.
+* **Repository:** https://github.com/iammagdy/digr. The primary branch is `main`.
+* **Work branch of this session:** `ccr-9dc4c8d3-d0ae22`. Only this branch was pushed. Every merge to `main` went through a PR.
+
+### Architecture (short)
+
+* **Website and API:** Next.js 15 / React 19 / TypeScript / Tailwind v4, on Vercel (project `prj_v7wrVudQg2M504BT2B3dvGzsnHh6`).
+  * Chat (`src/lib/agentMission/chatModel.ts` and the chat handler), plan cards, wallet, admin pages, file downloads.
+* **Agent worker:** `agent/` (Node 22, TypeScript), on Heroku app `diger-agent`.
+  * It claims missions from Supabase (with a lease), plans and executes with the Claude Agent SDK (`@anthropic-ai/claude-agent-sdk` 0.3.312 in `agent/node_modules`), and calls providers.
+  * The providers are:
+    * TREG catalog: `agent/src/gateway.ts`;
+    * Context.dev and Firecrawl: `agent/src/webGateway.ts`.
+  * Entry point: `agent/src/main.ts`. Mission flow: `agent/src/runMission.ts`.
+* **Database:** Supabase Postgres (migrations in `supabase/migrations/`), Storage buckets, Auth.
+  * Customer money is points in `credit_ledger`, moved only by the atomic functions `accept_quote_atomic`, `settle_job_atomic` and `release_job_atomic`.
+* **Pricing:** code only.
+  * `src/lib/modelPlanner/pricing.ts`, `src/lib/recordPricing.ts`.
+  * Settlement charge = ceil(delivered × unit), never above the hold.
+
+### Stack, tools and dependencies
+
+* Node 22.x and npm. Vitest 5, TypeScript 5.9, Next 15. Postgres 16 is used only for local scratch tests.
+* **No dependency was added or changed in rounds 57 to 61.**
+
+### Important directories
+
+* `src/lib/agentMission/`: plans, prices, sources (`sources.ts`), page extraction (`pageExtract.ts`), constants.
+* `src/lib/server/`: server code.
+  * `callBudget.ts` (the in-memory per-mission budget).
+  * `multiProvider/` (provider adapters).
+  * `spendGate/` (round 61, unwired, see below).
+* `agent/src/`: the worker.
+  * `gateway.ts`, `webGateway.ts`, `pageReuse.ts`, `runMission.ts`, `sdkRuntime.ts`, `sdkOptions.ts`.
+  * `modelGate.ts` (round 61, unwired).
+* `supabase/migrations/`: applied database history.
+* `docs/proposals/`: unapplied designs; SQL there is NOT applied.
+* `tests/`: Vitest.
+  * `tests/sql/*.local-pg.test.ts` run only with `DIGER_TEST_PG=<socket dir>:<port>` pointing at a scratch Postgres, never Supabase.
+
+### Configuration (variable NAMES only, never values)
+
+* **Website:** `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, `APP_URL`, `LLM_PROVIDER`, `LLM_ENABLED`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `TREG_TOKEN`, `TREG_BASE_URL`, `TREG_LIVE` (see README), `PROVIDER_KEYS_ENCRYPTION_KEY`.
+* **Worker (required):** `ANTHROPIC_API_KEY`, `TREG_TOKEN`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
+* **Worker (optional):** `PROVIDER_KEYS_ENCRYPTION_KEY`, `CONTEXT_DEV_API_KEY`, `FIRECRAWL_API_KEY`, `ADMIN_ALERT_EMAIL`, `AGENT_CONCURRENCY`.
+* **Kill switch (round 60):** `DIGER_WEB_PAGE_REUSE=0`.
+* **Proposed, NOT set anywhere and NOT read by running code:** `DIGER_SPEND_GATE` (round 61).
+* **Tests only:** `DIGER_TEST_PG`, `DIGER_TEST_REAL_SDK=1`.
+
+### Production (deployed) as last verified
+
+* **Version:** `main` = **`adb22f8`** (merge of PR #478, round 60).
+* **Verified on 13 Nov 2026 at the close of round 60:**
+  * Vercel deployment `dpl_2xc3n7wxe25nZwsoAPzwqtRkPTnV` was READY.
+  * Heroku release v187, worker log «started (adb22f8)».
+  * No runtime errors.
+  * Not re-checked since.
+* **Full suite on `adb22f8` (round 60):** 13,505 passed, 0 failed, 47 expected-fail, 65 skipped. Both typechecks, the build and the client-bundle secret scan were clean.
+
+### Rounds of this session (all on 13 Nov 2026)
+
+| Round | What | PR / merge commit | Status |
+|---|---|---|---|
+| 57 | Chat continuity for the customer journey | PRs merged before #475 (see the round 57 section) | Merged, deployed |
+| 58 | A plan's company count; reply guard; number words | #473 → `99acb4f`; follow-up #475 → `4ef32c3` | Merged, deployed |
+| E2E | Authenticated real customer acceptance (`msn_088c`, 9 companies) | docs only | Done: LIMITED RELEASE verdict |
+| 59 | Company quality checks before delivery; cost audit of msn_088c | #477 → `9974769` | Merged, deployed |
+| 60 | One paid fetch per page; no paid page for unsaved companies; spend-gate spec v1 | #478 → `adb22f8` | Merged, deployed (production) |
+| 61 | Hard spend gate: security review and offline build | **no PR**; commit `f0fe65d8` on `ccr-9dc4c8d3-d0ae22` | Implemented and tested offline. **Not reviewed, not merged, not deployed.** |
+
+### Round 61 status, precisely
+
+* **Implemented** (commit `f0fe65d8`, branch only):
+  * `docs/proposals/spend-gate/THREAT-MODEL.md`, `SPEC-v2.md` (v1 `docs/proposals/spend-gate-spec.md` is marked superseded);
+  * `src/lib/server/spendGate/bounds.ts`, `modelBound.ts`, `gate.ts`;
+  * `agent/src/modelGate.ts`;
+  * `docs/proposals/spend-gate/sql/001_spend_gate.sql`, its rollback, `002_verify.sql`;
+  * drafts `docs/proposals/spend-gate/drafts/*.ts.txt` (Supabase adapter and gate hooks, not compiled).
+* **Tested (offline, no paid call):**
+  * `tests/spend-gate-r61.test.ts`: 42/42.
+  * `tests/spend-gate-r61-sdk.test.ts`: 2/2, with `DIGER_TEST_REAL_SDK=1`. It runs the real Agent SDK against a fake upstream. Without a grant: 3 requests refused, 0 forwarded.
+  * `tests/sql/spend-gate.local-pg.test.ts`: 11/11 on a scratch Postgres 16.
+  * Mutation checks: 15/15 TypeScript protections and 11/11 SQL protections caught.
+  * `npm run agent:typecheck` and `npx tsc --noEmit -p .`: clean.
+* **NOT done:**
+  * a full-suite run of the round-61 tree to completion;
+  * `npm run build` of the round-61 tree;
+  * a PR;
+  * the wiring into the gateways and the SDK driver;
+  * any production step.
+* **Nothing is enforced in production.**
+  * No migration was applied, and no configuration changed.
+  * No production file imports the gate (a test pins it).
+
+### Important decisions in force (owner rules)
+
+* No paid API call without the owner's explicit authorization in the request.
+* No change to customer pricing, the credit ledger, refunds, settlement, database permissions, infrastructure or provider daily limits without specific owner approval.
+* Merges go only through a PR, after the exact head SHA is reviewed. Never push to `main`.
+* Never invent emails, phones or URLs. Never silently trade data quality for savings.
+* Never claim budget enforcement is live until the production migration, configuration and failure tests are authorized and verified.
+
+## Round 61 (13 Nov 2026): hard spend gate, security review and offline build (docs/proposals/spend-gate/)
+
+**Status:** implemented and tested offline; commit `f0fe65d8` on `ccr-9dc4c8d3-d0ae22`. **No PR, not merged, not deployed, nothing enforced in production.**
+
+* **Threat model:** `THREAT-MODEL.md`. It covers 15 threats: concurrent workers, website chat, evaluations, restarts, lost responses, the service key, retries, overruns, implicit authorization.
+* **The four v1 flaws, fixed in `SPEC-v2.md`:**
+  * a settle could pass the ceiling: now an overrun trips the grant;
+  * `maxBudgetUsd` is checked after a turn: now a loopback model gate reserves before each request;
+  * `service_role` could write the scope tables: now a separate schema and an owner-only `issue_grant`;
+  * a mission created authorization implicitly: now nothing is created, and no grant means no spend.
+* **Findings on `adb22f8`:** four estimates are not upper bounds.
+  * The TREG route cap sent is `max(estimate, 0.001)`, while the estimate is reserved.
+  * A search reserves 1.5 blocks for 15 results.
+  * A Firecrawl scrape with `proxy: "auto"` may cost 5 credits, while 1 is reserved.
+  * Context.dev prebuilt parsers have no documented credit cost.
+* **Measured on Agent SDK 0.3.312, against a fake upstream:**
+  * every model request goes to `ANTHROPIC_BASE_URL`, with `max_tokens` 128,000;
+  * fields sent: `model, messages, system, tools, metadata, max_tokens, thinking, context_management, output_config, stream`.
+* **Tests:**
+  * `spend-gate-r61` 42/42;
+  * `spend-gate-r61-sdk` 2/2 (opt-in);
+  * `sql/spend-gate.local-pg` 11/11 (scratch Postgres);
+  * mutations 15/15 TypeScript, 11/11 SQL;
+  * both typechecks clean.
+  * The full suite and the build were NOT completed on this tree.
+* **Owner decisions:** SPEC-v2 §13. Remaining work: `docs/NEXT_STEPS.md`.
+
 ## Round 60 (13 Nov 2026): one paid fetch per page (docs/PAGE-REUSE-R60.md)
 
 * **Root cause:** each contact field was its own paid page fetch. The reply masks e-mails and phones, and the model bought the pages again to read them, though the full values were in the saved answer.
