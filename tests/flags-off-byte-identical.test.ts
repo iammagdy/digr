@@ -18,6 +18,8 @@ import { isInternalEvent } from "../src/lib/agentMission/eventText";
  */
 // ROUND 26 CHANGED: the planView and finalView digests of the five worlds were re-pinned for the customer-view changes of round 26 (steps checked in order, one counter, the collecting
 // sentence, the time of the last event); every other section (mission and plan, workbook, notices, events, provider calls, ledger) is byte-identical to the base commit 0bf7b2c.
+// ROUND 57 CHANGED: the planView and finalView digests of the five worlds were re-pinned for the card's new price explanation (`priceExplainAr`: each step's count and the hold as price + margin); every other section
+// (mission and plan, workbook, notices, events, provider calls, ledger) was compared section by section and is byte-identical to main e71769d.
 // CHANGED (S1 live fixes): the pinned digests include cells that carry today's date in Cairo time, so this file failed on plain `origin/main` as soon as the Cairo day changed (observed 2026-11-02 00:21 Cairo). Only `Date` is pinned, to the day the digests were produced (2026-11-01).
 beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-11-01T12:00:00Z")); });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });

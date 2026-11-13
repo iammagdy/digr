@@ -164,6 +164,16 @@ export async function cancelForCustomer(client: any, input: { id: string; userId
   return { ok: true, requestText: String(data.request_text ?? "") };
 }
 
+/**
+ * ROUND 57: «اكتب الطلب من جديد» READS the request's words back into the chat box and changes NOTHING: the plan on the card stays until the customer sends the new request (the chat then replaces it, as any new request does).
+ * 13 Nov: the button cancelled the plan first, so a customer who opened the box and changed their mind had lost the plan. Read only; the customer's own mission only.
+ */
+export async function requestTextForCustomer(client: any, input: { id: string; userId: string }): Promise<CustomerResult<{ requestText: string }>> {
+  const { data } = await client.from(MISSION_TABLE).select(`id,user_id,request_text,${ADDON_MARKER_COLUMN}`).eq("id", input.id).maybeSingle();
+  if (!data || data.user_id !== input.userId || hasAddonMarker(data)) return bad(404, "المهمة غير موجودة.");
+  return { ok: true, requestText: String(data.request_text ?? "") };
+}
+
 /** The mapped items of the page each stage's yield was measured on, read from the mission's own folder (null for a stage whose page is unavailable: its measured yield stays). */
 async function readYieldRows(client: any, missionId: string, plan: PricedPlan): Promise<Map<string, Array<Record<string, unknown>>>> {
   const out = new Map<string, Array<Record<string, unknown>>>();

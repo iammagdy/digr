@@ -118,7 +118,7 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
     return () => { alive.current = false; stop(); if (typeof document !== "undefined") document.removeEventListener("visibilitychange", onVisible); };
   }, [read, live, ended]);
 
-  async function act(action: "approve" | "cancel" | "edit" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) {
+  async function act(action: "approve" | "cancel" | "edit" | "retype" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) {
     if (busy) return;
     // ROUND 27 (item 2): the field SHOWS Arabic-Indic digits; an answer that is only a number is SENT as a plain number (Latin, Arabic-Indic or Persian typed alike)
     const shownText = text;
@@ -148,7 +148,8 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
       const res = await fetch(`/api/missions/${encodeURIComponent(missionId)}`, { method: "POST", headers: { "Content-Type": "application/json", ...(await authHeaders()) }, body: JSON.stringify({ action, ...(text !== undefined ? { text } : {}), ...(edits !== undefined ? { edits } : {}), ...(action === "smaller" && typeof balancePoints === "number" ? { maxHoldPoints: Math.max(0, Math.floor(balancePoints)) } : {}) }) });
       const json = await res.json().catch(() => ({}));
       if (!res.ok || !json?.success) { setError(String(json?.error || "تعذّر تنفيذ الطلب الآن؛ حاول بعد قليل. لم يُخصم شيء.")); return; }
-      if (action === "edit" && typeof json.requestText === "string") onEdit?.(json.requestText);
+      if ((action === "edit" || action === "retype") && typeof json.requestText === "string") onEdit?.(json.requestText);
+      if (action === "retype") setEditing(false);
       if (action === "answer") setReply("");
       if (action === "edit_plan") setEditing(false);
       await read();
@@ -221,7 +222,7 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
 }
 
 /** The card itself, drawn from one view: pure (no network), so it renders the same on the server and in the tests. */
-export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAction = null, pendingText = null, quietSinceMs = null, nowMs = 0, approved = false, error = null, reply = "", onReply = () => undefined, onAct = () => undefined, onDownload = () => undefined, balancePoints = null, editing = false, onEditing = () => undefined, methodology = null, onSettled, askCard = null, onAskEdit = () => undefined, askError = null, live = null }: { /** STAGE 2 F-2: the live sheet's last data while it is shown (null: flag off, nothing yet, or finished); with a known promised total the phone shows the live counter as THE progress. */ live?: LiveData | null; /** STAGE 2 S4: the «فهمنا طلبك» card (only when the server sent it). */ askCard?: AskCardView | null; onAskEdit?: (edit: AskEdit) => void; askError?: string | null; view: CustomerMissionView; isGuest: boolean; busy?: boolean; pendingAction?: string | null; /** ROUND 26 (item 2): the choice on its way (its own label). */ pendingText?: string | null; /** ROUND 26 (item 2): when the card last saw a change, and the clock now (the holding line). */ quietSinceMs?: number | null; nowMs?: number; approved?: boolean; error?: string | null; reply?: string; onReply?: (text: string) => void; onAct?: (action: "approve" | "cancel" | "edit" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) => void; onDownload?: (name: string) => void; /** The customer's balance in points (null: not known, never zero). */ balancePoints?: number | null; editing?: boolean; onEditing?: (open: boolean) => void; /** ROUND 21: the methodology offer of a delivered compiled mission (the same offer the chat's chooser draws). */ methodology?: MethodologyOfferInfo | null; onSettled?: () => void }) {
+export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAction = null, pendingText = null, quietSinceMs = null, nowMs = 0, approved = false, error = null, reply = "", onReply = () => undefined, onAct = () => undefined, onDownload = () => undefined, balancePoints = null, editing = false, onEditing = () => undefined, methodology = null, onSettled, askCard = null, onAskEdit = () => undefined, askError = null, live = null }: { /** STAGE 2 F-2: the live sheet's last data while it is shown (null: flag off, nothing yet, or finished); with a known promised total the phone shows the live counter as THE progress. */ live?: LiveData | null; /** STAGE 2 S4: the «فهمنا طلبك» card (only when the server sent it). */ askCard?: AskCardView | null; onAskEdit?: (edit: AskEdit) => void; askError?: string | null; view: CustomerMissionView; isGuest: boolean; busy?: boolean; pendingAction?: string | null; /** ROUND 26 (item 2): the choice on its way (its own label). */ pendingText?: string | null; /** ROUND 26 (item 2): when the card last saw a change, and the clock now (the holding line). */ quietSinceMs?: number | null; nowMs?: number; approved?: boolean; error?: string | null; reply?: string; onReply?: (text: string) => void; onAct?: (action: "approve" | "cancel" | "edit" | "retype" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) => void; onDownload?: (name: string) => void; /** The customer's balance in points (null: not known, never zero). */ balancePoints?: number | null; editing?: boolean; onEditing?: (open: boolean) => void; /** ROUND 21: the methodology offer of a delivered compiled mission (the same offer the chat's chooser draws). */ methodology?: MethodologyOfferInfo | null; onSettled?: () => void }) {
   // the close-page sentence belongs to the status block of the card (on the page, from the moment of approval): the details list below does not say it a second time
   const panelContent = { title: "خطة المهمة", steps: v.steps, currentLineAr: v.currentLineAr, delayAr: v.delayAr, remainingAr: v.remainingAr, closePageAr: null, startedAt: v.startedAt ?? undefined, live: v.live };
   // STAGE 2 F-2: the progress the live counter shows (null: nothing to follow, the card is today's), and the card's own bar (its basis: the delivering stages' rows)
@@ -290,6 +291,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
             ))}
           </dl>
           {v.priceNoteAr ? <p className="m-0 mt-2 border-t border-ln pt-2 text-[12px] leading-[1.8] text-ink2" data-testid="agent-price-note">{v.priceNoteAr}</p> : null}
+          {(v.priceExplainAr ?? []).map((line) => <p key={line} className="m-0 mt-1 text-[12px] leading-[1.8] text-ink2" data-testid="agent-price-explain">{line}</p>)}
         </div>
       ) : planShown && v.priceLineAr ? <p className="m-0 rounded-[12px] bg-sf2 px-3 py-2 text-[13px] leading-[1.9] text-ink" data-testid="agent-price">{v.priceLineAr}</p> : null}
 
@@ -324,7 +326,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
       ) : null}
       {approving ? <p role="status" aria-live="polite" className="m-0 text-[13px] leading-[1.8] text-ink2" data-testid="agent-approving">جارٍ اعتماد خطتك… لن تحتاج لفعل شيء بعدها.</p> : null}
       {planShown && askCard ? <AskCard view={askCard} busy={busy} onEdit={onAskEdit} errorAr={askError} /> : null}
-      {planShown && v.edit && editing ? <PlanEditor edit={v.edit} busy={busy} pendingAction={pendingAction} onSave={(edits) => onAct("edit_plan", undefined, edits)} onCancel={() => onEditing(false)} onRetype={() => onAct("edit")} /> : null}
+      {planShown && v.edit && editing ? <PlanEditor edit={v.edit} busy={busy} pendingAction={pendingAction} onSave={(edits) => onAct("edit_plan", undefined, edits)} onCancel={() => onEditing(false)} onRetype={() => onAct("retype")} /> : null}
       {planShown && isGuest ? <p className="m-0 text-[12px] font-light leading-[1.8] text-mut" data-testid="agent-guest-note">بعد التسجيل تُنقل محادثتك لحسابك؛ اكتب «موافق» فيها ثم اضغط «اعتمد».</p> : null}
 
       {/* THE DETAILS, folded: how we understood the request, the steps, the example rows and what the file holds */}

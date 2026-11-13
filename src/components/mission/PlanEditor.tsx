@@ -72,6 +72,9 @@ export function editsFromState(edit: PlanEditorView, state: ReturnType<typeof in
   return out;
 }
 
+/** ROUND 57: what «اكتب الطلب من جديد» does, said before it is pressed (13 Nov: it cancelled the plan with no word). */
+export const RETYPE_NOTE_AR = "تعديل عمود أو شرط غير موجود هنا؟ اكتبه في المحادثة (مثلًا «ضيف عمود صفحة الفيسبوك») ونجهّز خطة معدّلة لنفس طلبك بسعرها. و«اكتب الطلب من جديد» يحط نص طلبك في خانة الكتابة بس؛ الخطة الحالية تفضل زي ما هي لحد ما تبعت الطلب الجديد.";
+
 export function PlanEditor({ edit, busy = false, pendingAction = null, onSave, onCancel, onRetype }: { edit: PlanEditorView; busy?: boolean; pendingAction?: string | null; onSave: (edits: PlanEdits) => void; onCancel: () => void; onRetype: () => void }) {
   const [state, setState] = useState(() => initialState(edit));
   const target = edit.stages.find((s) => s.key === edit.target_stage_key) ?? null;
@@ -156,8 +159,9 @@ export function PlanEditor({ edit, busy = false, pendingAction = null, onSave, o
       <div className="flex flex-wrap items-center gap-2">
         <button type="button" className={BTN_PRIMARY} disabled={busy || !changed} onClick={() => onSave(edits)} data-testid="agent-edit-save">{pendingAction === "edit_plan" ? "جارٍ الحفظ…" : "احفظ التعديل"}</button>
         <button type="button" className={BTN_PLAIN} disabled={busy} onClick={onCancel} data-testid="agent-edit-close">إغلاق</button>
-        <button type="button" className={`${BTN_PLAIN} border-0 underline`} disabled={busy} onClick={onRetype} data-testid="agent-retype">{pendingAction === "edit" ? "جارٍ التجهيز…" : "اكتب الطلب من جديد"}</button>
+        <button type="button" className={`${BTN_PLAIN} border-0 underline`} disabled={busy} onClick={onRetype} data-testid="agent-retype">{pendingAction === "retype" || pendingAction === "edit" ? "جارٍ التجهيز…" : "اكتب الطلب من جديد"}</button>
       </div>
+      <p className="m-0 text-[12px] leading-[1.8] text-ink2" data-testid="agent-retype-note">{RETYPE_NOTE_AR}</p>
     </div>
   );
 }

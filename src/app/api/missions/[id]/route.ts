@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { answerForCustomer, approveForCustomer, cancelForCustomer, editPlanForCustomer, loadCustomerMission, smallerVersionForCustomer } from "@/lib/agentMission/customerActions";
+import { answerForCustomer, approveForCustomer, cancelForCustomer, requestTextForCustomer, editPlanForCustomer, loadCustomerMission, smallerVersionForCustomer } from "@/lib/agentMission/customerActions";
 import { sendMissionNotice } from "@/lib/server/missionNotify";
 import { resolveMissionViewer, safeMissionId } from "@/lib/server/missionViewer";
 import { getLiveProviderGateStatusFromSettings } from "@/lib/server/providerGate";
@@ -67,6 +67,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       onApproved: async ({ jobId }) => { await sendMissionNotice(client, { userId: viewer.userId, missionId: id, jobId, kind: "started", facts: { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: true } }); },
     });
     return r.ok ? NextResponse.json({ success: true, jobId: r.jobId }) : fail(r);
+  }
+  // ROUND 57: «اكتب الطلب من جديد» only reads the words back; the plan stays until the new request is sent
+  if (body?.action === "retype") {
+    const r = await requestTextForCustomer(client, { id, userId: viewer.userId });
+    return r.ok ? NextResponse.json({ success: true, requestText: r.requestText }) : fail(r);
   }
   if (body?.action === "cancel" || body?.action === "edit") {
     const r = await cancelForCustomer(client, { id, userId: viewer.userId });
