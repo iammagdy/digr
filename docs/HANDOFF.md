@@ -23,7 +23,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 * **Project:** Diger (ديجر), an Arabic-first research and data-extraction platform.
 * **What a customer does:** describes in chat what they need (companies, contacts, social posts, reviews…). The platform plans it, prices it in points, and after approval an agent collects the data from paid providers. The result is delivered as Excel/CSV/PDF/JSON.
 * **Repository:** https://github.com/iammagdy/digr. The primary branch is `main`.
-* **Work branch of this session:** `ccr-9dc4c8d3-d0ae22`. Only this branch was pushed. Every merge to `main` went through a PR.
+* **Branches:** round 61 was built on `ccr-9dc4c8d3-d0ae22`, which is now fully merged (PR #479). The post-merge documentation is on `claude/sleepy-albattani-l6qgtv` (PR #480). New work starts from `main` on a new branch. Every merge to `main` went through a PR; nothing was pushed to `main` directly.
 
 ### Architecture (short)
 
@@ -72,7 +72,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ### Production (deployed) as last verified
 
-* **Version:** `main` = **`7d30ec8`** (merge of PR #479, round 61 offline spend gate; parents `adb22f8` + reviewed head `61338a2`, tree identical to the reviewed head).
+* **Last code change:** **`7d30ec8`** (merge of PR #479, round 61 offline spend gate; parents `adb22f8` + reviewed head `61338a2`, tree identical to the reviewed head). Later documentation-only merges (PR #480) move `main` without changing code; check `git log origin/main` for the tip.
 * **Verified on 13 Nov 2026 after the merge:**
   * Vercel production deployment `dpl_FM1Ej2fSqeY1hgLwuTYtDTQu4th7` READY on `7d30ec8`.
   * Heroku release v188 «Deploy 7d30ec85»; `worker.1` up on v188; heartbeat `version 7d30ec8`, `active_missions 0`.
@@ -88,7 +88,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 | 58 | A plan's company count; reply guard; number words | #473 → `99acb4f`; follow-up #475 → `4ef32c3` | Merged, deployed |
 | E2E | Authenticated real customer acceptance (`msn_088c`, 9 companies) | docs only | Done: LIMITED RELEASE verdict |
 | 59 | Company quality checks before delivery; cost audit of msn_088c | #477 → `9974769` | Merged, deployed |
-| 60 | One paid fetch per page; no paid page for unsaved companies; spend-gate spec v1 | #478 → `adb22f8` | Merged, deployed (production) |
+| 60 | One paid fetch per page; no paid page for unsaved companies; spend-gate spec v1 | #478 → `adb22f8` | Merged, deployed (code unchanged in `7d30ec8` except the disconnected gate) |
 | 61 | Hard spend gate: security review, offline build, review fixes | #479 → `7d30ec8` | Merged and deployed as **disconnected code only**. Not wired, not applied, **not enabled**. |
 
 ### Round 61 status, precisely
@@ -105,7 +105,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
   * `tests/sql/spend-gate.local-pg.test.ts`: 11/11 on a scratch Postgres 16.
   * Mutation checks: 15/15 TypeScript protections and 11/11 SQL protections caught.
   * `npm run agent:typecheck` and `npx tsc --noEmit -p .`: clean.
-* **Done:** full suite (13,563 / 0 failed), both typechecks, build and secret scan, all on the reviewed head; merged through PR #479 pinned to `61338a2`.
+* **Done:** full suite (13,563 / 0 failed), both typechecks, build and secret scan, all on the reviewed head; merged through PR #479 pinned to `61338a2`. The scratch-Postgres and mutation results above were recorded at `f0fe65d8` and not re-run; the SQL has not changed since.
 * **NOT done:**
   * the wiring into the gateways and the SDK driver (PR B: not started);
   * any production step: no SQL applied, no grant issued, no configuration set.
@@ -115,11 +115,12 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ### ACTIVATION BLOCKER (round 61): observe mode is not budget protection
 
+* **Observe mode can forward paid calls without a reservation. It is NOT budget enforcement.**
 * In `observe`, the model gate forwards every request, including ones it **could not reserve**: a bound above $1 or the grant's maximum, an unknown or header-billed `anthropic-beta`, an unpriced model, or a refused reservation. Such paid requests go out **unreserved**; their cost is only reported (`stats().unreservedUsd`, event `model_gate.observed_unreserved_usage`), never counted in the grant.
 * Observe is therefore a **measurement mode only**. It must never be described, configured or relied on as enforced budget protection.
 * **The gate stays disconnected and disabled** until all of these are true:
   1. the owner decisions in SPEC-v2 §13 (first grant, applying `001_spend_gate.sql` + `002_verify.sql`, provider-side limits, no database password in Heroku/Vercel);
-  2. PR B (wiring, default off) reviewed and merged with owner approval;
+  2. PR B (wiring, default off; NOT started; not the unrelated open PR #439 titled «PR-B») started, reviewed and merged only with the owner's separate authorization;
   3. an observe period whose unreserved requests are reviewed, understood as non-protection, and accepted by the owner;
   4. `enforce` turned on only after the production failure tests in SPEC-v2 §11.
 
@@ -133,7 +134,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ## Round 61 (13 Nov 2026): hard spend gate, security review and offline build (docs/proposals/spend-gate/)
 
-**Status:** implemented and tested offline; commit `f0fe65d8` on `ccr-9dc4c8d3-d0ae22`. **No PR, not merged, not deployed, nothing enforced in production.**
+**Status:** merged through PR #479 (merge `7d30ec8`, reviewed head `61338a2`) and deployed as **disconnected code only**: not wired, no SQL applied, `DIGER_SPEND_GATE` unset, **nothing enforced in production**. Built first as `f0fe65d8` on `ccr-9dc4c8d3-d0ae22`. See «CURRENT STATE» and «ACTIVATION BLOCKER».
 
 * **Threat model:** `THREAT-MODEL.md`. It covers 15 threats: concurrent workers, website chat, evaluations, restarts, lost responses, the service key, retries, overruns, implicit authorization.
 * **The four v1 flaws, fixed in `SPEC-v2.md`:**
@@ -155,7 +156,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
   * `sql/spend-gate.local-pg` 11/11 (scratch Postgres);
   * mutations 15/15 TypeScript, 11/11 SQL;
   * both typechecks clean.
-  * The full suite and the build were NOT completed on this tree.
+  * Full suite on the merged tree `61338a2`: 13,563 passed, 0 failed (`0dc19d74` before the review fixes: 13,547 passed, 0 failed); both typechecks, the build and the secret scan clean. The SQL and mutation results are those recorded at `f0fe65d8` (SQL unchanged since).
 * **Owner decisions:** SPEC-v2 §13. Remaining work: `docs/NEXT_STEPS.md`.
 
 ## Round 60 (13 Nov 2026): one paid fetch per page (docs/PAGE-REUSE-R60.md)
