@@ -87,7 +87,7 @@ export function targetLineAr(planPublic: unknown): string | null {
   if (!q || requested <= 0 || target <= 0 || target >= requested) return null;
   const stage = (Array.isArray(p?.stages) ? p!.stages : []).find((s: any) => s?.key === q.stage_key);
   const noun = itemNounOf(String(stage?.title_ar ?? ""));
-  return `طلبتَ ${countAr(requested, noun)}، وهذه الخطة تستهدف ${formatAr(target)} فقط، والسبب في ملاحظات الخطة. اعتمادها يعني قبول هذا العدد؛ ولو أردت عددًا آخر فاكتبه في المحادثة أو غيّره من تعديل الخطة.`;
+  return `طلبتَ ${countAr(requested, noun)}، وهذه الخطة تستهدف ${formatAr(target)} فقط، والسبب في ملاحظات الخطة. اعتمادها يعني قبول هذا العدد؛ ولو أردت عددًا آخر فاكتبه في المحادثة أو غيّره من «عدّل الطلب».`;
 }
 
 /** The delivery said by its top items: «منها ١٩ شركة، و١١ من «بيانات التواصل …»» (the file's first sheet). Null when the plan is not one counted thing with details. */
