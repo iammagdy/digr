@@ -290,3 +290,9 @@ A mission refused by the gate ends as one stopped by `over_budget` does today:
 9. **Lowering `max_tokens` to the gate's cap** (proposed 32,000) for mission model requests.
 10. **Wiring the website's 8 model call sites** and recording chat replies in `llm_usage`, before any claim of platform-wide coverage.
 11. **A daily reconciliation** of settled spend against the providers' free usage APIs, to detect under-reported settles.
+
+## Round 62 (PR B): the worker wiring
+
+Implemented in the open review PR «Round 62: Spend Gate Worker Wiring — INACTIVE» (NOT merged, NOT active). It covers the worker only. What is gated, how each operation is bounded and settled, the telemetry of observe and enforce, the coverage matrix of every paid call site, the database requirements, the activation prerequisites and the remaining risks are all in `WIRING-R62.md`.
+
+**Observe mode can forward paid calls without a reservation. It is NOT budget enforcement.**

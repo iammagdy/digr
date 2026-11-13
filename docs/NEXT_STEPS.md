@@ -1,4 +1,4 @@
-# Diger: next steps (updated 13 Nov 2026, after the merge of PR #479)
+# Diger: next steps (updated 13 Nov 2026, round 62 PR B opened for review)
 
 **Read first:** `docs/HANDOFF.md`, section «CURRENT STATE».
 
@@ -31,23 +31,22 @@
 * In `observe`, the model gate forwards every request, including those it could not reserve (`stats().unreservedUsd`).
 * It is a measurement mode only. See HANDOFF «ACTIVATION BLOCKER» for the conditions that must all hold before any activation.
 
-## The next engineering milestone: PR B (NOT started)
+## The current engineering milestone: PR B, round 62 (OPEN, INACTIVE)
 
-**PR B = the spend-gate wiring.**
+**PR B = the spend-gate wiring, WORKER ONLY.** The owner authorized code development only.
 
+* It is implemented and tested offline, in the open review PR «Round 62: Spend Gate Worker Wiring — INACTIVE» on branch `claude/round-62-spend-gate-worker-wiring`.
+* What it covers and what it does not (the coverage matrix, the activation prerequisites, the risks): `docs/proposals/spend-gate/WIRING-R62.md`.
 * Do not confuse it with the unrelated open PR #439, whose title says «PR-B» (API error messages).
-* **It has NOT started.** It needs the owner's separate authorization:
-  * to start it;
-  * before any sensitive change (pricing, ledger, settlement, permissions, configuration, SQL);
-  * to merge it (SPEC-v2 §13, decision 3).
-* Merging PR B would still not activate anything: the mode stays off by default.
-* Activation (`observe`, then `enforce`) is a further, separate owner decision.
+* **It is NOT merged.** Merging needs the owner's separate approval (SPEC-v2 §13, decision 3). Merging would still not activate anything: the mode stays off by default.
+* Activation (`observe`, then `enforce`) is a further, separate owner decision. It needs the SQL applied and a grant issued first.
+* **The website's paid call sites are NOT gated.** They are the next separate task (P2.3) and need owner approval.
 
 ## Remaining work, by priority
 
 ### P1: needed before the spend gate can protect production
 
-1. **Wire the gate into the call sites, behind `DIGER_SPEND_GATE` (default off): PR B. NOT started; owner authorization required.**
+1. **Wire the gate into the call sites, behind `DIGER_SPEND_GATE` (default off): PR B.** **IMPLEMENTED for the worker in the round-62 open PR (NOT merged).** The plan below is what was built, kept as the record; deviations and results are in `docs/proposals/spend-gate/WIRING-R62.md`.
    * **WHAT:**
      * Add `gateBefore`/`gateAfter` (drafted in `docs/proposals/spend-gate/drafts/gateHooks.ts.txt`) to `src/lib/server/spendGate/gate.ts`.
      * Add the Supabase adapter (drafted in `drafts/supabaseGate.ts.txt`) as `src/lib/server/spendGate/supabaseGate.ts`.

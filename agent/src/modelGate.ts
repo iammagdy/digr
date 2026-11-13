@@ -6,8 +6,8 @@ import type { SpendGate, SpendGateMode, SpendKind } from "../../src/lib/server/s
 import { RESERVE_TIMEOUT_MS } from "../../src/lib/server/spendGate/gate";
 
 /**
- * ROUND 61: THE MODEL GATE (docs/proposals/spend-gate/SPEC-v2.md §6). NOT WIRED: nothing in the worker starts it yet (DIGER_SPEND_GATE is off and the wiring
- * is in the separate, unmerged PR).
+ * ROUND 61: THE MODEL GATE (docs/proposals/spend-gate/SPEC-v2.md §6). ROUND 62: started per model run by the worker's driver (sdkRuntime.ts) through
+ * agent/src/spendGateWiring.ts, ONLY when DIGER_SPEND_GATE is observe or enforce; unset (production today) nothing starts it.
  *
  * The Agent SDK has no hook before each model request, and `maxBudgetUsd` is checked AFTER a turn: it cannot stop the request that passes the budget.
  * This gate sits where the SDK's requests must go: a loopback HTTP server the SDK child is pointed at with ANTHROPIC_BASE_URL (measured on SDK 0.3.312:

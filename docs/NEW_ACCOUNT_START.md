@@ -6,7 +6,10 @@
 * **Production (last verified 13 Nov 2026):** last code change = **`7d30ec8`**, the merge of PR #479 (https://github.com/iammagdy/digr/pull/479), round 61.
   * Vercel production READY on it; Heroku v188, worker heartbeat `7d30ec8`.
   * Later documentation-only merges (PR #480) move `main` without changing code; check `git log origin/main`.
-* **Branches:** `ccr-9dc4c8d3-d0ae22` (round 61) is fully merged. Start new work from `main` on a new branch.
+* **Branches:**
+  * `ccr-9dc4c8d3-d0ae22` (round 61) is fully merged.
+  * **Round 62 (PR B, worker wiring of the spend gate)** is an OPEN, unmerged review PR on `claude/round-62-spend-gate-worker-wiring`; see `docs/proposals/spend-gate/WIRING-R62.md`.
+  * Start new work from `main` on a new branch.
 * **Recent merged PRs:**
   * #479 (round 61 spend gate, offline and disconnected, merge `7d30ec8`; reviewed head `61338a2`);
   * #478 (round 60, merge `adb22f8`);
@@ -70,7 +73,7 @@
   * both typechecks clean;
   * build and secret scan clean.
 * **Incomplete:**
-  * wiring the gate: PR B, **not started**, owner authorization required;
+  * wiring the gate: PR B, worker only, **implemented in the round-62 open PR, NOT merged, NOT active** (the owner decides the merge);
   * the website's model calls going through the gate;
   * an honest plan estimate (a pricing decision).
 * **Blockers:** owner decisions (SPEC-v2 §13).
@@ -90,6 +93,6 @@
 4. Report the numbers. The last baseline is 13,563 passed, 0 failed.
 5. Then wait for the owner.
 
-* The next engineering milestone is **PR B** (the spend-gate wiring; `docs/NEXT_STEPS.md`). It has **NOT started** and needs the owner's separate authorization. Do not start it, and do not activate the gate, without that.
+* The current engineering milestone is **PR B** (the spend-gate wiring; `docs/NEXT_STEPS.md`). It is implemented for the worker as the round-62 open PR, which is **NOT merged**. Do not merge it, deploy it or activate the gate without the owner's separate authorization.
 * T1 (the round-61 review PR) is complete; see the history section of `docs/NEXT_STEPS.md`.
 * Do not redo rounds 57 to 61. They are complete as described in `docs/HANDOFF.md`.

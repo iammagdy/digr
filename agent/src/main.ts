@@ -24,6 +24,7 @@ import { ownedStore, type OwnedStore } from "./ownership";
 import { createSupabaseStore } from "./supabaseStore";
 import { createWorker } from "./worker";
 import { workerVersion } from "./buildVersion";
+import { workerSpendGateFromEnv } from "./spendGateWiring";
 
 /**
  * The entry point of the Heroku worker dyno (`worker: npx tsx agent/src/main.ts`). Required environment variables (names only; the values are set in Heroku, never in the repository):
@@ -65,6 +66,8 @@ async function main() {
   const recorder = createCallRecorder(client);
   const workerId = `w_${process.env.DYNO ?? "local"}_${randomUUID().slice(0, 8)}`;
   const log = (line: string) => console.log(`[agent] ${line}`);
+  // ROUND 62: the hard spend gate. DIGER_SPEND_GATE unset (production today): null, and nothing below changes. Observe is measurement only, NOT enforcement.
+  const spendGate = workerSpendGateFromEnv(process.env, client, log);
 
   let models = resolveModels(process.env, {});
   const refreshModels = async () => { models = resolveModels(process.env, await store.readSettings().catch(() => ({}))); };
@@ -103,7 +106,9 @@ async function main() {
       const view = ownedStore(store, mission.id);
       owned.set(mission.id, view);
       const revokeOwnership = () => { view.revoke(); abortRunsOf(mission.id, "lease_lost"); };
-      try { await runClaimedSafely({ ...deps(), store: view.store, leaseLost: view.revoked, ownerId: workerId, revokeOwnership }, mission); } finally { if (owned.get(mission.id) === view) owned.delete(mission.id); }
+      // ROUND 62: with the gate on, the mission's direct model requests (review.ts) go through it too, and its tally is logged when the claim ends
+      const gated = spendGate ? { spendGate, reviewCall: anthropicReviewCall(process.env.ANTHROPIC_API_KEY!, spendGate.modelFetch(mission.id)) } : {};
+      try { await runClaimedSafely({ ...deps(), ...gated, store: view.store, leaseLost: view.revoked, ownerId: workerId, revokeOwnership }, mission); } finally { if (owned.get(mission.id) === view) owned.delete(mission.id); spendGate?.finish(mission.id); }
     },
     // another worker owns a mission this one runs: its writes are refused from now on and its model run is stopped (the new owner finishes it)
     onLeaseLost: (missionId) => { owned.get(missionId)?.revoke(); abortRunsOf(missionId, "lease_lost"); },

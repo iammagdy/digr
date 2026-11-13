@@ -32,6 +32,7 @@ import { executionPageReuse } from "./pageReuse";
 import type { ModelDriver } from "./driver";
 import { createGateway } from "./gateway";
 import { createWebGateway, type ProviderKeyFn } from "./webGateway";
+import type { WorkerSpendGate } from "./spendGateWiring";
 import { loadSystemPrompt } from "./prompt";
 import { anyWebAvailable, NO_WEB, resolveWebAvailability } from "../../src/lib/agentMission/webAvailability";
 import { PLANNING_NUDGE } from "./nudge";
@@ -130,6 +131,20 @@ export interface RunnerDeps {
   providerDailyCaps?: () => Promise<Partial<Record<"firecrawl" | "contextdev", number>>>;
   /** LLM-FIRST OBJECTIVES (capability_discovery_v1 only): the research brief the chat stored with this mission's card (`messages.plan.researchBrief`, written by the server only), read back with its schema. Absent (tests that do not need it): none. */
   readMissionBrief?: (missionId: string, userId: string) => Promise<ResearchBrief | null>;
+  /**
+   * ROUND 62: the hard spend gate (agent/src/spendGateWiring.ts). Absent (DIGER_SPEND_GATE unset or off, and every test that does not ask for it): no
+   * gateway, model run or review changes at all. Present: every TREG and web call reserves its bound and every model request goes through the model gate.
+   */
+  spendGate?: WorkerSpendGate;
+}
+
+/** ROUND 62: the gateways' spend gate of this mission; nothing (not even an undefined key) when the gate is off. */
+export function spendGateOf(deps: Pick<RunnerDeps, "spendGate">, missionId: string): { spendGate?: ReturnType<WorkerSpendGate["context"]> } {
+  return deps.spendGate ? { spendGate: deps.spendGate.context(missionId) } : {};
+}
+/** ROUND 62: the model gate of one model run of this mission (every planning turn, every execution round); nothing when the gate is off. */
+function modelGateOf(deps: RunnerDeps, missionId: string): { modelGate?: ReturnType<WorkerSpendGate["modelGateFor"]> } {
+  return deps.spendGate ? { modelGate: deps.spendGate.modelGateFor(missionId) } : {};
 }
 
 /** The two answers of the reduced-scope card (UNIFIED CAPABILITY DISCOVERY): the customer chooses, nothing is planned or held before. */
@@ -442,14 +457,14 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const budgetFacts = planningBudgetFacts(requestForBudget, { catalog: deps.catalog, access, stats: sourceStats, now: planningNow });
   const budget = createJobCallBudget({ ceilingUsd: budgetFacts.budgetUsd, spentUsd: sum(calls, "planning") });
   deps.log?.(`planning_budget ${mission.id} base=${budgetFacts.baseUsd} budget=${budgetFacts.budgetUsd} cap=${budgetFacts.capUsd} stages=${budgetFacts.stages.map((s) => `${s.role}:${s.sourceId ?? "none"}:${s.callUsd.toFixed(5)}:reserve=${s.reserveUsd}`).join("|")}`);
-  const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, priorCalls: calls, stats: sourceStats, stageBudget: { stages: budgetFacts.stages.length, budgetUsd: budgetFacts.budgetUsd, reservesUsd: budgetFacts.stages.filter((s) => s.role !== "parent" && s.role !== "only").map((s) => s.reserveUsd) } });
+  const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, priorCalls: calls, stats: sourceStats, stageBudget: { stages: budgetFacts.stages.length, budgetUsd: budgetFacts.budgetUsd, reservesUsd: budgetFacts.stages.filter((s) => s.role !== "parent" && s.role !== "only").map((s) => s.reserveUsd) }, ...spendGateOf(deps, mission.id) });
   // THE WEB TOOLS ONLY WHEN THE WORKER HAS A KEY FOR THEM (webAvailability.ts): a tool that would only be refused is not offered, not listed, not named in the prompt
   const webAvailable = deps.providerKey ? await resolveWebAvailability(deps.providerKey) : NO_WEB;
   deps.log?.(`web_tools ${mission.id} firecrawl=${webAvailable.firecrawl} contextdev=${webAvailable.contextdev}`);
   // (round 53) the same two booleans for the ADMIN, in the database: production had 71 web calls refused «no key» on Oct 29-30 and none offered since, although the keys are stored; whether the deployed worker can
   // reach Firecrawl and Context.dev is now provable per mission (never a key, never shown to the customer)
   if (deps.providerKey) await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي للمشرف: توفر مصادر الويب لهذا التخطيط.", counts: { adm_web_firecrawl: webAvailable.firecrawl ? 1 : 0, adm_web_contextdev: webAvailable.contextdev ? 1 : 0 } }).catch(() => undefined);
-  const web = deps.providerKey && anyWebAvailable(webAvailable) ? createWebGateway({ store, missionId: mission.id, jobId: null, phase: "planning", budget, recorder: deps.recorder, providerKey: deps.providerKey, fetchFn: deps.fetchFn, counter }) : undefined;
+  const web = deps.providerKey && anyWebAvailable(webAvailable) ? createWebGateway({ store, missionId: mission.id, jobId: null, phase: "planning", budget, recorder: deps.recorder, providerKey: deps.providerKey, fetchFn: deps.fetchFn, counter, ...spendGateOf(deps, mission.id) }) : undefined;
   const state = newRunState(await lastOut(store, mission.id));
   const pricingSettings = normalizeMissionPricingSettings(settings[MISSION_PRICING_SETTING_KEY]);
   // THE REDESIGN FLAGS (S1 item 0.1): read once at the start of the run; every one is off unless the owner switched it
@@ -549,7 +564,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const toolsOf = (): ToolSpec[] => (checkpointOn ? buildTools(ctx).map((t) => ({ ...t, handler: async (a: Record<string, unknown>) => { const r = await t.handler(a); if (t.name === "report_progress" && typeof a.message_ar === "string") lastNote = a.message_ar; await writePlanningState(store, mission.id, snapshotOf(state, lastNote), deps.log); return r; } })) : buildTools(ctx));
   const runOnce = async (userPrompt: string): Promise<Awaited<ReturnType<ModelDriver["run"]>>> => {
     try {
-      return await deps.driver.run({ phase: "planning", missionId: mission.id, systemPrompt: loadSystemPrompt("planning", deps.systemPromptFile, { web: Boolean(web) }), userPrompt, tools: toolsOf(), state, model, maxTurns: AGENT_PLANNING_MAX_TURNS, maxBudgetUsd: AGENT_PLANNING_LLM_BUDGET_USD, wallMs: AGENT_PLANNING_WALL_MS, onUsage: checkpoint, onTurn: (t) => recordTurn(deps, mission.id, t) });
+      return await deps.driver.run({ phase: "planning", missionId: mission.id, systemPrompt: loadSystemPrompt("planning", deps.systemPromptFile, { web: Boolean(web) }), userPrompt, tools: toolsOf(), state, model, maxTurns: AGENT_PLANNING_MAX_TURNS, maxBudgetUsd: AGENT_PLANNING_LLM_BUDGET_USD, wallMs: AGENT_PLANNING_WALL_MS, onUsage: checkpoint, onTurn: (t) => recordTurn(deps, mission.id, t), ...modelGateOf(deps, mission.id) });
     } catch (e) {
       return { llmCostUsd: 0, turns: 0, stop: "error", error: String((e as Error)?.message ?? e).slice(0, 300) } as Awaited<ReturnType<ModelDriver["run"]>>;
     }
@@ -774,9 +789,9 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   const access = await deps.resolveAccess(mission.user_id);
   const budget = createJobCallBudget({ ceilingUsd: executionBudgetUsd(reserve), spentUsd: sum(calls, "execution") });
   const counter = { seq: lastSeq(calls) };
-  const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: mission.job_id, phase: "execution", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter });
+  const gateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: mission.job_id, phase: "execution", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, ...spendGateOf(deps, mission.id) });
   const webAvailable = deps.providerKey ? await resolveWebAvailability(deps.providerKey) : NO_WEB;
-  const web = deps.providerKey && anyWebAvailable(webAvailable) ? createWebGateway({ store, missionId: mission.id, jobId: mission.job_id, phase: "execution", budget, recorder: deps.recorder, providerKey: deps.providerKey, fetchFn: deps.fetchFn, counter, pageReuse: executionPageReuse(mission, plan, () => items) }) : undefined;
+  const web = deps.providerKey && anyWebAvailable(webAvailable) ? createWebGateway({ store, missionId: mission.id, jobId: mission.job_id, phase: "execution", budget, recorder: deps.recorder, providerKey: deps.providerKey, fetchFn: deps.fetchFn, counter, pageReuse: executionPageReuse(mission, plan, () => items), ...spendGateOf(deps, mission.id) }) : undefined;
   const state = newRunState(await lastOut(store, mission.id));
   // THE REVIEW of uncertain rows: a small model request per batch, within 20% of the mission's revenue (rows beyond it are not delivered and not charged); its tokens and cost are counted from the API's own answer
   const reviewBudgetUsd = plan.price.reviewBudgetUsd ?? reviewBudgetUsdFor(plan.price.maxChargePoints);
@@ -826,7 +841,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
       const saved = Object.fromEntries(plan.stages.map((s) => [s.key, items.counts(s.key).accepted]));
       let r: Awaited<ReturnType<ModelDriver["run"]>>;
       try {
-        r = await deps.driver.run({ phase: "execution", missionId: mission.id, systemPrompt: loadSystemPrompt("execution", deps.systemPromptFile, { web: Boolean(web) }), userPrompt: round === 0 ? executionPrompt(mission, plan, calls, savedBefore) : continuationPrompt(mission, plan, await store.listCalls(mission.id), saved), tools: buildTools(ctx), state, model, maxTurns: AGENT_EXECUTION_MAX_TURNS, maxBudgetUsd: llmBudget, wallMs: AGENT_EXECUTION_WALL_MS, onUsage: checkpoint });
+        r = await deps.driver.run({ phase: "execution", missionId: mission.id, systemPrompt: loadSystemPrompt("execution", deps.systemPromptFile, { web: Boolean(web) }), userPrompt: round === 0 ? executionPrompt(mission, plan, calls, savedBefore) : continuationPrompt(mission, plan, await store.listCalls(mission.id), saved), tools: buildTools(ctx), state, model, maxTurns: AGENT_EXECUTION_MAX_TURNS, maxBudgetUsd: llmBudget, wallMs: AGENT_EXECUTION_WALL_MS, onUsage: checkpoint, ...modelGateOf(deps, mission.id) });
       } catch (e) {
         r = { llmCostUsd: 0, turns: 0, stop: "error", error: String((e as Error)?.message ?? e).slice(0, 300) } as Awaited<ReturnType<ModelDriver["run"]>>;
       }

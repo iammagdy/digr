@@ -2,7 +2,8 @@
  * ROUND 61, HARD SPEND GATE: the contract every paid operation goes through (docs/proposals/spend-gate/SPEC-v2.md), and an in-memory REFERENCE MODEL
  * of the database functions (docs/proposals/spend-gate/sql/001_spend_gate.sql) with the same rules, used by the offline tests and the model gate's tests.
  *
- * NOT WIRED. No production call site uses this file (tests/spend-gate-r61.test.ts pins that). Default mode is OFF; production behaviour is unchanged.
+ * ROUND 62: wired into the WORKER's paid calls (agent/src/gateway.ts, agent/src/webGateway.ts, the model gate, review.ts) through agent/src/spendGateWiring.ts,
+ * behind DIGER_SPEND_GATE. Default mode is OFF (unset): the worker then builds no gate at all and runs exactly as before. The website does not use it yet.
  *
  * The rules (each one is a test):
  *  - A grant is ISSUED BY THE OWNER, outside the service role: nothing in `SpendGate` (what a worker or the website holds) can create, raise, reopen or
@@ -206,4 +207,70 @@ export async function guardedPaidCall<T>(
     else if (s.overrunUsd > 0) note("spend_gate.bound_violated", `overrun ${s.overrunUsd}`);
   }
   return { ran: true, value: result.value, reservationId, ...(reserved.ok ? {} : { observedRefusal: reserved.reason }) };
+}
+
+/**
+ * ROUND 62 (PR B): the two halves of `guardedPaidCall` for a call site whose call cannot be wrapped in one closure (the gateways reserve after their own
+ * checks and settle after their own records). Same rules: `off` (or no context) proceeds with no reservation and records nothing; `observe` proceeds on a
+ * refusal and REPORTS it (observe is NOT budget enforcement); `enforce` stops on any refusal, error or a reserve slower than the timeout.
+ */
+export interface GateEvent {
+  type: string;
+  detail?: string;
+  /** A priced amount the event is about (an unreserved operation's charge), when known. */
+  usd?: number;
+  /** The refusal reason, for a refusal (enforce) or an observed refusal (observe). */
+  reason?: RefusalReason;
+  /** The operation, e.g. "treg:<endpoint>" or "contextdev.search". */
+  op?: string;
+}
+/** A gate as a call site holds it. Absent or mode "off": the call site behaves exactly as before. */
+export interface GateContext { gate: SpendGate | null; mode: SpendGateMode; timeoutMs?: number; onEvent?: (e: GateEvent) => void }
+
+export type GateBefore =
+  | { proceed: true; reservationId: string | null; observedRefusal?: RefusalReason; op: string }
+  | { proceed: false; reason: RefusalReason; detail?: string; op: string };
+
+const noteOf = (ctx: GateContext) => (e: GateEvent) => { try { ctx.onEvent?.(e); } catch { /* telemetry never decides */ } };
+
+/** Before a paid call: reserve (or refuse). Nothing is sent by this function; the caller sends only when `proceed` is true. */
+export async function gateBefore(ctx: GateContext | undefined, req: ReserveRequest | { refuse: "no_safe_bound"; detail: string; op: string }): Promise<GateBefore> {
+  const op = "refuse" in req ? req.op : req.op;
+  if (!ctx || ctx.mode === "off") return { proceed: true, reservationId: null, op };
+  const note = noteOf(ctx);
+  let reserved: ReserveResult;
+  if ("refuse" in req) reserved = { ok: false, reason: "no_safe_bound", detail: req.detail };
+  else if (!ctx.gate) reserved = { ok: false, reason: "gate_unavailable", detail: "no gate client" };
+  else {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<ReserveResult>((resolve) => { timer = setTimeout(() => resolve({ ok: false, reason: "gate_unavailable", detail: "timeout" }), ctx.timeoutMs ?? RESERVE_TIMEOUT_MS); });
+    try { reserved = await Promise.race([ctx.gate.reserve(req), timeout]); } catch (e) { reserved = { ok: false, reason: "gate_unavailable", detail: String((e as Error)?.message ?? e).slice(0, 120) }; } finally { if (timer) clearTimeout(timer); }
+  }
+  if (reserved.ok) return { proceed: true, reservationId: reserved.reservationId, op };
+  const detail = reserved.detail;
+  if (ctx.mode === "enforce") {
+    note({ type: "spend_gate.refused", reason: reserved.reason, op, detail: `${reserved.reason}${detail ? `: ${detail}` : ""}` });
+    return { proceed: false, reason: reserved.reason, ...(detail ? { detail } : {}), op };
+  }
+  // OBSERVE: forwarded WITHOUT a reservation. Recorded as what enforce would have refused; its charge is reported apart by gateAfter (never hidden).
+  note({ type: "spend_gate.observed_refusal", reason: reserved.reason, op, detail: `${reserved.reason}${detail ? `: ${detail}` : ""}` });
+  return { proceed: true, reservationId: null, observedRefusal: reserved.reason, op };
+}
+
+/**
+ * After a paid call: settle with the actual charge, or null when it is not known (the whole bound stays spent). A failed settle leaves it held: it expires
+ * AS SPENT. In OBSERVE, an operation that went out without a reservation has its charge reported as `spend_gate.observed_unreserved_usage`.
+ * A settle that was already done is a replay (the database and the memory model are idempotent): settling twice never counts twice.
+ */
+export async function gateAfter(ctx: GateContext | undefined, before: GateBefore, actualUsd: number | null): Promise<void> {
+  if (!ctx || ctx.mode === "off" || !before.proceed) return;
+  const note = noteOf(ctx);
+  if (before.reservationId === null) {
+    note({ type: "spend_gate.observed_unreserved_usage", op: before.op, ...(before.observedRefusal ? { reason: before.observedRefusal } : {}), ...(actualUsd === null ? { detail: "charge unknown" } : { usd: actualUsd, detail: `${actualUsd} USD` }) });
+    return;
+  }
+  if (!ctx.gate) return;
+  const s = await ctx.gate.settle(before.reservationId, actualUsd).catch(() => null);
+  if (!s || !s.ok) note({ type: "spend_gate.settle_failed", op: before.op, detail: "left held: expires as spent" });
+  else if (s.overrunUsd > 0) note({ type: "spend_gate.bound_violated", op: before.op, usd: s.overrunUsd, detail: `overrun ${s.overrunUsd}` });
 }

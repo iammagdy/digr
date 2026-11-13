@@ -79,3 +79,53 @@ describe.skipIf(process.env.DIGER_TEST_REAL_SDK !== "1")("R61 model gate with th
     } finally { await g.close(); up.close(); rmSync(home, { recursive: true, force: true }); }
   }, 120_000);
 });
+
+/**
+ * ROUND 62: the worker's REAL driver (agent/src/sdkRuntime.ts createSdkDriver) with the gate the worker builds (agent/src/spendGateWiring.ts), against the same
+ * fake upstream on 127.0.0.1. No paid call. Opt-in like the tests above: DIGER_TEST_REAL_SDK=1 npx vitest run tests/spend-gate-r61-sdk.test.ts
+ */
+describe.skipIf(process.env.DIGER_TEST_REAL_SDK !== "1")("R62 the worker's driver through the wired model gate (fake upstream, no paid call)", () => {
+  const runInput = (modelGate: any) => ({ phase: "planning" as const, missionId: "msn_r62sdk", systemPrompt: "x", userPrompt: "say done", tools: [], state: { terminal: false } as any, model: MODEL_HAIKU, maxTurns: 2, maxBudgetUsd: 0.05, wallMs: 90_000, ...(modelGate ? { modelGate } : {}) });
+
+  it("ENFORCE with a grant: every request of the driver's child goes through the gate (capped, reserved, settled); the real key never leaves the worker", async () => {
+    const { createSdkDriver } = await import("../agent/src/sdkRuntime");
+    const { createWorkerSpendGate } = await import("../agent/src/spendGateWiring");
+    const up = await fakeUpstream();
+    const w = createMemorySpendGate();
+    w.owner.issueGrant({ id: "g1", ceilingUsd: 0.05, perOpMaxUsd: 0.05, perMissionMaxUsd: 0.05, kinds: ["model"], opensAt: Date.now() - 1000, closesAt: Date.now() + 600_000, issuedBy: "owner", reason: "test" });
+    const sg = createWorkerSpendGate({ mode: "enforce", gate: w.gate, apiKey: "real-key-stays-in-worker", upstreamBaseUrl: up.url, maxOutputTokens: 4000 });
+    // the driver is created with an environment holding the real key, as main.ts does: the gate must keep it from the child
+    const driver = createSdkDriver({ PATH: process.env.PATH, HOME: process.env.HOME, ANTHROPIC_API_KEY: "real-key-stays-in-worker" });
+    try {
+      const out = await driver.run(runInput(sg.modelGateFor("msn_r62sdk")));
+      expect(out.error).toBeUndefined();
+      const msgs = up.seen.filter((s) => s.url.startsWith("/v1/messages"));
+      expect(msgs.length).toBeGreaterThanOrEqual(1);
+      expect(msgs.every((s) => s.key === "real-key-stays-in-worker" && s.max_tokens <= 4000)).toBe(true);
+      const s = sg.finish("msn_r62sdk");
+      console.info("R62 real driver, enforce:", JSON.stringify(s));
+      expect(s).toMatchObject({ protection: "ENFORCED", refused: 0, model: { runs: 1, refused: 0, unreserved: 0 } });
+      expect(s.model.forwarded).toBe(msgs.length);
+      expect(s.reservations).toBe(msgs.length);
+      expect(w.owner.grant("g1")!.reservedUsd).toBe(0);
+    } finally { up.close(); }
+  }, 120_000);
+
+  it("ENFORCE with no grant: the driver's child reaches nothing; and a model gate that cannot start does not start the model at all", async () => {
+    const { createSdkDriver } = await import("../agent/src/sdkRuntime");
+    const { createWorkerSpendGate } = await import("../agent/src/spendGateWiring");
+    const up = await fakeUpstream();
+    const sg = createWorkerSpendGate({ mode: "enforce", gate: createMemorySpendGate().gate, apiKey: "real-key-stays-in-worker", upstreamBaseUrl: up.url });
+    const driver = createSdkDriver({ PATH: process.env.PATH, HOME: process.env.HOME, ANTHROPIC_API_KEY: "real-key-stays-in-worker" });
+    try {
+      const out = await driver.run(runInput(sg.modelGateFor("msn_r62sdk")));
+      expect(up.seen.filter((s) => s.url.startsWith("/v1/messages"))).toHaveLength(0);
+      expect(sg.finish("msn_r62sdk").refused).toBeGreaterThanOrEqual(1);
+      // the SDK may write its own error message as a turn; nothing was billed
+      expect(out.llmCostUsd).toBe(0);
+      const failed = await driver.run(runInput({ mode: "enforce", start: async () => { throw new Error("cannot listen"); } }));
+      expect(failed).toMatchObject({ stop: "spend_gate", turns: 0, llmCostUsd: 0 });
+      expect(up.seen).toHaveLength(0);
+    } finally { up.close(); }
+  }, 120_000);
+});
