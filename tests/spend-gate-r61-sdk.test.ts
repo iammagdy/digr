@@ -84,11 +84,15 @@ describe.skipIf(process.env.DIGER_TEST_REAL_SDK !== "1")("R61 model gate with th
  * ROUND 62: the worker's REAL driver (agent/src/sdkRuntime.ts createSdkDriver) with the gate the worker builds (agent/src/spendGateWiring.ts), against the same
  * fake upstream on 127.0.0.1. No paid call. Opt-in like the tests above: DIGER_TEST_REAL_SDK=1 npx vitest run tests/spend-gate-r61-sdk.test.ts
  */
+// sdkRuntime.ts imports the SDK, which only agent/node_modules has: it is loaded by a computed path so the website's type check (tsconfig excludes it; Vercel installs no agent/node_modules) never follows it
+const SDK_RUNTIME = path.resolve(__dirname, "../agent/src/sdkRuntime.ts");
+const loadDriver = async (): Promise<{ createSdkDriver: (env: Record<string, string | undefined>) => { run: (input: any) => Promise<any> } }> => import(/* @vite-ignore */ SDK_RUNTIME);
+
 describe.skipIf(process.env.DIGER_TEST_REAL_SDK !== "1")("R62 the worker's driver through the wired model gate (fake upstream, no paid call)", () => {
   const runInput = (modelGate: any) => ({ phase: "planning" as const, missionId: "msn_r62sdk", systemPrompt: "x", userPrompt: "say done", tools: [], state: { terminal: false } as any, model: MODEL_HAIKU, maxTurns: 2, maxBudgetUsd: 0.05, wallMs: 90_000, ...(modelGate ? { modelGate } : {}) });
 
   it("ENFORCE with a grant: every request of the driver's child goes through the gate (capped, reserved, settled); the real key never leaves the worker", async () => {
-    const { createSdkDriver } = await import("../agent/src/sdkRuntime");
+    const { createSdkDriver } = await loadDriver();
     const { createWorkerSpendGate } = await import("../agent/src/spendGateWiring");
     const up = await fakeUpstream();
     const w = createMemorySpendGate();
@@ -112,7 +116,7 @@ describe.skipIf(process.env.DIGER_TEST_REAL_SDK !== "1")("R62 the worker's drive
   }, 120_000);
 
   it("ENFORCE with no grant: the driver's child reaches nothing; and a model gate that cannot start does not start the model at all", async () => {
-    const { createSdkDriver } = await import("../agent/src/sdkRuntime");
+    const { createSdkDriver } = await loadDriver();
     const { createWorkerSpendGate } = await import("../agent/src/spendGateWiring");
     const up = await fakeUpstream();
     const sg = createWorkerSpendGate({ mode: "enforce", gate: createMemorySpendGate().gate, apiKey: "real-key-stays-in-worker", upstreamBaseUrl: up.url });
