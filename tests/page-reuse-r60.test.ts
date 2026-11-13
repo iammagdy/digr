@@ -228,22 +228,19 @@ describe("round 60: one paid fetch per page (execution)", () => {
     expect(w.requests()).toHaveLength(1);
   });
 
-  it("a page with almost no text (drawn by scripts): the provider's own parser is asked once for that field, as before; never a third time", async () => {
+  it("a page with almost no text (drawn by scripts): the provider's own parser answers that field in the SAME request (no value lost silently), once per field; never a third time", async () => {
     const store = createMemoryStore();
-    const w = world({ store });
+    store.missions.set("msn_page0001", newMission({ id: "msn_page0001", user_id: USER_ID, status: "executing" }));
     const thin = "https://thin.example/contact";
     const fake = fakeContextDev({ scrape: () => ({ markdown: "Loading…", credits: 1 }), parse: () => ({ data: emailsOf(["hello@thin.example"]), credits: 1 }) });
     const web = createWebGateway({ store, missionId: "msn_page0001", jobId: "job_x", phase: "execution", budget: createJobCallBudget({ ceilingUsd: 1, spentUsd: 0 }), recorder: fakeRecorder({}).recorder, providerKey: async () => "k", fetchFn: fake.fetchFn as any, counter: { seq: 50 }, pageReuse: { countryHint: "EG" } });
     const first: any = await web.parsePage({ parser: "emails", url: thin });
-    expect(first.rows_in_page).toBe(0);
-    expect(first.note).toContain("almost no text");
-    const second: any = await web.parsePage({ parser: "emails", url: thin });
-    expect(JSON.parse((await store.getFile("msn_page0001", `raw/${second.call_id}.json`))!).rows).toEqual([{ email: "hello@thin.example" }]);
-    const third: any = await web.parsePage({ parser: "emails", url: thin });
-    expect(third.rows_in_page).toBe(0);
+    expect(JSON.parse((await store.getFile("msn_page0001", `raw/${first.call_id}.json`))!).rows).toEqual([{ email: "hello@thin.example" }]);
+    expect(fake.requests).toHaveLength(2);
+    const again: any = await web.parsePage({ parser: "emails", url: thin });
+    expect(again.ok).toBe(true);
     expect(fake.requests.filter((r) => r.body?.formats?.parse)).toHaveLength(1);
     expect(fake.requests).toHaveLength(2);
-    void w;
   });
 
   it("PLANNING is unchanged: every field is still its own parser call (the plan's price is measured from these calls)", async () => {

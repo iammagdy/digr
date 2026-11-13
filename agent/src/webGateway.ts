@@ -277,6 +277,7 @@ export function createWebGateway(deps: WebGatewayDeps) {
     const failed = await failedPage(canonical);
     if (!mayRetry(failed)) return refuse(id, source, params, "page_failed_before", failed!.attempts.map((a) => `${a.call_id}:${a.code}`).join(",").slice(0, 100));
     let bought: { markdown: string; links: string[]; finalUrl: string } | null = null;
+    let thinPage = false;
     const work = execute({
       id, source, provider: "contextdev", params: { ...params, page_key: pageKeyOf(canonical), fetched_as: "page", extraction: "code" }, estimateUsd: PROVIDER_FACTS.contextdev.usdPerCredit! * 1,
       run: (ctx) => contextDevAdapter.run("page.read", { url: urlText }, ctx),
@@ -286,14 +287,18 @@ export function createWebGateway(deps: WebGatewayDeps) {
         bought = pg;
         const rows = pageRowsFor(parser, { markdown: pg.markdown, finalUrl: pg.finalUrl || urlText }, deps.pageReuse?.countryHint ?? null);
         const thin = pageTextChars(pg.markdown) < PAGE_MIN_TEXT_CHARS;
-        return { saved: { parser, url: urlText, rows, page: { markdown: pg.markdown, links: pg.links, final_url: pg.finalUrl } }, rows, costBasis: "reported", emptyIfNoRows: true, note: `the page was bought once and its ${parser} read by code; every other field of this page (emails, phone-numbers, links, its text) is now read from it at no charge${MASKED_NOTE}${thin ? `. The page has almost no text (${pageTextChars(pg.markdown)} characters): ask parse_page again for this field and the provider's own parser is used once` : ""}` };
+        thinPage = thin && parser !== "links";
+        return { saved: { parser, url: urlText, rows, page: { markdown: pg.markdown, links: pg.links, final_url: pg.finalUrl } }, rows, costBasis: "reported", emptyIfNoRows: true, note: `the page was bought once and its ${parser} read by code; every other field of this page (emails, phone-numbers, links, its text) is now read from it at no charge${MASKED_NOTE}${thin ? `. The page has almost no text (${pageTextChars(pg.markdown)} characters): the provider's own parser was asked for this field` : ""}` };
       },
       onOutcome: async (o) => {
         if (o.ok && bought) { await rememberPage(canonical, urlText, id, source, bought); const p = memory.get(pageKeyOf(canonical)); if (p) await noteLinks(p); }
         else if (!o.ok) await rememberFailure(canonical, id, o.code, o.thrown);
       },
     });
-    return work;
+    const answer = await work;
+    // A PAGE WITH ALMOST NO TEXT (drawn by scripts) cannot be read by code: the provider's own parser is asked for this field in the same request, as before, so no value is lost silently
+    if (thinPage && answer.ok) { thinTried.add(`${parser}|${canonical}`); return null; }
+    return answer;
   }
 
   return {
