@@ -21,6 +21,12 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 * **Measured, real model:** shown replies with an unsupported claim 4/24 (main `196942d`) → 0/48. Spend $0.0496 (round cap $0.15; all rounds $0.1376).
 * **Not applied (owner):** a company as the billable unit (`docs/proposals/per-company-unit.md`).
 * **Merged as `99acb4f`** (Heroku v182, worker on `99acb4f`; live card chunk identical to the build). Follow-up: the reply guard reads numbers written in words (live: «ثلاثة وثلاثون» for 32), `numberWords.ts`, `tests/number-words-r58.test.ts`.
+* **Authenticated production journey** (test account, `msn_088c`, 9 companies + 4 contact rows):
+  * delivered real data; settlement exact (reserve 310, charge 195, release);
+  * all delivered contacts verified on the cited pages;
+  * five wording defects fixed in #475 (`4ef32c3`);
+  * spend about $0.22 against the $0.20 authorized: execution ran 3× the plan's provider estimate.
+  * Details in docs/CUSTOMER-JOURNEY-R58.md.
 * **Planning race:** no website path cancels a `planning`/running mission (pinned by `tests/no-planning-cancel-r58.test.ts`). The worker fence stays unbuilt. A change typed during planning is now said NOT to be applied yet.
 * **Tests:** `tests/company-count-r58.test.ts` (29) and `tests/no-planning-cancel-r58.test.ts` (13). Re-pinned with notes: `flags-off-digests.json` (views; g1/g2 workbook sentence) and `stage3-flags-off.json` (file digests). One round-57 price line changed (CHANGED).
 
