@@ -275,7 +275,7 @@ export function exactPlaceLabelAr(value: unknown, kind: "country" | "city" | "re
   if (!n) return null;
   const wantKind = kind === "country" ? "country" : "city";
   // a district's own name may contain the generic word («Nasr City», «Sheikh Zayed City»): the whole text is tried first, then without the generic words and without a country word after the city
-  const variants = (kind === "country" ? [n] : [full, withoutCountryWord(full), n, withoutCountryWord(n)]).filter((x, i, a) => x && a.indexOf(x) === i);
+  const variants = (kind === "country" ? [n, withoutRepeatedWords(n)] : [full, withoutCountryWord(full), n, withoutCountryWord(n), withoutRepeatedWords(withoutCountryWord(n))]).filter((x, i, a) => x && a.indexOf(x) === i);
   // the district's own Arabic name first («mokattam» → «المقطم»), then the city's
   for (const v of variants) {
     const district = kind === "country" ? undefined : DISTRICTS.find((d) => d.names.some((name) => normalizeText(name) === v));
@@ -285,6 +285,12 @@ export function exactPlaceLabelAr(value: unknown, kind: "country" | "city" | "re
   }
   return null;
 }
+
+/**
+ * ROUND 59: A SOURCE THAT WRITES THE PLACE TWICE («Giza Giza», «Cairo Cairo», «giza, giza»: the city and its governorate joined, live msn_088c): the repeated word is said once. Only a word
+ * repeated right after itself is dropped, so a real two-word place («Port Said», «Nasr City») is untouched.
+ */
+export const withoutRepeatedWords = (normalized: string): string => normalized.replace(/[,،]/g, " ").split(/\s+/).filter((w, i, a) => w && (i === 0 || w !== a[i - 1])).join(" ");
 
 /** A source writes the country after the city («Sheikh Zayed Egypt», «القاهرة مصر», «Cairo, EG»): the country word is not part of the city. */
 const withoutCountryWord = (normalized: string): string => normalized.replace(/\b(?:egypt|eg|ksa|uae)\b/g, " ").replace(/(?:^|\s)(?:مصر|السعوديه|الامارات)(?=\s|$)/g, " ").replace(/\s+/g, " ").trim();

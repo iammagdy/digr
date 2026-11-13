@@ -27,6 +27,7 @@ import { toArabicDigits } from "../../src/lib/arabicDigits";
 import { RELEVANCE_REASON_LIST, type RelevanceReason } from "../../src/lib/agentMission/relevance";
 import { FILTER_REASONS, isEnabled, type FilterReason } from "../../src/lib/agentMission/filters";
 import { holdValueUsd } from "../../src/lib/server/callBudget";
+import { qualityResultLineAr } from "../../src/lib/agentMission/companyQuality";
 import type { ModelDriver } from "./driver";
 import { createGateway } from "./gateway";
 import { createWebGateway, type ProviderKeyFn } from "./webGateway";
@@ -920,6 +921,8 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   let fileCount = 0;
   /** The items of each delivered stage IN THE FILE (by sheet), for the tracker's final numbers. */
   let fileByStage: Record<string, number> | null = null;
+  // ROUND 59: what the company check of the file found (companyQuality.ts); said to the customer with the delivery when an identity is uncertain or a row may be a copy
+  let qualityLine: string | null = null;
   /** Rows whose parent-describing value was replaced by their own parent's before the file was written (admin only). */
   let parentFixedRows = 0;
   if (builtCount > 0) {
@@ -927,6 +930,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
       // STAGE 3, PART B: each contact column's gap, read from the cells of these very rows, joins «حدود هذا التسليم» only when DIGER_STAGE3_COMPANIES is on for the account (unset: no line, the file as it was)
       const b2bLines = b2bFlagSet() && b2bEngineOn(await accountIsTest(store, mission.user_id)) ? b2bLimitLines(plan, rowsByStage) : [];
       const built = await buildMissionFiles(plan, rowsByStage, missionFactsOf({ requestText: mission.request_text, plan, snap, reviewStop: checked.stop }), companyMailboxesOf(plan, snap), { ...(hadOpenReplies ? { repliesJudged: true } : {}), approvedPlan, ...(b2bLines.length > 0 ? { extraLimitLines: b2bLines } : {}) });
+      qualityLine = qualityResultLineAr(built.companyQuality);
       // THE DELIVERY CONTRACT (round 14): what it found is recorded for the admin; the file only had its DESCRIPTION completed (a limits line, a precision cell, a mark cell), never a row or a value
       if (built.contract.violations.length > 0) {
         const by = (rule: string) => built.contract.violations.filter((v) => v.rule === rule).length;
@@ -988,6 +992,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   // the admin page grants it again (same request id).
   // only a mission an admin created can be one (a customer's own mission is never looked up)
   // MULTI-OBJECTIVE RESEARCH (capability_discovery_v1 plans only): every objective of the approved plan gets its own explicit outcome, counted from the file (never claimed complete when one objective fell short)
+  if (qualityLine && delivered > 0) await store.addEvent(mission.id, { kind: "result", message_ar: qualityLine });
   if (approvedPlan.capability_selection) {
     const line = objectiveOutcomesLineAr(approvedPlan, fileByStage ?? Object.fromEntries(plan.stages.map((st) => [st.key, rowsByStage[st.key].length])));
     if (line) await store.addEvent(mission.id, { kind: "result", message_ar: line });

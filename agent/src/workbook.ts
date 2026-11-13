@@ -27,6 +27,7 @@ import { bilingualActivity, bilingualName, bilingualTitle } from "../../src/lib/
 import { titleFieldOf, titleTierOf } from "../../src/lib/agentMission/roles";
 import { isPeopleStage } from "../../src/lib/agentMission/people";
 import { isCompanyStage } from "../../src/lib/agentMission/entities";
+import { withCompanyQuality, type CompanyQualityReport } from "../../src/lib/agentMission/companyQuality";
 import { companiesWithoutDecisionMakers } from "./perParentLimits";
 import { ACTIVITY_AR_KEY, NAME_AR_KEY, TITLE_AR_KEY } from "./namesAr";
 import { cleanRowsForCustomer, isProviderUrl, providerContext, withoutProviderNames, withoutProviderUrls, type ProviderCleanReport } from "../../src/lib/agentMission/providerHosts";
@@ -415,11 +416,14 @@ export function fileLayoutsOf(plan: PricedPlan, rowsIn: Record<string, Row[]>, c
   const providers = providerContext();
   const cleaned = cleanRowsForCustomer(reconciled.rowsByStage, providers);
   // THE COMPANIES' OWN E-MAILS (role and generic mailboxes the people source gave: info@, customer_care@, webmaster@) are a COLUMN of the company's sheet, never rows of the people sheet: they add no row, so they are not counted and not charged
-  const { rowsByStage, layoutPlan } = withCompanyMailboxes(plan, cleaned.rowsByStage, companyMailboxes);
+  const mailed = withCompanyMailboxes(plan, cleaned.rowsByStage, companyMailboxes);
+  // ROUND 59: THE COMPANY ROWS ARE CHECKED (companyQuality.ts): a conflicting identity or a duplicate site is flagged in «ملاحظات التحقق», an unusable address is left out, a city written twice is said once; never a row removed or a value invented
+  const quality = withCompanyQuality(mailed.layoutPlan, mailed.rowsByStage);
+  const { rowsByStage, layoutPlan } = quality;
   // the replies sit in their comments' sheet (withThreads); everything else below (the counts, the summary, the methodology) reads the stages' own rows
   const threaded = withThreads(layoutPlan, rowsByStage);
   const layouts = layoutOf(threaded.layoutPlan, threaded.rowsByStage);
-  return { providers, reconciled, cleaned, rowsByStage, threaded, layouts };
+  return { providers, reconciled, cleaned, rowsByStage, threaded, layouts, qualityLines: quality.limitLines, qualityReports: quality.reports };
 }
 
 /**
@@ -427,18 +431,23 @@ export function fileLayoutsOf(plan: PricedPlan, rowsIn: Record<string, Row[]>, c
  * the row (moved here unchanged from `buildMissionFiles`). Exported for the Stage 2 live sheet: what the customer watches is laid out and completed by the same code as the file.
  */
 export function deliveredSheetsOf(plan: PricedPlan, rowsIn: Record<string, Row[]>, facts?: MissionFacts, companyMailboxes?: CompanyMailboxes, options: { repliesJudged?: boolean; approvedPlan?: PricedPlan; completeContract?: boolean; now?: number } = {}) {
-  const { providers, reconciled, cleaned, rowsByStage, threaded, layouts } = fileLayoutsOf(plan, rowsIn, companyMailboxes);
+  const { providers, reconciled, cleaned, rowsByStage, threaded, layouts, qualityLines, qualityReports } = fileLayoutsOf(plan, rowsIn, companyMailboxes);
   // THE DELIVERY CONTRACT (round 14, foundation/deliveryContract.ts): it checks the four rules on the file as it is about to be written. It is not a filter: it never removes a row or changes a value. R2, R3 and R4 only COMPLETE the description (a missing limits line, a precision cell, a mark cell
   // filled from data already in the row); R1 only reports. What it found is returned for the worker to record.
   const methodology = buildMethodology({ plan, layouts, rowsByStage, facts });
+  // ROUND 59: what the company check found (and that no site was visited) joins the summary's «حدود هذا التسليم»
+  if (qualityLines.length > 0) {
+    const limits = methodology.items.find((i) => i.label === "حدود هذا التسليم");
+    if (limits) limits.values = [...limits.values.filter((l) => l !== NO_LIMITS_AR), ...qualityLines.filter((l) => !limits.values.includes(l))];
+  }
   // the contract never blocks or delays a delivery: if it cannot run (a plan shape it does not know), the file is written as it would have been
   let contract: { violations: ContractViolation[]; completed: Completion[]; error?: string } = { violations: [], completed: [] };
   try { contract = runContract({ plan, rowsByStage, layouts, methodology, repliesJudged: options.repliesJudged === true, approvedPlan: options.approvedPlan, now: options.now ?? Date.now(), complete: options.completeContract !== false && plan.compiled?.by === "compiler", routes: routesOfFacts(facts) }); } catch (e) { contract = { violations: [], completed: [], error: String((e as Error)?.message ?? e).slice(0, 200) }; /* the file is delivered without the contract */ }
-  return { providers, reconciled, cleaned, rowsByStage, threaded, layouts, methodology, contract };
+  return { providers, reconciled, cleaned, rowsByStage, threaded, layouts, methodology, contract, qualityReports };
 }
 
-export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string, Row[]>, facts?: MissionFacts, companyMailboxes?: CompanyMailboxes, options: { repliesJudged?: boolean; /** The plan as the customer approved it (the card's number): the contract checks the promised number against it. */ approvedPlan?: PricedPlan; /** Complete the description (a missing limits line, a precision cell, a mark cell) where the delivery contract finds it missing. Default true; tests run with false to see the violations of the code itself. */ completeContract?: boolean; now?: number; /** STAGE 3 S2: lines added to the summary's «حدود هذا التسليم» (a B2B delivery's gaps, marks and removed exact duplicates, `stage3/b2bDelivery.ts`). Absent or empty: the file is exactly what it was. */ extraLimitLines?: ReadonlyArray<string> } = {}): Promise<{ xlsx: Buffer; csv: string; /** The delivery contract (round 14): what it found before any completion, and what was completed. */ contract: { violations: ContractViolation[]; completed: Completion[]; error?: string }; /** Wrong parent-describing values of a child sheet that were replaced from the row's own parent (for the admin only). */ parentFixes: ParentColumnFix[]; /** What was taken out of the customer's cells because it named a data provider (for the admin only). */ providerFixes: ProviderCleanReport & { final: number } }> {
-  const { providers, reconciled, cleaned, rowsByStage, threaded, layouts, methodology, contract } = deliveredSheetsOf(plan, rowsIn, facts, companyMailboxes, options);
+export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string, Row[]>, facts?: MissionFacts, companyMailboxes?: CompanyMailboxes, options: { repliesJudged?: boolean; /** The plan as the customer approved it (the card's number): the contract checks the promised number against it. */ approvedPlan?: PricedPlan; /** Complete the description (a missing limits line, a precision cell, a mark cell) where the delivery contract finds it missing. Default true; tests run with false to see the violations of the code itself. */ completeContract?: boolean; now?: number; /** STAGE 3 S2: lines added to the summary's «حدود هذا التسليم» (a B2B delivery's gaps, marks and removed exact duplicates, `stage3/b2bDelivery.ts`). Absent or empty: the file is exactly what it was. */ extraLimitLines?: ReadonlyArray<string> } = {}): Promise<{ xlsx: Buffer; csv: string; /** The delivery contract (round 14): what it found before any completion, and what was completed. */ contract: { violations: ContractViolation[]; completed: Completion[]; error?: string }; /** Wrong parent-describing values of a child sheet that were replaced from the row's own parent (for the admin only). */ parentFixes: ParentColumnFix[]; /** What was taken out of the customer's cells because it named a data provider (for the admin only). */ providerFixes: ProviderCleanReport & { final: number }; /** ROUND 59: what the company check found (companyQuality.ts), for the delivery line. */ companyQuality: CompanyQualityReport[] }> {
+  const { providers, reconciled, cleaned, rowsByStage, threaded, layouts, methodology, contract, qualityReports } = deliveredSheetsOf(plan, rowsIn, facts, companyMailboxes, options);
   // STAGE 3 S2: the lines a B2B delivery states (each gap, each mark, the exact duplicates removed) join the limits row of the summary; with none, nothing changes
   if (options.extraLimitLines && options.extraLimitLines.length > 0) {
     const limits = methodology.items.find((i) => i.label === "حدود هذا التسليم");
@@ -636,5 +645,5 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   // the CSV gets the same last look
   const csvOut = withoutProviderUrls(`﻿${lines.join("\r\n")}`, providers);
   if (csvOut !== `﻿${lines.join("\r\n")}`) finalFixes += 1;
-  return { xlsx, csv: csvOut, contract, parentFixes: reconciled.fixes, providerFixes: { ...cleaned.report, final: finalFixes } };
+  return { xlsx, csv: csvOut, contract, parentFixes: reconciled.fixes, providerFixes: { ...cleaned.report, final: finalFixes }, companyQuality: qualityReports };
 }
