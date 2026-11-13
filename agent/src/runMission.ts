@@ -19,7 +19,7 @@ import { statsFromCalls } from "../../src/lib/agentMission/sourceRanking";
 import { classifyNoCardEnd, refusalSentenceAr } from "../../src/lib/agentMission/refusal";
 import { parentCountsOf, parentsBelowShare } from "../../src/lib/agentMission/parents";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
-import { ensureOwned } from "./ownership";
+import { ensureOwned, isOwnershipError } from "./ownership";
 import { compensateFreeRerun } from "../../src/lib/agentMission/freeRerun";
 import { customerPlanView, namesAreWritten, requestedRowsOf, type PricedPlan } from "../../src/lib/agentMission/plan";
 import { topLevelFactsOf } from "../../src/lib/agentMission/repliesCard";
@@ -1091,6 +1091,8 @@ export async function recoverFromError(deps: RunnerDeps, mission: MissionRecord,
     try {
       await settleExecution(deps, fresh, plan, reserve, unit, { llm: Number(fresh.execution_llm_usd ?? 0), executionTregUsd: Number(fresh.execution_treg_usd ?? 0), summary: null, outputError: message });
     } catch (e) {
+      // ownership was lost or could not be verified: no release and no write (the lease path recovers it); a release here would give back the hold of a file that may be delivered
+      if (isOwnershipError(e)) { deps.log?.(`ownership_stop ${mission.id} ${shortError(e).slice(0, 160)}`); return; }
       // last resort: nothing delivered, the whole hold released through the existing function
       deps.log?.(`settle_failed ${mission.id} ${shortError(e).slice(0, 120)}`);
       await ensureOwned(deps, mission.id);
@@ -1115,6 +1117,8 @@ export async function runMissionSafely(deps: RunnerDeps, mission: MissionRecord)
     else return;
   } catch (e) {
     if (deps.leaseLost?.()) { deps.log?.(`lease_lost_stop ${mission.id}: no recovery, another worker owns it`); return; }
+    // ownership could not be established (ownership.ts): nothing is written; the lease runs out and the claim gives the mission to a worker that resumes and settles it
+    if (isOwnershipError(e)) { deps.log?.(`ownership_stop ${mission.id} ${shortError(e).slice(0, 160)}: no recovery write, the lease path takes it over`); return; }
     await recoverFromError(deps, mission, e);
     return;
   }

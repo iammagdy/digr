@@ -1,5 +1,5 @@
 import { AGENT_ERROR_REQUEUES_MAX, AGENT_MEMORY_REQUEUES_MAX, AGENT_PHASE_STARTS_MAX, AGENT_RESTART_REQUEUES_MAX, AGENT_EXECUTION_WALL_MS } from "../../../src/lib/agentMission/constants";
-import { ensureOwned } from "../ownership";
+import { ensureOwned, isOwnershipError } from "../ownership";
 import { addonProviderBudgetUsd, checkAddon, readAddonPlan, settleAddon, type AddonKind, type AddonPlan, type AddonSettleInput } from "../../../src/lib/agentMission/addonSettlement";
 import type { AddonRequest } from "../../../src/lib/agentMission/stage4/addonRow";
 import { EDIT_NOT_SEARCHED_AR, applyEditCore, type EditRequest } from "../../../src/lib/agentMission/stage4/editCore";
@@ -107,6 +107,8 @@ export async function runAddonSafely(deps: Deps, mission: MissionRecord): Promis
   } catch (e) {
     // another worker owns this row now (ownership.ts): its recovery is that worker's, nothing is written here
     if (deps.leaseLost?.()) { deps.log?.(`lease_lost_stop ${mission.id}: no recovery, another worker owns it`); return; }
+    // ownership could not be established: nothing is written or released; the lease runs out and the claim hands the row to a worker that resumes it
+    if (isOwnershipError(e)) { deps.log?.(`ownership_stop ${mission.id} ${shortError(e).slice(0, 160)}: no recovery write, the lease path takes it over`); return; }
     await recoverAddon(deps, mission, e);
   }
 }
