@@ -4,6 +4,26 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 59 (13 Nov 2026): research credibility and execution cost safety (docs/QUALITY-COST-R59.md)
+
+* **No paid call.** Evidence comes from msn_088c's recorded calls and delivered rows.
+* **Cost root cause:** execution spent $0.094 against a $0.0229 estimate.
+  * 37 paid reads covered only 13 pages: the same page was bought by several parsers.
+  * 16 empty calls were billed by the provider.
+  * 5 calls were for a company not delivered.
+  * The estimate counts one page per row.
+  * The provider ceiling (40% of the hold) held. No code knows the owner's API authorization.
+  * Hard pre-call gate designed, not applied: `docs/proposals/execution-spend-gate.md`.
+* **Data quality (applied, no money line):** `companyQuality.ts` and `places.ts`.
+  * Uncertain identities are flagged.
+  * Unusable addresses are left out and said.
+  * «Giza Giza» becomes «الجيزة».
+  * Possible duplicates are flagged.
+  * Missing contacts are shown per company.
+  * The missing source links and «no site visited» are stated.
+  * A delivery line names the uncertain identities.
+* **Tests:** `company-quality-r59` (14), `cost-audit-r59` (12). File digests are re-pinned with notes; money and plan digests are unchanged.
+
 ## Round 58 (13 Nov 2026): a plan's company count is its companies (docs/CUSTOMER-JOURNEY-R58.md)
 
 * **Verified first:** «عايز ٣٢ شركة…» already binds 32 to the companies step (plan.ts quantity contract); a lower target needs a reason the card shows.

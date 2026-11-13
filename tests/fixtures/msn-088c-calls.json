@@ -1,0 +1,393 @@
+{
+ "_about": "ROUND 59: the provider calls of the authenticated production mission msn_088cfef00f92a8ff1ea9 (13 Nov 2026), read from mission_calls (read-only): endpoint, status, the page asked for, the recorded cost and estimate, in the order they were made. Planning Context.dev samples keep no page here (they are not audited). Delivered companies: the ids of the companies sheet.",
+ "mission": {
+  "reserved_points": 310,
+  "planning_treg_usd": 0.010516,
+  "execution_treg_usd": 0.09398,
+  "planning_llm_usd": 0.01617,
+  "execution_llm_usd": 0.024528,
+  "plan_provider_cost_usd": 0.022902157894736843,
+  "contact_rows_planned": 9
+ },
+ "delivered_company_sites": [
+  "bobana-eg.com",
+  "nanostetic.com",
+  "yolo-cosmetics.com",
+  "go-natural.shop",
+  "avenscosmetics.com",
+  "kaline.com",
+  "deoc.store",
+  "donnanatural.com",
+  "hktrade-eg.com"
+ ],
+ "calls": [
+  {
+   "phase": "planning",
+   "endpoint_id": "tomba.companies.search.reveal",
+   "status": "empty",
+   "url": null,
+   "cost_usd": 0.000178,
+   "estimate_usd": 0.00178
+  },
+  {
+   "phase": "planning",
+   "endpoint_id": "tomba.companies.search.reveal",
+   "status": "ok",
+   "url": null,
+   "cost_usd": 0.000178,
+   "estimate_usd": 0.00178
+  },
+  {
+   "phase": "planning",
+   "endpoint_id": "contextdev.parse.emails",
+   "status": "ok",
+   "url": "(planning sample)",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "planning",
+   "endpoint_id": "contextdev.parse.emails",
+   "status": "ok",
+   "url": "(planning sample)",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "planning",
+   "endpoint_id": "contextdev.parse.links",
+   "status": "ok",
+   "url": "(planning sample)",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "planning",
+   "endpoint_id": "contextdev.parse.phone-numbers",
+   "status": "ok",
+   "url": "(planning sample)",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.emails",
+   "status": "empty",
+   "url": "https://bobana-eg.com",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.emails",
+   "status": "empty",
+   "url": "https://yolo-cosmetics.com",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.emails",
+   "status": "empty",
+   "url": "https://go-natural.shop",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.emails",
+   "status": "ok",
+   "url": "https://first-cosmetics.com",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.emails",
+   "status": "failed",
+   "url": "https://avenscosmetics.com",
+   "cost_usd": 0.0,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.emails",
+   "status": "empty",
+   "url": "https://kaline.com",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.emails",
+   "status": "empty",
+   "url": "https://deoc.store",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.emails",
+   "status": "empty",
+   "url": "https://donnanatural.com",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.emails",
+   "status": "failed",
+   "url": "https://hktrade-eg.com",
+   "cost_usd": 0.0,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.phone-numbers",
+   "status": "empty",
+   "url": "https://bobana-eg.com",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.phone-numbers",
+   "status": "empty",
+   "url": "https://yolo-cosmetics.com",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.phone-numbers",
+   "status": "ok",
+   "url": "https://go-natural.shop",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.phone-numbers",
+   "status": "ok",
+   "url": "https://first-cosmetics.com",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.phone-numbers",
+   "status": "empty",
+   "url": "https://kaline.com",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.phone-numbers",
+   "status": "empty",
+   "url": "https://deoc.store",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.phone-numbers",
+   "status": "empty",
+   "url": "https://donnanatural.com",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.phone-numbers",
+   "status": "failed",
+   "url": "https://avenscosmetics.com",
+   "cost_usd": 0.0,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.links",
+   "status": "ok",
+   "url": "https://bobana-eg.com",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.links",
+   "status": "ok",
+   "url": "https://yolo-cosmetics.com",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.links",
+   "status": "ok",
+   "url": "https://go-natural.shop",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.links",
+   "status": "ok",
+   "url": "https://kaline.com",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.links",
+   "status": "ok",
+   "url": "https://deoc.store",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.links",
+   "status": "ok",
+   "url": "https://donnanatural.com",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.links",
+   "status": "ok",
+   "url": "https://first-cosmetics.com",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.emails",
+   "status": "ok",
+   "url": "https://bobana-eg.com/pages/contact",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.emails",
+   "status": "empty",
+   "url": "https://yolo-cosmetics.com/language/en/contact-us/",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.emails",
+   "status": "empty",
+   "url": "https://kaline.com/pages/contact",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.emails",
+   "status": "empty",
+   "url": "https://deoc.store/pages/contact",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.emails",
+   "status": "ok",
+   "url": "https://donnanatural.com/contact",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.emails",
+   "status": "ok",
+   "url": "https://www.first-cosmetics.com/contact-details/",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.phone-numbers",
+   "status": "empty",
+   "url": "https://bobana-eg.com/pages/contact",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.phone-numbers",
+   "status": "ok",
+   "url": "https://donnanatural.com/contact",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.phone-numbers",
+   "status": "empty",
+   "url": "https://kaline.com/pages/contact",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.parse.phone-numbers",
+   "status": "ok",
+   "url": "https://yolo-cosmetics.com/language/en/contact-us/",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.scrape",
+   "status": "ok",
+   "url": "https://bobana-eg.com/pages/contact",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.scrape",
+   "status": "ok",
+   "url": "https://yolo-cosmetics.com/language/en/contact-us/",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.scrape",
+   "status": "ok",
+   "url": "https://kaline.com/pages/contact",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.scrape",
+   "status": "ok",
+   "url": "https://deoc.store/pages/contact",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.scrape",
+   "status": "ok",
+   "url": "https://donnanatural.com/contact",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  },
+  {
+   "phase": "execution",
+   "endpoint_id": "contextdev.scrape",
+   "status": "ok",
+   "url": "https://www.first-cosmetics.com/contact-details/",
+   "cost_usd": 0.00254,
+   "estimate_usd": 0.00254
+  }
+ ]
+}
