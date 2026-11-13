@@ -6,6 +6,7 @@ import { CHAT_MODEL_BRIEF_MAX_TOKENS, CHAT_MODEL_MAX_TOKENS, CHAT_MODEL_TIMEOUT_
 import { parseBrief, type ParsedBrief, type ResearchBrief } from "./researchBrief";
 import { POINT_VALUE_EGP_AR, classifyMessage, namesCollectibleData } from "./messageType";
 import { checkCustomerText } from "./text";
+import { wordNumbersIn } from "./numberWords";
 import { planFactsLinesAr, planNumbersAr, planQuestionKind, isExplicitCancel, refersToOpenRequest, unsupportedClaimIssues, type OpenPlanFacts } from "./openPlanFacts";
 
 /**
@@ -300,7 +301,8 @@ export function guardReply(reply: string, allowed: { message: string; balancePoi
   if (PROVIDER_NAME_PATTERN.test(text)) issues.push("provider_name");
   for (const issue of checkCustomerText(text, { maxChars: MAX_REPLY_CHARS }).issues) issues.push(`customer_text:${issue.slice(0, 40)}`);
   const ok = allowedNumbers(allowed);
-  const foreign = numbersIn(text).filter((n) => !ok.has(n));
+  // ROUND 58: a number above ten written in words is held to the same allowed numbers (live: «الرقم ثلاثة وثلاثون» for the plan's 32)
+  const foreign = [...numbersIn(text), ...wordNumbersIn(text).filter((n) => !ok.has(toArabicDigits(n)) && !ok.has(formatAr(n))).map((n) => toArabicDigits(n))].filter((n) => !ok.has(n));
   if (foreign.length > 0) issues.push("number_not_given");
   // ROUND 58: a reply about the open plan that says what its facts do not (its priced total as companies, a saving from a column, a de-duplication, a guarantee): the code's own answer is used instead
   for (const issue of unsupportedClaimIssues(text, allowed.facts ?? null)) issues.push(issue);

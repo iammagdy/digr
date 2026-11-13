@@ -57,6 +57,16 @@ Main before this round: `196942d` (PRs #469–#472). The acceptance request:
 * **Manual read:** no invented capability, count or saving remains. Two replies say «تدفع فقط مقابل ما يُسلَّم»; that is accurate. The minimum raises the job's unit (`missionPricing.ts` `priceByRule`), a partial delivery pays `ceil(delivered × job unit)`, and nothing is charged for zero rows.
 * **Spend:** a separate budget folder capped at $0.15 for this round. Spent $0.0496 over 74 attempts (cumulative for all rounds: $0.0880 + $0.0496 = $0.1376).
 
+## After the merge of #473 (`99acb4f`): numbers written in words
+
+* **Production:** Heroku v182 «Deploy 99acb4fa» with the worker reporting `started (99acb4f)` at 14:54 UTC. The card chunk diger.tech serves (`1747-d3d5800366f1fe84.js`) is byte-identical to a local build of `99acb4f` and contains `agent-count-explain`, which exists only in #473. The Vercel connector was disconnected, so the production deployment SHA was not read from Vercel itself.
+* **Real model on merged main** (24 turns, $0.0171): every objective check passed except one wording miss on N3 («لا أستطيع ضمان»).
+* **New defect found by reading the replies:** N1 answered «الرقم ثلاثة وثلاثون هو مجموع العناصر» for the plan's 32. The reply guard checked digits only, so the wrong number in words got through.
+* **Fix** (`numberWords.ts`): numbers above ten written in words are held to the same allowed numbers as digits. Small numbers of ordinary speech («مرة واحدة», «خطوتين») are not checked.
+  * Replayed over all 94 real model replies of this round: it flags exactly that reply and no other.
+  * When it blocks, the code's count answer is shown instead.
+* **Tests:** `tests/number-words-r58.test.ts` (9).
+
 ## Not changed (owner decision): what a unit of the price is
 
 The price counts every delivered item of every step. That is the approved contract (`missionPricing.ts`):
