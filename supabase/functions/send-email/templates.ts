@@ -23,7 +23,9 @@ export type PlatformEmailTemplateId =
   | "job-done"
   | "refund"
   | "job-update"
-  | "admin-topup-alert";
+  | "admin-topup-alert"
+  /** The consent-based announcement (news): customers who switched «أخبار ونصائح بحثية» on; carries a visible one-click unsubscribe link. */
+  | "news";
 
 export const PLATFORM_EMAIL_SUBJECTS: Record<PlatformEmailTemplateId, string> = {
   "welcome": `أهلًا {{ .Name }} — حسابك على ديجر جاهز`,
@@ -36,6 +38,8 @@ export const PLATFORM_EMAIL_SUBJECTS: Record<PlatformEmailTemplateId, string> = 
   "job-update": `{{ .Subject }}`,
   // The owner's alert for a new top-up request (sent by the app to the address in ADMIN_ALERT_EMAIL).
   "admin-topup-alert": `طلب شحن جديد: {{ .Points }} نقطة`,
+  // The announcement: its words come from the caller (src/lib/launch/announcement.ts), in plain Arabic.
+  "news": `{{ .Subject }}`,
 };
 
 /* ───────────── the base layout ───────────── */
@@ -77,6 +81,8 @@ interface LayoutOptions {
   button?: { href: string; label: string };
   /** A small note under the button (may hold a link). */
   note?: string;
+  /** Marketing-style mail only: the footer also carries a visible one-click unsubscribe link ({{ .UnsubscribeURL }}). Absent = the footer is byte-for-byte what it was. */
+  unsubscribe?: boolean;
 }
 
 const PRELUDE_PAD = "&#8199;&#65279;&#847;&#8199;&#65279;&#847;&#8199;&#65279;&#847;&#8199;&#65279;&#847;";
@@ -107,7 +113,9 @@ function layout(id: PlatformEmailTemplateId, o: LayoutOptions): string {
   const platformLine = `ديجر (Diger) — مصادر متاحة جاهزة للتحليل · القاهرة، مصر · <a href="mailto:support@diger.tech" style="color:${SUBTLE};text-decoration:underline">support@diger.tech</a>`;
   const footer = o.audience === "admin"
     ? `تنبيه داخلي للإدارة: يصل هذا البريد عند وصول كل طلب شحن جديد.<br>\n${platformLine}`
-    : `تصلك هذه الرسالة لأنك فعّلت إشعارات البريد. <a href="{{ .SiteURL }}/dashboard/settings" style="color:${SUBTLE};text-decoration:underline">غيّر تفضيلاتك</a>.<br>\n${platformLine}`;
+    : o.unsubscribe
+      ? `تصلك هذه الرسالة لأنك اخترت استقبال أخبار ديجر. <a href="{{ .SiteURL }}/dashboard/settings" style="color:${SUBTLE};text-decoration:underline">غيّر تفضيلاتك</a> أو <a href="{{ .UnsubscribeURL }}" style="color:${SUBTLE};text-decoration:underline">إلغاء الاشتراك من الأخبار</a>.<br>\n${platformLine}`
+      : `تصلك هذه الرسالة لأنك فعّلت إشعارات البريد. <a href="{{ .SiteURL }}/dashboard/settings" style="color:${SUBTLE};text-decoration:underline">غيّر تفضيلاتك</a>.<br>\n${platformLine}`;
 
   return `<!DOCTYPE html>
 <html lang="ar" dir="rtl" xmlns="http://www.w3.org/1999/xhtml">
@@ -252,9 +260,29 @@ const PLATFORM_EMAIL_TEMPLATES: Record<PlatformEmailTemplateId, string> = {
     ],
     button: { href: "{{ .AdminURL }}", label: "افتح صفحة الاعتماد" },
   }),
+  // The consent-based announcement. Greeting, lead and up to six bullet paragraphs (an empty one is dropped by renderEmailTemplate); ONE button;
+  // the footer adds the one-click unsubscribe link. Every word comes from the caller.
+  "news": layout("news", {
+    audience: "customer",
+    preheader: "{{ .Lead }}",
+    heading: "{{ .Heading }}",
+    paragraphs: [
+      "أهلًا {{ .Name }}،",
+      "{{ .Lead }}",
+      "{{ .Item1 }}",
+      "{{ .Item2 }}",
+      "{{ .Item3 }}",
+      "{{ .Item4 }}",
+      "{{ .Item5 }}",
+      "{{ .Item6 }}",
+    ],
+    button: { href: "{{ .SiteURL }}/dashboard", label: "{{ .ButtonLabel }}" },
+    unsubscribe: true,
+  }),
 };
 
-const TOKEN_RE = /\{\{\s*\.([A-Za-z]+)\s*\}\}/g;
+// a variable name may end in digits (Item1 … Item6 of the news template)
+const TOKEN_RE = /\{\{\s*\.([A-Za-z][A-Za-z0-9]*)\s*\}\}/g;
 
 export function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
