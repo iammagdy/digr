@@ -1,0 +1,25 @@
+{
+  "_about": "THE REVIEWED PRODUCTION LIST (Phase 3; audit §7.2: production-eligible ONLY from an explicit reviewed list). An id here becomes production_eligible only if its evidence also holds (public data, a verified or documented price, a stored real page that its hand card maps cleanly or Diger's own live calls with rows, not broken): src/lib/agentMission/capabilities/evidence.ts. Adding or removing an id is a reviewed PR change with its evidence named in the PR. Initial list (14 Nov 2026): the 20 hand ToolCards with status «verified» whose role is a data operation of the registry (the 21st verified card, tikhub.x.youtube-web-v2-search-channels, finds a CHANNEL, which is not a data operation) (src/lib/agentMission/foundation/toolCards/*), which serve the compiled social path that is ON in production for TikTok, X, Instagram, Facebook and YouTube (agent_settings.redesign_flags, read 13 Nov 2026) and are verified on stored real pages (tests/foundation-cards.test.ts, tests/platform-cards.test.ts). No other capability is on it: everything else is at most live_verified until reviewed.",
+  "ids": [
+    "anyapi.facebook.comment_replies",
+    "anyapi.facebook.post_comments",
+    "anyapi.facebook.user.posts",
+    "anyapi.instagram.comment_replies",
+    "anyapi.instagram.post.comments",
+    "anyapi.tiktok.comment_replies",
+    "anyapi.tiktok.search.videos",
+    "anyapi.tiktok.video.comments",
+    "anyapi.x.post.comments",
+    "anyapi.x.search.posts",
+    "anyapi.youtube.comment_replies",
+    "crawl4ai.tiktok.search.videos",
+    "crawl4ai.youtube.video.comments",
+    "justoneapi.x.facebook-search-post-v1",
+    "scrapecreators.instagram.post.comments",
+    "scrapecreators.instagram.user.posts",
+    "scrapecreators.x.v1-facebook-post-comments",
+    "tikhub.tiktok.search.videos",
+    "tikhub.x.youtube-web-search-channel",
+    "tikhub.youtube.video.comments"
+  ]
+}

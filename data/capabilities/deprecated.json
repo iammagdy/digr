@@ -1,0 +1,4 @@
+{
+  "_about": "THE REVIEWED DEPRECATION LIST (Phase 3): capability ids whose provider announced their removal, with the source. A deprecated capability is never selected by the router. Empty on 14 Nov 2026 for the registry's capabilities; Firecrawl's /extract (removed upstream 2026-12-10, audit §4.2) is not a registry capability (only the legacy chain lists it) and is recorded under advertised_only.",
+  "ids": {}
+}
