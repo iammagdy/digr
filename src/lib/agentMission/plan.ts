@@ -16,6 +16,7 @@ import { neutralPeopleTitleAr, roleLineAr, roleOfNoun, type RoleKey } from "./ro
 import { toArabicDigits } from "../arabicDigits";
 import { DEFAULT_PEOPLE_PER_PARENT, bindQuantity, bindQuantityDetailed, countedQuantities, ownTitleWords, perParentAskFor, perParentAskOf, perParentQuantities, perSourceQuantities, requestedStageIndexes, sameNounStem, unservedPerParentAsks } from "./quantity";
 import { itemNounOf } from "./itemNoun";
+import { revisionChangesLatestFirst } from "./revisionText";
 import { isTextItemStage, textKeyOf } from "./contract";
 import { repliesLinesAr } from "./repliesCard";
 import { childCardTitleAr, childRuleLinesAr } from "./childItems";
@@ -435,7 +436,9 @@ function validateAndPricePlanWith(input: unknown, lookup: PlanLookup, impliedCou
 
   // THE CUSTOMER'S QUANTITY is read by code from their words (the answer to the agent's question wins over the request): it is the target of the stage that counts it
   const refs = stagesIn.map((st, index) => ({ index, title_ar: isRecord(st) ? String(st.title_ar ?? "") : "", deliver: isRecord(st) && st.deliver === true }));
-  const quantityText = lookup.answerText && bindQuantity(lookup.answerText, refs) ? lookup.answerText : lookup.requestText ?? "";
+  // ROUND 58: a REVISED request («… تعديل العميل على نفس الطلب: عايز ٣٢ شركة») counts by its latest change that names a quantity, never by the first number of the request it revises (live risk: «٢٠ شركة … خليها ٣٢ شركة» was planned at 20)
+  const changedQuantityText = revisionChangesLatestFirst(lookup.requestText).find((c) => bindQuantity(c, refs) !== null);
+  const quantityText = lookup.answerText && bindQuantity(lookup.answerText, refs) ? lookup.answerText : changedQuantityText ?? lookup.requestText ?? "";
   const bound0 = quantityText ? bindQuantityDetailed(quantityText, refs) : null;
   // «٥ فيديوهات من كل قناة» with three named channels: no total in the words, a count PER NAMED SOURCE; the stage that counts that noun has its sources' count x that number as its target (read by code from the stage's own account filter)
   const accountValuesOf = (st: unknown): number => (isRecord(st) && Array.isArray(st.filters) ? st.filters.filter((f) => isRecord(f) && f.kind === "account" && f.enabled !== false && Array.isArray(f.values)).reduce((n, f) => Math.max(n, (f as { values: unknown[] }).values.length), 0) : 0);

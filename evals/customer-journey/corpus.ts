@@ -59,6 +59,11 @@ export const JOURNEY_CASES: JourneyCase[] = [
   { id: "D1", kind: "D_cancel", title: "explicit cancellation (cancels, never a new mission)", turns: ["خلاص الغي الطلب ده"], expect: { keepPlan: false, newMission: "never", mention: [/ألغي|الغي|إلغاء|ألغِ/] } },
   { id: "E1", kind: "E_new", title: "entirely new request", turns: ["عايز تعليقات الناس على تيك توك عن أسعار الدهب في مصر آخر أسبوع"], expect: { keepPlan: false, newMission: "required" } },
   { id: "AMB", kind: "A_question", title: "ambiguous fragment", turns: ["طيب والإسكندرية؟"], expect: { keepPlan: false, newMission: "allowed" } },
+  // ROUND 58: the company count and the cost advice (the plan on the card is 20 companies + the contacts of about 12 of them = 32 priced items)
+  { id: "N1", kind: "A_question", title: "is it 32 companies", turns: ["يعني هما ٣٢ شركة؟"], expect: { keepPlan: true, newMission: "never", mention: [/٢٠|عشرين|عشرون/] } },
+  { id: "N2", kind: "A_question", title: "does removing a column lower the price", turns: ["لو شلت عمود العنوان والتصنيف السعر هيقل؟"], expect: { keepPlan: true, newMission: "never", mention: [/(?:ما|مش|لا|لن|مبي)[^.؟!]{0,25}(?:يغي|يقل|بيغي|هيغي|هيقل|تغي)|ثابت|نفس السعر|مش هيأثر|ما بيأثرش|لا يؤثر/] } },
+  { id: "N3", kind: "A_question", title: "every company with contacts guaranteed", turns: ["هتضمن إن كل الشركات يبقى ليها إيميل وتليفون؟"], expect: { keepPlan: true, newMission: "never", mention: [/مش مضمون|مش هنضمن|منقدرش نضمن|مش كل|لا نضمن|لا أستطيع أن أضمن|ما أقدرش أضمن|ليس مضمون|مش شرط|لحوالي|١٢|مش هتلاقي/] } },
+  { id: "N4", kind: "C_revision", title: "raise to 32 companies", turns: ["عايز ٣٢ شركة مش ٢٠"], expect: { keepPlan: true, newMission: "never" } },
   {
     id: "SEQ", kind: "A_question", title: "the exact 13 Nov follow-ups in order",
     turns: ["أنا مش عايز بيانات ملهاش علاقة بالموضوع.", "إزاي هتتأكد إن الشركة فعلًا شغالة في مستحضرات التجميل؟", "لو مش لاقي رقم أو إيميل، سيبه فاضي.", "ممكن نقلل التكلفة من غير ما نخسر الجودة؟", "أنا عايز أعرف البيانات دي جاية منين."],

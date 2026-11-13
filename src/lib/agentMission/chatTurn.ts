@@ -61,7 +61,8 @@ export async function latestMissionOfConversation(sb: any, conversationId: strin
 }
 
 /** What the customer reads when the plan they want to change is not ready yet. */
-export const PLAN_NOT_READY_AR = "خطة طلبك ما زالت قيد التجهيز ولم تظهر بعد. انتظر ظهورها في البطاقة ثم عدّلها منها، ولن يُخصم شيء قبل موافقتك.";
+// ROUND 58: a change typed while the plan is still being prepared is NOT applied (the planner run is never cancelled under the worker): the customer is told so, and how to make it reach the plan
+export const PLAN_NOT_READY_AR = "خطة طلبك ما زالت قيد التجهيز، ولم يُطبَّق عليها تعديلك بعد. عندما تظهر في البطاقة أرسل لي التعديل نفسه مرة أخرى أو عدّلها منها، ولن يُخصم شيء قبل موافقتك.";
 /** What the customer reads when a follow-up changes something the chat cannot apply by itself (no new count): the card's own editor does it, priced again by code. */
 export const EDIT_IN_CARD_AR = "لتعديل الفترة أو اللغة أو الأعمدة أو الاستثناءات استخدم زر «عدّل الطلب» في بطاقة الخطة، وسيُحسب السعر من جديد قبل موافقتك. وإن كان طلبك مختلفًا تمامًا فاكتبه كاملًا.";
 export const PLAN_EDITED_AR = "عدّلنا الخطة بحسب طلبك، وحُسب السعر من جديد. راجعها في البطاقة، ولن يُخصم شيء قبل أن تعتمدها.";
@@ -172,7 +173,8 @@ export const CANCELLED_BY_CHAT_AR = "تمام، ألغيت طلب البحث د�
 export const CANCEL_HOW_AR = "لو عايز تلغي الطلب كله اكتب «الغي الطلب» أو اضغط «ألغِ المهمة» في البطاقة؛ ولو عايز تشيل حاجة معيّنة من الخطة قولّي هي إيه ونجهّز لك خطة معدّلة. ومفيش حاجة اتخصمت.";
 export const CANCEL_NOT_YET_AR = "خطة طلبك لسه بتتجهّز ومفيش حاجة اتخصمت. أول ما تظهر في البطاقة تقدر تلغيها بزر «ألغِ المهمة» أو تكتب «الغي الطلب».";
 /** ROUND 57: the open request's words and the customer's change, as ONE request (the worker plans from it). */
-export const REVISION_JOINER_AR = "تعديل العميل على نفس الطلب:";
+export { REVISION_JOINER_AR } from "./revisionText";
+import { REVISION_JOINER_AR } from "./revisionText";
 const REVISION_MAX_CHARS = 3900;
 
 /** ROUND 57: a short message, or a question, about something the plan's facts answer (its sources, the relevance check, missing fields, cost, the price): never a change by itself. */

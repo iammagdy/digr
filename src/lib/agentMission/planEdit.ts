@@ -3,6 +3,7 @@ import { AGENT_MAX_DELIVERED_ROWS, AGENT_PEOPLE_PAGES_MAX, AGENT_REPLIES_PER_COM
 import { textKeyOf } from "./contract";
 import { FILTER_KINDS, filterVerdict, isEnabled, kindsPromisedBy, type FilterKind } from "./filters";
 import { countAr, itemNounOf, itemNounOfPlan, type ItemNoun } from "./itemNoun";
+import { editedHeadlineAr, entityStagesOfPriced } from "./entityCount";
 import { lockedColumnKeys, stagePriceInputs, targetStageKey, type PlanColumn, type PricedPlan, type PricedStage } from "./plan";
 import { priceMissionByCode } from "./price";
 import { classifyRows } from "./relevance";
@@ -83,7 +84,7 @@ function restateCounts(plan: PricedPlan, from: number, to: number): void {
   const titles = plan.stages.map((s) => s.title_ar);
   const stale = (text: string): boolean => countedQuantities(text, titles).some((q) => !targets.has(q.value));
   plan.summary_ar = replaceCount(plan.summary_ar, from, to);
-  if (stale(plan.summary_ar)) plan.summary_ar = `تجمع لك ${countAr(to, itemNounOfPlan(plan))} بحسب خطتك المعدّلة.`;
+  if (stale(plan.summary_ar)) plan.summary_ar = editedHeadlineAr(entityStagesOfPriced(plan.stages)) ?? `تجمع لك ${countAr(to, itemNounOfPlan(plan))} بحسب خطتك المعدّلة.`;
   for (const s of plan.stages) if (s.how_ar) { s.how_ar = replaceCount(s.how_ar, from, to); if (stale(s.how_ar)) delete s.how_ar; }
   if (plan.assumptions_ar) plan.assumptions_ar = plan.assumptions_ar.map((a) => replaceCount(a, from, to)).filter((a) => !stale(a));
 }
@@ -251,7 +252,7 @@ export function applyPlanEdits(planIn: PricedPlan, editsIn: unknown, ctx: EditCo
   const offKinds = new Set(plan.stages.flatMap((s) => (s.filters ?? []).filter((f) => !isEnabled(f)).map((f) => f.kind)));
   const stalePromise = (text: string): boolean => kindsPromisedBy(text).some((k) => offKinds.has(k) || changedKinds.has(k));
   if (plan.assumptions_ar) plan.assumptions_ar = plan.assumptions_ar.filter((a) => !kindsPromisedBy(a).some((k) => changedKinds.has(k)));
-  if (stalePromise(plan.summary_ar)) plan.summary_ar = `تجمع لك ${countAr(plan.stages.filter((s) => s.deliver).reduce((n, s) => n + s.planned_rows, 0), itemNounOfPlan(plan))} بحسب خطتك المعدّلة.`;
+  if (stalePromise(plan.summary_ar)) plan.summary_ar = editedHeadlineAr(entityStagesOfPriced(plan.stages)) ?? `تجمع لك ${countAr(plan.stages.filter((s) => s.deliver).reduce((n, s) => n + s.planned_rows, 0), itemNounOfPlan(plan))} بحسب خطتك المعدّلة.`;
   for (const s of plan.stages) if (s.how_ar && stalePromise(s.how_ar)) delete s.how_ar;
 
   // 3. THE YIELD again where the measured page is available: a filter switched on changes how many items of a page match, and the price rests on the cost per MATCHING item

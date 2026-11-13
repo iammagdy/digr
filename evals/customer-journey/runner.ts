@@ -36,9 +36,15 @@ export function journeyWorld() {
 export interface JourneyTurn {
   turn: number; message: string; reply: string; ok: boolean; log: Record<string, unknown> | null;
   openStatus: string; newMissions: Array<{ id: string; status: string; request: string }>;
-  checks: { planKept: boolean; noFragment: boolean; notGeneric: boolean; mentionOk: boolean | null; newMissionOk: boolean; arabic: boolean; noLatinDigit: boolean; noProviderName: boolean };
+  checks: { planKept: boolean; noFragment: boolean; notGeneric: boolean; mentionOk: boolean | null; newMissionOk: boolean; arabic: boolean; noLatinDigit: boolean; noProviderName: boolean; noMiscount: boolean; noColumnSaving: boolean; noDedupePromise: boolean };
 }
 
+/** ROUND 58: claims the plan does not support. The open plan has 20 companies (32 priced items): «٣٢ شركة» said as a fact is a miscount; a column removed is no saving in a price per item; no de-duplication is promised by the plan. */
+const MISCOUNT = /(?<!(?:مش|ليس|ليست|لا|وليس|وليست|مو|بدل|بدل ما|عايز|طلبت|انت طلبت|إنت طلبت|تطلب|طالب) )٣٢ شركة/;
+const COLUMN_SAVING = /(?:شيل|نشيل|تشيل|شلت|احذف|حذف|إزالة|ازالة|تستغنى عن|نستغنى عن|الاستغناء عن)\s+(?:\S+\s+){0,2}(?:عمود|أعمدة|الأعمدة|العمود|خانة|خانات)[^.؟!]{0,60}(?:(?<!مش |ما |لا |لن )(?:يقل|هيقل|يقلل|هيقلل|توفير|توفر|أرخص|ارخص))/;
+const DEDUPE_PROMISE = /(?:بنشيل|هنشيل|نشيل|بنحذف|هنحذف|نحذف|بيتشال|بتتشال|بنستبعد|هنستبعد|بنتأكد إن مفيش)[^.؟!]{0,30}(?:التكرار|المكرر|المكررة|التكرارات|تكرار)|مش هتتكرر|مستحيل تتكرر|لن تتكرر|مش ممكن تتكرر/;
+/** The companies the open plan holds after the turn (a count edit to 32 makes «٣٢ شركة» true). */
+const companiesNow = (m: { plan_public?: unknown }): number => Number((m.plan_public as { stages?: Array<{ expected_rows?: unknown }> } | undefined)?.stages?.[0]?.expected_rows) || 0;
 const PROVIDER = /claude|anthropic|haiku|\btreg\b|firecrawl|context\.?dev|openai|\bgpt\b|tomba|google maps api/i;
 const arabic = (t: string) => { const ar = (t.match(/[؀-ۿ]/g) ?? []).length; const lat = (t.match(/[A-Za-z]/g) ?? []).length; return ar > 0 && ar >= lat * 3; };
 
@@ -59,7 +65,7 @@ export async function runJourneyCase(c: JourneyCase, infos: string[], onTurn?: (
     catch (e) { r = { ok: false, contentAr: `THREW: ${String((e as Error)?.message ?? e).slice(0, 160)}`, status: 500 }; }
     const line = infos.slice(before).reverse().find((l) => l.includes("chat_message_type"));
     const log = line ? JSON.parse(line) : null;
-    const missions = db.rows("missions") as Array<{ id: string; status: string; request_text: string }>;
+    const missions = db.rows("missions") as Array<{ id: string; status: string; request_text: string; plan_public?: unknown }>;
     const open = missions.find((m) => m.id === OPEN_ID)!;
     const fresh = missions.filter((m) => m.id !== OPEN_ID).map((m) => ({ id: m.id, status: m.status, request: m.request_text }));
     const live = fresh.filter((m) => m.status !== "cancelled");
@@ -75,6 +81,7 @@ export async function runJourneyCase(c: JourneyCase, infos: string[], onTurn?: (
         mentionOk: mention ? mention.test(reply) : null,
         newMissionOk: c.expect.newMission === "never" ? live.length === 0 : c.expect.newMission === "required" ? live.length > 0 : true,
         arabic: arabic(reply), noLatinDigit: !/[0-9]/.test(reply), noProviderName: !PROVIDER.test(reply),
+        noMiscount: companiesNow(open) === 32 || !MISCOUNT.test(reply), noColumnSaving: !COLUMN_SAVING.test(reply), noDedupePromise: !DEDUPE_PROMISE.test(reply),
       },
     });
   }
@@ -90,6 +97,7 @@ export function scoreJourney(results: Array<{ id: string; turns: JourneyTurn[] }
     cases: results.length, casesAllChecks: results.filter((r) => r.turns.every(passed)).length,
     planKept: rate("planKept"), noFragment: rate("noFragment"), notGeneric: rate("notGeneric"), mentionOk: rate("mentionOk"), newMissionOk: rate("newMissionOk"),
     arabic: rate("arabic"), noLatinDigit: rate("noLatinDigit"), noProviderName: rate("noProviderName"),
+    noMiscount: rate("noMiscount"), noColumnSaving: rate("noColumnSaving"), noDedupePromise: rate("noDedupePromise"),
     modelSource: turns.filter((t) => t.log?.source === "model").length,
     failures: turns.filter((t) => t.log?.failure).map((t) => String(t.log?.failure)),
   };

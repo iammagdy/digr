@@ -7,6 +7,7 @@ import { csvText } from "../../src/lib/agentMission/csvText";
 import { wordBoundarySheetName } from "../../src/lib/agentMission/fileNames";
 import { REASON_AR, type RelevanceReason } from "../../src/lib/agentMission/relevance";
 import { promisedTotalOf } from "../../src/lib/agentMission/promisedNumbers";
+import { deliveredBreakdownAr, entityStagesOfPriced } from "../../src/lib/agentMission/entityCount";
 import { promisedRowsOf } from "../../src/lib/agentMission/promisedTotal";
 import { customerMissionView, stagesView } from "../../src/lib/agentMission/customerView";
 import { checkDeliveryContract, parseDeliveredLine, precisionHeaderOf, NO_LIMITS_AR, type Completion, type ContractInput, type ContractSheet, type ContractViolation } from "../../src/lib/agentMission/foundation/deliveryContract";
@@ -584,7 +585,9 @@ export async function buildMissionFiles(plan: PricedPlan, rowsIn: Record<string,
   // the replies come in addition (replies.ts): the delivery is told against the top-level rows the customer asked for, the replies delivered are added to both sides
   // the replies JUDGED against the counters of the delivered comments (S9: the run applied withRepliesJudged) are told as the site and the notice tell them: against their counters (live D3: «٦٣ من ٦٦» on the site, «٦٣ من ٦٣» here). Otherwise exactly as before.
   const requestedCount = promisedTotalOf(plan, Object.fromEntries(plan.stages.map((st) => [st.key, (rowsByStage[st.key] ?? []).length])), options.repliesJudged === true).promised;
-  const intro = summary.addRow([`تم تسليم ${deliveredOfAr(deliveredCount, requestedCount, itemNounOfPlan(plan))}.`]);
+  // ROUND 58: a delivery of companies with their contacts says how many COMPANIES it holds (the priced total is «عنصر», never that many companies)
+  const breakdown = deliveredBreakdownAr(entityStagesOfPriced(plan.stages), Object.fromEntries(plan.stages.map((st) => [st.key, (rowsByStage[st.key] ?? []).length])));
+  const intro = summary.addRow([`تم تسليم ${deliveredOfAr(deliveredCount, requestedCount, itemNounOfPlan(plan))}.${breakdown ? ` ${breakdown}` : ""}`]);
   summary.mergeCells(intro.number, 1, intro.number, 5);
   intro.alignment = { wrapText: true, readingOrder: "rtl" as any, vertical: "middle" };
   intro.height = 32;

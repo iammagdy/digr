@@ -4,6 +4,25 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 58 (13 Nov 2026): a plan's company count is its companies (docs/CUSTOMER-JOURNEY-R58.md)
+
+* **Verified first:** «عايز ٣٢ شركة…» already binds 32 to the companies step (plan.ts quantity contract); a lower target needs a reason the card shows.
+* **Fixed (no money line):**
+  * A contact step titled with the companies' noun («بيانات تواصل الشركات») made the plan count as «شركة»: 20 + 12 read as «٣٢ شركة» on the card, notice, wallet line, file and PDF. Fixed in `itemNoun.ts`.
+  * A revision «… تعديل العميل على نفس الطلب: عايز ٣٢ شركة» was planned at the request's first number. It is now read from the latest change (`revisionText.ts`).
+  * The card states:
+    * the companies («٢٠ شركة»);
+    * the details' expected coverage;
+    * the priced total as items («… وعدد الشركات فيها ٢٠ فقط، لا ٣٢»);
+    * when the target is short, both numbers before approval.
+  * The file's first sentence adds «منها N شركة، وM من «…»».
+  * Chat facts carry the counts and «a column is not a saving».
+  * A deterministic reply guard (`unsupportedClaimIssues`) replaces model replies with five kinds of unsupported claim: total-as-companies, column saving, unstated de-duplication, invented capability, coverage guarantee.
+* **Measured, real model:** shown replies with an unsupported claim 4/24 (main `196942d`) → 0/48. Spend $0.0496 (round cap $0.15; all rounds $0.1376).
+* **Not applied (owner):** a company as the billable unit (`docs/proposals/per-company-unit.md`).
+* **Planning race:** no website path cancels a `planning`/running mission (pinned by `tests/no-planning-cancel-r58.test.ts`). The worker fence stays unbuilt. A change typed during planning is now said NOT to be applied yet.
+* **Tests:** `tests/company-count-r58.test.ts` (29) and `tests/no-planning-cancel-r58.test.ts` (13). Re-pinned with notes: `flags-off-digests.json` (views; g1/g2 workbook sentence) and `stage3-flags-off.json` (file digests). One round-57 price line changed (CHANGED).
+
 ## Round 57 (13 Nov 2026): the Egyptian-cosmetics customer journey (docs/CUSTOMER-JOURNEY-R57.md)
 
 * **Real failure (13 Nov, conversation `98a724a3995b46579f82`):** 7 of 9 turns had no chat model (5× `http_503`, 3× `unreadable`). Two follow-ups became NEW missions of their own words, which cancelled the plan the customer was asking about. Other follow-ups got «لم أفهم من رسالتك…» or the generic «use the edit button» line. The four prices (325, 200, 437, 1110) came from four different plans of four different requests (two of them fragments), not from one request priced four ways.
