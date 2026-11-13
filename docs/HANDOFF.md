@@ -4,6 +4,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 57 (13 Nov 2026): the Egyptian-cosmetics customer journey (docs/CUSTOMER-JOURNEY-R57.md)
+
+* **Real failure (13 Nov, conversation `98a724a3995b46579f82`):** 7 of 9 turns had no chat model (5× `http_503`, 3× `unreadable`). Two follow-ups became NEW missions of their own words, which cancelled the plan the customer was asking about. Other follow-ups got «لم أفهم من رسالتك…» or the generic «use the edit button» line. The four prices (325, 200, 437, 1110) came from four different plans of four different requests (two of them fragments), not from one request priced four ways.
+* **PR A (chat continuity, no money line):**
+  * the open plan's public facts go to the chat model, and code answers the same questions from the same facts when the model is down;
+  * two types exist only with an open request: `open_request_question` and `cancel_open_request` (explicit words only, existing compare-and-set cancel);
+  * a change without a number is a revision planned from the whole request plus the change;
+  * a follow-up never becomes a new mission of its own words;
+  * transcript in the system prompt in every mode; one retry after 5xx/529; `queued` is replaceable (unheld).
+* **Measured with the real model** (`evals/customer-journey`, production configuration): 11/40 → 40/40 turns pass every objective check; generic replies 23 → 0; spend $0.0743 (round ceiling $0.50).
+* **Tests:** `tests/customer-journey-r57.test.ts`; 4 existing tests changed on purpose (each marked CHANGED).
+
 ## Round 56, part 2 (13 Nov 2026): providers (evidence) and web provider selection
 
 * **Firecrawl / Context.dev history is genuine, but from the old pipeline.** `provider_costs` holds:

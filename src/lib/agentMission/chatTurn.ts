@@ -4,10 +4,11 @@ import { titleFromFirstRequest, isUntitledConversation } from "../conversationTi
 import { MISSION_TABLE } from "./constants";
 import { ADDON_MARKER_COLUMN, hasAddonMarker } from "./addonMarker";
 import { getBalance } from "../supabase/ledger";
-import { answerForCustomer, createCustomerMission, editPlanForCustomer } from "./customerActions";
+import { answerForCustomer, cancelForCustomer, createCustomerMission, editPlanForCustomer } from "./customerActions";
+import { isExplicitCancel, openPlanFactsOf, planFollowUpAnswerAr, planQuestionKind, refersToOpenRequest } from "./openPlanFacts";
 import { contactAskVerdict, contactClarifyAr, preModelAnswer, privacyRefusalAr, PRIVACY_REFUSAL_AR } from "./guardRules";
 import { decideTurn, type ChatType, type Decision, type OpenRequest, type OpenState } from "./conversationModel";
-import { FULL_RESEARCH_PREFIX_AR, greetingReplyAr, isFullResearchMethodologyAsk, methodologyReplyAr, methodologyTailAr, otherReplyAr, serviceAnswerAr } from "./messageType";
+import { FULL_RESEARCH_PREFIX_AR, greetingReplyAr, isFullResearchMethodologyAsk, methodologyReplyAr, methodologyTailAr, namesCollectibleData, otherReplyAr, serviceAnswerAr } from "./messageType";
 import { listMethodologyMissions } from "./methodology/missions";
 import { buildRequestContract } from "./requestContract";
 import { briefNumbersAr, contractIsComplete, differsOnlyByCount, numbersWritten, parseBrief, sameContract, storedBriefOf, validateBrief, withPartCounts, type ResearchBrief } from "./researchBrief";
@@ -44,7 +45,8 @@ export type AgentChatTurnResult =
 /** Consent is given with the card's button, never with typed words: a typed «موافق» is answered with where to press and starts nothing. */
 export const AGENT_PRESS_APPROVE_AR = "الاعتماد يتم بزر «اعتمد» في بطاقة المهمة فقط، ولن أبدأ التنفيذ ولا أحجز رصيدًا من الكتابة.";
 export const AGENT_TURN_CONTENT_AR = "بدأ الوكيل دراسة طلبك؛ تابع خطة المهمة هنا.";
-const REPLACEABLE = ["plan_ready", "needs_input"];
+// ROUND 57: «queued» too (a plan not yet picked up holds nothing either): two unapproved plans of one conversation were left alive on 13 Nov when a follow-up replaced a plan whose replacement was still queued
+const REPLACEABLE = ["plan_ready", "needs_input", "queued"];
 
 /** The id of the mission the assistant's latest card of this conversation points at, or null. */
 export async function latestMissionOfConversation(sb: any, conversationId: string): Promise<string | null> {
@@ -72,12 +74,13 @@ async function readOpenRequest(sb: any, conversationId: string, userId: string):
   const id = await latestMissionOfConversation(sb, conversationId);
   if (!id) return null;
   try {
-    const { data } = await sb.from(MISSION_TABLE).select(`id,user_id,status,question_ar,request_text,${ADDON_MARKER_COLUMN}`).eq("id", id).maybeSingle();
+    const { data } = await sb.from(MISSION_TABLE).select(`id,user_id,status,question_ar,request_text,plan_public,${ADDON_MARKER_COLUMN}`).eq("id", id).maybeSingle();
     if (!data || data.user_id !== userId) return null;
     // a review, review-fix or edit request of a delivered file is not the customer's open research request: a follow-up is never applied to it as a plan edit or an answer (MONEY PR 7e, docs/MONEY-PR-7A.md section 17)
     if (hasAddonMarker(data)) return null;
     const state = OPEN_STATE[String(data.status)];
-    return state ? { id, state, questionAr: data.question_ar ?? null, requestText: data.request_text ?? null } : null;
+    // ROUND 57: the plan's public facts (what the card shows) go with it, so a question about the plan is answered from the plan itself
+    return state ? { id, state, status: String(data.status), questionAr: data.question_ar ?? null, requestText: data.request_text ?? null, facts: state === "plan_ready" ? openPlanFactsOf(data.plan_public) : null } : null;
   } catch { return null; }
 }
 
@@ -138,14 +141,89 @@ async function answerOpenRequest(input: AgentChatTurnInput, open: OpenRequest, d
     return { ok: true, missionId: open.id, contentAr };
   };
   const text = async (contentAr: string): Promise<AgentChatTurnResult> => { await writeAnswer(input, contentAr); return { ok: false, contentAr, status: 200 }; };
+  // ROUND 57: a request still QUEUED (no worker has picked it up, nothing planned, nothing held) is revised like a plan: two quick changes in a row both reach the plan
+  if (open.state === "planning" && open.status === "queued" && decision.count === null && !decision.countRejected) {
+    const refusal = revisionRefusalAr(input.message);
+    return refusal ? text(refusal) : reviseOpenRequest(input, open);
+  }
   if (open.state === "planning") return text(PLAN_NOT_READY_AR);
   if (open.state === "needs_input") {
     const r = await answerForCustomer(sb, { id: open.id, userId: input.userId, text: input.message });
     return r.ok ? card(ANSWER_RECEIVED_AR) : text(r.error);
   }
-  if (decision.count === null) return text(EDIT_IN_CARD_AR);
+  // ROUND 57: a change the card's editor cannot apply by itself (a place, a column, a source, more data) is a REVISION of the same request: planned again from the customer's whole request with the change, never the
+  // generic «use the button» (13 Nov) and never a new mission of the change's words alone
+  if (decision.count === null) {
+    // a count the customer never wrote changes nothing (as before); approval and instructions to the system are never a change of the request
+    if (decision.countRejected) return text(EDIT_IN_CARD_AR);
+    const refusal = revisionRefusalAr(input.message);
+    if (refusal) return text(refusal);
+    return reviseOpenRequest(input, open);
+  }
   const r = await editPlanForCustomer(sb, { id: open.id, userId: input.userId, edits: { count: decision.count } });
   return r.ok ? card(PLAN_EDITED_AR) : text(r.error);
+}
+
+/** ROUND 57: what the customer reads when a change of the open plan is planned again (the card below it shows the revised plan; the replaced one says it was cancelled and nothing was charged). */
+export const REVISION_STARTED_AR = "تمام، هنجهّز خطة معدّلة لنفس طلبك بالتعديل ده، وكل اللي طلبته قبل كده باقي زي ما هو. الخطة السابقة اتشالت ومكانها الخطة المعدّلة، وسعرها الجديد هيظهر في البطاقة قبل أي خصم؛ ومفيش حاجة اتخصمت.";
+export const REVISION_TOO_LONG_AR = "طلبك مع تعديلاته بقى أطول من المسموح في طلب واحد. اكتب الطلب كامل بصيغته الأخيرة في رسالة واحدة، وهنجهّز له خطة بسعرها قبل أي خصم.";
+/** ROUND 57: the answers about cancelling the open request from the chat. */
+export const CANCELLED_BY_CHAT_AR = "تمام، ألغيت طلب البحث ده بناءً على رسالتك، ومفيش أي خصم ولا حجز. ولو حبيت ترجع له اكتب طلبك من جديد.";
+export const CANCEL_HOW_AR = "لو عايز تلغي الطلب كله اكتب «الغي الطلب» أو اضغط «ألغِ المهمة» في البطاقة؛ ولو عايز تشيل حاجة معيّنة من الخطة قولّي هي إيه ونجهّز لك خطة معدّلة. ومفيش حاجة اتخصمت.";
+export const CANCEL_NOT_YET_AR = "خطة طلبك لسه بتتجهّز ومفيش حاجة اتخصمت. أول ما تظهر في البطاقة تقدر تلغيها بزر «ألغِ المهمة» أو تكتب «الغي الطلب».";
+/** ROUND 57: the open request's words and the customer's change, as ONE request (the worker plans from it). */
+export const REVISION_JOINER_AR = "تعديل العميل على نفس الطلب:";
+const REVISION_MAX_CHARS = 3900;
+
+/** ROUND 57: a short message, or a question, about something the plan's facts answer (its sources, the relevance check, missing fields, cost, the price): never a change by itself. */
+function isPlanQuestion(message: string): boolean {
+  if (planQuestionKind(message) === null) return false;
+  const words = message.trim().split(/\s+/).filter(Boolean).length;
+  return /[؟?]/.test(message) || words <= 9;
+}
+
+/** ROUND 57: words that are never a change of the request: an approval (only the card's button approves) or an instruction to the system («تجاهل كل التعليمات…»). */
+export function revisionRefusalAr(message: string): string | null {
+  const t = normalizeDigits(message).replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه");
+  if (/تجاهل\s+(?:كل\s+)?(?:ال)?(?:تعليمات|اوامر|قواعد)|ignore\s+(?:all\s+|previous\s+|the\s+)*instructions|system\s*prompt|بسعر\s+صفر|ببلاش|مجانا|مجانًا/i.test(t)) return OPEN_KEPT_PLAIN_AR;
+  if (/(?:^|\s)و?(?:اعتمد\S*|وافق\S*|اوافق\S*|نفذ\S*|ابدا\s+التنفيذ)(?:\s|$)/.test(t)) return APPROVE_ON_CARD_AR;
+  return null;
+}
+export const OPEN_KEPT_PLAIN_AR = "خطتك زي ما هي في البطاقة، والسعر بيحسبه النظام من الخطة نفسها ومش بيتغيّر بالكتابة. لو عايز تغيّر حاجة في الطلب (العدد، المكان، الأعمدة، المصادر) قولّي هي إيه، ونجهّز لك خطة معدّلة بسعرها قبل أي خصم.";
+export const APPROVE_ON_CARD_AR = "خطتك لسه زي ما هي في البطاقة ومستنية اعتمادك. الاعتماد بيتم بزر «اعتمد» في البطاقة نفسها بس، ولن أبدأ التنفيذ ولا أحجز رصيدًا من الكتابة. ولو عايز تغيّر فيها حاجة قولّي هي إيه.";
+
+/** ROUND 57: the open plan is planned again from the WHOLE request with the change (its words are kept), never from the change alone. The plan it replaces held nothing. */
+async function reviseOpenRequest(input: AgentChatTurnInput, open: OpenRequest): Promise<AgentChatTurnResult> {
+  const base = String(open.requestText ?? "").replace(/\s+/g, " ").trim();
+  const change = input.message.replace(/\s+/g, " ").trim();
+  const combined = base === "" ? change : `${base} ${REVISION_JOINER_AR} ${change}`;
+  if (combined.length > REVISION_MAX_CHARS) { await writeAnswer(input, REVISION_TOO_LONG_AR); return { ok: false, contentAr: REVISION_TOO_LONG_AR, status: 200 }; }
+  console.info(JSON.stringify({ tag: "chat_revision", from: open.id, chars: combined.length }));
+  return startMission(input, combined, { contentAr: REVISION_STARTED_AR });
+}
+
+/** ROUND 57: a question about the open plan, answered from the plan's own facts: the model's checked reply, else the code's answer, else the honest «could not read it» (never the generic «لم أفهم»). Nothing changes. */
+async function answerAboutOpenRequest(input: AgentChatTurnInput, open: OpenRequest, decision: Decision): Promise<AgentChatTurnResult> {
+  const kind = planQuestionKind(input.message);
+  const byCode = kind && open.facts ? planFollowUpAnswerAr(kind, open.facts) : null;
+  // the model answered but its reply did not pass the guard: never «a temporary fault» (there was none); an approval or an instruction gets its own answer
+  const kept = decision.source === "model" ? (revisionRefusalAr(input.message) ?? OPEN_KEPT_PLAIN_AR) : OPEN_KEPT_AR;
+  const contentAr = decision.reply ?? byCode ?? (open.state === "plan_ready" ? kept : PLAN_NOT_READY_AR);
+  await writeAnswer(input, contentAr);
+  return { ok: false, contentAr, status: 200 };
+}
+/** ROUND 57: the chat model could not read a follow-up while a plan is open: the plan is kept and the customer is told so (13 Nov: such a follow-up became a new mission of its words alone). */
+export const OPEN_KEPT_AR = "ما قدرتش أفهم رسالتك دي كويس بسبب خلل مؤقت عندنا. خطتك الحالية زي ما هي في البطاقة ومستنية اعتمادك، ومفيش حاجة اتغيّرت ولا اتخصمت. ابعت رسالتك تاني، أو لو هي تعديل على الخطة اكتب التعديل بوضوح.";
+
+/** ROUND 57: an explicit cancellation of the whole open request, applied by the existing cancel (compare-and-set; nothing is held before approval). Anything less explicit is told how. */
+async function cancelOpenRequest(input: AgentChatTurnInput, open: OpenRequest): Promise<AgentChatTurnResult> {
+  const say = async (contentAr: string, plan?: { agentMissionId: string }): Promise<AgentChatTurnResult> => { await writeAnswer(input, contentAr, plan); return plan ? { ok: true, missionId: plan.agentMissionId, contentAr } : { ok: false, contentAr, status: 200 }; };
+  if (!isExplicitCancel(input.message)) return say(CANCEL_HOW_AR);
+  if (open.state === "planning") return say(CANCEL_NOT_YET_AR);
+  const r = await cancelForCustomer(input.sb, { id: open.id, userId: input.userId });
+  if (!r.ok) return say(r.error);
+  console.info(JSON.stringify({ tag: "chat_cancel", mission: open.id }));
+  return say(CANCELLED_BY_CHAT_AR, { agentMissionId: open.id });
 }
 
 /**
@@ -186,7 +264,26 @@ export async function agentChatTurn(input: AgentChatTurnInput): Promise<AgentCha
     const viaBrief = mode.enabled ? await briefTurn(input, decision, open, briefCtx) : null;
     console.info(JSON.stringify({ tag: "chat_message_type", type: decision.type, source: decision.source, guarded: decision.guarded, open: open?.state ?? "none", brief: mode.enabled ? briefCtx.outcome : "off", ...(decision.failure ? { failure: decision.failure } : {}) }));
     if (viaBrief) return viaBrief;
+    // ROUND 57: while the customer HAS an open request, a follow-up never becomes a new mission of its own words: a question is answered from the plan, a cancellation is applied only when explicit, a change is planned
+    // again from the whole request, and a message the model could not read keeps the plan and says so
+    if (open) {
+      if (decision.type === "open_request_question") return answerAboutOpenRequest(input, open, decision);
+      if (decision.type === "cancel_open_request") return cancelOpenRequest(input, open);
+      if (decision.source === "keyword" && decision.type !== "edit_of_open_request" && decision.type !== "greeting_or_small_talk" && decision.type !== "methodology_request") {
+        const aboutPlan = planQuestionKind(input.message) !== null || refersToOpenRequest(input.message);
+        // a request that stands on its own (it names what to collect, and is neither about the plan nor a question about it) still replaces the plan, as before; a follow-up never does
+        const standalone = decision.type === "data_request" && !aboutPlan && namesCollectibleData(input.message);
+        if (!standalone && (aboutPlan || decision.type !== "service_question")) return answerAboutOpenRequest(input, open, { ...decision, reply: null });
+      }
+      // a question about the plan is answered, never planned again: the model sometimes types «where does this data come from?» as a data request or a change (13 Nov replay)
+      if ((decision.type === "data_request" || (decision.type === "edit_of_open_request" && decision.count === null)) && isPlanQuestion(input.message)) return answerAboutOpenRequest(input, open, { ...decision, reply: null });
+      if (decision.type === "data_request" && refersToOpenRequest(input.message)) {
+        if (open.state === "plan_ready") { const refusal = revisionRefusalAr(input.message); if (refusal) { await writeAnswer(input, refusal); return { ok: false, contentAr: refusal, status: 200 }; } return reviseOpenRequest(input, open); }
+        return answerOpenRequest(input, open, decision);
+      }
+    }
     if (decision.type === "edit_of_open_request" && open) return answerOpenRequest(input, open, decision);
+    if (decision.type === "open_request_question" || decision.type === "cancel_open_request") return answerWithoutMission(input, "other", decision);
     if (decision.type !== "data_request" && decision.type !== "edit_of_open_request") return answerWithoutMission(input, decision.type, decision);
     // a request about to be read from the words alone, that names a platform no capability serves (Snapchat): said honestly with what can be collected, never a mission that can only end «unserved» (live evaluation 2026-11-12, O1)
     if (mode.enabled && mode.registry) {

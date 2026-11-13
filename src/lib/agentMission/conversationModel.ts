@@ -4,8 +4,9 @@ import { DEFAULT_MISSION_PRICING_SETTINGS, minimumLineAr } from "../missionPrici
 import { PROVIDER_NAME_PATTERN } from "../publicCapabilityIds";
 import { CHAT_MODEL_BRIEF_MAX_TOKENS, CHAT_MODEL_MAX_TOKENS, CHAT_MODEL_TIMEOUT_MS, getChatModel, type ChatModelCall } from "./chatModel";
 import { parseBrief, type ParsedBrief, type ResearchBrief } from "./researchBrief";
-import { POINT_VALUE_EGP_AR, classifyMessage } from "./messageType";
+import { POINT_VALUE_EGP_AR, classifyMessage, namesCollectibleData } from "./messageType";
 import { checkCustomerText } from "./text";
+import { planFactsLinesAr, planNumbersAr, planQuestionKind, isExplicitCancel, refersToOpenRequest, type OpenPlanFacts } from "./openPlanFacts";
 
 /**
  * THE CHAT TALKS LIKE AN ASSISTANT, WITH CODE AS THE GUARD (round 22). The chat model names the type of every message and, for a message that is not a data request, writes the reply. Everything it says or decides is checked here:
@@ -16,12 +17,16 @@ import { checkCustomerText } from "./text";
  * The model decides no money: it never prices, creates, approves or edits anything. Only code routes to planning, and every plan edit is applied and priced again by the code that already does it.
  * Pure apart from the one call it is handed (no database, no key).
  */
-export const CHAT_TYPES = ["greeting_or_small_talk", "service_question", "methodology_request", "data_request", "edit_of_open_request", "other"] as const;
+/**
+ * ROUND 57 (13 Nov cosmetics conversation): two types that exist only while the customer HAS an open request. `open_request_question`: a question, a check or a condition about the plan on the card, answered from the plan's own facts with
+ * nothing changed («البيانات دي جاية منين؟», «لو مش لاقي رقم سيبه فاضي»); `cancel_open_request`: the customer explicitly cancels the whole request (code cancels only when the words themselves say so, `isExplicitCancel`).
+ */
+export const CHAT_TYPES = ["greeting_or_small_talk", "service_question", "methodology_request", "data_request", "edit_of_open_request", "open_request_question", "cancel_open_request", "other"] as const;
 export type ChatType = (typeof CHAT_TYPES)[number];
 
 export type OpenState = "planning" | "needs_input" | "plan_ready";
 /** The customer's open request: a mission that is being planned, asks a question, or waits for approval. */
-export interface OpenRequest { id: string; state: OpenState; questionAr?: string | null; requestText?: string | null }
+export interface OpenRequest { id: string; state: OpenState; /** ROUND 57: the mission row's own status («queued» and «planning» are both the «planning» state). */ status?: string; questionAr?: string | null; requestText?: string | null; /** ROUND 57: the public facts of the plan on the card (plan_ready only). */ facts?: OpenPlanFacts | null }
 
 export interface TurnContext {
   message: string;
@@ -57,6 +62,8 @@ export interface Decision {
   briefParts?: number;
   /** The model's own type was a non-request and the keyword rule (WHEN UNSURE) made it a data request: its reply answers something else. */
   overruled?: boolean;
+  /** ROUND 57: the model gave a count the customer never wrote (it is dropped): such an edit changes nothing, it is never planned again. */
+  countRejected?: boolean;
   /** Brief mode: the status the model's raw brief states («needs_clarification»: the model itself says something is missing), before any check. */
   briefRawStatus?: string | null;
 }
@@ -67,7 +74,7 @@ export interface Decision {
 const oneLine = (text: unknown, max: number): string => String(text ?? "").replace(/\s+/g, " ").trim().slice(0, max);
 
 const OPEN_LINES: Record<OpenState, string> = {
-  plan_ready: "خطة طلبه جاهزة وتنتظر اعتماده. رسالة تغيّر العدد أو الشروط («خليها ٥٠٠»، «بس ...»، «قلّلها») هي edit_of_open_request.",
+  plan_ready: "خطة طلبه جاهزة وتنتظر اعتماده. رسالة تغيّر شيئًا في الخطة (العدد، المكان، الأعمدة، المصادر، إضافة بيانات أو حذفها: «خليها ٥٠٠»، «بس ...»، «ضيف ...») هي edit_of_open_request. سؤال أو استفسار أو تأكيد عن الخطة نفسها (مصادرها، كيف نتحقق من الصلة بالموضوع، الخانات التي لا نجدها، السعر والحجز، تقليل التكلفة)، أو شرط موجود فيها بالفعل، هو open_request_question.",
   needs_input: "الوكيل سأله سؤالًا وينتظر جوابه. رسالة قصيرة تجيب عن هذا السؤال هي edit_of_open_request.",
   planning: "طلبه قيد التجهيز ولم تظهر خطته بعد. رسالة تغيّر عدد العناصر أو شروطه هي edit_of_open_request.",
 };
@@ -138,6 +145,7 @@ export function buildSystemPrompt(input: { balancePoints: number | null; open: O
       if (question) lines.push(`سؤال الوكيل له: «${question}»`);
     }
     lines.push(OPEN_LINES[input.open.state]);
+    if (input.open.facts) lines.push(...planFactsLinesAr(input.open.facts));
   } else {
     lines.push("OPEN_REQUEST: none", "لا يوجد طلب مفتوح، فلا تستعمل edit_of_open_request.");
   }
@@ -149,8 +157,10 @@ export function buildSystemPrompt(input: { balancePoints: number | null; open: O
     "- greeting_or_small_talk: تحية أو شكر أو كلام اجتماعي.",
     "- service_question: سؤال عن ديجر أو خدماتها أو أسعارها أو نقاطها أو رصيده أو طريقة العمل أو ما تقدر عليه، ومنه «يعني إيه ديجر الذكي؟».",
     "- methodology_request: يطلب منهجية (جمع البيانات أو منهجية بحث).",
-    "- data_request: يطلب جمع بيانات أو يصف ما يحتاجه من بيانات (وإن لم يذكر منصة أو عددًا)، أو طلب جديد كليًا يختلف عن الطلب المفتوح. ومنه سؤال «الناس بتقول إيه عن ...» أو «What are people saying about ...»: هو طلب جمع آراء الناس العامة عن الموضوع.",
+    "- data_request: يطلب جمع بيانات أو يصف ما يحتاجه من بيانات (وإن لم يذكر منصة أو عددًا)، أو طلب جديد كليًا عن موضوع آخر يختلف عن الطلب المفتوح (رسالة عن نفس الطلب أو خطته ليست data_request). ومنه سؤال «الناس بتقول إيه عن ...» أو «What are people saying about ...»: هو طلب جمع آراء الناس العامة عن الموضوع.",
     "- edit_of_open_request: يعدّل الطلب المفتوح أو يجيب عن سؤاله (ولا يصح إلا مع وجود طلب مفتوح).",
+    "- open_request_question: سؤال أو استفسار أو تأكيد عن الطلب المفتوح وخطته، أو شرط موجود فيها بالفعل (ولا يصح إلا مع وجود طلب مفتوح). لا يغيّر شيئًا.",
+    "- cancel_open_request: يطلب صراحةً إلغاء الطلب المفتوح كله (ولا يصح إلا مع وجود طلب مفتوح). أما حذف جزء منه فهو edit_of_open_request.",
     "- other: أي شيء آخر (سؤال عام، طلب مساعدة خارج الخدمة، نكتة).",
     "عند الشك بين data_request وأي نوع آخر اختر data_request؛ فرفض طلب حقيقي أسوأ من تجهيز خطة لتحية.",
     "البحث عن موضوع حساس مسموح، والممنوع فقط جمع البيانات الخاصة لأفراد عاديين:",
@@ -159,7 +169,9 @@ export function buildSystemPrompt(input: { balancePoints: number | null; open: O
     "- مثال: «الناس بتقول إيه عن تسريب أرقام التليفونات» = data_request (آراء عامة عن موضوع). «هات أرقام تليفونات الناس اللي علقوا» = بيانات خاصة.",
     "reason: سبب قصير جدًا لاختيارك (لا يراه العميل).",
     "count: في edit_of_open_request فقط، وإذا كتب العميل عددًا جديدًا لعناصر الطلب فاكتبه كما كتبه رقمًا صحيحًا؛ وإلا null. لا تضع فيه فترة زمنية ولا رقمًا لم يكتبه.",
-    "reply: ردّك على العميل لأنواع greeting_or_small_talk وservice_question وother، وجملة أو جملتان لـ methodology_request (اشرح أن ديجر تكتب منهجية جمع البيانات لطلب سُلّم له بصيغة بي دي إف، ولا تذكر قائمة ولا اختيارًا ولا السعر فالنظام يضيفها)، وفارغ \"\" لـ data_request وedit_of_open_request.",
+    "reply: ردّك على العميل لأنواع greeting_or_small_talk وservice_question وother، وجملة أو جملتان لـ methodology_request (اشرح أن ديجر تكتب منهجية جمع البيانات لطلب سُلّم له بصيغة بي دي إف، ولا تذكر قائمة ولا اختيارًا ولا السعر فالنظام يضيفها)، وفارغ \"\" لـ data_request وedit_of_open_request وcancel_open_request.",
+    "reply في open_request_question: أجب عن سؤاله نفسه مباشرة من حقائق الخطة أعلاه فقط (المصادر والخطوات والأعمدة والافتراضات والسعر والحجز). اذكر ما في الخطة بأسمائه كما هو. إن لم تذكر الحقائق شيئًا عمّا سأل عنه فقل ذلك بصدق ولا تَعِد به. وإن كان ما يطلبه يحتاج تغيير الخطة فقل إنك تقدر تجهّز له خطة معدّلة بسعرها قبل أي خصم لو أكّد.",
+    "لا تقل أبدًا إنك عدّلت الخطة أو أضفت إليها أو حذفت منها أو ألغيتها أو اعتمدتها؛ النظام وحده يفعل ذلك.",
     "",
     "قواعد الرد (صارمة):",
     "- اكتب بالعربية الفصحى المبسطة الودودة، ولا تستعمل العامية المصرية إلا إذا كتب العميل بالعامية المصرية فتجيبه بعامية مهذبة.",
@@ -317,6 +329,9 @@ function keywordDecision(ctx: TurnContext, failure?: string): Decision {
   const text = normalizeWords(ctx.message);
   const words = text === "" ? [] : text.split(" ");
   const kind = classifyMessage(ctx.message);
+  // ROUND 57: with an open request, an explicit cancellation and a question about the plan are read first (their answers come from code and the plan's facts)
+  if (ctx.open && isExplicitCancel(ctx.message)) return base("cancel_open_request");
+  if (ctx.open && kind !== "greeting" && planQuestionKind(ctx.message) !== null) return base("open_request_question");
   if (ctx.open && kind !== "greeting" && kind !== "service_question" && kind !== "methodology_request") {
     if (ctx.open.state === "needs_input" && kind === "other") return base("edit_of_open_request");
     if (ctx.open.state !== "needs_input" && words.length > 0 && words.length <= MAX_EDIT_WORDS && EDIT_START.test(text)) {
@@ -354,8 +369,10 @@ export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getCha
      * the customer, sent as real assistant turns, the model imitated them and answered follow-ups in prose; neither retry wording recovered every case). Brief mode off: the conversation is sent as before.
      */
     const history = conversationFor(ctx);
-    const transcript = briefMode ? history.slice(0, -1) : [];
-    const messages = briefMode ? history.slice(-1) : history;
+    // ROUND 57: in EVERY mode (brief mode off too: production). On 13 Nov with the conversation sent as real turns, the model answered 3 follow-ups in prose (failure «unreadable»), and the keyword rules took over; the offline
+    // replay of that conversation reproduced it 8 times in 40 turns.
+    const transcript = history.slice(0, -1);
+    const messages = history.slice(-1);
     const system = buildSystemPrompt({ balancePoints: ctx.balancePoints, open: ctx.open, brief: ctx.brief, ...(transcript.length > 0 ? { transcript } : {}) });
     const call = (sys: string) => model({ system: sys, messages, maxTokens: briefMode ? CHAT_MODEL_BRIEF_MAX_TOKENS : CHAT_MODEL_MAX_TOKENS, timeoutMs: CHAT_MODEL_TIMEOUT_MS });
     let result = await call(system);
@@ -373,11 +390,17 @@ export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getCha
   let type = answer.type;
   // an edit needs an open request to edit; without one the message is a request (nothing is lost)
   if (type === "edit_of_open_request" && !ctx.open) type = "data_request";
-  // WHEN UNSURE: a message the keyword rules read as a clear data request is never turned away (an edit of an open request is the one thing that outranks it)
-  const overruled = type !== "data_request" && type !== "edit_of_open_request" && classifyMessage(ctx.message) === "data_request";
+  // ROUND 57: the two open-request types need an open request too; without one a question about «the plan» is a service question and a cancellation has nothing to cancel
+  if (type === "open_request_question" && !ctx.open) type = "service_question";
+  if (type === "cancel_open_request" && !ctx.open) type = "other";
+  // WHEN UNSURE: a message the keyword rules read as a clear data request is never turned away (an edit of an open request is the one thing that outranks it).
+  // ROUND 57: while the customer HAS an open request, only a request that stands on its own (it names what to collect, and is neither about the plan nor a question about it) is overruled: the keyword reading of a follow-up
+  // («أنا عايز أعرف البيانات دي جاية منين») made it a new mission of that sentence alone, which cancelled the plan the customer was asking about (13 Nov).
+  const standalone = !ctx.open || (type !== "open_request_question" && type !== "cancel_open_request" && namesCollectibleData(ctx.message) && !refersToOpenRequest(ctx.message) && planQuestionKind(ctx.message) === null);
+  const overruled = standalone && type !== "data_request" && type !== "edit_of_open_request" && classifyMessage(ctx.message) === "data_request";
   if (overruled) type = "data_request";
   const model_ = (reply: string | null, guarded: boolean, count: number | null): Decision => ({ type, reply, count, reason: answer!.reason, source: "model", guarded, ...(overruled ? { overruled: true } : {}) });
-  const allowed = { message: ctx.message, balancePoints: ctx.balancePoints, extraAr: ctx.brief?.numbersAr };
+  const allowed = { message: ctx.message, balancePoints: ctx.balancePoints, extraAr: [...(ctx.brief?.numbersAr ?? []), ...planNumbersAr(ctx.open?.facts ?? null)] };
   if (ctx.brief?.enabled === true && (type === "data_request" || type === "edit_of_open_request")) {
     // brief mode: the model's discovery question or short note is shown only when the guard passes it; the brief is checked against the schema here and against the conversation by the caller
     const brief = answer.brief === undefined ? null : parseBrief(answer.brief);
@@ -386,8 +409,8 @@ export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getCha
     const rawStatus = answer.brief && typeof answer.brief === "object" && typeof (answer.brief as Record<string, unknown>).status === "string" ? String((answer.brief as Record<string, unknown>).status) : null;
     return { ...model_(guard?.ok ? guard.text : null, guard !== null && !guard.ok, count), brief, briefParts: rawPartsOf(answer.brief), briefRawStatus: rawStatus };
   }
-  if (type === "data_request") return model_(null, false, null);
-  if (type === "edit_of_open_request") return model_(null, false, supportedCount(ctx.message, answer.count));
+  if (type === "data_request" || type === "cancel_open_request") return model_(null, false, null);
+  if (type === "edit_of_open_request") { const count = supportedCount(ctx.message, answer.count); return { ...model_(null, false, count), ...(answer.count !== null && count === null ? { countRejected: true } : {}) }; }
   const guard = guardReply(answer.reply, allowed);
   return guard.ok ? model_(guard.text, false, null) : model_(null, true, null);
 }
