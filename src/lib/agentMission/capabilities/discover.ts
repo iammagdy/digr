@@ -73,8 +73,10 @@ export interface CapabilityDiscovery {
 }
 
 export const PLATFORM_AR: Record<string, string> = { tiktok: "تيك توك", x: "إكس", instagram: "إنستجرام", facebook: "فيسبوك", youtube: "يوتيوب" };
+/** Names of the router families' platforms (Phase 4), for stage labels only: NOT a served platform of the chat or of the unresolved-platform wording (PLATFORM_AR stays the five). */
+const ROUTER_PLATFORM_AR: Record<string, string> = { reddit: "ريديت" };
 export function operationLabelAr(operation: Operation, platform: string | null): string {
-  const p = platform ? PLATFORM_AR[platform] ?? null : null;
+  const p = platform ? PLATFORM_AR[platform] ?? ROUTER_PLATFORM_AR[platform] ?? null : null;
   switch (operation) {
     case "social.parents": return p ? `منشورات وفيديوهات ${p}` : "المنشورات والفيديوهات";
     case "social.comments": return p ? `تعليقات ${p}` : "التعليقات";
@@ -89,6 +91,7 @@ export function operationLabelAr(operation: Operation, platform: string | null):
     case "apps.discover": return "التطبيقات من متاجر التطبيقات";
     case "apps.reviews": return "تقييمات التطبيقات ونصوصها من متاجر التطبيقات";
     case "company.enrich": return "المواقع الرسمية للشركات";
+    case "social.profile": return p ? `بيانات الحسابات العامة على ${p} (النبذة وعدد المتابعين)` : "بيانات الحسابات العامة (النبذة وعدد المتابعين)";
   }
 }
 /** A capability that exists but cannot be used now because of its provider (no key, a cap of 0, a cap used up today). */
@@ -102,7 +105,8 @@ function hardReject(c: Capability, stage: StageNeed): RejectReason | null {
   if (c.privacy !== "public") return "private_data";
   if (c.unavailable) return c.unavailable === "blocked" ? "not_permitted" : c.unavailable;
   if (stage.platform && c.platform !== stage.platform) return "platform_mismatch";
-  const accepts = stage.parentKey === null ? (["query"] as InputClass[]) : stage.accepts;
+  // a first stage is fed by the customer's words: their topic, or (when they name one) the account / page / channel itself
+  const accepts = stage.parentKey === null ? (stage.accepts.includes("account_ref") ? (["query", "account_ref"] as InputClass[]) : (["query"] as InputClass[])) : stage.accepts;
   if (!c.takes.some((t) => accepts.includes(t))) return "no_usable_input";
   if (c.outputsKnown && !stage.requires.every((r) => c.outputs.includes(r))) return "missing_outputs";
   return null;

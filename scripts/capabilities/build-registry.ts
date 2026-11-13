@@ -56,7 +56,7 @@ const read = (p: string) => readFileSync(rel(p), "utf8");
 export function collectInputs(): ArtifactInputs {
   const catalog = loadTregCatalog();
   // capability truth, not one account's availability: a normal account's policy (a sensitive endpoint shows as not permitted), no key or cap facts
-  const registry = buildCapabilityRegistry(catalog, { isAllowed: (id) => !blockedEndpointReason(id) && policyVerdict(id, { isAdmin: false, verifiedBusiness: false }).allowed, handCards: true });
+  const registry = buildCapabilityRegistry(catalog, { isAllowed: (id) => !blockedEndpointReason(id) && policyVerdict(id, { isAdmin: false, verifiedBusiness: false }).allowed, handCards: true, extendedFamilies: true });
   const policyOf = (id: string): EvidenceFacts["policy"] => { const c = categoryOf(id); return c === "unclassified" ? "blocked" : c; };
 
   // the hand cards, each checked on the stored REAL pages it lists (a page that is missing is an issue, never a pass)
