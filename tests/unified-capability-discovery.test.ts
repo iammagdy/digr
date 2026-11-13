@@ -582,6 +582,8 @@ describe("5. Firecrawl: a public-web request planned from the validated web sear
     const r = await replay({
       request: "اجمعلي مقالات أخبار عن السياحة في مصر من مواقع الويب",
       web,
+      // round 56: Context.dev (the cheaper web provider) has no key in this world, so Firecrawl is the provider the code allows for the search and the reads
+      deps: (base) => ({ ...base, providerKey: async (p: "firecrawl" | "contextdev") => (p === "firecrawl" ? "test-provider-key" : null) }),
       makeStore: () => flagOn(createMemoryStore()),
       planning: [
         { tool: "web_search", args: { provider: "firecrawl", query: "السياحة في مصر", limit: 10, why: WHY } },

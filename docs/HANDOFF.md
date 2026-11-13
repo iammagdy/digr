@@ -4,6 +4,31 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## Round 56, part 2 (13 Nov 2026): providers (evidence) and web provider selection
+
+* **Firecrawl / Context.dev history is genuine, but from the old pipeline.** `provider_costs` holds:
+  * Firecrawl: 36 successful calls ($0.295: 31 scrapes × $0.005 and 5 searches at $0.03 / $0.02); plus 1 failed;
+  * Context.dev: 21 successful scrapes ($0.05334 = 21 × $0.00254); plus 44 failed;
+  * Oct 23–25, 5 jobs (`job_quote_62ade260…`, `c2d6b997…`, `23990e23…`, `33f36e83…`, `cc96deb0…`).
+  * None of these jobs has a mission row. They are the website's serverless chain pipeline (`/api/worker/chunk` → `chainAdapter` / `chainRunner`), which runs on Vercel where the encryption key exists.
+  * No non-agent job has been created since Oct 28; every job since is an agent mission on the Heroku worker.
+  * Measured costs equal the configured prices: scrape $0.005 / $0.00254 per page; Firecrawl search 2 credits per started 10 results. Context.dev search has never been measured.
+* **Current Heroku state:**
+  * release v177 (12 Nov 23:34 UTC) is «Set PROVIDER_KEYS_ENCRYPTION_KEY config vars» (names only, read through the releases API; no value read);
+  * the worker heartbeat reports the deployed commit (`b61a514` before this round).
+  * No planning run has happened since the key was set, so whether the worker now resolves Firecrawl / Context.dev (`web_tools … firecrawl=… contextdev=…`) is **NOT VERIFIED**.
+  * Heroku logs need a POST (log session), which this round was not authorized to make.
+* **Company research in production** (24 completed missions): delivered through TREG only (Tomba, Parallel, Aviato, BlitzAPI). Each settlement is correct: charge = ceil(delivered × unit) ≤ reserve, one charge row, net ledger = charge. Files are xlsx + csv only. The agent never writes a data PDF (`file_id_pdf: null`); the only PDF is the on-demand methodology document.
+* **Fixed (planning, `agent/src/tools.ts`):** `web_search` / `web_scrape` let the model pick Firecrawl freely; Context.dev is cheaper for the same job ($0.00254 vs $0.01 a search; $0.00254 vs $0.005 a page).
+  * Now Firecrawl is used for an input only when one of these holds: Context.dev has no key; its recorded calls are failing; or Context.dev was asked for THAT query or page in this run and gave nothing or failed.
+  * A `why` sentence does not excuse it, and an input Context.dev already answered is never bought again.
+  * Execution (the approved plan) is unchanged. Tests: `tests/provider-selection-r56.test.ts`.
+* **Not changed (owner decision, with evidence):** for TREG sources of the same job, a `why` of 8+ characters still excuses a dearer source (`cheaperSameJobMessage`).
+  * A strict variant (only sampled sources, or skips the catalog / recorded calls verify) was built and measured offline: 121 tests in 43 files failed.
+  * Most of those files replay REAL recorded planner runs, in which the model chose sources 15–33× dearer with a sentence.
+  * Enforcing the strict rule therefore changes most real planning runs. It needs a real-planner measurement (paid model calls, owner-approved) before it can be enabled; the real planner rate is 83.9% (R4). Doing this behind a test-account switch would be the safe path.
+  * `capability_discovery_v1` stays OFF. Customer pricing and formulas are unchanged.
+
 ## Round 56 (13 Nov 2026): the money guard fails closed (ownership before settlement)
 
 * **Defect (main `b61a514`):** `ensureOwned` (agent/src/ownership.ts) let a settlement go on when the mission row could not be read (`catch { return; }`), when the row was missing, and when it named no worker. A worker that could not establish ownership could settle, release or charge.
