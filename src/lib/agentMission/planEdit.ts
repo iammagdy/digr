@@ -83,10 +83,14 @@ function restateCounts(plan: PricedPlan, from: number, to: number): void {
   const targets = new Set<number>(plan.stages.flatMap((s) => [s.planned_rows, ...(s.per_parent_rows ? [s.per_parent_rows] : [])]));
   const titles = plan.stages.map((s) => s.title_ar);
   const stale = (text: string): boolean => countedQuantities(text, titles).some((q) => !targets.has(q.value));
-  plan.summary_ar = replaceCount(plan.summary_ar, from, to);
+  // ROUND 58 (live, msn_088c): the count is first restated with the target step's own noun in the right form («١٢ شركة» -> «٩ شركات», never «٩ شركة»); a bare number left after it is moved as before
+  const targetKey = targetStageKey(plan);
+  const noun = itemNounOf(plan.stages.find((s) => s.key === targetKey)?.title_ar ?? "");
+  const restate = (text: string): string => replaceCount(noun.key === itemNounOf("").key ? text : restateNounCount(text, from, to, noun), from, to);
+  plan.summary_ar = restate(plan.summary_ar);
   if (stale(plan.summary_ar)) plan.summary_ar = editedHeadlineAr(entityStagesOfPriced(plan.stages)) ?? `تجمع لك ${countAr(to, itemNounOfPlan(plan))} بحسب خطتك المعدّلة.`;
-  for (const s of plan.stages) if (s.how_ar) { s.how_ar = replaceCount(s.how_ar, from, to); if (stale(s.how_ar)) delete s.how_ar; }
-  if (plan.assumptions_ar) plan.assumptions_ar = plan.assumptions_ar.map((a) => replaceCount(a, from, to)).filter((a) => !stale(a));
+  for (const s of plan.stages) if (s.how_ar) { s.how_ar = restate(s.how_ar); if (stale(s.how_ar)) delete s.how_ar; }
+  if (plan.assumptions_ar) plan.assumptions_ar = plan.assumptions_ar.map(restate).filter((a) => !stale(a));
 }
 
 export function applyPlanEdits(planIn: PricedPlan, editsIn: unknown, ctx: EditContext = {}): PlanEditResult {
