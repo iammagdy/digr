@@ -84,13 +84,16 @@
 ## 6. First action
 
 1. Fetch `main`. Check that `git diff --stat 7d30ec8 origin/main -- . ':!docs'` is empty: no code changed after the last verified production code. If it is not empty, read the newer HANDOFF entry first.
+   * Then check the state of PR #481 (round 62, https://github.com/iammagdy/digr/pull/481). If it is still open, its branch `claude/round-62-spend-gate-worker-wiring` holds the latest documentation; read HANDOFF «SESSION CLOSE» there.
 2. Install: `npm ci`, then `npm ci --prefix agent`.
 3. Run, one after another, with nothing else running:
    * `npm test`;
    * `npm run agent:typecheck`;
    * `npx tsc --noEmit -p .`;
    * `npm run build`.
-4. Report the numbers. The last baseline is 13,563 passed, 0 failed.
+4. Report the numbers.
+   * The last baseline on `main` is 13,563 passed, 0 failed.
+   * On the round-62 branch it is 13,605 passed, 0 failed.
 5. Then wait for the owner.
 
 * The current engineering milestone is **PR B** (the spend-gate wiring; `docs/NEXT_STEPS.md`). It is implemented for the worker as the round-62 open PR, which is **NOT merged**. Do not merge it, deploy it or activate the gate without the owner's separate authorization.

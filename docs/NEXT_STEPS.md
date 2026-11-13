@@ -133,4 +133,4 @@ Its original instructions are no longer needed. The tests and commands are liste
 
 ## Uncommitted changes
 
-None. All work is merged into `main` or is in an open PR.
+None. All work is merged into `main` or is in the open PR #481 (round 62, head documented in HANDOFF «Round 62 status»). Nothing is held only in a session.

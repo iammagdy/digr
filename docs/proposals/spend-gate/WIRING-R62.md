@@ -185,4 +185,8 @@ Until these are gated, **the platform is NOT protected by the spend gate**, what
 * `tests/spend-gate-r61-sdk.test.ts` (`DIGER_TEST_REAL_SDK=1`): 4 tests, 2 of them new. They run the worker's real driver and the real SDK through the wired gate against a fake upstream: every request is gated and the real key is used only upstream; with no grant nothing reaches upstream; a gate that cannot start does not start the model.
 * `tests/sql/spend-gate-r62-worker.local-pg.test.ts` (`DIGER_TEST_PG`): 3 tests. The worker's adapter and TREG gateway against the real SQL: two workers make 30 concurrent calls and never pass the ceiling.
 * **Mutation check:** with the gateway hooks disabled, 18 of the wiring tests fail (41 at the time of the check).
-* **Results of the full verification:** in the PR description.
+* **Full verification** (local; the repository has no GitHub Actions):
+  * full suite on `5538056`: 13,605 passed, 0 failed, 47 expected-fail, 83 skipped;
+  * both typechecks clean on `de46152`;
+  * build and client-bundle secret scan clean on `de46152` (0 secrets in 209 files);
+  * Vercel preview `dpl_G75csX4uPUVjsVzstFPRBVaSLDpL` READY on `de46152`.

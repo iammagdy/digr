@@ -130,13 +130,35 @@ This handoff document provides a clear, factual status of the Diger platform (`i
   * Every Agent SDK model request: through the model gate.
   * Every direct model request of `review.ts`.
 * **With the variable unset** (production): the worker builds nothing new, and requests, records and SDK options are identical. Tests pin this.
-* **Tested offline:**
-  * `tests/spend-gate-r62-wiring.test.ts`: 42 tests;
-  * `tests/spend-gate-r61-sdk.test.ts`: 4 with `DIGER_TEST_REAL_SDK=1` (real driver and real SDK, fake upstream);
-  * `tests/sql/spend-gate-r62-worker.local-pg.test.ts`: 3, on a scratch Postgres;
-  * the full suite (numbers in the PR).
+* **The PR:** https://github.com/iammagdy/digr/pull/481, «Round 62: Spend Gate Worker Wiring — INACTIVE».
+  * Branch `claude/round-62-spend-gate-worker-wiring`, base `main` at `9bbad01`.
+  * Code head `de46152`. Later commits on the branch are documentation only; check the PR for the current head.
+  * Vercel preview `dpl_G75csX4uPUVjsVzstFPRBVaSLDpL` READY on `de46152`. The earlier preview of `5538056` failed the website type check: a test imported `agent/src/sdkRuntime.ts` by a literal path. Fixed in `de46152` (test only).
+  * `mergeable_state` clean. No review comments at session close.
+* **Tested offline, locally** (the repository has no GitHub Actions):
+  * full suite on `5538056` (the code of `de46152` except one opt-in test's import path): **13,605 passed, 0 failed**, 47 expected-fail, 83 skipped;
+  * `tests/spend-gate-r62-wiring.test.ts`: 42/42;
+  * `tests/spend-gate-r61-sdk.test.ts`: 4/4 with `DIGER_TEST_REAL_SDK=1` (real driver and real SDK, fake upstream);
+  * scratch Postgres 16: 14/14 (`tests/sql/spend-gate.local-pg.test.ts` 11, `tests/sql/spend-gate-r62-worker.local-pg.test.ts` 3);
+  * mutation check: with the gateway hooks disabled, 18 wiring tests fail;
+  * both typechecks clean on `de46152`;
+  * `npm run build` and the secret scan clean on `de46152` (135 pages; 0 secrets in 209 client files). The build needs `NODE_OPTIONS=--max-old-space-size=6144` in a cloud container; the default heap ran out there.
 * **NOT covered:** the website's paid call sites (chat, planner, reviews, invoices, the Supabase-function jobs, admin checks) and the evaluation scripts. Those are a separate task. **The platform is not protected while they are not gated.**
 * **NOT done:** merge, deploy, SQL, grant, configuration. All of these need the owner's separate approval.
+* **Production at session close (13 Nov 2026):** unchanged. `main` = `9bbad01` (last code change `7d30ec8`). `DIGER_SPEND_GATE` unset. No SQL applied, no grant issued, no paid call made in this round.
+
+### SESSION CLOSE (13 Nov 2026, after round 62): where to resume
+
+1. **Waiting on the owner:**
+   * whether to merge PR #481. Merging activates nothing, and only `main` auto-deploys the worker;
+   * the SPEC-v2 §13 decisions: the first grant, applying `001_spend_gate.sql` and `002_verify.sql`, provider-side limits, the `max_tokens` cap, refusing pre-built parsers, the 5xx policy;
+   * whether to start the website's paid-call gating as a separate task.
+2. **If asked to merge #481:**
+   * re-check that the head SHA is the reviewed one and that no mission is queued, planning or executing;
+   * merge through GitHub pinned to that SHA;
+   * then verify the Vercel production SHA, the Heroku release and the worker heartbeat version, and that `DIGER_SPEND_GATE` is still unset (key names only).
+3. **Never, without an explicit owner instruction:** set `DIGER_SPEND_GATE`, apply SQL, issue a grant, or make a paid call.
+4. **Until #481 is merged, this section exists only on the PR branch.** `main`'s copy of this file still says PR B was not started.
 
 ### ACTIVATION BLOCKER (round 61): observe mode is not budget protection
 
