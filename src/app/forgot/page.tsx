@@ -4,7 +4,7 @@ import { appBaseUrl } from "@/lib/site";
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { AuthLayout, AuthToast, authInput, authPrimaryBtn } from "@/components/AuthLayout";
+import { AuthField, AuthLayout, AuthToast, authPrimaryBtn } from "@/components/AuthLayout";
 
 export default function ForgotPage() {
   const [email, setEmail] = useState("");
@@ -49,7 +49,7 @@ export default function ForgotPage() {
     >
       {!sent ? (
         <form onSubmit={submit} className="mt-7 flex flex-col gap-3" style={{ animation: "up .5s both" }}>
-          <input type="email" dir="ltr" required autoComplete="email" placeholder="name@example.com" value={email} onChange={(e) => setEmail(e.target.value)} className={`${authInput} text-left`} />
+          <AuthField label="البريد الإلكتروني" type="email" dir="ltr" required autoComplete="email" placeholder="name@example.com" value={email} onChange={(e) => setEmail(e.target.value)} className="text-left" />
           <button type="submit" disabled={busy} className={`${authPrimaryBtn} mt-1.5`}>إرسال رابط إعادة التعيين</button>
           {error && <AuthToast tone="bad">{error}</AuthToast>}
           <Link href="/login" className="flex min-h-11 items-center justify-center text-sm text-mut">→ العودة لتسجيل الدخول</Link>

@@ -4,7 +4,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
-import { AuthLayout, AuthToast, authInput, authPrimaryBtn } from "@/components/AuthLayout";
+import { AuthField, AuthLayout, AuthToast, authPrimaryBtn } from "@/components/AuthLayout";
 
 /** Strength meter from the design: length ≥ 8, a letter, a digit, a symbol. */
 function strength(pw: string) {
@@ -71,8 +71,8 @@ export default function ResetPage() {
   return (
     <AuthLayout title="كلمة مرور جديدة" subtitle="اختر كلمة مرور قوية لم تستخدمها من قبل." showPending={false}>
       <form onSubmit={submit} className="mt-7 flex flex-col gap-3" style={{ animation: "up .5s both" }}>
-        <input type="password" dir="ltr" required autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="كلمة المرور الجديدة · ٨ خانات على الأقل" className={`${authInput} text-left`} />
-        <input type="password" dir="ltr" required autoComplete="new-password" value={pw2} onChange={(e) => setPw2(e.target.value)} placeholder="تأكيد كلمة المرور" className={`${authInput} text-left`} />
+        <AuthField label="كلمة المرور الجديدة" type="password" dir="ltr" required autoComplete="new-password" value={pw} onChange={(e) => setPw(e.target.value)} className="text-left" />
+        <AuthField label="تأكيد كلمة المرور" type="password" dir="ltr" required autoComplete="new-password" value={pw2} onChange={(e) => setPw2(e.target.value)} className="text-left" />
         <div className="flex gap-1">
           {[0, 1, 2, 3].map((i) => (
             <span key={i} className="h-1 flex-1 rounded transition-colors duration-[250ms]" style={{ background: i < sc ? (sc >= 3 ? "var(--ok)" : "var(--gold)") : "var(--ln)" }} />

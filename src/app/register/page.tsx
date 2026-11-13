@@ -6,7 +6,7 @@ import Link from "next/link";
 import { useUser } from "@/hooks/useUser";
 import { Spinner } from "@/components/ui";
 import { normalizePromoCode, savePendingPromo } from "@/lib/signupPromo";
-import { AuthLayout, AuthToast, PasswordInput, authErrorMessage, authInput, authPrimaryBtn } from "@/components/AuthLayout";
+import { AuthField, AuthLayout, AuthToast, PasswordInput, authErrorMessage, authPrimaryBtn } from "@/components/AuthLayout";
 
 function RegisterForm() {
   const { user, loading: authLoading, register } = useUser();
@@ -17,6 +17,7 @@ function RegisterForm() {
   const [password, setPassword] = useState("");
   const [promo, setPromo] = useState(() => normalizePromoCode(searchParams?.get("promo")) ?? "");
   const [error, setError] = useState("");
+  const [passwordError, setPasswordError] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -27,7 +28,7 @@ function RegisterForm() {
     e.preventDefault();
     if (!navigator.onLine) { setError("أنت غير متصل بالإنترنت."); return; }
     setError("");
-    if (password.length < 8) { setError("كلمة المرور يجب ألا تقل عن ٨ خانات"); return; }
+    if (password.length < 8) { setPasswordError("كلمة المرور يجب ألا تقل عن ٨ خانات"); return; }
     setBusy(true);
     try {
       await register(email.trim(), password, name.trim());
@@ -52,18 +53,21 @@ function RegisterForm() {
   return (
     <AuthLayout title="أنشئ حسابك" subtitle="ابدأ في تصميم خطط بحثك والحصول على عروض أسعار شفافة بالنقاط.">
       <form onSubmit={handleSubmit} className="mt-8 flex flex-col gap-3">
-        <input
-          type="text" required autoComplete="name" placeholder="الاسم" value={name}
-          onChange={(e) => setName(e.target.value)} className={authInput}
+        <AuthField
+          label="الاسم" type="text" required autoComplete="name" placeholder="مثال: منى أحمد" value={name}
+          onChange={(e) => setName(e.target.value)}
         />
-        <input
-          type="email" dir="ltr" required autoComplete="email" placeholder="name@example.com"
-          value={email} onChange={(e) => setEmail(e.target.value)} className={`${authInput} text-left`}
+        <AuthField
+          label="البريد الإلكتروني" type="email" dir="ltr" required autoComplete="email" placeholder="name@example.com"
+          value={email} onChange={(e) => setEmail(e.target.value)} className="text-left"
         />
-        <PasswordInput value={password} onChange={setPassword} autoComplete="new-password" />
-        <input
-          type="text" dir="ltr" autoComplete="off" autoCapitalize="characters" spellCheck={false} maxLength={40} placeholder="كود الدعوة (اختياري)"
-          aria-label="كود الدعوة" data-testid="signup-promo" value={promo} onChange={(e) => setPromo(e.target.value.toUpperCase())} className={`${authInput} text-left`}
+        <PasswordInput
+          value={password} onChange={(v) => { setPassword(v); setPasswordError(""); }} autoComplete="new-password"
+          hint="٨ خانات على الأقل" error={passwordError}
+        />
+        <AuthField
+          label="كود الدعوة (اختياري)" type="text" dir="ltr" autoComplete="off" autoCapitalize="characters" spellCheck={false} maxLength={40} placeholder="مثال: CONF26"
+          data-testid="signup-promo" value={promo} onChange={(e) => setPromo(e.target.value.toUpperCase())} className="text-left"
         />
         <button type="submit" disabled={busy || authLoading} className={`${authPrimaryBtn} mt-2.5`}>{busy ? "جارٍ إنشاء الحساب..." : "إنشاء الحساب"}</button>
       </form>

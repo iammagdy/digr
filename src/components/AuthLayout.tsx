@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { authFailureMessageAr } from "@/lib/authHelp";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type InputHTMLAttributes, type ReactNode } from "react";
 import { Logo } from "@/components/Brand";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { readPendingQuestion } from "@/lib/pendingQuestion";
@@ -64,24 +64,56 @@ export function AuthToast({ tone = "ok", children }: { tone?: "ok" | "bad"; chil
   );
 }
 
+export const authLabel = "block px-1 pb-1.5 text-sm font-medium text-ink";
+
+/**
+ * A sign-in field with a label that stays on screen while the customer types (a placeholder disappears at the first key).
+ * The label is tied to the input by id; a hint and an error are announced with it (aria-describedby / aria-invalid).
+ * The placeholder is only an example of what to type, never the field's name.
+ */
+export function AuthField({
+  label, hint, error, id, className = "", adornment, ...input
+}: Omit<InputHTMLAttributes<HTMLInputElement>, "id"> & { label: string; hint?: string; error?: string; id?: string; adornment?: ReactNode }) {
+  const auto = useId();
+  const inputId = id ?? `auth-${auto}`;
+  const hintId = `${inputId}-hint`;
+  const errorId = `${inputId}-error`;
+  const describedBy = error ? errorId : hint ? hintId : undefined;
+  return (
+    <div className="flex flex-col">
+      <label htmlFor={inputId} className={authLabel}>{label}</label>
+      <div className="relative">
+        <input
+          {...input} id={inputId} aria-invalid={error ? true : undefined} aria-describedby={describedBy}
+          className={`${authInput} ${className}`}
+        />
+        {adornment}
+      </div>
+      {hint && !error && <p id={hintId} className="m-0 mt-1.5 px-1 text-xs leading-[1.7] text-mut">{hint}</p>}
+      {error && <p id={errorId} role="alert" className="m-0 mt-1.5 px-1 text-[13px] leading-[1.7] text-bad">{error}</p>}
+    </div>
+  );
+}
+
 export function PasswordInput({
-  value, onChange, placeholder = "كلمة المرور · ٨ خانات على الأقل", autoComplete,
-}: { value: string; onChange: (v: string) => void; placeholder?: string; autoComplete: string }) {
+  value, onChange, label = "كلمة المرور", hint, error, placeholder, autoComplete,
+}: { value: string; onChange: (v: string) => void; label?: string; hint?: string; error?: string; placeholder?: string; autoComplete: string }) {
   const [show, setShow] = useState(false);
   return (
-    <div className="relative">
-      <input
-        type={show ? "text" : "password"} dir="ltr" required autoComplete={autoComplete}
-        value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-        className={`${authInput} text-left`} style={{ paddingInline: "76px 22px", paddingLeft: 76, paddingRight: 22 }}
-      />
-      <button
-        type="button" onClick={() => setShow((v) => !v)} aria-pressed={show}
-        className="absolute left-2.5 top-2.5 h-11 cursor-pointer rounded-[14px] border-0 bg-sf2 px-3.5 text-[13px] text-mut"
-      >
-        {show ? "إخفاء" : "إظهار"}
-      </button>
-    </div>
+    <AuthField
+      label={label} hint={hint} error={error}
+      type={show ? "text" : "password"} dir="ltr" required autoComplete={autoComplete}
+      value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
+      className="text-left" style={{ paddingInline: "76px 22px", paddingLeft: 76, paddingRight: 22 }}
+      adornment={
+        <button
+          type="button" onClick={() => setShow((v) => !v)} aria-label={show ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}
+          className="absolute left-2.5 top-2.5 h-11 cursor-pointer rounded-[14px] border-0 bg-sf2 px-3.5 text-[13px] text-mut"
+        >
+          {show ? "إخفاء" : "إظهار"}
+        </button>
+      }
+    />
   );
 }
 
