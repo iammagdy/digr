@@ -2,7 +2,8 @@ import { isSellable, type CatalogEndpoint, type TregCatalog } from "../../treg/c
 import { expectedCost, priorRowsPerCall } from "../sourceRanking";
 import { canExpress, toolProfile } from "../toolProfile";
 import { CONTEXTDEV_PARSE_USD_ESTIMATE, PARSERS, WEB_SOURCES, type ParserName } from "../sources";
-
+import { TOOL_CARDS } from "../foundation/toolCards";
+import type { CardRole, ToolCard } from "../foundation/toolCards/types";
 
 /**
  * UNIFIED CAPABILITY REGISTRY (docs/UNIFIED-CAPABILITY-DISCOVERY.md). ONE list of what the existing providers can actually do, built from what the repository already holds, with no network and no paid call:
@@ -198,6 +199,11 @@ export interface RegistryAvailability {
   spentTodayUsd?: Partial<Record<"treg" | "firecrawl" | "contextdev", number | null>>;
   /** TREG's own daily cap in USD, with `spentTodayUsd.treg`. Absent: unknown. */
   tregDailyCapUsd?: number;
+  /**
+   * PHASE 3: include the hand ToolCards whose catalog capability maps to no operation (see `CARD_ROLE_OPERATION`). Always on for the reviewable artifact; at run time only with the Phase 4 router switch (`registry_router`), so
+   * discovery with the switch off is exactly what it was (a Facebook replies step, served in production by a verified card, was reported «partial» because the card was invisible: tests/phase3-registry.test.ts records the change).
+   */
+  handCards?: boolean;
 }
 
 /** Below this much room a provider's cap is used up for planning (the smallest call it could make costs about this). */
@@ -273,6 +279,33 @@ const WEB_CAPABILITIES: Record<string, { operation: Operation; takes: InputClass
   "contextdev.people.search": { operation: "people.discover", takes: ["query"], outputs: ["name", "title", "company", "url"], pagination: true, country: true, maxRows: 10 },
 };
 
+/**
+ * PHASE 3 (one canonical registry): the HAND TOOLCARDS of the compiled social path are capabilities too. A card written for an endpoint whose catalog capability string maps to no operation (the catalog has `None` for the AnyAPI
+ * replies tools and the Facebook comments tool, and a channel search string for the YouTube channel listing) was invisible to discovery although production uses it; and a carded endpoint the catalog does map was described by the
+ * catalog's WRAPPER fields (unknown, or missing the link the card reads). The card's own ROLE gives the operation; its documented mapping gives the outputs, KNOWN only when the card is verified on stored real pages. Roles that are not
+ * a data operation of the registry (a channel search, a counter card) stay out.
+ */
+const CARD_ROLE_OPERATION: Partial<Record<CardRole, Operation>> = {
+  "videos.search": "social.parents", "tweets.search": "social.parents", "posts.search": "social.parents", "posts.page": "social.parents", "posts.account": "social.parents", "videos.channel": "social.parents",
+  "video.comments": "social.comments", "post.comments": "social.comments", "tweet.replies": "social.comments",
+  "comment.replies": "social.replies",
+};
+
+function cardCapability(card: ToolCard, e: CatalogEndpoint, operation: Operation, unavailable: Capability["unavailable"]): Capability {
+  const takes: InputClass[] = card.inputs.parent ? [operation === "social.replies" ? "comment_ref" : "post_ref"] : ["query"];
+  const outputs = card.mapping.kind === "fields" ? [...new Set<OutputClass>(["id", ...outputsOfFields(Object.keys(card.mapping.fields))])] : (["id", "text", "author", "date"] as OutputClass[]);
+  if (card.counter) outputs.push("comment_count");
+  const rows = Math.max(1, card.page.observedRowsPerPage);
+  return {
+    id: card.endpointId, provider: "treg", operation, platform: card.platform, takes, outputs: [...new Set(outputs)], outputsKnown: card.status === "verified",
+    pagination: card.inputs.cursor !== null, maxRowsPerCall: rows,
+    filters: { date: Boolean(card.inputs.period), country: Boolean(card.inputs.country), language: false },
+    usdPerRow: Number.isFinite(card.costUsdPerPage) ? card.costUsdPerPage / rows : null, privacy: "public", unavailable,
+    summary: `hand tool card (${card.role})`, limits: card.cannot && card.cannot.length > 0 ? `cannot carry: ${card.cannot.join(", ")}` : null,
+    access: e.kind === "routed" ? "treg_routed" : "treg_direct", pricing: tregPricingOf(e),
+  };
+}
+
 export interface CapabilityRegistry {
   all: Capability[];
   byId: ReadonlyMap<string, Capability[]>;
@@ -281,9 +314,13 @@ export interface CapabilityRegistry {
 /** Builds the registry. `catalog` is the local snapshot; nothing is fetched. */
 export function buildCapabilityRegistry(catalog: TregCatalog, availability: RegistryAvailability): CapabilityRegistry {
   const all: Capability[] = [];
+  // with the hand cards, an endpoint that has a card whose role is this operation is described by its CARD (verified on stored real pages), not by the catalog's wrapper fields (below)
+  const cardOf = new Map<string, ToolCard>(availability.handCards ? TOOL_CARDS.filter((c) => CARD_ROLE_OPERATION[c.role]).map((c) => [c.endpointId, c] as const) : []);
   for (const e of catalog.endpoints) {
     const operation = operationOfCapability(e.capability);
     if (!operation) continue;
+    const card = cardOf.get(e.id);
+    if (card && CARD_ROLE_OPERATION[card.role] === operation) continue;
     const platformOf = String(e.capability ?? "").split(".")[0];
     const profile = toolProfile(e);
     // a sub-list schema documents nothing of the record (see `subListSchema`): no field is read from it
@@ -316,6 +353,17 @@ export function buildCapabilityRegistry(catalog: TregCatalog, availability: Regi
       access: e.kind === "routed" ? "treg_routed" : "treg_direct",
       pricing: tregPricingOf(e),
     });
+  }
+  for (const card of availability.handCards ? TOOL_CARDS : []) {
+    const e = catalog.byId.get(card.endpointId);
+    const operation = CARD_ROLE_OPERATION[card.role];
+    if (!e || !operation || isPrivateCapabilityString(e.capability)) continue;
+    // the catalog maps this endpoint to ANOTHER operation than the card's role: the catalog entry stays and the card adds nothing (never two readings of one endpoint)
+    const catalogOperation = operationOfCapability(e.capability);
+    if (catalogOperation !== null && catalogOperation !== operation) continue;
+    let allowed = true;
+    try { allowed = availability.isAllowed(e.id); } catch { allowed = false; }
+    all.push(cardCapability(card, e, operation, !isSellable(e.id, catalog) ? "not_sellable" : !allowed ? "not_permitted" : capUnavailable(availability.tregDailyCapUsd, availability.spentTodayUsd?.treg)));
   }
   for (const p of Object.values(PARSERS)) {
     for (const spec of PARSER_CAPABILITIES[p.name] ?? []) {
