@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useId, type ReactNode } from "react";
+import { useEffect, useId, useRef, type ReactNode } from "react";
+import { useDialogA11y } from "@/hooks/useDialogA11y";
 
 /* ------------------------------------------------------------------ */
 /* Buttons                                                             */
@@ -218,17 +219,6 @@ function useLockBody(locked: boolean) {
   }, [locked]);
 }
 
-function useEscape(onClose: () => void, active: boolean) {
-  useEffect(() => {
-    if (!active) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    document.addEventListener("keydown", onKey);
-    return () => document.removeEventListener("keydown", onKey);
-  }, [active, onClose]);
-}
-
 export function Modal({
   open,
   onClose,
@@ -242,15 +232,17 @@ export function Modal({
   children: ReactNode;
   wide?: boolean;
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const titleId = useId();
   useLockBody(open);
-  useEscape(onClose, open);
+  useDialogA11y({ open, onClose, containerRef: ref });
   if (!open) return null;
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-label={title}>
+    <div ref={ref} className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-4" role="dialog" aria-modal="true" aria-labelledby={titleId}>
       <div className="absolute inset-0 bg-ink/45 backdrop-blur-xs animate-fade" onClick={onClose} aria-hidden="true" />
       <div className={`relative flex max-h-[92dvh] w-full flex-col overflow-hidden rounded-t-[28px] bg-sf shadow-2xl animate-rise sm:rounded-[28px] ${wide ? "sm:max-w-2xl" : "sm:max-w-lg"}`}>
         <div className="flex items-center justify-between border-b border-sand-200 px-5 py-4">
-          <h2 className="text-base font-bold text-ink-900">{title}</h2>
+          <h2 id={titleId} className="text-base font-bold text-ink-900">{title}</h2>
           <IconButton label="إغلاق" onClick={onClose}>
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -276,16 +268,18 @@ export function Drawer({
   children: ReactNode;
   side?: "start" | "end";
 }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const titleId = useId();
   useLockBody(open);
-  useEscape(onClose, open);
+  useDialogA11y({ open, onClose, containerRef: ref });
   if (!open) return null;
   const pos = side === "start" ? "right-0" : "left-0";
   return (
-    <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label={title}>
+    <div ref={ref} className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-labelledby={titleId}>
       <div className="absolute inset-0 bg-ink/45 backdrop-blur-xs animate-fade" onClick={onClose} aria-hidden="true" />
       <div className={`absolute inset-y-0 ${pos} flex w-full max-w-sm flex-col bg-sf shadow-2xl animate-rise`}>
         <div className="flex items-center justify-between border-b border-sand-200 px-5 py-4">
-          <h2 className="text-base font-bold text-ink-900">{title}</h2>
+          <h2 id={titleId} className="text-base font-bold text-ink-900">{title}</h2>
           <IconButton label="إغلاق" onClick={onClose}>
             <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
               <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
