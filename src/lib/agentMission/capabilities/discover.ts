@@ -1,5 +1,6 @@
 import { linkOf, stagesOfNeed, type ResearchNeed, type StageNeed } from "./need";
 import type { Capability, CapabilityProvider, CapabilityRegistry, InputClass, Operation, OutputClass } from "./registry";
+import { routedFieldsOf, routerCompare, routerReject, type RouterReject, type RoutedFields, type RoutingFacts } from "./router";
 
 /**
  * CAPABILITY DISCOVERY (docs/UNIFIED-CAPABILITY-DISCOVERY.md): for each stage the request needs, which registry capabilities CAN do it, ranked by code:
@@ -16,7 +17,7 @@ import type { Capability, CapabilityProvider, CapabilityRegistry, InputClass, Op
  */
 export const DISCOVERY_VERSION = 1 as const;
 
-export type RejectReason = "private_data" | "provider_key_missing" | "provider_daily_cap_zero" | "provider_daily_cap_exhausted" | "not_sellable" | "not_permitted" | "platform_mismatch" | "no_usable_input" | "missing_outputs" | "cannot_take_parent_output";
+export type RejectReason = "private_data" | "provider_key_missing" | "provider_daily_cap_zero" | "provider_daily_cap_exhausted" | "not_sellable" | "not_permitted" | "platform_mismatch" | "no_usable_input" | "missing_outputs" | "cannot_take_parent_output" | RouterReject;
 
 export interface RankedCandidate {
   id: string;
@@ -34,6 +35,8 @@ export interface RankedCandidate {
   takes: InputClass[];
   summary: string;
   limits: string | null;
+  /** Phase 4 (router switch only): the evidence the router ranked on. */
+  routed?: RoutedFields;
 }
 
 export interface Limitation {
@@ -54,7 +57,7 @@ export interface StageDiscovery {
   link: { from: OutputClass; to: InputClass } | null;
 }
 
-export type UnsupportedReason = "no_capability" | "provider_unavailable" | "not_permitted" | "unsupported_platform";
+export type UnsupportedReason = "no_capability" | "provider_unavailable" | "not_permitted" | "unsupported_platform" | "not_verified";
 
 export interface CapabilityDiscovery {
   v: typeof DISCOVERY_VERSION;
@@ -90,6 +93,8 @@ export function operationLabelAr(operation: Operation, platform: string | null):
 }
 /** A capability that exists but cannot be used now because of its provider (no key, a cap of 0, a cap used up today). */
 const PROVIDER_REASONS: ReadonlySet<RejectReason> = new Set<RejectReason>(["provider_key_missing", "provider_daily_cap_zero", "provider_daily_cap_exhausted"]);
+/** Router refusals that mean «a capable source exists but Diger has not verified it» (Phase 4). */
+const VERIFICATION_REASONS: ReadonlySet<RejectReason> = new Set<RejectReason>(["below_verification", "broken_or_deprecated", "outputs_unproven_for_dependent", "price_unknown", "runtime_unhealthy"]);
 const FILTER_AR = { period: "الفترة", country: "الدولة", language: "اللغة" } as const;
 const UNSUPPORTED_PLATFORM_AR: Record<string, string> = { snapchat: "سناب شات", clubhouse: "كلوب هاوس", discord: "ديسكورد" };
 
@@ -152,6 +157,8 @@ export interface DiscoveryOptions {
    * website from its name (`company.enrich`, reached through the TREG gateway): companies → official website → contacts. Off (or a companies source that documents websites): the chain is exactly what it was.
    */
   enrichWebsites?: boolean;
+  /** Phase 4, switch `registry_router` (OFF by default): rank and filter with the router (router.ts). Absent: discovery's own order, exactly as before. */
+  routing?: RoutingFacts;
 }
 
 export const ENRICH_STAGE_KEY = "company_websites";
@@ -216,15 +223,24 @@ export function discoverCapabilities(need: ResearchNeed, registry: CapabilityReg
       // a child must be fed by its parent's rows: a field the parent's chosen capability documents (unknown parent outputs: proven on the sample, so any accepted input is kept)
       if (!reason && parentCandidate && parentCandidate.outputs.length > 0 && parentCandidate.outputsVerified && linkOf(parentCandidate.outputs, c.takes.filter((t) => stage.accepts.includes(t))) === null) reason = "cannot_take_parent_output";
       if (reason) { rejected.push({ id: c.id, reason }); continue; }
-      if (!eligible.some((e) => e.id === c.id)) eligible.push(candidateOf(c, stage, need, children, registry));
+      if (eligible.some((e) => e.id === c.id)) continue;
+      const candidate = candidateOf(c, stage, need, children, registry);
+      if (options.routing) {
+        const wanted = wantedFilters(need, stage).length;
+        const routed = routedFieldsOf(c, options.routing, wanted, candidate.filtersCovered.length);
+        const refused = routerReject(c, stage, children.length > 0, options.routing, routed);
+        if (refused) { rejected.push({ id: c.id, reason: refused }); continue; }
+        candidate.routed = routed;
+      }
+      eligible.push(candidate);
     }
-    eligible.sort(compare);
+    eligible.sort(options.routing ? routerCompare : compare);
     eligible.forEach((e, i) => { e.rank = i + 1; });
     const selected = eligible[0] ?? null;
     if (!selected) {
       failedKeys.add(stage.key);
       const reasons = new Set(rejected.filter((r) => r.reason !== "platform_mismatch").map((r) => r.reason));
-      const reason: UnsupportedReason = reasons.size === 0 ? "no_capability" : [...reasons].every((r) => PROVIDER_REASONS.has(r)) ? "provider_unavailable" : [...reasons].every((r) => r === "not_permitted" || r === "not_sellable" || PROVIDER_REASONS.has(r)) ? "not_permitted" : "no_capability";
+      const reason: UnsupportedReason = reasons.size === 0 ? "no_capability" : [...reasons].some((r) => VERIFICATION_REASONS.has(r)) && [...reasons].every((r) => VERIFICATION_REASONS.has(r) || PROVIDER_REASONS.has(r) || r === "not_permitted" || r === "not_sellable" || r === "missing_outputs" || r === "no_usable_input") ? "not_verified" : [...reasons].every((r) => PROVIDER_REASONS.has(r)) ? "provider_unavailable" : [...reasons].every((r) => r === "not_permitted" || r === "not_sellable" || PROVIDER_REASONS.has(r)) ? "not_permitted" : "no_capability";
       unsupported.push({ stageKey: stage.key, operation: stage.operation, reason });
       out.push({ stage, eligible: [], rejected, selected: null, link: null });
       continue;
@@ -252,7 +268,7 @@ export function discoverCapabilities(need: ResearchNeed, registry: CapabilityReg
     return { ...base, status, stages: out, unsupported, limitations, messageAr, alternativeAr: `نقدر نجمع لك ${kept.join(" و")} بدون هذا الجزء. هل يناسبك هذا النطاق، أم تحب توضّح الجزء الآخر بطريقة تانية؟` };
   }
   const missingLabels = [...new Set(missing.map((u) => operationLabelAr(u.operation, stages.find((s) => s.key === u.stageKey)?.platform ?? null)))];
-  const why = missing.every((u) => u.reason === "provider_unavailable") ? "المصدر الذي يقدّمها غير متاح الآن" : missing.every((u) => u.reason === "not_permitted") ? "المصادر التي تقدّمها غير مسموح بها لحسابك" : "لا يوجد مصدر متاح يقدّمها بالبيانات المطلوبة";
+  const why = missing.every((u) => u.reason === "not_verified") ? "المصادر التي تقدّمها لم نتحقق بعد من جودتها وتكلفتها، ولن نَعِد بها قبل التحقق" : missing.every((u) => u.reason === "provider_unavailable") ? "المصدر الذي يقدّمها غير متاح الآن" : missing.every((u) => u.reason === "not_permitted") ? "المصادر التي تقدّمها غير مسموح بها لحسابك" : "لا يوجد مصدر متاح يقدّمها بالبيانات المطلوبة";
   const messageAr = `لا نقدر حاليًا على جمع: ${missingLabels.join("، ")}، لأن ${why}.`;
   const kept = out.filter((s) => s.selected).map((s) => operationLabelAr(s.stage.operation, s.stage.platform));
   const alternativeAr = status === "partial" && kept.length > 0 ? `نقدر نجمع لك ${[...new Set(kept)].join(" و")} بدون الجزء غير المتاح. هل يناسبك هذا النطاق؟` : need.kind === "social" ? "نقدر نجمع بيانات عامة مشابهة من صفحات الويب العامة أو من منصة أخرى من المنصات المتاحة. أي بديل يناسبك؟" : "نقدر نبحث في صفحات الويب العامة عن نفس الموضوع. هل يناسبك ذلك؟";
