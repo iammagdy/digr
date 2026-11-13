@@ -65,7 +65,7 @@ const RUNNING = new Set(["planning", "executing"]);
  *       no row                          → OwnershipUnverifiedError("row_missing");
  *       no worker on the row            → OwnershipUnverifiedError("no_owner");
  *       our id but not running          → OwnershipUnverifiedError("not_running") (it was ended or put back: someone else settles it);
- *       our id, running, and the store cannot report renewals (a legacy store returning nothing): the read is the only evidence there is → passes.
+ *       our id and running, but the renewal did not confirm it (a race, or a store that cannot say what it renewed) → OwnershipUnverifiedError("renew_failed").
  *
  * A run with no `ownerId` was not claimed by a worker (an in-process harness): no lease exists to check. The production worker always passes its id
  * (main.ts; pinned by tests/ownership-fail-closed.test.ts).
@@ -95,7 +95,8 @@ export async function ensureOwned(
   }
   if (!owner) throw new OwnershipUnverifiedError(missionId, "no_owner");
   if (!RUNNING.has(String(row.status))) throw new OwnershipUnverifiedError(missionId, "not_running");
-  if (Array.isArray(renewed)) throw new OwnershipUnverifiedError(missionId, "renew_failed"); // ours and running, yet the renewal matched nothing: a race; never assumed
+  // ours and running, yet the renewal matched nothing (a race) or the store could not say what it renewed: a read alone is never proof (it does not keep another worker out)
+  throw new OwnershipUnverifiedError(missionId, "renew_failed");
 }
 
 export interface OwnedStore {

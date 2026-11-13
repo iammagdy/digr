@@ -710,7 +710,12 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   } else {
     // ROUND 25: a mission that already shows a plan (a stale run racing the card) is never closed as unserved or failed: the stored plan stays for the customer to approve
     const current = await store.getMission(mission.id).catch(() => null);
-    if (current && (current.status === "plan_ready" || current.plan)) { deps.log?.(`no_card_kept_plan ${mission.id}`); await store.updateMission(mission.id, { ...clear }).catch(() => undefined); return; }
+    if (current && (current.status === "plan_ready" || current.plan)) {
+      deps.log?.(`no_card_kept_plan ${mission.id}`);
+      // ROUND 56: the lease is cleared only on a row that is still THIS run's (its worker, not yet approved or executing): a stale run must never take the worker and the lease off a mission another worker now executes (a running row with no lease is never claimed again)
+      if (current.worker_id === mission.worker_id && (current.status === "planning" || current.status === "plan_ready")) await store.updateMission(mission.id, { ...clear }).catch(() => undefined);
+      return;
+    }
     // NO CARD: exactly one of four honest classes, decided by code from what the planning really did (src/lib/agentMission/refusal.ts), never from the model's own words
     const planningCalls = await store.listCalls(mission.id);
     const verdict = classifyNoCardEnd({ claim: state.finish?.kind ?? (state.finish ? "unsupported" : null), endedWithoutAnswer: !state.finish, stop: output.error ? `${output.stop}: ${output.error}` : String(output.stop ?? ""), calls: planningCalls, ...(state.planRejections ? { planRejections: state.planRejections } : {}) });
@@ -952,7 +957,13 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
       files = published.files.map((f) => ({ ...f, download_name: `${title}.${f.kind}` }));
     } catch (e) {
       await ensureOwned(deps, mission.id);
-      await settleMission(deps.client, { jobId, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath: null, releaseReason: "تعذّر حفظ ملفات النتيجة، فعاد الحجز المؤقت كاملًا." });
+      const released = await settleMission(deps.client, { jobId, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: spent, resultPath: null, releaseReason: "تعذّر حفظ ملفات النتيجة، فعاد الحجز المؤقت كاملًا." });
+      // ROUND 56: a release the database refused (already settled, or the call failed) is NEVER told as «nothing was charged»: the admin settles it by hand, as on the main path
+      if (!released.ok) {
+        await store.updateMission(mission.id, { status: "failed", error: `settlement ${released.code}: ${released.detail}`.slice(0, 300), execution_llm_usd: Number(llm.toFixed(6)), ...clear });
+        await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّرت التسوية الآلية للمهمة؛ راجع المشرف ولم يُخصم رصيد إضافي." });
+        return;
+      }
       await store.updateMission(mission.id, { status: "failed", error: `files: ${String((e as Error)?.message ?? e).slice(0, 200)}`, execution_llm_usd: Number(llm.toFixed(6)), charged_points: 0, delivered_units: 0, ...clear });
       await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّر حفظ ملفات النتائج؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد." });
       await tell(deps, mission, jobId, "failed", { delivered: 0, planned: plan.price.deliveredRows, chargedPoints: 0, releasedPoints: reserve, reservedPoints: reserve, noun: noun.singular, hasJob: true });
@@ -1096,7 +1107,13 @@ export async function recoverFromError(deps: RunnerDeps, mission: MissionRecord,
       // last resort: nothing delivered, the whole hold released through the existing function
       deps.log?.(`settle_failed ${mission.id} ${shortError(e).slice(0, 120)}`);
       await ensureOwned(deps, mission.id);
-      await settleMission(deps.client, { jobId: fresh.job_id, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: Number(fresh.planning_treg_usd ?? 0) + Number(fresh.execution_treg_usd ?? 0), resultPath: null, releaseReason: "تعذّر إكمال المهمة، فعاد الحجز المؤقت كاملًا." });
+      const released = await settleMission(deps.client, { jobId: fresh.job_id, deliveredUnits: 0, unitPricePoints: unit, reservedPoints: reserve, costUsd: Number(fresh.planning_treg_usd ?? 0) + Number(fresh.execution_treg_usd ?? 0), resultPath: null, releaseReason: "تعذّر إكمال المهمة، فعاد الحجز المؤقت كاملًا." });
+      // ROUND 56: a release the database refused (the job was already settled and charged, or the call failed) is NEVER told as «nothing was charged»: the admin settles it by hand, as on the main path
+      if (!released.ok) {
+        await store.updateMission(mission.id, { status: "failed", error: `settlement ${released.code}: ${released.detail}`.slice(0, 300), ...clear });
+        await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّرت التسوية الآلية للمهمة؛ راجع المشرف ولم يُخصم رصيد إضافي." });
+        return;
+      }
       await store.updateMission(mission.id, { status: "failed", error: message, charged_points: 0, delivered_units: 0, ...clear });
       await store.addEvent(mission.id, { kind: "result", message_ar: "تعذّر إكمال المهمة؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد." });
       await tell(deps, fresh, fresh.job_id, "failed", { delivered: 0, planned: plan.price.deliveredRows, chargedPoints: 0, releasedPoints: reserve, reservedPoints: reserve, noun: itemNounOfPlan(plan).singular, hasJob: true });

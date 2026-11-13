@@ -118,7 +118,7 @@ describe("ensureOwned (unit): ownership is established only by positive evidence
   });
   const refused: Array<[string, (s: MemoryStore) => void, string]> = [
     ["the renewal throws (database down)", (s) => { s.renewLeases = async () => { throw new Error("connect ECONNREFUSED"); }; }, "renew_failed"],
-    ["the row cannot be read", (s) => { s.missions.get("m")!.worker_id = "w9"; s.missions.get("m")!.worker_id = null; s.getMission = async () => { throw new Error("timeout"); }; }, "read_failed"],
+    ["the row cannot be read", (s) => { s.missions.get("m")!.worker_id = null; s.getMission = async () => { throw new Error("timeout"); }; }, "read_failed"],
     ["the row is missing", (s) => { s.missions.delete("m"); }, "row_missing"],
     ["the row names no worker", (s) => { s.missions.get("m")!.worker_id = null; }, "no_owner"],
     ["the row is ours but no longer running", (s) => { s.missions.get("m")!.status = "completed"; }, "not_running"],
@@ -142,12 +142,12 @@ describe("ensureOwned (unit): ownership is established only by positive evidence
     await expect(ensureOwned({ store, ownerId: "w1", revokeOwnership: () => { revoked += 1; } }, "m")).rejects.toBeInstanceOf(LeaseLostError);
     expect(revoked).toBe(1);
   });
-  it("a legacy store that cannot report renewals: the read is the only evidence (ours and running passes; anything else is refused)", async () => {
+  it("a store that cannot say what it renewed is not proof either: a read of «ours and running» alone is refused (review of round 56)", async () => {
     const store = createMemoryStore([row()]);
     store.renewLeases = async () => undefined;
-    await expect(ensureOwned({ store, ownerId: "w1" }, "m")).resolves.toBeUndefined();
-    store.missions.get("m")!.worker_id = null;
-    await expect(ensureOwned({ store, ownerId: "w1" }, "m")).rejects.toBeInstanceOf(OwnershipUnverifiedError);
+    const err = await ensureOwned({ store, ownerId: "w1" }, "m").catch((e) => e);
+    expect(err).toBeInstanceOf(OwnershipUnverifiedError);
+    expect((err as OwnershipUnverifiedError).reason).toBe("renew_failed");
   });
   it("the production worker always gives the run its worker id (a run without one is an in-process harness with no lease)", () => {
     const main = readFileSync(path.join(__dirname, "..", "agent", "src", "main.ts"), "utf8");
@@ -217,7 +217,7 @@ describe("the existing lease path recovers it: settled exactly once, by what was
 });
 
 describe("two workers, one mission", () => {
-  it("w1 stalls past its lease, w2 takes over and settles; w1 resumes into its settlement: refused, revoked, no second financial action", async () => {
+  it("w1 stalls past its lease, w2 takes over and settles; w1 resumes into its settlement: refused (the row names no worker now), no second financial action", async () => {
     const w = await world();
     // w1 stalls right after publishing its file
     let release!: () => void;
@@ -333,5 +333,54 @@ describe("cancellation cannot race a settlement", () => {
     const admin = readFileSync(path.join(__dirname, "..", "src", "lib", "agentMission", "adminActions.ts"), "utf8");
     expect(admin).toContain('.eq("id", input.id).in("status", ["queued", "needs_input", "plan_ready"]);');
     expect(admin).toContain('if (!["queued", "needs_input", "plan_ready"].includes(data.status)) return bad(409');
+  });
+});
+
+describe("review of round 56: a stale run can no longer strand an executing mission", () => {
+  it("a stale PLANNING run that ends without a card does not clear the worker and lease of a mission another worker now executes", async () => {
+    const w = await world();
+    // the row is executing under w3 (re-planned, approved and claimed while w1's planning was stalled)
+    w.store.missions.get(ID)!.worker_id = "w3";
+    const before = { ...w.store.missions.get(ID)! };
+    const stale = { ...before, status: "planning" as const, worker_id: "w1" };
+    // w1's planning run resumes and ends with no card: the model gives up at once
+    await runMissionSafely(w.deps({ driver: createFakeDriver([]), ownerId: "w1" }), stale);
+    const after = w.store.missions.get(ID)!;
+    expect(after.worker_id).toBe("w3");
+    expect(after.lease_until).toBe(before.lease_until);
+    expect(after.status).toBe("executing");
+  });
+
+  it("a release the database refuses after the files failed is never told as «nothing was charged»", async () => {
+    const w = await world();
+    await updateRunState(w.store, ID, (s) => ({ ...s, executionStarts: 0, errorRequeues: AGENT_ERROR_REQUEUES_MAX }));
+    // the job was already settled and charged by an earlier attempt; the settlement and the release are now refused
+    const realRpc = w.money.client.rpc.bind(w.money.client);
+    w.money.client.rpc = async (name: string, args: any) => (MONEY.includes(name) ? { error: { message: "job already settled" } } : realRpc(name, args));
+    const realPublish = w.store.publishResult.bind(w.store);
+    w.store.publishResult = async (a) => { await realPublish(a); throw new Error("storage: upload failed"); };
+    await recoverFromError(w.deps(), w.store.missions.get(ID)!, new Error("the run failed"));
+    const m = w.store.missions.get(ID)!;
+    expect(m.status).toBe("failed");
+    expect(m.charged_points).not.toBe(0);
+    expect(m.error).toMatch(/^settlement /);
+    const last = w.store.events[w.store.events.length - 1].message_ar;
+    expect(last).toBe("تعذّرت التسوية الآلية للمهمة؛ راجع المشرف ولم يُخصم رصيد إضافي.");
+    expect(w.notices).not.toContain("failed");
+  });
+  it("the same in recoverFromError's LAST RESORT (the item log itself cannot be read): a refused release is never told as «nothing was charged»", async () => {
+    const w = await world();
+    await updateRunState(w.store, ID, (s) => ({ ...s, executionStarts: 0, errorRequeues: AGENT_ERROR_REQUEUES_MAX }));
+    const realRpc = w.money.client.rpc.bind(w.money.client);
+    w.money.client.rpc = async (name: string, args: any) => (MONEY.includes(name) ? { error: { message: "job already settled" } } : realRpc(name, args));
+    w.store.listFiles = async () => { throw new Error("storage: list failed"); };
+    const logs: string[] = [];
+    await recoverFromError(w.deps({ log: (l) => logs.push(l) }), w.store.missions.get(ID)!, new Error("the run failed"));
+    expect(logs.some((l) => l.startsWith(`settle_failed ${ID}`))).toBe(true); // the last resort was reached
+    const m = w.store.missions.get(ID)!;
+    expect(m).toMatchObject({ status: "failed", worker_id: null, lease_until: null });
+    expect(m.charged_points).not.toBe(0);
+    expect(w.store.events[w.store.events.length - 1].message_ar).toBe("تعذّرت التسوية الآلية للمهمة؛ راجع المشرف ولم يُخصم رصيد إضافي.");
+    expect(w.notices).not.toContain("failed");
   });
 });
