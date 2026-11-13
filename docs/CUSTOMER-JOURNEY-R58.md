@@ -67,6 +67,44 @@ Main before this round: `196942d` (PRs #469–#472). The acceptance request:
   * When it blocks, the code's count answer is shown instead.
 * **Tests:** `tests/number-words-r58.test.ts` (9).
 
+## Authenticated production journey (13 Nov 2026, 15:56–16:06 UTC, production `2bd4b28`)
+
+A real customer journey on diger.tech with the dedicated test account (not an admin; `app_metadata.role` empty). The login was the normal `/login` page (Supabase password sign-in) in a headless browser. Credentials were never printed, committed or logged.
+
+* **Request** (a small labelled scenario, not the 32-company acceptance): «عايز ١٢ شركة مستحضرات تجميل في مصر، ومع كل شركة موقعها الرسمي، والتليفون والإيميل المنشورين ورابط مصدر المعلومات…».
+* **Plan** `msn_088cfef00f92a8ff1ea9`: 12 companies (Tomba company search) and 12 contact rows (Context.dev page parse). The card said «هتستلم ١٢ شركة» and «… وعدد الشركات فيها ١٢ فقط، لا ٢٤». Most charged 312, hold 359.
+* **Methodology questions** (real chat model): sources and relevance answered from the plan, no invented capability. «يعني هستلم ١٢ شركة ولا ٢٤؟» was answered «هتستلم ١٢ شركة. الرقم ٢٤ … مجموع العناصر».
+* **Plan edit** (card editor, no paid call): 12 → 10 → 9, so the hold stayed within the 325-point limit. At 9: most 270, hold 310.
+* **Approval → execution → delivery:**
+  * approved 16:01:16, completed 16:06:04;
+  * 9 companies + 4 contact rows delivered (13 of 18 planned items);
+  * Excel (summary, methodology, 2 sheets) and a CSV zip (one file per step + methodology), both UTF-8 with BOM;
+  * the file's first sentence: «تم تسليم ١٣ من ١٨ عنصرًا. منها ٩ شركات، و٤ من «…»».
+* **Data quality:**
+  * 9 distinct Egyptian cosmetics companies; 9 duplicates removed, 1 rejected as off-topic;
+  * all 6 delivered contact values (3 e-mails, 3 phones) were found on the cited public contact pages;
+  * of the 9 company websites: 5 confirmed live cosmetics sites, 2 unreachable, 2 inconclusive;
+  * issues: two possible identity mismatches (BOBANA described and linked as «Vision Cosmetics»; «yolo-cosmetics.com» described as «Cosmotrade»), one junk address («31.25»), one «Giza Giza»;
+  * the companies sheet has no source-link column (company data comes from a company database; only the contact rows carry a public link);
+  * contacts were found for 4 of 9 companies.
+* **Money:**
+  * ledger: reserve −310, release +310, charge −195;
+  * 195 = ceil(13 × 14.970984), at most the 270 shown;
+  * balance 3,281 → 3,086. No other row.
+* **Notices:** «بدأ تنفيذ مهمتك» and the partial-delivery notice. «طلباتي» shows the mission.
+* **Phone** (iPhone 13 emulation): no horizontal scroll; the card, the files and «طلباتي» are readable.
+* **Fixed after the journey (#475):** five customer-facing wording defects.
+  * The card line «تُجمع المنشورات…» («المنشورين», published, read as «posts»).
+  * The headline «٩ شركة» after an edit.
+  * The file and notice names «١٣/١٨ إيميل والتليفون…» for 9 companies.
+  * The shortfall reason «عليها منشورات أقل».
+  * «طلباتي» falling back to «سجل».
+* **External API spend:**
+  * this mission: $0.1452 (providers $0.1045 including 11 empty Context.dev parses at $0.00254 each; model $0.0407);
+  * evals of this round: $0.0735;
+  * chat replies: under $0.005, not recorded in `llm_usage`.
+  * The round's total is about $0.22, **over the $0.20 authorization by about $0.02**. Execution cost three times the plan's provider estimate ($0.0305), and an executing mission cannot be stopped by the customer.
+
 ## Not changed (owner decision): what a unit of the price is
 
 The price counts every delivered item of every step. That is the approved contract (`missionPricing.ts`):
