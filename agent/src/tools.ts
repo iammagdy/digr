@@ -900,8 +900,11 @@ function webTools(ctx: ToolContext): ToolSpec[] {
   const avail = webAvailableOf(ctx);
   const guard = (id: string, why: unknown) => { const m = cheapestFirstMessage(state, id, why); return m ? { ok: false, refused: "choose_cheapest", message: m } : null; };
   const done = (id: string, result: Record<string, any>) => { if (!("refused" in result)) state.tried.add(id); return result; };
-  // a search or read that reached the provider: what it gave for THIS input (a failed call, or a page with no text, counts as nothing)
+  // a search or read that reached the provider: what it gave for THIS input (a failed call, or a page with no text, counts as nothing). A refusal that is about the
+  // PROVIDER (its daily limit is full, or it has no key now) also counts as nothing for that input, so the other provider is never blocked by the cheaper one's refusal
+  const PROVIDER_REFUSALS = new Set(["daily_cap", "source_unavailable"]);
   const webDone = (id: string, input: unknown, result: Record<string, any>) => {
+    if ("refused" in result && PROVIDER_REFUSALS.has(String(result.refused))) { const list = state.webOutcomes.get(id) ?? []; list.push({ rows: 0, key: webInputKey(input) }); state.webOutcomes.set(id, list); }
     if (!("refused" in result)) {
       const page = Array.isArray(result.first_rows) ? (result.first_rows[0] as Record<string, unknown> | undefined) : undefined;
       const rows = result.ok !== true ? 0 : id.endsWith(".scrape") ? (Number(page?.characters ?? 0) > 0 ? 1 : 0) : Number(result.rows_in_page ?? 0) || 0;

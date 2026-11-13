@@ -95,4 +95,14 @@ describe("through the real web_search / web_scrape tools (fake providers, the re
     expect(logged.map((c) => c.endpoint_id)).toEqual(["contextdev.scrape", "firecrawl.scrape"]);
     void cheap;
   });
+  it("Context.dev refused by its own daily limit for a query: Firecrawl is not blocked for that query (no deadlock between the two rules)", async () => {
+    const t = setup({ search: () => [{ url: "https://co.example", title: "شركة", description: "x" }] });
+    const realSearch = t.h.ctx.web!.webSearch.bind(t.h.ctx.web);
+    t.h.ctx.web!.webSearch = async (input: any) => (input.provider === "contextdev" ? { ok: false, call_id: "c1", refused: "daily_cap", message: "the provider's daily limit has no room" } as any : realSearch(input));
+    const capped: any = await t.tools.web_search.handler({ provider: "contextdev", query: "شركات" });
+    expect(capped.refused).toBe("daily_cap");
+    const dear: any = await t.tools.web_search.handler({ provider: "firecrawl", query: "شركات" });
+    expect(dear.refused).toBeUndefined();
+    expect(t.hosts().filter(isFirecrawl)).toHaveLength(1);
+  });
 });
