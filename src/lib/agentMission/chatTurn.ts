@@ -61,7 +61,8 @@ export async function latestMissionOfConversation(sb: any, conversationId: strin
 }
 
 /** What the customer reads when the plan they want to change is not ready yet. */
-export const PLAN_NOT_READY_AR = "خطة طلبك ما زالت قيد التجهيز ولم تظهر بعد. انتظر ظهورها في البطاقة ثم عدّلها منها، ولن يُخصم شيء قبل موافقتك.";
+// ROUND 58: a change typed while the plan is still being prepared is NOT applied (the planner run is never cancelled under the worker): the customer is told so, and how to make it reach the plan
+export const PLAN_NOT_READY_AR = "خطة طلبك ما زالت قيد التجهيز، ولم يُطبَّق عليها تعديلك بعد. عندما تظهر في البطاقة أرسل لي التعديل نفسه مرة أخرى أو عدّلها منها، ولن يُخصم شيء قبل موافقتك.";
 /** What the customer reads when a follow-up changes something the chat cannot apply by itself (no new count): the card's own editor does it, priced again by code. */
 export const EDIT_IN_CARD_AR = "لتعديل الفترة أو اللغة أو الأعمدة أو الاستثناءات استخدم زر «عدّل الطلب» في بطاقة الخطة، وسيُحسب السعر من جديد قبل موافقتك. وإن كان طلبك مختلفًا تمامًا فاكتبه كاملًا.";
 export const PLAN_EDITED_AR = "عدّلنا الخطة بحسب طلبك، وحُسب السعر من جديد. راجعها في البطاقة، ولن يُخصم شيء قبل أن تعتمدها.";

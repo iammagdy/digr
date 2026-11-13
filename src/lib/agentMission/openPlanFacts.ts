@@ -210,13 +210,22 @@ export function unsupportedClaimIssues(reply: string, f: OpenPlanFacts | null): 
   const issues: string[] = [];
   if (f.entity && f.entity.total !== f.entity.rows) {
     const said = f.entity.totalAsNounAr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    if (new RegExp(`(?<!(?:مش|ليس|ليست|لا|وليس|وليست|مو|بدل|طلبت|تطلب) )${said}`).test(t)) issues.push("claim:priced_total_as_entities");
+    if (assertedWithoutNegation(t, new RegExp(said, "g"))) issues.push("claim:priced_total_as_entities");
   }
   if (/^(?:أيوه|ايوه|أيوة|ايوة|نعم|أكيد|اكيد)[،,.]?\s*(?:ال)?سعر\s*(?:بيقل|هيقل|يقل|سيقل|ينخفض|هينزل)/.test(t)) issues.push("claim:column_saving");
   if (/(?:شيل|نشيل|تشيل|حذف|إزالة|ازالة|إخفاء|اخفاء)\s+(?:\S+\s+){0,2}(?:عمود|أعمدة|الأعمدة|العمود|العمودين|خانة|خانات)[^.؟!]{0,50}(?<!(?:مش|ما|لا|لن|ولا) )(?:يقلل|هيقلل|بيقلل|يخفض|يوفر|هيوفر|بيوفر)/.test(t)) issues.push("claim:column_saving");
   const statesDedupe = [...f.notesAr, ...f.assumptionsAr].some((a) => /تكرار|مكرر/.test(a));
   if (!statesDedupe && /(?:حذف|إزالة|ازالة|نشيل|هنشيل|بنشيل|تشيل|استبعاد|نستبعد|هنستبعد|بنستبعد|تصفية|فلترة)\s+(?:ال)?(?:تكرار|مكرر|المكرر|المكررة|التكرارات)|مش هتتكرر|لن تتكرر|مستحيل تتكرر|ما بتتكررش/.test(t)) issues.push("claim:dedupe");
   if (/(?:خانة|عمود)\s+(?:لل|ال)?تحقق|(?:ترتفع|تزيد|هتزيد|هترتفع|بتزيد)\s+(?:ال)?جود[ةه]/.test(t)) issues.push("claim:unstated_capability");
-  if (/(?<!(?:لا|مش|ما|لن|ولا|نقدرش) )(?:نضمن|هنضمن|بنضمن|أضمن|اضمن)\s+(?:لك\s+)?(?:إن\s+|ان\s+)?(?:كل|جميع)/.test(t)) issues.push("claim:guarantee");
+  if (assertedWithoutNegation(t, /(?:نضمن|هنضمن|بنضمن|أضمن|اضمن)\s+(?:لك\s+)?(?:إن\s+|ان\s+)?(?:كل|جميع)/g)) issues.push("claim:guarantee");
   return issues;
+}
+
+/** A phrase the reply ASSERTS: some match of it has no negation or contrast among the few words before it («مش هنقدر نضمن إن كل…», «مش ٣٢ شركة», «انت طلبت ٣٢ شركة» are not assertions). */
+function assertedWithoutNegation(text: string, re: RegExp): boolean {
+  for (const m of text.matchAll(re)) {
+    const before = text.slice(Math.max(0, (m.index ?? 0) - 28), m.index ?? 0);
+    if (!/(?:^|\s|،)(?:و?لا|مش|ما|لن|ليس|ليست|مو|بدل|طلبت|تطلب|طالب|منقدرش|مقدرش|ماقدرش|يصعب|صعب)(?:\s|$)/.test(before)) return true;
+  }
+  return false;
 }

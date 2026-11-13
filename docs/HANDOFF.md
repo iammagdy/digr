@@ -20,6 +20,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
   * A deterministic reply guard (`unsupportedClaimIssues`) replaces model replies with five kinds of unsupported claim: total-as-companies, column saving, unstated de-duplication, invented capability, coverage guarantee.
 * **Measured, real model:** shown replies with an unsupported claim 4/24 (main `196942d`) → 0/48. Spend $0.0496 (round cap $0.15; all rounds $0.1376).
 * **Not applied (owner):** a company as the billable unit (`docs/proposals/per-company-unit.md`).
+* **Planning race:** no website path cancels a `planning`/running mission (pinned by `tests/no-planning-cancel-r58.test.ts`). The worker fence stays unbuilt. A change typed during planning is now said NOT to be applied yet.
 * **Tests:** `tests/company-count-r58.test.ts` (26). Re-pinned with notes: `flags-off-digests.json` (views; g1/g2 workbook sentence) and `stage3-flags-off.json` (file digests). One round-57 price line changed (CHANGED).
 
 ## Round 57 (13 Nov 2026): the Egyptian-cosmetics customer journey (docs/CUSTOMER-JOURNEY-R57.md)

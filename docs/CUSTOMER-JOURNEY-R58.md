@@ -40,6 +40,13 @@ Main before this round: `196942d` (PRs #469–#472). The acceptance request:
      * a guarantee of coverage.
      The patterns are the real model's own replies on main `196942d`.
 
+## Plan editing while the worker is planning (the round-57 deferred race, inspected again)
+
+* **No website path cancels a mission in `planning`, `approved` or `executing`.** Every cancel is a compare-and-set on waiting statuses: customer (`queued, needs_input, plan_ready`), chat replace/withdraw (the same), admin (the same), expiry (`needs_input, plan_ready`), add-on (`plan_ready`), free re-run (`queued`). So a late planner run cannot write a cancelled mission back to `plan_ready` today. The worker fence (compare-and-set on every worker write) stays unbuilt: it changes the byte-identical worker replays and a deliberate policy, and nothing needs it now.
+* **Pinned:** `tests/no-planning-cancel-r58.test.ts` reads every website `status: "cancelled"` write and fails if one could match a running status (mutation-checked: adding `planning` to the customer's list fails it). Adding such a path needs the worker fence first.
+* **What the customer reads** when they type a change while the plan is prepared: the change is NOT applied yet, and they should send it again once the plan shows, or use the card («خطة طلبك ما زالت قيد التجهيز، ولم يُطبَّق عليها تعديلك بعد…»). Before, the reply implied the change would be applied.
+* **Custom columns:** the card's editor toggles only the columns the plan has. A column the plan lacks («ضيف صفحة الفيسبوك») is a chat revision: the whole request is planned again with the change (round 57, `C2`/`B1` in the eval). Required source links stay, because the revision keeps the original words.
+
 ## Measured with the real model (production configuration, `evals/customer-journey`, 20 cases)
 
 | main `196942d` (24 turns) | this round (48 turns, 2 repeats) |

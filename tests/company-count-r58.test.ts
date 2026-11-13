@@ -171,6 +171,9 @@ describe("the reply guard refuses what the plan's facts do not say (the real mod
     "شيل عمود أو إخفاؤه ما بيغيّرش السعر، لأن السعر بيتحسب على كل عنصر بيتسلّم.",
     "في الخطة الحالية لا يوجد تصفية للتكرار، فقد تظهر الشركة مرتين.",
     "لا نضمن إن كل الشركات يبقى ليها إيميل وتليفون.",
+    "مش هنقدر نضمن إن كل الشركات يبقى ليها إيميل وتليفون.",
+    "الخطة مش فيها ٣٢ شركة، فيها ٢٠ شركة.",
+    "انت طلبت ٣٢ شركة، والخطة دي فيها ٢٠ بس.",
   ])("an honest reply passes: %s", async (reply) => {
     const { guardReply } = await import("../src/lib/agentMission/conversationModel");
     expect(guardReply(reply, { message: "x", balancePoints: null, extraAr: ["٣٢", "٢٠"], facts }).ok).toBe(true);
