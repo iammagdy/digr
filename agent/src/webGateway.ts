@@ -98,12 +98,13 @@ export function createWebGateway(deps: WebGatewayDeps) {
 
   const nextId = () => { deps.counter.seq += 1; return callIdOf(deps.counter.seq); };
 
-  async function log(row: { id: string; source: string; params: Record<string, unknown>; status: "ok" | "failed" | "empty" | "refused"; refused?: string; http?: number | null; rows?: number; cost?: number; estimate?: number; storage?: string | null; ms?: number }) {
+  async function log(row: { id: string; source: string; params: Record<string, unknown>; status: "ok" | "failed" | "empty" | "refused"; refused?: string; http?: number | null; rows?: number; cost?: number; estimate?: number; storage?: string | null; ms?: number; costId?: number | null }) {
     await deps.store.addCall({
       id: `${deps.missionId}:${row.id}`, mission_id: deps.missionId, phase: deps.phase, endpoint_id: row.source,
       params_digest: Object.fromEntries(Object.entries(row.params).slice(0, 20).map(([k, v]) => [k, typeof v === "string" ? clip(v, 160) : v])),
       status: row.status, refused_reason: row.refused ? row.refused.slice(0, 120) : null, http_status: row.http ?? null, rows_returned: row.rows ?? null,
-      cost_usd: row.cost ?? 0, estimate_usd: row.estimate ?? 0, provider_cost_id: null, storage_path: row.storage ?? null, duration_ms: row.ms ?? null,
+      // PHASE 2 (task 2.4, audit PR-2.4): the provider_costs row this call reserved and committed, as the TREG gateway records it: a web call is traced to its recorded cost (null when nothing was reserved)
+      cost_usd: row.cost ?? 0, estimate_usd: row.estimate ?? 0, provider_cost_id: row.costId ?? null, storage_path: row.storage ?? null, duration_ms: row.ms ?? null,
     });
   }
 
@@ -126,12 +127,15 @@ export function createWebGateway(deps: WebGatewayDeps) {
     const key = await deps.providerKey(args.provider).catch(() => null);
     if (!key) { deps.budget.settle(args.estimateUsd, 0); return refuse(id, source, params, "source_unavailable", args.provider); }
     let result: T;
+    // the reservation id of THIS call (the adapter reserves through the recorder before it sends): read back so the call row names its provider_costs row; the recorder itself is unchanged
+    let costId: number | null = null;
+    const recorder: CallRecorder = { reserve: async (a) => { const r = await deps.recorder.reserve(a); if (r.allowed && typeof r.costId === "number") costId = r.costId; return r; }, commit: (id2, record) => deps.recorder.commit(id2, record) };
     try {
-      result = await args.run({ apiKey: key, fetchFn, recorder: deps.recorder, jobId: deps.jobId, ...(deps.now ? { now: deps.now } : {}) });
+      result = await args.run({ apiKey: key, fetchFn, recorder, jobId: deps.jobId, ...(deps.now ? { now: deps.now } : {}) });
     } catch {
       // the call may have gone out: its estimate stays counted
       deps.budget.settle(args.estimateUsd, null);
-      await log({ id, source, params, status: "failed", estimate: args.estimateUsd, cost: args.estimateUsd });
+      await log({ id, source, params, status: "failed", estimate: args.estimateUsd, cost: args.estimateUsd, costId });
       if (args.onOutcome) await args.onOutcome({ ok: false, code: "thrown", thrown: true }).catch(() => undefined);
       return { ok: false, call_id: id, failed: true, message: "the call did not complete; it may be tried once more" };
     }
@@ -146,7 +150,7 @@ export function createWebGateway(deps: WebGatewayDeps) {
       try { await deps.store.putFile(deps.missionId, RAW_PATH(id), JSON.stringify(shaped.saved), "application/json"); storage = RAW_PATH(id); } catch { storage = null; }
     }
     const status = !result.ok ? "failed" : shaped.rows.length === 0 && (result.status === "empty" || shaped.emptyIfNoRows) ? "empty" : "ok";
-    await log({ id, source, params: { ...params, cost_basis: shaped.costBasis, ...(noAnswer ? { charge_unknown: true } : {}) }, status, http: result.httpStatus, rows: shaped.rows.length, cost: result.costUsd, estimate: args.estimateUsd, storage, ms: result.durationMs });
+    await log({ id, source, params: { ...params, cost_basis: shaped.costBasis, ...(noAnswer ? { charge_unknown: true } : {}) }, status, http: result.httpStatus, rows: shaped.rows.length, cost: result.costUsd, estimate: args.estimateUsd, storage, ms: result.durationMs, costId });
     if (args.onOutcome) await args.onOutcome(result.ok ? { ok: true, result } : { ok: false, code: String(result.errorCode ?? "unknown"), thrown: false }).catch(() => undefined);
     if (!result.ok) return { ok: false, call_id: id, failed: true, message: shaped.failedMessage ?? `the source answered with an error (${result.errorCode ?? "unknown"})` };
     const rows = shaped.rows as Array<Record<string, unknown>>;

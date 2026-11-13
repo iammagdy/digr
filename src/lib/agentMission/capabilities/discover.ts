@@ -16,7 +16,7 @@ import type { Capability, CapabilityProvider, CapabilityRegistry, InputClass, Op
  */
 export const DISCOVERY_VERSION = 1 as const;
 
-export type RejectReason = "private_data" | "provider_key_missing" | "provider_daily_cap_zero" | "not_sellable" | "not_permitted" | "platform_mismatch" | "no_usable_input" | "missing_outputs" | "cannot_take_parent_output";
+export type RejectReason = "private_data" | "provider_key_missing" | "provider_daily_cap_zero" | "provider_daily_cap_exhausted" | "not_sellable" | "not_permitted" | "platform_mismatch" | "no_usable_input" | "missing_outputs" | "cannot_take_parent_output";
 
 export interface RankedCandidate {
   id: string;
@@ -85,8 +85,11 @@ export function operationLabelAr(operation: Operation, platform: string | null):
     case "people.discover": return "المهنيين وأدوارهم من الملفات المهنية العامة";
     case "apps.discover": return "التطبيقات من متاجر التطبيقات";
     case "apps.reviews": return "تقييمات التطبيقات ونصوصها من متاجر التطبيقات";
+    case "company.enrich": return "المواقع الرسمية للشركات";
   }
 }
+/** A capability that exists but cannot be used now because of its provider (no key, a cap of 0, a cap used up today). */
+const PROVIDER_REASONS: ReadonlySet<RejectReason> = new Set<RejectReason>(["provider_key_missing", "provider_daily_cap_zero", "provider_daily_cap_exhausted"]);
 const FILTER_AR = { period: "الفترة", country: "الدولة", language: "اللغة" } as const;
 const UNSUPPORTED_PLATFORM_AR: Record<string, string> = { snapchat: "سناب شات", clubhouse: "كلوب هاوس", discord: "ديسكورد" };
 
@@ -143,8 +146,39 @@ function candidateOf(c: Capability, stage: StageNeed, need: ResearchNeed, childr
   };
 }
 
+export interface DiscoveryOptions {
+  /**
+   * Phase 2, switch `web_via_treg` (OFF by default): when the customer asks for the companies' websites or public contacts and NO companies source can document a website, the chain gains the step that finds each company's OFFICIAL
+   * website from its name (`company.enrich`, reached through the TREG gateway): companies → official website → contacts. Off (or a companies source that documents websites): the chain is exactly what it was.
+   */
+  enrichWebsites?: boolean;
+}
+
+export const ENRICH_STAGE_KEY = "company_websites";
+
+/**
+ * THE ENRICHMENT CHAIN (Phase 2): only when the switch is on, the companies stage needs a website, and no capability of that stage that is usable now DOCUMENTS a website for this account. The companies stage then needs names only, the
+ * enrichment stage gives the website, and every stage that read the website from the companies (the contact stages) reads it from the enrichment stage instead. People of each company still read the companies. Pure.
+ */
+export function withEnrichmentStage(stages: StageNeed[], registry: CapabilityRegistry): StageNeed[] {
+  const companies = stages.find((s) => s.operation === "companies.discover" && s.parentKey === null && s.requires.includes("website"));
+  if (!companies) return stages;
+  const documented = registry.all.some((c) => c.operation === "companies.discover" && hardReject(c, companies) === null && c.outputsKnown && companies.requires.every((r) => c.outputs.includes(r)));
+  if (documented) return stages;
+  const out: StageNeed[] = [];
+  for (const s of stages) {
+    if (s === companies) {
+      out.push({ ...s, requires: s.requires.filter((r) => r !== "website") });
+      out.push({ key: ENRICH_STAGE_KEY, operation: "company.enrich", platform: null, parentKey: s.key, requires: ["website"], prefers: ["url", "phone"], accepts: ["company_name"], volume: null, deliver: true });
+      continue;
+    }
+    out.push(s.parentKey === companies.key && s.operation === "company.contacts" ? { ...s, parentKey: ENRICH_STAGE_KEY } : s);
+  }
+  return out;
+}
+
 /** Every eligible capability of a stage is kept (the validated set a plan may use); the planner is shown the first ones in rank order (prompt.ts). */
-export function discoverCapabilities(need: ResearchNeed, registry: CapabilityRegistry): CapabilityDiscovery {
+export function discoverCapabilities(need: ResearchNeed, registry: CapabilityRegistry, options: DiscoveryOptions = {}): CapabilityDiscovery {
   const base = { v: DISCOVERY_VERSION, need, stages: [] as StageDiscovery[], unsupported: [] as CapabilityDiscovery["unsupported"], limitations: [] as Limitation[], messageAr: null as string | null, alternativeAr: null as string | null };
   if (need.privacy === "blocked") return { ...base, status: "blocked", messageAr: "هذا الطلب يتضمن بيانات خاصة لأفراد، ولا نجمعها بأي مصدر." };
   if (need.unsupportedPlatform && need.platforms.length === 0) {
@@ -155,7 +189,7 @@ export function discoverCapabilities(need: ResearchNeed, registry: CapabilityReg
       alternativeAr: "نقدر نجمع نفس النوع من البيانات العامة من تيك توك أو إكس أو إنستجرام أو فيسبوك أو يوتيوب، أو من صفحات الويب العامة. أي مصدر منها يناسبك؟",
     };
   }
-  const stages = stagesOfNeed(need);
+  const stages = options.enrichWebsites ? withEnrichmentStage(stagesOfNeed(need), registry) : stagesOfNeed(need);
   const unresolved = need.unresolved ?? [];
   // the model understood a goal that no operation serves (or nothing executable at all): the customer is ASKED, with what can be collected now; never «unsupported» because a word was not recognised
   if (stages.length === 0) return unresolved.length > 0 ? { ...base, status: "needs_clarification", messageAr: UNRESOLVED_AR, alternativeAr: availableAlternativeAr(registry) } : { ...base, status: "needs_clarification" };
@@ -190,7 +224,7 @@ export function discoverCapabilities(need: ResearchNeed, registry: CapabilityReg
     if (!selected) {
       failedKeys.add(stage.key);
       const reasons = new Set(rejected.filter((r) => r.reason !== "platform_mismatch").map((r) => r.reason));
-      const reason: UnsupportedReason = reasons.size === 0 ? "no_capability" : [...reasons].every((r) => r === "provider_key_missing" || r === "provider_daily_cap_zero") ? "provider_unavailable" : [...reasons].every((r) => r === "not_permitted" || r === "not_sellable" || r === "provider_key_missing" || r === "provider_daily_cap_zero") ? "not_permitted" : "no_capability";
+      const reason: UnsupportedReason = reasons.size === 0 ? "no_capability" : [...reasons].every((r) => PROVIDER_REASONS.has(r)) ? "provider_unavailable" : [...reasons].every((r) => r === "not_permitted" || r === "not_sellable" || PROVIDER_REASONS.has(r)) ? "not_permitted" : "no_capability";
       unsupported.push({ stageKey: stage.key, operation: stage.operation, reason });
       out.push({ stage, eligible: [], rejected, selected: null, link: null });
       continue;
