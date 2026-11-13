@@ -45,3 +45,44 @@ describe("a count edit restates the headline in the right form", () => {
     expect(checkCustomerText(nine.plan.summary_ar, { maxChars: 600 }).issues).toEqual([]);
   });
 });
+
+describe("the delivered file is named by its companies (live: «١٣ إيميل والتليفون عن مستحضرات تجميل» for 9 companies and 4 contact rows)", () => {
+  it("the live plan: «٩ شركات …», never the total of every step", async () => {
+    const { missionFileTitleAr } = await import("../src/lib/agentMission/fileNames");
+    const stages = [
+      { key: "companies", deliver: true, title_ar: "شركات مستحضرات التجميل في مصر", parent_key: null, expected_rows: 9 },
+      { key: "contacts", deliver: true, title_ar: "الإيميل والتليفون المنشورين على موقع كل شركة", parent_key: "companies", expected_rows: 9 },
+    ];
+    const title = missionFileTitleAr({ plan: { stages }, requestText: "عايز ١٢ شركة مستحضرات تجميل في مصر، ومع كل شركة موقعها الرسمي، والتليفون والإيميل المنشورين ورابط مصدر المعلومات.", delivered: 13, parentDelivered: 9, date: new Date("2026-11-13T16:06:00Z") });
+    expect(title).toMatch(/^٩ شركات مستحضرات تجميل - /);
+    expect(title).not.toMatch(/١٣ (?:إيميل|شرك|عنصر)|إيميل|عن شركة/);
+    expect(title).toContain("١٣ نوفمبر ٢٠٢٦");
+  });
+  it("posts with their comments keep the round-27 name", async () => {
+    const { missionFileTitleAr } = await import("../src/lib/agentMission/fileNames");
+    const title = missionFileTitleAr({ plan: { stages: [{ key: "videos", deliver: true, title_ar: "فيديوهات عن الذكاء الاصطناعي", parent_key: null, expected_rows: 2 }, { key: "comments", deliver: true, title_ar: "تعليقات كل فيديو", parent_key: "videos", expected_rows: 20 }] }, requestText: "هات فيديوهين عن الذكاء الاصطناعي مع التعليقات", delivered: 22, parentDelivered: 2, date: new Date("2026-11-13T16:06:00Z") });
+    expect(title).toMatch(/^فيديوهان مع التعليقات/);
+  });
+});
+
+describe("the shortfall reason of a detail step", () => {
+  it("contacts of companies: «لم نجد لها في المصدر», never «عليها منشورات أقل»", async () => {
+    const { childShortfallClauseAr } = await import("../agent/src/finalize");
+    const child = itemNounOf("الإيميل والتليفون المنشورين على موقع كل شركة");
+    const s = childShortfallClauseAr("شركة", "شركات", child.plural);
+    expect(s).toBe("لأن بعض الشركات لم نجد لها في المصدر ما طُلب لكل شركة");
+    expect(childShortfallClauseAr("فيديو", "فيديوهات", "تعليقات")).toBe("لأن بعض الفيديوهات عليها تعليقات أقل من العدد المطلوب لكل فيديو");
+  });
+});
+
+describe("the notice's mission title is named by the companies", () => {
+  it("live: «١٨ إيميل والتليفون عن مستحضرات تجميل» becomes «٩ شركات مستحضرات تجميل»", async () => {
+    const { missionTitleAr } = await import("../src/lib/agentMission/fileNames");
+    const stages = [
+      { key: "companies", deliver: true, title_ar: "شركات مستحضرات التجميل في مصر", parent_key: null, expected_rows: 9 },
+      { key: "contacts", deliver: true, title_ar: "الإيميل والتليفون المنشورين على موقع كل شركة", parent_key: "companies", expected_rows: 9 },
+    ];
+    const t = missionTitleAr({ plan: { stages }, requestText: "عايز ١٢ شركة مستحضرات تجميل في مصر، ومع كل شركة موقعها الرسمي، والتليفون والإيميل المنشورين ورابط مصدر المعلومات." });
+    expect(t).toBe("٩ شركات مستحضرات تجميل");
+  });
+});
