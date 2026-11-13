@@ -7,7 +7,7 @@ import { childStepSourcesFor, isPeopleNoun, linkableCompanySources, peopleSource
 import { peopleAndContactAdvice, phoneSourcesOf } from "../../src/lib/agentMission/peopleCheck";
 import { companyPhoneSourcesOf, finderSourcesOf, mailboxListerSourcesOf, validatorSourcesOf, verifierSourcesOf, withContactColumns } from "../../src/lib/agentMission/contactFinders";
 import { bindCompanySteps, withContractColumns } from "../../src/lib/agentMission/taskContracts";
-import { describeAgentSource, isAgentSourceId, searchAgentSources, SESSION_RESTRICTED_SOURCES } from "../../src/lib/agentMission/sources";
+import { describeAgentSource, isAgentSourceId, searchAgentSources, SESSION_RESTRICTED_SOURCES, WEB_SOURCES } from "../../src/lib/agentMission/sources";
 import { usableSearchProvider, webSourceAvailable, type WebAvailability } from "../../src/lib/agentMission/webAvailability";
 import { validateAndPricePlan, type PricedPlan, type RecordedCall } from "../../src/lib/agentMission/plan";
 import { checkCustomerText } from "../../src/lib/agentMission/text";
@@ -90,12 +90,14 @@ export interface RunState {
   moreAvailable: Map<string, boolean>;
   /** What each source gave in the planning samples: the rows of every answered call and a key of its inputs (two samples of the same item are one). */
   samples: Map<string, Array<{ rows: number; key: string }>>;
+  /** What each web search / page read gave in this run, by its input (round 56): Firecrawl is used for an input only after Context.dev gave nothing for it. */
+  webOutcomes: Map<string, Array<{ rows: number; key: string }>>;
   /** Plans propose_plan refused, and what the last refusal was about («data»: no sampled row matches the stage's rule; else «formal»). Read when the planning ends without a card (refusal.ts). */
   planRejections?: { count: number; last: "formal" | "data" };
   /** Where the rows of each answered sample are, as code (`rows_in_code` of its answer), by call id: an EMPTY run_code result over such a page is told where its rows are (round 52). */
   rowsAt?: Map<string, { rows: number; expr: string }>;
 }
-export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), described: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, giveUpNoRowsRefusals: 0, peopleSendBacks: 0, moreAvailable: new Map(), samples: new Map() });
+export const newRunState = (outSeq = 0): RunState => ({ proposedPlan: null, question: null, finish: null, outSeq, terminal: false, ranking: null, tried: new Set(), described: new Set(), callParams: new Map(), codeRuns: new Map(), skips: new Map(), finishRefusals: 0, giveUpRefusals: 0, giveUpNoRowsRefusals: 0, peopleSendBacks: 0, moreAvailable: new Map(), samples: new Map(), webOutcomes: new Map() });
 /** The redesigned mode of planning: any of the three social flags is active for this mission's account (planning does not know the request type yet; with every flag off this is false and nothing changes). */
 export const socialRedesignActive = (ctx: { redesign?: { flags: RedesignFlags; isTest: boolean; platformFlags?: PlatformFlags; platform?: SocialPlatform | null } }): boolean =>
   ctx.redesign !== undefined && (["social_posts", "social_account", "social_comments"] as const).some((t) => redesignActiveFor(ctx.redesign!.flags, ctx.redesign!.platformFlags ?? {}, t, ctx.redesign!.platform ?? null, { isTest: ctx.redesign!.isTest }));
@@ -233,6 +235,30 @@ export function cheaperSameJobMessage(ctx: Pick<ToolContext, "catalog" | "access
   if (unexplained.length === 0 || (!itemized && String(why ?? "").trim().length >= 8)) return { refusal: null, recorded };
   return { refusal: `cheaper sources that do the same job have not been tried: ${unexplained.map((r) => `${r.id} (about ${r.usdPerItem.toFixed(5)} USD per item)`).join(", ")}. Sample the cheapest first, or skip it on purpose with \`skip\` {"<source id>": "wrong_data" | "missing_input" | "too_few_rows" | "known_failing" | "other"} (recorded for the admin)${itemized ? "; you skipped some cheaper sources by name, so every one of them needs its own skip or a sample" : ", or give \`why\` (at least 8 characters)"}`, recorded };
 }
+
+/**
+ * WEB SEARCH AND PAGE READS, THE SAME JOB ON TWO PROVIDERS (round 56): Firecrawl and Context.dev search the web and read a page with the same inputs and the
+ * same outputs (capabilities/registry.ts), and Context.dev is the cheaper of the two by the documented prices (sources.ts). In planning, Firecrawl is used for a
+ * search or a read only when the code can see why: Context.dev has no key, its recorded calls are failing, or it was asked for THIS SAME query / page in this run
+ * and gave nothing or failed. Not for a sentence (`why`), and never a second, dearer call for an input Context.dev already answered.
+ * The execution phase follows the approved plan and is not changed here.
+ */
+export function dearerWebProviderMessage(ctx: Pick<ToolContext, "phase" | "stats" | "now" | "state">, avail: WebAvailability, op: "search" | "scrape", provider: "firecrawl" | "contextdev", input: unknown): string | null {
+  if (ctx.phase !== "planning" || provider !== "firecrawl" || !avail.contextdev) return null;
+  const cheap = `contextdev.${op}`;
+  const price = (id: string) => WEB_SOURCES.find((s) => s.id === id)?.usdPerCall ?? null;
+  const [mine, theirs] = [price(`firecrawl.${op}`), price(cheap)];
+  if (mine === null || theirs === null || theirs >= mine) return null; // never assumed: only a documented cheaper price triggers the rule
+  if (sourceHealth(ctx.stats?.get(cheap), ctx.now ?? Date.now()).state !== "ok") return null;
+  const key = webInputKey(input);
+  const same = (ctx.state.webOutcomes.get(cheap) ?? []).filter((o) => o.key === key);
+  if (same.some((o) => o.rows === 0)) return null;
+  if (same.some((o) => o.rows > 0)) return `contextdev.${op} already answered this same ${op === "search" ? "query" : "page"} in this run: a second, dearer call for it is not made. Use the rows you have`;
+  return `contextdev.${op} does the same job for about ${theirs.toFixed(5)} USD a call (firecrawl.${op}: ${mine.toFixed(5)}). Use provider "contextdev" first; firecrawl is used for this ${op === "search" ? "query" : "page"} only after contextdev gave nothing or failed for it (a sentence in \`why\` does not excuse the dearer provider)`;
+}
+
+/** The input that identifies a web search or read: the query (with its country) or the page address, normalized. */
+export const webInputKey = (input: unknown): string => { const o = isObject(input) ? (input as Record<string, unknown>) : {}; return [normalizeText(String(o.query ?? o.url ?? "")), String(o.country ?? "").toLowerCase()].join("|"); };
 
 /** A source that failed on its configuration or its inputs in recent calls is not sampled during planning (the health window of the recorded calls). */
 export function unhealthyMessage(ctx: Pick<ToolContext, "stats" | "now" | "phase">, id: string): string | null {
@@ -874,6 +900,18 @@ function webTools(ctx: ToolContext): ToolSpec[] {
   const avail = webAvailableOf(ctx);
   const guard = (id: string, why: unknown) => { const m = cheapestFirstMessage(state, id, why); return m ? { ok: false, refused: "choose_cheapest", message: m } : null; };
   const done = (id: string, result: Record<string, any>) => { if (!("refused" in result)) state.tried.add(id); return result; };
+  // a search or read that reached the provider: what it gave for THIS input (a failed call, or a page with no text, counts as nothing). A refusal that is about the
+  // PROVIDER (its daily limit is full, or it has no key now) also counts as nothing for that input, so the other provider is never blocked by the cheaper one's refusal
+  const PROVIDER_REFUSALS = new Set(["daily_cap", "source_unavailable"]);
+  const webDone = (id: string, input: unknown, result: Record<string, any>) => {
+    if ("refused" in result && PROVIDER_REFUSALS.has(String(result.refused))) { const list = state.webOutcomes.get(id) ?? []; list.push({ rows: 0, key: webInputKey(input) }); state.webOutcomes.set(id, list); }
+    if (!("refused" in result)) {
+      const page = Array.isArray(result.first_rows) ? (result.first_rows[0] as Record<string, unknown> | undefined) : undefined;
+      const rows = result.ok !== true ? 0 : id.endsWith(".scrape") ? (Number(page?.characters ?? 0) > 0 ? 1 : 0) : Number(result.rows_in_page ?? 0) || 0;
+      const list = state.webOutcomes.get(id) ?? []; list.push({ rows, key: webInputKey(input) }); state.webOutcomes.set(id, list);
+    }
+    return done(id, result);
+  };
   const why: ParamSpec = { type: "string", description: "Only when this source is dearer than one the last catalog_search ranked above it: why that cheaper source was unsuitable (kept in the admin's trace)", optional: true };
   const tools: ToolSpec[] = [
     {
@@ -907,7 +945,9 @@ function webTools(ctx: ToolContext): ToolSpec[] {
       handler: async (a) => {
         const provider = usableSearchProvider(a.provider, avail) ?? "contextdev";
         const id = `${provider}.search`;
-        return guard(id, a.why) ?? done(id, await web.webSearch({ provider, query: a.query, limit: a.limit, country: a.country, why: a.why }) as Record<string, any>);
+        const dearer = dearerWebProviderMessage(ctx, avail, "search", provider, a);
+        if (dearer) return { ok: false, refused: "choose_cheapest", message: dearer };
+        return guard(id, a.why) ?? webDone(id, a, await web.webSearch({ provider, query: a.query, limit: a.limit, country: a.country, why: a.why }) as Record<string, any>);
       },
     },
     {
@@ -918,7 +958,9 @@ function webTools(ctx: ToolContext): ToolSpec[] {
       handler: async (a) => {
         const provider = usableSearchProvider(a.provider, avail) ?? "contextdev";
         const id = `${provider}.scrape`;
-        return guard(id, a.why) ?? done(id, await web.webScrape({ provider, url: a.url, why: a.why }) as Record<string, any>);
+        const dearer = dearerWebProviderMessage(ctx, avail, "scrape", provider, a);
+        if (dearer) return { ok: false, refused: "choose_cheapest", message: dearer };
+        return guard(id, a.why) ?? webDone(id, a, await web.webScrape({ provider, url: a.url, why: a.why }) as Record<string, any>);
       },
     },
     {
