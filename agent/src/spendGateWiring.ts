@@ -4,6 +4,7 @@ import { gateAfter, gateBefore, spendGateMode, type GateContext, type GateEvent,
 import { DEFAULT_GATE_MAX_OUTPUT_TOKENS, modelRequestBound, modelUsageCost, type ModelUsage } from "../../src/lib/server/spendGate/modelBound";
 import { createSupabaseSpendGate } from "../../src/lib/server/spendGate/supabaseGate";
 import { checkAnthropicBetas, startModelGate, type ModelGateHandle } from "./modelGate";
+import { anthropicReviewCall, type ReviewCall } from "./review";
 import { PROVIDER_RESERVATION_TTL_SECONDS } from "./spendGateKeys";
 
 /**
@@ -95,6 +96,8 @@ export interface WorkerSpendGate {
   modelGateFor(missionId: string): NonNullable<import("./driver").RunInput["modelGate"]>;
   /** A fetch that gates each direct model request of this mission (review.ts). */
   modelFetch(missionId: string, inner?: FetchFn): FetchFn;
+  /** The review call (review.ts) of this mission, through `modelFetch`, with the worker's own key. */
+  reviewCall(missionId: string): ReviewCall;
   /** What has been recorded for this mission so far (a copy). */
   summary(missionId: string): SpendGateSummary;
   /** Logs the mission's summary and forgets it. */
@@ -212,6 +215,9 @@ export function createWorkerSpendGate(opts: WorkerSpendGateOptions): WorkerSpend
         inner: inner ?? opts.fetchFn ?? ((input, init) => fetch(input, init)),
         ...(opts.maxOutputTokens ? { maxOutputTokens: opts.maxOutputTokens } : {}),
       });
+    },
+    reviewCall(missionId) {
+      return anthropicReviewCall(opts.apiKey, gatedModelFetch(context(missionId), missionId, { inner: opts.fetchFn ?? ((input, init) => fetch(input, init)), ...(opts.maxOutputTokens ? { maxOutputTokens: opts.maxOutputTokens } : {}) }));
     },
     summary: (missionId) => snapshot(tally(missionId)),
     finish(missionId) {

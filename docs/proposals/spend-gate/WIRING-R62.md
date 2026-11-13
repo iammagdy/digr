@@ -22,7 +22,7 @@ Read with: `SPEC-v2.md` (the design), `THREAT-MODEL.md`, `sql/001_spend_gate.sql
 | Context.dev people search | `peopleSearch` | Fast mode: 10 credits for one page | As reported |
 | Context.dev pre-built parser (maps, social, app stores, g2; planning field parsers; a page with almost no text) | `parsePage` → `contextDevParse` | **None documented: refused in enforce** (`no_safe_bound`). This is SPEC-v2 §13 decision 7. | n/a |
 | Agent SDK model request (planning turns, every execution round) | `sdkRuntime.ts`: the model gate (`modelGate.ts`) started per run by `spendGateWiring.ts`, the child pointed at 127.0.0.1 | `modelRequestBound`: body bytes + 4096 tokens × input rate × cache multiplier, plus `max_tokens` (enforce lowers it to 32,000) × output rate | The stream's `usage`. **Unknown**: a cut stream, a missing `message_stop`, an error. A bound violation trips the grant (enforce). |
-| Direct model request of the worker (`review.ts`: row review, channel choice, capability choice, names step) | `main.ts` gives `anthropicReviewCall` the gated fetch `spendGateWiring.ts` `gatedModelFetch` | `modelRequestBound` of the body | `usage` of the answer. 0: an unbilled 4xx. **Unknown**: a 5xx or a thrown request. |
+| Direct model request of the worker (`review.ts`: row review, channel choice, capability choice, names step) | `runPlanning` / `runExecution` replace the review call with the mission's gated one (`withMissionSpendGate`, `spendGateWiring.ts` `gatedModelFetch`) | `modelRequestBound` of the body | `usage` of the answer. 0: an unbilled 4xx. **Unknown**: a 5xx or a thrown request. |
 
 **Common rules:**
 
@@ -74,7 +74,7 @@ Each enforce refusal and each bound violation is also logged on its own line, wi
 | `agent/src/gateway.ts` `tregCall` | Every TREG call of the worker: the planner, execution, the code engine (`engine/run.ts`, `engine/contacts.ts`, `compiled.ts`), `tools.ts`, and the add-on re-reads (`stage4/runAddon.ts`, `stage4/rereadRun.ts`) |
 | `agent/src/webGateway.ts` `execute` | Context.dev page reads, scrapes, searches and people search; Firecrawl scrapes and searches. Context.dev pre-built parsers are refused in enforce (no documented bound). |
 | Agent SDK model requests (`agent/src/sdkRuntime.ts` via `agent/src/modelGate.ts`) | Planning runs and every execution round |
-| `agent/src/review.ts` `anthropicReviewCall` | The direct requests: row review, channel understanding, capability choice, names step. Gated through `gatedModelFetch` from `main.ts`. |
+| `agent/src/review.ts` `anthropicReviewCall` | The direct requests: row review, channel understanding, capability choice, names step. Gated through `gatedModelFetch`, per mission, in `runPlanning` / `runExecution`. |
 
 **NOT GATED (the website and the platform outside the worker): the next separate task, which needs owner approval.**
 
@@ -156,7 +156,7 @@ Until these are gated, **the platform is NOT protected by the spend gate**, what
 
 * **New:**
   * `agent/src/spendGateWiring.ts`: the worker's gate, its per-mission tally and summary, and the gated direct-model fetch;
-  * `agent/src/spendGateKeys.ts`: per-attempt reservation keys and the TTL;
+  * `agent/src/spendGateKeys.ts`: per-attempt reservation keys, the TTL, and the call-site helpers `spendGateOf` and `withMissionSpendGate`. They are kept outside `runMission.ts`, so the add-on runner's import closure stays free of the Stage 4 flags (`tests/money7a-isolation.test.ts`);
   * `src/lib/server/spendGate/supabaseGate.ts`: the database adapter (was `drafts/supabaseGate.ts.txt`);
   * the tests (section 8) and this document.
 * **Changed:**
@@ -168,14 +168,14 @@ Until these are gated, **the platform is NOT protected by the spend gate**, what
   * `agent/src/driver.ts`: `RunInput.modelGate`;
   * `agent/src/runMission.ts`: passes the gate to the gateways and to every model run;
   * `agent/src/stage4/runAddon.ts`: add-on re-reads;
-  * `agent/src/main.ts`: builds the gate from `DIGER_SPEND_GATE`, gates the review calls, logs the summary;
+  * `agent/src/main.ts`: builds the gate from `DIGER_SPEND_GATE` and puts it in `deps()` only when set; the dispatch line is unchanged (pinned by the money and ownership tests); logs the claim's summary;
   * `agent/src/modelGate.ts`: comment only;
   * `tests/spend-gate-r61.test.ts`: the «NOT WIRED» pin becomes the R62 pin. Only the listed worker files may use the gate, and no website file;
   * `tests/spend-gate-r61-sdk.test.ts`: two opt-in tests of the real driver.
 
 ## 8. Tests (offline: fakes, a memory gate, a scratch Postgres; no paid call)
 
-* `tests/spend-gate-r62-wiring.test.ts`: 41 tests.
+* `tests/spend-gate-r62-wiring.test.ts`: 42 tests.
   * **OFF:** byte-identical TREG and web requests and records; identical SDK options.
   * **ENFORCE:** no grant, database failure, slow database, unknown charge, overrun trips, retries, 20 concurrent calls, the in-memory budget first, an unbounded parser, Firecrawl stealth bound, search blocks, people search, daily cap, page reuse.
   * **OBSERVE:** honest unreserved accounting.
@@ -184,5 +184,5 @@ Until these are gated, **the platform is NOT protected by the spend gate**, what
   * **CUSTOMER MONEY:** a whole mission enforced vs off gives the same charge, balance and records; no grant means no paid call; the adapter calls only `spend_*`.
 * `tests/spend-gate-r61-sdk.test.ts` (`DIGER_TEST_REAL_SDK=1`): 4 tests, 2 of them new. They run the worker's real driver and the real SDK through the wired gate against a fake upstream: every request is gated and the real key is used only upstream; with no grant nothing reaches upstream; a gate that cannot start does not start the model.
 * `tests/sql/spend-gate-r62-worker.local-pg.test.ts` (`DIGER_TEST_PG`): 3 tests. The worker's adapter and TREG gateway against the real SQL: two workers make 30 concurrent calls and never pass the ceiling.
-* **Mutation check:** with the gateway hooks disabled, 18 of the 41 wiring tests fail.
+* **Mutation check:** with the gateway hooks disabled, 18 of the wiring tests fail (41 at the time of the check).
 * **Results of the full verification:** in the PR description.

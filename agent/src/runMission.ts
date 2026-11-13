@@ -33,6 +33,7 @@ import type { ModelDriver } from "./driver";
 import { createGateway } from "./gateway";
 import { createWebGateway, type ProviderKeyFn } from "./webGateway";
 import type { WorkerSpendGate } from "./spendGateWiring";
+import { spendGateOf, withMissionSpendGate } from "./spendGateKeys";
 import { loadSystemPrompt } from "./prompt";
 import { anyWebAvailable, NO_WEB, resolveWebAvailability } from "../../src/lib/agentMission/webAvailability";
 import { PLANNING_NUDGE } from "./nudge";
@@ -138,10 +139,6 @@ export interface RunnerDeps {
   spendGate?: WorkerSpendGate;
 }
 
-/** ROUND 62: the gateways' spend gate of this mission; nothing (not even an undefined key) when the gate is off. */
-export function spendGateOf(deps: Pick<RunnerDeps, "spendGate">, missionId: string): { spendGate?: ReturnType<WorkerSpendGate["context"]> } {
-  return deps.spendGate ? { spendGate: deps.spendGate.context(missionId) } : {};
-}
 /** ROUND 62: the model gate of one model run of this mission (every planning turn, every execution round); nothing when the gate is off. */
 function modelGateOf(deps: RunnerDeps, missionId: string): { modelGate?: ReturnType<WorkerSpendGate["modelGateFor"]> } {
   return deps.spendGate ? { modelGate: deps.spendGate.modelGateFor(missionId) } : {};
@@ -425,6 +422,8 @@ async function endPlanningUnserved(deps: RunnerDeps, mission: MissionRecord, err
 }
 
 export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Promise<void> {
+  // ROUND 62: with the spend gate on, this mission's direct model requests (review.ts) are gated; off: deps unchanged
+  deps = withMissionSpendGate(deps, mission.id);
   const { store } = deps;
   const model = deps.models.planning;
   // a mission whose planning has started too many times (it keeps failing or keeps killing its worker) ends honestly instead of looping
@@ -760,6 +759,8 @@ export function continuationPrompt(mission: MissionRecord, plan: PricedPlan, cal
 }
 
 export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Promise<void> {
+  // ROUND 62: with the spend gate on, this mission's direct model requests (review.ts) are gated; off: deps unchanged
+  deps = withMissionSpendGate(deps, mission.id);
   const { store } = deps;
   const model = deps.models.execution;
   const plan = mission.plan;

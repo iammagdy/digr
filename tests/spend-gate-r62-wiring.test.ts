@@ -8,9 +8,8 @@ import { createWebGateway, observeProviderFetch, reportedCreditsOf } from "../ag
 import { createMemoryStore, newMission } from "../agent/src/memoryStore";
 import { anthropicReviewCall } from "../agent/src/review";
 import { buildQueryOptions } from "../agent/src/sdkOptions";
-import { spendGateOf } from "../agent/src/runMission";
 import { createWorkerSpendGate, gatedModelFetch, workerSpendGateFromEnv } from "../agent/src/spendGateWiring";
-import { spendReservationKey } from "../agent/src/spendGateKeys";
+import { spendGateOf, spendReservationKey, withMissionSpendGate } from "../agent/src/spendGateKeys";
 import { createJobCallBudget } from "../src/lib/server/callBudget";
 import { createMemorySpendGate, gateAfter, gateBefore, type SpendGate } from "../src/lib/server/spendGate/gate";
 import { createSupabaseSpendGate } from "../src/lib/server/spendGate/supabaseGate";
@@ -121,6 +120,22 @@ describe("R62 OFF: DIGER_SPEND_GATE unset is today's behaviour, byte for byte", 
     // no gate: the gateways get no key at all (not even an undefined one)
     expect(spendGateOf({}, MISSION)).toEqual({});
     expect(Object.keys(spendGateOf({}, MISSION))).toEqual([]);
+    // the runners' dependencies: the very same object when the gate is off; the mission's gated review call when it is on
+    const review = async () => null;
+    const offDeps = { reviewCall: review, log: () => undefined };
+    expect(withMissionSpendGate(offDeps, MISSION)).toBe(offDeps);
+    const sg = createWorkerSpendGate({ mode: "enforce", gate: null, apiKey: "k" });
+    const on = withMissionSpendGate({ ...offDeps, spendGate: sg }, MISSION);
+    expect(on.reviewCall).not.toBe(review);
+    expect(on.spendGate).toBe(sg);
+  });
+
+  it("main.ts: the dispatch line is unchanged; the gate rides in deps() only when the variable is set, and the claim's tally is logged at its end", () => {
+    const main = readFileSync(path.resolve(__dirname, "../agent/src/main.ts"), "utf8");
+    expect(main).toMatch(/const spendGate = workerSpendGateFromEnv\(process\.env, client, log\);/);
+    expect(main).toMatch(/\.\.\.\(spendGate \? \{ spendGate \} : \{\}\),/);
+    expect(main).toMatch(/runClaimedSafely\(\{ \.\.\.deps\(\), store: view\.store, leaseLost: view\.revoked, ownerId: workerId, revokeOwnership \}, mission\)/);
+    expect(main).toMatch(/spendGate\?\.finish\(mission\.id\)/);
   });
 
   it("TREG: with no gate and with a gate in mode off, the call sent, the records and the spend are identical, and a gate that would fail is never asked", async () => {

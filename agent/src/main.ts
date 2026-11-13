@@ -89,6 +89,8 @@ async function main() {
     // LLM-FIRST OBJECTIVES (read only while capability_discovery_v1 is on for the mission's account): the brief the chat server stored on the assistant message that carries this mission's card
     readMissionBrief: async (missionId, userId) => { const { data } = await client.from("messages").select("plan,created_at").eq("user_id", userId).eq("role", "assistant").eq("plan->>agentMissionId", missionId).order("created_at", { ascending: false }).limit(1); return storedBriefOf(Array.isArray(data) ? data[0]?.plan : null); },
     log,
+    // ROUND 62: present only when DIGER_SPEND_GATE is set (observe or enforce); each run then gates its gateways, its model runs and its review requests per mission
+    ...(spendGate ? { spendGate } : {}),
   });
 
   const concurrency = parseConcurrency(process.env[AGENT_CONCURRENCY_ENV]);
@@ -106,9 +108,8 @@ async function main() {
       const view = ownedStore(store, mission.id);
       owned.set(mission.id, view);
       const revokeOwnership = () => { view.revoke(); abortRunsOf(mission.id, "lease_lost"); };
-      // ROUND 62: with the gate on, the mission's direct model requests (review.ts) go through it too, and its tally is logged when the claim ends
-      const gated = spendGate ? { spendGate, reviewCall: anthropicReviewCall(process.env.ANTHROPIC_API_KEY!, spendGate.modelFetch(mission.id)) } : {};
-      try { await runClaimedSafely({ ...deps(), ...gated, store: view.store, leaseLost: view.revoked, ownerId: workerId, revokeOwnership }, mission); } finally { if (owned.get(mission.id) === view) owned.delete(mission.id); spendGate?.finish(mission.id); }
+      // ROUND 62: with the gate on, its tally of this claim is logged when the claim ends (counts and amounts only)
+      try { await runClaimedSafely({ ...deps(), store: view.store, leaseLost: view.revoked, ownerId: workerId, revokeOwnership }, mission); } finally { if (owned.get(mission.id) === view) owned.delete(mission.id); spendGate?.finish(mission.id); }
     },
     // another worker owns a mission this one runs: its writes are refused from now on and its model run is stopped (the new owner finishes it)
     onLeaseLost: (missionId) => { owned.get(missionId)?.revoke(); abortRunsOf(missionId, "lease_lost"); },

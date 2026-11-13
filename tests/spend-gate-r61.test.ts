@@ -572,7 +572,7 @@ describe("R62: WIRED INTO THE WORKER ONLY (the website is not wired; the gate st
     // round 62 (PR B): the worker's paid call sites and the files that carry the gate to them. A new user must be added here on purpose, after review.
     expect(users.sort()).toEqual([
       "agent/src/driver.ts", "agent/src/gateway.ts", "agent/src/main.ts", "agent/src/runMission.ts", "agent/src/sdkOptions.ts", "agent/src/sdkRuntime.ts",
-      "agent/src/spendGateWiring.ts", "agent/src/webGateway.ts",
+      "agent/src/spendGateKeys.ts", "agent/src/spendGateWiring.ts", "agent/src/webGateway.ts",
     ]);
     expect(users.filter((u) => u.startsWith("src/"))).toEqual([]);
   });

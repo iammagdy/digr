@@ -131,7 +131,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
   * Every direct model request of `review.ts`.
 * **With the variable unset** (production): the worker builds nothing new, and requests, records and SDK options are identical. Tests pin this.
 * **Tested offline:**
-  * `tests/spend-gate-r62-wiring.test.ts`: 41 tests;
+  * `tests/spend-gate-r62-wiring.test.ts`: 42 tests;
   * `tests/spend-gate-r61-sdk.test.ts`: 4 with `DIGER_TEST_REAL_SDK=1` (real driver and real SDK, fake upstream);
   * `tests/sql/spend-gate-r62-worker.local-pg.test.ts`: 3, on a scratch Postgres;
   * the full suite (numbers in the PR).

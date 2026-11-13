@@ -8,7 +8,8 @@ import { cellText, isRealValue, readRecipe, type RereadRecipe } from "../../../s
 import type { FileVersion } from "../../../src/lib/agentMission/stage4/versions";
 import { createJobCallBudget } from "../../../src/lib/server/callBudget";
 import { createGateway } from "../gateway";
-import { spendGateOf, type RunnerDeps } from "../runMission";
+import type { RunnerDeps } from "../runMission";
+import { spendGateOf } from "../spendGateKeys";
 import { readRunState, updateRunState, type RunState } from "../runState";
 import { trackRun, untrackRun } from "../sessions";
 import type { CallRow, MissionRecord } from "../types";
