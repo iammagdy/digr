@@ -100,7 +100,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
   * `docs/proposals/spend-gate/sql/001_spend_gate.sql`, its rollback, `002_verify.sql`;
   * drafts `docs/proposals/spend-gate/drafts/*.ts.txt` (Supabase adapter and gate hooks, not compiled).
 * **Tested (offline, no paid call):**
-  * `tests/spend-gate-r61.test.ts`: 42/42.
+  * `tests/spend-gate-r61.test.ts`: 42/42 at `f0fe65d8`; 58/58 after the PR #479 security review fixes (observe accounting, `anthropic-beta` allowlist, constant-time child token; SPEC-v2 §6).
   * `tests/spend-gate-r61-sdk.test.ts`: 2/2, with `DIGER_TEST_REAL_SDK=1`. It runs the real Agent SDK against a fake upstream. Without a grant: 3 requests refused, 0 forwarded.
   * `tests/sql/spend-gate.local-pg.test.ts`: 11/11 on a scratch Postgres 16.
   * Mutation checks: 15/15 TypeScript protections and 11/11 SQL protections caught.
@@ -142,7 +142,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
   * every model request goes to `ANTHROPIC_BASE_URL`, with `max_tokens` 128,000;
   * fields sent: `model, messages, system, tools, metadata, max_tokens, thinking, context_management, output_config, stream`.
 * **Tests:**
-  * `spend-gate-r61` 42/42;
+  * `spend-gate-r61` 42/42, then 58/58 with the PR #479 review fixes;
   * `spend-gate-r61-sdk` 2/2 (opt-in);
   * `sql/spend-gate.local-pg` 11/11 (scratch Postgres);
   * mutations 15/15 TypeScript, 11/11 SQL;

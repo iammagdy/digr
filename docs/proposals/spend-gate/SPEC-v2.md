@@ -175,6 +175,25 @@ unique (state) where state = 'open'      -- one open grant at a time
 * The input part rests on «tokens ≤ bytes + 4,096». Every answer is checked against it, and a violation stops the grant (tested).
 * `maxBudgetUsd` stays as a second, soft guard. **It is not a hard cap and is not described as one.**
 
+**PR #479 security review fixes** (`agent/src/modelGate.ts`, tests `FINDING 1..3` in `tests/spend-gate-r61.test.ts`)
+
+1. **Observe accounting.**
+   * Observe forwards the SDK's request unchanged (`max_tokens` 128,000), so it now reserves the bound of *that* request, not the capped bound enforce would send.
+   * An answer longer than the cap is therefore not a false overrun and cannot trip a grant.
+   * Observe can also forward a request whose as-sent bound cannot be reserved (for example Sonnet at 128,000 tokens, above $1, or an unknown beta). Such a request goes **unreserved**, and its priced usage is reported apart (`unreservedUsd`).
+   * Observe no longer sets `CLAUDE_CODE_MAX_OUTPUT_TOKENS` for the child.
+2. **`anthropic-beta` allowlist.** Only `ALLOWED_ANTHROPIC_BETAS` passes.
+   * That list is exactly the 10 values Agent SDK 0.3.312 sends, measured against a fake upstream. Each value carries the reason its billing stays inside the bound.
+   * Three of them are inert here: advisor, inline and mid-conversation tool changes. They bill only through body forms that the body check refuses.
+   * A value that bills by the header alone (for example `context-1m-*`), an unknown value or a malformed value is handled by mode:
+     * enforce refuses it before reserving or sending;
+     * observe forwards it unreserved and records the refusal enforce would have made.
+3. **Child authentication.**
+   * The token is compared as SHA-256 digests through `timingSafeEqual`, which is constant in content and length.
+   * The token is read from `x-api-key`, or else `Authorization: Bearer`, strictly.
+   * The gate still binds `127.0.0.1` and drops any peer that is not loopback.
+   * Refusals never echo the presented value, and no event carries the real key or the child's token (tested).
+
 **Not covered by the model gate.** These must be wired separately (§7):
 
 * `agent/src/review.ts`, which calls the API directly from the worker;
