@@ -50,3 +50,15 @@ The price differences (325 → 200 → 437 → 1110) are four different plans of
 | model failures (unreadable / truncated) | 10 | 1 (truncated; answered from the plan by code) |
 
 Spending: 134 paid attempts, $0.0743 in total for the round so far (cumulative ceiling set to $0.50 for this round). Qualitative review: replies are relevant and fluent; 3 of 40 contain a statement the plan's public facts do not support (twice «off-topic results are excluded», once «a company may appear twice»).
+
+## PR B: the plan card says what the price counts; «اكتب الطلب من جديد» no longer cancels
+
+* **Price explanation** (`customerView.ts` `priceExplainOf`, drawn under the unchanged promise sentence): for a plan that delivers more than one step, each step's count («٢٠ من «شركات …» و١٢ من «بيانات التواصل …»، والمجموع ٣٢»). When the hold is above the price, the hold is shown as price plus margin in the plan's own numbers («الحجز المؤقت ٣٧٤ نقطة = أقصى السعر ٣٢٥ نقطة + هامش أمان ٤٩ نقطة؛ وهو ليس خصمًا …»). The pricing is unchanged: reserve = max(minimum, ceil(items × unit × 1.15)), charge = delivered × unit, never above the reserve.
+* **Retype** (`requestTextForCustomer`, action `retype`): the button reads the request's words back into the chat box and changes nothing. The plan stays until the new request is sent; the chat then replaces it like any new request. A retyped full request sent as a change is the request itself, never joined to its own copy. The editor says this before it is pressed, and says that a column it does not list is asked for in the chat.
+* **Digests:** `flags-off-byte-identical` planView/finalView re-pinned (only those two sections changed; mission, workbook, notices, events, provider calls and ledger were compared and are identical).
+
+## Not done (needs the owner)
+
+* **A revision while the worker is ALREADY planning** is answered «the plan is still being prepared», as before. Letting it replace the running plan needs the worker to discard a plan whose request was cancelled while it ran. That fix was built and mutation-tested: a compare-and-set on every status write, plus a re-read before the final planning write. It was withdrawn from this round because it changes a deliberate earlier policy (pinned by two acceptance tests: «a request already being planned is left alone») and the byte-identical worker replays. Today nothing cancels a planning mission, so there is no live race.
+* **Chat model usage in `llm_usage`:** the agent chat model's call is not added to the turn's usage row (`model: deterministic`). Spend on the chat model is therefore not visible in that table.
+* **`chat_research_brief_v1`** stays OFF; nothing in this round needs it.

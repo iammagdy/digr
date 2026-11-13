@@ -196,7 +196,9 @@ export const APPROVE_ON_CARD_AR = "خطتك لسه زي ما هي في البط�
 async function reviseOpenRequest(input: AgentChatTurnInput, open: OpenRequest): Promise<AgentChatTurnResult> {
   const base = String(open.requestText ?? "").replace(/\s+/g, " ").trim();
   const change = input.message.replace(/\s+/g, " ").trim();
-  const combined = base === "" ? change : `${base} ${REVISION_JOINER_AR} ${change}`;
+  // a request retyped in full («اكتب الطلب من جديد» puts its words in the box) is the request itself, never joined to its own copy
+  const retyped = base !== "" && change.startsWith(base.slice(0, Math.min(40, base.length)));
+  const combined = base === "" || retyped ? change : `${base} ${REVISION_JOINER_AR} ${change}`;
   if (combined.length > REVISION_MAX_CHARS) { await writeAnswer(input, REVISION_TOO_LONG_AR); return { ok: false, contentAr: REVISION_TOO_LONG_AR, status: 200 }; }
   console.info(JSON.stringify({ tag: "chat_revision", from: open.id, chars: combined.length }));
   return startMission(input, combined, { contentAr: REVISION_STARTED_AR });

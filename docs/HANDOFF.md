@@ -15,6 +15,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
   * transcript in the system prompt in every mode; one retry after 5xx/529; `queued` is replaceable (unheld).
 * **Measured with the real model** (`evals/customer-journey`, production configuration): 11/40 → 40/40 turns pass every objective check; generic replies 23 → 0; spend $0.0743 (round ceiling $0.50).
 * **Tests:** `tests/customer-journey-r57.test.ts`; 4 existing tests changed on purpose (each marked CHANGED).
+* **PR B (card and retype, no money line):** the card states each step's count and the hold as price plus margin (`priceExplainAr`). «اكتب الطلب من جديد» reads the words back without cancelling the plan. Not done: a revision while the worker is ALREADY planning (see docs/CUSTOMER-JOURNEY-R57.md, «Not done»).
 
 ## Round 56, part 2 (13 Nov 2026): providers (evidence) and web provider selection
 

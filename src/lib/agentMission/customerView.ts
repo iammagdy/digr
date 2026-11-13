@@ -80,6 +80,8 @@ export interface CustomerMissionView {
   /** The same facts as short labelled cells for the compact card («السعر حتى ٢٤٣ نقطة»، «حجز مؤقت ٢٧٩ نقطة»، «الوقت المتوقع نحو ٤ دقائق»), and the one sentence under them. */
   priceFacts: Array<{ labelAr: string; valueAr: string }>;
   priceNoteAr: string | null;
+  /** ROUND 57: what the price counts (each step's items, when the plan delivers more than one kind) and the hold as the price plus its margin, in the plan's own numbers. Empty: nothing to add. */
+  priceExplainAr: string[];
   questionAr: string | null;
   /** Why the request waits (round 14: never a time), or null. */
   queueLineAr: string | null;
@@ -235,6 +237,28 @@ export function priceFactsOf(plan: any): { facts: Array<{ labelAr: string; value
     ...(minutes > 0 ? [{ labelAr: "الوقت المتوقع", valueAr: minutesAr(minutes) }] : []),
   ];
   return { facts, noteAr: PRICE_PROMISE_AR };
+}
+
+/**
+ * ROUND 57 (13 Nov): «٣٢ عنصرًا» read as 32 companies when the plan was 20 companies and 12 contact rows of companies, and the hold (374) next to the price (325) was never explained. Two sentences, from the plan's own numbers:
+ * what the price counts, step by step (only when more than one step is delivered), and the hold as the price plus the safety margin (only when it is above the price). The pricing itself is unchanged.
+ */
+export function priceExplainOf(plan: any): string[] {
+  const price = plan?.price;
+  if (!price || !(Number(price.max_charge_points) > 0)) return [];
+  const out: string[] = [];
+  const stages = (Array.isArray(plan?.stages) ? plan.stages : []).filter((s: any) => s && s.deliver !== false && Number(s.expected_rows) > 0);
+  if (stages.length >= 2) {
+    const parts = stages.map((s: any) => `${formatAr(Math.round(Number(s.expected_rows)))} من «${String(s.title_ar ?? "").replace(/\s+/g, " ").trim()}»`);
+    const total = stages.reduce((n: number, s: any) => n + Math.round(Number(s.expected_rows)), 0);
+    out.push(`السعر محسوب على كل عنصر يُسلَّم من كل خطوة: ${parts.join(" و")}، والمجموع ${formatAr(total)}.`);
+  }
+  const estimate = Math.round(Number(price.max_charge_points));
+  const reserve = Math.round(Number(price.reserve_points));
+  if (!countedSplitOf(price) && Number.isFinite(reserve) && reserve > estimate) {
+    out.push(`الحجز المؤقت ${pointsAr(reserve)} = أقصى السعر ${pointsAr(estimate)} + هامش أمان ${pointsAr(reserve - estimate)}؛ وهو ليس خصمًا، ولا يُخصم أكثر من أقصى السعر، ويُحرَّر ما لا يُستخدم منه بعد التسليم.`);
+  }
+  return out;
 }
 
 /** The period of the plan in words, from its own enabled period filter (the one the card's promise rests on); null when no stage filters by period. */
@@ -471,7 +495,7 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   const view: CustomerMissionView = {
     id: mission.id, phase, summaryAr: plan?.summary_ar ? String(plan.summary_ar) : null, notesAr: Array.isArray(plan?.notes_ar) ? dedupeNearIdentical(plan.notes_ar.map(String)) : [], assumptionsAr: Array.isArray(plan?.assumptions_ar) ? dedupeNearIdentical(plan.assumptions_ar.map(String)) : [], unservedAr: Array.isArray(plan?.unserved_ar) ? dedupeNearIdentical(plan.unserved_ar.map(String)) : [],
     questionOptionsAr: phase === "question" && Array.isArray((mission.plan_public as any)?.question_options) ? (mission.plan_public as any).question_options.map(String).slice(0, 6) : [], stages, totalRows: total, totalRowsAr: countAr(total, itemNounOfPlan(plan)),
-    samples: plan ? samplesView(plan) : null, fileContentsAr: plan ? fileContentsAr(plan) : null, priceLineAr: plan ? priceLineAr(plan) : null, priceFacts: plan ? priceFactsOf(plan).facts : [], priceNoteAr: plan ? priceFactsOf(plan).noteAr : null, questionAr: phase === "question" ? mission.question_ar : null,
+    samples: plan ? samplesView(plan) : null, fileContentsAr: plan ? fileContentsAr(plan) : null, priceLineAr: plan ? priceLineAr(plan) : null, priceFacts: plan ? priceFactsOf(plan).facts : [], priceNoteAr: plan ? priceFactsOf(plan).noteAr : null, priceExplainAr: plan ? priceExplainOf(plan) : [], questionAr: phase === "question" ? mission.question_ar : null,
     queueLineAr: q.lineAr, queuePosition: q.position, steps, currentLineAr, delayAr, remainingAr,
     closePageAr: closePageLine(mission.status, input.queue, input.emailWillBeSent),
     resultLinesAr, resultSummaryAr: phase === "done" || phase === "partial" || phase === "unserved" || phase === "failed" ? storedSummary : null,
@@ -505,7 +529,7 @@ export function guardViewText(v: CustomerMissionView): CustomerMissionView {
     summaryAr: n(v.summaryAr), notesAr: v.notesAr.map(g).filter(Boolean), assumptionsAr: v.assumptionsAr.map(g).filter(Boolean), unservedAr: v.unservedAr.map(g).filter(Boolean), questionOptionsAr: v.questionOptionsAr.map(g).filter(Boolean),
     stages: v.stages.map((s) => ({ ...s, titleAr: g(s.titleAr) || "مرحلة", noteAr: n(s.noteAr) })),
     samples: v.samples ? { ...v.samples, stageTitleAr: g(v.samples.stageTitleAr) } : null,
-    fileContentsAr: n(v.fileContentsAr), priceLineAr: n(v.priceLineAr), priceNoteAr: n(v.priceNoteAr), questionAr: n(v.questionAr), queueLineAr: n(v.queueLineAr), collectLineAr: n(v.collectLineAr),
+    fileContentsAr: n(v.fileContentsAr), priceLineAr: n(v.priceLineAr), priceNoteAr: n(v.priceNoteAr), priceExplainAr: (v.priceExplainAr ?? []).map(g).filter(Boolean), questionAr: n(v.questionAr), queueLineAr: n(v.queueLineAr), collectLineAr: n(v.collectLineAr),
     steps: v.steps.map((s) => ({ ...s, titleAr: g(s.titleAr) || "خطوة", ...(typeof s.countAr === "string" ? { countAr: g(s.countAr) } : {}) })),
     currentLineAr: g(v.currentLineAr), delayAr: n(v.delayAr), remainingAr: n(v.remainingAr), closePageAr: n(v.closePageAr),
     resultLinesAr: v.resultLinesAr.map(g).filter(Boolean), resultSummaryAr: n(v.resultSummaryAr), endLineAr: n(v.endLineAr),
