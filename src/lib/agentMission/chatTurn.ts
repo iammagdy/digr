@@ -172,7 +172,8 @@ export const CANCELLED_BY_CHAT_AR = "تمام، ألغيت طلب البحث د�
 export const CANCEL_HOW_AR = "لو عايز تلغي الطلب كله اكتب «الغي الطلب» أو اضغط «ألغِ المهمة» في البطاقة؛ ولو عايز تشيل حاجة معيّنة من الخطة قولّي هي إيه ونجهّز لك خطة معدّلة. ومفيش حاجة اتخصمت.";
 export const CANCEL_NOT_YET_AR = "خطة طلبك لسه بتتجهّز ومفيش حاجة اتخصمت. أول ما تظهر في البطاقة تقدر تلغيها بزر «ألغِ المهمة» أو تكتب «الغي الطلب».";
 /** ROUND 57: the open request's words and the customer's change, as ONE request (the worker plans from it). */
-export const REVISION_JOINER_AR = "تعديل العميل على نفس الطلب:";
+export { REVISION_JOINER_AR } from "./revisionText";
+import { REVISION_JOINER_AR } from "./revisionText";
 const REVISION_MAX_CHARS = 3900;
 
 /** ROUND 57: a short message, or a question, about something the plan's facts answer (its sources, the relevance check, missing fields, cost, the price): never a change by itself. */

@@ -85,9 +85,13 @@ export function itemNounOf(text: string | null | undefined): ItemNoun {
 }
 
 /** The noun of what the customer RECEIVES: the noun of the delivered stages when they all name the same thing («التغريدات»), else «عنصر» (posts together with their comments are items). */
-export function itemNounOfPlan(plan: { stages?: ReadonlyArray<{ title_ar?: unknown; titleAr?: unknown; deliver?: boolean }> } | null | undefined): ItemNoun {
+export function itemNounOfPlan(plan: { stages?: ReadonlyArray<{ title_ar?: unknown; titleAr?: unknown; deliver?: boolean; parent_key?: unknown }> } | null | undefined): ItemNoun {
   const stages = Array.isArray(plan?.stages) ? plan!.stages! : [];
   const delivered = stages.filter((s) => s?.deliver !== false);
+  // ROUND 58: a delivered step that hangs on another delivered step DESCRIBES its items («بيانات تواصل الشركات» of «شركات مستحضرات التجميل»): its rows are details of those companies, never more companies. The sum of the two is
+  // counted as «عنصر», never in the parent's noun (live risk: 20 companies + 12 contact rows told as «٣٢ شركة» on the card, in the notice and in the file)
+  const deliveredKeys = new Set(delivered.map((s) => String((s as { key?: unknown })?.key ?? "")).filter(Boolean));
+  if (delivered.some((s) => typeof s?.parent_key === "string" && s.parent_key !== "" && deliveredKeys.has(s.parent_key))) return GENERIC_ITEM_NOUN;
   const nouns = (delivered.length > 0 ? delivered : stages.slice(0, 1)).map((s) => itemNounOf(String(s?.title_ar ?? s?.titleAr ?? "")));
   return nouns.length > 0 && nouns.every((n) => n.key === nouns[0].key) ? nouns[0] : GENERIC_ITEM_NOUN;
 }

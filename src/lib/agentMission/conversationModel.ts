@@ -6,7 +6,7 @@ import { CHAT_MODEL_BRIEF_MAX_TOKENS, CHAT_MODEL_MAX_TOKENS, CHAT_MODEL_TIMEOUT_
 import { parseBrief, type ParsedBrief, type ResearchBrief } from "./researchBrief";
 import { POINT_VALUE_EGP_AR, classifyMessage, namesCollectibleData } from "./messageType";
 import { checkCustomerText } from "./text";
-import { planFactsLinesAr, planNumbersAr, planQuestionKind, isExplicitCancel, refersToOpenRequest, type OpenPlanFacts } from "./openPlanFacts";
+import { planFactsLinesAr, planNumbersAr, planQuestionKind, isExplicitCancel, refersToOpenRequest, unsupportedClaimIssues, type OpenPlanFacts } from "./openPlanFacts";
 
 /**
  * THE CHAT TALKS LIKE AN ASSISTANT, WITH CODE AS THE GUARD (round 22). The chat model names the type of every message and, for a message that is not a data request, writes the reply. Everything it says or decides is checked here:
@@ -289,7 +289,7 @@ export function allowedNumbers(input: { message: string; balancePoints: number |
 
 export type GuardResult = { ok: true; text: string } | { ok: false; issues: string[] };
 
-export function guardReply(reply: string, allowed: { message: string; balancePoints: number | null; extraAr?: string[] }): GuardResult {
+export function guardReply(reply: string, allowed: { message: string; balancePoints: number | null; extraAr?: string[]; facts?: OpenPlanFacts | null }): GuardResult {
   const text = String(reply ?? "").replace(/\s+/g, " ").trim();
   const issues: string[] = [];
   if (text === "") return { ok: false, issues: ["empty"] };
@@ -302,6 +302,8 @@ export function guardReply(reply: string, allowed: { message: string; balancePoi
   const ok = allowedNumbers(allowed);
   const foreign = numbersIn(text).filter((n) => !ok.has(n));
   if (foreign.length > 0) issues.push("number_not_given");
+  // ROUND 58: a reply about the open plan that says what its facts do not (its priced total as companies, a saving from a column, a de-duplication, a guarantee): the code's own answer is used instead
+  for (const issue of unsupportedClaimIssues(text, allowed.facts ?? null)) issues.push(issue);
   return issues.length > 0 ? { ok: false, issues } : { ok: true, text };
 }
 
@@ -400,7 +402,7 @@ export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getCha
   const overruled = standalone && type !== "data_request" && type !== "edit_of_open_request" && classifyMessage(ctx.message) === "data_request";
   if (overruled) type = "data_request";
   const model_ = (reply: string | null, guarded: boolean, count: number | null): Decision => ({ type, reply, count, reason: answer!.reason, source: "model", guarded, ...(overruled ? { overruled: true } : {}) });
-  const allowed = { message: ctx.message, balancePoints: ctx.balancePoints, extraAr: [...(ctx.brief?.numbersAr ?? []), ...planNumbersAr(ctx.open?.facts ?? null)] };
+  const allowed = { message: ctx.message, balancePoints: ctx.balancePoints, extraAr: [...(ctx.brief?.numbersAr ?? []), ...planNumbersAr(ctx.open?.facts ?? null)], facts: ctx.open?.facts ?? null };
   if (ctx.brief?.enabled === true && (type === "data_request" || type === "edit_of_open_request")) {
     // brief mode: the model's discovery question or short note is shown only when the guard passes it; the brief is checked against the schema here and against the conversation by the caller
     const brief = answer.brief === undefined ? null : parseBrief(answer.brief);

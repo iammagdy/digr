@@ -241,7 +241,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
   const byBalance = !v.limit?.over && hold !== null && hold.kind === "balance";
   const showStarted = v.phase === "running" || (v.phase === "plan" && approved);
   const facts = [
-    ...(v.totalRowsAr ? [{ labelAr: "هتستلم", valueAr: v.totalRowsAr }] : []),
+    ...(v.headlineCountAr || v.totalRowsAr ? [{ labelAr: "هتستلم", valueAr: v.headlineCountAr || v.totalRowsAr }] : []),
     ...(v.periodAr ? [{ labelAr: "الفترة", valueAr: v.periodAr }] : []),
     ...v.priceFacts,
   ];
@@ -290,6 +290,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
               <div key={f.labelAr} className="min-w-0"><dt className="text-[11px] font-light text-mut">{f.labelAr}</dt><dd className="m-0 mt-0.5 break-words text-[14px] font-semibold leading-[1.6] text-ink">{f.valueAr}</dd></div>
             ))}
           </dl>
+          {(v.countLinesAr ?? []).map((line) => <p key={line} className="m-0 mt-2 text-[12px] leading-[1.8] text-ink2" data-testid="agent-count-explain">{line}</p>)}
           {v.priceNoteAr ? <p className="m-0 mt-2 border-t border-ln pt-2 text-[12px] leading-[1.8] text-ink2" data-testid="agent-price-note">{v.priceNoteAr}</p> : null}
           {(v.priceExplainAr ?? []).map((line) => <p key={line} className="m-0 mt-1 text-[12px] leading-[1.8] text-ink2" data-testid="agent-price-explain">{line}</p>)}
         </div>

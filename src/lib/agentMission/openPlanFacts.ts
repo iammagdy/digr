@@ -1,4 +1,6 @@
 import { formatAr, toArabicDigits } from "../arabicDigits";
+import { definitePluralAr, entityBreakdownOf, entityStagesOfPublic } from "./entityCount";
+import { countAr, itemNounOf } from "./itemNoun";
 
 /**
  * THE FACTS OF THE CUSTOMER'S OPEN PLAN, FOR THE CHAT (round 57, the 13 Nov cosmetics conversation).
@@ -15,6 +17,10 @@ export interface OpenPlanFacts {
   notesAr: string[];
   /** All in points. `estimate` is the most the full delivery costs (the card's «السعر حتى»); `reserve` the temporary hold at approval; `unit` per delivered row. */
   price: { estimate: number; reserve: number; minimum: number; unit: number; rows: number } | null;
+  /** ROUND 58: a plan of companies with their details: the companies' count (the one number that is «شركة») and the priced total. */
+  entity: { countAr: string; pluralAr: string; rows: number; total: number; detailsAr: string[]; /** The priced total said in the companies' noun («٣٢ شركة»): never true of this plan. */ totalAsNounAr: string } | null;
+  /** ROUND 58: the customer's own number and the plan's target, when the plan targets fewer. */
+  shortTarget: { requestedAr: string; target: number } | null;
 }
 
 const text = (v: unknown, max: number): string => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, max);
@@ -49,7 +55,23 @@ export function openPlanFactsOf(planPublic: unknown): OpenPlanFacts | null {
     assumptionsAr: (Array.isArray(p?.assumptions_ar) ? p!.assumptions_ar : []).map((a: unknown) => text(a, 240)).filter(Boolean).slice(0, 8),
     notesAr: (Array.isArray(p?.notes_ar) ? p!.notes_ar : []).map((a: unknown) => text(a, 240)).filter(Boolean).slice(0, 4),
     price,
+    entity: entityOf(p),
+    shortTarget: shortTargetOf(p),
   };
+}
+
+function entityOf(p: Record<string, any> | null): OpenPlanFacts["entity"] {
+  const b = entityBreakdownOf(entityStagesOfPublic(p));
+  return b ? { countAr: countAr(b.root.rows, b.root.noun), pluralAr: definitePluralAr(b.root.noun), rows: b.root.rows, total: b.totalItems, detailsAr: b.details.map((d) => text(d.titleAr, 160)), totalAsNounAr: countAr(b.totalItems, b.root.noun) } : null;
+}
+
+function shortTargetOf(p: Record<string, any> | null): OpenPlanFacts["shortTarget"] {
+  const q = p?.quantity;
+  const requested = Math.floor(Number(q?.requested) || 0);
+  const target = Math.floor(Number(q?.target) || 0);
+  if (!q || requested <= 0 || target <= 0 || target >= requested) return null;
+  const stage = (Array.isArray(p?.stages) ? p!.stages : []).find((s: any) => s?.key === q.stage_key);
+  return { requestedAr: countAr(requested, itemNounOf(String(stage?.title_ar ?? ""))), target };
 }
 
 /** The unit price as the customer reads it: one decimal at most («١٠٫١»). */
@@ -62,11 +84,14 @@ export function planFactsLinesAr(f: OpenPlanFacts): string[] {
   f.stages.forEach((s, i) => {
     lines.push(`- الخطوة ${toArabicDigits(i + 1)}: «${s.titleAr}»، العدد المتوقع ${toArabicDigits(s.rows)}${s.parentTitleAr ? `، لكل عنصر من «${s.parentTitleAr}»${s.perParent ? ` (${toArabicDigits(s.perParent)} لكل عنصر)` : ""}` : ""}. الأعمدة: ${s.columnsAr.map((c) => `«${c}»`).join("، ")}.${s.howAr ? ` الطريقة: «${s.howAr}»` : ""}`);
   });
+  if (f.entity) lines.push(`- عدد ${f.entity.pluralAr} في الخطة ${toArabicDigits(f.entity.rows)} فقط (${f.entity.countAr})، ومعها ${f.entity.detailsAr.map((d) => `«${d}»`).join(" و")} لجزء منها. الرقم ${toArabicDigits(f.entity.total)} هو مجموع العناصر المحسوبة في السعر، وليس عدد ${f.entity.pluralAr}: لا تقل أبدًا إن الخطة فيها ${toArabicDigits(f.entity.total)} من ${f.entity.pluralAr}.`);
+  if (f.shortTarget) lines.push(`- العميل طلب ${f.shortTarget.requestedAr}، والخطة تستهدف ${toArabicDigits(f.shortTarget.target)} فقط (السبب في ملاحظات الخطة). قل الرقمين كما هما ولا تخفِ الفرق.`);
+  lines.push("- العدد المستهدف ليس مضمونًا، ولا توجد بيانات تواصل لكل عنصر بالضرورة. لا تَعِد بشيء لا تذكره هذه الحقائق صراحةً (لا حذف للتكرار، ولا استبعاد تلقائي، ولا تغطية كاملة، ولا مصادر غير المكتوبة هنا)، ولا تعرض قدرة غير مذكورة (خطة تحذف التكرار، خانة تحقق، جودة أعلى). وإذا سُئلت سؤال نعم أو لا، فابدأ بالإجابة الصحيحة من هذه الحقائق.");
   for (const a of f.assumptionsAr) lines.push(`- افتراض في الخطة: «${a}»`);
   for (const n of f.notesAr) lines.push(`- ملاحظة في الخطة: «${n}»`);
   if (f.price) {
     lines.push(
-      `- السعر: يُحسب على كل عنصر يُسلَّم من كل الخطوات (${f.stages.map((s) => `${toArabicDigits(s.rows)} من «${s.titleAr}»`).join(" و")}، والمجموع ${toArabicDigits(f.price.rows)})، بحوالي ${unitAr(f.price.unit)} نقطة للعنصر. أقصى ما يُخصم للتسليم الكامل ${formatAr(f.price.estimate)} نقطة، والحد الأدنى للمهمة ${formatAr(f.price.minimum)} نقطة. أكبر توفير يأتي من تقليل العدد أو الاستغناء عن خطوة كاملة.`,
+      `- السعر: يُحسب على كل عنصر يُسلَّم من كل الخطوات (${f.stages.map((s) => `${toArabicDigits(s.rows)} من «${s.titleAr}»`).join(" و")}، والمجموع ${toArabicDigits(f.price.rows)})، بحوالي ${unitAr(f.price.unit)} نقطة للعنصر. أقصى ما يُخصم للتسليم الكامل ${formatAr(f.price.estimate)} نقطة، والحد الأدنى للمهمة ${formatAr(f.price.minimum)} نقطة. التوفير الوحيد يأتي من تقليل العدد أو الاستغناء عن خطوة كاملة؛ أما إخفاء عمود أو حذفه فلا يغيّر السعر، فلا تقترحه كتوفير. والاستغناء عن خطوة يحذف ما تجمعه من الملف، فاذكر ذلك صراحةً.`,
       `- لا تقل «صف» ولا «سجل» للعميل: سمِّ العناصر بأسمائها (شركات، بيانات تواصل).`,
       `- الحجز المؤقت عند الاعتماد ${formatAr(f.price.reserve)} نقطة: ليس خصمًا، بل هامش أمان فوق أقصى سعر، ويُحرَّر كل ما لا يُستخدم منه بعد التسليم. ولا يُخصم أبدًا أكثر من أقصى السعر ولا أكثر من المحجوز.`,
     );
@@ -80,6 +105,8 @@ export function planNumbersAr(f: OpenPlanFacts | null): string[] {
   const out = new Set<string>();
   const add = (n: number) => { if (Number.isFinite(n) && n >= 0) { out.add(toArabicDigits(Math.round(n))); out.add(formatAr(Math.round(n))); } };
   f.stages.forEach((s, i) => { add(s.rows); add(i + 1); if (s.perParent) add(s.perParent); });
+  if (f.entity) { add(f.entity.rows); add(f.entity.total); }
+  if (f.shortTarget) { add(f.shortTarget.target); for (const d of f.shortTarget.requestedAr.match(/[٠-٩]+/g) ?? []) out.add(d); }
   if (f.price) { add(f.price.estimate); add(f.price.reserve); add(f.price.minimum); add(f.price.rows); out.add(unitAr(f.price.unit)); add(Math.floor(f.price.unit)); add(Math.round(f.price.unit)); }
   const total = f.stages.reduce((n, s) => n + s.rows, 0);
   add(total);
@@ -91,13 +118,17 @@ export function planNumbersAr(f: OpenPlanFacts | null): string[] {
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 const norm = (raw: string): string => String(raw ?? "").replace(/[ً-ٰٟـ]/g, "").replace(/[أإآٱ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه").toLowerCase().replace(/[،,.!؟?؛;:"'«»()[\]{}\-_/\\|*#@~`+=<>]/g, " ").replace(/\s+/g, " ").trim();
 
-export type PlanQuestionKind = "sources" | "relevance" | "blank" | "cost" | "price";
+export type PlanQuestionKind = "sources" | "relevance" | "blank" | "cost" | "price" | "count" | "duplicates";
 const KINDS: Array<[PlanQuestionKind, RegExp]> = [
   ["blank", /(?:مالهاش|ملهاش|مفيهاش|معندهاش) (?:موقع|رقم|ايميل|تليفون|بريد)|فاضي|فاضيه|فارغ|سيبه|سيبها|سيبهم|متلاقيش|ملقتش|مش لاقي|مش لاقيه|مش موجود|مش منشور|لو مفيش|لو ملقيتش/],
   ["sources", /منين|من اين|مصدر|مصادر|جايه من|جاي من|بتجيبوا|بتجيبها|بتجمعوا منين|تجيبوا/],
   ["relevance", /علاقه|شغاله|تتاكد|نتاكد|هتتاكد|متاكد|التاكد|فعلا|نشاط|مالهاش دعوه|ملهاش دعوه|بعيد عن الموضوع/],
-  ["cost", /تكلف|ارخص|نقلل|نوفر|نخفض|ميزاني|اقل سعر|سعر اقل|اوفر/],
+  ["cost", /تكلف|ارخص|نقلل|نوفر|نخفض|ميزاني|اقل سعر|سعر اقل|اوفر|السعر (?:هيقل|يقل|بيقل|هينزل|ينزل|هيرخص)/],
   ["price", /نهائي|هيزيد|يزيد|الحجز|حجز|هيتخصم|يتخصم|هتخصم/],
+  // ROUND 58: «هي كام شركة؟»، «يعني ٣٢ شركة؟»: the count of the plan, said with its noun
+  // (questions only: «قلل عدد الشركات لـ١٠» is an edit, never this)
+  ["duplicates", /تتكرر|يتكرر|هتتكرر|مكرره|مكرر|التكرار|تكرار/],
+  ["count", /كام (?:شركه|مكان|عنصر)|فيها كام|هتجيب كام|هيجيب كام|هتجيبوا كام|العدد كام|^يعني (?:[0-9]+ )?(?:شركه|مكان)/],
 ];
 
 /** What a message asks about the open plan, read from its words (null: none of the kinds above). Used only while the customer HAS an open plan. */
@@ -133,8 +164,22 @@ export function planFollowUpAnswerAr(kind: PlanQuestionKind, f: OpenPlanFacts): 
   if (kind === "cost") {
     if (!f.price) return null;
     const rows = f.stages.map((s) => `${toArabicDigits(s.rows)} من «${s.titleAr}»`).join(" و");
-    const drop = children.length > 0 ? ` أو تستغنى عن خطوة «${children[0].titleAr}» لو مش محتاجها، فيقل عدد العناصر المحسوبة.` : "";
-    return `خطتك الحالية فيها ${rows}، والسعر بيتحسب على كل عنصر بيتسلّم بحوالي ${unitAr(f.price.unit)} نقطة للعنصر، وأقصى سعر للتسليم الكامل ${formatAr(f.price.estimate)} نقطة. عشان تقلل التكلفة من غير ما تغيّر نوع البيانات: قلّل عدد الشركات (اكتب مثلًا «خليها ١٠ شركات») ويتحسب السعر من جديد قبل موافقتك،${drop} والحد الأدنى لأي مهمة ${formatAr(f.price.minimum)} نقطة.`;
+    // ROUND 58: hiding a column changes nothing in a price per item; dropping a step drops what it collects (the customer's contacts), and is said so
+    const drop = children.length > 0 ? ` ولو استغنيت عن خطوة «${children[0].titleAr}» يقل عدد العناصر المحسوبة، بس ساعتها مش هتوصلك البيانات اللي بتجمعها الخطوة دي.` : "";
+    return `خطتك الحالية فيها ${rows}، والسعر بيتحسب على كل عنصر بيتسلّم بحوالي ${unitAr(f.price.unit)} نقطة للعنصر، وأقصى سعر للتسليم الكامل ${formatAr(f.price.estimate)} نقطة. شيل عمود أو إخفاؤه ما بيغيّرش السعر. عشان تقلل التكلفة من غير ما تغيّر نوع البيانات: قلّل العدد (اكتب مثلًا «خليها ١٠ شركات») ويتحسب السعر من جديد قبل موافقتك.${drop} والحد الأدنى لأي مهمة ${formatAr(f.price.minimum)} نقطة.`;
+  }
+  if (kind === "count") {
+    const total = f.stages.reduce((n, s) => n + s.rows, 0);
+    const head = f.entity
+      ? `خطتك الحالية فيها ${f.entity.countAr} بس، ومعها ${f.entity.detailsAr.map((d) => `«${d}»`).join(" و")} لجزء منها. الرقم ${formatAr(f.entity.total)} اللي في السعر هو مجموع العناصر المحسوبة، مش عدد ${f.entity.pluralAr}.`
+      : `خطتك الحالية فيها ${f.stages.map((s) => `${toArabicDigits(s.rows)} من «${s.titleAr}»`).join(" و")}${f.stages.length > 1 ? `، والمجموع ${formatAr(total)}` : ""}.`;
+    const short = f.shortTarget ? ` انت طلبت ${f.shortTarget.requestedAr}، والخطة دي بتستهدف ${formatAr(f.shortTarget.target)} بس، والسبب مكتوب في ملاحظات الخطة.` : "";
+    return `${head}${short} والعدد ده هدف مش ضمان: بيتسلّم اللي يتلاقى فعلًا. ولو عايز عدد تاني اكتبه، ونجهّز لك الخطة بسعرها قبل أي خصم.`;
+  }
+  if (kind === "duplicates") {
+    const stated = [...f.notesAr, ...f.assumptionsAr].find((a) => /تكرار|مكرر/.test(a));
+    if (stated) return `اللي في خطتك عن التكرار: «${stated}». ولو عايز شرط تاني قولّي، ونجهّز لك خطة معدّلة بسعرها قبل أي خصم.`;
+    return `خطتك الحالية مش بتنص على حذف الشركات المكررة. النتيجة الواحدة من المصدر بتتسجّل مرة واحدة بس، لكن الشركة اللي ليها أكتر من فرع أو أكتر من صفحة على المصدر ممكن تظهر أكتر من مرة، وكل صف معاه رابط مصدره عشان تقدر تميّزه. ومفيش حاجة اتخصمت قبل اعتمادك.`;
   }
   if (!f.price) return null;
   return `أقصى ما يُخصم لخطتك ${formatAr(f.price.estimate)} نقطة لو اتسلّم كل حاجة، وأقل من كده بنسبة اللي اتسلّم فعلًا لو اتسلّم أقل، والحد الأدنى للمهمة ${formatAr(f.price.minimum)} نقطة. عند الاعتماد بنحجز مؤقتًا ${formatAr(f.price.reserve)} نقطة كهامش أمان، وده مش خصم: اللي مش بيتستخدم منه بيرجع لرصيدك بعد التسليم. والسعر ما بيزيدش إلا لو انت عدّلت الخطة، وساعتها بتشوف السعر الجديد قبل الاعتماد.`;
@@ -153,4 +198,25 @@ export function isExplicitCancel(message: string): boolean {
 /** A message that points at the open request or an earlier plan («الخطة»، «الطلب ده»، «زي ما هي»): never a new request by itself, whatever its type. */
 export function refersToOpenRequest(message: string): boolean {
   return /الخطه|الطلب (?:ده|دا|دي|السابق|اللي|بتاعي)|(?:الشركات|البيانات|الاعمده|الملف|النتايج|النتائج) (?:دي|دى|ده)|قبل كده|زي ما هي|زي ما هو|نفس الطلب|اللي فات|اللي كانت|اللي طلبته/.test(norm(message));
+}
+
+/**
+ * ROUND 58: WHAT A REPLY ABOUT THE OPEN PLAN MAY NOT SAY (measured with the real model on 13 Nov: «أيوه، السعر بيقل» for a removed column in a price per item; «خطة معدّلة تنص على حذف التكرار», a capability the plan never states;
+ * «خانة للتحقق»; «ترتفع الجودة»; and the risk of the priced total said as companies). Objective patterns only, checked against the plan's own facts; empty with no open plan. A flagged reply is not shown: the code's own answer is.
+ */
+export function unsupportedClaimIssues(reply: string, f: OpenPlanFacts | null): string[] {
+  if (!f) return [];
+  const t = String(reply ?? "");
+  const issues: string[] = [];
+  if (f.entity && f.entity.total !== f.entity.rows) {
+    const said = f.entity.totalAsNounAr.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    if (new RegExp(`(?<!(?:مش|ليس|ليست|لا|وليس|وليست|مو|بدل|طلبت|تطلب) )${said}`).test(t)) issues.push("claim:priced_total_as_entities");
+  }
+  if (/^(?:أيوه|ايوه|أيوة|ايوة|نعم|أكيد|اكيد)[،,.]?\s*(?:ال)?سعر\s*(?:بيقل|هيقل|يقل|سيقل|ينخفض|هينزل)/.test(t)) issues.push("claim:column_saving");
+  if (/(?:شيل|نشيل|تشيل|حذف|إزالة|ازالة|إخفاء|اخفاء)\s+(?:\S+\s+){0,2}(?:عمود|أعمدة|الأعمدة|العمود|العمودين|خانة|خانات)[^.؟!]{0,50}(?<!(?:مش|ما|لا|لن|ولا) )(?:يقلل|هيقلل|بيقلل|يخفض|يوفر|هيوفر|بيوفر)/.test(t)) issues.push("claim:column_saving");
+  const statesDedupe = [...f.notesAr, ...f.assumptionsAr].some((a) => /تكرار|مكرر/.test(a));
+  if (!statesDedupe && /(?:حذف|إزالة|ازالة|نشيل|هنشيل|بنشيل|تشيل|استبعاد|نستبعد|هنستبعد|بنستبعد|تصفية|فلترة)\s+(?:ال)?(?:تكرار|مكرر|المكرر|المكررة|التكرارات)|مش هتتكرر|لن تتكرر|مستحيل تتكرر|ما بتتكررش/.test(t)) issues.push("claim:dedupe");
+  if (/(?:خانة|عمود)\s+(?:لل|ال)?تحقق|(?:ترتفع|تزيد|هتزيد|هترتفع|بتزيد)\s+(?:ال)?جود[ةه]/.test(t)) issues.push("claim:unstated_capability");
+  if (/(?<!(?:لا|مش|ما|لن|ولا|نقدرش) )(?:نضمن|هنضمن|بنضمن|أضمن|اضمن)\s+(?:لك\s+)?(?:إن\s+|ان\s+)?(?:كل|جميع)/.test(t)) issues.push("claim:guarantee");
+  return issues;
 }

@@ -22,7 +22,8 @@ afterEach(() => { setChatModelForTesting(null); vi.restoreAllMocks(); });
 describe("the card's price explanation", () => {
   it("the cosmetics plan: each step's count and the hold as price + margin, in its own numbers", () => {
     expect(priceExplainOf(PUBLIC)).toEqual([
-      "السعر محسوب على كل عنصر يُسلَّم من كل خطوة: ٢٠ من «شركات مستحضرات التجميل في مصر من خرائط جوجل» و١٢ من «بيانات التواصل المنشورة في الموقع الرسمي لكل شركة»، والمجموع ٣٢.",
+      // ROUND 58 CHANGED: the priced total is said to be items, with the companies' own count (was «…، والمجموع ٣٢.»; the customer read it as 32 companies)
+      "السعر محسوب على كل عنصر يُسلَّم من كل خطوة: ٢٠ من «شركات مستحضرات التجميل في مصر من خرائط جوجل» و١٢ من «بيانات التواصل المنشورة في الموقع الرسمي لكل شركة»، والمجموع ٣٢ عنصرًا محسوبًا في السعر، وعدد الشركات فيها ٢٠ فقط، لا ٣٢.",
       "الحجز المؤقت ٣٧٤ نقطة = أقصى السعر ٣٢٥ نقطة + هامش أمان ٤٩ نقطة؛ وهو ليس خصمًا، ولا يُخصم أكثر من أقصى السعر، ويُحرَّر ما لا يُستخدم منه بعد التسليم.",
     ]);
     for (const line of priceExplainOf(PUBLIC)) expect(checkCustomerText(line, { maxChars: 400 }).issues, line).toEqual([]);

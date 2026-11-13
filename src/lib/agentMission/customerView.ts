@@ -7,7 +7,8 @@ import { FILES_STEP_TITLE_AR, PLANNING_STEP_TITLES, type PanelStep } from "../mi
 import { pointsAr } from "../pointsFormat";
 import { AGENT_CLOSE_PAGE_LINE_AR, AGENT_CLOSE_PAGE_NO_EMAIL_LINE_AR, AGENT_SLOW_AFTER_MS, AGENT_STALL_AFTER_MS } from "./constants";
 import { isInternalEvent } from "./eventText";
-import { countAr, deliveredOfAr, itemNounOf, itemNounOfPlan, knownItemNoun } from "./itemNoun";
+import { countAr, deliveredOfAr, GENERIC_ITEM_NOUN, itemNounOf, itemNounOfPlan, knownItemNoun } from "./itemNoun";
+import { entityBreakdownOf, entityStagesOfPublic, pricedTotalAr, receiveLineAr, targetLineAr } from "./entityCount";
 import { moneyLineAr } from "./moneyText";
 import { isFreeRerunEvents } from "./freeRerunMark";
 import { fixFileWordingAr } from "./fileWording";
@@ -82,6 +83,10 @@ export interface CustomerMissionView {
   priceNoteAr: string | null;
   /** ROUND 57: what the price counts (each step's items, when the plan delivers more than one kind) and the hold as the price plus its margin, in the plan's own numbers. Empty: nothing to add. */
   priceExplainAr: string[];
+  /** ROUND 58: what the count is, said with its noun: a plan of companies with their contacts is told as its companies (never the priced total as «شركة»), and a target below the customer's own number says both numbers. Empty: nothing to add. */
+  countLinesAr: string[];
+  /** ROUND 58: the «هتستلم» cell of a plan of companies with their details («٢٠ شركة»); null: the cell shows `totalRowsAr` as before. */
+  headlineCountAr: string | null;
   questionAr: string | null;
   /** Why the request waits (round 14: never a time), or null. */
   queueLineAr: string | null;
@@ -165,10 +170,19 @@ export function stagesView(plan: any): { stages: CustomerStageView[]; total: num
     if (deliver && split) total += split.counted;
     const parentIndex = typeof s?.parent_key === "string" ? list.findIndex((x) => x?.key === s.parent_key) : -1;
     // a stage that only FEEDS the next one is a ceiling, never a promise: «حتى ١٠ فيديوهات» (how many of them end up with results in the file is counted from the item store at the end)
-    const rowsAr = countAr(rows, itemNounOf(String(s?.title_ar ?? "")));
+    // ROUND 58: a step that hangs on a step of the same noun («بيانات تواصل الشركات» under «شركات …») holds details of those items, never more of them: its rows are «عنصر» («١٢ عنصرًا», not «١٢ شركة»)
+    const ownNoun = itemNounOf(String(s?.title_ar ?? ""));
+    const parentStage = typeof s?.parent_key === "string" ? list.find((x) => x?.key === s.parent_key) : null;
+    const rowsAr = countAr(rows, parentStage && ownNoun.key !== GENERIC_ITEM_NOUN.key && itemNounOf(String(parentStage?.title_ar ?? "")).key === ownNoun.key ? GENERIC_ITEM_NOUN : ownNoun);
     stages.push({ n: i + 1, parentN: parentIndex >= 0 ? parentIndex + 1 : null, titleAr: customerSafeText(s?.title_ar, "مرحلة"), rows: open ? 0 : rows, rowsAr: split ? repliesSplitAr(split.counted, split.open) : open ? (openReplies ? ALL_REPLIES_AR : ALL_COMMENTS_AR) : deliver ? rowsAr : `حتى ${rowsAr}`, deliver, noteAr: deliver ? null : "تُستخدم في المرحلة التالية ولا تُحتسب في ملفك", ...(typeof s?.yield_share === "number" ? { yieldShare: s.yield_share } : {}) });
   });
   return { stages, total };
+}
+
+/** ROUND 58: the card's «هتستلم» cell for a plan of companies with their details: the companies («٢٠ شركة»; the details and the priced total are said in `countLinesAr` and `priceExplainAr`). Null for any other plan (the cell keeps the total). */
+function headlineCountArOf(plan: any): string | null {
+  const entity = entityBreakdownOf(entityStagesOfPublic(plan));
+  return entity ? countAr(entity.root.rows, entity.root.noun) : null;
 }
 
 export function samplesView(plan: any): CustomerMissionView["samples"] {
@@ -251,7 +265,9 @@ export function priceExplainOf(plan: any): string[] {
   if (stages.length >= 2) {
     const parts = stages.map((s: any) => `${formatAr(Math.round(Number(s.expected_rows)))} من «${String(s.title_ar ?? "").replace(/\s+/g, " ").trim()}»`);
     const total = stages.reduce((n: number, s: any) => n + Math.round(Number(s.expected_rows)), 0);
-    out.push(`السعر محسوب على كل عنصر يُسلَّم من كل خطوة: ${parts.join(" و")}، والمجموع ${formatAr(total)}.`);
+    // ROUND 58: the priced total of companies with their contacts is never read as that many companies
+    const entity = entityBreakdownOf(entityStagesOfPublic(plan));
+    out.push(`السعر محسوب على كل عنصر يُسلَّم من كل خطوة: ${parts.join(" و")}، ${entity ? pricedTotalAr(entity) : `والمجموع ${formatAr(total)}`}.`);
   }
   const estimate = Math.round(Number(price.max_charge_points));
   const reserve = Math.round(Number(price.reserve_points));
@@ -262,6 +278,17 @@ export function priceExplainOf(plan: any): string[] {
 }
 
 /** The period of the plan in words, from its own enabled period filter (the one the card's promise rests on); null when no stage filters by period. */
+/** ROUND 58: the card's lines about the COUNT (see `countLinesAr`). */
+export function countLinesOf(plan: any): string[] {
+  if (!plan) return [];
+  const entity = entityBreakdownOf(entityStagesOfPublic(plan));
+  const target = targetLineAr(plan);
+  return [
+    ...(target ? [target] : []),
+    ...(entity ? [`ستستلم ${receiveLineAr(entity)}؛ وهذا عدد مستهدف وليس مضمونًا، وما لا يُنشر في المصدر يبقى فارغًا.`] : []),
+  ];
+}
+
 export function periodOfPlan(plan: any): string | null {
   const list: any[] = Array.isArray(plan?.stages) ? plan.stages : [];
   for (const s of list) {
@@ -494,7 +521,7 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
   const endLineAr = endLineOf(phase, resultLinesAr, storedSummary);
   const view: CustomerMissionView = {
     id: mission.id, phase, summaryAr: plan?.summary_ar ? String(plan.summary_ar) : null, notesAr: Array.isArray(plan?.notes_ar) ? dedupeNearIdentical(plan.notes_ar.map(String)) : [], assumptionsAr: Array.isArray(plan?.assumptions_ar) ? dedupeNearIdentical(plan.assumptions_ar.map(String)) : [], unservedAr: Array.isArray(plan?.unserved_ar) ? dedupeNearIdentical(plan.unserved_ar.map(String)) : [],
-    questionOptionsAr: phase === "question" && Array.isArray((mission.plan_public as any)?.question_options) ? (mission.plan_public as any).question_options.map(String).slice(0, 6) : [], stages, totalRows: total, totalRowsAr: countAr(total, itemNounOfPlan(plan)),
+    questionOptionsAr: phase === "question" && Array.isArray((mission.plan_public as any)?.question_options) ? (mission.plan_public as any).question_options.map(String).slice(0, 6) : [], stages, totalRows: total, totalRowsAr: countAr(total, itemNounOfPlan(plan)), headlineCountAr: headlineCountArOf(plan), countLinesAr: countLinesOf(plan),
     samples: plan ? samplesView(plan) : null, fileContentsAr: plan ? fileContentsAr(plan) : null, priceLineAr: plan ? priceLineAr(plan) : null, priceFacts: plan ? priceFactsOf(plan).facts : [], priceNoteAr: plan ? priceFactsOf(plan).noteAr : null, priceExplainAr: plan ? priceExplainOf(plan) : [], questionAr: phase === "question" ? mission.question_ar : null,
     queueLineAr: q.lineAr, queuePosition: q.position, steps, currentLineAr, delayAr, remainingAr,
     closePageAr: closePageLine(mission.status, input.queue, input.emailWillBeSent),
@@ -529,7 +556,7 @@ export function guardViewText(v: CustomerMissionView): CustomerMissionView {
     summaryAr: n(v.summaryAr), notesAr: v.notesAr.map(g).filter(Boolean), assumptionsAr: v.assumptionsAr.map(g).filter(Boolean), unservedAr: v.unservedAr.map(g).filter(Boolean), questionOptionsAr: v.questionOptionsAr.map(g).filter(Boolean),
     stages: v.stages.map((s) => ({ ...s, titleAr: g(s.titleAr) || "مرحلة", noteAr: n(s.noteAr) })),
     samples: v.samples ? { ...v.samples, stageTitleAr: g(v.samples.stageTitleAr) } : null,
-    fileContentsAr: n(v.fileContentsAr), priceLineAr: n(v.priceLineAr), priceNoteAr: n(v.priceNoteAr), priceExplainAr: (v.priceExplainAr ?? []).map(g).filter(Boolean), questionAr: n(v.questionAr), queueLineAr: n(v.queueLineAr), collectLineAr: n(v.collectLineAr),
+    fileContentsAr: n(v.fileContentsAr), priceLineAr: n(v.priceLineAr), priceNoteAr: n(v.priceNoteAr), priceExplainAr: (v.priceExplainAr ?? []).map(g).filter(Boolean), countLinesAr: (v.countLinesAr ?? []).map(g).filter(Boolean), headlineCountAr: n(v.headlineCountAr ?? null), questionAr: n(v.questionAr), queueLineAr: n(v.queueLineAr), collectLineAr: n(v.collectLineAr),
     steps: v.steps.map((s) => ({ ...s, titleAr: g(s.titleAr) || "خطوة", ...(typeof s.countAr === "string" ? { countAr: g(s.countAr) } : {}) })),
     currentLineAr: g(v.currentLineAr), delayAr: n(v.delayAr), remainingAr: n(v.remainingAr), closePageAr: n(v.closePageAr),
     resultLinesAr: v.resultLinesAr.map(g).filter(Boolean), resultSummaryAr: n(v.resultSummaryAr), endLineAr: n(v.endLineAr),
