@@ -67,18 +67,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 * **Worker (required):** `ANTHROPIC_API_KEY`, `TREG_TOKEN`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
 * **Worker (optional):** `PROVIDER_KEYS_ENCRYPTION_KEY`, `CONTEXT_DEV_API_KEY`, `FIRECRAWL_API_KEY`, `ADMIN_ALERT_EMAIL`, `AGENT_CONCURRENCY`.
 * **Kill switch (round 60):** `DIGER_WEB_PAGE_REUSE=0`.
-* **Proposed, NOT set anywhere and NOT read by running code:** `DIGER_SPEND_GATE` (round 61).
+* **NOT set anywhere and NOT read by running code:** `DIGER_SPEND_GATE` (round 61). Verified unset on Heroku and Vercel at the merge of PR #479 (key names only were read).
 * **Tests only:** `DIGER_TEST_PG`, `DIGER_TEST_REAL_SDK=1`.
 
 ### Production (deployed) as last verified
 
-* **Version:** `main` = **`adb22f8`** (merge of PR #478, round 60).
-* **Verified on 13 Nov 2026 at the close of round 60:**
-  * Vercel deployment `dpl_2xc3n7wxe25nZwsoAPzwqtRkPTnV` was READY.
-  * Heroku release v187, worker log «started (adb22f8)».
-  * No runtime errors.
-  * Not re-checked since.
-* **Full suite on `adb22f8` (round 60):** 13,505 passed, 0 failed, 47 expected-fail, 65 skipped. Both typechecks, the build and the client-bundle secret scan were clean.
+* **Version:** `main` = **`7d30ec8`** (merge of PR #479, round 61 offline spend gate; parents `adb22f8` + reviewed head `61338a2`, tree identical to the reviewed head).
+* **Verified on 13 Nov 2026 after the merge:**
+  * Vercel production deployment `dpl_FM1Ej2fSqeY1hgLwuTYtDTQu4th7` READY on `7d30ec8`.
+  * Heroku release v188 «Deploy 7d30ec85»; `worker.1` up on v188; heartbeat `version 7d30ec8`, `active_missions 0`.
+  * No mission was queued, planning or executing when the worker restarted (two `plan_ready` missions wait for customer approval and do not run on the worker).
+* **Spending behaviour in production is unchanged from `adb22f8`:** the gate code is in `main` but nothing imports or starts it, and `DIGER_SPEND_GATE` is unset.
+* **Full suite on `61338a2` (= the tree of `7d30ec8`), run locally:** 13,563 passed, 0 failed, 47 expected-fail, 78 skipped. Both typechecks, the build and the client-bundle secret scan were clean. The repository has no GitHub Actions: GitHub ran no tests.
 
 ### Rounds of this session (all on 13 Nov 2026)
 
@@ -89,11 +89,11 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 | E2E | Authenticated real customer acceptance (`msn_088c`, 9 companies) | docs only | Done: LIMITED RELEASE verdict |
 | 59 | Company quality checks before delivery; cost audit of msn_088c | #477 → `9974769` | Merged, deployed |
 | 60 | One paid fetch per page; no paid page for unsaved companies; spend-gate spec v1 | #478 → `adb22f8` | Merged, deployed (production) |
-| 61 | Hard spend gate: security review and offline build | **no PR**; commit `f0fe65d8` on `ccr-9dc4c8d3-d0ae22` | Implemented and tested offline. **Not reviewed, not merged, not deployed.** |
+| 61 | Hard spend gate: security review, offline build, review fixes | #479 → `7d30ec8` | Merged and deployed as **disconnected code only**. Not wired, not applied, **not enabled**. |
 
 ### Round 61 status, precisely
 
-* **Implemented** (commit `f0fe65d8`, branch only):
+* **Implemented and merged** (PR #479, merge `7d30ec8`; commits `f0fe65d8`, `0dc19d74`, review fixes `61338a2`):
   * `docs/proposals/spend-gate/THREAT-MODEL.md`, `SPEC-v2.md` (v1 `docs/proposals/spend-gate-spec.md` is marked superseded);
   * `src/lib/server/spendGate/bounds.ts`, `modelBound.ts`, `gate.ts`;
   * `agent/src/modelGate.ts`;
@@ -105,15 +105,23 @@ This handoff document provides a clear, factual status of the Diger platform (`i
   * `tests/sql/spend-gate.local-pg.test.ts`: 11/11 on a scratch Postgres 16.
   * Mutation checks: 15/15 TypeScript protections and 11/11 SQL protections caught.
   * `npm run agent:typecheck` and `npx tsc --noEmit -p .`: clean.
+* **Done:** full suite (13,563 / 0 failed), both typechecks, build and secret scan, all on the reviewed head; merged through PR #479 pinned to `61338a2`.
 * **NOT done:**
-  * a full-suite run of the round-61 tree to completion;
-  * `npm run build` of the round-61 tree;
-  * a PR;
-  * the wiring into the gateways and the SDK driver;
-  * any production step.
+  * the wiring into the gateways and the SDK driver (PR B: not started);
+  * any production step: no SQL applied, no grant issued, no configuration set.
 * **Nothing is enforced in production.**
   * No migration was applied, and no configuration changed.
   * No production file imports the gate (a test pins it).
+
+### ACTIVATION BLOCKER (round 61): observe mode is not budget protection
+
+* In `observe`, the model gate forwards every request, including ones it **could not reserve**: a bound above $1 or the grant's maximum, an unknown or header-billed `anthropic-beta`, an unpriced model, or a refused reservation. Such paid requests go out **unreserved**; their cost is only reported (`stats().unreservedUsd`, event `model_gate.observed_unreserved_usage`), never counted in the grant.
+* Observe is therefore a **measurement mode only**. It must never be described, configured or relied on as enforced budget protection.
+* **The gate stays disconnected and disabled** until all of these are true:
+  1. the owner decisions in SPEC-v2 §13 (first grant, applying `001_spend_gate.sql` + `002_verify.sql`, provider-side limits, no database password in Heroku/Vercel);
+  2. PR B (wiring, default off) reviewed and merged with owner approval;
+  3. an observe period whose unreserved requests are reviewed, understood as non-protection, and accepted by the owner;
+  4. `enforce` turned on only after the production failure tests in SPEC-v2 §11.
 
 ### Important decisions in force (owner rules)
 

@@ -2,6 +2,10 @@
 
 **Read first:** `docs/HANDOFF.md`, section «CURRENT STATE».
 
+**Update (13 Nov 2026, after T1):** T1 is DONE. PR #479 was reviewed, the three security review findings were fixed (`61338a2`), and it merged as `7d30ec8` (Vercel production READY, Heroku v188, worker heartbeat `7d30ec8`). The gate is in `main` as **disconnected code only**: not wired, no SQL applied, `DIGER_SPEND_GATE` unset, not enabled.
+
+**Activation blocker:** observe mode forwards paid requests it could not reserve (`unreservedUsd`). It is measurement only, never budget protection. See HANDOFF «ACTIVATION BLOCKER». The next task is PR B below, and it starts only when the owner asks.
+
 **State at the time of writing:**
 
 * Production runs `main` = `adb22f8`.
@@ -42,7 +46,7 @@
 
 ### P1: needed before the spend gate can protect production
 
-1. **T1 above.**
+1. **T1 above: DONE** (PR #479 → `7d30ec8`).
 
 2. **Wire the gate into the call sites, behind `DIGER_SPEND_GATE` (default off): "PR B".**
    * **WHAT:**
