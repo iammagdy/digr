@@ -57,7 +57,7 @@ import { modelPlanningForTests } from "../../src/lib/agentMission/testSeam";
 import { SOCIAL_NOT_OFFERED_AR } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { blockedEndpointReason } from "../../src/lib/treg/blockList";
 import { policyVerdict } from "../../src/lib/treg/dataPolicy";
-import { buildCapabilityRegistry, capabilitySelectionOf, discoverCapabilities, limitationLinesAr, mixedPartsAr, operationLabelAr, plannerCapabilitySection, readCapabilityDiscoveryFlag, researchNeedOf, scopeAnchorBody, scopeAnchorOf, SCOPE_ANCHOR_FOLDER, verifyApprovedScope, type CapabilityDiscovery, type ScopeAnchor } from "../../src/lib/agentMission/capabilities";
+import { buildCapabilityRegistry, capabilitySelectionOf, discoverCapabilities, limitationLinesAr, mixedPartsAr, operationLabelAr, plannerCapabilitySection, readCapabilityDiscoveryFlag, readWebViaTregFlag, researchNeedOf, scopeAnchorBody, scopeAnchorOf, SCOPE_ANCHOR_FOLDER, verifyApprovedScope, type CapabilityDiscovery, type ScopeAnchor } from "../../src/lib/agentMission/capabilities";
 import { namedShortfallChoiceOf } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { promiseShortfallAr, repliesShortfallAr } from "./repliesShortfall";
 import { TOPIC_OPTIONS_AR, topicMeaningOf, topicQuestionAr } from "../../src/lib/agentMission/topicMeaning";
@@ -128,6 +128,11 @@ export interface RunnerDeps {
   log?: (line: string) => void;
   /** UNIFIED CAPABILITY DISCOVERY (capability_discovery_v1 only): the web providers' daily caps in USD from the admin's provider limits (0 = spend nothing). Absent (tests): unknown, and the call recorder still refuses a call over the cap. */
   providerDailyCaps?: () => Promise<Partial<Record<"firecrawl" | "contextdev", number>>>;
+  /**
+   * PHASE 2 (capability_discovery_v1 only): TREG's own daily cap and what each provider has ALREADY spent today (provider_costs, read only), so a provider whose cap is used up is not planned on. Absent or failing (tests, a read error):
+   * unknown, and the call recorder still refuses a call over the cap. A value that could not be read is left out, never guessed.
+   */
+  providerToday?: () => Promise<{ tregDailyCapUsd?: number; spentTodayUsd: Partial<Record<"treg" | "firecrawl" | "contextdev", number | null>> }>;
   /** LLM-FIRST OBJECTIVES (capability_discovery_v1 only): the research brief the chat stored with this mission's card (`messages.plan.researchBrief`, written by the server only), read back with its schema. Absent (tests that do not need it): none. */
   readMissionBrief?: (missionId: string, userId: string) => Promise<ResearchBrief | null>;
 }
@@ -469,11 +474,13 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   let discovery: CapabilityDiscovery | null = null;
   if (readCapabilityDiscoveryFlag(settings, mission.user_id)) {
     const caps = deps.providerDailyCaps ? await deps.providerDailyCaps().catch(() => undefined) : undefined;
-    const registry = buildCapabilityRegistry(deps.catalog, { isAllowed: (id) => !blockedEndpointReason(id) && policyVerdict(id, access).allowed, webKeys: deps.providerKey ? webAvailable : NO_WEB, ...(caps ? { dailyCapUsd: caps } : {}) });
+    const today = deps.providerToday ? await deps.providerToday().catch(() => undefined) : undefined;
+    const registry = buildCapabilityRegistry(deps.catalog, { isAllowed: (id) => !blockedEndpointReason(id) && policyVerdict(id, access).allowed, webKeys: deps.providerKey ? webAvailable : NO_WEB, ...(caps ? { dailyCapUsd: caps } : {}), ...(today ? { spentTodayUsd: today.spentTodayUsd, ...(typeof today.tregDailyCapUsd === "number" ? { tregDailyCapUsd: today.tregDailyCapUsd } : {}) } : {}) });
     // LLM-FIRST OBJECTIVES: the research objectives the chat model proposed and the chat validated, read from the brief the SERVER stored with this mission's card (customers cannot write it), checked again against this mission's own words;
     // absent or not usable: the words are read, as before
     const objectiveBrief = await missionObjectivesBrief(deps, mission, await readRunState(store, mission.id));
-    discovery = discoverCapabilities(researchNeedOf({ request: mission.request_text, answer: mission.answer_text, semantic, ...(objectiveBrief ? { brief: objectiveBrief } : {}) }), registry);
+    // PHASE 2, switch `web_via_treg` (OFF): a companies chain whose websites no companies source documents gains the official-website step reached through the TREG gateway (companies → official website → contacts)
+    discovery = discoverCapabilities(researchNeedOf({ request: mission.request_text, answer: mission.answer_text, semantic, ...(objectiveBrief ? { brief: objectiveBrief } : {}) }), registry, { enrichWebsites: readWebViaTregFlag(settings, mission.user_id) });
     await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: اكتشاف المصادر القادرة على الطلب.", counts: { capability_discovery: 1, stages: discovery.stages.length, eligible: discovery.stages.reduce((n, s) => n + s.eligible.length, 0), unsupported: discovery.unsupported.length, limitations: discovery.limitations.length } }).catch(() => undefined);
     deps.log?.(`capability_discovery ${mission.id} status=${discovery.status} ${discovery.stages.map((s) => `${s.stage.key}:${s.selected ?? "none"}`).join("|")}`);
     // social data and another kind in one request reach the social compiler, which plans social data only: the other part is never cut silently; the customer is asked first (as for a step no capability serves)

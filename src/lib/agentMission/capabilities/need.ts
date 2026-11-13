@@ -358,7 +358,8 @@ function stagesOfObjectives(need: ResearchNeed, objectivesIn: ReadonlyArray<Need
 
 /** What the parent's rows give that the child stage can take as its input (null: nothing links them; the chain cannot be built). */
 export function linkOf(parentOutputs: ReadonlyArray<OutputClass>, childTakes: ReadonlyArray<InputClass>): { from: OutputClass; to: InputClass } | null {
-  const pairs: Array<[OutputClass, InputClass]> = [["place_ref", "place_ref"], ["app_ref", "app_ref"], ["id", "app_ref"], ["url", "url"], ["id", "post_ref"], ["id", "comment_ref"], ["website", "domain"], ["website", "url"]];
+  // (Phase 2: a company's NAME feeds an enrichment step that takes a company name; no other stage accepts `company_name`, so no other link changes)
+  const pairs: Array<[OutputClass, InputClass]> = [["place_ref", "place_ref"], ["app_ref", "app_ref"], ["id", "app_ref"], ["url", "url"], ["id", "post_ref"], ["id", "comment_ref"], ["website", "domain"], ["website", "url"], ["name", "company_name"]];
   for (const [from, to] of pairs) if (parentOutputs.includes(from) && childTakes.includes(to)) return { from, to };
   return null;
 }
