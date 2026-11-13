@@ -26,7 +26,13 @@ export type ChatModelResult =
   | { ok: false; failure: string };
 export type ChatModelCall = (input: ChatModelInput) => Promise<ChatModelResult>;
 
+/** ROUND 57: the statuses that mean «try again in a moment» (overloaded, unavailable, gateway); a refusal (4xx) is never retried. */
+export const TRANSIENT_STATUSES: ReadonlySet<number> = new Set([500, 502, 503, 504, 529]);
+export const TRANSIENT_RETRY_DELAY_MS = 700;
+
 export interface ChatModelDeps {
+  /** Test-only: the pause before the one transient retry. */
+  retryDelayMs?: number;
   fetchImpl?: typeof fetch;
   resolveKey?: () => Promise<string>;
   model?: string;
@@ -52,6 +58,12 @@ export async function callClaudeChatWith(input: ChatModelInput, deps: ChatModelD
     let response = await send(true);
     // the API refused the request while it carried the thinking parameter: the SAME request once more without it (as the product's other short calls do)
     if (!response.ok && response.status === 400) response = await send(false);
+    // ROUND 57: ONE more attempt after a short pause when the API was momentarily unavailable (13 Nov: 5 of 9 turns of a customer's conversation ended «http_503» and were answered by the keyword rules). The same timer bounds both
+    // attempts, so the turn never waits longer than before.
+    if (!response.ok && TRANSIENT_STATUSES.has(response.status) && !controller.signal.aborted) {
+      await new Promise((r) => setTimeout(r, Math.max(0, deps.retryDelayMs ?? TRANSIENT_RETRY_DELAY_MS)));
+      if (!controller.signal.aborted) response = await send(true);
+    }
     if (!response.ok) return fail(`http_${response.status}`);
     const data: any = await response.json();
     const text = Array.isArray(data?.content) ? data.content.map((part: any) => (typeof part?.text === "string" ? part.text : "")).join("") : "";

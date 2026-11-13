@@ -5,7 +5,7 @@ import { fakeChatModel } from "./helpers/fakeChatModel";
 import { validateAndPricePlan, type PlanLookup, type PricedPlan, customerPlanView } from "../src/lib/agentMission/plan";
 import { CHAT_TYPES, buildSystemPrompt, decideTurn, guardReply, parseModelAnswer, type OpenRequest } from "../src/lib/agentMission/conversationModel";
 import { callClaudeChatWith, CHAT_MODEL_MAX_TOKENS, setChatModelForTesting } from "../src/lib/agentMission/chatModel";
-import { agentChatTurn } from "../src/lib/agentMission/chatTurn";
+import { agentChatTurn, REVISION_JOINER_AR, REVISION_STARTED_AR } from "../src/lib/agentMission/chatTurn";
 import { METHODOLOGY_CHOOSER_SENTENCE_AR, otherReplyAr } from "../src/lib/agentMission/messageType";
 
 /**
@@ -446,16 +446,21 @@ describe("an OPEN request receives the customer's follow-ups: its edit or answer
     expect(JSON.stringify(db.rows("missions")[0].plan)).toBe(plan);
     expect(db.rows("missions")).toHaveLength(1);
   });
-  it("an edit with no number («خليها بالعربي بس»): no new mission and no generic reply; the card's «عدّل الطلب» is named, and the plan is untouched", async () => {
+  // CHANGED (round 57): an edit with no number is a REVISION of the same request, planned again from the whole request with the change (13 Nov: the generic «use the button» line answered every such follow-up). The plan it
+  // replaces held nothing and is cancelled in the open; the revised mission's words keep the original request.
+  it("an edit with no number («خليها بالعربي بس»): a revision of the WHOLE request (never the change's words alone), the old plan replaced in the open, no generic reply", async () => {
     setChatModelForTesting(fakeChatModel().call);
     const db = world({ status: "plan_ready" });
-    const plan = JSON.stringify(db.rows("missions")[0].plan);
+    const original = String(db.rows("missions")[0].request_text);
     const { r, assistant } = await turn(db, "خليها بالعربي بس");
-    expect(r.ok).toBe(false);
-    expect(assistant.content_ar).toContain("عدّل الطلب");
+    expect(r.ok).toBe(true);
+    expect(assistant.content_ar).toBe(REVISION_STARTED_AR);
     expect(assistant.content_ar).not.toContain("لم أفهم");
-    expect(JSON.stringify(db.rows("missions")[0].plan)).toBe(plan);
-    expect(db.rows("missions")).toHaveLength(1);
+    const rows = db.rows("missions") as Array<{ id: string; status: string; request_text: string }>;
+    expect(rows).toHaveLength(2);
+    expect(rows[0].status).toBe("cancelled");
+    expect(rows[1].request_text.startsWith(original)).toBe(true);
+    expect(rows[1].request_text).toContain(`${REVISION_JOINER_AR} خليها بالعربي بس`);
   });
   it("an answer to the question card goes to the mission's answer path: the mission is queued again with the answer text", async () => {
     setChatModelForTesting(fakeChatModel().call);

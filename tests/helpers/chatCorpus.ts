@@ -95,6 +95,11 @@ export const FOLLOW_UPS: CorpusEntry[] = [
   { text: "ايوه كمّل بنفس الشروط", type: "edit_of_open_request", open: "needs_input" },
   { text: "الحسابات الرسمية بس", type: "edit_of_open_request", open: "needs_input" },
   { text: "خليها ٢٠٠", type: "edit_of_open_request", open: "planning", count: 200 },
+  // ROUND 57 (13 Nov cosmetics conversation): questions about the open plan, and an explicit cancellation
+  { text: "أنا عايز أعرف البيانات دي جاية منين.", type: "open_request_question", open: "plan_ready" },
+  { text: "إزاي هتتأكد إن الشركة فعلًا شغالة في مستحضرات التجميل؟", type: "open_request_question", open: "plan_ready" },
+  { text: "لو مش لاقي رقم أو إيميل، سيبه فاضي.", type: "open_request_question", open: "plan_ready" },
+  { text: "خلاص الغي الطلب ده", type: "cancel_open_request", open: "plan_ready" },
   // with an open request, a message of another kind keeps its own type
   { text: "شكرًا", type: "greeting_or_small_talk", open: "plan_ready" },
   { text: "بكام النقطة؟", type: "service_question", open: "plan_ready" },

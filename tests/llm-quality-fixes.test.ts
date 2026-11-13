@@ -443,10 +443,11 @@ describe("round 5", () => {
     expect(seen[0].system).toContain("العميل: «تعليقات تيك توك عن السياحة»");
     expect(seen[0].system).toContain("المساعد: «تمام، بنجهّز طلبك.»");
     expect(seen[0].system.endsWith(FORMAT_REMINDER_AR)).toBe(true);
-    // brief mode off: the conversation is sent as before
+    // CHANGED (round 57): brief mode off (production) too — on 13 Nov the conversation sent as real turns made the model answer three follow-ups in prose («unreadable»), and the keyword rules took over
     seen.length = 0;
     await decideTurn({ message: "آخر شهر", balancePoints: null, open: null, history: [{ role: "user", content: "تعليقات تيك توك عن السياحة" }, { role: "assistant", content: "تمام، بنجهّز طلبك." }] }, async (i) => { seen.push(i); return { ok: true, text: JSON.stringify({ type: "data_request", reason: "", reply: "", count: null }) }; });
-    expect(seen[0].messages).toHaveLength(3);
+    expect(seen[0].messages).toEqual([{ role: "user", content: "آخر شهر" }]);
+    expect(seen[0].system).toContain("المساعد: «تمام، بنجهّز طلبك.»");
   });
   it("M5: a brief that invents platforms for an open question is ASKED (words name no data), never answered «اكتب كمّل»", async () => {
     scripted([{ type: "data_request", reason: "x", reply: "", count: null, brief: briefOf({ request: "منشورات وتعليقات عن تطبيقات الصحة النفسية", platforms: ["tiktok", "x"], content: ["posts", "comments"], objectives: [o("o1", "social.parents", { platform: "tiktok", request: "منشورات تيك توك عن تطبيقات الصحة النفسية" }), o("o2", "social.parents", { platform: "x", request: "تغريدات عن تطبيقات الصحة النفسية" })] }) }]);

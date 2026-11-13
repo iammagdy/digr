@@ -329,7 +329,11 @@ describe("cancellation cannot race a settlement", () => {
   it("a mission that holds money cannot be cancelled by the customer or the admin (only unheld statuses are withdrawable)", () => {
     const chat = readFileSync(path.join(__dirname, "..", "src", "lib", "agentMission", "chatTurn.ts"), "utf8");
     expect(chat).toMatch(/const WITHDRAWABLE = \["queued", "needs_input", "plan_ready"\];/);
-    expect(chat).toMatch(/const REPLACEABLE = \["plan_ready", "needs_input"\];/);
+    // CHANGED (round 57): «queued» joins the replaceable statuses (a plan not yet picked up holds nothing; 13 Nov left two unapproved plans alive). The list stays EXACTLY the unheld, withdrawable statuses: none of them holds money.
+    expect(chat).toMatch(/const REPLACEABLE = \["plan_ready", "needs_input", "queued"\];/);
+    const list = (name: string) => JSON.parse(chat.match(new RegExp(`const ${name} = (\\[[^\\]]*\\]);`))![1]) as string[];
+    expect([...list("REPLACEABLE")].sort()).toEqual([...list("WITHDRAWABLE")].sort());
+    for (const held of ["approved", "executing", "completed", "unserved", "failed"]) expect(list("REPLACEABLE")).not.toContain(held);
     const admin = readFileSync(path.join(__dirname, "..", "src", "lib", "agentMission", "adminActions.ts"), "utf8");
     expect(admin).toContain('.eq("id", input.id).in("status", ["queued", "needs_input", "plan_ready"]);');
     expect(admin).toContain('if (!["queued", "needs_input", "plan_ready"].includes(data.status)) return bad(409');
