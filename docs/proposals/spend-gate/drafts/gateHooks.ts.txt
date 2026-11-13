@@ -1,0 +1,29 @@
+/** A gate as a call site holds it (PR B). Absent or mode "off": the call site behaves exactly as before. */
+export interface GateContext { gate: SpendGate | null; mode: SpendGateMode; timeoutMs?: number; onEvent?: (e: { type: string; detail?: string }) => void }
+
+/** Before a paid call: reserve (or refuse). `off` always proceeds with no reservation; `observe` proceeds and reports; `enforce` stops on any refusal or error. */
+export async function gateBefore(ctx: GateContext | undefined, req: ReserveRequest | { refuse: "no_safe_bound"; detail: string }): Promise<{ proceed: true; reservationId: string | null; observedRefusal?: RefusalReason } | { proceed: false; reason: RefusalReason; detail?: string }> {
+  if (!ctx || ctx.mode === "off") return { proceed: true, reservationId: null };
+  const note = (type: string, detail?: string) => { try { ctx.onEvent?.({ type, detail }); } catch { /* telemetry never decides */ } };
+  let reserved: ReserveResult;
+  if ("refuse" in req) reserved = { ok: false, reason: "no_safe_bound", detail: req.detail };
+  else if (!ctx.gate) reserved = { ok: false, reason: "gate_unavailable", detail: "no gate client" };
+  else {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<ReserveResult>((resolve) => { timer = setTimeout(() => resolve({ ok: false, reason: "gate_unavailable", detail: "timeout" }), ctx.timeoutMs ?? RESERVE_TIMEOUT_MS); });
+    try { reserved = await Promise.race([ctx.gate.reserve(req), timeout]); } catch (e) { reserved = { ok: false, reason: "gate_unavailable", detail: String((e as Error)?.message ?? e).slice(0, 120) }; } finally { if (timer) clearTimeout(timer); }
+  }
+  if (reserved.ok) return { proceed: true, reservationId: reserved.reservationId };
+  note("spend_gate.refused", `${reserved.reason}${reserved.detail ? `: ${reserved.detail}` : ""}`);
+  if (ctx.mode === "enforce") return { proceed: false, reason: reserved.reason, ...(reserved.detail ? { detail: reserved.detail } : {}) };
+  return { proceed: true, reservationId: null, observedRefusal: reserved.reason };
+}
+
+/** After a paid call: settle with the actual charge, or null when it is not known (the whole bound stays spent). A failed settle leaves it held: it expires AS SPENT. */
+export async function gateAfter(ctx: GateContext | undefined, reservationId: string | null, actualUsd: number | null): Promise<void> {
+  if (!ctx || !ctx.gate || !reservationId) return;
+  const note = (type: string, detail?: string) => { try { ctx.onEvent?.({ type, detail }); } catch { /* never decides */ } };
+  const s = await ctx.gate.settle(reservationId, actualUsd).catch(() => null);
+  if (!s || !s.ok) note("spend_gate.settle_failed", "left held: expires as spent");
+  else if (s.overrunUsd > 0) note("spend_gate.bound_violated", `overrun ${s.overrunUsd}`);
+}

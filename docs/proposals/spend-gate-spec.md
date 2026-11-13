@@ -1,6 +1,8 @@
 # Hard spend gate: implementation-ready specification (NOT APPLIED)
 
-Status: **specification for owner review.** No SQL, migration, grant, pricing or settlement change was made. It refines `docs/proposals/execution-spend-gate.md` (round 59) after reading the code as it is on `9974769`.
+Status: **SUPERSEDED by `docs/proposals/spend-gate/SPEC-v2.md` (round 61).** v1 let a settle pass the ceiling, relied on `maxBudgetUsd` for the model, left the scope tables writable by `service_role`, and created mission scopes implicitly; v2 fixes all four (see its §0). Kept for the record.
+
+Original status: **specification for owner review.** No SQL, migration, grant, pricing or settlement change was made. It refines `docs/proposals/execution-spend-gate.md` (round 59) after reading the code as it is on `9974769`.
 
 ## 0. What exists today (read from the code, not assumed)
 
