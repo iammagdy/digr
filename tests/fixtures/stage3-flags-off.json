@@ -1,23 +1,23 @@
 {
- "_about": "Written by tests/stage3-flags-off.test.ts (WRITE_STAGE3_FLAGS_OFF=1) on the stage-3 branch before the planning and engine wiring. MERGE-TIME UPDATE (integration rehearsal on main 9b478568): only the three `file` digests changed (main's Round 37 changed the Excel title and the methodology wording); plan, rows and status are unchanged. The new values were first obtained on PLAIN main with this test copied in (no Stage 2, 3 or 4 code), then equal on the integrated tree. ROUND 58 CHANGED: only the three `file` digests changed (the first sheet's delivery sentence now adds the companies and each detail step: «منها ٥ شركات، و١٠ من «موظفو كل شركة».»); plan, rows and status are unchanged.",
+ "_about": "Written by tests/stage3-flags-off.test.ts (WRITE_STAGE3_FLAGS_OFF=1) on the stage-3 branch before the planning and engine wiring. MERGE-TIME UPDATE (integration rehearsal on main 9b478568): only the three `file` digests changed (main's Round 37 changed the Excel title and the methodology wording); plan, rows and status are unchanged. The new values were first obtained on PLAIN main with this test copied in (no Stage 2, 3 or 4 code), then equal on the integrated tree. ROUND 58 CHANGED: only the three `file` digests changed (the first sheet's delivery sentence now adds the companies and each detail step: «منها ٥ شركات، و١٠ من «موظفو كل شركة».»); plan, rows and status are unchanged. ROUND 59 CHANGED: only the three `file` digests changed (the company check of companyQuality.ts adds the summary's limits lines: no source link per record, identity consistency checked without visiting the sites); plan, rows and status are unchanged.",
  "worlds": {
   "g1": {
    "plan": "1888dae8e59550ef",
    "status": "completed:15:1166:",
    "rows": "41f55870952c05e7",
-   "file": "06377b85dcaaaddb"
+   "file": "c066bbb24a2221c7"
   },
   "g2": {
    "plan": "961143cf26b45bd3",
    "status": "completed:15:1166:",
    "rows": "5a2f08c7df649367",
-   "file": "b6f85630aeb831a4"
+   "file": "a134c19831fac2ef"
   },
   "live_7539_words": {
    "plan": "1888dae8e59550ef",
    "status": "completed:15:1166:",
    "rows": "41f55870952c05e7",
-   "file": "29ad96e62c7fd735"
+   "file": "050127832095a994"
   }
  }
 }

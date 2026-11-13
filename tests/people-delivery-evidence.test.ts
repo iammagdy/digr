@@ -40,7 +40,11 @@ describe("the A1 replay, counted from the delivered file", () => {
     expect(reasons).toContain("زاد عن العدد المعتمد");
     expect(reasons).not.toMatch(/لا بيانات تواصل موثّقة|لا يخص شخصًا/);
     const limits = rows.find((row) => row[0] === "حدود هذا التسليم")![1];
-    expect(limits).toBe("لا قيود سُجّلت على هذا التسليم");
+    // ROUND 59 CHANGED: the company check states that the company records carry no source link and that their identity was checked for consistency without visiting the sites
+    // (companyQuality.ts); before, the row said «لا قيود سُجّلت على هذا التسليم». Still no limit of the people step itself.
+    expect(limits).not.toContain("لا قيود سُجّلت على هذا التسليم");
+    expect(limits).toContain("رابط مصدر لكل سجل");
+    expect(limits).toContain("ولم نزر مواقع الشركات للتحقق من هويتها؛ لم نجد تعارضًا في أي منها");
     expect(limits).not.toContain("المصدر لم يعد يعطي");
   });
 });
