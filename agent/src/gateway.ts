@@ -17,6 +17,9 @@ import { PHONE_CAPABILITIES } from "../../src/lib/agentMission/peopleCheck";
 import { oneCallUsd } from "../../src/lib/agentMission/planningBudget";
 import { rankEndpoints, type StatsMap } from "../../src/lib/agentMission/sourceRanking";
 import type { AgentStore, CallPhase, CallRow } from "./types";
+import { gateAfter, gateBefore, type GateBefore, type GateContext } from "../../src/lib/server/spendGate/gate";
+import { providerCallBound, tregRouteCapUsd } from "../../src/lib/server/spendGate/bounds";
+import { PROVIDER_RESERVATION_TTL_SECONDS, spendReservationKey } from "./spendGateKeys";
 
 /**
  * THE GATEWAY: the only way the agent reaches TREG. Three tools — catalog_search, describe_endpoint, treg_call — and `treg_call` enforces, IN CODE, before every call, in this order:
@@ -27,6 +30,9 @@ import type { AgentStore, CallPhase, CallRow } from "./types";
  *   4. the parameters      every required input present, unknown inputs dropped;
  *   5. the mission budget  the USD budget of the phase (planning 0.05; execution 40% of the approved reserve's value, floor 0.005): a call that would pass it is NOT made;
  *   6. the provider's daily cap and the record  reserve_provider_spend_atomic BEFORE the call; if the spend cannot be recorded the call is not made;
+ *   6b. ROUND 62, the hard spend gate (DIGER_SPEND_GATE; unset = off = this step does nothing): the call's BOUND, which is the route cap SENT to TREG
+ *      (X-Treg-Route-Max-Cost, the same number), is reserved against the owner's grant; in enforce mode a refusal, a database error or a slow answer means
+ *      the call is NOT made (refusal «spend_gate»). Observe mode only records: it is NOT budget enforcement;
  * and after the call it
  *   7. commits the ACTUAL charge into provider_costs (commit_provider_spend_v2), writes a mission_calls row, saves the FULL raw answer to the private bucket, and returns to the model
  *      a SHAPE DIGEST and the FIRST ROWS only, never a large page. The model never sees a price of its own mission, and a refused call costs nothing.
@@ -44,7 +50,7 @@ const LIMIT_PARAM_NAMES = ["limit", "count", "page_size", "per_page", "size", "n
 
 export type RefusalCode =
   | "not_sellable" | "blocked" | "sensitive_not_allowed" | "purpose_required" | "daily_limit" | "audit_unavailable"
-  | "missing_params" | "over_budget" | "daily_cap" | "recording_unavailable" | "needs_login" | "repeat_sample" | "stage_reserved" | "contact_sample";
+  | "missing_params" | "over_budget" | "daily_cap" | "recording_unavailable" | "needs_login" | "repeat_sample" | "stage_reserved" | "contact_sample" | "spend_gate";
 
 export type GatewayCallResult =
   | { ok: true; call_id: string; http_status: number; rows_in_page: number; has_more: boolean | null; next_cursor: string | null; shape: unknown; first_rows: unknown[]; warnings: string[]; saved: string; /** the JavaScript expression that reads this page's rows in run_code */ rows_in_code?: string }
@@ -78,6 +84,8 @@ export interface GatewayDeps {
   /** The measured ranking of the sources (planning), to pick the cheapest ranked contact finder; absent: the catalog's own prices. */
   stats?: StatsMap;
   stageBudget?: { stages: number; budgetUsd: number; /** The USD kept for the first sample of each stage (code sized it from the sources' prices: planningBudget.ts); absent: the flat share of the budget for every stage. */ reservesUsd?: number[] };
+  /** ROUND 62: the hard spend gate of this mission (agent/src/spendGateWiring.ts). Absent or mode "off": nothing changes. */
+  spendGate?: GateContext;
 }
 
 const clip = (s: unknown, n: number): string => String(s ?? "").slice(0, n);
@@ -128,6 +136,7 @@ const REFUSAL_TEXT: Record<RefusalCode, string> = {
   stage_reserved: "this call would spend the planning budget kept for the first sample of a stage that has not been sampled yet: sample the next stage of the plan (its parent or its children) first, then come back if budget is left",
   needs_login: "this source refuses this kind of search without the customer's own login, so it was NOT called and cost nothing; sample the next source of the ranking",
   contact_sample: "this contact-finder sample was NOT made (the planning budget is for the stages of the plan)",
+  spend_gate: "the owner's spending gate has no approved room for this call, so it was NOT made and cost nothing; work with what is already saved or stop and explain honestly",
 };
 
 const FINDER_CAPABILITIES: Record<ContactFinderKind, ReadonlySet<string>> = { email: EMAIL_FINDER_CAPABILITIES, phone: PHONE_CAPABILITIES };
@@ -262,16 +271,36 @@ export function createGateway(deps: GatewayDeps) {
         return refuse(id, endpointId, trace, reservation.reason === "cap" ? "daily_cap" : "recording_unavailable", reservation.reason ?? "");
       }
 
+      // 6b: ROUND 62, THE HARD SPEND GATE. The bound reserved is the route cap that is SENT (tregRouteCapUsd = the value always sent here): TREG refuses before
+      // billing a call it cannot run under it. Each call (a new call id) is a new paid attempt with its own reservation key.
+      const routeCapUsd = tregRouteCapUsd(estimate);
+      let gated: GateBefore | null = null;
+      if (deps.spendGate && deps.spendGate.mode !== "off") {
+        const op = `treg:${endpointId}`.slice(0, 200);
+        const bound = providerCallBound({ provider: "treg", op: "call", routeCapUsd });
+        gated = await gateBefore(deps.spendGate, bound.ok
+          ? { key: spendReservationKey("treg", deps.missionId, id), kind: "provider", op, boundUsd: bound.usd, missionId: deps.missionId, ttlSeconds: PROVIDER_RESERVATION_TTL_SECONDS }
+          : { refuse: "no_safe_bound", detail: bound.detail, op });
+        if (!gated.proceed) {
+          // nothing was sent: the mission's budget and the provider's daily-cap reservation are given back exactly as for any other refusal after step 6
+          deps.budget.settle(estimate, 0);
+          await commit(deps.client, { costId: reservation.costId, costUsd: 0, units: 0, capabilityId, status: "failed", durationMs: 0, jobId: deps.jobId });
+          return refuse(id, endpointId, trace, "spend_gate", gated.reason);
+        }
+      }
+
       // the call itself, through the audited path for a sensitive endpoint
       const started = Date.now();
       let res: TregCallResult | null = null;
       let thrown = false;
+      let performed = false;
       let actualUsd = 0;
       const perform = async () => {
+        performed = true;
         try {
           res = await call({
             endpointId, method: endpoint.method === "GET" ? "GET" : "POST", params, allowedParamKeys: [...known], userId: deps.userId, jobId: deps.jobId ?? `agent_${deps.missionId}`,
-            stepId: id, page: 1, idempotencyKey: `agent_${deps.missionId}_${id}`, routeMaxCostUsd: Number(Math.max(estimate, 0.001).toFixed(6)), timeoutMs: GATEWAY_CALL_TIMEOUT_MS,
+            stepId: id, page: 1, idempotencyKey: `agent_${deps.missionId}_${id}`, routeMaxCostUsd: routeCapUsd, timeoutMs: GATEWAY_CALL_TIMEOUT_MS,
             endpointScope: endpoint.scope, sensitiveAccess: { allowed: true }, ...(deps.token ? { legacyToken: deps.token } : {}),
           });
         } catch {
@@ -284,7 +313,23 @@ export function createGateway(deps: GatewayDeps) {
         return { result: null, costUsd: actualUsd, ok: Boolean(r?.ok) };
       };
       const purpose = clip(input.purpose, 300) || clip(deps.defaultPurpose, 300);
-      const outcome = await runSensitiveCall({ client: deps.client, account: { userId: deps.userId, access: deps.access }, endpointId, params, purpose, jobId: deps.jobId, call: perform });
+      // the gate's settlement: what TREG reported, 0 when nothing was sent, and UNKNOWN (the whole bound stays spent) for a cut call or a charge TREG did not report
+      const gateActualUsd = (): number | null => {
+        const r = res as TregCallResult | null;
+        if (!performed) return 0;
+        if (thrown || !r || r.timedOut === true || r.error === "network_failure") return null;
+        if (r.blocked) return 0;
+        if (r.costIsEstimate === true) return null;
+        return Math.max(0, Number(r.costMicro) || 0) / 1_000_000;
+      };
+      let outcome: Awaited<ReturnType<typeof runSensitiveCall>>;
+      try {
+        outcome = await runSensitiveCall({ client: deps.client, account: { userId: deps.userId, access: deps.access }, endpointId, params, purpose, jobId: deps.jobId, call: perform });
+      } catch (e) {
+        if (gated) await gateAfter(deps.spendGate, gated, performed ? null : 0);
+        throw e;
+      }
+      if (gated) await gateAfter(deps.spendGate, gated, gateActualUsd());
       if (!outcome.ok) {
         // the reserved estimate must not stay open: commit it at zero as a failed call
         deps.budget.settle(estimate, 0);

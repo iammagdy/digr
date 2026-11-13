@@ -17,7 +17,10 @@ import { acquireSession, clipToolResult, releaseSession, trackRun, untrackRun } 
  *  - the SDK's child process gets an environment of its own (the Anthropic key, PATH, HOME) and NOTHING else: it never sees the Supabase service-role key or the TREG token (the
  *    MCP tools run in THIS process, which holds them);
  *  - settingSources is empty (no CLAUDE.md, no settings files) and the working directory is an empty temp folder;
- *  - maxTurns, maxBudgetUsd (what the model may cost) and a wall-clock abort bound every run.
+ *  - maxTurns, maxBudgetUsd (what the model may cost) and a wall-clock abort bound every run;
+ *  - ROUND 62: with the hard spend gate on (`input.modelGate`), the child is pointed at the model gate on 127.0.0.1 and holds only the gate's token: every model
+ *    request is bounded and reserved before it is sent (enforce) or recorded (observe, which is NOT budget enforcement). In enforce mode a gate that cannot
+ *    start means the run does not start. With the gate off nothing here changes.
  * This file is the only one that imports the SDK; the tests never load it (they use fakeDriver.ts through the same tool handlers).
  */
 function zodOf(spec: ParamSpec): z.ZodTypeAny {
@@ -31,6 +34,9 @@ function zodOf(spec: ParamSpec): z.ZodTypeAny {
   const described = base.describe(spec.description);
   return spec.optional ? described.optional() : described;
 }
+
+/** Enforce mode: the model gate could not start, so the model's process is not started (fail closed). */
+class SpendGateNotStarted extends Error {}
 
 function toSdkTool(spec: ToolSpec, input: RunInput) {
   const shape = Object.fromEntries(Object.entries(spec.params).map(([k, p]) => [k, zodOf(p)]));
@@ -57,8 +63,12 @@ export function createSdkDriver(env: Record<string, string | undefined> = proces
       let sdkTotal: number | undefined;
       let stop = "end";
       let error: string | undefined;
+      let gate: { childEnv: Record<string, string>; close: () => Promise<void> } | null = null;
       try {
-        const o = buildQueryOptions({ model: input.model, systemPrompt: input.systemPrompt, maxTurns: input.maxTurns, maxBudgetUsd: input.maxBudgetUsd, cwd, tools: input.tools }, env);
+        if (input.modelGate) {
+          try { gate = await input.modelGate.start(); } catch { if (input.modelGate.mode === "enforce") throw new SpendGateNotStarted(); /* observe: runs as today, recorded by the wiring */ }
+        }
+        const o = buildQueryOptions({ model: input.model, systemPrompt: input.systemPrompt, maxTurns: input.maxTurns, maxBudgetUsd: input.maxBudgetUsd, cwd, tools: input.tools }, env, gate?.childEnv);
         q = query({
           prompt: input.userPrompt,
           options: {
@@ -93,14 +103,19 @@ export function createSdkDriver(env: Record<string, string | undefined> = proces
         }
         if (abort.signal.aborted && run.reason.value) stop = run.reason.value;
       } catch (e) {
-        stop = abort.signal.aborted ? (run.reason.value ?? "time") : "error";
-        error = String((e as Error)?.message ?? e).slice(0, 300);
+        if (e instanceof SpendGateNotStarted) { stop = "spend_gate"; error = "the spend gate could not start, so the model was not called"; }
+        else {
+          stop = abort.signal.aborted ? (run.reason.value ?? "time") : "error";
+          error = String((e as Error)?.message ?? e).slice(0, 300);
+        }
       } finally {
         clearTimeout(timer);
         untrackRun(run);
         // release the session: its native process, its in-process tool server and its working folder go before the next one starts
         try { q?.close(); } catch { /* already closed */ }
         q = null;
+        // the model gate closes after the model's process: a request still in flight is cut and settled as an unknown charge (its whole bound stays spent)
+        if (gate) await gate.close().catch(() => undefined);
         try { rmSync(cwd, { recursive: true, force: true }); } catch { /* a temp folder */ }
         releaseSession();
       }

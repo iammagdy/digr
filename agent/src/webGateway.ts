@@ -12,6 +12,10 @@ import { RAW_PATH } from "./gateway";
 import type { AgentStore, CallPhase } from "./types";
 import { createHash } from "node:crypto";
 import { PAGE_MIN_TEXT_CHARS, canonicalPageUrl, isPageFieldParser, pageRowsFor, pageTextChars, siteOf, type PageFieldParser } from "../../src/lib/agentMission/pageExtract";
+import { gateAfter, gateBefore, type GateBefore, type GateContext } from "../../src/lib/server/spendGate/gate";
+import { providerCallBound, type ProviderOp } from "../../src/lib/server/spendGate/bounds";
+import { CONTEXTDEV_USD_PER_CREDIT, FIRECRAWL_USD_PER_CREDIT } from "../../src/lib/multiProvider/catalog";
+import { PROVIDER_RESERVATION_TTL_SECONDS, spendReservationKey } from "./spendGateKeys";
 
 /**
  * THE WEB GATEWAY: the agent's way to the page parsers, the web search and page scrape (Firecrawl and Context.dev) and Context.dev's people search. The SAME rules as treg_call, in code, before every call:
@@ -23,8 +27,15 @@ import { PAGE_MIN_TEXT_CHARS, canonicalPageUrl, isPageFieldParser, pageRowsFor, 
  *   4. the provider's key comes from the encrypted key store (the site's own resolver), never from the model;
  * and after the call it saves the FULL answer to the private bucket (`{ rows, ... }`), writes a mission_calls row with the actual charge, and returns a SHAPE DIGEST and the FIRST ROWS only.
  * The charge is `key_metadata.credits_consumed` of the answer; when an answer carries none, the documented credit cost is recorded as an ESTIMATE (`cost_basis: "estimated"` in the call row).
+ *
+ * ROUND 62, the hard spend gate (DIGER_SPEND_GATE; unset = off = nothing below changes): after the budget and the key, the operation's BOUND (bounds.ts:
+ * the most the provider may charge for it, never the estimate) is reserved against the owner's grant. In enforce mode a refusal, an operation with no
+ * documented bound (a Context.dev pre-built parser), a database error or a slow answer means the call is NOT made (refusal «spend_gate»). The reservation
+ * is settled with the credits the provider REPORTED in its answer; an answer that reports none (a Firecrawl scrape, a cut call, a 5xx) is settled as
+ * UNKNOWN: the whole bound stays spent. A page answered from the round-60 page cache is not a paid call and reserves nothing. Observe mode only records:
+ * it is NOT budget enforcement.
  */
-export type WebRefusal = "bad_source" | "bad_url" | "bad_input" | "over_budget" | "daily_cap" | "recording_unavailable" | "source_unavailable" | "choose_cheapest" | "parent_not_saved" | "page_failed_before";
+export type WebRefusal = "bad_source" | "bad_url" | "bad_input" | "over_budget" | "daily_cap" | "recording_unavailable" | "source_unavailable" | "choose_cheapest" | "parent_not_saved" | "page_failed_before" | "spend_gate";
 
 export type WebCallResult =
   | { ok: true; call_id: string; source: string; rows_in_page: number; next_cursor?: string | null; shape: unknown; first_rows: unknown[]; cost_basis: "reported" | "estimated"; saved: string; note?: string }
@@ -42,7 +53,45 @@ const REFUSAL_TEXT: Record<WebRefusal, string> = {
   choose_cheapest: "a cheaper source from the last catalog_search has not been tried; use it first, or pass `why` with the reason its sample was unsuitable",
   parent_not_saved: "this page is not on the site of a company already saved in this mission, nor linked from one of its pages: contact pages are bought only for companies that will be in the file. Save the company first, or skip it",
   page_failed_before: "this page already failed to load in this mission and is not bought again; work with what is saved or skip it",
+  spend_gate: "the owner's spending gate has no approved room for this call (or the call has no known maximum cost), so it was NOT made and cost nothing; use another source or stop and explain honestly",
 };
+
+/** HTTP answers a provider does not bill (a refused request, a bad key, a rate limit): settled at 0 when the answer reports no credits. */
+const NOT_BILLED_HTTP = new Set([400, 401, 402, 403, 404, 413, 429]);
+
+/** The credits a provider's own answer REPORTS, or null: Context.dev `key_metadata.credits_consumed`, Firecrawl `creditsUsed`. A fallback is never a report. */
+export function reportedCreditsOf(provider: "firecrawl" | "contextdev", json: unknown): number | null {
+  const j = json as { key_metadata?: { credits_consumed?: unknown }; creditsUsed?: unknown } | null;
+  const n = provider === "contextdev" ? Number(j?.key_metadata?.credits_consumed) : Number.isInteger(j?.creditsUsed) ? Number(j?.creditsUsed) : NaN;
+  return j && Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/**
+ * ROUND 62: watches the provider requests of ONE gateway call (the adapter's fetch), to settle the gate with what the provider itself reported. It does
+ * not change the request or the answer: the adapter reads the same response.
+ */
+export function observeProviderFetch(inner: FetchFn, provider: "firecrawl" | "contextdev") {
+  const sends: Array<{ status: number | null; credits: number | null }> = [];
+  const fetchFn: FetchFn = async (input, init) => {
+    const entry: { status: number | null; credits: number | null } = { status: null, credits: null };
+    sends.push(entry);
+    const res = await inner(input, init);
+    entry.status = typeof res?.status === "number" ? res.status : null;
+    try { if (typeof res?.clone === "function") entry.credits = reportedCreditsOf(provider, await res.clone().json()); } catch { /* not JSON: no report */ }
+    return res;
+  };
+  /** The charge to settle: 0 when nothing was sent; the reported credits; 0 for an unbilled refusal; otherwise null (UNKNOWN: the whole bound stays spent). */
+  const chargeUsd = (): number | null => {
+    if (sends.length === 0) return 0;
+    if (sends.length > 1) return null;
+    const s = sends[0];
+    if (s.status === null) return null;
+    if (s.credits !== null) return Number((s.credits * (provider === "firecrawl" ? FIRECRAWL_USD_PER_CREDIT : CONTEXTDEV_USD_PER_CREDIT)).toFixed(9));
+    if (NOT_BILLED_HTTP.has(s.status)) return 0;
+    return null;
+  };
+  return { fetchFn, chargeUsd, sent: () => sends.length > 0 };
+}
 
 export type ProviderKeyFn = (provider: "firecrawl" | "contextdev") => Promise<string | null>;
 
@@ -57,6 +106,8 @@ export interface WebGatewayDeps {
   fetchFn?: FetchFn;
   /** Shared with the TREG gateway: call ids continue in one sequence per mission. */
   counter: { seq: number };
+  /** ROUND 62: the hard spend gate of this mission (agent/src/spendGateWiring.ts). Absent or mode "off": nothing changes. */
+  spendGate?: GateContext;
   now?: () => number;
   /**
    * ROUND 60, EXECUTION ONLY: ONE PAID FETCH PER PAGE. When present, the field parsers (`emails`, `phone-numbers`, `links`) of a page are answered by code from the page text bought ONCE
@@ -115,6 +166,8 @@ export function createWebGateway(deps: WebGatewayDeps) {
   /** The common part: budget, key, the call itself, the record, the raw answer, the digest. `run` makes the provider call with the context it is given. */
   async function execute<T extends { costUsd: number; ok: boolean; status: string; units: number; durationMs: number; httpStatus: number | null; errorCode?: string; data: any }>(args: {
     id: string; source: string; provider: "firecrawl" | "contextdev"; params: Record<string, unknown>; estimateUsd: number;
+    /** ROUND 62: what the provider may charge AT MOST for this operation (bounds.ts); used only when the spend gate is on. */
+    bound: ProviderOp;
     run: (ctx: AdapterContext) => Promise<T>;
     /** Turns the provider's data into what is saved and returned. */
     shape: (result: T) => { saved: unknown; rows: unknown[]; costBasis: "reported" | "estimated"; next_cursor?: string | null; note?: string; failedMessage?: string; /** The rows were read by code from a page: no row is «empty», whatever the page call said. */ emptyIfNoRows?: boolean };
@@ -125,16 +178,31 @@ export function createWebGateway(deps: WebGatewayDeps) {
     if (!deps.budget.reserve(args.estimateUsd)) return refuse(id, source, params, "over_budget", deps.phase);
     const key = await deps.providerKey(args.provider).catch(() => null);
     if (!key) { deps.budget.settle(args.estimateUsd, 0); return refuse(id, source, params, "source_unavailable", args.provider); }
+    // ROUND 62: THE HARD SPEND GATE, before anything is sent (off: skipped entirely, the adapter gets the same fetch as before)
+    let gated: GateBefore | null = null;
+    let observer: ReturnType<typeof observeProviderFetch> | null = null;
+    if (deps.spendGate && deps.spendGate.mode !== "off") {
+      const op = source.slice(0, 200);
+      const b = providerCallBound(args.bound);
+      gated = await gateBefore(deps.spendGate, b.ok
+        ? { key: spendReservationKey(args.provider, deps.missionId, id), kind: "provider", op, boundUsd: b.usd, missionId: deps.missionId, ttlSeconds: PROVIDER_RESERVATION_TTL_SECONDS }
+        : { refuse: "no_safe_bound", detail: b.detail, op });
+      if (!gated.proceed) { deps.budget.settle(args.estimateUsd, 0); return refuse(id, source, params, "spend_gate", gated.reason); }
+      observer = observeProviderFetch(fetchFn, args.provider);
+    }
     let result: T;
     try {
-      result = await args.run({ apiKey: key, fetchFn, recorder: deps.recorder, jobId: deps.jobId, ...(deps.now ? { now: deps.now } : {}) });
+      result = await args.run({ apiKey: key, fetchFn: observer ? observer.fetchFn : fetchFn, recorder: deps.recorder, jobId: deps.jobId, ...(deps.now ? { now: deps.now } : {}) });
     } catch {
+      if (gated) await gateAfter(deps.spendGate, gated, observer!.sent() ? null : 0);
       // the call may have gone out: its estimate stays counted
       deps.budget.settle(args.estimateUsd, null);
       await log({ id, source, params, status: "failed", estimate: args.estimateUsd, cost: args.estimateUsd });
       if (args.onOutcome) await args.onOutcome({ ok: false, code: "thrown", thrown: true }).catch(() => undefined);
       return { ok: false, call_id: id, failed: true, message: "the call did not complete; it may be tried once more" };
     }
+    // settled once, with what the provider reported (a call the daily cap stopped was never sent: 0)
+    if (gated) await gateAfter(deps.spendGate, gated, observer!.chargeUsd());
     if ((result as any).errorCode === "cap_reached") { deps.budget.settle(args.estimateUsd, 0); return refuse(id, source, params, "daily_cap", args.provider); }
     // ROUND 60: a call that got NO answer (a timeout, a dropped connection) may have been billed: the provider said nothing, so the mission's budget keeps its estimate (never assumed free)
     const noAnswer = !result.ok && result.httpStatus === null;
@@ -280,6 +348,7 @@ export function createWebGateway(deps: WebGatewayDeps) {
     let thinPage = false;
     const work = execute({
       id, source, provider: "contextdev", params: { ...params, page_key: pageKeyOf(canonical), fetched_as: "page", extraction: "code" }, estimateUsd: PROVIDER_FACTS.contextdev.usdPerCredit! * 1,
+      bound: { provider: "contextdev", op: "scrape" },
       run: (ctx) => contextDevAdapter.run("page.read", { url: urlText }, ctx),
       shape: (r) => {
         const pg = r.data as { markdown: string; links: string[]; finalUrl: string } | null;
@@ -330,6 +399,8 @@ export function createWebGateway(deps: WebGatewayDeps) {
       }
       return execute({
         id, source, provider: "contextdev", params, estimateUsd: PROVIDER_FACTS.contextdev.usdPerCredit! * 1,
+        // a pre-built parser has no documented credit cost: no bound, so enforce mode refuses it (SPEC-v2 §13)
+        bound: { provider: "contextdev", op: "parser", parser: name },
         run: (ctx) => contextDevParse({ spec, url: urlText, ...(sort ? { sort } : {}), ...(limit !== undefined ? { limit } : {}) }, ctx),
         shape: (r) => {
           const d = r.data as { rows: unknown[]; parsed: any; costBasis: "reported" | "estimated"; errorCode?: string; message?: string } | null;
@@ -353,6 +424,7 @@ export function createWebGateway(deps: WebGatewayDeps) {
       const adapter = provider === "firecrawl" ? firecrawlAdapter : contextDevAdapter;
       return execute({
         id, source, provider, params, estimateUsd: spec.usdPerCall * (limit / 10),
+        bound: { provider, op: "search", limit },
         run: (ctx) => adapter.run("discover.web_search", { query, limit, ...(input.country ? { country: String(input.country) } : {}) }, ctx),
         shape: (r) => {
           const hits = Array.isArray(r.data) ? (r.data as unknown[]) : [];
@@ -387,6 +459,8 @@ export function createWebGateway(deps: WebGatewayDeps) {
       let bought: { markdown: string; links: string[]; finalUrl: string } | null = null;
       const work = execute({
         id, source, provider, params, estimateUsd: spec.usdPerCall,
+        // the Firecrawl adapter sends proxy "auto", which may escalate to the stealth proxy (5 credits): the bound is that, not the 1-credit estimate
+        bound: provider === "firecrawl" ? { provider: "firecrawl", op: "scrape", proxy: "auto" } : { provider: "contextdev", op: "scrape" },
         ...(reuseOn && canonical ? { onOutcome: async (o: { ok: true; result: unknown } | { ok: false; code: string; thrown: boolean }) => {
           if (o.ok && bought) { await rememberPage(canonical, urlText, id, source, bought); const p = memory.get(pageKeyOf(canonical)); if (p) await noteLinks(p); }
           else if (!o.ok) await rememberFailure(canonical, id, o.code, o.thrown);
@@ -414,6 +488,7 @@ export function createWebGateway(deps: WebGatewayDeps) {
       const spec = WEB_SOURCES.find((s) => s.id === source)!;
       return execute({
         id, source, provider: "contextdev", params, estimateUsd: spec.usdPerCall,
+        bound: { provider: "contextdev", op: "people_search", mode: "fast" },
         run: (ctx) => contextDevPeopleSearch({ query, ...(input.country ? { country: String(input.country) } : {}), ...(input.cursor ? { cursor: String(input.cursor) } : {}) }, ctx),
         shape: (r) => {
           const d = r.data as { rows: unknown[]; nextCursor: string | null; costBasis: "reported" | "estimated" } | null;

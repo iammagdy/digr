@@ -23,6 +23,12 @@ export interface RunInput {
   onUsage?: (progress: { usage: TokenUsage; costUsd: number }) => Promise<void> | void;
   /** Called once per model turn with THAT turn's own tokens (not cumulative): the planning telemetry of S1 item 0.4 (counts only). Must not throw. */
   onTurn?: (turn: { turn: number; usage: TokenUsage }) => Promise<void> | void;
+  /**
+   * ROUND 62: the hard spend gate's model gate for THIS run (agent/src/spendGateWiring.ts). Absent (the gate off): the run is exactly as before. Present:
+   * the driver starts it before the model's process, points the process at it (never the real key), and closes it after. In enforce mode a gate that
+   * cannot start means the run does not start.
+   */
+  modelGate?: { mode: "observe" | "enforce"; start: () => Promise<{ childEnv: Record<string, string>; close: () => Promise<void> }> };
 }
 
 export interface RunOutput {

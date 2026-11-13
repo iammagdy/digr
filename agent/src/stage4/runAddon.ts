@@ -9,6 +9,7 @@ import type { FileVersion } from "../../../src/lib/agentMission/stage4/versions"
 import { createJobCallBudget } from "../../../src/lib/server/callBudget";
 import { createGateway } from "../gateway";
 import type { RunnerDeps } from "../runMission";
+import { spendGateOf } from "../spendGateKeys";
 import { readRunState, updateRunState, type RunState } from "../runState";
 import { trackRun, untrackRun } from "../sessions";
 import type { CallRow, MissionRecord } from "../types";
@@ -237,7 +238,7 @@ async function editWork(deps: Deps, row: MissionRecord, addon: AddonPlan, jobId:
   if (plan.units.length > 0) {
     const budget = createJobCallBudget({ ceilingUsd: addonProviderBudgetUsd(hold, addon.pricing.settings), spentUsd: executionSpend(calls) });
     const access = await deps.resolveAccess(row.user_id);
-    const gateway = createGateway({ store, client: deps.client, missionId: row.id, userId: row.user_id, jobId, phase: "execution", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: row.request_text, counter: { seq: lastSeq(calls) } });
+    const gateway = createGateway({ store, client: deps.client, missionId: row.id, userId: row.user_id, jobId, phase: "execution", access, catalog: deps.catalog, budget, recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: row.request_text, counter: { seq: lastSeq(calls) }, ...spendGateOf(deps, row.id) });
     const tracked = trackRun(row.id);
     try {
       const got = await runReread({ store, gateway, catalog: deps.catalog, of: addon.of, addonId: row.id, base, sheet: plan.sheet, units: plan.units, deadlineMs: startsExceeded ? 0 : Date.now() + AGENT_EXECUTION_WALL_MS, shouldStop: () => tracked.reason.value !== null, lost: async () => !(await owns()), log: deps.log });

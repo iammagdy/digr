@@ -23,7 +23,11 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 * **Project:** Diger (ديجر), an Arabic-first research and data-extraction platform.
 * **What a customer does:** describes in chat what they need (companies, contacts, social posts, reviews…). The platform plans it, prices it in points, and after approval an agent collects the data from paid providers. The result is delivered as Excel/CSV/PDF/JSON.
 * **Repository:** https://github.com/iammagdy/digr. The primary branch is `main`.
-* **Branches:** round 61 was built on `ccr-9dc4c8d3-d0ae22`, which is now fully merged (PR #479). The post-merge documentation is on `claude/sleepy-albattani-l6qgtv` (PR #480). New work starts from `main` on a new branch. Every merge to `main` went through a PR; nothing was pushed to `main` directly.
+* **Branches:**
+  * Round 61 was built on `ccr-9dc4c8d3-d0ae22`, which is now fully merged (PR #479).
+  * The post-merge documentation was on `claude/sleepy-albattani-l6qgtv` (PR #480, merged as `9bbad01`).
+  * **Round 62 (PR B, spend-gate worker wiring)** is on `claude/round-62-spend-gate-worker-wiring`, branched from `9bbad01`. It is an OPEN review PR: **NOT merged, NOT deployed, NOT active.**
+  * New work starts from `main` on a new branch. Every merge to `main` went through a PR; nothing was pushed to `main` directly.
 
 ### Architecture (short)
 
@@ -52,10 +56,10 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 * `src/lib/server/`: server code.
   * `callBudget.ts` (the in-memory per-mission budget).
   * `multiProvider/` (provider adapters).
-  * `spendGate/` (round 61, unwired, see below).
+  * `spendGate/` (round 61; wired into the worker only by the unmerged round-62 PR, see below).
 * `agent/src/`: the worker.
   * `gateway.ts`, `webGateway.ts`, `pageReuse.ts`, `runMission.ts`, `sdkRuntime.ts`, `sdkOptions.ts`.
-  * `modelGate.ts` (round 61, unwired).
+  * `modelGate.ts` (round 61); `spendGateWiring.ts` and `spendGateKeys.ts` exist only in the unmerged round-62 PR.
 * `supabase/migrations/`: applied database history.
 * `docs/proposals/`: unapplied designs; SQL there is NOT applied.
 * `tests/`: Vitest.
@@ -67,7 +71,10 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 * **Worker (required):** `ANTHROPIC_API_KEY`, `TREG_TOKEN`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
 * **Worker (optional):** `PROVIDER_KEYS_ENCRYPTION_KEY`, `CONTEXT_DEV_API_KEY`, `FIRECRAWL_API_KEY`, `ADMIN_ALERT_EMAIL`, `AGENT_CONCURRENCY`.
 * **Kill switch (round 60):** `DIGER_WEB_PAGE_REUSE=0`.
-* **NOT set anywhere and NOT read by running code:** `DIGER_SPEND_GATE` (round 61). Verified unset on Heroku and Vercel at the merge of PR #479 (key names only were read).
+* **NOT set anywhere:** `DIGER_SPEND_GATE`.
+  * Production code (`main`) does not read it.
+  * The unmerged round-62 PR makes the worker read it: unset or `off` builds nothing; `observe` measures only and is NOT enforcement; any other value is `enforce`.
+  * Verified unset on Heroku and Vercel at the merge of PR #479 (key names only were read).
 * **Tests only:** `DIGER_TEST_PG`, `DIGER_TEST_REAL_SDK=1`.
 
 ### Production (deployed) as last verified
@@ -90,6 +97,8 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 | 59 | Company quality checks before delivery; cost audit of msn_088c | #477 → `9974769` | Merged, deployed |
 | 60 | One paid fetch per page; no paid page for unsaved companies; spend-gate spec v1 | #478 → `adb22f8` | Merged, deployed (code unchanged in `7d30ec8` except the disconnected gate) |
 | 61 | Hard spend gate: security review, offline build, review fixes | #479 → `7d30ec8` | Merged and deployed as **disconnected code only**. Not wired, not applied, **not enabled**. |
+| 61 docs | Post-merge documentation | #480 → `9bbad01` | Merged (documentation only) |
+| 62 | PR B: the spend gate wired into the WORKER (TREG, Context.dev, Firecrawl, the Agent SDK's model requests, review.ts), behind `DIGER_SPEND_GATE` (default off) | Open review PR «Round 62: Spend Gate Worker Wiring — INACTIVE» | **Implemented and tested offline. NOT merged, NOT deployed, NOT active.** See `docs/proposals/spend-gate/WIRING-R62.md` |
 
 ### Round 61 status, precisely
 
@@ -113,6 +122,44 @@ This handoff document provides a clear, factual status of the Diger platform (`i
   * No migration was applied, and no configuration changed.
   * No production file imports the gate (a test pins it).
 
+### Round 62 status, precisely (PR B, worker wiring: INACTIVE)
+
+* **Implemented, in an open PR:** the worker's paid calls go through the gate when `DIGER_SPEND_GATE` is set. The full list and the coverage matrix are in `docs/proposals/spend-gate/WIRING-R62.md`.
+  * Every TREG call: the reservation is the route cap that is sent.
+  * Every Context.dev and Firecrawl call: the documented bound; pre-built parsers are refused in enforce.
+  * Every Agent SDK model request: through the model gate.
+  * Every direct model request of `review.ts`.
+* **With the variable unset** (production): the worker builds nothing new, and requests, records and SDK options are identical. Tests pin this.
+* **The PR:** https://github.com/iammagdy/digr/pull/481, «Round 62: Spend Gate Worker Wiring — INACTIVE».
+  * Branch `claude/round-62-spend-gate-worker-wiring`, base `main` at `9bbad01`.
+  * Code head `de46152`. Later commits on the branch are documentation only; check the PR for the current head.
+  * Vercel preview `dpl_G75csX4uPUVjsVzstFPRBVaSLDpL` READY on `de46152`. The earlier preview of `5538056` failed the website type check: a test imported `agent/src/sdkRuntime.ts` by a literal path. Fixed in `de46152` (test only).
+  * `mergeable_state` clean. No review comments at session close.
+* **Tested offline, locally** (the repository has no GitHub Actions):
+  * full suite on `5538056` (the code of `de46152` except one opt-in test's import path): **13,605 passed, 0 failed**, 47 expected-fail, 83 skipped;
+  * `tests/spend-gate-r62-wiring.test.ts`: 42/42;
+  * `tests/spend-gate-r61-sdk.test.ts`: 4/4 with `DIGER_TEST_REAL_SDK=1` (real driver and real SDK, fake upstream);
+  * scratch Postgres 16: 14/14 (`tests/sql/spend-gate.local-pg.test.ts` 11, `tests/sql/spend-gate-r62-worker.local-pg.test.ts` 3);
+  * mutation check: with the gateway hooks disabled, 18 wiring tests fail;
+  * both typechecks clean on `de46152`;
+  * `npm run build` and the secret scan clean on `de46152` (135 pages; 0 secrets in 209 client files). The build needs `NODE_OPTIONS=--max-old-space-size=6144` in a cloud container; the default heap ran out there.
+* **NOT covered:** the website's paid call sites (chat, planner, reviews, invoices, the Supabase-function jobs, admin checks) and the evaluation scripts. Those are a separate task. **The platform is not protected while they are not gated.**
+* **NOT done:** merge, deploy, SQL, grant, configuration. All of these need the owner's separate approval.
+* **Production at session close (13 Nov 2026):** unchanged. `main` = `9bbad01` (last code change `7d30ec8`). `DIGER_SPEND_GATE` unset. No SQL applied, no grant issued, no paid call made in this round.
+
+### SESSION CLOSE (13 Nov 2026, after round 62): where to resume
+
+1. **Waiting on the owner:**
+   * whether to merge PR #481. Merging activates nothing, and only `main` auto-deploys the worker;
+   * the SPEC-v2 §13 decisions: the first grant, applying `001_spend_gate.sql` and `002_verify.sql`, provider-side limits, the `max_tokens` cap, refusing pre-built parsers, the 5xx policy;
+   * whether to start the website's paid-call gating as a separate task.
+2. **If asked to merge #481:**
+   * re-check that the head SHA is the reviewed one and that no mission is queued, planning or executing;
+   * merge through GitHub pinned to that SHA;
+   * then verify the Vercel production SHA, the Heroku release and the worker heartbeat version, and that `DIGER_SPEND_GATE` is still unset (key names only).
+3. **Never, without an explicit owner instruction:** set `DIGER_SPEND_GATE`, apply SQL, issue a grant, or make a paid call.
+4. **Until #481 is merged, this section exists only on the PR branch.** `main`'s copy of this file still says PR B was not started.
+
 ### ACTIVATION BLOCKER (round 61): observe mode is not budget protection
 
 * **Observe mode can forward paid calls without a reservation. It is NOT budget enforcement.**
@@ -120,7 +167,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 * Observe is therefore a **measurement mode only**. It must never be described, configured or relied on as enforced budget protection.
 * **The gate stays disconnected and disabled** until all of these are true:
   1. the owner decisions in SPEC-v2 §13 (first grant, applying `001_spend_gate.sql` + `002_verify.sql`, provider-side limits, no database password in Heroku/Vercel);
-  2. PR B (wiring, default off; NOT started; not the unrelated open PR #439 titled «PR-B») started, reviewed and merged only with the owner's separate authorization;
+  2. PR B (wiring, default off; not the unrelated open PR #439 titled «PR-B») reviewed and merged only with the owner's separate authorization. It is implemented as the round-62 open PR and is NOT merged;
   3. an observe period whose unreserved requests are reviewed, understood as non-protection, and accepted by the owner;
   4. `enforce` turned on only after the production failure tests in SPEC-v2 §11.
 
