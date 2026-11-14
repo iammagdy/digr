@@ -199,11 +199,13 @@ describe("the admin reverse-lookup tool: the order live evidence gave", () => {
     expect(tomorrow.ok).toBe(true);
   });
 
-  it("without the audit table the admin lookup still runs (a structured log line carries the masked fields)", async () => {
+  it("PHASE 5, FAIL CLOSED: without the audit table the admin lookup is refused and NOTHING is called (the day's cost cannot be read or recorded)", async () => {
+    // (before Phase 5 this ran with a log line only; the owner's Phase 5 brief requires audit records that fail closed)
     state.client = createMemoryDb({ missing: ["sensitive_lookup_audit"] });
-    const { call } = fakeCall({ "getleadsio.people.phone.lookup": person });
+    const { calls, call } = fakeCall({ "getleadsio.people.phone.lookup": person });
     const out = await runAdminLookup({ client: state.client, adminId: "adm-1", text: "+201001234567", call });
-    expect(out.ok).toBe(true);
+    expect(out).toMatchObject({ ok: false, reason: "audit_unavailable" });
+    expect(calls).toHaveLength(0);
   });
 
   it("the identity is read from whatever shape the source answers (flat, nested, split first and last name, with its country); a brand record is a COMPANY, its title is never a job title", () => {

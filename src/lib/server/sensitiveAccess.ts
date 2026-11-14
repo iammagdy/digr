@@ -135,8 +135,23 @@ export interface SensitiveCallInput<T> {
   purpose?: string | null;
   jobId?: string | null;
   now?: Date;
-  /** Makes the call (the gateway) after every check passed; returns what it cost so the audit row can say. */
-  call: () => Promise<{ result: T; costUsd: number; ok: boolean }>;
+  /**
+   * Makes the call (the gateway) after every check passed; returns what it cost so the audit row can say. `costUsd: null` means the charge is UNKNOWN (a cut or unreachable call
+   * the source may have billed): the row then keeps `reserveUsd`, never 0.
+   */
+  call: () => Promise<{ result: T; costUsd: number | null; ok: boolean }>;
+  /**
+   * PHASE 5 (admin reverse lookup): the most this call can cost (its route cap). When set, the «pending» row is written WITH this amount, so a call in flight already counts in any
+   * sum of the day's cost read from the audit log (a concurrent request sees it), and an unknown charge keeps it. Absent: the row says nothing until the call ends (unchanged behaviour).
+   */
+  reserveUsd?: number;
+  /** PHASE 5: refuse the call when its audit row cannot be written, for the admin too (fail closed). Absent: an admin call goes ahead with a log line (unchanged behaviour). */
+  requireAudit?: boolean;
+  /**
+   * PHASE 5: a check run AFTER the pending row is written and BEFORE the call (insert, then check): it sees this call's own reservation and every other one already written. A refusal
+   * marks the row `refused_limit` at cost 0, and nothing is called.
+   */
+  afterAudit?: () => Promise<SensitiveRefusal | null>;
 }
 
 export type SensitiveCallOutcome<T> = { ok: true; result: T; auditId: string; auditWritten: boolean } | { ok: false; refused: SensitiveRefusal; auditId: string };
@@ -179,19 +194,30 @@ export async function runSensitiveCall<T>(input: SensitiveCallInput<T>): Promise
     if (today === null) return refuse("audit_unavailable", null);
     if (today >= SENSITIVE_DAILY_LIMIT) return refuse("daily_limit", "refused_limit");
   }
-  const written = await writeSensitiveAudit(client, { ...base, cost_usd: null, outcome: "pending" });
+  const reserved = typeof input.reserveUsd === "number" && Number.isFinite(input.reserveUsd) ? Number(Math.max(0, input.reserveUsd).toFixed(6)) : null;
+  const written = await writeSensitiveAudit(client, { ...base, cost_usd: reserved, outcome: "pending" });
   if (!written) {
-    if (!isAdmin) return refuse("audit_unavailable", null);
+    if (!isAdmin || input.requireAudit === true) return refuse("audit_unavailable", null);
     console.warn(JSON.stringify({ tag: "sensitive_audit_unavailable", auditId: id, accountId: base.account_id, endpointId, category: base.endpoint_category, maskedValue: base.masked_value, jobId: base.job_id }));
   }
-  let out: { result: T; costUsd: number; ok: boolean };
+  if (input.afterAudit) {
+    let refusal: SensitiveRefusal | null;
+    try { refusal = await input.afterAudit(); } catch { refusal = "audit_unavailable"; }
+    if (refusal) {
+      await completeSensitiveAudit(client, id, { cost_usd: 0, outcome: refusal === "audit_unavailable" ? "refused_audit" : "refused_limit" });
+      return { ok: false, refused: refusal, auditId: id };
+    }
+  }
+  let out: { result: T; costUsd: number | null; ok: boolean };
   try {
     out = await input.call();
   } catch (err) {
-    await completeSensitiveAudit(client, id, { cost_usd: 0, outcome: "failed" });
+    // a call that threw may still have been billed: a reserved row keeps its reservation
+    await completeSensitiveAudit(client, id, { cost_usd: reserved ?? 0, outcome: "failed" });
     throw err;
   }
-  await completeSensitiveAudit(client, id, { cost_usd: Number(Math.max(0, out.costUsd).toFixed(6)), outcome: out.ok ? "called" : "failed" });
+  const cost = out.costUsd === null ? reserved ?? 0 : Number(Math.max(0, out.costUsd).toFixed(6));
+  await completeSensitiveAudit(client, id, { cost_usd: cost, outcome: out.ok ? "called" : "failed" });
   return { ok: true, result: out.result, auditId: id, auditWritten: written };
 }
 

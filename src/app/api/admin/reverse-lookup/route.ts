@@ -14,7 +14,7 @@ export async function GET(req: NextRequest) {
   const client = createAdminClient();
   const spent = await readAdminLookupSpendToday(client);
   const history = await loadLookupHistory(client);
-  return NextResponse.json({ capUsd: ADMIN_LOOKUP_DAILY_CAP_USD, spentTodayUsd: spent ?? 0, historyAvailable: history.available, history: history.rows });
+  return NextResponse.json({ capUsd: ADMIN_LOOKUP_DAILY_CAP_USD, spentTodayUsd: spent ?? 0, spendKnown: spent !== null, historyAvailable: history.available, history: history.rows });
 }
 
 const bad = () => NextResponse.json({ ok: false, reason: "bad_input", message: "اكتب رقم هاتف أو بريدًا إلكترونيًا صحيحًا." }, { status: 400 });
@@ -39,7 +39,7 @@ export async function POST(req: NextRequest) {
   if (action === "plan") {
     const plan = lookupPlan(parsed.kind, parsed.value);
     const spent = await readAdminLookupSpendToday(client);
-    return NextResponse.json({ ok: true, kind: parsed.kind, plan, spentTodayUsd: spent ?? 0, capUsd: ADMIN_LOOKUP_DAILY_CAP_USD });
+    return NextResponse.json({ ok: true, kind: parsed.kind, plan, spentTodayUsd: spent ?? 0, spendKnown: spent !== null, capUsd: ADMIN_LOOKUP_DAILY_CAP_USD });
   }
   if (action === "attempt") {
     const r = await runLookupAttempt({ client, adminId: auth.ctx.adminId, text: String(body.input), endpointId: String(body?.endpointId ?? ""), confirmedUsd: Number.isFinite(Number(body?.confirmedUsd)) ? Number(body.confirmedUsd) : undefined, previous: body?.previous && typeof body.previous === "object" ? body.previous : undefined });

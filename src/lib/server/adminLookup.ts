@@ -194,8 +194,14 @@ export async function readAdminLookupSpendToday(client: any, now: Date = new Dat
   } catch { return null; }
 }
 
-const MEMORY = { day: new Map<string, number>() };
-export function resetAdminLookupMemoryForTesting(): void { MEMORY.day.clear(); }
+/**
+ * PHASE 5: the day's cap is read ONLY from the audit log, never from the memory of one process (a second Vercel instance, a cold start or a restart had its own memory and could spend the
+ * cap again). The function stays exported for the tests that reset state between cases; there is nothing left to reset.
+ */
+export function resetAdminLookupMemoryForTesting(): void { /* no process-local spend state */ }
+
+/** The most one attempt can be charged: the route cap sent to TREG (`X-Treg-Route-Max-Cost`), which is also the amount the attempt RESERVES in the audit log before the call. */
+export const lookupReserveUsd = (entryUsd: number): number => Number(Math.max(entryUsd, 0.001).toFixed(6));
 
 type CallFn = (o: TregCallOptions) => Promise<TregCallResult>;
 
@@ -212,11 +218,12 @@ export async function runLookupAttempt(input: {
 }): Promise<AttemptResult> {
   const now = input.now ?? new Date();
   const capUsd = ADMIN_LOOKUP_DAILY_CAP_USD;
-  const day = now.toISOString().slice(0, 10);
-  const fromDb = await readAdminLookupSpendToday(input.client, now);
-  const spent = Math.max(fromDb ?? 0, MEMORY.day.get(day) ?? 0);
   const parsed = classifyLookupInput(input.text);
-  if (!parsed) return { ok: false, reason: "bad_input", spentTodayUsd: spent, capUsd };
+  if (!parsed) return { ok: false, reason: "bad_input", spentTodayUsd: 0, capUsd };
+  // FAIL CLOSED (Phase 5): a day whose spend cannot be read from the audit log is a day nothing is called
+  const fromDb = await readAdminLookupSpendToday(input.client, now);
+  if (fromDb === null) return { ok: false, reason: "audit_unavailable", spentTodayUsd: 0, capUsd };
+  const spent = fromDb;
   const catalog = input.catalog ?? loadTregCatalog();
   const plan = lookupPlan(parsed.kind, parsed.value, catalog, input.policyRule ?? policyRuleOf);
   const entry = plan.find((p) => p.id === input.endpointId);
@@ -225,31 +232,47 @@ export async function runLookupAttempt(input: {
   const skippedAttempt = (outcome: LookupAttempt["outcome"], note: string): LookupAttempt => ({ endpointId: entry.id, outcome, costUsd: 0, note });
   if (entry.state === "skipped") return { ok: false, reason: "skipped", attempt: skippedAttempt(/US|limited/.test(entry.skipReasonAr ?? "") ? "skipped_country" : "skipped", entry.skipReasonAr ?? "skipped"), spentTodayUsd: spent, capUsd };
   if (entry.state === "confirm" && !(Number(input.confirmedUsd) >= entry.usd - 1e-9)) return { ok: false, reason: "needs_confirmation", attempt: skippedAttempt("needs_confirmation", "a paid phone endpoint runs only after the admin confirmed its price"), priceUsd: entry.usd, ...(entry.warningAr ? { warningAr: entry.warningAr } : {}), spentTodayUsd: spent, capUsd };
-  if (spent + entry.usd > capUsd + 1e-9) return { ok: false, reason: "daily_cap", attempt: skippedAttempt("cap", "the day's cap would be passed"), spentTodayUsd: spent, capUsd };
+  // the cap is checked against what the call can cost AT MOST (its route cap), not its estimate
+  const reserveUsd = lookupReserveUsd(entry.usd);
+  if (spent + reserveUsd > capUsd + 1e-9) return { ok: false, reason: "daily_cap", attempt: skippedAttempt("cap", "the day's cap would be passed"), spentTodayUsd: spent, capUsd };
 
   const call = input.call ?? executeTregCall;
   const jobId = `${ADMIN_LOOKUP_JOB_PREFIX}${randomUUID().replace(/-/g, "")}`;
   const budget = createJobCallBudget({ ceilingUsd: Math.max(0, capUsd - spent), spentUsd: 0 });
   const value = parsed.value;
+  let unknownCharge = false;
+  /**
+   * THE HARD CAP, across processes and concurrent requests (Phase 5): the pending audit row is written WITH the reservation (`reserveUsd`), then the day's sum is read again. That sum
+   * holds this row and every reservation or cost written before the read; if it passes the cap the row is marked refused and nothing is called. Of two requests racing, at least one
+   * reads the other's row, so the cap holds (both may refuse: that errs on the side of no spend). An unreadable sum refuses too.
+   */
+  const afterAudit = async (): Promise<"daily_limit" | "audit_unavailable" | null> => {
+    const total = await readAdminLookupSpendToday(input.client, now);
+    if (total === null) return "audit_unavailable";
+    return total > capUsd + 1e-9 ? "daily_limit" : null;
+  };
   const out = await runSensitiveCall<TregCallResult>({
     client: input.client, account: { userId: input.adminId, access: { isAdmin: true, verifiedBusiness: false } }, endpointId: entry.id, params: { [entry.paramName]: value }, purpose: ADMIN_LOOKUP_PURPOSE, jobId, now,
+    reserveUsd, requireAudit: true, afterAudit,
     call: async () => {
       const r = await call({ endpointId: entry.id, method: endpoint.method === "GET" ? "GET" : "POST", params: { [entry.paramName]: value }, userId: input.adminId, jobId, stepId: "lookup", page: 1,
-        routeMaxCostUsd: Number(Math.max(entry.usd, 0.001).toFixed(6)), timeoutMs: 15_000, endpointScope: endpoint.scope, callBudget: budget, callEstimateUsd: entry.usd, sensitiveAccess: { allowed: true },
+        routeMaxCostUsd: reserveUsd, timeoutMs: 15_000, endpointScope: endpoint.scope, callBudget: budget, callEstimateUsd: entry.usd, sensitiveAccess: { allowed: true },
         ...(NO_WATERFALL_ENDPOINTS.includes(entry.id) ? { routeWaterfall: false } : {}) });
-      return { result: r, costUsd: Math.max(0, r.costMicro || 0) / 1_000_000, ok: r.ok };
+      // A CUT OR UNREACHABLE CALL may have been billed after we stopped waiting: its charge is unknown and counts at the reservation, never 0
+      unknownCharge = r.timedOut === true || r.error === "network_failure";
+      return { result: r, costUsd: unknownCharge ? null : Math.max(0, r.costMicro || 0) / 1_000_000, ok: r.ok };
     },
   });
   if (!out.ok) {
     if (out.refused === "audit_unavailable") return { ok: false, reason: "audit_unavailable", spentTodayUsd: spent, capUsd };
+    if (out.refused === "daily_limit") return { ok: false, reason: "daily_cap", attempt: skippedAttempt("cap", "the day's cap would be passed (reservations included)"), spentTodayUsd: spent, capUsd };
     return { ok: false, reason: "refused", attempt: skippedAttempt("failed", `refused: ${String(out.refused)}`), spentTodayUsd: spent, capUsd };
   }
   const result = out.result;
-  const costUsd = Math.max(0, result.costMicro || 0) / 1_000_000;
-  MEMORY.day.set(day, (MEMORY.day.get(day) ?? 0) + costUsd);
+  const costUsd = unknownCharge ? reserveUsd : Math.max(0, result.costMicro || 0) / 1_000_000;
   const spentAfter = spent + costUsd;
   if (!result.ok) {
-    const attempt: LookupAttempt = { endpointId: entry.id, outcome: "failed", costUsd, note: result.budgetStopped ? "stopped by the day's cap" : `HTTP ${result.httpStatus}${result.errorDetails ? `: ${String(result.errorDetails).slice(0, 100)}` : ""}` };
+    const attempt: LookupAttempt = { endpointId: entry.id, outcome: "failed", costUsd, note: result.budgetStopped ? "stopped by the day's cap" : unknownCharge ? "no answer: the charge is unknown and is counted at its cap" : `HTTP ${result.httpStatus}${result.errorDetails ? `: ${String(result.errorDetails).slice(0, 100)}` : ""}` };
     return { ok: true, attempt, identity: extractIdentity(undefined), fields: input.previous ?? {}, found: false, spentTodayUsd: spentAfter, capUsd };
   }
   const reading = readShape(result.data, hintsOf(endpoint));
@@ -269,11 +292,11 @@ export async function runAdminLookup(input: {
 }): Promise<AdminLookupOutcome> {
   const now = input.now ?? new Date();
   const capUsd = ADMIN_LOOKUP_DAILY_CAP_USD;
-  const day = now.toISOString().slice(0, 10);
-  const fromDb = await readAdminLookupSpendToday(input.client, now);
-  const spentBefore = Math.max(fromDb ?? 0, MEMORY.day.get(day) ?? 0);
   const parsed = classifyLookupInput(input.text);
-  if (!parsed) return { ok: false, reason: "bad_input", spentTodayUsd: spentBefore, capUsd };
+  if (!parsed) return { ok: false, reason: "bad_input", spentTodayUsd: 0, capUsd };
+  const fromDb = await readAdminLookupSpendToday(input.client, now);
+  if (fromDb === null) return { ok: false, reason: "audit_unavailable", spentTodayUsd: 0, capUsd };
+  const spentBefore = fromDb;
   const catalog = input.catalog ?? loadTregCatalog();
   const policyRule = input.policyRule ?? policyRuleOf;
   const all = lookupPlan(parsed.kind, parsed.value, catalog, policyRule);
