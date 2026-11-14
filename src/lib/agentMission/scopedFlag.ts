@@ -12,10 +12,17 @@
  */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
-export function scopedFlagOn(value: unknown, userId?: string | null): boolean {
+export function scopedFlagOn(value: unknown, userId?: string | null, nowMs: number = Date.now()): boolean {
   try {
     if (value === true || value === "on") return true;
     if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+    // ACCEPTANCE CAMPAIGNS (acceptance/campaign.ts): a scoped value may carry `expires_at` (ISO time). From that moment it is OFF for everyone, whether or not anybody restores it: a test account's
+    // switch can never be left on by a forgotten restore. A value without the field is read exactly as before; an unreadable `expires_at` is OFF.
+    const expires = (value as { expires_at?: unknown }).expires_at;
+    if (expires !== undefined) {
+      const at = typeof expires === "string" ? Date.parse(expires) : Number.NaN;
+      if (!Number.isFinite(at) || !(nowMs < at)) return false;
+    }
     const list = (value as { user_ids?: unknown }).user_ids;
     if (!Array.isArray(list) || typeof userId !== "string") return false;
     const id = userId.trim().toLowerCase();

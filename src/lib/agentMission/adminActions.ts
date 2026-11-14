@@ -185,6 +185,29 @@ const SUMMARY_COLUMNS = `id,request_text,status,question_ar,reserved_points,unit
 /** A row of the list as the page reads it: an add-on row says so (`is_addon`), and the selected marker column itself is not sent. */
 const listRowOf = (row: Record<string, unknown>) => ({ ...withoutMarkerColumn(row), ...(hasAddonMarker(row) ? { is_addon: true as const } : {}) });
 
+/**
+ * LIVE ACCEPTANCE (acceptance/campaign.ts): what the test account's missions cost since a moment, each mission's recorded model and source spend (a charge never answered is recorded at its estimate by the gateways,
+ * never at zero). Read-only. An add-on row is INCLUDED and marked `is_addon` (its spend is spend too); the marker column itself is not returned. An unreadable table is `ok: false`, never a zero.
+ */
+export interface AcceptanceMissionRow { id: string; status: string; created_at: string; planning_llm_usd: number; execution_llm_usd: number; planning_treg_usd: number; execution_treg_usd: number; reserved_points: number | null; charged_points: number | null; is_addon?: true }
+export async function loadAcceptanceSpend(client: any, accountId: string, sinceIso: string): Promise<{ ok: true; missions: AcceptanceMissionRow[]; totalUsd: number } | { ok: false }> {
+  try {
+    const { data, error } = await client.from(MISSION_TABLE).select(`id,status,created_at,planning_llm_usd,execution_llm_usd,planning_treg_usd,execution_treg_usd,reserved_points,charged_points,${ADDON_MARKER_COLUMN}`).eq("user_id", accountId).gte("created_at", sinceIso).order("created_at", { ascending: true }).limit(50);
+    if (error || !Array.isArray(data)) return { ok: false };
+    const num = (v: unknown) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+    const orNull = (v: unknown) => (v === null || v === undefined ? null : num(v));
+    const missions: AcceptanceMissionRow[] = data.map((m: Record<string, unknown>) => ({
+      id: String(m.id), status: String(m.status), created_at: String(m.created_at),
+      planning_llm_usd: num(m.planning_llm_usd), execution_llm_usd: num(m.execution_llm_usd), planning_treg_usd: num(m.planning_treg_usd), execution_treg_usd: num(m.execution_treg_usd),
+      reserved_points: orNull(m.reserved_points), charged_points: orNull(m.charged_points), ...(hasAddonMarker(m) ? { is_addon: true as const } : {}),
+    }));
+    const totalUsd = Number(missions.reduce((s, m) => s + m.planning_llm_usd + m.execution_llm_usd + m.planning_treg_usd + m.execution_treg_usd, 0).toFixed(6));
+    return { ok: true, missions, totalUsd };
+  } catch {
+    return { ok: false };
+  }
+}
+
 /** The page's first load: the worker's heartbeat (alive or not), the model setting, and the latest missions. */
 export async function loadOverview(client: any, now: number = Date.now()) {
   const [beats, setting, missions, pricing, redesign, contract, discovery] = await Promise.all([
