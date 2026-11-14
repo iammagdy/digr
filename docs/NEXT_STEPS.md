@@ -33,6 +33,10 @@
 * Merging PR B would still not activate anything: the mode stays off by default.
 * Activation (`observe`, then `enforce`) is a further, separate owner decision.
 
+## Phase 7 (14 Nov 2026)
+
+* **7.1 admin shadow comparison:** code complete and offline verified (`docs/intelligence/PHASE-7-SHADOW-EVALUATION.md`); not live verified; changes no customer behaviour. Before controlled activation (report §6.6): decide the quote increase of the router's choices and the 9 live-verified sources; promote non-social families before the router is on for customers; apply the Phase 6 sync's reviewed changes; fix or work around the free re-run dropping the exclusion list; a live shadow on the test account needs an owner-approved daily cap. **Phase 8 not started.**
+
 ## Phase 5.3 and Phase 6 (14 Nov 2026)
 
 * **5.3-A exclusion files:** merged and deployed (PR #495, `390b6a2`), offline verified, behind `customer_exclusion_files_v1` (**not enabled**). Owner: turn it on for the test account, then customers; decide whether possible matches are excluded too.

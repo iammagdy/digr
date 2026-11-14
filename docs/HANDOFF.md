@@ -18,6 +18,16 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 > * **Deployed**: running in production and verified.
 > * **Not independently verified**: none of the above can be shown.
 
+### Phase 7 (14 Nov 2026): admin shadow comparison (PR-7.1)
+
+* **Report and acceptance report:** `docs/intelligence/PHASE-7-SHADOW-EVALUATION.md` (what is compared, the 25 regression codes and 7 gates, the result, verified improvements, review items, customer journeys not tested, operational risks, requirements before controlled activation, the exclusion free re-run risk).
+* **Baseline verified before any change:** `main` = `02ba17f` (PR #496); Vercel production `dpl_FVdY3Yxagz4VMSUNAXs52vekKToB` READY on it; worker heartbeat `02ba17f`, `active_missions 0`; `agent_settings`: `redesign_flags`, `social_discovery` only.
+* **What it is:** an admin-only, OFFLINE screen (agent console) and API (`/api/admin/shadow`) that put production today (every switch off) next to the proposed behaviour (switches on) on 156 stored cases, with every finding labelled by evidence. It calls no provider or model, reads no switch or table, writes nothing, redacts everything it returns, and changes no customer behaviour.
+* **Result:** 0 regressions on the corpus; 81 verified improvements; 130 review items, the important ones for activation: the router raises the estimated reserve for 11 of the 20 stored missions (worst 293 → 672 points), and turning it on for customers before the non-social families are promoted would gate 29 requests the legacy planner may serve today.
+* **Documented risk (not fixed):** an admin's free re-run carries no exclusion list (report §7).
+* **No interpreter events exist** (the audit's model interpreter was never built); said on the screen.
+* **Deployment discipline:** one push, one preview, one production deployment, one Heroku release.
+
 ### Phase 5.3 and Phase 6 campaign (14 Nov 2026)
 
 * **Report:** `docs/intelligence/PHASE-5-3-AND-6.md` (status table, deployment discipline, the exclusion-file change, the enrichment blocker and proposal, the provider sync).
