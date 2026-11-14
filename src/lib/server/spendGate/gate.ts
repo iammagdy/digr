@@ -2,7 +2,8 @@
  * ROUND 61, HARD SPEND GATE: the contract every paid operation goes through (docs/proposals/spend-gate/SPEC-v2.md), and an in-memory REFERENCE MODEL
  * of the database functions (docs/proposals/spend-gate/sql/001_spend_gate.sql) with the same rules, used by the offline tests and the model gate's tests.
  *
- * NOT WIRED. No production call site uses this file (tests/spend-gate-r61.test.ts pins that). Default mode is OFF; production behaviour is unchanged.
+ * ROUND 62: wired into the WORKER's paid calls (agent/src/gateway.ts, agent/src/webGateway.ts, the model gate, review.ts) through agent/src/spendGateWiring.ts,
+ * behind DIGER_SPEND_GATE. Default mode is OFF (unset): the worker then builds no gate at all and runs exactly as before. The website does not use it yet.
  *
  * The rules (each one is a test):
  *  - A grant is ISSUED BY THE OWNER, outside the service role: nothing in `SpendGate` (what a worker or the website holds) can create, raise, reopen or
@@ -18,12 +19,16 @@
  *  - The customer's credit ledger is not touched: the gate holds owner money (provider and model spend), never points.
  */
 
+import { CAMPAIGN_KINDS, CAMPAIGN_LIFETIME_CEILING_USD, CAMPAIGN_MAX_ENROLLED_MISSIONS, CAMPAIGN_MAX_WINDOW_HOURS } from "./campaign";
+
 export type SpendKind = "provider" | "model" | "chat" | "eval";
 export type SpendGateMode = "off" | "observe" | "enforce";
 
 export type RefusalReason =
   | "no_grant" | "grant_not_open" | "grant_expired" | "grant_revoked" | "grant_tripped" | "kind_not_covered"
-  | "over_ceiling" | "over_mission_ceiling" | "over_op_max" | "bad_input" | "key_conflict" | "no_safe_bound" | "gate_unavailable";
+  | "over_ceiling" | "over_mission_ceiling" | "over_op_max" | "bad_input" | "key_conflict" | "no_safe_bound" | "gate_unavailable"
+  // CAMPAIGN SCOPE (003_campaign_scope.sql): the grant belongs to one account and its enrolled missions only
+  | "mission_not_enrolled" | "wrong_account" | "unknown_mission" | "campaign_full" | "not_a_campaign_grant";
 
 export interface ReserveRequest {
   /** Idempotency key: the same logical call keeps the same key across retries of the DATABASE call (a new provider attempt is a new key). */
@@ -37,8 +42,16 @@ export interface ReserveRequest {
 export type ReserveResult = { ok: true; reservationId: string; grantId: string; replay: boolean } | { ok: false; reason: RefusalReason; detail?: string };
 export type SettleResult = { ok: true; state: "settled" | "expired"; countedUsd: number; overrunUsd: number; replay: boolean } | { ok: false; reason: "unknown_reservation" | "bad_input" | "gate_unavailable" };
 
+export type EnrollResult = { ok: true; grantId: string; replay: boolean } | { ok: false; reason: RefusalReason; detail?: string };
+
 /** What a worker or the website holds. Deliberately no issue, raise, reopen or extend. */
 export interface SpendGate {
+  /**
+   * CAMPAIGN SCOPE: enroll a mission in the open campaign grant. The DATABASE decides, from its own record of who owns the mission: a mission of any
+   * other account is refused (`wrong_account`), an unknown mission is refused, and the grant's mission count is never passed. Absent on a gate that
+   * has no campaign scope.
+   */
+  enroll?(missionId: string): Promise<EnrollResult>;
   reserve(req: ReserveRequest): Promise<ReserveResult>;
   /** `actualUsd` null = the charge is not known (no answer, cut stream, provider silent): the whole bound stays spent. */
   settle(reservationId: string, actualUsd: number | null): Promise<SettleResult>;
@@ -72,6 +85,9 @@ export interface Grant {
   state: "open" | "revoked" | "tripped";
   issuedBy: string;
   reason: string;
+  /** CAMPAIGN SCOPE: the one account this grant belongs to, and how many of its missions may be enrolled. Absent on a general grant. */
+  accountId?: string | null;
+  maxMissions?: number | null;
 }
 interface Reservation { id: string; key: string; grantId: string; kind: SpendKind; op: string; boundUsd: number; missionId: string | null; state: "held" | "settled" | "expired"; actualUsd: number | null; countedUsd: number; overrunUsd: number; expiresAt: number }
 
@@ -82,8 +98,9 @@ const r6 = (n: number) => Number(n.toFixed(6));
  * The in-memory model. `owner` is what ONLY the owner holds (the database role that is not the service role, SPEC-v2 §5); `gate` is what callers hold.
  * Single-threaded JavaScript runs each method to completion, which is what the database's row lock gives the SQL version.
  */
-export function createMemorySpendGate(opts: { now?: () => number } = {}) {
+export function createMemorySpendGate(opts: { now?: () => number; /** CAMPAIGN SCOPE: who owns a mission (the database's own record; null = no such mission). */ missionOwner?: (missionId: string) => string | null } = {}) {
   const now = opts.now ?? (() => Date.now());
+  const enrolled = new Map<string, Set<string>>();
   const grants = new Map<string, Grant>();
   const reservations = new Map<string, Reservation>();
   const byKey = new Map<string, Reservation>();
@@ -118,6 +135,8 @@ export function createMemorySpendGate(opts: { now?: () => number } = {}) {
       if (!g) return { ok: false, reason: tripped ? "grant_tripped" : grants.size ? "grant_revoked" : "no_grant" };
       if (now() < g.opensAt) return { ok: false, reason: "grant_not_open" };
       if (now() >= g.closesAt) return { ok: false, reason: "grant_expired" };
+      // CAMPAIGN SCOPE: a campaign grant serves only the missions enrolled in it, and a call that names no mission has no claim on it
+      if (g.accountId && (req.missionId === null || !enrolled.get(g.id)?.has(req.missionId))) return { ok: false, reason: "mission_not_enrolled" };
       expireStale(g);
       const bound = r6(req.boundUsd);
       if (!g.kinds.includes(req.kind)) return { ok: false, reason: "kind_not_covered" };
@@ -149,19 +168,53 @@ export function createMemorySpendGate(opts: { now?: () => number } = {}) {
       const g = openGrant();
       if (g) g.state = "tripped";
     },
+    async enroll(missionId) {
+      if (typeof missionId !== "string" || !missionId || missionId.length > 100) return { ok: false, reason: "bad_input" };
+      const g = openGrant();
+      if (!g) return { ok: false, reason: [...grants.values()].some((x) => x.state === "tripped") ? "grant_tripped" : grants.size ? "grant_revoked" : "no_grant" };
+      if (now() < g.opensAt) return { ok: false, reason: "grant_not_open" };
+      if (now() >= g.closesAt) return { ok: false, reason: "grant_expired" };
+      if (!g.accountId) return { ok: false, reason: "not_a_campaign_grant" };
+      const set = enrolled.get(g.id) ?? new Set<string>();
+      if (set.has(missionId)) return { ok: true, grantId: g.id, replay: true };
+      const ownerOfMission = opts.missionOwner?.(missionId) ?? null;
+      if (ownerOfMission === null) return { ok: false, reason: "unknown_mission" };
+      if (ownerOfMission !== g.accountId) return { ok: false, reason: "wrong_account" };
+      if (set.size >= (g.maxMissions ?? 0)) return { ok: false, reason: "campaign_full" };
+      set.add(missionId); enrolled.set(g.id, set);
+      return { ok: true, grantId: g.id, replay: false };
+    },
   };
 
+  const campaignExposureUsd = (): number => { let t = 0; for (const x of grants.values()) if (x.accountId) t += x.spentUsd + x.reservedUsd + x.overrunUsd; return r6(t); };
+
   /** OWNER ONLY (the SQL version is executable by the owner's database role and never by service_role). */
+  const issueGrant = (input: Omit<Grant, "reservedUsd" | "spentUsd" | "overrunUsd" | "state">): Grant => {
+    if (openGrant()) throw new Error("one open grant at a time: revoke the open one first");
+    if (!(input.ceilingUsd > 0) || !(input.perOpMaxUsd > 0) || !(input.perMissionMaxUsd > 0) || !(input.closesAt > input.opensAt)) throw new Error("bad grant");
+    const g: Grant = { ...input, reservedUsd: 0, spentUsd: 0, overrunUsd: 0, state: "open" };
+    grants.set(g.id, g);
+    return g;
+  };
   const owner = {
-    issueGrant(input: Omit<Grant, "reservedUsd" | "spentUsd" | "overrunUsd" | "state">): Grant {
-      if (openGrant()) throw new Error("one open grant at a time: revoke the open one first");
-      if (!(input.ceilingUsd > 0) || !(input.perOpMaxUsd > 0) || !(input.perMissionMaxUsd > 0) || !(input.closesAt > input.opensAt)) throw new Error("bad grant");
-      const g: Grant = { ...input, reservedUsd: 0, spentUsd: 0, overrunUsd: 0, state: "open" };
-      grants.set(g.id, g);
-      return g;
-    },
+    issueGrant,
     revoke(id: string) { const g = grants.get(id); if (g) g.state = "revoked"; },
     grant: (id: string) => grants.get(id),
+    /** The most the campaign account has already used: spent + held + overrun over EVERY campaign grant ever issued (nothing is handed back by a revoke or an expiry). */
+    campaignExposureUsd,
+    /**
+     * OWNER ONLY: a campaign grant. The ceiling is ONE amount for the whole campaign: this grant's ceiling plus everything earlier campaign grants used
+     * cannot pass CAMPAIGN_LIFETIME_CEILING_USD. Kinds are provider and model only; the window is short; the terms are never changed afterwards.
+     */
+    issueCampaignGrant(input: Omit<Grant, "reservedUsd" | "spentUsd" | "overrunUsd" | "state"> & { accountId: string; maxMissions: number }): Grant {
+      if (!input.accountId) throw new Error("a campaign grant belongs to one account");
+      if (!(input.maxMissions >= 1 && input.maxMissions <= CAMPAIGN_MAX_ENROLLED_MISSIONS)) throw new Error("bad enrolled-mission limit");
+      if (!input.kinds.length || input.kinds.some((k) => !(CAMPAIGN_KINDS as readonly string[]).includes(k))) throw new Error("a campaign covers provider and model only");
+      if (input.closesAt - input.opensAt > CAMPAIGN_MAX_WINDOW_HOURS * 3_600_000) throw new Error("a campaign window is short");
+      if (input.ceilingUsd + campaignExposureUsd() > CAMPAIGN_LIFETIME_CEILING_USD + EPS) throw new Error("the campaign's cumulative ceiling would be passed");
+      return issueGrant(input);
+    },
+    enrolledMissions: (grantId: string): string[] => [...(enrolled.get(grantId) ?? [])],
   };
   return { gate, owner };
 }
@@ -206,4 +259,76 @@ export async function guardedPaidCall<T>(
     else if (s.overrunUsd > 0) note("spend_gate.bound_violated", `overrun ${s.overrunUsd}`);
   }
   return { ran: true, value: result.value, reservationId, ...(reserved.ok ? {} : { observedRefusal: reserved.reason }) };
+}
+
+/**
+ * ROUND 62 (PR B): the two halves of `guardedPaidCall` for a call site whose call cannot be wrapped in one closure (the gateways reserve after their own
+ * checks and settle after their own records). Same rules: `off` (or no context) proceeds with no reservation and records nothing; `observe` proceeds on a
+ * refusal and REPORTS it (observe is NOT budget enforcement); `enforce` stops on any refusal, error or a reserve slower than the timeout.
+ */
+export interface GateEvent {
+  type: string;
+  detail?: string;
+  /** A priced amount the event is about (an unreserved operation's charge), when known. */
+  usd?: number;
+  /** The refusal reason, for a refusal (enforce) or an observed refusal (observe). */
+  reason?: RefusalReason;
+  /** The operation, e.g. "treg:<endpoint>" or "contextdev.search". */
+  op?: string;
+}
+/** A gate as a call site holds it. Absent or mode "off": the call site behaves exactly as before. */
+export interface GateContext {
+  gate: SpendGate | null; mode: SpendGateMode; timeoutMs?: number; onEvent?: (e: GateEvent) => void;
+  /** CAMPAIGN SCOPE: how many billed attempts one TREG call may make (1 + the key pool's hops); the reservation covers all of them. Absent: 1 (the round-62 behaviour). */
+  tregAttempts?: number;
+  /** CAMPAIGN SCOPE: the TREG call carries the worker's token explicitly, so it never hops to another pool key (one billable attempt). */
+  noKeyPool?: boolean;
+}
+
+export type GateBefore =
+  | { proceed: true; reservationId: string | null; observedRefusal?: RefusalReason; op: string }
+  | { proceed: false; reason: RefusalReason; detail?: string; op: string };
+
+const noteOf = (ctx: GateContext) => (e: GateEvent) => { try { ctx.onEvent?.(e); } catch { /* telemetry never decides */ } };
+
+/** Before a paid call: reserve (or refuse). Nothing is sent by this function; the caller sends only when `proceed` is true. */
+export async function gateBefore(ctx: GateContext | undefined, req: ReserveRequest | { refuse: "no_safe_bound"; detail: string; op: string }): Promise<GateBefore> {
+  const op = "refuse" in req ? req.op : req.op;
+  if (!ctx || ctx.mode === "off") return { proceed: true, reservationId: null, op };
+  const note = noteOf(ctx);
+  let reserved: ReserveResult;
+  if ("refuse" in req) reserved = { ok: false, reason: "no_safe_bound", detail: req.detail };
+  else if (!ctx.gate) reserved = { ok: false, reason: "gate_unavailable", detail: "no gate client" };
+  else {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<ReserveResult>((resolve) => { timer = setTimeout(() => resolve({ ok: false, reason: "gate_unavailable", detail: "timeout" }), ctx.timeoutMs ?? RESERVE_TIMEOUT_MS); });
+    try { reserved = await Promise.race([ctx.gate.reserve(req), timeout]); } catch (e) { reserved = { ok: false, reason: "gate_unavailable", detail: String((e as Error)?.message ?? e).slice(0, 120) }; } finally { if (timer) clearTimeout(timer); }
+  }
+  if (reserved.ok) return { proceed: true, reservationId: reserved.reservationId, op };
+  const detail = reserved.detail;
+  if (ctx.mode === "enforce") {
+    note({ type: "spend_gate.refused", reason: reserved.reason, op, detail: `${reserved.reason}${detail ? `: ${detail}` : ""}` });
+    return { proceed: false, reason: reserved.reason, ...(detail ? { detail } : {}), op };
+  }
+  // OBSERVE: forwarded WITHOUT a reservation. Recorded as what enforce would have refused; its charge is reported apart by gateAfter (never hidden).
+  note({ type: "spend_gate.observed_refusal", reason: reserved.reason, op, detail: `${reserved.reason}${detail ? `: ${detail}` : ""}` });
+  return { proceed: true, reservationId: null, observedRefusal: reserved.reason, op };
+}
+
+/**
+ * After a paid call: settle with the actual charge, or null when it is not known (the whole bound stays spent). A failed settle leaves it held: it expires
+ * AS SPENT. In OBSERVE, an operation that went out without a reservation has its charge reported as `spend_gate.observed_unreserved_usage`.
+ * A settle that was already done is a replay (the database and the memory model are idempotent): settling twice never counts twice.
+ */
+export async function gateAfter(ctx: GateContext | undefined, before: GateBefore, actualUsd: number | null): Promise<void> {
+  if (!ctx || ctx.mode === "off" || !before.proceed) return;
+  const note = noteOf(ctx);
+  if (before.reservationId === null) {
+    note({ type: "spend_gate.observed_unreserved_usage", op: before.op, ...(before.observedRefusal ? { reason: before.observedRefusal } : {}), ...(actualUsd === null ? { detail: "charge unknown" } : { usd: actualUsd, detail: `${actualUsd} USD` }) });
+    return;
+  }
+  if (!ctx.gate) return;
+  const s = await ctx.gate.settle(before.reservationId, actualUsd).catch(() => null);
+  if (!s || !s.ok) note({ type: "spend_gate.settle_failed", op: before.op, detail: "left held: expires as spent" });
+  else if (s.overrunUsd > 0) note({ type: "spend_gate.bound_violated", op: before.op, usd: s.overrunUsd, detail: `overrun ${s.overrunUsd}` });
 }

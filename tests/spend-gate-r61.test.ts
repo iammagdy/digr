@@ -99,8 +99,9 @@ describe("R61 gate rules (the reference model of the SQL functions)", () => {
   it("NO GRANT, NO SPEND: nothing is reserved before the owner issues a grant; starting a mission creates none", async () => {
     const w = world();
     expect(await w.gate.reserve(req("k1", 0.001))).toEqual({ ok: false, reason: "no_grant" });
-    // what callers hold has no way to create, raise, reopen or extend a grant
-    expect(Object.keys(w.gate).sort()).toEqual(["reserve", "settle", "stop"]);
+    // what callers hold has no way to create, raise, reopen or extend a grant. (`enroll` is the campaign scope's: it can only add a mission OF THE GRANT'S OWN ACCOUNT, within the owner's
+    // mission limit, and it moves no money: tests/spend-campaign.test.ts and the SQL tests prove it.)
+    expect(Object.keys(w.gate).sort()).toEqual(["enroll", "reserve", "settle", "stop"]);
   });
   it("a grant not yet open, expired, revoked or tripped refuses (fail closed)", async () => {
     const w = world({ opensAt: T0 + 1000 });
@@ -554,10 +555,10 @@ describe("R61 model gate: every model request of the SDK child is bounded and re
   });
 });
 
-describe("R61: NOT WIRED (this PR changes no production behaviour)", () => {
-  it("no production source imports the spend gate or the model gate (only the gate's own files and the tests)", () => {
+describe("R62: WIRED INTO THE WORKER ONLY (the website is not wired; the gate stays off unless DIGER_SPEND_GATE is set)", () => {
+  it("only the listed worker files reference the spend gate or the model gate; no website source does", () => {
     const roots = ["src", "agent/src"].map((r) => path.resolve(__dirname, "..", r));
-    const offenders: string[] = [];
+    const users: string[] = [];
     const walk = (dir: string) => {
       for (const name of readdirSync(dir)) {
         const p = path.join(dir, name);
@@ -565,10 +566,15 @@ describe("R61: NOT WIRED (this PR changes no production behaviour)", () => {
         if (!/\.(ts|tsx)$/.test(name)) continue;
         const rel = path.relative(path.resolve(__dirname, ".."), p);
         if (rel.startsWith(path.join("src", "lib", "server", "spendGate")) || rel === path.join("agent", "src", "modelGate.ts")) continue;
-        if (/spendGate\/|modelGate/.test(readFileSync(p, "utf8"))) offenders.push(rel);
+        if (/spendGate\/|modelGate|spendGateWiring/.test(readFileSync(p, "utf8"))) users.push(rel.split(path.sep).join("/"));
       }
     };
     roots.forEach(walk);
-    expect(offenders).toEqual([]);
+    // round 62 (PR B): the worker's paid call sites and the files that carry the gate to them. A new user must be added here on purpose, after review.
+    expect(users.sort()).toEqual([
+      "agent/src/driver.ts", "agent/src/gateway.ts", "agent/src/main.ts", "agent/src/runMission.ts", "agent/src/sdkOptions.ts", "agent/src/sdkRuntime.ts",
+      "agent/src/spendGateKeys.ts", "agent/src/spendGateWiring.ts", "agent/src/webGateway.ts",
+    ]);
+    expect(users.filter((u) => u.startsWith("src/"))).toEqual([]);
   });
 });

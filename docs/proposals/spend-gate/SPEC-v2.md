@@ -290,3 +290,20 @@ A mission refused by the gate ends as one stopped by `over_budget` does today:
 9. **Lowering `max_tokens` to the gate's cap** (proposed 32,000) for mission model requests.
 10. **Wiring the website's 8 model call sites** and recording chat replies in `llm_usage`, before any claim of platform-wide coverage.
 11. **A daily reconciliation** of settled spend against the providers' free usage APIs, to detect under-reported settles.
+
+## Round 62 (PR B): the worker wiring
+
+Implemented in the open review PR «Round 62: Spend Gate Worker Wiring — INACTIVE» (NOT merged, NOT active). It covers the worker only. What is gated, how each operation is bounded and settled, the telemetry of observe and enforce, the coverage matrix of every paid call site, the database requirements, the activation prerequisites and the remaining risks are all in `WIRING-R62.md`.
+
+**Observe mode can forward paid calls without a reservation. It is NOT budget enforcement.**
+
+## 14. Addendum (14 Nov 2026): campaign scope. NOT APPLIED
+
+`docs/intelligence/SPEND-SAFETY-ACCEPTANCE.md` is the report; `sql/003_campaign_scope.sql` (rollback `003_campaign_scope.rollback.sql`, checks `004_verify_campaign.sql`) is applied AFTER `001`. It changes §2, §4 and §9 for a campaign grant only; a general grant behaves as above.
+
+* **A campaign grant** is bound to one account (`account_id`) and serves only the missions enrolled in it (`spend_gate.enrollments`, at most 5, the runbook uses 1). `spend_reserve` refuses any other mission, and a call with no mission, with `mission_not_enrolled`.
+* **Enrollment** is `public.spend_enroll_mission(mission)` (service_role may call it). The database reads the mission's owner itself (`spend_gate.mission_owner`, executable by `spend_gate_owner` only) and refuses another account's mission (`wrong_account`), an unknown mission, a full campaign, and any expired, revoked or tripped grant.
+* **One cumulative ceiling:** `spend_gate.issue_campaign_grant` (owner only) refuses a ceiling above 0.30 and any total that, with everything every campaign grant has spent, held or overrun, would pass 0.30. A revoke or an expiry gives nothing back. Kinds are provider and model; the window is at most 72 hours.
+* **Immutable:** a trigger refuses any change to a grant's id, account, amounts, kinds, window or mission limit, a reopening of a tripped or revoked grant, and any decrease of spent or overrun.
+* **Worker:** `DIGER_SPEND_GATE=campaign` with `DIGER_SPEND_CAMPAIGN_ACCOUNT`. At claim, the mission's own `user_id` decides: another account's mission never touches the gate; the test account's is enrolled or blocked (every paid call refused). TREG calls of a campaign mission carry the worker's token explicitly, so the client makes one attempt and never hops to another pool key.
+* **Not changed:** §3 bounds, §6 model gate, §12 customer money. **Not covered:** every call site of §7 outside the worker (the website, the admin lookups, the scripts): `src/lib/server/spendGate/paidPaths.ts` lists them and a test fails when a paid file is not listed.

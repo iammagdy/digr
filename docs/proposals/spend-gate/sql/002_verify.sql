@@ -1,6 +1,6 @@
 -- ROUND 61: read-only checks after applying 001_spend_gate.sql. Every row must say ok = true. Changes nothing.
 SELECT 'schema exists' AS check, EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'spend_gate') AS ok
-UNION ALL SELECT 'every grant was issued by the owner function (none by the migration)', (SELECT count(*) FROM spend_gate.grants) = (SELECT count(DISTINCT grant_id) FROM spend_gate.events WHERE kind = 'issued')
+UNION ALL SELECT 'every grant was issued by the owner function (none by the migration)', (SELECT count(*) FROM spend_gate.grants) = (SELECT count(DISTINCT grant_id) FROM spend_gate.events WHERE kind IN ('issued','issued_campaign'))
 UNION ALL SELECT 'service_role has no table privilege in spend_gate', NOT EXISTS (
   SELECT 1 FROM information_schema.role_table_grants WHERE table_schema = 'spend_gate' AND grantee IN ('service_role','authenticated','anon','PUBLIC'))
 UNION ALL SELECT 'service_role cannot use the spend_gate schema', NOT has_schema_privilege('service_role', 'spend_gate', 'USAGE')
