@@ -127,6 +127,7 @@ export const config = {
   matcher: [
     "/dashboard/:path*",
     "/admin/:path*",
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ttf)$).*)",
+    // VERCEL ACTIVE CPU: static files in public/ (icons, fonts, the web manifest, the sample workbooks) never run the middleware; they need no session
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|ttf|woff|woff2|webmanifest|xlsx)$).*)",
   ],
 };

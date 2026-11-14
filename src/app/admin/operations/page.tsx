@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { adminFetch } from "@/lib/adminApi";
+import { startVisiblePolling } from "@/lib/visiblePolling";
 import { formatAr } from "@/lib/arabicDigits";
 import type { OperationsSnapshot } from "@/lib/server/adminOperations";
 
@@ -20,8 +21,8 @@ export default function AdminOperationsPage() {
   }, []);
   useEffect(() => {
     load();
-    const timer = setInterval(load, POLL_MS);
-    return () => clearInterval(timer);
+    // VERCEL ACTIVE CPU: only while the tab is visible (visiblePolling.ts)
+    return startVisiblePolling(load, POLL_MS);
   }, [load]);
 
   const tiles: Array<{ k: string; v: number | null; c: string }> = [
