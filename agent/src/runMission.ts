@@ -43,6 +43,7 @@ import { ItemStore, newWriterId, type ItemSnapshot, type StopReason } from "./it
 import { createLiveWriter, liveSheetOn, writeDoneSnapshotSafely } from "./stage2/liveWriter";
 import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
+import { createSourceGateway, stageDispatchOf, stageScopeOf } from "./engine/sourceGateway";
 import { readPlatformFlagsOf, readRedesignFlags } from "../../src/lib/agentMission/redesignFlags";
 import { CLARIFY_OPTIONS_AR, CLARIFY_QUESTION_AR, PLATFORM_OPTIONS_AR, PLATFORM_QUESTION_AR, UNCLEAR_END_AR, legacyRouteOf, platformOptionOf, withPlatformChoice } from "../../src/lib/agentMission/platformQuestion";
 import { askedTextOf, buildRequestContract, platformsNamedIn } from "../../src/lib/agentMission/requestContract";
@@ -58,7 +59,7 @@ import { modelPlanningForTests } from "../../src/lib/agentMission/testSeam";
 import { SOCIAL_NOT_OFFERED_AR } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { blockedEndpointReason } from "../../src/lib/treg/blockList";
 import { policyVerdict } from "../../src/lib/treg/dataPolicy";
-import { buildCapabilityRegistry, capabilitySelectionOf, discoverCapabilities, limitationLinesAr, mixedPartsAr, operationLabelAr, plannerCapabilitySection, readCapabilityDiscoveryFlag, readRegistryRouterFlag, readWebViaTregFlag, researchNeedOf, scopeAnchorBody, scopeAnchorOf, SCOPE_ANCHOR_FOLDER, verifyApprovedScope, type CapabilityDiscovery, type ScopeAnchor } from "../../src/lib/agentMission/capabilities";
+import { buildCapabilityRegistry, capabilitySelectionOf, discoverCapabilities, limitationLinesAr, mixedPartsAr, operationLabelAr, plannerCapabilitySection, readCapabilityDiscoveryFlag, readMultiStageEngineFlag, readRegistryRouterFlag, readWebViaTregFlag, researchNeedOf, scopeAnchorBody, scopeAnchorOf, SCOPE_ANCHOR_FOLDER, verifyApprovedScope, type CapabilityDiscovery, type ScopeAnchor } from "../../src/lib/agentMission/capabilities";
 import { namedShortfallChoiceOf } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { promiseShortfallAr, repliesShortfallAr } from "./repliesShortfall";
 import { TOPIC_OPTIONS_AR, topicMeaningOf, topicQuestionAr } from "../../src/lib/agentMission/topicMeaning";
@@ -806,7 +807,8 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
     } catch { /* a lost checkpoint never stops a run */ }
   };
   const deadlineMs = Date.now() + AGENT_EXECUTION_WALL_MS;
-  let output: Awaited<ReturnType<ModelDriver["run"]>>;
+  // (assigned on every path below: the engine run, the model run, or both with per-stage dispatch)
+  let output!: Awaited<ReturnType<ModelDriver["run"]>>;
   const engineOn = deps.engine !== false && plan.stages.every((s) => s.engine !== undefined);
   // THE REDESIGN (S1): which stages run the redesigned engine (flag active for this account AND every recipe built by code); recorded as an internal event only when some flag is switched on, so with every flag off the mission's events are exactly as they were
   const redesignSettings = (await store.readSettings().catch(() => ({}))) as Record<string, unknown>;
@@ -819,17 +821,25 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   if (anyRedesignFlag(redesignFlags, platformFlags)) await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي للمسار الذي شغّل المهمة.", counts: { pipe_new: redesignStages.size > 0 ? 1 : 0, ...(fallbackStage !== null ? { fallback_stage: fallbackStage } : {}) } }).catch(() => undefined);
   // STAGE 2 S6 (docs/STAGE-2.md): the live sheet, only when DIGER_STAGE2_LIVE_SHEET is on for this account (unset: null, and the engine's events are written exactly as before)
   const live = (await liveSheetOn(async () => redesignIsTest)) ? createLiveWriter({ store, missionId: mission.id, plan, items, writerId: newWriterId(), log: deps.log }) : null;
-  if (engineOn) {
+  // PHASE 5, switch `multi_stage_engine` (OFF; agent/src/engine/sourceGateway.ts): pages go through the provider-neutral SourceGateway (the stage's stored scope, then the TREG or the web gateway), saved rows carry their source
+  // and call as internal marks, and a plan with SOME stages without a recipe runs those with one on the engine first (per-stage dispatch) and leaves the rest to the model. Off (always, today): null, and nothing below changes.
+  const multiStage = deps.engine !== false && readMultiStageEngineFlag(redesignSettings, mission.user_id);
+  const dispatch = multiStage && !engineOn ? stageDispatchOf(plan) : null;
+  const engineStages = dispatch && dispatch.engine.length > 0 ? new Set(dispatch.engine) : null;
+  const sources = multiStage ? createSourceGateway({ gateway, ...(web ? { web } : {}), scope: stageScopeOf(plan), budget }) : undefined;
+  if (multiStage) await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: توزيع المراحل على المحرك.", counts: { multi_stage: 1, engine_stages: engineOn ? plan.stages.length : engineStages?.size ?? 0, model_stages: engineOn ? 0 : dispatch?.model.length ?? plan.stages.length } }).catch(() => undefined);
+  if (engineOn || engineStages) {
     // THE MODEL PLANNED, CODE EXECUTES: every stage has a recipe the plan check proved, so no model session is started at all (the only model call left is the small review of items the rule cannot decide)
     const tracked = trackRun(mission.id);
     try {
-      const outcome = await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: mission.id, gateway, sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: live ? (e) => live.addEvent(e, () => store.addEvent(mission.id, e)) : (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, ...(redesignStages.size > 0 ? { redesignStages } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}), log: deps.log });
+      const outcome = await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: mission.id, gateway, sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: live ? (e) => live.addEvent(e, () => store.addEvent(mission.id, e)) : (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, ...(redesignStages.size > 0 ? { redesignStages } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}), log: deps.log, ...(sources ? { sources, provenance: true } : {}), ...(engineStages ? { onlyStages: engineStages } : {}) });
       output = { llmCostUsd: 0, turns: 0, stop: outcome.aborted ?? "end" };
     } finally {
       untrackRun(tracked);
       if (live) await live.flush();
     }
-  } else {
+  }
+  if (!engineOn && (!engineStages || output.stop === "end")) {
     // the model carries the mission out (a plan whose stages have no proven recipe), still through the one item store. A round that ends while matching items are still needed and a source has more is followed by another round.
     output = { llmCostUsd: 0, turns: 0, stop: "end", usage: { input_tokens: 0, output_tokens: 0, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 } };
     for (let round = 0; round <= AGENT_EXECUTION_CONTINUE_ROUNDS; round += 1) {
@@ -837,7 +847,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
       const saved = Object.fromEntries(plan.stages.map((s) => [s.key, items.counts(s.key).accepted]));
       let r: Awaited<ReturnType<ModelDriver["run"]>>;
       try {
-        r = await deps.driver.run({ phase: "execution", missionId: mission.id, systemPrompt: loadSystemPrompt("execution", deps.systemPromptFile, { web: Boolean(web) }), userPrompt: round === 0 ? executionPrompt(mission, plan, calls, savedBefore) : continuationPrompt(mission, plan, await store.listCalls(mission.id), saved), tools: buildTools(ctx), state, model, maxTurns: AGENT_EXECUTION_MAX_TURNS, maxBudgetUsd: llmBudget, wallMs: AGENT_EXECUTION_WALL_MS, onUsage: checkpoint });
+        r = await deps.driver.run({ phase: "execution", missionId: mission.id, systemPrompt: loadSystemPrompt("execution", deps.systemPromptFile, { web: Boolean(web) }), userPrompt: round === 0 && !engineStages ? executionPrompt(mission, plan, calls, savedBefore) : continuationPrompt(mission, plan, await store.listCalls(mission.id), saved), tools: buildTools(ctx), state, model, maxTurns: AGENT_EXECUTION_MAX_TURNS, maxBudgetUsd: llmBudget, wallMs: AGENT_EXECUTION_WALL_MS, onUsage: checkpoint });
       } catch (e) {
         r = { llmCostUsd: 0, turns: 0, stop: "error", error: String((e as Error)?.message ?? e).slice(0, 300) } as Awaited<ReturnType<ModelDriver["run"]>>;
       }
@@ -859,7 +869,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   const b2bAttempts = b2bEngineOn(redesignIsTest) ? createAttemptLog() : null;
   if (plan.contact_steps && plan.contact_steps.length > 0 && output.stop === "end" && !output.error) {
     try {
-      const enrichment = await runContactEnrichment({ items, store, plan, missionId: mission.id, requestText: mission.request_text, gateway, addEvent: (e) => store.addEvent(mission.id, e), budget, deadlineMs: Math.max(deadlineMs, Date.now() + CONTACT_STEP_MIN_WALL_MS), log: deps.log, ...(b2bAttempts ? { attempts: b2bAttempts } : {}) });
+      const enrichment = await runContactEnrichment({ items, store, plan, missionId: mission.id, requestText: mission.request_text, gateway, addEvent: (e) => store.addEvent(mission.id, e), budget, deadlineMs: Math.max(deadlineMs, Date.now() + CONTACT_STEP_MIN_WALL_MS), log: deps.log, ...(b2bAttempts ? { attempts: b2bAttempts } : {}), ...(multiStage ? { provenance: true } : {}) });
       deps.log?.(`contact_steps ${mission.id} email=${enrichment.filled.email} phone=${enrichment.filled.phone} unverified=${enrichment.filled.unverified} looked=${enrichment.looked} skipped=${enrichment.skipped} spent=${enrichment.spentUsd.toFixed(6)} stopped=${enrichment.stopped ?? "no"}`);
     } catch (e) { deps.log?.(`contact_steps_failed ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 120)}`); /* a lookup that breaks never stops the settlement: the people are delivered with the cells as they are */ }
   }

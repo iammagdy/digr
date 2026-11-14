@@ -30,3 +30,14 @@ export const REGISTRY_ROUTER_FLAG_KEY = "registry_router";
 export function readRegistryRouterFlag(settings: Record<string, unknown> | null | undefined, userId: string | null | undefined): boolean {
   return scopedFlagOn(settings?.[REGISTRY_ROUTER_FLAG_KEY], userId ?? null);
 }
+
+/**
+ * PHASE 5: the switch of multi-provider, per-stage execution (agent/src/engine/sourceGateway.ts): every engine page goes through the provider-neutral SourceGateway (the stage's stored scope, then the TREG or the
+ * web gateway), the engine carries out the stages that have an approved recipe even when another stage has none (that one is left to the model path), and saved rows carry their source and call as internal marks.
+ * Same reader and scopes (`true` / `"on"`, `{ "user_ids": [...] }`); OFF by default and set by nothing in the repository or the database. Off: execution is exactly what it was.
+ */
+export const MULTI_STAGE_ENGINE_FLAG_KEY = "multi_stage_engine";
+
+export function readMultiStageEngineFlag(settings: Record<string, unknown> | null | undefined, userId: string | null | undefined): boolean {
+  return scopedFlagOn(settings?.[MULTI_STAGE_ENGINE_FLAG_KEY], userId ?? null);
+}
