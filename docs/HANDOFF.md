@@ -18,6 +18,26 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 > * **Deployed**: running in production and verified.
 > * **Not independently verified**: none of the above can be shown.
 
+### P0 (14 Nov 2026): X account requests searched all of X; partial deliveries closed as complete
+
+* **Report:** `docs/incidents/P0-X-ACCOUNT-2026-11-14.md`. It covers:
+  * the trace of `msn_93ed6dea95edb303fd2b`, `msn_fefee20b5a4dfc1aafc2` and `msn_dd7c2e9c131b8783bf2e`;
+  * the root cause, the fix and the financial audit;
+  * the proposed remediation: 91 points (41 for tweets plus 50 for the methodology). **Not executed; owner approval needed.**
+* **Root cause:** X's verified search card has no account input. A named account was either not read («على وزارة …») or read and never written into the query. The compiler priced the all-of-X plan anyway.
+* **More causes:**
+  * A follow-up after an ENDED request became a new mission of its own words.
+  * «فقط» and whole sentences became the exact search phrase.
+  * The delivery contract (not a filter, by design) marked every row «غير مطابق» while the status said `completed` and the sentence said the request was exhausted.
+* **Fix:**
+  * An account is enforced: `from:<username>` in the query, plus an exact per-row `username` check at planning and on every row the run reads.
+  * Otherwise the username is asked once BEFORE any read or price, never guessed. The customer may instead explicitly choose «all of X», or cancel.
+  * `compilePlan` refuses an unenforceable X account (`x_account_unverified`).
+  * The latest change wins in a revision; a follow-up of an ended request keeps the request.
+  * The outcome sentence is truthful: «… للبحث المعتمد في خطتك», and a delivery not from the named source says so as partial.
+* **Unchanged:** pricing, reserve, settlement math, ledger, refunds, switches. No paid call.
+* **Tests:** `tests/p0-x-account-contract.test.ts`, on recorded and anonymised production pool rows in `tests/fixtures/p0-x-account/`.
+
 ### Phase 7 (14 Nov 2026): admin shadow comparison (PR-7.1)
 
 * **Report and acceptance report:** `docs/intelligence/PHASE-7-SHADOW-EVALUATION.md` (what is compared, the 25 regression codes and 7 gates, the result, verified improvements, review items, customer journeys not tested, operational risks, requirements before controlled activation, the exclusion free re-run risk).

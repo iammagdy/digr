@@ -70,6 +70,7 @@ import { occurrenceChoiceOf } from "../../src/lib/agentMission/foundation/occurr
 import { pageNotFoundAr } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { YOUTUBE_CHANNEL_DECLINED_AR, YOUTUBE_CHANNEL_UNIDENTIFIED_AR, youtubeChannelOf } from "../../src/lib/agentMission/foundation/youtubeChannel";
 import { INSTAGRAM_ACCOUNT_DECLINED_AR, instagramAccountOf } from "../../src/lib/agentMission/foundation/instagramAccount";
+import { X_ACCOUNT_CANCELLED_AR, X_ACCOUNT_DECLINED_AR, xAccountAnswerOf, xAccountMentionOf } from "../../src/lib/agentMission/foundation/xAccount";
 import { BUDGET_QUESTION_AR, BUDGET_TOO_SMALL_AR, choiceAnswerOf, type Choices } from "../../src/lib/agentMission/foundation/countChoice";
 import { parseChannels, understandChannelsPrompt, UNDERSTAND_SYSTEM } from "../../src/lib/agentMission/foundation/understand";
 import { llmCostFromUsage } from "./llmCost";
@@ -83,7 +84,8 @@ import { runNamesStep } from "./namesAr";
 
 import { runInSandbox } from "./sandbox";
 import { trackRun, untrackRun } from "./sessions";
-import { childShortfallClauseAr, countWorkbookSheets, shortfallClauseAr, shortfallFromStopAr, stageTruthBodyAr, zeroDeliveryReasonAr, type ZeroDeliveryFacts } from "./finalize";
+import { childShortfallClauseAr, countWorkbookSheets, namedSourceTruthAr, shortfallClauseAr, shortfallFromStopAr, stageTruthBodyAr, zeroDeliveryReasonAr, type ZeroDeliveryFacts } from "./finalize";
+import { namedAuthorVerdict } from "../../src/lib/agentMission/foundation/pool";
 import { createReviewer, readReviewState, type ReviewCall } from "./review";
 import type { TokenUsage } from "./llmCost";
 import { buildExcludedAdminCsv, buildMissionFiles, type CompanyMailboxes, type ExcludedRow } from "./workbook";
@@ -628,6 +630,19 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     answerIsChoice = true;
     choices = { ...choices, ...(handle ? { instagramAccount: handle } : { instagramAccountDeclined: true }) };
     await updateRunState(store, mission.id, (r) => { const { pending: _p, ...rest } = r; void _p; return { ...rest, choices }; }, deps.log);
+  } else if (compiledActive && prior?.pending === "x_account") {
+    // P0, 14 NOV 2026 (X, an account named by its name): the answer is read by code: a username or an account link (the plan is scoped to it), the explicit choice to search all of X, or a cancellation; anything else
+    // ends the request honestly (never asked twice). The answer's words are never part of the request (its topic, period and count stay the customer's own)
+    const said = xAccountAnswerOf(mission.answer_text);
+    answerIsChoice = true;
+    if (said?.kind === "cancel") {
+      await store.updateMission(mission.id, { status: "cancelled", ...clear });
+      await store.addEvent(mission.id, { kind: "result", message_ar: X_ACCOUNT_CANCELLED_AR });
+      return;
+    }
+    const name = said?.kind === "all" ? xAccountMentionOf(mission.request_text) : null;
+    choices = { ...choices, ...(said?.kind === "handle" ? { xAccount: said.handle } : said?.kind === "all" ? { xAccountAll: true, ...(name ? { xAccountName: name } : {}) } : { xAccountDeclined: true }) };
+    await updateRunState(store, mission.id, (r) => { const { pending: _p, ...rest } = r; void _p; return { ...rest, choices }; }, deps.log);
   } else if (compiledActive && prior?.pending === "youtube_channel") {
     // ROUND 31 (YouTube, no channel): the answer is a channel (kept as the customer's cleaned words) or none (kept as «declined»); its words are not part of the request
     const ref = youtubeChannelOf(mission.answer_text);
@@ -645,8 +660,11 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   } else if (compiledActive && choices.instagramAccount !== undefined && instagramAccountOf(mission.answer_text) === choices.instagramAccount) {
     // a planning that starts again after the answer was read (a restart, a later question): the same answer is still not part of the request
     answerIsChoice = true;
+  } else if (compiledActive && !prior?.pending && (choices.xAccount !== undefined || choices.xAccountAll === true) && xAccountAnswerOf(mission.answer_text) !== null) {
+    // a planning that starts again after the account answer was read (a restart, a later question): the same answer is still not part of the request
+    answerIsChoice = true;
   }
-  if (compiledActive && prior?.pending && prior.pending !== "instagram_account" && prior.pending !== "youtube_channel" && prior.pending !== "conditions") {
+  if (compiledActive && prior?.pending && prior.pending !== "instagram_account" && prior.pending !== "youtube_channel" && prior.pending !== "conditions" && prior.pending !== "x_account") {
     const parsed = choiceAnswerOf(mission.answer_text, prior.pending);
     if (parsed) {
       answerIsChoice = true;
@@ -674,7 +692,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // THE QUESTION BEFORE APPROVAL (live round 7): no video of the two pages read is about the topic; the plan is not made, the customer chooses (the same needs_input card as the topic question)
   if (compiled?.kind === "question") {
     // every question card counts toward the three a request may have; a count or comments question also waits for its answer
-    await updateRunState(store, mission.id, (r) => ({ ...r, questionsAsked: (r.questionsAsked ?? 0) + 1, ...(compiled.why === "count" || compiled.why === "per_parent" || compiled.why === "instagram_account" || compiled.why === "youtube_channel" || compiled.why === "conditions" ? { pending: compiled.why } : {}), ...(compiled.why === "topic_relation" ? { stage2Pending: "topic_relation" as const } : {}) }), deps.log);
+    await updateRunState(store, mission.id, (r) => ({ ...r, questionsAsked: (r.questionsAsked ?? 0) + 1, ...(compiled.why === "count" || compiled.why === "per_parent" || compiled.why === "instagram_account" || compiled.why === "youtube_channel" || compiled.why === "conditions" || compiled.why === "x_account" ? { pending: compiled.why } : {}), ...(compiled.why === "topic_relation" ? { stage2Pending: "topic_relation" as const } : {}) }), deps.log);
     await store.addEvent(mission.id, { kind: "call", message_ar: compiled.why === "named_shortfall" ? "قياس داخلي: سؤال قبل الخطة، منشورات الصفحة المسمّاة أقل من المطلوب." : compiled.why === "occurrence" || compiled.why === "occurrence_year" ? "قياس داخلي: سؤال قبل الخطة، الحدث يتكرر ولم تُحدَّد سنة." : compiled.why === "conditions" ? "قياس داخلي: سؤال قبل الخطة، فترة أو دولة أو لغة في الطلب تحتاج توضيحًا." : "قياس داخلي: سؤال قبل الخطة، لا فيديو في ما قُرئ يتحدث عن الموضوع.", counts: { compiled: 0, question: 1, pool_reads: compiled.reads.pool, exposure_reads: compiled.reads.exposure } }).catch(() => undefined);
     await store.updateMission(mission.id, { status: "needs_input", question_ar: compiled.question, plan_public: { question_options: compiled.options } as any, ...(compiled.llmCostUsd ? { planning_llm_usd: Number((Number((await store.getMission(mission.id))?.planning_llm_usd ?? mission.planning_llm_usd ?? 0) + compiled.llmCostUsd).toFixed(6)) } : {}), ...clear });
     await store.addEvent(mission.id, { kind: "question", message_ar: compiled.question });
@@ -762,7 +780,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
       await tell(deps, mission, null, "failed", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false, cause: "internal" });
     } else {
       // ROUND 30: no usable Instagram account was given: the honest sentence says what the source can do (an account's posts), not the general «our sources do not serve this»
-      const own = compiled?.kind === "cannot" ? (compiled.reason === "instagram_account_missing" ? INSTAGRAM_ACCOUNT_DECLINED_AR : compiled.reason === "youtube_channel_missing" ? YOUTUBE_CHANNEL_DECLINED_AR : compiled.reason === "youtube_channel_unidentified" ? YOUTUBE_CHANNEL_UNIDENTIFIED_AR : null) : null;
+      const own = compiled?.kind === "cannot" ? (compiled.reason === "instagram_account_missing" ? INSTAGRAM_ACCOUNT_DECLINED_AR : compiled.reason === "x_account_missing" || compiled.reason === "x_account_unverified" ? X_ACCOUNT_DECLINED_AR : compiled.reason === "youtube_channel_missing" ? YOUTUBE_CHANNEL_DECLINED_AR : compiled.reason === "youtube_channel_unidentified" ? YOUTUBE_CHANNEL_UNIDENTIFIED_AR : null) : null;
       const sentence = own ?? refusalSentenceAr(verdict.cls as "unsupported" | "empty_source");
       await store.updateMission(mission.id, { ...base, status: "unserved", summary_ar: sentence });
       await store.addEvent(mission.id, { kind: "result", message_ar: sentence });
@@ -1110,7 +1128,13 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   const repliesStage = plan.stages.find((s) => s.deliver && s.replies_of !== undefined);
   // (redesigned missions only: the replies stage of a plan built by code carries `built_by: "code"`; an old-pipeline mission keeps its text byte for byte)
   const repliesLine = !ourFailure && !promiseLine && delivered > 0 && repliesStage?.engine?.built_by === "code" ? repliesShortfallAr({ planned: tl.repliesPlanned, delivered: tl.repliesDelivered, stop: snap.stage(repliesStage.key).stop, review: { pending: 0, stop: null }, withMoney: reason === "" }) : "";
-  const summary = (ourFailure ? reason : [note, reason, repliesLine].filter(Boolean).join(" ")).slice(0, 1100);
+  // P0, 14 NOV 2026: delivered items that are not the named source's are said to the customer (the file's mark alone was not enough: msn_dd7c2e9c131b8783bf2e closed «completed» with every item marked «غير مطابق»)
+  const namedText = typeof plan.compiled?.source_text === "string" && plan.compiled.conditions?.named === true ? plan.compiled.source_text : null;
+  const namedParent = namedText && !ourFailure ? plan.stages.find((s) => s.deliver && s.parent_key === null) : undefined;
+  const namedRows = namedParent ? rowsByStage[namedParent.key] ?? [] : [];
+  const namedLine = namedParent && namedText ? namedSourceTruthAr({ name: namedText, delivered: namedRows.length, notFromSource: namedRows.filter((r) => namedAuthorVerdict(r as Record<string, unknown>, (isSocialPlatform(String(plan.compiled?.platform ?? "")) ? plan.compiled!.platform : null) as Parameters<typeof namedAuthorVerdict>[1], namedText) === false).length }) : null;
+  if (namedLine) flags.push("named_source_mismatch");
+  const summary = (ourFailure ? reason : [note, reason, repliesLine, namedLine ?? ""].filter(Boolean).join(" ")).slice(0, 1100);
   const mismatch = settled.kind === "settled" && !settled.matchesExpectation ? `charge ${settled.chargedPoints} differs from the expected ${settled.expectedChargedPoints}` : null;
   const unusableWords = checked.lastUnusable ? checked.lastUnusable.replace(/\s+/g, " ").slice(0, 120) : "";
   const adminFlag = flags.length > 0 ? `admin: ${[...new Set(flags)].join(", ")}${internalStage ? ` stage=${internalStage.key} source_rows=${snap.stage(internalStage.key).sourceRows}` : ""}${reviewFailedOurs ? ` pending=${checked.pending} review_failed_calls=${checked.failedCalls} unusable="${unusableWords}"` : ""}` : null;

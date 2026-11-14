@@ -13,6 +13,7 @@ import { aboutQueryOf, noAboutChoiceOf, noAboutQuestionAr, NO_ABOUT_OPTIONS_AR }
 import { NAMED_SHORTFALL_OPTIONS_AR, isNamedShortfallAnswer, namedShortfallChoiceOf, namedShortfallQuestionAr } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { YOUTUBE_CHANNEL_QUESTION_AR, matchChannel, youtubeChannelOf, type YoutubeChannelRef } from "../../src/lib/agentMission/foundation/youtubeChannel";
 import { INSTAGRAM_ACCOUNT_QUESTION_AR, instagramAccountNoteAr } from "../../src/lib/agentMission/foundation/instagramAccount";
+import { X_ACCOUNT_OPTIONS_AR, xAccountQuestionAr, xAllAccountsNoteAr, xHandleOfAsk } from "../../src/lib/agentMission/foundation/xAccount";
 import { budgetOfWords, questionNeeded, type Choices } from "../../src/lib/agentMission/foundation/countChoice";
 import { fitToBudget } from "../../src/lib/agentMission/foundation/budgetFit";
 import { applyAskEdit, type AskEdit } from "../../src/lib/agentMission/stage2/askCard";
@@ -93,7 +94,7 @@ export type CompiledPlanning =
    * LIVE ROUND 7: no video of the pool read (two queries) is about the topic; the customer is asked before approval how to go on. Nothing is priced or held. PR 3, decision 7.5 (`why: "named_shortfall"`): the named Facebook page has fewer
    * deliverable posts in the pool than asked.
    */
-  | { kind: "question"; ask: Ask; question: string; options: string[]; reads: { pool: number; exposure: number }; why?: "no_about" | "named_shortfall" | "occurrence" | "occurrence_year" | "count" | "per_parent" | "instagram_account" | "youtube_channel" | "topic_relation" | "conditions" };
+  | { kind: "question"; ask: Ask; question: string; options: string[]; reads: { pool: number; exposure: number }; why?: "no_about" | "named_shortfall" | "occurrence" | "occurrence_year" | "count" | "per_parent" | "instagram_account" | "youtube_channel" | "topic_relation" | "conditions" | "x_account" };
 
 /** What the understand step cost (USD), carried on the result so the caller adds it to the mission's model cost (never a charge). */
 export type WithCost<T> = T & { llmCostUsd?: number };
@@ -121,6 +122,13 @@ export async function planByCompiler(deps: CompiledPlanningDeps): Promise<WithCo
   const given = deps.choices?.instagramAccount;
   if (result.kind === "plan" && result.ask.platform === "instagram" && given && result.ask.source.text === given) {
     result = { ...result, plan: { ...result.plan, notes_ar: [...(result.plan.notes_ar ?? []), instagramAccountNoteAr(given)] } };
+  }
+  // P0 (X): an account-scoped plan says so before approval (the results are that account's alone, checked on every tweet); a plan the customer chose to widen to all of X says the results are not that account's
+  if (result.kind === "plan" && result.ask.platform === "x") {
+    // (the scoped plan's own note is written by the compiler: compilePlan.ts)
+    const widened = deps.choices?.xAccountAll === true && xHandleOfAsk(result.ask) === null;
+    const line = widened ? xAllAccountsNoteAr(deps.choices?.xAccountName ?? null) : null;
+    if (line) result = { ...result, plan: { ...result.plan, notes_ar: [...(result.plan.notes_ar ?? []), line] } };
   }
   // ROUND 35: a request for REELS says, before approval, how the media type is served (a reels-only tool, the tool's media-type filter) or that it is unproven; the mark is kept with the plan whether or not discovery is on
   if (result.kind === "plan" && seen.media) {
@@ -201,6 +209,15 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
     if (choices.instagramAccount) ask = { ...ask, source: { kind: "named", text: choices.instagramAccount } };
     else if (choices.instagramAccountDeclined) return { kind: "cannot", ask, reason: "instagram_account_missing", reads };
     else return { kind: "question", ask, why: "instagram_account", question: INSTAGRAM_ACCOUNT_QUESTION_AR, options: [], reads };
+  }
+  // P0, 14 NOV 2026 (msn_93ed6dea95edb303fd2b, msn_fefee20b5a4dfc1aafc2, msn_dd7c2e9c131b8783bf2e): X WITH A NAMED ACCOUNT. The search is scoped to an account only by its username (`from:` and a check of every tweet); an account named by
+  // its name alone is asked ONCE, before anything is read, held or priced: its username or link (then scoped), the explicit choice to search all of X (then the plan says the results are not that account's), or cancel. The
+  // username is never guessed. No usable answer ends the request honestly (nothing read, nothing held, never asked twice).
+  if (ask.platform === "x" && (ask.source.kind === "named" || ask.source.kind === "official") && xHandleOfAsk(ask) === null) {
+    if (choices.xAccount) ask = { ...ask, source: { kind: "named", text: choices.xAccount } };
+    else if (choices.xAccountAll) ask = { ...ask, source: { kind: "none", text: null } };
+    else if (choices.xAccountDeclined) return { kind: "cannot", ask, reason: "x_account_missing", reads };
+    else return { kind: "question", ask, why: "x_account", question: xAccountQuestionAr(ask.source.kind === "named" ? ask.source.text : null), options: [X_ACCOUNT_OPTIONS_AR.all, X_ACCOUNT_OPTIONS_AR.cancel], reads };
   }
   // ROUND 31: YOUTUBE WITH NO CHANNEL. The verified cards find a channel by name and search INSIDE a channel; none searches all of YouTube, and «<topic> الرسمية» is a guess, not a channel. A request that names no channel and does not ask for the official channels of an event
   // is asked ONCE which channel, before anything is read, held or priced; the answer (read by code, kept with the choices) or the channel named in the request is looked up by the verified channel search and used only if a result carries it. No usable answer ends the request honestly.

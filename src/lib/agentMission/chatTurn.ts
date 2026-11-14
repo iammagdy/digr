@@ -197,6 +197,36 @@ export function revisionRefusalAr(message: string): string | null {
 export const OPEN_KEPT_PLAIN_AR = "خطتك زي ما هي في البطاقة، والسعر بيحسبه النظام من الخطة نفسها ومش بيتغيّر بالكتابة. لو عايز تغيّر حاجة في الطلب (العدد، المكان، الأعمدة، المصادر) قولّي هي إيه، ونجهّز لك خطة معدّلة بسعرها قبل أي خصم.";
 export const APPROVE_ON_CARD_AR = "خطتك لسه زي ما هي في البطاقة ومستنية اعتمادك. الاعتماد بيتم بزر «اعتمد» في البطاقة نفسها بس، ولن أبدأ التنفيذ ولا أحجز رصيدًا من الكتابة. ولو عايز تغيّر فيها حاجة قولّي هي إيه.";
 
+/**
+ * P0, 14 NOV 2026 (conversation b7abe45b…, msn_fefee20b5a4dfc1aafc2 then msn_dd7c2e9c131b8783bf2e): A FOLLOW-UP AFTER A REQUEST THAT ENDED IS A CHANGE OF THAT REQUEST, NOT A NEW REQUEST OF ITS OWN WORDS. The customer asked for 400 tweets of the Saudi
+ * Ministry of Health's official account about health rumors; the request ended «unserved»; they wrote «طيب ابحث عن الشائعات فقط» in the same conversation. No request was open any more (the open-request rule of round 57 covers
+ * planning, a question and a plan waiting for approval only), so the four words became a new mission: the account, the platform and the count were asked again from scratch and the period was lost.
+ * A message that reads as a follow-up (it starts with a follow-up word or ends with a restriction such as «فقط», names no platform, and is short) after the conversation's latest request ENDED without a held plan (unserved, or
+ * completed) is planned from that request's words with the change joined after the revision marker, exactly as a change of an open plan: the latest change wins for what it names (requestContract.ts), everything else is kept.
+ * A request that stands on its own (it names a platform) is a new request, as before.
+ */
+const FOLLOW_UP_LEAD = /^(?:و?(?:طيب|طيّب|طب|ماشي|خلاص|تمام|اوكي|أوكي|اوك|أوك|ok|okay|إذن|اذن|يبقى|يبقي|بدل(?:ا|اً)?|بس|كمان|برضه|برضو|بالنسبة))(?:\s|،|,|$)/iu;
+const FOLLOW_UP_TAIL = /(?:\s|^)(?:فقط|بس|فحسب|حصر[اًا]?|حصرًا|لا\s+غير)[.!؟?]*$/u;
+export function isFollowUpOfEndedRequest(message: string): boolean {
+  const t = String(message ?? "").replace(/\s+/g, " ").trim();
+  if (t === "" || t.split(" ").length > 14) return false;
+  if (buildRequestContract(t).platform !== null) return false;
+  return FOLLOW_UP_LEAD.test(t) || FOLLOW_UP_TAIL.test(t) || refersToOpenRequest(t);
+}
+const ENDED_CONTINUABLE = new Set(["unserved", "completed"]);
+/** The conversation's latest research request when it ENDED (unserved or completed) and is the customer's own: its words. Read only; null on any doubt. */
+async function endedRequestOfConversation(sb: any, conversationId: string, userId: string): Promise<{ id: string; requestText: string } | null> {
+  const id = await latestMissionOfConversation(sb, conversationId);
+  if (!id) return null;
+  try {
+    const { data } = await sb.from(MISSION_TABLE).select(`id,user_id,status,request_text,${ADDON_MARKER_COLUMN}`).eq("id", id).maybeSingle();
+    if (!data || data.user_id !== userId || hasAddonMarker(data) || !ENDED_CONTINUABLE.has(String(data.status))) return null;
+    const requestText = String(data.request_text ?? "").replace(/\s+/g, " ").trim();
+    return requestText ? { id, requestText } : null;
+  } catch { return null; }
+}
+export const FOLLOW_UP_STARTED_AR = "فهمت رسالتك تعديلًا على طلبك السابق في هذه المحادثة، فنجهّز خطة جديدة من الطلب نفسه مع تعديلك: المصدر والمنصة والفترة والعدد كما طلبتها ما لم تغيّرها صراحةً. راجع البطاقة قبل الاعتماد، ولن يُخصم شيء قبل موافقتك.";
+
 /** ROUND 57: the open plan is planned again from the WHOLE request with the change (its words are kept), never from the change alone. The plan it replaces held nothing. */
 async function reviseOpenRequest(input: AgentChatTurnInput, open: OpenRequest): Promise<AgentChatTurnResult> {
   const base = String(open.requestText ?? "").replace(/\s+/g, " ").trim();
@@ -301,6 +331,18 @@ export async function agentChatTurn(input: AgentChatTurnInput): Promise<AgentCha
           console.info(JSON.stringify({ tag: "chat_message_type", type: decision.type, source: decision.source, brief: "words_unsupported_platform" }));
           await writeAnswer(input, contentAr);
           return { ok: false, contentAr, status: 200 };
+        }
+      }
+    }
+    // P0, 14 NOV 2026: a follow-up of a request that ended keeps that request's source, platform, period and count (only what it names changes)
+    if (!open && isFollowUpOfEndedRequest(input.message)) {
+      const ended = await endedRequestOfConversation(sb, input.conversationId, input.userId);
+      if (ended) {
+        const change = input.message.replace(/\s+/g, " ").trim();
+        const combined = `${ended.requestText} ${REVISION_JOINER_AR} ${change}`;
+        if (combined.length <= REVISION_MAX_CHARS) {
+          console.info(JSON.stringify({ tag: "chat_follow_up_of_ended", from: ended.id, chars: combined.length }));
+          return startMission(input, combined, { contentAr: FOLLOW_UP_STARTED_AR });
         }
       }
     }

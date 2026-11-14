@@ -20,6 +20,7 @@ import { TOPIC_RELATION_KEY, TOPIC_RELATION_TITLE_AR, topicRelationAr } from "./
 import { COLUMN_OF, sheetWantsOf, suppliedWants } from "./discovery/fieldRecovery";
 import { cardMapCode, cardsFor, CATALOG_ONLY_CAP_USD, CATALOG_ONLY_PRICE_MARGIN, CHILD_COLUMNS, COUNTRY_AR, mapPage, type CardRole, type ToolCard } from "./toolCards";
 import type { SocialPlatform } from "../redesignFlagTypes";
+import { xAccountNoteAr, xHandleMatches, xHandleOfAsk } from "./xAccount";
 
 /**
  * F3, THE PLAN COMPILER (docs/FOUNDATION-PLAN.md section 3.1). One pass, by code: the stage SHAPE comes from the Ask (parents, then comments when asked, then replies when asked
@@ -100,7 +101,8 @@ export function carriedBy(card: ToolCard, ask: Ask): { asked: string[]; carried:
   if (ask.country) add("country", Boolean(card.inputs.country));
   if (ask.language) add("language", Boolean(card.inputs.query?.operators));
   if (ask.period) add("period", Boolean(card.inputs.query?.operators || card.inputs.period));
-  if (ask.source.kind === "named") add("source", Boolean(card.inputs.source && card.inputs.source.kind !== "channel_id"));
+  // P0 (X): the named account is carried by the search's own `from:` operator when the Ask holds its username (xAccount.ts); an account named only by its Arabic name is NOT carried (the planning asks for the username first)
+  if (ask.source.kind === "named") add("source", Boolean(card.inputs.source && card.inputs.source.kind !== "channel_id") || Boolean(card.inputs.query?.operators && xHandleOfAsk(ask)));
   add("order", Boolean(card.inputs.order && card.inputs.order[ask.order] !== undefined));
   return { asked, carried };
 }
@@ -125,9 +127,12 @@ export function chooseCard(ask: Ask, role: StageRole, options: { cards?: Readonl
 export function parentInputs(card: ToolCard, ask: Ask): Record<string, unknown> {
   const p: Record<string, unknown> = {};
   const q = card.inputs.query;
-  if (q && ask.topic.text) {
+  // P0 (X): THE NAMED ACCOUNT IS PART OF THE QUERY (`from:<username>`, the provider's documented operator); with no topic the account's own tweets are searched
+  const xHandle = q?.operators ? xHandleOfAsk(ask) : null;
+  if (q && (ask.topic.text || xHandle)) {
     // ROUND 33: a hashtag input takes the topic as one tag (no «#», words joined by «_», the Arabic hashtag convention); the plan says which tag it searched
-    let query = q.format === "hashtag" ? hashtagOf(ask.topic.text) : q.quoted ? `"${ask.topic.text}"` : ask.topic.text;
+    let query = !ask.topic.text ? "" : q.format === "hashtag" ? hashtagOf(ask.topic.text) : q.quoted ? `"${ask.topic.text}"` : ask.topic.text;
+    if (xHandle) query = `${query} from:${xHandle}`.trim();
     if (q.operators) {
       if (ask.language) query += ` lang:${ask.language}`;
       if (ask.period) query += ` since:${operatorStampUtc(ask.period.startMs)} until:${operatorStampUtc(ask.period.endExclusiveMs)}`;
@@ -186,6 +191,8 @@ export interface CompileInput {
 export type CompileResult =
   | { ok: true; plan: PricedPlan; promises: Record<string, StagePromise>; chosen: string[]; spares: string[] }
   | { ok: false; reason: "no_platform_card" | "no_parent_card" | "no_rows" | "no_parent_with_children" }
+  /** P0 (X): the request names an account whose username the Ask does not hold: nothing is priced (the caller asks for it). */
+  | { ok: false; reason: "x_account_unverified" }
   /** Decision 7.5: the named page has fewer deliverable posts in the pool than asked and the customer has not answered: the caller asks the question (nothing is priced). */
   | { ok: false; reason: "named_shortfall"; found: number; need: number }
   /** NOV 6 2026: rows were read but none names the topic in its text: the caller asks the customer (go on with them marked, change the request, cancel); nothing is priced. */
@@ -284,6 +291,9 @@ const filtersOf = (ask: Ask): StageFilter[] => {
   if (ask.language) f.push({ kind: "language", lang: ask.language, field: "language" } as StageFilter);
   if (ask.country) f.push({ kind: "place", field: "country", fields: ["country"], places: [ask.country], values: [COUNTRY_AR[ask.country] ?? ask.country] } as StageFilter);
   if (ask.period) f.push({ kind: "period", from: ask.period.from, to: ask.period.to, field: "posted_at" } as StageFilter);
+  // P0 (X): the account is checked again on EVERY item the run reads (agent/src/items/ingest.ts): exactly the username, nothing else; a tweet of another account is neither delivered nor charged
+  const xHandle = xHandleOfAsk(ask);
+  if (xHandle) f.push({ kind: "account", field: "username", fields: ["username"], values: [xHandle], exact: true } as StageFilter);
   return f;
 };
 
@@ -345,6 +355,9 @@ const isReplyRow = (row: Record<string, unknown>): boolean => row.is_reply === t
  */
 export function parentEligible(row: Record<string, unknown>, ask: Pick<Ask, "platform" | "topic" | "source">, options: { allowUnrelated?: boolean } = {}): boolean {
   if (ask.platform === "x" && isReplyRow(row)) return false;
+  // P0 (X): A TWEET OF ANOTHER ACCOUNT IS NEVER A PARENT of an account-scoped request: the row's own username must BE the account (a display name, a fan account or a similar spelling never is), whatever the source answered to `from:`
+  const xHandle = xHandleOfAsk(ask);
+  if (xHandle && !xHandleMatches(xHandle, row.username)) return false;
   if (options.allowUnrelated !== true && topicGated(ask) && topicTierOf(String(row.text ?? ""), ask) === 0) return false;
   return true;
 }
@@ -363,6 +376,9 @@ export const topicGated = (ask: Pick<Ask, "topic" | "source"> & { platform?: Ask
 export function compilePlan(input: CompileInput): CompileResult {
   const { ask } = input;
   if (!ask.platform || !(COMPILED_PLATFORMS as ReadonlyArray<string>).includes(ask.platform)) return { ok: false, reason: "no_platform_card" };
+  // P0 (X): AN ACCOUNT THE PLAN CANNOT ENFORCE IS NEVER PRICED. A request that names an account (or asks for an official one) without its username would be searched across all of X and billed as that account's tweets
+  // (msn_dd7c2e9c131b8783bf2e: 79 tweets of 38 other accounts); the caller asks for the username first, and this is the guard if it did not
+  if (ask.platform === "x" && (ask.source.kind === "named" || ask.source.kind === "official") && xHandleOfAsk(ask) === null) return { ok: false, reason: "x_account_unverified" };
   const shape = stageShapeOf(ask);
   const poolCard = input.pool.card;
   // THE COUNTER OF THE POOL: the parent card's own, or (YouTube) the counter card's, merged onto the rows by id
@@ -472,6 +488,8 @@ export function compilePlan(input: CompileInput): CompileResult {
     engine: { endpoint_id: card.endpointId, params: input.pool.params, cursor_param: card.inputs.cursor, map_code: cardMapCode(card), map_file_id: "page", parent_binding: null, built_by: "code", ...(card.cannot && card.cannot.length > 0 ? { gaps: card.cannot.filter((c) => (c === "language" && ask.language) || (c === "period" && ask.period) || (c === "country" && ask.country)).map((c) => ({ cls: c === "period" ? "date" : c, reason: "no_field" })) } : {}) },
   } as PricedStage);
   if (chosen.length < need) notes.push(`وجدنا في ما قرأناه ${toArabicDigits(chosen.length)} فقط تناسب طلبك من ${toArabicDigits(need)}.`);
+  // P0 (X): an account-scoped plan says so before approval: that account alone, checked on every tweet, and the count may be lower
+  if (xHandleOfAsk(ask)) notes.push(xAccountNoteAr(xHandleOfAsk(ask)!));
   if (unrelatedLeftOut > 0) notes.push(`لم نختر شيئًا لا يذكر «${ask.topic.text}» في نصه؛ تركنا ${toArabicDigits(unrelatedLeftOut)} مما قرأناه لأن نصه لا يذكر الموضوع، ولا يدخل في السعر.`);
   if (ask.preferences && ask.preferences.length > 0) notes.push(`عاملنا ما كتبته بين قوسين أو كشرط إتاحة («${ask.preferences.join("»، «")}») كتفضيل لا كجزء من الموضوع، فلم نضفه إلى كلمات البحث.`);
   if (notOriginal > 0) notes.push(`لم نختر أي تغريدة هي نفسها ردّ على حساب آخر؛ تركنا ${toArabicDigits(notOriginal)} من هذا النوع مما قرأناه، لأنك طلبت منشورات أصلية.`);

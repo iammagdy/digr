@@ -129,14 +129,31 @@ function sourceOf(text: string): RequestContract["source"] {
   return { named: text2 !== null, official, text: text2 };
 }
 
+/**
+ * P0, 14 NOV 2026 (msn_fefee20b5a4dfc1aafc2, msn_dd7c2e9c131b8783bf2e): the topic is the SUBJECT, never an instruction or the source. «عن الشائعات فقط» was searched as the exact phrase «الشائعات فقط» (the word «only» is in no tweet), and
+ * «عن الشائعات الصحية عبر الصفحة الرسمية لوزارة الصحة السعودية أو أي تصحيح لشائعة صحية» was searched as that whole sentence (no result, the request ended «unserved»). The topic now also stops at «عبر» / «لدى» (the source
+ * that follows) and at «أو أي» (an alternative clause), and a trailing restriction word («فقط», «بس», «فحسب», «حصرًا», «لا غير») is not part of it.
+ */
+const TOPIC_RESTRICTION_TAIL = /\s+(?:فقط|بس|فحسب|حصر[اًا]?|حصرًا|لا\s+غير)$/u;
+const cleanTopic = (t: string): string | null => { const v = t.trim().replace(TOPIC_RESTRICTION_TAIL, "").trim(); return v === "" ? null : v; };
 function topicOf(text: string): string | null {
   const quoted = /(?:عن|حول|بخصوص|فيها|فيه|تذكر)\s+["«“]([^"»”]+)["»”]/.exec(text);
-  if (quoted) return quoted[1].trim();
+  if (quoted) return cleanTopic(quoted[1]);
   // ROUND 25: «رأي الناس في X», «آراء الجمهور عن X», «كلام الناس حول X»: the SUBJECT is X (live: the topic read «رأي الناس» and the search would have looked for that phrase)
-  const opinion = /(?:رأي|راي|آراء|اراء|كلام|انطباعات|ردود\s+فعل|مشاعر|موقف)\s+(?:ال\S+\s+)?(?:في|عن|حول|تجاه|بخصوص)\s+(.+?)(?=\s+(?:من|في|على|آخر|اخر|بالعربي|بالعربية|مع|بين|منذ|خلال)(?:\s|$)|[،,.؟?]|$)/.exec(text);
-  if (opinion) return opinion[1].trim();
-  const m = /(?:عن|حول|بخصوص)\s+(.+?)(?=\s+(?:من|في|على|آخر|اخر|بالعربي|بالعربية|مع|بين|منذ|خلال)(?:\s|$)|[،,.]|$)/.exec(text);
-  return m ? m[1].trim() : null;
+  const opinion = /(?:رأي|راي|آراء|اراء|كلام|انطباعات|ردود\s+فعل|مشاعر|موقف)\s+(?:ال\S+\s+)?(?:في|عن|حول|تجاه|بخصوص)\s+(.+?)(?=\s+(?:من|في|على|عبر|لدى|آخر|اخر|بالعربي|بالعربية|مع|بين|منذ|خلال)(?:\s|$)|\s+(?:أو|او)\s+(?:أي|اي)(?:\s|$)|[،,.؟?]|$)/.exec(text);
+  if (opinion) return cleanTopic(opinion[1]);
+  const m = /(?:عن|حول|بخصوص)\s+(.+?)(?=\s+(?:من|في|على|عبر|لدى|آخر|اخر|بالعربي|بالعربية|مع|بين|منذ|خلال|فقط|فحسب)(?:\s|$)|\s+(?:أو|او)\s+(?:أي|اي)(?:\s|$)|[،,.]|$)/.exec(text);
+  return m ? cleanTopic(m[1]) : null;
+}
+
+/**
+ * P0, 14 NOV 2026: A REVISED REQUEST KEEPS EVERYTHING THE CUSTOMER ASKED, AND THE LATEST CHANGE WINS FOR WHAT IT NAMES. A revision is «<the request> تعديل العميل على نفس الطلب: <change>» (revisionText.ts); the
+ * readers took the FIRST topic, number and source of the whole text, so a change that named a new topic («طيب ابحث عن الشائعات فقط») was not read, and nothing said so. A value the latest change names (the topic, the count,
+ * the source) is read from it; anything it does not name stays the request's own.
+ */
+const REVISION_MARK = "تعديل العميل على نفس الطلب:";
+export function latestChangesOf(request: string): string[] {
+  return request.split(REVISION_MARK).slice(1).map((p) => p.trim()).filter(Boolean).reverse();
 }
 
 /**
@@ -191,7 +208,8 @@ export function buildRequestContractWithReport(request: unknown, answer?: unknow
   const parsedReplies = repliesAskedIn(text);
   const repliesAsked = parsedReplies || readingOfText?.content.replies === true || readingOfAnswer?.content.replies === true;
   if (repliesAsked && !parsedReplies) report.filled.push("replies");
-  const parsedTopic = topicOf(required);
+  const changes = latestChangesOf(String(request ?? "").replace(/\s+/g, " "));
+  const parsedTopic = changes.map((ch) => topicOf(optionalPartsOf(ch).required)).find((t): t is string => t !== null) ?? topicOf(required);
   // PR-1.3: the conditions of the words (a period, a country, a language), read with no clock: only WHETHER each is asked is needed here (the values and the clarifications are the Ask's, which has the moment of the request)
   const conditions = options.semantic === true ? readConditions(request, answer, 0) : null;
   const readTopic = readingOfRequired ? topicWithReading(parsedTopic, readingOfRequired, report) : parsedTopic;
@@ -212,8 +230,8 @@ export function buildRequestContractWithReport(request: unknown, answer?: unknow
     parentKind: kind,
     ...(REELS_WORD.test(text) && platform === "instagram" ? { media: "reels" as const } : {}),
     ...(wantedFieldsOf(text).length > 0 ? { wants: wantedFieldsOf(text) } : {}),
-    count: countOf(required),
-    source: sourceOf(text),
+    count: changes.map((ch) => countOf(optionalPartsOf(ch).required)).find((n): n is number => n !== null) ?? countOf(required),
+    source: changes.map((ch) => sourceOf(ch)).find((s) => s.named || s.official) ?? sourceOf(text),
     topic,
     ...(preferences.length > 0 ? { preferences } : {}),
     country: countryAsked,
