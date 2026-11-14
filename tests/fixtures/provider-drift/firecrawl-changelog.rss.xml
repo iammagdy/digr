@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Firecrawl changelog</title>
+<item><title><![CDATA[Introducing Firecrawl MCP v3]]></title><link>https://www.firecrawl.dev/changelog/mcp-v3</link><pubDate>Thu, 12 Nov 2026 09:00:00 GMT</pubDate><description><![CDATA[<p>A new MCP server with fewer tools.</p>]]></description></item>
+<item><title><![CDATA[AI/ML Research Index in ChatGPT &amp; Claude]]></title><link>https://www.firecrawl.dev/changelog/research-index</link><pubDate>Wed, 11 Nov 2026 09:00:00 GMT</pubDate><description><![CDATA[<p>Free research data for agents.</p>]]></description></item>
+<item><title><![CDATA[The /extract endpoint is being retired]]></title><link>https://www.firecrawl.dev/changelog/extract-retired</link><pubDate>Mon, 09 Nov 2026 09:00:00 GMT</pubDate><description><![CDATA[<p>Please move to /agent. The /extract endpoint will be removed on December 10, 2026.</p>]]></description></item>
+<item><title><![CDATA[Older item before the baseline]]></title><link>https://www.firecrawl.dev/changelog/old</link><pubDate>Mon, 05 Oct 2026 09:00:00 GMT</pubDate><description><![CDATA[<p>Nothing.</p>]]></description></item>
+</channel></rss>

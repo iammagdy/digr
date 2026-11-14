@@ -1,0 +1,389 @@
+import { createHash } from "node:crypto";
+import { levelRank } from "./evidence";
+import type { ArtifactEntry, RegistryArtifact } from "./artifact";
+import { isPrivateCapabilityString } from "./registry";
+
+/**
+ * PHASE 6.1 / 6.2 (docs/intelligence/PHASE-5-3-AND-6.md §C; audit §7.3, §7.4): PROVIDER UPDATE INTELLIGENCE, as pure code.
+ *
+ * The read-only sync (scripts/capabilities/sync-providers.ts) fetches PUBLIC metadata only (TREG's token-free catalog, Firecrawl's and Context.dev's public OpenAPI files and changelog feeds) and hands the documents to the functions
+ * below, which compare them with what the repository holds (the pinned TREG snapshot, the registry artifact, the last known-good metadata baseline) and classify every difference. Nothing here fetches, writes, activates or promotes:
+ *   - a NEW tool is reported, never selectable (the registry keeps it out until a reviewed PR adds it with evidence);
+ *   - a REMOVED tool is reported only when the fetch was COMPLETE; a failed or partial fetch is «unverified», never «removed», and the last known-good registry is kept;
+ *   - a BREAKING change (a removed endpoint, a new required input, a lost or retyped input, a changed list or cursor path, lost record fields, a policy turning sensitive or blocked) on a capability the registry uses is
+ *     reported with the capabilities and plans it touches, and with the only replacement the rules allow, or «no safe replacement»;
+ *   - a production-eligible capability is never removed or promoted by this code: the report says «review required».
+ * Deterministic: the same documents give the same report (sorted, no clock: the date is passed in).
+ */
+
+// ------------------------------------------------------------------------------------------------ guard: public metadata only
+/**
+ * The ONLY addresses the sync may read: documented, token-free metadata. A provider's data or billable path (TREG `/call`, `/<endpoint>`, Firecrawl `/v2/scrape`, Context.dev `/v1/web/scrape`, any `api.` host) is refused before any
+ * request is made, and no request may carry credentials.
+ */
+const METADATA_URLS: ReadonlyArray<{ host: string; path: RegExp }> = [
+  { host: "treg.to", path: /^\/(?:meta|openapi\.json|catalog\/search|catalog\/endpoints\/[A-Za-z0-9._-]+)$/ },
+  { host: "docs.firecrawl.dev", path: /^\/(?:api-reference\/v2-openapi\.json|llms\.txt)$/ },
+  { host: "www.firecrawl.dev", path: /^\/changelog\/rss\.xml$/ },
+  { host: "docs.context.dev", path: /^\/(?:openapi\.json|changelog\/rss\.xml|llms\.txt)$/ },
+];
+/** The only query parameters any metadata address may carry (TREG's public catalog search). A credential never rides in a query string. */
+const SEARCH_QUERY_KEYS: ReadonlySet<string> = new Set(["q", "added_within_days", "sort", "limit"]);
+export function isMetadataUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== "https:" || u.username || u.password || u.port || u.hash) return false;
+    if (!METADATA_URLS.some((m) => m.host === u.hostname && m.path.test(u.pathname))) return false;
+    if (u.search) {
+      if (u.hostname !== "treg.to" || u.pathname !== "/catalog/search") return false;
+      for (const k of u.searchParams.keys()) if (!SEARCH_QUERY_KEYS.has(k)) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+/** Headers a metadata request may carry: none that authenticates. */
+export function assertNoCredentials(headers: Record<string, string> = {}): void {
+  for (const k of Object.keys(headers)) if (/^(authorization|cookie|x-api-key|api-key|x-treg-token|proxy-authorization)$/i.test(k)) throw new Error(`metadata requests carry no credentials (${k})`);
+}
+
+// ------------------------------------------------------------------------------------------------ the contract of one TREG endpoint
+export interface EndpointContract {
+  id: string;
+  provider: string;
+  capability: string;
+  /** [name, required, type], sorted by name. */
+  inputs: Array<[string, boolean, string]>;
+  costUsd: number | null;
+  costType: string | null;
+  listPath: string | null;
+  cursorPath: string | null;
+  itemFields: string[] | null;
+  /** «deprecated», «sunset», «paused» … as the provider says; null = active. */
+  status: string | null;
+  supersededBy: string | null;
+  /** The provider (or TREG) blocks it for platforms, or the provider is paused. */
+  blocked: boolean;
+  /** Why it is blocked, in the provider's own words when it gives one (null when not blocked). */
+  blockedBy?: string | null;
+}
+
+const normType = (t: unknown): string => {
+  const s = String(t ?? "").trim().toLowerCase();
+  if (!s) return "unknown";
+  if (s.startsWith("array") || s === "list") return "array";
+  if (s === "str" || s === "string" || s === "text") return "string";
+  if (s === "int" || s === "integer") return "integer";
+  if (s === "float" || s === "number" || s === "double") return "number";
+  if (s === "bool" || s === "boolean") return "boolean";
+  if (s === "dict" || s === "object" || s === "json") return "object";
+  return s;
+};
+const known = (p: unknown): string | null => { const s = typeof p === "string" ? p.trim() : ""; return s && s !== "NOT FOUND" ? s : null; };
+const blockReason = (e: Record<string, any>, paused: boolean): string | null => {
+  if (typeof e.platform_blocked === "string" && e.platform_blocked.trim()) return e.platform_blocked.replace(/\s+/g, " ").trim().slice(0, 200);
+  if (e.platform_blocked) return "no reason given";
+  if (e.platform_eligible === false) return "no reason given";
+  return paused ? "the provider is paused on TREG" : null;
+};
+const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+/** True when `now` (possibly a union such as «boolean|object») still accepts everything `was` accepted. */
+const typeCovers = (now: string, was: string): boolean => now.split(/\s*(?:\||,|\bor\b)\s*/).map((t) => normType(t)).includes(was);
+const sortInputs = (xs: Array<[string, boolean, string]>) => xs.sort((a, b) => a[0].localeCompare(b[0]));
+
+/** From the pinned snapshot (data/treg/treg_catalog_sellable.json). */
+export function contractFromSnapshot(e: Record<string, any>, pausedProviders: ReadonlySet<string> = new Set()): EndpointContract {
+  const inputs = sortInputs((Array.isArray(e.inputs) ? e.inputs : []).map((i: any) => [String(i.name), Boolean(i.required), normType(i.type)] as [string, boolean, string]));
+  const provider = String(e.provider ?? String(e.id).split(".")[0]);
+  return {
+    id: String(e.id), provider, capability: String(e.capability ?? ""), inputs,
+    costUsd: num(e.cost?.usd), costType: e.cost?.type ? String(e.cost.type) : null,
+    listPath: known(e.list_path), cursorPath: known(e.cursor_path), itemFields: e.item_fields && typeof e.item_fields === "object" ? Object.keys(e.item_fields).sort() : null,
+    status: e.status ? String(e.status) : null, supersededBy: e.superseded_by ? String(e.superseded_by) : null,
+    blocked: Boolean(e.platform_blocked) || pausedProviders.has(provider.toLowerCase()),
+    blockedBy: blockReason(e, pausedProviders.has(provider.toLowerCase())),
+  };
+}
+
+/** From TREG's public `/catalog/endpoints/{id}` answer (`{ endpoint: {...}, example_response }`). List and cursor paths are not stated there: they stay null (the output contract is compared only where both sides state it). */
+export function contractFromLive(detail: Record<string, any>, pausedProviders: ReadonlySet<string> = new Set()): EndpointContract | null {
+  const e = detail?.endpoint;
+  if (!e || typeof e !== "object" || typeof e.id !== "string") return null;
+  const groups = e.input && typeof e.input === "object" ? e.input : {};
+  const inputs: Array<[string, boolean, string]> = [];
+  for (const g of ["body", "queryParams", "query", "pathParams", "params"]) {
+    const fields = groups[g];
+    if (!fields || typeof fields !== "object" || Array.isArray(fields)) continue;
+    for (const [name, spec] of Object.entries(fields as Record<string, any>)) inputs.push([name, Boolean(spec?.required), normType(spec?.type)]);
+  }
+  const provider = String(e.provider ?? e.id.split(".")[0]);
+  return {
+    id: e.id, provider, capability: String(e.capability ?? ""), inputs: sortInputs(inputs),
+    costUsd: num(e.cost?.usd), costType: e.cost?.type ? String(e.cost.type) : null,
+    listPath: known(e.list_path), cursorPath: known(e.cursor_path), itemFields: e.item_fields && typeof e.item_fields === "object" ? Object.keys(e.item_fields).sort() : null,
+    status: e.status ? String(e.status) : null, supersededBy: e.superseded_by ? String(e.superseded_by) : null,
+    blocked: Boolean(e.platform_blocked) || e.platform_eligible === false || pausedProviders.has(provider.toLowerCase()),
+    blockedBy: blockReason(e, pausedProviders.has(provider.toLowerCase())),
+  };
+}
+
+/** What a caller depends on: inputs, list and cursor paths, record fields. */
+export function contractFingerprint(c: EndpointContract, opts: { outputs?: boolean } = {}): string {
+  const shape = opts.outputs === false ? { i: c.inputs } : { i: c.inputs, l: c.listPath, c: c.cursorPath, f: c.itemFields };
+  return createHash("sha256").update(JSON.stringify(shape)).digest("hex").slice(0, 16);
+}
+
+// ------------------------------------------------------------------------------------------------ the drift
+export type DriftKind =
+  | "added" | "removed" | "renamed" | "unverified"
+  | "input_breaking" | "input_additive" | "output_breaking" | "output_unknown"
+  | "price_changed" | "price_unknown" | "deprecated" | "policy_breaking" | "suspicious";
+/** A breaking kind stops a capability that depends on it from silently continuing: it must be re-verified (or replaced) in a reviewed PR. */
+export const BREAKING_KINDS: ReadonlySet<DriftKind> = new Set(["removed", "renamed", "input_breaking", "output_breaking", "deprecated", "policy_breaking"]);
+
+export interface DriftChange { id: string; kind: DriftKind; detail: string; to?: string }
+export interface DriftOptions {
+  /** Every endpoint of `after` was fetched (the listing reported a total and every page arrived). False: no removal is concluded. */
+  complete: boolean;
+  /** The ids whose fetch failed (time-out, 5xx, unreadable): «unverified», never removed or changed. */
+  failed?: ReadonlySet<string>;
+  /** The ids that were asked for (a sync that checks only the ids the registry uses); absent = every id of `before`. */
+  checked?: ReadonlySet<string>;
+  /** Both sides state list paths, cursor paths and record fields (two snapshots). False for TREG's public endpoint answers, which do not: the output contract is then not compared (never a guess). Default true. */
+  outputs?: boolean;
+  /** The data-policy category of an endpoint as it is now and as the new metadata would make it (scripts/treg/build-data-policy.mjs `classify`). */
+  policyOf?: (c: EndpointContract, side: "before" | "after") => "public" | "b2b_contact" | "sensitive" | "blocked";
+}
+
+const RANK: Record<string, number> = { public: 0, b2b_contact: 1, sensitive: 2, blocked: 3 };
+
+export function diffContracts(before: ReadonlyMap<string, EndpointContract>, after: ReadonlyMap<string, EndpointContract>, opts: DriftOptions): DriftChange[] {
+  const out: DriftChange[] = [];
+  const failed = opts.failed ?? new Set<string>();
+  const checked = opts.checked ?? new Set(before.keys());
+  const removed: EndpointContract[] = [];
+  for (const id of checked) {
+    const o = before.get(id);
+    if (!o) continue;
+    if (failed.has(id)) { out.push({ id, kind: "unverified", detail: "metadata fetch failed: kept as last known-good, not treated as removed" }); continue; }
+    const n = after.get(id);
+    if (!n) {
+      if (opts.complete) removed.push(o);
+      else out.push({ id, kind: "unverified", detail: "not in a partial listing: kept as last known-good, not treated as removed" });
+      continue;
+    }
+    // inputs
+    const oi = new Map(o.inputs.map(([name, req, type]) => [name, { req, type }]));
+    const ni = new Map(n.inputs.map(([name, req, type]) => [name, { req, type }]));
+    const breaking: string[] = [];
+    const additive: string[] = [];
+    for (const [name, v] of ni) {
+      const was = oi.get(name);
+      if (!was) (v.req ? breaking : additive).push(`${v.req ? "new required" : "new optional"} input ${name}`);
+      else {
+        if (v.req && !was.req) breaking.push(`input ${name} became required`);
+        if (was.type !== "unknown" && v.type !== "unknown" && was.type !== v.type) {
+          // a type that now ALSO accepts the old one (object → boolean|object) is a widening: additive, never breaking
+          if (typeCovers(v.type, was.type)) additive.push(`input ${name} type widened ${was.type} → ${v.type}`);
+          else breaking.push(`input ${name} type ${was.type} → ${v.type}`);
+        }
+      }
+    }
+    for (const name of oi.keys()) if (!ni.has(name)) breaking.push(`input ${name} removed`);
+    if (breaking.length) out.push({ id, kind: "input_breaking", detail: breaking.join("; ") });
+    else if (additive.length) out.push({ id, kind: "input_additive", detail: additive.join("; ") });
+    // outputs (only where both sides state them)
+    if (opts.outputs !== false) {
+      const outBreak: string[] = [];
+      if (o.listPath && n.listPath && o.listPath !== n.listPath) outBreak.push(`list path ${o.listPath} → ${n.listPath}`);
+      if (o.listPath && !n.listPath) outBreak.push(`list path ${o.listPath} no longer found`);
+      if (o.cursorPath && n.cursorPath && o.cursorPath !== n.cursorPath) outBreak.push(`cursor path ${o.cursorPath} → ${n.cursorPath}`);
+      if (o.itemFields && n.itemFields) { const lost = o.itemFields.filter((f) => !n.itemFields!.includes(f)); if (lost.length) outBreak.push(`lost record fields ${lost.join(",")}`); }
+      if (outBreak.length) out.push({ id, kind: "output_breaking", detail: outBreak.join("; ") });
+      else if (o.itemFields && n.itemFields === null) out.push({ id, kind: "output_unknown", detail: "record fields no longer stated: proven on a stored page before a dependent stage relies on them" });
+    }
+    // price
+    if (o.costUsd !== null && n.costUsd === null) out.push({ id, kind: "price_unknown", detail: `${o.costUsd} USD → unknown` });
+    else if (o.costUsd !== n.costUsd || o.costType !== n.costType) {
+      const pct = o.costUsd !== null && n.costUsd !== null && o.costUsd > 0 ? ` (${n.costUsd > o.costUsd ? "+" : ""}${Math.round(((n.costUsd - o.costUsd) / o.costUsd) * 100)}%)` : "";
+      // the billing LABEL changed (per_success ↔ per_call): TREG's live answer does not say whether a failed or empty call is billed (the pinned snapshot had a field for it), so that is said, not guessed
+      const nowBilledOnFailure = o.costType !== null && n.costType !== null && o.costType !== n.costType ? " (billing label changed: the live answer does not say whether failed or empty calls are billed; confirm before relying on it)" : "";
+      out.push({ id, kind: "price_changed", detail: `${o.costUsd ?? "?"} ${o.costType ?? ""} → ${n.costUsd ?? "?"} ${n.costType ?? ""}${pct}${nowBilledOnFailure}`.replace(/\s+/g, " ").trim() });
+    }
+    // deprecation and policy
+    if ((n.status && /deprecat|sunset|retir|remov|paused|disabled/i.test(n.status) && n.status !== o.status) || (n.supersededBy && n.supersededBy !== o.supersededBy)) out.push({ id, kind: "deprecated", detail: `${n.status ?? "superseded"}${n.supersededBy ? ` → ${n.supersededBy}` : ""}`, ...(n.supersededBy ? { to: n.supersededBy } : {}) });
+    const pBefore = opts.policyOf?.(o, "before");
+    const pAfter = opts.policyOf?.(n, "after");
+    const turnedPrivate = !isPrivateCapabilityString(o.capability) && isPrivateCapabilityString(n.capability);
+    if ((!o.blocked && n.blocked) || turnedPrivate || (pBefore && pAfter && RANK[pAfter] > RANK[pBefore])) out.push({ id, kind: "policy_breaking", detail: [!o.blocked && n.blocked ? `no longer available through TREG's platform key: ${n.blockedBy ?? "blocked or paused"}` : "", turnedPrivate ? `capability ${o.capability} → ${n.capability} (private data)` : "", pBefore && pAfter && RANK[pAfter] > RANK[pBefore] ? `policy ${pBefore} → ${pAfter}` : ""].filter(Boolean).join("; ") });
+    // suspicious contracts: what a caller cannot trust
+    const sus: string[] = [];
+    if (n.costUsd !== null && n.costUsd < 0) sus.push("negative price");
+    if (n.inputs.some(([name, req, type]) => req && type === "unknown")) sus.push("required input without a type");
+    if (sus.length) out.push({ id, kind: "suspicious", detail: sus.join("; ") });
+  }
+  // additions (never selectable on arrival)
+  const added: EndpointContract[] = [];
+  for (const [id, n] of after) if (!before.has(id)) added.push(n);
+  // renames: a removed id and an added id with the same capability and the same contract, or a removal the provider names as superseded
+  const usedAdded = new Set<string>();
+  // when the output contract is not compared (live answers do not state it) a rename is judged on the inputs alone
+  const fpOf = (c: EndpointContract) => contractFingerprint(c, { outputs: opts.outputs !== false });
+  for (const o of removed) {
+    const fp = fpOf(o);
+    const twin = added.find((a) => !usedAdded.has(a.id) && a.provider === o.provider && a.capability === o.capability && fpOf(a) === fp);
+    if (twin) { usedAdded.add(twin.id); out.push({ id: o.id, kind: "renamed", detail: `same capability and contract under a new id ${twin.id}`, to: twin.id }); }
+    else out.push({ id: o.id, kind: "removed", detail: "absent from a complete listing" });
+  }
+  for (const a of added) if (!usedAdded.has(a.id)) out.push({ id: a.id, kind: "added", detail: `${a.capability || "unknown capability"} (${a.costUsd ?? "?"} USD; never selectable until a reviewed PR adds it with evidence)` });
+  return out.sort((x, y) => x.id.localeCompare(y.id) || x.kind.localeCompare(y.kind));
+}
+
+// ------------------------------------------------------------------------------------------------ 6.2: what a breaking change touches, and the only replacement allowed
+export interface PlanRef { ref: string; endpointIds: ReadonlyArray<string>; /** The plan's approved cost per row of that endpoint (USD), when known: a replacement may not cost more. */ usdPerRowOf?: (id: string) => number | null }
+export interface FallbackVerdict { id: string | null; reason: string; rejected: Array<{ id: string; why: string }> }
+
+/**
+ * THE SAFE REPLACEMENT of a capability that broke (audit §7.3 «falls back to the next entry of its fallback_group; if none, the gap is stated»). A candidate qualifies only when ALL hold:
+ *   same operation and platform (the fallback group); not broken, not deprecated, not itself drifting; public data and public privacy unless the broken one was b2b_contact (then b2b_contact at most), never sensitive or blocked;
+ *   at least the broken one's verification tier and never below `minLevel` (a production-eligible capability is replaced only by a production-eligible one: an unverified provider is never activated);
+ *   carries every constraint (filter) and input class the broken one carried, and documents every output it documented; a KNOWN price no higher per row than the approved one (an approved price is never increased).
+ * Provider daily caps, privacy rules and the account's authorization are checked at run time as always: a replacement found here is a PROPOSAL for a reviewed PR, never applied by this code.
+ */
+export function safeReplacement(broken: ArtifactEntry, registry: RegistryArtifact, opts: { minLevel: ArtifactEntry["verification"]["level"]; drifting?: ReadonlySet<string>; maxUsdPerRow?: number | null }): FallbackVerdict {
+  const rejected: FallbackVerdict["rejected"] = [];
+  const brokenRank = levelRank(broken.verification.level);
+  // never below the broken one's own tier (a production-eligible capability is replaced only by a production-eligible one) and never below `minLevel`
+  const floor = Math.max(brokenRank, levelRank(opts.minLevel));
+  const ceiling = opts.maxUsdPerRow ?? broken.usd_per_row;
+  const candidates = registry.capabilities.filter((c) => c.fallback_group === broken.fallback_group && c.key !== broken.key).sort((a, b) => a.key.localeCompare(b.key));
+  for (const c of candidates) {
+    const why =
+      opts.drifting?.has(c.id) ? "itself changed in this sync" :
+      c.verification.level === "broken" || c.verification.level === "deprecated" ? `level ${c.verification.level}` :
+      levelRank(c.verification.level) < floor ? `level ${c.verification.level} is below the tier a replacement needs (the broken capability's own, and at least schema_checked)` :
+      c.policy === "sensitive" || c.policy === "blocked" || (c.privacy !== "public" && c.privacy !== broken.privacy) ? `policy ${c.policy}/${c.privacy}` :
+      broken.policy === "public" && c.policy !== "public" ? `policy ${c.policy} is stricter data than the approved public source` :
+      !(Object.keys(broken.filters) as Array<keyof ArtifactEntry["filters"]>).every((f) => !broken.filters[f] || c.filters[f]) ? "does not carry every constraint" :
+      !broken.takes.every((t) => c.takes.includes(t)) ? "is not fed by the same inputs" :
+      broken.outputs_known && !(c.outputs_known && broken.outputs.every((o) => c.outputs.includes(o))) ? "does not document every output" :
+      c.pricing.basis === "unknown" || c.usd_per_row === null ? "price unknown" :
+      ceiling !== null && ceiling !== undefined && c.usd_per_row > ceiling ? "costs more per row than the approved price allows" :
+      null;
+    if (why) { rejected.push({ id: c.id, why }); continue; }
+    return { id: c.id, reason: `same operation and platform, at least as verified, same constraints, inputs and outputs, a known price within the approved one`, rejected };
+  }
+  return { id: null, reason: "no safe replacement: the limitation is reported; nothing is substituted", rejected };
+}
+
+export interface ImpactRow {
+  change: DriftChange;
+  capabilities: Array<{ key: string; level: string; productionEligible: boolean }>;
+  plans: string[];
+  /** Any affected capability was production-eligible: a human must review before anything ships. */
+  reviewRequired: boolean;
+  replacement: FallbackVerdict | null;
+}
+
+/** Joins each change with the registry capabilities that call the endpoint and the given plans that use it, and proposes the only allowed replacement for a breaking change. */
+export function impactOf(changes: ReadonlyArray<DriftChange>, registry: RegistryArtifact, plans: ReadonlyArray<PlanRef> = [], minLevel: ArtifactEntry["verification"]["level"] = "schema_checked"): ImpactRow[] {
+  const drifting = new Set(changes.filter((c) => BREAKING_KINDS.has(c.kind)).map((c) => c.id));
+  return changes.map((change) => {
+    const entries = registry.capabilities.filter((c) => c.id === change.id);
+    const capabilities = entries.map((e) => ({ key: e.key, level: e.verification.level, productionEligible: e.verification.level === "production_eligible" }));
+    const usingPlans = plans.filter((p) => p.endpointIds.includes(change.id));
+    const breaking = BREAKING_KINDS.has(change.kind);
+    const first = entries[0];
+    const maxUsd = usingPlans.map((p) => p.usdPerRowOf?.(change.id) ?? null).filter((x): x is number => typeof x === "number");
+    const replacement = breaking && first ? safeReplacement(first, registry, { minLevel, drifting, maxUsdPerRow: maxUsd.length ? Math.min(...maxUsd) : null }) : null;
+    return { change, capabilities, plans: usingPlans.map((p) => p.ref).sort(), reviewRequired: capabilities.some((c) => c.productionEligible) || (breaking && usingPlans.length > 0), replacement };
+  });
+}
+
+// ------------------------------------------------------------------------------------------------ the web providers' public documents
+export interface OpenApiSummary { version: string | null; server: string | null; paths: string[]; enums: Record<string, string[]> }
+/** The parts of a public OpenAPI file Diger depends on: its version, server, every METHOD path, and every string enum (sorted). */
+export function summarizeOpenApi(spec: unknown): OpenApiSummary | null {
+  if (!spec || typeof spec !== "object" || !(spec as any).paths || typeof (spec as any).paths !== "object") return null;
+  const s = spec as any;
+  const paths: string[] = [];
+  for (const [p, ops] of Object.entries(s.paths as Record<string, any>)) for (const m of Object.keys(ops ?? {})) if (/^(get|post|put|patch|delete)$/i.test(m)) paths.push(`${m.toUpperCase()} ${p}`);
+  const enums: Record<string, string[]> = {};
+  const walk = (o: unknown, at: string, depth: number) => {
+    if (depth > 40 || !o || typeof o !== "object") return;
+    if (Array.isArray(o)) { o.forEach((v, i) => walk(v, `${at}/${i}`, depth + 1)); return; }
+    const r = o as Record<string, unknown>;
+    if (Array.isArray(r.enum) && r.enum.length > 0 && r.enum.every((x) => typeof x === "string")) enums[at] = [...(r.enum as string[])].sort();
+    for (const [k, v] of Object.entries(r)) if (k !== "enum" && k !== "example" && k !== "examples") walk(v, `${at}/${k}`, depth + 1);
+  };
+  walk(s.components ?? {}, "/components", 0);
+  walk(s.paths, "/paths", 0);
+  return { version: s.info?.version ? String(s.info.version) : null, server: Array.isArray(s.servers) && s.servers[0]?.url ? String(s.servers[0].url) : null, paths: paths.sort(), enums: Object.fromEntries(Object.entries(enums).sort(([a], [b]) => a.localeCompare(b))) };
+}
+
+export interface WebDependency { provider: "firecrawl" | "contextdev"; method: string; path: string; /** For a parser: the enum value the call sends. */ parser?: string }
+export interface WebDrift { provider: string; kind: "path_removed" | "path_added" | "parser_removed" | "parser_added" | "version_changed" | "server_changed" | "unverified"; detail: string; breaking: boolean }
+
+/** Compares a provider's public OpenAPI with the baseline and with the calls Diger makes. A failed fetch is «unverified» (the baseline is kept). A path or parser Diger CALLS that disappeared is breaking. */
+export function diffWebProvider(provider: "firecrawl" | "contextdev", baseline: OpenApiSummary | null, current: OpenApiSummary | null, used: ReadonlyArray<WebDependency>, parserEnumPointer?: string): WebDrift[] {
+  if (!current) return [{ provider, kind: "unverified", detail: "public OpenAPI could not be fetched or read: the last known-good baseline is kept", breaking: false }];
+  const out: WebDrift[] = [];
+  const base = baseline ?? { version: null, server: null, paths: [], enums: {} };
+  const withPrefix = (summary: OpenApiSummary, p: string): string => { const prefix = (summary.server ? safePath(summary.server) : "").replace(/\/+$/, ""); const [m, path] = p.split(" "); return `${m} ${prefix}${path}`; };
+  const cur = new Set(current.paths.map((p) => withPrefix(current, p)));
+  const usedPaths = used.filter((u) => u.provider === provider && !u.parser).map((d) => `${d.method} ${d.path}`);
+  for (const u of usedPaths) if (!cur.has(u)) out.push({ provider, kind: "path_removed", detail: `${u} is called by Diger and is no longer in the public OpenAPI`, breaking: true });
+  if (baseline) {
+    const was = new Set(base.paths.map((p) => withPrefix(base, p)));
+    for (const p of cur) if (!was.has(p)) out.push({ provider, kind: "path_added", detail: `${p} (new; not used by Diger)`, breaking: false });
+    for (const p of was) if (!cur.has(p) && !usedPaths.includes(p)) out.push({ provider, kind: "path_removed", detail: `${p} (not called by Diger)`, breaking: false });
+    if (base.version !== current.version) out.push({ provider, kind: "version_changed", detail: `${base.version ?? "?"} → ${current.version ?? "?"}`, breaking: false });
+    if (base.server !== current.server) out.push({ provider, kind: "server_changed", detail: `${base.server ?? "?"} → ${current.server ?? "?"}`, breaking: Boolean(base.server) });
+  }
+  if (parserEnumPointer) {
+    const now = current.enums[parserEnumPointer];
+    if (!now) out.push({ provider, kind: "unverified", detail: `parser list ${parserEnumPointer} not found in the public OpenAPI`, breaking: false });
+    else {
+      for (const d of used.filter((u) => u.provider === provider && u.parser)) if (!now.includes(d.parser!)) out.push({ provider, kind: "parser_removed", detail: `parser ${d.parser} is called by Diger and is no longer listed`, breaking: true });
+      const usedParsers = new Set(used.filter((u) => u.parser).map((u) => u.parser));
+      for (const p of now) if (!usedParsers.has(p) && !(base.enums[parserEnumPointer] ?? []).includes(p)) out.push({ provider, kind: "parser_added", detail: `parser ${p} (offered by the provider; not implemented in Diger)`, breaking: false });
+    }
+  }
+  return out.sort((a, b) => a.kind.localeCompare(b.kind) || a.detail.localeCompare(b.detail));
+}
+
+const safePath = (url: string): string => { try { return new URL(url).pathname; } catch { return ""; } };
+
+export interface FeedItem { title: string; date: string | null; link: string | null; /** The headings or first words of the entry's body (a provider whose titles are only dates). */ summary: string; /** The first sentence of the entry that announces a removal, deprecation or breaking change (empty when none). */ note: string }
+/** Words that announce a removal, deprecation or breaking change (a HEURISTIC for a human to read: a plain «remove» is not enough). */
+const BREAKING_WORDS = /deprecat|sunset|breaking change|discontinu|end[- ]of[- ]life|\b(?:will be|is being|are being|has been|have been|was|were|is|are) (?:removed|retired|renamed|disabled)|\bremoval of\b|\bretiring\b|\bno longer (?:available|supported|works?|accepted|offered)|\brenamed\b/i;
+const decode = (t: string): string => t.replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;|&apos;/g, "'").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&");
+/** Items of an RSS or Atom feed (title, date as ISO day when readable, link), newest first. Tolerant: an unreadable feed is an empty list. */
+export function feedItems(xml: string, max = 40): FeedItem[] {
+  const items: FeedItem[] = [];
+  const blocks = xml.match(/<(item|entry)\b[\s\S]*?<\/\1>/gi) ?? [];
+  const raw = (b: string, tag: string) => { const m = b.match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, "i")); return m ? m[1].replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, "$1") : null; };
+  const plain = (h: string) => decode(h.replace(/<[^>]+>/g, " ")).replace(/\s+/g, " ").trim();
+  for (const b of blocks) {
+    const titleRaw = raw(b, "title");
+    const title = titleRaw === null ? "" : plain(titleRaw);
+    if (!title) continue;
+    const html = raw(b, "content:encoded") ?? raw(b, "content") ?? raw(b, "description") ?? raw(b, "summary") ?? "";
+    const headings = [...html.matchAll(/<h[1-4]\b[^>]*>([\s\S]*?)<\/h[1-4]>/gi)].map((m) => plain(m[1])).filter(Boolean);
+    const body = plain(html);
+    // a title that is only a date says nothing: its headings do (a descriptive title needs no summary)
+    const dateOnly = /^(?:[A-Z][a-z]+ \d{1,2}, \d{4}|\d{4}-\d{2}-\d{2})$/.test(title);
+    const summary = dateOnly ? (headings.length ? headings.join(" · ") : body).slice(0, 240) : "";
+    const note = (body.split(/(?<=[.!?])\s+/).find((sentence) => BREAKING_WORDS.test(sentence)) ?? (BREAKING_WORDS.test(title) ? title : "")).slice(0, 240);
+    const rawDate = raw(b, "pubDate") ?? raw(b, "updated") ?? raw(b, "published");
+    const t = rawDate ? Date.parse(plain(rawDate)) : NaN;
+    const linkTag = (raw(b, "link") ? plain(raw(b, "link")!) : "") || (b.match(/<link\b[^>]*href="([^"]+)"/i)?.[1] ?? null);
+    items.push({ title: title.slice(0, 200), date: Number.isFinite(t) ? new Date(t).toISOString().slice(0, 10) : null, link: linkTag || null, summary, note });
+  }
+  return items.sort((a, b) => (b.date ?? "").localeCompare(a.date ?? "") || a.title.localeCompare(b.title)).slice(0, max);
+}
+/** Changelog items newer than the baseline's latest, each flagged when its words announce a removal, a deprecation or a breaking change. */
+export function newFeedItems(baselineLatest: string | null, items: ReadonlyArray<FeedItem>): Array<FeedItem & { breaking: boolean }> {
+  return items.filter((i) => i.date !== null && (baselineLatest === null || i.date > baselineLatest)).map((i) => ({ ...i, breaking: i.note !== "" }));
+}

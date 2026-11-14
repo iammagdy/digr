@@ -16,10 +16,10 @@
 
 | | CODE COMPLETE | OFFLINE VERIFIED | LIVE VERIFIED | PRODUCTION ENABLED | NEEDS THE OWNER |
 |---|---|---|---|---|---|
-| **5.3-A exclusion files** | Yes (PR A) | Yes (§A.5) | **No** | **No.** `customer_exclusion_files_v1` is unset. | Turning the switch on (test account first) |
+| **5.3-A exclusion files** | Yes (PR A, #495) | Yes (§A.5) | **No** | **No.** `customer_exclusion_files_v1` is unset. | Turning the switch on (test account first) |
 | **5.3-B enrichment files** | **No: stopped** (§B) | The honest refusal is (§A.3) | No | No | A pricing and settlement decision (§B.3) |
-| **6.1 provider sync** | see §C (PR C) | | | | |
-| **6.2 breaking changes** | see §C (PR C) | | | | |
+| **6.1 provider sync** | Yes (PR C) | Yes (§C.6) | Public metadata only: one manual sync, 14 Nov 2026 (§C.4). No provider data call. | **No.** Nothing is activated, re-routed or re-priced by it. | Reviewing the first report (§C.4); a reviewed PR for anything it proposes |
+| **6.2 breaking changes** | Yes (PR C) | Yes (§C.6) | Not applicable: detection runs on public metadata; no fallback was exercised live | **No** | The 6 capabilities with no safe replacement (§C.5) |
 
 «Code complete» is not «live». Nothing in this campaign was run against a real customer, a real provider or a real model.
 
@@ -113,12 +113,85 @@ PR B was therefore not implemented, and no workaround was improvised. PR A makes
 * **Settlement (the decision):** a supplied row is a delivered unit only when at least one requested field was found from an official, publicly verifiable source; rows with nothing found are delivered free, marked «غير متوفر» per field.
 * **Evidence first:** one capped live capture on the test account (≤ $0.20) before any customer use.
 
-## C. Phase 6: provider update intelligence
+## PR A: result (recorded here, in the next code PR, as the discipline requires)
 
-Added by PR C.
+* PR [#495](https://github.com/iammagdy/digr/pull/495), one push (head `454aa5e`), one preview, merged through the PR as `390b6a2`.
+* Preview `dpl_AECHFWcY5pGNF5v3o6xAcTa6Ahq5` READY on `454aa5e`; no mission or job was active at the merge (read-only check).
+* Production `dpl_BPJaobJH97erx44pzfRiz1vUedH1` READY on `390b6a2` (alias `diger.tech`); Heroku release v203 «Deploy 390b6a2b»; worker heartbeat `390b6a2`, `active_missions 0`.
+* After the deployment (read-only): `credit_ledger` 1,247 rows, sum 16,086 (unchanged); `agent_settings` keys `redesign_flags`, `social_discovery` only (no `customer_*` row); no queued, planning, approved or executing mission.
+* Verification kinds: offline tests, typechecks, build, secret scan and mutation checks locally; preview and production deployment states and the read-only database checks above. **Not done: a real-browser test, a live customer mission, a live provider or model call.**
+
+## C. Phase 6: provider update intelligence (PR C)
+
+### C.1 What was built
+
+| Part | File |
+|---|---|
+| Pure comparison, classification and fallback rules (no IO) | `src/lib/agentMission/capabilities/providerDrift.ts` |
+| The read-only sync (manual command, injectable fetch, offline replay) | `scripts/capabilities/sync-providers.ts` |
+| Last known-good metadata (the baseline the next sync compares with) | `data/capabilities/provider-metadata.json` |
+| The reviewable report of the first sync | `docs/capabilities/sync-2026-11-14.md` |
+| Offline tests and stored fixtures | `tests/provider-drift-phase6.test.ts`, `tests/fixtures/provider-drift/` |
+
+It reuses the existing registry (`data/capabilities/registry.json`, its levels, fallback groups, policy and prices), the pinned TREG snapshot, the data-policy classifier that built `data_policy.json` (`scripts/treg/build-data-policy.mjs` `classify`) and `levelRank`. Nothing else was duplicated.
+
+### C.2 The rules (all enforced by code and pinned by tests)
+
+* **Public metadata only.** Allowed addresses: TREG `/meta`, `/openapi.json`, `/catalog/search` (four query keys only), `/catalog/endpoints/{id}`; the public OpenAPI files and changelog feeds of Firecrawl and Context.dev. Every other address (TREG `/call`, any `api.` host, another scheme, port, user-info, fragment, a credential in a query) is refused BEFORE a request is made. GET only, no credential header, redirects refused, a generic client name. The scripts never read the environment, a database or a secret.
+* **A failed request is never a removal.** A time-out, a network error, a 429 or 5xx (retried twice), an unreadable answer, an answer for another id and a 404 that is not TREG's «unknown endpoint» are all «unverified»: the last known-good metadata is kept and nothing is concluded. Only a clear «unknown endpoint» is removal evidence, and more than a fifth of the ids asked answering that way is treated as an outage. A failed `/meta` keeps the last known paused providers. A public OpenAPI or feed that cannot be read is «unverified», never «no operations».
+* **Discovered tools are reported, never activated.** A new endpoint is listed with its data-policy category and «never selectable until a reviewed PR adds it with evidence». The sync cannot write `registry.json`, `production-eligible.json`, `deprecated.json` or the reliability snapshot: its only writes are the report (`--out`), the replay folder (`--save`) and `provider-metadata.json` (`--write-baseline`; any other file name is refused). Production eligibility, routing, budgets and prices are not read or changed.
+* **Classification:** added; removed (complete evidence only); renamed (a removed id and a new id with the same provider, capability and inputs; one new id renames at most one removed id); input breaking (a new required input, an input that became required, a removed input, a retyped input; a widened type such as `object` to `boolean|object` is additive); input additive; output breaking and output unknown (compared only where both sides state them: two snapshots; TREG's live answers state no list path, cursor or record fields, so they are never guessed); price changed (with its percentage), price unknown, a changed billing label; deprecated (status or `superseded_by`, naming the replacement the provider names); policy breaking (now blocked or paused with TREG's own reason, turned private, a stricter data-policy category); suspicious (negative price, a required input with no type). Schema fingerprint: sha256 of inputs and, when compared, list path, cursor path and record fields.
+* **Web providers:** the public operations Diger calls (Firecrawl `POST /v2/scrape`, `/v2/search`, `/v2/map`; Context.dev `POST /v1/web/scrape`, `/v1/web/search`, `GET /v1/web/urls`, `POST /v1/people/search`) and every prebuilt parser Diger sends are checked against the provider's public OpenAPI. A call or parser Diger uses that disappeared is breaking and is mapped to the registry capabilities that stand on it (a removed `/web/scrape` breaks `contextdev.scrape` and every `contextdev.parse.*`). A new operation, a new parser, a changed version or server is reported, never adopted. Changelog items newer than the baseline are listed; one whose text announces a removal, deprecation or breaking change is marked for a human to read (a heuristic: «remove» alone is not enough).
+* **Impact and safe fallback:** every breaking change is joined with the registry capabilities that call it, the approved plans given with `--plans`, and the review it needs (any production-eligible capability, or any plan). The only replacement proposed is a capability of the SAME fallback group that is at least as verified as the broken one (a production-eligible capability only by a production-eligible one) and never below `schema_checked`; not broken or deprecated; not itself changing in the same sync; not sensitive or blocked, and never stricter data than the approved source (a b2b-contact capability is not replaced by a sensitive one); carries every constraint and input class and documents every output of the broken one; and has a KNOWN price no higher per row than the approved one (the plan's own price when a plan is given). **When none qualifies the report says «no safe replacement» and substitutes nothing.** A proposal is for a reviewed PR; no code applies it.
+
+### C.3 How it is run
+
+```bash
+NODE_USE_ENV_PROXY=1 npx tsx scripts/capabilities/sync-providers.ts --out docs/capabilities/sync-YYYY-MM-DD.md --save <folder> [--write-baseline] [--plans plans.json]
+npx tsx scripts/capabilities/sync-providers.ts --offline <folder> --out report.md      # replays stored answers, no request
+```
+
+Manual, weekly at most. No cron, no scheduler, no Vercel, Heroku or Supabase change. (`NODE_USE_ENV_PROXY=1` only makes Node's `fetch` honour a sandbox proxy; the script reads no variable.)
+
+### C.4 The first sync (14 Nov 2026, one manual run, free)
+
+Public GETs only: 470 TREG endpoint answers, `/meta`, one catalog listing, two public OpenAPI files, two changelog feeds. No key, no billable call. The first run compared the live answers with the PINNED snapshot (27 Oct 2026); the baseline was then written, and a sync against it reports nothing (tested). Report: `docs/capabilities/sync-2026-11-14.md`.
+
+* **TREG** 0.30.0; paused providers: `datagma`, `google-business-profile`. 470 of 470 registry ids answered (0 unknown, 0 unverified).
+* **30 breaking changes, none on a production-eligible capability.** 29 are endpoints TREG now answers `platform_eligible: false` for («no longer offered through TREG's platform key»; several with TREG's own reason, for example no record cap on its key, «connect your own key»); 1 is a removed input (`exa.companies.search` `startPublishedDate`). 24 have a proposed replacement, 6 have none (§C.5). All 30 are `advertised` (26), `schema_checked` (3) or `broken` (1) in the registry: none is selectable for a customer today, so no plan is affected.
+* **113 other changes:** 81 price changes (18 higher, up to +153%; 1 lower; 62 show the same USD figure), 63 changes of the billing LABEL (`per_success` ↔ `per_call`) and 32 new optional inputs. **The live answers do not say whether a failed or empty call is billed** (the pinned snapshot had a field for it), so the report says «confirm before relying on it» and does not claim either way. 14 of the 20 production-eligible capabilities have one of these (11 new optional inputs on `anyapi.*`, 3 `tikhub.*` label changes): nothing changed for them.
+* **8 new TREG endpoints** in the last 8 days (5 are b2b-contact): listed, not selectable.
+* **Firecrawl** v2 (56 operations) and **Context.dev** 1.0.0 (52 operations): every operation and parser Diger calls is present. Context.dev offers 7 parsers Diger does not implement (`reddit-post`, `reddit-search`, `reddit-subreddit`, `reddit-user`, `tripadvisor-reviews`, `yelp-reviews`, `yelp-search`). Firecrawl's `/extract` is still in the public OpenAPI (its announced removal is not visible in a 30-day feed window).
+* Much of the diff is age: the snapshot is 18 days older than the live catalog. Refreshing the pinned snapshot and the registry from it is a separate, reviewed change (owner decision below); this campaign did not touch them.
+
+### C.5 Fallback validation and the honest gap
+
+For the 30 breaking changes the registry's rules proposed a replacement for 24 and found none for 6 (for example `exa.companies.search`: its same-group candidates are below the required tier or do not document every output; `crunchbase.people.search`: below the tier, or without every constraint it carries). Candidates are rejected with their reason in the report (tier, policy, missing constraint or input, unknown or higher price, itself changing). Nothing is substituted by code, and no production-eligible capability is replaced by a lower tier.
+
+### C.6 Tests (offline only)
+
+`tests/provider-drift-phase6.test.ts`, 81 tests: the address guard (accepted and refused addresses, credentials in headers and queries, the live fetcher refused before any request and its headers); every drift class above; schema fingerprints; the fallback rules one refusal at a time, the plan price ceiling, determinism and the honest «none»; impact and review; the whole sync on the real registry, pinned snapshot and committed baseline served from memory (nothing changed, removal, rename, a failed request in six forms, a wave of «unknown endpoint», a failed `/meta`, breaking schema with a plan, price and billing-label changes, deprecation, policy and pause, additions, Firecrawl and Context.dev path and parser removal, additions and failed documents, changelog flags); the command (writes only what it is told to, protected data files byte for byte unchanged, a baseline that is not named `provider-metadata.json` refused, replay of saved answers); the list of calls the sync watches against the adapters; no `process.env`, database or secret in the sources.
+
+Final local gates for PR C: the whole suite 13,945 passed, 0 failed, 47 expected-fail, 78 skipped (991 files); `tsc --noEmit` and `npm run agent:typecheck` clean; `npm run build` and the client-bundle secret scan clean (210 files, zero secrets; the build needs `NODE_OPTIONS=--max-old-space-size=8192` in a 16 GB sandbox: the default 2 GB heap runs out).
+
+Mutation checks (runner outside the repository, one protection removed at a time, the file restored each time): **56 of 56 caught**. The first run left three alive (a sensitive replacement for a b2b-contact capability, a broken candidate's own reason, and an endpoint of the pinned snapshot that the registry does not use being reported as «added»); tests were added and all three are caught.
+
+### C.7 Limitations (said, not hidden)
+
+* TREG's live answers state no list path, cursor path or record fields: the output contract is compared only against the stored real pages by the existing registry and card checks, not by this sync.
+* Only the 470 TREG ids the registry uses are asked (of the 3,276 sellable); new endpoints come from the 8-day listing, which TREG caps at 100 with no offset (a partial listing is said to be partial).
+* The list of web calls and parsers the sync watches is kept by hand (`USED_WEB_CALLS`); a test checks it against the adapters and the registry's parsers.
+* The first sync's feed window is 30 days; a changelog item older than that is not read until a baseline date exists.
+* Billing semantics for failed calls cannot be read from the live answers (§C.4).
+* GitHub's `releases.atom` answered 403 and is not used.
+
+### C.8 Not done, by design
+
+No cron or scheduler; no registry, eligibility, price, route, budget or customer-text change; no automatic demotion or activation; no provider data or billable call; no infrastructure, migration or switch.
 
 ## Owner decisions (new in this campaign)
 
 1. Turn `customer_exclusion_files_v1` on for the test account, then for customers.
 2. Whether a POSSIBLE match (shared brand word only) should also be excluded.
 3. The Phase 5.3-B proposal (§B.3): its settlement rule, its switch and its live capture.
+4. Phase 6: whether to open a reviewed PR that refreshes the pinned TREG snapshot and marks the 29 endpoints TREG no longer offers on its platform key (§C.4); the weekly manual sync; asking TREG how failed calls are billed under the changed billing labels; whether to implement any of Context.dev's 7 new parsers.

@@ -35,9 +35,9 @@
 
 ## Phase 5.3 and Phase 6 (14 Nov 2026)
 
-* **5.3-A exclusion files:** code complete and offline verified behind `customer_exclusion_files_v1` (**not enabled**). Owner: turn it on for the test account, then customers; decide whether possible matches are excluded too.
+* **5.3-A exclusion files:** merged and deployed (PR #495, `390b6a2`), offline verified, behind `customer_exclusion_files_v1` (**not enabled**). Owner: turn it on for the test account, then customers; decide whether possible matches are excluded too.
 * **5.3-B enrichment files:** **stopped**; it needs a new quote model and a new settlement rule. Proposal: report §B.3 (owner approval).
-* **6.1 / 6.2 provider sync and breaking changes:** see the report §C.
+* **6.1 / 6.2 provider sync and breaking changes:** code complete and offline verified; one manual public-metadata sync was run (report §C.4, `docs/capabilities/sync-2026-11-14.md`). Owner: review the report; decide on a reviewed PR that refreshes the pinned TREG snapshot and registry (29 endpoints are no longer offered on TREG's platform key); weekly manual sync (`sync-providers.ts`, no cron).
 * **Next roadmap priority after this campaign:** Phase 7 (shadow evaluation) and Phase 8 (controlled activation) need owner decisions first; they were not started.
 
 ## Phases 2–4 of the Diger Intelligence Audit (14 Nov 2026)
