@@ -1,3 +1,5 @@
+> **HISTORICAL DOCUMENT (status as of 11 Nov 2026).** Its implementation statuses are no longer current: Phases 0–5 and 5.3-A were built after it (code complete, offline verified, NOT enabled), Phase 5.3-B is stopped for owner approval, and Phase 6 is covered in `PHASE-5-3-AND-6.md`. Read `docs/HANDOFF.md` «CURRENT STATE», `PHASES-2-4-ACCEPTANCE.md`, `PHASE-5-CONTACTS-AND-REVERSE-LOOKUP.md` and `PHASE-5-3-AND-6.md` for what is true now. «Code complete» never means «enabled in production».
+
 Read-only audit11 Nov 2026iammagdy/digr · main 001cbeb
 
 # Diger Intelligence Audit

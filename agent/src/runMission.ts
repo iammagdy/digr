@@ -93,6 +93,8 @@ import { missionFileTitleAr } from "../../src/lib/agentMission/fileNames";
 import { itemNounOf, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
 import type { AgentStore, CallRow, MissionRecord } from "./types";
 import type { SandboxResult } from "./sandbox";
+import { loadApprovedExclusion, withCustomerExclusion, type ReadMissionExclusion } from "./customerExclusion";
+import type { ExclusionMatcher } from "../../src/lib/agentMission/customerExclusion";
 import type { MissionNoticeFacts, MissionNoticeKind } from "../../src/lib/agentMission/notices";
 
 export interface RunnerDeps {
@@ -137,6 +139,8 @@ export interface RunnerDeps {
   providerToday?: () => Promise<{ tregDailyCapUsd?: number; spentTodayUsd: Partial<Record<"treg" | "firecrawl" | "contextdev", number | null>> }>;
   /** LLM-FIRST OBJECTIVES (capability_discovery_v1 only): the research brief the chat stored with this mission's card (`messages.plan.researchBrief`, written by the server only), read back with its schema. Absent (tests that do not need it): none. */
   readMissionBrief?: (missionId: string, userId: string) => Promise<ResearchBrief | null>;
+  /** PHASE 5.3 (`customer_exclusion_files_v1` only): the exclusion list the chat stored on this mission's card (`messages.plan.customerExclusion`, server-written), read back with its digest. Absent (tests that do not need it): none. */
+  readMissionExclusion?: ReadMissionExclusion;
 }
 
 /** The two answers of the reduced-scope card (UNIFIED CAPABILITY DISCOVERY): the customer chooses, nothing is planned or held before. */
@@ -716,6 +720,8 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
       // a later planning of a mission whose earlier plan was made through discovery (the switch was turned off since): this plan has no record, and the anchor says so (only a re-planning reads the folder; a first planning has no anchor)
       try { if ((await capabilityAnchorOf(store, mission.id)).required) await writeCapabilityAnchor(store, mission.id, null); } catch (e) { deps.log?.(`capability_anchor_not_cleared ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 80)}`); }
     }
+    // PHASE 5.3: the customer's exclusion list (switch ON for the account and a list on the card only; otherwise the same plan object): copied to the private folder and pinned on the plan before it is shown
+    plan = await withCustomerExclusion({ plan, mission, store, settings, read: deps.readMissionExclusion });
     await store.updateMission(mission.id, { ...base, status: "plan_ready", plan: plan as any, plan_public: publicPlanOf(plan) as any, unit_price_points: plan.price.unitPricePoints, reserved_points: plan.price.reservePoints });
     await store.addEvent(mission.id, { kind: "plan", message_ar: plan.summary_ar, counts: { stages: plan.stages.length, rows: plan.price.deliveredRows, unit_points_x1000: Math.round(plan.price.unitPricePoints * 1000), reserve_points: plan.price.reservePoints } });
     deps.log?.(`plan_ready ${mission.id} ${JSON.stringify(customerPlanView(plan).price)}`);
@@ -780,6 +786,18 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
     await settleExecution(deps, mission, plan, reserve, unit, { llm: Number(mission.execution_llm_usd ?? 0), executionTregUsd: Number(mission.execution_treg_usd ?? 0), summary: null, outputError: `admin: approved_scope_changed ${scope.issues.slice(0, 6).join(",")}`.slice(0, 300) });
     return;
   }
+  // PHASE 5.3: a plan approved WITH the customer's exclusion list never runs without exactly that list (whatever the switch says now): a missing or altered copy stops here, nothing is called, and the hold is released
+  // whole by the existing settlement
+  let exclusion: ExclusionMatcher | undefined;
+  if (plan.customer_exclusion?.applies) {
+    const loaded = await loadApprovedExclusion(store, mission.id, plan.customer_exclusion);
+    if (!loaded) {
+      await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: تعذّر تحميل ملف الاستبعاد المعتمد، فلم يُنفَّذ شيء.", counts: { adm_flag: 1 } }).catch(() => undefined);
+      await settleExecution(deps, mission, plan, reserve, unit, { llm: Number(mission.execution_llm_usd ?? 0), executionTregUsd: Number(mission.execution_treg_usd ?? 0), summary: null, outputError: "admin: customer_exclusion_unavailable" });
+      return;
+    }
+    exclusion = loaded;
+  }
   await store.updateMission(mission.id, { execution_model: model, error: null });
   await store.addEvent(mission.id, { kind: "system", message_ar: "اعتُمدت الخطة وبدأ الوكيل التنفيذ." });
   const calls = await store.listCalls(mission.id);
@@ -796,7 +814,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   const reviewBefore = await readReviewState(store, mission.id);
   // THE ONE ITEM STORE: every item the engine or the model saves goes through it; a resumed mission continues from its log
   const items = await ItemStore.open(store, mission.id, { legacyStages: plan.stages.map((s) => s.key) });
-  const ctx: ToolContext = { phase: "execution", mission, plan, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, review: reviewer, items };
+  const ctx: ToolContext = { phase: "execution", mission, plan, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, review: reviewer, items, ...(exclusion ? { exclusion } : {}) };
   const savedBefore = Object.fromEntries(plan.stages.map((s) => [s.key, items.counts(s.key).accepted]));
   const llmBudget = Math.max(AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD, holdValueUsd(reserve, AGENT_PRICING_BASIS) * AGENT_EXECUTION_LLM_BUDGET_SHARE);
   const baseLlm = Number((await store.getMission(mission.id))?.execution_llm_usd ?? mission.execution_llm_usd ?? 0);
@@ -832,7 +850,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
     // THE MODEL PLANNED, CODE EXECUTES: every stage has a recipe the plan check proved, so no model session is started at all (the only model call left is the small review of items the rule cannot decide)
     const tracked = trackRun(mission.id);
     try {
-      const outcome = await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: mission.id, gateway, sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: live ? (e) => live.addEvent(e, () => store.addEvent(mission.id, e)) : (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, ...(redesignStages.size > 0 ? { redesignStages } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}), log: deps.log, ...(sources ? { sources, provenance: true } : {}), ...(engineStages ? { onlyStages: engineStages } : {}) });
+      const outcome = await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: mission.id, gateway, ...(exclusion ? { exclusion } : {}), sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: live ? (e) => live.addEvent(e, () => store.addEvent(mission.id, e)) : (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, ...(redesignStages.size > 0 ? { redesignStages } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}), log: deps.log, ...(sources ? { sources, provenance: true } : {}), ...(engineStages ? { onlyStages: engineStages } : {}) });
       output = { llmCostUsd: 0, turns: 0, stop: outcome.aborted ?? "end" };
     } finally {
       untrackRun(tracked);

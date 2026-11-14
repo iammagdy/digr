@@ -1,4 +1,5 @@
 import { deliveryCompletenessLineAr } from "../../src/lib/agentMission/foundation/discovery/plan";
+import { EXCLUSION_POSSIBLE_MARK, exclusionMethodologyAr, exclusionPossibleLineAr } from "../../src/lib/agentMission/customerExclusion";
 import type { PricedPlan, PricedStage } from "../../src/lib/agentMission/plan";
 import type { ItemSnapshot, StopReason } from "./items/itemStore";
 import { cairoText, dateOnlyText, isDateValues, parseDateOnly, parseMoment } from "../../src/lib/agentMission/dateCells";
@@ -312,6 +313,8 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
   const dedupe = perStage((s) => { const r = facts.stages?.[s.key]; return r ? (r.duplicates > 0 ? `أُزيل ${fmt(r.duplicates)} من النتائج المكررة` : "لم يظهر تكرار") : null; });
   items.push({ label: "المرشّحات المطبّقة", values: filterLines.length ? filterLines : ["لا مرشّحات في خطتك المعتمدة"] });
   items.push({ label: "إزالة المكرر", values: orNotRecorded(dedupe) });
+  // PHASE 5.3: the customer's exclusion list the plan was approved with (only when it applied to a stage of the plan: a mark that did not apply says nothing here, the card already said so)
+  if (plan.customer_exclusion?.applies) items.push({ label: "ملف الاستبعاد", values: [exclusionMethodologyAr(plan.customer_exclusion.entities)] });
 
   // 6. how relevance was checked
   const relevance = perStage((s) => {
@@ -391,6 +394,12 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
     const mine = rowsByStage[s.key] ?? [];
     const unread = mine.filter((r) => dateUnreadColumnsOf(r).length > 0).length;
     if (unread > 0) limits.push(`${many ? `«${s.title_ar}»: ` : ""}${fmt(unread)} من ${fmt(mine.length)} سُلّمت بلا تاريخ، لأن المصدر ذكر وقت النشر بنص لم نستطع تحويله إلى تاريخ، فتُرك الحقل فارغًا.`);
+  }
+  // PHASE 5.3: rows delivered although they RESEMBLE a listed company (a shared brand word only, never a certain match): their number is said, never hidden
+  if (plan.customer_exclusion?.applies) for (const s of delivering) {
+    const mine = rowsByStage[s.key] ?? [];
+    const possible = mine.filter((r) => r[EXCLUSION_POSSIBLE_MARK] === true).length;
+    if (possible > 0) limits.push(`${many ? `«${s.title_ar}»: ` : ""}${exclusionPossibleLineAr(possible, mine.length)}`);
   }
   // DECISION MAKERS: a people stage that prefers the decision makers says when people who are not fill the count (the titles of the delivered rows; a title the source did not give is not judged)
   for (const s of delivering) {

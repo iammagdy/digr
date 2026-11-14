@@ -258,6 +258,11 @@ export interface PricedPlan {
    * its price. Execution checks the stored approved plan against it before any call. Internal; never shown to the customer. Absent: the switch was off.
    */
   capability_selection?: import("./capabilities/selection").CapabilitySelection;
+  /**
+   * PHASE 5.3 (`customer_exclusion_files_v1` only): the customer's exclusion list this plan was approved with: its digest, its size and whether any stage can be checked against it. The list itself is in the mission's private
+   * folder (customerExclusion.ts EXCLUSION_SNAPSHOT_PATH), never in the plan. Execution refuses to run a plan whose list cannot be loaded with this digest. Internal; the card shows only its sentence (`notes_ar`). Absent: no list.
+   */
+  customer_exclusion?: import("./customerExclusion").PlanExclusionMark;
 }
 
 export interface CompiledMark {

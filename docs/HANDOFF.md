@@ -18,7 +18,17 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 > * **Deployed**: running in production and verified.
 > * **Not independently verified**: none of the above can be shown.
 
-### Stale verification jobs (14 Nov 2026): cleanup prepared, NOT run (owner approval needed)
+### Phase 5.3 and Phase 6 campaign (14 Nov 2026)
+
+* **Report:** `docs/intelligence/PHASE-5-3-AND-6.md` (status table, deployment discipline, the exclusion-file change, the enrichment blocker and proposal, the provider sync).
+* **Baseline verified before any change:** `main` = `8c30294` (PR #494); Vercel production `dpl_ETmFhPpr7bWBWQmqzGLegDqMtg3W` READY on it; Heroku v202, worker heartbeat `8c30294`, `active_missions 0`; `agent_settings` = `redesign_flags`, `social_discovery`; ledger 1,247 rows.
+* **PR A (Phase 5.3-A):** exclusion files reach the mission and are applied at the one item boundary, behind `customer_exclusion_files_v1` (OFF, set by nothing). While OFF, a conversation with an uploaded file is told plainly that the file is NOT applied (the documented wording exception).
+* **Phase 5.3-B (enrichment files): stopped for owner approval.** It needs a new quote model and a new settlement rule (report §B.2); the smallest proposal is in §B.3. An enrichment request is never applied as an exclusion list, and the customer is told it is not supported.
+* **Deployment discipline (mandatory):** one push per focused PR, one preview, one production deployment, one Heroku release; everything (tests, typechecks, build, secret scan, mutation checks, docs) is finished locally first. Details: report «Deployment discipline».
+
+### Stale verification jobs (14 Nov 2026): CLOSED
+
+* **Closed.** Re-checked read-only on 14 Nov 2026 (twice, the second time at the start of the resumed campaign): `jobs` has no queued or running row (completed 291, failed 152, refused 2). This campaign did not run the cleanup and cannot say who did; the history below is kept.
 
 * **Document:** `docs/ops/STALE-TEST-JOBS-CLEANUP.md`, the read-only findings and the guarded procedure, to be run by an authorized agent only after explicit owner approval.
 * **What they are:**
@@ -28,7 +38,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
   * the 36 `reserved_credits` were written by the fixtures and never debited, so they are not holds;
   * the two `provider_costs` rows ($0.60) are hard-coded commits from `verify-spend-cap.ts` into the daily-cap accounting; no provider was called.
 * **Why they never close:** `release_job_atomic` refuses all nine, correctly. Meanwhile the per-minute stall notifier retries them: 18 requests a minute, measured at about 1,080 an hour.
-* **Code fix (PR, not merged):** one batch check in `notifyStalledJobs` skips jobs whose stalled notice already exists, with the same outcome.
+* **Code fix: PR #494, merged `8c30294`:** one batch check in `notifyStalledJobs` skips jobs whose stalled notice already exists, with the same outcome.
 * **Cleanup:** sets `status` to `failed`, `lease_until` to `NULL` and a fixed `error_message` on exactly these nine.
   * Guarded, including no active lease and a count of exactly 9.
   * No ledger row, no delete.
@@ -42,7 +52,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
   * Only 2 accounts used the product in 30 days, so the always-on work dominates:
     * admin screens polled every 3–60 s forever, in background tabs too;
     * the database driver calls `/api/cron/drive` every minute unconditionally (1,440 a day, for its heartbeat).
-* **Fix PR (CPU):**
+* **Fix: PR #493, merged `7d9bcad`:**
   * admin screens ask only while visible;
   * an ended mission is refreshed once a minute in the admin console;
   * static files skip the middleware.
@@ -105,7 +115,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 | #483 | Phase 2, provider readiness | `fb26563`. Vercel `dpl_Cnr2y99XB8Ao5zvy9ynR8HEioWEL` READY; heartbeat `fb26563` |
 | #484 | Phase 3, registry | `cc81502`. Vercel `dpl_FGvB7oLLntbtUU2QEEajqXyW59mc` READY; heartbeat `cc81502` |
 | #485 | Phase 4, router | `df1c534` |
-| PR D | families + cross-phase acceptance | see the PR |
+| #486 | PR D: families + cross-phase acceptance | `e0ebe47` |
 
 * **Switches, all OFF and set by nothing:**
   * `web_via_treg`: company enrichment through TREG;
@@ -176,7 +186,8 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ### Production (deployed) as last verified
 
-* **Last code change:** **`7d30ec8`** (merge of PR #479, round 61 offline spend gate; parents `adb22f8` + reviewed head `61338a2`, tree identical to the reviewed head). Later documentation-only merges (PR #480) move `main` without changing code; check `git log origin/main` for the tip.
+* **Latest verified baseline (14 Nov 2026):** `8c30294` (merge of PR #494). Vercel production `dpl_ETmFhPpr7bWBWQmqzGLegDqMtg3W` READY on it; Heroku release v202 «Deploy 8c302942»; worker heartbeat `8c30294`, `active_missions 0`. The campaign PRs that follow record their own production results in `docs/intelligence/PHASE-5-3-AND-6.md`.
+* **Historical (13 Nov 2026), no longer the latest:** **`7d30ec8`** (merge of PR #479, round 61 offline spend gate; parents `adb22f8` + reviewed head `61338a2`, tree identical to the reviewed head). Later documentation-only merges (PR #480) move `main` without changing code; check `git log origin/main` for the tip.
 * **Verified on 13 Nov 2026 after the merge:**
   * Vercel production deployment `dpl_FM1Ej2fSqeY1hgLwuTYtDTQu4th7` READY on `7d30ec8`.
   * Heroku release v188 «Deploy 7d30ec85»; `worker.1` up on v188; heartbeat `version 7d30ec8`, `active_missions 0`.
