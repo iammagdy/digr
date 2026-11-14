@@ -1,6 +1,6 @@
 # Stale verification jobs: findings and cleanup proposal (14 Nov 2026)
 
-**Status: proposal only. Nothing in production was changed.** Every number below comes from a read-only query on 14 Nov 2026. The cleanup in §5 needs the owner's explicit approval and is run by the owner.
+**Status: proposal only. Nothing in production was changed.** Every number below comes from a read-only query on 14 Nov 2026. The cleanup in §5 may be performed only by an authorized agent, and only after the owner's explicit approval.
 
 ## 1. The nine jobs
 
@@ -68,14 +68,19 @@
    - **Result:** 18 requests a tick, about 1,080 an hour (measured in the Supabase API logs: `stall_notices` ≈ 1,075–1,099 an hour), about 26,000 a day. No duplicate notice and no e-mail is sent.
 3. **The drive itself does not touch them.** Its dispatch query only considers jobs updated within the last 25 minutes.
 
-## 5. The smallest safe cleanup (owner-run, after approval)
+## 5. The smallest safe cleanup (run by an authorized agent, only after explicit owner approval)
 
-**Operation.** A status-only change from `queued`/`running` to `failed` on exactly these nine rows, guarded so that it changes nothing else. Nothing is deleted, no ledger row is written and no RPC is called.
+**Operation.** On exactly these nine rows it changes three columns and nothing else:
+- `status`: `queued`/`running` → `failed`;
+- `lease_until`: → `NULL` (the two `claim_parallel` rows hold leases that expired on 12 Oct; the other seven are already `NULL`);
+- `error_message`: `NULL` → a fixed explanation.
+
+Nothing is deleted, no ledger row is written and no RPC is called. It stops without changing anything if any of the nine holds an **active** lease (`lease_until` in the future).
 - `updated_at` is deliberately left unchanged, so the admin Operations panel does not report "9 jobs failed in the last 24 hours (points returned)", which would be false: no points move.
 - The `chk_jobs_status` constraint allows `failed`.
 
 ```sql
--- Run once, as the owner, in the Supabase SQL editor. All or nothing.
+-- Run once, by an authorized agent, ONLY after the owner's explicit approval (Supabase SQL editor or an approved write connection). All or nothing.
 DO $$
 DECLARE
   v_ids text[] := ARRAY[
@@ -92,6 +97,9 @@ DECLARE
   v_count int;
 BEGIN
   -- every guard must hold, or nothing changes
+  IF EXISTS (SELECT 1 FROM public.jobs WHERE id = ANY (v_ids) AND lease_until IS NOT NULL AND lease_until > now()) THEN
+    RAISE EXCEPTION 'an active lease is held on one of these jobs: stop';
+  END IF;
   IF EXISTS (SELECT 1 FROM public.credit_ledger WHERE job_id = ANY (v_ids)
              OR id = ANY (SELECT p || i FROM unnest(v_ids) i, unnest(ARRAY['res_','rel_','chg_']) p)) THEN
     RAISE EXCEPTION 'ledger rows exist for these jobs: stop';
@@ -100,13 +108,14 @@ BEGIN
   UPDATE public.jobs
      SET status = 'failed',
          lease_until = NULL,
-         error_message = 'Verification fixture (12 Oct 2026) closed by owner cleanup; no credits were reserved, charged or released.'
+         error_message = 'Verification fixture (12 Oct 2026) closed by an owner-approved cleanup; no credits were reserved, charged or released.'
    WHERE id = ANY (v_ids)
      AND user_id = '00000000-0000-0000-0000-000000000001'
      AND status IN ('queued', 'running')
      AND COALESCE(charged_credits, 0) = 0
      AND COALESCE(delivered_units, 0) = 0
      AND result_file_id IS NULL
+     AND (lease_until IS NULL OR lease_until <= now())
      AND updated_at < '2026-10-13T00:00:00Z';
   GET DIAGNOSTICS v_count = ROW_COUNT;
 
@@ -146,7 +155,11 @@ The next minute's tick should show no more notification requests. In the Supabas
 **Rollback.** The old values are in the "Before" output. A rollback sets `status` back (7 `queued`, 2 `running`) and restores the two expired `lease_until` values and a NULL `error_message`. Nothing else was touched.
 
 **Risks:**
-- **The updated rows are only these nine.** The id list, the user, the status, zero charge, zero delivery, no file and the October date guard all have to match, and the count must be exactly 9, or nothing changes.
+- **The updated rows are only these nine.** Every guard has to match, or nothing changes:
+  - the id list and the user;
+  - the status, zero charge, zero delivery and no file;
+  - no active lease and the October date;
+  - a count of exactly 9.
 - **No money or schema changes:** no ledger row, no balance change, no provider call, no migration, no schedule change.
 - **What changes for the test user:** its history shows nine more failed jobs. They are only visible to that synthetic account.
 - **Later watchdog runs skip them,** because they are no longer queued or running.

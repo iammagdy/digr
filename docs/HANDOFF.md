@@ -20,7 +20,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ### Stale verification jobs (14 Nov 2026): cleanup prepared, NOT run (owner approval needed)
 
-* **Document:** `docs/ops/STALE-TEST-JOBS-CLEANUP.md`, the read-only findings and the guarded owner-run procedure.
+* **Document:** `docs/ops/STALE-TEST-JOBS-CLEANUP.md`, the read-only findings and the guarded procedure, to be run by an authorized agent only after explicit owner approval.
 * **What they are:**
   * nine `vrun_` fixture jobs from 12 Oct, on the synthetic test user `…0001` (`digr.local`, never signed in);
   * 7 queued and 2 running, nothing charged or delivered, no ledger rows.
@@ -29,7 +29,10 @@ This handoff document provides a clear, factual status of the Diger platform (`i
   * the two `provider_costs` rows ($0.60) are hard-coded commits from `verify-spend-cap.ts` into the daily-cap accounting; no provider was called.
 * **Why they never close:** `release_job_atomic` refuses all nine, correctly. Meanwhile the per-minute stall notifier retries them: 18 requests a minute, measured at about 1,080 an hour.
 * **Code fix (PR, not merged):** one batch check in `notifyStalledJobs` skips jobs whose stalled notice already exists, with the same outcome.
-* **Cleanup:** a status-only change to `failed` for exactly these nine (guarded; no ledger, no delete); not run.
+* **Cleanup:** sets `status` to `failed`, `lease_until` to `NULL` and a fixed `error_message` on exactly these nine.
+  * Guarded, including no active lease and a count of exactly 9.
+  * No ledger row, no delete.
+  * Not run.
 
 ### Vercel Active CPU (14 Nov 2026): block lifted; admin polling fixed in its own PR
 
