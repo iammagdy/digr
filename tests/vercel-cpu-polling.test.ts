@@ -4,7 +4,10 @@ import { startVisiblePolling, type VisibilityDoc } from "../src/lib/visiblePolli
 import { ADMIN_DETAIL_ENDED_POLL_MS, ADMIN_DETAIL_POLL_MS, ADMIN_ENDED_STATUSES, ADMIN_OVERVIEW_POLL_MS, adminDetailDelayMs } from "../src/lib/agentMission/adminPolling";
 import { MISSION_STATUSES, MISSION_TERMINAL } from "../src/lib/agentMission/constants";
 import { config as middlewareConfig } from "../src/middleware";
-import { getMiddlewareMatchers } from "next/dist/build/analysis/get-page-static-info";
+import * as pageStaticInfo from "next/dist/build/analysis/get-page-static-info";
+
+/** Next's own matcher compiler (the build calls it on `config.matcher`); exported at runtime but not in its type declarations. */
+const getMiddlewareMatchers = (pageStaticInfo as unknown as { getMiddlewareMatchers: (matchers: unknown, nextConfig: unknown) => Array<{ regexp: string }> }).getMiddlewareMatchers;
 
 /** VERCEL ACTIVE CPU (docs/ops/VERCEL-CPU.md): a background admin tab asks the server nothing; what a visible tab reads is unchanged. */
 function fakeDoc(state: "visible" | "hidden" = "visible") {
@@ -143,8 +146,13 @@ describe("the admin console's refresh", () => {
 });
 
 describe("the middleware matcher (compiled by Next itself: getMiddlewareMatchers, the same function the build uses)", () => {
-  const compiled = getMiddlewareMatchers(middlewareConfig.matcher, {} as any).map((m: { regexp: string }) => new RegExp(m.regexp));
+  const compiled = getMiddlewareMatchers(middlewareConfig.matcher, {}).map((m) => new RegExp(m.regexp));
   const runs = (path: string) => compiled.some((re: RegExp) => re.test(path));
+
+  it("the compiler is Next's real one (one compiled matcher per source)", () => {
+    expect(typeof getMiddlewareMatchers).toBe("function");
+    expect(compiled).toHaveLength(middlewareConfig.matcher.length);
+  });
 
   it("1. the PUBLIC sample spreadsheets skip it", () => {
     for (const p of ["/samples/diger-sample-companies.xlsx", "/samples/diger-sample-comments.xlsx", "/samples/diger-sample-decision-makers.xlsx"]) expect(runs(p), p).toBe(false);
