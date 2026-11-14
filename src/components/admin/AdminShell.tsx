@@ -7,6 +7,7 @@ import { Logo } from "@/components/Brand";
 import { useUser } from "@/hooks/useUser";
 import { useTheme } from "@/lib/theme";
 import { adminFetch } from "@/lib/adminApi";
+import { startVisiblePolling } from "@/lib/visiblePolling";
 import { formatAr, toArabicDigits } from "@/lib/arabicDigits";
 import { ADMIN_IC, ADMIN_PAGES, AIcon, adminHref, type AdminPageId } from "./icons";
 import { EGP, agoAr, initials, tint } from "./format";
@@ -112,7 +113,8 @@ export function AdminShell({ children }: { children: ReactNode }) {
     adminFetch<AdminAlerts>("/api/admin/alerts").then(setAlerts).catch(() => {});
     adminFetch<ProviderStatus>("/api/admin/providers?refresh=true").then(setProviders).catch(() => {});
   }, []);
-  useEffect(() => { refresh(); const t = setInterval(refresh, 60000); return () => clearInterval(t); }, [refresh]);
+  // VERCEL ACTIVE CPU: every minute while the tab is visible, at once when it becomes visible again; a background admin tab asks nothing (visiblePolling.ts)
+  useEffect(() => { refresh(); return startVisiblePolling(refresh, 60000); }, [refresh]);
 
   // One «تسجيل دخول» audit entry per browser session.
   useEffect(() => {

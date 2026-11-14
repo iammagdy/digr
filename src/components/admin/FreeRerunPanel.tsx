@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { adminFetch } from "@/lib/adminApi";
+import { startVisiblePolling } from "@/lib/visiblePolling";
 import { formatAr } from "@/lib/arabicDigits";
 import { dateTimeAr } from "./format";
 
@@ -40,8 +41,8 @@ export function FreeRerunPanel({ userId }: { userId: string }) {
   // while a re-run is being planned or carried out, the list follows it
   useEffect(() => {
     if (!open || !data?.reruns.some((r) => ACTIVE.has(r.status))) return;
-    const t = setInterval(() => { void load(); }, 8000);
-    return () => clearInterval(t);
+    // VERCEL ACTIVE CPU: only while the tab is visible (visiblePolling.ts)
+    return startVisiblePolling(() => { void load(); }, 8000);
   }, [open, data, load]);
 
   const act = async (key: string, body: Record<string, unknown>, confirmAr?: string) => {

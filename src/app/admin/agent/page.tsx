@@ -8,11 +8,11 @@ import { countsLineAr, internalCountsLineAr } from "@/lib/agentMission/eventText
 import { RedesignFlagsSection, createFlagController, type FlagBody, type FlagKey, type FlagMode } from "@/components/admin/RedesignFlagsSection";
 import { AcceptancePanel } from "@/components/admin/AcceptancePanel";
 import type { PlatformFlags, RedesignFlags } from "@/lib/agentMission/redesignFlagTypes";
+import { startVisiblePolling } from "@/lib/visiblePolling";
+import { ADMIN_OVERVIEW_POLL_MS, adminDetailDelayMs } from "@/lib/agentMission/adminPolling";
 
 const SECTION = "flex flex-col gap-3 rounded-[18px] border border-ln bg-bg p-4";
 const BTN = "hit min-h-11 cursor-pointer rounded-xl border border-ln2 bg-sf px-4 text-sm font-semibold text-ink disabled:opacity-50";
-const POLL_MS = 3000;
-const OVERVIEW_POLL_MS = 10000;
 
 interface WorkerMemory { rssMb: number; treeRssMb: number | null; limitMb: number; warn: boolean }
 interface WorkerState { alive: boolean; ageSeconds: number | null; lastBeatAt: string | null; workers: Array<{ worker_id: string; active_missions: number; model: string | null; version: string | null }>; memory: WorkerMemory | null }
@@ -61,6 +61,8 @@ export default function AgentPage() {
   const [events, setEvents] = useState<EventRow[]>([]);
   const [answer, setAnswer] = useState("");
   const lastEvent = useRef(0);
+  /** the selected mission's last read status: an ended mission is refreshed once a minute instead of every 3 seconds (adminPolling.ts) */
+  const detailStatus = useRef<string | null>(null);
   // PR 1 of docs/FOUNDATION-PLAN.md: the stored raw pages and delivered rows of chosen missions, as one ZIP for the owner's own device
   const [rawIds, setRawIds] = useState("");
   const [rawBusy, setRawBusy] = useState(false);
@@ -78,12 +80,14 @@ export default function AgentPage() {
     try { setOverview(await adminFetch<Overview>("/api/admin/agent")); } catch (e) { toast(e instanceof Error ? e.message : "تعذّر التحميل"); }
   }, [toast]);
 
-  useEffect(() => { void loadOverview(); const t = setInterval(() => { void loadOverview(); }, OVERVIEW_POLL_MS); return () => clearInterval(t); }, [loadOverview]);
+  // VERCEL ACTIVE CPU: refreshed only while the tab is visible, and at once when it becomes visible again (visiblePolling.ts)
+  useEffect(() => { void loadOverview(); return startVisiblePolling(() => { void loadOverview(); }, ADMIN_OVERVIEW_POLL_MS); }, [loadOverview]);
 
   const loadDetail = useCallback(async (id: string, reset: boolean) => {
     try {
       const d = await adminFetch<Detail>(`/api/admin/agent/${id}?after=${reset ? 0 : lastEvent.current}`);
       setDetail(d);
+      detailStatus.current = d.mission?.status ?? null;
       setEvents((prev) => {
         const base = reset ? [] : prev;
         const merged = [...base, ...d.events.filter((e) => !base.some((b) => b.id === e.id))];
@@ -96,9 +100,9 @@ export default function AgentPage() {
   useEffect(() => {
     if (!selected) return;
     lastEvent.current = 0;
+    detailStatus.current = null;
     void loadDetail(selected, true);
-    const t = setInterval(() => { void loadDetail(selected, false); }, POLL_MS);
-    return () => clearInterval(t);
+    return startVisiblePolling(() => { void loadDetail(selected, false); }, () => adminDetailDelayMs(detailStatus.current));
   }, [selected, loadDetail]);
 
   async function create() {
