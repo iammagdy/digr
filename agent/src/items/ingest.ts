@@ -48,6 +48,8 @@ export interface IngestOptions {
   /** A stage whose customer named SEVERAL sources: every item is marked with the named source it belongs to (read from `fields`), and no source takes more than `perValue` items (an item beyond it is kept, never delivered, like a match beyond the volume bought). */
   /** RAW DELIVERY (S1 item 1.1): the stage runs in the redesigned mode (its flag is active and its request was built by code). Only the same id, an unknown parent, the volume bought and a named source's share remove an item; every content rule becomes a mark on the row. Ignored for a people or company stage. Absent: the old checks. */
   raw?: boolean;
+  /** PHASE 5 (`multi_stage_engine`, OFF): the source endpoint and the recorded call that gave this batch, written on every saved row as `_src` / `_call` (internal marks: never a column of the file, never part of an item's id). Absent: no mark. */
+  provenance?: { src: string; call: string | null };
   sourceQuota?: { fields: string[]; values: string[]; perValue: number; /** The stream reads ONE named source's own listing: an item that names no author belongs to it (and its author cell, when empty, says so). */ defaultSource?: string };
 }
 
@@ -147,6 +149,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     for (const k of columnKeys) if (k !== "id" && k !== "parent_id") row[k] = raw[k] ?? "";
     // the tokens the stage's replies tool needs from the item's own row (rule 6 of the consolidation): kept on the stored row, never a column of the file
     for (const k of stage.carry_keys ?? []) if (raw[k] !== undefined && raw[k] !== null && raw[k] !== "" && !(k in row)) row[k] = raw[k];
+    if (options.provenance) { row._src = options.provenance.src; if (options.provenance.call) row._call = options.provenance.call; }
     // THE PLACE CELLS in Arabic («al qahirah» → «القاهرة»); never empty when the card promised the place
     if (!isChild) placeCellsAr(row, stage.columns, raw, promisedPlace);
     // WHAT THE CARD PROMISES, checked here on the mapped item (replies, language, period, account, place): an item a filter rejects is neither delivered nor charged, and is kept with its reason

@@ -21,6 +21,7 @@ import type { Reviewer } from "../review";
 import type { SandboxResult } from "../sandbox";
 import type { AgentStore, MissionEventInput } from "../types";
 import { withCairoPeriod } from "../periodRequest";
+import type { SourceGateway } from "./sourceGateway";
 
 type Stage = PricedPlan["stages"][number];
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -59,6 +60,14 @@ export interface EngineDeps {
   /** The pause before the one delayed review retry (default AGENT_REVIEW_RETRY_DELAY_MS); tests pass a fake that does not wait. */
   sleep?: (ms: number) => Promise<void>;
   log?: (line: string) => void;
+  /**
+   * PHASE 5, switch `multi_stage_engine` (OFF). `sources`: every page is asked through the provider-neutral SourceGateway (engine/sourceGateway.ts: the stage's stored scope, then the TREG or the web gateway) instead of
+   * `gateway.tregCall`. `onlyStages`: the engine carries out these stages only (per-stage dispatch; the others are left to the model path). `provenance`: each saved row carries `_src` (endpoint) and `_call` (call id), internal
+   * marks the file never shows. All three absent: the engine is exactly what it was.
+   */
+  sources?: SourceGateway;
+  onlyStages?: ReadonlySet<string>;
+  provenance?: boolean;
 }
 
 export interface EngineOutcome {
@@ -80,6 +89,7 @@ export async function runEngine(deps: EngineDeps): Promise<EngineOutcome> {
   const { items, plan } = deps;
   const stops: Record<string, StopReason> = {};
   for (const stage of plan.stages) {
+    if (deps.onlyStages && !deps.onlyStages.has(stage.key)) continue;
     const spec = stage.engine;
     if (!spec) throw new Error(`stage ${stage.key} has no engine recipe`);
     const outcome = await runStage(deps, stage, spec);
@@ -545,7 +555,7 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     const pageMode = spec.cursor_param === "page" && Number.isFinite(Number(params.page));
     const cursor = state?.cursor ?? null;
     const callParams = cursor && spec.cursor_param ? { ...params, [spec.cursor_param]: pageMode ? Number(cursor) : cursor } : params;
-    const result = await gateway.tregCall({ endpoint_id: spec.endpoint_id, params: callParams });
+    const result = deps.sources ? await deps.sources.call({ stageKey: stage.key, endpoint_id: spec.endpoint_id, params: callParams }) : await gateway.tregCall({ endpoint_id: spec.endpoint_id, params: callParams });
     if (!result.ok) {
       if ("refused" in result) return { reason: refusalStop(result.refused), aborted: null };
       // A PARENT THE SOURCE DOES NOT KNOW (live: aviato.companies.employees answered 404 «Not Found» for 14 of 23 companies, each asked twice by the same input, and three such companies in a row ended the stage with 20 companies never asked): a client error
@@ -581,7 +591,7 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     // a parent's share (per_parent_rows) is a cap on what this page may add for it
     const have = parentId !== null ? items.acceptedRows(stage.key).filter((r) => String(r.parent_id) === parentId).length : 0;
     const oldestMs = periodField !== null ? oldestMomentOf(incoming, periodField) : null;
-    await ingestRows(deps, stage, incoming, { silent: true, idField: spec.id_field ?? null, ...(deps.redesignStages?.has(stage.key) ? { raw: true } : {}), ...(parentId !== null && Number.isFinite(perParentCap) ? { acceptCap: Math.max(0, perParentCap - have) } : {}), ...(source ? { sourceQuota: { fields: source.fields, values: source.values, perValue: source.perValue, ...(source.listing && source.names.length === 1 ? { defaultSource: source.names[0] } : {}) } } : {}), page: { stream: streamKey, call_id: result.call_id, cursor_in: cursor, cursor_next: nextCursor, has_more: result.has_more, ended, rows_in_page: result.rows_in_page, ...(oldestMs !== null ? { oldest_ms: oldestMs } : {}) } });
+    await ingestRows(deps, stage, incoming, { silent: true, idField: spec.id_field ?? null, ...(deps.redesignStages?.has(stage.key) ? { raw: true } : {}), ...(parentId !== null && Number.isFinite(perParentCap) ? { acceptCap: Math.max(0, perParentCap - have) } : {}), ...(source ? { sourceQuota: { fields: source.fields, values: source.values, perValue: source.perValue, ...(source.listing && source.names.length === 1 ? { defaultSource: source.names[0] } : {}) } } : {}), page: { stream: streamKey, call_id: result.call_id, cursor_in: cursor, cursor_next: nextCursor, has_more: result.has_more, ended, rows_in_page: result.rows_in_page, ...(oldestMs !== null ? { oldest_ms: oldestMs } : {}) }, ...(deps.provenance ? { provenance: { src: spec.endpoint_id, call: result.call_id } } : {}) });
     // EVERY REPLY, WITHOUT A PAID PAGE FOR NOTHING (live finding C): the replies of a comment read to the end have the comment's own counter as their signal (a real page keeps a next-page value after its last row). When the replies read have reached the counter, the page was
     // not a full one (fewer rows than a call usually gives) and the counter was not exceeded, the comment is done; a counter that was understated shows itself (more rows than it said, or a full page), and the read goes on to the source's end
     if (counterStop !== null && parentId !== null && counterStop > 0) {
