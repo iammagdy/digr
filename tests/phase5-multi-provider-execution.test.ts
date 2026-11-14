@@ -4,7 +4,8 @@ import { createMemoryStore } from "../agent/src/memoryStore";
 import { ItemStore } from "../agent/src/items/itemStore";
 import { runEngine } from "../agent/src/engine/run";
 import { RAW_PATH, type Gateway } from "../agent/src/gateway";
-import { createSourceGateway, isDirectWebSource, providerOf, stageDispatchOf, stageScopeOf, webRequestOf } from "../agent/src/engine/sourceGateway";
+import { createSourceGateway, isDirectWebSource, providerOf, stageDispatchOf, stageScopeOf, verifiedCallMaxUsdOf, webRequestOf } from "../agent/src/engine/sourceGateway";
+import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { createJobCallBudget } from "../src/lib/server/callBudget";
 import { MULTI_STAGE_ENGINE_FLAG_KEY, readMultiStageEngineFlag } from "../src/lib/agentMission/capabilities";
 import type { PricedPlan } from "../src/lib/agentMission/plan";
@@ -15,6 +16,7 @@ import type { PricedPlan } from "../src/lib/agentMission/plan";
  * dependency (a web stage fed by a TREG stage's saved rows), the provenance marks, failures and refusals, per-stage dispatch, and that nothing changes with the switch off.
  */
 const MISSION = "msn_p5";
+const catalog: any = loadTregCatalog();
 const U1 = "11111111-1111-4111-8111-111111111111";
 const U2 = "22222222-2222-4222-8222-222222222222";
 const stage = (over: Record<string, unknown>) => ({ expected_rows: 1, planned_rows: 1, parent_key: null, deliver: true, sample_rows: [], measured_by: [], measured_from_calls: [], measured_cost_per_row_usd: 0.0005, ...over }) as any;
@@ -108,16 +110,29 @@ describe("Phase 5: the SourceGateway keeps every stage inside its stored scope",
     expect(w.treg).toHaveLength(0);
   });
 
-  it("a stage cap (when the plan carries one) stops that stage's calls once its own spend reaches it; other stages are unaffected", async () => {
+  // CHANGED (Phase 5 final safety gate, stricter): this test used to let two 0.0008 web calls through a 0.001 cap (0.0016 spent: the cap was checked only after the spend). A capped stage now checks each call's VERIFIED maximum
+  // BEFORE the request; a direct web source has no maximum the provider enforces, so a capped web stage makes no call at all. The full boundary is proven in tests/phase5-stage-cap.test.ts.
+  it("a stage cap (when the plan carries one) is checked before each call with the call's verified maximum: a capped web stage makes no call; a capped TREG stage stops before its cap; other stages are unaffected", async () => {
     const w = world();
     const plan = chainPlan();
     (plan.stages[1] as any).max_usd = 0.001;
-    const sg = createSourceGateway({ gateway: w.gateway, web: w.web, scope: stageScopeOf(plan), budget: w.budget });
-    expect((await sg.call({ stageKey: "contacts", endpoint_id: "contextdev.parse.emails", params: { url: "https://a.example" } })).ok).toBe(true);
-    expect((await sg.call({ stageKey: "contacts", endpoint_id: "contextdev.parse.emails", params: { url: "https://b.example" } })).ok).toBe(true);
-    expect(await sg.call({ stageKey: "contacts", endpoint_id: "contextdev.parse.emails", params: { url: "https://c.example" } })).toMatchObject({ ok: false, refused: "stage_cap" });
-    expect(w.webCalls).toHaveLength(2);
+    const sg = createSourceGateway({ gateway: w.gateway, web: w.web, scope: stageScopeOf(plan), budget: w.budget, maxCallUsd: verifiedCallMaxUsdOf(catalog) });
+    expect(await sg.call({ stageKey: "contacts", endpoint_id: "contextdev.parse.emails", params: { url: "https://a.example" } })).toMatchObject({ ok: false, refused: "stage_cap_unbounded" });
+    expect(await sg.call({ stageKey: "contacts", endpoint_id: "contextdev.parse.emails", params: { url: "https://b.example" } })).toMatchObject({ ok: false, refused: "stage_cap_unbounded" });
+    expect(w.webCalls).toHaveLength(0);
+    expect(sg.stageSpentUsd("contacts")).toBe(0);
     expect((await sg.call({ stageKey: "companies", endpoint_id: "tomba.companies.search.reveal", params: {} })).ok).toBe(true);
+    // a capped TREG stage: its maximum per call is the route cap the gateway sends; once what it counts plus the next maximum would pass the cap, nothing more is sent
+    const treg = chainPlan();
+    const routeMax = verifiedCallMaxUsdOf(catalog)("tomba.companies.search.reveal", {})!;
+    (treg.stages[0] as any).max_usd = routeMax * 2;
+    const w2 = world();
+    const sg2 = createSourceGateway({ gateway: w2.gateway, web: w2.web, scope: stageScopeOf(treg), budget: w2.budget, maxCallUsd: verifiedCallMaxUsdOf(catalog) });
+    const outcomes = [];
+    for (let i = 0; i < 4; i += 1) outcomes.push(await sg2.call({ stageKey: "companies", endpoint_id: "tomba.companies.search.reveal", params: {} }));
+    expect(outcomes.filter((o) => o.ok).length).toBeLessThanOrEqual(2);
+    expect(outcomes.at(-1)).toMatchObject({ ok: false, refused: "stage_cap" });
+    expect(sg2.stageCapUsedUsd("companies")).toBeLessThanOrEqual(routeMax * 2 + 1e-12);
   });
 
   it("web ids map to the existing web gateway methods with the stage's own inputs; TREG ids are never treated as web ids", () => {

@@ -110,6 +110,18 @@ export function estimateCallUsd(endpoint: CatalogEndpoint, params: Record<string
   return catalogUsd !== null && catalogUsd > 0 ? catalogUsd : GATEWAY_UNKNOWN_PRICE_ESTIMATE_USD;
 }
 
+/**
+ * PHASE 5 SAFETY GATE: THE MOST ONE TREG CALL OF THIS GATEWAY CAN COST, the route cap `tregCall` sends as `X-Treg-Route-Max-Cost` (TREG refuses, 402 `route_max_cost`, a route that would cost more). The same arithmetic as the
+ * call itself: the parameters the catalog does not know are dropped, then the estimate, floored at 0.001 (a test pins this to the value the gateway really sends). Null: not a catalog id (no bound is known, none is assumed).
+ */
+export function tregRouteMaxUsd(endpointId: string, params: Record<string, unknown>, catalog: TregCatalog): number | null {
+  const endpoint = catalog.byId.get(endpointId);
+  if (!endpoint) return null;
+  const known = new Set([...endpoint.inputs.map((i) => i.name), ...(endpoint.pagination ?? [])]);
+  const kept = Object.fromEntries(Object.entries(params ?? {}).filter(([k]) => known.has(k)));
+  return Number(Math.max(estimateCallUsd(endpoint, kept, catalog), 0.001).toFixed(6));
+}
+
 const callIdOf = (n: number) => `call_${String(n).padStart(4, "0")}`;
 export const RAW_PATH = (callId: string) => `raw/${callId}.json`;
 
