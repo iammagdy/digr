@@ -67,8 +67,16 @@ function paramFor(endpoint: CatalogEndpoint, kind: LookupKind): string | null {
   const byName = (re: RegExp) => (required.length > 0 ? required : strings).find((i) => re.test(i.name));
   const hit = kind === "phone" ? byName(/phone|mobile|number|msisdn/i) : byName(/e-?mail/i);
   if (hit) return hit.name;
-  return required.length === 1 ? required[0].name : null;
+  // PHASE 5, INPUT COMPATIBILITY: the one required input of another endpoint takes the typed value only when its name is a GENERIC search input (search, query, q, input, value, …). An input that names
+  // another kind of value (a person's name, a profile link, a domain, a handle, the other of phone/e-mail) would be sent a value it does not take: a paid call with the wrong input, never made.
+  if (required.length !== 1) return null;
+  const only = required[0].name;
+  if (OTHER_VALUE_INPUT.test(only) || (kind === "phone" ? /e-?mail/i.test(only) : /phone|mobile|msisdn/i.test(only))) return null;
+  return only;
 }
+
+/** Input names that carry a value of another kind than the phone or e-mail the admin typed. */
+const OTHER_VALUE_INPUT = /(^|_)(name|full_?name|first_?name|last_?name|given_?name|family_?name|linkedin|profile|url|link|domain|website|company|username|handle|id|uuid|slug)($|_)/i;
 
 /**
  * The reverse-lookup endpoints for this kind of input IN THE ORDER LIVE EVIDENCE GAVE (src/lib/treg/reverseOrder.ts): the listed ones first, in their order; any other priceable reverse-lookup
@@ -171,6 +179,16 @@ export interface LookupAttempt {
   costUsd: number;
   /** English, internal: why it was skipped or what went wrong. */
   note: string;
+  /** PHASE 5: the answer held SEVERAL different people (by name): the first is shown, and it is NOT a confirmed match. */
+  ambiguous?: boolean;
+}
+
+/** PHASE 5: how many DIFFERENT people (by normalized name) the rows of one answer describe. A brand record is about a company, never counted. */
+export function distinctPeopleIn(rows: ReadonlyArray<Record<string, unknown>>, endpointId = ""): number {
+  if (/^branddev\./.test(endpointId)) return 0;
+  const names = new Set<string>();
+  for (const r of rows.slice(0, 20)) { const n = extractIdentity(r, endpointId).name.toLowerCase().replace(/\s+/g, " ").trim(); if (n) names.add(n); }
+  return names.size;
 }
 
 type Identity = ReturnType<typeof extractIdentity>;
@@ -278,7 +296,9 @@ export async function runLookupAttempt(input: {
   const reading = readShape(result.data, hintsOf(endpoint));
   const identity = extractIdentity(reading.rows[0], entry.id);
   const found = isUsefulIdentity(identity);
-  const attempt: LookupAttempt = { endpointId: entry.id, outcome: found ? "found" : "no_data", costUsd, note: found ? "" : "the source answered with no data" };
+  const people = distinctPeopleIn(reading.rows, entry.id);
+  const ambiguous = found && people > 1;
+  const attempt: LookupAttempt = { endpointId: entry.id, outcome: found ? "found" : "no_data", costUsd, note: !found ? "the source answered with no data" : ambiguous ? `ambiguous: ${people} different people answered; the first is shown, not a confirmed match` : "", ...(ambiguous ? { ambiguous: true } : {}) };
   return { ok: true, attempt, identity, fields: found ? mergeFields(input.previous, entry.id, identity) : input.previous ?? {}, found, spentTodayUsd: spentAfter, capUsd };
 }
 

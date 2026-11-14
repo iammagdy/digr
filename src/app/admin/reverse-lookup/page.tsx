@@ -11,7 +11,7 @@ const FIELD = "min-h-[46px] w-full rounded-xl border border-ln bg-bg px-3.5 text
 const BTN = "hit min-h-11 cursor-pointer rounded-xl border border-ln2 bg-sf px-4 text-sm font-semibold text-ink disabled:opacity-50";
 
 interface PlanEntry { id: string; paramName: string; usd: number; paid: boolean; state: "auto" | "confirm" | "skipped"; skipReasonAr?: string; warningAr?: string }
-interface Attempt { endpointId: string; outcome: string; costUsd: number; note: string }
+interface Attempt { endpointId: string; outcome: string; costUsd: number; note: string; ambiguous?: boolean }
 interface HistoryRow { id: string; createdAt: string; kind: "phone" | "email"; maskedInput: string; found: boolean; fields: LookupFields; attempts: Attempt[]; costUsd: number }
 interface AttemptReply { ok: boolean; reason?: string; attempt?: Attempt; found?: boolean; fields?: LookupFields; spentTodayUsd?: number; capUsd?: number; message?: string }
 
@@ -182,7 +182,7 @@ export default function AdminReverseLookupPage() {
           <h3 className="m-0 text-[13px] font-semibold text-ink">المحاولات</h3>
           <ul className="m-0 flex list-none flex-col gap-1 p-0 text-[12px] text-ink2">
             {shownAttempts.map((a, i) => (
-              <li key={`${a.endpointId}-${i}`} className="flex flex-wrap gap-x-3"><span dir="ltr">{a.endpointId}</span><span>{ATTEMPT_AR[a.outcome] ?? a.outcome}</span><span>{usd(a.costUsd)}</span>{a.note ? <span className="text-mut">{a.note}</span> : null}</li>
+              <li key={`${a.endpointId}-${i}`} className="flex flex-wrap gap-x-3"><span dir="ltr">{a.endpointId}</span><span>{ATTEMPT_AR[a.outcome] ?? a.outcome}</span>{a.ambiguous ? <span className="font-semibold text-ink" data-testid="lookup-ambiguous">نتيجة غير مؤكدة: أكثر من شخص</span> : null}<span>{usd(a.costUsd)}</span>{a.note ? <span className="text-mut">{a.note}</span> : null}</li>
             ))}
             {running ? <li className="flex flex-wrap gap-x-3 text-ink" data-testid="lookup-running"><span dir="ltr">{running}</span><span>يعمل الآن…</span></li> : null}
           </ul>
