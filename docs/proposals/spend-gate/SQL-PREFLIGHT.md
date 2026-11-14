@@ -1,6 +1,6 @@
 # Production SQL preflight: `001_spend_gate.sql`, `003_campaign_scope.sql`, `002_verify.sql`, `004_verify_campaign.sql`
 
-**Status (14 Nov 2026): PREPARED, NOT APPLIED.** Nothing in this document changed production. Applying these files needs the owner's explicit approval of these exact files (decision D1 of `docs/intelligence/PHASE-8-EXECUTION-CHECKLIST.md`). Every production check below was a **read-only** query through the read-only Supabase connection.
+**Status (14 Nov 2026, evening): APPLIED BY THE OWNER, and re-confirmed read-only by Claude** (`docs/intelligence/PHASE-8-EXECUTION-CHECKLIST.md` §8.1: both verifies re-run 15/15 and 13/13; the body of all 12 functions is byte-identical to the approved files once the dashboard's CRLF carriage returns are removed; no grant exists). This document keeps the preflight as written before the apply; the sections below describe what the files do and how to roll them back, and are still correct. Every production check in this document was a **read-only** query through the read-only Supabase connection. The ledger figures quoted in §7 step 6 were the figures of the morning of 14 Nov (1,247 rows, sum 16,086); the ledger moves with customer activity (1,254 rows, net 15,995 at the apply).
 
 ## 1. What the four files do
 

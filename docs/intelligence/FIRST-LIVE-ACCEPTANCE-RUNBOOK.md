@@ -15,7 +15,7 @@
 5. No database password or `DATABASE_URL` is set on Heroku or Vercel (SPEC-v2 decision 4): without that the grant's separation does not hold.
 6. Provider-side limits exist and are **read back** (checklist §6, G4): a **dedicated, non-default** Anthropic workspace and key for the worker (Anthropic does not allow a spend limit on the Default Workspace) with a monthly spend limit and token rate limits on it, and prepaid credit with auto-reload off if the organization uses prepaid credit; plan caps at TREG, Context.dev and Firecrawl. The spend limit is monthly and its enforcement speed is not documented: it is a **backstop**, not an exact USD 0.30 cap. These limits are the only control against a leaked key and against the tokenizer assumption.
 
-## 1. Apply the database objects **[OWNER]** (Supabase dashboard SQL editor, the database owner role)
+## 1. Apply the database objects **[OWNER]** (DONE on 14 Nov 2026: applied by the owner and re-confirmed read-only; do NOT re-apply. See the checklist §8.1. Keep this section for the rollback.) (Supabase dashboard SQL editor, the database owner role)
 
 First read `docs/proposals/spend-gate/SQL-PREFLIGHT.md` (what the files do, the production facts, the grants matrix, the rollback table) and confirm a backup. Apply in this order, each in its own run:
 
@@ -25,6 +25,8 @@ First read `docs/proposals/spend-gate/SQL-PREFLIGHT.md` (what the files do, the 
 No grant exists after this: every reservation is refused (`no_grant`). Nothing calls these functions yet (the worker gate is off).
 
 ## 2. Scoped campaign activation **[OWNER]**
+
+**One mission only, and in this order.** The grant enrolls the FIRST mission of the test account that the worker claims after step 3 (`max_missions` 1). Create no other test-account mission (and do not touch the older `plan_ready` one) until the L4 mission of §4 has finished; create the L4 mission only after step 3 is verified.
 
 1. **Issue the campaign grant** (the immutable campaign id is the first argument; use a new id for every issue; the account is the test account's id, never an e-mail):
 
