@@ -43,7 +43,7 @@ import { ItemStore, newWriterId, type ItemSnapshot, type StopReason } from "./it
 import { createLiveWriter, liveSheetOn, writeDoneSnapshotSafely } from "./stage2/liveWriter";
 import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
-import { createSourceGateway, stageDispatchOf, stageScopeOf } from "./engine/sourceGateway";
+import { createSourceGateway, stageDispatchOf, stageScopeOf, verifiedCallMaxUsdOf } from "./engine/sourceGateway";
 import { readPlatformFlagsOf, readRedesignFlags } from "../../src/lib/agentMission/redesignFlags";
 import { CLARIFY_OPTIONS_AR, CLARIFY_QUESTION_AR, PLATFORM_OPTIONS_AR, PLATFORM_QUESTION_AR, UNCLEAR_END_AR, legacyRouteOf, platformOptionOf, withPlatformChoice } from "../../src/lib/agentMission/platformQuestion";
 import { askedTextOf, buildRequestContract, platformsNamedIn } from "../../src/lib/agentMission/requestContract";
@@ -826,7 +826,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   const multiStage = deps.engine !== false && readMultiStageEngineFlag(redesignSettings, mission.user_id);
   const dispatch = multiStage && !engineOn ? stageDispatchOf(plan) : null;
   const engineStages = dispatch && dispatch.engine.length > 0 ? new Set(dispatch.engine) : null;
-  const sources = multiStage ? createSourceGateway({ gateway, ...(web ? { web } : {}), scope: stageScopeOf(plan), budget }) : undefined;
+  const sources = multiStage ? createSourceGateway({ gateway, ...(web ? { web } : {}), scope: stageScopeOf(plan), budget, maxCallUsd: verifiedCallMaxUsdOf(deps.catalog) }) : undefined;
   if (multiStage) await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: توزيع المراحل على المحرك.", counts: { multi_stage: 1, engine_stages: engineOn ? plan.stages.length : engineStages?.size ?? 0, model_stages: engineOn ? 0 : dispatch?.model.length ?? plan.stages.length } }).catch(() => undefined);
   if (engineOn || engineStages) {
     // THE MODEL PLANNED, CODE EXECUTES: every stage has a recipe the plan check proved, so no model session is started at all (the only model call left is the small review of items the rule cannot decide)

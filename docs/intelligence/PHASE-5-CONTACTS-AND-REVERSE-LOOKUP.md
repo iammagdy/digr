@@ -172,6 +172,28 @@
 * **Money:** no change to pricing, ledger, approval, reservation or settlement. An end-to-end replay with the switch on gives the same calls, delivered count, charge, release and file, cell for cell.
 * **Not covered offline:** the model path that continues after the engine stages is exercised only by a source-level test. An executed mixed engine + model mission needs the live acceptance (L4).
 
+### 6.1 Final safety gate: the stage cap (after #490)
+
+* **Finding.** `createSourceGateway` checked a stage cap AFTER the spend: «has this stage already spent its cap?». Reproduced on the merged code (`1fb4c88`), cap $0.001:
+
+| Case | Calls made | Stage spend |
+|---|---|---|
+| web calls of $0.0008 (the merged test's own numbers) | 2 | $0.0016 |
+| TREG: $0.0007 counted, next call's maximum $0.0004 | 2 | $0.0011 |
+| 10 calls racing on one stage, $0.0003 each | 10 | $0.0030 |
+
+  A call whose cost was unknown (a timeout) counted only what the job budget kept, which can be less than what TREG may bill (the route cap is floored at $0.001).
+* **Can a real plan carry `max_usd`?** No, today. It is not in `PricedStage`; `validateAndPricePlan` builds each stage field by field, so a model cannot inject it; no code writes it. Read-only: 0 of 204 missions' `plan` / `plan_public` and 0 of 651 `messages.plan` contain it. The switch is off. **No production exposure.**
+* **Does the job budget already prevent it?** No. The job budget bounds the whole job (min of the per-job ceiling and 40% of the hold, $0.005 floor), not one stage, and it reserves the call's estimate, not its route cap. It still holds as before; the stage cap is a separate, stricter boundary.
+* **Fix** (`agent/src/engine/sourceGateway.ts`, wired in `runMission.ts` under the switch only):
+  * before the request: counted + in flight + this call's **verified maximum** must fit in the cap; the maximum is reserved while the call runs (racing calls cannot pass it together) and released when it returns or throws;
+  * the verified maximum is the one the provider enforces: TREG's route cap, `tregRouteMaxUsd` (the exact `X-Treg-Route-Max-Cost` the gateway sends; TREG refuses a route above it, 402 `route_max_cost`). A direct web source (Firecrawl, Context.dev) bills the credits it reports after the call and has no enforced maximum, so **a capped stage never calls one** (`stage_cap_unbounded`). An unknown maximum is never taken as zero;
+  * a failed or thrown call counts its full maximum; an answered call counts what the budget moved, at most its maximum;
+  * a stage with no cap is unchanged: no maximum is asked, every number is as before.
+* **Unchanged:** pricing, ledger, approval, reservation, settlement, the job budget, the gateways' own checks, `stageSpentUsd`. Flags-off digests green.
+* **Tests:** `tests/phase5-stage-cap.test.ts` (new, 16) and one CHANGED (stricter) test in `tests/phase5-multi-provider-execution.test.ts`; mutation 12/12 killed.
+* **Owner decision 10:** may a documented per-credit price count as a web source's maximum under a stage cap (today: no; a capped web stage makes no call)? Only relevant once a plan producer writes `max_usd`.
+
 ## 7. Tests (local; the repository has no GitHub Actions)
 
 | PR | Head | Full suite | New / changed tests | Typechecks | Build + secret scan | Mutations | Merge | Production |
@@ -238,6 +260,7 @@ All steps use the existing caps. **The total ceiling is $0.30.** Order:
 | 7 | Live acceptance L1–L4 (§8), ≤ $0.30 | Spend |
 | 8 | Price confirmation for automatic e-mail reverse endpoints above a threshold (e.g. > $0.05: treg identity $0.25 and the $0.19–$0.65 tail are «auto» today, bounded only by the $2 cap) | Admin UX / spend |
 | 9 | Turn `multi_stage_engine` on for the test account (L4), later for customers | Flag |
+| 10 | Whether a web source's documented credit price may count as its maximum under a stage cap (§6.1; today a capped web stage makes no call) | Spend policy |
 
 ## 10. Production state
 

@@ -28,12 +28,14 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 | #487 | Admin reverse lookup: a hard $2 cap (audit log only, reserve-then-check, route cap, unknown charges kept); fail-closed audit; no identity in browser history | `26e0231` | Vercel `dpl_81qKeG1RE6rx2F7Hzkr5sMm5Fqv8` READY; Heroku v195, heartbeat `26e0231` |
 | #488 | B2B contacts: a private mailbox (gmail/outlook…) is never written as a work e-mail; contact provenance (under the switch) | `158b3d7` | Vercel `dpl_3NHbkEFKhghtURRqmqFD2HekAhfL` READY; Heroku v196, heartbeat `158b3d7` |
 | #489 | `SourceGateway` + per-stage dispatch + row provenance, behind `multi_stage_engine` (OFF) | `ce81204` | Vercel `dpl_FHq8t8rfii1SpQYJCJ3ERHg5x3uy` READY; Heroku v197, heartbeat `ce81204`, `active_missions 0` |
-| this PR | Reverse lookup: input compatibility and ambiguous matches; Phase 5 report | see the PR | see the PR |
+| #490 | Reverse lookup: input compatibility and ambiguous matches; Phase 5 report | `1fb4c88` | Vercel `dpl_HiDx1tg5zoSx2wkHvZtedH9Bk6DF` READY; Heroku v198, heartbeat `1fb4c88`, `active_missions 0` |
+| this PR | **Final safety gate:** the SourceGateway stage cap is checked BEFORE each call with the call's verified maximum (report §6.1) | see the PR | see the PR |
 
 * **What changed in production behaviour:**
   * #487 changes the admin screen only: refusals when the audit log fails, a stricter cap, no identity in `localStorage`.
   * #488 stops delivering private mailboxes in B2B work-email cells.
   * #489 changes nothing unless `multi_stage_engine` is set, and nothing sets it.
+  * The safety gate changes nothing in production: it acts only on a stage with `max_usd`, under the switch, and no plan carries one (0 of 204 missions, 0 of 651 plan messages, read-only).
 * **Production facts (read-only):**
   * `sensitive_lookup_audit`: 11 admin rows, $0.325340;
   * `verified_business_accounts`: 0 rows, so sensitive access is admin-only;
