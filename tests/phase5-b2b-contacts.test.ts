@@ -55,8 +55,8 @@ async function world(answers: (endpoint: string, params: Record<string, unknown>
       return { ok: true, call_id: id, http_status: 200, rows_in_page: out ? 1 : 0, has_more: false, next_cursor: null };
     },
   };
-  const run = () => runContactEnrichment({ items, store, plan, missionId: MISSION, gateway, addEvent: async () => undefined, budget, deadlineMs: Date.now() + 60_000 });
-  const row = (id: string) => { const r = items.acceptedRows("people").find((x) => x.id === id)! as Record<string, unknown>; return { ...r, email: String(r.email ?? ""), email_status: String(r.email_status ?? ""), phone: String(r.phone ?? "") }; };
+  const run = (provenance = true) => runContactEnrichment({ items, store, plan, missionId: MISSION, gateway, addEvent: async () => undefined, budget, deadlineMs: Date.now() + 60_000, ...(provenance ? { provenance: true } : {}) });
+  const row = (id: string) => { const r = items.acceptedRows("people").find((x) => x.id === id)! as Record<string, unknown>; const out: Record<string, unknown> & { email: string; email_status: string; phone: string } = { ...r, email: String(r.email ?? ""), email_status: String(r.email_status ?? ""), phone: String(r.phone ?? "") }; return out; };
   return { store, items, calls, run, row };
 }
 
@@ -184,6 +184,15 @@ describe("Phase 5 B2B: money and access invariants", () => {
     await all.run();
     expect(all.items.acceptedRows("people").map((r) => r.id)).toEqual(none.items.acceptedRows("people").map((r) => r.id));
     expect(all.items.acceptedRows("companies")).toHaveLength(1);
+  });
+
+  it("without the provenance switch (flags off) no mark is written: the stored rows are what they were", async () => {
+    const w = await world((ep, p) => (ep === EMAIL_A.id ? { email: `${slug(p)}@orascom-em.com.eg` } : null));
+    await w.run(false);
+    const r = w.row("p1");
+    expect(r.email).toBe("person1@orascom-em.com.eg");
+    expect(contactSrcKey("email") in r).toBe(false);
+    expect(contactCallKey("email") in r).toBe(false);
   });
 
   it("the provenance marks are internal: they start with «_» and the workbook writes only the stage's own columns", () => {

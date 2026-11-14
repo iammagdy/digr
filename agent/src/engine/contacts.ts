@@ -59,6 +59,8 @@ export interface ContactDeps {
    * `cellFor` gives the cell of a company column that got no value by the fallthrough (stage3/b2bEngine.ts: «غير متوفر» only after every tool of the chain answered with nothing, else «لم يكتمل البحث»).
    * Passed by runMission.ts only when DIGER_STAGE3_COMPANIES is on for the account; absent, nothing is recorded and every step does exactly what it did.
    */
+  /** PHASE 5: write the internal provenance marks of each contact cell (`_src_<column>`, `_call_<column>`). Passed only under the `multi_stage_engine` switch; absent, the stored rows are exactly what they were (flags-off digests). */
+  provenance?: boolean;
   attempts?: {
     record: (a: { stage: string; row: string; column: string; endpointId: string; outcome: "value" | "empty" | "failed" | "refused" | "not_tried"; value?: string }) => void;
     cellFor: (stage: string, row: string, column: string, chain: ReadonlyArray<string>) => string;
@@ -76,7 +78,7 @@ const STEP_LABEL_AR = { email: "الإيميل", phone: "رقم التليفون
  */
 export const contactSrcKey = (column: string): string => `_src_${column}`;
 export const contactCallKey = (column: string): string => `_call_${column}`;
-const provenance = (column: string, endpointId: string, callId: string): Record<string, string> => ({ [contactSrcKey(column)]: endpointId, [contactCallKey(column)]: callId });
+const provenanceOf = (column: string, endpointId: string, callId: string): Record<string, string> => ({ [contactSrcKey(column)]: endpointId, [contactCallKey(column)]: callId });
 
 /**
  * ONE PASS PER PEOPLE STAGE, DECISION MAKERS FIRST: the people are taken in the order of their titles (roles.ts) and EACH person gets every step of the plan (the e-mail with its verifier, then the phone with its validator) before the next person is looked at. When the money or the
@@ -225,7 +227,7 @@ async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: Conta
             try { verdict = await emailStatusFor(emailStep.verifiers ?? [], emailApi, value, domain, out.verifier); } catch { verdict = { status: "unverified", stop: null }; }
             cells[emailStep.column_key] = value;
             cells[emailStep.status_key] = emailStatusAr(verdict.status);
-            if (origin) Object.assign(cells, provenance(emailStep.column_key, origin.endpointId, origin.callId));
+            if (origin && deps.provenance) Object.assign(cells, provenanceOf(emailStep.column_key, origin.endpointId, origin.callId));
             emailFound += 1;
             if (verdict.stop) stopped = verdict.stop;
           } else if (deps.attempts) {
@@ -270,7 +272,7 @@ async function runCompanyStage(deps: ContactDeps, stageKey: string, steps: Conta
             const first = helpers.find((h) => (phoneApi.down.get(h.id) ?? 0) < 2 && /^(q|query|keyword)$/i.test(h.inputs.find((i) => /^(q|query|keyword)$/i.test(i.name))?.name ?? ""));
             if (first) await lookup(first, identity.domain);
           }
-          if (value !== "") { cells[phoneStep.column_key] = value; if (origin) Object.assign(cells, provenance(phoneStep.column_key, origin.endpointId, origin.callId)); phoneFound += 1; }
+          if (value !== "") { cells[phoneStep.column_key] = value; const o = origin as { endpointId: string; callId: string } | null; /* set inside lookup() */ if (o && deps.provenance) Object.assign(cells, provenanceOf(phoneStep.column_key, o.endpointId, o.callId)); phoneFound += 1; }
           else if (deps.attempts) {
             // STAGE 3 PART B: the same rule over the map searches; a step stopped here leaves the cell to the pass after the steps
             if (!stopped) { cells[phoneStep.column_key] = deps.attempts.cellFor(stageKey, id, phoneStep.column_key, helpers.map((h) => h.id)); if (cells[phoneStep.column_key] === NOT_AVAILABLE_AR) out.companies.notAvailable += 1; }
@@ -456,7 +458,7 @@ function createRunner(deps: ContactDeps, step: ContactStep, stage: ContactDeps["
           statusAr = phoneStatusAr(status);
           if (status === "verified") out.filled.verified += 1; else if (hit || typeAr === PHONE_TYPE_COMPANY_AR) out.filled.unverified += 1;
         }
-        const cells: Record<string, string> = { ...(hit || existing === "" ? { [step.column_key]: value } : {}), ...(statusAr !== null ? { [step.status_key]: statusAr } : {}), ...(typeAr !== null && step.type_key ? { [step.type_key]: typeAr } : {}), ...(origin && (hit || existing === "") ? provenance(step.column_key, origin.endpointId, origin.callId) : {}) };
+        const cells: Record<string, string> = { ...(hit || existing === "" ? { [step.column_key]: value } : {}), ...(statusAr !== null ? { [step.status_key]: statusAr } : {}), ...(typeAr !== null && step.type_key ? { [step.type_key]: typeAr } : {}), ...(origin && deps.provenance && (hit || existing === "") ? provenanceOf(step.column_key, origin.endpointId, origin.callId) : {}) };
         if (Object.keys(cells).length > 0) pending.push({ t: "cells", stage: step.stage_key, id: String(row.id), cells });
         if (hit || (existing === "" && typeAr === PHONE_TYPE_COMPANY_AR)) { found += 1; out.filled[step.kind] += 1; }
       }
