@@ -123,7 +123,8 @@ function sourceOf(text: string): RequestContract["source"] {
     const words = m[1].trim().split(/\s+/).filter((w) => !/^(?:صفحة|قناة|حساب|قنوات|الرسمية|الرسمي|عام|عامة|عامه|معين|معينة|معينه|ما|واحد)$/.test(w));
     const kept: string[] = [];
     for (const w of words) { if (STOP.test(w)) break; kept.push(w); }
-    named = kept.length > 0 ? kept.join(" ") : null;
+    // (a name never ends with the punctuation that followed it: «وزارة الصحة السعودية،» is «وزارة الصحة السعودية»)
+    named = kept.length > 0 ? kept.join(" ").replace(/[،,.؛;:!؟?]+$/u, "").trim() || null : null;
   }
   const text2 = handle ?? named;
   return { named: text2 !== null, official, text: text2 };
@@ -137,6 +138,16 @@ function topicOf(text: string): string | null {
   if (opinion) return opinion[1].trim();
   const m = /(?:عن|حول|بخصوص)\s+(.+?)(?=\s+(?:من|في|على|آخر|اخر|بالعربي|بالعربية|مع|بين|منذ|خلال)(?:\s|$)|[،,.]|$)/.exec(text);
   return m ? m[1].trim() : null;
+}
+
+/**
+ * P0, 14 NOV 2026: A REVISED REQUEST KEEPS EVERYTHING THE CUSTOMER ASKED, AND THE LATEST CHANGE WINS FOR WHAT IT NAMES. A revision is «<the request> تعديل العميل على نفس الطلب: <change>» (revisionText.ts); the
+ * readers took the FIRST topic, number and source of the whole text, so a change that named a new topic («طيب ابحث عن الشائعات فقط») was not read, and nothing said so. A value the latest change names (the topic, the count,
+ * the source) is read from it; anything it does not name stays the request's own.
+ */
+const REVISION_MARK = "تعديل العميل على نفس الطلب:";
+export function latestChangesOf(request: string): string[] {
+  return request.split(REVISION_MARK).slice(1).map((p) => p.trim()).filter(Boolean).reverse();
 }
 
 /**
@@ -191,7 +202,8 @@ export function buildRequestContractWithReport(request: unknown, answer?: unknow
   const parsedReplies = repliesAskedIn(text);
   const repliesAsked = parsedReplies || readingOfText?.content.replies === true || readingOfAnswer?.content.replies === true;
   if (repliesAsked && !parsedReplies) report.filled.push("replies");
-  const parsedTopic = topicOf(required);
+  const changes = latestChangesOf(String(request ?? "").replace(/\s+/g, " "));
+  const parsedTopic = changes.map((ch) => topicOf(optionalPartsOf(ch).required)).find((t): t is string => t !== null) ?? topicOf(required);
   // PR-1.3: the conditions of the words (a period, a country, a language), read with no clock: only WHETHER each is asked is needed here (the values and the clarifications are the Ask's, which has the moment of the request)
   const conditions = options.semantic === true ? readConditions(request, answer, 0) : null;
   const readTopic = readingOfRequired ? topicWithReading(parsedTopic, readingOfRequired, report) : parsedTopic;
@@ -212,8 +224,8 @@ export function buildRequestContractWithReport(request: unknown, answer?: unknow
     parentKind: kind,
     ...(REELS_WORD.test(text) && platform === "instagram" ? { media: "reels" as const } : {}),
     ...(wantedFieldsOf(text).length > 0 ? { wants: wantedFieldsOf(text) } : {}),
-    count: countOf(required),
-    source: sourceOf(text),
+    count: changes.map((ch) => countOf(optionalPartsOf(ch).required)).find((n): n is number => n !== null) ?? countOf(required),
+    source: changes.map((ch) => sourceOf(ch)).find((s) => s.named || s.official) ?? sourceOf(text),
     topic,
     ...(preferences.length > 0 ? { preferences } : {}),
     country: countryAsked,

@@ -147,12 +147,13 @@ describe("a topic or a period on an account: the card says it cannot carry them,
     expect(p.plan.stages[0].filters?.some((f) => f.kind === "period")).toBe(true);
   });
 
-  it("an account given by an Arabic name (no handle) cannot be read by a handle input: the plan is not made and the reason is honest", async () => {
+  // CHANGED (P0, 14 Nov 2026, the general source rule, docs/incidents/P0-X-ACCOUNT-2026-11-14.md): an account named by its Arabic name is no longer refused as «no tool»: the customer is asked ONCE for its username, before any read or price
+  it("an account given by an Arabic name (no handle) cannot be read by a handle input: the plan is not made; the customer is asked for the username before anything is read", async () => {
     const store = createMemoryStore();
     const { gateway } = replayGateway(M16, catalog, store, "msn_replay_ig_n");
     const out = await planByCompiler({ mission: { id: "msn_replay_ig_n", request_text: "هات منشورين من حساب قناة الحدث على إنستجرام، مع كل التعليقات والردود.", answer_text: null, created_at: "2026-11-02T17:31:00Z" }, gateway, store, catalog, nowMs: Date.now() });
-    expect(out.kind).toBe("cannot");
-    if (out.kind === "cannot") expect(out.reason).toBe("no_parent_card");
+    expect(out.kind).toBe("question");
+    if (out.kind === "question") expect(out.why).toBe("source_id");
     expect(out.reads.pool).toBe(0);
   });
 });

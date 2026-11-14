@@ -150,7 +150,8 @@ describe("«حدود هذا التسليم» says when the results cover much le
     const plan = planOf([{ kind: "period", days: 7 }]);
     const { lines } = await firstSheetOf(plan, spread(40, 16 * 3_600_000), factsOf({ accepted: 40, stop: "source_exhausted" }));
     const text = limitsOf(lines);
-    expect(text).toContain("سُلّم ٤٠ من ٥٠ لأن المصدر لم يعد يعطي نتائج أخرى لهذا الطلب.");
+    // CHANGED (P0, 14 Nov 2026, docs/incidents/P0-X-ACCOUNT-2026-11-14.md): «the source gave no more» speaks of the plan's search, never of the customer's whole request
+    expect(text).toContain("سُلّم ٤٠ من ٥٠ لأن المصدر لم يعد يعطي نتائج أخرى للبحث المعتمد في خطتك.");
     expect(text).toContain("طلبت آخر ٧ أيام، وغطّت النتائج نحو ١٦ ساعة فقط.");
   });
 

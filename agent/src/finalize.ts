@@ -49,7 +49,8 @@ export function shortfallClauseAr(reason: StopReason | null, review: { pending: 
   if (review.childShare && (reason === null || reason === "source_exhausted" || reason === "no_new_items" || reason === "target_reached")) return review.childShare;
   if ((review.languageLeftOut ?? 0) > 0 && (reason === null || reason === "source_exhausted" || reason === "no_new_items" || reason === "target_reached")) return "لأن المصادر لم تعطِ ما يكفي من المحتوى باللغة المحددة في خطتك";
   switch (reason) {
-    case "source_exhausted": return "لأن المصدر لم يعد يعطي نتائج أخرى لهذا الطلب";
+    // P0, 14 NOV 2026 (msn_dd7c2e9c131b8783bf2e): the source ran out for the SEARCH the plan sent, which is not always the customer's whole research objective; the sentence says only what is true
+    case "source_exhausted": return "لأن المصدر لم يعد يعطي نتائج أخرى للبحث المعتمد في خطتك";
     case "no_new_items": return "لأن المصدر صار يكرر نفس النتائج ولم تظهر نتائج جديدة مطابقة لطلبك";
     case "budget": return "لأن ميزانية القراءة من المصادر المخصصة لهذه المهمة اكتملت";
     case "daily_cap": return "لأن الحد اليومي للقراءة من المصادر اكتمل";
@@ -188,4 +189,16 @@ export function stageTruthBodyAr(t: StageTruthFacts): string | null {
   const pending = Math.max(0, Math.floor(Number(t.pending) || 0));
   if (pending > 0) parts.push(`وبقي ${formatAr(pending)} دون مراجعة${t.reviewStop === "failed" ? " لأن المراجعة الآلية تعذّر الوصول إليها" : t.reviewStop === "budget" ? " لأن المراجعة الآلية بلغت حدّها المسموح لهذه المهمة" : ""}`);
   return parts.join("، ");
+}
+
+/**
+ * P0, 14 NOV 2026 (msn_dd7c2e9c131b8783bf2e: 79 tweets delivered for «the Saudi Ministry of Health's account», every one of them marked «غير مطابق» for the named source by the delivery contract, and the customer read only «the source
+ * gave no more results»): WHEN DELIVERED ITEMS ARE NOT FROM THE SOURCE THE CUSTOMER NAMED, THE RESULT SAYS SO. The delivery contract fills the mark in the file (R4) but, by design, never changes the status or the
+ * customer's sentence; this is that sentence, from the delivered rows themselves. No number (the counts are stated by code elsewhere). Null when every delivered item is the named source's (or none says who published it).
+ */
+export function namedSourceTruthAr(f: { source: string; delivered: number; notFromSource: number }): string | null {
+  const name = String(f.source ?? "").trim();
+  if (name === "" || f.delivered <= 0 || f.notFromSource <= 0) return null;
+  if (f.notFromSource >= f.delivered) return `ولم يثبت أن أيًا مما سُلّم من «${name}» الذي سمّيته؛ فالبحث المنفّذ لم يكن مقيّدًا بهذا المصدر، وكل عنصر عليه علامة «غير مطابق» في الملف. هذا تسليم جزئي لا يحقق طلبك كما كتبته.`;
+  return `وبعض ما سُلّم ليس من «${name}» الذي سمّيته، وعليه علامة «غير مطابق» في الملف.`;
 }

@@ -52,9 +52,11 @@ describe("the limits row of the delivered file (live A1 and A2: people read, all
 
   it("when the source really gave no more (everything it gave was delivered, or only what does not match the request was left out) the old sentence is still the true one", () => {
     const v = limitsOf(facts(record({ found: 7, accepted: 7, stop: "source_exhausted" })), { companies: 5, people: 7 }).join("\n");
-    expect(v).toContain("سُلّم ٧ من ١٠ لأن المصدر لم يعد يعطي نتائج أخرى لهذا الطلب.");
+    // CHANGED (P0, 14 Nov 2026, docs/incidents/P0-X-ACCOUNT-2026-11-14.md): «the source gave no more» speaks of the plan's search, never of the customer's whole request
+    expect(v).toContain("سُلّم ٧ من ١٠ لأن المصدر لم يعد يعطي نتائج أخرى للبحث المعتمد في خطتك.");
     const w = limitsOf(facts(record({ found: 12, accepted: 7, excluded: 5, excludedByReason: { no_term: 5 }, stop: "source_exhausted" })), { companies: 5, people: 7 }).join("\n");
-    expect(w).toContain("لأن المصدر لم يعد يعطي نتائج أخرى لهذا الطلب");
+    // CHANGED (P0, 14 Nov 2026, docs/incidents/P0-X-ACCOUNT-2026-11-14.md): «the source gave no more» speaks of the plan's search, never of the customer's whole request
+    expect(w).toContain("لأن المصدر لم يعد يعطي نتائج أخرى للبحث المعتمد في خطتك");
   });
 
   it("the surplus companies a review never needed are not reported as a review that ran out: the table says the count was reached", () => {

@@ -37,6 +37,11 @@ export interface StageFilter {
   fields?: string[];
   /** account: for each of `values`, in the same order, the id of the saved call that read THAT named source (its own channel, page or account listing). Optional; code checks it against the call's own items and trusts it only when they do not contradict it. */
   calls?: string[];
+  /**
+   * account (P0, 14 Nov 2026, X): the value is a USERNAME and only the item's own `field` (its username) is read, compared exactly (case-insensitive, «@» ignored). Never a display name, never «every word of it»: a fan account
+   * «SaudiMOH_fans» or a display name that copies the ministry's is another account. Set by code (compilePlan.ts) for an account-scoped X plan; an item with no username is rejected.
+   */
+  exact?: boolean;
   /** media: the kind of item the card promises (a video, an image); `fields` are the mapped fields that can prove it, found by code. */
   media?: MediaKind;
   /** place: the source itself was asked for the place (its own country or location input, recorded with the measuring call): an item that carries no evidence against it passes. Set by code. */
@@ -103,6 +108,7 @@ export function parseFilters(input: unknown, label: string): { filters: StageFil
       f.values = values;
       // the call that read each named source, in the order of the values (a list of saved-call ids of the same length, or nothing)
       if (kind === "account" && Array.isArray(raw.calls) && raw.calls.length === values.length && raw.calls.every((c) => typeof c === "string" && /^call_\d{4,6}$/.test(c))) f.calls = raw.calls.map(String);
+      if (kind === "account" && raw.exact === true) f.exact = true;
     }
     filters.push(f);
   }
@@ -208,6 +214,13 @@ export function filterVerdict(filters: ReadonlyArray<StageFilter> | undefined, m
         break;
       }
       case "account": {
+        // P0 (X): an exact username filter reads the item's own username only, and nothing but equality passes
+        if (f.exact === true) {
+          const own = f.field ? mapped[f.field] : undefined;
+          const have = String(typeof own === "string" || typeof own === "number" ? own : "").trim().replace(/^@/, "").toLowerCase();
+          if (have === "" || !(f.values ?? []).some((v) => String(v).trim().replace(/^@/, "").toLowerCase() === have)) return "filter_account";
+          break;
+        }
         // the named source of the customer (a channel, a page, an account): the name the source gives for the author matches it (namedSources.ts: the same name, or every word of it), not only the exact handle
         // the item's author is named by several fields (a channel's handle AND its display name): the source matches when any of them is the named source
         const whos = [f.field, ...(f.fields ?? [])].filter((k): k is string => typeof k === "string").map((k) => { const v = mapped[k]; return typeof v === "string" || typeof v === "number" ? String(v).trim() : ""; }).filter(Boolean);
@@ -313,7 +326,8 @@ export function resolveFilters(declared: ReadonlyArray<StageFilter>, fields: Fil
       case "account":
         g.field = f.field ?? fields.account ?? undefined;
         // the named source is looked for in every field that names the author (the handle AND the display name), found by code from the mapping
-        g.fields = [...new Set([...(g.field ? [g.field] : []), ...(f.fields ?? []), ...fields.accountFields])];
+        // an exact username filter keeps its one field (a display name is never the account)
+        g.fields = f.exact === true ? [...new Set([...(g.field ? [g.field] : [])])] : [...new Set([...(g.field ? [g.field] : []), ...(f.fields ?? []), ...fields.accountFields])];
         if (!g.field) problem = `${label}: an account filter needs a mapped username field; the mapping gives none`;
         break;
       case "exclude_government":

@@ -3,6 +3,8 @@ import type { ToolCard } from "./types";
 /**
  * THE X CARD (data), verified on the stored real pages of M14 and M5 (tests/foundation-cards.test.ts). The query takes the search operators: the period is written as
  * `since:` / `until:` Cairo instants in UTC (toolInput.ts, S10) and the language as `lang:`. Tweets asked WITH their replies are requested as originals only (`-filter:replies`, compilePlan.ts).
+ * P0 (14 Nov 2026): the search takes the named account as `from:<username>` (the catalog entry of anyapi.x.search.posts: «operators like from:, since:, until: … work inline in the query»); the compiler then checks every row's own
+ * username against it (foundation/sourceScope.ts).
  * The X replies card was `catalog_only` (live D5, rounds 7 and 8: test accounts only, owner decision 7.4) and is VERIFIED since live round 8 (3 Nov 2026): the 14 real pages of msn_50e3b83c44e7ebd7f577 show the route
  * pages (a token on every page with rows, the next call asked for it, an empty page with a null token ends each tweet), at 0.00054 USD a call. Every account gets the replies step; the stage keeps its page cap
  * (CATALOG_ONLY_CAP_USD / (price x CATALOG_ONLY_PRICE_MARGIN) pages: the name is from the card's catalog_only days, the cap is still the one that bounds what a mission may spend on these calls).
@@ -13,7 +15,7 @@ export const X_CARDS: ReadonlyArray<ToolCard> = [
     platform: "x",
     role: "tweets.search",
     status: "verified",
-    inputs: { query: { field: "query", operators: true, quoted: true }, order: { field: "queryType", most_commented: "Top", newest: "Latest" }, pageSize: { field: "limit", value: 20 }, cursor: "cursor" },
+    inputs: { query: { field: "query", operators: true, quoted: true, sourceOperator: "from:" }, order: { field: "queryType", most_commented: "Top", newest: "Latest" }, pageSize: { field: "limit", value: 20 }, cursor: "cursor" },
     page: { list: ["output", "data", "items"], cursor: ["output", "data", "nextCursor"], observedRowsPerPage: 20 },
     mapping: {
       kind: "fields",

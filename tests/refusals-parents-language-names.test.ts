@@ -320,7 +320,8 @@ describe("C. the rest of the language rule", () => {
     for (const stop of [null, "source_exhausted", "no_new_items", "target_reached"] as const) expect(shortfallClauseAr(stop, { pending: 0, stop: null, languageLeftOut: 39 })).toBe("لأن المصادر لم تعطِ ما يكفي من المحتوى باللغة المحددة في خطتك");
     // another honest reason keeps its own words; with nothing left out by language the old sentence is unchanged
     expect(shortfallClauseAr("time_limit", { pending: 0, stop: null, languageLeftOut: 39 })).toBe("لأن الوقت المخصص لهذه المهمة انتهى");
-    expect(shortfallClauseAr("source_exhausted", { pending: 0, stop: null })).toBe("لأن المصدر لم يعد يعطي نتائج أخرى لهذا الطلب");
+    // CHANGED (P0, 14 Nov 2026, docs/incidents/P0-X-ACCOUNT-2026-11-14.md): «the source gave no more» speaks of the plan's search, never of the customer's whole request
+    expect(shortfallClauseAr("source_exhausted", { pending: 0, stop: null })).toBe("لأن المصدر لم يعد يعطي نتائج أخرى للبحث المعتمد في خطتك");
   });
 });
 

@@ -1,4 +1,4 @@
-import { buildRequestContract, optionalPartsOf, type ChildAsk, type ContractOptions, type ParentKind } from "../requestContract";
+import { buildRequestContract, latestChangesOf, optionalPartsOf, type ChildAsk, type ContractOptions, type ParentKind } from "../requestContract";
 import { countryOfValue } from "../places";
 import { clarifyOf, readConditions, type ClarifyCode, type ClarifyField } from "../semantic/conditions";
 import { topicMeaningOf } from "../topicMeaning";
@@ -137,10 +137,11 @@ export function periodOfRequest(text: string, requestedAtMs: number): AskPeriod 
   if (/(?:^|[^a-z])this\s+week(?:[^a-z]|$)/.test(lc)) return periodOf(shiftDays(today, -7), today);
   if (/(?:^|[^a-z])this\s+month(?:[^a-z]|$)/.test(lc)) return periodOf(`${today.slice(0, 7)}-01`, today);
   if (/(?:^|[^a-z])this\s+year(?:[^a-z]|$)/.test(lc)) return periodOf(`${today.slice(0, 4)}-01-01`, today);
-  const last = /(?:آخر|اخر)\s+(\d{1,3})?\s*(شهرين|شهر|شهور|أشهر|اشهر|أسبوعين|اسبوعين|أسبوع|اسبوع|أسابيع|اسابيع|يومين|يوم|أيام|ايام|سنة|سنتين|سنوات|سنين)/.exec(t);
+  // P0 (14 Nov 2026, live evaluation P0-1): the number may be written in WORDS («آخر ثلاثة أشهر»: the understanding layer wrote it so); it is the same period as «آخر ٣ أشهر» (the shared number-word table)
+  const last = new RegExp(`(?:آخر|اخر)\\s+(\\d{1,3}|${NUMBER_WORDS_SRC})?\\s*(شهرين|شهر|شهور|أشهر|اشهر|أسبوعين|اسبوعين|أسبوع|اسبوع|أسابيع|اسابيع|يومين|يوم|أيام|ايام|سنة|سنتين|سنوات|سنين)`).exec(t);
   if (!last) return null;
   const unit = last[2];
-  const n = last[1] ? Number(last[1]) : /ين$/.test(unit) ? 2 : 1;
+  const n = last[1] ? numberOfToken(last[1]) ?? 1 : /ين$/.test(unit) ? 2 : 1;
   if (/شهر|شهور|أشهر|اشهر/.test(unit)) return periodOf(monthsBack(today, n), today);
   if (/سن/.test(unit)) return periodOf(monthsBack(today, 12 * n), today);
   if (/سبوع|سابيع/.test(unit)) return periodOf(shiftDays(today, -7 * n), today);
@@ -250,7 +251,7 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
     count,
     source: { kind: sourceKind, text: link ?? c.source.text },
     topic: { text: topicText, relation },
-    period: conditions && conditions.period.status === "resolved" ? periodOf(conditions.period.from, conditions.period.to) : conditions && conditions.period.status === "clarify" ? null : c.period ? periodOfRequest(text, requestedAtMs) : yearPeriod,
+    period: conditions && conditions.period.status === "resolved" ? periodOf(conditions.period.from, conditions.period.to) : conditions && conditions.period.status === "clarify" ? null : c.period ? latestChangesOf(String(request ?? "").replace(/\s+/g, " ")).map((ch) => periodOfRequest(ch, requestedAtMs)).find((p): p is AskPeriod => p !== null) ?? periodOfRequest(text, requestedAtMs) : yearPeriod,
     country: conditions && conditions.country.status === "resolved" ? conditions.country.code : conditions && (conditions.country.status === "many" || conditions.country.status === "any") ? null : c.country ? countryNamedIn(text) : null,
     language,
     ...(conditions && conditions.language.report ? { reportLanguage: conditions.language.report } : {}),

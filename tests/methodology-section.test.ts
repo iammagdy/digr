@@ -149,7 +149,8 @@ describe("the contents", () => {
     expect(text).toContain("العدد المعتمد في الخطة أقل مما طلبت لأن المصدر لا يعطي أكثر من هذا العدد في الطلب الواحد.");
     expect(text).toContain("لم يُنفَّذ: مديرو كل شركة؛ لا مصدر يعطي أسماءهم.");
     expect(text).toContain("لم نجد «حساب غير موجود» بين ما فحصناه قبل عرض الخطة");
-    expect(text).toContain("سُلّم ٤٠ من ٥٠ لأن المصدر لم يعد يعطي نتائج أخرى لهذا الطلب.");
+    // CHANGED (P0, 14 Nov 2026, docs/incidents/P0-X-ACCOUNT-2026-11-14.md): «the source gave no more» speaks of the plan's search, never of the customer's whole request
+    expect(text).toContain("سُلّم ٤٠ من ٥٠ لأن المصدر لم يعد يعطي نتائج أخرى للبحث المعتمد في خطتك.");
   });
 
   it("never holds a provider's name, an endpoint id, an internal id, a price, a model's vendor, «صف» or «سجل», and every number is in Arabic-Indic digits", async () => {

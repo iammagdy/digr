@@ -57,7 +57,8 @@ describe("the shortfall is stated and charged for what was delivered", () => {
     const r = await replay({ request: "هات ٥٠ تغريدة عن محمد صلاح", planning: fifty(), execution: () => [], answers: [pg(0, 30), pg(0, 30), pg(1, 30)], deps: (d) => { (d.store as MemoryStore).settings.redesign_flags = { social_posts: "on" }; return d; } });
     expect(r.mission.delivered_units).toBe(30);
     expect(r.finalView.resultLinesAr[0]).toBe("تم تسليم ٣٠ من ٥٠ تغريدة.");
-    expect(r.notices[0].facts.shortfallClauseAr).toBe("لأن المصدر لم يعد يعطي نتائج أخرى لهذا الطلب");
+    // CHANGED (P0, 14 Nov 2026, docs/incidents/P0-X-ACCOUNT-2026-11-14.md): «the source gave no more» speaks of the plan's search, never of the customer's whole request
+    expect(r.notices[0].facts.shortfallClauseAr).toBe("لأن المصدر لم يعد يعطي نتائج أخرى للبحث المعتمد في خطتك");
     expect(r.mission.charged_points).toBe(Math.ceil(30 * Number(r.mission.unit_price_points)));
     expect(Number(r.mission.charged_points)).toBeLessThanOrEqual(Number(r.mission.reserved_points));
   });

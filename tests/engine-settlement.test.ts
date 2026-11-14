@@ -116,10 +116,12 @@ describe("C. no shortfall while matching items are still needed and the source h
     const snap = await readSnapshot(r.store, r.missionId);
     expect(snap.stage("tweets").stop).toBe("source_exhausted");
     expect(snap.counts("tweets")).toMatchObject({ found: 200, accepted: 160, excluded: 40, unchecked: 0, pending: 0 });
-    expect(r.mission.summary_ar).toBe("لم يكتمل العدد المطلوب لأن المصدر لم يعد يعطي نتائج أخرى لهذا الطلب، ولم يُخصم إلا مقابل ما سُلّم.");
+    // CHANGED (P0, 14 Nov 2026, docs/incidents/P0-X-ACCOUNT-2026-11-14.md): «the source gave no more» speaks of the plan's search, never of the customer's whole request
+    expect(r.mission.summary_ar).toBe("لم يكتمل العدد المطلوب لأن المصدر لم يعد يعطي نتائج أخرى للبحث المعتمد في خطتك، ولم يُخصم إلا مقابل ما سُلّم.");
     expect(r.finalView.phase).toBe("partial");
     expect(r.notices[0].kind).toBe("partial");
-    expect(r.notices[0].facts.shortfallClauseAr).toBe("لأن المصدر لم يعد يعطي نتائج أخرى لهذا الطلب");
+    // CHANGED (P0, 14 Nov 2026, docs/incidents/P0-X-ACCOUNT-2026-11-14.md): «the source gave no more» speaks of the plan's search, never of the customer's whole request
+    expect(r.notices[0].facts.shortfallClauseAr).toBe("لأن المصدر لم يعد يعطي نتائج أخرى للبحث المعتمد في خطتك");
   });
 
   it("the mission's call budget refuses the 6th page: the stop reason is the budget, and the sentence says the reading budget ended (not «this is all that matched»)", async () => {
