@@ -209,3 +209,28 @@ describe("Phase 5: the browser fallback history keeps no identity", () => {
     expect(page).toContain("lookup-fields-not-kept");
   });
 });
+
+describe("Phase 5: input compatibility and ambiguous matches (simulated answers)", () => {
+  it("no candidate is sent the typed value under an input that names another kind of value (a person's name, a link, a domain)", async () => {
+    const { lookupCandidates: lc } = await import("../src/lib/server/adminLookup");
+    for (const kind of ["email", "phone"] as const) {
+      for (const c of lc(kind, catalog, policyRuleOf)) {
+        expect(c.paramName, `${kind} ${c.id}`).not.toMatch(/(^|_)(name|full_?name|first_?name|last_?name|linkedin|url|domain|company|username|handle)($|_)/i);
+        if (kind === "email") expect(c.paramName).not.toMatch(/phone|mobile|msisdn/i); else expect(c.paramName).not.toMatch(/e-?mail/i);
+      }
+    }
+    expect(lookupCandidates("email", catalog, policyRuleOf).map((c) => c.id)).not.toContain("limadata.people.identity.resolve");
+  });
+
+  it("an answer that holds several DIFFERENT people is flagged ambiguous (the first is shown, not a confirmed match); one person twice is not", async () => {
+    const db = createMemoryDb();
+    const two = { data: [{ full_name: "Sara Ahmed", company: "Acme Co" }, { full_name: "Sara Ahmad", company: "Other LLC" }] };
+    const a = await runLookupAttempt({ client: db, adminId: "adm-1", text: EMAIL, endpointId: FIRST.id, call: async () => ok(two, 20_000), now: NOW });
+    expect(a.ok && a.attempt).toMatchObject({ outcome: "found", ambiguous: true });
+    expect(a.ok && a.attempt.note).toMatch(/^ambiguous: 2 different people/);
+    const same = { data: [{ full_name: "Sara Ahmed", company: "Acme Co" }, { full_name: "sara  ahmed", title: "CEO" }] };
+    const b = await runLookupAttempt({ client: db, adminId: "adm-1", text: EMAIL, endpointId: FIRST.id, call: async () => ok(same, 20_000), now: NOW });
+    expect(b.ok && b.attempt.ambiguous).toBeUndefined();
+    expect(readFileSync("src/app/admin/reverse-lookup/page.tsx", "utf-8")).toContain("lookup-ambiguous");
+  });
+});
