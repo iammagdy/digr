@@ -206,10 +206,11 @@ describe("P0 the same rule on the five platforms (planByCompiler, no paid call)"
     expect(r).toMatchObject({ kind: "question", why: "source_id" });
     expect(a.queries).toEqual([]);
   });
-  it("Facebook, a page named by its name with a topic: asked for the page link (the keyword search cannot restrict to a page)", async () => {
+  it("Facebook, a page named by its name with a topic: the keyword search CARRIES the name (card data `withSource`): no source question; the rows are checked by their page, and widening is the customer's explicit choice (decision 7.5)", async () => {
     const { r, a } = await plan("عايز ٢٠ منشور فيسبوك من صفحة وزارة الصحة عن التطعيمات");
-    expect(r).toMatchObject({ kind: "question", why: "source_id" });
-    expect(a.queries).toEqual([]);
+    expect(r.kind === "question" ? r.why : null).not.toBe("source_id");
+    expect(a.queries.length).toBeGreaterThan(0);
+    expect(a.queries.every((q) => q.includes("وزارة الصحة"))).toBe(true);
   });
   it("TikTok, an account named: no TikTok service can restrict to an account, so the question says so and offers to search without it", async () => {
     const { r, a } = await plan("عايز ٢٠ فيديو تيك توك من حساب وزارة الصحة عن التطعيمات");

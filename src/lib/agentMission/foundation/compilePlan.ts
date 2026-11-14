@@ -390,7 +390,9 @@ export function compilePlan(input: CompileInput): CompileResult {
   if (!ask.platform || !(COMPILED_PLATFORMS as ReadonlyArray<string>).includes(ask.platform)) return { ok: false, reason: "no_platform_card" };
   // P0: A SOURCE THE PLAN CANNOT ENFORCE IS NEVER PRICED, on any platform (msn_dd7c2e9c131b8783bf2e: «the Saudi Ministry of Health's account» searched across all of X, 79 tweets of 38 other accounts billed); the caller asks the customer first,
   // and this is the guard if it did not
-  if (sourceUnenforced(input.pool.card, ask)) return { ok: false, reason: "source_unenforceable" };
+  // (a listing read by an identifier resolved from the customer's name by evidence, Facebook's page link found by its name: the pool's own inputs carry it)
+  const listedBy = input.pool.card.inputs.source && input.pool.card.inputs.source.kind !== "channel_id" ? input.pool.params?.[input.pool.card.inputs.source.param] : undefined;
+  if (sourceUnenforced(input.pool.card, ask) && !(typeof listedBy === "string" && listedBy !== "")) return { ok: false, reason: "source_unenforceable" };
   const shape = stageShapeOf(ask);
   const poolCard = input.pool.card;
   // THE COUNTER OF THE POOL: the parent card's own, or (YouTube) the counter card's, merged onto the rows by id

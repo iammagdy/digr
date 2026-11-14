@@ -18,7 +18,7 @@ export function conditionsOfRequest(textIn: unknown): ConditionClass[] {
   // (round 51: the forms the period reader now gives a value for, Arabic and English: ask.ts periodOfRequest)
   if (/(?:الأسبوع|الاسبوع|الشهر|السنة|السنه|العام)\s+(?:الماضية|الماضيه|الحالية|الحاليه|الجاري|ده|دا|دي|(?:اللي|اللى|الي|الى)\s+فاتت?)(?:\s|$|[.،,!؟?])|هذا\s+(?:الأسبوع|الاسبوع|الشهر|العام)|هذه\s+السنة/.test(text) || /(?:^|[^a-z])(?:last|past|previous)\s+(?:\d{1,3}\s+)?(?:hours?|days?|weeks?|months?|years?)(?:[^a-z]|$)|(?:^|[^a-z])this\s+(?:week|month|year)(?:[^a-z]|$)/i.test(text)) found.add("date");
   // P0 (14 Nov 2026): the number may be written in words («آخر ثلاثة أشهر»), as the shared number-word table reads it
-  if (new RegExp(`(?:آخر|اخر)\\s+(?:(?:\\d+|${NUMBER_WORDS_SRC})\\s+)?(?:${UNITS})|(?:الأسبوع|الاسبوع|الشهر|السنة|العام)\\s+(?:الماضي|الماضى|الحالي)|(?:^|\\s)الشهر\\s+(?:اللي|اللى|الي|الى)\\s+فات|(?:^|\\s)(?:اليوم|أمس|امبارح)(?:\\s|$)|(?:في|خلال)\\s+(?:${MONTHS})|(?:${MONTHS})\\s+\\d{4}|\\bمنذ\\s+\\d+`).test(text)) found.add("date");
+  if (new RegExp(`آخر\\s+(?:(?:\\d+|${NUMBER_WORDS_SRC})\\s+)?(?:${UNITS})|(?:الأسبوع|الاسبوع|الشهر|السنة|العام)\\s+(?:الماضي|الماضى|الحالي)|(?:^|\\s)الشهر\\s+(?:اللي|اللى|الي|الى)\\s+فات|(?:^|\\s)(?:اليوم|أمس|امبارح)(?:\\s|$)|(?:في|خلال)\\s+(?:${MONTHS})|(?:${MONTHS})\\s+\\d{4}|\\bمنذ\\s+\\d+`).test(text)) found.add("date");
   if (/بالعربي|باللغة\s+العربية|(?:عربي|عربية)\s+فقط|بالإنجليزي|بالانجليزي|باللغة\s+الإنجليزية|باللغة\s+الانجليزية|بالفرنسي/.test(raw)) found.add("language");
   if (new RegExp(`(?:^|\\s)(?:في|من|داخل)\\s+(?:${COUNTRIES})`).test(raw)) found.add("country");
   if (/@[A-Za-z0-9_.]{2,}/.test(raw)) found.add("account");

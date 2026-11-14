@@ -7,6 +7,7 @@ import type { ToolCard } from "./toolCards/types";
  *   1. A request that names a source (an account, a page, a channel) is planned only with a service that CARRIES it:
  *        - `input`: the service reads that source's own listing by its identifier (an account's handle, a page's link): what it returns is the source's by construction;
  *        - `lookup`: the service resolves the source by name with evidence (a channel search whose result carries the channel) before reading inside it;
+ *        - `name`: a search that writes the source's name into its query (`query.withSource`) and whose rows name their page: each row's author is checked by that name, and widening is the customer's explicit choice;
  *        - `operator`: a search that takes the source as an operator of its query (the card's `query.sourceOperator`, e.g. the provider-documented `from:` of X): every row it returns is then CHECKED by its own author identifier,
  *          exactly (case-insensitive), because a search can return anyone.
  *   2. A source no chosen service can carry with what the customer wrote (a name where an identifier is needed, or a platform whose services cannot restrict to a source at all) is asked ONCE, before anything is priced or held: the
@@ -62,12 +63,15 @@ export function rowIsBy(row: Record<string, unknown>, id: string): boolean {
   return ids.includes(want);
 }
 
-export type SourceCarry = "input" | "lookup" | "operator";
+export type SourceCarry = "input" | "lookup" | "operator" | "name";
 /** How a card carries the Ask's named source, or null when it cannot (with what the customer wrote). `writable` says whether the source text can be written in the card's input (compilePlan's `sourceInputOf`). */
 export function sourceCarryOf(card: ToolCard, sourceText: string | null, writable: boolean): SourceCarry | null {
   if (card.inputs.source?.kind === "channel_id") return "lookup";
   if (card.inputs.source && writable) return "input";
   if (card.inputs.query?.sourceOperator && sourceIdOf(sourceText)) return "operator";
+  // a search that writes the source's NAME into its query (the card's `query.withSource`, Facebook's keyword search) and whose rows carry the author's page: the plan keeps the source's own rows (each row's author checked by name), and
+  // widening to other sources is the customer's explicit choice before approval (decision 7.5: «only the ones found» / «fill from other pages» / cancel)
+  if (card.inputs.query?.withSource && String(sourceText ?? "").trim() !== "") return "name";
   return null;
 }
 /** Whether a card could carry SOME source given its identifier (an input or an operator): the question then asks for the identifier; with none, it says the platform's services cannot restrict to a source. */

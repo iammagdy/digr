@@ -425,11 +425,13 @@ describe("PR-1.3 in the worker's own planning run (runPlanning over the stored l
     }
   }, 120_000);
 
-  it("«آخر تلات شهور»: OFF the period is dropped silently; ON it is the SAME plan as «آخر ٣ شهور» (the stated period, the same provider inputs and the same price)", async () => {
+  // CHANGED (P0, 14 Nov 2026, docs/incidents/P0-X-ACCOUNT-2026-11-14.md): a period whose number is written in WORDS is read with the shared number-word table OFF too (the understanding layer wrote «آخر ثلاثة أشهر» in the live
+  // evaluation and the period was lost); OFF is now the same plan as «آخر ٣ شهور», as ON already was
+  it("«آخر تلات شهور»: OFF and ON it is the SAME plan as «آخر ٣ شهور» (the stated period, the same provider inputs and the same price)", async () => {
     const spoken = TT.replace("من مصر", "من مصر آخر تلات شهور");
     const digits = TT.replace("من مصر", "من مصر آخر ٣ شهور");
     const off = await plan(spoken);
-    expect(summary(off)).not.toMatch(/بين/);
+    expect(summary(off)).toBe(summary(await plan(digits)));
     const on = await plan(spoken, FLAG_ON);
     const reference = await plan(digits);
     expect(summary(on)).toContain("بين ٢٠٢٦-٠٨-٠٢ و٢٠٢٦-١١-٠٢");

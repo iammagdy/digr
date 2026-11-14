@@ -91,8 +91,8 @@ export function briefPromptLines(soFar: ResearchBrief | null, withObjectives = f
     "- افهم هدف العميل وما قاله بالفعل في المحادثة كلها، وحدّد ما ينقص فعلًا فقط.",
     "- مع كل data_request وكل edit_of_open_request أضف الحقل brief في نفس سطر الـ JSON:",
     withObjectives
-      ? '  "brief":{"status":"ready","request":"...","platforms":[],"content":[],"count":null,"topic":"","period":"","country":"","language":"","source":"","objectives":[...]}'
-      : '  "brief":{"status":"ready","request":"...","platforms":[],"content":[],"count":null,"topic":"","period":"","country":"","language":"","source":""}',
+      ? '  "brief":{"status":"ready","request":"...","platforms":[],"content":[],"count":null,"topic":"","source":"","period":"","country":"","language":"","objectives":[...]}'
+      : '  "brief":{"status":"ready","request":"...","platforms":[],"content":[],"count":null,"topic":"","source":"","period":"","country":"","language":""}',
     ...(withObjectives ? ["  objectives حقل داخل brief نفسه (آخر حقوله قبل قوس إغلاقه)، وليس حقلًا بجانب brief في الـ JSON."] : []),
     "- request: طلب البحث الكامل في جملة أو جملتين بالعربية يجمع كل ما طلبه العميل في هذه المحادثة لهذا الطلب (والملخص السابق إن وُجد)، مع تطبيق تصحيحاته: القيمة الجديدة تحل محل القديمة، وكل ما لم يغيّره يبقى كما هو.",
     "  اكتب المنصة باسمها: تيك توك أو إكس أو إنستجرام أو فيسبوك أو يوتيوب. اكتب صراحة ما يُجمع: فيديوهات، منشورات، تغريدات، تعليقات، ردود. اكتب الموضوع بعد كلمة «عن». اكتب الفترة والبلد واللغة بكلمات العميل نفسها (مثل «آخر شهر»، «في مصر»).",
