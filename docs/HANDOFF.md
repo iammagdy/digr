@@ -18,6 +18,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 > * **Deployed**: running in production and verified.
 > * **Not independently verified**: none of the above can be shown.
 
+### Live acceptance workflow (14 Nov 2026): built, refused in production until the $0.30 ceiling is enforceable
+
+* **Document:** `docs/intelligence/ACCEPTANCE-WORKFLOW.md`. It covers what blocked L1–L4, the audit, why a combined hard ceiling is NOT enforceable today (§3), the workflow, its guarantees, and the proposals for owner approval (P1 hard ceiling through the spend gate; P2 machine credential, not recommended; P3 L1/L2 identifiers).
+* **PR #492 (not merged; see below):** `/api/admin/acceptance` and the «حملة القبول الحي» panel in `/admin/agent`.
+  * Scoped Intelligence switches for the test account only, with automatic expiry (`scopedFlagOn` reads `expires_at`).
+  * Exact, verified restore.
+  * L3/L4 created through the existing console.
+  * Spend view and a JSON report.
+  * Start and scenario creation are refused while `PRODUCTION_BUDGET_GUARANTEE.enforceable` is false, which it is.
+* **Deploy blocker (14 Nov, 10:44 UTC):** Vercel marks every new commit «Account is blocked» (`vercel.com/knowledge/why-is-my-account-deployment-blocked`). Production still serves `2a84032` (READY). Nothing is merged until previews build again, because a merge could not be verified on Vercel.
+* **No switch was turned on, no mission created and no paid call made.** `agent_settings` still holds only `redesign_flags` and `social_discovery`.
+
 ### Phase 5 (14 Nov 2026): B2B contacts, admin reverse lookup, multi-provider execution
 
 * **Report:** `docs/intelligence/PHASE-5-CONTACTS-AND-REVERSE-LOOKUP.md`. It covers the audit, the gaps, the tests, the capped live proposal (§8, ≤ $0.30, NOT run) and the owner decisions (§9).
@@ -29,7 +41,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 | #488 | B2B contacts: a private mailbox (gmail/outlook…) is never written as a work e-mail; contact provenance (under the switch) | `158b3d7` | Vercel `dpl_3NHbkEFKhghtURRqmqFD2HekAhfL` READY; Heroku v196, heartbeat `158b3d7` |
 | #489 | `SourceGateway` + per-stage dispatch + row provenance, behind `multi_stage_engine` (OFF) | `ce81204` | Vercel `dpl_FHq8t8rfii1SpQYJCJ3ERHg5x3uy` READY; Heroku v197, heartbeat `ce81204`, `active_missions 0` |
 | #490 | Reverse lookup: input compatibility and ambiguous matches; Phase 5 report | `1fb4c88` | Vercel `dpl_HiDx1tg5zoSx2wkHvZtedH9Bk6DF` READY; Heroku v198, heartbeat `1fb4c88`, `active_missions 0` |
-| this PR | **Final safety gate:** the SourceGateway stage cap is checked BEFORE each call with the call's verified maximum (report §6.1) | see the PR | see the PR |
+| #491 | **Final safety gate:** the SourceGateway stage cap is checked BEFORE each call with the call's verified maximum (report §6.1) | `2a84032` | Vercel `dpl_3wymVrTygeVNmCjPgipaAnMGpymP` READY; Heroku v199, heartbeat `2a84032`, `active_missions 0` |
 
 * **What changed in production behaviour:**
   * #487 changes the admin screen only: refusals when the audit log fails, a stricter cap, no identity in `localStorage`.
