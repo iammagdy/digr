@@ -1,4 +1,4 @@
-# Diger: next steps (updated 13 Nov 2026, after the merge of PR #479)
+# Diger: next steps (updated 14 Nov 2026, after Phase 5)
 
 **Read first:** `docs/HANDOFF.md`, section «CURRENT STATE».
 
@@ -55,7 +55,22 @@
   6. the chat policy for «personal e-mails of employees»;
   7. the Phase 1 understanding gaps;
   8. the Next build heap.
-* **Phase 5** (multi-provider execution) is **NOT started**. Recommendation: CONDITIONAL GO, after decisions 1–3 and a rebase of PR #481.
+* **Phase 5** was done on 14 Nov 2026 (PRs #487–#489 and the report PR). See the next section.
+
+## Phase 5 (14 Nov 2026): offline complete, NOT enabled
+
+* **Report:** `docs/intelligence/PHASE-5-CONTACTS-AND-REVERSE-LOOKUP.md`.
+* **Owner decisions** (report §9):
+  1. person mobiles from B2B phone finders (keep with legal sign-off / restrict / relabel);
+  2. the chat wording for «personal e-mails of employees»;
+  3. fail closed for every admin sensitive call;
+  4. per-field contact pricing (a pricing change);
+  5. the `admin_lookup_history` table with a retention period;
+  6. lawful basis, retention, opt-out and a provider-terms review before any verified-business sensitive access;
+  7. live acceptance L1–L4 (≤ $0.30);
+  8. price confirmation for automatic e-mail reverse endpoints above a threshold;
+  9. `multi_stage_engine` for the test account.
+* **PR #481** must be rebased: #489 also edits `agent/src/runMission.ts`.
 
 ## Remaining work, by priority
 

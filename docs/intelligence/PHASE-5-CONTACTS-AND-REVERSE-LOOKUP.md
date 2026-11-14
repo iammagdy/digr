@@ -81,7 +81,7 @@
   * a `personal_mailbox` is never written, for any account, and the next finder is asked;
   * `withheld.personal_email` counts it.
 * **Two existing tests asserted the leak.** They now assert the stricter rule (no gmail written); each is commented CHANGED.
-* **Provenance:** every contact cell a call filled carries `_src_<column>` (endpoint) and `_call_<column>` (the recorded `mission_calls` id, raw answer at `raw/<call>.json`). These are internal marks: the workbook writes stage columns only.
+* **Provenance:** with `multi_stage_engine` on, every contact cell a call filled carries `_src_<column>` (endpoint) and `_call_<column>` (the recorded `mission_calls` id, raw answer at `raw/<call>.json`). These are internal marks: the workbook writes stage columns only. With the switch off, nothing is written: the flags-off stored-row digests stay identical.
 
 ### 3.3 Not changed: mobiles from B2B phone finders (owner and legal decision 1)
 
@@ -174,18 +174,20 @@
 
 ## 7. Tests (local; the repository has no GitHub Actions)
 
-| PR | Head | Full suite | New / changed tests | Typechecks | Build + secret scan | Mutations |
-|---|---|---|---|---|---|---|
-| #487 admin lookup | `fc3ddd9` | 13,697 passed, 0 failed, 47 expected-fail, 78 skipped | 18 new; 1 made stricter | clean | clean | 9/9 |
-| #488 B2B contacts | `5c052db` | see the PR | 17 new; 2 made stricter | clean | see the PR | 6/6 |
-| #489 SourceGateway | `2a8a909` | see the PR | 17 new | clean | see the PR | 9/9 |
-| this PR | see the PR | see the PR | input compatibility + ambiguity (2); recorded-call replay (1) | see the PR | see the PR | 3/3 |
+| PR | Head | Full suite | New / changed tests | Typechecks | Build + secret scan | Mutations | Merge | Production |
+|---|---|---|---|---|---|---|---|---|
+| #487 admin lookup | `fc3ddd9` | 13,697 passed, 0 failed, 47 expected-fail, 78 skipped | 18 new; 1 made stricter | clean | clean | 9/9 | `26e0231` | Vercel `dpl_81qKeG1RE6rx2F7Hzkr5sMm5Fqv8` READY; Heroku v195, heartbeat `26e0231` |
+| #488 B2B contacts | `5611897` | 13,697 / 0 / 47 / 78 | 18 new; 2 made stricter | clean | clean | 6/6 | `158b3d7` | Vercel `dpl_3NHbkEFKhghtURRqmqFD2HekAhfL` READY; Heroku v196, heartbeat `158b3d7` |
+| #489 SourceGateway | `1304ded` (main merged in) | 13,733 / 0 / 47 / 78 | 18 new (incl. the recorded-call replay) | clean | clean | 9/9 | `ce81204` | see `docs/HANDOFF.md` |
+| this PR | see the PR | see the PR | 2 new (input compatibility, ambiguity) | see the PR | see the PR | 3/3 | — | — |
+
+**A finding while testing #488:** its first full run failed 2 tests in `tests/stage3-flags-off.test.ts`. The contact provenance marks changed the frozen stored-row digest of companies missions; the files, plans and money were unchanged. The marks were then made opt-in, under `multi_stage_engine`, so flags-off rows are byte-identical again. The digest test was not touched.
 
 **Real vs simulated:**
 
 * **Real:**
   * the TREG catalog snapshot and the data policy;
-  * the recorded calls of the production mission msn_088c (13 Nov 2026: endpoint, page, status, real cost), replayed through the SourceGateway in `tests/phase5-recorded-replay.test.ts`;
+  * the 34 recorded execution Context.dev parser calls of the production mission msn_088c (13 Nov 2026: endpoint, page, status, real cost $0.07874 in total), replayed through the SourceGateway in `tests/phase5-recorded-replay.test.ts` (#489);
   * production row counts (read-only SQL).
 * **Simulated** (labelled in every file): the provider answer bodies (names, addresses, map results), the reverse-lookup answers, and the X pages of the end-to-end replay.
 

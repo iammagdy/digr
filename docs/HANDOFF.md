@@ -18,6 +18,33 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 > * **Deployed**: running in production and verified.
 > * **Not independently verified**: none of the above can be shown.
 
+### Phase 5 (14 Nov 2026): B2B contacts, admin reverse lookup, multi-provider execution
+
+* **Report:** `docs/intelligence/PHASE-5-CONTACTS-AND-REVERSE-LOOKUP.md`. It covers the audit, the gaps, the tests, the capped live proposal (§8, ≤ $0.30, NOT run) and the owner decisions (§9).
+* **PRs:**
+
+| PR | What | Merge | Production |
+|---|---|---|---|
+| #487 | Admin reverse lookup: a hard $2 cap (audit log only, reserve-then-check, route cap, unknown charges kept); fail-closed audit; no identity in browser history | `26e0231` | Vercel `dpl_81qKeG1RE6rx2F7Hzkr5sMm5Fqv8` READY; Heroku v195, heartbeat `26e0231` |
+| #488 | B2B contacts: a private mailbox (gmail/outlook…) is never written as a work e-mail; contact provenance (under the switch) | `158b3d7` | Vercel `dpl_3NHbkEFKhghtURRqmqFD2HekAhfL` READY; Heroku v196, heartbeat `158b3d7` |
+| #489 | `SourceGateway` + per-stage dispatch + row provenance, behind `multi_stage_engine` (OFF) | `ce81204` | verified after merge (see the PR) |
+| this PR | Reverse lookup: input compatibility and ambiguous matches; Phase 5 report | see the PR | see the PR |
+
+* **What changed in production behaviour:**
+  * #487 changes the admin screen only: refusals when the audit log fails, a stricter cap, no identity in `localStorage`.
+  * #488 stops delivering private mailboxes in B2B work-email cells.
+  * #489 changes nothing unless `multi_stage_engine` is set, and nothing sets it.
+* **Production facts (read-only):**
+  * `sensitive_lookup_audit`: 11 admin rows, $0.325340;
+  * `verified_business_accounts`: 0 rows, so sensitive access is admin-only;
+  * `admin_lookup_history`: not applied;
+  * `agent_settings`: `redesign_flags` and `social_discovery` only.
+* **Not live verified:**
+  * no reverse lookup was run;
+  * no mission was run through the SourceGateway;
+  * no paid call was made.
+* **The sensitive-contact service is NOT fully live:** lawful basis, retention, opt-out and a provider-terms review are missing (report §4).
+
 ### Phases 2–4 of the Diger Intelligence Audit (14 Nov 2026): code complete, offline verified, NOT enabled
 
 * **Reference:** `docs/intelligence/DIGER_INTELLIGENCE_AUDIT.md` (#482 → `c657599`). Baseline: `docs/intelligence/PHASES-2-4-BASELINE.md`. Final report: `docs/intelligence/PHASES-2-4-ACCEPTANCE.md`.
