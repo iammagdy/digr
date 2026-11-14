@@ -43,10 +43,39 @@ describe("startVisiblePolling", () => {
     stop();
   });
 
+  it("hidden means NO pending timer at all (not a timer that wakes up to do nothing); a visibilitychange to visible while already visible never stacks a second timer", () => {
+    const tick = vi.fn();
+    const doc = fakeDoc();
+    const stop = startVisiblePolling(tick, 3000, doc);
+    expect(vi.getTimerCount()).toBe(1);
+    doc.set("hidden");
+    expect(vi.getTimerCount()).toBe(0);
+    doc.set("visible");
+    expect(vi.getTimerCount()).toBe(1);
+    doc.set("visible"); doc.set("visible");
+    expect(vi.getTimerCount()).toBe(1);
+    vi.advanceTimersByTime(3000);
+    expect(tick).toHaveBeenCalledTimes(4);
+    stop();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("a tab that turned hidden without an event (a browser that misses it) still asks nothing when the timer fires", () => {
+    const tick = vi.fn();
+    const doc = fakeDoc();
+    const stop = startVisiblePolling(tick, 1000, doc);
+    doc.visibilityState = "hidden";
+    vi.advanceTimersByTime(60_000);
+    expect(tick).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+    stop();
+  });
+
   it("a tab opened in the background schedules nothing until it is shown", () => {
     const tick = vi.fn();
     const doc = fakeDoc("hidden");
     const stop = startVisiblePolling(tick, 1000, doc);
+    expect(vi.getTimerCount()).toBe(0);
     vi.advanceTimersByTime(60_000); expect(tick).not.toHaveBeenCalled();
     doc.set("visible"); expect(tick).toHaveBeenCalledTimes(1);
     stop();

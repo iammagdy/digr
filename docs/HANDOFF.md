@@ -18,16 +18,36 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 > * **Deployed**: running in production and verified.
 > * **Not independently verified**: none of the above can be shown.
 
-### Live acceptance workflow (14 Nov 2026): built, refused in production until the $0.30 ceiling is enforceable
+### Vercel Active CPU (14 Nov 2026): block lifted; admin polling fixed in its own PR
+
+* **The block.** Vercel blocked deployments at 10:44 UTC for Fluid Active CPU. Support lifted it and granted 3× limits for 30 days (Hobby, no paid upgrade). Previews and production build again; verified with the #492 preview and merge.
+* **Findings:** `docs/ops/VERCEL-CPU.md`.
+  * Per-route CPU cannot be measured on Hobby: Observability Plus is paid.
+  * Only 2 accounts used the product in 30 days, so the always-on work dominates:
+    * admin screens polled every 3–60 s forever, in background tabs too;
+    * the database driver calls `/api/cron/drive` every minute unconditionally (1,440 a day, for its heartbeat).
+* **Fix PR (CPU):**
+  * admin screens ask only while visible;
+  * an ended mission is refreshed once a minute in the admin console;
+  * static files skip the middleware.
+  
+  No business logic changed.
+* **Needs owner approval (not done):** move the driver's heartbeat into SQL and call Vercel only when work is due. That is a migration (§"Not changed" in the findings).
+
+### Live acceptance workflow (14 Nov 2026): merged; refused in production until the $0.30 ceiling is enforceable
 
 * **Document:** `docs/intelligence/ACCEPTANCE-WORKFLOW.md`. It covers what blocked L1–L4, the audit, why a combined hard ceiling is NOT enforceable today (§3), the workflow, its guarantees, and the proposals for owner approval (P1 hard ceiling through the spend gate; P2 machine credential, not recommended; P3 L1/L2 identifiers).
-* **PR #492 (not merged; see below):** `/api/admin/acceptance` and the «حملة القبول الحي» panel in `/admin/agent`.
+* **PR #492, merged `84da32e`:** `/api/admin/acceptance` and the «حملة القبول الحي» panel in `/admin/agent`.
   * Scoped Intelligence switches for the test account only, with automatic expiry (`scopedFlagOn` reads `expires_at`).
   * Exact, verified restore.
   * L3/L4 created through the existing console.
   * Spend view and a JSON report.
   * Start and scenario creation are refused while `PRODUCTION_BUDGET_GUARANTEE.enforceable` is false, which it is.
-* **Deploy blocker (14 Nov, 10:44 UTC):** Vercel marks every new commit «Account is blocked» (`vercel.com/knowledge/why-is-my-account-deployment-blocked`). Production still serves `2a84032` (READY). Nothing is merged until previews build again, because a merge could not be verified on Vercel.
+* **Production:**
+  * Preview `dpl_FG4AtQFXj66YJK9V53gq3epG1yRH` READY at head `6caab04` (build and secret scan clean).
+  * Production `dpl_4W5Cykk9uuv3tQPWvTtz6JRFDsYM` READY on `84da32e`.
+  * Heroku v200, worker heartbeat `84da32e`, `active_missions 0`.
+  * Suite 13,795 passed, 0 failed; mutations 22/22 and 12/12.
 * **No switch was turned on, no mission created and no paid call made.** `agent_settings` still holds only `redesign_flags` and `social_discovery`.
 
 ### Phase 5 (14 Nov 2026): B2B contacts, admin reverse lookup, multi-provider execution
