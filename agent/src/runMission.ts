@@ -869,7 +869,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   const b2bAttempts = b2bEngineOn(redesignIsTest) ? createAttemptLog() : null;
   if (plan.contact_steps && plan.contact_steps.length > 0 && output.stop === "end" && !output.error) {
     try {
-      const enrichment = await runContactEnrichment({ items, store, plan, missionId: mission.id, requestText: mission.request_text, gateway, addEvent: (e) => store.addEvent(mission.id, e), budget, deadlineMs: Math.max(deadlineMs, Date.now() + CONTACT_STEP_MIN_WALL_MS), log: deps.log, ...(b2bAttempts ? { attempts: b2bAttempts } : {}) });
+      const enrichment = await runContactEnrichment({ items, store, plan, missionId: mission.id, requestText: mission.request_text, gateway, addEvent: (e) => store.addEvent(mission.id, e), budget, deadlineMs: Math.max(deadlineMs, Date.now() + CONTACT_STEP_MIN_WALL_MS), log: deps.log, ...(b2bAttempts ? { attempts: b2bAttempts } : {}), ...(multiStage ? { provenance: true } : {}) });
       deps.log?.(`contact_steps ${mission.id} email=${enrichment.filled.email} phone=${enrichment.filled.phone} unverified=${enrichment.filled.unverified} looked=${enrichment.looked} skipped=${enrichment.skipped} spent=${enrichment.spentUsd.toFixed(6)} stopped=${enrichment.stopped ?? "no"}`);
     } catch (e) { deps.log?.(`contact_steps_failed ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 120)}`); /* a lookup that breaks never stops the settlement: the people are delivered with the cells as they are */ }
   }

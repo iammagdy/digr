@@ -232,6 +232,8 @@ describe("Phase 5: with the switch off nothing changes", () => {
     expect(src).toContain("const sources = multiStage ? createSourceGateway(");
     expect(src).toContain("const dispatch = multiStage && !engineOn ? stageDispatchOf(plan) : null;");
     expect(src).toContain("...(sources ? { sources, provenance: true } : {}), ...(engineStages ? { onlyStages: engineStages } : {})");
+    // the contact steps' provenance marks (PR #488) follow the same switch
+    expect(src).toContain("...(multiStage ? { provenance: true } : {}) });");
     // the money path is untouched: settlement still counts the file, the SourceGateway has no ledger, price or reservation code
     const sg = readFileSync("agent/src/engine/sourceGateway.ts", "utf-8");
     expect(sg).not.toMatch(/accept_quote_atomic|settle_job_atomic|release_job_atomic|credit_ledger|priceMission|reserve\(/);
