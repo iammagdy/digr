@@ -27,7 +27,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 |---|---|---|---|
 | #487 | Admin reverse lookup: a hard $2 cap (audit log only, reserve-then-check, route cap, unknown charges kept); fail-closed audit; no identity in browser history | `26e0231` | Vercel `dpl_81qKeG1RE6rx2F7Hzkr5sMm5Fqv8` READY; Heroku v195, heartbeat `26e0231` |
 | #488 | B2B contacts: a private mailbox (gmail/outlook…) is never written as a work e-mail; contact provenance (under the switch) | `158b3d7` | Vercel `dpl_3NHbkEFKhghtURRqmqFD2HekAhfL` READY; Heroku v196, heartbeat `158b3d7` |
-| #489 | `SourceGateway` + per-stage dispatch + row provenance, behind `multi_stage_engine` (OFF) | `ce81204` | verified after merge (see the PR) |
+| #489 | `SourceGateway` + per-stage dispatch + row provenance, behind `multi_stage_engine` (OFF) | `ce81204` | Vercel `dpl_FHq8t8rfii1SpQYJCJ3ERHg5x3uy` READY; Heroku v197, heartbeat `ce81204`, `active_missions 0` |
 | this PR | Reverse lookup: input compatibility and ambiguous matches; Phase 5 report | see the PR | see the PR |
 
 * **What changed in production behaviour:**

@@ -178,8 +178,8 @@
 |---|---|---|---|---|---|---|---|---|
 | #487 admin lookup | `fc3ddd9` | 13,697 passed, 0 failed, 47 expected-fail, 78 skipped | 18 new; 1 made stricter | clean | clean | 9/9 | `26e0231` | Vercel `dpl_81qKeG1RE6rx2F7Hzkr5sMm5Fqv8` READY; Heroku v195, heartbeat `26e0231` |
 | #488 B2B contacts | `5611897` | 13,697 / 0 / 47 / 78 | 18 new; 2 made stricter | clean | clean | 6/6 | `158b3d7` | Vercel `dpl_3NHbkEFKhghtURRqmqFD2HekAhfL` READY; Heroku v196, heartbeat `158b3d7` |
-| #489 SourceGateway | `1304ded` (main merged in) | 13,733 / 0 / 47 / 78 | 18 new (incl. the recorded-call replay) | clean | clean | 9/9 | `ce81204` | see `docs/HANDOFF.md` |
-| this PR | see the PR | see the PR | 2 new (input compatibility, ambiguity) | see the PR | see the PR | 3/3 | — | — |
+| #489 SourceGateway | `1304ded` (main merged in) | 13,733 / 0 / 47 / 78 | 18 new (incl. the recorded-call replay) | clean | clean | 9/9 | `ce81204` | Vercel `dpl_FHq8t8rfii1SpQYJCJ3ERHg5x3uy` READY; Heroku v197, heartbeat `ce81204` |
+| this PR | see the PR | 13,735 / 0 / 47 / 78 (with #487–#489) | 2 new (input compatibility, ambiguity) | clean | clean | 3/3 | — | — |
 
 **A finding while testing #488:** its first full run failed 2 tests in `tests/stage3-flags-off.test.ts`. The contact provenance marks changed the frozen stored-row digest of companies missions; the files, plans and money were unchanged. The marks were then made opt-in, under `multi_stage_engine`, so flags-off rows are byte-identical again. The digest test was not touched.
 
