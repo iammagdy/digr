@@ -1,0 +1,1623 @@
+diff --git a/agent/src/customerExclusion.ts b/agent/src/customerExclusion.ts
+new file mode 100644
+index 0000000..60c51c6
+--- /dev/null
++++ b/agent/src/customerExclusion.ts
+@@ -0,0 +1,71 @@
++import { scopedFlagOn } from "../../src/lib/agentMission/scopedFlag";
++import type { PricedPlan } from "../../src/lib/agentMission/plan";
++import {
++  CUSTOMER_EXCLUSION_FLAG_KEY,
++  EXCLUSION_SNAPSHOT_PATH,
++  exclusionMatcherOf,
++  exclusionNotApplicableAr,
++  exclusionPlanLineAr,
++  parseExclusionSnapshot,
++  type ExclusionMatcher,
++  type ExclusionSnapshot,
++  type PlanExclusionMark,
++} from "../../src/lib/agentMission/customerExclusion";
++import { exclusionAppliesToStage } from "./items/ingest";
++import type { AgentStore, MissionRecord } from "./types";
++
++/**
++ * PHASE 5.3: THE CUSTOMER'S EXCLUSION LIST IN THE WORKER (docs/intelligence/PHASE-5-3-AND-6.md).
++ *
++ * PLANNING (switch `customer_exclusion_files_v1` ON for the mission's account only): the list the chat stored on this mission's card is read (same user, same mission id), copied to the mission's private folder and pinned by
++ * its digest on the plan the customer approves, with one honest sentence on the card: applied to the plan's company or people stages, or not applicable to this kind of data. Switch OFF, or no list: the plan is returned as it
++ * is (the same object), so nothing changes.
++ *
++ * EXECUTION (whatever the switch says now: the customer approved the plan WITH the list): the private copy is loaded and its digest must equal the approved one; anything else and the mission does not run (fail closed).
++ */
++
++/** Reads the snapshot stored on the mission's card. Null: no list on the card. Throws when the read fails or a stored list is malformed (never a silent «no list»). */
++export type ReadMissionExclusion = (missionId: string, userId: string) => Promise<ExclusionSnapshot | null>;
++
++/**
++ * The real reader: the assistant message of THIS user that carries THIS mission's card (`plan->>agentMissionId`), newest first: the same lookup as the research brief's. A message of another account can never be read (the
++ * user id is the mission row's own), and only the server writes an assistant message's plan (messages RLS: customers insert `role = 'user'` rows with `plan IS NULL`, and have no update policy).
++ */
++export function missionExclusionReader(client: any): ReadMissionExclusion {
++  return async (missionId, userId) => {
++    const { data, error } = await client.from("messages").select("plan,created_at").eq("user_id", userId).eq("role", "assistant").eq("plan->>agentMissionId", missionId).order("created_at", { ascending: false }).limit(1);
++    if (error) throw new Error("customer_exclusion_read_failed");
++    const raw = Array.isArray(data) ? data[0]?.plan?.customerExclusion : undefined;
++    if (raw === undefined || raw === null) return null;
++    const snapshot = parseExclusionSnapshot(raw);
++    if (!snapshot) throw new Error("customer_exclusion_malformed");
++    return snapshot;
++  };
++}
++
++export async function withCustomerExclusion(input: { plan: PricedPlan; mission: MissionRecord; store: AgentStore; settings: Record<string, unknown>; read?: ReadMissionExclusion }): Promise<PricedPlan> {
++  const { plan, mission, store } = input;
++  if (!input.read || !scopedFlagOn(input.settings[CUSTOMER_EXCLUSION_FLAG_KEY], mission.user_id)) return plan;
++  const snapshot = await input.read(mission.id, mission.user_id);
++  if (!snapshot) return plan;
++  const applies = plan.stages.some(exclusionAppliesToStage);
++  // the approved copy, in the mission's private folder (written before the plan is shown: a failure stops here and the existing error path retries the planning)
++  if (applies) await store.putFile(mission.id, EXCLUSION_SNAPSHOT_PATH, JSON.stringify(snapshot), "application/json");
++  const n = snapshot.entities.length;
++  const mark: PlanExclusionMark = { digest: snapshot.digest, entities: n, applies };
++  const line = applies ? exclusionPlanLineAr(n) : exclusionNotApplicableAr(n);
++  return { ...plan, notes_ar: [...new Set([...(plan.notes_ar ?? []), line])], customer_exclusion: mark };
++}
++
++/** The approved list of an approved plan, or null when it cannot be loaded with exactly the approved digest (missing, unreadable, altered). */
++export async function loadApprovedExclusion(store: AgentStore, missionId: string, mark: PlanExclusionMark): Promise<ExclusionMatcher | null> {
++  try {
++    const bytes = await store.getFileBytes(missionId, EXCLUSION_SNAPSHOT_PATH);
++    if (!bytes) return null;
++    const snapshot = parseExclusionSnapshot(JSON.parse(Buffer.from(bytes).toString("utf8")));
++    if (!snapshot || snapshot.digest !== mark.digest || snapshot.entities.length !== mark.entities) return null;
++    return exclusionMatcherOf(snapshot);
++  } catch {
++    return null;
++  }
++}
+diff --git a/agent/src/engine/run.ts b/agent/src/engine/run.ts
+index cc39ccc..231dac8 100644
+--- a/agent/src/engine/run.ts
++++ b/agent/src/engine/run.ts
+@@ -49,6 +49,8 @@ export interface EngineDeps {
+   sandbox: (code: string, inputs: Record<string, unknown>) => Promise<SandboxResult>;
+   reviewer?: Reviewer;
+   addEvent: (event: MissionEventInput) => Promise<void>;
++  /** PHASE 5.3: the customer's approved exclusion list (items/ingest.ts IngestDeps.exclusion). Absent: no list. */
++  exclusion?: import("../../../src/lib/agentMission/customerExclusion").ExclusionMatcher;
+   now?: () => number;
+   /** Absolute time (ms) after which no new page is read. */
+   deadlineMs: number;
+diff --git a/agent/src/finalize.ts b/agent/src/finalize.ts
+index 2bde048..df5edd2 100644
+--- a/agent/src/finalize.ts
++++ b/agent/src/finalize.ts
+@@ -1,4 +1,5 @@
+ import ExcelJS from "exceljs";
++import { EXCLUSION_REASON_TEXT_AR } from "../../src/lib/agentMission/customerExclusion";
+ import type { StopReason } from "./items/itemStore";
+ import { formatAr } from "../../src/lib/arabicDigits";
+ import { countAr, GENERIC_ITEM_NOUN, knownItemNoun, type ItemNoun } from "../../src/lib/agentMission/itemNoun";
+@@ -104,6 +105,7 @@ const ZERO_REASON_CLAUSES: ReadonlyArray<{ keys: ReadonlyArray<string>; clause:
+   { keys: ["no_text", "no_term", "mention_only", "other_person", "name_extended", "other_meaning", "uncertain", "review_no", "review_failed"], clause: "لا يطابق موضوع طلبك" },
+   { keys: ["not_a_person"], clause: "كان عناوين عامة للشركات لا لأشخاص" },
+   { keys: ["no_verified_contact"], clause: "لا اسم شخص فيه ولا بيانات تواصل موثّقة" },
++  { keys: ["customer_exclusion"], clause: "كان واردًا في ملف الاستبعاد الذي أرسلته" },
+ ];
+ const ZERO_ADVICE_AR = "يمكنك تعديل الطلب، كاللغة أو الحساب أو الموضوع، ثم إعادة المحاولة.";
+ 
+@@ -135,6 +137,7 @@ export const REASON_TEXT_AR: Record<string, string> = {
+   filter_reply: "رد على غيره", filter_repost: "إعادة نشر", filter_language: "بلغة غير التي حددتها", filter_period: "خارج الفترة المحددة", filter_account: "من مصدر لم تسمّه", filter_place: "من مكان غير الذي حددته", filter_government: "جهة حكومية أو عسكرية", filter_media: "لا يثبت أنه فيديو أو صورة",
+   unknown_parent: "لا ينتمي لعنصر مقروء", no_verified_contact: "لا اسم شخص فيه ولا بيانات تواصل موثّقة", not_a_person: "لا يخص شخصًا بعينه (بريد عام أو اسم جهة أو بلا اسم؛ يظهر البريد في عمود إيميلات الشركة)", target_reached: "زاد عن العدد المعتمد",
+   not_at_company: "لا يعمل حاليًا في هذه الشركة (شركته الحالية غير الشركة المطلوبة)",
++  customer_exclusion: EXCLUSION_REASON_TEXT_AR,
+ };
+ export const reasonTextAr = (reason: string): string => REASON_TEXT_AR[reason] ?? "سبب آخر";
+ 
+@@ -144,7 +147,7 @@ const OUR_ROW_RULE_REASONS: ReadonlyArray<string> = ["no_verified_contact", "not
+  * EVERY FILTER OF THE PLAN IS OURS TOO (golden run round 2, G1: 242 companies found, the place filter left 240 out, and the closing sentence said «the source gave no more»): a row a filter of the plan removed (place, period, account, media, replies, reposts, government bodies) or
+  * a person who is not at the company is counted and said, for every stage. The language filter keeps its own sentence (shortfallClauseAr) and the topic check keeps «this is all that matched».
+  */
+-const OUR_FILTER_REASONS: ReadonlyArray<string> = ["filter_place", "filter_period", "filter_account", "filter_media", "filter_reply", "filter_repost", "filter_government", "not_at_company"];
++const OUR_FILTER_REASONS: ReadonlyArray<string> = ["filter_place", "filter_period", "filter_account", "filter_media", "filter_reply", "filter_repost", "filter_government", "not_at_company", "customer_exclusion"];
+ const LEFT_OUT_BY_US: ReadonlyArray<string> = [...OUR_ROW_RULE_REASONS, ...OUR_FILTER_REASONS];
+ 
+ export interface StageTruthFacts {
+diff --git a/agent/src/items/ingest.ts b/agent/src/items/ingest.ts
+index c6cee68..978315e 100644
+--- a/agent/src/items/ingest.ts
++++ b/agent/src/items/ingest.ts
+@@ -15,6 +15,8 @@ import { MARKS_KEY, markVerdict } from "../../../src/lib/agentMission/rawMarks";
+ import type { MissionEventInput } from "../types";
+ import type { Reviewer } from "../review";
+ import type { ItemReason, ItemStore, Op, Row, StageCounts } from "./itemStore";
++import { isCompanyStage } from "../../../src/lib/agentMission/entities";
++import { CUSTOMER_EXCLUSION_REASON, EXCLUSION_POSSIBLE_MARK, organisationOfRow, type ExclusionMatcher } from "../../../src/lib/agentMission/customerExclusion";
+ 
+ type Stage = PricedPlan["stages"][number];
+ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+@@ -30,8 +32,26 @@ export interface IngestDeps {
+   plan: PricedPlan;
+   reviewer?: Reviewer;
+   addEvent: (event: MissionEventInput) => Promise<void>;
++  /**
++   * PHASE 5.3: the customer's exclusion list of the APPROVED plan (`plan.customer_exclusion`), loaded from the mission's private copy and checked against the plan's digest. Required whenever the plan carries a mark that applies:
++   * a company or people stage is never ingested without it (the batch throws, nothing is saved). Absent with no mark: today's behaviour exactly.
++   */
++  exclusion?: ExclusionMatcher;
+ }
+ 
++/**
++ * PHASE 5.3: the stages the customer's exclusion list is checked on, and how a row names its organisation: a top-level COMPANY stage (the row is the company) or a top-level PEOPLE stage (a people search: the row's employer
++ * fields). A child stage is not checked (its parent was); any other stage (posts, comments, places) is not an organisation list. A people stage is told by the same rules as a child people stage (role preference, a people
++ * capability, a people noun in the title) or by a people-search endpoint.
++ */
++const PEOPLE_SEARCH_ENDPOINT = /(?:^|\.)people\.(?:search|find|list)|\.employees\b/i;
++export function exclusionStageKind(stage: Stage): "company" | "people" | null {
++  if (stage.parent_key !== null) return null;
++  if (isPeopleStage({ ...stage, parent_key: "__top" }) || PEOPLE_SEARCH_ENDPOINT.test(String(stage.endpoint_id ?? ""))) return "people";
++  return isCompanyStage(stage) ? "company" : null;
++}
++export const exclusionAppliesToStage = (stage: Stage): boolean => exclusionStageKind(stage) !== null;
++
+ /** What one page of a source adds to the log together with its items (one segment, so the cursor and the items can never disagree after a crash). */
+ export interface PageRecord { stream: string; call_id: string | null; cursor_in: string | null; cursor_next: string | null; has_more: boolean | null; ended: boolean; rows_in_page: number; /** The oldest moment among the page's rows (a stage read in date windows). */ oldest_ms?: number }
+ 
+@@ -102,6 +122,14 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
+   const quotaHave = new Map<string, number>();
+   if (quota) for (const r of items.acceptedRows(key)) { const v = r[SOURCE_KEY]; if (typeof v === "string") quotaHave.set(v, (quotaHave.get(v) ?? 0) + 1); }
+   const ops: Op[] = [];
++  // PHASE 5.3: THE CUSTOMER'S EXCLUSION LIST, on a stage it applies to. A plan that carries the mark is never ingested without the very list it was approved with (fail closed: the batch throws before anything is saved).
++  const exclusionMark = plan.customer_exclusion;
++  const exclusionKind = exclusionMark?.applies === true ? exclusionStageKind(stage) : null;
++  const exclusionHere = exclusionKind !== null;
++  if (exclusionHere && (!deps.exclusion || deps.exclusion.digest !== exclusionMark!.digest)) throw new Error("customer_exclusion_unavailable");
++  const exclusion = exclusionHere ? deps.exclusion! : null;
++  const exclusionNameKeys = exclusion ? nameKeysOf(stage.columns) : [];
++  let excludedByList = 0;
+ 
+   // items that were waiting (a review the budget or a failure delayed) or never looked at come back first, while matching items are still needed
+   const carry: Array<{ id: string; row: Row }> = [];
+@@ -152,6 +180,13 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
+     if (options.provenance) { row._src = options.provenance.src; if (options.provenance.call) row._call = options.provenance.call; }
+     // THE PLACE CELLS in Arabic («al qahirah» → «القاهرة»); never empty when the card promised the place
+     if (!isChild) placeCellsAr(row, stage.columns, raw, promisedPlace);
++    // PHASE 5.3: A COMPANY THE CUSTOMER EXCLUDED (their uploaded list, matched by code on the source's own fields: domain, registration number, full name, distinctive brand words) is kept with its reason, never delivered, never
++    // counted and never charged; its id is remembered, so a retried page or another source cannot bring it back under the same id, and a new id meets the same check. A possible match (a shared brand word only) is delivered and marked.
++    if (exclusion) {
++      const verdict = exclusion.check(organisationOfRow(raw, { people: exclusionKind === "people", nameKeys: exclusionNameKeys }));
++      if (verdict.kind === "excluded") { excludedByList += 1; excludedStructural.push({ id, reason: CUSTOMER_EXCLUSION_REASON, row }); continue; }
++      if (verdict.kind === "possible") row[EXCLUSION_POSSIBLE_MARK] = true;
++    }
+     // WHAT THE CARD PROMISES, checked here on the mapped item (replies, language, period, account, place): an item a filter rejects is neither delivered nor charged, and is kept with its reason
+     if (!rawMode && enabledFilters.length > 0) {
+       // THE DAYS OF A PERIOD ARE CAIRO DAYS here too (live finding B: the old reading, UTC days, accepted a tweet of 2026-11-01 00:14 Cairo into an October file and refused the first three hours of 1 October)
+@@ -314,7 +349,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
+   }
+   const stillNeeded = Math.max(0, stage.planned_rows - counts.accepted);
+   return {
+-    ok: true, stage: key, ...tally, counts, newlyAccepted: acceptedNow, total_in_stage: counts.accepted, stage_limit: stage.planned_rows,
++    ok: true, stage: key, ...tally, ...(excludedByList > 0 ? { rejected_by_customer_exclusion: excludedByList } : {}), counts, newlyAccepted: acceptedNow, total_in_stage: counts.accepted, stage_limit: stage.planned_rows,
+     ...(spec ? {
+       left_out_not_matching: left, reviewed_by_model: reviewedNow, review_budget_reached: reviewStop === "budget", review_failed: reviewStop === "failed", pending_for_review: counts.pending,
+       accepted_by_rule: acceptedNow - modelAccepted,
+diff --git a/agent/src/items/itemStore.ts b/agent/src/items/itemStore.ts
+index 4938fb0..89837cb 100644
+--- a/agent/src/items/itemStore.ts
++++ b/agent/src/items/itemStore.ts
+@@ -26,9 +26,9 @@ import type { AgentStore } from "../types";
+ export type Row = Record<string, unknown>;
+ export type ItemState = "accepted" | "excluded" | "pending" | "unchecked";
+ /** Why a structurally valid item was not saved, besides the relevance reasons. */
+-export type StructuralReason = "unknown_parent" | "no_verified_contact" | "not_a_person" | "not_at_company";
++export type StructuralReason = "unknown_parent" | "no_verified_contact" | "not_a_person" | "not_at_company" | "customer_exclusion";
+ export type ItemReason = RelevanceReason | StructuralReason | FilterReason | "target_reached";
+-export const STRUCTURAL_REASONS: ReadonlyArray<ItemReason> = ["unknown_parent", "no_verified_contact", "not_a_person", "not_at_company"];
++export const STRUCTURAL_REASONS: ReadonlyArray<ItemReason> = ["unknown_parent", "no_verified_contact", "not_a_person", "not_at_company", "customer_exclusion"];
+ 
+ /** Why a stage's collection stopped: recorded once, by code, and the only source of the shortfall sentence. */
+ export type StopReason = "target_reached" | "source_exhausted" | "no_new_items" | "budget" | "daily_cap" | "refused" | "time_limit" | "review_limit" | "failed" | "page_limit" | "no_parents" | "model_stopped" | "need_new_plan"
+diff --git a/agent/src/main.ts b/agent/src/main.ts
+index b8065ee..60d0ef2 100644
+--- a/agent/src/main.ts
++++ b/agent/src/main.ts
+@@ -8,6 +8,7 @@ import { resolveProviderKey, useProviderKeyStoreClient } from "../../src/lib/ser
+ import { last4Of } from "../../src/lib/server/providerKeyCrypto";
+ import { readProviderSpendToday, resolveAllProviderDailyCaps, resolveProviderDailyCapUsd } from "../../src/lib/server/multiProvider/providerCaps";
+ import { storedBriefOf } from "../../src/lib/agentMission/researchBrief";
++import { missionExclusionReader } from "./customerExclusion";
+ import { sendPlatformEmail } from "../../src/lib/server/sendPlatformEmail";
+ import { configureTregKeyPool } from "../../src/lib/server/tregKeyPool";
+ import { buildPoolAlertVars } from "../../src/lib/server/tregPoolAlerts";
+@@ -91,6 +92,8 @@ async function main() {
+     },
+     // LLM-FIRST OBJECTIVES (read only while capability_discovery_v1 is on for the mission's account): the brief the chat server stored on the assistant message that carries this mission's card
+     readMissionBrief: async (missionId, userId) => { const { data } = await client.from("messages").select("plan,created_at").eq("user_id", userId).eq("role", "assistant").eq("plan->>agentMissionId", missionId).order("created_at", { ascending: false }).limit(1); return storedBriefOf(Array.isArray(data) ? data[0]?.plan : null); },
++    // PHASE 5.3 (read ONLY when customer_exclusion_files_v1 is on for the mission's account): the exclusion list the chat server stored on the same card, for the same user; a failed read or a malformed list throws (never «no list»)
++    readMissionExclusion: missionExclusionReader(client),
+     log,
+   });
+ 
+diff --git a/agent/src/methodology.ts b/agent/src/methodology.ts
+index 7865bb3..8aa2526 100644
+--- a/agent/src/methodology.ts
++++ b/agent/src/methodology.ts
+@@ -1,4 +1,5 @@
+ import { deliveryCompletenessLineAr } from "../../src/lib/agentMission/foundation/discovery/plan";
++import { EXCLUSION_POSSIBLE_MARK, exclusionMethodologyAr, exclusionPossibleLineAr } from "../../src/lib/agentMission/customerExclusion";
+ import type { PricedPlan, PricedStage } from "../../src/lib/agentMission/plan";
+ import type { ItemSnapshot, StopReason } from "./items/itemStore";
+ import { cairoText, dateOnlyText, isDateValues, parseDateOnly, parseMoment } from "../../src/lib/agentMission/dateCells";
+@@ -312,6 +313,8 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
+   const dedupe = perStage((s) => { const r = facts.stages?.[s.key]; return r ? (r.duplicates > 0 ? `أُزيل ${fmt(r.duplicates)} من النتائج المكررة` : "لم يظهر تكرار") : null; });
+   items.push({ label: "المرشّحات المطبّقة", values: filterLines.length ? filterLines : ["لا مرشّحات في خطتك المعتمدة"] });
+   items.push({ label: "إزالة المكرر", values: orNotRecorded(dedupe) });
++  // PHASE 5.3: the customer's exclusion list the plan was approved with (only when it applied to a stage of the plan: a mark that did not apply says nothing here, the card already said so)
++  if (plan.customer_exclusion?.applies) items.push({ label: "ملف الاستبعاد", values: [exclusionMethodologyAr(plan.customer_exclusion.entities)] });
+ 
+   // 6. how relevance was checked
+   const relevance = perStage((s) => {
+@@ -392,6 +395,12 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
+     const unread = mine.filter((r) => dateUnreadColumnsOf(r).length > 0).length;
+     if (unread > 0) limits.push(`${many ? `«${s.title_ar}»: ` : ""}${fmt(unread)} من ${fmt(mine.length)} سُلّمت بلا تاريخ، لأن المصدر ذكر وقت النشر بنص لم نستطع تحويله إلى تاريخ، فتُرك الحقل فارغًا.`);
+   }
++  // PHASE 5.3: rows delivered although they RESEMBLE a listed company (a shared brand word only, never a certain match): their number is said, never hidden
++  if (plan.customer_exclusion?.applies) for (const s of delivering) {
++    const mine = rowsByStage[s.key] ?? [];
++    const possible = mine.filter((r) => r[EXCLUSION_POSSIBLE_MARK] === true).length;
++    if (possible > 0) limits.push(`${many ? `«${s.title_ar}»: ` : ""}${exclusionPossibleLineAr(possible, mine.length)}`);
++  }
+   // DECISION MAKERS: a people stage that prefers the decision makers says when people who are not fill the count (the titles of the delivered rows; a title the source did not give is not judged)
+   for (const s of delivering) {
+     const role = (s as { role_preference?: { role?: string } }).role_preference?.role;
+diff --git a/agent/src/runMission.ts b/agent/src/runMission.ts
+index e4b8085..9a6e0fc 100644
+--- a/agent/src/runMission.ts
++++ b/agent/src/runMission.ts
+@@ -93,6 +93,8 @@ import { missionFileTitleAr } from "../../src/lib/agentMission/fileNames";
+ import { itemNounOf, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun";
+ import type { AgentStore, CallRow, MissionRecord } from "./types";
+ import type { SandboxResult } from "./sandbox";
++import { loadApprovedExclusion, withCustomerExclusion, type ReadMissionExclusion } from "./customerExclusion";
++import type { ExclusionMatcher } from "../../src/lib/agentMission/customerExclusion";
+ import type { MissionNoticeFacts, MissionNoticeKind } from "../../src/lib/agentMission/notices";
+ 
+ export interface RunnerDeps {
+@@ -137,6 +139,8 @@ export interface RunnerDeps {
+   providerToday?: () => Promise<{ tregDailyCapUsd?: number; spentTodayUsd: Partial<Record<"treg" | "firecrawl" | "contextdev", number | null>> }>;
+   /** LLM-FIRST OBJECTIVES (capability_discovery_v1 only): the research brief the chat stored with this mission's card (`messages.plan.researchBrief`, written by the server only), read back with its schema. Absent (tests that do not need it): none. */
+   readMissionBrief?: (missionId: string, userId: string) => Promise<ResearchBrief | null>;
++  /** PHASE 5.3 (`customer_exclusion_files_v1` only): the exclusion list the chat stored on this mission's card (`messages.plan.customerExclusion`, server-written), read back with its digest. Absent (tests that do not need it): none. */
++  readMissionExclusion?: ReadMissionExclusion;
+ }
+ 
+ /** The two answers of the reduced-scope card (UNIFIED CAPABILITY DISCOVERY): the customer chooses, nothing is planned or held before. */
+@@ -716,6 +720,8 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
+       // a later planning of a mission whose earlier plan was made through discovery (the switch was turned off since): this plan has no record, and the anchor says so (only a re-planning reads the folder; a first planning has no anchor)
+       try { if ((await capabilityAnchorOf(store, mission.id)).required) await writeCapabilityAnchor(store, mission.id, null); } catch (e) { deps.log?.(`capability_anchor_not_cleared ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 80)}`); }
+     }
++    // PHASE 5.3: the customer's exclusion list (switch ON for the account and a list on the card only; otherwise the same plan object): copied to the private folder and pinned on the plan before it is shown
++    plan = await withCustomerExclusion({ plan, mission, store, settings, read: deps.readMissionExclusion });
+     await store.updateMission(mission.id, { ...base, status: "plan_ready", plan: plan as any, plan_public: publicPlanOf(plan) as any, unit_price_points: plan.price.unitPricePoints, reserved_points: plan.price.reservePoints });
+     await store.addEvent(mission.id, { kind: "plan", message_ar: plan.summary_ar, counts: { stages: plan.stages.length, rows: plan.price.deliveredRows, unit_points_x1000: Math.round(plan.price.unitPricePoints * 1000), reserve_points: plan.price.reservePoints } });
+     deps.log?.(`plan_ready ${mission.id} ${JSON.stringify(customerPlanView(plan).price)}`);
+@@ -780,6 +786,18 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
+     await settleExecution(deps, mission, plan, reserve, unit, { llm: Number(mission.execution_llm_usd ?? 0), executionTregUsd: Number(mission.execution_treg_usd ?? 0), summary: null, outputError: `admin: approved_scope_changed ${scope.issues.slice(0, 6).join(",")}`.slice(0, 300) });
+     return;
+   }
++  // PHASE 5.3: a plan approved WITH the customer's exclusion list never runs without exactly that list (whatever the switch says now): a missing or altered copy stops here, nothing is called, and the hold is released
++  // whole by the existing settlement
++  let exclusion: ExclusionMatcher | undefined;
++  if (plan.customer_exclusion?.applies) {
++    const loaded = await loadApprovedExclusion(store, mission.id, plan.customer_exclusion);
++    if (!loaded) {
++      await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: تعذّر تحميل ملف الاستبعاد المعتمد، فلم يُنفَّذ شيء.", counts: { adm_flag: 1 } }).catch(() => undefined);
++      await settleExecution(deps, mission, plan, reserve, unit, { llm: Number(mission.execution_llm_usd ?? 0), executionTregUsd: Number(mission.execution_treg_usd ?? 0), summary: null, outputError: "admin: customer_exclusion_unavailable" });
++      return;
++    }
++    exclusion = loaded;
++  }
+   await store.updateMission(mission.id, { execution_model: model, error: null });
+   await store.addEvent(mission.id, { kind: "system", message_ar: "اعتُمدت الخطة وبدأ الوكيل التنفيذ." });
+   const calls = await store.listCalls(mission.id);
+@@ -796,7 +814,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
+   const reviewBefore = await readReviewState(store, mission.id);
+   // THE ONE ITEM STORE: every item the engine or the model saves goes through it; a resumed mission continues from its log
+   const items = await ItemStore.open(store, mission.id, { legacyStages: plan.stages.map((s) => s.key) });
+-  const ctx: ToolContext = { phase: "execution", mission, plan, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, review: reviewer, items };
++  const ctx: ToolContext = { phase: "execution", mission, plan, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, review: reviewer, items, ...(exclusion ? { exclusion } : {}) };
+   const savedBefore = Object.fromEntries(plan.stages.map((s) => [s.key, items.counts(s.key).accepted]));
+   const llmBudget = Math.max(AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD, holdValueUsd(reserve, AGENT_PRICING_BASIS) * AGENT_EXECUTION_LLM_BUDGET_SHARE);
+   const baseLlm = Number((await store.getMission(mission.id))?.execution_llm_usd ?? mission.execution_llm_usd ?? 0);
+@@ -832,7 +850,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
+     // THE MODEL PLANNED, CODE EXECUTES: every stage has a recipe the plan check proved, so no model session is started at all (the only model call left is the small review of items the rule cannot decide)
+     const tracked = trackRun(mission.id);
+     try {
+-      const outcome = await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: mission.id, gateway, sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: live ? (e) => live.addEvent(e, () => store.addEvent(mission.id, e)) : (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, ...(redesignStages.size > 0 ? { redesignStages } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}), log: deps.log, ...(sources ? { sources, provenance: true } : {}), ...(engineStages ? { onlyStages: engineStages } : {}) });
++      const outcome = await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: mission.id, gateway, ...(exclusion ? { exclusion } : {}), sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: live ? (e) => live.addEvent(e, () => store.addEvent(mission.id, e)) : (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, ...(redesignStages.size > 0 ? { redesignStages } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}), log: deps.log, ...(sources ? { sources, provenance: true } : {}), ...(engineStages ? { onlyStages: engineStages } : {}) });
+       output = { llmCostUsd: 0, turns: 0, stop: outcome.aborted ?? "end" };
+     } finally {
+       untrackRun(tracked);
+diff --git a/agent/src/tools.ts b/agent/src/tools.ts
+index df42cf6..4014c74 100644
+--- a/agent/src/tools.ts
++++ b/agent/src/tools.ts
+@@ -136,6 +136,8 @@ export interface ToolContext {
+   /** The redesign flags in force for this mission and whether its account is a test account (redesignFlags.ts). Absent: the old behaviour. */
+   /** UNIFIED CAPABILITY DISCOVERY (capability_discovery_v1 only, model-planned path): the validated capabilities of each stage; a proposed stage reading anything else is refused by code. Absent: today's behaviour. */
+   capabilities?: CapabilityDiscovery;
++  /** PHASE 5.3: the customer's approved exclusion list (execution of a plan that carries `customer_exclusion`); every save goes through it. Absent: no list. */
++  exclusion?: import("../../src/lib/agentMission/customerExclusion").ExclusionMatcher;
+   redesign?: { flags: RedesignFlags; isTest: boolean; /** Per-platform overrides (docs/ROOT-CAUSE.md, section 5.3): absent = every platform follows its type. */ platformFlags?: PlatformFlags; /** The platform the customer's words name (the request contract), null when none. */ platform?: SocialPlatform | null };
+ }
+ 
+@@ -355,7 +357,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
+   const checkAndSaveRows = async (stage: PricedPlan["stages"][number], incoming: unknown[]): Promise<Record<string, unknown>> => {
+     const plan = ctx.plan!;
+     const items = await getItems();
+-    const result = await ingestRows({ items, plan, reviewer: ctx.review, addEvent: (e) => store.addEvent(mission.id, e) }, stage, incoming);
++    const result = await ingestRows({ items, plan, reviewer: ctx.review, addEvent: (e) => store.addEvent(mission.id, e), ...(ctx.exclusion ? { exclusion: ctx.exclusion } : {}) }, stage, incoming);
+     await mirrorLegacyFiles(items, store, plan, [stage.key]);
+     const { counts: _counts, newlyAccepted: _n, ...visible } = result;
+     return visible;
+diff --git a/docs/HANDOFF.md b/docs/HANDOFF.md
+index bc4a345..98f6f7e 100644
+--- a/docs/HANDOFF.md
++++ b/docs/HANDOFF.md
+@@ -18,7 +18,17 @@ This handoff document provides a clear, factual status of the Diger platform (`i
+ > * **Deployed**: running in production and verified.
+ > * **Not independently verified**: none of the above can be shown.
+ 
+-### Stale verification jobs (14 Nov 2026): cleanup prepared, NOT run (owner approval needed)
++### Phase 5.3 and Phase 6 campaign (14 Nov 2026)
++
++* **Report:** `docs/intelligence/PHASE-5-3-AND-6.md` (status table, deployment discipline, the exclusion-file change, the enrichment blocker and proposal, the provider sync).
++* **Baseline verified before any change:** `main` = `8c30294` (PR #494); Vercel production `dpl_ETmFhPpr7bWBWQmqzGLegDqMtg3W` READY on it; Heroku v202, worker heartbeat `8c30294`, `active_missions 0`; `agent_settings` = `redesign_flags`, `social_discovery`; ledger 1,247 rows.
++* **PR A (Phase 5.3-A):** exclusion files reach the mission and are applied at the one item boundary, behind `customer_exclusion_files_v1` (OFF, set by nothing). While OFF, a conversation with an uploaded file is told plainly that the file is NOT applied (the documented wording exception).
++* **Phase 5.3-B (enrichment files): stopped for owner approval.** It needs a new quote model and a new settlement rule (report §B.2); the smallest proposal is in §B.3. An enrichment request is never applied as an exclusion list, and the customer is told it is not supported.
++* **Deployment discipline (mandatory):** one push per focused PR, one preview, one production deployment, one Heroku release; everything (tests, typechecks, build, secret scan, mutation checks, docs) is finished locally first. Details: report «Deployment discipline».
++
++### Stale verification jobs (14 Nov 2026): CLOSED
++
++* **Closed** after explicit owner approval, by an authorized run of the guarded procedure. Independently re-checked on 14 Nov 2026 (read-only): `jobs` has no queued or running row (completed 291, failed 152, refused 2). The history below is kept.
+ 
+ * **Document:** `docs/ops/STALE-TEST-JOBS-CLEANUP.md`, the read-only findings and the guarded procedure, to be run by an authorized agent only after explicit owner approval.
+ * **What they are:**
+@@ -28,7 +38,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
+   * the 36 `reserved_credits` were written by the fixtures and never debited, so they are not holds;
+   * the two `provider_costs` rows ($0.60) are hard-coded commits from `verify-spend-cap.ts` into the daily-cap accounting; no provider was called.
+ * **Why they never close:** `release_job_atomic` refuses all nine, correctly. Meanwhile the per-minute stall notifier retries them: 18 requests a minute, measured at about 1,080 an hour.
+-* **Code fix (PR, not merged):** one batch check in `notifyStalledJobs` skips jobs whose stalled notice already exists, with the same outcome.
++* **Code fix: PR #494, merged `8c30294`:** one batch check in `notifyStalledJobs` skips jobs whose stalled notice already exists, with the same outcome.
+ * **Cleanup:** sets `status` to `failed`, `lease_until` to `NULL` and a fixed `error_message` on exactly these nine.
+   * Guarded, including no active lease and a count of exactly 9.
+   * No ledger row, no delete.
+@@ -42,7 +52,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
+   * Only 2 accounts used the product in 30 days, so the always-on work dominates:
+     * admin screens polled every 3–60 s forever, in background tabs too;
+     * the database driver calls `/api/cron/drive` every minute unconditionally (1,440 a day, for its heartbeat).
+-* **Fix PR (CPU):**
++* **Fix: PR #493, merged `7d9bcad`:**
+   * admin screens ask only while visible;
+   * an ended mission is refreshed once a minute in the admin console;
+   * static files skip the middleware.
+@@ -105,7 +115,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
+ | #483 | Phase 2, provider readiness | `fb26563`. Vercel `dpl_Cnr2y99XB8Ao5zvy9ynR8HEioWEL` READY; heartbeat `fb26563` |
+ | #484 | Phase 3, registry | `cc81502`. Vercel `dpl_FGvB7oLLntbtUU2QEEajqXyW59mc` READY; heartbeat `cc81502` |
+ | #485 | Phase 4, router | `df1c534` |
+-| PR D | families + cross-phase acceptance | see the PR |
++| #486 | PR D: families + cross-phase acceptance | `e0ebe47` |
+ 
+ * **Switches, all OFF and set by nothing:**
+   * `web_via_treg`: company enrichment through TREG;
+@@ -176,7 +186,8 @@ This handoff document provides a clear, factual status of the Diger platform (`i
+ 
+ ### Production (deployed) as last verified
+ 
+-* **Last code change:** **`7d30ec8`** (merge of PR #479, round 61 offline spend gate; parents `adb22f8` + reviewed head `61338a2`, tree identical to the reviewed head). Later documentation-only merges (PR #480) move `main` without changing code; check `git log origin/main` for the tip.
++* **Latest verified baseline (14 Nov 2026):** `8c30294` (merge of PR #494). Vercel production `dpl_ETmFhPpr7bWBWQmqzGLegDqMtg3W` READY on it; Heroku release v202 «Deploy 8c302942»; worker heartbeat `8c30294`, `active_missions 0`. The campaign PRs that follow record their own production results in `docs/intelligence/PHASE-5-3-AND-6.md`.
++* **Historical (13 Nov 2026), no longer the latest:** **`7d30ec8`** (merge of PR #479, round 61 offline spend gate; parents `adb22f8` + reviewed head `61338a2`, tree identical to the reviewed head). Later documentation-only merges (PR #480) move `main` without changing code; check `git log origin/main` for the tip.
+ * **Verified on 13 Nov 2026 after the merge:**
+   * Vercel production deployment `dpl_FM1Ej2fSqeY1hgLwuTYtDTQu4th7` READY on `7d30ec8`.
+   * Heroku release v188 «Deploy 7d30ec85»; `worker.1` up on v188; heartbeat `version 7d30ec8`, `active_missions 0`.
+diff --git a/docs/NEXT_STEPS.md b/docs/NEXT_STEPS.md
+index fab686a..8c80eb3 100644
+--- a/docs/NEXT_STEPS.md
++++ b/docs/NEXT_STEPS.md
+@@ -1,28 +1,18 @@
+-# Diger: next steps (updated 14 Nov 2026, after Phase 5)
+-
+-**Read first:** `docs/HANDOFF.md`, section «CURRENT STATE».
+-
+-## Current state (verified 13 Nov 2026)
+-
+-* **Last code change in production:** `7d30ec8`, the merge of PR #479 (round 61). Verified after that merge:
+-  * Vercel production deployment `dpl_FM1Ej2fSqeY1hgLwuTYtDTQu4th7` READY on `7d30ec8`;
+-  * Heroku release v188, worker heartbeat `version 7d30ec8`.
+-* **Later documentation-only merges** (this file's PR #480) move `main` without changing any code. Check `git log origin/main` for the current tip.
+-* **Round 61** (the hard spend gate) is **merged as disconnected code only**:
+-  * not wired into any call site;
+-  * no SQL applied;
+-  * no grant issued;
+-  * `DIGER_SPEND_GATE` unset on Heroku and Vercel;
+-  * **not enabled**.
+-* **Spending behaviour in production is unchanged** from round 60.
+-* **Tests on the merged tree** (`61338a2`, run locally; the repository has no GitHub Actions, so GitHub ran no tests):
+-  * full suite: 13,563 passed, 0 failed, 47 expected-fail, 78 skipped;
+-  * both typechecks clean;
+-  * `npm run build` and the client-bundle secret scan clean.
+-* **Branches:**
+-  * `ccr-9dc4c8d3-d0ae22` is fully merged (PR #479) and needs no further work.
+-  * New work starts from `main` on a new branch.
+-* **Budget enforcement is NOT live.**
++# Diger: next steps (updated 14 Nov 2026, Phase 5.3 and Phase 6 campaign)
++
++**Read first:** `docs/HANDOFF.md`, section «CURRENT STATE», and `docs/intelligence/PHASE-5-3-AND-6.md`.
++
++## Current state (verified 14 Nov 2026)
++
++* **Latest verified baseline:** `8c30294`, the merge of PR #494 (PR #493 is merged too, `7d9bcad`):
++  * Vercel production deployment `dpl_ETmFhPpr7bWBWQmqzGLegDqMtg3W` READY on `8c30294`;
++  * Heroku release v202, worker heartbeat `version 8c30294`, `active_missions 0`.
++* The nine stale `vrun_` verification jobs are **closed** (no queued or running job, read-only check).
++* **This campaign's PRs** (Phase 5.3-A, Phase 6) and their production results are in `docs/intelligence/PHASE-5-3-AND-6.md`. Check `git log origin/main` for the current tip.
++* **Statuses are kept apart everywhere:** code complete ≠ offline verified ≠ live verified ≠ production enabled. No Intelligence switch is set in production.
++* **Deployment discipline (mandatory):** one push, one preview and one production deployment per focused PR; everything is verified locally first (report «Deployment discipline»).
++* **Round 61** (the hard spend gate) is still **merged as disconnected code only** (not wired, no SQL, no grant, `DIGER_SPEND_GATE` unset). **Budget enforcement is NOT live.**
++* **Historical (13 Nov 2026):** the last code change was then `7d30ec8` (PR #479); suite 13,563 passed at `61338a2`.
+ 
+ ## ACTIVATION BLOCKER: observe mode is NOT budget enforcement
+ 
+@@ -43,6 +33,13 @@
+ * Merging PR B would still not activate anything: the mode stays off by default.
+ * Activation (`observe`, then `enforce`) is a further, separate owner decision.
+ 
++## Phase 5.3 and Phase 6 (14 Nov 2026)
++
++* **5.3-A exclusion files:** code complete and offline verified behind `customer_exclusion_files_v1` (**not enabled**). Owner: turn it on for the test account, then customers; decide whether possible matches are excluded too.
++* **5.3-B enrichment files:** **stopped**; it needs a new quote model and a new settlement rule. Proposal: report §B.3 (owner approval).
++* **6.1 / 6.2 provider sync and breaking changes:** see the report §C.
++* **Next roadmap priority after this campaign:** Phase 7 (shadow evaluation) and Phase 8 (controlled activation) need owner decisions first; they were not started.
++
+ ## Phases 2–4 of the Diger Intelligence Audit (14 Nov 2026)
+ 
+ * **State:** code complete and offline verified, **not enabled**. See `docs/intelligence/PHASES-2-4-ACCEPTANCE.md`.
+diff --git a/docs/intelligence/DIGER_INTELLIGENCE_AUDIT.md b/docs/intelligence/DIGER_INTELLIGENCE_AUDIT.md
+index de376f2..2b6461f 100644
+--- a/docs/intelligence/DIGER_INTELLIGENCE_AUDIT.md
++++ b/docs/intelligence/DIGER_INTELLIGENCE_AUDIT.md
+@@ -1,3 +1,5 @@
++> **HISTORICAL DOCUMENT (status as of 11 Nov 2026).** Its implementation statuses are no longer current: Phases 0–5 and 5.3-A were built after it (code complete, offline verified, NOT enabled), Phase 5.3-B is stopped for owner approval, and Phase 6 is covered in `PHASE-5-3-AND-6.md`. Read `docs/HANDOFF.md` «CURRENT STATE», `PHASES-2-4-ACCEPTANCE.md`, `PHASE-5-CONTACTS-AND-REVERSE-LOOKUP.md` and `PHASE-5-3-AND-6.md` for what is true now. «Code complete» never means «enabled in production».
++
+ Read-only audit11 Nov 2026iammagdy/digr · main 001cbeb
+ 
+ # Diger Intelligence Audit
+diff --git a/docs/intelligence/PHASE-5-3-AND-6.md b/docs/intelligence/PHASE-5-3-AND-6.md
+new file mode 100644
+index 0000000..4f722bc
+--- /dev/null
++++ b/docs/intelligence/PHASE-5-3-AND-6.md
+@@ -0,0 +1,121 @@
++# Phase 5.3 and Phase 6: customer files and provider update intelligence (14 Nov 2026)
++
++**Reference documents:** `DIGER_INTELLIGENCE_AUDIT.md` (historical, Chapters 7, 9, 14 PR-5.3 / PR-6.1 / PR-6.2), `PHASES-2-4-ACCEPTANCE.md`, `PHASE-5-CONTACTS-AND-REVERSE-LOOKUP.md`.
++
++**Starting point:** `main` = `8c30294` (PR #494), verified before any change:
++
++* Vercel production `dpl_ETmFhPpr7bWBWQmqzGLegDqMtg3W` READY on `8c30294`;
++* Heroku release v202 «Deploy 8c302942», worker heartbeat `8c30294`, `active_missions 0`;
++* `agent_settings` keys: `redesign_flags`, `social_discovery` only (no Intelligence switch set);
++* `credit_ledger`: 1,247 rows, sum 16,086, last row 13 Nov 2026 16:06 UTC;
++* `jobs`: no queued or running job (the nine stale `vrun_` jobs are closed); `missions`: none queued, planning, approved or executing (two `plan_ready` wait for their customers).
++
++**Rules kept throughout:** no paid call (provider or model), no switch set, no migration, no secret read or printed, no change to pricing, ledger, reservation, settlement, refunds, permissions, RLS, crons or infrastructure. PR #481 was not touched.
++
++## Status at a glance
++
++| | CODE COMPLETE | OFFLINE VERIFIED | LIVE VERIFIED | PRODUCTION ENABLED | NEEDS THE OWNER |
++|---|---|---|---|---|---|
++| **5.3-A exclusion files** | Yes (PR A) | Yes (§A.5) | **No** | **No.** `customer_exclusion_files_v1` is unset. | Turning the switch on (test account first) |
++| **5.3-B enrichment files** | **No: stopped** (§B) | The honest refusal is (§A.3) | No | No | A pricing and settlement decision (§B.3) |
++| **6.1 provider sync** | see §C (PR C) | | | | |
++| **6.2 breaking changes** | see §C (PR C) | | | | |
++
++«Code complete» is not «live». Nothing in this campaign was run against a real customer, a real provider or a real model.
++
++## Deployment discipline (in force from this campaign)
++
++Measured before this campaign: 76 Vercel deployments in about 36 hours (25 production, 47 successful previews, 3 failed previews, 1 cancelled).
++
++1. Local commits are allowed; intermediate GitHub pushes are not.
++2. One branch from the current `main` per focused PR; the whole scoped change, its tests and its documentation are finished locally first.
++3. Before the single push: targeted tests, the full suite, both typechecks, `npm run build` (with the client-bundle secret scan), the relevant mutation checks, and a review of the whole diff.
++4. Push once, open one PR, verify its one preview at the exact head SHA, merge through the PR (never to `main` directly), then verify production on the merge SHA and the worker heartbeat on the same SHA.
++5. No documentation-only PR when the documentation belongs to a code change; no push to re-test what can be checked locally; no redeploy of an already verified SHA; no merge of `main` back into a finished branch just to synchronise it.
++6. Extra pushes only for genuine review findings or failed deployment gates.
++7. The production result of one PR is recorded in the NEXT code PR of the campaign (never in a documentation-only PR). The last PR's own production result is in the campaign's final report.
++
++## A. Phase 5.3-A: exclusion files (PR A)
++
++### A.1 The flow before this PR (audit)
++
++| Step | Where | What happened |
++|---|---|---|
++| Upload | `Composer.tsx` → `POST /api/chat` | `.xlsx` / `.csv` up to 5 MB, signed-in users only |
++| Parsing, validation | `src/app/api/chat/route.ts`, `exclusionFileParser.ts` | server-side; company name, corporate domain, registration number; at most 5,000 rows; personal columns never read |
++| Persistence | `chatHandler.ts` → `saveConversationBrief` | `brief.exclusionFile` on the conversation (owner checked by the route) |
++| Mission creation | `chatTurn.ts` `startMission` → `createCustomerMission` | **the mission row held only the request text: the list never reached the worker** |
++| Planning, approval, execution | `agent/src/runMission.ts` | no knowledge of the list |
++| Ingestion, deduplication, files, delivered rows, settlement | `agent/src/items/ingest.ts`, `finalize.ts`, settlement | **excluded companies could be delivered and charged** |
++
++The old jobs path (`src/app/api/worker/chunk/route.ts`) does apply `exclusionRules`, and the old plan text says so; that path is not reachable in production while `AGENT_SERVES_CHAT` is true (every research request goes to the agent). It is unchanged.
++
++### A.2 The change (behind `customer_exclusion_files_v1`, default OFF)
++
++* **Switch:** `agent_settings.customer_exclusion_files_v1`, read with the existing `scopedFlagOn` (`true` / `"on"` for everyone, `{ "user_ids": [...] }` for named accounts, `expires_at` honoured). Nothing in the repository sets it.
++* **Chat (`chatTurn.ts` `exclusionForCard`):** with a file in the conversation and the switch ON for the account, a snapshot of the server-parsed list (`customerExclusion.ts` `exclusionSnapshotOf`: organisation identifiers only, repeats removed, at most 5,000, SHA-256 digest) is written on the assistant message of the new mission's card, in the SAME update as `agentMissionId`. Customers cannot write an assistant message's plan (messages RLS: insert only `role = 'user'` with `plan IS NULL`; no update policy).
++* **Planning (`agent/src/customerExclusion.ts` `withCustomerExclusion`):** with the switch ON for the mission's user, the worker reads that card (same `user_id`, same mission id: `missionExclusionReader`), copies the list to the mission's private folder (`inputs/customer-exclusion.json`) and pins `plan.customer_exclusion = { digest, entities, applies }`. The card gets one sentence: applied to the plan's company or people stages, or «not applicable to this kind of data» (posts, comments, places). A failed read or a malformed list throws (the existing planning retry), never a silent «no list». The list itself is never in the plan (the plan text reaches models; the list does not).
++* **Execution (`runExecution`):** a plan approved WITH a list never runs without exactly that list, whatever the switch says at execution time. The private copy is loaded and its digest and size must equal the approved ones; otherwise nothing is called and the hold is released whole by the existing settlement (`admin: customer_exclusion_unavailable`).
++* **The one boundary (`agent/src/items/ingest.ts`):** every row enters the item store through `ingestRows` (engine pages, the pinned approved rows, retried pages, fallback sources, the model's `save_rows`). On a top-level company stage (the row is the company) or people stage (the row's employer fields only, never the person's name or job title), a row the matcher CONFIRMS is in the list is stored as `excluded` with the new reason `customer_exclusion`: never delivered, never counted, never charged. Its id is remembered, so a retried page cannot bring it back under the same id, and a new id meets the same check. If a plan carries an applying mark and the batch has no list with that digest, the batch throws before anything is saved (fail closed).
++* **Matching (`exclusionMatcherOf`, deterministic, no model):** the rules of `negativeListEngine.compareOrganizations`, indexed (constant time per row for 5,000 listed companies): equal corporate domain (registrable form; social networks, free mailboxes and site builders never count as a domain); equal registration number (Arabic digits read); equal normalized full name (Arabic letter forms and diacritics unified); equal set of distinctive brand words (generic words such as «شركة», «مقاولات», «group» never count). A shared brand word only is a POSSIBLE match: kept and delivered (the negative-list engine's owner rule: an uncertain case is never silently deleted), marked on the row (`_excl_possible`, internal) and counted in the methodology.
++* **What the customer reads:** the card's sentence; the methodology item «ملف الاستبعاد»; the reason «وارد في ملف الاستبعاد الذي أرسلته» in the counts table and the shortfall sentence; the number of delivered rows that only resemble a listed name. Counts only, never a listed name.
++* **Unchanged:** pricing, reservation, approval, settlement arithmetic (charge = ceil(delivered × unit), never above the reserve), the source-link and source-identity rules, the people-at-company confirmation, every provider gateway and cap. The list never goes to a provider or a model.
++
++### A.3 Customer honesty while the switch is OFF (documented wording exception)
++
++The only customer-facing change with the switch OFF, and only for a conversation that has an uploaded file:
++
++* the new mission's chat message gets one more line: «ملاحظة: استلمنا ملف الاستبعاد (ن شركة)، لكن تطبيقه على نتائج البحث غير مفعّل حاليًا، فقد تتضمن النتيجة شركات واردة فيه.»;
++* a file with no usable company: «لم نجد في ملف الاستبعاد المرفوع أسماء شركات صالحة، فلن يُستخدم في هذا الطلب.»;
++* a request that asks to research the companies IN the file (`uploadIntentOf` = enrichment, any switch state): «استخدام ملف مرفوع كقائمة شركات تُكمَل بياناتها غير متاح حاليًا، فلن تُستخدم شركات الملف كبداية للبحث ولن يُطبَّق الملف كقائمة استبعاد …». The list is then never applied as an exclusion, because it would remove the very companies the customer asked about.
++
++Without a file nothing is read or written and the message is exactly today's. Tests: `tests/customer-exclusion-phase53.test.ts` («the chat card», «ENRICHMENT»).
++
++### A.4 Limitations (said, not hidden)
++
++* The parser is organisation-focused. Exclusion lists of social accounts, comment authors or people are **not supported**; on a plan of posts or comments the card says the file does not apply.
++* A possible match (shared brand word) is delivered, with its count in the methodology. Excluding possible matches too would be stricter and is an owner choice.
++* A sample row shown on the plan card is from planning; the delivered file is filtered.
++* The file of a conversation applies to every new mission of that conversation (the brief keeps it), and each card says so.
++* Upload intent is read from the request words; an enrichment request worded in an unforeseen way and uploaded in an earlier turn is read as an exclusion request (the upload control is labelled «ملف استبعاد»).
++
++### A.5 Tests (offline only)
++
++`tests/customer-exclusion-phase53.test.ts`: CSV and XLSX fixtures through the real parser; exact, domain, registration, Arabic-normalized and brand matches; ambiguous matches; duplicate entities; empty and invalid files; tampered snapshots; retried pages; a fallback source under new ids; people stages; fail-closed ingest; switch OFF / ON / ON-for-another-account; the reader's user filter (cross-account isolation); a whole replayed mission on the model path (2 + 4 + 3 delivered, the excluded company and everything under it absent, charge = ceil(delivered × unit)); a whole replayed mission on the code engine (no people asked for the excluded company); the fail-closed execution (no provider call, no charge, balance unchanged). `tests/raw-delivery-contract.test.ts`: the reason inventory pin is updated on purpose (24 reasons; `customer_exclusion` is an allowed raw removal), marked CHANGED.
++
++Mutation checks: 29 of 29 mutants caught (each protection removed in turn: the skip, the fail-closed throw, the digest checks, each matcher rule, the shared-host guard, the people/company reading, the switch check, the private copy, the reader's user filter, the execution stop, the engine and model wiring, the chat's OFF behaviour, the enrichment-intent guard).
++
++## B. Phase 5.3-B: enrichment files (STOPPED for owner approval)
++
++### B.1 What exists
++
++* Upload, server parsing and conversation persistence (§A.1), and from PR A a secure way to associate a server-parsed list with ONE mission and give the worker the approved copy (card snapshot → private copy → digest on the plan). No migration is needed for that part.
++* Company → official website → public contacts chain through TREG (`web_via_treg`, Phase 2, OFF) and the contact steps (`contact_steps`) that fill cells of delivered rows.
++
++### B.2 The precise blocker
++
++Making an uploaded list the approved starting dataset needs three things that the brief puts outside this campaign without owner approval:
++
++1. **A new quote and approval model.** Every stage of a plan today is a provider capability, priced by `price.ts` from measured calls, recorded in the capability selection and re-verified at execution (`verifyApprovedScope`). A stage whose rows come from the customer's file has no capability, no measured cost and no record; adding one changes the pricing function's inputs and the approved-scope verification (a security control).
++2. **New settlement semantics.** Settlement charges `ceil(delivered rows × unit)`. A supplied company is the customer's own row: delivering it again with nothing found would charge for nothing, and charging only rows with at least one found field is a new definition of a delivered unit.
++3. **Paid enrichment calls per supplied row.** Each row needs a priced website and contact lookup that the customer approves in advance; that is a new paid operation with its own price per row.
++
++PR B was therefore not implemented, and no workaround was improvised. PR A makes sure such a request is never applied as an exclusion and tells the customer plainly that it is not supported (§A.3).
++
++### B.3 Smallest safe proposal (for owner approval)
++
++* **Input:** reuse PR A's snapshot path unchanged, with its own switch `customer_enrichment_files_v1` (default OFF) and the intent reader; company name and corporate domain as identifiers; each supplied row keeps its original row number (`_input_row`) and is never replaced by another company (a found value is written only when its source names the same company by domain or exact name).
++* **Plan:** one stage «الشركات من ملفك» (rows = supplied rows after repeats are removed, said on the card) feeding the existing `company.enrich` → official website → public contacts chain, plus social profile links read from the official site only. The count is the supplied count; no other company is searched for.
++* **Price:** the existing pricing function over the enrichment chain's measured cost per supplied row (no new formula), reserved before approval as today.
++* **Settlement (the decision):** a supplied row is a delivered unit only when at least one requested field was found from an official, publicly verifiable source; rows with nothing found are delivered free, marked «غير متوفر» per field.
++* **Evidence first:** one capped live capture on the test account (≤ $0.20) before any customer use.
++
++## C. Phase 6: provider update intelligence
++
++Added by PR C.
++
++## Owner decisions (new in this campaign)
++
++1. Turn `customer_exclusion_files_v1` on for the test account, then for customers.
++2. Whether a POSSIBLE match (shared brand word only) should also be excluded.
++3. The Phase 5.3-B proposal (§B.3): its settlement rule, its switch and its live capture.
+diff --git a/src/functions/shared/chatHandler.ts b/src/functions/shared/chatHandler.ts
+index c961adc..61df77d 100644
+--- a/src/functions/shared/chatHandler.ts
++++ b/src/functions/shared/chatHandler.ts
+@@ -1612,8 +1612,8 @@ export class ChatHandler {
+   }
+ 
+   /** One chat turn answered by the AGENT (see `agentChat`): a mission is created for the customer; the page draws its card. Never calls a model or a source itself. */
+-  private async answerWithAgent(ctx: { sb: any; turn: TurnUsageLog; conversationId: string; assistantMsgId: string; userMsgId: string; userId: string; message: string; conversationTitle: string | null; stats: () => NonNullable<ChatHandlerResponse["turnStats"]> }): Promise<ChatHandlerResponse> {
+-    const r = await agentChatTurn({ sb: ctx.sb, userId: ctx.userId, conversationId: ctx.conversationId, userMsgId: ctx.userMsgId, assistantMsgId: ctx.assistantMsgId, message: ctx.message, conversationTitle: ctx.conversationTitle });
++  private async answerWithAgent(ctx: { sb: any; turn: TurnUsageLog; conversationId: string; assistantMsgId: string; userMsgId: string; userId: string; message: string; conversationTitle: string | null; stats: () => NonNullable<ChatHandlerResponse["turnStats"]>; /** PHASE 5.3: the brief's server-parsed exclusion file (null: none). */ exclusionFile?: { name?: unknown; baselineRowCount?: unknown; normalizedEntities?: unknown } | null }): Promise<ChatHandlerResponse> {
++    const r = await agentChatTurn({ sb: ctx.sb, userId: ctx.userId, conversationId: ctx.conversationId, userMsgId: ctx.userMsgId, assistantMsgId: ctx.assistantMsgId, message: ctx.message, conversationTitle: ctx.conversationTitle, ...(ctx.exclusionFile ? { exclusionFile: ctx.exclusionFile } : {}) });
+     ctx.turn.model = "agent";
+     const base = { conversationId: ctx.conversationId, messageId: ctx.assistantMsgId, role: "assistant" as const, intent: "research" as const, tokensUsed: { input: 0, output: 0, costUsd: 0 }, turnStats: ctx.stats() };
+     if (!r.ok) return { ...base, contentAr: r.contentAr, outputType: "answer_question" } as ChatHandlerResponse;
+@@ -2714,7 +2714,7 @@ export class ChatHandler {
+       // The AGENT takes every research request when it is on (the rollback constant is AGENT_SERVES_CHAT): a greeting, a general question and a file-shaping turn are still answered by the code above.
+       if (this.agentChat?.enabled && sb && !isTestSearchScenario && !isFileShapingTurn && !isGreeting && !isGeneralQuestion) {
+         currentStep = "agent_mission";
+-        return await this.answerWithAgent({ sb, turn, conversationId, assistantMsgId, userMsgId, userId, message, conversationTitle: currentConversationTitle, stats: currentTurnStats });
++        return await this.answerWithAgent({ sb, turn, conversationId, assistantMsgId, userMsgId, userId, message, conversationTitle: currentConversationTitle, stats: currentTurnStats, exclusionFile: brief.exclusionFile ?? null });
+       }
+ 
+       // The MODEL PLANNER takes the whole planning path (studies, coverage, discovery questions, social intent, deterministic plans, the model call of the old path) when it is on.
+diff --git a/src/lib/agentMission/chatTurn.ts b/src/lib/agentMission/chatTurn.ts
+index 5e2940d..33eb947 100644
+--- a/src/lib/agentMission/chatTurn.ts
++++ b/src/lib/agentMission/chatTurn.ts
+@@ -16,6 +16,7 @@ import { conditionChanged, conditionDriftOf, droppedRequirementsOf, groundedCond
+ import { randomUUID } from "node:crypto";
+ import { normalizeDigits } from "../arabicDigits";
+ import { readSettingValue, scopedFlagOn } from "./scopedFlag";
++import { CUSTOMER_EXCLUSION_FLAG_KEY, ENRICHMENT_NOT_SUPPORTED_AR, exclusionNotAppliedAr, exclusionSnapshotOf, exclusionWillApplyAr, EXCLUSION_UNUSABLE_AR, uploadIntentOf } from "./customerExclusion";
+ import { buildCapabilityRegistry, chatCapabilityLines, discoverCapabilities, operationLabelAr, PLATFORM_AR, researchNeedOf, CAPABILITY_DISCOVERY_FLAG_KEY, type CapabilityDiscovery, type CapabilityRegistry } from "./capabilities";
+ import { loadTregCatalog } from "../treg/catalog";
+ import { blockedEndpointReason } from "../treg/blockList";
+@@ -36,6 +37,8 @@ export interface AgentChatTurnInput {
+   assistantMsgId: string;
+   message: string;
+   conversationTitle?: string | null;
++  /** PHASE 5.3: the exclusion file the chat server parsed and kept in this conversation's brief (chatHandler `brief.exclusionFile`; never a field the customer's browser sends). Absent: no file. */
++  exclusionFile?: { name?: unknown; baselineRowCount?: unknown; normalizedEntities?: unknown } | null;
+ }
+ 
+ export type AgentChatTurnResult =
+@@ -327,11 +330,12 @@ async function startMission(input: AgentChatTurnInput, requestText: string, extr
+     } catch { /* shown anyway */ }
+     return { ok: false, contentAr, status: created.status };
+   }
+-  const contentAr = extra.contentAr ?? (extra.noteAr ? `${extra.noteAr} ${AGENT_TURN_CONTENT_AR}` : AGENT_TURN_CONTENT_AR);
++  const exclusion = await exclusionForCard(input, `${requestText} ${input.message}`);
++  const contentAr = withExclusionNote(extra.contentAr ?? (extra.noteAr ? `${extra.noteAr} ${AGENT_TURN_CONTENT_AR}` : AGENT_TURN_CONTENT_AR), exclusion.noteAr);
+   const derived = isUntitledConversation(input.conversationTitle) ? titleFromFirstRequest([{ role: "user", content: requestText }]) : null;
+   try {
+     await Promise.all([
+-      sb.from("messages").update({ content_ar: contentAr, plan: { agentMissionId: created.id, ...(extra.brief ? { researchBrief: extra.brief } : {}) } }).eq("id", input.assistantMsgId),
++      sb.from("messages").update({ content_ar: contentAr, plan: { agentMissionId: created.id, ...(extra.brief ? { researchBrief: extra.brief } : {}), ...exclusion.plan } }).eq("id", input.assistantMsgId),
+       sb.from("messages").update({ request_status: "planning" }).eq("id", input.userMsgId),
+       ...(derived ? [sb.from("conversations").update({ title: derived, updated_at: new Date().toISOString() }).eq("id", input.conversationId).eq("user_id", input.userId)] : []),
+     ]);
+@@ -341,6 +345,23 @@ async function startMission(input: AgentChatTurnInput, requestText: string, extr
+   return { ok: true, missionId: created.id, contentAr, ...(derived ? { conversationTitle: derived } : {}) };
+ }
+ 
++/**
++ * PHASE 5.3: THE EXCLUSION FILE ON A NEW MISSION'S CARD. No file in the conversation: nothing (no read, no field, no sentence: today's behaviour exactly). With a file and the server switch `customer_exclusion_files_v1` ON for the
++ * account: the snapshot of the parsed list goes on the card's message (`plan.customerExclusion`, in the SAME write as `agentMissionId`, so the worker finds both or neither) and the customer reads that the plan will say whether it
++ * applies. Switch OFF (the default): nothing is stored, and the customer reads plainly that the file was received and is NOT applied. A file with no usable company is said too, and never stored. A request that asks to
++ * research the companies IN the file (enrichment, customerExclusion.ts uploadIntentOf) never stores the list as an exclusion, in any switch state: it would remove the very companies asked about.
++ */
++export async function exclusionForCard(input: Pick<AgentChatTurnInput, "sb" | "userId" | "exclusionFile">, requestText = ""): Promise<{ plan: Record<string, unknown>; noteAr: string | null }> {
++  if (!input.exclusionFile) return { plan: {}, noteAr: null };
++  // the customer asked to research the companies IN the file (enrichment, not supported yet): the file is never applied as an exclusion list, whatever the switch says, and that is said
++  if (uploadIntentOf(requestText) === "enrichment") return { plan: {}, noteAr: ENRICHMENT_NOT_SUPPORTED_AR };
++  const snapshot = exclusionSnapshotOf(input.exclusionFile);
++  if (!snapshot) return { plan: {}, noteAr: EXCLUSION_UNUSABLE_AR };
++  const on = scopedFlagOn(await readSettingValue(input.sb, CUSTOMER_EXCLUSION_FLAG_KEY), input.userId);
++  return on ? { plan: { customerExclusion: snapshot }, noteAr: exclusionWillApplyAr(snapshot.entities.length) } : { plan: {}, noteAr: exclusionNotAppliedAr(snapshot.entities.length) };
++}
++const withExclusionNote = (contentAr: string, noteAr: string | null): string => (noteAr ? `${contentAr}\n${noteAr}` : contentAr);
++
+ // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ // CONSOLIDATED MISSION: THE RESEARCH BRIEF (docs/AGENT-UNDERSTANDING-V1.md)
+ // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+@@ -896,6 +917,7 @@ async function groupTurn(input: AgentChatTurnInput, decision: Decision, open: Op
+   const toWrite = judged.filter((j) => placed.has(j.part.key) || keptWithoutCard.includes(j));
+   const cardGroup = groupNow();
+   const savedCards: Array<{ j: JudgedPart; id: string; messageId: string; contentAr: string }> = [];
++  const exclusion = toWrite.length > 0 ? await exclusionForCard(input, `${brief.request ?? ""} ${toWrite.map((j) => j.partBrief?.request ?? "").join(" ")} ${input.message}`) : { plan: {}, noteAr: null };
+   const now = Date.now();
+   for (const [i, j] of toWrite.entries()) {
+     const missionId = missionOf(j)!;
+@@ -903,7 +925,7 @@ async function groupTurn(input: AgentChatTurnInput, decision: Decision, open: Op
+     const existing = cards?.get(missionId);
+     if (existing) { savedCards.push({ j, id: missionId, messageId: existing.messageId, contentAr: existing.contentAr || contentAr }); continue; }
+     const messageId = partCardIdOf(missionId);
+-    const saved = await saveCard(sb, input, { id: messageId, conversation_id: input.conversationId, user_id: input.userId, role: "assistant", content_ar: contentAr, plan: { agentMissionId: missionId, researchBrief: j.partBrief!, researchGroup: cardGroup }, created_at: new Date(now + i + 1).toISOString() });
++    const saved = await saveCard(sb, input, { id: messageId, conversation_id: input.conversationId, user_id: input.userId, role: "assistant", content_ar: contentAr, plan: { agentMissionId: missionId, researchBrief: j.partBrief!, researchGroup: cardGroup, ...exclusion.plan }, created_at: new Date(now + i + 1).toISOString() });
+     if (saved) { savedCards.push({ j, id: missionId, messageId, contentAr }); continue; }
+     unsaved.add(j.part.key);
+     console.warn(`[chat:agent_group_card_unsaved] ${missionId}`);
+@@ -928,6 +950,7 @@ async function groupTurn(input: AgentChatTurnInput, decision: Decision, open: Op
+   if (withdrawnNow.length > 0) lines.push(`النسخة السابقة من ${withdrawnNow.map((p) => `«${p.request}»`).join(" و")} اتلغت (اتشالت أو اتعدّلت بحسب رسالتك)، ومش هيتجهّز منها حاجة.`);
+   if (leftRunning.length > 0) lines.push(PREVIOUS_STILL_PLANNING_AR);
+   if (savedCards.length > 0 || judged.some((j) => partOf(j).outcome === "planned")) lines.push(GROUP_APPROVAL_AR);
++  if (exclusion.noteAr && savedCards.length > 0) lines.push(exclusion.noteAr);
+   const summary = lines.join("\n");
+   const group = groupNow();
+   const createdNow = Array.from(placed.values()).filter((p) => p.own).length;
+diff --git a/src/lib/agentMission/customerExclusion.ts b/src/lib/agentMission/customerExclusion.ts
+new file mode 100644
+index 0000000..e58dd1b
+--- /dev/null
++++ b/src/lib/agentMission/customerExclusion.ts
+@@ -0,0 +1,260 @@
++import { createHash } from "node:crypto";
++import { extractBrandTokens, normalizeArabicText } from "../server/negativeListEngine";
++import { registrableDomain } from "./companyIdentity";
++import { isPersonalMailDomain } from "../multiProvider/policy";
++
++/**
++ * PHASE 5.3 (docs/intelligence/PHASE-5-3-AND-6.md): THE CUSTOMER'S EXCLUSION FILE REACHES THE MISSION.
++ *
++ * The chat route parses the uploaded spreadsheet on the server (exclusionFileParser.ts: company name, corporate domain, registration number; never a person's contact) and keeps it in the conversation brief. Until now the agent
++ * worker never saw it. With the server switch below ON for the account:
++ *   1. the chat stores a SNAPSHOT of the parsed list on the assistant message that carries the new mission's card (`messages.plan.customerExclusion`, written by the server only: customers cannot insert an assistant message
++ *      with a plan, and have no update policy);
++ *   2. the worker reads it at planning (same user, same mission id), copies it to the mission's private folder, and records its digest on the plan the customer approves;
++ *   3. at execution the item check (agent/src/items/ingest.ts) refuses every row of a company or people stage that the matcher below CONFIRMS is in the list. The check runs on every row that enters the item store (every page,
++ *      retried page, fallback source and model save), so nothing can bring an excluded company back.
++ *
++ * OFF (the default; nothing in the repository sets it): nothing is stored or applied, and the chat says plainly that the file was received but is NOT applied.
++ *
++ * Matching is deterministic (no model): the same rules as negativeListEngine.compareOrganizations (exact corporate domain, exact registration number, exact normalized name, equal set of distinctive brand words), indexed so a
++ * list of 5,000 companies is checked in constant time per row. A partial brand-word overlap is only a POSSIBLE match: it is never excluded (owner rule of the negative-list engine: an uncertain case is kept), it is marked on the
++ * row and counted in the delivered file's methodology. The uploaded list never goes to a provider or a model.
++ */
++
++/** `agent_settings` key (scopedFlag.ts: `true` / `"on"` for everyone, `{ "user_ids": [...] }` for named accounts). OFF by default. */
++export const CUSTOMER_EXCLUSION_FLAG_KEY = "customer_exclusion_files_v1";
++/** The chat route's own maximum (src/app/api/chat/route.ts MAX_EXCLUSION_ROWS). */
++export const EXCLUSION_MAX_ENTITIES = 5000;
++/** Internal row mark (never a column of the file): the row resembles a listed company without a certain match, so it was kept. */
++export const EXCLUSION_POSSIBLE_MARK = "_excl_possible";
++/** The item reason of a row the list excluded (agent/src/items/itemStore.ts). */
++export const CUSTOMER_EXCLUSION_REASON = "customer_exclusion" as const;
++/** Where the worker keeps the approved copy, inside the mission's private folder. */
++export const EXCLUSION_SNAPSHOT_PATH = "inputs/customer-exclusion.json";
++
++export interface ExclusionEntity { name: string; domain?: string; crNumber?: string }
++export interface ExclusionSnapshot { v: 1; file_name: string; entities: ExclusionEntity[]; digest: string }
++/** What the APPROVED plan records: the digest of the exact list and whether any stage of the plan can be checked against it. Never the list itself (the plan text reaches models; the list does not). */
++export interface PlanExclusionMark { digest: string; entities: number; applies: boolean }
++
++// ------------------------------------------------------------------------------------------------ the snapshot
++const ARABIC_INDIC = /[٠-٩۰-۹]/g;
++const asciiDigits = (s: string): string => s.replace(ARABIC_INDIC, (d) => String((d.charCodeAt(0) & 0xf) % 10));
++const cleanText = (v: unknown, max: number): string => (typeof v === "string" || typeof v === "number" ? String(v) : "").replace(/[\u0000-\u001f​-‏‪-‮⁦-⁩﻿]/g, " ").replace(/\s+/g, " ").trim().slice(0, max);
++
++/**
++ * Hosts that never identify ONE company: social networks, free mailboxes and site builders («facebook.com/acme», «acme.wixsite.com»). A domain on one of them is dropped from both the list and the row, so it can never exclude
++ * every company that only has a social page.
++ */
++const SHARED_LABELS: ReadonlySet<string> = new Set([
++  "facebook", "fb", "instagram", "linkedin", "twitter", "x", "tiktok", "youtube", "youtu", "snapchat", "pinterest", "reddit", "telegram", "t", "whatsapp", "wa", "threads",
++  "google", "goo", "bit", "linktr", "wixsite", "wix", "blogspot", "wordpress", "weebly", "godaddysites", "medium", "github", "gitlab", "notion", "carrd", "webflow", "myshopify",
++  "tripadvisor", "yelp", "wikipedia", "zoominfo", "crunchbase", "kompass", "yellowpages", "dubizzle", "olx", "jumia", "noon", "amazon",
++]);
++const SHARED_DOMAINS: ReadonlySet<string> = new Set(["business.site", "square.site", "ueniweb.com", "site123.me"]);
++const isSharedHost = (registrable: string): boolean => SHARED_DOMAINS.has(registrable) || SHARED_LABELS.has(registrable.split(".")[0] ?? "");
++
++/** The corporate domain of a value, or null (no domain, a shared host, a free mailbox). Registrable form: «eg.orascom.com» and «www.orascom.com» are «orascom.com»; «x.com.eg» keeps three labels. */
++export function corporateDomainOf(value: unknown): string | null {
++  const d = registrableDomain(typeof value === "string" ? value.trim() : value);
++  if (!d || isSharedHost(d) || isPersonalMailDomain(d)) return null;
++  return d;
++}
++
++const registrationOf = (value: unknown): string | null => {
++  const t = asciiDigits(cleanText(value, 64)).replace(/[\s\-_/.]/g, "").toUpperCase();
++  return /^[A-Z0-9]{3,40}$/.test(t) ? t : null;
++};
++
++const digestOf = (entities: ReadonlyArray<ExclusionEntity>): string => createHash("sha256").update(JSON.stringify(entities)).digest("hex");
++
++/**
++ * THE SNAPSHOT of the brief's parsed exclusion file (the chat route already parsed and validated it on the server). Only organisation identifiers are kept: a name of at least two letters, a corporate domain, a registration
++ * number. Repeats are removed, the list is capped at the route's maximum, and the digest pins the exact list. Null when nothing usable remains (an empty or unreadable file is never «applied»).
++ */
++export function exclusionSnapshotOf(file: { name?: unknown; normalizedEntities?: unknown } | null | undefined): ExclusionSnapshot | null {
++  if (!file || !Array.isArray(file.normalizedEntities)) return null;
++  const entities: ExclusionEntity[] = [];
++  const seen = new Set<string>();
++  for (const raw of file.normalizedEntities) {
++    if (entities.length >= EXCLUSION_MAX_ENTITIES) break;
++    if (!raw || typeof raw !== "object") continue;
++    const r = raw as Record<string, unknown>;
++    const name = cleanText(r.name, 200);
++    if (name.length < 2) continue;
++    const domain = corporateDomainOf(r.domain);
++    const crNumber = registrationOf(r.crNumber);
++    const key = `${normalizeArabicText(name)}|${domain ?? ""}|${crNumber ?? ""}`;
++    if (seen.has(key)) continue;
++    seen.add(key);
++    entities.push({ name, ...(domain ? { domain } : {}), ...(crNumber ? { crNumber } : {}) });
++  }
++  if (entities.length === 0) return null;
++  const fileName = cleanText(file.name, 100) || "exclusion";
++  return { v: 1, file_name: fileName, entities, digest: digestOf(entities) };
++}
++
++/** A stored snapshot read back (a message's plan or the mission's private copy): its shape is checked and its digest recomputed. Anything else is null, never a partial list. */
++export function parseExclusionSnapshot(raw: unknown): ExclusionSnapshot | null {
++  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
++  const s = raw as Record<string, unknown>;
++  if (s.v !== 1 || typeof s.file_name !== "string" || typeof s.digest !== "string" || !Array.isArray(s.entities)) return null;
++  if (s.entities.length === 0 || s.entities.length > EXCLUSION_MAX_ENTITIES) return null;
++  const entities: ExclusionEntity[] = [];
++  for (const e of s.entities) {
++    if (!e || typeof e !== "object" || Array.isArray(e)) return null;
++    const x = e as Record<string, unknown>;
++    if (typeof x.name !== "string" || x.name.length < 2) return null;
++    if (x.domain !== undefined && typeof x.domain !== "string") return null;
++    if (x.crNumber !== undefined && typeof x.crNumber !== "string") return null;
++    entities.push({ name: x.name, ...(typeof x.domain === "string" ? { domain: x.domain } : {}), ...(typeof x.crNumber === "string" ? { crNumber: x.crNumber } : {}) });
++  }
++  if (digestOf(entities) !== s.digest) return null;
++  return { v: 1, file_name: s.file_name, entities, digest: s.digest };
++}
++
++// ------------------------------------------------------------------------------------------------ the matcher
++export type ExclusionRule = "domain" | "registration" | "name" | "brand";
++export type ExclusionVerdict = { kind: "excluded"; rule: ExclusionRule } | { kind: "possible" } | { kind: "none" };
++export interface OrganisationIdentity { names: ReadonlyArray<string>; domain?: string | null; crNumber?: string | null }
++export interface ExclusionMatcher { readonly size: number; readonly digest: string; check(candidate: OrganisationIdentity): ExclusionVerdict }
++
++const brandKey = (tokens: ReadonlyArray<string>): string => [...new Set(tokens)].sort().join(" ");
++
++/**
++ * The deterministic matcher of a snapshot. A row is EXCLUDED when, against any listed company: the corporate domains are equal; or the registration numbers are equal; or the normalized full names are equal (longer than three
++ * letters); or the sets of distinctive brand words are equal (generic words such as «شركة», «مقاولات», «group» never count). It is POSSIBLE when a distinctive brand word is shared and one of the two names has more than one
++ * such word. Otherwise NONE. A name made only of generic words is never matched by its words (only an exact full name, a domain or a registration number can match it).
++ */
++export function exclusionMatcherOf(snapshot: ExclusionSnapshot): ExclusionMatcher {
++  const domains = new Set<string>();
++  const registrations = new Set<string>();
++  const fullNames = new Set<string>();
++  const brandSets = new Set<string>();
++  /** distinctive word → the largest number of distinctive words of a listed name that holds it */
++  const wordWidth = new Map<string, number>();
++  for (const e of snapshot.entities) {
++    const d = corporateDomainOf(e.domain);
++    if (d) domains.add(d);
++    const cr = registrationOf(e.crNumber);
++    if (cr) registrations.add(cr);
++    const norm = normalizeArabicText(e.name);
++    if (norm.length > 3) fullNames.add(norm);
++    const tokens = [...new Set(extractBrandTokens(e.name))];
++    if (tokens.length > 0) {
++      brandSets.add(brandKey(tokens));
++      for (const t of tokens) wordWidth.set(t, Math.max(wordWidth.get(t) ?? 0, tokens.length));
++    }
++  }
++  return {
++    size: snapshot.entities.length,
++    digest: snapshot.digest,
++    check(candidate) {
++      const d = corporateDomainOf(candidate.domain);
++      if (d && domains.has(d)) return { kind: "excluded", rule: "domain" };
++      const cr = registrationOf(candidate.crNumber);
++      if (cr && registrations.has(cr)) return { kind: "excluded", rule: "registration" };
++      let possible = false;
++      for (const name of candidate.names) {
++        const clean = cleanText(name, 300);
++        if (clean.length < 2) continue;
++        const norm = normalizeArabicText(clean);
++        if (norm.length > 3 && fullNames.has(norm)) return { kind: "excluded", rule: "name" };
++        const tokens = [...new Set(extractBrandTokens(clean))];
++        if (tokens.length === 0) continue;
++        if (brandSets.has(brandKey(tokens))) return { kind: "excluded", rule: "brand" };
++        if (!possible) for (const t of tokens) { const w = wordWidth.get(t); if (w !== undefined && (tokens.length > 1 || w > 1)) { possible = true; break; } }
++      }
++      return possible ? { kind: "possible" } : { kind: "none" };
++    },
++  };
++}
++
++// ------------------------------------------------------------------------------------------------ the organisation of a row
++const PEOPLE_COMPANY_NAME_KEY = /^(?:company|company_name|company_name_en|company_name_ar|current_company|current_company_name|employer|employer_name|organization|organisation|organization_name|organisation_name|org_name|account_name)$/i;
++const COMPANY_NAME_KEY = /^(?:name|title|company|company_name|company_name_en|company_name_ar|name_en|name_ar|brand|brand_name|organization|organisation|organization_name|organisation_name|legal_name|trade_name)$/i;
++const DOMAIN_KEY = /^(?:domain|website|website_url|site|homepage|url|company_domain|company_website|company_url|company_website_url|web|web_site)$/i;
++const REGISTRATION_KEY = /^(?:cr|cr_number|commercial_registration|commercial_registration_number|registration|registration_number|registration_no|tax_id|tax_number|vat_number)$/i;
++
++/**
++ * The organisation a stored row names, read only from fields that hold the company: on a COMPANY row its name fields (the planner's name columns, then the usual keys), website and registration number; on a PERSON row only the
++ * employer fields (never the person's own name, never their job title). A LinkedIn or other shared address is never a domain.
++ */
++export function organisationOfRow(row: Record<string, unknown>, opts: { people: boolean; nameKeys?: ReadonlyArray<string> }): OrganisationIdentity {
++  const names: string[] = [];
++  let domain: string | null = null;
++  let crNumber: string | null = null;
++  const nameKey = (k: string): boolean => (opts.people ? PEOPLE_COMPANY_NAME_KEY.test(k) : (opts.nameKeys ?? []).includes(k) || COMPANY_NAME_KEY.test(k));
++  for (const [k, v] of Object.entries(row)) {
++    if (k.startsWith("_")) continue;
++    // a nested employer or company record («company: { name, website }»): its own name and website fields
++    if (v && typeof v === "object" && !Array.isArray(v) && /company|organi[sz]ation|employer/i.test(k)) {
++      const o = v as Record<string, unknown>;
++      for (const nk of ["name", "company_name", "title", "legal_name"]) { const n = cleanText(o[nk], 300); if (n.length >= 2 && !/^https?:\/\//i.test(n) && !names.includes(n)) names.push(n); }
++      if (domain === null) for (const dk of ["domain", "website", "website_url", "url", "homepage"]) { const d = corporateDomainOf(o[dk]); if (d) { domain = d; break; } }
++      continue;
++    }
++    const t = cleanText(v, 300);
++    if (!t) continue;
++    if (nameKey(k)) {
++      if (!/^https?:\/\//i.test(t) && !names.includes(t)) {
++        names.push(t);
++        const parts = t.split(/\s*[\\|]\s*|\s+\/\s+/).map((x) => x.trim()).filter((x) => x.length >= 2);
++        if (parts.length > 1) for (const p of parts) if (!names.includes(p)) names.push(p);
++      }
++      continue;
++    }
++    if (domain === null && (DOMAIN_KEY.test(k) || (opts.people && /^(?:company_)?(?:domain|website)$/i.test(k)))) { domain = corporateDomainOf(t); continue; }
++    if (crNumber === null && REGISTRATION_KEY.test(k)) crNumber = registrationOf(t);
++  }
++  return { names, domain, crNumber };
++}
++
++// ------------------------------------------------------------------------------------------------ what the customer meant by the file
++/**
++ * PHASE 5.3 / 5.3-B: WHAT THE CUSTOMER WANTS DONE WITH THE UPLOADED LIST, read by code from their words (no model). The upload control is labelled «ملف استبعاد», so an unspecified request keeps that meaning. A request
++ * that names the companies IN the file as the ones to research («هات مواقع الشركات اللي في الملف», «كمّل بيانات القائمة المرفقة», «enrich») is an ENRICHMENT request: that is not supported yet (docs/intelligence/
++ * PHASE-5-3-AND-6.md §B), so the file is NEVER applied as an exclusion list then (it would remove the very companies the customer asked about) and the customer is told plainly. Explicit exclusion words win.
++ */
++const EXCLUSION_WORDS = /(?:استبعد|استبعاد|إستبعاد|استثن|ماعدا|ما عدا|بخلاف|(?:غير|مش|مو|ليست|ليس)\s+(?:ال)?(?:موجود|وارد|مذكور|اللي)|exclude|excluding|except|not in)/i;
++const IN_FILE_WORDS = /(?:(?:ال)?شركات|(?:ال)?شركة|(?:ال)?شركه|الأسماء|الاسماء|القائمة|القائمه|اللستة|الليستة|الكيانات|companies|names)\s+(?:(?:اللي|الى|التي|الموجودة|الموجوده|الواردة|الوارده|المذكورة|المذكوره)\s+)?(?:في|فى|ف|ب)\s*(?:ال)?(?:ملف|مرفق|شيت|إكسل|اكسل|اكسيل|جدول|قائمة|file|sheet)|(?:(?:ال)?شركات|القائمة|القائمه|الأسماء|الاسماء|اللستة)\s+(?:المرفقة|المرفقه|المرفوعة|المرفوعه)|(?:بيانات|مواقع|إيميلات|ايميلات|أرقام|ارقام|حسابات|روابط|تفاصيل)\s+(?:الملف|المرفق|الشيت|القائمة المرفقة|القائمه المرفقه)|\benrich(?:ment)?\b|(?:إثراء|اثراء)\s+(?:ال)?(?:ملف|قائمة|قائمه|بيانات|شركات)/i;
++export type UploadIntent = "exclusion" | "enrichment" | "unspecified";
++export function uploadIntentOf(text: unknown): UploadIntent {
++  const t = cleanText(text, 4000);
++  if (!t) return "unspecified";
++  if (EXCLUSION_WORDS.test(t)) return "exclusion";
++  return IN_FILE_WORDS.test(t) ? "enrichment" : "unspecified";
++}
++/** The chat's sentence for an enrichment request with an uploaded list (any switch state): not supported yet, the file is not used, the plan says what will really be collected, nothing is charged before approval. */
++export const ENRICHMENT_NOT_SUPPORTED_AR = "ملاحظة: استخدام ملف مرفوع كقائمة شركات تُكمَل بياناتها غير متاح حاليًا، فلن تُستخدم شركات الملف كبداية للبحث ولن يُطبَّق الملف كقائمة استبعاد. ستوضح خطة المهمة ما سيُجمع فعلًا، ولن يُخصم شيء قبل اعتمادك.";
++
++// ------------------------------------------------------------------------------------------------ what the customer reads
++/** The chat's honest sentence when the switch is OFF: the file was received, it is NOT applied. */
++export const exclusionNotAppliedAr = (count: number): string =>
++  `ملاحظة: استلمنا ملف الاستبعاد (${formatCount(count)})، لكن تطبيقه على نتائج البحث غير مفعّل حاليًا، فقد تتضمن النتيجة شركات واردة فيه.`;
++/** The chat's sentence when the uploaded file holds no usable company (an empty or unreadable list is never applied). */
++export const EXCLUSION_UNUSABLE_AR = "ملاحظة: لم نجد في ملف الاستبعاد المرفوع أسماء شركات صالحة، فلن يُستخدم في هذا الطلب.";
++/** The chat's sentence when the switch is ON: the plan card says whether it applies (the worker decides from the plan's stages). */
++export const exclusionWillApplyAr = (count: number): string =>
++  `استلمنا ملف الاستبعاد (${formatCount(count)}): ستوضح خطة المهمة هل يُطبَّق على نتائجها، ولن تُسلَّم أي شركة يثبت تطابقها مع الملف.`;
++/** The plan card's line when the plan has a company or people stage. */
++export const exclusionPlanLineAr = (count: number): string =>
++  `ملف الاستبعاد: تُستبعد من النتيجة كل شركة واردة في ملفك (${formatCount(count)}) عند تطابق مؤكد في النطاق الإلكتروني أو رقم القيد التجاري أو الاسم أو العلامة التجارية المميزة؛ التشابه الجزئي غير المؤكد لا يُستبعد ويُذكر عدده في المنهجية. السعر لا يتغير، ولا يُحتسب إلا ما يُسلَّم.`;
++/** The plan card's line when no stage of the plan lists companies or people (the file lists organisations only). */
++export const exclusionNotApplicableAr = (count: number): string =>
++  `ملف الاستبعاد (${formatCount(count)}) يخص الشركات، ولا ينطبق على نوع البيانات في هذه الخطة، فلن يُستخدم فيها.`;
++/** The methodology's line of the approved rule. */
++export const exclusionMethodologyAr = (count: number): string =>
++  `طُبّق ملف الاستبعاد الذي أرسلته (${formatCount(count)}): استُبعدت كل شركة ثبت تطابقها معه في النطاق الإلكتروني أو رقم القيد التجاري أو الاسم أو العلامة التجارية المميزة، ولم تُحتسب أي نتيجة مستبعدة.`;
++export const exclusionPossibleLineAr = (possible: number, delivered: number): string =>
++  `${formatCount(possible, false)} من ${formatCount(delivered, false)} نتيجة مسلّمة تشبه أسماؤها اسمًا في ملف الاستبعاد دون تطابق مؤكد، فسُلّمت ولم تُستبعد.`;
++/** The item reason's text (agent/src/finalize.ts REASON_TEXT_AR). */
++export const EXCLUSION_REASON_TEXT_AR = "وارد في ملف الاستبعاد الذي أرسلته";
++
++const AR_DIGITS = "٠١٢٣٤٥٦٧٨٩";
++function formatCount(n: number, withNoun = true): string {
++  const v = Math.max(0, Math.floor(Number(n) || 0));
++  const digits = v.toLocaleString("en-US").replace(/\d/g, (d) => AR_DIGITS[Number(d)]).replace(/,/g, "٬");
++  if (!withNoun) return digits;
++  return v === 1 ? "شركة واحدة" : v === 2 ? "شركتان" : v >= 3 && v <= 10 ? `${digits} شركات` : `${digits} شركة`;
++}
+diff --git a/src/lib/agentMission/plan.ts b/src/lib/agentMission/plan.ts
+index 9ec86d7..72cf1dc 100644
+--- a/src/lib/agentMission/plan.ts
++++ b/src/lib/agentMission/plan.ts
+@@ -258,6 +258,11 @@ export interface PricedPlan {
+    * its price. Execution checks the stored approved plan against it before any call. Internal; never shown to the customer. Absent: the switch was off.
+    */
+   capability_selection?: import("./capabilities/selection").CapabilitySelection;
++  /**
++   * PHASE 5.3 (`customer_exclusion_files_v1` only): the customer's exclusion list this plan was approved with: its digest, its size and whether any stage can be checked against it. The list itself is in the mission's private
++   * folder (customerExclusion.ts EXCLUSION_SNAPSHOT_PATH), never in the plan. Execution refuses to run a plan whose list cannot be loaded with this digest. Internal; the card shows only its sentence (`notes_ar`). Absent: no list.
++   */
++  customer_exclusion?: import("./customerExclusion").PlanExclusionMark;
+ }
+ 
+ export interface CompiledMark {
+diff --git a/src/lib/agentMission/rawDelivery.ts b/src/lib/agentMission/rawDelivery.ts
+index 2954235..4c05b1f 100644
+--- a/src/lib/agentMission/rawDelivery.ts
++++ b/src/lib/agentMission/rawDelivery.ts
+@@ -8,14 +8,14 @@ export type RemovalReason = string;
+ export const EXISTING_REMOVAL_REASONS: ReadonlyArray<RemovalReason> = [
+   "no_text", "no_term", "mention_only", "other_person", "name_extended", "other_meaning", "uncertain", "not_reviewed", "review_no", "review_failed",
+   "filter_reply", "filter_repost", "filter_language", "filter_period", "filter_account", "filter_place", "filter_government", "filter_media",
+-  "unknown_parent", "no_verified_contact", "not_a_person", "target_reached", "not_at_company",
++  "unknown_parent", "no_verified_contact", "not_a_person", "target_reached", "not_at_company", "customer_exclusion",
+ ];
+ 
+ /**
+  * The only removals allowed in raw mode: the same record id twice (a duplicate is counted, never stored), an item whose parent is not saved, an item beyond the volume the customer bought (the count cap, D6) and the share of a named source
+  * (stored under the reason `target_reached`).
+  */
+-export const ALLOWED_REMOVALS_RAW: ReadonlySet<RemovalReason> = new Set(["id_duplicate", "unknown_parent", "target_reached", "named_source_share"]);
++export const ALLOWED_REMOVALS_RAW: ReadonlySet<RemovalReason> = new Set(["id_duplicate", "unknown_parent", "target_reached", "named_source_share", /** PHASE 5.3: a company in the customer's own approved exclusion list. */ "customer_exclusion"]);
+ 
+ export const isAllowedRemovalRaw = (reason: RemovalReason): boolean => ALLOWED_REMOVALS_RAW.has(reason);
+ 
+diff --git a/tests/customer-exclusion-phase53.test.ts b/tests/customer-exclusion-phase53.test.ts
+new file mode 100644
+index 0000000..d9ac11a
+--- /dev/null
++++ b/tests/customer-exclusion-phase53.test.ts
+@@ -0,0 +1,543 @@
++import { afterEach, describe, expect, it, vi } from "vitest";
++import ExcelJS from "exceljs";
++import { parseExclusionFile } from "../src/lib/server/exclusionFileParser";
++import { compareOrganizations, deduplicateAgainstBaseline } from "../src/lib/server/negativeListEngine";
++import {
++  CUSTOMER_EXCLUSION_FLAG_KEY,
++  EXCLUSION_POSSIBLE_MARK,
++  EXCLUSION_SNAPSHOT_PATH,
++  EXCLUSION_UNUSABLE_AR,
++  ENRICHMENT_NOT_SUPPORTED_AR,
++  uploadIntentOf,
++  corporateDomainOf,
++  exclusionMatcherOf,
++  exclusionNotAppliedAr,
++  exclusionSnapshotOf,
++  organisationOfRow,
++  parseExclusionSnapshot,
++  type ExclusionSnapshot,
++} from "../src/lib/agentMission/customerExclusion";
++import { exclusionForCard, agentChatTurn } from "../src/lib/agentMission/chatTurn";
++import { createMemoryStore } from "../agent/src/memoryStore";
++import { ItemStore } from "../agent/src/items/itemStore";
++import { exclusionAppliesToStage, ingestRows } from "../agent/src/items/ingest";
++import { loadApprovedExclusion, missionExclusionReader, withCustomerExclusion } from "../agent/src/customerExclusion";
++import { REASON_TEXT_AR, reasonTextAr, zeroDeliveryReasonAr } from "../agent/src/finalize";
++import { buildMethodology } from "../agent/src/methodology";
++import { EXISTING_REMOVAL_REASONS, isAllowedRemovalRaw } from "../src/lib/agentMission/rawDelivery";
++import { checkCustomerText } from "../src/lib/agentMission/text";
++import type { PricedPlan, PricedStage } from "../src/lib/agentMission/plan";
++import type { MissionRecord } from "../agent/src/types";
++import { createMemoryDb } from "./helpers/memoryDb";
++import { fakeMoneyClient } from "./helpers/agentMoney";
++import { approvingReview, assertReplayInvariants, replay, replayClient, REPLAY_USER } from "./helpers/agentReplay";
++import { callIds, companiesPage, emailFound, emailNotFound, employeesPage, lastOutputId, planningFlow, tregResult, type Results } from "./helpers/agentFakeWorld";
++const execCalls = (r: Results) => r.filter((x) => x.tool === "treg_call" && x.result.ok === true).map((x) => String(x.result.call_id));
++import type { FakeStep } from "../agent/src/fakeDriver";
++import { COMPANIES as A1_COMPANIES, PEOPLE as A1_PEOPLE, companiesPage as a1CompaniesPage, peopleOfCompany, pickCompany, planFlow as a1PlanFlow, request as a1Request } from "./helpers/a1World";
++import type { TregCallOptions } from "../src/functions/shared/tregClient";
++
++/**
++ * PHASE 5.3 (docs/intelligence/PHASE-5-3-AND-6.md): THE CUSTOMER'S EXCLUSION FILE REACHES THE RESULTS, behind `customer_exclusion_files_v1` (OFF by default).
++ * Offline only: CSV and XLSX fixtures go through the real server parser, the snapshot, the deterministic matcher, the one item check of the worker, the planning and execution wiring, and a whole replayed mission.
++ */
++afterEach(() => { vi.unstubAllGlobals(); });
++
++const OTHER_USER = "00000000-0000-0000-0000-0000000000bb";
++const csv = (text: string) => Buffer.from(text, "utf-8");
++async function xlsx(rows: string[][]): Promise<Buffer> {
++  const wb = new ExcelJS.Workbook();
++  const ws = wb.addWorksheet("قائمة");
++  for (const r of rows) ws.addRow(r);
++  return Buffer.from(await wb.xlsx.writeBuffer());
++}
++const fileOf = async (buf: Buffer, type: "csv" | "xlsx", name = "exclude.xlsx") => { const spec = await parseExclusionFile(buf, type); return { name, baselineRowCount: spec.baselineRowCount, normalizedEntities: spec.normalizedEntities }; };
++const snap = (entities: Array<{ name: string; domain?: string; crNumber?: string }>): ExclusionSnapshot => exclusionSnapshotOf({ name: "x.csv", normalizedEntities: entities })!;
++
++// ------------------------------------------------------------------------------------------------ the snapshot
++describe("the snapshot of the server-parsed file", () => {
++  it("keeps only organisation identifiers, removes repeats, pins the exact list by its digest", async () => {
++    const file = await fileOf(csv("اسم الشركة,الموقع,السجل التجاري,البريد الشخصي\nأوراسكوم للإنشاءات,https://www.orascom.com/en,١٢٣٤٥,nobody@gmail.example\nأوراسكوم للإنشاءات,orascom.com,12345,\nبتروجت,petrojet.com.eg,,\n"), "csv");
++    const s = exclusionSnapshotOf(file)!;
++    expect(s.entities).toEqual([{ name: "أوراسكوم للإنشاءات", domain: "orascom.com", crNumber: "12345" }, { name: "بتروجت", domain: "petrojet.com.eg" }]);
++    expect(JSON.stringify(s)).not.toContain("gmail");
++    expect(s.digest).toMatch(/^[0-9a-f]{64}$/);
++    expect(exclusionSnapshotOf(file)!.digest).toBe(s.digest);
++    expect(parseExclusionSnapshot(JSON.parse(JSON.stringify(s)))).toEqual(s);
++  });
++  it("reads an XLSX fixture through the real parser", async () => {
++    const s = exclusionSnapshotOf(await fileOf(await xlsx([["Company Name", "Website"], ["Elsewedy Electric", "elsewedyelectric.com"], ["Hassan Allam Holding", "www.hassanallam.com"]]), "xlsx"))!;
++    expect(s.entities.map((e) => e.domain)).toEqual(["elsewedyelectric.com", "hassanallam.com"]);
++  });
++  it("an empty file, a file of blank rows and a file with no usable name are never a list", async () => {
++    expect(exclusionSnapshotOf(await fileOf(csv(""), "csv"))).toBeNull();
++    expect(exclusionSnapshotOf(await fileOf(csv("اسم الشركة\n\n\n"), "csv"))).toBeNull();
++    expect(exclusionSnapshotOf(await fileOf(csv("اسم الشركة\nا\n"), "csv"))).toBeNull();
++    expect(exclusionSnapshotOf(null)).toBeNull();
++    expect(exclusionSnapshotOf({ name: "x", normalizedEntities: "not a list" })).toBeNull();
++  });
++  it("an invalid (corrupt) spreadsheet is refused by the parser before any snapshot exists", async () => {
++    await expect(parseExclusionFile(Buffer.from("PK\u0003\u0004 not a workbook"), "xlsx")).rejects.toBeTruthy();
++  });
++  it("a tampered stored list (one name changed, a digest edited, a wrong shape) is refused whole, never read partly", () => {
++    const s = snap([{ name: "أوراسكوم" }, { name: "بتروجت" }]);
++    expect(parseExclusionSnapshot({ ...s, entities: [{ name: "أوراسكوم" }, { name: "طلعت مصطفى" }] })).toBeNull();
++    expect(parseExclusionSnapshot({ ...s, digest: "0".repeat(64) })).toBeNull();
++    expect(parseExclusionSnapshot({ ...s, v: 2 })).toBeNull();
++    expect(parseExclusionSnapshot({ ...s, entities: [{ name: 5 }] })).toBeNull();
++    expect(parseExclusionSnapshot([])).toBeNull();
++  });
++  it("a shared host or a free mailbox is never a company's domain", () => {
++    expect(corporateDomainOf("https://facebook.com/acme")).toBeNull();
++    expect(corporateDomainOf("acme.wixsite.com")).toBeNull();
++    expect(corporateDomainOf("gmail.com")).toBeNull();
++    expect(corporateDomainOf("https://www.linkedin.com/company/acme")).toBeNull();
++    expect(corporateDomainOf("https://eg.orascom.com/about?x=1")).toBe("orascom.com");
++    expect(corporateDomainOf("shop.petrojet.com.eg")).toBe("petrojet.com.eg");
++  });
++});
++
++// ------------------------------------------------------------------------------------------------ the matcher
++describe("the deterministic matcher (no model)", () => {
++  const m = exclusionMatcherOf(snap([
++    { name: "شركة أوراسكوم للإنشاءات", domain: "orascom.com" },
++    { name: "المقاولون العرب", crNumber: "98765" },
++    { name: "Hassan Allam Holding" },
++    { name: "النيل للتركيبات الكهربائية" },
++    { name: "شركة مقاولات" },
++    { name: "Acme", domain: "facebook.com" },
++  ]));
++  it("exact names, Arabic spelling variants, domains, registration numbers and brand words", () => {
++    expect(m.check({ names: ["شركة أوراسكوم للإنشاءات"] })).toEqual({ kind: "excluded", rule: "name" });
++    expect(m.check({ names: ["شركه اوراسكوم للانشاءات"] })).toEqual({ kind: "excluded", rule: "name" });
++    expect(m.check({ names: ["شَرِكَة أُوراسكوم للإنشاءات"] })).toEqual({ kind: "excluded", rule: "name" });
++    expect(m.check({ names: ["Some Other Name"], domain: "https://www.orascom.com/contact" })).toEqual({ kind: "excluded", rule: "domain" });
++    expect(m.check({ names: ["x"], crNumber: "٩٨٧٦٥" })).toEqual({ kind: "excluded", rule: "registration" });
++    expect(m.check({ names: ["Hassan Allam Holdings Group"] })).toEqual({ kind: "excluded", rule: "brand" });
++    expect(m.check({ names: ["النيل للتركيبات الكهربائيه"] })).toEqual({ kind: "excluded", rule: "name" });
++  });
++  it("an ambiguous resemblance (one shared brand word) is POSSIBLE, never excluded", () => {
++    expect(m.check({ names: ["النيل للمقاولات"] })).toEqual({ kind: "possible" });
++    expect(m.check({ names: ["Allam Trading"] })).toEqual({ kind: "possible" });
++  });
++  it("generic words alone never match, and a shared host in the list never excludes every social page", () => {
++    expect(m.check({ names: ["شركة مقاولات عامة"] })).toEqual({ kind: "none" });
++    expect(m.check({ names: ["Totally Different"], domain: "https://facebook.com/somebody" })).toEqual({ kind: "none" });
++    expect(m.check({ names: ["طلعت مصطفى"], domain: "tmg.com.eg" })).toEqual({ kind: "none" });
++  });
++  it("agrees with the existing negative-list engine on every confirmed match of a fixture matrix", () => {
++    const base = [{ name: "شركة أوراسكوم للإنشاءات", domain: "orascom.com" }, { name: "Hassan Allam Holding" }, { name: "بتروجت" }, { name: "المقاولون العرب" }];
++    const candidates = [
++      { name: "اوراسكوم للانشاءات" }, { name: "Orascom Construction", domain: "orascom.com" }, { name: "Hassan Allam" }, { name: "Hassan Allam Holding" }, { name: "بتروجيت" },
++      { name: "شركة بتروجت" }, { name: "المقاولون العرب" }, { name: "العرب للمقاولات" }, { name: "طلعت مصطفى" }, { name: "Allam Group" },
++    ];
++    const mm = exclusionMatcherOf(snap(base));
++    const engine = deduplicateAgainstBaseline(candidates, base);
++    for (const c of candidates) {
++      const expected = engine.confirmedDuplicates.includes(c) ? "excluded" : engine.ambiguousMatches.includes(c) ? "possible" : "none";
++      expect(mm.check({ names: [c.name], domain: c.domain }).kind, c.name).toBe(expected);
++    }
++    // and the single-pair engine says the same for a domain match
++    expect(compareOrganizations({ name: "x", domain: "orascom.com" }, base[0]).status).toBe("CONFIRMED_DUPLICATE");
++  });
++  it("checks 5,000 listed companies against 2,000 rows fast (indexed, not pair by pair)", () => {
++    const big = exclusionMatcherOf(snap(Array.from({ length: 5000 }, (_, i) => ({ name: `Brand${i} Trading`, domain: `brand${i}.com` }))));
++    const t = Date.now();
++    let excluded = 0;
++    for (let i = 0; i < 2000; i += 1) if (big.check({ names: [`Brand${i * 3} Trading`] }).kind === "excluded") excluded += 1;
++    expect(excluded).toBe(1667);
++    expect(Date.now() - t).toBeLessThan(2000);
++  });
++});
++
++describe("the organisation of a stored row", () => {
++  it("a person row is matched by its EMPLOYER only, never the person's own name or job title", () => {
++    const o = organisationOfRow({ id: "p1", name: "Orascom", title: "Hassan Allam Holding", company: "Elsewedy Electric", company_domain: "elsewedy.com" }, { people: true });
++    expect(o.names).toEqual(["Elsewedy Electric"]);
++    expect(o.domain).toBe("elsewedy.com");
++  });
++  it("a nested employer record and a combined name are read", () => {
++    expect(organisationOfRow({ company: { name: "Petrojet", website: "https://petrojet.com.eg" } }, { people: true })).toMatchObject({ names: ["Petrojet"], domain: "petrojet.com.eg" });
++    expect(organisationOfRow({ text: "Mitsubishi Elevators \\ Melco Egypt" }, { people: false, nameKeys: ["text"] }).names).toContain("Mitsubishi Elevators");
++  });
++  it("internal marks are never read", () => {
++    expect(organisationOfRow({ _src: "orascom.com", name: "X" }, { people: false }).domain).toBeNull();
++  });
++});
++
++// ------------------------------------------------------------------------------------------------ the one item check (ingest)
++const companyStage = (extra: Record<string, unknown> = {}): PricedStage => ({
++  key: "companies", title_ar: "الشركات", endpoint_id: "e.companies.search", expected_rows: 5, planned_rows: 5, parent_key: null, deliver: true,
++  columns: [{ key: "name", title_ar: "اسم الشركة" }, { key: "website", title_ar: "الموقع" }], sample_rows: [], measured_by: [], ...extra,
++} as unknown as PricedStage);
++const postsStage = (): PricedStage => ({ key: "posts", title_ar: "المنشورات", endpoint_id: "e.posts", expected_rows: 5, planned_rows: 5, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "النص" }], sample_rows: [], measured_by: [] } as unknown as PricedStage);
++const LIST = snap([{ name: "أوراسكوم للإنشاءات", domain: "orascom.com" }, { name: "النيل للتركيبات الكهربائية" }, { name: "Hassan Allam Holding" }]);
++const planWith = (s: PricedStage, applies = true): PricedPlan => ({ summary_ar: "x", stages: [s], price: { deliveredRows: s.planned_rows }, customer_exclusion: { digest: LIST.digest, entities: LIST.entities.length, applies } } as unknown as PricedPlan);
++const rowsA = [
++  { id: "1", name: "اوراسكوم للانشاءات", website: "" },
++  { id: "2", name: "شركة الدلتا للصناعات", website: "delta-ind.com" },
++  { id: "3", name: "Some Brand", website: "https://www.orascom.com" },
++  { id: "4", name: "النيل للمقاولات", website: "" },
++  { id: "5", name: "طلعت مصطفى", website: "tmg.com.eg" },
++];
++async function ingestAll(batches: Array<Array<Record<string, unknown>>>, opts: { plan?: PricedPlan; stage?: PricedStage; exclusion?: ReturnType<typeof exclusionMatcherOf> | null } = {}) {
++  const store = createMemoryStore();
++  const items = await ItemStore.open(store, "msn_excl01");
++  const s = opts.stage ?? companyStage();
++  const plan = opts.plan ?? planWith(s);
++  const exclusion = opts.exclusion === undefined ? exclusionMatcherOf(LIST) : opts.exclusion;
++  const results = [];
++  for (const b of batches) results.push(await ingestRows({ items, plan, addEvent: async () => undefined, ...(exclusion ? { exclusion } : {}) }, s, b, { silent: true, idField: null }));
++  return { items, results, store };
++}
++
++describe("the worker's one item check refuses every excluded company", () => {
++  it("excluded rows are never accepted, counted or delivered; possible matches are delivered and marked", async () => {
++    const { items, results } = await ingestAll([rowsA]);
++    const accepted = items.acceptedRows("companies").map((r) => String(r.id)).sort();
++    expect(accepted).toEqual(["2", "4", "5"]);
++    expect(items.counts("companies").accepted).toBe(3);
++    expect(items.acceptedRows("companies").find((r) => r.id === "4")![EXCLUSION_POSSIBLE_MARK]).toBe(true);
++    expect(items.acceptedRows("companies").find((r) => r.id === "2")![EXCLUSION_POSSIBLE_MARK]).toBeUndefined();
++    expect(results[0].rejected_by_customer_exclusion).toBe(2);
++    const snapshotState = items.stage("companies");
++    expect([...snapshotState.items.values()].filter((it) => it.state === "excluded").map((it) => it.reason)).toEqual(["customer_exclusion", "customer_exclusion"]);
++  });
++  it("a retried page (the same rows again) and a fallback source (the same companies under new ids and other fields) cannot bring them back", async () => {
++    const fallback = [{ id: "fb-1", name: "شركه اوراسكوم للإنشاءات" }, { id: "fb-2", name: "Hassan Allam Holdings" }, { id: "fb-3", name: "x", website: "orascom.com/ar" }, { id: "fb-4", name: "مصنع جديد", website: "new.example" }];
++    const { items } = await ingestAll([rowsA, rowsA, fallback, rowsA]);
++    expect(items.acceptedRows("companies").map((r) => String(r.id)).sort()).toEqual(["2", "4", "5", "fb-4"]);
++    expect(items.counts("companies").accepted).toBe(4);
++    expect(items.acceptedRows("companies").some((r) => /orascom|اوراسكوم|أوراسكوم|Allam/i.test(`${r.name} ${r.website}`))).toBe(false);
++  });
++  it("duplicate companies in one page are one item, and an excluded one stays excluded", async () => {
++    const { items } = await ingestAll([[{ id: "a", name: "أوراسكوم للإنشاءات" }, { id: "a", name: "أوراسكوم للإنشاءات" }, { id: "b", name: "شركة جديدة" }, { id: "b", name: "شركة جديدة" }]]);
++    expect(items.acceptedRows("companies").map((r) => r.id)).toEqual(["b"]);
++    expect(items.counts("companies").duplicates).toBe(2);
++  });
++  it("a people stage is matched by the person's employer", async () => {
++    const people = { ...companyStage(), key: "people", title_ar: "الأشخاص", endpoint_id: "e.people.search", capability: "people.search", columns: [{ key: "name", title_ar: "الاسم" }, { key: "company", title_ar: "الشركة" }, { key: "job_title", title_ar: "المسمى" }] } as unknown as PricedStage;
++    expect(exclusionAppliesToStage(people)).toBe(true);
++    const { items } = await ingestAll([[{ id: "p1", name: "Hassan Allam", company: "Petrojet", job_title: "Engineer" }, { id: "p2", name: "Mona Adel", company: "أوراسكوم للإنشاءات", job_title: "CEO" }]], { stage: people, plan: planWith(people) });
++    expect(items.acceptedRows("people").map((r) => r.id)).toEqual(["p1"]);
++  });
++  it("FAIL CLOSED: a plan approved with a list is never ingested without exactly that list", async () => {
++    await expect(ingestAll([rowsA], { exclusion: null })).rejects.toThrow("customer_exclusion_unavailable");
++    await expect(ingestAll([rowsA], { exclusion: exclusionMatcherOf(snap([{ name: "Other" }])) })).rejects.toThrow("customer_exclusion_unavailable");
++  });
++  it("no mark, or a mark that does not apply, or a stage it does not apply to: today's behaviour exactly", async () => {
++    const s = companyStage();
++    const noMark = { summary_ar: "x", stages: [s], price: { deliveredRows: 5 } } as unknown as PricedPlan;
++    expect((await ingestAll([rowsA], { plan: noMark, exclusion: null })).items.counts("companies").accepted).toBe(5);
++    expect((await ingestAll([rowsA], { plan: planWith(s, false), exclusion: null })).items.counts("companies").accepted).toBe(5);
++    const posts = postsStage();
++    expect(exclusionAppliesToStage(posts)).toBe(false);
++    const r = await ingestAll([[{ id: "1", text: "أوراسكوم للإنشاءات" }]], { stage: posts, plan: planWith(posts), exclusion: null });
++    expect(r.items.counts("posts").accepted).toBe(1);
++    // a child stage: its parent was already checked
++    expect(exclusionAppliesToStage({ ...s, parent_key: "x" } as PricedStage)).toBe(false);
++  });
++  it("the stored rows keep the row shape: no exclusion key is written on a row when the mark is absent", async () => {
++    const s = companyStage();
++    const noMark = { summary_ar: "x", stages: [s], price: { deliveredRows: 5 } } as unknown as PricedPlan;
++    const { items } = await ingestAll([rowsA], { plan: noMark, exclusion: null });
++    expect(items.acceptedRows("companies").every((r) => !(EXCLUSION_POSSIBLE_MARK in r))).toBe(true);
++  });
++});
++
++// ------------------------------------------------------------------------------------------------ planning and execution wiring
++const mission = (userId = REPLAY_USER): MissionRecord => ({ id: "msn_excl02", user_id: userId } as MissionRecord);
++const ON_FOR_USER = { [CUSTOMER_EXCLUSION_FLAG_KEY]: { user_ids: [REPLAY_USER] } };
++
++describe("planning pins the list on the plan the customer approves (switch ON only)", () => {
++  it("switch OFF (default), or ON for another account only: the same plan object, the card is never read, nothing is written", async () => {
++    const store = createMemoryStore();
++    const read = vi.fn(async () => LIST);
++    const plan = planWith(companyStage());
++    delete (plan as any).customer_exclusion;
++    expect(await withCustomerExclusion({ plan, mission: mission(), store, settings: {}, read })).toBe(plan);
++    expect(await withCustomerExclusion({ plan, mission: mission(OTHER_USER), store, settings: ON_FOR_USER, read })).toBe(plan);
++    expect(await withCustomerExclusion({ plan, mission: mission(), store, settings: { [CUSTOMER_EXCLUSION_FLAG_KEY]: "off" }, read })).toBe(plan);
++    expect(read).not.toHaveBeenCalled();
++    expect(store.files.size).toBe(0);
++  });
++  it("switch ON: the private copy is written, the digest and size are on the plan, and the card says how it applies", async () => {
++    const store = createMemoryStore();
++    const plan = planWith(companyStage());
++    delete (plan as any).customer_exclusion;
++    const out = await withCustomerExclusion({ plan, mission: mission(), store, settings: ON_FOR_USER, read: async () => LIST });
++    expect(out.customer_exclusion).toEqual({ digest: LIST.digest, entities: 3, applies: true });
++    expect(out.notes_ar!.join(" ")).toContain("ملف الاستبعاد");
++    expect(JSON.stringify(out)).not.toContain("أوراسكوم");
++    expect(out.price).toBe(plan.price);
++    expect(parseExclusionSnapshot(JSON.parse(String(await store.getFile("msn_excl02", EXCLUSION_SNAPSHOT_PATH))))).toEqual(LIST);
++    for (const line of out.notes_ar!) expect(checkCustomerText(line).issues).toEqual([]);
++  });
++  it("switch ON with a plan of posts: said not applicable, nothing written, nothing applied", async () => {
++    const store = createMemoryStore();
++    const plan = { summary_ar: "x", stages: [postsStage()], price: { deliveredRows: 5 } } as unknown as PricedPlan;
++    const out = await withCustomerExclusion({ plan, mission: mission(), store, settings: ON_FOR_USER, read: async () => LIST });
++    expect(out.customer_exclusion!.applies).toBe(false);
++    expect(out.notes_ar!.join(" ")).toContain("لا ينطبق");
++    expect(store.files.size).toBe(0);
++  });
++  it("switch ON with no list on the card: unchanged; a failed or malformed read throws (never a silent «no list»)", async () => {
++    const store = createMemoryStore();
++    const plan = planWith(companyStage());
++    delete (plan as any).customer_exclusion;
++    expect(await withCustomerExclusion({ plan, mission: mission(), store, settings: ON_FOR_USER, read: async () => null })).toBe(plan);
++    await expect(withCustomerExclusion({ plan, mission: mission(), store, settings: ON_FOR_USER, read: async () => { throw new Error("customer_exclusion_read_failed"); } })).rejects.toThrow();
++  });
++  it("the real reader reads ONLY the same user's assistant card of the same mission", async () => {
++    const calls: Array<[string, unknown]> = [];
++    const rows = [{ plan: { agentMissionId: "msn_excl02", customerExclusion: LIST } }];
++    const q: any = { select: () => q, eq: (k: string, v: unknown) => { calls.push([k, v]); return q; }, order: () => q, limit: async () => ({ data: rows, error: null }) };
++    const read = missionExclusionReader({ from: (t: string) => { expect(t).toBe("messages"); return q; } });
++    expect(await read("msn_excl02", REPLAY_USER)).toEqual(LIST);
++    expect(calls).toEqual([["user_id", REPLAY_USER], ["role", "assistant"], ["plan->>agentMissionId", "msn_excl02"]]);
++    rows[0] = { plan: { agentMissionId: "msn_excl02" } } as any;
++    expect(await read("msn_excl02", REPLAY_USER)).toBeNull();
++    rows[0] = { plan: { agentMissionId: "msn_excl02", customerExclusion: { ...LIST, digest: "f".repeat(64) } } } as any;
++    await expect(read("msn_excl02", REPLAY_USER)).rejects.toThrow("customer_exclusion_malformed");
++    const failing: any = { select: () => failing, eq: () => failing, order: () => failing, limit: async () => ({ data: null, error: { message: "boom" } }) };
++    await expect(missionExclusionReader({ from: () => failing })("m", REPLAY_USER)).rejects.toThrow("customer_exclusion_read_failed");
++  });
++  it("execution loads exactly the approved copy; missing or altered is refused", async () => {
++    const store = createMemoryStore();
++    const mark = { digest: LIST.digest, entities: 3, applies: true };
++    expect(await loadApprovedExclusion(store, "m1", mark)).toBeNull();
++    await store.putFile("m1", EXCLUSION_SNAPSHOT_PATH, JSON.stringify(LIST), "application/json");
++    expect((await loadApprovedExclusion(store, "m1", mark))!.digest).toBe(LIST.digest);
++    await store.putFile("m1", EXCLUSION_SNAPSHOT_PATH, JSON.stringify(snap([{ name: "Other" }])), "application/json");
++    expect(await loadApprovedExclusion(store, "m1", mark)).toBeNull();
++    await store.putFile("m1", EXCLUSION_SNAPSHOT_PATH, "{not json", "application/json");
++    expect(await loadApprovedExclusion(store, "m1", mark)).toBeNull();
++  });
++});
++
++// ------------------------------------------------------------------------------------------------ the customer's words
++describe("what the customer reads", () => {
++  it("the reason, the zero-delivery clause and the methodology say it in Arabic, with counts only", () => {
++    expect(reasonTextAr("customer_exclusion")).not.toBe("سبب آخر");
++    expect(REASON_TEXT_AR.customer_exclusion).toContain("ملف الاستبعاد");
++    expect(checkCustomerText(reasonTextAr("customer_exclusion")).issues).toEqual([]);
++    expect(zeroDeliveryReasonAr({ found: 5, pending: 0, stop: "source_exhausted", reviewStop: null, excludedByReason: { customer_exclusion: 5 } } as any)).toContain("ملف الاستبعاد");
++    expect(EXISTING_REMOVAL_REASONS).toContain("customer_exclusion");
++    expect(isAllowedRemovalRaw("customer_exclusion")).toBe(true);
++    const s = companyStage();
++    const m = buildMethodology({ plan: planWith(s), layouts: [], rowsByStage: { companies: [{ id: "2" }, { id: "4", [EXCLUSION_POSSIBLE_MARK]: true }] }, facts: { requestText: "x", reviewStop: null, stages: { companies: { found: 5, duplicates: 0, accepted: 2, excluded: 3, pending: 0, unchecked: 0, acceptedByRule: 2, acceptedByModel: 0, excludedByReason: { customer_exclusion: 3 }, stop: "source_exhausted" } } } as any });
++    const text = JSON.stringify(m);
++    expect(text).toContain("طُبّق ملف الاستبعاد");
++    expect(text).toContain("وارد في ملف الاستبعاد");
++    expect(text).toContain("تشبه أسماؤها اسمًا في ملف الاستبعاد");
++    expect(text).not.toContain("أوراسكوم");
++  });
++  it("no mark: the methodology has no exclusion line (flags-OFF unchanged)", () => {
++    const s = companyStage();
++    const m = buildMethodology({ plan: { summary_ar: "x", stages: [s], price: { deliveredRows: 5 } } as unknown as PricedPlan, layouts: [], rowsByStage: { companies: [{ id: "2" }] } });
++    expect(JSON.stringify(m)).not.toContain("ملف الاستبعاد");
++  });
++});
++
++const settingsClient = (value: unknown) => {
++  const reads: string[] = [];
++  const q: any = { select: () => q, eq: (_k: string, v: string) => { reads.push(v); return q; }, maybeSingle: async () => ({ data: value === undefined ? null : { value }, error: null }) };
++  return { sb: { from: (t: string) => { expect(t).toBe("agent_settings"); return q; } }, reads };
++};
++
++describe("the chat card (CUSTOMER HONESTY: OFF never claims the file was applied)", () => {
++  const file = { name: "list.xlsx", baselineRowCount: 2, normalizedEntities: [{ name: "أوراسكوم للإنشاءات", domain: "orascom.com" }, { name: "بتروجت" }] };
++  it("no file: nothing is read, stored or said (today's turn exactly)", async () => {
++    const c = settingsClient(true);
++    expect(await exclusionForCard({ sb: c.sb, userId: REPLAY_USER })).toEqual({ plan: {}, noteAr: null });
++    expect(c.reads).toEqual([]);
++  });
++  it("switch OFF: acknowledged, said NOT applied, nothing stored", async () => {
++    const r = await exclusionForCard({ sb: settingsClient(undefined).sb, userId: REPLAY_USER, exclusionFile: file });
++    expect(r.plan).toEqual({});
++    expect(r.noteAr).toBe(exclusionNotAppliedAr(2));
++    expect(r.noteAr).toContain("غير مفعّل");
++    expect(r.noteAr).not.toMatch(/تم .*استبعاد|سيتم استبعاد|طُبّق/);
++    expect(checkCustomerText(r.noteAr!).issues).toEqual([]);
++  });
++  it("switch ON for another account only: still OFF for this one", async () => {
++    const r = await exclusionForCard({ sb: settingsClient({ user_ids: [OTHER_USER] }).sb, userId: REPLAY_USER, exclusionFile: file });
++    expect(r.plan).toEqual({});
++  });
++  it("switch ON: the snapshot goes on the card, with an honest sentence", async () => {
++    const r = await exclusionForCard({ sb: settingsClient({ user_ids: [REPLAY_USER] }).sb, userId: REPLAY_USER, exclusionFile: file });
++    expect(parseExclusionSnapshot((r.plan as any).customerExclusion)!.entities).toHaveLength(2);
++    expect(r.noteAr).toContain("ستوضح خطة المهمة");
++    expect(checkCustomerText(r.noteAr!).issues).toEqual([]);
++  });
++  it("an unusable file is said, never stored", async () => {
++    const r = await exclusionForCard({ sb: settingsClient(true).sb, userId: REPLAY_USER, exclusionFile: { name: "x", baselineRowCount: 0, normalizedEntities: [] } });
++    expect(r).toEqual({ plan: {}, noteAr: EXCLUSION_UNUSABLE_AR });
++  });
++  it("a whole chat turn with the switch OFF: the card's message says NOT applied and carries no list", async () => {
++    vi.stubGlobal("fetch", () => { throw new Error("no network"); });
++    const db = createMemoryDb();
++    const { client } = replayClient(db, fakeMoneyClient({}));
++    db.seed("agent_worker_heartbeat", [{ worker_id: "w", beat_at: new Date().toISOString() }]);
++    db.seed("conversations", [{ id: "conv1", user_id: REPLAY_USER, title: "محادثة جديدة" }]);
++    db.seed("messages", [{ id: "u1", conversation_id: "conv1", role: "user", user_id: REPLAY_USER }, { id: "a1", conversation_id: "conv1", role: "assistant", user_id: REPLAY_USER }]);
++    const turn = await agentChatTurn({ sb: client, userId: REPLAY_USER, conversationId: "conv1", userMsgId: "u1", assistantMsgId: "a1", message: "عايز ٣ شركات كهروميكانيكا في مصر", conversationTitle: "محادثة جديدة", exclusionFile: file });
++    expect(turn.ok).toBe(true);
++    const card = db.rows("messages").find((m: any) => m.id === "a1")!;
++    expect(card.content_ar).toContain("غير مفعّل");
++    expect(card.plan.agentMissionId).toBe((turn as any).missionId);
++    expect(card.plan.customerExclusion).toBeUndefined();
++  });
++});
++
++// ------------------------------------------------------------------------------------------------ a whole mission, replayed offline
++describe("a whole replayed mission: companies, their employees and work e-mails, with one company in the customer's list", () => {
++  const COMPANIES = "aiark.companies.search";
++  const EMPLOYEES = "aviato.companies.employees";
++  const EMAILS = "blitzapi.people.email.find";
++  const MAILS = ["ahmed.hassan@company1.example", "ahmed.salim@company1.example", "mona.hassan@company2.example", "mona.salim@company2.example", null, "khaled.salim@company3.example"];
++  const personId = (c: number, p: number) => `co${c}-p${p}`;
++  const LIST2 = snap([{ name: "شركة النيل للتركيبات الكهربائيه", domain: "www.company2.example" }, { name: "شركة غير موجودة في النتائج" }]);
++  const world = (opts: { dropCopy: boolean }) => ({
++    request: "عايز ٣ شركات كهروميكانيكا في مصر، وجوه كل شركة موظفين اتنين بإيميلاتهم",
++    // the switch ON for this account in the worker's settings, and the card's list read as main.ts reads it (the chat-side write is proven above)
++    makeStore: () => { const st = createMemoryStore(); st.settings[CUSTOMER_EXCLUSION_FLAG_KEY] = { user_ids: [REPLAY_USER] }; return st; },
++    deps: (base: any) => ({ ...base, reviewCall: approvingReview as never, readMissionExclusion: async (_m: string, userId: string) => (userId === REPLAY_USER ? LIST2 : null) }),
++    planning: planningFlow({
++      progress: "أبحث عن مصدر الشركات ثم الموظفين ثم البريد المهني",
++      searchWords: ["companies", "search"],
++      sample: [{ endpoint: COMPANIES, params: { page: 0, size: 3, account: "الكهروميكانيكا مصر" }, why: "the cheaper sources return no author or link fields in their catalog description" }, { endpoint: EMPLOYEES, params: { website: "company1.example", page: 0, perPage: 2 }, why: "the cheaper sources return no author or link fields in their catalog description" }, { endpoint: EMAILS, params: { person_linkedin_url: "https://www.linkedin.com/in/co1-p1" }, why: "the cheaper sources return no author or link fields in their catalog description" }],
++      sampleCode: "return inputs.call_0001.content.slice(0, 2).map(c => ({ id: c.id, text: c.name, url: c.domain, country: c.location.country }))",
++      plan: (res: Results) => ({
++        summary_ar: "ستحصل على ثلاث شركات كهروميكانيكا في مصر وموظفين اثنين من كل شركة مع بريد كل موظف المهني.",
++        stages: [
++          { key: "companies", title_ar: "الشركات", endpoint_id: COMPANIES, expected_rows: 3, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "اسم الشركة" }, { key: "url", title_ar: "الموقع" }], sample_rows: (res.filter((x) => x.tool === "run_code")[0].result.result as unknown[]).slice(0, 2), measured_by: [callIds(res)[0]] },
++          { key: "employees", title_ar: "موظفو كل شركة", endpoint_id: EMPLOYEES, expected_rows: 6, parent_key: "companies", per_parent_rows: 2, deliver: true, columns: [{ key: "text", title_ar: "اسم الموظف" }, { key: "title", title_ar: "المسمى الوظيفي" }, { key: "company", title_ar: "الشركة" }], sample_rows: [{ id: "co1-p1", text: "أحمد حسن", title: "مدير المشتريات", company: "الشركة المصرية للكهروميكانيكا" }], measured_by: [callIds(res)[1]] },
++          { key: "emails", title_ar: "البريد المهني لكل موظف", endpoint_id: EMAILS, expected_rows: 6, parent_key: "employees", per_parent_rows: 1, deliver: true, columns: [{ key: "text", title_ar: "البريد المهني", kind: "work_email" }, { key: "person", title_ar: "الموظف" }], sample_rows: [{ id: MAILS[0], text: MAILS[0], person: "أحمد حسن" }], measured_by: [callIds(res)[2]] },
++        ],
++      }),
++    }),
++    execution: () => [
++      { tool: "treg_call", args: { endpoint_id: COMPANIES, params: { page: 0, size: 3, account: "الكهروميكانيكا مصر" } } },
++      { tool: "run_code", args: (res: Results) => ({ code: "return inputs[Object.keys(inputs)[0]].content.map(c => ({ id: c.id, text: c.name, url: c.domain, country: c.location.country }))", files: [execCalls(res)[0]] }) },
++      { tool: "save_rows", args: (res: Results) => ({ stage_key: "companies", from_output: lastOutputId(res) }) },
++      ...[1, 2, 3].map((c): FakeStep => ({ tool: "treg_call", args: { endpoint_id: EMPLOYEES, params: { website: `company${c}.example`, page: 0, perPage: 2 } } })),
++      { tool: "run_code", args: (res: Results) => ({ code: "const out = []; for (const page of Object.values(inputs)) for (const e of page.employees) out.push({ id: e.personID, parent_id: e.companyID, text: 'موظف ' + e.personID, title: e.positionList[0].title, company: e.companyID }); return out;", files: execCalls(res).slice(1, 4) }) },
++      { tool: "save_rows", args: (res: Results) => ({ stage_key: "employees", from_output: lastOutputId(res) }) },
++      ...MAILS.map((_, i): FakeStep => ({ tool: "treg_call", args: { endpoint_id: EMAILS, params: { person_linkedin_url: `https://www.linkedin.com/in/${personId(Math.floor(i / 2) + 1, (i % 2) + 1)}` } } })),
++      { tool: "run_code", args: (res: Results) => ({ code: "const people = ['co1-p1','co1-p2','co2-p1','co2-p2','co3-p1','co3-p2']; const out = []; Object.keys(inputs).forEach((k, i) => { const p = inputs[k]; if (p.found && p.all_emails.length) out.push({ id: p.all_emails[0].email, parent_id: people[i], text: p.all_emails[0].email, person: people[i] }); }); return out;", files: execCalls(res).slice(4, 10) }) },
++      { tool: "save_rows", args: (res: Results) => ({ stage_key: "emails", from_output: lastOutputId(res) }) },
++      { tool: "finish", args: { outcome: "delivered", summary_ar: "سُلّم ما وُجد بعد تطبيق ملف الاستبعاد." } },
++    ],
++    answers: [
++      tregResult(companiesPage(3), 0.0005267), tregResult(employeesPage("co1", 2), 0.005), tregResult(emailFound(MAILS[0]!), 0.000495),
++      tregResult(companiesPage(3), 0.0005267), tregResult(employeesPage("co1", 2), 0.005), tregResult(employeesPage("co2", 2), 0.005), tregResult(employeesPage("co3", 2), 0.005),
++      ...MAILS.map((mm) => (mm ? tregResult(emailFound(mm), 0.000495) : tregResult(emailNotFound(), 0))),
++    ],
++    // the private copy is lost between approval and execution (the fail-closed case)
++    beforeApproval: async ({ store, missionId }: any) => { if (opts.dropCopy) store.files.delete(`${missionId}/${EXCLUSION_SNAPSHOT_PATH}`); },
++  });
++
++  it("the excluded company, its employees and their e-mails are never delivered; the charge is ceil(delivered × unit) of what was delivered", async () => {
++    const r = await replay(world({ dropCopy: false }) as any);
++    // the REAL planning pinned the list: digest on the approved plan, the private copy on file, the sentence on the customer's card, never the names
++    expect(r.plannedPlan.customer_exclusion).toEqual({ digest: LIST2.digest, entities: 2, applies: true });
++    expect(parseExclusionSnapshot(JSON.parse(String(await r.store.getFile(r.missionId, EXCLUSION_SNAPSHOT_PATH))))).toEqual(LIST2);
++    expect(r.planView.notesAr.join(" ")).toContain("ملف الاستبعاد");
++    expect(JSON.stringify(r.planView)).not.toContain("النيل للتركيبات الكهربائيه");
++    // 2 companies + 4 employees + 3 e-mails: company 2 (in the list by its domain and its Arabic name) and everything under it is left out
++    assertReplayInvariants(r, { expectDelivered: 9, expectStatus: "partial" });
++    const companies = JSON.parse((await r.store.getFile(r.missionId, "rows/companies.json"))!);
++    expect(companies.map((c: any) => c.id).sort()).toEqual(["co1", "co3"]);
++    const employees = JSON.parse((await r.store.getFile(r.missionId, "rows/employees.json"))!);
++    expect(employees.every((e: any) => e.parent_id !== "co2")).toBe(true);
++    const emails = JSON.parse((await r.store.getFile(r.missionId, "rows/emails.json"))!);
++    expect(emails.some((e: any) => /company2/.test(e.text))).toBe(false);
++    expect(r.mission.charged_points).toBeLessThan(r.mission.reserved_points!);
++    // the list never reached a provider: no outgoing call carries a listed name
++    expect(JSON.stringify(r.call.mock.calls)).not.toContain("النيل للتركيبات الكهربائيه");
++  });
++
++  it("FAIL CLOSED: the approved list is missing from the mission's folder, so nothing runs and nothing is charged", async () => {
++    const r = await replay(world({ dropCopy: true }) as any);
++    expect(r.plannedPlan.customer_exclusion?.applies).toBe(true);
++    expect(Number(r.mission.delivered_units ?? 0)).toBe(0);
++    expect(Number(r.mission.charged_points ?? 0)).toBe(0);
++    expect(r.money.balance()).toBe(r.initialBalance);
++    // only the planning's three calls were made: execution called no provider
++    expect(r.call.mock.calls.length).toBe(3);
++    expect(r.store.events.some((e) => /ملف الاستبعاد المعتمد/.test(e.message_ar))).toBe(true);
++  });
++});
++
++describe("a whole replayed mission executed by the CODE ENGINE (no model session): five companies and their decision makers, one company in the list", () => {
++  it("the engine path checks every page through the same list: the listed company and its people are never delivered, and the charge follows what was delivered", async () => {
++    const LIST3 = snap([{ name: "Nile Electromechanical", domain: "https://www.nile-em.com.eg" }]);
++    const calls: TregCallOptions[] = [];
++    const answer = (o: TregCallOptions) => {
++      calls.push(o);
++      if (o.endpointId === A1_COMPANIES) return tregResult(a1CompaniesPage, 0.0005);
++      if (o.endpointId === A1_PEOPLE) { const slug = pickCompany(o); return tregResult(slug ? peopleOfCompany(slug) : { results: [] }, 0.0005); }
++      return tregResult({ found: false }, 0);
++    };
++    const r = await replay({
++      request: a1Request, planning: a1PlanFlow(), execution: () => [], answers: Array.from({ length: 140 }, () => answer),
++      makeStore: () => { const st = createMemoryStore(); st.settings[CUSTOMER_EXCLUSION_FLAG_KEY] = { user_ids: [REPLAY_USER] }; return st; },
++      deps: (base) => ({ ...base, readMissionExclusion: async () => LIST3 }),
++    });
++    expect(r.plannedPlan.customer_exclusion).toMatchObject({ applies: true, entities: 1 });
++    // the engine ran (no model execution session)
++    expect(r.executionDriver.results).toEqual([]);
++    // 4 of the 5 planned companies exist outside the list: a partial delivery, charged ceil(delivered × unit), never above the reserve
++    assertReplayInvariants(r, { expectStatus: "partial" });
++    const rows = JSON.stringify(await Promise.all(r.plannedPlan.stages.filter((s) => s.deliver).map(async (s) => JSON.parse((await r.store.getFile(r.missionId, `rows/${s.key}.json`)) ?? "[]"))));
++    expect(rows).not.toMatch(/nile-em|Nile Electromechanical/);
++    expect(rows).toMatch(/Orascom Electromechanical/);
++    // no people were ever asked for the excluded company
++    expect(calls.filter((c) => c.endpointId === A1_PEOPLE && JSON.stringify(c.params ?? {}).includes("nile-em")).length).toBe(0);
++  });
++});
++
++describe("an uploaded list meant for ENRICHMENT is never applied as an exclusion list (Phase 5.3-B is not supported yet)", () => {
++  const file = { name: "list.xlsx", baselineRowCount: 2, normalizedEntities: [{ name: "أوراسكوم للإنشاءات" }, { name: "بتروجت" }] };
++  it("reads the customer's intent by code", () => {
++    for (const t of ["هات المواقع الرسمية للشركات اللي في الملف", "عايز ايميلات الشركات الموجودة في الملف", "كمّل بيانات القائمة المرفقة", "هات حسابات السوشيال للشركات المرفقة", "enrich the companies in the sheet", "إثراء الملف بالمواقع"]) expect(uploadIntentOf(t), t).toBe("enrichment");
++    for (const t of ["عايز ٥٠ شركة مقاولات في مصر واستبعد الشركات اللي في الملف", "شركات مقاولات غير الموجودة في الملف", "هات شركات جديدة ماعدا اللي في الشيت", "companies except the ones in the file"]) expect(uploadIntentOf(t), t).toBe("exclusion");
++    for (const t of ["عايز ٥٠ شركة مقاولات في مصر", "", null]) expect(uploadIntentOf(t)).toBe("unspecified");
++  });
++  it("switch ON or OFF: an enrichment request stores no list and says plainly that enrichment files are not supported", async () => {
++    for (const value of [undefined, true, { user_ids: [REPLAY_USER] }]) {
++      const r = await exclusionForCard({ sb: settingsClient(value).sb, userId: REPLAY_USER, exclusionFile: file }, "هات المواقع الرسمية للشركات اللي في الملف");
++      expect(r).toEqual({ plan: {}, noteAr: ENRICHMENT_NOT_SUPPORTED_AR });
++    }
++    expect(checkCustomerText(ENRICHMENT_NOT_SUPPORTED_AR).issues).toEqual([]);
++  });
++  it("an explicit exclusion request with the switch ON still stores the list", async () => {
++    const r = await exclusionForCard({ sb: settingsClient(true).sb, userId: REPLAY_USER, exclusionFile: file }, "عايز ٥٠ شركة مقاولات واستبعد اللي في الملف");
++    expect((r.plan as any).customerExclusion).toBeDefined();
++  });
++});
++
++describe("a whole chat turn with the switch ON and an ENRICHMENT request", () => {
++  it("the card carries no list and says enrichment files are not supported", async () => {
++    vi.stubGlobal("fetch", () => { throw new Error("no network"); });
++    const db = createMemoryDb();
++    const { client } = replayClient(db, fakeMoneyClient({}));
++    db.seed("agent_settings", [{ key: CUSTOMER_EXCLUSION_FLAG_KEY, value: true }]);
++    db.seed("agent_worker_heartbeat", [{ worker_id: "w", beat_at: new Date().toISOString() }]);
++    db.seed("conversations", [{ id: "conv1", user_id: REPLAY_USER, title: "محادثة جديدة" }]);
++    db.seed("messages", [{ id: "u1", conversation_id: "conv1", role: "user", user_id: REPLAY_USER }, { id: "a1", conversation_id: "conv1", role: "assistant", user_id: REPLAY_USER }]);
++    const file = { name: "list.xlsx", baselineRowCount: 2, normalizedEntities: [{ name: "أوراسكوم للإنشاءات" }, { name: "بتروجت" }] };
++    const turn = await agentChatTurn({ sb: client, userId: REPLAY_USER, conversationId: "conv1", userMsgId: "u1", assistantMsgId: "a1", message: "عايز المواقع الرسمية وإيميلات الشركات اللي في الملف", conversationTitle: "محادثة جديدة", exclusionFile: file });
++    const card = db.rows("messages").find((m: any) => m.id === "a1")!;
++    expect(String(card.content_ar ?? turn.contentAr)).toContain(turn.ok ? ENRICHMENT_NOT_SUPPORTED_AR : "");
++    expect(card.plan?.customerExclusion).toBeUndefined();
++    // and the same turn with an exclusion request stores it (the switch is really ON here)
++    db.seed("messages", [{ id: "u2", conversation_id: "conv2", role: "user", user_id: REPLAY_USER }, { id: "a2", conversation_id: "conv2", role: "assistant", user_id: REPLAY_USER }]);
++    db.seed("conversations", [{ id: "conv2", user_id: REPLAY_USER, title: "محادثة جديدة" }]);
++    const turn2 = await agentChatTurn({ sb: client, userId: REPLAY_USER, conversationId: "conv2", userMsgId: "u2", assistantMsgId: "a2", message: "عايز ٣ شركات كهروميكانيكا في مصر واستبعد الشركات اللي في الملف", conversationTitle: "محادثة جديدة", exclusionFile: file });
++    expect(turn2.ok).toBe(true);
++    expect(turn.ok).toBe(true);
++    expect(db.rows("messages").find((m: any) => m.id === "a2")!.plan.customerExclusion.entities).toHaveLength(2);
++  });
++});
+diff --git a/tests/raw-delivery-contract.test.ts b/tests/raw-delivery-contract.test.ts
+index c07122c..bb3dc0b 100644
+--- a/tests/raw-delivery-contract.test.ts
++++ b/tests/raw-delivery-contract.test.ts
+@@ -7,25 +7,27 @@ import { ALLOWED_REMOVALS_RAW, EXISTING_REMOVAL_REASONS, isAllowedRemovalRaw, ra
+  * the same record id twice (`id_duplicate`: counted as a duplicate, never stored), an item whose parent is unknown (`unknown_parent`), an item beyond the volume bought (`target_reached`, the count cap) and the share of a named source
+  * (`named_source_share`: stored as `target_reached`). Everything else becomes a MARK column. The behaviour under raw mode is asserted in tests/raw-ingest-social.test.ts (item 1.1); this file pins the inventory and the allowed set.
+  */
+-const PINNED_23 = [
++// CHANGED (Phase 5.3, docs/intelligence/PHASE-5-3-AND-6.md): the 24th reason `customer_exclusion` (a company in the customer's own approved exclusion list) is added on purpose, and it is an allowed raw removal:
++// the customer's explicit criterion, never a content rule. The inventory stays pinned exactly.
++const PINNED_24 = [
+   "no_text", "no_term", "mention_only", "other_person", "name_extended", "other_meaning", "uncertain", "not_reviewed", "review_no", "review_failed",
+   "filter_reply", "filter_repost", "filter_language", "filter_period", "filter_account", "filter_place", "filter_government", "filter_media",
+-  "unknown_parent", "no_verified_contact", "not_a_person", "target_reached", "not_at_company",
++  "unknown_parent", "no_verified_contact", "not_a_person", "target_reached", "not_at_company", "customer_exclusion",
+ ];
+ 
+ describe("the removal reasons that exist today are pinned", () => {
+-  it("finalize.ts knows exactly these 23 codes, and the contract constant lists the same", () => {
+-    expect(Object.keys(REASON_TEXT_AR).sort()).toEqual([...PINNED_23].sort());
+-    expect([...EXISTING_REMOVAL_REASONS].sort()).toEqual([...PINNED_23].sort());
+-    expect(PINNED_23).toHaveLength(23);
++  it("finalize.ts knows exactly these 24 codes, and the contract constant lists the same", () => {
++    expect(Object.keys(REASON_TEXT_AR).sort()).toEqual([...PINNED_24].sort());
++    expect([...EXISTING_REMOVAL_REASONS].sort()).toEqual([...PINNED_24].sort());
++    expect(PINNED_24).toHaveLength(24);
+   });
+ });
+ 
+-describe("only four removals are allowed when raw mode is on", () => {
++describe("only five removals are allowed when raw mode is on (four, plus the customer's own exclusion list since Phase 5.3)", () => {
+   it("the allowed set is fixed", () => {
+-    expect([...ALLOWED_REMOVALS_RAW].sort()).toEqual(["id_duplicate", "named_source_share", "target_reached", "unknown_parent"]);
++    expect([...ALLOWED_REMOVALS_RAW].sort()).toEqual(["customer_exclusion", "id_duplicate", "named_source_share", "target_reached", "unknown_parent"]);
+   });
+-  it("of the 23 stored reasons only unknown_parent and target_reached stay; the other 21 must become marks", () => {
++  it("of the 24 stored reasons only unknown_parent, target_reached and customer_exclusion stay; the other 21 must become marks", () => {
+     expect(isAllowedRemovalRaw("unknown_parent")).toBe(true);
+     expect(isAllowedRemovalRaw("target_reached")).toBe(true);
+     expect(isAllowedRemovalRaw("id_duplicate")).toBe(true);
