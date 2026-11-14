@@ -336,6 +336,8 @@ export function createGateway(deps: GatewayDeps) {
         if (thrown || !r || r.timedOut === true || r.error === "network_failure") return null;
         if (r.blocked) return 0;
         if (r.costIsEstimate === true) return null;
+        // TREG's answer carried no charge at all (tregClient puts a placeholder 0 in costMicro): an answered call may still have billed, so it is UNKNOWN, never a reported zero
+        if (r.costUnreported === true) return null;
         // a charge that is not a number is UNKNOWN (the whole bound stays spent), never zero
         if (typeof r.costMicro !== "number" || !Number.isFinite(r.costMicro)) return null;
         return Math.max(0, r.costMicro) / 1_000_000;

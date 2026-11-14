@@ -183,6 +183,47 @@ describe("CAMPAIGN SCOPE: what the gate does for the campaign account and for ev
     expect(y.sg.summary(MISSION).unknown_charges).toBe(1);
   });
 
+  it("F2 (independent review): a TREG answer that carries NO charge settles UNKNOWN, never at the placeholder 0 the client puts in costMicro", async () => {
+    // the REAL client against a stubbed fetch: a header, an explicit 0 header, and an answer with neither
+    const ANSWER = { total: 1, success: true, leads: [] };
+    const opts = { token: "t", endpointId: "icypeas.people.search", method: "POST" as const, params: { query: { keyword: { include: ["software"] } }, pagination: { size: 9 } }, userId: "u", jobId: "j", stepId: "s", page: 1, routeMaxCostUsd: "0.005", timeoutMs: 2000 };
+    const run = async (headers: Record<string, string>, status = 200) => {
+      vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(ANSWER), { status, headers: { "content-type": "application/json", ...headers } })));
+      try { return await (await import("../src/functions/shared/tregClient")).executeTregCall(opts); } finally { vi.unstubAllGlobals(); }
+    };
+    expect((await run({ "x-treg-cost-micro": "1140" })).costUnreported).toBeUndefined();
+    expect((await run({ "x-treg-cost-micro": "0" })).costUnreported).toBeUndefined(); // a REPORTED zero is a zero
+    for (const status of [200, 500, 503]) {
+      const bare = await run({}, status);
+      expect(bare.costUnreported, `status ${status}`).toBe(true);
+      expect(bare.costMicro).toBe(0);
+    }
+    // the gateway settles that shape as unknown: the whole bound stays spent
+    const x = world({ ceilingUsd: 0.2 });
+    await admit(x);
+    const bare = { ...tregResult(postsPage(3), 0), costUnreported: true } as TregCallResult;
+    const t = treg(x.sg, { answers: [bare] });
+    await ask(t);
+    const cap = Number((t.call.mock.calls[0][0] as TregCallOptions).routeMaxCostUsd);
+    expect(x.w.owner.grant("camp1")!.spentUsd).toBeGreaterThanOrEqual(cap - 1e-9);
+    expect(x.sg.summary(MISSION).unknown_charges).toBe(1);
+    // and a reported zero (header 0, no flag) still settles at zero
+    const y = world({ ceilingUsd: 0.2 });
+    await admit(y);
+    await ask(treg(y.sg, { answers: [tregResult(postsPage(3), 0)] }));
+    expect(y.w.owner.grant("camp1")!.spentUsd).toBeCloseTo(0, 9);
+  });
+
+  it("F3 (independent review): Context.dev credits that are null, empty, false or missing are NOT a reported zero", async () => {
+    const { reportedCreditsOf } = await import("../agent/src/webGateway");
+    for (const v of [null, "", "  ", false, undefined, {}, "abc", -1]) expect(reportedCreditsOf("contextdev", { key_metadata: { credits_consumed: v } }), String(JSON.stringify(v))).toBeNull();
+    expect(reportedCreditsOf("contextdev", {})).toBeNull();
+    expect(reportedCreditsOf("contextdev", null)).toBeNull();
+    expect(reportedCreditsOf("contextdev", { key_metadata: { credits_consumed: 0 } })).toBe(0);
+    expect(reportedCreditsOf("contextdev", { key_metadata: { credits_consumed: 3 } })).toBe(3);
+    expect(reportedCreditsOf("contextdev", { key_metadata: { credits_consumed: "2" } })).toBe(2);
+  });
+
   it("G: a worker restart cannot reset the campaign: spending lives in the store, and a restarted worker has NO mission admitted (every paid call is refused until it admits it again)", async () => {
     const x = world({ ceilingUsd: 0.2 });
     await admit(x);

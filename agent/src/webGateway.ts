@@ -62,7 +62,10 @@ const NOT_BILLED_HTTP = new Set([400, 401, 402, 403, 404, 413, 429]);
 /** The credits a provider's own answer REPORTS, or null: Context.dev `key_metadata.credits_consumed`, Firecrawl `creditsUsed`. A fallback is never a report. */
 export function reportedCreditsOf(provider: "firecrawl" | "contextdev", json: unknown): number | null {
   const j = json as { key_metadata?: { credits_consumed?: unknown }; creditsUsed?: unknown } | null;
-  const n = provider === "contextdev" ? Number(j?.key_metadata?.credits_consumed) : Number.isInteger(j?.creditsUsed) ? Number(j?.creditsUsed) : NaN;
+  // only a number (or a non-empty numeric string) is a report: null, "", false and a missing field are NOT a reported 0 (Number(null) is 0)
+  const raw = j?.key_metadata?.credits_consumed;
+  const reportedByContext = typeof raw === "number" ? raw : typeof raw === "string" && raw.trim() !== "" ? Number(raw) : NaN;
+  const n = provider === "contextdev" ? reportedByContext : Number.isInteger(j?.creditsUsed) ? Number(j?.creditsUsed) : NaN;
   return j && Number.isFinite(n) && n >= 0 ? n : null;
 }
 

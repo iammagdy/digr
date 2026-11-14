@@ -2,6 +2,8 @@
 
 **Status (14 Nov 2026): NOT AUTHORIZED, NOT STARTED.** This is the procedure for ONE test-account-only, hard-capped (USD 0.30 in total) Intelligence acceptance mission, **after** the owner approvals of `docs/intelligence/SPEND-SAFETY-ACCEPTANCE.md` §10. Every step that changes production is marked **[OWNER]**. A step marked **[READ-ONLY]** changes nothing. No step may be started before the one above it is verified.
 
+**This runbook is the command appendix of the master checklist `docs/intelligence/PHASE-8-EXECUTION-CHECKLIST.md`** (gates G0 to G13, the two approval decisions D1 and D2, and the exact guarantee statement). The SQL facts, the offline rehearsal and the rollback table are in `docs/proposals/spend-gate/SQL-PREFLIGHT.md`. Where the two differ, the checklist wins.
+
 **What the cap covers, exactly:** the worker's paid calls (TREG, Context.dev, Firecrawl, the Agent SDK's model requests, the review requests) for the missions ENROLLED in the campaign grant, which belong to the test account. It does **not** cover the website's customer chat, the admin reverse lookup, the TREG key check, the smoke test or any script. Those must not be used for the test account while the window is open (step 0).
 
 ## 0. Preconditions
@@ -11,11 +13,11 @@
 3. Nobody uses the customer chat, the reverse lookup, the TREG key check or the smoke test with the test account during the window.
 4. The execution model is Haiku (the default; `AGENT_MODEL` unset or Haiku) and the `planning_model` setting is unset or Haiku. **Sonnet cannot run under this cap** (its smallest request bound is above the grant's per-operation maximum, §6 of the acceptance report).
 5. No database password or `DATABASE_URL` is set on Heroku or Vercel (SPEC-v2 decision 4): without that the grant's separation does not hold.
-6. Provider-side limits exist: an Anthropic Console spend limit on the worker's workspace, and plan caps at TREG, Context.dev and Firecrawl. They are the only control against a leaked key.
+6. Provider-side limits exist and are **read back** (checklist §6, G4): a **dedicated, non-default** Anthropic workspace and key for the worker (Anthropic does not allow a spend limit on the Default Workspace) with a monthly spend limit and token rate limits on it, and prepaid credit with auto-reload off if the organization uses prepaid credit; plan caps at TREG, Context.dev and Firecrawl. The spend limit is monthly and its enforcement speed is not documented: it is a **backstop**, not an exact USD 0.30 cap. These limits are the only control against a leaked key and against the tokenizer assumption.
 
 ## 1. Apply the database objects **[OWNER]** (Supabase dashboard SQL editor, the database owner role)
 
-Apply in this order, each in its own run:
+First read `docs/proposals/spend-gate/SQL-PREFLIGHT.md` (what the files do, the production facts, the grants matrix, the rollback table) and confirm a backup. Apply in this order, each in its own run:
 
 1. `docs/proposals/spend-gate/sql/001_spend_gate.sql`, then `002_verify.sql`: every row must say `true`.
 2. `docs/proposals/spend-gate/sql/003_campaign_scope.sql`, then `004_verify_campaign.sql` and `002_verify.sql` again: every row must say `true`.

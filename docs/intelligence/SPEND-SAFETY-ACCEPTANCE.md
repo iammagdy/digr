@@ -108,14 +108,15 @@ This is `src/lib/server/spendGate/paidPaths.ts`, enforced by test Q. "Gated" mea
 
 | Check | Result |
 |---|---|
-| Letter tests A to P and the inventory (`tests/spend-campaign.test.ts`) | 30 tests, all pass |
+| Letter tests A to P, the inventory and the two review fixes F2/F3 (`tests/spend-campaign.test.ts`) | 32 tests, all pass |
 | SQL on a real Postgres 16 (`tests/sql/spend-campaign.local-pg.test.ts`) | 16 tests, all pass; plus the 14 of rounds 61 and 62 |
 | Rounds 61 and 62 suites kept | `tests/spend-gate-r61.test.ts` 58, `tests/spend-gate-r62-wiring.test.ts` 42, all pass (two assertions were extended, not weakened: the allowed RPC names gained `spend_enroll_mission`, and the gate's method list gained `enroll`) |
-| Full suite (with the scratch Postgres for the SQL tests) | **14,167 passed, 0 failed**, 47 expected-fail, 12 skipped (1,002 files passed, 1 skipped). The baseline on `e550178` was 14,008. |
+| Full suite (with the scratch Postgres for the SQL tests) | **14,169 passed, 0 failed**, 47 expected-fail, 12 skipped (re-run after the review fixes of §7a; 14,167 before them). The baseline on `e550178` was 14,008. |
 | Opt-in real Agent SDK against a fake upstream (`DIGER_TEST_REAL_SDK=1`) | 4/4 |
 | Website typecheck, agent typecheck | clean |
 | `npm run build` and the client-bundle secret scan | built; 211 client files, **zero secrets** |
-| Mutation check | 36 mutants (26 in TypeScript: the reference model, the worker's admission, the wiring keys, the bounds, the gateway and the readiness checklist; 10 in the SQL). The first run caught 32 and four survived; each survivor became a test (an overrun counts in the exposure, the 72-hour window, an ungated mission's context is off, a held reservation counts after a revoke) and **all 36 are caught**. |
+| Mutation check | 39 mutants (29 in TypeScript: the reference model, the worker's admission, the wiring keys, the bounds, the gateway, the web gateway, the TREG client flag and the readiness checklist; 10 in the SQL). The first run caught 32 of the first 36 and four survived; each survivor became a test (an overrun counts in the exposure, the 72-hour window, an ungated mission's context is off, a held reservation counts after a revoke). The three added with the review fixes (§7a) were caught on their first run. **All 39 are caught.** |
+| SQL rehearsal as a non-superuser (`docs/proposals/spend-gate/sql/rehearse-as-supabase-owner.sh`) | `REHEARSAL OK` on a scratch Postgres 16 with a `CREATEROLE`/`BYPASSRLS` non-superuser owner, Supabase's default privileges and RLS on `missions` and `credit_ledger`: verifies 15, 13, 15 all true; the functional pass, the refusals and both rollbacks as in `docs/proposals/spend-gate/SQL-PREFLIGHT.md` §6 |
 
 | Letter | Required test | Test |
 |---|---|---|
@@ -137,6 +138,15 @@ This is `src/lib/server/spendGate/paidPaths.ts`, enforced by test Q. "Gated" mea
 | P | The acceptance workflow cannot start while the ceiling is unenforceable | `P:` (three) and the existing `acceptance-campaign.test.ts` |
 | Q (added) | No paid file is outside the inventory | `Q:` (four) |
 
+## 7a. Independent review of the money diff (before merge) and what it changed
+
+One reviewer read the diff against `main` without running anything. It found **two real defects, both fixed here and covered by tests F2 and F3**:
+
+1. **A TREG answer that carried no charge settled at 0.** `tregClient` puts a placeholder `0` in `costMicro` when TREG reports nothing (no `X-Treg-Cost-Micro`, no `_treg.charged_micro`), and the worker never asks for an estimate, so the gate freed the whole reservation. That contradicted the design (an unreported charge is unknown). The client now marks such an answer (`costUnreported`, an additive field: with the gate off nothing reads it) and the gateway settles it **unknown**. A reported `0` (a real header of 0) still settles at 0.
+2. **Context.dev `key_metadata.credits_consumed: null`** (or `""`, `false`) was read as a reported 0 (`Number(null)` is 0). Only a number or a non-empty numeric string is a report now.
+
+It also listed notes that are **documented, not changed** (see `PHASE-8-EXECUTION-CHECKLIST.md` §7): a mistyped `DIGER_SPEND_GATE` with no account id means global enforce; a holder of the service key can settle a held reservation at 0; the replay branch of `spend_reserve` answers before the grant-state checks (not reachable: keys are random per attempt). It found no path where a paid call is sent without a reservation, no behaviour change with the variable unset, no way for another account to use or be blocked by the grant, and no touch of the ledger, pricing or points. Not verified by the reviewer: TREG refusing a call above the header before billing, Anthropic not billing 4xx answers, the SDK replacing `process.env` when `options.env` is set.
+
 ## 8. Is the ceiling technically enforceable?
 
 * **In code, yes**, for the worker's paid calls of enrolled missions, under the stated bounds and the stated tokenizer assumption.
@@ -151,7 +161,10 @@ New in this milestone: `src/lib/server/spendGate/campaign.ts`, `paidPaths.ts`; `
 
 No migration, pricing, ledger, settlement, permission, RLS, balance or infrastructure file was changed.
 
-## 10. Owner approval required (none given, none assumed)
+## 10. Owner approval required (none given for these, none assumed)
+
+**Update, 14 Nov 2026 (roadmap session):** the owner approved merging this PR as **inactive code** and closing PR #481 once this PR is verified to supersede it. That approval covers **only** the merge and the closing. The nine items below, now grouped into the two decisions **D1** (preparation, zero spend) and **D2** (spending) of `docs/intelligence/PHASE-8-EXECUTION-CHECKLIST.md` §3, remain **not given**. The SQL preflight is `docs/proposals/spend-gate/SQL-PREFLIGHT.md`.
+
 
 1. **Apply `001_spend_gate.sql`, then `003_campaign_scope.sql`** (with `002_verify.sql` and `004_verify_campaign.sql`) on the production database. This creates a role, a schema, tables and functions, and grants `execute` on five functions to `service_role`. **It also needs the table owner to be able to read `public.missions`**: `spend_gate.mission_owner` is created by the database owner role and reads only a user id for one mission.
 2. **Issue the one campaign grant** (§2 of the runbook: ceiling 0.30, per-op 0.10, one mission, 3 hours).
@@ -170,5 +183,6 @@ No migration, pricing, ledger, settlement, permission, RLS, balance or infrastru
 * **Uncovered paid paths** exist (§4): the website, the admin lookups and the scripts. The runbook forbids them for the window; nothing technical stops an owner from using them.
 * **Observe mode** forwards unreserved requests and is not enforcement; the runbook never uses it. A typo of `DIGER_SPEND_GATE` WITHOUT `DIGER_SPEND_CAMPAIGN_ACCOUNT` still fails closed for **all** accounts (the pre-existing global enforce); with the account id set it is a campaign.
 * **The free re-run** still creates a mission with no exclusion list (Phase 7 risk); the campaign does not set `customer_exclusion_files_v1`.
-* The SQL was tested on a scratch Postgres as a superuser. Supabase's role model (the table owner reading `public.missions` under row-level security) is argued from the design and checked by `004_verify_campaign.sql` on the real database, not proven here.
+* The SQL's unit tests ran as a superuser; the new rehearsal ran it as a **non-superuser** that mimics Supabase's `postgres` role (table owner reading `public.missions` under row-level security: it worked). It is still an emulation on **Postgres 16** while production is **17.11**, and the SQL has never run on the production database: `002_verify.sql` and `004_verify_campaign.sql` on the real database are the proof, and they are read-only.
+* **The model input bound rests on an assumption** and the provider-side limits are the only independent control; what may and may not be claimed is in `docs/intelligence/PHASE-8-EXECUTION-CHECKLIST.md` §2.
 * Phase 5.3-B, PR #481 and Phase 8 were not touched.
