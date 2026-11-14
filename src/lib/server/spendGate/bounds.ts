@@ -35,7 +35,7 @@ export type ProviderOp =
   | { provider: "contextdev"; op: "parser"; parser: string }
   | { provider: "firecrawl"; op: "scrape"; proxy?: string; json?: boolean }
   | { provider: "firecrawl"; op: "search"; limit: number; scrapesResults?: boolean }
-  | { provider: "treg"; op: "call"; routeCapUsd: number | null }
+  | { provider: "treg"; op: "call"; routeCapUsd: number | null; attempts?: number }
   | { provider: string; op: string };
 
 const blocksOfTen = (limit: number) => Math.max(1, Math.ceil(Math.max(1, Math.floor(Number(limit) || 0)) / 10));
@@ -86,7 +86,10 @@ function boundOf(input: ProviderOp): Bound {
     // (docs/PEOPLE_PRICING_FACTS.md). The bound IS the cap that is sent, so the reservation and the header must be the same number.
     const cap = (input as { routeCapUsd: number | null }).routeCapUsd;
     if (cap === null || !Number.isFinite(cap) || cap <= 0) return no("a TREG call without a route cost cap has no ceiling");
-    return ok(cap, "treg route max cost header");
+    // CAMPAIGN SCOPE: every attempt (the call and each key-pool hop) may be billed up to the cap, so the bound is the cap times the attempts the call can make
+    const attempts = (input as { attempts?: number }).attempts;
+    if (attempts !== undefined && !(Number.isInteger(attempts) && attempts >= 1 && attempts <= 8)) return no("a TREG call's attempt count is not a whole number from 1 to 8");
+    return ok(cap * (attempts ?? 1), attempts && attempts > 1 ? `treg route max cost header x ${attempts} attempts` : "treg route max cost header");
   }
   return no(`unknown provider ${String(input.provider)}`);
 }

@@ -65,6 +65,8 @@ export interface TregCallResult {
   costIsEstimate?: boolean;
   /** The charge the answer itself reported (`_treg.charged_micro`, routed calls), when it did. */
   chargedMicroReported?: number;
+  /** TREG's answer reported NO charge (no header, no `_treg.charged_micro`) and there is no estimate: `costMicro` is a placeholder 0, not a reported zero. */
+  costUnreported?: boolean;
   /** The call was NOT made: the endpoint is on the hard block list (never callable) ... */
   blocked?: string;
   /** ... or the job's USD budget would have been passed. */
@@ -483,5 +485,7 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
     ...(Number.isFinite(originalCostMicro) && originalCostMicro > 0 ? { originalCostMicro } : {}),
     ...(costIsEstimate ? { costIsEstimate: true } : {}),
     ...(bodyMicro !== null ? { chargedMicroReported: bodyMicro } : {}),
+    // an answer that carries NO charge at all (no cost header, no `_treg.charged_micro`, no estimate): `costMicro` above is a placeholder 0, not a report (the spend gate settles it UNKNOWN)
+    ...(headerMicro === null && bodyMicro === null && !costIsEstimate ? { costUnreported: true } : {}),
   };
 }

@@ -21,17 +21,14 @@
 * In `observe`, the model gate forwards every request, including those it could not reserve (`stats().unreservedUsd`).
 * It is a measurement mode only. See HANDOFF «ACTIVATION BLOCKER» for the conditions that must all hold before any activation.
 
-## The next engineering milestone: PR B (NOT started)
+## Spend safety milestone (14 Nov 2026): the USD 0.30 campaign ceiling
 
-**PR B = the spend-gate wiring.**
-
-* Do not confuse it with the unrelated open PR #439, whose title says «PR-B» (API error messages).
-* **It has NOT started.** It needs the owner's separate authorization:
-  * to start it;
-  * before any sensitive change (pricing, ledger, settlement, permissions, configuration, SQL);
-  * to merge it (SPEC-v2 §13, decision 3).
-* Merging PR B would still not activate anything: the mode stays off by default.
-* Activation (`observe`, then `enforce`) is a further, separate owner decision.
+* **Code complete and offline verified; INACTIVE; NOT live verified; verdict NO-GO for the first live test.** Report: `docs/intelligence/SPEND-SAFETY-ACCEPTANCE.md`. Runbook (preparation only): `docs/intelligence/FIRST-LIVE-ACCEPTANCE-RUNBOOK.md`.
+* The milestone's PR carries PR #481's worker wiring (reviewed, kept) and adds the campaign scope (one account, enrolled missions, one cumulative 0.30, expiry, stop). PR #481 itself was not touched.
+* **Needs the owner (report §10):** apply `001_spend_gate.sql` + `003_campaign_scope.sql` (and the two verify scripts); issue the one campaign grant; set `DIGER_SPEND_GATE=campaign` and `DIGER_SPEND_CAMPAIGN_ACCOUNT` on the worker; a rehearsal on the production store; provider-side limits; confirm no `DATABASE_URL` in Heroku or Vercel; the `max_tokens` cap and Haiku only; the parsers refusal; what to do with PR #481. Then a **separate** change that replaces `PRODUCTION_BUDGET_GUARANTEE` with a live check.
+* **Single master plan:** `docs/intelligence/PHASE-8-EXECUTION-CHECKLIST.md` (gates G0 to G13; **D1** = zero-spend preparation: SQL apply, provider-side limits, confirmations; **D2** = the separate approval to spend; an independent verification gate G5 between them). SQL facts, rehearsal and rollback: `docs/proposals/spend-gate/SQL-PREFLIGHT.md`. The owner approved merging the PR as inactive code and closing #481 once it is verified to supersede it; the outcome is in the PR conversation.
+* The cap covers the worker's paid calls of an enrolled mission. **It does not cover the website, the chat, the admin lookups or any script.** The model input bound rests on a tokenizer assumption: provider-side limits are the only independent control (checklist §2).
+* Do not confuse any of this with the unrelated open PR #439, whose title says «PR-B» (API error messages).
 
 ## Phase 7 (14 Nov 2026)
 
@@ -71,13 +68,13 @@
   7. live acceptance L1–L4 (≤ $0.30);
   8. price confirmation for automatic e-mail reverse endpoints above a threshold;
   9. `multi_stage_engine` for the test account.
-* **PR #481** must be rebased: #489 also edits `agent/src/runMission.ts`.
+* **PR #481** is superseded by the spend-safety milestone's PR (its code was merged there and the `runMission.ts` conflict with #489 resolved). Owner decision: close it or keep it.
 
 ## Remaining work, by priority
 
 ### P1: needed before the spend gate can protect production
 
-1. **Wire the gate into the call sites, behind `DIGER_SPEND_GATE` (default off): PR B. NOT started; owner authorization required.**
+1. **DONE (round 62 and the spend-safety milestone, inactive): wire the gate into the worker's call sites behind `DIGER_SPEND_GATE` (default off).** The list below is the original plan, kept for the record; the website's paid calls are still NOT gated.
    * **WHAT:**
      * Add `gateBefore`/`gateAfter` (drafted in `docs/proposals/spend-gate/drafts/gateHooks.ts.txt`) to `src/lib/server/spendGate/gate.ts`.
      * Add the Supabase adapter (drafted in `drafts/supabaseGate.ts.txt`) as `src/lib/server/spendGate/supabaseGate.ts`.

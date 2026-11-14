@@ -148,7 +148,11 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 * **Project:** Diger (ديجر), an Arabic-first research and data-extraction platform.
 * **What a customer does:** describes in chat what they need (companies, contacts, social posts, reviews…). The platform plans it, prices it in points, and after approval an agent collects the data from paid providers. The result is delivered as Excel/CSV/PDF/JSON.
 * **Repository:** https://github.com/iammagdy/digr. The primary branch is `main`.
-* **Branches:** round 61 was built on `ccr-9dc4c8d3-d0ae22`, which is now fully merged (PR #479). The post-merge documentation is on `claude/sleepy-albattani-l6qgtv` (PR #480). New work starts from `main` on a new branch. Every merge to `main` went through a PR; nothing was pushed to `main` directly.
+* **Branches:**
+  * Round 61 was built on `ccr-9dc4c8d3-d0ae22`, which is now fully merged (PR #479).
+  * The post-merge documentation was on `claude/sleepy-albattani-l6qgtv` (PR #480, merged as `9bbad01`).
+  * **Round 62 (PR #481, spend-gate worker wiring)** is on `claude/round-62-spend-gate-worker-wiring`. It is an OPEN review PR that was **not touched**; its code reached `main` through the spend-safety milestone's PR (inactive).
+  * New work starts from `main` on a new branch. Every merge to `main` went through a PR; nothing was pushed to `main` directly.
 
 ### Architecture (short)
 
@@ -177,10 +181,10 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 * `src/lib/server/`: server code.
   * `callBudget.ts` (the in-memory per-mission budget).
   * `multiProvider/` (provider adapters).
-  * `spendGate/` (round 61, unwired, see below).
+  * `spendGate/` (round 61; wired into the worker by the spend-safety milestone, inactive; campaign scope in `campaign.ts`, the paid-call inventory in `paidPaths.ts`).
 * `agent/src/`: the worker.
   * `gateway.ts`, `webGateway.ts`, `pageReuse.ts`, `runMission.ts`, `sdkRuntime.ts`, `sdkOptions.ts`.
-  * `modelGate.ts` (round 61, unwired).
+  * `modelGate.ts` (round 61); `spendGateWiring.ts` and `spendGateKeys.ts` (round 62 wiring, with the campaign scope, inactive).
 * `supabase/migrations/`: applied database history.
 * `docs/proposals/`: unapplied designs; SQL there is NOT applied.
 * `tests/`: Vitest.
@@ -192,7 +196,10 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 * **Worker (required):** `ANTHROPIC_API_KEY`, `TREG_TOKEN`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`.
 * **Worker (optional):** `PROVIDER_KEYS_ENCRYPTION_KEY`, `CONTEXT_DEV_API_KEY`, `FIRECRAWL_API_KEY`, `ADMIN_ALERT_EMAIL`, `AGENT_CONCURRENCY`.
 * **Kill switch (round 60):** `DIGER_WEB_PAGE_REUSE=0`.
-* **NOT set anywhere and NOT read by running code:** `DIGER_SPEND_GATE` (round 61). Verified unset on Heroku and Vercel at the merge of PR #479 (key names only were read).
+* **NOT set anywhere:** `DIGER_SPEND_GATE`.
+  * Production code (`main`) does not read it.
+  * The worker reads it (round 62 wiring, in `main` through the spend-safety milestone, inactive): unset or `off` builds nothing; `observe` measures only and is NOT enforcement; `campaign` (with `DIGER_SPEND_CAMPAIGN_ACCOUNT`) gates only the test account's enrolled missions; any other value is a GLOBAL `enforce` (it would refuse every customer's paid worker call: never use it).
+  * Verified unset on Heroku and Vercel at the merge of PR #479 (key names only were read).
 * **Tests only:** `DIGER_TEST_PG`, `DIGER_TEST_REAL_SDK=1`.
 
 ### Production (deployed) as last verified
@@ -216,6 +223,8 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 | 59 | Company quality checks before delivery; cost audit of msn_088c | #477 → `9974769` | Merged, deployed |
 | 60 | One paid fetch per page; no paid page for unsaved companies; spend-gate spec v1 | #478 → `adb22f8` | Merged, deployed (code unchanged in `7d30ec8` except the disconnected gate) |
 | 61 | Hard spend gate: security review, offline build, review fixes | #479 → `7d30ec8` | Merged and deployed as **disconnected code only**. Not wired, not applied, **not enabled**. |
+| 61 docs | Post-merge documentation | #480 → `9bbad01` | Merged (documentation only) |
+| 62 | PR B: the spend gate wired into the WORKER (TREG, Context.dev, Firecrawl, the Agent SDK's model requests, review.ts), behind `DIGER_SPEND_GATE` (default off) | PR #481 (open, untouched); its code is carried by the spend-safety milestone's PR | **Implemented and tested offline. Inactive.** See `docs/proposals/spend-gate/WIRING-R62.md` and `docs/intelligence/SPEND-SAFETY-ACCEPTANCE.md` |
 
 ### Round 61 status, precisely
 
@@ -233,11 +242,31 @@ This handoff document provides a clear, factual status of the Diger platform (`i
   * `npm run agent:typecheck` and `npx tsc --noEmit -p .`: clean.
 * **Done:** full suite (13,563 / 0 failed), both typechecks, build and secret scan, all on the reviewed head; merged through PR #479 pinned to `61338a2`. The scratch-Postgres and mutation results above were recorded at `f0fe65d8` and not re-run; the SQL has not changed since.
 * **NOT done:**
-  * the wiring into the gateways and the SDK driver (PR B: not started);
+  * the wiring into the gateways and the SDK driver (done later, round 62 and the spend-safety milestone; see below);
   * any production step: no SQL applied, no grant issued, no configuration set.
 * **Nothing is enforced in production.**
   * No migration was applied, and no configuration changed.
   * No production file imports the gate (a test pins it).
+
+### Spend safety milestone (14 Nov 2026): the USD 0.30 campaign ceiling. READ `docs/intelligence/SPEND-SAFETY-ACCEPTANCE.md`
+
+* **What it is:** one new PR on `main` (`e550178`) that **absorbs PR #481's worker wiring** (merged into the branch, three conflicts resolved by hand; #481 itself was not touched and stays open, now superseded) and adds the **campaign scope**: the hard gate serves one account's enrolled missions only, with one cumulative 0.30 ceiling, an expiry, an emergency stop and an owner-only issue.
+* **Inactive.** `DIGER_SPEND_GATE` is unset in production, so the worker builds no gate and every request, record and SDK option is what it was. **No SQL is applied, no grant exists, no switch is set, no paid call was made (spend USD 0.00).**
+* **Verdict: NO-GO for the first live test** until the owner approves the nine items of the report's §10. The hard ceiling is enforceable **in code** for the worker's paid calls of an enrolled mission; it is **not** enforceable in production.
+* **New SQL (proposals, NOT applied):** `docs/proposals/spend-gate/sql/003_campaign_scope.sql` (+ rollback, `004_verify_campaign.sql`), applied after 001.
+* **New code:** `src/lib/server/spendGate/campaign.ts` (terms, env parsing, the readiness checklist: called by no production code), `paidPaths.ts` (the paid-call inventory, enforced by a test), `agent/src/spendGateWiring.ts` (`admit`, `active`, `scope`), `main.ts` (admission before a claim runs), `gateway.ts` (explicit token: one TREG attempt; unknown cost is never zero).
+* **Worker settings (owner only, not set):** `DIGER_SPEND_GATE=campaign`, `DIGER_SPEND_CAMPAIGN_ACCOUNT=<test account id>`, `DIGER_SPEND_MAX_OUTPUT_TOKENS`. A campaign without a valid account stops the worker from starting.
+* **What the ceiling covers:** the worker's TREG, Context.dev, Firecrawl, Agent SDK and review requests for enrolled missions. **It does not cover** the website (chat, planners, reviews), the admin reverse lookup, the TREG key check, the smoke test or any script. The platform is **not** protected.
+* **Runbook (preparation only):** `docs/intelligence/FIRST-LIVE-ACCEPTANCE-RUNBOOK.md`. **Master checklist, approvals D1 (zero-spend preparation) and D2 (spending), and the exact guarantee statement:** `docs/intelligence/PHASE-8-EXECUTION-CHECKLIST.md`. **Production SQL preflight, rehearsal and rollback table:** `docs/proposals/spend-gate/SQL-PREFLIGHT.md`.
+* **Owner decision of 14 Nov 2026 (roadmap session):** merge the PR as inactive code and close PR #481 once the PR is verified to supersede it (it does: all 22 files of #481 are in it). That covers only the merge and the closing. The merge SHA, the production verification and the closing are recorded in the PR conversation and in the next code PR.
+* **Independent review before merge** found and fixed two unknown-charge defects (an unreported TREG charge and a null Context.dev credits value were settled at 0); see the report §7a.
+* **Unchanged on purpose:** `PRODUCTION_BUDGET_GUARANTEE` (`enforceable: false`), so the admin acceptance panel keeps refusing to start a campaign or create a scenario.
+* **Still the owner's:** SPEC-v2 §13 (grant, SQL, provider-side limits, no database password in Heroku/Vercel, the `max_tokens` cap, parsers, the 5xx policy).
+
+### Round 62 (PR #481, the worker wiring): history
+
+* PR #481 «Round 62: Spend Gate Worker Wiring — INACTIVE» is **open and was not modified** by the spend-safety milestone; its code reached `main` only through the milestone's PR. Its design record is `docs/proposals/spend-gate/WIRING-R62.md`.
+* **Observe mode is not budget enforcement** (it can forward unreserved paid calls). The runbook never uses it.
 
 ### ACTIVATION BLOCKER (round 61): observe mode is not budget protection
 
@@ -246,7 +275,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 * Observe is therefore a **measurement mode only**. It must never be described, configured or relied on as enforced budget protection.
 * **The gate stays disconnected and disabled** until all of these are true:
   1. the owner decisions in SPEC-v2 §13 (first grant, applying `001_spend_gate.sql` + `002_verify.sql`, provider-side limits, no database password in Heroku/Vercel);
-  2. PR B (wiring, default off; NOT started; not the unrelated open PR #439 titled «PR-B») started, reviewed and merged only with the owner's separate authorization;
+  2. PR B (wiring, default off; not the unrelated open PR #439 titled «PR-B») reviewed and merged only with the owner's separate authorization. It is implemented (round 62, carried into `main` by the spend-safety milestone, inactive);
   3. an observe period whose unreserved requests are reviewed, understood as non-protection, and accepted by the owner;
   4. `enforce` turned on only after the production failure tests in SPEC-v2 §11.
 
