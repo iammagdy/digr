@@ -43,6 +43,20 @@
 * Merging PR B would still not activate anything: the mode stays off by default.
 * Activation (`observe`, then `enforce`) is a further, separate owner decision.
 
+## Phases 2–4 of the Diger Intelligence Audit (14 Nov 2026)
+
+* **State:** code complete and offline verified, **not enabled**. See `docs/intelligence/PHASES-2-4-ACCEPTANCE.md`.
+* **Owner decisions** (§7 of that report), each needing approval:
+  1. switches on for the test account only;
+  2. one capped enrichment capture (≤ $0.03);
+  3. additions to the reviewed production list;
+  4. direct provider keys (proposal);
+  5. the cap accounting of an unanswered web call;
+  6. the chat policy for «personal e-mails of employees»;
+  7. the Phase 1 understanding gaps;
+  8. the Next build heap.
+* **Phase 5** (multi-provider execution) is **NOT started**. Recommendation: CONDITIONAL GO, after decisions 1–3 and a rebase of PR #481.
+
 ## Remaining work, by priority
 
 ### P1: needed before the spend gate can protect production

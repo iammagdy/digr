@@ -51,6 +51,12 @@ export interface ResearchNeed {
   topic: string | null;
   /** How the need was read: from the model's validated objectives, or from the words (fallback). */
   source: "objectives" | "words";
+  /** PHASE 4 families (router switch only): social sources outside the five compiled platforms (Reddit), read from the words. */
+  extraPlatforms?: string[];
+  /** PHASE 4 families (router switch only): the social platforms whose PUBLIC ACCOUNT PROFILE the customer asked for (bio, followers): a profile stage each, never dropped silently. */
+  profiles?: string[];
+  /** PHASE 4 (router switch only): the customer NAMES an account, page or channel: a first social stage may then be an account listing (`account_ref`), not only a topic search. */
+  namedSource?: boolean;
   /** The executable objectives (objective reading only), in order. Every one becomes at least one stage. */
   objectives?: NeedObjective[];
   /** What the model understood that no operation or served platform can do (objective reading only): asked before any mission or plan, never dropped silently. */
@@ -76,6 +82,10 @@ const STORE_WORDS = /جوجل\s*بلاي|بلاي\s*ستور|اب\s*(?:ا)?ست�
 const APP_WORDS = /تطبيق|تطبيقات|ابلكيشن|ابليكيشن|ابلكيشنات|ابليكشن|applications?|(?:^|[^a-z])apps?(?:[^a-z]|$)/;
 const appStoreOf = (t: string): AppStore | null => (/جوجل\s*بلاي|بلاي\s*ستور|google\s*play|play\s*store|اندرويد|android/.test(t) ? "google_play" : /اب\s*(?:ا)?ستور|app\s*store|ايفون|iphone|ios/.test(t) ? "app_store" : null);
 const REPLY_WORDS = /ردود|الرد(?:ود)?|ريبلاي|replies/;
+/** PHASE 4 families (router switch only). Folded text (ة→ه, أ→ا). */
+const REDDIT_WORDS = /ريديت|رديت|ريدت|reddit|subreddit/;
+const NAMED_SOURCE_WORDS = /(?:^|[^ء-ي])(?:حساب|صفحه|قناه|اكونت)(?:[^ء-ي]|$)|@[a-z0-9_.]{2,}|(?:instagram|facebook|tiktok|youtube|x|twitter)\.com\/|(?:^|[^a-z])(?:account|page|channel)(?:[^a-z]|$)/;
+const PROFILE_WORDS = /بروفايل|بروفيل|بيانات\s*(?:ال)?حساب|متابعين|فولورز|followers|profile|(?:^|[^a-z])bio(?:[^a-z]|$)|النبذه/;
 /** Platforms no provider of the registry serves (the five social platforms, the web, maps and companies are served). */
 const UNSUPPORTED_PLATFORMS: ReadonlyArray<[string, RegExp]> = [["snapchat", /سناب\s*شات|سناب(?![ء-ي])|snapchat/], ["clubhouse", /كلوب\s*هاوس|clubhouse/], ["discord", /ديسكورد|discord/]];
 
@@ -85,6 +95,8 @@ export interface NeedInput {
   /** The validated research brief of the chat (brief mode), when there is one: its platforms and contents were checked against the customer's words. */
   brief?: Pick<ResearchBrief, "platforms" | "content" | "count" | "objectives"> | null;
   semantic?: boolean;
+  /** PHASE 4 (router switch only): read the router families from the words (Reddit as a social source; a public account's profile). Off: the reading is exactly what it was. */
+  extendedFamilies?: boolean;
 }
 
 const KIND_OF_ROOT: Record<NeedObjective["operation"], NeedKind> = {
@@ -173,6 +185,28 @@ export function researchNeedOf(input: NeedInput): ResearchNeed {
   else if (WEB_WORDS.test(t) || unsupported) kind = "web";
   const comments = kind === "social" && (contract.comments !== "none" || content.has("comments") || COMMENT_WORDS.test(t));
   const replies = kind === "social" && (contract.replies !== "none" || content.has("replies") || REPLY_WORDS.test(t));
+  // PHASE 4 families (router switch only): Reddit named and no compiled platform → a social request on Reddit; a profile asked of a named social platform → a profile stage
+  const reddit = input.extendedFamilies === true && platforms.length === 0 && REDDIT_WORDS.test(t);
+  if (reddit) kind = "social";
+  const profiles = input.extendedFamilies === true && kind === "social" && PROFILE_WORDS.test(t) ? [...platforms, ...(reddit ? ["reddit"] : [])] : [];
+  const socialComments = kind === "social" && (contract.comments !== "none" || content.has("comments") || COMMENT_WORDS.test(t));
+  const socialReplies = kind === "social" && (contract.replies !== "none" || content.has("replies") || REPLY_WORDS.test(t));
+  const namedSource = input.extendedFamilies === true && kind === "social" && NAMED_SOURCE_WORDS.test(t);
+  if (namedSource && !reddit && profiles.length === 0) {
+    return {
+      kind, platforms, comments: socialComments, replies: socialReplies, reviews: false, appStore: null, websites: false, contacts: { email: false, phone: false }, people: false,
+      count: contract.count ?? brief?.count ?? countedQuantities(text)[0]?.value ?? null, conditions: { period: contract.period, country: contract.country, language: contract.language },
+      privacy: privacyRefusalAr(text) ? "blocked" : "ok", unsupportedPlatform: unsupported, topic: contract.topic, source: "words", namedSource: true,
+    };
+  }
+  if (reddit || profiles.length > 0) {
+    return {
+      kind, platforms: kind === "social" ? platforms : [], comments: socialComments, replies: socialReplies, reviews: false, appStore: null, websites: false, contacts: { email: false, phone: false }, people: false,
+      count: contract.count ?? brief?.count ?? countedQuantities(text)[0]?.value ?? null, conditions: { period: contract.period, country: contract.country, language: contract.language },
+      privacy: privacyRefusalAr(text) ? "blocked" : "ok", unsupportedPlatform: unsupported, topic: contract.topic, source: "words",
+      ...(reddit ? { extraPlatforms: ["reddit"] } : {}), ...(profiles.length > 0 ? { profiles } : {}), ...(namedSource ? { namedSource: true } : {}),
+    };
+  }
   return {
     kind,
     platforms: kind === "social" ? platforms : [],
@@ -217,10 +251,12 @@ export function stagesOfNeed(need: ResearchNeed): StageNeed[] {
   if (need.objectives && need.objectives.length > 0) return stagesOfObjectives(need, need.objectives);
   const out: StageNeed[] = [];
   if (need.kind === "social") {
-    for (const p of need.platforms) {
+    // PHASE 4 families: each profile asked is its own first stage (a named account's own data), beside the content chain
+    for (const p of need.profiles ?? []) out.push({ key: `${p}_profile`, operation: "social.profile", platform: p, parentKey: null, requires: [], prefers: ["name", "text", "comment_count", "url"], accepts: ["query"], volume: null, deliver: true });
+    for (const p of [...need.platforms, ...(need.extraPlatforms ?? [])] as string[]) {
       const parents = `${p}_parents`;
       const childAsked = need.comments || need.replies;
-      out.push({ key: parents, operation: "social.parents", platform: p, parentKey: null, requires: childAsked ? ["id", "url"] : ["url", "text"], prefers: ["text", "date", "author", "comment_count"], accepts: ["query"], volume: childAsked ? null : need.count, deliver: true });
+      out.push({ key: parents, operation: "social.parents", platform: p, parentKey: null, requires: childAsked ? ["id", "url"] : ["url", "text"], prefers: ["text", "date", "author", "comment_count"], accepts: need.namedSource ? ["query", "account_ref"] : ["query"], volume: childAsked ? null : need.count, deliver: true });
       if (need.comments || need.replies) {
         out.push({ key: `${p}_comments`, operation: "social.comments", platform: p, parentKey: parents, requires: ["id", "text"], prefers: ["date", "author"], accepts: ["post_ref", "url"], volume: need.count, deliver: true });
       }

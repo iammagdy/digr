@@ -39,12 +39,17 @@ export const OPERATIONS = [
  *   the `web_via_treg` switch is on and no companies source documents a website.
  */
 export const INTERNAL_OPERATIONS = ["company.enrich"] as const;
-export type Operation = (typeof OPERATIONS)[number] | (typeof INTERNAL_OPERATIONS)[number];
+/**
+ * ROUTER OPERATIONS (Phase 4, task 4.3): data operations the router can route that the chat's objective vocabulary does not carry yet (recognising them in the customer's own words is Phase 1 work). Mapped only with the router switch
+ * (`extendedFamilies`): social.profile = a public account's own profile (bio, followers, counters) on TikTok / Instagram / X / YouTube / Facebook / Reddit.
+ */
+export const ROUTER_OPERATIONS = ["social.profile"] as const;
+export type Operation = (typeof OPERATIONS)[number] | (typeof INTERNAL_OPERATIONS)[number] | (typeof ROUTER_OPERATIONS)[number];
 
 /** The classes of output field the stages need from one another and the customer needs in the file. */
 export type OutputClass = "id" | "url" | "text" | "date" | "author" | "rating" | "name" | "website" | "email" | "phone" | "place_ref" | "comment_count" | "title" | "company" | "app_ref";
 /** The classes of input a capability takes. `query` comes from the customer's topic; every other one must come from the parent stage's rows. */
-export type InputClass = "query" | "url" | "post_ref" | "comment_ref" | "place_ref" | "domain" | "app_ref" | "company_name";
+export type InputClass = "query" | "url" | "post_ref" | "comment_ref" | "place_ref" | "domain" | "app_ref" | "company_name" | "account_ref";
 
 /** How a capability is reached: through the TREG gateway as one endpoint (`treg_direct`), through TREG as a ROUTED endpoint any of whose siblings may serve the call (`treg_routed`), or through Diger's own adapter with its own key (`direct`). */
 export type CapabilityAccess = "treg_direct" | "treg_routed" | "direct";
@@ -127,6 +132,23 @@ const TREG_RULES: ReadonlyArray<{ re: RegExp; operation: Operation }> = [
 export const PRIVATE_CAPABILITY = /(^|\.)personal(\.|$)|^people\.(profile\.from_phone|identity\.from_email|address\.|audience|audiences|email\.personal|phone\.find\.personal)|^x\.chat\.|\.chat\.(conversation|conversations|media)|^people\.phone\.live|^people\.phone\.network/;
 export const isPrivateCapabilityString = (capability: string | null | undefined): boolean => PRIVATE_CAPABILITY.test(String(capability ?? ""));
 
+/**
+ * PHASE 4 FAMILIES (task 4.3), with the router switch only: Reddit public posts, comments and replies (52 catalog endpoints; Diger's own recorded calls returned rows), and public account PROFILES. Kept apart from `TREG_RULES` so the
+ * discovery of today (switch off) maps exactly what it mapped.
+ */
+const EXTENDED_RULES: ReadonlyArray<{ re: RegExp; operation: Operation }> = [
+  { re: /^reddit\.(search\.posts|subreddit\.posts|user\.posts)$/, operation: "social.parents" },
+  { re: /^reddit\.post\.comments$/, operation: "social.comments" },
+  { re: /^reddit\.comment\.replies$/, operation: "social.replies" },
+  { re: /^(tiktok|instagram|x|youtube|facebook|reddit)\.user\.profile$/, operation: "social.profile" },
+];
+export function extendedOperationOf(capability: string | null | undefined): Operation | null {
+  const c = String(capability ?? "");
+  if (!c || isPrivateCapabilityString(c)) return null;
+  for (const r of EXTENDED_RULES) if (r.re.test(c)) return r.operation;
+  return null;
+}
+
 export function operationOfCapability(capability: string | null | undefined): Operation | null {
   const c = String(capability ?? "");
   if (!c || isPrivateCapabilityString(c)) return null;
@@ -170,6 +192,11 @@ const COMPANY_NAME_INPUT = /^(name|names|company_?name|companyName|companyNames|
 
 function takesOf(endpoint: CatalogEndpoint, operation: Operation): InputClass[] {
   const out = new Set<InputClass>();
+  if (operation === "social.profile") {
+    // a public account's profile is read by its handle or link, which the customer's own words name
+    for (const input of endpoint.inputs) if (/^(username|user_?name|handle|unique_?id|user|screen_?name|account|profile|url|user_?id)$/i.test(input.name)) out.add("query");
+    return [...out];
+  }
   if (operation === "company.enrich") {
     for (const input of endpoint.inputs) {
       if (COMPANY_NAME_INPUT.test(input.name)) out.add("company_name");
@@ -204,6 +231,8 @@ export interface RegistryAvailability {
    * discovery with the switch off is exactly what it was (a Facebook replies step, served in production by a verified card, was reported «partial» because the card was invisible: tests/phase3-registry.test.ts records the change).
    */
   handCards?: boolean;
+  /** PHASE 4: also map the router families (`EXTENDED_RULES`: Reddit, public profiles). Always on for the artifact; at run time only with the router switch. */
+  extendedFamilies?: boolean;
 }
 
 /** Below this much room a provider's cap is used up for planning (the smallest call it could make costs about this). */
@@ -292,14 +321,18 @@ const CARD_ROLE_OPERATION: Partial<Record<CardRole, Operation>> = {
 };
 
 function cardCapability(card: ToolCard, e: CatalogEndpoint, operation: Operation, unavailable: Capability["unavailable"]): Capability {
-  const takes: InputClass[] = card.inputs.parent ? [operation === "social.replies" ? "comment_ref" : "post_ref"] : ["query"];
+  // a card that lists ONE named source (an account's posts, a page's posts) and takes no topic is fed by that source's name, never by a topic: it serves a request that names the account (`account_ref`), not a topic search
+  const takes: InputClass[] = card.inputs.parent ? [operation === "social.replies" ? "comment_ref" : "post_ref"] : card.inputs.source && !card.inputs.query ? ["account_ref"] : ["query"];
   const outputs = card.mapping.kind === "fields" ? [...new Set<OutputClass>(["id", ...outputsOfFields(Object.keys(card.mapping.fields))])] : (["id", "text", "author", "date"] as OutputClass[]);
   if (card.counter) outputs.push("comment_count");
+  // a card that BUILDS each item's link from a field (Instagram's short code, YouTube's video id: `linkTemplate`) delivers a link even though no item field is named like one (found by the Phase 4 replay of the stored missions)
+  if (card.mapping.kind === "fields" && card.mapping.linkTemplate) outputs.push("url");
   const rows = Math.max(1, card.page.observedRowsPerPage);
   return {
     id: card.endpointId, provider: "treg", operation, platform: card.platform, takes, outputs: [...new Set(outputs)], outputsKnown: card.status === "verified",
     pagination: card.inputs.cursor !== null, maxRowsPerCall: rows,
-    filters: { date: Boolean(card.inputs.period), country: Boolean(card.inputs.country), language: false },
+    // a query that takes `since:` / `until:` / `lang:` operators carries the period and the language itself (the X search card)
+    filters: { date: Boolean(card.inputs.period) || card.inputs.query?.operators === true, country: Boolean(card.inputs.country), language: card.inputs.query?.operators === true },
     usdPerRow: Number.isFinite(card.costUsdPerPage) ? card.costUsdPerPage / rows : null, privacy: "public", unavailable,
     summary: `hand tool card (${card.role})`, limits: card.cannot && card.cannot.length > 0 ? `cannot carry: ${card.cannot.join(", ")}` : null,
     access: e.kind === "routed" ? "treg_routed" : "treg_direct", pricing: tregPricingOf(e),
@@ -317,7 +350,7 @@ export function buildCapabilityRegistry(catalog: TregCatalog, availability: Regi
   // with the hand cards, an endpoint that has a card whose role is this operation is described by its CARD (verified on stored real pages), not by the catalog's wrapper fields (below)
   const cardOf = new Map<string, ToolCard>(availability.handCards ? TOOL_CARDS.filter((c) => CARD_ROLE_OPERATION[c.role]).map((c) => [c.endpointId, c] as const) : []);
   for (const e of catalog.endpoints) {
-    const operation = operationOfCapability(e.capability);
+    const operation = operationOfCapability(e.capability) ?? (availability.extendedFamilies ? extendedOperationOf(e.capability) : null);
     if (!operation) continue;
     const card = cardOf.get(e.id);
     if (card && CARD_ROLE_OPERATION[card.role] === operation) continue;
