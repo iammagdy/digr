@@ -127,7 +127,8 @@ export const config = {
   matcher: [
     "/dashboard/:path*",
     "/admin/:path*",
-    // VERCEL ACTIVE CPU: static files in public/ (icons, fonts, the web manifest, the sample workbooks) never run the middleware; they need no session
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|ttf|woff|woff2|webmanifest|xlsx)$).*)",
+    // VERCEL ACTIVE CPU: static files in public/ (icons, fonts, the web manifest) never run the middleware; they need no session. Spreadsheets skip it ONLY
+    // under the public /samples/ folder: any other path ending in .xlsx (a download route, now or later) still runs it.
+    "/((?!_next/static|_next/image|favicon.ico|samples/[^/]+\\.xlsx$|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|ttf|woff|woff2|webmanifest)$).*)",
   ],
 };

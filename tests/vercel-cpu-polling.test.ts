@@ -4,6 +4,7 @@ import { startVisiblePolling, type VisibilityDoc } from "../src/lib/visiblePolli
 import { ADMIN_DETAIL_ENDED_POLL_MS, ADMIN_DETAIL_POLL_MS, ADMIN_ENDED_STATUSES, ADMIN_OVERVIEW_POLL_MS, adminDetailDelayMs } from "../src/lib/agentMission/adminPolling";
 import { MISSION_STATUSES, MISSION_TERMINAL } from "../src/lib/agentMission/constants";
 import { config as middlewareConfig } from "../src/middleware";
+import { getMiddlewareMatchers } from "next/dist/build/analysis/get-page-static-info";
 
 /** VERCEL ACTIVE CPU (docs/ops/VERCEL-CPU.md): a background admin tab asks the server nothing; what a visible tab reads is unchanged. */
 function fakeDoc(state: "visible" | "hidden" = "visible") {
@@ -141,15 +142,31 @@ describe("the admin console's refresh", () => {
   });
 });
 
-describe("the middleware matcher", () => {
-  const matches = (path: string) => middlewareConfig.matcher.some((m) => {
-    if (!m.startsWith("/((")) return new RegExp(`^${m.replace("/:path*", "(/.*)?")}$`).test(path);
-    return new RegExp(`^${m}$`).test(path);
+describe("the middleware matcher (compiled by Next itself: getMiddlewareMatchers, the same function the build uses)", () => {
+  const compiled = getMiddlewareMatchers(middlewareConfig.matcher, {} as any).map((m: { regexp: string }) => new RegExp(m.regexp));
+  const runs = (path: string) => compiled.some((re: RegExp) => re.test(path));
+
+  it("1. the PUBLIC sample spreadsheets skip it", () => {
+    for (const p of ["/samples/diger-sample-companies.xlsx", "/samples/diger-sample-comments.xlsx", "/samples/diger-sample-decision-makers.xlsx"]) expect(runs(p), p).toBe(false);
   });
-  it("static files in public/ never run it", () => {
-    for (const p of ["/favicon.ico", "/site.webmanifest", "/samples/diger-sample-companies.xlsx", "/fonts/x.woff2", "/fonts/x.woff", "/brand/diger-mark.svg", "/og-image.png", "/instapay-qr.jpeg", "/_next/static/chunks/a.js"]) expect(matches(p), p).toBe(false);
+
+  it("2. every other path ending in .xlsx still runs it: API download routes (today's and any future one), nested or look-alike sample paths", () => {
+    for (const p of ["/api/jobs/abc/download.xlsx", "/api/missions/m1/file.xlsx", "/api/admin/export.xlsx", "/api/samples/x.xlsx", "/report.xlsx", "/samples/nested/x.xlsx", "/xsamples/x.xlsx", "/files/samples/x.xlsx"]) expect(runs(p), p).toBe(true);
   });
-  it("every page and API path still runs it (session refresh and the dashboard/admin checks are unchanged)", () => {
-    for (const p of ["/", "/dashboard", "/dashboard/chat", "/admin", "/admin/agent", "/api/requests", "/api/missions/x", "/login", "/robots.txt", "/sitemap.xml", "/legal/terms"]) expect(matches(p), p).toBe(true);
+
+  it("3. admin and dashboard protection is unchanged: every /admin and /dashboard path runs it, whatever its ending", () => {
+    for (const p of ["/admin", "/admin/agent", "/admin/export", "/admin/x.xlsx", "/admin/logo.png", "/dashboard", "/dashboard/chat", "/dashboard/requests", "/dashboard/x.xlsx", "/dashboard/a.svg"]) expect(runs(p), p).toBe(true);
+    // and every page and API path still runs it (session refresh)
+    for (const p of ["/", "/login", "/api/requests", "/api/missions/x", "/api/chat", "/robots.txt", "/sitemap.xml", "/legal/terms"]) expect(runs(p), p).toBe(true);
+  });
+
+  it("4. static assets still skip it where intended", () => {
+    for (const p of ["/favicon.ico", "/favicon-32x32.png", "/site.webmanifest", "/fonts/x.woff2", "/fonts/x.woff", "/x.ttf", "/brand/diger-mark.svg", "/og-image.png", "/instapay-qr.jpeg", "/_next/static/chunks/a.js", "/_next/image"]) expect(runs(p), p).toBe(false);
+  });
+
+  it("the source keeps the spreadsheet exception to /samples/ only (no global .xlsx in the extension list)", () => {
+    const src = readFileSync("src/middleware.ts", "utf8");
+    expect(src).toContain("samples/[^/]+\\\\.xlsx$");
+    expect(src).not.toMatch(/\|xlsx\)\$/);
   });
 });

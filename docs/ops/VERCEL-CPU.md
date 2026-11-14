@@ -47,7 +47,7 @@
   - `/admin/operations`;
   - the free re-run panel.
 - **`src/lib/agentMission/adminPolling.ts`:** an ended mission (exactly `MISSION_TERMINAL`) is refreshed in the admin console once a minute instead of every 3 s. The admin's own action still re-reads it at once.
-- **Middleware matcher:** also skips `ico`, `woff`, `woff2`, `webmanifest` and `xlsx` files. Every page and API path still runs it.
+- **Middleware matcher:** also skips `ico`, `woff`, `woff2` and `webmanifest` files, and spreadsheets **only** directly under the public `/samples/` folder. Every other path ending in `.xlsx`, every `/admin` and `/dashboard` path, and every page and API path still runs it. The tests compile the matcher with Next's own `getMiddlewareMatchers`.
 - **Tests:** `tests/vercel-cpu-polling.test.ts`.
 
 What each screen reads and shows, every route, every price, the ledger and the worker are unchanged.
