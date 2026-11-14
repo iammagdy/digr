@@ -8,6 +8,7 @@ import { resolveProviderKey, useProviderKeyStoreClient } from "../../src/lib/ser
 import { last4Of } from "../../src/lib/server/providerKeyCrypto";
 import { readProviderSpendToday, resolveAllProviderDailyCaps, resolveProviderDailyCapUsd } from "../../src/lib/server/multiProvider/providerCaps";
 import { storedBriefOf } from "../../src/lib/agentMission/researchBrief";
+import { missionExclusionReader } from "./customerExclusion";
 import { sendPlatformEmail } from "../../src/lib/server/sendPlatformEmail";
 import { configureTregKeyPool } from "../../src/lib/server/tregKeyPool";
 import { buildPoolAlertVars } from "../../src/lib/server/tregPoolAlerts";
@@ -91,6 +92,8 @@ async function main() {
     },
     // LLM-FIRST OBJECTIVES (read only while capability_discovery_v1 is on for the mission's account): the brief the chat server stored on the assistant message that carries this mission's card
     readMissionBrief: async (missionId, userId) => { const { data } = await client.from("messages").select("plan,created_at").eq("user_id", userId).eq("role", "assistant").eq("plan->>agentMissionId", missionId).order("created_at", { ascending: false }).limit(1); return storedBriefOf(Array.isArray(data) ? data[0]?.plan : null); },
+    // PHASE 5.3 (read ONLY when customer_exclusion_files_v1 is on for the mission's account): the exclusion list the chat server stored on the same card, for the same user; a failed read or a malformed list throws (never «no list»)
+    readMissionExclusion: missionExclusionReader(client),
     log,
   });
 

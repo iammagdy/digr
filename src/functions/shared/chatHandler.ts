@@ -1612,8 +1612,8 @@ export class ChatHandler {
   }
 
   /** One chat turn answered by the AGENT (see `agentChat`): a mission is created for the customer; the page draws its card. Never calls a model or a source itself. */
-  private async answerWithAgent(ctx: { sb: any; turn: TurnUsageLog; conversationId: string; assistantMsgId: string; userMsgId: string; userId: string; message: string; conversationTitle: string | null; stats: () => NonNullable<ChatHandlerResponse["turnStats"]> }): Promise<ChatHandlerResponse> {
-    const r = await agentChatTurn({ sb: ctx.sb, userId: ctx.userId, conversationId: ctx.conversationId, userMsgId: ctx.userMsgId, assistantMsgId: ctx.assistantMsgId, message: ctx.message, conversationTitle: ctx.conversationTitle });
+  private async answerWithAgent(ctx: { sb: any; turn: TurnUsageLog; conversationId: string; assistantMsgId: string; userMsgId: string; userId: string; message: string; conversationTitle: string | null; stats: () => NonNullable<ChatHandlerResponse["turnStats"]>; /** PHASE 5.3: the brief's server-parsed exclusion file (null: none). */ exclusionFile?: { name?: unknown; baselineRowCount?: unknown; normalizedEntities?: unknown } | null }): Promise<ChatHandlerResponse> {
+    const r = await agentChatTurn({ sb: ctx.sb, userId: ctx.userId, conversationId: ctx.conversationId, userMsgId: ctx.userMsgId, assistantMsgId: ctx.assistantMsgId, message: ctx.message, conversationTitle: ctx.conversationTitle, ...(ctx.exclusionFile ? { exclusionFile: ctx.exclusionFile } : {}) });
     ctx.turn.model = "agent";
     const base = { conversationId: ctx.conversationId, messageId: ctx.assistantMsgId, role: "assistant" as const, intent: "research" as const, tokensUsed: { input: 0, output: 0, costUsd: 0 }, turnStats: ctx.stats() };
     if (!r.ok) return { ...base, contentAr: r.contentAr, outputType: "answer_question" } as ChatHandlerResponse;
@@ -2714,7 +2714,7 @@ export class ChatHandler {
       // The AGENT takes every research request when it is on (the rollback constant is AGENT_SERVES_CHAT): a greeting, a general question and a file-shaping turn are still answered by the code above.
       if (this.agentChat?.enabled && sb && !isTestSearchScenario && !isFileShapingTurn && !isGreeting && !isGeneralQuestion) {
         currentStep = "agent_mission";
-        return await this.answerWithAgent({ sb, turn, conversationId, assistantMsgId, userMsgId, userId, message, conversationTitle: currentConversationTitle, stats: currentTurnStats });
+        return await this.answerWithAgent({ sb, turn, conversationId, assistantMsgId, userMsgId, userId, message, conversationTitle: currentConversationTitle, stats: currentTurnStats, exclusionFile: brief.exclusionFile ?? null });
       }
 
       // The MODEL PLANNER takes the whole planning path (studies, coverage, discovery questions, social intent, deterministic plans, the model call of the old path) when it is on.

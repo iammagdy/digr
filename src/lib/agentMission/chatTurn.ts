@@ -16,6 +16,7 @@ import { conditionChanged, conditionDriftOf, droppedRequirementsOf, groundedCond
 import { randomUUID } from "node:crypto";
 import { normalizeDigits } from "../arabicDigits";
 import { readSettingValue, scopedFlagOn } from "./scopedFlag";
+import { CUSTOMER_EXCLUSION_FLAG_KEY, ENRICHMENT_NOT_SUPPORTED_AR, exclusionNotAppliedAr, exclusionSnapshotOf, exclusionWillApplyAr, EXCLUSION_UNUSABLE_AR, uploadIntentOf } from "./customerExclusion";
 import { buildCapabilityRegistry, chatCapabilityLines, discoverCapabilities, operationLabelAr, PLATFORM_AR, researchNeedOf, CAPABILITY_DISCOVERY_FLAG_KEY, type CapabilityDiscovery, type CapabilityRegistry } from "./capabilities";
 import { loadTregCatalog } from "../treg/catalog";
 import { blockedEndpointReason } from "../treg/blockList";
@@ -36,6 +37,8 @@ export interface AgentChatTurnInput {
   assistantMsgId: string;
   message: string;
   conversationTitle?: string | null;
+  /** PHASE 5.3: the exclusion file the chat server parsed and kept in this conversation's brief (chatHandler `brief.exclusionFile`; never a field the customer's browser sends). Absent: no file. */
+  exclusionFile?: { name?: unknown; baselineRowCount?: unknown; normalizedEntities?: unknown } | null;
 }
 
 export type AgentChatTurnResult =
@@ -327,11 +330,12 @@ async function startMission(input: AgentChatTurnInput, requestText: string, extr
     } catch { /* shown anyway */ }
     return { ok: false, contentAr, status: created.status };
   }
-  const contentAr = extra.contentAr ?? (extra.noteAr ? `${extra.noteAr} ${AGENT_TURN_CONTENT_AR}` : AGENT_TURN_CONTENT_AR);
+  const exclusion = await exclusionForCard(input, `${requestText} ${input.message}`);
+  const contentAr = withExclusionNote(extra.contentAr ?? (extra.noteAr ? `${extra.noteAr} ${AGENT_TURN_CONTENT_AR}` : AGENT_TURN_CONTENT_AR), exclusion.noteAr);
   const derived = isUntitledConversation(input.conversationTitle) ? titleFromFirstRequest([{ role: "user", content: requestText }]) : null;
   try {
     await Promise.all([
-      sb.from("messages").update({ content_ar: contentAr, plan: { agentMissionId: created.id, ...(extra.brief ? { researchBrief: extra.brief } : {}) } }).eq("id", input.assistantMsgId),
+      sb.from("messages").update({ content_ar: contentAr, plan: { agentMissionId: created.id, ...(extra.brief ? { researchBrief: extra.brief } : {}), ...exclusion.plan } }).eq("id", input.assistantMsgId),
       sb.from("messages").update({ request_status: "planning" }).eq("id", input.userMsgId),
       ...(derived ? [sb.from("conversations").update({ title: derived, updated_at: new Date().toISOString() }).eq("id", input.conversationId).eq("user_id", input.userId)] : []),
     ]);
@@ -340,6 +344,23 @@ async function startMission(input: AgentChatTurnInput, requestText: string, extr
   }
   return { ok: true, missionId: created.id, contentAr, ...(derived ? { conversationTitle: derived } : {}) };
 }
+
+/**
+ * PHASE 5.3: THE EXCLUSION FILE ON A NEW MISSION'S CARD. No file in the conversation: nothing (no read, no field, no sentence: today's behaviour exactly). With a file and the server switch `customer_exclusion_files_v1` ON for the
+ * account: the snapshot of the parsed list goes on the card's message (`plan.customerExclusion`, in the SAME write as `agentMissionId`, so the worker finds both or neither) and the customer reads that the plan will say whether it
+ * applies. Switch OFF (the default): nothing is stored, and the customer reads plainly that the file was received and is NOT applied. A file with no usable company is said too, and never stored. A request that asks to
+ * research the companies IN the file (enrichment, customerExclusion.ts uploadIntentOf) never stores the list as an exclusion, in any switch state: it would remove the very companies asked about.
+ */
+export async function exclusionForCard(input: Pick<AgentChatTurnInput, "sb" | "userId" | "exclusionFile">, requestText = ""): Promise<{ plan: Record<string, unknown>; noteAr: string | null }> {
+  if (!input.exclusionFile) return { plan: {}, noteAr: null };
+  // the customer asked to research the companies IN the file (enrichment, not supported yet): the file is never applied as an exclusion list, whatever the switch says, and that is said
+  if (uploadIntentOf(requestText) === "enrichment") return { plan: {}, noteAr: ENRICHMENT_NOT_SUPPORTED_AR };
+  const snapshot = exclusionSnapshotOf(input.exclusionFile);
+  if (!snapshot) return { plan: {}, noteAr: EXCLUSION_UNUSABLE_AR };
+  const on = scopedFlagOn(await readSettingValue(input.sb, CUSTOMER_EXCLUSION_FLAG_KEY), input.userId);
+  return on ? { plan: { customerExclusion: snapshot }, noteAr: exclusionWillApplyAr(snapshot.entities.length) } : { plan: {}, noteAr: exclusionNotAppliedAr(snapshot.entities.length) };
+}
+const withExclusionNote = (contentAr: string, noteAr: string | null): string => (noteAr ? `${contentAr}\n${noteAr}` : contentAr);
 
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 // CONSOLIDATED MISSION: THE RESEARCH BRIEF (docs/AGENT-UNDERSTANDING-V1.md)
@@ -896,6 +917,7 @@ async function groupTurn(input: AgentChatTurnInput, decision: Decision, open: Op
   const toWrite = judged.filter((j) => placed.has(j.part.key) || keptWithoutCard.includes(j));
   const cardGroup = groupNow();
   const savedCards: Array<{ j: JudgedPart; id: string; messageId: string; contentAr: string }> = [];
+  const exclusion = toWrite.length > 0 ? await exclusionForCard(input, `${brief.request ?? ""} ${toWrite.map((j) => j.partBrief?.request ?? "").join(" ")} ${input.message}`) : { plan: {}, noteAr: null };
   const now = Date.now();
   for (const [i, j] of toWrite.entries()) {
     const missionId = missionOf(j)!;
@@ -903,7 +925,7 @@ async function groupTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     const existing = cards?.get(missionId);
     if (existing) { savedCards.push({ j, id: missionId, messageId: existing.messageId, contentAr: existing.contentAr || contentAr }); continue; }
     const messageId = partCardIdOf(missionId);
-    const saved = await saveCard(sb, input, { id: messageId, conversation_id: input.conversationId, user_id: input.userId, role: "assistant", content_ar: contentAr, plan: { agentMissionId: missionId, researchBrief: j.partBrief!, researchGroup: cardGroup }, created_at: new Date(now + i + 1).toISOString() });
+    const saved = await saveCard(sb, input, { id: messageId, conversation_id: input.conversationId, user_id: input.userId, role: "assistant", content_ar: contentAr, plan: { agentMissionId: missionId, researchBrief: j.partBrief!, researchGroup: cardGroup, ...exclusion.plan }, created_at: new Date(now + i + 1).toISOString() });
     if (saved) { savedCards.push({ j, id: missionId, messageId, contentAr }); continue; }
     unsaved.add(j.part.key);
     console.warn(`[chat:agent_group_card_unsaved] ${missionId}`);
@@ -928,6 +950,7 @@ async function groupTurn(input: AgentChatTurnInput, decision: Decision, open: Op
   if (withdrawnNow.length > 0) lines.push(`النسخة السابقة من ${withdrawnNow.map((p) => `«${p.request}»`).join(" و")} اتلغت (اتشالت أو اتعدّلت بحسب رسالتك)، ومش هيتجهّز منها حاجة.`);
   if (leftRunning.length > 0) lines.push(PREVIOUS_STILL_PLANNING_AR);
   if (savedCards.length > 0 || judged.some((j) => partOf(j).outcome === "planned")) lines.push(GROUP_APPROVAL_AR);
+  if (exclusion.noteAr && savedCards.length > 0) lines.push(exclusion.noteAr);
   const summary = lines.join("\n");
   const group = groupNow();
   const createdNow = Array.from(placed.values()).filter((p) => p.own).length;

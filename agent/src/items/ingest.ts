@@ -15,6 +15,8 @@ import { MARKS_KEY, markVerdict } from "../../../src/lib/agentMission/rawMarks";
 import type { MissionEventInput } from "../types";
 import type { Reviewer } from "../review";
 import type { ItemReason, ItemStore, Op, Row, StageCounts } from "./itemStore";
+import { isCompanyStage } from "../../../src/lib/agentMission/entities";
+import { CUSTOMER_EXCLUSION_REASON, EXCLUSION_POSSIBLE_MARK, organisationOfRow, type ExclusionMatcher } from "../../../src/lib/agentMission/customerExclusion";
 
 type Stage = PricedPlan["stages"][number];
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -30,7 +32,25 @@ export interface IngestDeps {
   plan: PricedPlan;
   reviewer?: Reviewer;
   addEvent: (event: MissionEventInput) => Promise<void>;
+  /**
+   * PHASE 5.3: the customer's exclusion list of the APPROVED plan (`plan.customer_exclusion`), loaded from the mission's private copy and checked against the plan's digest. Required whenever the plan carries a mark that applies:
+   * a company or people stage is never ingested without it (the batch throws, nothing is saved). Absent with no mark: today's behaviour exactly.
+   */
+  exclusion?: ExclusionMatcher;
 }
+
+/**
+ * PHASE 5.3: the stages the customer's exclusion list is checked on, and how a row names its organisation: a top-level COMPANY stage (the row is the company) or a top-level PEOPLE stage (a people search: the row's employer
+ * fields). A child stage is not checked (its parent was); any other stage (posts, comments, places) is not an organisation list. A people stage is told by the same rules as a child people stage (role preference, a people
+ * capability, a people noun in the title) or by a people-search endpoint.
+ */
+const PEOPLE_SEARCH_ENDPOINT = /(?:^|\.)people\.(?:search|find|list)|\.employees\b/i;
+export function exclusionStageKind(stage: Stage): "company" | "people" | null {
+  if (stage.parent_key !== null) return null;
+  if (isPeopleStage({ ...stage, parent_key: "__top" }) || PEOPLE_SEARCH_ENDPOINT.test(String(stage.endpoint_id ?? ""))) return "people";
+  return isCompanyStage(stage) ? "company" : null;
+}
+export const exclusionAppliesToStage = (stage: Stage): boolean => exclusionStageKind(stage) !== null;
 
 /** What one page of a source adds to the log together with its items (one segment, so the cursor and the items can never disagree after a crash). */
 export interface PageRecord { stream: string; call_id: string | null; cursor_in: string | null; cursor_next: string | null; has_more: boolean | null; ended: boolean; rows_in_page: number; /** The oldest moment among the page's rows (a stage read in date windows). */ oldest_ms?: number }
@@ -102,6 +122,14 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   const quotaHave = new Map<string, number>();
   if (quota) for (const r of items.acceptedRows(key)) { const v = r[SOURCE_KEY]; if (typeof v === "string") quotaHave.set(v, (quotaHave.get(v) ?? 0) + 1); }
   const ops: Op[] = [];
+  // PHASE 5.3: THE CUSTOMER'S EXCLUSION LIST, on a stage it applies to. A plan that carries the mark is never ingested without the very list it was approved with (fail closed: the batch throws before anything is saved).
+  const exclusionMark = plan.customer_exclusion;
+  const exclusionKind = exclusionMark?.applies === true ? exclusionStageKind(stage) : null;
+  const exclusionHere = exclusionKind !== null;
+  if (exclusionHere && (!deps.exclusion || deps.exclusion.digest !== exclusionMark!.digest)) throw new Error("customer_exclusion_unavailable");
+  const exclusion = exclusionHere ? deps.exclusion! : null;
+  const exclusionNameKeys = exclusion ? nameKeysOf(stage.columns) : [];
+  let excludedByList = 0;
 
   // items that were waiting (a review the budget or a failure delayed) or never looked at come back first, while matching items are still needed
   const carry: Array<{ id: string; row: Row }> = [];
@@ -152,6 +180,13 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     if (options.provenance) { row._src = options.provenance.src; if (options.provenance.call) row._call = options.provenance.call; }
     // THE PLACE CELLS in Arabic («al qahirah» → «القاهرة»); never empty when the card promised the place
     if (!isChild) placeCellsAr(row, stage.columns, raw, promisedPlace);
+    // PHASE 5.3: A COMPANY THE CUSTOMER EXCLUDED (their uploaded list, matched by code on the source's own fields: domain, registration number, full name, distinctive brand words) is kept with its reason, never delivered, never
+    // counted and never charged; its id is remembered, so a retried page or another source cannot bring it back under the same id, and a new id meets the same check. A possible match (a shared brand word only) is delivered and marked.
+    if (exclusion) {
+      const verdict = exclusion.check(organisationOfRow(raw, { people: exclusionKind === "people", nameKeys: exclusionNameKeys }));
+      if (verdict.kind === "excluded") { excludedByList += 1; excludedStructural.push({ id, reason: CUSTOMER_EXCLUSION_REASON, row }); continue; }
+      if (verdict.kind === "possible") row[EXCLUSION_POSSIBLE_MARK] = true;
+    }
     // WHAT THE CARD PROMISES, checked here on the mapped item (replies, language, period, account, place): an item a filter rejects is neither delivered nor charged, and is kept with its reason
     if (!rawMode && enabledFilters.length > 0) {
       // THE DAYS OF A PERIOD ARE CAIRO DAYS here too (live finding B: the old reading, UTC days, accepted a tweet of 2026-11-01 00:14 Cairo into an October file and refused the first three hours of 1 October)
@@ -314,7 +349,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   }
   const stillNeeded = Math.max(0, stage.planned_rows - counts.accepted);
   return {
-    ok: true, stage: key, ...tally, counts, newlyAccepted: acceptedNow, total_in_stage: counts.accepted, stage_limit: stage.planned_rows,
+    ok: true, stage: key, ...tally, ...(excludedByList > 0 ? { rejected_by_customer_exclusion: excludedByList } : {}), counts, newlyAccepted: acceptedNow, total_in_stage: counts.accepted, stage_limit: stage.planned_rows,
     ...(spec ? {
       left_out_not_matching: left, reviewed_by_model: reviewedNow, review_budget_reached: reviewStop === "budget", review_failed: reviewStop === "failed", pending_for_review: counts.pending,
       accepted_by_rule: acceptedNow - modelAccepted,

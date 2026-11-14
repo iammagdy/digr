@@ -1,28 +1,18 @@
-# Diger: next steps (updated 14 Nov 2026, after Phase 5)
+# Diger: next steps (updated 14 Nov 2026, Phase 5.3 and Phase 6 campaign)
 
-**Read first:** `docs/HANDOFF.md`, section «CURRENT STATE».
+**Read first:** `docs/HANDOFF.md`, section «CURRENT STATE», and `docs/intelligence/PHASE-5-3-AND-6.md`.
 
-## Current state (verified 13 Nov 2026)
+## Current state (verified 14 Nov 2026)
 
-* **Last code change in production:** `7d30ec8`, the merge of PR #479 (round 61). Verified after that merge:
-  * Vercel production deployment `dpl_FM1Ej2fSqeY1hgLwuTYtDTQu4th7` READY on `7d30ec8`;
-  * Heroku release v188, worker heartbeat `version 7d30ec8`.
-* **Later documentation-only merges** (this file's PR #480) move `main` without changing any code. Check `git log origin/main` for the current tip.
-* **Round 61** (the hard spend gate) is **merged as disconnected code only**:
-  * not wired into any call site;
-  * no SQL applied;
-  * no grant issued;
-  * `DIGER_SPEND_GATE` unset on Heroku and Vercel;
-  * **not enabled**.
-* **Spending behaviour in production is unchanged** from round 60.
-* **Tests on the merged tree** (`61338a2`, run locally; the repository has no GitHub Actions, so GitHub ran no tests):
-  * full suite: 13,563 passed, 0 failed, 47 expected-fail, 78 skipped;
-  * both typechecks clean;
-  * `npm run build` and the client-bundle secret scan clean.
-* **Branches:**
-  * `ccr-9dc4c8d3-d0ae22` is fully merged (PR #479) and needs no further work.
-  * New work starts from `main` on a new branch.
-* **Budget enforcement is NOT live.**
+* **Latest verified baseline:** `8c30294`, the merge of PR #494 (PR #493 is merged too, `7d9bcad`):
+  * Vercel production deployment `dpl_ETmFhPpr7bWBWQmqzGLegDqMtg3W` READY on `8c30294`;
+  * Heroku release v202, worker heartbeat `version 8c30294`, `active_missions 0`.
+* The nine stale `vrun_` verification jobs are **closed** (no queued or running job, read-only check).
+* **This campaign's PRs** (Phase 5.3-A, Phase 6) and their production results are in `docs/intelligence/PHASE-5-3-AND-6.md`. Check `git log origin/main` for the current tip.
+* **Statuses are kept apart everywhere:** code complete ≠ offline verified ≠ live verified ≠ production enabled. No Intelligence switch is set in production.
+* **Deployment discipline (mandatory):** one push, one preview and one production deployment per focused PR; everything is verified locally first (report «Deployment discipline»).
+* **Round 61** (the hard spend gate) is still **merged as disconnected code only** (not wired, no SQL, no grant, `DIGER_SPEND_GATE` unset). **Budget enforcement is NOT live.**
+* **Historical (13 Nov 2026):** the last code change was then `7d30ec8` (PR #479); suite 13,563 passed at `61338a2`.
 
 ## ACTIVATION BLOCKER: observe mode is NOT budget enforcement
 
@@ -42,6 +32,13 @@
   * to merge it (SPEC-v2 §13, decision 3).
 * Merging PR B would still not activate anything: the mode stays off by default.
 * Activation (`observe`, then `enforce`) is a further, separate owner decision.
+
+## Phase 5.3 and Phase 6 (14 Nov 2026)
+
+* **5.3-A exclusion files:** code complete and offline verified behind `customer_exclusion_files_v1` (**not enabled**). Owner: turn it on for the test account, then customers; decide whether possible matches are excluded too.
+* **5.3-B enrichment files:** **stopped**; it needs a new quote model and a new settlement rule. Proposal: report §B.3 (owner approval).
+* **6.1 / 6.2 provider sync and breaking changes:** see the report §C.
+* **Next roadmap priority after this campaign:** Phase 7 (shadow evaluation) and Phase 8 (controlled activation) need owner decisions first; they were not started.
 
 ## Phases 2–4 of the Diger Intelligence Audit (14 Nov 2026)
 

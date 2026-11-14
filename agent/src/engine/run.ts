@@ -49,6 +49,8 @@ export interface EngineDeps {
   sandbox: (code: string, inputs: Record<string, unknown>) => Promise<SandboxResult>;
   reviewer?: Reviewer;
   addEvent: (event: MissionEventInput) => Promise<void>;
+  /** PHASE 5.3: the customer's approved exclusion list (items/ingest.ts IngestDeps.exclusion). Absent: no list. */
+  exclusion?: import("../../../src/lib/agentMission/customerExclusion").ExclusionMatcher;
   now?: () => number;
   /** Absolute time (ms) after which no new page is read. */
   deadlineMs: number;
