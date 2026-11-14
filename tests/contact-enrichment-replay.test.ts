@@ -73,9 +73,11 @@ describe("A1 replay: the people's e-mail and phone cells", () => {
     expect(filled.length).toBeGreaterThan(0);
     // every value has its status beside it, and the empty cells have none
     emails.forEach((e, i) => expect(status[i] === "").toBe(e === ""));
-    // CHANGED (item 2): a verifier-backed «موثّق» for the company's own addresses; an address on another domain (gmail.com) is «غير موثّق لهذه الشركة»
-    expect(new Set(status.filter(Boolean))).toEqual(new Set(["موثّق", "غير موثّق لهذه الشركة"]));
-    emails.forEach((e, i) => { if (e.endsWith("@gmail.com")) expect(status[i]).toBe("غير موثّق لهذه الشركة"); else if (e) expect(status[i]).toBe("موثّق"); });
+    // CHANGED (item 2): a verifier-backed «موثّق» for the company's own addresses.
+    // CHANGED (Phase 5, stricter): a PRIVATE MAILBOX (gmail.com) a finder returned is never written in the work-email cell (before: written «غير موثّق لهذه الشركة»); only professional addresses are delivered
+    expect(new Set(status.filter(Boolean))).toEqual(new Set(["موثّق"]));
+    expect(emails.filter((e) => /@gmail\.com$/i.test(e))).toEqual([]);
+    emails.forEach((e) => { if (e) expect(e).toMatch(/\.com\.eg$/); });
     const phones = s.col("هاتف / محمول المسؤول").filter(Boolean);
     expect(phones.length).toBeGreaterThan(0);
     expect(s.col("حالة توثيق هاتف / محمول المسؤول").filter(Boolean).length).toBe(phones.length);
