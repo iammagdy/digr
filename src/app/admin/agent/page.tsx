@@ -6,6 +6,7 @@ import { toArabicDigits } from "@/lib/arabicDigits";
 import { useAdmin } from "@/components/admin/AdminShell";
 import { countsLineAr, internalCountsLineAr } from "@/lib/agentMission/eventText";
 import { RedesignFlagsSection, createFlagController, type FlagBody, type FlagKey, type FlagMode } from "@/components/admin/RedesignFlagsSection";
+import { AcceptancePanel } from "@/components/admin/AcceptancePanel";
 import type { PlatformFlags, RedesignFlags } from "@/lib/agentMission/redesignFlagTypes";
 
 const SECTION = "flex flex-col gap-3 rounded-[18px] border border-ln bg-bg p-4";
@@ -200,6 +201,9 @@ export default function AgentPage() {
         <textarea className="min-h-28 w-full rounded-xl border border-ln2 bg-sf p-3 text-sm" placeholder="مثال: هات لي ٣٠٠ منشور عن القهوة في مصر على إكس مع تعليقات كل منشور" value={text} onChange={(e) => setText(e.target.value)} data-testid="agent-text" />
         <div><button type="button" className={BTN} disabled={busy || text.trim().length < 3} onClick={create} data-testid="agent-create">شغّل الوكيل</button></div>
       </section>
+
+      {/* LIVE ACCEPTANCE: the test account's scoped Intelligence switches, the L1–L4 scenarios and their spend (docs/intelligence/ACCEPTANCE-WORKFLOW.md) */}
+      <AcceptancePanel toast={toast} />
 
       {/* ROUND 14, READ ONLY: the last files whose DESCRIPTION the delivery contract completed (a missing gap line, a precision cell, a mark cell); no row and no value is ever changed by it */}
       <section className={SECTION} data-testid="contract-events" aria-label="ملفات صُحّحت تلقائيًا">
