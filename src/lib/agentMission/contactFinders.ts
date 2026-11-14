@@ -11,6 +11,7 @@ import { MAILBOX_LISTER_CAPABILITIES } from "./childSources";
 import { isCompanyStage } from "./entities";
 import { emailOnOtherDomain } from "./emailVerification";
 import { isRoleMailbox } from "./people";
+import { isPersonalMailDomain } from "../multiProvider/policy";
 
 /**
  * THE CONTACT FINDER STEPS, BY CODE. Live test 2026-11-01 (A1 msn_7a8b…, A2 msn_020c…): 14 decision makers delivered, every e-mail and phone cell empty. The approved plans had two stages (companies, people); the people stage maps `email: ''` and `phone: ''`
@@ -290,6 +291,19 @@ export function foundContactIn(kind: FinderKind, page: unknown): FoundContact | 
 }
 
 export const contactStatusAr = (s: "verified" | "unverified"): string => (s === "verified" ? CONTACT_STATUS_VERIFIED_AR : CONTACT_STATUS_UNVERIFIED_AR);
+
+/**
+ * PHASE 5: THE TYPE OF AN E-MAIL A PERSON FINDER RETURNED. A named address on a company's own domain (mina.naguib@orascom-em.com.eg) is a PROFESSIONAL address: the b2b_contact service.
+ * An address on a free consumer mailbox provider (gmail.com, outlook.com, yahoo.*, icloud.com …: multiProvider/policy.ts) is a PRIVATE MAILBOX, whatever finder returned it: it belongs to
+ * the sensitive category (data policy S1, personal contact), so it is never written in a work-email cell. A value that is not an address at all is invalid.
+ */
+export type EmailValueType = "professional" | "personal_mailbox" | "invalid";
+export function emailValueTypeOf(value: unknown): EmailValueType {
+  const t = String(value ?? "").trim().replace(/^mailto:/i, "").toLowerCase();
+  const at = t.lastIndexOf("@");
+  if (at <= 0 || !ADDRESS_ONLY.test(t) || t.includes("*")) return "invalid";
+  return isPersonalMailDomain(t.slice(at + 1)) ? "personal_mailbox" : "professional";
+}
 
 
 // ------------------------------------------------------------------------------------------------ the company's own e-mail and HQ phone (audit 2026-11, reference A columns 5 and 6)

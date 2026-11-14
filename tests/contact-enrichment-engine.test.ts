@@ -95,8 +95,9 @@ describe("the engine fills the cells of the people it delivered", () => {
     await w.run();
     // CHANGED (item 2): no verifier in this world, so a found address on the company's domain is «غير موثّق» as well
     expect(cellsOf(w.items, "p1")).toMatchObject({ email: "one@orascom-em.com.eg", email_status: "غير موثّق" });
-    // CHANGED (item 2): an address on another domain than the company's (gmail.com for orascom-em.com.eg) says so: «غير موثّق لهذه الشركة»
-    expect(cellsOf(w.items, "p3")).toMatchObject({ email: "person3@gmail.com", email_status: "غير موثّق لهذه الشركة" });
+    // CHANGED (item 2): an address on another domain than the company's says so: «غير موثّق لهذه الشركة» (tests/phase5-b2b-contacts.test.ts keeps that for a company domain).
+    // CHANGED (Phase 5, stricter): gmail.com is a PRIVATE MAILBOX, not another company: it is never written (before: written «غير موثّق لهذه الشركة»); the person stays, the cell stays empty
+    expect(cellsOf(w.items, "p3")).toMatchObject({ email: "", email_status: "" });
     expect(cellsOf(w.items, "p5")).toMatchObject({ email: "", email_status: "", phone: "", phone_status: "" });
     expect(w.items.acceptedRows("people").length).toBe(5);
   });

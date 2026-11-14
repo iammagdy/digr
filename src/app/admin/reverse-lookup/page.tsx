@@ -23,10 +23,28 @@ const REASON_AR: Record<string, string> = {
   needs_confirmation: "هذه الخدمة مدفوعة: أكّد سعرها أولًا.",
 };
 
-const HISTORY_KEY = "diger.admin.reverseLookupHistory.v1";
+/**
+ * THE BROWSER FALLBACK HISTORY KEEPS NO IDENTITY (Phase 5 privacy review). A lookup's result (a person's name, employer, title, profile link) is personal data about someone who is not a
+ * Diger user; localStorage is unencrypted, has no retention, survives logout and is readable by any script of this origin. So the browser keeps only the masked input, whether something
+ * was found, the attempts and the cost. The fields themselves are kept only by the server table (admin-only, RLS) once the owner applies it. Entries written by the earlier version
+ * (key v1, with the fields) are stripped and moved to the new key on the first load.
+ */
+const HISTORY_KEY = "diger.admin.reverseLookupHistory.v2";
+const LEGACY_HISTORY_KEY = "diger.admin.reverseLookupHistory.v1";
 const HISTORY_MAX = 30;
-const readLocalHistory = (): HistoryRow[] => { try { const v = JSON.parse(window.localStorage.getItem(HISTORY_KEY) || "[]"); return Array.isArray(v) ? v : []; } catch { return []; } };
-const writeLocalHistory = (rows: HistoryRow[]) => { try { window.localStorage.setItem(HISTORY_KEY, JSON.stringify(rows.slice(0, HISTORY_MAX))); } catch { /* the history is a convenience */ } };
+const withoutFields = (rows: unknown): HistoryRow[] => (Array.isArray(rows) ? rows : []).filter((r) => r && typeof r === "object").map((r: HistoryRow) => ({ id: String(r.id), createdAt: String(r.createdAt), kind: r.kind === "email" ? "email" : "phone", maskedInput: String(r.maskedInput ?? ""), found: Boolean(r.found), fields: {}, attempts: Array.isArray(r.attempts) ? r.attempts : [], costUsd: Number(r.costUsd) || 0 }));
+const readLocalHistory = (): HistoryRow[] => {
+  try {
+    const legacy = window.localStorage.getItem(LEGACY_HISTORY_KEY);
+    if (legacy !== null) {
+      const merged = [...withoutFields(JSON.parse(window.localStorage.getItem(HISTORY_KEY) || "[]")), ...withoutFields(JSON.parse(legacy || "[]"))].slice(0, HISTORY_MAX);
+      window.localStorage.setItem(HISTORY_KEY, JSON.stringify(merged));
+      window.localStorage.removeItem(LEGACY_HISTORY_KEY);
+    }
+    return withoutFields(JSON.parse(window.localStorage.getItem(HISTORY_KEY) || "[]"));
+  } catch { return []; }
+};
+const writeLocalHistory = (rows: HistoryRow[]) => { try { window.localStorage.setItem(HISTORY_KEY, JSON.stringify(withoutFields(rows).slice(0, HISTORY_MAX))); } catch { /* the history is a convenience */ } };
 
 /** USD with Arabic-Indic digits: this screen is admin-only, the only place a cost in dollars is shown. */
 const usd = (n: number) => `${toArabicDigits(n.toFixed(4))} دولار`;
@@ -200,14 +218,14 @@ export default function AdminReverseLookupPage() {
                 </div>
               ))}
             </dl>
-          ) : <p className="m-0 text-[13px] text-ink2">لم تُرجع الخدمات بيانات عن هذا المدخل.</p>}
+          ) : reopened && reopened.found && reopened.id.startsWith("local_") ? <p className="m-0 text-[13px] text-ink2" data-testid="lookup-fields-not-kept">وُجدت بيانات، لكن الحقول لا تُحفظ في المتصفح حفاظًا على الخصوصية.</p> : <p className="m-0 text-[13px] text-ink2">لم تُرجع الخدمات بيانات عن هذا المدخل.</p>}
           <p className="m-0 text-[12px] font-light text-mut" data-testid="admin-lookup-cost">تكلفة هذا البحث {usd(reopened ? reopened.costUsd : total)}</p>
         </section>
       ) : null}
 
       <section className={SECTION} aria-label="سجل البحث" data-testid="lookup-history">
         <h3 className="m-0 text-[13px] font-semibold text-ink">سجل البحث</h3>
-        <p className="m-0 text-[12px] font-light text-mut">{historyOnServer ? "محفوظ على الخادم." : "محفوظ في متصفحك فقط (جدول السجل على الخادم لم يُفعَّل بعد)."} فتح نتيجة سابقة لا يستدعي أي خدمة.</p>
+        <p className="m-0 text-[12px] font-light text-mut">{historyOnServer ? "محفوظ على الخادم." : "ملخص فقط في متصفحك، بلا اسم أو جهة أو رابط (جدول السجل على الخادم لم يُفعَّل بعد)."} فتح نتيجة سابقة لا يستدعي أي خدمة.</p>
         {history.length === 0 ? <p className="m-0 text-[12px] text-ink2">لا توجد عمليات بحث سابقة.</p> : (
           <ul className="m-0 flex list-none flex-col gap-1 p-0 text-[12px]">
             {history.map((h) => (
