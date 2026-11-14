@@ -25,13 +25,13 @@ export interface EvalCase {
   /** Live missions expected at the end when UNDERSTOOD (default 1). */
   parts?: number;
   /** Round 50: the original 22 cases of 2026-11-12 (labels unchanged) or the expanded corpus; round 51: the HELD-OUT corpus, labelled before its first run and never used to tune a fix. */
-  set?: "original" | "expanded" | "heldout";
+  set?: "original" | "expanded" | "heldout" | "p0";
   /** CAPABILITY SELECTION (round 51): operations the live missions' discovered stages must include when the request is UNDERSTOOD (all of them, across the missions). */
   ops?: string[];
   /** Operations that would be a wrong route for this request (e.g. company discovery for hotel reviews). */
   forbidOps?: string[];
   /** The state the live mission is put in after the first turn (default: it stays queued, «being prepared»): a correction of a plan that is READY. */
-  openAs?: "plan_ready";
+  openAs?: "plan_ready" | "unserved";
 }
 
 const NOW = Date.parse("2026-11-12T09:00:00Z");
@@ -297,4 +297,38 @@ export const HELDOUT: EvalCase[] = [
   { id: "Z34", category: "MX", title: "mixed: places + reviews with English words", turns: ["عايز reviews بتاعة الـ cafes في الزمالك"], plannedCalls: 1, legitimate: true, acceptable: ["UNDERSTOOD", "CLARIFY"], ops: ["places.reviews"], forbidOps: ["social.comments"] },
 ];
 for (const c of HELDOUT) c.set = "heldout";
-export const ALL_CASES: EvalCase[] = [...CASES, ...EXPANDED, ...HELDOUT];
+/**
+ * P0, 14 NOV 2026: THE PRODUCTION INCIDENT'S CONVERSATIONS (msn_93ed6dea95edb303fd2b, msn_fefee20b5a4dfc1aafc2, msn_dd7c2e9c131b8783bf2e; the customer's own words, no identifier). The understanding layer must keep the SOURCE (the
+ * ministry's account) as a source, the topic as the subject only, and the platform, count and period across a follow-up typed after the request ENDED (`openAs: "unserved"`). The last live mission is judged.
+ */
+const src = (t: string) => buildAsk(t, null, NOW).source;
+const lastOf = (f: (t: string) => string[]) => (texts: string[]) => (texts.length === 0 ? ["no live mission"] : f(texts[texts.length - 1]));
+export const P0_CASES: EvalCase[] = [
+  {
+    id: "P0-1", category: "P0", set: "p0", title: "msn_93ed: 400 tweets about health rumors ON the Saudi MOH, last 3 months", turns: ["أريد ٤٠٠ تغريدة عن الشائعات الصحية على وزارة الصحة السعودية على إكس خلال آخر ٣ أشهر."], plannedCalls: 2, legitimate: true, acceptable: ["UNDERSTOOD", "CLARIFY"],
+    keep: lastOf((t) => lost([[ask(t).platform === "x", "platform x"], [hasNumber(t, 400), "count 400"], [samePeriod(t, "آخر ٣ أشهر"), "period آخر ٣ أشهر"], [src(t).kind === "named" && /وزار/.test(String(src(t).text)), "source the ministry"], [/شائع/.test(String(ask(t).topic.text)) && !/وزار/.test(String(ask(t).topic.text)), "topic rumors, not the ministry"]])),
+  },
+  {
+    id: "P0-2", category: "P0", set: "p0", title: "msn_fefee: the official page of the Saudi MOH, rumors or their correction", turns: ["أريد ٤٠٠ تغريدة عن الشائعات الصحية عبر الصفحة الرسمية لوزارة الصحة السعودية أو أي تصحيح لشائعة صحية على إكس."], plannedCalls: 2, legitimate: true, acceptable: ["UNDERSTOOD", "CLARIFY"],
+    keep: lastOf((t) => lost([[ask(t).platform === "x", "platform x"], [hasNumber(t, 400), "count 400"], [src(t).kind === "named" && /وزار/.test(String(src(t).text)), "source the ministry"], [!/الصفحة|وزار|عبر/.test(String(ask(t).topic.text)), "topic without the source sentence"]])),
+  },
+  {
+    id: "P0-3", category: "P0", set: "p0", title: "msn_dd7c: «طيب ابحث عن الشائعات فقط» after the request ENDED unserved", openAs: "unserved",
+    turns: ["أريد ٤٠٠ تغريدة عن الشائعات الصحية عبر الصفحة الرسمية لوزارة الصحة السعودية أو أي تصحيح لشائعة صحية على إكس.", "طيب ابحث عن الشائعات فقط"], plannedCalls: 3, legitimate: true, acceptable: ["UNDERSTOOD", "CLARIFY"],
+    keep: lastOf((t) => lost([[ask(t).platform === "x", "platform x"], [hasNumber(t, 400), "count 400"], [src(t).kind === "named" && /وزار/.test(String(src(t).text)), "source the ministry"], [/شائع/.test(String(ask(t).topic.text)) && !/فقط/.test(String(ask(t).topic.text)), "topic rumors without «فقط»"]])),
+  },
+  {
+    id: "P0-4", category: "P0", set: "p0", title: "an account given by its @username", turns: ["هات ٥٠ تغريدة من @ExampleMinistry عن الشائعات على إكس"], plannedCalls: 2, legitimate: true, acceptable: ["UNDERSTOOD"],
+    keep: lastOf((t) => lost([[ask(t).platform === "x", "platform x"], [hasNumber(t, 50), "count 50"], [src(t).kind === "named" && /ExampleMinistry/i.test(String(src(t).text)), "source @ExampleMinistry"]])),
+  },
+  {
+    id: "P0-5", category: "P0", set: "p0", title: "no source named: none invented", turns: ["عايز ١٠٠ تغريدة عن كأس العالم على إكس"], plannedCalls: 2, legitimate: true, acceptable: ["UNDERSTOOD"],
+    keep: lastOf((t) => lost([[ask(t).platform === "x", "platform x"], [hasNumber(t, 100), "count 100"], [src(t).kind === "none", "no source invented"]])),
+  },
+  {
+    id: "P0-6", category: "P0", set: "p0", title: "a Facebook page named by its name, about a topic", turns: ["عايز ٣٠ منشور من صفحة وزارة الصحة المصرية على فيسبوك عن التطعيمات"], plannedCalls: 2, legitimate: true, acceptable: ["UNDERSTOOD", "CLARIFY"],
+    keep: lastOf((t) => lost([[ask(t).platform === "facebook", "platform facebook"], [hasNumber(t, 30), "count 30"], [src(t).kind === "named" && /وزار/.test(String(src(t).text)), "source the ministry page"], [/تطعيم/.test(String(ask(t).topic.text)), "topic vaccinations"]])),
+  },
+];
+
+export const ALL_CASES: EvalCase[] = [...CASES, ...EXPANDED, ...HELDOUT, ...P0_CASES];

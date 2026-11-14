@@ -123,27 +123,21 @@ function sourceOf(text: string): RequestContract["source"] {
     const words = m[1].trim().split(/\s+/).filter((w) => !/^(?:صفحة|قناة|حساب|قنوات|الرسمية|الرسمي|عام|عامة|عامه|معين|معينة|معينه|ما|واحد)$/.test(w));
     const kept: string[] = [];
     for (const w of words) { if (STOP.test(w)) break; kept.push(w); }
-    named = kept.length > 0 ? kept.join(" ") : null;
+    // (a name never ends with the punctuation that followed it: «وزارة الصحة السعودية،» is «وزارة الصحة السعودية»)
+    named = kept.length > 0 ? kept.join(" ").replace(/[،,.؛;:!؟?]+$/u, "").trim() || null : null;
   }
   const text2 = handle ?? named;
   return { named: text2 !== null, official, text: text2 };
 }
 
-/**
- * P0, 14 NOV 2026 (msn_fefee20b5a4dfc1aafc2, msn_dd7c2e9c131b8783bf2e): the topic is the SUBJECT, never an instruction or the source. «عن الشائعات فقط» was searched as the exact phrase «الشائعات فقط» (the word «only» is in no tweet), and
- * «عن الشائعات الصحية عبر الصفحة الرسمية لوزارة الصحة السعودية أو أي تصحيح لشائعة صحية» was searched as that whole sentence (no result, the request ended «unserved»). The topic now also stops at «عبر» / «لدى» (the source
- * that follows) and at «أو أي» (an alternative clause), and a trailing restriction word («فقط», «بس», «فحسب», «حصرًا», «لا غير») is not part of it.
- */
-const TOPIC_RESTRICTION_TAIL = /\s+(?:فقط|بس|فحسب|حصر[اًا]?|حصرًا|لا\s+غير)$/u;
-const cleanTopic = (t: string): string | null => { const v = t.trim().replace(TOPIC_RESTRICTION_TAIL, "").trim(); return v === "" ? null : v; };
 function topicOf(text: string): string | null {
   const quoted = /(?:عن|حول|بخصوص|فيها|فيه|تذكر)\s+["«“]([^"»”]+)["»”]/.exec(text);
-  if (quoted) return cleanTopic(quoted[1]);
+  if (quoted) return quoted[1].trim();
   // ROUND 25: «رأي الناس في X», «آراء الجمهور عن X», «كلام الناس حول X»: the SUBJECT is X (live: the topic read «رأي الناس» and the search would have looked for that phrase)
-  const opinion = /(?:رأي|راي|آراء|اراء|كلام|انطباعات|ردود\s+فعل|مشاعر|موقف)\s+(?:ال\S+\s+)?(?:في|عن|حول|تجاه|بخصوص)\s+(.+?)(?=\s+(?:من|في|على|عبر|لدى|آخر|اخر|بالعربي|بالعربية|مع|بين|منذ|خلال)(?:\s|$)|\s+(?:أو|او)\s+(?:أي|اي)(?:\s|$)|[،,.؟?]|$)/.exec(text);
-  if (opinion) return cleanTopic(opinion[1]);
-  const m = /(?:عن|حول|بخصوص)\s+(.+?)(?=\s+(?:من|في|على|عبر|لدى|آخر|اخر|بالعربي|بالعربية|مع|بين|منذ|خلال|فقط|فحسب)(?:\s|$)|\s+(?:أو|او)\s+(?:أي|اي)(?:\s|$)|[،,.]|$)/.exec(text);
-  return m ? cleanTopic(m[1]) : null;
+  const opinion = /(?:رأي|راي|آراء|اراء|كلام|انطباعات|ردود\s+فعل|مشاعر|موقف)\s+(?:ال\S+\s+)?(?:في|عن|حول|تجاه|بخصوص)\s+(.+?)(?=\s+(?:من|في|على|آخر|اخر|بالعربي|بالعربية|مع|بين|منذ|خلال)(?:\s|$)|[،,.؟?]|$)/.exec(text);
+  if (opinion) return opinion[1].trim();
+  const m = /(?:عن|حول|بخصوص)\s+(.+?)(?=\s+(?:من|في|على|آخر|اخر|بالعربي|بالعربية|مع|بين|منذ|خلال)(?:\s|$)|[،,.]|$)/.exec(text);
+  return m ? m[1].trim() : null;
 }
 
 /**

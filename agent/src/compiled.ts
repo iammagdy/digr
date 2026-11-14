@@ -3,7 +3,7 @@ import { CLARIFY_QUESTION_AR } from "../../src/lib/agentMission/semantic/conditi
 import { isOccurrenceAnswer, isRecurringEvent, occurrenceChoiceOf, OCCURRENCE_OPTIONS_AR, OCCURRENCE_QUESTION_AR, OCCURRENCE_YEAR_QUESTION_AR, type Occurrence } from "../../src/lib/agentMission/foundation/occurrence";
 import { checkChannelsAgainstWords } from "../../src/lib/agentMission/foundation/understand";
 import { buildShapeDigest } from "../../src/lib/modelPlanner/digest";
-import { carriedBy, chooseCard, compilePlan, parentInputs, rankedCards, rankedPoolOf, COMPILED_PLATFORMS, type CompileResult } from "../../src/lib/agentMission/foundation/compilePlan";
+import { carriedBy, chooseCard, compilePlan, parentInputs, rankedCards, rankedPoolOf, sourceUnenforced, COMPILED_PLATFORMS, type CompileResult } from "../../src/lib/agentMission/foundation/compilePlan";
 import { channelAnswerOf, channelEvidenceOf, youtubeChannelChoiceQuestionAr } from "../../src/lib/agentMission/foundation/discovery/channelEvidence";
 import { confirmFieldsOnRows, fieldNotesAr, recoverFields, sheetWantsOf, type FieldReport } from "../../src/lib/agentMission/foundation/discovery/fieldRecovery";
 import { mediaMarkOf, mediaNotesAr, reelsBasisOf, reelsCandidates, type MediaMark } from "../../src/lib/agentMission/foundation/discovery/media";
@@ -13,7 +13,8 @@ import { aboutQueryOf, noAboutChoiceOf, noAboutQuestionAr, NO_ABOUT_OPTIONS_AR }
 import { NAMED_SHORTFALL_OPTIONS_AR, isNamedShortfallAnswer, namedShortfallChoiceOf, namedShortfallQuestionAr } from "../../src/lib/agentMission/foundation/namedShortfall";
 import { YOUTUBE_CHANNEL_QUESTION_AR, matchChannel, youtubeChannelOf, type YoutubeChannelRef } from "../../src/lib/agentMission/foundation/youtubeChannel";
 import { INSTAGRAM_ACCOUNT_QUESTION_AR, instagramAccountNoteAr } from "../../src/lib/agentMission/foundation/instagramAccount";
-import { X_ACCOUNT_OPTIONS_AR, xAccountQuestionAr, xAllAccountsNoteAr, xHandleOfAsk } from "../../src/lib/agentMission/foundation/xAccount";
+import { cardCanTakeId, SOURCE_OPTIONS_AR, sourceQuestionAr, sourceWidenedNoteAr } from "../../src/lib/agentMission/foundation/sourceScope";
+import { PLATFORM_AR } from "../../src/lib/agentMission/capabilities/discover";
 import { budgetOfWords, questionNeeded, type Choices } from "../../src/lib/agentMission/foundation/countChoice";
 import { fitToBudget } from "../../src/lib/agentMission/foundation/budgetFit";
 import { applyAskEdit, type AskEdit } from "../../src/lib/agentMission/stage2/askCard";
@@ -94,7 +95,7 @@ export type CompiledPlanning =
    * LIVE ROUND 7: no video of the pool read (two queries) is about the topic; the customer is asked before approval how to go on. Nothing is priced or held. PR 3, decision 7.5 (`why: "named_shortfall"`): the named Facebook page has fewer
    * deliverable posts in the pool than asked.
    */
-  | { kind: "question"; ask: Ask; question: string; options: string[]; reads: { pool: number; exposure: number }; why?: "no_about" | "named_shortfall" | "occurrence" | "occurrence_year" | "count" | "per_parent" | "instagram_account" | "youtube_channel" | "topic_relation" | "conditions" | "x_account" };
+  | { kind: "question"; ask: Ask; question: string; options: string[]; reads: { pool: number; exposure: number }; why?: "no_about" | "named_shortfall" | "occurrence" | "occurrence_year" | "count" | "per_parent" | "instagram_account" | "youtube_channel" | "topic_relation" | "conditions" | "source_id" };
 
 /** What the understand step cost (USD), carried on the result so the caller adds it to the mission's model cost (never a charge). */
 export type WithCost<T> = T & { llmCostUsd?: number };
@@ -123,12 +124,9 @@ export async function planByCompiler(deps: CompiledPlanningDeps): Promise<WithCo
   if (result.kind === "plan" && result.ask.platform === "instagram" && given && result.ask.source.text === given) {
     result = { ...result, plan: { ...result.plan, notes_ar: [...(result.plan.notes_ar ?? []), instagramAccountNoteAr(given)] } };
   }
-  // P0 (X): an account-scoped plan says so before approval (the results are that account's alone, checked on every tweet); a plan the customer chose to widen to all of X says the results are not that account's
-  if (result.kind === "plan" && result.ask.platform === "x") {
-    // (the scoped plan's own note is written by the compiler: compilePlan.ts)
-    const widened = deps.choices?.xAccountAll === true && xHandleOfAsk(result.ask) === null;
-    const line = widened ? xAllAccountsNoteAr(deps.choices?.xAccountName ?? null) : null;
-    if (line) result = { ...result, plan: { ...result.plan, notes_ar: [...(result.plan.notes_ar ?? []), line] } };
+  // P0: a plan the customer chose, at the source question, to read without the named source says so before approval (a source-scoped plan's own note is written by the compiler)
+  if (result.kind === "plan" && deps.choices?.sourceWiden === true && result.ask.source.kind === "none") {
+    result = { ...result, plan: { ...result.plan, notes_ar: [...(result.plan.notes_ar ?? []), sourceWidenedNoteAr(deps.choices.sourceName ?? null)] } };
   }
   // ROUND 35: a request for REELS says, before approval, how the media type is served (a reels-only tool, the tool's media-type filter) or that it is unproven; the mark is kept with the plan whether or not discovery is on
   if (result.kind === "plan" && seen.media) {
@@ -210,14 +208,13 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
     else if (choices.instagramAccountDeclined) return { kind: "cannot", ask, reason: "instagram_account_missing", reads };
     else return { kind: "question", ask, why: "instagram_account", question: INSTAGRAM_ACCOUNT_QUESTION_AR, options: [], reads };
   }
-  // P0, 14 NOV 2026 (msn_93ed6dea95edb303fd2b, msn_fefee20b5a4dfc1aafc2, msn_dd7c2e9c131b8783bf2e): X WITH A NAMED ACCOUNT. The search is scoped to an account only by its username (`from:` and a check of every tweet); an account named by
-  // its name alone is asked ONCE, before anything is read, held or priced: its username or link (then scoped), the explicit choice to search all of X (then the plan says the results are not that account's), or cancel. The
-  // username is never guessed. No usable answer ends the request honestly (nothing read, nothing held, never asked twice).
-  if (ask.platform === "x" && (ask.source.kind === "named" || ask.source.kind === "official") && xHandleOfAsk(ask) === null) {
-    if (choices.xAccount) ask = { ...ask, source: { kind: "named", text: choices.xAccount } };
-    else if (choices.xAccountAll) ask = { ...ask, source: { kind: "none", text: null } };
-    else if (choices.xAccountDeclined) return { kind: "cannot", ask, reason: "x_account_missing", reads };
-    else return { kind: "question", ask, why: "x_account", question: xAccountQuestionAr(ask.source.kind === "named" ? ask.source.text : null), options: [X_ACCOUNT_OPTIONS_AR.all, X_ACCOUNT_OPTIONS_AR.cancel], reads };
+  // P0, 14 NOV 2026 (msn_93ed6dea95edb303fd2b, msn_fefee20b5a4dfc1aafc2, msn_dd7c2e9c131b8783bf2e), THE GENERAL SOURCE RULE (sourceScope.ts): the customer's answer to the source question is applied here, for every platform: the identifier they gave
+  // is the source; the explicit choice to search without it removes it (the plan says so); no usable answer ends the request honestly. The question itself is asked below, once the service is chosen, and only when the chosen service
+  // cannot carry the source.
+  if (ask.source.kind === "named" || ask.source.kind === "official") {
+    if (choices.sourceId) ask = { ...ask, source: { kind: "named", text: choices.sourceId } };
+    else if (choices.sourceWiden) ask = { ...ask, source: { kind: "none", text: null } };
+    else if (choices.sourceDeclined) return { kind: "cannot", ask, reason: "source_missing", reads };
   }
   // ROUND 31: YOUTUBE WITH NO CHANNEL. The verified cards find a channel by name and search INSIDE a channel; none searches all of YouTube, and «<topic> الرسمية» is a guess, not a channel. A request that names no channel and does not ask for the official channels of an event
   // is asked ONCE which channel, before anything is read, held or priced; the answer (read by code, kept with the choices) or the channel named in the request is looked up by the verified channel search and used only if a result carries it. No usable answer ends the request honestly.
@@ -321,6 +318,17 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   // ROUND 33: every candidate was refused by the catalog check of its chain: an Instagram request with no account is still asked for one, as before
   if (!card && ask.platform === "instagram" && ask.source.kind !== "named" && deps.cards && !choices.instagramAccountDeclined) {
     if (!choices.instagramAccount) return { kind: "question", ask, why: "instagram_account", question: INSTAGRAM_ACCOUNT_QUESTION_AR, options: [], reads };
+  }
+  // P0, THE GENERAL SOURCE RULE: a named (or official) source that no candidate service carries with what the customer wrote is asked ONCE, before any price or hold: the identifier when some service of the platform can take one, the explicit
+  // choice to search without the source, or cancel. Never guessed; an identifier already given that no service carries ends the request honestly.
+  if (ask.source.kind === "named" || ask.source.kind === "official") {
+    const carrying = candidates.find((c) => !sourceUnenforced(c, cardAsk)) ?? (card && !sourceUnenforced(card, cardAsk) ? card : null);
+    if (!carrying) {
+      if (choices.sourceId) return { kind: "cannot", ask, reason: "source_missing", reads };
+      const byId = ask.platform ? PARENT_ROLES[ask.platform].flatMap((r) => cardsFor(ask.platform!, r, { catalogOnly: deps.catalogOnly === true, ...cardsOpt })).some(cardCanTakeId) : false;
+      return { kind: "question", ask, why: "source_id", question: sourceQuestionAr(ask.platform ? PLATFORM_AR[ask.platform] ?? ask.platform : "المنصة", ask.source.kind === "named" ? ask.source.text : null, byId), options: [SOURCE_OPTIONS_AR.widen, SOURCE_OPTIONS_AR.cancel], reads };
+    }
+    if (carrying !== card) card = carrying;
   }
   if (!card) return { kind: "cannot", ask, reason: "no_parent_card", reads };
   const need = Math.max(1, ask.count ?? 10);

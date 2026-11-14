@@ -81,6 +81,11 @@ export interface ResearchBrief {
   period: string | null;
   country: string | null;
   language: string | null;
+  /**
+   * P0, 14 Nov 2026: THE SOURCE the content must come FROM (an account, a page, a channel), as the customer wrote it: a name, «@identifier» or a link; null when none. The model reads it from the whole conversation; code checks that the
+   * customer wrote it (never invented) and that the consolidated request carries it (the planner then enforces it or asks for its identifier: foundation/sourceScope.ts). Absent on an older brief: none.
+   */
+  source?: string | null;
   /** The model's structured research objectives (absent: the brief carried none; the request is then read from its words, as before). */
   objectives?: BriefObjective[];
 }
@@ -88,7 +93,7 @@ export interface ResearchBrief {
 export const BRIEF_REQUEST_MIN = 3;
 export const BRIEF_REQUEST_MAX = 1000;
 const FIELD_MAX = 120;
-const KNOWN_FIELDS = new Set(["status", "request", "platforms", "content", "count", "topic", "period", "country", "language", "objectives", "v"]);
+const KNOWN_FIELDS = new Set(["status", "request", "platforms", "content", "count", "topic", "period", "country", "language", "source", "objectives", "v"]);
 const OBJECTIVE_FIELDS = new Set(["id", "operation", "platform", "parent", "contacts", "what", "request", "period", "country", "language", "count"]);
 /**
  * DESCRIPTIVE keys a real model adds to an objective (live evaluation 2026-11-12: «topic»). They describe the goal and are never executed: their text joins `what` (internal, privacy-checked by `validateBrief`) instead of discarding the
@@ -225,7 +230,7 @@ export function parseBrief(raw: unknown): ParsedBrief {
   return {
     ok: true,
     unknown,
-    brief: { v: RESEARCH_BRIEF_VERSION, status, request, platforms, content, count, topic: text(o.topic, FIELD_MAX), period: text(o.period, FIELD_MAX), country: text(o.country, FIELD_MAX), language: text(o.language, FIELD_MAX), ...(objectives && objectives.length > 0 ? { objectives } : {}) },
+    brief: { v: RESEARCH_BRIEF_VERSION, status, request, platforms, content, count, topic: text(o.topic, FIELD_MAX), period: text(o.period, FIELD_MAX), country: text(o.country, FIELD_MAX), language: text(o.language, FIELD_MAX), ...(text(o.source, FIELD_MAX) ? { source: text(o.source, FIELD_MAX) } : {}), ...(objectives && objectives.length > 0 ? { objectives } : {}) },
   };
 }
 
@@ -255,6 +260,9 @@ export interface BriefContext {
 }
 
 export type BriefRejection =
+  /** P0: the brief's source is not in the customer's words (invented), or the consolidated request does not carry it (it would be lost). */
+  | "source_not_written"
+  | "source_dropped"
   | "privacy_refusal"
   | "privacy_clarify"
   | "request_length"
@@ -302,6 +310,16 @@ export function validateBrief(brief: ResearchBrief, ctx: BriefContext): Validate
   // X has no comments stage in the contract: «تعليقات إكس» is stated by the plan as replies, not dropped here
   if (brief.content.includes("comments") && contract.comments === "none" && contract.platform !== "x") return { ok: false, reason: "comments_dropped" };
   if (brief.content.includes("replies") && contract.replies === "none") return { ok: false, reason: "replies_dropped" };
+  // P0, 14 NOV 2026: THE SOURCE IS NEVER INVENTED AND NEVER LOST. Every word of the brief's source is in the customer's words; the consolidated request carries a named source whose words are the brief's (the worker then enforces
+  // it, or asks for its identifier). A request that names a source the brief does not is kept as it is (the words decide).
+  if (brief.source) {
+    // contained in the customer's words as written (an attached letter is part of the word they typed: «لوزارة الصحة» carries «وزارة الصحة»; «@» and links are compared without their punctuation)
+    const ground = ` ${sourceWordsOf(groundText).join(" ")} `;
+    if (!ground.includes(sourceWordsOf(brief.source).join(" "))) return { ok: false, reason: "source_not_written" };
+    const carried = contract.source.named && contract.source.text ? sourceWordsOf(contract.source.text) : [];
+    const wanted = new Set(sourceWordsOf(brief.source));
+    if (carried.length === 0 || !carried.every((w) => wanted.has(w))) return { ok: false, reason: "source_dropped" };
+  }
   if (brief.objectives) {
     const issue = objectivesIssue(brief, named);
     if (issue) return { ok: false, reason: issue };
@@ -402,4 +420,9 @@ export function storedBriefOf(plan: unknown): ResearchBrief | null {
   const raw = (plan as { researchBrief?: unknown } | null | undefined)?.researchBrief;
   const parsed = parseBrief(raw);
   return parsed.ok && parsed.unknown.length === 0 ? parsed.brief : null;
+}
+
+/** The comparable words of a source name, identifier or link (lower case, no «@», no punctuation, Arabic letter forms unified). */
+function sourceWordsOf(text: string): string[] {
+  return normalizeDigits(String(text ?? "")).toLowerCase().replace(/[أإآ]/g, "ا").replace(/ة/g, "ه").replace(/ى/g, "ي").replace(/https?:\/\/(?:www\.|m\.)?/g, " ").replace(/[^\p{L}\p{N}_]+/gu, " ").split(/\s+/).filter(Boolean);
 }

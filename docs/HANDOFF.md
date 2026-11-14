@@ -29,13 +29,18 @@ This handoff document provides a clear, factual status of the Diger platform (`i
   * A follow-up after an ENDED request became a new mission of its own words.
   * «فقط» and whole sentences became the exact search phrase.
   * The delivery contract (not a filter, by design) marked every row «غير مطابق» while the status said `completed` and the sentence said the request was exhausted.
-* **Fix:**
-  * An account is enforced: `from:<username>` in the query, plus an exact per-row `username` check at planning and on every row the run reads.
-  * Otherwise the username is asked once BEFORE any read or price, never guessed. The customer may instead explicitly choose «all of X», or cancel.
-  * `compilePlan` refuses an unenforceable X account (`x_account_unverified`).
-  * The latest change wins in a revision; a follow-up of an ended request keeps the request.
-  * The outcome sentence is truthful: «… للبحث المعتمد في خطتك», and a delivery not from the named source says so as partial.
-* **Unchanged:** pricing, reserve, settlement math, ledger, refunds, switches. No paid call.
+* **Fix (general, owner direction: no rule per word, service or platform):**
+  * **Understanding is the AI layer's job:** the research brief now carries `source`. Code checks that the source is in the customer's words (never invented) and that the consolidated request carries it (never dropped).
+  * **One source rule, on every platform, from card data** (`foundation/sourceScope.ts`): a named source is carried by the service (its input, an evidence lookup, or a documented search operator such as X's `from:`, with an exact author check of every row), or it is asked once BEFORE any price, never guessed.
+  * `compilePlan` refuses an unenforced source (`source_unenforceable`).
+  * The latest change of a revision wins; a follow-up of an ended request keeps the request.
+  * The outcome sentence is truthful («… للبحث المعتمد في خطتك»), and a delivery not from the named source says so as partial.
+* **Live evaluation (owner-authorized ≤ $0.05; spent $0.0492):**
+  * the incident's conversations pass (5/6, then P0-3 fixed and 2/2);
+  * original set 21/22 with discovery on (equal to the best recorded);
+  * original set 17/22 brief-only (the misses are capability-discovery features).
+* **To enable the understanding layer for all customers (owner-approved; this session has read-only DB access):** `agent_settings.chat_research_brief_v1 = true`. The SQL is in the report §5.4.
+* **Unchanged:** pricing, reserve, settlement math, ledger, refunds; `capability_discovery_v1`, `registry_router`, `web_via_treg` stay off. No paid provider call.
 * **Tests:** `tests/p0-x-account-contract.test.ts`, on recorded and anonymised production pool rows in `tests/fixtures/p0-x-account/`.
 
 ### Phase 7 (14 Nov 2026): admin shadow comparison (PR-7.1)

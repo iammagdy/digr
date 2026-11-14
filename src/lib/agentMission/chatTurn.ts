@@ -201,17 +201,15 @@ export const APPROVE_ON_CARD_AR = "خطتك لسه زي ما هي في البط�
  * P0, 14 NOV 2026 (conversation b7abe45b…, msn_fefee20b5a4dfc1aafc2 then msn_dd7c2e9c131b8783bf2e): A FOLLOW-UP AFTER A REQUEST THAT ENDED IS A CHANGE OF THAT REQUEST, NOT A NEW REQUEST OF ITS OWN WORDS. The customer asked for 400 tweets of the Saudi
  * Ministry of Health's official account about health rumors; the request ended «unserved»; they wrote «طيب ابحث عن الشائعات فقط» in the same conversation. No request was open any more (the open-request rule of round 57 covers
  * planning, a question and a plan waiting for approval only), so the four words became a new mission: the account, the platform and the count were asked again from scratch and the period was lost.
- * A message that reads as a follow-up (it starts with a follow-up word or ends with a restriction such as «فقط», names no platform, and is short) after the conversation's latest request ENDED without a held plan (unserved, or
- * completed) is planned from that request's words with the change joined after the revision marker, exactly as a change of an open plan: the latest change wins for what it names (requestContract.ts), everything else is kept.
- * A request that stands on its own (it names a platform) is a new request, as before.
+ * THE GENERAL RULE (no word list): after the conversation's latest request ENDED without a held plan (unserved, or completed), a message that is not a request standing on its own (it names no platform, so it cannot be planned by
+ * itself, and it names no kind of data of its own) is a change of that request: it is planned from that request's words with the change joined after the revision marker, exactly as a change of an open plan, and the latest change wins for what it names
+ * (requestContract.ts). The card tells the customer it was read as a change and that a new request should say so. A message that names a platform is a new request, as before. With the research brief on, the chat model
+ * consolidates the conversation itself and this rule is its fallback.
  */
-const FOLLOW_UP_LEAD = /^(?:و?(?:طيب|طيّب|طب|ماشي|خلاص|تمام|اوكي|أوكي|اوك|أوك|ok|okay|إذن|اذن|يبقى|يبقي|بدل(?:ا|اً)?|بس|كمان|برضه|برضو|بالنسبة))(?:\s|،|,|$)/iu;
-const FOLLOW_UP_TAIL = /(?:\s|^)(?:فقط|بس|فحسب|حصر[اًا]?|حصرًا|لا\s+غير)[.!؟?]*$/u;
 export function isFollowUpOfEndedRequest(message: string): boolean {
   const t = String(message ?? "").replace(/\s+/g, " ").trim();
-  if (t === "" || t.split(" ").length > 14) return false;
-  if (buildRequestContract(t).platform !== null) return false;
-  return FOLLOW_UP_LEAD.test(t) || FOLLOW_UP_TAIL.test(t) || refersToOpenRequest(t);
+  // standing on its own: it names a platform, or a kind of data Diger collects (companies, people, places, posts…): then it is a new request
+  return t !== "" && buildRequestContract(t).platform === null && !namesCollectibleData(t);
 }
 const ENDED_CONTINUABLE = new Set(["unserved", "completed"]);
 /** The conversation's latest research request when it ENDED (unserved or completed) and is the customer's own: its words. Read only; null on any doubt. */
@@ -225,7 +223,7 @@ async function endedRequestOfConversation(sb: any, conversationId: string, userI
     return requestText ? { id, requestText } : null;
   } catch { return null; }
 }
-export const FOLLOW_UP_STARTED_AR = "فهمت رسالتك تعديلًا على طلبك السابق في هذه المحادثة، فنجهّز خطة جديدة من الطلب نفسه مع تعديلك: المصدر والمنصة والفترة والعدد كما طلبتها ما لم تغيّرها صراحةً. راجع البطاقة قبل الاعتماد، ولن يُخصم شيء قبل موافقتك.";
+export const FOLLOW_UP_STARTED_AR = "فهمت رسالتك تعديلًا على طلبك السابق في هذه المحادثة، فنجهّز خطة جديدة من الطلب نفسه مع تعديلك: المصدر والمنصة والفترة والعدد كما طلبتها ما لم تغيّرها صراحةً. راجع البطاقة قبل الاعتماد، ولن يُخصم شيء قبل موافقتك. وإن كان طلبًا جديدًا مختلفًا فاكتبه كاملًا مع اسم المنصة.";
 
 /** ROUND 57: the open plan is planned again from the WHOLE request with the change (its words are kept), never from the change alone. The plan it replaces held nothing. */
 async function reviseOpenRequest(input: AgentChatTurnInput, open: OpenRequest): Promise<AgentChatTurnResult> {

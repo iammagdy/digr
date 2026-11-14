@@ -1,5 +1,4 @@
 import { buildRequestContract, latestChangesOf, optionalPartsOf, type ChildAsk, type ContractOptions, type ParentKind } from "../requestContract";
-import { xAccountMentionOf, xHandleIn } from "./xAccount";
 import { countryOfValue } from "../places";
 import { clarifyOf, readConditions, type ClarifyCode, type ClarifyField } from "../semantic/conditions";
 import { topicMeaningOf } from "../topicMeaning";
@@ -138,10 +137,11 @@ export function periodOfRequest(text: string, requestedAtMs: number): AskPeriod 
   if (/(?:^|[^a-z])this\s+week(?:[^a-z]|$)/.test(lc)) return periodOf(shiftDays(today, -7), today);
   if (/(?:^|[^a-z])this\s+month(?:[^a-z]|$)/.test(lc)) return periodOf(`${today.slice(0, 7)}-01`, today);
   if (/(?:^|[^a-z])this\s+year(?:[^a-z]|$)/.test(lc)) return periodOf(`${today.slice(0, 4)}-01-01`, today);
-  const last = /(?:آخر|اخر)\s+(\d{1,3})?\s*(شهرين|شهر|شهور|أشهر|اشهر|أسبوعين|اسبوعين|أسبوع|اسبوع|أسابيع|اسابيع|يومين|يوم|أيام|ايام|سنة|سنتين|سنوات|سنين)/.exec(t);
+  // P0 (14 Nov 2026, live evaluation P0-1): the number may be written in WORDS («آخر ثلاثة أشهر»: the understanding layer wrote it so); it is the same period as «آخر ٣ أشهر» (the shared number-word table)
+  const last = new RegExp(`(?:آخر|اخر)\\s+(\\d{1,3}|${NUMBER_WORDS_SRC})?\\s*(شهرين|شهر|شهور|أشهر|اشهر|أسبوعين|اسبوعين|أسبوع|اسبوع|أسابيع|اسابيع|يومين|يوم|أيام|ايام|سنة|سنتين|سنوات|سنين)`).exec(t);
   if (!last) return null;
   const unit = last[2];
-  const n = last[1] ? Number(last[1]) : /ين$/.test(unit) ? 2 : 1;
+  const n = last[1] ? numberOfToken(last[1]) ?? 1 : /ين$/.test(unit) ? 2 : 1;
   if (/شهر|شهور|أشهر|اشهر/.test(unit)) return periodOf(monthsBack(today, n), today);
   if (/سن/.test(unit)) return periodOf(monthsBack(today, 12 * n), today);
   if (/سبوع|سابيع/.test(unit)) return periodOf(shiftDays(today, -7 * n), today);
@@ -226,14 +226,7 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
   const relation: TopicRelation = topicText === null ? "none" : MADE_WITH.test(text) ? "made_with" : ABOUT.test(text) ? "about" : meaning.kind === "ambiguous" ? "ambiguous" : "about";
   // A PAGE OR ACCOUNT GIVEN BY ITS LINK (Facebook, Instagram): the request contract reads the words after «من صفحة» and stops at the link's first dot; the link itself is the source
   const link = c.platform === "facebook" || c.platform === "instagram" ? /https?:\/\/(?:www\.|m\.)?(?:facebook|instagram)\.com\/[A-Za-z0-9._-]+\/?/i.exec(text)?.[0] ?? null : null;
-  // P0, 14 NOV 2026 (X): an account given by its link or «@username» is the named source; an institution named only by its name («الصفحة الرسمية لوزارة الصحة السعودية», «على وزارة الصحة السعودية») is the named
-  // source too, by that name, so the planning asks for its username before anything is read, held or priced (xAccount.ts); it is never dropped and the search is never widened to all of X without the customer's choice
-  const xLink = c.platform === "x" ? xHandleIn(optionalPartsOf(text).required) : null;
-  // the latest change first, then the request's own words, then the answer to the question
-  const xMention = c.platform === "x" && !xLink && !c.source.named
-    ? [...latestChangesOf(String(request ?? "").replace(/\s+/g, " ")), String(request ?? "").split("تعديل العميل على نفس الطلب:")[0], String(answer ?? "")].map((p) => xAccountMentionOf(optionalPartsOf(p).required)).find((n): n is string => n !== null) ?? null
-    : null;
-  const sourceKind: AskSourceKind = link || xLink || c.source.named || xMention ? "named" : c.source.official ? "official" : "none";
+  const sourceKind: AskSourceKind = link || c.source.named ? "named" : c.source.official ? "official" : "none";
   // A YEAR (decision 7; Facebook, Instagram and YouTube only): written by the customer in their words, or typed as the answer of «حدد سنة», is the period of that calendar year; the customer's own number of posts («٢٠٢٠ منشور») is never a year
   const social = c.platform === "facebook" || c.platform === "instagram" || c.platform === "youtube";
   const chosen = edits.occurrence ?? (occurrenceChoiceOf(answer) as Occurrence | { kind: "ask_year" } | null) ?? (eventLatest && !c.period ? ({ kind: "latest" } as Occurrence) : null);
@@ -256,7 +249,7 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
     platform: c.platform,
     parentKind: c.parentKind,
     count,
-    source: { kind: sourceKind, text: link ?? xLink ?? (c.source.named ? c.source.text : xMention ?? c.source.text) },
+    source: { kind: sourceKind, text: link ?? c.source.text },
     topic: { text: topicText, relation },
     period: conditions && conditions.period.status === "resolved" ? periodOf(conditions.period.from, conditions.period.to) : conditions && conditions.period.status === "clarify" ? null : c.period ? latestChangesOf(String(request ?? "").replace(/\s+/g, " ")).map((ch) => periodOfRequest(ch, requestedAtMs)).find((p): p is AskPeriod => p !== null) ?? periodOfRequest(text, requestedAtMs) : yearPeriod,
     country: conditions && conditions.country.status === "resolved" ? conditions.country.code : conditions && (conditions.country.status === "many" || conditions.country.status === "any") ? null : c.country ? countryNamedIn(text) : null,

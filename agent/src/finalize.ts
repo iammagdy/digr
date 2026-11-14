@@ -196,8 +196,8 @@ export function stageTruthBodyAr(t: StageTruthFacts): string | null {
  * gave no more results»): WHEN DELIVERED ITEMS ARE NOT FROM THE SOURCE THE CUSTOMER NAMED, THE RESULT SAYS SO. The delivery contract fills the mark in the file (R4) but, by design, never changes the status or the
  * customer's sentence; this is that sentence, from the delivered rows themselves. No number (the counts are stated by code elsewhere). Null when every delivered item is the named source's (or none says who published it).
  */
-export function namedSourceTruthAr(f: { name: string; delivered: number; notFromSource: number }): string | null {
-  const name = String(f.name ?? "").trim();
+export function namedSourceTruthAr(f: { source: string; delivered: number; notFromSource: number }): string | null {
+  const name = String(f.source ?? "").trim();
   if (name === "" || f.delivered <= 0 || f.notFromSource <= 0) return null;
   if (f.notFromSource >= f.delivered) return `ولم يثبت أن أيًا مما سُلّم من «${name}» الذي سمّيته؛ فالبحث المنفّذ لم يكن مقيّدًا بهذا المصدر، وكل عنصر عليه علامة «غير مطابق» في الملف. هذا تسليم جزئي لا يحقق طلبك كما كتبته.`;
   return `وبعض ما سُلّم ليس من «${name}» الذي سمّيته، وعليه علامة «غير مطابق» في الملف.`;
