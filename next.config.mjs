@@ -22,6 +22,8 @@ const nextConfig = {
     "/api/chat": ["./data/treg/treg_catalog_sellable.json", "./data/treg/treg_write_actions.json"],
     "/api/chat/edit-plan": ["./data/treg/treg_catalog_sellable.json", "./data/treg/treg_write_actions.json"],
     "/api/admin/reverse-lookup": ["./data/treg/treg_catalog_sellable.json", "./data/treg/treg_write_actions.json"],
+    // the admin shadow comparison builds the capability registry (catalog snapshot) and reads the reviewed registry artifact; no other runtime file
+    "/api/admin/shadow": ["./data/treg/treg_catalog_sellable.json", "./data/treg/treg_write_actions.json", "./data/capabilities/registry.json"],
     "/api/admin/planner-selftest": ["./data/treg/treg_catalog_sellable.json", "./data/treg/treg_write_actions.json"],
     "/api/admin/recipes-seed": ["./data/treg/treg_catalog_sellable.json"],
     "/api/admin/failures/retry": ["./data/treg/treg_catalog_sellable.json", "./data/treg/treg_write_actions.json"],

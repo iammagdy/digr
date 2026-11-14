@@ -121,6 +121,14 @@ PR B was therefore not implemented, and no workaround was improvised. PR A makes
 * After the deployment (read-only): `credit_ledger` 1,247 rows, sum 16,086 (unchanged); `agent_settings` keys `redesign_flags`, `social_discovery` only (no `customer_*` row); no queued, planning, approved or executing mission.
 * Verification kinds: offline tests, typechecks, build, secret scan and mutation checks locally; preview and production deployment states and the read-only database checks above. **Not done: a real-browser test, a live customer mission, a live provider or model call.**
 
+## PR C: result (recorded here, in the next code PR, as the discipline requires)
+
+* PR [#496](https://github.com/iammagdy/digr/pull/496), one push (head `7e8ab2e`), one preview, merged through the PR as `02ba17f`.
+* Preview `dpl_Bs4PS2jTKcPnkGWixUZc9QTPVTrS` READY on `7e8ab2e`.
+* Production `dpl_FVdY3Yxagz4VMSUNAXs52vekKToB` READY on `02ba17f` (alias `diger.tech`); Heroku release v204 «Deploy 02ba17f7»; worker heartbeat `02ba17f`, `active_missions 0`.
+* After the deployment (read-only): `credit_ledger` 1,247 rows, sum 16,086 (unchanged); `agent_settings` keys `redesign_flags`, `social_discovery` only; no queued, planning, approved or executing mission, no queued or running job.
+* Verification kinds: offline tests, typechecks, build, secret scan and mutation checks locally; preview and production deployment states and the read-only database checks above; one manual public-metadata sync (no key, no billable call). **Not done: a real-browser test, a live provider data call, a model call.**
+
 ## C. Phase 6: provider update intelligence (PR C)
 
 ### C.1 What was built
