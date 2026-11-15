@@ -66,6 +66,24 @@ Missions `msn_7365668c48162ce20bbd`, `msn_c6767995ad124f9edbec`, `msn_cfee23cdac
 | 5 | **The model's tool choice is offered only candidates that carry every condition the customer wrote** that the best-ranked tool carries (the topic, the period, the source, the language, the country), and the source rule. Before #1, this choice silently never answered; now that it answers, it can never trade a written condition for a preferred tool. | `compiled.ts` |
 | 6 | The admin-only planning event no longer labels every question «لا فيديو في ما قُرئ…» (it said so for the source question on X). | `runMission.ts` |
 
+### Independent review of the PR head, fixed before merge
+
+A separate review of the diff found five problems. All are fixed, each with a test:
+
+1. **High: a recorded page could be reused for a different query.**
+   * The problem: the call log keeps the first 80 characters of each input, and the expanded query puts its terms first. A re-planning after the customer changed the period or the source could match an old page of another query.
+   * The fix: the gateway now records `__params_sig`, a fingerprint of the complete inputs, and the planner matches saved pages by it. Older records keep the old rule. The same weakness existed before for long precise queries; it is fixed for them too.
+2. **Medium-high: a failed vocabulary call could end a later planning run with `pool_refused`.**
+   * The problem: if run 1's call failed and the precise query was read, a run 2 that succeeded would need a third sample, which the gateway refuses.
+   * The fix: the vocabulary is asked only while this search has given no planning page with rows. It is kept with the topic it was asked for, and is not used for another topic.
+3. **Medium: the last retry turned thinking back on.** The retry order is now: no thinking with the tool, then no thinking without the tool, then the model's default with the tool, then without it. It stops at the first request that is not refused.
+4. **Low-medium: the record could claim a model choice that the source rule then overrode.**
+   * The source rule now keeps the chosen tool when that tool carries the source.
+   * When the rule does override the choice, the record says `rank`.
+5. **Low: saved choices and identifier forms disagreed.**
+   * A source choice saved with a trailing full stop is now normalized, not dropped.
+   * The bare identifier form strips a trailing `-` as the link form does.
+
 **Unchanged:**
 
 * the research gate (every row judged by meaning before it can be chosen, delivered or charged);

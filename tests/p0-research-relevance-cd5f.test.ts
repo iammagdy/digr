@@ -431,7 +431,7 @@ describe("independent review findings (fixed before merge)", () => {
     const deps = { mission: { id: "msn_t", request_text: fx.request_text, answer_text: fx.source_answer, created_at: fx.created_at }, gateway, store, catalog, nowMs, choices: { sourceId: fx.source_answer }, answerIsChoice: true, judge: scriptedJudge(), variants };
     const first = await planByCompiler(deps as never);
     expect(first.kind).toBe("plan");
-    expect(JSON.parse((await store.getFile("msn_t", VARIANTS_FILE))!)).toEqual({ terms: VARS });
+    expect(JSON.parse((await store.getFile("msn_t", VARIANTS_FILE))!)).toMatchObject({ terms: VARS });
     // recorded the way the gateway records them (every input, strings clipped to 80 characters: gateway.ts `params_digest`)
     const recorded = sent.map((p, i) => ({ id: `msn_t:call_${String(i + 1).padStart(4, "0")}`, phase: "planning", status: "ok", endpoint_id: "anyapi.x.search.posts", params_digest: Object.fromEntries(Object.entries(p).map(([k, v]) => [k, typeof v === "string" ? v.slice(0, 80) : v])) }));
     const before = queries.length;

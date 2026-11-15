@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { createMemoryStore } from "../agent/src/memoryStore";
 import { planByCompiler, VARIANTS_FILE } from "../agent/src/compiled";
+import { paramsSignature, PARAMS_SIG_KEY } from "../agent/src/gateway";
+import { readRunState } from "../agent/src/runState";
 import { RAW_PATH } from "../agent/src/gateway";
 import { anthropicReviewCall } from "../agent/src/review";
 import { topicVariants, TOPIC_VARIANTS_MAX_TOKENS } from "../agent/src/researchJudge";
@@ -111,7 +113,8 @@ describe("Q1: a model call never comes back silently empty", () => {
     }) as never;
     const out = await anthropicReviewCall("k", f)({ model: "m", system: "s", user: "u", maxTokens: 50, rows: 2 });
     expect(out?.text).toBe("[1,0]");
-    expect(bodies.map((b) => [Boolean(b.thinking), Boolean(b.tool_choice)])).toEqual([[true, true], [false, true], [false, false]]);
+    // never thinking back on before the tool was dropped (review finding 3): no tool, still no thinking, comes second
+    expect(bodies.map((b) => [Boolean(b.thinking), Boolean(b.tool_choice)])).toEqual([[true, true], [true, false], [false, true], [false, false]]);
   });
   it("a failed variants call is never kept for the mission: the next planning run asks again (production kept {\"terms\":[]} and every later run trusted it)", async () => {
     const m = fx.missions[2];
@@ -122,7 +125,7 @@ describe("Q1: a model call never comes back silently empty", () => {
     expect(await store.getFile(m.id, VARIANTS_FILE)).toBeNull();
     const again = await plan({ ...m, id: m.id }, [pageOf([...ABOUT], null)], { variants }, store);
     expect(n).toBe(2);
-    expect(JSON.parse((await store.getFile(m.id, VARIANTS_FILE))!)).toEqual({ terms: ["شائعات", "إشاعات"] });
+    expect(JSON.parse((await store.getFile(m.id, VARIANTS_FILE))!)).toMatchObject({ terms: ["شائعات", "إشاعات"] });
     expect(again.queries[0]).toMatch(/^\(شائعات OR إشاعات OR /);
   });
 });
@@ -162,3 +165,74 @@ describe("Q4: an identifier never keeps the sentence's punctuation", () => {
   });
 });
 const TERMS_Q4 = ["شائعات"];
+
+describe("independent review findings on the PR head (fixed before merge)", () => {
+  const TERMS = ["شائعات", "إشاعات", "معلومات مغلوطة"];
+  /** A planning run over recorded calls (as production rebuilds it after an answer or a restart): `recorded` pages are on disk, new reads come from `fresh`. */
+  async function replan(m: (typeof fx.missions)[number], recorded: Array<{ params: Record<string, unknown>; page: unknown; withSig?: boolean }>, fresh: unknown[], extra: Record<string, unknown> = {}, store = createMemoryStore()) {
+    const priorCalls = [];
+    for (const [i, r] of recorded.entries()) {
+      const id = `call_${String(i + 1).padStart(4, "0")}`;
+      await store.putFile(m.id, RAW_PATH(id), JSON.stringify(r.page), "application/json");
+      const digest: Record<string, unknown> = Object.fromEntries(Object.entries(r.params).map(([k, v]) => [k, typeof v === "string" ? v.slice(0, 80) : v]));
+      if (r.withSig !== false) digest[PARAMS_SIG_KEY] = paramsSignature(r.params);
+      const rows = ((r.page as { output: { data: { items: unknown[] } } }).output.data.items).length;
+      priorCalls.push({ id: `${m.id}:${id}`, phase: "planning", status: rows > 0 ? "ok" : "empty", rows_returned: rows, endpoint_id: "anyapi.x.search.posts", params_digest: digest });
+    }
+    const calls: Array<Record<string, unknown>> = [];
+    const gateway = {
+      async tregCall(input: { endpoint_id?: unknown; params?: unknown }) {
+        calls.push((input.params ?? {}) as Record<string, unknown>);
+        const page = fresh[calls.length - 1] ?? pageOf([]);
+        const callId = `call_${String(recorded.length + calls.length).padStart(4, "0")}`;
+        await store.putFile(m.id, RAW_PATH(callId), JSON.stringify(page), "application/json");
+        const { reading } = buildShapeDigest(page, catalog.byId.get(String(input.endpoint_id))!);
+        return { ok: true as const, call_id: callId, http_status: 200, rows_in_page: reading.rows.length, has_more: null, next_cursor: null };
+      },
+    };
+    const r = await planByCompiler({ mission: { id: m.id, request_text: m.request_text, answer_text: null, created_at: "2026-11-15T11:58:19Z" } as never, gateway: gateway as never, store, catalog, nowMs, choices: { sourceId: "SaudiMOH" }, judge, priorCalls, ...extra } as never);
+    return { r, calls, store };
+  }
+  it("FINDING 1: a recorded page is reused only for the SAME complete inputs: a query that shares its first 80 characters but not its period is read afresh", async () => {
+    const m = fx.missions[2];
+    const first = await plan(m, [pageOf([...ABOUT], null)], { variants: async () => ({ terms: TERMS, costUsd: 0.0001 }) });
+    const sent = first.calls[0];
+    // the same query with another period: identical first 80 characters (the terms come first), a different query
+    const otherPeriod = { ...sent, query: String(sent.query).replace(/since:\S+/, "since:2025-01-01_00:00:00_UTC") };
+    expect(String(otherPeriod.query).slice(0, 80)).toBe(String(sent.query).slice(0, 80));
+    const store = createMemoryStore();
+    await store.putFile(m.id, VARIANTS_FILE, JSON.stringify({ terms: TERMS, topic: JSON.stringify([buildAskTopic(m), []]) }), "application/json");
+    const stale = await replan(m, [{ params: otherPeriod, page: pageOf([...ABOUT], null) }], [pageOf([...ABOUT], null)], { variants: async () => ({ terms: TERMS, costUsd: 0.0001 }) }, store);
+    expect(stale.calls).toHaveLength(1);
+    expect(stale.calls[0].query).toBe(sent.query);
+    // the identical inputs ARE reused (no call)
+    const store2 = createMemoryStore();
+    await store2.putFile(m.id, VARIANTS_FILE, JSON.stringify({ terms: TERMS, topic: JSON.stringify([buildAskTopic(m), []]) }), "application/json");
+    const same = await replan(m, [{ params: sent, page: pageOf([...ABOUT], null) }], [], { variants: async () => ({ terms: TERMS, costUsd: 0.0001 }) }, store2);
+    expect(same.calls).toHaveLength(0);
+  });
+  it("FINDING 2: terms are never asked once this search already gave a planning page with rows: the run reuses the recorded precise pages instead of a refused third sample", async () => {
+    const m = fx.missions[2];
+    const precise = (await plan(m, [pageOf([...ABOUT], "c"), pageOf([...ABOUT].map((p) => ({ ...p, id: p.id.replace("91", "92") })), null)], { variants: async () => ({ terms: [], costUsd: 0.0001, failed: true as const }) })).calls;
+    let asked = 0;
+    const again = await replan(m, precise.map((p, i) => ({ params: p, page: i === 0 ? pageOf([...ABOUT], "c") : pageOf([...ABOUT].map((x) => ({ ...x, id: x.id.replace("91", "92") })), null) })), [], { variants: async () => { asked += 1; return { terms: TERMS, costUsd: 0.0001 }; } });
+    expect(asked).toBe(0);
+    expect(again.calls).toHaveLength(0);
+    expect(again.r.kind).not.toBe("cannot");
+  });
+  it("FINDING 2b: a kept vocabulary of ANOTHER topic is not used (the customer changed the topic)", async () => {
+    const m = fx.missions[2];
+    const store = createMemoryStore();
+    await store.putFile(m.id, VARIANTS_FILE, JSON.stringify({ terms: ["كلمة قديمة"], topic: JSON.stringify(["موضوع آخر", []]) }), "application/json");
+    const { queries } = await plan(m, [pageOf([...ABOUT], null)], { variants: async () => ({ terms: TERMS, costUsd: 0.0001 }) }, store);
+    expect(queries[0]).not.toContain("كلمة قديمة");
+    expect(queries[0]).toMatch(/^\(شائعات OR /);
+  });
+  it("FINDING 5: a source choice saved with the sentence's full stop is normalized, not dropped", async () => {
+    const store = createMemoryStore();
+    await store.putFile("msn_rs", "run_state.json", JSON.stringify({ planningStarts: 1, choices: { sourceId: "SaudiMOH." } }), "application/json");
+    expect((await readRunState(store, "msn_rs")).choices?.sourceId).toBe("SaudiMOH");
+  });
+});
+import { buildAsk } from "../src/lib/agentMission/foundation/ask";
+function buildAskTopic(m: (typeof fx.missions)[number]): string { return buildAsk(m.request_text, null, nowMs).topic.text ?? ""; }

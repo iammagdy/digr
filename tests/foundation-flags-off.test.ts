@@ -50,7 +50,9 @@ async function planningDigest(m: { id: string; request: string }, settings: Reco
     // value stays pinned to the digests written on main before PR 2a: with only that hint removed, all 20 digests were checked equal)
     results: driver.results.map((r) => { const { rows_in_code: _hint, ...rest } = r.result as Record<string, unknown>; return typeof rest.saved === "string" ? { ...rest, saved: rest.saved.replace(/: its rows are [^)]*\)$/, ")") } : rest; }),
     providerCalls: call.mock.calls.map((c) => { const o = (c as unknown[])[0] as Record<string, unknown>; return { endpointId: o.endpointId, params: o.params }; }),
-    callLog: store.calls.map((c) => ({ endpoint: c.endpoint_id, status: c.status, rows: c.rows_returned, params: c.params_digest, phase: c.phase })),
+    // (P0, 15 Nov 2026: the call log also keeps `__params_sig`, the fingerprint of a call's complete inputs that re-planning matches saved pages by; that additive key is tested in tests/p0-research-query-retest3.test.ts and set
+    // aside here, so every other value stays pinned to the digests written on main before PR 2a)
+    callLog: store.calls.map((c) => ({ endpoint: c.endpoint_id, status: c.status, rows: c.rows_returned, params: Object.fromEntries(Object.entries(c.params_digest ?? {}).filter(([k]) => k !== "__params_sig")), phase: c.phase })),
     // the one value that changes from run to run on any commit: the worker's memory at a turn (process.memoryUsage), a telemetry count, not an output
     events: store.events.map((e) => ({ kind: e.kind, message: e.message_ar, counts: e.counts ? Object.fromEntries(Object.entries(e.counts).filter(([k]) => k !== "turn_rss_mb")) : null })),
     mission: { status: mission.status, question: mission.question_ar, plan: mission.plan, plan_public: mission.plan_public, error: mission.error ?? null, summary: mission.summary_ar ?? null },

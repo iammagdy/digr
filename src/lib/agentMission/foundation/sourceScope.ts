@@ -42,7 +42,7 @@ export function sourceIdOf(sourceText: unknown): string | null {
   if (t === "") return null;
   const link = /^(?:https?:\/\/|www\.)/i.test(t) || /^[a-z0-9-]+\.[a-z]{2,}\//i.test(t) ? idOfLink(t) : null;
   if (link) return link;
-  const bare = t.replace(/^@/, "").replace(/[.،,؛;:!?؟]+$/, "");
+  const bare = t.replace(/^@/, "").replace(/[.\-،,؛;:!?؟]+$/, "");
   return validId(bare) ? bare : null;
 }
 

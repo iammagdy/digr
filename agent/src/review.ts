@@ -109,10 +109,11 @@ export function anthropicReviewCall(apiKey: string, fetchFn: FetchFn = fetch as 
     // P0 (15 Nov 2026, msn_7365668c48162ce20bbd, msn_c6767995ad124f9edbec, msn_cfee23cdac3a2c7e4ab4): claude-haiku-5-5 THINKS BY DEFAULT when the request omits `thinking`, and its thinking counts toward
     // `max_tokens`. Every short text call of the worker (the topic's search variants at 300 tokens, the capability choice at 200, the channel names at 200) could end at the cap after a thinking block and BEFORE any text,
     // so the call "succeeded" with an empty answer: production kept `planning_variants.json` = {"terms":[]} for all three missions and the research query was never widened. Every call now asks for no thinking (accepted at the
-    // default effort, as the web app's chat and review calls already do); a model that refuses the field (HTTP 400) is asked once more without it, and then, for a verdict call, without the forced tool (as before).
-    let got = await send(toolWanted, true);
-    if (refused400(got)) got = await send(toolWanted, false);
-    if (toolWanted && refused400(got)) got = await send(false, false);
+    // default effort, as the web app's chat and review calls already do). A request the API refuses (HTTP 400, not billed) is asked again in this order, stopping at the first that is not refused: without the forced tool (still
+    // without thinking), then with thinking left to the model (with the tool, then without it). At most four requests, only after refusals.
+    const attempts: Array<[boolean, boolean]> = toolWanted ? [[true, true], [false, true], [true, false], [false, false]] : [[false, true], [false, false]];
+    let got: { res: any; body: any } | null = null;
+    for (const [tool, off] of attempts) { got = await send(tool, off); if (!refused400(got)) break; }
     if (!got || !(got.res as { ok?: boolean }).ok || !got.body) return null;
     const body = got.body as { content?: Array<{ type?: string; text?: string; name?: string; input?: { verdicts?: unknown } }>; usage?: Record<string, number>; stop_reason?: string };
     const blocks = body.content ?? [];

@@ -28,7 +28,7 @@ import type { PricedPlan } from "../../src/lib/agentMission/plan";
 import type { MissionPricingSettings } from "../../src/lib/missionPricing";
 import type { TregCatalog } from "../../src/lib/treg/catalog";
 import { isSocialPlatform, type PlatformFlags, type SocialPlatform } from "../../src/lib/agentMission/redesignFlagTypes";
-import { RAW_PATH, type GatewayCallResult } from "./gateway";
+import { PARAMS_SIG_KEY, paramsSignature, RAW_PATH, type GatewayCallResult } from "./gateway";
 import type { AgentStore, CallRow, MissionRecord } from "./types";
 
 /**
@@ -122,6 +122,8 @@ export const LISTING_WALK_MAX_PAGES = 12;
 const clipped = (k: string, v: unknown): unknown => (typeof v === "string" ? v.slice(0, k.startsWith("_") ? 300 : 80) : v);
 const present = (v: unknown): boolean => v !== undefined && v !== null && v !== "";
 const sameInputs = (digest: Record<string, unknown>, params: Record<string, unknown>): boolean => {
+  // a record with the fingerprint of its complete inputs is matched by it (never by the first 80 characters of a long query); older records keep the digest rule
+  if (typeof digest[PARAMS_SIG_KEY] === "string") return digest[PARAMS_SIG_KEY] === paramsSignature(params);
   const a = Object.entries(digest).filter(([, v]) => present(v));
   const b = Object.entries(params).filter(([, v]) => present(v));
   return a.length === b.length && b.every(([k, v]) => present(digest[k]) && digest[k] === clipped(k, v));
@@ -348,13 +350,14 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   // P0, THE GENERAL SOURCE RULE: a named (or official) source that no candidate service carries with what the customer wrote is asked ONCE, before any price or hold: the identifier when some service of the platform can take one, the explicit
   // choice to search without the source, or cancel. Never guessed; an identifier already given that no service carries ends the request honestly.
   if (ask.source.kind === "named" || ask.source.kind === "official") {
-    const carrying = candidates.find((c) => !sourceUnenforced(c, cardAsk)) ?? (card && !sourceUnenforced(card, cardAsk) ? card : null);
+    // the tool already chosen is kept when it carries the source; otherwise the best-ranked one that does (and the record then says the ranking decided, never the model)
+    const carrying = (card && !sourceUnenforced(card, cardAsk) ? card : null) ?? candidates.find((c) => !sourceUnenforced(c, cardAsk)) ?? null;
     if (!carrying) {
       if (choices.sourceId) return { kind: "cannot", ask, reason: "source_missing", reads };
       const byId = ask.platform ? PARENT_ROLES[ask.platform].flatMap((r) => cardsFor(ask.platform!, r, { catalogOnly: deps.catalogOnly === true, ...cardsOpt })).some(cardCanTakeId) : false;
       return { kind: "question", ask, why: "source_id", question: sourceQuestionAr(ask.platform ? PLATFORM_AR[ask.platform] ?? ask.platform : "المنصة", ask.source.kind === "named" ? ask.source.text : null, byId), options: [SOURCE_OPTIONS_AR.widen, SOURCE_OPTIONS_AR.cancel], reads };
     }
-    if (carrying !== card) card = carrying;
+    if (carrying !== card) { card = carrying; if (seen.choice?.by === "model") seen.choice = { by: "rank", candidates: seen.choice.candidates }; }
   }
   if (!card) return { kind: "cannot", ask, reason: "no_parent_card", reads };
   const need = Math.max(1, ask.count ?? 10);
@@ -460,18 +463,24 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   // delivered or charged. With no terms (no model, or a failed call) the precise query is read as before.
   let expanded: { strategy: SearchStrategy; params: Record<string, unknown> } | null = null;
   if (deps.variants && researchTopicOf(ask) && card.inputs.query?.or && card.inputs.query.operators) {
-    // the variants are asked ONCE per mission and kept: a later planning run (after an answer, a restart) builds the SAME expanded query, so its recorded page is reused instead of a new paid read or a refused third sample.
-    // A FAILED call is never kept (production kept {"terms":[]} from answers cut at their cap, and every later run of the mission read that as «no other wording»).
+    // the variants are asked ONCE per mission and kept, with the topic they were asked for: a later planning run (after an answer, a restart) builds the SAME expanded query, so its recorded page is reused instead of a new paid read or a refused third sample.
+    // A FAILED call is never kept (production kept {"terms":[]} from answers cut at their cap, and every later run of the mission read that as «no other wording»). They are asked only while this search has given NO planning page
+    // with rows: once it has, a new query would be a third sample the gateway refuses (the mission would end «pool_refused» instead of reusing its recorded pages), so the run keeps the strategy the pages were read with.
+    const topicKey = JSON.stringify([ask.topic.text ?? "", ask.topic.alternatives ?? []]);
     let terms: string[] | null = null;
-    try { const kept = await deps.store.getFile(deps.mission.id, VARIANTS_FILE); const o = kept ? (JSON.parse(kept) as { terms?: unknown }) : null; if (o && Array.isArray(o.terms) && o.terms.length > 0 && o.terms.every((t) => typeof t === "string")) terms = o.terms as string[]; } catch { terms = null; }
-    if (terms === null) {
+    let keptFor: string | null = null;
+    try { const kept = await deps.store.getFile(deps.mission.id, VARIANTS_FILE); const o = kept ? (JSON.parse(kept) as { terms?: unknown; topic?: unknown }) : null; if (o && Array.isArray(o.terms) && o.terms.every((t) => typeof t === "string")) { terms = o.terms as string[]; keptFor = typeof o.topic === "string" ? o.topic : null; } } catch { terms = null; }
+    // a kept list of another topic (the customer changed it) is not this topic's vocabulary; an old list kept with no topic is used only when it holds terms (an empty one was the silent failure)
+    if (terms !== null && (keptFor !== null ? keptFor !== topicKey : terms.length === 0)) terms = null;
+    const sampledBefore = (deps.priorCalls ?? []).some((c) => (c.phase ?? "planning") === "planning" && c.endpoint_id === card!.endpointId && c.status === "ok" && Number(c.rows_returned) > 0);
+    if (terms === null && !sampledBefore) {
       const said = `${deps.mission.request_text}${deps.mission.answer_text ? ` — ${deps.mission.answer_text}` : ""}`;
       const v = await deps.variants({ request: said, topic: ask.topic.text ?? "", alternatives: ask.topic.alternatives ?? [] }).catch(() => null);
       if (v) {
         cost.usd += Math.max(0, Number(v.costUsd) || 0);
         terms = v.terms;
         const put = (deps.store as Partial<Pick<AgentStore, "putFile">>).putFile;
-        if (put && !v.failed && v.terms.length > 0) await put.call(deps.store, deps.mission.id, VARIANTS_FILE, JSON.stringify({ terms }), "application/json").catch(() => undefined);
+        if (put && !v.failed) await put.call(deps.store, deps.mission.id, VARIANTS_FILE, JSON.stringify({ terms, topic: topicKey }), "application/json").catch(() => undefined);
       }
     }
     if (terms && terms.length > 0) expanded = expandedInputsOf(card, cardAsk, terms);
