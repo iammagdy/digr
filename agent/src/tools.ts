@@ -676,7 +676,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           ...(noRelevance ? { noRelevance: true } : {}),
           call: (id: string): RecordedCall | null => {
             const row = calls.find((c) => c.id === `${mission.id}:${id}`);
-            return row ? { id, endpointId: row.endpoint_id, ok: row.status === "ok", costUsd: Number(row.cost_usd) || 0, rows: Number(row.rows_returned) || 0, durationMs: Number(row.duration_ms) || undefined, params: row.params_digest } : null;
+            return row ? { id, endpointId: row.endpoint_id, ok: row.status === "ok", costUsd: Number(row.cost_usd) || 0, rows: Number(row.rows_returned) || 0, durationMs: Number(row.duration_ms) || undefined, params: Object.fromEntries(Object.entries(row.params_digest ?? {}).filter(([k]) => !k.startsWith("__"))) } : null;
           },
           evidenceText: (id: string) => evidence.get(id) ?? null,
           endpointCapability: (endpointId: string) => ctx.catalog.byId.get(endpointId)?.capability ?? null,

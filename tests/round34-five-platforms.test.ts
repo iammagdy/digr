@@ -129,6 +129,16 @@ describe("X (SIMULATED pages: no stored real page answers the compiler's inputs)
     expect(b.endpoints().every((e) => [VERIFIED, DERIVED].includes(e))).toBe(true);
     for (const list of seen) expect(list.sort()).toEqual([DERIVED, VERIFIED].sort());
   });
+  it("P0 (15 Nov 2026): THE MODEL IS NEVER OFFERED A CANDIDATE THAT DROPS A WRITTEN CONDITION: with a period asked, the catalog tool that cannot carry it is not shown to the model, so the verified search is used without a model call", async () => {
+    const seen: string[][] = [];
+    const pick: SelectCapability = async ({ candidates }) => { seen.push(ids(candidates)); return { endpointId: DERIVED, reason: "test", costUsd: 0 }; };
+    const handlers = { [VERIFIED]: () => catalogPage(VERIFIED, Array.from({ length: 14 }, (_, i) => tweet(i + 1)), null), [DERIVED]: () => catalogPage(DERIVED, [], null) };
+    const w = discoveryWorld("هات ١٠ تغريدات من تويتر عن الذكاء الاصطناعي خلال آخر شهر", handlers, { discovery: true, platform: "x" });
+    const r = await w.plan({ selectCapability: pick });
+    expect(seen).toEqual([]);
+    expect(w.endpoints()).not.toContain(DERIVED);
+    if (r.kind === "plan") { expect(r.plan.stages[0].endpoint_id).toBe(VERIFIED); expect(r.plan.compiled!.discovery!.selection!.by).toBe("rank"); }
+  });
   it("A VALID FALLBACK: the chosen tool's read failing (not refused) reads the next validated candidate once, and the mark records the fallback", async () => {
     const w = discoveryWorld(REQUEST, { [VERIFIED]: () => "fail", [DERIVED]: () => catalogPage(DERIVED, Array.from({ length: 14 }, (_, i) => ({ type: "tweet", tweet_id: `18000000000${i}`, screen_name: `w${i}`, created_at: "Mon Oct 20 10:00:00 +0000 2026", text: `تغريدة عن الذكاء الاصطناعي ${i}`, favorites: i, replies: 0, retweets: i, views: i, lang: "ar", conversation_id: `${i}` })), null) }, { discovery: true, platform: "x" });
     const r = await w.plan();

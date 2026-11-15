@@ -210,16 +210,30 @@ describe("R3: a planning sample never sizes the plan", () => {
 
 describe("R4: recall, the expanded strategy, bounded", () => {
   const VARIANTS = ["شائعات", "إشاعات", "معلومات مغلوطة", "أخبار كاذبة", "مصادر موثوقة"];
-  it("a short first page sends the second sample to the expanded query (not to the empty cursor), and the plan executes the expanded query", async () => {
-    const { r, queries } = await plan([PAGE_1, pageOf([...RUMOR_POSTS], "cur_x")], { judge: scriptedJudge(), variants: scriptedVariants(VARIANTS) });
+  it("(15 Nov retest, msn_7365/c676/cfee) THE FIRST READ IS THE EXPANDED QUERY (the customer's words OR the model's search terms), its next page is the second sample, and the plan executes it", async () => {
+    const { r, queries, calls } = await plan([pageOf([...fx.page_1_items, ...RUMOR_POSTS], "cur_x"), pageOf([], null)], { judge: scriptedJudge(), variants: scriptedVariants(VARIANTS) });
     expect(queries).toHaveLength(2);
-    expect(queries[0]).toBe(fx.query_sent);
-    expect(queries[1]).toMatch(/^\(شائعات OR إشاعات OR "معلومات مغلوطة" OR "أخبار كاذبة" OR "مصادر موثوقة" OR الشائعات OR "التصدي للشائعات" OR "جهود الوزارة في مكافحة الشائعات"\) from:SaudiMOH since:\S+ until:\S+ -filter:replies$/);
+    // the precise query alone is never read first: its terms are inside the disjunction, so the expanded read finds everything it finds
+    expect(queries[0]).not.toBe(fx.query_sent);
+    expect(queries[0]).toMatch(/^\(شائعات OR إشاعات OR "معلومات مغلوطة" OR "أخبار كاذبة" OR "مصادر موثوقة" OR الشائعات OR "التصدي للشائعات" OR "جهود الوزارة في مكافحة الشائعات"\) from:SaudiMOH since:\S+ until:\S+ -filter:replies$/);
+    // the second sample is the SAME query's next page (never a literal query that the expanded one already contains)
+    expect(queries[1]).toBe(queries[0]);
+    expect(calls[1].cursor).toBe("cur_x");
     expect(r.kind).toBe("plan");
     if (r.kind !== "plan") return;
-    expect(String(parentStage(r.plan).engine?.params?.query)).toBe(queries[1]);
-    expect(parentStage(r.plan).planned_rows).toBe(400);
-    expect((r.plan.notes_ar ?? []).join(" ")).toMatch(/وسّعنا البحث بصيغ أخرى للموضوع/);
+    expect(String(parentStage(r.plan).engine?.params?.query)).toBe(queries[0]);
+    expect((r.plan.notes_ar ?? []).join(" ")).toMatch(/بحثنا بعباراتك وبصيغ أخرى للموضوع ومرادفاته معًا/);
+    expect((r.plan.notes_ar ?? []).join(" ")).not.toMatch(/بعباراتك وحدها/);
+  });
+  it("with no search terms (no model, or the variants call failed) the precise query is read first, as before", async () => {
+    const { queries } = await plan([PAGE_1, pageOf([])], { judge: scriptedJudge(), variants: async () => ({ terms: [], costUsd: 0.0001, failed: true as const }) });
+    expect(queries[0]).toBe(fx.query_sent);
+  });
+  it("an EMPTY expanded page is followed only by the source's own items in the period (never by the narrower «all the words» query)", async () => {
+    const { queries } = await plan([pageOf([], null), pageOf(fx.page_1_items, null)], { judge: scriptedJudge(), variants: scriptedVariants(VARIANTS) });
+    expect(queries).toHaveLength(2);
+    expect(queries[0]).toMatch(/^\(شائعات OR/);
+    expect(queries[1]).toMatch(/^from:SaudiMOH since:\S+ until:\S+ -filter:replies$/);
   });
   it("the expanded query keeps every hard condition, differs from the precise one from its first word (a recorded page is matched by its first 80 characters), and fits the length cap", () => {
     const a = ask();
@@ -402,10 +416,12 @@ describe("independent review findings (fixed before merge)", () => {
     const variants = async () => { asked += 1; return { terms: asked === 1 ? VARS : ["مختلف"], costUsd: 0.0001 }; };
     const store = createMemoryStore();
     const queries: string[] = [];
+    const sent: Array<Record<string, unknown>> = [];
     const gateway = {
       async tregCall(input: { endpoint_id?: unknown; params?: unknown }) {
         const params = (input.params ?? {}) as Record<string, unknown>;
         queries.push(String(params.query));
+        sent.push(params);
         const page = queries.length === 1 ? PAGE_1 : pageOf([...RUMOR_POSTS], "cx");
         const callId = `call_${String(queries.length).padStart(4, "0")}`;
         await store.putFile("msn_t", RAW_PATH(callId), JSON.stringify(page), "application/json");
@@ -415,8 +431,9 @@ describe("independent review findings (fixed before merge)", () => {
     const deps = { mission: { id: "msn_t", request_text: fx.request_text, answer_text: fx.source_answer, created_at: fx.created_at }, gateway, store, catalog, nowMs, choices: { sourceId: fx.source_answer }, answerIsChoice: true, judge: scriptedJudge(), variants };
     const first = await planByCompiler(deps as never);
     expect(first.kind).toBe("plan");
-    expect(JSON.parse((await store.getFile("msn_t", VARIANTS_FILE))!)).toEqual({ terms: VARS });
-    const recorded = queries.map((q, i) => ({ id: `msn_t:call_${String(i + 1).padStart(4, "0")}`, phase: "planning", status: "ok", endpoint_id: "anyapi.x.search.posts", params_digest: { limit: 20, query: q.slice(0, 80), queryType: "Latest" } }));
+    expect(JSON.parse((await store.getFile("msn_t", VARIANTS_FILE))!)).toMatchObject({ terms: VARS });
+    // recorded the way the gateway records them (every input, strings clipped to 80 characters: gateway.ts `params_digest`)
+    const recorded = sent.map((p, i) => ({ id: `msn_t:call_${String(i + 1).padStart(4, "0")}`, phase: "planning", status: "ok", endpoint_id: "anyapi.x.search.posts", params_digest: Object.fromEntries(Object.entries(p).map(([k, v]) => [k, typeof v === "string" ? v.slice(0, 80) : v])) }));
     const before = queries.length;
     const second = await planByCompiler({ ...deps, priorCalls: recorded } as never);
     expect(second.kind).toBe("plan");

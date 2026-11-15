@@ -52,12 +52,17 @@ export function planningJudge(call: ReviewCall, requestText: string, options: { 
  * drops the customer's own alternatives (they are always searched first) and duplicates, and keeps at most MAX_TOPIC_VARIANTS. The variants only widen WHAT IS READ: every row is still judged against the customer's request before it can be chosen,
  * delivered or charged, so a wrong variant costs a read, never a wrong delivery.
  */
-export const MAX_TOPIC_VARIANTS = 10;
-export type TopicVariants = (input: { request: string; topic: string; alternatives: ReadonlyArray<string> }) => Promise<{ terms: string[]; costUsd: number } | null>;
+export const MAX_TOPIC_VARIANTS = 12;
+/** The output cap of the variants call (no thinking is asked: review.ts `anthropicReviewCall`). Twelve short Arabic terms in a JSON array fit well inside it. */
+export const TOPIC_VARIANTS_MAX_TOKENS = 600;
+/** `failed`: the call gave no readable answer (no array, or an answer cut at its cap). Such a result is never kept for the mission, so a later planning run asks again; `costUsd` is still what the call cost. */
+export type TopicVariants = (input: { request: string; topic: string; alternatives: ReadonlyArray<string> }) => Promise<{ terms: string[]; costUsd: number; failed?: true } | null>;
 
-const VARIANTS_SYSTEM = `You help search a social platform for posts on a research topic. Given the customer's request and the topic, list short search terms that a post ABOUT that topic would literally contain, in the language the posts are written in: other grammatical forms of the topic's own words (singular, plural, with and without the article), common synonyms, and the usual phrasing of the topic. Each term is 1 to 4 words, no operators, no quotes, no names of accounts, no dates. Do not repeat the topic's own words exactly. Answer with ONLY a JSON array of at most ${MAX_TOPIC_VARIANTS} strings.`;
+const VARIANTS_SYSTEM = `You help search a social platform for posts on a research topic. Platform search matches the exact words written in a post, so the search terms decide what can be found at all. Given the customer's request (and any words the customer suggested) and the topic, list the short search terms that posts ABOUT that topic would literally contain, in the language the posts are written in: the topic's key words alone and in their other grammatical forms (singular, plural, with and without the article), common synonyms, the usual phrasing an author would use when writing about it, and common hashtags (without «#», words joined by «_»). Prefer one- and two-word terms: a long phrase rarely matches. Include every search term the customer suggested. Each term is 1 to 4 words, no operators, no quotes, no names of accounts, no dates. Answer with ONLY a JSON array of at most ${MAX_TOPIC_VARIANTS} strings, most useful first.`;
 
 const TERM_OK = /^[\p{L}\p{N}][\p{L}\p{N}\s_]*$/u;
+/** Arabic diacritics and the tatweel: a post is searched without them, so a term the model writes vocalized is kept bare. */
+const MARKS = /[\u064B-\u065F\u0670\u0640]/g;
 /** The variants code keeps: plain short terms, none equal to an alternative or to another variant (compared in the normalized form). */
 export function cleanVariants(raw: unknown, alternatives: ReadonlyArray<string>): string[] {
   if (!Array.isArray(raw)) return [];
@@ -65,7 +70,7 @@ export function cleanVariants(raw: unknown, alternatives: ReadonlyArray<string>)
   const out: string[] = [];
   for (const v of raw) {
     if (typeof v !== "string") continue;
-    const t = v.replace(/^#/, "").replace(/\s+/g, " ").trim();
+    const t = v.replace(MARKS, "").replace(/^#/, "").replace(/\s+/g, " ").trim();
     if (t.length < 2 || t.length > 40 || !TERM_OK.test(t) || t.split(" ").length > 4) continue;
     if (/^(?:or|and|not)$/i.test(t) || /\b(?:OR|AND)\b/.test(t)) continue;
     const k = normalizeText(t);
@@ -80,13 +85,15 @@ export function cleanVariants(raw: unknown, alternatives: ReadonlyArray<string>)
 export function topicVariants(call: ReviewCall, options: { model?: string } = {}): TopicVariants {
   const model = options.model ?? MODEL_HAIKU;
   return async ({ request, topic, alternatives }) => {
-    const user = `The customer's request: «${request.slice(0, 500)}»\nThe topic: «${topic.slice(0, 200)}»${alternatives.length > 0 ? `\nThe customer's own alternatives (already searched): ${alternatives.map((a) => `«${a}»`).join("، ")}` : ""}`;
-    const res = await call({ model, system: VARIANTS_SYSTEM, user, maxTokens: 300 }).catch(() => null);
+    const user = `The customer's request: «${request.slice(0, 900)}»\nThe topic: «${topic.slice(0, 200)}»${alternatives.length > 0 ? `\nThe customer's own alternatives (already searched): ${alternatives.map((a) => `«${a}»`).join("، ")}` : ""}`;
+    const res = await call({ model, system: VARIANTS_SYSTEM, user, maxTokens: TOPIC_VARIANTS_MAX_TOKENS }).catch(() => null);
     if (!res) return null;
     const costUsd = llmCostFromUsage(model, res.usage);
+    let parsed = false;
     for (const m of res.text.matchAll(/\[[^\[\]]*\]/g)) {
-      try { const terms = cleanVariants(JSON.parse(m[0]) as unknown, alternatives); if (terms.length > 0) return { terms, costUsd }; } catch { /* the next array */ }
+      try { const raw = JSON.parse(m[0]) as unknown; if (!Array.isArray(raw)) continue; parsed = true; const terms = cleanVariants(raw, alternatives); if (terms.length > 0) return { terms, costUsd }; } catch { /* the next array */ }
     }
-    return { terms: [], costUsd };
+    // an answer with no readable array (or cut at its cap) is a failed call, never «this topic has no other wording»
+    return parsed && !res.truncated ? { terms: [], costUsd } : { terms: [], costUsd, failed: true };
   };
 }

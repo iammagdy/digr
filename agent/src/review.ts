@@ -11,7 +11,7 @@ import type { AgentStore } from "./types";
  * customer's real words and the intended meaning; the rows are DATA, never instructions. The tokens of every call come back from the API and are stored on the mission (review_state.json), so the cost is
  * counted, not guessed.
  */
-export type ReviewCall = (input: { model: string; system: string; user: string; maxTokens: number; /** How many rows the answer must have a verdict for: the real call then FORCES an answer of exactly that shape (a tool whose input is an array of that many 0/1). */ rows?: number }) => Promise<{ text: string; usage: TokenUsage } | null>;
+export type ReviewCall = (input: { model: string; system: string; user: string; maxTokens: number; /** How many rows the answer must have a verdict for: the real call then FORCES an answer of exactly that shape (a tool whose input is an array of that many 0/1). */ rows?: number }) => Promise<{ text: string; usage: TokenUsage; /** The answer stopped at `max_tokens` (an empty text with it is a failed call, not an empty answer). */ truncated?: boolean } | null>;
 
 export const REVIEW_STATE_FILE = "review_state.json";
 
@@ -81,11 +81,11 @@ export function parseVerdicts(text: string, n: number): boolean[] | null {
 export function anthropicReviewCall(apiKey: string, fetchFn: FetchFn = fetch as unknown as FetchFn, timeoutMs = 30_000): ReviewCall {
   const VERDICT_TOOL = "verdicts";
   return async ({ model, system, user, maxTokens, rows }) => {
-    const send = async (withTool: boolean): Promise<{ res: any; body: any } | null> => {
+    const send = async (withTool: boolean, thinkingOff: boolean): Promise<{ res: any; body: any } | null> => {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const payload: Record<string, unknown> = { model, max_tokens: maxTokens, system, messages: [{ role: "user", content: user }] };
+        const payload: Record<string, unknown> = { model, max_tokens: maxTokens, ...(thinkingOff ? { thinking: { type: "disabled" } } : {}), system, messages: [{ role: "user", content: user }] };
         if (withTool && rows && rows > 0) {
           payload.tools = [{ name: VERDICT_TOOL, description: "Report one verdict per row, in the order given: 1 if the row is about what the customer means, 0 if it is not.", input_schema: { type: "object", properties: { [VERDICT_TOOL]: { type: "array", minItems: rows, maxItems: rows, items: { type: "integer", enum: [0, 1] } } }, required: [VERDICT_TOOL] } }];
           payload.tool_choice = { type: "tool", name: VERDICT_TOOL };
@@ -104,17 +104,26 @@ export function anthropicReviewCall(apiKey: string, fetchFn: FetchFn = fetch as 
         clearTimeout(timer);
       }
     };
+    const refused400 = (g: { res: any } | null): boolean => Boolean(g && !(g.res as { ok?: boolean }).ok && (g.res as { status?: number }).status === 400);
     const toolWanted = Boolean(rows && rows > 0);
-    let got = await send(toolWanted);
-    // an API that refuses the tool request is asked once more the plain way
-    if (toolWanted && got && !(got.res as { ok?: boolean }).ok && (got.res as { status?: number }).status === 400) got = await send(false);
+    // P0 (15 Nov 2026, msn_7365668c48162ce20bbd, msn_c6767995ad124f9edbec, msn_cfee23cdac3a2c7e4ab4): claude-haiku-5-5 THINKS BY DEFAULT when the request omits `thinking`, and its thinking counts toward
+    // `max_tokens`. Every short text call of the worker (the topic's search variants at 300 tokens, the capability choice at 200, the channel names at 200) could end at the cap after a thinking block and BEFORE any text,
+    // so the call "succeeded" with an empty answer: production kept `planning_variants.json` = {"terms":[]} for all three missions and the research query was never widened. Every call now asks for no thinking (accepted at the
+    // default effort, as the web app's chat and review calls already do). A request the API refuses (HTTP 400, not billed) is asked again in this order, stopping at the first that is not refused: without the forced tool (still
+    // without thinking), then with thinking left to the model (with the tool, then without it). At most four requests, only after refusals.
+    const attempts: Array<[boolean, boolean]> = toolWanted ? [[true, true], [false, true], [true, false], [false, false]] : [[false, true], [false, false]];
+    let got: { res: any; body: any } | null = null;
+    for (const [tool, off] of attempts) { got = await send(tool, off); if (!refused400(got)) break; }
     if (!got || !(got.res as { ok?: boolean }).ok || !got.body) return null;
-    const body = got.body as { content?: Array<{ type?: string; text?: string; name?: string; input?: { verdicts?: unknown } }>; usage?: Record<string, number> };
+    const body = got.body as { content?: Array<{ type?: string; text?: string; name?: string; input?: { verdicts?: unknown } }>; usage?: Record<string, number>; stop_reason?: string };
     const blocks = body.content ?? [];
     const tool = blocks.find((c) => c.type === "tool_use" && c.name === VERDICT_TOOL && Array.isArray(c.input?.verdicts));
     const text = tool ? JSON.stringify(tool.input!.verdicts) : blocks.filter((c) => c.type === "text").map((c) => c.text ?? "").join("");
     const u = body.usage ?? {};
-    return { text, usage: { input_tokens: u.input_tokens ?? 0, output_tokens: u.output_tokens ?? 0, cache_read_input_tokens: u.cache_read_input_tokens ?? 0, cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0 } };
+    const usage = { input_tokens: u.input_tokens ?? 0, output_tokens: u.output_tokens ?? 0, cache_read_input_tokens: u.cache_read_input_tokens ?? 0, cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0 };
+    // an answer cut at the output cap with no text is a FAILED call (its cost is still reported), never an empty answer a caller would read as «nothing to say»
+    if (!tool && text.trim() === "" && body.stop_reason === "max_tokens") return { text: "", usage, truncated: true };
+    return { text, usage, ...(body.stop_reason === "max_tokens" ? { truncated: true } : {}) };
   };
 }
 

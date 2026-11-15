@@ -4,6 +4,26 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## P0, 15 Nov 2026 (third retest, after PR #502): the model layer was silent; the query was the customer's sentence
+
+`msn_7365668c48162ce20bbd`, `msn_c6767995ad124f9edbec`, `msn_cfee23cdac3a2c7e4ab4`: six reads, five empty, one of 20 rows (the account's newest tweets with no topic), no plan, nothing charged.
+
+* **Main cause (proved):** `claude-haiku-5-5` thinks by default and thinking counts toward `max_tokens`, so the worker's short text calls (the search variants at 300 tokens, the capability choice and the channel understanding at 200) ended at the cap with **no text**, read as an empty answer. Every mission kept `planning_variants.json` = `{"terms":[]}`.
+* **More causes:**
+  * the query was the customer's sentence, as one exact phrase, then all its words;
+  * the recall strategy ran only after the literal read, and its fallback read the account's newest 20 tweets with no topic;
+  * a link at the end of a sentence gave `from:SaudiMOH.`.
+* **Fix:**
+  * every worker model call asks for no thinking (400 → asked without it), and an empty answer cut at the cap is a failure;
+  * failed variants are never kept;
+  * the first read of a research search is the expanded vocabulary query, with every hard condition kept and every row still judged;
+  * identifiers drop trailing punctuation;
+  * the model's tool choice sees only candidates that carry every written condition.
+* **Finding:** the acceptance account is a test account and plans with catalog-derived tools (`social_discovery = test`). Its path is a superset of the customer's, so every acceptance report must say so.
+* **Details and what is unverified live:** `docs/incidents/P0-RESEARCH-QUERY-2026-11-15-RETEST3.md`.
+
+---
+
 ## P0, 15 Nov 2026 (second retest): research relevance is a gate; a sample never sizes a plan
 
 `msn_cd5f32adadefb9bb971f`: 3 tweets of @SaudiMOH in which «شائعة» means *common* were planned as the whole result (the 2-page sample sized the plan), priced at the 200-point minimum (66.67 a tweet), delivered with **no execution read**, marked «لا يذكر الموضوع» ×3 in the file, closed `completed`, and charged 200 points (test account).

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { executeTregCall, type TregCallOptions, type TregCallResult } from "../../src/functions/shared/tregClient";
 import type { CallRecorder } from "../../src/lib/server/multiProvider/adapterTypes";
 import { commitTregSpend, tregCallStatusOf, tregCapabilityIdOf } from "../../src/lib/server/tregCallRecord";
@@ -20,6 +21,17 @@ import type { AgentStore, CallPhase, CallRow } from "./types";
 import { gateAfter, gateBefore, type GateBefore, type GateContext } from "../../src/lib/server/spendGate/gate";
 import { providerCallBound, tregRouteCapUsd } from "../../src/lib/server/spendGate/bounds";
 import { PROVIDER_RESERVATION_TTL_SECONDS, spendReservationKey } from "./spendGateKeys";
+
+/**
+ * P0 (15 Nov 2026): THE FINGERPRINT OF A CALL'S COMPLETE INPUTS, kept in its digest as `__params_sig`. The digest cuts every text at 80 characters, so a re-planning that matched a saved page by the digest could take a page of a DIFFERENT
+ * query whose first 80 characters are the same (a long research query keeps its account, period and filters after them). The planner matches a saved page by this fingerprint when the record has one (compiled.ts `sameInputs`).
+ * Keys are sorted, so the order inputs were written in does not matter. Not a secret: inputs never carry a token.
+ */
+export const PARAMS_SIG_KEY = "__params_sig";
+export function paramsSignature(params: Record<string, unknown>): string {
+  const canon = (v: unknown): unknown => (Array.isArray(v) ? v.map(canon) : v !== null && typeof v === "object" ? Object.fromEntries(Object.keys(v as Record<string, unknown>).sort().filter((k) => (v as Record<string, unknown>)[k] !== undefined).map((k) => [k, canon((v as Record<string, unknown>)[k])])) : v);
+  return createHash("sha256").update(JSON.stringify(canon(params))).digest("hex").slice(0, 32);
+}
 
 /**
  * THE GATEWAY: the only way the agent reaches TREG. Three tools — catalog_search, describe_endpoint, treg_call — and `treg_call` enforces, IN CODE, before every call, in this order:
@@ -195,7 +207,7 @@ export function createGateway(deps: GatewayDeps) {
     await deps.store.addCall({
       id: `${deps.missionId}:${row.id}`, mission_id: deps.missionId, phase: deps.phase, endpoint_id: row.endpoint_id,
       // parameter NAMES and short values; never a token (the call carries none in its params)
-      params_digest: Object.fromEntries(Object.entries(row.params).slice(0, 20).map(([k, v]) => [k, typeof v === "string" ? clip(v, k.startsWith("_") ? 300 : 80) : v])),
+      params_digest: { ...Object.fromEntries(Object.entries(row.params).slice(0, 20).map(([k, v]) => [k, typeof v === "string" ? clip(v, k.startsWith("_") ? 300 : 80) : v])), [PARAMS_SIG_KEY]: paramsSignature(Object.fromEntries(Object.entries(row.params).filter(([k]) => k !== "_why" && k !== "_failure"))) },
       status: row.status, refused_reason: row.refused_reason ?? null, http_status: row.http_status ?? null, rows_returned: row.rows ?? null,
       cost_usd: row.cost_usd ?? 0, estimate_usd: row.estimate_usd ?? 0, provider_cost_id: row.provider_cost_id ?? null, storage_path: row.storage_path ?? null, duration_ms: row.duration_ms ?? null,
     });
