@@ -6,6 +6,7 @@ import { cairoDayEndExclusiveMs, cairoDayOf, cairoDayStartMs } from "../cairoTim
 import type { SocialPlatform } from "../redesignFlagTypes";
 import { occurrenceChoiceOf, requestYearOf, type Occurrence } from "./occurrence";
 import { NUMBER_WORDS_SRC, numberOfToken } from "../arabicNumberWords";
+import { extendedAlternativeTopicOf, topicAlternativesOf } from "./topicAlternatives";
 
 /**
  * F1, THE ASK (docs/FOUNDATION-PLAN.md section 3.1): what the customer asked, built ONCE by code from their words, their answer to the one question and their edit of the
@@ -43,7 +44,8 @@ export interface Ask {
   /** The number of top-level items (parents), or null when the request gives none. */
   count: number | null;
   source: { kind: AskSourceKind; text: string | null };
-  topic: { text: string | null; relation: TopicRelation };
+  /** `alternatives` (P0, 15 Nov 2026): the concepts the customer separated by «أو» / «or» (topicAlternatives.ts): each is searched and matched on its own, never the whole sentence as one phrase. Absent: one topic. */
+  topic: { text: string | null; relation: TopicRelation; alternatives?: string[] };
   period: AskPeriod | null;
   /** ISO 3166 alpha-2 code of the country the customer named («من مصر» → EG), or null. */
   country: string | null;
@@ -221,7 +223,11 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
   // and, on the platforms that ask «تقصد أنهي مرة؟» (Facebook, Instagram, YouTube), it is the customer's own answer «آخر مرة»: no question. A request with no such phrase is read exactly as before.
   const eventLatest = c.platform === "facebook" || c.platform === "instagram" || c.platform === "youtube" ? LATEST_EVENT.exec(text)?.[1]?.replace(/\s+/g, " ").trim() ?? null : null;
   const baseTopic = c.topic ?? meaning.topic ?? null;
-  const topicText = eventLatest && !(baseTopic ?? "").includes(eventLatest) ? [baseTopic, eventLatest].filter(Boolean).join(" ") : baseTopic;
+  const joinedTopic = eventLatest && !(baseTopic ?? "").includes(eventLatest) ? [baseTopic, eventLatest].filter(Boolean).join(" ") : baseTopic;
+  // P0 (15 Nov 2026): a topic that lists alternatives («الشائعات أو التصدي للشائعات أو جهود الوزارة في مكافحة الشائعات») is several concepts; the last keeps the words written after «في» (not a country)
+  const extendedTopic = extendedAlternativeTopicOf(joinedTopic, text);
+  const alternatives = topicAlternativesOf(extendedTopic);
+  const topicText = alternatives.length > 0 ? extendedTopic : joinedTopic;
   // «عن / حول / فيها X» is about X, «معمول بـ X» is made with X; a topic named with neither, that one can make content with, is ambiguous (asked before planning)
   const relation: TopicRelation = topicText === null ? "none" : MADE_WITH.test(text) ? "made_with" : ABOUT.test(text) ? "about" : meaning.kind === "ambiguous" ? "ambiguous" : "about";
   // A PAGE OR ACCOUNT GIVEN BY ITS LINK (Facebook, Instagram): the request contract reads the words after «من صفحة» and stops at the link's first dot; the link itself is the source
@@ -250,7 +256,7 @@ export function buildAsk(request: unknown, answer: unknown, requestedAtMs: numbe
     parentKind: c.parentKind,
     count,
     source: { kind: sourceKind, text: link ?? c.source.text },
-    topic: { text: topicText, relation },
+    topic: { text: topicText, relation, ...(alternatives.length > 0 ? { alternatives } : {}) },
     period: conditions && conditions.period.status === "resolved" ? periodOf(conditions.period.from, conditions.period.to) : conditions && conditions.period.status === "clarify" ? null : c.period ? latestChangesOf(String(request ?? "").replace(/\s+/g, " ")).map((ch) => periodOfRequest(ch, requestedAtMs)).find((p): p is AskPeriod => p !== null) ?? periodOfRequest(text, requestedAtMs) : yearPeriod,
     country: conditions && conditions.country.status === "resolved" ? conditions.country.code : conditions && (conditions.country.status === "many" || conditions.country.status === "any") ? null : c.country ? countryNamedIn(text) : null,
     language,

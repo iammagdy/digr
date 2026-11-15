@@ -126,12 +126,35 @@ async function answerWithoutMission(input: AgentChatTurnInput, type: Exclude<Cha
     const mentionsScope = decision.reply !== null && decision.reply.includes("جمع البيانات");
     if (decision.reply === null || (isFullResearchMethodologyAsk(input.message) && !mentionsScope)) contentAr = methodologyReplyAr({ text: input.message, delivered });
     else contentAr = `${isFullResearchMethodologyAsk(input.message) && !decision.reply.includes("وليس منهجية بحث كاملة") ? FULL_RESEARCH_PREFIX_AR : ""}${decision.reply} ${methodologyTailAr(delivered)}`;
-  } else if (decision.reply !== null) contentAr = decision.reply;
+  } else if (decision.reply !== null) contentAr = (await noPlanReplyAr(sb, input, decision.reply)) ?? decision.reply;
   else if (type === "greeting_or_small_talk") contentAr = greetingReplyAr(input.message);
   else if (type === "service_question") contentAr = serviceAnswerAr(input.message);
   else contentAr = otherReplyAr();
   await writeAnswer(input, contentAr);
   return { ok: false, contentAr, status: 200 };
+}
+
+/**
+ * P0 (15 Nov 2026, msn_84d0f3738c87d5ed3aee): the customer asked «هل بحثت فقط داخل حساب @SaudiMOH …؟ وما المصادر التي بحثت فيها بالضبط؟» after the request had ENDED with no plan, and the model answered that the details were «مكتوبة في خطة الطلب
+ * المعروضة أمامك»: no plan existed. A reply that speaks of a plan, in a conversation whose latest request has NO plan, is replaced by the facts code holds: there is no plan, nothing was charged, and the request's own end sentence (which now says
+ * what was searched and what it gave, searchScope.ts). Read only; on any doubt the model's reply stays.
+ */
+const PLAN_WORD = /خط(?:ة|ه|ت|تك|تي)(?![ا-ي])/;
+const PLANNED_STATUSES = new Set(["plan_ready", "approved", "executing", "completed"]);
+const ENDED_STATUSES = new Set(["unserved", "failed", "cancelled"]);
+export const NO_PLAN_YET_AR = "لم تُجهَّز خطة لطلبك بعد؛ ستظهر في بطاقة الطلب حين تجهز بشروطها وسعرها، ولن يُخصم شيء قبل موافقتك.";
+export const noPlanEndedAr = (summary: string): string => `لم تُجهَّز خطة لطلبك الأخير في هذه المحادثة، ولم يُخصم منك شيء.${summary.trim() !== "" ? ` ${summary.trim()}` : ""}`;
+async function noPlanReplyAr(sb: any, input: AgentChatTurnInput, reply: string): Promise<string | null> {
+  if (!PLAN_WORD.test(reply)) return null;
+  try {
+    const id = await latestMissionOfConversation(sb, input.conversationId);
+    if (!id) return null;
+    const { data } = await sb.from(MISSION_TABLE).select("id,user_id,status,summary_ar,plan").eq("id", id).maybeSingle();
+    if (!data || data.user_id !== input.userId) return null;
+    const status = String(data.status ?? "");
+    if (PLANNED_STATUSES.has(status) || (data.plan !== null && data.plan !== undefined)) return null;
+    return ENDED_STATUSES.has(status) ? noPlanEndedAr(String(data.summary_ar ?? "")) : NO_PLAN_YET_AR;
+  } catch { return null; }
 }
 
 /**

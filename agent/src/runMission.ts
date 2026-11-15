@@ -71,6 +71,7 @@ import { pageNotFoundAr } from "../../src/lib/agentMission/foundation/namedShort
 import { YOUTUBE_CHANNEL_DECLINED_AR, YOUTUBE_CHANNEL_UNIDENTIFIED_AR, youtubeChannelOf } from "../../src/lib/agentMission/foundation/youtubeChannel";
 import { INSTAGRAM_ACCOUNT_DECLINED_AR, instagramAccountOf } from "../../src/lib/agentMission/foundation/instagramAccount";
 import { SOURCE_CANCELLED_AR, SOURCE_DECLINED_AR, sourceAnswerOf } from "../../src/lib/agentMission/foundation/sourceScope";
+import { searchScopeEndAr } from "../../src/lib/agentMission/foundation/searchScope";
 import { buildAsk } from "../../src/lib/agentMission/foundation/ask";
 import { BUDGET_QUESTION_AR, BUDGET_TOO_SMALL_AR, choiceAnswerOf, type Choices } from "../../src/lib/agentMission/foundation/countChoice";
 import { parseChannels, understandChannelsPrompt, UNDERSTAND_SYSTEM } from "../../src/lib/agentMission/foundation/understand";
@@ -782,7 +783,8 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
       await tell(deps, mission, null, "failed", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false, cause: "internal" });
     } else {
       // ROUND 30: no usable Instagram account was given: the honest sentence says what the source can do (an account's posts), not the general «our sources do not serve this»
-      const own = compiled?.kind === "cannot" ? (compiled.reason === "instagram_account_missing" ? INSTAGRAM_ACCOUNT_DECLINED_AR : compiled.reason === "source_missing" || compiled.reason === "source_unenforceable" ? SOURCE_DECLINED_AR : compiled.reason === "youtube_channel_missing" ? YOUTUBE_CHANNEL_DECLINED_AR : compiled.reason === "youtube_channel_unidentified" ? YOUTUBE_CHANNEL_UNIDENTIFIED_AR : null) : null;
+      // P0 (15 Nov 2026): a search that gave no plan says WHAT was searched and what it gave (searchScope.ts), never «we searched the available sources and nothing matches»
+      const own = compiled?.kind === "cannot" ? (compiled.reason === "no_rows" && compiled.scope ? searchScopeEndAr(compiled.scope) : compiled.reason === "instagram_account_missing" ? INSTAGRAM_ACCOUNT_DECLINED_AR : compiled.reason === "source_missing" || compiled.reason === "source_unenforceable" ? SOURCE_DECLINED_AR : compiled.reason === "youtube_channel_missing" ? YOUTUBE_CHANNEL_DECLINED_AR : compiled.reason === "youtube_channel_unidentified" ? YOUTUBE_CHANNEL_UNIDENTIFIED_AR : null) : null;
       const sentence = own ?? refusalSentenceAr(verdict.cls as "unsupported" | "empty_source");
       await store.updateMission(mission.id, { ...base, status: "unserved", summary_ar: sentence });
       await store.addEvent(mission.id, { kind: "result", message_ar: sentence });

@@ -3,7 +3,8 @@ import { CLARIFY_QUESTION_AR } from "../../src/lib/agentMission/semantic/conditi
 import { isOccurrenceAnswer, isRecurringEvent, occurrenceChoiceOf, OCCURRENCE_OPTIONS_AR, OCCURRENCE_QUESTION_AR, OCCURRENCE_YEAR_QUESTION_AR, type Occurrence } from "../../src/lib/agentMission/foundation/occurrence";
 import { checkChannelsAgainstWords } from "../../src/lib/agentMission/foundation/understand";
 import { buildShapeDigest } from "../../src/lib/modelPlanner/digest";
-import { carriedBy, chooseCard, compilePlan, parentInputs, rankedCards, rankedPoolOf, sourceUnenforced, COMPILED_PLATFORMS, type CompileResult } from "../../src/lib/agentMission/foundation/compilePlan";
+import { carriedBy, chooseCard, compilePlan, parentInputs, rankedCards, rankedPoolOf, relaxedInputsOf, sourceUnenforced, COMPILED_PLATFORMS, type CompileResult, type SearchStrategy } from "../../src/lib/agentMission/foundation/compilePlan";
+import { searchScopeOf, type SearchScope } from "../../src/lib/agentMission/foundation/searchScope";
 import { channelAnswerOf, channelEvidenceOf, youtubeChannelChoiceQuestionAr } from "../../src/lib/agentMission/foundation/discovery/channelEvidence";
 import { confirmFieldsOnRows, fieldNotesAr, recoverFields, sheetWantsOf, type FieldReport } from "../../src/lib/agentMission/foundation/discovery/fieldRecovery";
 import { mediaMarkOf, mediaNotesAr, reelsBasisOf, reelsCandidates, type MediaMark } from "../../src/lib/agentMission/foundation/discovery/media";
@@ -90,7 +91,7 @@ export interface CompiledPlanningDeps {
 }
 export type CompiledPlanning =
   | { kind: "plan"; plan: PricedPlan; ask: Ask; result: Extract<CompileResult, { ok: true }>; reads: { pool: number; exposure: number }; discovery?: DiscoveryMark }
-  | { kind: "cannot"; ask: Ask; reason: string; reads: { pool: number; exposure: number } }
+  | { kind: "cannot"; ask: Ask; reason: string; reads: { pool: number; exposure: number }; /** P0 (15 Nov 2026): what the parent search actually tested and found (no plan could be made from it): said to the customer instead of «nothing matches». */ scope?: SearchScope }
   /**
    * LIVE ROUND 7: no video of the pool read (two queries) is about the topic; the customer is asked before approval how to go on. Nothing is priced or held. PR 3, decision 7.5 (`why: "named_shortfall"`): the named Facebook page has fewer
    * deliverable posts in the pool than asked.
@@ -340,6 +341,8 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   const measuredRows = (c: ToolCard, page: unknown): ToolCard => { if (!c.derived) return c; const n = mapPage(c, page).length; return n >= 1 ? { ...c, page: { ...c.page, observedRowsPerPage: n } } : c; };
 
   /** THE EXPOSURE CHECK and the compile, shared by every platform (decision 7.3): the first comments page of the ranked parents, in order, until enough parents with comments are found; a read the gateway refuses leaves the parent unchecked. */
+  // P0 (15 Nov 2026): the parent search strategies read at planning, in order, with the rows each answered (at most SEARCH_STRATEGIES_MAX: the precise query and one relaxed query when the first answered nothing)
+  const searched: Array<{ strategy: SearchStrategy; rows: number }> = [];
   const finish = async (poolCard: ToolCard, params: Record<string, unknown>, pages: Array<{ callId: string; page: unknown; card?: ToolCard }>, extra: { counters?: ReadonlyMap<string, number>; channels?: ReadonlyArray<{ id: string; title?: string }>; customerChannel?: { display: string | null } } = {}): Promise<CompiledPlanning> => {
     const exposure = new Map<string, { callId: string | null; page: unknown | null; failed: boolean }>();
     const repliesCards = ask.replies !== "none" ? cardsFor(ask.platform!, "comment.replies", { catalogOnly }) : [];
@@ -376,14 +379,21 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
       // NOV 6 2026: rows were read and none names the topic: the customer decides before approval, on every platform (the TikTok second query is above); nothing priced or held
       return { kind: "question", ask, why: "no_about", question: noAboutQuestionAr(ask.topic.text ?? "", NO_ABOUT_NOUN[ask.platform!], result.tagOnly > 0), options: [NO_ABOUT_OPTIONS_AR.useAsIs, NO_ABOUT_OPTIONS_AR.change, NO_ABOUT_OPTIONS_AR.cancel], reads };
     }
-    if (!result.ok) return { kind: "cannot", ask, reason: result.reason, reads };
+    if (!result.ok) return { kind: "cannot", ask, reason: result.reason, reads, ...(result.reason === "no_rows" && searched.length > 0 ? { scope: searchScopeOf(ask, poolCard, pages, searched) } : {}) };
     // THE BUDGET IS A HARD CEILING on the hold (Part B): the largest version that fits, priced by the same price function; none fits: the plan is not made and the reason is the budget
     if (ask.edits.budget !== undefined) {
       const fit = fitToBudget(compileWith, ask, ask.edits.budget, need, ask.parentKind === "videos" ? "فيديو" : ask.parentKind === "tweets" ? "تغريدة" : "منشور");
       if (!fit.ok) return { kind: "cannot", ask, reason: "budget_too_small", reads };
       return { kind: "plan", plan: fit.plan, ask: fit.ask, result: fit.result, reads };
     }
-    return { kind: "plan", plan: result.plan, ask, result, reads };
+    return { kind: "plan", plan: withStrategyNote(result.plan), ask, result, reads };
+  };
+  /** P0 (15 Nov 2026): the plan says when its items came from the relaxed strategy (the exact words answered nothing). */
+  const withStrategyNote = (p: PricedPlan): PricedPlan => {
+    const relaxedUsed = searched.find((x) => x.strategy !== "exact" && x.rows > 0);
+    if (!relaxedUsed) return p;
+    const how = relaxedUsed.strategy === "words" ? "بكلمات الموضوع في أي ترتيب" : "في منشورات الحساب نفسه داخل الفترة، ثم فحصنا كل منشور بالموضوع";
+    return { ...p, notes_ar: [...(p.notes_ar ?? []), `البحث بالعبارات كما كتبتها لم يُرجع نتائج، فبحثنا ${how}؛ ولم يُختر إلا ما يطابق شروطك.`] };
   };
 
   // YOUTUBE: the official channels are resolved first (a channel search by name), then each is read INSIDE (the channel's own videos about the topic): a plain search has no channel input, which is why M18 and M20 once took a video of another channel
@@ -431,7 +441,19 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
     for (const k of card.page.cursor ?? []) { if (v === null || v === undefined || typeof v !== "object") return null; v = (v as Record<string, unknown>)[k]; }
     return typeof v === "string" && v !== "" ? v : typeof v === "number" ? String(v) : null;
   };
-  if (aboutQuery && card.inputs.query && !hasAbout()) {
+  // P0 (15 Nov 2026, msn_84d0f3738c87d5ed3aee and two more): THE FIRST PAGE OF A SEARCH THAT TAKES OPERATORS ANSWERED NO ROW. Its cursor is not followed (production: an empty page's cursor answered 0 rows again, a paid read each time);
+  // the one more read the gateway allows for this source goes to ONE relaxed strategy that keeps the source, the period and every other written condition (relaxedInputsOf), or to nothing when none is safe
+  searched.push({ strategy: "exact", rows: mapPage(card, first.page).length });
+  const firstEmpty = mapPage(card, first.page).length === 0 && Boolean(card.inputs.query?.operators);
+  const relaxed = firstEmpty && !aboutQuery ? relaxedInputsOf(card, cardAsk) : null;
+  if (relaxed) {
+    const r = await read(card.endpointId, relaxed.params, card);
+    reads.pool += 1;
+    // the plan keeps the params a fresh read at execution may use: the relaxed WORDS query still carries every topic word; the source's own items do not, so the precise query stays (a fresh read never collects off-topic items)
+    if (!("failed" in r)) { pages.push({ callId: r.callId, page: r.page }); track(card, r); searched.push({ strategy: relaxed.strategy, rows: mapPage(card, r.page).length }); if (relaxed.strategy === "words") params = relaxed.params; }
+  } else if (firstEmpty && !aboutQuery) {
+    // no safe relaxed strategy: the request ends with the scope that was searched (never a page of the same empty query)
+  } else if (aboutQuery && card.inputs.query && !hasAbout()) {
     const more = await read(card.endpointId, { ...params, [card.inputs.query.field]: aboutQuery }, card);
     reads.pool += 1;
     if (!("failed" in more)) { pages.push({ callId: more.callId, page: more.page }); track(card, more); }
