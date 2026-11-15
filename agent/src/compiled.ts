@@ -5,7 +5,7 @@ import { checkChannelsAgainstWords } from "../../src/lib/agentMission/foundation
 import { buildShapeDigest } from "../../src/lib/modelPlanner/digest";
 import { carriedBy, chooseCard, compilePlan, coreExpandedInputsOf, expandedInputsOf, operatorIdOf, parentInputs, rankedCards, rankedPoolOf, relaxedInputsOf, researchRelevanceOf, researchTopicOf, sourceUnenforced, COMPILED_PLATFORMS, type CompileResult, type SearchStrategy } from "../../src/lib/agentMission/foundation/compilePlan";
 import type { PlanningJudge, TopicVariants } from "./researchJudge";
-import type { ResearchSpec } from "./researchSpec";
+import { saveJudged, type ResearchSpec } from "./researchSpec";
 import { searchScopeOf, type SearchScope } from "../../src/lib/agentMission/foundation/searchScope";
 import { channelAnswerOf, channelEvidenceOf, youtubeChannelChoiceQuestionAr } from "../../src/lib/agentMission/foundation/discovery/channelEvidence";
 import { confirmFieldsOnRows, fieldNotesAr, recoverFields, sheetWantsOf, type FieldReport } from "../../src/lib/agentMission/foundation/discovery/fieldRecovery";
@@ -395,6 +395,8 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
       const subject = researchRelevanceOf(ask, ["text"], spec?.by === "model" ? spec.criterion : null)?.subject_ar ?? ask.topic.text ?? "";
       const said = candidatesRead.length > 0 ? await deps.judge({ subject, rows: candidatesRead.map((r) => ({ id: String(r.id), text: String(r.text ?? "") })), ...(spec ? { spec } : {}) }).catch(() => null) : null;
       if (said) { cost.usd += Math.max(0, Number(said.costUsd) || 0); if (said.verdicts.size > 0) judged = said.verdicts; }
+      // the verdicts are kept with the spec they were given against: execution reuses them for the same rows (one verdict per row per spec)
+      if (said && said.verdicts.size > 0 && spec && (deps.store as Partial<Pick<AgentStore, "putFile">>).putFile) await saveJudged(deps.store as AgentStore, deps.mission.id, spec.sig, said.verdicts).catch(() => undefined);
       // the planning judgment as the admin reads it (internal event, counts only): how many rows were judged and how many were about the request
       if (said && said.verdicts.size > 0) await (deps.store as Partial<Pick<AgentStore, "addEvent">>).addEvent?.call(deps.store, deps.mission.id, { kind: "call", message_ar: "قياس داخلي: حكم الصلة على عينة التخطيط.", counts: { jdg_phase: 0, jdg_rows: said.verdicts.size, jdg_yes: [...said.verdicts.values()].filter(Boolean).length } }).catch(() => undefined);
     }

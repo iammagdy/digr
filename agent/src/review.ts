@@ -172,7 +172,7 @@ export async function readReviewState(store: AgentStore, missionId: string): Pro
   }
 }
 
-export function createReviewer(deps: { call: ReviewCall; store: AgentStore; missionId: string; requestText: string; /** P0: the mission's research spec; every batch then carries the customer's own words. Absent: the request text alone, as before. */ spec?: ResearchSpec | null; answer?: string | null; budgetUsd: number; /** The most the review may reach when rows the request needs are still waiting (default: the budget itself). */ ceilingUsd?: number; model?: string; log?: (line: string) => void }): Reviewer {
+export function createReviewer(deps: { call: ReviewCall; store: AgentStore; missionId: string; requestText: string; /** P0: the mission's research spec; every batch then carries the customer's own words. Absent: the request text alone, as before. */ spec?: ResearchSpec | null; answer?: string | null; /** P0: the verdicts the planning judgment gave against the same spec (row id -> about the request), reused as they are. */ known?: ReadonlyMap<string, boolean>; budgetUsd: number; /** The most the review may reach when rows the request needs are still waiting (default: the budget itself). */ ceilingUsd?: number; model?: string; log?: (line: string) => void }): Reviewer {
   const model = deps.model ?? MODEL_HAIKU;
   let state: ReviewState | null = null;
   let seq = 0;
@@ -190,8 +190,10 @@ export function createReviewer(deps: { call: ReviewCall; store: AgentStore; miss
   return {
     budgetUsd: deps.budgetUsd,
     state: load,
-    async review({ subject, rows }) {
+    async review({ subject, rows: asked }) {
       const out = new Map<string, boolean>();
+      // ONE VERDICT PER ROW PER SPEC (P0, msn_88a5d0ec135b3cbd962d): a row the planning judgment already decided against the same spec keeps that verdict (the customer approved the plan it built); only the others are asked
+      const rows = deps.known ? asked.filter((r) => { const v = deps.known!.get(r.id); if (v === undefined) return true; out.set(r.id, v); return false; }) : asked;
       const s = await load();
       s.stop = null;
       const ceiling = Math.max(deps.budgetUsd, deps.ceilingUsd ?? deps.budgetUsd);

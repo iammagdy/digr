@@ -5,7 +5,7 @@ import { planByCompiler } from "../agent/src/compiled";
 import { RAW_PATH } from "../agent/src/gateway";
 import { anthropicReviewCall, createReviewer, reviewPrompt, type ReviewCall } from "../agent/src/review";
 import { planningJudge, topicVariants } from "../agent/src/researchJudge";
-import { checkedSpecAnswer, customerAlternativesCount, customerWordsOf, executionSpecFor, readResearchSpec, researchSpecFor, RESEARCH_SPEC_FILE, specBlock, specSignature, SPEC_SYSTEM, type ResearchSpec } from "../agent/src/researchSpec";
+import { checkedSpecAnswer, customerAlternativesCount, customerWordsOf, executionSpecFor, readJudged, readResearchSpec, saveJudged, researchSpecFor, RESEARCH_SPEC_FILE, specBlock, specSignature, SPEC_SYSTEM, type ResearchSpec } from "../agent/src/researchSpec";
 import { buildMethodology, periodLimitLineAr, topicRelationLinesOf, type MissionFacts } from "../agent/src/methodology";
 import { customerWordsFromPlan, customerWordsToStore, CUSTOMER_WORDS_MAX_TURNS, splitCustomerWords } from "../src/lib/agentMission/customerWords";
 import { criterionNoteAr } from "../src/lib/agentMission/foundation/compilePlan";
@@ -236,6 +236,8 @@ describe("planning asks for the spec once and uses it everywhere", () => {
     expect(parent.relevance?.judge).toBe("model");
     // the card states the criterion before approval
     expect(r.plan.notes_ar).toContain(criterionNoteAr(GOOD.criterion));
+    // the planning verdicts are kept with the spec they were given against
+    expect([...(await readJudged(store, FIRST.id, spec.sig))]).toEqual([["9100000000000000001", true], ["9100000000000000002", false]]);
     // only the judged-relevant tweet is a planned sample (the minister's tour is not)
     expect((parent.pinned_rows ?? []).map((x: Record<string, unknown>) => String(x.id))).toEqual(["9100000000000000001"]);
     expect((r as { llmCostUsd?: number }).llmCostUsd).toBeCloseTo(0.0005 + 0.0001 + 0.0002, 8);
@@ -323,6 +325,31 @@ describe("independent review findings (fixed)", () => {
   });
   it("F5: the card states the criterion before approval (compiled plans had no «المقصود» line)", () => {
     expect(criterionNoteAr(`${GOOD.criterion}.`)).toBe(`المقصود بموضوعك كما فهمناه من كلماتك: ${GOOD.criterion}. راجعه قبل الاعتماد، وإن لم يطابق ما تقصده فعدّل طلبك.`);
+  });
+});
+
+describe("one verdict per row per spec (live msn_88a5d0ec135b3cbd962d: planning accepted the tweet, execution rejected the same row)", () => {
+  const spec: ResearchSpec = { v: 1, sig: "sig-1", customerWords: [CRITICAL], earlierWords: [], criterion: GOOD.criterion, anyOf: GOOD.any_of, notRelevant: GOOD.not_relevant, by: "model" };
+  it("execution reuses the planning verdict for the same row and asks the model only about rows planning never saw", async () => {
+    const asked: string[] = [];
+    const call = (async (i: { user: string }) => { asked.push(i.user); return { text: "[0]", usage: { input_tokens: 1, output_tokens: 1 } }; }) as unknown as ReviewCall;
+    const store = createMemoryStore();
+    await saveJudged(store, "m3", spec.sig, new Map([["1466135018154205187", true]]));
+    const known = await readJudged(store, "m3", spec.sig);
+    const got = await createReviewer({ call, store, missionId: "m3", requestText: "r", spec, known, budgetUsd: 1 }).review({ subject: spec.criterion, rows: [{ id: "1466135018154205187", text: "تم رصد المتحور في المملكة … وأن نحذر من الشائعات." }, { id: "2", text: "تغريدة جديدة" }] });
+    expect(got.get("1466135018154205187")).toBe(true);
+    expect(got.get("2")).toBe(false);
+    expect(asked).toHaveLength(1);
+    expect(asked[0]).not.toContain("تم رصد المتحور");
+  });
+  it("verdicts of another spec are never reused; later planning runs add to the same spec's verdicts", async () => {
+    const store = createMemoryStore();
+    await saveJudged(store, "m4", "sig-1", new Map([["a", true]]));
+    await saveJudged(store, "m4", "sig-1", new Map([["b", false]]));
+    expect([...(await readJudged(store, "m4", "sig-1"))]).toEqual([["a", true], ["b", false]]);
+    expect((await readJudged(store, "m4", "sig-2")).size).toBe(0);
+    await saveJudged(store, "m4", "sig-2", new Map([["c", true]]));
+    expect([...(await readJudged(store, "m4", "sig-2"))]).toEqual([["c", true]]);
   });
 });
 

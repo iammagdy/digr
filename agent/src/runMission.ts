@@ -21,7 +21,7 @@ import { classifyNoCardEnd, refusalSentenceAr } from "../../src/lib/agentMission
 import { parentCountsOf, parentsBelowShare } from "../../src/lib/agentMission/parents";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
 import { planningJudge, topicVariants } from "./researchJudge";
-import { executionSpecFor, researchSpecFor, type ResearchSpec } from "./researchSpec";
+import { executionSpecFor, readJudged, researchSpecFor, type ResearchSpec } from "./researchSpec";
 import type { StoredCustomerWords } from "../../src/lib/agentMission/customerWords";
 import { ensureOwned, isOwnershipError } from "./ownership";
 import { compensateFreeRerun } from "../../src/lib/agentMission/freeRerun";
@@ -914,7 +914,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   // THE REVIEW of uncertain rows: a small model request per batch, within 20% of the mission's revenue (rows beyond it are not delivered and not charged); its tokens and cost are counted from the API's own answer
   const reviewBudgetUsd = plan.price.reviewBudgetUsd ?? reviewBudgetUsdFor(plan.price.maxChargePoints);
   const researchSpec = deps.reviewCall ? await executionResearchSpec(deps, store, mission, plan).catch(() => null) : null;
-  const reviewer = deps.reviewCall ? createReviewer({ call: deps.reviewCall, store, missionId: mission.id, requestText: `${mission.request_text}${mission.answer_text ? ` — ${mission.answer_text}` : ""}`, ...(researchSpec ? { spec: researchSpec, answer: mission.answer_text } : {}), budgetUsd: reviewBudgetUsd, ceilingUsd: reviewCeilingUsdFor(reserve), log: deps.log }) : undefined;
+  const reviewer = deps.reviewCall ? createReviewer({ call: deps.reviewCall, store, missionId: mission.id, requestText: `${mission.request_text}${mission.answer_text ? ` — ${mission.answer_text}` : ""}`, ...(researchSpec ? { spec: researchSpec, answer: mission.answer_text, known: await readJudged(store, mission.id, researchSpec.sig) } : {}), budgetUsd: reviewBudgetUsd, ceilingUsd: reviewCeilingUsdFor(reserve), log: deps.log }) : undefined;
   const reviewBefore = await readReviewState(store, mission.id);
   // THE ONE ITEM STORE: every item the engine or the model saves goes through it; a resumed mission continues from its log
   const items = await ItemStore.open(store, mission.id, { legacyStages: plan.stages.map((s) => s.key) });

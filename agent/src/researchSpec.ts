@@ -245,3 +245,24 @@ export function specBlock(spec: ResearchSpec, answer: string | null | undefined)
   }
   return lines.join("\n");
 }
+
+/**
+ * P0 (15 Nov 2026, msn_88a5d0ec135b3cbd962d): ONE VERDICT PER ROW PER SPEC. Live: the planning judgment accepted a borderline tweet (the Omicron variant, ending «…وأن نحذر من الشائعات»), the customer approved a plan of that one tweet, and the
+ * execution review asked the model again about the same row against the same spec and rejected it: nothing was delivered. Two independent samples of a model disagree on borderline rows, and claude-haiku-5-5 refuses a
+ * non-default temperature, so the agreement is made by the architecture: the planning verdicts are stored with the spec's signature, and execution reuses them for the same rows (only rows planning never saw are asked).
+ */
+export const JUDGED_FILE = "research_judged.json";
+export async function saveJudged(store: AgentStore, missionId: string, sig: string, verdicts: ReadonlyMap<string, boolean>): Promise<void> {
+  let kept: Record<string, boolean> = {};
+  try { const raw = await store.getFile(missionId, JUDGED_FILE); const o = raw ? (JSON.parse(raw) as { sig?: unknown; verdicts?: unknown }) : null; if (o && o.sig === sig && o.verdicts && typeof o.verdicts === "object") kept = o.verdicts as Record<string, boolean>; } catch { kept = {}; }
+  for (const [id, v] of verdicts) kept[id] = v === true;
+  await store.putFile(missionId, JUDGED_FILE, JSON.stringify({ sig, verdicts: kept }), "application/json").catch(() => undefined);
+}
+export async function readJudged(store: AgentStore, missionId: string, sig: string): Promise<Map<string, boolean>> {
+  try {
+    const raw = await store.getFile(missionId, JUDGED_FILE);
+    const o = raw ? (JSON.parse(raw) as { sig?: unknown; verdicts?: unknown }) : null;
+    if (!o || o.sig !== sig || !o.verdicts || typeof o.verdicts !== "object") return new Map();
+    return new Map(Object.entries(o.verdicts as Record<string, unknown>).filter(([, v]) => typeof v === "boolean") as Array<[string, boolean]>);
+  } catch { return new Map(); }
+}
