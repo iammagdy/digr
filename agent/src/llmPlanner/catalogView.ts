@@ -65,12 +65,17 @@ export function reliabilityOf(e: CatalogEndpoint): number {
 export const callUsdOf = (e: CatalogEndpoint): number => Math.max(0, Number(e.cost?.usd ?? 0)) || 0.01;
 
 /** The candidates of one capability (and, when it has few, the platform's other tools), best first, at most `max`. */
-export function candidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8): CatalogEndpoint[] {
+export function candidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8, options: { alsoSearch?: boolean } = {}): CatalogEndpoint[] {
   const usable = catalog.endpoints.filter((e) => e.platform === platform && usableEndpoint(e, catalog, access));
   const exact = usable.filter((e) => capabilityOf(e) === capability);
   const rank = (a: CatalogEndpoint, b: CatalogEndpoint): number => reliabilityOf(b) - reliabilityOf(a) || callUsdOf(a) - callUsdOf(b);
   const chosen = [...exact].sort(rank).slice(0, max);
-  if (chosen.length >= 3) return chosen;
+  if (chosen.length >= 3 && !options.alsoSearch) return chosen;
+  // a step with a named source AND a topic: the platform's search tools are candidates too (a search whose query names the source and the topic may carry both, where the source's listing carries no topic)
+  if (options.alsoSearch) {
+    const search = usable.filter((e) => !chosen.includes(e) && /\.search\.(posts|videos)$/.test(capabilityOf(e))).sort(rank).slice(0, 4);
+    return [...chosen.slice(0, max - search.length), ...search];
+  }
   // a capability the catalog names differently (or did not name): the same platform's tools whose capability shares the last word (posts, comments, replies …)
   const last = capability.split(".").pop() ?? "";
   const near = usable.filter((e) => !chosen.includes(e) && last !== "" && capabilityOf(e).split(".").pop() === last).sort(rank);
