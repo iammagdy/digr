@@ -49,6 +49,8 @@ export interface StageRecord {
 export interface MissionFacts {
   /** The customer's request, in their own words. */
   requestText?: string | null;
+  /** P0 (15 Nov 2026): the customer's own messages (the research spec's), when stored: the item «طلبك (بكلماتك)» shows THEM, and the system's one-line summary is shown as the summary it is. */
+  customerWords?: ReadonlyArray<string> | null;
   /** The moment the file is built (the delivery). */
   deliveredAt?: Date;
   stages?: Record<string, StageRecord>;
@@ -69,14 +71,14 @@ export function alternativeRoutesOf(streams: ReadonlyMap<string, { pages: number
   return out;
 }
 
-export function missionFactsOf(input: { requestText: string | null | undefined; plan: PricedPlan; snap: ItemSnapshot; reviewStop: "budget" | "failed" | null; deliveredAt?: Date }): MissionFacts {
+export function missionFactsOf(input: { requestText: string | null | undefined; customerWords?: ReadonlyArray<string> | null; plan: PricedPlan; snap: ItemSnapshot; reviewStop: "budget" | "failed" | null; deliveredAt?: Date }): MissionFacts {
   const stages: Record<string, StageRecord> = {};
   for (const s of input.plan.stages) {
     const c = input.snap.counts(s.key);
     const routes = alternativeRoutesOf(input.snap.stage(s.key).streams);
     stages[s.key] = { found: c.found, duplicates: c.duplicates, accepted: c.accepted, excluded: c.excluded, pending: c.pending, unchecked: c.unchecked, acceptedByRule: c.acceptedByRule, acceptedByModel: c.acceptedByModel, excludedByReason: { ...c.excludedByReason } as Record<string, number>, stop: input.snap.stage(s.key).stop, ...(Object.keys(routes).length > 0 ? { routes } : {}) };
   }
-  return { requestText: input.requestText ?? null, deliveredAt: input.deliveredAt ?? new Date(), stages, reviewStop: input.reviewStop };
+  return { requestText: input.requestText ?? null, ...(input.customerWords && input.customerWords.length > 0 ? { customerWords: [...input.customerWords] } : {}), deliveredAt: input.deliveredAt ?? new Date(), stages, reviewStop: input.reviewStop };
 }
 
 /** The sheets of the file as the workbook lays them out (only what the dates need). */
@@ -218,13 +220,16 @@ function requestedSpanOf(f: StageFilter, deliveredAt: Date): { ms: number; wordi
  * («طلبت آخر ٧ أيام، وغطّت النتائج نحو ١٦ ساعة فقط لأن العدد المطلوب اكتمل من أحدث النتائج.»). It never changes, blocks or refuses a delivery. Null when the coverage is not that short, when the dates are
  * only approximate (a relative time such as «قبل ٤ أيام» has no exact span), or when the period or the dates are not recorded.
  */
-export function periodLimitLineAr(input: { filter: StageFilter | undefined; covered: Covered | null; deliveredAt: Date; targetReached: boolean }): string | null {
+export function periodLimitLineAr(input: { filter: StageFilter | undefined; covered: Covered | null; deliveredAt: Date; targetReached: boolean; /** P0: how many items were delivered (one item covers no span). */ delivered?: number; planned?: number }): string | null {
   const { filter, covered } = input;
   if (!filter || !isEnabled(filter) || filter.kind !== "period" || !covered || covered.approx) return null;
   const asked = requestedSpanOf(filter, input.deliveredAt);
   if (!asked) return null;
   const got = covered.dayOnly ? (covered.toMs - covered.fromMs) + DAY_MS : covered.toMs - covered.fromMs;
   if (!(got * 2 < asked.ms)) return null;
+  // P0 (15 Nov 2026, msn_6d86fb6f698bb8ca7320): ONE delivered tweet of a five-year request was told «وغطّت النتائج أقل من ساعة فقط», as if the period had been cut short. A single item, or items of one moment, cover no span: the line says
+  // so plainly (why fewer were delivered is the shortfall line's, beside it)
+  if (input.delivered === 1 || got <= 0) return `طلبت ${asked.wording}، و${input.delivered === 1 ? "سُلّمت نتيجة واحدة فقط" : "وقعت النتائج المسلّمة كلها في وقت واحد"}.`;
   let said: string;
   if (covered.dayOnly) said = daysObjectAr(Math.max(1, Math.round(got / DAY_MS)));
   else if (got < HOUR_MS) said = "أقل من ساعة";
@@ -261,7 +266,9 @@ export function topicRelationLinesOf(stages: ReadonlyArray<PricedStage>, rowsByS
     out.push(`${head}الموضوع مذكور في الوسوم فقط: ${countAr(tags, noun)}`);
     if (none > 0) out.push(`${head}لا يذكر الموضوع: ${countAr(none, noun)}`);
     if (unknown > 0) out.push(`${head}تصنيف غير متاح: ${countAr(unknown, noun)}`);
-    out.push(`${head}هذه علامات في عمود «علاقة النص بالموضوع» فقط؛ لم يُحذف بها شيء من النتائج، وسُلّمت كلها.`);
+    // P0 (15 Nov 2026, msn_6d86fb6f698bb8ca7320): on a stage whose items were JUDGED against the request, «لم يُحذف بها شيء … وسُلّمت كلها» contradicted the counts table, which lists the items left out as not about the request. The marks
+    // describe the delivered items; the exclusions are the judgment's, and are counted where the counts are
+    out.push(s.relevance ? `${head}هذه العلامات تصف النتائج المسلّمة فقط؛ أما ما استُبعد لأنه لا يتناول طلبك فعدده في جدول الأعداد.` : `${head}هذه علامات في عمود «علاقة النص بالموضوع» فقط؛ لم يُحذف بها شيء من النتائج، وسُلّمت كلها.`);
   }
   return out;
 }
@@ -286,7 +293,12 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
 
   // 1. the request, in the customer's own words
   const request = oneLine(String(facts.requestText ?? "")).slice(0, 1500);
-  items.push({ label: "طلبك (بكلماتك)", values: [request || NOT_RECORDED_AR] });
+  const own = (facts.customerWords ?? []).map((w) => oneLine(w)).filter((w) => w !== "");
+  if (own.length > 0) {
+    // the customer's own messages, as typed; the one-line summary the plan was built from is labeled as a summary (it is not the customer's words)
+    items.push({ label: "طلبك (بكلماتك)", values: own.map((w) => w.slice(0, 900)) });
+    if (request) items.push({ label: "ملخص الطلب الذي نُفّذ", values: [request] });
+  } else items.push({ label: "طلبك (بكلماتك)", values: [request || NOT_RECORDED_AR] });
 
   // 2. the platforms (or kinds of source) the stages read
   items.push({ label: "المنصات والمصادر المستخدمة", values: orNotRecorded(perStage((s) => sourceLabelAr(s.engine?.endpoint_id ?? s.endpoint_id))) });
@@ -324,6 +336,9 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
       const spec = s.relevance;
       const terms = (spec.terms ?? []).filter(Boolean);
       const about = spec.subject_ar ? ` (المقصود: ${oneLine(spec.subject_ar)})` : "";
+      // P0 (15 Nov 2026, msn_6d86fb6f698bb8ca7320): a research topic is judged by MEANING (`judge: "model"`): every item is reviewed against the request, and an item that only repeats a word is not accepted. The word-rule sentence («تُقبل إذا
+      // ذكر نصها …») described a check that did not run
+      if (spec.judge === "model") return `فُحصت كل نتيجة مقروءة قبل تسليمها بمراجعة آلية لمعناها مقابل طلبك بكلماتك${about}: تُقبل إذا تناولت ما طلبته فعلًا، ولا يكفي أن تذكر كلمة منه؛ وما لم يُراجَع أو لم تُحسم صلته لم يُسلَّم.${counts}`;
       const review = spec.review === false ? " وما لم تحسمه القاعدة لم يُسلَّم." : " وما لم تحسمه القاعدة عُرض على مراجعة آلية، ولم يُسلَّم ما لم يُراجَع.";
       const base = spec.entity
         ? `فُحصت كل جهة مقروءة قبل تسليمها: تُقبل إذا دلّ نصها على القطاع المطلوب${about}.`
@@ -412,7 +427,7 @@ export function buildMethodology(input: { plan: PricedPlan; layouts: ReadonlyArr
   const deliveredAt = facts.deliveredAt ?? new Date();
   for (const s of delivering) {
     const lay = layouts.find((l) => l.stage.key === s.key);
-    const line = periodLimitLineAr({ filter: (s.filters ?? []).find((f) => isEnabled(f) && f.kind === "period"), covered: lay ? coveredOf(lay) : null, deliveredAt, targetReached: facts.stages?.[s.key]?.stop === "target_reached" });
+    const line = periodLimitLineAr({ filter: (s.filters ?? []).find((f) => isEnabled(f) && f.kind === "period"), covered: lay ? coveredOf(lay) : null, deliveredAt, targetReached: facts.stages?.[s.key]?.stop === "target_reached", delivered: (rowsByStage[s.key] ?? []).length, planned: s.planned_rows });
     if (line) limits.push(many ? `«${s.title_ar}»: ${line}` : line);
   }
   if (threads.counterLines.length > 0) items.push({ label: "عدّاد المصدر وما سُلّم", values: threads.counterLines.slice(0, 30) });

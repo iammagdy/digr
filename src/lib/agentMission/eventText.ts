@@ -66,6 +66,7 @@ const INTERNAL_LABEL_AR: Record<(typeof MISSION_INTERNAL_COUNT_KEYS)[number], st
   adm_source_rows: "ما أعطاه المصدر", adm_parent_fixed: "قيم أُصلحت من أصلها", adm_pending: "عناصر بلا حكم", adm_review_failed_calls: "ردود مراجعة غير صالحة", adm_web_firecrawl: "مصدر ويب أول متاح", adm_web_contextdev: "مصدر ويب ثانٍ متاح",
   adm_contract: "ملف صُحّح وصفه تلقائيًا (١ نعم)", adm_r1: "مخالفات قاعدة العدد الواحد", adm_r2: "مخالفات قاعدة بيان كل نقص", adm_r3: "مخالفات قاعدة تعليم التواريخ التقريبية", adm_r4: "مخالفات قاعدة تعبئة العلامات", adm_completed: "ما اكتمل وصفه",
   free_rerun: "تشغيل مجاني لحساب العميل (١ نعم)", free_rerun_hold_grant: "رصيد الحجز الممنوح للتشغيل المجاني", free_rerun_refund: "ما أُعيد للعميل بعد التسوية",
+  spec_by_model: "مواصفة البحث من النموذج (١ نعم، ٠ كلمات العميل وحدها)", spec_any_of: "بدائل الموضوع في المواصفة", spec_not_relevant: "ما لا يدخل في المواصفة", jdg_phase: "المرحلة (٠ تخطيط، ١ تنفيذ)", jdg_rows: "عناصر حُكم على صلتها", jdg_yes: "عناصر حُكم بأنها عن الطلب", source_carried: "معرّف المصدر من مهمة سابقة في المحادثة (١ نعم)",
 };
 
 /** An event the CUSTOMER never sees: the run's measured memory (its counts carry the `mem_` keys). The admin page shows it. */

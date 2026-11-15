@@ -24,6 +24,7 @@ import { loadTregCatalog } from "../treg/catalog";
 import { blockedEndpointReason } from "../treg/blockList";
 import { policyVerdict } from "../treg/dataPolicy";
 import { PENDING_MAX_WAITING } from "../requests/expiry";
+import { customerWordsToStore, splitCustomerWords, type StoredCustomerWords } from "./customerWords";
 
 /**
  * ONE CHAT TURN ANSWERED BY THE AGENT. The customer's request becomes a mission for the signed-in user (or the guest, who must sign up before approving); the worker plans it; the chat card
@@ -304,6 +305,20 @@ async function cancelOpenRequest(input: AgentChatTurnInput, open: OpenRequest): 
 }
 
 /**
+ * P0 (15 Nov 2026): the customer's own messages, exactly as typed, for the mission's card (customerWords.ts): this request's (after the conversation's previous mission card, this one last) and the earlier ones as context. A read that fails stores this message alone.
+ */
+const wordsPlan = (w: StoredCustomerWords): Record<string, string[]> => (w.current.length > 0 ? { customerWords: w.current, ...(w.earlier.length > 0 ? { earlierWords: w.earlier } : {}) } : {});
+async function conversationCustomerWords(sb: any, input: AgentChatTurnInput): Promise<StoredCustomerWords> {
+  const alone: StoredCustomerWords = { current: customerWordsToStore([input.message]), earlier: [] };
+  try {
+    const { data, error } = await sb.from("messages").select("id,role,user_id,content_ar,plan,created_at").eq("conversation_id", input.conversationId).order("created_at", { ascending: false }).limit(24);
+    if (error || !Array.isArray(data)) return alone;
+    const rows = data.filter((m: any) => m && m.id !== input.userMsgId && m.id !== input.assistantMsgId && (m.role === "user" || m.role === "assistant") && (m.user_id === undefined || m.user_id === input.userId)).reverse();
+    return splitCustomerWords([...rows.map((m: any) => ({ role: String(m.role), content: m.role === "user" ? m.content_ar : "", missionCard: m.role === "assistant" && typeof m.plan?.agentMissionId === "string" })), { role: "user", content: input.message }]);
+  } catch { return alone; }
+}
+
+/**
  * The mission the last card of the conversation points at may be replaced (cancelled) only when it is a RESEARCH mission: a review request of a delivered file is never replaced by a new chat request (MONEY PR 7e). A read that fails leaves the mission as it is
  * (the replacement is best effort: the open-missions limit protects either way).
  */
@@ -415,11 +430,13 @@ async function startMission(input: AgentChatTurnInput, requestText: string, extr
   const exclusion = await exclusionForCard(input, `${requestText} ${input.message}`);
   // P0: «without repeating what was delivered»: the conversation's earlier missions go on the card (server-written); the worker verifies and enforces (never applied from the customer's words alone)
   const priorDelivery = extra.brief?.exclude_delivered === true ? { priorDelivery: { missionIds: await earlierMissionsOfConversation(sb, input.conversationId, input.userId, created.id) } } : {};
+  // P0 (15 Nov 2026): the customer's OWN messages go with the card (code-written): the worker's research spec and every relevance judgment read them, not the model's summary alone
+  const customerWords = await conversationCustomerWords(sb, input);
   const contentAr = withExclusionNote(extra.contentAr ?? (extra.noteAr ? `${extra.noteAr} ${AGENT_TURN_CONTENT_AR}` : AGENT_TURN_CONTENT_AR), exclusion.noteAr);
   const derived = isUntitledConversation(input.conversationTitle) ? titleFromFirstRequest([{ role: "user", content: requestText }]) : null;
   try {
     await Promise.all([
-      sb.from("messages").update({ content_ar: contentAr, plan: { agentMissionId: created.id, ...(extra.brief ? { researchBrief: extra.brief } : {}), ...exclusion.plan, ...priorDelivery } }).eq("id", input.assistantMsgId),
+      sb.from("messages").update({ content_ar: contentAr, plan: { agentMissionId: created.id, ...(extra.brief ? { researchBrief: extra.brief } : {}), ...exclusion.plan, ...priorDelivery, ...wordsPlan(customerWords) } }).eq("id", input.assistantMsgId),
       sb.from("messages").update({ request_status: "planning" }).eq("id", input.userMsgId),
       ...(derived ? [sb.from("conversations").update({ title: derived, updated_at: new Date().toISOString() }).eq("id", input.conversationId).eq("user_id", input.userId)] : []),
     ]);
@@ -1037,6 +1054,7 @@ async function groupTurn(input: AgentChatTurnInput, decision: Decision, open: Op
   const toWrite = judged.filter((j) => placed.has(j.part.key) || keptWithoutCard.includes(j));
   const cardGroup = groupNow();
   const savedCards: Array<{ j: JudgedPart; id: string; messageId: string; contentAr: string }> = [];
+  const customerWords: StoredCustomerWords = toWrite.length > 0 ? await conversationCustomerWords(sb, input) : { current: [], earlier: [] };
   const exclusion = toWrite.length > 0 ? await exclusionForCard(input, `${brief.request ?? ""} ${toWrite.map((j) => j.partBrief?.request ?? "").join(" ")} ${input.message}`) : { plan: {}, noteAr: null };
   const now = Date.now();
   for (const [i, j] of toWrite.entries()) {
@@ -1045,7 +1063,7 @@ async function groupTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     const existing = cards?.get(missionId);
     if (existing) { savedCards.push({ j, id: missionId, messageId: existing.messageId, contentAr: existing.contentAr || contentAr }); continue; }
     const messageId = partCardIdOf(missionId);
-    const saved = await saveCard(sb, input, { id: messageId, conversation_id: input.conversationId, user_id: input.userId, role: "assistant", content_ar: contentAr, plan: { agentMissionId: missionId, researchBrief: j.partBrief!, researchGroup: cardGroup, ...exclusion.plan }, created_at: new Date(now + i + 1).toISOString() });
+    const saved = await saveCard(sb, input, { id: messageId, conversation_id: input.conversationId, user_id: input.userId, role: "assistant", content_ar: contentAr, plan: { agentMissionId: missionId, researchBrief: j.partBrief!, researchGroup: cardGroup, ...exclusion.plan, ...wordsPlan(customerWords) }, created_at: new Date(now + i + 1).toISOString() });
     if (saved) { savedCards.push({ j, id: missionId, messageId, contentAr }); continue; }
     unsaved.add(j.part.key);
     console.warn(`[chat:agent_group_card_unsaved] ${missionId}`);

@@ -5,6 +5,7 @@ import { checkChannelsAgainstWords } from "../../src/lib/agentMission/foundation
 import { buildShapeDigest } from "../../src/lib/modelPlanner/digest";
 import { carriedBy, chooseCard, compilePlan, expandedInputsOf, operatorIdOf, parentInputs, rankedCards, rankedPoolOf, relaxedInputsOf, researchRelevanceOf, researchTopicOf, sourceUnenforced, COMPILED_PLATFORMS, type CompileResult, type SearchStrategy } from "../../src/lib/agentMission/foundation/compilePlan";
 import type { PlanningJudge, TopicVariants } from "./researchJudge";
+import type { ResearchSpec } from "./researchSpec";
 import { searchScopeOf, type SearchScope } from "../../src/lib/agentMission/foundation/searchScope";
 import { channelAnswerOf, channelEvidenceOf, youtubeChannelChoiceQuestionAr } from "../../src/lib/agentMission/foundation/discovery/channelEvidence";
 import { confirmFieldsOnRows, fieldNotesAr, recoverFields, sheetWantsOf, type FieldReport } from "../../src/lib/agentMission/foundation/discovery/fieldRecovery";
@@ -98,6 +99,11 @@ export interface CompiledPlanningDeps {
   delivered?: (row: Record<string, unknown>) => boolean;
   /** P0: the topic's search variants (researchJudge.ts `topicVariants`), asked only when the precise query's first page is short of the request. Absent: no expanded strategy. */
   variants?: TopicVariants;
+  /**
+   * P0 (15 Nov 2026): THE MISSION'S RESEARCH SPEC (researchSpec.ts), asked only for a research topic and at most once per planning run (its cost is the planning's). Its criterion is the stage's relevance subject (the card's «المقصود»),
+   * and the planning judgment and the search-vocabulary step read it with the customer's own words. Absent: the subject the code derives, as before.
+   */
+  spec?: () => Promise<{ spec: ResearchSpec; costUsd: number } | null>;
 }
 export type CompiledPlanning =
   | { kind: "plan"; plan: PricedPlan; ask: Ask; result: Extract<CompileResult, { ok: true }>; reads: { pool: number; exposure: number }; discovery?: DiscoveryMark }
@@ -132,6 +138,12 @@ const sameInputs = (digest: Record<string, unknown>, params: Record<string, unkn
 /** Reads the pool and the exposure pages through the gateway, then compiles. */
 export async function planByCompiler(deps: CompiledPlanningDeps): Promise<WithCost<CompiledPlanning>> {
   const cost = { usd: 0 };
+  // the spec is asked once per run, whichever step needs it first; its cost is counted once
+  if (deps.spec) {
+    const ask0 = deps.spec;
+    let once: Promise<{ spec: ResearchSpec; costUsd: number } | null> | null = null;
+    deps = { ...deps, spec: () => (once ??= ask0().then((r) => { if (r) cost.usd += Math.max(0, Number(r.costUsd) || 0); return r ? { spec: r.spec, costUsd: 0 } : null; }).catch(() => null)) };
+  }
   const seen: { pages: Array<{ card: ToolCard; page: unknown; nextCursor: string | null; hasMore: boolean | null }>; choice?: DiscoveryMark["selection"]; evaluation?: DiscoveryEvaluation; media?: MediaMark; fields?: FieldReport[] } = { pages: [] };
   let result = await planInner(deps, cost, seen);
   // ROUND 30: a plan made from an account the customer gave (the request named none) says so: the results are that account's, not all of Instagram
@@ -379,9 +391,12 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
     let judged: Map<string, boolean> | undefined;
     if (deps.judge && researchTopicOf(ask)) {
       const candidatesRead = rankedPoolOf({ ask, poolCard, pages, nowMs: deps.nowMs, allowUnrelated: true }).filter((r) => !deps.delivered?.(r));
-      const subject = researchRelevanceOf(ask, ["text"])?.subject_ar ?? ask.topic.text ?? "";
-      const said = candidatesRead.length > 0 ? await deps.judge({ subject, rows: candidatesRead.map((r) => ({ id: String(r.id), text: String(r.text ?? "") })) }).catch(() => null) : null;
+      const spec = deps.spec ? (await deps.spec())?.spec ?? null : null;
+      const subject = researchRelevanceOf(ask, ["text"], spec?.by === "model" ? spec.criterion : null)?.subject_ar ?? ask.topic.text ?? "";
+      const said = candidatesRead.length > 0 ? await deps.judge({ subject, rows: candidatesRead.map((r) => ({ id: String(r.id), text: String(r.text ?? "") })), ...(spec ? { spec } : {}) }).catch(() => null) : null;
       if (said) { cost.usd += Math.max(0, Number(said.costUsd) || 0); if (said.verdicts.size > 0) judged = said.verdicts; }
+      // the planning judgment as the admin reads it (internal event, counts only): how many rows were judged and how many were about the request
+      if (said && said.verdicts.size > 0) await (deps.store as Partial<Pick<AgentStore, "addEvent">>).addEvent?.call(deps.store, deps.mission.id, { kind: "call", message_ar: "قياس داخلي: حكم الصلة على عينة التخطيط.", counts: { jdg_phase: 0, jdg_rows: said.verdicts.size, jdg_yes: [...said.verdicts.values()].filter(Boolean).length } }).catch(() => undefined);
     }
     // P0: DID THE QUERY THE PLAN EXECUTES REACH ITS END? Its last page read said there is no more (no next page, or a next page that held nothing). Only then does the sample size the plan.
     let poolExhausted: boolean | undefined;
@@ -417,8 +432,9 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
         if (mapPage(commentsCard, r.page).length > 0) withComments += 1;
       }
     }
+    const criterion = deps.spec && researchTopicOf(ask) ? await deps.spec().then((r) => (r?.spec.by === "model" ? r.spec.criterion : null)) : null;
     const compileWith = (a: Ask) => compilePlan({
-      ask: a, pool: { card: poolCard, params, pages }, exposure: (id) => exposure.get(id), capabilityOf: (id) => deps.catalog.byId.get(id)?.capability ?? null, pricingSettings: deps.pricingSettings, nowMs: deps.nowMs, ...(catalogOnly ? { catalogOnly: true } : {}), ...(ask.media === "reels" && ask.platform === "instagram" && reelsBasisOf(poolCard) !== "unproven" ? { reelsProven: true } : {}),
+      ask: a, ...(criterion ? { criterion } : {}), pool: { card: poolCard, params, pages }, exposure: (id) => exposure.get(id), capabilityOf: (id) => deps.catalog.byId.get(id)?.capability ?? null, pricingSettings: deps.pricingSettings, nowMs: deps.nowMs, ...(catalogOnly ? { catalogOnly: true } : {}), ...(ask.media === "reels" && ask.platform === "instagram" && reelsBasisOf(poolCard) !== "unproven" ? { reelsProven: true } : {}),
       ...(extra.counters ? { counters: extra.counters } : {}), ...(extra.channels ? { channels: extra.channels } : {}), ...(extra.customerChannel ? { customerChannel: extra.customerChannel } : {}), ...(shortfallChoice === "only_found" || shortfallChoice === "fill" ? { namedChoice: shortfallChoice } : {}),
       ...(allowUnrelated ? { allowUnrelated: true } : {}), ...(judged ? { judged } : {}), ...(poolExhausted !== undefined ? { poolExhausted } : {}), ...(deps.delivered ? { delivered: deps.delivered } : {}),
     });
@@ -477,7 +493,8 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
     const sampledBefore = (deps.priorCalls ?? []).some((c) => (c.phase ?? "planning") === "planning" && c.endpoint_id === card!.endpointId && c.status === "ok" && Number(c.rows_returned) > 0);
     if (terms === null && !sampledBefore) {
       const said = `${deps.mission.request_text}${deps.mission.answer_text ? ` — ${deps.mission.answer_text}` : ""}`;
-      const v = await deps.variants({ request: said, topic: ask.topic.text ?? "", alternatives: ask.topic.alternatives ?? [], ...(operatorIdOf(card!, cardAsk) ? { source: sourceNames } : {}) }).catch(() => null);
+      const spec = deps.spec ? (await deps.spec())?.spec ?? null : null;
+      const v = await deps.variants({ request: said, topic: ask.topic.text ?? "", alternatives: ask.topic.alternatives ?? [], ...(operatorIdOf(card!, cardAsk) ? { source: sourceNames } : {}), ...(spec ? { spec } : {}) }).catch(() => null);
       if (v) {
         cost.usd += Math.max(0, Number(v.costUsd) || 0);
         terms = v.terms;

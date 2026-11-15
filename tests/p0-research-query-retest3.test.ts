@@ -310,8 +310,10 @@ describe("LIVE ACCEPTANCE 4 (continuation msn_5abbc68352f31fa31d56): context, th
     const { createReviewer } = await import("../agent/src/review");
     const r = createReviewer({ call, store: createMemoryStore(), missionId: "m", requestText: FOLLOW.request_text, budgetUsd: 1, ceilingUsd: 1 });
     await r.review({ subject: "محتوى يتحدث فعلًا عن: الشائعات الصحية وتصحيح الشائعات وجهود الوزارة", rows: [{ id: "1", text: "#الصحة_في_أسبوع: معالي وزير الصحة يتفقد مستشفيات مكة المكرمة" }] });
-    expect(sys[0]).toMatch(/The customer's request is authoritative/);
-    expect(sys[0]).toMatch(/any activity of an organization when the request asks for its efforts against something specific/);
+    // CHANGED (P0, research spec): the judge reads the customer's OWN words as authoritative (not the summary), and the organization's general news is named as not qualifying
+    expect(sys[0]).toMatch(/When the criterion and the customer's own words disagree, the customer's words win/);
+    expect(sys[0]).toMatch(/the general activity or news of the organization or person that is not about the subject/);
+    expect(sys[0]).toMatch(/being about ANY ONE of them \(with its qualifier\) is enough/);
     expect(reviewPrompt({ requestText: FOLLOW.request_text, subject: "x", rows: [{ text: "t" }] })).toContain("في مكافحة المعلومات المضللة");
   });
   it("the chat brief keeps the customer's «أو» alternatives and every qualifier of the topic", () => {

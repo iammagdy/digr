@@ -245,6 +245,8 @@ export const hashtagOf = (topic: string): string => topic.trim().replace(/^#+/, 
 
 export interface CompileInput {
   ask: Ask;
+  /** P0 (15 Nov 2026): the research criterion of the mission's research spec (the worker's, from the customer's own words): the relevance subject of the stage, stated on the card as «المقصود». Absent: the subject the code derives. */
+  criterion?: string | null;
   /** The parent card's pages read at planning, in order (their call ids and bodies). A page of ANOTHER card of the same role (a second keyword search) carries its own `card`. */
   pool: { card: ToolCard; params: Record<string, unknown>; pages: ReadonlyArray<{ callId: string; page: unknown; card?: ToolCard }> };
   /** YouTube: the counters of the pool's videos from the counter card (id -> comments), when it answered: the promise is then the counters of the chosen videos; absent, it is open. */
@@ -366,6 +368,8 @@ export function repliesSizing(input: { comments: number; known: ReadonlyArray<nu
 
 /** P0 (15 Nov 2026): the research gate, said on every plan of a research topic. */
 export const RESEARCH_GATE_NOTE_AR = "لا نعتمد على ورود الكلمة وحدها: كل عنصر يُفحص قبل التسليم بأنه يتحدث فعلًا عن موضوعك كما كتبته، وما لا يتحدث عنه لا يُسلَّم ولا يُحتسب.";
+/** P0 (15 Nov 2026): the card's line of the research criterion (the mission's research spec). */
+export const criterionNoteAr = (criterion: string): string => `المقصود بموضوعك كما فهمناه من كلماتك: ${criterion.replace(/[.،؛:\s]+$/u, "")}. راجعه قبل الاعتماد، وإن لم يطابق ما تقصده فعدّل طلبك.`;
 /** Every research-gate sentence starts with this (the plan's notes are matched by it). */
 export const RESEARCH_GATE_PREFIX_AR = "لا نعتمد على ورود الكلمة وحدها:";
 /** The same, for a plan whose comments or replies follow the chosen items: those are delivered as the source gives them (never judged), so the sentence says the check is of the items they belong to, in the platform's own words. */
@@ -508,11 +512,12 @@ export const topicGatedFor = (ask: Ask, poolCard: ToolCard): boolean => topicGat
 export const researchTopicOf = (ask: Pick<Ask, "topic">): boolean => Boolean(ask.topic?.text) && ask.topic.relation !== "made_with";
 
 /** The execution's relevance rule of a research topic: every row with text is judged by the review against the customer's request; the words are only what was searched. */
-export function researchRelevanceOf(ask: Pick<Ask, "topic">, textColumns: ReadonlyArray<string>): RelevanceSpec | null {
+export function researchRelevanceOf(ask: Pick<Ask, "topic">, textColumns: ReadonlyArray<string>, /** P0: the mission's research criterion (the worker's research spec, made from the customer's own words), when there is one: it is the subject every judgment reads and the card states. */ criterion?: string | null): RelevanceSpec | null {
   if (!researchTopicOf(ask) || textColumns.length === 0) return null;
   const alternatives = (ask.topic.alternatives ?? []).filter((a) => a.trim() !== "");
   const terms = (alternatives.length > 0 ? alternatives : [ask.topic.text!]).map((t) => t.trim()).slice(0, 12);
-  return { subject_ar: `محتوى يتحدث فعلًا عن: ${terms.join(" أو ")}`, terms, text_columns: [...textColumns], min_own_words: 0, review: true, judge: "model" };
+  const own = typeof criterion === "string" ? criterion.replace(/\s+/g, " ").trim().replace(/[.،؛:\s]+$/u, "") : "";
+  return { subject_ar: own !== "" ? own : `محتوى يتحدث فعلًا عن: ${terms.join(" أو ")}`, terms, text_columns: [...textColumns], min_own_words: 0, review: true, judge: "model" };
 }
 
 /** Compiles the plan. Pure: the same Ask and the same pages give the same plan. */
@@ -648,7 +653,7 @@ export function compilePlan(input: CompileInput): CompileResult {
   const parentRows = sizedByRequest ? need : chosen.length;
   promises[parentKey] = sizedByRequest ? { type: "open", n: need } : { type: "exact", n: chosen.length };
   const textColumns = fieldKeys.includes("text") ? ["text"] : [];
-  const relevance = researchRelevanceOf(ask, textColumns);
+  const relevance = researchRelevanceOf(ask, textColumns, input.criterion);
   stages.push({
     key: parentKey, title_ar: input.reelsProven === true ? REELS_TITLE_AR : PARENT_TITLE[ask.platform], endpoint_id: card.endpointId, ...(capabilityOf(card.endpointId) ? { capability: capabilityOf(card.endpointId)! } : {}),
     expected_rows: parentRows, planned_rows: parentRows, parent_key: null, deliver: true, columns, sample_rows: chosen.slice(0, 3).map(shown), ...(relevance ? { relevance } : {}),
@@ -669,6 +674,8 @@ export function compilePlan(input: CompileInput): CompileResult {
   if (topicAlts.length > 0) notes.push(poolCard.inputs.query?.or ? `بحثنا عن أيٍّ من: ${alternativesAr(topicAlts)}.` : `هذا المصدر يبحث بعبارة واحدة في المرة، فبحثنا بـ«${topicAlts[0]}».`);
   // P0: what decides a research result is said once, truthfully: the meaning, judged on every row, never the presence of a word
   if (relevance) notes.push(parentOnly ? RESEARCH_GATE_NOTE_AR : researchGateParentsNoteAr(ask.platform));
+  // P0 (15 Nov 2026): the research criterion every item is judged against (the mission's research spec, made from the customer's own words), stated BEFORE approval so the customer can see whether it is what they meant
+  if (relevance && typeof input.criterion === "string" && input.criterion.trim() !== "") notes.push(criterionNoteAr(relevance.subject_ar));
   if (unrelatedLeftOut > 0) notes.push(judged ? `تركنا ${toArabicDigits(unrelatedLeftOut)} مما قرأناه لأنه لا يتحدث عن «${ask.topic.text}» وإن تشابهت بعض كلماته، ولا يدخل في السعر.` : `لم نختر شيئًا لا يذكر «${ask.topic.text}» في نصه؛ تركنا ${toArabicDigits(unrelatedLeftOut)} مما قرأناه لأن نصه لا يذكر الموضوع، ولا يدخل في السعر.`);
   if (ask.preferences && ask.preferences.length > 0) notes.push(`عاملنا ما كتبته بين قوسين أو كشرط إتاحة («${ask.preferences.join("»، «")}») كتفضيل لا كجزء من الموضوع، فلم نضفه إلى كلمات البحث.`);
   if (notOriginal > 0) notes.push(`لم نختر أي تغريدة هي نفسها ردّ على حساب آخر؛ تركنا ${toArabicDigits(notOriginal)} من هذا النوع مما قرأناه، لأنك طلبت منشورات أصلية.`);

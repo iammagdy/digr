@@ -9,6 +9,7 @@ import { resolveProviderKey, useProviderKeyStoreClient } from "../../src/lib/ser
 import { last4Of } from "../../src/lib/server/providerKeyCrypto";
 import { readProviderSpendToday, resolveAllProviderDailyCaps, resolveProviderDailyCapUsd } from "../../src/lib/server/multiProvider/providerCaps";
 import { storedBriefOf } from "../../src/lib/agentMission/researchBrief";
+import { newestCustomerWords } from "../../src/lib/agentMission/customerWords";
 import { deliveredMissionsReader, priorDeliveryCardReader } from "./priorDelivery";
 import { missionExclusionReader } from "./customerExclusion";
 import { sendPlatformEmail } from "../../src/lib/server/sendPlatformEmail";
@@ -96,6 +97,9 @@ async function main() {
       return { ...(typeof tregCap === "number" && Number.isFinite(tregCap) ? { tregDailyCapUsd: tregCap } : {}), spentTodayUsd: { treg, firecrawl, contextdev } };
     },
     // LLM-FIRST OBJECTIVES (read only while capability_discovery_v1 is on for the mission's account): the brief the chat server stored on the assistant message that carries this mission's card
+    // P0 (15 Nov 2026): the customer's own messages the chat server stored with this mission's card (code-written); the newest card of the mission is the one read
+    // (the newest card OF THE MISSION THAT HOLDS THEM: an answer typed in the chat writes a later card of the same mission with no words)
+    readMissionWords: async (missionId, userId) => { const { data, error } = await client.from("messages").select("plan,created_at").eq("user_id", userId).eq("role", "assistant").eq("plan->>agentMissionId", missionId).order("created_at", { ascending: false }).limit(20); if (error) throw new Error("mission_words_read_failed"); return newestCustomerWords(Array.isArray(data) ? data : []); },
     readMissionBrief: async (missionId, userId) => { const { data } = await client.from("messages").select("plan,created_at").eq("user_id", userId).eq("role", "assistant").eq("plan->>agentMissionId", missionId).order("created_at", { ascending: false }).limit(1); return storedBriefOf(Array.isArray(data) ? data[0]?.plan : null); },
     // PHASE 5.3 (read ONLY when customer_exclusion_files_v1 is on for the mission's account): the exclusion list the chat server stored on the same card, for the same user; a failed read or a malformed list throws (never «no list»)
     readMissionExclusion: missionExclusionReader(client),

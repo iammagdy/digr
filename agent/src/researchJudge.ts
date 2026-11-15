@@ -2,6 +2,7 @@ import { MODEL_HAIKU } from "../../src/lib/agentMission/constants";
 import { normalizeText } from "../../src/lib/agentMission/relevance";
 import { llmCostFromUsage } from "./llmCost";
 import { createReviewer, type ReviewCall } from "./review";
+import type { ResearchSpec } from "./researchSpec";
 import type { AgentStore } from "./types";
 
 /**
@@ -16,7 +17,7 @@ export const PLANNING_JUDGE_CAP_USD = 0.01;
 /** The most rows judged at planning (the two sample pages hold about 40). */
 export const PLANNING_JUDGE_MAX_ROWS = 60;
 
-export type PlanningJudge = (input: { subject: string; rows: ReadonlyArray<{ id: string; text: string }> }) => Promise<{ verdicts: Map<string, boolean>; costUsd: number } | null>;
+export type PlanningJudge = (input: { subject: string; rows: ReadonlyArray<{ id: string; text: string }>; /** P0: the mission's research spec (the same one the execution review reads). */ spec?: ResearchSpec | null }) => Promise<{ verdicts: Map<string, boolean>; costUsd: number } | null>;
 
 /** An in-memory store for a reviewer that must not write the mission's review account (planning is not execution). */
 function memoryStore(): AgentStore {
@@ -29,12 +30,12 @@ function memoryStore(): AgentStore {
   } as unknown as AgentStore;
 }
 
-export function planningJudge(call: ReviewCall, requestText: string, options: { capUsd?: number; model?: string } = {}): PlanningJudge {
-  return async ({ subject, rows }) => {
+export function planningJudge(call: ReviewCall, requestText: string, options: { capUsd?: number; model?: string; answer?: string | null } = {}): PlanningJudge {
+  return async ({ subject, rows, spec }) => {
     const list = rows.filter((r) => r.text.trim() !== "").slice(0, PLANNING_JUDGE_MAX_ROWS);
     if (list.length === 0) return { verdicts: new Map(), costUsd: 0 };
     const cap = options.capUsd ?? PLANNING_JUDGE_CAP_USD;
-    const reviewer = createReviewer({ call, store: memoryStore(), missionId: "planning", requestText, budgetUsd: cap, ceilingUsd: cap, ...(options.model ? { model: options.model } : {}) });
+    const reviewer = createReviewer({ call, store: memoryStore(), missionId: "planning", requestText, ...(spec ? { spec, answer: options.answer ?? null } : {}), budgetUsd: cap, ceilingUsd: cap, ...(options.model ? { model: options.model } : {}) });
     try {
       const verdicts = await reviewer.review({ subject, rows: list.map((r) => ({ id: r.id, text: r.text })) });
       return { verdicts, costUsd: (await reviewer.state()).spentUsd };
@@ -56,7 +57,7 @@ export const MAX_TOPIC_VARIANTS = 14;
 /** The output cap of the variants call (no thinking is asked: review.ts `anthropicReviewCall`). Twelve short Arabic terms in a JSON array fit well inside it. */
 export const TOPIC_VARIANTS_MAX_TOKENS = 600;
 /** `failed`: the call gave no readable answer (no array, or an answer cut at its cap). Such a result is never kept for the mission, so a later planning run asks again; `costUsd` is still what the call cost. */
-export type TopicVariants = (input: { request: string; topic: string; alternatives: ReadonlyArray<string>; /** The source every post is read from (its name as the customer wrote it, its identifier), when the search is restricted to it. */ source?: ReadonlyArray<string> }) => Promise<{ terms: string[]; costUsd: number; failed?: true } | null>;
+export type TopicVariants = (input: { request: string; topic: string; alternatives: ReadonlyArray<string>; /** The source every post is read from (its name as the customer wrote it, its identifier), when the search is restricted to it. */ source?: ReadonlyArray<string>; /** P0: the mission's research spec: the customer's own words and the criterion's alternatives. */ spec?: ResearchSpec | null }) => Promise<{ terms: string[]; costUsd: number; failed?: true } | null>;
 
 const VARIANTS_SYSTEM = `You help search a social platform for posts on a research topic. Platform search matches the exact words written in a post, so the search terms decide what can be found at all. Given the customer's request (and any words the customer suggested) and the topic, list the short search terms that posts ABOUT that topic would literally contain, in the language the posts are written in: the topic's key words alone and in their other grammatical forms (singular, plural, with and without the article), common synonyms, the usual phrasing an author would use when writing about it, and common hashtags (without «#», words joined by «_»). Think also about how the AUTHORS of such posts actually write: a customer describes a research subject in an analyst's words, while the posts use their authors' own register and recurring phrasings (an organization announcing, warning, correcting or denying something words it its own way, often without the customer's words); include those phrasings. Prefer one- and two-word terms: a long phrase rarely matches. Include every search term the customer suggested. Each term is 1 to 4 words, no operators, no quotes, no names of accounts, no dates. When the posts are all read from one named source, never include that source's name, nor words that most of its posts would contain whatever they are about (its own field or institution): such a term matches nearly every post of the source and finds nothing specific. Answer with ONLY a JSON array of at most ${MAX_TOPIC_VARIANTS} strings, most useful first.`;
 
@@ -103,8 +104,9 @@ export function cleanVariants(raw: unknown, alternatives: ReadonlyArray<string>,
 
 export function topicVariants(call: ReviewCall, options: { model?: string } = {}): TopicVariants {
   const model = options.model ?? MODEL_HAIKU;
-  return async ({ request, topic, alternatives, source = [] }) => {
-    const user = `The customer's request: «${request.slice(0, 900)}»\nThe topic: «${topic.slice(0, 200)}»${alternatives.length > 0 ? `\nThe customer's own alternatives (already searched): ${alternatives.map((a) => `«${a}»`).join("، ")}` : ""}${source.length > 0 ? `\nEvery post is read from this one source (the search is restricted to it): ${source.map((x) => `«${x}»`).join(" / ")}` : ""}`;
+  return async ({ request, topic, alternatives, source = [], spec }) => {
+    const own = spec ? `${spec.earlierWords.length > 0 ? `Earlier messages of the customer (context only): ${spec.earlierWords.map((w) => `«${w.slice(0, 400)}»`).join(" / ")}\n` : ""}The customer's own messages of this request (authoritative): ${spec.customerWords.map((w) => `«${w.slice(0, 600)}»`).join(" / ")}\n${spec.by === "model" ? `What the posts must be about (any one is enough): ${spec.anyOf.map((a) => `«${a}»`).join("، ")}\n${spec.notRelevant.length > 0 ? `Not wanted: ${spec.notRelevant.map((a) => `«${a}»`).join("، ")}\n` : ""}` : ""}` : "";
+    const user = `${own}The customer's request: «${request.slice(0, 900)}»\nThe topic: «${topic.slice(0, 200)}»${alternatives.length > 0 ? `\nThe customer's own alternatives (already searched): ${alternatives.map((a) => `«${a}»`).join("، ")}` : ""}${source.length > 0 ? `\nEvery post is read from this one source (the search is restricted to it): ${source.map((x) => `«${x}»`).join(" / ")}` : ""}`;
     const res = await call({ model, system: VARIANTS_SYSTEM, user, maxTokens: TOPIC_VARIANTS_MAX_TOKENS }).catch(() => null);
     if (!res) return null;
     const costUsd = llmCostFromUsage(model, res.usage);
