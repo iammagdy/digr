@@ -3,7 +3,7 @@ import { CLARIFY_QUESTION_AR } from "../../src/lib/agentMission/semantic/conditi
 import { isOccurrenceAnswer, isRecurringEvent, occurrenceChoiceOf, OCCURRENCE_OPTIONS_AR, OCCURRENCE_QUESTION_AR, OCCURRENCE_YEAR_QUESTION_AR, type Occurrence } from "../../src/lib/agentMission/foundation/occurrence";
 import { checkChannelsAgainstWords } from "../../src/lib/agentMission/foundation/understand";
 import { buildShapeDigest } from "../../src/lib/modelPlanner/digest";
-import { carriedBy, chooseCard, compilePlan, expandedInputsOf, operatorIdOf, parentInputs, rankedCards, rankedPoolOf, relaxedInputsOf, researchRelevanceOf, researchTopicOf, sourceUnenforced, COMPILED_PLATFORMS, type CompileResult, type SearchStrategy } from "../../src/lib/agentMission/foundation/compilePlan";
+import { carriedBy, chooseCard, compilePlan, coreExpandedInputsOf, expandedInputsOf, operatorIdOf, parentInputs, rankedCards, rankedPoolOf, relaxedInputsOf, researchRelevanceOf, researchTopicOf, sourceUnenforced, COMPILED_PLATFORMS, type CompileResult, type SearchStrategy } from "../../src/lib/agentMission/foundation/compilePlan";
 import type { PlanningJudge, TopicVariants } from "./researchJudge";
 import type { ResearchSpec } from "./researchSpec";
 import { searchScopeOf, type SearchScope } from "../../src/lib/agentMission/foundation/searchScope";
@@ -445,7 +445,7 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
     }
     if (!result.ok && result.reason === "no_relevant_rows") {
       // NOV 6 2026: rows were read and none names the topic: the customer decides before approval, on every platform (the TikTok second query is above); nothing priced or held
-      return { kind: "question", ask, why: "no_about", question: noAboutQuestionAr(ask.topic.text ?? "", NO_ABOUT_NOUN[ask.platform!], result.tagOnly > 0, result.judged === true, searched.length > 0 && searched.every((x) => x.strategy === "source_items" || x.rows === 0)), options: [NO_ABOUT_OPTIONS_AR.change, NO_ABOUT_OPTIONS_AR.cancel], reads };
+      return { kind: "question", ask, why: "no_about", question: noAboutQuestionAr(ask.topic.text ?? "", NO_ABOUT_NOUN[ask.platform!], result.tagOnly > 0, result.judged === true, searched.some((x) => x.strategy === "source_items") && searched.every((x) => x.strategy === "source_items" || x.rows === 0)), options: [NO_ABOUT_OPTIONS_AR.change, NO_ABOUT_OPTIONS_AR.cancel], reads };
     }
     if (!result.ok) return { kind: "cannot", ask, reason: result.reason, reads, ...(result.reason === "no_rows" && searched.length > 0 ? { scope: searchScopeOf(ask, poolCard, pages, searched, judged) } : {}) };
     // THE BUDGET IS A HARD CEILING on the hold (Part B): the largest version that fits, priced by the same price function; none fits: the plan is not made and the reason is the budget
@@ -460,6 +460,7 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   const withStrategyNote = (p: PricedPlan): PricedPlan => {
     const relaxedUsed = searched.find((x) => x.strategy !== "exact" && x.rows > 0);
     if (!relaxedUsed) return p;
+    if (relaxedUsed.strategy === "expanded_core") return { ...p, notes_ar: [...(p.notes_ar ?? []), "البحث بصيغ الموضوع ومرادفاته كلها معًا لم يُرجع نتائج، فبحثنا بأهم صيغه القصيرة وحدها مع الحفاظ على شروطك كلها؛ وكل ما يُختار يُفحص بأنه يتحدث فعلًا عن الموضوع."] };
     if (relaxedUsed.strategy === "expanded") return { ...p, notes_ar: [...(p.notes_ar ?? []), "بحثنا بعباراتك وبصيغ أخرى للموضوع ومرادفاته معًا، لأن المنشورات لا تُكتب دائمًا بالكلمات نفسها، مع الحفاظ على شروطك كلها؛ وكل ما يُختار يُفحص بأنه يتحدث فعلًا عن الموضوع."] };
     const how = relaxedUsed.strategy === "words" ? "بكلمات الموضوع في أي ترتيب" : "في منشورات الحساب نفسه داخل الفترة، ثم فحصنا كل منشور بالموضوع";
     return { ...p, notes_ar: [...(p.notes_ar ?? []), `البحث بالعبارات كما كتبتها لم يُرجع نتائج، فبحثنا ${how}؛ ولم يُختر إلا ما يطابق شروطك.`] };
@@ -480,6 +481,8 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   // source's operator, the period, originals only). It contains the precise query's terms, so it finds everything the precise query finds. Every row is still judged against the customer's request before it can be chosen,
   // delivered or charged. With no terms (no model, or a failed call) the precise query is read as before.
   let expanded: { strategy: SearchStrategy; params: Record<string, unknown> } | null = null;
+  /** The vocabulary the expanded query was built from (its core is read when the expanded page is empty). */
+  let expandedTerms: string[] = [];
   if (deps.variants && researchTopicOf(ask) && card.inputs.query?.or && card.inputs.query.operators) {
     // the variants are asked ONCE per mission and kept, with the topic they were asked for: a later planning run (after an answer, a restart) builds the SAME expanded query, so its recorded page is reused instead of a new paid read or a refused third sample.
     // A FAILED call is never kept (production kept {"terms":[]} from answers cut at their cap, and every later run of the mission read that as «no other wording»). They are asked only while this search has given NO planning page
@@ -502,7 +505,7 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
         if (put && !v.failed) await put.call(deps.store, deps.mission.id, VARIANTS_FILE, JSON.stringify({ terms, topic: topicKey }), "application/json").catch(() => undefined);
       }
     }
-    if (terms && terms.length > 0) expanded = expandedInputsOf(card, cardAsk, terms);
+    if (terms && terms.length > 0) { expanded = expandedInputsOf(card, cardAsk, terms); expandedTerms = terms; }
     if (expanded) params = expanded.params;
   }
   let first = await read(card.endpointId, params, card);
@@ -551,13 +554,15 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   const firstEmpty = mapPage(card, first.page).length === 0 && Boolean(card.inputs.query?.operators);
   // the expanded query already holds every word of the precise one, so after an EMPTY expanded page the only other strategy worth a read is the source's own items in the period (each then judged): it shows whether the source
   // answers at all for this period. The «words» strategy (all words, any order) is narrower than the expanded query and is never read after it.
-  const relaxedRaw = firstEmpty && !aboutQuery ? relaxedInputsOf(card, cardAsk) : null;
-  const relaxed = relaxedRaw && (!expanded || relaxedRaw.strategy === "source_items") ? relaxedRaw : null;
+  // P0 (15 Nov 2026, msn_69cd4879ce77e97d01a1): after an EMPTY expanded page, the one more read goes to the expanded query's CORE (the topic's shortest forms, the same hard conditions), never first to the source's newest items with no topic
+  const core = firstEmpty && !aboutQuery && expanded && expandedTerms.length > 0 ? coreExpandedInputsOf(card, cardAsk, expandedTerms, expanded.params) : null;
+  const relaxedRaw = firstEmpty && !aboutQuery ? (core ?? relaxedInputsOf(card, cardAsk)) : null;
+  const relaxed = relaxedRaw && (!expanded || relaxedRaw.strategy === "source_items" || relaxedRaw.strategy === "expanded_core") ? relaxedRaw : null;
   if (relaxed) {
     const r = await read(card.endpointId, relaxed.params, card);
     reads.pool += 1;
     // the plan keeps the params a fresh read at execution may use: the relaxed WORDS query still carries every topic word; the source's own items do not, so the precise query stays (a fresh read never collects off-topic items)
-    if (!("failed" in r)) { pages.push({ callId: r.callId, page: r.page }); track(card, r); searched.push({ strategy: relaxed.strategy, rows: mapPage(card, r.page).length }); if (relaxed.strategy === "words") params = relaxed.params; }
+    if (!("failed" in r)) { pages.push({ callId: r.callId, page: r.page }); track(card, r); searched.push({ strategy: relaxed.strategy, rows: mapPage(card, r.page).length }); if (relaxed.strategy === "words" || (relaxed.strategy === "expanded_core" && mapPage(card, r.page).length > 0)) params = relaxed.params; }
   } else if (firstEmpty && !aboutQuery) {
     // no safe relaxed strategy: the request ends with the scope that was searched (never a page of the same empty query)
   } else if (aboutQuery && card.inputs.query && !hasAbout()) {

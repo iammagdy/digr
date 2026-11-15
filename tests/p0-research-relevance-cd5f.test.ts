@@ -229,11 +229,14 @@ describe("R4: recall, the expanded strategy, bounded", () => {
     const { queries } = await plan([PAGE_1, pageOf([])], { judge: scriptedJudge(), variants: async () => ({ terms: [], costUsd: 0.0001, failed: true as const }) });
     expect(queries[0]).toBe(fx.query_sent);
   });
-  it("an EMPTY expanded page is followed only by the source's own items in the period (never by the narrower «all the words» query)", async () => {
+  // CHANGED (P0, msn_69cd4879ce77e97d01a1): the one more read after an EMPTY expanded page is the expanded query's CORE (the topic's short forms, every hard condition kept), not the account's newest posts with no topic
+  it("an EMPTY expanded page is followed by the expanded query's core (short terms, same conditions), never by the narrower «all the words» query", async () => {
     const { queries } = await plan([pageOf([], null), pageOf(fx.page_1_items, null)], { judge: scriptedJudge(), variants: scriptedVariants(VARIANTS) });
     expect(queries).toHaveLength(2);
     expect(queries[0]).toMatch(/^\(شائعات OR/);
-    expect(queries[1]).toMatch(/^from:SaudiMOH since:\S+ until:\S+ -filter:replies$/);
+    expect(queries[1]).toMatch(/^\(شائعات OR إشاعات OR "معلومات مغلوطة" OR "أخبار كاذبة" OR "مصادر موثوقة"( OR [^)]+)?\) from:SaudiMOH since:\S+ until:\S+ -filter:replies$/);
+    expect(queries[1]).not.toBe(queries[0]);
+    expect((queries[1].match(/ OR /g) ?? []).length).toBeLessThanOrEqual(5);
   });
   it("the expanded query keeps every hard condition, differs from the precise one from its first word (a recorded page is matched by its first 80 characters), and fits the length cap", () => {
     const a = ask();
