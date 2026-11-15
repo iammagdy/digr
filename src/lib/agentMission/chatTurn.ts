@@ -7,6 +7,7 @@ import { getBalance } from "../supabase/ledger";
 import { answerForCustomer, cancelForCustomer, createCustomerMission, editPlanForCustomer } from "./customerActions";
 import { isExplicitCancel, openPlanFactsOf, planFollowUpAnswerAr, planQuestionKind, refersToOpenRequest } from "./openPlanFacts";
 import { contactAskVerdict, contactClarifyAr, preModelAnswer, privacyRefusalAr, PRIVACY_REFUSAL_AR } from "./guardRules";
+import { LLM_PLANNER_SETTING_KEY, llmPlannerOnValue } from "./llmPlannerFlag";
 import { decideTurn, type ChatType, type Decision, type OpenRequest, type OpenState } from "./conversationModel";
 import { FULL_RESEARCH_PREFIX_AR, greetingReplyAr, isFullResearchMethodologyAsk, methodologyReplyAr, methodologyTailAr, namesCollectibleData, otherReplyAr, serviceAnswerAr } from "./messageType";
 import { listMethodologyMissions } from "./methodology/missions";
@@ -346,7 +347,10 @@ export async function agentChatTurn(input: AgentChatTurnInput): Promise<AgentCha
       await writeAnswer(input, fixed.contentAr);
       return { ok: false, contentAr: fixed.contentAr, status: 200 };
     }
-    const mode = await readBriefMode(sb, input.userId);
+    // LLM-FIRST PLANNER (llm_planner_v1, on unless the owner set it false): the worker's planning model reads the customer's own messages and asks what it needs on the card; the chat does not re-check the
+    // request with word rules (the brief's consistency checks, the capability gate), which asked again and again for what the customer had already written. Privacy and the open request's handling stay.
+    const plannerOn = llmPlannerOnValue(await readSettingValue(sb, LLM_PLANNER_SETTING_KEY));
+    const mode = plannerOn ? { enabled: false, semantic: false, registry: null } : await readBriefMode(sb, input.userId);
     const [open, balancePoints, history, priorState] = await Promise.all([readOpenRequest(sb, input.conversationId, input.userId), readBalance(sb, input.userId), readHistory(sb, input), mode.enabled ? readPriorBrief(sb, input.conversationId) : Promise.resolve({ brief: null, group: null })]);
     const prior = priorState.brief;
     // what the customer asked in this conversation: the open request's stored words (typed earlier, maybe beyond the recent messages), the recent messages, this one
@@ -357,6 +361,10 @@ export async function agentChatTurn(input: AgentChatTurnInput): Promise<AgentCha
     const viaBrief = mode.enabled ? await briefTurn(input, decision, open, briefCtx) : null;
     console.info(JSON.stringify({ tag: "chat_message_type", type: decision.type, source: decision.source, guarded: decision.guarded, open: open?.state ?? "none", brief: mode.enabled ? briefCtx.outcome : "off", ...(decision.failure ? { failure: decision.failure } : {}) }));
     if (viaBrief) return viaBrief;
+    if (plannerOn && (decision.type === "data_request" || decision.type === "edit_of_open_request")) {
+      const privacy = privacyRefusalAr(input.message) ?? (contactAskVerdict(input.message) === "clarify" ? contactClarifyAr(input.message) : null);
+      if (privacy) { await writeAnswer(input, privacy); return { ok: false, contentAr: privacy, status: 200 }; }
+    }
     // ROUND 57: while the customer HAS an open request, a follow-up never becomes a new mission of its own words: a question is answered from the plan, a cancellation is applied only when explicit, a change is planned
     // again from the whole request, and a message the model could not read keeps the plan and says so
     if (open) {

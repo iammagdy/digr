@@ -4,6 +4,14 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## LLM-FIRST PLANNER, 15 Nov 2026 (owner direction: the model plans, no word rules, no filters)
+
+The model now understands every data request and chooses the catalog's tools and their inputs; code checks them against the catalog, reads one real page per step, and prices. Every platform the catalog serves (Reddit, LinkedIn, Threads, Telegram, Maps …), not only the five social ones. Execution reads to the customer's count across further input sets; nothing is dropped for its meaning. Chat no longer re-checks the request with word rules.
+* Switch `llm_planner_v1` (ON unless set `false`; rollback = `false`). Model `claude-sonnet-5-5` via structured outputs.
+* Root cause, design, evidence and what is unverified live: `docs/LLM-FIRST-PLANNER-2026-11-15.md`.
+
+---
+
 ## P0, 15 Nov 2026 (after PR #506): the customer's meaning is one stored research specification
 
 `msn_6d86fb6f698bb8ca7320`, `msn_5abbc68352f31fa31d56`: in the continuation, 5 of the 6 delivered tweets were the ministry's general news.

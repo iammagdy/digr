@@ -86,7 +86,12 @@ export function createMemoryDb(options: { missing?: string[] } = {}): MemoryDb {
     storage: { from: (bucket: string) => ({ upload: async (path: string, body: any) => { uploads.push({ bucket, path, body }); return { data: { path }, error: null }; } }) },
     auth: { admin: { getUserById: async (id: string) => ({ data: { user: { id, app_metadata: admins.has(id) ? { role: "admin" } : {} } }, error: null }) } },
     rows: (t: string) => tableRows(t),
-    seed: (t: string, rows: any[]) => { tableRows(t).push(...rows.map((r) => ({ ...r }))); },
+    seed: (t: string, rows: any[]) => {
+      tableRows(t).push(...rows.map((r) => ({ ...r })));
+      // LLM-FIRST PLANNER (15 Nov 2026): the chat's brief mode runs only while the owner's switch `llm_planner_v1` is OFF (with it on, the worker's planning model reads the customer's words and the brief checks do not run).
+      // A test that seeds brief mode tests that switched-off path, so the switch is stored off beside it unless the test set it itself.
+      if (t === "agent_settings" && rows.some((r) => r?.key === "chat_research_brief_v1") && !tableRows(t).some((r) => r?.key === "llm_planner_v1")) tableRows(t).push({ key: "llm_planner_v1", value: false });
+    },
     setMissing: (names: string[]) => { missing.clear(); for (const n of names) missing.add(n); },
     reset: () => { tables.clear(); uploads.length = 0; admins.clear(); missing.clear(); for (const n of base) missing.add(n); },
   };

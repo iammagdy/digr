@@ -289,6 +289,8 @@ export interface CompiledMark {
    * exactly where the planning did; elsewhere the period stays a mark, as the card said. Absent (older plans): a mark.
    */
   period_gate?: boolean;
+  /** LLM-FIRST PLANNER (15 Nov 2026): set ONLY on a plan the planning model understood and code checked against the catalog (agent/src/llmPlanner): what the model understood, per step. Internal audit; the card shows the summary. */
+  llm?: { understanding_ar: string; steps: Array<{ key: string; platform: string; capability: string; source: { kind: string; value: string } | null; topic: string | null; period: { from: string; to: string } | null; terms: string[] }> };
 }
 
 export interface UnservedStep {

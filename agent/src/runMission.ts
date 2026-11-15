@@ -79,11 +79,12 @@ import { buildAsk } from "../../src/lib/agentMission/foundation/ask";
 import { BUDGET_QUESTION_AR, BUDGET_TOO_SMALL_AR, choiceAnswerOf, type Choices } from "../../src/lib/agentMission/foundation/countChoice";
 import { parseChannels, understandChannelsPrompt, UNDERSTAND_SYSTEM } from "../../src/lib/agentMission/foundation/understand";
 import { llmCostFromUsage } from "./llmCost";
-import { MODEL_HAIKU } from "../../src/lib/agentMission/constants";
+import { AGENT_PLANNING_BUDGET_CAP_USD, MODEL_HAIKU } from "../../src/lib/agentMission/constants";
 import { cardsWithDiscovery, chainCheckerFor, discoveryActive, modelSelector } from "../../src/lib/agentMission/foundation/discovery";
 import { promisedTotalOf } from "../../src/lib/agentMission/promisedNumbers";
 import { reportedPlan, withPromiseCaps, withRepliesJudged } from "../../src/lib/agentMission/repliesCard";
 import { publicPlanOf } from "../../src/lib/agentMission/overLimit";
+import { llmPlannerOn, runLlmPlanning } from "./llmPlanner/run";
 import { runContactEnrichment } from "./engine/contacts";
 import { runNamesStep } from "./namesAr";
 
@@ -136,6 +137,8 @@ export interface RunnerDeps {
   fetchFn?: FetchFn;
   /** The model call that reviews uncertain rows (a small request to the model API, no SDK process). Absent (tests, no key): uncertain rows are not delivered. */
   reviewCall?: ReviewCall;
+  /** LLM-FIRST PLANNER: the planning model (one forced structured call per question; agent/src/llmPlanner/model.ts). Absent (tests, no key): the planner does not run and the earlier paths plan. */
+  plannerModel?: import("./llmPlanner/planner").PlannerModel;
   systemPromptFile?: string;
   /** Carry out a plan whose stages all have an execution recipe with the code engine, no model session (default true). false: the model carries every mission out (through the same item store). */
   engine?: boolean;
@@ -521,6 +524,50 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   const web = deps.providerKey && anyWebAvailable(webAvailable) ? createWebGateway({ store, missionId: mission.id, jobId: null, phase: "planning", budget, recorder: deps.recorder, providerKey: deps.providerKey, fetchFn: deps.fetchFn, counter, ...spendGateOf(deps, mission.id) }) : undefined;
   const state = newRunState(await lastOut(store, mission.id));
   const pricingSettings = normalizeMissionPricingSettings(settings[MISSION_PRICING_SETTING_KEY]);
+  // LLM-FIRST PLANNER (owner direction, 15 Nov 2026; agent/src/llmPlanner): the planning model reads the customer's own words, chooses the catalog's tools and writes their inputs; code checks them against the catalog,
+  // reads one real page per step and prices. It runs BEFORE every word rule below, for every platform the catalog serves; company and people research goes on to its own live-proven path. Switch `llm_planner_v1` (on unless set false).
+  // (with the hard spend gate active for this mission the planner does not run: its long structured requests are not on the gate's reviewed call path; production runs with the gate unset)
+  if (deps.plannerModel && llmPlannerOn(settings) && !(deps.spendGate && deps.spendGate.active(mission.id))) {
+    const words = deps.readMissionWords ? await deps.readMissionWords(mission.id, mission.user_id).catch(() => null) : null;
+    const llmBefore = Number((await store.getMission(mission.id))?.planning_llm_usd ?? mission.planning_llm_usd ?? 0);
+    let r: Awaited<ReturnType<typeof runLlmPlanning>> | null = null;
+    try {
+      // its own planning budget (the cap of every planning), not the word-sized stage reserves of the earlier paths: the model decides the steps
+      const llmGateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget: createJobCallBudget({ ceilingUsd: AGENT_PLANNING_BUDGET_CAP_USD, spentUsd: sum(calls, "planning") }), recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, priorCalls: calls, stats: sourceStats, ...spendGateOf(deps, mission.id) });
+      r = await runLlmPlanning({ mission, store, gateway: llmGateway, catalog: deps.catalog, access, model: deps.plannerModel, words, pricingSettings, now: Date.now(), ...(deps.log ? { log: deps.log } : {}) });
+    } catch (e) {
+      deps.log?.(`llm_planner_error ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 200)}`);
+    }
+    if (r) {
+      const llmUsd = Number((llmBefore + r.costUsd).toFixed(6));
+      deps.log?.(`llm_planner ${mission.id} kind=${r.kind}${r.kind === "cannot" ? ` detail=${r.detail}` : ""} usd=${r.costUsd.toFixed(4)}`);
+      if (r.understanding) await store.addEvent(mission.id, { kind: "call", message_ar: toArabicDigits(`قياس داخلي: فهم النموذج للطلب: ${r.understanding.understanding_ar.replace(/[A-Za-z@_/:.]+/g, " ")}`).replace(/\s+/g, " ").slice(0, 900), counts: { llm_planner: 1, steps: r.understanding.steps.length, questions: r.asked } }).catch(() => undefined);
+      if (r.kind === "plan") {
+        let plan = r.plan;
+        plan = await withCustomerExclusion({ plan, mission, store, settings, read: deps.readMissionExclusion });
+        const priorDelivery = await priorDeliveryForPlanning({ mission, store, ...(deps.readPriorDeliveryCard ? { readCard: deps.readPriorDeliveryCard } : {}), ...(deps.readDeliveredMissions ? { readMissions: deps.readDeliveredMissions } : {}) }).catch(() => null);
+        plan = await withPriorDelivery(plan, mission.id, store, priorDelivery);
+        await store.updateMission(mission.id, { planning_llm_usd: llmUsd, ...clear, status: "plan_ready", plan: plan as any, plan_public: publicPlanOf(plan) as any, unit_price_points: plan.price.unitPricePoints, reserved_points: plan.price.reservePoints });
+        await store.addEvent(mission.id, { kind: "plan", message_ar: plan.summary_ar, counts: { stages: plan.stages.length, rows: plan.price.deliveredRows, unit_points_x1000: Math.round(plan.price.unitPricePoints * 1000), reserve_points: plan.price.reservePoints } });
+        deps.log?.(`plan_ready ${mission.id} ${JSON.stringify(customerPlanView(plan).price)}`);
+        return;
+      }
+      if (r.kind === "question") {
+        await store.updateMission(mission.id, { planning_llm_usd: llmUsd, ...clear, status: "needs_input", question_ar: r.question_ar, plan_public: { question_options: r.options_ar } as any });
+        await store.addEvent(mission.id, { kind: "question", message_ar: r.question_ar });
+        return;
+      }
+      if (r.detail === "model_cannot" || r.detail === "no_step_served") {
+        const sentence = `${r.reason_ar.trim() !== "" ? r.reason_ar.trim().replace(/[.،\s]*$/u, ".") : "لم نجد مصدرًا متاحًا الآن يعطي ما طلبته."} لم يُخصم منك شيء.`;
+        await store.updateMission(mission.id, { planning_llm_usd: llmUsd, ...clear, status: "unserved", summary_ar: sentence });
+        await store.addEvent(mission.id, { kind: "result", message_ar: sentence });
+        await tell(deps, mission, null, "unserved", { delivered: 0, planned: 0, chargedPoints: 0, releasedPoints: 0, hasJob: false });
+        return;
+      }
+      // handed over (company or people research), the model could not be read, or too many questions: the earlier path plans, with this cost already counted
+      await store.updateMission(mission.id, { planning_llm_usd: llmUsd }).catch(() => undefined);
+    }
+  }
   // THE REDESIGN FLAGS (S1 item 0.1): read once at the start of the run; every one is off unless the owner switched it
   const redesign = { flags: readRedesignFlags(settings), isTest: await accountIsTest(store, mission.user_id), platformFlags: readPlatformFlagsOf(settings), platform: buildRequestContract(mission.request_text, mission.answer_text, { semantic }).platform };
   // PR B (round 18), ONE PATH FOR SOCIAL: a request on TikTok, X, Instagram, Facebook or YouTube is planned by the plan compiler or not at all. The platform's own switch decides: «تشغيل» (and «تجريبي» for a test account) = the compiled path; «إيقاف» (or no value) = the platform is NOT OFFERED:
