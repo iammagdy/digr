@@ -20,6 +20,7 @@ import { loadRegistryArtifact, minLevelFor, routingFactsOf } from "../../src/lib
 import { classifyNoCardEnd, refusalSentenceAr } from "../../src/lib/agentMission/refusal";
 import { parentCountsOf, parentsBelowShare } from "../../src/lib/agentMission/parents";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
+import { planningJudge, topicVariants } from "./researchJudge";
 import { ensureOwned, isOwnershipError } from "./ownership";
 import { compensateFreeRerun } from "../../src/lib/agentMission/freeRerun";
 import { customerPlanView, namesAreWritten, requestedRowsOf, type PricedPlan } from "../../src/lib/agentMission/plan";
@@ -691,7 +692,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // candidates. Everything else about the mission (the gateway, the price, the hold, the approval, the engine) is what it was.
   const discovered = compiledActive && redesign.platform && discoveryActive(settings, redesign.isTest) ? cardsWithDiscovery(deps.catalog, redesign.platform, access) : null;
   const selectCapability = discovered && deps.reviewCall ? modelSelector(async ({ system, user, maxTokens }) => { const got = await deps.reviewCall!({ model: MODEL_HAIKU, system, user, maxTokens }); return got ? { text: got.text, costUsd: llmCostFromUsage(MODEL_HAIKU, got.usage) } : null; }) : undefined;
-  const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, ...(discovered ? { cards: discovered.cards, chainIssues: chainCheckerFor(deps.catalog, access), discoveryRejected: discovered.rejected.map((r) => ({ endpointId: r.endpointId, reason: r.reason })), ...(selectCapability ? { selectCapability } : {}) } : {}), nowMs: planningNow, priorCalls: calls, ...(askEdits.length > 0 ? { askEdits } : {}), ...(stage2Questions ? { questionCards: true, ...(topicRelation ? { topicRelation } : {}) } : {}), ...(understand ? { understand } : {}), ...(occurrence ? { occurrence } : {}), ...(redesign.isTest ? { catalogOnly: true } : {}), askCount: true, choices, questionsAsked: prior?.questionsAsked ?? 0, answerIsChoice, ...(semantic ? { semantic: true } : {}) }) : null;
+  const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, ...(discovered ? { cards: discovered.cards, chainIssues: chainCheckerFor(deps.catalog, access), discoveryRejected: discovered.rejected.map((r) => ({ endpointId: r.endpointId, reason: r.reason })), ...(selectCapability ? { selectCapability } : {}) } : {}), nowMs: planningNow, priorCalls: calls, ...(askEdits.length > 0 ? { askEdits } : {}), ...(stage2Questions ? { questionCards: true, ...(topicRelation ? { topicRelation } : {}) } : {}), ...(understand ? { understand } : {}), ...(occurrence ? { occurrence } : {}), ...(redesign.isTest ? { catalogOnly: true } : {}), askCount: true, choices, questionsAsked: prior?.questionsAsked ?? 0, answerIsChoice, ...(semantic ? { semantic: true } : {}), ...(deps.reviewCall ? { judge: planningJudge(deps.reviewCall, `${mission.request_text}${mission.answer_text ? ` — ${mission.answer_text}` : ""}`), variants: topicVariants(deps.reviewCall) } : {}) }) : null;
   // THE QUESTION BEFORE APPROVAL (live round 7): no video of the two pages read is about the topic; the plan is not made, the customer chooses (the same needs_input card as the topic question)
   if (compiled?.kind === "question") {
     // every question card counts toward the three a request may have; a count or comments question also waits for its answer
@@ -784,7 +785,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     } else {
       // ROUND 30: no usable Instagram account was given: the honest sentence says what the source can do (an account's posts), not the general «our sources do not serve this»
       // P0 (15 Nov 2026): a search that gave no plan says WHAT was searched and what it gave (searchScope.ts), never «we searched the available sources and nothing matches»
-      const own = compiled?.kind === "cannot" ? (compiled.reason === "no_rows" && compiled.scope ? searchScopeEndAr(compiled.scope) : compiled.reason === "instagram_account_missing" ? INSTAGRAM_ACCOUNT_DECLINED_AR : compiled.reason === "source_missing" || compiled.reason === "source_unenforceable" ? SOURCE_DECLINED_AR : compiled.reason === "youtube_channel_missing" ? YOUTUBE_CHANNEL_DECLINED_AR : compiled.reason === "youtube_channel_unidentified" ? YOUTUBE_CHANNEL_UNIDENTIFIED_AR : null) : null;
+      const own = compiled?.kind === "cannot" ? (compiled.reason === "no_topic" ? NO_TOPIC_END_AR : compiled.reason === "no_rows" && compiled.scope ? searchScopeEndAr(compiled.scope) : compiled.reason === "instagram_account_missing" ? INSTAGRAM_ACCOUNT_DECLINED_AR : compiled.reason === "source_missing" || compiled.reason === "source_unenforceable" ? SOURCE_DECLINED_AR : compiled.reason === "youtube_channel_missing" ? YOUTUBE_CHANNEL_DECLINED_AR : compiled.reason === "youtube_channel_unidentified" ? YOUTUBE_CHANNEL_UNIDENTIFIED_AR : null) : null;
       const sentence = own ?? refusalSentenceAr(verdict.cls as "unsupported" | "empty_source");
       await store.updateMission(mission.id, { ...base, status: "unserved", summary_ar: sentence });
       await store.addEvent(mission.id, { kind: "result", message_ar: sentence });
@@ -1157,6 +1158,10 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   if (resultPath && delivered > 0 && !ourFailure) await storeFirstVersion({ store, log: deps.log }, { missionId: mission.id, userId: mission.user_id });
 }
 
+/**
+ * P0 (15 Nov 2026, msn_8824508f840f703dee69): the request reached the planner with nothing to search for (no topic, no source). It is OUR reading that failed, never the sources: said as it is, before any call, nothing held or charged.
+ */
+export const NO_TOPIC_END_AR = "لم نستطع أن نحدد من رسالتك ما الذي نبحث عنه بالضبط (الموضوع أو الحساب)، فلم نرسل أي بحث ولم نجهّز خطة ولم يُخصم منك شيء. اكتب طلبك كاملًا في رسالة واحدة: المنصة، والموضوع، والحساب إن أردت، والعدد، والفترة.";
 /** What the customer is told when the source gave items and our own mapping stored none: it was OUR failure, never «nothing was found». No number: the money line says the rest. */
 export const INTERNAL_FAILURE_AR = "تعذّر تنفيذ طلبك بسبب خلل من جانبنا، وليس لأن المصدر خالٍ من النتائج. لم يُخصم منك شيء، وأُبلغ فريقنا بالأمر ليراجعه.";
 const loweredTargetClauseAr = (plan: PricedPlan): string => (plan.quantity?.reason_ar ? `لأن ${plan.quantity.reason_ar.replace(/[.،\s]+$/, "")}` : "لأن الخطة التي اعتمدتها كانت بعدد أقل من المطلوب");

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { tiktokWorld, xWorld } from "./helpers/round11Worlds";
-import { MATCH_COUNTS_PREFIX_AR } from "../src/lib/agentMission/foundation/compilePlan";
+import { MATCH_COUNTS_PREFIX_AR, RESEARCH_GATE_PREFIX_AR } from "../src/lib/agentMission/foundation/compilePlan";
 
 /**
  * TIKTOK AND X ARE CUSTOMERS' TOOLS (live round 11). The pinned hashes below are of the plan, the customer's plan view and the file (every cell of every sheet) that the stored real pages of TikTok (M12) and X (M14 and msn_50e3b83c44e7ebd7f577) gave on
@@ -37,6 +37,20 @@ const withoutLinksWhole = (v: unknown): unknown => {
   if (v && typeof v === "object") return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([k]) => k !== "links_whole").map(([k, x]) => [k, withoutLinksWhole(x)]));
   return v;
 };
+// CHANGED (P0, 15 Nov 2026, msn_cd5f32adadefb9bb971f): one more stated diff, set apart before the hash is compared: a compiled stage of a research topic carries the execution's research gate (`relevance`, judged by the model review) and the card
+// says it in ONE sentence (it starts with RESEARCH_GATE_PREFIX_AR). Every other byte of the plan and the view is what it was.
+const withoutResearchGate = (v: unknown): unknown => {
+  if (Array.isArray(v)) return v.filter((x) => !(typeof x === "string" && x.startsWith(RESEARCH_GATE_PREFIX_AR))).map(withoutResearchGate);
+  if (v && typeof v === "object") return Object.fromEntries(Object.entries(v as Record<string, unknown>).filter(([k]) => k !== "relevance").map(([k, x]) => [k, withoutResearchGate(x)]));
+  return v;
+};
+// and, in the editor view, the stage's TEXT column is locked (the research gate judges every row by it, so it cannot be switched off: plan.ts lockedColumnKeys locks a relevance rule's text columns)
+const withTextUnlocked = (view: unknown): unknown => {
+  const v = view as { edit?: { stages?: Array<{ columns?: Array<Record<string, unknown>> }> } };
+  if (!v?.edit?.stages?.[0]?.columns) return view;
+  const stages = v.edit.stages.map((st, i) => (i === 0 ? { ...st, columns: st.columns!.map((c) => (c.key === "text" ? { ...c, locked: false } : c)) } : st));
+  return { ...(view as object), edit: { ...v.edit, stages } };
+};
 const dataSheets = (cells: Record<string, string[][]>): Record<string, string[][]> => Object.fromEntries(Object.entries(cells).slice(1));
 
 /** The topic mark taken out: its column entry and its value on every row, anywhere in the document. */
@@ -49,8 +63,8 @@ function withoutTopicMark(v: unknown): unknown {
 describe("TikTok: the plan and the customer's view are byte for byte what they were; the file differs in one stated cell kind only", () => {
   it("plan and view", async () => {
     const w = await tiktokWorld();
-    expect(sha(withoutMatchCounts(withoutConditions(w.plan)))).toBe(BASE.tiktok.plan);
-    expect(sha(withoutLinksWhole(withoutMatchCounts(w.view)))).toBe(BASE.tiktok.view);
+    expect(sha(withoutResearchGate(withoutMatchCounts(withoutConditions(w.plan))))).toBe(BASE.tiktok.plan);
+    expect(sha(withTextUnlocked(withoutResearchGate(withoutLinksWhole(withoutMatchCounts(w.view)))))).toBe(BASE.tiktok.view);
   }, 120_000);
   it("the file: the only change is «عدد الردود» of the reply rows (20 cells, empty -> «غير متاح»); with those put back the file is the old one", async () => {
     const w = await tiktokWorld();
@@ -73,8 +87,8 @@ describe("TikTok: the plan and the customer's view are byte for byte what they w
 describe("X: the plan, the view and the file are what they were, plus the topic mark", () => {
   it("with the topic mark taken out, the plan and the view are the old ones; the mark itself is there on every chosen tweet", async () => {
     const w = await xWorld();
-    expect(sha(withoutTopicMark(withoutMatchCounts(withoutConditions(w.plan))))).toBe(BASE.x.plan);
-    expect(sha(withoutLinksWhole(withoutTopicMark(withoutMatchCounts(w.view))))).toBe(BASE.x.view);
+    expect(sha(withoutResearchGate(withoutTopicMark(withoutMatchCounts(withoutConditions(w.plan)))))).toBe(BASE.x.plan);
+    expect(sha(withoutResearchGate(withoutLinksWhole(withoutTopicMark(withoutMatchCounts(w.view)))))).toBe(BASE.x.view);
     const pinned = (w.plan.stages[0].pinned_rows ?? []) as Array<Record<string, unknown>>;
     expect(pinned.length).toBeGreaterThan(0);
     for (const r of pinned) expect(typeof r.topic_relation).toBe("string");

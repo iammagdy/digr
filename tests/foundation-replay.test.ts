@@ -1,4 +1,5 @@
 import { toArabicDigits } from "../src/lib/arabicDigits";
+import { approvingResearchReviewer } from "./helpers/researchReviewer";
 import { readFileSync } from "node:fs";
 import { beforeAll, describe, expect, it } from "vitest";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
@@ -47,7 +48,7 @@ describe("acceptance 2: M12 (TikTok) replayed on its stored pages", () => {
     const exec = replayGateway(M12, catalog, store, target, { firstSeq: 100 });
     const items = await ItemStore.open(store, target);
     const plan = planned.plan;
-    await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: target, gateway: exec.gateway as unknown as Gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: redesignStagesOf(plan, TYPES_OFF, true, { tiktok: "test" }) });
+    await runEngine({ reviewer: approvingResearchReviewer(), items, store, plan: withPromiseCaps(plan), missionId: target, gateway: exec.gateway as unknown as Gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: redesignStagesOf(plan, TYPES_OFF, true, { tiktok: "test" }) });
     delivered = { videos: items.acceptedRows("videos").map((r) => String(r.id)), comments: items.acceptedRows("comments").map((r) => String(r.id)), replies: items.acceptedRows("comments_replies").map((r) => String(r.id)), unserved: exec.stats.unserved.length };
   }, 120_000);
 

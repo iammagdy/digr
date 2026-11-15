@@ -82,9 +82,10 @@ describe("1. THE LIVE MISSION replayed: platform «إكس», then the count «١
     expect(String(w.calls[0].params.query ?? "")).not.toContain("رأي الناس");
     expect(w.m().status).toBe("plan_ready");
     expect(w.m().plan!.compiled?.by).toBe("compiler");
-    // NOV 6 2026 CAMPAIGN: the parents on X are ORIGINAL posts; one tweet of the served page is itself a reply, so 9 of the 10 asked are planned and the card says so
-    expect(w.m().plan!.price.deliveredRows).toBe(9);
-    expect((w.m().plan!.notes_ar ?? []).join(" ")).toContain("وجدنا في ما قرأناه ٩ فقط تناسب طلبك من ١٠");
+    // NOV 6 2026 CAMPAIGN: the parents on X are ORIGINAL posts; one tweet of the served page is itself a reply, so 9 of the sample are eligible.
+    // CHANGED (P0, 15 Nov 2026, msn_cd5f32adadefb9bb971f): the sample no longer sizes the plan. The search has more pages, so the plan is the customer's 10, read on at execution, and the card says what the sample showed
+    expect(w.m().plan!.price.deliveredRows).toBe(10);
+    expect((w.m().plan!.notes_ar ?? []).join(" ")).toContain("العينة لا تبيّن كم يوجد في المصدر");
     expect(w.m().summary_ar ?? "").not.toContain("مصادرنا لا تخدم");
     expect(w.notes).not.toContain("unserved");
   });

@@ -1,4 +1,6 @@
 import { createMemoryStore, newMission } from "../../agent/src/memoryStore";
+import { approvingResearchReviewer } from "./researchReviewer";
+import type { Reviewer } from "../../agent/src/review";
 import { planByCompiler, type CompiledPlanning, type CompiledPlanningDeps, type WithCost } from "../../agent/src/compiled";
 import { ItemStore } from "../../agent/src/items/itemStore";
 import { runEngine } from "../../agent/src/engine/run";
@@ -106,13 +108,13 @@ export function discoveryWorld(request: string, handlers: Record<string, Handler
 }
 
 /** Runs an approved plan through the real engine over the same scripted provider, then builds the Excel and the CSV exactly as the worker does at the end of a run. */
-export async function deliver(world: World, plan: PricedPlan, request: string, platform: keyof PlatformFlags & string) {
+export async function deliver(world: World, plan: PricedPlan, request: string, platform: keyof PlatformFlags & string, opts: { reviewer?: Reviewer } = {}) {
   world.phase = "execution";
   const target = world.store.missions.keys().next().value as string;
   const items = await ItemStore.open(world.store, target);
   const approved = withPromiseCaps(plan);
   const gw = world.gateway as unknown as Gateway;
-  const outcome = await runEngine({ items, store: world.store, plan: approved, missionId: target, gateway: gw, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, now: () => Date.parse("2026-11-04T18:10:00Z"), redesignStages: new Set(approved.stages.map((s) => s.key)) });
+  const outcome = await runEngine({ reviewer: opts.reviewer ?? approvingResearchReviewer(), items, store: world.store, plan: approved, missionId: target, gateway: gw, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, now: () => Date.parse("2026-11-04T18:10:00Z"), redesignStages: new Set(approved.stages.map((s) => s.key)) });
   const snap = items.snapshotOfMemory();
   let judged = approved;
   const rowsByStage: Record<string, Array<Record<string, unknown>>> = {};

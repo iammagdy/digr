@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { approvingResearchReviewer } from "./researchReviewer";
 import { loadTregCatalog } from "../../src/lib/treg/catalog";
 import { createMemoryStore } from "../../agent/src/memoryStore";
 import { ItemStore } from "../../agent/src/items/itemStore";
@@ -83,7 +84,7 @@ export async function replayMission(input: MissionReplayInput): Promise<MissionR
   const exec = replayGateway(input.fixture, catalog, store, target, { ...input.replay, phase: "execution", firstSeq: 100 });
   const items = await ItemStore.open(store, target);
   const platformFlags: PlatformFlags = { [input.platform]: "test" } as PlatformFlags;
-  await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: target, gateway: exec.gateway as unknown as Gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, now: () => Date.parse(input.readAt), redesignStages: redesignStagesOf(plan, TYPES_OFF, true, platformFlags) });
+  await runEngine({ reviewer: approvingResearchReviewer(), items, store, plan: withPromiseCaps(plan), missionId: target, gateway: exec.gateway as unknown as Gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, now: () => Date.parse(input.readAt), redesignStages: redesignStagesOf(plan, TYPES_OFF, true, platformFlags) });
   // THE END OF A RUN, as runMission.ts does it
   const snap = items.snapshotOfMemory();
   let judged = withPromiseCaps(plan);

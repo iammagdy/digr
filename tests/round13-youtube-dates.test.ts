@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { approvingResearchReviewer } from "./helpers/researchReviewer";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { DECLARED_EXTRA_INPUTS, loadTregCatalog } from "../src/lib/treg/catalog";
 import { createMemoryStore } from "../agent/src/memoryStore";
@@ -72,7 +73,7 @@ async function run(rewrite: ((page: Record<string, unknown>, callId: string) => 
   const spy = { async tregCall(input: { endpoint_id?: unknown; params?: unknown; purpose?: unknown }) { if (String(input.endpoint_id) === COMMENTS_ENDPOINT) commentParams.push({ ...(input.params as Record<string, unknown>) }); return inner.tregCall(input); } };
   const items = await ItemStore.open(store, TARGET);
   const plan = planned.plan;
-  await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: TARGET, gateway: sentTo(spy as never, rewrite, store) as unknown as Gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: redesignStagesOf(plan, TYPES_OFF, true, { youtube: "test" }) });
+  await runEngine({ reviewer: approvingResearchReviewer(), items, store, plan: withPromiseCaps(plan), missionId: TARGET, gateway: sentTo(spy as never, rewrite, store) as unknown as Gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: redesignStagesOf(plan, TYPES_OFF, true, { youtube: "test" }) });
   return { videos: items.acceptedRows("videos"), comments: items.acceptedRows("comments"), replies: items.acceptedRows("comments_replies"), unserved: exec.stats.unserved, commentParams, stageParams: plan.stages.find((s) => s.key === "comments")!.engine!.params, plan };
 }
 

@@ -12,6 +12,7 @@ import { approxInstantOfRelative } from "./occurrence";
 import { APPROX_DATES_KEY, approxColumnsOf } from "../relativeDates";
 import { cairoMomentAr } from "./cairoText";
 import { NAMED_MARK_KEY, NAMED_MARK_TITLE_AR, NAMED_MISMATCH_MARK_AR, NAMED_UNAVAILABLE_MARK_AR } from "./namedShortfall";
+import type { RelevanceSpec } from "../relevance";
 import { childPromise, perParentPromise, promiseLineAr, type StagePromise } from "./promise";
 import { OPEN_REPLIES_FLOOR } from "./openReplies";
 import { ALTERNATIVE_LINE_AR, catalogOnlyPagesOf, commentsAlternativesOf, quoteCostPerRowOf } from "./alternatives";
@@ -191,7 +192,7 @@ export function topicQueryOf(card: ToolCard, ask: Pick<Ask, "topic">, mode: "exa
 
 /** THE MOST STRATEGIES ONE PARENT SEARCH TRIES AT PLANNING: the precise query and, when it answered NO row, one relaxed query (the gateway's two samples of one source: no read is added). */
 export const SEARCH_STRATEGIES_MAX = 2;
-export type SearchStrategy = "exact" | "words" | "source_items";
+export type SearchStrategy = "exact" | "words" | "source_items" | "expanded";
 /**
  * THE SECOND SEARCH STRATEGY (P0, 15 Nov 2026), used only when the precise query's first page holds NO row, in place of following that empty page's cursor (production: an empty page's cursor answered 0 rows again in every recorded case, a paid read
  * each). Only a search that takes operators (the restrictions stay written in the query). It keeps EVERY hard condition: the source's operator, the period, the language, originals only; it never drops the source and never searches all
@@ -212,6 +213,29 @@ export function relaxedInputsOf(card: ToolCard, ask: Ask): { strategy: SearchStr
     return { strategy: "words", params: { ...exact, [q.field]: `${topicQueryOf(card, ask, "words")}${query.slice(quoted.length)}` } };
   }
   if (operatorIdOf(card, ask)) return { strategy: "source_items", params: parentInputs(card, { ...ask, topic: { text: null, relation: "none" } }) };
+  return null;
+}
+
+/** The longest query an expanded search sends (X documents 512 characters; the operators and the period are added to the group). */
+export const EXPANDED_QUERY_MAX_CHARS = 400;
+/**
+ * P0 (15 Nov 2026): THE EXPANDED STRATEGY (recall). The customer's alternatives AND the topic's variants (other forms of its words, synonyms: researchJudge.ts `topicVariants`, cleaned by code) as ONE disjunction group, with every hard
+ * condition kept exactly as the precise query writes it (the source's operator, the period, originals only). Only a card that documents a disjunction (`query.or`) and takes operators. The variants come FIRST in the group, so the query
+ * differs from the precise one from its first word (a recorded page is matched by its first 80 characters). Variants are dropped from the end until the query fits. Null: nothing to add, or the card cannot carry it.
+ * The variants widen only what is READ: every row is then judged against the request before it can be chosen, delivered or charged.
+ */
+export function expandedInputsOf(card: ToolCard, ask: Ask, variants: ReadonlyArray<string>): { strategy: SearchStrategy; params: Record<string, unknown> } | null {
+  const q = card.inputs.query;
+  if (!q?.operators || !q.or || !ask.topic.text || q.format === "hashtag") return null;
+  const own = (ask.topic.alternatives ?? []).length > 0 ? ask.topic.alternatives! : [ask.topic.text];
+  const exact = String(parentInputs(card, ask)[q.field] ?? "");
+  let extra = [...variants];
+  while (extra.length > 0) {
+    const params = parentInputs(card, { ...ask, topic: { ...ask.topic, alternatives: [...extra, ...own] } });
+    const query = String(params[q.field] ?? "");
+    if (query.length <= EXPANDED_QUERY_MAX_CHARS && query !== exact) return { strategy: "expanded", params };
+    extra = extra.slice(0, -1);
+  }
   return null;
 }
 
@@ -240,10 +264,24 @@ export interface CompileInput {
   catalogOnly?: boolean;
   /** The moment of planning: a source that says «7 years ago» is placed in time from it (YouTube), to rank by the newest and by the latest occurrence. */
   nowMs?: number;
-  /** NOV 6 2026: the customer chose, before approval, to go on with what was found although no row names the topic («أكمل بما وجدتموه كما هو»): unrelated rows may be chosen, each with its mark. */
+  /**
+   * NOV 6 2026: the customer chose, before approval, to go on with what was found although no row names the topic («أكمل بما وجدتموه كما هو»): unrelated rows may be chosen, each with its mark.
+   * P0 (15 Nov 2026): the worker's planning NO LONGER offers or passes it (unrelated rows are never sold as research results), and a row the research judgment (`judged`) rejected is never chosen even with it.
+   */
   allowUnrelated?: boolean;
   /** ROUND 33: the cards the plan may be built from (the hand-written ones and the ones derived from the catalog); absent: the hand-written ones, as before. */
   cards?: ReadonlyArray<ToolCard>;
+  /**
+   * P0 (15 Nov 2026): THE RESEARCH JUDGMENT of the rows read at planning (row id -> about the customer's request), from the same model review that gates execution. A row it decided is chosen or left out by it; a row it could not
+   * decide falls back to the word rule. Absent (tests, no model key): the word rule, as before.
+   */
+  judged?: ReadonlyMap<string, boolean>;
+  /**
+   * P0 (15 Nov 2026): whether the parent query the plan executes reached ITS END at planning. `true`: what the planning found is the whole of what the source gives for it, and the plan is sized by it. `false` (set by the
+   * planning driver only where the engine can read the same query on): a planning sample never sizes the plan; a parent-only plan is sized by the customer's number and the execution reads on until it is reached or the source ends.
+   * Absent: unknown, the plan is sized by what was found (as before).
+   */
+  poolExhausted?: boolean;
 }
 
 export type CompileResult =
@@ -254,7 +292,7 @@ export type CompileResult =
   /** Decision 7.5: the named page has fewer deliverable posts in the pool than asked and the customer has not answered: the caller asks the question (nothing is priced). */
   | { ok: false; reason: "named_shortfall"; found: number; need: number }
   /** NOV 6 2026: rows were read but none names the topic in its text: the caller asks the customer (go on with them marked, change the request, cancel); nothing is priced. */
-  | { ok: false; reason: "no_relevant_rows"; read: number; tagOnly: number };
+  | { ok: false; reason: "no_relevant_rows"; read: number; tagOnly: number; /** P0: decided by the research judgment (meaning), not by the words. */ judged?: boolean };
 
 const TITLE: Record<string, string> = {
   text: "النص", author: "صاحب الحساب", username: "اسم المستخدم", posted_at: "تاريخ ووقت النشر", link: "الرابط", country: "الدولة", language: "اللغة", likes: "الإعجابات",
@@ -318,6 +356,21 @@ export function repliesSizing(input: { comments: number; known: ReadonlyArray<nu
   const open = Math.min(unknown * cap, Math.ceil(unknown * Math.max(ratio, OPEN_REPLIES_FLOOR)));
   const total = Math.max(1, counted + open);
   return { counted, countedComments: seen.length, open: total - counted, total };
+}
+
+/** P0 (15 Nov 2026): the research gate, said on every plan of a research topic. */
+export const RESEARCH_GATE_NOTE_AR = "لا نعتمد على ورود الكلمة وحدها: كل عنصر يُفحص قبل التسليم بأنه يتحدث فعلًا عن موضوعك كما كتبته، وما لا يتحدث عنه لا يُسلَّم ولا يُحتسب.";
+/** Every research-gate sentence starts with this (the plan's notes are matched by it). */
+export const RESEARCH_GATE_PREFIX_AR = "لا نعتمد على ورود الكلمة وحدها:";
+/** The same, for a plan whose comments or replies follow the chosen items: those are delivered as the source gives them (never judged), so the sentence says the check is of the items they belong to, in the platform's own words. */
+export function researchGateParentsNoteAr(platform: SocialPlatform): string {
+  const item = platform === "x" ? { one: "تغريدة", children: "الردود عليها" } : platform === "tiktok" || platform === "youtube" ? { one: "فيديو", children: "التعليقات والردود عليه" } : { one: "منشور", children: "التعليقات والردود عليه" };
+  return `${RESEARCH_GATE_PREFIX_AR} كل ${item.one} يُختار يُفحص قبل التسليم بأنه يتحدث فعلًا عن موضوعك كما كتبته، وما لا يتحدث عنه لا يُسلَّم ولا يُحتسب؛ أما ${item.children} فتُسلَّم كما يعطيها المصدر.`;
+}
+/** P0 (15 Nov 2026): what a planning sample shows, and that it does not size the source. */
+export function sampleNoteAr(input: { read: number; found: number; need: number; judged: boolean }): string {
+  const found = input.found === 0 ? "لم نجد فيها بعد" : `وجدنا فيها ${toArabicDigits(input.found)}`;
+  return `قرأنا قبل التسعير عينة من ${toArabicDigits(input.read)} عنصرًا، ${found} ما ${input.judged ? "يتحدث فعلًا عن موضوعك" : "يذكر موضوعك"}. العينة لا تبيّن كم يوجد في المصدر: عند التنفيذ نواصل القراءة حتى نصل إلى ${toArabicDigits(input.need)} أو تنتهي نتائج المصدر، وقد يكون العدد النهائي أقل بكثير من المطلوب. لا يُخصم إلا مقابل ما يُسلَّم فعلًا، ولا يتجاوز الخصم المبلغ المحجوز.`;
 }
 
 /** ROUND 16: how many of the selected items match the customer's conditions and how many are alternatives marked in the file (all counted on the inspected planning rows; Arabic-Indic digits, no provider, no price). */
@@ -392,7 +445,7 @@ const periodIsChecked = (ask: Pick<Ask, "period" | "platform">): boolean => ask.
  */
 const periodGatedFor = (ask: Ask, poolCard: ToolCard): boolean => periodIsChecked(ask) || (ask.period !== null && operatorIdOf(poolCard, ask) !== null);
 
-export function rankedPoolOf(input: { ask: Ask; poolCard: ToolCard; pages: ReadonlyArray<{ page: unknown; card?: ToolCard }>; counters?: ReadonlyMap<string, number>; channels?: ReadonlyArray<{ id: string; title?: string }>; nowMs?: number; /** Count every row read, inside the period or not, eligible or not (the card says how many were read and how many were left out). */ keepOutsidePeriod?: boolean; /** The customer chose to go on with rows that do not name the topic. */ allowUnrelated?: boolean }): PoolRow[] {
+export function rankedPoolOf(input: { ask: Ask; poolCard: ToolCard; pages: ReadonlyArray<{ page: unknown; card?: ToolCard }>; counters?: ReadonlyMap<string, number>; channels?: ReadonlyArray<{ id: string; title?: string }>; nowMs?: number; /** Count every row read, inside the period or not, eligible or not (the card says how many were read and how many were left out). */ keepOutsidePeriod?: boolean; /** The customer chose to go on with rows that do not name the topic. */ allowUnrelated?: boolean; /** P0: the research judgment of the rows read (id -> about the request), when the planning could ask it. */ judged?: ReadonlyMap<string, boolean> }): PoolRow[] {
   const { ask, poolCard } = input;
   const card: ToolCard = poolCard.counter || !input.counters ? poolCard : { ...poolCard, counter: { key: "comments", counts: "comments" } };
   const mapped = input.pages.flatMap((p) => mapPage(p.card ?? poolCard, p.page)).map((r) => (input.counters && input.counters.has(String(r.id)) ? { ...r, comments: input.counters.get(String(r.id)) } : r))
@@ -402,7 +455,7 @@ export function rankedPoolOf(input: { ask: Ask; poolCard: ToolCard; pages: Reado
   // WHEN THE ASK HAS A PERIOD every parent of the pool is inside it, whichever search read it (live round 11): the chosen parents, the spares and the exposure check all come from this one list
   const inPeriodAll = input.keepOutsidePeriod !== true && periodGatedFor(ask, poolCard) ? mapped.filter((r) => insidePeriod(r, ask)) : mapped;
   // AN X PARENT IS AN ORIGINAL POST (NOV 6 2026 CAMPAIGN): a tweet the source marks as a reply to someone else is never a parent, even when the source ignored `-filter:replies` (one list for the chosen parents, the spares and the exposure check)
-  const inPeriod = input.keepOutsidePeriod !== true ? inPeriodAll.filter((r) => parentEligible(r, ask, { allowUnrelated: input.allowUnrelated === true, authorId: operatorIdOf(poolCard, ask) })) : inPeriodAll;
+  const inPeriod = input.keepOutsidePeriod !== true ? inPeriodAll.filter((r) => parentEligible(r, ask, { allowUnrelated: input.allowUnrelated === true, authorId: operatorIdOf(poolCard, ask), ...(input.judged ? { judged: input.judged } : {}) })) : inPeriodAll;
   const rankedAll = rankPool(inPeriod, ask, card, { occurrence: ask.occurrence });
   return ask.source.kind === "official" && (input.channels?.length ?? 0) > 1 ? interleaveByChannel(rankedAll, ask) : rankedAll;
 }
@@ -416,9 +469,14 @@ const isReplyRow = (row: Record<string, unknown>): boolean => row.is_reply === t
  *    (tier 0) is UNRELATED and is never chosen, unless the customer chose, before approval, to go on with what was found (`allowUnrelated`, the answer «أكمل بما وجدتموه كما هو»). A row that names the topic only in its hashtags (tier 1)
  *    stays eligible and keeps its mark («يذكر الموضوع في الوسوم فقط»); nothing is guessed: the text is read as it is, no synonym or translation is added.
  */
-export function parentEligible(row: Record<string, unknown>, ask: Pick<Ask, "platform" | "topic" | "source">, options: { allowUnrelated?: boolean; /** P0: the source a search carried by its operator: a row whose own author is not it is never a parent (sourceScope.ts rowIsBy). */ authorId?: string | null } = {}): boolean {
+export function parentEligible(row: Record<string, unknown>, ask: Pick<Ask, "platform" | "topic" | "source">, options: { allowUnrelated?: boolean; /** P0: the source a search carried by its operator: a row whose own author is not it is never a parent (sourceScope.ts rowIsBy). */ authorId?: string | null; /** P0 (15 Nov 2026): the research judgment of the row, when the planning asked it. */ judged?: ReadonlyMap<string, boolean> } = {}): boolean {
   if (ask.platform === "x" && isReplyRow(row)) return false;
   if (options.authorId && !rowIsBy(row, options.authorId)) return false;
+  // P0 (15 Nov 2026, msn_cd5f32adadefb9bb971f): A JUDGED ROW IS DECIDED BY ITS JUDGMENT, on every platform, whatever the customer answered before. A row judged not about the request is never a research result (three tweets that only shared
+  // the word «شائعة» = «common» with «الشائعات» = «rumors» were planned, delivered and charged); a row judged about it is one even when it does not repeat the customer's words.
+  const verdict = researchTopicOf(ask) && options.judged ? options.judged.get(String(row.id)) : undefined;
+  if (verdict === false) return false;
+  if (verdict === true) return true;
   // P0 (15 Nov 2026): a search CARRYING a named source by its operator is a gate for the topic too (the customer asked for the source's items ABOUT the topic; a relaxed search or the source's own items no longer guarantee the words)
   if (options.allowUnrelated !== true && (topicGated(ask) || (Boolean(options.authorId) && Boolean(ask.topic?.text))) && topicTierOf(String(row.text ?? ""), ask) === 0) return false;
   return true;
@@ -437,6 +495,20 @@ export const topicGated = (ask: Pick<Ask, "topic" | "source"> & { platform?: Ask
 /** The topic gate of a pool: the request's (`topicGated`) or, P0, a search that carries a named source by its operator and has a topic. */
 export const topicGatedFor = (ask: Ask, poolCard: ToolCard): boolean => topicGated(ask) || (Boolean(ask.topic.text) && operatorIdOf(poolCard, ask) !== null);
 
+/**
+ * P0 (15 Nov 2026): A RESEARCH TOPIC, the subject the items must be ABOUT («عن الشائعات»). Not a topic the items are made WITH (a sound, a filter: `made_with`), which a word does decide.
+ * A research topic is judged by meaning: at planning (the judge the worker passes in `judged`) and at execution (the stage's `relevance` rule with `judge: "model"`, applied by the item store and its review).
+ */
+export const researchTopicOf = (ask: Pick<Ask, "topic">): boolean => Boolean(ask.topic?.text) && ask.topic.relation !== "made_with";
+
+/** The execution's relevance rule of a research topic: every row with text is judged by the review against the customer's request; the words are only what was searched. */
+export function researchRelevanceOf(ask: Pick<Ask, "topic">, textColumns: ReadonlyArray<string>): RelevanceSpec | null {
+  if (!researchTopicOf(ask) || textColumns.length === 0) return null;
+  const alternatives = (ask.topic.alternatives ?? []).filter((a) => a.trim() !== "");
+  const terms = (alternatives.length > 0 ? alternatives : [ask.topic.text!]).map((t) => t.trim()).slice(0, 12);
+  return { subject_ar: `محتوى يتحدث فعلًا عن: ${terms.join(" أو ")}`, terms, text_columns: [...textColumns], min_own_words: 0, review: true, judge: "model" };
+}
+
 /** Compiles the plan. Pure: the same Ask and the same pages give the same plan. */
 export function compilePlan(input: CompileInput): CompileResult {
   const { ask } = input;
@@ -451,11 +523,13 @@ export function compilePlan(input: CompileInput): CompileResult {
   // THE COUNTER OF THE POOL: the parent card's own, or (YouTube) the counter card's, merged onto the rows by id
   const counterKey: string | null = poolCard.counter?.key ?? (input.counters ? "comments" : null);
   const card: ToolCard = poolCard.counter || !input.counters ? poolCard : { ...poolCard, counter: { key: "comments", counts: "comments" } };
-  const ranked0 = rankedPoolOf({ ask, poolCard, pages: input.pool.pages, ...(input.counters ? { counters: input.counters } : {}), ...(input.channels ? { channels: input.channels } : {}), ...(input.nowMs !== undefined ? { nowMs: input.nowMs } : {}), ...(input.allowUnrelated ? { allowUnrelated: true } : {}) });
+  const judged = input.judged && researchTopicOf(ask) ? input.judged : undefined;
+  const ranked0 = rankedPoolOf({ ask, poolCard, pages: input.pool.pages, ...(input.counters ? { counters: input.counters } : {}), ...(input.channels ? { channels: input.channels } : {}), ...(input.nowMs !== undefined ? { nowMs: input.nowMs } : {}), ...(input.allowUnrelated ? { allowUnrelated: true } : {}), ...(judged ? { judged } : {}) });
   if (ranked0.length === 0) {
     // NOTHING READ NAMES THE TOPIC (and every row is otherwise a candidate): the customer decides before approval (go on with what was found, marked; change the request; cancel). Nothing is priced or held
     const all = rankedPoolOf({ ask, poolCard, pages: input.pool.pages, ...(input.nowMs !== undefined ? { nowMs: input.nowMs } : {}), allowUnrelated: true });
-    if (all.length > 0 && topicGatedFor(ask, poolCard)) return { ok: false, reason: "no_relevant_rows", read: all.length, tagOnly: all.filter((r) => topicTierOf(String(r.text ?? ""), ask) === 1).length };
+    // P0: rows were read and the research judgment found none about the request: the same honest question, on every platform (never a plan of rows about something else)
+    if (all.length > 0 && (topicGatedFor(ask, poolCard) || (judged !== undefined && all.some((r) => judged.get(String(r.id)) === false)))) return { ok: false, reason: "no_relevant_rows", read: all.length, tagOnly: all.filter((r) => topicTierOf(String(r.text ?? ""), ask) === 1).length, ...(judged !== undefined && all.some((r) => judged.has(String(r.id))) ? { judged: true } : {}) };
     return { ok: false, reason: "no_rows" };
   }
   const need = Math.max(1, ask.count ?? DEFAULT_COUNT);
@@ -463,8 +537,10 @@ export function compilePlan(input: CompileInput): CompileResult {
   // WHAT THE SOURCES ANSWERED OUTSIDE THE PERIOD (live round 11): every row read, and how many the period rule left out (said on the card as a count)
   const readAll = rankedPoolOf({ ask, poolCard, pages: input.pool.pages, keepOutsidePeriod: true, ...(input.counters ? { counters: input.counters } : {}), ...(input.channels ? { channels: input.channels } : {}), ...(input.nowMs !== undefined ? { nowMs: input.nowMs } : {}) });
   const notOriginal = ask.platform === "x" ? readAll.filter(isReplyRow).length : 0;
-  const unrelatedLeftOut = input.allowUnrelated || !topicGatedFor(ask, poolCard) ? 0 : readAll.filter((r) => !(ask.platform === "x" && isReplyRow(r)) && topicTierOf(String(r.text ?? ""), ask) === 0).length;
-  const leftOutOfPeriod = periodGatedFor(ask, poolCard) ? readAll.filter((r) => parentEligible(r, ask, { allowUnrelated: input.allowUnrelated === true })).length - ranked0.length : 0;
+  // P0: a row the research judgment decided is counted by its verdict; an undecided row by the word rule where the topic is a gate
+  const notAbout = (r: PoolRow): boolean => { const v = judged?.get(String(r.id)); return v !== undefined ? v === false : topicGatedFor(ask, poolCard) && topicTierOf(String(r.text ?? ""), ask) === 0; };
+  const unrelatedLeftOut = input.allowUnrelated && !judged ? 0 : readAll.filter((r) => !(ask.platform === "x" && isReplyRow(r)) && notAbout(r)).length;
+  const leftOutOfPeriod = periodGatedFor(ask, poolCard) ? readAll.filter((r) => parentEligible(r, ask, { allowUnrelated: input.allowUnrelated === true, ...(judged ? { judged } : {}) })).length - ranked0.length : 0;
   const cardsOpt = input.cards ? { cards: input.cards } : {};
   const repliesCards = shape.includes("replies") ? cardsFor(ask.platform, REPLY_ROLE[ask.platform], { catalogOnly, ...cardsOpt }) : [];
   const commentsCard = shape.includes("comments") ? chooseCard(ask, "comments", { catalogOnly, repliesCards, ...cardsOpt }) : null;
@@ -523,7 +599,8 @@ export function compilePlan(input: CompileInput): CompileResult {
   /** The comments stage's pages: the cap of its own card, and of a `catalog_only` alternative it may continue with (the cap is the stage's: the engine counts the stage's pages whichever tool read them). */
   const commentsMaxPages = (c: ToolCard): number | null => { const own = [sharedMaxPages(c), ...captureAlternatives.map((a) => sharedMaxPages(a.card))].filter((x): x is number => x !== null); return own.length > 0 ? Math.min(...own) : null; };
   // THE TOPIC RELATION MARK (live round 7, always since round 11): every item of the stage carries how its own text relates to the topic the customer named, so the file says which is which (a mark, never a drop)
-  const tierOf = (r: PoolRow) => factsOf(r, ask, bySource).topicTier;
+  // P0: a judged row's relation is its judgment (about the request, or not), never the presence of a word
+  const tierOf = (r: PoolRow) => { const v = judged?.get(String(r.id)); return v === true ? 2 : v === false ? 0 : factsOf(r, ask, bySource).topicTier; };
   // LIVE ROUND 11: the column is on the parent sheet WHENEVER the Ask has a topic, on every platform (a file whose items are all about it said nothing, so «all about it» could not be told from «not checked»)
   const markTopic = Boolean(ask.topic.text);
   // THE NAMED-SOURCE MARK (decision 7.5, «fill from other pages»): a post that is not the named page's carries «المصدر المسمّى: غير مطابق», the page's own posts carry nothing (a mark, never a drop)
@@ -544,23 +621,40 @@ export function compilePlan(input: CompileInput): CompileResult {
   const fieldKeys = sameParentColumnsOf(ask.platform, [...cardFieldKeys, ...wantedKeys]);
   const columns = [...fieldKeys.filter((k, i) => k !== "id" && fieldKeys.indexOf(k) === i).map((k) => ({ key: k, title_ar: TITLE[k] ?? k })), ...(markTopic ? [{ key: TOPIC_RELATION_KEY, title_ar: TOPIC_RELATION_TITLE_AR }] : []), ...(markNamed ? [{ key: NAMED_MARK_KEY, title_ar: NAMED_MARK_TITLE_AR }] : [])];
   const pageRows = Math.max(1, card.page.observedRowsPerPage);
-  promises[parentKey] = { type: "exact", n: chosen.length };
+  // P0 (15 Nov 2026, msn_cd5f32adadefb9bb971f): A PLANNING SAMPLE NEVER SIZES THE PLAN. Two sample pages say what the source returns first, not how much it holds: a request for 400 tweets was planned, priced (66.67 points a tweet,
+  // the mission minimum spread over 3) and executed as the 3 rows of the sample, with no read at execution. A plan of parent items only is sized by the customer's number unless the query the plan executes reached its end at planning
+  // (then what was found IS what the source gives). The execution reads on (the pinned rows are fewer than the volume, so the engine reads the source afresh) and every row passes the research judgment; the customer is charged per
+  // delivered row only, never above the hold. A plan with comments or replies keeps its chosen parents (their children were measured on them).
+  const parentOnly = !commentsCard && !shape.includes("comments") && !shape.includes("replies");
+  // `poolExhausted === false` is the driver's word that the executed query did NOT end and the engine can read on (unknown: the plan keeps what was found); «only the ones found» on a named page is the customer's own limit
+  // Only a SEARCH (its query carries the source, the period and the topic, so reading on stays inside the request); an account's or a page's LISTING has no date input and would be paged back through its whole history: it keeps
+  // what the planning walk found, with the customer's number kept (`quantity`) so the delivery is told as partial
+  const searchRole = /\.search$/.test(poolCard.role);
+  const sizedByRequest = parentOnly && searchRole && input.poolExhausted === false && input.namedChoice !== "only_found" && chosen.length < need;
+  const parentRows = sizedByRequest ? need : chosen.length;
+  promises[parentKey] = sizedByRequest ? { type: "open", n: need } : { type: "exact", n: chosen.length };
+  const textColumns = fieldKeys.includes("text") ? ["text"] : [];
+  const relevance = researchRelevanceOf(ask, textColumns);
   stages.push({
     key: parentKey, title_ar: input.reelsProven === true ? REELS_TITLE_AR : PARENT_TITLE[ask.platform], endpoint_id: card.endpointId, ...(capabilityOf(card.endpointId) ? { capability: capabilityOf(card.endpointId)! } : {}),
-    expected_rows: chosen.length, planned_rows: chosen.length, parent_key: null, deliver: true, columns, sample_rows: chosen.slice(0, 3).map(shown),
+    expected_rows: parentRows, planned_rows: parentRows, parent_key: null, deliver: true, columns, sample_rows: chosen.slice(0, 3).map(shown), ...(relevance ? { relevance } : {}),
     measured_by: input.pool.pages.map((p) => p.callId), measured_from_calls: input.pool.pages.map((p) => p.callId), measured_cost_per_row_usd: card.costUsdPerPage / pageRows,
     yield_share: 1, review_share: 0, pinned_rows: chosen.map(shown), ...(spares.length > 0 && commentsCard ? { spare_rows: spares.map(shown) } : {}),
     ...(filtersOf(ask, card).length > 0 ? { filters: filtersOf(ask, card) } : {}),
     ...(ask.order === "most_commented" && commentsCard ? { chosen_most_engaged: true } : {}),
     engine: { endpoint_id: card.endpointId, params: input.pool.params, cursor_param: card.inputs.cursor, map_code: cardMapCode(card), map_file_id: "page", parent_binding: null, built_by: "code", ...(card.cannot && card.cannot.length > 0 ? { gaps: card.cannot.filter((c) => (c === "language" && ask.language) || (c === "period" && ask.period) || (c === "country" && ask.country)).map((c) => ({ cls: c === "period" ? "date" : c, reason: "no_field" })) } : {}) },
   } as PricedStage);
-  if (chosen.length < need) notes.push(`وجدنا في ما قرأناه ${toArabicDigits(chosen.length)} فقط تناسب طلبك من ${toArabicDigits(need)}.`);
+  // «يتحدث فعلًا» only when every chosen row was judged (the planning judge has a small cap; rows past it were matched by the words)
+  if (sizedByRequest) notes.push(sampleNoteAr({ read: readAll.length, found: chosen.length, need, judged: judged !== undefined && chosen.every((r) => judged.has(String(r.id))) }));
+  else if (chosen.length < need) notes.push(`وجدنا في ما قرأناه ${toArabicDigits(chosen.length)} فقط تناسب طلبك من ${toArabicDigits(need)}${input.poolExhausted === true ? "، وانتهت نتائج المصدر لهذا البحث عند آخر صفحة قرأناها" : ""}.`);
   // P0: a plan whose search carries the source by its operator says so before approval: that source alone, every item checked, and the count may be lower
   if (operatorIdOf(poolCard, ask)) notes.push(sourceOperatorNoteAr(operatorIdOf(poolCard, ask)!));
   // P0 (15 Nov 2026): the alternatives the customer listed, as they were searched and checked
   const topicAlts = ask.topic.alternatives ?? [];
-  if (topicAlts.length > 0) notes.push(poolCard.inputs.query?.or ? `بحثنا عن أيٍّ من: ${alternativesAr(topicAlts)}، وكل عنصر مختار يذكر واحدًا منها على الأقل في نصه.` : `هذا المصدر يبحث بعبارة واحدة في المرة، فبحثنا بـ«${topicAlts[0]}»، وكل عنصر مختار يذكر واحدًا على الأقل مما طلبته: ${alternativesAr(topicAlts)}.`);
-  if (unrelatedLeftOut > 0) notes.push(`لم نختر شيئًا لا يذكر «${ask.topic.text}» في نصه؛ تركنا ${toArabicDigits(unrelatedLeftOut)} مما قرأناه لأن نصه لا يذكر الموضوع، ولا يدخل في السعر.`);
+  if (topicAlts.length > 0) notes.push(poolCard.inputs.query?.or ? `بحثنا عن أيٍّ من: ${alternativesAr(topicAlts)}.` : `هذا المصدر يبحث بعبارة واحدة في المرة، فبحثنا بـ«${topicAlts[0]}».`);
+  // P0: what decides a research result is said once, truthfully: the meaning, judged on every row, never the presence of a word
+  if (relevance) notes.push(parentOnly ? RESEARCH_GATE_NOTE_AR : researchGateParentsNoteAr(ask.platform));
+  if (unrelatedLeftOut > 0) notes.push(judged ? `تركنا ${toArabicDigits(unrelatedLeftOut)} مما قرأناه لأنه لا يتحدث عن «${ask.topic.text}» وإن تشابهت بعض كلماته، ولا يدخل في السعر.` : `لم نختر شيئًا لا يذكر «${ask.topic.text}» في نصه؛ تركنا ${toArabicDigits(unrelatedLeftOut)} مما قرأناه لأن نصه لا يذكر الموضوع، ولا يدخل في السعر.`);
   if (ask.preferences && ask.preferences.length > 0) notes.push(`عاملنا ما كتبته بين قوسين أو كشرط إتاحة («${ask.preferences.join("»، «")}») كتفضيل لا كجزء من الموضوع، فلم نضفه إلى كلمات البحث.`);
   if (notOriginal > 0) notes.push(`لم نختر أي تغريدة هي نفسها ردّ على حساب آخر؛ تركنا ${toArabicDigits(notOriginal)} من هذا النوع مما قرأناه، لأنك طلبت منشورات أصلية.`);
   // WHAT THE POOL HELD, from the pages' own numbers (Facebook's keyword search): how many posts were read in how many pages, whether the source had more, how many are from the named page and how many talk about the topic
@@ -716,12 +810,14 @@ export function compilePlan(input: CompileInput): CompileResult {
   }
   const price = priceMissionByCode(stagePriceInputs(stages), { settings: input.pricingSettings });
   const plan: PricedPlan = {
-    summary_ar: summaryAr(ask, chosen.length, shape.filter((s) => s !== "replies" || stages.some((x) => x.replies_of !== undefined)), perParent, input.reelsProven === true),
+    summary_ar: summaryAr(ask, parentRows, shape.filter((s) => s !== "replies" || stages.some((x) => x.replies_of !== undefined)), perParent, input.reelsProven === true),
     ...(notes.length > 0 ? { notes_ar: notes } : {}),
     ...(ask.count === null ? { assumptions_ar: [`لم تحدد عددًا، فاخترنا ${toArabicDigits(DEFAULT_COUNT)}؛ يمكنك تعديله قبل الموافقة.`] } : {}),
     stages,
     price,
     ...(unserved.length > 0 ? { unserved_steps: unserved } : {}),
+    // P0 (15 Nov 2026): a parent-only plan the source could not fill keeps the customer's own number, so a delivery of what exists is told and shown as PARTIAL against the request, never as complete
+    ...(parentOnly && !sizedByRequest && ask.count !== null && chosen.length < need ? { quantity: { requested: need, stage_key: parentKey, target: chosen.length, reason_ar: input.poolExhausted === true ? "نتائج المصدر لهذا البحث انتهت عند هذا العدد مما يطابق طلبك" : "ما وجدناه مما يطابق طلبك كان هذا العدد", source: "request" as const } } : {}),
     compiled: { by: "compiler", platform: ask.platform, promises: Object.fromEntries(Object.entries(promises).map(([k, v]) => [k, { ...v }])), conditions: { named: ask.source.kind === "named", period: Boolean(ask.period), language: Boolean(ask.language), country: Boolean(ask.country), topic: Boolean(ask.topic.text) }, ...(ask.source.kind === "named" && ask.source.text ? { source_text: ask.source.text } : {}) },
   };
   return { ok: true, plan, promises, chosen: chosen.map((r) => r.id), spares: spares.map((r) => r.id) };

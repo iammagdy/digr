@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { approvingResearchReviewer } from "./helpers/researchReviewer";
 import { describe, expect, it, vi } from "vitest";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { createMemoryStore, newMission } from "../agent/src/memoryStore";
@@ -162,7 +163,7 @@ describe("the engine follows nextCursor until it is null or the cap is reached",
     };
     const items = await ItemStore.open(store, target);
     const plan = r.plan;
-    await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: target, gateway: gateway as unknown as Gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: redesignStagesOf(plan, TYPES_OFF, true, { x: "test" }) });
+    await runEngine({ reviewer: approvingResearchReviewer(), items, store, plan: withPromiseCaps(plan), missionId: target, gateway: gateway as unknown as Gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: redesignStagesOf(plan, TYPES_OFF, true, { x: "test" }) });
     const counterOf = new Map(mapPage(searchCard, pool).map((t) => [String(t.id), Number(t.replies_count) || 0] as const));
     const withReplies = r.chosen.filter((id) => (counterOf.get(id) ?? 0) > 0);
     return { items, replyCalls, plan, withReplies, perTweet };

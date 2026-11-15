@@ -104,12 +104,13 @@ describe("round 7, item 1: no video of the pool is about the topic, so one more 
 });
 
 describe("round 7, item 1: the union still has no video about the topic: the question card before approval", () => {
-  it("a question with the three choices, and no plan: nothing is held, nothing is priced", async () => {
+  // CHANGED (P0, 15 Nov 2026, msn_cd5f32adadefb9bb971f): «أكمل بما وجدتموه كما هو» is no longer offered: rows that are not about the request are never sold as research results
+  it("a question with two choices (change the request, cancel), and no plan: nothing is held, nothing is priced", async () => {
     const g = stubGateway([searchPage({ suffix: "", caption: () => HASHTAG_ONLY }), searchPage({ suffix: "1", caption: () => HASHTAG_ONLY })]);
     const r = await plan(g);
     if (r.kind !== "question") throw new Error(`expected a question, got ${r.kind}`);
     expect(searchCalls(g.calls)).toHaveLength(2);
-    expect(r.options).toEqual([NO_ABOUT_OPTIONS_AR.useAsIs, NO_ABOUT_OPTIONS_AR.change, NO_ABOUT_OPTIONS_AR.cancel]);
+    expect(r.options).toEqual([NO_ABOUT_OPTIONS_AR.change, NO_ABOUT_OPTIONS_AR.cancel]);
     expect(r.question).toMatch(/لم نجد في ما قرأناه فيديو يطابق طلبك ويتحدث نصه عن «الذكاء الاصطناعي»/);
     expect(r.question).toMatch(/الوسوم/);
     // Arabic only, Arabic-Indic digits, no provider, no endpoint, no USD, no emoji
@@ -131,6 +132,8 @@ describe("round 7, item 1: the union still has no video about the topic: the que
     const videos = r.plan.stages.find((s) => s.key === "videos")!;
     expect(videos.columns.map((c) => c.title_ar)).toContain("علاقة النص بالموضوع");
     expect(videos.pinned_rows!.every((x) => x[TOPIC_RELATION_KEY] === topicRelationAr(1))).toBe(true);
+    // P0 (15 Nov 2026): the answer is no longer offered; a mission that still carries it is planned under the research gate, so at execution every video is judged and one that is not about the topic is neither delivered nor charged
+    expect(videos.relevance?.judge).toBe("model");
     // the marked rows reach the file as a column of the videos sheet (nothing is removed)
     const rows = videos.pinned_rows!.map((x) => ({ ...x }));
     const built = await buildMissionFiles(r.plan as PricedPlan, { videos: rows, comments: [] } as never);

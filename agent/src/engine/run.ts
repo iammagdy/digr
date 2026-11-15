@@ -37,6 +37,8 @@ export const enginePageCapFor = (plannedRows: number): number => Math.max(ENGINE
 const REVIEW_STALL_PAGES = 3;
 /** Pages in a row that give no new item at all (the source repeats itself). */
 const BARREN_PAGES = 2;
+/** P0 (15 Nov 2026): consecutive pages of a research topic that add no accepted row before the read stops. */
+export const JUDGED_DRY_PAGES = 5;
 /** Windows one stage may walk back through (a safety net: every window ends at least a day earlier than the one before, and a source that gives nothing more ends the walk). */
 export const ENGINE_MAX_WINDOWS = 200;
 
@@ -533,6 +535,7 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
   // a stage with its own page limit (a catalog_only card within its dollar cap, plan.ts `max_pages`) is never read past it
   const maxPages = Math.min(stage.max_pages ?? Number.POSITIVE_INFINITY, Math.max(deps.maxPagesPerStage ?? enginePageCapFor(stage.planned_rows), depthPages > 1 && stage.parent_key ? items.acceptedRows(stage.parent_key).length * depthPages : 0));
   let stallStreak = 0;
+  let dryStreak = 0;
   let failures = 0;
   for (;;) {
     const counts = items.counts(stage.key);
@@ -607,5 +610,8 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     const after = items.counts(stage.key);
     if (after.accepted === before && after.pending > 0 && deps.reviewer && (await deps.reviewer.state()).stop) stallStreak += 1; else stallStreak = 0;
     if (stallStreak >= REVIEW_STALL_PAGES) return { reason: "review_limit", aborted: null };
+    // P0 (15 Nov 2026): A RESEARCH TOPIC'S READ ENDS when page after page adds nothing the review accepts (a broad query whose rows are about something else): the reading is bounded by its yield, never bought to the budget for rows no one is charged for
+    if (stage.relevance?.judge === "model" && parentId === null) { if (after.accepted === before && after.pending === 0) dryStreak += 1; else dryStreak = 0; }
+    if (dryStreak >= JUDGED_DRY_PAGES) return { reason: "page_limit", aborted: null };
   }
 }

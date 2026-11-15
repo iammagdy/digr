@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { approvingResearchReviewer } from "./helpers/researchReviewer";
 import { describe, expect, it } from "vitest";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { createMemoryStore } from "../agent/src/memoryStore";
@@ -233,7 +234,7 @@ describe("3 and 4. the compiled plan keeps the reply tokens and sizes an open co
     const store = createMemoryStore();
     const items = await ItemStore.open(store, mission);
     const { gateway, calls } = liveGateway(store, mission, first);
-    await runEngine({ items, store, plan: withPromiseCaps(p.plan), missionId: mission, gateway: gateway as unknown as Gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: redesignStagesOf(p.plan, OFF, true, { youtube: "test" }) });
+    await runEngine({ reviewer: approvingResearchReviewer(), items, store, plan: withPromiseCaps(p.plan), missionId: mission, gateway: gateway as unknown as Gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: redesignStagesOf(p.plan, OFF, true, { youtube: "test" }) });
     const comments = items.acceptedRows("comments");
     expect(comments.filter((c) => c.parent_id === first)).toHaveLength(100);
     expect(comments.filter((c) => c.parent_id === second)).toHaveLength(20);

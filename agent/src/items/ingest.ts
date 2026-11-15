@@ -1,4 +1,5 @@
 import { CONTACT_STATUS_UNVERIFIED_AR, statusKeyOf } from "../../../src/lib/agentMission/contactFinders";
+import { TOPIC_RELATION_KEY, topicRelationAr } from "../../../src/lib/agentMission/foundation/topicChoice";
 import { classifyRowDetailed, type RelevanceReason, type RuleBasis } from "../../../src/lib/agentMission/relevance";
 import { CONTACT_KINDS, isContactSource, verifyContactValue } from "../../../src/lib/agentMission/contacts";
 import { isNamedPerson, isPeopleStage, personVerdict } from "../../../src/lib/agentMission/people";
@@ -96,7 +97,10 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   // comment wrote two comments); only the same item id is one item. The relevance and the language rules choose the PARENTS and the top-level items.
   const isChild = stage.parent_key !== null;
   const rawMode = options.raw === true && !isContactSource(stage.endpoint_id) && !isPeopleStage(stage);
-  const spec = isChild || rawMode ? null : stage.relevance ?? null;
+  // P0 (15 Nov 2026, msn_cd5f32adadefb9bb971f): a research topic judged by the model (`judge: "model"`, set by the compiler) gates the plan's own pinned rows too: the rows a planning sample read are delivered and charged only when the
+  // execution's review says they are about the request (three rows that only shared a word with the topic were delivered and charged in full)
+  const spec = isChild || (rawMode && stage.relevance?.judge !== "model") ? null : stage.relevance ?? null;
+  const judgedMark = spec?.judge === "model" && stage.columns.some((c) => c.key === TOPIC_RELATION_KEY);
   const before = items.counts(key);
   const room = Math.max(0, stage.planned_rows - before.accepted);
   const columnKeys = stage.columns.map((c) => c.key);
@@ -186,6 +190,15 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
       const verdict = exclusion.check(organisationOfRow(raw, { people: exclusionKind === "people", nameKeys: exclusionNameKeys }));
       if (verdict.kind === "excluded") { excludedByList += 1; excludedStructural.push({ id, reason: CUSTOMER_EXCLUSION_REASON, row }); continue; }
       if (verdict.kind === "possible") row[EXCLUSION_POSSIBLE_MARK] = true;
+    }
+    // P0 (15 Nov 2026): THE PLAN'S OWN SELECTION RULES HOLD AT EXECUTION. Raw delivery writes most conditions as marks, but a compiled plan CHOSE its top-level items by these rules (compilePlan.ts parentEligible): the exact named account
+    // («لا يُسلَّم ولا يُحتسب أي عنصر من حساب آخر»), the period the customer asked, and, on X, original posts only. Once execution reads on past the planning sample, a row the plan would never have chosen is never delivered or charged
+    // (msn_dd7c2e9c131b8783bf2e: a fresh read after the count was raised delivered 79 tweets of 38 other accounts).
+    if (rawMode && !isChild && plan.compiled?.by === "compiler") {
+      const hard = enabledFilters.filter((f) => (f.kind === "account" && f.exact === true) || f.kind === "period");
+      const why = hard.length > 0 ? filterVerdict(hard, raw, { textKey: textKeyOf(stage, Object.keys(raw)), now, cairoDays: true }) : null;
+      const xReply = plan.compiled.platform === "x" && (raw.is_reply === true || raw.is_reply === "true" || raw.is_reply === "True");
+      if (why || xReply) { tally.rejected_by_filter += 1; excludedStructural.push({ id, reason: why ?? "filter_reply", row }); continue; }
     }
     // WHAT THE CARD PROMISES, checked here on the mapped item (replies, language, period, account, place): an item a filter rejects is neither delivered nor charged, and is kept with its reason
     if (!rawMode && enabledFilters.length > 0) {
@@ -331,9 +344,11 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     if (state === "excluded" && reason && reason !== "target_reached") left[reason] = (left[reason] ?? 0) + 1;
     if (c.carried) {
       // a carried item is already in the log: only a decision moves it
-      if (state === "accepted" || state === "excluded") ops.push({ t: "resolve", stage: key, id: c.id, state, ...(o.by ? { by: o.by } : {}), ...(o.basis ? { basis: o.basis } : {}), ...(reason ? { reason } : {}) });
+      if (state === "accepted" || state === "excluded") ops.push({ t: "resolve", stage: key, id: c.id, state, ...(o.by ? { by: o.by } : {}), ...(o.basis ? { basis: o.basis } : {}), ...(reason ? { reason } : {}), ...(state === "accepted" && judgedMark ? { marks: { [TOPIC_RELATION_KEY]: topicRelationAr(2) } } : {}) });
     } else {
-      ops.push({ t: "item", stage: key, id: c.id, state, ...(state === "accepted" && o.by ? { by: o.by } : {}), ...(state === "accepted" && o.basis ? { basis: o.basis } : {}), ...(reason ? { reason } : {}), row: c.row });
+      // a row the review judged about the request says so in its own topic column (the file's mark is the verdict that let it in, never a guess from words)
+      const row = state === "accepted" && judgedMark ? { ...c.row, [TOPIC_RELATION_KEY]: topicRelationAr(2) } : c.row;
+      ops.push({ t: "item", stage: key, id: c.id, state, ...(state === "accepted" && o.by ? { by: o.by } : {}), ...(state === "accepted" && o.basis ? { basis: o.basis } : {}), ...(reason ? { reason } : {}), row });
     }
   }
   tally.saved_now = acceptedNow;

@@ -49,7 +49,7 @@ export interface StoredItem {
 export type Op =
   | { t: "page"; stage: string; stream: string; call_id: string | null; cursor_in: string | null; cursor_next: string | null; has_more: boolean | null; ended: boolean; rows_in_page: number; /** Pages this record stands for (default 1: a source read by collect_pages writes one record for a whole call). */ pages?: number; /** The oldest moment (ms since 1970) among the source rows of this page, read from the stage's period field: where a read that walks back through date windows has got to. */ oldest_ms?: number; /** The keys of the raw rows this record added to the stream (collect_pages: a later call returns only new rows). */ keys?: string[] }
   | { t: "item"; stage: string; id: string; state: ItemState; by?: "rule" | "model" | "legacy"; basis?: RuleBasis; reason?: ItemReason; row: Row | null }
-  | { t: "resolve"; stage: string; id: string; state: "accepted" | "excluded"; by?: "rule" | "model"; basis?: RuleBasis; reason?: ItemReason }
+  | { t: "resolve"; stage: string; id: string; state: "accepted" | "excluded"; by?: "rule" | "model"; basis?: RuleBasis; reason?: ItemReason; /** P0 (15 Nov 2026): cells the decision writes on an accepted row (the research verdict's topic mark). Absent in older logs. */ marks?: Record<string, string> }
   | { t: "dup"; stage: string; n: number }
   /** A parent that gave no child is replaced by a spare parent the stage had checked and kept beyond its volume (`target_reached`): `in` becomes accepted, `out` becomes a kept, undelivered match. The parent stage's count does not change. */
   | { t: "swap"; stage: string; out: string; in: string }
@@ -129,6 +129,7 @@ function applyOp(logs: Map<string, StageLog>, op: Op): void {
       if (op.by) it.by = op.by; else delete it.by;
       if (op.reason) it.reason = op.reason; else delete it.reason;
       if (op.basis) it.basis = op.basis; else delete it.basis;
+      if (op.state === "accepted" && op.marks && it.row) it.row = { ...it.row, ...op.marks };
       if (op.state === "excluded") { if (log.excludedRowsKept >= AGENT_EXCLUDED_ROWS_KEPT) it.row = null; else log.excludedRowsKept += 1; }
       return;
     }

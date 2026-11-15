@@ -1,4 +1,6 @@
 import { readFileSync } from "node:fs";
+import { RESEARCH_GATE_NOTE_AR } from "../src/lib/agentMission/foundation/compilePlan";
+import { emptyReviewState } from "../agent/src/review";
 import { describe, expect, it, vi } from "vitest";
 import { createMemoryStore } from "../agent/src/memoryStore";
 import { priceMissionByCode } from "../src/lib/agentMission/price";
@@ -75,21 +77,28 @@ describe("6. YOUTUBE KEYWORD VIDEOS (a request with no channel; SIMULATED catalo
     expect(r.plan.notes_ar).toContain(DISCOVERED_SOURCE_NOTE_AR);
     for (const n of r.plan.notes_ar ?? []) expect(checkCustomerText(n).issues, n).toEqual([]);
   });
-  it("NO SILENT RELEVANCE FILTERING: 17 of the 20 videos read are not about the topic; the 10 chosen include some of them, they are MARKED, and the file delivers all 10 with none excluded", async () => {
+  it("NO SILENT RELEVANCE FILTERING, AND NO OFF-TOPIC DELIVERY (P0, 15 Nov 2026): 17 of the 20 videos read are not about the topic; the research review keeps the ones about it, every other is EXCLUDED WITH ITS REASON (never delivered, never charged), and the card said so before approval", async () => {
+    // Before the P0 of 15 Nov 2026 this test required the 7 off-topic videos to be delivered and charged, only marked (msn_cd5f32adadefb9bb971f: 3 off-topic tweets sold as the research result).
+    // The review is scripted here (a video is about the topic when its text names it); in production it is the model review of agent/src/review.ts.
     const w = discoveryWorld("عايز ١٠ فيديوهات من يوتيوب عن الذكاء الاصطناعي", { [SEARCH]: handler }, { discovery: true, platform: "youtube" });
     const r = await w.plan();
     if (r.kind !== "plan") throw new Error("no plan");
-    const d = await deliver(w, r.plan, "x", "youtube");
+    expect(r.plan.notes_ar).toContain(RESEARCH_GATE_NOTE_AR);
+    expect(r.plan.stages[0].relevance?.judge).toBe("model");
+    const asked: string[] = [];
+    const reviewer = { budgetUsd: 1, state: async () => emptyReviewState(), review: async ({ rows: rr }: { rows: Array<{ id: string; text: string }> }) => { asked.push(...rr.map((x) => x.id)); return new Map(rr.map((x) => [x.id, /الذكاء الاصطناعي/.test(x.text)])); } };
+    const d = await deliver(w, r.plan, "x", "youtube", { reviewer });
     const delivered = d.rowsByStage.videos;
-    expect(delivered).toHaveLength(10);
-    expect(d.snap.counts("videos").excluded).toBe(0);
-    const marks = delivered.map((x) => x.topic_relation);
-    expect(marks.filter((m) => m === "يتحدث نصه عن الموضوع")).toHaveLength(3);
-    expect(marks.filter((m) => m !== "يتحدث نصه عن الموضوع").length).toBe(7);
+    expect(delivered.length).toBeGreaterThan(0);
+    for (const row of delivered) expect(String(row.title ?? row.text ?? "")).toMatch(/الذكاء الاصطناعي/);
+    for (const row of delivered) expect(row.topic_relation).toBe("يتحدث نصه عن الموضوع");
+    // the off-topic videos the review read are recorded with their reason (the admin's check report), not silently lost
+    expect(d.snap.counts("videos").excludedByReason.review_no ?? 0).toBeGreaterThan(0);
+    expect(asked.length).toBeGreaterThanOrEqual(delivered.length + (d.snap.counts("videos").excludedByReason.review_no ?? 0));
     // no invented identifier, a public link that opens the video, no repeat, every id one the provider gave
     const served = servedIds(w);
     for (const row of delivered) { expect(served.has(String(row.id)), String(row.id)).toBe(true); expect(String(row.link)).toBe(`https://www.youtube.com/watch?v=${row.id}`); }
-    expect(new Set(idsOf(delivered)).size).toBe(10);
+    expect(new Set(idsOf(delivered)).size).toBe(delivered.length);
     noRepeat(w.calls);
   });
   it("THE PRICE IS CODE'S: the stored price equals the one pricing function over the stages, the model's choice has no input into it, and the hold is explicit before anything runs", async () => {
