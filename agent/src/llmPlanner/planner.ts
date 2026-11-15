@@ -349,6 +349,8 @@ export function runMap(code: string, page: unknown): Array<Record<string, unknow
 
 interface BuiltStep {
   step: UnderstoodStep; option: ToolOption; mapCode: string; columns: PlanColumn[]; carryKeys: string[]; sampleRows: Array<Record<string, unknown>>; rowsPerPage: number; callIds: string[]; hasMore: boolean;
+  /** A SECOND tool that also answered on a real page, with its own proven mapping: execution continues with it when the first tool's input sets run out (another index gives other items). */
+  second?: { option: ToolOption; mapCode: string };
 }
 
 const asJson = (text: unknown): unknown => text;
@@ -422,7 +424,20 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     if (sampleRows.length === 0) { unserved.push({ what_ar: step.title_ar, reason_ar: "لم نتمكن من قراءة نتائج هذه الخطوة بشكل موثوق، فلن تُضاف ولن تُحسب في السعر." }); continue; }
     const columns: PlanColumn[] = [...COLUMN_ORDER.filter((k) => map.fields[k] || (k === "link" && map.linkTemplate)).map((k) => ({ key: k, title_ar: COLUMN_TITLES[k] })), ...map.extra.map((e) => ({ key: e.key, title_ar: e.title_ar }))];
     step.title_ar = customerSafe(step.title_ar, 60) ?? "العناصر";
-    built.set(step.key, { step, option: got.option, mapCode, columns, carryKeys: Object.keys(carry), sampleRows, rowsPerPage: got.items.length, callIds: got.callIds, hasMore: got.hasMore });
+    // ASKED FOR 400, GET 400: a topic search also proves the model's next tool (another provider's index gives other items); execution reads it after the first tool's input sets run out
+    let second: BuiltStep["second"];
+    const next = !step.parent && step.topic ? options.find((o) => o.endpoint.id !== got.option.endpoint.id && !o.parent) : undefined;
+    if (next) {
+      const got2 = await probeStep(step, [next], null, deps);
+      if (got2) {
+        const map2 = enrichedMap(checkFieldMap(await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, got2.option.endpoint, got2.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500), got2.items), got2.items);
+        if (map2) {
+          const code2 = cardMapCode(pseudoCard(got2.option.endpoint, got2.listPath, map2, got2.items.length, carryFieldsOf(got2.items, map2), got2.items));
+          if (runMap(code2, got2.page).length > 0) second = { option: got2.option, mapCode: code2 };
+        }
+      }
+    }
+    built.set(step.key, { step, option: got.option, mapCode, columns, carryKeys: Object.keys(carry), sampleRows, rowsPerPage: got.items.length, callIds: got.callIds, hasMore: got.hasMore, ...(second ? { second } : {}) });
   }
   costUsd = cost.usd;
   if (built.size === 0) return { kind: "cannot", reason_ar: unserved[0]?.reason_ar ?? "", understanding: u, costUsd, detail: "no_step_served" };
@@ -540,7 +555,10 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
     if (b.option.notCarried.length > 0) notes.push(`${s.title_ar}: الأداة المتاحة لهذه الخطوة لا تحدد ${b.option.notCarried.map((c) => CONDITION_AR[c]).join(" ولا ")}، فستصلك كما يعرضها المصدر دون تصفية بها.`);
     const rowsPerPage = Math.max(1, b.rowsPerPage);
     const costPerRow = (callUsdOf(b.option.endpoint) / rowsPerPage) * VARIANT_OVERLAP_FACTOR;
-    const alternatives = b.option.more.map((params) => ({ endpoint_id: b.option.endpoint.id, params, cursor_param: b.option.cursor, map_code: b.mapCode, map_file_id: "page", ...(b.option.parent ? { parent_binding: { param: b.option.parent.param, from: b.option.parent.from } } : {}) }));
+    const alternatives = [
+      ...b.option.more.map((params) => ({ endpoint_id: b.option.endpoint.id, params, cursor_param: b.option.cursor, map_code: b.mapCode, map_file_id: "page", ...(b.option.parent ? { parent_binding: { param: b.option.parent.param, from: b.option.parent.from } } : {}) })),
+      ...(b.second ? [b.second.option.params, ...b.second.option.more].map((params) => ({ endpoint_id: b.second!.option.endpoint.id, params, cursor_param: b.second!.option.cursor, map_code: b.second!.mapCode, map_file_id: "page" })) : []),
+    ];
     stages.push({
       key: s.key, title_ar: s.title_ar, endpoint_id: b.option.endpoint.id, capability: s.capability,
       expected_rows: planned, planned_rows: planned, parent_key: s.parent, ...(perParent !== undefined ? { per_parent_rows: perParent } : {}),
@@ -568,7 +586,7 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
   const platforms = [...new Set(steps.map((b) => platformAr(b.step.platform)))].join(" و");
   const understood = customerSafe(u.understanding_ar.replace(/[.،\s]+$/u, ""), 300) ?? `نجمع ${stages.filter((s) => s.deliver).map((s) => s.title_ar).join(" و")} من ${platforms} كما طلبت`;
   const summary = `${understood}. ${counts ? `العدد المخطط: ${counts}.` : ""}`.trim();
-  const widened = steps.some((b) => b.option.more.length > 0);
+  const widened = steps.some((b) => b.option.more.length > 0 || b.second !== undefined);
   notes.push(widened
     ? "نجمع بالعدد الذي طلبته من المصدر صفحةً بعد صفحة، ونوسّع البحث بصيغ أخرى للموضوع نفسه حتى نصل إلى العدد أو ينتهي ما يعرضه المصدر، ونحذف المكرر فقط. لا تدفع إلا مقابل ما يُسلَّم."
     : "نجمع بالعدد الذي طلبته من المصدر صفحةً بعد صفحة حتى نصل إليه أو ينتهي ما يعرضه المصدر، ونحذف المكرر فقط. لا تدفع إلا مقابل ما يُسلَّم.");

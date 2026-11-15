@@ -311,3 +311,25 @@ describe("live finding: a TikTok file with links only (the item is big and neste
     expect(rows[0]).toMatchObject({ id: "7609673492950256917", text: "فطار مصري على أصوله", username: "ali.mahgoub8", likes: 1200, link: "https://www.tiktok.com/@ali.mahgoub8/video/7609673492950256917" });
   });
 });
+
+describe("asked for 400, get 400: a topic search continues on the model's next tool", () => {
+  it("the second tool is probed and mapped on its own real page, and execution reads it after the first tool's input sets", async () => {
+    const choice = { options: [CHOICE_X.options[0], { endpoint_id: "tikhub.x.twitter-web-fetch-search-timeline", params_json: JSON.stringify({ keyword: "(الشائعات OR \"نفي شائعة\") from:SaudiMOH", search_type: "Latest" }), cursor_input: "cursor", more_params_json: [] }] };
+    const otherPage = { data: { timeline: [{ rest_id: "77", legacy: { full_text: "نفي شائعة", created_at: "Mon Mar 04 10:00:00 +0000 2024" } }], next_cursor: "n2" } };
+    const m = scriptedModel({ request_plan: [UNDERSTOOD_X], tool_choice: [choice], field_map: [MAP_X, { fields: { id: ["rest_id"], text: ["legacy", "full_text"] }, extra: [] }] });
+    const pages = new Map<string, unknown>([["call_0001", xPage(0, 20, "c2")], ["call_0002", otherPage]]);
+    let n = 0;
+    const deps: LlmPlannerDeps = {
+      model: m.model, catalog, access: null, today: "2026-11-15",
+      probe: async () => { n += 1; return { ok: true, call_id: `call_000${n}`, http_status: 200, rows_in_page: n === 1 ? 20 : 1, has_more: true, next_cursor: "x", shape: null, first_rows: [], warnings: [], saved: "" }; },
+      readPage: async (id) => pages.get(id) ?? null,
+    };
+    const r = await planWithLlm({ words: ["٥٠ تغريدة"], request: "" }, deps);
+    expect(r.kind).toBe("plan");
+    if (r.kind !== "plan") return;
+    const alts = r.plan.stages[0].engine!.alternatives!;
+    expect(alts.map((a) => a.endpoint_id)).toEqual(["anyapi.x.search.posts", "tikhub.x.twitter-web-fetch-search-timeline"]);
+    const { runMap } = await import("../agent/src/llmPlanner/planner");
+    expect(runMap(alts[1].map_code, otherPage)[0]).toMatchObject({ id: "77", text: "نفي شائعة" });
+  });
+});
