@@ -386,7 +386,14 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
       if (!fit.ok) return { kind: "cannot", ask, reason: "budget_too_small", reads };
       return { kind: "plan", plan: fit.plan, ask: fit.ask, result: fit.result, reads };
     }
-    return { kind: "plan", plan: result.plan, ask, result, reads };
+    return { kind: "plan", plan: withStrategyNote(result.plan), ask, result, reads };
+  };
+  /** P0 (15 Nov 2026): the plan says when its items came from the relaxed strategy (the exact words answered nothing). */
+  const withStrategyNote = (p: PricedPlan): PricedPlan => {
+    const relaxedUsed = searched.find((x) => x.strategy !== "exact" && x.rows > 0);
+    if (!relaxedUsed) return p;
+    const how = relaxedUsed.strategy === "words" ? "بكلمات الموضوع في أي ترتيب" : "في منشورات الحساب نفسه داخل الفترة، ثم فحصنا كل منشور بالموضوع";
+    return { ...p, notes_ar: [...(p.notes_ar ?? []), `البحث بالعبارات كما كتبتها لم يُرجع نتائج، فبحثنا ${how}؛ ولم يُختر إلا ما يطابق شروطك.`] };
   };
 
   // YOUTUBE: the official channels are resolved first (a channel search by name), then each is read INSIDE (the channel's own videos about the topic): a plain search has no channel input, which is why M18 and M20 once took a video of another channel
@@ -442,7 +449,8 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   if (relaxed) {
     const r = await read(card.endpointId, relaxed.params, card);
     reads.pool += 1;
-    if (!("failed" in r)) { pages.push({ callId: r.callId, page: r.page }); track(card, r); searched.push({ strategy: relaxed.strategy, rows: mapPage(card, r.page).length }); params = relaxed.params; }
+    // the plan keeps the params a fresh read at execution may use: the relaxed WORDS query still carries every topic word; the source's own items do not, so the precise query stays (a fresh read never collects off-topic items)
+    if (!("failed" in r)) { pages.push({ callId: r.callId, page: r.page }); track(card, r); searched.push({ strategy: relaxed.strategy, rows: mapPage(card, r.page).length }); if (relaxed.strategy === "words") params = relaxed.params; }
   } else if (firstEmpty && !aboutQuery) {
     // no safe relaxed strategy: the request ends with the scope that was searched (never a page of the same empty query)
   } else if (aboutQuery && card.inputs.query && !hasAbout()) {

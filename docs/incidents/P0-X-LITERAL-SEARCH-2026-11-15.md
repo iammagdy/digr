@@ -55,7 +55,7 @@ The request asked for up to 400 tweets of the Saudi Ministry of Health's account
 
 **Validation of every row:**
 - The exact author check is unchanged.
-- **X rows are now also checked by their own date.** The mapping writes ISO instants. Before, the code relied on `since:`/`until:`.
+- **On a search that carries a named source by its operator, every row is also checked by its own date.** The mapping writes ISO instants. An ordinary X search keeps its rule: rows outside the period are marked «لا», never dropped (live round B, unchanged).
 - **A search that carries a named source by its operator is a topic gate.** A row naming none of the alternatives is never chosen. When rows of the account exist but none is about the topic, the customer is asked before anything is priced (the existing «no_about» question).
 
 **Bounded strategies** (`relaxedInputsOf`, `agent/src/compiled.ts`):

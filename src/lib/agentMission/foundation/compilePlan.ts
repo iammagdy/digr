@@ -378,8 +378,7 @@ function interleaveByChannel(rows: PoolRow[], ask: Ask): PoolRow[] {
  * placed in time, ranked by named source, country and language, own text about the topic, the latest occurrence (decision 7), the most commented or the newest; the official channels take turns inside each level (live round 10: both videos were the first channel's).
  */
 /** The platforms whose sources take the period as a REQUEST and do not keep to it (live round 11, Facebook: a search sent `startDate` and `endDate` answered posts of January and of last October): their pool is checked row by row. TikTok and X keep what they do. */
-// P0 (15 Nov 2026): X too. Its search takes `since:`/`until:`, and every row is now ALSO checked by its own date (a source can ignore an operator, as it can ignore `from:`); the mapping writes every X date as an ISO instant (mapCode.ts `iso`)
-export const PERIOD_CHECKED_PLATFORMS: ReadonlyArray<SocialPlatform> = ["facebook", "instagram", "youtube", "x"];
+export const PERIOD_CHECKED_PLATFORMS: ReadonlyArray<SocialPlatform> = ["facebook", "instagram", "youtube"];
 /** True when the row is inside the Ask's period (Cairo days, inclusive: from the first moment of the first day to the end of the last). A row with no readable date is not proven inside. */
 export function insidePeriod(row: Record<string, unknown>, ask: Pick<Ask, "period">): boolean {
   if (!ask.period) return true;
@@ -387,6 +386,11 @@ export function insidePeriod(row: Record<string, unknown>, ask: Pick<Ask, "perio
   return Number.isFinite(t) && t >= ask.period.startMs && t < ask.period.endExclusiveMs;
 }
 const periodIsChecked = (ask: Pick<Ask, "period" | "platform">): boolean => ask.period !== null && ask.platform !== null && PERIOD_CHECKED_PLATFORMS.includes(ask.platform);
+/**
+ * P0 (15 Nov 2026): a search that CARRIES a named source by its operator (X `from:`) checks every row by its own date too (as it checks the author and the topic): the source can ignore an operator, and a relaxed strategy reads the source's own
+ * posts. An ordinary X search keeps its rule (outside rows marked «لا», never dropped: live round B). The mapping writes every X date as an ISO instant (mapCode.ts `iso`).
+ */
+const periodGatedFor = (ask: Ask, poolCard: ToolCard): boolean => periodIsChecked(ask) || (ask.period !== null && operatorIdOf(poolCard, ask) !== null);
 
 export function rankedPoolOf(input: { ask: Ask; poolCard: ToolCard; pages: ReadonlyArray<{ page: unknown; card?: ToolCard }>; counters?: ReadonlyMap<string, number>; channels?: ReadonlyArray<{ id: string; title?: string }>; nowMs?: number; /** Count every row read, inside the period or not, eligible or not (the card says how many were read and how many were left out). */ keepOutsidePeriod?: boolean; /** The customer chose to go on with rows that do not name the topic. */ allowUnrelated?: boolean }): PoolRow[] {
   const { ask, poolCard } = input;
@@ -396,7 +400,7 @@ export function rankedPoolOf(input: { ask: Ask; poolCard: ToolCard; pages: Reado
     // ROUND 38: that instant is COMPUTED, never the source's: the row carries the mark (`_approx_dates`), kept in the plan's pinned rows, so the preview and the file call it approximate whatever the gap between planning and the run
     .map((r) => { if ((r.posted_at === undefined || r.posted_at === null) && input.nowMs !== undefined) { const t = approxInstantOfRelative(r.published, input.nowMs); if (t !== null) return { ...r, posted_at: new Date(t).toISOString(), [APPROX_DATES_KEY]: [...approxColumnsOf(r).filter((k) => k !== "posted_at"), "posted_at"] }; } return r; });
   // WHEN THE ASK HAS A PERIOD every parent of the pool is inside it, whichever search read it (live round 11): the chosen parents, the spares and the exposure check all come from this one list
-  const inPeriodAll = input.keepOutsidePeriod !== true && periodIsChecked(ask) ? mapped.filter((r) => insidePeriod(r, ask)) : mapped;
+  const inPeriodAll = input.keepOutsidePeriod !== true && periodGatedFor(ask, poolCard) ? mapped.filter((r) => insidePeriod(r, ask)) : mapped;
   // AN X PARENT IS AN ORIGINAL POST (NOV 6 2026 CAMPAIGN): a tweet the source marks as a reply to someone else is never a parent, even when the source ignored `-filter:replies` (one list for the chosen parents, the spares and the exposure check)
   const inPeriod = input.keepOutsidePeriod !== true ? inPeriodAll.filter((r) => parentEligible(r, ask, { allowUnrelated: input.allowUnrelated === true, authorId: operatorIdOf(poolCard, ask) })) : inPeriodAll;
   const rankedAll = rankPool(inPeriod, ask, card, { occurrence: ask.occurrence });
@@ -460,7 +464,7 @@ export function compilePlan(input: CompileInput): CompileResult {
   const readAll = rankedPoolOf({ ask, poolCard, pages: input.pool.pages, keepOutsidePeriod: true, ...(input.counters ? { counters: input.counters } : {}), ...(input.channels ? { channels: input.channels } : {}), ...(input.nowMs !== undefined ? { nowMs: input.nowMs } : {}) });
   const notOriginal = ask.platform === "x" ? readAll.filter(isReplyRow).length : 0;
   const unrelatedLeftOut = input.allowUnrelated || !topicGatedFor(ask, poolCard) ? 0 : readAll.filter((r) => !(ask.platform === "x" && isReplyRow(r)) && topicTierOf(String(r.text ?? ""), ask) === 0).length;
-  const leftOutOfPeriod = periodIsChecked(ask) ? readAll.filter((r) => parentEligible(r, ask, { allowUnrelated: input.allowUnrelated === true })).length - ranked0.length : 0;
+  const leftOutOfPeriod = periodGatedFor(ask, poolCard) ? readAll.filter((r) => parentEligible(r, ask, { allowUnrelated: input.allowUnrelated === true })).length - ranked0.length : 0;
   const cardsOpt = input.cards ? { cards: input.cards } : {};
   const repliesCards = shape.includes("replies") ? cardsFor(ask.platform, REPLY_ROLE[ask.platform], { catalogOnly, ...cardsOpt }) : [];
   const commentsCard = shape.includes("comments") ? chooseCard(ask, "comments", { catalogOnly, repliesCards, ...cardsOpt }) : null;

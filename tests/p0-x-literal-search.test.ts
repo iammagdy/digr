@@ -155,6 +155,9 @@ describe("C, E, F, J. what is planned is the source's own, real, dated, relevant
     expect(calls).toHaveLength(2);
     if (r.kind !== "plan") throw new Error(r.kind);
     expect((r.plan.stages[0].pinned_rows as Array<{ id: string }>).map((x) => x.id)).toEqual(["201"]);
+    // the customer reads how the items were found; a fresh read at execution keeps the topic words (never the account's unrelated posts)
+    expect(r.plan.notes_ar!.join(" ")).toMatch(/البحث بالعبارات كما كتبتها لم يُرجع نتائج، فبحثنا في منشورات الحساب نفسه داخل الفترة/);
+    expect(JSON.stringify(r.plan)).toContain("(الشائعات OR");
   });
   it("E: nothing is fabricated: every planned row is one the source returned, with its own link", async () => {
     const rows = [tweet("301", HANDLE, "التصدي للشائعات واجب"), tweet("302", HANDLE, "الشائعات الصحية خطر")];

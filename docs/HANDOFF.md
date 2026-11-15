@@ -6,7 +6,7 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ## P0, 15 Nov 2026: overly literal search (msn_84d0f3738c87d5ed3aee and two more)
 
-A topic of alternatives («… أو … أو …») is now separate concepts. On X they become one `OR` group, the card's documented disjunction; elsewhere the first alternative is searched. Every row is checked by author, date and any alternative.
+A topic of alternatives («… أو … أو …») is now separate concepts. On X they become one `OR` group, the card's documented disjunction; elsewhere the first alternative is searched. On the account path every row is checked by author, date and any alternative.
 - An empty first page of an operator search is not followed by its cursor. The remaining sample tries ONE relaxed strategy that keeps the source and the period.
 - A request that ends without a plan says what was searched and the counts.
 - The chat no longer points to a plan that does not exist.
