@@ -328,6 +328,17 @@ describe("independent review findings (fixed)", () => {
   });
 });
 
+describe("live msn_ab60f5eb5c1bedcaffc7: a reaction to a circulating clip is not a rumor correction", () => {
+  it("the judge is told the row's own words must address the subject, and what a correction must say", async () => {
+    const sys: string[] = [];
+    const call = (async (i: { system: string }) => { sys.push(i.system); return { text: "[0]", usage: { input_tokens: 1, output_tokens: 1 } }; }) as unknown as ReviewCall;
+    await createReviewer({ call, store: createMemoryStore(), missionId: "m5", requestText: "r", budgetUsd: 1 }).review({ subject: "s", rows: [{ id: "2111754500776030669", text: "رصدت وزارة الصحة مقطعًا متداولًا يُظهر إعداد الطعام باستخدام جهاز طهي كهربائي داخل غرفة مريض بمنشأة صحية خاصة بالرياض؛ واتخذت الإجراءات النظامية بحق المنشأة" }] });
+    expect(sys[0]).toContain("The row's OWN words must address the subject");
+    expect(sys[0]).toContain("even when it reacts to something circulating, viral or trending");
+    expect(sys[0]).toContain("the text must say that a claim is false, misleading, unconfirmed or a rumor");
+  });
+});
+
 describe("one verdict per row per spec (live msn_88a5d0ec135b3cbd962d: planning accepted the tweet, execution rejected the same row)", () => {
   const spec: ResearchSpec = { v: 1, sig: "sig-1", customerWords: [CRITICAL], earlierWords: [], criterion: GOOD.criterion, anyOf: GOOD.any_of, notRelevant: GOOD.not_relevant, by: "model" };
   it("execution reuses the planning verdict for the same row and asks the model only about rows planning never saw", async () => {
