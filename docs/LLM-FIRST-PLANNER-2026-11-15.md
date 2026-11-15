@@ -75,6 +75,29 @@ Run on a one-off worker dyno (`agent/scripts/evalPlanner.ts`). 16 requests, USD 
 | Telegram channel posts | correct |
 | Google Maps places + 50 reviews each | correct |
 
+## Live results (test account, 15 Nov 2026)
+
+Deployed as iammagdy/digr#514 (`a22172f`), then live round 1 as iammagdy/digr#515 (`e50522d`). Every customer card passed the customer-text rules.
+
+| Mission | Platform / request | Delivered | Points | What it showed |
+|---|---|---|---|---|
+| `msn_0fae256c54a1eafcde48` | X, @SaudiMOH rumors, 400 | 18 | 36 | Planning was right: `from:SaudiMOH`, the period, further queries. Precision was poor: bare «شائعة» (= "common") and `lang:ar`. Fixed in #515 and again in the following PR |
+| `msn_4b333c02ce2b235b025f` | Reddit, 30 posts + 5 comments each | 168 / 180 | 329 | A platform that was refused before. Some posts had fewer comments, which the summary says |
+| `msn_23e522f9c9cd224a3234` | Instagram, 30 reels of an account + 5 comments each | 180 / 180 | 332 | The first comments tool refused the input; the next option was used automatically |
+| `msn_d040a750ad7dcaf56cc1` | TikTok, 40 videos + 5 comments each | 220 / 240 | 276 | The videos file had links only (big nested items). Fixed in #515 |
+| `msn_7946809aa451bbbbc4db` | LinkedIn, 50 posts, last 3 months | 50 / 50 | 200 | On topic, full columns |
+| `msn_11c3d7c88829acd50211` | TikTok retest after #515, 15 videos + 3 comments each | 60 / 60 | 200 | Full columns (caption, account, date, clean link, counters) and 8 further sources |
+| `msn_883c058b52f039b2b35c` | YouTube, the first 100 comments of a video by link | 100 / 100 | 200 | |
+| `msn_b840f9b0437104ea6a15` | Multi-part: 30 tweets + 10 TikTok videos + 3 comments each, same topic | 70 / 70 | 248 | One plan of 3 steps across 2 platforms |
+| (question) | «عايز داتا عن السوق» | — | 0 | The planner asked one question with 4 options, then planned from the answer |
+| Facebook page about a topic + comments | — | — | 0 | The page listing carries no topic, which is said on the card. Every comments tool was empty for the page's 3 newest posts (reels), so the step was said and not priced. Same provider limitation as the 2 Nov missions M17 and M19 |
+
+## Still open
+
+- **Facebook comments** on a page's reels: every catalog tool returned empty. This is a provider limitation, not a planning one, and the card says it before approval.
+- **The X account+topic search** returns few rows per query from the provider. A second tool now continues after the first tool's queries. Precision depends on the model's terms; the ambiguity rule now covers every query, and the X retest after the last PR will measure it.
+- **TikTok search relevance** is the provider's: some videos returned for a topic are from the right accounts but about other things. Nothing is dropped by meaning, per the owner's decision.
+
 ## Not yet verified live
 
 - The probe and the field map on real pages for every platform.

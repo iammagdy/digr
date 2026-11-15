@@ -285,6 +285,8 @@ describe("live findings, 15 Nov 2026 (first live missions of the planner)", () =
     const { UNDERSTAND_SYSTEM, TOOL_CHOICE_SYSTEM } = await import("../agent/src/llmPlanner/prompts");
     expect(UNDERSTAND_SYSTEM).toMatch(/another common meaning/);
     expect(TOOL_CHOICE_SYSTEM).toMatch(/Add no restriction the customer did not ask for/);
+    // live retest: the model still put the bare word in the FIRST query; the rule now names every query
+    expect(TOOL_CHOICE_SYSTEM).toMatch(/EVERY query, the first one included, uses only unambiguous terms/);
   });
 });
 
