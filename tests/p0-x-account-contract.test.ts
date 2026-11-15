@@ -108,9 +108,17 @@ describe("P0 the understanding layer (research brief): the source is read, never
     const b = brief({ request: "جمع ١٠٠ تغريدة على إكس من حساب @SomeGuess عن كأس العالم", count: 100, topic: "كأس العالم", source: "@SomeGuess" });
     expect(validateBrief(b, ctx(["عايز ١٠٠ تغريدة عن كأس العالم على إكس"]))).toMatchObject({ ok: false, reason: "source_not_written" });
   });
-  it("a source the consolidated request would lose is rejected (never dropped)", () => {
+  // CHANGED (P0, 15 Nov 2026, msn_8824508f840f703dee69): the sentence that loses the source is no longer thrown away together with the model's reading (the turn then became a mission of the last message alone). The guarantee is the same, «never dropped»,
+  // and now holds by construction: the request is rendered from the structured fields and CARRIES the source; a source the customer never wrote is still rejected (above).
+  it("a source the consolidated request would lose is never dropped: the request that becomes the mission carries it", () => {
     const b = brief({ request: "جمع ٤٠٠ تغريدة على إكس عن الشائعات الصحية", count: 400, topic: "الشائعات الصحية", source: "وزارة الصحة السعودية" });
-    expect(validateBrief(b, ctx([M1.request_text]))).toMatchObject({ ok: false, reason: "source_dropped" });
+    const v = validateBrief(b, ctx([M1.request_text]));
+    expect(v.ok).toBe(true);
+    if (v.ok) { expect(v.brief.request).toContain("وزارة الصحة السعودية"); expect(v.contract.source).toMatchObject({ named: true }); }
+  });
+  it("when the fields cannot be rendered (two platforms), the loss is still a rejection", () => {
+    const b = brief({ request: "جمع ٤٠٠ تغريدة على إكس عن الشائعات الصحية", count: 400, topic: "الشائعات الصحية", source: "وزارة الصحة السعودية", platforms: ["x", "tiktok"] });
+    expect(validateBrief(b, ctx([M1.request_text])).ok).toBe(false);
   });
 });
 

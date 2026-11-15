@@ -283,7 +283,52 @@ export type ValidatedBrief =
 /**
  * What may become a mission (see the header). The privacy check comes first: a consolidated request that the guard would refuse is refused, and one it would clarify is clarified, exactly as if the customer had typed it.
  */
+/** Rejections that only say the WORDS of the model's sentence are not read back by the code's reader the way its structured fields say (never a privacy, grounding or number problem): the fields may then be rendered into the request. */
+const READER_LIMITS: ReadonlySet<BriefRejection> = new Set<BriefRejection>(["source_dropped", "platform_mismatch", "count_mismatch", "comments_dropped", "replies_dropped"]);
+
+const ITEM_NOUN: Record<string, { one: string; platform: Record<BriefPlatform, string> }> = {
+  tweets: { one: "تغريدة", platform: { x: "إكس", tiktok: "تيك توك", instagram: "إنستجرام", facebook: "فيسبوك", youtube: "يوتيوب" } },
+  videos: { one: "فيديو", platform: { x: "إكس", tiktok: "تيك توك", instagram: "إنستجرام", facebook: "فيسبوك", youtube: "يوتيوب" } },
+  posts: { one: "منشور", platform: { x: "إكس", tiktok: "تيك توك", instagram: "إنستجرام", facebook: "فيسبوك", youtube: "يوتيوب" } },
+};
+
+/**
+ * P0 (15 Nov 2026, msn_8824508f840f703dee69): THE EXECUTABLE REQUEST IS RENDERED FROM THE STRUCTURED SPECIFICATION. The model understood the follow-up and wrote the account in the brief's `source`, but code rejected its sentence because a keyword reader did not
+ * find the account in it (`rejected_source_dropped`), and the turn then became a mission of the last message alone. The brief's FIELDS (platform, kind, count, topic, source, period, country, language) are what was understood and what code can check
+ * against the customer's own words; a sentence in the form the worker's reader is built for is rendered from them. Only for the parent items of ONE platform (posts, videos, tweets); anything else (comments, replies, several parts) stays as it was.
+ * Null when the fields do not say enough to write it. The caller validates what this returns exactly as it validates a sentence from the model, so a rendering is never trusted past the same checks.
+ */
+export function renderRequestFromBrief(brief: ResearchBrief): string | null {
+  if (brief.platforms.length !== 1 || (brief.objectives ?? []).filter((o) => o.parent === null).length > 1) return null;
+  const kinds = brief.content.filter((c) => c === "tweets" || c === "videos" || c === "posts");
+  if (kinds.length !== 1 || brief.content.some((c) => c !== kinds[0])) return null;
+  const platform = brief.platforms[0];
+  const noun = ITEM_NOUN[kinds[0]];
+  const topic = brief.topic?.trim() || null;
+  if (!topic && !brief.source) return null;
+  const clauses = [
+    `جمع ${brief.count !== null ? `${toArabicDigits(brief.count)} ` : ""}${noun.one}`,
+    `على ${noun.platform[platform]}`,
+    ...(brief.source ? [`من حساب ${brief.source.trim()}`] : []),
+    ...(topic ? [`عن ${topic}`] : []),
+    ...(brief.period ? [/^(?:خلال|في|من|منذ)\s/.test(brief.period.trim()) ? brief.period.trim() : `خلال ${brief.period.trim()}`] : []),
+    ...(brief.country ? [`من ${brief.country.trim()}`] : []),
+    ...(brief.language ? [`باللغة ${brief.language.trim()}`] : []),
+  ];
+  return clauses.join(" ");
+}
+
 export function validateBrief(brief: ResearchBrief, ctx: BriefContext): ValidatedBrief {
+  const first = validateBriefAsWritten(brief, ctx);
+  if (first.ok || !READER_LIMITS.has(first.reason)) return first;
+  const rendered = renderRequestFromBrief(brief);
+  if (!rendered || rendered === brief.request.replace(/\s+/g, " ").trim()) return first;
+  const again = validateBriefAsWritten({ ...brief, request: rendered }, ctx);
+  // the rendering passed every check the model's sentence failed; otherwise the original rejection stands (nothing is accepted that the checks do not accept)
+  return again.ok ? again : first;
+}
+
+function validateBriefAsWritten(brief: ResearchBrief, ctx: BriefContext): ValidatedBrief {
   const request = brief.request.replace(/\s+/g, " ").trim();
   const refusal = privacyRefusalAr(request);
   if (refusal) return { ok: false, reason: "privacy_refusal", contentAr: refusal };
