@@ -74,3 +74,32 @@ Pricing, holds, settlement and the ledger; database schema; feature switches; pr
 
 - The spec is one model reading. It is checked for structure, but not for every nuance of meaning. The customer's words travel with every judgment so that a weak criterion does not decide alone.
 - Rejected rows are recorded as counts and in the admin CSV, not as text in events. The event guard is Arabic-only, so a row's text cannot be stored there.
+
+## Live acceptance (test account, browser, owner cap USD 2.00 / 5 missions)
+
+| # | Mission | Deployed | What happened | Charged |
+|---|---|---|---|---|
+| 1 | `msn_69cd4879ce77e97d01a1` | #507 | The spec (real model) kept 3 alternatives with qualifiers and 5 near misses, including «أخطاء شائعة». The expanded search returned **0 rows**, and the fallback read the 20 newest posts, none relevant. An honest question was shown. | 0 |
+| 2 | `msn_88a5d0ec135b3cbd962d` | #508 | 10 rows, 1 judged relevant (Omicron notice «…وأن نحذر من الشائعات»). The card showed «المقصود …» and the 200-point minimum; I approved it. **Execution re-judged the same row and rejected it**, so nothing was delivered and the hold was released. → #509 | 0 |
+| 3 | `msn_55816a05a6afc274e958` | #509 | Expanded and core searches both returned **0 rows**. Honest "nothing found". | 0 |
+| 4 | `msn_ab60f5eb5c1bedcaffc7` | #509 | The handle was **not asked again** (carried over). 40 sample + 140 execution rows, all from @SaudiMOH in the period; 1 delivered (the planning verdict reused), 137 rejected, 2 with no text. Files and methodology are correct. **The delivered tweet is off-topic by my own reading**: a violation seen in a circulating clip, not a rumor. → #510 | 1 point |
+| 5 | `msn_dae6a9b770b0560709cc` | #510 | The owner's follow-up. Topic, «أو», account and period were kept, and the handle was not asked. **The model's summary said «مع استبعاد ما سُلّم» but the brief flag was missing**, so no prior delivery was recorded. Searches returned 0 rows; nothing was delivered. → #511 | 0 |
+
+Totals: USD 0.0157 (provider 0.0083, model 0.0074) of USD 2.00, and 5 of 5 missions. Test-account points: 1 charged; every hold was released or settled.
+
+## What the live runs proved and did not prove
+
+- **Proved:**
+  - the real model produces a correct, checked spec from the customer's words, three times;
+  - the card shows the criterion before approval;
+  - the handle carries over within the conversation;
+  - planning and execution now agree, because the verdict is reused;
+  - the files and methodology match the delivered data;
+  - the charges match the card.
+- **Provider limitation (with evidence):**
+  - X search inside @SaudiMOH over five years returned 0 rows in 4 of 9 topic queries, including a six-term core of «شائعة/شائعات», while near-identical queries returned 10–40;
+  - any one run sees at most a few dozen tweets of this topic;
+  - whether the account has 400 such tweets is unknown.
+- **Not proved:**
+  - #510 (the stricter judge) and #511 (the no-repeat backstop) have run only in tests, because the live budget is used up;
+  - the 137 rejected rows of mission 4 could not be inspected: their text is in storage I cannot read, so false negatives are unmeasured.
