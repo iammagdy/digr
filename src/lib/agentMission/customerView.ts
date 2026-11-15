@@ -389,7 +389,11 @@ function stepsOf(input: { phase: CustomerPhase; status: string; stages: Customer
       // ROUND 26 (item 6): no «جرّبنا N عينات» line in the steps panel (a count there was the second counter); the samples stay in the data
     }
     if (phase === "question") { for (const s of steps) if (s.state === "waiting" || s.state === "running") s.state = "waiting"; }
-    if (phase === "unserved" || phase === "failed" || phase === "cancelled") for (const s of steps) if (s.state === "running" || s.state === "waiting") s.state = "stopped";
+    if (phase === "unserved" || phase === "failed" || phase === "cancelled") {
+      // P0 (15 Nov 2026): a request that ENDED WITHOUT A PLAN never shows «لقينا المصادر» or the sample as done: a source that can serve the request was identified, but nothing usable was found (msn_84d0f3738c87d5ed3aee showed it done after two empty reads)
+      if (!planned) for (const s of steps.slice(1)) if (s.state === "done") s.state = "stopped";
+      for (const s of steps) if (s.state === "running" || s.state === "waiting") s.state = "stopped";
+    }
     return { steps: inOrder(steps, phase === "planning"), samples, savedTotal: savedTotalNow, plannedTotal, track };
   }
   const finished = status === "completed";

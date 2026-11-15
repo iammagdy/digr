@@ -21,6 +21,7 @@ import { COLUMN_OF, sheetWantsOf, suppliedWants } from "./discovery/fieldRecover
 import { cardMapCode, cardsFor, CATALOG_ONLY_CAP_USD, CATALOG_ONLY_PRICE_MARGIN, CHILD_COLUMNS, COUNTRY_AR, mapPage, type CardRole, type ToolCard } from "./toolCards";
 import type { SocialPlatform } from "../redesignFlagTypes";
 import { rowIsBy, sourceCarryOf, sourceIdOf, sourceOperatorNoteAr, type SourceCarry } from "./sourceScope";
+import { alternativesAr } from "./topicAlternatives";
 
 /**
  * F3, THE PLAN COMPILER (docs/FOUNDATION-PLAN.md section 3.1). One pass, by code: the stage SHAPE comes from the Ask (parents, then comments when asked, then replies when asked
@@ -145,7 +146,7 @@ export function parentInputs(card: ToolCard, ask: Ask): Record<string, unknown> 
   const opId = q?.sourceOperator ? operatorIdOf(card, ask) : null;
   if (q && (ask.topic.text || opId)) {
     // ROUND 33: a hashtag input takes the topic as one tag (no «#», words joined by «_», the Arabic hashtag convention); the plan says which tag it searched
-    let query = !ask.topic.text ? "" : q.format === "hashtag" ? hashtagOf(ask.topic.text) : q.quoted ? `"${ask.topic.text}"` : ask.topic.text;
+    let query = topicQueryOf(card, ask);
     if (opId) query = `${query} ${q.sourceOperator}${opId}`.trim();
     if (q.operators) {
       if (ask.language) query += ` lang:${ask.language}`;
@@ -169,6 +170,49 @@ export function parentInputs(card: ToolCard, ask: Ask): Record<string, unknown> 
   // inputs the card sends on every call as they are (a derived search that asks the source for videos only); no verified parent card has any, so nothing changes for them
   if (card.inputs.fixed) Object.assign(p, structuredClone(card.inputs.fixed));
   return p;
+}
+
+/**
+ * THE TOPIC AS THE CARD'S QUERY TAKES IT (P0, 15 Nov 2026). One topic: as before (a hashtag, the exact quoted words, or the words). ALTERNATIVES (topicAlternatives.ts): one group joined by the card's documented disjunction
+ * (`query.or`; each phrase of several words quoted when the card quotes), never the customer's sentence with its «أو» as one phrase; a card with no documented disjunction searches the FIRST alternative (the plan says so and every row is still
+ * matched against all of them). `words`: the RELAXED form of one topic of several words (every word, in any order: the source's bare terms are ANDed), the second strategy of `relaxedInputsOf`.
+ */
+export function topicQueryOf(card: ToolCard, ask: Pick<Ask, "topic">, mode: "exact" | "words" = "exact"): string {
+  const q = card.inputs.query;
+  const topic = ask.topic.text;
+  if (!q || !topic) return "";
+  const alternatives = ask.topic.alternatives ?? [];
+  const phrase = (t: string): string => (q.quoted && /\s/.test(t.trim()) ? `"${t.trim()}"` : t.trim());
+  if (q.format === "hashtag") return hashtagOf(alternatives[0] ?? topic);
+  if (alternatives.length > 0) return q.or ? `(${alternatives.map(phrase).join(` ${q.or} `)})` : q.quoted ? `"${alternatives[0]}"` : alternatives[0];
+  if (mode === "words") return topic.trim();
+  return q.quoted ? `"${topic}"` : topic;
+}
+
+/** THE MOST STRATEGIES ONE PARENT SEARCH TRIES AT PLANNING: the precise query and, when it answered NO row, one relaxed query (the gateway's two samples of one source: no read is added). */
+export const SEARCH_STRATEGIES_MAX = 2;
+export type SearchStrategy = "exact" | "words" | "source_items";
+/**
+ * THE SECOND SEARCH STRATEGY (P0, 15 Nov 2026), used only when the precise query's first page holds NO row, in place of following that empty page's cursor (production: an empty page's cursor answered 0 rows again in every recorded case, a paid read
+ * each). Only a search that takes operators (the restrictions stay written in the query). It keeps EVERY hard condition: the source's operator, the period, the language, originals only; it never drops the source and never searches all
+ * of the platform for a request that named one:
+ *  - `words`: one topic of several words, its words unquoted (every word, any order) instead of the exact phrase;
+ *  - `source_items`: a source carried by the card's operator (alternatives, or one word): the source's own items in the period, each then checked by code for the topic (a row that names none of the topic's words is never chosen).
+ * Null: no safe alternative (the request then ends with the scope that was searched, never «nothing exists»).
+ */
+export function relaxedInputsOf(card: ToolCard, ask: Ask): { strategy: SearchStrategy; params: Record<string, unknown> } | null {
+  const q = card.inputs.query;
+  if (!q?.operators || !ask.topic.text || q.format === "hashtag") return null;
+  const alternatives = ask.topic.alternatives ?? [];
+  if (alternatives.length === 0 && q.quoted && /\s/.test(ask.topic.text.trim())) {
+    const exact = parentInputs(card, ask);
+    const query = String(exact[q.field] ?? "");
+    const quoted = topicQueryOf(card, ask, "exact");
+    if (!query.startsWith(quoted)) return null;
+    return { strategy: "words", params: { ...exact, [q.field]: `${topicQueryOf(card, ask, "words")}${query.slice(quoted.length)}` } };
+  }
+  if (operatorIdOf(card, ask)) return { strategy: "source_items", params: parentInputs(card, { ...ask, topic: { text: null, relation: "none" } }) };
+  return null;
 }
 
 /** A topic as one hashtag: no «#», words joined by «_». */
@@ -334,7 +378,8 @@ function interleaveByChannel(rows: PoolRow[], ask: Ask): PoolRow[] {
  * placed in time, ranked by named source, country and language, own text about the topic, the latest occurrence (decision 7), the most commented or the newest; the official channels take turns inside each level (live round 10: both videos were the first channel's).
  */
 /** The platforms whose sources take the period as a REQUEST and do not keep to it (live round 11, Facebook: a search sent `startDate` and `endDate` answered posts of January and of last October): their pool is checked row by row. TikTok and X keep what they do. */
-export const PERIOD_CHECKED_PLATFORMS: ReadonlyArray<SocialPlatform> = ["facebook", "instagram", "youtube"];
+// P0 (15 Nov 2026): X too. Its search takes `since:`/`until:`, and every row is now ALSO checked by its own date (a source can ignore an operator, as it can ignore `from:`); the mapping writes every X date as an ISO instant (mapCode.ts `iso`)
+export const PERIOD_CHECKED_PLATFORMS: ReadonlyArray<SocialPlatform> = ["facebook", "instagram", "youtube", "x"];
 /** True when the row is inside the Ask's period (Cairo days, inclusive: from the first moment of the first day to the end of the last). A row with no readable date is not proven inside. */
 export function insidePeriod(row: Record<string, unknown>, ask: Pick<Ask, "period">): boolean {
   if (!ask.period) return true;
@@ -370,7 +415,8 @@ const isReplyRow = (row: Record<string, unknown>): boolean => row.is_reply === t
 export function parentEligible(row: Record<string, unknown>, ask: Pick<Ask, "platform" | "topic" | "source">, options: { allowUnrelated?: boolean; /** P0: the source a search carried by its operator: a row whose own author is not it is never a parent (sourceScope.ts rowIsBy). */ authorId?: string | null } = {}): boolean {
   if (ask.platform === "x" && isReplyRow(row)) return false;
   if (options.authorId && !rowIsBy(row, options.authorId)) return false;
-  if (options.allowUnrelated !== true && topicGated(ask) && topicTierOf(String(row.text ?? ""), ask) === 0) return false;
+  // P0 (15 Nov 2026): a search CARRYING a named source by its operator is a gate for the topic too (the customer asked for the source's items ABOUT the topic; a relaxed search or the source's own items no longer guarantee the words)
+  if (options.allowUnrelated !== true && (topicGated(ask) || (Boolean(options.authorId) && Boolean(ask.topic?.text))) && topicTierOf(String(row.text ?? ""), ask) === 0) return false;
   return true;
 }
 /**
@@ -383,6 +429,9 @@ export function parentEligible(row: Record<string, unknown>, ask: Pick<Ask, "pla
 export const TOPIC_GATED_PLATFORMS: ReadonlyArray<SocialPlatform> = ["facebook", "instagram"];
 export const topicGated = (ask: Pick<Ask, "topic" | "source"> & { platform?: Ask["platform"] }): boolean =>
   Boolean(ask.topic?.text) && ask.source?.kind === "none" && ask.platform !== undefined && ask.platform !== null && TOPIC_GATED_PLATFORMS.includes(ask.platform);
+
+/** The topic gate of a pool: the request's (`topicGated`) or, P0, a search that carries a named source by its operator and has a topic. */
+export const topicGatedFor = (ask: Ask, poolCard: ToolCard): boolean => topicGated(ask) || (Boolean(ask.topic.text) && operatorIdOf(poolCard, ask) !== null);
 
 /** Compiles the plan. Pure: the same Ask and the same pages give the same plan. */
 export function compilePlan(input: CompileInput): CompileResult {
@@ -402,7 +451,7 @@ export function compilePlan(input: CompileInput): CompileResult {
   if (ranked0.length === 0) {
     // NOTHING READ NAMES THE TOPIC (and every row is otherwise a candidate): the customer decides before approval (go on with what was found, marked; change the request; cancel). Nothing is priced or held
     const all = rankedPoolOf({ ask, poolCard, pages: input.pool.pages, ...(input.nowMs !== undefined ? { nowMs: input.nowMs } : {}), allowUnrelated: true });
-    if (all.length > 0 && topicGated(ask)) return { ok: false, reason: "no_relevant_rows", read: all.length, tagOnly: all.filter((r) => topicTierOf(String(r.text ?? ""), ask) === 1).length };
+    if (all.length > 0 && topicGatedFor(ask, poolCard)) return { ok: false, reason: "no_relevant_rows", read: all.length, tagOnly: all.filter((r) => topicTierOf(String(r.text ?? ""), ask) === 1).length };
     return { ok: false, reason: "no_rows" };
   }
   const need = Math.max(1, ask.count ?? DEFAULT_COUNT);
@@ -410,7 +459,7 @@ export function compilePlan(input: CompileInput): CompileResult {
   // WHAT THE SOURCES ANSWERED OUTSIDE THE PERIOD (live round 11): every row read, and how many the period rule left out (said on the card as a count)
   const readAll = rankedPoolOf({ ask, poolCard, pages: input.pool.pages, keepOutsidePeriod: true, ...(input.counters ? { counters: input.counters } : {}), ...(input.channels ? { channels: input.channels } : {}), ...(input.nowMs !== undefined ? { nowMs: input.nowMs } : {}) });
   const notOriginal = ask.platform === "x" ? readAll.filter(isReplyRow).length : 0;
-  const unrelatedLeftOut = input.allowUnrelated || !topicGated(ask) ? 0 : readAll.filter((r) => !(ask.platform === "x" && isReplyRow(r)) && topicTierOf(String(r.text ?? ""), ask) === 0).length;
+  const unrelatedLeftOut = input.allowUnrelated || !topicGatedFor(ask, poolCard) ? 0 : readAll.filter((r) => !(ask.platform === "x" && isReplyRow(r)) && topicTierOf(String(r.text ?? ""), ask) === 0).length;
   const leftOutOfPeriod = periodIsChecked(ask) ? readAll.filter((r) => parentEligible(r, ask, { allowUnrelated: input.allowUnrelated === true })).length - ranked0.length : 0;
   const cardsOpt = input.cards ? { cards: input.cards } : {};
   const repliesCards = shape.includes("replies") ? cardsFor(ask.platform, REPLY_ROLE[ask.platform], { catalogOnly, ...cardsOpt }) : [];
@@ -504,6 +553,9 @@ export function compilePlan(input: CompileInput): CompileResult {
   if (chosen.length < need) notes.push(`وجدنا في ما قرأناه ${toArabicDigits(chosen.length)} فقط تناسب طلبك من ${toArabicDigits(need)}.`);
   // P0: a plan whose search carries the source by its operator says so before approval: that source alone, every item checked, and the count may be lower
   if (operatorIdOf(poolCard, ask)) notes.push(sourceOperatorNoteAr(operatorIdOf(poolCard, ask)!));
+  // P0 (15 Nov 2026): the alternatives the customer listed, as they were searched and checked
+  const topicAlts = ask.topic.alternatives ?? [];
+  if (topicAlts.length > 0) notes.push(poolCard.inputs.query?.or ? `بحثنا عن أيٍّ من: ${alternativesAr(topicAlts)}، وكل عنصر مختار يذكر واحدًا منها على الأقل في نصه.` : `هذا المصدر يبحث بعبارة واحدة في المرة، فبحثنا بـ«${topicAlts[0]}»، وكل عنصر مختار يذكر واحدًا على الأقل مما طلبته: ${alternativesAr(topicAlts)}.`);
   if (unrelatedLeftOut > 0) notes.push(`لم نختر شيئًا لا يذكر «${ask.topic.text}» في نصه؛ تركنا ${toArabicDigits(unrelatedLeftOut)} مما قرأناه لأن نصه لا يذكر الموضوع، ولا يدخل في السعر.`);
   if (ask.preferences && ask.preferences.length > 0) notes.push(`عاملنا ما كتبته بين قوسين أو كشرط إتاحة («${ask.preferences.join("»، «")}») كتفضيل لا كجزء من الموضوع، فلم نضفه إلى كلمات البحث.`);
   if (notOriginal > 0) notes.push(`لم نختر أي تغريدة هي نفسها ردّ على حساب آخر؛ تركنا ${toArabicDigits(notOriginal)} من هذا النوع مما قرأناه، لأنك طلبت منشورات أصلية.`);

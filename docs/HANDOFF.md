@@ -4,6 +4,16 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## P0, 15 Nov 2026: overly literal search (msn_84d0f3738c87d5ed3aee and two more)
+
+A topic of alternatives («… أو … أو …») is now separate concepts. On X they become one `OR` group, the card's documented disjunction; elsewhere the first alternative is searched. Every row is checked by author, date and any alternative.
+- An empty first page of an operator search is not followed by its cursor. The remaining sample tries ONE relaxed strategy that keeps the source and the period.
+- A request that ends without a plan says what was searched and the counts.
+- The chat no longer points to a plan that does not exist.
+- Details and what remains unverified live: `docs/incidents/P0-X-LITERAL-SEARCH-2026-11-15.md`.
+
+---
+
 ## PRODUCTION SWITCHES, 15 Nov 2026 (supersedes every "OFF" statement below for these three keys)
 
 `chat_research_brief_v1`, `capability_discovery_v1` and `semantic_normalization_v1` are **`true` (ON for every customer)** in production `agent_settings` since 05:49:04 UTC. The owner decided it the same day, and it was applied through a one-off dyno of the Heroku worker app.

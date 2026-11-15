@@ -27,6 +27,9 @@ const withoutHashtags = (text: string): string => text.replace(HASHTAG, " ");
  * a hashtag match is what was asked, so it counts as tier 2. Ranking only: no tier removes an item.
  */
 export function topicTierOf(text: string, ask: Pick<Ask, "topic">): TopicTier {
+  // P0 (15 Nov 2026): a topic of ALTERNATIVES (topicAlternatives.ts) is met by ANY of them, each read by the same rule as a topic of its own (the customer's «أو» is never a word an item must contain)
+  const alternatives = ask.topic.alternatives ?? [];
+  if (alternatives.length > 0) return alternatives.reduce<TopicTier>((best, a) => Math.max(best, topicTierOf(text, { topic: { text: a, relation: ask.topic.relation } })) as TopicTier, 0);
   const words = keyTokensOf(ask.topic.text);
   if (words.length === 0) return 2;
   const need = keyTokensNeeded(words.length);

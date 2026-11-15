@@ -1,0 +1,126 @@
+{
+ "_about": "P0 15 Nov 2026: three real missions of the same customer request (customer id removed). Recorded from production read-only: the mission rows (request, answer, end sentence), the parent search calls (params as sent, rows returned, cost) and the customer's chat question with the assistant's reply. Provider cursors are replaced by placeholders (opaque tokens; the empty first page carried one, the second call sent it).",
+ "query_as_sent": "\"الشائعات أو التصدي للشائعات أو جهود الوزارة\" from:SaudiMOH since:2021-11-14_22:00:00_UTC until:2026-11-15_22:00:00_UTC -filter:replies",
+ "query_as_recorded_prefix": "\"الشائعات أو التصدي للشائعات أو جهود الوزارة\" from:SaudiMOH since:2021-11-14_22:",
+ "endpoint": "anyapi.x.search.posts",
+ "missions": {
+  "msn_84d0f3738c87d5ed3aee": {
+   "request_text": "تغريدات من حساب وزارة الصحة السعودية عن الشائعات أو التصدي للشائعات أو جهود الوزارة في مكافحة الشائعات خلال آخر خمس سنوات، بحد أقصى ٤٠٠ تغريدة، وإن كان المتاح أقل فيُسلَّم المتاح فقط",
+   "answer_text": "@SaudiMOH — https://x.com/SaudiMOH",
+   "created_at": "2026-11-15T06:38:50.780Z",
+   "status": "unserved",
+   "summary_ar": "بحثنا في المصادر المتاحة فلم نجد ما يطابق طلبك، ولم يُخصم منك شيء.",
+   "calls": [
+    {
+     "call": "call_0001",
+     "params": {
+      "limit": 20,
+      "queryType": "Latest"
+     },
+     "cursor_sent": false,
+     "rows_returned": 0,
+     "cost_usd": 0.00049
+    },
+    {
+     "call": "call_0002",
+     "params": {
+      "limit": 20,
+      "queryType": "Latest"
+     },
+     "cursor_sent": true,
+     "rows_returned": 0,
+     "cost_usd": 0.00049
+    }
+   ],
+   "chat_question": "هل بحثت فقط داخل حساب @SaudiMOH على إكس، أم بحثت في كل إكس؟ وما المصادر التي بحثت فيها بالضبط؟",
+   "chat_reply": "بحثنا داخل حساب وزارة الصحة السعودية على إكس، ولم نبحث في كل إكس. المصدر المحدد في الطلب هو الحساب نفسه، وتفاصيل المصادر والخطوات مكتوبة في خطة الطلب المعروضة أمامك."
+  },
+  "msn_7758164aa2b4a840fda5": {
+   "request_text": "تغريدات من حساب وزارة الصحة السعودية عن الشائعات أو التصدي للشائعات أو جهود الوزارة في مكافحة الشائعات، خلال آخر خمس سنوات، بعدد حتى ٤٠٠ تغريدة، وإن كان المتاح أقل فيُسلَّم المتاح.",
+   "answer_text": "@SaudiMOH — https://x.com/SaudiMOH",
+   "created_at": "2026-11-15T06:47:46.980Z",
+   "status": "unserved",
+   "summary_ar": "بحثنا في المصادر المتاحة فلم نجد ما يطابق طلبك، ولم يُخصم منك شيء.",
+   "calls": [
+    {
+     "call": "call_0001",
+     "params": {
+      "limit": 20,
+      "queryType": "Latest"
+     },
+     "cursor_sent": false,
+     "rows_returned": 0,
+     "cost_usd": 0.00049
+    },
+    {
+     "call": "call_0002",
+     "params": {
+      "limit": 20,
+      "queryType": "Latest"
+     },
+     "cursor_sent": true,
+     "rows_returned": 0,
+     "cost_usd": 0.00049
+    }
+   ]
+  },
+  "msn_47c4016d9099f63c2bb5": {
+   "request_text": "تغريدات من حساب وزارة الصحة السعودية عن الشائعات أو التصدي للشائعات أو جهود الوزارة في مكافحتها، خلال آخر خمس سنوات، بحد أقصى ٤٠٠ تغريدة، ويُقبل أقل من ذلك إن لم يتوفر العدد كاملًا.",
+   "answer_text": "@SaudiMOH — https://x.com/SaudiMOH",
+   "created_at": "2026-11-15T06:50:45.685Z",
+   "status": "unserved",
+   "summary_ar": "بحثنا في المصادر المتاحة فلم نجد ما يطابق طلبك، ولم يُخصم منك شيء.",
+   "calls": [
+    {
+     "call": "call_0001",
+     "params": {
+      "limit": 20,
+      "queryType": "Latest"
+     },
+     "cursor_sent": false,
+     "rows_returned": 0,
+     "cost_usd": 0.00049
+    },
+    {
+     "call": "call_0002",
+     "params": {
+      "limit": 20,
+      "queryType": "Latest"
+     },
+     "cursor_sent": true,
+     "rows_returned": 0,
+     "cost_usd": 0.00049
+    }
+   ]
+  }
+ },
+ "recorded_empty_page": {
+  "output": {
+   "data": {
+    "items": [],
+    "nextCursor": "cur_recorded_placeholder"
+   }
+  }
+ },
+ "provider_spend_usd": {
+  "x_search_calls": 0.00294,
+  "planning_model": 0.000679
+ },
+ "syntax_evidence": {
+  "catalog_note": "Search query using X (Twitter) advanced-search syntax. IMPORTANT: bare terms are ANDed - a tweet must contain EVERY word, so a list of loosely related keywords matches nothing; use one short phrase or OR between alternatives (e.g. 'anyapi OR getanyapi').",
+  "grouped_or_answered": [
+   {
+    "query": "الذكاء الاصطناعي (أعتقد OR رأيي OR برأيي OR أرى) lang:ar -filter:replies",
+    "rows": 20,
+    "at": "2026-11-04T10:59:46Z"
+   }
+  ],
+  "since_until_answered": [
+   {
+    "query_prefix": "\"العاصمة الإدارية\" lang:ar since:2026-09-30_21:00:00_UTC until:2026-10-31_22:00:",
+    "rows": 20,
+    "at": "2026-11-04T11:54:35Z"
+   }
+  ]
+ }
+}
