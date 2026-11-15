@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { approvingResearchReviewer } from "./helpers/researchReviewer";
 import { beforeAll, describe, expect, it } from "vitest";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { createMemoryStore } from "../agent/src/memoryStore";
@@ -108,7 +109,7 @@ describe("F3/F5: compiled from real pages of the same search, the comments and t
     if (planned.kind !== "plan") return;
     const exec = replayGateway(M12, catalog, store, target, { firstSeq: 100 });
     const items = await ItemStore.open(store, target);
-    await runEngine({ items, store, plan: withPromiseCaps(planned.plan), missionId: target, gateway: exec.gateway as unknown as Gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: redesignStagesOf(planned.plan, TYPES_TEST, true, { tiktok: "test" }) });
+    await runEngine({ reviewer: approvingResearchReviewer(), items, store, plan: withPromiseCaps(planned.plan), missionId: target, gateway: exec.gateway as unknown as Gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: redesignStagesOf(planned.plan, TYPES_TEST, true, { tiktok: "test" }) });
     delivered = { videos: items.acceptedRows("videos").map((r) => String(r.id)), comments: items.acceptedRows("comments"), replies: items.acceptedRows("comments_replies") };
   }, 120_000);
 

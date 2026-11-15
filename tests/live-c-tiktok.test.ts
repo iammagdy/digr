@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { approvingResearchReviewer } from "./helpers/researchReviewer";
 import { describe, expect, it } from "vitest";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { buildShapeDigest } from "../src/lib/modelPlanner/digest";
@@ -218,7 +219,7 @@ describe("C3, the cap of 50 never truncates a delivery: a comment with 120 repli
     const w = world((id) => extra(id, ids.get(id) ?? 0), videoPages);
     const items = await ItemStore.open(w.store, "msn_c_test");
     const plan = withPromiseCaps(c.plan);
-    await runEngine({ items, store: w.store, plan, missionId: "msn_c_test", gateway: w.gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: redesignStagesOf(c.plan, FLAGS, true, { tiktok: "test" }) });
+    await runEngine({ reviewer: approvingResearchReviewer(), items, store: w.store, plan, missionId: "msn_c_test", gateway: w.gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: redesignStagesOf(c.plan, FLAGS, true, { tiktok: "test" }) });
     return { c, items, w, plan, ids };
   }
 
@@ -262,7 +263,7 @@ describe("C3, the cap of 50 never truncates a delivery: a comment with 120 repli
     const shown = (id: string) => { const n = ids.get(id) ?? 0; return n === 33 ? 75 : n; };
     const w = world(shown, new Map(chosen.map((id, i) => [id, commentRows[i]])), { trailingCursor: true });
     const items = await ItemStore.open(w.store, "msn_c_test");
-    await runEngine({ items, store: w.store, plan: withPromiseCaps(c.plan), missionId: "msn_c_test", gateway: w.gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: redesignStagesOf(c.plan, FLAGS, true, { tiktok: "test" }) });
+    await runEngine({ reviewer: approvingResearchReviewer(), items, store: w.store, plan: withPromiseCaps(c.plan), missionId: "msn_c_test", gateway: w.gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: redesignStagesOf(c.plan, FLAGS, true, { tiktok: "test" }) });
     const delivered = items.acceptedRows("comments_replies");
     for (const [id] of ids) expect(delivered.filter((r) => String(r.parent_id) === id), id).toHaveLength(shown(id));
     // a comment with 6 replies is read once (its page had 6 rows, under a full page); the understated one past its counter, to the source's end
@@ -289,7 +290,7 @@ describe("C3, the cap of 50 never truncates a delivery: a comment with 120 repli
     const chosen = (c.result.plan.stages[0].pinned_rows ?? []).map((r) => String(r.id));
     const w = world((_id) => 40, new Map(chosen.map((id, i) => [id, commentRows[i]])));
     const items = await ItemStore.open(w.store, "msn_c_test");
-    await runEngine({ items, store: w.store, plan: withPromiseCaps(c.plan), missionId: "msn_c_test", gateway: w.gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: redesignStagesOf(c.plan, FLAGS, true, { tiktok: "test" }) });
+    await runEngine({ reviewer: approvingResearchReviewer(), items, store: w.store, plan: withPromiseCaps(c.plan), missionId: "msn_c_test", gateway: w.gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: redesignStagesOf(c.plan, FLAGS, true, { tiktok: "test" }) });
     const delivered = items.acceptedRows("comments_replies");
     const perComment = new Map<string, number>();
     for (const r of delivered) perComment.set(String(r.parent_id), (perComment.get(String(r.parent_id)) ?? 0) + 1);

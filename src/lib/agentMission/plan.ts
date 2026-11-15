@@ -263,6 +263,11 @@ export interface PricedPlan {
    * folder (customerExclusion.ts EXCLUSION_SNAPSHOT_PATH), never in the plan. Execution refuses to run a plan whose list cannot be loaded with this digest. Internal; the card shows only its sentence (`notes_ar`). Absent: no list.
    */
   customer_exclusion?: import("./customerExclusion").PlanExclusionMark;
+  /**
+   * P0 (15 Nov 2026): the items earlier missions of this conversation delivered, excluded because the customer asked not to receive them again: the digest of the exact snapshot (in the mission's private folder,
+   * priorDelivery.ts PRIOR_DELIVERY_PATH), how many missions and items. Execution refuses to run a plan whose snapshot cannot be loaded with this digest. Internal; the card shows only its sentence. Absent: nothing excluded.
+   */
+  prior_delivery?: import("./priorDelivery").PlanPriorDelivery;
 }
 
 export interface CompiledMark {
@@ -279,6 +284,11 @@ export interface CompiledMark {
   media?: import("./foundation/discovery/media").MediaMark;
   /** ROUND 36: the deliverable fields the customer named and what the REAL first page showed for each: in the card, recovered from the provider's own key (with its path: the provenance), or unavailable (said before approval; the column's cells say «غير متاح»). Internal audit. */
   fields?: import("./foundation/discovery/fieldRecovery").FieldReport[];
+  /**
+   * P0 (15 Nov 2026): the planning chose its top-level items only inside the period (a platform whose rows are dated and checked, or a search that carries the named source by its operator). Execution then refuses a row outside it,
+   * exactly where the planning did; elsewhere the period stays a mark, as the card said. Absent (older plans): a mark.
+   */
+  period_gate?: boolean;
 }
 
 export interface UnservedStep {

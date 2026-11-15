@@ -86,6 +86,11 @@ export interface ResearchBrief {
    * customer wrote it (never invented) and that the consolidated request carries it (the planner then enforces it or asks for its identifier: foundation/sourceScope.ts). Absent on an older brief: none.
    */
   source?: string | null;
+  /**
+   * P0, 15 Nov 2026 (msn_8824508f840f703dee69): the customer wants MORE of earlier research in this conversation without receiving again what was already delivered («من دون تكرار», «كمّل», «هات غيرهم»). The model reads it from the
+   * conversation; the server then records the conversation's earlier missions on the card and the worker excludes every item they delivered (priorDelivery.ts). It can only remove rows, never add a charge. Absent: false.
+   */
+  exclude_delivered?: true;
   /** The model's structured research objectives (absent: the brief carried none; the request is then read from its words, as before). */
   objectives?: BriefObjective[];
 }
@@ -93,7 +98,7 @@ export interface ResearchBrief {
 export const BRIEF_REQUEST_MIN = 3;
 export const BRIEF_REQUEST_MAX = 1000;
 const FIELD_MAX = 120;
-const KNOWN_FIELDS = new Set(["status", "request", "platforms", "content", "count", "topic", "period", "country", "language", "source", "objectives", "v"]);
+const KNOWN_FIELDS = new Set(["status", "request", "platforms", "content", "count", "topic", "period", "country", "language", "source", "exclude_delivered", "objectives", "v"]);
 const OBJECTIVE_FIELDS = new Set(["id", "operation", "platform", "parent", "contacts", "what", "request", "period", "country", "language", "count"]);
 /**
  * DESCRIPTIVE keys a real model adds to an objective (live evaluation 2026-11-12: «topic»). They describe the goal and are never executed: their text joins `what` (internal, privacy-checked by `validateBrief`) instead of discarding the
@@ -230,7 +235,7 @@ export function parseBrief(raw: unknown): ParsedBrief {
   return {
     ok: true,
     unknown,
-    brief: { v: RESEARCH_BRIEF_VERSION, status, request, platforms, content, count, topic: text(o.topic, FIELD_MAX), period: text(o.period, FIELD_MAX), country: text(o.country, FIELD_MAX), language: text(o.language, FIELD_MAX), ...(text(o.source, FIELD_MAX) ? { source: text(o.source, FIELD_MAX) } : {}), ...(objectives && objectives.length > 0 ? { objectives } : {}) },
+    brief: { v: RESEARCH_BRIEF_VERSION, status, request, platforms, content, count, topic: text(o.topic, FIELD_MAX), period: text(o.period, FIELD_MAX), country: text(o.country, FIELD_MAX), language: text(o.language, FIELD_MAX), ...(text(o.source, FIELD_MAX) ? { source: text(o.source, FIELD_MAX) } : {}), ...(o.exclude_delivered === true ? { exclude_delivered: true as const } : {}), ...(objectives && objectives.length > 0 ? { objectives } : {}) },
   };
 }
 
@@ -283,7 +288,52 @@ export type ValidatedBrief =
 /**
  * What may become a mission (see the header). The privacy check comes first: a consolidated request that the guard would refuse is refused, and one it would clarify is clarified, exactly as if the customer had typed it.
  */
+/** Rejections that only say the WORDS of the model's sentence are not read back by the code's reader the way its structured fields say (never a privacy, grounding or number problem): the fields may then be rendered into the request. */
+const READER_LIMITS: ReadonlySet<BriefRejection> = new Set<BriefRejection>(["source_dropped", "platform_mismatch", "count_mismatch", "comments_dropped", "replies_dropped"]);
+
+const ITEM_NOUN: Record<string, { one: string; platform: Record<BriefPlatform, string> }> = {
+  tweets: { one: "تغريدة", platform: { x: "إكس", tiktok: "تيك توك", instagram: "إنستجرام", facebook: "فيسبوك", youtube: "يوتيوب" } },
+  videos: { one: "فيديو", platform: { x: "إكس", tiktok: "تيك توك", instagram: "إنستجرام", facebook: "فيسبوك", youtube: "يوتيوب" } },
+  posts: { one: "منشور", platform: { x: "إكس", tiktok: "تيك توك", instagram: "إنستجرام", facebook: "فيسبوك", youtube: "يوتيوب" } },
+};
+
+/**
+ * P0 (15 Nov 2026, msn_8824508f840f703dee69): THE EXECUTABLE REQUEST IS RENDERED FROM THE STRUCTURED SPECIFICATION. The model understood the follow-up and wrote the account in the brief's `source`, but code rejected its sentence because a keyword reader did not
+ * find the account in it (`rejected_source_dropped`), and the turn then became a mission of the last message alone. The brief's FIELDS (platform, kind, count, topic, source, period, country, language) are what was understood and what code can check
+ * against the customer's own words; a sentence in the form the worker's reader is built for is rendered from them. Only for the parent items of ONE platform (posts, videos, tweets); anything else (comments, replies, several parts) stays as it was.
+ * Null when the fields do not say enough to write it. The caller validates what this returns exactly as it validates a sentence from the model, so a rendering is never trusted past the same checks.
+ */
+export function renderRequestFromBrief(brief: ResearchBrief): string | null {
+  if (brief.platforms.length !== 1 || (brief.objectives ?? []).filter((o) => o.parent === null).length > 1) return null;
+  const kinds = brief.content.filter((c) => c === "tweets" || c === "videos" || c === "posts");
+  if (kinds.length !== 1 || brief.content.some((c) => c !== kinds[0])) return null;
+  const platform = brief.platforms[0];
+  const noun = ITEM_NOUN[kinds[0]];
+  const topic = brief.topic?.trim() || null;
+  if (!topic && !brief.source) return null;
+  const clauses = [
+    `جمع ${brief.count !== null ? `${toArabicDigits(brief.count)} ` : ""}${noun.one}`,
+    `على ${noun.platform[platform]}`,
+    ...(brief.source ? [`من حساب ${brief.source.trim()}`] : []),
+    ...(topic ? [`عن ${topic}`] : []),
+    ...(brief.period ? [/^(?:خلال|في|من|منذ)\s/.test(brief.period.trim()) ? brief.period.trim() : `خلال ${brief.period.trim()}`] : []),
+    ...(brief.country ? [`من ${brief.country.trim()}`] : []),
+    ...(brief.language ? [`باللغة ${brief.language.trim()}`] : []),
+  ];
+  return clauses.join(" ");
+}
+
 export function validateBrief(brief: ResearchBrief, ctx: BriefContext): ValidatedBrief {
+  const first = validateBriefAsWritten(brief, ctx);
+  if (first.ok || !READER_LIMITS.has(first.reason)) return first;
+  const rendered = renderRequestFromBrief(brief);
+  if (!rendered || rendered === brief.request.replace(/\s+/g, " ").trim()) return first;
+  const again = validateBriefAsWritten({ ...brief, request: rendered }, ctx);
+  // the rendering passed every check the model's sentence failed; otherwise the original rejection stands (nothing is accepted that the checks do not accept)
+  return again.ok ? again : first;
+}
+
+function validateBriefAsWritten(brief: ResearchBrief, ctx: BriefContext): ValidatedBrief {
   const request = brief.request.replace(/\s+/g, " ").trim();
   const refusal = privacyRefusalAr(request);
   if (refusal) return { ok: false, reason: "privacy_refusal", contentAr: refusal };

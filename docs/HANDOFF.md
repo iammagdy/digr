@@ -4,6 +4,31 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## P0, 15 Nov 2026 (second retest): research relevance is a gate; a sample never sizes a plan
+
+`msn_cd5f32adadefb9bb971f`: 3 tweets of @SaudiMOH in which «شائعة» means *common* were planned as the whole result (the 2-page sample sized the plan), priced at the 200-point minimum (66.67 a tweet), delivered with **no execution read**, marked «لا يذكر الموضوع» ×3 in the file, closed `completed`, and charged 200 points (test account).
+
+* **Root causes (proved in code):**
+  * relevance was a label, not a gate: compiled plans never attached the existing relevance rule, and «أكمل بما وجدتموه كما هو» sold unrelated rows;
+  * the word rule cannot read meaning;
+  * the planning sample sized the plan;
+  * recall was never attempted;
+  * raw execution skipped every hard filter. That last one is pre-existing, and is also how `msn_dd7c` delivered 38 other accounts.
+* **Fix:**
+  * a model-judged research gate at planning AND execution (the existing review), with no sale of unrelated rows;
+  * search plans sized by the customer's number unless the source ended, with execution reading on and bounded by a dry-page stop;
+  * an expanded-vocabulary strategy, its variants kept per mission;
+  * the plan's own selection rules enforced at execution;
+  * truthful sentences.
+* **Unchanged:** pricing, settlement, ledger, flags.
+* **Details, limits, the financial items for the owner (incl. the 200 points of this test mission), and what is unverified live:** `docs/incidents/P0-RESEARCH-RELEVANCE-2026-11-15.md`.
+* **Same change, two more incidents:**
+  * `msn_8824` (a follow-up planned as a fragment with no topic): the model's structured brief is now the request contract, rendered and re-validated; a search with no query is refused before any call.
+  * «من دون تكرار»: earlier deliveries of the conversation are pinned on the plan and never delivered or charged again (`already_delivered`). No migration or switch is involved.
+* **Owner decision raised:** with plans sized by the request, the 200-point minimum applies only to a full delivery (3 of 400 tweets cost 2 points). See §10 of the incident doc.
+
+---
+
 ## P0, 15 Nov 2026: overly literal search (msn_84d0f3738c87d5ed3aee and two more)
 
 A topic of alternatives («… أو … أو …») is now separate concepts. On X they become one `OR` group, the card's documented disjunction; elsewhere the first alternative is searched. On the account path every row is checked by author, date and any alternative.

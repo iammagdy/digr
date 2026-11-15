@@ -20,6 +20,7 @@ import { loadRegistryArtifact, minLevelFor, routingFactsOf } from "../../src/lib
 import { classifyNoCardEnd, refusalSentenceAr } from "../../src/lib/agentMission/refusal";
 import { parentCountsOf, parentsBelowShare } from "../../src/lib/agentMission/parents";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
+import { planningJudge, topicVariants } from "./researchJudge";
 import { ensureOwned, isOwnershipError } from "./ownership";
 import { compensateFreeRerun } from "../../src/lib/agentMission/freeRerun";
 import { customerPlanView, namesAreWritten, requestedRowsOf, type PricedPlan } from "../../src/lib/agentMission/plan";
@@ -100,6 +101,8 @@ import { itemNounOf, itemNounOfPlan } from "../../src/lib/agentMission/itemNoun"
 import type { AgentStore, CallRow, MissionRecord } from "./types";
 import type { SandboxResult } from "./sandbox";
 import { loadApprovedExclusion, withCustomerExclusion, type ReadMissionExclusion } from "./customerExclusion";
+import { loadApprovedPriorDelivery, priorDeliveryForPlanning, withPriorDelivery, type ReadDeliveredMissions, type ReadPriorDeliveryCard } from "./priorDelivery";
+import { priorDeliveryMatcherOf } from "../../src/lib/agentMission/priorDelivery";
 import type { ExclusionMatcher } from "../../src/lib/agentMission/customerExclusion";
 import type { MissionNoticeFacts, MissionNoticeKind } from "../../src/lib/agentMission/notices";
 
@@ -145,6 +148,10 @@ export interface RunnerDeps {
   providerToday?: () => Promise<{ tregDailyCapUsd?: number; spentTodayUsd: Partial<Record<"treg" | "firecrawl" | "contextdev", number | null>> }>;
   /** LLM-FIRST OBJECTIVES (capability_discovery_v1 only): the research brief the chat stored with this mission's card (`messages.plan.researchBrief`, written by the server only), read back with its schema. Absent (tests that do not need it): none. */
   readMissionBrief?: (missionId: string, userId: string) => Promise<ResearchBrief | null>;
+  /** P0 (15 Nov 2026): the earlier missions the chat recorded on this mission's card because the customer asked not to receive delivered items again (`messages.plan.priorDelivery`, server-written). Absent: none. */
+  readPriorDeliveryCard?: ReadPriorDeliveryCard;
+  /** P0: of those, the ones of this customer that completed and delivered, with the stages their file was built from. */
+  readDeliveredMissions?: ReadDeliveredMissions;
   /** PHASE 5.3 (`customer_exclusion_files_v1` only): the exclusion list the chat stored on this mission's card (`messages.plan.customerExclusion`, server-written), read back with its digest. Absent (tests that do not need it): none. */
   readMissionExclusion?: ReadMissionExclusion;
   /**
@@ -691,7 +698,10 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
   // candidates. Everything else about the mission (the gateway, the price, the hold, the approval, the engine) is what it was.
   const discovered = compiledActive && redesign.platform && discoveryActive(settings, redesign.isTest) ? cardsWithDiscovery(deps.catalog, redesign.platform, access) : null;
   const selectCapability = discovered && deps.reviewCall ? modelSelector(async ({ system, user, maxTokens }) => { const got = await deps.reviewCall!({ model: MODEL_HAIKU, system, user, maxTokens }); return got ? { text: got.text, costUsd: llmCostFromUsage(MODEL_HAIKU, got.usage) } : null; }) : undefined;
-  const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, ...(discovered ? { cards: discovered.cards, chainIssues: chainCheckerFor(deps.catalog, access), discoveryRejected: discovered.rejected.map((r) => ({ endpointId: r.endpointId, reason: r.reason })), ...(selectCapability ? { selectCapability } : {}) } : {}), nowMs: planningNow, priorCalls: calls, ...(askEdits.length > 0 ? { askEdits } : {}), ...(stage2Questions ? { questionCards: true, ...(topicRelation ? { topicRelation } : {}) } : {}), ...(understand ? { understand } : {}), ...(occurrence ? { occurrence } : {}), ...(redesign.isTest ? { catalogOnly: true } : {}), askCount: true, choices, questionsAsked: prior?.questionsAsked ?? 0, answerIsChoice, ...(semantic ? { semantic: true } : {}) }) : null;
+  // P0 (15 Nov 2026): «without repeating what was delivered»: the identities of what the conversation's earlier missions delivered (verified as this customer's), read BEFORE the plan is built so a planning sample never
+  // chooses or counts one of them; a read that fails throws (the existing error path retries the planning): the customer's requirement is never silently dropped
+  const priorDelivery = await priorDeliveryForPlanning({ mission, store, ...(deps.readPriorDeliveryCard ? { readCard: deps.readPriorDeliveryCard } : {}), ...(deps.readDeliveredMissions ? { readMissions: deps.readDeliveredMissions } : {}) });
+  const compiled = compiledActive ? await planByCompiler({ mission, gateway, store, catalog: deps.catalog, pricingSettings, ...(priorDelivery && priorDelivery.items > 0 ? { delivered: priorDeliveryMatcherOf(priorDelivery) } : {}), ...(discovered ? { cards: discovered.cards, chainIssues: chainCheckerFor(deps.catalog, access), discoveryRejected: discovered.rejected.map((r) => ({ endpointId: r.endpointId, reason: r.reason })), ...(selectCapability ? { selectCapability } : {}) } : {}), nowMs: planningNow, priorCalls: calls, ...(askEdits.length > 0 ? { askEdits } : {}), ...(stage2Questions ? { questionCards: true, ...(topicRelation ? { topicRelation } : {}) } : {}), ...(understand ? { understand } : {}), ...(occurrence ? { occurrence } : {}), ...(redesign.isTest ? { catalogOnly: true } : {}), askCount: true, choices, questionsAsked: prior?.questionsAsked ?? 0, answerIsChoice, ...(semantic ? { semantic: true } : {}), ...(deps.reviewCall ? { judge: planningJudge(deps.reviewCall, `${mission.request_text}${mission.answer_text ? ` — ${mission.answer_text}` : ""}`), variants: topicVariants(deps.reviewCall) } : {}) }) : null;
   // THE QUESTION BEFORE APPROVAL (live round 7): no video of the two pages read is about the topic; the plan is not made, the customer chooses (the same needs_input card as the topic question)
   if (compiled?.kind === "question") {
     // every question card counts toward the three a request may have; a count or comments question also waits for its answer
@@ -757,6 +767,8 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     }
     // PHASE 5.3: the customer's exclusion list (switch ON for the account and a list on the card only; otherwise the same plan object): copied to the private folder and pinned on the plan before it is shown
     plan = await withCustomerExclusion({ plan, mission, store, settings, read: deps.readMissionExclusion });
+    // P0: what earlier missions of the conversation delivered, excluded at the customer's request: pinned on the plan (private copy + digest) before it is shown
+    plan = await withPriorDelivery(plan, mission.id, store, priorDelivery);
     await store.updateMission(mission.id, { ...base, status: "plan_ready", plan: plan as any, plan_public: publicPlanOf(plan) as any, unit_price_points: plan.price.unitPricePoints, reserved_points: plan.price.reservePoints });
     await store.addEvent(mission.id, { kind: "plan", message_ar: plan.summary_ar, counts: { stages: plan.stages.length, rows: plan.price.deliveredRows, unit_points_x1000: Math.round(plan.price.unitPricePoints * 1000), reserve_points: plan.price.reservePoints } });
     deps.log?.(`plan_ready ${mission.id} ${JSON.stringify(customerPlanView(plan).price)}`);
@@ -784,7 +796,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     } else {
       // ROUND 30: no usable Instagram account was given: the honest sentence says what the source can do (an account's posts), not the general «our sources do not serve this»
       // P0 (15 Nov 2026): a search that gave no plan says WHAT was searched and what it gave (searchScope.ts), never «we searched the available sources and nothing matches»
-      const own = compiled?.kind === "cannot" ? (compiled.reason === "no_rows" && compiled.scope ? searchScopeEndAr(compiled.scope) : compiled.reason === "instagram_account_missing" ? INSTAGRAM_ACCOUNT_DECLINED_AR : compiled.reason === "source_missing" || compiled.reason === "source_unenforceable" ? SOURCE_DECLINED_AR : compiled.reason === "youtube_channel_missing" ? YOUTUBE_CHANNEL_DECLINED_AR : compiled.reason === "youtube_channel_unidentified" ? YOUTUBE_CHANNEL_UNIDENTIFIED_AR : null) : null;
+      const own = compiled?.kind === "cannot" ? (compiled.reason === "no_topic" ? NO_TOPIC_END_AR : compiled.reason === "no_rows" && compiled.scope ? searchScopeEndAr(compiled.scope) : compiled.reason === "instagram_account_missing" ? INSTAGRAM_ACCOUNT_DECLINED_AR : compiled.reason === "source_missing" || compiled.reason === "source_unenforceable" ? SOURCE_DECLINED_AR : compiled.reason === "youtube_channel_missing" ? YOUTUBE_CHANNEL_DECLINED_AR : compiled.reason === "youtube_channel_unidentified" ? YOUTUBE_CHANNEL_UNIDENTIFIED_AR : null) : null;
       const sentence = own ?? refusalSentenceAr(verdict.cls as "unsupported" | "empty_source");
       await store.updateMission(mission.id, { ...base, status: "unserved", summary_ar: sentence });
       await store.addEvent(mission.id, { kind: "result", message_ar: sentence });
@@ -836,6 +848,17 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
     }
     exclusion = loaded;
   }
+  // P0: a plan approved with «nothing delivered before, again» never runs without exactly that snapshot (fail closed: nothing is called, the hold is released whole)
+  let priorDelivered: import("../../src/lib/agentMission/priorDelivery").PriorDeliveryMatcher | undefined;
+  if (plan.prior_delivery && plan.prior_delivery.items > 0) {
+    const loaded = await loadApprovedPriorDelivery(store, mission.id, plan.prior_delivery);
+    if (!loaded) {
+      await store.addEvent(mission.id, { kind: "call", message_ar: "علامة داخلية للمشرف: تعذّر تحميل قائمة ما سُلّم سابقًا المعتمدة مع الخطة، فلم يُنفَّذ شيء.", counts: { adm_flag: 1 } }).catch(() => undefined);
+      await settleExecution(deps, mission, plan, reserve, unit, { llm: Number(mission.execution_llm_usd ?? 0), executionTregUsd: Number(mission.execution_treg_usd ?? 0), summary: null, outputError: "admin: prior_delivery_unavailable" });
+      return;
+    }
+    priorDelivered = loaded;
+  }
   await store.updateMission(mission.id, { execution_model: model, error: null });
   await store.addEvent(mission.id, { kind: "system", message_ar: "اعتُمدت الخطة وبدأ الوكيل التنفيذ." });
   const calls = await store.listCalls(mission.id);
@@ -852,7 +875,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   const reviewBefore = await readReviewState(store, mission.id);
   // THE ONE ITEM STORE: every item the engine or the model saves goes through it; a resumed mission continues from its log
   const items = await ItemStore.open(store, mission.id, { legacyStages: plan.stages.map((s) => s.key) });
-  const ctx: ToolContext = { phase: "execution", mission, plan, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, review: reviewer, items, ...(exclusion ? { exclusion } : {}) };
+  const ctx: ToolContext = { phase: "execution", mission, plan, store, gateway, web, webAvailable, catalog: deps.catalog, access, state, sandbox: deps.sandbox, review: reviewer, items, ...(exclusion ? { exclusion } : {}), ...(priorDelivered ? { priorDelivered } : {}) };
   const savedBefore = Object.fromEntries(plan.stages.map((s) => [s.key, items.counts(s.key).accepted]));
   const llmBudget = Math.max(AGENT_EXECUTION_LLM_BUDGET_FLOOR_USD, holdValueUsd(reserve, AGENT_PRICING_BASIS) * AGENT_EXECUTION_LLM_BUDGET_SHARE);
   const baseLlm = Number((await store.getMission(mission.id))?.execution_llm_usd ?? mission.execution_llm_usd ?? 0);
@@ -888,7 +911,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
     // THE MODEL PLANNED, CODE EXECUTES: every stage has a recipe the plan check proved, so no model session is started at all (the only model call left is the small review of items the rule cannot decide)
     const tracked = trackRun(mission.id);
     try {
-      const outcome = await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: mission.id, gateway, ...(exclusion ? { exclusion } : {}), sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: live ? (e) => live.addEvent(e, () => store.addEvent(mission.id, e)) : (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, ...(redesignStages.size > 0 ? { redesignStages } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}), log: deps.log, ...(sources ? { sources, provenance: true } : {}), ...(engineStages ? { onlyStages: engineStages } : {}) });
+      const outcome = await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: mission.id, gateway, ...(exclusion ? { exclusion } : {}), ...(priorDelivered ? { priorDelivered } : {}), sandbox: deps.sandbox ?? ((code, inputs) => runInSandbox(code, inputs)), reviewer, addEvent: live ? (e) => live.addEvent(e, () => store.addEvent(mission.id, e)) : (e) => store.addEvent(mission.id, e), deadlineMs, shouldStop: () => tracked.reason.value, ...(redesignStages.size > 0 ? { redesignStages } : {}), ...(deps.sleep ? { sleep: deps.sleep } : {}), log: deps.log, ...(sources ? { sources, provenance: true } : {}), ...(engineStages ? { onlyStages: engineStages } : {}) });
       output = { llmCostUsd: 0, turns: 0, stop: outcome.aborted ?? "end" };
     } finally {
       untrackRun(tracked);
@@ -1157,6 +1180,10 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
   if (resultPath && delivered > 0 && !ourFailure) await storeFirstVersion({ store, log: deps.log }, { missionId: mission.id, userId: mission.user_id });
 }
 
+/**
+ * P0 (15 Nov 2026, msn_8824508f840f703dee69): the request reached the planner with nothing to search for (no topic, no source). It is OUR reading that failed, never the sources: said as it is, before any call, nothing held or charged.
+ */
+export const NO_TOPIC_END_AR = "لم نستطع أن نحدد من رسالتك ما الذي نبحث عنه بالضبط (الموضوع أو الحساب)، فلم نرسل أي بحث ولم نجهّز خطة ولم يُخصم منك شيء. اكتب طلبك كاملًا في رسالة واحدة: المنصة، والموضوع، والحساب إن أردت، والعدد، والفترة.";
 /** What the customer is told when the source gave items and our own mapping stored none: it was OUR failure, never «nothing was found». No number: the money line says the rest. */
 export const INTERNAL_FAILURE_AR = "تعذّر تنفيذ طلبك بسبب خلل من جانبنا، وليس لأن المصدر خالٍ من النتائج. لم يُخصم منك شيء، وأُبلغ فريقنا بالأمر ليراجعه.";
 const loweredTargetClauseAr = (plan: PricedPlan): string => (plan.quantity?.reason_ar ? `لأن ${plan.quantity.reason_ar.replace(/[.،\s]+$/, "")}` : "لأن الخطة التي اعتمدتها كانت بعدد أقل من المطلوب");

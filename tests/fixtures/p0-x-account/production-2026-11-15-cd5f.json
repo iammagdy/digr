@@ -1,0 +1,142 @@
+{
+ "_source": "Read-only production evidence, 15 Nov 2026 (missions, mission_calls, mission_events, credit_ledger). Test account; no account identifier is kept.",
+ "mission_id": "msn_cd5f32adadefb9bb971f",
+ "job_id": "job_quote_db59f56139e5862c064ba41d6bb57090",
+ "request_text": "أنا محتاجة 400 تغريدة من حساب وزارة الصحة السعودية عن الشائعات أو التصدي للشائعات أو جهود الوزارة في مكافحة الشائعات خلال آخر 5 سنين. ولو العدد المتاح أقل من 400 مفيش مشكلة، بس لازم التغريدات تكون فعلًا من حساب الوزارة وعن الموضوع ده.",
+ "created_at": "2026-11-15T08:03:48.291Z",
+ "source_answer": "SaudiMOH",
+ "final_answer_text": "أكمل بما وجدتموه كما هو، مع علامة على كل عنصر",
+ "questions": [
+  {
+   "at": "2026-11-15T08:03:54Z",
+   "why": "source_id"
+  },
+  {
+   "at": "2026-11-15T08:04:30Z",
+   "why": "no_about",
+   "question": "لم نجد في ما قرأناه تغريدة يطابق طلبك ويتحدث نصها عن «الشائعات أو التصدي للشائعات أو جهود الوزارة في مكافحة الشائعات»؛ ما وجدناه لا يذكر الموضوع في نصه. كيف تريد أن نكمل؟",
+   "options_offered": [
+    "أكمل بما وجدتموه كما هو، مع علامة على كل عنصر",
+    "change",
+    "cancel"
+   ]
+  }
+ ],
+ "query_sent": "(الشائعات OR \"التصدي للشائعات\" OR \"جهود الوزارة في مكافحة الشائعات\") from:SaudiMOH since:2021-11-14_22:00:00_UTC until:2026-11-15_22:00:00_UTC -filter:replies",
+ "calls": [
+  {
+   "phase": "planning",
+   "at": "2026-11-15T08:04:27Z",
+   "cursor_sent": false,
+   "status": "ok",
+   "rows_returned": 3,
+   "cost_usd": 0.00049
+  },
+  {
+   "phase": "planning",
+   "at": "2026-11-15T08:04:29Z",
+   "cursor_sent": true,
+   "status": "empty",
+   "rows_returned": 0,
+   "cost_usd": 0.00049
+  },
+  {
+   "phase": "planning",
+   "at": "2026-11-15T08:06:01Z",
+   "cursor_sent": true,
+   "status": "empty",
+   "rows_returned": 0,
+   "cost_usd": 0.00049,
+   "note": "the SAME empty cursor page, read again after the answer"
+  }
+ ],
+ "execution_calls": 0,
+ "plan": {
+  "planned_rows": 3,
+  "promise": {
+   "type": "exact",
+   "n": 3
+  },
+  "reserve_points": 200,
+  "unit_price_points": 66.666666,
+  "rule_unit_points": 24.039584,
+  "min_applied": true,
+  "completeness": "complete_within_source",
+  "contradictory_notes": [
+   "بحثنا عن أيٍّ من: «الشائعات» أو «التصدي للشائعات» أو «جهود الوزارة في مكافحة الشائعات»، وكل عنصر مختار يذكر واحدًا منها على الأقل في نصه.",
+   "من العناصر المختارة وعددها ٣: كلها تطابق شروطك، ولا بديل بينها.",
+   "لم نجد في ما قرأناه تغريدة يتحدث نصها عن «الشائعات أو التصدي للشائعات أو جهود الوزارة في مكافحة الشائعات»؛ ما اخترناه لا يذكر الموضوع في نصه، فراجع الاختيار قبل الاعتماد أو عدّل طلبك."
+  ]
+ },
+ "outcome": {
+  "status": "completed",
+  "delivered_units": 3,
+  "charged_points": 200,
+  "ledger": [
+   {
+    "type": "reserve",
+    "delta": -200
+   },
+   {
+    "type": "release",
+    "delta": 200
+   },
+   {
+    "type": "charge",
+    "delta": -200
+   }
+  ],
+  "workbook_topic_marks": {
+   "يتحدث نصه عن الموضوع": 0,
+   "لا يذكر الموضوع": 3
+  }
+ },
+ "page_1_items": [
+  {
+   "id": "1876940934396477905",
+   "text": "RT @Saudi_PHA: فيروس الميتانيمو البشري (HMPV) من الفيروسات التنفسية الشائعة وأعراضه مشابهة لنزلات البرد ومعظم الحالات تكون خفيفة، اطَّلع عل…",
+   "authorName": "وزارة الصحة السعودية",
+   "authorUsername": "SaudiMOH",
+   "authorFollowers": 5914387,
+   "createdUtc": "2025-01-08T10:36:05.000Z",
+   "url": "https://x.com/i/web/status/1876940934396477905",
+   "isReply": false,
+   "lang": "ar",
+   "likeCount": 0,
+   "replyCount": 0,
+   "retweetCount": 225,
+   "viewCount": 6
+  },
+  {
+   "id": "1704518410992779670",
+   "text": "تابعونا من مستشفى صحة الافتراضي عبر البث المباشر في منصة تيك توك عن: \"أخطاء شائعة عند علاج الإدمان \" مع د.علي القحطاني استشاري الاضطرابات النفسية والإدمان. \n\nالوقت: 9 مساء \nاليوم: الأربعاء 20سبتمبر 2023م \nhttps://t.co/soXf8p9z1v https://t.co/0bPyMeecQF",
+   "authorName": "وزارة الصحة السعودية",
+   "authorUsername": "SaudiMOH",
+   "authorFollowers": 5914387,
+   "createdUtc": "2023-09-20T15:30:32.000Z",
+   "url": "https://x.com/i/web/status/1704518410992779670",
+   "isReply": false,
+   "lang": "ar",
+   "likeCount": 52,
+   "replyCount": 28,
+   "retweetCount": 37,
+   "viewCount": 110729
+  },
+  {
+   "id": "1691049150001934336",
+   "text": "أسئلتك تستحق إجابة..\nاحصل على أجوبة لتساؤلاتك من خلال ملف الأسئلة الشائعة.",
+   "authorName": "وزارة الصحة السعودية",
+   "authorUsername": "SaudiMOH",
+   "authorFollowers": 5914387,
+   "createdUtc": "2023-08-14T11:28:30.000Z",
+   "url": "https://x.com/i/web/status/1691049150001934336",
+   "isReply": false,
+   "lang": "ar",
+   "likeCount": 77,
+   "replyCount": 75,
+   "retweetCount": 55,
+   "viewCount": 156122
+  }
+ ],
+ "page_1_next_cursor": "cur_jrQTKyEXWGU0HiJzq-fmcA"
+}

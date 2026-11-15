@@ -11,6 +11,8 @@ import { decideTurn, type ChatType, type Decision, type OpenRequest, type OpenSt
 import { FULL_RESEARCH_PREFIX_AR, greetingReplyAr, isFullResearchMethodologyAsk, methodologyReplyAr, methodologyTailAr, namesCollectibleData, otherReplyAr, serviceAnswerAr } from "./messageType";
 import { listMethodologyMissions } from "./methodology/missions";
 import { buildRequestContract } from "./requestContract";
+import { renderRequestFromBrief } from "./researchBrief";
+import { PRIOR_DELIVERY_MAX_MISSIONS } from "./priorDelivery";
 import { briefNumbersAr, contractIsComplete, differsOnlyByCount, numbersWritten, parseBrief, sameContract, storedBriefOf, validateBrief, withPartCounts, type ResearchBrief } from "./researchBrief";
 import { conditionChanged, conditionDriftOf, droppedRequirementsOf, groundedConditions, sameExecutedConditions, sameExecutedValues, unaccountedRequirements, inventedRequirementOf, type ConditionDrift, type ConditionKind, type ConditionPhrases, partBriefOf, partCardIdOf, partMissionIdOf, partsOf, PART_ID_ATTEMPTS, requirementLabelAr, RESEARCH_GROUP_MAX_PARTS, RESEARCH_GROUP_VERSION, samePartRequest, storedGroupOf, type IntentRequirement, type PartOutcome, type ResearchPart, type StoredGroupPart, type StoredResearchGroup } from "./researchGroup";
 import { randomUUID } from "node:crypto";
@@ -61,6 +63,23 @@ export async function latestMissionOfConversation(sb: any, conversationId: strin
     }
   } catch { /* no earlier mission */ }
   return null;
+}
+
+/**
+ * P0 (15 Nov 2026, msn_8824508f840f703dee69): THE EARLIER MISSIONS OF THIS CONVERSATION, for a request whose brief says the customer does not want what was delivered before again (`exclude_delivered`). Only ids of this user's
+ * assistant cards in this conversation, newest first, the new mission excluded; the WORKER verifies each one (same customer, delivered something) before it excludes anything (agent/src/priorDelivery.ts).
+ */
+export async function earlierMissionsOfConversation(sb: any, conversationId: string, userId: string, except: string): Promise<string[]> {
+  try {
+    const { data } = await sb.from("messages").select("plan,created_at").eq("conversation_id", conversationId).eq("user_id", userId).eq("role", "assistant").order("created_at", { ascending: false }).limit(100);
+    const ids: string[] = [];
+    for (const row of Array.isArray(data) ? data : []) {
+      const id = row?.plan?.agentMissionId;
+      if (typeof id === "string" && /^msn_[a-z0-9]{8,40}$/.test(id) && id !== except && !ids.includes(id)) ids.push(id);
+      if (ids.length >= PRIOR_DELIVERY_MAX_MISSIONS) break;
+    }
+    return ids;
+  } catch { return []; }
 }
 
 /** What the customer reads when the plan they want to change is not ready yet. */
@@ -394,11 +413,13 @@ async function startMission(input: AgentChatTurnInput, requestText: string, extr
     return { ok: false, contentAr, status: created.status };
   }
   const exclusion = await exclusionForCard(input, `${requestText} ${input.message}`);
+  // P0: «without repeating what was delivered»: the conversation's earlier missions go on the card (server-written); the worker verifies and enforces (never applied from the customer's words alone)
+  const priorDelivery = extra.brief?.exclude_delivered === true ? { priorDelivery: { missionIds: await earlierMissionsOfConversation(sb, input.conversationId, input.userId, created.id) } } : {};
   const contentAr = withExclusionNote(extra.contentAr ?? (extra.noteAr ? `${extra.noteAr} ${AGENT_TURN_CONTENT_AR}` : AGENT_TURN_CONTENT_AR), exclusion.noteAr);
   const derived = isUntitledConversation(input.conversationTitle) ? titleFromFirstRequest([{ role: "user", content: requestText }]) : null;
   try {
     await Promise.all([
-      sb.from("messages").update({ content_ar: contentAr, plan: { agentMissionId: created.id, ...(extra.brief ? { researchBrief: extra.brief } : {}), ...exclusion.plan } }).eq("id", input.assistantMsgId),
+      sb.from("messages").update({ content_ar: contentAr, plan: { agentMissionId: created.id, ...(extra.brief ? { researchBrief: extra.brief } : {}), ...exclusion.plan, ...priorDelivery } }).eq("id", input.assistantMsgId),
       sb.from("messages").update({ request_status: "planning" }).eq("id", input.userMsgId),
       ...(derived ? [sb.from("conversations").update({ title: derived, updated_at: new Date().toISOString() }).eq("id", input.conversationId).eq("user_id", input.userId)] : []),
     ]);
@@ -503,6 +524,20 @@ export const REQUEST_UPDATED_AR = "حدّثنا طلبك بحسب رسالتك،
 export const PREVIOUS_STILL_PLANNING_AR = "حدّثنا طلبك بحسب رسالتك، ويجهّز الوكيل خطة جديدة بسعرها. أما الخطة السابقة فكانت قيد التجهيز، ولن يُنفَّذ منها شيء ولن يُخصم شيء إلا إذا اعتمدتها بنفسك.";
 
 /**
+ * P0 (15 Nov 2026, msn_8824508f840f703dee69): A MESSAGE THAT DEPENDS ON THE CONVERSATION IS NEVER PLANNED FROM ITS OWN WORDS. «هل ممكن تتوسع اكتر في استخراج التغريدات من دون تكرار بواقع 400 تغريدة» is a follow-up of earlier research; by itself it names no topic and no
+ * source. The model understood it, but when its reading could not be used the turn fell to the words path, which made a mission of that one sentence: an X search with no query, refused by the provider, told to the customer as «our sources do not serve this».
+ * With earlier customer turns in the conversation and no topic in the message itself, the reading that could not be used is given back to the customer in plain words to confirm or correct; nothing is created, held or searched.
+ */
+function dependsOnConversation(ctx: BriefTurnContext): boolean {
+  // decided by the reader the worker itself uses (a topic after «عن», or a named source), never by a list of words that are not topics
+  const own = buildRequestContract(currentMessageOf(ctx));
+  return ctx.customerTurns.length > 1 && !own.topic && !own.source.named && !own.source.official;
+}
+const SOCIAL_CONTENT: ReadonlySet<string> = new Set(["tweets", "videos", "posts", "comments", "replies"]);
+export const CONFIRM_UNDERSTANDING_AR = (what: string): string => `فهمت أنك تريد: «${what}». هل هذا صحيح؟ اكتب «نعم» لنجهّز الخطة، أو صحّح ما تريد في رسالة واحدة. لم نبدأ بحثًا ولم يُخصم منك شيء.`;
+export const RESTATE_REQUEST_AR = "لم أتمكن من ربط رسالتك بطلبك السابق بشكل مؤكد، فلم أبدأ أي بحث ولم يُخصم منك شيء. اكتب الطلب كاملًا في رسالة واحدة: المنصة، والموضوع، والحساب إن أردت، والعدد، والفترة.";
+
+/**
  * ONE TURN IN BRIEF MODE. Returns the turn's answer, or null when today's path should answer (the model gave no usable brief, the brief failed a check that is not about privacy, or the message is not a request): the old behaviour is the fallback,
  * so brief mode can never do worse than today. What it never does: approve, price, hold, or start anything that the customer did not ask for.
  */
@@ -584,6 +619,11 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
       await writeAnswer(input, MODEL_RETRY_AR);
       return { ok: false, contentAr: MODEL_RETRY_AR, status: 200 };
     }
+    if (!open && dependsOnConversation(ctx)) {
+      ctx.outcome = "follow_up_without_reading";
+      await writeAnswer(input, RESTATE_REQUEST_AR);
+      return { ok: false, contentAr: RESTATE_REQUEST_AR, status: 200 };
+    }
     return null;
   }
   // MULTI-OBJECTIVE RESEARCH: a reading of SEVERAL parts that cannot be used as written is never replaced by one mission read from the words (it would silently keep one part and drop the others): the customer continues with one word
@@ -603,6 +643,14 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     const asked = await askInsteadOfWords(`rejected_${v.reason}`);
     if (asked) return asked;
     if (multiPart) return multiPartUnsafe(v.reason);
+    // P0: a follow-up whose own words carry no topic is confirmed with the customer in the model's own reading, never planned from the fragment
+    if (open === null && dependsOnConversation(ctx)) {
+      const understood = renderRequestFromBrief(parsed.brief) ?? (parsed.brief.topic || parsed.brief.source ? parsed.brief.request : null);
+      ctx.outcome = `confirm_${v.reason}`;
+      const contentAr = understood ? CONFIRM_UNDERSTANDING_AR(understood) : RESTATE_REQUEST_AR;
+      await writeAnswer(input, contentAr, understood ? { researchBrief: { ...parsed.brief, request: understood, status: "needs_clarification" } } : undefined);
+      return { ok: false, contentAr, status: 200 };
+    }
     return null;
   }
   // the condition fields the model filled in by itself (a country inferred from a city, a language never said) are cleared before the brief is stored or shown to the model again; the sentences are checked below
@@ -662,6 +710,15 @@ async function briefTurn(input: AgentChatTurnInput, decision: Decision, open: Op
     return { ok: false, contentAr: question, status: 200 };
   }
   // a request with NO TOPIC the customer gave (only a platform, «تيك توك»): the model may fill one in («عن الموضوع المطلوب»); it is asked, never planned (live evaluation 2026-11-12, S1)
+  // P0 (15 Nov 2026): THE SEARCH INPUT IS IN THE BRIEF ITSELF. A social search needs something to search for (a topic) or someone to read (a source): the provider refuses a search with no query (`missing_params:query`). Whether SOME earlier message of the conversation
+  // had a topic is not the question (a stop-word list called «تتوسع اكتر بواقع» a topic, and a mission with no query was created): the structured reading, or the sentence the worker will read (the same reader), must carry it, or the customer is asked.
+  const firstObjectives = (brief.objectives ?? []).filter((o) => o.parent === null).length;
+  if (open === null && firstObjectives < 2 && brief.platforms.length === 1 && brief.content.length > 0 && brief.content.every((c) => SOCIAL_CONTENT.has(c)) && !brief.topic && !brief.source && !v.contract.topic && !v.contract.source.named && !v.contract.source.official) {
+    const contentAr = ctx.customerTurns.length > 1 ? RESTATE_REQUEST_AR : TOPIC_QUESTION_AR;
+    ctx.outcome = "clarify_search_input";
+    await writeAnswer(input, contentAr, { researchBrief: { ...brief, status: "needs_clarification" } });
+    return { ok: false, contentAr, status: 200 };
+  }
   if (isNewRequest(ctx, open) && !brief.topic && !customerGaveTopic(ctx.customerTurns)) {
     ctx.outcome = "clarify_topic";
     await writeAnswer(input, TOPIC_QUESTION_AR, { researchBrief: { ...brief, status: "needs_clarification" } });
@@ -1160,7 +1217,8 @@ export function intentInventedAr(r: IntentRequirement): string {
  */
 async function briefEditOfOpen(input: AgentChatTurnInput, decision: Decision, open: OpenRequest, brief: ResearchBrief, contract: ReturnType<typeof buildRequestContract>, ctx: BriefTurnContext): Promise<AgentChatTurnResult | null> {
   const openContract = buildRequestContract(open.requestText ?? "", undefined, { semantic: ctx.semantic });
-  const ready = { ...brief, status: "ready" as const };
+  // P0: an EDIT of the open request changes only what the customer changed: «without repeating what was delivered» stays when the open request's brief had it (the model need not repeat it)
+  const ready = { ...brief, status: "ready" as const, ...(ctx.prior?.exclude_delivered === true ? { exclude_delivered: true as const } : {}) };
   // THE EXECUTED VALUES, not only whether a condition is stated: «آخر شهر» → «آخر أسبوع» or «الغردقة» → «شرم الشيخ» is a changed request (live evaluation 2026-11-12, K1: the contract said «the same» and the correction waited)
   const editNow = Date.now();
   const sameConditions = sameExecutedConditions(brief.request, open.requestText ?? "", editNow);

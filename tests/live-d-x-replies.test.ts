@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { approvingResearchReviewer } from "./helpers/researchReviewer";
 import ExcelJS from "exceljs";
 import { describe, expect, it } from "vitest";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
@@ -224,7 +225,7 @@ describe("D5: the engine reads the replies of the chosen tweets, only those that
     };
     const items = await ItemStore.open(store, target);
     const plan = r.plan;
-    await runEngine({ items, store, plan: withPromiseCaps(plan), missionId: target, gateway: gateway as unknown as Gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: redesignStagesOf(plan, TYPES_OFF, true, { x: "test" }) });
+    await runEngine({ reviewer: approvingResearchReviewer(), items, store, plan: withPromiseCaps(plan), missionId: target, gateway: gateway as unknown as Gateway, sandbox: (code, inputs) => runInSandbox(code, inputs), addEvent: async () => undefined, deadlineMs: Date.now() + 3_600_000, sleep: async () => undefined, redesignStages: redesignStagesOf(plan, TYPES_OFF, true, { x: "test" }) });
     return { items, replyCalls, plan, chosen: r.chosen };
   }
 

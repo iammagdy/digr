@@ -24,6 +24,8 @@ export interface SearchScope {
   bySource: number;
   inPeriod: number;
   about: number;
+  /** P0: `about` was counted by the research judgment (meaning), not by the words. */
+  judged?: boolean;
 }
 
 const PLATFORM_AR: Record<string, string> = { tiktok: "تيك توك", x: "إكس", instagram: "إنستجرام", facebook: "فيسبوك", youtube: "يوتيوب" };
@@ -31,20 +33,22 @@ const STRATEGY_AR: Record<SearchStrategy, string> = {
   exact: "بالعبارات كما كتبتها",
   words: "بكلمات الموضوع في أي ترتيب",
   source_items: "منشورات الحساب نفسه في الفترة، ثم فحص كل منشور بالموضوع",
+  expanded: "بصيغ أخرى للموضوع ومرادفاته، ثم فحص كل عنصر بأنه عن الموضوع فعلًا",
 };
 
 /** The scope of the searches that were read (their pages, deduplicated by id) for the Ask. */
-export function searchScopeOf(ask: Ask, card: ToolCard, pages: ReadonlyArray<{ page: unknown; card?: ToolCard }>, strategies: ReadonlyArray<{ strategy: SearchStrategy; rows: number }>): SearchScope {
+export function searchScopeOf(ask: Ask, card: ToolCard, pages: ReadonlyArray<{ page: unknown; card?: ToolCard }>, strategies: ReadonlyArray<{ strategy: SearchStrategy; rows: number }>, judged?: ReadonlyMap<string, boolean>): SearchScope {
   const seen = new Set<string>();
   const rows: Array<Record<string, unknown>> = [];
   for (const p of pages) for (const r of mapPage(p.card ?? card, p.page)) { const id = String(r.id ?? ""); if (id !== "" && seen.has(id)) continue; if (id !== "") seen.add(id); rows.push(r); }
   const sourceId = operatorIdOf(card, ask);
   const bySource = sourceId ? rows.filter((r) => rowIsBy(r, sourceId)) : rows;
   const inPeriod = ask.period ? bySource.filter((r) => insidePeriod(r, ask)) : bySource;
-  const about = ask.topic.text ? inPeriod.filter((r) => topicTierOf(String(r.text ?? ""), ask) > 0) : inPeriod;
+  // P0: a row the research judgment decided counts by its verdict (about the request or not), never by a shared word
+  const about = ask.topic.text ? inPeriod.filter((r) => { const v = judged?.get(String(r.id ?? "")); return v !== undefined ? v : topicTierOf(String(r.text ?? ""), ask) > 0; }) : inPeriod;
   return {
     platform: ask.platform, sourceId, period: ask.period ? { from: ask.period.from, to: ask.period.to } : null, topic: ask.topic.text, alternatives: [...(ask.topic.alternatives ?? [])], strategies: [...strategies],
-    read: rows.length, bySource: bySource.length, inPeriod: inPeriod.length, about: about.length,
+    read: rows.length, bySource: bySource.length, inPeriod: inPeriod.length, about: about.length, ...(judged && judged.size > 0 ? { judged: true } : {}),
   };
 }
 
@@ -59,7 +63,7 @@ export function searchScopeEndAr(s: SearchScope): string {
   if (s.read > 0) {
     if (s.sourceId) counts.push(`منها من الحساب نفسه: ${toArabicDigits(s.bySource)}`);
     if (s.period) counts.push(`داخل الفترة: ${toArabicDigits(s.inPeriod)}`);
-    if (s.topic) counts.push(`تذكر الموضوع: ${toArabicDigits(s.about)}`);
+    if (s.topic) counts.push(s.judged ? `تتحدث فعلًا عن الموضوع بعد فحص كل منها: ${toArabicDigits(s.about)}` : `تذكر الموضوع: ${toArabicDigits(s.about)}`);
   }
   const notProof = s.sourceId ? "وهذا لا يثبت أن الحساب لم ينشر عن الموضوع" : "وهذا لا يثبت أن المنصة لا تحوي شيئًا عنه";
   return `بحثنا ${where}${when}${what}.${how} ${counts.join("، ")}. لم نجد ما يكفي لخطة، ${notProof}: هو ما أرجعه البحث بهذه الشروط فقط. لم نجهّز سعرًا ولم يُخصم منك شيء، ويمكنك إعادة صياغة الموضوع بكلمات أخرى أو تغيير الفترة.`.replace(/\s+/g, " ");

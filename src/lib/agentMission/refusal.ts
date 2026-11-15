@@ -29,7 +29,8 @@ export interface NoCardEndInput {
 }
 
 /** The refusals that mean the PLANNING ran out of something of ours (its source budget, the provider's daily limit, the cost recorder). */
-const OWN_LIMIT = /^(over_budget|daily_cap|recording_unavailable)/;
+// P0 (15 Nov 2026, msn_8824508f840f703dee69): a call refused because OUR request lacked an input the source requires (an X search with no query) is our malformed request, never «our sources do not serve this»
+const OWN_LIMIT = /^(over_budget|daily_cap|recording_unavailable|missing_params)/;
 const SOURCE_DOWN = /^source_unavailable/;
 
 export function classifyNoCardEnd(input: NoCardEndInput): { cls: RefusalClass; reason: string } {

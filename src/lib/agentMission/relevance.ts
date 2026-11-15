@@ -41,6 +41,12 @@ export interface RelevanceSpec {
    * model check instead of being left out or delivered; a bare name with no words of its own is not «a mention».
    */
   entity?: boolean;
+  /**
+   * P0 (15 Nov 2026, msn_cd5f32adadefb9bb971f): set BY CODE for a research TOPIC (never by the model). Every row that has text is judged by the model review against the customer's request, whatever words it carries:
+   * a search that matched the words is not evidence that the row is ABOUT the topic («الشائعة» = «common», «الأسئلة الشائعة» = FAQ, both returned for «الشائعات» = rumors), and a row that is about the topic may not repeat the
+   * customer's words. `terms` are then only what was searched (shown, never a verdict). A row that is not reviewed is not delivered and not charged, as for every review.
+   */
+  judge?: "model";
 }
 
 /** Another meaning of the name, as the planner saw it in its sample: «الحكم محمد صلاح عبد الفتاح». `extensions`: the words that follow the name in it («عبد الفتاح»); `titles`: a title right before or after the name («الحكم», «المدرب»); `markers`: words of that meaning anywhere in the text. */
@@ -195,6 +201,8 @@ export function classifyRowDetailed(spec: RelevanceSpec, row: Record<string, unk
   // a @handle is an account: the name inside it is not the subject being written about
   const text = normalizeText(stripLinksAndMentions(raw));
   if (!text) return { verdict: "exclude", reason: "no_text" };
+  // P0: a research topic is judged by meaning, never by the presence of a word
+  if (spec.judge === "model") return { verdict: "review", reason: "uncertain" };
   // a company that does not name the sector is not thrown away unseen: the model checks it (a contracting company may not say «مقاولات» in its name); every other stage leaves the row out
   if (!terms.some((r) => r.test(text))) return spec.entity ? { verdict: "review", reason: "uncertain" } : { verdict: "exclude", reason: "no_term" };
   // what the author says beyond the name itself

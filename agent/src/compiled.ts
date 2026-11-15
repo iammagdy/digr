@@ -3,7 +3,8 @@ import { CLARIFY_QUESTION_AR } from "../../src/lib/agentMission/semantic/conditi
 import { isOccurrenceAnswer, isRecurringEvent, occurrenceChoiceOf, OCCURRENCE_OPTIONS_AR, OCCURRENCE_QUESTION_AR, OCCURRENCE_YEAR_QUESTION_AR, type Occurrence } from "../../src/lib/agentMission/foundation/occurrence";
 import { checkChannelsAgainstWords } from "../../src/lib/agentMission/foundation/understand";
 import { buildShapeDigest } from "../../src/lib/modelPlanner/digest";
-import { carriedBy, chooseCard, compilePlan, parentInputs, rankedCards, rankedPoolOf, relaxedInputsOf, sourceUnenforced, COMPILED_PLATFORMS, type CompileResult, type SearchStrategy } from "../../src/lib/agentMission/foundation/compilePlan";
+import { carriedBy, chooseCard, compilePlan, expandedInputsOf, parentInputs, rankedCards, rankedPoolOf, relaxedInputsOf, researchRelevanceOf, researchTopicOf, sourceUnenforced, COMPILED_PLATFORMS, type CompileResult, type SearchStrategy } from "../../src/lib/agentMission/foundation/compilePlan";
+import type { PlanningJudge, TopicVariants } from "./researchJudge";
 import { searchScopeOf, type SearchScope } from "../../src/lib/agentMission/foundation/searchScope";
 import { channelAnswerOf, channelEvidenceOf, youtubeChannelChoiceQuestionAr } from "../../src/lib/agentMission/foundation/discovery/channelEvidence";
 import { confirmFieldsOnRows, fieldNotesAr, recoverFields, sheetWantsOf, type FieldReport } from "../../src/lib/agentMission/foundation/discovery/fieldRecovery";
@@ -88,6 +89,15 @@ export interface CompiledPlanningDeps {
   topicRelation?: "about" | "made_with";
   questionsAsked?: number;
   answerIsChoice?: boolean;
+  /**
+   * P0 (15 Nov 2026, msn_cd5f32adadefb9bb971f): THE RESEARCH JUDGMENT of the rows read (researchJudge.ts `planningJudge`, the execution's own review): a research topic's rows are chosen by meaning, and the card's counts say so.
+   * Absent (tests, no model key): the word rule, as before; the execution still judges every row of a research topic (the stage's relevance rule).
+   */
+  judge?: PlanningJudge;
+  /** P0 (15 Nov 2026): what earlier missions of the conversation delivered, when the customer asked not to receive it again (agent/src/priorDelivery.ts): never chosen as a sample, never counted, never judged. */
+  delivered?: (row: Record<string, unknown>) => boolean;
+  /** P0: the topic's search variants (researchJudge.ts `topicVariants`), asked only when the precise query's first page is short of the request. Absent: no expanded strategy. */
+  variants?: TopicVariants;
 }
 export type CompiledPlanning =
   | { kind: "plan"; plan: PricedPlan; ask: Ask; result: Extract<CompileResult, { ok: true }>; reads: { pool: number; exposure: number }; discovery?: DiscoveryMark }
@@ -101,6 +111,8 @@ export type CompiledPlanning =
 /** What the understand step cost (USD), carried on the result so the caller adds it to the mission's model cost (never a charge). */
 export type WithCost<T> = T & { llmCostUsd?: number };
 
+/** P0 (15 Nov 2026): the topic's search variants of a mission, kept with it (asked once). */
+export const VARIANTS_FILE = "planning_variants.json";
 /** The pages a parent may be read for at planning beyond the ones it needs (the exposure check replaces an empty parent by the next one). */
 const EXPOSURE_EXTRA = 3;
 /** ROUND 17: the most pages one listing is walked back through at planning for a period (the gateway's own two samples of a source end the walk earlier today; this only bounds it if that cap ever changes). */
@@ -273,10 +285,18 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   }
   // OWNER DECISION 7.4: the calls made with catalog_only cards cost at most CATALOG_ONLY_CAP_USD a mission; a read that would pass it is not made (it counts as a read that did not answer)
   let catalogOnlySpentUsd = 0;
+  /** P0: every page read at planning, with its inputs and what it said about more (whether the query the plan executes reached its end). */
+  const readLog: Array<{ endpointId: string; params: Record<string, unknown>; page: unknown; nextCursor: string | null; hasMore: boolean | null }> = [];
   const read = async (endpointId: string, params: Record<string, unknown>, using?: ToolCard): Promise<{ callId: string; page: unknown; nextCursor: string | null; hasMore: boolean | null } | { failed: true; refused: boolean }> => {
+    const r = await readOnce(endpointId, params, using);
+    if (!("failed" in r)) readLog.push({ endpointId, params, page: r.page, nextCursor: r.nextCursor, hasMore: r.hasMore });
+    return r;
+  };
+  const readOnce = async (endpointId: string, params: Record<string, unknown>, using?: ToolCard): Promise<{ callId: string; page: unknown; nextCursor: string | null; hasMore: boolean | null } | { failed: true; refused: boolean }> => {
     // A PAGE ALREADY READ for this mission (a re-planning after the customer's answer) is served from its saved page: no call, no cost, and not counted against the gateway's samples
     for (const row of deps.priorCalls ?? []) {
-      if ((row.phase ?? "planning") !== "planning" || row.status !== "ok" || row.endpoint_id !== endpointId || recorded.has(row.id) || !sameInputs(row.params_digest ?? {}, params)) continue;
+      // P0 (15 Nov 2026): a recorded EMPTY page is a page too (msn_cd5f32adadefb9bb971f paid the same empty cursor page twice, once per planning run)
+      if ((row.phase ?? "planning") !== "planning" || (row.status !== "ok" && row.status !== "empty") || row.endpoint_id !== endpointId || recorded.has(row.id) || !sameInputs(row.params_digest ?? {}, params)) continue;
       const callId = String(row.id).split(":").pop()!;
       const saved = await deps.store.getFile(deps.mission.id, RAW_PATH(callId));
       let page: unknown = null;
@@ -343,15 +363,37 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   /** THE EXPOSURE CHECK and the compile, shared by every platform (decision 7.3): the first comments page of the ranked parents, in order, until enough parents with comments are found; a read the gateway refuses leaves the parent unchecked. */
   // P0 (15 Nov 2026): the parent search strategies read at planning, in order, with the rows each answered (at most SEARCH_STRATEGIES_MAX: the precise query and one relaxed query when the first answered nothing)
   const searched: Array<{ strategy: SearchStrategy; rows: number }> = [];
-  const finish = async (poolCard: ToolCard, params: Record<string, unknown>, pages: Array<{ callId: string; page: unknown; card?: ToolCard }>, extra: { counters?: ReadonlyMap<string, number>; channels?: ReadonlyArray<{ id: string; title?: string }>; customerChannel?: { display: string | null } } = {}): Promise<CompiledPlanning> => {
+  const finish = async (poolCard: ToolCard, params: Record<string, unknown>, pages: Array<{ callId: string; page: unknown; card?: ToolCard }>, extra: { counters?: ReadonlyMap<string, number>; channels?: ReadonlyArray<{ id: string; title?: string }>; customerChannel?: { display: string | null }; /** P0: the engine can read this query on at execution (the main search or listing flow). */ sizeable?: boolean } = {}): Promise<CompiledPlanning> => {
     const exposure = new Map<string, { callId: string | null; page: unknown | null; failed: boolean }>();
+    // P0 (15 Nov 2026): THE RESEARCH JUDGMENT of every candidate read (the source, the period and originals already checked; the topic decided by meaning, not by a word)
+    let judged: Map<string, boolean> | undefined;
+    if (deps.judge && researchTopicOf(ask)) {
+      const candidatesRead = rankedPoolOf({ ask, poolCard, pages, nowMs: deps.nowMs, allowUnrelated: true }).filter((r) => !deps.delivered?.(r));
+      const subject = researchRelevanceOf(ask, ["text"])?.subject_ar ?? ask.topic.text ?? "";
+      const said = candidatesRead.length > 0 ? await deps.judge({ subject, rows: candidatesRead.map((r) => ({ id: String(r.id), text: String(r.text ?? "") })) }).catch(() => null) : null;
+      if (said) { cost.usd += Math.max(0, Number(said.costUsd) || 0); if (said.verdicts.size > 0) judged = said.verdicts; }
+    }
+    // P0: DID THE QUERY THE PLAN EXECUTES REACH ITS END? Its last page read said there is no more (no next page, or a next page that held nothing). Only then does the sample size the plan.
+    let poolExhausted: boolean | undefined;
+    if (extra.sizeable === true) {
+      const cursorKey = poolCard.inputs.cursor;
+      const base = (p: Record<string, unknown>): string => JSON.stringify(Object.entries(p).filter(([k, v]) => k !== cursorKey && v !== undefined && v !== null && v !== "").sort(([a], [b]) => a.localeCompare(b)));
+      const mine = readLog.filter((l) => l.endpointId === poolCard.endpointId && base(l.params) === base(params));
+      const last = mine[mine.length - 1];
+      if (last) {
+        let next: unknown = last.nextCursor;
+        if (!next) { let v: unknown = last.page; for (const k of poolCard.page.cursor ?? []) { v = v !== null && typeof v === "object" ? (v as Record<string, unknown>)[k] : undefined; } next = typeof v === "string" || typeof v === "number" ? v : null; }
+        // a card with no paging input says nothing about the source's end: unknown (the plan keeps what was found, and never claims the source ended)
+        poolExhausted = !cursorKey ? undefined : last.hasMore === false || !next || next === "" || mapPage(poolCard, last.page).length === 0;
+      }
+    }
     const repliesCards = ask.replies !== "none" ? cardsFor(ask.platform!, "comment.replies", { catalogOnly }) : [];
     const commentsCard = ask.comments !== "none" ? chooseCard(ask, "comments", { catalogOnly, repliesCards }) : null;
     const counterKey = poolCard.counter?.key ?? (extra.counters ? "comments" : null);
-    // NOV 6 2026: the customer's answer «أكمل بما وجدتموه كما هو» lets rows that do not name the topic be chosen (marked); otherwise they are never parents, and the exposure check reads only the eligible ones
-    const allowUnrelated = noAboutChoiceOf(deps.mission.answer_text) === "use";
+    // P0 (15 Nov 2026, msn_cd5f32adadefb9bb971f): rows that are not about the request are never chosen, priced, delivered or charged, whatever was answered: the former answer «أكمل بما وجدتموه كما هو» (no longer offered) changes nothing
+    const allowUnrelated = false;
     if (commentsCard?.inputs.parent) {
-      const ranked = rankedPoolOf({ ask, poolCard, pages, ...(extra.counters ? { counters: extra.counters } : {}), ...(extra.channels ? { channels: extra.channels } : {}), nowMs: deps.nowMs, ...(allowUnrelated ? { allowUnrelated: true } : {}) });
+      const ranked = rankedPoolOf({ ask, poolCard, pages, ...(extra.counters ? { counters: extra.counters } : {}), ...(extra.channels ? { channels: extra.channels } : {}), nowMs: deps.nowMs, ...(allowUnrelated ? { allowUnrelated: true } : {}), ...(judged ? { judged } : {}) });
       let withComments = 0;
       for (const row of ranked) {
         if (withComments >= need || reads.exposure >= need + EXPOSURE_EXTRA) break;
@@ -368,7 +410,7 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
     const compileWith = (a: Ask) => compilePlan({
       ask: a, pool: { card: poolCard, params, pages }, exposure: (id) => exposure.get(id), capabilityOf: (id) => deps.catalog.byId.get(id)?.capability ?? null, pricingSettings: deps.pricingSettings, nowMs: deps.nowMs, ...(catalogOnly ? { catalogOnly: true } : {}), ...(ask.media === "reels" && ask.platform === "instagram" && reelsBasisOf(poolCard) !== "unproven" ? { reelsProven: true } : {}),
       ...(extra.counters ? { counters: extra.counters } : {}), ...(extra.channels ? { channels: extra.channels } : {}), ...(extra.customerChannel ? { customerChannel: extra.customerChannel } : {}), ...(shortfallChoice === "only_found" || shortfallChoice === "fill" ? { namedChoice: shortfallChoice } : {}),
-      ...(allowUnrelated ? { allowUnrelated: true } : {}),
+      ...(allowUnrelated ? { allowUnrelated: true } : {}), ...(judged ? { judged } : {}), ...(poolExhausted !== undefined ? { poolExhausted } : {}), ...(deps.delivered ? { delivered: deps.delivered } : {}),
     });
     const result = compileWith(ask);
     if (!result.ok && result.reason === "named_shortfall") {
@@ -377,9 +419,9 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
     }
     if (!result.ok && result.reason === "no_relevant_rows") {
       // NOV 6 2026: rows were read and none names the topic: the customer decides before approval, on every platform (the TikTok second query is above); nothing priced or held
-      return { kind: "question", ask, why: "no_about", question: noAboutQuestionAr(ask.topic.text ?? "", NO_ABOUT_NOUN[ask.platform!], result.tagOnly > 0), options: [NO_ABOUT_OPTIONS_AR.useAsIs, NO_ABOUT_OPTIONS_AR.change, NO_ABOUT_OPTIONS_AR.cancel], reads };
+      return { kind: "question", ask, why: "no_about", question: noAboutQuestionAr(ask.topic.text ?? "", NO_ABOUT_NOUN[ask.platform!], result.tagOnly > 0, result.judged === true), options: [NO_ABOUT_OPTIONS_AR.change, NO_ABOUT_OPTIONS_AR.cancel], reads };
     }
-    if (!result.ok) return { kind: "cannot", ask, reason: result.reason, reads, ...(result.reason === "no_rows" && searched.length > 0 ? { scope: searchScopeOf(ask, poolCard, pages, searched) } : {}) };
+    if (!result.ok) return { kind: "cannot", ask, reason: result.reason, reads, ...(result.reason === "no_rows" && searched.length > 0 ? { scope: searchScopeOf(ask, poolCard, pages, searched, judged) } : {}) };
     // THE BUDGET IS A HARD CEILING on the hold (Part B): the largest version that fits, priced by the same price function; none fits: the plan is not made and the reason is the budget
     if (ask.edits.budget !== undefined) {
       const fit = fitToBudget(compileWith, ask, ask.edits.budget, need, ask.parentKind === "videos" ? "فيديو" : ask.parentKind === "tweets" ? "تغريدة" : "منشور");
@@ -392,6 +434,7 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   const withStrategyNote = (p: PricedPlan): PricedPlan => {
     const relaxedUsed = searched.find((x) => x.strategy !== "exact" && x.rows > 0);
     if (!relaxedUsed) return p;
+    if (relaxedUsed.strategy === "expanded") return { ...p, notes_ar: [...(p.notes_ar ?? []), "البحث بعباراتك وحدها أرجع قليلًا، فوسّعنا البحث بصيغ أخرى للموضوع ومرادفاته مع الحفاظ على شروطك كلها؛ وكل ما يُختار يُفحص بأنه يتحدث فعلًا عن الموضوع."] };
     const how = relaxedUsed.strategy === "words" ? "بكلمات الموضوع في أي ترتيب" : "في منشورات الحساب نفسه داخل الفترة، ثم فحصنا كل منشور بالموضوع";
     return { ...p, notes_ar: [...(p.notes_ar ?? []), `البحث بالعبارات كما كتبتها لم يُرجع نتائج، فبحثنا ${how}؛ ولم يُختر إلا ما يطابق شروطك.`] };
   };
@@ -401,6 +444,9 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
 
   // F4: THE POOL, the first page of the chosen card (and its next page when the first holds fewer rows than are needed with their spares: the gateway allows two samples of one source)
   let params = parentInputs(card, cardAsk);
+  // P0 (15 Nov 2026, msn_8824508f840f703dee69): A SEARCH WITH NOTHING TO SEARCH IS NEVER SENT. «هل ممكن تتوسع اكتر في استخراج التغريدات من دون تكرار بواقع 400 تغريدة» reached the planner with no topic and no source; the X search was sent with no
+  // query, refused (`missing_params:query`), and the customer read «مصادرنا لا تخدم هذا الطلب». A request whose search input is empty ends here, before any call, with the truth: we could not read what to search for.
+  if (card.inputs.query && String(params[card.inputs.query.field] ?? "").trim() === "") return { kind: "cannot", ask, reason: "no_topic", reads };
   let first = await read(card.endpointId, params, card);
   reads.pool += 1;
   // ROUND 33: A VALID FALLBACK. When the chosen tool's read FAILS (not when the gateway refuses it: a refusal is a limit, never worked around) and another validated candidate of the same role exists, the next-ranked one is read ONCE (the planning budget, the daily cap and the catalog_only cap all apply to that read too); nothing changes for a mission without candidates from the discovery.
@@ -445,8 +491,31 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   // the one more read the gateway allows for this source goes to ONE relaxed strategy that keeps the source, the period and every other written condition (relaxedInputsOf), or to nothing when none is safe
   searched.push({ strategy: "exact", rows: mapPage(card, first.page).length });
   const firstEmpty = mapPage(card, first.page).length === 0 && Boolean(card.inputs.query?.operators);
-  const relaxed = firstEmpty && !aboutQuery ? relaxedInputsOf(card, cardAsk) : null;
-  if (relaxed) {
+  // P0 (15 Nov 2026, msn_cd5f32adadefb9bb971f): THE PRECISE QUERY'S FIRST PAGE IS SHORT of the request (fewer rows than a page holds, so its own wording is near its end): the one more read the gateway allows for this source goes to the EXPANDED
+  // strategy (the customer's alternatives and the topic's variants in one disjunction, every hard condition kept; expandedInputsOf) instead of the precise query's next page. The plan then executes the expanded query; every row it reads is judged.
+  const firstRows = mapPage(card, first.page).length;
+  let expanded: { strategy: SearchStrategy; params: Record<string, unknown> } | null = null;
+  if (deps.variants && researchTopicOf(ask) && !aboutQuery && card.inputs.query?.or && card.inputs.query.operators && firstRows < Math.min(need, Math.max(1, card.page.observedRowsPerPage))) {
+    // the variants are asked ONCE per mission and kept: a later planning run (after an answer, a restart) builds the SAME expanded query, so its recorded page is reused instead of a new paid read or a refused third sample
+    let terms: string[] | null = null;
+    try { const kept = await deps.store.getFile(deps.mission.id, VARIANTS_FILE); const o = kept ? (JSON.parse(kept) as { terms?: unknown }) : null; if (o && Array.isArray(o.terms) && o.terms.every((t) => typeof t === "string")) terms = o.terms as string[]; } catch { terms = null; }
+    if (terms === null) {
+      const v = await deps.variants({ request: deps.mission.request_text, topic: ask.topic.text ?? "", alternatives: ask.topic.alternatives ?? [] }).catch(() => null);
+      if (v) {
+        cost.usd += Math.max(0, Number(v.costUsd) || 0);
+        terms = v.terms;
+        const put = (deps.store as Partial<Pick<AgentStore, "putFile">>).putFile;
+        if (put) await put.call(deps.store, deps.mission.id, VARIANTS_FILE, JSON.stringify({ terms }), "application/json").catch(() => undefined);
+      }
+    }
+    if (terms && terms.length > 0) expanded = expandedInputsOf(card, cardAsk, terms);
+  }
+  const relaxed = firstEmpty && !aboutQuery && !expanded ? relaxedInputsOf(card, cardAsk) : null;
+  if (expanded) {
+    const r = await read(card.endpointId, expanded.params, card);
+    reads.pool += 1;
+    if (!("failed" in r)) { pages.push({ callId: r.callId, page: r.page }); track(card, r); searched.push({ strategy: "expanded", rows: mapPage(card, r.page).length }); params = expanded.params; }
+  } else if (relaxed) {
     const r = await read(card.endpointId, relaxed.params, card);
     reads.pool += 1;
     // the plan keeps the params a fresh read at execution may use: the relaxed WORDS query still carries every topic word; the source's own items do not, so the precise query stays (a fresh read never collects off-topic items)
@@ -492,9 +561,9 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   if (aboutQuery && !hasAbout()) {
     const rows = pages.flatMap((p) => mapPage(card, p.page));
     const hashtagsOnly = rows.some((r) => factsOf(r, ask).topicTier === 1);
-    return { kind: "question", ask, why: "no_about", question: noAboutQuestionAr(ask.topic.text ?? "", { one: "فيديو", talks: "يتحدث نصه" }, hashtagsOnly), options: [NO_ABOUT_OPTIONS_AR.useAsIs, NO_ABOUT_OPTIONS_AR.change, NO_ABOUT_OPTIONS_AR.cancel], reads };
+    return { kind: "question", ask, why: "no_about", question: noAboutQuestionAr(ask.topic.text ?? "", { one: "فيديو", talks: "يتحدث نصه" }, hashtagsOnly), options: [NO_ABOUT_OPTIONS_AR.change, NO_ABOUT_OPTIONS_AR.cancel], reads };
   }
-  return finish(card, params, pages);
+  return finish(card, params, pages, { sizeable: true });
 
   /** ROUND 31: A CHANNEL THE CUSTOMER GAVE (an id, a handle or a name). The id is used as it is; a handle or a name is looked up with the verified channel search and used ONLY if a result carries it (never «the first result»); then the channel's own videos about the topic are read. */
   async function planYoutubeChannel(ref: YoutubeChannelRef): Promise<CompiledPlanning> {

@@ -8,6 +8,7 @@ import { resolveProviderKey, useProviderKeyStoreClient } from "../../src/lib/ser
 import { last4Of } from "../../src/lib/server/providerKeyCrypto";
 import { readProviderSpendToday, resolveAllProviderDailyCaps, resolveProviderDailyCapUsd } from "../../src/lib/server/multiProvider/providerCaps";
 import { storedBriefOf } from "../../src/lib/agentMission/researchBrief";
+import { deliveredMissionsReader, priorDeliveryCardReader } from "./priorDelivery";
 import { missionExclusionReader } from "./customerExclusion";
 import { sendPlatformEmail } from "../../src/lib/server/sendPlatformEmail";
 import { configureTregKeyPool } from "../../src/lib/server/tregKeyPool";
@@ -97,6 +98,9 @@ async function main() {
     readMissionBrief: async (missionId, userId) => { const { data } = await client.from("messages").select("plan,created_at").eq("user_id", userId).eq("role", "assistant").eq("plan->>agentMissionId", missionId).order("created_at", { ascending: false }).limit(1); return storedBriefOf(Array.isArray(data) ? data[0]?.plan : null); },
     // PHASE 5.3 (read ONLY when customer_exclusion_files_v1 is on for the mission's account): the exclusion list the chat server stored on the same card, for the same user; a failed read or a malformed list throws (never «no list»)
     readMissionExclusion: missionExclusionReader(client),
+    // P0 (15 Nov 2026): «without repeating what was delivered»: the earlier missions the chat server recorded on this mission's card, and of those the ones this customer completed with a delivery
+    readPriorDeliveryCard: priorDeliveryCardReader(client),
+    readDeliveredMissions: deliveredMissionsReader(client),
     log,
     // ROUND 62: present only when DIGER_SPEND_GATE is set (observe or enforce); each run then gates its gateways, its model runs and its review requests per mission
     ...(spendGate ? { spendGate } : {}),
