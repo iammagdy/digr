@@ -335,3 +335,19 @@ describe("asked for 400, get 400: a topic search continues on the model's next t
     expect(runMap(alts[1].map_code, otherPage)[0]).toMatchObject({ id: "77", text: "نفي شائعة" });
   });
 });
+
+describe("a small real sample is said before approval", () => {
+  it("the source gave 2 and no next page for a request of 400: the card says the available amount is likely far below it", async () => {
+    const m = scriptedModel({ request_plan: [{ ...UNDERSTOOD_X, steps: [{ ...UNDERSTOOD_X.steps[0], count: { total: 400, per_parent: null, all: false } }] }], tool_choice: [CHOICE_X], field_map: [MAP_X] });
+    const deps: LlmPlannerDeps = {
+      model: m.model, catalog, access: null, today: "2026-11-15",
+      probe: async () => ({ ok: true, call_id: "call_0001", http_status: 200, rows_in_page: 2, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: "" }),
+      readPage: async () => xPage(0, 2, null),
+    };
+    const r = await planWithLlm({ words: ["٤٠٠ تغريدة"], request: "" }, deps);
+    expect(r.kind).toBe("plan");
+    if (r.kind !== "plan") return;
+    expect(r.plan.stages[0].planned_rows).toBe(400);
+    expect(r.plan.notes_ar!.some((n) => /أعطت ٢ فقط/.test(n) && /أقل بكثير من ٤٠٠/.test(n))).toBe(true);
+  });
+});

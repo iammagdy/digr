@@ -552,6 +552,8 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
     }
     planned = Math.max(1, Math.min(MAX_STEP_ITEMS, Math.floor(planned)));
     plannedOf.set(s.key, planned);
+    // THE REAL SAMPLE IS SMALL (live X, 15 Nov 2026: the account's precise searches gave 0 and 2 for a request of 400): said before approval, with the honest consequence; the customer pays only for what is delivered
+    if (!s.parent && !b.hasMore && b.rowsPerPage < Math.min(planned, 20)) notes.push(`${s.title_ar}: الصفحة الحقيقية التي قرأناها من المصدر أعطت ${toArabicDigits(b.rowsPerPage)} فقط ولم يعرض المصدر صفحة تالية لهذا البحث، فالمتاح غالبًا أقل بكثير من ${toArabicDigits(planned)}؛ نكمل البحث بصيغ أخرى، ولا تدفع إلا مقابل ما يُسلَّم.`);
     if (b.option.notCarried.length > 0) notes.push(`${s.title_ar}: الأداة المتاحة لهذه الخطوة لا تحدد ${b.option.notCarried.map((c) => CONDITION_AR[c]).join(" ولا ")}، فستصلك كما يعرضها المصدر دون تصفية بها.`);
     const rowsPerPage = Math.max(1, b.rowsPerPage);
     const costPerRow = (callUsdOf(b.option.endpoint) / rowsPerPage) * VARIANT_OVERLAP_FACTOR;

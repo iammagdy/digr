@@ -89,13 +89,14 @@ Deployed as iammagdy/digr#514 (`a22172f`), then live round 1 as iammagdy/digr#51
 | `msn_11c3d7c88829acd50211` | TikTok retest after #515, 15 videos + 3 comments each | 60 / 60 | 200 | Full columns (caption, account, date, clean link, counters) and 8 further sources |
 | `msn_883c058b52f039b2b35c` | YouTube, the first 100 comments of a video by link | 100 / 100 | 200 | |
 | `msn_b840f9b0437104ea6a15` | Multi-part: 30 tweets + 10 TikTok videos + 3 comments each, same topic | 70 / 70 | 248 | One plan of 3 steps across 2 platforms |
+| `msn_795b609fa767430e4a15` | X retest after the ambiguity rule, @SaudiMOH rumors, 400 | 4 | 12 | The precise phrases («نفي شائعة», «مكافحة الشائعات» …) returned **0** from the account; the broader set returned 2. X's search index holds very few such tweets for this account, so no query delivers 400. The card now says it before approval when the real sample is that small |
 | (question) | «عايز داتا عن السوق» | — | 0 | The planner asked one question with 4 options, then planned from the answer |
 | Facebook page about a topic + comments | — | — | 0 | The page listing carries no topic, which is said on the card. Every comments tool was empty for the page's 3 newest posts (reels), so the step was said and not priced. Same provider limitation as the 2 Nov missions M17 and M19 |
 
 ## Still open
 
 - **Facebook comments** on a page's reels: every catalog tool returned empty. This is a provider limitation, not a planning one, and the card says it before approval.
-- **The X account+topic search** returns few rows per query from the provider. A second tool now continues after the first tool's queries. Precision depends on the model's terms; the ambiguity rule now covers every query, and the X retest after the last PR will measure it.
+- **The X account+topic search** returns few rows per query from the provider. The precise queries found nothing more for @SaudiMOH. The only way to look further is to read the account's whole 5-year timeline and select by meaning. That is a filter, so it is the **owner's decision**; it was not built. A second tool now continues after the first tool's queries. Precision depends on the model's terms; the ambiguity rule now covers every query, and the X retest after the last PR will measure it.
 - **TikTok search relevance** is the provider's: some videos returned for a topic are from the right accounts but about other things. Nothing is dropped by meaning, per the owner's decision.
 
 ## Not yet verified live
