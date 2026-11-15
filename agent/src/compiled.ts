@@ -429,7 +429,7 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
     }
     if (!result.ok && result.reason === "no_relevant_rows") {
       // NOV 6 2026: rows were read and none names the topic: the customer decides before approval, on every platform (the TikTok second query is above); nothing priced or held
-      return { kind: "question", ask, why: "no_about", question: noAboutQuestionAr(ask.topic.text ?? "", NO_ABOUT_NOUN[ask.platform!], result.tagOnly > 0, result.judged === true), options: [NO_ABOUT_OPTIONS_AR.change, NO_ABOUT_OPTIONS_AR.cancel], reads };
+      return { kind: "question", ask, why: "no_about", question: noAboutQuestionAr(ask.topic.text ?? "", NO_ABOUT_NOUN[ask.platform!], result.tagOnly > 0, result.judged === true, searched.length > 0 && searched.every((x) => x.strategy === "source_items" || x.rows === 0)), options: [NO_ABOUT_OPTIONS_AR.change, NO_ABOUT_OPTIONS_AR.cancel], reads };
     }
     if (!result.ok) return { kind: "cannot", ask, reason: result.reason, reads, ...(result.reason === "no_rows" && searched.length > 0 ? { scope: searchScopeOf(ask, poolCard, pages, searched, judged) } : {}) };
     // THE BUDGET IS A HARD CEILING on the hold (Part B): the largest version that fits, priced by the same price function; none fits: the plan is not made and the reason is the budget

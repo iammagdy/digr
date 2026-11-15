@@ -35,7 +35,8 @@ export function noAboutChoiceOf(answer: unknown): NoAboutChoice | null {
 }
 
 /** The question, in the customer's words: what was not found and what the found videos are. `hashtagsOnly`: some video names the topic only in its hashtags. */
-export function noAboutQuestionAr(topic: string, noun: { one: string; talks: string }, hashtagsOnly: boolean, /** P0 (15 Nov 2026): the rows were JUDGED by meaning (some share a word with the topic but are about something else). */ judged = false): string {
+export function noAboutQuestionAr(topic: string, noun: { one: string; talks: string }, hashtagsOnly: boolean, /** P0 (15 Nov 2026): the rows were JUDGED by meaning (some share a word with the topic but are about something else). */ judged = false, /** P0 (15 Nov 2026, msn_5a1cf6c36852566f9e41): the search by the topic's words inside the source answered nothing, and every row read was one of the source's newest posts (no topic word was searched for them). */ sourceItemsOnly = false): string {
+  if (sourceItemsOnly) return `بحثنا داخل الحساب بكلمات الموضوع وصيغه فلم يُرجع البحث شيئًا، ثم قرأنا أحدث منشوراته في الفترة فلم نجد بينها ${noun.one} ${noun.talks} عن «${topic}». هذا لا يثبت أن الحساب لم ينشر عن الموضوع: هو ما أرجعه البحث فقط. كيف تريد أن نكمل؟`;
   const what = judged ? "ما وجدناه لا يتحدث عن الموضوع، وإن تشابهت بعض كلماته" : hashtagsOnly ? "ما وجدناه يذكر الموضوع في الوسوم فقط، أي أنه غالبًا صُنع بالموضوع ولا يتحدث عنه" : "ما وجدناه لا يذكر الموضوع في نصه";
   return `لم نجد في ما قرأناه ${noun.one} يطابق طلبك و${noun.talks} عن «${topic}»؛ ${what}. كيف تريد أن نكمل؟`;
 }
