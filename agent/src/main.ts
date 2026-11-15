@@ -21,6 +21,8 @@ import { parseConcurrency } from "../../src/lib/agentMission/concurrency";
 import { resolveModels } from "./modelConfig";
 import type { RunnerDeps } from "./runMission";
 import { runClaimedSafely } from "./stage4/dispatch";
+import { anthropicPlannerModel } from "./llmPlanner/model";
+import { LLM_PLANNER_MODEL } from "./llmPlanner/run";
 import { anthropicReviewCall } from "./review";
 import { createSdkDriver } from "./sdkRuntime";
 import { abortActiveRuns, abortRunsOf } from "./sessions";
@@ -83,6 +85,8 @@ async function main() {
     resolveAccess: (userId) => resolveAccountAccess(client, userId),
     // the review of uncertain rows: one small request per batch to the model API (the SDK's native process is never started for it)
     reviewCall: anthropicReviewCall(process.env.ANTHROPIC_API_KEY!),
+    // LLM-FIRST PLANNER: the planning model's structured calls carry the catalog's descriptions and take longer than a review
+    plannerModel: anthropicPlannerModel(process.env.ANTHROPIC_API_KEY!, LLM_PLANNER_MODEL, { log }),
     // the customer's notice when a mission ends: an in-site notification and an e-mail through the existing send-email function
     notify: (n) => sendMissionNotice(client, n),
     // the Firecrawl and Context.dev keys come from the SAME encrypted provider key store the website uses (needs PROVIDER_KEYS_ENCRYPTION_KEY, the same value as the website's); when the store gives no key the site's

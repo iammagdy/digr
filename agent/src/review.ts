@@ -262,3 +262,74 @@ export function createReviewer(deps: { call: ReviewCall; store: AgentStore; miss
     },
   };
 }
+
+/** One structured answer of the model (the planner's questions): the parsed JSON and what it cost, or null. */
+export type JsonModel = (call: { system: string; user: string; tool: { name: string; description: string; schema: Record<string, unknown> }; maxTokens: number }) => Promise<{ input: unknown; costUsd: number } | null>;
+type FetchLike = (url: string, init: { method: string; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown>; text: () => Promise<string> }>;
+
+/**
+ * THE PLANNING MODEL'S REQUEST: one structured-output answer (`output_config.format`, a JSON schema), no thinking (`between_tools`): claude-sonnet-5-5 accepts neither a forced tool call nor `thinking: disabled` (both answered 400 on the worker dyno, 15 Nov 2026). Unlike the review's call, a refused request is never retried WITHOUT the tool (a free-text answer is useless to
+ * the planner), and the API's own error is logged (status and the first words of its message: never a key), so a schema the API refuses is seen at once.
+ */
+export function anthropicJsonCall(apiKey: string, model: string, options: { fetchFn?: FetchLike; timeoutMs?: number; log?: (line: string) => void } = {}): JsonModel {
+  const fetchFn = options.fetchFn ?? (fetch as unknown as FetchLike);
+  const timeoutMs = options.timeoutMs ?? 180_000;
+  return async ({ system, user, tool, maxTokens }) => {
+    for (const thinkingOff of [true, false]) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const res = await fetchFn("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+          body: JSON.stringify({
+            model, max_tokens: maxTokens, ...(thinkingOff ? { thinking: { type: "between_tools" } } : {}),
+            system: `${system}\n\nAnswer with the JSON object only (${tool.description}).`, messages: [{ role: "user", content: user }],
+            // STRUCTURED OUTPUT: the answer is guaranteed to match the schema (this model accepts no forced tool call)
+            output_config: { format: { type: "json_schema", schema: strictJsonSchema(tool.schema) } },
+          }),
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          options.log?.(`llm_planner_api ${tool.name} status=${res.status} ${body.replace(/\s+/g, " ").slice(0, 300)}`);
+          // a request refused for asking no thinking is asked once more with the model's default; any other refusal ends the call
+          if (res.status === 400 && thinkingOff && /thinking|between_tools/i.test(body)) continue;
+          return null;
+        }
+        const body = (await res.json()) as { content?: Array<{ type?: string; text?: string }>; usage?: Record<string, number>; stop_reason?: string };
+        const u = body.usage ?? {};
+        const costUsd = llmCostFromUsage(model, { input_tokens: u.input_tokens ?? 0, output_tokens: u.output_tokens ?? 0, cache_read_input_tokens: u.cache_read_input_tokens ?? 0, cache_creation_input_tokens: u.cache_creation_input_tokens ?? 0 });
+        const text = (body.content ?? []).filter((c) => c.type === "text").map((c) => (c as { text?: string }).text ?? "").join("").trim();
+        let input: unknown = null;
+        try { input = text ? JSON.parse(text) : null; } catch { input = null; }
+        if (input === null || typeof input !== "object") { options.log?.(`llm_planner_api ${tool.name} no_json stop=${body.stop_reason ?? ""}`); return { input: null, costUsd }; }
+        if (body.stop_reason === "max_tokens") options.log?.(`llm_planner_api ${tool.name} cut_at_max_tokens`);
+        return { input, costUsd };
+      } catch (e) {
+        options.log?.(`llm_planner_api ${tool.name} error ${String((e as Error)?.name ?? "")}`);
+        return null;
+      } finally {
+        clearTimeout(timer);
+      }
+    }
+    return null;
+  };
+}
+
+
+/** The schema as structured outputs accepts it: every object closed (`additionalProperties: false`), the bounds it does not support removed; everything else as written. */
+export function strictJsonSchema(schema: unknown): Record<string, unknown> {
+  const walk = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(walk);
+    if (!v || typeof v !== "object") return v;
+    const o: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v as Record<string, unknown>)) {
+      if (["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "multipleOf", "minLength", "maxLength", "minItems", "maxItems", "pattern"].includes(k)) continue;
+      o[k] = k === "properties" && x && typeof x === "object" ? Object.fromEntries(Object.entries(x as Record<string, unknown>).map(([pk, pv]) => [pk, walk(pv)])) : walk(x);
+    }
+    if (o.type === "object") o.additionalProperties = false;
+    return o;
+  };
+  return walk(schema) as Record<string, unknown>;
+}
