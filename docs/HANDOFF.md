@@ -4,6 +4,15 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## PRODUCTION SWITCHES, 15 Nov 2026 (supersedes every "OFF" statement below for these three keys)
+
+`chat_research_brief_v1`, `capability_discovery_v1` and `semantic_normalization_v1` are **`true` (ON for every customer)** in production `agent_settings` since 05:49:04 UTC. The owner decided it the same day, and it was applied through a one-off dyno of the Heroku worker app.
+- What stays OFF and why, the evidence, and the rollback (set `false` or delete the row) are in `docs/ACTIVATION-2026-11-15.md`.
+- Stays OFF: `registry_router`, `web_via_treg`, `multi_stage_engine`, `customer_exclusion_files_v1`.
+- Unchanged: `social_discovery` (`test`) and the six request-type keys of `redesign_flags` (`test`).
+
+---
+
 ## CURRENT STATE: read this first (account switch, 13 Nov 2026)
 
 > Companion files:
