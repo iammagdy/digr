@@ -128,3 +128,87 @@ PRs #499 and #501 fixed **retrieval inputs**: the source and the query syntax. E
   * the mission minimum (200) spread over a small plan gives a high price per row when the source genuinely has few relevant rows;
   * compiled plans price review cost and relevance yield as 1 (the older planner measures `yield_share`), so the hold for a low-yield request may be smaller than the reading it needs; execution then stops at its budget and the delivery is partial and honest.
 * **Methodology offer:** still shown for any delivery (14 Nov §7.4, unchanged).
+
+## 8. Third incident: a follow-up became a mission with no topic (`msn_8824508f840f703dee69`)
+
+Conversation `b7abe45b18874b4b9d53`: «أريد ٤٠٠ تغريدة عن الشائعات الصحية … وزارة الصحة السعودية … إكس» → «طيب ابحث عن الشائعات فقط» (`msn_dd7c`, 79 tweets) → «زود العدد ل 400 تغريدة» → «هل ممكن تتوسع اكتر في استخراج التغريدات من دون تكرار بواقع 400 تغريدة».
+
+* **What was recorded.**
+  * The chat model read the last message correctly, as a data request, with the account and the topic carried from the conversation.
+  * Code rejected that brief (`rejected_source_dropped`): the keyword reader did not find the account in the model's sentence.
+  * The turn fell back to the fragment. The mission had no topic and no account.
+  * The X search was sent with no query and refused (`missing_params:query`). The customer was told «مصادرنا لا تخدم هذا الطلب».
+* **Root cause.** The model's understanding was a *suggestion* that a keyword reader could veto, and the veto fell back to the last sentence instead of to the conversation. A second, smaller cause: the «is there a topic?» check let any word outside a stop list through, so «تتوسع» counted as a topic.
+* **Fix (general, no phrase list).**
+  * The executable request is rendered from the brief's structured fields and re-validated by the same checks. An invented account, number or platform is still rejected.
+  * An understanding that cannot be used is restated to the customer to confirm. A mission is never planned from a fragment of a conversation with history.
+  * A search request needs search input (a topic or a source) by construction.
+  * A search with an empty query is refused before any call (`no_topic`) with a truthful sentence; an invalid query is no longer reported as a missing source capability.
+* **«من دون تكرار» is now enforced.** See §9.
+
+## 9. «Without repeating what was delivered» (continuations)
+
+**Correction to the earlier status report:** I wrote that this needed the `customer_exclusion_files_v1` switch and that carrying the structured brief to the worker needed a schema migration. **Both were wrong.**
+
+* That switch checks *companies* against an uploaded spreadsheet. It cannot recognise a tweet.
+* The brief already reaches the worker on the server-written `messages.plan` JSON. No migration and no switch are involved.
+
+**The mechanism** (`src/lib/agentMission/priorDelivery.ts`, `agent/src/priorDelivery.ts`):
+
+1. **The model reads the intent.** The brief has an optional `exclude_delivered`, written by the chat model when the customer wants more of earlier research without receiving again what was delivered. There is no keyword list.
+2. **The chat server records the earlier missions.** It puts the conversation's earlier mission ids on the new card (`plan.priorDelivery.missionIds`, server-written; customers cannot write an assistant plan).
+3. **The worker verifies and pins, at planning.**
+   * It keeps only missions of the same customer that are `completed` with `delivered_units > 0`.
+   * It reads their item stores, and builds the identity of every delivered item: its id, and its canonical link (`x:status:<id>` whether the link was x.com or twitter.com, with or without a query string).
+   * It writes that snapshot to the mission's private folder and pins its digest on the plan, with one sentence on the card stating how many items are excluded.
+   * A failed read throws, and the existing planning retry handles it. The requirement is never dropped silently.
+4. **A delivered item is never a sample.** It is never chosen as a planning sample, judged, or counted as available. A parent-only search whose whole sample was delivered before is still planned for the customer's number, and execution reads past it.
+5. **Execution never delivers or charges it.**
+   * It loads exactly the approved snapshot. If it is missing or altered, nothing runs and the hold is released whole (fail closed).
+   * Every matching row is kept out with the reason `already_delivered`.
+   * Pages made only of earlier items do not count as «dry», so the read continues past the earlier mission's pages.
+
+**Limits.**
+
+* The continuation re-reads the earlier pages from the start of the query; it does not resume the earlier cursor. Those reads are a provider cost, inside the execution budget, and never a charge.
+* If the model does not set `exclude_delivered`, nothing is excluded. The card says it when it is set, so the customer sees it before approval.
+* For a follow-up that is not a parent-only search (with comments or replies, or an account listing), delivered items are still never chosen or delivered. But when *every* item its planning read was delivered before, no plan is made (the existing «no rows» answer); it does not read past them.
+
+Tests: `tests/p0-continuation-no-duplicates.test.ts`, `tests/p0-conversation-continuity.test.ts`.
+
+## 10. Pre-merge review of the whole diff (the seven questions)
+
+1. **Can irrelevant rows still be delivered or charged?** Not on a compiled plan with a research topic.
+   * Every top-level row with text goes to the model review at execution, pinned sample rows included. Only a «yes» is accepted.
+   * Rows a review never reached stay `pending`: not in the file, not counted, not charged.
+   * With no reviewer configured, such rows are final exclusions, so the gate fails closed.
+   * Comments and replies under judged posts are delivered as the source gives them, and the card says so.
+   * Plans with no topic (for example, «all posts of account X») have nothing to judge, and are unchanged.
+2. **If the model review fails:** failed calls are retried by the reviewer. What stays unreviewed is `pending`, never delivered or charged.
+   * The closing sentence says the review could not be reached («تعذّر الوصول إليها … فلم يُسلَّم ما لم يُراجَع»).
+   * A planning judge failure falls back to the word rule for the *card only*. Execution judges every row again.
+3. **Costs and budgets** (computed with the real price functions for a 400-tweet plan):
+
+   | Spend | Amount (USD) | Enforced by |
+   |---|---|---|
+   | Planning judge | ≤ 0.01 per planning run | `createReviewer` budget |
+   | Variants | one Haiku call (≤ 300 output tokens), once per mission | `planning_variants.json` |
+   | Execution review | budget ≈ 0.073; ceiling ≈ 0.145 | 20% of revenue / 40% of the hold value, `review.ts` |
+   | Provider reads at execution | ≈ 0.145 | `executionBudgetUsd(200)` |
+
+   * A low-yield topic stops after 5 consecutive pages with no accepted row (`JUDGED_DRY_PAGES`).
+   * Planning model cost is recorded as planning cost, never charged.
+4. **Does the changed planned-row count affect pricing?** No pricing code changed, but the effective price changes.
+   * A plan sized for 400 tweets is priced on 400. The 200-point minimum is spread over 400 (unit 0.5) and the hold is 200.
+   * Settlement charges `ceil(delivered × unit)`. So 3 delivered tweets now cost **2 points**, where the incident charged 200.
+   * This is in the customer's favour. Under it, the card's line «الحد الأدنى للمهمة ٢٠٠ نقطة» holds only for a full delivery, which was already true of any partial delivery.
+   * The company's exposure on a short delivery is bounded by the budgets above. **Owner decision:** whether a minimum should apply to partial deliveries. That would be a settlement-policy change (the database function), and was not made.
+5. **Can an approved plan execute beyond its scope?** No.
+   * The approved scope check (capabilities, parameters, counts, pins) is unchanged.
+   * The plan's own selection rules are gates at execution: exact account, period, X originals (`COMPILED_PLAN_GATES`).
+   * The volume cap is `planned_rows`.
+   * The expanded query keeps every hard condition, and is the query recorded and approved on the plan.
+6. **Do conversation follow-ups preserve previous intent?** Yes, through the model's structured brief, re-validated by code (§8). A brief that cannot be validated is confirmed with the customer, never executed from a fragment.
+7. **Is «without duplicates» enforced against previously delivered tweets?** Yes, for missions created after this change, by the snapshot mechanism in §9. It was never enforced before.
+
+**Not verified live:** provider coverage for the incident account over five years, the production model's verdicts, variant quality, and the end-to-end continuation on a real conversation. Each needs the authorised live acceptance.

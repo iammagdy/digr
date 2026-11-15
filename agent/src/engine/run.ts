@@ -53,6 +53,8 @@ export interface EngineDeps {
   addEvent: (event: MissionEventInput) => Promise<void>;
   /** PHASE 5.3: the customer's approved exclusion list (items/ingest.ts IngestDeps.exclusion). Absent: no list. */
   exclusion?: import("../../../src/lib/agentMission/customerExclusion").ExclusionMatcher;
+  /** P0 (15 Nov 2026): the items earlier missions of this conversation delivered (items/ingest.ts IngestDeps.priorDelivered). Absent: none. */
+  priorDelivered?: import("../../../src/lib/agentMission/priorDelivery").PriorDeliveryMatcher;
   now?: () => number;
   /** Absolute time (ms) after which no new page is read. */
   deadlineMs: number;
@@ -593,6 +595,7 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     const guaranteeCount = deps.redesignStages?.has(stage.key) === true;
     const ended = pageMode ? result.rows_in_page === 0 : !nextCursor || (result.rows_in_page === 0 && !guaranteeCount) || result.has_more === false || !spec.cursor_param;
     const before = items.counts(stage.key).accepted;
+    const deliveredBefore = items.counts(stage.key).excludedByReason.already_delivered ?? 0;
     // a parent's share (per_parent_rows) is a cap on what this page may add for it
     const have = parentId !== null ? items.acceptedRows(stage.key).filter((r) => String(r.parent_id) === parentId).length : 0;
     const oldestMs = periodField !== null ? oldestMomentOf(incoming, periodField) : null;
@@ -610,8 +613,9 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     const after = items.counts(stage.key);
     if (after.accepted === before && after.pending > 0 && deps.reviewer && (await deps.reviewer.state()).stop) stallStreak += 1; else stallStreak = 0;
     if (stallStreak >= REVIEW_STALL_PAGES) return { reason: "review_limit", aborted: null };
+    // (a page of items delivered to the customer before, excluded at their request, is neither dry nor a yield: a continuation reads past what the earlier missions read)
     // P0 (15 Nov 2026): A RESEARCH TOPIC'S READ ENDS when page after page adds nothing the review accepts (a broad query whose rows are about something else): the reading is bounded by its yield, never bought to the budget for rows no one is charged for
-    if (stage.relevance?.judge === "model" && parentId === null) { if (after.accepted === before && after.pending === 0) dryStreak += 1; else dryStreak = 0; }
+    if (stage.relevance?.judge === "model" && parentId === null) { if (after.accepted === before && after.pending === 0 && (after.excludedByReason.already_delivered ?? 0) === deliveredBefore) dryStreak += 1; else if (after.accepted > before || after.pending > 0) dryStreak = 0; }
     if (dryStreak >= JUDGED_DRY_PAGES) return { reason: "page_limit", aborted: null };
   }
 }

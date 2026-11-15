@@ -12,6 +12,7 @@ import { FULL_RESEARCH_PREFIX_AR, greetingReplyAr, isFullResearchMethodologyAsk,
 import { listMethodologyMissions } from "./methodology/missions";
 import { buildRequestContract } from "./requestContract";
 import { renderRequestFromBrief } from "./researchBrief";
+import { PRIOR_DELIVERY_MAX_MISSIONS } from "./priorDelivery";
 import { briefNumbersAr, contractIsComplete, differsOnlyByCount, numbersWritten, parseBrief, sameContract, storedBriefOf, validateBrief, withPartCounts, type ResearchBrief } from "./researchBrief";
 import { conditionChanged, conditionDriftOf, droppedRequirementsOf, groundedConditions, sameExecutedConditions, sameExecutedValues, unaccountedRequirements, inventedRequirementOf, type ConditionDrift, type ConditionKind, type ConditionPhrases, partBriefOf, partCardIdOf, partMissionIdOf, partsOf, PART_ID_ATTEMPTS, requirementLabelAr, RESEARCH_GROUP_MAX_PARTS, RESEARCH_GROUP_VERSION, samePartRequest, storedGroupOf, type IntentRequirement, type PartOutcome, type ResearchPart, type StoredGroupPart, type StoredResearchGroup } from "./researchGroup";
 import { randomUUID } from "node:crypto";
@@ -62,6 +63,23 @@ export async function latestMissionOfConversation(sb: any, conversationId: strin
     }
   } catch { /* no earlier mission */ }
   return null;
+}
+
+/**
+ * P0 (15 Nov 2026, msn_8824508f840f703dee69): THE EARLIER MISSIONS OF THIS CONVERSATION, for a request whose brief says the customer does not want what was delivered before again (`exclude_delivered`). Only ids of this user's
+ * assistant cards in this conversation, newest first, the new mission excluded; the WORKER verifies each one (same customer, delivered something) before it excludes anything (agent/src/priorDelivery.ts).
+ */
+export async function earlierMissionsOfConversation(sb: any, conversationId: string, userId: string, except: string): Promise<string[]> {
+  try {
+    const { data } = await sb.from("messages").select("plan,created_at").eq("conversation_id", conversationId).eq("user_id", userId).eq("role", "assistant").order("created_at", { ascending: false }).limit(100);
+    const ids: string[] = [];
+    for (const row of Array.isArray(data) ? data : []) {
+      const id = row?.plan?.agentMissionId;
+      if (typeof id === "string" && /^msn_[a-z0-9]{8,40}$/.test(id) && id !== except && !ids.includes(id)) ids.push(id);
+      if (ids.length >= PRIOR_DELIVERY_MAX_MISSIONS) break;
+    }
+    return ids;
+  } catch { return []; }
 }
 
 /** What the customer reads when the plan they want to change is not ready yet. */
@@ -395,11 +413,13 @@ async function startMission(input: AgentChatTurnInput, requestText: string, extr
     return { ok: false, contentAr, status: created.status };
   }
   const exclusion = await exclusionForCard(input, `${requestText} ${input.message}`);
+  // P0: «without repeating what was delivered»: the conversation's earlier missions go on the card (server-written); the worker verifies and enforces (never applied from the customer's words alone)
+  const priorDelivery = extra.brief?.exclude_delivered === true ? { priorDelivery: { missionIds: await earlierMissionsOfConversation(sb, input.conversationId, input.userId, created.id) } } : {};
   const contentAr = withExclusionNote(extra.contentAr ?? (extra.noteAr ? `${extra.noteAr} ${AGENT_TURN_CONTENT_AR}` : AGENT_TURN_CONTENT_AR), exclusion.noteAr);
   const derived = isUntitledConversation(input.conversationTitle) ? titleFromFirstRequest([{ role: "user", content: requestText }]) : null;
   try {
     await Promise.all([
-      sb.from("messages").update({ content_ar: contentAr, plan: { agentMissionId: created.id, ...(extra.brief ? { researchBrief: extra.brief } : {}), ...exclusion.plan } }).eq("id", input.assistantMsgId),
+      sb.from("messages").update({ content_ar: contentAr, plan: { agentMissionId: created.id, ...(extra.brief ? { researchBrief: extra.brief } : {}), ...exclusion.plan, ...priorDelivery } }).eq("id", input.assistantMsgId),
       sb.from("messages").update({ request_status: "planning" }).eq("id", input.userMsgId),
       ...(derived ? [sb.from("conversations").update({ title: derived, updated_at: new Date().toISOString() }).eq("id", input.conversationId).eq("user_id", input.userId)] : []),
     ]);

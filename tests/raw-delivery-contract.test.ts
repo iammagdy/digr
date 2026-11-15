@@ -9,25 +9,27 @@ import { ALLOWED_REMOVALS_RAW, EXISTING_REMOVAL_REASONS, isAllowedRemovalRaw, ra
  */
 // CHANGED (Phase 5.3, docs/intelligence/PHASE-5-3-AND-6.md): the 24th reason `customer_exclusion` (a company in the customer's own approved exclusion list) is added on purpose, and it is an allowed raw removal:
 // the customer's explicit criterion, never a content rule. The inventory stays pinned exactly.
+// CHANGED (P0, 15 Nov 2026, msn_8824508f840f703dee69): the 25th reason `already_delivered` (an item an earlier mission of the same conversation delivered, when the customer asked «من دون تكرار») is added on purpose and is an allowed raw
+// removal for the same reason as `customer_exclusion`: the customer's own explicit criterion, enforced from a snapshot pinned on the approved plan.
 const PINNED_24 = [
   "no_text", "no_term", "mention_only", "other_person", "name_extended", "other_meaning", "uncertain", "not_reviewed", "review_no", "review_failed",
   "filter_reply", "filter_repost", "filter_language", "filter_period", "filter_account", "filter_place", "filter_government", "filter_media",
-  "unknown_parent", "no_verified_contact", "not_a_person", "target_reached", "not_at_company", "customer_exclusion",
+  "unknown_parent", "no_verified_contact", "not_a_person", "target_reached", "not_at_company", "customer_exclusion", "already_delivered",
 ];
 
 describe("the removal reasons that exist today are pinned", () => {
-  it("finalize.ts knows exactly these 24 codes, and the contract constant lists the same", () => {
+  it("finalize.ts knows exactly these 25 codes, and the contract constant lists the same", () => {
     expect(Object.keys(REASON_TEXT_AR).sort()).toEqual([...PINNED_24].sort());
     expect([...EXISTING_REMOVAL_REASONS].sort()).toEqual([...PINNED_24].sort());
-    expect(PINNED_24).toHaveLength(24);
+    expect(PINNED_24).toHaveLength(25);
   });
 });
 
-describe("only five removals are allowed when raw mode is on (four, plus the customer's own exclusion list since Phase 5.3)", () => {
+describe("only six removals are allowed when raw mode is on (four, plus the customer's own exclusion list since Phase 5.3 and what was delivered before since P0 15 Nov 2026)", () => {
   it("the allowed set is fixed", () => {
-    expect([...ALLOWED_REMOVALS_RAW].sort()).toEqual(["customer_exclusion", "id_duplicate", "named_source_share", "target_reached", "unknown_parent"]);
+    expect([...ALLOWED_REMOVALS_RAW].sort()).toEqual(["already_delivered", "customer_exclusion", "id_duplicate", "named_source_share", "target_reached", "unknown_parent"]);
   });
-  it("of the 24 stored reasons only unknown_parent, target_reached and customer_exclusion stay; the other 21 must become marks", () => {
+  it("of the 25 stored reasons only unknown_parent, target_reached, customer_exclusion and already_delivered stay; the other 21 must become marks", () => {
     expect(isAllowedRemovalRaw("unknown_parent")).toBe(true);
     expect(isAllowedRemovalRaw("target_reached")).toBe(true);
     expect(isAllowedRemovalRaw("id_duplicate")).toBe(true);

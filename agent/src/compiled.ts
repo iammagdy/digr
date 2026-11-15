@@ -94,6 +94,8 @@ export interface CompiledPlanningDeps {
    * Absent (tests, no model key): the word rule, as before; the execution still judges every row of a research topic (the stage's relevance rule).
    */
   judge?: PlanningJudge;
+  /** P0 (15 Nov 2026): what earlier missions of the conversation delivered, when the customer asked not to receive it again (agent/src/priorDelivery.ts): never chosen as a sample, never counted, never judged. */
+  delivered?: (row: Record<string, unknown>) => boolean;
   /** P0: the topic's search variants (researchJudge.ts `topicVariants`), asked only when the precise query's first page is short of the request. Absent: no expanded strategy. */
   variants?: TopicVariants;
 }
@@ -366,7 +368,7 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
     // P0 (15 Nov 2026): THE RESEARCH JUDGMENT of every candidate read (the source, the period and originals already checked; the topic decided by meaning, not by a word)
     let judged: Map<string, boolean> | undefined;
     if (deps.judge && researchTopicOf(ask)) {
-      const candidatesRead = rankedPoolOf({ ask, poolCard, pages, nowMs: deps.nowMs, allowUnrelated: true });
+      const candidatesRead = rankedPoolOf({ ask, poolCard, pages, nowMs: deps.nowMs, allowUnrelated: true }).filter((r) => !deps.delivered?.(r));
       const subject = researchRelevanceOf(ask, ["text"])?.subject_ar ?? ask.topic.text ?? "";
       const said = candidatesRead.length > 0 ? await deps.judge({ subject, rows: candidatesRead.map((r) => ({ id: String(r.id), text: String(r.text ?? "") })) }).catch(() => null) : null;
       if (said) { cost.usd += Math.max(0, Number(said.costUsd) || 0); if (said.verdicts.size > 0) judged = said.verdicts; }
@@ -408,7 +410,7 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
     const compileWith = (a: Ask) => compilePlan({
       ask: a, pool: { card: poolCard, params, pages }, exposure: (id) => exposure.get(id), capabilityOf: (id) => deps.catalog.byId.get(id)?.capability ?? null, pricingSettings: deps.pricingSettings, nowMs: deps.nowMs, ...(catalogOnly ? { catalogOnly: true } : {}), ...(ask.media === "reels" && ask.platform === "instagram" && reelsBasisOf(poolCard) !== "unproven" ? { reelsProven: true } : {}),
       ...(extra.counters ? { counters: extra.counters } : {}), ...(extra.channels ? { channels: extra.channels } : {}), ...(extra.customerChannel ? { customerChannel: extra.customerChannel } : {}), ...(shortfallChoice === "only_found" || shortfallChoice === "fill" ? { namedChoice: shortfallChoice } : {}),
-      ...(allowUnrelated ? { allowUnrelated: true } : {}), ...(judged ? { judged } : {}), ...(poolExhausted !== undefined ? { poolExhausted } : {}),
+      ...(allowUnrelated ? { allowUnrelated: true } : {}), ...(judged ? { judged } : {}), ...(poolExhausted !== undefined ? { poolExhausted } : {}), ...(deps.delivered ? { delivered: deps.delivered } : {}),
     });
     const result = compileWith(ask);
     if (!result.ok && result.reason === "named_shortfall") {

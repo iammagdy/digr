@@ -86,6 +86,11 @@ export interface ResearchBrief {
    * customer wrote it (never invented) and that the consolidated request carries it (the planner then enforces it or asks for its identifier: foundation/sourceScope.ts). Absent on an older brief: none.
    */
   source?: string | null;
+  /**
+   * P0, 15 Nov 2026 (msn_8824508f840f703dee69): the customer wants MORE of earlier research in this conversation without receiving again what was already delivered («من دون تكرار», «كمّل», «هات غيرهم»). The model reads it from the
+   * conversation; the server then records the conversation's earlier missions on the card and the worker excludes every item they delivered (priorDelivery.ts). It can only remove rows, never add a charge. Absent: false.
+   */
+  exclude_delivered?: true;
   /** The model's structured research objectives (absent: the brief carried none; the request is then read from its words, as before). */
   objectives?: BriefObjective[];
 }
@@ -93,7 +98,7 @@ export interface ResearchBrief {
 export const BRIEF_REQUEST_MIN = 3;
 export const BRIEF_REQUEST_MAX = 1000;
 const FIELD_MAX = 120;
-const KNOWN_FIELDS = new Set(["status", "request", "platforms", "content", "count", "topic", "period", "country", "language", "source", "objectives", "v"]);
+const KNOWN_FIELDS = new Set(["status", "request", "platforms", "content", "count", "topic", "period", "country", "language", "source", "exclude_delivered", "objectives", "v"]);
 const OBJECTIVE_FIELDS = new Set(["id", "operation", "platform", "parent", "contacts", "what", "request", "period", "country", "language", "count"]);
 /**
  * DESCRIPTIVE keys a real model adds to an objective (live evaluation 2026-11-12: «topic»). They describe the goal and are never executed: their text joins `what` (internal, privacy-checked by `validateBrief`) instead of discarding the
@@ -230,7 +235,7 @@ export function parseBrief(raw: unknown): ParsedBrief {
   return {
     ok: true,
     unknown,
-    brief: { v: RESEARCH_BRIEF_VERSION, status, request, platforms, content, count, topic: text(o.topic, FIELD_MAX), period: text(o.period, FIELD_MAX), country: text(o.country, FIELD_MAX), language: text(o.language, FIELD_MAX), ...(text(o.source, FIELD_MAX) ? { source: text(o.source, FIELD_MAX) } : {}), ...(objectives && objectives.length > 0 ? { objectives } : {}) },
+    brief: { v: RESEARCH_BRIEF_VERSION, status, request, platforms, content, count, topic: text(o.topic, FIELD_MAX), period: text(o.period, FIELD_MAX), country: text(o.country, FIELD_MAX), language: text(o.language, FIELD_MAX), ...(text(o.source, FIELD_MAX) ? { source: text(o.source, FIELD_MAX) } : {}), ...(o.exclude_delivered === true ? { exclude_delivered: true as const } : {}), ...(objectives && objectives.length > 0 ? { objectives } : {}) },
   };
 }
 

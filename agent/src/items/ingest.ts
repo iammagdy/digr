@@ -17,6 +17,7 @@ import type { MissionEventInput } from "../types";
 import type { Reviewer } from "../review";
 import type { ItemReason, ItemStore, Op, Row, StageCounts } from "./itemStore";
 import { isCompanyStage } from "../../../src/lib/agentMission/entities";
+import { PRIOR_DELIVERY_REASON, type PriorDeliveryMatcher } from "../../../src/lib/agentMission/priorDelivery";
 import { CUSTOMER_EXCLUSION_REASON, EXCLUSION_POSSIBLE_MARK, organisationOfRow, type ExclusionMatcher } from "../../../src/lib/agentMission/customerExclusion";
 
 type Stage = PricedPlan["stages"][number];
@@ -38,6 +39,11 @@ export interface IngestDeps {
    * a company or people stage is never ingested without it (the batch throws, nothing is saved). Absent with no mark: today's behaviour exactly.
    */
   exclusion?: ExclusionMatcher;
+  /**
+   * P0 (15 Nov 2026): the items earlier missions of this conversation delivered (the APPROVED plan's `prior_delivery`, loaded from the mission's private copy with its digest). Required whenever the plan carries a mark with items:
+   * a top-level stage is never ingested without it (fail closed). A matching row is never delivered, counted or charged (reason `already_delivered`).
+   */
+  priorDelivered?: PriorDeliveryMatcher;
 }
 
 /**
@@ -134,6 +140,12 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   const exclusion = exclusionHere ? deps.exclusion! : null;
   const exclusionNameKeys = exclusion ? nameKeysOf(stage.columns) : [];
   let excludedByList = 0;
+  // P0: WHAT WAS DELIVERED BEFORE, never again (the customer asked «من دون تكرار»): a top-level item whose identity is in the approved snapshot is kept out (a child follows its parent, which was checked)
+  const priorMark = plan.prior_delivery;
+  const priorHere = !isChild && priorMark !== undefined && priorMark.items > 0;
+  if (priorHere && !deps.priorDelivered) throw new Error("prior_delivery_unavailable");
+  const priorDelivered = priorHere ? deps.priorDelivered! : null;
+  let excludedAsDelivered = 0;
 
   // items that were waiting (a review the budget or a failure delayed) or never looked at come back first, while matching items are still needed
   const carry: Array<{ id: string; row: Row }> = [];
@@ -186,6 +198,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     if (!isChild) placeCellsAr(row, stage.columns, raw, promisedPlace);
     // PHASE 5.3: A COMPANY THE CUSTOMER EXCLUDED (their uploaded list, matched by code on the source's own fields: domain, registration number, full name, distinctive brand words) is kept with its reason, never delivered, never
     // counted and never charged; its id is remembered, so a retried page or another source cannot bring it back under the same id, and a new id meets the same check. A possible match (a shared brand word only) is delivered and marked.
+    if (priorDelivered && priorDelivered({ ...raw, id })) { excludedAsDelivered += 1; excludedStructural.push({ id, reason: PRIOR_DELIVERY_REASON, row }); continue; }
     if (exclusion) {
       const verdict = exclusion.check(organisationOfRow(raw, { people: exclusionKind === "people", nameKeys: exclusionNameKeys }));
       if (verdict.kind === "excluded") { excludedByList += 1; excludedStructural.push({ id, reason: CUSTOMER_EXCLUSION_REASON, row }); continue; }
@@ -364,7 +377,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
   }
   const stillNeeded = Math.max(0, stage.planned_rows - counts.accepted);
   return {
-    ok: true, stage: key, ...tally, ...(excludedByList > 0 ? { rejected_by_customer_exclusion: excludedByList } : {}), counts, newlyAccepted: acceptedNow, total_in_stage: counts.accepted, stage_limit: stage.planned_rows,
+    ok: true, stage: key, ...tally, ...(excludedByList > 0 ? { rejected_by_customer_exclusion: excludedByList } : {}), ...(excludedAsDelivered > 0 ? { rejected_as_delivered_before: excludedAsDelivered } : {}), counts, newlyAccepted: acceptedNow, total_in_stage: counts.accepted, stage_limit: stage.planned_rows,
     ...(spec ? {
       left_out_not_matching: left, reviewed_by_model: reviewedNow, review_budget_reached: reviewStop === "budget", review_failed: reviewStop === "failed", pending_for_review: counts.pending,
       accepted_by_rule: acceptedNow - modelAccepted,

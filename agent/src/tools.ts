@@ -138,6 +138,8 @@ export interface ToolContext {
   capabilities?: CapabilityDiscovery;
   /** PHASE 5.3: the customer's approved exclusion list (execution of a plan that carries `customer_exclusion`); every save goes through it. Absent: no list. */
   exclusion?: import("../../src/lib/agentMission/customerExclusion").ExclusionMatcher;
+  /** P0 (15 Nov 2026): the approved snapshot of what earlier missions of the conversation delivered (plan `prior_delivery`). Absent: none. */
+  priorDelivered?: import("../../src/lib/agentMission/priorDelivery").PriorDeliveryMatcher;
   redesign?: { flags: RedesignFlags; isTest: boolean; /** Per-platform overrides (docs/ROOT-CAUSE.md, section 5.3): absent = every platform follows its type. */ platformFlags?: PlatformFlags; /** The platform the customer's words name (the request contract), null when none. */ platform?: SocialPlatform | null };
 }
 
@@ -357,7 +359,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
   const checkAndSaveRows = async (stage: PricedPlan["stages"][number], incoming: unknown[]): Promise<Record<string, unknown>> => {
     const plan = ctx.plan!;
     const items = await getItems();
-    const result = await ingestRows({ items, plan, reviewer: ctx.review, addEvent: (e) => store.addEvent(mission.id, e), ...(ctx.exclusion ? { exclusion: ctx.exclusion } : {}) }, stage, incoming);
+    const result = await ingestRows({ items, plan, reviewer: ctx.review, addEvent: (e) => store.addEvent(mission.id, e), ...(ctx.exclusion ? { exclusion: ctx.exclusion } : {}), ...(ctx.priorDelivered ? { priorDelivered: ctx.priorDelivered } : {}) }, stage, incoming);
     await mirrorLegacyFiles(items, store, plan, [stage.key]);
     const { counts: _counts, newlyAccepted: _n, ...visible } = result;
     return visible;

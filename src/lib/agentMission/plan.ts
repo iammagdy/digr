@@ -263,6 +263,11 @@ export interface PricedPlan {
    * folder (customerExclusion.ts EXCLUSION_SNAPSHOT_PATH), never in the plan. Execution refuses to run a plan whose list cannot be loaded with this digest. Internal; the card shows only its sentence (`notes_ar`). Absent: no list.
    */
   customer_exclusion?: import("./customerExclusion").PlanExclusionMark;
+  /**
+   * P0 (15 Nov 2026): the items earlier missions of this conversation delivered, excluded because the customer asked not to receive them again: the digest of the exact snapshot (in the mission's private folder,
+   * priorDelivery.ts PRIOR_DELIVERY_PATH), how many missions and items. Execution refuses to run a plan whose snapshot cannot be loaded with this digest. Internal; the card shows only its sentence. Absent: nothing excluded.
+   */
+  prior_delivery?: import("./priorDelivery").PlanPriorDelivery;
 }
 
 export interface CompiledMark {

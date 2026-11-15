@@ -1,3 +1,4 @@
+import { PRIOR_DELIVERY_REASON_TEXT_AR } from "../../src/lib/agentMission/priorDelivery";
 import ExcelJS from "exceljs";
 import { EXCLUSION_REASON_TEXT_AR } from "../../src/lib/agentMission/customerExclusion";
 import type { StopReason } from "./items/itemStore";
@@ -107,6 +108,7 @@ const ZERO_REASON_CLAUSES: ReadonlyArray<{ keys: ReadonlyArray<string>; clause: 
   { keys: ["not_a_person"], clause: "كان عناوين عامة للشركات لا لأشخاص" },
   { keys: ["no_verified_contact"], clause: "لا اسم شخص فيه ولا بيانات تواصل موثّقة" },
   { keys: ["customer_exclusion"], clause: "كان واردًا في ملف الاستبعاد الذي أرسلته" },
+  { keys: ["already_delivered"], clause: "سُلّم لك من قبل في مهمة سابقة، وطلبت ألا يتكرر" },
 ];
 const ZERO_ADVICE_AR = "يمكنك تعديل الطلب، كاللغة أو الحساب أو الموضوع، ثم إعادة المحاولة.";
 
@@ -139,6 +141,7 @@ export const REASON_TEXT_AR: Record<string, string> = {
   unknown_parent: "لا ينتمي لعنصر مقروء", no_verified_contact: "لا اسم شخص فيه ولا بيانات تواصل موثّقة", not_a_person: "لا يخص شخصًا بعينه (بريد عام أو اسم جهة أو بلا اسم؛ يظهر البريد في عمود إيميلات الشركة)", target_reached: "زاد عن العدد المعتمد",
   not_at_company: "لا يعمل حاليًا في هذه الشركة (شركته الحالية غير الشركة المطلوبة)",
   customer_exclusion: EXCLUSION_REASON_TEXT_AR,
+  already_delivered: PRIOR_DELIVERY_REASON_TEXT_AR,
 };
 export const reasonTextAr = (reason: string): string => REASON_TEXT_AR[reason] ?? "سبب آخر";
 
@@ -148,7 +151,7 @@ const OUR_ROW_RULE_REASONS: ReadonlyArray<string> = ["no_verified_contact", "not
  * EVERY FILTER OF THE PLAN IS OURS TOO (golden run round 2, G1: 242 companies found, the place filter left 240 out, and the closing sentence said «the source gave no more»): a row a filter of the plan removed (place, period, account, media, replies, reposts, government bodies) or
  * a person who is not at the company is counted and said, for every stage. The language filter keeps its own sentence (shortfallClauseAr) and the topic check keeps «this is all that matched».
  */
-const OUR_FILTER_REASONS: ReadonlyArray<string> = ["filter_place", "filter_period", "filter_account", "filter_media", "filter_reply", "filter_repost", "filter_government", "not_at_company", "customer_exclusion"];
+const OUR_FILTER_REASONS: ReadonlyArray<string> = ["filter_place", "filter_period", "filter_account", "filter_media", "filter_reply", "filter_repost", "filter_government", "not_at_company", "customer_exclusion", "already_delivered"];
 const LEFT_OUT_BY_US: ReadonlyArray<string> = [...OUR_ROW_RULE_REASONS, ...OUR_FILTER_REASONS];
 
 export interface StageTruthFacts {

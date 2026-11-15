@@ -22,6 +22,10 @@ This handoff document provides a clear, factual status of the Diger platform (`i
   * truthful sentences.
 * **Unchanged:** pricing, settlement, ledger, flags.
 * **Details, limits, the financial items for the owner (incl. the 200 points of this test mission), and what is unverified live:** `docs/incidents/P0-RESEARCH-RELEVANCE-2026-11-15.md`.
+* **Same change, two more incidents:**
+  * `msn_8824` (a follow-up planned as a fragment with no topic): the model's structured brief is now the request contract, rendered and re-validated; a search with no query is refused before any call.
+  * «من دون تكرار»: earlier deliveries of the conversation are pinned on the plan and never delivered or charged again (`already_delivered`). No migration or switch is involved.
+* **Owner decision raised:** with plans sized by the request, the 200-point minimum applies only to a full delivery (3 of 400 tweets cost 2 points). See §10 of the incident doc.
 
 ---
 

@@ -13,6 +13,7 @@ import { APPROX_DATES_KEY, approxColumnsOf } from "../relativeDates";
 import { cairoMomentAr } from "./cairoText";
 import { NAMED_MARK_KEY, NAMED_MARK_TITLE_AR, NAMED_MISMATCH_MARK_AR, NAMED_UNAVAILABLE_MARK_AR } from "./namedShortfall";
 import type { RelevanceSpec } from "../relevance";
+import { priorDeliverySampleAr } from "../priorDelivery";
 import { childPromise, perParentPromise, promiseLineAr, type StagePromise } from "./promise";
 import { OPEN_REPLIES_FLOOR } from "./openReplies";
 import { ALTERNATIVE_LINE_AR, catalogOnlyPagesOf, commentsAlternativesOf, quoteCostPerRowOf } from "./alternatives";
@@ -282,6 +283,11 @@ export interface CompileInput {
    * Absent: unknown, the plan is sized by what was found (as before).
    */
   poolExhausted?: boolean;
+  /**
+   * P0 (15 Nov 2026, msn_8824508f840f703dee69): the items earlier missions of this conversation delivered, when the customer asked not to receive them again (priorDelivery.ts). A row it matches is never chosen, counted or priced:
+   * a parent-only search plan whose sample was all delivered before is still sized by the customer's number (the execution reads past it).
+   */
+  delivered?: (row: Record<string, unknown>) => boolean;
 }
 
 export type CompileResult =
@@ -525,7 +531,13 @@ export function compilePlan(input: CompileInput): CompileResult {
   const card: ToolCard = poolCard.counter || !input.counters ? poolCard : { ...poolCard, counter: { key: "comments", counts: "comments" } };
   const judged = input.judged && researchTopicOf(ask) ? input.judged : undefined;
   const ranked0 = rankedPoolOf({ ask, poolCard, pages: input.pool.pages, ...(input.counters ? { counters: input.counters } : {}), ...(input.channels ? { channels: input.channels } : {}), ...(input.nowMs !== undefined ? { nowMs: input.nowMs } : {}), ...(input.allowUnrelated ? { allowUnrelated: true } : {}), ...(judged ? { judged } : {}) });
-  if (ranked0.length === 0) {
+  // P0 (15 Nov 2026, msn_8824508f840f703dee69): WHAT WAS DELIVERED BEFORE, never offered again (the customer asked «من دون تكرار»). A parent-only search the engine can read on is planned even when every row read was delivered before
+  // or is not about the request: the sample is the earlier mission's own first pages, and the execution reads past them (sized by the customer's number, `sizedByRequest` below)
+  const isDelivered = (r: Record<string, unknown>): boolean => input.delivered !== undefined && input.delivered(r);
+  const deliveredBefore = input.delivered ? rankedPoolOf({ ask, poolCard, pages: input.pool.pages, keepOutsidePeriod: true, ...(input.nowMs !== undefined ? { nowMs: input.nowMs } : {}) }).filter(isDelivered).length : 0;
+  const readsOnPastSample = !shape.includes("comments") && !shape.includes("replies") && /\.search$/.test(poolCard.role) && input.poolExhausted === false && input.namedChoice !== "only_found";
+  const continuesPast = deliveredBefore > 0 && readsOnPastSample;
+  if (ranked0.length === 0 && !continuesPast) {
     // NOTHING READ NAMES THE TOPIC (and every row is otherwise a candidate): the customer decides before approval (go on with what was found, marked; change the request; cancel). Nothing is priced or held
     const all = rankedPoolOf({ ask, poolCard, pages: input.pool.pages, ...(input.nowMs !== undefined ? { nowMs: input.nowMs } : {}), allowUnrelated: true });
     // P0: rows were read and the research judgment found none about the request: the same honest question, on every platform (never a plan of rows about something else)
@@ -539,7 +551,7 @@ export function compilePlan(input: CompileInput): CompileResult {
   const notOriginal = ask.platform === "x" ? readAll.filter(isReplyRow).length : 0;
   // P0: a row the research judgment decided is counted by its verdict; an undecided row by the word rule where the topic is a gate
   const notAbout = (r: PoolRow): boolean => { const v = judged?.get(String(r.id)); return v !== undefined ? v === false : topicGatedFor(ask, poolCard) && topicTierOf(String(r.text ?? ""), ask) === 0; };
-  const unrelatedLeftOut = input.allowUnrelated && !judged ? 0 : readAll.filter((r) => !(ask.platform === "x" && isReplyRow(r)) && notAbout(r)).length;
+  const unrelatedLeftOut = input.allowUnrelated && !judged ? 0 : readAll.filter((r) => !(ask.platform === "x" && isReplyRow(r)) && !isDelivered(r) && notAbout(r)).length;
   const leftOutOfPeriod = periodGatedFor(ask, poolCard) ? readAll.filter((r) => parentEligible(r, ask, { allowUnrelated: input.allowUnrelated === true, ...(judged ? { judged } : {}) })).length - ranked0.length : 0;
   const cardsOpt = input.cards ? { cards: input.cards } : {};
   const repliesCards = shape.includes("replies") ? cardsFor(ask.platform, REPLY_ROLE[ask.platform], { catalogOnly, ...cardsOpt }) : [];
@@ -552,8 +564,10 @@ export function compilePlan(input: CompileInput): CompileResult {
   const isNamed = (r: Record<string, unknown>): boolean => factsOf(r, ask, bySource).named;
   // A POST THE CUSTOMER ASKED FOR from a named page is the page's AND (when a topic is named) about the topic (live round 10: 4 posts of «the page» with 2 about the topic satisfied 3 asked, and no question was asked)
   const isNamedAbout = (r: Record<string, unknown>): boolean => isNamed(r) && (!ask.topic.text || factsOf(r, ask, bySource).topicTier === 2);
-  const ranked = input.namedChoice === "only_found" && ask.source.kind === "named" ? ranked0.filter(isNamedAbout) : ranked0;
-  if (ranked.length === 0) return { ok: false, reason: "no_rows" };
+  const rankedAll = input.namedChoice === "only_found" && ask.source.kind === "named" ? ranked0.filter(isNamedAbout) : ranked0;
+  if (rankedAll.length === 0 && !continuesPast) return { ok: false, reason: "no_rows" };
+  const ranked = deliveredBefore > 0 ? rankedAll.filter((r) => !isDelivered(r)) : rankedAll;
+  if (ranked.length === 0 && !continuesPast) return { ok: false, reason: "no_rows" };
 
   // THE EXPOSURE CHECK (decision 7.3): a parent whose first comments page is empty while its counter says it has comments is replaced by the next one, before the card; a parent that says it has none is never chosen for a comments request
   const chosen: PoolRow[] = [];
@@ -575,7 +589,7 @@ export function compilePlan(input: CompileInput): CompileResult {
     chosen.push(r);
     exposurePages.push({ parent: r.id, callId: e.callId, rows });
   }
-  if (chosen.length === 0) return { ok: false, reason: commentsCard ? "no_parent_with_children" : "no_rows" };
+  if (chosen.length === 0 && !continuesPast) return { ok: false, reason: commentsCard ? "no_parent_with_children" : "no_rows" };
   // DECISION 7.5: a named Facebook page whose deliverable posts in the pool are fewer than asked: the customer decides before approval (the question is asked by the caller; nothing is priced)
   const namedFacebook = ask.platform === "facebook" && ask.source.kind === "named" && poolCard.role === "posts.search";
   if (namedFacebook && input.namedChoice === undefined) {
@@ -646,6 +660,7 @@ export function compilePlan(input: CompileInput): CompileResult {
   } as PricedStage);
   // «يتحدث فعلًا» only when every chosen row was judged (the planning judge has a small cap; rows past it were matched by the words)
   if (sizedByRequest) notes.push(sampleNoteAr({ read: readAll.length, found: chosen.length, need, judged: judged !== undefined && chosen.every((r) => judged.has(String(r.id))) }));
+  if (deliveredBefore > 0) notes.push(priorDeliverySampleAr(deliveredBefore));
   else if (chosen.length < need) notes.push(`وجدنا في ما قرأناه ${toArabicDigits(chosen.length)} فقط تناسب طلبك من ${toArabicDigits(need)}${input.poolExhausted === true ? "، وانتهت نتائج المصدر لهذا البحث عند آخر صفحة قرأناها" : ""}.`);
   // P0: a plan whose search carries the source by its operator says so before approval: that source alone, every item checked, and the count may be lower
   if (operatorIdOf(poolCard, ask)) notes.push(sourceOperatorNoteAr(operatorIdOf(poolCard, ask)!));
@@ -702,10 +717,11 @@ export function compilePlan(input: CompileInput): CompileResult {
   const unmet = chosen.filter((r) => { const f = factsOf(r, ask, bySource); return !f.country || !f.language || !f.named; }).length;
   if (unmet > 0) notes.push(`لم نجد في ما قرأناه ما يكفي مما يطابق المصدر أو الدولة أو اللغة المطلوبة؛ ${toArabicDigits(unmet)} من العناصر المختارة لا تطابق ذلك، وعليها علامة في الملف.`);
   // ROUND 16: the card says how many of the selected items match the conditions the customer named (a source, a country, a language) and how many are alternatives marked in the file, counted on the rows read at planning (a mark, never a drop)
-  if (ask.source.kind === "named" || ask.country !== null || ask.language !== null) notes.push(matchCountsLineAr(chosen.length, unmet));
+  if ((ask.source.kind === "named" || ask.country !== null || ask.language !== null) && chosen.length > 0) notes.push(matchCountsLineAr(chosen.length, unmet));
   // THE TOPIC, SAID HONESTLY BEFORE APPROVAL (live D1): «عن X» means the item's own text talks about X. A video whose caption names X only in its hashtags is made WITH X (the tool), so it ranks below the videos whose caption body is about X;
   // when the pool read has none of the latter the card says so; when some chosen items are below it, it says how many. Ranking only: the items are chosen and delivered either way.
-  if (ask.topic.text && ask.topic.relation !== "made_with") {
+  // (nothing chosen: a continuation past a delivered sample says so in its own sentences, never «what we chose»)
+  if (ask.topic.text && ask.topic.relation !== "made_with" && chosen.length > 0) {
     const topic = `«${ask.topic.text}»`;
     if (!ranked.some((r) => tierOf(r) === 2)) {
       notes.push(`لم نجد في ما قرأناه ${NOUN[ask.platform!].one} ${NOUN[ask.platform!].talks} عن ${topic}؛ ${chosen.some((r) => tierOf(r) === 1) ? `ما اخترناه يذكر الموضوع في الوسوم فقط، وغالبًا يكون الموضوع فيها أداة صُنع بها المحتوى لا موضوعه` : "ما اخترناه لا يذكر الموضوع في نصه"}، فراجع الاختيار قبل الاعتماد أو عدّل طلبك.`);
