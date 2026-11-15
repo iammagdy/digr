@@ -393,7 +393,7 @@ describe("independent review findings (fixed before merge)", () => {
     const offTopic = (n: number) => Array.from({ length: 20 }, (_, i) => synthetic(`80000000000${String(n).padStart(3, "0")}${String(i).padStart(3, "0")}`, `منشور عن موضوع آخر ${n}-${i}`));
     const pageFor = (params: Record<string, unknown>) => { if (!params.cursor) return pageOf([...RUMOR_POSTS], "p1"); page += 1; return pageOf(offTopic(page), `p${page + 1}`); };
     const { outcome, executionCalls } = await planAndRun(pageFor, judgingReviewer());
-    expect(outcome.stops.tweets).toBe("page_limit");
+    expect(outcome.stops.tweets).toBe("topic_dry");
     expect(executionCalls).toBeLessThanOrEqual(JUDGED_DRY_PAGES + 3);
   });
   it("MEDIUM: the topic variants are asked ONCE per mission; a later planning run builds the same expanded query and reads it from its recorded page", async () => {

@@ -284,6 +284,11 @@ export interface CompiledMark {
   media?: import("./foundation/discovery/media").MediaMark;
   /** ROUND 36: the deliverable fields the customer named and what the REAL first page showed for each: in the card, recovered from the provider's own key (with its path: the provenance), or unavailable (said before approval; the column's cells say «غير متاح»). Internal audit. */
   fields?: import("./foundation/discovery/fieldRecovery").FieldReport[];
+  /**
+   * P0 (15 Nov 2026): the planning chose its top-level items only inside the period (a platform whose rows are dated and checked, or a search that carries the named source by its operator). Execution then refuses a row outside it,
+   * exactly where the planning did; elsewhere the period stays a mark, as the card said. Absent (older plans): a mark.
+   */
+  period_gate?: boolean;
 }
 
 export interface UnservedStep {

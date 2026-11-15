@@ -8,13 +8,15 @@ import { ItemStore } from "../agent/src/items/itemStore";
 import { runEngine } from "../agent/src/engine/run";
 import { runInSandbox } from "../agent/src/sandbox";
 import { emptyReviewState } from "../agent/src/review";
-import { REASON_TEXT_AR, zeroDeliveryReasonAr } from "../agent/src/finalize";
+import { REASON_TEXT_AR, shortfallClauseAr, zeroDeliveryReasonAr } from "../agent/src/finalize";
+import { JUDGED_DRY_PAGES } from "../agent/src/engine/run";
+const REASON_STOP_AR = (r: string): string => shortfallClauseAr(r as never, { pending: 0, stop: null });
 import { deliveredMissionsReader, loadApprovedPriorDelivery, priorDeliveryCardReader, priorDeliveryForPlanning, withPriorDelivery } from "../agent/src/priorDelivery";
 import { withPromiseCaps } from "../src/lib/agentMission/repliesCard";
 import { buildShapeDigest } from "../src/lib/modelPlanner/digest";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import {
-  PRIOR_DELIVERY_PATH, PRIOR_DELIVERY_REASON, canonicalLinkOf, deliveryKeysOf, parsePriorDeliverySnapshot, priorDeliveryLineAr, priorDeliveryMatcherOf, priorDeliverySnapshotOf,
+  PRIOR_DELIVERY_PATH, PRIOR_DELIVERY_REASON, canonicalLinkOf, planPriorDeliveryOf, deliveryKeysOf, parsePriorDeliverySnapshot, priorDeliveryLineAr, priorDeliveryMatcherOf, priorDeliverySnapshotOf,
 } from "../src/lib/agentMission/priorDelivery";
 import { EXISTING_REMOVAL_REASONS, isAllowedRemovalRaw } from "../src/lib/agentMission/rawDelivery";
 import { parseBrief, storedBriefOf } from "../src/lib/agentMission/researchBrief";
@@ -76,6 +78,8 @@ describe("the identity of a delivered item", () => {
     expect(REASON_TEXT_AR[PRIOR_DELIVERY_REASON]).toBe("سُلّم لك في مهمة سابقة");
     expect(zeroDeliveryReasonAr({ found: 40, pending: 0, excludedByReason: { already_delivered: 40 } } as never)).toMatch(/سُلّم لك من قبل/);
     expect(priorDeliveryLineAr({ missions: 1, items: 79 })).toMatch(/نستبعد ٧٩ عنصرًا سُلّم لك في ١ مهمة سابقة/);
+    // the card never promises a read past the sample it may not make
+    expect(priorDeliveryLineAr({ missions: 1, items: 79 })).not.toMatch(/نقرأ المصدر أبعد/);
   });
 });
 
@@ -139,7 +143,8 @@ describe("the worker verifies what it excludes", () => {
       { id: "msn_cccccccccccccccccccc", user_id: "u1", status: "failed", delivered_units: 0, plan: { stages: [{ key: "tweets", deliver: true, planned_rows: 5 }] } },
     ]);
     const readMissions = deliveredMissionsReader(db);
-    expect((await readMissions(["msn_aaaaaaaaaaaaaaaaaaaa", "msn_bbbbbbbbbbbbbbbbbbbb", "msn_cccccccccccccccccccc"], "u1")).map((m) => m.id)).toEqual(["msn_aaaaaaaaaaaaaaaaaaaa"]);
+    // another customer's mission is never returned; the worker decides by status and delivery
+    expect((await readMissions(["msn_aaaaaaaaaaaaaaaaaaaa", "msn_bbbbbbbbbbbbbbbbbbbb", "msn_cccccccccccccccccccc"], "u1")).map((m) => m.id).sort()).toEqual(["msn_aaaaaaaaaaaaaaaaaaaa", "msn_cccccccccccccccccccc"]);
     const store = createMemoryStore();
     const items = await ItemStore.open(store, "msn_aaaaaaaaaaaaaaaaaaaa");
     const st = { key: "tweets", title_ar: "التغريدات", endpoint_id: "e", expected_rows: 2, planned_rows: 2, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "النص" }, { key: "link", title_ar: "الرابط" }], sample_rows: [] } as unknown as PricedStage;
@@ -152,13 +157,43 @@ describe("the worker verifies what it excludes", () => {
     // no card record: nothing is read or excluded
     expect(await priorDeliveryForPlanning({ mission, store, readCard: async () => null, readMissions })).toBeNull();
   });
-  it("the card reader reads only this user's assistant card of this mission, and a failed read throws (the requirement is never silently dropped)", async () => {
+  it("the card reader: this user's card of this mission, then the conversation's earlier cards read BY THE WORKER (the chat's list may be empty after a failed read on its side); any failed read throws", async () => {
     const calls: Array<[string, unknown]> = [];
-    const client = (result: { data: unknown; error: unknown }) => ({ from: () => { const b: any = { select: () => b, eq: (c: string, v: unknown) => { calls.push([c, v]); return b; }, order: () => b, limit: () => Promise.resolve(result) }; return b; } });
-    const read = priorDeliveryCardReader(client({ data: [{ plan: { agentMissionId: "msn_x", priorDelivery: { missionIds: ["msn_a", 3] } } }], error: null }));
-    expect(await read("msn_x", "u1")).toEqual({ missionIds: ["msn_a"] });
-    expect(calls).toEqual(expect.arrayContaining([["user_id", "u1"], ["role", "assistant"], ["plan->>agentMissionId", "msn_x"]]));
-    await expect(priorDeliveryCardReader(client({ data: null, error: { message: "down" } }))("msn_x", "u1")).rejects.toThrow("prior_delivery_card_read_failed");
+    const client = (results: Array<{ data: unknown; error: unknown }>) => { let n = 0; return { from: () => { const r = results[Math.min(n, results.length - 1)]; n += 1; const b: any = { select: () => b, eq: (c: string, v: unknown) => { calls.push([c, v]); return b; }, lt: (c: string, v: unknown) => { calls.push([`${c}<`, v]); return b; }, order: () => b, limit: () => Promise.resolve(r) }; return b; } }; };
+    const card = { plan: { agentMissionId: "msn_x", priorDelivery: { missionIds: [] } }, created_at: "2026-11-15T09:22:11Z", conversation_id: "c1" };
+    const earlier = [{ plan: { agentMissionId: "msn_dd7c" } }, { plan: { agentMissionId: "msn_cd5f" } }, { plan: null }];
+    const read = priorDeliveryCardReader(client([{ data: [card], error: null }, { data: earlier, error: null }]));
+    expect((await read("msn_x", "u1"))?.missionIds.sort()).toEqual(["msn_cd5f", "msn_dd7c"]);
+    expect(calls).toEqual(expect.arrayContaining([["user_id", "u1"], ["role", "assistant"], ["plan->>agentMissionId", "msn_x"], ["conversation_id", "c1"], ["created_at<", "2026-11-15T09:22:11Z"]]));
+    // a card that does not ask: nothing is read further
+    expect(await priorDeliveryCardReader(client([{ data: [{ ...card, plan: { agentMissionId: "msn_x" } }], error: null }]))("msn_x", "u1")).toBeNull();
+    await expect(priorDeliveryCardReader(client([{ data: null, error: { message: "down" } }]))("msn_x", "u1")).rejects.toThrow("prior_delivery_card_read_failed");
+    await expect(priorDeliveryCardReader(client([{ data: [card], error: null }, { data: null, error: { message: "down" } }]))("msn_x", "u1")).rejects.toThrow("prior_delivery_conversation_read_failed");
+  });
+  it("what is NOT known is said, never «nothing to exclude»: an earlier mission still running (its items so far are excluded) and an earlier delivery whose items cannot be read; an older mission's stage file is read", async () => {
+    const store = createMemoryStore();
+    const st = { key: "tweets", title_ar: "التغريدات", endpoint_id: "e", expected_rows: 5, planned_rows: 5, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "النص" }, { key: "link", title_ar: "الرابط" }], sample_rows: [] } as unknown as PricedStage;
+    const running = await ItemStore.open(store, "msn_run00000000000000000");
+    await ingestRows({ items: running, plan: { summary_ar: "x", stages: [st], price: {} } as unknown as PricedPlan, addEvent: async () => undefined }, st, [EARLIER[0]].map((p) => ({ id: p.id, text: p.text, link: p.url })), { silent: true, idField: null });
+    await store.putFile("msn_old00000000000000000", "rows/tweets.json", JSON.stringify([{ id: EARLIER[1].id, link: EARLIER[1].url }]), "application/json");
+    const stages = [{ key: "tweets", rows: 5 }];
+    const snap = await priorDeliveryForPlanning({
+      mission: { id: "msn_new0000000000000000", user_id: "u1" } as MissionRecord, store, readCard: async () => ({ missionIds: ["msn_run00000000000000000", "msn_old00000000000000000", "msn_gone0000000000000000", "msn_none0000000000000000"] }),
+      readMissions: async () => [
+        { id: "msn_run00000000000000000", status: "executing", delivered: 0, stages },
+        { id: "msn_old00000000000000000", status: "completed", delivered: 1, stages },
+        { id: "msn_gone0000000000000000", status: "completed", delivered: 4, stages },
+        { id: "msn_none0000000000000000", status: "cancelled", delivered: 0, stages },
+      ],
+    });
+    expect(snap).toMatchObject({ items: 2, running: 1, unreadable: 1 });
+    expect(snap!.missions.sort()).toEqual(["msn_old00000000000000000", "msn_run00000000000000000"]);
+    const line = priorDeliveryLineAr(planPriorDeliveryOf(snap!));
+    expect(line).toMatch(/نستبعد ٢ عنصرًا/);
+    expect(line).toMatch(/١ مهمة سابقة ما زالت قيد التنفيذ/);
+    expect(line).toMatch(/تعذّر علينا قراءة ما سُلّم في ١ مهمة سابقة/);
+    expect(priorDeliveryLineAr({ missions: 0, items: 0, unreadable: 2 })).not.toMatch(/لم نجد في هذه المحادثة/);
+    expect(parsePriorDeliverySnapshot(JSON.parse(JSON.stringify(snap)))).toEqual(snap);
   });
 });
 
@@ -233,6 +268,15 @@ describe("a continuation never redelivers, and never charges, what was delivered
       expect(items.counts("tweets").excludedByReason.already_delivered).toBe(120);
     } finally { for (const pg of many) for (const p of pg) ABOUT.delete(p.id); }
   });
+  it("off-topic pages that also carry a few earlier deliveries still end the read (the dry stop is not defeated), with a truthful reason", async () => {
+    let page = 0;
+    const offTopic = (n: number) => Array.from({ length: 19 }, (_, i) => post(`93000000000${String(n).padStart(3, "0")}${String(i).padStart(3, "0")}`, `منشور عن موضوع آخر ${n}-${i}`));
+    const pageFor = (params: Record<string, unknown>) => { if (!params.cursor) return pageOf([...NEW], "p1"); page += 1; return pageOf([...offTopic(page), EARLIER[page % 2]], `p${page + 1}`); };
+    const { outcome, executionCalls } = await continuation(pageFor);
+    expect(outcome.stops.tweets).toBe("topic_dry");
+    expect(executionCalls).toBeLessThanOrEqual(JUDGED_DRY_PAGES + 4);
+    expect(REASON_STOP_AR("topic_dry")).toMatch(/لم نجد فيها ما يتحدث فعلًا عن موضوعك/);
+  });
   it("FAIL CLOSED: a plan approved with an exclusion never ingests without exactly that snapshot", async () => {
     const store = createMemoryStore();
     const st = { key: "tweets", title_ar: "التغريدات", endpoint_id: "e", expected_rows: 5, planned_rows: 5, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "النص" }], sample_rows: [] } as unknown as PricedStage;
@@ -245,5 +289,25 @@ describe("a continuation never redelivers, and never charges, what was delivered
     expect(await loadApprovedPriorDelivery(store, "msn_t", plan.prior_delivery!)).toBeNull();
     await store.putFile("msn_t", PRIOR_DELIVERY_PATH, JSON.stringify(EARLIER_SNAPSHOT), "application/json");
     expect(await loadApprovedPriorDelivery(store, "msn_t", plan.prior_delivery!)).not.toBeNull();
+  });
+});
+
+describe("the period is a gate at execution exactly where the planning gated it (the approved card's own rule)", () => {
+  const st = (key = "videos") => ({ key, title_ar: "x", endpoint_id: "e", expected_rows: 5, planned_rows: 5, parent_key: null, deliver: true, columns: [{ key: "text", title_ar: "النص" }, { key: "posted_at", title_ar: "التاريخ" }], filters: [{ kind: "period", from: "2026-11-08", to: "2026-11-15", field: "posted_at", enabled: true }], sample_rows: [] } as unknown as PricedStage);
+  const rows = [{ id: "old", text: "x", posted_at: "2025-01-01T10:00:00.000Z" }, { id: "in", text: "y", posted_at: "2026-11-10T10:00:00.000Z" }];
+  const run = async (compiled: Record<string, unknown>) => {
+    const items = await ItemStore.open(createMemoryStore(), "msn_t");
+    const s = st();
+    await ingestRows({ items, plan: { summary_ar: "x", stages: [s], price: {}, compiled } as unknown as PricedPlan, addEvent: async () => undefined }, s, rows, { silent: true, idField: null, raw: true });
+    return items;
+  };
+  it("a plan whose planning only MARKED the period (TikTok, an ordinary X search): the row stays, with its mark, as the card said", async () => {
+    const items = await run({ by: "compiler", platform: "tiktok", promises: {} });
+    expect(items.snapshotOfMemory().acceptedRows("videos").map((r) => r.id).sort()).toEqual(["in", "old"]);
+  });
+  it("a plan whose planning chose inside the period (`period_gate`): the row outside it is never delivered or charged", async () => {
+    const items = await run({ by: "compiler", platform: "x", promises: {}, period_gate: true });
+    expect(items.snapshotOfMemory().acceptedRows("videos").map((r) => r.id)).toEqual(["in"]);
+    expect(items.counts("videos").excludedByReason.filter_period).toBe(1);
   });
 });

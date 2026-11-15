@@ -1217,7 +1217,8 @@ export function intentInventedAr(r: IntentRequirement): string {
  */
 async function briefEditOfOpen(input: AgentChatTurnInput, decision: Decision, open: OpenRequest, brief: ResearchBrief, contract: ReturnType<typeof buildRequestContract>, ctx: BriefTurnContext): Promise<AgentChatTurnResult | null> {
   const openContract = buildRequestContract(open.requestText ?? "", undefined, { semantic: ctx.semantic });
-  const ready = { ...brief, status: "ready" as const };
+  // P0: an EDIT of the open request changes only what the customer changed: «without repeating what was delivered» stays when the open request's brief had it (the model need not repeat it)
+  const ready = { ...brief, status: "ready" as const, ...(ctx.prior?.exclude_delivered === true ? { exclude_delivered: true as const } : {}) };
   // THE EXECUTED VALUES, not only whether a condition is stated: «آخر شهر» → «آخر أسبوع» or «الغردقة» → «شرم الشيخ» is a changed request (live evaluation 2026-11-12, K1: the contract said «the same» and the correction waited)
   const editNow = Date.now();
   const sameConditions = sameExecutedConditions(brief.request, open.requestText ?? "", editNow);

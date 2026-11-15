@@ -834,7 +834,7 @@ export function compilePlan(input: CompileInput): CompileResult {
     ...(unserved.length > 0 ? { unserved_steps: unserved } : {}),
     // P0 (15 Nov 2026): a parent-only plan the source could not fill keeps the customer's own number, so a delivery of what exists is told and shown as PARTIAL against the request, never as complete
     ...(parentOnly && !sizedByRequest && ask.count !== null && chosen.length < need ? { quantity: { requested: need, stage_key: parentKey, target: chosen.length, reason_ar: input.poolExhausted === true ? "نتائج المصدر لهذا البحث انتهت عند هذا العدد مما يطابق طلبك" : "ما وجدناه مما يطابق طلبك كان هذا العدد", source: "request" as const } } : {}),
-    compiled: { by: "compiler", platform: ask.platform, promises: Object.fromEntries(Object.entries(promises).map(([k, v]) => [k, { ...v }])), conditions: { named: ask.source.kind === "named", period: Boolean(ask.period), language: Boolean(ask.language), country: Boolean(ask.country), topic: Boolean(ask.topic.text) }, ...(ask.source.kind === "named" && ask.source.text ? { source_text: ask.source.text } : {}) },
+    compiled: { by: "compiler", platform: ask.platform, promises: Object.fromEntries(Object.entries(promises).map(([k, v]) => [k, { ...v }])), conditions: { named: ask.source.kind === "named", period: Boolean(ask.period), language: Boolean(ask.language), country: Boolean(ask.country), topic: Boolean(ask.topic.text) }, ...(ask.source.kind === "named" && ask.source.text ? { source_text: ask.source.text } : {}), ...(periodGatedFor(ask, poolCard) ? { period_gate: true } : {}) },
   };
   return { ok: true, plan, promises, chosen: chosen.map((r) => r.id), spares: spares.map((r) => r.id) };
 }

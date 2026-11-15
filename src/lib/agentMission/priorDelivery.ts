@@ -21,9 +21,13 @@ export const PRIOR_DELIVERY_MAX_MISSIONS = 20;
 /** The identities kept (two per item: id and link). */
 export const PRIOR_DELIVERY_MAX_KEYS = 100_000;
 
-export interface PriorDeliverySnapshot { v: 1; missions: string[]; items: number; keys: string[]; digest: string }
+/**
+ * `running`: earlier missions still executing (what they collected so far is excluded; what they collect later is not known yet). `unreadable`: earlier missions that delivered but whose items could not be read (an older storage).
+ * Both are said on the card, so the customer never reads «nothing to exclude» when that is not known.
+ */
+export interface PriorDeliverySnapshot { v: 1; missions: string[]; items: number; keys: string[]; digest: string; running?: number; unreadable?: number }
 /** What the APPROVED plan records: the digest of the exact snapshot, the missions and the items it excludes. Never the identities themselves (the plan text reaches models). */
-export interface PlanPriorDelivery { digest: string; missions: number; items: number }
+export interface PlanPriorDelivery { digest: string; missions: number; items: number; running?: number; unreadable?: number }
 
 const PLATFORM_HOSTS: Array<[RegExp, string]> = [[/^(?:.*\.)?(?:x|twitter)\.com$/, "x"], [/^(?:.*\.)?tiktok\.com$/, "tiktok"], [/^(?:.*\.)?instagram\.com$/, "instagram"], [/^(?:.*\.)?facebook\.com$|^fb\.com$/, "facebook"], [/^(?:.*\.)?(?:youtube\.com|youtu\.be)$/, "youtube"]];
 
@@ -57,7 +61,7 @@ export function deliveryKeysOf(row: Record<string, unknown>): string[] {
 const digestOf = (missions: ReadonlyArray<string>, keys: ReadonlyArray<string>): string => createHash("sha256").update(JSON.stringify({ missions, keys })).digest("hex");
 
 /** The snapshot of what earlier missions delivered (their accepted items), deterministic: the same missions and items give the same digest. */
-export function priorDeliverySnapshotOf(missions: ReadonlyArray<{ id: string; rows: ReadonlyArray<Record<string, unknown>> }>): PriorDeliverySnapshot {
+export function priorDeliverySnapshotOf(missions: ReadonlyArray<{ id: string; rows: ReadonlyArray<Record<string, unknown>> }>, caveats: { running?: number; unreadable?: number } = {}): PriorDeliverySnapshot {
   const ids = [...new Set(missions.map((m) => m.id))].sort();
   const keys = new Set<string>();
   let items = 0;
@@ -68,7 +72,7 @@ export function priorDeliverySnapshotOf(missions: ReadonlyArray<{ id: string; ro
     for (const x of k) if (keys.size < PRIOR_DELIVERY_MAX_KEYS) keys.add(x);
   }
   const sorted = [...keys].sort();
-  return { v: 1, missions: ids, items, keys: sorted, digest: digestOf(ids, sorted) };
+  return { v: 1, missions: ids, items, keys: sorted, digest: digestOf(ids, sorted), ...(caveats.running ? { running: caveats.running } : {}), ...(caveats.unreadable ? { unreadable: caveats.unreadable } : {}) };
 }
 
 /** The stored snapshot, read back; null when it is malformed or its digest does not match its content. */
@@ -80,7 +84,8 @@ export function parsePriorDeliverySnapshot(raw: unknown): PriorDeliverySnapshot 
   const missions = o.missions as string[];
   const keys = o.keys as string[];
   if (digestOf(missions, keys) !== o.digest) return null;
-  return { v: 1, missions, items: o.items, keys, digest: o.digest };
+  const n = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.floor(v) : 0);
+  return { v: 1, missions, items: o.items, keys, digest: o.digest, ...(n(o.running) ? { running: n(o.running) } : {}), ...(n(o.unreadable) ? { unreadable: n(o.unreadable) } : {}) };
 }
 
 export type PriorDeliveryMatcher = (row: Record<string, unknown>) => boolean;
@@ -89,12 +94,18 @@ export function priorDeliveryMatcherOf(snapshot: Pick<PriorDeliverySnapshot, "ke
   return (row) => deliveryKeysOf(row).some((k) => set.has(k));
 }
 
-export const planPriorDeliveryOf = (s: PriorDeliverySnapshot): PlanPriorDelivery => ({ digest: s.digest, missions: s.missions.length, items: s.items });
+export const planPriorDeliveryOf = (s: PriorDeliverySnapshot): PlanPriorDelivery => ({ digest: s.digest, missions: s.missions.length, items: s.items, ...(s.running ? { running: s.running } : {}), ...(s.unreadable ? { unreadable: s.unreadable } : {}) });
 
-/** The card's sentence (said once, with the numbers the snapshot holds). */
-export function priorDeliveryLineAr(p: Pick<PlanPriorDelivery, "missions" | "items">): string {
-  if (p.items <= 0) return "طلبت ألا يتكرر ما سلّمناه لك من قبل: لم نجد في هذه المحادثة عناصر سُلّمت لك سابقًا، فلا شيء يُستبعد.";
-  return `طلبت ألا يتكرر ما سلّمناه لك من قبل: نستبعد ${toArabicDigits(p.items)} عنصرًا سُلّم لك في ${toArabicDigits(p.missions)} ${p.missions === 1 ? "مهمة سابقة" : "مهام سابقة"} في هذه المحادثة، فلا يُسلَّم مرة أخرى ولا يُحتسب. لهذا نقرأ المصدر أبعد مما قرأناه أول مرة، وقد يكون الجديد أقل من العدد المطلوب.`;
+const missionsAr = (n: number): string => `${toArabicDigits(n)} ${n === 1 ? "مهمة سابقة" : "مهام سابقة"}`;
+/** The card's sentence (said once, with the numbers the snapshot holds; what is not known is said, never «nothing to exclude»). */
+export function priorDeliveryLineAr(p: Pick<PlanPriorDelivery, "missions" | "items" | "running" | "unreadable">): string {
+  const caveats = [
+    ...(p.running ? [`${missionsAr(p.running)} ما زالت قيد التنفيذ: استبعدنا ما جُمع منها حتى الآن فقط، وما تجمعه بعد ذلك قد يتكرر`] : []),
+    ...(p.unreadable ? [`تعذّر علينا قراءة ما سُلّم في ${missionsAr(p.unreadable)}، فلا نضمن عدم تكرار ما سُلّم فيها`] : []),
+  ];
+  const tail = caveats.length > 0 ? ` ${caveats.join("، و")}.` : "";
+  if (p.items <= 0) return caveats.length > 0 ? `طلبت ألا يتكرر ما سلّمناه لك من قبل:${tail}` : "طلبت ألا يتكرر ما سلّمناه لك من قبل: لم نجد في هذه المحادثة عناصر سُلّمت لك سابقًا، فلا شيء يُستبعد.";
+  return `طلبت ألا يتكرر ما سلّمناه لك من قبل: نستبعد ${toArabicDigits(p.items)} عنصرًا سُلّم لك في ${missionsAr(p.missions)} في هذه المحادثة، فلا يُسلَّم مرة أخرى ولا يُحتسب، وقد يكون الجديد أقل من العدد المطلوب.${tail}`;
 }
 /** The planning sample's sentence when some of what was read had been delivered before. */
 export const priorDeliverySampleAr = (n: number): string => `من العينة التي قرأناها ${toArabicDigits(n)} سبق أن سلّمناه لك، فلم نختره ولم نحسبه.`;

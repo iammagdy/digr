@@ -212,3 +212,21 @@ Tests: `tests/p0-continuation-no-duplicates.test.ts`, `tests/p0-conversation-con
 7. **Is «without duplicates» enforced against previously delivered tweets?** Yes, for missions created after this change, by the snapshot mechanism in §9. It was never enforced before.
 
 **Not verified live:** provider coverage for the incident account over five years, the production model's verdicts, variant quality, and the end-to-end continuation on a real conversation. Each needs the authorised live acceptance.
+
+### Independent review of the PR head (839a859) and what changed after it
+
+A separate review of the diff traced every path a row can be accepted by: the pinned replay, the engine's reads and alternative tools, the model's `save_rows`, carried pending items, and swaps. It found no path where an off-topic, wrong-account, out-of-period or previously delivered row is accepted and charged. A failed or exhausted review leaves rows pending.
+
+It found five problems. All five are fixed in the next commit:
+
+1. **The prior-delivery exclusion could fail open.**
+   * The problem: the chat server's read of the earlier missions swallowed errors, and the card would then say «nothing to exclude». The same happened when the earlier mission was still executing, or when it predated the item store.
+   * The fix: the worker now reads the conversation's earlier cards itself, and a failed read throws, so the planning retries.
+   * An earlier mission still running has what it collected so far excluded. One whose items cannot be read is counted. The card states both, and never says «nothing to exclude» unless that is known.
+   * Older missions' `rows/<stage>.json` files are read.
+2. **The model execution path crashed at its closing review** (`tools.ts` `drainPending`). It was not given the approved exclusion lists. This already affected the customer's exclusion list before this change. Both lists are now passed.
+3. **Execution enforced the period where the planning had only marked it** (TikTok, X searches with no account operator), so the approved card and the execution disagreed. The plan now records whether the planning gated the period (`compiled.period_gate`), and execution gates exactly there. **This means the requested period is a hard gate only where the planning could check it.** Elsewhere a row outside the period stays in the file, marked, as the card says.
+4. **The new low-yield stop told the customer «the page limit was reached»,** which was false. It is now its own reason, `topic_dry`: «قرأنا عدة صفحات متتالية … ولم نجد فيها ما يتحدث فعلًا عن موضوعك». A page counts as dry when it held new rows that were not delivered before and none was accepted, so a few earlier items on a page no longer defeat the stop.
+5. **The card promised «we read further than the first time»** even for plans that do not read past the sample. That clause is removed.
+
+Also fixed: an edit of the open request keeps `exclude_delivered`, so the model does not have to repeat it.

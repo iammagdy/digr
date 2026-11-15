@@ -208,7 +208,7 @@ async function ingestLocked(deps: IngestDeps, stage: Stage, incoming: unknown[],
     // («لا يُسلَّم ولا يُحتسب أي عنصر من حساب آخر»), the period the customer asked, and, on X, original posts only. Once execution reads on past the planning sample, a row the plan would never have chosen is never delivered or charged
     // (msn_dd7c2e9c131b8783bf2e: a fresh read after the count was raised delivered 79 tweets of 38 other accounts).
     if (rawMode && !isChild && plan.compiled?.by === "compiler") {
-      const hard = enabledFilters.filter((f) => (f.kind === "account" && f.exact === true) || f.kind === "period");
+      const hard = enabledFilters.filter((f) => (f.kind === "account" && f.exact === true) || (f.kind === "period" && plan.compiled?.period_gate === true));
       const why = hard.length > 0 ? filterVerdict(hard, raw, { textKey: textKeyOf(stage, Object.keys(raw)), now, cairoDays: true }) : null;
       const xReply = plan.compiled.platform === "x" && (raw.is_reply === true || raw.is_reply === "true" || raw.is_reply === "True");
       if (why || xReply) { tally.rejected_by_filter += 1; excludedStructural.push({ id, reason: why ?? "filter_reply", row }); continue; }

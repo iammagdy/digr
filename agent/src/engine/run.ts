@@ -236,7 +236,7 @@ async function runStage(deps: EngineDeps, stage: Stage, spec: EngineSpec): Promi
         }
         if (r.aborted) return r;
         // a stop that ends the whole stage (the budget, the daily limit, the time, a refusal) is not «this parent has no more»
-        if (r.reason === "budget" || r.reason === "daily_cap" || r.reason === "refused" || r.reason === "time_limit" || r.reason === "review_limit" || r.reason === "page_limit") return r;
+        if (r.reason === "budget" || r.reason === "daily_cap" || r.reason === "refused" || r.reason === "time_limit" || r.reason === "review_limit" || r.reason === "page_limit" || r.reason === "topic_dry") return r;
         const children = items.acceptedRows(stage.key).filter((x) => String(x.parent_id) === parentId).length;
         // the source ended for this parent and gave it NO child: a spare parent takes its place and is read the same way
         if (children === 0 && (r.reason === "source_exhausted" || r.reason === "no_new_items") && swapsLeft.n > 0) {
@@ -511,7 +511,7 @@ async function runSources(deps: EngineDeps, stage: Stage, spec: EngineSpec, sour
     if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
     const r = await runStream(deps, stage, spec, `s:${i}`, { ...sources[i].params }, null, Number.POSITIVE_INFINITY, period?.field ?? null, { ...share, names: sources[i].names, listing: spec.source_listing === true });
     if (r.aborted) return r;
-    if (r.reason === "budget" || r.reason === "daily_cap" || r.reason === "refused" || r.reason === "time_limit" || r.reason === "review_limit" || r.reason === "page_limit") return r;
+    if (r.reason === "budget" || r.reason === "daily_cap" || r.reason === "refused" || r.reason === "time_limit" || r.reason === "review_limit" || r.reason === "page_limit" || r.reason === "topic_dry") return r;
     if (r.reason === "failed") { anyFailed = true; continue; }
     last = r.reason;
   }
@@ -596,6 +596,7 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     const ended = pageMode ? result.rows_in_page === 0 : !nextCursor || (result.rows_in_page === 0 && !guaranteeCount) || result.has_more === false || !spec.cursor_param;
     const before = items.counts(stage.key).accepted;
     const deliveredBefore = items.counts(stage.key).excludedByReason.already_delivered ?? 0;
+    const newBefore = items.counts(stage.key).new;
     // a parent's share (per_parent_rows) is a cap on what this page may add for it
     const have = parentId !== null ? items.acceptedRows(stage.key).filter((r) => String(r.parent_id) === parentId).length : 0;
     const oldestMs = periodField !== null ? oldestMomentOf(incoming, periodField) : null;
@@ -615,7 +616,11 @@ async function runStream(deps: EngineDeps, stage: Stage, spec: EngineSpec, strea
     if (stallStreak >= REVIEW_STALL_PAGES) return { reason: "review_limit", aborted: null };
     // (a page of items delivered to the customer before, excluded at their request, is neither dry nor a yield: a continuation reads past what the earlier missions read)
     // P0 (15 Nov 2026): A RESEARCH TOPIC'S READ ENDS when page after page adds nothing the review accepts (a broad query whose rows are about something else): the reading is bounded by its yield, never bought to the budget for rows no one is charged for
-    if (stage.relevance?.judge === "model" && parentId === null) { if (after.accepted === before && after.pending === 0 && (after.excludedByReason.already_delivered ?? 0) === deliveredBefore) dryStreak += 1; else if (after.accepted > before || after.pending > 0) dryStreak = 0; }
-    if (dryStreak >= JUDGED_DRY_PAGES) return { reason: "page_limit", aborted: null };
+    // a page counts as dry when it added nothing accepted or waiting AND it held new rows that were not delivered before (a page made only of earlier deliveries is neither dry nor a yield)
+    if (stage.relevance?.judge === "model" && parentId === null) {
+      const freshNew = (after.new - newBefore) - ((after.excludedByReason.already_delivered ?? 0) - deliveredBefore);
+      if (after.accepted > before || after.pending > 0) dryStreak = 0; else if (freshNew > 0) dryStreak += 1;
+    }
+    if (dryStreak >= JUDGED_DRY_PAGES) return { reason: "topic_dry", aborted: null };
   }
 }

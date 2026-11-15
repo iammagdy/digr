@@ -853,7 +853,7 @@ export function buildTools(ctx: ToolContext): ToolSpec[] {
           const items = await getItems();
           for (const st of ctx.plan.stages) {
             if (!st.relevance) continue;
-            await drainPending({ items, plan: ctx.plan, reviewer: ctx.review, addEvent: (e) => store.addEvent(mission.id, e) }, st);
+            await drainPending({ items, plan: ctx.plan, reviewer: ctx.review, addEvent: (e) => store.addEvent(mission.id, e), ...(ctx.exclusion ? { exclusion: ctx.exclusion } : {}), ...(ctx.priorDelivered ? { priorDelivered: ctx.priorDelivered } : {}) }, st);
             await mirrorLegacyFiles(items, store, ctx.plan, [st.key]);
           }
         }
