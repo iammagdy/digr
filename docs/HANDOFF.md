@@ -14,6 +14,15 @@ This handoff document provides a clear, factual status of the Diger platform (`i
   * the worker makes ONE research spec per mission with a forced structured model answer. It holds a criterion, alternatives that keep their qualifiers, and near misses. Code checks it, and alternatives the customer wrote with «أو» must stay alternatives;
   * the spec is stored with the mission. The planning judge, the vocabulary step, the card's «المقصود», the execution review and the methodology all read it, and every judgment also reads the customer's own words, which win over the criterion;
   * the methodology no longer contradicts its own counts.
+* **Live follow-ups (#508–#511):**
+  * after an empty expanded page, the core query is read, not the newest posts;
+  * one verdict per row per spec (execution reuses planning's);
+  * the judge requires the row's own words to address the subject;
+  * «من غير تكرار» is read from the customer's words, not one model flag.
+* **Live acceptance:** 5 missions, USD 0.0157. The spec works; X search inside the account returns empty pages intermittently.
+* **Open:**
+  * #510 and #511 have not been verified live;
+  * rejected rows can't be inspected without admin storage access.
 * **Details:** `docs/incidents/P0-RESEARCH-SPEC-2026-11-15.md`.
 
 ---
