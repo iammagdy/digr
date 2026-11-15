@@ -84,7 +84,7 @@ export const DEFAULT_PER_PARENT = 20;
 /** The most items one step may promise. */
 export const MAX_STEP_ITEMS = 50_000;
 /** Real calls one step may make while planning (options and their further input sets). */
-export const MAX_PROBES_PER_STEP = 5;
+export const MAX_PROBES_PER_STEP = 6;
 /** What one page is assumed to give beyond what the probe showed, for the price: further input sets repeat some items (removed as duplicates). */
 export const VARIANT_OVERLAP_FACTOR = 1.3;
 
@@ -273,9 +273,33 @@ export function checkFieldMap(answer: unknown, items: ReadonlyArray<Record<strin
   return { fields, linkTemplate, extra };
 }
 
+/**
+ * Every leaf of the sample items as «path = example» lines (array positions as «0»), deepest first where items are big: a provider's item can hold hundreds of fields under nested objects (TikTok's
+ * `aweme_info`), and a cut JSON copy hid the caption, the author and the counters from the model (live, 15 Nov 2026: a TikTok file with links only).
+ */
+export function flatPathsOf(items: ReadonlyArray<Record<string, unknown>>, maxPaths = 220, maxDepth = 5): string[] {
+  const seen = new Map<string, string>();
+  const clipV = (v: unknown): string => { const t = typeof v === "string" ? v.replace(/\s+/g, " ") : JSON.stringify(v); return t.length > 90 ? `${t.slice(0, 90)}…` : t; };
+  const walk = (v: unknown, path: string[], depth: number) => {
+    if (seen.size >= maxPaths * 2) return;
+    if (Array.isArray(v)) { if (v.length > 0 && depth < maxDepth) walk(v[0], [...path, "0"], depth + 1); else if (path.length > 0 && !seen.has(path.join("."))) seen.set(path.join("."), "[]"); return; }
+    if (isObj(v)) { if (depth >= maxDepth) return; for (const [k, x] of Object.entries(v)) walk(x, [...path, k], depth + 1); return; }
+    if (v === null || v === undefined || v === "") return;
+    const key = path.map((k) => JSON.stringify(k)).join(",");
+    if (!seen.has(key)) seen.set(key, clipV(v));
+  };
+  for (const it of items.slice(0, 3)) walk(it, [], 0);
+  return [...seen.entries()].slice(0, maxPaths).map(([k, v]) => `[${k}] = ${v}`);
+}
+
 export function fieldMapPrompt(step: UnderstoodStep, endpoint: CatalogEndpoint, items: ReadonlyArray<Record<string, unknown>>): string {
-  const sample = items.slice(0, 3).map((it) => { const s = JSON.stringify(it); return s.length > 4000 ? JSON.stringify(digestValue(it)) : s; });
-  return [`Tool: ${endpoint.id} — ${str(endpoint.summary ?? endpoint.name).slice(0, 300)}`, `Items of this step: ${step.title_ar} (${step.capability})`, ...(step.fields_wanted && step.fields_wanted.length > 0 ? [`Fields the customer asked for: ${step.fields_wanted.join(", ")}`] : []), "", "Sample items:", ...sample].join("\n");
+  const small = items.slice(0, 2).map((it) => JSON.stringify(it)).every((s) => s.length <= 3000);
+  return [
+    `Tool: ${endpoint.id} — ${str(endpoint.summary ?? endpoint.name).slice(0, 300)}`, `Items of this step: ${step.title_ar} (${step.capability})`,
+    ...(step.fields_wanted && step.fields_wanted.length > 0 ? [`Fields the customer asked for: ${step.fields_wanted.join(", ")}`] : []),
+    "",
+    ...(small ? ["Sample items:", ...items.slice(0, 2).map((it) => JSON.stringify(it))] : ["The items are large: every field of the sample items as [path] = example value (use these exact paths):", ...flatPathsOf(items)]),
+  ].join("\n");
 }
 
 /** The hand-card shape the existing mapping generator reads, made from the checked paths (the list path is the one the shape reader found on the real page). */
@@ -298,14 +322,16 @@ export function carryFieldsOf(items: ReadonlyArray<Record<string, unknown>>, map
   return Object.fromEntries(Object.entries(out).slice(0, 12));
 }
 
-export function pseudoCard(endpoint: CatalogEndpoint, listPath: string | null, map: FieldMap, rowsPerPage: number, carry: Record<string, string[]> = {}): ToolCard {
+export function pseudoCard(endpoint: CatalogEndpoint, listPath: string | null, map: FieldMap, rowsPerPage: number, carry: Record<string, string[]> = {}, items: ReadonlyArray<Record<string, unknown>> = []): ToolCard {
+  // a link's query string is kept only when it NAMES the item (YouTube's watch?v=, Facebook's story_fbid / id): tracking parameters are dropped
+  const keepQuery = map.fields.link ? items.some((it) => /[?&](v|id|story_fbid|fbid|p|q)=/.test(String(at(it, map.fields.link!) ?? ""))) : false;
   const list = !listPath || listPath === "root" ? [] : listPath.split(".");
   const fields: Record<string, string[]> = { ...map.fields, ...carry };
   for (const e of map.extra) fields[e.key] = e.path;
   return {
     endpointId: endpoint.id, platform: endpoint.platform as never, role: "posts.search", status: "verified",
     inputs: { cursor: null }, page: { list, cursor: null, observedRowsPerPage: Math.max(1, rowsPerPage) },
-    mapping: { kind: "fields", fields, ...(map.linkTemplate ? { linkTemplate: map.linkTemplate } : {}), keepLinkQuery: true, numeric: ["likes", "comments_count", "replies_count", "shares", "views"].filter((k) => fields[k]) },
+    mapping: { kind: "fields", fields, ...(map.linkTemplate ? { linkTemplate: map.linkTemplate } : {}), ...(keepQuery ? { keepLinkQuery: true as const } : {}), numeric: ["likes", "comments_count", "replies_count", "shares", "views"].filter((k) => fields[k]) },
     counter: null, costUsdPerPage: callUsdOf(endpoint), verifiedOn: [],
   };
 }
@@ -323,6 +349,8 @@ export function runMap(code: string, page: unknown): Array<Record<string, unknow
 
 interface BuiltStep {
   step: UnderstoodStep; option: ToolOption; mapCode: string; columns: PlanColumn[]; carryKeys: string[]; sampleRows: Array<Record<string, unknown>>; rowsPerPage: number; callIds: string[]; hasMore: boolean;
+  /** A SECOND tool that also answered on a real page, with its own proven mapping: execution continues with it when the first tool's input sets run out (another index gives other items). */
+  second?: { option: ToolOption; mapCode: string };
 }
 
 const asJson = (text: unknown): unknown => text;
@@ -355,7 +383,7 @@ export async function understandRequest(input: LlmPlannerInput, deps: Pick<LlmPl
 
 /** 2. CHOOSE: the model's options for one step, checked against its candidates. */
 export async function chooseTools(step: UnderstoodStep, parentSample: ReadonlyArray<Record<string, unknown>> | null, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today">, cost: { usd: number } = { usd: 0 }): Promise<{ candidates: CatalogEndpoint[]; options: ToolOption[] }> {
-  const candidates = candidatesFor(deps.catalog, deps.access, step.platform, step.capability);
+  const candidates = candidatesFor(deps.catalog, deps.access, step.platform, step.capability, 8, { alsoSearch: Boolean(step.source && step.topic && !step.parent) });
   if (candidates.length === 0) return { candidates, options: [] };
   const choice = await asker(deps, cost)(TOOL_CHOICE_SYSTEM, toolChoicePrompt(step, candidates, deps.today, parentSample), { name: TOOL_CHOICE_TOOL, description: "The tool and its inputs for this step.", schema: TOOL_CHOICE_SCHEMA }, 3000);
   return { candidates, options: checkOptions(choice, candidates, parentSample !== null) };
@@ -387,16 +415,29 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     const got = await probeStep(step, options, parent, deps);
     if (!got) { unserved.push({ what_ar: step.title_ar, reason_ar: "جرّبنا الأدوات المتاحة لهذه الخطوة فلم تُعطِ نتائج الآن، فلن تُضاف ولن تُحسب في السعر." }); continue; }
     const mapAnswer = await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, got.option.endpoint, got.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500);
-    const map = checkFieldMap(mapAnswer, got.items) ?? fallbackMap(got.items);
+    const map = enrichedMap(checkFieldMap(mapAnswer, got.items), got.items);
     if (!map) { unserved.push({ what_ar: step.title_ar, reason_ar: "لم نتمكن من قراءة نتائج هذه الخطوة بشكل موثوق، فلن تُضاف ولن تُحسب في السعر." }); continue; }
     const carry = carryFieldsOf(got.items, map);
-    const card = pseudoCard(got.option.endpoint, got.listPath, map, got.items.length, carry);
+    const card = pseudoCard(got.option.endpoint, got.listPath, map, got.items.length, carry, got.items);
     const mapCode = cardMapCode(card);
     const sampleRows = runMap(mapCode, got.page);
     if (sampleRows.length === 0) { unserved.push({ what_ar: step.title_ar, reason_ar: "لم نتمكن من قراءة نتائج هذه الخطوة بشكل موثوق، فلن تُضاف ولن تُحسب في السعر." }); continue; }
     const columns: PlanColumn[] = [...COLUMN_ORDER.filter((k) => map.fields[k] || (k === "link" && map.linkTemplate)).map((k) => ({ key: k, title_ar: COLUMN_TITLES[k] })), ...map.extra.map((e) => ({ key: e.key, title_ar: e.title_ar }))];
     step.title_ar = customerSafe(step.title_ar, 60) ?? "العناصر";
-    built.set(step.key, { step, option: got.option, mapCode, columns, carryKeys: Object.keys(carry), sampleRows, rowsPerPage: got.items.length, callIds: got.callIds, hasMore: got.hasMore });
+    // ASKED FOR 400, GET 400: a topic search also proves the model's next tool (another provider's index gives other items); execution reads it after the first tool's input sets run out
+    let second: BuiltStep["second"];
+    const next = !step.parent && step.topic ? options.find((o) => o.endpoint.id !== got.option.endpoint.id && !o.parent) : undefined;
+    if (next) {
+      const got2 = await probeStep(step, [next], null, deps);
+      if (got2) {
+        const map2 = enrichedMap(checkFieldMap(await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, got2.option.endpoint, got2.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500), got2.items), got2.items);
+        if (map2) {
+          const code2 = cardMapCode(pseudoCard(got2.option.endpoint, got2.listPath, map2, got2.items.length, carryFieldsOf(got2.items, map2), got2.items));
+          if (runMap(code2, got2.page).length > 0) second = { option: got2.option, mapCode: code2 };
+        }
+      }
+    }
+    built.set(step.key, { step, option: got.option, mapCode, columns, carryKeys: Object.keys(carry), sampleRows, rowsPerPage: got.items.length, callIds: got.callIds, hasMore: got.hasMore, ...(second ? { second } : {}) });
   }
   costUsd = cost.usd;
   if (built.size === 0) return { kind: "cannot", reason_ar: unserved[0]?.reason_ar ?? "", understanding: u, costUsd, detail: "no_step_served" };
@@ -407,8 +448,18 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   return { kind: "plan", plan, understanding: u, costUsd };
 }
 
-/** A map made by code when the model gave none usable: the common names. */
-function fallbackMap(items: ReadonlyArray<Record<string, unknown>>): FieldMap | null {
+/** The model's map with the standard columns it left out filled from the common names (a thin map, id and link only, made a file a researcher cannot use: live TikTok, 15 Nov 2026). */
+export function enrichedMap(map: FieldMap | null, items: ReadonlyArray<Record<string, unknown>>): FieldMap | null {
+  const guess = fallbackMap(items);
+  if (!map) return guess;
+  if (!guess) return map;
+  const fields = { ...map.fields };
+  for (const [k, p] of Object.entries(guess.fields)) if (!fields[k] && !(k === "link" && map.linkTemplate)) fields[k] = p;
+  return { ...map, fields };
+}
+
+/** A map made by code when the model gave none usable: the common names, at the item's top or inside its one wrapping object (TikTok's `aweme_info`). */
+export function fallbackMap(items: ReadonlyArray<Record<string, unknown>>): FieldMap | null {
   const guess: Record<string, string[][]> = {
     id: [["id"], ["id_str"], ["aweme_id"], ["post_id"], ["video_id"], ["comment_id"], ["cid"], ["pk"], ["url"]],
     text: [["text"], ["full_text"], ["desc"], ["caption"], ["body"], ["selftext"], ["content"], ["message"], ["title"]],
@@ -417,8 +468,22 @@ function fallbackMap(items: ReadonlyArray<Record<string, unknown>>): FieldMap | 
     posted_at: [["createdUtc"], ["created_at"], ["create_time"], ["created_utc"], ["timestamp"], ["date"], ["publishedAt"]],
     link: [["url"], ["link"], ["permalink"], ["share_url"]],
   };
+  guess.author.push(["author", "nickname"], ["user", "full_name"], ["owner", "full_name"], ["author", "displayName"]);
+  guess.username.push(["author", "unique_id"], ["owner", "username"], ["user", "username"], ["author", "handle"]);
+  guess.text.push(["description"], ["snippet", "title"]);
+  guess.posted_at.push(["createTime"], ["taken_at"], ["published_at"], ["create_time_utc"]);
+  guess.link.push(["share_url"], ["video_url"], ["post_url"]);
+  const counters: Record<string, string[][]> = { likes: [["likeCount"], ["like_count"], ["digg_count"], ["statistics", "digg_count"], ["likes"], ["score"]], comments_count: [["commentCount"], ["comment_count"], ["statistics", "comment_count"], ["num_comments"]], shares: [["shareCount"], ["share_count"], ["statistics", "share_count"], ["retweetCount"]], views: [["viewCount"], ["view_count"], ["play_count"], ["statistics", "play_count"]] };
+  const all: Record<string, string[][]> = { ...guess, ...counters };
+  const wrappers = new Set<string>([""]);
+  for (const it of items.slice(0, 3)) for (const [k, v] of Object.entries(it)) if (isObj(v) && Object.keys(v).length >= 5) wrappers.add(k);
   const fields: Record<string, string[]> = {};
-  for (const [k, paths] of Object.entries(guess)) { const p = paths.find((q) => items.some((it) => filled(at(it, q)))); if (p) fields[k] = p; }
+  for (const [k, paths] of Object.entries(all)) {
+    for (const w of wrappers) {
+      const p = paths.map((q) => (w ? [w, ...q] : q)).find((q) => items.some((it) => { const v = at(it, q); return filled(v) && (typeof v === "string" || typeof v === "number"); }));
+      if (p) { fields[k] = p; break; }
+    }
+  }
   return fields.id ? { fields, linkTemplate: null, extra: [] } : null;
 }
 
@@ -430,13 +495,15 @@ async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: Bu
   const callIds: string[] = [];
   for (const option of options) {
     const sets = [option.params, ...option.more];
-    for (let i = 0; i < sets.length && calls < MAX_PROBES_PER_STEP; i += 1) {
+    // a child is tried on up to PARENTS_TRIED parents, the most commented first (the newest post may have no comment yet): the first input set only
+    const parentValues = option.parent && parent ? parentValuesOf(parent.sampleRows, option.parent.from) : [null];
+    if (option.parent && parent && parentValues.length === 0) continue;
+    const attempts: Array<{ set: number; parentValue: unknown }> = option.parent && parent ? parentValues.map((v) => ({ set: 0, parentValue: v })) : sets.map((_, i) => ({ set: i, parentValue: null }));
+    for (const a of attempts) {
+      if (calls >= MAX_PROBES_PER_STEP) break;
+      const i = a.set;
       let params = { ...sets[i] };
-      if (option.parent && parent) {
-        const value = parent.sampleRows.map((r) => r[option.parent!.from]).find(filled);
-        if (!filled(value)) break;
-        params = { ...params, [option.parent.param]: value };
-      }
+      if (option.parent && parent) params = { ...params, [option.parent.param]: a.parentValue };
       calls += 1;
       const r = await deps.probe(option.endpoint.id, params);
       callIds.push(r.call_id);
@@ -453,6 +520,14 @@ async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: Bu
     if (calls >= MAX_PROBES_PER_STEP) break;
   }
   return null;
+}
+
+/** Parents a child step is tried on: those that carry the binding's value, the most commented (or replied, or liked) first, at most PARENTS_TRIED. */
+export const PARENTS_TRIED = 3;
+export function parentValuesOf(rows: ReadonlyArray<Record<string, unknown>>, from: string): unknown[] {
+  const n = (v: unknown): number => { const x = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN; return Number.isFinite(x) ? x : -1; };
+  const score = (r: Record<string, unknown>): number => Math.max(n(r.comments_count), n(r.replies_count)) * 1000 + Math.max(0, n(r.likes)) / 1e6;
+  return [...rows].filter((r) => filled(r[from])).sort((a, b) => score(b) - score(a)).slice(0, PARENTS_TRIED).map((r) => r[from]);
 }
 
 /** The plan in the shape every later part already reads (the card, the price, approval, the engine, the file, settlement). */
@@ -480,7 +555,10 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
     if (b.option.notCarried.length > 0) notes.push(`${s.title_ar}: الأداة المتاحة لهذه الخطوة لا تحدد ${b.option.notCarried.map((c) => CONDITION_AR[c]).join(" ولا ")}، فستصلك كما يعرضها المصدر دون تصفية بها.`);
     const rowsPerPage = Math.max(1, b.rowsPerPage);
     const costPerRow = (callUsdOf(b.option.endpoint) / rowsPerPage) * VARIANT_OVERLAP_FACTOR;
-    const alternatives = b.option.more.map((params) => ({ endpoint_id: b.option.endpoint.id, params, cursor_param: b.option.cursor, map_code: b.mapCode, map_file_id: "page", ...(b.option.parent ? { parent_binding: { param: b.option.parent.param, from: b.option.parent.from } } : {}) }));
+    const alternatives = [
+      ...b.option.more.map((params) => ({ endpoint_id: b.option.endpoint.id, params, cursor_param: b.option.cursor, map_code: b.mapCode, map_file_id: "page", ...(b.option.parent ? { parent_binding: { param: b.option.parent.param, from: b.option.parent.from } } : {}) })),
+      ...(b.second ? [b.second.option.params, ...b.second.option.more].map((params) => ({ endpoint_id: b.second!.option.endpoint.id, params, cursor_param: b.second!.option.cursor, map_code: b.second!.mapCode, map_file_id: "page" })) : []),
+    ];
     stages.push({
       key: s.key, title_ar: s.title_ar, endpoint_id: b.option.endpoint.id, capability: s.capability,
       expected_rows: planned, planned_rows: planned, parent_key: s.parent, ...(perParent !== undefined ? { per_parent_rows: perParent } : {}),
@@ -508,7 +586,10 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
   const platforms = [...new Set(steps.map((b) => platformAr(b.step.platform)))].join(" و");
   const understood = customerSafe(u.understanding_ar.replace(/[.،\s]+$/u, ""), 300) ?? `نجمع ${stages.filter((s) => s.deliver).map((s) => s.title_ar).join(" و")} من ${platforms} كما طلبت`;
   const summary = `${understood}. ${counts ? `العدد المخطط: ${counts}.` : ""}`.trim();
-  notes.push("نجمع بالعدد الذي طلبته من المصدر صفحةً بعد صفحة، ونوسّع البحث بصيغ أخرى للموضوع نفسه حتى نصل إلى العدد أو ينتهي ما يعرضه المصدر، ونحذف المكرر فقط. لا تدفع إلا مقابل ما يُسلَّم.");
+  const widened = steps.some((b) => b.option.more.length > 0 || b.second !== undefined);
+  notes.push(widened
+    ? "نجمع بالعدد الذي طلبته من المصدر صفحةً بعد صفحة، ونوسّع البحث بصيغ أخرى للموضوع نفسه حتى نصل إلى العدد أو ينتهي ما يعرضه المصدر، ونحذف المكرر فقط. لا تدفع إلا مقابل ما يُسلَّم."
+    : "نجمع بالعدد الذي طلبته من المصدر صفحةً بعد صفحة حتى نصل إليه أو ينتهي ما يعرضه المصدر، ونحذف المكرر فقط. لا تدفع إلا مقابل ما يُسلَّم.");
   return {
     summary_ar: summary,
     notes_ar: notes,

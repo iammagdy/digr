@@ -213,7 +213,20 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
 
   const v = answer?.view;
   if (!v) {
-    return <div dir="rtl" data-testid="agent-card" data-phase="loading" className="mt-3 rounded-[18px] border border-ln bg-sf p-4 text-[13px] text-ink2" role="status">جارٍ تجهيز مهمتك…</div>;
+    // LLM-FIRST PLANNER ROUND (15 Nov 2026, live): the first read of the mission was a bare line for several seconds; it now shows that work has started and the shape of the card that is coming
+    return (
+      <div dir="rtl" data-testid="agent-card" data-phase="loading" className="mt-3 flex w-full max-w-[640px] flex-col gap-3 rounded-[18px] border border-ln bg-sf p-4" role="status" aria-live="polite">
+        <div className="flex items-center gap-2">
+          <span className="h-4 w-4 shrink-0 rounded-full border-2 border-ln2 border-t-ac motion-safe:animate-spin motion-reduce:animate-none" aria-hidden="true" />
+          <p className="m-0 text-[14px] font-semibold leading-[1.8] text-ink">جارٍ تجهيز مهمتك…</p>
+        </div>
+        <p className="m-0 text-[13px] leading-[1.8] text-ink2">{PLANNING_USUAL_TIME_AR}</p>
+        <div className="flex flex-col gap-2" aria-hidden="true">
+          <div className="h-3 w-4/5 rounded-full bg-sf2 motion-safe:animate-pulse" />
+          <div className="h-3 w-3/5 rounded-full bg-sf2 motion-safe:animate-pulse" />
+        </div>
+      </div>
+    );
   }
   // STAGE 2 S10 + LAUNCH ROUND: the live sheet under the card, where the page asks for it (`liveSheet`: the requests page and the conversation) and only when the server said the flag is on for this
   // viewer; from the moment the customer approves here (the plan is shown as started at once) or the mission works, and after it ends (the final rows stay)
@@ -296,7 +309,8 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
         </div>
       ) : planShown && v.priceLineAr ? <p className="m-0 rounded-[12px] bg-sf2 px-3 py-2 text-[13px] leading-[1.9] text-ink" data-testid="agent-price">{v.priceLineAr}</p> : null}
 
-      {(v.phase === "plan" || v.phase === "running") && v.notesAr.length > 0 ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-notes">{v.notesAr.join(" ")}</p> : null}
+      {/* LLM-FIRST PLANNER ROUND (15 Nov 2026, live 390 px): the plan's notes are read BEFORE approval; while the mission runs they pushed the progress below the fold, so the running card shows the progress, not the notes again */}
+      {planShown && v.notesAr.length > 0 ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-notes">{v.notesAr.join(" ")}</p> : null}
 
       {planShown && !isGuest && overLimit && v.limit ? (
         <div className="flex flex-col gap-2 rounded-[14px] border border-ln2 bg-sf2 px-3 py-2.5" role="alert" data-testid="agent-over-limit">

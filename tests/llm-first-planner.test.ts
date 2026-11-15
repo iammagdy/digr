@@ -184,7 +184,7 @@ describe("END TO END: chat → the model plans → approval → the engine reads
 });
 
 describe("END TO END on a platform the word rules never served: Reddit posts with two comments on each", () => {
-  const post = (i: number) => ({ id: `p${i}`, title: `منشور عن الذكاء الاصطناعي ${i}`, selftext: "نص المنشور", author: `user${i}`, subreddit: "egypt", created_utc: 1785167578 + i, url: `https://www.reddit.com/r/egypt/comments/p${i}/x/`, permalink: `/r/egypt/comments/p${i}/x/`, score: 10 + i, num_comments: 5 });
+  const post = (i: number) => ({ id: `p${i}`, title: `منشور عن الذكاء الاصطناعي ${i}`, selftext: "نص المنشور", author: `user${i}`, subreddit: "egypt", created_utc: 1785167578 + i, url: `https://www.reddit.com/r/egypt/comments/p${i}/x/`, permalink: `/r/egypt/comments/p${i}/x/`, score: 10 + i, num_comments: i === 1 ? 50 : 5 });
   const comment = (p: number, c: number) => ({ id: `p${p}c${c}`, text: `تعليق ${c} على ${p}`, author: `u${c}`, created: "2026-08-31T09:51:27Z", score: c, parent: `p${p}` });
   const postsPage = (from: number, n: number, after: string | null) => ({ success: true, posts: Array.from({ length: n }, (_, k) => post(from + k)), after });
   const commentsPage = (p: number, n: number) => ({ meta: { partial: false }, rows: Array.from({ length: n }, (_, k) => comment(p, k)) });
@@ -218,8 +218,8 @@ describe("END TO END on a platform the word rules never served: Reddit posts wit
     expect(snap.counts("posts").accepted).toBe(3);
     expect(snap.counts("comments").accepted).toBe(6);
     expect(r.mission.delivered_units).toBe(9);
-    // the planning probe of the comments used the first post's link; execution read each chosen post's comments by its own link
-    expect(urlsAsked).toEqual(["https://www.reddit.com/r/egypt/comments/p0/x/", "https://www.reddit.com/r/egypt/comments/p0/x/", "https://www.reddit.com/r/egypt/comments/p1/x/", "https://www.reddit.com/r/egypt/comments/p2/x/"]);
+    // the planning probe of the comments used the MOST COMMENTED post's link (the newest may have none yet); execution read each chosen post's comments by its own link
+    expect(urlsAsked).toEqual(["https://www.reddit.com/r/egypt/comments/p1/x/", "https://www.reddit.com/r/egypt/comments/p0/x/", "https://www.reddit.com/r/egypt/comments/p1/x/", "https://www.reddit.com/r/egypt/comments/p2/x/"]);
     assertReplayInvariants(r, { expectDelivered: 9, expectStatus: "completed" });
   });
 });
@@ -263,5 +263,73 @@ describe("the model request and what the plan keeps for later steps", () => {
     const cands = candidatesFor(catalog, null, "x", "x.search.posts");
     const opts = checkOptions({ options: [{ ...CHOICE_X.options[0], conditions_not_carried: ["topic", "nonsense"] }] }, cands, false);
     expect(opts[0].notCarried).toEqual(["topic"]);
+  });
+});
+
+describe("live findings, 15 Nov 2026 (first live missions of the planner)", () => {
+  it("a child step is tried on the most commented parents first, at most three (live Facebook: the newest post, a reel minutes old, had no comment and every comments tool looked empty)", async () => {
+    const { parentValuesOf, PARENTS_TRIED } = await import("../agent/src/llmPlanner/planner");
+    const rows = [{ link: "a", comments_count: 0 }, { link: "b", comments_count: 40 }, { link: "c" }, { link: "d", comments_count: 7 }, { link: "" , comments_count: 99 }];
+    expect(parentValuesOf(rows, "link")).toEqual(["b", "d", "a"]);
+    expect(PARENTS_TRIED).toBe(3);
+  });
+
+  it("a step with a named source AND a topic also gets the platform's search tools (a search may carry both where the source's listing carries no topic)", () => {
+    const plain = candidatesFor(catalog, null, "facebook", "facebook.user.posts");
+    const both = candidatesFor(catalog, null, "facebook", "facebook.user.posts", 8, { alsoSearch: true });
+    expect(plain.some((e) => e.capability === "facebook.search.posts")).toBe(false);
+    expect(both.some((e) => e.capability === "facebook.search.posts")).toBe(true);
+  });
+
+  it("the model is told that a word with another common meaning goes only inside a phrase, and to add no restriction the customer did not ask for (live X: «شائعة» also means «common»; `lang:ar` hid most tweets)", async () => {
+    const { UNDERSTAND_SYSTEM, TOOL_CHOICE_SYSTEM } = await import("../agent/src/llmPlanner/prompts");
+    expect(UNDERSTAND_SYSTEM).toMatch(/another common meaning/);
+    expect(TOOL_CHOICE_SYSTEM).toMatch(/Add no restriction the customer did not ask for/);
+  });
+});
+
+describe("live finding: a TikTok file with links only (the item is big and nested)", () => {
+  const item = { type: 1, aweme_info: { aweme_id: "7609673492950256917", desc: "فطار مصري على أصوله", create_time: 1772000000, author: { nickname: "علي محجوب", unique_id: "ali.mahgoub8", uid: "3048" }, statistics: { digg_count: 1200, comment_count: 54, share_count: 9, play_count: 30000 }, share_url: "https://www.tiktok.com/@ali.mahgoub8/video/7609673492950256917?_r=1&u_code=f026", music: { title: "x", author: "y", play_url: { uri: "z", url_list: ["a", "b"] } }, extra: Object.fromEntries(Array.from({ length: 120 }, (_, i) => [`k${i}`, `قيمة طويلة للحقل رقم ${i}`])) } };
+
+  it("the model is shown every field as a path when the items are big (a cut JSON copy hid the caption and the author)", async () => {
+    const { flatPathsOf, fieldMapPrompt } = await import("../agent/src/llmPlanner/planner");
+    const lines = flatPathsOf([item]);
+    expect(lines).toContain('["aweme_info","desc"] = فطار مصري على أصوله');
+    expect(lines).toContain('["aweme_info","author","unique_id"] = ali.mahgoub8');
+    expect(lines.some((l) => l.startsWith('["aweme_info","music","play_url","url_list","0"]'))).toBe(true);
+    const prompt = fieldMapPrompt({ key: "videos", title_ar: "الفيديوهات", platform: "tiktok", capability: "tiktok.search.videos", parent: null, deliver: true, count: { total: 40, per_parent: null, all: false }, source: null, topic: "x", search_terms: [], period: null }, catalog.byId.get("tikhub.tiktok.search.videos")!, [item]);
+    expect(prompt).toContain('["aweme_info","statistics","digg_count"] = 1200');
+  });
+
+  it("a thin map (id only) is filled from the common names inside the item's wrapping object; the share link loses its tracking query", async () => {
+    const { enrichedMap, pseudoCard, runMap } = await import("../agent/src/llmPlanner/planner");
+    const { cardMapCode } = await import("../src/lib/agentMission/foundation/toolCards/mapCode");
+    const map = enrichedMap({ fields: { id: ["aweme_info", "aweme_id"] }, linkTemplate: null, extra: [] }, [item])!;
+    expect(map.fields).toMatchObject({ text: ["aweme_info", "desc"], author: ["aweme_info", "author", "nickname"], username: ["aweme_info", "author", "unique_id"], likes: ["aweme_info", "statistics", "digg_count"], comments_count: ["aweme_info", "statistics", "comment_count"], views: ["aweme_info", "statistics", "play_count"], link: ["aweme_info", "share_url"] });
+    const card = pseudoCard(catalog.byId.get("tikhub.tiktok.search.videos")!, "data.search_item_list", map, 1, {}, [item]);
+    const rows = runMap(cardMapCode(card), { data: { search_item_list: [item] } });
+    expect(rows[0]).toMatchObject({ id: "7609673492950256917", text: "فطار مصري على أصوله", username: "ali.mahgoub8", likes: 1200, link: "https://www.tiktok.com/@ali.mahgoub8/video/7609673492950256917" });
+  });
+});
+
+describe("asked for 400, get 400: a topic search continues on the model's next tool", () => {
+  it("the second tool is probed and mapped on its own real page, and execution reads it after the first tool's input sets", async () => {
+    const choice = { options: [CHOICE_X.options[0], { endpoint_id: "tikhub.x.twitter-web-fetch-search-timeline", params_json: JSON.stringify({ keyword: "(الشائعات OR \"نفي شائعة\") from:SaudiMOH", search_type: "Latest" }), cursor_input: "cursor", more_params_json: [] }] };
+    const otherPage = { data: { timeline: [{ rest_id: "77", legacy: { full_text: "نفي شائعة", created_at: "Mon Mar 04 10:00:00 +0000 2024" } }], next_cursor: "n2" } };
+    const m = scriptedModel({ request_plan: [UNDERSTOOD_X], tool_choice: [choice], field_map: [MAP_X, { fields: { id: ["rest_id"], text: ["legacy", "full_text"] }, extra: [] }] });
+    const pages = new Map<string, unknown>([["call_0001", xPage(0, 20, "c2")], ["call_0002", otherPage]]);
+    let n = 0;
+    const deps: LlmPlannerDeps = {
+      model: m.model, catalog, access: null, today: "2026-11-15",
+      probe: async () => { n += 1; return { ok: true, call_id: `call_000${n}`, http_status: 200, rows_in_page: n === 1 ? 20 : 1, has_more: true, next_cursor: "x", shape: null, first_rows: [], warnings: [], saved: "" }; },
+      readPage: async (id) => pages.get(id) ?? null,
+    };
+    const r = await planWithLlm({ words: ["٥٠ تغريدة"], request: "" }, deps);
+    expect(r.kind).toBe("plan");
+    if (r.kind !== "plan") return;
+    const alts = r.plan.stages[0].engine!.alternatives!;
+    expect(alts.map((a) => a.endpoint_id)).toEqual(["anyapi.x.search.posts", "tikhub.x.twitter-web-fetch-search-timeline"]);
+    const { runMap } = await import("../agent/src/llmPlanner/planner");
+    expect(runMap(alts[1].map_code, otherPage)[0]).toMatchObject({ id: "77", text: "نفي شائعة" });
   });
 });
