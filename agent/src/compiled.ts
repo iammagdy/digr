@@ -3,7 +3,7 @@ import { CLARIFY_QUESTION_AR } from "../../src/lib/agentMission/semantic/conditi
 import { isOccurrenceAnswer, isRecurringEvent, occurrenceChoiceOf, OCCURRENCE_OPTIONS_AR, OCCURRENCE_QUESTION_AR, OCCURRENCE_YEAR_QUESTION_AR, type Occurrence } from "../../src/lib/agentMission/foundation/occurrence";
 import { checkChannelsAgainstWords } from "../../src/lib/agentMission/foundation/understand";
 import { buildShapeDigest } from "../../src/lib/modelPlanner/digest";
-import { carriedBy, chooseCard, compilePlan, expandedInputsOf, parentInputs, rankedCards, rankedPoolOf, relaxedInputsOf, researchRelevanceOf, researchTopicOf, sourceUnenforced, COMPILED_PLATFORMS, type CompileResult, type SearchStrategy } from "../../src/lib/agentMission/foundation/compilePlan";
+import { carriedBy, chooseCard, compilePlan, expandedInputsOf, operatorIdOf, parentInputs, rankedCards, rankedPoolOf, relaxedInputsOf, researchRelevanceOf, researchTopicOf, sourceUnenforced, COMPILED_PLATFORMS, type CompileResult, type SearchStrategy } from "../../src/lib/agentMission/foundation/compilePlan";
 import type { PlanningJudge, TopicVariants } from "./researchJudge";
 import { searchScopeOf, type SearchScope } from "../../src/lib/agentMission/foundation/searchScope";
 import { channelAnswerOf, channelEvidenceOf, youtubeChannelChoiceQuestionAr } from "../../src/lib/agentMission/foundation/discovery/channelEvidence";
@@ -226,8 +226,10 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   // P0, 14 NOV 2026 (msn_93ed6dea95edb303fd2b, msn_fefee20b5a4dfc1aafc2, msn_dd7c2e9c131b8783bf2e), THE GENERAL SOURCE RULE (sourceScope.ts): the customer's answer to the source question is applied here, for every platform: the identifier they gave
   // is the source; the explicit choice to search without it removes it (the plan says so); no usable answer ends the request honestly. The question itself is asked below, once the service is chosen, and only when the chosen service
   // cannot carry the source.
+  // the names the customer gave the source (its name as written, then its identifier): a search term that names the source cannot narrow a search INSIDE that source (researchJudge.ts `cleanVariants`)
+  const sourceNames: string[] = ask.source.text ? [ask.source.text] : [];
   if (ask.source.kind === "named" || ask.source.kind === "official") {
-    if (choices.sourceId) ask = { ...ask, source: { kind: "named", text: choices.sourceId } };
+    if (choices.sourceId) { ask = { ...ask, source: { kind: "named", text: choices.sourceId } }; sourceNames.push(choices.sourceId); }
     else if (choices.sourceWiden) ask = { ...ask, source: { kind: "none", text: null } };
     else if (choices.sourceDeclined) return { kind: "cannot", ask, reason: "source_missing", reads };
   }
@@ -475,7 +477,7 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
     const sampledBefore = (deps.priorCalls ?? []).some((c) => (c.phase ?? "planning") === "planning" && c.endpoint_id === card!.endpointId && c.status === "ok" && Number(c.rows_returned) > 0);
     if (terms === null && !sampledBefore) {
       const said = `${deps.mission.request_text}${deps.mission.answer_text ? ` — ${deps.mission.answer_text}` : ""}`;
-      const v = await deps.variants({ request: said, topic: ask.topic.text ?? "", alternatives: ask.topic.alternatives ?? [] }).catch(() => null);
+      const v = await deps.variants({ request: said, topic: ask.topic.text ?? "", alternatives: ask.topic.alternatives ?? [], ...(operatorIdOf(card!, cardAsk) ? { source: sourceNames } : {}) }).catch(() => null);
       if (v) {
         cost.usd += Math.max(0, Number(v.costUsd) || 0);
         terms = v.terms;

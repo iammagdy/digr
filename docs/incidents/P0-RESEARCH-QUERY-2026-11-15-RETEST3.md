@@ -99,6 +99,23 @@ A separate review of the diff found five problems. All are fixed, each with a te
   * code still writes and enforces the account, the period and originals only, and judges every row;
   * a model call that fails is visible as a failure instead of passing as an empty answer.
 
+## 4b. Live acceptance, first mission after #503 (`msn_1d1d7964a2b6da26378b`, not approved)
+
+* Production `b85d78e`, test account, real browser.
+* **The journey:**
+  1. the owner's exact request;
+  2. the handle was asked before any price;
+  3. answered «@SaudiMOH»;
+  4. the plan was made for 400 tweets: hold 200 points, 0.5 points a tweet.
+* **The model layer works again.** The terms are real, and the query is one disjunction with `from:SaudiMOH`, the five-year window and originals only.
+* **A new defect was proved by the evidence:**
+  * the model's terms included **«وزارة الصحة»**, the source's own name, because the chat brief's topic says «جهود **الوزارة**»;
+  * inside `from:SaudiMOH`, that term matches nearly every post, so the 40-post sample held **1** post the judgment accepted.
+  * The judgment was right; the query was polluted. A plan on that query would read pages of generic posts and stop early on the dry-page rule. **The plan was not approved.**
+* **Fix (general):**
+  * code drops a term whose every word is a word of the source's name, or that contains its identifier (`namesTheSource`);
+  * the variants request names the source the posts are read from, and tells the model to avoid its name and its general field.
+
 ## 5. What is NOT established (needs a live, authorized acceptance)
 
 * **Provider coverage.** Unknown until a paid read: whether the X search returns @SaudiMOH's posts about rumors across five years for a disjunction of terms with `from:` and `since/until`.

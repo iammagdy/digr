@@ -6,7 +6,7 @@ import { paramsSignature, PARAMS_SIG_KEY } from "../agent/src/gateway";
 import { readRunState } from "../agent/src/runState";
 import { RAW_PATH } from "../agent/src/gateway";
 import { anthropicReviewCall } from "../agent/src/review";
-import { topicVariants, TOPIC_VARIANTS_MAX_TOKENS } from "../agent/src/researchJudge";
+import { cleanVariants, namesTheSource, topicVariants, TOPIC_VARIANTS_MAX_TOKENS } from "../agent/src/researchJudge";
 import { buildShapeDigest } from "../src/lib/modelPlanner/digest";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { sourceAnswerOf, sourceIdIn, sourceIdOf } from "../src/lib/agentMission/foundation/sourceScope";
@@ -236,3 +236,27 @@ describe("independent review findings on the PR head (fixed before merge)", () =
 });
 import { buildAsk } from "../src/lib/agentMission/foundation/ask";
 function buildAskTopic(m: (typeof fx.missions)[number]): string { return buildAsk(m.request_text, null, nowMs).topic.text ?? ""; }
+
+describe("LIVE ACCEPTANCE 1 (msn_1d1d7964a2b6da26378b, after #503): the model's terms included the source's own name", () => {
+  // the terms production's model returned (recorded in the executed query of the plan); «وزارة الصحة» matched nearly every post inside from:SaudiMOH and the 40-post sample held 1 post about rumors
+  const PRODUCED = ["الشائعات", "شائعة", "معلومات مضللة", "المعلومات المضللة", "تكذيب الشائعات", "حقائق", "نفي شائعة", "وزارة الصحة", "الشائعات_الصحية", "تصحيح_شائعة"];
+  const SOURCE = ["وزارة الصحة السعودية", "SaudiMOH"];
+  it("code drops a term that names the source the posts are read from (its name's words, or its identifier), and keeps every topic term", () => {
+    expect(cleanVariants(PRODUCED, [], SOURCE)).toEqual(PRODUCED.filter((t) => t !== "وزارة الصحة"));
+    for (const t of ["وزارة الصحة", "الصحة", "وزارة", "السعودية", "saudimoh", "@SaudiMOH"]) expect(namesTheSource(t, SOURCE)).toBe(true);
+    for (const t of ["الشائعات", "معلومات مضللة", "الصحة النفسية", "لا صحة"]) expect(namesTheSource(t, SOURCE)).toBe(false);
+    // no source given (a search across the platform): nothing is dropped for it
+    expect(cleanVariants(["وزارة الصحة"], [])).toEqual(["وزارة الصحة"]);
+  });
+  it("the variants request tells the model the one source the posts come from, and the planner passes the source's name as the customer wrote it and its identifier", async () => {
+    const seen: string[] = [];
+    const call = async (i: { user: string }) => { seen.push(i.user); return { text: JSON.stringify(PRODUCED), usage: { input_tokens: 10, output_tokens: 10 } }; };
+    const got = await topicVariants(call as never)({ request: "r", topic: "t", alternatives: [], source: SOURCE });
+    expect(seen[0]).toContain("Every post is read from this one source");
+    expect(got?.terms).not.toContain("وزارة الصحة");
+    const asked: Array<ReadonlyArray<string> | undefined> = [];
+    const m = { ...fx.missions[0], source_answer: "SaudiMOH" };
+    await plan(m, [pageOf([...ABOUT], null)], { variants: async (i: { source?: ReadonlyArray<string> }) => { asked.push(i.source); return { terms: ["شائعات"], costUsd: 0.0001 }; } });
+    expect(asked[0]).toEqual(["وزارة الصحة السعودية", "SaudiMOH"]);
+  });
+});
