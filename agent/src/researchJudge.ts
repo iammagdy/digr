@@ -56,15 +56,33 @@ export const MAX_TOPIC_VARIANTS = 12;
 /** The output cap of the variants call (no thinking is asked: review.ts `anthropicReviewCall`). Twelve short Arabic terms in a JSON array fit well inside it. */
 export const TOPIC_VARIANTS_MAX_TOKENS = 600;
 /** `failed`: the call gave no readable answer (no array, or an answer cut at its cap). Such a result is never kept for the mission, so a later planning run asks again; `costUsd` is still what the call cost. */
-export type TopicVariants = (input: { request: string; topic: string; alternatives: ReadonlyArray<string> }) => Promise<{ terms: string[]; costUsd: number; failed?: true } | null>;
+export type TopicVariants = (input: { request: string; topic: string; alternatives: ReadonlyArray<string>; /** The source every post is read from (its name as the customer wrote it, its identifier), when the search is restricted to it. */ source?: ReadonlyArray<string> }) => Promise<{ terms: string[]; costUsd: number; failed?: true } | null>;
 
-const VARIANTS_SYSTEM = `You help search a social platform for posts on a research topic. Platform search matches the exact words written in a post, so the search terms decide what can be found at all. Given the customer's request (and any words the customer suggested) and the topic, list the short search terms that posts ABOUT that topic would literally contain, in the language the posts are written in: the topic's key words alone and in their other grammatical forms (singular, plural, with and without the article), common synonyms, the usual phrasing an author would use when writing about it, and common hashtags (without «#», words joined by «_»). Prefer one- and two-word terms: a long phrase rarely matches. Include every search term the customer suggested. Each term is 1 to 4 words, no operators, no quotes, no names of accounts, no dates. Answer with ONLY a JSON array of at most ${MAX_TOPIC_VARIANTS} strings, most useful first.`;
+const VARIANTS_SYSTEM = `You help search a social platform for posts on a research topic. Platform search matches the exact words written in a post, so the search terms decide what can be found at all. Given the customer's request (and any words the customer suggested) and the topic, list the short search terms that posts ABOUT that topic would literally contain, in the language the posts are written in: the topic's key words alone and in their other grammatical forms (singular, plural, with and without the article), common synonyms, the usual phrasing an author would use when writing about it, and common hashtags (without «#», words joined by «_»). Prefer one- and two-word terms: a long phrase rarely matches. Include every search term the customer suggested. Each term is 1 to 4 words, no operators, no quotes, no names of accounts, no dates. When the posts are all read from one named source, never include that source's name, nor words that most of its posts would contain whatever they are about (its own field or institution): such a term matches nearly every post of the source and finds nothing specific. Answer with ONLY a JSON array of at most ${MAX_TOPIC_VARIANTS} strings, most useful first.`;
 
 const TERM_OK = /^[\p{L}\p{N}][\p{L}\p{N}\s_]*$/u;
 /** Arabic diacritics and the tatweel: a post is searched without them, so a term the model writes vocalized is kept bare. */
 const MARKS = /[\u064B-\u065F\u0670\u0640]/g;
-/** The variants code keeps: plain short terms, none equal to an alternative or to another variant (compared in the normalized form). */
-export function cleanVariants(raw: unknown, alternatives: ReadonlyArray<string>): string[] {
+/** The words of a text, normalized, each without the Arabic article (a source named «وزارة الصحة السعودية» has the words وزاره, صحه, سعوديه). */
+const wordsOf = (t: string): string[] => normalizeText(t).split(/[\s_]+/).map((w) => w.replace(/^ال(?=\S{2,})/, "")).filter((w) => w.length > 0);
+/**
+ * A term that NAMES THE SOURCE cannot narrow a search inside that source (P0, 15 Nov 2026, msn_1d1d7964a2b6da26378b: the model proposed «وزارة الصحة» for posts of the Saudi Ministry of Health; inside `from:SaudiMOH` it matched nearly
+ * every post, and the sample held 1 post about rumors in 40). Code drops a term whose every word is a word of one of the source's names, or that contains the source's identifier.
+ */
+export function namesTheSource(term: string, source: ReadonlyArray<string>): boolean {
+  const words = wordsOf(term);
+  if (words.length === 0) return false;
+  for (const name of source) {
+    const n = name.replace(/^@/, "").trim();
+    if (n === "") continue;
+    if (/^[A-Za-z0-9._-]+$/.test(n) && normalizeText(term).replace(/\s+/g, "").includes(normalizeText(n))) return true;
+    const own = new Set(wordsOf(n));
+    if (own.size > 0 && words.every((w) => own.has(w))) return true;
+  }
+  return false;
+}
+/** The variants code keeps: plain short terms, none equal to an alternative or to another variant (compared in the normalized form), none that names the source the posts are read from. */
+export function cleanVariants(raw: unknown, alternatives: ReadonlyArray<string>, source: ReadonlyArray<string> = []): string[] {
   if (!Array.isArray(raw)) return [];
   const seen = new Set(alternatives.map((a) => normalizeText(a)));
   const out: string[] = [];
@@ -73,6 +91,7 @@ export function cleanVariants(raw: unknown, alternatives: ReadonlyArray<string>)
     const t = v.replace(MARKS, "").replace(/^#/, "").replace(/\s+/g, " ").trim();
     if (t.length < 2 || t.length > 40 || !TERM_OK.test(t) || t.split(" ").length > 4) continue;
     if (/^(?:or|and|not)$/i.test(t) || /\b(?:OR|AND)\b/.test(t)) continue;
+    if (namesTheSource(t, source)) continue;
     const k = normalizeText(t);
     if (seen.has(k)) continue;
     seen.add(k);
@@ -84,14 +103,14 @@ export function cleanVariants(raw: unknown, alternatives: ReadonlyArray<string>)
 
 export function topicVariants(call: ReviewCall, options: { model?: string } = {}): TopicVariants {
   const model = options.model ?? MODEL_HAIKU;
-  return async ({ request, topic, alternatives }) => {
-    const user = `The customer's request: «${request.slice(0, 900)}»\nThe topic: «${topic.slice(0, 200)}»${alternatives.length > 0 ? `\nThe customer's own alternatives (already searched): ${alternatives.map((a) => `«${a}»`).join("، ")}` : ""}`;
+  return async ({ request, topic, alternatives, source = [] }) => {
+    const user = `The customer's request: «${request.slice(0, 900)}»\nThe topic: «${topic.slice(0, 200)}»${alternatives.length > 0 ? `\nThe customer's own alternatives (already searched): ${alternatives.map((a) => `«${a}»`).join("، ")}` : ""}${source.length > 0 ? `\nEvery post is read from this one source (the search is restricted to it): ${source.map((x) => `«${x}»`).join(" / ")}` : ""}`;
     const res = await call({ model, system: VARIANTS_SYSTEM, user, maxTokens: TOPIC_VARIANTS_MAX_TOKENS }).catch(() => null);
     if (!res) return null;
     const costUsd = llmCostFromUsage(model, res.usage);
     let parsed = false;
     for (const m of res.text.matchAll(/\[[^\[\]]*\]/g)) {
-      try { const raw = JSON.parse(m[0]) as unknown; if (!Array.isArray(raw)) continue; parsed = true; const terms = cleanVariants(raw, alternatives); if (terms.length > 0) return { terms, costUsd }; } catch { /* the next array */ }
+      try { const raw = JSON.parse(m[0]) as unknown; if (!Array.isArray(raw)) continue; parsed = true; const terms = cleanVariants(raw, alternatives, source); if (terms.length > 0) return { terms, costUsd }; } catch { /* the next array */ }
     }
     // an answer with no readable array (or cut at its cap) is a failed call, never «this topic has no other wording»
     return parsed && !res.truncated ? { terms: [], costUsd } : { terms: [], costUsd, failed: true };
