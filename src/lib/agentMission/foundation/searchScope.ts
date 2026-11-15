@@ -34,6 +34,7 @@ const STRATEGY_AR: Record<SearchStrategy, string> = {
   words: "بكلمات الموضوع في أي ترتيب",
   source_items: "منشورات الحساب نفسه في الفترة، ثم فحص كل منشور بالموضوع",
   expanded: "بصيغ أخرى للموضوع ومرادفاته، ثم فحص كل عنصر بأنه عن الموضوع فعلًا",
+  expanded_core: "بأهم صيغ الموضوع القصيرة وحدها، ثم فحص كل عنصر بأنه عن الموضوع فعلًا",
 };
 
 /** The scope of the searches that were read (their pages, deduplicated by id) for the Ask. */

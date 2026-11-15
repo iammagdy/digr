@@ -193,7 +193,7 @@ export function topicQueryOf(card: ToolCard, ask: Pick<Ask, "topic">, mode: "exa
 
 /** THE MOST STRATEGIES ONE PARENT SEARCH TRIES AT PLANNING: the precise query and, when it answered NO row, one relaxed query (the gateway's two samples of one source: no read is added). */
 export const SEARCH_STRATEGIES_MAX = 2;
-export type SearchStrategy = "exact" | "words" | "source_items" | "expanded";
+export type SearchStrategy = "exact" | "words" | "source_items" | "expanded" | "expanded_core";
 /**
  * THE SECOND SEARCH STRATEGY (P0, 15 Nov 2026), used only when the precise query's first page holds NO row, in place of following that empty page's cursor (production: an empty page's cursor answered 0 rows again in every recorded case, a paid read
  * each). Only a search that takes operators (the restrictions stay written in the query). It keeps EVERY hard condition: the source's operator, the period, the language, originals only; it never drops the source and never searches all
@@ -238,6 +238,27 @@ export function expandedInputsOf(card: ToolCard, ask: Ask, variants: ReadonlyArr
     extra = extra.slice(0, -1);
   }
   return null;
+}
+
+/** P0 (15 Nov 2026): the most terms the CORE expanded query carries. */
+export const CORE_QUERY_MAX_TERMS = 6;
+/**
+ * P0 (15 Nov 2026, msn_69cd4879ce77e97d01a1 and msn_5a1cf6c36852566f9e41): THE CORE OF THE EXPANDED QUERY. In production a long expanded query (many alternatives and quoted phrases, within the 400-character cap) answered NO row inside
+ * the account, while shorter queries of the same vocabulary over the same account and period answered rows (msn_6d86…: 13). After an empty expanded page, the one more read the gateway allows went to the account's newest posts with no
+ * topic at all, and none of them was about the request. The core keeps the SAME hard conditions (the source's operator, the period, originals only) and the topic's shortest, most useful forms: the model's first terms of one or
+ * two words and the customer's own alternatives of one or two words, at most CORE_QUERY_MAX_TERMS. Null when nothing short is left, or when it is the expanded query itself. Every row is still judged against the request.
+ */
+export function coreExpandedInputsOf(card: ToolCard, ask: Ask, variants: ReadonlyArray<string>, expandedParams: Record<string, unknown> | null): { strategy: SearchStrategy; params: Record<string, unknown> } | null {
+  const q = card.inputs.query;
+  if (!q?.operators || !q.or || !ask.topic.text || q.format === "hashtag") return null;
+  const short = (t: string): boolean => t.trim() !== "" && t.trim().split(/\s+/).length <= 2;
+  const own = (ask.topic.alternatives ?? []).filter(short);
+  const terms: string[] = [];
+  for (const t of [...variants.filter(short), ...own]) { if (!terms.includes(t.trim())) terms.push(t.trim()); if (terms.length >= CORE_QUERY_MAX_TERMS) break; }
+  if (terms.length === 0) return null;
+  const params = parentInputs(card, { ...ask, topic: { ...ask.topic, alternatives: terms } });
+  if (expandedParams && String(params[q.field] ?? "") === String(expandedParams[q.field] ?? "")) return null;
+  return { strategy: "expanded_core", params };
 }
 
 /** A topic as one hashtag: no «#», words joined by «_». */

@@ -266,14 +266,21 @@ describe("LIVE ACCEPTANCE 2 (msn_5a1cf6c36852566f9e41, after #504): the topic's 
     const m = { ...fx.missions[0], source_answer: "SaudiMOH" };
     // the account's newest posts, none about rumors (synthetic texts; production's 20 rows are not readable from the database)
     const newest = Array.from({ length: 20 }, (_, i) => post(`93000000000000000${String(i).padStart(2, "0")}`, `حملة التطعيم الموسمية في المراكز الصحية رقم ${i}`));
-    const { r, queries } = await plan(m, [pageOf([], null), pageOf(newest, null)], { variants: async () => ({ terms: ["شائعات", "معلومات مغلوطة"], costUsd: 0.0001 }) });
+    // CHANGED (P0, msn_69cd…): the second read is the core of the expanded query (topic words, every condition), and the question says what that read found; it never claims the newest posts were read
+    const { r, queries } = await plan(m, [pageOf([], null), pageOf(newest, null)], { variants: async () => ({ terms: ["شائعات", "معلومات مغلوطة", "تصحيح معلومة", "نفي شائعة", "تحذير", "إشاعة", "أخبار كاذبة"], costUsd: 0.0001 }) });
     expect(queries[0]).toMatch(/^\(شائعات OR /);
-    expect(queries[1]).toMatch(/^from:SaudiMOH since:/);
+    expect(queries[1]).toMatch(/^\(شائعات OR "معلومات مغلوطة" OR .+\) from:SaudiMOH since:/);
     expect(r.kind).toBe("question");
     if (r.kind !== "question") return;
-    expect(r.question).toContain("بحثنا داخل الحساب بكلمات الموضوع وصيغه فلم يُرجع البحث شيئًا");
-    expect(r.question).toContain("لا يثبت أن الحساب لم ينشر عن الموضوع");
-    expect(r.question).not.toContain("وإن تشابهت بعض كلماته");
+    expect(r.question).not.toContain("قرأنا أحدث منشوراته");
+    expect(r.question).toContain("لم نجد في ما قرأناه");
+  });
+  it("both topic reads empty: no read of the newest posts, nothing planned, the scope says both searches", async () => {
+    const m = { ...fx.missions[0], source_answer: "SaudiMOH" };
+    const { r, queries } = await plan(m, [pageOf([], null), pageOf([], null)], { variants: async () => ({ terms: ["شائعات", "معلومات مغلوطة", "تصحيح معلومة", "نفي شائعة", "تحذير", "إشاعة", "أخبار كاذبة"], costUsd: 0.0001 }) });
+    expect(queries).toHaveLength(2);
+    expect(queries.some((q) => /^from:SaudiMOH/.test(q))).toBe(false);
+    expect(r.kind).not.toBe("plan");
   });
   it("the variants prompt asks for the AUTHORS' own register (how the source itself words the topic), not only the customer's words", async () => {
     const sys: string[] = [];
