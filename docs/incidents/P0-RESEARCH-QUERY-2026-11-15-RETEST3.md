@@ -127,6 +127,45 @@ A separate review of the diff found five problems. All are fixed, each with a te
   * at most 14 terms;
   * the question now states what was really read («بحثنا داخل الحساب بكلمات الموضوع وصيغه فلم يُرجع البحث شيئًا، ثم قرأنا أحدث منشوراته …»), instead of claiming the rows shared words with the topic.
 
+## 4d. Live acceptance, third mission after #505 (`msn_6d86fb6f698bb8ca7320`): delivered and settled
+
+* **The query** held the customer's words plus the source's register («عدم صحة», «تنويه», «يرجى عدم الانسياق», «احذروا الشائعات»). There were no source-name terms, and the account, the period and originals only were kept.
+* **Planning.** The sample was 13 posts (5 + 8); 1 was judged about the topic. The plan: 400 tweets with an open promise, a 200-point hold, 0.5 points a tweet. The card said the final count may be far lower.
+* **Execution** read afresh: 13 posts, then an empty next page (the source ended for this query). 12 were rejected by the relevance review and **1 was delivered**: @SaudiMOH, 2021-12-01, «… أن نأخذ المعلومات من مصادرها الموثوقة وأن نحذر من الشائعات».
+* **The files:**
+  * Excel (2 right-to-left sheets) and CSV (UTF-8 with BOM) hold the same single row, with author check «مطابق» and period «نعم»;
+  * the methodology CSV: read 13, excluded 12, delivered 1.
+* **Money.** The ledger shows reserve −200, release +200, charge −1. Provider cost was USD 0.00196 and model cost USD 0.00112.
+* **The customer view, desktop and phone.** «تم تسليم تغريدة واحدة من ٤٠٠ تغريدة», «خُصم نقطة واحدة», and the true reason («المصدر لم يعد يعطي نتائج أخرى للبحث المعتمد في خطتك»).
+
+## 4e. Live acceptance, the continuation (`msn_5abbc68352f31fa31d56`, owner-approved fourth mission)
+
+**What worked:**
+
+* the conversation's brief kept the account, topic, period and count, and set `exclude_delivered`;
+* the card said, before approval, that 1 earlier item is excluded;
+* execution read 200 posts in 11 calls until the source ended;
+* the earlier tweet was **not** delivered again;
+* 6 tweets were delivered, 3 points charged.
+
+**What failed (proved by reading the delivered file):**
+
+1. **Only 1 of the 6 delivered tweets is about the topic** («نفي صحة الادعاءات المتداولة بشأن مشروع مدينة آسيا الطبية»). The other five are ministry activities: weekly «#الصحة_في_أسبوع» news, a donation story and a walking challenge.
+   * Cause: the chat model wrote the topic with «و» instead of the customer's «أو», and the request parser stops a topic at «في». The judge was then told the customer means «…**وجهود الوزارة**», any ministry effort, with «في مكافحة المعلومات المضللة» cut off.
+   * The accepted rows are exactly «ministry efforts».
+2. **The follow-up asked for the account handle again**, although the customer gave «@SaudiMOH» earlier in the same conversation.
+
+**Fix (general):**
+
+* The judge's prompt makes the customer's request authoritative: the «what they mean» label can drop a qualifier, and a row about the general subject that misses the request's qualified meaning is 0.
+* The chat brief is told to keep «أو» alternatives and every qualifier.
+* A source identifier the same customer confirmed for the same source name, earlier in the same conversation, is reused instead of asked again (`conversationSource.ts`). A failed read asks as before, and the plan states the account before approval.
+
+**Financial note for the owner:**
+
+* The continuation charged 3 points for 6 tweets, of which 5 are off-topic (about 2.5 points). This is the test account.
+* A refund is an owner decision and was **not** executed.
+
 ## 5. What is NOT established (needs a live, authorized acceptance)
 
 * **Provider coverage.** Unknown until a paid read: whether the X search returns @SaudiMOH's posts about rumors across five years for a disjunction of terms with `from:` and `since/until`.

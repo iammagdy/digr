@@ -102,6 +102,7 @@ import type { AgentStore, CallRow, MissionRecord } from "./types";
 import type { SandboxResult } from "./sandbox";
 import { loadApprovedExclusion, withCustomerExclusion, type ReadMissionExclusion } from "./customerExclusion";
 import { loadApprovedPriorDelivery, priorDeliveryForPlanning, withPriorDelivery, type ReadDeliveredMissions, type ReadPriorDeliveryCard } from "./priorDelivery";
+import { conversationSourceIdOf, type ReadConversationMissions } from "./conversationSource";
 import { priorDeliveryMatcherOf } from "../../src/lib/agentMission/priorDelivery";
 import type { ExclusionMatcher } from "../../src/lib/agentMission/customerExclusion";
 import type { MissionNoticeFacts, MissionNoticeKind } from "../../src/lib/agentMission/notices";
@@ -150,6 +151,8 @@ export interface RunnerDeps {
   readMissionBrief?: (missionId: string, userId: string) => Promise<ResearchBrief | null>;
   /** P0 (15 Nov 2026): the earlier missions the chat recorded on this mission's card because the customer asked not to receive delivered items again (`messages.plan.priorDelivery`, server-written). Absent: none. */
   readPriorDeliveryCard?: ReadPriorDeliveryCard;
+  /** P0 (15 Nov 2026): the earlier missions of this mission's conversation (same customer), to carry a source identifier the customer already confirmed (conversationSource.ts). Absent: never carried. */
+  readConversationMissions?: ReadConversationMissions;
   /** P0: of those, the ones of this customer that completed and delivered, with the stages their file was built from. */
   readDeliveredMissions?: ReadDeliveredMissions;
   /** PHASE 5.3 (`customer_exclusion_files_v1` only): the exclusion list the chat stored on this mission's card (`messages.plan.customerExclusion`, server-written), read back with its digest. Absent (tests that do not need it): none. */
@@ -688,6 +691,15 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
       }
       choices = { ...choices, ...(parsed.kind === "count" ? { count: parsed.n } : parsed.kind === "budget" ? { budget: parsed.points } : { perParent: parsed.n }) };
       await updateRunState(store, mission.id, (r) => { const { pending: _p, ...rest } = r; void _p; return { ...rest, choices }; }, deps.log);
+    }
+  }
+  // P0 (15 Nov 2026, msn_5abbc68352f31fa31d56): a source the customer already identified in this conversation (same name, an earlier mission of theirs) is not asked again; a failed read asks as before
+  if (compiledActive && !prior?.pending && choices.sourceId === undefined && choices.sourceWiden !== true && choices.sourceDeclined !== true && deps.readConversationMissions) {
+    const carried = await conversationSourceIdOf({ mission, store, read: deps.readConversationMissions }).catch(() => null);
+    if (carried) {
+      choices = { ...choices, sourceId: carried.id };
+      await updateRunState(store, mission.id, (r) => ({ ...r, choices }), deps.log);
+      await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: معرّف المصدر من مهمة سابقة في المحادثة نفسها.", counts: { source_carried: 1 } }).catch(() => undefined);
     }
   }
   // STAGE 2 (docs/STAGE-2.md S2): the customer's card edits (create-only objects of the mission's folder), only when DIGER_STAGE2_ASK_CARD is on for this account; unset (today), none is read

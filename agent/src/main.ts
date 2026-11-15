@@ -1,3 +1,4 @@
+import { conversationMissionsReader } from "./conversationSource";
 import { randomUUID } from "node:crypto";
 import { createClient } from "@supabase/supabase-js";
 import { loadTregCatalog } from "../../src/lib/treg/catalog";
@@ -100,6 +101,7 @@ async function main() {
     readMissionExclusion: missionExclusionReader(client),
     // P0 (15 Nov 2026): «without repeating what was delivered»: the earlier missions the chat server recorded on this mission's card, and of those the ones this customer completed with a delivery
     readPriorDeliveryCard: priorDeliveryCardReader(client),
+    readConversationMissions: conversationMissionsReader(client),
     readDeliveredMissions: deliveredMissionsReader(client),
     log,
     // ROUND 62: present only when DIGER_SPEND_GATE is set (observe or enforce); each run then gates its gateways, its model runs and its review requests per mission
