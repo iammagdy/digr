@@ -13,7 +13,11 @@ Follows PRs #503–#506 (docs/incidents/P0-RESEARCH-QUERY-2026-11-15-RETEST3.md)
 
 ## The contract now
 
-1. **The customer's words travel with the mission.** The chat server stores the customer's own messages of the conversation (newest 8, as typed) on the mission's card as `plan.customerWords`. The model never writes them. There is no schema change: the card's `plan` is already JSON.
+1. **The customer's words travel with the mission.** The chat server stores the customer's own messages on the mission's card, exactly as typed. The model never writes them. There is no schema change: the card's `plan` is already JSON. They are stored in two parts:
+   - `plan.customerWords`: the messages of this request, meaning those typed after the conversation's previous mission card;
+   - `plan.earlierWords`: earlier messages, kept as context only.
+   
+   The worker reads the newest card of the mission that holds them, because an answer typed in chat writes a later card that has none.
 2. **One research spec per mission** (`agent/src/researchSpec.ts`). The worker asks the model once, with no thinking and a forced structured answer (`research_spec` tool). The answer has three fields:
    - `criterion`: what a record must be about;
    - `any_of`: the alternatives, each keeping its qualifier;
@@ -21,14 +25,15 @@ Follows PRs #503–#506 (docs/incidents/P0-RESEARCH-QUERY-2026-11-15-RETEST3.md)
 3. **Code checks the answer before anything uses it:**
    - shape and length;
    - the customer-facing Arabic rules, with a Latin word allowed only if the customer wrote it;
-   - **a request whose customer words separate alternatives with «أو» must keep at least two alternatives.**
+   - **a request whose customer words separate alternatives with «أو» must keep at least two alternatives.** A message counts only when at least one of its alternatives appears in this request's summary, so an earlier request on another subject, or another part of a split request, never imposes its alternatives;
+   - no provider or model name may appear, even one the customer typed.
    
-   A failed answer is not stored. The spec then falls back to the customer's words alone (`by: "words"`), and the next run asks again.
+   A failed answer falls back to the customer's words alone (`by: "words"`). That fallback replaces any spec made from other inputs, and the next run asks the model again. Execution judges only with the spec made from exactly its inputs, or else with the customer's words alone; it never uses a stale spec.
 4. **Everything reads that one stored spec:**
    - the planning judgment;
    - the search-vocabulary step;
-   - the plan stage's relevance subject, shown on the card as «المقصود» before approval;
-   - the execution review;
+   - the plan stage's relevance subject, also stated on the card before approval: «المقصود بموضوعك كما فهمناه من كلماتك: …»;
+   - the execution review, but only for plans whose research topic is judged by meaning;
    - the methodology.
    
    Every judgment prompt starts with the customer's own messages. The system prompt says that when the criterion and the customer's words disagree, the customer's words win, and that an uncertain row is 0.
@@ -48,7 +53,7 @@ Pricing, holds, settlement and the ledger; database schema; feature switches; pr
 
 ## Tests
 
-`tests/p0-research-spec.test.ts` (24 tests) uses the recorded production words. It checks:
+`tests/p0-research-spec.test.ts` (29 tests) uses the recorded production words. It checks:
 
 - R1/R2 reproduced;
 - bounds on the stored words;
@@ -60,9 +65,12 @@ Pricing, holds, settlement and the ledger; database schema; feature switches; pr
 - the structured call, with thinking off and the HTTP 400 retry;
 - one spec per planning run, with its cost counted once;
 - the four methodology contradictions;
-- the chat card carries the customer's words beside the summary.
+- the chat card carries the customer's words beside the summary;
+- the five independent-review findings that were fixed (answer cards, stale spec, earlier-request bleed, provider names, the card line).
 
 ## Remaining limits
+
+- «طلبك (بكلماتك)» in the methodology prints this request's messages as the customer typed them, so the customer's own Latin words, links or numbers appear in their own file.
 
 - The spec is one model reading. It is checked for structure, but not for every nuance of meaning. The customer's words travel with every judgment so that a weak criterion does not decide alone.
 - Rejected rows are recorded as counts and in the admin CSV, not as text in events. The event guard is Arabic-only, so a row's text cannot be stored there.
