@@ -1,0 +1,41 @@
+{
+  "_note": "Read-only production evidence of the 15 Nov 2026 acceptance retest after PR #502 (test account). Tables: missions, mission_calls, mission_events, messages, storage.objects. Query strings are the recorded params_digest (clipped by the gateway to 80 characters).",
+  "missions": [
+    {
+      "id": "msn_7365668c48162ce20bbd",
+      "request_text": "400 تغريدة من حساب وزارة الصحة السعودية على إكس عن الشائعات الصحية أو تصحيح الشائعات أو جهود الوزارة في مكافحة المعلومات المضللة، خلال آخر خمس سنوات",
+      "source_answer": "SaudiMOH",
+      "status": "cancelled",
+      "calls": [
+        { "query": "(\"الشائعات الصحية\" OR \"تصحيح الشائعات\" OR \"جهود الوزارة في مكافحة المعلومات المض", "status": "empty", "rows": 0 },
+        { "query": "from:SaudiMOH since:2021-11-14_22:00:00_UTC until:2026-11-15_22:00:00_UTC -filte", "status": "ok", "rows": 20 }
+      ],
+      "variants_file_bytes": 12,
+      "planning_llm_usd": 0.000753
+    },
+    {
+      "id": "msn_c6767995ad124f9edbec",
+      "request_text": "400 تغريدة على إكس من حساب وزارة الصحة السعودية عن الشائعات الصحية وتصحيحها وجهود الوزارة في مكافحة المعلومات المضللة، خلال آخر خمس سنوات",
+      "answer_text": "@SaudiMOH — https://x.com/SaudiMOH. ابحث في كل تغريدات الحساب خلال آخر خمس سنوات، وجرّب صيغًا متنوعة للموضوع مثل: شائعات، إشاعات، معلومات مغلوطة، تصحيح، لا صحة لما يُتداول، مكافحة المعلومات المضللة.",
+      "status": "unserved",
+      "calls": [
+        { "query": "\"الشائعات الصحية وتصحيحها وجهود الوزارة\" from:SaudiMOH. since:2021-11-14_22:00:0", "status": "empty", "rows": 0 },
+        { "query": "الشائعات الصحية وتصحيحها وجهود الوزارة from:SaudiMOH. since:2021-11-14_22:00:00_", "status": "empty", "rows": 0 }
+      ],
+      "variants_file_bytes": 12,
+      "planning_llm_usd": 0.000399
+    },
+    {
+      "id": "msn_cfee23cdac3a2c7e4ab4",
+      "request_text": "تغريدات إكس من حساب @SaudiMOH (وزارة الصحة السعودية) عن الشائعات الصحية وتصحيحها وجهود الوزارة في مكافحة المعلومات المضللة، خلال آخر خمس سنوات، بعدد 400 تغريدة.",
+      "status": "unserved",
+      "calls": [
+        { "query": "\"الشائعات الصحية وتصحيحها وجهود الوزارة\" from:SaudiMOH since:2021-11-14_22:00:00", "status": "empty", "rows": 0 },
+        { "query": "الشائعات الصحية وتصحيحها وجهود الوزارة from:SaudiMOH since:2021-11-14_22:00:00_U", "status": "empty", "rows": 0 }
+      ],
+      "variants_file_bytes": 12,
+      "planning_llm_usd": 0.000293
+    }
+  ],
+  "cost_usd": { "provider": 0.00294, "planning_model": 0.001445 }
+}

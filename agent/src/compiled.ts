@@ -268,11 +268,16 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   let card: ToolCard | null = candidates[0] ?? null;
   // ROUND 33: SEVERAL validated candidates, at least one derived from the catalog: the model chooses among them (it sees only these, and its answer is checked to be one of them); no answer, or one that is not a candidate, leaves the best-ranked
   let selection: DiscoveryMark["selection"] | undefined;
-  if (card && deps.selectCapability && candidates.length >= 2) {
-    const views = candidates.map((c) => candidateViewOf(c, carriedBy(c, ask).carried, deps.catalog.byId.get(c.endpointId)?.capability ?? null));
+  // P0 (15 Nov 2026): THE MODEL CHOOSES ONLY AMONG CANDIDATES THAT CARRY AS MANY OF THE CUSTOMER'S CONDITIONS AS THE BEST-RANKED ONE. The choice's call silently answered nothing before (review.ts: thinking used the whole
+  // output cap), so the ranking always decided; now that it answers, a choice may never trade a written condition (the source, the period, the topic) for a tool the model prefers. Code decides what must be carried.
+  const written = (c: ToolCard): Set<string> => new Set(carriedBy(c, ask).carried.filter((x) => x !== "order"));
+  const best = card ? written(card) : new Set<string>();
+  const comparable = card ? candidates.filter((c) => { const w = written(c); return [...best].every((x) => w.has(x)) && (sourceUnenforced(card!, ask) || !sourceUnenforced(c, ask)); }) : [];
+  if (card && deps.selectCapability && comparable.length >= 2) {
+    const views = comparable.map((c) => candidateViewOf(c, carriedBy(c, ask).carried, deps.catalog.byId.get(c.endpointId)?.capability ?? null));
     const said = await deps.selectCapability({ request: deps.mission.request_text, topic: ask.topic.text, candidates: views }).catch(() => null);
     if (said) cost.usd += Math.max(0, Number(said.costUsd) || 0);
-    const picked = said ? candidates.find((c) => c.endpointId === said.endpointId) : undefined;
+    const picked = said ? comparable.find((c) => c.endpointId === said.endpointId) : undefined;
     if (picked) { card = picked; selection = { by: "model", candidates: candidates.map((c) => c.endpointId), reason: said!.reason }; }
     else selection = { by: "rank", candidates: candidates.map((c) => c.endpointId) };
   } else if (card && deps.cards) selection = { by: candidates.length === 1 ? "only_candidate" : "rank", candidates: candidates.map((c) => c.endpointId) };
@@ -430,11 +435,11 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
     }
     return { kind: "plan", plan: withStrategyNote(result.plan), ask, result, reads };
   };
-  /** P0 (15 Nov 2026): the plan says when its items came from the relaxed strategy (the exact words answered nothing). */
+  /** P0 (15 Nov 2026): the plan says when its items came from another strategy than the customer's words alone (the expanded vocabulary, or a relaxed query after an empty page). */
   const withStrategyNote = (p: PricedPlan): PricedPlan => {
     const relaxedUsed = searched.find((x) => x.strategy !== "exact" && x.rows > 0);
     if (!relaxedUsed) return p;
-    if (relaxedUsed.strategy === "expanded") return { ...p, notes_ar: [...(p.notes_ar ?? []), "البحث بعباراتك وحدها أرجع قليلًا، فوسّعنا البحث بصيغ أخرى للموضوع ومرادفاته مع الحفاظ على شروطك كلها؛ وكل ما يُختار يُفحص بأنه يتحدث فعلًا عن الموضوع."] };
+    if (relaxedUsed.strategy === "expanded") return { ...p, notes_ar: [...(p.notes_ar ?? []), "بحثنا بعباراتك وبصيغ أخرى للموضوع ومرادفاته معًا، لأن المنشورات لا تُكتب دائمًا بالكلمات نفسها، مع الحفاظ على شروطك كلها؛ وكل ما يُختار يُفحص بأنه يتحدث فعلًا عن الموضوع."] };
     const how = relaxedUsed.strategy === "words" ? "بكلمات الموضوع في أي ترتيب" : "في منشورات الحساب نفسه داخل الفترة، ثم فحصنا كل منشور بالموضوع";
     return { ...p, notes_ar: [...(p.notes_ar ?? []), `البحث بالعبارات كما كتبتها لم يُرجع نتائج، فبحثنا ${how}؛ ولم يُختر إلا ما يطابق شروطك.`] };
   };
@@ -447,6 +452,31 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   // P0 (15 Nov 2026, msn_8824508f840f703dee69): A SEARCH WITH NOTHING TO SEARCH IS NEVER SENT. «هل ممكن تتوسع اكتر في استخراج التغريدات من دون تكرار بواقع 400 تغريدة» reached the planner with no topic and no source; the X search was sent with no
   // query, refused (`missing_params:query`), and the customer read «مصادرنا لا تخدم هذا الطلب». A request whose search input is empty ends here, before any call, with the truth: we could not read what to search for.
   if (card.inputs.query && String(params[card.inputs.query.field] ?? "").trim() === "") return { kind: "cannot", ask, reason: "no_topic", reads };
+  // P0 (15 Nov 2026, msn_7365668c48162ce20bbd, msn_c6767995ad124f9edbec, msn_cfee23cdac3a2c7e4ab4): THE RESEARCH QUERY IS THE TOPIC'S SEARCH VOCABULARY, FROM THE FIRST READ. A platform search matches the words written in a post, and
+  // the customer's sentence («الشائعات الصحية وتصحيحها وجهود الوزارة …») is how the customer describes the research, not how the posts are worded: searched as an exact phrase (or as all of its words) it answered 0 rows in every
+  // recorded mission, and the expanded strategy (PR #502) ran only AFTER that literal read had spent one of the gateway's two planning samples. On a search that documents a disjunction and takes operators, the first read is now the
+  // EXPANDED query: the customer's own alternatives (or the topic) OR the model's search terms (researchJudge.ts `topicVariants`, cleaned by code), with every hard condition written exactly as the precise query writes it (the
+  // source's operator, the period, originals only). It contains the precise query's terms, so it finds everything the precise query finds. Every row is still judged against the customer's request before it can be chosen,
+  // delivered or charged. With no terms (no model, or a failed call) the precise query is read as before.
+  let expanded: { strategy: SearchStrategy; params: Record<string, unknown> } | null = null;
+  if (deps.variants && researchTopicOf(ask) && card.inputs.query?.or && card.inputs.query.operators) {
+    // the variants are asked ONCE per mission and kept: a later planning run (after an answer, a restart) builds the SAME expanded query, so its recorded page is reused instead of a new paid read or a refused third sample.
+    // A FAILED call is never kept (production kept {"terms":[]} from answers cut at their cap, and every later run of the mission read that as «no other wording»).
+    let terms: string[] | null = null;
+    try { const kept = await deps.store.getFile(deps.mission.id, VARIANTS_FILE); const o = kept ? (JSON.parse(kept) as { terms?: unknown }) : null; if (o && Array.isArray(o.terms) && o.terms.length > 0 && o.terms.every((t) => typeof t === "string")) terms = o.terms as string[]; } catch { terms = null; }
+    if (terms === null) {
+      const said = `${deps.mission.request_text}${deps.mission.answer_text ? ` — ${deps.mission.answer_text}` : ""}`;
+      const v = await deps.variants({ request: said, topic: ask.topic.text ?? "", alternatives: ask.topic.alternatives ?? [] }).catch(() => null);
+      if (v) {
+        cost.usd += Math.max(0, Number(v.costUsd) || 0);
+        terms = v.terms;
+        const put = (deps.store as Partial<Pick<AgentStore, "putFile">>).putFile;
+        if (put && !v.failed && v.terms.length > 0) await put.call(deps.store, deps.mission.id, VARIANTS_FILE, JSON.stringify({ terms }), "application/json").catch(() => undefined);
+      }
+    }
+    if (terms && terms.length > 0) expanded = expandedInputsOf(card, cardAsk, terms);
+    if (expanded) params = expanded.params;
+  }
   let first = await read(card.endpointId, params, card);
   reads.pool += 1;
   // ROUND 33: A VALID FALLBACK. When the chosen tool's read FAILS (not when the gateway refuses it: a refusal is a limit, never worked around) and another validated candidate of the same role exists, the next-ranked one is read ONCE (the planning budget, the daily cap and the catalog_only cap all apply to that read too); nothing changes for a mission without candidates from the discovery.
@@ -456,7 +486,7 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
       const altParams = parentInputs(alt, cardAsk);
       const r = await read(alt.endpointId, altParams, alt);
       reads.pool += 1;
-      if (!("failed" in r)) { fellBackFrom = card.endpointId; card = alt; params = altParams; first = r; if (card.derived) seen.choice = { by: "rank", candidates: candidates.map((c) => c.endpointId), reason: `fallback from ${fellBackFrom}` }; }
+      if (!("failed" in r)) { fellBackFrom = card.endpointId; card = alt; params = altParams; first = r; expanded = null; if (card.derived) seen.choice = { by: "rank", candidates: candidates.map((c) => c.endpointId), reason: `fallback from ${fellBackFrom}` }; }
     }
   }
   if ("failed" in first) return { kind: "cannot", ask, reason: first.refused ? "pool_refused" : "pool_failed", reads };
@@ -489,33 +519,13 @@ async function planInner(deps: CompiledPlanningDeps, cost: { usd: number }, seen
   };
   // P0 (15 Nov 2026, msn_84d0f3738c87d5ed3aee and two more): THE FIRST PAGE OF A SEARCH THAT TAKES OPERATORS ANSWERED NO ROW. Its cursor is not followed (production: an empty page's cursor answered 0 rows again, a paid read each time);
   // the one more read the gateway allows for this source goes to ONE relaxed strategy that keeps the source, the period and every other written condition (relaxedInputsOf), or to nothing when none is safe
-  searched.push({ strategy: "exact", rows: mapPage(card, first.page).length });
+  searched.push({ strategy: expanded ? "expanded" : "exact", rows: mapPage(card, first.page).length });
   const firstEmpty = mapPage(card, first.page).length === 0 && Boolean(card.inputs.query?.operators);
-  // P0 (15 Nov 2026, msn_cd5f32adadefb9bb971f): THE PRECISE QUERY'S FIRST PAGE IS SHORT of the request (fewer rows than a page holds, so its own wording is near its end): the one more read the gateway allows for this source goes to the EXPANDED
-  // strategy (the customer's alternatives and the topic's variants in one disjunction, every hard condition kept; expandedInputsOf) instead of the precise query's next page. The plan then executes the expanded query; every row it reads is judged.
-  const firstRows = mapPage(card, first.page).length;
-  let expanded: { strategy: SearchStrategy; params: Record<string, unknown> } | null = null;
-  if (deps.variants && researchTopicOf(ask) && !aboutQuery && card.inputs.query?.or && card.inputs.query.operators && firstRows < Math.min(need, Math.max(1, card.page.observedRowsPerPage))) {
-    // the variants are asked ONCE per mission and kept: a later planning run (after an answer, a restart) builds the SAME expanded query, so its recorded page is reused instead of a new paid read or a refused third sample
-    let terms: string[] | null = null;
-    try { const kept = await deps.store.getFile(deps.mission.id, VARIANTS_FILE); const o = kept ? (JSON.parse(kept) as { terms?: unknown }) : null; if (o && Array.isArray(o.terms) && o.terms.every((t) => typeof t === "string")) terms = o.terms as string[]; } catch { terms = null; }
-    if (terms === null) {
-      const v = await deps.variants({ request: deps.mission.request_text, topic: ask.topic.text ?? "", alternatives: ask.topic.alternatives ?? [] }).catch(() => null);
-      if (v) {
-        cost.usd += Math.max(0, Number(v.costUsd) || 0);
-        terms = v.terms;
-        const put = (deps.store as Partial<Pick<AgentStore, "putFile">>).putFile;
-        if (put) await put.call(deps.store, deps.mission.id, VARIANTS_FILE, JSON.stringify({ terms }), "application/json").catch(() => undefined);
-      }
-    }
-    if (terms && terms.length > 0) expanded = expandedInputsOf(card, cardAsk, terms);
-  }
-  const relaxed = firstEmpty && !aboutQuery && !expanded ? relaxedInputsOf(card, cardAsk) : null;
-  if (expanded) {
-    const r = await read(card.endpointId, expanded.params, card);
-    reads.pool += 1;
-    if (!("failed" in r)) { pages.push({ callId: r.callId, page: r.page }); track(card, r); searched.push({ strategy: "expanded", rows: mapPage(card, r.page).length }); params = expanded.params; }
-  } else if (relaxed) {
+  // the expanded query already holds every word of the precise one, so after an EMPTY expanded page the only other strategy worth a read is the source's own items in the period (each then judged): it shows whether the source
+  // answers at all for this period. The «words» strategy (all words, any order) is narrower than the expanded query and is never read after it.
+  const relaxedRaw = firstEmpty && !aboutQuery ? relaxedInputsOf(card, cardAsk) : null;
+  const relaxed = relaxedRaw && (!expanded || relaxedRaw.strategy === "source_items") ? relaxedRaw : null;
+  if (relaxed) {
     const r = await read(card.endpointId, relaxed.params, card);
     reads.pool += 1;
     // the plan keeps the params a fresh read at execution may use: the relaxed WORDS query still carries every topic word; the source's own items do not, so the precise query stays (a fresh read never collects off-topic items)

@@ -30,7 +30,9 @@ export function idOfLink(text: unknown): string | null {
   if (!m || !m[1]) return null;
   const segs = m[1].split("/").filter(Boolean);
   const seg = PREFIX_SEGMENTS.has((segs[0] ?? "").toLowerCase()) ? segs[1] : segs[0];
-  const id = (seg ?? "").replace(/^@/, "");
+  // P0 (15 Nov 2026, msn_c6767995ad124f9edbec): a link at the end of a sentence carries the sentence's punctuation («https://x.com/SaudiMOH.»); the identifier never ends with it (the search was sent as `from:SaudiMOH.`, a handle that
+  // does not exist, and answered 0 rows twice)
+  const id = (seg ?? "").replace(/^@/, "").replace(/[.\-]+$/, "");
   return validId(id) ? id : null;
 }
 
@@ -40,7 +42,7 @@ export function sourceIdOf(sourceText: unknown): string | null {
   if (t === "") return null;
   const link = /^(?:https?:\/\/|www\.)/i.test(t) || /^[a-z0-9-]+\.[a-z]{2,}\//i.test(t) ? idOfLink(t) : null;
   if (link) return link;
-  const bare = t.replace(/^@/, "");
+  const bare = t.replace(/^@/, "").replace(/[.،,؛;:!?؟]+$/, "");
   return validId(bare) ? bare : null;
 }
 
