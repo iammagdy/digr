@@ -124,11 +124,22 @@ describe("the model's reading reaches the card (no keyword list, no migration)",
       expect(card.plan.priorDelivery).toEqual({ missionIds: ["msn_dd7c2e9c131b8783bf2e"] });
       expect(card.plan.researchBrief.exclude_delivered).toBe(true);
     });
-    it("without that reading nothing is recorded (an ordinary new request is never narrowed)", async () => {
+    // CHANGED (P0, live msn_dae6a9b770b0560709cc): this message itself says «من دون تكرار»; the model's flag is no longer the only reading (the customer's own words record the exclusion, the worker verifies it)
+    it("the customer's own «من دون تكرار» records the earlier missions even when the model leaves the flag unset", async () => {
       model(brief());
       const db = world();
       await run(db);
       const card = (db.rows("messages") as any[]).find((m) => m.id === "acur");
+      expect(card.plan.priorDelivery).toEqual({ missionIds: ["msn_dd7c2e9c131b8783bf2e"] });
+    });
+    it("without any reading nothing is recorded (an ordinary new request is never narrowed)", async () => {
+      model(brief());
+      const db = world();
+      const rows = db.rows("messages") as any[];
+      const cur = rows.find((m) => m.id === "ucur");
+      cur.content_ar = "هات ٤٠٠ تغريدة عن الشائعات الصحية من حساب وزارة الصحة السعودية";
+      await agentChatTurn({ sb: db, userId: USER, conversationId: "c1", userMsgId: "ucur", assistantMsgId: "acur", message: cur.content_ar, conversationTitle: "t" });
+      const card = rows.find((m) => m.id === "acur");
       expect(card.plan.priorDelivery).toBeUndefined();
     });
   });
