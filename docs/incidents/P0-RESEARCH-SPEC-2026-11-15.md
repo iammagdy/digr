@@ -96,10 +96,60 @@ Totals: USD 0.0157 (provider 0.0083, model 0.0074) of USD 2.00, and 5 of 5 missi
   - planning and execution now agree, because the verdict is reused;
   - the files and methodology match the delivered data;
   - the charges match the card.
-- **Provider limitation (with evidence):**
-  - X search inside @SaudiMOH over five years returned 0 rows in 4 of 9 topic queries, including a six-term core of «شائعة/شائعات», while near-identical queries returned 10–40;
-  - any one run sees at most a few dozen tweets of this topic;
+- **Empty searches (corrected by the zero-spend audit below):** 4 of 9 topic queries inside @SaudiMOH returned 0 rows. This record first called that an intermittent provider; the stored calls do NOT prove it. See «Zero-spend forensic audit».
   - whether the account has 400 such tweets is unknown.
 - **Not proved:**
   - #510 (the stricter judge) and #511 (the no-repeat backstop) have run only in tests, because the live budget is used up;
   - the 137 rejected rows of mission 4 could not be inspected: their text is in storage I cannot read, so false negatives are unmeasured.
+
+## Zero-spend forensic audit (15 Nov 2026, after #512)
+
+No paid call, no live mission, no data change. Evidence: read-only queries of `missions`, `mission_calls`, `mission_events` and `storage.objects` (names and sizes only).
+
+### Method: queries proven by their fingerprints
+
+`mission_calls.params_digest` cuts every query at 80 characters, but keeps `__params_sig`, the SHA-256 of the call's complete inputs (`agent/src/gateway.ts` `paramsSignature`). A rebuilt query whose fingerprint equals the recorded one is the query that was sent. Five queries are proven that way:
+- the two plans' expanded queries (msn_ab60, msn_88a5: 354 characters, 16–17 terms);
+- the two empty core queries (msn_5581, msn_dae6: 150–167 characters, 6 terms);
+- the topic-less newest-posts query.
+
+The three empty expanded queries (msn_69cd, msn_5581, msn_dae6) are stored only as their first 80 characters; by construction they hold the model's variants and then the customer's three alternatives, 241–400 characters.
+
+### Task 1: the 180 rows of msn_ab60f5eb5c1bedcaffc7
+
+- **Access boundary.** Row texts are only in the private bucket `agent-missions`, which has no storage policy: only the service role reads it. The read-only database role sees the object names and sizes, not their contents:
+  - `excluded/tweets.json` (94,655 bytes) and `admin/excluded.csv`;
+  - `raw/call_0001…0009.json`;
+  - `research_judged.json`.
+  
+  The admin download needs an admin session; the test account is not admin, and this audit holds no credential. Reaching the bucket through the worker's production key was not attempted: that would mean using a production secret.
+- **Examined: 1 of 180**, the delivered tweet 2111754500776030669, stored on the plan (`pinned_rows`):
+  - @SaudiMOH, 18 Oct 2026, inside the period, an original post;
+  - **a confirmed false positive.** It reports action on a violation seen in a circulating clip and calls nothing a rumor or false;
+  - **it contains none of the 17 terms of the query that returned it**, so the search matched it on something other than its stored text (mechanism unknown).
+- **Not examined: 179.** These are 139 execution rows (137 rejected, 2 with no text) and the 40 planning-sample rows. Execution's first page repeats planning's first query (same fingerprint), so some of those rows are the same. False negatives remain unmeasured.
+- **Also examined (msn_88a5):** tweet 1466135018154205187 (@SaudiMOH, 1 Dec 2021: «…وأن نحذر من الشائعات»). It is a genuine warning against rumors, so relevant, and its only query word is «الشائعات».
+
+### Task 2: the empty searches
+
+| Fact | Status |
+|---|---|
+| Account, period and filter are identical in every topic query (`from:SaudiMOH since:2021-11-14_22:00:00_UTC until:2026-11-15_22:00:00_UTC -filter:replies`, `Latest`, 20 per page); the date format works (the same conditions returned 20, 10 and 180 rows) | confirmed |
+| Every call answered HTTP 200; the empty ones returned 0 rows | confirmed |
+| The only queries sent twice with identical inputs returned identical counts (20/20 twice) | confirmed: **no evidence of intermittency** |
+| msn_88a5's first page held 10 rows (< 20) and its cursor page 0: the end of that query's results | consistent with normal paging |
+| The empty CORE queries never carried the customer's «الشائعات»; the one relevant tweet found contains that word and none of their six terms | confirmed: **code defect, fixed below** |
+| The empty EXPANDED queries of msn_5581 (16:35) and msn_dae6 (17:00) carried «الشائعات» (the customer's alternatives are always appended) and the same conditions as msn_88a5's query, which returned that tweet at 16:18 | confirmed from code and stored alternatives; contradicts a boolean OR over a stable index |
+| Why: a hidden length or complexity limit (empty ones are 241–400 characters, ≥10 terms; non-empty ones 354), or a provider answering differently over time | **unresolved hypotheses**: no identical query exists to separate them |
+| msn_ab60 returned 180 rows because it carried common words («نفي», «تصحيح», «غير صحيح», «لا صحة»), which is why 137 were off-topic | hypothesis (row texts unreadable) |
+
+### Task 3: #510 and #511 checked offline
+
+- **#510 (the stricter judge)** is a prompt rule. Tests prove the prompt says it; only a real model can prove it changes the verdict on the clip tweet. **Not proven.**
+- **No deterministic filter can discard a genuine rumor correction.** A stage judged by the model sends every row with text to the meaning review (`classifyRowDetailed`: `review`). Only a row with no text left once links and mentions are dropped is set aside, counted as «no text»; a video-only correction is lost that way.
+- **Planning and execution stay consistent.** Execution reuses planning's verdict for the same row and spec (#509). Limit: the verdict file is keyed by the spec, not by the judge's rules, so a mission planned before a rule change and executed after reuses the older verdicts. No mission is waiting across #510 today.
+- **#511.** The owner's follow-up words alone record the exclusion; the first request's words never do, whatever the summary says.
+
+### Fix
+
+`coreExpandedInputsOf` now puts the customer's own short alternatives first, then the model's variants, at most six terms. It makes no new call, and every row is still judged. Production's msn_5581 core reproduces exactly from the old order (fingerprint match), and the fixed core carries «الشائعات». Whether it returns rows live is **not proven**. Tests: `tests/p0-zero-spend-audit.test.ts`.

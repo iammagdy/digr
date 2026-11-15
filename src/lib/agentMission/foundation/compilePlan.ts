@@ -247,6 +247,8 @@ export const CORE_QUERY_MAX_TERMS = 6;
  * the account, while shorter queries of the same vocabulary over the same account and period answered rows (msn_6d86…: 13). After an empty expanded page, the one more read the gateway allows went to the account's newest posts with no
  * topic at all, and none of them was about the request. The core keeps the SAME hard conditions (the source's operator, the period, originals only) and the topic's shortest, most useful forms: the model's first terms of one or
  * two words and the customer's own alternatives of one or two words, at most CORE_QUERY_MAX_TERMS. Null when nothing short is left, or when it is the expanded query itself. Every row is still judged against the request.
+ * The customer's own short alternatives come FIRST (zero-spend audit, 15 Nov 2026, msn_55816a05a6afc274e958 and msn_dae6a9b770b0560709cc, both queries proven by their recorded `__params_sig`): with the model's variants first,
+ * six short variants filled the cap and the customer's own «الشائعات» was never searched, while the one relevant tweet production had found (1466135018154205187) matches that word and none of the six.
  */
 export function coreExpandedInputsOf(card: ToolCard, ask: Ask, variants: ReadonlyArray<string>, expandedParams: Record<string, unknown> | null): { strategy: SearchStrategy; params: Record<string, unknown> } | null {
   const q = card.inputs.query;
@@ -254,7 +256,7 @@ export function coreExpandedInputsOf(card: ToolCard, ask: Ask, variants: Readonl
   const short = (t: string): boolean => t.trim() !== "" && t.trim().split(/\s+/).length <= 2;
   const own = (ask.topic.alternatives ?? []).filter(short);
   const terms: string[] = [];
-  for (const t of [...variants.filter(short), ...own]) { if (!terms.includes(t.trim())) terms.push(t.trim()); if (terms.length >= CORE_QUERY_MAX_TERMS) break; }
+  for (const t of [...own, ...variants.filter(short)]) { if (!terms.includes(t.trim())) terms.push(t.trim()); if (terms.length >= CORE_QUERY_MAX_TERMS) break; }
   if (terms.length === 0) return null;
   const params = parentInputs(card, { ...ask, topic: { ...ask.topic, alternatives: terms } });
   if (expandedParams && String(params[q.field] ?? "") === String(expandedParams[q.field] ?? "")) return null;
