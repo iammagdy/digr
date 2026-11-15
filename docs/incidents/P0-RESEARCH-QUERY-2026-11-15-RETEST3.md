@@ -116,6 +116,17 @@ A separate review of the diff found five problems. All are fixed, each with a te
   * code drops a term whose every word is a word of the source's name, or that contains its identifier (`namesTheSource`);
   * the variants request names the source the posts are read from, and tells the model to avoid its name and its general field.
 
+## 4c. Live acceptance, second mission after #504 (`msn_5a1cf6c36852566f9e41`)
+
+* **The source's name is gone from the terms.** The expanded query inside `from:SaudiMOH` over five years had 12 terms of the customer's vocabulary («المعلومات المضللة», «شائعة», «شائعات», «نفي شائعة» …). It returned **0** posts.
+* **The relaxed read found nothing either.** It read the account's newest 20 posts; none was about the topic, and the customer got the «no relevant posts» question.
+* **The search reaches back years.** The earlier incident's hits are dated 2023 and 2025, so a short search window is not the explanation.
+* **The vocabulary is.** The account does not write the customer's analyst words. The one post judged relevant in the first mission said «رصدت وزارة الصحة مقطعًا **متداولًا** …».
+* **Fix (general):**
+  * the variants prompt asks for the authors' own register: how such posts are actually worded by their authors when announcing, warning, correcting or denying, not only the customer's words;
+  * at most 14 terms;
+  * the question now states what was really read («بحثنا داخل الحساب بكلمات الموضوع وصيغه فلم يُرجع البحث شيئًا، ثم قرأنا أحدث منشوراته …»), instead of claiming the rows shared words with the topic.
+
 ## 5. What is NOT established (needs a live, authorized acceptance)
 
 * **Provider coverage.** Unknown until a paid read: whether the X search returns @SaudiMOH's posts about rumors across five years for a disjunction of terms with `from:` and `since/until`.

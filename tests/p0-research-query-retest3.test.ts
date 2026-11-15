@@ -260,3 +260,24 @@ describe("LIVE ACCEPTANCE 1 (msn_1d1d7964a2b6da26378b, after #503): the model's 
     expect(asked[0]).toEqual(["وزارة الصحة السعودية", "SaudiMOH"]);
   });
 });
+
+describe("LIVE ACCEPTANCE 2 (msn_5a1cf6c36852566f9e41, after #504): the topic's words inside the account answered nothing", () => {
+  it("the end question says what was really read (the search by the topic's words answered nothing; the newest posts were read), never «some words resembled»", async () => {
+    const m = { ...fx.missions[0], source_answer: "SaudiMOH" };
+    // the account's newest posts, none about rumors (synthetic texts; production's 20 rows are not readable from the database)
+    const newest = Array.from({ length: 20 }, (_, i) => post(`93000000000000000${String(i).padStart(2, "0")}`, `حملة التطعيم الموسمية في المراكز الصحية رقم ${i}`));
+    const { r, queries } = await plan(m, [pageOf([], null), pageOf(newest, null)], { variants: async () => ({ terms: ["شائعات", "معلومات مغلوطة"], costUsd: 0.0001 }) });
+    expect(queries[0]).toMatch(/^\(شائعات OR /);
+    expect(queries[1]).toMatch(/^from:SaudiMOH since:/);
+    expect(r.kind).toBe("question");
+    if (r.kind !== "question") return;
+    expect(r.question).toContain("بحثنا داخل الحساب بكلمات الموضوع وصيغه فلم يُرجع البحث شيئًا");
+    expect(r.question).toContain("لا يثبت أن الحساب لم ينشر عن الموضوع");
+    expect(r.question).not.toContain("وإن تشابهت بعض كلماته");
+  });
+  it("the variants prompt asks for the AUTHORS' own register (how the source itself words the topic), not only the customer's words", async () => {
+    const sys: string[] = [];
+    await topicVariants((async (i: { system: string }) => { sys.push(i.system); return { text: "[\"x y\"]", usage: { input_tokens: 1, output_tokens: 1 } }; }) as never)({ request: "r", topic: "t", alternatives: [] });
+    expect(sys[0]).toMatch(/how the AUTHORS of such posts actually write/);
+  });
+});
