@@ -21,7 +21,8 @@ import { classifyNoCardEnd, refusalSentenceAr } from "../../src/lib/agentMission
 import { parentCountsOf, parentsBelowShare } from "../../src/lib/agentMission/parents";
 import { settleMission } from "../../src/lib/agentMission/lifecycle";
 import { planningJudge, topicVariants } from "./researchJudge";
-import { customerWordsOf, readResearchSpec, researchSpecFor, specSignature, type ResearchSpec } from "./researchSpec";
+import { executionSpecFor, researchSpecFor, type ResearchSpec } from "./researchSpec";
+import type { StoredCustomerWords } from "../../src/lib/agentMission/customerWords";
 import { ensureOwned, isOwnershipError } from "./ownership";
 import { compensateFreeRerun } from "../../src/lib/agentMission/freeRerun";
 import { customerPlanView, namesAreWritten, requestedRowsOf, type PricedPlan } from "../../src/lib/agentMission/plan";
@@ -151,7 +152,7 @@ export interface RunnerDeps {
   /** LLM-FIRST OBJECTIVES (capability_discovery_v1 only): the research brief the chat stored with this mission's card (`messages.plan.researchBrief`, written by the server only), read back with its schema. Absent (tests that do not need it): none. */
   readMissionBrief?: (missionId: string, userId: string) => Promise<ResearchBrief | null>;
   /** P0 (15 Nov 2026): the customer's OWN messages the chat server stored with this mission's card (`messages.plan.customerWords`, written by code). Absent, or none stored: the mission's text stands for them. */
-  readMissionWords?: (missionId: string, userId: string) => Promise<string[] | null>;
+  readMissionWords?: (missionId: string, userId: string) => Promise<StoredCustomerWords | null>;
   /** P0 (15 Nov 2026): the earlier missions the chat recorded on this mission's card because the customer asked not to receive delivered items again (`messages.plan.priorDelivery`, server-written). Absent: none. */
   readPriorDeliveryCard?: ReadPriorDeliveryCard;
   /** P0 (15 Nov 2026): the earlier missions of this mission's conversation (same customer), to carry a source identifier the customer already confirmed (conversationSource.ts). Absent: never carried. */
@@ -276,14 +277,14 @@ const specEventAr = (spec: ResearchSpec): string => {
   if (spec.by !== "model") return "قياس داخلي: مواصفة البحث من كلمات العميل وحدها؛ لم يُعطِ النموذج مواصفة صالحة.";
   return cut(`قياس داخلي: مواصفة البحث. المقصود: ${cut(spec.criterion, 300)}. البدائل: ${spec.anyOf.map((a) => cut(a, 120)).join("؛ ")}.${spec.notRelevant.length > 0 ? ` لا يدخل: ${spec.notRelevant.map((a) => cut(a, 120)).join("؛ ")}.` : ""}`, 1090);
 };
-/** The spec the execution judges with: the one planning stored; when none was stored (a mission planned before the spec existed, or its call failed), the customer's own words alone (no model call, no criterion). */
-async function executionResearchSpec(deps: RunnerDeps, store: AgentStore, mission: MissionRecord): Promise<ResearchSpec | null> {
-  const kept = await readResearchSpec(store, mission.id);
-  if (kept) return kept;
+/**
+ * The spec the execution judges with: the one planning stored for exactly this mission's inputs, else the customer's words alone (never a spec of other inputs). Only for a plan with a research topic judged by meaning (`judge: "model"`):
+ * the review of any other plan (a sector, a name) is unchanged.
+ */
+async function executionResearchSpec(deps: RunnerDeps, store: AgentStore, mission: MissionRecord, plan: PricedPlan): Promise<ResearchSpec | null> {
+  if (!plan.stages.some((s) => s.relevance?.judge === "model")) return null;
   const stored = deps.readMissionWords ? await deps.readMissionWords(mission.id, mission.user_id).catch(() => null) : null;
-  if (!stored || stored.length === 0) return null;
-  const words = customerWordsOf(stored, mission);
-  return { v: 1, sig: specSignature(words, mission), customerWords: words, criterion: mission.request_text, anyOf: [mission.request_text], notRelevant: [], by: "words" };
+  return executionSpecFor(store, mission, stored);
 }
 
 /** The least time the contact finder steps may take after the stages, even when the stages used the mission's whole wall time (a lookup is about a second per person). */
@@ -912,7 +913,7 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   const state = newRunState(await lastOut(store, mission.id));
   // THE REVIEW of uncertain rows: a small model request per batch, within 20% of the mission's revenue (rows beyond it are not delivered and not charged); its tokens and cost are counted from the API's own answer
   const reviewBudgetUsd = plan.price.reviewBudgetUsd ?? reviewBudgetUsdFor(plan.price.maxChargePoints);
-  const researchSpec = deps.reviewCall ? await executionResearchSpec(deps, store, mission).catch(() => null) : null;
+  const researchSpec = deps.reviewCall ? await executionResearchSpec(deps, store, mission, plan).catch(() => null) : null;
   const reviewer = deps.reviewCall ? createReviewer({ call: deps.reviewCall, store, missionId: mission.id, requestText: `${mission.request_text}${mission.answer_text ? ` — ${mission.answer_text}` : ""}`, ...(researchSpec ? { spec: researchSpec, answer: mission.answer_text } : {}), budgetUsd: reviewBudgetUsd, ceilingUsd: reviewCeilingUsdFor(reserve), log: deps.log }) : undefined;
   const reviewBefore = await readReviewState(store, mission.id);
   // THE ONE ITEM STORE: every item the engine or the model saves goes through it; a resumed mission continues from its log
@@ -1072,7 +1073,7 @@ async function settleExecution(deps: RunnerDeps, mission: MissionRecord, plan: P
     try {
       // STAGE 3, PART B: each contact column's gap, read from the cells of these very rows, joins «حدود هذا التسليم» only when DIGER_STAGE3_COMPANIES is on for the account (unset: no line, the file as it was)
       const b2bLines = b2bFlagSet() && b2bEngineOn(await accountIsTest(store, mission.user_id)) ? b2bLimitLines(plan, rowsByStage) : [];
-      const built = await buildMissionFiles(plan, rowsByStage, missionFactsOf({ requestText: mission.request_text, customerWords: (await readResearchSpec(store, mission.id))?.customerWords ?? null, plan, snap, reviewStop: checked.stop }), companyMailboxesOf(plan, snap), { ...(hadOpenReplies ? { repliesJudged: true } : {}), approvedPlan, ...(b2bLines.length > 0 ? { extraLimitLines: b2bLines } : {}) });
+      const built = await buildMissionFiles(plan, rowsByStage, missionFactsOf({ requestText: mission.request_text, customerWords: (await executionResearchSpec(deps, store, mission, plan).catch(() => null))?.customerWords ?? null, plan, snap, reviewStop: checked.stop }), companyMailboxesOf(plan, snap), { ...(hadOpenReplies ? { repliesJudged: true } : {}), approvedPlan, ...(b2bLines.length > 0 ? { extraLimitLines: b2bLines } : {}) });
       qualityLine = qualityResultLineAr(built.companyQuality);
       // THE DELIVERY CONTRACT (round 14): what it found is recorded for the admin; the file only had its DESCRIPTION completed (a limits line, a precision cell, a mark cell), never a row or a value
       if (built.contract.violations.length > 0) {

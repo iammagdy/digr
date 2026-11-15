@@ -26,7 +26,8 @@ describe("the chat hands a research request to the agent", () => {
     expect(db.rows("missions")).toHaveLength(1);
     expect(db.rows("missions")[0]).toMatchObject({ id: r.agentMission.id, user_id: "u1", status: "queued", request_text: "هات ٣٠٠ تغريدة عن محمد صلاح بعد انتقاله لتركيا" });
     const assistant = db.rows("messages").find((m: any) => m.id === r.messageId);
-    expect(assistant.plan).toEqual({ agentMissionId: r.agentMission.id });
+    // P0 (research spec): the card also carries the customer's own words, exactly as typed (code-written)
+    expect(assistant.plan).toEqual({ agentMissionId: r.agentMission.id, customerWords: ["هات ٣٠٠ تغريدة عن محمد صلاح بعد انتقاله لتركيا"] });
     expect(db.rows("plans_quotes")).toHaveLength(0);
   });
 

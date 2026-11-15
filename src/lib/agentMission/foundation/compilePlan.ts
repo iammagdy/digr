@@ -368,6 +368,8 @@ export function repliesSizing(input: { comments: number; known: ReadonlyArray<nu
 
 /** P0 (15 Nov 2026): the research gate, said on every plan of a research topic. */
 export const RESEARCH_GATE_NOTE_AR = "لا نعتمد على ورود الكلمة وحدها: كل عنصر يُفحص قبل التسليم بأنه يتحدث فعلًا عن موضوعك كما كتبته، وما لا يتحدث عنه لا يُسلَّم ولا يُحتسب.";
+/** P0 (15 Nov 2026): the card's line of the research criterion (the mission's research spec). */
+export const criterionNoteAr = (criterion: string): string => `المقصود بموضوعك كما فهمناه من كلماتك: ${criterion.replace(/[.،؛:\s]+$/u, "")}. راجعه قبل الاعتماد، وإن لم يطابق ما تقصده فعدّل طلبك.`;
 /** Every research-gate sentence starts with this (the plan's notes are matched by it). */
 export const RESEARCH_GATE_PREFIX_AR = "لا نعتمد على ورود الكلمة وحدها:";
 /** The same, for a plan whose comments or replies follow the chosen items: those are delivered as the source gives them (never judged), so the sentence says the check is of the items they belong to, in the platform's own words. */
@@ -672,6 +674,8 @@ export function compilePlan(input: CompileInput): CompileResult {
   if (topicAlts.length > 0) notes.push(poolCard.inputs.query?.or ? `بحثنا عن أيٍّ من: ${alternativesAr(topicAlts)}.` : `هذا المصدر يبحث بعبارة واحدة في المرة، فبحثنا بـ«${topicAlts[0]}».`);
   // P0: what decides a research result is said once, truthfully: the meaning, judged on every row, never the presence of a word
   if (relevance) notes.push(parentOnly ? RESEARCH_GATE_NOTE_AR : researchGateParentsNoteAr(ask.platform));
+  // P0 (15 Nov 2026): the research criterion every item is judged against (the mission's research spec, made from the customer's own words), stated BEFORE approval so the customer can see whether it is what they meant
+  if (relevance && typeof input.criterion === "string" && input.criterion.trim() !== "") notes.push(criterionNoteAr(relevance.subject_ar));
   if (unrelatedLeftOut > 0) notes.push(judged ? `تركنا ${toArabicDigits(unrelatedLeftOut)} مما قرأناه لأنه لا يتحدث عن «${ask.topic.text}» وإن تشابهت بعض كلماته، ولا يدخل في السعر.` : `لم نختر شيئًا لا يذكر «${ask.topic.text}» في نصه؛ تركنا ${toArabicDigits(unrelatedLeftOut)} مما قرأناه لأن نصه لا يذكر الموضوع، ولا يدخل في السعر.`);
   if (ask.preferences && ask.preferences.length > 0) notes.push(`عاملنا ما كتبته بين قوسين أو كشرط إتاحة («${ask.preferences.join("»، «")}») كتفضيل لا كجزء من الموضوع، فلم نضفه إلى كلمات البحث.`);
   if (notOriginal > 0) notes.push(`لم نختر أي تغريدة هي نفسها ردّ على حساب آخر؛ تركنا ${toArabicDigits(notOriginal)} من هذا النوع مما قرأناه، لأنك طلبت منشورات أصلية.`);

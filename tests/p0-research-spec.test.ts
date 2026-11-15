@@ -5,9 +5,10 @@ import { planByCompiler } from "../agent/src/compiled";
 import { RAW_PATH } from "../agent/src/gateway";
 import { anthropicReviewCall, createReviewer, reviewPrompt, type ReviewCall } from "../agent/src/review";
 import { planningJudge, topicVariants } from "../agent/src/researchJudge";
-import { checkedSpecAnswer, customerAlternativesCount, customerWordsOf, readResearchSpec, researchSpecFor, RESEARCH_SPEC_FILE, specBlock, specSignature, SPEC_SYSTEM, type ResearchSpec } from "../agent/src/researchSpec";
+import { checkedSpecAnswer, customerAlternativesCount, customerWordsOf, executionSpecFor, readResearchSpec, researchSpecFor, RESEARCH_SPEC_FILE, specBlock, specSignature, SPEC_SYSTEM, type ResearchSpec } from "../agent/src/researchSpec";
 import { buildMethodology, periodLimitLineAr, topicRelationLinesOf, type MissionFacts } from "../agent/src/methodology";
-import { customerWordsFromPlan, customerWordsToStore, CUSTOMER_WORDS_MAX_TURNS } from "../src/lib/agentMission/customerWords";
+import { customerWordsFromPlan, customerWordsToStore, CUSTOMER_WORDS_MAX_TURNS, splitCustomerWords } from "../src/lib/agentMission/customerWords";
+import { criterionNoteAr } from "../src/lib/agentMission/foundation/compilePlan";
 import { buildAsk } from "../src/lib/agentMission/foundation/ask";
 import { researchRelevanceOf } from "../src/lib/agentMission/foundation/compilePlan";
 import { TOPIC_RELATION_KEY, TOPIC_RELATION_TITLE_AR, topicRelationAr } from "../src/lib/agentMission/foundation/topicChoice";
@@ -71,13 +72,14 @@ describe("the customer's own words are stored with the card by code, bounded", (
     expect(kept).toHaveLength(CUSTOMER_WORDS_MAX_TURNS);
     expect(kept[kept.length - 1]).toBe("رسالة 12 ثانية");
     expect(customerWordsToStore(["x".repeat(2000)])[0]).toHaveLength(900);
-    expect(customerWordsFromPlan({ customerWords: ["  ", 5, "أهلًا", null] })).toEqual(["أهلًا"]);
+    expect(customerWordsFromPlan({ customerWords: ["  ", 5, "أهلًا", null] })).toEqual({ current: ["أهلًا"], earlier: [] });
+    expect(customerWordsFromPlan({ customerWords: ["ب"], earlierWords: ["أ", 3] })).toEqual({ current: ["ب"], earlier: ["أ"] });
     expect(customerWordsFromPlan({ agentMissionId: "m" })).toBeNull();
     expect(customerWordsFromPlan(null)).toBeNull();
   });
   it("a mission with no stored words is judged with its own text (admin missions, older cards)", () => {
-    expect(customerWordsOf(null, { request_text: "نص  المهمة" })).toEqual(["نص المهمة"]);
-    expect(customerWordsOf([FIRST.customer_said, FOLLOW.customer_said], { request_text: "x" })).toEqual([FIRST.customer_said, FOLLOW.customer_said]);
+    expect(customerWordsOf(null, { request_text: "نص  المهمة" })).toEqual({ current: ["نص المهمة"], earlier: [] });
+    expect(customerWordsOf({ current: [FOLLOW.customer_said], earlier: [FIRST.customer_said] }, { request_text: "x" })).toEqual({ current: [FOLLOW.customer_said], earlier: [FIRST.customer_said] });
   });
 });
 
@@ -107,28 +109,28 @@ describe("one spec per mission: asked once, stored, and read the same way by pla
     const store = createMemoryStore();
     const seen: Array<Record<string, unknown>> = [];
     const m = mission({ id: FIRST.id, request_text: FIRST.request_text, answer_text: FIRST.answer_text });
-    const a = await researchSpecFor({ call: specCall(GOOD, seen), store, mission: m, storedWords: [FIRST.customer_said], fallbackSubject: "x" });
+    const a = await researchSpecFor({ call: specCall(GOOD, seen), store, mission: m, storedWords: { current: [FIRST.customer_said], earlier: [] }, fallbackSubject: "x" });
     expect(a.spec.by).toBe("model");
     expect(a.costUsd).toBeGreaterThan(0);
     expect(String(seen[0].user)).toContain(FIRST.customer_said);
     expect(String(seen[0].user)).toContain("@SaudiMOH");
     expect((seen[0].tool as { name: string }).name).toBe("research_spec");
     expect(String(seen[0].system)).toBe(SPEC_SYSTEM);
-    const b = await researchSpecFor({ call: specCall(GOOD, seen), store, mission: m, storedWords: [FIRST.customer_said], fallbackSubject: "x" });
+    const b = await researchSpecFor({ call: specCall(GOOD, seen), store, mission: m, storedWords: { current: [FIRST.customer_said], earlier: [] }, fallbackSubject: "x" });
     expect(seen).toHaveLength(1);
     expect(b.costUsd).toBe(0);
     expect(b.spec).toEqual(a.spec);
     expect(await readResearchSpec(store, FIRST.id)).toEqual(a.spec);
   });
   it("a changed request (another answer, other words) makes a new spec", () => {
-    const words = [FIRST.customer_said];
+    const words = { current: [FIRST.customer_said], earlier: [] };
     expect(specSignature(words, { request_text: "a", answer_text: "@x" })).not.toBe(specSignature(words, { request_text: "a", answer_text: "@y" }));
-    expect(specSignature(words, { request_text: "a", answer_text: null })).not.toBe(specSignature([...words, "تعديل"], { request_text: "a", answer_text: null }));
+    expect(specSignature(words, { request_text: "a", answer_text: null })).not.toBe(specSignature({ current: [...words.current, "تعديل"], earlier: [] }, { request_text: "a", answer_text: null }));
   });
   it("a FAILED answer (merged alternatives, cut at the cap, no answer) falls back to the customer's words and is NOT stored, so the next run asks again", async () => {
     for (const call of [specCall({ ...GOOD, any_of: ["الكل"] }), specCall("", [], { truncated: true }), (async () => null) as unknown as ReviewCall]) {
       const store = createMemoryStore();
-      const r = await researchSpecFor({ call, store, mission: mission({ id: "m1", request_text: FIRST.request_text }), storedWords: [FIRST.customer_said], fallbackSubject: "محتوى يتحدث فعلًا عن: الشائعات" });
+      const r = await researchSpecFor({ call, store, mission: mission({ id: "m1", request_text: FIRST.request_text }), storedWords: { current: [FIRST.customer_said], earlier: [] }, fallbackSubject: "محتوى يتحدث فعلًا عن: الشائعات" });
       expect(r.spec.by).toBe("words");
       expect(r.spec.customerWords).toEqual([FIRST.customer_said]);
       expect(await store.getFile("m1", RESEARCH_SPEC_FILE)).toBeNull();
@@ -137,7 +139,7 @@ describe("one spec per mission: asked once, stored, and read the same way by pla
 });
 
 describe("R2/R3: every judgment reads the customer's own words and the same criterion", () => {
-  const spec: ResearchSpec = { v: 1, sig: "s", customerWords: [FIRST.customer_said, FOLLOW.customer_said], criterion: GOOD.criterion, anyOf: GOOD.any_of, notRelevant: GOOD.not_relevant, by: "model" };
+  const spec: ResearchSpec = { v: 1, sig: "s", customerWords: [FOLLOW.customer_said], earlierWords: [FIRST.customer_said], criterion: GOOD.criterion, anyOf: GOOD.any_of, notRelevant: GOOD.not_relevant, by: "model" };
   it("the prompt carries the customer's «أو» verbatim, the alternatives, the near misses and the confirmed account", () => {
     const p = reviewPrompt({ requestText: FOLLOW.request_text, subject: spec.criterion, rows: [{ text: "t" }], spec, answer: "@SaudiMOH" });
     expect(p).toContain("الشائعات الصحية أو تصحيح الشائعات أو جهود الوزارة في مكافحة المعلومات المضللة");
@@ -205,7 +207,7 @@ describe("planning asks for the spec once and uses it everywhere", () => {
     let asked = 0;
     const seenJudge: Array<{ subject: string; spec?: ResearchSpec | null }> = [];
     const seenVariants: Array<{ spec?: ResearchSpec | null }> = [];
-    const spec: ResearchSpec = { v: 1, sig: "s", customerWords: [FIRST.customer_said], criterion: GOOD.criterion, anyOf: GOOD.any_of, notRelevant: GOOD.not_relevant, by: "model" };
+    const spec: ResearchSpec = { v: 1, sig: "s", customerWords: [FIRST.customer_said], earlierWords: [], criterion: GOOD.criterion, anyOf: GOOD.any_of, notRelevant: GOOD.not_relevant, by: "model" };
     const gateway = {
       calls: 0,
       async tregCall(input: { endpoint_id?: unknown }) {
@@ -232,6 +234,8 @@ describe("planning asks for the spec once and uses it everywhere", () => {
     const parent = r.plan.stages.find((s) => s.parent_key === null)!;
     expect(parent.relevance?.subject_ar).toBe(GOOD.criterion);
     expect(parent.relevance?.judge).toBe("model");
+    // the card states the criterion before approval
+    expect(r.plan.notes_ar).toContain(criterionNoteAr(GOOD.criterion));
     // only the judged-relevant tweet is a planned sample (the minister's tour is not)
     expect((parent.pinned_rows ?? []).map((x: Record<string, unknown>) => String(x.id))).toEqual(["9100000000000000001"]);
     expect((r as { llmCostUsd?: number }).llmCostUsd).toBeCloseTo(0.0005 + 0.0001 + 0.0002, 8);
@@ -279,12 +283,55 @@ describe("R4: the methodology agrees with what was delivered", () => {
   });
 });
 
+describe("independent review findings (fixed)", () => {
+  it("F1: an answer card of the same mission has no words; the worker reads the newest card that HOLDS them", async () => {
+    const { newestCustomerWords } = await import("../src/lib/agentMission/customerWords");
+    // newest first, as the worker reads them: the answer card (no words) then the request's card
+    expect(newestCustomerWords([{ plan: { agentMissionId: "m" } }, { plan: { agentMissionId: "m", customerWords: [CRITICAL] } }])).toEqual({ current: [CRITICAL], earlier: [] });
+    expect(newestCustomerWords([{ plan: { agentMissionId: "m" } }, null])).toBeNull();
+  });
+  it("F2: execution never judges with a spec of other inputs (a re-plan whose spec call failed); it uses the customer's words alone", async () => {
+    const store = createMemoryStore();
+    const before = mission({ id: "m2", request_text: FIRST.request_text, answer_text: null });
+    const words = { current: [FIRST.customer_said], earlier: [] };
+    await researchSpecFor({ call: specCall(GOOD), store, mission: before, storedWords: words, fallbackSubject: "x" });
+    const after = mission({ id: "m2", request_text: FIRST.request_text, answer_text: "@SaudiMOH" });
+    // the re-plan after the answer: the call fails, the stale model spec is replaced by the words-only one
+    await researchSpecFor({ call: (async () => null) as unknown as ReviewCall, store, mission: after, storedWords: words, fallbackSubject: "x" });
+    expect((await readResearchSpec(store, "m2"))?.by).toBe("words");
+    const used = await executionSpecFor(store, after as never, words);
+    expect(used.by).toBe("words");
+    expect(used.customerWords).toEqual([FIRST.customer_said]);
+    // and a spec stored for exactly these inputs IS the one execution uses
+    await researchSpecFor({ call: specCall(GOOD), store, mission: after, storedWords: words, fallbackSubject: "x" });
+    expect((await executionSpecFor(store, after as never, words)).by).toBe("model");
+  });
+  it("F3: an earlier request on another subject (or another part of a split request) never imposes its «أو» alternatives", () => {
+    const earlier = ["هات تغريدات عن الهلال أو النصر"];
+    const now = ["هات تغريدات عن السيارات الكهربائية"];
+    expect(customerAlternativesCount([...earlier, ...now], NOW, "تغريدات عن السيارات الكهربائية")).toBe(0);
+    expect(checkedSpecAnswer({ criterion: "تغريدات تتناول السيارات الكهربائية", any_of: ["السيارات الكهربائية"], not_relevant: [] }, { alternatives: customerAlternativesCount([...earlier, ...now], NOW, "تغريدات عن السيارات الكهربائية") })).not.toBeNull();
+    // the earlier request is shown to the judge as context only, never as this request
+    const p = specBlock({ v: 1, sig: "s", customerWords: now, earlierWords: earlier, criterion: "c", anyOf: ["السيارات الكهربائية"], notRelevant: [], by: "model" }, null);
+    expect(p.indexOf("context only")).toBeLessThan(p.indexOf("of THIS request"));
+    expect(p).toContain("an earlier request on another subject is not part of this one");
+  });
+  it("F4: a provider or model name never reaches the customer as «المقصود», even when the customer typed it", () => {
+    for (const name of ["Apify", "Firecrawl", "OpenAI", "Claude"]) {
+      expect(checkedSpecAnswer({ criterion: `منشورات تتناول خدمة ${name} الجديدة`, any_of: ["الخدمة"], not_relevant: [] }, { alternatives: 0, words: [`عايز منشورات عن ${name}`] })).toBeNull();
+    }
+  });
+  it("F5: the card states the criterion before approval (compiled plans had no «المقصود» line)", () => {
+    expect(criterionNoteAr(`${GOOD.criterion}.`)).toBe(`المقصود بموضوعك كما فهمناه من كلماتك: ${GOOD.criterion}. راجعه قبل الاعتماد، وإن لم يطابق ما تقصده فعدّل طلبك.`);
+  });
+});
+
 describe("the follow-up keeps the earlier request's words for the spec", () => {
   it("the stored words of a continuation hold the earlier request, so «نفس الموضوع» is resolved from the customer's own words", () => {
-    const words = customerWordsToStore([CRITICAL, "@SaudiMOH", FOLLOW_UP]);
-    expect(words[0]).toBe(CRITICAL);
-    expect(words[words.length - 1]).toBe(FOLLOW_UP);
-    expect(customerAlternativesCount(words, NOW)).toBe(3);
+    const words = splitCustomerWords([{ role: "user", content: CRITICAL }, { role: "assistant", content: "", missionCard: true }, { role: "user", content: FOLLOW_UP }]);
+    expect(words).toEqual({ current: [FOLLOW_UP], earlier: [CRITICAL] });
+    // the follow-up's summary repeats the subject, so the original request's «أو» alternatives bind its spec
+    expect(customerAlternativesCount([...words.earlier, ...words.current], NOW, FOLLOW.request_text)).toBe(3);
   });
 });
 
@@ -311,10 +358,12 @@ describe("the chat card carries the customer's own words (code-written, beside t
     const r = await agentChatTurn({ sb: db, userId: USER, conversationId: "c1", userMsgId: "ucur", assistantMsgId: "acur", message: FOLLOW_UP, conversationTitle: "t" });
     expect(r.ok).toBe(true);
     const card = (db.rows("messages") as any[]).find((m) => m.id === "acur");
-    expect(card.plan.customerWords).toEqual([CRITICAL, "@SaudiMOH", FOLLOW_UP]);
-    expect(customerWordsFromPlan(card.plan)).toEqual([CRITICAL, "@SaudiMOH", FOLLOW_UP]);
+    // this request's messages (after the previous mission card) and the earlier request as context
+    expect(card.plan.customerWords).toEqual(["@SaudiMOH", FOLLOW_UP]);
+    expect(card.plan.earlierWords).toEqual([CRITICAL]);
+    expect(customerWordsFromPlan(card.plan)).toEqual({ current: ["@SaudiMOH", FOLLOW_UP], earlier: [CRITICAL] });
     // the worker's spec then sees the customer's three alternatives, whatever the summary says
-    expect(customerAlternativesCount(card.plan.customerWords, NOW)).toBe(3);
+    expect(customerAlternativesCount([...card.plan.earlierWords, ...card.plan.customerWords], NOW, card.plan.researchBrief.request)).toBe(3);
     expect(customerAlternativesCount([card.plan.researchBrief.request], NOW)).toBe(0);
   });
 });
