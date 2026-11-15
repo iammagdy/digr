@@ -9,6 +9,7 @@ import { checkedSpecAnswer, customerAlternativesCount, customerWordsOf, executio
 import { buildMethodology, periodLimitLineAr, topicRelationLinesOf, type MissionFacts } from "../agent/src/methodology";
 import { customerWordsFromPlan, customerWordsToStore, CUSTOMER_WORDS_MAX_TURNS, splitCustomerWords } from "../src/lib/agentMission/customerWords";
 import { criterionNoteAr } from "../src/lib/agentMission/foundation/compilePlan";
+import { asksNoRepeat } from "../src/lib/agentMission/noRepeat";
 import { buildAsk } from "../src/lib/agentMission/foundation/ask";
 import { researchRelevanceOf } from "../src/lib/agentMission/foundation/compilePlan";
 import { TOPIC_RELATION_KEY, TOPIC_RELATION_TITLE_AR, topicRelationAr } from "../src/lib/agentMission/foundation/topicChoice";
@@ -403,5 +404,48 @@ describe("the chat card carries the customer's own words (code-written, beside t
     // the worker's spec then sees the customer's three alternatives, whatever the summary says
     expect(customerAlternativesCount([...card.plan.earlierWords, ...card.plan.customerWords], NOW, card.plan.researchBrief.request)).toBe(3);
     expect(customerAlternativesCount([card.plan.researchBrief.request], NOW)).toBe(0);
+  });
+});
+
+describe("live msn_dae6a9b770b0560709cc: «من غير تكرار» is never left to one model flag", () => {
+  it.each([
+    FOLLOW_UP,
+    "ممكن تكمّل البحث وتجيبلي تغريدات أكتر عن نفس الموضوع من نفس الحساب، من غير ما تكرر اللي استلمته قبل كده؟",
+    "عايز 200 تانيين بدون تكرار",
+    "هات غير اللي وصلني",
+    "give me 100 more without duplicates",
+  ])("the customer's own words ask for no repeat: %s", (w) => expect(asksNoRepeat([w], null)).toBe(true));
+  it.each([
+    "عايز تغريدات عن تكرار الإصابة بالكورونا",
+    "هات 400 تغريدة عن الشائعات من حساب وزارة الصحة",
+    "منشورات عن تكرار الأخطاء الطبية",
+  ])("a topic that merely contains the word is not a no-repeat request: %s", (w) => expect(asksNoRepeat([w], "تغريدات عن الموضوع")).toBe(false));
+  it("the model's own summary stating the exclusion counts too (production's summary)", () => {
+    expect(asksNoRepeat(["هات تانيين"], "تغريدات من حساب وزارة الصحة السعودية عن الشائعات، مع استبعاد التغريدات التي سُلّمت سابقًا.")).toBe(true);
+  });
+
+  const USER = "8a2f1c3e-5a6b-4c7d-8e9f-0a1b2c3d4e5f";
+  beforeEach(() => { vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("no network"); })); vi.spyOn(console, "info").mockImplementation(() => undefined); });
+  afterEach(() => { setChatModelForTesting(null); vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+  it("the brief without the flag (production) still records the earlier delivered mission on the card", async () => {
+    const db: any = createMemoryDb();
+    db.seed("conversations", [{ id: "c1", user_id: USER, title: "t", status: "active" }]);
+    db.seed("credit_ledger", [{ user_id: USER, delta: 1000 }]);
+    db.seed("agent_settings", [{ key: "chat_research_brief_v1", value: true }]);
+    db.seed("missions", [{ id: "msn_ab60f5eb5c1bedcaffc7", user_id: USER, status: "completed", request_text: "x", plan: null, created_at: "2026-11-15T16:45:00Z" }]);
+    db.seed("mission_events", []);
+    db.seed("messages", [
+      { id: "u0", conversation_id: "c1", user_id: USER, role: "user", content_ar: CRITICAL, request_status: "completed", created_at: "2026-11-15T16:45:00Z" },
+      { id: "a0", conversation_id: "c1", user_id: USER, role: "assistant", content_ar: "…", plan: { agentMissionId: "msn_ab60f5eb5c1bedcaffc7" }, created_at: "2026-11-15T16:45:30Z" },
+      { id: "ucur", conversation_id: "c1", user_id: USER, role: "user", content_ar: FOLLOW_UP, request_status: "planning", created_at: "2026-11-15T16:59:30Z" },
+      { id: "acur", conversation_id: "c1", user_id: USER, role: "assistant", content_ar: "…", created_at: "2026-11-15T16:59:31Z" },
+    ]);
+    const summary = "تغريدات من حساب وزارة الصحة السعودية عن الشائعات أو التصدي للشائعات أو جهود الوزارة في مكافحة الشائعات، خلال آخر خمس سنوات، بعدد يصل إلى ٤٠٠ تغريدة، ويُسلَّم ما هو متاح إن كان أقل، مع استبعاد التغريدات التي سُلّمت سابقًا.";
+    setChatModelForTesting(async () => ({ ok: true, text: JSON.stringify({ type: "data_request", reason: "scripted", reply: "", count: 400, brief: { status: "ready", request: summary, platforms: ["x"], content: ["tweets"], count: 400, topic: "الشائعات أو التصدي للشائعات أو جهود الوزارة في مكافحة الشائعات", source: "وزارة الصحة السعودية", period: "آخر خمس سنين" } }), usage: { inputTokens: 1, outputTokens: 1 } }));
+    const r = await agentChatTurn({ sb: db, userId: USER, conversationId: "c1", userMsgId: "ucur", assistantMsgId: "acur", message: FOLLOW_UP, conversationTitle: "t" });
+    expect(r.ok).toBe(true);
+    const card = (db.rows("messages") as any[]).find((m) => m.id === "acur");
+    expect(card.plan.priorDelivery).toEqual({ missionIds: ["msn_ab60f5eb5c1bedcaffc7"] });
+    expect(card.plan.researchBrief.exclude_delivered).toBe(true);
   });
 });

@@ -25,6 +25,7 @@ import { blockedEndpointReason } from "../treg/blockList";
 import { policyVerdict } from "../treg/dataPolicy";
 import { PENDING_MAX_WAITING } from "../requests/expiry";
 import { customerWordsToStore, splitCustomerWords, type StoredCustomerWords } from "./customerWords";
+import { asksNoRepeat } from "./noRepeat";
 
 /**
  * ONE CHAT TURN ANSWERED BY THE AGENT. The customer's request becomes a mission for the signed-in user (or the guest, who must sign up before approving); the worker plans it; the chat card
@@ -429,9 +430,12 @@ async function startMission(input: AgentChatTurnInput, requestText: string, extr
   }
   const exclusion = await exclusionForCard(input, `${requestText} ${input.message}`);
   // P0: «without repeating what was delivered»: the conversation's earlier missions go on the card (server-written); the worker verifies and enforces (never applied from the customer's words alone)
-  const priorDelivery = extra.brief?.exclude_delivered === true ? { priorDelivery: { missionIds: await earlierMissionsOfConversation(sb, input.conversationId, input.userId, created.id) } } : {};
   // P0 (15 Nov 2026): the customer's OWN messages go with the card (code-written): the worker's research spec and every relevance judgment read them, not the model's summary alone
   const customerWords = await conversationCustomerWords(sb, input);
+  // P0 (live msn_dae6a9b770b0560709cc): «without repeating» is read from the model's flag OR the customer's own words OR the model's own summary (noRepeat.ts); the worker verifies what it excludes
+  const noRepeat = extra.brief?.exclude_delivered === true || asksNoRepeat(customerWords.current, requestText);
+  const priorDelivery = noRepeat ? { priorDelivery: { missionIds: await earlierMissionsOfConversation(sb, input.conversationId, input.userId, created.id) } } : {};
+  if (noRepeat && extra.brief && extra.brief.exclude_delivered !== true) extra = { ...extra, brief: { ...extra.brief, exclude_delivered: true } };
   const contentAr = withExclusionNote(extra.contentAr ?? (extra.noteAr ? `${extra.noteAr} ${AGENT_TURN_CONTENT_AR}` : AGENT_TURN_CONTENT_AR), exclusion.noteAr);
   const derived = isUntitledConversation(input.conversationTitle) ? titleFromFirstRequest([{ role: "user", content: requestText }]) : null;
   try {
