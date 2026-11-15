@@ -147,7 +147,7 @@ The three empty expanded queries (msn_69cd, msn_5581, msn_dae6) are stored only 
 
 - **#510 (the stricter judge)** is a prompt rule. Tests prove the prompt says it; only a real model can prove it changes the verdict on the clip tweet. **Not proven.**
 - **No deterministic filter can discard a genuine rumor correction.** A stage judged by the model sends every row with text to the meaning review (`classifyRowDetailed`: `review`). Only a row with no text left once links and mentions are dropped is set aside, counted as «no text»; a video-only correction is lost that way.
-- **Planning and execution stay consistent.** Execution reuses planning's verdict for the same row and spec (#509). Limit: the verdict file is keyed by the spec, not by the judge's rules, so a mission planned before a rule change and executed after reuses the older verdicts. No mission is waiting across #510 today.
+- **Planning and execution stay consistent.** Execution reuses planning's verdict for the same row and spec (#509). Limit: the verdict file is keyed by the spec, not by the judge's rules, so a mission planned before a rule change and executed after reuses the older verdicts. The one judged plan waiting today (msn_1d1d7964a2b6da26378b, planned before #509) has no stored verdict file, so this cannot affect it.
 - **#511.** The owner's follow-up words alone record the exclusion; the first request's words never do, whatever the summary says.
 
 ### Fix
