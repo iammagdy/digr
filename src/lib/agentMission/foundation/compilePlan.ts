@@ -245,6 +245,8 @@ export const hashtagOf = (topic: string): string => topic.trim().replace(/^#+/, 
 
 export interface CompileInput {
   ask: Ask;
+  /** P0 (15 Nov 2026): the research criterion of the mission's research spec (the worker's, from the customer's own words): the relevance subject of the stage, stated on the card as «المقصود». Absent: the subject the code derives. */
+  criterion?: string | null;
   /** The parent card's pages read at planning, in order (their call ids and bodies). A page of ANOTHER card of the same role (a second keyword search) carries its own `card`. */
   pool: { card: ToolCard; params: Record<string, unknown>; pages: ReadonlyArray<{ callId: string; page: unknown; card?: ToolCard }> };
   /** YouTube: the counters of the pool's videos from the counter card (id -> comments), when it answered: the promise is then the counters of the chosen videos; absent, it is open. */
@@ -508,11 +510,12 @@ export const topicGatedFor = (ask: Ask, poolCard: ToolCard): boolean => topicGat
 export const researchTopicOf = (ask: Pick<Ask, "topic">): boolean => Boolean(ask.topic?.text) && ask.topic.relation !== "made_with";
 
 /** The execution's relevance rule of a research topic: every row with text is judged by the review against the customer's request; the words are only what was searched. */
-export function researchRelevanceOf(ask: Pick<Ask, "topic">, textColumns: ReadonlyArray<string>): RelevanceSpec | null {
+export function researchRelevanceOf(ask: Pick<Ask, "topic">, textColumns: ReadonlyArray<string>, /** P0: the mission's research criterion (the worker's research spec, made from the customer's own words), when there is one: it is the subject every judgment reads and the card states. */ criterion?: string | null): RelevanceSpec | null {
   if (!researchTopicOf(ask) || textColumns.length === 0) return null;
   const alternatives = (ask.topic.alternatives ?? []).filter((a) => a.trim() !== "");
   const terms = (alternatives.length > 0 ? alternatives : [ask.topic.text!]).map((t) => t.trim()).slice(0, 12);
-  return { subject_ar: `محتوى يتحدث فعلًا عن: ${terms.join(" أو ")}`, terms, text_columns: [...textColumns], min_own_words: 0, review: true, judge: "model" };
+  const own = typeof criterion === "string" ? criterion.replace(/\s+/g, " ").trim().replace(/[.،؛:\s]+$/u, "") : "";
+  return { subject_ar: own !== "" ? own : `محتوى يتحدث فعلًا عن: ${terms.join(" أو ")}`, terms, text_columns: [...textColumns], min_own_words: 0, review: true, judge: "model" };
 }
 
 /** Compiles the plan. Pure: the same Ask and the same pages give the same plan. */
@@ -648,7 +651,7 @@ export function compilePlan(input: CompileInput): CompileResult {
   const parentRows = sizedByRequest ? need : chosen.length;
   promises[parentKey] = sizedByRequest ? { type: "open", n: need } : { type: "exact", n: chosen.length };
   const textColumns = fieldKeys.includes("text") ? ["text"] : [];
-  const relevance = researchRelevanceOf(ask, textColumns);
+  const relevance = researchRelevanceOf(ask, textColumns, input.criterion);
   stages.push({
     key: parentKey, title_ar: input.reelsProven === true ? REELS_TITLE_AR : PARENT_TITLE[ask.platform], endpoint_id: card.endpointId, ...(capabilityOf(card.endpointId) ? { capability: capabilityOf(card.endpointId)! } : {}),
     expected_rows: parentRows, planned_rows: parentRows, parent_key: null, deliver: true, columns, sample_rows: chosen.slice(0, 3).map(shown), ...(relevance ? { relevance } : {}),

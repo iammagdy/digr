@@ -4,6 +4,20 @@ This handoff document provides a clear, factual status of the Diger platform (`i
 
 ---
 
+## P0, 15 Nov 2026 (after PR #506): the customer's meaning is one stored research specification
+
+`msn_6d86fb6f698bb8ca7320`, `msn_5abbc68352f31fa31d56`: in the continuation, 5 of the 6 delivered tweets were the ministry's general news.
+
+* **Root cause (proved from production rows):** the customer's own words were never stored. The mission kept only the chat model's summary, where «أو» had become «و». The worker's word rules re-derived the topic from that summary (cut at «في»), and the judge read that label. Planning and execution also built their judge inputs separately.
+* **Fix:**
+  * the chat server stores the customer's own messages on the card (`plan.customerWords`, written by code);
+  * the worker makes ONE research spec per mission with a forced structured model answer. It holds a criterion, alternatives that keep their qualifiers, and near misses. Code checks it, and alternatives the customer wrote with «أو» must stay alternatives;
+  * the spec is stored with the mission. The planning judge, the vocabulary step, the card's «المقصود», the execution review and the methodology all read it, and every judgment also reads the customer's own words, which win over the criterion;
+  * the methodology no longer contradicts its own counts.
+* **Details:** `docs/incidents/P0-RESEARCH-SPEC-2026-11-15.md`.
+
+---
+
 ## P0, 15 Nov 2026 (third retest, after PR #502): the model layer was silent; the query was the customer's sentence
 
 `msn_7365668c48162ce20bbd`, `msn_c6767995ad124f9edbec`, `msn_cfee23cdac3a2c7e4ab4`: six reads, five empty, one of 20 rows (the account's newest tweets with no topic), no plan, nothing charged.
