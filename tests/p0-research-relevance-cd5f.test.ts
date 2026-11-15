@@ -234,7 +234,8 @@ describe("R4: recall, the expanded strategy, bounded", () => {
     const { queries } = await plan([pageOf([], null), pageOf(fx.page_1_items, null)], { judge: scriptedJudge(), variants: scriptedVariants(VARIANTS) });
     expect(queries).toHaveLength(2);
     expect(queries[0]).toMatch(/^\(شائعات OR/);
-    expect(queries[1]).toMatch(/^\(شائعات OR إشاعات OR "معلومات مغلوطة" OR "أخبار كاذبة" OR "مصادر موثوقة"( OR [^)]+)?\) from:SaudiMOH since:\S+ until:\S+ -filter:replies$/);
+    // CHANGED (zero-spend audit, msn_5581…/msn_dae6…): the customer's own short alternatives come first in the core (production's core left «الشائعات» out), then the model's variants up to the cap
+    expect(queries[1]).toMatch(/^\(الشائعات OR "التصدي للشائعات" OR شائعات OR إشاعات OR "معلومات مغلوطة" OR "أخبار كاذبة"\) from:SaudiMOH since:\S+ until:\S+ -filter:replies$/);
     expect(queries[1]).not.toBe(queries[0]);
     expect((queries[1].match(/ OR /g) ?? []).length).toBeLessThanOrEqual(5);
   });

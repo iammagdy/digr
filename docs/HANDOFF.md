@@ -19,10 +19,11 @@ This handoff document provides a clear, factual status of the Diger platform (`i
   * one verdict per row per spec (execution reuses planning's);
   * the judge requires the row's own words to address the subject;
   * «من غير تكرار» is read from the customer's words, not one model flag.
-* **Live acceptance:** 5 missions, USD 0.0157. The spec works; X search inside the account returns empty pages intermittently.
+* **Live acceptance:** 5 missions, USD 0.0157. The spec works. 4 of 9 topic searches inside the account returned 0 rows; the zero-spend audit found NO evidence that the provider is intermittent (identical queries answered identically), and found the core query dropping the customer's own words (fixed).
 * **Open:**
   * #510 and #511 have not been verified live;
-  * rejected rows can't be inspected without admin storage access.
+  * rejected rows can't be inspected without admin storage access (1 of 180 examined: the delivered tweet, a confirmed false positive matched by none of its query's words);
+  * why expanded queries that carry «الشائعات» returned 0 while a sibling query returned a tweet with that word is unresolved (length/complexity vs. provider).
 * **Details:** `docs/incidents/P0-RESEARCH-SPEC-2026-11-15.md`.
 
 ---

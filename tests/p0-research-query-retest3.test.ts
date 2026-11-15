@@ -269,7 +269,8 @@ describe("LIVE ACCEPTANCE 2 (msn_5a1cf6c36852566f9e41, after #504): the topic's 
     // CHANGED (P0, msn_69cd…): the second read is the core of the expanded query (topic words, every condition), and the question says what that read found; it never claims the newest posts were read
     const { r, queries } = await plan(m, [pageOf([], null), pageOf(newest, null)], { variants: async () => ({ terms: ["شائعات", "معلومات مغلوطة", "تصحيح معلومة", "نفي شائعة", "تحذير", "إشاعة", "أخبار كاذبة"], costUsd: 0.0001 }) });
     expect(queries[0]).toMatch(/^\(شائعات OR /);
-    expect(queries[1]).toMatch(/^\(شائعات OR "معلومات مغلوطة" OR .+\) from:SaudiMOH since:/);
+    // CHANGED (zero-spend audit, msn_5581…/msn_dae6…): the customer's own short alternatives come first in the core, then the model's variants
+    expect(queries[1]).toMatch(/^\("الشائعات الصحية" OR "تصحيح الشائعات" OR شائعات OR "معلومات مغلوطة" OR .+\) from:SaudiMOH since:/);
     expect(r.kind).toBe("question");
     if (r.kind !== "question") return;
     expect(r.question).not.toContain("قرأنا أحدث منشوراته");
