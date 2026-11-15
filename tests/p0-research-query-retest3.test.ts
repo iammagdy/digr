@@ -281,3 +281,41 @@ describe("LIVE ACCEPTANCE 2 (msn_5a1cf6c36852566f9e41, after #504): the topic's 
     expect(sys[0]).toMatch(/how the AUTHORS of such posts actually write/);
   });
 });
+
+import { conversationSourceIdOf } from "../agent/src/conversationSource";
+import { buildSystemPrompt } from "../src/lib/agentMission/conversationModel";
+import { reviewPrompt } from "../agent/src/review";
+describe("LIVE ACCEPTANCE 4 (continuation msn_5abbc68352f31fa31d56): context, the judge's meaning, the brief's wording", () => {
+  const FIRST = { id: "msn_6d86fb6f698bb8ca7320", request_text: "400 تغريدة من حساب وزارة الصحة السعودية عن الشائعات الصحية وتصحيح الشائعات وجهود الوزارة في مكافحة المعلومات المضللة خلال آخر خمس سنوات" };
+  const FOLLOW = { id: "msn_5abbc68352f31fa31d56", user_id: "u1", created_at: "2026-11-15T14:03:57Z", request_text: "400 تغريدة من حساب وزارة الصحة السعودية عن الشائعات الصحية وتصحيح الشائعات وجهود الوزارة في مكافحة المعلومات المضللة خلال آخر خمس سنوات، من غير تكرار ما سُلّم سابقًا" };
+  it("a follow-up naming the SAME source by name reuses the identifier the customer confirmed earlier in the conversation (production asked for it again)", async () => {
+    const store = createMemoryStore();
+    await store.putFile(FIRST.id, "run_state.json", JSON.stringify({ planningStarts: 2, choices: { sourceId: "SaudiMOH" } }), "application/json");
+    const got = await conversationSourceIdOf({ mission: FOLLOW as never, store, read: async () => [FIRST] });
+    expect(got).toEqual({ id: "SaudiMOH", from: FIRST.id });
+  });
+  it("nothing is carried for ANOTHER source, when no identifier was confirmed, or when the request already writes one; a failed read gives nothing (the question is asked as before)", async () => {
+    const store = createMemoryStore();
+    await store.putFile(FIRST.id, "run_state.json", JSON.stringify({ planningStarts: 2, choices: { sourceId: "SaudiMOH" } }), "application/json");
+    const other = { ...FOLLOW, request_text: FOLLOW.request_text.replace("وزارة الصحة السعودية", "وزارة التعليم") };
+    expect(await conversationSourceIdOf({ mission: other as never, store, read: async () => [FIRST] })).toBeNull();
+    expect(await conversationSourceIdOf({ mission: FOLLOW as never, store: createMemoryStore(), read: async () => [FIRST] })).toBeNull();
+    const written = { ...FOLLOW, request_text: FOLLOW.request_text.replace("وزارة الصحة السعودية", "@SaudiMOH") };
+    expect(await conversationSourceIdOf({ mission: written as never, store, read: async () => [FIRST] })).toBeNull();
+    await expect(conversationSourceIdOf({ mission: FOLLOW as never, store, read: async () => { throw new Error("read failed"); } })).rejects.toThrow();
+  });
+  it("the judge is told the request is authoritative and the label can drop a qualifier (production accepted weekly ministry news for «…وجهود الوزارة», the qualifier «في مكافحة المعلومات المضللة» cut by the parser)", async () => {
+    const sys: string[] = [];
+    const call = (async (i: { system: string }) => { sys.push(i.system); return { text: "[0]", usage: { input_tokens: 1, output_tokens: 1 } }; }) as never;
+    const { createReviewer } = await import("../agent/src/review");
+    const r = createReviewer({ call, store: createMemoryStore(), missionId: "m", requestText: FOLLOW.request_text, budgetUsd: 1, ceilingUsd: 1 });
+    await r.review({ subject: "محتوى يتحدث فعلًا عن: الشائعات الصحية وتصحيح الشائعات وجهود الوزارة", rows: [{ id: "1", text: "#الصحة_في_أسبوع: معالي وزير الصحة يتفقد مستشفيات مكة المكرمة" }] });
+    expect(sys[0]).toMatch(/The customer's request is authoritative/);
+    expect(sys[0]).toMatch(/any activity of an organization when the request asks for its efforts against something specific/);
+    expect(reviewPrompt({ requestText: FOLLOW.request_text, subject: "x", rows: [{ text: "t" }] })).toContain("في مكافحة المعلومات المضللة");
+  });
+  it("the chat brief keeps the customer's «أو» alternatives and every qualifier of the topic", () => {
+    const p = buildSystemPrompt({ balancePoints: 100, open: null, brief: { enabled: true } as never });
+    expect(p).toContain("فاكتبها بـ«أو» كما كتبها ولا تجمعها بـ«و»");
+  });
+});
