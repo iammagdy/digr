@@ -694,18 +694,9 @@ export default function ChatWorkspacePage() {
       createdAt: new Date().toISOString(),
     };
 
-    const isPriceOrPlanRequest = /(هيكلفني كام|احسبلي|احسب لي|السعر|بكام|كم نقطة|كم يكلف|تكلف كام|التكلفة|كم التكلفة|السعر كام|ابدأ|نفذ|تمام جهز الخطة|اعمل الخطة)/i.test(textToSend);
-    const hasPriorResearch = Boolean(
-      activeJob ||
-      messages.some((m) =>
-        m.planQuote ||
-        (m.clarificationQuestions && m.clarificationQuestions.length > 0) ||
-        m.outputType === "propose_plan" ||
-        m.outputType === "ask_clarification" ||
-        m.intent === "research"
-      )
-    );
-    const baseStatus = isPriceOrPlanRequest ? "أبحث وأحسب السعر..." : (hasPriorResearch ? "يفكّر في سؤالك ويجهّز الخطوة التالية..." : "يكتب الرد...");
+    // THE WAITING LINE IS NEVER A GUESS ABOUT THE MESSAGE: a word list on the customer's text said «أبحث وأحسب السعر» to a question that only mentioned a price, and «يفكّر في سؤالك» to a «شكرًا».
+    // The line is the same true one for every message («يكتب الرد...»); when the server really starts research it writes its own line into the reply row (chatHandler), and a long wait says so (waitProgress.ts).
+    const baseStatus = "يكتب الرد...";
     loadingBaseText.current = baseStatus;
     setLoadingStatusText(baseStatus);
     setMessages((prev) => [...prev, userMsg]);

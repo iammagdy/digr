@@ -24,7 +24,7 @@ import { FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT
  * Code never re-reads the request. It checks only what the model wrote against the catalog (ids, input names, enums, parents, numbers).
  */
 
-export interface PlannerModelAnswer { input: unknown; costUsd: number }
+export interface PlannerModelAnswer { input: unknown; costUsd: number; /** the model declined to answer (stop_reason refusal): the request asks for something it will not do */ refused?: boolean }
 /** One forced structured call of the planning model (the tool's input comes back parsed), or null when it gave none. */
 export type PlannerModel = (call: { system: string; user: string; tool: { name: string; description: string; schema: Record<string, unknown> }; maxTokens: number }) => Promise<PlannerModelAnswer | null>;
 
@@ -369,17 +369,18 @@ interface BuiltStep {
 const asJson = (text: unknown): unknown => text;
 
 /** Asks the model through the deps and counts what it cost. */
-function asker(deps: Pick<LlmPlannerDeps, "model">, cost: { usd: number }) {
+function asker(deps: Pick<LlmPlannerDeps, "model">, cost: { usd: number; refused?: boolean }) {
   return async (system: string, user: string, tool: { name: string; description: string; schema: Record<string, unknown> }, maxTokens: number): Promise<unknown | null> => {
     const got = await deps.model({ system, user, tool, maxTokens });
     if (!got) return null;
     cost.usd += Math.max(0, Number(got.costUsd) || 0);
+    if (got.refused === true) cost.refused = true;
     return asJson(got.input);
   };
 }
 
 /** 1. UNDERSTAND, with one retry carrying code's objection. */
-export async function understandRequest(input: LlmPlannerInput, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today" | "log">, cost: { usd: number } = { usd: 0 }): Promise<{ ok: true; value: Understanding } | { ok: false; error: string }> {
+export async function understandRequest(input: LlmPlannerInput, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today" | "log">, cost: { usd: number; refused?: boolean } = { usd: 0 }): Promise<{ ok: true; value: Understanding } | { ok: false; error: string }> {
   const ask = asker(deps, cost);
   const system = `${UNDERSTAND_SYSTEM}\n\nCATALOG INDEX (platform: capability(number of tools), …):\n${platformIndex(deps.catalog, deps.access)}`;
   const tool = { name: UNDERSTAND_TOOL, description: "The collection plan for the customer's request.", schema: UNDERSTAND_SCHEMA };
@@ -391,8 +392,12 @@ export async function understandRequest(input: LlmPlannerInput, deps: Pick<LlmPl
     if (checked.ok) break;
     deps.log?.(`llm_planner_understand_retry ${checked.error.slice(0, 200)}`);
   }
+  if (checked && !checked.ok && cost.refused === true) return { ok: false, error: "refused" };
   return checked ?? { ok: false, error: "no answer" };
 }
+
+/** The model declined the request twice (live eval 16 Nov 2026: «the private messages of an Instagram account»): the customer is told what the platform collects, never a vague «no source». */
+export const REFUSED_REQUEST_AR = "لا نستطيع تنفيذ هذا الطلب: نجمع البيانات العامة المنشورة على المنصات فقط، وليس الرسائل الخاصة ولا الحسابات المغلقة. إن كان لديك طلب على بيانات عامة فاكتبه وسنجهّزه لك.";
 
 /** 2. CHOOSE: the model's options for one step, checked against its candidates. */
 export async function chooseTools(step: UnderstoodStep, parentSample: ReadonlyArray<Record<string, unknown>> | null, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today">, cost: { usd: number } = { usd: 0 }): Promise<{ candidates: CatalogEndpoint[]; options: ToolOption[] }> {
@@ -407,7 +412,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   const ask = asker(deps, cost);
   const checked = await understandRequest(input, deps, cost);
   let costUsd = cost.usd;
-  if (!checked.ok) return { kind: "cannot", reason_ar: "", understanding: null, costUsd, detail: `understand_failed: ${checked.error}` };
+  if (!checked.ok) return { kind: "cannot", reason_ar: checked.error === "refused" ? REFUSED_REQUEST_AR : "", understanding: null, costUsd, detail: `understand_failed: ${checked.error}` };
   const u = checked.value;
   if (u.decision === "ask") return { kind: "question", question_ar: customerSafe(u.question_ar) ?? GENERIC_QUESTION_AR, options_ar: (u.options_ar ?? []).map((o) => customerSafe(o, 80)).filter((o): o is string => o !== null), understanding: u, costUsd };
   if (u.decision === "cannot") return { kind: "cannot", reason_ar: customerSafe(u.cannot_ar ?? u.understanding_ar) ?? "", understanding: u, costUsd, detail: "model_cannot" };
