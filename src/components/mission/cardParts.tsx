@@ -89,8 +89,8 @@ export function RequestLine({ parts }: { parts: ReadonlyArray<string> }) {
 
 export interface Snippet { handle: string | null; textAr: string }
 
-/** «آخر ما وصل»: at most two real rows (the newest of the window the sheet already read), one line each with an ellipsis. */
-export function Snippets({ items, title = "آخر ما وصل" }: { items: ReadonlyArray<Snippet>; title?: string }) {
+/** «عيّنة مما وصل»: at most two real rows (the last of the window the sheet already read; the window is the first rows of the sheet, so it is a sample, never called the newest), one line each with an ellipsis. */
+export function Snippets({ items, title = "عيّنة مما وصل" }: { items: ReadonlyArray<Snippet>; title?: string }) {
   if (items.length === 0) return null;
   return (
     <div className="flex flex-col gap-1.5" data-testid="agent-snippets">
