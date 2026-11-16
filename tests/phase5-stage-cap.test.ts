@@ -275,7 +275,7 @@ describe("where a stage cap can come from", () => {
 describe("the worker wires the verified maximum (under the switch only)", () => {
   it("runMission gives the SourceGateway the catalog's verified maxima; the gateway still has no ledger, price, reservation or settlement code of its own", () => {
     const src = readFileSync("agent/src/runMission.ts", "utf-8");
-    expect(src).toContain("const sources = multiStage ? createSourceGateway({ gateway, ...(web ? { web } : {}), scope: stageScopeOf(plan), budget, maxCallUsd: verifiedCallMaxUsdOf(deps.catalog) }) : undefined;");
+    expect(src).toContain("const sources = multiStage || (usesDirectWeb && web) ? createSourceGateway({ gateway, ...(web ? { web } : {}), scope: stageScopeOf(plan), budget, maxCallUsd: verifiedCallMaxUsdOf(deps.catalog) }) : undefined;");
     const sg = readFileSync("agent/src/engine/sourceGateway.ts", "utf-8");
     expect(sg).not.toMatch(/accept_quote_atomic|settle_job_atomic|release_job_atomic|credit_ledger|priceMission|\.reserve\(|\.settle\(/);
   });

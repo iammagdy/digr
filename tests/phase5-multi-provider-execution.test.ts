@@ -244,7 +244,9 @@ describe("Phase 5: with the switch off nothing changes", () => {
   it("runMission builds the SourceGateway, the dispatch and the provenance ONLY under the switch", () => {
     const src = readFileSync("agent/src/runMission.ts", "utf-8");
     expect(src).toContain("const multiStage = deps.engine !== false && readMultiStageEngineFlag(redesignSettings, mission.user_id);");
-    expect(src).toContain("const sources = multiStage ? createSourceGateway(");
+    // CHANGED (16 Nov 2026, our own web search in the LLM planner): the one exception is a plan that names a direct web tool (Firecrawl / Context.dev), which only the SourceGateway can call
+    expect(src).toContain("const sources = multiStage || (usesDirectWeb && web) ? createSourceGateway(");
+    expect(src).toContain("WEB_SOURCE_IDS.has(id)");
     expect(src).toContain("const dispatch = multiStage && !engineOn ? stageDispatchOf(plan) : null;");
     expect(src).toContain("...(sources ? { sources, provenance: true } : {}), ...(engineStages ? { onlyStages: engineStages } : {})");
     // the contact steps' provenance marks (PR #488) follow the same switch
