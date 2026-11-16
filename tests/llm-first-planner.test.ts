@@ -430,6 +430,14 @@ describe("SCOUTING: the real search found far less than the customer asked for �
     if (r.kind === "question") expect(r.scout).toBe(true);
   });
 
+  it("the source answered with a stray item nothing can be read from (a named account that does not exist) → the customer is asked, not told «unreadable»", async () => {
+    const m = scriptedModel({ request_plan: [ask400], tool_choice: [CHOICE_X], field_map: [{ fields: { text: ["nothing"] } }], scout_report: [SCOUT_OK] });
+    const { d } = deps(m, { probe: async () => ({ ok: true, call_id: "call_0001", http_status: 200, rows_in_page: 1, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: "" }), readPage: async () => ({ output: { data: { items: [{ weird: true }], nextCursor: null } } }) });
+    const r = await planWithLlm({ words: ["٤٠٠ تغريدة"], request: "" }, d);
+    expect(r.kind).toBe("question");
+    if (r.kind === "question") expect(r.scout).toBe(true);
+  });
+
   it("a failed provider call is not «nothing found»: no question (the step is said as unavailable)", async () => {
     const m = scriptedModel({ request_plan: [ask400], tool_choice: [CHOICE_X] });
     const { d } = deps(m, { probe: async () => ({ ok: false, call_id: "call_0001", http_status: 500, error: "x", refused: undefined } as never) });
