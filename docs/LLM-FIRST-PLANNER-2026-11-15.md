@@ -111,6 +111,20 @@ Owner direction: when the real search finds far less than the customer asked for
 - A reply the guard refuses (Latin digit, emoji, a number the facts do not give …) is asked again once with the reasons; only a second refusal falls to the fixed text.
 - While the agent's question is open (`needs_input`), a doubt about it is answered from the question's own text (its numbers are allowed), a greeting is answered naturally, and the question stays open. Tests: `tests/chat-natural-conversation.test.ts`.
 
+### Round 2 live results (test account, 16 Nov 2026)
+
+| Scenario | Result |
+|---|---|
+| X, «المتحدث الرسمي لوزارة الصحة السعودية» without a handle, 400 | The model guessed a handle; every search was empty → the customer was asked (Egyptian Arabic, 3 options, said the username may differ). A greeting plus «what does widen mean?» typed in the chat was answered naturally and the question stayed open. The answer «the account is SaudiMOH, widen to Saudi Arabia if not enough» became ONE step of 400 (310 points max); 93 delivered, 73 points charged, the card said the source had no more |
+| Reddit, 500 posts, last year | 500 of 500 delivered |
+| Chat: «ازيك يا عم؟» | «الحمد لله، وإنت عامل إيه؟ بتفكر في إيه النهارده؟» |
+| Chat: quantitative or qualitative research? | answered as a consultant, then asked what to collect |
+| X, 300 tweets of an account about the flu vaccine | not approved: the plan priced 1,681 points for 300 (a tool whose first page gave few rows), the source had a next page so no scouting question. See open items |
+
+Found and fixed live: (1) adding `accepts_available` as an OPTIONAL schema property made the structured-output compiler refuse the schema («Schema is too complex»): every understanding call failed for ~15 minutes after #518 and requests fell to the old path; it is REQUIRED now (#519). Any schema change must be checked against the real API before merging (the eval dyno: `agent/scripts/evalPlanner.ts`). (2) A guessed handle: the empty/unreadable first answer is now a «found 0» finding (#520, #522). (3) «Account, and widen if not enough» was planned as two steps of 400 (#521).
+
+Open: the price of a step whose first page gave few rows is high per row (the customer pays only for what is delivered). A probe that shows a next page does not tell how many different items exist: the scouting counts only when every search ended.
+
 ## Still open
 
 - **Facebook comments** on a page's reels: every catalog tool returned empty. This is a provider limitation, not a planning one, and the card says it before approval.
