@@ -93,6 +93,10 @@ export const MAX_PROBES_PER_STEP = 6;
 export const VARIANT_OVERLAP_FACTOR = 1.3;
 /** Further input sets read once, while planning, to measure how much a source really holds for a request (the scouting). */
 export const MAX_SCOUT_SETS = 4;
+/** A page with fewer rows than this is THIN: a next page after it does not show that the source holds more (live 16 Nov: a source offered a next page after 1 tweet). Thin searches are followed and counted. */
+export const THIN_PAGE_ROWS = 15;
+/** Pages followed after a thin first page, while planning. */
+export const MAX_SCOUT_PAGES = 3;
 /** The real search found less than this share of the customer's number: the customer is asked what to do before the plan (take it, or widen). */
 export const SCOUT_SHORT_SHARE = 0.5;
 
@@ -357,7 +361,7 @@ export function runMap(code: string, page: unknown): Array<Record<string, unknow
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 
 interface BuiltStep {
-  step: UnderstoodStep; option: ToolOption; mapCode: string; columns: PlanColumn[]; carryKeys: string[]; sampleRows: Array<Record<string, unknown>>; rowsPerPage: number; callIds: string[]; hasMore: boolean;
+  step: UnderstoodStep; option: ToolOption; mapCode: string; columns: PlanColumn[]; carryKeys: string[]; sampleRows: Array<Record<string, unknown>>; rowsPerPage: number; callIds: string[]; hasMore: boolean; nextCursor?: string | null;
   /** A SECOND tool that also answered on a real page, with its own proven mapping: execution continues with it when the first tool's input sets run out (another index gives other items). */
   second?: { option: ToolOption; mapCode: string };
 }
@@ -452,14 +456,14 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
         if (map2) {
           const code2 = cardMapCode(pseudoCard(got2.option.endpoint, got2.listPath, map2, got2.items.length, carryFieldsOf(got2.items, map2), got2.items));
           const rows2 = runMap(code2, got2.page);
-          if (rows2.length > 0) { second = { option: got2.option, mapCode: code2 }; secondRows.push(...rows2); secondMore = got2.hasMore; }
+          if (rows2.length > 0) { second = { option: got2.option, mapCode: code2 }; secondRows.push(...rows2); secondMore = got2.hasMore && rows2.length >= Math.min(THIN_PAGE_ROWS, step.count.total ?? THIN_PAGE_ROWS); }
         }
       }
     }
-    built.set(step.key, { step, option: got.option, mapCode, columns, carryKeys: Object.keys(carry), sampleRows, rowsPerPage: got.items.length, callIds: got.callIds, hasMore: got.hasMore, ...(second ? { second } : {}) });
+    built.set(step.key, { step, option: got.option, mapCode, columns, carryKeys: Object.keys(carry), sampleRows, rowsPerPage: got.items.length, callIds: got.callIds, hasMore: got.hasMore, nextCursor: got.nextCursor, ...(second ? { second } : {}) });
     // SCOUTING: how much does the source really hold for this request? (a source that shows one page for a query and no next page is read once for each of the model's other input sets, and the sets' items are counted once)
     if (!step.parent && step.count.total !== null && input.scoutAllowed !== false) {
-      const y = await scoutYield({ option: got.option, mapCode, firstRows: sampleRows, hasMore: got.hasMore || secondMore, extraRows: secondRows, requested: step.count.total }, deps);
+      const y = await scoutYield({ option: got.option, mapCode, firstRows: sampleRows, hasMore: got.hasMore, nextCursor: got.nextCursor, otherHasMore: secondMore, extraRows: secondRows, requested: step.count.total }, deps);
       deps.log?.(`llm_planner_scout ${step.key} found=${y.found} requested=${step.count.total} exhausted=${y.exhausted} sets=${y.sets}`);
       findings.push({ step, requested: step.count.total, found: y.found, exhausted: y.exhausted, sets: y.sets });
     }
@@ -520,7 +524,7 @@ export function fallbackMap(items: ReadonlyArray<Record<string, unknown>>): Fiel
   return fields.id ? { fields, linkTemplate: null, extra: [] } : null;
 }
 
-interface Probed { option: ToolOption; page: unknown; items: Array<Record<string, unknown>>; listPath: string | null; callIds: string[]; hasMore: boolean }
+interface Probed { option: ToolOption; page: unknown; items: Array<Record<string, unknown>>; listPath: string | null; callIds: string[]; hasMore: boolean; nextCursor: string | null }
 
 /** ONE real first page per option, in the model's order; an option whose first input set is empty tries its further sets (a precise query may be empty where a broader one is not). At most MAX_PROBES_PER_STEP calls. */
 async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: BuiltStep | null, deps: LlmPlannerDeps, trace?: { empties: number; failures: number }): Promise<Probed | null> {
@@ -548,7 +552,7 @@ async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: Bu
       if (reading.rows.length === 0) { if (trace) trace.empties += 1; continue; }
       // the input set that answered becomes the first one, the others follow it
       const reordered: ToolOption = i === 0 ? option : { ...option, params: sets[i], more: sets.filter((_, j) => j !== i) };
-      return { option: reordered, page, items: reading.rows, listPath: reading.listPath, callIds, hasMore: Boolean(r.next_cursor) || r.has_more === true };
+      return { option: reordered, page, items: reading.rows, listPath: reading.listPath, callIds, hasMore: Boolean(r.next_cursor) || r.has_more === true, nextCursor: typeof r.next_cursor === "string" && r.next_cursor !== "" ? r.next_cursor : null };
     }
     if (calls >= MAX_PROBES_PER_STEP) break;
   }
@@ -569,22 +573,42 @@ const rowKeyOf = (row: Record<string, unknown>): string => String(row.id ?? row.
  * (a next cursor) means the source holds more than a page: nothing to report, execution pages through it. A failed call makes the answer uncertain (not exhausted): the customer is never asked on a guess.
  */
 export async function scoutYield(
-  a: { option: ToolOption; mapCode: string; firstRows: ReadonlyArray<Record<string, unknown>>; hasMore: boolean; extraRows?: ReadonlyArray<Record<string, unknown>>; requested: number },
+  a: { option: ToolOption; mapCode: string; firstRows: ReadonlyArray<Record<string, unknown>>; hasMore: boolean; nextCursor?: string | null; otherHasMore?: boolean; extraRows?: ReadonlyArray<Record<string, unknown>>; requested: number },
   deps: Pick<LlmPlannerDeps, "probe" | "readPage" | "log">,
 ): Promise<{ found: number; exhausted: boolean; sets: number }> {
   const ids = new Set<string>([...a.firstRows, ...(a.extraRows ?? [])].map(rowKeyOf));
+  const healthy = Math.min(THIN_PAGE_ROWS, a.requested);
   let sets = 1;
-  if (a.hasMore) return { found: ids.size, exhausted: false, sets };
-  for (const params of a.option.more.slice(0, MAX_SCOUT_SETS)) {
-    if (ids.size >= a.requested) break;
+  // a FULL first page with a next page, or another tool's: the source holds more than a page: nothing to report, execution pages through it
+  if (a.otherHasMore || (a.hasMore && a.firstRows.length >= healthy)) return { found: ids.size, exhausted: false, sets };
+  const read = async (params: Record<string, unknown>): Promise<{ ok: true; rows: Array<Record<string, unknown>>; next: string | null } | { ok: false }> => {
     const r = await deps.probe(a.option.endpoint.id, params);
     sets += 1;
-    if (!r.ok) return { found: ids.size, exhausted: false, sets };
-    if (r.rows_in_page <= 0) continue;
+    if (!r.ok) return { ok: false };
+    if (r.rows_in_page <= 0) return { ok: true, rows: [], next: null };
     const page = await deps.readPage(r.call_id);
-    if (page === null) return { found: ids.size, exhausted: false, sets };
-    for (const row of runMap(a.mapCode, page)) ids.add(rowKeyOf(row));
-    if (Boolean(r.next_cursor) || r.has_more === true) return { found: ids.size, exhausted: false, sets };
+    if (page === null) return { ok: false };
+    return { ok: true, rows: runMap(a.mapCode, page), next: typeof r.next_cursor === "string" && r.next_cursor !== "" ? r.next_cursor : null };
+  };
+  // a THIN first page with a next page: follow the cursor for a few pages and count (the provider may page through a filtered, almost empty list)
+  if (a.hasMore && a.nextCursor && a.option.cursor) {
+    let cursor: string | null = a.nextCursor;
+    for (let i = 0; i < MAX_SCOUT_PAGES && cursor && ids.size < a.requested; i += 1) {
+      const got = await read({ ...a.option.params, [a.option.cursor]: cursor });
+      if (!got.ok) return { found: ids.size, exhausted: false, sets };
+      const before = ids.size;
+      for (const row of got.rows) ids.add(rowKeyOf(row));
+      cursor = got.next;
+      // a followed page that is full again: the source holds more
+      if (got.rows.length >= healthy && ids.size > before) return { found: ids.size, exhausted: false, sets };
+    }
+  }
+  for (const params of a.option.more.slice(0, MAX_SCOUT_SETS)) {
+    if (ids.size >= a.requested) break;
+    const got = await read(params);
+    if (!got.ok) return { found: ids.size, exhausted: false, sets };
+    for (const row of got.rows) ids.add(rowKeyOf(row));
+    if (got.rows.length >= healthy) return { found: ids.size, exhausted: false, sets };
   }
   return { found: ids.size, exhausted: ids.size < a.requested, sets };
 }
