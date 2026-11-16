@@ -24,14 +24,13 @@ describe("the waiting and planning cards open with a whole sentence", () => {
     expect(PLANNING_USUAL_TIME_AR).not.toMatch(/دقيقة|دقائق|ساعة|خلال|عادةً|ثانية|[0-9]/);
     expect(checkCustomerText(PLANNING_USUAL_TIME_AR, { maxChars: 400 }).issues).toEqual([]);
   });
-  it.each(["queued", "planning"])("the %s card: its first visible text is that sentence, whole", (status) => {
+  it.each(["queued", "planning"])("the %s card: the money promise is a whole sentence on its own line, and no text of the card starts with a conjunction", (status) => {
     const markup = card(status);
     expect(markup).toContain('data-testid="agent-planning-usual"');
     const first = visible(markup);
-    expect(first.startsWith(PLANNING_USUAL_TIME_AR) || first.includes(PLANNING_USUAL_TIME_AR)).toBe(true);
+    // CHANGED (card redesign, 16 Nov 2026): the card opens with the planning track and the live line; the promise is the money line «لن يُخصم شيء قبل موافقتك.» (whole, with its first clause)
+    expect(first).toContain("لن يُخصم شيء قبل موافقتك.");
     expect(first.startsWith("ولن")).toBe(false);
-    // no text of the card comes before the sentence except the card's own labels
-    const before = first.slice(0, first.indexOf(PLANNING_USUAL_TIME_AR));
-    expect(before).not.toMatch(/^\s*ولن/);
+    expect(first).not.toMatch(/(^|\s)ولن يُخصم شيء قبل موافقتك/);
   });
 });
