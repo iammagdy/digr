@@ -579,15 +579,19 @@ export async function scoutYield(
   const ids = new Set<string>([...a.firstRows, ...(a.extraRows ?? [])].map(rowKeyOf));
   const healthy = Math.min(THIN_PAGE_ROWS, a.requested);
   let sets = 1;
+  let measured = 0;
   // a FULL first page with a next page, or another tool's: the source holds more than a page: nothing to report, execution pages through it
   if (a.otherHasMore || (a.hasMore && a.firstRows.length >= healthy)) return { found: ids.size, exhausted: false, sets };
+  // a refused or failed measurement (the gateway lets planning sample a source twice) ends the measuring: what was gathered before it decides, provided at least one more search was read than the first
+  const stopped = (): { found: number; exhausted: boolean; sets: number } => ({ found: ids.size, exhausted: measured >= 1 && ids.size < Math.max(1, Math.ceil(a.requested * SCOUT_SHORT_SHARE)), sets });
   const read = async (params: Record<string, unknown>): Promise<{ ok: true; rows: Array<Record<string, unknown>>; next: string | null } | { ok: false }> => {
     const r = await deps.probe(a.option.endpoint.id, params);
     sets += 1;
     if (!r.ok) return { ok: false };
-    if (r.rows_in_page <= 0) return { ok: true, rows: [], next: null };
+    if (r.rows_in_page <= 0) { measured += 1; return { ok: true, rows: [], next: null }; }
     const page = await deps.readPage(r.call_id);
     if (page === null) return { ok: false };
+    measured += 1;
     return { ok: true, rows: runMap(a.mapCode, page), next: typeof r.next_cursor === "string" && r.next_cursor !== "" ? r.next_cursor : null };
   };
   // a THIN first page with a next page: follow the cursor for a few pages and count (the provider may page through a filtered, almost empty list)
@@ -595,7 +599,7 @@ export async function scoutYield(
     let cursor: string | null = a.nextCursor;
     for (let i = 0; i < MAX_SCOUT_PAGES && cursor && ids.size < a.requested; i += 1) {
       const got = await read({ ...a.option.params, [a.option.cursor]: cursor });
-      if (!got.ok) return { found: ids.size, exhausted: false, sets };
+      if (!got.ok) return stopped();
       const before = ids.size;
       for (const row of got.rows) ids.add(rowKeyOf(row));
       cursor = got.next;
@@ -606,7 +610,7 @@ export async function scoutYield(
   for (const params of a.option.more.slice(0, MAX_SCOUT_SETS)) {
     if (ids.size >= a.requested) break;
     const got = await read(params);
-    if (!got.ok) return { found: ids.size, exhausted: false, sets };
+    if (!got.ok) return stopped();
     for (const row of got.rows) ids.add(rowKeyOf(row));
     if (got.rows.length >= healthy) return { found: ids.size, exhausted: false, sets };
   }

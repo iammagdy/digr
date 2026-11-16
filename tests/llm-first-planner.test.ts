@@ -436,6 +436,17 @@ describe("SCOUTING: the real search found far less than the customer asked for �
     expect(n).toBeGreaterThanOrEqual(2); // the first page, then the followed page
   });
 
+  it("the gateway refuses a third sample of the source (planning samples a source twice): what was measured before decides → the customer is asked", async () => {
+    const m = scriptedModel({ request_plan: [ask300()], tool_choice: [CHOICE_X], field_map: [MAP_X], scout_report: [SCOUT_OK] });
+    let n = 0;
+    const { d } = deps(m, {
+      probe: async () => { n += 1; if (n >= 3) return { ok: false, call_id: "call_0009", refused: "repeat_sample" } as never; const first = n === 1; return { ok: true, call_id: `call_000${n}`, http_status: 200, rows_in_page: first ? 1 : 0, has_more: first, next_cursor: first ? "c1" : null, shape: null, first_rows: [], warnings: [], saved: "" } as never; },
+      readPage: async () => xPage(0, 1, "c1"),
+    });
+    const r = await planWithLlm({ words: ["٣٠٠ تغريدة"], request: "" }, d);
+    expect(r.kind).toBe("question");
+  });
+
   it("every input set empty (nothing found at all) → the customer is asked, not told «unserved»", async () => {
     const m = scriptedModel({ request_plan: [ask400], tool_choice: [CHOICE_X], scout_report: [SCOUT_OK] });
     const { d } = deps(m, { probe: async () => ({ ok: true, call_id: "call_0001", http_status: 200, rows_in_page: 0, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: "" }) });
