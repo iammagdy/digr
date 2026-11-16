@@ -425,12 +425,13 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     const trace = { empties: 0, failures: 0 };
     const got = await probeStep(step, options, parent, deps, trace);
     // a source that answered with nothing, for every input set tried, is a finding too (the customer is asked; a tool that failed is not "nothing found")
-    if (!got && !step.parent && trace.empties > 0 && trace.failures === 0) findings.push({ step, requested: step.count.total ?? DEFAULT_COUNT, found: 0, exhausted: true, sets: trace.empties });
+    // (a tool that answered empty on its searches is evidence even when another option of the step failed to answer at all: live 16 Nov, the second option was refused)
+    if (!got && !step.parent && trace.empties > 0) findings.push({ step, requested: step.count.total ?? DEFAULT_COUNT, found: 0, exhausted: true, sets: trace.empties });
     if (!got) { unserved.push({ what_ar: step.title_ar, reason_ar: "جرّبنا الأدوات المتاحة لهذه الخطوة فلم تُعطِ نتائج الآن، فلن تُضاف ولن تُحسب في السعر." }); continue; }
     const mapAnswer = await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, got.option.endpoint, got.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500);
     const map = enrichedMap(checkFieldMap(mapAnswer, got.items), got.items);
     // the source answered, but nothing usable came back for a top-level step (a named account that does not exist answers with a stray item): for the customer that is «nothing found», so they are asked, not told «unreadable»
-    const noUsable = (): void => { if (!step.parent && trace.failures === 0) findings.push({ step, requested: step.count.total ?? DEFAULT_COUNT, found: 0, exhausted: true, sets: Math.max(1, trace.empties + 1) }); };
+    const noUsable = (): void => { if (!step.parent) findings.push({ step, requested: step.count.total ?? DEFAULT_COUNT, found: 0, exhausted: true, sets: Math.max(1, trace.empties + 1) }); };
     if (!map) { noUsable(); unserved.push({ what_ar: step.title_ar, reason_ar: "لم نتمكن من قراءة نتائج هذه الخطوة بشكل موثوق، فلن تُضاف ولن تُحسب في السعر." }); continue; }
     const carry = carryFieldsOf(got.items, map);
     const card = pseudoCard(got.option.endpoint, got.listPath, map, got.items.length, carry, got.items);
