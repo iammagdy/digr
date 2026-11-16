@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { ChatHandler } from "../src/functions/shared/chatHandler";
 import { formatStructuredClarificationAnswers } from "../src/functions/shared/clarification";
-import { WAIT_SLOW_AR, WAIT_STILL_AR, waitProgressText } from "../src/lib/waitProgress";
+import { WAIT_BASE_AR, WAIT_SLOW_AR, WAIT_STILL_AR, waitProgressText } from "../src/lib/waitProgress";
 
 /**
  * A turn's database work used to run one wave after another (about ten sequential round trips for a plan request; each
@@ -156,5 +156,15 @@ describe("a long wait keeps saying that the work goes on", () => {
     const page = readFileSync("src/app/dashboard/chat/page.tsx", "utf8");
     expect(page).toContain("waitProgressText(loadingBaseText.current, Date.now() - startedAt)");
     expect(page).toMatch(/if \(!loading\) return;\s*const startedAt = Date\.now\(\);[\s\S]*clearInterval\(timer\)/);
+  });
+});
+
+describe("the first waiting line is true for every message", () => {
+  it("says only that the message arrived (never that research or a price is being worked on), then escalates by time", () => {
+    expect(WAIT_BASE_AR).toBe("وصلنا رسالتك، لحظة...");
+    expect(WAIT_BASE_AR).not.toMatch(/أبحث|نحسب|أحسب|السعر|خطة/);
+    expect(waitProgressText(WAIT_BASE_AR, 0)).toBe(WAIT_BASE_AR);
+    expect(waitProgressText(WAIT_BASE_AR, 8_000)).toBe(WAIT_STILL_AR);
+    expect(waitProgressText(WAIT_BASE_AR, 25_000)).toBe(WAIT_SLOW_AR);
   });
 });

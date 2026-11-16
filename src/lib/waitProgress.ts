@@ -10,6 +10,11 @@ export const WAIT_CANCEL_AFTER_MS = 15_000;
  * route is cut at 60 s: the page gives up between the two, so a turn that has not answered is never a silent minute.
  */
 export const TURN_TIMEOUT_MS = 45_000;
+/**
+ * The first line after a message is sent, for EVERY message (a greeting and a data request alike): it says only what is certain, that the message arrived. The page cannot know before the server answers
+ * whether the message is a data request, so it never says «we are planning» (a guess that was wrong for a thank-you). A data request gets its own card as soon as the mission exists.
+ */
+export const WAIT_BASE_AR = "وصلنا رسالتك، لحظة...";
 export const WAIT_STILL_AR = "ما زلت أعمل على طلبك، لحظات قليلة...";
 export const WAIT_SLOW_AR = "الخدمة أبطأ من المعتاد الآن. إن لم تصلك الخطوة التالية خلال لحظات نوقف الانتظار ونعرض لك زر إعادة المحاولة.";
 
