@@ -300,3 +300,5 @@ Never capped, hidden, removed or invented: the whole delivered number and the pl
 **Worker.** The DONE snapshot's work log ends with `file_ready` at its build time (it is written only after the file and the settlement). No other event is invented.
 
 **Browser (SIMULATED, not production):** `scripts/browser-journey/live-sheet-journey.browser.ts` (real Chromium at 1280/390/320, chat and request pages, the REAL live route and worker snapshot code over the stored M12 rows, rows compared with the workbook built by `buildMissionFiles`).
+
+> **Redesign (16 Nov 2026):** the grid and the phone card were redrawn from the Claude Design handoff (#533–#535); summary in `docs/PLATFORM-CHECK-2026-11-16.md` §6.

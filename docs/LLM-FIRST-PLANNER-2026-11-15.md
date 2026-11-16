@@ -138,3 +138,5 @@ Open: the price of a step whose first page gave few rows is high per row (the cu
 - The card wording.
 
 These are covered by the live tests after deployment.
+
+> **16 Nov 2026 platform check:** what changed in this planner after a live check of every data family (lookup steps, cross-engine search, our own web search fallback, shortfall questions) is in `docs/PLATFORM-CHECK-2026-11-16.md`.
