@@ -75,7 +75,7 @@ import { findUnresolvedResearchPlaceholder, unresolvedResearchPlaceholderMessage
 import { MissionPlanMobileBar, MissionPlanSheet, MissionPlanSidePanel } from "@/components/mission/MissionPlanPanel";
 import { useMissionPanel } from "@/hooks/useMissionPanel";
 import { PANEL_STATE_KEY, defaultPanelState, parsePanelState, newPlannerRequestId } from "@/lib/missionPanelState";
-import { TURN_TIMEOUT_MS, WAIT_CANCEL_AFTER_MS, waitProgressText } from "@/lib/waitProgress";
+import { TURN_TIMEOUT_MS, WAIT_BASE_AR, WAIT_CANCEL_AFTER_MS, waitProgressText } from "@/lib/waitProgress";
 import { customerFacingFailure, isRetryableFailure, logClientFailure, readChatResponse, startFailureMessageAr, TEMPORARY_FAILURE_AR } from "@/lib/customerError";
 import { startFailureText, type StartedJobState } from "@/lib/startFailure";
 
@@ -208,8 +208,8 @@ export default function ChatWorkspacePage() {
     try { window.localStorage.setItem(PANEL_STATE_KEY, JSON.stringify(next)); } catch { /* a convenience only */ }
     return next;
   });
-  const [loadingStatusText, setLoadingStatusText] = useState("يكتب الرد...");
-  const loadingBaseText = useRef("يكتب الرد...");
+  const [loadingStatusText, setLoadingStatusText] = useState(WAIT_BASE_AR);
+  const loadingBaseText = useRef(WAIT_BASE_AR);
   // The request of the turn on screen: «إيقاف الانتظار» aborts it, and the failure message then carries the retry.
   const turnAbort = useRef<AbortController | null>(null);
   // Jobs whose final balance was read again after the settlement (one extra read per job).
@@ -695,8 +695,8 @@ export default function ChatWorkspacePage() {
     };
 
     // THE WAITING LINE IS NEVER A GUESS ABOUT THE MESSAGE: a word list on the customer's text said «أبحث وأحسب السعر» to a question that only mentioned a price, and «يفكّر في سؤالك» to a «شكرًا».
-    // The line is the same true one for every message («يكتب الرد...»); when the server really starts research it writes its own line into the reply row (chatHandler), and a long wait says so (waitProgress.ts).
-    const baseStatus = "يكتب الرد...";
+    // The line is the same true one for every message («وصلنا رسالتك، لحظة...»: the message arrived); when the server really starts research it writes its own line into the reply row (chatHandler), and a long wait says so (waitProgress.ts).
+    const baseStatus = WAIT_BASE_AR;
     loadingBaseText.current = baseStatus;
     setLoadingStatusText(baseStatus);
     setMessages((prev) => [...prev, userMsg]);
