@@ -25,6 +25,7 @@ import { isInternalEvent } from "../src/lib/agentMission/eventText";
 // ROUND 59 CHANGED: only the `workbook` digests of g1 and g2 (company worlds) were re-pinned: the company check (src/lib/agentMission/companyQuality.ts) adds lines to the summary's «حدود هذا التسليم» (no source link per record;
 // identity consistency checked without visiting the sites). mission, plan, ledger, notices, planView and providerCalls are unchanged.
 // CHANGED (S1 live fixes): the pinned digests include cells that carry today's date in Cairo time, so this file failed on plain `origin/main` as soon as the Cairo day changed (observed 2026-11-02 00:21 Cairo). Only `Date` is pinned, to the day the digests were produced (2026-11-01).
+// CARD REDESIGN PHASE 2 CHANGED (16 Nov 2026): only the `planView` and `finalView` digests of the five worlds were re-pinned: the customer view gained `requestPartsAr` (empty for these worlds, which are not LLM-planned); mission and plan, workbook, notices, events, provider calls and ledger are byte-identical (checked section by section).
 beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-11-01T12:00:00Z")); });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 const FIXTURE = path.join(__dirname, "fixtures", "flags-off-digests.json");
