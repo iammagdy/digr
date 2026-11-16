@@ -2,6 +2,106 @@
 
 This handoff document provides a clear, factual status of the Diger platform (`iammagdy/digr`) for engineering agents (Codex), developers, and the project owner.
 
+> **Start here.** This file is newest first.
+> - `docs/PROGRESS.md`: one page on where the platform stands today, what is open, and what is next.
+> - `README.md`: how the parts fit together (the site on Vercel, the worker on Heroku, Supabase, the providers).
+
+---
+
+## 16 Nov 2026: every data family, the whole order, a new card and live sheet (PRs #515–#543)
+
+**State at the end of the day**
+- Main is `a580274` (#543).
+- The worker runs Heroku release v249.
+- The full suite passes: 14,363 tests.
+
+### 1. Planner rounds 1 and 2 (#515–#526)
+Documented in `docs/LLM-FIRST-PLANNER-2026-11-15.md` («Live results», «Round 2»). In short:
+- **Search terms.** Every query uses unambiguous terms.
+- **Next tool.** A topic search continues on the model's next proven tool.
+- **Small samples.** A small real sample is said to the customer before approval.
+- **Scouting conversation.** When the real search finds far less than asked, the customer is asked «تسلّم الموجود ولا نوسّع؟», and the planner re-plans from the answer.
+- **Natural chat.** Greetings, small talk and general questions get a normal assistant's answer.
+- **Hotfix #519.** `accepts_available` is a REQUIRED schema field. An optional field made the structured-output schema too complex, and every understanding call failed.
+
+### 2. Mission card redesign and waiting lines (#527–#532)
+No separate doc exists. The card is `src/components/mission/AgentMissionCard.tsx`, built from `src/lib/agentMission/customerView.ts`.
+
+- **One card, the same answers at every moment.** What you asked, what is happening, what it costs, what comes next.
+- **Plan facts.** Three cells: the count, the highest price, the time. The hold is told in the one money sentence.
+- **Phase 2.** It added:
+  - the request line («طلبك: ٢٠ خبرًا · مواقع الأخبار · …»);
+  - the newest rows while running;
+  - retry on the endings;
+  - sticky actions on a phone, where the action bar carries the price, the time and the promise;
+  - caveats in the customer's language.
+- **Waiting lines.**
+  - The chat waiting line is always a true one, never guessed from the customer's words.
+  - The first line after sending is «وصلنا رسالتك، لحظة...».
+  - A declined request gets a clear sentence.
+- **The live sheet is shown open while data is collected** (#532). The customer may fold it.
+
+### 3. Live sheet redesign (#533–#535)
+Source: the Claude Design handoff «Diger live sheet». Details are in `docs/STAGE-2.md` and `docs/PLATFORM-CHECK-2026-11-16.md` §6.
+
+- **Desktop** (`LiveSheetGrid.tsx`):
+  - an Excel-like grid where rows fade in one at a time;
+  - follow mode, with a «نتائج جديدة ↓» chip;
+  - virtualised rows and a side panel per row.
+- **Phone** (`LiveSheetCards.tsx`): a card with the newest three rows, plus a bottom sheet per row.
+- **Pure helpers:**
+  - `src/lib/agentMission/stage2/liveSheetView.ts`;
+  - `src/hooks/useLiveRows.ts` (row cache, honest reveal, follow, window asks).
+- **Route** (`liveSheet.ts`):
+  - `tail=1` returns the newest rows;
+  - «unchanged» is returned for any window.
+- **Customer-text rule.**
+  - The customer-text check bans spreadsheet words («صف», «الصفوف»), so the UI says «النتائج», «رقم ١٢» and «آخر إضافة».
+- **Card counter** (#534, #535):
+  - The sheet asks at once when the card knows rows were saved (`rowsHint`).
+  - The card's counter never goes back while the snapshot lags (`cardLive`).
+
+### 4. Platform check: every data family, every provider (#537–#543)
+Full report: `docs/PLATFORM-CHECK-2026-11-16.md`.
+
+- **Planning**
+  - The planner serves Maps, stores, app stores, review sites, news, search, jobs and markets, not only social media.
+  - Reviews of a NAMED place, app or product:
+    - a lookup step finds the thing first;
+    - the model picks the result that IS that thing (`pickNamedItem`). Live, the first result had been Fawry for «InstaPay»;
+    - the reviews are then bound to that item's id (`bindLookups`).
+  - Async task tools are never offered (`isAsyncTask`, 212 endpoints).
+  - Unnamed `<platform>.other` tools whose id names the items are offered as fallbacks.
+  - A plan with no delivered step ends `no_step_served`. Before, it fell into the legacy social-only question.
+- **Search and providers**
+  - News and web searches use every engine (`SEARCH_ENGINE_PLATFORMS`).
+  - **Our own Firecrawl and Context.dev keys:**
+    - they are offered to the model (`directWebEndpoints`);
+    - they are proven as the LAST fallback of a short web or news search;
+    - execution reads them through the `SourceGateway`, created for any plan that names a direct web tool even with `multi_stage_engine` off.
+  - A 401, 402 or 403 while planning leaves that tool at once.
+- **Shortfalls**
+  - A shortfall below 90% (`SCOUT_SHORT_SHARE`) is asked before the plan. This includes the items of one found thing (#541).
+  - After «سلّمني الموجود», the plan targets what was found (#542).
+- **Files and card**
+  - One source field gives one column.
+  - Post marks appear only on posts, comments and videos (`markColumnsOf`).
+  - The file button says what the file holds (`fileRowsAr`).
+  - Counts of 100 and up follow the last two digits (`countAr`: «١٠٠ تقييم»).
+  - The Google label depends on the capability: «خرائط جوجل», «أخبار جوجل» or «مواقع الأخبار».
+  - The card says what is collected, never «الطالب يريد».
+  - The chat prompt lists every family it serves.
+- **Provider names never reach the customer.**
+  - The scan found 0 hits in 62 files and cards, and 0 in `plan_public` and events.
+  - The methodology says «البحث في صفحات الويب».
+- **Open**
+  - Amazon reviews:
+    - the main tool answered 504 on every call on 16 Nov;
+    - the fallback gives the top 10 only.
+  - `exa.web.search.news` answered 402 every time. It is probably unpaid, so raise it with TREG.
+  - Firecrawl and Context.dev are not yet seen in a live mission. They are covered by tests only.
+  - Owner decision on price: an accepted shortfall is charged the 200-point minimum, while an unasked partial delivery of the same 10 was charged 142.
+
 ---
 
 ## LLM-FIRST PLANNER, 15 Nov 2026 (owner direction: the model plans, no word rules, no filters)
