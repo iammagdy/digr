@@ -429,12 +429,14 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     if (!got) { unserved.push({ what_ar: step.title_ar, reason_ar: "جرّبنا الأدوات المتاحة لهذه الخطوة فلم تُعطِ نتائج الآن، فلن تُضاف ولن تُحسب في السعر." }); continue; }
     const mapAnswer = await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, got.option.endpoint, got.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500);
     const map = enrichedMap(checkFieldMap(mapAnswer, got.items), got.items);
-    if (!map) { unserved.push({ what_ar: step.title_ar, reason_ar: "لم نتمكن من قراءة نتائج هذه الخطوة بشكل موثوق، فلن تُضاف ولن تُحسب في السعر." }); continue; }
+    // the source answered, but nothing usable came back for a top-level step (a named account that does not exist answers with a stray item): for the customer that is «nothing found», so they are asked, not told «unreadable»
+    const noUsable = (): void => { if (!step.parent && trace.failures === 0) findings.push({ step, requested: step.count.total ?? DEFAULT_COUNT, found: 0, exhausted: true, sets: Math.max(1, trace.empties + 1) }); };
+    if (!map) { noUsable(); unserved.push({ what_ar: step.title_ar, reason_ar: "لم نتمكن من قراءة نتائج هذه الخطوة بشكل موثوق، فلن تُضاف ولن تُحسب في السعر." }); continue; }
     const carry = carryFieldsOf(got.items, map);
     const card = pseudoCard(got.option.endpoint, got.listPath, map, got.items.length, carry, got.items);
     const mapCode = cardMapCode(card);
     const sampleRows = runMap(mapCode, got.page);
-    if (sampleRows.length === 0) { unserved.push({ what_ar: step.title_ar, reason_ar: "لم نتمكن من قراءة نتائج هذه الخطوة بشكل موثوق، فلن تُضاف ولن تُحسب في السعر." }); continue; }
+    if (sampleRows.length === 0) { noUsable(); unserved.push({ what_ar: step.title_ar, reason_ar: "لم نتمكن من قراءة نتائج هذه الخطوة بشكل موثوق، فلن تُضاف ولن تُحسب في السعر." }); continue; }
     const columns: PlanColumn[] = [...COLUMN_ORDER.filter((k) => map.fields[k] || (k === "link" && map.linkTemplate)).map((k) => ({ key: k, title_ar: COLUMN_TITLES[k] })), ...map.extra.map((e) => ({ key: e.key, title_ar: e.title_ar }))];
     step.title_ar = customerSafe(step.title_ar, 60) ?? "العناصر";
     // ASKED FOR 400, GET 400: a topic search also proves the model's next tool (another provider's index gives other items); execution reads it after the first tool's input sets run out
