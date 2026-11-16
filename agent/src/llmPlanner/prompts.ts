@@ -6,6 +6,7 @@
 export const UNDERSTAND_TOOL = "request_plan";
 export const TOOL_CHOICE_TOOL = "tool_choice";
 export const FIELD_MAP_TOOL = "field_map";
+export const SCOUT_TOOL = "scout_report";
 
 export const UNDERSTAND_SYSTEM = `You are the planner of Diger, a service that collects public data for researchers. A customer wrote a request (usually in Arabic or Egyptian Arabic). Your job is to understand EXACTLY what they want and turn it into collection steps over the data catalog below. You decide; nothing else re-reads the request after you.
 
@@ -24,6 +25,11 @@ Choosing where to collect:
 - Pick the platform key and capability exactly as written in the catalog index below (a capability is "<platform>.<name>"). A search inside a named account is usually the platform's search capability with the account as source (or the account's posts when there is no topic). Comments/replies are their own capabilities.
 - The index lists everything the service can collect. If a request needs something the index does not have at all, use decision "cannot" with a short honest Arabic reason. Never invent a platform or capability.
 
+A question you or the system asked the customer, and their answer, complete the request: the customer may be answering a QUESTION ABOUT WHAT THE REAL SEARCH FOUND (it found less than they asked for). Their answer decides:
+  - they accept what exists («سلّمني الموجود», «كمّل بالموجود», «خلاص كده»): keep every step as it was and set accepts_available true;
+  - they widen («وسّع», another country or region, other accounts or pages, a longer period, related topics, another platform): change ONLY the conditions they name (drop the single account for a whole country; add an account as one more step of the same capability with that source; lengthen the period; add the related topics to the topic and the search terms) and keep every other condition. The count stays the customer's number unless they gave another.
+  - an answer that is a new question or a doubt about the plan is not a plan: use decision "ask" and answer in question_ar before asking what is still open.
+
 When to ask: ONLY when the request cannot be carried out without the answer (you cannot tell what kind of items to collect, or from where). Missing count, period or order is NOT a reason to ask: choose a sensible default and state it in assumptions_ar. Ask in Egyptian-friendly Arabic, short, with 2 to 4 options when possible.
 
 Write every *_ar field in clear Arabic for the customer, with NO Latin letters and no handles or links (say «حساب وزارة الصحة السعودية», not the handle) and digits in Arabic-Indic form. understanding_ar restates the whole request as you understood it in one or two sentences (what, from where, about what, how many, which period). Never mention providers, tools, APIs or prices.`;
@@ -38,6 +44,7 @@ export const UNDERSTAND_SCHEMA: Record<string, unknown> = {
     cannot_ar: { type: "string" },
     assumptions_ar: { type: "array", items: { type: "string" } },
     no_repeat: { type: "boolean" },
+    accepts_available: { type: "boolean", description: "true only when the customer's answer to a question about what the real search found accepts what exists" },
     steps: {
       type: "array",
       items: {
@@ -124,4 +131,21 @@ export const FIELD_MAP_SCHEMA: Record<string, unknown> = {
     extra: { type: "array", items: { type: "object", properties: { key: { type: "string" }, title_ar: { type: "string" }, path: { type: "array", items: { type: "string" } } }, required: ["key", "title_ar", "path"] } },
   },
   required: ["fields"],
+};
+
+export const SCOUT_SYSTEM = `You are Diger's assistant, talking to a customer who asked for data. Before preparing their plan you ran REAL searches for their request, and the source gave LESS than they asked for. Tell them honestly what you found and ask what they prefer, like a thoughtful person would in a chat.
+
+Write in the customer's own dialect (if they wrote Egyptian Arabic, answer in friendly Egyptian Arabic; otherwise clear, simple Arabic). 2 to 4 short sentences: what you searched (in their words: the account, the topic, the period), how many you found against how many they asked for, and that you can either hand over what exists or widen the search. Then offer 2 to 4 options, each a short clause the customer can tap, specific to THEIR request, for example:
+- hand over what was found («سلّمني الموجود»);
+- widen along the conditions the request has: drop the single account and search the whole country or region about the same topic; add related accounts or pages; lengthen the period; add related topics or other platforms the catalog serves;
+- or let them write their own idea (the system adds that choice itself: do not add it).
+Facts are given as JSON. Use ONLY the numbers in the facts (what was requested, what was found) and the numbers the customer wrote. Never promise that a wider search will reach the requested number. No provider, tool or price talk; no Latin letters, handles or links (say «حساب وزارة الصحة السعودية», not the handle); digits in Arabic-Indic form; no emoji.`;
+
+export const SCOUT_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    message_ar: { type: "string", description: "what was found and what you can do, 2 to 4 short sentences, ending with the question" },
+    options_ar: { type: "array", items: { type: "string" }, description: "2 to 4 short options, each under 60 characters" },
+  },
+  required: ["message_ar", "options_ar"],
 };

@@ -76,7 +76,7 @@ const oneLine = (text: unknown, max: number): string => String(text ?? "").repla
 
 const OPEN_LINES: Record<OpenState, string> = {
   plan_ready: "خطة طلبه جاهزة وتنتظر اعتماده. رسالة تغيّر شيئًا في الخطة (العدد، المكان، الأعمدة، المصادر، إضافة بيانات أو حذفها: «خليها ٥٠٠»، «بس ...»، «ضيف ...») هي edit_of_open_request. سؤال أو استفسار أو تأكيد عن الخطة نفسها (مصادرها، كيف نتحقق من الصلة بالموضوع، الخانات التي لا نجدها، السعر والحجز، تقليل التكلفة)، أو شرط موجود فيها بالفعل، هو open_request_question.",
-  needs_input: "الوكيل سأله سؤالًا وينتظر جوابه. رسالة قصيرة تجيب عن هذا السؤال هي edit_of_open_request.",
+  needs_input: "الوكيل سأله سؤالًا وينتظر جوابه (قد يكون سؤالًا عن طلبه، أو عرضًا لما وجدناه فعلًا في بحث حقيقي مع خيارات). رسالة تجيب عن هذا السؤال أو تختار أحد خياراته أو تقول ما يريده بكلماته (مثل «وسّع على السعودية كلها» أو «سلّمني الموجود») هي edit_of_open_request. أما إن سأل عن معنى السؤال أو الخيارات أو عمّا وجدناه، فهي open_request_question وأجبه من نص سؤال الوكيل أعلاه (فيه ما وجدناه فعلًا) بلغة طبيعية ثم ذكّره بالسؤال بإيجاز دون أن تقول إنك وسّعت البحث أو غيّرت شيئًا؛ وإن تحدث في موضوع آخر أو حيّاك فرد عليه بشكل طبيعي ثم ذكّره بلطف أن سؤال الوكيل ينتظر جوابه.",
   planning: "طلبه قيد التجهيز ولم تظهر خطته بعد. رسالة تغيّر عدد العناصر أو شروطه هي edit_of_open_request.",
 };
 
@@ -181,15 +181,16 @@ export function buildSystemPrompt(input: { balancePoints: number | null; open: O
     "reply في open_request_question: أجب عن سؤاله نفسه مباشرة من حقائق الخطة أعلاه فقط (المصادر والخطوات والأعمدة والافتراضات والسعر والحجز). اذكر ما في الخطة بأسمائه كما هو. إن لم تذكر الحقائق شيئًا عمّا سأل عنه فقل ذلك بصدق ولا تَعِد به. وإن كان ما يطلبه يحتاج تغيير الخطة فقل إنك تقدر تجهّز له خطة معدّلة بسعرها قبل أي خصم لو أكّد.",
     "لا تقل أبدًا إنك عدّلت الخطة أو أضفت إليها أو حذفت منها أو ألغيتها أو اعتمدتها؛ النظام وحده يفعل ذلك.",
     "",
-    "قواعد الرد (صارمة):",
-    "- اكتب بالعربية الفصحى المبسطة الودودة، ولا تستعمل العامية المصرية إلا إذا كتب العميل بالعامية المصرية فتجيبه بعامية مهذبة.",
-    "- اجعل الرد قصيرًا: من جملة إلى أربع جمل.",
+    "قواعد الرد:",
+    "- كن مساعدًا طبيعيًا ودودًا مثل أي مساعد ذكاء اصطناعي محترف: ردّ على التحية بتحية، وعلى «عامل إيه» أو «ازيك» بجواب إنساني طبيعي (مثل «الحمد لله، وإنت عامل إيه؟ بتفكر في إيه النهارده؟») ثم دع العميل يقود الحوار. أجب مباشرة عن الأسئلة العامة والمعلومات والمساعدات البسيطة وشاركه الحديث بعفوية، ولا تحوّل كل رسالة إلى عرض للخدمة. اعرض مساعدتك في جمع البيانات بجملة قصيرة فقط حين يناسب سياق الكلام.",
+    "- اكتب بلغة العميل ولهجته نفسها: عامية مصرية بدفء وبساطة إن كتب بها، وفصحى مبسطة إن كتب بها. لا تتكلّف ولا تكرر نفسك.",
+    "- طول الرد على قدر الكلام: جملة أو جملتان للتحية، وفقرة أو أكثر لسؤال يحتاج شرحًا. لا تقطع إجابة مفيدة.",
     "- لا تستعمل إيموجي ولا رموزًا تعبيرية.",
     "- اكتب الأرقام بالأرقام الهندية (٠١٢٣٤٥٦٧٨٩) فقط، ولا تكتب رقمًا لاتينيًا أبدًا. واكتب الأعداد الصغيرة بالكلمات (ثلاث خطوات).",
     "- لا تذكر أي مزوّد بيانات أو واجهة ربط أو معرّف تقني أو سعرًا بالدولار، ولا اسم أي نموذج ذكاء اصطناعي ولا الشركة المصنّعة له. إن سُئلت عن التقنية فقل إن ديجر تستعين بالذكاء الاصطناعي في قراءة الطلب وتجهيز الخطة دون تسمية أحد.",
     "- لا تخترع أسعارًا أو أرقامًا لم تُعطَ لك في الحقائق الثابتة أو في رسالة العميل.",
     "- لا تَعِد بعدد معيّن من النتائج ولا بموعد تسليم؛ فالخطة تحدد العدد والسعر قبل أي خصم.",
-    "- اعرض على العميل أن يبدأ طلب بيانات عندما يناسب ذلك، ولا تضغط عليه.",
+    "- اعرض على العميل أن يبدأ طلب بيانات عندما يناسب ذلك، ولا تضغط عليه. وإن كان له طلب مفتوح يسأله الوكيل عن شيء، ذكّره بالسؤال بلطف بعد أن ترد على كلامه.",
     "- لا تقل إنك نفّذت أو اعتمدت أو خصمت شيئًا، ولا تطلب من العميل مفتاحًا أو كلمة سر.",
     "- اكتب «بي دي إف» و«إكسل» بالحروف العربية، ولا تكتب كلمات لاتينية.",
   );
@@ -277,7 +278,7 @@ export function rawPartsOf(brief: unknown): number {
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 // THE REPLY GUARD
 // ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------
-export const MAX_REPLY_CHARS = 900;
+export const MAX_REPLY_CHARS = 1800;
 const EMOJI = /[\p{Extended_Pictographic}\u{FE0F}\u{200D}\u{1F1E6}-\u{1F1FF}]/u;
 const LATIN_OR_PERSIAN_DIGIT = /[0-9۰-۹]/;
 /** Model names and their makers, in Latin and in Arabic letters. */
@@ -373,6 +374,8 @@ function conversationFor(ctx: TurnContext): Array<{ role: "user" | "assistant"; 
 export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getChatModel()): Promise<Decision> {
   let answer: ParsedAnswer | null = null;
   let failure = "unreadable";
+  /** One more try of the reply when the code's guard refused the first (the reasons go back to the model in plain words): set inside the try below. */
+  let regenerate: ((hints: string[]) => Promise<ParsedAnswer | null>) | null = null;
   try {
     const briefMode = ctx.brief?.enabled === true;
     /**
@@ -386,6 +389,10 @@ export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getCha
     const messages = history.slice(-1);
     const system = buildSystemPrompt({ balancePoints: ctx.balancePoints, open: ctx.open, brief: ctx.brief, ...(transcript.length > 0 ? { transcript } : {}) });
     const call = (sys: string) => model({ system: sys, messages, maxTokens: briefMode ? CHAT_MODEL_BRIEF_MAX_TOKENS : CHAT_MODEL_MAX_TOKENS, timeoutMs: CHAT_MODEL_TIMEOUT_MS });
+    regenerate = async (hints) => {
+      const again = await call(`${system}\nملاحظة: ردك السابق على هذه الرسالة لم يُعرض على العميل لأن: ${hints.join("؛ ")}. اكتب ردًا جديدًا طبيعيًا يحترم ذلك، بسطر JSON واحد فقط.`);
+      return again.ok && !again.truncated ? parseModelAnswer(again.text) : null;
+    };
     let result = await call(system);
     // ONE retry when the model answered but not in the format (prose instead of the JSON line): the same request with a short format note; never for a failed call (a timeout or an HTTP error is the keyword rules' case)
     // ONE retry when the model answered but not in the format: the same request with a short note at the end of the system prompt; never for a failed call (a timeout or an HTTP error is the keyword rules' case)
@@ -411,7 +418,7 @@ export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getCha
   const overruled = standalone && type !== "data_request" && type !== "edit_of_open_request" && classifyMessage(ctx.message) === "data_request";
   if (overruled) type = "data_request";
   const model_ = (reply: string | null, guarded: boolean, count: number | null): Decision => ({ type, reply, count, reason: answer!.reason, source: "model", guarded, ...(overruled ? { overruled: true } : {}) });
-  const allowed = { message: ctx.message, balancePoints: ctx.balancePoints, extraAr: [...(ctx.brief?.numbersAr ?? []), ...planNumbersAr(ctx.open?.facts ?? null)], facts: ctx.open?.facts ?? null };
+  const allowed = { message: ctx.message, balancePoints: ctx.balancePoints, extraAr: [...(ctx.brief?.numbersAr ?? []), ...planNumbersAr(ctx.open?.facts ?? null), ...(ctx.open?.state === "needs_input" ? numbersIn(String(ctx.open.questionAr ?? "")) : [])], facts: ctx.open?.facts ?? null };
   if (ctx.brief?.enabled === true && (type === "data_request" || type === "edit_of_open_request")) {
     // brief mode: the model's discovery question or short note is shown only when the guard passes it; the brief is checked against the schema here and against the conversation by the caller
     const brief = answer.brief === undefined ? null : parseBrief(answer.brief);
@@ -423,5 +430,20 @@ export async function decideTurn(ctx: TurnContext, model: ChatModelCall = getCha
   if (type === "data_request" || type === "cancel_open_request") return model_(null, false, null);
   if (type === "edit_of_open_request") { const count = supportedCount(ctx.message, answer.count); return { ...model_(null, false, count), ...(answer.count !== null && count === null ? { countRejected: true } : {}) }; }
   const guard = guardReply(answer.reply, allowed);
-  return guard.ok ? model_(guard.text, false, null) : model_(null, true, null);
+  if (guard.ok) return model_(guard.text, false, null);
+  // the reply was long, had a Latin digit, an emoji or a number the facts do not give: ONE more try with the reasons, so the customer reads a natural answer and not the fixed text
+  if (regenerate && answer.reply.trim() !== "") {
+    const hints = [...new Set(guard.issues.map((i) => GUARD_HINT_AR[i.split(":")[0]] ?? "خالف قواعد الرد"))];
+    try {
+      const second = await regenerate(hints);
+      if (second && second.type === type) { const g2 = guardReply(second.reply, allowed); if (g2.ok) return model_(g2.text, false, null); }
+    } catch { /* the fixed answer follows */ }
+  }
+  return model_(null, true, null);
 }
+
+/** What the model is told when its reply was refused, per reason. */
+const GUARD_HINT_AR: Record<string, string> = {
+  empty: "كان فارغًا", too_long: "كان أطول من اللازم، اختصره", latin_digit: "فيه رقم لاتيني، اكتب الأرقام بالهندية فقط", emoji: "فيه إيموجي", model_name: "ذكر اسم نموذج أو شركة ذكاء اصطناعي",
+  provider_name: "ذكر اسم مزوّد بيانات", number_not_given: "ذكر رقمًا لم يكتبه العميل ولم يُعطَ لك في الحقائق، فلا تذكر أرقامًا غير ما أُعطيت", customer_text: "فيه كلمة لاتينية أو معرّف تقني، اكتب كل شيء بالحروف العربية",
+};
