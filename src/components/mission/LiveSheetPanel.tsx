@@ -3,6 +3,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useLiveSheet, type LiveReach } from "@/hooks/useLiveSheet";
 import type { LiveData, LiveWindow } from "@/lib/agentMission/stage2/livePoller";
+import { counterAr } from "@/lib/agentMission/stage2/liveSheet";
 import { LiveSheetCards } from "./LiveSheetCards";
 import { LiveSheetGrid } from "./LiveSheetGrid";
 
