@@ -163,7 +163,8 @@ describe("how the card knows (wiring)", () => {
   it("the card keeps the last live data the panel reported, and passes it only while the live sheet is shown", () => {
     const card = readFileSync("src/components/mission/AgentMissionCard.tsx", "utf8");
     expect(card).toContain("useState<LiveData | null>(null)");
-    expect(card).toContain("live={showLive ? liveData : null}");
+    expect(card).toContain("live={showLive ? cardLive : null}");
+    expect(card).toContain("v.savedSoFar > liveData.delivered ? { ...liveData, delivered: v.savedSoFar");
     expect(card).toContain("<LiveSheetPanel missionId={missionId} enabled missionLive={!ended} onData={setLiveData} rowsHint={v.savedSoFar} />");
     const panel = readFileSync("src/components/mission/LiveSheetPanel.tsx", "utf8");
     expect(panel).toContain("onData");

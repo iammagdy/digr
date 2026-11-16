@@ -29,6 +29,7 @@ import { SUPPORT_URL } from "@/lib/constants";
 import type { AskCardView, AskEdit } from "@/lib/agentMission/stage2/askCard";
 import type { LiveData } from "@/lib/agentMission/stage2/livePoller";
 import { liveProgressOf, phoneCollectLine } from "@/lib/agentMission/stage2/singleCounter";
+import { counterAr } from "@/lib/agentMission/stage2/counterWording";
 
 /**
  * THE MISSION CARD of the chat: what the agent will deliver, in plain Arabic and in one place. It draws ONE answer of /api/missions/<id> (the customer's own mission): a summary sentence, the
@@ -233,7 +234,9 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   // STAGE 2 S10 + LAUNCH ROUND: the live sheet under the card, where the page asks for it (`liveSheet`: the requests page and the conversation) and only when the server said the flag is on for this
   // viewer; from the moment the customer approves here (the plan is shown as started at once) or the mission works, and after it ends (the final rows stay)
   const showLive = liveSheet && answer?.liveSheet === true && (v.phase === "running" || v.phase === "done" || v.phase === "partial" || (v.phase === "plan" && approvedHere));
-  return <>{<AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} pendingText={pendingText} quietSinceMs={quietSinceMs} nowMs={nowMs} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled} askCard={stage2 ? answer?.askCard ?? null : null} onAskEdit={askEdit} askError={askError} live={showLive ? liveData : null} onRetry={typeof answer?.requestText === "string" && answer.requestText.trim() ? () => onEdit?.(answer.requestText as string) : undefined} />}{showLive ? (
+  // the live snapshot is written a little after the card's own events: while it lags, the card keeps the higher count it already knows (live, 16 Nov 2026: ٤٠ → ٢٠ → ٦٠ on one run)
+  const cardLive = liveData && v.phase === "running" && v.savedSoFar > liveData.delivered ? { ...liveData, delivered: v.savedSoFar, counterAr: counterAr(v.savedSoFar, liveData.promised) } : liveData;
+  return <>{<AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} pendingText={pendingText} quietSinceMs={quietSinceMs} nowMs={nowMs} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled} askCard={stage2 ? answer?.askCard ?? null : null} onAskEdit={askEdit} askError={askError} live={showLive ? cardLive : null} onRetry={typeof answer?.requestText === "string" && answer.requestText.trim() ? () => onEdit?.(answer.requestText as string) : undefined} />}{showLive ? (
     // THE LIVE SHEET IS SHOWN WHILE THE DATA IS COLLECTED (owner, 16 Nov 2026: the customer watches the rows arrive in a sheet like the Excel file). The sheet has its own fold button (handoff
     // «Diger live sheet»); it stays mounted while folded so its numbers keep the same source as the card's counter
     <div className="mt-2 w-full min-w-0" data-testid="agent-live">
