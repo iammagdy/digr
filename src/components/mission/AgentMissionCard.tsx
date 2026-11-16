@@ -505,7 +505,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2" data-testid="agent-files">
           {excel ? (
             <button type="button" className="flex min-h-[60px] w-full cursor-pointer items-center justify-between gap-3 rounded-2xl border-0 bg-ac px-5 text-start text-onac focus-visible:outline-2" onClick={() => onDownload(excel.name)}>
-              <span className="flex min-w-0 flex-col"><span className="text-[16px] font-semibold">{excel.labelAr}</span><span className="text-[12px] opacity-80">{[v.totalRowsAr, v.samples ? `${formatAr(v.samples.columns.length)} أعمدة` : null].filter(Boolean).join(" · ")}</span></span>
+              <span className="flex min-w-0 flex-col"><span className="text-[16px] font-semibold">{excel.labelAr}</span><span className="text-[12px] opacity-80">{v.fileRowsAr ?? v.totalRowsAr}</span></span>
               <span aria-hidden="true" className="text-[20px]">↓</span>
             </button>
           ) : null}
