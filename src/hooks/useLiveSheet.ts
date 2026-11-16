@@ -70,6 +70,7 @@ export function useLiveSheet(missionId: string, options: { enabled: boolean; /**
       const p = new URLSearchParams();
       if (q.cursor) p.set("cursor", q.cursor);
       if (q.sheet) p.set("sheet", q.sheet);
+      if (q.tail) p.set("tail", "1");
       p.set("offset", String(q.offset));
       p.set("limit", String(q.limit));
       const res = await fetch(`/api/missions/${encodeURIComponent(missionId)}/live?${p.toString()}`, { cache: "no-store", headers: await authHeaders() });
@@ -81,7 +82,10 @@ export function useLiveSheet(missionId: string, options: { enabled: boolean; /**
     // (not this viewer's mission, or the flag) removes what was remembered and draws nothing
     poller.current = startLivePolling(
       { fetchPage, onData, onEnd: setEnded, onReach, ...(missionLiveRef.current === undefined ? {} : { isMissionLive: () => missionLiveRef.current !== false }) },
-      remembered ? { cursor: remembered.status === "done" ? null : remembered.cursor, window: { sheet: remembered.window.stageKey || null, offset: remembered.window.offset } } : {},
+      // a running mission's sheet starts at its NEWEST rows (the screen follows them as they arrive); a finished one at its first rows
+      remembered
+        ? { cursor: remembered.status === "done" ? null : remembered.cursor, window: { sheet: remembered.window.stageKey || null, offset: remembered.window.offset, tail: remembered.status !== "done" } }
+        : { window: { tail: missionLiveRef.current !== false } },
     );
     const onVisible = () => { if (typeof document !== "undefined" && document.visibilityState === "visible") poller.current?.refresh(); };
     const onOnline = () => poller.current?.refresh();

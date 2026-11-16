@@ -64,7 +64,8 @@ export const LIVE_SHEET_POLL = {
   maxPayloadBytes: 262_144,
 } as const;
 
-export interface LivePollRequest { cursor: string | null; sheet: string | null; offset: number; limit: number }
+/** `tail`: the window is the sheet's NEWEST rows (`offset = total − limit`), so a screen that follows the rows as they arrive asks once per change (the answer's `window.offset` says where it starts). */
+export interface LivePollRequest { cursor: string | null; sheet: string | null; offset: number; limit: number; tail?: true }
 export type LivePollResponse =
   | { changed: false; cursor: string; retryAfterMs: number }
   | {
@@ -95,7 +96,8 @@ export function parsePollRequest(q: { get(name: string): string | null } | Recor
   const cursor = get("cursor");
   const sheet = get("sheet");
   const limit = Math.min(LIVE_SHEET_POLL.maxRowsPerResponse, Math.max(1, whole(get("limit"), LIVE_SHEET_POLL.defaultRowsPerResponse) || LIVE_SHEET_POLL.defaultRowsPerResponse));
-  return { cursor: cursor && cursor.length <= 200 ? cursor : null, sheet: sheet && sheet.length <= 100 ? sheet : null, offset: whole(get("offset"), 0), limit };
+  const tail = get("tail") === "1";
+  return { cursor: cursor && cursor.length <= 200 ? cursor : null, sheet: sheet && sheet.length <= 100 ? sheet : null, offset: whole(get("offset"), 0), limit, ...(tail ? { tail: true as const } : {}) };
 }
 
 /** The counter's words live in counterWording.ts (finding F-1: over-delivery is said in words); re-exported so the worker and the tests keep one import. */
@@ -117,7 +119,8 @@ const cutRow = (r: LiveRow): LiveRow & { cut?: true } => {
  */
 export function pollResponse(snapshot: LiveSnapshot | null, req: LivePollRequest, delayMs: number = LIVE_SHEET_POLL.intervalMs): LivePollResponse {
   if (!snapshot) return { changed: false, cursor: null, retryAfterMs: LIVE_SHEET_POLL.maxIntervalMs, empty: true };
-  if (req.cursor !== null && req.cursor === snapshot.cursor && req.offset === 0) return { changed: false, cursor: snapshot.cursor, retryAfterMs: snapshot.status === "done" ? LIVE_SHEET_POLL.maxIntervalMs : delayMs };
+  // the same cursor: nothing the screen shows has changed, whatever window it holds (a new window is asked with no cursor)
+  if (req.cursor !== null && req.cursor === snapshot.cursor) return { changed: false, cursor: snapshot.cursor, retryAfterMs: snapshot.status === "done" ? LIVE_SHEET_POLL.maxIntervalMs : delayMs };
   const sheet = snapshot.sheets.find((s) => s.stageKey === req.sheet) ?? snapshot.sheets[0] ?? null;
   const base = {
     changed: true as const, cursor: snapshot.cursor, status: snapshot.status, delivered: snapshot.delivered, promised: snapshot.promised, counterAr: counterOfStored(snapshot),
@@ -125,11 +128,18 @@ export function pollResponse(snapshot: LiveSnapshot | null, req: LivePollRequest
     sheets: snapshot.sheets.map((s) => ({ stageKey: s.stageKey, nameAr: s.nameAr, headers: s.headers, total: s.rows.length })),
     retryAfterMs: snapshot.status === "done" ? null : delayMs,
   };
-  let rows = sheet ? sheet.rows.slice(req.offset, req.offset + req.limit).map(cutRow) : [];
+  const offset = req.tail && sheet ? Math.max(0, sheet.rows.length - req.limit) : req.offset;
+  let rows = sheet ? sheet.rows.slice(offset, offset + req.limit).map(cutRow) : [];
   let truncated = false;
-  const size = (r: typeof rows): number => new TextEncoder().encode(JSON.stringify({ ...base, window: { stageKey: sheet?.stageKey ?? "", offset: req.offset, rows: r }, truncated: true })).length;
-  while (rows.length > 0 && size(rows) > LIVE_SHEET_POLL.maxPayloadBytes) { rows = rows.slice(0, Math.max(0, Math.floor(rows.length / 2))); truncated = true; }
-  return { ...base, window: { stageKey: sheet?.stageKey ?? "", offset: req.offset, rows }, truncated };
+  const size = (r: typeof rows): number => new TextEncoder().encode(JSON.stringify({ ...base, window: { stageKey: sheet?.stageKey ?? "", offset, rows: r }, truncated: true })).length;
+  // shortened to the size limit: a tail window keeps its NEWEST rows (its start moves down), any other window its first ones
+  let start = offset;
+  while (rows.length > 0 && size(rows) > LIVE_SHEET_POLL.maxPayloadBytes) {
+    const keep = Math.max(0, Math.floor(rows.length / 2));
+    if (req.tail) { start += rows.length - keep; rows = rows.slice(rows.length - keep); } else rows = rows.slice(0, keep);
+    truncated = true;
+  }
+  return { ...base, window: { stageKey: sheet?.stageKey ?? "", offset: start, rows }, truncated };
 }
 
 /** The wait before the next poll: the base interval while things change, growing by `backoffFactor` while nothing does (to `maxIntervalMs`), with ±`jitterShare` jitter. `random` in [0,1). */

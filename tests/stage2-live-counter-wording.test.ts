@@ -94,13 +94,13 @@ describe("the phone card and the work log say the same", () => {
   it("the phone counter carries the over-delivery sentence and never «X من N» with X above N", async () => {
     const data = await liveAnswer({ sheet: "comments", offset: 0, limit: 10 });
     const html = renderToStaticMarkup(createElement(LiveSheetCards, { data }));
-    expect(html).toContain(`>${data.counterAr}<`);
+    expect(html).toContain(`aria-label="${data.counterAr}"`);
     expect(html).toContain("أكثر من التقدير");
   });
   it("normal progress on the phone is unchanged", async () => {
     const data = await liveAnswer({ sheet: "comments", offset: 0, limit: 10 });
     const ok = { ...data, delivered: 12, promised: 40, counterAr: counterAr(12, 40) };
-    expect(renderToStaticMarkup(createElement(LiveSheetCards, { data: ok }))).toContain(">١٢ من ٤٠<");
+    expect(renderToStaticMarkup(createElement(LiveSheetCards, { data: ok }))).toContain('aria-label="١٢ من ٤٠"');
   });
   it("the work log's «المجموع الآن» and «انتهينا» lines use the same words when the total is above the stage's number", () => {
     const at = Date.parse("2026-11-04T08:31:00Z");

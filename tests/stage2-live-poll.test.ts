@@ -41,6 +41,32 @@ describe("the answer", () => {
     expect(r.window.rows.map((x) => x.id)).toEqual(Array.from({ length: 20 }, (_, i) => `c${100 + i}`));
     expect(r.truncated).toBe(false);
   });
+  it("the same cursor at ANY window: «nothing changed» (a new window is asked with no cursor)", () => {
+    const s = snapshot(120);
+    expect(pollResponse(s, { cursor: s.cursor, sheet: "comments", offset: 70, limit: 50 }).changed).toBe(false);
+    expect(pollResponse(s, { cursor: s.cursor, sheet: "comments", offset: 0, limit: 50, tail: true }).changed).toBe(false);
+  });
+  it("a tail window: the sheet's NEWEST rows (one ask per change for a screen that follows them); its offset says where it starts", () => {
+    expect(parsePollRequest(new URLSearchParams("tail=1&sheet=comments"))).toEqual({ cursor: null, sheet: "comments", offset: 0, limit: 50, tail: true });
+    expect(parsePollRequest(new URLSearchParams("tail=0")).tail).toBeUndefined();
+    const r = pollResponse(snapshot(120), { cursor: null, sheet: "comments", offset: 0, limit: 50, tail: true });
+    if (!r.changed) throw new Error("unchanged");
+    expect(r.window.offset).toBe(70);
+    expect(r.window.rows.map((x) => x.id)).toEqual(Array.from({ length: 50 }, (_, i) => `c${70 + i}`));
+    const small = pollResponse(snapshot(12), { cursor: null, sheet: "comments", offset: 0, limit: 50, tail: true });
+    expect(small.changed && small.window.offset).toBe(0);
+    expect(small.changed && small.window.rows).toHaveLength(12);
+  });
+  it("a tail window shortened to the size limit keeps its newest rows", () => {
+    const big = snapshot(300, 2000);
+    for (const r of big.sheets[1].rows) r.cells = [r.cells[0], r.cells[0], r.cells[0]]; // three long cells a row: 200 rows pass the size limit
+    const r = pollResponse(big, { cursor: null, sheet: "comments", offset: 0, limit: 200, tail: true });
+    if (!r.changed) throw new Error("unchanged");
+    expect(r.truncated).toBe(true);
+    expect(r.window.rows.at(-1)?.id).toBe("c299");
+    expect(r.window.offset + r.window.rows.length).toBe(300);
+    expect(r.window.rows[0].id).toBe(`c${r.window.offset}`);
+  });
   it("no sheet asked: the first sheet", () => {
     const r = pollResponse(snapshot(3), { cursor: null, sheet: null, offset: 0, limit: 50 });
     expect(r.changed && r.window.stageKey).toBe("videos");
