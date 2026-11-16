@@ -644,7 +644,7 @@ export async function scoutQuestion(u: Understanding, weak: ReadonlyArray<ScoutF
   if (!isObj(answer)) return fallback;
   const message = customerSafe(str(answer.message_ar), 700);
   if (!message) return fallback;
-  const allowed = new Set<string>([...weak.flatMap((f) => [String(f.requested), String(f.found)]), ...numbersWritten(`${input.words.join(" ")} ${JSON.stringify(weak.map((f) => f.step.period))}`)]);
+  const allowed = new Set<string>([...weak.flatMap((f) => [String(f.requested), String(f.found), String(f.sets)]), ...numbersWritten(`${input.words.join(" ")} ${JSON.stringify(weak.map((f) => f.step.period))}`)]);
   const foreign = [...numbersWritten(message)].filter((n) => !allowed.has(n));
   if (foreign.length > 0) { deps.log?.(`llm_planner_scout_numbers ${foreign.join(",")}`); return fallback; }
   const options = (Array.isArray(answer.options_ar) ? answer.options_ar : []).map((o) => customerSafe(str(o), 80)).filter((o): o is string => o !== null && [...numbersWritten(o)].every((n) => allowed.has(n))).slice(0, 4);

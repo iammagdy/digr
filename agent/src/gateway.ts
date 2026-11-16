@@ -70,6 +70,8 @@ export type GatewayCallResult =
   | { ok: false; call_id: string; failed: true; http_status: number; message: string };
 
 export interface GatewayDeps {
+  /** Planning only: the most samples of one source that gave rows (default GATEWAY_MAX_SAMPLES_PER_SOURCE). The LLM planner reads more pages while it measures what a source holds, and plans again after the customer answers; the planning budget still bounds the spend. */
+  maxSamplesPerSource?: number;
   store: AgentStore;
   /** Supabase client, for the sensitive-lookup audit only. */
   client: unknown;
@@ -284,7 +286,8 @@ export function createGateway(deps: GatewayDeps) {
       // 5b: planning samples a source at most twice once it has given rows (the budget is shared by every stage of the plan); the reservation just taken is given back
       const sourceKey = sourceKeyOf(endpoint, params);
       const sampled = samplesWithRows.get(endpointId) ?? 0;
-      const repeated = sourceKey !== null ? (samplesBySource.get(sourceKey) ?? 0) >= GATEWAY_MAX_SAMPLES_PER_SOURCE || sampled >= GATEWAY_MAX_NAMED_SOURCE_SAMPLES : sampled >= GATEWAY_MAX_SAMPLES_PER_SOURCE;
+      const perSource = Math.max(GATEWAY_MAX_SAMPLES_PER_SOURCE, deps.maxSamplesPerSource ?? 0);
+      const repeated = sourceKey !== null ? (samplesBySource.get(sourceKey) ?? 0) >= perSource || sampled >= Math.max(GATEWAY_MAX_NAMED_SOURCE_SAMPLES, perSource) : sampled >= perSource;
       if (deps.phase === "planning" && repeated) { deps.budget.settle(estimate, 0); return refuse(id, endpointId, trace, "repeat_sample", "planning"); }
 
       // 6: the provider's daily cap, recorded BEFORE the call
