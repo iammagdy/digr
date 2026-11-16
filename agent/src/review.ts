@@ -303,7 +303,7 @@ export function anthropicJsonCall(apiKey: string, model: string, options: { fetc
         const text = (body.content ?? []).filter((c) => c.type === "text").map((c) => (c as { text?: string }).text ?? "").join("").trim();
         let input: unknown = null;
         try { input = text ? JSON.parse(text) : null; } catch { input = null; }
-        if (input === null || typeof input !== "object") { options.log?.(`llm_planner_api ${tool.name} no_json stop=${body.stop_reason ?? ""}`); return { input: null, costUsd }; }
+        if (input === null || typeof input !== "object") { options.log?.(`llm_planner_api ${tool.name} no_json stop=${body.stop_reason ?? ""}`); return { input: null, costUsd, ...(body.stop_reason === "refusal" ? { refused: true } : {}) }; }
         if (body.stop_reason === "max_tokens") options.log?.(`llm_planner_api ${tool.name} cut_at_max_tokens`);
         return { input, costUsd };
       } catch (e) {

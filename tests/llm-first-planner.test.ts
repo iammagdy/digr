@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { loadTregCatalog } from "../src/lib/treg/catalog";
 import { readSnapshot } from "../agent/src/items/itemStore";
-import { checkFieldMap, checkOptions, checkUnderstanding, planWithLlm, type LlmPlannerDeps, type PlannerModel } from "../agent/src/llmPlanner/planner";
+import { REFUSED_REQUEST_AR, checkFieldMap, checkOptions, checkUnderstanding, planWithLlm, type LlmPlannerDeps, type PlannerModel } from "../agent/src/llmPlanner/planner";
 import { platformIndex, candidatesFor } from "../agent/src/llmPlanner/catalogView";
 import { llmPlannerOnValue } from "../src/lib/agentMission/llmPlannerFlag";
 import type { ReviewCall } from "../agent/src/review";
@@ -506,5 +506,25 @@ describe("the mission remembers its questions: a scouting question and its answe
     const m3 = scriptedModel({ request_plan: [ask400], tool_choice: [CHOICE_X], field_map: [MAP_X] });
     const r3 = await run("كمّل", m3);
     expect(r3.kind).toBe("plan");
+  });
+});
+
+describe("a request the model declines", () => {
+  it("is answered with what the platform collects (never a vague «no source»), and costs the customer nothing", async () => {
+    const deps: LlmPlannerDeps = {
+      model: async () => ({ input: null, costUsd: 0.001, refused: true }),
+      catalog, access: null, today: "2026-11-16",
+      probe: async () => { throw new Error("nothing is probed for a refused request"); },
+      readPage: async () => { throw new Error("nothing is read"); },
+    };
+    const r = await planWithLlm({ words: ["هات لي الرسائل الخاصة لحساب فلان على انستجرام"], request: "" }, deps);
+    expect(r.kind).toBe("cannot");
+    if (r.kind === "cannot") { expect(r.reason_ar).toBe(REFUSED_REQUEST_AR); expect(r.detail).toContain("refused"); }
+  });
+  it("a model that merely gave no answer (a failed call) keeps the generic ending, not the refusal sentence", async () => {
+    const deps: LlmPlannerDeps = { model: async () => null, catalog, access: null, today: "2026-11-16", probe: async () => { throw new Error("no"); }, readPage: async () => { throw new Error("no"); } };
+    const r = await planWithLlm({ words: ["٥٠ تغريدة"], request: "" }, deps);
+    expect(r.kind).toBe("cannot");
+    if (r.kind === "cannot") expect(r.reason_ar).toBe("");
   });
 });
