@@ -71,7 +71,49 @@ export function reliabilityOf(e: CatalogEndpoint): number {
 export const callUsdOf = (e: CatalogEndpoint): number => Math.max(0, Number(e.cost?.usd ?? 0)) || 0.01;
 
 /** The candidates of one capability (and, when it has few, the platform's other tools), best first, at most `max`. */
-export function candidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8, options: { alsoSearch?: boolean } = {}): CatalogEndpoint[] {
+/**
+ * SEARCH ENGINES ARE INTERCHANGEABLE for a search the customer did not tie to one engine (live, 16 Nov 2026: «آخر ٢٠ خبر عن الذكاء الاصطناعي في السعودية» was planned on the web news tools only, whose
+ * one working tool gave 5 items a call and ran dry at 15, while two Google News tools of the catalog answered 70 and 92 items for another news request the same hour). A search step on one of these
+ * platforms also gets the other engines' tools of the same kind (news with news, organic results with organic results).
+ */
+export const SEARCH_ENGINE_PLATFORMS: ReadonlySet<string> = new Set(["web", "google", "bing", "yahoo", "duckduckgo", "yandex", "naver", "seznam", "baidu"]);
+const isSearchKind = (capability: string): boolean => /(^|\.)(search|serp|news|organic|articles?)(\.|$)/.test(capability);
+const kindOf = (capability: string): string => (/(^|\.)news(\.|$)/.test(capability) ? "news" : /(^|\.)(organic|search)$/.test(capability) || /serp\.organic/.test(capability) ? "organic" : capability.split(".").pop() ?? "");
+
+/**
+ * THE DIRECT WEB TOOLS (Firecrawl and Context.dev, our own keys, outside the TREG catalog), shaped as catalog entries so the planning model reads and fills them like any other tool. Offered only when the worker
+ * has their key. Their names never reach the customer: the card says «الويب» / «مواقع الأخبار», and every customer sentence passes the customer-text check.
+ */
+export function directWebEndpoints(available: { firecrawl?: boolean; contextdev?: boolean } | null | undefined): CatalogEndpoint[] {
+  const inputs = [
+    { name: "query", in: "body", type: "string", required: true, enum: null, minimum: null, maximum: null, default: null, example: "أسعار الذهب في مصر", note: "a plain search phrase in the language of the pages wanted; no operators" },
+    { name: "limit", in: "body", type: "integer", required: false, enum: null, minimum: 10, maximum: 30, default: 10, example: 30, note: "results per call (10 to 30)" },
+    { name: "country", in: "body", type: "string", required: false, enum: null, minimum: null, maximum: null, default: null, example: "SA", note: "two-letter country code of the results, only when the customer named a country" },
+  ];
+  const make = (id: string, provider: string, usd: number): CatalogEndpoint => ({
+    id, provider, platform: "web", category: "SEO/AEO", capability: "web.search", name: "Web search", method: "POST", path: "", kind: "direct", tier: "core", async: null, async_config: null,
+    summary: "General web search (news sites, articles, blogs, official pages): title, address and description of up to 30 results per call. Each further input set (another phrase of the same topic) gives other results.",
+    inputs, pagination: [], cost: { unit: "call", usd, type: null, currency: "USD", value: null, per: null, billing_note: null, failed_or_empty_billed: null },
+    observed: { ok_rate: 0.97, hit_rate: 0.95, samples: 200 }, scope: "public", item_fields: { title: { type: "string", example: "" }, url: { type: "string", example: "" }, description: { type: "string", example: "" } },
+  }) as unknown as CatalogEndpoint;
+  const out: CatalogEndpoint[] = [];
+  if (available?.contextdev) out.push(make("contextdev.search", "contextdev", 0.0076));
+  if (available?.firecrawl) out.push(make("firecrawl.search", "firecrawl", 0.03));
+  return out;
+}
+
+export function candidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8, options: { alsoSearch?: boolean; web?: ReadonlyArray<CatalogEndpoint> } = {}): CatalogEndpoint[] {
+  const base = tregCandidatesFor(catalog, access, platform, capability, max, options);
+  if (!SEARCH_ENGINE_PLATFORMS.has(platform) || !isSearchKind(capability)) return base;
+  const rank = (a: CatalogEndpoint, b: CatalogEndpoint): number => reliabilityOf(b) - reliabilityOf(a) || callUsdOf(a) - callUsdOf(b);
+  const kind = kindOf(capability);
+  const others = catalog.endpoints.filter((e) => e.platform !== platform && SEARCH_ENGINE_PLATFORMS.has(e.platform) && !base.includes(e) && usableEndpoint(e, catalog, access) && kindOf(capabilityOf(e)) === kind && isSearchKind(capabilityOf(e))).sort(rank).slice(0, 3);
+  const web = [...(options.web ?? [])];
+  const extra = [...others, ...web];
+  return [...base.slice(0, Math.max(3, max + 2 - extra.length)), ...extra];
+}
+
+function tregCandidatesFor(catalog: TregCatalog, access: AccountAccess | null, platform: string, capability: string, max = 8, options: { alsoSearch?: boolean } = {}): CatalogEndpoint[] {
   const usable = catalog.endpoints.filter((e) => e.platform === platform && usableEndpoint(e, catalog, access));
   const exact = usable.filter((e) => capabilityOf(e) === capability);
   const rank = (a: CatalogEndpoint, b: CatalogEndpoint): number => reliabilityOf(b) - reliabilityOf(a) || callUsdOf(a) - callUsdOf(b);

@@ -1,6 +1,9 @@
 import { MODEL_SONNET } from "../../../src/lib/agentMission/constants";
 import { cairoDayOf } from "../../../src/lib/agentMission/cairoTime";
-import { RAW_PATH, type Gateway } from "../gateway";
+import { RAW_PATH, type Gateway, type GatewayCallResult } from "../gateway";
+import type { WebGateway } from "../webGateway";
+import { webRequestOf } from "../engine/sourceGateway";
+import { directWebEndpoints } from "./catalogView";
 import type { AgentStore, MissionRecord } from "../types";
 import type { StoredCustomerWords } from "../../../src/lib/agentMission/customerWords";
 import type { TregCatalog } from "../../../src/lib/treg/catalog";
@@ -46,6 +49,9 @@ export interface RunLlmPlanningInput {
   mission: MissionRecord;
   store: AgentStore;
   gateway: Gateway;
+  /** The direct web tools (Firecrawl, Context.dev) of this planning, and which of them the worker holds a key for. Absent: only the catalog's tools are offered. */
+  web?: Pick<WebGateway, "parsePage" | "webSearch" | "webScrape" | "peopleSearch">;
+  webAvailable?: { firecrawl?: boolean; contextdev?: boolean };
   catalog: TregCatalog;
   access: AccountAccess | null;
   model: PlannerModel;
@@ -79,7 +85,8 @@ export async function runLlmPlanning(input: RunLlmPlanningInput): Promise<LlmPla
       model: input.model,
       catalog: input.catalog,
       access: input.access,
-      probe: (endpointId, params) => input.gateway.tregCall({ endpoint_id: endpointId, params, purpose: "planning sample", why: "llm planner probe" }),
+      probe: (endpointId, params) => probeAny(input, endpointId, params),
+      ...(input.web && input.webAvailable ? { webTools: directWebEndpoints(input.webAvailable) } : {}),
       readPage: async (callId) => { const raw = await store.getFile(mission.id, RAW_PATH(callId)); if (raw === null) return null; try { return JSON.parse(raw) as unknown; } catch { return null; } },
       pricingSettings: input.pricingSettings,
       today: cairoDayOf(input.now),
@@ -99,3 +106,15 @@ export async function runLlmPlanning(input: RunLlmPlanningInput): Promise<LlmPla
 
 /** True when the model read the request as company or people research, which the earlier live-proven path plans (no paid call was made for it here). */
 export const handedOver = (r: LlmPlanResult): boolean => r.kind === "cannot" && r.detail === "handed_over";
+
+/** One planning call: a direct web id goes to the web gateway (its own key, the same budget and record), every other id to the TREG gateway; the answer has the TREG gateway's shape. */
+async function probeAny(input: RunLlmPlanningInput, endpointId: string, params: Record<string, unknown>): Promise<GatewayCallResult> {
+  const req = webRequestOf(endpointId, params);
+  if (req && input.web) {
+    const w = await input.web[req.method]({ ...req.args, why: "llm planner probe" } as never);
+    if (w.ok) return { ok: true, call_id: w.call_id, http_status: 200, rows_in_page: w.rows_in_page, has_more: false, next_cursor: null, shape: w.shape, first_rows: w.first_rows, warnings: [], saved: w.saved } as unknown as GatewayCallResult;
+    if ("refused" in w) return { ok: false, call_id: w.call_id, refused: w.refused as never, message: w.message };
+    return { ok: false, call_id: w.call_id, failed: true, http_status: 0, message: w.message };
+  }
+  return input.gateway.tregCall({ endpoint_id: endpointId, params, purpose: "planning sample", why: "llm planner probe" });
+}

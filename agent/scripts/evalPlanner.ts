@@ -8,6 +8,7 @@ import { anthropicPlannerModel } from "../src/llmPlanner/model";
 import { LLM_PLANNER_MODEL } from "../src/llmPlanner/run";
 import { chooseTools, understandRequest } from "../src/llmPlanner/planner";
 import { cairoDayOf } from "../../src/lib/agentMission/cairoTime";
+import { directWebEndpoints } from "../src/llmPlanner/catalogView";
 
 async function main(): Promise<void> {
   const key = process.env.ANTHROPIC_API_KEY;
@@ -16,7 +17,7 @@ async function main(): Promise<void> {
   const maxUsd = Number(process.env.EVAL_MAX_USD ?? "1");
   const catalog = loadTregCatalog();
   const model = anthropicPlannerModel(key, process.env.EVAL_MODEL || LLM_PLANNER_MODEL, { log: (l) => console.log(`EVALLOG ${l}`) });
-  const deps = { model, catalog, access: null, today: cairoDayOf(Date.now()) };
+  const deps = { model, catalog, access: null, today: cairoDayOf(Date.now()), webTools: directWebEndpoints({ firecrawl: true, contextdev: true }) };
   let total = 0;
   for (const r of requests) {
     if (total >= maxUsd) { console.log(`EVAL ${JSON.stringify({ id: r.id, skipped: "budget" })}`); continue; }

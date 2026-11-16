@@ -8,7 +8,7 @@ import type { ToolCard } from "../../../src/lib/agentMission/foundation/toolCard
 import { toArabicDigits } from "../../../src/lib/arabicDigits";
 import { checkCustomerText } from "../../../src/lib/agentMission/text";
 import type { GatewayCallResult } from "../gateway";
-import { callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isProven, platformIndex, platformsOf } from "./catalogView";
+import { SEARCH_ENGINE_PLATFORMS, callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isProven, platformIndex, platformsOf } from "./catalogView";
 import { FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
 
 /**
@@ -41,6 +41,8 @@ export interface LlmPlannerDeps {
   today: string;
   /** What the customer reads while the plan is prepared (one short Arabic line per phase). Absent: nothing is said. */
   onProgress?: (lineAr: string) => Promise<void>;
+  /** The direct web tools the worker holds a key for (catalogView `directWebEndpoints`): offered beside the catalog's tools for a web or news search. Absent: none. */
+  webTools?: CatalogEndpoint[];
   /** Whether this planner plans what the model understood (false: the caller's other path plans it, before any paid call). Absent: always. */
   accept?: (u: Understanding) => boolean;
   log?: (line: string) => void;
@@ -98,7 +100,9 @@ export const THIN_PAGE_ROWS = 15;
 /** Pages followed after a thin first page, while planning. */
 export const MAX_SCOUT_PAGES = 3;
 /** The real search found less than this share of the customer's number: the customer is asked what to do before the plan (take it, or widen). */
-export const SCOUT_SHORT_SHARE = 0.5;
+/** Below this share of the customer's number, a source that ran dry is told to the customer BEFORE the plan (take what exists, or widen). Live, 16 Nov 2026: 10 of 20 Amazon reviews and 15 of 20 news were
+ * planned silently at 20 behind a folded note, because the share was one half; a customer asking for 20 who will get 10 decides before approving. */
+export const SCOUT_SHORT_SHARE = 0.9;
 
 const COLUMN_TITLES: Record<string, string> = {
   text: "النص", title: "العنوان", author: "الاسم", username: "الحساب", posted_at: "تاريخ النشر", link: "الرابط", likes: "الإعجابات", comments_count: "عدد التعليقات", replies_count: "عدد الردود",
@@ -398,6 +402,8 @@ interface BuiltStep {
   step: UnderstoodStep; option: ToolOption; mapCode: string; columns: PlanColumn[]; carryKeys: string[]; sampleRows: Array<Record<string, unknown>>; rowsPerPage: number; callIds: string[]; hasMore: boolean; nextCursor?: string | null;
   /** A SECOND tool that also answered on a real page, with its own proven mapping: execution continues with it when the first tool's input sets run out (another index gives other items). */
   second?: { option: ToolOption; mapCode: string };
+  /** OUR OWN WEB SEARCH (Firecrawl / Context.dev) as the last fallback of a web or news search, proven on a real page: execution reads it after the catalog's tools run out. */
+  webFallback?: { option: ToolOption; mapCode: string };
   /** A lookup step resolved to the one named thing: its children are bound to that thing's own value, and it is not a stage of the plan. */
   lookup?: true;
 }
@@ -436,8 +442,8 @@ export async function understandRequest(input: LlmPlannerInput, deps: Pick<LlmPl
 export const REFUSED_REQUEST_AR = "لا نستطيع تنفيذ هذا الطلب: نجمع البيانات العامة المنشورة على المنصات فقط، وليس الرسائل الخاصة ولا الحسابات المغلقة. إن كان لديك طلب على بيانات عامة فاكتبه وسنجهّزه لك.";
 
 /** 2. CHOOSE: the model's options for one step, checked against its candidates. */
-export async function chooseTools(step: UnderstoodStep, parentSample: ReadonlyArray<Record<string, unknown>> | null, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today">, cost: { usd: number } = { usd: 0 }): Promise<{ candidates: CatalogEndpoint[]; options: ToolOption[] }> {
-  const candidates = candidatesFor(deps.catalog, deps.access, step.platform, step.capability, 8, { alsoSearch: Boolean(step.source && step.topic && !step.parent) });
+export async function chooseTools(step: UnderstoodStep, parentSample: ReadonlyArray<Record<string, unknown>> | null, deps: Pick<LlmPlannerDeps, "model" | "catalog" | "access" | "today" | "webTools">, cost: { usd: number } = { usd: 0 }): Promise<{ candidates: CatalogEndpoint[]; options: ToolOption[] }> {
+  const candidates = candidatesFor(deps.catalog, deps.access, step.platform, step.capability, 8, { alsoSearch: Boolean(step.source && step.topic && !step.parent), ...(deps.webTools && deps.webTools.length > 0 ? { web: deps.webTools } : {}) });
   if (candidates.length === 0) return { candidates, options: [] };
   const choice = await asker(deps, cost)(TOOL_CHOICE_SYSTEM, toolChoicePrompt(step, candidates, deps.today, parentSample), { name: TOOL_CHOICE_TOOL, description: "The tool and its inputs for this step.", schema: TOOL_CHOICE_SCHEMA }, 3000);
   return { candidates, options: checkOptions(choice, candidates, parentSample !== null) };
@@ -524,6 +530,26 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
         }
       }
     }
+    // OUR OWN WEB SEARCH AS THE LAST FALLBACK (owner direction, 16 Nov 2026: «use providers other than TREG so the customer gets the whole order»): a web or news search whose real sample is short of the number
+    // also proves a direct web tool on the step's own search phrases; execution reads it after every catalog tool has run out.
+    let webFallback: BuiltStep["webFallback"];
+    const webRows: Array<Record<string, unknown>> = [];
+    const webTool = deps.webTools?.[0];
+    const usedWeb = [got.option.endpoint.id, second?.option.endpoint.id].some((id) => (deps.webTools ?? []).some((w) => w.id === id));
+    if (webTool && !usedWeb && !step.parent && step.topic && SEARCH_ENGINE_PLATFORMS.has(step.platform) && !got.hasMore && sampleRows.length + secondRows.length < (step.count.total ?? DEFAULT_COUNT)) {
+      const phrases = [...new Set([step.topic, ...step.search_terms].map((t) => String(t ?? "").trim()).filter((t) => t.length >= 2))].slice(0, 5);
+      const webOption: ToolOption = { endpoint: webTool, params: { query: phrases[0], limit: 30 }, cursor: null, parent: null, more: phrases.slice(1).map((q) => ({ query: q, limit: 30 })), notCarried: [] };
+      const got3 = await probeStep(step, [webOption], null, deps);
+      if (got3) {
+        const map3 = enrichedMap(checkFieldMap(await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, got3.option.endpoint, got3.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500), got3.items), got3.items);
+        if (map3) {
+          const code3 = cardMapCode(pseudoCard(got3.option.endpoint, got3.listPath, map3, got3.items.length, carryFieldsOf(got3.items, map3), got3.items));
+          const rows3 = runMap(code3, got3.page);
+          if (rows3.length > 0) { webFallback = { option: got3.option, mapCode: code3 }; webRows.push(...rows3); }
+        }
+      }
+      deps.log?.(`llm_planner_web_fallback ${step.key} ${webTool.id} rows=${webRows.length}`);
+    }
     // A LOOKUP STEP (the one named app, place or product the customer's items belong to): the search's FIRST result is not the thing (live, 16 Nov 2026: Google Play's search for «InstaPay» answered Fawry first, and 100 Fawry
     // reviews were delivered as InstaPay's). The model picks the result that IS the named thing; none of them: the customer is asked for its link, nothing is planned on a guess.
     if (isLookupStep(step, u.steps)) {
@@ -532,10 +558,10 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
       if (at < 0) return { kind: "question", question_ar: `بحثنا في ${platformAr(step.platform, step.capability)} عن الذي ذكرته بالاسم ولم نجده بين النتائج بشكل مؤكد. ممكن ترسل رابطه أو اسمه كما يظهر هناك بالضبط؟`, options_ar: [], understanding: u, costUsd: cost.usd };
       sampleRows.splice(0, sampleRows.length, sampleRows[at]!);
     }
-    built.set(step.key, { step, option: got.option, mapCode, columns, carryKeys: Object.keys(carry), sampleRows, rowsPerPage: got.items.length, callIds: got.callIds, hasMore: got.hasMore, nextCursor: got.nextCursor, ...(second ? { second } : {}), ...(isLookupStep(step, u.steps) ? { lookup: true as const } : {}) });
+    built.set(step.key, { step, option: got.option, mapCode, columns, carryKeys: Object.keys(carry), sampleRows, rowsPerPage: got.items.length, callIds: got.callIds, hasMore: got.hasMore, nextCursor: got.nextCursor, ...(second ? { second } : {}), ...(webFallback ? { webFallback } : {}), ...(isLookupStep(step, u.steps) ? { lookup: true as const } : {}) });
     // SCOUTING: how much does the source really hold for this request? (a source that shows one page for a query and no next page is read once for each of the model's other input sets, and the sets' items are counted once)
     if (!step.parent && step.count.total !== null && input.scoutAllowed !== false) {
-      const y = await scoutYield({ option: got.option, mapCode, firstRows: sampleRows, hasMore: got.hasMore, nextCursor: got.nextCursor, otherHasMore: secondMore, extraRows: secondRows, requested: step.count.total }, deps);
+      const y = await scoutYield({ option: got.option, mapCode, firstRows: sampleRows, hasMore: got.hasMore, nextCursor: got.nextCursor, otherHasMore: secondMore, extraRows: [...secondRows, ...webRows], requested: step.count.total }, deps);
       deps.log?.(`llm_planner_scout ${step.key} found=${y.found} requested=${step.count.total} exhausted=${y.exhausted} sets=${y.sets}`);
       findings.push({ step, requested: step.count.total, found: y.found, exhausted: y.exhausted, sets: y.sets });
     }
@@ -617,7 +643,13 @@ async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: Bu
       calls += 1;
       const r = await deps.probe(option.endpoint.id, params);
       callIds.push(r.call_id);
-      if (!r.ok) { deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} not ok`); if (trace) trace.failures += 1; if ("refused" in r) break; continue; }
+      if (!r.ok) {
+        deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} not ok${"http_status" in r ? ` ${r.http_status}` : ""}`);
+        if (trace) trace.failures += 1;
+        // a refusal, or a provider that is not paid or not allowed (401/402/403: live, 16 Nov 2026, one news tool answered 402 to eight calls in a row): its other input sets are not tried, the next tool is
+        if ("refused" in r || ("http_status" in r && [401, 402, 403].includes(Number(r.http_status)))) break;
+        continue;
+      }
       if (r.rows_in_page <= 0) { deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} empty`); if (trace) trace.empties += 1; continue; }
       const page = await deps.readPage(r.call_id);
       if (page === null) { if (trace) trace.failures += 1; continue; }
@@ -791,13 +823,14 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
     planned = Math.max(1, Math.min(MAX_STEP_ITEMS, Math.floor(planned)));
     plannedOf.set(s.key, planned);
     // THE REAL SAMPLE IS SMALL (live X, 15 Nov 2026: the account's precise searches gave 0 and 2 for a request of 400): said before approval, with the honest consequence; the customer pays only for what is delivered
-    if (!s.parent && !b.hasMore && b.rowsPerPage < Math.min(planned, 20)) notes.push(`${s.title_ar}: الصفحة الأولى من المصدر أعطتنا ${toArabicDigits(b.rowsPerPage)} فقط، فالمتاح غالبًا أقل بكثير من ${toArabicDigits(planned)}. نكمل البحث بصيغ أخرى، ولن تدفع إلا مقابل ما يُسلَّم.`);
+    if (!s.parent && !b.hasMore && b.rowsPerPage < Math.min(planned, 20)) notes.push(`${s.title_ar}: الصفحة الأولى من المصدر أعطتنا ${toArabicDigits(b.rowsPerPage)} فقط، فالمتاح غالبًا أقل بكثير من ${toArabicDigits(planned)}.${b.option.more.length > 0 || b.second || b.webFallback ? " نكمل البحث بصيغ أخرى ومن مصادر أخرى" : " والمصدر لا يعرض أكثر من ذلك"}، ولن تدفع إلا مقابل ما يُسلَّم.`);
     if (b.option.notCarried.length > 0) notes.push(`${s.title_ar}: المصدر لا يتيح التصفية حسب ${b.option.notCarried.map((c) => CONDITION_AR[c]).join(" ولا ")}، فقد تصلك نتائج من خارجها. لو ده مهم لك، اضغط «عدّل الطلب».`);
     const rowsPerPage = Math.max(1, b.rowsPerPage);
     const costPerRow = (callUsdOf(b.option.endpoint) / rowsPerPage) * VARIANT_OVERLAP_FACTOR;
     const alternatives = [
       ...b.option.more.map((params) => ({ endpoint_id: b.option.endpoint.id, params, cursor_param: b.option.cursor, map_code: b.mapCode, map_file_id: "page", ...(b.option.parent ? { parent_binding: { param: b.option.parent.param, from: b.option.parent.from } } : {}) })),
       ...(b.second ? [b.second.option.params, ...b.second.option.more].map((params) => ({ endpoint_id: b.second!.option.endpoint.id, params, cursor_param: b.second!.option.cursor, map_code: b.second!.mapCode, map_file_id: "page" })) : []),
+      ...(b.webFallback ? [b.webFallback.option.params, ...b.webFallback.option.more].map((params) => ({ endpoint_id: b.webFallback!.option.endpoint.id, params, cursor_param: null, map_code: b.webFallback!.mapCode, map_file_id: "page" })) : []),
     ];
     stages.push({
       key: s.key, title_ar: s.title_ar, endpoint_id: b.option.endpoint.id, capability: s.capability,
@@ -826,7 +859,7 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
   const platforms = [...new Set(steps.map((b) => platformAr(b.step.platform, b.step.capability)))].join(" و");
   const understood = customerSafe(impersonalAr(u.understanding_ar).replace(/[.،\s]+$/u, ""), 300) ?? `نجمع ${stages.filter((s) => s.deliver).map((s) => s.title_ar).join(" و")} من ${platforms} كما طلبت`;
   const summary = `${understood}. ${counts ? `العدد المخطط: ${counts}.` : ""}`.trim();
-  const widened = steps.some((b) => b.option.more.length > 0 || b.second !== undefined);
+  const widened = steps.some((b) => b.option.more.length > 0 || b.second !== undefined || b.webFallback !== undefined);
   notes.push(widened
     ? "نجمع بالعدد الذي طلبته من المصدر صفحةً بعد صفحة، ونوسّع البحث بصيغ أخرى للموضوع نفسه حتى نصل إلى العدد أو ينتهي ما يعرضه المصدر، ونحذف المكرر فقط. لا تدفع إلا مقابل ما يُسلَّم."
     : "نجمع بالعدد الذي طلبته من المصدر صفحةً بعد صفحة حتى نصل إليه أو ينتهي ما يعرضه المصدر، ونحذف المكرر فقط. لا تدفع إلا مقابل ما يُسلَّم.");
