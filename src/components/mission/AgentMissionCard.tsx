@@ -293,7 +293,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
   const headlineAr = finished ? deliveredLineAr || v.resultSummaryAr || "" : "";
   const counter = liveProgress ? { n: liveProgress.delivered, total: liveProgress.promised } : { n: v.savedSoFar, total: v.totalRows };
   const approveButton = (
-    <button type="button" className={`${BTN_PRIMARY} inline-flex min-h-12 w-full items-center justify-center gap-2 text-[15px] font-semibold sm:w-auto sm:min-w-[220px]`} disabled={busy || approving} aria-busy={approving || undefined} style={approving ? { opacity: 0.75 } : undefined} onClick={() => onAct("approve")} data-testid="agent-approve">
+    <button type="button" className={`${BTN_PRIMARY} inline-flex min-h-12 min-w-0 flex-1 items-center justify-center gap-2 text-[15px] font-semibold sm:w-auto sm:min-w-[220px] sm:flex-none`} disabled={busy || approving} aria-busy={approving || undefined} style={approving ? { opacity: 0.75 } : undefined} onClick={() => onAct("approve")} data-testid="agent-approve">
       {approving ? <><span className="h-4 w-4 rounded-full border-2 border-onac/30 border-t-onac motion-safe:animate-spin motion-reduce:animate-none" aria-hidden="true" />جارٍ الاعتماد…</> : v.unservedAr.length > 0 ? APPROVE_WITHOUT_UNSERVED_AR : "اعتمد وابدأ الجمع"}
     </button>
   );
@@ -376,11 +376,17 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
 
       {planShown && !approving && !(overLimit && !isGuest) ? (
         <div className="flex flex-col gap-2 max-sm:sticky max-sm:bottom-0 max-sm:z-10 max-sm:-mx-4 max-sm:border-t max-sm:border-ln max-sm:bg-sf max-sm:px-4 max-sm:py-3 sm:flex-row sm:flex-wrap sm:items-center" data-testid="agent-actions">
-          {isGuest
-            ? <a href="/register" className={`${BTN_PRIMARY} inline-flex min-h-12 items-center justify-center text-[15px] font-semibold no-underline sm:min-w-[220px]`} data-testid="agent-signup">سجّل لتعتمد</a>
-            : overLimit ? null
-            : approveButton}
-          <button type="button" className={`${BTN_PLAIN} min-h-12 w-full sm:w-auto`} disabled={busy} onClick={() => (v.edit ? onEditing(!editing) : onAct("edit"))} data-testid="agent-edit" aria-expanded={v.edit ? editing : undefined}>{pendingAction === "edit" ? "جارٍ التجهيز…" : "عدّل الطلب"}</button>
+          {/* ON A PHONE the bar is the whole decision: the price and the time, the one promise, and the two buttons in one row */}
+          {!isGuest && !overLimit && (maxPriceAr || factOf("الوقت")) ? (
+            <p className="m-0 flex items-baseline justify-between gap-2 text-[12.5px] leading-[1.6] text-ink2 sm:hidden" data-testid="agent-dock-line"><span>{[maxPriceAr ? `حتى ${maxPriceAr}` : null, factOf("الوقت")].filter(Boolean).join(" · ")}</span><span className="text-mut">يُخصم ما يُسلَّم فقط</span></p>
+          ) : null}
+          <div className="flex gap-2 sm:contents">
+            {isGuest
+              ? <a href="/register" className={`${BTN_PRIMARY} inline-flex min-h-12 flex-1 items-center justify-center text-[15px] font-semibold no-underline sm:min-w-[220px] sm:flex-none`} data-testid="agent-signup">سجّل لتعتمد</a>
+              : overLimit ? null
+              : approveButton}
+            <button type="button" className={`${BTN_PLAIN} min-h-12 shrink-0 sm:w-auto`} disabled={busy} onClick={() => (v.edit ? onEditing(!editing) : onAct("edit"))} data-testid="agent-edit" aria-expanded={v.edit ? editing : undefined}>{pendingAction === "edit" ? "جارٍ التجهيز…" : "عدّل الطلب"}</button>
+          </div>
         </div>
       ) : null}
       {/* APPROVING: the same card, the button in flight, the status beside it; no counter until the server confirms */}
