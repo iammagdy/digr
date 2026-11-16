@@ -4,7 +4,7 @@ import { DEFAULT_PRICING_SETTINGS, type PricingSettings } from "../functions/sha
  * Proposed tiered discount for large per-record social jobs. NOT ACTIVE.
  *
  * - The flag VOLUME_PRICING_ENABLED is OFF by default, and the quote builder does not call this module: the live
- *   pricing formula (provider cost USD x 55 x 10 / 0.10 per unit, rounded up) and the 600-point cap are unchanged.
+ *   pricing formula (provider cost USD x 55 x 10 / 0.10 per unit, rounded up) and the 25,000-point cap (JOB_MAX_POINTS_CAP) are unchanged.
  *   Wiring it in is a separate, reviewed change after the owner picks the tiers (see docs/BATCH_REPORT.md).
  * - A tier lowers the markup multiple applied to the provider's real cost; it never lowers the price below
  *   cost x VOLUME_PRICING_MARKUP_FLOOR, and never raises it above the price the customer would pay today.
