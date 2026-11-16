@@ -93,6 +93,24 @@ Deployed as iammagdy/digr#514 (`a22172f`), then live round 1 as iammagdy/digr#51
 | (question) | «عايز داتا عن السوق» | — | 0 | The planner asked one question with 4 options, then planned from the answer |
 | Facebook page about a topic + comments | — | — | 0 | The page listing carries no topic, which is said on the card. Every comments tool was empty for the page's 3 newest posts (reels), so the step was said and not priced. Same provider limitation as the 2 Nov missions M17 and M19 |
 
+## Round 2 (16 Nov 2026): the conversation
+
+Owner direction: when the real search finds far less than the customer asked for (4 of 400), the model does not deliver 4 and stop. It tells the customer what it found and asks what they prefer, and the answer re-plans. And the chat talks like a normal assistant.
+
+### Scouting question (worker)
+
+- After the first real page of a top-level step with a stated count, the planner reads the model's other input sets once each (page one only, at most 4 calls) and counts the different items. A next page anywhere means the source holds more: no question.
+- If every search ended and the different items found are fewer than half of the customer's number (or nothing was found at all), the planner stops before pricing and asks. The model writes the message from code-counted facts (requested, found, searches tried); code allows only those numbers and the customer's own, and falls back to its own sentence if the model's text breaks the customer-text rules. Options: the model's (take what exists, widen by country/accounts/period/topic); the customer may also type their own.
+- The answer re-plans from the whole exchange: the understanding prompt carries every question and answer. «سلّمني الموجود» sets `accepts_available` (no second question). A widening changes only the conditions the customer names.
+- Limits: 2 scouting questions per mission (state in `state/llm_planner.json`, `scout: true` entries); the planner's own clarifying questions keep their limit of 2. A failed provider call is not «nothing found»: no question.
+- Offline: `tests/llm-first-planner.test.ts` (SCOUTING, mission memory). Cost: up to 4 extra provider calls per short step.
+
+### Chat
+
+- The chat model's instructions now ask for a natural reply in the customer's dialect at the length the talk needs, without a sales pitch on every message; the reply cap is 1800 characters (was 900) and 800 tokens (was 400).
+- A reply the guard refuses (Latin digit, emoji, a number the facts do not give …) is asked again once with the reasons; only a second refusal falls to the fixed text.
+- While the agent's question is open (`needs_input`), a doubt about it is answered from the question's own text (its numbers are allowed), a greeting is answered naturally, and the question stays open. Tests: `tests/chat-natural-conversation.test.ts`.
+
 ## Still open
 
 - **Facebook comments** on a page's reels: every catalog tool returned empty. This is a provider limitation, not a planning one, and the card says it before approval.

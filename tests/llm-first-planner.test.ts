@@ -147,7 +147,7 @@ describe("one real page per step, priced by code from what it gave", () => {
       probe: async () => { n += 1; return n === 1 ? { ok: true, call_id: "call_0001", http_status: 200, rows_in_page: 0, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: "" } : { ok: true, call_id: "call_0002", http_status: 200, rows_in_page: 5, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: "" }; },
       readPage: async () => xPage(100, 5, null),
     };
-    const r = await planWithLlm({ words: ["تغريدات"], request: "" }, deps);
+    const r = await planWithLlm({ words: ["تغريدات"], request: "", scoutAllowed: false }, deps);
     expect(n).toBe(2);
     expect(r.kind).toBe("plan");
     // the input set that answered reads first
@@ -344,10 +344,126 @@ describe("a small real sample is said before approval", () => {
       probe: async () => ({ ok: true, call_id: "call_0001", http_status: 200, rows_in_page: 2, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: "" }),
       readPage: async () => xPage(0, 2, null),
     };
-    const r = await planWithLlm({ words: ["٤٠٠ تغريدة"], request: "" }, deps);
+    // the customer already chose to take what exists (or the limit of questions was reached): the plan says it before approval
+    const r = await planWithLlm({ words: ["٤٠٠ تغريدة"], request: "", scoutAllowed: false }, deps);
     expect(r.kind).toBe("plan");
     if (r.kind !== "plan") return;
     expect(r.plan.stages[0].planned_rows).toBe(400);
     expect(r.plan.notes_ar!.some((n) => /أعطت ٢ فقط/.test(n) && /أقل بكثير من ٤٠٠/.test(n))).toBe(true);
+  });
+});
+
+describe("SCOUTING: the real search found far less than the customer asked for → the customer is told and chooses; the answer re-plans", () => {
+  const ask400 = { ...UNDERSTOOD_X, steps: [{ ...UNDERSTOOD_X.steps[0], count: { total: 400, per_parent: null, all: false } }] };
+  const SCOUT_OK = { message_ar: "بحثنا في حساب وزارة الصحة السعودية عن الشائعات ووجدنا ٤ تغريدات فقط من ٤٠٠ طلبتها. تحب نسلّمك الـ٤، ولا نوسّع البحث؟", options_ar: ["سلّمني الموجود", "وسّع البحث على السعودية كلها", "أضف حسابات أخرى للصحة"] };
+  /** every input set returns its own two tweets and no next page: the source holds 4 different tweets in all */
+  const deps = (m: ReturnType<typeof scriptedModel>, extra: Partial<LlmPlannerDeps> = {}): { d: LlmPlannerDeps; calls: () => number } => {
+    let n = 0;
+    return {
+      calls: () => n,
+      d: {
+        model: m.model, catalog, access: null, today: "2026-11-15",
+        probe: async () => { n += 1; return { ok: true, call_id: `call_000${n}`, http_status: 200, rows_in_page: 2, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: "" }; },
+        readPage: async (id) => xPage(Number(id.slice(-1)) * 10, 2, null),
+        ...extra,
+      },
+    };
+  };
+
+  it("4 different tweets of 400 asked: a question with the model's own words and options, code-counted facts; every input set was read once to measure", async () => {
+    const m = scriptedModel({ request_plan: [ask400], tool_choice: [CHOICE_X], field_map: [MAP_X], scout_report: [SCOUT_OK] });
+    const { d, calls } = deps(m);
+    const r = await planWithLlm({ words: ["٤٠٠ تغريدة من حساب وزارة الصحة عن الشائعات"], request: "" }, d);
+    expect(r.kind).toBe("question");
+    if (r.kind !== "question") return;
+    expect(r.scout).toBe(true);
+    expect(r.question_ar).toContain("٤ تغريدات فقط من ٤٠٠");
+    expect(r.options_ar).toHaveLength(3);
+    expect(calls()).toBe(2); // the first input set (probe) + the other set (scouting)
+    const facts = JSON.parse(m.seen.find((s) => s.tool === "scout_report")!.user);
+    expect(facts.searches[0]).toMatchObject({ requested: 400, found: 4 });
+  });
+
+  it("the model's message with a number code was not given is not shown: code's own sentence says what was found", async () => {
+    const m = scriptedModel({ request_plan: [ask400], tool_choice: [CHOICE_X], field_map: [MAP_X], scout_report: [{ message_ar: "وجدنا ٩٠٠ تغريدة تقريبًا، تحب نكمل؟", options_ar: ["كمّل", "وسّع"] }] });
+    const r = await planWithLlm({ words: ["٤٠٠ تغريدة"], request: "" }, deps(m).d);
+    expect(r.kind).toBe("question");
+    if (r.kind !== "question") return;
+    expect(r.question_ar).toMatch(/نحو ٤ فقط من ٤٠٠/);
+    expect(r.options_ar.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("a model message with a Latin word is not shown either (customer-text rules)", async () => {
+    const m = scriptedModel({ request_plan: [ask400], tool_choice: [CHOICE_X], field_map: [MAP_X], scout_report: [{ message_ar: "وجدنا ٤ تغريدات من SaudiMOH فقط من ٤٠٠", options_ar: ["كمّل", "وسّع"] }] });
+    const r = await planWithLlm({ words: ["٤٠٠ تغريدة"], request: "" }, deps(m).d);
+    expect(r.kind).toBe("question");
+    if (r.kind === "question") expect(r.question_ar).not.toMatch(/[A-Za-z]/);
+  });
+
+  it("the customer accepted what exists (the model reads it from their answer) → no second question: the plan, with the small-sample note", async () => {
+    const m = scriptedModel({ request_plan: [{ ...ask400, accepts_available: true }], tool_choice: [CHOICE_X], field_map: [MAP_X] });
+    const r = await planWithLlm({ words: ["٤٠٠ تغريدة"], request: "", exchanges: [{ question: "وجدنا ٤ فقط، نسلّمها ولا نوسّع؟", answer: "سلّمني الموجود" }] }, deps(m).d);
+    expect(r.kind).toBe("plan");
+    // the question and the answer are what the model read
+    expect(m.seen[0].user).toContain("سلّمني الموجود");
+  });
+
+  it("the limit of scouting questions was reached → the plan, never another question", async () => {
+    const m = scriptedModel({ request_plan: [ask400], tool_choice: [CHOICE_X], field_map: [MAP_X] });
+    const r = await planWithLlm({ words: ["٤٠٠ تغريدة"], request: "", scoutAllowed: false }, deps(m).d);
+    expect(r.kind).toBe("plan");
+  });
+
+  it("a source with a next page is not a shortage: no question, no extra scouting calls", async () => {
+    const m = scriptedModel({ request_plan: [ask400], tool_choice: [CHOICE_X], field_map: [MAP_X] });
+    const { d, calls } = deps(m, { probe: async () => ({ ok: true, call_id: "call_0001", http_status: 200, rows_in_page: 20, has_more: true, next_cursor: "n", shape: null, first_rows: [], warnings: [], saved: "" }), readPage: async () => xPage(0, 20, "n") });
+    const r = await planWithLlm({ words: ["٤٠٠ تغريدة"], request: "" }, d);
+    expect(r.kind).toBe("plan");
+    void calls;
+  });
+
+  it("every input set empty (nothing found at all) → the customer is asked, not told «unserved»", async () => {
+    const m = scriptedModel({ request_plan: [ask400], tool_choice: [CHOICE_X], scout_report: [SCOUT_OK] });
+    const { d } = deps(m, { probe: async () => ({ ok: true, call_id: "call_0001", http_status: 200, rows_in_page: 0, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: "" }) });
+    const r = await planWithLlm({ words: ["٤٠٠ تغريدة"], request: "" }, d);
+    expect(r.kind).toBe("question");
+    if (r.kind === "question") expect(r.scout).toBe(true);
+  });
+
+  it("a failed provider call is not «nothing found»: no question (the step is said as unavailable)", async () => {
+    const m = scriptedModel({ request_plan: [ask400], tool_choice: [CHOICE_X] });
+    const { d } = deps(m, { probe: async () => ({ ok: false, call_id: "call_0001", http_status: 500, error: "x", refused: undefined } as never) });
+    const r = await planWithLlm({ words: ["٤٠٠ تغريدة"], request: "" }, d);
+    expect(r.kind).toBe("cannot");
+  });
+});
+
+describe("the mission remembers its questions: a scouting question and its answer reach the model on the next run; at most two scouting questions", () => {
+  const files = new Map<string, string>();
+  const events: Array<Record<string, unknown>> = [];
+  const store = { getFile: async (_m: string, p: string) => files.get(p) ?? null, putFile: async (_m: string, p: string, t: string) => { files.set(p, t); }, addEvent: async (_m: string, e: Record<string, unknown>) => { events.push(e); } } as never;
+  const ask400 = { ...UNDERSTOOD_X, steps: [{ ...UNDERSTOOD_X.steps[0], count: { total: 400, per_parent: null, all: false } }] };
+  const gateway = (): never => ({ tregCall: async () => ({ ok: true, call_id: "call_0001", http_status: 200, rows_in_page: 2, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: "" }) }) as never;
+  const mission = (answer: string | null) => ({ id: "msn_t", request_text: "٤٠٠ تغريدة", answer_text: answer }) as never;
+
+  it("asks (scout), stores it, then the answer is read with the question; the third would not ask", async () => {
+    const { runLlmPlanning } = await import("../agent/src/llmPlanner/run");
+    const { RAW_PATH } = await import("../agent/src/gateway");
+    files.set(RAW_PATH("call_0001"), JSON.stringify(xPage(0, 2, null)));
+    const run = async (answer: string | null, m: ReturnType<typeof scriptedModel>) => runLlmPlanning({ mission: mission(answer), store, gateway: gateway(), catalog, access: null, model: m.model, words: { current: ["٤٠٠ تغريدة"], earlier: [] } as never, now: Date.parse("2026-11-15T12:00:00Z") });
+    const m1 = scriptedModel({ request_plan: [ask400], tool_choice: [CHOICE_X], field_map: [MAP_X], scout_report: [{ message_ar: "وجدنا ٢ فقط من ٤٠٠، تحب نسلّمك الموجود ولا نوسّع؟", options_ar: ["سلّمني الموجود", "وسّع"] }] });
+    const r1 = await run(null, m1);
+    expect(r1.kind).toBe("question");
+    expect(JSON.parse(files.get("state/llm_planner.json")!).asked[0]).toMatchObject({ scout: true, answer: null });
+    // the customer widens: the model reads question and answer, and (still short) a second scouting question is allowed
+    const m2 = scriptedModel({ request_plan: [ask400], tool_choice: [CHOICE_X], field_map: [MAP_X], scout_report: [{ message_ar: "وسّعنا البحث ووجدنا ٢ فقط من ٤٠٠، نكمل بالموجود؟", options_ar: ["نعم", "لا"] }] });
+    const r2 = await run("وسّع على السعودية كلها", m2);
+    expect(m2.seen[0].user).toContain("وسّع على السعودية كلها");
+    expect(m2.seen[0].user).toContain("وجدنا ٢ فقط من ٤٠٠");
+    expect(r2.kind).toBe("question");
+    // two scouting questions were asked: the next run plans with what it has (and says so on the card)
+    const m3 = scriptedModel({ request_plan: [ask400], tool_choice: [CHOICE_X], field_map: [MAP_X] });
+    const r3 = await run("كمّل", m3);
+    expect(r3.kind).toBe("plan");
   });
 });

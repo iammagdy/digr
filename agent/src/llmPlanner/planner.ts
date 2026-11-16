@@ -9,7 +9,7 @@ import { toArabicDigits } from "../../../src/lib/arabicDigits";
 import { checkCustomerText } from "../../../src/lib/agentMission/text";
 import type { GatewayCallResult } from "../gateway";
 import { callUsdOf, candidatesFor, capabilitiesOf, describeForModel, isProven, platformIndex, platformsOf } from "./catalogView";
-import { FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
+import { FIELD_MAP_SCHEMA, FIELD_MAP_SYSTEM, FIELD_MAP_TOOL, SCOUT_SCHEMA, SCOUT_SYSTEM, SCOUT_TOOL, TOOL_CHOICE_SCHEMA, TOOL_CHOICE_SYSTEM, TOOL_CHOICE_TOOL, UNDERSTAND_SCHEMA, UNDERSTAND_SYSTEM, UNDERSTAND_TOOL } from "./prompts";
 
 /**
  * THE LLM-FIRST PLANNER (owner direction, 15 Nov 2026: «the model must understand the request and call the catalog's tools the way the customer wants; no word rules, no filters»).
@@ -56,6 +56,10 @@ export interface LlmPlannerInput {
   /** A question this planner asked and the customer's answer to it. */
   question?: string | null;
   answer?: string | null;
+  /** Every question this planner asked and the customer's answer, oldest first (the planner's own, and the scouting questions that tell what the real search found). */
+  exchanges?: Array<{ question: string; answer: string }>;
+  /** May this run stop and ask the customer what to do when the real search found far less than they asked for (false once the limit is reached). Absent: yes. */
+  scoutAllowed?: boolean;
 }
 
 export interface UnderstoodStep {
@@ -65,12 +69,12 @@ export interface UnderstoodStep {
   language?: string | null; country?: string | null; order?: "newest" | "top" | null; fields_wanted?: string[];
 }
 export interface Understanding {
-  decision: "plan" | "ask" | "cannot"; understanding_ar: string; question_ar?: string; options_ar?: string[]; cannot_ar?: string; assumptions_ar?: string[]; no_repeat?: boolean; steps: UnderstoodStep[];
+  decision: "plan" | "ask" | "cannot"; understanding_ar: string; question_ar?: string; options_ar?: string[]; cannot_ar?: string; assumptions_ar?: string[]; no_repeat?: boolean; /** the customer's answer to a question about what the search found accepted what exists */ accepts_available?: boolean; steps: UnderstoodStep[];
 }
 
 export type LlmPlanResult =
   | { kind: "plan"; plan: PricedPlan; understanding: Understanding; costUsd: number }
-  | { kind: "question"; question_ar: string; options_ar: string[]; understanding: Understanding; costUsd: number }
+  | { kind: "question"; question_ar: string; options_ar: string[]; understanding: Understanding; costUsd: number; /** the question reports what the real search found (the customer chooses: take it, or widen) */ scout?: true }
   | { kind: "cannot"; reason_ar: string; understanding: Understanding | null; costUsd: number; detail: string };
 
 /** Asked when the model's own question cannot be shown as it wrote it. */
@@ -87,6 +91,10 @@ export const MAX_STEP_ITEMS = 50_000;
 export const MAX_PROBES_PER_STEP = 6;
 /** What one page is assumed to give beyond what the probe showed, for the price: further input sets repeat some items (removed as duplicates). */
 export const VARIANT_OVERLAP_FACTOR = 1.3;
+/** Further input sets read once, while planning, to measure how much a source really holds for a request (the scouting). */
+export const MAX_SCOUT_SETS = 4;
+/** The real search found less than this share of the customer's number: the customer is asked what to do before the plan (take it, or widen). */
+export const SCOUT_SHORT_SHARE = 0.5;
 
 const COLUMN_TITLES: Record<string, string> = {
   text: "النص", title: "العنوان", author: "الاسم", username: "الحساب", posted_at: "تاريخ النشر", link: "الرابط", likes: "الإعجابات", comments_count: "عدد التعليقات", replies_count: "عدد الردود",
@@ -132,7 +140,8 @@ export function understandPrompt(input: LlmPlannerInput, today: string): string 
   ];
   if (input.request && !input.words.some((w) => w.includes(input.request))) lines.push("", `The chat's summary of the request (context only; the customer's words win): ${input.request}`);
   if (input.earlier && input.earlier.length > 0) lines.push("", "Earlier messages of the same conversation (context only, a previous request):", ...input.earlier.slice(-6).map((w) => `- ${w}`));
-  if (input.question) lines.push("", `You asked the customer: ${input.question}`, `The customer answered: ${input.answer ?? ""}`);
+  if (input.exchanges && input.exchanges.length > 0) { lines.push("", "Questions you or the system asked the customer, and their answers (oldest first):"); input.exchanges.forEach((e, i) => lines.push(`${i + 1}. Asked: ${e.question}`, `   The customer answered: ${e.answer}`)); }
+  else if (input.question) lines.push("", `You asked the customer: ${input.question}`, `The customer answered: ${input.answer ?? ""}`);
   else if (input.answer) lines.push("", `The customer added: ${input.answer}`);
   return lines.join("\n");
 }
@@ -144,7 +153,7 @@ export function checkUnderstanding(u: unknown, catalog: TregCatalog, access: Acc
   if (!isObj(u)) return { ok: false, error: "the answer is not an object" };
   const decision = u.decision === "ask" || u.decision === "cannot" ? u.decision : "plan";
   const understanding_ar = str(u.understanding_ar);
-  const base = { decision, understanding_ar, assumptions_ar: Array.isArray(u.assumptions_ar) ? u.assumptions_ar.map(str).filter(Boolean).slice(0, 8) : [], no_repeat: u.no_repeat === true } as Understanding;
+  const base = { decision, understanding_ar, assumptions_ar: Array.isArray(u.assumptions_ar) ? u.assumptions_ar.map(str).filter(Boolean).slice(0, 8) : [], no_repeat: u.no_repeat === true, ...(u.accepts_available === true ? { accepts_available: true } : {}) } as Understanding;
   if (decision === "ask") {
     const q = str(u.question_ar);
     if (!q) return { ok: false, error: "decision ask needs question_ar" };
@@ -404,6 +413,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
 
   // 2-4. EVERY STEP, parents first (the model's order already is: a parent must be an earlier step)
   const built = new Map<string, BuiltStep>();
+  const findings: ScoutFinding[] = [];
   const unserved: Array<{ what_ar: string; reason_ar: string }> = [];
   for (const step of u.steps) {
     const parent = step.parent ? built.get(step.parent) ?? null : null;
@@ -412,7 +422,10 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     const { candidates, options } = await chooseTools(step, parent ? parent.sampleRows : null, deps, cost);
     if (candidates.length === 0) { unserved.push({ what_ar: step.title_ar, reason_ar: "لا توجد لدينا أداة متاحة لهذه الخطوة الآن، فلن تُضاف ولن تُحسب في السعر." }); continue; }
     deps.log?.(`llm_planner_options ${step.key} ${options.map((o) => o.endpoint.id).join(",") || "none"}`);
-    const got = await probeStep(step, options, parent, deps);
+    const trace = { empties: 0, failures: 0 };
+    const got = await probeStep(step, options, parent, deps, trace);
+    // a source that answered with nothing, for every input set tried, is a finding too (the customer is asked; a tool that failed is not "nothing found")
+    if (!got && !step.parent && trace.empties > 0 && trace.failures === 0) findings.push({ step, requested: step.count.total ?? DEFAULT_COUNT, found: 0, exhausted: true, sets: trace.empties });
     if (!got) { unserved.push({ what_ar: step.title_ar, reason_ar: "جرّبنا الأدوات المتاحة لهذه الخطوة فلم تُعطِ نتائج الآن، فلن تُضاف ولن تُحسب في السعر." }); continue; }
     const mapAnswer = await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, got.option.endpoint, got.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500);
     const map = enrichedMap(checkFieldMap(mapAnswer, got.items), got.items);
@@ -426,6 +439,8 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     step.title_ar = customerSafe(step.title_ar, 60) ?? "العناصر";
     // ASKED FOR 400, GET 400: a topic search also proves the model's next tool (another provider's index gives other items); execution reads it after the first tool's input sets run out
     let second: BuiltStep["second"];
+    const secondRows: Array<Record<string, unknown>> = [];
+    let secondMore = false;
     const next = !step.parent && step.topic ? options.find((o) => o.endpoint.id !== got.option.endpoint.id && !o.parent) : undefined;
     if (next) {
       const got2 = await probeStep(step, [next], null, deps);
@@ -433,11 +448,26 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
         const map2 = enrichedMap(checkFieldMap(await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, got2.option.endpoint, got2.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500), got2.items), got2.items);
         if (map2) {
           const code2 = cardMapCode(pseudoCard(got2.option.endpoint, got2.listPath, map2, got2.items.length, carryFieldsOf(got2.items, map2), got2.items));
-          if (runMap(code2, got2.page).length > 0) second = { option: got2.option, mapCode: code2 };
+          const rows2 = runMap(code2, got2.page);
+          if (rows2.length > 0) { second = { option: got2.option, mapCode: code2 }; secondRows.push(...rows2); secondMore = got2.hasMore; }
         }
       }
     }
     built.set(step.key, { step, option: got.option, mapCode, columns, carryKeys: Object.keys(carry), sampleRows, rowsPerPage: got.items.length, callIds: got.callIds, hasMore: got.hasMore, ...(second ? { second } : {}) });
+    // SCOUTING: how much does the source really hold for this request? (a source that shows one page for a query and no next page is read once for each of the model's other input sets, and the sets' items are counted once)
+    if (!step.parent && step.count.total !== null && input.scoutAllowed !== false) {
+      const y = await scoutYield({ option: got.option, mapCode, firstRows: sampleRows, hasMore: got.hasMore || secondMore, extraRows: secondRows, requested: step.count.total }, deps);
+      deps.log?.(`llm_planner_scout ${step.key} found=${y.found} requested=${step.count.total} exhausted=${y.exhausted} sets=${y.sets}`);
+      findings.push({ step, requested: step.count.total, found: y.found, exhausted: y.exhausted, sets: y.sets });
+    }
+  }
+  // THE CONVERSATION: the real search found far less than the customer asked for → the customer is told what was found and chooses (take it, or widen); the model re-plans from the answer. Asked at most twice per mission,
+  // and never after the customer accepted what exists. Nothing is dropped and nothing is hidden: the customer decides with the facts in front of them.
+  const weak = findings.filter((f) => f.exhausted && f.found < Math.max(1, Math.ceil(f.requested * SCOUT_SHORT_SHARE)));
+  if (weak.length > 0 && input.scoutAllowed !== false && !u.accepts_available) {
+    await say("جرّبنا عينة حقيقية ووجدنا أقل مما طلبت، فنعرض عليك الموقف لتختار كيف نكمل.");
+    const q = await scoutQuestion(u, weak, input, deps, cost);
+    return { kind: "question", question_ar: q.question_ar, options_ar: q.options_ar, understanding: u, costUsd: cost.usd, scout: true };
   }
   costUsd = cost.usd;
   if (built.size === 0) return { kind: "cannot", reason_ar: unserved[0]?.reason_ar ?? "", understanding: u, costUsd, detail: "no_step_served" };
@@ -490,7 +520,7 @@ export function fallbackMap(items: ReadonlyArray<Record<string, unknown>>): Fiel
 interface Probed { option: ToolOption; page: unknown; items: Array<Record<string, unknown>>; listPath: string | null; callIds: string[]; hasMore: boolean }
 
 /** ONE real first page per option, in the model's order; an option whose first input set is empty tries its further sets (a precise query may be empty where a broader one is not). At most MAX_PROBES_PER_STEP calls. */
-async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: BuiltStep | null, deps: LlmPlannerDeps): Promise<Probed | null> {
+async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: BuiltStep | null, deps: LlmPlannerDeps, trace?: { empties: number; failures: number }): Promise<Probed | null> {
   let calls = 0;
   const callIds: string[] = [];
   for (const option of options) {
@@ -507,12 +537,12 @@ async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: Bu
       calls += 1;
       const r = await deps.probe(option.endpoint.id, params);
       callIds.push(r.call_id);
-      if (!r.ok) { deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} not ok`); if ("refused" in r) break; continue; }
-      if (r.rows_in_page <= 0) { deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} empty`); continue; }
+      if (!r.ok) { deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} not ok`); if (trace) trace.failures += 1; if ("refused" in r) break; continue; }
+      if (r.rows_in_page <= 0) { deps.log?.(`llm_planner_probe ${step.key} ${option.endpoint.id} empty`); if (trace) trace.empties += 1; continue; }
       const page = await deps.readPage(r.call_id);
-      if (page === null) continue;
+      if (page === null) { if (trace) trace.failures += 1; continue; }
       const { reading } = buildShapeDigest(page, option.endpoint);
-      if (reading.rows.length === 0) continue;
+      if (reading.rows.length === 0) { if (trace) trace.empties += 1; continue; }
       // the input set that answered becomes the first one, the others follow it
       const reordered: ToolOption = i === 0 ? option : { ...option, params: sets[i], more: sets.filter((_, j) => j !== i) };
       return { option: reordered, page, items: reading.rows, listPath: reading.listPath, callIds, hasMore: Boolean(r.next_cursor) || r.has_more === true };
@@ -520,6 +550,74 @@ async function probeStep(step: UnderstoodStep, options: ToolOption[], parent: Bu
     if (calls >= MAX_PROBES_PER_STEP) break;
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+// SCOUTING: what does the source really hold, and what does the customer want to do about it?
+// ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+
+/** What one top-level step's real searches showed: how many different items the source gave (up to the customer's number), and whether every search ended (no further page). */
+export interface ScoutFinding { step: UnderstoodStep; requested: number; found: number; exhausted: boolean; sets: number }
+
+const rowKeyOf = (row: Record<string, unknown>): string => String(row.id ?? row.link ?? JSON.stringify(row));
+
+/**
+ * The yield of one step, measured with real calls: when the first page has no next page, the model's other input sets are read once each (page one only), and the different items are counted. Any further page
+ * (a next cursor) means the source holds more than a page: nothing to report, execution pages through it. A failed call makes the answer uncertain (not exhausted): the customer is never asked on a guess.
+ */
+export async function scoutYield(
+  a: { option: ToolOption; mapCode: string; firstRows: ReadonlyArray<Record<string, unknown>>; hasMore: boolean; extraRows?: ReadonlyArray<Record<string, unknown>>; requested: number },
+  deps: Pick<LlmPlannerDeps, "probe" | "readPage" | "log">,
+): Promise<{ found: number; exhausted: boolean; sets: number }> {
+  const ids = new Set<string>([...a.firstRows, ...(a.extraRows ?? [])].map(rowKeyOf));
+  let sets = 1;
+  if (a.hasMore) return { found: ids.size, exhausted: false, sets };
+  for (const params of a.option.more.slice(0, MAX_SCOUT_SETS)) {
+    if (ids.size >= a.requested) break;
+    const r = await deps.probe(a.option.endpoint.id, params);
+    sets += 1;
+    if (!r.ok) return { found: ids.size, exhausted: false, sets };
+    if (r.rows_in_page <= 0) continue;
+    const page = await deps.readPage(r.call_id);
+    if (page === null) return { found: ids.size, exhausted: false, sets };
+    for (const row of runMap(a.mapCode, page)) ids.add(rowKeyOf(row));
+    if (Boolean(r.next_cursor) || r.has_more === true) return { found: ids.size, exhausted: false, sets };
+  }
+  return { found: ids.size, exhausted: ids.size < a.requested, sets };
+}
+
+const ARABIC_INDIC = "٠١٢٣٤٥٦٧٨٩";
+/** The numbers written in a text, with Arabic-Indic digits and separators read as plain integers. */
+export function numbersWritten(text: string): Set<string> {
+  const plain = String(text ?? "").replace(/[٠-٩]/g, (d) => String(ARABIC_INDIC.indexOf(d))).replace(/(\d)[٬,](?=\d{3})/g, "$1");
+  return new Set((plain.match(/\d+/g) ?? []).map((n) => String(Number(n))));
+}
+
+/** The sentence the customer reads when the model's own cannot be used: what was found, and the two things we can do. */
+export function scoutFallbackAr(weak: ReadonlyArray<ScoutFinding>): { question_ar: string; options_ar: string[] } {
+  const lines = weak.map((f) => (f.found === 0
+    ? `جرّبنا البحث عن ${f.step.title_ar} في ${platformAr(f.step.platform)} بالشروط التي كتبتها ولم نجد نتائج.`
+    : `جرّبنا البحث عن ${f.step.title_ar} في ${platformAr(f.step.platform)} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط من ${toArabicDigits(f.requested)} طلبتها، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`));
+  return { question_ar: `${lines.join(" ")} تحب نسلّمك الموجود، ولا نوسّع البحث؟`, options_ar: ["سلّمني الموجود فقط", "وسّع البحث (اكتب كيف تحب نوسّعه)"] };
+}
+
+/** The question the customer reads when the search found less than they asked for: the model writes it from the facts (code allows only the numbers it was given); code's own sentence when the model's cannot be shown. */
+export async function scoutQuestion(u: Understanding, weak: ReadonlyArray<ScoutFinding>, input: LlmPlannerInput, deps: Pick<LlmPlannerDeps, "model" | "log">, cost: { usd: number }): Promise<{ question_ar: string; options_ar: string[] }> {
+  const facts = {
+    customer_words: input.words.slice(-4),
+    understanding: u.understanding_ar,
+    searches: weak.map((f) => ({ items: f.step.title_ar, platform: platformAr(f.step.platform), source: f.step.source, topic: f.step.topic, period: f.step.period, language: f.step.language ?? null, country: f.step.country ?? null, requested: f.requested, found: f.found, different_searches_tried: f.sets })),
+  };
+  const fallback = scoutFallbackAr(weak);
+  const answer = await asker(deps, cost)(SCOUT_SYSTEM, JSON.stringify(facts), { name: SCOUT_TOOL, description: "What the real search found, and the customer's choices.", schema: SCOUT_SCHEMA }, 900);
+  if (!isObj(answer)) return fallback;
+  const message = customerSafe(str(answer.message_ar), 700);
+  if (!message) return fallback;
+  const allowed = new Set<string>([...weak.flatMap((f) => [String(f.requested), String(f.found)]), ...numbersWritten(`${input.words.join(" ")} ${JSON.stringify(weak.map((f) => f.step.period))}`)]);
+  const foreign = [...numbersWritten(message)].filter((n) => !allowed.has(n));
+  if (foreign.length > 0) { deps.log?.(`llm_planner_scout_numbers ${foreign.join(",")}`); return fallback; }
+  const options = (Array.isArray(answer.options_ar) ? answer.options_ar : []).map((o) => customerSafe(str(o), 80)).filter((o): o is string => o !== null && [...numbersWritten(o)].every((n) => allowed.has(n))).slice(0, 4);
+  return { question_ar: message, options_ar: options.length >= 2 ? options : fallback.options_ar };
 }
 
 /** Parents a child step is tried on: those that carry the binding's value, the most commented (or replied, or liked) first, at most PARENTS_TRIED. */

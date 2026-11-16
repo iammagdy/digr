@@ -6,12 +6,12 @@ import { resolveProviderKey } from "../server/providerKeys";
  * call of the product), a timeout; a failure of any kind is returned as a value (`{ ok: false }`), never thrown, and the caller falls back to the round-21 keyword rules.
  * The model decides no money and starts nothing: what it returns is validated by `conversationModel.ts` and only code routes to planning.
  */
-export const CHAT_MODEL_MAX_TOKENS = 400;
+export const CHAT_MODEL_MAX_TOKENS = 800;
 /**
  * CONSOLIDATED MISSION, COST CAP (docs/AGENT-UNDERSTANDING-V1.md): in research-brief mode (a server switch, off by default) the SAME one call per message also returns the brief, so its output may be longer. The hard ceiling of ANY chat call is this
  * number of output tokens; there is still exactly one call per customer message and never a second one.
  */
-export const CHAT_MODEL_BRIEF_MAX_TOKENS = 700;
+export const CHAT_MODEL_BRIEF_MAX_TOKENS = 900;
 export const CHAT_MODEL_TIMEOUT_MS = 12_000;
 const DEFAULT_MODEL = "claude-haiku-5-5";
 
