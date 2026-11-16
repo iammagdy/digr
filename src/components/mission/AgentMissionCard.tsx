@@ -24,6 +24,7 @@ import { CARD_FAST_AFTER_ACTION_MS, cardPollDelayMs, holdingLineAr } from "@/lib
 import type { PlanEdits } from "@/lib/agentMission/planEdit";
 import { AskCard } from "@/components/mission/AskCard";
 import { LiveSheetPanel } from "@/components/mission/LiveSheetPanel";
+import { CountBadge, FoldRow, LiveLine, MoneyLine, StepTrack, Tick } from "@/components/mission/cardParts";
 import type { AskCardView, AskEdit } from "@/lib/agentMission/stage2/askCard";
 import type { LiveData } from "@/lib/agentMission/stage2/livePoller";
 import { liveProgressOf, phoneCollectLine } from "@/lib/agentMission/stage2/singleCounter";
@@ -231,7 +232,13 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   // STAGE 2 S10 + LAUNCH ROUND: the live sheet under the card, where the page asks for it (`liveSheet`: the requests page and the conversation) and only when the server said the flag is on for this
   // viewer; from the moment the customer approves here (the plan is shown as started at once) or the mission works, and after it ends (the final rows stay)
   const showLive = liveSheet && answer?.liveSheet === true && (v.phase === "running" || v.phase === "done" || v.phase === "partial" || (v.phase === "plan" && approvedHere));
-  return <>{<AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} pendingText={pendingText} quietSinceMs={quietSinceMs} nowMs={nowMs} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled} askCard={stage2 ? answer?.askCard ?? null : null} onAskEdit={askEdit} askError={askError} live={showLive ? liveData : null} />}{showLive ? <div className="mt-3 w-full max-w-[640px] min-w-0 sm:max-w-none" data-testid="agent-live"><LiveSheetPanel missionId={missionId} enabled missionLive={!ended} onData={setLiveData} /></div> : null}</>;
+  return <>{<AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} pendingText={pendingText} quietSinceMs={quietSinceMs} nowMs={nowMs} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled} askCard={stage2 ? answer?.askCard ?? null : null} onAskEdit={askEdit} askError={askError} live={showLive ? liveData : null} />}{showLive ? (
+    // THE FULL TABLE IS ONE TAP AWAY (card redesign): the card carries the one counter; the sheet opens under «اعرض الجدول», and it stays mounted while closed so its numbers keep the same source
+    <details className="mt-2 w-full min-w-0 max-w-[640px] sm:max-w-none" data-testid="agent-live">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center text-[13.5px] font-semibold text-ac underline underline-offset-4 focus-visible:outline-2">{`اعرض الجدول${liveProgressOf(liveData) ? ` (${formatAr(liveProgressOf(liveData)!.delivered)} صف)` : ""}`}</summary>
+      <div className="mt-2 min-w-0"><LiveSheetPanel missionId={missionId} enabled missionLive={!ended} onData={setLiveData} /></div>
+    </details>
+  ) : null}</>;
 }
 
 /** The card itself, drawn from one view: pure (no network), so it renders the same on the server and in the tests. */
@@ -253,39 +260,71 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
   const overLimit = Boolean(v.limit?.over) || hold !== null;
   const byBalance = !v.limit?.over && hold !== null && hold.kind === "balance";
   const showStarted = v.phase === "running" || (v.phase === "plan" && approved);
-  const facts = [
-    ...(v.headlineCountAr || v.totalRowsAr ? [{ labelAr: "هتستلم", valueAr: v.headlineCountAr || v.totalRowsAr }] : []),
-    ...(v.periodAr ? [{ labelAr: "الفترة", valueAr: v.periodAr }] : []),
-    ...v.priceFacts,
-  ];
   const sampleRows = v.samples?.rows ?? [];
   const hasDetails = v.assumptionsAr.length > 0 || v.stages.length > 0 || Boolean(v.samples) || Boolean(v.fileContentsAr) || v.notesAr.length > 0;
+  // THE REDESIGN (handoff of 16 Nov 2026): the facts of the plan are THREE cells (the count, the highest price, the time); the hold is told in the one money sentence, not as a fourth cell
+  const factOf = (word: string) => v.priceFacts.find((f) => f.labelAr.includes(word))?.valueAr ?? null;
+  const holdAr = factOf("حجز");
+  const maxPriceAr = factOf("السعر");
+  const planFacts = [
+    ...(v.headlineCountAr || v.totalRowsAr ? [{ labelAr: "هتستلم", valueAr: v.headlineCountAr || v.totalRowsAr }] : []),
+    ...(v.periodAr && !(v.summaryAr ?? "").includes(v.periodAr) ? [{ labelAr: "الفترة", valueAr: v.periodAr }] : []),
+    ...v.priceFacts.filter((f) => !f.labelAr.includes("حجز")).map((f) => ({ labelAr: f.labelAr === "السعر حتى" ? "أقصى سعر" : f.labelAr === "الوقت المتوقع" ? "الوقت" : f.labelAr, valueAr: f.valueAr })),
+  ];
+  const caveats = v.notesAr;
+  // the dot pulses only while a real event arrived in the last 20 seconds (the card's own clock; before it has one the dot is as the server saw it: live)
+  const pulsing = v.live && (typeof v.lastEventAt !== "number" || nowMs === 0 || nowMs - v.lastEventAt < 20_000);
+  const planning = v.phase === "waiting" || v.phase === "planning";
+  const running = showStarted && !approving;
+  const finished = v.phase === "done" || v.phase === "partial";
+  const excel = v.files.find((f) => f.kind === "xlsx") ?? null;
+  const otherFiles = v.files.filter((f) => f !== excel);
+  const [deliveredLineAr, ...moneyLinesAr] = v.resultLinesAr;
+  const headlineAr = finished ? deliveredLineAr || v.resultSummaryAr || "" : "";
+  const counter = liveProgress ? { n: liveProgress.delivered, total: liveProgress.promised } : { n: v.savedSoFar, total: v.totalRows };
+  const approveButton = (
+    <button type="button" className={`${BTN_PRIMARY} inline-flex min-h-12 w-full items-center justify-center gap-2 text-[15px] font-semibold sm:w-auto sm:min-w-[220px]`} disabled={busy || approving} aria-busy={approving || undefined} style={approving ? { opacity: 0.75 } : undefined} onClick={() => onAct("approve")} data-testid="agent-approve">
+      {approving ? <><span className="h-4 w-4 rounded-full border-2 border-onac/30 border-t-onac motion-safe:animate-spin motion-reduce:animate-none" aria-hidden="true" />جارٍ الاعتماد…</> : v.unservedAr.length > 0 ? APPROVE_WITHOUT_UNSERVED_AR : "اعتمد وابدأ الجمع"}
+    </button>
+  );
   return (
-    <section dir="rtl" data-testid="agent-card" data-phase={v.phase} aria-label="مهمتك" className="mt-3 flex w-full max-w-[640px] min-w-0 flex-col gap-3 rounded-[18px] border border-ln bg-sf p-3.5 sm:p-4">
+    <section dir="rtl" data-testid="agent-card" data-phase={v.phase} aria-label="مهمتك" className="mt-3 flex w-full max-w-[640px] min-w-0 flex-col gap-3.5 rounded-[18px] border border-ln bg-sf p-4 sm:p-4" style={{ boxShadow: "var(--shadow)" }}>
       {v.queueLineAr ? <p role="status" className="m-0 rounded-[12px] bg-sf2 px-3 py-2 text-[13px] leading-[1.8] text-ink" data-testid="agent-queue">{v.queueLineAr}</p> : null}
-      {/* ROUND 26 (item 2): WHILE THE MISSION WAITS OR WORKS, the live step (a real event's title) and the time since the last change; after a minute one honest line */}
-      {v.live && typeof quietSinceMs === "number" && nowMs > 0 ? <p role="status" aria-live="off" className="m-0 text-[12px] leading-[1.8] text-ink2" data-testid="agent-holding">{holdingLineAr(v.currentLineAr || "نعمل على طلبك", nowMs - quietSinceMs)}</p> : null}
+
+      {/* ZONE 2, WHILE THE MISSION WAITS OR WORKS: the live line, a real event's title; after a quiet minute the one honest holding line */}
+      {planning ? <StepTrack steps={v.steps} /> : null}
+      {planning || (v.live && !running && v.phase !== "question" && !planShown) ? (
+        <LiveLine textAr={v.currentLineAr || "نقرأ طلبك"} detailAr={v.delayAr} pulsing={pulsing && !v.delayAr} />
+      ) : null}
+      {v.live && typeof quietSinceMs === "number" && nowMs > 0 && nowMs - quietSinceMs >= 20_000 ? <p role="status" aria-live="off" className="m-0 text-[12px] leading-[1.8] text-mut" data-testid="agent-holding">{holdingLineAr(v.currentLineAr || "نعمل على طلبك", nowMs - quietSinceMs)}</p> : null}
+      {planning ? <p className="m-0 text-[13px] leading-[1.8] text-ink2" data-testid="agent-planning-usual"><span className="text-mut">بعدها: </span>نحسب السعر ونعرض عليك الخطة.</p> : null}
+      {planning ? <MoneyLine>لن يُخصم شيء قبل موافقتك.</MoneyLine> : null}
 
       {v.phase === "question" && v.questionAr ? (
-        <div className="flex flex-col gap-2" data-testid="agent-question">
-          <p className="m-0 text-[14px] font-semibold leading-[1.9] text-ink">{v.questionAr}</p>
+        <div className="flex flex-col gap-2.5" data-testid="agent-question">
+          <p className="m-0 text-[12px] font-semibold" style={{ color: "var(--goldT)" }}>محتاجين رأيك</p>
+          <p className="m-0 text-[17px] font-semibold leading-[1.8] text-ink">{v.questionAr}</p>
           {v.questionOptionsAr.length > 0 ? (
-            <div className="flex flex-wrap gap-2" role="group" aria-label="إجابات جاهزة" data-testid="agent-question-options">
-              {v.questionOptionsAr.map((o) => <button key={o} type="button" className={BTN_PLAIN} disabled={busy} onClick={() => onAct("answer", o)}>{busy && pendingAction === "answer" && pendingText === o ? "جارٍ الإرسال…" : o}</button>)}
+            <div className="flex flex-col gap-2" role="group" aria-label="إجابات جاهزة" data-testid="agent-question-options">
+              {v.questionOptionsAr.map((o) => <button key={o} type="button" className="min-h-[52px] w-full cursor-pointer rounded-[14px] border border-ln2 bg-bg px-4 text-start text-[14px] font-semibold text-ink focus-visible:outline-2 disabled:cursor-wait disabled:opacity-60" disabled={busy} onClick={() => onAct("answer", o)}>{busy && pendingAction === "answer" && pendingText === o ? "جارٍ الإرسال…" : o}</button>)}
             </div>
           ) : null}
-          <input value={reply} onChange={(e) => onReply(displayDigitsAr(e.target.value))} disabled={busy} className="min-h-11 rounded-xl border border-ln2 bg-bg px-3 text-sm text-ink disabled:opacity-60" aria-label="أو اكتب إجابتك" />
-          <div><button type="button" className={BTN_PRIMARY} disabled={busy || !reply.trim()} onClick={() => onAct("answer", reply)}>{busy && pendingAction === "answer" && pendingText === reply ? "جارٍ الإرسال…" : "أرسل إجابتك"}</button></div>
+          <div className="flex gap-2">
+            <input value={reply} onChange={(e) => onReply(displayDigitsAr(e.target.value))} disabled={busy} className="min-h-11 min-w-0 flex-1 rounded-xl border border-ln2 bg-bg px-3 text-[16px] text-ink disabled:opacity-60" aria-label="أو اكتب إجابتك" />
+            <button type="button" className={BTN_PRIMARY} disabled={busy || !reply.trim()} onClick={() => onAct("answer", reply)}>{busy && pendingAction === "answer" && pendingText === reply ? "جارٍ الإرسال…" : "أرسل إجابتك"}</button>
+          </div>
+          <MoneyLine>المهمة متوقفة لحين ردك، ولم يُخصم شيء.</MoneyLine>
         </div>
       ) : null}
 
-      {/* THE ONE LINE: what the customer will receive */}
-      {(v.phase === "plan" || v.phase === "running" || v.phase === "done" || v.phase === "partial") && v.summaryAr ? (
+      {/* ZONE 1, THE HEADLINE: what the customer will receive */}
+      {(v.phase === "plan" || v.phase === "running") && v.summaryAr ? (
         <div className="flex flex-col gap-1" data-testid="agent-hero">
-          {planShown ? <p className="m-0 text-[12px] font-medium text-mut">هتستلم إيه</p> : null}
-          <p className={`m-0 font-semibold leading-[1.8] text-ink ${planShown ? "text-[17px]" : "text-[14px]"}`} data-testid="agent-summary">{v.summaryAr}</p>
+          {planShown ? <p className="m-0 text-[12.5px] font-medium text-mut">خطتك جاهزة · هتستلم إيه</p> : null}
+          <p className={`m-0 leading-[1.4] text-ink ${planShown ? "font-display text-[25px] font-semibold" : "text-[14px] font-semibold leading-[1.8]"}`} data-testid="agent-summary">{v.summaryAr}</p>
         </div>
       ) : null}
+      {finished && v.summaryAr ? <p className="m-0 text-[12.5px] leading-[1.8] text-mut" data-testid="agent-summary">{v.summaryAr}</p> : null}
 
       {v.unservedAr.length > 0 && planShown ? (
         <div className="rounded-[12px] border border-ln2 bg-sf2 px-3 py-2" role="note" data-testid="agent-unserved">
@@ -295,22 +334,17 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
         </div>
       ) : null}
 
-      {/* count, period, price and the hold, each in its own cell; full sentences, never cut */}
-      {planShown && facts.length > 0 ? (
-        <div className="rounded-[14px] bg-sf2 px-3 py-2.5" data-testid="agent-price">
-          <dl className={`m-0 grid grid-cols-2 gap-x-3 gap-y-2.5 ${facts.length === 4 ? "sm:grid-cols-4" : "sm:grid-cols-3"}`} data-testid="agent-facts">
-            {facts.map((f) => (
-              <div key={f.labelAr} className="min-w-0"><dt className="text-[11px] font-light text-mut">{f.labelAr}</dt><dd className="m-0 mt-0.5 break-words text-[14px] font-semibold leading-[1.6] text-ink">{f.valueAr}</dd></div>
+      {/* THE DECISION AREA: three facts and ONE money sentence; nothing else sits between the price and the buttons */}
+      {planShown && !approving && planFacts.length > 0 ? (
+        <div className="flex flex-col gap-2.5" data-testid="agent-price">
+          <dl className={`m-0 grid overflow-hidden rounded-[14px] border border-ln bg-sf2 ${planFacts.length >= 4 ? "grid-cols-2 sm:grid-cols-4" : planFacts.length === 3 ? "grid-cols-3" : planFacts.length === 2 ? "grid-cols-2" : "grid-cols-1"}`} data-testid="agent-facts">
+            {planFacts.map((f, i) => (
+              <div key={f.labelAr} className={`min-w-0 px-3 py-2.5 ${planFacts.length >= 4 ? "border-b border-ln last:border-b-0 sm:border-b-0" : ""} ${i > 0 ? "border-s border-ln" : ""}`}><dt className="text-[11.5px] text-mut">{f.labelAr}</dt><dd className="m-0 mt-0.5 break-words text-[15px] font-semibold leading-[1.5] text-ink">{f.valueAr}</dd></div>
             ))}
           </dl>
-          {(v.countLinesAr ?? []).map((line) => <p key={line} className="m-0 mt-2 text-[12px] leading-[1.8] text-ink2" data-testid="agent-count-explain">{line}</p>)}
-          {v.priceNoteAr ? <p className="m-0 mt-2 border-t border-ln pt-2 text-[12px] leading-[1.8] text-ink2" data-testid="agent-price-note">{v.priceNoteAr}</p> : null}
-          {(v.priceExplainAr ?? []).map((line) => <p key={line} className="m-0 mt-1 text-[12px] leading-[1.8] text-ink2" data-testid="agent-price-explain">{line}</p>)}
+          <p className="m-0 flex items-start gap-2 text-[13px] leading-[1.8] text-ink2" data-testid="agent-price-sentence"><Tick /><span className="min-w-0">{holdAr ? `تُحجز ${holdAr} عند الاعتماد، ويُخصم منها مقابل ما يُسلَّم فقط، ويعود الباقي إلى رصيدك.` : v.priceNoteAr ?? "يُخصم مقابل ما يُسلَّم فقط."}</span></p>
         </div>
-      ) : planShown && v.priceLineAr ? <p className="m-0 rounded-[12px] bg-sf2 px-3 py-2 text-[13px] leading-[1.9] text-ink" data-testid="agent-price">{v.priceLineAr}</p> : null}
-
-      {/* LLM-FIRST PLANNER ROUND (15 Nov 2026, live 390 px): the plan's notes are read BEFORE approval; while the mission runs they pushed the progress below the fold, so the running card shows the progress, not the notes again */}
-      {planShown && v.notesAr.length > 0 ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-notes">{v.notesAr.join(" ")}</p> : null}
+      ) : planShown && !approving && v.priceLineAr ? <p className="m-0 rounded-[12px] bg-sf2 px-3 py-2 text-[13px] leading-[1.9] text-ink" data-testid="agent-price">{v.priceLineAr}</p> : null}
 
       {planShown && !isGuest && overLimit && v.limit ? (
         <div className="flex flex-col gap-2 rounded-[14px] border border-ln2 bg-sf2 px-3 py-2.5" role="alert" data-testid="agent-over-limit">
@@ -328,123 +362,140 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
         </div>
       ) : null}
 
-      {planShown && !(overLimit && !isGuest) ? (
+      {planShown && !approving && !(overLimit && !isGuest) ? (
         <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
           {isGuest
-            ? <a href="/register" className={`${BTN_PRIMARY} inline-flex min-h-12 items-center justify-center text-[15px] font-semibold no-underline sm:min-w-[200px]`} data-testid="agent-signup">سجّل لتعتمد</a>
+            ? <a href="/register" className={`${BTN_PRIMARY} inline-flex min-h-12 items-center justify-center text-[15px] font-semibold no-underline sm:min-w-[220px]`} data-testid="agent-signup">سجّل لتعتمد</a>
             : overLimit ? null
-            : <button type="button" className={`${BTN_PRIMARY} inline-flex min-h-12 w-full items-center justify-center gap-2 text-[15px] font-semibold sm:w-auto sm:min-w-[200px]`} disabled={busy} onClick={() => onAct("approve")} data-testid="agent-approve">
-                {approving ? <><span className="h-4 w-4 rounded-full border-2 border-onac/30 border-t-onac motion-safe:animate-spin motion-reduce:animate-none" aria-hidden="true" />جارٍ الاعتماد…</> : v.unservedAr.length > 0 ? APPROVE_WITHOUT_UNSERVED_AR : "اعتمد"}
-              </button>}
-          <button type="button" className={`${BTN_PLAIN} w-full sm:w-auto`} disabled={busy} onClick={() => (v.edit ? onEditing(!editing) : onAct("edit"))} data-testid="agent-edit" aria-expanded={v.edit ? editing : undefined}>{pendingAction === "edit" ? "جارٍ التجهيز…" : "عدّل الطلب"}</button>
+            : approveButton}
+          <button type="button" className={`${BTN_PLAIN} min-h-12 w-full sm:w-auto`} disabled={busy} onClick={() => (v.edit ? onEditing(!editing) : onAct("edit"))} data-testid="agent-edit" aria-expanded={v.edit ? editing : undefined}>{pendingAction === "edit" ? "جارٍ التجهيز…" : "عدّل الطلب"}</button>
         </div>
       ) : null}
-      {approving ? <p role="status" aria-live="polite" className="m-0 text-[13px] leading-[1.8] text-ink2" data-testid="agent-approving">جارٍ اعتماد خطتك… لن تحتاج لفعل شيء بعدها.</p> : null}
+      {/* APPROVING: the same card, the button in flight, the status beside it; no counter until the server confirms */}
+      {approving ? (
+        <div className="flex flex-col gap-2.5" data-testid="agent-approving-block">
+          <p className="m-0 text-[14px] leading-[1.8] text-ink2" data-testid="agent-facts-line">{[v.headlineCountAr || v.totalRowsAr, maxPriceAr ? `حتى ${maxPriceAr}` : null, factOf("الوقت")].filter(Boolean).join(" · ")}</p>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">{approveButton}<p role="status" aria-live="polite" className="m-0 text-[13px] leading-[1.8] text-ink2" data-testid="agent-approving">لن تحتاج لفعل شيء بعدها.</p></div>
+          <MoneyLine>{holdAr ? `تُحجز ${holdAr} الآن، ويُخصم منها مقابل ما يُسلَّم فقط.` : "يُخصم مقابل ما يُسلَّم فقط."}</MoneyLine>
+        </div>
+      ) : null}
       {planShown && askCard ? <AskCard view={askCard} busy={busy} onEdit={onAskEdit} errorAr={askError} /> : null}
       {planShown && v.edit && editing ? <PlanEditor edit={v.edit} busy={busy} pendingAction={pendingAction} onSave={(edits) => onAct("edit_plan", undefined, edits)} onCancel={() => onEditing(false)} onRetype={() => onAct("retype")} /> : null}
       {planShown && isGuest ? <p className="m-0 text-[12px] font-light leading-[1.8] text-mut" data-testid="agent-guest-note">بعد التسجيل تُنقل محادثتك لحسابك؛ اكتب «موافق» فيها ثم اضغط «اعتمد».</p> : null}
 
-      {/* THE DETAILS, folded: how we understood the request, the steps, the example rows and what the file holds */}
-      {planShown && hasDetails ? (
-        <details className="rounded-[14px] border border-ln bg-bg px-3 py-1" data-testid="agent-details">
-          <summary className="cursor-pointer py-2 text-[13px] font-semibold text-ink">تفاصيل الخطة</summary>
-          <div className="flex flex-col gap-3 pb-3 pt-1">
-            {v.assumptionsAr.length > 0 ? (
-              <div className="rounded-[12px] bg-sf2 px-3 py-2" data-testid="agent-assumptions">
-                <p className="m-0 text-[12px] font-semibold text-ink">كيف فهمنا طلبك</p>
-                <ul className="m-0 mt-0.5 list-disc pe-4 text-[13px] leading-[1.75] text-ink2">{v.assumptionsAr.map((a) => <li key={a}>{a}</li>)}</ul>
-                <p className="m-0 mt-1 text-[11px] font-light leading-[1.7] text-mut">لو فهمنا شيئًا بشكل مختلف، اضغط «عدّل الطلب» وغيّره قبل الاعتماد.</p>
+      {/* BELOW THE BUTTONS, FOLDED: the caveat (what the customer should know before approving) and the plan's details */}
+      {planShown && !approving && caveats.length > 0 ? (
+        <FoldRow testId="agent-caveats" label="ملاحظة قبل ما تعتمد" badge={<CountBadge n={toArabicDigits(caveats.length)} />}>
+          <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-notes">{caveats.join(" ")}</p>
+        </FoldRow>
+      ) : null}
+      {planShown && !approving && hasDetails ? (
+        <FoldRow testId="agent-details" label="تفاصيل الخطة: الأعمدة وعينة من النتيجة">
+          {(v.countLinesAr ?? []).map((line) => <p key={line} className="m-0 text-[12.5px] leading-[1.8] text-ink2" data-testid="agent-count-explain">{line}</p>)}
+          {v.priceNoteAr ? <p className="m-0 text-[12.5px] leading-[1.8] text-ink2" data-testid="agent-price-note">{v.priceNoteAr}</p> : null}
+          {(v.priceExplainAr ?? []).map((line) => <p key={line} className="m-0 text-[12.5px] leading-[1.8] text-ink2" data-testid="agent-price-explain">{line}</p>)}
+          {v.assumptionsAr.length > 0 ? (
+            <div className="rounded-[12px] bg-sf2 px-3 py-2" data-testid="agent-assumptions">
+              <p className="m-0 text-[12px] font-semibold text-ink">كيف فهمنا طلبك</p>
+              <ul className="m-0 mt-0.5 list-disc pe-4 text-[13px] leading-[1.75] text-ink2">{v.assumptionsAr.map((a) => <li key={a}>{a}</li>)}</ul>
+              <p className="m-0 mt-1 text-[11.5px] font-light leading-[1.7] text-mut">لو فهمنا شيئًا بشكل مختلف، اضغط «عدّل الطلب» وغيّره قبل الاعتماد.</p>
+            </div>
+          ) : null}
+          {v.stages.length > 0 ? (
+            <div data-testid="agent-stages">
+              <p className="m-0 mb-1 text-[12px] font-semibold text-ink">الخطوات</p>
+              {/* ROUND 14 (390 px): a long step line wraps INSIDE the card; the label and the value stack on a narrow screen and sit side by side from 640 px up. The value never takes `shrink-0`. */}
+              <ol className="m-0 flex list-none flex-col gap-1 p-0">
+                {v.stages.map((s) => (
+                  <li key={s.n} className="flex min-w-0 items-baseline gap-1.5 text-[13px] leading-[1.7] text-ink" data-testid={`agent-stage-${s.n}`}>
+                    <b className="shrink-0 text-mut">{toArabicDigits(s.n)}</b>
+                    <div className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3" data-testid={`agent-stage-body-${s.n}`}>
+                      <span className="min-w-0 break-words sm:flex-1">{s.titleAr}{s.noteAr ? <span className="block break-words text-[11px] font-light text-mut">{s.noteAr}</span> : null}</span>
+                      <span className="min-w-0 break-words text-ink2 sm:max-w-[60%] sm:text-end" data-testid={`agent-stage-rows-${s.n}`}>{s.rowsAr}</span>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+              {v.stages.length > 1 ? <p className="m-0 mt-1 border-t border-ln pt-1 text-[13px] font-semibold text-ink" data-testid="agent-total">المجموع في ملفك: {v.totalRowsAr}</p> : null}
+            </div>
+          ) : null}
+          {v.samples ? (
+            <div className="rounded-[12px] border border-ln bg-bg p-2" data-testid="agent-samples" aria-label={SAMPLES_TITLE_AR}>
+              <p className="m-0 mb-1 text-[12px] font-semibold text-ink">{SAMPLES_TITLE_AR}{v.samples.stageTitleAr ? ` · ${v.samples.stageTitleAr}` : ""}</p>
+              <p className="m-0 mb-1 text-[11px] leading-[1.7] text-mut" data-testid="agent-samples-note">{SAMPLES_NOTE_AR}</p>
+              {/* its own scrolling box: the table never widens the card or the page, and a cell wraps instead of being cut */}
+              <div className="max-w-full overflow-x-auto" data-testid="agent-samples-scroll">
+                <table className="w-full min-w-[420px] border-collapse text-[12px]">
+                  <thead><tr className="text-right text-mut">{v.samples.columns.map((c) => <th key={c.key} className="min-w-[88px] whitespace-normal break-words border-b border-ln px-1.5 py-1 font-semibold">{c.titleAr}</th>)}</tr></thead>
+                  <tbody>{sampleRows.map((r, i) => <tr key={i}>{r.map((cell, j) => <td key={j} className="min-w-[88px] max-w-[260px] whitespace-normal break-words border-b border-ln px-1.5 py-1 align-top text-ink2">{formatSampleCell(cell) || "—"}</td>)}</tr>)}</tbody>
+                </table>
               </div>
-            ) : null}
-
-            {v.stages.length > 0 ? (
-              <div data-testid="agent-stages">
-                <p className="m-0 mb-1 text-[12px] font-semibold text-ink">الخطوات</p>
-                {/* ROUND 14 (390 px): a long step line («١٧ ردًا بحسب عدّادات ... وحتى ٥٦٩ ردًا ...») wraps INSIDE the card; the label and the value stack on a narrow screen and sit side by side from 640 px up. The value never takes `shrink-0`: that pushed the label to a letter-wide column and the text off the edge. */}
-                <ol className="m-0 flex list-none flex-col gap-1 p-0">
-                  {v.stages.map((s) => (
-                    <li key={s.n} className="flex min-w-0 items-baseline gap-1.5 text-[13px] leading-[1.7] text-ink" data-testid={`agent-stage-${s.n}`}>
-                      <b className="shrink-0 text-mut">{toArabicDigits(s.n)}</b>
-                      <div className="flex min-w-0 flex-1 flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3" data-testid={`agent-stage-body-${s.n}`}>
-                        <span className="min-w-0 break-words sm:flex-1">{s.titleAr}{s.noteAr ? <span className="block break-words text-[11px] font-light text-mut">{s.noteAr}</span> : null}</span>
-                        <span className="min-w-0 break-words text-ink2 sm:max-w-[60%] sm:text-end" data-testid={`agent-stage-rows-${s.n}`}>{s.rowsAr}</span>
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-                {v.stages.length > 1 ? <p className="m-0 mt-1 border-t border-ln pt-1 text-[13px] font-semibold text-ink" data-testid="agent-total">المجموع في ملفك: {v.totalRowsAr}</p> : null}
-              </div>
-            ) : null}
-
-            {v.samples ? (
-              <div className="rounded-[12px] border border-ln bg-bg p-2" data-testid="agent-samples" aria-label={SAMPLES_TITLE_AR}>
-                <p className="m-0 mb-1 text-[12px] font-semibold text-ink">{SAMPLES_TITLE_AR}{v.samples.stageTitleAr ? ` · ${v.samples.stageTitleAr}` : ""}</p>
-                <p className="m-0 mb-1 text-[11px] leading-[1.7] text-mut" data-testid="agent-samples-note">{SAMPLES_NOTE_AR}</p>
-                {/* its own scrolling box: the table never widens the card or the page, and a cell wraps instead of being cut */}
-                <div className="max-w-full overflow-x-auto" data-testid="agent-samples-scroll">
-                  <table className="w-full min-w-[420px] border-collapse text-[12px]">
-                    <thead><tr className="text-right text-mut">{v.samples.columns.map((c) => <th key={c.key} className="min-w-[88px] whitespace-normal break-words border-b border-ln px-1.5 py-1 font-semibold">{c.titleAr}</th>)}</tr></thead>
-                    <tbody>{sampleRows.map((r, i) => <tr key={i}>{r.map((cell, j) => <td key={j} className="min-w-[88px] max-w-[260px] whitespace-normal break-words border-b border-ln px-1.5 py-1 align-top text-ink2">{formatSampleCell(cell) || "—"}</td>)}</tr>)}</tbody>
-                  </table>
-                </div>
-              </div>
-            ) : null}
-
-            {v.fileContentsAr ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-file-contents">{v.fileContentsAr}</p> : null}
-          </div>
-        </details>
+            </div>
+          ) : null}
+          {v.fileContentsAr ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-file-contents">{v.fileContentsAr}</p> : null}
+        </FoldRow>
       ) : null}
 
-      {(v.phase === "unserved" || v.phase === "failed") && v.endLineAr ? <p role="status" aria-live="polite" className="m-0 rounded-[12px] bg-sf2 px-3 py-2 text-[13px] font-semibold leading-[1.9] text-ink" data-testid="agent-end-line">{v.endLineAr}</p> : null}
+      {(v.phase === "unserved" || v.phase === "failed") && v.endLineAr ? <p role="status" aria-live="polite" className="m-0 rounded-[12px] bg-sf2 px-3 py-2 text-[14px] font-semibold leading-[1.9] text-ink" data-testid="agent-end-line">{v.endLineAr}</p> : null}
 
-      {/* THE STATUS OF AN APPROVED MISSION, on the page: what was started, how far it is, the time, and that the page can be closed */}
-      {showStarted ? (
-        <div role="status" aria-live="polite" className="flex flex-col gap-2 rounded-[14px] border border-ln bg-sf2 p-3.5" data-testid="agent-started">
-          {/* ROUND 26 (item 6): ONE sentence that follows the state and carries the one counter; never «بدأنا جمع ... نحو دقيقتين» once collecting is over */}
-          <p className="m-0 text-[15px] font-semibold leading-[1.8] text-ink" data-testid="agent-started-line">
-            {/* STAGE 2 F-2 + LAUNCH ROUND: with live data and a known promised total the live counter is THE progress on EVERY width (the desktop grid now shows it too), so the sentence drops its own «(X من N)» (another total) and its «collection is over» claim (made on that other total) until the live snapshot is complete */}
-            {liveProgress && v.collectLineAr ? <span data-testid="agent-started-line-phone">{phoneCollectLine(v.collectLineAr, live)}</span> : (v.collectLineAr ?? `نجمع ${v.totalRowsAr}`)}
-          </p>
-          <div className="flex flex-col gap-1" data-testid="agent-progress">
-            <div className="flex items-baseline justify-between gap-2 text-[13px] text-ink2">
-              {v.remainingAr ? <span className="text-mut" data-testid="agent-remaining">{v.remainingAr}</span> : null}
-            </div>
-            {liveProgress ? (
-              <>
-                <div className="w-full" data-testid="agent-progress-live">
-                  <div role="progressbar" aria-label="تقدّم المهمة" aria-valuemin={0} aria-valuemax={liveProgress.promised} aria-valuenow={Math.min(liveProgress.delivered, liveProgress.promised)} className="h-1.5 w-full overflow-hidden rounded-full bg-sf">
-                    <div className="h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none" style={{ width: `${Math.round(liveProgress.ratio * 100)}%`, background: "var(--ac)" }} />
-                  </div>
-                </div>
-              </>
-            ) : cardBar}
+      {/* RUNNING: ONE counter (the rows saved for delivery), its bar, ONE activity line; the money line says what is held and that the page can be closed */}
+      {running ? (
+        <div role="status" aria-live="polite" className="flex flex-col gap-3" data-testid="agent-started">
+          {/* the sentence that carries the count stays for screen readers and the tests; the eye reads the big number */}
+          <p className="sr-only" data-testid="agent-started-line">{liveProgress && v.collectLineAr ? <span data-testid="agent-started-line-phone">{phoneCollectLine(v.collectLineAr, live)}</span> : (v.collectLineAr ?? `نجمع ${v.totalRowsAr}`)}</p>
+          <div className="flex items-end justify-between gap-3" data-testid="agent-progress">
+            <p className="m-0 flex items-baseline gap-2 text-ink" aria-hidden="true"><span className="font-display text-[46px] font-semibold leading-[0.9]" data-testid="agent-counter">{formatAr(counter.n)}</span><span className="text-[15px] text-ink2">من {v.totalRowsAr}</span></p>
+            {v.remainingAr ? <span className="pb-1 text-[12.5px] text-mut" data-testid="agent-remaining">{v.remainingAr}</span> : null}
           </div>
-          <p className="m-0 text-[13px] font-semibold leading-[1.8] text-ink" data-testid="agent-close-notice">{AGENT_CLOSE_NOTICE_AR}</p>
+          {liveProgress ? (
+            <div className="w-full" data-testid="agent-progress-live">
+              <div role="progressbar" aria-label="تقدّم المهمة" aria-valuemin={0} aria-valuemax={liveProgress.promised} aria-valuenow={Math.min(liveProgress.delivered, liveProgress.promised)} className="h-1.5 w-full overflow-hidden rounded-full bg-sf2">
+                <div className="h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none" style={{ width: `${Math.round(liveProgress.ratio * 100)}%`, background: "var(--bar)" }} />
+              </div>
+            </div>
+          ) : cardBar}
+          <LiveLine textAr={v.currentLineAr || "نعمل على طلبك"} detailAr={v.delayAr} pulsing={pulsing && !v.delayAr} size="md" />
+          <MoneyLine sub={AGENT_CLOSE_NOTICE_AR}>{holdAr ? `محجوز ${holdAr}، ويُخصم مقابل ما يُسلَّم فقط.` : "يُخصم مقابل ما يُسلَّم فقط."}</MoneyLine>
         </div>
       ) : null}
 
-      {(v.phase === "waiting" || v.phase === "planning") ? <p className="m-0 text-[13px] leading-[1.8] text-ink2" data-testid="agent-planning-usual">{PLANNING_USUAL_TIME_AR}</p> : null}
-
-      {(v.phase === "waiting" || v.phase === "planning" || v.phase === "running" || v.phase === "done" || v.phase === "partial" || (v.phase === "failed" && v.steps.length > 1) || (v.phase === "unserved" && v.steps.length > 1)) ? (
+      {/* THE PANEL stays only where it explains an ending of several steps */}
+      {((v.phase === "failed" && v.steps.length > 1) || (v.phase === "unserved" && v.steps.length > 1)) ? (
         <details open={v.live} className="rounded-[14px] border border-ln bg-bg px-3 py-1" data-testid="agent-panel">
           <summary className="cursor-pointer py-2 text-[13px] font-semibold text-ink">خطة المهمة</summary>
           <MissionPlanBody content={panelContent} />
         </details>
       ) : null}
 
-      {(v.phase === "done" || v.phase === "partial" || v.phase === "unserved" || v.phase === "failed") && v.resultLinesAr.length > 0 ? (
-        <div className="rounded-[12px] bg-sf2 px-3 py-2" data-testid="agent-result-lines">{v.resultLinesAr.map((line) => <p key={line} className="m-0 text-[13px] leading-[1.8] text-ink">{line}</p>)}</div>
-      ) : null}
-      {(v.phase === "done" || v.phase === "partial") && v.resultSummaryAr ? <p className="m-0 text-[13px] leading-[1.9] text-ink" data-testid="agent-result">{v.resultSummaryAr}</p> : null}
-      {v.phase === "cancelled" ? <p className="m-0 text-[13px] text-ink2" data-testid="agent-cancelled">أُلغيت هذه المهمة ولم يُخصم شيء.</p> : null}
-      {v.files.length > 0 ? (
-        <div className="flex flex-wrap gap-2" data-testid="agent-files">
-          {v.files.map((f) => <button key={f.name} type="button" data-testid={f.kind === "xlsx" ? undefined : `agent-file-${f.kind}`} className={f.kind === "xlsx" ? BTN_PRIMARY : BTN_PLAIN} onClick={() => onDownload(f.name)}>{f.labelAr}</button>)}
-          <a href="/dashboard/requests" className={`${BTN_PLAIN} inline-flex items-center no-underline`}>افتح طلباتي</a>
-          {v.files.some((f) => f.kind === "csv") ? <p className="m-0 basis-full text-[12px] leading-[1.7] text-ink2" data-testid="agent-csv-note">{CSV_PACKAGING_NOTE_AR}</p> : null}
+      {/* DONE: the tick and the headline, Excel as the one big button, the rest as quiet text buttons, the offer apart, the money line once */}
+      {finished && headlineAr ? (
+        <div className="flex items-center gap-3" data-testid="agent-result-lines">
+          <span aria-hidden="true" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[18px] font-bold" style={{ background: "color-mix(in oklab, var(--ok) 16%, transparent)", color: "var(--ok)" }}>✓</span>
+          <p className={`m-0 font-semibold text-ink ${headlineAr.length > 40 ? "text-[17px] leading-[1.7]" : "font-display text-[27px] leading-[1.3]"}`}>{headlineAr}</p>
         </div>
       ) : null}
-      {(v.phase === "done" || v.phase === "partial") && methodology ? <MethodologyOffer jobId={methodology.jobId} titleAr={methodology.titleAr} purchased={methodology.purchased} onCharged={onSettled} /> : null}
+      {finished && !headlineAr && v.resultSummaryAr ? <p className="m-0 text-[13px] leading-[1.9] text-ink2" data-testid="agent-result-summary">{v.resultSummaryAr}</p> : null}
+      {(v.phase === "unserved" || v.phase === "failed") && v.resultLinesAr.length > 0 ? (
+        <div className="flex flex-col gap-1" data-testid="agent-result-lines">{v.resultLinesAr.map((line) => <MoneyLine key={line} border={false}>{line}</MoneyLine>)}</div>
+      ) : null}
+      {v.phase === "cancelled" ? <p className="m-0 text-[14px] font-semibold leading-[1.8] text-ink" data-testid="agent-cancelled">أُلغيت هذه المهمة ولم يُخصم شيء.</p> : null}
+      {v.files.length > 0 ? (
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2" data-testid="agent-files">
+          {excel ? (
+            <button type="button" className="flex min-h-[60px] w-full cursor-pointer items-center justify-between gap-3 rounded-2xl border-0 bg-ac px-5 text-start text-onac focus-visible:outline-2" onClick={() => onDownload(excel.name)}>
+              <span className="flex min-w-0 flex-col"><span className="text-[16px] font-semibold">{excel.labelAr}</span><span className="text-[12px] opacity-80">{[v.totalRowsAr, v.samples ? `${formatAr(v.samples.columns.length)} أعمدة` : null].filter(Boolean).join(" · ")}</span></span>
+              <span aria-hidden="true" className="text-[20px]">↓</span>
+            </button>
+          ) : null}
+          <div className="contents">
+            {otherFiles.map((f) => <button key={f.name} type="button" data-testid={`agent-file-${f.kind}`} className="min-h-11 cursor-pointer border-0 bg-transparent p-0 text-[13.5px] font-semibold text-ac underline underline-offset-4 focus-visible:outline-2" onClick={() => onDownload(f.name)}>{f.labelAr}</button>)}
+            <a href="/dashboard/requests" className="inline-flex min-h-11 items-center text-[13.5px] font-semibold text-ac underline underline-offset-4">افتح طلباتي</a>
+          </div>
+          {v.files.some((f) => f.kind === "csv") ? <p className="m-0 basis-full text-[12px] leading-[1.7] text-mut" data-testid="agent-csv-note">{CSV_PACKAGING_NOTE_AR}</p> : null}
+        </div>
+      ) : null}
+      {finished && methodology ? <MethodologyOffer jobId={methodology.jobId} titleAr={methodology.titleAr} purchased={methodology.purchased} onCharged={onSettled} /> : null}
+      {finished && moneyLinesAr.length > 0 ? <MoneyLine>{moneyLinesAr.join(" ")}</MoneyLine> : null}
       {error ? <p role="alert" className="m-0 text-[13px] leading-[1.8]" style={{ color: "var(--bad)" }} data-testid="agent-error">{error}{/رصيد/.test(error) ? <> <a href="/dashboard/topup" className="text-ac">اشحن رصيدك</a></> : null}</p> : null}
     </section>
   );

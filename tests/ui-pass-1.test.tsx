@@ -198,7 +198,10 @@ describe("5. the planning steps read plainly and a finished step is not struck t
     const planning = customerMissionView({ mission: row({ status: "planning", plan_public: null }), events: [ev(1, { counts: { samples: 2 } })], callsMade: 2, now: T0 });
     const markup = html(createElement(AgentMissionCardBody, { view: planning, isGuest: false }));
     expect(markup).toContain('data-testid="agent-planning-usual"');
-    expect(text(markup)).toContain(PLANNING_USUAL_TIME_AR);
+    // CHANGED (card redesign, 16 Nov 2026): the planning card is a four-segment track, the live line, «بعدها: ...» and the money line; the sentence of the loading card keeps the money promise as its own last clause
+    expect(text(markup)).toContain("لن يُخصم شيء قبل موافقتك.");
+    expect(text(markup)).toContain("بعدها: نحسب السعر ونعرض عليك الخطة.");
+    expect(markup).toContain('data-testid="agent-track"');
   });
   it("no technical label of the old wording is left anywhere a customer reads", () => {
     for (const file of ["src/lib/missionView.ts", "src/lib/agentMission/customerView.ts", "src/components/mission/MissionPlanPanel.tsx", "src/components/mission/AgentMissionCard.tsx"]) {
@@ -227,7 +230,10 @@ describe("6. the plan card", () => {
     expect(at('data-testid="agent-facts"')).toBeLessThan(at('data-testid="agent-approve"'));
     expect(at('data-testid="agent-approve"')).toBeLessThan(at('data-testid="agent-details"'));
     const facts = text(markup.slice(at('data-testid="agent-facts"'), at('data-testid="agent-approve"')));
-    for (const label of ["هتستلم", "الفترة", "السعر حتى", "حجز مؤقت", "الوقت المتوقع"]) expect(facts).toContain(label);
+    // CHANGED (card redesign): three cells (the count, the highest price, the time); the hold is told once, in the money sentence under them
+    for (const label of ["هتستلم", "الفترة", "أقصى سعر", "الوقت"]) expect(facts).toContain(label);
+    expect(facts).not.toContain("حجز مؤقت");
+    expect(text(markup)).toContain("تُحجز");
     expect(facts).toContain("آخر ٩٠ يومًا");
     // the details element is closed by default
     expect(markup).toMatch(/<details[^>]*data-testid="agent-details"/);

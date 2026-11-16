@@ -179,10 +179,10 @@ describe("E. the panel and the compact card are drawn from the tracker", () => {
     expect(v.priceFacts).toEqual([{ labelAr: "السعر حتى", valueAr: "٢٤٣ نقطة" }, { labelAr: "حجز مؤقت", valueAr: "٢٧٩ نقطة" }, { labelAr: "الوقت المتوقع", valueAr: "نحو ٤ دقائق" }]);
     expect(v.priceNoteAr).toBe(PRICE_PROMISE_AR);
     const html = renderToStaticMarkup(createElement(AgentMissionCardBody, { view: v, isGuest: false }));
-    expect(html).toContain("grid-cols-2");
-    // the count the customer receives is the first cell, in front of the three money-and-time cells (four cells: four columns)
-    expect(html).toContain("sm:grid-cols-4");
+    // CHANGED (card redesign, 16 Nov 2026): three cells in one row (the count, the highest price, the time); the hold is told in the one money sentence under them
+    expect(html).toContain("grid-cols-3");
     expect(html).toContain(">هتستلم<");
+    expect(html).toContain('data-testid="agent-price-sentence"');
     expect(html).toContain("لو سُلّم أقل يُخصم بنسبة ما سُلّم فقط");
     expect(html).toContain('data-testid="agent-file-contents"');
     expect(html).toContain("يضم الملف: التاريخ والوقت، نص التغريدة.");

@@ -38,7 +38,8 @@ export function MethodologyOfferBody({ titleAr, deliveredUnits, purchased, step 
   onAsk?: () => void; onConfirm?: () => void; onCancel?: () => void; onDownload?: () => void;
 }) {
   return (
-    <div dir="rtl" data-testid="methodology-offer" data-state={purchased ? "bought" : step} className="flex flex-col gap-2 rounded-[14px] border border-ln bg-bg p-3">
+    <div dir="rtl" data-testid="methodology-offer" data-state={purchased ? "bought" : step} className="flex flex-col gap-2 rounded-[14px] p-3.5" style={{ background: "color-mix(in oklab, var(--gold) 10%, var(--sf))", border: "1px solid color-mix(in oklab, var(--gold) 35%, var(--ln))" }}>
+      <p className="m-0 text-[11.5px] font-semibold" style={{ color: "var(--goldT)" }} data-testid="methodology-offer-eyebrow">إضافة مدفوعة</p>
       {titleAr ? <p className="m-0 text-[13px] font-semibold leading-[1.8] text-ink" data-testid="methodology-offer-title">{titleAr}{deliveredUnits ? <span className="font-light text-mut"> · {countAr(deliveredUnits, GENERIC_ITEM_NOUN)}</span> : null}</p> : null}
       <p className="m-0 text-[13px] leading-[1.8] text-ink2" data-testid="methodology-offer-price">{purchased ? METHODOLOGY_BOUGHT_LINE_AR : METHODOLOGY_PRICE_LINE_AR}</p>
       {step === "confirm" && !purchased ? <p role="alert" className="m-0 text-[13px] font-semibold leading-[1.8] text-ink" data-testid="methodology-offer-confirm-line">{METHODOLOGY_CONFIRM_LINE_AR}</p> : null}
