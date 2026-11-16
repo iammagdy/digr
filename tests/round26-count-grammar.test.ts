@@ -40,7 +40,7 @@ describe("ROUND 26 item 5: the other platforms", () => {
       expect(summaryAr(askOn(p), 3, [])).toMatch(/^٣ منشورات/);
       expect(summaryAr(askOn(p), 10, [])).toMatch(/^١٠ منشورات/);
       expect(summaryAr(askOn(p), 11, [])).toMatch(/^١١ منشورًا /);
-      expect(summaryAr(askOn(p), 100, [])).toMatch(/^١٠٠ منشورًا /);
+      expect(summaryAr(askOn(p), 100, [])).toMatch(/^١٠٠ منشور /);
     }
   });
   it("from 3 to 10 the count is never followed by the bare singular", () => {

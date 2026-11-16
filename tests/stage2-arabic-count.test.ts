@@ -19,7 +19,7 @@ describe("nounCountAr", () => {
     expect(nounCountAr(111, comment)).toBe("١١١ تعليقًا");
     expect(nounCountAr(250, video)).toBe("٢٥٠ فيديو");
   });
-  it("the shared function still says what it said (no other surface changes)", () => {
-    expect(countAr(100, comment)).toBe("١٠٠ تعليقًا");
+  it("the shared function now follows the same last-two-digits rule (live, 16 Nov 2026: the card read «١٠٠ تقييمًا»)", () => {
+    expect(countAr(100, comment)).toBe("١٠٠ تعليق");
   });
 });

@@ -41,7 +41,7 @@ describe("C. the noun of the request, with the right form for every count", () =
     expect([0, 1, 2, 3, 10, 11, 250, 300].map((n) => countAr(n, tweet))).toEqual(["٠ تغريدة", "تغريدة واحدة", "تغريدتين", "٣ تغريدات", "١٠ تغريدات", "١١ تغريدة", "٢٥٠ تغريدة", "٣٠٠ تغريدة"]);
     expect(countAr(2, tweet, { subject: true })).toBe("تغريدتان");
     const comment = knownItemNoun("تعليق")!;
-    expect([1, 2, 5, 12, 300].map((n) => countAr(n, comment))).toEqual(["تعليق واحد", "تعليقين", "٥ تعليقات", "١٢ تعليقًا", "٣٠٠ تعليقًا"]);
+    expect([1, 2, 5, 12, 300].map((n) => countAr(n, comment))).toEqual(["تعليق واحد", "تعليقين", "٥ تعليقات", "١٢ تعليقًا", "٣٠٠ تعليق"]);
     const post = knownItemNoun("منشور")!;
     expect([1, 2, 5, 12].map((n) => countAr(n, post))).toEqual(["منشور واحد", "منشورين", "٥ منشورات", "١٢ منشورًا"]);
     const video = knownItemNoun("فيديو")!;
