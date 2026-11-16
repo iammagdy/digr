@@ -133,7 +133,7 @@ export function LiveSheetCards({ data, onWindow = noop, reach = "ok", onShown }:
               <span dir="auto" className="line-clamp-2 w-full text-right text-[13.5px] leading-[1.6] text-ink [overflow-wrap:anywhere]">{text}</span>
               <span className="flex flex-wrap gap-3 text-[12px] text-mut">
                 <span className="text-fnt [font-variant-numeric:tabular-nums]">رقم {formatAr(i + 1)}</span>
-                {parts.stats.slice(0, 2).map((s) => <span key={s.i}><b className="font-semibold text-ink">{cellTextOf(s.c)}</b> {s.word}</span>)}
+                {parts.stats.slice(0, 2).map((s) => <span key={s.i}><span className="sr-only"> · </span><b className="font-semibold text-ink">{cellTextOf(s.c)}</b> {s.word}</span>)}
               </span>
             </button>
           );

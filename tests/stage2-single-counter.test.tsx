@@ -164,7 +164,7 @@ describe("how the card knows (wiring)", () => {
     const card = readFileSync("src/components/mission/AgentMissionCard.tsx", "utf8");
     expect(card).toContain("useState<LiveData | null>(null)");
     expect(card).toContain("live={showLive ? liveData : null}");
-    expect(card).toContain("<LiveSheetPanel missionId={missionId} enabled missionLive={!ended} onData={setLiveData} />");
+    expect(card).toContain("<LiveSheetPanel missionId={missionId} enabled missionLive={!ended} onData={setLiveData} rowsHint={v.savedSoFar} />");
     const panel = readFileSync("src/components/mission/LiveSheetPanel.tsx", "utf8");
     expect(panel).toContain("onData");
   });

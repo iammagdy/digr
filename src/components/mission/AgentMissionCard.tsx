@@ -237,7 +237,7 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
     // THE LIVE SHEET IS SHOWN WHILE THE DATA IS COLLECTED (owner, 16 Nov 2026: the customer watches the rows arrive in a sheet like the Excel file). The sheet has its own fold button (handoff
     // «Diger live sheet»); it stays mounted while folded so its numbers keep the same source as the card's counter
     <div className="mt-2 w-full min-w-0" data-testid="agent-live">
-      <LiveSheetPanel missionId={missionId} enabled missionLive={!ended} onData={setLiveData} />
+      <LiveSheetPanel missionId={missionId} enabled missionLive={!ended} onData={setLiveData} rowsHint={v.savedSoFar} />
     </div>
   ) : null}</>;
 }

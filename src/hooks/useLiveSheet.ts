@@ -48,6 +48,8 @@ export interface LiveSheetState {
   /** The last ask failed (network or server): the data shown is the last one received. */
   reach: LiveReach;
   setWindow: (w: Partial<LiveWindow>) => void;
+  /** Ask now (the page learned that rows were saved: no need to wait out the slower «waiting» interval). */
+  refresh: () => void;
 }
 
 export function useLiveSheet(missionId: string, options: { enabled: boolean; /** Whether the mission still works (see `isMissionLive` of the loop). */ missionLive?: boolean }): LiveSheetState {
@@ -100,5 +102,6 @@ export function useLiveSheet(missionId: string, options: { enabled: boolean; /**
     // missionLive is read through its ref: a change of it never restarts the loop
   }, [missionId, options.enabled]);
   const setWindow = useCallback((w: Partial<LiveWindow>) => poller.current?.setWindow(w), []);
-  return { data: options.enabled ? data : null, ended, waiting: options.enabled && waiting && data === null, reach, setWindow };
+  const refresh = useCallback(() => poller.current?.refresh(), []);
+  return { data: options.enabled ? data : null, ended, waiting: options.enabled && waiting && data === null, reach, setWindow, refresh };
 }
