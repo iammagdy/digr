@@ -39,6 +39,8 @@ export async function writePlannerState(store: AgentStore, missionId: string, st
 export const MAX_PLANNER_QUESTIONS = 2;
 /** The most times one mission may stop to tell the customer what the real search found and ask what to do (take it, or widen). */
 export const MAX_SCOUT_QUESTIONS = 2;
+/** Samples of one source the planner's gateway allows (the default is 2): measuring what a source holds reads a few pages, and the planning runs again after the customer answers. The planning budget cap still bounds the spend. */
+export const LLM_PLANNER_MAX_SAMPLES_PER_SOURCE = 12;
 
 export interface RunLlmPlanningInput {
   mission: MissionRecord;

@@ -283,6 +283,14 @@ describe("planning samples a source's own listing once per named source (live: t
     expect(got).toEqual(["ok", "ok", "repeat_sample"]);
   });
 
+  it("the LLM planner's gateway (maxSamplesPerSource) samples a keyword search more than twice: it measures a source's pages and plans again after the customer answers; the budget still bounds the spend", async () => {
+    const h = makeHarness({ phase: "planning", budgetUsd: 0.05, maxSamplesPerSource: 12, responses: answers() });
+    const ask = (query: string) => h.gateway.tregCall({ endpoint_id: "crawl4ai.youtube.search.videos", params: { query, limit: 20 } } as never);
+    const got: string[] = [];
+    for (const q of ["a", "b", "c", "d", "e"]) got.push(outcome(await ask(q)));
+    expect(got).toEqual(["ok", "ok", "ok", "ok", "ok"]);
+  });
+
   it("a listing source is sampled for at most eight named sources (the planning budget still decides what is spent)", async () => {
     const h = makeHarness({ phase: "planning", budgetUsd: 0.05, responses: Array.from({ length: 12 }, () => tregResult(page, 0.0009)) });
     const got: string[] = [];

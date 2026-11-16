@@ -66,7 +66,7 @@ export interface Harness {
 }
 
 /** A gateway + tool context over memory, a fake TREG and a fake recorder. `responses` are handed out in order to the calls the agent makes. */
-export function makeHarness(options: { phase?: "planning" | "execution"; budgetUsd?: number; access?: AccountAccess; responses?: Array<TregCallResult | ((o: TregCallOptions) => TregCallResult)>; dailyCapUsd?: number; failReserve?: boolean; mission?: Partial<MissionRecord>; catalog?: TregCatalog; store?: MemoryStore } = {}): Harness {
+export function makeHarness(options: { maxSamplesPerSource?: number; phase?: "planning" | "execution"; budgetUsd?: number; access?: AccountAccess; responses?: Array<TregCallResult | ((o: TregCallOptions) => TregCallResult)>; dailyCapUsd?: number; failReserve?: boolean; mission?: Partial<MissionRecord>; catalog?: TregCatalog; store?: MemoryStore } = {}): Harness {
   const store = options.store ?? createMemoryStore();
   const mission = newMission({ id: "msn_test0001", user_id: USER_ID, request_text: "أريد منشورات وتعليقاتها", status: "planning", job_id: options.phase === "execution" ? "job_quote_test" : null, ...options.mission });
   store.missions.set(mission.id, mission);
@@ -80,7 +80,7 @@ export function makeHarness(options: { phase?: "planning" | "execution"; budgetU
   });
   const budget = createJobCallBudget({ ceilingUsd: options.budgetUsd ?? 0.05, spentUsd: 0 });
   const access = options.access ?? NOT_ADMIN;
-  const gateway = createGateway({ store, client: { from: () => ({ insert: async () => ({ error: null }), update: () => ({ eq: async () => ({}) }), select: () => ({ eq: () => ({ gte: () => ({ lt: async () => ({ data: [], error: null }) }) }) }) }) }, missionId: mission.id, userId: USER_ID, jobId: mission.job_id, phase: options.phase ?? "planning", access, catalog, budget, recorder, commit, call, defaultPurpose: mission.request_text, counter: { seq: 0 } });
+  const gateway = createGateway({ ...(options.maxSamplesPerSource ? { maxSamplesPerSource: options.maxSamplesPerSource } : {}), store, client: { from: () => ({ insert: async () => ({ error: null }), update: () => ({ eq: async () => ({}) }), select: () => ({ eq: () => ({ gte: () => ({ lt: async () => ({ data: [], error: null }) }) }) }) }) }, missionId: mission.id, userId: USER_ID, jobId: mission.job_id, phase: options.phase ?? "planning", access, catalog, budget, recorder, commit, call, defaultPurpose: mission.request_text, counter: { seq: 0 } });
   const ctx: ToolContext = { phase: options.phase ?? "planning", mission, plan: mission.plan, store, gateway, catalog, access, state: newRunState() };
   return { store, mission, gateway, catalog, call, providerCosts: rows, budget, ctx };
 }

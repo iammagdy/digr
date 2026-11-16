@@ -84,7 +84,7 @@ import { cardsWithDiscovery, chainCheckerFor, discoveryActive, modelSelector } f
 import { promisedTotalOf } from "../../src/lib/agentMission/promisedNumbers";
 import { reportedPlan, withPromiseCaps, withRepliesJudged } from "../../src/lib/agentMission/repliesCard";
 import { publicPlanOf } from "../../src/lib/agentMission/overLimit";
-import { llmPlannerOn, runLlmPlanning } from "./llmPlanner/run";
+import { LLM_PLANNER_MAX_SAMPLES_PER_SOURCE, llmPlannerOn, runLlmPlanning } from "./llmPlanner/run";
 import { runContactEnrichment } from "./engine/contacts";
 import { runNamesStep } from "./namesAr";
 
@@ -533,7 +533,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     let r: Awaited<ReturnType<typeof runLlmPlanning>> | null = null;
     try {
       // its own planning budget (the cap of every planning), not the word-sized stage reserves of the earlier paths: the model decides the steps
-      const llmGateway = createGateway({ store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget: createJobCallBudget({ ceilingUsd: AGENT_PLANNING_BUDGET_CAP_USD, spentUsd: sum(calls, "planning") }), recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, priorCalls: calls, stats: sourceStats, ...spendGateOf(deps, mission.id) });
+      const llmGateway = createGateway({ maxSamplesPerSource: LLM_PLANNER_MAX_SAMPLES_PER_SOURCE, store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget: createJobCallBudget({ ceilingUsd: AGENT_PLANNING_BUDGET_CAP_USD, spentUsd: sum(calls, "planning") }), recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, priorCalls: calls, stats: sourceStats, ...spendGateOf(deps, mission.id) });
       r = await runLlmPlanning({ mission, store, gateway: llmGateway, catalog: deps.catalog, access, model: deps.plannerModel, words, pricingSettings, now: Date.now(), ...(deps.log ? { log: deps.log } : {}) });
     } catch (e) {
       deps.log?.(`llm_planner_error ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 200)}`);
