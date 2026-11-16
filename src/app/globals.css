@@ -20,6 +20,9 @@
   --onac: #faf8f4;
   --goldT: #8a6420;
   --gold: #c8963e;
+  /* the live sheet's new-row highlight (gold mixed into --sf, 24 % desktop / 20 % phone): plain colours, since a colour mix inside a keyframe gets a full-gold fallback when compiled */
+  --ls-hi: #f2e6d1;
+  --ls-hi-phone: #f4ead8;
   --ok: #2f7a4f;
   --bad: #b4382b;
   --info: #2b5f8a;
@@ -43,6 +46,8 @@
   --onac: #111413;
   --goldT: #d4a65a;
   --gold: #c8963e;
+  --ls-hi: #423923;
+  --ls-hi-phone: #3a3421;
   --ok: #7ccb9e;
   --bad: #f08a7c;
   --info: #8db8e0;
@@ -383,4 +388,26 @@ input::placeholder, textarea::placeholder { color: var(--fnt); }
   .rtable td[data-wide] { display: block; }
   .rtable td[data-wide]::before { display: none; }
   .rtable td > .rtable-val { min-width: 0; text-align: end; }
+}
+
+/* ── Live sheet (handoff «Diger live sheet», 16 Nov 2026) ─────────
+   A row lands with a short fade and slide and a gold highlight that settles over 1.5 s; the classes are on a row only while it is new (the screen removes them), so hover works after.
+   Reduced motion: nothing moves (rows simply appear; the static gold edge still marks a new row). */
+@keyframes ls-row-in { from { opacity: 0; transform: translateY(6px) } to { opacity: 1; transform: none } }
+@keyframes ls-row-in-phone { from { opacity: 0; transform: translateY(8px) } to { opacity: 1; transform: none } }
+@keyframes ls-row-hi { 0%, 15% { background-color: var(--ls-hi) } 100% { background-color: var(--sf) } }
+@keyframes ls-row-hi-phone { 0%, 15% { background-color: var(--ls-hi-phone) } 100% { background-color: var(--sf) } }
+@keyframes ls-chip { from { opacity: 0; transform: translate(-50%, 4px) } to { opacity: 1; transform: translate(-50%, 0) } }
+@keyframes ls-panel { from { opacity: 0; transform: translateX(-12px) } to { opacity: 1; transform: none } }
+.ls-row-in { animation: ls-row-in 260ms cubic-bezier(.2, .7, .2, 1) both, ls-row-hi 1500ms ease-out both; }
+.ls-cell-hi { animation: ls-row-hi 1500ms ease-out both; }
+.ls-phone-in { animation: ls-row-in-phone 280ms cubic-bezier(.2, .7, .2, 1) both, ls-row-hi-phone 1500ms ease-out both; }
+.ls-breathe { animation: breathe 2.4s ease-in-out infinite; }
+.ls-chip { animation: ls-chip 180ms ease-out both; }
+.ls-panel { animation: ls-panel 220ms cubic-bezier(.2, .7, .2, 1) both; }
+.ls-sheet-up { animation: sheetUp 280ms cubic-bezier(.2, .7, .2, 1) both; }
+.ls-fade { animation: fade 200ms both; }
+.ls-grid { scrollbar-width: thin; overscroll-behavior: contain; }
+@media (prefers-reduced-motion: reduce) {
+  .ls-row-in, .ls-cell-hi, .ls-phone-in, .ls-breathe, .ls-chip, .ls-panel, .ls-sheet-up, .ls-fade, .ls-grid .skeleton { animation: none !important; }
 }

@@ -15,7 +15,8 @@ const WIRING: ReadonlyArray<string> = [
   "src/hooks/useLiveSheet.ts", // S8: asks the live route only when the page enables it; the route is 404 while the flag is off
   "src/components/mission/LiveSheetGrid.tsx", // S9: draws only what the live route sent
   "src/components/mission/LiveSheetCards.tsx", // S10: draws only what the live route sent
-  "src/components/mission/LiveWorkLog.tsx", // S10: draws only the whitelisted lines the route sent
+  "src/components/mission/LiveSheetParts.tsx", // the live sheet's dot, counter, bar and status line: draws only what the route sent (the whitelisted work-log lines)
+  "src/hooks/useLiveRows.ts", // the live sheet's rows on screen: keeps the rows the route sent and picks the window to ask; reached only through the panel above
   "src/components/mission/LiveSheetPanel.tsx", // S10: polls only when the mission answer says DIGER_STAGE2_LIVE_SHEET is on (requests page)
   "src/components/mission/AgentMissionCard.tsx", // S4: shows the card only when the answer carries it and the page asked for Stage 2 (the requests page)
   "src/app/dashboard/chat/page.tsx", // LAUNCH ROUND: imports only the pure placement rule (the last card of a mission carries the live sheet); the sheet itself appears only when the mission answer says DIGER_STAGE2_LIVE_SHEET is on

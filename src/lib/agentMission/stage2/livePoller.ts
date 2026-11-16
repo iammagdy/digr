@@ -6,7 +6,8 @@ import { LIVE_SHEET_POLL, nextPollDelayMs, type LivePollResponse } from "./liveS
  * at all), and STOPS when the job is done (`retryAfterMs: null`) or when no snapshot exists three times in a row (the flag is off or the worker writes none: today's panel stays).
  */
 export type LiveData = Extract<LivePollResponse, { changed: true }>;
-export interface LiveWindow { sheet: string | null; offset: number; limit: number }
+/** `tail`: ask for the sheet's newest rows (the route places the window; `offset` is then ignored). */
+export interface LiveWindow { sheet: string | null; offset: number; limit: number; tail?: boolean }
 export type LiveEnd = "done" | "empty" | "stopped";
 /** «off»: the route answered «not found» (the flag is off for the viewer, or not their mission). `null`: the ask failed (network, a server error): a passing failure, asked again later. */
 export type LiveFetchResult = LivePollResponse | "off" | null;

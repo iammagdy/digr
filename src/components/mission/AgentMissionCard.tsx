@@ -234,12 +234,11 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   // viewer; from the moment the customer approves here (the plan is shown as started at once) or the mission works, and after it ends (the final rows stay)
   const showLive = liveSheet && answer?.liveSheet === true && (v.phase === "running" || v.phase === "done" || v.phase === "partial" || (v.phase === "plan" && approvedHere));
   return <>{<AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} pendingText={pendingText} quietSinceMs={quietSinceMs} nowMs={nowMs} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled} askCard={stage2 ? answer?.askCard ?? null : null} onAskEdit={askEdit} askError={askError} live={showLive ? liveData : null} onRetry={typeof answer?.requestText === "string" && answer.requestText.trim() ? () => onEdit?.(answer.requestText as string) : undefined} />}{showLive ? (
-    // THE LIVE SHEET IS SHOWN WHILE THE DATA IS COLLECTED (owner, 16 Nov 2026: the customer watches the rows arrive in a sheet like the Excel file): open by default; the customer may fold it,
-    // and it stays mounted while folded so its numbers keep the same source as the card's counter
-    <details open className="group mt-2 w-full min-w-0 max-w-[640px] sm:max-w-none" data-testid="agent-live">
-      <summary className="flex min-h-11 cursor-pointer list-none items-center text-[13.5px] font-semibold text-ac underline underline-offset-4 focus-visible:outline-2"><span className="group-open:hidden">{`اعرض الجدول${liveProgressOf(liveData) ? ` (${formatAr(liveProgressOf(liveData)!.delivered)} صف)` : ""}`}</span><span className="hidden group-open:inline">أخفِ الجدول</span></summary>
-      <div className="mt-2 min-w-0"><LiveSheetPanel missionId={missionId} enabled missionLive={!ended} onData={setLiveData} /></div>
-    </details>
+    // THE LIVE SHEET IS SHOWN WHILE THE DATA IS COLLECTED (owner, 16 Nov 2026: the customer watches the rows arrive in a sheet like the Excel file). The sheet has its own fold button (handoff
+    // «Diger live sheet»); it stays mounted while folded so its numbers keep the same source as the card's counter
+    <div className="mt-2 w-full min-w-0" data-testid="agent-live">
+      <LiveSheetPanel missionId={missionId} enabled missionLive={!ended} onData={setLiveData} />
+    </div>
   ) : null}</>;
 }
 
@@ -463,7 +462,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
           {/* the sentence that carries the count stays for screen readers and the tests; the eye reads the big number */}
           <p className="sr-only" data-testid="agent-started-line">{liveProgress && v.collectLineAr ? <span data-testid="agent-started-line-phone">{phoneCollectLine(v.collectLineAr, live)}</span> : (v.collectLineAr ?? `نجمع ${v.totalRowsAr}`)}</p>
           <div className="flex items-end justify-between gap-3" data-testid="agent-progress">
-            <p className="m-0 flex items-baseline gap-2 text-ink" aria-hidden="true"><span className="font-display text-[46px] font-semibold leading-[0.9]" data-testid="agent-counter">{formatAr(counter.n)}</span><span className="text-[15px] text-ink2">من {v.totalRowsAr}</span></p>
+            {counter.n > 0 ? <p className="m-0 flex items-baseline gap-2 text-ink" aria-hidden="true"><span className="font-display text-[46px] font-semibold leading-[0.9]" data-testid="agent-counter">{formatAr(counter.n)}</span><span className="text-[15px] text-ink2">من {v.totalRowsAr}</span></p> : <p className="m-0 text-[15px] leading-[1.7] text-ink2" aria-hidden="true" data-testid="agent-counter-wait">{`بانتظار أول النتائج · المطلوب ${v.totalRowsAr}`}</p>}
             {v.remainingAr ? <span className="pb-1 text-[12.5px] text-mut" data-testid="agent-remaining">{v.remainingAr}</span> : null}
           </div>
           {liveProgress ? (

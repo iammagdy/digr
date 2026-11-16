@@ -13,7 +13,7 @@ const catalog = loadTregCatalog();
 const M12 = "msn_5851abc92a1e6645a9cd";
 const read = (rel: string): any => JSON.parse(readFileSync(new URL(`../fixtures/live/missions/${M12}/${rel}.json`, import.meta.url), "utf8"));
 
-export async function liveAnswer(query: { sheet: string | null; offset: number; limit: number }, at: { status?: "running" | "done"; nowMs?: number } = {}): Promise<Extract<LivePollResponse, { changed: true }>> {
+export async function liveAnswer(query: { sheet: string | null; offset: number; limit: number; tail?: true }, at: { status?: "running" | "done"; nowMs?: number } = {}): Promise<Extract<LivePollResponse, { changed: true }>> {
   const store = createMemoryStore();
   const { gateway } = replayGateway(M12, catalog, store, "msn_ui");
   const planned = await planByCompiler({ mission: { id: "msn_ui", request_text: "هات فيديوهين تيك توك بالعربي عن الذكاء الاصطناعي من مصر، أكتر فيديوهات عليها تعليقات، و٢٠ تعليق من كل فيديو مع ردودهم", answer_text: NO_ABOUT_OPTIONS_AR.useAsIs, created_at: "2026-11-02T11:35:00Z" }, gateway, store, catalog, nowMs: Date.parse("2026-11-02T11:36:00Z") });
