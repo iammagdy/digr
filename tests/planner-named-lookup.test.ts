@@ -37,3 +37,39 @@ describe("the lookup step", () => {
     expect(out[0]!.option.more).toEqual([{ sort: 1, product_id: "com.egyptianbanks.instapay" }]);
   });
 });
+
+describe("the items of one found thing are measured before the plan", () => {
+  it("10 reviews and no next page for a request of 20: the customer is asked before any plan (live: planned silently as 20, 10 delivered)", async () => {
+    const { planWithLlm } = await import("../agent/src/llmPlanner/planner");
+    const { loadTregCatalog } = await import("../src/lib/treg/catalog");
+    const answers: Record<string, unknown[]> = {
+      request_plan: [{ decision: "plan", understanding_ar: "عشرون تقييمًا لسماعة سوني من أمازون.", assumptions_ar: [], accepts_available: false, steps: [
+        { key: "find_product", title_ar: "المنتجات", platform: "amazon", capability: "amazon.search.products", parent: null, deliver: false, count: { total: 1, all: false }, topic: "Sony WH-1000XM5", search_terms: ["Sony WH-1000XM5"] },
+        { key: "reviews", title_ar: "التقييمات", platform: "amazon", capability: "amazon.product.reviews", parent: "find_product", deliver: true, count: { total: 20, all: false }, search_terms: [] },
+      ] }],
+      tool_choice: [
+        { options: [{ endpoint_id: "treg.amazon.search.products", params_json: JSON.stringify({ q: "Sony WH-1000XM5" }) }] },
+        { options: [{ endpoint_id: "justoneapi.x.amazon-get-product-top-reviews-v1", params_json: "{}", parent_input: { param: "asin", from_field: "id" } }] },
+      ],
+      field_map: [{ fields: { id: ["asin"], text: ["title"] }, extra: [] }, { fields: { id: ["rid"], text: ["body"] }, extra: [] }],
+      pick_item: [{ index: 0 }],
+    };
+    let n = 0;
+    const pages = new Map<string, unknown>();
+    const r = await planWithLlm({ words: ["عايز ٢٠ ريفيو لسماعة Sony WH-1000XM5 من أمازون"], request: "" }, {
+      model: async ({ tool }) => { const next = (answers[tool.name] ?? []).shift(); return next === undefined ? null : { input: next, costUsd: 0.001 }; },
+      catalog: loadTregCatalog(), access: null, today: "2026-11-16",
+      probe: async (id) => {
+        n += 1; const call_id = `call_${n}`;
+        const reviews = id.includes("reviews");
+        pages.set(call_id, reviews ? { data: { reviews: Array.from({ length: 10 }, (_, k) => ({ rid: `R${k}`, body: `review ${k}` })) } } : { data: { products: [{ asin: "B09XS7JWHH", title: "Sony WH-1000XM5" }, { asin: "B0OTHER", title: "Other" }] } });
+        return { ok: true, call_id, http_status: 200, rows_in_page: reviews ? 10 : 2, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: call_id };
+      },
+      readPage: async (id) => pages.get(id) ?? null,
+    });
+    expect(r.kind).toBe("question");
+    if (r.kind !== "question") return;
+    expect(r.scout).toBe(true);
+    expect(r.question_ar).toMatch(/١٠/);
+  });
+});
