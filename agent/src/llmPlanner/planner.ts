@@ -407,6 +407,29 @@ export async function chooseTools(step: UnderstoodStep, parentSample: ReadonlyAr
   return { candidates, options: checkOptions(choice, candidates, parentSample !== null) };
 }
 
+const MONTHS_AR = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
+/** «١٦ أكتوبر» from a day «2026-10-16» (and its year); null when it is not a day. */
+function dayAr(day: string | null | undefined): { text: string; year: number } | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(day ?? ""));
+  if (!m) return null;
+  return { text: `${toArabicDigits(Number(m[3]))} ${MONTHS_AR[Number(m[2]) - 1] ?? ""}`, year: Number(m[1]) };
+}
+/**
+ * THE REQUEST LINE OF THE CARD (card redesign, 16 Nov 2026): the parts of what the customer asked for, read from the understanding (the platform, the topic, the period), so the card can say
+ * «٣٠ تغريدة · إكس · لقاح الإنفلونزا · ١٦ أكتوبر – ١٦ نوفمبر ٢٠٢٦» in every state. Display only; the count is the card's own.
+ */
+export function requestPartsAr(steps: ReadonlyArray<UnderstoodStep>): string[] {
+  const top = steps.filter((s) => !s.parent);
+  const first = top[0] ?? steps[0];
+  if (!first) return [];
+  const parts: string[] = [[...new Set((top.length > 0 ? top : steps).map((s) => platformAr(s.platform)))].join(" و")];
+  const topic = String(first.topic ?? "").trim();
+  if (topic && topic.length <= 60) parts.push(topic);
+  const from = dayAr(first.period?.from), to = dayAr(first.period?.to);
+  if (from && to) parts.push(`${from.text} – ${to.text} ${toArabicDigits(to.year)}`);
+  return parts.filter(Boolean);
+}
+
 export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps): Promise<LlmPlanResult> {
   const cost = { usd: 0 };
   const ask = asker(deps, cost);
@@ -687,8 +710,8 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
     planned = Math.max(1, Math.min(MAX_STEP_ITEMS, Math.floor(planned)));
     plannedOf.set(s.key, planned);
     // THE REAL SAMPLE IS SMALL (live X, 15 Nov 2026: the account's precise searches gave 0 and 2 for a request of 400): said before approval, with the honest consequence; the customer pays only for what is delivered
-    if (!s.parent && !b.hasMore && b.rowsPerPage < Math.min(planned, 20)) notes.push(`${s.title_ar}: الصفحة الحقيقية التي قرأناها من المصدر أعطت ${toArabicDigits(b.rowsPerPage)} فقط ولم يعرض المصدر صفحة تالية لهذا البحث، فالمتاح غالبًا أقل بكثير من ${toArabicDigits(planned)}؛ نكمل البحث بصيغ أخرى، ولا تدفع إلا مقابل ما يُسلَّم.`);
-    if (b.option.notCarried.length > 0) notes.push(`${s.title_ar}: الأداة المتاحة لهذه الخطوة لا تحدد ${b.option.notCarried.map((c) => CONDITION_AR[c]).join(" ولا ")}، فستصلك كما يعرضها المصدر دون تصفية بها.`);
+    if (!s.parent && !b.hasMore && b.rowsPerPage < Math.min(planned, 20)) notes.push(`${s.title_ar}: الصفحة الأولى من المصدر أعطتنا ${toArabicDigits(b.rowsPerPage)} فقط، فالمتاح غالبًا أقل بكثير من ${toArabicDigits(planned)}. نكمل البحث بصيغ أخرى، ولن تدفع إلا مقابل ما يُسلَّم.`);
+    if (b.option.notCarried.length > 0) notes.push(`${s.title_ar}: المصدر لا يتيح التصفية حسب ${b.option.notCarried.map((c) => CONDITION_AR[c]).join(" ولا ")}، فقد تصلك نتائج من خارجها. لو ده مهم لك، اضغط «عدّل الطلب».`);
     const rowsPerPage = Math.max(1, b.rowsPerPage);
     const costPerRow = (callUsdOf(b.option.endpoint) / rowsPerPage) * VARIANT_OVERLAP_FACTOR;
     const alternatives = [
@@ -738,7 +761,7 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
       platform: steps[0]?.step.platform ?? "",
       promises: Object.fromEntries(stages.map((s) => [s.key, { type: s.parent_key && u.steps.find((x) => x.key === s.key)?.count.all ? "open" : "exact", n: s.planned_rows }])),
       conditions: { named: false, period: false, language: false, country: false, topic: false },
-      llm: { understanding_ar: u.understanding_ar, steps: u.steps.map((s) => ({ key: s.key, platform: s.platform, capability: s.capability, source: s.source, topic: s.topic, period: s.period, terms: s.search_terms })) },
+      llm: { understanding_ar: u.understanding_ar, request_parts_ar: requestPartsAr(u.steps), steps: u.steps.map((s) => ({ key: s.key, platform: s.platform, capability: s.capability, source: s.source, topic: s.topic, period: s.period, terms: s.search_terms })) },
     } as PricedPlan["compiled"],
   } as PricedPlan;
 }

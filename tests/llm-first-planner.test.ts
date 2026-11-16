@@ -349,7 +349,7 @@ describe("a small real sample is said before approval", () => {
     expect(r.kind).toBe("plan");
     if (r.kind !== "plan") return;
     expect(r.plan.stages[0].planned_rows).toBe(400);
-    expect(r.plan.notes_ar!.some((n) => /أعطت ٢ فقط/.test(n) && /أقل بكثير من ٤٠٠/.test(n))).toBe(true);
+    expect(r.plan.notes_ar!.some((n) => /أعطتنا ٢ فقط/.test(n) && /أقل بكثير من ٤٠٠/.test(n))).toBe(true);
   });
 });
 

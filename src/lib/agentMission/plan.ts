@@ -1067,6 +1067,7 @@ export function customerPlanView(plan: PricedPlan, options: { now?: number } = {
     ...(plan.compiled?.by === "compiler" ? { compiled: true } : {}),
     ...(notes.length ? { notes_ar: notes } : {}),
     ...(assumptions.length ? { assumptions_ar: assumptions } : {}),
+    ...(Array.isArray((plan.compiled as any)?.llm?.request_parts_ar) && (plan.compiled as any).llm.request_parts_ar.length > 0 ? { request_parts_ar: ((plan.compiled as any).llm.request_parts_ar as unknown[]).map(String).slice(0, 5) } : {}),
     ...(plan.quantity ? { quantity: { requested: plan.quantity.requested, target: plan.quantity.target, stage_key: plan.quantity.stage_key } } : {}),
     ...(plan.unserved_steps && plan.unserved_steps.length > 0 ? { unserved_ar: plan.unserved_steps.map(unservedStepLineAr) } : {}),
     stages: plan.stages.map((s) => {
