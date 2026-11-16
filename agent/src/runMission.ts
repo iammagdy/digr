@@ -48,6 +48,7 @@ import { ItemStore, newWriterId, type ItemSnapshot, type StopReason } from "./it
 import { createLiveWriter, liveSheetOn, writeDoneSnapshotSafely } from "./stage2/liveWriter";
 import { mirrorLegacyFiles } from "./items/mirror";
 import { runEngine } from "./engine/run";
+import { WEB_SOURCE_IDS } from "../../src/lib/agentMission/sources";
 import { createSourceGateway, stageDispatchOf, stageScopeOf, verifiedCallMaxUsdOf } from "./engine/sourceGateway";
 import { readPlatformFlagsOf, readRedesignFlags } from "../../src/lib/agentMission/redesignFlags";
 import { CLARIFY_OPTIONS_AR, CLARIFY_QUESTION_AR, PLATFORM_OPTIONS_AR, PLATFORM_QUESTION_AR, UNCLEAR_END_AR, legacyRouteOf, platformOptionOf, withPlatformChoice } from "../../src/lib/agentMission/platformQuestion";
@@ -534,7 +535,7 @@ export async function runPlanning(deps: RunnerDeps, mission: MissionRecord): Pro
     try {
       // its own planning budget (the cap of every planning), not the word-sized stage reserves of the earlier paths: the model decides the steps
       const llmGateway = createGateway({ maxSamplesPerSource: LLM_PLANNER_MAX_SAMPLES_PER_SOURCE, store, client: deps.client, missionId: mission.id, userId: mission.user_id, jobId: null, phase: "planning", access, catalog: deps.catalog, budget: createJobCallBudget({ ceilingUsd: AGENT_PLANNING_BUDGET_CAP_USD, spentUsd: sum(calls, "planning") }), recorder: deps.recorder, commit: deps.commit, call: deps.call, token: deps.token, defaultPurpose: mission.request_text, counter, priorCalls: calls, stats: sourceStats, ...spendGateOf(deps, mission.id) });
-      r = await runLlmPlanning({ mission, store, gateway: llmGateway, catalog: deps.catalog, access, model: deps.plannerModel, words, pricingSettings, now: Date.now(), ...(deps.log ? { log: deps.log } : {}) });
+      r = await runLlmPlanning({ mission, store, gateway: llmGateway, ...(web ? { web, webAvailable } : {}), catalog: deps.catalog, access, model: deps.plannerModel, words, pricingSettings, now: Date.now(), ...(deps.log ? { log: deps.log } : {}) });
     } catch (e) {
       deps.log?.(`llm_planner_error ${mission.id} ${String((e as Error)?.message ?? e).slice(0, 200)}`);
     }
@@ -995,7 +996,10 @@ export async function runExecution(deps: RunnerDeps, mission: MissionRecord): Pr
   const multiStage = deps.engine !== false && readMultiStageEngineFlag(redesignSettings, mission.user_id);
   const dispatch = multiStage && !engineOn ? stageDispatchOf(plan) : null;
   const engineStages = dispatch && dispatch.engine.length > 0 ? new Set(dispatch.engine) : null;
-  const sources = multiStage ? createSourceGateway({ gateway, ...(web ? { web } : {}), scope: stageScopeOf(plan), budget, maxCallUsd: verifiedCallMaxUsdOf(deps.catalog) }) : undefined;
+  // A PLAN THAT READS A DIRECT WEB TOOL (Firecrawl, Context.dev: the LLM planner offers them beside the catalog's tools) runs through the provider-neutral SourceGateway, whatever `multi_stage_engine` says: the TREG gateway
+  // alone cannot call them. Its stored scope and the job's budget hold exactly as for any stage.
+  const usesDirectWeb = plan.stages.some((s) => [s.engine?.endpoint_id, ...(s.engine?.alternatives ?? []).map((a) => a.endpoint_id)].some((id) => typeof id === "string" && WEB_SOURCE_IDS.has(id)));
+  const sources = multiStage || (usesDirectWeb && web) ? createSourceGateway({ gateway, ...(web ? { web } : {}), scope: stageScopeOf(plan), budget, maxCallUsd: verifiedCallMaxUsdOf(deps.catalog) }) : undefined;
   if (multiStage) await store.addEvent(mission.id, { kind: "call", message_ar: "قياس داخلي: توزيع المراحل على المحرك.", counts: { multi_stage: 1, engine_stages: engineOn ? plan.stages.length : engineStages?.size ?? 0, model_stages: engineOn ? 0 : dispatch?.model.length ?? plan.stages.length } }).catch(() => undefined);
   if (engineOn || engineStages) {
     // THE MODEL PLANNED, CODE EXECUTES: every stage has a recipe the plan check proved, so no model session is started at all (the only model call left is the small review of items the rule cannot decide)
