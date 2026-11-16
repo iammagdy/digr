@@ -24,7 +24,8 @@ import { CARD_FAST_AFTER_ACTION_MS, cardPollDelayMs, holdingLineAr } from "@/lib
 import type { PlanEdits } from "@/lib/agentMission/planEdit";
 import { AskCard } from "@/components/mission/AskCard";
 import { LiveSheetPanel } from "@/components/mission/LiveSheetPanel";
-import { CountBadge, FoldRow, LiveLine, MoneyLine, StepTrack, Tick } from "@/components/mission/cardParts";
+import { CountBadge, FoldRow, LiveLine, MoneyLine, RequestLine, Snippets, StepTrack, Tick, type Snippet } from "@/components/mission/cardParts";
+import { SUPPORT_URL } from "@/lib/constants";
 import type { AskCardView, AskEdit } from "@/lib/agentMission/stage2/askCard";
 import type { LiveData } from "@/lib/agentMission/stage2/livePoller";
 import { liveProgressOf, phoneCollectLine } from "@/lib/agentMission/stage2/singleCounter";
@@ -232,7 +233,7 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   // STAGE 2 S10 + LAUNCH ROUND: the live sheet under the card, where the page asks for it (`liveSheet`: the requests page and the conversation) and only when the server said the flag is on for this
   // viewer; from the moment the customer approves here (the plan is shown as started at once) or the mission works, and after it ends (the final rows stay)
   const showLive = liveSheet && answer?.liveSheet === true && (v.phase === "running" || v.phase === "done" || v.phase === "partial" || (v.phase === "plan" && approvedHere));
-  return <>{<AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} pendingText={pendingText} quietSinceMs={quietSinceMs} nowMs={nowMs} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled} askCard={stage2 ? answer?.askCard ?? null : null} onAskEdit={askEdit} askError={askError} live={showLive ? liveData : null} />}{showLive ? (
+  return <>{<AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} pendingText={pendingText} quietSinceMs={quietSinceMs} nowMs={nowMs} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled} askCard={stage2 ? answer?.askCard ?? null : null} onAskEdit={askEdit} askError={askError} live={showLive ? liveData : null} onRetry={typeof answer?.requestText === "string" && answer.requestText.trim() ? () => onEdit?.(answer.requestText as string) : undefined} />}{showLive ? (
     // THE FULL TABLE IS ONE TAP AWAY (card redesign): the card carries the one counter; the sheet opens under «اعرض الجدول», and it stays mounted while closed so its numbers keep the same source
     <details className="mt-2 w-full min-w-0 max-w-[640px] sm:max-w-none" data-testid="agent-live">
       <summary className="flex min-h-11 cursor-pointer list-none items-center text-[13.5px] font-semibold text-ac underline underline-offset-4 focus-visible:outline-2">{`اعرض الجدول${liveProgressOf(liveData) ? ` (${formatAr(liveProgressOf(liveData)!.delivered)} صف)` : ""}`}</summary>
@@ -242,7 +243,7 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
 }
 
 /** The card itself, drawn from one view: pure (no network), so it renders the same on the server and in the tests. */
-export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAction = null, pendingText = null, quietSinceMs = null, nowMs = 0, approved = false, error = null, reply = "", onReply = () => undefined, onAct = () => undefined, onDownload = () => undefined, balancePoints = null, editing = false, onEditing = () => undefined, methodology = null, onSettled, askCard = null, onAskEdit = () => undefined, askError = null, live = null }: { /** STAGE 2 F-2: the live sheet's last data while it is shown (null: flag off, nothing yet, or finished); with a known promised total the phone shows the live counter as THE progress. */ live?: LiveData | null; /** STAGE 2 S4: the «فهمنا طلبك» card (only when the server sent it). */ askCard?: AskCardView | null; onAskEdit?: (edit: AskEdit) => void; askError?: string | null; view: CustomerMissionView; isGuest: boolean; busy?: boolean; pendingAction?: string | null; /** ROUND 26 (item 2): the choice on its way (its own label). */ pendingText?: string | null; /** ROUND 26 (item 2): when the card last saw a change, and the clock now (the holding line). */ quietSinceMs?: number | null; nowMs?: number; approved?: boolean; error?: string | null; reply?: string; onReply?: (text: string) => void; onAct?: (action: "approve" | "cancel" | "edit" | "retype" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) => void; onDownload?: (name: string) => void; /** The customer's balance in points (null: not known, never zero). */ balancePoints?: number | null; editing?: boolean; onEditing?: (open: boolean) => void; /** ROUND 21: the methodology offer of a delivered compiled mission (the same offer the chat's chooser draws). */ methodology?: MethodologyOfferInfo | null; onSettled?: () => void }) {
+export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAction = null, pendingText = null, quietSinceMs = null, nowMs = 0, approved = false, error = null, reply = "", onReply = () => undefined, onAct = () => undefined, onDownload = () => undefined, balancePoints = null, editing = false, onEditing = () => undefined, methodology = null, onSettled, askCard = null, onAskEdit = () => undefined, askError = null, live = null, onRetry }: { /** The customer asks to start again from the same words (the failed, partial and cancelled cards). */ onRetry?: () => void; /** STAGE 2 F-2: the live sheet's last data while it is shown (null: flag off, nothing yet, or finished); with a known promised total the phone shows the live counter as THE progress. */ live?: LiveData | null; /** STAGE 2 S4: the «فهمنا طلبك» card (only when the server sent it). */ askCard?: AskCardView | null; onAskEdit?: (edit: AskEdit) => void; askError?: string | null; view: CustomerMissionView; isGuest: boolean; busy?: boolean; pendingAction?: string | null; /** ROUND 26 (item 2): the choice on its way (its own label). */ pendingText?: string | null; /** ROUND 26 (item 2): when the card last saw a change, and the clock now (the holding line). */ quietSinceMs?: number | null; nowMs?: number; approved?: boolean; error?: string | null; reply?: string; onReply?: (text: string) => void; onAct?: (action: "approve" | "cancel" | "edit" | "retype" | "edit_plan" | "answer" | "smaller", text?: string, edits?: PlanEdits) => void; onDownload?: (name: string) => void; /** The customer's balance in points (null: not known, never zero). */ balancePoints?: number | null; editing?: boolean; onEditing?: (open: boolean) => void; /** ROUND 21: the methodology offer of a delivered compiled mission (the same offer the chat's chooser draws). */ methodology?: MethodologyOfferInfo | null; onSettled?: () => void }) {
   // the close-page sentence belongs to the status block of the card (on the page, from the moment of approval): the details list below does not say it a second time
   const panelContent = { title: "خطة المهمة", steps: v.steps, currentLineAr: v.currentLineAr, delayAr: v.delayAr, remainingAr: v.remainingAr, closePageAr: null, startedAt: v.startedAt ?? undefined, live: v.live };
   // STAGE 2 F-2: the progress the live counter shows (null: nothing to follow, the card is today's), and the card's own bar (its basis: the delivering stages' rows)
@@ -272,6 +273,15 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
     ...v.priceFacts.filter((f) => !f.labelAr.includes("حجز")).map((f) => ({ labelAr: f.labelAr === "السعر حتى" ? "أقصى سعر" : f.labelAr === "الوقت المتوقع" ? "الوقت" : f.labelAr, valueAr: f.valueAr })),
   ];
   const caveats = v.notesAr;
+  // THE NEWEST TWO ROWS the live sheet has read (a real text, one line each); none before the sheet has answered
+  const headersOf = live?.sheets?.[0]?.headers ?? [];
+  const snippets: Snippet[] = (liveProgress ? live?.window?.rows ?? [] : []).slice(-2).reverse().map((r) => {
+    const texts = r.cells.map((c, i) => ({ c, h: headersOf[i] ?? "" })).filter((x) => x.c.k === "text" && x.c.v.trim() !== "");
+    const body = texts.reduce<{ c: { v: string }; h: string } | null>((best, x) => (best === null || x.c.v.length > best.c.v.length ? x : best), null);
+    const who = texts.find((x) => /المستخدم|الحساب/.test(x.h) && x !== body);
+    return { handle: who && /^[\w.]+$/.test(who.c.v) ? who.c.v : null, textAr: body ? body.c.v.replace(/\s+/g, " ").slice(0, 160) : "" };
+  }).filter((x) => x.textAr !== "");
+  const requestParts = v.requestPartsAr.length > 0 ? [...(v.headlineCountAr || v.totalRowsAr ? [v.headlineCountAr || v.totalRowsAr] : []), ...v.requestPartsAr] : [];
   // the dot pulses only while a real event arrived in the last 20 seconds (the card's own clock; before it has one the dot is as the server saw it: live)
   const pulsing = v.live && (typeof v.lastEventAt !== "number" || nowMs === 0 || nowMs - v.lastEventAt < 20_000);
   const planning = v.phase === "waiting" || v.phase === "planning";
@@ -290,6 +300,8 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
   return (
     <section dir="rtl" data-testid="agent-card" data-phase={v.phase} aria-label="مهمتك" className="mt-3 flex w-full max-w-[640px] min-w-0 flex-col gap-3.5 rounded-[18px] border border-ln bg-sf p-4 sm:p-4" style={{ boxShadow: "var(--shadow)" }}>
       {v.queueLineAr ? <p role="status" className="m-0 rounded-[12px] bg-sf2 px-3 py-2 text-[13px] leading-[1.8] text-ink" data-testid="agent-queue">{v.queueLineAr}</p> : null}
+
+      {v.phase !== "question" && v.phase !== "cancelled" ? <RequestLine parts={requestParts} /> : null}
 
       {/* ZONE 2, WHILE THE MISSION WAITS OR WORKS: the live line, a real event's title; after a quiet minute the one honest holding line */}
       {planning ? <StepTrack steps={v.steps} /> : null}
@@ -363,7 +375,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
       ) : null}
 
       {planShown && !approving && !(overLimit && !isGuest) ? (
-        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+        <div className="flex flex-col gap-2 max-sm:sticky max-sm:bottom-0 max-sm:z-10 max-sm:-mx-4 max-sm:border-t max-sm:border-ln max-sm:bg-sf max-sm:px-4 max-sm:py-3 sm:flex-row sm:flex-wrap sm:items-center" data-testid="agent-actions">
           {isGuest
             ? <a href="/register" className={`${BTN_PRIMARY} inline-flex min-h-12 items-center justify-center text-[15px] font-semibold no-underline sm:min-w-[220px]`} data-testid="agent-signup">سجّل لتعتمد</a>
             : overLimit ? null
@@ -455,6 +467,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
             </div>
           ) : cardBar}
           <LiveLine textAr={v.currentLineAr || "نعمل على طلبك"} detailAr={v.delayAr} pulsing={pulsing && !v.delayAr} size="md" />
+          <Snippets items={snippets} />
           <MoneyLine sub={AGENT_CLOSE_NOTICE_AR}>{holdAr ? `محجوز ${holdAr}، ويُخصم مقابل ما يُسلَّم فقط.` : "يُخصم مقابل ما يُسلَّم فقط."}</MoneyLine>
         </div>
       ) : null}
@@ -496,6 +509,14 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
       ) : null}
       {finished && methodology ? <MethodologyOffer jobId={methodology.jobId} titleAr={methodology.titleAr} purchased={methodology.purchased} onCharged={onSettled} /> : null}
       {finished && moneyLinesAr.length > 0 ? <MoneyLine>{moneyLinesAr.join(" ")}</MoneyLine> : null}
+      {onRetry && (v.phase === "failed" || v.phase === "unserved") ? (
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center" data-testid="agent-retry">
+          <button type="button" className={`${BTN_PRIMARY} inline-flex min-h-12 w-full items-center justify-center text-[15px] font-semibold sm:w-auto sm:min-w-[220px]`} onClick={onRetry}>عدّل الطلب وجرّب تاني</button>
+          <a href={SUPPORT_URL} className="inline-flex min-h-11 items-center justify-center text-[13.5px] font-semibold text-ac underline underline-offset-4">تواصل مع الدعم</a>
+        </div>
+      ) : null}
+      {onRetry && v.phase === "partial" ? <div><button type="button" className="min-h-11 cursor-pointer border-0 bg-transparent p-0 text-[13.5px] font-semibold text-ac underline underline-offset-4" onClick={onRetry} data-testid="agent-retry-partial">عدّل الطلب واطلب الباقي</button></div> : null}
+      {onRetry && v.phase === "cancelled" ? <div><button type="button" className={BTN_PLAIN} onClick={onRetry} data-testid="agent-retry-cancelled">ابدأها من جديد</button></div> : null}
       {error ? <p role="alert" className="m-0 text-[13px] leading-[1.8]" style={{ color: "var(--bad)" }} data-testid="agent-error">{error}{/رصيد/.test(error) ? <> <a href="/dashboard/topup" className="text-ac">اشحن رصيدك</a></> : null}</p> : null}
     </section>
   );

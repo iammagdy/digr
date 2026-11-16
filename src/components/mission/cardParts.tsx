@@ -80,3 +80,27 @@ export function FoldRow({ testId, label, badge, children, open = false }: { test
 export function CountBadge({ n }: { n: string }) {
   return <span aria-hidden="true" className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11.5px] font-semibold" style={{ background: "color-mix(in oklab, var(--gold) 20%, transparent)", color: "var(--goldT)" }}>{n}</span>;
 }
+
+/** THE REQUEST LINE (zone 1): what was asked, the same line in every state: «طلبك: ٣٠ تغريدة · إكس · لقاح الإنفلونزا · ١٦ أكتوبر – ١٦ نوفمبر ٢٠٢٦». */
+export function RequestLine({ parts }: { parts: ReadonlyArray<string> }) {
+  if (parts.length === 0) return null;
+  return <p className="m-0 text-[12.5px] leading-[1.8] text-mut" data-testid="agent-request-line"><b className="font-semibold text-ink2">طلبك: </b>{parts.join(" · ")}</p>;
+}
+
+export interface Snippet { handle: string | null; textAr: string }
+
+/** «آخر ما وصل»: at most two real rows (the newest of the window the sheet already read), one line each with an ellipsis. */
+export function Snippets({ items, title = "آخر ما وصل" }: { items: ReadonlyArray<Snippet>; title?: string }) {
+  if (items.length === 0) return null;
+  return (
+    <div className="flex flex-col gap-1.5" data-testid="agent-snippets">
+      <p className="m-0 text-[12px] text-mut">{title}</p>
+      {items.map((it, i) => (
+        <p key={i} className="m-0 flex min-w-0 items-center gap-2 rounded-xl border border-ln bg-bg px-3 py-2 text-[13px] text-ink2">
+          {it.handle ? <span dir="ltr" className="shrink-0 text-[12px] text-mut">@{it.handle.replace(/^@/, "")}</span> : null}
+          <span className="min-w-0 flex-1 truncate">{it.textAr}</span>
+        </p>
+      ))}
+    </div>
+  );
+}
