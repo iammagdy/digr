@@ -105,6 +105,8 @@ export function countAr(n: number, noun: ItemNoun, options: { subject?: boolean 
   if (c === 1) return `${noun.singular} ${noun.feminine ? "واحدة" : "واحد"}`;
   if (c === 2) return options.subject ? noun.dual : noun.dualGen;
   if (c >= 3 && c <= 10) return `${formatAr(c)} ${noun.plural}`;
+  // 100 AND ABOVE follow the last two digits (live, 16 Nov 2026: the card read «١٠٠ تقييمًا»; Arabic says «١٠٠ تقييم», «١٠٣ تقييمات», «١١٥ تقييمًا»)
+  if (c >= 100) { const tail = c % 100; return `${formatAr(c)} ${tail <= 2 ? noun.singular : tail <= 10 ? noun.plural : noun.tamyiz}`; }
   return `${formatAr(c)} ${noun.tamyiz}`;
 }
 

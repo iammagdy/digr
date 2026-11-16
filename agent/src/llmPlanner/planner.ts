@@ -114,7 +114,13 @@ export const PLATFORM_AR: Record<string, string> = {
   x: "إكس", tiktok: "تيك توك", instagram: "إنستجرام", facebook: "فيسبوك", youtube: "يوتيوب", reddit: "ريديت", linkedin: "لينكدإن", threads: "ثريدز", telegram: "تليجرام", google: "خرائط جوجل", pinterest: "بنترست",
   tripadvisor: "تريب أدفايزر", trustpilot: "ترست بايلوت", yelp: "يلب", "app-store": "متجر آبل", "google-play": "متجر جوجل بلاي", amazon: "أمازون", web: "الويب", bing: "الويب", rumble: "رمبل", spotify: "سبوتيفاي", github: "جيت هب", imdb: "آي إم دي بي",
 };
-export const platformAr = (p: string): string => PLATFORM_AR[p] ?? "المنصة";
+/** With the step's capability: Google is Maps only for places and their reviews (live, 16 Nov 2026: a news request's card read «خرائط جوجل»), news read from the web are «مواقع الأخبار». */
+export const platformAr = (p: string, capability?: string): string => {
+  const cap = String(capability ?? "");
+  if (/(^|\.)news(\.|$)/.test(cap)) return p === "google" ? "أخبار جوجل" : "مواقع الأخبار";
+  if (p === "google" && cap !== "") return /maps|place|reviews/.test(cap) ? "خرائط جوجل" : "بحث جوجل";
+  return PLATFORM_AR[p] ?? "المنصة";
+};
 
 /** A sentence of the model shown to the customer: Arabic digits, and only when it passes the customer-text rules (no Latin word, no id, no provider); else null. */
 export function customerSafe(text: string | null | undefined, maxChars = 400): string | null {
@@ -392,6 +398,8 @@ interface BuiltStep {
   step: UnderstoodStep; option: ToolOption; mapCode: string; columns: PlanColumn[]; carryKeys: string[]; sampleRows: Array<Record<string, unknown>>; rowsPerPage: number; callIds: string[]; hasMore: boolean; nextCursor?: string | null;
   /** A SECOND tool that also answered on a real page, with its own proven mapping: execution continues with it when the first tool's input sets run out (another index gives other items). */
   second?: { option: ToolOption; mapCode: string };
+  /** A lookup step resolved to the one named thing: its children are bound to that thing's own value, and it is not a stage of the plan. */
+  lookup?: true;
 }
 
 const asJson = (text: unknown): unknown => text;
@@ -450,7 +458,7 @@ export function requestPartsAr(steps: ReadonlyArray<UnderstoodStep>): string[] {
   const top = steps.filter((s) => !s.parent);
   const first = top[0] ?? steps[0];
   if (!first) return [];
-  const parts: string[] = [[...new Set((top.length > 0 ? top : steps).map((s) => platformAr(s.platform)))].join(" و")];
+  const parts: string[] = [[...new Set((top.length > 0 ? top : steps).map((s) => platformAr(s.platform, s.capability)))].join(" و")];
   const topic = String(first.topic ?? "").trim();
   if (topic && topic.length <= 60) parts.push(topic);
   const from = dayAr(first.period?.from), to = dayAr(first.period?.to);
@@ -478,7 +486,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   for (const step of u.steps) {
     const parent = step.parent ? built.get(step.parent) ?? null : null;
     if (step.parent && !parent) { unserved.push({ what_ar: step.title_ar, reason_ar: "لم نتمكن من قراءة الخطوة التي تسبقها، فلن تُضاف هذه الخطوة ولن تُحسب في السعر." }); continue; }
-    await say(customerSafe(`نختار المصدر المناسب لجمع ${step.title_ar} من ${platformAr(step.platform)} ونجرب عينة حقيقية منه.`, 200));
+    await say(customerSafe(`نختار المصدر المناسب لجمع ${step.title_ar} من ${platformAr(step.platform, step.capability)} ونجرب عينة حقيقية منه.`, 200));
     const { candidates, options } = await chooseTools(step, parent ? parent.sampleRows : null, deps, cost);
     if (candidates.length === 0) { unserved.push({ what_ar: step.title_ar, reason_ar: "لا توجد لدينا أداة متاحة لهذه الخطوة الآن، فلن تُضاف ولن تُحسب في السعر." }); continue; }
     deps.log?.(`llm_planner_options ${step.key} ${options.map((o) => o.endpoint.id).join(",") || "none"}`);
@@ -516,7 +524,15 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
         }
       }
     }
-    built.set(step.key, { step, option: got.option, mapCode, columns, carryKeys: Object.keys(carry), sampleRows, rowsPerPage: got.items.length, callIds: got.callIds, hasMore: got.hasMore, nextCursor: got.nextCursor, ...(second ? { second } : {}) });
+    // A LOOKUP STEP (the one named app, place or product the customer's items belong to): the search's FIRST result is not the thing (live, 16 Nov 2026: Google Play's search for «InstaPay» answered Fawry first, and 100 Fawry
+    // reviews were delivered as InstaPay's). The model picks the result that IS the named thing; none of them: the customer is asked for its link, nothing is planned on a guess.
+    if (isLookupStep(step, u.steps)) {
+      const at = await pickNamedItem(step, sampleRows, ask);
+      deps.log?.(`llm_planner_lookup ${step.key} picked=${at}`);
+      if (at < 0) return { kind: "question", question_ar: `بحثنا في ${platformAr(step.platform, step.capability)} عن الذي ذكرته بالاسم ولم نجده بين النتائج بشكل مؤكد. ممكن ترسل رابطه أو اسمه كما يظهر هناك بالضبط؟`, options_ar: [], understanding: u, costUsd: cost.usd };
+      sampleRows.splice(0, sampleRows.length, sampleRows[at]!);
+    }
+    built.set(step.key, { step, option: got.option, mapCode, columns, carryKeys: Object.keys(carry), sampleRows, rowsPerPage: got.items.length, callIds: got.callIds, hasMore: got.hasMore, nextCursor: got.nextCursor, ...(second ? { second } : {}), ...(isLookupStep(step, u.steps) ? { lookup: true as const } : {}) });
     // SCOUTING: how much does the source really hold for this request? (a source that shows one page for a query and no next page is read once for each of the model's other input sets, and the sets' items are counted once)
     if (!step.parent && step.count.total !== null && input.scoutAllowed !== false) {
       const y = await scoutYield({ option: got.option, mapCode, firstRows: sampleRows, hasMore: got.hasMore, nextCursor: got.nextCursor, otherHasMore: secondMore, extraRows: secondRows, requested: step.count.total }, deps);
@@ -538,7 +554,7 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
 
   // 5. PRICE
   await say("بنجهز العدد والسعر من العينة الحقيقية.");
-  const plan = assemblePlan(u, [...built.values()], unserved, deps.pricingSettings);
+  const plan = assemblePlan(u, bindLookups([...built.values()]), unserved, deps.pricingSettings);
   return { kind: "plan", plan, understanding: u, costUsd };
 }
 
@@ -684,8 +700,8 @@ export function numbersWritten(text: string): Set<string> {
 /** The sentence the customer reads when the model's own cannot be used: what was found, and the two things we can do. */
 export function scoutFallbackAr(weak: ReadonlyArray<ScoutFinding>): { question_ar: string; options_ar: string[] } {
   const lines = weak.map((f) => (f.found === 0
-    ? `جرّبنا البحث عن ${f.step.title_ar} في ${platformAr(f.step.platform)} بالشروط التي كتبتها ولم نجد نتائج.`
-    : `جرّبنا البحث عن ${f.step.title_ar} في ${platformAr(f.step.platform)} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط من ${toArabicDigits(f.requested)} طلبتها، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`));
+    ? `جرّبنا البحث عن ${f.step.title_ar} في ${platformAr(f.step.platform, f.step.capability)} بالشروط التي كتبتها ولم نجد نتائج.`
+    : `جرّبنا البحث عن ${f.step.title_ar} في ${platformAr(f.step.platform, f.step.capability)} بالشروط التي كتبتها فوجدنا نحو ${toArabicDigits(f.found)} فقط من ${toArabicDigits(f.requested)} طلبتها، ولا يعرض المصدر أكثر من ذلك لهذه الشروط.`));
   return { question_ar: `${lines.join(" ")} تحب نسلّمك الموجود، ولا نوسّع البحث؟`, options_ar: ["سلّمني الموجود فقط", "وسّع البحث (اكتب كيف تحب نوسّعه)"] };
 }
 
@@ -694,7 +710,7 @@ export async function scoutQuestion(u: Understanding, weak: ReadonlyArray<ScoutF
   const facts = {
     customer_words: input.words.slice(-4),
     understanding: u.understanding_ar,
-    searches: weak.map((f) => ({ items: f.step.title_ar, platform: platformAr(f.step.platform), source: f.step.source, topic: f.step.topic, period: f.step.period, language: f.step.language ?? null, country: f.step.country ?? null, requested: f.requested, found: f.found, different_searches_tried: f.sets })),
+    searches: weak.map((f) => ({ items: f.step.title_ar, platform: platformAr(f.step.platform, f.step.capability), source: f.step.source, topic: f.step.topic, period: f.step.period, language: f.step.language ?? null, country: f.step.country ?? null, requested: f.requested, found: f.found, different_searches_tried: f.sets })),
   };
   const fallback = scoutFallbackAr(weak);
   const answer = await asker(deps, cost)(SCOUT_SYSTEM, JSON.stringify(facts), { name: SCOUT_TOOL, description: "What the real search found, and the customer's choices.", schema: SCOUT_SCHEMA }, 900);
@@ -714,6 +730,42 @@ export function parentValuesOf(rows: ReadonlyArray<Record<string, unknown>>, fro
   const n = (v: unknown): number => { const x = typeof v === "number" ? v : typeof v === "string" ? Number(v) : NaN; return Number.isFinite(x) ? x : -1; };
   const score = (r: Record<string, unknown>): number => Math.max(n(r.comments_count), n(r.replies_count)) * 1000 + Math.max(0, n(r.likes)) / 1e6;
   return [...rows].filter((r) => filled(r[from])).sort((a, b) => score(b) - score(a)).slice(0, PARENTS_TRIED).map((r) => r[from]);
+}
+
+/** A step that only FINDS the one thing the customer named (count 1, not delivered, with a name, and a later step reads from it). */
+export function isLookupStep(step: UnderstoodStep, steps: ReadonlyArray<UnderstoodStep>): boolean {
+  return !step.parent && !step.deliver && step.count.total === 1 && Boolean(step.topic || step.source?.value) && steps.some((x) => x.parent === step.key);
+}
+
+const PICK_TOOL = { name: "pick_item", description: "Which result is the named thing.", schema: { type: "object", properties: { index: { type: "integer", description: "the position (0-based) of the result that IS the named thing, -1 when none is" }, why: { type: "string" } }, required: ["index"] } as Record<string, unknown> };
+/** The position of the result that IS the thing the customer named (not a similar or competing one), or -1. One small model call; with one result that the model cannot confirm, -1 too. */
+export async function pickNamedItem(step: UnderstoodStep, rows: ReadonlyArray<Record<string, unknown>>, ask: (system: string, user: string, tool: typeof PICK_TOOL, maxTokens: number) => Promise<unknown | null>): Promise<number> {
+  if (rows.length === 0) return -1;
+  const name = [step.source?.value, step.topic].filter(Boolean).join(" — ");
+  const view = rows.slice(0, 10).map((r, i) => ({ index: i, ...Object.fromEntries(Object.entries(r).filter(([k, v]) => !k.startsWith("__") && (typeof v === "string" || typeof v === "number")).map(([k, v]) => [k, String(v).slice(0, 160)]).slice(0, 12)) }));
+  const answer = await ask(
+    "You check search results for a data service. The customer named ONE specific thing (an app, a place, a product, a business). Return the index of the result that IS that exact thing: the same brand/app/place, not a similar, competing or related one (a different company's app is never it). Names may differ in language or spelling (Arabic vs Latin). If no result is clearly it, return -1.",
+    `The customer named: «${name}» (${step.platform}, ${step.capability}).\nResults:\n${JSON.stringify(view)}`,
+    PICK_TOOL,
+    300,
+  );
+  const i = isObj(answer) && typeof answer.index === "number" ? Math.trunc(answer.index) : -1;
+  return i >= 0 && i < Math.min(10, rows.length) ? i : -1;
+}
+
+/** Children of a resolved lookup become top-level steps that read the found thing directly (its value fixed in their inputs); the lookup itself is not a stage (execution would search again and take the first result). */
+export function bindLookups(steps: ReadonlyArray<BuiltStep>): BuiltStep[] {
+  const out: BuiltStep[] = [];
+  for (const b of steps) {
+    const parent = b.step.parent ? steps.find((x) => x.step.key === b.step.parent) : undefined;
+    if (b.lookup) continue;
+    if (!parent?.lookup || !b.option.parent) { out.push(b); continue; }
+    const value = parent.sampleRows[0]?.[b.option.parent.from];
+    if (!filled(value)) { out.push(b); continue; }
+    const fix = (params: Record<string, unknown>): Record<string, unknown> => ({ ...params, [b.option.parent!.param]: value });
+    out.push({ ...b, step: { ...b.step, parent: null }, option: { ...b.option, params: fix(b.option.params), more: b.option.more.map(fix), parent: null }, ...(b.second ? { second: { ...b.second, option: { ...b.second.option, params: fix(b.second.option.params), more: b.second.option.more.map(fix), parent: null } } } : {}) });
+  }
+  return out;
 }
 
 /** The plan in the shape every later part already reads (the card, the price, approval, the engine, the file, settlement). */
@@ -771,7 +823,7 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
   for (const st of stages) if (st.carry_keys && st.carry_keys.length === 0) delete st.carry_keys;
   const price = priceMissionByCode(stagePriceInputs(stages), { settings: pricingSettings as never });
   const counts = stages.filter((s) => s.deliver).map((s) => `${s.title_ar}: ${toArabicDigits(s.planned_rows)}`).join("، ");
-  const platforms = [...new Set(steps.map((b) => platformAr(b.step.platform)))].join(" و");
+  const platforms = [...new Set(steps.map((b) => platformAr(b.step.platform, b.step.capability)))].join(" و");
   const understood = customerSafe(impersonalAr(u.understanding_ar).replace(/[.،\s]+$/u, ""), 300) ?? `نجمع ${stages.filter((s) => s.deliver).map((s) => s.title_ar).join(" و")} من ${platforms} كما طلبت`;
   const summary = `${understood}. ${counts ? `العدد المخطط: ${counts}.` : ""}`.trim();
   const widened = steps.some((b) => b.option.more.length > 0 || b.second !== undefined);
