@@ -74,6 +74,8 @@ export interface CustomerMissionView {
   stages: CustomerStageView[];
   totalRows: number;
   totalRowsAr: string;
+  /** What the delivered file holds, with the noun («١٥ خبرًا»): the file button says it, never the planned total (live, 16 Nov 2026: a partial of 15 news read «إكسل ٢٠ خبرًا · ٦ أعمدة»). Null before the end. */
+  fileRowsAr?: string | null;
   /** 2 to 3 sample rows with readable columns only. */
   samples: { stageTitleAr: string; columns: Array<{ key: string; titleAr: string }>; rows: string[][] } | null;
   /** What the file will contain, built from the plan's REAL columns (never from the agent's own words): «يضم الملف: التاريخ والوقت، نص التغريدة، …». */
@@ -513,6 +515,7 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
 
   // THE RESULT, in the words of the wallet: what was delivered of what was requested (with the noun of the request), then the hold, the charge and the released hold, each with the same number the wallet shows
   const resultLinesAr: string[] = [];
+  const fileRowsAr = delivered !== null && delivered > 0 && (phase === "done" || phase === "partial") ? countAr(delivered, itemNounOfPlan(plan)) : null;
   if (delivered !== null && (phase === "done" || phase === "partial" || phase === "failed" || phase === "unserved")) {
     const noun = itemNounOfPlan(plan);
     // a delivery short of the CARD is told against the card's total (what the customer approved); one that fills a card with a lowered target, against the request
@@ -531,7 +534,7 @@ export function customerMissionView(input: { mission: MissionRowForCustomer; eve
     samples: plan ? samplesView(plan) : null, fileContentsAr: plan ? fileContentsAr(plan) : null, priceLineAr: plan ? priceLineAr(plan) : null, priceFacts: plan ? priceFactsOf(plan).facts : [], priceNoteAr: plan ? priceFactsOf(plan).noteAr : null, priceExplainAr: plan ? priceExplainOf(plan) : [], questionAr: phase === "question" ? mission.question_ar : null,
     queueLineAr: q.lineAr, queuePosition: q.position, steps, currentLineAr, delayAr, remainingAr,
     closePageAr: closePageLine(mission.status, input.queue, input.emailWillBeSent),
-    resultLinesAr, resultSummaryAr: phase === "done" || phase === "partial" || phase === "unserved" || phase === "failed" ? storedSummary : null,
+    resultLinesAr, fileRowsAr, resultSummaryAr: phase === "done" || phase === "partial" || phase === "unserved" || phase === "failed" ? storedSummary : null,
     // a mission whose delivery holds only a CSV (older) is offered ONE Excel: the download builds it from that CSV
     files: filesReady ? customerFilesOf(mission.files!) : [],
     requestedRows, endLineAr, edit: phase === "plan" && plan?.edit && typeof plan.edit === "object" ? (plan.edit as PlanEditorView) : null,

@@ -28,6 +28,7 @@ import { isInternalEvent } from "../src/lib/agentMission/eventText";
 // CARD REDESIGN PHASE 2 CHANGED (16 Nov 2026): only the `planView` and `finalView` digests of the five worlds were re-pinned: the customer view gained `requestPartsAr` (empty for these worlds, which are not LLM-planned); mission and plan, workbook, notices, events, provider calls and ledger are byte-identical (checked section by section).
 beforeEach(() => { vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(new Date("2026-11-01T12:00:00Z")); });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+// LIVE CHECK 16 NOV 2026 CHANGED: only the `planView` and `finalView` digests of the five worlds were re-pinned: the customer view gained `fileRowsAr` (what the delivered file holds, shown on the file button), and counts of 100 and above follow the last two digits (g4 also re-pinned `workbook` for that wording).
 const FIXTURE = path.join(__dirname, "fixtures", "flags-off-digests.json");
 const DROP = new Set(["created_at", "updated_at", "lease_until", "started_at", "finished_at", "generated_at", "at", "ts", "beat_at", "created", "startedAt", "p_quote_hash", "p_expires_at", "expires_at"]);
 const norm = (value: unknown): string => JSON.stringify(value, (k, v) => {
