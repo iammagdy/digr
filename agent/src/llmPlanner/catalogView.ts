@@ -16,8 +16,14 @@ export const isProven = (id: string): boolean => PROVEN.has(id);
 /** Families that produce media rather than collect data: never offered to a data request. */
 const NOT_DATA_FAMILIES: ReadonlySet<string> = new Set(["image-gen", "video-gen", "voice-gen", "ai-search", "creators"]);
 
+/**
+ * An ASYNC TASK tool (submit a task, then poll another endpoint for its result: 212 endpoints of the catalog) answers a probe with a task id, never items; the worker has no poller, so such a tool is never offered
+ * (live eval, 16 Nov 2026: a TripAdvisor request got a task tool as its only option).
+ */
+export const isAsyncTask = (e: CatalogEndpoint): boolean => Boolean(e.async) || Boolean(e.async_config) || /-task-(post|get)(-|$)/.test(e.id);
+
 export const usableEndpoint = (e: CatalogEndpoint, catalog: TregCatalog, access: AccountAccess | null): boolean =>
-  !NOT_DATA_FAMILIES.has(e.platform) && isSellable(e.id, catalog) && !blockedEndpointReason(e.id, e.scope ?? null) && policyVerdict(e.id, access).allowed;
+  !NOT_DATA_FAMILIES.has(e.platform) && !isAsyncTask(e) && isSellable(e.id, catalog) && !blockedEndpointReason(e.id, e.scope ?? null) && policyVerdict(e.id, access).allowed;
 
 /** The capability of an endpoint, or a name made from its id when the catalog gave none (`platform.other`). */
 export const capabilityOf = (e: CatalogEndpoint): string => (e.capability && e.capability.trim() !== "" ? e.capability : `${e.platform}.other`);
@@ -79,7 +85,10 @@ export function candidatesFor(catalog: TregCatalog, access: AccountAccess | null
   // a capability the catalog names differently (or did not name): the same platform's tools whose capability shares the last word (posts, comments, replies …)
   const last = capability.split(".").pop() ?? "";
   const near = usable.filter((e) => !chosen.includes(e) && last !== "" && capabilityOf(e).split(".").pop() === last).sort(rank);
-  return [...chosen, ...near].slice(0, max);
+  // the same platform's tools the catalog gave NO capability (`<platform>.other`) whose id names the items (live, 16 Nov 2026: the one Amazon reviews tool timed out three times while «amazon-get-product-top-reviews» sat unnamed)
+  const stem = last.replace(/ies$/, "y").replace(/s$/, "");
+  const unnamed = stem.length >= 4 ? usable.filter((e) => !chosen.includes(e) && !near.includes(e) && capabilityOf(e) === `${platform}.other` && e.id.toLowerCase().includes(stem)).sort(rank) : [];
+  return [...chosen, ...near, ...unnamed].slice(0, max);
 }
 
 const clip = (s: unknown, n: number): string => { const t = String(s ?? "").replace(/\s+/g, " ").trim(); return t.length > n ? `${t.slice(0, n)}…` : t; };

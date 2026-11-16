@@ -46,6 +46,25 @@ export function markVerdict(filters: ReadonlyArray<StageFilter> | undefined, map
 /** The titles of the five mark columns, in the order they are added to the first sheet. */
 export const MARK_COLUMNS_AR = { reply: "رد أم أصلي", repost: "إعادة نشر", lang: "لغة النص", inPeriod: "ضمن الفترة المطلوبة", named: "المصدر المسمّى" } as const;
 export const MARK_COLUMN_ORDER: ReadonlyArray<keyof RowMarks> = ["reply", "repost", "lang", "inPeriod", "named"];
+
+/**
+ * WHICH MARK COLUMNS A RAW SHEET SHOWS (live, 16 Nov 2026: 40 Google Maps restaurants came with «رد أم أصلي = أصلي», «إعادة نشر = لا», «لغة النص = لغة أخرى» and two «غير محدد» columns on every row). The five marks describe posts and comments;
+ * a stage whose catalog capability names another kind of item (places, products, prices, repositories, jobs …) shows only the marks the request asked for (the delivery contract checks those), the language of a REVIEW's text,
+ * and a period or named-source verdict some row actually holds. A stage with no capability, or one of posts, comments, videos …, keeps all five (S1 items 1.1 and 1.2).
+ */
+const CONVERSATION_WORD = /^(posts?|comments?|repl(y|ies)|tweets?|retweets?|quotes?|videos?|reels?|stor(y|ies)|threads?|messages?|answers?|questions?|captions?|status(es)?|feeds?|timeline|mentions?|shorts?|clips?|pins?|lives?|notes?)$/i;
+const isConversation = (capability: string): boolean => capability.split(/[._\-]+/).some((w) => CONVERSATION_WORD.test(w));
+export function markColumnsOf(capability: string | null | undefined, rows: ReadonlyArray<Record<string, unknown>>, conditions?: { named?: boolean; period?: boolean; language?: boolean } | null): Array<keyof RowMarks> {
+  if (!capability || isConversation(capability)) return [...MARK_COLUMN_ORDER];
+  const asked: Partial<Record<keyof RowMarks, boolean>> = { named: Boolean(conditions?.named), inPeriod: Boolean(conditions?.period), lang: Boolean(conditions?.language) };
+  const held = (k: keyof RowMarks): boolean => rows.some((r) => { const m = r[MARKS_KEY] as (Partial<RowMarks> & { namedUnavailable?: true }) | undefined; return m !== undefined && m[k] !== null && m[k] !== undefined; });
+  return MARK_COLUMN_ORDER.filter((k) => {
+    if (asked[k]) return true;
+    if (k === "reply" || k === "repost") return false;
+    if (k === "lang") return /review/i.test(capability) && held(k);
+    return held(k);
+  });
+}
 const UNKNOWN_AR = "غير محدد";
 const yesNo = (v: boolean | null): string => (v === null ? UNKNOWN_AR : v ? "نعم" : "لا");
 

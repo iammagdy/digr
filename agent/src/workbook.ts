@@ -1,5 +1,5 @@
 import { isLanguageColumn, languageLabelAr, languageOfTextAr, textColumnKeyOf } from "../../src/lib/agentMission/languageLabel";
-import { MARKS_KEY, MARK_COLUMNS_AR, MARK_COLUMN_ORDER, markCellAr, type RowMarks } from "../../src/lib/agentMission/rawMarks";
+import { MARKS_KEY, MARK_COLUMNS_AR, markCellAr, markColumnsOf, type RowMarks } from "../../src/lib/agentMission/rawMarks";
 import { columnSpec, headerHeightOf, rowHeightOf } from "./sheetLayout";
 import ExcelJS from "exceljs";
 import { SUMMARY_SHEET_AR } from "../../src/lib/modelPlanner/missionWorkbook";
@@ -194,7 +194,7 @@ export function layoutOf(plan: PricedPlan, rowsByStage: Record<string, Row[]>): 
         if (!titles.has(title)) { titles.add(title); columns.push({ title, get: (r) => (isBlankCell(r[c.key]) ? "" : approxColumnsOf(r).includes(c.key) ? DATE_PRECISION_APPROX_AR : DATE_PRECISION_EXACT_AR), kind: "own", key: `__acc_${columns.length}` }); }
       }
     }
-    if (rawSheet) for (const k of MARK_COLUMN_ORDER) columns.push({ title: MARK_COLUMNS_AR[k], get: (r) => markCellAr(k, r[MARKS_KEY] as Partial<RowMarks> | undefined), kind: "own", key: `__mark_${k}` });
+    if (rawSheet) for (const k of markColumnsOf(stage.capability, rows, plan.compiled?.conditions)) columns.push({ title: MARK_COLUMNS_AR[k], get: (r) => markCellAr(k, r[MARKS_KEY] as Partial<RowMarks> | undefined), kind: "own", key: `__mark_${k}` });
     layouts.push({ stageIndex, stage, rows, columns: columns.map((c) => (isNameColumn(c) ? { ...c, get: (row: Row, parent: Row | null) => withoutDirectionMarks(c.get(row, parent)) } : c)), hasParent: stage.parent_key !== null });
   });
   return layouts;

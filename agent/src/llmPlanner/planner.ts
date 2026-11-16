@@ -106,6 +106,9 @@ const COLUMN_TITLES: Record<string, string> = {
 };
 const COLUMN_ORDER = ["text", "title", "author", "username", "posted_at", "link", "likes", "comments_count", "replies_count", "shares", "views", "language", "country"];
 
+/** The card describes what is collected, never the person (live, 16 Nov 2026: «الطالب يريد قائمة بأربعين مطعمًا…»): a leading «الطالب/العميل يريد» becomes «المطلوب». */
+export const impersonalAr = (t: string): string => t.replace(/^\s*(?:ال)?(?:طالب|عميل|باحث)(?:ة)?\s+(?:ي|ت)(?:ريد|طلب|حتاج)\s+(?:أن\s+)?/u, "المطلوب: ");
+
 /** The platforms' Arabic names for the code-written sentences (a platform not listed is «المنصة»). */
 export const PLATFORM_AR: Record<string, string> = {
   x: "إكس", tiktok: "تيك توك", instagram: "إنستجرام", facebook: "فيسبوك", youtube: "يوتيوب", reddit: "ريديت", linkedin: "لينكدإن", threads: "ثريدز", telegram: "تليجرام", google: "خرائط جوجل", pinterest: "بنترست",
@@ -283,7 +286,32 @@ export function checkFieldMap(answer: unknown, items: ReadonlyArray<Record<strin
     if (!key || !p || !reads(p) || fields[key] || key === "id" || key === "parent_id" || extra.some((x) => x.key === key)) continue;
     extra.push({ key: `x_${key}`, title_ar: str(e.title_ar) || key, path: p });
   }
-  return { fields, linkTemplate, extra };
+  return withoutTwinPaths({ fields, linkTemplate, extra });
+}
+
+const COUNTER_FIELDS: ReadonlySet<string> = new Set(["likes", "comments_count", "replies_count", "shares", "views"]);
+const samePath = (a: string[], b: string[]): boolean => a.length === b.length && a.every((k, i) => k === b[i]);
+/**
+ * ONE SOURCE FIELD, ONE COLUMN (live, 16 Nov 2026: a Google Maps place's rating was mapped as «الإعجابات» AND as an extra «التقييم», its number of reviews as «عدد التعليقات» AND «عدد المراجعات», and its name as both
+ * «النص» and «العنوان»). A standard counter that reads the same path as an extra column is dropped (the extra's title names what it is); an extra or a later standard column that repeats an earlier one is dropped.
+ */
+export function withoutTwinPaths(map: FieldMap): FieldMap {
+  const fields: Record<string, string[]> = {};
+  const isExtra = (p: string[]): boolean => map.extra.some((e) => samePath(e.path, p));
+  for (const k of ["id", ...COLUMN_ORDER]) {
+    const p = map.fields[k];
+    if (!p) continue;
+    if (k !== "id" && COUNTER_FIELDS.has(k) && isExtra(p)) continue;
+    if (k !== "id" && k !== "link" && Object.entries(fields).some(([o, q]) => o !== "id" && samePath(q, p))) continue;
+    fields[k] = p;
+  }
+  for (const [k, p] of Object.entries(map.fields)) if (!(k in fields) && !COLUMN_ORDER.includes(k) && k !== "id") fields[k] = p;
+  const extra: FieldMap["extra"] = [];
+  for (const e of map.extra) {
+    if (Object.entries(fields).some(([k, q]) => k !== "id" && samePath(q, e.path)) || extra.some((x) => samePath(x.path, e.path))) continue;
+    extra.push(e);
+  }
+  return { fields, linkTemplate: map.linkTemplate, extra };
 }
 
 /**
@@ -505,7 +533,8 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     return { kind: "question", question_ar: q.question_ar, options_ar: q.options_ar, understanding: u, costUsd: cost.usd, scout: true };
   }
   costUsd = cost.usd;
-  if (built.size === 0) return { kind: "cannot", reason_ar: unserved[0]?.reason_ar ?? "", understanding: u, costUsd, detail: "no_step_served" };
+  // a plan delivers something: when only an intermediate step was read (live, 16 Nov 2026: the Amazon product was found, its reviews tool timed out three times), the customer is told honestly, never priced at zero rows nor sent to another path
+  if (![...built.values()].some((b) => b.step.deliver)) return { kind: "cannot", reason_ar: unserved.find((x) => x.reason_ar)?.reason_ar ?? "", understanding: u, costUsd, detail: "no_step_served" };
 
   // 5. PRICE
   await say("بنجهز العدد والسعر من العينة الحقيقية.");
@@ -520,7 +549,7 @@ export function enrichedMap(map: FieldMap | null, items: ReadonlyArray<Record<st
   if (!guess) return map;
   const fields = { ...map.fields };
   for (const [k, p] of Object.entries(guess.fields)) if (!fields[k] && !(k === "link" && map.linkTemplate)) fields[k] = p;
-  return { ...map, fields };
+  return withoutTwinPaths({ ...map, fields });
 }
 
 /** A map made by code when the model gave none usable: the common names, at the item's top or inside its one wrapping object (TikTok's `aweme_info`). */
@@ -743,7 +772,7 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
   const price = priceMissionByCode(stagePriceInputs(stages), { settings: pricingSettings as never });
   const counts = stages.filter((s) => s.deliver).map((s) => `${s.title_ar}: ${toArabicDigits(s.planned_rows)}`).join("، ");
   const platforms = [...new Set(steps.map((b) => platformAr(b.step.platform)))].join(" و");
-  const understood = customerSafe(u.understanding_ar.replace(/[.،\s]+$/u, ""), 300) ?? `نجمع ${stages.filter((s) => s.deliver).map((s) => s.title_ar).join(" و")} من ${platforms} كما طلبت`;
+  const understood = customerSafe(impersonalAr(u.understanding_ar).replace(/[.،\s]+$/u, ""), 300) ?? `نجمع ${stages.filter((s) => s.deliver).map((s) => s.title_ar).join(" و")} من ${platforms} كما طلبت`;
   const summary = `${understood}. ${counts ? `العدد المخطط: ${counts}.` : ""}`.trim();
   const widened = steps.some((b) => b.option.more.length > 0 || b.second !== undefined);
   notes.push(widened
