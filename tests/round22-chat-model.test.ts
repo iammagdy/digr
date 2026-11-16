@@ -269,7 +269,8 @@ describe("the system prompt is built BY CODE from facts of the code", () => {
     expect(prompt).toContain("OPEN_REQUEST: none");
   });
   it("carries the strict rules: formal friendly Arabic, short, no emoji, Arabic-Indic numerals, no provider/endpoint/dollar/model names, no invented numbers or prices, no promised counts, offer a request", () => {
-    for (const rule of ["العربية الفصحى", "قصير", "إيموجي", "الأرقام الهندية", "لا تذكر", "لا تخترع", "لا تَعِد", "اعرض"]) expect(prompt, rule).toContain(rule);
+    // 16 Nov 2026: natural chat in the customer's own dialect, at the length the talk needs (chat-natural-conversation.test.ts)
+    for (const rule of ["لهجته نفسها", "على قدر الكلام", "إيموجي", "الأرقام الهندية", "لا تذكر", "لا تخترع", "لا تَعِد", "اعرض"]) expect(prompt, rule).toContain(rule);
   });
   it("names no provider, no model and no key, and the type set is the code's", () => {
     expect(prompt).not.toMatch(/TREG|tikhub|scrapecreators|anyapi|apify|sk-ant|api[_-]?key|claude|haiku|anthropic|openai/i);
@@ -290,14 +291,14 @@ describe("the system prompt is built BY CODE from facts of the code", () => {
 
 // ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 describe("a non-data message: one model call, no mission, no money, no provider call", () => {
-  it("the model gets ONE call per message, with max_tokens 400 or less, the balance in its prompt, and the customer's message last", async () => {
+  it("the model gets ONE call per message, with max_tokens 800 or less, the balance in its prompt, and the customer's message last", async () => {
     const model = fakeChatModel();
     setChatModelForTesting(model.call);
     const db = world();
     await turn(db, "بكام النقطة؟");
     expect(model.calls).toHaveLength(1);
-    expect(model.calls[0].maxTokens).toBeLessThanOrEqual(400);
-    expect(CHAT_MODEL_MAX_TOKENS).toBeLessThanOrEqual(400);
+    expect(model.calls[0].maxTokens).toBeLessThanOrEqual(800);
+    expect(CHAT_MODEL_MAX_TOKENS).toBeLessThanOrEqual(800);
     expect(model.calls[0].system).toContain("١١٬٦٧٦");
     expect(model.calls[0].messages.at(-1)).toEqual({ role: "user", content: "بكام النقطة؟" });
   });
