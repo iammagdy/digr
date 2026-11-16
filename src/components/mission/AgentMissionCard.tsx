@@ -234,9 +234,10 @@ export default function AgentMissionCard({ missionId, onEdit, onApproved, onSett
   // viewer; from the moment the customer approves here (the plan is shown as started at once) or the mission works, and after it ends (the final rows stay)
   const showLive = liveSheet && answer?.liveSheet === true && (v.phase === "running" || v.phase === "done" || v.phase === "partial" || (v.phase === "plan" && approvedHere));
   return <>{<AgentMissionCardBody view={v} isGuest={Boolean(answer?.isGuest)} busy={busy} pendingAction={pendingAction} pendingText={pendingText} quietSinceMs={quietSinceMs} nowMs={nowMs} approved={approvedHere} error={error} reply={reply} onReply={setReply} onAct={act} onDownload={download} balancePoints={balancePoints} editing={editing} onEditing={setEditing} methodology={answer?.methodology ?? null} onSettled={onSettled} askCard={stage2 ? answer?.askCard ?? null : null} onAskEdit={askEdit} askError={askError} live={showLive ? liveData : null} onRetry={typeof answer?.requestText === "string" && answer.requestText.trim() ? () => onEdit?.(answer.requestText as string) : undefined} />}{showLive ? (
-    // THE FULL TABLE IS ONE TAP AWAY (card redesign): the card carries the one counter; the sheet opens under «اعرض الجدول», and it stays mounted while closed so its numbers keep the same source
-    <details className="mt-2 w-full min-w-0 max-w-[640px] sm:max-w-none" data-testid="agent-live">
-      <summary className="flex min-h-11 cursor-pointer list-none items-center text-[13.5px] font-semibold text-ac underline underline-offset-4 focus-visible:outline-2">{`اعرض الجدول${liveProgressOf(liveData) ? ` (${formatAr(liveProgressOf(liveData)!.delivered)} صف)` : ""}`}</summary>
+    // THE LIVE SHEET IS SHOWN WHILE THE DATA IS COLLECTED (owner, 16 Nov 2026: the customer watches the rows arrive in a sheet like the Excel file): open by default; the customer may fold it,
+    // and it stays mounted while folded so its numbers keep the same source as the card's counter
+    <details open className="group mt-2 w-full min-w-0 max-w-[640px] sm:max-w-none" data-testid="agent-live">
+      <summary className="flex min-h-11 cursor-pointer list-none items-center text-[13.5px] font-semibold text-ac underline underline-offset-4 focus-visible:outline-2"><span className="group-open:hidden">{`اعرض الجدول${liveProgressOf(liveData) ? ` (${formatAr(liveProgressOf(liveData)!.delivered)} صف)` : ""}`}</span><span className="hidden group-open:inline">أخفِ الجدول</span></summary>
       <div className="mt-2 min-w-0"><LiveSheetPanel missionId={missionId} enabled missionLive={!ended} onData={setLiveData} /></div>
     </details>
   ) : null}</>;
