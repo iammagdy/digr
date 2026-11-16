@@ -355,6 +355,7 @@ describe("a small real sample is said before approval", () => {
 
 describe("SCOUTING: the real search found far less than the customer asked for → the customer is told and chooses; the answer re-plans", () => {
   const ask400 = { ...UNDERSTOOD_X, steps: [{ ...UNDERSTOOD_X.steps[0], count: { total: 400, per_parent: null, all: false } }] };
+  const ask300 = () => ({ ...UNDERSTOOD_X, steps: [{ ...UNDERSTOOD_X.steps[0], count: { total: 300, per_parent: null, all: false } }] });
   const SCOUT_OK = { message_ar: "بحثنا في حساب وزارة الصحة السعودية عن الشائعات ووجدنا ٤ تغريدات فقط من ٤٠٠ طلبتها. تحب نسلّمك الـ٤، ولا نوسّع البحث؟", options_ar: ["سلّمني الموجود", "وسّع البحث على السعودية كلها", "أضف حسابات أخرى للصحة"] };
   /** every input set returns its own two tweets and no next page: the source holds 4 different tweets in all */
   const deps = (m: ReturnType<typeof scriptedModel>, extra: Partial<LlmPlannerDeps> = {}): { d: LlmPlannerDeps; calls: () => number } => {
@@ -420,6 +421,19 @@ describe("SCOUTING: the real search found far less than the customer asked for �
     const r = await planWithLlm({ words: ["٤٠٠ تغريدة"], request: "" }, d);
     expect(r.kind).toBe("plan");
     void calls;
+  });
+
+  it("a THIN first page (1 tweet) that offers a next page is followed: the next pages are empty → the customer is asked (live 16 Nov: 1 of 300 was delivered after a plan priced at 1,681 points)", async () => {
+    const m = scriptedModel({ request_plan: [ask300()], tool_choice: [CHOICE_X], field_map: [MAP_X], scout_report: [SCOUT_OK] });
+    let n = 0;
+    const { d } = deps(m, {
+      probe: async (_id, params) => { n += 1; const first = n === 1; return { ok: true, call_id: `call_000${n}`, http_status: 200, rows_in_page: first ? 1 : 0, has_more: first, next_cursor: first ? "c1" : null, shape: null, first_rows: [], warnings: [], saved: "", ...({ _p: params } as object) } as never; },
+      readPage: async () => xPage(0, 1, "c1"),
+    });
+    const r = await planWithLlm({ words: ["٣٠٠ تغريدة"], request: "" }, d);
+    expect(r.kind).toBe("question");
+    if (r.kind === "question") expect(r.scout).toBe(true);
+    expect(n).toBeGreaterThanOrEqual(2); // the first page, then the followed page
   });
 
   it("every input set empty (nothing found at all) → the customer is asked, not told «unserved»", async () => {
