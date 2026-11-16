@@ -585,6 +585,15 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
   // a plan delivers something: when only an intermediate step was read (live, 16 Nov 2026: the Amazon product was found, its reviews tool timed out three times), the customer is told honestly, never priced at zero rows nor sent to another path
   if (![...built.values()].some((b) => b.step.deliver)) return { kind: "cannot", reason_ar: unserved.find((x) => x.reason_ar)?.reason_ar ?? "", understanding: u, costUsd, detail: "no_step_served" };
 
+  // THE CUSTOMER ACCEPTED WHAT EXISTS (their answer to the question about what the real search found): the plan targets what was found, and says so (live, 16 Nov 2026: after «سلّمني الموجود» the plan still read
+  // «هتستلم ٢٠ تقييمًا» and the end «١٠ من ٢٠»)
+  if (u.accepts_available) {
+    for (const f of findings) {
+      if (!f.exhausted || f.found <= 0 || f.found >= f.requested) continue;
+      f.step.count = { ...f.step.count, total: f.found };
+      u.assumptions_ar = [...(u.assumptions_ar ?? []), `طلبتَ ${toArabicDigits(f.requested)}، ووافقت على تسليم الموجود فعلًا من ${f.step.title_ar}: نحو ${toArabicDigits(f.found)}.`];
+    }
+  }
   // 5. PRICE
   await say("بنجهز العدد والسعر من العينة الحقيقية.");
   const plan = assemblePlan(u, bindLookups([...built.values()]), unserved, deps.pricingSettings);
