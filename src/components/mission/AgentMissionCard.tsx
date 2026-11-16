@@ -469,7 +469,7 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
 
       {/* DONE: the tick and the headline, Excel as the one big button, the rest as quiet text buttons, the offer apart, the money line once */}
       {finished && headlineAr ? (
-        <div className="flex items-center gap-3" data-testid="agent-result">
+        <div className="flex items-center gap-3" data-testid="agent-result-lines">
           <span aria-hidden="true" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-[18px] font-bold" style={{ background: "color-mix(in oklab, var(--ok) 16%, transparent)", color: "var(--ok)" }}>✓</span>
           <p className={`m-0 font-semibold text-ink ${headlineAr.length > 40 ? "text-[17px] leading-[1.7]" : "font-display text-[27px] leading-[1.3]"}`}>{headlineAr}</p>
         </div>
@@ -480,18 +480,18 @@ export function AgentMissionCardBody({ view: v, isGuest, busy = false, pendingAc
       ) : null}
       {v.phase === "cancelled" ? <p className="m-0 text-[14px] font-semibold leading-[1.8] text-ink" data-testid="agent-cancelled">أُلغيت هذه المهمة ولم يُخصم شيء.</p> : null}
       {v.files.length > 0 ? (
-        <div className="flex flex-col gap-3" data-testid="agent-files">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2" data-testid="agent-files">
           {excel ? (
             <button type="button" className="flex min-h-[60px] w-full cursor-pointer items-center justify-between gap-3 rounded-2xl border-0 bg-ac px-5 text-start text-onac focus-visible:outline-2" onClick={() => onDownload(excel.name)}>
               <span className="flex min-w-0 flex-col"><span className="text-[16px] font-semibold">{excel.labelAr}</span><span className="text-[12px] opacity-80">{[v.totalRowsAr, v.samples ? `${formatAr(v.samples.columns.length)} أعمدة` : null].filter(Boolean).join(" · ")}</span></span>
               <span aria-hidden="true" className="text-[20px]">↓</span>
             </button>
           ) : null}
-          <div className="flex flex-wrap items-center gap-x-5 gap-y-1">
+          <div className="contents">
             {otherFiles.map((f) => <button key={f.name} type="button" data-testid={`agent-file-${f.kind}`} className="min-h-11 cursor-pointer border-0 bg-transparent p-0 text-[13.5px] font-semibold text-ac underline underline-offset-4 focus-visible:outline-2" onClick={() => onDownload(f.name)}>{f.labelAr}</button>)}
             <a href="/dashboard/requests" className="inline-flex min-h-11 items-center text-[13.5px] font-semibold text-ac underline underline-offset-4">افتح طلباتي</a>
           </div>
-          {v.files.some((f) => f.kind === "csv") ? <p className="m-0 text-[12px] leading-[1.7] text-mut" data-testid="agent-csv-note">{CSV_PACKAGING_NOTE_AR}</p> : null}
+          {v.files.some((f) => f.kind === "csv") ? <p className="m-0 basis-full text-[12px] leading-[1.7] text-mut" data-testid="agent-csv-note">{CSV_PACKAGING_NOTE_AR}</p> : null}
         </div>
       ) : null}
       {finished && methodology ? <MethodologyOffer jobId={methodology.jobId} titleAr={methodology.titleAr} purchased={methodology.purchased} onCharged={onSettled} /> : null}

@@ -96,6 +96,7 @@ describe("audit phase 4: the header and the grids fit 390", () => {
       if (allowed.some((pattern) => pattern.test(file))) continue;
       readFileSync(file, "utf8").split("\n").forEach((line, index) => {
         if (line.includes('data-testid="topup-presets"')) return; // the five top-up amounts are ONE row by design, checked at 390
+        if (line.includes('data-testid="agent-facts"')) return; // the plan card's three short fact cells (count, highest price, time) are ONE row by design (the redesign handoff), checked at 390; four cells go 2×2 on a phone
         for (const match of line.matchAll(/(?<![:\w-])grid-cols-([3-9])\b/g)) offenders.push(`${file}:${index + 1} grid-cols-${match[1]}`);
       });
     }
