@@ -438,7 +438,15 @@ describe("SCOUTING: the real search found far less than the customer asked for �
     if (r.kind === "question") expect(r.scout).toBe(true);
   });
 
-  it("a failed provider call is not «nothing found»: no question (the step is said as unavailable)", async () => {
+  it("the first tool answered empty on its searches and the second option failed to answer → still «nothing found»: the customer is asked", async () => {
+    const choice = { options: [CHOICE_X.options[0], { ...CHOICE_X.options[0], endpoint_id: "tikhub.x.twitter-web-fetch-search-timeline", params: { keyword: "x", search_type: "Latest" }, more_params: [] }] };
+    const m = scriptedModel({ request_plan: [ask400], tool_choice: [choice], scout_report: [SCOUT_OK] });
+    const { d } = deps(m, { probe: async (id) => (id === "anyapi.x.search.posts" ? { ok: true, call_id: "call_0001", http_status: 200, rows_in_page: 0, has_more: false, next_cursor: null, shape: null, first_rows: [], warnings: [], saved: "" } : { ok: false, call_id: "call_0009", http_status: 500, error: "x" } as never) });
+    const r = await planWithLlm({ words: ["٤٠٠ تغريدة"], request: "" }, d);
+    expect(r.kind).toBe("question");
+  });
+
+  it("every provider call failed (none answered) is not «nothing found»: no question (the step is said as unavailable)", async () => {
     const m = scriptedModel({ request_plan: [ask400], tool_choice: [CHOICE_X] });
     const { d } = deps(m, { probe: async () => ({ ok: false, call_id: "call_0001", http_status: 500, error: "x", refused: undefined } as never) });
     const r = await planWithLlm({ words: ["٤٠٠ تغريدة"], request: "" }, d);
