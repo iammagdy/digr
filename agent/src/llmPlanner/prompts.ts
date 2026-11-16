@@ -74,7 +74,8 @@ export const UNDERSTAND_SCHEMA: Record<string, unknown> = {
       },
     },
   },
-  required: ["decision", "understanding_ar", "steps"],
+  // accepts_available is REQUIRED on purpose: the structured-output compiler refuses a schema with too many OPTIONAL properties («Schema is too complex», live 16 Nov 2026: adding it as optional made every understanding call fail)
+  required: ["decision", "understanding_ar", "steps", "accepts_available"],
 };
 
 export const TOOL_CHOICE_SYSTEM = `You choose the data tool for ONE step of a customer's collection plan and write its exact inputs. You are given the step (what the customer wants, already understood), the candidate tools from the catalog (each with what it does, every input with its type, limits and note, how it pages, what an item carries, its measured reliability and price), and, for a child step, sample items of its parent step.
