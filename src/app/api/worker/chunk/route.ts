@@ -2097,6 +2097,8 @@ export async function POST(req: NextRequest) {
         }
 
         collectedRows.push(...stepObj.rows);
+        if (isChainJob && typeof stepObj.chainStop === "string") lastChainStop = stepObj.chainStop;
+        if (isChainJob && Number(stepObj.chainSkippedOrigins) > 0) lastChainSkipped = Number(stepObj.chainSkippedOrigins);
         if (Array.isArray(stepObj.uncertainRows)) collectedUncertainRows.push(...stepObj.uncertainRows);
         if (Array.isArray(stepObj.unreviewedRows)) collectedUnreviewedRows.push(...stepObj.unreviewedRows);
         rawRowsCollected += Number(stepObj.rawRowsCount ?? stepObj.rows.length) || 0;
