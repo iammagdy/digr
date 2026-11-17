@@ -54,13 +54,17 @@ function harness(world: FakeCompany[], scenario: FakeScenario = {}) {
     emit: async (line) => { events.push(line); },
     trace: async (chunk) => { traces.push(chunk); },
     tregFn: async (): Promise<ProviderAdapterCallOutput> => ({ ok: true, httpStatus: 200, rows: world.slice(0, 10).map((c) => ({ company_name: c.name, website: `https://${c.domain}` })), nextCursor: null, costUsd: 0.00576, costMicro: 5760, tregCallId: "t" }),
+    jobSpend: async () => ({ usd: rec.spent(), calls: rec.rows.length }),
+    leaseHeld: async () => true,
+    jobStartedAtMs: async () => Date.now() - 1000,
+    newAttemptId: () => crypto.randomUUID(),
   };
   return { deps, events, traces, fetch, rec };
 }
 const input = (params: Record<string, any>, over: Partial<ProviderAdapterCallInput> = {}): ProviderAdapterCallInput => ({
   jobId: "job_trace_1", userId: "u1", step: 0, endpointId: "mp", capabilitySlug: CHAIN_CAPABILITY_SLUG, method: "POST", params, paginationStrategy: "cursor",
   cursor: null, pageSize: 10, remainingNeeded: params.count, targetVolumeMax: params.count, deliveredSoFar: 0, deadlineMs: Date.now() + 45_000,
-  unitPricePoints: (1 * 5500) / (1.15 * params.count), ...over,
+  unitPricePoints: (1 * 5500) / (1.15 * params.count), claimLeaseUntil: "2026-11-17T12:00:00.000000+00:00", startIndex: 0, ...over,
 });
 const params = (over: Record<string, any> = {}) => ({ routeCode: routeCodeOf("chain:contextdev>firecrawl"), industry: "contracting", keyword: "contracting", country: "Egypt", countryIso: "EG", industryAr: "مقاولات", countryAr: "مصر", requiredFields: ["work_email"], count: 3, ...over });
 
@@ -70,7 +74,7 @@ async function runAll(h: ReturnType<typeof harness>, p: Record<string, any>, max
   for (let step = 0; step < maxChunks; step += 1) {
     const out: ProviderAdapterCallOutput = await runChainChunk(input(p, { cursor, step, remainingNeeded: Math.max(0, p.count - rows.length), deliveredSoFar: rows.length }), h.deps);
     rows.push(...out.rows);
-    if (!out.ok || !out.nextCursor) break;
+    if (!out.ok || !out.nextCursor || rows.length >= p.count) break;
     cursor = out.nextCursor;
   }
   return rows;
