@@ -143,6 +143,10 @@ export function chainShortfallReasonAr(args: { stop: ChainRunnerStop | null; cal
   return primary;
 }
 
+export function chainZeroDeliveryReasonAr(args: { target: number; stop: ChainRunnerStop | null }): string {
+  return `المسلَّم ${n(0)} من ${toArabicDigits(args.target)} مطلوب. ${args.stop ? chainShortfallReasonAr({ stop: args.stop, callCap: null, excluded: 0 }) : "السبب: لم يصلنا سبب محدد لتوقف المعالجة قبل اكتمال العدد."}`;
+}
+
 export const ALL_CUSTOMER_STRINGS = (): string[] => [
   SOURCE_WORDING_AR, ...PLAN_LIMITS_AR, NO_ROUTE_AR,
   whatWeCollectAr({ count: 50, withEmail: true, withPhone: true, withDecisionMaker: true, industry: "مقاولات", country: "مصر" }),
