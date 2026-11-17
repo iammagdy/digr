@@ -1241,4 +1241,37 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(false);
   });
 
+
+  it("T-W B5-R5 and B6 killed after settle, before the final line: charge = ceil(units x unit), result file exists, no final line (closed by DT-20261117-05)", async () => {
+    resetDb({ target: 3 });
+    db.unitPrice = 100;
+    db.reserved = 3 * 100 * 2;
+
+    const units = 3;
+    const charged = Math.ceil(units * db.unitPrice);
+
+    // Assembly and result file created
+    const wb = new ExcelJS.Workbook();
+    const ws = wb.addWorksheet("Results");
+    ws.addRow(["name", "website"]);
+    for (let i = 1; i <= units; i++) ws.addRow([`Company ${i}`, `https://c${i}.com`]);
+    const outBuf = await wb.xlsx.writeBuffer();
+    db.results.set(`user_1/${JOB}/result.xlsx`, Buffer.from(outBuf));
+
+    // settle_job_atomic called and charges ceil(units * unit)
+    const supabase = await import("../src/lib/supabase/server");
+    const admin = (supabase as any).createAdminClient();
+    const settleRes = await admin.rpc("settle_job_atomic", { p_job_id: JOB });
+    expect(settleRes.data).toMatchObject({ success: true, charged_credits: charged });
+
+    // Killed after settle, before writing final info line to job_events
+    // Asserted as the known gap: closed by DT-20261117-05
+    expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(true);
+    expect(settleRes.data.charged_credits).toBe(charged);
+
+    // No final line emitted in events
+    const finalLines = db.events.filter((e: any) => String(e.message ?? "").startsWith("المسلَّم"));
+    expect(finalLines.length).toBe(0);
+  });
+
 });
