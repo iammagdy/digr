@@ -901,18 +901,8 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     // 1. Terminal chain chunk with skipped origins
     resetDb({ target: 8 });
     const world1 = defaultFakeWorld(1);
-    fetchSpy = createFakeFetch(world1);
-    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world1), keys: { treg: "managed" }, tregCall: tregHook([{ name: "   ", website: "https://skipped-origin.com" }]) });
-    setProviderAdapterForTesting(async () => ({
-      ok: true,
-      httpStatus: 200,
-      rows: [{ name: "   ", website: "https://skipped-origin.com" }],
-      nextCursor: null,
-      costUsd: 0,
-      costMicro: 0,
-      tregCallId: "",
-    }));
-    const { last: chainLast } = await runMany(world1);
+    // Context.dev is unavailable (the sources are limited) and the directory answers one company whose address is not supported: the run delivers the one real company, ends in `sources_limited` and counts ONE skipped origin
+    const { last: chainLast } = await runWith(world1, { keys: NO_CONTEXTDEV, tregCall: tregHook([SKIPPED_ORIGIN_LEAD]), unitPrice: 1000 });
     expect(chainLast.status).toBe(200);
 
     const stepFiles = Array.from(db.partials.keys()).filter((k) => k.startsWith(`${JOB}/step_`));
@@ -922,6 +912,8 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(typeof chainStepObj.chainStop).toBe("string");
     expect(typeof chainStepObj.attemptId).toBe("string");
     expect(Number(chainStepObj.chainSkippedOrigins)).toBeGreaterThan(0);
+    expect(chainStepObj.chainStop).toBe("sources_limited");
+    expect(stopLinesOfLog()).toEqual(["sources_limited"]);
 
     // 2. Non-chain job
     resetDb({ target: 10 });
