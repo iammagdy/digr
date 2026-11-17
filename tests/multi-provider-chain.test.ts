@@ -672,4 +672,21 @@ describe("chain: exact-N engine (DT-20261117-04)", () => {
     expect(run.ok).toBe(false);
     expect((run as any).errorCode).toBe("lease_lost");
   });
+
+  it("T-A A8 no runner-emitted line claims delivery or charge", async () => {
+    const stops: Array<{ budgetUsd?: number; count: number; empty?: boolean }> = [
+      { budgetUsd: 0.01, count: 10 },
+      { count: 3 },
+      { empty: true, count: 5 },
+    ];
+    for (const s of stops) {
+      const world = s.empty ? [] : defaultFakeWorld(10);
+      const h = harness(world);
+      await runAll(h, params({ count: s.count, budgetUsd: s.budgetUsd ?? 1 }), 5);
+      for (const ev of h.events) {
+        if (ev.includes("الموثّق منها")) continue;
+        expect(ev).not.toMatch(/سُلّم|يُخصم|يُحتسب|المسلَّم|تم إكمال/);
+      }
+    }
+  });
 });
