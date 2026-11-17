@@ -982,4 +982,25 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     }
   });
 
+
+  it("T-W B5-R1 normal terminal: winner continues to end, assembles from own step in memory, result file and artifact_versions written, settle charges ceil(delivered x unit)", async () => {
+    resetDb({ target: 3 });
+    const world = defaultFakeWorld(10);
+    const { last } = await run(world);
+    expect(last.status).toBe(200);
+    expect(last.json).toMatchObject({ done: true, deliveredUnits: 3 });
+
+    // Result file exists in results bucket
+    expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(true);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(db.results.get(`user_1/${JOB}/result.xlsx`)! as any);
+    const sheet = wb.worksheets[0];
+    expect(sheet.rowCount).toBe(4); // header + 3 rows
+
+    // settle_job_atomic called with charge = ceil(delivered * unit)
+    const settleCall = db.rpcCalls.find((c) => c.name === "settle_job_atomic");
+    expect(settleCall).toBeDefined();
+    expect(last.json.settle.charged_credits).toBe(Math.ceil(3 * db.unitPrice));
+  });
+
 });
