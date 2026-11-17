@@ -1310,6 +1310,8 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     db.reserved = 3 * 100 * 2;
 
     const units = 3;
+    // the fake settlement charges what the job has delivered: the three units of this test
+    db.deliveredUnits = units;
     const charged = Math.ceil(units * db.unitPrice);
 
     // Assembly and result file created
