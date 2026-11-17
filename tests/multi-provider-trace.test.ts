@@ -8,7 +8,7 @@ vi.mock("../src/lib/supabase/server", () => ({
 }));
 
 import { GET as traceGet } from "../src/app/api/admin/job-trace/route";
-import { runChainChunk, type ChainDeps } from "../src/lib/server/multiProvider/chainRunner";
+import { runChainChunk, type ChainChunkInput, type ChainDeps } from "../src/lib/server/multiProvider/chainRunner";
 import { createFakeFetch, createFakeRobotsFetch, defaultFakeWorld, type FakeCompany, type FakeScenario } from "../src/lib/server/multiProvider/fakeTransport";
 import type { ProviderAdapterCallInput, ProviderAdapterCallOutput } from "../src/lib/server/tregAdapter";
 import { appendChunkTrace, readRoutingTrace, writeRoutingDecision } from "../src/lib/server/multiProvider/traceStore";
@@ -61,7 +61,7 @@ function harness(world: FakeCompany[], scenario: FakeScenario = {}) {
   };
   return { deps, events, traces, fetch, rec };
 }
-const input = (params: Record<string, any>, over: Partial<ProviderAdapterCallInput> = {}): ProviderAdapterCallInput => ({
+const input = (params: Record<string, any>, over: Partial<ChainChunkInput> = {}): ChainChunkInput => ({
   jobId: "job_trace_1", userId: "u1", step: 0, endpointId: "mp", capabilitySlug: CHAIN_CAPABILITY_SLUG, method: "POST", params, paginationStrategy: "cursor",
   cursor: null, pageSize: 10, remainingNeeded: params.count, targetVolumeMax: params.count, deliveredSoFar: 0, deadlineMs: Date.now() + 45_000,
   unitPricePoints: (1 * 5500) / (1.15 * params.count), claimLeaseUntil: "2026-11-17T12:00:00.000000+00:00", startIndex: 0, ...over,
