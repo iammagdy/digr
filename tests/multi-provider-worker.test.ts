@@ -18,6 +18,8 @@ const db = vi.hoisted(() => ({
   delayedCompleteChunkMs: 0,
   killAfterCommit: false,
   corruptDownloadPaths: new Set<string>(),
+  // the body of every step file ever uploaded: the route deletes the step files once the job has settled
+  stepBodies: new Map<string, string>(),
 }));
 
 function builder(rows: () => any[]) {
@@ -114,6 +116,7 @@ vi.mock("../src/lib/supabase/server", () => ({
             // records whether path already exists
             // Storage decides existence for `upsert: false` (the start markers): a duplicate is refused with 409, as the real bucket does.
             if (existed && opts?.upsert === false) return { data: null, error: { message: "The resource already exists", statusCode: "409" } };
+            if (bucket === "partials" && /\/step_\d+\.json$/.test(path)) db.stepBodies.set(path, Buffer.isBuffer(body) ? body.toString("utf-8") : String(body));
             store.set(path, Buffer.isBuffer(body) ? body : Buffer.from(String(body)));
             return { data: { path, existed }, error: null };
           },
@@ -198,7 +201,7 @@ function resetDb(over: { target?: number } = {}) {
   db.settings = [{ key: "provider_limits", value: { dailyUsd: 0.8, firecrawlDailyUsd: 1, contextdevDailyUsd: 1 } }];
   db.costs = []; db.partials.clear(); db.results.clear(); db.rpcCalls = []; db.events = []; db.reserveDeniedFor = new Set();
   db.step = 0; db.cursor = null; db.deliveredUnits = 0; db.targetVolumeMax = target; db.unitPrice = 100; db.reserved = Math.ceil(target * 100 * 1.15); db.endpoint = "mp.business.contacts";
-  db.uploadHistory = []; db.delayedCompleteChunkMs = 0; db.killAfterCommit = false; db.corruptDownloadPaths.clear();
+  db.uploadHistory = []; db.delayedCompleteChunkMs = 0; db.killAfterCommit = false; db.corruptDownloadPaths.clear(); db.stepBodies.clear();
 }
 
 describe("worker: multi-provider chain job (fake providers)", () => {
