@@ -12,3 +12,4 @@ export const ADAPTERS: Record<DataProviderId, ProviderAdapter> = {
 
 export { contextDevAdapter, firecrawlAdapter, tregAdapter };
 export { runTregDirectoryPage } from "./treg";
+export { buildTregIdempotencyKey, classifyTregCost, runTregCall, runTregDirectoryPageDirect, runTregEmailLookup } from "./treg";
