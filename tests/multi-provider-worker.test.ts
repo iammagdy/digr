@@ -223,7 +223,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
   async function run(world: FakeCompany[], scenario: Parameters<typeof createFakeFetch>[1] = {}) {
     const route = await import("../src/app/api/worker/chunk/route");
     fetchSpy = createFakeFetch(world, scenario);
-    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS });
+    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook() });
     setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
     const responses: Array<{ status: number; json: any }> = [];
     for (let i = 0; i < 12; i++) {
@@ -238,7 +238,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
   async function runMany(world: FakeCompany[], scenario: Parameters<typeof createFakeFetch>[1] = {}, maxIters = 40) {
     const route = await import("../src/app/api/worker/chunk/route");
     fetchSpy = createFakeFetch(world, scenario);
-    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS });
+    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook() });
     setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
     const responses: Array<{ status: number; json: any }> = [];
     for (let i = 0; i < maxIters; i++) {
@@ -490,7 +490,7 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     const world = defaultFakeWorld(40);
     const route = await import("../src/app/api/worker/chunk/route");
     fetchSpy = createFakeFetch(world, {});
-    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS });
+    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook() });
     setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
 
     await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", { method: "POST", headers: { authorization: "Bearer chain-secret" }, body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }) }));
@@ -834,7 +834,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       resetDb({ target: 8 });
       const world = defaultFakeWorld(1);
       fetchSpy = createFakeFetch(world, { emptyProvider: { firecrawl: true, contextdev: true } });
-      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS });
+      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook() });
       setProviderAdapterForTesting(async () => ({
         ok: true,
         httpStatus: 200,
@@ -1040,7 +1040,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
 
     const route = await import("../src/app/api/worker/chunk/route");
     fetchSpy = createFakeFetch(world);
-    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS });
+    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook() });
     setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
 
     // Winner runs and commits, then throws/dies
@@ -1374,7 +1374,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       resetDb({ target: 5 });
       const world = defaultFakeWorld(5).map((c) => ({ ...c, email: undefined, phone: undefined }));
       fetchSpy = createFakeFetch(world);
-      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS });
+      setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook() });
       setProviderAdapterForTesting(async () => ({
         ok: true,
         httpStatus: 200,
@@ -1638,7 +1638,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     resetDb({ target: 5 });
     const world = defaultFakeWorld(5);
     fetchSpy = createFakeFetch(world);
-    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS });
+    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS, tregCall: tregHook() });
     setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
 
     const chainUploadHistStart = db.uploadHistory.length;
