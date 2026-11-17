@@ -43,7 +43,7 @@ export interface FakeScenario {
   timeoutProvider?: Partial<Record<"firecrawl" | "contextdev", boolean>>;
 }
 
-export interface FakeCallLog { provider: "firecrawl" | "contextdev"; operation: "search" | "map" | "scrape" | "scrape_json" | "usage"; url: string; status: number; auth: string }
+export interface FakeCallLog { provider: "firecrawl" | "contextdev"; operation: "search" | "map" | "scrape" | "scrape_json" | "usage"; url: string; status: number; auth: string; query?: string; excluded?: string[] }
 
 export function defaultFakeWorld(count = 12): FakeCompany[] {
   return Array.from({ length: count }, (_, i) => {
@@ -85,7 +85,7 @@ export function createFakeFetch(world: FakeCompany[], scenario: FakeScenario = {
     const provider: "firecrawl" | "contextdev" = u.hostname.includes("firecrawl") ? "firecrawl" : "contextdev";
     const auth = String((init?.headers as Record<string, string> | undefined)?.Authorization ?? "");
     const body = init?.body ? JSON.parse(String(init.body)) : {};
-    const record = (operation: FakeCallLog["operation"], status: number) => { log.push({ provider, operation, url, status, auth }); };
+    const record = (operation: FakeCallLog["operation"], status: number) => { log.push({ provider, operation, url, status, auth, ...(typeof body.query === "string" ? { query: body.query } : {}), ...(Array.isArray(body.excludeDomains) ? { excluded: body.excludeDomains } : {}) }); };
     const operation: FakeCallLog["operation"] = /credit-usage|org\/usage/.test(u.pathname) ? "usage" : /\/search$/.test(u.pathname) ? "search" : /\/map$|\/urls$/.test(u.pathname) ? "map" : body?.formats?.json || (Array.isArray(body?.formats) && body.formats.some((f: any) => f?.type === "json")) ? "scrape_json" : "scrape";
 
     if (scenario.validKey && auth !== `Bearer ${scenario.validKey}`) { record(operation, 401); return json(401, provider === "contextdev" ? { message: "unauthorized", error_code: "UNAUTHORIZED", request_id: "r" } : { success: false, error: "Unauthorized" }); }
