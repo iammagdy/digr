@@ -329,23 +329,12 @@ describe("chain: a provider daily cap hit in the middle of a run (today's runner
     const world = defaultFakeWorld(20);
     const h = harness(world);
     let tregCalls = 0;
-    h.deps.tregFn = async (input) => {
+    const lookupFake = h.deps.tregCall;
+    h.deps.tregCall = async (options) => {
+      if (options.endpointId !== "icypeas.companies.search") return lookupFake!(options);
       tregCalls += 1;
-      const rows = world.slice(0, 10).map((c) => ({
-        company_name: c.name,
-        website: `https://${c.domain}`,
-        industry: "مقاولات",
-        country: "مصر",
-      }));
-      return {
-        ok: true,
-        httpStatus: 200,
-        rows,
-        nextCursor: tregCalls === 1 ? "p2" : null,
-        costUsd: 0.00576,
-        costMicro: 5760,
-        tregCallId: "t",
-      };
+      const rows = world.slice(0, 10).map((c) => ({ company_name: c.name, website: `https://${c.domain}`, industry: "مقاولات", country: "مصر" }));
+      return directoryAnswer(rows, tregCalls === 1 ? "p2" : null);
     };
     let tregReserveAttempts = 0;
     const origRecorder = h.deps.recorder;
@@ -364,11 +353,11 @@ describe("chain: a provider daily cap hit in the middle of a run (today's runner
     const { rows, last } = await runAll(h, params({ routeCode: routeCodeOf("chain:treg>firecrawl"), count: 12, budgetUsd: 1, requiredFields: ["work_email"] }));
     expect(rows.length).toBe(12);
     expect(tregCalls).toBe(1);
-    expect(tregReserveAttempts).toBe(2);
+    expect(tregReserveAttempts).toBe(3);
     const webSearchRow = h.rec.rows.find((r) => (r.capabilityId === "contextdev.search" || r.capabilityId === "firecrawl.search") && r.status === "success");
     expect(webSearchRow).toBeDefined();
     expect(h.events.some((e) => e.includes("فجرّبنا مصدرًا آخر"))).toBe(true);
-    expect(last.nextCursor).toBeNull();
+    expect("chainStop" in last).toBe(false);
   });
 
   it("T-3(3) all web providers capped: all web providers capped", async () => {
