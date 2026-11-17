@@ -187,6 +187,8 @@ const KEYS = { treg: "managed", firecrawl: "fc-test-key-123456", contextdev: "cx
  */
 const TWO_REQUIRED_FIELDS = ["work_email", "office_phone"];
 function useTwoRequiredFields() { db.quotes[0].items[0].params.requiredFields = TWO_REQUIRED_FIELDS; }
+// a row the NON-chain gate accepts for the quote of `resetDb` (industry مقاولات, country مصر): its name, industry and country say so (tried with the real worker: the name alone or the country alone is not enough)
+const MATCHING_ROW = { name: "شركة مقاولات", website: "https://acme.com", country: "مصر", industry: "مقاولات" };
 // ROOMY: a unit price whose budget (reserve / 5,500) no stop of the test can be pre-empted by: a job that must END (coverage_end) reads every candidate and tries every search variant, which costs more than the budget of the default price of 100 points per unit
 const roomyBudget = (target: number) => { db.unitPrice = 1000; db.reserved = Math.ceil(target * 1000 * 1.15); };
 // DT-20261117-04 CI r2 (C1): the TREG client of every chain test. A valid EMPTY e-mail lookup (cost 0) and a directory page made of `leads` (the shapes of chain.test.ts :64-70 and of the F08/F22 `leads` key): the runner never reaches the real client. `token` makes the directory answer carry a next-page token.
@@ -933,7 +935,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     setProviderAdapterForTesting(async () => ({
       ok: true,
       httpStatus: 200,
-      rows: [{ name: "Acme", website: "https://acme.com" }],
+      rows: [MATCHING_ROW],
       nextCursor: null,
       costUsd: 0.005,
       costMicro: 5000,
@@ -1655,7 +1657,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     setProviderAdapterForTesting(async () => ({
       ok: true,
       httpStatus: 200,
-      rows: [{ name: "Acme", website: "https://acme.com" }],
+      rows: [MATCHING_ROW],
       nextCursor: "cur_2",
       costUsd: 0.005,
       costMicro: 5000,
