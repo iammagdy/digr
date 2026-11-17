@@ -1944,4 +1944,84 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(db.partials.has(k1Path)).toBe(true);
   });
 
+  it("T-N route outputs: provider errors never reach the customer", async () => {
+    prepareJob("chain", 4);
+    const injected = [
+      "Context.dev service unavailable",
+      "firecrawl credits exhausted",
+      "Tomba rate limit",
+      "TREG route_max_cost firecrawl 402",
+    ];
+
+    setChainTransportForTesting({
+      fetchFn: (async (input: string) => {
+        const u = new URL(String(input));
+        const provider = u.hostname.includes("firecrawl") ? "firecrawl" : "contextdev";
+        return new Response(JSON.stringify({ error: injected[0], provider, message: injected[1] }), {
+          status: 500,
+          headers: { "content-type": "application/json" },
+        });
+      }) as any,
+      robotsFetch: createFakeRobotsFetch(defaultFakeWorld(4)),
+      keys: KEYS,
+      tregCall: async () => ({
+        ok: false,
+        httpStatus: 500,
+        tregCallId: "t",
+        costMicro: 0,
+        latencyMs: 1,
+        data: null,
+        error: injected[2],
+        errorDetails: injected[3],
+        isRouteMaxCost: false,
+        isPlatformBalanceLow: false,
+      }),
+    });
+
+    const responses: Array<{ status: number; body: any }> = [];
+    for (let i = 0; i < 12; i++) {
+      const res = await postChunk();
+      const body = await res.json();
+      responses.push({ status: res.status, body });
+      if (body.done === true || body.released === true || res.status >= 400) break;
+    }
+
+    const customerOutputs: string[] = [];
+    for (const r of responses) {
+      if (r.body.error) customerOutputs.push(String(r.body.error));
+      if (r.body.message) customerOutputs.push(String(r.body.message));
+      if (r.body.errorMessageAr) customerOutputs.push(String(r.body.errorMessageAr));
+    }
+    for (const evt of db.events) {
+      if (evt.message) customerOutputs.push(String(evt.message));
+    }
+    for (const [key, buf] of db.partials.entries()) {
+      if (key.match(/\/step_\d+\.json$/)) {
+        customerOutputs.push(buf.toString("utf-8"));
+      }
+    }
+    for (const text of db.stepBodies.values()) {
+      customerOutputs.push(text);
+    }
+    for (const rpc of db.rpcCalls) {
+      if (rpc.name === "release_job_atomic" && rpc.args?.p_error_message) {
+        customerOutputs.push(String(rpc.args.p_error_message));
+      }
+    }
+
+    expect(customerOutputs.length).toBeGreaterThan(3);
+
+    const FORBIDDEN_WORDS = /contextdev|context\.dev|firecrawl|treg|icypeas/i;
+    for (const out of customerOutputs) {
+      expect(out).not.toMatch(FORBIDDEN_WORDS);
+      for (const inj of injected) {
+        expect(out.toLowerCase()).not.toContain(inj.toLowerCase());
+      }
+      if (/[؀-ۿ]/.test(out)) {
+        // Arabic text shown to customer must not contain Latin digits
+        expect(out).not.toMatch(/[؀-ۿ].*[0-9]|[0-9].*[؀-ۿ]/);
+      }
+    }
+  });
+
 });
