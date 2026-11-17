@@ -31,6 +31,8 @@ const db = vi.hoisted(() => ({
   mismatchExtra: 0,
   // v7 (W-1): when set, `release_job_atomic` answers this error (a refused release); null keeps today's success answer.
   releaseError: null as any,
+  // v5 (P04): the endpoint_id that the claim answers. Every test keeps the default; only T3 "known total, held" sets a company source (resetDb restores it).
+  claimEndpointId: "x-keyword-search",
 }));
 
 function builder(rows: () => any[]) {
@@ -69,7 +71,7 @@ vi.mock("../src/lib/supabase/server", () => ({
     rpc: vi.fn(async (name: string, args: any) => {
       db.rpcCalls.push({ name, args });
       if (name === "claim_job_chunk") {
-        return { data: { claimed: true, job_id: args.p_job_id, user_id: "user_1", step: db.step, current_cursor: db.cursor, delivered_units: db.deliveredUnits, target_volume_max: db.targetVolumeMax, target_volume_min: 1, endpoint_id: "x-keyword-search", unit_price: db.unitPrice }, error: null };
+        return { data: { claimed: true, job_id: args.p_job_id, user_id: "user_1", step: db.step, current_cursor: db.cursor, delivered_units: db.deliveredUnits, target_volume_max: db.targetVolumeMax, target_volume_min: 1, endpoint_id: db.claimEndpointId, unit_price: db.unitPrice }, error: null };
       }
       if (name === "reserve_provider_spend_atomic") return { data: { allowed: db.spendAllowed, cost_id: db.spendAllowed ? 11 : null }, error: null };
       if (name === "commit_provider_spend") return { data: { success: true }, error: null };
@@ -173,6 +175,7 @@ function resetDb(params: Record<string, unknown> = { query: "AI Trends" }, targe
   db.updates = [];
   db.mismatchExtra = 0;
   db.releaseError = null;
+  db.claimEndpointId = "x-keyword-search";
 }
 
 describe("estimateRemainingSecondsFromBatchDurations (remaining batches x measured duration)", () => {
@@ -551,6 +554,8 @@ describe("worker: activity events, ETA and distinct failure paths", () => {
       db.cursor = "c1";
       Object.assign(db.jobs[0], { step: 1, current_cursor: "c1" });
       if (seeded) {
+        Object.assign(db.quotes[0].items[0], { capabilitySlug: "icypeas-companies-search", endpointId: "icypeas.companies.search" }); // a real company job: the quote item AND the claim name the company source, because an x claim wins the catalog match (jobExecutionSpec.ts:230-239)
+        db.claimEndpointId = "icypeas.companies.search";
         await saveRunningSet(partials, JOB, { ...emptyRunningSet(), step: 0, cursors: ["c1"], batchUnits: [0], received: 12 });
         await saveStepDiagnostic(partials, JOB, 0, recordRowGate(emptyDiagnostic(), { received: 12, outsideWindow: 0, accepted: 0, excluded: [], held: 3, unreviewed: 0 }));
       }
