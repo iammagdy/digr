@@ -383,7 +383,8 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     const { last } = await runMany(world);
     expect(last.status).toBe(200);
 
-    const nomoreSentence = chainShortfallReasonAr({ stop: "no_more_work", callCap: null, excluded: 0 });
+    // the new engine has no «no_more_work» stop (terminalOf: budget, sources_limited, coverage_end, stalled, work_limit); with the TREG hook the world of 5 companies ends coverage_end (plan v9 :276(a) pins the same for the chain test)
+    const nomoreSentence = chainShortfallReasonAr({ stop: "coverage_end", callCap: null, excluded: 0 });
     const finalEvent = db.events.find((e: any) => String(e.message ?? "").includes(nomoreSentence));
     expect(finalEvent).toBeDefined();
     expect(String(finalEvent.message)).toBe(`المسلَّم ٣ من ٨ مطلوب. ${nomoreSentence}`);
