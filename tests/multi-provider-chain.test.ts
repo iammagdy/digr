@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { chainParamsOf, decodeChainCursor, encodeChainCursor, runChainChunk, discoveryQueryVariants, type ChainDeps, type ChainChunkInput } from "../src/lib/server/multiProvider/chainRunner";
+import { chainParamsOf, decodeChainCursor, encodeChainCursor, runChainChunk, discoveryQueryVariants, workLimitsFor, type ChainDeps, type ChainChunkInput } from "../src/lib/server/multiProvider/chainRunner";
 import { createFakeFetch, createFakeRobotsFetch, defaultFakeWorld, type FakeCompany, type FakeScenario } from "../src/lib/server/multiProvider/fakeTransport";
 import type { ProviderAdapterCallInput, ProviderAdapterCallOutput } from "../src/lib/server/tregAdapter";
 import type { TregCallResult } from "../src/functions/shared/tregClient";
@@ -622,5 +622,36 @@ describe("chain: exact-N engine (DT-20261117-04)", () => {
     };
     const failRun = await runChainChunk(baseInput(params({ count: 5 })), hFail.deps);
     expect(failRun.ok).toBe(false);
+  });
+
+  it("T-A A6 work bound conditions", async () => {
+    const world = defaultFakeWorld(10);
+
+    // 1. Clock 7h -> work_limit BEFORE any call
+    const hClock = harness(world);
+    hClock.deps.jobStartedAtMs = async () => Date.now() - 7 * 3600 * 1000;
+    const runClock = await runChainChunk(baseInput(params({ count: 5 })), hClock.deps);
+    expect(runClock.chainStop).toBe("work_limit");
+    expect(hClock.rec.rows.length).toBe(0);
+
+    // 2. jobStartedAtMs unreadable -> ok: false with errorCode "clock_unreadable"
+    const hUnreadable = harness(world);
+    hUnreadable.deps.jobStartedAtMs = async () => { throw new Error("unreadable clock"); };
+    const runUnreadable = await runChainChunk(baseInput(params({ count: 5 })), hUnreadable.deps);
+    expect(runUnreadable.ok).toBe(false);
+    expect((runUnreadable as any).errorCode).toBe("clock_unreadable");
+
+    // 3. startIndex = 8 -> terminal work_limit with ZERO calls
+    const hStart8 = harness(world);
+    const runStart8 = await runChainChunk(baseInput(params({ count: 5 }), { startIndex: 8 }), hStart8.deps);
+    expect(runStart8.chainStop).toBe("work_limit");
+    expect(hStart8.rec.rows.length).toBe(0);
+  });
+
+  it("T-A A6 workLimitsFor exact values", () => {
+    expect(workLimitsFor(45, ["work_email", "decision_maker"], "firecrawl.search")).toEqual({ maxCalls: 2877, maxChunks: 60420, maxWallMs: 21600000 });
+    expect(workLimitsFor(45, ["work_email"], "firecrawl.search")).toEqual({ maxCalls: 1407, maxChunks: 29550, maxWallMs: 21600000 });
+    expect(workLimitsFor(1, ["work_email"], "firecrawl.search")).toEqual({ maxCalls: 198, maxChunks: 4161, maxWallMs: 21600000 });
+    expect(workLimitsFor(45, ["work_email", "decision_maker"], "treg.companies.search").maxCalls).toBe(2877);
   });
 });
