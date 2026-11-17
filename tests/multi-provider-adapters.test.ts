@@ -976,4 +976,61 @@ it("T-T P9-P10 402 route_max_cost, 402 and 429 with explicit header 0 commit 0; 
       expect(r200NonEmpty.known).toBe(false);
     }
   });
+it("T-T status sweep (100-599 x 6 figures x 3 answerKinds against independent expectation table)", () => {
+    const R = 8900;
+    const figures: Array<"absent" | 0 | 100 | typeof R | 20000 | "malformed"> = ["absent", 0, 100, R, 20000, "malformed"];
+    const answerKinds: Array<"empty" | "non_empty" | "unparsable"> = ["empty", "non_empty", "unparsable"];
+
+    function expectedCommit(status: number, fig: "absent" | 0 | 100 | typeof R | 20000 | "malformed", answerKind: "empty" | "non_empty" | "unparsable", reserved: number): { commitMicro: number; known: boolean } {
+      const isDefinite = (status >= 200 && status <= 299) || (status >= 400 && status <= 499 && status !== 408 && status !== 409);
+      if (!isDefinite) {
+        const validFig = typeof fig === "number" && Number.isSafeInteger(fig) && fig >= 0 ? fig : 0;
+        return { commitMicro: Math.max(reserved, validFig), known: false };
+      }
+      if (fig === "absent" || fig === "malformed") {
+        return { commitMicro: reserved, known: false };
+      }
+      if (fig > 0) {
+        return { commitMicro: fig, known: true };
+      }
+      if (status >= 200 && status <= 299) {
+        return answerKind === "empty" ? { commitMicro: 0, known: true } : { commitMicro: reserved, known: false };
+      }
+      if (status >= 400 && status <= 499) {
+        return { commitMicro: 0, known: true };
+      }
+      return { commitMicro: reserved, known: false };
+    }
+
+    for (let status = 100; status <= 599; status++) {
+      for (const fig of figures) {
+        for (const answerKind of answerKinds) {
+          const fakeResult: any = {
+            ok: status >= 200 && status <= 299,
+            httpStatus: status,
+            tregCallId: `call_${status}`,
+            latencyMs: 10,
+            data: answerKind === "empty" ? { data: { emails: [] }, meta: { total: 0 } } : { data: { emails: [{ email: "a@b.com" }] }, meta: { total: 1 } },
+            isRouteMaxCost: false,
+            isPlatformBalanceLow: false,
+          };
+
+          if (fig === "absent") {
+            fakeResult.costMicro = 0;
+            fakeResult.costUnreported = true;
+          } else if (fig === "malformed") {
+            fakeResult.costMicro = 0;
+            fakeResult.costHeaderInvalid = true;
+          } else {
+            fakeResult.costMicro = fig;
+          }
+
+          const verdict = classifyTregCost(fakeResult, R, answerKind);
+          const expected = expectedCommit(status, fig, answerKind, R);
+          expect(verdict.commitMicro).toBe(expected.commitMicro);
+          expect(verdict.known).toBe(expected.known);
+        }
+      }
+    }
+  });
 });
