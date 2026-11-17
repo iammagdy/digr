@@ -43,3 +43,16 @@ export function sameInstant(a: unknown, b: unknown): boolean {
   const keyB = parseInstantKey(b);
   return keyA !== null && keyA === keyB;
 }
+
+export const COMPANY_MAILBOX_ORDER: ReadonlyArray<string> = ["info", "contact", "contactus", "sales", "office", "hello", "enquiries", "inquiries", "admin", "support", "customercare", "customerservice", "marketing", "service", "mail", "reception"];
+
+export type TregAnswerKind = "empty" | "non_empty" | "unparsable";
+
+export function tombaAnswerKind(body: unknown): TregAnswerKind {
+  if (!body || typeof body !== "object") return "unparsable";
+  const b = body as any;
+  if (!Array.isArray(b?.data?.emails)) return "unparsable";
+  if (b.data.emails.length >= 1) return "non_empty";
+  if (b.data.emails.length === 0 && typeof b?.meta?.total === "number" && b.meta.total === 0) return "empty";
+  return "unparsable";
+}
