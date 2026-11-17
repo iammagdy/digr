@@ -110,13 +110,17 @@ export function expectedTargetLineAr(args: { asked: number; fitted: number }): s
 
 export type ChainRunnerStop = "budget" | "no_more_work" | "target_reached" | "coverage_end" | "sources_limited" | "stalled" | "work_limit";
 
-export function chainShortfallReasonAr(args: { stop: ChainRunnerStop | null; callCap: string | null; excluded: number }): string {
+export function chainShortfallReasonAr(args: { stop: ChainRunnerStop | null; callCap: string | null; excluded: number; skippedOrigins?: number }): string {
   const excl = `استُبعد ${countPlainAr(args.excluded, "companies")} لأنه مكرر أو غير مطابق قبل اكتمال العدد.`;
   let primary: string | null = null;
   if (args.stop === "budget") {
     primary = "توقفنا عند الحد المسموح لتكلفة هذه المعالجة قبل اكتمال العدد، وقد توجد شركات أخرى مطابقة لم نصل إليها.";
   } else if (args.stop === "no_more_work") {
     primary = "توقفت المعالجة عند حدود البحث الحالية قبل اكتمال العدد، وقد توجد شركات أخرى مطابقة لم نصل إليها.";
+  } else if (args.stop === "coverage_end") {
+    primary = "السبب: أنهينا صيغ البحث المحددة لدينا في مصادر متاحة (٨ صيغ لكل مصدر بحث). هذا حدّ لنطاق بحثنا، ولا يعني أنه لا توجد شركات أخرى مطابقة.";
+  } else if (args.stop === "sources_limited") {
+    primary = "السبب: بعض مصادر متاحة لم تكن متاحة أو لم تُجب أو بلغت حدّها المسموح قبل اكتمال العدد، فلم نبحث فيها بالكامل، وقد توجد شركات أخرى مطابقة لم نصل إليها." + ((args.skippedOrigins ?? 0) > 0 ? ` وتخطينا ${countPlainAr(args.skippedOrigins ?? 0, "companies")} لأن عنوانها غير مدعوم.` : "");
   } else if (args.callCap === "page_cap") {
     primary = "توقفت المعالجة عند الحد الأقصى لعدد الدفعات المسموح لهذا الطلب قبل اكتمال العدد، وقد توجد شركات أخرى مطابقة لم نصل إليها.";
   } else if (args.callCap === "empty_pages" || args.callCap === "no_progress") {
