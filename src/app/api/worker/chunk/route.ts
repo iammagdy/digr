@@ -849,7 +849,7 @@ export async function POST(req: NextRequest) {
         if (!made?.error) { chainStartIndex = k; markerWritten = true; break; }
         const markerError: any = made.error;
         const alreadyThere = String(markerError?.statusCode ?? markerError?.status ?? "") === "409" || /already exists|duplicate/i.test(String(markerError?.message ?? ""));
-        if (!alreadyThere) throw new Error(`تعذّر تسجيل بدء الدفعة (${currentStep}).`);
+        if (!alreadyThere) throw new Error("تعذّر تسجيل بدء الدفعة.");
       }
       if (!markerWritten) chainStartIndex = MAX_STARTS_PER_STEP;
     }
