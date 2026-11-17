@@ -1505,17 +1505,60 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     }
   });
 
-  it("T-W B5-R8 assembly or settle throws: triggers existing release messages", async () => {
-    resetDb({ target: 2 });
-    // Assembly or settle throws -> releases reserve with error message
+  it("T-W B5-R8 assembly or settle throws: the real route releases the whole reserve once, with zero debit and the existing release messages", async () => {
     const supabase = await import("../src/lib/supabase/server");
-    const admin = (supabase as any).createAdminClient();
-    const relRes = await admin.rpc("release_job_atomic", {
-      p_job_id: JOB,
-      p_error_message: "تعذر استكمال الاستخراج: settle_failed (حجز مؤقت مُحرَّر كاملًا ولم يُخصم شيء).",
-      p_force: true,
-    });
-    expect(relRes.data).toMatchObject({ success: true, released_credits: db.reserved });
+    const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+    try {
+      // a. the final files cannot be saved (assembly fails): nothing is settled
+      prepareJob("chain", 2);
+      arrangeInvocation("chain", "P", 2);
+      vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+        const client = origImpl!();
+        const origStorage = client.storage;
+        (client as any).storage = { from: (bucket: string) => { const b = origStorage.from(bucket); return { ...b, upload: async (path: string, body: any, o: any) => (bucket === "results" ? { data: null, error: { message: "results_down" } } : b.upload(path, body, o)) }; } };
+        return client;
+      });
+      const resA = await postChunk();
+      const bodyA = await resA.json();
+      expect(resA.status).toBe(500);
+      expect(bodyA.released).toBe(true);
+      expect(bodyA.chargedCredits).toBe(0);
+      expect(bodyA.deliveredUnits).toBe(0);
+      expect(rpcCount("settle_job_atomic")).toBe(0);
+      expect(rpcCount("release_job_atomic")).toBe(1);
+      const relA = db.rpcCalls.find((c) => c.name === "release_job_atomic")!;
+      expect(relA.args.p_force).toBe(true);
+      expect(relA.args.p_error_message).toBe(bodyA.error);
+      expect(String(bodyA.error)).toContain("حجز مؤقت مُحرَّر كاملًا");
+      expect(String(bodyA.error)).not.toMatch(/[A-Za-z0-9]/);
+      expect(db.events.some((e: any) => String(e.message ?? "").includes("تم إكمال"))).toBe(false);
+
+      // b. the settlement itself fails: the whole reserve is released, zero debit, and no completion event is written
+      vi.mocked(supabase.createAdminClient).mockImplementation(origImpl!);
+      prepareJob("chain", 2);
+      arrangeInvocation("chain", "P", 2);
+      vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+        const client = origImpl!();
+        const origRpc = client.rpc;
+        (client as any).rpc = vi.fn(async (name: string, args: any) => {
+          if (name === "settle_job_atomic") { db.rpcCalls.push({ name, args }); return { data: null, error: { message: "settle_failed" } }; }
+          return origRpc(name, args);
+        });
+        return client;
+      });
+      const resB = await postChunk();
+      const bodyB = await resB.json();
+      expect(resB.status).toBe(500);
+      expect(bodyB.released).toBe(true);
+      expect(bodyB.chargedCredits).toBe(0);
+      expect(rpcCount("settle_job_atomic")).toBe(1);
+      expect(rpcCount("release_job_atomic")).toBe(1);
+      expect(rpcCount("record_chunk_failure")).toBe(1);
+      expect(db.rpcCalls.find((c) => c.name === "release_job_atomic")!.args.p_error_message).toBe(bodyB.error);
+      expect(db.events.some((e: any) => String(e.message ?? "").includes("تم إكمال"))).toBe(false);
+    } finally {
+      if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+    }
   });
 
   it("T-W B5-R9 listing never called: bucket list throws if called — never called in chain path", async () => {
