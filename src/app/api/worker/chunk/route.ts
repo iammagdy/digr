@@ -1679,7 +1679,7 @@ export async function POST(req: NextRequest) {
     // A report chunk that browsed or classified (no comment row yet) made progress: the «empty pages» and «no progress» rules, which are about pages that bring nothing, do not apply to it;
     // the page ceiling still does, and the collector's own limits (calls, cost, stall) end the job.
     const reportChunkProgress = isReportJob && rawAdapterResult.reportProgress === true && acceptedRows.length === 0;
-    const pageCapReason = reportChunkProgress
+    const pageCapReason = isChainJob ? null : reportChunkProgress
       ? (currentStep + 1 >= maxPagesForJob(targetMax, effectivePageSize, "feed") ? "page_cap" as const : null)
       : evaluateProviderCallCap({
           pagesDone: currentStep + 1,
