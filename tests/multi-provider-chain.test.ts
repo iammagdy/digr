@@ -118,7 +118,8 @@ const params = (over: Record<string, any> = {}) => ({ routeCode: routeCodeOf("ch
 describe("chain: discover -> read public contact pages -> verify", () => {
   it("delivers only verified rows, with allowed keys only, and records every call with its provider", async () => {
     const world = defaultFakeWorld(12).map((c, i) => (i === 0 ? { ...c, email: undefined, foreignEmail: "agency@other-agency.com" } : c));
-    const h = harness(world);
+    // DT-20261117-04 CI r1: no TREG key in this test: with one, every candidate gets a billed e-mail lookup row (provider treg, tomba.companies.emails.list), which the three assertions below were not written for. The assertions are unchanged.
+    const h = harness(world, {}, { keys: { firecrawl: "fc-test-key-123456", contextdev: "cx-test-key-123456" } });
     const { rows, last } = await runAll(h, params({ count: 4 }));
     expect(last.ok).toBe(true);
     expect(rows.length).toBe(4);
