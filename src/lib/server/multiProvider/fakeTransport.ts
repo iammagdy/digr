@@ -37,6 +37,10 @@ export interface FakeScenario {
   creditsRemaining?: number;
   /** A key the fake accepts; any other key is answered 401. */
   validKey?: string;
+  /** Search answers differ per distinct query: query number k (in order of first appearance) answers world[k*perQuery .. (k+1)*perQuery), minus any host listed in the request's excludeDomains; with `ignoreExclude: true` NO exclusion is applied and EVERY query answers the SAME first `perQuery` world entries (a provider that ignores `excludeDomains`, used by T-C). */
+  searchByQuery?: { perQuery: number; ignoreExclude?: boolean };
+  overbill?: Partial<Record<"firecrawl" | "contextdev", number>>;
+  timeoutProvider?: Partial<Record<"firecrawl" | "contextdev", boolean>>;
 }
 
 export interface FakeCallLog { provider: "firecrawl" | "contextdev"; operation: "search" | "map" | "scrape" | "scrape_json" | "usage"; url: string; status: number; auth: string }
