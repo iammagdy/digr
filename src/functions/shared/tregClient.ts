@@ -490,5 +490,6 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
     ...(bodyMicro !== null ? { chargedMicroReported: bodyMicro } : {}),
     // an answer that carries NO charge at all (no cost header, no `_treg.charged_micro`, no estimate): `costMicro` above is a placeholder 0, not a report (the spend gate settles it UNKNOWN)
     ...(headerMicro === null && bodyMicro === null && !costIsEstimate ? { costUnreported: true } : {}),
+    ...(costHeaderInvalid ? { costHeaderInvalid: true as const } : {}),
   };
 }
