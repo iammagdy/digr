@@ -748,6 +748,48 @@ export async function readPageV2(rc: ChainRunCtx, url: string, structured = fals
   return null;
 }
 
+export function finishCompanyRow(rc: ChainRunCtx, facts: EnrichmentFacts): void {
+  const params = rc.params;
+  const row = buildContactRow(facts);
+  if (rowPassesGate(row, params.requiredFields)) {
+    rc.rows.push(row);
+    rc.trace.stage("verify", null, null).verified += 1;
+  } else {
+    rc.unverified += 1;
+    rc.trace.stage("verify", null, null).unverified += 1;
+  }
+}
+
+export async function processCompanyV2(rc: ChainRunCtx, c: ChainCandidateV2, robotsCache: Map<string, RobotsRules | "none" | "unreadable">): Promise<void> {
+  const params = rc.params;
+  const domain = companyDomain(c.u);
+  if (!domain || !checkPublicBusinessUrl(c.u).ok) {
+    rc.skipped += 1;
+    return;
+  }
+  const provider = await lookupEmail(rc, domain);
+  const needPhone = params.requiredFields.includes("office_phone");
+  const needDm = params.requiredFields.includes("decision_maker");
+  if (provider && !needPhone && !needDm) {
+    finishCompanyRow(rc, {
+      companyName: c.n,
+      website: c.u,
+      industry: params.industryAr ?? params.industry,
+      location: params.countryAr ?? params.country,
+      description: undefined,
+      emails: [provider],
+      phones: [],
+      decisionMakers: [],
+      profileLink: undefined,
+      sourcePage: "",
+    });
+    return;
+  }
+  await websiteReadV2(rc, c, domain, provider ? [provider] : [], robotsCache);
+}
+
+async function websiteReadV2(rc: ChainRunCtx, c: ChainCandidateV2, domain: string, seeded: FoundEmail[], robotsCache: Map<string, RobotsRules | "none" | "unreadable">): Promise<void> {}
+
 
 
 
