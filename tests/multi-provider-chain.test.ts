@@ -8,7 +8,7 @@ import { createMemoryRecorder } from "./helpers/multiProviderFakes";
 import { HARD_LIMITS, routeCodeOf, estimateRoute, routeById } from "../src/lib/multiProvider/routes";
 import { ALL_CUSTOMER_STRINGS, budgetStopLineAr, chainFinishedLineAr, chainStopProgressLineAr } from "../src/lib/multiProvider/copy";
 import { STATUS_VERIFIED_AR, ALLOWED_ROW_KEYS } from "../src/lib/multiProvider/policy";
-import { sameInstant } from "../src/lib/multiProvider/tregContacts";
+import { sameInstant, stripControl } from "../src/lib/multiProvider/tregContacts";
 
 interface Harness { deps: ChainDeps; events: string[]; fetch: ReturnType<typeof createFakeFetch>; rec: ReturnType<typeof createMemoryRecorder>; tregCalls: number }
 
@@ -772,7 +772,8 @@ describe("chain: exact-N engine (DT-20261117-04)", () => {
       "\\".repeat(120),
       '"'.repeat(120),
       "\u4E00".repeat(120),
-      "\u200F\u0300\uD83D\uDE00\x00".repeat(30),
+      // the queue name as the admission can leave it: control characters stripped and cut to 120 UTF-16 units (chainRunner.ts admission); a raw NUL name (JSON-escaped, 6 bytes each) can never be queued.
+      stripControl("\u200F\u0300\uD83D\uDE00\x00".repeat(30)).slice(0, 120),
     ];
 
     for (const nameSample of sets) {
