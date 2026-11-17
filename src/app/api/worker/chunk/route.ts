@@ -1844,6 +1844,7 @@ export async function POST(req: NextRequest) {
       ...(reviewDiagnostics.length > 0 ? { reviewCalls: reviewDiagnostics } : {}),
       ...(reviewSampleSummary ? { reviewSample: reviewSampleSummary } : {}),
       totalDelivered: newDeliveredUnits,
+      ...(isChainJob ? { ...(typeof (rawAdapterResult as any).attemptId === "string" ? { attemptId: (rawAdapterResult as any).attemptId } : {}), ...((rawAdapterResult as any).chainStop ? { chainStop: (rawAdapterResult as any).chainStop } : {}), ...(Number((rawAdapterResult as any).chainSkippedOrigins) > 0 ? { chainSkippedOrigins: Number((rawAdapterResult as any).chainSkippedOrigins) } : {}) } : {}),
       rows: acceptedRows,
       uncertainRows,
       unreviewedRows,
