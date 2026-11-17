@@ -1,14 +1,36 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { chainParamsOf, decodeChainCursor, encodeChainCursor, runChainChunk, type ChainDeps } from "../src/lib/server/multiProvider/chainRunner";
+import { chainParamsOf, decodeChainCursor, encodeChainCursor, runChainChunk, type ChainDeps, type ChainChunkInput } from "../src/lib/server/multiProvider/chainRunner";
 import { createFakeFetch, createFakeRobotsFetch, defaultFakeWorld, type FakeCompany, type FakeScenario } from "../src/lib/server/multiProvider/fakeTransport";
 import type { ProviderAdapterCallInput, ProviderAdapterCallOutput } from "../src/lib/server/tregAdapter";
+import type { TregCallResult } from "../src/functions/shared/tregClient";
 import { createMemoryRecorder } from "./helpers/multiProviderFakes";
 import { HARD_LIMITS, routeCodeOf } from "../src/lib/multiProvider/routes";
 import { ALL_CUSTOMER_STRINGS, budgetStopLineAr, chainFinishedLineAr, chainStopProgressLineAr } from "../src/lib/multiProvider/copy";
 import { STATUS_VERIFIED_AR, ALLOWED_ROW_KEYS } from "../src/lib/multiProvider/policy";
 
 interface Harness { deps: ChainDeps; events: string[]; fetch: ReturnType<typeof createFakeFetch>; rec: ReturnType<typeof createMemoryRecorder>; tregCalls: number }
+
+function directoryAnswer(rows: Record<string, any>[], nextCursor: string | null): TregCallResult {
+  return {
+    ok: true,
+    httpStatus: 200,
+    tregCallId: "t",
+    costMicro: 5760,
+    latencyMs: 1,
+    data: {
+      leads: rows.map((r) => ({
+        name: r.company_name,
+        website: r.website,
+        industry: r.industry ?? "",
+        location: r.country ?? "",
+      })),
+      ...(nextCursor ? { pagination: { token: nextCursor } } : {}),
+    },
+    isRouteMaxCost: false,
+    isPlatformBalanceLow: false,
+  };
+}
 
 function harness(world: FakeCompany[], scenario: FakeScenario = {}, opts: { caps?: any; keys?: ChainDeps["providerKeys"]; tregRows?: Record<string, any>[] } = {}): Harness {
   const events: string[] = [];
@@ -27,18 +49,51 @@ function harness(world: FakeCompany[], scenario: FakeScenario = {}, opts: { caps
       const rows = (opts.tregRows ?? world.map((c) => ({ company_name: c.name, website: `https://${c.domain}`, industry: "مقاولات", country: "مصر" }))).slice(0, 10);
       return { ok: true, httpStatus: 200, rows, nextCursor: null, costUsd: 0.00576, costMicro: 5760, tregCallId: "t" };
     },
+    tregCall: async (options) => {
+      if (options.endpointId === "icypeas.companies.search") {
+        h.tregCalls += 1;
+        const rows = (opts.tregRows ?? world.map((c) => ({ company_name: c.name, website: `https://${c.domain}`, industry: "مقاولات", country: "مصر" }))).slice(0, 10);
+        return directoryAnswer(rows, null);
+      }
+      if (options.endpointId === "tomba.companies.emails.list") {
+        return {
+          ok: true,
+          httpStatus: 200,
+          tregCallId: "t",
+          costMicro: 0,
+          latencyMs: 1,
+          data: { data: { organization: {}, emails: [] }, meta: { params: { domain: options.params.domain }, total: 0 } },
+          isRouteMaxCost: false,
+          isPlatformBalanceLow: false,
+        };
+      }
+      return {
+        ok: true,
+        httpStatus: 200,
+        tregCallId: "t",
+        costMicro: 0,
+        latencyMs: 1,
+        data: {},
+        isRouteMaxCost: false,
+        isPlatformBalanceLow: false,
+      };
+    },
+    jobSpend: async () => ({ usd: rec.spent(), calls: rec.rows.length }),
+    leaseHeld: async () => true,
+    jobStartedAtMs: async () => Date.now() - 1000,
+    newAttemptId: () => crypto.randomUUID(),
   };
   return h;
 }
 
 /** `budgetUsd` is the provider-spend budget of the job: the worker passes the unit price, the reserve of which (/ 5,500) is the budget. */
-const baseInput = (params: Record<string, any>, over: Partial<ProviderAdapterCallInput> = {}): ProviderAdapterCallInput => {
+const baseInput = (params: Record<string, any>, over: Partial<ChainChunkInput> = {}): ChainChunkInput => {
   const count = params.count ?? 5;
   const budgetUsd = params.budgetUsd ?? 1;
   return {
     jobId: "job_x", userId: "u1", step: 0, endpointId: "mp", capabilitySlug: "mp-business-contacts", method: "POST", params, paginationStrategy: "cursor",
     cursor: null, pageSize: 10, remainingNeeded: count, targetVolumeMax: count, deliveredSoFar: 0, deadlineMs: Date.now() + 45_000,
-    unitPricePoints: (budgetUsd * 5500) / (1.15 * count), ...over,
+    unitPricePoints: (budgetUsd * 5500) / (1.15 * count), claimLeaseUntil: "2026-11-17T12:00:00.000000+00:00", startIndex: 0, ...over,
   };
 };
 
@@ -51,7 +106,7 @@ async function runAll(h: Harness, params: Record<string, any>, maxChunks = 12) {
     last = await runChainChunk(baseInput(params, { cursor, step: chunks, remainingNeeded: Math.max(0, (params.count ?? 5) - rows.length), deliveredSoFar: rows.length }), h.deps);
     rows.push(...last.rows);
     chunks += 1;
-    if (!last.ok || !last.nextCursor) break;
+    if (!last.ok || !last.nextCursor || rows.length >= (params.count ?? 5)) break;
     cursor = last.nextCursor;
   }
   return { rows, chunks, last: last! };
