@@ -2046,7 +2046,9 @@ export async function POST(req: NextRequest) {
         let stepObj: any = null;
         let stepCorrupt = false;
 
-        if (typeof partialsBucket.download === "function") {
+        if (isChainJob && s === currentStep && !compData.already_completed) {
+          stepObj = partialData;
+        } else if (typeof partialsBucket.download === "function") {
           const { data: blob, error: dlErr } = await partialsBucket.download(stepKey);
           if (!dlErr && blob) {
             try {
