@@ -85,3 +85,18 @@ export function buildTregIdempotencyKey(args: { jobId: string; attemptId: string
   }
   return key;
 }
+
+export function classifyTregCost(result: TregCallResult | null | undefined, reservedMicro: number, answerKind: TregAnswerKind, thrown?: unknown): { known: boolean; commitMicro: number } {
+  const valid = (x: unknown): x is number => typeof x === "number" && Number.isSafeInteger(x) && x >= 0;
+  const unknown = (): { known: boolean; commitMicro: number } => {
+    const figs = result ? [result.costMicro, "originalCostMicro" in result ? result.originalCostMicro : undefined, "chargedMicroReported" in result ? result.chargedMicroReported : undefined] : [];
+    return { known: false, commitMicro: Math.max(reservedMicro, ...figs.filter(valid)) };
+  };
+  if (thrown !== undefined || !result) return unknown();
+  if (result.timedOut === true || result.error === "network_failure" || !Number.isSafeInteger(result.httpStatus)) return unknown();
+  if ("blocked" in result && result.blocked !== undefined || "budgetStopped" in result && (result as any).budgetStopped !== undefined) return unknown();
+  const s = result.httpStatus;
+  const definite = (s >= 200 && s <= 299) || (s >= 400 && s <= 499 && s !== 408 && s !== 409);
+  if (!definite) return unknown();
+  return unknown();
+}
