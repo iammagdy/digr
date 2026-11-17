@@ -526,7 +526,8 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     const call = relCalls[0];
     expect(Object.keys(call.args).sort()).toEqual(["p_error_message", "p_force", "p_job_id"]);
     expect(call.args.p_force).toBe(true);
-    expect(call.args.p_error_message).toBe("لم يُعثر على أي بيانات مطابقة من المصدر؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+    // plan v9 :196 / :310 (P86, D-0026/D-0031): the VALUE of the release text of a chain job is chainZeroDeliveryReasonAr({ target, stop }); this world (8 companies, no e-mail or phone, the real TREG out of the way) ends coverage_end
+    expect(call.args.p_error_message).toBe(chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" }));
   });
 
   it("W-9 settlement fails: returns error and writes no completion or delivered event", async () => {
