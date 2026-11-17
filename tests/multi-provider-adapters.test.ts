@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { vi } from "vitest";
 import { executeTregCall } from "../src/functions/shared/tregClient";
+import { executeTregCallWithRetry } from "../src/lib/server/tregAdapter";
 import { firecrawlAdapter } from "../src/lib/server/multiProvider/adapters/firecrawl";
 import { contextDevAdapter } from "../src/lib/server/multiProvider/adapters/contextdev";
 import { tregAdapter, runTregDirectoryPage } from "../src/lib/server/multiProvider/adapters/treg";
@@ -356,6 +357,37 @@ describe("T-T TREG cost: the real client, the predicate, the wrappers", () => {
         timedOut: false,
         costMicro: 0,
       });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+it("T-T 1b unchanged-caller regression (for every scenario with well-formed or absent header, costHeaderInvalid is absent)", async () => {
+    try {
+      // Well-formed header: costHeaderInvalid is absent
+      vi.stubGlobal("fetch", vi.fn(async () => stubResponse(200, { "x-treg-cost-micro": "8900" })));
+      const resOk = await executeTregCall(baseTregOptions());
+      expect("costHeaderInvalid" in resOk).toBe(false);
+      expect(resOk.costHeaderInvalid).toBeUndefined();
+
+      // Absent header: costHeaderInvalid is absent
+      vi.stubGlobal("fetch", vi.fn(async () => stubResponse(200, {})));
+      const resAbsent = await executeTregCall(baseTregOptions());
+      expect("costHeaderInvalid" in resAbsent).toBe(false);
+      expect(resAbsent.costHeaderInvalid).toBeUndefined();
+
+      // Malformed header: changes only costHeaderInvalid key
+      vi.stubGlobal("fetch", vi.fn(async () => stubResponse(200, { "x-treg-cost-micro": "bad" })));
+      const resBad = await executeTregCall(baseTregOptions());
+      expect(resBad.costHeaderInvalid).toBe(true);
+      const rest = { ...resBad };
+      delete (rest as any).costHeaderInvalid;
+      expect("costHeaderInvalid" in rest).toBe(false);
+
+      // executeTregCallWithRetry receives the same result object without costHeaderInvalid for well-formed header
+      vi.stubGlobal("fetch", vi.fn(async () => stubResponse(200, { "x-treg-cost-micro": "8900" })));
+      const resRetry = await executeTregCallWithRetry(baseTregOptions(), 0);
+      expect("costHeaderInvalid" in resRetry).toBe(false);
+      expect(resRetry.costMicro).toBe(8900);
     } finally {
       vi.unstubAllGlobals();
     }
