@@ -86,7 +86,7 @@ export async function runRecordedCall<T>(args: {
     // A failed call is charged only what the provider says it used (Context.dev reports credits_consumed on errors too); otherwise nothing.
     const credits = Number(answer.json?.key_metadata?.credits_consumed);
     const usedCredits = Number.isFinite(credits) && credits > 0 ? credits : 0;
-    result = { ok: false, status: "failed", data: null, units: 0, credits: usedCredits, costUsd: round6(usedCredits * usdPerCredit), durationMs, httpStatus: answer.httpStatus, errorCode: code, retryable: RETRYABLE_ON_ANOTHER_PROVIDER.has(code) };
+    result = { ok: false, status: "failed", data: null, units: 0, credits: usedCredits, costUsd: ctx.chainStrict && !(typeof answer.json?.key_metadata?.credits_consumed === "number" && Number.isFinite(answer.json.key_metadata.credits_consumed)) ? estimatedUsd : round6(usedCredits * usdPerCredit), durationMs, httpStatus: answer.httpStatus, errorCode: code, retryable: RETRYABLE_ON_ANOTHER_PROVIDER.has(code) };
   } else {
     const read = args.interpret(answer);
     const credits = read.credits !== null ? read.credits : read.status === "failed" ? 0 : (capability.creditsPerCall ?? 0);
