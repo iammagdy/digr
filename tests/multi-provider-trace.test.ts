@@ -110,7 +110,8 @@ describe("routing trace: what each stage did, per chunk, collected by the chain"
     expect(summary.totalCalls).toBe(h.rec.rows.length);
     // the job total equals the provider spend recorded for the job
     expect(summary.totalCostUsd).toBeCloseTo(h.rec.spent(), 6);
-    expect(summary.stoppedBy).toBe("target_reached");
+    // plan v9 :122: the runner never ends a job at N and emits no «target_reached» (chainRunner.ts: stoppedBy is budget | no_more_work | null); the harness stops at the count, so the last chunk has no stop
+    expect(summary.stoppedBy).toBe(null);
   });
 
   it("a reading stage that fails records the fallback to the other provider's reader (stage fallback)", async () => {
