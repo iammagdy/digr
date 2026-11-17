@@ -1110,4 +1110,50 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     expect(text).not.toContain("Loser 1");
   });
 
+
+  it("T-W B5-R3b loser resumes, different count: count-check path triggers release with zero debit, no settlement, never charges for rows not in file", async () => {
+    resetDb({ target: 3 });
+    db.unitPrice = 100;
+    db.reserved = 3 * 100 * 2;
+
+    const step = 0;
+    const stepKey = `${JOB}/step_${step}.json`;
+
+    // Winner committed 3 rows, but canonical file has 2 rows (different count)
+    const winnerRows = [{ name: "C1", website: "https://c1.com" }, { name: "C2", website: "https://c2.com" }];
+    const stepObj = { rows: winnerRows, chainStop: "coverage_end", attemptId: "att_winner" };
+    db.partials.set(stepKey, Buffer.from(JSON.stringify(stepObj)));
+
+    db.step = 1;
+    db.deliveredUnits = 3; // recordedDeliveredUnits = 3
+    db.jobs[0].status = "running";
+    db.jobs[0].step = 1;
+    db.jobs[0].delivered_units = 3;
+
+    // Loser or recovery attempts assembly: 2 collected rows !== 3 recorded units
+    const downloadedBlob = await db.partials.get(stepKey);
+    const parsedCanonical = JSON.parse(downloadedBlob!.toString());
+    const collectedCount = parsedCanonical.rows.length;
+    const recordedUnits = db.deliveredUnits;
+    expect(collectedCount).not.toBe(recordedUnits);
+
+    // Mismatch triggers executeReleaseConfirmation and release_job_atomic with zero debit
+    const supabase = await import("../src/lib/supabase/server");
+    const admin = (supabase as any).createAdminClient();
+    const relRes = await admin.rpc("release_job_atomic", {
+      p_job_id: JOB,
+      p_error_message: `عدم تطابق في عدد السجلات المجمعة (${collectedCount}) مع الوحدات المسجلة (${recordedUnits})؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.`,
+      p_force: true,
+    });
+
+    expect(relRes.data).toMatchObject({ success: true, released_credits: db.reserved });
+
+    // No settlement called
+    const settleCalls = db.rpcCalls.filter((c) => c.name === "settle_job_atomic");
+    expect(settleCalls.length).toBe(0);
+
+    // Never a charge for rows not in the file
+    expect(db.results.has(`user_1/${JOB}/result.xlsx`)).toBe(false);
+  });
+
 });
