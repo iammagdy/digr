@@ -6,6 +6,9 @@ import { runTregEmailLookup, runTregDirectoryPageDirect } from "../src/lib/serve
 import { classifyTregCost } from "../src/lib/server/multiProvider/adapters/treg";
 import { buildTregIdempotencyKey } from "../src/lib/server/multiProvider/adapters/treg";
 import { runRecordedCall } from "../src/lib/server/multiProvider/httpCall";
+import { readFileSync } from "node:fs";
+import { categoryOf } from "../src/lib/treg/dataPolicy";
+import { blockedEndpointReason } from "../src/lib/treg/blockList";
 import { firecrawlAdapter } from "../src/lib/server/multiProvider/adapters/firecrawl";
 import { contextDevAdapter } from "../src/lib/server/multiProvider/adapters/contextdev";
 import { tregAdapter, runTregDirectoryPage } from "../src/lib/server/multiProvider/adapters/treg";
@@ -1216,5 +1219,18 @@ it("T-T 3 crash at each stage followed by redo produces two ledger rows, never e
       expect(res.ok).toBe(false);
       expect(res.errorCode).toBe(expected);
     }
+  });
+it("T-T 7 catalog drift guard (tomba.companies.emails.list is in catalog, sellable, cost 0.0089, b2b_contact)", () => {
+    const raw = JSON.parse(readFileSync("data/treg/treg_catalog_sellable.json", "utf8"));
+    const endpoints = (raw as { endpoints: Array<any> }).endpoints;
+    const tomba = endpoints.find((e) => e.id === "tomba.companies.emails.list");
+    expect(tomba).toBeDefined();
+    expect(tomba.cost.usd).toBe(0.0089);
+    expect(tomba.cost.type).toBe("per_success");
+    const inputNames = tomba.inputs.map((i: any) => i.name);
+    expect(inputNames).toContain("domain");
+    expect(inputNames).toContain("limit");
+    expect(blockedEndpointReason("tomba.companies.emails.list")).toBeNull();
+    expect(categoryOf("tomba.companies.emails.list")).toBe("b2b_contact");
   });
 });
