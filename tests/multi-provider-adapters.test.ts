@@ -3,6 +3,7 @@ import { vi } from "vitest";
 import { executeTregCall } from "../src/functions/shared/tregClient";
 import { executeTregCallWithRetry } from "../src/lib/server/tregAdapter";
 import { runTregEmailLookup, runTregDirectoryPageDirect } from "../src/lib/server/multiProvider/adapters/treg";
+import { classifyTregCost } from "../src/lib/server/multiProvider/adapters/treg";
 import { firecrawlAdapter } from "../src/lib/server/multiProvider/adapters/firecrawl";
 import { contextDevAdapter } from "../src/lib/server/multiProvider/adapters/contextdev";
 import { tregAdapter, runTregDirectoryPage } from "../src/lib/server/multiProvider/adapters/treg";
@@ -580,6 +581,79 @@ it("T-T P4 ambiguous statuses table (503, 302, 408, 409 always commit max(R, f))
         // replay shape => max(R, original)
         const resReplay = await ep.run({ ok: false, httpStatus: status, tregCallId: "c", costMicro: 0, originalCostMicro: 20000, latencyMs: 10, data: null, isRouteMaxCost: false, isPlatformBalanceLow: false });
         expect(resReplay).toBe(20000);
+      }
+    }
+  });
+it("T-T P4 sweep and property (500, 502, 504, 301, 304, 100 and full ambiguous status property test)", async () => {
+    const sweepStatuses = [500, 502, 504, 301, 304, 100];
+    const R_lookup = 8900;
+    const R_dir = 5760;
+
+    for (const status of sweepStatuses) {
+      for (const [R, runEp] of [
+        [R_lookup, async (res: any) => {
+          const commits: Array<{ costMicro: number }> = [];
+          const recorder = {
+            reserve: async () => ({ allowed: true, costId: 1 }),
+            commit: async (_id: number, rec: any) => { commits.push({ costMicro: Math.round(rec.costUsd * 1e6) }); },
+          };
+          await runTregEmailLookup({
+            tregCall: async () => res,
+            ctx: { recorder: recorder as any, jobId: "j" },
+            userId: "u",
+            domain: "example.com",
+            idempotencyKey: "k",
+            timeoutMs: 100,
+          });
+          return commits[0]?.costMicro;
+        }],
+        [R_dir, async (res: any) => {
+          const commits: Array<{ costMicro: number }> = [];
+          const recorder = {
+            reserve: async () => ({ allowed: true, costId: 1 }),
+            commit: async (_id: number, rec: any) => { commits.push({ costMicro: Math.round(rec.costUsd * 1e6) }); },
+          };
+          await runTregDirectoryPageDirect({
+            tregCall: async () => res,
+            ctx: { recorder: recorder as any, jobId: "j" },
+            userId: "u",
+            rawParams: { domain: "example.com" },
+            cursor: null,
+            idempotencyKey: "k",
+            timeoutMs: 100,
+          });
+          return commits[0]?.costMicro;
+        }],
+      ] as const) {
+        for (const f of [100, R, 20000]) {
+          const res = await runEp({ ok: false, httpStatus: status, tregCallId: "c", costMicro: f, latencyMs: 10, data: null, isRouteMaxCost: false, isPlatformBalanceLow: false });
+          expect(res).toBe(Math.max(R, f));
+          expect(res).toBeGreaterThanOrEqual(R);
+        }
+      }
+    }
+
+    const isDefinite = (s: number) => (s >= 200 && s <= 299) || (s >= 400 && s <= 499 && s !== 408 && s !== 409);
+
+    for (const R of [R_lookup, R_dir]) {
+      const grid = [0, 100, Math.round(R * 0.5), R, Math.round(R * 1.5), R * 2, R * 3];
+      for (let s = 100; s <= 599; s++) {
+        if (isDefinite(s)) continue;
+        for (const f of grid) {
+          const fakeResult = {
+            ok: false,
+            httpStatus: s,
+            tregCallId: "c",
+            costMicro: f,
+            latencyMs: 10,
+            data: null,
+            isRouteMaxCost: false,
+            isPlatformBalanceLow: false,
+          };
+          const verdict = classifyTregCost(fakeResult, R, "unparsable");
+          expect(verdict.commitMicro).toBeGreaterThanOrEqual(R);
+          expect(verdict.commitMicro).toBe(Math.max(R, f));
+        }
       }
     }
   });
