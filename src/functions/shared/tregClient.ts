@@ -388,6 +388,7 @@ async function executeTregCallUnguarded(options: TregCallOptions): Promise<TregC
   if (resolvedKey) reportProviderHttpStatus("treg", response.status, resolvedKey.source);
   const headerCost = response.headers.get("x-treg-cost-micro");
   const headerMicro = headerCost === null ? null : (parseInt(headerCost || "0", 10) || 0);
+  const costHeaderInvalid = headerCost !== null && !/^\d+$/.test(headerCost.trim());
   const originalCostMicro = parseInt(response.headers.get("x-treg-original-cost-micro") || "0", 10);
   const tregCallId = response.headers.get("x-treg-call-id") || "";
 
