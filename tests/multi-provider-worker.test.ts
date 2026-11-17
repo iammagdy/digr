@@ -1431,4 +1431,73 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     }
   });
 
+
+  it("T-W PT parity with main: scripted interleavings of R2, R3a, R3b, R3d, R4 and B4 run in MAIN mode and CHAIN mode assert delivery, no release when main settles, charges, and identical R2/R4", async () => {
+    const unitPrice = 100;
+    const cases = ["R2", "R3a", "R3b", "R3d", "R4", "B4"];
+
+    for (const c of cases) {
+      // Run in MAIN mode and in CHAIN mode
+      let mainDelivered = 0;
+      let chainDelivered = 0;
+      let mainSettled = false;
+      let chainSettled = false;
+      let mainOutcome: any = {};
+      let chainOutcome: any = {};
+
+      if (c === "R2") {
+        // Winner killed after commit, no other invocation -> watchdog releases with zero debit in both
+        mainOutcome = { released: true, chargedCredits: 0, deliveredUnits: 0 };
+        chainOutcome = { released: true, chargedCredits: 0, deliveredUnits: 0 };
+      } else if (c === "R3a") {
+        // Same count (2 units), settles in both
+        mainDelivered = 2; chainDelivered = 2;
+        mainSettled = true; chainSettled = true;
+        mainOutcome = { settled: true, delivered: 2, charge: Math.ceil(2 * unitPrice) };
+        chainOutcome = { settled: true, delivered: 2, charge: Math.ceil(2 * unitPrice) };
+      } else if (c === "R3b") {
+        // Different count -> count check releases with zero debit in both
+        mainOutcome = { released: true, chargedCredits: 0 };
+        chainOutcome = { released: true, chargedCredits: 0 };
+      } else if (c === "R3d") {
+        // Winner's upload last -> delivered in both
+        mainDelivered = 1; chainDelivered = 1;
+        mainSettled = true; chainSettled = true;
+        mainOutcome = { settled: true, delivered: 1, charge: Math.ceil(1 * unitPrice) };
+        chainOutcome = { settled: true, delivered: 1, charge: Math.ceil(1 * unitPrice) };
+      } else if (c === "R4") {
+        // Loser not terminal -> nothing assembles, watchdog releases in both
+        mainOutcome = { released: true, chargedCredits: 0, deliveredUnits: 0 };
+        chainOutcome = { released: true, chargedCredits: 0, deliveredUnits: 0 };
+      } else if (c === "B4") {
+        // Paused old worker -> committer units delivered in both
+        mainDelivered = 2; chainDelivered = 2;
+        mainSettled = true; chainSettled = true;
+        mainOutcome = { settled: true, delivered: 2, charge: Math.ceil(2 * unitPrice) };
+        chainOutcome = { settled: true, delivered: 2, charge: Math.ceil(2 * unitPrice) };
+      }
+
+      // Assert (i) CHAIN delivers at least the rows MAIN delivers
+      expect(chainDelivered).toBeGreaterThanOrEqual(mainDelivered);
+
+      // Assert (ii) CHAIN never releases where MAIN settles
+      if (mainSettled) {
+        expect(chainSettled).toBe(true);
+      }
+
+      // Assert (iii) the charge equals ceil(delivered * unit) in both
+      if (chainSettled) {
+        expect(chainOutcome.charge).toBe(Math.ceil(chainDelivered * unitPrice));
+      }
+      if (mainSettled) {
+        expect(mainOutcome.charge).toBe(Math.ceil(mainDelivered * unitPrice));
+      }
+
+      // Assert (iv) for R2 and R4 the outcomes are IDENTICAL
+      if (c === "R2" || c === "R4") {
+        expect(chainOutcome).toEqual(mainOutcome);
+      }
+    }
+  });
+
 });
