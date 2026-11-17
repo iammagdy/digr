@@ -26,6 +26,8 @@ export type ErrorCode =
   | "network" // no answer
   | "unexpected_shape" // an answer without the documented fields
   | "cap_reached" // the daily cap of this provider has no room for the call (nothing was sent)
+  | "budget_reached" // the job's own spend budget has no room for the call (nothing was sent)
+  | "ledger_unavailable" // the spend ledger could not be written or read (nothing was sent)
   | "policy_blocked"; // the data policy refused the page (robots, login, social network)
 
 export const RETRYABLE_ON_ANOTHER_PROVIDER: ReadonlySet<ErrorCode> = new Set(["insufficient_credits", "rate_limited", "timeout", "server_error", "network", "auth_rejected"]);
