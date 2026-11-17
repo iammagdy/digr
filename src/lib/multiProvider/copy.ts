@@ -147,6 +147,12 @@ export function chainZeroDeliveryReasonAr(args: { target: number; stop: ChainRun
   return `المسلَّم ${n(0)} من ${toArabicDigits(args.target)} مطلوب. ${args.stop ? chainShortfallReasonAr({ stop: args.stop, callCap: null, excluded: 0 }) : "السبب: لم يصلنا سبب محدد لتوقف المعالجة قبل اكتمال العدد."}`;
 }
 
+export function chainFailureReasonAr(kind: "spend" | "cursor" | "lease"): string {
+  if (kind === "spend") return "السبب: تعذّر التحقق من الحد المسموح لتكلفة هذا الطلب فتوقفنا احتياطًا قبل اكتمال العدد.";
+  if (kind === "cursor") return "السبب: تعذّر حفظ حالة البحث بشكل آمن فتوقفنا احتياطًا قبل اكتمال العدد.";
+  return "السبب: تعذّر التأكد من سلامة تنفيذ هذه المعالجة فتوقفنا احتياطًا قبل اكتمال العدد.";
+}
+
 export const ALL_CUSTOMER_STRINGS = (): string[] => [
   SOURCE_WORDING_AR, ...PLAN_LIMITS_AR, NO_ROUTE_AR,
   whatWeCollectAr({ count: 50, withEmail: true, withPhone: true, withDecisionMaker: true, industry: "مقاولات", country: "مصر" }),
