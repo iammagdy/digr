@@ -694,6 +694,60 @@ export async function lookupEmail(rc: ChainRunCtx, domain: string): Promise<Foun
   }
 }
 
+export async function readPageV2(rc: ChainRunCtx, url: string, structured = false): Promise<ReadResult | "blocked" | null> {
+  const enrichStage = rc.route.stages.find((s) => s.stage === "enrich");
+  let failed: CapabilityDef | null = null;
+  let failedReason = "";
+  const closeFallback = (to: CapabilityDef | null) => {
+    if (failed) {
+      rc.trace.fallback({ stage: "enrich", fromCapabilityId: failed.id, toCapabilityId: to?.id ?? null, reason: failedReason });
+      failed = null;
+    }
+  };
+  for (const capId of enrichStage?.capabilityIds ?? []) {
+    const base = capabilityById(capId);
+    const cap = structured && base ? capabilityById(base.provider === "firecrawl" ? "firecrawl.scrape_json" : "contextdev.scrape_json") : base;
+    if (!cap || !isSellable(cap) || !rc.deps.providerKeys[cap.provider] || rc.state.dn.includes(cap.provider) || rc.state.cp.includes(cap.provider)) continue;
+    const gate = await canStartCall(rc, cap.costPerCallUsd ?? 0);
+    if (gate !== "ok") {
+      if (gate === "budget") rc.state.bd = 1;
+      closeFallback(null);
+      return null;
+    }
+    closeFallback(cap);
+    rc.state.ec += 1;
+    const adapter = ADAPTERS[cap.provider];
+    const ctx = chainCtxFor(rc, cap.provider);
+    const res: OperationResult<any> = structured
+      ? await adapter.run("page.read_structured", { url, prompt: TEAM_PROMPT, schema: TEAM_SCHEMA }, ctx)
+      : await adapter.run("page.read", { url }, ctx);
+    rc.chunkUsd += res.costUsd;
+    rc.trace.call("enrich", cap.provider, cap.id, { status: res.status, costUsd: res.costUsd, durationMs: res.durationMs });
+    if (res.errorCode === "budget_reached") {
+      rc.state.bd = 1;
+      closeFallback(null);
+      return null;
+    }
+    if (res.errorCode === "ledger_unavailable") {
+      rc.stop.ledger = true;
+      closeFallback(null);
+      return null;
+    }
+    if (res.errorCode === "cap_reached") {
+      if (!rc.state.cp.includes(cap.provider)) rc.state.cp.push(cap.provider);
+      closeFallback(null);
+      return null;
+    }
+    if (res.ok && res.status !== "empty") return Object.assign(res, { capId: cap.id });
+    if (res.errorCode === "blocked_site") return "blocked";
+    if (res.errorCode === "not_found" || res.errorCode === "bad_request") return null;
+    failed = cap;
+    failedReason = res.errorCode ?? "empty";
+  }
+  closeFallback(null);
+  return null;
+}
+
 
 
 
