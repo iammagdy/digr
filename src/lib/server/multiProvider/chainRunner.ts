@@ -578,6 +578,7 @@ export async function discoverOnce(rc: ChainRunCtx): Promise<void> {
   if (!stage) return;
   const caps = stage.capabilityIds.map(capabilityById);
   for (const cap of caps) {
+    if (!cap) continue;
     const provider = cap.provider;
     const isUnusable =
       !rc.deps.providerKeys[provider] ||
