@@ -908,9 +908,9 @@ describe("chain: exact-N engine (DT-20261117-04)", () => {
     expect(rows.length).toBeGreaterThanOrEqual(1);
     const r = rows[0];
     expect(r.industry).toBe("مقاولات");
-    expect(r.country).toBe("مصر");
+    expect(r.location).toBe("مصر");
     expect(r.industry).not.toBe("صناعة");
-    expect(r.country).not.toBe("السعودية");
+    expect(r.location).not.toBe("السعودية");
 
     const hBlank = harness(world, {}, {
       tregRows: [{ company_name: "شركة النور", website: "https://alnoor.com", industry: "صناعة", country: "السعودية" }],
@@ -918,7 +918,7 @@ describe("chain: exact-N engine (DT-20261117-04)", () => {
     const { rows: rowsBlank } = await runAll(hBlank, params({ count: 1, industry: undefined, industryAr: undefined, country: undefined, countryAr: undefined }), 5);
     if (rowsBlank.length > 0) {
       expect(rowsBlank[0].industry).toBe("");
-      expect(rowsBlank[0].country).toBe("");
+      expect(rowsBlank[0].location).toBe("");
     }
   });
 });
