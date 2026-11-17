@@ -639,7 +639,8 @@ describe("worker: multi-provider chain job (fake providers)", () => {
       const call = relCalls[0];
       expect(Object.keys(call.args).sort()).toEqual(["p_error_message", "p_force", "p_job_id"]);
       expect(call.args.p_force).toBe(true);
-      expect(call.args.p_error_message).toBe("لم يُعثر على أي بيانات مطابقة من المصدر؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+      // plan v9 :196 / :310 (P86): the chain release text; this world (8 companies, no e-mail or phone) ends coverage_end
+      expect(call.args.p_error_message).toBe(chainZeroDeliveryReasonAr({ target: TARGET, stop: "coverage_end" }));
     } finally {
       if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
     }
