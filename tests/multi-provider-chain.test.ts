@@ -433,7 +433,7 @@ describe("T-7 money and shape guards (source text)", () => {
     }
 
     const tregClientSrc = readFileSync("src/functions/shared/tregClient.ts", "utf8");
-    expect(countOccurrences(tregClientSrc, "costHeaderInvalid")).toBe(4);
+    expect(countOccurrences(tregClientSrc, "costHeaderInvalid")).toBe(5);
     expect(tregClientSrc.includes("costMicro: chargedMicro !== null ? chargedMicro :")).toBe(true);
 
     const workerRouteSrc = readFileSync("src/app/api/worker/chunk/route.ts", "utf8");
