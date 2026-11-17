@@ -145,7 +145,7 @@ import { jobIdForQuote } from "../src/lib/server/retryReuse";
 import { setChainTransportForTesting } from "../src/lib/server/multiProvider/chainAdapter";
 import { createFakeFetch, createFakeRobotsFetch, defaultFakeWorld, type FakeCompany } from "../src/lib/server/multiProvider/fakeTransport";
 import { routeCodeOf } from "../src/lib/multiProvider/routes";
-import { chainShortfallReasonAr, chainStopProgressLineAr, chainZeroDeliveryReasonAr } from "../src/lib/multiProvider/copy";
+import { chainShortfallReasonAr, chainStopProgressLineAr, chainZeroDeliveryReasonAr, chainFailureReasonAr } from "../src/lib/multiProvider/copy";
 import { dedupeIdentityFor } from "../src/lib/server/rowDedupe";
 import { toArabicDigits } from "../src/lib/arabicDigits";
 
@@ -1497,6 +1497,76 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       if (c === "R2" || c === "R4") {
         expect(chainOutcome).toEqual(mainOutcome);
       }
+    }
+  });
+
+
+  it("T-W B8 ok:false terminals: spend, ledger, clock, cursor, lease emit neutral Arabic sentence of chainFailureReasonAr, no provider string, no release/charge claim", async () => {
+    const kinds = [
+      { failure: "spend", reason: chainFailureReasonAr("spend") },
+      { failure: "ledger", reason: chainFailureReasonAr("spend") },
+      { failure: "clock", reason: chainFailureReasonAr("spend") },
+      { failure: "cursor", reason: chainFailureReasonAr("cursor") },
+      { failure: "lease", reason: chainFailureReasonAr("lease") },
+    ];
+
+    for (const { failure, reason } of kinds) {
+      expect(typeof reason).toBe("string");
+      expect(reason.startsWith("السبب:")).toBe(true);
+      // No provider name
+      expect(reason).not.toMatch(/treg|tomba|icypeas|firecrawl|contextdev|hunter|apollo/i);
+      // No release or charge claim
+      expect(reason).not.toMatch(/سُلّم|يُخصم|يُحتسب/);
+    }
+  });
+
+  it("T-W B9 final line and DT-03 failures: final line read from assembled file; dedupe and settlement failure behave as DT-03 W-6/W-10", async () => {
+    // 1. Dedupe removes a runner row (W-6 behavior)
+    resetDb({ target: 5 });
+    const companyIdentity = dedupeIdentityFor("company");
+    db.quotes[0].items[0].params.excludeRowKeys = [1].map((n) => companyIdentity({ website: `https://fakeco${n}.net` })!);
+    const world = defaultFakeWorld(6);
+    const { last: dedupeLast } = await runMany(world);
+    expect(dedupeLast.status).toBe(200);
+
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(db.results.get(`user_1/${JOB}/result.xlsx`)! as any);
+    const sheet = wb.worksheets[0];
+    const assembledRowCount = sheet.rowCount - 1;
+
+    const finalEvent = db.events.find((e: any) => String(e.message ?? "").startsWith("المسلَّم"));
+    expect(finalEvent).toBeDefined();
+    expect(String(finalEvent.message)).toContain(`المسلَّم ${toArabicDigits(assembledRowCount)} من`);
+
+    // 2. Settlement failure (W-10 behavior)
+    resetDb({ target: 5 });
+    const supabase = await import("../src/lib/supabase/server");
+    const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+    vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+      const client = origImpl!();
+      const origRpc = client.rpc;
+      (client as any).rpc = vi.fn(async (name: string, args: any) => {
+        if (name === "settle_job_atomic") {
+          db.rpcCalls.push({ name, args });
+          return { data: null, error: { message: "settle_failed" } };
+        }
+        return origRpc(name, args);
+      });
+      return client;
+    });
+
+    try {
+      const { last: failLast } = await run(world);
+      expect(failLast.status).toBeGreaterThanOrEqual(400);
+
+      const events = db.events.map((e: any) => String(e.message ?? ""));
+      for (const t of events) {
+        if (t.includes("الموثّق منها")) continue;
+        if (/^تعذر استكمال الاستخراج: settle_failed \(حجز مؤقت مُحرَّر [٠-٩]+ نقطة، ولم يُخصم شيء\)\.$/.test(t)) continue;
+        expect(t).not.toMatch(/سُلّم|يُخصم|يُحتسب|تم إكمال/);
+      }
+    } finally {
+      if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
     }
   });
 
