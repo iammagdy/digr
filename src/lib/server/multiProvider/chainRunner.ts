@@ -120,6 +120,138 @@ export function encodeCursorV2(state: ChainCursorV2): { fits: true; cursor: stri
   }
   return { fits: true, cursor, state: copy };
 }
+
+export function decodeCursorAny(raw: string | null | undefined, aid: string): ChainCursorV2 {
+  if (!raw || typeof raw !== "string" || !raw.trim()) {
+    return emptyCursorV2(aid);
+  }
+  let parsed: any;
+  try {
+    const json = Buffer.from(raw, "base64url").toString("utf8");
+    parsed = JSON.parse(json);
+  } catch {
+    return emptyCursorV2(aid);
+  }
+  if (!parsed || typeof parsed !== "object") {
+    return emptyCursorV2(aid);
+  }
+
+  const clampInt = (x: unknown): number => (typeof x === "number" && Number.isFinite(x) ? Math.max(0, Math.min(9999999999, Math.floor(x))) : 0);
+  const clampFlag = (x: unknown): number => (x === 1 || x === true ? 1 : 0);
+  const validProviders = new Set(["treg", "firecrawl", "contextdev"]);
+
+  if (parsed.v === 2) {
+    const q: ChainCandidateV2[] = Array.isArray(parsed.q)
+      ? parsed.q
+          .filter((c: any) => c && typeof c.n === "string" && typeof c.u === "string")
+          .map((c: any) => ({ n: c.n, u: c.u }))
+      : [];
+    const wq: Record<string, number> = {};
+    if (parsed.wq && typeof parsed.wq === "object") {
+      for (const [k, v] of Object.entries(parsed.wq)) {
+        if (validProviders.has(k)) wq[k] = clampInt(v);
+      }
+    }
+    const ff: Record<string, number> = {};
+    const validFfKeys = new Set(["treg", "firecrawl", "contextdev", "tregmail"]);
+    if (parsed.ff && typeof parsed.ff === "object") {
+      for (const [k, v] of Object.entries(parsed.ff)) {
+        if (validFfKeys.has(k)) ff[k] = clampInt(v);
+      }
+    }
+    const filterProv = (arr: unknown): string[] => (Array.isArray(arr) ? arr.filter((x): x is string => typeof x === "string" && validProviders.has(x)) : []);
+    const seen = Array.isArray(parsed.seen) ? parsed.seen.filter((x: any): x is string => typeof x === "string") : [];
+
+    return {
+      v: 2,
+      n: clampInt(parsed.n),
+      dc: clampInt(parsed.dc),
+      ec: clampInt(parsed.ec),
+      tp: clampInt(parsed.tp),
+      out: clampInt(parsed.out),
+      ix: clampInt(parsed.ix),
+      sq: clampInt(parsed.sq),
+      uo: clampInt(parsed.uo),
+      tr: clampFlag(parsed.tr),
+      wm: clampInt(parsed.wm),
+      tg: clampFlag(parsed.tg),
+      dx: clampFlag(parsed.dx),
+      bd: clampFlag(parsed.bd),
+      tx: clampFlag(parsed.tx),
+      tf: clampFlag(parsed.tf),
+      aid,
+      q,
+      tc: typeof parsed.tc === "string" ? parsed.tc : null,
+      tl: typeof parsed.tl === "string" ? parsed.tl : null,
+      wq,
+      ff,
+      dn: filterProv(parsed.dn),
+      cp: filterProv(parsed.cp),
+      un: filterProv(parsed.un),
+      seen,
+    };
+  }
+
+  if (parsed.v === 1) {
+    let uo = 0;
+    const q: ChainCandidateV2[] = [];
+    if (Array.isArray(parsed.rest)) {
+      for (const c of parsed.rest) {
+        if (!c || typeof c.u !== "string" || !ORIGIN_CHARSET_RE.test(c.u)) {
+          uo++;
+          continue;
+        }
+        const n = stripControl(String(c.n ?? "")).slice(0, 120);
+        if (!n) {
+          uo++;
+          continue;
+        }
+        q.push({ n, u: c.u });
+      }
+    }
+    const seen: string[] = [];
+    if (Array.isArray(parsed.seen)) {
+      for (const s of parsed.seen) {
+        if (typeof s === "string" && HOST_RE.test(s)) {
+          seen.push(s);
+        } else {
+          uo++;
+        }
+      }
+    }
+    return {
+      v: 2,
+      n: 0,
+      dc: clampInt(parsed.dc),
+      ec: clampInt(parsed.ec),
+      tp: clampInt(parsed.taken),
+      out: clampInt(parsed.out),
+      ix: clampInt(parsed.ix),
+      sq: 0,
+      uo,
+      tr: 0,
+      wm: 0,
+      tg: 0,
+      dx: clampFlag(parsed.dx),
+      bd: 0,
+      tx: 0,
+      tf: 0,
+      aid,
+      q,
+      tc: typeof parsed.tc === "string" ? parsed.tc : null,
+      tl: null,
+      wq: {},
+      ff: {},
+      dn: [],
+      cp: [],
+      un: [],
+      seen,
+    };
+  }
+
+  return emptyCursorV2(aid);
+}
+
 const MAX_CURSOR_CHARS = 8000;
 export const MAX_STARTS_PER_STEP = 8;
 export const CHAIN_RUN = { chunkCalls: 24, variantsPerProvider: 8, queueBatchMax: 20, stallChunks: 3, downAfterFailures: 3, wasteBreakerMisses: 8, leaseMarginMs: 3000, noCallBeforeEndMs: 5000, noCompanyBeforeEndMs: 15000, hardEndAfterDeadlineMs: 5000, tregTimeoutCapMs: 10000, tregMinTimeoutMs: 2000, tregKeyPoolHops: 3, wallClockMs: 6 * 60 * 60 * 1000, cursorStateMaxBytes: 30000, cursorV2MaxChars: 40000, queueMaxBytes: 12000, tregCursorMaxEscapedBytes: 512, webAskLimit: 20, webQueryMaxChars: 300, excludeDomainsMax: 100, lookupFailuresOff: 3 } as const;
