@@ -1,6 +1,6 @@
 import { capabilityById, isSellable, PROVIDER_FACTS } from "../../multiProvider/catalog";
 import {
-  budgetStopLineAr, chainFinishedLineAr, discoveryEmptyLineAr, discoveryLineAr, enrichLineAr, skippedSitesLineAr, stageFallbackLineAr,
+  budgetStopLineAr, chainFinishedLineAr, chainStopProgressLineAr, discoveryEmptyLineAr, discoveryLineAr, enrichLineAr, skippedSitesLineAr, stageFallbackLineAr,
 } from "../../multiProvider/copy";
 import {
   buildContactRow, checkPublicBusinessUrl, checkRobots, companyDomain, extractEmails, extractPhones, extractProfileLink, linksFromMarkdown,
@@ -201,7 +201,7 @@ type ReadResult = OperationResult<any> & { capId: string };
 const TEAM_PROMPT = "List the people this page publicly lists as company leaders or owners, with their exact job titles. Return only what the page states.";
 const TEAM_SCHEMA = { type: "object", properties: { people: { type: "array", items: { type: "object", properties: { name: { type: "string" }, title: { type: "string" } }, required: ["name", "title"] } } }, required: ["people"] };
 
-export async function runChainChunk(input: ProviderAdapterCallInput, deps: ChainDeps): Promise<ProviderAdapterCallOutput> {
+export async function runChainChunk(input: ProviderAdapterCallInput, deps: ChainDeps): Promise<ProviderAdapterCallOutput & { chainStop?: "budget" | "no_more_work" | "target_reached" }> {
   const now = deps.now ?? Date.now;
   const fail = (messageAr: string, errorCode: string): ProviderAdapterCallOutput => ({ ok: false, httpStatus: 503, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "", errorCode, errorMessageAr: messageAr });
 
@@ -425,8 +425,7 @@ export async function runChainChunk(input: ProviderAdapterCallInput, deps: Chain
   state.ix = processedAny ? 0 : state.ix + 1;
   const noMoreWork = (state.rest.length === 0 && state.dx) || (state.rest.length > 0 && state.ec >= maxEnrichCalls) || state.ix >= 3;
   const finished = budgetStop || noMoreWork || input.deliveredSoFar + delivered.length >= params.count;
-  if (budgetStop) await deps.emit(budgetStopLineAr(state.out), state.out);
-  else if (finished) await deps.emit(chainFinishedLineAr({ delivered: state.out }), state.out);
+  if (finished) await deps.emit(chainStopProgressLineAr(budgetStop ? "budget" : input.deliveredSoFar + delivered.length >= params.count ? "target_reached" : "no_more_work"), state.out);
 
   const stoppedBy: ChunkTrace["stoppedBy"] = budgetStop ? "budget" : input.deliveredSoFar + delivered.length >= params.count ? "target_reached" : noMoreWork ? "no_more_work" : null;
   trace.stage("verify", null, null).skipped += skipped;
@@ -440,5 +439,6 @@ export async function runChainChunk(input: ProviderAdapterCallInput, deps: Chain
     costUsd: Math.round(chunkUsd * 1e6) / 1e6,
     costMicro: Math.round(chunkUsd * 1e6),
     tregCallId: "",
+    ...(finished && stoppedBy ? { chainStop: stoppedBy } : {}),
   };
 }

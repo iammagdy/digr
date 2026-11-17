@@ -1,3 +1,5 @@
+import { checkCustomerText } from "../src/lib/agentMission/text";
+import { expectedTargetLineAr, chainShortfallReasonAr } from "../src/lib/multiProvider/copy";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { NextRequest } from "next/server";
@@ -70,6 +72,44 @@ describe("customer-facing words of the multi-provider feature", () => {
       expect(code).not.toMatch(/firecrawl|contextdev|treg/);
     }
     expect(new Set(ROUTE_DEFS.map((r) => routeCodeOf(r.id))).size).toBe(ROUTE_DEFS.length);
+  });
+
+  it("T-1 new chain strings satisfy all customer leak and Arabic rules", () => {
+    const all = ALL_CUSTOMER_STRINGS();
+    const newStrings = all.slice(14);
+    for (const s of newStrings) {
+      expect(checkCustomerText(s).issues).toEqual([]);
+      expect(s).not.toMatch(LATIN);
+      expect(s).not.toMatch(ASCII_DIGIT);
+      expect(s).not.toMatch(LEAK);
+      expect(s).not.toContain("سجل");
+      expect(s).not.toMatch(/لا توجد بيانات|لا يوجد|انتهت البيانات|لا تتوفر/);
+    }
+
+    const cut = expectedTargetLineAr({ asked: 50, fitted: 41 });
+    const uncut = expectedTargetLineAr({ asked: 50, fitted: 50 });
+    expect(cut).toContain("العدد المستهدف تسليمه");
+    expect(uncut).toContain("العدد المستهدف تسليمه");
+    expect(cut).toContain("من أصل ٥٠");
+    for (const forbidden of ["نواصل", "حتى يكتمل", "بالضبط", "لا توجد", "لا يوجد"]) {
+      expect(cut).not.toContain(forbidden);
+      expect(uncut).not.toContain(forbidden);
+    }
+
+    const reasons = [
+      chainShortfallReasonAr({ stop: "budget", callCap: null, excluded: 0 }),
+      chainShortfallReasonAr({ stop: "no_more_work", callCap: null, excluded: 0 }),
+      chainShortfallReasonAr({ stop: null, callCap: "page_cap", excluded: 0 }),
+      chainShortfallReasonAr({ stop: null, callCap: "empty_pages", excluded: 0 }),
+      chainShortfallReasonAr({ stop: null, callCap: "source_repeats", excluded: 0 }),
+    ];
+    for (const r of reasons) {
+      expect(r.endsWith("لم نصل إليها.")).toBe(true);
+    }
+    const exclReason = chainShortfallReasonAr({ stop: null, callCap: null, excluded: 3 });
+    const neutralReason = chainShortfallReasonAr({ stop: null, callCap: null, excluded: 0 });
+    expect(exclReason).toContain("استُبعد ٣ شركات");
+    expect(neutralReason).toBe("لم يصلنا سبب محدد لتوقف المعالجة قبل اكتمال العدد.");
   });
 });
 

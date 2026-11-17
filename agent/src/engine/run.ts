@@ -22,6 +22,7 @@ import type { SandboxResult } from "../sandbox";
 import type { AgentStore, MissionEventInput } from "../types";
 import { withCairoPeriod } from "../periodRequest";
 import type { SourceGateway } from "./sourceGateway";
+import { isDirectWebSource, providerOf } from "./sourceGateway";
 
 type Stage = PricedPlan["stages"][number];
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -432,6 +433,7 @@ const CONTINUE_ON: ReadonlySet<StopReason> = new Set<StopReason>(["failed", "sou
 /** The first day a read goes back to when the customer gave no period. */
 const EARLIEST_DAY = "2000-01-01";
 
+const capFamilyOf = (endpointId: string): string => (isDirectWebSource(endpointId) ? providerOf(endpointId) : "treg");
 /**
  * FETCH TO THE COUNT ACROSS TOOLS (S1 item 1.9, owner decisions D7 and D15). When the tool of the recipe could not give the approved count, the next tool of `spec.alternatives` continues: by the remaining count (the stage's own accepted count), by the date boundary
  * (a tool with date inputs is asked for the days up to the oldest day read so far) and by the stored ids (the item store drops an id it already holds). A cursor never crosses providers; near-duplicates the id check cannot catch are kept. Everything stays inside the
@@ -442,16 +444,19 @@ async function continueAcrossTools(deps: EngineDeps, stage: Stage, spec: EngineS
   const now = (deps.now ?? Date.now)();
   const period = periodOf(stage, now);
   let r = first;
+  const capped = new Set<string>(); if (first.reason === "daily_cap") capped.add(capFamilyOf(spec.endpoint_id));
   for (let i = 0; i < (spec.alternatives ?? []).length; i += 1) {
     if (r.aborted) return r;
     if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };
-    if (!CONTINUE_ON.has(r.reason)) break;
+    if (!CONTINUE_ON.has(r.reason) && r.reason !== "daily_cap") break;
     const alt = spec.alternatives![i];
+    const family = capFamilyOf(alt.endpoint_id); if (capped.has(family)) continue;
     const oldest = items.streamKeys(stage.key).map((k) => items.streamState(stage.key, k)?.oldest ?? null).filter((x): x is number => x !== null);
     const params = alt.window && oldest.length > 0 ? windowParams(alt.window, alt.params, period ? dayOf(period.sinceMs) : EARLIEST_DAY, dayOf(Math.min(...oldest)), boundsOf(period)) : withCairoPeriod(stage, alt.window, alt.params);
     const { alternatives: _a, sources: _s, id_field: _i, window: _w, ...rest } = spec;
     const altSpec: EngineSpec = { ...rest, endpoint_id: alt.endpoint_id, params, cursor_param: alt.cursor_param, map_code: alt.map_code, map_file_id: alt.map_file_id, ...(alt.id_field !== undefined ? { id_field: alt.id_field } : {}), ...(alt.window ? { window: alt.window } : {}) };
     r = await runStream(deps, stage, altSpec, `alt:${i}`, params, null, Number.POSITIVE_INFINITY, boundaryFieldOf(stage, now));
+    if (r.reason === "daily_cap") capped.add(family);
   }
   if (r.aborted) return r;
   if (items.counts(stage.key).accepted >= stage.planned_rows) return { reason: "target_reached", aborted: null };

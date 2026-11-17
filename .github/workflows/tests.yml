@@ -46,3 +46,34 @@ jobs:
 
       - name: Run the test suite
         run: npm test
+
+  typecheck:
+    name: Typecheck (root + agent)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Check out the PR head commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - name: Verify the checked-out commit is the PR head
+        run: test "$(git rev-parse HEAD)" = "$PR_HEAD_SHA"
+      - name: Set up Node 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            agent/package-lock.json
+      - name: Install root dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Install agent dependencies
+        run: npm ci --prefix agent --no-audit --no-fund
+      - name: Type-check the website and tests (root tsconfig)
+        run: npx tsc --noEmit
+      - name: Type-check the worker (agent tsconfig)
+        run: npm run agent:typecheck

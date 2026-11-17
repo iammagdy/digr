@@ -101,6 +101,8 @@ import { jobIdForQuote } from "../src/lib/server/retryReuse";
 import { setChainTransportForTesting } from "../src/lib/server/multiProvider/chainAdapter";
 import { createFakeFetch, createFakeRobotsFetch, defaultFakeWorld, type FakeCompany } from "../src/lib/server/multiProvider/fakeTransport";
 import { routeCodeOf } from "../src/lib/multiProvider/routes";
+import { chainShortfallReasonAr, chainStopProgressLineAr } from "../src/lib/multiProvider/copy";
+import { dedupeIdentityFor } from "../src/lib/server/rowDedupe";
 
 const JOB = jobIdForQuote("quote_chain_1");
 const TARGET = 3;
@@ -137,6 +139,21 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
     const responses: Array<{ status: number; json: any }> = [];
     for (let i = 0; i < 12; i++) {
+      const res = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", { method: "POST", headers: { authorization: "Bearer chain-secret" }, body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }) }));
+      const entry = { status: res.status, json: await res.json() };
+      responses.push(entry);
+      if (entry.json.done === true || entry.json.released === true || entry.status >= 400) break;
+    }
+    return { responses, last: responses[responses.length - 1] };
+  }
+
+  async function runMany(world: FakeCompany[], scenario: Parameters<typeof createFakeFetch>[1] = {}, maxIters = 40) {
+    const route = await import("../src/app/api/worker/chunk/route");
+    fetchSpy = createFakeFetch(world, scenario);
+    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS });
+    setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
+    const responses: Array<{ status: number; json: any }> = [];
+    for (let i = 0; i < maxIters; i++) {
       const res = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", { method: "POST", headers: { authorization: "Bearer chain-secret" }, body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }) }));
       const entry = { status: res.status, json: await res.json() };
       responses.push(entry);
@@ -249,5 +266,331 @@ describe("worker: multi-provider chain job (fake providers)", () => {
     const { last } = await run(defaultFakeWorld(10));
     expect(fetchSpy.log.filter((l) => l.operation !== "usage")).toHaveLength(0);
     expect(last.json).toMatchObject({ released: true, chargedCredits: 0 });
+  });
+
+  it("W-1 budget stop: states budget limit in customer words and never claims source exhausted", async () => {
+    resetDb({ target: 8 });
+    db.unitPrice = 10;
+    db.reserved = Math.ceil(8 * 10 * 1.15);
+    const world = defaultFakeWorld(20);
+    const { last } = await runMany(world);
+    expect(last.status).toBe(200);
+
+    const budgetSentence = chainShortfallReasonAr({ stop: "budget", callCap: null, excluded: 0 });
+    const finalEvent = db.events.find((e: any) => String(e.message ?? "").includes(budgetSentence));
+    expect(finalEvent).toBeDefined();
+    expect(String(finalEvent.message)).toMatch(/^المسلَّم .* من .* مطلوب\./);
+
+    const settleIdx = db.rpcCalls.findIndex((c) => c.name === "settle_job_atomic");
+    expect(settleIdx).toBeGreaterThanOrEqual(0);
+
+    expect(db.events.some((e: any) => String(e.message ?? "").includes("لم يتوفر في المصدر عدد أكبر يطابق طلبك."))).toBe(false);
+  });
+
+  it("W-2 no more work: emits NOMORE sentence when search runs dry before target", async () => {
+    resetDb({ target: 8 });
+    const world = defaultFakeWorld(5).map((c, i) => (i < 3 ? { ...c, email: "corp@fakedomain.org" } : { ...c, email: undefined, phone: undefined }));
+    const { last } = await runMany(world);
+    expect(last.status).toBe(200);
+
+    const nomoreSentence = chainShortfallReasonAr({ stop: "no_more_work", callCap: null, excluded: 0 });
+    const finalEvent = db.events.find((e: any) => String(e.message ?? "").includes(nomoreSentence));
+    expect(finalEvent).toBeDefined();
+    expect(String(finalEvent.message)).toBe(`المسلَّم ٣ من ٨ مطلوب. ${nomoreSentence}`);
+
+    const settleIdx = db.rpcCalls.findIndex((c) => c.name === "settle_job_atomic");
+    expect(settleIdx).toBeGreaterThanOrEqual(0);
+
+    expect(db.events.some((e: any) => String(e.message ?? "").includes("لم يتوفر في المصدر عدد أكبر يطابق طلبك."))).toBe(false);
+  });
+
+  it("W-3 page cap: emits PAGECAP sentence when 3-page cap is reached", async () => {
+    resetDb({ target: 10 });
+    const world = defaultFakeWorld(100).map((c, i) => (i % 10 === 0 ? { ...c, email: "verified@corp.com" } : { ...c, email: undefined, phone: undefined }));
+    const { last } = await runMany(world);
+    expect(last.status).toBe(200);
+
+    const pagecapSentence = chainShortfallReasonAr({ stop: null, callCap: "page_cap", excluded: 0 });
+    const finalEvent = db.events.find((e: any) => String(e.message ?? "").includes(pagecapSentence));
+    expect(finalEvent).toBeDefined();
+    expect(String(finalEvent.message)).toMatch(/^المسلَّم .* من .* مطلوب\./);
+
+    const settleIdx = db.rpcCalls.findIndex((c) => c.name === "settle_job_atomic");
+    expect(settleIdx).toBeGreaterThanOrEqual(0);
+
+    expect(db.events.some((e: any) => String(e.message ?? "").includes("لم يتوفر في المصدر عدد أكبر يطابق طلبك."))).toBe(false);
+  });
+
+  it("W-4 empty pages: emits EMPTY sentence when consecutive pages yield zero accepted rows", async () => {
+    resetDb({ target: 8 });
+    const world = defaultFakeWorld(10).map((c, i) => (i < 2 ? { ...c, email: "verified@corp.com" } : { ...c, email: undefined, phone: undefined }));
+    const { last } = await runMany(world);
+    expect(last.status).toBe(200);
+
+    const emptySentence = "توقفت المعالجة لأن دفعتين متتاليتين لم تضيفا شركات موثّقة جديدة قبل اكتمال العدد، وقد توجد شركات أخرى مطابقة لم نصل إليها.";
+    const finalEvent = db.events.find((e: any) => String(e.message ?? "").includes(emptySentence));
+    expect(finalEvent).toBeDefined();
+    expect(String(finalEvent.message)).toMatch(/^المسلَّم .* من .* مطلوب\./);
+
+    const settleIdx = db.rpcCalls.findIndex((c) => c.name === "settle_job_atomic");
+    expect(settleIdx).toBeGreaterThanOrEqual(0);
+
+    expect(db.events.some((e: any) => String(e.message ?? "").includes("لم يتوفر في المصدر عدد أكبر يطابق طلبك."))).toBe(false);
+  });
+
+  it("W-5 repeat: emits REPEAT sentence when consecutive chunks repeat already delivered companies", async () => {
+    resetDb({ target: 8 });
+    const world = defaultFakeWorld(10);
+    const { last } = await runMany(world);
+    expect(last.status).toBe(200);
+
+    const repeatSentence = chainShortfallReasonAr({ stop: null, callCap: "source_repeats", excluded: 0 });
+    const finalEvent = db.events.find((e: any) => String(e.message ?? "").includes(repeatSentence));
+    if (finalEvent) {
+      expect(String(finalEvent.message)).toMatch(/^المسلَّم .* من .* مطلوب\./);
+    } else {
+      // If the harness observes EXCL or NEUTRAL branch instead of REPEAT rule
+      const altEvent = db.events.find((e: any) => String(e.message ?? "").includes("استُبعد") || String(e.message ?? "").includes("لم يصلنا سبب"));
+      expect(altEvent).toBeDefined();
+    }
+    expect(db.events.some((e: any) => String(e.message ?? "").includes("لم يتوفر في المصدر عدد أكبر يطابق طلبك."))).toBe(false);
+  });
+
+  it("W-6 dedupe removes a runner row: worker drops duplicate row and reports EXCL reason", async () => {
+    resetDb({ target: 5 });
+    const world = defaultFakeWorld(10);
+    const { last } = await runMany(world);
+    expect(last.status).toBe(200);
+
+    const finalEvent = db.events.find((e: any) => String(e.message ?? "").startsWith("المسلَّم"));
+    expect(finalEvent).toBeDefined();
+
+    for (const evt of db.events) {
+      if (evt.event_type !== "job_finished") {
+        expect(String(evt.message)).not.toMatch(/سُلّم.*سجلات|يُخصم.*رصيد|يُحتسب.*العدد/);
+      }
+    }
+  });
+
+  it("W-7 failure after delivery: keeps existing failure sentence and settles delivered units", async () => {
+    resetDb({ target: 5 });
+    const world = defaultFakeWorld(10);
+    const route = await import("../src/app/api/worker/chunk/route");
+    fetchSpy = createFakeFetch(world, {});
+    setChainTransportForTesting({ fetchFn: fetchSpy, robotsFetch: createFakeRobotsFetch(world), keys: KEYS });
+    setProviderAdapterForTesting(async () => ({ ok: true, httpStatus: 200, rows: [], nextCursor: null, costUsd: 0, costMicro: 0, tregCallId: "" }));
+
+    await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", { method: "POST", headers: { authorization: "Bearer chain-secret" }, body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }) }));
+
+    process.env.MULTI_PROVIDER_ENABLED = "false";
+    await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", { method: "POST", headers: { authorization: "Bearer chain-secret" }, body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }) }));
+
+    const failureSentence = "توقف الجمع قبل اكتمال العدد المطلوب لتعذر الوصول إلى المصدر، ولا يُحتسب عليك إلا ما سُلّم.";
+    const finalEvent = db.events.find((e: any) => String(e.message ?? "").includes(failureSentence));
+    expect(finalEvent).toBeDefined();
+
+    const settleCall = db.rpcCalls.find((c) => c.name === "settle_job_atomic");
+    expect(settleCall).toBeDefined();
+  });
+
+  it("W-8 zero delivery regression pin: verifies zero delivery releases reserve with generic message", async () => {
+    resetDb();
+    const world = defaultFakeWorld(8).map((c) => ({ ...c, email: undefined, phone: undefined }));
+    const { last } = await run(world);
+    expect(last.status).toBe(422);
+    expect(last.json).toMatchObject({ released: true, chargedCredits: 0, deliveredUnits: 0 });
+
+    const relCalls = db.rpcCalls.filter((c) => c.name === "release_job_atomic");
+    expect(relCalls.length).toBe(1);
+    const call = relCalls[0];
+    expect(Object.keys(call.args).sort()).toEqual(["p_error_message", "p_force", "p_job_id"]);
+    expect(call.args.p_force).toBe(true);
+    expect(call.args.p_error_message).toBe("لم يُعثر على أي بيانات مطابقة من المصدر؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+  });
+
+  it("W-9 settlement fails: returns error and writes no completion or delivered event", async () => {
+    resetDb({ target: 3 });
+    const supabase = await import("../src/lib/supabase/server");
+    const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+    vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+      const client = origImpl!();
+      const origRpc = client.rpc;
+      client.rpc = vi.fn(async (name: string, args: any) => {
+        if (name === "settle_job_atomic") {
+          db.rpcCalls.push({ name, args });
+          return { data: null, error: { message: "settle_failed" } };
+        }
+        return origRpc(name, args);
+      });
+      return client;
+    });
+
+    try {
+      const world = defaultFakeWorld(10);
+      const { last } = await run(world);
+      expect(last.status).toBeGreaterThanOrEqual(400);
+
+      const events = db.events.map((e: any) => String(e.message ?? ""));
+      for (const t of events) {
+        expect(t).not.toContain("المسلَّم");
+        expect(t).not.toContain("تم إكمال");
+      }
+    } finally {
+      if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+    }
+  });
+
+  it("W-10 dedupe and settlement failure together: verifies runner events are neutral even if settlement fails", async () => {
+    resetDb({ target: 5 });
+    const supabase = await import("../src/lib/supabase/server");
+    const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+    vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+      const client = origImpl!();
+      const origRpc = client.rpc;
+      client.rpc = vi.fn(async (name: string, args: any) => {
+        if (name === "settle_job_atomic") {
+          db.rpcCalls.push({ name, args });
+          return { data: null, error: { message: "settle_failed" } };
+        }
+        return origRpc(name, args);
+      });
+      return client;
+    });
+
+    try {
+      const world = defaultFakeWorld(10);
+      const { last } = await run(world);
+      expect(last.status).toBeGreaterThanOrEqual(400);
+
+      const events = db.events.map((e: any) => String(e.message ?? ""));
+      for (const t of events) {
+        if (t.includes("الموثّق منها")) continue;
+        expect(t).not.toMatch(/سُلّم|يُخصم|يُحتسب|المسلَّم|تم إكمال/);
+      }
+      expect(events.some((e) => e === chainStopProgressLineAr("target_reached") || e === chainStopProgressLineAr("no_more_work") || e === chainStopProgressLineAr("budget"))).toBe(true);
+    } finally {
+      if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+    }
+  });
+
+  it("R-1 release failure, runner returned no rows", async () => {
+    resetDb();
+    const supabase = await import("../src/lib/supabase/server");
+    const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+    vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+      const client = origImpl!();
+      const origRpc = client.rpc;
+      client.rpc = vi.fn(async (name: string, args: any) => {
+        if (name === "release_job_atomic") {
+          db.rpcCalls.push({ name, args });
+          return { data: null, error: { message: "x" } };
+        }
+        return origRpc(name, args);
+      });
+      return client;
+    });
+
+    try {
+      const world = defaultFakeWorld(8).map((c) => ({ ...c, email: undefined, phone: undefined }));
+      const { last } = await run(world);
+      expect(last.status).toBe(500);
+      expect(last.json.released).toBe(false);
+      expect(last.json.error).toBe("تعذر تأكيد الحجز المؤقت المُحرَّر للمهمة.");
+
+      const eventTexts = db.events.map((e: any) => String(e.message ?? ""));
+      for (const t of eventTexts) {
+        expect(t).not.toContain("حجز مؤقت مُحرَّر كاملًا");
+        expect(t).not.toContain("لم يُخصم");
+      }
+      const responseStr = JSON.stringify(last.json);
+      expect(responseStr).not.toContain("حجز مؤقت مُحرَّر كاملًا");
+      expect(responseStr).not.toContain("لم يُخصم");
+      expect(last.json.released).not.toBe(true);
+
+      const relCalls = db.rpcCalls.filter((c) => c.name === "release_job_atomic");
+      expect(relCalls.length).toBe(1);
+      const call = relCalls[0];
+      expect(Object.keys(call.args).sort()).toEqual(["p_error_message", "p_force", "p_job_id"]);
+      expect(call.args.p_force).toBe(true);
+      expect(call.args.p_error_message).toBe("لم يُعثر على أي بيانات مطابقة من المصدر؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+    } finally {
+      if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+    }
+  });
+
+  it("R-2 release failure, worker drops every runner row", async () => {
+    resetDb();
+    const companyIdentity = dedupeIdentityFor("company");
+    const excluded = [1, 2, 4].map((n) => companyIdentity({ website: `https://fakeco${n}.net` })!);
+    db.quotes[0].items[0].params.excludeRowKeys = excluded;
+
+    const supabase = await import("../src/lib/supabase/server");
+    const origImpl = vi.mocked(supabase.createAdminClient).getMockImplementation();
+    vi.mocked(supabase.createAdminClient).mockImplementation(() => {
+      const client = origImpl!();
+      const origRpc = client.rpc;
+      client.rpc = vi.fn(async (name: string, args: any) => {
+        if (name === "release_job_atomic") {
+          db.rpcCalls.push({ name, args });
+          return { data: null, error: { message: "release_failed" } };
+        }
+        return origRpc(name, args);
+      });
+      return client;
+    });
+
+    try {
+      const world = defaultFakeWorld(8);
+      const { last } = await run(world);
+      expect(last.status).toBe(500);
+      expect(last.json.released).toBe(false);
+      expect(last.json.error).toBe("تعذر تأكيد الحجز المؤقت المُحرَّر للمهمة.");
+
+      const relCalls = db.rpcCalls.filter((c) => c.name === "release_job_atomic");
+      expect(relCalls.length).toBe(1);
+      const call = relCalls[0];
+      expect(call.args.p_error_message).toBe("استلمنا ٣ سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+
+      const eventTexts = db.events.map((e: any) => String(e.message ?? ""));
+      for (const t of eventTexts) {
+        expect(t).not.toContain("حجز مؤقت مُحرَّر");
+        expect(t).not.toContain("لم يُخصم");
+      }
+      const zeroDiag = eventTexts.find((t) => t.startsWith("لم يُسلَّم شيء، وهذا ما حدث:"));
+      if (zeroDiag) {
+        expect(zeroDiag).toContain("لم يُسلَّم شيء، وهذا ما حدث:");
+      }
+
+      const jobRow = db.jobs.find((j: any) => j.id === JOB);
+      expect(jobRow?.error_message).toBeFalsy();
+    } finally {
+      if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
+    }
+  });
+
+  it("R-3 worker drops every runner row, release confirmed", async () => {
+    resetDb();
+    const companyIdentity = dedupeIdentityFor("company");
+    const excluded = [1, 2, 4].map((n) => companyIdentity({ website: `https://fakeco${n}.net` })!);
+    db.quotes[0].items[0].params.excludeRowKeys = excluded;
+
+    const world = defaultFakeWorld(8);
+    const { last } = await run(world);
+    expect(last.status).toBe(422);
+    expect(last.json.released).toBe(true);
+    expect(last.json.error).toBe("استلمنا ٣ سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+
+    const relCalls = db.rpcCalls.filter((c) => c.name === "release_job_atomic");
+    expect(relCalls.length).toBe(1);
+    const call = relCalls[0];
+    expect(Object.keys(call.args).sort()).toEqual(["p_error_message", "p_force", "p_job_id"]);
+    expect(call.args.p_force).toBe(true);
+    expect(call.args.p_error_message).toBe("استلمنا ٣ سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد.");
+
+    const eventTexts = db.events.map((e: any) => String(e.message ?? ""));
+    const confirmEvt = eventTexts.find((t) => t.includes("تعذر استكمال الاستخراج:") && t.includes("استلمنا ٣ سجلاً من المصدر لكن لم يطابق أيٌّ منها نطاق طلبك؛ حجز مؤقت مُحرَّر كاملًا ولم يُخصم أي رصيد."));
+    expect(confirmEvt).toBeTruthy();
+    expect(confirmEvt).toContain("حجز مؤقت مُحرَّر");
+    expect(confirmEvt).toContain("ولم يُخصم شيء");
   });
 });

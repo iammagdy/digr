@@ -403,7 +403,7 @@ interface BuiltStep {
   /** A SECOND tool that also answered on a real page, with its own proven mapping: execution continues with it when the first tool's input sets run out (another index gives other items). */
   second?: { option: ToolOption; mapCode: string };
   /** OUR OWN WEB SEARCH (Firecrawl / Context.dev) as the last fallback of a web or news search, proven on a real page: execution reads it after the catalog's tools run out. */
-  webFallback?: { option: ToolOption; mapCode: string };
+  webFallbacks?: Array<{ option: ToolOption; mapCode: string }>;
   /** A lookup step resolved to the one named thing: its children are bound to that thing's own value, and it is not a stage of the plan. */
   lookup?: true;
 }
@@ -532,23 +532,53 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
     }
     // OUR OWN WEB SEARCH AS THE LAST FALLBACK (owner direction, 16 Nov 2026: «use providers other than TREG so the customer gets the whole order»): a web or news search whose real sample is short of the number
     // also proves a direct web tool on the step's own search phrases; execution reads it after every catalog tool has run out.
-    let webFallback: BuiltStep["webFallback"];
+    const webFallbacks: NonNullable<BuiltStep["webFallbacks"]> = [];
     const webRows: Array<Record<string, unknown>> = [];
+    const phrases = [...new Set([step.topic, ...(Array.isArray(step.search_terms) ? step.search_terms : [])].map((t) => String(t ?? "").trim()).filter((t) => t.length >= 2))].slice(0, 5);
+    let triedFirstWeb = false;
+    const webEligible = !step.parent && Boolean(step.topic) && SEARCH_ENGINE_PLATFORMS.has(step.platform) && !got.hasMore && sampleRows.length + secondRows.length < (step.count.total ?? DEFAULT_COUNT) && phrases.length > 0;
+    const searchOrNews = /(^|\.)(search|news)(\.|$)/.test(String(step.capability ?? ""));
     const webTool = deps.webTools?.[0];
     const usedWeb = [got.option.endpoint.id, second?.option.endpoint.id].some((id) => (deps.webTools ?? []).some((w) => w.id === id));
-    if (webTool && !usedWeb && !step.parent && step.topic && SEARCH_ENGINE_PLATFORMS.has(step.platform) && !got.hasMore && sampleRows.length + secondRows.length < (step.count.total ?? DEFAULT_COUNT)) {
-      const phrases = [...new Set([step.topic, ...step.search_terms].map((t) => String(t ?? "").trim()).filter((t) => t.length >= 2))].slice(0, 5);
+    if (webTool && !usedWeb && webEligible) {
       const webOption: ToolOption = { endpoint: webTool, params: { query: phrases[0], limit: 30 }, cursor: null, parent: null, more: phrases.slice(1).map((q) => ({ query: q, limit: 30 })), notCarried: [] };
+      triedFirstWeb = true;
       const got3 = await probeStep(step, [webOption], null, deps);
       if (got3) {
         const map3 = enrichedMap(checkFieldMap(await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, got3.option.endpoint, got3.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500), got3.items), got3.items);
         if (map3) {
           const code3 = cardMapCode(pseudoCard(got3.option.endpoint, got3.listPath, map3, got3.items.length, carryFieldsOf(got3.items, map3), got3.items));
           const rows3 = runMap(code3, got3.page);
-          if (rows3.length > 0) { webFallback = { option: got3.option, mapCode: code3 }; webRows.push(...rows3); }
+          if (rows3.length > 0) { webFallbacks.push({ option: got3.option, mapCode: code3 }); webRows.push(...rows3); }
         }
       }
       deps.log?.(`llm_planner_web_fallback ${step.key} ${webTool.id} rows=${webRows.length}`);
+    }
+    const webIds = new Set((deps.webTools ?? []).map((w) => w.id));
+    const taken = new Set<string>([got.option.endpoint.id, ...(second ? [second.option.endpoint.id] : []), ...webFallbacks.map((w) => w.option.endpoint.id)]);
+    const otherWeb = (deps.webTools ?? []).find((w) => !taken.has(w.id));
+    const proven = webFallbacks[0] ?? (webIds.has(got.option.endpoint.id) ? { option: got.option, mapCode } : second && webIds.has(second.option.endpoint.id) ? second : undefined);
+    if (otherWeb && webEligible && searchOrNews) {
+      if (proven && !proven.option.parent) {
+        // R3-A: the different provider reuses the PROVEN option's inputs and map: 0 billed calls, 0 model calls.
+        // The input sets are de-duplicated among THEMSELVES only (this is the only de-duplication in the change).
+        const sets: Array<Record<string, unknown>> = [];
+        for (const p of [proven.option.params, ...proven.option.more]) if (!sets.some((q) => JSON.stringify(q) === JSON.stringify(p))) sets.push(p);
+        webFallbacks.push({ option: { endpoint: otherWeb, params: sets[0], cursor: null, parent: null, more: sets.slice(1), notCarried: [] }, mapCode: proven.mapCode });
+      } else if (!proven && triedFirstWeb) {
+        // R3-B: the first web tool gave nothing usable: ONE probe, ONE phrase, no retry
+        const fcOption: ToolOption = { endpoint: otherWeb, params: { query: phrases[0], limit: 30 }, cursor: null, parent: null, more: [], notCarried: [] };
+        const gotFc = await probeStep(step, [fcOption], null, deps);
+        if (gotFc) {
+          const mapFc = enrichedMap(checkFieldMap(await ask(FIELD_MAP_SYSTEM, fieldMapPrompt(step, gotFc.option.endpoint, gotFc.items), { name: FIELD_MAP_TOOL, description: "Where each column is in an item.", schema: FIELD_MAP_SCHEMA }, 1500), gotFc.items), gotFc.items);
+          if (mapFc) {
+            const codeFc = cardMapCode(pseudoCard(gotFc.option.endpoint, gotFc.listPath, mapFc, gotFc.items.length, carryFieldsOf(gotFc.items, mapFc), gotFc.items));
+            const rowsFc = runMap(codeFc, gotFc.page);
+            if (rowsFc.length > 0) { webFallbacks.push({ option: gotFc.option, mapCode: codeFc }); webRows.push(...rowsFc); }   // the sample rows feed the scout (extraRows, planner.ts:571)
+          }
+        }
+        deps.log?.(`llm_planner_web_fallback ${step.key} ${otherWeb.id} rows=${webRows.length}`);
+      }
     }
     // A LOOKUP STEP (the one named app, place or product the customer's items belong to): the search's FIRST result is not the thing (live, 16 Nov 2026: Google Play's search for «InstaPay» answered Fawry first, and 100 Fawry
     // reviews were delivered as InstaPay's). The model picks the result that IS the named thing; none of them: the customer is asked for its link, nothing is planned on a guess.
@@ -558,11 +588,11 @@ export async function planWithLlm(input: LlmPlannerInput, deps: LlmPlannerDeps):
       if (at < 0) return { kind: "question", question_ar: `بحثنا في ${platformAr(step.platform, step.capability)} عن الذي ذكرته بالاسم ولم نجده بين النتائج بشكل مؤكد. ممكن ترسل رابطه أو اسمه كما يظهر هناك بالضبط؟`, options_ar: [], understanding: u, costUsd: cost.usd };
       sampleRows.splice(0, sampleRows.length, sampleRows[at]!);
     }
-    built.set(step.key, { step, option: got.option, mapCode, columns, carryKeys: Object.keys(carry), sampleRows, rowsPerPage: got.items.length, callIds: got.callIds, hasMore: got.hasMore, nextCursor: got.nextCursor, ...(second ? { second } : {}), ...(webFallback ? { webFallback } : {}), ...(isLookupStep(step, u.steps) ? { lookup: true as const } : {}) });
+    built.set(step.key, { step, option: got.option, mapCode, columns, carryKeys: Object.keys(carry), sampleRows, rowsPerPage: got.items.length, callIds: got.callIds, hasMore: got.hasMore, nextCursor: got.nextCursor, ...(second ? { second } : {}), ...(webFallbacks.length > 0 ? { webFallbacks } : {}), ...(isLookupStep(step, u.steps) ? { lookup: true as const } : {}) });
     // SCOUTING: how much does the source really hold for this request? (a source that shows one page for a query and no next page is read once for each of the model's other input sets, and the sets' items are counted once)
     // THE ITEMS OF ONE FOUND THING (the reviews of the one product the lookup found) are a top-level request in all but name: a source that answered them all on one page, with no next page, is what exists
     // (live, 16 Nov 2026: 10 Amazon reviews with no next page were planned silently as 20, and 10 were delivered)
-    if (step.parent && built.get(step.parent)?.lookup && step.count.total !== null && input.scoutAllowed !== false && !got.hasMore && !webFallback) {
+    if (step.parent && built.get(step.parent)?.lookup && step.count.total !== null && input.scoutAllowed !== false && !got.hasMore && webFallbacks.length === 0) {
       const found = new Set(sampleRows.map(rowKeyOf)).size;
       deps.log?.(`llm_planner_scout ${step.key} found=${found} requested=${step.count.total} exhausted=${found < step.count.total} sets=1 (one found item)`);
       findings.push({ step, requested: step.count.total, found, exhausted: found < step.count.total, sets: 1 });
@@ -839,14 +869,14 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
     planned = Math.max(1, Math.min(MAX_STEP_ITEMS, Math.floor(planned)));
     plannedOf.set(s.key, planned);
     // THE REAL SAMPLE IS SMALL (live X, 15 Nov 2026: the account's precise searches gave 0 and 2 for a request of 400): said before approval, with the honest consequence; the customer pays only for what is delivered
-    if (!s.parent && !b.hasMore && b.rowsPerPage < Math.min(planned, 20)) notes.push(`${s.title_ar}: الصفحة الأولى من المصدر أعطتنا ${toArabicDigits(b.rowsPerPage)} فقط، فالمتاح غالبًا أقل بكثير من ${toArabicDigits(planned)}.${b.option.more.length > 0 || b.second || b.webFallback ? " نكمل البحث بصيغ أخرى ومن مصادر أخرى" : " والمصدر لا يعرض أكثر من ذلك"}، ولن تدفع إلا مقابل ما يُسلَّم.`);
+    if (!s.parent && !b.hasMore && b.rowsPerPage < Math.min(planned, 20)) notes.push(`${s.title_ar}: الصفحة الأولى من المصدر أعطتنا ${toArabicDigits(b.rowsPerPage)} فقط، فالمتاح غالبًا أقل بكثير من ${toArabicDigits(planned)}.${b.option.more.length > 0 || b.second || (b.webFallbacks?.length ?? 0) > 0 ? " نكمل البحث بصيغ أخرى ومن مصادر أخرى" : " والمصدر لا يعرض أكثر من ذلك"}، ولن تدفع إلا مقابل ما يُسلَّم.`);
     if (b.option.notCarried.length > 0) notes.push(`${s.title_ar}: المصدر لا يتيح التصفية حسب ${b.option.notCarried.map((c) => CONDITION_AR[c]).join(" ولا ")}، فقد تصلك نتائج من خارجها. لو ده مهم لك، اضغط «عدّل الطلب».`);
     const rowsPerPage = Math.max(1, b.rowsPerPage);
     const costPerRow = (callUsdOf(b.option.endpoint) / rowsPerPage) * VARIANT_OVERLAP_FACTOR;
     const alternatives = [
       ...b.option.more.map((params) => ({ endpoint_id: b.option.endpoint.id, params, cursor_param: b.option.cursor, map_code: b.mapCode, map_file_id: "page", ...(b.option.parent ? { parent_binding: { param: b.option.parent.param, from: b.option.parent.from } } : {}) })),
       ...(b.second ? [b.second.option.params, ...b.second.option.more].map((params) => ({ endpoint_id: b.second!.option.endpoint.id, params, cursor_param: b.second!.option.cursor, map_code: b.second!.mapCode, map_file_id: "page" })) : []),
-      ...(b.webFallback ? [b.webFallback.option.params, ...b.webFallback.option.more].map((params) => ({ endpoint_id: b.webFallback!.option.endpoint.id, params, cursor_param: null, map_code: b.webFallback!.mapCode, map_file_id: "page" })) : []),
+      ...(b.webFallbacks ?? []).flatMap((w) => [w.option.params, ...w.option.more].map((params) => ({ endpoint_id: w.option.endpoint.id, params, cursor_param: null, map_code: w.mapCode, map_file_id: "page" }))),
     ];
     stages.push({
       key: s.key, title_ar: s.title_ar, endpoint_id: b.option.endpoint.id, capability: s.capability,
@@ -875,7 +905,7 @@ export function assemblePlan(u: Understanding, steps: ReadonlyArray<BuiltStep>, 
   const platforms = [...new Set(steps.map((b) => platformAr(b.step.platform, b.step.capability)))].join(" و");
   const understood = customerSafe(impersonalAr(u.understanding_ar).replace(/[.،\s]+$/u, ""), 300) ?? `نجمع ${stages.filter((s) => s.deliver).map((s) => s.title_ar).join(" و")} من ${platforms} كما طلبت`;
   const summary = `${understood}. ${counts ? `العدد المخطط: ${counts}.` : ""}`.trim();
-  const widened = steps.some((b) => b.option.more.length > 0 || b.second !== undefined || b.webFallback !== undefined);
+  const widened = steps.some((b) => b.option.more.length > 0 || b.second !== undefined || (b.webFallbacks?.length ?? 0) > 0);
   notes.push(widened
     ? "نجمع بالعدد الذي طلبته من المصدر صفحةً بعد صفحة، ونوسّع البحث بصيغ أخرى للموضوع نفسه حتى نصل إلى العدد أو ينتهي ما يعرضه المصدر، ونحذف المكرر فقط. لا تدفع إلا مقابل ما يُسلَّم."
     : "نجمع بالعدد الذي طلبته من المصدر صفحةً بعد صفحة حتى نصل إليه أو ينتهي ما يعرضه المصدر، ونحذف المكرر فقط. لا تدفع إلا مقابل ما يُسلَّم.");
