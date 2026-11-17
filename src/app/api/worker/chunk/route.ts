@@ -2025,6 +2025,8 @@ export async function POST(req: NextRequest) {
       const collectedUnreviewedRows: Record<string, any>[] = [];
       let firstRawProfile: Record<string, any> | null = null;
       let rawRowsCollected = 0;
+      let lastChainStop: string | null = null;
+      let lastChainSkipped = 0;
       let baselineExcludedCount = 0;
       let relevanceExcludedCount = 0;
       let dateExcludedTotal = 0;
