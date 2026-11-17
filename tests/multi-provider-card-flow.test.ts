@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { NextRequest } from "next/server";
 import { toArabicDigits } from "../src/lib/arabicDigits";
-import { CHAIN_CARD_LIMITS_AR } from "../src/lib/multiProvider/copy";
+import { CHAIN_CARD_LIMITS_V2_AR, expectedTargetLineAr } from "../src/lib/multiProvider/copy";
 import { chainQuoteCopyFor } from "../src/lib/server/multiProvider/planUpgrade";
 import { setRouterStateForTesting, setRouteChooserForTesting } from "../src/lib/server/multiProvider/planRouting";
 import { persistEditedQuoteMessage } from "../src/functions/shared/quoteMessagePersistence";
@@ -221,7 +221,7 @@ describe("T-5 chain card builders (first quote, chat edit, edit-plan API)", () =
     expect(card.summaryAr).toContain("شركة");
     expect(card.methodologyNotes).toContain("العدد المستهدف تسليمه");
     expect(card.methodologyNotes).toContain("من أصل ٥٠");
-    expect(card.methodologyNotes).toContain(CHAIN_CARD_LIMITS_AR.join(" "));
+    expect(card.methodologyNotes).toContain(CHAIN_CARD_LIMITS_V2_AR.join(" "));
     for (const forbidden of ["نواصل", "حتى يكتمل", "بالضبط", "سجل"]) {
       expect(card.methodologyNotes).not.toContain(forbidden);
     }
@@ -297,7 +297,7 @@ describe("T-5 chain card builders (first quote, chat edit, edit-plan API)", () =
     expect(card.summaryAr).toContain("شركة");
     expect(card.methodologyNotes).toContain("العدد المستهدف تسليمه");
     expect(card.methodologyNotes).toContain("من أصل ٥٠");
-    expect(card.methodologyNotes).toContain(CHAIN_CARD_LIMITS_AR.join(" "));
+    expect(card.methodologyNotes).toContain(CHAIN_CARD_LIMITS_V2_AR.join(" "));
     for (const forbidden of ["نواصل", "حتى يكتمل", "بالضبط", "سجل"]) {
       expect(card.methodologyNotes).not.toContain(forbidden);
     }
@@ -371,7 +371,7 @@ describe("T-5 chain card builders (first quote, chat edit, edit-plan API)", () =
       expect(card.summaryAr).toContain("شركة");
       expect(card.methodologyNotes).toContain("العدد المستهدف تسليمه");
       expect(card.methodologyNotes).toContain("من أصل ٥٠");
-      expect(card.methodologyNotes).toContain(CHAIN_CARD_LIMITS_AR.join(" "));
+      expect(card.methodologyNotes).toContain(CHAIN_CARD_LIMITS_V2_AR.join(" "));
       for (const forbidden of ["نواصل", "حتى يكتمل", "بالضبط", "سجل"]) {
         expect(card.methodologyNotes).not.toContain(forbidden);
       }
