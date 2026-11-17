@@ -609,6 +609,9 @@ export async function discoverOnce(rc: ChainRunCtx): Promise<void> {
     rc.discoveredNow = admitted;
     if (admitted > 0) {
       await rc.deps.emit(discoveryLineAr({ found: admitted, fresh: admitted, duplicate: 0, total: rc.state.tp }), rc.state.out);
+    } else if (caps.indexOf(cap) < caps.length - 1) {
+      rc.trace.fallback({ stage: "discover", fromCapabilityId: cap.id, toCapabilityId: caps[caps.indexOf(cap) + 1]?.id ?? null, reason: "no_usable_results" });
+      await rc.deps.emit(stageFallbackLineAr(), rc.state.out);
     } else {
       await rc.deps.emit(discoveryEmptyLineAr(), rc.state.out);
     }
