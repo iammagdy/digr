@@ -438,13 +438,13 @@ describe("copy API regression", () => {
 
     const h2 = harness(defaultFakeWorld(10));
     const { last: last2 } = await runAll(h2, params({ count: 3 }));
-    expect(last2.chainStop).toBe("target_reached");
+    expect("chainStop" in last2).toBe(false);
     expect(last2.ok).toBe(true);
-    expect(last2.nextCursor).toBeNull();
+    expect(last2.nextCursor).not.toBeNull();
 
     const h3 = harness(defaultFakeWorld(2));
     const { last: last3 } = await runAll(h3, params({ count: 8 }));
-    expect(last3.chainStop).toBe("no_more_work");
+    expect(last3.chainStop).toBe("coverage_end");
     expect(last3.ok).toBe(true);
     expect(last3.nextCursor).toBeNull();
 
