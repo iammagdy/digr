@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { chainParamsOf, decodeChainCursor, encodeChainCursor, runChainChunk, type ChainDeps, type ChainChunkInput } from "../src/lib/server/multiProvider/chainRunner";
+import { chainParamsOf, decodeChainCursor, encodeChainCursor, runChainChunk, discoveryQueryVariants, type ChainDeps, type ChainChunkInput } from "../src/lib/server/multiProvider/chainRunner";
 import { createFakeFetch, createFakeRobotsFetch, defaultFakeWorld, type FakeCompany, type FakeScenario } from "../src/lib/server/multiProvider/fakeTransport";
 import type { ProviderAdapterCallInput, ProviderAdapterCallOutput } from "../src/lib/server/tregAdapter";
 import type { TregCallResult } from "../src/functions/shared/tregClient";
@@ -569,5 +569,28 @@ describe("chain: exact-N engine (DT-20261117-04)", () => {
     // fakeco1 has no scrape and no robots call
     const co1Scrapes = h.rec.rows.filter((r) => r.capabilityId.includes("scrape") && (r as any).url?.includes("fakeco1.net"));
     expect(co1Scrapes.length).toBe(0);
+  });
+
+  it("T-A A3 coverage end ONLY after TREG null cursor + 8 variants per usable web provider, and sources_limited conditions", async () => {
+    const p = params({ routeCode: routeCodeOf("chain:contextdev>firecrawl"), count: 20 });
+    const variants = discoveryQueryVariants(chainParamsOf(p as any));
+    expect(variants.length).toBe(8);
+
+    const hCov = harness([], { emptyProvider: { contextdev: true, firecrawl: true } }, { tregRows: [] });
+    const { last: lastCov } = await runAll(hCov, p, 20);
+    expect(lastCov.chainStop).toBe("coverage_end");
+
+    // sources_limited conditions
+    const hNoKey = harness([], {}, { keys: {} });
+    const { last: lastNoKey } = await runAll(hNoKey, params({ count: 5 }), 5);
+    expect(lastNoKey.chainStop).toBe("sources_limited");
+
+    const hCap = harness(defaultFakeWorld(5), {}, { caps: { treg: 0, firecrawl: 0, contextdev: 0 } });
+    const { last: lastCap } = await runAll(hCap, params({ count: 5 }), 5);
+    expect(lastCap.chainStop).toBe("sources_limited");
+
+    const hDown = harness([], { failProvider: { contextdev: 500, firecrawl: 500 } }, { tregRows: [] });
+    const { last: lastDown } = await runAll(hDown, params({ count: 5 }), 10);
+    expect(lastDown.chainStop).toBe("sources_limited");
   });
 });
