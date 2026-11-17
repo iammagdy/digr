@@ -1699,6 +1699,7 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       fetchFn: async (...args) => { providerCallsMade += 1; return fetchSpy(...args); },
       robotsFetch: createFakeRobotsFetch(defaultFakeWorld(5)),
       keys: KEYS,
+      tregCall: tregHook(),
     });
     setProviderAdapterForTesting(async () => {
       providerCallsMade += 1;
@@ -1710,13 +1711,18 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
       headers: { authorization: "Bearer chain-secret" },
       body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
     }));
-    expect(res9th.status).toBe(200);
+    // the 9th start ends with ZERO delivered rows: a zero-delivery release = 422 (B7's own expectation)
+    expect(res9th.status).toBe(422);
+    expect((await res9th.json()).released).toBe(true);
     // Zero provider calls
     expect(providerCallsMade).toBe(0);
 
     // Terminal work_limit and delivered-only charge
-    const finalEvent = db.events.find((e: any) => String(e.message ?? "").includes("بلغنا الحد الأقصى المسموح لحجم العمل"));
-    expect(finalEvent).toBeDefined();
+    const relWorkLimit = db.rpcCalls.find((c) => c.name === "release_job_atomic");
+    expect(relWorkLimit).toBeDefined();
+    // plan v9 :196/:310 (P86): the release text of a chain job; it carries the work_limit sentence
+    expect(relWorkLimit!.args.p_error_message).toBe(chainZeroDeliveryReasonAr({ target: 5, stop: "work_limit" }));
+    expect(String(relWorkLimit!.args.p_error_message)).toContain("بلغنا الحد الأقصى المسموح لحجم العمل");
 
     // 3. Storage error that is NOT "already exists" => throw (a caught failure), never a loop
     resetDb({ target: 5 });
@@ -1743,11 +1749,14 @@ it("T-W B1 no worker page cap for chain jobs: pageCapReason is null, while non-c
     });
 
     try {
-      await expect(route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
+      // the route's top-level catch turns the thrown start-marker error into a 500 RESPONSE (it never rejects): a caught failure, never a loop; the release is confirmed, so `error` carries the thrown text
+      const resStartErr = await route.POST(new NextRequest("http://127.0.0.1:3000/api/worker/chunk", {
         method: "POST",
         headers: { authorization: "Bearer chain-secret" },
         body: JSON.stringify({ jobId: JOB, expectedStep: db.step, disableSelfChain: true }),
-      }))).rejects.toThrow("تعذّر تسجيل بدء الدفعة");
+      }));
+      expect(resStartErr.status).toBe(500);
+      expect(String((await resStartErr.json()).error)).toContain("تعذّر تسجيل بدء الدفعة");
     } finally {
       if (origImpl) vi.mocked(supabase.createAdminClient).mockImplementation(origImpl);
     }
